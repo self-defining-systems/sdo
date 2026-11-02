@@ -38,6 +38,8 @@ const (
 	PlaybookIndexFile      = PlaybooksDir + "/README.md"
 	PlaybookFileName       = "README.md"
 	PlaybookScriptsDir     = "scripts"
+	RenderedDir            = Dir + "/rendered"
+	RenderedLockFile       = RenderedDir + "/lock.json"
 	OutcomesDir            = Dir + "/outcomes"
 	ApplicationGenerator   = "application"
 	IncidentGenerator      = "incident"
@@ -75,6 +77,8 @@ const (
 	KindPlaybookIndex            Kind = "playbook-index"
 	KindPlaybook                 Kind = "playbook"
 	KindPlaybookScript           Kind = "playbook-script"
+	KindRenderedLock             Kind = "rendered-lock"
+	KindRenderedObject           Kind = "rendered-object"
 	KindOutcome                  Kind = "outcome"
 )
 
@@ -159,6 +163,7 @@ const (
 var (
 	playbookIDPattern = regexp.MustCompile(PlaybookIDPattern)
 	detectorIDPattern = regexp.MustCompile(DetectorIDPattern)
+	renderedFile      = regexp.MustCompile(`^([0-9a-f]{64})\.yaml$`)
 	outcomeFile       = regexp.MustCompile(`^([0-9a-f]{64})\.json$`)
 )
 
@@ -187,6 +192,20 @@ func Classify(p string) (Kind, string, bool) {
 		return only(parts, KindArchitecture)
 	case "lifecycle-provenance.yaml":
 		return only(parts, KindLifecycleProvenance)
+<<<<<<< HEAD
+=======
+	case "outcomes.jsonl":
+		return only(parts, KindLegacyOutcomes)
+	case "rendered":
+		if len(parts) == 2 {
+			if parts[1] == "lock.json" {
+				return KindRenderedLock, "", true
+			}
+			if match := renderedFile.FindStringSubmatch(parts[1]); match != nil {
+				return KindRenderedObject, match[1], true
+			}
+		}
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	case "outcomes":
 		if len(parts) == 2 {
 			if match := outcomeFile.FindStringSubmatch(parts[1]); match != nil {
@@ -200,7 +219,7 @@ func Classify(p string) (Kind, string, bool) {
 	case "corpus":
 		if len(parts) == 3 && ValidPlaybookID(parts[1]) {
 			switch parts[2] {
-			case "open.json", "fixed.json", "healthy.json", "recordings.json", "labels.json":
+			case "open.json", "fixed.json", "healthy.json", "recordings.json", "labels.json", "operator.json", "accepted.json":
 				return KindCorpus, parts[1], true
 			}
 		}
@@ -337,6 +356,39 @@ func LogicalText(value string) (string, error) {
 	return value, nil
 }
 
+// physicalPathToken is one physical memory path inside prose: the memory root
+// followed by path characters, either separator.
+var physicalPathToken = regexp.MustCompile(`\.sdo[/\\][A-Za-z0-9._/\\-]*`)
+
+// LogicalizeText rewrites every physical memory path in free text to a logical
+// reference: script:<playbook>/<name>, playbook:<id>, detector:<id>, or
+// memory:<relative path> for anything else. Unlike LogicalText it never fails,
+// so stored agent prose can always be shown to a worker.
+func LogicalizeText(value string) string {
+	// A rewritten path can itself hold a nested memory path; each pass removes
+	// one level.
+	for ContainsPhysicalPath(value) {
+		value = physicalPathToken.ReplaceAllStringFunc(value, logicalReference)
+	}
+	return value
+}
+
+func logicalReference(token string) string {
+	relative := strings.ReplaceAll(token[len(Dir)+1:], `\`, "/")
+	trimmed := strings.TrimRight(relative, "./")
+	parts := strings.Split(trimmed, "/")
+	suffix := relative[len(trimmed):]
+	switch {
+	case len(parts) == 4 && parts[0] == "playbooks" && parts[2] == PlaybookScriptsDir && ValidPlaybookID(parts[1]) && strings.HasSuffix(parts[3], ".sh"):
+		return "script:" + parts[1] + "/" + parts[3] + suffix
+	case len(parts) >= 2 && parts[0] == "playbooks" && ValidPlaybookID(parts[1]):
+		return "playbook:" + parts[1] + suffix
+	case len(parts) >= 4 && parts[0] == "diagnostics" && parts[1] == "detectors" && ValidDetectorID(parts[3]):
+		return "detector:" + parts[3] + suffix
+	}
+	return "memory:" + relative
+}
+
 // PlaybookID translates a physical playbook reference to its logical ID. A
 // logical ID is returned unchanged.
 func PlaybookID(reference string) (string, error) {
@@ -407,6 +459,27 @@ func ArtifactID(reference string) (string, error) {
 func RequiresControllerRollout(changedPaths []string) bool {
 	for _, p := range changedPaths {
 		if kind, _, ok := Classify(p); ok && (kind == KindLegacyDetectorManifest || kind == KindIncidentDetectorManifest || kind == KindIncidentDetectorSource || kind == KindPlaybookProgram || kind == KindLibrary) {
+			return true
+		}
+	}
+	return false
+}
+
+// RequiresValidatorJob reports whether validating the changed paths needs the
+// isolated validator Job, which compiles the detector workspace and replays
+// the corpus. Only paths known to be inert prose, scripts or outcome records
+// skip it; every unclassified, executable or corpus path (the Job is the only
+// place a new corpus case is replayed) keeps it, so this is a strict superset
+// of RequiresControllerRollout.
+func RequiresValidatorJob(changedPaths []string) bool {
+	for _, p := range changedPaths {
+		kind, _, ok := Classify(p)
+		if !ok {
+			return true
+		}
+		switch kind {
+		case KindGoal, KindArchitecture, KindLifecycleProvenance, KindPlaybookIndex, KindPlaybook, KindPlaybookScript, KindOutcome, KindLegacyOutcomes:
+		default:
 			return true
 		}
 	}

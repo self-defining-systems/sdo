@@ -13,22 +13,19 @@ diagnostic; look it up here.
 ## Front matter
 
 - `README.md` starts with YAML front matter and a non-empty body. Enforced by: `document.parse`.
-- Front matter: `schema_version: 1`, `owner: responder`, `fault_class` equal to the playbook ID (the scaffold
-  sets this), and a non-empty `originating_incident`. Enforced by: `playbook.owner`, `playbook.fault-class`,
-  `playbook.originating-incident`, `document.parse`.
+- Front matter: `schema_version: 1`, `owner: responder`, and a non-empty `originating_incident`; `fault_class` is
+  derived from the playbook ID when SDO publishes. Enforced by: `playbook.owner`, `playbook.originating-incident`,
+  `document.parse`.
 
 ## Body
 
-- The body names resources by role placeholder in angle brackets and capitals, such as `<TARGET_RESOURCE>`, not by
-  concrete names. Enforced by: `playbook.placeholder`.
 - The body, the index, the architecture, scripts, and detector source never contain physical `.sdo/` paths. Refer
   to playbooks as the logical ID and to scripts as `<playbook-id>/<name>.sh`. Enforced by: `text.physical-path`.
 
 ## Index
 
-- The playbook index lists every playbook as a Markdown link to its README using its logical ID and links only to playbooks.
-  `memory new playbook` maintains it. Enforced by: `playbook.index-missing`, `playbook.index-link`,
-  `playbook.not-indexed`.
+- SDO generates the playbook index: one line per active playbook, titled by its README's first heading.
+  Edits to the index are replaced. Enforced by: `playbook.index-missing`, `playbook.index-generated`.
 
 ## Scripts
 
@@ -45,19 +42,29 @@ diagnostic; look it up here.
 
 ## Ownership
 
-- The responder writes playbooks, scripts, and the index during reflection. The health judge writes only the
+- The responder writes playbooks and scripts during reflection. The health judge writes only the
   health-objective playbook during the initial health-judge stage. Enforced by: `ownership.denied`.
 
-- A mitigator must clear its diagnosis after its patches are applied to the faulted fixture, including under consistent renaming. An already-faulty target value is not a repair. Enforced by: `program.mitigation-not-repaired`.
-- A mitigation effect must be reproducible from recorded evidence; unavailable source reconciliation, revision lookup, or rollout effects fail explicitly. Use replayable SetField patches when the fixture proves the repair. Enforced by: `program.mitigation-unreplayable`.
+Compilation, imports, changed-source formatting, ownership and receipt provenance are required.
+<!-- replay:on -->
+Replay results are information only.
+<!-- /replay:on -->
 
+## Diagnosis
+
+- Diagnose compares typed fields (`diff.ContainerChanges`, `diff.Field`), never a substring of `diff.Text`;
+  such programs still load but are noted for rewrite. Enforced by: `program.diff-text-match`.
+
+## Executable repair evidence
+
+Every recorded hand repair needs an executable typed SDK or RunScript step (partial coverage is fine), with
+relation-derived Env and digest-to-receipt linkage; README text holds only judgement and ordering.
+
+<!-- replay:on -->
 ## Corpus evidence
 
-- Every added case requires captured provenance and matching snapshot digests, including cases for existing programs.
-  A synthetic NoMatch case needs a reason, only negative labels, and no incident provenance. Enforced by: `program.corpus-provenance`.
-- Captured cases require the provisioned capture directory and incident ID. If either is missing or the directory is
-  unavailable, restore the controller-provided context before retrying. Enforced by: `program.capture-unavailable`.
-- A case's incident ID must match the provisioned incident; its open, fixed and recorded primitive observations must
-  match the trusted capture bytes. An empty incident label cannot bypass comparison. Enforced by: `program.capture-provenance`.
+- Build replay fixtures from recorded session observations when available. Missing or inconclusive replay
+  is recorded with its reason and never rejects publication; retain RunScript receipt linkage. Enforced by: `program.mitigation-not-repaired`.
 - Preserve every accepted case exactly as it appears at the accepted base commit, including snapshots, recordings,
   provenance, bindings and labels. Do not delete or relabel it; submit new evidence with a new case ID. Enforced by: `program.corpus-immutable`.
+<!-- /replay:on -->

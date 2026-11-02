@@ -9,8 +9,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
 from benchmarks.sregym.adapter.cluster_resources import kubectl
 from benchmarks.sregym.adapter.native_operator import (
+    AGENT_EFFORTS,
+    DEFAULT_AGENT_EFFORT,
     NativeInstallConfig,
     collect_native_receipt,
     install_existing,
@@ -41,21 +44,27 @@ class RuntimeConfig:
     credentials_secret: str
     model: str
     timeout_seconds: int
+<<<<<<< HEAD
     verification_timeout_seconds: int = 120
+=======
+    validator_image: str = "sdo-detector-validator:v0.1.0"
+    verification_timeout_seconds: int = int(wait_for(WaitKind.VERIFICATION_SAMPLE))
+>>>>>>> origin/vic-lsh/dev/sdo-improve
     wait_for_completion: bool = False
-    repair_policy: str = "commit"
+    repair_policy: str = "recorded-actions"
     agent_provider: str = "codex"
+    replay: str = "on"
+    agent_effort: str = DEFAULT_AGENT_EFFORT
     reflection_session: str = "resume"
     reflection_guidance: str = "baseline"
     force_reflection: bool = False
-    program_fast_path: bool = False
-    program_trust_threshold: int = 3
-    drift_tokens_per_hour: int = 1_000_000
+    code_path: str = "go"
+
     late_findings: str = "off"
-    max_follow_ups: int = 0
-    max_response_loops: int = 5
-    follow_up_cooldown_seconds: int = 30
+    max_response_loops: int = 10
     healthy_baseline: bool = False
+    permissive_responder: bool = False
+    responder_namespaces: tuple[str, ...] = ()
     controller_namespace: str | None = None
     reuse_existing: bool = False
     submission_api_base: str | None = None
@@ -69,8 +78,13 @@ class RuntimeConfig:
     max_deployment_attempts: int = 3
     agent_registrations: Path | None = None
     deployed_manifest_paths: tuple[str, ...] = ()
+    shared_accepted_id: str = ""
 
     def __post_init__(self) -> None:
+        if type(self.permissive_responder) is not bool:
+            raise TypeError("permissive_responder must be a boolean")
+        if self.responder_namespaces and not self.permissive_responder:
+            raise ValueError("responder_namespaces requires permissive_responder")
         for field in (
             "namespace",
             "application",
@@ -90,22 +104,23 @@ class RuntimeConfig:
             raise ValueError("repair_policy must be commit or recorded-actions")
         if self.agent_provider not in ("codex", "claude"):
             raise ValueError("agent_provider must be codex or claude")
+        if self.replay not in ("on", "off"):
+            raise ValueError("replay must be on or off")
+        if self.agent_effort not in AGENT_EFFORTS:
+            raise ValueError(f"agent_effort must be one of {AGENT_EFFORTS}")
         if self.reflection_session not in ("fresh", "resume"):
             raise ValueError("reflection_session must be fresh or resume")
+        if self.code_path not in ("go", "shell"):
+            raise ValueError("code_path must be go or shell")
         if self.reflection_guidance not in ("baseline", "generalize", "generalize-spec"):
             raise ValueError("invalid reflection_guidance")
         if self.late_findings not in ("off", "pull"):
             raise ValueError("late_findings must be off or pull")
-        if self.max_follow_ups < 0 or self.follow_up_cooldown_seconds <= 0 or self.max_response_loops <= 0:
-            raise ValueError("invalid follow-up limit or cooldown")
+        if self.max_response_loops <= 0:
+            raise ValueError("max_response_loops must be positive")
         if self.max_deployment_attempts <= 0:
             raise ValueError("max_deployment_attempts must be positive")
-        if self.program_trust_threshold <= 0:
-            raise ValueError("program_trust_threshold must be positive")
-        if self.drift_tokens_per_hour <= 0:
-            raise ValueError("drift_tokens_per_hour must be positive")
-        if self.program_fast_path and self.repair_policy != "recorded-actions":
-            raise ValueError("program fast path requires recorded-actions repair policy")
+
         if self.agent_registrations is not None and not self.agent_registrations.is_absolute():
             raise ValueError("agent_registrations path must be absolute")
 
@@ -140,22 +155,23 @@ def native_install_config(config: RuntimeConfig) -> NativeInstallConfig:
         model=config.model,
         kubeconfig=Path(kubeconfig),
         agent_provider=config.agent_provider,
+        replay=config.replay,
+        agent_effort=config.agent_effort,
         repair_policy=config.repair_policy,
         late_findings=config.late_findings,
         reflection_session=config.reflection_session,
         reflection_guidance=config.reflection_guidance,
         force_reflection=config.force_reflection,
-        program_fast_path=config.program_fast_path,
-        program_trust_threshold=config.program_trust_threshold,
-        drift_tokens_per_hour=config.drift_tokens_per_hour,
+        code_path=config.code_path,
         healthy_baseline=config.healthy_baseline,
-        max_follow_ups=config.max_follow_ups,
+        permissive_responder=config.permissive_responder,
+        responder_namespaces=config.responder_namespaces,
         max_response_loops=config.max_response_loops,
-        follow_up_cooldown_seconds=config.follow_up_cooldown_seconds,
         response_timeout_seconds=config.timeout_seconds,
         verification_timeout_seconds=config.verification_timeout_seconds,
         responder_env=responder_env,
         deployed_manifest_paths=config.deployed_manifest_paths,
+        shared_accepted_id=config.shared_accepted_id,
     )
 
 

@@ -39,3 +39,20 @@ def test_application_kubeconfig_outside_a_pod_is_left_to_the_ambient_kubeconfig(
     monkeypatch.setattr(job, "SERVICE_ACCOUNT_ROOT", tmp_path / "missing")
 
     assert job.write_application_kubeconfig("app-ns") is None
+
+
+def test_proxy_kubeconfig_is_loopback_without_client_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service_account = tmp_path / "serviceaccount"
+    service_account.mkdir()
+    (service_account / "token").write_text("synthetic-token", encoding="utf-8")
+    monkeypatch.setattr(job, "SERVICE_ACCOUNT_ROOT", service_account)
+    monkeypatch.setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
+    monkeypatch.setenv("SDO_API_PROXY_URL", "http://127.0.0.1:18080")
+    kubeconfig = job.write_application_kubeconfig("app-ns")
+    assert kubeconfig is not None
+    config = json.loads(kubeconfig.read_text())
+    assert config["clusters"][0]["cluster"] == {"server": "http://127.0.0.1:18080"}
+    assert config["users"][0]["user"] == {}
+    assert config["contexts"][0]["context"]["namespace"] == "app-ns"

@@ -1,0 +1,231 @@
+The controller has committed its authoritative incident outcome. You are reflecting in a fresh session: the responder's session transcript is not available, so rely on the incident brief below and supplied memory context.
+
+Incident brief (built by the broker from the verified closure; about 687 tokens):
+## Live evidence at dispatch (closure request)
+Application toy in namespace toy; source commit bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, deployed commit cccccccccccccccccccccccccccccccccccccccc.
+Detected 1970-01-01T00:00:00+00:00, dispatched 1970-01-01T00:00:00+00:00, responder completed 1970-01-01T00:00:00+00:00, health verified 1970-01-01T00:00:00+00:00.
+Findings:
+State changes at dispatch (against healthy baseline):
+```
+{
+  "changes": [
+    {
+      "change": "modified",
+      "kind": "Service",
+      "name": "component-0"
+    }
+  ],
+  "omitted": 2,
+  "unobserved_kinds": [
+    "Secret"
+  ]
+}
+
+```
+Findings:
+- [critical] detector-0 / unavailable (active): component-0 is unavailable
+  primary: Service toy/component-0 (v1)
+  fingerprint: fingerprint-0
+  playbooks: repair-0
+  evidence (verbatim):
+```
+Observed component-0 has no ready endpoints.
+```
+- [critical] detector-1 / unavailable (active): component-1 is unavailable
+  primary: Service toy/component-1 (v1)
+  fingerprint: fingerprint-1
+  playbooks: repair-1
+  evidence (verbatim):
+```
+Observed component-1 has no ready endpoints.
+```
+- [critical] detector-2 / unavailable (active): component-2 is unavailable
+  primary: Service toy/component-2 (v1)
+  fingerprint: fingerprint-2
+  playbooks: repair-2
+  evidence (verbatim):
+```
+Observed component-2 has no ready endpoints.
+```
+- [critical] detector-3 / unavailable (active): component-3 is unavailable
+  primary: Service toy/component-3 (v1)
+  fingerprint: fingerprint-3
+  playbooks: repair-3
+  evidence (verbatim):
+```
+Observed component-3 has no ready endpoints.
+```
+- [critical] detector-4 / unavailable: component-4 is unavailable (Service toy/component-4 (v1); evidence omitted)
+Detector history before dispatch:
+- detector-0: 1 evaluation(s) 1970-01-01T00:00:00+00:00 .. 1970-01-01T00:00:00+00:00; latest statuses: firing
+- detector-1: 1 evaluation(s) 1970-01-01T00:00:00+00:00 .. 1970-01-01T00:00:00+00:00; latest statuses: firing
+- detector-2: 1 evaluation(s) 1970-01-01T00:00:00+00:00 .. 1970-01-01T00:00:00+00:00; latest statuses: firing
+- detector-3: 1 evaluation(s) 1970-01-01T00:00:00+00:00 .. 1970-01-01T00:00:00+00:00; latest statuses: firing
+- detector-4: 1 evaluation(s) 1970-01-01T00:00:00+00:00 .. 1970-01-01T00:00:00+00:00; latest statuses: firing
+Surfaced playbooks: repair-0
+Prior outcome prior-toy (exact-fingerprint): root causes []; repairs []; applied ["repair-0"]
+Post-response health detector states: none recorded
+Post-response incident detector states: none recorded
+
+## Responder structured result
+Status: completed
+Confirmed root causes:
+- none
+Repair actions:
+- none recorded
+Verification:
+- none recorded
+
+## Responder shell commands
+The responder's shell commands are not available for this session.
+End of incident brief.
+
+Reflection request:
+Memory speeds later repairs. Compare applied playbooks, matching detectors and unchanged source. If playbooks match and no detection gap or new evidence remains, return no_change with a reason. Every recorded hand repair needs an executable typed SDK plan or RunScript step; README holds only judgement and ordering, and sdk_gaps name actually unavailable observations or effects, never work not encoded yet. Update or retire applied playbooks that failed, left findings unresolved or needed later hand repair.
+
+For a visible cause detected late by generic health, learn an incident detector watching its read resource to fire within seconds. Health stays judge-owned.
+
+Read accepted memory; incident-linked entries first, full files in the checkout. Make the smallest useful addition. Keep revisions that applied cleanly unless this incident shows failure or incompleteness; add or narrowly edit, never rewrite working steps. Preserve verified partial steps. Authoring guide: /opt/sdo/skills/sdo-playbook-authoring/SKILL.md.
+
+Committed outcomes are authoritative; memory is fallible advice and accepted source expresses intent. Use recorded actions as repair evidence; never infer from truncated output. Unavailable observations remain Unknown. Replay is informational. Preserve accepted corpus evidence.
+Edit only authorized operational-memory files in this isolated checkout. Protect source, outcomes, goal, architecture and trust. Validate changes and resolve blocking diagnostics. Return updated with changed playbook IDs for a validated nonempty diff. The broker checks and publishes. Answer in the `reflection` field and leave `incident_result` null.
+
+Outcome commit: dddddddddddddddddddddddddddddddddddddddd
+Operational memory snapshot:
+{
+  "accepted_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "detectors": [
+    {
+      "id": "detector-0",
+      "description": "Toy service port mismatch",
+      "playbook_ids": [
+        "repair-0"
+      ]
+    }
+  ],
+  "playbooks": [
+    {
+      "id": "repair-0",
+      "description": "Repair",
+      "script_names": [
+        "diagnose.go"
+      ]
+    }
+  ],
+  "full_text": "Open only relevant accepted files in the proposal checkout.",
+  "full_index_path": "<context file>"
+}
+
+Open referenced outcome/memory files as needed.
+Current outcome:
+{"incident_id":"toy-incident","classification":"success","repair_actions":[],"full_current_outcome_path":"<context file>"}
+{
+  "findings": [
+    {
+      "detector_id": "detector-0",
+      "rule_id": "unavailable",
+      "status": "active",
+      "severity": "critical",
+      "summary": "component-0 is unavailable",
+      "evidence": "Observed component-0 has no ready endpoints.",
+      "primary_resource": {
+        "api_version": "v1",
+        "kind": "Service",
+        "namespace": "toy",
+        "name": "component-0"
+      },
+      "playbook_ids": [
+        "repair-0"
+      ],
+      "fingerprint": "fingerprint-0",
+      "related_resources": [],
+      "parameter_bindings": {}
+    },
+    {
+      "detector_id": "detector-1",
+      "rule_id": "unavailable",
+      "status": "active",
+      "severity": "critical",
+      "summary": "component-1 is unavailable",
+      "evidence": "Observed component-1 has no ready endpoints.",
+      "primary_resource": {
+        "api_version": "v1",
+        "kind": "Service",
+        "namespace": "toy",
+        "name": "component-1"
+      },
+      "playbook_ids": [
+        "repair-1"
+      ],
+      "fingerprint": "fingerprint-1",
+      "related_resources": [],
+      "parameter_bindings": {}
+    },
+    {
+      "detector_id": "detector-2",
+      "rule_id": "unavailable",
+      "status": "active",
+      "severity": "critical",
+      "summary": "component-2 is unavailable",
+      "evidence": "Observed component-2 has no ready endpoints.",
+      "primary_resource": {
+        "api_version": "v1",
+        "kind": "Service",
+        "namespace": "toy",
+        "name": "component-2"
+      },
+      "playbook_ids": [
+        "repair-2"
+      ],
+      "fingerprint": "fingerprint-2",
+      "related_resources": [],
+      "parameter_bindings": {}
+    },
+    {
+      "detector_id": "detector-3",
+      "rule_id": "unavailable",
+      "status": "active",
+      "severity": "critical",
+      "summary": "component-3 is unavailable",
+      "evidence": "Observed component-3 has no ready endpoints.",
+      "primary_resource": {
+        "api_version": "v1",
+        "kind": "Service",
+        "namespace": "toy",
+        "name": "component-3"
+      },
+      "playbook_ids": [
+        "repair-3"
+      ],
+      "fingerprint": "fingerprint-3",
+      "related_resources": [],
+      "parameter_bindings": {}
+    },
+    {
+      "detector_id": "detector-4",
+      "rule_id": "unavailable",
+      "status": "active",
+      "severity": "critical",
+      "summary": "component-4 is unavailable",
+      "evidence": "Observed component-4 has no ready endpoints.",
+      "primary_resource": {
+        "api_version": "v1",
+        "kind": "Service",
+        "namespace": "toy",
+        "name": "component-4"
+      },
+      "playbook_ids": [
+        "repair-4"
+      ],
+      "fingerprint": "fingerprint-4",
+      "related_resources": [],
+      "parameter_bindings": {}
+    }
+  ],
+  "confirmed_root_causes": [],
+  "plan_applications": [],
+  "undetected_causes": []
+}
+
+Outcome history (prior incidents, compact): none
+

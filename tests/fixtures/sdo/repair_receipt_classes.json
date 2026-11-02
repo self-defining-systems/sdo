@@ -1,0 +1,21 @@
+{
+  "comment": "Every mutating responder command class and the repair receipt kind it records. tests/unit/sdo/agents/responder/test_repair_receipt_classes.py checks sdo act produces these kinds; sdo/operator/memory/validate/repair_receipt_classes_test.go checks each receipt can be saved as a RunScript program step.",
+  "sdo_act": [
+    {"command": ["kubectl", "-n", "app", "apply", "-f", "web.yaml"], "kind": "kubectl-apply"},
+    {"command": ["kubectl", "-n", "app", "patch", "pod", "web-1", "--type=merge", "-p", "{}"], "kind": "kubectl-patch"},
+    {"command": ["kubectl", "-n", "app", "delete", "pod", "web-1"], "kind": "kubectl-delete"},
+    {"command": ["kubectl", "-n", "app", "exec", "deploy/web", "--", "sh", "-c", "true"], "kind": "kubectl-exec"},
+    {"command": ["kubectl", "-n", "app", "scale", "rs", "web-1", "--replicas=0"], "kind": "kubectl-scale"},
+    {"command": ["kubectl", "-n", "app", "create", "configmap", "web"], "kind": "kubectl-create"},
+    {"command": ["kubectl", "-n", "app", "replace", "-f", "web.yaml"], "kind": "kubectl-replace"},
+    {"command": ["kubectl", "-n", "app", "label", "pod", "web-1", "a=b"], "kind": "kubectl-label"},
+    {"command": ["kubectl", "-n", "app", "annotate", "pod", "web-1", "a=b"], "kind": "kubectl-annotate"},
+    {"command": ["kubectl", "-n", "app", "set", "image", "deployment/web", "web=img:2"], "kind": "kubectl-set-image"},
+    {"command": ["kubectl", "-n", "app", "rollout", "restart", "deployment/web"], "kind": "kubectl-rollout-restart"},
+    {"command": ["kubectl", "-n", "app", "rollout", "undo", "deployment/web"], "kind": "kubectl-rollout-undo"},
+    {"command": ["kubectl", "cordon", "node-1"], "kind": "kubectl-cordon"},
+    {"command": ["helm", "upgrade", "web", "chart"], "kind": "command-helm"},
+    {"command": ["bash", "repair.sh"], "kind": "command-bash"}
+  ],
+  "controller": ["kubernetes-api"]
+}

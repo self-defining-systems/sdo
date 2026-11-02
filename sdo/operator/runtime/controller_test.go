@@ -1,7 +1,6 @@
 package runtime
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -43,6 +42,7 @@ func TestControllerCapturesOpenAndVerifiedSnapshots(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+<<<<<<< HEAD
 		for i := 0; i < 2; i++ {
 			if err := controller.Step(context.Background(), time.Unix(int64(i), 0), nil); err != nil {
 				t.Fatal(err)
@@ -70,6 +70,37 @@ func TestControllerCapturesOpenAndVerifiedSnapshots(t *testing.T) {
 			t.Fatalf("fixed: %s, %v", fixed, err)
 		}
 	})
+=======
+	}
+	executePendingEffect(t, controller)
+	request := awaitRequest(t, dispatcher.requests)
+	dir, err := memory.IncidentCorpusDir(root, request.IncidentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	open, err := os.ReadFile(filepath.Join(dir, "open@detect.json"))
+	if err != nil || !strings.Contains(string(open), "broken") {
+		t.Fatalf("open: %s, %v", open, err)
+	}
+	provider.snapshot = sdktest.Snapshot{NamespaceName: "demo", PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "fixed", Namespace: "demo"}}}}
+	awaitDispatchCompletionQueued(t, controller)
+	for i := 2; i < 19; i++ {
+		if err := controller.Step(context.Background(), time.Unix(int64(i), 0), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fixed, err := os.ReadFile(filepath.Join(dir, "fixed.json"))
+	if err != nil || !strings.Contains(string(fixed), "fixed") {
+		t.Fatalf("fixed: %s, %v", fixed, err)
+	}
+	// No pre-incident capture existed: the verified closure supplies the
+	// healthy sample, so incident detectors are checked against a state the
+	// controller itself verified healthy.
+	healthy, err := os.ReadFile(filepath.Join(dir, "healthy", "healthy.json"))
+	if err != nil || string(healthy) != string(fixed) {
+		t.Fatalf("closure healthy sample: %s, %v", healthy, err)
+	}
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 
 type sequenceDetector struct {
@@ -96,6 +127,9 @@ func (d *sequenceDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.
 type staticProvider struct{ snapshot sdk.DetectionContext }
 
 func (p staticProvider) Snapshot(context.Context) (sdk.DetectionContext, error) {
+	if p.snapshot == nil {
+		return sdktest.Snapshot{}, nil
+	}
 	return p.snapshot, nil
 }
 
@@ -325,6 +359,7 @@ func TestClearRefireWhileResponderRunsMergesEvidenceIntoTheSameIncident(t *testi
 }
 
 func TestDifferentFingerprintCannotDispatchWhileResponderRuns(t *testing.T) {
+<<<<<<< HEAD
 	synctest.Test(t, func(t *testing.T) {
 		start := time.Unix(0, 0)
 		first := stateFinding("selector-mismatch")
@@ -350,6 +385,32 @@ func TestDifferentFingerprintCannotDispatchWhileResponderRuns(t *testing.T) {
 		}
 		executePendingEffect(t, controller)
 		request := awaitRequest(t, dispatcher.requests)
+=======
+	start := time.Unix(0, 0)
+	first := stateFinding("selector-mismatch")
+	second := stateFinding("no-ready-endpoints")
+	detector := controllerDetector("health", time.Hour, first, second)
+	detector.spec.Watches = []sdk.WatchKind{{APIVersion: "v1", Kind: "Service", Namespace: "demo"}}
+	dispatcher := &blockingDispatcher{requests: make(chan IncidentRequest, 2), release: make(chan struct{})}
+	config := testControllerConfig()
+	config.FiringThreshold = 1
+	config.ClearThreshold = 1
+	controller, err := NewController(
+		config,
+		[]sdk.Detector{detector},
+		staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "demo"}},
+		dispatcher,
+		start,
+	)
+	if err != nil {
+		t.Fatalf("new controller: %v", err)
+	}
+	if err := controller.Step(context.Background(), start, nil); err != nil {
+		t.Fatalf("initial firing step: %v", err)
+	}
+	executePendingEffect(t, controller)
+	request := awaitRequest(t, dispatcher.requests)
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 
 		event := sdk.WatchKind{APIVersion: "v1", Kind: "Service", Namespace: "demo"}
 		if err := controller.Step(context.Background(), start.Add(time.Millisecond), &event); err != nil {
@@ -371,6 +432,7 @@ func TestDifferentFingerprintCannotDispatchWhileResponderRuns(t *testing.T) {
 }
 
 func TestControllerDebouncesFindingsFromSeparateWatchEvents(t *testing.T) {
+<<<<<<< HEAD
 	synctest.Test(t, func(t *testing.T) {
 		start := time.Unix(0, 0)
 		first := controllerDetector("first", time.Minute, sdk.Finding{}, stateFinding("a"))
@@ -406,6 +468,41 @@ func TestControllerDebouncesFindingsFromSeparateWatchEvents(t *testing.T) {
 			t.Fatalf("separate events were not batched: %v", got)
 		}
 	})
+=======
+	start := time.Unix(0, 0)
+	first := controllerDetector("first", time.Minute, sdk.Finding{}, stateFinding("a"))
+	first.spec.Watches = []sdk.WatchKind{{APIVersion: "v1", Kind: "ConfigMap", Namespace: "demo"}}
+	second := controllerDetector("second", time.Minute, sdk.Finding{}, stateFinding("b"))
+	second.spec.Watches = []sdk.WatchKind{{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "demo"}}
+	dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
+	config := testControllerConfig()
+	config.FiringThreshold = 1
+	config.BatchDebounce = 100 * time.Millisecond
+	controller, err := NewController(config, []sdk.Detector{first, second}, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "demo"}}, dispatcher, start)
+	if err != nil {
+		t.Fatalf("new controller: %v", err)
+	}
+	if err := controller.Step(context.Background(), start, nil); err != nil {
+		t.Fatalf("initial step: %v", err)
+	}
+	configMapEvent := sdk.WatchKind{APIVersion: "v1", Kind: "ConfigMap", Namespace: "demo"}
+	if err := controller.Step(context.Background(), start.Add(10*time.Millisecond), &configMapEvent); err != nil {
+		t.Fatalf("ConfigMap event: %v", err)
+	}
+	deploymentEvent := sdk.WatchKind{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "demo"}
+	if err := controller.Step(context.Background(), start.Add(50*time.Millisecond), &deploymentEvent); err != nil {
+		t.Fatalf("Deployment event: %v", err)
+	}
+	assertNoRequest(t, dispatcher.requests)
+	if err := controller.Step(context.Background(), start.Add(110*time.Millisecond), nil); err != nil {
+		t.Fatalf("debounce deadline: %v", err)
+	}
+	executePendingEffect(t, controller)
+	request := awaitRequest(t, dispatcher.requests)
+	if got := []string{request.Findings[0].Fingerprint, request.Findings[1].Fingerprint}; !equalStrings(got, []string{"a", "b"}) {
+		t.Fatalf("separate events were not batched: %v", got)
+	}
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 
 func TestControllerDropsFindingThatClearsBeforeDebounceDeadline(t *testing.T) {
@@ -502,6 +599,7 @@ func TestResponderCompletionDoesNotCloseIncidentUntilAllHealthFindingsClear(t *t
 				t.Fatalf("cause clear step: %v", err)
 			}
 		}
+<<<<<<< HEAD
 		if !controller.IncidentOpen() {
 			t.Fatal("responder completion closed incident while independent health finding remained")
 		}
@@ -609,6 +707,117 @@ func TestControllerRequiresDetectorReviewWhenPostResponseHealthNeverClears(t *te
 			t.Fatalf("detector review state was not durable: %#v", state)
 		}
 	})
+=======
+	}
+	if !controller.IncidentOpen() {
+		t.Fatal("responder completion closed incident while independent health finding remained")
+	}
+	state := exportState(t, controller)
+	if state.IncidentResult == nil || controllerTime(state.ResponderCompletedAt).IsZero() || controllerTime(state.IncidentDispatchedAt).IsZero() {
+		t.Fatalf("open incident did not persist responder result and timestamps: %#v", state)
+	}
+	select {
+	case closure := <-closed:
+		t.Fatalf("closure emitted before health verification: %#v", closure)
+	default:
+	}
+	for sample := 4; sample < 21; sample++ {
+		if err := controller.Step(context.Background(), time.Unix(int64(sample), 0), nil); err != nil {
+			t.Fatalf("health clear step: %v", err)
+		}
+	}
+	if controller.IncidentOpen() {
+		t.Fatal("incident remained open after responder completion and all findings cleared")
+	}
+	var closure IncidentClosure
+	select {
+	case closure = <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("verified incident did not emit authoritative closure")
+	}
+	if closure.Result == nil || closure.Result.IncidentID != closure.Request.IncidentID {
+		t.Fatalf("closure did not retain responder result: %#v", closure)
+	}
+	if len(closure.FinalDetectorStates) != 1 || closure.FinalDetectorStates[0].DetectorID != "health" ||
+		closure.FinalDetectorStates[0].Status != DetectorEvaluationClear {
+		t.Fatalf("closure did not record final health state: %#v", closure.FinalDetectorStates)
+	}
+	if len(closure.IncidentDetectorStates) != 1 || closure.IncidentDetectorStates[0].DetectorID != "cause" ||
+		closure.IncidentDetectorStates[0].Status != DetectorEvaluationClear ||
+		closure.IncidentDetectorStates[0].EvaluatedAt.Before(closure.ResponderCompletedAt) {
+		t.Fatalf("closure did not record the post-response incident detector state: %#v", closure.IncidentDetectorStates)
+	}
+	if closure.DetectedAt.IsZero() || closure.DispatchedAt.Before(closure.DetectedAt) ||
+		closure.ResponderCompletedAt.Before(closure.DispatchedAt) || closure.VerifiedAt.Before(closure.ResponderCompletedAt) {
+		t.Fatalf("closure timestamps are not ordered: %#v", closure)
+	}
+	pending, ok := controller.PendingIncidentClosure()
+	if !ok || pending.Request.IncidentID != closure.Request.IncidentID {
+		t.Fatalf("verified closure was not persisted for outcome handling: %#v", pending)
+	}
+}
+
+func TestControllerClosesAsFailedWhenPostResponseHealthNeverClears(t *testing.T) {
+	interval := time.Second
+	health := controllerDetector(
+		"health", interval,
+		stateFinding("health"), stateFinding("health"), stateFinding("health"), stateFinding("health"),
+	)
+	health.spec.Class = sdk.DetectorClassHealth
+	health.spec.Owner = sdk.DetectorOwnerHealthJudge
+	health.spec.Persistence = sdk.PersistencePolicy{Firing: 2, Clearing: 2}
+	health.spec.Batching = sdk.BatchingPolicy{Severity: sdk.SeverityCritical}
+	health.spec.OriginatingCommit = "health-objective"
+	for index := range health.samples {
+		health.samples[index][0].Severity = sdk.SeverityCritical
+	}
+	dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
+	config := testControllerConfig()
+	config.VerificationTimeout = 2 * time.Second
+	controller, err := NewController(
+		config, []sdk.Detector{health}, staticProvider{snapshot: sdktest.Snapshot{}}, dispatcher, time.Unix(0, 0),
+	)
+	if err != nil {
+		t.Fatalf("new controller: %v", err)
+	}
+	closed := make(chan IncidentClosure, 1)
+	controller.OnIncidentClosed = func(closure IncidentClosure) { closed <- closure }
+
+	for sample := 0; sample < 2; sample++ {
+		if err := controller.Step(context.Background(), time.Unix(int64(sample), 0), nil); err != nil {
+			t.Fatalf("firing step: %v", err)
+		}
+	}
+	executePendingEffect(t, controller)
+	awaitRequest(t, dispatcher.requests)
+	awaitDispatchCompletionQueued(t, controller)
+	if err := controller.Step(context.Background(), time.Unix(2, 0), nil); err != nil {
+		t.Fatalf("completion step: %v", err)
+	}
+	select {
+	case <-closed:
+		t.Fatal("incident closed before the verification window elapsed")
+	default:
+	}
+	if err := controller.Step(context.Background(), time.Unix(4, 0), nil); err != nil {
+		t.Fatalf("verification deadline step: %v", err)
+	}
+	var closure IncidentClosure
+	select {
+	case closure = <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("persistent post-response health finding did not close the incident at the timeout")
+	}
+	if len(closure.FinalDetectorStates) != 0 || closure.HealthClearedAt != nil {
+		t.Fatalf("timed-out closure claims verified health: %#v", closure)
+	}
+	if closure.VerifiedAt.Before(closure.ResponderCompletedAt.Add(config.VerificationTimeout)) {
+		t.Fatalf("closure was cut before the verification window elapsed: %#v", closure)
+	}
+	if controller.IncidentOpen() {
+		t.Fatal("timed-out incident stayed open")
+	}
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 
 type failedJobDispatcher struct {
@@ -686,6 +895,7 @@ func TestAFailedResponderJobIsATerminalDispatchFailure(t *testing.T) {
 	})
 }
 
+<<<<<<< HEAD
 // A persistent controller's Job restarts it on exit. Exiting on detector
 // review crash-looped the Job past its backoff limit, which stopped detection
 // for every later incident; only a one-shot run ends on review.
@@ -806,6 +1016,76 @@ func TestClosureAfterDetectorReviewRecordsTheLateVerification(t *testing.T) {
 			t.Fatalf("closure verified before its review deadline: %#v", closure)
 		}
 	})
+=======
+// A failed responder Job leaves no attempt to verify: its outcome is failed
+// whatever health does next. Waiting out the verification timeout only held
+// the still-firing findings back from the next responder (lane 51 row 006:
+// 300 s). The incident closes at once, unverified, and the findings that are
+// still firing open the next incident within seconds. As on row 006, the
+// finding that fires after the failed attempt is new (pending -> init stuck).
+func TestAFailedResponderJobClosesAtOnceAndTheNextAttemptFollows(t *testing.T) {
+	interval := time.Second
+	samples := []sdk.Finding{stateFinding("health"), stateFinding("health")}
+	for range 12 {
+		stuck := stateFinding("health")
+		stuck.RuleID, stuck.Fingerprint = "init-stuck", "init-stuck"
+		samples = append(samples, stuck)
+	}
+	health := controllerDetector("health", interval, samples...)
+	health.spec.Class = sdk.DetectorClassHealth
+	health.spec.Owner = sdk.DetectorOwnerHealthJudge
+	health.spec.Persistence = sdk.PersistencePolicy{Firing: 2, Clearing: 2}
+	health.spec.Batching = sdk.BatchingPolicy{Severity: sdk.SeverityCritical}
+	health.spec.OriginatingCommit = "health-objective"
+	for index := range health.samples {
+		health.samples[index][0].Severity = sdk.SeverityCritical
+	}
+	dispatcher := &failedJobDispatcher{}
+	config := testControllerConfig()
+	config.VerificationTimeout = 5 * time.Minute
+	controller, err := NewController(config, []sdk.Detector{health}, staticProvider{snapshot: sdktest.Snapshot{}}, dispatcher, time.Unix(0, 0))
+	if err != nil {
+		t.Fatalf("new controller: %v", err)
+	}
+	closed := make(chan IncidentClosure, 2)
+	controller.OnIncidentClosed = func(closure IncidentClosure) { closed <- closure }
+	for sample := 0; sample < 2; sample++ {
+		if err := controller.Step(context.Background(), time.Unix(int64(sample), 0), nil); err != nil {
+			t.Fatalf("firing step: %v", err)
+		}
+	}
+	executePendingEffect(t, controller)
+	awaitDispatchCompletionQueued(t, controller)
+	var closure IncidentClosure
+	for second := int64(2); second < 10 && closure.Request.IncidentID == ""; second++ {
+		if err := controller.Step(context.Background(), time.Unix(second, 0), nil); err != nil {
+			t.Fatalf("step %d: %v", second, err)
+		}
+		select {
+		case closure = <-closed:
+		default:
+		}
+	}
+	if closure.Request.IncidentID == "" {
+		t.Fatalf("a failed responder Job waited for the %s verification timeout", config.VerificationTimeout)
+	}
+	if closure.VerifiedAt.Sub(closure.ResponderCompletedAt) > 2*time.Second {
+		t.Fatalf("failed Job closed %s after it ended", closure.VerifiedAt.Sub(closure.ResponderCompletedAt))
+	}
+	if len(closure.FinalDetectorStates) != 0 || closure.HealthClearedAt != nil || !strings.Contains(closure.DispatchError, "failed") {
+		t.Fatalf("failed Job closure must stay unverified and record the failure: %#v", closure)
+	}
+	followed := false
+	for second := closure.VerifiedAt.Unix() + 1; second < closure.VerifiedAt.Unix()+6 && !followed; second++ {
+		if err := controller.Step(context.Background(), time.Unix(second, 0), nil); err != nil {
+			t.Fatalf("follow-up step: %v", err)
+		}
+		_, followed = controller.PendingDispatchEffect()
+	}
+	if !followed {
+		t.Fatalf("still-firing findings did not open the next attempt within 5 s: %#v", exportState(t, controller))
+	}
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 
 func controllerDetector(id string, interval time.Duration, samples ...sdk.Finding) *sequenceDetector {
@@ -846,10 +1126,23 @@ func awaitRequest(t *testing.T, requests <-chan IncidentRequest) IncidentRequest
 
 func awaitDispatchCompletionQueued(t *testing.T, controller *Controller) {
 	t.Helper()
+<<<<<<< HEAD
 	// Observe and restore the queued message: downstream controller steps still
 	// own consumption, and the channel receive synchronizes with the worker.
 	result := <-controller.results
 	controller.results <- result
+=======
+	// Completion includes real repository/API work and race instrumentation.
+	// This is a failure ceiling, not the controller's injected recovery clock.
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(controller.results) > 0 {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("timed out waiting for dispatch completion")
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 
 func assertNoRequest(t *testing.T, requests <-chan IncidentRequest) {
@@ -909,4 +1202,51 @@ func TestControllerEvaluateAllRunsEveryDetectorRegardlessOfSchedule(t *testing.T
 			t.Fatalf("resume evaluation must run every detector once: slow=%d fast=%d evaluations=%d", slow.calls, fast.calls, evaluations)
 		}
 	})
+}
+
+func TestReplayOffStillRepairsWithoutCapturingCorpus(t *testing.T) {
+	root := t.TempDir()
+	config := testControllerConfig()
+	config.Namespace = "demo"
+	config.Replay = "off"
+	config.CorpusSessionRoot = root
+	provider := &changingProvider{snapshot: sdktest.Snapshot{NamespaceName: "demo", PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "broken", Namespace: "demo"}}}}}
+	detector := controllerDetector("health", time.Second, stateFinding("health"), stateFinding("health"), sdk.Finding{}, sdk.Finding{})
+	detector.spec.Class, detector.spec.Owner = sdk.DetectorClassHealth, sdk.DetectorOwnerHealthJudge
+	detector.spec.Persistence = sdk.PersistencePolicy{Firing: 2, Clearing: 2}
+	detector.spec.Batching = sdk.BatchingPolicy{Severity: sdk.SeverityWarning}
+	detector.spec.OriginatingCommit = "health-objective"
+	dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
+	controller, err := NewController(config, []sdk.Detector{detector}, provider, dispatcher, time.Unix(0, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := controller.Step(context.Background(), time.Unix(int64(i), 0), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	executePendingEffect(t, controller)
+	request := awaitRequest(t, dispatcher.requests)
+	dir, err := memory.IncidentCorpusDir(root, request.IncidentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.snapshot = sdktest.Snapshot{NamespaceName: "demo", PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "fixed", Namespace: "demo"}}}}
+	awaitDispatchCompletionQueued(t, controller)
+	for i := 2; i < 19; i++ {
+		if err := controller.Step(context.Background(), time.Unix(int64(i), 0), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("replay off captured corpus: %s (%v)", dir, err)
+	}
+	if controller.IncidentOpen() {
+		t.Fatal("replay off prevented independent closure")
+	}
+	if controller.config.CorpusSessionRoot != "" {
+		t.Fatal("capture root enabled")
+	}
+
 }

@@ -6,12 +6,18 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"testing"
+	"time"
+
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
+<<<<<<< HEAD
 	"testing"
 	"testing/synctest"
 	"time"
+=======
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -53,6 +59,7 @@ func TestCloneIncidentResultPreservesEmptyCollectionsForBrokerProtocol(t *testin
 }
 
 func TestStateRoundTripRetainsAppliedActionsAndProgramEvidenceWithoutRollbackState(t *testing.T) {
+<<<<<<< HEAD
 	synctest.Test(t, func(t *testing.T) {
 		ctx := context.Background()
 		ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "demo", Name: "api"}
@@ -104,6 +111,58 @@ func TestStateRoundTripRetainsAppliedActionsAndProgramEvidenceWithoutRollbackSta
 		if value, _ := testField(client.objects[ref], "spec.replicas"); value != float64(2) {
 			t.Fatal("durable outcome undid fix")
 		}
+=======
+	ctx := context.Background()
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "demo", Name: "api"}
+	before := planObject(ref, map[string]any{"replicas": float64(1)})
+	client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before.DeepCopy()}}
+	executor := PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
+	action := program.SetField{Ref: ref, Path: "spec.replicas", Value: testPlanValue(2), Reason: "restore capacity"}
+	application, err := executor.Apply(ctx, IncidentRequest{RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{action}}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trust := map[string]ProgramTrust{"capacity": {VerifiedSuccesses: 3, LastChange: "abc"}}
+	response, err := json.Marshal(ToolResponse{Command: "status", Trust: trust, ProgramRuns: []ProgramRun{{ProgramID: "capacity", Bindings: program.Bindings{Objects: program.ObjectBindings{"deployment": ref}}, Verdict: program.Verdict{Result: program.NoMatch}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := &contracts.ControllerState{Version: RuntimeStateVersion, IncidentResult: mustProject(t, incidentResultContract, IncidentResult{SchemaVersion: ProtocolSchemaVersion, IncidentID: "program-state", Status: IncidentCompleted, Timing: TimingMetrics{StartedAt: time.Unix(1, 0), CompletedAt: time.Unix(2, 0)},
+		ProgramRuns:      []ProgramRun{{ProgramID: "capacity", Bindings: program.Bindings{Objects: program.ObjectBindings{"deployment": ref}}, Verdict: program.Verdict{Result: program.NoMatch}}},
+		ProgramToolCalls: []ToolCall{{Command: "status", RequestJSON: `{"command":"status"}`, ResponseJSON: string(response), Summary: "healthy"}},
+		PlanApplications: []RecordedPlanApplication{{ID: "application-1", ProgramIDs: []string{"capacity"}, Result: application}},
+	})}
+	store := lifecycleio.NewConfigMapStateStore(fake.NewSimpleClientset(), "demo", "state")
+	if _, err := store.Save(ctx, state, ""); err != nil {
+		t.Fatalf("persist applied plan: %v", err)
+	}
+	loaded, _, err := store.Load(ctx)
+	if err != nil {
+		t.Fatalf("reload applied plan: %v", err)
+	}
+	result := incidentResultState(loaded.IncidentResult)
+	if len(result.ProgramRuns) != 1 || !reflect.DeepEqual(result.ProgramRuns[0].Bindings, incidentResultState(state.IncidentResult).ProgramRuns[0].Bindings) ||
+		!reflect.DeepEqual(result.ProgramToolCalls, incidentResultState(state.IncidentResult).ProgramToolCalls) {
+		t.Fatalf("program evidence changed after reload: %+v", result)
+	}
+	var restoredResponse ToolResponse
+	if err := json.Unmarshal([]byte(result.ProgramToolCalls[0].ResponseJSON), &restoredResponse); err != nil || !reflect.DeepEqual(restoredResponse.Trust, trust) {
+		t.Fatalf("trust stats after reload: %+v, %v", restoredResponse.Trust, err)
+	}
+	got := result.PlanApplications[0].Result
+	if len(got.PreImages) != 0 || len(got.Patches) != 0 || len(got.ActionsApplied) != 1 {
+		t.Fatalf("outcome lost action evidence or retained rollback state: %+v", got)
+	}
+	if _, ok := got.ActionsApplied[0].(program.SetField); !ok {
+		t.Fatalf("applied action type = %T", got.ActionsApplied[0])
+	}
+	if err := executor.Rollback(ctx, got); err == nil {
+		t.Fatal("durable outcome authorized rollback")
+	}
+	if value, _ := testField(client.objects[ref], "spec.replicas"); value != float64(2) {
+		t.Fatal("durable outcome undid fix")
+	}
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 
 	})
 }
@@ -479,6 +538,7 @@ func TestFindingArrivingDuringIncidentIsDeferredAndRestartRecoverable(t *testing
 			t.Fatalf("new fault was not buffered exactly once: %#v", state.PendingBatch.Findings)
 		}
 
+<<<<<<< HEAD
 		// Receiving the request does not imply that Dispatch has returned or that
 		// its completion is queued. Hold the responder through the late finding,
 		// then synchronize on its queued completion before the next controller step.
@@ -502,6 +562,33 @@ func TestFindingArrivingDuringIncidentIsDeferredAndRestartRecoverable(t *testing
 		if err := controller.PersistState(ctx); err != nil {
 			t.Fatalf("persist deferred effect: %v", err)
 		}
+=======
+	// Receiving the request does not imply that Dispatch has returned or that
+	// its completion is queued. Hold the responder through the late finding,
+	// then synchronize on its queued completion before the next controller step.
+	firstDispatcher.release <- struct{}{}
+	select {
+	case completion := <-controller.results:
+		controller.results <- completion
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for primary responder completion")
+	}
+	for _, at := range []time.Duration{time.Second, time.Second + controller.config.ClosureStabilityWindow} {
+		if err := controller.Step(ctx, start.Add(at), nil); err != nil {
+			t.Fatalf("dispatch buffered secondary fault after primary completion: %v", err)
+		}
+	}
+	deferredEffect, ok := controller.PendingDispatchEffect()
+	if !ok || len(deferredEffect.Request.Findings) != 1 || deferredEffect.Request.Findings[0].Fingerprint != "secondary-fault" {
+		t.Fatalf("new fault was not deferred exactly once: %#v", deferredEffect)
+	}
+	if deferredEffect.Request.IncidentID == firstEffect.Request.IncidentID {
+		t.Fatal("deferred fault reused the primary incident ID")
+	}
+	if err := controller.PersistState(ctx); err != nil {
+		t.Fatalf("persist deferred effect: %v", err)
+	}
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 
 		restoredDispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
 		restored, err := NewController(config, []sdk.Detector{
@@ -529,6 +616,7 @@ func TestFindingArrivingDuringIncidentIsDeferredAndRestartRecoverable(t *testing
 }
 
 func TestControllerStateDropsRetiredRollbackFieldsFromPriorBuild(t *testing.T) {
+<<<<<<< HEAD
 	synctest.Test(t, func(t *testing.T) {
 		ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
 		action := program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: 8080, Reason: "restore port"}
@@ -562,4 +650,37 @@ func TestControllerStateDropsRetiredRollbackFieldsFromPriorBuild(t *testing.T) {
 			t.Fatal("lost revision-bound failure")
 		}
 	})
+=======
+	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
+	action := program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: testPlanValue(8080), Reason: "restore port"}
+	result := completedResult("legacy-state")
+	result.PlanApplications = []RecordedPlanApplication{{ID: "old-application", ProgramIDs: []string{"targetport"}, Result: PlanApplicationResult{Plan: program.Plan{Actions: []program.Action{action}}, Applied: true, ActionsApplied: []program.Action{action}}}}
+	result.ProgramFailureSignals = []string{"application_verification_failure:targetport@original-revision"}
+	payload, err := encodeControllerState(&contracts.ControllerState{Version: RuntimeStateVersion, IncidentResult: mustProject(t, incidentResultContract, result)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err = json.Unmarshal(payload, &document); err != nil {
+		t.Fatal(err)
+	}
+	application := document["incident_result"].(map[string]any)["plan_applications"].([]any)[0].(map[string]any)
+	application["pre_images"] = []any{map[string]any{"ref": map[string]any{"name": "retired"}, "object": map[string]any{"spec": map[string]any{"replicas": 9}}}}
+	application["patches"] = []any{map[string]any{"patch_json": "retired mutation"}}
+	payload, err = json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := decodeControllerState(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := incidentResultState(loaded.IncidentResult).PlanApplications[0].Result
+	if len(got.PreImages) != 0 || len(got.Patches) != 0 || len(got.ActionsApplied) != 1 || !got.Applied {
+		t.Fatalf("retired fields corrupted outcome facts: %+v", got)
+	}
+	if !reflect.DeepEqual(loaded.IncidentResult.ProgramFailureSignals, result.ProgramFailureSignals) {
+		t.Fatal("lost revision-bound failure")
+	}
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 }

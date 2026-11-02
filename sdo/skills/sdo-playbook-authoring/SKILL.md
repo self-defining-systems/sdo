@@ -1,36 +1,100 @@
 ---
 name: sdo-playbook-authoring
-description: Use when writing or refining an SDO playbook - judgement prose, deterministic Go programs, shared helpers and captured replay cases for a fault class. Gives the memory new workflow, validator rules, and a complete example.
+description: Start here for reflection. Turn recorded hand repairs into validated playbook programs (diagnose.go, mitigate.go), or return no_change.
 ---
 
-# Authoring a playbook
+# From hand repairs to validated programs
 
-A playbook generalizes one verified repair into instructions for the same failure mechanism on different
-resources. Read the `sdo-memory` skill first for artifact IDs and the `memory` commands.
+Work in the proposal checkout, in this order. Open other files only when a step or a diagnostic names them.
 
-## Workflow
+1. **Consider detection coverage.** If generic detection lagged a visible cause, use [detector authoring](../sdo-detector-authoring/SKILL.md) to add or refine a cause-specific incident detector on the resource it reads; aim for seconds on recurrence. Health detectors remain judge-owned. **Ask the check what is left.** Use supplied diagnostics without repeating a rejected probe. Otherwise call `check_memory` with `learning_decision: no_change` and a one-line `no_change_reason`.
+   If it passes and no detection gap remains, return that decision immediately. Its diagnostics identify required work: uncovered hand
+   repairs (`reflection.program-required`), applied playbooks that failed, left findings unresolved or needed a later hand repair
+   (`reflection.stale-playbook`: update or retire with a reason), and the decision to return when Go
+   already settled evidence in this checkout. Do not investigate or polish a passing covered incident.
+2. **Map each hand repair to a step.** Make a ledger from **all successful hand repairs** in the current outcome
+   (`repair_actions`, `plan_applications`), not only receipts named by diagnostics. Include generic menu
+   repairs and dependent Pod replacements; distinguish them from accepted playbook applications. Map each
+   receipt and repaired target to a program/action. Keep the exact API version, Kind and action
+   semantics from receipts when adapting an example. Each needs an executable step: the typed action matching what ran, or `RunScript` with the recorded bytes. README text and `sdk_gaps` never replace
+   a step; work not encoded yet is not an SDK gap. Group by failure mechanism; one program may cover several targets, but leave no performed repair unencoded.
+3. **Copy the closest worked example** from `assets/examples/` (`playbooks/<id>/`, each passing the memory check): `deployment-source-drift`, `webhook-ca-sync`,
+   `database-user-recovery`, `crashloop-script-repair` (RunScript). Exact signatures are on the
+   [SDK card](references/sdk-card.md), grouped by fault.
+4. **Write `.sdo/playbooks/<id>/`**: `diagnose.go` (`Spec`, `Diagnose`), `mitigate.go` (`Mitigate`, same
+   package and spec) and `README.md` with front matter `schema_version: 1`, `owner: responder`,
+   `originating_incident: <incident id>`, `description: <one line>`. The README holds only judgement and
+   ordering: when to use it, what first, what to check after. SDO adds `fault_class` and the index entry.
+<!-- replay:on -->
+5. **Label one corpus case** per new program (rules below): `create_corpus` copies the controller's captures
+   (pass `observations` only when none exist, with `repair_receipt_ids`) and writes it in one call. Each program should Match its fault
+   capture and NoMatch healthy: decide from what the capture holds (snapshot objects, `pod_admission`, reads
+   `recordings_index` lists); a read the capture lacks replays as Unknown, so keep uncaptured live-only reads
+   in Mitigate, as `webhook-ca-sync` does.
+<!-- /replay:on -->
+6. **Check**: `check_memory` with `learning_decision: updated`, `proposed_artifact_ids` = the changed
+   playbook IDs, and a summary. It formats changed Go first. Fix each blocking diagnostic as its hint says,
+   then check again. Its `next` field says what to do: return or fix diagnostics.
+7. When `next` says return, return the same decision and IDs; do not polish passing memory.
 
-1. Look before you add: `sdo-operator memory ls --kind playbook`. Refine an existing playbook when the mechanism
-   and repair are the same; create a new one only for a different mechanism or repair.
-2. Scaffold: `sdo-operator memory new playbook <id> --incident <incident-id>`. The ID is lowercase letters,
-   digits, `-` and `_`, starting with a letter. The command writes the playbook and registers it in the index; do
-   not omit the index entry. For a program, use `program scaffold --fault-class <id> --param name=Kind
-   [--mitigate] --out .sdo/playbooks/<id>` to create final files directly, then add its logical index entry.
-3. Fill in the playbook ([restart-loop example](assets/restart-loop/README.md) is a complete example): front matter unchanged except
-   what the scaffold set, then symptoms, diagnosis, repair, and verification.
-4. For deterministic programs, read [program authoring](references/programs.md) and keep the README to judgement
-   prose with no shell commands or persisted scripts. For prose-only playbooks, add scripts only when they make diagnosis or verification repeatable. Put them in the playbook's `scripts/`
-   directory as executable `.sh` files, name each one in the playbook text, and keep them read-only unless the
-   playbook explicitly repairs with them.
-5. If a detector should surface the playbook, add its ID to that detector's `possiblePlaybooks` and `Playbooks`
-   (see `sdo-detector-authoring`).
-6. Run `sdo-operator memory check` until it exits 0.
+Keep revisions that applied cleanly unless this incident shows failure or incompleteness; add or narrowly edit, never rewrite working steps. Preserve verified partial steps. For source repairs, separate independent causes as described in
+[program notes](references/programs.md#source-restoration).
 
-## Principles
+## Program rules
 
-- Write only what was confirmed by evidence in the incident, never a guess.
-- Describe resources by role with placeholders such as `<TARGET_RESOURCE>`; no concrete names from the incident.
-- Diagnosis first: say how to confirm the fault on the live object before repairing.
-- Repairs change the source of truth (source manifests, then redeploy), not only live objects.
-- Refer to other playbooks and scripts by logical ID, never by file path.
-- Read [validator rules](references/rules.md) when a diagnostic names a `playbook.*`, `script.*`, or `text.*` rule.
+- Roles come from findings: one `ParamSpec` per object Kind. Read other objects through ReadView by
+  relation (selector, owner, mount), never by app name; put unavoidable app facts in the README.
+- Write values only as `FromSource`, `FromObserved` or `FromParam` (a declared scalar with a default).
+- Diagnose returns Match on positive evidence, NoMatch when the fault is absent, and an error (Unknown)
+  when a read is unavailable. Check what the action needs, e.g. that the cause is gone before a restart.
+- Mitigate returns to accepted or observed state; intended-state changes are source repairs. Prefer a
+  narrow `SetField`; `ReconcileFromSource` restores a whole object. After a workload write, append
+  `program.StalledRolloutRelease(v, ref)`.
+- `RunScript`: inline bash byte-identical to the recorded command, application inputs only through
+  relation-derived Env, and a successful accepted receipt for those bytes; preserve
+  [each script revision's original receipt](references/script-receipts.md).
+<!-- replay:on -->
+  Link the script digest to its receipt ID in the case's `script_origins`.
+<!-- /replay:on -->
+
+- Credentials stay references (env or ConfigMap key); never read Secret data.
+- Learn into incident playbooks. The health judge owns `health-objective` and health detectors: never edit
+  them; when its generic program applied and hand repairs followed, encode those in an incident playbook.
+- When the check reports that no finding binds a program's roles (`reflection.detector-required`), copy
+  `assets/examples/detectors/crashloop-script-repair/` to `.sdo/diagnostics/detectors/incidents/<id>/`,
+  keep its manifest and `Spec` in step, and bind the role in `ParameterBindings`.
+
+<!-- replay:on -->
+## Corpus labels
+
+A case is `.sdo/corpus/<case-id>/`. Use a new ID; never edit or delete an accepted case.
+
+- `labels.json`:
+  - `root_cause_program_ids`: programs whose Diagnose must Match `open.json` (the fault).
+  - `no_match_program_ids`: programs that must NoMatch it (a healthy state, or a fixed capture a program
+    wrongly matched).
+  - `bindings.objects`: role name (as in `ParamSpec`) to `{api_version, kind, namespace, name}`; bind each
+    resource the linked receipts repaired, or its recorded owner.
+  - `provenance.incident_id`: this incident. `script_origins`: RunScript sha256 to receipt ID.
+- `recordings.json`: the replies Diagnose reads, `{"phase", "method", "arguments", "result"}` (empty phase
+  is open; `fixed`, `healthy`), plus one `RepairReceipt` entry per encoded hand repair (`create_corpus` adds them; a
+  `reflection.program-required` hint prints the exact entry otherwise).
+- `open.json`, `fixed.json`, `healthy.json` snapshots, and `accepted.json` when Mitigate reads source.
+  Omit `open.json` or `healthy.json` when identical to `fixed.json`; the loader uses that file.
+  Missing captures never block saving; replay results are information. Diagnose replays recorded phase
+  reads, including source comparisons, webhooks, database catalogs and pod admission; an unrecorded read
+  is Unknown and names the call. Use its open capture (repair reads are in pre-apply); never invent replies.
+
+<!-- /replay:on -->
+## More detail, only when needed
+
+- A diagnostic names a rule: [validator rules](references/rules.md).
+- Patches, commands, HTTP, Jobs: [general actions](references/general-actions.md); typed API reads:
+  [recorded client](references/kubernetes-client.md).
+- Stalled rollouts, database catalogs, routing probes, Service ports, per-cause work:
+  [program notes](references/programs.md).
+- Full generated API: [program SDK](references/program-sdk.md).
+
+Generated API sections: [program-01](references/program-sdk/program-01.md),
+[program-02](references/program-sdk/program-02.md), [program-03](references/program-sdk/program-03.md),
+[program-04](references/program-sdk/program-04.md), [routing-01](references/program-sdk/routing-01.md).

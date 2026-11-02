@@ -25,7 +25,11 @@ func TestInstallerNativeJobPreservesBrokerAndMountModeInChildConfig(t *testing.T
 	if len(container.Command) != 1 || container.Command[0] != "/usr/local/bin/sdo-operator" {
 		t.Fatalf("native command=%v", container.Command)
 	}
+<<<<<<< HEAD
 	launch, err := operatorcli.ParseControllerLaunch(container.Args)
+=======
+	launch, supervise, err := operatorcli.ParseControllerLaunch(append(container.Args, "--operator-root", ".."))
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +176,11 @@ func TestHealthyBaselineIsForwardedAcrossOperateAndControllerJobs(t *testing.T) 
 	if !contains(plan.Job.Spec.Template.Spec.Containers[0].Args, "--healthy-baseline") {
 		t.Fatal("controller Job lost healthy baseline setting")
 	}
+<<<<<<< HEAD
 	controllerLaunch, err := operatorcli.ParseControllerLaunch(plan.Job.Spec.Template.Spec.Containers[0].Args)
+=======
+	controllerLaunch, _, err := operatorcli.ParseControllerLaunch(append(plan.Job.Spec.Template.Spec.Containers[0].Args, "--operator-root", ".."))
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	if err != nil || !controllerLaunch.Controller.GetHealthyBaseline() {
 		t.Fatalf("controller child lost healthy baseline: %+v, %v", controllerLaunch.Controller, err)
 	}
@@ -215,8 +223,55 @@ func TestMetricsURLIsForwardedAcrossOperateAndControllerJobs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+<<<<<<< HEAD
 	controllerLaunch, err := operatorcli.ParseControllerLaunch(plan.Job.Spec.Template.Spec.Containers[0].Args)
+=======
+	controllerLaunch, _, err := operatorcli.ParseControllerLaunch(append(plan.Job.Spec.Template.Spec.Containers[0].Args, "--operator-root", ".."))
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	if err != nil || controllerLaunch.Controller.GetMetricsUrl() != cfg.MetricsURL {
 		t.Fatalf("controller child lost the metrics URL: %+v, %v", controllerLaunch.Controller, err)
+	}
+}
+
+func TestMemoryUpstreamReachesTheControllerLaunchWithReadOnlyKey(t *testing.T) {
+	cfg := install.Config{Namespace: "demo", Application: "demo", ControllerImage: "controller:test", ResponderImage: "responder:test", ValidatorImage: "validator:test", RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "gpt-test", AcceptedCommit: strings.Repeat("a", 40), TimeoutSeconds: 60, NativeCommand: []string{"/usr/local/bin/sdo-operator"}}
+	plan, err := install.Resources(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contains(plan.Job.Spec.Template.Spec.Containers[0].Args, "--memory-upstream-url") {
+		t.Fatal("the default install must keep accepted memory local")
+	}
+	cfg.MemoryUpstreamURL, cfg.MemoryUpstreamBranch, cfg.MemoryUpstreamSSHSecret = "git@github.com:example/demo-sdo.git", "live/20261028-synthetic", "memory-ssh"
+	plan, err = install.Resources(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod := plan.Job.Spec.Template.Spec
+	launch, _, err := operatorcli.ParseControllerLaunch(append(pod.Containers[0].Args, "--operator-root", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := launch.Controller.GetMemoryUpstream()
+	if upstream.GetUrl() != cfg.MemoryUpstreamURL || upstream.GetBranch() != cfg.MemoryUpstreamBranch || upstream.GetSshDir() != install.MemoryUpstreamSSHDir {
+		t.Fatalf("controller lost the memory upstream: %+v", upstream)
+	}
+	mounted := false
+	for _, mount := range pod.Containers[0].VolumeMounts {
+		if mount.MountPath == install.MemoryUpstreamSSHDir {
+			mounted = mount.ReadOnly
+			for _, volume := range pod.Volumes {
+				if volume.Name == mount.Name && (volume.Secret == nil || volume.Secret.SecretName != "memory-ssh") {
+					mounted = false
+				}
+			}
+		}
+	}
+	if !mounted {
+		t.Fatal("ssh key Secret is not mounted read-only at the controller's ssh directory")
+	}
+	cfg.MemoryUpstreamBranch = ""
+	if _, err := install.Resources(cfg); err == nil {
+		t.Fatal("memory upstream without a branch was accepted")
 	}
 }

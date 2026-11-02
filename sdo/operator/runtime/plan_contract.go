@@ -1,7 +1,11 @@
 package runtime
 
 import (
+	"encoding/json"
 	"fmt"
+	utiljson "k8s.io/apimachinery/pkg/util/json"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"google.golang.org/protobuf/types/known/structpb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -10,7 +14,8 @@ import (
 )
 
 // Proto projects an application onto the current PlanApplication contract.
-// Only completed action and verification evidence crosses the durable boundary.
+// Applied actions, pending-rollout observations and verification evidence cross
+// the durable boundary; pending observations never become verification credit.
 func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 	if err := r.Plan.Validate(); err != nil {
 		return nil, err
@@ -23,7 +28,7 @@ func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 		}
 		plan.Actions = append(plan.Actions, converted)
 	}
-	application := &contracts.PlanApplication{Plan: plan, Applied: r.Applied, DryRun: r.DryRun, VerificationCompleted: r.VerificationCompleted, VerificationPassed: r.VerificationPassed}
+	application := &contracts.PlanApplication{RolledBack: r.RolledBack, RollbackError: r.RollbackError, Plan: plan, Applied: r.Applied, DryRun: r.DryRun, VerificationCompleted: r.VerificationCompleted, VerificationPassed: r.VerificationPassed, FinalEquivalenceVerified: r.FinalEquivalenceVerified, FinalVerificationBasis: r.FinalVerificationBasis, SettlementRejectionReason: r.SettlementRejectionReason, RolloutPending: r.RolloutPending, RecoveryWait: r.RecoveryWait}
 	for _, action := range r.ActionsApplied {
 		converted, err := planActionProto(action)
 		if err != nil {
@@ -41,11 +46,49 @@ func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 		}
 		application.Verification = &contracts.Verdict{Result: verdict}
 	}
+	for _, effect := range r.observedObjectEffects() {
+		encoded := &contracts.PlanObjectEffect{Operation: effect.Operation, Ref: planRefProto(effect.Ref), Uid: effect.UID, State: effect.State, Confirmed: effect.Confirmed, Irreversible: effect.Irreversible}
+		if effect.DeletedPreImage != nil {
+			object := effect.DeletedPreImage.DeepCopy().Object
+			sdk.ProjectWebhookCABundles(object)
+			image, err := structpb.NewStruct(object)
+			if err != nil {
+				return nil, fmt.Errorf("encode delete receipt")
+			}
+			encoded.DeletedPreImage = image
+		}
+		application.ObjectEffects = append(application.ObjectEffects, encoded)
+	}
+	for _, report := range r.ActionReports {
+		encoded := &contracts.ActionReport{ActionIndex: uint32(report.ActionIndex), Status: report.Status, ExitCode: report.ExitCode}
+		encoded.SourceReconcile = report.SourceReconcile
+		encoded.WebhookCaDigest = report.WebhookCADigest
+		encoded.FailureReason = report.FailureReason
+		encoded.RecordingError = report.RecordingError
+		encoded.JobStatusJson = report.JobStatus
+		if report.Script != nil {
+			encoded.ScriptResultJson, _ = json.Marshal(report.Script)
+		}
+		if report.ExternalEffect != nil {
+			encoded.ExternalEffectJson, _ = json.Marshal(report.ExternalEffect)
+		}
+		if report.KubernetesEffect != nil {
+			encoded.KubernetesEffectJson, _ = json.Marshal(report.KubernetesEffect)
+		}
+		for _, v := range report.Values {
+			var ref *contracts.ObjectRef
+			if v.Origin != program.ParameterValue {
+				ref = planRefProto(v.Ref)
+			}
+			encoded.Values = append(encoded.Values, &contracts.ValueProvenance{Origin: string(v.Origin), Ref: ref, Path: v.Path, SourceCommit: v.SourceCommit, ResourceVersion: v.ResourceVersion, Parameter: v.Parameter})
+		}
+		application.ActionReports = append(application.ActionReports, encoded)
+	}
 	return application, nil
 }
 
 func planApplicationState(application *contracts.PlanApplication) RecordedPlanApplication {
-	result := PlanApplicationResult{Applied: application.GetApplied(), DryRun: application.GetDryRun()}
+	result := PlanApplicationResult{RolledBack: application.GetRolledBack(), RollbackError: application.GetRollbackError(), Applied: application.GetApplied(), DryRun: application.GetDryRun(), FinalEquivalenceVerified: application.FinalEquivalenceVerified, FinalVerificationBasis: application.GetFinalVerificationBasis(), SettlementRejectionReason: application.GetSettlementRejectionReason(), RolloutPending: application.GetRolloutPending(), RecoveryWait: application.GetRecoveryWait()}
 	if application.GetPlan() != nil {
 		result.Plan.Rationale = application.GetPlan().GetRationale()
 		for _, action := range application.GetPlan().GetActions() {
@@ -59,7 +102,44 @@ func planApplicationState(application *contracts.PlanApplication) RecordedPlanAp
 			result.ActionsApplied = append(result.ActionsApplied, decoded)
 		}
 	}
-	result.VerificationCompleted = application.GetVerificationCompleted() || application.GetVerification() != nil
+	for _, effect := range application.GetObjectEffects() {
+		decoded := PlanObjectEffect{Operation: effect.GetOperation(), Ref: objectRefState(effect.GetRef()), UID: effect.GetUid(), State: effect.GetState(), Confirmed: effect.GetConfirmed(), Irreversible: effect.GetIrreversible()}
+		if effect.GetDeletedPreImage() != nil {
+			decoded.DeletedPreImage = &unstructured.Unstructured{Object: effect.GetDeletedPreImage().AsMap()}
+		}
+		result.ObjectEffects = append(result.ObjectEffects, decoded)
+	}
+	for _, report := range application.GetActionReports() {
+		decoded := PlanActionReport{ActionIndex: int(report.GetActionIndex()), Status: report.GetStatus(), ExitCode: report.ExitCode}
+		decoded.SourceReconcile = report.GetSourceReconcile()
+		decoded.WebhookCADigest = report.GetWebhookCaDigest()
+		decoded.FailureReason = report.GetFailureReason()
+		decoded.RecordingError = report.GetRecordingError()
+		decoded.JobStatus = report.GetJobStatusJson()
+		if len(report.GetScriptResultJson()) > 0 {
+			var script ScriptExecutionResult
+			if json.Unmarshal(report.GetScriptResultJson(), &script) == nil {
+				decoded.Script = &script
+			}
+		}
+		if len(report.GetExternalEffectJson()) > 0 {
+			var effect program.ExternalEffect
+			if json.Unmarshal(report.GetExternalEffectJson(), &effect) == nil {
+				decoded.ExternalEffect = &effect
+			}
+		}
+		if len(report.GetKubernetesEffectJson()) > 0 {
+			var effect program.KubernetesEffect
+			if utiljson.Unmarshal(report.GetKubernetesEffectJson(), &effect) == nil {
+				decoded.KubernetesEffect = &effect
+			}
+		}
+		for _, v := range report.GetValues() {
+			decoded.Values = append(decoded.Values, program.ValueProvenance{Origin: program.ValueOrigin(v.GetOrigin()), Ref: objectRefState(v.GetRef()), Path: v.GetPath(), SourceCommit: v.GetSourceCommit(), ResourceVersion: v.GetResourceVersion(), Parameter: v.GetParameter()})
+		}
+		result.ActionReports = append(result.ActionReports, decoded)
+	}
+	result.VerificationCompleted = application.GetVerificationCompleted() || (application.GetVerification() != nil && application.GetRolloutPending() == nil)
 	result.VerificationPassed = application.GetVerificationPassed() || application.GetVerification().GetResult() == contracts.Verdict_RESULT_NO_MATCH
 	if application.GetDuration() != nil {
 		result.Duration = application.GetDuration().AsDuration()
@@ -69,17 +149,89 @@ func planApplicationState(application *contracts.PlanApplication) RecordedPlanAp
 }
 
 func planActionProto(action program.Action) (*contracts.Action, error) {
+	if isGeneralAction(action) {
+		if _, legacyDelete := generalAction(action).(program.DeleteObject); !legacyDelete {
+			return generalActionProto(action)
+		}
+	}
 	switch a := action.(type) {
+	case program.RemoveServicePort:
+		return &contracts.Action{Kind: &contracts.Action_RemoveServicePort{RemoveServicePort: &contracts.RemoveServicePort{Ref: planRefProto(a.Ref), Name: a.Name, Port: a.Port, Protocol: a.Protocol, AllowEmpty: a.AllowEmpty, Reason: a.Reason}}}, nil
+	case *program.RemoveServicePort:
+		if a != nil {
+			return planActionProto(*a)
+		}
+	case program.EnsureDatabaseUser:
+		return databaseActionProto(a), nil
+	case *program.EnsureDatabaseUser:
+		if a != nil {
+			return planActionProto(*a)
+		}
+	case program.CreateFromSource:
+		return &contracts.Action{Kind: &contracts.Action_CreateFromSource{CreateFromSource: &contracts.CreateFromSource{Ref: planRefProto(a.Ref), Reason: a.Reason}}}, nil
+	case program.DeleteObject:
+		return &contracts.Action{Kind: &contracts.Action_DeleteObject{DeleteObject: &contracts.DeleteObject{Ref: planRefProto(a.Ref), Reason: a.Reason}}}, nil
+	case *program.CreateFromSource:
+		if a != nil {
+			return planActionProto(*a)
+		}
+	case *program.DeleteObject:
+		if a != nil {
+			return planActionProto(*a)
+		}
 	case program.ReconcileFromSource:
 		return &contracts.Action{Kind: &contracts.Action_ReconcileFromSource{ReconcileFromSource: &contracts.ReconcileFromSource{Ref: planRefProto(a.Ref)}}}, nil
 	case program.Rollback:
 		return &contracts.Action{Kind: &contracts.Action_Rollback{Rollback: &contracts.Rollback{Ref: planRefProto(a.Ref), ToRevision: a.ToRevision}}}, nil
 	case program.SetField:
-		value, err := structpb.NewValue(a.Value)
+		value, err := planValueProto(a.Value)
 		if err != nil {
-			return nil, fmt.Errorf("encode SetField value: %w", err)
+			return nil, err
 		}
-		return &contracts.Action{Kind: &contracts.Action_SetField{SetField: &contracts.SetField{Ref: planRefProto(a.Ref), Path: a.Path, Value: value, Reason: a.Reason}}}, nil
+		return &contracts.Action{Kind: &contracts.Action_SetField{SetField: &contracts.SetField{Ref: planRefProto(a.Ref), Path: a.Path, Value: value, Reason: a.Reason, DocumentFormat: a.DocumentFormat, DocumentPath: a.DocumentPath}}}, nil
+	case program.DeletePod:
+		return &contracts.Action{Kind: &contracts.Action_DeletePod{DeletePod: &contracts.DeletePod{Ref: planRefProto(a.Ref)}}}, nil
+	case program.ScaleWorkload:
+		value, err := planValueProto(a.Replicas)
+		if err != nil {
+			return nil, err
+		}
+		return &contracts.Action{Kind: &contracts.Action_ScaleWorkload{ScaleWorkload: &contracts.ScaleWorkload{Ref: planRefProto(a.Ref), Replicas: value}}}, nil
+	case program.RetryAdmission:
+		return &contracts.Action{Kind: &contracts.Action_RetryAdmission{RetryAdmission: &contracts.RetryAdmission{Ref: planRefProto(a.Ref)}}}, nil
+	case *program.RetryAdmission:
+		if a != nil {
+			return planActionProto(*a)
+		}
+	case program.RetireOldRevision:
+		return &contracts.Action{Kind: &contracts.Action_RetireOldRevision{RetireOldRevision: &contracts.RetireOldRevision{Ref: planRefProto(a.Ref)}}}, nil
+	case program.Exec:
+		command := make([]*contracts.PlanValue, 0, len(a.Command))
+		for _, v := range a.Command {
+			value, err := planValueProto(v)
+			if err != nil {
+				return nil, err
+			}
+			command = append(command, value)
+		}
+		return &contracts.Action{Kind: &contracts.Action_Exec{Exec: &contracts.Exec{Pod: planRefProto(a.Pod), Container: a.Container, Command: command}}}, nil
+	case *program.DeletePod:
+		if a != nil {
+			return planActionProto(*a)
+		}
+	case *program.ScaleWorkload:
+		if a != nil {
+			return planActionProto(*a)
+		}
+	case *program.RetireOldRevision:
+		if a != nil {
+			return planActionProto(*a)
+		}
+	case *program.Exec:
+		if a != nil {
+			return planActionProto(*a)
+		}
+
 	case program.RestartRollout:
 		return &contracts.Action{Kind: &contracts.Action_RestartRollout{RestartRollout: &contracts.RestartRollout{Ref: planRefProto(a.Ref), Reason: a.Reason}}}, nil
 	case *program.ReconcileFromSource:
@@ -108,15 +260,93 @@ func planRefProto(ref sdk.ObjectRef) *contracts.ObjectRef {
 
 func planActionState(action *contracts.Action) program.Action {
 	var decoded program.Action
+	if general, err := generalActionState(action); err == nil {
+		if (program.Plan{Actions: []program.Action{general}}).Validate() == nil {
+			return general
+		}
+		return nil
+	}
 	switch kind := action.GetKind().(type) {
+	case *contracts.Action_RemoveServicePort:
+		a := kind.RemoveServicePort
+		decoded = program.RemoveServicePort{Ref: objectRefState(a.GetRef()), Name: a.GetName(), Port: a.GetPort(), Protocol: a.GetProtocol(), AllowEmpty: a.GetAllowEmpty(), Reason: a.GetReason()}
+	case *contracts.Action_EnsureDatabaseUser:
+		decoded = databaseActionState(kind.EnsureDatabaseUser)
+	case *contracts.Action_CreateFromSource:
+		decoded = program.CreateFromSource{Ref: objectRefState(kind.CreateFromSource.GetRef()), Reason: kind.CreateFromSource.GetReason()}
+	case *contracts.Action_DeleteObject:
+		decoded = program.DeleteObject{Ref: objectRefState(kind.DeleteObject.GetRef()), Reason: kind.DeleteObject.GetReason()}
 	case *contracts.Action_ReconcileFromSource:
 		decoded = program.ReconcileFromSource{Ref: objectRefState(kind.ReconcileFromSource.GetRef())}
 	case *contracts.Action_Rollback:
 		decoded = program.Rollback{Ref: objectRefState(kind.Rollback.GetRef()), ToRevision: kind.Rollback.GetToRevision()}
 	case *contracts.Action_SetField:
-		decoded = program.SetField{Ref: objectRefState(kind.SetField.GetRef()), Path: kind.SetField.GetPath(), Value: kind.SetField.GetValue().AsInterface(), Reason: kind.SetField.GetReason()}
+		decoded = program.SetField{Ref: objectRefState(kind.SetField.GetRef()), Path: kind.SetField.GetPath(), Value: planValueState(kind.SetField.GetValue()), Reason: kind.SetField.GetReason(), DocumentFormat: kind.SetField.GetDocumentFormat(), DocumentPath: kind.SetField.GetDocumentPath()}
+	case *contracts.Action_DeletePod:
+		decoded = program.DeletePod{Ref: objectRefState(kind.DeletePod.GetRef())}
+	case *contracts.Action_ScaleWorkload:
+		decoded = program.ScaleWorkload{Ref: objectRefState(kind.ScaleWorkload.GetRef()), Replicas: planValueState(kind.ScaleWorkload.GetReplicas())}
+	case *contracts.Action_RetryAdmission:
+		decoded = program.RetryAdmission{Ref: objectRefState(kind.RetryAdmission.GetRef())}
+	case *contracts.Action_RetireOldRevision:
+		decoded = program.RetireOldRevision{Ref: objectRefState(kind.RetireOldRevision.GetRef())}
+	case *contracts.Action_Exec:
+		a := program.Exec{Pod: objectRefState(kind.Exec.GetPod()), Container: kind.Exec.GetContainer()}
+		for _, v := range kind.Exec.GetCommand() {
+			a.Command = append(a.Command, planValueState(v))
+		}
+		decoded = a
 	case *contracts.Action_RestartRollout:
 		decoded = program.RestartRollout{Ref: objectRefState(kind.RestartRollout.GetRef()), Reason: kind.RestartRollout.GetReason()}
 	}
 	return decoded
+}
+
+func planValueProto(v program.Value) (*contracts.PlanValue, error) {
+	if err := v.Validate(); err != nil {
+		return nil, err
+	}
+	field := &contracts.ValueField{Ref: planRefProto(v.Ref()), Path: v.Path()}
+	switch v.Origin() {
+	case program.SourceValue:
+		return &contracts.PlanValue{Origin: &contracts.PlanValue_Source{Source: field}}, nil
+	case program.ObservedValue:
+		return &contracts.PlanValue{Origin: &contracts.PlanValue_Observed{Observed: field}}, nil
+	case program.ParameterValue:
+		return &contracts.PlanValue{Origin: &contracts.PlanValue_Parameter{Parameter: v.Param()}}, nil
+	}
+	return nil, fmt.Errorf("invalid value origin")
+}
+func planValueState(v *contracts.PlanValue) program.Value {
+	switch origin := v.GetOrigin().(type) {
+	case *contracts.PlanValue_Source:
+		return program.FromSource(objectRefState(origin.Source.GetRef()), origin.Source.GetPath())
+	case *contracts.PlanValue_Observed:
+		return program.FromObserved(objectRefState(origin.Observed.GetRef()), origin.Observed.GetPath())
+	case *contracts.PlanValue_Parameter:
+		return program.FromParam(origin.Parameter)
+	}
+	return program.Value{}
+}
+
+// observedObjectEffects carries UID-bound direct write evidence across the
+// receipt boundary without serializing mutable patch preimages. Successful
+// verification already required the executor's identity/value readback.
+func (r PlanApplicationResult) observedObjectEffects() []PlanObjectEffect {
+	effects := append([]PlanObjectEffect(nil), r.ObjectEffects...)
+	if !r.Applied || r.DryRun || r.RolledBack || r.RollbackError != "" || !r.VerificationCompleted || !r.VerificationPassed || r.RolloutPending != nil {
+		return effects
+	}
+	seen := map[sdk.ObjectRef]bool{}
+	for _, effect := range effects {
+		seen[effect.Ref] = true
+	}
+	for _, patch := range r.Patches {
+		if seen[patch.Ref] || patch.Operation != "" || patch.Before == nil || patch.Before.GetUID() == "" || patch.ObservedUID != string(patch.Before.GetUID()) {
+			continue
+		}
+		effects = append(effects, PlanObjectEffect{Operation: "patch", Ref: patch.Ref, UID: string(patch.Before.GetUID()), State: "applied", Confirmed: true})
+		seen[patch.Ref] = true
+	}
+	return effects
 }

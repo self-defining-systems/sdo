@@ -1,0 +1,1 @@
+Post-response incident detector states

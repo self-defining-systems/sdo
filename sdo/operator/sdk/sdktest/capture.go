@@ -4,10 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"regexp"
 
+<<<<<<< HEAD
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+=======
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	"sdo.dev/operator/sdk"
 )
 
@@ -16,15 +20,30 @@ const MaxCapturedSnapshotBytes = 4 << 20
 var sensitiveEnvironmentName = regexp.MustCompile(`(?i)SECRET|TOKEN|PASSWORD|KEY`)
 
 // CaptureSnapshot copies the namespace-local detection view for corpus replay.
-func CaptureSnapshot(view sdk.DetectionContext, namespace string) (Snapshot, error) {
+// ConfigMap data and binaryData retain key names only; live read views are unchanged.
+func CaptureSnapshot(view sdk.DetectionContext, namespace string, refs ...sdk.ObjectRef) (Snapshot, error) {
 	if view == nil || namespace == "" || view.Namespace() != namespace {
 		return Snapshot{}, errors.New("capture requires a matching application namespace")
 	}
-	s := Snapshot{NamespaceName: namespace}
+	s := Snapshot{NamespaceName: namespace, ObjectSnapshotVersion: 1}
+	if result, ok := view.PodAdmission(); ok {
+		s.Admission = &result
+	}
+	if recorder, ok := view.(interface{ RecordedReads() []PrimitiveCall }); ok {
+		s.captureReadInputs(recorder.RecordedReads())
+	}
+	if original, ok := view.(Snapshot); ok {
+		s.Traffic = original.Traffic
+		s.Metrics = original.Metrics
+		s.Alerts = original.Alerts
+		s.Readings = original.Readings
+		s.Reachability = original.Reachability
+	}
 	if clock, ok := view.(sdk.ObservationClock); ok && !clock.ObservedAt().IsZero() {
 		observed := clock.ObservedAt().UTC()
 		s.ObservedAtTime = &observed
 	}
+<<<<<<< HEAD
 	for _, object := range view.ConfigMaps() {
 		if object.Namespace == namespace {
 			copy := *object.DeepCopy()
@@ -72,54 +91,102 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string) (Snapshot, err
 			copy := *object.DeepCopy()
 			compactMeta(&copy.ObjectMeta)
 			s.HPAList = append(s.HPAList, copy)
+=======
+	if scoped, ok := view.(sdk.ScopedObservationSource); ok {
+		s.ScopedSnapshot.Version = 1
+		s.ScopedSnapshot.Generation = scoped.ObservationGeneration()
+		for _, status := range scoped.ObservationStatuses() {
+			s.ScopedSnapshot.Scope.Version = 1
+			s.ScopedSnapshot.Scope.Targets = append(s.ScopedSnapshot.Scope.Targets, status.Target)
+			s.ScopedSnapshot.Statuses = append(s.ScopedSnapshot.Statuses, status)
+			if status.State != sdk.ObservationObserved {
+				continue
+			}
+			t := status.Target
+			refs = append(refs, sdk.ObjectRef{APIVersion: t.APIVersion, Kind: t.Kind, Namespace: t.Namespace, Name: t.Name})
+			switch t.Kind {
+			case "MutatingWebhookConfiguration":
+				object, err := scoped.MutatingWebhookConfiguration(t.Name)
+				if err != nil {
+					return Snapshot{}, err
+				}
+				if object != nil {
+					s.ScopedSnapshot.Mutating = append(s.ScopedSnapshot.Mutating, *object)
+				}
+			case "ValidatingWebhookConfiguration":
+				object, err := scoped.ValidatingWebhookConfiguration(t.Name)
+				if err != nil {
+					return Snapshot{}, err
+				}
+				if object != nil {
+					s.ScopedSnapshot.Validating = append(s.ScopedSnapshot.Validating, *object)
+				}
+			case "Deployment":
+				objects, err := scoped.ScopedDeployments(t.Namespace)
+				if err != nil {
+					return Snapshot{}, err
+				}
+				s.ScopedSnapshot.Deployments = append(s.ScopedSnapshot.Deployments, objects...)
+			case "Service":
+				objects, err := scoped.ScopedServices(t.Namespace)
+				if err != nil {
+					return Snapshot{}, err
+				}
+				s.ScopedSnapshot.Services = append(s.ScopedSnapshot.Services, objects...)
+			case "Endpoints":
+				objects, err := scoped.ScopedEndpoints(t.Namespace)
+				if err != nil {
+					return Snapshot{}, err
+				}
+				s.ScopedSnapshot.Endpoints = append(s.ScopedSnapshot.Endpoints, objects...)
+			}
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 		}
+
 	}
+<<<<<<< HEAD
 	for _, object := range view.PodDisruptionBudgets() {
 		if object.Namespace == namespace {
 			copy := *object.DeepCopy()
 			compactMeta(&copy.ObjectMeta)
 			s.PDBList = append(s.PDBList, copy)
+=======
+	objects := sdk.TypedObjects(view)
+	if source, ok := view.(sdk.ObjectCaptureSource); ok {
+		var err error
+		objects, err = source.CaptureObjects(refs)
+		if err != nil {
+			return Snapshot{}, err
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 		}
 	}
-	for _, object := range view.ReplicaSets() {
-		if object.Namespace != namespace {
+	seen := map[sdk.ObjectRef]bool{}
+	var local []unstructured.Unstructured
+	for _, o := range objects {
+		if o.GetKind() == "Secret" || seen[sdk.ObjectIdentity(o)] {
 			continue
 		}
-		copy := *object.DeepCopy()
-		compactMeta(&copy.ObjectMeta)
-		compactMeta(&copy.Spec.Template.ObjectMeta)
-		redactPodSpec(&copy.Spec.Template.Spec)
-		s.ReplicaSetList = append(s.ReplicaSetList, copy)
-	}
-	for _, object := range view.Endpoints() {
-		if object.Namespace == namespace {
-			copy := *object.DeepCopy()
-			compactMeta(&copy.ObjectMeta)
-			s.EndpointList = append(s.EndpointList, copy)
+		seen[sdk.ObjectIdentity(o)] = true
+		raw, err := json.Marshal(&o)
+		if err != nil {
+			return Snapshot{}, err
+		}
+		projected, err := ProjectCapturedObject(raw)
+		if err != nil {
+			return Snapshot{}, err
+		}
+		var object unstructured.Unstructured
+		if err = json.Unmarshal(projected, &object); err != nil {
+			return Snapshot{}, err
+		}
+		s.Objects = append(s.Objects, object)
+		if object.GetNamespace() == namespace {
+			local = append(local, object)
 		}
 	}
-	for _, object := range view.EndpointSlices() {
-		if object.Namespace == namespace {
-			copy := *object.DeepCopy()
-			compactMeta(&copy.ObjectMeta)
-			s.EndpointSliceList = append(s.EndpointSliceList, copy)
-		}
-	}
-	for _, object := range view.NetworkPolicies() {
-		if object.Namespace == namespace {
-			copy := *object.DeepCopy()
-			compactMeta(&copy.ObjectMeta)
-			s.NetworkPolicyList = append(s.NetworkPolicyList, copy)
-		}
-	}
-	for _, object := range view.Events() {
-		if object.Namespace == namespace {
-			copy := *object.DeepCopy()
-			compactMeta(&copy.ObjectMeta)
-			copy.InvolvedObject.ResourceVersion = ""
-			copy.InvolvedObject.UID = ""
-			s.EventList = append(s.EventList, copy)
-		}
+	sdk.SortObjects(s.Objects)
+	if err := sdk.DecodeTypedObjects(&s, local); err != nil {
+		return Snapshot{}, err
 	}
 	for _, object := range view.DaemonSets() {
 		if object.Namespace == namespace {
@@ -188,38 +255,4 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string) (Snapshot, err
 		return Snapshot{}, fmt.Errorf("captured snapshot exceeds %d bytes", MaxCapturedSnapshotBytes)
 	}
 	return s, nil
-}
-
-func compactMeta(meta *metav1.ObjectMeta) {
-	meta.ManagedFields = nil
-	meta.ResourceVersion = ""
-	meta.UID = ""
-	meta.Generation = 0
-	delete(meta.Annotations, "kubectl.kubernetes.io/last-applied-configuration")
-}
-
-func redactPodSpec(spec *corev1.PodSpec) {
-	for i := range spec.InitContainers {
-		redactContainer(&spec.InitContainers[i])
-	}
-	for i := range spec.Containers {
-		redactContainer(&spec.Containers[i])
-	}
-	for i := range spec.EphemeralContainers {
-		for j := range spec.EphemeralContainers[i].Env {
-			if sensitiveEnvironmentName.MatchString(spec.EphemeralContainers[i].Env[j].Name) {
-				spec.EphemeralContainers[i].Env[j].Value = ""
-				spec.EphemeralContainers[i].Env[j].ValueFrom = nil
-			}
-		}
-	}
-}
-
-func redactContainer(container *corev1.Container) {
-	for i := range container.Env {
-		if sensitiveEnvironmentName.MatchString(container.Env[i].Name) {
-			container.Env[i].Value = ""
-			container.Env[i].ValueFrom = nil
-		}
-	}
 }

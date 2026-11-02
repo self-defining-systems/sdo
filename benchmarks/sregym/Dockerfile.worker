@@ -32,10 +32,10 @@ RUN python3 -m pip install --break-system-packages --no-cache-dir --no-deps \
 # assurance/faults.py), which this image's `codex exec
 # --danger-full-access` responder must never be able to read.
 COPY benchmarks/__init__.py /opt/sdo/benchmarks/__init__.py
-COPY benchmarks/sregym/__init__.py /opt/sdo/benchmarks/sregym/__init__.py
+COPY benchmarks/sregym/__init__.py benchmarks/sregym/repository_git.py /opt/sdo/benchmarks/sregym/
 COPY benchmarks/sregym/adapter/__init__.py benchmarks/sregym/adapter/submission.py benchmarks/sregym/adapter/submission_relay.py /opt/sdo/benchmarks/sregym/adapter/
 COPY benchmarks/sregym/protocol/__init__.py benchmarks/sregym/protocol/_http.py benchmarks/sregym/protocol/benchmark.py benchmarks/sregym/protocol/conductor.py benchmarks/sregym/protocol/mcp_client.py benchmarks/sregym/protocol/receipt.py benchmarks/sregym/protocol/schema.py benchmarks/sregym/protocol/submission_guard.py /opt/sdo/benchmarks/sregym/protocol/
-COPY benchmarks/sregym/fastloop/__init__.py benchmarks/sregym/fastloop/model_recording.py benchmarks/sregym/fastloop/file_edits.py benchmarks/sregym/fastloop/recording_worker.py /opt/sdo/benchmarks/sregym/fastloop/
+COPY benchmarks/sregym/fastloop/__init__.py benchmarks/sregym/fastloop/model_recording.py benchmarks/sregym/fastloop/file_edits.py benchmarks/sregym/fastloop/recording_worker.py benchmarks/sregym/fastloop/checkpoint_limits.py /opt/sdo/benchmarks/sregym/fastloop/
 RUN chmod -R a+rX /opt/sdo/benchmarks
 
 FROM ${SDO_SCRIPTED_BASE_IMAGE} AS scripted-worker
@@ -43,8 +43,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends bubblewrap \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=submission-guard-build /usr/local/bin/sdo-submission-guard /usr/local/bin/sdo-submission-guard
 COPY --from=sregym-responder /opt/sdo/benchmarks /opt/sdo/benchmarks
+<<<<<<< HEAD
 COPY benchmarks/sregym/agent_script/synthetic_health_judge.py benchmarks/sregym/agent_script/template.py benchmarks/sregym/agent_script/model.py benchmarks/sregym/agent_script/invocation.py benchmarks/sregym/agent_script/__init__.py benchmarks/sregym/agent_script/judge_example.py benchmarks/sregym/agent_script/runner.py benchmarks/sregym/agent_script/converter.py benchmarks/sregym/agent_script/cli.py benchmarks/sregym/agent_script/wire.py benchmarks/sregym/agent_script/__main__.py /opt/sdo/benchmarks/sregym/agent_script/
 COPY benchmarks/sregym/fastloop/generated_worker.py benchmarks/sregym/fastloop/responder_script.py benchmarks/sregym/fastloop/responder_steps.py benchmarks/sregym/fastloop/reflection_script.py /opt/sdo/benchmarks/sregym/fastloop/
 COPY benchmarks/sregym/fastloop/scripted_program /opt/sdo/benchmarks/sregym/fastloop/scripted_program
 COPY benchmarks/sregym/fastloop/scripted_networkpolicy_program /opt/sdo/benchmarks/sregym/fastloop/scripted_networkpolicy_program
 RUN chmod -R a+rX /opt/sdo/benchmarks
+=======
+COPY benchmarks/sregym/adapter/scripted_worker.py benchmarks/sregym/adapter/scripted_replay.py benchmarks/sregym/adapter/scripted_replay_catalog.py /opt/sdo/benchmarks/sregym/adapter/
+COPY benchmarks/sregym/fastloop/scripted_program /opt/sdo-scripted/targetport
+COPY benchmarks/sregym/fastloop/scripted_networkpolicy_program /opt/sdo-scripted/networkpolicy
+# Only the model-free scripted worker can retain the exact toy health fixture.
+COPY apps/toy/seed/.sdo/goal.md apps/toy/seed/.sdo/lifecycle-provenance.yaml /opt/sdo/apps/toy/seed/.sdo/
+COPY apps/toy/seed/.sdo/diagnostics/detectors/health /opt/sdo/apps/toy/seed/.sdo/diagnostics/detectors/health
+COPY apps/toy/kubernetes /opt/sdo/apps/toy/kubernetes
+RUN chmod -R a+rX /opt/sdo/benchmarks/sregym/adapter /opt/sdo-scripted /opt/sdo/apps/toy
+>>>>>>> origin/vic-lsh/dev/sdo-improve

@@ -1,17 +1,39 @@
 ---
 name: sdo-detector-authoring
-description: Use when authoring or changing an SDO detector - a deterministic Go health or incident detector under operational memory. Gives the memory new -> write -> go test -> memory check workflow, the Go SDK reference, the validator rules, and a complete example.
+description: Author or refine deterministic Go health and incident detectors from observed resource state. Covers SDK discovery, matching and near-miss tests, and independently validated memory edits.
 ---
 
 # Authoring a detector
 
+<<<<<<< HEAD
 A detector is deterministic Go that reads a Kubernetes snapshot and returns findings. It never calls an LLM, reads
 the environment, the clock, or the network, and never looks at benchmark data or verdicts. Measure ages with
 `sdk.ObservationTime(ctx)`, never `time.Now()`. Read the `sdo-memory` skill first for artifact IDs and the
 `memory` commands. To decide which detectors an application needs, use the `sdo-operationalize` skill.
+=======
+A detector reads the runtime snapshot and returns findings. Keep it deterministic: no model, environment,
+clock, network access or benchmark data. Measure ages with `sdk.ObservationTime(ctx)`, never `time.Now()`. Read the [memory principles](../sdo-memory/SKILL.md#memory-principles) for evidence, reuse and generalization; that skill also explains ownership and logical IDs.
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 
-## Workflow
+1. Compare the confirmed mechanism with accepted detectors using the memory principles. The installed `service-endpoints` and
+   `workload-health` detectors cover generic symptoms; their grace periods do not replace prompt cause-specific coverage.
+   When generic detection lagged a visible cause, watch the resource read by the predicate and fire within seconds; refine an existing matching incident detector first. Health detectors stay judge-owned.
+   `pod-admission` checks a frozen server-side dry-run Pod create via `ctx.PodAdmission()`; API rejections fire,
+   while missing observations and transport failures are errors. Test with `sdktest.Snapshot.Admission`.
+2. Before implementing, read the [generated SDK](references/sdk.md). Keep the detector's manifest and Spec
+   identical, including watches, persistence, playbook IDs and accepted provenance.
+3. Derive relationships from observed objects. Use the context namespace for absent resources and emit
+   stable fingerprints and role bindings. Observed evaluation supplies an omitted `DetectorID` from
+   the emitting detector's `Spec.ID`; an authored identity must still match that detector.
+<!-- replay:on -->
+4. Explore matching cases and near misses with the [generated replay API](references/replay.md).
+<!-- /replay:on -->
+   Replay and test verdicts are information, never a save gate; keep unavailable observations explicit.
+   The [restart-loop source](assets/restart-loop/detector.go) and
+   [tests](assets/restart-loop/detector_test.go) show the current detector interface.
+5. Use shell tools to inspect and edit the proposal; run the complete memory check before returning. The broker repeats it independently.
 
+<<<<<<< HEAD
 1. Look before you add: `sdo-operator memory ls --kind detector`. Widen an existing detector when only resource
    identity or a parameter differs. Add a new one only for a different failure mechanism. The Go-installed
    `service-endpoints` and `workload-health` health detectors already report Services without ready endpoints and
@@ -29,16 +51,31 @@ the environment, the clock, or the network, and never looks at benchmark data or
    builds, vets, and runs the same tests.
 6. Run `sdo-operator memory check`. Fix every diagnostic by rule ID (see [validator rules](references/rules.md)) and
    repeat until it exits 0.
+=======
+Before returning memory edits, run the complete memory check and resolve every diagnostic until it passes.
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 
-## Principles
+Read [validator rules](references/rules.md) before changing a manifest or when a diagnostic names a detector rule.
 
-- Detect the mechanism, not the incident: derive what a check depends on from observed objects (selectors, owner
-  references, volume and env references), never from hard-coded names or the literal namespace. Use
-  `DetectionContext.Namespace()` for resources that are absent.
-- Refer to playbooks by logical ID in `Spec().Playbooks`, `Finding.Playbooks`, and `possiblePlaybooks`.
-- Emit stable fingerprints and `ParameterBindings` whose keys match the playbook's placeholders in lower case
-  (`target_resource` for `<TARGET_RESOURCE>`).
-- Read [validator rules](references/rules.md) before changing a manifest; read [SDK reference](references/sdk.md) before using an SDK type.
+## Runtime reads
+
+Use `program.ReadFrom(ctx)` for the shared detector/Diagnose surface; read the
+[generated program SDK](../sdo-playbook-authoring/references/program-sdk.md) before using it.
+Use the [recorded Kubernetes client](../sdo-playbook-authoring/references/kubernetes-client.md) for typed or dynamic API reads.
+Detectors can call `ctx.DiffAgainstSource(ref)` directly, before playbook selection.
+`Changed` covers field drift and source-absent objects; `SourceAbsent` requires a successful accepted-source lookup.
+Bind playbooks through findings. The shared view adds `LogsWithOptions` (previous instances), `PodUsage`/`NodeUsage`, probes, baseline diffs, metric queries, alerts and traffic.
+The runtime caches identical reads per snapshot and records actual results and failures for offline replay.
+Logs are capped at 64 KiB / 5 s; probes at 5 s. Read failures are errors/Unknown, never clearance;
+a successful probe with `Success:false` is an observed failure. Keep always-on reads cheap and use Diagnose for depth.
+Test using `sdktest.Snapshot.Readings` plus phase recordings; never fill absent evidence with healthy answers.
+
+## Synthetic traffic confirmation
+
+Steady traffic remains pending until every scenario has succeeded since observation began and has enough recent usable SLO samples. Pending carries a reason naming unproven scenarios, establishes no health and never opens an incident by itself. Qualified violations still fire alongside unproven peers. Process restarts lose qualification; recovery requires fresh observations and the controller's ordinary clearing check. A verify burst reports present scenario evidence, while controller verification owns incident closure.
+
+Health traffic sees only what it calls: give every `links.yaml` edge a continuous scenario that crosses it, writes
+included, bound each scenario's latency and cover every seeded record; see [traffic coverage](references/traffic-coverage.md).
 
 ## Logs and usage detectors
 
@@ -64,7 +101,15 @@ a source exists.
 - An unreachable source, a failed query or a missing result is a detector error, never a clear and never a finding.
   Do not turn it into one.
 - Findings carry the query, value, threshold and labels as evidence, so each series is a distinct finding.
-- Query IDs are unique and non-empty, expressions non-empty, and a controller evaluates at most `metrics.MaxQueries`.
+- Query IDs are unique and non-empty, expressions non-empty, and a declared query bundle contains at most `metrics.MaxQueries`.
   The generated registration tests check this.
 - `memory.PrepareHealth` installs the generic `metrics-alerts` detector (`metrics.NewAlertsDetector`: firing alerts of
   the application namespace, one finding each) only when a metrics URL is configured; do not author it.
+
+## Generic reachability baseline
+
+The controller's opt-in healthy-baseline gate measures exclusions on each cluster and keeps them as that cluster's own state, outside memory. Never write measured values from one cluster (Service UIDs, allocated IPs, probe or capture times) into `.sdo/`: memory holds what to measure and thresholds, not one cluster's measurement, and the check rejects such fields (`memory.cluster-local`). Do not infer exclusions from missing successful dials or author them from an incident. Generic reachability invalidates an exclusion when source, objective or target configuration changes; new wrong targetPort failures remain detectable. Service UID/resourceVersion, allocated ClusterIP/IP-family values, NodePort and health-check NodePort do not identify the application configuration; namespace/Service/port identity, headless routing, selector, targetPort/protocol, selected container configuration, referenced ConfigMaps and selecting network policies do. Inspect `baseline_status` in finding port metadata when an earlier exclusion no longer applies.
+
+For kinds outside the typed getters, use the [generic object interface](references/generic-objects.md).
+
+The controller's verified onboarding window also records immutable measured reachability reference evidence beside the final onboarding record. Consistently refused, never-served declared ports are visible `declared-but-never-served` observations rather than health findings. Unconfirmed probe windows are pending, not clear. Previously serving ports retain the ordinary failure gate; target configuration changes and later successful dials end an exclusion. Agents cannot author or expand this controller-owned install reference.

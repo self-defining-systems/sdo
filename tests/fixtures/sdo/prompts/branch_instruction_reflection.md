@@ -1,0 +1,1 @@
+Answer in the `reflection` field and leave `incident_result` null.

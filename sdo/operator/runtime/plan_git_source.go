@@ -1,6 +1,7 @@
 package runtime
 
 import (
+<<<<<<< HEAD
 	"bytes"
 	"context"
 	"encoding/json"
@@ -16,19 +17,19 @@ import (
 
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/sdk"
+=======
+	"regexp"
+	"sdo.dev/operator/rendered"
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 )
-
-// ErrAcceptedManifestAbsent distinguishes confirmed absence from unavailable source.
-var ErrAcceptedManifestAbsent = errors.New("object is absent from accepted manifests")
 
 var gitRevision = regexp.MustCompile(`^[a-fA-F0-9]{40,64}$`)
 
-// SourceImages returns images captured at the last healthy deployment.
-type SourceImages interface {
-	BaselineImage(sdk.ObjectRef, string, bool) (string, bool)
-	BaselineTree(sdk.ObjectRef) string
-}
+// GitPlanSource renders accepted source as it is written; raw revision reads are
+// retained for explicit historical source inspection.
+type GitPlanSource = rendered.Source
 
+<<<<<<< HEAD
 // GitPlanSource reads accepted manifests and applies the deployment renderer.
 type GitPlanSource struct {
 	Repository    string
@@ -221,3 +222,6 @@ func (s GitPlanSource) sameImageSource(ctx context.Context, deployedTree, accept
 	}
 	return equal, nil
 }
+=======
+var ErrAcceptedManifestAbsent = rendered.ErrAcceptedManifestAbsent
+>>>>>>> origin/vic-lsh/dev/sdo-improve

@@ -10,6 +10,7 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 echo "Running Python tests..."
 cd "$PROJECT_ROOT"
 
+<<<<<<< HEAD
 # Build the benchmark protocol tools once for this invocation, from this checkout.
 # xdist workers otherwise independently compile/link the same executables on their
 # first receipt/submission test. Only compiler entries persist; never trust a
@@ -24,7 +25,34 @@ export SDO_NATIVE_RECEIPT_BIN="$TOOLS/sdo-native-receipt"
 export SDO_SUBMISSION_GUARD_BIN="$TOOLS/sdo-submission-guard"
 
 # Parallelize across cores with pytest-xdist; pytest-cov combines the per-worker
+=======
+# Bound shared-host parallelism; pytest-cov combines the per-worker
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 # coverage so the fail_under gate still sees the whole suite. Override with
 # SDO_PYTEST_WORKERS (e.g. 0 to run in-process for a targeted local run).
-WORKERS="${SDO_PYTEST_WORKERS:-auto}"
-uv run --extra test pytest -n "$WORKERS" --cov --cov-report=term-missing "$@" tests
+if [[ -v SDO_PYTEST_WORKERS ]]; then
+    WORKERS="$SDO_PYTEST_WORKERS"
+else
+    WORKERS="$(nproc)"
+    if (( WORKERS > 4 )); then
+        WORKERS=4
+    fi
+fi
+# The two hosted Python runners share the suite without adding another job.
+# Every path outside fastloop belongs to core, including new test directories.
+# Shards publish raw data; Required PR CI combines it before enforcing coverage.
+paths=(tests)
+coverage=(--cov --cov-report=term-missing)
+case "${SDO_PYTEST_SHARD:-}" in
+    "") ;;
+    core)
+        paths=(--ignore=tests/unit/benchmarks/sregym/fastloop tests)
+        coverage=(--cov --cov-report= --cov-fail-under=0)
+        ;;
+    fastloop)
+        paths=(tests/unit/benchmarks/sregym/fastloop)
+        coverage=(--cov --cov-report= --cov-fail-under=0)
+        ;;
+    *) echo "unknown Python test shard: $SDO_PYTEST_SHARD" >&2; exit 2 ;;
+esac
+uv run --extra test pytest -n "$WORKERS" "${coverage[@]}" "$@" "${paths[@]}"

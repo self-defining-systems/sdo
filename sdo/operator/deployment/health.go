@@ -25,8 +25,20 @@ type HealthProbe interface {
 }
 
 type AcceptedDetectorProbe struct {
+<<<<<<< HEAD
 	MetricsURL string
 	Limit      time.Duration
+=======
+	Replay          string
+	RequireComplete bool
+	Kubeconfig      string
+	MetricsURL      string
+	Limit           time.Duration
+	// Resolver supplies the host DNS transport preflight; nil uses the OS resolver.
+	Resolver interface {
+		LookupHost(context.Context, string) ([]string, error)
+	}
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 
 func (probe AcceptedDetectorProbe) Evaluate(ctx context.Context, acceptedRoot, operatorRoot, namespace string) (string, error) {
@@ -40,16 +52,57 @@ func (probe AcceptedDetectorProbe) Evaluate(ctx context.Context, acceptedRoot, o
 	if err != nil {
 		return "", fmt.Errorf("resolve accepted diagnostics: %w", err)
 	}
-	workspace, err := builder.BuildWorkspace(bounded, builder.Config{ApplicationRoot: acceptedRoot, DiagnosticsRoot: projected.Directory, OperatorRoot: operatorRoot})
+	workspace, err := builder.BuildWorkspace(bounded, builder.Config{Replay: probe.Replay, ApplicationRoot: acceptedRoot, DiagnosticsRoot: projected.Directory, OperatorRoot: operatorRoot})
 	if err != nil {
 		return "", fmt.Errorf("stage accepted diagnostics: %w", err)
 	}
 	defer workspace.Close()
+	if workspace.HasProber {
+		if err := probe.checkTransport(bounded); err != nil {
+			return "", err
+		}
+	}
 	binary, err := workspace.ValidateAndBuild(bounded)
 	if err != nil {
 		return "", fmt.Errorf("compile accepted health detectors: %w", err)
 	}
+<<<<<<< HEAD
 	artifact, err := workspace.BuildMemoryHost(bounded)
+=======
+	args := []string{"--evaluate-once", "--namespace", namespace, "--app-root", acceptedRoot}
+	if probe.RequireComplete {
+		args = append(args, "--accept-seed")
+	}
+	if probe.MetricsURL != "" {
+		args = append(args, "--metrics-url", probe.MetricsURL)
+	}
+	environment := os.Environ()
+	if probe.Kubeconfig != "" {
+		environment = append(environment, "KUBECONFIG="+probe.Kubeconfig)
+	}
+	if workspace.HasProber {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return "", fmt.Errorf("probe transport unavailable: reserve local prober address: %w", err)
+		}
+		address := listener.Addr().String()
+		_ = listener.Close()
+		prober := exec.CommandContext(bounded, filepath.Join(workspace.Directory, "sdo-prober"), "--namespace", namespace, "--listen", address)
+		prober.Dir = workspace.Directory
+		prober.Env = environment
+		if err := prober.Start(); err != nil {
+			return "", fmt.Errorf("probe transport unavailable: start bounded health prober: %w", err)
+		}
+		defer func() { _ = prober.Process.Kill(); _ = prober.Wait() }()
+		args = append(args, "--prober-url", "http://"+address)
+	}
+	command := exec.CommandContext(bounded, binary, args...)
+	command.Dir = workspace.Directory
+	command.Env = environment
+	var stdout, stderr bytes.Buffer
+	command.Stdout, command.Stderr = &stdout, &stderr
+	err = command.Run()
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	if err != nil {
 		return "", fmt.Errorf("compile accepted memory host: %w", err)
 	}
@@ -69,7 +122,7 @@ func decodeHealthVerdict(stdout, stderr []byte) (string, error) {
 	if err := json.Unmarshal(stdout, &verdict); err != nil {
 		return "", fmt.Errorf("decode health detector verdict: %w (stdout=%q stderr=%q)", err, boundedHealthOutput(stdout), boundedHealthOutput(stderr))
 	}
-	if verdict.Status != "clear" && verdict.Status != "firing" {
+	if verdict.Status != "clear" && verdict.Status != "firing" && verdict.Status != "pending" && verdict.Status != "unavailable" {
 		return "", fmt.Errorf("unknown health detector verdict %q (stdout=%q stderr=%q)", verdict.Status, boundedHealthOutput(stdout), boundedHealthOutput(stderr))
 	}
 	return verdict.Status, nil
@@ -177,10 +230,26 @@ func (v IndependentHealthVerifier) Validate() error {
 	return nil
 }
 
+<<<<<<< HEAD
 func (probe AcceptedDetectorProbe) evaluationArgs(acceptedRoot, namespace string) []string {
 	args := []string{"--evaluate-once", "--namespace", namespace, "--app-root", acceptedRoot}
 	if probe.MetricsURL != "" {
 		args = append(args, "--metrics-url", probe.MetricsURL)
 	}
 	return args
+=======
+// A host without cluster Service DNS cannot interpret failed traffic probes as
+// application health. Onboarding never uses this legacy host verifier.
+func (probe AcceptedDetectorProbe) checkTransport(ctx context.Context) error {
+	resolver := probe.Resolver
+	if resolver == nil {
+		resolver = net.DefaultResolver
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if _, err := resolver.LookupHost(ctx, "kubernetes.default.svc.cluster.local"); err != nil {
+		return fmt.Errorf("probe transport unavailable: host cannot resolve cluster Service DNS: %w", err)
+	}
+	return nil
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 }

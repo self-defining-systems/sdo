@@ -5,20 +5,28 @@ package broker
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+<<<<<<< HEAD
 	"sdo.dev/operator/broker/internal/processio"
+=======
+	"sdo.dev/operator/contracts/settings"
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	"strings"
 	"syscall"
+	"unicode"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/rendered"
+	"sdo.dev/operator/sdk"
 )
 
 // Actor and Phase are defined by the validator, which owns the ownership
@@ -39,6 +47,7 @@ const (
 	ReflectionPhase = validate.ReflectionPhase
 	InitialPhase    = validate.InitialPhase
 	OutcomePhase    = validate.OutcomePhase
+	ImportPhase     = validate.ImportPhase
 )
 
 // Validator validates a complete candidate tree, including manifests and
@@ -56,36 +65,52 @@ type Receipt struct {
 	Phase        Phase
 	Commit       string
 	ChangedPaths []string
+	// CoverageGaps are the non-blocking notes the accepting check recorded, also
+	// kept as SDO-Coverage-Gap trailers on the accepted commit.
+	CoverageGaps []validate.Diagnostic
 }
 
 // SourceEvidence is produced by a trusted deployment strategy, never by an
 // agent. Its ledger record is staged before source acceptance and reconciled
 // against the attributed Git commit after an interrupted publish.
 type SourceEvidence struct {
-	ProposalTreeDigest string   `json:"proposal_tree_digest"`
-	ObservedRevision   string   `json:"observed_revision"`
-	StrategyID         string   `json:"strategy_id"`
-	Images             []string `json:"images"`
-	ResourceIDs        []string `json:"resource_ids"`
-	ManifestPaths      []string `json:"manifest_paths,omitempty"`
-	Ready              bool     `json:"ready"`
-	AcceptedCommit     string   `json:"accepted_commit,omitempty"`
+	ContainerImages    []rendered.DeployedImage `json:"container_images,omitempty"`
+	ProposalTreeDigest string                   `json:"proposal_tree_digest"`
+	ObservedRevision   string                   `json:"observed_revision"`
+	StrategyID         string                   `json:"strategy_id"`
+	Images             []string                 `json:"images"`
+	ResourceIDs        []string                 `json:"resource_ids"`
+	ManifestPaths      []string                 `json:"manifest_paths,omitempty"`
+	Ready              bool                     `json:"ready"`
+	AcceptedCommit     string                   `json:"accepted_commit,omitempty"`
 }
 
 type Broker struct {
+	// ValidationToolchain must identify immutable validator/compiler images and policy code.
+	// Empty disables reuse. Attestations remain private to this broker instance.
+	ValidationToolchain string
+	attestations        map[string]validationAttestation
+
+	codePath string
+	replay   string
+
 	// MetricsDetectors installs the optional generic metrics detectors when
 	// the health judge's initial memory is accepted. Set it only where a
 	// metrics source is configured.
 	MetricsDetectors bool
 
-	target        string
-	workspaceRoot string
-	validator     Validator
+	observationCeiling   sdk.ObservationScope
+	applicationNamespace string
+	target               string
+	workspaceRoot        string
+	lockPath             string
+	validator            Validator
+	upstream             *Upstream
 }
 
 // New requires the workspace root to be outside the accepted repository.
 // The worker must receive only Proposal.Path, never target or workspaceRoot.
-func New(target, workspaceRoot string, validator Validator) (*Broker, error) {
+func New(target, workspaceRoot string, validator Validator, policy ...ObservationPolicy) (*Broker, error) {
 	if target == "" || workspaceRoot == "" {
 		return nil, errors.New("target and workspace root are required")
 	}
@@ -121,38 +146,106 @@ func New(target, workspaceRoot string, validator Validator) (*Broker, error) {
 	if repositoryRoot != absoluteTarget {
 		return nil, errors.New("accepted repository path must be its Git root")
 	}
-	return &Broker{target: absoluteTarget, workspaceRoot: absoluteWorkspaces, validator: validator}, nil
+	gitCommon, err := gitText(context.Background(), absoluteTarget, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return nil, err
+	}
+	b := &Broker{target: absoluteTarget, workspaceRoot: absoluteWorkspaces, validator: validator, lockPath: filepath.Join(gitCommon, "sdo-broker.lock")}
+	if len(policy) > 1 {
+		return nil, errors.New("one observation policy is required")
+	}
+	if len(policy) == 1 {
+		if err := policy[0].Ceiling.Validate(); err != nil {
+			return nil, err
+		}
+		if policy[0].CodePath != "" && policy[0].CodePath != "go" && policy[0].CodePath != "shell" {
+			return nil, fmt.Errorf("unsupported broker code path %q", policy[0].CodePath)
+		}
+		if _, err := settings.Replay(policy[0].Replay); err != nil {
+			return nil, err
+		}
+		b.replay = policy[0].Replay
+		b.codePath = policy[0].CodePath
+		b.observationCeiling = policy[0].Ceiling
+		b.observationCeiling.Targets = append([]sdk.ObservationTarget(nil), policy[0].Ceiling.Targets...)
+		b.applicationNamespace = policy[0].ApplicationNamespace
+	}
+	return b, nil
 }
 
 func (b *Broker) CreateProposal(ctx context.Context, incidentID string) (Proposal, error) {
 	return b.CreateProposalForPhase(ctx, incidentID, ProposalPhase)
 }
 
-// CreateProposalForPhase starts a fresh isolated checkout for each lifecycle
-// phase. Reflection therefore starts from the accepted outcome commit.
-func (b *Broker) CreateProposalForPhase(ctx context.Context, incidentID string, phase Phase) (Proposal, error) {
-	if strings.TrimSpace(incidentID) == "" {
-		return Proposal{}, errors.New("incident ID is required")
+// CreateProposalAt prepares an incident from the immutable accepted revision
+// bound at detection. It never takes the publication lock: a peer may be
+// validating or publishing newer memory while this incident starts repairing.
+func (b *Broker) CreateProposalAt(ctx context.Context, incidentID, base string) (Proposal, error) {
+	if err := checkIncidentID(incidentID); err != nil {
+		return Proposal{}, err
 	}
-	if phase != ProposalPhase && phase != ReflectionPhase && phase != InitialPhase {
+	if _, err := hex.DecodeString(base); err != nil || (len(base) != 40 && len(base) != 64) {
+		return Proposal{}, errors.New("proposal base must be a full accepted commit ID")
+	}
+	commit, err := gitText(ctx, b.target, "rev-parse", "--verify", base+"^{commit}")
+	if err != nil {
+		return Proposal{}, fmt.Errorf("resolve proposal base %s: %w", base, err)
+	}
+	if commit != base {
+		return Proposal{}, fmt.Errorf("proposal base %q is not a canonical commit ID", base)
+	}
+	if _, err := runGit(ctx, b.target, "merge-base", "--is-ancestor", base, "HEAD"); err != nil {
+		return Proposal{}, fmt.Errorf("proposal base %s is not in accepted ancestry: %w", base, err)
+	}
+	return b.createProposal(ctx, incidentID, ProposalPhase, base)
+}
+
+// CreateProposalForPhase starts a fresh isolated checkout for each lifecycle
+// phase. Reflection starts from the accepted outcome commit with the responder's
+// isolated working playbook changes carried forward for validation.
+func (b *Broker) CreateProposalForPhase(ctx context.Context, incidentID string, phase Phase) (Proposal, error) {
+	if err := checkIncidentID(incidentID); err != nil {
+		return Proposal{}, err
+	}
+	if phase != ProposalPhase && phase != ReflectionPhase && phase != InitialPhase && phase != ImportPhase {
 		return Proposal{}, fmt.Errorf("invalid proposal phase %q", phase)
 	}
 	var proposal Proposal
 	err := b.locked(func() error {
 		var err error
+		proposal, err = b.createProposal(ctx, incidentID, phase, "")
+		return err
+	})
+	return proposal, err
+}
+
+func (b *Broker) createProposal(ctx context.Context, incidentID string, phase Phase, base string) (Proposal, error) {
+	var proposal Proposal
+	// Deduplicate only this proposal. This lock is independent of publication
+	// and shared by both bound incident creation and ordinary lifecycle phases.
+	err := b.lockedAt(b.proposalRoot(incidentID, phase)+".lock", func() error {
+		var err error
 		proposal, err = b.proposal(incidentID, phase)
 		if err == nil {
+			if base != "" && proposal.BaseCommit != base {
+				return fmt.Errorf("existing proposal base %s differs from bound commit %s", proposal.BaseCommit, base)
+			}
 			return nil
 		}
 		if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		if err := b.requireClean(ctx); err != nil {
-			return err
-		}
-		base, err := gitText(ctx, b.target, "rev-parse", "HEAD")
-		if err != nil {
-			return err
+		if base == "" {
+			if err := b.syncUpstream(ctx); err != nil {
+				return err
+			}
+			if err := b.requireClean(ctx); err != nil {
+				return err
+			}
+			base, err = gitText(ctx, b.target, "rev-parse", "HEAD")
+			if err != nil {
+				return err
+			}
 		}
 		parent := b.proposalRoot(incidentID, phase)
 		if err := os.RemoveAll(parent); err != nil {
@@ -162,7 +255,7 @@ func (b *Broker) CreateProposalForPhase(ctx context.Context, incidentID string, 
 			return err
 		}
 		checkout := filepath.Join(parent, "checkout")
-		if _, err := runGit(ctx, "", "clone", "--no-local", "--no-hardlinks", "--quiet", "--no-checkout", b.target, checkout); err != nil {
+		if err := cloneGit(ctx, b.target, checkout, "--no-checkout"); err != nil {
 			return err
 		}
 		if _, err := runGit(ctx, checkout, "checkout", "--quiet", "--detach", base); err != nil {
@@ -171,8 +264,13 @@ func (b *Broker) CreateProposalForPhase(ctx context.Context, incidentID string, 
 		if _, err := runGit(ctx, checkout, "remote", "remove", "origin"); err != nil {
 			return err
 		}
+		if phase == ReflectionPhase {
+			if err := b.carryWorkingPrograms(ctx, incidentID, checkout); err != nil {
+				return err
+			}
+		}
 		proposal = Proposal{IncidentID: incidentID, Path: checkout, BaseCommit: base}
-		if err := validate.WritePublicationContext(ctx, checkout, validate.PublicationContext{BaseCommit: base, IncidentID: incidentID}); err != nil {
+		if err := validate.WritePublicationContext(ctx, checkout, validate.PublicationContext{BaseCommit: base, IncidentID: incidentID, ObservationCeiling: b.observationCeiling, ApplicationNamespace: b.applicationNamespace}); err != nil {
 			return err
 		}
 		data, err := json.Marshal(proposal)
@@ -206,7 +304,7 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 		return Receipt{}, errors.New("outcomes must use RecordOutcome")
 	}
 	var receipt Receipt
-	err := b.locked(func() error {
+	err := b.locked(b.withUpstream(ctx, func() error {
 		if prior, ok, err := b.findAccepted(ctx, incidentID, phase); err != nil {
 			return err
 		} else if ok {
@@ -238,35 +336,81 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 		if err != nil {
 			return err
 		}
-		if current != proposal.BaseCommit {
-			return errors.New("proposal base is stale; re-create the proposal from accepted state")
-		}
 		paths, err := validate.ChangedPaths(ctx, proposal.Path, proposal.BaseCommit)
 		if err != nil {
 			return err
 		}
+		// Authored memory whitespace is normalized, never a rejection; the
+		// changed set is recomputed in case a file now equals its base.
+		if normalized, err := validate.NormalizeAuthoredWhitespace(proposal.Path, paths); err != nil {
+			return fmt.Errorf("normalize authored whitespace: %w", err)
+		} else if len(normalized) > 0 {
+			if paths, err = validate.ChangedPaths(ctx, proposal.Path, proposal.BaseCommit); err != nil {
+				return err
+			}
+		}
+		// Playbook fault_class and index entries are derived, never rejected.
+		if normalized, err := validate.NormalizeAuthoredPlaybooks(proposal.Path, paths); err != nil {
+			return fmt.Errorf("normalize authored playbooks: %w", err)
+		} else if len(normalized) > 0 {
+			if paths, err = validate.ChangedPaths(ctx, proposal.Path, proposal.BaseCommit); err != nil {
+				return err
+			}
+		}
+		// A corpus case stores each snapshot once; copies of fixed.json are removed.
+		if normalized, err := b.normalizeCorpus(proposal.Path, paths); err != nil {
+			return fmt.Errorf("normalize captured corpus: %w", err)
+		} else if len(normalized) > 0 {
+			if paths, err = validate.ChangedPaths(ctx, proposal.Path, proposal.BaseCommit); err != nil {
+				return err
+			}
+		}
+		candidateRoot := proposal.Path
+		if actor == Responder && phase == ProposalPhase {
+			paths = SourceRepairPaths(paths)
+			if len(paths) == 0 {
+				receipt = Receipt{IncidentID: incidentID, Phase: phase}
+				return nil
+			}
+			// Validate the exact source-only submission in a private tree. Working
+			// programs are never included in a source publication or its compile check.
+			sourceStage, cleanup, err := b.privateClone(ctx)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			if _, err := runGit(ctx, sourceStage, "checkout", "--quiet", "--detach", proposal.BaseCommit); err != nil {
+				return err
+			}
+			for _, path := range paths {
+				if err := copyChange(proposal.Path, sourceStage, path); err != nil {
+					return err
+				}
+			}
+			candidateRoot = sourceStage
+		}
 		publication := &validate.PublicationContext{BaseCommit: proposal.BaseCommit, IncidentID: incidentID, VerifiedSourceTree: expectedSourceTree}
 		if phase == ReflectionPhase && decision == nil {
-			decision, err = validate.LoadReflectionDecision(ctx, proposal.Path, "")
+			decision, err = validate.LoadCheckedReflectionDecision(ctx, proposal.Path, "")
 			if err != nil {
 				return err
 			}
 		}
 		// Validate before copying so invalid filesystem shapes also receive the
 		// shared diagnostics. Recheck the frozen private clone with the real runner.
-		preflight, err := checkCandidate(ctx, proposal.Path, proposal.BaseCommit, actor, phase, paths, func(context.Context, string, []string) error { return nil }, publication, decision, b.MetricsDetectors)
+		preflight, err := b.checkCandidate(ctx, candidateRoot, proposal.BaseCommit, actor, phase, paths, func(context.Context, string, []string) error { return nil }, publication, decision, nil)
 		if err != nil {
 			return err
 		}
 		if err := validate.Err(preflight); err != nil {
 			return err
 		}
-		if len(paths) == 0 {
+		if len(paths) == 0 && !(actor == HealthJudge && phase == InitialPhase && strings.HasPrefix(incidentID, "health-refresh-")) {
 			receipt = Receipt{IncidentID: incidentID, Phase: phase}
 			return nil
 		}
 		if expectedSourceTree != "" {
-			actualTree, err := ProposalTreeDigest(ctx, proposal.Path)
+			actualTree, err := ProposalTreeDigest(ctx, candidateRoot)
 			if err != nil {
 				return err
 			}
@@ -277,7 +421,7 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 				return err
 			}
 		}
-		if b.validator == nil {
+		if b.validator == nil && b.codePath != "shell" {
 			return errors.New("proposal validation is not configured")
 		}
 		stage, cleanup, err := b.privateClone(ctx)
@@ -285,34 +429,59 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 			return err
 		}
 		defer cleanup()
-		for _, path := range paths {
-			if err := copyChange(proposal.Path, stage, path); err != nil {
+		if current != proposal.BaseCommit {
+			if err := b.replayCandidate(ctx, proposal, candidateRoot, stage, current, paths); err != nil {
 				return err
 			}
+		} else {
+			for _, path := range paths {
+				if err := copyChange(candidateRoot, stage, path); err != nil {
+					return err
+				}
+			}
 		}
-		diagnostics, err := checkCandidate(ctx, stage, proposal.BaseCommit, actor, phase, paths, b.validator, publication, decision, b.MetricsDetectors)
+		// Validation is bound to the current accepted head and the exact merged tree.
+		publication.BaseCommit = current
+		paths, err = validate.ChangedPaths(ctx, stage, current)
+		if err != nil {
+			return err
+		}
+		var gaps []validate.Diagnostic
+		diagnostics, err := b.checkAttestedCandidate(ctx, stage, current, actor, phase, paths, publication, decision, &gaps)
 		if err != nil {
 			return fmt.Errorf("proposal validation: %w", err)
 		}
 		if err := validate.Err(diagnostics); err != nil {
+			if current != proposal.BaseCommit {
+				return b.memoryConflict(ctx, proposal.BaseCommit, current, paths, err)
+			}
 			return fmt.Errorf("candidate validation: %w", err)
 		}
 		if expectedSourceTree != "" {
-			stagedTree, err := ProposalTreeDigest(ctx, stage)
+			// The head may have moved since the proposal's base (SDO's own outcome
+			// and judge commits). The proposal was replayed onto it; the replay
+			// must carry exactly the verified source, whatever memory history
+			// landed in between.
+			stagedTree, verifiedTree := "", expectedSourceTree
+			if current == proposal.BaseCommit {
+				stagedTree, err = ProposalTreeDigest(ctx, stage)
+			} else if stagedTree, err = proposalSourceTreeDigest(ctx, stage); err == nil {
+				verifiedTree, err = proposalSourceTreeDigest(ctx, candidateRoot)
+			}
 			if err != nil {
 				return err
 			}
-			if stagedTree != expectedSourceTree {
+			if stagedTree != verifiedTree {
 				return errors.New("staged source tree differs from verified deployment")
 			}
 		}
 		// The shared check may install generic health registrations. Publish
 		// every checked file, including those explicit Go bootstrap outputs.
-		paths, err = validate.ChangedPaths(ctx, stage, proposal.BaseCommit)
+		paths, err = validate.ChangedPaths(ctx, stage, current)
 		if err != nil {
 			return err
 		}
-		receipt, err = b.accept(ctx, stage, incidentID, actor, phase, paths)
+		receipt, err = b.accept(ctx, stage, incidentID, actor, phase, paths, gaps...)
 		if err != nil {
 			return err
 		}
@@ -324,7 +493,7 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 			}
 		}
 		return nil
-	})
+	}))
 	return receipt, err
 }
 
@@ -348,6 +517,15 @@ func (b *Broker) AcceptedCommit(ctx context.Context, incidentID string, phase Ph
 	return b.findAccepted(ctx, incidentID, phase)
 }
 
+// RequiresControllerRollout includes lifecycle changes to learned programs while
+// keeping ordinary playbook prose edits inert.
+func (b *Broker) RequiresControllerRollout(ctx context.Context, before, after string, paths []string) (bool, error) {
+	if layout.RequiresControllerRollout(paths) {
+		return true, nil
+	}
+	return memory.PlaybookActivationChanged(ctx, b.target, before, after, paths)
+}
+
 // DiagnosticsFingerprint identifies accepted source compiled into the controller.
 func (b *Broker) DiagnosticsFingerprint(ctx context.Context, commit string) (string, error) {
 	if commit == "" {
@@ -359,17 +537,31 @@ func (b *Broker) DiagnosticsFingerprint(ctx context.Context, commit string) (str
 // ReleaseProposal removes a proposal checkout after acknowledgement or a
 // superseded incident. Accepted commits remain in the operational repository.
 func (b *Broker) ReleaseProposal(incidentID string, phase Phase) error {
-	if strings.TrimSpace(incidentID) == "" {
-		return errors.New("incident ID is required")
+	if err := checkIncidentID(incidentID); err != nil {
+		return err
 	}
-	return b.locked(func() error { return os.RemoveAll(b.proposalRoot(incidentID, phase)) })
+	return b.locked(func() error {
+		return b.lockedAt(b.proposalRoot(incidentID, phase)+".lock", func() error {
+			if phase == ReflectionPhase {
+				for identity, attestation := range b.attestations {
+					if attestation.incidentID == incidentID {
+						delete(b.attestations, identity)
+					}
+				}
+			}
+			return os.RemoveAll(b.proposalRoot(incidentID, phase))
+		})
+	})
 }
 
 // RecordOutcome writes an authoritative immutable outcome in a private broker
 // clone and commits it. Agents cannot supply an outcome through Publish.
 func (b *Broker) RecordOutcome(ctx context.Context, incidentID string, record *contracts.OutcomeRecord) (Receipt, error) {
+	if err := checkIncidentID(incidentID); err != nil {
+		return Receipt{}, err
+	}
 	var receipt Receipt
-	err := b.locked(func() error {
+	err := b.locked(b.withUpstream(ctx, func() error {
 		if err := b.requireClean(ctx); err != nil {
 			return err
 		}
@@ -405,7 +597,7 @@ func (b *Broker) RecordOutcome(ctx context.Context, incidentID string, record *c
 		}
 		receipt, err = b.accept(ctx, stage, incidentID, "controller", OutcomePhase, paths)
 		return err
-	})
+	}))
 	return receipt, err
 }
 
@@ -441,7 +633,7 @@ func (b *Broker) privateClone(ctx context.Context) (string, func(), error) {
 	}
 	cleanup := func() { os.RemoveAll(dir) }
 	stage := filepath.Join(dir, "checkout")
-	if _, err := runGit(ctx, "", "clone", "--no-local", "--no-hardlinks", "--quiet", b.target, stage); err != nil {
+	if err := cloneGit(ctx, b.target, stage); err != nil {
 		cleanup()
 		return "", nil, err
 	}
@@ -464,10 +656,14 @@ func (b *Broker) requireClean(ctx context.Context) error {
 }
 
 func (b *Broker) locked(fn func() error) error {
-	if err := os.MkdirAll(b.workspaceRoot, 0o700); err != nil {
+	return b.lockedAt(b.lockPath, fn)
+}
+
+func (b *Broker) lockedAt(path string, fn func() error) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	file, err := os.OpenFile(filepath.Join(b.workspaceRoot, "broker.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return err
 	}
@@ -479,19 +675,49 @@ func (b *Broker) locked(fn func() error) error {
 	return fn()
 }
 
-func (b *Broker) accept(ctx context.Context, stage, incidentID string, actor Actor, phase Phase, paths []string) (Receipt, error) {
-	if err := addIgnoredProgramMemory(ctx, stage, nil); err != nil {
+// checkIncidentID rejects IDs that are empty or contain a control or line
+// separator character. Accepted commits carry the ID in a trailer block that
+// other code matches line by line, so a line break would forge trailers.
+func checkIncidentID(incidentID string) error {
+	if strings.TrimSpace(incidentID) == "" {
+		return errors.New("incident ID is required")
+	}
+	for _, r := range incidentID {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
+			return fmt.Errorf("incident ID %q contains a control or line separator character", incidentID)
+		}
+	}
+	return nil
+}
+
+func (b *Broker) accept(ctx context.Context, stage, incidentID string, actor Actor, phase Phase, paths []string, gaps ...validate.Diagnostic) (Receipt, error) {
+	if err := checkIncidentID(incidentID); err != nil {
+		return Receipt{}, err
+	}
+	if err := addIgnoredOperationalMemory(ctx, stage, nil); err != nil {
 		return Receipt{}, err
 	}
 	if _, err := runGit(ctx, stage, "add", "--all", "--", "."); err != nil {
 		return Receipt{}, err
 	}
 	message := fmt.Sprintf("sdo(%s): validated %s\n\nSDO-Incident: %s\nSDO-Actor: %s\nSDO-Phase: %s\nSDO-Validation: passed", incidentID, phase, incidentID, actor, phase)
-	if _, err := runGitEnv(ctx, stage, brokerGitEnv(), "commit", "--quiet", "-m", message); err != nil {
+	if phase == ReflectionPhase {
+		message += "\nSDO-Learning: executable-v1"
+	}
+	if phase == ImportPhase {
+		message += "\nSDO-Origin: operator"
+	}
+	for _, gap := range gaps {
+		message += "\nSDO-Coverage-Gap: " + strings.Join(strings.Fields(gap.Rule+": "+gap.Message), " ")
+	}
+	if _, err := runGitEnv(ctx, stage, brokerGitEnv(), "commit", "--quiet", "--allow-empty", "-m", message); err != nil {
 		return Receipt{}, err
 	}
 	commit, err := gitText(ctx, stage, "rev-parse", "HEAD")
 	if err != nil {
+		return Receipt{}, err
+	}
+	if err := b.replicate(ctx, stage, commit); err != nil {
 		return Receipt{}, err
 	}
 	if _, err := runGit(ctx, b.target, "fetch", "--no-tags", "--quiet", stage, commit); err != nil {
@@ -500,10 +726,23 @@ func (b *Broker) accept(ctx context.Context, stage, incidentID string, actor Act
 	if _, err := runGit(ctx, b.target, "merge", "--ff-only", "--quiet", commit); err != nil {
 		return Receipt{}, fmt.Errorf("accepted branch changed during publish: %w", err)
 	}
-	return Receipt{IncidentID: incidentID, Phase: phase, Commit: commit, ChangedPaths: paths}, nil
+	return Receipt{IncidentID: incidentID, Phase: phase, Commit: commit, ChangedPaths: paths, CoverageGaps: gaps}, nil
+}
+
+// AcceptedCommitAt authenticates an exact historical broker commit still in
+// accepted ancestry. Later outcome annotations cannot replace its identity.
+func (b *Broker) AcceptedCommitAt(ctx context.Context, incidentID string, phase Phase, commit string) (Receipt, bool, error) {
+	if commit == "" {
+		return Receipt{}, false, errors.New("accepted commit identity is required")
+	}
+	return b.findAcceptedAt(ctx, incidentID, phase, commit)
 }
 
 func (b *Broker) findAccepted(ctx context.Context, incidentID string, phase Phase) (Receipt, bool, error) {
+	return b.findAcceptedAt(ctx, incidentID, phase, "")
+}
+
+func (b *Broker) findAcceptedAt(ctx context.Context, incidentID string, phase Phase, expected string) (Receipt, bool, error) {
 	data, err := runGit(ctx, b.target, "log", "--format=%H%x1f%B%x1e")
 	if err != nil {
 		return Receipt{}, false, err
@@ -511,6 +750,9 @@ func (b *Broker) findAccepted(ctx context.Context, incidentID string, phase Phas
 	for _, item := range strings.Split(string(data), "\x1e") {
 		parts := strings.SplitN(item, "\x1f", 2)
 		if len(parts) != 2 {
+			continue
+		}
+		if expected != "" && strings.TrimSpace(parts[0]) != expected {
 			continue
 		}
 		message := "\n" + parts[1] + "\n"
@@ -541,7 +783,33 @@ func runGit(ctx context.Context, cwd string, args ...string) ([]byte, error) {
 }
 
 func runGitEnv(ctx context.Context, cwd string, env []string, args ...string) ([]byte, error) {
+<<<<<<< HEAD
 	return processio.RunGitEnv(ctx, cwd, env, args...)
+=======
+	// Waiting for Git alone does not wait for its detached auto-maintenance.
+	// Keep housekeeping inside this command's context and process lifetime.
+	commandArgs := append([]string{"-c", "gc.autoDetach=false", "-c", "maintenance.autoDetach=false"}, args...)
+	cmd := exec.CommandContext(ctx, "git", commandArgs...)
+	if cwd != "" {
+		cmd.Dir = cwd
+	}
+	cmd.Env = append(os.Environ(), env...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return out, nil
+>>>>>>> origin/vic-lsh/dev/sdo-improve
+}
+
+// cloneGit also persists the lifetime policy for commands run later by workers;
+// repository-local configuration is not inherited from the accepted source.
+func cloneGit(ctx context.Context, source, destination string, options ...string) error {
+	args := []string{"clone", "--no-local", "--no-hardlinks", "--quiet",
+		"--config", "gc.autoDetach=false", "--config", "maintenance.autoDetach=false"}
+	args = append(args, options...)
+	_, err := runGit(ctx, "", append(args, source, destination)...)
+	return err
 }
 
 func gitText(ctx context.Context, cwd string, args ...string) (string, error) {
@@ -552,6 +820,16 @@ func gitText(ctx context.Context, cwd string, args ...string) (string, error) {
 // ProposalTreeDigest computes the complete candidate Git tree without changing
 // the checkout's index. Both deployment and publish use this exact convention.
 func ProposalTreeDigest(ctx context.Context, checkout string) (string, error) {
+	return proposalTreeDigest(ctx, checkout, false)
+}
+
+// proposalSourceTreeDigest is ProposalTreeDigest without operational memory,
+// so two trees that differ only in accepted .sdo history compare equal.
+func proposalSourceTreeDigest(ctx context.Context, checkout string) (string, error) {
+	return proposalTreeDigest(ctx, checkout, true)
+}
+
+func proposalTreeDigest(ctx context.Context, checkout string, sourceOnly bool) (string, error) {
 	root, err := filepath.Abs(checkout)
 	if err != nil {
 		return "", err
@@ -572,8 +850,13 @@ func ProposalTreeDigest(ctx context.Context, checkout string) (string, error) {
 	if _, err := run("add", "-A"); err != nil {
 		return "", err
 	}
-	if err := addIgnoredProgramMemory(ctx, root, []string{"GIT_INDEX_FILE=" + index}); err != nil {
+	if err := addIgnoredOperationalMemory(ctx, root, []string{"GIT_INDEX_FILE=" + index}); err != nil {
 		return "", err
+	}
+	if sourceOnly {
+		if _, err := run("rm", "-r", "--cached", "--ignore-unmatch", "-q", "--", layout.Dir); err != nil {
+			return "", err
+		}
 	}
 	tree, err := run("write-tree")
 	if err != nil {
@@ -585,8 +868,8 @@ func ProposalTreeDigest(ctx context.Context, checkout string) (string, error) {
 	return tree, nil
 }
 
-func addIgnoredProgramMemory(ctx context.Context, root string, env []string) error {
-	for _, part := range []string{layout.LibrariesDir, layout.CorpusDir} {
+func addIgnoredOperationalMemory(ctx context.Context, root string, env []string) error {
+	for _, part := range []string{layout.LibrariesDir, layout.CorpusDir, layout.RenderedDir} {
 		path := filepath.Join(root, part)
 		info, err := os.Lstat(path)
 		if os.IsNotExist(err) {
@@ -596,7 +879,7 @@ func addIgnoredProgramMemory(ctx context.Context, root string, env []string) err
 			return err
 		}
 		if !info.IsDir() {
-			return fmt.Errorf("program memory root must be a directory: %s", path)
+			return fmt.Errorf("operational memory root must be a directory: %s", path)
 		}
 		if _, err := runGitEnv(ctx, root, env, "add", "-f", "--all", "--", part); err != nil {
 			return err
@@ -663,4 +946,22 @@ func safeParents(root, path string) error {
 func within(root, path string) bool {
 	relative, err := filepath.Rel(root, path)
 	return err == nil && (relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator))))
+}
+
+// ObservationPolicy is supplied only by the trusted installer host.
+type ObservationPolicy struct {
+	Replay string
+
+	// CodePath is trusted launch policy; shell selects hygiene instead of Go compilation.
+	CodePath string
+
+	Ceiling              sdk.ObservationScope
+	ApplicationNamespace string
+}
+
+func (b *Broker) normalizeCorpus(root string, paths []string) ([]string, error) {
+	if b.replay == "off" {
+		return nil, nil
+	}
+	return validate.NormalizeCapturedCorpus(root, paths)
 }

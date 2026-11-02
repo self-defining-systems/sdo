@@ -1,0 +1,14 @@
+apiVersion: sdo.dev/v1alpha1
+kind: DetectorManifest
+sdkVersion: v0.1
+id: service-targetport-mismatch
+constructor: New
+class: incident
+owner: responder
+watches: [{apiVersion: v1, kind: Service}, {apiVersion: v1, kind: Pod}]
+interval: 1s
+persistence: {firing: 1, clearing: 1}
+batching: {severity: warn, debounce: 500ms}
+possiblePlaybooks: [service-targetport-mismatch]
+originatingIncident: scripted-incident
+originatingCommit: reflection

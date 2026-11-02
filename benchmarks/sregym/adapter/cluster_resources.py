@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
+
 _DNS_LABEL = re.compile(r"^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$")
 _KIND_NODE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _REGISTRY_NAME = "sdo-benchmark-registry"
@@ -83,7 +85,7 @@ def _run(command: list[str], *, input_text: str | None = None) -> str:
             capture_output=True,
             text=True,
             check=False,
-            timeout=120,
+            timeout=wait_for(WaitKind.SLOW_COMMAND),
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise RuntimeError(f"benchmark cluster command could not run: {exc}") from exc
@@ -115,7 +117,7 @@ def kubectl(
             capture_output=True,
             text=True,
             check=False,
-            timeout=120,
+            timeout=wait_for(WaitKind.SLOW_COMMAND),
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise RuntimeError(f"benchmark kubectl could not run: {exc}") from exc
@@ -267,7 +269,9 @@ def _bridge_resources(config: BenchmarkClusterResourcesConfig, relay_target_base
     ]
 
 
-def _wait_ready(name: str, namespace: str, kubeconfig: Path, *, timeout_seconds: float = 120) -> None:
+def _wait_ready(
+    name: str, namespace: str, kubeconfig: Path, *, timeout_seconds: float = int(wait_for(WaitKind.SLOW_COMMAND))
+) -> None:
     deadline = time.monotonic() + timeout_seconds
     last_status = "not observed"
     while time.monotonic() < deadline:
@@ -279,7 +283,7 @@ def _wait_ready(name: str, namespace: str, kubeconfig: Path, *, timeout_seconds:
         if isinstance(status, dict) and status.get("readyReplicas") == 1:
             return
         last_status = json.dumps(status)
-        time.sleep(1)
+        time.sleep(wait_for(WaitKind.POLL_FAST))
     raise RuntimeError(f"{name} did not become ready: {last_status}")
 
 

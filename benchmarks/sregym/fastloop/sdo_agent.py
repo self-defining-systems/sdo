@@ -15,7 +15,12 @@ verifies, and the loop grades the cluster with the problem's own oracle.
 from __future__ import annotations
 
 import json
+<<<<<<< HEAD
 import os
+=======
+import logging
+import subprocess
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -25,21 +30,53 @@ from benchmarks.sregym.adapter import (
     REJECTED_RECEIPT_FILENAME,
     STRICT_RECEIPT_FILENAME,
     Clock,
+    ClosureFailedError,
     ClusterOps,
+    FollowupClosureTimeout,
     PersistentState,
+    ReflectionDeadlineError,
     StageInputs,
+    WaitKind,
+    control_namespace_for,
     drain_pending_incident,
+    pause_for_recovery,
+    record_failed_closure,
     run_persistent_stage,
+    wait_for,
 )
-from benchmarks.sregym.fastloop.loop import AgentOutcome, InjectionWindow
-from benchmarks.sregym.fastloop.records import AgentName, TokenCounts
+from benchmarks.sregym.fastloop.evidence_queue import (
+    EvidenceExportQueue,
+    ExportJob,
+    QueuedEvidenceExport,
+    snapshot_id_for,
+    stash_checkpoint_inputs,
+)
+from benchmarks.sregym.fastloop.loop import AgentOutcome, InjectionWindow, RecoveryWaitTimeout, ResolutionGradePoint
+from benchmarks.sregym.fastloop.pinned_tools import assert_attestation_eligible
+from benchmarks.sregym.fastloop.records import AgentName, PostClosureWait, RecoveryTrigger, TokenCounts
 from benchmarks.sregym.fastloop.replay import CheckpointStore, capture_checkpoints
 from benchmarks.sregym.protocol import receipt_resolution
+from benchmarks.sregym.protocol.injection import ensure_incident_follows_injection
+from benchmarks.sregym.protocol.provider_capacity import (
+    RateLimitedRun,
+    capacity_prevented_completion,
+    read_provider_waits,
+)
+from libs.agent_cli.errors import rate_limit_failure
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from benchmarks.sregym.adapter import DeployedLifecycle, DeployedLifecycleContext, RuntimeConfig
+    from benchmarks.sregym.adapter import (
+        ControllerRecord,
+        DeployedLifecycle,
+        DeployedLifecycleContext,
+        FollowupClosureWait,
+        RuntimeConfig,
+    )
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -51,10 +88,12 @@ class SdoAgentSettings:
     state_path: Path
     results_dir: Path
     kubeconfig: str | None = None
-    verification_timeout_seconds: float = 3900.0
-    reflection_wait_seconds: float = 3600.0
+    verification_timeout_seconds: float = wait_for(WaitKind.INCIDENT_VERIFICATION)
+    reflection_wait_seconds: float = wait_for(WaitKind.REFLECTION_DRAIN)
     detection_timeout_seconds: float | None = None
     checkpoint_enabled: bool = True
+    #: Pinned-tools lanes refuse injection unless the launched controller can reuse attestations.
+    require_attestation_eligible: bool = False
 
     def __post_init__(self) -> None:
         if self.runtime_config.submission_api_base or self.runtime_config.submission_relay_target_base:
@@ -107,6 +146,12 @@ def _receipt_closure_fields(receipt: dict[str, Any]) -> tuple[dict[str, float], 
     return _closure_phase_seconds(ledger), skipped if isinstance(skipped, str) else None
 
 
+def _receipt_no_repair_count(receipt: dict[str, Any]) -> int | None:
+    ledger = receipt.get("native_ledger")
+    value = ledger.get("reflection_no_repair_count") if isinstance(ledger, dict) else None
+    return value if type(value) is int and value >= 0 else None
+
+
 def _last_successful_repair(repairs: object) -> datetime | None:
     completions = [
         completed
@@ -154,6 +199,7 @@ def _with_receipt_times(outcome: AgentOutcome, receipt: dict[str, Any]) -> Agent
         or _timestamp(timestamps.get("dispatched_at"))
         or _timestamp(receipt.get("responder_started_at")),
         responder_finished_at=outcome.responder_finished_at or _timestamp(receipt.get("responder_finished_at")),
+        reflection_no_repair_count=_receipt_no_repair_count(receipt),
     )
 
 
@@ -207,15 +253,9 @@ def _program_metrics(result: dict[str, Any], memory_reasons: tuple[str, ...] = (
                 commands[name] = commands.get(name, 0) + 1
     loops = result.get("response_loops_used")
     return {
+        "playbook_coverage": result.get("playbook_coverage"),
         "program_diagnoses": len(runs) if isinstance(runs, list) else None,
-        "resolution_path": result.get("resolution_path")
-        if result.get("resolution_path") in ("fast_path", "responder")
-        else None,
-        "fast_path_programs": tuple(str(item) for item in result.get("fast_path_programs", []) or []),
-        "fast_path_relation_covered_findings": tuple(
-            item for item in result.get("fast_path_relation_covered_findings", []) or [] if isinstance(item, dict)
-        ),
-        "fast_path_skipped_reason": result.get("fast_path_skipped_reason") or None,
+        "resolution_path": result.get("resolution_path") if result.get("resolution_path") == "responder" else None,
         "match_reasons": tuple(dict.fromkeys(match_reasons)),
         "binding_sources": tuple(dict.fromkeys(binding_sources)),
         "program_verdicts": verdicts,
@@ -237,6 +277,7 @@ class SdoPersistentAgent:
         run_lifecycle: Callable[[DeployedLifecycleContext], bool],
         clock: Clock | None = None,
         keep_running: bool = False,
+<<<<<<< HEAD
         check_continuity: bool = False,
         stop_on_detector_review: bool = True,
     ) -> None:
@@ -244,15 +285,36 @@ class SdoPersistentAgent:
         self.learn_before_recovery = check_continuity
         self._continuity_before: dict[str, Any] = {}
         self._stop_on_detector_review = stop_on_detector_review
+=======
+        evidence_queue: EvidenceExportQueue | None = None,
+    ) -> None:
+        self._keep_running = keep_running
+        # With a lane queue, the drain seals evidence and delivery leaves the critical path.
+        self._evidence_queue = evidence_queue
+        self._on_verified: Callable[[ResolutionGradePoint], None] | None = None
+>>>>>>> origin/vic-lsh/dev/sdo-improve
         self._settings = settings
         self._ops = ops
         self._lifecycle_inputs = lifecycle_inputs
         self._run_lifecycle = run_lifecycle
         self._clock = clock or Clock()
+        self.last_recovery_trigger: RecoveryTrigger | None = None
 
     @property
     def model(self) -> str:
         return self._settings.runtime_config.model
+
+    @property
+    def provider(self) -> str:
+        return self._settings.runtime_config.agent_provider
+
+    @property
+    def reasoning_effort(self) -> str:
+        return self._settings.runtime_config.agent_effort
+
+    @property
+    def replay(self) -> str:
+        return self._settings.runtime_config.replay
 
     def stage_inputs(self, stage_label: str, receipt_dir: Path, fingerprint: str) -> StageInputs:
         settings = self._settings
@@ -267,9 +329,24 @@ class SdoPersistentAgent:
             kubeconfig=settings.kubeconfig,
             verification_timeout_seconds=settings.verification_timeout_seconds,
             detection_timeout_seconds=settings.detection_timeout_seconds,
-            stop_on_detector_review=self._stop_on_detector_review,
             lifecycle_installs_controller=True,
+            reflection_wait_seconds=settings.reflection_wait_seconds,
         )
+
+    def resolve_at_closure(
+        self,
+        index: int,
+        problem_id: str,
+        inject: Callable[[], InjectionWindow],
+        on_verified: Callable[[ResolutionGradePoint], None],
+    ) -> AgentOutcome:
+        """Observe closure within the agent's complete (possibly composite) resolution path."""
+        previous = self._on_verified
+        self._on_verified = on_verified
+        try:
+            return self.resolve(index, problem_id, inject)
+        finally:
+            self._on_verified = previous
 
     def resolve(self, index: int, problem_id: str, inject: Callable[[], InjectionWindow]) -> AgentOutcome:
         settings = self._settings
@@ -278,18 +355,55 @@ class SdoPersistentAgent:
         windows: list[InjectionWindow] = []
 
         def gated_inject() -> None:
+<<<<<<< HEAD
             if self.learn_before_recovery:
                 self._continuity_before = self._controller_identity()
+=======
+            if settings.require_attestation_eligible:
+                assert_attestation_eligible(settings.kubeconfig, control_namespace_for(settings.namespace))
+>>>>>>> origin/vic-lsh/dev/sdo-improve
             windows.append(inject())
 
-        resolution = run_persistent_stage(
-            self.stage_inputs(f"fastloop-{index:03d}", receipt_dir, lifecycle.fingerprint),
-            ops=self._ops,
-            run_lifecycle=lambda: self._run_lifecycle(lifecycle.context),
-            inject=gated_inject,
-            clock=self._clock,
-            pause_after_verified=not self._keep_running,
-        )
+        def measure_verified(incident_id: str, detected_at: datetime | None, verified_at: datetime | None) -> None:
+            if not windows:
+                raise RuntimeError("the controller verified an incident without the fault being injected")
+            ensure_incident_follows_injection(incident_id, detected_at, windows[0].started_at)
+            if self._on_verified is not None:
+                self._on_verified(ResolutionGradePoint(incident_id, verified_at))
+
+        try:
+            resolution = run_persistent_stage(
+                self.stage_inputs(f"fastloop-{index:03d}", receipt_dir, lifecycle.fingerprint),
+                ops=self._ops,
+                run_lifecycle=lambda: self._run_lifecycle(lifecycle.context),
+                inject=gated_inject,
+                clock=self._clock,
+                pause_after_verified=not self._keep_running,
+                on_verified=measure_verified,
+            )
+        except RuntimeError as exc:
+            try:
+                self._ops.export_runtime_artifacts(
+                    replace(settings.runtime_config, artifacts_dir=receipt_dir), receipt_dir
+                )
+            except (OSError, RuntimeError):
+                logger.exception("could not export provider wait evidence")
+            evidence = read_provider_waits(receipt_dir, after=windows[0].started_at if windows else None)
+            # Stable worker-owned diagnostics, or an interrupted/exhausted wait,
+            # survive controller wrapping and hard worker deadlines.
+            if (
+                rate_limit_failure(exc) is not None
+                or "rate_limited:" in str(exc)
+                or "account_exhausted:" in str(exc)
+                or capacity_prevented_completion(evidence, str(exc))
+            ):
+                limited = rate_limit_failure(exc)
+                if "account_exhausted:" in str(exc) or (
+                    limited is not None and limited.failure_reason == "account_exhausted"
+                ):
+                    evidence = replace(evidence, exhausted=True, exhausted_reason="account_exhausted")
+                raise RateLimitedRun(evidence) from None
+            raise
         self._checkpoint(index, str(resolution["incident_id"]), receipt_dir)
         if not windows:
             raise RuntimeError("the controller verified an incident without the fault being injected")
@@ -307,6 +421,8 @@ class SdoPersistentAgent:
         drift_tokens = TokenCounts()
         return AgentOutcome(
             injection=windows[0],
+            provider_waits=read_provider_waits(receipt_dir, incident_id=str(resolution["incident_id"])).intervals,
+            account_events=read_provider_waits(receipt_dir, incident_id=str(resolution["incident_id"])).account_events,
             detected_at=detected,
             responder_started_at=_timestamp(resolution.get("responder_started_at")),
             responder_finished_at=_timestamp(resolution.get("responder_finished_at")),
@@ -327,10 +443,8 @@ class SdoPersistentAgent:
             previous_reflection_drain_seconds=costs.get("previous_incident_reflection_drain"),
             incident_id=str(resolution["incident_id"]),
             artifacts_dir=str(receipt_dir),
+            playbook_coverage=resolution.get("playbook_coverage"),
             resolution_path=resolution.get("resolution_path"),
-            fast_path_programs=tuple(resolution.get("fast_path_programs") or []),
-            fast_path_relation_covered_findings=tuple(resolution.get("fast_path_relation_covered_findings") or []),
-            fast_path_skipped_reason=resolution.get("fast_path_skipped_reason"),
         )
 
     def learn(self, outcome: AgentOutcome) -> AgentOutcome:
@@ -349,6 +463,7 @@ class SdoPersistentAgent:
         started = self._clock.monotonic()
         reflection_observed_at = self._clock.now()
         error: str | None = None
+        receipt_dir = Path(str(outcome.artifacts_dir))
         try:
             drained = drain_pending_incident(
                 record,
@@ -356,19 +471,31 @@ class SdoPersistentAgent:
                 repository=settings.repository,
                 drained_by=f"fastloop-learn-{outcome.incident_id}",
                 clock=self._clock,
-                timeout_seconds=settings.reflection_wait_seconds,
+                evidence=self._queued_evidence(receipt_dir),
             )
             if drained.HasField("failure"):
                 error = f"strict receipt rejected: {drained.failure.message}"
         finally:
-            if settings.kubeconfig:
-                receipt_dir = Path(str(outcome.artifacts_dir))
-                exported = self._ops.export_runtime_artifacts(
-                    replace(settings.runtime_config, artifacts_dir=receipt_dir), receipt_dir
-                )
-                if exported.get("error"):
-                    raise RuntimeError(f"incomplete replay recording: {exported['error']}")
-                self._checkpoint(int(receipt_dir.name.split("_", 1)[0]), outcome.incident_id, receipt_dir)
+            queued = self._evidence_queue is not None and (
+                self._evidence_queue.job(snapshot_id_for(outcome.incident_id)) is not None
+            )
+            # A queued export owns the post-reflection evidence and its checkpoint.
+            if settings.kubeconfig and not queued:
+                index = int(receipt_dir.name.split("_", 1)[0])
+                try:
+                    if not self._has_post_reflection_export(receipt_dir, outcome.incident_id):
+                        exported = self._ops.export_runtime_artifacts(
+                            replace(settings.runtime_config, artifacts_dir=receipt_dir), receipt_dir
+                        )
+                        if exported.get("error"):
+                            raise RuntimeError(f"incomplete replay recording: {exported['error']}")
+                except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+                    self._unrecorded_checkpoint(index, exc)
+                else:
+                    self._checkpoint(index, outcome.incident_id, receipt_dir)
+            evidence = read_provider_waits(Path(str(outcome.artifacts_dir)), incident_id=outcome.incident_id)
+            if evidence.exhausted and evidence.exhausted_reason == "account_exhausted":
+                raise RateLimitedRun(evidence) from None
         # Receipt rejection happens after the controller has acknowledged and relaunched.
         # Other drain failures leave the pending gate intact and stop the stream.
         record.pending = None
@@ -376,6 +503,9 @@ class SdoPersistentAgent:
         receipt_dir = Path(str(outcome.artifacts_dir))
         receipt = self._receipt(receipt_dir)
         if not receipt:
+            from benchmarks.sregym.adapter import export_closure_failure_evidence
+
+            export_closure_failure_evidence(self._ops, settings.runtime_config.control_namespace, receipt_dir)
             raise RuntimeError(f"incident {outcome.incident_id!r} receipt missing after reflection drain")
         # Only a receipt that passed strict validation states how the incident closed.
         resolution = (
@@ -396,14 +526,9 @@ class SdoPersistentAgent:
         program_metrics = _program_metrics(
             outcome_document, tuple(str(reason) for reason in memory.get("match_reasons", []) or [])
         )
+        program_metrics["playbook_coverage"] = program_metrics["playbook_coverage"] or outcome.playbook_coverage
         program_metrics["resolution_path"] = program_metrics["resolution_path"] or outcome.resolution_path
-        program_metrics["fast_path_programs"] = program_metrics["fast_path_programs"] or outcome.fast_path_programs
-        program_metrics["fast_path_relation_covered_findings"] = (
-            program_metrics["fast_path_relation_covered_findings"] or outcome.fast_path_relation_covered_findings
-        )
-        program_metrics["fast_path_skipped_reason"] = (
-            program_metrics["fast_path_skipped_reason"] or outcome.fast_path_skipped_reason
-        )
+
         rollout_receipts = ledger.get("rollout_receipts")
         rollout_receipts = rollout_receipts if isinstance(rollout_receipts, list) else []
         rebuild_verified = next(
@@ -439,7 +564,11 @@ class SdoPersistentAgent:
             )
             error = "; ".join(item for item in (error, continuity_error) if item) or None
         return outcome.with_learning(
+<<<<<<< HEAD
             memory_host_activations=activations,
+=======
+            account_events=evidence.account_events,
+>>>>>>> origin/vic-lsh/dev/sdo-improve
             diagnosis=outcome.diagnosis or _summaries(receipt.get("confirmed_root_causes")),
             mitigation=outcome.mitigation or _summaries(receipt.get("repair_actions"), successful_only=True),
             reflection_seconds=self._clock.monotonic() - started,
@@ -452,12 +581,14 @@ class SdoPersistentAgent:
             reflection_tokens=TokenCounts.from_usage(receipt.get("reflection_usage")),
             warm_path=bool(memory["warm_path"]) if "warm_path" in memory else None,
             reflection_skipped_reason=skipped,
+            reflection_no_repair_count=_receipt_no_repair_count(receipt),
             closure_phase_seconds=closure_phases,
             sdo_resolution=resolution if isinstance(resolution, str) else None,
             **program_metrics,
             error=error,
         )
 
+<<<<<<< HEAD
     def _controller_identity(self) -> dict[str, Any]:
         from benchmarks.sregym.adapter import kubectl
 
@@ -501,6 +632,49 @@ class SdoPersistentAgent:
             namespace=self._settings.runtime_config.controller_namespace,
             kubeconfig=Path(str(self._settings.kubeconfig)),
         ).stdout
+=======
+    def _queued_evidence(self, receipt_dir: Path) -> QueuedEvidenceExport | None:
+        queue = self._evidence_queue
+        if queue is None:
+            return None
+        index = int(receipt_dir.name.split("_", 1)[0])
+        from benchmarks.sregym.adapter import snapshot_runtime_artifacts
+
+        def before_submit(job: ExportJob) -> ExportJob:
+            if not self._settings.checkpoint_enabled or not self._settings.kubeconfig:
+                return job
+            try:
+                return stash_checkpoint_inputs(queue.directory, job, index, self._worker_configmaps())
+            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+                self._unrecorded_checkpoint(index, exc)
+                return job
+
+        return QueuedEvidenceExport(queue, snapshot_runtime_artifacts, before_submit=before_submit)
+
+    def _has_post_reflection_export(self, receipt_dir: Path, incident_id: str) -> bool:
+        """The native drain owns the completed post-reflection export.
+
+        A stage-end directory alone is insufficient: only drain metadata for
+        this exact incident and directory can remove the duplicate export.
+        Failed or unavailable evidence retains the last-chance export path.
+        """
+        try:
+            receipt = self._receipt(receipt_dir)
+            if receipt.get("incident_id") != incident_id:
+                return False
+            drain = receipt.get("reflection_drain")
+            export = drain.get("runtime_artifacts") if isinstance(drain, dict) else None
+            if not isinstance(export, dict) or export.get("error"):
+                return False
+            directory = export.get("directory")
+            return (
+                isinstance(directory, str)
+                and Path(directory).resolve() == (receipt_dir / "sdo_runtime").resolve()
+                and Path(directory).is_dir()
+            )
+        except (OSError, ValueError, TypeError):
+            return False
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 
     @staticmethod
     def _receipt(receipt_dir: Path) -> dict[str, Any]:
@@ -514,22 +688,110 @@ class SdoPersistentAgent:
             return document if isinstance(document, dict) else {}
         return {}
 
+    def prepare_recovery(self, outcome: AgentOutcome | None) -> PostClosureWait | None:
+        """Leave incident intake paused throughout harness recovery and its baseline check.
+
+        Recovery runs once the row is over, whichever way SDO's closure ended: a closure still
+        pending here is waited for until the reflection deadline, never aborted. The path that let
+        recovery run is ``last_recovery_trigger``.
+        """
+
+        settings = self._settings
+        state = PersistentState.load(settings.state_path)
+        record = state.controllers.get(settings.namespace)
+        if record is None:
+            raise RuntimeError("eval: recovery requires a recorded controller")
+        trigger: RecoveryTrigger = "natural_closure" if outcome is not None and outcome.incident_id else "no_incident"
+        if record.pending is not None:
+            trigger = self._settle_pending_closure(record)
+            state.save(settings.state_path)
+        self.last_recovery_trigger = trigger
+        try:
+            wait = pause_for_recovery(
+                self._ops,
+                record.control_namespace,
+                incident_id=outcome.incident_id if outcome is not None and trigger != "reflection_deadline" else None,
+                clock=self._clock,
+                closure_open=trigger == "reflection_deadline",
+            )
+        except FollowupClosureTimeout as exc:
+            raise RecoveryWaitTimeout(_post_closure_wait(exc.wait), str(exc)) from exc
+        return _post_closure_wait(wait) if wait is not None else None
+
+    def _settle_pending_closure(self, record: ControllerRecord) -> RecoveryTrigger:
+        """Wait out a closure learning left pending, until the incident's one reflection deadline.
+
+        A terminal failure becomes its rejected receipt.
+        """
+
+        pending = record.pending
+        assert pending is not None
+        started = self._clock.monotonic()
+        try:
+            drain_pending_incident(
+                record,
+                ops=self._ops,
+                repository=self._settings.repository,
+                drained_by=f"fastloop-recovery-{pending.incident_id}",
+                clock=self._clock,
+            )
+        except ClosureFailedError as exc:
+            record_failed_closure(pending, str(exc), self._clock.monotonic() - started)
+            record.pending = None
+            return "closure_failed"
+        except ReflectionDeadlineError as exc:
+            # SDO was observed still working past the deadline: the closure stays pending for SDO to finish.
+            # Any other error (an unreadable state, a receipt failure) propagates, so recovery never
+            # skips the closed-incident fence on a read error.
+            logger.warning("recovering incident %s past its reflection deadline: %s", pending.incident_id, exc)
+            return "reflection_deadline"
+        record.pending = None
+        return "natural_closure"
+
     def close(self) -> None:
         """The controller keeps running for the next loop; ``fastloop down`` stops it."""
 
     def _checkpoint(self, index: int, incident_id: str, receipt_dir: Path) -> None:
         if not self._settings.checkpoint_enabled or not self._settings.kubeconfig:
             return
+        store = CheckpointStore(self._settings.results_dir)
+        try:
+            capture_checkpoints(store, index, incident_id, receipt_dir, self._worker_configmaps())
+            store.clear_unrecorded(index)
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+            self._unrecorded_checkpoint(index, exc)
+
+    def _worker_configmaps(self) -> list[dict[str, Any]]:
         from benchmarks.sregym.adapter import kubectl
 
-        control = self._settings.runtime_config.controller_namespace
+        assert self._settings.kubeconfig is not None
         response = kubectl(
             ["get", "configmaps", "-o", "json"],
-            namespace=control,
+            namespace=self._settings.runtime_config.controller_namespace,
             kubeconfig=Path(self._settings.kubeconfig),
         )
         document = json.loads(response.stdout)
+        if not isinstance(document, dict):
+            raise ValueError("worker ConfigMap listing must be a JSON object")
         items = document.get("items")
         if not isinstance(items, list):
             raise RuntimeError("worker ConfigMap listing omitted items")
-        capture_checkpoints(CheckpointStore(self._settings.results_dir), index, incident_id, receipt_dir, items)
+        return items
+
+    def _unrecorded_checkpoint(self, index: int, error: Exception) -> None:
+        reason = f"{type(error).__name__}: {error}"
+        logger.warning("Optional replay checkpoint %03d not recorded: %s", index, reason)
+        try:
+            CheckpointStore(self._settings.results_dir).mark_unrecorded(index, reason)
+        except OSError:
+            logger.warning("Could not persist unrecorded checkpoint %03d reason", index, exc_info=True)
+
+
+def _post_closure_wait(wait: FollowupClosureWait) -> PostClosureWait:
+    return PostClosureWait(
+        graded_incident_id=wait.graded_incident_id,
+        followup_incident_ids=list(wait.followup_incident_ids),
+        waited_seconds=round(wait.waited_seconds, 3),
+        bound_seconds=wait.bound_seconds,
+        closed=wait.closed,
+    )

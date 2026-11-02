@@ -7,6 +7,45 @@ from sdo.contracts import DriftEvent, IncidentRequest, ObjectRef
 from tests.unit.benchmarks.sregym.fastloop import script_harness as scripts
 
 
+def test_scripted_source_repair_removes_injected_probe_when_source_has_none(monkeypatch) -> None:
+    import json
+
+    request = IncidentRequest(incident_id="repair", namespace="app")
+    commands = []
+    monkeypatch.setattr(
+        scripted_worker,
+        "_tool",
+        lambda *_args: {
+            "source": {
+                "spec": {
+                    "template": {
+                        "spec": {
+                            "containers": [
+                                {
+                                    "name": "frontend",
+                                    "image": "app:accepted",
+                                    "livenessProbe": {"tcpSocket": {"port": 80}},
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+    )
+    monkeypatch.setattr(scripted_worker, "_command", lambda argv, **_kwargs: commands.append(argv))
+
+    scripted_worker._patch_from_source(request, {"kind": "Deployment", "name": "frontend"})
+
+    patch = json.loads(commands[0][-1])["spec"]["template"]["spec"]["containers"][0]
+    # A strategic merge needs explicit null to delete an injected optional field.
+    assert "readinessProbe" in patch
+    assert patch["readinessProbe"] is None
+    assert patch["startupProbe"] is None
+    assert patch["livenessProbe"] == {"tcpSocket": {"port": 80}}
+    assert patch["image"] == "app:accepted"
+
+
 def test_scripted_drift_requires_source_mismatch_and_observed_listening_ports(monkeypatch, tmp_path: Path) -> None:
     from contextlib import nullcontext
 
@@ -244,3 +283,27 @@ def test_scripted_policy_drift_requires_source_absence_and_total_ingress_isolati
     if not near_miss:
         assert response.repair_actions[0].kind == "kubectl-delete"
         assert response.repair_actions[0].target == "NetworkPolicy/deny"
+
+
+def test_scripted_source_restore_allows_slow_init_clone(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 170s init clone can start 41s after the repair, within a 600s rollout."""
+    request = IncidentRequest(namespace="social-network")
+    monkeypatch.setattr(
+        scripted_worker,
+        "_tool",
+        lambda *args: {
+            "source": {"spec": {"template": {"spec": {"containers": [{"name": "api", "image": "api@sha256:abc"}]}}}}
+        },
+    )
+
+    def command(argv: list[str], *, timeout: int = 180) -> str:
+        if "status" in argv:
+            bound = int(
+                next(arg.removeprefix("--timeout=").removesuffix("s") for arg in argv if arg.startswith("--timeout="))
+            )
+            if bound < 211 or timeout <= bound:
+                raise RuntimeError("rollout timed out before the recorded init clone finished")
+        return ""
+
+    monkeypatch.setattr(scripted_worker, "_command", command)
+    scripted_worker._patch_from_source(request, {"kind": "Deployment", "name": "api"})

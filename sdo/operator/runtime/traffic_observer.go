@@ -2,7 +2,15 @@ package runtime
 
 import (
 	"context"
+<<<<<<< HEAD
 	kclock "k8s.io/utils/clock"
+=======
+	"encoding/json"
+	"fmt"
+	"io"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"net/http"
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	"sort"
 	"sync"
 	"time"
@@ -291,6 +299,8 @@ type TrafficSnapshotProvider struct {
 	Base         SnapshotProvider
 	Observer     *TrafficObserver
 	Reachability *ServiceReachabilityObserver
+	// Reference is this cluster's reachability baseline; nil means no record.
+	Reference *ReachabilityReference
 }
 
 func (p TrafficSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
@@ -305,11 +315,29 @@ func (p TrafficSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionCon
 	var reachability *servicehealth.ReachabilityWindow
 	if p.Reachability != nil {
 		window, _ := p.Reachability.Window()
+		p.Reference.bind(&window)
 		reachability = &window
 	}
+<<<<<<< HEAD
 	carrier := inputs.New(base)
 	if p.Observer != nil {
 		carrier = carrier.WithTraffic(trafficWindows(windows))
+=======
+	return trafficContext{ScopedObservationSource: scopedSource(base), DetectionContext: base, windows: windows, reachability: reachability}, nil
+}
+
+type trafficContext struct {
+	sdk.ScopedObservationSource
+	sdk.DetectionContext
+	windows      map[string]traffic.Window
+	reachability *servicehealth.ReachabilityWindow
+}
+
+// ServiceReachability implements servicehealth.ReachabilitySource.
+func (c trafficContext) ServiceReachability() (servicehealth.ReachabilityWindow, bool) {
+	if c.reachability == nil {
+		return servicehealth.ReachabilityWindow{}, false
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	}
 	if reachability != nil {
 		carrier = carrier.WithReachability(reachabilityWindow{reachability})
@@ -327,4 +355,25 @@ type reachabilityWindow struct {
 
 func (w reachabilityWindow) ServiceReachability() (servicehealth.ReachabilityWindow, bool) {
 	return *w.window, true
+}
+
+func scopedSource(view sdk.DetectionContext) sdk.ScopedObservationSource {
+	if source, ok := view.(sdk.ScopedObservationSource); ok {
+		return source
+	}
+	return sdk.ScopedSnapshot{}
+}
+
+func (v trafficContext) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error) {
+	if source, ok := v.DetectionContext.(sdk.ObjectCaptureSource); ok {
+		return source.CaptureObjects(refs)
+	}
+	return sdk.TypedObjects(v.DetectionContext), nil
+}
+
+func (v trafficContext) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	if source, ok := v.DetectionContext.(sdk.ObjectReader); ok {
+		return source.Object(ref)
+	}
+	return sdk.FindObject(sdk.TypedObjects(v.DetectionContext), ref)
 }

@@ -10,6 +10,7 @@
   ],
   "kubernetes_job": {
     "image": "${RESPONDER_IMAGE}",
+<<<<<<< HEAD:benchmarks/sregym/fastloop/agent_registrations/reflector.json
     "command": [
       "python3",
       "-m",
@@ -20,5 +21,8 @@
       "-m",
       "sdo.agents.responder.reflection_worker"
     ]
+=======
+    "command": ["env", "SDO_SCRIPTED_MEMORY_CHANGE=1", "python3", "-m", "benchmarks.sregym.adapter.scripted_worker", "reflection"]
+>>>>>>> origin/vic-lsh/dev/sdo-improve:benchmarks/sregym/adapter/scripted_registrations/reflector.json
   }
 }

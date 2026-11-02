@@ -1,8 +1,11 @@
 import datetime
 
 from buf.validate import validate_pb2 as _validate_pb2
+from sdodev.contracts.v1alpha1 import controller_config_pb2 as _controller_config_pb2
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
 from sdodev.contracts.v1alpha1 import messages_pb2 as _messages_pb2
+from sdodev.contracts.v1alpha1 import common_pb2 as _common_pb2
+from sdodev.contracts.v1alpha1 import memory_diagnostic_pb2 as _memory_diagnostic_pb2
 from sdodev.contracts.v1alpha1 import program_pb2 as _program_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf import descriptor as _descriptor
@@ -13,7 +16,12 @@ from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 DESCRIPTOR: _descriptor.FileDescriptor
 
 class OutcomeRecord(_message.Message):
+<<<<<<< HEAD
     __slots__ = ("schema_version", "incident_id", "source_commit", "deployed_commit", "detector_history", "findings", "surfaced_playbooks", "inspected_playbooks", "confirmed_playbooks", "rejected_playbooks", "applied_playbooks", "confirmed_root_causes", "final_health_detector_state", "classification", "repair_commit", "repair_actions", "memory_commit", "responder_backend", "responder_model", "usage", "timestamps", "diagnosis_verification", "program_tool_calls", "program_runs", "plan_applications", "program_failure_signals", "response_loops_used", "response_loop_exhausted", "drift_events", "resolution_path", "fast_path_programs", "fast_path_skipped_reason", "fast_path_relation_covered_findings", "prior_stages")
+=======
+    __slots__ = ("code_path", "schema_version", "incident_id", "source_commit", "deployed_commit", "detector_history", "findings", "surfaced_playbooks", "inspected_playbooks", "confirmed_playbooks", "rejected_playbooks", "applied_playbooks", "confirmed_root_causes", "final_health_detector_state", "classification", "repair_commit", "repair_actions", "memory_commit", "responder_backend", "responder_model", "usage", "timestamps", "program_tool_calls", "program_runs", "plan_applications", "program_failure_signals", "response_loops_used", "response_loop_exhausted", "drift_events", "resolution_path", "reflection_eligibility", "playbook_coverage", "prior_stages", "reflection_skip_reason", "sdk_gaps", "undetected_causes", "reflection_rejections", "source_check_notes", "drift_reprompt", "disabled_setup_detectors", "state_persistence_failure")
+    CODE_PATH_FIELD_NUMBER: _ClassVar[int]
+>>>>>>> origin/vic-lsh/dev/sdo-improve
     SCHEMA_VERSION_FIELD_NUMBER: _ClassVar[int]
     INCIDENT_ID_FIELD_NUMBER: _ClassVar[int]
     SOURCE_COMMIT_FIELD_NUMBER: _ClassVar[int]
@@ -35,7 +43,6 @@ class OutcomeRecord(_message.Message):
     RESPONDER_MODEL_FIELD_NUMBER: _ClassVar[int]
     USAGE_FIELD_NUMBER: _ClassVar[int]
     TIMESTAMPS_FIELD_NUMBER: _ClassVar[int]
-    DIAGNOSIS_VERIFICATION_FIELD_NUMBER: _ClassVar[int]
     PROGRAM_TOOL_CALLS_FIELD_NUMBER: _ClassVar[int]
     PROGRAM_RUNS_FIELD_NUMBER: _ClassVar[int]
     PLAN_APPLICATIONS_FIELD_NUMBER: _ClassVar[int]
@@ -44,10 +51,25 @@ class OutcomeRecord(_message.Message):
     RESPONSE_LOOP_EXHAUSTED_FIELD_NUMBER: _ClassVar[int]
     DRIFT_EVENTS_FIELD_NUMBER: _ClassVar[int]
     RESOLUTION_PATH_FIELD_NUMBER: _ClassVar[int]
+<<<<<<< HEAD
     FAST_PATH_PROGRAMS_FIELD_NUMBER: _ClassVar[int]
     FAST_PATH_SKIPPED_REASON_FIELD_NUMBER: _ClassVar[int]
     FAST_PATH_RELATION_COVERED_FINDINGS_FIELD_NUMBER: _ClassVar[int]
     PRIOR_STAGES_FIELD_NUMBER: _ClassVar[int]
+=======
+    REFLECTION_ELIGIBILITY_FIELD_NUMBER: _ClassVar[int]
+    PLAYBOOK_COVERAGE_FIELD_NUMBER: _ClassVar[int]
+    PRIOR_STAGES_FIELD_NUMBER: _ClassVar[int]
+    REFLECTION_SKIP_REASON_FIELD_NUMBER: _ClassVar[int]
+    SDK_GAPS_FIELD_NUMBER: _ClassVar[int]
+    UNDETECTED_CAUSES_FIELD_NUMBER: _ClassVar[int]
+    REFLECTION_REJECTIONS_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_CHECK_NOTES_FIELD_NUMBER: _ClassVar[int]
+    DRIFT_REPROMPT_FIELD_NUMBER: _ClassVar[int]
+    DISABLED_SETUP_DETECTORS_FIELD_NUMBER: _ClassVar[int]
+    STATE_PERSISTENCE_FAILURE_FIELD_NUMBER: _ClassVar[int]
+    code_path: _controller_config_pb2.CodePathConfig
+>>>>>>> origin/vic-lsh/dev/sdo-improve
     schema_version: int
     incident_id: str
     source_commit: str
@@ -69,7 +91,6 @@ class OutcomeRecord(_message.Message):
     responder_model: str
     usage: _messages_pb2.UsageMetrics
     timestamps: OutcomeTimestamps
-    diagnosis_verification: _containers.RepeatedCompositeFieldContainer[DiagnosisVerification]
     program_tool_calls: _containers.RepeatedCompositeFieldContainer[_program_pb2.ProgramToolCall]
     program_runs: _containers.RepeatedCompositeFieldContainer[_program_pb2.ProgramRun]
     plan_applications: _containers.RepeatedCompositeFieldContainer[_program_pb2.PlanApplication]
@@ -78,11 +99,26 @@ class OutcomeRecord(_message.Message):
     response_loop_exhausted: bool
     drift_events: _containers.RepeatedCompositeFieldContainer[_messages_pb2.DriftEvent]
     resolution_path: str
+<<<<<<< HEAD
     fast_path_programs: _containers.RepeatedScalarFieldContainer[str]
     fast_path_skipped_reason: str
     fast_path_relation_covered_findings: _containers.RepeatedCompositeFieldContainer[_program_pb2.RelationCoveredFinding]
     prior_stages: _containers.RepeatedCompositeFieldContainer[_messages_pb2.StageReport]
     def __init__(self, schema_version: _Optional[int] = ..., incident_id: _Optional[str] = ..., source_commit: _Optional[str] = ..., deployed_commit: _Optional[str] = ..., detector_history: _Optional[_Iterable[_Union[_messages_pb2.DetectorEvaluation, _Mapping]]] = ..., findings: _Optional[_Iterable[_Union[_messages_pb2.Finding, _Mapping]]] = ..., surfaced_playbooks: _Optional[_Iterable[str]] = ..., inspected_playbooks: _Optional[_Iterable[str]] = ..., confirmed_playbooks: _Optional[_Iterable[str]] = ..., rejected_playbooks: _Optional[_Iterable[str]] = ..., applied_playbooks: _Optional[_Iterable[str]] = ..., confirmed_root_causes: _Optional[_Iterable[_Union[_messages_pb2.ConfirmedRootCause, _Mapping]]] = ..., final_health_detector_state: _Optional[_Iterable[_Union[_messages_pb2.DetectorEvaluation, _Mapping]]] = ..., classification: _Optional[str] = ..., repair_commit: _Optional[str] = ..., repair_actions: _Optional[_Iterable[_Union[_messages_pb2.RepairActionReceipt, _Mapping]]] = ..., memory_commit: _Optional[str] = ..., responder_backend: _Optional[str] = ..., responder_model: _Optional[str] = ..., usage: _Optional[_Union[_messages_pb2.UsageMetrics, _Mapping]] = ..., timestamps: _Optional[_Union[OutcomeTimestamps, _Mapping]] = ..., diagnosis_verification: _Optional[_Iterable[_Union[DiagnosisVerification, _Mapping]]] = ..., program_tool_calls: _Optional[_Iterable[_Union[_program_pb2.ProgramToolCall, _Mapping]]] = ..., program_runs: _Optional[_Iterable[_Union[_program_pb2.ProgramRun, _Mapping]]] = ..., plan_applications: _Optional[_Iterable[_Union[_program_pb2.PlanApplication, _Mapping]]] = ..., program_failure_signals: _Optional[_Iterable[str]] = ..., response_loops_used: _Optional[int] = ..., response_loop_exhausted: _Optional[bool] = ..., drift_events: _Optional[_Iterable[_Union[_messages_pb2.DriftEvent, _Mapping]]] = ..., resolution_path: _Optional[str] = ..., fast_path_programs: _Optional[_Iterable[str]] = ..., fast_path_skipped_reason: _Optional[str] = ..., fast_path_relation_covered_findings: _Optional[_Iterable[_Union[_program_pb2.RelationCoveredFinding, _Mapping]]] = ..., prior_stages: _Optional[_Iterable[_Union[_messages_pb2.StageReport, _Mapping]]] = ...) -> None: ...
+=======
+    reflection_eligibility: _program_pb2.ReflectionEligibility
+    playbook_coverage: _program_pb2.PlaybookCoverage
+    prior_stages: _containers.RepeatedCompositeFieldContainer[_messages_pb2.StageReport]
+    reflection_skip_reason: str
+    sdk_gaps: _containers.RepeatedCompositeFieldContainer[SdkGap]
+    undetected_causes: _containers.RepeatedCompositeFieldContainer[UndetectedCause]
+    reflection_rejections: _containers.RepeatedCompositeFieldContainer[_memory_diagnostic_pb2.ProposalRejection]
+    source_check_notes: _containers.RepeatedScalarFieldContainer[str]
+    drift_reprompt: _messages_pb2.DriftReprompt
+    disabled_setup_detectors: _containers.RepeatedCompositeFieldContainer[_messages_pb2.DisabledSetupDetector]
+    state_persistence_failure: _messages_pb2.StatePersistenceFailure
+    def __init__(self, code_path: _Optional[_Union[_controller_config_pb2.CodePathConfig, _Mapping]] = ..., schema_version: _Optional[int] = ..., incident_id: _Optional[str] = ..., source_commit: _Optional[str] = ..., deployed_commit: _Optional[str] = ..., detector_history: _Optional[_Iterable[_Union[_messages_pb2.DetectorEvaluation, _Mapping]]] = ..., findings: _Optional[_Iterable[_Union[_messages_pb2.Finding, _Mapping]]] = ..., surfaced_playbooks: _Optional[_Iterable[str]] = ..., inspected_playbooks: _Optional[_Iterable[str]] = ..., confirmed_playbooks: _Optional[_Iterable[str]] = ..., rejected_playbooks: _Optional[_Iterable[str]] = ..., applied_playbooks: _Optional[_Iterable[str]] = ..., confirmed_root_causes: _Optional[_Iterable[_Union[_messages_pb2.ConfirmedRootCause, _Mapping]]] = ..., final_health_detector_state: _Optional[_Iterable[_Union[_messages_pb2.DetectorEvaluation, _Mapping]]] = ..., classification: _Optional[str] = ..., repair_commit: _Optional[str] = ..., repair_actions: _Optional[_Iterable[_Union[_messages_pb2.RepairActionReceipt, _Mapping]]] = ..., memory_commit: _Optional[str] = ..., responder_backend: _Optional[str] = ..., responder_model: _Optional[str] = ..., usage: _Optional[_Union[_messages_pb2.UsageMetrics, _Mapping]] = ..., timestamps: _Optional[_Union[OutcomeTimestamps, _Mapping]] = ..., program_tool_calls: _Optional[_Iterable[_Union[_program_pb2.ProgramToolCall, _Mapping]]] = ..., program_runs: _Optional[_Iterable[_Union[_program_pb2.ProgramRun, _Mapping]]] = ..., plan_applications: _Optional[_Iterable[_Union[_program_pb2.PlanApplication, _Mapping]]] = ..., program_failure_signals: _Optional[_Iterable[str]] = ..., response_loops_used: _Optional[int] = ..., response_loop_exhausted: _Optional[bool] = ..., drift_events: _Optional[_Iterable[_Union[_messages_pb2.DriftEvent, _Mapping]]] = ..., resolution_path: _Optional[str] = ..., reflection_eligibility: _Optional[_Union[_program_pb2.ReflectionEligibility, _Mapping]] = ..., playbook_coverage: _Optional[_Union[_program_pb2.PlaybookCoverage, _Mapping]] = ..., prior_stages: _Optional[_Iterable[_Union[_messages_pb2.StageReport, _Mapping]]] = ..., reflection_skip_reason: _Optional[str] = ..., sdk_gaps: _Optional[_Iterable[_Union[SdkGap, _Mapping]]] = ..., undetected_causes: _Optional[_Iterable[_Union[UndetectedCause, _Mapping]]] = ..., reflection_rejections: _Optional[_Iterable[_Union[_memory_diagnostic_pb2.ProposalRejection, _Mapping]]] = ..., source_check_notes: _Optional[_Iterable[str]] = ..., drift_reprompt: _Optional[_Union[_messages_pb2.DriftReprompt, _Mapping]] = ..., disabled_setup_detectors: _Optional[_Iterable[_Union[_messages_pb2.DisabledSetupDetector, _Mapping]]] = ..., state_persistence_failure: _Optional[_Union[_messages_pb2.StatePersistenceFailure, _Mapping]] = ...) -> None: ...
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 
 class OutcomeTimestamps(_message.Message):
     __slots__ = ("detected_at", "dispatched_at", "mitigated_at", "verified_at", "completed_at")
@@ -98,54 +134,32 @@ class OutcomeTimestamps(_message.Message):
     completed_at: _timestamp_pb2.Timestamp
     def __init__(self, detected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., dispatched_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., mitigated_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., verified_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
-class DiagnosisVerification(_message.Message):
-    __slots__ = ("summary", "verdict", "evidence", "detectors", "repair")
-    SUMMARY_FIELD_NUMBER: _ClassVar[int]
-    VERDICT_FIELD_NUMBER: _ClassVar[int]
-    EVIDENCE_FIELD_NUMBER: _ClassVar[int]
-    DETECTORS_FIELD_NUMBER: _ClassVar[int]
-    REPAIR_FIELD_NUMBER: _ClassVar[int]
-    summary: str
-    verdict: str
-    evidence: _containers.RepeatedCompositeFieldContainer[OutcomeEvidenceCheck]
-    detectors: _containers.RepeatedCompositeFieldContainer[OutcomeDetectorFlip]
-    repair: OutcomeRepairAttribution
-    def __init__(self, summary: _Optional[str] = ..., verdict: _Optional[str] = ..., evidence: _Optional[_Iterable[_Union[OutcomeEvidenceCheck, _Mapping]]] = ..., detectors: _Optional[_Iterable[_Union[OutcomeDetectorFlip, _Mapping]]] = ..., repair: _Optional[_Union[OutcomeRepairAttribution, _Mapping]] = ...) -> None: ...
-
-class OutcomeEvidenceCheck(_message.Message):
-    __slots__ = ("kind", "source", "verified", "reason")
-    KIND_FIELD_NUMBER: _ClassVar[int]
-    SOURCE_FIELD_NUMBER: _ClassVar[int]
-    VERIFIED_FIELD_NUMBER: _ClassVar[int]
+class SdkGap(_message.Message):
+    __slots__ = ("fault_class", "primitive", "reason", "scratch_script", "resources")
+    FAULT_CLASS_FIELD_NUMBER: _ClassVar[int]
+    PRIMITIVE_FIELD_NUMBER: _ClassVar[int]
     REASON_FIELD_NUMBER: _ClassVar[int]
-    kind: str
-    source: str
-    verified: bool
+    SCRATCH_SCRIPT_FIELD_NUMBER: _ClassVar[int]
+    RESOURCES_FIELD_NUMBER: _ClassVar[int]
+    fault_class: str
+    primitive: str
     reason: str
-    def __init__(self, kind: _Optional[str] = ..., source: _Optional[str] = ..., verified: _Optional[bool] = ..., reason: _Optional[str] = ...) -> None: ...
+    scratch_script: str
+    resources: _containers.RepeatedCompositeFieldContainer[_common_pb2.ObjectRef]
+    def __init__(self, fault_class: _Optional[str] = ..., primitive: _Optional[str] = ..., reason: _Optional[str] = ..., scratch_script: _Optional[str] = ..., resources: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ...) -> None: ...
 
-class OutcomeDetectorFlip(_message.Message):
-    __slots__ = ("detector_id", "fired_at_dispatch", "cleared_after_fix", "flipped")
-    DETECTOR_ID_FIELD_NUMBER: _ClassVar[int]
-    FIRED_AT_DISPATCH_FIELD_NUMBER: _ClassVar[int]
-    CLEARED_AFTER_FIX_FIELD_NUMBER: _ClassVar[int]
-    FLIPPED_FIELD_NUMBER: _ClassVar[int]
-    detector_id: str
-    fired_at_dispatch: bool
-    cleared_after_fix: bool
-    flipped: bool
-    def __init__(self, detector_id: _Optional[str] = ..., fired_at_dispatch: _Optional[bool] = ..., cleared_after_fix: _Optional[bool] = ..., flipped: _Optional[bool] = ...) -> None: ...
-
-class OutcomeRepairAttribution(_message.Message):
-    __slots__ = ("attributed", "actions", "repaired_resources", "externally_reverted", "reason")
-    ATTRIBUTED_FIELD_NUMBER: _ClassVar[int]
-    ACTIONS_FIELD_NUMBER: _ClassVar[int]
-    REPAIRED_RESOURCES_FIELD_NUMBER: _ClassVar[int]
-    EXTERNALLY_REVERTED_FIELD_NUMBER: _ClassVar[int]
-    REASON_FIELD_NUMBER: _ClassVar[int]
-    attributed: bool
-    actions: _containers.RepeatedScalarFieldContainer[str]
-    repaired_resources: _containers.RepeatedScalarFieldContainer[str]
-    externally_reverted: _containers.RepeatedScalarFieldContainer[str]
-    reason: str
-    def __init__(self, attributed: _Optional[bool] = ..., actions: _Optional[_Iterable[str]] = ..., repaired_resources: _Optional[_Iterable[str]] = ..., externally_reverted: _Optional[_Iterable[str]] = ..., reason: _Optional[str] = ...) -> None: ...
+class UndetectedCause(_message.Message):
+    __slots__ = ("resource", "repair_action_id", "open_digest", "fixed_digest", "open_observed_at", "fixed_observed_at")
+    RESOURCE_FIELD_NUMBER: _ClassVar[int]
+    REPAIR_ACTION_ID_FIELD_NUMBER: _ClassVar[int]
+    OPEN_DIGEST_FIELD_NUMBER: _ClassVar[int]
+    FIXED_DIGEST_FIELD_NUMBER: _ClassVar[int]
+    OPEN_OBSERVED_AT_FIELD_NUMBER: _ClassVar[int]
+    FIXED_OBSERVED_AT_FIELD_NUMBER: _ClassVar[int]
+    resource: _common_pb2.ObjectRef
+    repair_action_id: str
+    open_digest: str
+    fixed_digest: str
+    open_observed_at: _timestamp_pb2.Timestamp
+    fixed_observed_at: _timestamp_pb2.Timestamp
+    def __init__(self, resource: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., repair_action_id: _Optional[str] = ..., open_digest: _Optional[str] = ..., fixed_digest: _Optional[str] = ..., open_observed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., fixed_observed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...

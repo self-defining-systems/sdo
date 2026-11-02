@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-import json
 import os
 import sys
-from dataclasses import dataclass
-from datetime import timezone
-from pathlib import PurePosixPath
+import time
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from google.protobuf import json_format
 
+<<<<<<< HEAD
 from libs.agent_cli.structured import AGENT_PROVIDERS, StructuredTurnError, run_structured_turn, turn_usage
 from sdo.agents.metrics_context import metrics_context
 from sdo.agents.provider import resolve_agent
@@ -17,24 +16,65 @@ from sdo.agents.responder.cause_admissibility import CauseAdmissibilityPolicy, a
 from sdo.agents.responder.reflection import INCIDENT_REASONING_EFFORT
 from sdo.agents.responder.result_output import EvidenceReferenceError, parse_incident_result
 from sdo.agents.responder.tools_cli import CLI_EXAMPLES
+=======
+from libs.agent_cli.structured import AGENT_PROVIDERS, StructuredTurnError, StructuredTurnInterrupted, turn_usage
+from libs.agent_cli.usage_checkpoint import UsageCheckpoint
+from sdo.agents.code_paths import agent_guidance
+from sdo.agents.prompt_templates import RenderedPrompt, named_prompt, render_prompt
+from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
+from sdo.agents.provider import MODEL_ENV, agent_effort, resolve_agent
+from sdo.agents.replay import selected_skills_root
+from sdo.agents.responder import recorded_actions
+from sdo.agents.responder.continuation import continuation_prompt
+from sdo.agents.responder.credentials import SKILLS_ROOT
+from sdo.agents.responder.incident_context import prepared_incident_data
+from sdo.agents.responder.result_output import parse_incident_result
+from sdo.agents.responder.session_recovery import SessionRecoveryError, open_recovery
+from sdo.agents.responder.session_turn import (
+    WrongBranchError,
+    branch_correction,
+    branch_instruction,
+    session_turn_options,
+    unwrap_branch,
+)
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 from sdo.contracts import (
-    ROOT_CAUSE_EVIDENCE_KINDS,
-    DetectorEvaluation,
-    Finding,
     IncidentRequest,
     IncidentResult,
-    MemoryDetector,
-    StateFieldChange,
-    timestamp_datetime,
+    model_output_schema,
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from agentshim import CommandExecutor
-    from google.protobuf.timestamp_pb2 import Timestamp
 
 
 class ResponderExecutionError(RuntimeError):
     pass
+
+
+#: Time a running turn keeps after SDO verifies recovery, so an in-flight
+#: command or answer can finish before the session is asked for its result.
+VERIFIED_SETTLE_SECONDS = 5.0
+
+
+def verified_recovery() -> Callable[[], bool] | None:
+    """True once the controller's verification marker has stood for the settle time."""
+    directory = os.environ.get("SDO_API_HISTORY_DIR")
+    if not directory:
+        return None
+    marker = Path(directory) / "incident-verified.json"
+    seen: list[float] = []
+
+    def settled() -> bool:
+        if not seen:
+            if not marker.exists():
+                return False
+            seen.append(time.monotonic())
+        return time.monotonic() - seen[0] >= VERIFIED_SETTLE_SECONDS
+
+    return settled
 
 
 def main() -> int:
@@ -60,229 +100,156 @@ def execute_incident(
     provider: str | None = None,
     executor: CommandExecutor | None = None,
 ) -> IncidentResult:
-    if provider is None:
+    with prepared_incident_data(request) as data:
+        return _execute_incident(request, incident_data=data, model=model, provider=provider, executor=executor)
+
+
+def _execute_incident(
+    request: IncidentRequest,
+    *,
+    incident_data: str,
+    model: str | None = None,
+    provider: str | None = None,
+    executor: CommandExecutor | None = None,
+) -> IncidentResult:
+    try:
+        if provider is None:
+            resolved = resolve_agent("responder", "responder")
+            selected_provider, model, effort = resolved.provider, model or resolved.model, resolved.effort
+        else:
+            selected_provider = provider.strip().lower()
+            if selected_provider not in AGENT_PROVIDERS:
+                raise ResponderExecutionError(f"unsupported agent provider {selected_provider!r}")
+            model, effort = model or os.getenv(MODEL_ENV["responder"]) or None, agent_effort()
+    except ValueError as exc:
+        raise ResponderExecutionError(str(exc)) from exc
+    prompt = _responder_prompt(request, incident_data=incident_data)
+    try:
+        recovery = open_recovery(request.incident_id, selected_provider)
+        resume_session_id = recovery.resume_session_id() if recovery is not None else None
+    except SessionRecoveryError as exc:
+        raise ResponderExecutionError(str(exc)) from exc
+    if resume_session_id is None:
+        recorded_actions.reset()
+    if recovery is not None:
+        prompt += recovery.recovered_prompt()
+    continuation = os.environ.get("SDO_RESPONSE_CONTINUATION", "")
+    if continuation:
+        if recovery is None or resume_session_id is None:
+            raise ResponderExecutionError("controller continuation requires the existing provider session")
         try:
-            resolved = resolve_agent("responder", "SDO_RESPONDER_MODEL")
+            prompt = continuation_prompt(continuation)
         except ValueError as exc:
-            raise ResponderExecutionError(str(exc)) from exc
-        selected_provider, model = resolved.provider, model or resolved.model
-    else:
-        selected_provider = provider.strip().lower()
-        if selected_provider not in AGENT_PROVIDERS:
-            raise ResponderExecutionError(f"unsupported agent provider {selected_provider!r}")
-        model = model or os.getenv("SDO_RESPONDER_MODEL") or None
-    prompt = _responder_prompt(request)
-    resume_session_id: str | None = None
+            raise ResponderExecutionError(f"invalid controller continuation: {exc}") from exc
+    corrected_result = False
+    verified = verified_recovery()
+    usage: dict[str, int | float] = {}
+    options = session_turn_options(selected_provider, Path(request.repository_worktree))
+    options["environment"] = {**(options.get("environment") or {}), "SDO_INCIDENT_ID": request.incident_id}
     while True:
+        checkpoint_directory = os.environ.get("SDO_RESPONDER_USAGE_DIR", "")
+        checkpoint = (
+            UsageCheckpoint(
+                Path(checkpoint_directory),
+                request.incident_id,
+                os.environ.get("SDO_RESPONDER_TASK_ID", request.incident_id),
+                "responder",
+            )
+            if checkpoint_directory
+            else None
+        )
         try:
             completed = run_structured_turn(
                 selected_provider,  # type: ignore[arg-type]
                 prompt,
-                output_schema=_incident_result_schema(),
                 cwd=request.repository_worktree,
                 access="danger-full-access",
                 model=model,
-                reasoning_effort=INCIDENT_REASONING_EFFORT,
+                reasoning_effort=effort,
+                timeout_seconds=recovery.remaining_seconds() if recovery is not None else None,
                 resume_session_id=resume_session_id,
                 executor=executor,
+                on_session_started=recovery.checkpoint if recovery is not None else None,
+                on_usage=checkpoint.publish if checkpoint is not None else None,
+                interrupt_when=verified,
+                **options,
             )
+        except SessionRecoveryError as exc:
+            raise ResponderExecutionError(str(exc)) from exc
+        except StructuredTurnInterrupted as exc:
+            # SDO verified recovery: the rest of the session only produces the result.
+            for name, value in exc.usage.items():
+                usage[name] = usage.get(name, 0) + value
+            if not exc.session_id:
+                raise ResponderExecutionError(f"{selected_provider} responder stopped before a session") from exc
+            resume_session_id = exc.session_id
+            prompt = render_prompt("responder", "verified_final", part="session.instructions")
+            verified = None
+            continue
         except StructuredTurnError as exc:
             raise ResponderExecutionError(f"{selected_provider} responder failed: {exc}") from exc
+        for name, value in turn_usage(completed).items():
+            usage[name] = usage.get(name, 0) + value
         try:
-            result = parse_incident_result(json.loads(completed.output_json), turn_usage(completed))
+            result = parse_incident_result(
+                unwrap_branch(completed.output_json, "incident_result"),
+                usage,
+                incident_id=request.incident_id,
+            )
             break
-        except EvidenceReferenceError as exc:
-            if resume_session_id is not None:
+        except WrongBranchError as exc:
+            if corrected_result:
                 raise ResponderExecutionError(f"invalid {selected_provider} incident result: {exc}") from exc
-            # One resumed turn lets the agent split a compound reference instead of losing the diagnosis.
+            corrected_result = True
             resume_session_id = completed.session_id
-            prompt = _evidence_reference_feedback(str(exc))
-        except (OSError, ValueError) as exc:
+            prompt = branch_correction("incident_result")
+        except ValueError as exc:
+            if not corrected_result:
+                corrected_result = True
+                resume_session_id = completed.session_id
+                prompt = render_prompt(
+                    "responder",
+                    "result_correction",
+                    part="session.instructions",
+                    result_type=type(exc).__name__,
+                    diagnostic=str(exc),
+                )
+                continue
             raise ResponderExecutionError(f"invalid {selected_provider} incident result: {exc}") from exc
+    try:
+        if recovery is not None:
+            recovery.acknowledge_reports()
+    except SessionRecoveryError as exc:
+        raise ResponderExecutionError(str(exc)) from exc
+    try:
+        recorded_actions.merge_into(result)
+    except recorded_actions.RecordedActionsError as exc:
+        raise ResponderExecutionError(f"invalid recorded repair actions: {exc}") from exc
     if not result.HasField("responder_session_id"):
         result.responder_session_id = completed.session_id
-    if result.incident_id != request.incident_id:
-        raise ResponderExecutionError(f"{selected_provider} result incident_id does not match request")
-    # Withhold weakly-evidenced causes before the result reaches the broker;
-    # this is upstream of and independent from the fenced diagnosis verifier.
-    return apply_cause_admissibility(result, request)
+    return result
 
 
-def _evidence_reference_feedback(problems: str) -> str:
-    return (
-        "Your result was not accepted: a state-change evidence source must name exactly one object. "
-        f"Problems: {problems}\n"
-        "Resubmit the same result with each changed object as its own evidence entry, for example "
-        '{"kind": "state-change", "source": "Service/geo", ...} and '
-        '{"kind": "state-change", "source": "Service/recommendation", ...}. '
-        "Change nothing else unless it is wrong."
-    )
+#: Proto fields the model does not supply: worker accounting and session, the controller's
+#: program-loop state, and the detector states and artifact IDs the responder never reports.
+_MODEL_OMITS: dict[str, tuple[str, ...]] = {
+    "sdodev.contracts.v1alpha1.IncidentResult": (
+        "schema_version",
+        "proposed_artifact_ids",
+        "usage",
+        "responder_session_id",
+        "error",
+        "late_findings_pull",
+        "repair_actions",
+    ),
+    "sdodev.contracts.v1alpha1.AppliedPlaybook": ("parameter_bindings", "script_names"),
+}
 
 
 def _incident_result_schema() -> dict[str, object]:
-    object_ref = {
-        "type": "object",
-        "properties": {
-            "api_version": {"type": "string"},
-            "kind": {"type": "string", "minLength": 1},
-            "namespace": {"type": "string"},
-            "name": {"type": "string", "minLength": 1},
-        },
-        "required": ["api_version", "kind", "namespace", "name"],
-        "additionalProperties": False,
-    }
-    # Only live evidence qualifies; static artifacts go to static_context.
-    evidence_item = {
-        "type": "object",
-        "properties": {
-            "kind": {"type": "string", "enum": list(ROOT_CAUSE_EVIDENCE_KINDS)},
-            "source": {"type": "string", "minLength": 1},
-            "observation": {"type": "string", "minLength": 1},
-        },
-        "required": ["kind", "source", "observation"],
-        "additionalProperties": False,
-    }
-    properties: dict[str, object] = {
-        "incident_id": {"type": "string", "minLength": 1},
-        "status": {"type": "string", "enum": ["completed", "failed", "cancelled"]},
-        "confirmed_root_causes": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "summary": {"type": "string", "minLength": 1},
-                    "resources": {"type": "array", "items": object_ref, "minItems": 1},
-                    "evidence": {"type": "array", "items": evidence_item, "minItems": 1},
-                    "explained_detectors": {
-                        "type": "array",
-                        "items": {"type": "string", "minLength": 1},
-                        "minItems": 1,
-                    },
-                    "static_context": {"type": "array", "items": {"type": "string", "minLength": 1}},
-                },
-                "required": ["summary", "resources", "evidence", "explained_detectors", "static_context"],
-                "additionalProperties": False,
-            },
-        },
-        "applied_playbooks": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {"playbook_id": {"type": "string", "minLength": 1}},
-                "required": ["playbook_id"],
-                "additionalProperties": False,
-            },
-        },
-        "repair_changes": {"type": "array", "items": {"type": "string"}},
-        "repair_actions": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "action_id": {"type": "string", "minLength": 1},
-                    "kind": {"type": "string", "minLength": 1},
-                    "target": {"type": "string", "minLength": 1},
-                    "resources": {"type": "array", "items": object_ref},
-                    "summary": {"type": "string", "minLength": 1},
-                    "details": {"type": "string", "minLength": 1},
-                    "started_at": {"type": "string", "format": "date-time"},
-                    "completed_at": {"type": "string", "format": "date-time"},
-                    "success": {"type": "boolean"},
-                    "reversible": {"type": "boolean"},
-                },
-                "required": [
-                    "action_id",
-                    "kind",
-                    "target",
-                    "resources",
-                    "summary",
-                    "details",
-                    "started_at",
-                    "completed_at",
-                    "success",
-                    "reversible",
-                ],
-                "additionalProperties": False,
-            },
-        },
-        "verification_evidence": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string", "minLength": 1},
-                    "passed": {"type": "boolean"},
-                    "details": {"type": "string", "minLength": 1},
-                    "observed_at": {"type": "string", "format": "date-time"},
-                },
-                "required": ["name", "passed", "details", "observed_at"],
-                "additionalProperties": False,
-            },
-        },
-        "timing": {
-            "type": "object",
-            "properties": {
-                "started_at": {"type": "string", "format": "date-time"},
-                "completed_at": {"type": "string", "format": "date-time"},
-            },
-            "required": ["started_at", "completed_at"],
-            "additionalProperties": False,
-        },
-    }
-    properties["drift_events"] = {
-        "type": "array",
-        "items": {
-            "type": "object",
-            "properties": {
-                "ref": object_ref,
-                "fields": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {key: {"type": "string"} for key in ("path", "old", "new", "source")},
-                        "required": ["path", "old", "new", "source"],
-                        "additionalProperties": False,
-                    },
-                },
-                "manager": {"type": "string"},
-                "classification": {"type": "string", "enum": ["fault", "unexplained"]},
-                "investigation_verdict": {"type": "string", "enum": ["bug", "benign", "unsure"]},
-                "investigation_reason": {"type": "string"},
-                "investigation_evidence": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "kind": {
-                                "type": "string",
-                                "enum": ["source_contradiction", "violated_relation", "observed_impact"],
-                            },
-                            "observation": {"type": "string"},
-                        },
-                        "required": ["kind", "observation"],
-                        "additionalProperties": False,
-                    },
-                },
-            },
-            "required": [
-                "ref",
-                "fields",
-                "manager",
-                "classification",
-                "investigation_verdict",
-                "investigation_reason",
-                "investigation_evidence",
-            ],
-            "additionalProperties": False,
-        },
-    }
-    return {
-        "type": "object",
-        "properties": properties,
-        "required": list(properties),
-        "additionalProperties": False,
-    }
+    """The model-facing schema of ``IncidentResult``, generated from the proto the Go loader reads."""
 
+<<<<<<< HEAD
 
 #: Upper bounds on playbook text inlined into a warm-path prompt.
 _WARM_PLAYBOOK_MAX_CHARS = 8_000
@@ -678,6 +645,9 @@ def _no_action_instructions() -> str:
         "nothing extra. Never return `completed` while the health objective is still failing: a completion claim "
         "with no repair evidence is rejected outright when nothing is confirmed fixed.\n\n"
     )
+=======
+    return model_output_schema(IncidentResult.DESCRIPTOR, omit=_MODEL_OMITS)
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 
 
 LATE_FINDINGS_ENV = "SDO_LATE_FINDINGS"
@@ -693,17 +663,17 @@ def late_findings_guidance(request: IncidentRequest, *, mode: str | None = None)
         raise ValueError(f"late-findings mode must be one of {', '.join(LATE_FINDINGS_MODES)}: {selected!r}")
     if selected == "off":
         return ""
-    command = f"{LATE_FINDINGS_COMMAND} --incident-id {request.incident_id}"
-    return (
-        "Late findings: evidence for this incident can arrive after you start, and this request cannot change. "
-        f"Run `{command}` once now, and again immediately before your first change to the cluster or the "
-        "repository. It is read-only and prints compact JSON listing findings that activated after this request "
-        "was built, each with surfaced logical playbook IDs. Treat every returned playbook as a hypothesis: read it, "
-        "confirm its preconditions against live state, adapt or reject it, and never replay its steps blindly. "
-        "An empty list means nothing more has arrived yet.\n\n"
+    command = render_prompt(
+        "responder",
+        "late_findings_guidance_01",
+        part="responder.instructions",
+        late_findings_command=LATE_FINDINGS_COMMAND,
+        incident_id=request.incident_id,
     )
+    return render_prompt("responder", "late_findings_guidance_02", part="responder.instructions", command=command)
 
 
+<<<<<<< HEAD
 def follow_up_guidance(request: IncidentRequest) -> str:
     """Scope paragraph for a follow-up request; empty for an ordinary incident."""
 
@@ -848,7 +818,40 @@ def _responder_prompt(request: IncidentRequest) -> str:
         f"{_detector_evidence(request)}\n"
         f"{_state_changes_section(request)}"
         f"Incident request:\n{request_json}\n"
+=======
+def _responder_prompt(request: IncidentRequest, *, incident_data: str) -> RenderedPrompt:
+    if not request.HasField("memory_snapshot"):
+        raise ValueError("incident responder requires a logical memory snapshot")
+    prompt = render_prompt(
+        "responder",
+        "incident_shell"
+        if agent_guidance() == "shell"
+        else "incident_reuse_instructions"
+        if request.prior_stages
+        else "incident_response_instructions",
+        part="responder.instructions",
+        incident_id=request.incident_id,
+        skills_root=selected_skills_root(SKILLS_ROOT),
+        repair_policy=request.repair_policy,
+        branch_instruction=branch_instruction("incident_result"),
+>>>>>>> origin/vic-lsh/dev/sdo-improve
     )
+    prompt += late_findings_guidance(request)
+    extra = os.getenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "").strip()
+    if extra:
+        prompt += named_prompt(
+            "responder.additional_context",
+            render_prompt(
+                "responder",
+                "incident_01",
+                part="responder.additional_context",
+                extra_instructions=named_prompt("responder.additional_context", extra),
+            ),
+        )
+    return prompt + named_prompt("responder.incident_data", incident_data)
+
+
+render_incident_prompt = _responder_prompt
 
 
 if __name__ == "__main__":

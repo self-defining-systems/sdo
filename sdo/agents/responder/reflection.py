@@ -3,20 +3,53 @@ from __future__ import annotations
 import json
 import os
 import re
-import sys
-from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, cast
+import tempfile
+import time
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, cast
 
-from agentshim import SessionResumeError, StdioMcpServer
+from agentshim import SessionResumeError
 from google.protobuf import json_format
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
-from libs.agent_cli.structured import AgentProvider, StructuredTurnError, run_structured_turn, turn_usage
+from libs.agent_cli.structured import (
+    AgentProvider,
+    StructuredTurn,
+    StructuredTurnError,
+    turn_usage,
+)
+from sdo.agents.code_paths import agent_guidance
+from sdo.agents.context_output import ContextText, save_context
 from sdo.agents.memory_diagnostics import render_validation_feedback
+<<<<<<< HEAD
 from sdo.agents.metrics_context import metrics_context
+=======
+from sdo.agents.prompt_templates import RenderedPrompt, join_prompts, named_prompt, render_prompt
+from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
+from sdo.agents.provider import DEFAULT_AGENT_EFFORT
+from sdo.agents.replay import replay_mode, selected_skills_root
+from sdo.agents.responder.credentials import SKILLS_ROOT
+from sdo.agents.responder.detection_learning import detection_learning
+from sdo.agents.responder.memory_check import (
+    VALIDATION_TIMEOUT_FILE_ENV,
+    VALIDATION_TIMEOUT_SECONDS,
+    MemoryCheckTimeout,
+    ValidationResult,
+    check_reflection_result,
+)
+from sdo.agents.responder.reflection_authoring import SdkGap
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 from sdo.agents.responder.reflection_brief import incident_brief
+from sdo.agents.responder.reflection_evidence import reflection_memory_view
 from sdo.agents.responder.reflection_outcomes import current_outcome_view, history_view
-from sdo.agents.responder.reflection_validation import VALIDATION_ENVIRONMENT, VALIDATION_TOOL_TIMEOUT_SECONDS
-from sdo.contracts import OutcomeClassification
+from sdo.agents.responder.session_turn import (
+    WrongBranchError,
+    branch_correction,
+    branch_instruction,
+    session_turn_options,
+    unwrap_branch,
+)
+from sdo.contracts import ReflectionResult, model_output_schema, validate, worker_result_payload
+from sdo.contracts import SdkGap as ProtoSdkGap
 
 ReflectionGuidance = Literal["baseline", "generalize", "generalize-spec"]
 ReflectionSessionMode = Literal["resume", "fresh"]
@@ -24,23 +57,12 @@ REFLECTION_GUIDANCE_MODES: tuple[ReflectionGuidance, ...] = ("baseline", "genera
 REFLECTION_SESSION_MODES: tuple[ReflectionSessionMode, ...] = ("resume", "fresh")
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
     from agentshim import CommandExecutor
 
-    from sdo.contracts import IncidentClosure, MemoryDiagnostic, OutcomeRecord
-
-
-def _classification_directive(classification: str, guidance: ReflectionGuidance = "baseline") -> str:
-    if classification == OutcomeClassification.SUCCESS:
-        if guidance in _GENERALIZING_GUIDANCE:
-            return (
-                "Capture the confirmed signature at the level of its root-cause class, following the generalization "
-                "protocol above, and stay within what the evidence supports."
-            )
-        return "Capture the confirmed signature without generalizing beyond the observed successful evidence."
-    return "Do not encode the result as successful operational memory."
+    from sdo.contracts import IncidentClosure, MemoryDiagnostic, OutcomeRecord, ReflectionCauseWork, ReflectionWorkItem
 
 
 class ReflectionTurn(BaseModel):
@@ -49,6 +71,7 @@ class ReflectionTurn(BaseModel):
     summary: str = Field(min_length=1)
     learning_decision: Literal["updated", "no_change", "sdk_gap"]
     no_change_reason: str | None = Field(default=None, min_length=1)
+    decline_reason: Literal["", "no_recorded_repair"] = ""
     playbook_ids: list[str] = Field(default_factory=list)
     sdk_gaps: list[SdkGap] = Field(default_factory=list)
     # Provider accounting for the turn; kept out of the model-facing schema.
@@ -57,6 +80,40 @@ class ReflectionTurn(BaseModel):
     @property
     def usage(self) -> dict[str, int | float]:
         return dict(self._usage)
+
+    @classmethod
+    def from_model_output(cls, payload: object) -> ReflectionTurn:
+        """Parse the model's reply as the ``ReflectionResult`` it was asked for, then view it as a turn."""
+
+        try:
+            result = json_format.ParseDict(
+                worker_result_payload(payload, ReflectionResult.DESCRIPTOR), ReflectionResult()
+            )
+        except json_format.ParseError as exc:
+            raise ValueError(f"invalid reflection result: {exc}") from exc
+        validate(result)
+        return cls(
+            summary=result.summary,
+            learning_decision=cast("Literal['updated', 'no_change', 'sdk_gap']", result.learning_decision),
+            no_change_reason=result.no_change_reason or None,
+            decline_reason=cast("Literal['', 'no_recorded_repair']", result.decline_reason),
+            playbook_ids=list(result.proposed_artifact_ids),
+            sdk_gaps=[
+                SdkGap.model_validate(json_format.MessageToDict(gap, preserving_proto_field_name=True))
+                for gap in result.sdk_gaps
+            ],
+        )
+
+    def to_result(self) -> ReflectionResult:
+        """The exact decision checked locally and published in the worker envelope."""
+        return ReflectionResult(
+            summary=self.summary,
+            learning_decision=self.learning_decision,
+            no_change_reason=self.no_change_reason or "",
+            decline_reason=self.decline_reason,
+            proposed_artifact_ids=self.playbook_ids,
+            sdk_gaps=[json_format.ParseDict(gap.model_dump(), ProtoSdkGap()) for gap in self.sdk_gaps],
+        )
 
     def with_usage(self, usage: dict[str, int | float]) -> ReflectionTurn:
         self._usage = dict(usage)
@@ -78,41 +135,10 @@ class ReflectionTurn(BaseModel):
             raise ValueError("sdk_gap reflection requires typed gaps")
 
 
-class SdkGap(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    fault_class: str = Field(min_length=1)
-    primitive: str = Field(min_length=1)
-    reason: str = Field(min_length=1)
-    scratch_script: str = Field(min_length=1)
-
-
 def reflection_output_schema() -> dict[str, object]:
-    """ReflectionTurn as a strict structured-output schema.
+    """The model-facing schema of ``ReflectionResult``, generated from the proto the Go decision loader reads."""
 
-    Strict provider schemas (Codex/OpenAI) require every property to be listed
-    in ``required``; optional fields are expressed as nullable instead.
-    """
-
-    schema = ReflectionTurn.model_json_schema()
-
-    def strict_object(node: object) -> None:
-        if isinstance(node, dict):
-            properties = node.get("properties")
-            if isinstance(properties, dict):
-                for prop in properties.values():
-                    if isinstance(prop, dict):
-                        prop.pop("default", None)
-                node["required"] = list(properties)
-                node["additionalProperties"] = False
-            for child in node.values():
-                strict_object(child)
-        elif isinstance(node, list):
-            for child in node:
-                strict_object(child)
-
-    strict_object(schema)
-    return schema
+    return model_output_schema(ReflectionResult.DESCRIPTOR)
 
 
 class StatefulResponderBackend(Protocol):
@@ -138,34 +164,108 @@ class ResponderSessionUnavailable(RuntimeError):
     """The provider cannot continue the responder's incident session."""
 
 
-#: Reasoning effort of the incident agents (responder and reflection). A
-#: benchmark comparing SDO against a stock agent declares the same effort.
-INCIDENT_REASONING_EFFORT = "medium"
+#: Absolute Unix time of the controller's frozen reflection task deadline. The
+#: worker binds it from the task; the Job and any claimed standby end no earlier.
+REFLECTION_DEADLINE_ENV = "SDO_REFLECTION_DEADLINE"
+#: The agent stops this long before that deadline so its typed result is published first.
+REFLECTION_RESULT_MARGIN_SECONDS = 120.0
+#: Budget without a bound deadline: the controller's default 30-minute task deadline.
+DEFAULT_REFLECTION_SECONDS = 1800.0 - REFLECTION_RESULT_MARGIN_SECONDS
+
+
+class ReflectionDeadlineExceeded(RuntimeError):
+    """The reflection used its whole budget before the agent returned a valid result."""
+
+
+class ReflectionCorrectionStopped(RuntimeError):
+    """A blocking check cannot be corrected safely within this dispatch."""
+
+    def __init__(
+        self, reason: Literal["unchanged_validation_failure", "validation_budget_reserved"], check: ValidationResult
+    ) -> None:
+        self.reason = reason
+        super().__init__(f"reflection memory check failed ({reason}): {check.stdout}\n{check.stderr}")
+
+
+def reflection_budget_seconds() -> float:
+    """Seconds the reflection agent may use, ending before the frozen task deadline."""
+    raw = os.environ.get(REFLECTION_DEADLINE_ENV)
+    if not raw:
+        return DEFAULT_REFLECTION_SECONDS
+    budget = float(raw) - time.time() - REFLECTION_RESULT_MARGIN_SECONDS
+    if not budget > 0:
+        raise ReflectionDeadlineExceeded("reflection task deadline leaves no agent budget")
+    return budget
+
 
 _GENERALIZING_GUIDANCE = ("generalize", "generalize-spec")
 
 
-def _logical_guidance(guidance: ReflectionGuidance) -> str:
-    if guidance == "baseline":
-        return (
-            "Capture the confirmed signature without generalizing beyond the observed successful evidence. "
-            "Add a precise matching test and near-miss regression test for any incident detector.\n"
-        )
-    protocol = (
-        "Generalize by root-cause class: compare the confirmed failure mechanism and repair with existing "
-        "incident detectors. Widen one existing detector and playbook when only resource identity or a parameter "
-        "differs; do not add a sibling. Use Finding.ParameterBindings for affected roles, preserve existing "
-        "originatingIncident and originatingCommit, and include matching and near-miss tests. "
-        "Create a new logical detector and playbook only for a different failure mechanism or repair.\n"
+def reflection_work_view(work_json: str) -> RenderedPrompt:
+    """Keep every question and its scope; settled evaluation details are optional.
+
+    The full controller-owned work is retained independently. Counting omitted
+    metadata is explicit so a compact view cannot imply that it did not exist.
+    """
+    work = json.loads(work_json)
+    work_file, full_path = save_context(work_json)
+    fields = {"question", "disposition", "reason", "program_id", "resources"}
+
+    def questions(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            {
+                **{key: value for key, value in item.items() if key in fields},
+                "detail_fields_omitted": sum(key not in fields for key in item),
+            }
+            for item in items
+            if item.get("question")
+        ]
+
+    causes = [
+        {
+            "cause_index": cause.get("cause_index", 0),
+            "resources": cause.get("resources", []),
+            "items": questions(cause.get("items", [])),
+            "settled_items_omitted": sum(not item.get("question") for item in cause.get("items", [])),
+        }
+        for cause in work["causes"]
+    ]
+    required = {
+        "causes": causes,
+        "unassigned": questions(work["unassigned"]),
+        "unassigned_settled_items_omitted": sum(not item.get("question") for item in work["unassigned"]),
+        "full_work_path": full_path,
+    }
+
+    def details(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            {
+                "item_index": index,
+                **({key: value for key, value in item.items() if key not in fields} if item.get("question") else item),
+            }
+            for index, item in enumerate(items)
+        ]
+
+    return join_prompts(
+        "\n",
+        [
+            named_prompt("reflection.cause_work", ContextText(json.dumps(required, separators=(",", ":")), work_file)),
+            named_prompt(
+                "reflection.cause_details",
+                json.dumps(
+                    {
+                        "causes": [
+                            {"cause_index": cause.get("cause_index", 0), "items": details(cause.get("items", []))}
+                            for cause in work["causes"]
+                        ],
+                        "unassigned": details(work["unassigned"]),
+                    }
+                ),
+                required=False,
+            ),
+        ],
+        part="reflection.cause_work",
     )
-    if guidance == "generalize-spec":
-        protocol += (
-            "Spec-first: prefer a detector predicate decidable from current Kubernetes spec or status. "
-            "Events, logs, and restart counts may corroborate, but must not be the firing precondition when "
-            "current state is sufficient. Prove a matching snapshot without Event objects and a near-miss. "
-            "If the confirmed cause is not decidable from spec or status, name the earliest available evidence.\n"
-        )
-    return protocol
 
 
 def _logical_learning_request(
@@ -175,11 +275,13 @@ def _logical_learning_request(
     outcome_commit: str,
     closure: IncidentClosure,
     guidance: ReflectionGuidance,
-) -> str:
+    cause_work: Sequence[ReflectionCauseWork] = (),
+    unassigned_work: Sequence[ReflectionWorkItem] = (),
+) -> RenderedPrompt:
     if not closure.request.HasField("memory_snapshot"):
         raise ValueError("logical reflection requires an operational memory snapshot")
-    example_dir = os.environ.get("SDO_PLAYBOOK_PROGRAM_EXAMPLE_DIR") or "/opt/sdo/examples/playbook-programs"
     snapshot = closure.request.memory_snapshot
+<<<<<<< HEAD
     classification = outcome.classification
     return (
         f"{metrics_context(closure.request.metrics_source)}\n"
@@ -245,14 +347,152 @@ def _logical_learning_request(
         "Root causes, findings, action receipts and program transitions are retained.\n"
         f"Current outcome:\n{json.dumps(current_outcome_view(outcome), indent=2)}\n\n"
         f"{_history_section(outcome, history)}"
+=======
+    findings = [*outcome.findings, *closure.request.findings]
+    linked = {finding.detector_id for finding in findings}
+    linked.update(playbook for finding in findings for playbook in finding.playbook_ids)
+    linked.update([*outcome.applied_playbooks, *outcome.confirmed_playbooks, *outcome.rejected_playbooks])
+    linked.update(run.program_id for run in outcome.program_runs)
+    linked.update(match.playbook_id for match in closure.request.playbook_coverage.matches)
+    memory_index = reflection_memory_view(snapshot, outcome, linked_ids=linked)
+    _, memory_path = save_context(json.dumps(memory_index, indent=2))
+    outcome_file, outcome_path = save_context(json_format.MessageToJson(outcome, preserving_proto_field_name=True))
+    outcome_view = current_outcome_view(outcome)
+    outcome_summary = {
+        key: outcome_view[key]
+        for key in (
+            "incident_id",
+            "classification",
+            "findings",
+            "confirmed_root_causes",
+            "repair_actions",
+            "plan_applications",
+            "undetected_causes",
+            "final_detector_states",
+            "source_check_notes",
+            "disabled_setup_detectors",
+        )
+        if key in outcome_view
+    }
+    outcome_summary["full_current_outcome_path"] = outcome_path
+    memory_index["full_index_path"] = memory_path
+    required_outcome = {
+        "incident_id": outcome.incident_id,
+        "classification": outcome.classification,
+        "repair_actions": [
+            {**json_format.MessageToDict(action, preserving_proto_field_name=True), "success": action.success}
+            for action in outcome.repair_actions
+        ],
+        "full_current_outcome_path": outcome_path,
+    }
+    optional_outcome = {key: value for key, value in outcome_summary.items() if key not in required_outcome}
+    outcome_prompt = join_prompts(
+        "\n",
+        [
+            named_prompt(
+                "reflection.outcome", ContextText(json.dumps(required_outcome, separators=(",", ":")), outcome_file)
+            ),
+            named_prompt("reflection.outcome_details", json.dumps(optional_outcome, indent=2), required=False),
+        ],
+        part="reflection.outcome",
+>>>>>>> origin/vic-lsh/dev/sdo-improve
     )
+    work_section = ""
+    if cause_work or unassigned_work:
+        work_json = json.dumps(
+            {
+                "causes": [json_format.MessageToDict(item, preserving_proto_field_name=True) for item in cause_work],
+                "unassigned": [
+                    json_format.MessageToDict(item, preserving_proto_field_name=True) for item in unassigned_work
+                ],
+            },
+            separators=(",", ":"),
+        )
+        work_data = reflection_work_view(work_json)
+        work_section = (
+            work_data
+            if agent_guidance() == "shell"
+            else render_prompt(
+                "responder",
+                "learning_01",
+                part="reflection.cause_work",
+                work_json=work_data,
+            )
+        )
+    if agent_guidance() == "shell":
+        return render_prompt(
+            "responder",
+            "reflection_shell",
+            part="reflection.instructions",
+            skills_root=selected_skills_root(SKILLS_ROOT),
+            branch_instruction=branch_instruction("reflection"),
+            memory_view_json=named_prompt("reflection.memory", json.dumps(memory_index, indent=2), required=False),
+            outcome_commit=outcome_commit,
+            outcome_json=outcome_prompt,
+            work_section=work_section,
+            history_section=named_prompt("reflection.history", _history_section(outcome, history)),
+        )
+    prompt = render_prompt(
+        "responder",
+        "reflection",
+        part="reflection.instructions",
+        skills_root=selected_skills_root(SKILLS_ROOT),
+        branch_instruction=branch_instruction("reflection"),
+        work_section=work_section,
+        outcome_commit=outcome_commit,
+        memory_view_json=named_prompt("reflection.memory", json.dumps(memory_index, indent=2), required=False),
+        replay_guidance=(
+            render_prompt("responder", "reflection_replay", part="reflection.instructions")
+            if replay_mode() == "on"
+            else ""
+        ),
+        current_outcome_view_json=outcome_prompt,
+        history_section=named_prompt("reflection.history", _history_section(outcome, history)),
+    )
+    if closure.request.HasField("namespace_onboarding"):
+        prompt += render_prompt(
+            "responder",
+            "namespace_onboarding",
+            part="reflection.outcome",
+            onboarding_json=named_prompt(
+                "template_data.responder-namespace_onboarding-onboarding_json",
+                json_format.MessageToJson(closure.request.namespace_onboarding, preserving_proto_field_name=True),
+                required=False,
+            ),
+        )
+    prompt += detection_learning(closure)
+    return prompt
 
 
 def _history_section(outcome: OutcomeRecord, history: list[OutcomeRecord]) -> str:
-    prior = history_view(history, current_incident_id=outcome.incident_id)
+    detector_ids = {finding.detector_id for finding in outcome.findings}
+    playbook_ids = set(outcome.applied_playbooks) | set(outcome.confirmed_playbooks)
+    resources = {
+        (ref.kind, ref.namespace, ref.name) for cause in outcome.confirmed_root_causes for ref in cause.resources
+    }
+    relevant = [
+        record
+        for record in history
+        if (
+            any(finding.detector_id in detector_ids for finding in record.findings)
+            or playbook_ids.intersection(record.applied_playbooks)
+            or playbook_ids.intersection(record.confirmed_playbooks)
+            or any(
+                (ref.kind, ref.namespace, ref.name) in resources
+                for cause in record.confirmed_root_causes
+                for ref in cause.resources
+            )
+        )
+    ]
+    prior = history_view(relevant[-3:], current_incident_id=outcome.incident_id)
     if not prior:
-        return "Outcome history (prior incidents, compact): none\n"
-    return f"Outcome history (prior incidents, compact; raw evidence omitted):\n{json.dumps(prior, indent=2)}\n"
+        return render_prompt("responder", "history_section_01", part="reflection.instructions")
+    return render_prompt(
+        "responder",
+        "history_section_02",
+        part="reflection.instructions",
+        prior_json=named_prompt("reflection.history", json.dumps(prior, indent=2), required=False),
+    )
 
 
 class SessionReflector:
@@ -260,8 +500,8 @@ class SessionReflector:
 
     The first attempt resumes the responder session (``session_mode="resume"``)
     or, opt-in, starts a fresh session from a compact incident brief
-    (``"fresh"``). A retry after a broker rejection (non-empty ``diagnostics``)
-    is always a short fresh session that carries the typed diagnostics.
+    (``"fresh"``). A retry after a broker rejection carries typed diagnostics in the same
+    resumed incident session.
     """
 
     def __init__(self, backend: StatefulResponderBackend, *, guidance: str = "baseline") -> None:
@@ -283,6 +523,8 @@ class SessionReflector:
         closure: IncidentClosure | None = None,
         validation_attempt: int = 1,
         diagnostics: Sequence[MemoryDiagnostic] = (),
+        cause_work: Sequence[ReflectionCauseWork] = (),
+        unassigned_work: Sequence[ReflectionWorkItem] = (),
     ) -> ReflectionTurn:
         if session_mode not in REFLECTION_SESSION_MODES:
             raise ValueError(f"unsupported reflection session mode: {session_mode!r}")
@@ -294,72 +536,97 @@ class SessionReflector:
             outcome_commit=outcome_commit,
             closure=closure,
             guidance=self.guidance,
+            cause_work=cause_work,
+            unassigned_work=unassigned_work,
         )
         idempotency_key = f"reflection:{incident_id}:{outcome_commit}"
         if diagnostics:
-            # Re-sending the responder transcript on every model request is the
-            # dominant retry cost; the typed diagnostics are all a retry needs.
-            prompt = (
-                "Author corrected final files. You are correcting operational-memory edits that SDO's broker rejected. "
-                "The controller has "
-                "independently verified incident closure and committed its authoritative outcome; the responder's "
-                "session transcript is intentionally not available.\n\n"
-                f"{render_validation_feedback(validation_attempt, diagnostics)}\n"
-                "The rejected edit was rolled back, so the worktree is clean at the accepted outcome commit. "
-                "Author corrected final files here, then call check_memory until green.\n\n"
-                f"Original reflection request:\n{request}"
+            # Keep the incident session and the rejected edits; only the
+            # rejection is new. A fresh session also needs the request.
+            original_request = (
+                render_prompt("responder", "reflection_retry_request", part="reflection.instructions", request=request)
+                if session_mode == "fresh"
+                else RenderedPrompt(())
             )
+            prompt = render_prompt(
+                "responder",
+                "reflection_retry",
+                part="reflection.instructions",
+                render_validation_feedback=named_prompt(
+                    "reflection.validation_feedback",
+                    render_validation_feedback(validation_attempt, diagnostics, kept_edits=True),
+                ),
+                original_request=original_request,
+            )
+            if session_mode == "resume":
+                return self.backend.resume(
+                    session_id=session_id, worktree=worktree, prompt=prompt, idempotency_key=idempotency_key
+                )
             return self.backend.fresh(worktree=worktree, prompt=prompt, idempotency_key=idempotency_key)
         if session_mode == "fresh":
+            if agent_guidance() == "shell":
+                prompt = render_prompt(
+                    "responder", "reflection_shell_fresh", part="reflection.instructions", request=request
+                )
+                return self.backend.fresh(worktree=worktree, prompt=prompt, idempotency_key=idempotency_key)
             if closure is None:
                 raise ValueError("a fresh first reflection attempt requires the verified closure for its brief")
-            # The brief replaces the responder transcript, which a resumed
-            # session would re-send on every model request.
+            # The request already contains the complete accepted inventory;
+            # the brief replaces only the missing responder transcript.
             brief = incident_brief(
                 closure,
+                include_memory=False,
+                include_detection=False,
                 worktree=worktree,
                 detector_detail=self.guidance in _GENERALIZING_GUIDANCE,
                 event_dependence=self.guidance == "generalize-spec",
             )
-            prompt = (
-                "The controller has independently verified incident closure and committed its authoritative "
-                "outcome. You are reflecting in a fresh session: the responder's session transcript is not "
-                "available, so rely on the incident brief below and supplied memory context.\n\n"
-                f"{brief}\n"
-                f"Reflection request:\n{request}"
+            prompt = render_prompt(
+                "responder", "reflection_fresh", part="reflection.instructions", brief=brief, request=request
             )
             return self.backend.fresh(worktree=worktree, prompt=prompt, idempotency_key=idempotency_key)
-        prompt = (
-            "The controller has independently verified incident closure and committed its authoritative outcome.\n"
-            "Reflect using the same incident context.\n"
-            f"{request}"
+        prompt = render_prompt("responder", "reflection_resume", part="reflection.instructions", request=request)
+        return self.backend.resume(
+            session_id=session_id,
+            worktree=worktree,
+            prompt=prompt,
+            idempotency_key=idempotency_key,
         )
-        try:
-            return self.backend.resume(
-                session_id=session_id,
-                worktree=worktree,
-                prompt=prompt,
-                idempotency_key=idempotency_key,
+
+
+def memory_check_correction(check: ValidationResult, idempotency_key: str) -> RenderedPrompt:
+    details = check.stdout + "\n" + check.stderr
+    feedback = details
+    try:
+        report = json.loads(check.stdout)
+        diagnostics = report.get("diagnostics", [])
+        if diagnostics:
+            feedback = "\n".join(
+                f"[{item.get('rule', '')}] {item.get('path', '')}: {item.get('message', '')}" for item in diagnostics
             )
-        except ResponderSessionUnavailable as exc:
-            print(f"reflection: cannot resume responder session ({exc}); starting fresh", file=sys.stderr)
-            return self.resume(
-                session_id=session_id,
-                incident_id=incident_id,
-                worktree=worktree,
-                outcome=outcome,
-                history=history,
-                outcome_commit=outcome_commit,
-                session_mode="fresh",
-                closure=closure,
-            )
+            _, path = save_context(details)
+            feedback += "\nFull check: " + path
+    except (ValueError, AttributeError, TypeError):
+        pass
+    correction = render_prompt(
+        "responder",
+        "reflection_check_correction",
+        part="reflection.instructions",
+        diagnostics=named_prompt("reflection.validation_feedback", feedback),
+    )
+    return render_prompt(
+        "responder",
+        "turn_01",
+        part="reflection.instructions",
+        idempotency_key=idempotency_key,
+        prompt=correction,
+    )
 
 
 class CodexSessionBackend:
     """Resume the responder's own Codex session to reflect on its outcome.
 
-    Validation retries use :meth:`fresh` instead, so they never re-send the
-    responder transcript.
+    Validation retries retain the responder session and carry typed feedback.
     """
 
     provider: ClassVar[AgentProvider] = "codex"
@@ -368,14 +635,16 @@ class CodexSessionBackend:
         self,
         *,
         model: str | None = None,
-        reasoning_effort: str = INCIDENT_REASONING_EFFORT,
-        timeout_seconds: int = 900,
+        reasoning_effort: str = DEFAULT_AGENT_EFFORT,
+        timeout_seconds: float | None = None,
         executor: CommandExecutor | None = None,
+        memory_checker: Callable[[Path, ReflectionResult, float], ValidationResult] = check_reflection_result,
     ) -> None:
         self.model = model
         self.reasoning_effort = reasoning_effort
         self.timeout_seconds = timeout_seconds
         self.executor = executor
+        self.memory_checker = memory_checker
 
     def resume(
         self,
@@ -406,30 +675,118 @@ class CodexSessionBackend:
         idempotency_key: str,
         session_id: str | None,
     ) -> ReflectionTurn:
+        # The MCP server is a child process. A private per-turn latch carries a
+        # terminal timeout back to the final checker without trusting a pass.
+        with tempfile.TemporaryDirectory(prefix="sdo-check-timeout-") as temporary:
+            previous = os.environ.get(VALIDATION_TIMEOUT_FILE_ENV)
+            os.environ[VALIDATION_TIMEOUT_FILE_ENV] = os.path.join(temporary, "timeout.json")
+            try:
+                return self._checked_turn(
+                    worktree=worktree,
+                    prompt=prompt,
+                    idempotency_key=idempotency_key,
+                    session_id=session_id,
+                )
+            finally:
+                if previous is None:
+                    os.environ.pop(VALIDATION_TIMEOUT_FILE_ENV, None)
+                else:
+                    os.environ[VALIDATION_TIMEOUT_FILE_ENV] = previous
+
+    def _checked_turn(
+        self,
+        *,
+        worktree: Path,
+        prompt: str,
+        idempotency_key: str,
+        session_id: str | None,
+    ) -> ReflectionTurn:
+        budget = reflection_budget_seconds() if self.timeout_seconds is None else self.timeout_seconds
+        deadline = time.monotonic() + budget
+        # Keep validation inside the frozen worker budget. Small explicit test or
+        # operator budgets reserve the same fraction, up to one full check.
+        validation_reserve = min(VALIDATION_TIMEOUT_SECONDS, budget / 3)
+
+        def remaining() -> float:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise ReflectionDeadlineExceeded(f"reflection exceeded its {budget:g}s budget")
+            return left
+
+        def agent_remaining() -> float:
+            left = remaining() - validation_reserve
+            if left <= 0:
+                raise ReflectionDeadlineExceeded("reflection validation budget reserved; no agent budget remains")
+            return left
+
+        turn = self._run(
+            worktree=worktree,
+            prompt=render_prompt(
+                "responder", "turn_01", part="reflection.instructions", idempotency_key=idempotency_key, prompt=prompt
+            ),
+            session_id=session_id,
+            timeout_seconds=agent_remaining(),
+        )
+        usage: dict[str, int | float] = {}
+        previous_failure: ValidationResult | None = None
+        for attempt in range(4):
+            for name, value in turn_usage(turn).items():
+                usage[name] = usage.get(name, 0) + value
+            try:
+                payload = unwrap_branch(turn.output_json, "reflection")
+            except WrongBranchError:
+                turn = self._run(
+                    worktree=worktree,
+                    prompt=branch_correction("reflection"),
+                    session_id=turn.session_id,
+                    timeout_seconds=agent_remaining(),
+                )
+                for name, value in turn_usage(turn).items():
+                    usage[name] = usage.get(name, 0) + value
+                payload = unwrap_branch(turn.output_json, "reflection")
+            # Preserve the complete returned proto through validation: Python's
+            # view must not discard deprecated payloads or reject a decision
+            # before the shared Go diagnostics can drive an in-session correction.
+            decision = json_format.ParseDict(
+                worker_result_payload(payload, ReflectionResult.DESCRIPTOR), ReflectionResult()
+            )
+            check = self.memory_checker(worktree, decision, min(VALIDATION_TIMEOUT_SECONDS, remaining()))
+            if check.exit_code == 0 and not check.timed_out:
+                return ReflectionTurn.from_model_output(
+                    json_format.MessageToDict(decision, preserving_proto_field_name=True)
+                ).with_usage(usage)
+            if check.timed_out:
+                raise MemoryCheckTimeout(check)
+            if attempt == 3 or time.monotonic() >= deadline:
+                raise RuntimeError(f"reflection memory check failed before submission: {check.stdout}\n{check.stderr}")
+            if check.same_failure(previous_failure):
+                raise ReflectionCorrectionStopped("unchanged_validation_failure", check)
+            if remaining() <= validation_reserve:
+                raise ReflectionCorrectionStopped("validation_budget_reserved", check)
+            previous_failure = check
+            turn = self._run(
+                worktree=worktree,
+                prompt=memory_check_correction(check, idempotency_key),
+                session_id=turn.session_id,
+                timeout_seconds=agent_remaining(),
+            )
+        raise AssertionError("unreachable reflection validation state")
+
+    def _run(self, *, worktree: Path, prompt: str, session_id: str | None, timeout_seconds: float) -> StructuredTurn:
+        if os.environ.get("SDO_API_HISTORY_DIR"):
+            prompt += render_prompt("responder", "run_01", part="reflection.instructions")
         try:
-            turn = run_structured_turn(
+            return run_structured_turn(
                 self.provider,
-                f"Idempotency key: {idempotency_key}\n\n{prompt}",
-                output_schema=reflection_output_schema(),
+                prompt,
                 cwd=worktree,
                 access="danger-full-access",
                 model=self.model,
                 reasoning_effort=self.reasoning_effort,
-                timeout_seconds=self.timeout_seconds,
+                timeout_seconds=timeout_seconds,
                 resume_session_id=session_id,
                 executor=self.executor,
-                mcp_servers=[
-                    StdioMcpServer(
-                        name="sdo_reflection",
-                        command=sys.executable,
-                        args=["-m", "sdo.agents.responder.reflection_validation", "--root", str(worktree.resolve())],
-                        env={key: os.environ[key] for key in VALIDATION_ENVIRONMENT if key in os.environ},
-                        tool_timeout_s=VALIDATION_TOOL_TIMEOUT_SECONDS if self.provider == "codex" else None,
-                    )
-                ],
-                environment={"MCP_TOOL_TIMEOUT": str(VALIDATION_TOOL_TIMEOUT_SECONDS * 1000)}
-                if self.provider == "claude"
-                else None,
+                **session_turn_options(self.provider, worktree, phase="reflection"),
             )
         except StructuredTurnError as exc:
             if session_id is not None and (
@@ -447,10 +804,12 @@ class CodexSessionBackend:
                     f"{self.provider} cannot resume session {session_id!r}: {exc}"
                 ) from exc
             raise RuntimeError(f"{self.provider} reflection failed: {exc}") from exc
-        return ReflectionTurn.model_validate_json(turn.output_json).with_usage(turn_usage(turn))
 
 
 class ClaudeSessionBackend(CodexSessionBackend):
     """Resume the responder's own Claude Code session to reflect on its outcome."""
 
     provider: ClassVar[AgentProvider] = "claude"
+
+
+render_reflection_prompt = _logical_learning_request

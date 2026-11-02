@@ -1,0 +1,1 @@
+Prior outcome ${incident_id} (${match_reason}): root causes ${list}; repairs ${list_2}; applied ${list_3}

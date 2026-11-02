@@ -3,7 +3,9 @@ package sdk
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -43,8 +45,34 @@ func TestObjectRefJSONPassesRawAgentTextToGo(t *testing.T) {
 	}
 }
 
+func TestObjectRefJSONUnknownKindsInKnownKindNamespaces(t *testing.T) {
+	for alias, kind := range objectKinds {
+		for _, namespace := range []string{alias, kind, alias + ".example"} {
+			for _, version := range []string{"", "example.dev/v2"} {
+				ref := ObjectRef{Kind: "Widget", Namespace: namespace, Name: "worker", APIVersion: version}
+				raw, err := json.Marshal(ref)
+				if err != nil {
+					t.Fatal(err)
+				}
+				parsed, err := ParseObjectRef(string(raw))
+				if err != nil || parsed != ref {
+					t.Fatalf("JSON reference %s: %+v, %v; want %+v", raw, parsed, err, ref)
+				}
+				text, err := FormatObjectRef(parsed)
+				if err != nil {
+					t.Fatalf("format accepted JSON reference %s: %v", raw, err)
+				}
+				again, err := ParseObjectRef(text)
+				if err != nil || again != ref {
+					t.Fatalf("round trip %s -> %q: %+v, %v; want %+v", raw, text, again, err, ref)
+				}
+			}
+		}
+	}
+}
+
 func FuzzObjectRefParseFormat(f *testing.F) {
-	for _, seed := range []string{"Deployment/api", "deploy/shop/api", "shop/deployments.apps/api", "Service/a; Service/b", "Service//api", "example.dev/v2@Widget/shop/example", "\xff\x00"} {
+	for _, seed := range []string{"Pod/0/0", "Deployment/api", "deploy/shop/api", "shop/deployments.apps/api", "Service/a; Service/b", "Service//api", "example.dev/v2@Widget/shop/example", `{"api_version":"apps/v1","kind":"Deployment","namespace":"app","name":"worker"}`, `{"kind":"Pod","name":"worker","name":"peer"}`, "\xff\x00"} {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, raw string) {
@@ -82,4 +110,65 @@ func FuzzObjectRefTypedRoundTrip(f *testing.F) {
 			t.Fatalf("typed round trip %+v -> %q -> %+v: %v", ref, text, got, err)
 		}
 	})
+}
+
+// TestObjectRefGrammarCorpus pins the shared corpus
+// tests/fixtures/sdo/contracts/object_ref_grammar.json. The Python copy of the
+// grammar (sdo/agents/responder/recorded_actions.py) is checked against the same
+// file, so the two parsers cannot drift.
+func TestObjectRefGrammarCorpus(t *testing.T) {
+	raw, err := os.ReadFile("../../../tests/fixtures/sdo/contracts/object_ref_grammar.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct {
+		Input string `json:"input"`
+		Go    *struct {
+			APIVersion string `json:"api_version"`
+			Kind       string `json:"kind"`
+			Namespace  string `json:"namespace"`
+			Name       string `json:"name"`
+		} `json:"go"`
+	}
+	if err := json.Unmarshal(raw, &cases); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cases {
+		got, err := ParseObjectRef(c.Input)
+		if c.Go == nil {
+			if err == nil {
+				t.Errorf("ParseObjectRef(%q) accepted %+v", c.Input, got)
+			}
+			continue
+		}
+		want := ObjectRef{APIVersion: c.Go.APIVersion, Kind: c.Go.Kind, Namespace: c.Go.Namespace, Name: c.Go.Name}
+		if err != nil || got != want {
+			t.Errorf("ParseObjectRef(%q) = %+v, %v; want %+v", c.Input, got, err, want)
+		}
+	}
+}
+
+func TestClusterRBACReferencesKeepTheirKindVersionAndScope(t *testing.T) {
+	for _, kind := range []string{"ClusterRole", "ClusterRoleBinding"} {
+		ref, err := ParseObjectRef(kind + "/app-cleanup")
+		if err != nil || ref.Kind != kind || ref.APIVersion != "rbac.authorization.k8s.io/v1" || ref.Namespace != "" {
+			t.Fatalf("cluster RBAC reference: %+v %v", ref, err)
+		}
+	}
+}
+
+func TestObjectRefErrorOffersCallerExample(t *testing.T) {
+	for _, raw := range []string{`Deployment/app/worker,peer`, `{"kind":"Deployment","namespace":"app","name":"worker","names":["peer"]}`} {
+		_, err := ParseObjectRef(raw)
+		if err == nil || !strings.Contains(err.Error(), "Kind/name") || !strings.Contains(err.Error(), "kind") || !strings.Contains(err.Error(), "Deployment/app/worker") {
+			t.Fatalf("reference %q needs accepted forms and a caller-derived example: %v", raw, err)
+		}
+	}
+}
+
+func TestObjectRefErrorsDoNotEchoUnrelatedFields(t *testing.T) {
+	_, err := ParseObjectRef(`{"kind":"Deployment","namespace":"app","name":"worker","unexpected":"PRIVATE_CANARY"}`)
+	if err == nil || strings.Contains(err.Error(), "PRIVATE_CANARY") || !strings.Contains(err.Error(), "Deployment/app/worker") {
+		t.Fatalf("unsafe or unhelpful error: %v", err)
+	}
 }

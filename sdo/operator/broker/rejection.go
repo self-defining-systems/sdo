@@ -16,12 +16,16 @@ import (
 // MaxValidationRetries bounds how often Go re-dispatches an agent task after
 // the broker rejected its proposal with validator diagnostics. A task is
 // therefore dispatched at most 1+MaxValidationRetries times.
-const MaxValidationRetries = 2
+const MaxValidationRetries = 5
 
 // RejectionDiagnostics returns the typed validator diagnostics carried by a
 // broker rejection. Errors that are not validator failures (infrastructure,
-// stale proposals, isolated-job failures) report false and are not retried.
+// isolated-job failures) report false and are not retried.
 func RejectionDiagnostics(err error) ([]*contracts.MemoryDiagnostic, bool) {
+	var conflict *MemoryConflict
+	if errors.As(err, &conflict) {
+		return []*contracts.MemoryDiagnostic{conflict.Diagnostic()}, true
+	}
 	var failure *validate.Failure
 	if !errors.As(err, &failure) || len(failure.Diagnostics) == 0 {
 		return nil, false
@@ -86,7 +90,7 @@ func (b *Broker) readRejections(proposalID string) (*contracts.ProposalRejection
 		return nil, err
 	}
 	log := &contracts.ProposalRejectionLog{}
-	if err := wire.Unmarshal(data, log); err != nil {
+	if err := wire.UnmarshalDurable(data, log); err != nil {
 		return nil, err
 	}
 	if log.ProposalId != proposalID {

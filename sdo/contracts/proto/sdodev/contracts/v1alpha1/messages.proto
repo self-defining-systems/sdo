@@ -19,6 +19,8 @@ package sdodev.contracts.v1alpha1;
 import "buf/validate/validate.proto";
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
+import "sdodev/contracts/v1alpha1/controller_config.proto";
+import "google/protobuf/duration.proto";
 import "sdodev/contracts/v1alpha1/common.proto";
 import "sdodev/contracts/v1alpha1/program.proto";
 import "sdodev/contracts/v1alpha1/traffic.proto";
@@ -51,18 +53,18 @@ message DriftField {
 message DriftEvent {
   ObjectRef ref = 1;
   repeated DriftField fields = 2;
-  string source = 3;
+  string source = 3 [(controller_owned) = true];
   string manager = 4;
-  string operation = 5;
-  google.protobuf.Timestamp observed_at = 6;
+  string operation = 5 [(controller_owned) = true];
+  google.protobuf.Timestamp observed_at = 6 [(controller_owned) = true];
   string classification = 7 [(buf.validate.field).string = {in: ["fault", "unexplained"]}];
-  string program_id = 8;
-  google.protobuf.Timestamp manager_at = 9;
-  string investigation_status = 10;
-  string investigation_verdict = 11;
+  string program_id = 8 [(controller_owned) = true];
+  google.protobuf.Timestamp manager_at = 9 [(controller_owned) = true];
+  string investigation_status = 10 [(controller_owned) = true];
+  string investigation_verdict = 11 [(buf.validate.field).string = {in: ["", "bug", "benign", "unsure"]}];
   string investigation_reason = 12;
   repeated DriftEvidence investigation_evidence = 13;
-  string investigation_capture_id = 14;
+  string investigation_capture_id = 14 [(controller_owned) = true];
 }
 
 message DriftEvidence {
@@ -71,12 +73,15 @@ message DriftEvidence {
 }
 
 // DetectorEvaluation is one detector's status at a point in time.
+// Pending means observations are incomplete: it establishes neither a fault nor health.
 message DetectorEvaluation {
   string detector_id = 1 [(buf.validate.field).string = {min_len: 1, pattern: "^[a-z0-9][a-z0-9_.-]*$"}];
   google.protobuf.Timestamp evaluated_at = 2 [(buf.validate.field).required = true];
-  string status = 3 [(buf.validate.field).string = {in: ["firing", "clear", "error"]}];
+  string status = 3 [(buf.validate.field).string = {in: ["firing", "clear", "error", "pending"]}];
   repeated string fingerprints = 4;
   optional string error = 5;
+  // Informational explanation for an unconfirmed observation, not an error.
+  optional string reason = 6;
 }
 
 message SurfacedPlaybook {
@@ -107,6 +112,8 @@ message StateChange {
   string name = 2 [(buf.validate.field).string.min_len = 1];
   string change = 3 [(buf.validate.field).string = {in: ["added", "removed", "modified"]}];
   repeated StateFieldChange fields = 4;
+ optional string api_version = 5;
+ optional string namespace = 6;
 }
 
 message StateChanges {
@@ -115,24 +122,6 @@ message StateChanges {
   repeated StateChange changes = 3;
   optional int32 omitted = 4 [(buf.validate.field).int32.gte = 0];
   repeated string unobserved_kinds = 5;
-}
-
-message ObservedStateChange {
-  string kind = 1 [(buf.validate.field).string.min_len = 1];
-  string name = 2 [(buf.validate.field).string.min_len = 1];
-  google.protobuf.Timestamp first_observed_at = 3 [(buf.validate.field).required = true];
-}
-
-message FollowUpContext {
-  string original_incident_id = 1 [(buf.validate.field).string.min_len = 1];
-  string parent_incident_id = 2 [(buf.validate.field).string.min_len = 1];
-  int32 attempt = 3 [(buf.validate.field).int32.gte = 1];
-  int32 max_follow_ups = 4 [(buf.validate.field).int32.gte = 1];
-  string prior_responder_summary = 5;
-  // True when health is quiet and the request's only blockers are unexplained
-  // drift events the earlier responder left without a structured label. The
-  // follow-up asks for those labels and nothing else.
-  bool drift_labels_only = 6;
 }
 
 // Read-only logical memory supplied by the Go storage edge. Agent workers do
@@ -168,6 +157,9 @@ message MemoryPlaybook {
 }
 
 message OperationalMemorySnapshot {
+  // Shell snapshots intentionally retain literal notes, scripts and their file paths.
+  CodePathConfig code_path = 100;
+
   string accepted_commit = 1;
   string goal_markdown = 2;
   string architecture_markdown = 3;
@@ -228,6 +220,7 @@ message OperationalArtifactProposal {
   repeated string delete_playbook_ids = 6;
 }
 
+<<<<<<< HEAD
 // IncidentRequest is the snapshot the controller dispatches to the responder.
 // Explicit publishing capabilities; an empty query_url means no configured source.
 message MetricsSource {
@@ -235,6 +228,33 @@ message MetricsSource {
   bool annotated_pod_scraping = 2;
   // Full OTLP HTTP metrics URL, not a gRPC endpoint.
   string otlp_metrics_url = 3;
+=======
+// Controller-owned exclusion, valid only at the exact accepted memory revision.
+message DisabledSetupDetector {
+  string detector_id = 1 [(buf.validate.field).string.min_len = 1];
+  string accepted_revision = 2 [(buf.validate.field).string.min_len = 1];
+  repeated string fingerprints = 3 [(buf.validate.field).repeated = {min_items: 1, items: {string: {min_len: 1}}}];
+  google.protobuf.Timestamp disabled_at = 4 [(buf.validate.field).required = true];
+  string reason = 5 [(buf.validate.field).string.const = "fired on the confirmed-healthy app at setup"];
+}
+
+// NamespaceOnboarding is controller-owned identity acknowledgement at verified
+// initial installation. It never asserts content correctness or repair credit.
+message NamespaceOnboarding {
+  repeated DisabledSetupDetector disabled_setup_detectors = 6;
+  string namespace = 1;
+  string accepted_commit = 2;
+  google.protobuf.Timestamp established_at = 3;
+  repeated ObjectRef objects = 4;
+  // Install observations carry no health authority. The digest binds UID,
+  // configuration and ownership, excluding API bookkeeping and status.
+  repeated InstallEnvironmentObject environment_objects = 5;
+}
+
+message InstallEnvironmentObject {
+  ObjectRef ref = 1;
+  string digest = 2;
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 
 message IncidentRequest {
@@ -257,25 +277,41 @@ message IncidentRequest {
   string cancellation_token = 16 [(buf.validate.field).string.min_len = 1];
   string repair_policy = 17 [(buf.validate.field).string = {in: ["commit", "recorded-actions"]}];
   StateChanges state_changes = 18;
-  FollowUpContext follow_up = 19;
+  reserved 19;
+  reserved "follow_up";
   OperationalMemorySnapshot memory_snapshot = 20;
   repeated ProgramRun initial_program_runs = 21;
   int32 max_response_loops = 22;
   repeated DriftEvent drift_events = 23;
-  string fast_path_summary = 24;
+  reserved 24;
   string prepared_agent_task = 25;
+<<<<<<< HEAD
   // What earlier automatic stages did, in order; the agent starts from it.
   repeated StageReport prior_stages = 27;
+=======
+  string observation_generation = 26;
+  PlaybookCoverage playbook_coverage = 27;
+  NamespaceOnboarding namespace_onboarding = 28;
+  repeated StageReport prior_stages = 29;
+  // Go-owned: each lossy step taken so the request fit the transport limit, in order.
+  repeated string compaction = 30;
+  // Information from failed episodes of the same continuously open problem.
+  repeated ResponseProgress prior_response_progress = 31;
+  repeated DisabledSetupDetector disabled_setup_detectors = 32;
+}
+
+message ResponseProgress {
+  string incident_id = 1;
+  repeated RepairActionReceipt successful_actions = 2;
+  repeated RolloutPending blockers = 3;
+  string error = 4;
+  // Projection only: complete facts remain in durable outcomes.
+  bool truncated = 5;
+  uint32 omitted_episodes = 6;
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 
 message RootCauseEvidence {
-  // A state-change source names exactly one object, so the controller can look
-  // it up: Kind/name or Kind/namespace/name, with no whitespace, ';' or ','.
-  option (buf.validate.message).cel = {
-    id: "root_cause_evidence.state_change_single_object"
-    message: "a state-change evidence source must be exactly one object reference, Kind/name or Kind/namespace/name, with no spaces, ';' or ','; cite each changed object as its own evidence entry"
-    expression: "this.kind != 'state-change' || this.source.matches('^[^[:space:];,/]+/([^[:space:];,/]+/)?[^[:space:];,/]+$')"
-  };
   string kind = 1 [(buf.validate.field).string = {
     in: ["detector-finding", "synthetic-traffic", "state-change", "live-observation"]
   }];
@@ -359,6 +395,8 @@ message UsageMetrics {
   int64 reasoning_output_tokens = 9 [(buf.validate.field).int64.gte = 0];
   optional int64 model_requests = 10 [(buf.validate.field).int64.gte = 0];
   optional double total_cost_usd = 11 [(buf.validate.field).double.gte = 0];
+  // True when at least one included turn was interrupted before final accounting.
+  bool partial = 12;
 }
 
 message TimingMetrics {
@@ -387,6 +425,20 @@ message RepairActionReceipt {
   google.protobuf.Timestamp completed_at = 8 [(buf.validate.field).required = true];
   bool success = 9;
   bool reversible = 10;
+  string failure_reason = 11 [(buf.validate.field).string = {in: ["", "authorization_denied", "execution_failed", "delete_not_confirmed", "outcome_unknown", "incident_verified", "source_residual", "script_unprovenanced"]}];
+  // Controller ownerReference chains of written resources, read from the
+  // live object before the write. Cause attribution follows these chains,
+  // never generated names.
+  repeated ResourceOwners owners = 12 [(controller_owned) = true];
+  // Controller-recorded SHA256 of the exact executed RunScript bytes.
+  string script_digest = 13 [(controller_owned) = true];
+}
+
+// ResourceOwners is one written resource's controller owner chain, nearest
+// owner first (for example Pod -> ReplicaSet -> Deployment).
+message ResourceOwners {
+  ObjectRef resource = 1 [(buf.validate.field).required = true];
+  repeated ObjectRef owner_chain = 2 [(buf.validate.field).repeated.min_items = 1];
 }
 
 // IncidentResult is what the responder returns. The CEL enforces unique
@@ -404,7 +456,7 @@ message IncidentResult {
   repeated AppliedPlaybook applied_playbooks = 5;
   repeated string repair_changes = 6;
   repeated RepairActionReceipt repair_actions = 7;
-  repeated DetectorEvaluation final_detector_states = 8;
+  repeated DetectorEvaluation final_detector_states = 8 [(controller_owned) = true];
   repeated string proposed_artifact_ids = 9;
   repeated VerificationEvidence verification_evidence = 10;
   UsageMetrics usage = 11 [(buf.validate.field).required = true];
@@ -412,6 +464,7 @@ message IncidentResult {
   optional string responder_session_id = 13;
   optional string error = 14;
   LateFindingsPull late_findings_pull = 15;
+<<<<<<< HEAD
   repeated ProgramToolCall program_tool_calls = 16;
   repeated ProgramRun program_runs = 17;
   repeated PlanApplication plan_applications = 18;
@@ -424,6 +477,22 @@ message IncidentResult {
   repeated RelationCoveredFinding fast_path_relation_covered_findings = 25;
   repeated DriftEvent drift_events = 26;
   repeated StageReport prior_stages = 27;
+=======
+  repeated ProgramToolCall program_tool_calls = 16 [(controller_owned) = true];
+  repeated ProgramRun program_runs = 17 [(controller_owned) = true];
+  repeated PlanApplication plan_applications = 18 [(controller_owned) = true];
+  int32 response_loops_used = 19 [(controller_owned) = true];
+  bool response_loop_exhausted = 20 [(controller_owned) = true];
+  repeated string program_failure_signals = 21 [(controller_owned) = true];
+  string resolution_path = 22 [(controller_owned) = true, (buf.validate.field).string = {in: ["", "responder", "deterministic"]}];
+  reserved 23;
+  reserved 24;
+  reserved 25;
+  repeated DriftEvent drift_events = 26;
+  // Controller verification at terminal responder completion, never worker authority.
+  repeated Finding unresolved_findings = 27 [(controller_owned) = true];
+  DriftReprompt drift_reprompt = 28 [(controller_owned) = true];
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 
 // A responder claim that it read controller-published findings during its turn.
@@ -493,10 +562,86 @@ message IncidentClosure {
   google.protobuf.Timestamp responder_completed_at = 13 [(buf.validate.field).required = true];
   google.protobuf.Timestamp verified_at = 14 [(buf.validate.field).required = true];
   optional google.protobuf.Timestamp health_cleared_at = 15;
-  repeated ObservedStateChange observed_state_changes = 16;
-  optional google.protobuf.Timestamp detector_review_required_at = 17;
-  optional string detector_review_reason = 18;
+  reserved 16, 17, 18;
+  reserved "observed_state_changes";
+  reserved "detector_review_required_at", "detector_review_reason";
   repeated string cleaned_helpers = 19;
+  string observation_generation = 20;
+  // Confirmed per-finding observations on a failed closure; never global health authority.
+  repeated DetectorEvaluation partial_detector_states = 21;
+  bool verified_while_responder_running = 22;
+  google.protobuf.Duration closure_stability_window = 23;
+  // Set when the closure-time recheck never saw a complete observation window
+  // within its bound. Final states moved to partial; the outcome is unverified.
+  ClosureUnconfirmedReason unconfirmed_reason = 24;
+  string unconfirmed_detail = 25;
+  // Source checks that never became available before the recheck bound (the
+  // accepted source would not render, the inventory did not load). Information
+  // only: health alone decided the closure.
+  repeated string source_check_notes = 26;
+  StatePersistenceFailure state_persistence_failure = 27;
+  // Set durably before the first broker attempt, with the closure-time
+  // recheck's notes folded in. A frozen closure is the incident's terminal
+  // identity: every later attempt, across restarts, sends these exact bytes.
+  bool frozen = 28;
+}
+
+// ClosureUnconfirmedReason explains why a verified closure was committed
+// unconfirmed instead of superseded. Incomplete is "not yet", never a contradiction.
+enum ClosureUnconfirmedReason {
+  CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED = 0;
+  CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE = 1;
+  // An observer stayed unavailable (timeout, API 5xx, unsynced) until the bound.
+  CLOSURE_UNCONFIRMED_REASON_OBSERVER_UNAVAILABLE = 2;
+}
+
+// Controller-owned evidence from one response stage. Finding credit describes
+// a fresh scoped observation; independent controller verification owns closure.
+message StageReport {
+  string stage = 1 [(buf.validate.field).string.min_len = 1];
+  repeated StageMitigation mitigations = 2;
+  repeated string remaining_finding_fingerprints = 3;
+  string error = 4;
+  repeated string cleared_finding_fingerprints = 5;
+  RecoveryWait recovery_wait = 6;
+}
+
+message StageMitigation {
+  string playbook_id = 1 [(buf.validate.field).string.min_len = 1];
+  string program_revision = 2;
+  repeated Binding bindings = 3;
+  string plan_id = 4;
+  PlanApplication apply_receipt = 5;
+  string result = 6 [(buf.validate.field).string = {in: ["applied_cleared", "applied_still_matching", "reverted_ineffective", "rollout_failed", "rollout_pending_at_handoff", "admission_blocked", "apply_error", "skipped"]}];
+  string skip_reason = 7 [(buf.validate.field).string = {in: ["", "multiple_entry_points", "no_mitigation", "unbound_parameter", "diagnose_no_longer_matches", "diagnose_unavailable", "unexplained_coverage", "already_attempted", "repair_policy", "stage_budget", "plan_not_executable", "ineffective"]}];
+  ProgramRun post_apply_diagnose = 8;
+  repeated string cleared_finding_fingerprints = 9;
+  repeated string remaining_finding_fingerprints = 10;
+  string error = 11;
+  // One stage apply covers several attempts; apply_receipt is that whole
+  // application. These select this attempt's actions in apply_receipt.plan.
+  int32 plan_action_start = 12;
+  int32 plan_action_count = 13;
+  // Objects this attempt's applied actions wrote.
+  repeated ObjectRef touched_objects = 14;
+  // Why an applied attempt that left findings open was not reverted: it
+  // cleared some of them or its diagnosis (partial), an effect cannot be
+  // undone (irreversible), or restoring the preimages failed.
+  string kept_reason = 15 [(buf.validate.field).string = {in: ["", "partial", "irreversible", "rollback_failed"]}];
+}
+
+// Controller-owned evidence of the single optional healthy source-drift turn.
+message DriftReprompt {
+  int32 findings_before = 1 [(buf.validate.field).int32.gt = 0];
+  // Absent until a post-turn verification is available.
+  optional int32 findings_after = 2 [(buf.validate.field).int32.gte = 0];
+}
+
+// Controller-owned failure of the durable state contract. Invalid evidence is
+// quarantined; its field paths remain visible to outcome consumers/reflection.
+message StatePersistenceFailure {
+  string reason = 1 [(buf.validate.field).string.const = "state_persistence_invalid"];
+  string detail = 2 [(buf.validate.field).string.min_len = 1];
 }
 
 // StageReport is one automatic response stage's account of an incident: what

@@ -1,0 +1,1 @@
+- [${value}] ${kind} ${target}: ${summary} -- ${clip}

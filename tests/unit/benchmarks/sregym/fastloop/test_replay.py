@@ -18,11 +18,16 @@ from sdo.contracts import (
 from sdo.contracts.proto import parse_json, to_canonical_json
 
 
-def _task_and_result() -> tuple[str, str]:
+def _task_and_result(task_type: str = "incident-response") -> tuple[str, str]:
     from google.protobuf.any_pb2 import Any as ProtoAny
 
-    request = IncidentRequest(schema_version="sdo.dev/v1alpha1", incident_id="incident-1")
-    response = IncidentResult(schema_version="sdo.dev/v1alpha1", incident_id="incident-1")
+    if task_type == "incident-response":
+        request = IncidentRequest(schema_version="sdo.dev/v1alpha1", incident_id="incident-1")
+        response = IncidentResult(schema_version="sdo.dev/v1alpha1", incident_id="incident-1")
+    else:
+        request = ReflectionRequest()
+        request.closure.request.incident_id = "incident-1"
+        response = ReflectionResult(learning_decision="no_change", no_change_reason="synthetic")
     packed_request, packed_result = ProtoAny(), ProtoAny()
     packed_request.Pack(request)
     packed_result.Pack(response)
@@ -30,7 +35,7 @@ def _task_and_result() -> tuple[str, str]:
         schema_version="sdo.dev/v1alpha1",
         task_id="incident-1",
         agent_id="sdo-responder",
-        task_type="incident-response",
+        task_type=task_type,
         request=packed_request,
         workspace={"proposal_id": "incident-1", "checkout_path": "/workspace/incident"},
     )
@@ -86,6 +91,7 @@ def test_checkpoint_rejects_tampered_capture(tmp_path: Path) -> None:
         store.load(0, "responder")
 
 
+@pytest.mark.go_integration
 def test_checkpoint_retains_oversized_reflection_result_for_broker_replay(tmp_path: Path) -> None:
     request, result = _task_and_result()
     envelope = parse_json(result, AgentResult())
@@ -249,6 +255,101 @@ def test_capture_includes_redacted_session_snapshots_for_fake_api(tmp_path: Path
     assert set(CheckpointStore(tmp_path).load(0, "responder").captures) == {"open@pre-apply.json", "fixed.json"}
 
 
+@pytest.mark.parametrize("oversized", ["open@detect-recordings.json", "fixed.json", "healthy/healthy.json"])
+@pytest.mark.parametrize("stage", ["responder", "reflection"])
+def test_capture_keeps_finished_result_and_names_oversized_evidence(tmp_path: Path, oversized: str, stage: str) -> None:
+    import hashlib
+
+    from benchmarks.sregym.fastloop.replay import MAX_CAPTURE_BYTES
+    from benchmarks.sregym.fastloop.replay_worker import (
+        replay_live_worker,
+        replay_scripted_reflection,
+        replay_scripted_responder,
+    )
+
+    request, result = _task_and_result("incident-response" if stage == "responder" else "outcome-reflection-direct-v1")
+    receipt = tmp_path / "receipt"
+    session = hashlib.sha256(b"incident-1").hexdigest()[:32]
+    corpus = receipt / "sdo_runtime/sessions" / session / "corpus"
+    path = corpus / oversized
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b" " * (MAX_CAPTURE_BYTES + 1))
+    (corpus / "open@pre-apply.json").write_bytes(b'{"services":[]}')
+    ledger = {"incident_id": "incident-1", "receipt": {"outcome_commit": "synthetic-accepted"}}
+    (receipt / "sdo_production_receipt_strict.json").write_text(json.dumps({"native_ledger": ledger}))
+    maps = [{"data": {"agent-task.json": request}}, {"data": {"agent-result.json": result}}]
+    store = CheckpointStore(tmp_path)
+
+    capture_checkpoints(store, 0, "incident-1", receipt, maps)
+
+    checkpoint = store.load(0, stage)
+    assert checkpoint.result == result
+    assert checkpoint.broker == ledger
+    assert checkpoint.captures == {"open@pre-apply.json": b'{"services":[]}'}
+    assert oversized in checkpoint.unrecorded_captures
+    assert str(MAX_CAPTURE_BYTES) in checkpoint.unrecorded_captures[oversized]
+    assert not (store.root / "blobs" / hashlib.sha256(path.read_bytes()).hexdigest()).exists()
+    replays = [lambda: replay_live_worker(store, 0, stage, source=tmp_path, live_on_cache_miss=False)]
+    if stage == "responder":
+        replays.append(lambda: replay_scripted_responder(store, 0, source=tmp_path))
+    else:
+        assert store.load(0, "broker").result == result
+        replays.extend(
+            (
+                lambda: replay_scripted_reflection(store, 0, source=tmp_path, operator_root=tmp_path),
+                lambda: replay_broker(store, 0, source=tmp_path, operator_root=tmp_path),
+            )
+        )
+    for replay in replays:
+        with pytest.raises(CheckpointError, match=f"not replayable:.*{oversized}"):
+            replay()
+
+
+def test_checkpoint_bundle_budget_keeps_result_and_other_captures(tmp_path: Path) -> None:
+    from benchmarks.sregym.fastloop.replay import MAX_CAPTURE_BUNDLE_BYTES, MAX_CAPTURE_BYTES
+
+    request, result = _task_and_result()
+    captures = {
+        f"part-{i}.json": bytes([i]) * MAX_CAPTURE_BYTES
+        for i in range(1 + MAX_CAPTURE_BUNDLE_BYTES // MAX_CAPTURE_BYTES)
+    }
+    store = CheckpointStore(tmp_path)
+    store.save(0, "responder", request=request, result=result, captures=captures)
+
+    checkpoint = store.load(0, "responder")
+    assert checkpoint.result == result
+    assert sum(map(len, checkpoint.captures.values())) <= MAX_CAPTURE_BUNDLE_BYTES
+    assert set(checkpoint.captures) | set(checkpoint.unrecorded_captures) == set(captures)
+    assert "bundle" in next(iter(checkpoint.unrecorded_captures.values()))
+
+
+def test_incomplete_checkpoint_blocks_stale_stages_until_successful_recapture(tmp_path: Path) -> None:
+    request, result = _task_and_result()
+    store = CheckpointStore(tmp_path)
+    store.save(0, "responder", request=request, result=result)
+    store.mark_unrecorded(0, "archive incomplete")
+
+    with pytest.raises(CheckpointError, match="not replayable:.*archive incomplete"):
+        store.load(0, "responder")
+    assert (store.root / "000/responder/result.json").read_text() == result
+    store.clear_unrecorded(0)
+    assert store.load(0, "responder").result == result
+
+
+@pytest.mark.parametrize("reasons", [[], {"../escape": "oversized"}, {"open.json": ""}, {"open.json": 1}])
+def test_checkpoint_rejects_malformed_unrecorded_capture_reasons(tmp_path: Path, reasons: object) -> None:
+    request, result = _task_and_result()
+    store = CheckpointStore(tmp_path)
+    directory = store.save(0, "responder", request=request, result=result)
+    path = directory / "checkpoint.json"
+    manifest = json.loads(path.read_text())
+    manifest["unrecorded_captures"] = reasons
+    path.write_text(json.dumps(manifest))
+    with pytest.raises(CheckpointError, match="invalid unrecorded corpus capture"):
+        store.load(0, "responder")
+
+
+@pytest.mark.go_integration
 def test_replay_cli_selects_one_stage_without_loading_environment(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -395,6 +496,7 @@ def test_respond_replay_uses_captured_kubernetes_objects(
     assert replayed["status"] == "completed", replayed
 
 
+@pytest.mark.go_integration
 def test_scripted_reflection_replay_runs_worker_again(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     from google.protobuf.any_pb2 import Any as ProtoAny
 
@@ -521,6 +623,7 @@ def test_capture_keeps_current_incident_protojson_strict(tmp_path: Path, payload
         capture_checkpoints(CheckpointStore(tmp_path), 0, "incident-1", tmp_path / "incident", maps)
 
 
+<<<<<<< HEAD
 def test_capture_exports_script_actions_from_live_recording(tmp_path: Path) -> None:
     from benchmarks.sregym.agent_script.cli import load
 
@@ -599,3 +702,32 @@ def test_broker_replay_pins_the_requested_operator_modules(tmp_path: Path, monke
     assert replay_broker_result(checkpoint, source=source, operator_root=operator) == {"status": "no_change"}
     assert len(observed) == 1
     assert not observed[0].exists()
+=======
+def test_checkpoint_preserves_controller_healthy_reference(tmp_path: Path) -> None:
+    import hashlib
+
+    request, result = _task_and_result()
+    receipt = tmp_path / "receipt"
+    session = hashlib.sha256(b"incident-1").hexdigest()[:32]
+    reference = receipt / "sdo_runtime/sessions" / session / "corpus/healthy"
+    reference.mkdir(parents=True)
+    snapshot = b'{"namespace":"demo","services":[]}'
+    (reference / "healthy.json").write_bytes(snapshot)
+    (reference / "reference").write_bytes(b"accepted-source@clear-observation\n")
+    maps = [{"data": {"agent-task.json": request}}, {"data": {"agent-result.json": result}}]
+    store = CheckpointStore(tmp_path / "store")
+
+    capture_checkpoints(store, 0, "incident-1", receipt, maps)
+
+    assert store.load(0, "responder").captures == {
+        "healthy/healthy.json": snapshot,
+        "healthy/reference": b"accepted-source@clear-observation\n",
+    }
+
+
+@pytest.mark.parametrize("name", ["healthy/../outside", "healthy/extra.json", "nested/healthy.json"])
+def test_checkpoint_rejects_unowned_nested_capture_paths(tmp_path: Path, name: str) -> None:
+    request, result = _task_and_result()
+    with pytest.raises(CheckpointError, match="capture name"):
+        CheckpointStore(tmp_path).save(0, "responder", request=request, result=result, captures={name: b"{}"})
+>>>>>>> origin/vic-lsh/dev/sdo-improve

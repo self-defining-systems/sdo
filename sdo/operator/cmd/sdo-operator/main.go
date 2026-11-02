@@ -11,17 +11,74 @@ import (
 	"sdo.dev/operator/builder"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/operatorcli"
+	"sdo.dev/operator/shellpath"
 )
 
 // sourceHash is set by source-bound test builds; ordinary builds leave it empty.
 var sourceHash string
 
 func main() {
+<<<<<<< HEAD
 	broker.RunValidationChild()
+=======
+	if len(os.Args) == 2 && os.Args[1] == "shell-detector-runner" {
+		if err := shellpath.RunInCluster(context.Background()); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) == 2 && os.Args[1] == "script-runner" {
+		if err := operatorcli.RunScriptRunner(context.Background()); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	if len(os.Args) == 2 && os.Args[1] == "source-hash" {
 		fmt.Println(sourceHash)
 		return
 	}
+<<<<<<< HEAD
+=======
+	if len(os.Args) > 1 && (os.Args[1] == "standby" || os.Args[1] == "standby-history" || os.Args[1] == "standby-ready") {
+		var err error
+		switch os.Args[1] {
+		case "standby":
+			err = operatorcli.RunStandby(context.Background(), os.Args[2:])
+		case "standby-history":
+			err = operatorcli.RunStandbyHistory(context.Background(), os.Args[2:])
+		default:
+			err = operatorcli.RunStandbyReady(os.Args[2:])
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) > 1 && (os.Args[1] == "evidence" || os.Args[1] == "api-proxy") {
+		var err error
+		if os.Args[1] == "evidence" {
+			err = operatorcli.RunEvidence(os.Args[2:], os.Getenv, os.Stdout)
+		} else {
+			err = operatorcli.RunAPIProxy(context.Background(), os.Args[2:])
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) == 2 && os.Args[1] == "render-source" {
+		if err := operatorcli.RunSourceRender(context.Background(), os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	if len(os.Args) == 2 && os.Args[1] == "observe-controller" {
 		if err := operatorcli.RunControllerObservation(os.Stdin, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -84,6 +141,22 @@ func main() {
 			result, err = operatorcli.RunHost(context.Background(), config)
 			if err == nil {
 				err = json.NewEncoder(os.Stdout).Encode(result)
+			}
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "reset-control-state" {
+		config, err := operatorcli.ParseResetControlStateLaunch(os.Args[1:])
+		if err == nil {
+			result, runErr := operatorcli.RunResetControlState(context.Background(), config)
+			err = runErr
+			encodeErr := json.NewEncoder(os.Stdout).Encode(result)
+			if err == nil {
+				err = encodeErr
 			}
 		}
 		if err != nil {

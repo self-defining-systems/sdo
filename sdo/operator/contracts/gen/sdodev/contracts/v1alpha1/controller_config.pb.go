@@ -69,8 +69,6 @@ type ControllerConfig struct {
 	Duration            *durationpb.Duration `protobuf:"bytes,20,opt,name=duration,proto3" json:"duration,omitempty"`
 	ResponseTimeout     *durationpb.Duration `protobuf:"bytes,21,opt,name=response_timeout,json=responseTimeout,proto3" json:"response_timeout,omitempty"`
 	VerificationTimeout *durationpb.Duration `protobuf:"bytes,22,opt,name=verification_timeout,json=verificationTimeout,proto3" json:"verification_timeout,omitempty"`
-	MaxFollowUps        int32                `protobuf:"varint,23,opt,name=max_follow_ups,json=maxFollowUps,proto3" json:"max_follow_ups,omitempty"`
-	FollowUpCooldown    *durationpb.Duration `protobuf:"bytes,24,opt,name=follow_up_cooldown,json=followUpCooldown,proto3" json:"follow_up_cooldown,omitempty"`
 	RepairPolicy        string               `protobuf:"bytes,25,opt,name=repair_policy,json=repairPolicy,proto3" json:"repair_policy,omitempty"`
 	// Leader election.
 	LeaseName     string               `protobuf:"bytes,26,opt,name=lease_name,json=leaseName,proto3" json:"lease_name,omitempty"`
@@ -104,27 +102,23 @@ type ControllerConfig struct {
 	BrokerMode       string `protobuf:"bytes,46,opt,name=broker_mode,json=brokerMode,proto3" json:"broker_mode,omitempty"`
 	ResponderBackend string `protobuf:"bytes,49,opt,name=responder_backend,json=responderBackend,proto3" json:"responder_backend,omitempty"`
 	ResponderModel   string `protobuf:"bytes,50,opt,name=responder_model,json=responderModel,proto3" json:"responder_model,omitempty"`
-	WorkerMountMode  string `protobuf:"bytes,51,opt,name=worker_mount_mode,json=workerMountMode,proto3" json:"worker_mount_mode,omitempty"`
+	// Reasoning effort every agent worker runs at; empty means the shared default (sdo/contracts/agent_env.json).
+	AgentEffort string `protobuf:"bytes,101,opt,name=agent_effort,json=agentEffort,proto3" json:"agent_effort,omitempty"`
+	// Trusted run policy; empty preserves default-on replay and corpus capture.
+	Replay          string `protobuf:"bytes,102,opt,name=replay,proto3" json:"replay,omitempty"`
+	WorkerMountMode string `protobuf:"bytes,51,opt,name=worker_mount_mode,json=workerMountMode,proto3" json:"worker_mount_mode,omitempty"`
 	// Operator policy for the outcome reflection session. A resumed session
 	// requires a valid responder session ID from the accepted closure.
 	ReflectionSession  string `protobuf:"bytes,52,opt,name=reflection_session,json=reflectionSession,proto3" json:"reflection_session,omitempty"`
 	ReflectionGuidance string `protobuf:"bytes,53,opt,name=reflection_guidance,json=reflectionGuidance,proto3" json:"reflection_guidance,omitempty"`
 	// Replays incident detectors on benchmark-supplied healthy snapshots. The
 	// validator receives only the bounded snapshot directory, read-only.
-	HealthyBaseline        bool                 `protobuf:"varint,54,opt,name=healthy_baseline,json=healthyBaseline,proto3" json:"healthy_baseline,omitempty"`
-	MaxResponseLoops       int32                `protobuf:"varint,55,opt,name=max_response_loops,json=maxResponseLoops,proto3" json:"max_response_loops,omitempty"`
-	DiagnosisDeadline      *durationpb.Duration `protobuf:"bytes,56,opt,name=diagnosis_deadline,json=diagnosisDeadline,proto3" json:"diagnosis_deadline,omitempty"`
-	DiagnosisSettleDelay   *durationpb.Duration `protobuf:"bytes,57,opt,name=diagnosis_settle_delay,json=diagnosisSettleDelay,proto3" json:"diagnosis_settle_delay,omitempty"`
-	DriftSweepInterval     *durationpb.Duration `protobuf:"bytes,58,opt,name=drift_sweep_interval,json=driftSweepInterval,proto3" json:"drift_sweep_interval,omitempty"`
-	DriftBatchWindow       *durationpb.Duration `protobuf:"bytes,66,opt,name=drift_batch_window,json=driftBatchWindow,proto3" json:"drift_batch_window,omitempty"`
-	DriftDispatchesPerHour int32                `protobuf:"varint,67,opt,name=drift_dispatches_per_hour,json=driftDispatchesPerHour,proto3" json:"drift_dispatches_per_hour,omitempty"`
-	DriftTokensPerHour     int64                `protobuf:"varint,68,opt,name=drift_tokens_per_hour,json=driftTokensPerHour,proto3" json:"drift_tokens_per_hour,omitempty"`
-	ForceReflection        bool                 `protobuf:"varint,62,opt,name=force_reflection,json=forceReflection,proto3" json:"force_reflection,omitempty"`
-	DeployedManifestPaths  []string             `protobuf:"bytes,63,rep,name=deployed_manifest_paths,json=deployedManifestPaths,proto3" json:"deployed_manifest_paths,omitempty"`
-	ProgramFastPath        bool                 `protobuf:"varint,64,opt,name=program_fast_path,json=programFastPath,proto3" json:"program_fast_path,omitempty"`
-	ProgramTrustThreshold  int32                `protobuf:"varint,65,opt,name=program_trust_threshold,json=programTrustThreshold,proto3" json:"program_trust_threshold,omitempty"`
-	// Unset uses the runtime's 10-second firing and clearing confirmation.
-	ProgramMinDuration *durationpb.Duration `protobuf:"bytes,69,opt,name=program_min_duration,json=programMinDuration,proto3" json:"program_min_duration,omitempty"`
+	HealthyBaseline       bool                 `protobuf:"varint,54,opt,name=healthy_baseline,json=healthyBaseline,proto3" json:"healthy_baseline,omitempty"`
+	MaxResponseLoops      int32                `protobuf:"varint,55,opt,name=max_response_loops,json=maxResponseLoops,proto3" json:"max_response_loops,omitempty"`
+	DiagnosisDeadline     *durationpb.Duration `protobuf:"bytes,56,opt,name=diagnosis_deadline,json=diagnosisDeadline,proto3" json:"diagnosis_deadline,omitempty"`
+	DriftBatchWindow      *durationpb.Duration `protobuf:"bytes,66,opt,name=drift_batch_window,json=driftBatchWindow,proto3" json:"drift_batch_window,omitempty"`
+	ForceReflection       bool                 `protobuf:"varint,62,opt,name=force_reflection,json=forceReflection,proto3" json:"force_reflection,omitempty"`
+	DeployedManifestPaths []string             `protobuf:"bytes,63,rep,name=deployed_manifest_paths,json=deployedManifestPaths,proto3" json:"deployed_manifest_paths,omitempty"`
 	// Prometheus-compatible API that metric and alert detectors query once per
 	// evaluation cycle. Unset runs no metrics source: detectors that need one
 	// report an error instead of health. The token file holds an optional bearer
@@ -135,9 +129,21 @@ type ControllerConfig struct {
 	MetricsTokenFile  string `protobuf:"bytes,71,opt,name=metrics_token_file,json=metricsTokenFile,proto3" json:"metrics_token_file,omitempty"`
 	// Trusted controller image supplying Go to compiler-free workers and validators.
 	// Required at startup, independently of the optional traffic prober image.
-	ToolchainImage string `protobuf:"bytes,72,opt,name=toolchain_image,json=toolchainImage,proto3" json:"toolchain_image,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	ToolchainImage         string               `protobuf:"bytes,75,opt,name=toolchain_image,json=toolchainImage,proto3" json:"toolchain_image,omitempty"`
+	ClosureStabilityWindow *durationpb.Duration `protobuf:"bytes,76,opt,name=closure_stability_window,json=closureStabilityWindow,proto3" json:"closure_stability_window,omitempty"`
+	ResponderReportGrace   *durationpb.Duration `protobuf:"bytes,77,opt,name=responder_report_grace,json=responderReportGrace,proto3" json:"responder_report_grace,omitempty"`
+	// Pre-start one idle responder; false forces the ordinary cold Job path.
+	ResponderStandby *bool `protobuf:"varint,78,opt,name=responder_standby,json=responderStandby,proto3,oneof" json:"responder_standby,omitempty"`
+	// Fixed tool image for application-local RunScript Jobs.
+	ScriptImage string `protobuf:"bytes,79,opt,name=script_image,json=scriptImage,proto3" json:"script_image,omitempty"`
+	// Shared remote branch the accepted repository replicates, so lanes of one
+	// application on several hosts share one accepted memory. Unset keeps the
+	// accepted repository local.
+	MemoryUpstream *MemoryUpstream `protobuf:"bytes,80,opt,name=memory_upstream,json=memoryUpstream,proto3" json:"memory_upstream,omitempty"`
+	// Named programming-model plugin set. An omitted value preserves Go.
+	CodePath      *CodePathConfig `protobuf:"bytes,100,opt,name=code_path,json=codePath,proto3" json:"code_path,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ControllerConfig) Reset() {
@@ -326,20 +332,6 @@ func (x *ControllerConfig) GetVerificationTimeout() *durationpb.Duration {
 	return nil
 }
 
-func (x *ControllerConfig) GetMaxFollowUps() int32 {
-	if x != nil {
-		return x.MaxFollowUps
-	}
-	return 0
-}
-
-func (x *ControllerConfig) GetFollowUpCooldown() *durationpb.Duration {
-	if x != nil {
-		return x.FollowUpCooldown
-	}
-	return nil
-}
-
 func (x *ControllerConfig) GetRepairPolicy() string {
 	if x != nil {
 		return x.RepairPolicy
@@ -480,6 +472,20 @@ func (x *ControllerConfig) GetResponderModel() string {
 	return ""
 }
 
+func (x *ControllerConfig) GetAgentEffort() string {
+	if x != nil {
+		return x.AgentEffort
+	}
+	return ""
+}
+
+func (x *ControllerConfig) GetReplay() string {
+	if x != nil {
+		return x.Replay
+	}
+	return ""
+}
+
 func (x *ControllerConfig) GetWorkerMountMode() string {
 	if x != nil {
 		return x.WorkerMountMode
@@ -522,39 +528,11 @@ func (x *ControllerConfig) GetDiagnosisDeadline() *durationpb.Duration {
 	return nil
 }
 
-func (x *ControllerConfig) GetDiagnosisSettleDelay() *durationpb.Duration {
-	if x != nil {
-		return x.DiagnosisSettleDelay
-	}
-	return nil
-}
-
-func (x *ControllerConfig) GetDriftSweepInterval() *durationpb.Duration {
-	if x != nil {
-		return x.DriftSweepInterval
-	}
-	return nil
-}
-
 func (x *ControllerConfig) GetDriftBatchWindow() *durationpb.Duration {
 	if x != nil {
 		return x.DriftBatchWindow
 	}
 	return nil
-}
-
-func (x *ControllerConfig) GetDriftDispatchesPerHour() int32 {
-	if x != nil {
-		return x.DriftDispatchesPerHour
-	}
-	return 0
-}
-
-func (x *ControllerConfig) GetDriftTokensPerHour() int64 {
-	if x != nil {
-		return x.DriftTokensPerHour
-	}
-	return 0
 }
 
 func (x *ControllerConfig) GetForceReflection() bool {
@@ -567,27 +545,6 @@ func (x *ControllerConfig) GetForceReflection() bool {
 func (x *ControllerConfig) GetDeployedManifestPaths() []string {
 	if x != nil {
 		return x.DeployedManifestPaths
-	}
-	return nil
-}
-
-func (x *ControllerConfig) GetProgramFastPath() bool {
-	if x != nil {
-		return x.ProgramFastPath
-	}
-	return false
-}
-
-func (x *ControllerConfig) GetProgramTrustThreshold() int32 {
-	if x != nil {
-		return x.ProgramTrustThreshold
-	}
-	return 0
-}
-
-func (x *ControllerConfig) GetProgramMinDuration() *durationpb.Duration {
-	if x != nil {
-		return x.ProgramMinDuration
 	}
 	return nil
 }
@@ -620,14 +577,261 @@ func (x *ControllerConfig) GetToolchainImage() string {
 	return ""
 }
 
+func (x *ControllerConfig) GetClosureStabilityWindow() *durationpb.Duration {
+	if x != nil {
+		return x.ClosureStabilityWindow
+	}
+	return nil
+}
+
+func (x *ControllerConfig) GetResponderReportGrace() *durationpb.Duration {
+	if x != nil {
+		return x.ResponderReportGrace
+	}
+	return nil
+}
+
+func (x *ControllerConfig) GetResponderStandby() bool {
+	if x != nil && x.ResponderStandby != nil {
+		return *x.ResponderStandby
+	}
+	return false
+}
+
+func (x *ControllerConfig) GetScriptImage() string {
+	if x != nil {
+		return x.ScriptImage
+	}
+	return ""
+}
+
+func (x *ControllerConfig) GetMemoryUpstream() *MemoryUpstream {
+	if x != nil {
+		return x.MemoryUpstream
+	}
+	return nil
+}
+
+func (x *ControllerConfig) GetCodePath() *CodePathConfig {
+	if x != nil {
+		return x.CodePath
+	}
+	return nil
+}
+
+type MemoryUpstream struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Url   string                 `protobuf:"bytes,1,opt,name=url,proto3" json:"url,omitempty"`
+	// One branch per run; never the repository's main branch.
+	Branch string `protobuf:"bytes,2,opt,name=branch,proto3" json:"branch,omitempty"`
+	// Read-only directory holding an ssh identity file and known_hosts for the
+	// remote; empty uses the transport's own configuration.
+	SshDir        string `protobuf:"bytes,3,opt,name=ssh_dir,json=sshDir,proto3" json:"ssh_dir,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MemoryUpstream) Reset() {
+	*x = MemoryUpstream{}
+	mi := &file_sdodev_contracts_v1alpha1_controller_config_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MemoryUpstream) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MemoryUpstream) ProtoMessage() {}
+
+func (x *MemoryUpstream) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_controller_config_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MemoryUpstream.ProtoReflect.Descriptor instead.
+func (*MemoryUpstream) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_controller_config_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *MemoryUpstream) GetUrl() string {
+	if x != nil {
+		return x.Url
+	}
+	return ""
+}
+
+func (x *MemoryUpstream) GetBranch() string {
+	if x != nil {
+		return x.Branch
+	}
+	return ""
+}
+
+func (x *MemoryUpstream) GetSshDir() string {
+	if x != nil {
+		return x.SshDir
+	}
+	return ""
+}
+
+// Code paths compose implementations at independently named runtime seams.
+type CodePathConfig struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Overrides     *CodePathOverrides     `protobuf:"bytes,2,opt,name=overrides,proto3" json:"overrides,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CodePathConfig) Reset() {
+	*x = CodePathConfig{}
+	mi := &file_sdodev_contracts_v1alpha1_controller_config_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CodePathConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CodePathConfig) ProtoMessage() {}
+
+func (x *CodePathConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_controller_config_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CodePathConfig.ProtoReflect.Descriptor instead.
+func (*CodePathConfig) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_controller_config_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *CodePathConfig) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *CodePathConfig) GetOverrides() *CodePathOverrides {
+	if x != nil {
+		return x.Overrides
+	}
+	return nil
+}
+
+type CodePathOverrides struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	DetectorSource   string                 `protobuf:"bytes,1,opt,name=detector_source,json=detectorSource,proto3" json:"detector_source,omitempty"`
+	Coverage         string                 `protobuf:"bytes,2,opt,name=coverage,proto3" json:"coverage,omitempty"`
+	ResponseStages   []string               `protobuf:"bytes,3,rep,name=response_stages,json=responseStages,proto3" json:"response_stages,omitempty"`
+	MemoryValidation string                 `protobuf:"bytes,4,opt,name=memory_validation,json=memoryValidation,proto3" json:"memory_validation,omitempty"`
+	Activation       string                 `protobuf:"bytes,5,opt,name=activation,proto3" json:"activation,omitempty"`
+	AgentGuidance    string                 `protobuf:"bytes,6,opt,name=agent_guidance,json=agentGuidance,proto3" json:"agent_guidance,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *CodePathOverrides) Reset() {
+	*x = CodePathOverrides{}
+	mi := &file_sdodev_contracts_v1alpha1_controller_config_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CodePathOverrides) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CodePathOverrides) ProtoMessage() {}
+
+func (x *CodePathOverrides) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_controller_config_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CodePathOverrides.ProtoReflect.Descriptor instead.
+func (*CodePathOverrides) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_controller_config_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *CodePathOverrides) GetDetectorSource() string {
+	if x != nil {
+		return x.DetectorSource
+	}
+	return ""
+}
+
+func (x *CodePathOverrides) GetCoverage() string {
+	if x != nil {
+		return x.Coverage
+	}
+	return ""
+}
+
+func (x *CodePathOverrides) GetResponseStages() []string {
+	if x != nil {
+		return x.ResponseStages
+	}
+	return nil
+}
+
+func (x *CodePathOverrides) GetMemoryValidation() string {
+	if x != nil {
+		return x.MemoryValidation
+	}
+	return ""
+}
+
+func (x *CodePathOverrides) GetActivation() string {
+	if x != nil {
+		return x.Activation
+	}
+	return ""
+}
+
+func (x *CodePathOverrides) GetAgentGuidance() string {
+	if x != nil {
+		return x.AgentGuidance
+	}
+	return ""
+}
+
 var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
+<<<<<<< HEAD
 	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\x8c\x1e\n" +
 	"\x10ControllerConfig\x12,\n" +
 	"\x12memory_host_binary\x18K \x01(\tR\x10memoryHostBinary\x12,\n" +
 	"\x12memory_host_digest\x18L \x01(\tR\x10memoryHostDigest\x12%\n" +
+=======
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\x9d\x1f\n" +
+	"\x10ControllerConfig\x12%\n" +
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	"\tnamespace\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tnamespace\x12+\n" +
 	"\x11control_namespace\x18\x02 \x01(\tR\x10controlNamespace\x12\"\n" +
 	"\bapp_root\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\aappRoot\x12 \n" +
@@ -651,9 +855,7 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\x15firing_telemetry_path\x18\x13 \x01(\tR\x13firingTelemetryPath\x125\n" +
 	"\bduration\x18\x14 \x01(\v2\x19.google.protobuf.DurationR\bduration\x12D\n" +
 	"\x10response_timeout\x18\x15 \x01(\v2\x19.google.protobuf.DurationR\x0fresponseTimeout\x12L\n" +
-	"\x14verification_timeout\x18\x16 \x01(\v2\x19.google.protobuf.DurationR\x13verificationTimeout\x12-\n" +
-	"\x0emax_follow_ups\x18\x17 \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\fmaxFollowUps\x12G\n" +
-	"\x12follow_up_cooldown\x18\x18 \x01(\v2\x19.google.protobuf.DurationR\x10followUpCooldown\x12D\n" +
+	"\x14verification_timeout\x18\x16 \x01(\v2\x19.google.protobuf.DurationR\x13verificationTimeout\x12D\n" +
 	"\rrepair_policy\x18\x19 \x01(\tB\x1f\xbaH\x1cr\x1aR\x06commitR\x10recorded-actionsR\frepairPolicy\x12\x1d\n" +
 	"\n" +
 	"lease_name\x18\x1a \x01(\tR\tleaseName\x12@\n" +
@@ -675,33 +877,55 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\vbroker_mode\x18. \x01(\tR\n" +
 	"brokerMode\x12+\n" +
 	"\x11responder_backend\x181 \x01(\tR\x10responderBackend\x12'\n" +
-	"\x0fresponder_model\x182 \x01(\tR\x0eresponderModel\x12*\n" +
+	"\x0fresponder_model\x182 \x01(\tR\x0eresponderModel\x12!\n" +
+	"\fagent_effort\x18e \x01(\tR\vagentEffort\x12(\n" +
+	"\x06replay\x18f \x01(\tB\x10\xbaH\rr\vR\x00R\x02onR\x03offR\x06replay\x12*\n" +
 	"\x11worker_mount_mode\x183 \x01(\tR\x0fworkerMountMode\x12E\n" +
 	"\x12reflection_session\x184 \x01(\tB\x16\xbaH\x13r\x11R\x00R\x05freshR\x06resumeR\x11reflectionSession\x12_\n" +
 	"\x13reflection_guidance\x185 \x01(\tB.\xbaH+r)R\x00R\bbaselineR\n" +
 	"generalizeR\x0fgeneralize-specR\x12reflectionGuidance\x12)\n" +
 	"\x10healthy_baseline\x186 \x01(\bR\x0fhealthyBaseline\x125\n" +
 	"\x12max_response_loops\x187 \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\x10maxResponseLoops\x12H\n" +
-	"\x12diagnosis_deadline\x188 \x01(\v2\x19.google.protobuf.DurationR\x11diagnosisDeadline\x12O\n" +
-	"\x16diagnosis_settle_delay\x189 \x01(\v2\x19.google.protobuf.DurationR\x14diagnosisSettleDelay\x12K\n" +
-	"\x14drift_sweep_interval\x18: \x01(\v2\x19.google.protobuf.DurationR\x12driftSweepInterval\x12G\n" +
-	"\x12drift_batch_window\x18B \x01(\v2\x19.google.protobuf.DurationR\x10driftBatchWindow\x129\n" +
-	"\x19drift_dispatches_per_hour\x18C \x01(\x05R\x16driftDispatchesPerHour\x121\n" +
-	"\x15drift_tokens_per_hour\x18D \x01(\x03R\x12driftTokensPerHour\x12)\n" +
+	"\x12diagnosis_deadline\x188 \x01(\v2\x19.google.protobuf.DurationR\x11diagnosisDeadline\x12G\n" +
+	"\x12drift_batch_window\x18B \x01(\v2\x19.google.protobuf.DurationR\x10driftBatchWindow\x12)\n" +
 	"\x10force_reflection\x18> \x01(\bR\x0fforceReflection\x126\n" +
-	"\x17deployed_manifest_paths\x18? \x03(\tR\x15deployedManifestPaths\x12*\n" +
-	"\x11program_fast_path\x18@ \x01(\bR\x0fprogramFastPath\x12?\n" +
-	"\x17program_trust_threshold\x18A \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\x15programTrustThreshold\x12U\n" +
-	"\x14program_min_duration\x18E \x01(\v2\x19.google.protobuf.DurationB\b\xbaH\x05\xaa\x01\x022\x00R\x12programMinDuration\x12\x1f\n" +
+	"\x17deployed_manifest_paths\x18? \x03(\tR\x15deployedManifestPaths\x12\x1f\n" +
 	"\vmetrics_url\x18F \x01(\tR\n" +
 	"metricsUrl\x12.\n" +
 	"\x13metrics_publish_url\x18I \x01(\tR\x11metricsPublishUrl\x12,\n" +
 	"\x12metrics_token_file\x18G \x01(\tR\x10metricsTokenFile\x12'\n" +
-	"\x0ftoolchain_image\x18H \x01(\tR\x0etoolchainImageB\x14\n" +
+	"\x0ftoolchain_image\x18K \x01(\tR\x0etoolchainImage\x12S\n" +
+	"\x18closure_stability_window\x18L \x01(\v2\x19.google.protobuf.DurationR\x16closureStabilityWindow\x12O\n" +
+	"\x16responder_report_grace\x18M \x01(\v2\x19.google.protobuf.DurationR\x14responderReportGrace\x120\n" +
+	"\x11responder_standby\x18N \x01(\bH\x03R\x10responderStandby\x88\x01\x01\x12!\n" +
+	"\fscript_image\x18O \x01(\tR\vscriptImage\x12R\n" +
+	"\x0fmemory_upstream\x18P \x01(\v2).sdodev.contracts.v1alpha1.MemoryUpstreamR\x0ememoryUpstream\x12F\n" +
+	"\tcode_path\x18d \x01(\v2).sdodev.contracts.v1alpha1.CodePathConfigR\bcodePathB\x14\n" +
 	"\x12_synthetic_trafficB\x1a\n" +
 	"\x18_clean_responder_helpersB\x11\n" +
+<<<<<<< HEAD
 	"\x0f_state_baselineJ\x04\bJ\x10KJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x1e\x10\x1fJ\x04\b$\x10%J\x04\b%\x10&J\x04\b&\x10'J\x04\b/\x100J\x04\b0\x101J\x04\b;\x10<J\x04\b<\x10=J\x04\b=\x10>R\vmemory_hostR\x06brokerR\vbroker_argsR\x15restart_after_closureR\rprober_binaryR\fprober_imageR\n" +
 	"prober_urlR\x0fvalidator_imageR\x0fschema_identityR\x1adrift_investigation_windowR'drift_investigation_dispatches_per_hourR#drift_investigation_tokens_per_hourB\x88\x02\n" +
+=======
+	"\x0f_state_baselineB\x14\n" +
+	"\x12_responder_standbyJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x17\x10\x18J\x04\b\x18\x10\x19J\x04\b9\x10:J\x04\b:\x10;J\x04\b;\x10<J\x04\b<\x10=J\x04\b=\x10>J\x04\bC\x10DJ\x04\bD\x10EJ\x04\b@\x10AJ\x04\bA\x10BJ\x04\bE\x10FJ\x04\bH\x10IJ\x04\bI\x10JJ\x04\bJ\x10KR\x06brokerR\vbroker_argsR\x0emax_follow_upsR\x12follow_up_cooldownR\x14drift_sweep_intervalR\x1adrift_investigation_windowR'drift_investigation_dispatches_per_hourR#drift_investigation_tokens_per_hourR\x19drift_dispatches_per_hourR\x15drift_tokens_per_hourR\x14program_min_durationR\x17plan_safety_policy_jsonR\x19plan_safety_policy_sha256R\x17plan_source_policy_json\"e\n" +
+	"\x0eMemoryUpstream\x12\x19\n" +
+	"\x03url\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x03url\x12\x1f\n" +
+	"\x06branch\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06branch\x12\x17\n" +
+	"\assh_dir\x18\x03 \x01(\tR\x06sshDir\"p\n" +
+	"\x0eCodePathConfig\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12J\n" +
+	"\toverrides\x18\x02 \x01(\v2,.sdodev.contracts.v1alpha1.CodePathOverridesR\toverrides\"\xf5\x01\n" +
+	"\x11CodePathOverrides\x12'\n" +
+	"\x0fdetector_source\x18\x01 \x01(\tR\x0edetectorSource\x12\x1a\n" +
+	"\bcoverage\x18\x02 \x01(\tR\bcoverage\x12'\n" +
+	"\x0fresponse_stages\x18\x03 \x03(\tR\x0eresponseStages\x12+\n" +
+	"\x11memory_validation\x18\x04 \x01(\tR\x10memoryValidation\x12\x1e\n" +
+	"\n" +
+	"activation\x18\x05 \x01(\tR\n" +
+	"activation\x12%\n" +
+	"\x0eagent_guidance\x18\x06 \x01(\tR\ragentGuidanceB\x88\x02\n" +
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	"\x1dcom.sdodev.contracts.v1alpha1B\x15ControllerConfigProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 
 var (
@@ -716,30 +940,34 @@ func file_sdodev_contracts_v1alpha1_controller_config_proto_rawDescGZIP() []byte
 	return file_sdodev_contracts_v1alpha1_controller_config_proto_rawDescData
 }
 
-var file_sdodev_contracts_v1alpha1_controller_config_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
+var file_sdodev_contracts_v1alpha1_controller_config_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_sdodev_contracts_v1alpha1_controller_config_proto_goTypes = []any{
 	(*ControllerConfig)(nil),    // 0: sdodev.contracts.v1alpha1.ControllerConfig
-	(*durationpb.Duration)(nil), // 1: google.protobuf.Duration
+	(*MemoryUpstream)(nil),      // 1: sdodev.contracts.v1alpha1.MemoryUpstream
+	(*CodePathConfig)(nil),      // 2: sdodev.contracts.v1alpha1.CodePathConfig
+	(*CodePathOverrides)(nil),   // 3: sdodev.contracts.v1alpha1.CodePathOverrides
+	(*durationpb.Duration)(nil), // 4: google.protobuf.Duration
 }
 var file_sdodev_contracts_v1alpha1_controller_config_proto_depIdxs = []int32{
-	1,  // 0: sdodev.contracts.v1alpha1.ControllerConfig.duration:type_name -> google.protobuf.Duration
-	1,  // 1: sdodev.contracts.v1alpha1.ControllerConfig.response_timeout:type_name -> google.protobuf.Duration
-	1,  // 2: sdodev.contracts.v1alpha1.ControllerConfig.verification_timeout:type_name -> google.protobuf.Duration
-	1,  // 3: sdodev.contracts.v1alpha1.ControllerConfig.follow_up_cooldown:type_name -> google.protobuf.Duration
-	1,  // 4: sdodev.contracts.v1alpha1.ControllerConfig.lease_duration:type_name -> google.protobuf.Duration
-	1,  // 5: sdodev.contracts.v1alpha1.ControllerConfig.maintenance_poll_interval:type_name -> google.protobuf.Duration
-	1,  // 6: sdodev.contracts.v1alpha1.ControllerConfig.resume_sync_timeout:type_name -> google.protobuf.Duration
-	1,  // 7: sdodev.contracts.v1alpha1.ControllerConfig.synthetic_traffic_warmup:type_name -> google.protobuf.Duration
-	1,  // 8: sdodev.contracts.v1alpha1.ControllerConfig.diagnosis_deadline:type_name -> google.protobuf.Duration
-	1,  // 9: sdodev.contracts.v1alpha1.ControllerConfig.diagnosis_settle_delay:type_name -> google.protobuf.Duration
-	1,  // 10: sdodev.contracts.v1alpha1.ControllerConfig.drift_sweep_interval:type_name -> google.protobuf.Duration
-	1,  // 11: sdodev.contracts.v1alpha1.ControllerConfig.drift_batch_window:type_name -> google.protobuf.Duration
-	1,  // 12: sdodev.contracts.v1alpha1.ControllerConfig.program_min_duration:type_name -> google.protobuf.Duration
-	13, // [13:13] is the sub-list for method output_type
-	13, // [13:13] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	4,  // 0: sdodev.contracts.v1alpha1.ControllerConfig.duration:type_name -> google.protobuf.Duration
+	4,  // 1: sdodev.contracts.v1alpha1.ControllerConfig.response_timeout:type_name -> google.protobuf.Duration
+	4,  // 2: sdodev.contracts.v1alpha1.ControllerConfig.verification_timeout:type_name -> google.protobuf.Duration
+	4,  // 3: sdodev.contracts.v1alpha1.ControllerConfig.lease_duration:type_name -> google.protobuf.Duration
+	4,  // 4: sdodev.contracts.v1alpha1.ControllerConfig.maintenance_poll_interval:type_name -> google.protobuf.Duration
+	4,  // 5: sdodev.contracts.v1alpha1.ControllerConfig.resume_sync_timeout:type_name -> google.protobuf.Duration
+	4,  // 6: sdodev.contracts.v1alpha1.ControllerConfig.synthetic_traffic_warmup:type_name -> google.protobuf.Duration
+	4,  // 7: sdodev.contracts.v1alpha1.ControllerConfig.diagnosis_deadline:type_name -> google.protobuf.Duration
+	4,  // 8: sdodev.contracts.v1alpha1.ControllerConfig.drift_batch_window:type_name -> google.protobuf.Duration
+	4,  // 9: sdodev.contracts.v1alpha1.ControllerConfig.closure_stability_window:type_name -> google.protobuf.Duration
+	4,  // 10: sdodev.contracts.v1alpha1.ControllerConfig.responder_report_grace:type_name -> google.protobuf.Duration
+	1,  // 11: sdodev.contracts.v1alpha1.ControllerConfig.memory_upstream:type_name -> sdodev.contracts.v1alpha1.MemoryUpstream
+	2,  // 12: sdodev.contracts.v1alpha1.ControllerConfig.code_path:type_name -> sdodev.contracts.v1alpha1.CodePathConfig
+	3,  // 13: sdodev.contracts.v1alpha1.CodePathConfig.overrides:type_name -> sdodev.contracts.v1alpha1.CodePathOverrides
+	14, // [14:14] is the sub-list for method output_type
+	14, // [14:14] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_controller_config_proto_init() }
@@ -754,7 +982,7 @@ func file_sdodev_contracts_v1alpha1_controller_config_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc), len(file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   1,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

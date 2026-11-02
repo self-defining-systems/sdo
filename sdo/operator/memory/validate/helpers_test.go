@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"sdo.dev/operator/memory/layout"
 )
 
 // copyTree copies a tree and preserves permission bits, which the script
@@ -81,6 +83,14 @@ func write(t *testing.T, root, rel, content string) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// generateIndex writes the generated playbook index, as the broker does.
+func generateIndex(t *testing.T, root string) {
+	t.Helper()
+	if _, err := layout.WritePlaybookIndex(root); err != nil {
 		t.Fatal(err)
 	}
 }

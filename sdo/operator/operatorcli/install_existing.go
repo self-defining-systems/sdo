@@ -6,20 +6,28 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"sdo.dev/operator/builder"
 	"sdo.dev/operator/install"
+	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/validate"
 )
 
 // InstallExistingConfig installs an already accepted source tree without
 // rerunning deployment agents or replacing the accepted Git history.
 type InstallExistingConfig struct {
-	Repository string
-	Kubeconfig string
-	Duration   time.Duration
-	Install    install.Config
+	Repository          string
+	AdoptExistingMemory bool
+	OperatorRoot        string
+	Kubeconfig          string
+	// DeployedManifestPaths scopes adoption evidence to the accepted deployment.
+	DeployedManifestPaths []string
+	Duration              time.Duration
+	Install               install.Config
 }
 
 type InstallExistingResult struct {
@@ -36,36 +44,46 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	}
 	flags := flag.NewFlagSet("sdo-operator install-existing", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
+	codePathName := flags.String("code-path", "", "programming-model plugin set: go or shell")
+	codePathOverrides := flags.String("code-path-overrides", "", "CodePathOverrides JSON")
+	adopt := flags.Bool("adopt-existing-memory", false, "explicitly adopt supplied memory unvalidated as the accepted base")
+	operatorRoot := flags.String("operator-root", "/opt/sdo/sdo/operator", "operator sources used to compile adopted memory")
 	repository := flags.String("repository", "", "clean accepted Git repository")
 	namespace := flags.String("namespace", "", "application namespace")
 	controlNamespace := flags.String("control-namespace", "", "operator namespace")
 	application := flags.String("application", "", "application identity")
 	controllerImage := flags.String("controller-image", "", "Go controller image")
 	responderImage := flags.String("responder-image", "", "agent worker image")
+<<<<<<< HEAD
+=======
+	scriptImage := flags.String("script-image", "", "fixed slim script-tools image; defaults to the controller image")
+	validatorImage := flags.String("validator-image", "", "isolated validator image")
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	repositoryPVC := flags.String("repository-pvc", "", "shared accepted repository PVC")
 	credentialsSecret := flags.String("credentials-secret", "", "agent credentials Secret")
 	model := flags.String("model", "", "agent model")
 	provider := flags.String("agent-provider", "codex", "agent provider")
-	repairPolicy := flags.String("repair-policy", "commit", "repair evidence policy")
+	replay := flags.String("replay", "", "replay and corpus capture: on (default) or off")
+	effort := flags.String("agent-effort", "", "reasoning effort of every agent worker (empty: the shared default)")
+	repairPolicy := flags.String("repair-policy", "recorded-actions", "repair evidence policy")
 	reflectionSession := flags.String("reflection-session", "resume", "reflection session mode: fresh or resume")
 	reflectionGuidance := flags.String("reflection-guidance", "baseline", "reflection guidance mode")
 	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
-	maxFollowUps := flags.Int("max-follow-ups", 0, "maximum follow-up responders")
-	maxResponseLoops := flags.Int("max-response-loops", 5, "maximum sdo apply batches per incident")
-	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve incidents")
-	programTrustThreshold := flags.Int("program-trust-threshold", 3, "verified successes required to trust a program")
-	driftTokensPerHour := registerDriftTokenBudget(flags)
-	followUpCooldown := flags.Duration("follow-up-cooldown", 30*time.Second, "follow-up responder cooldown")
+	maxResponseLoops := flags.Int("max-response-loops", 10, "maximum mitigation rounds the responder agent may use per incident (the automatic stage's one apply does not count)")
 	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
-	verificationTimeout := flags.Duration("verification-timeout", 2*time.Minute, "verification timeout")
+	verificationTimeout := flags.Duration("verification-timeout", 5*time.Minute, "verification timeout")
 	duration := flags.Duration("duration", 0, "bounded controller duration")
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "stop after the first closure")
 	lateFindings := flags.String("late-findings", "off", "late finding pull mode: off or pull")
+	permissiveResponder := flags.Bool("permissive-responder", false, "broad lane repair permissions excluding Secret and credential APIs")
+	var responderNamespaces repeatable
+	flags.Var(&responderNamespaces, "responder-namespace", "additional lane namespace for permissive responder")
 	healthyBaseline := flags.Bool("healthy-baseline", false, "validate incident detectors against recorded healthy snapshots")
 	disableObservability := flags.Bool("no-observability-stack", false, "Do not install the SDO Prometheus stack")
 	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL; installs the metrics alerts detector and lets metric detectors query it")
 	registrationConfigMap := flags.String("agent-registration-configmap", "", "registration ConfigMap")
 	kubeconfig := flags.String("kubeconfig", "", "Kubernetes client and kubectl config")
+	standby := flags.Bool("responder-standby", true, "pre-start a responder; false forces cold Jobs")
 	var responderEnv repeatable
 	flags.Var(&responderEnv, "responder-env", "responder environment NAME=VALUE")
 	var deployedManifestPaths repeatable
@@ -73,6 +91,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	if err := flags.Parse(args[1:]); err != nil {
 		return InstallExistingConfig{}, err
 	}
+
 	if flags.NArg() != 0 {
 		return InstallExistingConfig{}, fmt.Errorf("unexpected install-existing arguments: %v", flags.Args())
 	}
@@ -100,23 +119,24 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	if *reflectionGuidance != "baseline" && *reflectionGuidance != "generalize" && *reflectionGuidance != "generalize-spec" {
 		return InstallExistingConfig{}, fmt.Errorf("unsupported reflection guidance %q", *reflectionGuidance)
 	}
-	if *maxFollowUps < 0 || *maxFollowUps > 1000 || *followUpCooldown < time.Second || *followUpCooldown%time.Second != 0 {
-		return InstallExistingConfig{}, errors.New("follow-up limit must be at most 1000 and cooldown positive whole seconds")
-	}
 	if *lateFindings != "off" && *lateFindings != "pull" {
 		return InstallExistingConfig{}, fmt.Errorf("invalid late findings mode %q", *lateFindings)
 	}
 	if *duration < 0 || *responseTimeout <= 0 || *verificationTimeout <= 0 {
 		return InstallExistingConfig{}, errors.New("controller timeouts must be positive")
 	}
-	if *programTrustThreshold < 1 {
-		return InstallExistingConfig{}, errors.New("program trust threshold must be positive")
+	menu := os.Getenv("SDO_RESPONDER_MENU")
+	if menu != "" && menu != "0" && menu != "1" {
+		return InstallExistingConfig{}, errors.New("SDO_RESPONDER_MENU must be 0 or 1")
 	}
-	if *driftTokensPerHour <= 0 {
-		return InstallExistingConfig{}, errors.New("drift responder token budget must be positive")
+	selectedCodePath, err := parseCodePathSelection(*codePathName, *codePathOverrides)
+	if err != nil {
+		return InstallExistingConfig{}, err
 	}
 	config := install.Config{
+		CodePath:  selectedCodePath,
 		Namespace: *namespace, ControlNamespace: *controlNamespace, Application: *application,
+<<<<<<< HEAD
 		ControllerImage: *controllerImage, ResponderImage: *responderImage,
 		RepositoryPVC: *repositoryPVC, CredentialsSecret: *credentialsSecret, Model: *model,
 		RepairPolicy: *repairPolicy, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, AgentProvider: *provider,
@@ -127,6 +147,17 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 		HealthyBaseline:      *healthyBaseline,
 		DisableObservability: *disableObservability, MetricsURL: *metricsURL,
 		TimeoutSeconds: int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()),
+=======
+		ScriptImage: *scriptImage, ControllerImage: *controllerImage, ResponderImage: *responderImage, ValidatorImage: *validatorImage,
+		RepositoryPVC: *repositoryPVC, CredentialsSecret: *credentialsSecret, Model: *model,
+		RepairPolicy: *repairPolicy, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, AgentProvider: *provider, AgentEffort: *effort, Replay: *replay,
+		MaxResponseLoops: *maxResponseLoops,
+		ResponderMenu:    menu != "0",
+		LateFindings:     *lateFindings,
+		HealthyBaseline:  *healthyBaseline, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
+		TimeoutSeconds: int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()),
+		MetricsURL:    *metricsURL,
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 		NativeCommand: []string{"/usr/local/bin/sdo-operator"},
 		ReuseExisting: *duration == 0 && !*exitAfterClosure, WaitForCompletion: *duration > 0 || *exitAfterClosure,
 		RegistrationConfigMap: *registrationConfigMap,
@@ -134,6 +165,11 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	if *registrationConfigMap != "" {
 		config.RegistrationDirectory = "/sdo/registrations"
 	}
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "responder-standby" {
+			config.ResponderStandby = standby
+		}
+	})
 	for _, value := range responderEnv {
 		name, _, found := strings.Cut(value, "=")
 		if !found || name == "" || strings.ContainsAny(name, "=\r\n") {
@@ -150,11 +186,11 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	if *exitAfterClosure {
 		config.ExtraControllerArgs = append(config.ExtraControllerArgs, "--exit-after-closure")
 	}
-	return InstallExistingConfig{Repository: *repository, Kubeconfig: *kubeconfig, Duration: *duration, Install: config}, nil
+	return InstallExistingConfig{AdoptExistingMemory: *adopt, OperatorRoot: *operatorRoot, Repository: *repository, Kubeconfig: *kubeconfig, DeployedManifestPaths: deployedManifestPaths, Duration: *duration, Install: config}, nil
 }
 
 func RunInstallExisting(ctx context.Context, launch InstallExistingConfig) (InstallExistingResult, error) {
-	commit, err := acceptedHead(ctx, launch.Repository)
+	commit, err := prepareInstallExistingRepository(ctx, launch)
 	if err != nil {
 		return InstallExistingResult{}, err
 	}
@@ -169,9 +205,65 @@ func RunInstallExisting(ctx context.Context, launch InstallExistingConfig) (Inst
 		SeedRepository: install.KubectlTarSeederWithKubeconfig(launch.Repository, commit, launch.Kubeconfig),
 		SyncRepository: install.KubectlTarSynchronizerWithKubeconfig(launch.Repository, launch.Kubeconfig),
 	}
+	installer.BeforeControllerStart = existingNamespaceOnboardingHook(client, launch, commit)
 	result, err := installer.Install(ctx, config)
 	if err != nil {
 		return InstallExistingResult{}, err
 	}
 	return InstallExistingResult{Installed: true, Reused: result.Reused, Fingerprint: result.Fingerprint, AcceptedCommit: commit, ControllerLogs: result.ControllerLogs}, nil
+}
+
+// prepareInstallExistingRepository keeps the opt-in adoption edge separate from
+// normal accepted installs and every subsequent broker mutation.
+func prepareInstallExistingRepository(ctx context.Context, launch InstallExistingConfig) (string, error) {
+	if !launch.AdoptExistingMemory {
+		return acceptedHead(ctx, launch.Repository)
+	}
+	if memoryCodePath(launch.Install.CodePath) == "shell" {
+		if err := validate.ShellHygieneValidator(ctx, launch.Repository, nil); err != nil {
+			return "", err
+		}
+		return memory.MarkAdoptedExisting(ctx, launch.Repository)
+	}
+	diagnostics, err := memory.CandidateDiagnostics(launch.Repository)
+	if err != nil {
+		return "", err
+	}
+	w, err := builder.BuildWorkspace(ctx, builder.Config{Replay: launch.Install.Replay, ApplicationRoot: launch.Repository, DiagnosticsRoot: diagnostics, OperatorRoot: launch.OperatorRoot, CompileOnly: true})
+	if err != nil {
+		return "", err
+	}
+	defer w.Close()
+	if _, err = w.ValidateAndBuild(ctx); err != nil {
+		return "", err
+	}
+	return memory.MarkAdoptedExisting(ctx, launch.Repository)
+}
+
+func memoryAdoptExisting(ctx context.Context, args []string, getenv func(string) string, out io.Writer) error {
+	flags := flag.NewFlagSet("memory adopt-existing", flag.ContinueOnError)
+	codePathName := flags.String("code-path", getenv("SDO_CODE_PATH"), "programming-model plugin set: go or shell")
+	root := flags.String("root", ".", "seed repository with existing memory")
+	operator := flags.String("operator-root", operatorRootDefault(getenv), "operator sources")
+	positional, err := parseFlags(flags, args)
+	if err != nil {
+		return err
+	}
+	if len(positional) != 0 {
+		return errors.New("adopt-existing takes no positional arguments")
+	}
+	absolute, err := absRoot(*root)
+	if err != nil {
+		return err
+	}
+	selectedCodePath, err := parseCodePathSelection(*codePathName, "")
+	if err != nil {
+		return err
+	}
+	commit, err := prepareInstallExistingRepository(ctx, InstallExistingConfig{Repository: absolute, OperatorRoot: *operator, AdoptExistingMemory: true, Install: install.Config{CodePath: selectedCodePath}})
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(out, "{\"adopted\":true,\"accepted_commit\":%q,\"origin\":\"adopted-existing\",\"validated\":false}\n", commit)
+	return err
 }

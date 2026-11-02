@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import ast
+import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -180,6 +185,7 @@ def test_production_sdo_does_not_import_benchmark_code() -> None:
     assert not violations, f"{len(violations)} production-to-benchmark import(s) found:\n" + "\n".join(violations)
 
 
+<<<<<<< HEAD
 def _wall_clock_sleeps(source: str) -> list[tuple[str, int]]:
     """Find real time/asyncio sleeps, resolving module and function aliases."""
     tree = ast.parse(source)
@@ -227,3 +233,48 @@ def test_unit_tests_synchronize_without_wall_clock_sleeps() -> None:
             if (relative, function) not in allowed:
                 violations.append(f"{relative}:{line}: {function}: replace sleep with readiness or an injected clock")
     assert not violations, "\n".join(violations)
+=======
+def _adapter_import_errors(files: list[Path]) -> list[str]:
+    """Resolve actual import statements, including Python's submodule fallback."""
+    errors = []
+    for filepath in files:
+        tree = ast.parse(filepath.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom) or node.module != "benchmarks.sregym.adapter":
+                continue
+            statement = ast.Module(body=[node], type_ignores=[])
+            try:
+                exec(compile(statement, str(filepath), "exec"), {})
+            except (ImportError, AttributeError) as error:
+                errors.append(f"{filepath}:{node.lineno}: {error}; export the name from the adapter facade")
+    return errors
+
+
+def test_repository_adapter_facade_imports_resolve() -> None:
+    # Tracked paths cover the whole repository without entering submodules or venvs.
+    paths = subprocess.run(
+        ["git", "ls-files", "--", "*.py"],
+        cwd=_REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    errors = _adapter_import_errors([_REPO_ROOT / path for path in paths])
+    assert not errors, "Unresolved adapter facade imports:\n" + "\n".join(errors)
+
+
+def test_adapter_import_check_detects_missing_export(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from benchmarks.sregym import adapter
+
+    source = tmp_path / "consumer.py"
+    source.write_text("from benchmarks.sregym.adapter import ImageRetentionError\n")
+    assert _adapter_import_errors([source]) == []
+    monkeypatch.delitem(vars(adapter), "ImageRetentionError", raising=False)
+    monkeypatch.delitem(adapter._EXPORTS, "ImageRetentionError")
+
+    errors = _adapter_import_errors([source])
+
+    assert len(errors) == 1
+    assert "consumer.py:1" in errors[0]
+    assert "ImageRetentionError" in errors[0]
+>>>>>>> origin/vic-lsh/dev/sdo-improve

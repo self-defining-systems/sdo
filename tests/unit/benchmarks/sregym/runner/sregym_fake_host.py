@@ -42,6 +42,15 @@ class FakeHost:
     def kickoff_import(self, command: str, workdir: Path, sregym_dir: Path, env: Mapping[str, str]) -> str | None:
         return None
 
+    def suite_descriptions(self, config, sregym_dir):
+        from benchmarks.sregym.faults.description import FaultSpec, ProblemDescription
+
+        return {
+            "fake-problem": ProblemDescription(
+                problem_id="fake-problem", faults=(FaultSpec("target_port", "geo"),), injection_order=(0,)
+            ).model_dump(mode="json")
+        }
+
     def free_bytes(self, path: Path) -> int | None:
         for prefix, value in self.free.items():
             if str(path).startswith(prefix):

@@ -16,11 +16,9 @@ protovalidate CEL mirrors the hand-written invariants.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import pytest
 
-from sdo.agents.responder.codex import _incident_result_schema
 from sdo.contracts import OUTCOME_CLASSIFICATIONS, OutcomeClassification
 from sdo.contracts import proto as contract_proto
 from sdo.contracts.proto import (
@@ -28,7 +26,6 @@ from sdo.contracts.proto import (
     ControllerState,
     IncidentClosure,
     IncidentRequest,
-    IncidentResult,
     IncidentView,
     OutcomeRecord,
     parse_json,
@@ -69,7 +66,6 @@ def test_outcome_round_trips_through_canonical_contract() -> None:
         ("incident_view_open.json", IncidentView),
         ("incident_view_populated.json", IncidentView),
         ("closure_repaired.json", IncidentClosure),
-        ("closure_own_edit.json", IncidentClosure),
         ("controller_state.json", ControllerState),
         ("broker_ledger.json", BrokerLedger),
     ],
@@ -80,18 +76,15 @@ def test_proto_schema_models_every_go_fixture(name: str, message_type: type) -> 
     parse_json(raw, message_type())
 
 
-def _assert_schema_fields_exist(schema: dict[str, Any], descriptor: Any, path: str) -> None:
-    """Every property of the model-output schema names a field of the proto message, recursively."""
+def test_detector_status_validation_includes_unconfirmed_pending() -> None:
+    from buf.validate import validate_pb2
 
-    for name, spec in schema["properties"].items():
-        field = descriptor.fields_by_name.get(name)
-        assert field is not None, f"{path}.{name} is not a field of {descriptor.full_name}"
-        child = spec["items"] if spec.get("type") == "array" else spec
-        if child.get("type") == "object" and "properties" in child:
-            assert field.message_type is not None, f"{path}.{name} is not a message field"
-            _assert_schema_fields_exist(child, field.message_type, f"{path}.{name}")
+    field = contract_proto.DetectorEvaluation.DESCRIPTOR.fields_by_name["status"]
+    permitted = getattr(field.GetOptions().Extensions[validate_pb2.field].string, "in")
+    assert set(permitted) == {"firing", "clear", "error", "pending"}
 
 
+<<<<<<< HEAD
 def test_model_output_schema_is_pinned_to_the_incident_result_descriptor() -> None:
     schema = _incident_result_schema()
 
@@ -118,3 +111,15 @@ def test_model_output_schema_is_pinned_to_the_incident_result_descriptor() -> No
     unrequested = set(IncidentResult.DESCRIPTOR.fields_by_name) - set(schema["properties"]) - owned
     assert unrequested == {"final_detector_states", "proposed_artifact_ids"}
     assert set(schema["required"]) == set(schema["properties"])
+=======
+def test_install_environment_observations_round_trip_as_typed_contracts() -> None:
+    observation = contract_proto.InstallEnvironmentObject(
+        ref=contract_proto.ObjectRef(api_version="v1", kind="ConfigMap", namespace="app", name="environment"),
+        digest="sha256:" + "a" * 64,
+    )
+    record = contract_proto.NamespaceOnboarding(environment_objects=[observation])
+    encoded = to_canonical_json(record)
+    decoded = parse_json(encoded, contract_proto.NamespaceOnboarding())
+    assert decoded.environment_objects[0] == observation
+    assert not decoded.HasField("established_at")
+>>>>>>> origin/vic-lsh/dev/sdo-improve

@@ -266,6 +266,7 @@ func TestControllerRecordsActivationBatchingAndClearingWithDispatchRelation(t *t
 		closed := make(chan IncidentClosure, 1)
 		controller.OnIncidentClosed = func(closure IncidentClosure) { closed <- closure }
 
+<<<<<<< HEAD
 		step(t, controller, 0)
 		step(t, controller, 1)
 		executePendingEffect(t, controller)
@@ -274,6 +275,16 @@ func TestControllerRecordsActivationBatchingAndClearingWithDispatchRelation(t *t
 		for second := 2; second < 6; second++ {
 			step(t, controller, second)
 		}
+=======
+	step(t, controller, 0)
+	step(t, controller, 1)
+	executePendingEffect(t, controller)
+	request := awaitRequest(t, dispatcher.requests)
+	awaitDispatchCompletionQueued(t, controller)
+	for second := 2; second < 21; second++ {
+		step(t, controller, second)
+	}
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 
 		activated := sink.events(FiringActivated, "cause")
 		if len(activated) != 1 {
@@ -449,6 +460,7 @@ func TestFiringTelemetryDoesNotDuplicateAfterRestartOrReplay(t *testing.T) {
 }
 
 func TestControllerWithoutASinkStillBuildsTheClosureTimeline(t *testing.T) {
+<<<<<<< HEAD
 	synctest.Test(t, func(t *testing.T) {
 		cause := incidentDetector("cause", stateFinding("cause"), stateFinding("cause"), sdk.Finding{}, sdk.Finding{}, sdk.Finding{})
 		dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
@@ -462,6 +474,25 @@ func TestControllerWithoutASinkStillBuildsTheClosureTimeline(t *testing.T) {
 		awaitDispatchCompletionQueued(t, controller)
 		for second := 2; second < 5; second++ {
 			step(t, controller, second)
+=======
+	cause := incidentDetector("cause", stateFinding("cause"), stateFinding("cause"), sdk.Finding{}, sdk.Finding{}, sdk.Finding{})
+	dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
+	controller := telemetryController(t, nil, dispatcher, cause)
+	closed := make(chan IncidentClosure, 1)
+	controller.OnIncidentClosed = func(closure IncidentClosure) { closed <- closure }
+	step(t, controller, 0)
+	step(t, controller, 1)
+	executePendingEffect(t, controller)
+	awaitRequest(t, dispatcher.requests)
+	awaitDispatchCompletionQueued(t, controller)
+	for second := 2; second < 20; second++ {
+		step(t, controller, second)
+	}
+	select {
+	case closure := <-closed:
+		if !closure.IncidentDetectorFiredBeforeDispatch || len(closure.DetectorTimeline) != 1 {
+			t.Fatalf("closure: %#v", closure)
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 		}
 		select {
 		case closure := <-closed:

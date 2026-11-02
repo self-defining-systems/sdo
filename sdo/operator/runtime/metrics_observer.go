@@ -12,6 +12,11 @@ import (
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/metrics"
+<<<<<<< HEAD
+=======
+	"sdo.dev/operator/sdk/servicehealth"
+	"sdo.dev/operator/sdk/traffic"
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 )
 
 // DefaultMetricsQueryTimeout bounds each metric query, and the alerts read,
@@ -103,9 +108,13 @@ type frozenMetrics struct {
 	ctx context.Context
 	at  time.Time
 
-	once    sync.Once
-	results map[string]metrics.Result
-	alerts  *metrics.AlertsResult
+	once           sync.Once
+	results        map[string]metrics.Result
+	dynamicMu      sync.Mutex
+	dynamic        map[metrics.Query]metrics.Result
+	alerts         *metrics.AlertsResult
+	alertOnce      sync.Once
+	onDemandAlerts metrics.AlertsResult
 }
 
 func (f *frozenMetrics) load() {
@@ -119,16 +128,26 @@ func (o *MetricsObserver) fetch(ctx context.Context, at time.Time) (map[string]m
 	var alerts *metrics.AlertsResult
 	var mu sync.Mutex
 	var wait sync.WaitGroup
+	groups := map[metrics.Query][]metrics.Query{}
 	for _, query := range o.queries {
+		key := metricReadKey(query)
+		groups[key] = append(groups[key], query)
+	}
+	for _, queries := range groups {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			result := o.fetchQuery(ctx, query, at)
+			result := o.fetchQuery(ctx, queries[0], at)
 			mu.Lock()
-			results[query.ID] = result
-			mu.Unlock()
+			defer mu.Unlock()
+			for _, query := range queries {
+				copy := result
+				copy.Query = query
+				results[query.ID] = copy
+			}
 		}()
 	}
+
 	if o.alerts {
 		wait.Add(1)
 		go func() {
@@ -236,6 +255,7 @@ func (p MetricsSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionCon
 	if err != nil || p.Observer == nil {
 		return base, err
 	}
+<<<<<<< HEAD
 	frozen := p.Observer.freeze(ctx)
 	return inputs.New(base).WithMetrics(frozen).WithAlerts(frozen), nil
 }
@@ -249,6 +269,102 @@ func (f *frozenMetrics) AlertsResult() (metrics.AlertsResult, bool) {
 	f.load()
 	if f.alerts == nil {
 		return metrics.AlertsResult{}, false
+=======
+	return metricsContext{DetectionContext: base, frozen: p.Observer.freeze(ctx), ScopedObservationSource: sdk.ScopedSource(base)}, nil
+}
+
+// metricsContext wraps a snapshot with the cycle's frozen metrics. It keeps
+// the wrapped snapshot's other optional views visible, so wrapping never
+// hides what capture and replay read.
+type metricsContext struct {
+	sdk.DetectionContext
+	sdk.ScopedObservationSource
+	frozen *frozenMetrics
+}
+
+func (c metricsContext) MetricResult(id string) (metrics.Result, bool) {
+	c.frozen.load()
+	result, ok := c.frozen.results[id]
+	if ok {
+		return result, true
+	}
+	c.frozen.dynamicMu.Lock()
+	defer c.frozen.dynamicMu.Unlock()
+	for q, r := range c.frozen.dynamic {
+		if q.ID == id {
+			return r, true
+		}
+	}
+	return metrics.Result{}, false
+}
+
+func (c metricsContext) AlertsResult() (metrics.AlertsResult, bool) {
+	c.frozen.load()
+	if c.frozen.alerts == nil {
+		c.frozen.alertOnce.Do(func() { c.frozen.onDemandAlerts = c.frozen.observer.fetchAlerts(c.frozen.ctx, c.frozen.at) })
+		return c.frozen.onDemandAlerts, true
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	}
 	return *f.alerts, true
 }
+
+// QueryMetrics reuses a declared query or freezes an on-demand query for
+// Diagnose and handwritten detectors at the same cycle timestamp.
+func (c metricsContext) QueryMetrics(q metrics.Query) metrics.Result {
+	if err := q.Validate(); err != nil {
+		return metrics.Result{Query: q, Error: err.Error()}
+	}
+	f := c.frozen
+	for _, declared := range f.observer.queries {
+		if declared.ID == q.ID && declared != q {
+			return metrics.Result{Query: q, Error: "metric query ID conflicts with declared query"}
+		}
+	}
+	f.dynamicMu.Lock()
+	defer f.dynamicMu.Unlock()
+	for known := range f.dynamic {
+		if known.ID == q.ID && known != q {
+			return metrics.Result{Query: q, Error: "metric query ID conflicts with frozen query"}
+		}
+	}
+	if result, ok := f.dynamic[q]; ok {
+		return result
+	}
+	if f.dynamic == nil {
+		f.dynamic = map[metrics.Query]metrics.Result{}
+	}
+	for _, declared := range f.observer.queries {
+		if metricReadKey(declared) == metricReadKey(q) {
+			f.load()
+			result := f.results[declared.ID]
+			result.Query = q
+			f.dynamic[q] = result
+			return result
+		}
+	}
+	for known, result := range f.dynamic {
+		if metricReadKey(known) == metricReadKey(q) {
+			result.Query = q
+			f.dynamic[q] = result
+			return result
+		}
+	}
+	result := f.observer.fetchQuery(f.ctx, q, f.at)
+	f.dynamic[q] = result
+	return result
+}
+
+func (c metricsContext) ObservedAt() time.Time {
+	if clock, ok := c.DetectionContext.(sdk.ObservationClock); ok {
+		return clock.ObservedAt()
+	}
+	return time.Time{}
+}
+func (c metricsContext) ServiceReachability() (servicehealth.ReachabilityWindow, bool) {
+	if source, ok := c.DetectionContext.(servicehealth.ReachabilitySource); ok {
+		return source.ServiceReachability()
+	}
+	return servicehealth.ReachabilityWindow{}, false
+}
+
+func metricReadKey(q metrics.Query) metrics.Query { q.ID = ""; q.Step = q.EffectiveStep(); return q }

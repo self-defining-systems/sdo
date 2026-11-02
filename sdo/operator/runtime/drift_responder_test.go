@@ -5,13 +5,18 @@ import (
 	"encoding/json"
 	"fmt"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	"os"
 	"path/filepath"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/latefindings"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -23,7 +28,8 @@ func unexplainedFinding() sdk.Finding {
 	return f
 }
 
-func TestVerifyRetainsDriftWithHealthyDetectors(t *testing.T) {
+// Retained drift is reported next to a clear health verdict; it never decides it.
+func TestVerifyReportsDriftWithoutDecidingHealth(t *testing.T) {
 	f := unexplainedFinding()
 	health := controllerDetector("health", time.Second, sdk.Finding{})
 	loop := NewResponderLoop(IncidentRequest{IncidentID: "incident", Namespace: "app", Findings: []sdk.Finding{f}}, nil, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app"}}, []sdk.Detector{health}, PlanExecutor{}, 1)
@@ -32,35 +38,16 @@ func TestVerifyRetainsDriftWithHealthyDetectors(t *testing.T) {
 	}
 	for _, command := range []string{"status", "diagnose", "verify"} {
 		result := loop.Handle(context.Background(), ToolRequest{Command: command})
-		if result.Healthy || len(result.Findings) != 1 {
-			t.Fatalf("%s lost retained drift with quiet health: %+v", command, result)
+		if (command != "diagnose" && !result.Healthy) || len(result.Findings) != 0 || len(result.Drift) != 1 {
+			t.Fatalf("%s hid retained drift or let it decide health: %+v", command, result)
 		}
-	}
-}
-
-func TestClosureRetainsDriftWithHealthyDetectors(t *testing.T) {
-	start := time.Unix(100, 0).UTC()
-	c, err := NewController(testControllerConfig(), []sdk.Detector{controllerDetector("health", time.Second, sdk.Finding{})}, staticProvider{snapshot: sdktest.Snapshot{}}, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, start)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f := unexplainedFinding()
-	c.currentIncidentRequest = &IncidentRequest{IncidentID: "incident", Findings: []sdk.Finding{f}}
-	c.incidentOpen = true
-	c.incidentFindingKeys = findingKeys([]sdk.Finding{f})
-	c.responderCompletedAt = start
-	c.healthDetectorIDs = []string{"health"}
-	c.recordEvaluation("health", start.Add(time.Second), nil)
-	c.recordEvaluation(f.DetectorID, start.Add(time.Second), []sdk.Finding{f})
-	if _, clear := c.finalVerificationStates(); clear {
-		t.Fatal("quiet health closed retained drift")
 	}
 }
 
 func TestRepairedDriftRecursWithoutProgram(t *testing.T) {
 	start := time.Unix(100, 0).UTC()
 	before, broken := driftService(8080), driftService(9999)
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +60,7 @@ func TestRepairedDriftRecursWithoutProgram(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Events: cache, View: func(snapshot sdk.DetectionContext) program.ReadView {
+	c.ConfigureDrift(DriftControllerConfig{Events: cache, View: func(snapshot sdk.DetectionContext) program.ReadView {
 		return driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}, diff: program.Diff{Changed: snapshot.(sdktest.Snapshot).ServiceList[0].Spec.Ports[0].TargetPort.IntVal == 9999}}
 	}})
 	cache.eventHandler(sdk.WatchKind{APIVersion: "v1", Kind: "Service", Namespace: "app"}).OnUpdate(before, broken)
@@ -91,7 +78,7 @@ func TestRepairedDriftRecursWithoutProgram(t *testing.T) {
 func TestUnexplainedDriftDuringResponseAttachesToOpenIncident(t *testing.T) {
 	start := time.Unix(100, 0).UTC()
 	before, broken := driftService(8080), driftService(9999)
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,8 +92,10 @@ func TestUnexplainedDriftDuringResponseAttachesToOpenIncident(t *testing.T) {
 		t.Fatal(err)
 	}
 	sink := &memorySink{}
-	c.SetFiringSink(sink)
-	c.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Events: cache, View: func(snapshot sdk.DetectionContext) program.ReadView {
+	lateClient := fake.NewSimpleClientset()
+	lateStore := latefindings.Store{Client: lateClient, Namespace: "control"}
+	c.SetFiringSink(lateFindingSink{Downstream: sink, Store: lateStore})
+	c.ConfigureDrift(DriftControllerConfig{Events: cache, View: func(snapshot sdk.DetectionContext) program.ReadView {
 		return driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}, diff: program.Diff{Changed: true}}
 	}})
 	if err := c.StepEvents(context.Background(), start, nil); err != nil {
@@ -117,6 +106,9 @@ func TestUnexplainedDriftDuringResponseAttachesToOpenIncident(t *testing.T) {
 	}
 	executePendingEffect(t, c)
 	first := awaitRequest(t, dispatcher.requests)
+	if err := lateStore.Ensure(context.Background(), first.IncidentID); err != nil {
+		t.Fatal(err)
+	}
 	frozen := exportState(t, c).IncidentRequest.PreparedAgentTask
 	cache.eventHandler(sdk.WatchKind{APIVersion: "v1", Kind: "Service", Namespace: "app"}).OnUpdate(before, broken)
 	if err := c.StepEvents(context.Background(), start.Add(2*time.Second), cache.TakeEvents()); err != nil {
@@ -135,6 +127,20 @@ func TestUnexplainedDriftDuringResponseAttachesToOpenIncident(t *testing.T) {
 			}
 		}
 	}
+	cm, err := lateClient.CoreV1().ConfigMaps("control").Get(context.Background(), latefindings.ConfigMapName(first.IncidentID), metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := new(contracts.LateFindingsReport)
+	if err := wire.Unmarshal([]byte(cm.Data[latefindings.ReportKey]), report); err != nil {
+		t.Fatal(err)
+	}
+	if len(report.GetLateFindings()) != 1 || report.GetLateFindings()[0].GetDetectorId() != "drift.unexplained" {
+		t.Fatalf("running responder cannot pull late drift evidence: %v", report)
+	}
+	if len(first.DriftEvents) != 0 || len(dispatcher.requests) != 0 {
+		t.Fatal("late drift changed the frozen task or started another responder")
+	}
 	if late != 1 {
 		t.Fatalf("late activations=%d", late)
 	}
@@ -146,7 +152,7 @@ func TestUnexplainedDriftDuringResponseAttachesToOpenIncident(t *testing.T) {
 func TestUnexplainedTargetPortOpensLatentIncidentWithDriftCorpus(t *testing.T) {
 	start := time.Unix(100, 0).UTC()
 	root := t.TempDir()
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +164,8 @@ func TestUnexplainedTargetPortOpensLatentIncidentWithDriftCorpus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Events: cache, BatchWindow: time.Second, View: func(snapshot sdk.DetectionContext) program.ReadView {
+	t.Cleanup(c.Wait)
+	c.ConfigureDrift(DriftControllerConfig{Events: cache, BatchWindow: time.Second, View: func(snapshot sdk.DetectionContext) program.ReadView {
 		return driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}, diff: program.Diff{Changed: true}}
 	}})
 	cache.eventHandler(sdk.WatchKind{APIVersion: "v1", Kind: "Service", Namespace: "app"}).OnUpdate(driftService(8080), broken)
@@ -186,49 +193,23 @@ func TestUnexplainedTargetPortOpensLatentIncidentWithDriftCorpus(t *testing.T) {
 	}
 }
 
-func TestVerifyRetainedLearnedDriftRequiresEveryBinding(t *testing.T) {
-	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
-	other := ref
-	other.Name = "peer"
-	first := sdk.Finding{DetectorID: "drift.targetport", RuleID: "targetport", Status: sdk.FindingActive, PrimaryResource: ref, ParameterBindings: program.Bindings{"service": ref}}
-	second := first
-	second.PrimaryResource = other
-	second.ParameterBindings = program.Bindings{"service": other}
-	for _, result := range []program.Result{program.Match, program.Unknown, program.NoMatch} {
-		t.Run(string(result), func(t *testing.T) {
-			registry, err := program.NewRegistry([]program.Diagnoser{candidateProgram{spec: program.ProgramSpec{ID: "targetport", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}, run: func(_ context.Context, b program.Bindings) program.Verdict {
-				if b["service"].Name == "api" {
-					return program.Verdict{Result: program.NoMatch}
-				}
-				return program.Verdict{Result: result}
-			}}}, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			loop := NewResponderLoop(IncidentRequest{IncidentID: "incident", Findings: []sdk.Finding{first, second}}, registry, staticProvider{snapshot: sdktest.Snapshot{}}, []sdk.Detector{controllerDetector("health", time.Second, sdk.Finding{})}, PlanExecutor{}, 1)
-			loop.ReadView = func(sdk.DetectionContext) program.ReadView { return &sdktest.ReplayReadView{} }
-			verify := loop.Handle(context.Background(), ToolRequest{Command: "verify"})
-			if verify.Healthy != (result == program.NoMatch) {
-				t.Fatalf("binding-specific clearance lost: %+v", verify)
-			}
-			if result != program.NoMatch && (len(verify.Findings) != 1 || verify.Findings[0].PrimaryResource != other) {
-				t.Fatalf("wrong binding remained: %+v", verify.Findings)
-			}
-		})
-	}
-}
-
 type failedSourceDriftView struct{ driftReadView }
 
 func (failedSourceDriftView) DiffAgainstSource(sdk.ObjectRef) (program.Diff, error) {
 	return program.Diff{}, fmt.Errorf("source unavailable")
 }
-func TestUnexplainedDriftSourceErrorNeverClears(t *testing.T) {
+
+// A source that cannot be compared is information about the drift, never a
+// verdict on health.
+func TestUnexplainedDriftSourceErrorIsInformationOnly(t *testing.T) {
 	loop := NewResponderLoop(IncidentRequest{IncidentID: "incident", Findings: []sdk.Finding{unexplainedFinding()}}, nil, staticProvider{snapshot: sdktest.Snapshot{}}, []sdk.Detector{controllerDetector("health", time.Second, sdk.Finding{})}, PlanExecutor{}, 1)
 	loop.ReadView = func(sdk.DetectionContext) program.ReadView { return failedSourceDriftView{} }
 	result := loop.Handle(context.Background(), ToolRequest{Command: "verify"})
-	if result.Healthy || len(result.Findings) != 1 || result.DetectorStates[len(result.DetectorStates)-1].Status != DetectorEvaluationError {
-		t.Fatalf("source error cleared drift: %+v", result)
+	if !result.Healthy || len(result.Findings) != 0 || len(result.Drift) != 1 {
+		t.Fatalf("drift decided health instead of informing: %+v", result)
+	}
+	if strings.Contains(result.Summary, "immediately") || !strings.Contains(result.Summary, "1 object(s) still differ from the accepted source") {
+		t.Fatalf("verify told the agent to stop while a difference remains: %q", result.Summary)
 	}
 }
 
@@ -238,7 +219,7 @@ func TestUnexplainedDriftRetainsIndependentFieldSetsOnSameObject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}})
+	c.ConfigureDrift(DriftControllerConfig{})
 	event := sdk.DriftEvent{Ref: sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}, Classification: sdk.DriftUnexplained, Fields: []sdk.DriftField{{Path: "spec.ports[0].targetPort", New: "9999", Source: "8080"}}}
 	c.queueUnexplainedFinding(start, event)
 	event.Fields = []sdk.DriftField{{Path: "spec.selector.app", New: "wrong", Source: "api"}}
@@ -254,7 +235,7 @@ func TestUnexplainedDriftRetainsIndependentFieldSetsOnSameObject(t *testing.T) {
 // quiet for its first sample and fires from the second.
 func pendingDriftController(t *testing.T, start time.Time, health []sdk.Finding, changed *bool) (*Controller, *memorySink, *KubernetesCache) {
 	t.Helper()
-	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +257,7 @@ func pendingDriftController(t *testing.T, start time.Time, health []sdk.Finding,
 	}
 	sink := &memorySink{}
 	c.SetFiringSink(sink)
-	c.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Events: cache, BatchWindow: 20 * time.Second, View: func(snapshot sdk.DetectionContext) program.ReadView {
+	c.ConfigureDrift(DriftControllerConfig{Events: cache, BatchWindow: 20 * time.Second, View: func(snapshot sdk.DetectionContext) program.ReadView {
 		return driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}, diff: program.Diff{Changed: *changed}}
 	}})
 	cache.eventHandler(sdk.WatchKind{APIVersion: "v1", Kind: "Service", Namespace: "app"}).OnUpdate(driftService(8080), driftService(9999))
@@ -341,15 +322,24 @@ func TestPendingDriftAloneStillWaitsForBatchWindow(t *testing.T) {
 	}
 }
 
-func TestClearedPendingDriftIsNotCoalesced(t *testing.T) {
-	start := time.Unix(100, 0).UTC()
-	changed := true
-	c, _, _ := pendingDriftController(t, start, []sdk.Finding{{}, stateFinding("health")}, &changed)
-	changed = false
-	stepHealthIncident(t, c, start)
-	state := exportState(t, c)
-	request := state.IncidentRequest
-	if request == nil || len(request.Findings) != 1 || request.Findings[0].DetectorId != "health" || len(request.DriftEvents) != 0 || len(state.PendingBatch.Findings) != 0 {
-		t.Fatalf("cleared drift was pulled into the incident: request=%+v pending=%+v", request, state.PendingBatch)
+func TestUnexplainedDriftFindingUsesAcceptedSourceRestorationDefault(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	c, err := NewController(testControllerConfig(), nil, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app"}}, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := sdk.DriftEvent{Ref: sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "app", Name: "flags"}, Classification: sdk.DriftUnexplained}
+	c.ConfigureDrift(DriftControllerConfig{})
+	c.queueUnexplainedFinding(now, event)
+	findings := exportState(t, c).PendingBatch.Findings
+	if len(findings) != 1 {
+		t.Fatalf("lost drift evidence: %+v", findings)
+	}
+	finding := findings[0]
+	if !strings.Contains(finding.Summary, "restore accepted-source differences") || !strings.Contains(finding.Summary, "positive evidence") {
+		t.Fatalf("finding still requires impact before restoration: %s", finding.Summary)
+	}
+	if finding.PrimaryResource.Name != event.Ref.Name || finding.DetectorId != "drift.unexplained" {
+		t.Fatalf("changed drift identity: %+v", finding)
 	}
 }

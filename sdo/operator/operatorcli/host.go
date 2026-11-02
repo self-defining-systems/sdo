@@ -12,11 +12,14 @@ import (
 	"strings"
 	"time"
 
+	"encoding/json"
+
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/install"
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -35,8 +38,11 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 		return HostConfig{}, errors.New("expected host subcommand")
 	}
 	flags := flag.NewFlagSet("sdo-operator host", flag.ContinueOnError)
+	codePathName := flags.String("code-path", os.Getenv("SDO_CODE_PATH"), "programming-model plugin set: go or shell")
+	codePathOverrides := flags.String("code-path-overrides", "", "CodePathOverrides JSON")
 	flags.SetOutput(io.Discard)
 	repository := flags.String("repository", "", "clean accepted Git repository")
+	ceilingJSON := flags.String("observation-ceiling-json", "", "installer-owned observation ceiling JSON")
 	namespace := flags.String("namespace", "", "application namespace")
 	control := flags.String("control-namespace", "", "operator namespace")
 	application := flags.String("application", "", "application identity")
@@ -54,24 +60,24 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	registryHost := flags.String("registry-host", "", "trusted source image registry host[:port]")
 	model := flags.String("model", "", "agent model")
 	provider := flags.String("agent-provider", "codex", "agent provider")
+	replay := flags.String("replay", "", "replay and corpus capture: on (default) or off")
+	effort := flags.String("agent-effort", "", "reasoning effort of every agent worker (empty: the shared default)")
 	registrationSource := flags.String("agent-registrations", "", "local registration JSON directory")
 	registrationConfigMap := flags.String("agent-registration-configmap", "", "registration ConfigMap name")
 	controllerDuration := flags.Duration("controller-duration", 0, "bounded controller run duration")
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "stop after first closure")
 	lateFindings := flags.String("late-findings", "off", "late finding pull mode: off or pull")
-	repairPolicy := flags.String("repair-policy", "commit", "repair evidence policy")
+	repairPolicy := flags.String("repair-policy", "recorded-actions", "repair evidence policy")
 	reflectionSession := flags.String("reflection-session", "resume", "reflection session mode: fresh or resume")
 	reflectionGuidance := flags.String("reflection-guidance", "baseline", "reflection guidance mode")
 	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
-	maxFollowUps := flags.Int("max-follow-ups", 0, "maximum follow-up responders")
-	maxResponseLoops := flags.Int("max-response-loops", 5, "maximum sdo apply batches per incident")
-	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve incidents")
-	programTrustThreshold := flags.Int("program-trust-threshold", 3, "verified successes required to trust a program")
-	driftTokensPerHour := registerDriftTokenBudget(flags)
-	followUpCooldown := flags.Duration("follow-up-cooldown", 30*time.Second, "follow-up responder cooldown")
+	maxResponseLoops := flags.Int("max-response-loops", 10, "maximum mitigation rounds the responder agent may use per incident (the automatic stage's one apply does not count)")
 	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
-	verificationTimeout := flags.Duration("verification-timeout", 2*time.Minute, "independent verification timeout")
+	verificationTimeout := flags.Duration("verification-timeout", 5*time.Minute, "independent verification timeout")
 	registryInsecure := flags.Bool("registry-insecure", false, "allow an explicitly configured HTTP image registry")
+	permissiveResponder := flags.Bool("permissive-responder", false, "broad lane repair permissions excluding Secret and credential APIs")
+	var responderNamespaces repeatable
+	flags.Var(&responderNamespaces, "responder-namespace", "additional lane namespace for permissive responder")
 	healthyBaseline := flags.Bool("healthy-baseline", false, "validate incident detectors against recorded healthy snapshots")
 	disableObservability := flags.Bool("no-observability-stack", false, "Do not install the SDO Prometheus stack")
 	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL; installs the metrics alerts detector and lets metric detectors query it")
@@ -80,6 +86,11 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	kubeconfig := flags.String("kubeconfig", "", "Kubernetes client and kubectl config")
 	if err := flags.Parse(args[1:]); err != nil {
 		return HostConfig{}, err
+	}
+
+	menuEnabled, menuErr := responderMenuEnabled()
+	if menuErr != nil {
+		return HostConfig{}, menuErr
 	}
 	if flags.NArg() != 0 {
 		return HostConfig{}, fmt.Errorf("unexpected host arguments: %v", flags.Args())
@@ -130,9 +141,6 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	if *reflectionGuidance != "baseline" && *reflectionGuidance != "generalize" && *reflectionGuidance != "generalize-spec" {
 		return HostConfig{}, fmt.Errorf("unsupported reflection guidance %q", *reflectionGuidance)
 	}
-	if *maxFollowUps < 0 || *maxFollowUps > 1000 || *followUpCooldown < time.Second || *followUpCooldown%time.Second != 0 {
-		return HostConfig{}, errors.New("follow-up limit must be at most 1000 and cooldown positive whole seconds")
-	}
 	if !strings.Contains(*buildkitImage, "@sha256:") || *credentialsSecret == *registrySecret {
 		return HostConfig{}, errors.New("host launch requires digest-pinned BuildKit image and separate registry push Secret")
 	}
@@ -147,19 +155,40 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	if *kubeconfig != "" && !filepath.IsAbs(*kubeconfig) {
 		return HostConfig{}, errors.New("kubeconfig path must be absolute")
 	}
+	var ceiling sdk.ObservationScope
+	if *ceilingJSON != "" {
+		decoder := json.NewDecoder(strings.NewReader(*ceilingJSON))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&ceiling); err != nil {
+			return HostConfig{}, err
+		}
+		if err := ceiling.Validate(); err != nil {
+			return HostConfig{}, err
+		}
+	}
+	selectedCodePath, err := parseCodePathSelection(*codePathName, *codePathOverrides)
+	if err != nil {
+		return HostConfig{}, err
+	}
 	config := install.Config{
-		Namespace: *namespace, ControlNamespace: *control, Application: *application,
+		CodePath:           selectedCodePath,
+		ResponderMenu:      menuEnabled,
+		ObservationCeiling: ceiling,
+		Namespace:          *namespace, ControlNamespace: *control, Application: *application,
 		ControllerImage: *controllerImage, ResponderImage: *responderImage,
 		BuildKitImage: *buildkitImage,
 		RepositoryPVC: *repositoryPVC, CredentialsSecret: *credentialsSecret,
+<<<<<<< HEAD
 		RegistryPushSecret: *registrySecret, RegistryHost: *registryHost, Model: *model, AgentProvider: *provider,
 		RegistryInsecure: *registryInsecure, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline, DisableObservability: *disableObservability, MetricsURL: *metricsURL,
+=======
+		RegistryPushSecret: *registrySecret, RegistryHost: *registryHost, Model: *model, AgentProvider: *provider, AgentEffort: *effort, Replay: *replay,
+		RegistryInsecure: *registryInsecure, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline, MetricsURL: *metricsURL, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 		ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,
 		LateFindings: *lateFindings, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection,
-		MaxFollowUps: *maxFollowUps, FollowUpCooldownSeconds: int(followUpCooldown.Seconds()), MaxResponseLoops: *maxResponseLoops,
-		ProgramFastPath: *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
-		DriftTokensPerHour: *driftTokensPerHour,
-		TimeoutSeconds:     int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()), RepairPolicy: *repairPolicy,
+		MaxResponseLoops: *maxResponseLoops,
+		TimeoutSeconds:   int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()), RepairPolicy: *repairPolicy,
 		NativeCommand:         []string{"/usr/local/bin/sdo-operator"},
 		RegistrationConfigMap: *registrationConfigMap,
 	}
@@ -169,7 +198,41 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	return HostConfig{Repository: *repository, Objective: *objective, OperationID: *operationID, MaxAttempts: *maxAttempts, Install: config, Kubeconfig: *kubeconfig, RegistrationSource: *registrationSource}, nil
 }
 
+<<<<<<< HEAD
 func hostKubernetesClient(path string) (kubernetes.Interface, error) {
+=======
+func acceptedHead(ctx context.Context, repository string) (string, error) {
+	root, err := exec.CommandContext(ctx, "git", "-C", repository, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return "", fmt.Errorf("inspect accepted repository root: %w", err)
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(strings.TrimSpace(string(root)))
+	if err != nil {
+		return "", err
+	}
+	resolvedRepository, err := filepath.EvalSymlinks(repository)
+	if err != nil {
+		return "", err
+	}
+	if resolvedRoot != resolvedRepository {
+		return "", errors.New("accepted repository path must be its Git root")
+	}
+	status, err := exec.CommandContext(ctx, "git", "-C", repository, "status", "--porcelain").Output()
+	if err != nil {
+		return "", fmt.Errorf("inspect accepted repository status: %w", err)
+	}
+	if len(status) != 0 {
+		return "", errors.New("accepted repository has uncommitted changes")
+	}
+	commit, err := exec.CommandContext(ctx, "git", "-C", repository, "rev-parse", "HEAD").Output()
+	if err != nil {
+		return "", fmt.Errorf("inspect accepted commit: %w", err)
+	}
+	return strings.TrimSpace(string(commit)), nil
+}
+
+func hostKubernetesConfig(path string) (*rest.Config, error) {
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	rules := clientcmd.NewDefaultClientConfigLoadingRules()
 	if path != "" {
 		rules.ExplicitPath = path
@@ -182,6 +245,14 @@ func hostKubernetesClient(path string) (kubernetes.Interface, error) {
 		return nil, fmt.Errorf("load Kubernetes credentials: %w", err)
 	}
 	config.QPS, config.Burst = 50, 100
+	return config, nil
+}
+
+func hostKubernetesClient(path string) (kubernetes.Interface, error) {
+	config, err := hostKubernetesConfig(path)
+	if err != nil {
+		return nil, err
+	}
 	return kubernetes.NewForConfig(config)
 }
 

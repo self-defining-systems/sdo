@@ -1,0 +1,479 @@
+package runtime
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/anypb"
+	"sdo.dev/operator/broker"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/internal/testutil"
+	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/sdktest"
+)
+
+type sharedMemoryResponder struct {
+	health *chaosDetector
+	lane   string
+	start  time.Time
+}
+
+func (d sharedMemoryResponder) Dispatch(_ context.Context, r IncidentRequest) (IncidentResult, error) {
+	if err := os.WriteFile(filepath.Join(r.RepositoryWorktree, d.lane+".txt"), []byte("synthetic accepted source repair\n"), 0644); err != nil {
+		return IncidentResult{}, err
+	}
+	d.health.active.set(false)
+	result := completedResult(r.IncidentID)
+	result.ResponderSessionID = "session-" + d.lane
+	result.Timing = TimingMetrics{StartedAt: d.start.Add(time.Second), CompletedAt: d.start.Add(2 * time.Second)}
+	// The repair is the source file in the incident workspace, published by the
+	// broker. No cluster receipt is recorded, so README edits stay judgement.
+	return result, nil
+}
+
+// The cluster edge is synthetic; controller detection, workspaces, registered
+// reflection tasks, independent compilation, native ledgers and Git are real.
+var conflictBlock = regexp.MustCompile(`(?s)<<<<<<< [^\n]*\n.*?\n>>>>>>> [^\n]*\n`)
+
+func TestHermeticSharedMemoryControllers(t *testing.T) {
+	type mode struct{ conflict, remote bool }
+	for _, m := range []mode{{false, false}, {true, false}, {false, true}, {true, true}} {
+		conflict, remote := m.conflict, m.remote
+		name := fmt.Sprintf("same-playbook=%t", conflict)
+		if remote {
+			// Lanes on different hosts: private accepted checkouts sharing one remote branch.
+			name += ",remote-branch"
+		}
+		t.Run(name, func(t *testing.T) {
+			// Conflict modes own separate repositories and controller/process state.
+			t.Parallel()
+			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+			defer cancel()
+			root := nativeRepository(t)
+			if err := os.CopyFS(root, os.DirFS("../memory/validate/testdata/good")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(filepath.Join(root, ".sdo/playbooks/base/scripts/fix.sh"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			for _, id := range []string{"alpha", "beta"} {
+				path := filepath.Join(root, ".sdo/playbooks", id, "README.md")
+				if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte("---\nschema_version: 1\nowner: responder\nfault_class: "+id+"\noriginating_incident: synthetic\n---\nOriginal <RESOURCE_NAME> learning\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(root, ".sdo/playbooks/README.md"), []byte("# Playbooks\n\n- [base](base/README.md)\n- [alpha](alpha/README.md)\n- [beta](beta/README.md)\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			nativeGit(t, root, "add", ".")
+			nativeGit(t, root, "commit", "-qm", "synthetic accepted memory")
+			base := nativeGit(t, root, "rev-parse", "HEAD")
+			const branch = "live/20261028-hermetic"
+			laneRoots := []string{root, root}
+			remoteURL := filepath.Join(t.TempDir(), "memory.git")
+			if remote {
+				testutil.CloneGit(t, root, remoteURL, "--bare")
+				nativeGit(t, root, "push", "--quiet", remoteURL, "HEAD:refs/heads/"+branch)
+				for lane := range laneRoots {
+					laneRoots[lane] = filepath.Join(t.TempDir(), "accepted")
+					testutil.CloneGit(t, remoteURL, laneRoots[lane], "--branch", branch)
+				}
+			}
+			operatorRoot, err := filepath.Abs("..")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var compiles atomic.Int32
+			compile := func(ctx context.Context, stage string, _ []string) error {
+				compiles.Add(1)
+				ds, err := validate.CompileCandidate(ctx, validate.Request{Root: stage, OperatorRoot: operatorRoot})
+				if err != nil {
+					return err
+				}
+				return validate.Err(ds)
+			}
+			started := make(chan int, 2)
+			releases := []chan struct{}{make(chan struct{}), make(chan struct{})}
+			controllers := make([]*Controller, 2)
+			natives := make([]NativeIncidentBroker, 2)
+			calls := make([]atomic.Int32, 2)
+			incidents := make([]string, 2)
+			for lane := 0; lane < 2; lane++ {
+				name := fmt.Sprintf("lane-%d", lane)
+				laneRoot := laneRoots[lane]
+				authority, err := broker.New(laneRoot, t.TempDir(), compile)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if remote {
+					if err := authority.SetUpstream(broker.Upstream{URL: remoteURL, Branch: branch}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				executor := reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
+					attempt := calls[lane].Add(1)
+					request := new(contracts.ReflectionRequest)
+					if err := task.Request.UnmarshalTo(request); err != nil {
+						return nil, err
+					}
+					if request.GetMemorySnapshot().GetAcceptedCommit() != task.GetWorkspace().GetBaseCommit() {
+						return nil, fmt.Errorf("snapshot not bound to proposal")
+					}
+					if request.GetSessionMode() != "resume" || request.GetClosure().GetResult().GetResponderSessionId() != "session-"+name {
+						return nil, fmt.Errorf("retry lost responder session")
+					}
+					book := []string{"alpha", "beta"}[lane]
+					if conflict {
+						book = "base"
+					}
+					path := filepath.Join(task.Workspace.CheckoutPath, ".sdo/playbooks", book, "README.md")
+					data, err := os.ReadFile(path)
+					if err != nil {
+						return nil, err
+					}
+					if attempt == 1 {
+						// Both edit the same original line to force a real three-way conflict.
+						if conflict {
+							data = []byte(strings.ReplaceAll(string(data), "Repair <RESOURCE_NAME>. Run fix.sh to restart it.", "Repair <RESOURCE_NAME> with "+name+" intent. Run fix.sh to restart it."))
+							if lane == 1 {
+								extra := filepath.Join(task.Workspace.CheckoutPath, ".sdo/playbooks/alpha/README.md")
+								prior, err := os.ReadFile(extra)
+								if err != nil {
+									return nil, err
+								}
+								if err := os.WriteFile(extra, append(prior, []byte("lane-1 extra learning\n")...), 0644); err != nil {
+									return nil, err
+								}
+							}
+						} else {
+							data = append(data, []byte(name+" learning\n")...)
+						}
+						if err := os.WriteFile(path, data, 0644); err != nil {
+							return nil, err
+						}
+						started <- lane
+						select {
+						case <-releases[lane]:
+						case <-ctx.Done():
+							return nil, ctx.Err()
+						}
+					} else {
+						if !conflict || lane != 1 || attempt != 2 || len(request.GetPreviousDiagnostics()) != 1 {
+							return nil, fmt.Errorf("unexpected retry %d lane %d: %v", attempt, lane, request.GetPreviousDiagnostics())
+						}
+						detail := request.GetPreviousDiagnostics()[0].GetMemoryConflict()
+						if detail == nil || len(detail.GetAcceptedChanges()) == 0 || detail.GetAcceptedChanges()[0].GetIncidentId() != incidents[0] {
+							return nil, fmt.Errorf("typed conflict lost accepted incident provenance")
+						}
+						// The correction starts from its own rejected work on the newest
+						// accepted memory: the clean hunk is kept and only the collision
+						// is marked, with both incidents' sides.
+						extra, err := os.ReadFile(filepath.Join(task.Workspace.CheckoutPath, ".sdo/playbooks/alpha/README.md"))
+						if err != nil || !strings.Contains(string(extra), "lane-1 extra learning") {
+							return nil, fmt.Errorf("retry lost its own clean learning: %s %v", extra, err)
+						}
+						marked := conflictBlock.FindString(string(data))
+						if !strings.Contains(marked, "lane-0 intent") || !strings.Contains(marked, "lane-1 intent") {
+							return nil, fmt.Errorf("retry lacks the marked collision: %s", data)
+						}
+						data = []byte(strings.Replace(string(data), marked, "Repair <RESOURCE_NAME> with lane-0 intent and lane-1 intent. Run fix.sh to restart it.\n", 1))
+						if err := os.WriteFile(path, data, 0644); err != nil {
+							return nil, err
+						}
+					}
+					books := []string{book}
+					if conflict && lane == 1 {
+						books = append(books, "alpha")
+					}
+					response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: books})
+					return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: response}, err
+				})
+				worker := RegisteredReflectionWorker{Executor: executor, AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: memory.OpenReader(laneRoot), Catalog: memory.OpenCatalogReader(laneRoot), Timeout: time.Minute, SessionMode: "resume", SessionExecutor: func(string) (ReflectionTaskExecutor, error) { return executor, nil }}
+				native := NativeIncidentBroker{Repository: authority, LedgerRoot: t.TempDir(), Deriver: ProtoOutcomeDeriver{}, Reflector: worker, ResponderBackend: "scripted", ResponderModel: "none", ForceReflection: true}
+				natives[lane] = native
+				at := time.Unix(1000+int64(lane)*100, 0)
+				now := at
+				health := newChaosHealthDetector("health")
+				health.spec.Persistence = sdk.PersistencePolicy{Firing: 1, Clearing: 1}
+				health.active.set(true)
+				cfg := testControllerConfig()
+				cfg.SourceCommit, cfg.DeployedCommit = base, base
+				cfg.RepositoryWorktree = laneRoot
+				cfg.BatchDebounce = 0
+				cfg.ClearThreshold = 1
+				cfg.FiringThreshold = 1
+				c, err := NewController(cfg, []sdk.Detector{health}, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "demo"}}, sharedMemoryResponder{health: health, lane: name, start: at}, at)
+				if err != nil {
+					t.Fatal(err)
+				}
+				c.now = func() time.Time { return now }
+				if err := c.SetIncidentBroker(native); err != nil {
+					t.Fatal(err)
+				}
+				controllers[lane] = c
+				// Exercise actual detection and workspace/dispatch effects, then stop at
+				// the durable closure boundary so both incidents overlap in reflection.
+				for tick := 0; tick < 30; tick++ {
+					now = at.Add(time.Duration(tick) * time.Second)
+					if err := c.Step(ctx, now, nil); err != nil {
+						t.Fatal(err)
+					}
+					if effect, ok := c.PendingWorkspaceEffect(); ok {
+						if err := c.ExecuteWorkspaceEffect(ctx, effect); err != nil {
+							t.Fatal(err)
+						}
+						fastloopGateWait(t, 10*time.Second, func() bool { return len(c.workspaceResults) > 0 })
+						c.processBrokerCompletions()
+					}
+					if effect, ok := c.PendingDispatchEffect(); ok {
+						if err := c.ExecuteDispatchEffect(ctx, effect); err != nil {
+							t.Fatal(err)
+						}
+						awaitDispatchCompletionQueued(t, c)
+					}
+					if _, ok := c.PendingClosureEffect(); ok {
+						break
+					}
+				}
+				effect, ok := c.PendingClosureEffect()
+				if !ok {
+					t.Fatal("controller never reached independently verified closure")
+				}
+				incidents[lane] = effect.Closure.Request.IncidentID
+				if err := c.ExecuteClosureEffect(ctx, effect); err != nil {
+					t.Fatal(err)
+				}
+				select {
+				case got := <-started:
+					if got != lane {
+						t.Fatalf("unexpected started lane %d", got)
+					}
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				}
+			}
+			close(releases[0])
+			fastloopGateWait(t, 30*time.Second, func() bool { return len(controllers[0].closureResults) > 0 })
+			controllers[0].processBrokerCompletions()
+			if controllers[0].closureReceipt == nil {
+				t.Fatalf("first closure failed: %+v", controllers[0].closureFailure)
+			}
+			close(releases[1])
+			fastloopGateWait(t, 30*time.Second, func() bool { return len(controllers[1].closureResults) > 0 })
+			controllers[1].processBrokerCompletions()
+			if controllers[1].closureReceipt == nil {
+				t.Fatalf("second closure failed: %+v", controllers[1].closureFailure)
+			}
+			if remote {
+				for lane := range natives {
+					if err := natives[lane].Repository.SyncUpstream(ctx); err != nil {
+						t.Fatal(err)
+					}
+				}
+				head := nativeGit(t, remoteURL, "rev-parse", "refs/heads/"+branch)
+				for _, laneRoot := range laneRoots {
+					if nativeGit(t, laneRoot, "rev-parse", "HEAD") != head {
+						t.Fatal("lanes did not converge on the remote branch head")
+					}
+				}
+				if merges := nativeGit(t, remoteURL, "rev-list", "--merges", head); merges != "" {
+					t.Fatalf("online lanes produced merge commits: %s", merges)
+				}
+				root = laneRoots[1]
+			}
+			for lane, c := range controllers {
+				if c.closureReceipt.ReflectionCommit == "" {
+					t.Fatal("reflection learning was not accepted")
+				}
+				ledger, err := natives[lane].readLedger(incidents[lane])
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := int32(1)
+				if conflict && lane == 1 {
+					want = 2
+				}
+				if calls[lane].Load() != want || ledger.GetReflectionRejected() {
+					t.Fatalf("lane %d calls=%d ledger=%v", lane, calls[lane].Load(), ledger)
+				}
+				nativeGit(t, root, "merge-base", "--is-ancestor", c.closureReceipt.ReflectionCommit, "HEAD")
+			}
+			for lane := 0; lane < 2; lane++ {
+				book := []string{"alpha", "beta"}[lane]
+				needle := fmt.Sprintf("lane-%d learning", lane)
+				if conflict {
+					book = "base"
+					needle = fmt.Sprintf("lane-%d intent", lane)
+				}
+				data, err := os.ReadFile(filepath.Join(root, ".sdo/playbooks", book, "README.md"))
+				if err != nil || !strings.Contains(string(data), needle) {
+					t.Fatalf("lost accepted learning %q: %s %v", needle, data, err)
+				}
+				if conflict && lane == 1 {
+					if data, err := os.ReadFile(filepath.Join(root, ".sdo/playbooks/alpha/README.md")); err != nil || !strings.Contains(string(data), "lane-1 extra learning") {
+						t.Fatalf("carried learning not accepted: %s %v", data, err)
+					}
+				}
+			}
+			if compiles.Load() < 4 {
+				t.Fatal("independent compiler was bypassed")
+			}
+		})
+	}
+}
+
+func TestIncidentDispatchSnapshotPinsBaseAfterPeerPublication(t *testing.T) {
+	ctx := context.Background()
+	root := nativeRepository(t)
+	nativeMemoryFixture(t, root)
+	authority, err := broker.New(root, t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposal, err := authority.CreateProposal(ctx, "snapshot-race")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The peer moves accepted HEAD after preparation but before dispatch.
+	if _, err := authority.RecordOutcome(ctx, "peer", &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "peer", Classification: "failed"}); err != nil {
+		t.Fatal(err)
+	}
+	request := goldenRequest(t)
+	request.RepositoryWorktree, request.RepositoryBaseCommit = proposal.Path, proposal.BaseCommit
+	dispatcher := KubernetesJobDispatcher{Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t), Catalog: memory.OpenCatalogReader(root), RequireMemorySnapshot: true}
+	prepared, err := dispatcher.PrepareDispatch(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := new(contracts.AgentTask)
+	if err := wire.Unmarshal([]byte(prepared.PreparedAgentTask), task); err != nil {
+		t.Fatal(err)
+	}
+	typed := new(contracts.IncidentRequest)
+	if err := task.GetRequest().UnmarshalTo(typed); err != nil {
+		t.Fatal(err)
+	}
+	if typed.GetMemorySnapshot().GetAcceptedCommit() != proposal.BaseCommit {
+		t.Fatal("dispatch snapshot advanced to peer publication")
+	}
+}
+
+func TestNativeSharedMemoryConflictsTerminateWithLastDiagnostic(t *testing.T) {
+	ctx := context.Background()
+	var h *rejectionHarness
+	var peer *broker.Broker
+	var accepted broker.Receipt
+	h = newRejectionHarness(t, "conflict-loser", func(call int, w IncidentWorkspace) (ReflectionDecision, error) {
+		decision, err := writeGoodPlaybook(w)
+		if err != nil {
+			return decision, err
+		}
+		id := fmt.Sprintf("peer-%d", call)
+		if _, err := peer.RecordOutcome(ctx, id, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: id, Classification: "success"}); err != nil {
+			return decision, err
+		}
+		proposal, err := peer.CreateProposalForPhase(ctx, id, broker.ReflectionPhase)
+		if err != nil {
+			return decision, err
+		}
+		body := fmt.Sprintf("---\nschema_version: 1\nowner: responder\nfault_class: base\noriginating_incident: synthetic\n---\nPeer learning for <RESOURCE_NAME> revision %d\n", call)
+		if err := os.WriteFile(filepath.Join(proposal.Path, ".sdo/playbooks/base/README.md"), []byte(body), 0644); err != nil {
+			return decision, err
+		}
+		accepted, err = peer.PublishReflection(ctx, id, &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"base"}})
+		return decision, err
+	})
+	var err error
+	peer, err = broker.New(h.target, t.TempDir(), func(context.Context, string, []string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := h.native.ProcessClosure(ctx, h.closure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := h.native.readLedger("conflict-loser")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(h.calls) != 3 || !ledger.GetReflectionRejected() || !ledger.GetReflectionProcessed() || receipt.ReflectionCommit != "" {
+		t.Fatalf("conflict did not fail visibly at bound: %v", ledger)
+	}
+	last := ledger.GetReflectionRejections()[2].GetDiagnostics()[0].GetMemoryConflict()
+	if last.GetAcceptedCommit() != accepted.Commit || last.GetAcceptedChanges()[0].GetIncidentId() != "peer-3" {
+		t.Fatalf("terminal conflict diagnostic lost: %v", last)
+	}
+	requireOnlyRejectionEvidenceSince(t, h.target, accepted.Commit, "conflict-loser", ledger.GetReflectionRejections())
+	// Receipt replay cannot resume a terminal losing reflection after restart.
+	restored := h.native
+	restored.Reflector = ReflectionWorkerFunc(func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string, ReflectionFeedback) (ReflectionDecision, error) {
+		return ReflectionDecision{}, fmt.Errorf("terminal reflection redispatched")
+	})
+	again, err := restored.ProcessClosure(ctx, h.closure)
+	if err != nil || again != receipt {
+		t.Fatalf("terminal conflict not durable across restart: %v", err)
+	}
+}
+
+// requireOnlyRejectionEvidenceSince asserts that rejected learning never reaches
+// accepted state: after the winning publication, only the controller's outcome
+// annotation recording the loser's rejections may advance the branch.
+func requireOnlyRejectionEvidenceSince(t *testing.T, repo, accepted, incident string, rejections []*contracts.ProposalRejection) {
+	t.Helper()
+	if status := nativeGit(t, repo, "status", "--porcelain"); status != "" {
+		t.Fatalf("rejected learning left the accepted worktree dirty: %s", status)
+	}
+	if changed := nativeGit(t, repo, "diff", "--name-only", accepted, "HEAD"); changed != "" && changed != layout.OutcomePath(incident) {
+		t.Fatalf("rejected learning reached accepted state: %s", changed)
+	}
+	format := "--format=%(trailers:key=SDO-Incident,valueonly,separator=)|%(trailers:key=SDO-Actor,valueonly,separator=)|%(trailers:key=SDO-Phase,valueonly,separator=)"
+	if commits := nativeGit(t, repo, "log", format, accepted+"..HEAD"); commits != "" {
+		for _, commit := range strings.Split(commits, "\n") {
+			if commit != incident+"|controller|"+string(broker.OutcomePhase) {
+				t.Fatalf("rejected learning reached accepted state: %s", commit)
+			}
+		}
+	}
+	for _, commit := range strings.Split(nativeGit(t, repo, "log", format, "HEAD"), "\n") {
+		if commit == incident+"|responder|"+string(broker.ReflectionPhase) {
+			t.Fatalf("rejected learning reached accepted history: %s", commit)
+		}
+	}
+	stored, err := memory.NewJSONStore(repo).Get(context.Background(), incident)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The ledger keeps the physical diagnostics; the stored outcome reads them
+	// as logical memory references.
+	projection := proto.Clone(stored.Record).(*contracts.OutcomeRecord)
+	projection.ReflectionRejections = rejections
+	logical, err := memory.LogicalOutcome(projection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := logical.GetReflectionRejections()
+	recorded := stored.Record.GetReflectionRejections()
+	if len(recorded) != len(want) {
+		t.Fatalf("rejection evidence = %d entries, want %d", len(recorded), len(want))
+	}
+	for i := range want {
+		if !proto.Equal(recorded[i], want[i]) {
+			t.Fatalf("rejection evidence %d = %v, want %v", i, recorded[i], want[i])
+		}
+	}
+}

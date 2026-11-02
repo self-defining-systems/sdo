@@ -8,14 +8,20 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/util/retry"
 	"sdo.dev/operator/devmount"
+<<<<<<< HEAD
 	"sdo.dev/operator/install/internal/installio"
+=======
+	"sdo.dev/operator/memory/observation"
+	"sdo.dev/operator/shellpath"
+	"sdo.dev/operator/worker_registry"
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 )
 
 const PreparedCommitAnnotation = "sdo.dev/prepared-commit"
@@ -24,7 +30,7 @@ const OperateLockConfigMap = "sdo-operate-lock"
 // Prepare creates the shared control resources and seeds the initial accepted
 // repository before lifecycle workers need proposal checkouts on the PVC.
 // It never starts a controller and refuses to reset an active controller's PVC.
-func (i Installer) Prepare(ctx context.Context, cfg Config, seed RepositorySeeder) error {
+func (i Installer) Prepare(ctx context.Context, cfg Config, seed RepositorySeeder) (resultErr error) {
 	if i.Client == nil {
 		return errors.New("Kubernetes client is required")
 	}
@@ -44,10 +50,11 @@ func (i Installer) Prepare(ctx context.Context, cfg Config, seed RepositorySeede
 		return err
 	}
 	prepareOwner := "prepare-" + cfg.AcceptedCommit
-	if err := i.acquireOperateLock(ctx, cfg, prepareOwner); err != nil {
+	reservation, err := i.acquireOperateLock(ctx, cfg, prepareOwner, metav1.OwnerReference{Kind: "Pod", Name: RepositorySyncPodName})
+	if err != nil {
 		return err
 	}
-	defer func() { _ = i.releaseOperateLock(context.Background(), cfg, prepareOwner) }()
+	defer func() { resultErr = errors.Join(resultErr, i.finishClaimedSyncPod(cfg, reservation)) }()
 	if i.Extension != nil {
 		if err := i.Extension.InstallResources(ctx, cfg, i.Client); err != nil {
 			return fmt.Errorf("install transport resources: %w", err)
@@ -57,19 +64,22 @@ func (i Installer) Prepare(ctx context.Context, cfg Config, seed RepositorySeede
 			return fmt.Errorf("wait for transport: %w", err)
 		}
 	}
-	if err := i.ensureSyncPod(ctx, plan.SyncPod); err != nil {
+	if err := i.startClaimedSyncPod(ctx, cfg, reservation, plan.SyncPod); err != nil {
 		return err
 	}
-	defer func() {
-		_ = i.Client.CoreV1().Pods(cfg.controlNamespace()).Delete(context.Background(), RepositorySyncPodName, metav1.DeleteOptions{})
-	}()
 	if err := i.waitSync(ctx, cfg.controlNamespace()); err != nil {
 		return err
 	}
 	if err := seed(ctx, cfg); err != nil {
 		return fmt.Errorf("seed initial accepted repository: %w", err)
 	}
-	return i.markPreparedCommit(ctx, cfg)
+	if err := i.markPreparedCommit(ctx, cfg); err != nil {
+		return err
+	}
+	if runner, enabled := ShellRunnerConfig(cfg); enabled {
+		return shellpath.EnsureReadOnlyRunner(ctx, i.Client, runner)
+	}
+	return nil
 }
 
 func (i Installer) markPreparedCommit(ctx context.Context, cfg Config) error {
@@ -112,31 +122,21 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 		"--responder-image", cfg.ResponderImage,
 		"--repository-pvc", cfg.RepositoryPVC, "--repository-mount-path", "/workspace",
 		"--credentials-secret", cfg.CredentialsSecret, "--model", cfg.Model,
-		"--agent-provider", provider(cfg), "--worktree-root", "/workspace/worktrees",
+		"--replay", cfg.Replay, "--agent-provider", provider(cfg), "--agent-effort", cfg.AgentEffort, "--worktree-root", "/workspace/worktrees",
 		"--buildkit-image", cfg.BuildKitImage, "--registry-push-secret", cfg.RegistryPushSecret,
 		"--repair-policy", defaultRepairPolicy(cfg), "--response-timeout", fmt.Sprintf("%ds", cfg.TimeoutSeconds),
 		"--verification-timeout", fmt.Sprintf("%ds", verificationTimeout(cfg)),
 		"--reflection-session", reflectionSession(cfg),
 		"--reflection-guidance", reflectionGuidance(cfg),
 	}
+	args = append(args, codePathArgs(cfg)...)
 	if cfg.ForceReflection {
 		args = append(args, "--force-reflection")
-	}
-	if cfg.MaxFollowUps > 0 {
-		args = append(args, "--max-follow-ups", fmt.Sprint(cfg.MaxFollowUps), "--follow-up-cooldown", fmt.Sprintf("%ds", followUpCooldown(cfg)))
 	}
 	if cfg.MaxResponseLoops > 0 {
 		args = append(args, "--max-response-loops", fmt.Sprint(cfg.MaxResponseLoops))
 	}
-	if cfg.ProgramFastPath {
-		args = append(args, "--program-fast-path")
-	}
-	if cfg.ProgramTrustThreshold > 0 {
-		args = append(args, "--program-trust-threshold", fmt.Sprint(cfg.ProgramTrustThreshold))
-	}
-	if cfg.DriftTokensPerHour > 0 {
-		args = append(args, "--drift-tokens-per-hour", fmt.Sprint(cfg.DriftTokensPerHour))
-	}
+
 	if cfg.LateFindings == "pull" {
 		args = append(args, "--late-findings", cfg.LateFindings)
 	}
@@ -148,6 +148,12 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 	}
 	if cfg.RegistryInsecure {
 		args = append(args, "--registry-insecure")
+	}
+	if cfg.PermissiveResponder {
+		args = append(args, "--permissive-responder")
+	}
+	for _, ns := range cfg.ResponderNamespaces {
+		args = append(args, "--responder-namespace", ns)
 	}
 	if cfg.HealthyBaseline {
 		args = append(args, "--healthy-baseline")
@@ -181,6 +187,8 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 		pod.Volumes = append(pod.Volumes, corev1.Volume{Name: "registrations", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: cfg.RegistrationConfigMap}}}})
 	}
 	container := corev1.Container{Name: "operate", Image: cfg.ControllerImage, ImagePullPolicy: corev1.PullIfNotPresent, Command: append([]string{}, cfg.NativeCommand...), Args: args, SecurityContext: containerSecurity(), Resources: limits("250m", "512Mi", "2", "4Gi"), EnvFrom: []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: cfg.CredentialsSecret}}}}, Env: []corev1.EnvVar{{Name: "CODEX_HOME", Value: "/workspace/.sdo-runtime/codex"}, {Name: "CLAUDE_CONFIG_DIR", Value: "/workspace/.sdo-runtime/claude"}, {Name: "TMPDIR", Value: "/tmp"}, {Name: "GIT_AUTHOR_NAME", Value: "sdo-controller"}, {Name: "GIT_AUTHOR_EMAIL", Value: "sdo-controller@invalid"}, {Name: "GIT_COMMITTER_NAME", Value: "sdo-controller"}, {Name: "GIT_COMMITTER_EMAIL", Value: "sdo-controller@invalid"}}, VolumeMounts: []corev1.VolumeMount{{Name: "repository", MountPath: "/workspace"}, {Name: "scratch", MountPath: "/tmp"}, {Name: "credentials", MountPath: "/sdo/credentials", ReadOnly: true}}}
+	policyJSON, _ := json.Marshal(cfg.ObservationCeiling)
+	container.Env = append(container.Env, corev1.EnvVar{Name: observation.CeilingEnvironment, Value: string(policyJSON)}, corev1.EnvVar{Name: "SDO_RESPONDER_MENU", Value: responderMenuValue(cfg.ResponderMenu)})
 	if cfg.RegistrationConfigMap != "" {
 		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: "registrations", MountPath: cfg.registrationDirectory(), ReadOnly: true})
 	}
@@ -189,8 +197,13 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 		pod.Containers[0].Env = append(pod.Containers[0].Env, corev1.EnvVar{Name: "SDO_DEV_MOUNT", Value: "1"})
 		devmount.Apply(pod)
 	}
+<<<<<<< HEAD
 	if scale := installio.TimeScale(); scale != "" {
 		pod.Containers[0].Env = append(pod.Containers[0].Env, corev1.EnvVar{Name: "SDO_TIME_SCALE", Value: scale})
+=======
+	if err := worker_registry.ApplyProviderCapacity(pod, worker_registry.ProviderCapacityEnvironment()); err != nil {
+		return nil, err
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	}
 	return job, nil
 }
@@ -204,7 +217,7 @@ func defaultRepairPolicy(c Config) string {
 	if c.RepairPolicy != "" {
 		return c.RepairPolicy
 	}
-	return "commit"
+	return "recorded-actions"
 }
 func reflectionSession(c Config) string {
 	if c.ReflectionSession != "" {
@@ -217,12 +230,6 @@ func reflectionGuidance(c Config) string {
 		return c.ReflectionGuidance
 	}
 	return "baseline"
-}
-func followUpCooldown(c Config) int {
-	if c.FollowUpCooldownSeconds > 0 {
-		return c.FollowUpCooldownSeconds
-	}
-	return 30
 }
 
 type OperateResult struct {
@@ -259,13 +266,19 @@ func (i Installer) StartOperate(ctx context.Context, cfg Config, objective, oper
 	if registrySecret.Type != corev1.SecretTypeDockerConfigJson || len(registrySecret.Data[corev1.DockerConfigJsonKey]) == 0 {
 		return "", errors.New("registry push Secret lacks .dockerconfigjson data")
 	}
-	if err := i.acquireOperateLock(ctx, cfg, operationID); err != nil {
+	reservation, err := i.acquireOperateLock(ctx, cfg, operationID, metav1.OwnerReference{Kind: "Job", Name: job.Name})
+	if err != nil {
 		return "", err
 	}
-	if _, err := i.Client.BatchV1().Jobs(cfg.controlNamespace()).Create(ctx, job, metav1.CreateOptions{}); err != nil {
-		_ = i.releaseOperateLock(context.Background(), cfg, operationID)
+	// The Job cannot write until its exact UID owns the reservation.
+	suspended := true
+	job.Spec.Suspend = &suspended
+	created, err := i.Client.BatchV1().Jobs(cfg.controlNamespace()).Create(ctx, job, metav1.CreateOptions{})
+	if err != nil {
+		// An ambiguous create may have succeeded; leave recovery to the owner check.
 		return "", fmt.Errorf("start native operate Job: %w", err)
 	}
+<<<<<<< HEAD
 	return job.Name, nil
 }
 
@@ -310,8 +323,28 @@ func (i Installer) acquireOperateLock(ctx context.Context, cfg Config, operation
 		if err := configMaps.Delete(ctx, OperateLockConfigMap, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}); err != nil && !apierrors.IsNotFound(err) && !apierrors.IsConflict(err) {
 			return fmt.Errorf("release completed native operate PVC claim: %w", err)
 		}
+=======
+	if err := i.bindOperateLock(ctx, cfg, reservation, "Job", created.ObjectMeta); err != nil {
+		_ = i.Client.BatchV1().Jobs(cfg.controlNamespace()).Delete(context.Background(), created.Name, ownerDeleteOptions(created.ObjectMeta))
+		return "", err
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	}
-	return errors.New("native operate PVC claim changed while starting Job; retry")
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current, err := i.Client.BatchV1().Jobs(cfg.controlNamespace()).Get(ctx, created.Name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if current.UID != created.UID {
+			return errors.New("operate Job was replaced before activation")
+		}
+		suspended := false
+		current.Spec.Suspend = &suspended
+		_, err = i.Client.BatchV1().Jobs(cfg.controlNamespace()).Update(ctx, current, metav1.UpdateOptions{})
+		return err
+	}); err != nil {
+		return "", fmt.Errorf("activate native operate Job: %w", err)
+	}
+	return job.Name, nil
 }
 
 func (i Installer) releaseOperateLock(ctx context.Context, cfg Config, operationID string) error {
@@ -326,8 +359,7 @@ func (i Installer) releaseOperateLock(ctx context.Context, cfg Config, operation
 	if claim.Data["operation_id"] != operationID {
 		return nil
 	}
-	uid := claim.UID
-	return configMaps.Delete(ctx, OperateLockConfigMap, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}})
+	return configMaps.Delete(ctx, OperateLockConfigMap, ownerDeleteOptions(claim.ObjectMeta))
 }
 
 // WaitOperate requires a complete Job and an attributable success receipt.

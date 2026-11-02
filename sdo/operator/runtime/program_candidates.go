@@ -2,23 +2,20 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
 
 const DefaultDiagnosisDeadline = 10 * time.Second
-const maxCandidateAssignments = 32
-const DefaultSweepLimit = 64
 
+<<<<<<< HEAD
 type CandidateOptions struct {
 	// Clock measures diagnosis duration; nil uses the production clock.
 	Clock      func() time.Time
@@ -30,6 +27,9 @@ type CandidateOptions struct {
 }
 
 // ProgramRun is one diagnosis for a concrete finding, hint, or sweep binding.
+=======
+// ProgramRun is one diagnosis for a concrete finding or hint binding.
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 type ProgramRun struct {
 	CanMitigate        *bool            `json:"can_mitigate,omitempty"`
 	FindingFingerprint string           `json:"finding_fingerprint,omitempty"`
@@ -41,23 +41,13 @@ type ProgramRun struct {
 	ProgramRevision    string           `json:"program_revision,omitempty"`
 }
 
-// SelectProgramCandidates diagnoses all bindable programs under one deadline.
+// SelectProgramCandidates diagnoses finding-bound programs under one deadline.
 func SelectProgramCandidates(ctx context.Context, registry program.ProgramRegistry, view program.ReadView, findings []sdk.Finding, deadline time.Duration) []ProgramRun {
-	return SelectProgramCandidatesWithOptions(ctx, registry, view, findings, CandidateOptions{Deadline: deadline})
-}
-
-// SelectProgramCandidatesWithOptions diagnoses finding and namespace-sweep bindings.
-func SelectProgramCandidatesWithOptions(ctx context.Context, registry program.ProgramRegistry, view program.ReadView, findings []sdk.Finding, options CandidateOptions) []ProgramRun {
 	if registry == nil {
 		return nil
 	}
-	deadline := options.Deadline
 	if deadline <= 0 {
 		deadline = DefaultDiagnosisDeadline
-	}
-	limit := options.SweepLimit
-	if limit <= 0 {
-		limit = DefaultSweepLimit
 	}
 	ctx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
@@ -75,19 +65,6 @@ func SelectProgramCandidatesWithOptions(ctx context.Context, registry program.Pr
 	seen := map[string]bool{}
 	aliases := map[string][]candidate{}
 	add := func(id string, bindings program.Bindings, fingerprint, source string) {
-		if len(options.Affected) > 0 {
-			matched := false
-			for _, ref := range bindings {
-				for _, affected := range options.Affected {
-					if ref.Kind == affected.Kind && ref.Namespace == affected.Namespace && ref.Name == affected.Name {
-						matched = true
-					}
-				}
-			}
-			if !matched {
-				return
-			}
-		}
 		key := id + "\x00" + bindingKey(bindings)
 		if seen[key] {
 			if fingerprint != "" {
@@ -103,112 +80,9 @@ func SelectProgramCandidatesWithOptions(ctx context.Context, registry program.Pr
 			continue
 		}
 		for _, spec := range registry.List() {
-			assignments := candidateBindings(spec, finding)
-			hintOnly := false
-			if len(assignments) == 0 {
-				for _, reference := range finding.Playbooks {
-					id, err := layout.PlaybookID(reference)
-					if err == nil && id == spec.ID {
-						assignments = []program.Bindings{cloneProgramBindings(program.Bindings(finding.ParameterBindings))}
-						hintOnly = true
-						break
-					}
-				}
-			}
-			for _, bindings := range assignments {
-				source := "finding"
-				if hintOnly {
-					source = "hint"
-				} else {
-					for name, ref := range bindings {
-						if finding.ParameterBindings[name] == ref && ref.Kind != "" {
-							source = "hint"
-						}
-					}
-				}
+			bindings, source, ok := findingProgramBindings(spec, finding)
+			if ok {
 				add(spec.ID, bindings, FindingFingerprint(finding), source)
-			}
-		}
-	}
-	for _, spec := range registry.List() {
-		if len(spec.Params) == 0 {
-			continue
-		}
-		refs := make([][]sdk.ObjectRef, len(spec.Params))
-		valid := true
-		for index, param := range spec.Params {
-			if !param.Required {
-				refs[index] = append([]sdk.ObjectRef{{}}, sweepRefs(view, param.Kind)...)
-				continue
-			}
-			if param.Kind == "" {
-				valid = false
-				break
-			}
-			refs[index] = sweepRefs(view, param.Kind)
-			if len(refs[index]) == 0 {
-				valid = false
-				break
-			}
-		}
-		if !valid {
-			continue
-		}
-		indices := make([]int, len(refs))
-		if cursor := options.SweepCursors[spec.ID]; cursor != "" {
-			parts := strings.Split(cursor, ",")
-			if len(parts) == len(indices) {
-				for i, part := range parts {
-					n, err := strconv.Atoi(part)
-					if err == nil && n >= 0 && (len(refs[i]) == 0 && n == 0 || n < len(refs[i])) {
-						indices[i] = n
-					}
-				}
-			}
-		}
-		encode := func() string {
-			parts := make([]string, len(indices))
-			for i, n := range indices {
-				parts[i] = strconv.Itoa(n)
-			}
-			return strings.Join(parts, ",")
-		}
-		start := encode()
-		count := 0
-		for ctx.Err() == nil {
-			bindings := program.Bindings{}
-			valid := true
-			for i, param := range spec.Params {
-				if !param.Required && indices[i] == 0 {
-					continue
-				}
-				ref := refs[i][indices[i]]
-				if bindingUses(bindings, ref) {
-					valid = false
-					break
-				}
-				bindings[param.Name] = ref
-			}
-			if valid {
-				before := len(candidates)
-				add(spec.ID, bindings, "", "sweep")
-				if len(candidates) > before {
-					count++
-				}
-			}
-			for i := len(indices) - 1; i >= 0; i-- {
-				indices[i]++
-				if indices[i] < len(refs[i]) {
-					break
-				}
-				indices[i] = 0
-			}
-			next := encode()
-			if options.SweepCursors != nil {
-				options.SweepCursors[spec.ID] = next
-			}
-			if count >= limit || next == start {
-				break
 			}
 		}
 	}
@@ -266,10 +140,17 @@ func SelectProgramCandidatesWithOptions(ctx context.Context, registry program.Pr
 	return runs
 }
 
-func sweepRefs(view program.ReadView, kind program.Kind) []sdk.ObjectRef {
-	if view == nil || view.Namespace() == "" {
-		return nil
+// findingProgramBindings is the shared candidate/target boundary. Optional
+// object roles still need a finding resource; scalar defaults and an empty map
+// do not make an unrelated finding a diagnosis candidate. Explicit authored
+// hints remain visible even when incomplete, but carry only declared roles.
+func findingProgramBindings(spec program.ProgramSpec, finding sdk.Finding) (program.Bindings, string, bool) {
+	bound, err := program.BindFinding(spec, finding)
+	hasObjectRoles := false
+	for _, param := range spec.Params {
+		hasObjectRoles = hasObjectRoles || param.Kind != ""
 	}
+<<<<<<< HEAD
 	var objects []metav1.Object
 	apiVersion := "v1"
 	switch kind {
@@ -422,62 +303,34 @@ func candidateBindings(spec program.ProgramSpec, finding sdk.Finding) []program.
 		if index == len(spec.Params) {
 			if program.ValidateBindings(spec, current) == nil {
 				result = append(result, current)
+=======
+	if err == nil && (!hasObjectRoles || len(bound.Objects) > 0) {
+		source := "finding"
+		for name, ref := range bound.Objects {
+			if finding.ParameterBindings[name] == ref && ref.Kind != "" {
+				source = "hint"
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 			}
-			return
 		}
-		param := spec.Params[index]
-		if hint, ok := finding.ParameterBindings[param.Name]; ok && hint.Kind == string(param.Kind) {
-			if !bindingUses(current, hint) {
-				next := cloneProgramBindings(current)
-				next[param.Name] = hint
-				bind(index+1, next)
-			}
-			return
-		}
-		for _, ref := range unique {
-			if ref.Kind != string(param.Kind) || bindingUses(current, ref) {
-				continue
-			}
-			next := cloneProgramBindings(current)
-			next[param.Name] = ref
-			bind(index+1, next)
-		}
-		if !param.Required {
-			bind(index+1, current)
+		return bound, source, true
+	}
+	for _, reference := range finding.Playbooks {
+		id, err := layout.PlaybookID(reference)
+		if err == nil && id == spec.ID {
+			return cloneProgramBindings(bound), "hint", true
 		}
 	}
-	bind(0, program.Bindings{})
-	return result
-}
-
-func bindingUses(bindings program.Bindings, ref sdk.ObjectRef) bool {
-	for _, existing := range bindings {
-		if existing == ref {
-			return true
-		}
-	}
-	return false
+	return program.Bindings{}, "", false
 }
 
 func cloneProgramBindings(source program.Bindings) program.Bindings {
-	result := make(program.Bindings, len(source))
-	for key, ref := range source {
-		result[key] = ref
+	result := source.Clone()
+	if result.Objects == nil {
+		result.Objects = program.ObjectBindings{}
 	}
 	return result
 }
-
-func sameBindings(left, right program.Bindings) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for key, ref := range left {
-		if right[key] != ref {
-			return false
-		}
-	}
-	return true
-}
+func sameBindings(left, right program.Bindings) bool { return left.Equal(right) }
 
 func sortProgramRuns(runs []ProgramRun) {
 	priority := map[program.Result]int{program.Match: 0, program.NeedsJudgement: 1, program.Unknown: 2, program.NoMatch: 3}
@@ -497,15 +350,43 @@ func sortProgramRuns(runs []ProgramRun) {
 }
 
 func bindingKey(bindings program.Bindings) string {
-	keys := make([]string, 0, len(bindings))
-	for key := range bindings {
+	keys := make([]string, 0, len(bindings.Objects))
+	for key := range bindings.Objects {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 	parts := make([]string, 0, len(keys))
 	for _, key := range keys {
-		ref := bindings[key]
+		ref := bindings.Objects[key]
 		parts = append(parts, key+"="+ref.Kind+"/"+ref.Namespace+"/"+ref.Name)
 	}
-	return strings.Join(parts, ",")
+	key := strings.Join(parts, ",")
+	if len(bindings.Values) > 0 {
+		raw, _ := json.Marshal(bindings.Values)
+		key += "|values=" + string(raw)
+	}
+	return key
+}
+
+// matchedFindingFingerprints joins a successful live diagnosis to the active
+// findings that supplied its bindings. It never reconstructs bindings from
+// authored explanation links, recorded corpus labels, or proposed writes.
+func matchedFindingFingerprints(findings []sdk.Finding, runs []ProgramRun, id string, bindings program.Bindings) []string {
+	matched := map[string]bool{}
+	for _, run := range runs {
+		if run.ProgramID == id && run.Verdict.Result == program.Match && run.Bindings.Equal(bindings) {
+			matched[run.FindingFingerprint] = true
+		}
+	}
+	var fingerprints []string
+	seen := map[string]bool{}
+	for _, finding := range findings {
+		fp := FindingFingerprint(finding)
+		if finding.Status == sdk.FindingActive && matched[fp] && !seen[fp] {
+			fingerprints = append(fingerprints, fp)
+			seen[fp] = true
+		}
+	}
+	sort.Strings(fingerprints)
+	return fingerprints
 }

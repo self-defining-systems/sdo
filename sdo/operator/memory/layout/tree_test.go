@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -173,6 +174,7 @@ func TestParseDocument(t *testing.T) {
 	}
 }
 
+<<<<<<< HEAD
 func TestReadTreeRejectsUnsupportedSchemaBeforeReadingArtifacts(t *testing.T) {
 	for _, version := range []int{0, 1, 2, 4} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
@@ -185,5 +187,22 @@ func TestReadTreeRejectsUnsupportedSchemaBeforeReadingArtifacts(t *testing.T) {
 				t.Fatalf("error = %v; want %s", err, want)
 			}
 		})
+=======
+// Corpus is not catalog input: the validator owns it, while agent snapshots and
+// listings must not inspect optional replay data that cannot affect the result.
+func TestLogicalTreeDoesNotInspectCorpus(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, CorpusDir, "inert"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, Dir, "schema-version"), []byte(strconv.Itoa(CurrentSchemaVersion)+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, CorpusDir, "inert", "unsupported.go"), []byte("not authored code"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadTree(root); err != nil {
+		t.Fatal(err)
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	}
 }

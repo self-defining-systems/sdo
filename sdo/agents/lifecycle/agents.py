@@ -2,17 +2,25 @@
 
 from __future__ import annotations
 
+<<<<<<< HEAD
+=======
+import hashlib
+import json
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 from typing import TYPE_CHECKING, ClassVar, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from libs.agent_cli.structured import (
-    AccessMode,
     AgentProvider,
     StructuredTurnError,
     StructuredTurnTimeout,
-    run_structured_turn,
 )
+from sdo.agents.code_paths import SKILLS_ROOT, agent_guidance
+from sdo.agents.prompt_templates import named_prompt, render_prompt
+from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
+from sdo.agents.provider import DEFAULT_AGENT_EFFORT
+from sdo.agents.replay import selected_skills_root
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -46,6 +54,7 @@ class HealthJudgeArtifact(HealthJudgeDraft):
 
 
 #: Health-judge instructions for direct synthetic traffic edits.
+<<<<<<< HEAD
 TRAFFIC_AUTHORING = """Synthetic traffic (health-judge owned). For an application that serves HTTP, also author
 end-to-end synthetic traffic in the checkout under `.sdo/diagnostics/traffic/` (full API: references/traffic.md of the
 `sdo-detector-authoring` skill). Ground it in the application source and
@@ -111,6 +120,12 @@ each query once per cycle; the detector never does I/O, and an unreachable sourc
 clear. Use task.metrics_source for availability and publishing instructions; without a query URL, omit these
 detectors. The shared check installs the generic
 alerts detector itself when a source is configured."""
+=======
+TRAFFIC_AUTHORING = render_prompt("health_judge", "traffic_authoring", part="health_judge.traffic_authoring")
+
+#: Metrics are an optional detector input, present only when an operator configured a metrics source.
+METRICS_AUTHORING = render_prompt("health_judge", "metrics_authoring", part="health_judge.metrics_authoring")
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 
 
 class LifecycleAgentBackend(Protocol):
@@ -127,7 +142,11 @@ class LifecycleAgentBackend(Protocol):
 
 
 class CodexLifecycleBackend:
+<<<<<<< HEAD
     """Run each lifecycle handoff as a fresh Codex CLI session."""
+=======
+    """Run each lifecycle handoff in a fresh session inside its worker pod."""
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 
     provider: ClassVar[AgentProvider] = "codex"
 
@@ -135,7 +154,7 @@ class CodexLifecycleBackend:
         self,
         *,
         model: str | None = None,
-        reasoning_effort: str = "medium",
+        reasoning_effort: str = DEFAULT_AGENT_EFFORT,
         timeout_seconds: int = 900,
         executor: CommandExecutor | None = None,
     ) -> None:
@@ -146,6 +165,27 @@ class CodexLifecycleBackend:
         self.timeout_seconds = timeout_seconds
         self.executor = executor
 
+<<<<<<< HEAD
+=======
+    def run_deployer(
+        self,
+        *,
+        repository: Path,
+        application: str,
+        correction_feedback: str | None,
+    ) -> DeployerHandoff:
+        feedback = correction_feedback or render_prompt("lifecycle", "run_deployer_01", part="lifecycle.instructions")
+        prompt = render_prompt(
+            "lifecycle",
+            "architecture",
+            part="lifecycle.instructions",
+            application=repr(application),
+            feedback=feedback,
+        )
+        draft, session_id = self._execute(repository, prompt, DeployerDraft)
+        return DeployerHandoff(**draft.model_dump(), session_id=session_id)
+
+>>>>>>> origin/vic-lsh/dev/sdo-improve
     def run_health_judge(
         self,
         *,
@@ -156,6 +196,7 @@ class CodexLifecycleBackend:
         resources: list[TopologyResourceDTO],
         correction_feedback: str | None,
     ) -> HealthJudgeArtifact:
+<<<<<<< HEAD
         feedback = correction_feedback or "No validator feedback."
         prompt = f"""You are the independent SDO health judge for application {application!r}.
 This is one fresh authoring session in an isolated proposal checkout.
@@ -231,16 +272,54 @@ The shared memory check installs and checks the generic detector for each health
 It compiles and tests the complete candidate, including the health detector and traffic generators.
 """
         draft, session_id = self._execute(repository, prompt, HealthJudgeDraft, sandbox="workspace-write")
+=======
+        objective_digest = hashlib.sha256(health_objective.strip().encode()).hexdigest()
+        previous_payload = previous.model_dump_json(indent=2) if previous else "null"
+        active_payload = (
+            json.dumps([resource.model_dump(mode="json") for resource in active_resources], indent=2)
+            if active_resources is not None
+            else "null"
+        )
+        feedback = correction_feedback or render_prompt(
+            "health_judge", "run_health_judge_01", part="health_judge.instructions"
+        )
+        prompt = render_prompt(
+            "health_judge",
+            "health_judge_shell" if agent_guidance() == "shell" else "health_judge",
+            part="health_judge.instructions",
+            skills_root=selected_skills_root(SKILLS_ROOT),
+            source_commit=deployer.source_commit,
+            application=repr(application),
+            round_index=round_index,
+            health_objective=named_prompt("health_judge.health_objective", health_objective),
+            objective_digest=objective_digest,
+            deployer=named_prompt("health_judge.deployer", deployer.model_dump_json(indent=2), required=False),
+            active_payload=named_prompt("health_judge.active_payload", active_payload, required=False),
+            previous_payload=named_prompt("health_judge.previous_payload", previous_payload, required=False),
+            feedback=feedback,
+            watch_list=_WATCH_LIST,
+            round_index_2=round_index,
+            covered_kinds=_COVERED_KINDS,
+            traffic_authoring=TRAFFIC_AUTHORING,
+            metrics_authoring=METRICS_AUTHORING,
+        )
+        draft, session_id = self._execute(repository, prompt, HealthJudgeDraft)
+>>>>>>> origin/vic-lsh/dev/sdo-improve
         return HealthJudgeArtifact(**draft.model_dump(), session_id=session_id)
 
     def _execute(
         self,
         repository: Path,
         prompt: str,
+<<<<<<< HEAD
         output_type: type[HealthJudgeDraft],
         *,
         sandbox: AccessMode = "read-only",
     ) -> tuple[HealthJudgeDraft, str]:
+=======
+        output_type: type[DeployerDraft] | type[HealthJudgeDraft],
+    ) -> tuple[DeployerDraft | HealthJudgeDraft, str]:
+>>>>>>> origin/vic-lsh/dev/sdo-improve
         role = f"{self.provider.capitalize()} lifecycle session"
         try:
             turn = run_structured_turn(
@@ -248,7 +327,7 @@ It compiles and tests the complete candidate, including the health detector and 
                 prompt,
                 output_schema=output_type.model_json_schema(),
                 cwd=repository,
-                access=sandbox,
+                access="danger-full-access",
                 model=self.model,
                 reasoning_effort=self.reasoning_effort,
                 timeout_seconds=self.timeout_seconds,

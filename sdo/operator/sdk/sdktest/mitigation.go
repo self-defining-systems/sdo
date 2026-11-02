@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	jsonpatch "github.com/evanphx/json-patch"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sort"
 	"time"
 
 	"sdo.dev/operator/sdk"
@@ -15,6 +17,7 @@ type MitigationReplayStatus string
 
 const (
 	MitigationReplayPassed                    MitigationReplayStatus = "replayed"
+	MitigationReplayObservedTransition        MitigationReplayStatus = "observed-transition"
 	MitigationReplaySkippedUnreplayableEffect MitigationReplayStatus = "skipped_unreplayable_effect"
 )
 
@@ -29,7 +32,7 @@ type MitigationReplayResult struct {
 
 // CheckMitigation validates every plan. SetField-only plans must repair the
 // faulted fixture; plans with external effects return an explicit skipped note.
-// Diagnosis corpus replay remains a separate mandatory gate.
+// Diagnosis replay is an analysis helper; its outcome never gates publication.
 func CheckMitigation(p program.Diagnoser, m program.Mitigator, c CorpusCase) (MitigationReplayResult, error) {
 	result := MitigationReplayResult{ProgramID: p.Spec().ID}
 	plan, err := m.Mitigate(context.Background(), &ReplayReadView{Snapshot: c.Open, Calls: c.PhaseRecordings("open")}, c.Bindings)
@@ -39,9 +42,47 @@ func CheckMitigation(p program.Diagnoser, m program.Mitigator, c CorpusCase) (Mi
 	if err := plan.Validate(); err != nil {
 		return result, fmt.Errorf("program.mitigation-unreplayable: invalid plan: %w", err)
 	}
+	if err := program.CheckReplicaSetScales(plan, c.Open); err != nil {
+		return result, fmt.Errorf("program.mitigation-unreplayable: %w", err)
+	}
+	scripted := false
 	for _, action := range plan.Actions {
-		switch action.(type) {
-		case program.SetField, *program.SetField:
+		var script program.RunScript
+		ok := false
+		switch a := action.(type) {
+		case program.RunScript:
+			script, ok = a, true
+		case *program.RunScript:
+			if a != nil {
+				script, ok = *a, true
+			}
+		}
+		if ok {
+			scripted = true
+			if _, err := ScriptOrigin(script, c); err != nil {
+				return result, fmt.Errorf("program.mitigation-not-repaired: %w", err)
+			}
+		}
+	}
+	if scripted {
+		before := program.RunDiagnose(context.Background(), p, &ReplayReadView{Snapshot: c.Open, Calls: c.PhaseRecordings("open")}, c.Bindings, 5*time.Second)
+		after := program.RunDiagnose(context.Background(), p, &ReplayReadView{Snapshot: c.Fixed, Calls: c.PhaseRecordings("fixed")}, c.Bindings, 5*time.Second)
+		if before.Result != program.Match || after.Result != program.NoMatch {
+			return result, fmt.Errorf("program.mitigation-not-repaired: observed script transition must diagnose Match then NoMatch")
+		}
+		result.Status = MitigationReplayObservedTransition
+		return result, nil
+	}
+	for _, action := range plan.Actions {
+		switch a := action.(type) {
+		case program.SetField:
+			if a.Value.Origin() == program.SourceValue {
+				result.Effects = append(result.Effects, "accepted-source SetField")
+			}
+		case *program.SetField:
+			if a != nil && a.Value.Origin() == program.SourceValue {
+				result.Effects = append(result.Effects, "accepted-source SetField")
+			}
 		default:
 			result.Effects = append(result.Effects, fmt.Sprintf("%T", action))
 		}
@@ -73,6 +114,10 @@ func checkMitigationPlanRepairs(p program.Diagnoser, c CorpusCase, plan program.
 	if err := json.Unmarshal(raw, &fixture); err != nil {
 		return err
 	}
+	var observedFixture map[string]any
+	if err := json.Unmarshal(raw, &observedFixture); err != nil {
+		return err
+	}
 	for _, action := range plan.Actions {
 		var field program.SetField
 		switch a := action.(type) {
@@ -94,7 +139,11 @@ func checkMitigationPlanRepairs(p program.Diagnoser, c CorpusCase, plan program.
 		if err != nil {
 			return err
 		}
-		if err := program.ApplySetField(object, field.Path, field.Value); err != nil {
+		value, _, resolveErr := program.ResolveSetFieldValue(field, program.ValueInputs{Spec: p.Spec(), Bindings: c.Bindings, Observed: func(ref sdk.ObjectRef) (map[string]any, error) { return fixtureObject(observedFixture, ref) }})
+		if resolveErr != nil {
+			return fmt.Errorf("program.mitigation-unreplayable: %w", resolveErr)
+		}
+		if err := program.ApplySetFieldAction(object, field, value); err != nil {
 			return fmt.Errorf("program.mitigation-unreplayable: %w", err)
 		}
 		after, err := json.Marshal(object)
@@ -114,6 +163,33 @@ func checkMitigationPlanRepairs(p program.Diagnoser, c CorpusCase, plan program.
 		}
 		if err := json.Unmarshal(patched, &object); err != nil {
 			return err
+		}
+	}
+	// Generic objects are authoritative. Refresh typed compatibility arrays after
+	// patching so typed diagnoses see the same repaired object as generic readers.
+	if objects, ok := fixture["objects"].([]any); ok && len(objects) > 0 {
+		body, _ := json.Marshal(objects)
+		var canonical []unstructured.Unstructured
+		if err := json.Unmarshal(body, &canonical); err != nil {
+			return err
+		}
+		compatibility := Snapshot{NamespaceName: c.Open.NamespaceName}
+		var local []unstructured.Unstructured
+		for _, object := range canonical {
+			if object.GetNamespace() == compatibility.NamespaceName {
+				local = append(local, object)
+			}
+		}
+		if err := sdk.DecodeTypedObjects(&compatibility, local); err != nil {
+			return err
+		}
+		encoded, _ := json.Marshal(compatibility)
+		var legacy map[string]any
+		_ = json.Unmarshal(encoded, &legacy)
+		for key, value := range legacy {
+			if _, isList := value.([]any); isList && key != "objects" {
+				fixture[key] = value
+			}
 		}
 	}
 	raw, err = json.Marshal(fixture)
@@ -137,17 +213,68 @@ func checkMitigationPlanRepairs(p program.Diagnoser, c CorpusCase, plan program.
 }
 
 func fixtureObject(snapshot map[string]any, ref sdk.ObjectRef) (map[string]any, error) {
+<<<<<<< HEAD
 	kinds := map[string]string{"StatefulSet": "statefulSets", "DaemonSet": "daemonSets", "Job": "jobs", "CronJob": "cronJobs", "PersistentVolumeClaim": "persistentVolumeClaims", "ServiceAccount": "serviceAccounts", "HorizontalPodAutoscaler": "horizontalPodAutoscalers", "PodDisruptionBudget": "podDisruptionBudgets", "Ingress": "ingresses", "Service": "services", "Pod": "pods", "Deployment": "deployments", "ReplicaSet": "replicaSets", "ConfigMap": "configMaps", "Endpoints": "endpoints", "EndpointSlice": "endpointSlices", "NetworkPolicy": "networkPolicies"}
 	versions := map[string]string{"StatefulSet": "apps/v1", "DaemonSet": "apps/v1", "Job": "batch/v1", "CronJob": "batch/v1", "PersistentVolumeClaim": "v1", "ServiceAccount": "v1", "HorizontalPodAutoscaler": "autoscaling/v2", "PodDisruptionBudget": "policy/v1", "Ingress": "networking.k8s.io/v1", "Service": "v1", "Pod": "v1", "Deployment": "apps/v1", "ReplicaSet": "apps/v1", "ConfigMap": "v1", "Endpoints": "v1", "EndpointSlice": "discovery.k8s.io/v1", "NetworkPolicy": "networking.k8s.io/v1"}
 	if ref.Namespace != snapshot["namespace"] || versions[ref.Kind] != ref.APIVersion || ref.Name == "" {
+=======
+	if ref.Name == "" || ref.Kind == "" || ref.APIVersion == "" {
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 		return nil, fmt.Errorf("invalid fixture reference %+v", ref)
 	}
-	list, _ := snapshot[kinds[ref.Kind]].([]any)
-	for _, item := range list {
-		object, _ := item.(map[string]any)
-		meta, _ := object["metadata"].(map[string]any)
-		if meta["name"] == ref.Name && meta["namespace"] == ref.Namespace {
-			return object, nil
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		return nil, err
+	}
+	var typed Snapshot
+	if err = json.Unmarshal(raw, &typed); err != nil {
+		return nil, err
+	}
+	known := sdk.TypedObjects(typed)
+	keys := []string{"objects"}
+	rest := make([]string, 0, len(snapshot))
+	for key := range snapshot {
+		if key != "objects" {
+			rest = append(rest, key)
+		}
+	}
+	sort.Strings(rest)
+	keys = append(keys, rest...)
+	for _, key := range keys {
+		value := snapshot[key]
+		list, _ := value.([]any)
+		for _, item := range list {
+			object, _ := item.(map[string]any)
+			if object == nil {
+				continue
+			}
+			meta, _ := object["metadata"].(map[string]any)
+			namespace, _ := meta["namespace"].(string)
+			if meta["name"] != ref.Name || namespace != ref.Namespace {
+				continue
+			}
+			api, _ := object["apiVersion"].(string)
+			kind, _ := object["kind"].(string)
+			if api == ref.APIVersion && kind == ref.Kind {
+				return object, nil
+			}
+			// Old typed fixture arrays predate explicit GVKs. Match by their JSON shape.
+			if api == "" && kind == "" {
+				for _, candidate := range known {
+					if sdk.ObjectIdentity(candidate) == ref {
+						a, _ := json.Marshal(candidate.Object)
+						var fields map[string]any
+						_ = json.Unmarshal(a, &fields)
+						delete(fields, "apiVersion")
+						delete(fields, "kind")
+						b, _ := json.Marshal(fields)
+						c, _ := json.Marshal(object)
+						if string(b) == string(c) {
+							return object, nil
+						}
+					}
+				}
+			}
 		}
 	}
 	return nil, fmt.Errorf("fixture lacks %s/%s", ref.Kind, ref.Name)

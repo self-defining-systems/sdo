@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
+from sdo.agents.code_paths import agent_guidance, skills_for_role
 from sdo.agents.lifecycle import (
     ClaudeLifecycleBackend,
     CodexLifecycleBackend,
@@ -16,7 +17,13 @@ from sdo.agents.lifecycle import (
 from sdo.agents.memory_diagnostics import render_validation_feedback
 from sdo.agents.metrics_context import metrics_context
 from sdo.agents.provider import resolve_agent
-from sdo.agents.responder import KubernetesResultPublisher, prepare_claude_home, prepare_codex_home
+from sdo.agents.responder import (
+    KubernetesResultPublisher,
+    prepare_claude_home,
+    prepare_codex_home,
+    record_worker_failure,
+    records_worker_failure,
+)
 from sdo.contracts import (
     SCHEMA_VERSION,
     AgentResult,
@@ -52,6 +59,7 @@ def author_health_diagnostics(request: HealthJudgeRequest, checkout: Path) -> He
     summary = request.architecture_summary_markdown.strip()
     if not summary:
         raise ValueError("health judge requires accepted architecture summary")
+<<<<<<< HEAD
     resources = [
         TopologyResourceDTO(
             kind=row.kind,
@@ -64,6 +72,28 @@ def author_health_diagnostics(request: HealthJudgeRequest, checkout: Path) -> He
     ]
     resolved = resolve_agent("health_judge", "SDO_LIFECYCLE_MODEL")
     backend = (ClaudeLifecycleBackend if resolved.provider == "claude" else CodexLifecycleBackend)(model=resolved.model)
+=======
+    deployer = DeployerAssessment(
+        source_commit=request.accepted_source_commit,
+        topology_fingerprint=request.source_topology_fingerprint,
+        architecture_summary_markdown=summary,
+        session_id="accepted-source",
+        resources=[
+            TopologyResourceDTO(
+                kind=row.kind,
+                name=row.name,
+                namespace=row.namespace,
+                source=row.source,
+                dependencies=list(row.dependencies),
+            )
+            for row in request.source_resources
+        ],
+    )
+    resolved = resolve_agent("health_judge", "lifecycle")
+    backend = (ClaudeLifecycleBackend if resolved.provider == "claude" else CodexLifecycleBackend)(
+        model=resolved.model, reasoning_effort=resolved.effort
+    )
+>>>>>>> origin/vic-lsh/dev/sdo-improve
     artifact = backend.run_health_judge(
         repository=checkout,
         application=request.application,
@@ -142,15 +172,21 @@ def run_judge_task(
     return result
 
 
+@records_worker_failure
 def main() -> int:
     namespace = os.environ.get("SDO_NAMESPACE", "")
     result_name = os.environ.get("SDO_RESULT_CONFIGMAP", "")
     if not namespace or not result_name:
         print("SDO_NAMESPACE and SDO_RESULT_CONFIGMAP are required", file=sys.stderr)
+        record_worker_failure(ValueError("SDO_NAMESPACE and SDO_RESULT_CONFIGMAP are required"))
         return 2
     try:
-        prepare_codex_home()
-        prepare_claude_home()
+        if agent_guidance() == "shell":
+            prepare_codex_home(skills=skills_for_role("health-judge"))
+            prepare_claude_home(skills=skills_for_role("health-judge"))
+        else:
+            prepare_codex_home()
+            prepare_claude_home()
         run_judge_task(
             Path(os.environ.get("SDO_TASK_PATH", str(DEFAULT_TASK_PATH))),
             result_name,
@@ -158,6 +194,7 @@ def main() -> int:
         )
     except (OSError, ValueError, RuntimeError) as exc:
         print(str(exc), file=sys.stderr)
+        record_worker_failure(exc)
         return 1
     return 0
 

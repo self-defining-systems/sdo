@@ -7,6 +7,7 @@ executor, with a stub ``kubectl`` standing in for the cluster.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -14,6 +15,7 @@ import stat
 import subprocess
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from google.protobuf import json_format
@@ -25,6 +27,9 @@ from benchmarks.sregym.assurance.usage import request_usage
 from sdo.agents.responder.codex import execute_incident
 from sdo.agents.responder.reflection import CodexSessionBackend
 from sdo.contracts import AgentTask, IncidentRequest, to_canonical_json
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
 SEED = REPO_ROOT / "tests" / "fixtures" / "sdo" / "contracts" / "incident_request.json"
@@ -65,11 +70,22 @@ def _memory_worktree(tmp_path: Path) -> Path:
         ["git", "-C", str(worktree), "-c", "user.name=t", "-c", "user.email=t@e", "commit", "-qm", "seed"],
         check=True,
     )
+    for name, body in {
+        "goal.md": "---\nschema_version: 1\nowner: human\n---\nKeep healthy.\n",
+        "arch.md": "---\nschema_version: 1\nowner: health_judge\n---\nOne service.\n",
+        "playbooks/README.md": "# Playbooks\n\n- [missing-configmap](missing-configmap/README.md)\n",
+    }.items():
+        (worktree / ".sdo" / name).write_text(body)
+    existing = worktree / ".sdo/playbooks/missing-configmap/README.md"
+    existing.write_text(
+        "---\nschema_version: 1\nowner: responder\nfault_class: missing-configmap\n"
+        "originating_incident: fixture\n---\n\n" + existing.read_text().split("---\n", 2)[-1]
+    )
     return worktree
 
 
 @pytest.fixture
-def scripted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
+def scripted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, memory_binary: Path) -> dict[str, Path]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     _executable(
@@ -77,12 +93,7 @@ def scripted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]
         f'#!/bin/sh\nPYTHONPATH="{REPO_ROOT}" exec "{sys.executable}" -m benchmarks.sregym.assurance.script_cli "$@"\n',
     )
     _executable(bin_dir / "kubectl", _KUBECTL)
-    _executable(
-        bin_dir / "sdo-operator",
-        '#!/bin/sh\ntest "$*" = "memory check" || exit 2\n'
-        'if grep -q "malformed README" .sdo/playbooks/*/README.md; '
-        'then echo "frontmatter.missing"; exit 1; fi\n',
-    )
+    (bin_dir / "sdo-operator").symlink_to(memory_binary)
     state = tmp_path / "cluster"
     state.mkdir()
     policy = {
@@ -171,8 +182,13 @@ def _expected_usage(seed: int, kind: str, requests: int) -> dict[str, int]:
     }
 
 
+<<<<<<< HEAD:tests/unit/benchmarks/sregym/assurance/test_script_execution.py
 def test_generated_responder_repairs_through_the_real_structured_turn(
     scripted: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+=======
+def test_scripted_responder_repairs_through_the_real_structured_turn(
+    scripted: dict[str, Path], monkeypatch: pytest.MonkeyPatch, prepare_reflection_memory
+>>>>>>> origin/vic-lsh/dev/sdo-improve:tests/unit/benchmarks/sregym/assurance/test_scripted_codex.py
 ) -> None:
     worktree = _memory_worktree(scripted["tmp"])
     request = _request(worktree, scripted["tmp"], monkeypatch)
@@ -205,7 +221,7 @@ def test_generated_responder_repairs_through_the_real_structured_turn(
 
 
 def test_wrong_then_correct_reports_the_failed_attempt_and_the_repair(
-    scripted: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+    scripted: dict[str, Path], monkeypatch: pytest.MonkeyPatch, prepare_reflection_memory
 ) -> None:
     worktree = _memory_worktree(scripted["tmp"])
     request = _request(worktree, scripted["tmp"], monkeypatch)
@@ -221,7 +237,7 @@ def test_wrong_then_correct_reports_the_failed_attempt_and_the_repair(
 
 
 def test_wrong_only_honest_fails_and_claimed_lies_about_verification(
-    scripted: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+    scripted: dict[str, Path], monkeypatch: pytest.MonkeyPatch, prepare_reflection_memory
 ) -> None:
     worktree = _memory_worktree(scripted["tmp"])
     request = _request(worktree, scripted["tmp"], monkeypatch)
@@ -242,8 +258,116 @@ def test_wrong_only_honest_fails_and_claimed_lies_about_verification(
     assert [(ref.kind, ref.name) for ref in wrong.resources] == [("Deployment", "frontend")]
 
 
+def _prepare_policy_reflection(
+    worktree: Path,
+    incident_id: str,
+    prepare_reflection_memory: Callable[..., str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> str:
+    """Controller-owned opening, repair and fresh-clear evidence for the toy policy."""
+    resource = {"api_version": "networking.k8s.io/v1", "kind": "NetworkPolicy", "namespace": NAMESPACE, "name": POLICY}
+    policy = {
+        "metadata": {"name": POLICY, "namespace": NAMESPACE},
+        "spec": {
+            "podSelector": {"matchLabels": {"io.kompose.service": "recommendation"}},
+            "policyTypes": ["Ingress", "Egress"],
+        },
+    }
+    peer = {
+        **policy,
+        "metadata": {"name": "allow-recommendation", "namespace": NAMESPACE},
+        "spec": {**policy["spec"], "ingress": [{}]},
+    }
+    opened = json.dumps({"namespace": NAMESPACE, "networkPolicies": [policy, peer]}).encode()
+    fixed = json.dumps({"namespace": NAMESPACE, "networkPolicies": [peer]}).encode()
+    # memory.CaptureRepairReceipts copies the original hand-repair receipt into
+    # captured recordings; the positive case links it to the learned program.
+    receipt = {
+        "id": "delete-policy",
+        "incident_id": incident_id,
+        "success": True,
+        "started_at": "2026-01-01T00:00:01Z",
+        "completed_at": "2026-01-01T00:00:02Z",
+        "resources": [resource],
+    }
+    recordings = json.dumps([{"method": "RepairReceipt", "arguments": [], "result": receipt}]).encode()
+    corpus = worktree / ".sdo/corpus/deny-all-networkpolicy-isolation"
+    corpus.mkdir(parents=True)
+    for name, content in {
+        "open.json": opened,
+        "fixed.json": fixed,
+        "healthy.json": fixed,
+        "recordings.json": recordings,
+    }.items():
+        (corpus / name).write_bytes(content)
+    (corpus / "labels.json").write_text(
+        json.dumps(
+            {
+                "root_cause_program_ids": ["deny-all-networkpolicy-isolation"],
+                "bindings": {"policy": resource},
+                "peer_bindings": {"policy": {**resource, "name": "allow-recommendation"}},
+                "provenance": {
+                    "incident_id": incident_id,
+                    "open_at": "detect",
+                    "open_sha256": hashlib.sha256(opened).hexdigest(),
+                    "fixed_sha256": hashlib.sha256(fixed).hexdigest(),
+                },
+            }
+        )
+    )
+    capture = worktree.parent / "policy-capture"
+    (capture / "healthy").mkdir(parents=True)
+    (capture / "healthy/healthy.json").write_bytes(fixed)
+    (capture / "open@detect.json").write_bytes(opened)
+    (capture / "fixed.json").write_bytes(fixed)
+    (capture / "open@detect-recordings.json").write_bytes(recordings)
+    monkeypatch.setenv("SDO_CAPTURED_CORPUS_DIR", str(capture))
+    return prepare_reflection_memory(
+        worktree,
+        incident_id,
+        outcome_record={
+            "schema_version": 1,
+            "incident_id": incident_id,
+            "classification": "success",
+            "confirmed_root_causes": [{"summary": "deny-all policy isolates recommendation", "resources": [resource]}],
+            "findings": [
+                {
+                    "detector_id": "deny-all-networkpolicy-isolation",
+                    "rule_id": "total-isolation",
+                    "status": "active",
+                    "severity": "critical",
+                    "summary": "policy isolates recommendation",
+                    "evidence": "deny-all rules select workload",
+                    "primary_resource": resource,
+                    "fingerprint": "policy-isolation",
+                }
+            ],
+            "repair_actions": [
+                {
+                    "action_id": "delete-policy",
+                    "kind": "kubectl",
+                    "target": "NetworkPolicy/" + POLICY,
+                    "summary": "remove isolation",
+                    "details": "policy deleted and absence observed",
+                    "success": True,
+                    "resources": [resource],
+                    "started_at": "2026-01-01T00:00:01Z",
+                    "completed_at": "2026-01-01T00:00:02Z",
+                }
+            ],
+            "detector_history": [
+                {
+                    "detector_id": "deny-all-networkpolicy-isolation",
+                    "status": "clear",
+                    "evaluated_at": "2026-01-01T00:00:03Z",
+                }
+            ],
+        },
+    )
+
+
 def test_resumed_reflection_accounts_its_tokens_and_edits_final_files(
-    scripted: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+    scripted: dict[str, Path], monkeypatch: pytest.MonkeyPatch, prepare_reflection_memory
 ) -> None:
     worktree = _memory_worktree(scripted["tmp"])
     request = _request(worktree, scripted["tmp"], monkeypatch)
@@ -251,7 +375,7 @@ def test_resumed_reflection_accounts_its_tokens_and_edits_final_files(
     result = execute_incident(request, model="gpt-6-luna", provider="codex")
     assert result.responder_session_id
 
-    commit = "a" * 40
+    commit = _prepare_policy_reflection(worktree, request.incident_id, prepare_reflection_memory, monkeypatch)
     turn = CodexSessionBackend(model="gpt-6-luna").resume(
         session_id=result.responder_session_id,
         worktree=worktree,
@@ -275,7 +399,7 @@ def test_resumed_reflection_accounts_its_tokens_and_edits_final_files(
     ).read_text()
     assert f'originatingIncident: "{request.incident_id}"' in manifest
     assert (worktree / ".sdo/playbooks/deny-all-networkpolicy-isolation/README.md").exists()
-    assert any(item["command"] == "sdo-operator memory check" for item in reflection["commands"])
+    assert any(item["command"].startswith("sdo-operator memory check") for item in reflection["commands"])
     assert subprocess.run(
         ["git", "-C", str(worktree), "status", "--porcelain"], capture_output=True, text=True, check=True
     ).stdout
@@ -332,13 +456,19 @@ def test_healed_noop_claims_completed_with_no_action_once_health_is_back(
     assert healed.verification_evidence[0].passed is True
 
 
+<<<<<<< HEAD:tests/unit/benchmarks/sregym/assurance/test_script_execution.py
 def test_scripted_reflection_returns_invalid_proposal_then_corrects_after_rejection(
     scripted: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+=======
+def test_scripted_reflection_fixes_local_diagnostics_in_the_same_checkout(
+    scripted: dict[str, Path], monkeypatch: pytest.MonkeyPatch, prepare_reflection_memory
+>>>>>>> origin/vic-lsh/dev/sdo-improve:tests/unit/benchmarks/sregym/assurance/test_scripted_codex.py
 ) -> None:
     worktree = _memory_worktree(scripted["tmp"])
     request = _request(worktree, scripted["tmp"], monkeypatch)
     _script(scripted["store"], reflection="invalid_then_learn")
     responder = execute_incident(request, model="gpt-6-luna", provider="codex")
+    _prepare_policy_reflection(worktree, request.incident_id, prepare_reflection_memory, monkeypatch)
     turn = CodexSessionBackend(model="gpt-6-luna").resume(
         session_id=responder.responder_session_id,
         worktree=worktree,
@@ -347,6 +477,7 @@ def test_scripted_reflection_returns_invalid_proposal_then_corrects_after_reject
     )
     assert turn.learning_decision == "updated"
     reflection = _turn_records(scripted["store"])[-1]
+<<<<<<< HEAD:tests/unit/benchmarks/sregym/assurance/test_script_execution.py
     checks = [command for command in reflection["commands"] if command["command"] == "sdo-operator memory check"]
     assert [command["exit_code"] for command in checks] == [1]
     assert turn.learning_decision == "updated"
@@ -366,6 +497,12 @@ def test_scripted_reflection_returns_invalid_proposal_then_corrects_after_reject
         if c["command"] == "sdo-operator memory check"
     ]
     assert [c["exit_code"] for c in checks] == [1, 0]
+=======
+    checks = [
+        command for command in reflection["commands"] if command["command"].startswith("sdo-operator memory check")
+    ]
+    assert [command["exit_code"] for command in checks] == [1, 0]
+>>>>>>> origin/vic-lsh/dev/sdo-improve:tests/unit/benchmarks/sregym/assurance/test_scripted_codex.py
     assert (
         "malformed README" not in (worktree / ".sdo/playbooks/deny-all-networkpolicy-isolation/README.md").read_text()
     )

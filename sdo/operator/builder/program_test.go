@@ -3,11 +3,14 @@ package builder
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"sdo.dev/operator/internal/testutil"
+	programvalidation "sdo.dev/operator/memory/validate/program"
 )
 
 func programFixture(t *testing.T) string {
@@ -26,7 +29,7 @@ func buildProgramFixture(t *testing.T, root string) (*Workspace, error) {
 
 func TestBuildWorkspaceRegistersProgramAndSharedLibrary(t *testing.T) {
 	testutil.OfflineGo(t, "..")
-	t.Setenv("GOFLAGS", "-mod=mod -p=2")
+	t.Setenv("GOFLAGS", os.Getenv("GOFLAGS")+" -mod=mod -p=2")
 	root := programFixture(t)
 	w, err := buildProgramFixture(t, root)
 	if err != nil {
@@ -77,12 +80,12 @@ func TestProgramAcceptsRecordedSyntheticNoMatchCase(t *testing.T) {
 	}
 }
 
-func TestProgramRenameInvarianceRejectsHardcodedValues(t *testing.T) {
+func TestProgramSaveReplayDoesNotRequireRenameInvariance(t *testing.T) {
 	for _, tc := range []struct {
 		name, old, replacement string
 		port                   bool
 	}{
-		{"service name", "ref := b[\"service\"]", "ref := b[\"service\"]\nif ref.Name != \"front\" { return program.Verdict{Result: program.NoMatch}, nil }", false},
+		{"service name", "ref := b.Objects[\"service\"]", "ref := b.Objects[\"service\"]\nif ref.Name != \"front\" { return program.Verdict{Result: program.NoMatch}, nil }", false},
 		{"port 8087", "target := port.TargetPort", "target := port.TargetPort\nif target.Type == intstr.Int && target.IntVal != 8087 { return program.Verdict{Result: program.NoMatch}, nil }", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -91,6 +94,9 @@ func TestProgramRenameInvarianceRejectsHardcodedValues(t *testing.T) {
 			source, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if !strings.Contains(string(source), tc.old) {
+				t.Fatalf("mutation anchor missing: %s", tc.old)
 			}
 			if err := os.WriteFile(path, []byte(strings.Replace(string(source), tc.old, tc.replacement, 1)), 0o644); err != nil {
 				t.Fatal(err)
@@ -111,8 +117,8 @@ func TestProgramRenameInvarianceRejectsHardcodedValues(t *testing.T) {
 			}
 			defer w.Close()
 			_, err = w.ValidateAndBuild(context.Background())
-			if err == nil || !strings.Contains(err.Error(), "matched only under original names") || !strings.Contains(err.Error(), "service-targetport-mismatch") {
-				t.Fatalf("hard-coded %s: %v", tc.name, err)
+			if err != nil {
+				t.Fatalf("repair replay should not require renamed fixtures (%s): %v", tc.name, err)
 			}
 		})
 	}
@@ -129,7 +135,7 @@ func TestProgramValidationRejectsUnsafeMemory(t *testing.T) {
 		{"syscall import", ".sdo/lib/ports/ports.go", "import (", "import (\n\t\"syscall\"", "may not import"},
 		{"plugin import", ".sdo/lib/ports/ports.go", "import (", "import (\n\t\"plugin\"", "may not import"},
 		{"missing diagnoser", ".sdo/playbooks/service-targetport-mismatch/diagnose.go", "func (Program) Diagnose", "func (Program) Inspect", "exactly one Diagnoser"},
-		{"bad binding", ".sdo/corpus/targetport-mismatch/labels.json", `"kind":"Service"`, `"kind":"Pod"`, "binding"},
+		{"unknown action parameter", ".sdo/playbooks/service-targetport-mismatch/README.md", "Check the", "sdo mitigate SyncWebhookCA --param namespace=app\nCheck the", "unknown parameter \"namespace\""},
 		{"shell guidance", ".sdo/playbooks/service-targetport-mismatch/README.md", "Check the", "kubectl get services\nCheck the", "shell command"},
 		{"shell fence", ".sdo/playbooks/service-targetport-mismatch/README.md", "Check the", "```bash\n```\nCheck the", "shell command"},
 		{"spaced shell fence", ".sdo/playbooks/service-targetport-mismatch/README.md", "Check the", "``` bash\n```\nCheck the", "shell command"},
@@ -156,6 +162,34 @@ func TestProgramValidationRejectsUnsafeMemory(t *testing.T) {
 				t.Fatalf("got %v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestProgramRepeatUnreachableIsRecordedAsGap(t *testing.T) {
+	root := programFixture(t)
+	path := filepath.Join(root, ".sdo/diagnostics/detectors/incidents/routing-relations/detector.go")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The detector never fires, so no finding selects the playbook.
+	if err := os.WriteFile(path, []byte(strings.Replace(string(data), "if faulty {", `if faulty && service.Name == "" {`, 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := buildProgramFixture(t, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	if _, err := w.ValidateAndBuild(context.Background()); err != nil {
+		t.Fatalf("unreachable repeat must not reject memory: %v", err)
+	}
+	gaps, err := w.CoverageGaps()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(gaps, "\n"), "program.repeat-unreachable") {
+		t.Fatalf("coverage gaps = %v, want program.repeat-unreachable", gaps)
 	}
 }
 
@@ -289,7 +323,7 @@ func TestProgramAndLibraryRejectPersistentShellFiles(t *testing.T) {
 	}
 }
 
-func TestProgramGeneralizationIsRequired(t *testing.T) {
+func TestProgramSaveReplayProvesEffectsWithoutFixedSnapshotGate(t *testing.T) {
 	root := programFixture(t)
 	path := filepath.Join(root, ".sdo", "corpus", "targetport-mismatch", "fixed.json")
 	data, err := os.ReadFile(filepath.Join(root, ".sdo", "corpus", "targetport-mismatch", "open.json"))
@@ -304,7 +338,112 @@ func TestProgramGeneralizationIsRequired(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer w.Close()
-	if _, err := w.ValidateAndBuild(context.Background()); err == nil || !strings.Contains(err.Error(), "fixed") {
-		t.Fatalf("generalization failure: %v", err)
+	if _, err := w.ValidateAndBuild(context.Background()); err != nil {
+		t.Fatalf("repair replay unnecessarily depended on fixed snapshot: %v", err)
+	}
+}
+
+// Declaration validity is independent of corpus/replay availability and must
+// remain a save-time check when replay results are informational.
+func TestProgramDeclarationsCheckedWithoutReplay(t *testing.T) {
+	root := programFixture(t)
+	path := filepath.Join(root, ".sdo/playbooks/service-targetport-mismatch/diagnose.go")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := strings.Replace(string(data), "[]program.ParamSpec{", "[]program.ParamSpec{{Name: \"recorded-only\", ValueKind: program.IntValue, Required: true},", 1)
+	if source == string(data) {
+		t.Fatal("missing synthetic declaration anchor")
+	}
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := buildProgramFixture(t, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	if err := generatePrograms(w.Directory, w.ModulePath, []programvalidation.Spec{{ID: "service-targetport-mismatch", Diagnoser: "Program", Mitigator: "Program"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.runGo(context.Background(), "mod", "tidy"); err != nil {
+		t.Fatal(err)
+	}
+	err = w.runGo(context.Background(), "test", "./generated", "-run", "^TestProgramRegistrationContracts$")
+	if err == nil || !strings.Contains(err.Error(), "required scalar parameter") {
+		t.Fatalf("declaration bypassed save-time validation without replay: %v", err)
+	}
+}
+
+// A peer reflection on the shared hotel memory (PAR3) turned the learned
+// program's one required Deployment role into two optional aliases. Unnamed
+// health findings then bound neither, and the repeat's 70 diagnoses all ran
+// unbound. The save-time declaration gate refuses the edit.
+func TestProgramAliasRolesRefusedAtSave(t *testing.T) {
+	testutil.OfflineGo(t, "..")
+	t.Setenv("GOFLAGS", os.Getenv("GOFLAGS")+" -mod=mod -p=2")
+	root := programFixture(t)
+	path := filepath.Join(root, ".sdo/playbooks/service-targetport-mismatch/diagnose.go")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := strings.Replace(string(data), `{{Name: "service", Kind: "Service", Required: true}}`, `{{Name: "resource", Kind: "Service"}, {Name: "service", Kind: "Service"}}`, 1)
+	if source == string(data) {
+		t.Fatal("missing declaration anchor")
+	}
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := buildProgramFixture(t, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	_, err = w.ValidateAndBuild(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "program.finding-bindings") || !strings.Contains(err.Error(), "[resource service]") {
+		t.Fatalf("alias roles reached accepted memory: %v", err)
+	}
+}
+
+// Declaration rules judge only the playbooks a candidate edits, so accepted
+// memory never blocks an outcome publication that does not touch it.
+func TestChangedProgramsAreTheCandidateEditedPlaybooks(t *testing.T) {
+	root := t.TempDir()
+	programs := []programvalidation.Spec{{ID: "edited"}, {ID: "accepted"}, {ID: "added"}}
+	if got := changedPrograms(context.Background(), root, programs); !slices.Equal(got, []string{"edited", "accepted", "added"}) {
+		t.Fatalf("without Git every program is checked: %v", got)
+	}
+	git := func(args ...string) {
+		t.Helper()
+		command := exec.Command("git", append([]string{"-C", root, "-c", "user.name=t", "-c", "user.email=t@example.invalid"}, args...)...)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, output)
+		}
+	}
+	write := func(rel, content string) {
+		t.Helper()
+		full := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git("init", "-q")
+	write(".sdo/playbooks/edited/diagnose.go", "package edited\n")
+	write(".sdo/playbooks/accepted/diagnose.go", "package accepted\n")
+	git("add", ".")
+	git("commit", "-q", "-m", "accepted")
+	if got := changedPrograms(context.Background(), root, programs); len(got) != 0 {
+		t.Fatalf("accepted programs re-judged: %v", got)
+	}
+	write(".sdo/playbooks/edited/README.md", "# edited\n")
+	write(".sdo/playbooks/added/diagnose.go", "package added\n")
+	write(".sdo/outcomes/x.json", "{}")
+	if got := changedPrograms(context.Background(), root, programs); !slices.Equal(got, []string{"edited", "added"}) {
+		t.Fatalf("edited playbooks: %v", got)
 	}
 }

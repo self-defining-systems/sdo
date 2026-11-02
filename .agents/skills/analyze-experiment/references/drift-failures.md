@@ -4,11 +4,13 @@
 
 **Signature:** a `latent` finding or an outcome `drift_events` entry names a matching program while health detectors remain clear, or a changed object is recorded as `unexplained` without an incident.
 
-Join the event's ref, changed fields and old/source/new values, manager/time, program ID and responder evidence to the current incident. Declared drift requires changed `sdo-deployer` fields and a successful source comparison. Foreign drift requires positively established accepted-source absence, a reviewed namespace-local NetworkPolicy and no controlling owner. Metadata-only updates, initial listings, controller churn and foreign deletes must not open incidents. Source failure is never absence.
+Join the event's ref, source revision, fields and responder evidence to the current incident. Declared spec drift still requires admitted owned fields and a successful source comparison. The source inventory additionally compares top-level non-secret informer objects against accepted deployment manifests, including initial listings: source-absent application objects, namespace-bound RBAC and deletion-pending declared objects become ordinary latent findings even with every health detector clear. Accepted PodSpec references (volumes/projected, environment refs, ServiceAccounts and image-pull names) and accepted RBAC subjects/roleRefs declare dependency identities; `referenced_dependency_content` gaps preserve unknown contents. References injected only into live objects grant no authority. Generated descendants of source objects, SDO-owned runtime objects, endpoint/event churn and status-only updates remain quiet. Source failure is never absence; the rolling detector-clear baseline never authorizes source-absent objects.
 
-Unexplained drift is an ordinary `drift.unexplained` question, attached immediately to an open incident or batched for its own responder. Require a concrete source contradiction plus violated relation or observed impact before mutation; source absence and missing port declarations alone do not establish fault. Quiet health never clears retained drift. Source restoration/adoption or a checked exact benign label may clear unexplained fields; learned `drift.<program>` findings need explicit NoMatch on every retained binding, including deleted objects. Unknown, missing bindings, errors and timeouts remain unresolved.
+Unexplained inventory drift attaches to the open incident or batches for its own responder. An incident with only drift findings never early-closes while its responder runs (a close at about 15 s after dispatch with no repair action is a bug); it closes on health after the agent returns. Closure and self-check follow health alone: remaining drift is shown to the responder (`drift[]`) and recorded in `source_check_notes`, and a checked benign assessment with a nonempty reason and valid evidence is recorded without deciding closure. Closures before 2026-10-27 required removal, restoration or such an assessment. The existing outcome `drift_events` retain the explicit acceptance; it is not independently verified repair or learning evidence. `ControllerState.accepted_source_drift` retains checked assessments and `accepted_source_drift_revision` binds their application-source content identity. Memory-only commits preserve that identity; changed source, object incarnation, configuration or deletion metadata invalidates acceptance. Unknown and source errors stay unresolved. Historical releases skipped source-absent drift at closure; do not interpret those closures as full latent-fault repairs.
 
-Only checked benign labels in existing outcomes suppress identical current/source fields and manager; timestamps, old values and unrelated outcome commits do not change identity. Bug and unsure labels never suppress a repaired recurrence. Inspect `pending_batch`, the moving incident view and late-findings activations when drift arrives after launch; it joins the same incident and must block closure until resolved. New keys bypass repeat drift dispatch/token budgets; health dispatch and evidence attachment never wait. Historical investigator state/verdict ConfigMaps are evidence from retired releases, not current controller inputs.
+Adoption compiles memory without health authority. Matching broker `health_judge/initial/passed` inputs/objective suppress refresh; legacy prose or changed inputs require a judge and validation Job. Report setup cost separately. Refresh never consumes onboarding's attempt. A successful refresh may advance accepted health memory before the controller starts: onboarding retains its original install commit, identities and time only across a continuous single-parent chain of validated judge commits or changes confined to controller-owned rendered artifacts, preserving source and objective. Source/objective changes, merges and unrelated publications reject that exception. Compare final and pending snapshots; inspect accepted lineage without rewriting evidence.
+
+Controller iteration logs identify `evaluated_detectors`. Each `findings` list contains only the selected detectors' fresh samples. An empty list on a resource-only iteration does not clear an omitted traffic detector; inspect its actual evaluation history and firing timeline before diagnosing a flap. The generated controller's read-only `--evaluate-once --namespace NS --app-root REPO --deployed-manifest-path PATH --source-drift-report /absolute/full.json` prints a compact count and saves the complete inventory findings without starting probers, adopting fields, dispatching workers or writing to Kubernetes.
 
 Reset must cancel and await all Jobs before cleaning capture sessions or checkouts. Fail-soft reset retains accepted outcomes and clears saved controller Pod identity; seed rollback drops benign labels with those outcomes. Compare drift clearance with timely attributed repair receipts before granting mitigation credit. A benign no-op closes as `cleared_without_action` without learning credit. New run metadata marks `responder-drift/v2` accounting: merged reasoning is charged once to responder tokens, and legacy `drift_tokens` is zero. Keep historical recorded costs intact.
 
@@ -42,10 +44,36 @@ per probe and two seconds total. Open recordings live in the existing protected
 `*-routing.done` files prevent resampling an immutable capture. Missing, capped,
 or failed reads remain Unknown, not a refused connection.
 
+<<<<<<< HEAD
 The accepted memory host owns routing primitives even without traffic workloads.
 There is no separate prober binary, pod or URL. The controller routes reads and
 bounded responder verification through the active host RPC; a missing host is
 unavailable evidence, never proof of a refused application connection.
+=======
+Source comparisons: from REPLAY1 the controller records `DiffAgainstSource` for
+every non-derived namespace object and every accepted-source object at detect and
+pre-apply (into the phase recordings) and in the healthy baseline's `readings`,
+plus `AdmissionWebhooksFor` on the app Namespace,
+capped at 20 s per boundary. Fixed observations repeat every open read on the
+live repaired snapshot. Older captures recomputed fixed comparisons from the
+redacted `fixed.json`, so a ConfigMap reads `changed: true` there even after a
+correct repair; prefer the `readings` inside `fixed.json`, which come from the
+live snapshot. Replay answers repeated state reads from the first recorded reply
+and reports `unrecorded <Method> call with arguments ...` for a read no phase holds.
+
+The builder emits the isolated prober even when an application has no traffic
+generators or traffic-consuming detectors. Startup awaits its readiness before
+incident capture; disabling synthetic workloads still leaves routing primitives
+available. Older builds silently skipped routing capture when that prober was
+absent. New captures record `routing-probe-note.json` in the incident corpus with
+`capability: routing_probe`, `status: unavailable`, `reason` (`prober_not_configured`,
+`read_view_not_live`, `probe_failed`, or `budget_exhausted` when the capture's time
+budget skipped targets), the first affected `phase`, and optional error `detail`.
+Probe deadlines are seconds, not milliseconds, so a slow prober is waited for rather
+than recorded as a closed port. The controller logs the same gap once per incident. A note is
+capability evidence, not a TCP result or a routing diagnosis; inspect the
+adjacent recordings for actual successes, refusals and read errors.
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 
 A routing Match needs a successful candidate-port TCP result and refused faulty
 numeric target on selected ready Pods; declarations alone prove no listener.
@@ -53,4 +81,55 @@ Healthy-peer replay also needs recorded evidence. Service-targetPort-only
 SetField replay retains original direct-Pod TCP observations only when the full
 captured Pod object is unchanged. It never reuses Service probes or fixed answers
 to prove an effect. The installed routing example exercises this stricter
-predicate and complete repair-to-NoMatch replay through the shared compiler gate.
+predicate and informational repair-to-NoMatch replay through the shared compiler; a replay mismatch never blocks saving.
+
+## Accepted source rendering
+
+No rendered lock and no image evidence exist. `AcceptedManifest(s)`, adoption, drift and `sdo source` render accepted source
+directly, like `kubectl diff` and `kubectl apply`. The image string is compared
+and applied exactly as source writes it (tag or digest). No deployer receipt or
+image ledger is required. A restart before the accepted-source
+inventory loads makes a verified closure wait (bounded), never retire.
+Publication errors retain the last accepted revision or explicitly recover the
+broker's advanced HEAD; an empty publication result must never clear it.
+
+Missing lock/indexed YAML, hash mismatch and per-object `error` mean evidence
+gap, never absence or health. Inspect successful objects and retryable adoption
+coverage separately: a consul image gap must not suppress reservation Service
+drift. Lock publication uses an attributed `SDO-Actor: controller`,
+`SDO-Phase: rendered` broker commit; a crash before it leaves a gap and retries
+rollout observation, while a crash after it carries the accepted lock forward.
+No phase-2 diff, quarantine or revalidation behavior is implied.
+
+
+## Qualified scoped drift
+
+State changes may carry `api_version` and `namespace`; qualify those together with kind/name before joining evidence. An empty namespace on admission webhooks is cluster scope, never the application namespace. Older app-local captures may omit both fields. Do not collapse same-name foreign Deployments from different namespaces.
+
+Named Mutating/ValidatingWebhookConfiguration changes can enter unexplained drift after a successful accepted-source lookup, including proven source-absent creates/deletes. An unavailable source is not proven absence. Qualified read-only lookup still proves application-lock selection/freshness and supplies no foreign image/apply authority. Pending comparisons survive observation gaps; revoked targets are dropped from observation, while scope additions establish initial baselines without synthetic changes. Initial observations are suppressed. Foreign Endpoints turnover supplies qualified baseline evidence and detector wakeups without automatically opening a configuration drift incident. Per-target unobserved-kind strings qualify API version/kind/namespace/name. Failed reads retain the prior comparison baseline and do not manufacture removals.
+
+## Source inventory with rendered evidence gaps
+
+Object presence and generated-owner ancestry use accepted source identities after
+validating the lock's selection and application-source freshness. Missing image
+receipts or per-object rendered bytes do not remove declared identities or block
+this inventory check. The read-only report includes `evidence_gaps` entries with
+`kind: rendered_object`, the object `ref`, and a `reason`; its compact summary
+counts them separately from unexplained objects. The live controller logs these
+typed gaps when loading its cached inventory. Zero inventory findings with gaps
+proves only the presence/ownership check, never image equality or global health.
+Drift compares rendered accepted source directly; no lock or image evidence is needed.
+
+
+## Verified onboarding acknowledgement
+
+`namespace_onboarding` retains namespace, frozen install commit/time and acknowledged identities in controller/incident/reflection state. Native install stages immutable `sdo-namespace-onboarding-pending` without host probes. Rendering precedes inventory. Missing prerequisites never claim; one ready confirmed full sweep creates `sdo-namespace-onboarding-attempt`, and only clear/error-free evidence outside incidents publishes immutable `sdo-namespace-onboarding`. Sampling/rejection markers prevent interrupted processes from acquiring later authority. Supported reset retires five onboarding records, controller checkpoint and owned maintenance; absent maintenance defaults ACTIVE. Logs report `install_to_record`; final `onboarding.json` is ProtoJSON. Acknowledgement never expands or grants content, repair or learning authority. Unknown objects/RBAC and source-declared changes still block closure.
+
+A fresh-lane row waits for the completed record only while onboarding can still finish. `admission/onboarding.json` records `rejected_reason` (the durable `sdo-namespace-onboarding-rejected` marker: the one evaluation was spent because an incident was open or a detector was not clear at install, so the row fails at once with the controller's reason and the app was unhealthy at bring-up) and `controller_failed` (the controller Job hit its backoff limit). `admission/onboarding-controller.log` keeps every controller pod's log from the failed wait.
+
+ACTIVE→ACTIVE generation changes preserve samples. A genuine pause/resume restarts sampling/deadline while retaining frozen identities, prior configuration/serving evidence and invalidations. Completion requires post-resume samples. Distinguish an operational hook resetting observations from scheduler failure; never extend an old sample window or manufacture a final record.
+
+For a read-only replay, export the installer's `onboarding.json` and pass `--source-drift-acknowledgement /absolute/ack.json` alongside the existing evaluator flags. Its report includes the `namespace_onboarding` object and typed dependency/render gaps. Missing acknowledgement grants no exception: never manufacture it from incident-time inventory or a rolling healthy baseline. A zero finding count remains inventory evidence only, not global health proof.
+
+
+Probe windows still collecting confirmation samples appear as detector status `pending`, never `clear`, and do not consume the one onboarding attempt. The final immutable ConfigMap also contains `reachability-reference.json`, published atomically with `onboarding.json`. It records configuration-bound failed TCP samples for ports refused throughout an independently goal-healthy install window. These are typed `declared-but-never-served` observations in controller logs, not findings or verified repairs. A prior successful dial prevents capture; a later successful dial or target configuration change invalidates an exclusion. On a partial event-driven schedule, confirmation triggers one full detector sweep on the same snapshot; an omitted detector is never assumed clear. Ordinary detector deadlines and the confirmation budget are preserved. Late confirmation and observed install-window commit or inventory contradictions grant no authority. Three default probe rounds add 20 seconds of sample collection to install-to-record, plus probe/scheduling time, without extending the normal three-failure incident path. Reference data is restored from the finalized ConfigMap; pending identities and incident-time state cannot manufacture it.

@@ -20,15 +20,28 @@ func TestSessionToolServerRepliesToIncidentScopedRequest(t *testing.T) {
 	if err := server.Prepare(); err != nil {
 		t.Fatal(err)
 	}
+<<<<<<< HEAD
 	// Write the request the way the tool CLI does: a dot-prefixed temporary
 	// file renamed into place, so the server never reads a partial request.
+=======
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	done := make(chan struct{})
+	go func() { defer close(done); _ = server.Serve(ctx) }()
+	t.Cleanup(func() { cancel(); <-done })
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	requests := filepath.Join(directory, "requests")
 	data, _ := json.Marshal(ToolRequest{Command: "status"})
+<<<<<<< HEAD
+=======
+	// The real CLI publishes by rename; a final-name write exposes an empty
+	// or partial document to the concurrently polling server.
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	temporary := filepath.Join(requests, ".call-1.json")
 	if err := os.WriteFile(temporary, data, 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Rename(temporary, filepath.Join(requests, "call-1.json")); err != nil {
+<<<<<<< HEAD
 		t.Fatal(err)
 	}
 	if err := server.process(context.Background()); err != nil {
@@ -41,6 +54,29 @@ func TestSessionToolServerRepliesToIncidentScopedRequest(t *testing.T) {
 	var response ToolResponse
 	if err := json.Unmarshal(data, &response); err != nil {
 		t.Fatal(err)
+=======
+		t.Fatal(err)
+	}
+	var response ToolResponse
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		data, err := os.ReadFile(filepath.Join(responses, "call-1.json"))
+		if err == nil {
+			if err := json.Unmarshal(data, &response); err != nil {
+				t.Fatal(err)
+			}
+			break
+		}
+		if !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("waiting for tool response: %v (last read: %v)", ctx.Err(), err)
+		case <-ticker.C:
+		}
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	}
 	if response.Command != "status" || response.Summary != "ready" {
 		t.Fatalf("response: %+v", response)
@@ -106,7 +142,7 @@ func TestSessionToolServerIgnoresAtomicRequestTemporaryFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	temporary := filepath.Join(directory, "requests", ".call.json")
-	if err := os.WriteFile(temporary, []byte(`{"command":"status"}`), 0600); err != nil {
+	if err := os.WriteFile(temporary, []byte(`{"command":`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := server.process(context.Background()); err != nil {
@@ -117,6 +153,18 @@ func TestSessionToolServerIgnoresAtomicRequestTemporaryFiles(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(directory, "responses", ".call.json")); !os.IsNotExist(err) {
 		t.Fatalf("temporary request produced a response: %v", err)
+	}
+	if err := os.WriteFile(temporary, []byte(`{"command":"status"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(temporary, filepath.Join(directory, "requests", "call.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.process(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("complete request was not executed after atomic publication")
 	}
 }
 

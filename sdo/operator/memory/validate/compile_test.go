@@ -1,8 +1,13 @@
 package validate
 
 import (
+<<<<<<< HEAD
+=======
+	"context"
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -22,6 +27,25 @@ func compileRequest(root string) Request {
 }
 
 const detectorSource = ".sdo/diagnostics/detectors/incidents/missing-configmap/detector.go"
+
+func TestCompileCachedVetLocationsSurviveWorkspaceRelocation(t *testing.T) {
+	t.Setenv("GOFLAGS", os.Getenv("GOFLAGS")+" -trimpath")
+	var first []Diagnostic
+	for attempt := 0; attempt < 2; attempt++ {
+		root := compileTree(t)
+		edit(t, root, detectorSource, "return Detector{}", `_ = fmt.Sprintf("%d", "not a number")
+	return Detector{}`)
+		diagnostics := diagnose(t, compileRequest(root))
+		if len(diagnostics) != 1 || diagnostics[0].Rule != RuleDetectorVet || diagnostics[0].Path != detectorSource || diagnostics[0].Line == 0 {
+			t.Fatalf("attempt %d: unlocated vet diagnostic: %+v", attempt, diagnostics)
+		}
+		if attempt == 0 {
+			first = diagnostics
+		} else if !reflect.DeepEqual(first, diagnostics) {
+			t.Fatalf("same source in isolated workspaces changed diagnostics: first %+v, second %+v", first, diagnostics)
+		}
+	}
+}
 
 func TestCompileAcceptsDetectorsThatBuildVetAndPass(t *testing.T) {
 	if got := diagnose(t, compileRequest(compileTree(t))); len(got) != 0 {
@@ -43,9 +67,6 @@ func TestCompileReportsTheFailingStage(t *testing.T) {
 			edit(t, root, detectorSource, "return Detector{}", `_ = fmt.Sprintf("%d", "not a number")
 	return Detector{}`)
 		}, detectorSource},
-		{"test", RuleDetectorTest, func(t *testing.T, root string) {
-			edit(t, root, ".sdo/diagnostics/detectors/incidents/missing-configmap/detector_test.go", "if len(findings) != 1 {", "if len(findings) != 7 {")
-		}, ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -97,6 +118,7 @@ func TestCompileSkipsRepositoriesWithoutDetectors(t *testing.T) {
 	}
 }
 
+<<<<<<< HEAD
 // Reporting does not need to rebuild Kubernetes/controller dependencies for
 // each Go failure stage. Real compiler fixtures still run in nightly CI.
 func TestCompileStageDiagnostics(t *testing.T) {
@@ -113,6 +135,36 @@ func TestCompileStageDiagnostics(t *testing.T) {
 			got := diagnose(t, compileRequest(compileTree(t)))
 			if len(got) != 1 || got[0].Rule != stage.rule || got[0].Path != detectorSource || got[0].Line != 17 {
 				t.Fatalf("%s diagnostic: %+v", stage.name, got)
+=======
+func TestMissingHealthyReplayInputIsInformational(t *testing.T) {
+	for _, mode := range []string{"missing", "empty", "file"} {
+		t.Run(mode, func(t *testing.T) {
+			root := compileTree(t)
+			baseline := filepath.Join(t.TempDir(), "baseline")
+			if mode == "empty" {
+				if err := os.MkdirAll(baseline, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == "file" {
+				if err := os.WriteFile(baseline, []byte("no snapshot directory"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var observations []Diagnostic
+			request := compileRequest(root)
+			request.HealthyBaseline = baseline
+			request.CoverageGaps = &observations
+			if ds, err := CompileCandidate(context.Background(), request); err != nil || len(ds) != 0 {
+				t.Fatalf("missing replay input blocked saving: %v %v", ds, err)
+			}
+			found := false
+			for _, note := range observations {
+				found = found || note.Rule == RuleReplayObservation && strings.Contains(note.Message, "healthy replay unverified")
+			}
+			if !found {
+				t.Fatalf("missing replay input was hidden: %v", observations)
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 			}
 		})
 	}

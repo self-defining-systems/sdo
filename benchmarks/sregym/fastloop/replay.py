@@ -14,17 +14,21 @@ from typing import Any
 
 from google.protobuf.json_format import ParseError
 
-from benchmarks.sregym.fastloop.file_edits import FileEdit, decode_file_edits, encode_file_edits
+from benchmarks.sregym.adapter import WaitKind, wait_for
+from benchmarks.sregym.fastloop.checkpoint_limits import MAX_BROKER_BYTES, MAX_RESULT_BYTES, MAX_TASK_BYTES
+from benchmarks.sregym.fastloop.file_edits import (
+    UNRECORDED_FILE_EDITS,
+    FileEdit,
+    decode_file_edits,
+    encode_file_edits,
+)
 from sdo.contracts import AgentResult, AgentTask, parse_json
 
 STAGES = frozenset({"responder", "reflection", "broker"})
-MAX_TASK_BYTES = 1 << 20
-MAX_RESULT_BYTES = 1 << 20
 MAX_CAPTURE_BYTES = 4 << 20
-MAX_BROKER_BYTES = 1 << 20
 MAX_CAPTURE_BUNDLE_BYTES = 32 << 20
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
-_CAPTURE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9@_.-]{0,127}\Z")
+_CAPTURE_NAME = re.compile(r"(?:[A-Za-z0-9][A-Za-z0-9@_.-]{0,127}|healthy/(?:healthy\.json|reference))\Z")
 
 
 class CheckpointError(ValueError):
@@ -39,6 +43,20 @@ class StageCheckpoint:
     captures: dict[str, bytes] = field(default_factory=dict)
     broker: dict[str, Any] | None = None
     file_edits: tuple[FileEdit, ...] | None = None
+    # Why the recorder could not capture this checkpoint's file edits.
+    unrecorded_file_edits: str | None = None
+    unrecorded_captures: dict[str, str] = field(default_factory=dict)
+
+    def require_captures(self) -> None:
+        if self.unrecorded_captures:
+            reasons = "; ".join(f"{name}: {reason}" for name, reason in sorted(self.unrecorded_captures.items()))
+            raise CheckpointError(f"not replayable: corpus captures not recorded: {reasons}")
+
+
+@dataclass(frozen=True)
+class CaptureBundle:
+    captures: dict[str, bytes] = field(default_factory=dict)
+    unrecorded: dict[str, str] = field(default_factory=dict)
 
 
 class CheckpointStore:
@@ -55,22 +73,38 @@ class CheckpointStore:
         captures: dict[str, bytes] | None = None,
         broker: dict[str, Any] | None = None,
         file_edits: tuple[FileEdit, ...] | None = None,
+        unrecorded_file_edits: str | None = None,
+        unrecorded_captures: dict[str, str] | None = None,
     ) -> Path:
         directory = self._directory(incident, stage)
         _bounded(request.encode(), MAX_TASK_BYTES, "dispatch request")
         if result is not None:
             _bounded(result.encode(), MAX_RESULT_BYTES, "worker result checkpoint limit")
         _validate_envelopes(request, result)
-        captures = captures or {}
+        captures = dict(captures or {})
+        unrecorded_captures = dict(unrecorded_captures or {})
         digests: dict[str, str] = {}
-        for name, data in captures.items():
+        total = 0
+        for name, data in list(captures.items()):
             if not _CAPTURE_NAME.fullmatch(name):
                 raise CheckpointError(f"invalid corpus capture name {name!r}")
-            _bounded(data, MAX_CAPTURE_BYTES, f"corpus capture {name}")
+            reason = _capture_limit_reason(len(data), total)
+            if reason:
+                unrecorded_captures[name] = reason
+                del captures[name]
+                continue
+            total += len(data)
             digests[name] = hashlib.sha256(data).hexdigest()
+        _validate_unrecorded_captures(unrecorded_captures, digests)
         edit_data = encode_file_edits(file_edits) if file_edits is not None else None
         edit_digest = hashlib.sha256(edit_data).hexdigest() if edit_data is not None else None
-        manifest = {"version": 1, "captures": digests, "broker": broker, "file_edits": edit_digest}
+        if file_edits is not None and unrecorded_file_edits is not None:
+            raise CheckpointError("a checkpoint has either recorded or unrecorded file edits")
+        manifest: dict[str, Any] = {"version": 1, "captures": digests, "broker": broker, "file_edits": edit_digest}
+        if unrecorded_file_edits is not None:
+            manifest["unrecorded_file_edits"] = unrecorded_file_edits
+        if unrecorded_captures:
+            manifest["unrecorded_captures"] = unrecorded_captures
         encoded = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
         _bounded(encoded, MAX_BROKER_BYTES, "broker validation result")
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -96,7 +130,15 @@ class CheckpointStore:
     def load(self, incident: int, stage: str) -> StageCheckpoint:
         directory = self._directory(incident, stage)
         try:
-            manifest = json.loads((directory / "checkpoint.json").read_bytes())
+            marker = directory.parent / "unrecorded.json"
+            if marker.exists():
+                reason = _json_envelope(marker.read_text(encoding="utf-8")).get("reason")
+                if not isinstance(reason, str) or not reason:
+                    raise CheckpointError("invalid unrecorded checkpoint reason")
+                raise CheckpointError(f"not replayable: checkpoint not recorded: {reason}")
+            manifest_wire = (directory / "checkpoint.json").read_bytes()
+            _bounded(manifest_wire, MAX_BROKER_BYTES, "broker validation result")
+            manifest = json.loads(manifest_wire)
             if manifest.get("version") != 1 or not isinstance(manifest.get("captures"), dict):
                 raise CheckpointError("unsupported checkpoint manifest")
             request = (directory / "request.json").read_text(encoding="utf-8")
@@ -109,6 +151,7 @@ class CheckpointStore:
             _bounded(result.encode(), MAX_RESULT_BYTES, "worker result checkpoint limit")
         _validate_envelopes(request, result)
         captures: dict[str, bytes] = {}
+        total = 0
         for name, digest in manifest["captures"].items():
             if (
                 not isinstance(name, str)
@@ -122,6 +165,9 @@ class CheckpointStore:
             except OSError as exc:
                 raise CheckpointError(f"read corpus capture {name}: {exc}") from exc
             _bounded(data, MAX_CAPTURE_BYTES, f"corpus capture {name}")
+            total += len(data)
+            if total > MAX_CAPTURE_BUNDLE_BYTES:
+                raise CheckpointError("corpus capture bundle exceeds its size limit")
             if hashlib.sha256(data).hexdigest() != digest:
                 raise CheckpointError(f"corpus capture {name} digest mismatch")
             captures[name] = data
@@ -137,7 +183,25 @@ class CheckpointStore:
             if hashlib.sha256(data).hexdigest() != edit_digest:
                 raise CheckpointError("recorded file edit digest mismatch")
             edits = decode_file_edits(data)
-        return StageCheckpoint(request, result, manifest["captures"], captures, broker, edits)
+        unrecorded = manifest.get("unrecorded_file_edits")
+        if unrecorded is not None and (not isinstance(unrecorded, str) or edits is not None):
+            raise CheckpointError("invalid unrecorded file edit reason")
+        unrecorded_captures = manifest.get("unrecorded_captures", {})
+        _validate_unrecorded_captures(unrecorded_captures, manifest["captures"])
+        return StageCheckpoint(
+            request, result, manifest["captures"], captures, broker, edits, unrecorded, unrecorded_captures
+        )
+
+    def mark_unrecorded(self, incident: int, reason: str) -> None:
+        """Invalidate partial/older stages when optional recording fails."""
+        self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.root.chmod(0o700)
+        _write(
+            self._directory(incident, "responder").parent / "unrecorded.json", json.dumps({"reason": reason}).encode()
+        )
+
+    def clear_unrecorded(self, incident: int) -> None:
+        (self._directory(incident, "responder").parent / "unrecorded.json").unlink(missing_ok=True)
 
     def _directory(self, incident: int, stage: str) -> Path:
         if incident < 0 or stage not in STAGES:
@@ -148,6 +212,26 @@ class CheckpointStore:
 def _bounded(data: bytes, limit: int, label: str) -> None:
     if len(data) > limit:
         raise CheckpointError(f"{label} exceeds {limit} bytes")
+
+
+def _capture_limit_reason(size: int, total: int) -> str | None:
+    if size > MAX_CAPTURE_BYTES:
+        return f"corpus capture exceeds {MAX_CAPTURE_BYTES} bytes ({size} bytes)"
+    if total + size > MAX_CAPTURE_BUNDLE_BYTES:
+        return f"corpus capture bundle exceeds {MAX_CAPTURE_BUNDLE_BYTES} bytes"
+    return None
+
+
+def _validate_unrecorded_captures(reasons: Any, recorded: dict[str, str]) -> None:
+    if not isinstance(reasons, dict) or any(
+        not isinstance(name, str)
+        or not _CAPTURE_NAME.fullmatch(name)
+        or name in recorded
+        or not isinstance(reason, str)
+        or not reason
+        for name, reason in reasons.items()
+    ):
+        raise CheckpointError("invalid unrecorded corpus capture reason")
 
 
 def _validate_envelopes(request: str, result: str | None) -> None:
@@ -165,10 +249,20 @@ def _validate_envelopes(request: str, result: str | None) -> None:
 
 
 def _write(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     temporary = path.with_name(path.name + ".tmp")
     with os.fdopen(os.open(temporary, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o600), "wb") as stream:
         stream.write(data)
     temporary.replace(path)
+
+
+def materialize_captures(directory: Path, captures: dict[str, bytes]) -> None:
+    """Restore bounded checkpoint names, including the protected healthy reference."""
+    for name, data in captures.items():
+        if not _CAPTURE_NAME.fullmatch(name):
+            raise CheckpointError(f"invalid corpus capture name {name!r}")
+        _bounded(data, MAX_CAPTURE_BYTES, f"corpus capture {name}")
+        _write(directory / name, data)
 
 
 def capture_checkpoints(
@@ -184,6 +278,7 @@ def capture_checkpoints(
     results: dict[str, str] = {}
     exported: list[dict[str, Any]] = []
     edits_by_request: dict[str, tuple[FileEdit, ...]] = {}
+    unrecorded_by_request: dict[str, str] = {}
     for path in sorted((receipt_dir / "sdo_runtime" / "sessions").glob("*/checkpoints/*/request.json")):
         wire = path.read_text(encoding="utf-8")
         if not _could_belong_to_incident(wire, incident_id):
@@ -192,6 +287,7 @@ def capture_checkpoints(
         edits_path = path.with_name("file_edits.json")
         if edits_path.is_file():
             edits_by_request[hashlib.sha256(wire.encode()).hexdigest()] = decode_file_edits(edits_path.read_bytes())
+<<<<<<< HEAD
         from benchmarks.sregym.agent_script.converter import convert_recording
 
         model_dir = path.parents[2] / "model_io" / path.parent.name
@@ -205,6 +301,14 @@ def capture_checkpoints(
                     file_edits=edits_path if edits_path.is_file() else None,
                 )
                 _write(path.with_name("script.json"), plan.model_dump_json().encode())
+=======
+        unrecorded_path = path.with_name(UNRECORDED_FILE_EDITS)
+        if unrecorded_path.is_file():
+            reason = _json_envelope(unrecorded_path.read_text(encoding="utf-8")).get("reason")
+            if not isinstance(reason, str):
+                raise CheckpointError(f"invalid {UNRECORDED_FILE_EDITS}")
+            unrecorded_by_request[hashlib.sha256(wire.encode()).hexdigest()] = reason
+>>>>>>> origin/vic-lsh/dev/sdo-improve
         data = {"agent-task.json": wire}
         result_path = path.with_name("result.json")
         if result_path.is_file():
@@ -217,6 +321,10 @@ def capture_checkpoints(
             continue
         wire = data.get("agent-task.json")
         if isinstance(wire, str) and _could_belong_to_incident(wire, incident_id):
+<<<<<<< HEAD
+=======
+            _bounded(wire.encode(), MAX_TASK_BYTES, "dispatch request")
+>>>>>>> origin/vic-lsh/dev/sdo-improve
             try:
                 task = parse_json(wire, AgentTask())
             except ParseError as exc:
@@ -237,6 +345,10 @@ def capture_checkpoints(
             task_id = envelope.get("task_id", envelope.get("taskId"))
             if task_id is not None and task_id not in requests:
                 continue
+<<<<<<< HEAD
+=======
+            _bounded(wire.encode(), MAX_RESULT_BYTES, "worker result checkpoint limit")
+>>>>>>> origin/vic-lsh/dev/sdo-improve
             try:
                 result = parse_json(wire, AgentResult())
             except ParseError as exc:
@@ -258,22 +370,27 @@ def capture_checkpoints(
             stage,
             request=request,
             result=result,
-            captures=captures,
+            captures=captures.captures,
+            unrecorded_captures=captures.unrecorded,
             broker=ledger,
             file_edits=edits_by_request.get(hashlib.sha256(request.encode()).hexdigest()),
+            unrecorded_file_edits=unrecorded_by_request.get(hashlib.sha256(request.encode()).hexdigest()),
         )
     broker_task = stages.get("reflection")
     if ledger is not None and broker_task is not None and results.get(broker_task[0]) is not None:
         task_id, request = broker_task
         result = results.get(task_id)
+        captures = _referenced_captures(receipt_dir, incident_id, result)
         store.save(
             incident,
             "broker",
             request=request,
             result=result,
-            captures=_referenced_captures(receipt_dir, incident_id, result),
+            captures=captures.captures,
+            unrecorded_captures=captures.unrecorded,
             broker=ledger,
             file_edits=edits_by_request.get(hashlib.sha256(request.encode()).hexdigest()),
+            unrecorded_file_edits=unrecorded_by_request.get(hashlib.sha256(request.encode()).hexdigest()),
         )
 
 
@@ -335,7 +452,7 @@ def _broker_ledger(receipt_dir: Path, incident_id: str) -> dict[str, Any] | None
     return None
 
 
-def _referenced_captures(receipt_dir: Path, incident_id: str, result: str | None) -> dict[str, bytes]:
+def _referenced_captures(receipt_dir: Path, incident_id: str, result: str | None) -> CaptureBundle:
     reference = json.loads(result) if result is not None else {}
     digests: set[str] = set()
 
@@ -365,28 +482,45 @@ def _referenced_captures(receipt_dir: Path, incident_id: str, result: str | None
     session = hashlib.sha256(incident_id.encode()).hexdigest()[:32]
     root = receipt_dir / "sdo_runtime" / "sessions" / session / "corpus"
     found: dict[str, bytes] = {}
+    unrecorded: dict[str, str] = {}
     total = 0
-    for path in root.glob("*.json"):
+    paths = sorted(root.glob("*.json"))
+    healthy = root / "healthy"
+    if healthy.is_symlink():
+        raise CheckpointError("invalid controller healthy reference directory")
+    for name in ("healthy.json", "reference"):
+        path = healthy / name
+        if path.exists() or path.is_symlink():
+            paths.append(path)
+    for path in paths:
         if path.is_symlink() or not path.is_file():
             raise CheckpointError(f"invalid corpus capture {path.name}")
-        if path.stat().st_size > MAX_CAPTURE_BYTES:
-            raise CheckpointError(f"corpus capture {path.name} exceeds {MAX_CAPTURE_BYTES} bytes")
-        data = path.read_bytes()
-        total += len(data)
-        if total > MAX_CAPTURE_BUNDLE_BYTES:
-            raise CheckpointError("corpus capture bundle exceeds its size limit")
+        name = path.relative_to(root).as_posix()
+        reason = _capture_limit_reason(path.stat().st_size, total)
+        if reason:
+            unrecorded[name] = reason
+            continue
+        with path.open("rb") as stream:
+            data = stream.read(MAX_CAPTURE_BYTES + 1)
+        reason = _capture_limit_reason(len(data), total)
+        if reason:
+            unrecorded[name] = reason
+            continue
         digest = hashlib.sha256(data).hexdigest()
         if (
-            path.name in {"open@pre-apply.json", "open@settle.json", "open@detect.json", "fixed.json"}
+            name in {"healthy/healthy.json", "healthy/reference"}
+            or path.name in {"open@pre-apply.json", "open@settle.json", "open@detect.json", "fixed.json"}
             or path.name.endswith("-recordings.json")
             or path.name == "recordings.json"
             or digest in digests
         ):
             digests.discard(digest)
-            found[path.name] = data
+            found[name] = data
+            total += len(data)
     if digests:
-        raise CheckpointError(f"missing corpus captures referenced by digest: {', '.join(sorted(digests))}")
-    return found
+        for digest in sorted(digests):
+            unrecorded[f"sha256-{digest}"] = "missing corpus capture referenced by digest"
+    return CaptureBundle(found, unrecorded)
 
 
 def replay_broker(store: CheckpointStore, incident: int, *, source: Path, operator_root: Path) -> dict[str, str]:
@@ -397,9 +531,19 @@ def replay_broker(store: CheckpointStore, incident: int, *, source: Path, operat
 
 def replay_broker_result(checkpoint: StageCheckpoint, *, source: Path, operator_root: Path) -> dict[str, str]:
     """Validate a newly re-executed worker result with the real Go broker."""
+    checkpoint.require_captures()
     if checkpoint.result is None:
         raise CheckpointError("broker replay requires a recorded worker result")
+<<<<<<< HEAD
     program = Path(__file__).with_name("replay_go").resolve()
+=======
+    if checkpoint.unrecorded_file_edits is not None:
+        raise CheckpointError(f"not replayable: file edits not recorded: {checkpoint.unrecorded_file_edits}")
+    _bounded(checkpoint.request.encode(), MAX_TASK_BYTES, "dispatch request")
+    _bounded(checkpoint.result.encode(), MAX_RESULT_BYTES, "worker result checkpoint limit")
+    _validate_envelopes(checkpoint.request, checkpoint.result)
+    program = Path(__file__).with_name("replay_go") / "main.go"
+>>>>>>> origin/vic-lsh/dev/sdo-improve
     with tempfile.TemporaryDirectory(prefix="sdo-fastloop-replay-") as temporary:
         directory = Path(temporary)
         _write(directory / "request.json", checkpoint.request.encode())
@@ -408,6 +552,7 @@ def replay_broker_result(checkpoint: StageCheckpoint, *, source: Path, operator_
             _write(directory / "file_edits.json", encode_file_edits(checkpoint.file_edits))
         capture_dir = directory / "captures"
         capture_dir.mkdir(mode=0o700)
+<<<<<<< HEAD
         for name, data in checkpoint.captures.items():
             _write(capture_dir / name, data)
         # A private workspace pins replay to the requested frozen operator,
@@ -424,6 +569,9 @@ def replay_broker_result(checkpoint: StageCheckpoint, *, source: Path, operator_
             + ")\n",
             encoding="utf-8",
         )
+=======
+        materialize_captures(capture_dir, checkpoint.captures)
+>>>>>>> origin/vic-lsh/dev/sdo-improve
         command = [
             "go",
             "run",
@@ -437,11 +585,18 @@ def replay_broker_result(checkpoint: StageCheckpoint, *, source: Path, operator_
         ]
         completed = subprocess.run(
             command,
+<<<<<<< HEAD
             cwd=program,
             env={**os.environ, "GOWORK": str(workspace)},
             capture_output=True,
             text=True,
             timeout=300,
+=======
+            cwd=operator_root / "runtime",
+            capture_output=True,
+            text=True,
+            timeout=wait_for(WaitKind.ROLLOUT),
+>>>>>>> origin/vic-lsh/dev/sdo-improve
             check=False,
         )
         if completed.returncode:

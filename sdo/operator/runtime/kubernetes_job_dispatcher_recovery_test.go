@@ -53,7 +53,7 @@ func TestDispatcherRestoresFailureSignalsAndDeniesBudgetReset(t *testing.T) {
 		t.Fatal(applied.Error)
 	}
 	loop.mu.Lock()
-	loop.addFailureSignal("fast_path_failure:targetport@revision-a")
+	loop.addFailureSignal("application_verification_failure:targetport@revision-a")
 	if err := loop.persistToolState(context.Background()); err != nil {
 		t.Fatal(err)
 	}

@@ -5,11 +5,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
+<<<<<<< HEAD
 	"sdo.dev/operator/builder/internal/buildio"
+=======
+	"sdo.dev/operator/contracts/settings"
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	"strings"
+	"time"
 
 	"sdo.dev/operator/memory/layout"
 )
@@ -17,36 +23,133 @@ import (
 // Config identifies the application to build and the installed operator's Go
 // modules. The returned workspace is independent of the application checkout.
 type Config struct {
+	// Replay is trusted run configuration: empty/on enables corpus and replay.
+	Replay          string
 	ApplicationRoot string
 	DiagnosticsRoot string
 	OperatorRoot    string
 	HealthyBaseline string
+	// ProgramModule pins JIT imports to the accepted diagnostics module name.
+	// It never compiles checkout detector code.
+	ProgramModule string
+	// CompileOnly is reserved for an explicit, unvalidated adoption build.
+	CompileOnly bool
 }
 
+var advisoryDuration = regexp.MustCompile(`(?m)(?:\t(?:[0-9]+\.[0-9]+s|\(cached\))| \([0-9]+\.[0-9]+s\))$`)
+
 type Workspace struct {
+<<<<<<< HEAD
 	Directory  string
 	ModulePath string
+=======
+	Directory   string
+	ModulePath  string
+	HasProber   bool
+	compileOnly bool
+	// StageTimings lists each Go toolchain stage run by Check or
+	// ValidateAndBuild, including a rejected final stage.
+	StageTimings        []StageTiming
+	advisoryTestErrors  []string
+	advisorySetupErrors []string
+}
+
+// StageTiming is the wall-clock cost of one Go toolchain stage.
+type StageTiming struct {
+	Stage    string
+	Duration time.Duration
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 
 type StageError = buildio.StageError
 
+// lean returns a Go build that links without symbol tables or DWARF. Linking a
+// controller is the dominant fixed cost of every validation, it is never
+// cached, and DWARF about doubles it. Only builds whose binary is discarded or
+// executed locally use it; the controller image binary keeps its debug data.
+// Test commands do not: go test skips the link entirely on a cached result,
+// and any -ldflags forces it.
+func lean(args ...string) []string {
+	return append([]string{args[0], "-ldflags=-s -w"}, args[1:]...)
+}
+
 func (workspace *Workspace) runGo(ctx context.Context, args ...string) error {
+<<<<<<< HEAD
 	return buildio.RunGo(ctx, workspace.Directory, args...)
+=======
+	return workspace.runGoEnv(ctx, nil, args...)
+}
+
+func (workspace *Workspace) runGoEnv(ctx context.Context, environment []string, args ...string) error {
+	// Go's exact-input cache can survive a new isolated staging directory only
+	// when temporary source paths are omitted from compiled package identities.
+	if len(args) > 0 && (args[0] == "build" || args[0] == "vet" || args[0] == "test") {
+		args = append([]string{args[0], "-trimpath"}, args[1:]...)
+	}
+	started := time.Now()
+	slog.Info("memory_check_stage_started", "stage", strings.Join(args, " "))
+	defer func() {
+		slog.Info("memory_check_stage_finished", "stage", strings.Join(args, " "), "duration", time.Since(started))
+	}()
+	command := exec.CommandContext(ctx, "go", args...)
+	command.Dir = workspace.Directory
+	if environment != nil {
+		command.Env = environment
+	}
+	if output, err := command.CombinedOutput(); err != nil {
+		return &StageError{Stage: strings.Join(args, " "), Output: strings.TrimSpace(string(output)), Err: err}
+	}
+	return nil
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 
 // ValidateAndBuild compiles detector tests and the controller binary inside
 // the isolated workspace. The returned path is valid until Close is called.
 func (workspace *Workspace) ValidateAndBuild(ctx context.Context) (string, error) {
+	binary, err := workspace.BuildForLaunch(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !workspace.compileOnly {
+		if err := workspace.collectAdvisories(ctx); err != nil {
+			return "", err
+		}
+	}
+	return binary, nil
+}
+
+// BuildForLaunch retains every launch gate and emits the controller/prober
+// artifacts. It omits informational tests already available from self-checks.
+func (workspace *Workspace) BuildForLaunch(ctx context.Context) (string, error) {
 	return workspace.validate(ctx, false)
 }
 
-// Check is ValidateAndBuild plus a package build and go vet beforehand: the
-// full detector acceptance gate.
+// Check compiles and vets every package and enforces detector acceptance.
+// Playbook tests and replay are informational. The initial package build already links
+// the controller, so Check does not link a second controller artifact. The
+// explicit CGO-disabled prober build still checks its portable launch target.
 // A rejected stage is reported as a *StageError.
 func (workspace *Workspace) Check(ctx context.Context) error {
+<<<<<<< HEAD
 	if err := workspace.prepareMemoryHost(); err != nil {
 		return err
 	}
+=======
+	if err := workspace.CheckAcceptance(ctx); err != nil {
+		return err
+	}
+	return workspace.collectAdvisories(ctx)
+}
+
+// CheckAcceptance runs every required acceptance gate without the optional
+// behavioral replay pass. Publication and relaunch must not wait for advisory
+// tests that cannot affect acceptance. Check additionally collects those notes
+// for callers explicitly requesting the informational self-check.
+func (workspace *Workspace) CheckAcceptance(ctx context.Context) error {
+	if workspace != nil && workspace.compileOnly {
+		return errors.New("unvalidated adoption workspace cannot run the acceptance checker")
+	}
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	_, err := workspace.validate(ctx, true)
 	return err
 }
@@ -65,19 +168,118 @@ func (workspace *Workspace) validate(ctx context.Context, vet bool) (string, err
 	binary := filepath.Join(workspace.Directory, name)
 	stages := [][]string{{"mod", "tidy"}}
 	if vet {
-		stages = append(stages, []string{"build", "-buildvcs=false", "./..."}, []string{"vet", "./..."})
+		stages = append(stages, lean("build", "-buildvcs=false", "./..."), []string{"vet", "./..."})
 	}
+	if workspace.compileOnly {
+		stages = append(stages, lean("build", "-buildvcs=false", "./..."))
+	} else {
+		// Vet already compiles source and tests. Launch-only builds still
+		// compile tests without executing their behavioral assertions.
+		if !vet {
+			stages = append(stages, []string{"test", "-exec=true", "-run", "^$", "./..."})
+		}
+		// Detector and generated safety contracts remain acceptance gates. Only
+		// authored playbook tests and the program corpus replay are advisory.
+		args := []string{"test", "./detectors/..."}
+		if _, err := os.Stat(filepath.Join(workspace.Directory, "traffic", "generators")); err == nil {
+			args = append(args, "./traffic/...")
+		}
+		stages = append(stages, args, []string{"test", "-skip", "^TestProgramCorpus$", "./generated"})
+	}
+	if !vet {
+		stages = append(stages, []string{"build", "-buildvcs=false", "-o", binary, "./cmd/controller"})
+	}
+<<<<<<< HEAD
 	stages = append(stages, []string{"test", "./..."}, []string{"build", "-buildvcs=false", "-o", binary, target})
+=======
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	for _, args := range stages {
-		if err := workspace.runGo(ctx, args...); err != nil {
+		started := time.Now()
+		err := workspace.runGo(ctx, args...)
+		workspace.StageTimings = append(workspace.StageTimings, StageTiming{Stage: strings.Join(args, " "), Duration: time.Since(started)})
+		if err != nil {
 			return "", err
 		}
 	}
+<<<<<<< HEAD
 
 	return binary, nil
 }
 
 func seedGoBuildCache(ctx context.Context) error { return buildio.SeedGoBuildCache(ctx) }
+=======
+	if workspace.HasProber {
+		started := time.Now()
+		err := workspace.runGoEnv(ctx, append(os.Environ(), "CGO_ENABLED=0"), "build", "-buildvcs=false", "-o", filepath.Join(workspace.Directory, "sdo-prober"), "./cmd/prober")
+		workspace.StageTimings = append(workspace.StageTimings, StageTiming{Stage: "build prober", Duration: time.Since(started)})
+		if err != nil {
+			return "", fmt.Errorf("go build prober: %w", err)
+		}
+	}
+	return binary, nil
+}
+
+func (workspace *Workspace) collectAdvisories(ctx context.Context) error {
+	started := time.Now()
+	err := workspace.runGo(ctx, "test", "-timeout=30s", "./...")
+	workspace.StageTimings = append(workspace.StageTimings, StageTiming{Stage: "test (informational)", Duration: time.Since(started)})
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	workspace.advisoryTestErrors = nil
+	if err != nil {
+		message := err.Error()
+		var failed *StageError
+		if errors.As(err, &failed) {
+			message = failed.Output
+		}
+		message = strings.ReplaceAll(message, workspace.Directory, "<workspace>")
+		message = advisoryDuration.ReplaceAllString(message, "")
+		if len(message) > 4096 {
+			message = message[:4096] + " (truncated)"
+		}
+		workspace.advisoryTestErrors = append(workspace.advisoryTestErrors, message)
+	}
+	return nil
+}
+
+func seedGoBuildCache(ctx context.Context) error {
+	// The cache helper reads image entries in place and writes misses to scratch.
+	if os.Getenv("GOCACHEPROG") != "" {
+		return nil
+	}
+	seed := os.Getenv("SDO_GO_CACHE_SEED")
+	if seed == "" {
+		return nil
+	}
+	if _, err := os.Stat(seed); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("inspect Go build cache seed: %w", err)
+	}
+	cache := os.Getenv("GOCACHE")
+	if cache == "" {
+		return errors.New("GOCACHE is required when SDO_GO_CACHE_SEED is set")
+	}
+	marker := filepath.Join(cache, ".sdo-seeded")
+	if _, err := os.Stat(marker); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect Go build cache: %w", err)
+	}
+	if err := os.MkdirAll(cache, 0o755); err != nil {
+		return fmt.Errorf("create Go build cache: %w", err)
+	}
+	command := exec.CommandContext(ctx, "cp", "-R", seed+string(os.PathSeparator)+".", cache)
+	if output, err := command.CombinedOutput(); err != nil {
+		return fmt.Errorf("seed Go build cache: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	if err := os.WriteFile(marker, nil, 0o644); err != nil {
+		return fmt.Errorf("mark seeded Go build cache: %w", err)
+	}
+	return nil
+}
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 
 func (workspace *Workspace) Close() error {
 	if workspace == nil || workspace.Directory == "" {
@@ -91,6 +293,12 @@ var modulePattern = regexp.MustCompile(`(?m)^module\s+(\S+)\s*$`)
 // BuildWorkspace stages an opaque diagnostics projection and generates the
 // stable controller and accepted memory host in an isolated workspace.
 func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error) {
+	if _, err := settings.Replay(config.Replay); err != nil {
+		return nil, err
+	}
+	if config.Replay == "off" {
+		config.HealthyBaseline = ""
+	}
 	if config.ApplicationRoot == "" || config.DiagnosticsRoot == "" || config.OperatorRoot == "" {
 		return nil, errors.New("application, diagnostics projection, and operator roots are required")
 	}
@@ -166,9 +374,13 @@ func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error
 	if err := generateMetricsTest(directory); err != nil {
 		return nil, err
 	}
+	if err := generateControllerStartTest(directory); err != nil {
+		return nil, err
+	}
+	var setupErrors []string
 	if config.HealthyBaseline != "" {
 		if err := generateHealthyBaselineTest(config.HealthyBaseline, directory); err != nil {
-			return nil, err
+			setupErrors = append(setupErrors, "healthy replay unverified: "+strings.ReplaceAll(err.Error(), config.HealthyBaseline, "<healthy input>"))
 		}
 	}
 	main := "package main\nimport \"sdo.dev/operator/runtime\"\nfunc main(){runtime.Run()}\n"
@@ -179,7 +391,11 @@ func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error
 	if err != nil {
 		return nil, err
 	}
+<<<<<<< HEAD
 	return &Workspace{Directory: directory, ModulePath: module}, nil
+=======
+	return &Workspace{Directory: directory, ModulePath: module, HasProber: hasProber, compileOnly: config.CompileOnly, advisorySetupErrors: setupErrors}, nil
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 
 func validateDetectors(detectors []layout.Detector) error {

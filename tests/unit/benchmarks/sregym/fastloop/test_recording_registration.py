@@ -39,7 +39,7 @@ def test_recording_registrations_preserve_all_builtin_capabilities(tmp_path: Pat
             assert recorded["kubernetes_job"]["command"] == original["kubernetes_job"]["command"]
 
 
-def test_recording_roles_retain_scripted_incident_task_coverage(tmp_path: Path) -> None:
+def test_scripted_registrations_add_deterministic_health_refresh(tmp_path: Path) -> None:
     root = Path(__file__).resolve().parents[5]
     live = recording_registrations(tmp_path, "worker:test")
     scripted = root / "benchmarks/sregym/fastloop/agent_registrations"
@@ -52,7 +52,13 @@ def test_recording_roles_retain_scripted_incident_task_coverage(tmp_path: Path) 
             for capability in json.loads(path.read_text())["capabilities"]
         }
 
-    assert task_types(live, {"responder", "reflector"}) == task_types(scripted)
+    incident_types = task_types(live, {"responder", "reflector"})
+    assert incident_types == {"incident-response", "outcome-reflection-direct-v1"}
+    assert task_types(scripted) == incident_types | {"health-judgment-direct-v1"}
+    health_judge = json.loads((scripted / "health-judge.json").read_text())
+    assert health_judge["kubernetes_job"]["command"][-1] == "health-judge"
+    assert health_judge["capabilities"][0]["request_type_url"].endswith(".HealthJudgeRequest")
+    assert health_judge["capabilities"][0]["result_type_url"].endswith(".HealthJudgeResult")
 
 
 def test_incident_drift_tokens_use_completed_investigations() -> None:

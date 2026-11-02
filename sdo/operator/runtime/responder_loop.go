@@ -7,35 +7,47 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+<<<<<<< HEAD
 	"maps"
 	"os"
 	"path/filepath"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
+=======
+	"strings"
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	"sync"
 	"time"
 
 	"sdo.dev/operator/memory/layout"
+<<<<<<< HEAD
 	"sdo.dev/operator/runtime/prober"
 
+=======
+
+	"sdo.dev/operator/apihistory"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
-const DefaultMaxResponseLoops = 5
-const DefaultDiagnosisSettleDelay = 15 * time.Second
+const DefaultMaxResponseLoops = 10
 const maxRecordedToolResponse = 2048
 
 // maxRecordedApplyResponse bounds an apply record that lists the runs of the
-// applied plans. Each incident records at most MaxBatches (5) applies, so they
-// cost at most 5 x 8 KiB = 40 KiB; the other tool calls are 2 KiB each, well
-// under 100 of them (200 KiB). Together they stay far inside the 768 KiB state
-// ConfigMap budget. A compact run is about 250 B, so 8 KiB holds about 30 runs,
+// applied plans. The agent records at most MaxBatches (5) applies; the automatic
+// stage adds one apply per pass over all its matched plans, and a pass never
+// retries a binding it already attempted, so a restart adds at most one more.
+// That is a handful of applies at 8 KiB (tens of KiB); the other tool calls are
+// 2 KiB each, well under 100 of them (200 KiB). Together they stay far inside
+// the 768 KiB state ConfigMap budget. A compact run is about 250 B, so 8 KiB holds about 30 runs,
 // several per applied plan.
 const maxRecordedApplyResponse = 8192
 
 type ToolRequest struct {
+<<<<<<< HEAD
 	Command       string           `json:"command"`
 	Workload      string           `json:"workload,omitempty"`
 	Scenarios     []string         `json:"scenarios,omitempty"`
@@ -44,9 +56,46 @@ type ToolRequest struct {
 	Bindings      program.Bindings `json:"bindings,omitempty"`
 	PlanIDs       []string         `json:"plan_ids,omitempty"`
 	ApplicationID string           `json:"application_id,omitempty"`
+=======
+	SelectionSet        *contracts.MitigationSelectionSet      `json:"-"`
+	WaitSeconds         float64                                `json:"wait_seconds,omitempty"`
+	PreviousFindings    []sdk.Finding                          `json:"previous_findings,omitempty"`
+	FindingFingerprints []string                               `json:"finding_fingerprints,omitempty"`
+	DetectorIDs         []string                               `json:"detector_ids,omitempty"`
+	Refs                []sdk.ObjectRef                        `json:"refs,omitempty"`
+	Parameters          map[string]string                      `json:"parameters,omitempty"`
+	Selection           *contracts.MitigationSelection         `json:"-"`
+	ReportQuery         *contracts.MitigationReportQuery       `json:"-"`
+	Checkpoint          *contracts.MitigationSessionCheckpoint `json:"-"`
+	Command             string                                 `json:"command"`
+	Ref                 *sdk.ObjectRef                         `json:"ref,omitempty"`
+	ProgramID           string                                 `json:"program_id,omitempty"`
+	Match               bool                                   `json:"match,omitempty"`
+	Bindings            program.Bindings                       `json:"bindings,omitempty"`
+	PlanIDs             []string                               `json:"plan_ids,omitempty"`
+	ApplicationID       string                                 `json:"application_id,omitempty"`
+	// stage marks a call made by the automatic response stage. It is not
+	// decodable from a tool call, so only the stage can set it. A stage call
+	// never takes the notes queued for the agent and waits for rollouts inline.
+	stage bool
+	// rolloutTimeout bounds a stage apply's rollout wait; it is not decodable
+	// either, and an agent call keeps the executor's own timeout.
+	rolloutTimeout time.Duration
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 
+// VerificationBlocker names observation work that cannot yet establish health.
+type VerificationBlocker struct {
+	DetectorID string `json:"detector_id"`
+	Reason     string `json:"reason"`
+}
+
+type VerificationStatus string
+
+const VerificationAwaitingResponderCompletion VerificationStatus = "awaiting_responder_completion"
+
 type ToolResponse struct {
+<<<<<<< HEAD
 	Command       string              `json:"command"`
 	Burst         *prober.BurstResult `json:"burst,omitempty"`
 	Source        map[string]any      `json:"source,omitempty"`
@@ -56,6 +105,49 @@ type ToolResponse struct {
 	ApplicationID string              `json:"application_id,omitempty"`
 	Patches       []PlanPatch         `json:"patches,omitempty"`
 	ProgramRuns   []ProgramRun        `json:"program_runs,omitempty"`
+=======
+	VerificationStatus  VerificationStatus `json:"verification_status,omitempty"`
+	MemoryCheckReport   json.RawMessage    `json:"memory_check_report,omitempty"`
+	MemoryCheckTimedOut bool               `json:"memory_check_timed_out,omitempty"`
+
+	VerificationBlockers       []VerificationBlocker          `json:"verification_blockers,omitempty"`
+	ActionReports              []PlanActionReport             `json:"action_reports,omitempty"`
+	SelectionSchema            *MenuSchema                    `json:"selection_schema,omitempty"`
+	SelectionSetSchema         *MenuSchema                    `json:"selection_set_schema,omitempty"`
+	ProgramRevisions           map[string]string              `json:"program_revisions,omitempty"`
+	OptionReports              []*contracts.MitigationReport  `json:"-"`
+	UnexplainedRemovalBlockers []UnexplainedRemovalBlocker    `json:"unexplained_removal_blockers,omitempty"`
+	Drift                      []sdk.Finding                  `json:"drift,omitempty"`
+	BeforeFindings             []sdk.Finding                  `json:"before_findings"`
+	ControllerFindings         []sdk.Finding                  `json:"controller_findings"`
+	Progress                   *FindingProgress               `json:"progress,omitempty"`
+	IncidentVerified           *apihistory.IncidentVerified   `json:"incident_verified,omitempty"`
+	FailureReason              string                         `json:"failure_reason,omitempty"`
+	Receipt                    *contracts.RepairActionReceipt `json:"-"`
+	MitigationRoundsUsed       int                            `json:"mitigation_rounds_used"`
+	MitigationRoundsAllowed    int                            `json:"mitigation_rounds_allowed"`
+	ResponseLoopsUsed          int                            `json:"response_loops_used"`
+	ResponseLoopsAllowed       int                            `json:"response_loops_allowed"`
+	MitigationHealth           *MitigationHealth              `json:"mitigation_health,omitempty"`
+	RolloutPending             *contracts.RolloutPending      `json:"rollout_pending,omitempty"`
+	MenuExecution              []MenuRoundExecution           `json:"-"`
+	MenuParameters             map[string][]MenuParameter     `json:"-"`
+	Menu                       *contracts.MitigationMenu      `json:"-"`
+	Report                     *contracts.MitigationReport    `json:"-"`
+	Session                    *contracts.MitigationSession   `json:"-"`
+	Command                    string                         `json:"command"`
+	Source                     map[string]any                 `json:"source,omitempty"`
+	Error                      string                         `json:"error,omitempty"`
+	Summary                    string                         `json:"summary"`
+	PlanID                     string                         `json:"plan_id,omitempty"`
+	ApplicationID              string                         `json:"application_id,omitempty"`
+	Patches                    []PlanPatch                    `json:"patches,omitempty"`
+	ProgramRuns                []ProgramRun                   `json:"program_runs,omitempty"`
+	// PriorStages reports automatic passes that ran while the responder worked,
+	// each once, in the vocabulary of the incident's prior_stages.
+	PriorStages []StageNote `json:"prior_stages,omitempty"`
+
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	// ProgramRunsOmitted counts runs a truncated record could not list; the
 	// trust reader fails closed on it. ProgramRunsUnrelatedOmitted counts apply
 	// runs of programs or bindings the applied plans do not name, which the
@@ -67,6 +159,7 @@ type ToolResponse struct {
 	DetectorStates              []DetectorEvaluation    `json:"detector_states,omitempty"`
 	LoopsUsed                   int                     `json:"loops_used"`
 	LoopsAllowed                int                     `json:"loops_allowed"`
+	TargetedHealthy             bool                    `json:"targeted_healthy,omitempty"`
 	Healthy                     bool                    `json:"healthy"`
 	Unresolved                  bool                    `json:"unresolved"`
 	Trust                       map[string]ProgramTrust `json:"trust,omitempty"`
@@ -95,14 +188,18 @@ type RecordedPlanApplication struct {
 }
 
 type selectedPlan struct {
-	id        string
-	programID string
-	bindings  program.Bindings
-	plan      program.Plan
+	targetFingerprints []string
+	revision           string
+	diagnoser          program.Diagnoser
+	id                 string
+	programID          string
+	bindings           program.Bindings
+	plan               program.Plan
 }
 
 // ResponderLoop holds one incident's tool state while its responder Job runs.
 type ResponderLoop struct {
+<<<<<<< HEAD
 	CurrentEvidence                 func() *IncidentRequest
 	Request                         IncidentRequest
 	Programs                        program.ProgramRegistry
@@ -142,6 +239,83 @@ type ResponderLoop struct {
 	fastPathPrograms                []string
 	fastPathRelationCoveredFindings []RelationCoveredFinding
 	fastPathSkippedReason           FastPathSkipReason
+=======
+	scriptRefusals map[string]error
+
+	stageProgress       map[string]responseStageProgress
+	applicationBindings map[string][]recoveryBinding
+	// WorkingProgramRoot is set by the production loop factory to the mounted
+	// proposal checkout. Embedders with an in-memory registry may leave it empty.
+	WorkingProgramRoot string
+	workingPrograms    []*workingProgram
+	pendingWrites      map[string]pendingMitigation
+	MutationGate       *apihistory.MutationGate
+	Now                func() time.Time
+	CachedFindings     func() ToolResponse
+	IncidentStatus     func() *apihistory.IncidentVerified
+	WaitClosure        func(context.Context, time.Duration) ToolResponse
+	ExternalReceipts   func() ([]RepairActionReceipt, bool, string, error)
+	gateError          error
+	closureReceipts    []RepairActionReceipt
+	continuation       responderContinuation
+	MenuConfig         *ResponderMenuConfig
+	menu               *contracts.MitigationMenu
+	menuEntries        menuCatalog
+	menuSession        *contracts.MitigationSession
+	menuReports        []*contracts.MitigationReport
+	menuExecutions     map[string][]MenuRoundExecution
+	menuRepairs        []RepairActionReceipt
+	VerifyClosure      func(context.Context) ToolResponse
+	VerifyResult       func(context.Context, IncidentResult) ToolResponse
+	CurrentEvidence    func() *IncidentRequest
+	Request            IncidentRequest
+	Programs           program.ProgramRegistry
+	Provider           SnapshotProvider
+	Detectors          []sdk.Detector
+	Executor           PlanExecutor
+	ReadView           func(sdk.DetectionContext) program.ReadView
+	DiagnosisDeadline  time.Duration
+	// ProgramFollowUpSettle bounds each wait before a program follow-up plan;
+	// PendingStallTimeout bounds how long a pending application holds its writes.
+	ProgramFollowUpSettle time.Duration
+	PendingStallTimeout   time.Duration
+	MaxBatches            int
+	Trust                 map[string]ProgramTrust
+	CorpusSessionRoot     string
+	RecoverySessionRoot   string
+	capturePhase          string
+	sourceCompared        map[string]bool
+	stageNotes            []StageNote
+	timing                toolTiming
+	preApplyCaptured      bool
+	saveToolState         func(context.Context, []byte) error
+	operationMu           sync.Mutex
+	mu                    sync.Mutex
+	sessionID             string
+	plans                 map[string]selectedPlan
+	applications          map[string]PlanApplicationResult
+	applicationsLog       []RecordedPlanApplication
+	// Restored application evidence has no live plan or rollback handles.
+	archivedApplications []RecordedPlanApplication
+	completedRepairs     []continuationRepair
+	failureSignals       []string
+	calls                []ToolCall
+	runs                 []ProgramRun
+	matchedViews         map[string]program.ReadView
+	matchedPlans         map[string]PlanApplicationResult
+	matchedPlanErrors    map[string]error
+	terminalPlanErrors   map[string]*NonExecutablePlanError
+	lastDiagnosisView    program.ReadView
+	findings             []sdk.Finding
+	drift                []sdk.Finding
+	// batches counts the agent's response loops, the budget the agent is told.
+	// A loop is one act→verify cycle: loopOpen is set by the first write after a
+	// verification and cleared by the next one. applySeq numbers every apply,
+	// including the automatic stage's, which never spends that budget.
+	batches  int
+	loopOpen bool
+	applySeq int
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 
 // ResponderLoopOptions supplies sources that must replay across simulated runs.
@@ -168,6 +342,7 @@ func NewResponderLoopWithOptions(request IncidentRequest, programs program.Progr
 	if source == nil {
 		source = lifecycleio.NewSessionID
 	}
+<<<<<<< HEAD
 	session, err := source()
 	if err != nil {
 		return nil, fmt.Errorf("create responder session ID: %w", err)
@@ -177,6 +352,73 @@ func NewResponderLoopWithOptions(request IncidentRequest, programs program.Progr
 		return nil, fmt.Errorf("responder session ID must be 32 lowercase hexadecimal characters")
 	}
 	return &ResponderLoop{sessionID: session, Request: request, Programs: programs, Provider: provider, Detectors: detectors, Executor: executor, MaxBatches: maxBatches, plans: map[string]selectedPlan{}, applications: map[string]PlanApplicationResult{}, matchedViews: map[string]program.ReadView{}, matchedPlans: map[string]PlanApplicationResult{}, findings: append([]sdk.Finding(nil), request.Findings...)}, nil
+=======
+	detectors = withoutDisabledSetupDetectors(detectors, request.SourceCommit, request.DisabledSetupDetectors)
+	loop := &ResponderLoop{sessionID: fmt.Sprintf("%x", session), Request: request, Programs: programs, Provider: provider, Detectors: detectors, Executor: executor, MaxBatches: maxBatches, plans: map[string]selectedPlan{}, applications: map[string]PlanApplicationResult{}, matchedViews: map[string]program.ReadView{}, matchedPlans: map[string]PlanApplicationResult{}, findings: append([]sdk.Finding(nil), request.Findings...)}
+	priorRecorder := executor.RecordPrimitive
+	loop.Executor.RecordPrimitive = func(call sdktest.PrimitiveCall) error {
+		if priorRecorder != nil {
+			if err := priorRecorder(call); err != nil {
+				return err
+			}
+		}
+		if loop.CorpusSessionRoot == "" {
+			return nil
+		}
+		phase := loop.capturePhase
+		if phase == "" {
+			phase = "open@detect"
+			if loop.preApplyCaptured {
+				phase = "open@pre-apply"
+			}
+		}
+		return memory.AppendCapturedRecording(loop.CorpusSessionRoot, loop.Request.IncidentID, phase, call)
+	}
+	return loop
+}
+
+// initializeDispatch may run after LoopFactory has published this loop to the
+// controller. It follows the same operation/state lock order as tools/restore.
+func (l *ResponderLoop) initializeDispatch(trust map[string]ProgramTrust, maxBatches int, runs []ProgramRun) {
+	l.operationMu.Lock()
+	defer l.operationMu.Unlock()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.Trust = trust
+	if maxBatches > 0 {
+		l.MaxBatches = maxBatches
+	}
+	l.runs = append([]ProgramRun(nil), runs...)
+}
+
+func (l *ResponderLoop) continuationAttempts() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.continuation.Attempts
+}
+
+func (l *ResponderLoop) observeMutations() (*apihistory.MutationObservation, error) {
+	// A cancelled turn may still be unwinding a tool. Controller observation
+	// retries on contention instead of waiting behind responder-owned work.
+	gate, err := func() (*apihistory.MutationGate, error) {
+		if !l.mu.TryLock() {
+			return nil, errors.New("responder mutation observation is busy")
+		}
+		defer l.mu.Unlock()
+		return l.MutationGate, nil
+	}()
+	if err != nil {
+		return nil, err
+	}
+	if gate == nil {
+		return nil, nil
+	}
+	observation, err := gate.TryObserve()
+	if err == nil && observation == nil {
+		err = errors.New("responder mutation observation is unavailable")
+	}
+	return observation, err
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 
 func (l *ResponderLoop) ToolCalls() []ToolCall {
@@ -189,11 +431,42 @@ func (l *ResponderLoop) ProgramRuns() []ProgramRun {
 	defer l.mu.Unlock()
 	return append([]ProgramRun(nil), l.runs...)
 }
+
+// PlanApplications returns only applications observed in this process. Restarted
+// evidence cannot be used as live execution state.
 func (l *ResponderLoop) PlanApplications() []RecordedPlanApplication {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return append([]RecordedPlanApplication(nil), l.applicationsLog...)
 }
+
+// ApplicationEvidence returns historical and live facts for outcome/learning
+// attribution only. It confers no execution or rollback authority.
+func (l *ResponderLoop) ApplicationEvidence() []RecordedPlanApplication {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.applicationEvidenceLocked()
+}
+
+// Caller holds l.mu. Live observations supersede the archived receipt for the
+// same application; unrelated restored receipts must survive subsequent saves.
+func (l *ResponderLoop) applicationEvidenceLocked() []RecordedPlanApplication {
+	result := append([]RecordedPlanApplication(nil), l.archivedApplications...)
+	positions := map[string]int{}
+	for i, application := range result {
+		positions[application.ID] = i
+	}
+	for _, application := range l.applicationsLog {
+		if i, ok := positions[application.ID]; ok {
+			result[i] = application
+		} else {
+			positions[application.ID] = len(result)
+			result = append(result, application)
+		}
+	}
+	return result
+}
+
 func (l *ResponderLoop) FailureSignals() []string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -210,6 +483,7 @@ func (l *ResponderLoop) InitialDiagnose(ctx context.Context) []ProgramRun {
 	return l.diagnose(ctx, l.findings)
 }
 
+<<<<<<< HEAD
 // RetryInitialDiagnose refreshes inconclusive initial verdicts after the cluster settles.
 // The caller starts this while the responder Job is being dispatched.
 func (l *ResponderLoop) RetryInitialDiagnose(ctx context.Context) {
@@ -244,11 +518,13 @@ func (l *ResponderLoop) RetryInitialDiagnose(ctx context.Context) {
 	l.capturePhase = ""
 }
 
+=======
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 func (l *ResponderLoop) LoopsUsed() int { l.mu.Lock(); defer l.mu.Unlock(); return l.batches }
 func (l *ResponderLoop) Exhausted() bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.batches >= l.MaxBatches && len(l.findings) > 0
+	return l.loopsRemaining() == 0 && len(l.findings) > 0
 }
 
 // toolTiming accumulates the phase durations of one Handle call. capture is
@@ -261,7 +537,16 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 	defer l.operationMu.Unlock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
+<<<<<<< HEAD
 	started := l.clock()
+=======
+	started := time.Now()
+	mutating := request.Command == "rollback" || request.Command == "apply" || request.Command == "mitigate" || request.Command == "act-result"
+	var before []sdk.Finding
+	if mutating && l.CachedFindings != nil {
+		before = l.CachedFindings().Findings
+	}
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	l.timing = toolTiming{}
 	defer func() {
 		slog.Info("responder_tool_timing", "incident_id", l.Request.IncidentID, "command", request.Command,
@@ -275,8 +560,30 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			l.Request.DriftEvents = append([]sdk.DriftEvent(nil), current.DriftEvents...)
 		}
 	}
-	response = ToolResponse{Command: request.Command, LoopsUsed: l.batches, LoopsAllowed: l.MaxBatches}
+	if len(l.pendingWrites) > 0 {
+		l.settlePending(ctx)
+	}
+	response = ToolResponse{Command: request.Command, LoopsUsed: l.batches, LoopsAllowed: l.batchLimit(),
+		MitigationRoundsUsed: l.batches, MitigationRoundsAllowed: l.batchLimit(), ResponseLoopsUsed: l.continuation.Attempts, ResponseLoopsAllowed: l.MaxBatches}
+	if l.Request.MaxResponseLoops > 0 {
+		response.ResponseLoopsAllowed = min(response.ResponseLoopsAllowed, l.Request.MaxResponseLoops)
+	}
 	defer func() {
+		if mutating && l.CachedFindings != nil {
+			after := l.CachedFindings()
+			response.BeforeFindings = append([]sdk.Finding{}, before...)
+			response.ControllerFindings = append([]sdk.Finding{}, after.Findings...)
+			progress := CompareFindingProgress(before, after.Findings)
+			response.Progress = &progress
+		}
+		if l.IncidentStatus != nil {
+			response.IncidentVerified = l.IncidentStatus()
+		}
+		if response.IncidentVerified == nil && l.MutationGate != nil {
+			response.IncidentVerified, _ = l.MutationGate.Verified()
+		}
+		response.MitigationRoundsUsed = l.batches
+		response.MitigationRoundsAllowed = l.batchLimit()
 		if response.Error != "" {
 			response.Summary = response.Error
 		}
@@ -290,6 +597,15 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 				}
 			}
 		}
+		if request.Command == "apply" {
+			response.ProgramRevisions = map[string]string{}
+			for _, plan := range applied {
+				response.ProgramRevisions[plan.programID] = plan.revision
+			}
+		}
+		if request.ProgramID != "" && (request.Command == "plan" || request.Command == "diagnose") && response.Error == "" {
+			response.ProgramRevisions = map[string]string{request.ProgramID: l.programRevision(request.ProgramID)}
+		}
 		responseJSON := recordedToolResponseJSON(response, applied)
 		l.calls = append(l.calls, ToolCall{Command: request.Command, At: l.clock().UTC(), RequestJSON: string(requestJSON), ResponseJSON: string(responseJSON), Error: response.Error, Summary: response.Summary})
 		persistStarted := l.clock()
@@ -301,19 +617,87 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		}
 	}()
 	response.DriftEvents = append([]sdk.DriftEvent(nil), l.Request.DriftEvents...)
+
+	if request.Command == "apply" || request.Command == "mitigate" || request.Command == "rollback" || request.Command == "pre-apply" {
+		if l.gateError != nil {
+			response.Error = l.gateError.Error()
+			return response
+		}
+		if l.MutationGate != nil {
+			lease, err := l.MutationGate.Begin()
+			if err != nil {
+				response.Error = err.Error()
+				response.FailureReason = "execution_failed"
+				if response.Error == "incident_verified" {
+					response.FailureReason = "incident_verified"
+				}
+				response.Receipt = &contracts.RepairActionReceipt{FailureReason: response.FailureReason, ActionId: "sdo-rejected-" + l.sessionID, Kind: request.Command, Summary: "incident is closed", StartedAt: contractTimestamp(started.UTC()), CompletedAt: contractTimestamp(time.Now().UTC())}
+				return response
+			}
+			defer func() {
+				if err := lease.Finish(false); err != nil {
+					response.Error = err.Error()
+				}
+			}()
+		} else if l.IncidentStatus != nil && l.IncidentStatus() != nil {
+			response.Error = "incident_verified"
+			response.FailureReason = "incident_verified"
+			response.Receipt = &contracts.RepairActionReceipt{FailureReason: "incident_verified", ActionId: "sdo-rejected-" + l.sessionID, Kind: request.Command, Summary: "incident is closed", StartedAt: contractTimestamp(started.UTC()), CompletedAt: contractTimestamp(time.Now().UTC())}
+			return response
+		}
+	}
 	switch request.Command {
+	case "menu", "plan", "diagnose":
+		if err := l.loadWorkingPrograms(ctx, request.ProgramID); err != nil {
+			response.Error = err.Error()
+			return response
+		}
+		if request.Command == "diagnose" && request.ProgramID == "" {
+			if registry, ok := l.Programs.(*workingProgramRegistry); ok {
+				for _, message := range registry.failures {
+					response.Error = message
+					return response
+				}
+			}
+		}
+	case "mitigate":
+		if err := l.loadSelectedWorkingPrograms(ctx, request); err != nil {
+			response.Error = err.Error()
+			return response
+		}
+	}
+	switch request.Command {
+	case "menu":
+		l.listMenu(ctx, request, &response)
+	case "mitigate":
+		if err := l.validateFindingTargets(request.FindingFingerprints); err != nil {
+			response.Error = err.Error()
+			break
+		}
+		l.mitigateSelection(ctx, request, &response)
+	case "session-open":
+		l.openMenuSession(ctx, &response)
+	case "session-checkpoint":
+		l.checkpointMenuSession(ctx, request.Checkpoint, &response)
+	case "report":
+		l.selectionReport(ctx, request.ReportQuery, &response)
+	case "detect":
+		l.detect(ctx, request.DetectorIDs, &response)
 	case "status":
-		l.capturePreApply()
 		response.DriftEvents = append([]sdk.DriftEvent(nil), l.Request.DriftEvents...)
 		response.Trust = l.Trust
-		response.Findings, response.ProgramRuns, response.Error = l.refresh(ctx)
+		response.Findings, response.ProgramRuns, response.DetectorStates, response.Error = l.refresh(ctx)
+		response.Drift = append([]sdk.Finding(nil), l.drift...)
 		response.Healthy = response.Error == "" && len(l.findings) == 0
-		response.Unresolved = l.batches >= l.MaxBatches && !response.Healthy
-		response.Summary = fmt.Sprintf("%d open findings; %d of %d apply batches used", len(l.findings), l.batches, l.MaxBatches)
+		for _, state := range response.DetectorStates {
+			response.Healthy = response.Healthy && state.Status == DetectorEvaluationClear
+		}
+		response.Unresolved = l.loopsRemaining() == 0 && !response.Healthy
+		response.Summary = fmt.Sprintf("%d open findings; %d of %d act-verify loops used", len(l.findings), l.batches, l.batchLimit()) + pendingEvaluationSummary(response.DetectorStates)
 	case "diagnose":
-		l.capturePreApply()
 		if request.ProgramID == "" {
-			response.Findings, response.ProgramRuns, response.Error = l.refresh(ctx)
+			response.Findings, response.ProgramRuns, response.DetectorStates, response.Error = l.refresh(ctx)
+			response.Drift = append([]sdk.Finding(nil), l.drift...)
 		} else {
 			if l.Programs == nil {
 				response.Error = "no programs are compiled"
@@ -332,7 +716,11 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			started := l.clock()
 			verdict := program.RunDiagnose(ctx, p, view, request.Bindings, l.deadline())
 			_, canMitigate := l.Programs.Mitigator(request.ProgramID)
+<<<<<<< HEAD
 			run := ProgramRun{CanMitigate: &canMitigate, ProgramID: request.ProgramID, Bindings: request.Bindings, Verdict: verdict, Duration: l.clock().Sub(started)}
+=======
+			run := ProgramRun{ProgramRevision: l.programRevision(request.ProgramID), CanMitigate: &canMitigate, ProgramID: request.ProgramID, Bindings: request.Bindings, Verdict: verdict, Duration: time.Since(started)}
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 			response.ProgramRuns = []ProgramRun{run}
 			l.runs = append(l.runs, run)
 		}
@@ -348,26 +736,21 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			response.Error = err.Error()
 			break
 		}
-		if request.Ref.Namespace != l.Request.Namespace {
+		if request.Ref.Namespace != l.Request.Namespace && request.Ref.Namespace != "" {
 			response.Error = "source resource is outside incident namespace"
 			break
 		}
 		if l.CorpusSessionRoot != "" {
 			l.capturePhase = "open@detect"
-			if l.preApplyCaptured {
-				l.capturePhase = "open@pre-apply"
-			}
-			view, err := l.snapshotView(ctx)
-			if err != nil {
+			if _, err := l.snapshotView(ctx); err != nil {
 				response.Error = err.Error()
 				break
 			}
-			if _, err := view.DiffAgainstSource(*request.Ref); err != nil {
-				response.Error = err.Error()
-				break
-			}
+			// An object without an acceptance record compares as unknown;
+			// accepted source itself is still shown.
+			l.recordSourceComparisons(ctx, l.capturePhase, *request.Ref)
 		}
-		object, err := l.Executor.Source.AcceptedManifest(ctx, l.Request.SourceCommit, *request.Ref)
+		object, err := acceptedIncidentManifest(ctx, l.Executor.Source, l.Request.SourceCommit, l.Request.Namespace, *request.Ref)
 		if errors.Is(err, ErrAcceptedManifestAbsent) {
 			response.Summary = "resource is absent from accepted source"
 			break
@@ -383,14 +766,8 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		response.Source = object.Object
 		response.Summary = fmt.Sprintf("rendered source for %s/%s", request.Ref.Kind, request.Ref.Name)
 	case "apply":
-		l.capturePreApply()
-		if l.capturePhase != "" {
-			if _, err := l.snapshotView(ctx); err != nil {
-				response.Error = err.Error()
-				break
-			}
-		}
 		l.apply(ctx, request, &response)
+<<<<<<< HEAD
 	case "verify":
 		if l.Traffic == nil && (request.Workload != "" || len(request.Scenarios) > 0) {
 			response.Error = "bounded traffic verification is unavailable"
@@ -413,39 +790,69 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		application, ok := l.applications[request.ApplicationID]
 		if !ok {
 			response.Error = fmt.Sprintf("unknown application %q", request.ApplicationID)
+=======
+		if result, ok := l.applications[response.ApplicationID]; ok {
+			response.MitigationHealth = result.MitigationHealth
+			response.TargetedHealthy = result.VerificationPassed
+		}
+	case "pre-apply":
+		if l.pendingConflict(ctx, request.Refs, &response) {
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 			break
 		}
-		executor := l.Executor
-		reconciled, err := executor.Reconcile(ctx, application)
-		if err != nil {
+		if l.CachedFindings != nil {
+			response.Findings = l.CachedFindings().Findings
+		}
+		if err := l.capturePreApply(ctx, request.Refs...); err != nil {
 			response.Error = err.Error()
 			break
 		}
-		application = reconciled
-		rollbackErr := executor.rollback(ctx, &application)
-		if rollbackErr != nil {
-			application.RollbackError = rollbackErr.Error()
-		}
-		l.applications[request.ApplicationID] = application
-		for i := range l.applicationsLog {
-			if l.applicationsLog[i].ID == request.ApplicationID {
-				l.applicationsLog[i].Result = application
-				l.applicationsLog[i].RolledBack = application.RolledBack
-				l.applicationsLog[i].RollbackError = application.RollbackError
+		response.Summary = "first-mutation snapshot captured"
+	case "verify":
+		if l.VerifyClosure != nil {
+			// The controller may persist continuation state while observing.
+			// A read-only closure check must not hold responder locks while
+			// waiting for that observation to finish.
+			var closure ToolResponse
+			if err := withoutResponderLocks(l, "verify", true, func() {
+				if request.WaitSeconds < 0 || request.WaitSeconds > 86400 {
+					closure = ToolResponse{Command: "verify", Error: "wait seconds must be between 0 and 86400"}
+				} else if request.WaitSeconds > 0 && l.WaitClosure != nil {
+					closure = l.WaitClosure(ctx, time.Duration(request.WaitSeconds*float64(time.Second)))
+				} else {
+					closure = l.VerifyClosure(ctx)
+				}
+			}); err != nil {
+				response = ToolResponse{Command: "verify", Error: err.Error()}
+				break
 			}
+			response = closure
+			if request.PreviousFindings != nil {
+				progress := CompareFindingProgress(request.PreviousFindings, response.Findings)
+				response.Progress = &progress
+			}
+			l.findings = append([]sdk.Finding(nil), response.Findings...)
+			response.LoopsAllowed = l.batchLimit()
+		} else {
+			l.verify(ctx, nil, &response, request.stage)
 		}
-		if rollbackErr != nil {
-			response.Error = rollbackErr.Error()
-			break
-		}
-		l.verify(ctx, nil, &response)
 		if response.Error == "" {
-			response.Summary = "application rolled back and verified"
+			l.closeLoop()
 		}
+	case "rollback":
+		l.rollbackApplication(ctx, request, &response)
 	default:
 		response.Error = fmt.Sprintf("unknown sdo command %q", request.Command)
 	}
 	response.LoopsUsed = l.batches
+	if notes := l.takeStageNotes(request); len(notes) > 0 {
+		response.PriorStages = notes
+		lines := make([]string, len(notes))
+		for i, note := range notes {
+			lines[i] = note.String()
+		}
+		response.Summary = "automatic stage ran while you worked: " + strings.Join(lines, "; ") + ". " + response.Summary
+	}
 	return response
 }
 
@@ -454,11 +861,13 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 // writer's definition; everything bulky is reduced to a count.
 type truncatedToolResponse struct {
 	ToolResponse
-	Truncated           bool `json:"truncated"`
-	FindingsCount       int  `json:"findings_count"`
-	ProgramRunsCount    int  `json:"program_runs_count"`
-	DetectorStatesCount int  `json:"detector_states_count"`
-	PatchesCount        int  `json:"patches_count"`
+	VerificationSummary   *VerificationSummary `json:"verification_summary,omitempty"`
+	Truncated             bool                 `json:"truncated"`
+	FindingsCount         int                  `json:"findings_count"`
+	ProgramRunsCount      int                  `json:"program_runs_count"`
+	ProgramRevisionsCount int                  `json:"program_revisions_count"`
+	DetectorStatesCount   int                  `json:"detector_states_count"`
+	PatchesCount          int                  `json:"patches_count"`
 }
 
 // recordedToolResponseJSON caps the stored response. An apply record keeps every
@@ -472,8 +881,15 @@ func recordedToolResponseJSON(response ToolResponse, applied []selectedPlan) []b
 		return responseJSON
 	}
 	record := truncatedToolResponse{
-		ToolResponse: ToolResponse{Command: response.Command, Summary: boundedToolText(response.Summary), Error: boundedToolText(response.Error), PlanID: response.PlanID, ApplicationID: response.ApplicationID, LoopsUsed: response.LoopsUsed, LoopsAllowed: response.LoopsAllowed, Healthy: response.Healthy, Unresolved: response.Unresolved},
-		Truncated:    true, FindingsCount: len(response.Findings), ProgramRunsCount: len(response.ProgramRuns), DetectorStatesCount: len(response.DetectorStates), PatchesCount: len(response.Patches),
+		ToolResponse: ToolResponse{Command: response.Command, Summary: boundedToolText(response.Summary), Error: boundedToolText(response.Error), PlanID: response.PlanID, ApplicationID: response.ApplicationID, LoopsUsed: response.LoopsUsed, LoopsAllowed: response.LoopsAllowed, Healthy: response.Healthy, TargetedHealthy: response.TargetedHealthy, Unresolved: response.Unresolved, RolloutPending: compactRolloutPending(response.RolloutPending)},
+		Truncated:    true, ProgramRevisionsCount: len(response.ProgramRevisions), FindingsCount: len(response.Findings), ProgramRunsCount: len(response.ProgramRuns), DetectorStatesCount: len(response.DetectorStates), PatchesCount: len(response.Patches),
+	}
+	if response.Command == "verify" {
+		record.VerificationSummary = compactVerification(response)
+		candidate, _ := json.Marshal(record)
+		if len(candidate) > maxRecordedToolResponse {
+			record.VerificationSummary = nil
+		}
 	}
 	limit := maxRecordedToolResponse
 	isApply := response.Command == "apply"
@@ -499,7 +915,7 @@ func recordedToolResponseJSON(response ToolResponse, applied []selectedPlan) []b
 
 func runOfAppliedPlan(run ProgramRun, applied []selectedPlan) bool {
 	for _, plan := range applied {
-		if run.ProgramID == plan.programID && maps.Equal(run.Bindings, plan.bindings) {
+		if run.ProgramID == plan.programID && run.Bindings.Equal(plan.bindings) {
 			return true
 		}
 	}
@@ -548,34 +964,13 @@ func (l *ResponderLoop) snapshotView(ctx context.Context) (program.ReadView, err
 		return nil, errors.New("live read view is unavailable")
 	}
 	if l.CorpusSessionRoot != "" && l.capturePhase != "" {
-		if err := memory.CaptureIncidentSnapshot(l.CorpusSessionRoot, l.Request.IncidentID, l.capturePhase, snapshot, l.Request.Namespace); err != nil {
-			return nil, err
-		}
-		if l.capturePhase == "open@pre-apply" {
-			l.preApplyCaptured = true
-		}
-	}
-	if l.CorpusSessionRoot != "" && l.capturePhase == "open@detect" {
-		dir, err := memory.IncidentCorpusDir(l.CorpusSessionRoot, l.Request.IncidentID)
-		if err != nil {
-			return nil, err
-		}
-		data, err := os.ReadFile(filepath.Join(dir, "open@detect.json"))
-		if err != nil {
-			return nil, err
-		}
-		var captured sdktest.Snapshot
-		if err := json.Unmarshal(data, &captured); err != nil {
-			return nil, err
-		}
-		snapshot = captured
-	}
-	view := l.ReadView(snapshot)
-	if l.CorpusSessionRoot != "" && l.capturePhase != "" {
-		if err := captureRoutingEvidence(ctx, l.CorpusSessionRoot, l.Request.IncidentID, l.capturePhase, l.Request.Findings, view); err != nil {
+		if err := memory.CaptureIncidentSnapshot(l.CorpusSessionRoot, l.Request.IncidentID, l.capturePhase, snapshot, l.Request.Namespace, findingCaptureRefs(l.Request.Findings)...); err != nil {
 			return nil, err
 		}
 	}
+	// Captures are immutable historical evidence. Every operational diagnosis,
+	// including a resumed initial diagnosis, uses this attempt's fresh snapshot.
+	view := NewCycleReadView(l.ReadView(snapshot))
 	if l.CorpusSessionRoot != "" && l.capturePhase != "" {
 		phase := l.capturePhase
 		return &sdktest.RecordingReadView{ReadView: view, OnRecord: func(call sdktest.PrimitiveCall) {
@@ -588,11 +983,15 @@ func (l *ResponderLoop) snapshotView(ctx context.Context) (program.ReadView, err
 	return view, nil
 }
 
-func (l *ResponderLoop) capturePreApply() {
-	if l.preApplyCaptured || l.CorpusSessionRoot == "" {
-		return
-	}
-	l.capturePhase = "open@pre-apply"
+// RefreshDiagnose diagnoses the open findings against a fresh snapshot without
+// retaking a capture: the opening captures stay what the incident opened with.
+func (l *ResponderLoop) RefreshDiagnose(ctx context.Context) []ProgramRun {
+	l.operationMu.Lock()
+	defer l.operationMu.Unlock()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.capturePhase = ""
+	return l.diagnose(ctx, l.findings)
 }
 
 func (l *ResponderLoop) diagnose(ctx context.Context, findings []sdk.Finding) []ProgramRun {
@@ -600,41 +999,72 @@ func (l *ResponderLoop) diagnose(ctx context.Context, findings []sdk.Finding) []
 	if err != nil {
 		return nil
 	}
+<<<<<<< HEAD
 	runs := SelectProgramCandidatesWithOptions(ctx, l.Programs, view, findings, CandidateOptions{Clock: l.clock, Deadline: l.deadline(), SweepLimit: l.CandidateSweepLimit})
+=======
+	runs := SelectProgramCandidates(ctx, l.Programs, view, findings, l.deadline())
+	l.stampProgramRuns(runs)
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	l.rememberMatchedViews(ctx, runs, view)
 	l.lastDiagnosisView = view
 	l.runs = append(l.runs, runs...)
+	if l.capturePhase != "" {
+		l.recordSourceComparisons(ctx, l.capturePhase, findingCaptureRefs(findings)...)
+	}
 	return runs
 }
 
+<<<<<<< HEAD
 func (l *ResponderLoop) refresh(ctx context.Context) ([]sdk.Finding, []ProgramRun, string) {
 	started := l.clock()
 	defer func() { l.timing.refresh += l.clock().Sub(started) }()
+=======
+func (l *ResponderLoop) refresh(ctx context.Context) ([]sdk.Finding, []ProgramRun, []DetectorEvaluation, string) {
+	started := time.Now()
+	defer func() { l.timing.refresh += time.Since(started) }()
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	view, err := l.snapshotView(ctx)
 	if err != nil {
-		return nil, nil, err.Error()
+		return nil, nil, nil, err.Error()
 	}
 	findings := make([]sdk.Finding, 0)
+	states := make([]DetectorEvaluation, 0, len(l.Detectors))
 	for _, detector := range l.Detectors {
-		observed, err := detector.Detect(ctx, view)
+		observed, err := sdk.DetectObserved(ctx, detector, view)
+		state := DetectorEvaluation{DetectorID: detector.Spec().ID, EvaluatedAt: l.clock().UTC(), Status: DetectorEvaluationClear, Reason: detectorConfirmationReason(detector, view)}
+		if err == nil && len(observed) == 0 && !detectorConfirmed(detector, view) {
+			state.Status = DetectorEvaluationPending
+		}
 		if err != nil {
-			return nil, nil, fmt.Sprintf("detector %s: %v", detector.Spec().ID, err)
+			state.Status, state.Error = DetectorEvaluationError, err.Error()
+			states = append(states, state)
+			return nil, nil, states, fmt.Sprintf("detector %s: %v", detector.Spec().ID, err)
 		}
 		for _, finding := range observed {
 			if finding.Status == sdk.FindingActive {
 				findings = append(findings, finding)
+				state.Status = DetectorEvaluationFiring
+				state.Fingerprints = append(state.Fingerprints, FindingFingerprint(finding))
 			}
 		}
+		states = append(states, state)
 	}
+<<<<<<< HEAD
 	drift, _, driftRuns := checkRetainedDrift(ctx, l.Request.Findings, view, l.Programs, l.deadline(), nil, l.clock())
 	findings = append(findings, drift...)
 	l.runs = append(l.runs, driftRuns...)
 	l.findings = findings
 	runs := SelectProgramCandidatesWithOptions(ctx, l.Programs, view, findings, CandidateOptions{Clock: l.clock, Deadline: l.deadline(), SweepLimit: l.CandidateSweepLimit})
+=======
+	l.drift = retainedDrift(l.Request.Findings, view)
+	l.findings = findings
+	runs := SelectProgramCandidates(ctx, l.Programs, view, findings, l.deadline())
+	l.stampProgramRuns(runs)
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	l.rememberMatchedViews(ctx, runs, view)
 	l.lastDiagnosisView = view
 	l.runs = append(l.runs, runs...)
-	return findings, runs, ""
+	return findings, runs, states, ""
 }
 
 func matchedViewKey(id string, bindings program.Bindings) string {
@@ -689,6 +1119,10 @@ func logicalToolResponse(response ToolResponse) ToolResponse {
 }
 
 func (l *ResponderLoop) plan(ctx context.Context, request ToolRequest, response *ToolResponse) {
+	if err := l.validateFindingTargets(request.FindingFingerprints); err != nil {
+		response.Error = err.Error()
+		return
+	}
 	if l.Programs == nil {
 		response.Error = "no programs are compiled"
 		return
@@ -703,7 +1137,7 @@ func (l *ResponderLoop) plan(ctx context.Context, request ToolRequest, response 
 		return
 	}
 	view := l.matchedViews[matchedViewKey(request.ProgramID, request.Bindings)]
-	if view == nil || l.batches > 0 {
+	if view == nil || l.appliedAny() {
 		var err error
 		view, err = l.snapshotView(ctx)
 		if err != nil {
@@ -714,11 +1148,16 @@ func (l *ResponderLoop) plan(ctx context.Context, request ToolRequest, response 
 	key := matchedViewKey(request.ProgramID, request.Bindings)
 	preview, matched := l.matchedPlans[key]
 	plan := preview.Plan
-	if !matched || l.batches > 0 {
+	if !matched || l.appliedAny() {
 		var err error
 		plan, err = l.runMitigator(ctx, request.ProgramID, mitigator, view, request.Bindings)
 		if err != nil {
 			response.Error = err.Error()
+			response.FailureReason = ""
+			var provenanceError *ScriptUnprovenancedError
+			if errors.As(err, &provenanceError) {
+				response.FailureReason = "script_unprovenanced"
+			}
 			return
 		}
 	}
@@ -736,25 +1175,27 @@ func (l *ResponderLoop) plan(ctx context.Context, request ToolRequest, response 
 		return
 	}
 	id := fmt.Sprintf("plan-%s-%d", l.sessionID, len(l.plans)+1)
-	l.plans[id] = selectedPlan{id: id, programID: request.ProgramID, bindings: cloneProgramBindings(request.Bindings), plan: plan}
+	diagnoser, _ := l.Programs.Diagnoser(request.ProgramID)
+	l.plans[id] = selectedPlan{revision: l.programRevision(request.ProgramID), diagnoser: diagnoser, targetFingerprints: append([]string(nil), request.FindingFingerprints...), id: id, programID: request.ProgramID, bindings: cloneProgramBindings(request.Bindings), plan: plan}
 	response.PlanID, response.Patches = id, preview.Patches
 	response.Summary = fmt.Sprintf("%s: %d dry-run patches", id, len(preview.Patches))
 }
 
 func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response *ToolResponse) {
+
 	for _, entry := range l.applicationsLog {
 		for _, consumed := range entry.PlanIDs {
 			for _, requested := range request.PlanIDs {
 				if consumed == requested {
 					response.ApplicationID = entry.ID
 					response.Error = "prepared plan already consumed by " + entry.ID
-					response.Unresolved = l.batches >= l.MaxBatches
+					response.Unresolved = l.loopsRemaining() == 0
 					return
 				}
 			}
 		}
 	}
-	if l.batches >= l.MaxBatches {
+	if !request.stage && l.loopsRemaining() == 0 {
 		response.Error = "response loop budget exhausted"
 		response.Unresolved = true
 		return
@@ -774,22 +1215,66 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 		selected = append(selected, plan)
 		batch.Actions = append(batch.Actions, plan.plan.Actions...)
 	}
+<<<<<<< HEAD
 	l.batches++
 	started := l.clock().UTC()
 	id := fmt.Sprintf("application-%s-%d", l.sessionID, l.batches)
+=======
+
+	refs, refErr := l.menuPlanWriteRefs(batch)
+	if l.heldPendingWrites() > 0 && refErr != nil {
+		l.refuseSelection(response, "write_set_unknown", refErr.Error())
+		return
+	}
+	if l.pendingConflict(ctx, refs, response) {
+		return
+	}
+	// A missing capture is an evidence gap; it must not block the repair.
+	_ = l.capturePreApply(ctx, planCaptureRefs(batch)...)
+	l.applySeq++
+	if !request.stage {
+		l.spendLoop()
+	}
+	started := time.Now().UTC()
+	id := fmt.Sprintf("application-%s-%d", l.sessionID, l.applySeq)
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	programIDs := make([]string, 0, len(selected))
 	for _, plan := range selected {
 		programIDs = append(programIDs, plan.programID)
 	}
 	entry := RecordedPlanApplication{ID: id, ProgramIDs: programIDs, PlanIDs: append([]string(nil), request.PlanIDs...), Result: PlanApplicationResult{Plan: batch}, StartedAt: started, Pending: true}
+	if l.applicationBindings == nil {
+		l.applicationBindings = map[string][]recoveryBinding{}
+	}
+	actionStart := 0
+	for _, plan := range selected {
+		l.applicationBindings[id] = append(l.applicationBindings[id], recoveryBinding{ProgramID: plan.programID, ProgramRevision: plan.revision, Bindings: cloneProgramBindings(plan.bindings), FindingFingerprints: append([]string(nil), plan.targetFingerprints...), ActionStart: actionStart, ActionCount: len(plan.plan.Actions)})
+		actionStart += len(plan.plan.Actions)
+	}
 	l.applicationsLog = append(l.applicationsLog, entry)
 	if err := l.persistToolState(ctx); err != nil {
 		response.Error = err.Error()
 		return
 	}
 	executor := l.Executor
+<<<<<<< HEAD
 	result, err := executor.Apply(ctx, l.Request, batch, false)
 	completed := l.clock().UTC()
+=======
+	executor.ApplicationID = id
+	// Both automatic and responder applications observe once. A rollout may
+	// depend on another matched binding that has not been written yet.
+	executor.PollRollouts = true
+	if request.stage && request.rolloutTimeout > 0 {
+		executor.RolloutTimeout = request.rolloutTimeout
+	}
+	result, err := executor.Apply(ctx, l.mitigationIncident(selected), batch, false)
+	response.ActionReports = result.ActionReports
+	completed := time.Now().UTC()
+	if result.RolloutPending != nil {
+		l.reservePending(id, result, "", "", program.Bindings{}, request.FindingFingerprints)
+	}
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	if result.Applied || result.PendingAction != nil {
 		l.applications[id] = result
 		response.ApplicationID = id
@@ -797,46 +1282,34 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	if err != nil {
 		response.Error = err.Error()
 	}
-	l.verify(ctx, selected, response)
-	if result.Applied && (err != nil || !result.VerificationPassed || !response.Healthy || !boundPlansNoMatch(selected, response.ProgramRuns)) {
-		result.VerificationPassed = false
-		if response.Error == "" {
-			response.Error = "plan verification failed"
+	response.RolloutPending = result.RolloutPending
+	if result.RolloutPending == nil {
+		l.verify(ctx, selected, response, request.stage)
+		// apply verifies its own batch: one complete act→verify cycle.
+		if !request.stage && response.Error == "" {
+			l.closeLoop()
 		}
-		recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		// Preserve the failed revision independently of the in-process application
-		// log, including when rollback succeeds or the process stops during it.
-		failedRuns := make([]ProgramRun, 0, len(programIDs))
-		for _, programID := range programIDs {
-			failedRuns = append(failedRuns, ProgramRun{ProgramID: programID})
-		}
-		fillProgramRevisions(recoveryCtx, failedRuns, l.Request.RepositoryWorktree, l.Request.SourceCommit)
-		for _, run := range failedRuns {
-			signal := "application_verification_failure:" + run.ProgramID
-			if run.ProgramRevision != "" {
-				signal += "@" + run.ProgramRevision
-			}
-			l.addFailureSignal(signal)
-		}
-		if persistErr := l.persistToolState(recoveryCtx); persistErr != nil {
-			response.Error += ": " + persistErr.Error()
-		}
-		rollbackErr := executor.rollback(recoveryCtx, &result)
-		cancel()
-		if rollbackErr != nil {
-			result.RollbackError = rollbackErr.Error()
-			response.Error += ": rollback failed: " + rollbackErr.Error()
-			for _, id := range programIDs {
-				l.addFailureSignal("rollback_failure:" + id)
-			}
-		}
+	}
+	// The application is recorded as observed and left in place; whether to roll
+	// it back, apply again or edit is the responder's decision.
+	if result.Applied && result.RolloutPending == nil {
+		// Application credit is binding-scoped; closure still independently
+		// requires global health. A different open fault is not a failed repair.
+		result.VerificationPassed = err == nil && response.Error == "" && result.VerificationCompleted &&
+			boundPlansNoMatch(selected, response.ProgramRuns) &&
+			targetedFindingsClear(l.mitigationIncident(selected).Findings, response.Findings) &&
+			result.VerificationPassed
+		// Observation is not execution failure. Typed immutable action reports
+		// and rollback facts persist with the application; recovery settlement
+		// owns later credit. Do not publish a second health-as-failure signal.
+
 	}
 	if response.Error != "" {
 		response.Healthy = false
 	}
 	entry.Result = result
 	entry.CompletedAt = completed
-	entry.Pending = result.PendingAction != nil || result.RollingBack
+	entry.Pending = planApplicationPending(result)
 	entry.RolledBack = result.RolledBack
 	entry.RollbackError = result.RollbackError
 	entry.Error = response.Error
@@ -851,10 +1324,12 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	if response.Error == "" {
 		response.Summary = fmt.Sprintf("%s applied; %d open findings", id, len(response.Findings))
 	}
-	response.Unresolved = l.batches >= l.MaxBatches && !response.Healthy
+	response.Unresolved = l.loopsRemaining() == 0 && !response.Healthy
 }
 
-func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, response *ToolResponse) {
+// verify observes fresh findings. stage is true for the automatic stage's own
+// observations, which are not the agent's ad hoc fixes.
+func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, response *ToolResponse, stage bool) {
 	previous := append([]sdk.Finding(nil), l.findings...)
 	view, err := l.snapshotView(ctx)
 	if err != nil {
@@ -865,24 +1340,36 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 		if l.Programs == nil {
 			break
 		}
-		p, ok := l.Programs.Diagnoser(plan.programID)
+		p, ok := plan.diagnoser, plan.diagnoser != nil
+		if !ok {
+			p, ok = l.Programs.Diagnoser(plan.programID)
+		}
 		if !ok {
 			continue
 		}
 		started := l.clock()
 		verdict := program.RunDiagnose(ctx, p, view, plan.bindings, l.deadline())
+<<<<<<< HEAD
 		run := ProgramRun{ProgramID: plan.programID, Bindings: plan.bindings, Verdict: verdict, Duration: l.clock().Sub(started)}
+=======
+		run := ProgramRun{ProgramRevision: plan.revision, ProgramID: plan.programID, Bindings: plan.bindings, Verdict: verdict, Duration: time.Since(started)}
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 		response.ProgramRuns = append(response.ProgramRuns, run)
 		l.runs = append(l.runs, run)
-		if verdict.Result == program.Match {
-			l.addFailureSignal("applied_diagnosis_still_match:" + plan.programID)
-		}
 	}
 	findings := make([]sdk.Finding, 0)
 	states := make([]DetectorEvaluation, 0, len(l.Detectors))
 	for _, detector := range l.Detectors {
+<<<<<<< HEAD
 		observed, err := detector.Detect(ctx, view)
 		state := DetectorEvaluation{DetectorID: detector.Spec().ID, EvaluatedAt: l.clock().UTC(), Status: DetectorEvaluationClear}
+=======
+		observed, err := sdk.DetectObserved(ctx, detector, view)
+		state := DetectorEvaluation{DetectorID: detector.Spec().ID, EvaluatedAt: time.Now().UTC(), Status: DetectorEvaluationClear, Reason: detectorConfirmationReason(detector, view)}
+		if err == nil && len(observed) == 0 && !detectorConfirmed(detector, view) {
+			state.Status = DetectorEvaluationPending
+		}
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 		if err != nil {
 			state.Status, state.Error = DetectorEvaluationError, err.Error()
 			response.Error = err.Error()
@@ -895,6 +1382,7 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 		}
 		states = append(states, state)
 	}
+<<<<<<< HEAD
 	drift, driftStates, driftRuns := checkRetainedDrift(ctx, l.Request.Findings, view, l.Programs, l.deadline(), nil, l.clock())
 	findings = append(findings, drift...)
 	states = append(states, driftStates...)
@@ -912,6 +1400,13 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 			}
 		}
 	} else if l.batches == 0 && l.stageWrites == 0 && len(previous) > 0 && len(findings) == 0 {
+=======
+	l.drift = retainedDrift(l.Request.Findings, view)
+	l.findings = findings
+	// Typed diagnoses and findings retain observation history. They are not
+	// durable execution failures; only actual ad hoc work needs a novelty flag.
+	if len(applied) == 0 && !stage && !l.appliedAny() && len(previous) > 0 && len(findings) == 0 {
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 		matched := false
 		for _, run := range l.runs {
 			if run.Verdict.Result == program.Match {
@@ -925,24 +1420,26 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 			l.addFailureSignal("adhoc_coverage_gap")
 		}
 	}
-	if len(applied) > 0 && len(findings) > 0 {
-		for _, run := range response.ProgramRuns {
-			if run.Verdict.Result == program.NoMatch {
-				l.addFailureSignal("diagnosis_clear_detectors_firing:" + run.ProgramID)
-			}
-		}
-	}
 	response.Findings, response.DetectorStates = append([]sdk.Finding(nil), findings...), states
+	response.Drift = append([]sdk.Finding(nil), l.drift...)
 	if len(findings) > 0 {
+<<<<<<< HEAD
 		runs := SelectProgramCandidatesWithOptions(ctx, l.Programs, view, findings, CandidateOptions{Clock: l.clock, Deadline: l.deadline(), SweepLimit: l.CandidateSweepLimit})
+=======
+		runs := SelectProgramCandidates(ctx, l.Programs, view, findings, l.deadline())
+		l.stampProgramRuns(runs)
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 		response.ProgramRuns = append(response.ProgramRuns, runs...)
 		l.runs = append(l.runs, runs...)
 	}
-	response.Healthy = response.Error == "" && len(findings) == 0 && (len(l.Detectors) > 0 || len(driftStates) > 0)
-	response.Unresolved = l.batches >= l.MaxBatches && !response.Healthy
+	response.Healthy = response.Error == "" && len(findings) == 0 && (len(l.Detectors) > 0 || hasRetainedDrift(l.Request.Findings)) && detectorsConfirmed(l.Detectors, view)
+	response.Unresolved = l.loopsRemaining() == 0 && !response.Healthy
 	if response.Error == "" {
-		response.Summary = fmt.Sprintf("verification: %d open findings", len(findings))
-		if response.Healthy {
+		response.Summary = fmt.Sprintf("verification: %d open findings", len(findings)) + pendingEvaluationSummary(states)
+		switch {
+		case response.Healthy && len(response.Drift) > 0:
+			response.Summary = fmt.Sprintf("verification: health is clear, but %d object(s) still differ from the accepted source; restore them or explain why they should differ, then return the structured incident result", len(response.Drift))
+		case response.Healthy:
 			response.Summary = "verification: healthy; return the structured incident result immediately"
 		}
 	}
@@ -962,7 +1459,7 @@ func boundPlansNoMatch(selected []selectedPlan, runs []ProgramRun) bool {
 	for _, plan := range selected {
 		clear := false
 		for _, run := range runs {
-			if run.ProgramID != plan.programID || !maps.Equal(run.Bindings, plan.bindings) {
+			if run.ProgramID != plan.programID || !run.Bindings.Equal(plan.bindings) {
 				continue
 			}
 			if run.Verdict.Result != program.NoMatch {
@@ -977,10 +1474,93 @@ func boundPlansNoMatch(selected []selectedPlan, runs []ProgramRun) bool {
 	return true
 }
 
+<<<<<<< HEAD
 // clock shares the executor's injected clock across diagnosis and apply receipts.
 func (l *ResponderLoop) clock() time.Time {
 	if l.Executor.Now != nil {
 		return l.Executor.Now()
 	}
 	return lifecycleio.Now()
+=======
+func (l *ResponderLoop) rollbackApplication(ctx context.Context, request ToolRequest, response *ToolResponse) {
+	application, ok := l.applications[request.ApplicationID]
+	if !ok {
+		response.Error = fmt.Sprintf("unknown application %q", request.ApplicationID)
+		return
+	}
+	if l.pendingConflict(ctx, planCaptureRefs(application.Plan), response) {
+		return
+	}
+	executor := l.Executor
+	reconciled, err := executor.Reconcile(ctx, application)
+	if err != nil {
+		response.Error = err.Error()
+		return
+	}
+	application = reconciled
+	rollbackErr := executor.rollback(ctx, &application)
+	if rollbackErr != nil {
+		application.RollbackError = rollbackErr.Error()
+	}
+	l.applications[request.ApplicationID] = application
+	l.updateMenuRollback(request.ApplicationID, application)
+	for i := range l.applicationsLog {
+		if l.applicationsLog[i].ID == request.ApplicationID {
+			l.applicationsLog[i].Result = application
+			l.applicationsLog[i].Pending = planApplicationPending(application)
+			l.applicationsLog[i].RolledBack = application.RolledBack
+			l.applicationsLog[i].RollbackError = application.RollbackError
+		}
+	}
+	if rollbackErr != nil {
+		response.Error = rollbackErr.Error()
+		return
+	}
+	l.verify(ctx, nil, response, request.stage)
+	if response.Error == "" {
+		response.Summary = "application rolled back and verified"
+	}
+}
+
+// appliedAny reports whether any plan, from the stage or the agent, has been
+// applied: later plans must then be built from a fresh view.
+func (l *ResponderLoop) appliedAny() bool { return l.batches > 0 || l.applySeq > 0 }
+
+// Menu rounds and provider continuations have separate budgets. Advertise and
+// enforce the same incident-wide write-batch limit used by menu execution.
+func (l *ResponderLoop) batchLimit() int {
+	if l.MenuConfig != nil {
+		return min(5, l.MaxBatches)
+	}
+	return l.MaxBatches
+}
+
+// spendLoop charges a write to the open act→verify cycle, opening one if the
+// last verification closed it. Every write path calls it only once a write is
+// about to run, so a call that writes nothing spends no loop.
+func (l *ResponderLoop) spendLoop() {
+	if !l.loopOpen {
+		l.batches++
+		l.loopOpen = true
+	}
+}
+
+// closeLoop ends the open cycle: a verification observed its writes.
+func (l *ResponderLoop) closeLoop() { l.loopOpen = false }
+
+// loopsRemaining counts the cycles that may still write, including the open one.
+func (l *ResponderLoop) loopsRemaining() int {
+	remaining := max(0, l.batchLimit()-l.batches)
+	if l.loopOpen {
+		remaining++
+	}
+	return remaining
+}
+
+func (l *ResponderLoop) clock() time.Time {
+	if l.Now != nil {
+		return l.Now()
+	}
+	return time.Now()
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 }

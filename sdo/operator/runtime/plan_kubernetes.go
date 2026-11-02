@@ -15,6 +15,8 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/sdk"
 )
 
@@ -63,37 +65,126 @@ type KubernetesPlanRollouts struct {
 	Client kubernetes.Interface
 }
 
+// Observe checks touched Deployments once. Pending never consumes a rollout wait.
+func (w KubernetesPlanRollouts) Observe(ctx context.Context, refs []sdk.ObjectRef) error {
+	if w.Client == nil {
+		return errors.New("Kubernetes rollout client is required")
+	}
+	started := time.Now()
+	var blockers []*contracts.RolloutBlocker
+	stalled := 0
+	for _, ref := range refs {
+		if ref.Kind != "Deployment" || ref.APIVersion != "apps/v1" {
+			continue
+		}
+		object, err := w.Client.AppsV1().Deployments(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("observe rollout %s/%s: %w", ref.Namespace, ref.Name, err)
+		}
+		if !deployment.DeploymentRolloutComplete(object) {
+			blocker, stuck, admission := w.rolloutBlocker(ctx, object, started)
+			if admission != nil {
+				return admission
+			}
+			blockers = append(blockers, blocker)
+			if stuck {
+				stalled++
+			}
+		}
+	}
+	if len(blockers) > 0 && stalled == len(blockers) {
+		return &rolloutBlockedError{blockers: blockers, cause: errRolloutStalled}
+	}
+	if len(blockers) > 0 {
+		return &rolloutBlockedError{blockers: blockers, cause: context.DeadlineExceeded}
+	}
+	return nil
+}
+
+// rolloutStallGrace lets transient scheduling failures (a node joining, a
+// volume binding) clear before a stall is handed off.
+const rolloutStallGrace = 2 * time.Second
+
+// errRolloutStalled means waiting cannot complete a rollout; it never means
+// the rollout failed or that its writes should be undone.
+var errRolloutStalled = errors.New("rollout cannot progress without another actor")
+
+// Wait settles each Deployment on its own: it returns once every one has
+// completed or stalled, so a stalled rollout never spends the bounded wait.
 func (w KubernetesPlanRollouts) Wait(ctx context.Context, refs []sdk.ObjectRef) error {
 	if w.Client == nil {
 		return errors.New("Kubernetes rollout client is required")
 	}
 	ticker := timerClock(w.Clock).NewTicker(time.Second)
 	defer ticker.Stop()
+	started := time.Now()
+	stalledSince := map[sdk.ObjectRef]time.Time{}
 	for {
-		settled := true
+		var blockers, stalled []*contracts.RolloutBlocker
 		for _, ref := range refs {
 			if ref.Kind != "Deployment" || ref.APIVersion != "apps/v1" {
 				continue
 			}
-			deployment, err := w.Client.AppsV1().Deployments(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+			deploymentObject, err := w.Client.AppsV1().Deployments(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
 			if err != nil {
 				return fmt.Errorf("observe rollout %s/%s: %w", ref.Namespace, ref.Name, err)
 			}
-			replicas := int32(1)
-			if deployment.Spec.Replicas != nil {
-				replicas = *deployment.Spec.Replicas
+			if deployment.DeploymentRolloutComplete(deploymentObject) {
+				delete(stalledSince, ref)
+				continue
 			}
-			if deployment.Status.ObservedGeneration < deployment.Generation || deployment.Status.UpdatedReplicas < replicas || deployment.Status.AvailableReplicas < replicas || deployment.Status.Replicas > replicas {
-				settled = false
+			blocker, stuck, admission := w.rolloutBlocker(ctx, deploymentObject, started)
+			if admission != nil {
+				return admission
+			}
+			blockers = append(blockers, blocker)
+			if !stuck {
+				delete(stalledSince, ref)
+				continue
+			}
+			if stalledSince[ref].IsZero() {
+				stalledSince[ref] = time.Now()
+			}
+			if time.Since(stalledSince[ref]) >= rolloutStallGrace {
+				stalled = append(stalled, blocker)
 			}
 		}
-		if settled {
+		if len(blockers) == 0 {
 			return nil
+		}
+		if len(stalled) == len(blockers) {
+			return &rolloutBlockedError{blockers: stalled, cause: errRolloutStalled}
 		}
 		select {
 		case <-ctx.Done():
+<<<<<<< HEAD
 			return ctx.Err()
 		case <-ticker.C():
+=======
+			return &rolloutBlockedError{blockers: blockers, cause: ctx.Err()}
+		case <-ticker.C:
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 		}
 	}
+}
+
+func (c KubernetesPlanClient) Create(ctx context.Context, ref sdk.ObjectRef, object *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	if object == nil || !samePlanRef(object, ref) || ref.Namespace == "" {
+		return nil, fmt.Errorf("object create kind/scope is unsupported")
+	}
+	resource, err := c.resource(ref)
+	if err != nil {
+		return nil, err
+	}
+	return resource.Create(ctx, object, metav1.CreateOptions{})
+}
+func (c KubernetesPlanClient) Delete(ctx context.Context, ref sdk.ObjectRef, uid types.UID, version string) error {
+	if uid == "" || version == "" {
+		return fmt.Errorf("delete requires UID/version preconditions")
+	}
+	resource, err := c.resource(ref)
+	if err != nil {
+		return err
+	}
+	return resource.Delete(ctx, ref.Name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid, ResourceVersion: &version}})
 }

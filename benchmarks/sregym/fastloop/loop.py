@@ -3,8 +3,8 @@
 For every incident the agent decides when to inject (the SDO controller first
 reports an all-clear baseline; a raw baseline agent injects at once) and then
 resolves the incident. The loop grades the live cluster with the problem's own
-deterministic oracle, recovers the fault the harness's way, lets the agent
-learn (SDO reflection, measured separately), and appends one record.
+deterministic oracle, persists the grade, lets the agent learn (SDO reflection,
+measured separately), recovers the fault, and appends one record.
 
 There is no conductor or application rebuild or undeploy between incidents.
 """
@@ -13,21 +13,35 @@ from __future__ import annotations
 
 import json
 import logging
+import math
+import os
 import time
 from concurrent.futures import Future, ThreadPoolExecutor, wait
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.records import (
     AgentName,
     DiagnosisGrade,
     IncidentRecord,
+    Injected,
+    NotInjected,
     OracleVerdict,
+    PostClosureWait,
+    RecoveryOracleSample,
     TokenCounts,
     append_record,
+    persist_grade_checkpoint,
     write_records,
 )
+from benchmarks.sregym.faults.description import SuiteCapabilities
+from benchmarks.sregym.protocol.injection import InvalidInjectionError, ensure_incident_follows_injection
+from benchmarks.sregym.protocol.provider_capacity import AccountEvent, ProviderWaitInterval, RateLimitedRun
+from benchmarks.sregym.protocol.recovery import RecoveryError, RecoveryFailureReason
+from libs.agent_cli.errors import rate_limit_failure
+from libs.agent_cli.provider_capacity import OpusPoolAllocation
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -36,6 +50,20 @@ if TYPE_CHECKING:
     from benchmarks.sregym.fastloop.continuity import ActivationContinuity
 
 logger = logging.getLogger(__name__)
+
+
+class RecoveryWaitTimeout(RuntimeError):
+    """A follow-up incident outlived recovery's bounded wait; the row stops with the wait recorded."""
+
+    def __init__(self, wait: PostClosureWait, message: str) -> None:
+        super().__init__(message)
+        self.wait = wait
+
+
+@dataclass(frozen=True)
+class ResolutionGradePoint:
+    incident_id: str | None
+    resolved_at: datetime | None
 
 
 @dataclass(frozen=True)
@@ -55,7 +83,12 @@ class AgentOutcome:
     """What an agent reports for one incident; learning fields arrive after recovery."""
 
     injection: InjectionWindow
+<<<<<<< HEAD
     memory_host_activations: list[ActivationContinuity] = field(default_factory=list)
+=======
+    provider_waits: tuple[ProviderWaitInterval, ...] = ()
+    account_events: tuple[AccountEvent, ...] = ()
+>>>>>>> origin/vic-lsh/dev/sdo-improve
     detected_at: datetime | None = None
     mitigation_applied_at: datetime | None = None
     resolved_at: datetime | None = None
@@ -74,10 +107,10 @@ class AgentOutcome:
     binding_sources: tuple[str, ...] = ()
     reflection_attempts: int | None = None
     reflection_skipped_reason: str | None = None
+    reflection_no_repair_count: int | None = None
+    playbook_coverage: dict[str, Any] | None = None
     resolution_path: str | None = None
-    fast_path_programs: tuple[str, ...] = ()
-    fast_path_relation_covered_findings: tuple[dict[str, Any], ...] = ()
-    fast_path_skipped_reason: str | None = None
+
     closure_phase_seconds: dict[str, float] = field(default_factory=dict)
     driver_phase_timings_seconds: dict[str, float] = field(default_factory=dict)
     fault_gate_timings_seconds: dict[str, float] = field(default_factory=dict)
@@ -128,6 +161,8 @@ class IncidentAgent(Protocol):
 
     def learn(self, outcome: AgentOutcome) -> AgentOutcome: ...
 
+    def prepare_recovery(self, outcome: AgentOutcome | None) -> PostClosureWait | None: ...
+
     def close(self) -> None: ...
 
 
@@ -146,9 +181,42 @@ class LoopConfig:
     image_delivery_reason: str = ""
     stream: tuple[tuple[str, ...], ...] = ()
     continue_on_error: bool = False
+    slot_offset: int = 0
     run_prelude_phase_seconds: dict[str, float] = field(default_factory=dict)
+    capability_evidence: SuiteCapabilities = field(default_factory=SuiteCapabilities)
+    permissive_responder: bool = False
+    responder_namespaces: tuple[str, ...] = ()
+    cleanup_passes: int = 1
+    lane_id: str | None = None
+    accepted_repository: Path | None = None
+    #: A single row whose next invocation rebuilds dirty application state.
+    row_start_tier2: bool = False
+    #: Admission's stabilization rule: sample until the app passes, within this budget.
+    recovery_settle_seconds: float = wait_for(WaitKind.ROLLOUT)
+    recovery_settle_poll_seconds: float = wait_for(WaitKind.SAMPLE)
+    opus_pool: OpusPoolAllocation | None = field(
+        default_factory=lambda: (
+            OpusPoolAllocation.from_environment(os.environ)
+            if any(
+                os.environ.get(name) for name in ("SDO_OPUS_POOL_MODE", "SDO_OPUS_POOL_DIR", "SDO_OPUS_POOL_NFS_SERVER")
+            )
+            else None
+        )
+    )
 
     def __post_init__(self) -> None:
+        if type(self.row_start_tier2) is not bool:
+            raise TypeError("row_start_tier2 must be a boolean")
+        if self.row_start_tier2 and self.incidents != 1:
+            raise ValueError("row_start_tier2 requires one incident per invocation")
+        if not 0 < self.recovery_settle_seconds <= 300:
+            raise ValueError("recovery_settle_seconds must be in (0, 300]")
+        if self.recovery_settle_poll_seconds <= 0:
+            raise ValueError("recovery_settle_poll_seconds must be positive")
+        if type(self.cleanup_passes) is not int or not 1 <= self.cleanup_passes <= 2:
+            raise ValueError("cleanup_passes must be 1 or 2")
+        if not isinstance(self.slot_offset, int) or self.slot_offset < 0:
+            raise ValueError("slot_offset must be a non-negative integer")
         if not self.run_id:
             raise ValueError("run_id must not be empty")
         if not self.problems or not all(isinstance(problem, str) and problem for problem in self.problems):
@@ -163,6 +231,27 @@ def _describe(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {exc}"
 
 
+def write_loop_manifest(config: LoopConfig) -> None:
+    """Persist benchmark capability policy before a worker or agent starts."""
+    config.results_path.parent.mkdir(parents=True, exist_ok=True)
+    config.results_path.with_name("run_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "sdo.fastloop-run/v1",
+                "run_id": config.run_id,
+                "fault_capabilities": config.capability_evidence.model_dump(mode="json"),
+                "permissive_responder": config.permissive_responder,
+                "responder_namespaces": list(config.responder_namespaces),
+                "cleanup_passes": config.cleanup_passes,
+                "opus_pool": asdict(config.opus_pool) if config.opus_pool is not None else None,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def run_incidents(
     agent: IncidentAgent,
     driver: FaultDriver,
@@ -170,10 +259,11 @@ def run_incidents(
     *,
     grader: DiagnosisGrader | None = None,
     diagnosis_grading: str = "off",
-    grading_timeout_seconds: float = 1800.0,
+    grading_timeout_seconds: float = wait_for(WaitKind.RESPONSE),
     on_failed_incident: Callable[[], None] | None = None,
     monotonic: Callable[[], float] = time.monotonic,
     now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+    sleep: Callable[[float], None] = time.sleep,
 ) -> list[IncidentRecord]:
     """Run ``config.incidents`` incidents, cycling through ``config.problems``."""
 
@@ -182,7 +272,7 @@ def run_incidents(
         raise ValueError("diagnosis_grading must be off, deferred, or inline")
     if diagnosis_grading != "off" and grader is None:
         raise ValueError("diagnosis grader is required when grading is enabled")
-    config.results_path.parent.mkdir(parents=True, exist_ok=True)
+    write_loop_manifest(config)
     config.results_path.with_name("run_metadata.json").write_text(
         json.dumps(
             {
@@ -200,8 +290,16 @@ def run_incidents(
     pending: dict[Future[DiagnosisGrade], IncidentRecord] = {}
     stop_reason = "completed"
     try:
-        for index in range(config.incidents):
-            ids = config.stream[index] if config.stream else (config.problems[index % len(config.problems)],)
+        for local_index in range(config.incidents):
+            index = config.slot_offset + local_index
+            ids = (
+                config.stream[local_index] if config.stream else (config.problems[local_index % len(config.problems)],)
+            )
+            before_commit = None
+            if config.accepted_repository is not None:
+                from benchmarks.sregym.fastloop.parallel_memory import memory_head
+
+                before_commit = memory_head(config.accepted_repository)
             record, recovered = _run_one(
                 agent,
                 driver,
@@ -210,13 +308,16 @@ def run_incidents(
                 ids,
                 monotonic=monotonic,
                 now=now,
+                sleep=sleep,
                 grader=grader if diagnosis_grading == "inline" else None,
             )
             baseline_ready = recovered or (record.recovery_oracle is not None and record.recovery_oracle.success)
             if (
                 config.continue_on_error
                 and record.error
-                and index + 1 < config.incidents
+                and record.recovery_error is None
+                and record.infra_error is None
+                and local_index + 1 < config.incidents
                 and on_failed_incident is not None
             ):
                 try:
@@ -226,6 +327,17 @@ def run_incidents(
                     logger.exception("reset failed after incident %d", index)
                     record.error = f"{record.error}; reset failed: {_describe(exc)}"
                     baseline_ready = False
+            record.capability_mode = config.capability_evidence.mode
+            if config.accepted_repository is not None and before_commit is not None:
+                from benchmarks.sregym.fastloop.parallel_memory import memory_ancestry, memory_head
+
+                record.lane_id = config.lane_id
+                record.memory_before_commit = before_commit
+                record.memory_after_commit = memory_head(config.accepted_repository)
+                record.memory_ancestry = memory_ancestry(
+                    config.accepted_repository, before_commit, record.memory_after_commit
+                )
+            record.fault_capabilities = [f for f in config.capability_evidence.faults if f.problem_id in ids]
             append_record(config.results_path, record)
             records.append(record)
             if pool is not None and grader is not None:
@@ -241,7 +353,11 @@ def run_incidents(
                 record.incident_wall_seconds or 0.0,
                 record.error,
             )
-            if (not config.continue_on_error and not recovered) or (config.continue_on_error and not baseline_ready):
+            if (
+                record.recovery_error
+                or (not config.continue_on_error and not recovered)
+                or (config.continue_on_error and not baseline_ready)
+            ):
                 stop_reason = f"incident {index} did not clear the recovery and learning gate"
                 logger.error("stopping: incident %d did not clear the recovery and learning gate", index)
                 break
@@ -283,6 +399,64 @@ def run_incidents(
     return records
 
 
+def _recover_fault(
+    agent: IncidentAgent,
+    driver: FaultDriver,
+    outcome: AgentOutcome | None,
+    waits: list[PostClosureWait] | None = None,
+) -> float:
+    # All harness recovery paths, including invalid injection and interruption,
+    # pass this fence. Missing SDO pause support fails before a recovery write.
+    if agent.name == "sdo":
+        prepare = getattr(agent, "prepare_recovery", None)
+        if not callable(prepare):
+            raise RuntimeError("eval: SDO recovery requires an incident intake pause capability")
+        try:
+            wait = prepare(outcome)
+        except RecoveryWaitTimeout as exc:
+            if waits is not None:
+                waits.append(exc.wait)
+            raise
+        if isinstance(wait, PostClosureWait) and waits is not None:
+            waits.append(wait)
+    return driver.recover()
+
+
+def _settled_recovery_oracle(
+    driver: FaultDriver,
+    grade: Callable[[], OracleVerdict],
+    config: LoopConfig,
+    samples: list[RecoveryOracleSample],
+    *,
+    monotonic: Callable[[], float],
+    sleep: Callable[[float], None],
+) -> OracleVerdict:
+    """Sample the recovered baseline until it passes or the settle budget ends (admission's rule).
+
+    Traffic can lag a just-recovered app; residue is a verdict that still fails at the budget.
+    """
+
+    independent = getattr(driver, "recovery_oracle", None)
+    started = monotonic()
+    # The sample cap also bounds a clock that sleep does not advance.
+    cap = math.ceil(config.recovery_settle_seconds / config.recovery_settle_poll_seconds) + 1
+    for attempt in range(1, cap + 1):
+        sample = independent() if callable(independent) else None
+        if sample is None:
+            verdict = grade()
+        elif isinstance(sample, OracleVerdict):
+            verdict = sample
+        else:
+            raise TypeError(f"recovery_oracle returned {type(sample).__name__}, not an OracleVerdict")
+        elapsed = monotonic() - started
+        samples.append(RecoveryOracleSample(seconds=round(elapsed, 3), success=verdict.success))
+        remaining = config.recovery_settle_seconds - elapsed
+        if verdict.success or remaining <= 0 or attempt == cap:
+            return verdict
+        sleep(min(config.recovery_settle_poll_seconds, remaining))
+    raise AssertionError("the settle loop returns on its last sample")
+
+
 def _run_one(
     agent: IncidentAgent,
     driver: FaultDriver,
@@ -292,6 +466,7 @@ def _run_one(
     *,
     monotonic: Callable[[], float],
     now: Callable[[], datetime],
+    sleep: Callable[[float], None] = time.sleep,
     grader: DiagnosisGrader | None = None,
 ) -> tuple[IncidentRecord, bool]:
     if not problem_ids:
@@ -301,23 +476,143 @@ def _run_one(
     problem_id = "+".join(problem_ids)
     windows: list[InjectionWindow] = []
 
+    injection_attempted = False
+
     def inject() -> InjectionWindow:
-        window = (
-            driver.inject_composite(problem_ids).window  # type: ignore[attr-defined]
-            if len(problem_ids) > 1
-            else driver.inject(first_problem)
-        )
+        nonlocal injection_attempted
+        injection_attempted = True
+        try:
+            window = (
+                driver.inject_composite(problem_ids).window  # type: ignore[attr-defined]
+                if len(problem_ids) > 1
+                else driver.inject(first_problem)
+            )
+        except Exception:
+            # The recorded worker event survives a later validity/oracle failure.
+            event = getattr(driver, "last_injection_window", None)
+            if event is not None:
+                windows.append(event)
+            raise
         windows.append(window)
         return window
 
     errors: list[str] = []
     outcome: AgentOutcome | None = None
+    oracle: OracleVerdict | None = None
+    infra_error: str | None = None
+    limited_waits: list[ProviderWaitInterval] = []
+    account_events: list[AccountEvent] = []
+    recovery_oracle: OracleVerdict | None = None
+    recovery_oracle_samples: list[RecoveryOracleSample] = []
+    oracle_finished_at: datetime | None = None
+    oracle_point: ResolutionGradePoint | None = None
+    diagnosis_grade: DiagnosisGrade | None = None
+    recovery_finished_at: datetime | None = None
+    recovery_seconds: float | None = None
+    cleanup_passes_verified = 0
+    post_closure_waits: list[PostClosureWait] = []
+    recovery_error: str | None = None
+    recovery_failures: list[RecoveryFailureReason] = []
+    recovered = False
+
+    def grade() -> OracleVerdict:
+        # The official aggregate oracle owns collateral/traffic policy. A submitted
+        # problem may itself contribute multiple components; positions are not IDs.
+        return driver.oracle()
+
+    def measure_resolution(point: ResolutionGradePoint | None = None) -> None:
+        nonlocal oracle, infra_error, oracle_finished_at, oracle_point
+        if oracle_finished_at is not None:
+            return
+        if not windows:
+            raise RuntimeError("cannot grade an incident before injection")
+        oracle_point = point
+        try:
+            oracle = grade()
+            raw_infra = oracle.details.get("infra_error")
+            infra_error = raw_infra if isinstance(raw_infra, str) and raw_infra.strip() else None
+            if not oracle.success and infra_error is None:
+                errors.append("oracle reported failure")
+        except Exception as exc:
+            logger.exception("oracle failed for incident %d", index)
+            infra_error = f"oracle failed: {_describe(exc)}"
+            errors.append(infra_error)
+        finally:
+            oracle_finished_at = now()
+            fields = (
+                _outcome_fields(outcome)
+                if outcome is not None
+                else {
+                    "incident_id": oracle_point.incident_id if oracle_point else None,
+                    "resolved_at": oracle_point.resolved_at if oracle_point else None,
+                }
+            )
+            checkpoint = IncidentRecord(
+                run_id=config.run_id,
+                index=index,
+                agent=agent.name,
+                problem_id=problem_id,
+                provider=getattr(agent, "provider", None),
+                model=agent.model,
+                reasoning_effort=getattr(agent, "reasoning_effort", None),
+                replay=getattr(agent, "replay", None),
+                injection=Injected(started_at=windows[0].started_at, finished_at=windows[0].finished_at),
+                oracle=oracle,
+                diagnosis_grade=diagnosis_grade,
+                oracle_finished_at=oracle_finished_at,
+                oracle_incident_id=oracle_point.incident_id if oracle_point else None,
+                oracle_resolved_at=oracle_point.resolved_at if oracle_point else None,
+                infra_error=infra_error,
+                **fields,
+            )
+            persist_grade_checkpoint(config.results_path.with_suffix(".grades") / f"{index:06d}.json", checkpoint)
+
     try:
-        outcome = agent.resolve(index, problem_id, inject)
-    except KeyboardInterrupt:
-        if windows:
+        resolve_at_closure = getattr(agent, "resolve_at_closure", None)
+        outcome = (
+            resolve_at_closure(index, problem_id, inject, measure_resolution)
+            if resolve_at_closure is not None
+            else agent.resolve(index, problem_id, inject)
+        )
+        if outcome is None:
+            raise TypeError("agent resolution returned no outcome")
+        if windows:  # the worker's recorded event, never the agent's own clock
+            ensure_incident_follows_injection(outcome.incident_id, outcome.detected_at, windows[0].started_at)
+    except InvalidInjectionError as exc:
+        cleanup_error = exc.cleanup_error
+        recovered = False
+        recovery_seconds = None
+        if not config.row_start_tier2:
             try:
-                driver.recover()
+                recovery_seconds = _recover_fault(agent, driver, outcome)
+                recovered = cleanup_error is None
+            except Exception as recovery_exc:
+                cleanup_error = f"invalid injection cleanup failed: {_describe(recovery_exc)}"
+        return IncidentRecord(
+            opus_pool=config.opus_pool,
+            run_id=config.run_id,
+            index=index,
+            agent=agent.name,
+            problem_id=problem_id,
+            provider=getattr(agent, "provider", None),
+            model=agent.model,
+            reasoning_effort=getattr(agent, "reasoning_effort", None),
+            replay=getattr(agent, "replay", None),
+            injection=_injection_state(windows, attempted=injection_attempted),
+            fault_components=getattr(driver, "last_components", []),
+            infra_error=exc.infra_error,
+            recovery_error=cleanup_error,
+            injection_evidence=exc.details,
+            cleanup_skipped_reason="row_start_tier2" if config.row_start_tier2 else None,
+            error=cleanup_error,
+            recovery_finished_at=now() if recovered else None,
+            fault_recovery_seconds=recovery_seconds,
+            incident_wall_seconds=monotonic() - started,
+        ), recovered
+    except KeyboardInterrupt:
+        if windows and not config.row_start_tier2:
+            try:
+                _recover_fault(agent, driver, outcome)
                 if not driver.oracle().success:
                     logger.error("fault oracle still fails after interrupt recovery for incident %d", index)
             except Exception:
@@ -325,21 +620,32 @@ def _run_one(
         raise
     except Exception as exc:
         logger.exception("incident %d failed", index)
-        errors.append(_describe(exc))
+        if limited := rate_limit_failure(exc):
+            infra_error = limited.failure_reason
+            if isinstance(exc, RateLimitedRun):
+                limited_waits = list(exc.evidence.intervals)
+                account_events = list(exc.evidence.account_events)
+        else:
+            errors.append(_describe(exc))
+        from benchmarks.sregym.fastloop.runtime_observation import ObservationUnavailable
 
-    oracle: OracleVerdict | None = None
-    recovery_oracle: OracleVerdict | None = None
-    oracle_finished_at: datetime | None = None
-    recovery_finished_at: datetime | None = None
-    recovery_seconds: float | None = None
+        if isinstance(exc, ObservationUnavailable) and not injection_attempted and not windows:
+            infra_error = "never_injected_retry"
+
     recovered = bool(windows)
-    diagnosis_grade: DiagnosisGrade | None = None
-    if windows and grader is not None and outcome is not None and outcome.diagnosis.strip():
+    if (
+        windows
+        and infra_error not in ("rate_limited", "account_exhausted")
+        and grader is not None
+        and outcome is not None
+        and outcome.diagnosis.strip()
+    ):
         try:
             diagnosis_grade = grader.grade(problem_ids, outcome.diagnosis if outcome else "")
         except Exception as exc:
             diagnosis_grade = DiagnosisGrade(error=_describe(exc))
     elif windows and grader is not None:
+<<<<<<< HEAD
         diagnosis_grade = DiagnosisGrade(skipped=True, skip_reason="no diagnosis text")
     learned_early = False
     learning_complete = True
@@ -351,19 +657,17 @@ def _run_one(
             learning_complete = False
         learned_early = True
     if windows:
+=======
+        diagnosis_grade = DiagnosisGrade(
+            skipped=True,
+            skip_reason=infra_error if infra_error in ("rate_limited", "account_exhausted") else "no diagnosis text",
+        )
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 
-        def grade() -> OracleVerdict:
-            if len(problem_ids) > 1:
-                verdicts = [driver.oracle(fault=position) for position in range(len(problem_ids))]  # type: ignore[call-arg]
-                return OracleVerdict(
-                    kind="composition",
-                    success=all(verdict.success for verdict in verdicts),
-                    details={
-                        problem: verdict.model_dump() for problem, verdict in zip(problem_ids, verdicts, strict=True)
-                    },
-                )
-            return driver.oracle()
+    if windows and oracle_finished_at is None and infra_error not in ("rate_limited", "account_exhausted"):
+        measure_resolution(ResolutionGradePoint(outcome.incident_id, outcome.resolved_at) if outcome else None)
 
+<<<<<<< HEAD
         try:
             oracle = grade()
             if not oracle.success:
@@ -394,17 +698,50 @@ def _run_one(
     elif outcome is not None and not learned_early:
         # Benchmark cleanup cannot invalidate SDO's own outcome or suppress its
         # reflection. The separate recovery gate still blocks the next injection.
+=======
+    learning_complete = outcome is None or not outcome.terminal_error
+    if outcome is not None:
+>>>>>>> origin/vic-lsh/dev/sdo-improve
         try:
             outcome = agent.learn(outcome)
         except Exception as exc:
             logger.exception("learning failed for incident %d", index)
-            errors.append(f"learning failed: {_describe(exc)}")
+            limited = rate_limit_failure(exc)
+            if limited is not None:
+                infra_error = limited.failure_reason
+                if isinstance(exc, RateLimitedRun):
+                    outcome = replace(outcome, account_events=exc.evidence.account_events)
+            else:
+                errors.append(f"learning failed: {_describe(exc)}")
             learning_complete = False
+
+    if windows and not config.row_start_tier2:
+        try:
+            recovery_seconds = 0.0
+            for _ in range(config.cleanup_passes):
+                recovery_seconds += _recover_fault(agent, driver, outcome, post_closure_waits)
+                # Seed cleanup can remove injected workloads; grade the recovered baseline.
+                recovery_oracle = _settled_recovery_oracle(
+                    driver, grade, config, recovery_oracle_samples, monotonic=monotonic, sleep=sleep
+                )
+                if not recovery_oracle.success:
+                    raise RuntimeError("recovery residue: the fault oracle still fails after harness recovery")
+                full_cleanup = getattr(driver, "last_full_cleanup_verified", False)
+                if config.cleanup_passes > 1 and not full_cleanup:
+                    raise RuntimeError("repeated cleanup requires verified full seed recovery on every pass")
+                if full_cleanup:
+                    cleanup_passes_verified += 1
+            recovery_finished_at = now()
+        except Exception as exc:
+            logger.exception("fault recovery failed for incident %d", index)
+            if isinstance(exc, RecoveryError):
+                recovery_failures = list(exc.recovery_failures)
+            recovery_error = f"fault recovery failed: {_describe(exc)}"
+            errors.append(recovery_error)
+            recovered = False
 
     if outcome is not None and outcome.error:
         errors.append(outcome.error)
-    fallback = windows[0] if windows else InjectionWindow(started_at=now(), finished_at=now())
-    window = outcome.injection if outcome is not None else fallback
     cleanup = getattr(driver, "last_cleanup", None) if windows else None
     delivery, reason = config.image_delivery, config.image_delivery_reason
     if config.delivery_record_path is not None and config.delivery_record_path.is_file():
@@ -413,36 +750,86 @@ def _run_one(
         state = delivery_state(config.delivery_record_path)
         if state:
             delivery, reason = state["path"], state["reason"]
+    outcome_fields: dict[str, Any] = (
+        _outcome_fields(outcome)
+        if outcome is not None
+        else {"provider_waits": limited_waits, "account_events": account_events}
+    )
     record = IncidentRecord(
+        opus_pool=config.opus_pool,
         image_delivery=delivery,
         image_delivery_reason=reason,
         run_id=config.run_id,
         index=index,
         agent=agent.name,
         problem_id=problem_id,
+        provider=getattr(agent, "provider", None),
         model=agent.model,
-        injection_started_at=window.started_at,
-        injection_finished_at=window.finished_at,
+        reasoning_effort=getattr(agent, "reasoning_effort", None),
+        replay=getattr(agent, "replay", None),
+        injection=_injection_state(windows, attempted=injection_attempted),
+        fault_components=getattr(driver, "last_components", []),
+        infra_error=infra_error,
         oracle=oracle,
         recovery_oracle=recovery_oracle,
+        recovery_oracle_samples=recovery_oracle_samples,
+        recovery_error=recovery_error,
+        recovery_failures=recovery_failures,
         diagnosis_grade=diagnosis_grade,
         oracle_finished_at=oracle_finished_at,
+        oracle_incident_id=oracle_point.incident_id if oracle_point else None,
+        oracle_resolved_at=oracle_point.resolved_at if oracle_point else None,
         recovery_finished_at=recovery_finished_at,
         fault_recovery_seconds=recovery_seconds,
+        post_closure_waits=post_closure_waits,
+        recovery_trigger=getattr(agent, "last_recovery_trigger", None) if windows else None,
         cleanup_deleted_counts=cleanup.deleted_counts if cleanup is not None else {},
         cleanup_restored=cleanup.restored if cleanup is not None else [],
-        cleanup_skipped_reason=cleanup.skipped_reason if cleanup is not None else None,
+        cleanup_skipped_reason=(
+            "row_start_tier2"
+            if windows and config.row_start_tier2
+            else cleanup.skipped_reason
+            if cleanup is not None
+            else None
+        ),
+        eval_notes=getattr(driver, "last_eval_notes", []) if windows else [],
+        confounds=getattr(driver, "last_confounds", []) if windows else [],
+        full_cleanup_verified=(
+            not config.row_start_tier2
+            and getattr(driver, "last_full_cleanup_verified", False)
+            and recovery_error is None
+        ),
+        cleanup_passes_verified=cleanup_passes_verified,
         incident_wall_seconds=monotonic() - started,
-        run_prelude_phase_seconds=config.run_prelude_phase_seconds if index == 0 else {},
+        run_prelude_phase_seconds=config.run_prelude_phase_seconds if index == config.slot_offset else {},
         error="; ".join(errors) or None,
-        **(_outcome_fields(outcome) if outcome is not None else {}),
+        **outcome_fields,
     )
+    if infra_error in ("rate_limited", "account_exhausted"):
+        try:
+            persist_grade_checkpoint(config.results_path.with_suffix(".grades") / f"{index:06d}.json", record)
+        except FileExistsError:
+            # Preserve the independent pre-reflection grade as evidence. The
+            # final row carries the later infrastructure exclusion.
+            pass
     return record, recovered and learning_complete
+
+
+def _injection_state(windows: list[InjectionWindow], *, attempted: bool) -> Injected | NotInjected:
+    if windows:
+        event = windows[0]
+        return Injected(started_at=event.started_at, finished_at=event.finished_at)
+    return NotInjected(stage="injection" if attempted else "pre_injection")
 
 
 def _outcome_fields(outcome: AgentOutcome) -> dict[str, Any]:
     return {
+<<<<<<< HEAD
         "memory_host_activations": outcome.memory_host_activations,
+=======
+        "provider_waits": list(outcome.provider_waits),
+        "account_events": list(outcome.account_events),
+>>>>>>> origin/vic-lsh/dev/sdo-improve
         "detected_at": outcome.detected_at,
         "mitigation_applied_at": outcome.mitigation_applied_at,
         "resolved_at": outcome.resolved_at,
@@ -461,10 +848,9 @@ def _outcome_fields(outcome: AgentOutcome) -> dict[str, Any]:
         "binding_sources": list(outcome.binding_sources),
         "reflection_attempts": outcome.reflection_attempts,
         "reflection_skipped_reason": outcome.reflection_skipped_reason,
+        "reflection_no_repair_count": outcome.reflection_no_repair_count,
+        "playbook_coverage": outcome.playbook_coverage,
         "resolution_path": outcome.resolution_path,
-        "fast_path_programs": list(outcome.fast_path_programs),
-        "fast_path_relation_covered_findings": list(outcome.fast_path_relation_covered_findings),
-        "fast_path_skipped_reason": outcome.fast_path_skipped_reason,
         "closure_phase_seconds": dict(outcome.closure_phase_seconds),
         "driver_phase_timings_seconds": dict(outcome.driver_phase_timings_seconds),
         "fault_gate_timings_seconds": dict(outcome.fault_gate_timings_seconds),

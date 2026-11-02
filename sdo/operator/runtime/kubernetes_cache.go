@@ -3,8 +3,13 @@ package runtime
 import (
 	"context"
 	"fmt"
+<<<<<<< HEAD
 	kclock "k8s.io/utils/clock"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
+=======
+	"sort"
+	"strings"
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	"sync"
 	"time"
 
@@ -15,10 +20,12 @@ import (
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
+	rbacinformers "k8s.io/client-go/informers/rbac/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 
@@ -32,6 +39,7 @@ import (
 )
 
 type KubernetesCacheConfig struct {
+<<<<<<< HEAD
 	// TimerClock controls waits for informer observation; nil uses production timers.
 	TimerClock kclock.WithTicker
 	// ResyncPeriod controls informer resyncs. Zero disables resync; simulations
@@ -39,6 +47,13 @@ type KubernetesCacheConfig struct {
 	ResyncPeriod time.Duration
 	// Clock supplies snapshot observation time; nil uses the production clock.
 	Clock              func() time.Time
+=======
+	GenericCapture     *controllercore.GenericCapture
+	Now                func() time.Time
+	AcceptedScope      func(context.Context) (sdk.ObservationScope, string, error)
+	Scope, Ceiling     sdk.ObservationScope
+	Generation         string
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	Namespace          string
 	Client             kubernetes.Interface
 	StateConfigMapName string
@@ -60,8 +75,15 @@ type ObjectChange struct {
 // would either drop kinds on overflow or delay a ConfigMap delete behind a
 // backlog of unrelated Pod events.
 type KubernetesCache struct {
-	config   KubernetesCacheConfig
-	declared map[string]sdk.WatchKind
+	scopedRetries    map[string]scopedRetry
+	scopedLastStatus map[string]sdk.ObservationStatus
+	scopedMu         sync.Mutex
+	scopedPrevious   map[string]map[string]*unstructured.Unstructured
+	scopedStatuses   map[string]string
+	scopedTracker    *StateTracker
+	podAdmission     bool
+	config           KubernetesCacheConfig
+	declared         map[string]sdk.WatchKind
 
 	// informerMu guards the live informer generation. Stop and Resync replace
 	// it so a redeployed application namespace is observed through a fresh
@@ -81,6 +103,9 @@ type KubernetesCache struct {
 }
 
 func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) (*KubernetesCache, error) {
+	if err := config.Scope.Within(config.Ceiling); err != nil {
+		return nil, err
+	}
 	if config.Namespace == "" {
 		return nil, fmt.Errorf("namespace is required")
 	}
@@ -91,7 +116,7 @@ func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) 
 		return nil, fmt.Errorf("Kubernetes client is required")
 	}
 	result := &KubernetesCache{
-		config: config, pending: make(map[string]sdk.WatchKind), changes: make(map[string]ObjectChange), notify: make(chan struct{}, 1),
+		podAdmission: sdk.ConsumesPodAdmission(detectors), config: config, pending: make(map[string]sdk.WatchKind), changes: make(map[string]ObjectChange), notify: make(chan struct{}, 1),
 	}
 	declared := make(map[string]sdk.WatchKind)
 	for _, d := range detectors {
@@ -101,7 +126,7 @@ func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) 
 	}
 	for _, detector := range detectors {
 		for _, watch := range detector.Spec().Watches {
-			if watch.Namespace != "" && watch.Namespace != config.Namespace {
+			if !config.Scope.AllowsWatch(watch, config.Namespace) {
 				return nil, fmt.Errorf("watch namespace %q does not match cache namespace %q", watch.Namespace, config.Namespace)
 			}
 			if watch.APIVersion == traffic.Watch.APIVersion && watch.Kind == traffic.Watch.Kind ||
@@ -109,6 +134,7 @@ func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) 
 				// Synthetic-traffic and reachability results arrive through Notify, not an informer.
 				continue
 			}
+<<<<<<< HEAD
 			if watch.APIVersion == usage.Watch.APIVersion && watch.Kind == usage.Watch.Kind || watch.APIVersion == metrics.Watch.APIVersion && watch.Kind == metrics.Watch.Kind {
 				// Metrics detectors run on their interval; no informer backs the watch.
 				continue
@@ -120,6 +146,17 @@ func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) 
 			watch.Namespace = config.Namespace
 			if watch.Kind == "Node" && watch.APIVersion == "v1" {
 				watch.Namespace = ""
+=======
+			if watch.Namespace != "" && watch.Namespace != config.Namespace || (sdk.ObservationTarget{Kind: watch.Kind}).Cluster() {
+				continue
+			}
+			if watch.APIVersion == metrics.Watch.APIVersion && watch.Kind == metrics.Watch.Kind {
+				// Metrics detectors run on their interval; no informer backs the watch.
+				continue
+			}
+			if !inventoryClusterKind(watch.Kind) {
+				watch.Namespace = config.Namespace
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 			}
 			declared[watch.APIVersion+"/"+watch.Kind] = watch
 		}
@@ -131,8 +168,15 @@ func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) 
 			{APIVersion: "apps/v1", Kind: "ReplicaSet"}, {APIVersion: "v1", Kind: "Endpoints"},
 			{APIVersion: "discovery.k8s.io/v1", Kind: "EndpointSlice"},
 			{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy"},
+			{APIVersion: "apps/v1", Kind: "StatefulSet"}, {APIVersion: "apps/v1", Kind: "DaemonSet"},
+			{APIVersion: "v1", Kind: "ServiceAccount"}, {APIVersion: "v1", Kind: "PersistentVolumeClaim"},
+			{APIVersion: "batch/v1", Kind: "Job"}, {APIVersion: "batch/v1", Kind: "CronJob"},
+			{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "Role"}, {APIVersion: "rbac.authorization.k8s.io/v1", Kind: "RoleBinding"},
+			{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole"}, {APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRoleBinding"},
 		} {
-			watch.Namespace = config.Namespace
+			if !inventoryClusterKind(watch.Kind) {
+				watch.Namespace = config.Namespace
+			}
 			declared[watch.APIVersion+"/"+watch.Kind] = watch
 		}
 	}
@@ -146,7 +190,19 @@ func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) 
 }
 
 func (c *KubernetesCache) build() (informers.SharedInformerFactory, map[string]cache.SharedIndexInformer, error) {
+<<<<<<< HEAD
 	factory := informers.NewSharedInformerFactoryWithOptions(c.config.Client, c.config.ResyncPeriod, informers.WithNamespace(c.config.Namespace))
+=======
+	factory := informers.NewSharedInformerFactoryWithOptions(c.config.Client, 0, informers.WithNamespace(c.config.Namespace))
+	// RoleBindings in other namespaces may reference an application-relevant
+	// ClusterRole. Observe them for ownership checks, without admitting foreign
+	// objects to the application inventory or detector snapshots.
+	if c.config.TrackDrift {
+		factory.InformerFor(&rbacv1.RoleBinding{}, func(client kubernetes.Interface, resync time.Duration) cache.SharedIndexInformer {
+			return rbacinformers.NewRoleBindingInformer(client, metav1.NamespaceAll, resync, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+		})
+	}
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	built := make(map[string]cache.SharedIndexInformer, len(c.declared))
 	for key, watch := range c.declared {
 		informer, err := informerFor(factory, key)
@@ -193,15 +249,48 @@ func (c *KubernetesCache) Start(ctx context.Context) {
 	c.factory.Start(running.Done())
 }
 
+// Observe brings observation up to date after a maintenance interval that
+// stopped it: a fresh generation is listed, and a cache never started is
+// started. It waits for the initial list.
+func (c *KubernetesCache) Observe(start, ctx context.Context) error {
+	return c.observe(start, ctx, false)
+}
+
+// ObserveRunning is Observe for an interval that left the informers running,
+// so their stores are still current. It only waits when they really are
+// running: a cache that was never started (the controller launched inside a
+// baseline-preserving pause) must be started, since informers that were never
+// started never sync.
+func (c *KubernetesCache) ObserveRunning(start, ctx context.Context) error {
+	return c.observe(start, ctx, true)
+}
+
+func (c *KubernetesCache) observe(start, ctx context.Context, keepRunning bool) error {
+	c.informerMu.RLock()
+	running, used := c.cancel != nil, c.parent != nil
+	c.informerMu.RUnlock()
+	switch {
+	case keepRunning && running:
+		return c.WaitForSync(ctx)
+	case used:
+		return c.Resync(ctx)
+	}
+	c.Start(start)
+	return c.WaitForSync(ctx)
+}
+
 // Stop ends observation, for example while the application is intentionally
 // absent, without discarding pending watch events.
 func (c *KubernetesCache) Stop() {
 	c.informerMu.Lock()
-	defer c.informerMu.Unlock()
+	factory := c.factory
 	if c.cancel != nil {
 		c.cancel()
 		c.cancel = nil
 	}
+	c.informerMu.Unlock()
+	// Outside the lock: Shutdown waits for handlers that may read the cache.
+	factory.Shutdown()
 }
 
 // Resync replaces the informers with a fresh generation, starts it, and waits
@@ -215,6 +304,7 @@ func (c *KubernetesCache) Resync(ctx context.Context) error {
 	if c.cancel != nil {
 		c.cancel()
 	}
+	previous := c.factory
 	parent := c.parent
 	if parent == nil {
 		parent = ctx
@@ -224,26 +314,79 @@ func (c *KubernetesCache) Resync(ctx context.Context) error {
 	c.factory, c.informers = factory, built
 	factory.Start(running.Done())
 	c.informerMu.Unlock()
+	// The replaced generation is stopped; wait for its goroutines to exit.
+	previous.Shutdown()
 	return c.WaitForSync(ctx)
 }
 
+// InformerSyncError reports the informers whose initial list never completed,
+// by apiVersion/kind. A controller that cannot observe a kind is blind to it,
+// so callers fail with this error instead of continuing on a partial cache.
+type InformerSyncError struct {
+	Kinds []string
+	Err   error
+}
+
+func (e *InformerSyncError) Error() string {
+	return fmt.Sprintf("Kubernetes informer cache did not sync %s: %v", strings.Join(e.Kinds, ", "), e.Err)
+}
+
+func (e *InformerSyncError) Unwrap() error { return e.Err }
+
 func (c *KubernetesCache) WaitForSync(ctx context.Context) error {
 	c.informerMu.RLock()
-	syncs := make([]cache.InformerSynced, 0, len(c.informers))
-	for _, informer := range c.informers {
-		syncs = append(syncs, informer.HasSynced)
+	synced := make(map[string]cache.InformerSynced, len(c.informers))
+	for key, informer := range c.informers {
+		synced[key] = informer.HasSynced
 	}
 	c.informerMu.RUnlock()
-	if len(syncs) == 0 {
-		return nil
-	}
-	if !cache.WaitForCacheSync(ctx.Done(), syncs...) {
-		if err := ctx.Err(); err != nil {
-			return err
+	unsynced := func() []string {
+		kinds := []string{}
+		for key, hasSynced := range synced {
+			if !hasSynced() {
+				kinds = append(kinds, key)
+			}
 		}
-		return fmt.Errorf("Kubernetes informer cache failed to sync")
+		sort.Strings(kinds)
+		return kinds
+	}
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for len(unsynced()) > 0 {
+		select {
+		case <-ctx.Done():
+			kinds := unsynced()
+			if len(kinds) == 0 {
+				return nil
+			}
+			return &InformerSyncError{Kinds: kinds, Err: ctx.Err()}
+		case <-ticker.C:
+		}
 	}
 	return nil
+}
+
+// InformerGrant is the read access one started informer needs: ClusterWide
+// informers list and watch across namespaces and need a ClusterRole, the rest
+// need a Role in the observed namespace.
+type InformerGrant struct {
+	Key, Group, Resource string
+	ClusterWide          bool
+}
+
+// RequiredGrants lists the grants every informer this cache starts depends
+// on. The install ratchet derives the controller's list/watch grants from it.
+func (c *KubernetesCache) RequiredGrants() []InformerGrant {
+	grants := make([]InformerGrant, 0, len(c.informers))
+	for key := range c.informers {
+		resource := informerResources[key]
+		kind := key[strings.LastIndex(key, "/")+1:]
+		// With drift tracking, RoleBindings are observed in every namespace (see build).
+		clusterWide := inventoryClusterKind(kind) || kind == "RoleBinding" && c.config.TrackDrift
+		grants = append(grants, InformerGrant{Key: key, Group: resource.Group, Resource: resource.Resource, ClusterWide: clusterWide})
+	}
+	sort.Slice(grants, func(i, j int) bool { return grants[i].Key < grants[j].Key })
+	return grants
 }
 
 // Notifications signals that at least one watched kind changed since the last
@@ -300,13 +443,36 @@ func (c *KubernetesCache) enqueue(watch sdk.WatchKind) {
 }
 
 func (c *KubernetesCache) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
+<<<<<<< HEAD
 	clock := c.config.Clock
 	if clock == nil {
 		clock = lifecycleio.Now
+=======
+	c.scopedMu.Lock()
+	defer c.scopedMu.Unlock()
+	if c.config.AcceptedScope != nil {
+		scope, revision, err := c.config.AcceptedScope(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if err = scope.Within(c.config.Ceiling); err != nil {
+			return nil, err
+		}
+		c.reconcileScope(scope, revision)
+	}
+	scoped, err := c.readScoped(ctx)
+	if err != nil {
+		return nil, err
+	}
+	c.observeScoped(scoped)
+	snapshot := controllercore.DetectionSnapshot{GenericCapture: c.config.GenericCapture, NamespaceName: c.config.Namespace, ObservedAtTime: time.Now().UTC(), ScopedSnapshot: scoped}
+	statefulSets, err := c.config.Client.AppsV1().StatefulSets(c.config.Namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list statefulsets: %w", err)
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	}
 	snapshot := controllercore.DetectionSnapshot{NamespaceName: c.config.Namespace, ObservedAtTime: clock().UTC()}
 	c.informerMu.RLock()
-	defer c.informerMu.RUnlock()
 	for key, informer := range c.informers {
 		for _, object := range informer.GetStore().List() {
 			switch key {
@@ -356,6 +522,11 @@ func (c *KubernetesCache) Snapshot(ctx context.Context) (sdk.DetectionContext, e
 			}
 		}
 	}
+	c.informerMu.RUnlock()
+	if c.podAdmission {
+		r := controllercore.ObservePodAdmission(ctx, c.config.Client, c.config.Namespace, snapshot.PodList)
+		snapshot.Admission = &r
+	}
 	return snapshot, nil
 }
 
@@ -364,6 +535,13 @@ func (c *KubernetesCache) eventHandler(watch sdk.WatchKind) cache.ResourceEventH
 		identity := object
 		if identity == nil {
 			identity = previous
+		}
+		if watch.Kind == "RoleBinding" {
+			binding := driftObject(identity, watch)
+			if binding != nil && binding.GetNamespace() != c.config.Namespace {
+				c.enqueue(watch)
+				return
+			}
 		}
 		if watch.Kind == "ConfigMap" && objectName(identity) == c.config.StateConfigMapName {
 			return
@@ -430,6 +608,30 @@ func objectName(object any) string {
 	return accessor.GetName()
 }
 
+// informerResources maps every informer key to the REST resource its list and
+// watch calls need, in the same order as informerFor.
+var informerResources = map[string]struct{ Group, Resource string }{
+	"v1/ConfigMap":                                    {"", "configmaps"},
+	"v1/Service":                                      {"", "services"},
+	"v1/Pod":                                          {"", "pods"},
+	"apps/v1/Deployment":                              {"apps", "deployments"},
+	"apps/v1/ReplicaSet":                              {"apps", "replicasets"},
+	"v1/Endpoints":                                    {"", "endpoints"},
+	"discovery.k8s.io/v1/EndpointSlice":               {"discovery.k8s.io", "endpointslices"},
+	"networking.k8s.io/v1/NetworkPolicy":              {"networking.k8s.io", "networkpolicies"},
+	"apps/v1/StatefulSet":                             {"apps", "statefulsets"},
+	"apps/v1/DaemonSet":                               {"apps", "daemonsets"},
+	"v1/ServiceAccount":                               {"", "serviceaccounts"},
+	"v1/PersistentVolumeClaim":                        {"", "persistentvolumeclaims"},
+	"batch/v1/Job":                                    {"batch", "jobs"},
+	"batch/v1/CronJob":                                {"batch", "cronjobs"},
+	"rbac.authorization.k8s.io/v1/Role":               {"rbac.authorization.k8s.io", "roles"},
+	"rbac.authorization.k8s.io/v1/RoleBinding":        {"rbac.authorization.k8s.io", "rolebindings"},
+	"rbac.authorization.k8s.io/v1/ClusterRole":        {"rbac.authorization.k8s.io", "clusterroles"},
+	"rbac.authorization.k8s.io/v1/ClusterRoleBinding": {"rbac.authorization.k8s.io", "clusterrolebindings"},
+	"v1/Event":                                        {"", "events"},
+}
+
 func informerFor(factory informers.SharedInformerFactory, key string) (cache.SharedIndexInformer, error) {
 	switch key {
 	case "apps/v1/StatefulSet":
@@ -471,9 +673,135 @@ func informerFor(factory informers.SharedInformerFactory, key string) (cache.Sha
 		return factory.Discovery().V1().EndpointSlices().Informer(), nil
 	case "networking.k8s.io/v1/NetworkPolicy":
 		return factory.Networking().V1().NetworkPolicies().Informer(), nil
+	case "apps/v1/StatefulSet":
+		return factory.Apps().V1().StatefulSets().Informer(), nil
+	case "apps/v1/DaemonSet":
+		return factory.Apps().V1().DaemonSets().Informer(), nil
+	case "v1/ServiceAccount":
+		return factory.Core().V1().ServiceAccounts().Informer(), nil
+	case "v1/PersistentVolumeClaim":
+		return factory.Core().V1().PersistentVolumeClaims().Informer(), nil
+	case "batch/v1/Job":
+		return factory.Batch().V1().Jobs().Informer(), nil
+	case "batch/v1/CronJob":
+		return factory.Batch().V1().CronJobs().Informer(), nil
+	case "rbac.authorization.k8s.io/v1/Role":
+		return factory.Rbac().V1().Roles().Informer(), nil
+	case "rbac.authorization.k8s.io/v1/RoleBinding":
+		return factory.Rbac().V1().RoleBindings().Informer(), nil
+	case "rbac.authorization.k8s.io/v1/ClusterRole":
+		return factory.Rbac().V1().ClusterRoles().Informer(), nil
+	case "rbac.authorization.k8s.io/v1/ClusterRoleBinding":
+		return factory.Rbac().V1().ClusterRoleBindings().Informer(), nil
 	case "v1/Event":
 		return factory.Core().V1().Events().Informer(), nil
 	default:
 		return nil, fmt.Errorf("unsupported informer resource %q", key)
 	}
+}
+
+// SourceDriftObjects returns the current non-secret informer inventory. It does
+// no API reads and never includes resource versions or status in its verdict.
+func (c *KubernetesCache) SourceDriftObjects() []*unstructured.Unstructured {
+	c.informerMu.RLock()
+	defer c.informerMu.RUnlock()
+	objects := []*unstructured.Unstructured{}
+	// Resolve relevant cluster RBAC from binding subjects before converting any
+	// rule bodies. Unrelated cluster authorization is outside this inventory.
+	clusterRoles := map[string]bool{}
+	clusterBindings := map[string]bool{}
+	bound := func(subjects []rbacv1.Subject, namespace string) bool {
+		for _, subject := range subjects {
+			ns := subject.Namespace
+			if ns == "" {
+				ns = namespace
+			}
+			if subject.Kind == "ServiceAccount" && ns == c.config.Namespace {
+				return true
+			}
+		}
+		return false
+	}
+	for _, key := range []string{"rbac.authorization.k8s.io/v1/RoleBinding", "rbac.authorization.k8s.io/v1/ClusterRoleBinding"} {
+		informer := c.informers[key]
+		if informer == nil {
+			continue
+		}
+		for _, object := range informer.GetStore().List() {
+			switch binding := object.(type) {
+			case *rbacv1.RoleBinding:
+				if bound(binding.Subjects, binding.Namespace) && binding.RoleRef.Kind == "ClusterRole" {
+					clusterRoles[binding.RoleRef.Name] = true
+				}
+			case *rbacv1.ClusterRoleBinding:
+				if bound(binding.Subjects, "") {
+					clusterBindings[binding.Name] = true
+					if binding.RoleRef.Kind == "ClusterRole" {
+						clusterRoles[binding.RoleRef.Name] = true
+					}
+				}
+			case *unstructured.Unstructured:
+				for ref := range inventoryRBACScope(c.config.Namespace, []*unstructured.Unstructured{binding}) {
+					if ref.Kind == "ClusterRole" {
+						clusterRoles[ref.Name] = true
+					}
+					if ref.Kind == "ClusterRoleBinding" {
+						clusterBindings[ref.Name] = true
+					}
+				}
+			}
+		}
+	}
+	for key, informer := range c.informers {
+		api, kind := splitInformerKey(key)
+		for _, object := range informer.GetStore().List() {
+			if kind == "RoleBinding" {
+				accessor, err := meta.Accessor(object)
+				if err != nil || accessor.GetNamespace() != c.config.Namespace {
+					continue
+				}
+			}
+			if kind == "ClusterRole" && !clusterRoles[objectName(object)] || kind == "ClusterRoleBinding" && !clusterBindings[objectName(object)] {
+				continue
+			}
+			if observed := driftObject(object, sdk.WatchKind{APIVersion: api, Kind: kind}); observed != nil {
+				objects = append(objects, observed)
+			}
+		}
+	}
+	return objects
+}
+
+// SourceRemovalObjects retains the complete RBAC graph for negative ownership
+// proofs. It is not exposed as application drift or as a detector read view.
+func (c *KubernetesCache) SourceRemovalObjects() []*unstructured.Unstructured {
+	c.informerMu.RLock()
+	defer c.informerMu.RUnlock()
+	var objects []*unstructured.Unstructured
+	for key, informer := range c.informers {
+		api, kind := splitInformerKey(key)
+		if api != "rbac.authorization.k8s.io/v1" {
+			continue
+		}
+		for _, object := range informer.GetStore().List() {
+			if observed := driftObject(object, sdk.WatchKind{APIVersion: api, Kind: kind}); observed != nil {
+				objects = append(objects, observed)
+			}
+		}
+	}
+	return objects
+}
+func splitInformerKey(key string) (string, string) {
+	index := strings.LastIndex(key, "/")
+	return key[:index], key[index+1:]
+}
+func (c *KubernetesCache) SourceDriftReady() bool {
+	c.informerMu.RLock()
+	defer c.informerMu.RUnlock()
+	for _, informer := range c.informers {
+		if !informer.HasSynced() {
+			return false
+		}
+	}
+	return true
 }

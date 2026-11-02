@@ -2,6 +2,7 @@ package install
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -83,7 +84,7 @@ func (i Installer) InspectExisting(ctx context.Context, cfg InspectConfig) (Exis
 	if podUID == "" {
 		return ExistingController{}, errors.New("existing controller has no ready owned Pod")
 	}
-	if err := i.restoreApplicationGrants(ctx, cfg); err != nil {
+	if err := i.restoreApplicationGrantsWithSettings(ctx, cfg, job.Spec.Template.Annotations[PermissiveResponderAnnotation]); err != nil {
 		return ExistingController{}, err
 	}
 	commit, err := i.ReadAcceptedCommit(ctx, SyncConfig{ControlNamespace: cfg.ControlNamespace, RepositoryPVC: cfg.RepositoryPVC, ControllerImage: cfg.ControllerImage})
@@ -114,11 +115,21 @@ func podReady(conditions []corev1.PodCondition) bool {
 	return false
 }
 
-// restoreApplicationGrants reapplies the namespace-scoped grants the controller holds in the application
-// namespace. A harness that recreates that namespace between stages deletes them, and the persistent controller
-// would then keep running without being able to observe the application.
+// restoreApplicationGrants re-applies the cluster grant of every SDO identity and the responder namespaces,
+// so a persistent controller keeps its authority across stages.
 func (i Installer) restoreApplicationGrants(ctx context.Context, cfg InspectConfig) error {
+	return i.restoreApplicationGrantsWithSettings(ctx, cfg, "")
+}
+
+func (i Installer) restoreApplicationGrantsWithSettings(ctx context.Context, cfg InspectConfig, settings string) error {
+	var namespaces []string
+	if settings != "" {
+		if err := json.Unmarshal([]byte(settings), &namespaces); err != nil {
+			return fmt.Errorf("invalid permissive responder settings: %w", err)
+		}
+	}
 	plan, err := Resources(Config{
+		PermissiveResponder: settings != "", ResponderNamespaces: namespaces,
 		Namespace: cfg.Namespace, ControlNamespace: cfg.ControlNamespace, Application: cfg.Application,
 		RepositoryPVC: cfg.RepositoryPVC, CredentialsSecret: "grants-only", Model: "grants-only",
 		ControllerImage: cfg.ControllerImage, ResponderImage: cfg.ControllerImage,
@@ -128,6 +139,7 @@ func (i Installer) restoreApplicationGrants(ctx context.Context, cfg InspectConf
 	if err != nil {
 		return fmt.Errorf("plan application grants: %w", err)
 	}
+<<<<<<< HEAD
 	if err := i.ensureClusterGrants(ctx, plan); err != nil {
 		return err
 	}
@@ -135,11 +147,10 @@ func (i Installer) restoreApplicationGrants(ctx context.Context, cfg InspectConf
 		if err := i.upsertRole(ctx, role); err != nil {
 			return err
 		}
+=======
+	if err := i.ensurePermissiveNamespaces(ctx, Config{PermissiveResponder: settings != "", ResponderNamespaces: namespaces}); err != nil {
+		return err
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	}
-	for _, binding := range plan.AppBindings {
-		if err := i.upsertBinding(ctx, binding); err != nil {
-			return err
-		}
-	}
-	return nil
+	return i.ensureClusterGrants(ctx, plan)
 }

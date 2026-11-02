@@ -19,6 +19,7 @@ var skillsRoot = filepath.Join("..", "..", "..", "skills")
 
 // internalRules are validator rules no agent skill teaches, each with the reason.
 var internalRules = map[string]string{
+<<<<<<< HEAD
 	RuleLegacyManifest:      "only the current schema is supported; authoring agents never see a legacy manifest",
 	RuleSchemaVersion:       "the schema-version file is controller metadata, changed only by Upkeep",
 	RuleArchitectureMissing: "Go generates the manifest inventory; no authoring skill edits it",
@@ -26,6 +27,26 @@ var internalRules = map[string]string{
 	RuleUnknownActor:        "the controller supplies the actor; an agent cannot choose it",
 	RuleUnknownPhase:        "the controller supplies the phase; an agent cannot choose it",
 	RuleUnsafePath:          "a path-traversal guard against malformed diffs, not an authoring decision",
+=======
+	RuleDetectorHealthyBaseline: "missing controller healthy capture is informational",
+	RuleReplayObservation:       "informational replay observations, never an acceptance gate",
+	RuleLegacyManifest:          "Upkeep migrates schema versions; authoring agents never see a legacy manifest",
+	RuleSchemaVersion:           "the schema-version file is controller metadata, changed only by Upkeep",
+	RuleGoalMissing:             "the human goal is installed before any agent runs",
+	RuleArchitectureMissing:     "the deployer's architecture stage is not an authoring skill flow",
+	RuleGoalOwner:               "goal.md is human-owned and no skill flow edits it",
+	RuleArchitectureCommit:      "architecture belongs to the deployer lifecycle stage",
+	RuleArchitectureBaseline:    "architecture belongs to the deployer lifecycle stage",
+	RuleUnknownActor:            "the controller supplies the actor; an agent cannot choose it",
+	RuleUnknownPhase:            "the controller supplies the phase; an agent cannot choose it",
+	RuleUnsafePath:              "a path-traversal guard against malformed diffs, not an authoring decision",
+	RuleUpkeepMigration:         "only the Upkeep actor migrates schema versions",
+	RuleArchitectureAlone:       "architecture belongs to the deployer lifecycle stage",
+
+	RuleReflectionDetectorRequired: "a coverage-gap name, recorded and never refused; the skills teach linking detectors",
+	RuleTrafficUndrivenEdge:        "a coverage-gap name, recorded and never refused; the detector-authoring skill teaches driving every edge",
+	RuleTrafficDefaultLatency:      "a coverage-gap name, recorded and never refused; the detector-authoring skill teaches latency bounds",
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 
 // ruleIDs returns every rule constant declared in rules.go.
@@ -143,7 +164,7 @@ func exampleTree(t *testing.T) string {
 	write(t, root, ".sdo/goal.md", "---\nschema_version: 1\nowner: human\napplication: demo\n---\nKeep the application healthy.\n")
 	write(t, root, ".sdo/arch.md", "---\nschema_version: 1\ngenerated_at_commit: base\napplication: demo\n---\nA small application.\n")
 	write(t, root, ".sdo/schema-version", strconv.Itoa(layout.CurrentSchemaVersion)+"\n")
-	write(t, root, ".sdo/playbooks/README.md", "# Playbooks\n\n- [restart-loop](restart-loop/README.md)\n")
+	generateIndex(t, root)
 	return root
 }
 

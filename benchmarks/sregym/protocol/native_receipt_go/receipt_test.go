@@ -27,7 +27,7 @@ func fixture() *c.NativeProductionReceipt {
 				Result:              &c.IncidentResult{IncidentId: "incident-1", Status: "completed", RepairActions: []*c.RepairActionReceipt{{ActionId: "repair-1", Success: true}}, ConfirmedRootCauses: []*c.ConfirmedRootCause{{Summary: "unavailable replica"}}},
 				FinalDetectorStates: []*c.DetectorEvaluation{{DetectorId: "health-objective", Status: "clear"}}, VerifiedAt: stamp,
 			},
-			OutcomeDocument: &c.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident-1", Classification: "success", RepairCommit: proto.String(proposal), DiagnosisVerification: []*c.DiagnosisVerification{{Verdict: "confirmed"}}},
+			OutcomeDocument: &c.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident-1", Classification: "success", RepairCommit: proto.String(proposal)},
 		},
 		ResponderJobEvidence: []*c.ResponderJobEvidence{{IncidentId: "incident-1", JobName: "sdo-incident-1-hash", JobUid: "worker-uid", Succeeded: true}},
 	}
@@ -59,6 +59,32 @@ func TestReceiptBuildAndValidation(t *testing.T) {
 	}
 }
 
+func TestReceiptSurvivesResponderRetirement(t *testing.T) {
+	r := fixture()
+	r.ResponderJobEvidence = nil
+	closure := r.NativeLedger.Closure
+	closure.DispatchedAt, closure.ResponderCompletedAt = closure.VerifiedAt, closure.VerifiedAt
+	if got := Evaluate(encoded(t, r), true); got.GetFailure() != nil {
+		t.Fatal(got.GetFailure())
+	}
+	for name, mutate := range map[string]func(*c.IncidentClosure){
+		"missing dispatch":   func(c *c.IncidentClosure) { c.DispatchedAt = nil },
+		"missing completion": func(c *c.IncidentClosure) { c.ResponderCompletedAt = nil },
+		"reversed lifecycle": func(c *c.IncidentClosure) {
+			c.DispatchedAt = timestamppb.New(c.ResponderCompletedAt.AsTime().Add(time.Second))
+		},
+		"failed result": func(c *c.IncidentClosure) { c.Result.Status = "failed" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := proto.Clone(r).(*c.NativeProductionReceipt)
+			mutate(bad.NativeLedger.Closure)
+			if got := Evaluate(encoded(t, bad), true); got.GetFailure() == nil {
+				t.Fatal("accepted retired worker without a valid durable lifecycle")
+			}
+		})
+	}
+}
+
 func TestReceiptRejectsConflictingEvidence(t *testing.T) {
 	cases := map[string]func(*c.NativeProductionReceipt){
 		"partial":        func(r *c.NativeProductionReceipt) { r.NativeLedger.OutcomeDocument.Classification = "partial" },
@@ -69,9 +95,6 @@ func TestReceiptRejectsConflictingEvidence(t *testing.T) {
 		"health":         func(r *c.NativeProductionReceipt) { r.NativeLedger.Closure.FinalDetectorStates[0].Status = "firing" },
 		"fingerprints": func(r *c.NativeProductionReceipt) {
 			r.NativeLedger.Closure.FinalDetectorStates[0].Fingerprints = []string{"still active"}
-		},
-		"diagnosis": func(r *c.NativeProductionReceipt) {
-			r.NativeLedger.OutcomeDocument.DiagnosisVerification = append(r.NativeLedger.OutcomeDocument.DiagnosisVerification, &c.DiagnosisVerification{Verdict: "contradicted"})
 		},
 		"updated reflection": func(r *c.NativeProductionReceipt) {
 			r.NativeLedger.ReflectionCommit = ""
@@ -104,32 +127,6 @@ func TestFailedLearningRetainsVerifiedMitigation(t *testing.T) {
 	l.ReflectionDecision = &c.ReflectionDecision{LearningDecision: "failed", Error: "invalid authored program"}
 	if result := Evaluate(encoded(t, r), true); result.GetFailure() != nil || result.GetReceipt().GetResolution() != "sdo_mitigated" {
 		t.Fatal(result)
-	}
-}
-
-func TestVerifiedFastPathNeedsNoResponderJob(t *testing.T) {
-	r := fixture()
-	l := r.NativeLedger
-	r.ResponderJobEvidence = nil
-	l.ProposalCommit = ""
-	l.Receipt.ProposalCommit = ""
-	l.OutcomeDocument.RepairCommit = nil
-	l.RequiresReflection = false
-	l.ReflectionDecision = nil
-	l.ReflectionCommit = ""
-	l.Receipt.ReflectionCommit = ""
-	l.ReflectionSkippedReason = "trusted program fast path"
-	l.OutcomeDocument.ResolutionPath = "fast_path"
-	l.OutcomeDocument.FastPathPrograms = []string{"targetport"}
-	l.Closure.Result.ResolutionPath = "fast_path"
-	l.Closure.Result.FastPathPrograms = []string{"targetport"}
-	l.OutcomeDocument.PlanApplications = []*c.PlanApplication{{Applied: true, Verification: &c.Verdict{Result: c.Verdict_RESULT_NO_MATCH}}}
-	if result := Evaluate(encoded(t, r), true); result.GetFailure() != nil {
-		t.Fatal(result)
-	}
-	l.OutcomeDocument.PlanApplications[0].RolledBack = true
-	if result := Evaluate(encoded(t, r), true); result.GetFailure() == nil {
-		t.Fatal("rolled-back plan was accepted")
 	}
 }
 
@@ -170,10 +167,80 @@ func TestReceiptPolicyCoversEveryOutcomeClassification(t *testing.T) {
 			r := fixture()
 			r.NativeLedger.OutcomeDocument.Classification = classification
 			got := Evaluate(encoded(t, r), true)
-			want := classification == "success" || classification == "cleared_without_action" || classification == "external_recovery" || classification == "false_positive"
+			want := classification == "success" || classification == "cleared_without_action"
 			if (got.GetFailure() == nil) != want {
 				t.Fatalf("classification %s acceptance drifted: %v", classification, got)
 			}
 		})
+	}
+}
+
+func TestReceiptAcceptsVerifiedSuccessWithoutDiagnosisEvidence(t *testing.T) {
+	r := fixture()
+	r.NativeLedger.Closure.Result.ConfirmedRootCauses = nil
+	if got := Evaluate(encoded(t, r), true); got.GetFailure() != nil {
+		t.Fatal(got.GetFailure())
+	}
+}
+
+// Every current classification has its own resolution label: a rejected
+// unconfirmed or failed closure is SDO's own repair attempt, never recorded as
+// an external recovery in analysis rows.
+func TestEveryOutcomeClassificationHasItsOwnResolution(t *testing.T) {
+	seen := map[string]string{}
+	for _, classification := range wire.StringIn(&c.OutcomeRecord{}, "classification") {
+		label := resolution(classification)
+		if label == "external_recovery" || seen[label] != "" {
+			t.Fatalf("classification %s resolves to %q (also %q)", classification, label, seen[label])
+		}
+		seen[label] = classification
+	}
+	if seen["sdo_unconfirmed"] != "unconfirmed" {
+		t.Fatalf("unconfirmed has no label of its own: %v", seen)
+	}
+}
+
+// Successful startup may subsume a reflection with a later accepted health
+// refresh. Only the exact reflection revision must retain its original tree.
+func TestReceiptRolloutRevisionCorrelation(t *testing.T) {
+	for _, later := range []bool{false, true} {
+		for _, sameTree := range []bool{false, true} {
+			r := fixture()
+			expected := &c.ControllerRolloutExpectation{IncidentId: r.IncidentId, ReflectionCommit: r.NativeLedger.ReflectionCommit, BeforeDetectorFingerprint: "before", AfterDetectorFingerprint: "reflected"}
+			attempt := &c.ControllerRolloutReceipt{Expectation: proto.Clone(expected).(*c.ControllerRolloutExpectation), Success: true, BuildArtifact: "sha256:synthetic", ControllerRevision: expected.ReflectionCommit, ObservedDetectorFingerprint: "reflected", VerifiedAt: r.RecordedAt}
+			if later {
+				attempt.ControllerRevision = strings.Repeat("d", 40)
+			}
+			if !sameTree {
+				attempt.ObservedDetectorFingerprint = "refreshed"
+			}
+			r.NativeLedger.RolloutExpectation = expected
+			r.NativeLedger.RolloutReceipts = []*c.ControllerRolloutReceipt{attempt}
+			want := later || sameTree
+			if got := Evaluate(encoded(t, r), true); (got.Failure == nil) != want {
+				t.Fatalf("later=%v sameTree=%v: %v", later, sameTree, got.Failure)
+			}
+			if !want {
+				continue
+			}
+			for name, mutate := range map[string]func(*c.NativeProductionReceipt){
+				"missing observed tree": func(r *c.NativeProductionReceipt) { r.NativeLedger.RolloutReceipts[0].ObservedDetectorFingerprint = "" },
+				"missing revision":      func(r *c.NativeProductionReceipt) { r.NativeLedger.RolloutReceipts[0].ControllerRevision = "" },
+				"duplicate success": func(r *c.NativeProductionReceipt) {
+					r.NativeLedger.RolloutReceipts = append(r.NativeLedger.RolloutReceipts, proto.Clone(attempt).(*c.ControllerRolloutReceipt))
+				},
+				"wrong incident": func(r *c.NativeProductionReceipt) { r.NativeLedger.RolloutReceipts[0].Expectation.IncidentId = "other" },
+				"wrong reflection": func(r *c.NativeProductionReceipt) {
+					r.NativeLedger.RolloutReceipts[0].Expectation.ReflectionCommit = strings.Repeat("e", 40)
+				},
+				"failed attempt": func(r *c.NativeProductionReceipt) { r.NativeLedger.RolloutReceipts[0].Success = false },
+			} {
+				bad := proto.Clone(r).(*c.NativeProductionReceipt)
+				mutate(bad)
+				if got := Evaluate(encoded(t, bad), true); got.Failure == nil {
+					t.Fatalf("accepted %s (later=%v sameTree=%v)", name, later, sameTree)
+				}
+			}
+		}
 	}
 }

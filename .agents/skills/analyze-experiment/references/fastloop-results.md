@@ -2,13 +2,18 @@
 
 `fastloop.json` and every new incident row carry `image_delivery` (`registry`, `kind-load-fallback`, or `unknown` for older lanes) and `image_delivery_reason`. Surface fallback and its registry error in reports. Completion rows include mid-run source-deployment fallbacks. `image_delivery.jsonl` records each attempted delivery's cluster, image list, path, reason and wall seconds; the lane additionally retains `image_delivery_seconds` and `image_delivery_images`. Successful registry delivery of every affected image clears fallback mode; a partial success cannot hide another image's fallback. Code resets preserve delivery mode without transferring images. Fallback warns on stderr when delivery fails, after the archive transfer, and at each run startup. Delivery metadata is benchmark transport evidence.
 
-Fastloop runs write `results/<run-id>/incidents.jsonl` and `incidents.csv`, one row per injected stream entry. `problem_id` joins explicitly composed IDs with `+`. Use `oracle.success`, `recovery_oracle.success`, and `error` together: a failed incident oracle or failed post-recovery oracle is a failed incident. `injection_started_at`, `detected_at`, `responder_started_at`, `responder_finished_at`, `mitigation_applied_at`, `oracle_finished_at`, `reflection_started_at`, `reflection_finished_at`, `rebuild_done_at`, and `recovery_finished_at` are timestamp columns; `responder_tokens`, `drift_tokens`, and `reflection_tokens` are separate objects in JSONL and JSON strings in CSV. New `run_metadata.json` declares `token_accounting_version: responder-drift/v2`: `drift_tokens` is legacy zero and merged reasoning is charged once to `responder_tokens`. Older rows retain recorded investigator costs; the historical reader sums completed investigations between injection start and resolution end. `diagnosis_grade` is separate from the deterministic oracle: when enabled, it contains SREGym's diagnosis-judge success, accuracy, D1/D2/D3 details, judge tokens, latency, and any judge error. Explicit composites receive one whole-set diagnosis grade. Deferred grades are merged into both result files at run end and never gate the next injection; inline grades run before recovery. With deferred grading, fastloop time-to-mitigation is `injection_to_mitigation_seconds` directly; inline grading occurs after responder resolution and before recovery, so it is excluded from that metric too. Reflection timestamps are the harness-observed drain interval; newer native broker ledgers separately expose closure phase instants. Do not mix these fastloop rows into pipeline stage cost calculations without accounting for that different timing scope.
+Fastloop runs write `results/<run-id>/incidents.jsonl` and `incidents.csv`, one row per attempted stream entry. `problem_id` joins explicitly composed IDs with `+`. Use `oracle.success`, `recovery_oracle.success`, and `error` together: a failed incident oracle or failed post-recovery oracle is a failed incident. `injection_started_at`, `detected_at`, `responder_started_at`, `responder_finished_at`, `mitigation_applied_at`, `oracle_finished_at`, `reflection_started_at`, `reflection_finished_at`, `rebuild_done_at`, and `recovery_finished_at` are timestamp columns; `responder_tokens`, `drift_tokens`, and `reflection_tokens` are separate objects in JSONL and JSON strings in CSV. Each token object carries `input_tokens` (including cache reads and writes), `cached_input_tokens` and its 0.7 name `cache_read_input_tokens` (cache reads only), `cache_write_input_tokens`, `cache_write_1h_input_tokens`, `output_tokens` and `reasoning_output_tokens`; rows written before the cache-write fields existed priced Claude cache writes as uncached input. Rows record `provider`, `model` and `reasoning_effort` (the run's one effort for every SDO agent; `null` on older rows); each worker's actual resolution is in `sdo_runtime/sessions/*/agent-resolved.jsonl` (`role`, `provider`, `model`, `effort`). New `run_metadata.json` declares `token_accounting_version: responder-drift/v2`: `drift_tokens` is legacy zero and merged reasoning is charged once to `responder_tokens`. Older rows retain recorded investigator costs; the historical reader sums completed investigations between injection start and resolution end. `diagnosis_grade` is separate from the deterministic oracle: when enabled, it contains SREGym's diagnosis-judge success, accuracy, D1/D2/D3 details, judge tokens, latency, and any judge error. Explicit composites receive one whole-set diagnosis grade. Deferred grades are merged into both result files at run end and never gate the next injection; inline grades run before the reflection drain and recovery. With deferred grading, fastloop time-to-mitigation is `injection_to_mitigation_seconds` directly; inline grading occurs after responder resolution and before recovery, so it is excluded from that metric too. Reflection timestamps are the harness-observed drain interval; newer native broker ledgers separately expose closure phase instants. Do not mix these fastloop rows into pipeline stage cost calculations without accounting for that different timing scope.
 
-New native broker ledgers expose `closure_phase_timestamps` as UTC instants and `reflection_skipped_reason`; fastloop rows expose `closure_phase_seconds`, the elapsed seconds since each preceding observed closure phase. Missing phases mean that path did not execute or that the run predates instrumentation. The immutable outcome document is committed before reflection, so join later phases from the broker ledger using the incident ID and outcome commit.
+For injection occurrence, grade checkpoints and per-fault probe semantics, read [fault tracking evidence](fault-tracking.md).
 
+<<<<<<< HEAD
 Native `OutcomeRecord.resolution_path` is `deterministic` (the response stage cleared every finding before any agent), `fast_path` or `responder`. `prior_stages` lists each automatic stage's attempts: `playbook_id`, `program_revision`, bindings, `result` (`applied_cleared`, `applied_still_matching`, `reverted_ineffective`, `apply_error`, `skipped`), a typed `skip_reason`, a `kept_reason` (`partial`, `irreversible`, `rollback_failed`) when an applied attempt that left its findings open was not reverted, the apply receipt and post-apply diagnosis; a deterministic result skips reflection with reason `deterministic response stage`. Native `fast_path`: `fast_path_programs` lists the programs attempted, including a failed attempt handed to the responder. `plan_applications` records each plan's verification plus `rolled_back` and `rollback_error`, and `program_failure_signals` breaks a failed program's trust streak. A fully resolved fast path has `reflection_skipped_reason: trusted program fast path`, no responder Job, and zero responder usage. The strict native receipt accepts an empty `responder_job_evidence` only for that verified outcome path. Fastloop rows carry `resolution_path` and `fast_path_programs`; composite rows use `fast_path` only when every component receipt used it and combine distinct program IDs. Older outcomes and rows omit these fields.
+=======
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 
-When a configured fast path does not attempt a plan, `fast_path_skipped_reason` records the typed eligibility gate in the native ledger, outcome, and fastloop row. The controller log prints the same reason. `uncovered_finding` means at least one active finding had neither its own trusted match nor a direct snapshot relation to a selected trusted run. `fast_path_relation_covered_findings` is a list of finding fingerprints paired with the covering `program_id` and its named `bindings`; it appears in the fast-path result, native ledger, outcome, and fastloop row. A relation-covered finding must clear during verification or the attempt rolls back, hands off to the responder, and records `fast_path_failure` for the program. Fastloop `match_reasons` includes program verdict evidence facts and `binding_sources` lists the sources of matching runs (`hint`, `finding`, or `sweep`); duplicate reasons and sources are collapsed in each row. Older records omit these fields.
+New native broker ledgers expose `closure_phase_timestamps` as UTC instants and `reflection_skipped_reason`; fastloop rows expose `closure_phase_seconds`, the elapsed seconds since each preceding observed closure phase. Missing phases mean that path did not execute or that the run predates instrumentation. Each phase is recorded once, at its first occurrence. A rejected reflection adds `reflection_rejected`, then `reflection_retry_dispatch` and `retry_worker_result_picked_up` for the correction turn (later corrections share them). `network_canaries_started` to `network_canaries_passed` is the canary Jobs alone. Rows before these phases charge correction turns and broker publication work to `network_canaries_passed`; read `reflection_rejections` in the strict receipt before calling that phase slow. The immutable outcome document is committed before reflection, so join later phases from the broker ledger using the incident ID and outcome commit.
+
+Native `OutcomeRecord.resolution_path` is `responder` when populated. `playbook_coverage` records incident-open matches and unexplained findings; rows retain it even if receipt validation fails. Every current native receipt requires one successful responder Job. Program selections, raw agent actions, final verification and explicit rollbacks are recorded separately. See [agent-selected repair evidence](automatic-repair.md).
 
 Snapshot captures may include `statefulSets`, `horizontalPodAutoscalers`, and `podDisruptionBudgets` alongside Deployments, Services, ReplicaSets, and Pods. Use their same-namespace selectors, scale targets, and controller owner references to audit relation coverage; a matching name alone is insufficient.
 
@@ -18,112 +23,78 @@ Fastloop rows also expose `run_prelude_phase_seconds` on the first incident only
 
 Rows also count program diagnoses and verdicts, tool calls and commands, and response loops. On a permanently failed closure, the fastloop retains recoverable timing, usage, and program evidence from the controller's pending closure, records the closure error, and stops the stream. A missing diagnosis has `diagnosis_grade.skipped: true` with a reason; it is never sent to the diagnosis judge.
 
-## Learned-program watch confirmations
+Benchmark fault recovery has a separate intake fence: SDO must have no pending
+closure, prove the expected incident durably acknowledged (or terminally failed),
+request maintenance pause, observe its exact paused-generation acknowledgment,
+and recheck that no incident raced admission. Missing state, missing pause support,
+unclosed incidents or failed acknowledgment stop recovery before any harness write.
+Normal cleanup, invalid-injection cleanup, interruption and repeated cleanup passes
+all use this fence. The persistent conductor driver also drains terminal bookkeeping
+and establishes the same fence before signaling application teardown. Intake remains paused through recovery verification; the next
+stage resumes it only through the existing baseline/injection gate. A blocked
+recovery is an eval failure, not an SDO repair or a repeat encounter.
 
-Learned `drift.<program>` findings evaluate relevant non-initial watch changes
-without ownership or accepted-source admission gates. The attributed
-`drift.unexplained` path keeps its original field ownership rules. Watch matches
-retain `source="watch event program match"` (or the owned field event evidence)
-and hint bindings; fallback discoveries retain `source="periodic program sweep"`.
+## Finding-triggered playbook diagnosis
 
-Events, periodic sweeps and scheduled per-binding confirmations share the finding
-tracker. The default program policy requires 10 seconds of sustained Match,
-confirmed by a fresh diagnosis at or after the deadline, before activation;
-clearing is confirmed symmetrically. `--program-min-duration` configures this
-duration. Controller-state `finding_states` retain `first_seen_at`,
-`first_clear_at`, and `last_observed_at` so pending confirmations survive restart.
-Use the activation/detection timestamp for time to detection; a drift event's
-`observed_at` records the initial observation and can precede activation.
-Brief rollout mismatches should appear only as pending or `not_persisted`
-observations; rollouts that remain mismatched beyond the configured duration can
-still activate, regardless of which actor changed the object.
+Current controllers run incident detectors continuously. Playbook Diagnose runs only while handling detector findings, with one binding per finding/program; watch events and timers never enumerate playbook roles. Accepted-source drift remains `drift.unexplained`. Program diagnoses and matches belong to incident coverage, responder commands, and self-check evidence.
 
-For a confirmed watch-time program match, `DriftEvent.source` is `watch event program match` for both owned and unowned objects. Owned-field diffs, manager/operation attribution and original watch timestamps remain attached as evidence. `differs from accepted manifest` remains the ordinary attributed path when no learned program matches. Older owned-object matches can carry that ordinary source string even though their detector and hint binding identify the learned program; do not confuse those historical labels with periodic sweep discovery.
+Historical runs can contain `drift.<program>` findings and `DriftEvent.source` values `watch event program match` or `periodic program sweep`. Those were proactive playbook detections, with their own firing/clearing confirmation timers; do not interpret them as current detector-driven coverage. Current controller state has no program sweep cursor, and the former sweep/persistence flags have been removed.
+
+Reflection's shared memory check compiles and vets authored code, then records replay and test outcomes without gating saving on them. `program.replay-observation` entries retain program/case, diagnoses, replay status and reasons in the incident's reflection ledger and accepted commit trailers. Open NoMatch, persistent post-plan Match, missing case/observations and failed test assertions are information; compilation, imports, formatting and provenance remain blocking. Existing mitigation replay notes use `skipped_unreplayable_effect` for inconclusive replay. See [reflection evidence](native-reflection.md) before counting coverage or trust; a saved program is not proof that a repair worked.
 
 ## Program trust evidence
 
-`runtime/program_trust.go` derives trust from accepted outcomes in completion order.
-The default threshold is three verified successes; `--program-trust-threshold=1`
-changes eligibility, not the evidence required. An application earns credit only
-when all of the following hold:
+`runtime/program_trust.go` derives informational success/failure counters from accepted outcomes in completion order. There is no automatic execution threshold. The broker persists
+`reflection_eligibility` version 1 before committing the authoritative outcome.
+Its cause groups exactly preserve `confirmed_root_causes` resources; observations
+outside those groups remain unassigned. Only `covered` items for the same program
+revision and named bindings supply success credit. They require affirmative
+`final_equivalence_verified`, a successful application with bound post-apply
+NoMatch, and an explicit NoMatch on the independently verified fixed capture.
+Missing proof, unavailable captures, different-field repairs and unbound writes
+remain questions, with no success or failure judgment. A definite fixed Match
+is a false match: Go records a negative case, revokes trust for that revision,
+and gives no credit, even if reflection is rejected.
 
-- The independently derived outcome classification is `success`, and the
-  application was neither a dry run nor rolled back. Application errors,
-  rollback errors and program-scoped failure signals disqualify it.
-- The application's health verification is `NO_MATCH`. This field alone is a
-  health-only verdict and does not prove the program diagnosed the repair.
-- Successful controller-recorded `plan` and `apply` tool calls connect the plan
-  IDs to the application ID and its selected program and named bindings. The
-  apply call is at or after `completed_at`; its response contains explicit
-  post-apply `NoMatch` for every selected binding of that program. Compare full
-  object refs, including API version, namespace and name, and the accepted
-  dependency revision. Missing/truncated history, wrong bindings or revisions,
-  diagnosis errors, `Unknown`, `NeedsJudgement` and `Match` earn no credit.
+Corpus publication and reflection dispatch consume that same settled result.
+Exact positive and negative cases use ordinary broker validation; the model is
+needed for questions or rejected cases. Old repair-text and trusted-program
+whole-incident skip shortcuts no longer exist. Forced model reflection retains
+all typed work and any Go-authored files.
 
-Ordinary unapplied applications are ignored; fast-path records are also inspected
-when unapplied so attempted failures can revoke trust. At most one success per
-program is credited from an outcome. These evidence rules apply
-to ordinary, fast-path and equivalent-repair applications; an application ID
-prefix or a flat `program_runs` list supplies no exception. Current fast paths
-record controller-authored plan/apply calls. An `equivalent-repair-*` record
-without the required bound tool evidence earns no credit. Failed, partial,
-cancelled, external-recovery, unclassified and unverified outcomes cannot earn
-successes even when an immediate health check passed.
+At most one success per program is credited per incident. Program revisions
+fingerprint executable Git objects and imported helpers, excluding Markdown and
+Go tests. Broker-validated revisions preserve the success streak; explicit execution failures and
+false matches retain suspicion for their revision. Historical versions reset on edits. Historical outcomes without
+settled eligibility earn no new success credit and are not rewritten. Questions
+do not add credit or manufacture failures. Inspect the accepted outcome and
+broker reflection ledger separately; publication failure cannot change the
+already committed eligibility facts.
 
-Trust is bound to `program_runs.program_revision`: the digest of accepted program
-Git objects and their transitive shared-library imports. A revision change starts
-a new success streak. Failed applications reset successes and retain suspicion
-for that dependency revision. Missing or inconclusive bound evidence also resets
-the success streak. The counters are derived values, exposed by `sdo status`;
-they are not a separately authoritative durable trust record.
-
-`program_failure_signals` can contain
-`fast_path_failure:<program_id>@<accepted_dependency_revision>`. The fast-path
-marker freezes this revision before mutation, then restores the signal on failed
-handoff or interrupted recovery. Failures remain associated with that revision
-after unrelated source commits, edits and later reversions; later successes do
-not erase them. Legacy `fast_path_failure:<program_id>` uses the known program
-revision, falling back to the source commit only when none is available. Generic
-signals such as `adhoc_coverage_gap` are not a failure of every program. Inspect
-the attempt facts and live recheck evidence described in [native broker evidence](native-broker.md)
-when an outcome has not yet been committed.
+Program failures are recorded as `application_verification_failure:<program_id>@<accepted_dependency_revision>`; counters describe evidence and never gate dispatch.
 
 Responder applications record the same revision-bound trust failure as
 `application_verification_failure:<program_id>@<accepted_dependency_revision>`.
-The tool state saves it before rollback, regardless of rollback's result. Trust
+`apply` does not roll back: the signal marks an unverified application that stays applied until the responder issues `rollback` or retries. The tool state saves it so it survives a restart. Trust
 counts the signal with the failed application once, or on its own after restart
 discards application history; a successful retry in that incident leaves zero
 successes and one failure for the affected revision.
 
-### Learning credit
+### Historical learning credit
 
-A newly introduced program may earn one credit from its original independently
-successful incident, although it did not perform that repair. The memory reader
-joins the immutable outcome by incident ID to captured root-cause labels in the
-introducing accepted reflection commit. It requires the broker's incident,
-actor, phase and passed-validation trailers, matching open/fixed capture hashes,
-and newly introduced diagnosis and mitigation sources. Synthetic cases and later
-revalidation of an existing program do not supply new learning credit.
+Earlier dispatchers could synthesize one origin credit from an accepted program's
+introducing corpus replay. Current dispatchers derive credit only from persisted
+covered instances. Newly authored or unmatched programs must earn their first
+credit on a later exact covered repair; corpus acceptance alone creates no credit.
+Do not reinterpret archived counters under the new policy.
 
-The dispatcher additionally checks that the current accepted program/dependency
-revision equals the introducing revision, loads immutable accepted captures and
-phase recordings, validates bindings and capture hashes, and executes diagnosis:
-open must be `Match`, fixed must be `NoMatch` on the same binding. Inconclusive
-replay or an unsuccessful original outcome earns nothing. The dispatcher makes a
-transient `learned-repair-*` application and plan/apply-shaped replay receipt for
-the trust calculation. It never rewrites the original outcome or publishes those
-receipts as live tool calls. Audit the outcome, introducing commit, corpus
-provenance and replay together; do not look for a live learned-program application
-in the original outcome. Program-scoped failures still invalidate this credit.
-
-After a controller restart, fast-path closure requires fresh bound NoMatch
-results plus independent verification. Markers never replay a cached success or
-undo a prior write. A read-only recovery closure has no new applied-plan receipt
-and earns no additional program trust credit. `PlanApplication` keeps applied
+After a controller restart, the original coverage remains in the prepared incident task. The responder rechecks live state before choosing repairs. `PlanApplication` keeps applied
 actions and verification outcomes; rollback pre-images and patches are retired
 (reserved fields 11 and 13). The tools-state ConfigMap retains attempt counts,
 limits and revision-bound failure signals, not mutation history.
 
+
+For capability policy, infrastructure outcomes, mixed-app ordering and image delivery evidence, read [fastloop dispatch evidence](fastloop-dispatch.md).
 ## Seed recovery oracle
 
 A full seed-compatible cleanup intentionally removes fault-created objects. Its `recovery_oracle` is an independent baseline check plus a fresh HTTP probe, not another mitigation verdict for the removed injection. Keep the original `oracle` and its failed components unchanged. A failed or incomplete seed probe blocks reuse and keeps `full_cleanup_verified=False`; no benchmark verdict is supplied to production learning. Legacy drivers without this check retain their fault-oracle recovery behavior.
@@ -134,6 +105,7 @@ The persistent fault gate keeps controller startup (including health refresh) se
 
 Warm resets require structural health and independent HTTP. Failed HTTP permits one bounded hotel-client refresh and recheck, preserving backends/memory. Failed refresh or HTTP blocks admission; restoration earns no responder credit.
 
+<<<<<<< HEAD
 Toy single-fault SDO rows include `memory_host_activations`: one entry per host
 activation since injection, containing accepted commit, activation timestamp and
 latency, before/after evaluation counts, maximum/allowed gap, controller pod and
@@ -141,3 +113,121 @@ container identity snapshots, `controller_unchanged` and `passed`. Checks cover
 the build/catch-up interval and a cadence margin before recovery maintenance.
 An empty list establishes no activation proof. Any failed check sets the row
 error and fails the run; stage timeouts use wall time, including scripted runs.
+=======
+### Protected healthy references in offline checkpoints
+
+Checkpoint capture maps retain the controller's frozen `healthy/healthy.json` and
+`healthy/reference` alongside ordinary incident capture files. These are the only
+nested capture names; traversal and other nested paths are rejected. Export and
+both worker/broker replay restore the same private directory and retain existing
+per-file, bundle and content-digest checks. A missing historical healthy reference
+is a replay evidence gap for a closure that did not verify healthy; never substitute an agent-authored corpus healthy state.
+On a verified-healthy closure with no pre-incident reference, the controller binds its own `fixed` capture as `healthy/healthy.json` (`reference` is `closure`). A session-authored positive replay case can still
+omit incident captures when its controller healthy reference is retained.
+
+## Concurrent shared-memory lanes
+
+Lanes bound to a GitHub memory branch (`fastloop.json` `memory_repo`/`memory_branch`) each have a
+private accepted checkout; the branch, not a host path, is the shared history. Compare lanes by
+branch commits. `sdo(sync): merge accepted memory` commits join history accepted while GitHub was
+unreachable; a `<branch>-unmerged-<commit>` branch holds offline history that overlapped a peer and
+was not merged (a lane-private divergence to report). Controller logs `memory upstream ...
+unavailable` mark those windows.
+
+`fastloop parallel` joins ordinary per-lane rows into output `incidents.jsonl`
+and CSV. `parallel_plan.json` records order/provider/model; `parallel_result.json`
+reports requested/completed counts and every lane error. Completed peer evidence
+survives a lane failure. Aggregate `index` follows input order; `lane_id` names
+the private controller/cluster. Original rows and immutable grade checkpoints
+retain lane-local indices. Never double-count copies. Missing encounters and
+duplicate incident identities fail the aggregate.
+
+`memory_before_commit`, `memory_after_commit` and `memory_ancestry` bound an
+encounter's accepted state. Ancestry includes every intervening peer publication
+in Git ancestry order. Bounds precede admission and follow closure grading,
+reflection drain and fenced recovery; they describe observed state, not causal
+learning credit. Join native receipt request/outcome/reflection commits for exact
+incident inputs. A commit rewind is an eval error.
+
+Lanes overlap but each lane stays sequential, preserving grade-at-closure and
+paused recovery. Oracle values never enter memory. Shared mode rejects seeding,
+archive copy-back and reset. The attachment report records phase, cohort, matched
+commits and original Jobs. Lanes must match a commit of accepted history
+exactly (cluster baselines are per-lane controller state, not memory); roots
+stay private. Reports from older runs also list `discarded_cluster_captures`. Scripted scheduling, broker
+and lock tests prove plumbing; live runs establish learning and speedup.
+
+Install-time pending namespace inventory records pre-existing environment UID/configuration/ownership digests independently of healthy onboarding. A rejected health window preserves only matching captured observations; replacement or changed objects remain unexplained presence drift. Check the immutable pending snapshot and install boundary; source-declared faults, health/reachability checks and objects added after that boundary remain active. This rule does not label, delete or recreate environment objects.
+For private lane journals and warm-app conversion receipts, see
+[restartable lanes and application conversion](fastloop-sequences.md).
+
+### Resolution grading and row-start recovery
+
+The aggregate `oracle` is sampled once when SDO's verified closure is first
+observed, before controller pause, runtime export, reflection, or follow-up
+incident waits. `oracle_finished_at` identifies this sample; `health_clear_s`
+continues to derive from the original native closure health timestamp.
+
+A single-row SDO invocation with row-start wipes records
+`cleanup_skipped_reason: row_start_tier2`. It does not call per-fault restore,
+wait for follow-up incidents for restore, or sample a recovery oracle. Recovery
+timestamps/oracles remain absent, `full_cleanup_verified` is false, and
+`cleanup_passes_verified` is zero. These mean the lane needs tier 2, not that the
+graded row failed. The attempt marker carries the injected problem IDs; the next
+row's wipe receipt records `previous_row_unrecovered` and the recreated namespaces.
+Legacy warm streams without a row-start rebuild retain their recovery fence.
+
+`oracle_incident_id` and `oracle_resolved_at` bind the grade to the first
+verified closure. A composite may internally drain reflection and handle later
+incidents before returning; its existing aggregate `resolved_at` and native
+health-clear timing remain unchanged. `closure_to_grade_seconds` uses the
+oracle's own closure timestamp when present, falling back to `resolved_at` for
+older rows. The grade is never resampled after the later incidents.
+The immutable `incidents.grades/<index>.json` checkpoint is published at that
+sample, including during composite resolution before its first receipt drain.
+Responder/reflection accounting completed later belongs to the final row, not
+to a replacement grade checkpoint.
+
+## Healthy-baseline oracle exclusions
+
+`oracle-baselines.json` in the environment run directory records the raw no-fault
+oracle grades once per problem, bound to application namespace, seed commit and
+harness revision. Preparation still requires healthy collateral and fresh traffic.
+A fault oracle red at baseline is `oracle_invalid`, not an SDO repair failure.
+Post-incident `oracle.details.oracles[i]` retains the raw baseline under
+`baseline_verdict` (and the current unfiltered grade under `raw_verdict`), sets
+`status=oracle_invalid`, and gives no boolean repair
+verdict (`success=null`, `fault_i_verdict=null`). `faults_total` and `faults_fixed`
+count only valid oracles; `oracle_invalid` reports the excluded count separately.
+Collateral and traffic failures still fail the aggregate. Plain excluded faults
+fall back to fresh independent application health and traffic. Recovery always
+regrades current state while preserving the initial exclusion set. The composite analysis
+table exposes `oracle_invalid`. Do not count an excluded fault as fixed or unfixed.
+Historical C64 candidates: as-e/000 and as-e/001, and the first/repeat rows for
+seed42 astronomy slots 6, 8, 39 and 40 (TRIAGE3 reported eight affected rows;
+confirm row/slot overlap before re-grading). Raw historical grades remain intact.
+
+### Shared host image registry
+
+New image-delivery entries include a `registry` object with `registry` (the
+harness-owned container name), `uploads`, `cache_hits`, `publication_seconds`,
+`pull_seconds`, `frozen_ids` and `manifest_digests`. These fields distinguish
+one-time build publication from each lane's CRI pull/unpack. A cache hit verifies
+manifest bytes and frozen image identity before skipping upload; nodes pull by
+manifest digest and verify their CRI config IDs. Total delivery `seconds`
+includes registry setup and transfer; it excludes retention and waiting for
+the host-wide image-delivery lock. Older entries lack this object. A fallback can retain
+partial registry metrics; use `path` and `success` to establish the result.
+
+Recovery failures now also publish `recovery_failures` on incident rows (empty on older rows).
+Each entry has numeric `incident_index` and `component_index` (null when unknown or not
+component-scoped), fixed `step` (`recover`, `refresh`, `health`, `restore`) and fixed `code`
+(`timeout`, `execution_failed`, `exec_failed`, `rollout_failed`, `protocol_invalid`, `unknown`).
+Use these fields for classification; do not parse `recovery_error`. The current harness's
+`error` status maps to `execution_failed`: it does not prove an exec or rollout failure.
+Worker exception text remains excluded from the typed projection and the existing redacted
+recovery message. A late open follow-on incident receives its controller-published full
+closure budget, frozen when the fence observes it; a queued reflection alone retains its
+reflection-attempt cap. A pause-admission race goes through the same bounded fence, without
+another problem injection or grading attempt.
+>>>>>>> origin/vic-lsh/dev/sdo-improve

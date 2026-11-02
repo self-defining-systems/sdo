@@ -10,3 +10,5 @@
 ## Overlap with the benchmark grader's probe
 
 The composite grader (`sregym/conductor/problems/composition/grading.py`, `ENTRY_POINTS["Social Network"]`) requests `/`, `/wrk2-api/home-timeline/read?user_id=1&start=0&stop=10` and `/wrk2-api/user-timeline/read?user_id=1&start=0&stop=10`. All three scenarios overlap with these paths (the seed varies `user_id`). Both were derived independently from the same nginx configuration and wrk2 scripts, and the gateway serves no other unauthenticated read.
+
+The generic `pod-admission` detector requires successful server-side dry-run Pod creation in the application namespace, even while existing Pods are Ready. API rejection is unhealthy; transport failure is an observation error.

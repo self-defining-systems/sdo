@@ -22,7 +22,7 @@ func TestPendingDriftJoinsIncidentBeforeVerifiedClosure(t *testing.T) {
 			name = "restore_before_verification"
 		}
 		t.Run(name, func(t *testing.T) {
-			c, client, cache, _, start := newDriftScenario(t, false)
+			c, client, cache, _, start := newDriftScenario(t)
 			c.drift.BatchWindow = 20 * time.Second
 			dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 2)}
 			c.dispatcher = dispatcher
@@ -56,6 +56,9 @@ func TestPendingDriftJoinsIncidentBeforeVerifiedClosure(t *testing.T) {
 			// The peer deadline has not expired when verification runs.
 			c.scheduler.ExpediteAll(start.Add(21*time.Second + 50*time.Millisecond))
 			stepScenario(t, c, cache, start.Add(21*time.Second+50*time.Millisecond))
+			settled := start.Add(21*time.Second + 50*time.Millisecond + c.config.ClosureStabilityWindow)
+			c.scheduler.ExpediteAll(settled)
+			stepScenario(t, c, cache, settled)
 			closure, ok := c.PendingIncidentClosure()
 			if !ok || len(closure.FinalDetectorStates) == 0 {
 				t.Fatal("repair did not independently verify")
@@ -103,7 +106,7 @@ func TestPendingDriftPreventsVerificationWhenPeerIsUnresolved(t *testing.T) {
 			name = "source_unavailable"
 		}
 		t.Run(name, func(t *testing.T) {
-			c, client, cache, requests, start := newDriftScenario(t, false)
+			c, client, cache, requests, start := newDriftScenario(t)
 			c.drift.BatchWindow = 20 * time.Second
 			injectScenarioPort(t, client, cache, "api")
 			stepScenario(t, c, cache, start.Add(time.Second))

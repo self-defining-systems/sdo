@@ -7,16 +7,14 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
 	"sdo.dev/operator/memory/internal/memoryio"
 	"sdo.dev/operator/memory/layout"
-)
-
-var (
-	rolePlaceholder = regexp.MustCompile(`<\w*[A-Z][A-Z0-9_]+>`)
-	markdownLink    = regexp.MustCompile(`\[[^]]+\]\(([^)]+)\)`)
+	"sdo.dev/operator/memory/observation"
+	"sdo.dev/operator/sdk"
 )
 
 func (s *run) semantic(ctx context.Context) error {
@@ -26,7 +24,10 @@ func (s *run) semantic(ctx context.Context) error {
 	if s.memory {
 		s.completeness()
 		s.documents()
-		s.playbookIndex()
+		s.observationRules()
+		if err := s.playbookIndex(); err != nil {
+			return err
+		}
 		s.detectorRules()
 		if err := s.scripts(ctx); err != nil {
 			return err
@@ -44,9 +45,7 @@ func (s *run) semantic(ctx context.Context) error {
 			if err := s.corpusRules(base); err != nil {
 				return err
 			}
-			if err := validateNewProgramCorpus(s.req.Root, base); err != nil {
-				s.add(Semantic, Diagnostic{Rule: RuleCorpusProvenance, Path: layout.CorpusDir, Message: err.Error()})
-			}
+
 		} else if err := s.corpusRules(""); err != nil {
 			return err
 		}
@@ -93,18 +92,14 @@ func (s *run) documents() {
 			continue
 		}
 		doc, at := book.readme.doc, book.readme.path
+		if _, err := layout.PlaybookRetired(doc); err != nil {
+			s.add(Semantic, Diagnostic{Rule: RulePlaybookStatus, Path: at, Message: err.Error()})
+		}
 		if doc.Meta["owner"] != "responder" {
 			s.add(Semantic, Diagnostic{Rule: RulePlaybookOwner, Path: at, Message: "playbook owner must be responder"})
 		}
-		fault := layout.PlaybookFaultClass(book.id)
-		if doc.Meta["fault_class"] != fault {
-			s.add(Semantic, Diagnostic{Rule: RulePlaybookFaultClass, Path: at, Message: fmt.Sprintf("fault_class must be %s", fault)})
-		}
 		if incident, ok := doc.Meta["originating_incident"]; !ok || incident == nil || strings.TrimSpace(fmt.Sprint(incident)) == "" {
 			s.add(Semantic, Diagnostic{Rule: RulePlaybookIncident, Path: at, Message: "originating_incident is required"})
-		}
-		if !rolePlaceholder.MatchString(doc.Body) {
-			s.add(Semantic, Diagnostic{Rule: RulePlaybookPlaceholder, Path: at, Message: "playbook must use a role placeholder", Hint: "write resource names as <RESOURCE_NAME> style placeholders, not literals"})
 		}
 	}
 }
@@ -132,44 +127,27 @@ func (s *run) sortedDetectors() []*detector {
 	return list
 }
 
-func (s *run) playbookIndex() {
+// playbookIndex requires the generated index. A publication that changes no
+// playbook keeps the accepted index, so only the full check and playbook
+// changes compare it; the broker and memory check regenerate it first.
+func (s *run) playbookIndex() error {
 	if s.index == nil {
 		if s.complete() && len(s.playbooks) > 0 {
-			s.add(Semantic, Diagnostic{Rule: RuleIndexMissing, Path: layout.PlaybookIndexFile, Message: "the playbook index is required", Hint: "list every playbook as a Markdown link in .sdo/playbooks/README.md"})
+			s.add(Semantic, Diagnostic{Rule: RuleIndexMissing, Path: layout.PlaybookIndexFile, Message: "the playbook index is required", Hint: "SDO generates the index whenever a playbook changes; publish or check a playbook change"})
 		}
-		return
+		return nil
 	}
-	linked := map[string]bool{}
-	for _, match := range markdownLink.FindAllStringSubmatchIndex(string(s.index.content), -1) {
-		target := string(s.index.content[match[2]:match[3]])
-		line := strings.Count(string(s.index.content[:match[0]]), "\n") + 1
-		link := strings.SplitN(target, "#", 2)[0]
-		if strings.Contains(link, "://") || link == "" {
-			continue
-		}
-		clean := path.Clean(link)
-		if path.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, "../") {
-			s.add(Semantic, Diagnostic{Rule: RuleIndexLink, Path: s.index.path, Line: line, Message: fmt.Sprintf("index link escapes the playbooks directory: %s", link)})
-			continue
-		}
-		if !strings.HasSuffix(clean, layout.PlaybookFileName) {
-			clean = path.Join(clean, layout.PlaybookFileName)
-		}
-		id, _, _ := strings.Cut(clean, "/")
-		if book := s.playbooks[id]; book == nil || !book.hasReadme || clean != id+"/"+layout.PlaybookFileName {
-			s.add(Semantic, Diagnostic{Rule: RuleIndexLink, Path: s.index.path, Line: line, Message: fmt.Sprintf("index link does not name a playbook: %s", link)})
-			continue
-		}
-		linked[id] = true
+	if s.req.Base != "" && !slices.ContainsFunc(s.changed, func(p string) bool { return strings.HasPrefix(p, layout.PlaybooksDir+"/") }) {
+		return nil
 	}
-	if !s.complete() {
-		return
+	generated, err := layout.GeneratePlaybookIndex(s.req.Root)
+	if err != nil {
+		return err
 	}
-	for _, book := range s.sortedPlaybooks() {
-		if book.hasReadme && !linked[book.id] {
-			s.add(Semantic, Diagnostic{Rule: RulePlaybookNotIndexed, Path: s.index.path, Message: fmt.Sprintf("playbook %s is missing from the index", book.id), Hint: fmt.Sprintf("add `[%s](%s/%s)`", book.id, book.id, layout.PlaybookFileName)})
-		}
+	if generated != nil && !bytes.Equal(generated, s.index.content) {
+		s.add(Semantic, Diagnostic{Rule: RuleIndexGenerated, Path: s.index.path, Message: "the playbook index differs from the one generated from the playbooks", Hint: "do not edit the index; SDO regenerates it from each playbook's first heading when a playbook changes"})
 	}
+	return nil
 }
 
 func (s *run) detectorRules() {
@@ -299,4 +277,28 @@ func containsPath(paths []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func (s *run) observationRules() {
+	if s.arch == nil {
+		return
+	}
+	scope, err := observation.Parse([]byte(s.arch.doc.Source))
+	if err == nil {
+		err = scope.Within(s.req.ObservationCeiling)
+	}
+	if err != nil {
+		s.add(Semantic, Diagnostic{Rule: "observation.scope", Path: layout.ArchitectureFile, Message: err.Error()})
+		return
+	}
+	for _, d := range s.detectors {
+		if d.manifest == nil {
+			continue
+		}
+		for _, w := range d.manifest.Watches {
+			if !scope.AllowsWatch(sdk.WatchKind{APIVersion: w.APIVersion, Kind: w.Kind, Namespace: w.Namespace}, s.req.ApplicationNamespace) {
+				s.add(Semantic, Diagnostic{Rule: "observation.watch", Path: layout.ArchitectureFile, Message: "detector watch exceeds accepted observation scope"})
+			}
+		}
+	}
 }

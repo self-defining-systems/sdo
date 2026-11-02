@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+<<<<<<< HEAD
 	"strings"
 	"syscall"
 	"time"
@@ -17,13 +18,27 @@ import (
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/runtime/lifecyclecore"
+=======
+	"slices"
+	"strings"
+	"syscall"
+	"time"
+>>>>>>> origin/vic-lsh/dev/sdo-improve
+
+	outcomeclass "sdo.dev/operator/contracts/outcome"
+	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
+	"sdo.dev/operator/runtime/lifecyclecore"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
-	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/shellpath"
 )
 
 // DerivedOutcome is produced from controller facts, not from a worker claim.
@@ -54,16 +69,20 @@ type ReflectionWorker interface {
 // is 1-based; after a broker rejection Diagnostics are that rejection's typed
 // validator findings.
 type ReflectionFeedback struct {
-	DispatchAt  time.Time
-	Attempt     uint32
-	Diagnostics []*contracts.MemoryDiagnostic
+	DispatchAt     time.Time
+	Attempt        uint32
+	Diagnostics    []*contracts.MemoryDiagnostic
+	CauseWork      []*contracts.ReflectionCauseWork
+	UnassignedWork []*contracts.ReflectionWorkItem
 }
 
 type ReflectionDecision struct {
 	LearningDecision string
 	NoChangeReason   string
+	DeclineReason    string
 	PlaybookIDs      []string
 	Error            string
+	FailureReason    string
 	SDKGaps          []*contracts.SdkGap
 	Usage            *UsageMetrics
 }
@@ -78,6 +97,10 @@ func (f ReflectionWorkerFunc) Reflect(ctx context.Context, closure IncidentClosu
 // safe to select when a full OutcomeDeriver and ReflectionWorker are configured;
 // no partial closure can be acknowledged.
 type NativeIncidentBroker struct {
+	Replay      string
+	CodePath    CodePathConfig
+	ShellReader shellpath.Reader
+
 	Now                  func() time.Time
 	Repository           *broker.Broker
 	LedgerRoot           string
@@ -88,8 +111,8 @@ type NativeIncidentBroker struct {
 	SessionRoot          string
 	SessionRetention     time.Duration
 	PhaseLog             io.Writer
-	PriorOutcomes        memory.Reader
 	ForceReflection      bool
+	Programs             program.ProgramRegistry
 	LateFindingsVerifier interface {
 		VerifyPull(context.Context, string, uint32, string, []string, []string) error
 	}
@@ -118,6 +141,41 @@ type ControllerRolloutReceipt struct {
 type ControllerRolloutHandoff struct {
 	Expectation ControllerRolloutExpectation
 	Receipt     ClosureReceipt
+}
+
+// ClosureIdentityError reports a closure whose contents differ from the frozen
+// closure the broker already stored for the incident. The controller hands the
+// broker its durable frozen closure, so a retry cannot change the comparison.
+type ClosureIdentityError struct {
+	IncidentID string
+	// Fields names the top-level IncidentClosure fields that differ.
+	Fields []string
+}
+
+func (e *ClosureIdentityError) Error() string {
+	return fmt.Sprintf("closure differs from persisted broker evidence in %s", strings.Join(e.Fields, ", "))
+}
+
+func (e *ClosureIdentityError) NonRetryable() bool { return true }
+
+func differingFields(stored, projected proto.Message) []string {
+	left, right := stored.ProtoReflect(), projected.ProtoReflect()
+	fields := left.Descriptor().Fields()
+	var names []string
+	for index := 0; index < fields.Len(); index++ {
+		field := fields.Get(index)
+		only := func(message protoreflect.Message) proto.Message {
+			copy := message.Type().New()
+			if message.Has(field) {
+				copy.Set(field, message.Get(field))
+			}
+			return copy.Interface()
+		}
+		if !proto.Equal(only(left), only(right)) {
+			names = append(names, string(field.Name()))
+		}
+	}
+	return names
 }
 
 type closurePhaseContextKey struct{}
@@ -159,7 +217,33 @@ func (n NativeIncidentBroker) PrepareIncident(ctx context.Context, incidentID st
 	return IncidentWorkspace{IncidentID: incidentID, Worktree: proposal.Path, BaseCommit: proposal.BaseCommit}, nil
 }
 
+// PrepareIncidentAt keeps the incident's detector/program revision and its
+// isolated memory checkout together, independently of peer publications.
+func (n NativeIncidentBroker) PrepareIncidentAt(ctx context.Context, incidentID, base string) (IncidentWorkspace, error) {
+	if n.Repository == nil {
+		return IncidentWorkspace{}, errors.New("Go repository broker is not configured")
+	}
+	proposal, err := n.Repository.CreateProposalAt(ctx, incidentID, base)
+	if err != nil {
+		return IncidentWorkspace{}, err
+	}
+	return IncidentWorkspace{IncidentID: incidentID, Worktree: proposal.Path, BaseCommit: proposal.BaseCommit}, nil
+}
+
 func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure IncidentClosure) (ClosureReceipt, error) {
+	return n.processClosure(ctx, closure, nil)
+}
+
+// The command identity remains frozen. Current controller health is a separate
+// outcome fact: it may withdraw recovery before any outcome has been accepted.
+func (n NativeIncidentBroker) processUnverifiedClosure(ctx context.Context, closure IncidentClosure, observation closureHealthObservation) (ClosureReceipt, error) {
+	if !closure.Frozen || observation.At.IsZero() || observation.At.Before(closure.VerifiedAt) {
+		return ClosureReceipt{}, errors.New("unverified closure requires a fresh controller observation of a frozen command")
+	}
+	return n.processClosure(ctx, closure, &observation)
+}
+
+func (n NativeIncidentBroker) processClosure(ctx context.Context, closure IncidentClosure, observation *closureHealthObservation) (ClosureReceipt, error) {
 	if n.Repository == nil || n.Deriver == nil || n.ResponderBackend == "" || n.ResponderModel == "" {
 		return ClosureReceipt{}, errors.New("native broker requires repository, outcome deriver, and responder identity")
 	}
@@ -195,7 +279,7 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 			return fmt.Errorf("project closure: %w", err)
 		}
 		if ledger.Closure != nil && !proto.Equal(ledger.Closure, projected) {
-			return errors.New("closure differs from persisted broker evidence")
+			return &ClosureIdentityError{IncidentID: id, Fields: differingFields(ledger.Closure, projected)}
 		}
 		prepared, err := n.Repository.ProposalInfo(id, broker.ProposalPhase)
 		if err != nil && ledger.Receipt == nil {
@@ -207,10 +291,6 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 		if ledger.Closure == nil {
 			ledger.Closure = projected
 			if closure.Result != nil {
-				ledger.FastPathSkippedReason = string(closure.Result.FastPathSkippedReason)
-				for _, covered := range closure.Result.FastPathRelationCoveredFindings {
-					ledger.FastPathRelationCoveredFindings = append(ledger.FastPathRelationCoveredFindings, relationCoveredFindingContract(covered))
-				}
 			}
 			if err := n.saveLedger(ledger); err != nil {
 				return err
@@ -219,6 +299,20 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 		if ledger.Receipt != nil {
 			receipt = *closureReceiptState(ledger.Receipt)
 			return nil
+		}
+
+		if observation != nil && ledger.OutcomeCommit == "" {
+			// Recover an accepted write before considering a new health fact.
+			// A lost ledger acknowledgement never rewrites a historical outcome.
+			if accepted, ok, err := n.Repository.AcceptedCommit(ctx, id, broker.OutcomePhase); err != nil {
+				return err
+			} else if ok {
+				ledger.OutcomeCommit = accepted.Commit
+			}
+			if ledger.OutcomeCommit == "" {
+				closure = observation.withoutRecovery(closure)
+				ledger.OutcomeDocument = nil
+			}
 		}
 
 		if ledger.ProposalCommit == "" {
@@ -232,13 +326,15 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 				if err != nil {
 					return err
 				}
-				if len(changed) > 0 {
+				// An unverified (timed-out) closure never publishes its repair.
+				verified := len(closure.FinalDetectorStates) > 0
+				if len(broker.SourceRepairPaths(changed)) > 0 && verified {
 					accepted, err := n.Repository.Publish(ctx, id, broker.Responder, broker.ProposalPhase)
 					if err != nil {
 						return err
 					}
 					ledger.ProposalCommit = accepted.Commit
-				} else if closure.Request.RepairPolicy == "commit" {
+				} else if verified && closure.Request.RepairPolicy == "commit" {
 					return errors.New("commit repair policy requires a nonempty validated proposal")
 				}
 			}
@@ -255,11 +351,10 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 			if derived.Record == nil || derived.Record.GetIncidentId() != id {
 				return errors.New("outcome deriver returned an invalid typed record")
 			}
-			if derived.RequiresReflection && derived.Record.GetClassification() != outcomeclass.Success {
-				return errors.New("outcome reflection requires successful classification")
-			}
 			ledger.OutcomeDocument = proto.Clone(derived.Record).(*contracts.OutcomeRecord)
+			ledger.OutcomeDocument.CodePath = codePathContract(n.CodePath)
 			ledger.RequiresReflection = derived.RequiresReflection
+<<<<<<< HEAD
 			switch derived.Record.GetResolutionPath() {
 			case "fast_path":
 				ledger.RequiresReflection = false
@@ -267,16 +362,34 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 			case "deterministic":
 				ledger.RequiresReflection = false
 				ledger.ReflectionSkippedReason = "deterministic response stage"
+=======
+			if n.SessionRoot != "" {
+				capture, captureErr := memory.IncidentCorpusDir(n.SessionRoot, id)
+				if captureErr == nil {
+					validate.ObservedRepairOwners(ledger.OutcomeDocument, capture)
+					validate.DropReplacedOwnedPods(ledger.OutcomeDocument, capture)
+					ledger.OutcomeDocument.UndetectedCauses = validate.CaptureUndetectedCauses(ledger.OutcomeDocument, capture)
+				}
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 			}
-			if ledger.RequiresReflection && !n.ForceReflection && n.PriorOutcomes != nil {
-				prior, err := n.PriorOutcomes.List(ctx)
-				if err != nil {
-					return fmt.Errorf("read accepted repair outcomes: %w", err)
+			// Every verified closure settles current evidence before committing its
+			// authoritative outcome. Prior repair text is never an eligibility proof.
+			if derived.Record.GetClassification() == "success" {
+				ledger.OutcomeDocument.ReflectionEligibility = n.prepareCauseWork(ctx, ledger.OutcomeDocument, IncidentWorkspace{IncidentID: id, Worktree: closure.Request.RepositoryWorktree, BaseCommit: closure.Request.RepositoryBaseCommit})
+				ledger.RequiresReflection = true
+			} else {
+				indices := partialRepairCauses(ledger.OutcomeDocument)
+				ledger.RequiresReflection = len(indices) > 0 || hasResponderSession(closure) || stageOnlyClosure(closure)
+				if ledger.RequiresReflection {
+					eligibility := n.prepareCauseWork(ctx, ledger.OutcomeDocument, IncidentWorkspace{IncidentID: id, Worktree: closure.Request.RepositoryWorktree, BaseCommit: closure.Request.RepositoryBaseCommit})
+					ledger.OutcomeDocument.ReflectionEligibility = partialReflectionEligibility(eligibility, indices, false)
+					ledger.OutcomeDocument.ReflectionEligibility.Unassigned = unverifiedCauseWork(ledger.OutcomeDocument, indices)
+				} else {
+					ledger.ReflectionDecision = &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "no_session"}
 				}
-				ledger.ReflectionSkippedReason = reflectionSkipReason(derived.Record, prior)
-				if ledger.ReflectionSkippedReason != "" {
-					ledger.RequiresReflection = false
-				}
+			}
+			if !hasResponderSession(closure) && !stageOnlyClosure(closure) {
+				ledger.OutcomeDocument.ReflectionSkipReason = "no_session"
 			}
 			if err := n.saveLedger(ledger); err != nil {
 				return err
@@ -300,21 +413,22 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 		}
 
 		// The persisted decision prevents a restart from changing learning policy.
-		if ledger.RequiresReflection && !ledger.ReflectionProcessed {
-			if n.Reflector == nil {
-				return errors.New("verified success requires a registered reflection worker")
+		// A failed attempt's reflection is queued behind the acknowledgment so
+		// the incident's follow-up starts from the outcome commit at once.
+		if ledger.RequiresReflection && !ledger.ReflectionProcessed && ledger.OutcomeDocument.GetClassification() != outcomeclass.Success {
+			if !ledger.ReflectionQueued {
+				ledger.ReflectionQueued = true
+				ledger.ReflectionQueuedAt = contractTimestamp(n.clock())
+				if err := n.recordPhase(ledger, "reflection_queued"); err != nil {
+					return err
+				}
 			}
-			reflectionPaths, err := n.processReflection(ctx, ledger)
-			if err != nil {
+		} else if ledger.RequiresReflection && !ledger.ReflectionProcessed {
+			if err := n.reflectLocked(ctx, ledger); err != nil {
 				return err
 			}
-			if err := n.setRolloutExpectation(ctx, ledger, reflectionPaths); err != nil {
-				return err
-			}
-			ledger.ReflectionProcessed = true
-			if err := n.saveLedger(ledger); err != nil {
-				return err
-			}
+			// Persist this marker together with its receipt below. A checkpoint
+			// declaring processing complete without a receipt cannot authorize ACK.
 		}
 		if ledger.OutcomeCommit == "" {
 			return errors.New("closure has no authoritative outcome commit")
@@ -332,74 +446,147 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 	return receipt, err
 }
 
-func reflectionSkipReason(current *contracts.OutcomeRecord, prior []memory.Outcome) string {
-	if current == nil || current.GetClassification() != "success" || len(current.GetRepairActions()) == 0 || len(current.GetConfirmedRootCauses()) == 0 || len(current.GetProgramFailureSignals()) != 0 {
-		return ""
+// reflectLocked runs reflection and records its typed SDK gaps and rejections
+// through the broker. Reflection follows the original outcome commit; these
+// appends never change incident evidence or the commit that identifies the
+// reflection task across restarts. Callers hold the broker lock.
+func (n NativeIncidentBroker) reflectLocked(ctx context.Context, ledger *contracts.BrokerLedger) error {
+	id := ledger.IncidentId
+	reflectionPaths, err := n.processReflection(ctx, ledger)
+	if err != nil {
+		return err
 	}
-	records := make([]*contracts.OutcomeRecord, 0, len(prior))
-	for _, stored := range prior {
-		if stored.Record != nil && stored.IncidentID != current.GetIncidentId() && stored.Record.GetClassification() == "success" {
-			records = append(records, stored.Record)
-		}
+	if err := n.setRolloutExpectation(ctx, ledger, reflectionPaths); err != nil {
+		return err
 	}
-	if allTrustedProgramRepairs(current, records) {
-		return "trusted accepted programs resolved every repair"
+	ledger.ReflectionProcessed = true
+	if reason := ledger.GetReflectionDecision().GetFailureReason(); reflectionSkipReasons[reason] {
+		// A transport limit or a worker killed for memory never decides closure: health already did. The skip is
+		// typed and not retried.
+		ledger.ReflectionSkippedReason = reason
 	}
-	for _, record := range records {
-		if current.GetSourceCommit() == "" || record.GetSourceCommit() != current.GetSourceCommit() || len(record.GetRepairActions()) != len(current.GetRepairActions()) || len(record.GetConfirmedRootCauses()) != len(current.GetConfirmedRootCauses()) {
-			continue
-		}
-		match := true
-		for index, cause := range current.GetConfirmedRootCauses() {
-			if !proto.Equal(cause, record.GetConfirmedRootCauses()[index]) {
-				match = false
-			}
-		}
-		for index, action := range current.GetRepairActions() {
-			previous := record.GetRepairActions()[index]
-			if !action.GetSuccess() || !previous.GetSuccess() || action.GetKind() != previous.GetKind() || action.GetTarget() != previous.GetTarget() || action.GetSummary() != previous.GetSummary() || action.GetDetails() != previous.GetDetails() || len(action.GetResources()) != len(previous.GetResources()) {
-				match = false
-				break
-			}
-			for resource := range action.GetResources() {
-				if !proto.Equal(action.GetResources()[resource], previous.GetResources()[resource]) {
-					match = false
-				}
-			}
-		}
-		if match {
-			return "exact replay of accepted repairs"
+	var gaps []*contracts.SdkGap
+	for _, decision := range ledger.GetReflectionResults() {
+		gaps = append(gaps, decision.GetSdkGaps()...)
+	}
+	gaps = append(gaps, ledger.GetReflectionDecision().GetSdkGaps()...)
+	if len(gaps) > 0 {
+		if _, err := n.Repository.RecordSDKGaps(ctx, id, gaps); err != nil {
+			return fmt.Errorf("record reflection SDK gaps: %w", err)
 		}
 	}
-	return ""
+	if len(ledger.ReflectionRejections) > 0 {
+		if _, err := n.Repository.RecordReflectionRejections(ctx, id, ledger.ReflectionRejections); err != nil {
+			return fmt.Errorf("record reflection rejections: %w", err)
+		}
+	}
+	return nil
 }
 
-func allTrustedProgramRepairs(current *contracts.OutcomeRecord, prior []*contracts.OutcomeRecord) bool {
-	if len(current.GetPlanApplications()) == 0 || len(prior) == 0 {
-		return false
+// QueuedReflections lists acknowledged incidents whose queued reflection has
+// not finished or whose accepted detector change awaits its controller
+// rollout, oldest first. Ledger writes are atomic renames, so this reads
+// without the broker lock that a running reflection holds.
+func (n NativeIncidentBroker) QueuedReflections() ([]string, error) {
+	entries, err := os.ReadDir(n.LedgerRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
 	}
-	for _, action := range current.GetRepairActions() {
-		if !action.GetSuccess() || action.GetKind() != "program-plan" {
-			return false
+	if err != nil {
+		return nil, err
+	}
+	var queued []*contracts.BrokerLedger
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		path := filepath.Join(n.LedgerRoot, entry.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		ledger, err := parseLedger(path, data)
+		if err != nil {
+			return nil, fmt.Errorf("broker ledger %s: %w", entry.Name(), err)
+		}
+		if ledger.ReflectionQueued && ledger.Acknowledged && (!ledger.ReflectionProcessed || reflectionRolloutPending(ledger)) {
+			queued = append(queued, ledger)
 		}
 	}
-	trust := ProgramTrustStats(prior)
-	revisions := make(map[string]string)
-	for _, run := range current.GetProgramRuns() {
-		revisions[run.GetProgramId()] = run.GetProgramRevision()
-	}
-	for _, application := range current.GetPlanApplications() {
-		if !application.GetApplied() || application.GetVerification().GetResult() != contracts.Verdict_RESULT_NO_MATCH || len(application.GetProgramIds()) == 0 {
-			return false
+	slices.SortFunc(queued, func(a, b *contracts.BrokerLedger) int {
+		if c := a.GetReflectionQueuedAt().AsTime().Compare(b.GetReflectionQueuedAt().AsTime()); c != 0 {
+			return c
 		}
-		for _, id := range application.GetProgramIds() {
-			state := trust[id]
-			if !state.Trusted || revisions[id] == "" || revisions[id] != state.LastChange {
-				return false
-			}
-		}
+		return strings.Compare(a.IncidentId, b.IncidentId)
+	})
+	ids := make([]string, len(queued))
+	for i, ledger := range queued {
+		ids[i] = ledger.IncidentId
 	}
-	return true
+	return ids, nil
+}
+
+// ProcessQueuedReflection runs one acknowledged incident's queued reflection
+// under the broker lock, so memory publication stays serialized with every
+// closure. It is idempotent: a finished or unqueued ledger is a no-op.
+func (n NativeIncidentBroker) ProcessQueuedReflection(ctx context.Context, incidentID string) error {
+	return n.withLock(func() error {
+		ledger, err := n.readLedger(incidentID)
+		if err != nil {
+			return err
+		}
+		if !ledger.ReflectionQueued || ledger.ReflectionProcessed || !ledger.Acknowledged {
+			return nil
+		}
+		if err := n.reflectLocked(ctx, ledger); err != nil {
+			return err
+		}
+		if err := n.Repository.ReleaseProposal(incidentID, broker.ReflectionPhase); err != nil {
+			return err
+		}
+		if err := n.recordPhase(ledger, "reflection_committed"); err != nil {
+			return err
+		}
+		return n.saveLedger(ledger)
+	})
+}
+
+// QueuedReflectionRolloutPending reports whether an incident's queued
+// reflection accepted a detector change that no restarted controller has
+// recorded yet. Like QueuedReflections, it reads without the broker lock.
+func (n NativeIncidentBroker) QueuedReflectionRolloutPending(incidentID string) (bool, error) {
+	ledger, err := n.readLedger(incidentID)
+	if err != nil {
+		return false, err
+	}
+	return ledger.ReflectionQueued && reflectionRolloutPending(ledger), nil
+}
+
+func reflectionRolloutPending(ledger *contracts.BrokerLedger) bool {
+	return ledger.RolloutExpectation != nil && !successfulRollout(rolloutReceiptsState(ledger.RolloutReceipts))
+}
+
+// AbandonQueuedReflection ends a queued reflection whose retries are spent.
+// The outcome commit stands; the ledger records why no reflection followed.
+func (n NativeIncidentBroker) AbandonQueuedReflection(_ context.Context, incidentID, reason string) error {
+	return n.withLock(func() error {
+		ledger, err := n.readLedger(incidentID)
+		if err != nil {
+			return err
+		}
+		if !ledger.ReflectionQueued || ledger.ReflectionProcessed {
+			return nil
+		}
+		ledger.ReflectionProcessed = true
+		ledger.ReflectionSkippedReason = "queued_reflection_abandoned: " + reason
+		if err := n.Repository.ReleaseProposal(incidentID, broker.ReflectionPhase); err != nil {
+			return err
+		}
+		if err := n.recordPhase(ledger, "reflection_abandoned"); err != nil {
+			return err
+		}
+		return n.saveLedger(ledger)
+	})
 }
 
 // processReflection is a driver: durable pure transitions choose every effect,
@@ -419,15 +606,108 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 	}
 	driver := lifecycleio.ReflectionDriver{Repository: n.Repository, SessionRoot: n.SessionRoot, Now: n.clock, Phase: func(phase string) error { return n.recordPhase(ledger, phase) }, Reflect: func(ctx context.Context, effect lifecyclecore.ReflectionEffect) (*contracts.ReflectionDecision, error) {
 		workspace := IncidentWorkspace{IncidentID: effect.IncidentID, Worktree: effect.Workspace.GetCheckoutPath(), BaseCommit: effect.Workspace.GetBaseCommit()}
-		decision, err := n.Reflector.Reflect(ctx, incidentClosureState(effect.Closure), workspace, effect.Outcome, effect.ProposalCommit, effect.OutcomeCommit, ReflectionFeedback{Attempt: effect.Attempt, Diagnostics: effect.Diagnostics, DispatchAt: controllerTime(effect.DispatchAt)})
+		selected, err := NewCodePathRegistry().Resolve(n.CodePath)
+		if err != nil {
+			return nil, err
+		}
+		if selected.Selection.MemoryValidation != "go" {
+			if n.Reflector == nil {
+				return nil, errors.New("shell learning requires a registered reflection worker")
+			}
+			decision, err := n.Reflector.Reflect(ctx, incidentClosureState(effect.Closure), workspace, effect.Outcome, effect.ProposalCommit, effect.OutcomeCommit, ReflectionFeedback{Attempt: effect.Attempt, Diagnostics: effect.Diagnostics, DispatchAt: controllerTime(effect.DispatchAt)})
+			if err != nil {
+				return nil, err
+			}
+			return logicalReflectionDecision(decision), nil
+		}
+
+		// A session is provenance, not new corrective evidence. The shared
+		// broker check below proves that accepted memory explains every write.
+		if effect.Attempt == 1 && !n.ForceReflection && coveredRepeatCandidate(effect.Outcome) {
+			decision := &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "accepted_programs_no_new_evidence"}
+			checkCtx := ctx
+			if n.SessionRoot != "" {
+				capture, err := memory.IncidentCorpusDir(n.SessionRoot, effect.IncidentID)
+				if err != nil {
+					return nil, err
+				}
+				checkCtx = validate.WithCaptureSource(checkCtx, capture, effect.IncidentID)
+			}
+			report, err := n.Repository.CheckReflection(checkCtx, effect.IncidentID, decision)
+			if err == nil && len(report.GetDiagnostics()) == 0 {
+				return decision, nil
+			}
+			// A failed probe preserves the ordinary learning/correction path. It
+			// cannot turn unavailable evidence or a hand repair into a no-op.
+		}
+
+		if effect.Outcome.GetClassification() != outcomeclass.Success {
+			effect.Outcome = partialReflectionOutcome(effect.Outcome)
+			trimPartialReflectionClosure(effect.Closure, effect.Outcome)
+		}
+		eligibility := &contracts.ReflectionEligibility{}
+		if effect.Outcome.GetReflectionEligibility() != nil {
+			proto.Merge(eligibility, effect.Outcome.GetReflectionEligibility())
+		}
+		work, unassigned := eligibility.GetCauses(), eligibility.GetUnassigned()
+		positive, negative := settledProgramCases(eligibility)
+		origins := settledCaptureOrigins(eligibility)
+		capture := ""
+		if n.Replay != "off" && n.SessionRoot != "" {
+			capture, _ = memory.IncidentCorpusDir(n.SessionRoot, effect.IncidentID)
+		}
+		prepared := false
+		negativePrepared := false
+		if n.Replay != "off" && len(positive) > 0 {
+			if capture != "" {
+				paths, err := memory.RecordRepeatCorpus(workspace.Worktree, capture, effect.IncidentID, positive, origins)
+				prepared = err == nil && len(paths) > 0
+			}
+			if !prepared {
+				for _, cause := range work {
+					for _, item := range cause.Items {
+						if item.Disposition == "covered" {
+							item.Disposition, item.Reason, item.Question = "question", "uncertain", "The exact repair is covered, but captured peer evidence could not be recorded. Review the case preparation failure."
+						}
+					}
+				}
+			}
+		}
+		if capture != "" && len(negative) > 0 {
+			if _, err := memory.RecordFixedNoMatchCorpus(workspace.Worktree, capture, effect.IncidentID, negative, origins); err != nil {
+				return nil, err
+			}
+			negativePrepared = true
+		}
+		if effect.Attempt == 1 && !n.ForceReflection && !hasResponderSession(incidentClosureState(effect.Closure)) && !stageOnlyClosure(incidentClosureState(effect.Closure)) && (prepared || negativePrepared) && !causeWorkNeedsModel(work) && !reflectionItemsNeedModel(unassigned) {
+			return &contracts.ReflectionDecision{LearningDecision: "updated"}, nil
+		}
+		if n.Reflector == nil {
+			return nil, errors.New("unsettled learning requires a registered reflection worker")
+		}
+		decision, err := n.Reflector.Reflect(ctx, incidentClosureState(effect.Closure), workspace, effect.Outcome, effect.ProposalCommit, effect.OutcomeCommit, ReflectionFeedback{Attempt: effect.Attempt, Diagnostics: effect.Diagnostics, DispatchAt: controllerTime(effect.DispatchAt), CauseWork: work, UnassignedWork: unassigned})
 		if err != nil {
 			return nil, fmt.Errorf("reflection worker: %w", err)
 		}
-		result := &contracts.ReflectionDecision{LearningDecision: decision.LearningDecision, NoChangeReason: decision.NoChangeReason, Error: decision.Error, SdkGaps: decision.SDKGaps, PlaybookIds: decision.PlaybookIDs}
-		if decision.Usage != nil {
-			result.Usage = proto.Clone(decision.Usage).(*contracts.UsageMetrics)
+		// A failed/no-op closure with no independently repaired cause may
+		// explain that no repair was recorded, but cannot publish README-only learning or
+		// turn the responder's unverified repair claims into executable memory.
+		if effect.Outcome.GetClassification() != outcomeclass.Success && len(validate.VerifiedReflectionCauses(effect.Outcome)) == 0 && decision.LearningDecision == "updated" {
+			decision.LearningDecision = "failed"
+			decision.Error = "reflection without a verified repaired cause or controller-observed undetected transition requires no_change with a no-recorded-repair reason or a typed SDK gap"
 		}
-		return result, nil
+		if prepared {
+			if _, err := memory.RecordRepeatCorpus(workspace.Worktree, capture, effect.IncidentID, positive, origins); err != nil {
+				return nil, err
+			}
+		}
+		// Keep Go-owned negative evidence even if the agent deleted or relabeled it.
+		if capture != "" && len(negative) > 0 {
+			if _, err := memory.RecordFixedNoMatchCorpus(workspace.Worktree, capture, effect.IncidentID, negative, origins); err != nil {
+				return nil, err
+			}
+		}
+		return logicalReflectionDecision(decision), nil
 	}}
 	for {
 		_, effects := lifecyclecore.StepReflection(ledger, lifecyclecore.ReflectionEvent{Kind: lifecyclecore.ReflectionDrive})
@@ -466,7 +746,12 @@ func (n NativeIncidentBroker) AcknowledgeClosure(_ context.Context, receipt Clos
 		if err := n.Repository.ReleaseProposal(receipt.IncidentID, broker.ProposalPhase); err != nil {
 			return err
 		}
-		if err := n.Repository.ReleaseProposal(receipt.IncidentID, broker.ReflectionPhase); err != nil {
+		if !ledger.ReflectionQueued || ledger.ReflectionProcessed {
+			if err := n.Repository.ReleaseProposal(receipt.IncidentID, broker.ReflectionPhase); err != nil {
+				return err
+			}
+		}
+		if err := n.recordPhase(ledger, "closure_ack"); err != nil {
 			return err
 		}
 		ledger.Acknowledged = true
@@ -514,7 +799,9 @@ func (n NativeIncidentBroker) PruneIncidentSessions(now time.Time) error {
 			if ledger.IncidentId == "" || filepath.Base(n.ledgerPath(ledger.IncidentId)) != entry.Name() {
 				return fmt.Errorf("session retention ledger %s has mismatched identity", entry.Name())
 			}
-			if ledger.Acknowledged && ledger.AcknowledgedAt != nil && !now.Before(ledger.AcknowledgedAt.AsTime().Add(retention)) {
+			// A queued reflection still resumes the session it would delete.
+			queued := ledger.ReflectionQueued && !ledger.ReflectionProcessed
+			if ledger.Acknowledged && !queued && ledger.AcknowledgedAt != nil && !now.Before(ledger.AcknowledgedAt.AsTime().Add(retention)) {
 				if err := memory.RemoveIncidentSession(n.SessionRoot, ledger.IncidentId); err != nil {
 					return fmt.Errorf("prune session for %s: %w", ledger.IncidentId, err)
 				}
@@ -525,7 +812,42 @@ func (n NativeIncidentBroker) PruneIncidentSessions(now time.Time) error {
 }
 
 func (n NativeIncidentBroker) setRolloutExpectation(ctx context.Context, ledger *contracts.BrokerLedger, paths []string) error {
-	if !layout.RequiresControllerRollout(paths) {
+	if ledger.ReflectionCommit == "" {
+		return nil
+	}
+	selected, err := NewCodePathRegistryWithDependencies(CodePathDependencies{
+		RebuildController: func(ctx context.Context, _ string) error { return n.prepareControllerRollout(ctx, ledger, paths) },
+		PullAcceptedCommit: func(ctx context.Context, commit string) error {
+			if ledger.ClosurePhaseTimestamps["shell_runner_activated"] != nil {
+				return nil
+			}
+			if n.ShellReader == nil {
+				return errors.New("shell runner activation reader is required")
+			}
+			bounded, cancel := context.WithTimeout(ctx, 2*time.Minute)
+			defer cancel()
+			at, err := shellpath.AwaitActivation(bounded, n.ShellReader, commit)
+			if err != nil {
+				return err
+			}
+			if ledger.ClosurePhaseTimestamps == nil {
+				ledger.ClosurePhaseTimestamps = map[string]*timestamppb.Timestamp{}
+			}
+			ledger.ClosurePhaseTimestamps["shell_runner_activated"] = timestamppb.New(at)
+			return n.saveLedger(ledger)
+		},
+	}).Resolve(n.CodePath)
+	if err != nil {
+		return err
+	}
+	return selected.Activation.Activate(ctx, ledger.ReflectionCommit)
+}
+func (n NativeIncidentBroker) prepareControllerRollout(ctx context.Context, ledger *contracts.BrokerLedger, paths []string) error {
+	required, err := n.Repository.RequiresControllerRollout(ctx, ledger.OutcomeCommit, ledger.ReflectionCommit, paths)
+	if err != nil {
+		return err
+	}
+	if !required {
 		return nil
 	}
 	if ledger.OutcomeCommit == "" || ledger.ReflectionCommit == "" {
@@ -633,7 +955,7 @@ func (n NativeIncidentBroker) PendingControllerRollouts() ([]ControllerRolloutHa
 			if ledger.RolloutExpectation == nil || ledger.Receipt == nil || successfulRollout(rolloutReceiptsState(ledger.RolloutReceipts)) {
 				continue
 			}
-			if ledger.RolloutExpectation.IncidentId != ledger.IncidentId || ledger.RolloutExpectation.ReflectionCommit != ledger.Receipt.ReflectionCommit || ledger.Receipt.OutcomeCommit == "" || ledger.Receipt.AckToken == "" {
+			if ledger.RolloutExpectation.IncidentId != ledger.IncidentId || ledger.RolloutExpectation.ReflectionCommit != ledger.ReflectionCommit || ledger.Receipt.OutcomeCommit == "" || ledger.Receipt.AckToken == "" {
 				return fmt.Errorf("broker ledger %s has incomplete rollout handoff", entry.Name())
 			}
 			handoffs = append(handoffs, ControllerRolloutHandoff{Expectation: *rolloutExpectationState(ledger.RolloutExpectation), Receipt: *closureReceiptState(ledger.Receipt)})
@@ -658,11 +980,19 @@ func (n NativeIncidentBroker) RecordControllerRollout(receipt ControllerRolloutR
 			return errors.New("controller rollout verification time is required")
 		}
 		if receipt.Success {
+<<<<<<< HEAD
 			if receipt.ControllerRevision != receipt.Expectation.ReflectionCommit {
 				return errors.New("host activation revision differs from accepted memory")
 			}
 			if receipt.BuildArtifact == "" || receipt.ControllerRevision == "" || receipt.ObservedDetectorFingerprint != receipt.Expectation.AfterDetectorFingerprint {
 				return errors.New("successful rollout lacks matching host artifact and activated detector fingerprint")
+=======
+			// A later accepted revision carries its own diagnostics tree; the
+			// trusted startup check has already verified it contains the reflection.
+			exact := receipt.ControllerRevision == receipt.Expectation.ReflectionCommit
+			if receipt.BuildArtifact == "" || receipt.ControllerRevision == "" || receipt.ObservedDetectorFingerprint == "" || (exact && receipt.ObservedDetectorFingerprint != receipt.Expectation.AfterDetectorFingerprint) {
+				return errors.New("successful rollout lacks matching build and restarted detector fingerprint")
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 			}
 			if successfulRollout(rolloutReceiptsState(ledger.RolloutReceipts)) {
 				return errors.New("controller rollout already succeeded")
@@ -689,19 +1019,6 @@ func successfulRollout(receipts []ControllerRolloutReceipt) bool {
 		}
 	}
 	return false
-}
-
-func (n NativeIncidentBroker) ReleaseIncident(_ context.Context, incidentID string) error {
-	return n.withLock(func() error {
-		ledger, err := n.readLedger(incidentID)
-		if err != nil {
-			return err
-		}
-		if ledger.Closure != nil {
-			return nil
-		}
-		return n.Repository.ReleaseProposal(incidentID, broker.ProposalPhase)
-	})
 }
 
 func (n NativeIncidentBroker) withLock(fn func() error) error {
@@ -793,4 +1110,94 @@ func (n NativeIncidentBroker) saveLedger(ledger *contracts.BrokerLedger) error {
 func (n NativeIncidentBroker) ledgerPath(incidentID string) string {
 	path, _ := broker.NativeLedgerFile(n.LedgerRoot, incidentID)
 	return path
+}
+
+// committedClosureReceipt recovers the receipt of a closure whose proposal and
+// outcome the broker already committed, authenticated against durable native
+// evidence and broker Git attribution. ok is false when the closure is not
+// fully committed yet.
+func (n NativeIncidentBroker) committedClosureReceipt(ctx context.Context, closure IncidentClosure, receipt *ClosureReceipt) (recovered ClosureReceipt, ok bool, err error) {
+	err = n.withLock(func() error {
+		if n.Repository == nil || closure.Request.IncidentID == "" {
+			return nil
+		}
+		ledger, err := n.readLedger(closure.Request.IncidentID)
+		if err != nil {
+			return err
+		}
+		projected, err := incidentClosureContract(closure)
+		if err != nil {
+			return err
+		}
+		stored := closureReceiptState(ledger.Receipt)
+		if stored == nil || stored.IncidentID != closure.Request.IncidentID || stored.BaseCommit != closure.Request.RepositoryBaseCommit || stored.ProposalCommit == "" || stored.OutcomeCommit == "" || stored.AckToken == "" || !proto.Equal(ledger.Closure, projected) || ledger.OutcomeDocument == nil || len(closure.FinalDetectorStates) == 0 {
+			return nil
+		}
+		if receipt != nil && *receipt != *stored {
+			return nil
+		}
+		if ledger.ProposalCommit != stored.ProposalCommit || ledger.OutcomeCommit != stored.OutcomeCommit {
+			return nil
+		}
+		for phase, commit := range map[broker.Phase]string{broker.ProposalPhase: stored.ProposalCommit, broker.OutcomePhase: stored.OutcomeCommit} {
+			accepted, found, err := n.Repository.AcceptedCommit(ctx, stored.IncidentID, phase)
+			if err != nil {
+				return err
+			}
+			if !found || accepted.Commit != commit {
+				return nil
+			}
+		}
+		recovered, ok = *stored, true
+		return nil
+	})
+	return recovered, ok, err
+}
+
+// committedOutcomeClosure authenticates a historical outcome before allowing
+// restart to resume reflection/receipt work. Exact frozen evidence and the
+// broker's accepted Git commit are both required; no receipt is needed yet.
+func (n NativeIncidentBroker) committedOutcomeClosure(ctx context.Context, closure IncidentClosure, receipt *ClosureReceipt) (bool, error) {
+	if n.Repository == nil || closure.Request.IncidentID == "" {
+		return false, nil
+	}
+	// Ledger writes use fsync + atomic rename. Read the immutable accepted
+	// outcome checkpoint without the effect lock: reflection may still own that
+	// lock while its Job runs, and health checks must not wait for the worker.
+	ledger, err := n.readLedger(closure.Request.IncidentID)
+	if err != nil {
+		return false, err
+	}
+	projected, err := incidentClosureContract(closure)
+	if err != nil {
+		return false, err
+	}
+	if ledger.OutcomeDocument == nil || ledger.OutcomeDocument.GetIncidentId() != closure.Request.IncidentID || !proto.Equal(ledger.Closure, projected) {
+		return false, nil
+	}
+	if receipt != nil && (ledger.Receipt == nil || !proto.Equal(ledger.Receipt, closureReceiptContract(receipt))) {
+		return false, nil
+	}
+	if ledger.ReflectionProcessed && ledger.Receipt == nil {
+		return false, nil
+	}
+	accepted := false
+	if ledger.OutcomeCommit != "" {
+		_, accepted, err = n.Repository.AcceptedCommitAt(ctx, closure.Request.IncidentID, broker.OutcomePhase, ledger.OutcomeCommit)
+	} else {
+		// Git acceptance can survive a crash before its ledger marker is saved.
+		_, accepted, err = n.Repository.AcceptedCommit(ctx, closure.Request.IncidentID, broker.OutcomePhase)
+	}
+	if err != nil || !accepted {
+		return accepted, err
+	}
+	return true, nil
+}
+
+func logicalReflectionDecision(decision ReflectionDecision) *contracts.ReflectionDecision {
+	result := &contracts.ReflectionDecision{DeclineReason: decision.DeclineReason, LearningDecision: decision.LearningDecision, NoChangeReason: decision.NoChangeReason, Error: decision.Error, FailureReason: decision.FailureReason, SdkGaps: decision.SDKGaps, PlaybookIds: decision.PlaybookIDs}
+	if decision.Usage != nil {
+		result.Usage = proto.Clone(decision.Usage).(*contracts.UsageMetrics)
+	}
+	return result
 }

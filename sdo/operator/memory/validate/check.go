@@ -25,11 +25,23 @@ func WithCaptureSource(ctx context.Context, directory, incidentID string) contex
 	return context.WithValue(ctx, captureSourceKey{}, captureSource{directory, incidentID})
 }
 
+// CaptureSource returns trusted capture provenance for validation attestations.
+func CaptureSource(ctx context.Context) (string, string) {
+ source, _ := ctx.Value(captureSourceKey{}).(captureSource)
+ return source.directory, source.incidentID
+}
+
 // Check is the complete memory acceptance pipeline. Callers cannot select
 // partial layers. Static failures block execution of candidate Go code.
 func Check(ctx context.Context, request Request, compile CompileRunner) ([]Diagnostic, error) {
 	if request.Base == "" || request.Actor == "" || request.Phase == "" {
 		return nil, errors.New("memory check requires base, actor, and phase (SDO_BASE_COMMIT, SDO_ACTOR, SDO_PHASE)")
+	}
+	if request.CodePath == "shell" {
+		return CheckShell(ctx, request)
+	}
+	if request.CodePath != "" && request.CodePath != "go" {
+		return nil, fmt.Errorf("unknown memory code path %q", request.CodePath)
 	}
 	if compile == nil {
 		return nil, errors.New("memory check requires a compile runner")
@@ -57,6 +69,9 @@ func Check(ctx context.Context, request Request, compile CompileRunner) ([]Diagn
 			return nil, err
 		}
 	}
+	if request.Phase == ReflectionPhase && request.Actor == Responder {
+		diagnostics = append(diagnostics, ReflectionDecisionContractDiagnostics(request.Decision)...)
+	}
 	// Publication content gates run before executing candidate Go code.
 	extra, err := publicationChecks(ctx, request, len(diagnostics) == 0)
 	if err != nil {
@@ -74,6 +89,10 @@ func Check(ctx context.Context, request Request, compile CompileRunner) ([]Diagn
 
 	request, err = selectCompileBaseline(ctx, request)
 	if err != nil {
+		var failure *Failure
+		if errors.As(err, &failure) {
+			return failure.Diagnostics, nil
+		}
 		return nil, err
 	}
 	request.Layers = Compile
@@ -93,13 +112,6 @@ func CompileCandidate(ctx context.Context, request Request) ([]Diagnostic, error
 	}
 	if err := memoryio.GoAvailable(); err != nil {
 		return nil, fmt.Errorf("memory check Go toolchain: %w", err)
-	}
-	if request.HealthyBaseline != "" {
-		if info, err := os.Stat(request.HealthyBaseline); err != nil {
-			return nil, fmt.Errorf("memory check healthy baseline: %w", err)
-		} else if !info.IsDir() {
-			return nil, errors.New("memory check healthy baseline must be a directory")
-		}
 	}
 	request.Layers = Compile
 	return Validate(ctx, request)

@@ -1,0 +1,257 @@
+package runtime
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"google.golang.org/protobuf/reflect/protoreflect"
+
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+)
+
+// The outer tool envelope retains the established JSON spelling; generated
+// inner contracts use strict ProtoJSON (including string uint64 epochs).
+func (r *ToolRequest) UnmarshalJSON(data []byte) error {
+	normalized, err := menuNormalizeInput(data)
+	if err != nil {
+		return err
+	}
+	data = normalized
+	type plain ToolRequest
+	envelope := struct {
+		*plain
+		SelectionSet json.RawMessage `json:"selection_set,omitempty"`
+		Selection    json.RawMessage `json:"selection"`
+		ReportQuery  json.RawMessage `json:"report_query"`
+		Checkpoint   json.RawMessage `json:"checkpoint"`
+		// Recorded stage applies carry "stage": true. It is read and dropped,
+		// so a tool call can never set ToolRequest.stage.
+		Stage bool `json:"stage"`
+	}{plain: (*plain)(r)}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&envelope); err != nil {
+		return errors.New("invalid tool request envelope")
+	}
+	for _, field := range []struct {
+		raw     json.RawMessage
+		message proto.Message
+	}{
+		{envelope.Selection, new(contracts.MitigationSelection)},
+		{envelope.SelectionSet, new(contracts.MitigationSelectionSet)},
+		{envelope.ReportQuery, new(contracts.MitigationReportQuery)},
+		{envelope.Checkpoint, new(contracts.MitigationSessionCheckpoint)},
+	} {
+		if len(field.raw) == 0 {
+			continue
+		}
+		var object map[string]any
+		if err := json.Unmarshal(field.raw, &object); err != nil || object == nil {
+			return errors.New("tool contract: expected object")
+		}
+		for name, value := range object {
+			f := field.message.ProtoReflect().Descriptor().Fields().ByName(protoreflect.Name(name))
+			if f == nil {
+				f = field.message.ProtoReflect().Descriptor().Fields().ByJSONName(name)
+			}
+			if f == nil {
+				return fmt.Errorf("%s.%s: unknown field", field.message.ProtoReflect().Descriptor().Name(), name)
+			}
+			converted, err := menuNormalizeReferences(f, value, string(field.message.ProtoReflect().Descriptor().Name())+"."+name)
+			if err != nil {
+				return err
+			}
+			object[name] = converted
+			if err := menuValidateShape(f, converted, string(field.message.ProtoReflect().Descriptor().Name())+"."+name); err != nil {
+				return err
+			}
+		}
+		normalized, err := json.Marshal(object)
+		if err != nil {
+			return err
+		}
+		if protojson.Unmarshal(normalized, field.message) != nil {
+			return errors.New("invalid generated tool contract")
+		}
+		switch value := field.message.(type) {
+		case *contracts.MitigationSelectionSet:
+			r.SelectionSet = value
+		case *contracts.MitigationSelection:
+			r.Selection = value
+		case *contracts.MitigationReportQuery:
+			r.ReportQuery = value
+		case *contracts.MitigationSessionCheckpoint:
+			r.Checkpoint = value
+		}
+	}
+	return nil
+}
+func toolContractJSON(message proto.Message) (json.RawMessage, error) {
+	if message == nil || !message.ProtoReflect().IsValid() {
+		return nil, nil
+	}
+	return (protojson.MarshalOptions{UseProtoNames: true}).Marshal(message)
+}
+func (r ToolRequest) MarshalJSON() ([]byte, error) {
+	type plain ToolRequest
+	selectionSet, err := toolContractJSON(r.SelectionSet)
+	if err != nil {
+		return nil, err
+	}
+	selection, err := toolContractJSON(r.Selection)
+	if err != nil {
+		return nil, err
+	}
+	query, err := toolContractJSON(r.ReportQuery)
+	if err != nil {
+		return nil, err
+	}
+	checkpoint, err := toolContractJSON(r.Checkpoint)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(struct {
+		plain
+		SelectionSet json.RawMessage `json:"selection_set,omitempty"`
+		Selection    json.RawMessage `json:"selection,omitempty"`
+		ReportQuery  json.RawMessage `json:"report_query,omitempty"`
+		Checkpoint   json.RawMessage `json:"checkpoint,omitempty"`
+		// Recorded calls keep the stage marker so analysis can tell the
+		// automatic stage's apply from the agent's. Decoding never reads it.
+		Stage bool `json:"stage,omitempty"`
+	}{plain(r), selectionSet, selection, query, checkpoint, r.stage})
+}
+func (r ToolResponse) MarshalJSON() ([]byte, error) {
+	type plain ToolResponse
+	menu, err := toolContractJSON(r.Menu)
+	if err != nil {
+		return nil, err
+	}
+	menu, err = menuParameterJSON(menu, r.MenuParameters)
+	if err != nil {
+		return nil, err
+	}
+	report, err := toolContractJSON(r.Report)
+	if err != nil {
+		return nil, err
+	}
+	report, err = menuExecutionJSON(report, r.MenuExecution)
+	if err != nil {
+		return nil, err
+	}
+	optionReports := make([]json.RawMessage, 0, len(r.OptionReports))
+	for _, item := range r.OptionReports {
+		encoded, err := toolContractJSON(item)
+		if err != nil {
+			return nil, err
+		}
+		optionReports = append(optionReports, encoded)
+	}
+	session, err := toolContractJSON(r.Session)
+	if err != nil {
+		return nil, err
+	}
+	receipt, err := toolContractJSON(r.Receipt)
+	if err != nil {
+		return nil, err
+	}
+	// The release actions are a oneof, which only protojson encodes.
+	pending, err := toolContractJSON(r.RolloutPending)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(struct {
+		plain
+		OptionReports  []json.RawMessage `json:"option_reports,omitempty"`
+		Receipt        json.RawMessage   `json:"receipt,omitempty"`
+		Menu           json.RawMessage   `json:"menu,omitempty"`
+		Report         json.RawMessage   `json:"report,omitempty"`
+		Session        json.RawMessage   `json:"session,omitempty"`
+		RolloutPending json.RawMessage   `json:"rollout_pending,omitempty"`
+	}{plain(r), optionReports, receipt, menu, report, session, pending})
+}
+
+// Defining an outer marshaler prevents the embedded ToolResponse marshaler
+// from swallowing truncation counters used by the revision-bound trust reader.
+func (r truncatedToolResponse) MarshalJSON() ([]byte, error) {
+	encoded, err := json.Marshal(r.ToolResponse)
+	if err != nil {
+		return nil, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		return nil, err
+	}
+	for key, value := range map[string]any{"truncated": r.Truncated, "findings_count": r.FindingsCount, "program_runs_count": r.ProgramRunsCount, "program_revisions_count": r.ProgramRevisionsCount, "detector_states_count": r.DetectorStatesCount, "patches_count": r.PatchesCount} {
+		fields[key], err = json.Marshal(value)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if r.VerificationSummary != nil {
+		fields["verification_summary"], err = json.Marshal(r.VerificationSummary)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return json.Marshal(fields)
+}
+
+func menuParameterJSON(menu json.RawMessage, parameters map[string][]MenuParameter) (json.RawMessage, error) {
+	if len(menu) == 0 || parameters == nil {
+		return menu, nil
+	}
+	var envelope struct {
+		Options []map[string]json.RawMessage `json:"options"`
+	}
+	if err := json.Unmarshal(menu, &envelope); err != nil {
+		return nil, err
+	}
+	for _, option := range envelope.Options {
+		var id string
+		if err := json.Unmarshal(option["option_id"], &id); err != nil {
+			return nil, err
+		}
+		schema, err := json.Marshal(parameters[id])
+		if err != nil {
+			return nil, err
+		}
+		option["parameters"] = schema
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(menu, &fields); err != nil {
+		return nil, err
+	}
+	options, err := json.Marshal(envelope.Options)
+	if err != nil {
+		return nil, err
+	}
+	fields["options"] = options
+	return json.Marshal(fields)
+}
+
+func (r *ToolResponse) UnmarshalJSON(data []byte) error {
+	type plain ToolResponse
+	envelope := struct {
+		*plain
+		Receipt        json.RawMessage `json:"receipt"`
+		RolloutPending json.RawMessage `json:"rollout_pending"`
+	}{plain: (*plain)(r)}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return err
+	}
+	if len(envelope.RolloutPending) > 0 && string(envelope.RolloutPending) != "null" {
+		r.RolloutPending = new(contracts.RolloutPending)
+		if err := protojson.Unmarshal(envelope.RolloutPending, r.RolloutPending); err != nil {
+			return err
+		}
+	}
+	if len(envelope.Receipt) > 0 && string(envelope.Receipt) != "null" {
+		r.Receipt = new(contracts.RepairActionReceipt)
+		return protojson.Unmarshal(envelope.Receipt, r.Receipt)
+	}
+	return nil
+}

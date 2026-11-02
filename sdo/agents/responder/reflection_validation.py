@@ -5,28 +5,60 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import inspect
+import json
 import math
 import os
 import signal
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
+from mcp.types import TextContent
+
+from sdo.agents.context_output import budget_for, save_context
+from sdo.agents.replay import replay_mode
+from sdo.agents.responder.memory_check import (
+    VALIDATION_TIMEOUT_EXIT_CODE,
+    VALIDATION_TIMEOUT_SECONDS,
+    ValidationResult,
+    prior_timeout,
+    remember_timeout,
+    validation_output,
+)
+from sdo.agents.responder.reflection_authoring import SdkGap, install_authoring_tools
+from sdo.agents.responder.reflection_evidence import install_evidence_tools
+from sdo.agents.responder.tool_output import bound_reply
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable, Sequence
+
+    from mcp.types import ContentBlock
 
 # Codex forwards only a small default environment to MCP servers. Carry the
 # worker-pinned ownership and offline toolchain settings explicitly.
 VALIDATION_ENVIRONMENT = (
+    "SDO_REPLAY",
+    "SDO_MEMORY_CHECK_DIR",
+    "SDO_MEMORY_CHECK_TIMEOUT_FILE",
     "SDO_ACTOR",
+    "SDO_SESSION_SCRATCH",
+    "SDO_SESSION_DIR",
     "SDO_PHASE",
     "SDO_BASE_COMMIT",
     "SDO_INCIDENT_ID",
     "SDO_CAPTURED_CORPUS_DIR",
     "SDO_OPERATOR_ROOT",
+    "SDO_PLAYBOOK_PROGRAM_EXAMPLE_DIR",
     "SDO_HEALTHY_BASELINE",
     "SDO_GO_CACHE_SEED",
     "PATH",
     "PYTHONPATH",
     "GOCACHE",
+    "GOCACHEPROG",
     "GOMODCACHE",
     "GOPROXY",
     "GOSUMDB",
@@ -34,28 +66,146 @@ VALIDATION_ENVIRONMENT = (
     "GOFLAGS",
     "CGO_ENABLED",
 )
-VALIDATION_TIMEOUT_SECONDS = 300
 VALIDATION_TOOL_TIMEOUT_SECONDS = VALIDATION_TIMEOUT_SECONDS + 30
-_MAX_OUTPUT_CHARS = 24_000
+
+
+class _TextToolServer(FastMCP):
+    """Return each tool result once, as text within the shared reply budget.
+
+    A resumed reflection carries every result for the rest of the session;
+    FastMCP's structured copy would repeat each one, and an oversized reply
+    is saved to a file the agent can search instead.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.help_texts: dict[str, str] = {}
+
+    def add_tool(self, fn: Any, *args: Any, structured_output: bool | None = None, **kwargs: Any) -> None:
+        name = kwargs.get("name") or fn.__name__
+        budget_for("tool_reply." + name)
+        limit = budget_for("tool_description." + name)
+        help_text = kwargs.pop("description", None) or inspect.getdoc(fn) or ""
+        self.help_texts[name] = help_text
+        if len(help_text) > limit:
+            _, reference = save_context(help_text)
+            description = help_text.split(". ", 1)[0].split("\n", 1)[0].rstrip(".") + "."
+            suffix = f" Full help: {reference}"
+            if len(description + suffix) > limit:
+                raise ValueError(f"{name}: first help sentence exceeds listing budget {limit}")
+            help_text = description + suffix
+        super().add_tool(fn, *args, description=help_text, structured_output=False, **kwargs)
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Sequence[ContentBlock] | dict[str, Any]:
+        try:
+            result = await super().call_tool(name, arguments)
+        except ToolError as exc:
+            result = [TextContent(type="text", text="Tool error: " + str(exc))]
+        if isinstance(result, dict) or not all(isinstance(block, TextContent) for block in result):
+            raise TypeError(f"{name}: SDO tools must return text through the capped boundary")
+        text = "\n".join(block.text for block in result if isinstance(block, TextContent))
+        bounded = bound_reply(text, tool=name, budget=budget_for("tool_reply." + name))
+        return result if bounded == text else [TextContent(type="text", text=bounded)]
 
 
 @dataclass(frozen=True)
-class ValidationResult:
+class CheckMemoryReply:
+    """A check result led by the next step, so a capped reply keeps it."""
+
+    next: str
     exit_code: int
     timed_out: bool
     stdout: str
     stderr: str
 
+    @classmethod
+    def after(cls, result: ValidationResult, decision: str | None, ids: list[str]) -> CheckMemoryReply:
+        if result.exit_code == 0 and not result.timed_out:
+            returned = (
+                f"learning_decision {json.dumps(decision)} with proposed_artifact_ids {json.dumps(ids)}"
+                if decision
+                else "the same decision"
+            )
+            disagreements = (
+                _replay_disagreements(result.stdout, set(ids) if decision else None) if replay_mode() == "on" else []
+            )
+            text_matches = _diff_text_matches(result.stdout)
+            if disagreements:
+                step = (
+                    f"passed; replay disagrees for {'; '.join(disagreements)}. Each program should Match its fault "
+                    "capture and NoMatch healthy: decide from what the capture holds (snapshot objects, pod_admission, "
+                    f"reads listed by recordings_index) and check again; after two refinements return {returned}."
+                )
+            elif text_matches:
+                step = (
+                    f"passed; {', '.join(text_matches)} decide on diff.Text, which matches any container. "
+                    "Compare typed fields (diff.ContainerChanges, diff.Field) and check again; "
+                    f"after one rewrite return {returned}."
+                )
+            else:
+                step = f"passed: return {returned} now. Other coverage_gaps are information, not work."
+        elif result.timed_out:
+            step = "terminal memory_check_timeout: stop validation; report this failure. Do not retry."
+        else:
+            step = "fix each diagnostic as its hint says, then check again."
+            if replay_mode() == "on":
+                step += " Replay is judged once the check passes."
+        return cls(step, result.exit_code, result.timed_out, result.stdout, result.stderr)
 
-def _output(raw: bytes) -> str:
-    text = raw.decode("utf-8", errors="replace")
-    if len(text) <= _MAX_OUTPUT_CHARS:
-        return text
-    half = _MAX_OUTPUT_CHARS // 2
-    return f"{text[:half]}\n[... {len(text) - _MAX_OUTPUT_CHARS} characters omitted ...]\n{text[-half:]}"
+
+def _diff_text_matches(stdout: str) -> list[str]:
+    """Program lines memory check notes for deciding on a diff's whole-document Text."""
+    try:
+        gaps = json.loads(stdout).get("coverage_gaps") or []
+    except (ValueError, AttributeError):
+        return []
+    return [
+        f"{gap.get('path')}:{gap.get('line')}"
+        for gap in gaps
+        if isinstance(gap, dict) and gap.get("rule") == "program.diff-text-match"
+    ]
 
 
-def validation_server(root: Path, *, timeout_seconds: float = VALIDATION_TIMEOUT_SECONDS) -> FastMCP:
+def _replay_disagreements(stdout: str, own: set[str] | None) -> list[str]:
+    """The agent's programs whose replay does not Match their fault capture or NoMatch healthy.
+
+    Cases Go settled for other playbooks (the health judge's included) are not the agent's to refine.
+    """
+    try:
+        notes = json.loads(stdout).get("mitigation_replay_notes") or []
+    except (ValueError, AttributeError):
+        return []
+    found = []
+    for note in notes:
+        if not isinstance(note, dict) or (own is not None and note.get("program_id") not in own):
+            continue
+        effects = note.get("effects") or []
+        diagnosis = {
+            phase: next((e.split(": ", 1)[1] or "none" for e in effects if e.startswith(f"{phase} diagnosis: ")), "")
+            for phase in ("open", "healthy")
+        }
+        if "healthy diagnosis is not NoMatch" in effects and diagnosis["healthy"] in ("", "NoMatch"):
+            diagnosis["healthy"] = "not NoMatch"
+        wrong = [
+            f"{phase} {value}"
+            for phase, value, want in (
+                ("open", diagnosis["open"], "Match"),
+                ("healthy", diagnosis["healthy"], "NoMatch"),
+            )
+            if value and value != want
+        ]
+        if wrong:
+            found.append(f"{note.get('program_id')} on case {note.get('case_id')} ({', '.join(wrong)})")
+    return found
+
+
+def validation_server(
+    root: Path,
+    *,
+    timeout_seconds: float = VALIDATION_TIMEOUT_SECONDS,
+    expire: Callable[[float], Awaitable[object]] = asyncio.sleep,
+) -> _TextToolServer:
+    """Serve the reflection tools; ``expire(timeout_seconds)`` returns when a check times out."""
     if (
         isinstance(timeout_seconds, bool)
         or not math.isfinite(timeout_seconds)
@@ -65,16 +215,68 @@ def validation_server(root: Path, *, timeout_seconds: float = VALIDATION_TIMEOUT
     checkout = root.resolve(strict=True)
     if not checkout.is_dir():
         raise ValueError("validation root must be a checkout directory")
-    server = FastMCP("sdo_reflection")
+    server = _TextToolServer("sdo_reflection")
+    install_authoring_tools(server, checkout)
+    install_evidence_tools(server)
+    terminal_timeout: ValidationResult | None = None
+    check_lock = asyncio.Lock()
 
     @server.tool()
-    async def check_memory(decision_path: str | None = None) -> ValidationResult:
+    async def check_memory(
+        decision_path: str | None = None,
+        learning_decision: Literal["updated", "no_change", "sdk_gap"] | None = None,
+        summary: str = "",
+        no_change_reason: str = "",
+        decline_reason: Literal["", "no_recorded_repair"] = "",
+        proposed_artifact_ids: list[str] | None = None,
+        sdk_gaps: list[SdkGap] | None = None,
+    ) -> CheckMemoryReply:
         """Run the complete memory check and wait for final diagnostics (at most 300s).
 
-        Write ReflectionDecision JSON first. Pass its filename as decision_path,
-        or use the default .git/sdo-reflection-decision.json. No polling needed.
-        The broker independently repeats this same validation before acceptance.
+        Supply typed decision fields; this tool writes JSON outside authored memory.
+        Return the same decision and logical IDs. It gofmt-formats changed Go under .sdo/.
+        Follow next: return on pass, fix diagnostics, or report terminal timeout without retry.
+        Broker deadlines are terminal too. Legacy decision_path files are supported.
+        One call waits for final diagnostics. Responder incident detectors use the same
+        check; health detectors are judge-owned. Compile/import/format/provenance remain required.
+        SDO_REPLAY defaults on; off skips corpus/replay. RunScript still needs its successful
+        accepted receipt. Replay verdicts are information. Broker acceptance may reuse an isolated
+        check only for identical bytes, accepted base, policy and toolchain.
         """
+        if learning_decision is not None:
+            if decision_path is not None:
+                raise ValueError("supply decision fields or decision_path, not both")
+            # Proposal checkouts may be Git worktrees, where .git is a file.
+            with tempfile.TemporaryDirectory(prefix="sdo-decision-") as temporary:
+                decision = Path(temporary) / "decision.json"
+                decision.write_text(
+                    json.dumps(
+                        {
+                            "summary": summary,
+                            "learning_decision": learning_decision,
+                            "no_change_reason": no_change_reason,
+                            "decline_reason": decline_reason,
+                            "proposed_artifact_ids": proposed_artifact_ids or [],
+                            "sdk_gaps": [gap.model_dump() for gap in sdk_gaps or []],
+                        }
+                    )
+                )
+                result = await run_check(str(decision))
+            return CheckMemoryReply.after(result, learning_decision, proposed_artifact_ids or [])
+        return CheckMemoryReply.after(await run_check(decision_path), None, [])
+
+    async def run_check(decision_path: str | None) -> ValidationResult:
+        # Providers can issue parallel calls. One owned check may run at a time;
+        # callers queued behind a timeout observe its terminal result.
+        async with check_lock:
+            return await run_serial_check(decision_path)
+
+    async def run_serial_check(decision_path: str | None) -> ValidationResult:
+        nonlocal terminal_timeout
+        terminal_timeout = terminal_timeout or prior_timeout()
+        if terminal_timeout is not None:
+            return terminal_timeout
+        await _format_changed_memory_go(checkout)
         argv = ["sdo-operator", "memory", "check", "--json"]
         if decision_path is not None:
             argv.extend(["--decision", decision_path])
@@ -89,22 +291,88 @@ def validation_server(root: Path, *, timeout_seconds: float = VALIDATION_TIMEOUT
         except OSError as exc:
             return ValidationResult(2, False, "", f"cannot start memory check: {exc}")
         communication = asyncio.create_task(process.communicate())
-        try:
-            stdout, stderr = await asyncio.wait_for(asyncio.shield(communication), timeout_seconds)
-        except (TimeoutError, asyncio.CancelledError) as exc:
+
+        async def stop() -> tuple[bytes, bytes]:
             # Go builds/tests may have children holding the pipes. Terminate the
             # whole validation process group and reap it, including on tool cancellation.
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(process.pid, signal.SIGKILL)
-            stdout, stderr = await communication
-            if isinstance(exc, asyncio.CancelledError):
-                raise
-            return ValidationResult(
-                2, True, _output(stdout), f"memory check timed out after {timeout_seconds:g}s\n{_output(stderr)}"
+            return await communication
+
+        deadline = asyncio.ensure_future(expire(timeout_seconds))
+        try:
+            await asyncio.wait((communication, deadline), return_when=asyncio.FIRST_COMPLETED)
+        except asyncio.CancelledError:
+            await stop()
+            raise
+        finally:
+            deadline.cancel()
+        if communication.done():
+            stdout, stderr = communication.result()
+            result = ValidationResult(
+                process.returncode or 0,
+                process.returncode == VALIDATION_TIMEOUT_EXIT_CODE,
+                validation_output(stdout),
+                validation_output(stderr),
             )
-        return ValidationResult(process.returncode or 0, False, _output(stdout), _output(stderr))
+            if result.timed_out:
+                terminal_timeout = result
+                remember_timeout(result)
+            return result
+        stdout, stderr = await stop()
+        terminal_timeout = ValidationResult(
+            2,
+            True,
+            validation_output(stdout),
+            f"memory check timed out after {timeout_seconds:g}s\n{validation_output(stderr)}",
+        )
+        remember_timeout(terminal_timeout)
+        return terminal_timeout
 
     return server
+
+
+async def _format_changed_memory_go(checkout: Path) -> None:
+    """gofmt the Go files this session changed under .sdo/; accepted bytes stay untouched.
+
+    Formatting is mechanical, so a go.format diagnostic would only cost a round.
+    Without git or gofmt the check reports formatting as before.
+    """
+    try:
+        status = await asyncio.create_subprocess_exec(
+            "git",
+            "status",
+            "--porcelain",
+            "-z",
+            "--untracked-files=all",
+            "--",
+            ".sdo",
+            cwd=checkout,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        listing, _ = await status.communicate()
+        if status.returncode != 0:
+            return
+        paths = [entry[3:] for entry in listing.decode().split("\0") if entry[3:].endswith(".go") and entry[:2] != " D"]
+        existing = [
+            path
+            for path in paths
+            if (checkout / path).is_file() and (replay_mode() != "off" or not path.startswith(".sdo/corpus/"))
+        ]
+        if existing:
+            gofmt = await asyncio.create_subprocess_exec(
+                "gofmt",
+                "-w",
+                "--",
+                *existing,
+                cwd=checkout,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await gofmt.wait()
+    except OSError:
+        return
 
 
 def main() -> None:

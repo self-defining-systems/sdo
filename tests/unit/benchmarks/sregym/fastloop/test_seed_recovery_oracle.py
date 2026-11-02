@@ -9,6 +9,7 @@ from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline
 from benchmarks.sregym.fastloop.fault_driver import SregymFaultDriver
 from benchmarks.sregym.fastloop.loop import run_incidents
 from benchmarks.sregym.fastloop.records import OracleVerdict
+from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import fixed_source_provider
 from tests.unit.benchmarks.sregym.fastloop.test_fastloop_loop import FakeAgent, FakeClock, FakeDriver, _config
 
 
@@ -27,13 +28,15 @@ def test_seed_recovery_uses_independent_verdict_and_retains_original_grade(tmp_p
 
     clock = FakeClock()
     driver = SeedDriver(clock)
-    records = run_incidents(FakeAgent(clock), driver, _config(tmp_path, 2), monotonic=clock.monotonic)
+    records = run_incidents(
+        FakeAgent(clock), driver, _config(tmp_path, 2), monotonic=clock.monotonic, sleep=clock.advance
+    )
     assert len(records) == (2 if baseline_healthy else 1)
     assert all(r.oracle.success is False for r in records)
     assert all(r.recovery_oracle.success is baseline_healthy for r in records)
     assert all(("recovery residue" in (r.error or "")) is (not baseline_healthy) for r in records)
     assert driver.events.count("mitigation_oracle") == len(records)
-    assert driver.events.count("seed_oracle") == len(records)
+    assert driver.events.count("seed_oracle") == sum(len(r.recovery_oracle_samples) for r in records)
 
 
 def test_driver_requires_completed_seed_cleanup_before_independent_oracle():
@@ -53,6 +56,7 @@ def test_driver_requires_completed_seed_cleanup_before_independent_oracle():
         baseline_problem_id="seed-problem",
         baseline=ApplicationBaseline("sample", []),
         cluster=SimpleNamespace(list_objects=lambda _: []),
+        accepted_source=fixed_source_provider(ApplicationBaseline("sample", []), "sample"),
     )
     with pytest.raises(RuntimeError, match="seed recovery"):
         driver.recovery_oracle()

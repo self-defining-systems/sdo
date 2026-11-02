@@ -12,10 +12,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sdo.dev/operator/contracts/settings"
+	"sdo.dev/operator/memory/layout"
 	"sort"
 	"strings"
 
+	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
@@ -38,6 +42,7 @@ const (
 	ReflectionPhase Phase = "reflection"
 	InitialPhase    Phase = "initial"
 	OutcomePhase    Phase = "outcome"
+	ImportPhase     Phase = "import"
 )
 
 // Layer selects a group of rules.
@@ -64,8 +69,25 @@ const (
 
 // Request describes one validation run.
 type Request struct {
+	// AcceptanceOnly omits informational test execution after all required gates.
+	// Isolated publication validators use it; local self-checks may collect notes.
+	AcceptanceOnly bool
+
+	// Replay is trusted run configuration: empty/on enables corpus and replay.
+	Replay string
+	// CodePath is trusted caller configuration, never read from candidate artifacts.
+	CodePath string
+
+	// ObservationCeiling is caller-owned installer policy, never loaded from candidate memory.
+	ObservationCeiling   sdk.ObservationScope
+	ApplicationNamespace string
 	// MitigationReplayNotes optionally receives informational corpus replay results.
 	MitigationReplayNotes *[]sdktest.MitigationReplayResult
+	// CoverageGaps optionally receives non-blocking notes about learning the
+	// reflection left out. They never reject a candidate.
+	CoverageGaps *[]Diagnostic
+	// StageTimings optionally receives the Go toolchain stage durations of the compile layer.
+	StageTimings *[]builder.StageTiming
 	// Root is the checkout to validate.
 	Root string
 	// Publication is broker-derived context. CLI callers load its provisioned
@@ -86,8 +108,9 @@ type Request struct {
 	Layers Layer
 	// OperatorRoot holds the operator Go modules and is required for Compile.
 	OperatorRoot string
-	// HealthyBaseline optionally names recorded healthy snapshots that
-	// incident detectors must stay quiet on during Compile.
+	// HealthyBaseline names recorded healthy snapshots for Compile. Reflection
+	// Check always replaces caller input with the controller pre-incident capture.
+	// Other lifecycle phases may opt into an independently provisioned baseline.
 	HealthyBaseline string
 	// CaptureRoot and IncidentID bind proposed corpus to controller-owned captures.
 	CaptureRoot      string
@@ -107,6 +130,12 @@ type Diagnostic struct {
 	Line    int
 	Message string
 	Hint    string
+}
+
+func (r Request) noteGaps(gaps ...Diagnostic) {
+	if r.CoverageGaps != nil {
+		*r.CoverageGaps = append(*r.CoverageGaps, gaps...)
+	}
 }
 
 func (d Diagnostic) String() string {
@@ -136,6 +165,10 @@ func Err(diagnostics []Diagnostic) error {
 	return &Failure{Diagnostics: diagnostics}
 }
 
+// NonRetryable marks deterministic diagnostics: resubmitting the same bytes
+// can only reproduce them, so callers end the attempt instead of retrying.
+func (f *Failure) NonRetryable() bool { return true }
+
 func (f *Failure) Error() string {
 	lines := make([]string, 0, len(f.Diagnostics)+1)
 	lines = append(lines, fmt.Sprintf("%d validation diagnostic(s)", len(f.Diagnostics)))
@@ -153,6 +186,9 @@ func (r Request) effectiveLayers() Layer {
 }
 
 func (r Request) check() error {
+	if _, err := settings.Replay(r.Replay); err != nil {
+		return err
+	}
 	if r.Root == "" {
 		return errors.New("validate: root is required")
 	}
@@ -207,4 +243,13 @@ func Validate(ctx context.Context, request Request) ([]Diagnostic, error) {
 		return a.Rule < b.Rule
 	})
 	return s.diags, nil
+}
+
+// Corpus bytes are inert when replay is disabled; the containing artifact still
+// has the same owner. Source, detector and playbook classification is unchanged.
+func (r Request) classify(path string) (layout.Kind, string, bool) {
+	if r.Replay == "off" && strings.HasPrefix(path, layout.CorpusDir+"/") {
+		return layout.KindCorpus, strings.TrimPrefix(path, layout.CorpusDir+"/"), true
+	}
+	return layout.Classify(path)
 }

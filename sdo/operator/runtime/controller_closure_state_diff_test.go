@@ -49,6 +49,7 @@ func TestIncidentClosureCarriesTheStateDiffAsOfVerificationTime(t *testing.T) {
 		}}
 		controller.Baseline = baseline
 
+<<<<<<< HEAD
 		closed := make(chan IncidentClosure, 1)
 		controller.OnIncidentClosed = func(closure IncidentClosure) { closed <- closure }
 
@@ -61,6 +62,12 @@ func TestIncidentClosureCarriesTheStateDiffAsOfVerificationTime(t *testing.T) {
 		request := awaitRequest(t, dispatcher.requests)
 		if len(request.StateChanges.Changes) != 1 || request.StateChanges.Changes[0].Kind != "Service" {
 			t.Fatalf("the dispatch snapshot should carry only the selector fault: %+v", request.StateChanges)
+=======
+	awaitDispatchCompletionQueued(t, controller)
+	for sample := 2; sample < 21; sample++ {
+		if err := controller.Step(context.Background(), time.Unix(int64(sample), 0), nil); err != nil {
+			t.Fatalf("clearing step %d: %v", sample, err)
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 		}
 
 		// The readiness-probe fault lands about 6s after dispatch, while the
@@ -118,9 +125,21 @@ func TestIncidentClosureNeverInventsAStateChangeItNeverSaw(t *testing.T) {
 		if err != nil {
 			t.Fatalf("new controller: %v", err)
 		}
+<<<<<<< HEAD
 		// No baseline configured, as in a cluster where the state tracker never started.
 		closed := make(chan IncidentClosure, 1)
 		controller.OnIncidentClosed = func(closure IncidentClosure) { closed <- closure }
+=======
+	}
+	executePendingEffect(t, controller)
+	awaitRequest(t, dispatcher.requests)
+	awaitDispatchCompletionQueued(t, controller)
+	for sample := 2; sample < 19; sample++ {
+		if err := controller.Step(context.Background(), time.Unix(int64(sample), 0), nil); err != nil {
+			t.Fatalf("clearing step %d: %v", sample, err)
+		}
+	}
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 
 		for sample := 0; sample < 2; sample++ {
 			if err := controller.Step(context.Background(), time.Unix(int64(sample), 0), nil); err != nil {

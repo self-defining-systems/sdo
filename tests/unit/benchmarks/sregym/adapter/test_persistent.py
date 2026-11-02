@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -16,27 +17,26 @@ from benchmarks.sregym.adapter.persistent import (
     ControllerPod,
     ControllerRecord,
     DetectionMissError,
-    DetectorReviewRequiredError,
     PendingIncident,
     PersistentControllerError,
     PersistentState,
     StageInputs,
+    _resolution_timings,
     _wait_for_reflection_drain,
     collect_followup_incident,
     control_namespace_for,
+    controller_job_failure,
     drain_pending_incident,
     publish_deferred_receipts,
     run_persistent_stage,
     runtime_config_from_payload,
     runtime_config_payload,
     teardown,
-    wait_for_maintenance_ack,
 )
 from benchmarks.sregym.adapter.runtime import RuntimeConfig
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
 DETECTED = datetime(2026, 9, 27, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -83,6 +83,27 @@ def _receipt(incident_id: str) -> dict[str, Any]:
     }
 
 
+#: A bound that has already passed: the fake controller is busy, and the wait expires one closeout margin later.
+FAKE_CONTROLLER_BUSY_UNTIL = "2000-01-01T00:00:00Z"
+
+
+def _with_controller_busy_until(state: dict[str, Any]) -> dict[str, Any]:
+    """Stand in for the controller's published fact: ``busy_until`` is set exactly while the fake owns work.
+
+    A permanently failed closure keeps its pending evidence but blocks nothing (lifecyclecore.BlocksNext).
+    """
+    if "busy_until" in state:
+        return state
+    failed = state.get("closure_state") == "CLOSURE_STATE_FAILED"
+    open_work = (
+        bool(state.get("incident_open") or state.get("incident_request"))
+        or bool(state.get("queued_reflection_incident_ids") or state.get("queued_reflections_unknown"))
+        or (bool(state.get("pending_closure")) and not failed)
+        or state.get("closure_state") in {"CLOSURE_STATE_COMMITTED", "CLOSURE_STATE_ACKNOWLEDGING"}
+    )
+    return {**state, "busy_until": FAKE_CONTROLLER_BUSY_UNTIL} if open_work else state
+
+
 @dataclass
 class FakeOps:
     """In-memory cluster: one controller pod per control namespace, driven by the test."""
@@ -109,6 +130,9 @@ class FakeOps:
     def controller_pod(self, control_namespace: str) -> ControllerPod | None:
         return self.pods.get(control_namespace)
 
+    def controller_job_failure(self, control_namespace: str) -> str | None:
+        return None
+
     def namespace_exists(self, namespace: str) -> bool:
         return namespace in self.existing_namespaces or namespace in self.pods
 
@@ -132,7 +156,9 @@ class FakeOps:
         self.events.append(("install", control))
         return False
 
-    def set_maintenance(self, control_namespace: str, *, paused: bool, generation: str) -> None:
+    def set_maintenance(
+        self, control_namespace: str, *, paused: bool, generation: str, preserve_baseline: bool = False
+    ) -> None:
         mode = "paused" if paused else "active"
         self.events.append((mode, control_namespace))
         self.logs[control_namespace].append(
@@ -149,7 +175,7 @@ class FakeOps:
                 self.polls_until_reflected[incident_id] = remaining - 1
             elif incident_id in self.reflectable:
                 self._finish_reflection(control_namespace, incident_id)
-        return self.states.get(control_namespace, {})
+        return _with_controller_busy_until(self.states.get(control_namespace, {}))
 
     def _finish_reflection(self, control_namespace: str, incident_id: str) -> None:
         state = self.states[control_namespace]
@@ -168,6 +194,7 @@ class FakeOps:
     def inject_after_resume(
         self, control_namespace: str, generation: str, inject: Callable[[], None]
     ) -> dict[str, float]:
+        self.set_maintenance(control_namespace, paused=False, generation=generation)
         assert self.logs[control_namespace][-1] == json.dumps(
             {"controller_maintenance": "active", "maintenance_generation": generation}
         )
@@ -186,18 +213,13 @@ class FakeOps:
             "dispatched_at": (DETECTED + timedelta(seconds=1)).isoformat(),
             "responder_completed_at": (DETECTED + timedelta(seconds=35)).isoformat(),
             "verified_at": verified.isoformat(),
+            "final_detector_states": [{"detector_id": "health", "status": "clear"}],
         }
         return {"controller_baseline_wait": 3.0, "fault_injection_request": 0.5}
 
     def collect_receipt(self, config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]:
         self.events.append(("receipt", incident_id, str(config.repository)))
-        # The drain exports the controller PVC's cumulative runtime evidence.
-        usage = artifacts_dir / "sdo_runtime" / "usage" / "controller-turns.jsonl"
-        usage.parent.mkdir(parents=True, exist_ok=True)
-        usage.write_text(json.dumps({"cwd": f"/wt/{incident_id}", "duration_seconds": 1.0}) + "\n", encoding="utf-8")
-        rollout = artifacts_dir / "sdo_runtime" / "codex" / "sessions" / f"rollout-{incident_id}.jsonl"
-        rollout.parent.mkdir(parents=True, exist_ok=True)
-        rollout.write_bytes(b'{"type":"session_meta"}\n')
+        # Like collect_production_receipt, reading the ledger exports no runtime evidence.
         receipt = _receipt(incident_id)
         receipt["artifacts_dir"] = str(artifacts_dir)
         receipt["completed"] = incident_id not in self.incomplete
@@ -217,6 +239,15 @@ class FakeOps:
         rollout = artifacts_dir / "sdo_runtime" / "codex" / "sessions" / f"rollout-responder-{self.incidents}.jsonl"
         rollout.parent.mkdir(parents=True, exist_ok=True)
         rollout.write_bytes(b'{"type":"session_meta"}\n')
+        # The export is a snapshot: reflection's rollout and usage exist only once reflection has finished.
+        acknowledged = self.states.get(config.control_namespace, {}).get("last_acknowledged_incident_id")
+        if acknowledged:
+            usage = artifacts_dir / "sdo_runtime" / "usage" / "controller-turns.jsonl"
+            usage.parent.mkdir(parents=True, exist_ok=True)
+            usage.write_text(
+                json.dumps({"cwd": f"/wt/{acknowledged}", "duration_seconds": 1.0}) + "\n", encoding="utf-8"
+            )
+            (rollout.parent / f"rollout-{acknowledged}.jsonl").write_bytes(b'{"type":"session_meta"}\n')
         return {"directory": str(artifacts_dir / "sdo_runtime"), "error": None}
 
     def export_controller_logs(self, control_namespace: str, artifacts_dir: Path) -> None:
@@ -224,6 +255,16 @@ class FakeOps:
         log = artifacts_dir / "sdo_runtime" / "controller_logs" / "sdo-controller-run-1.log"
         log.parent.mkdir(parents=True, exist_ok=True)
         log.write_text(self.controller_logs(control_namespace) + "\n", encoding="utf-8")
+
+
+def _elapsed_clock(elapsed: list[float]) -> Clock:
+    """Fake time whose wall clock agrees with the stage clock that stamped the reflection deadline."""
+
+    return Clock(
+        monotonic=lambda: elapsed[0],
+        sleep=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds),
+        now=lambda: DETECTED + timedelta(seconds=elapsed[0]),
+    )
 
 
 def _clock(ops: FakeOps) -> Clock:
@@ -235,20 +276,26 @@ def _clock(ops: FakeOps) -> Clock:
     return Clock(monotonic=lambda: now[0], sleep=sleep, now=lambda: DETECTED)
 
 
-def test_maintenance_ack_timeout_follows_time_scale(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("SDO_TIME_SCALE", "0.1")
+def test_drain_exports_runtime_evidence_after_reflection_ends(tmp_path: Path) -> None:
+    # The stage-end export runs before reflection; only a drain-time export holds reflection's rollout.
+    from tests.unit.benchmarks.sregym.adapter.test_closeout_receipt_race import _drained_record
 
-    class NoAck:
-        def controller_logs(self, _control: str) -> str:
-            return ""
+    ops = FakeOps()
+    record = _drained_record(tmp_path, ops)
+    ops.events.clear()
 
-    elapsed = [0.0]
-    clock = Clock(monotonic=lambda: elapsed[0], sleep=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds))
+    drain_pending_incident(
+        record, ops=ops, repository=tmp_path / "s0" / "application_workspace", drained_by="test", clock=_clock(ops)
+    )
 
-    with pytest.raises(PersistentControllerError, match="did not acknowledge maintenance"):
-        wait_for_maintenance_ack(NoAck(), "hotel-sdo", "generation", clock)  # type: ignore[arg-type]
-
-    assert elapsed[0] == pytest.approx(60.0)
+    order = [event[0] for event in ops.events]
+    assert "stage_evidence" in order
+    assert order.index("reflected") < order.index("stage_evidence")
+    incident_id = record.pending.incident_id
+    sessions = record.pending.receipt_dir / "sdo_runtime" / "codex" / "sessions"
+    assert (sessions / f"rollout-{incident_id}.jsonl").is_file()
+    receipt = json.loads((record.pending.receipt_dir / STRICT_RECEIPT_FILENAME).read_text(encoding="utf-8"))
+    assert receipt["reflection_drain"]["runtime_artifacts"]["error"] is None
 
 
 def test_drain_receipt_reports_ack_and_collection_phases(tmp_path: Path) -> None:
@@ -264,7 +311,7 @@ def test_drain_receipt_reports_ack_and_collection_phases(tmp_path: Path) -> None
         return collect(config, incident_id, artifacts_dir)
 
     ops.collect_receipt = timed_collect  # type: ignore[method-assign]
-    clock = Clock(monotonic=lambda: elapsed[0], sleep=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds))
+    clock = _elapsed_clock(elapsed)
 
     drain_pending_incident(
         record, ops=ops, repository=tmp_path / "s0" / "application_workspace", drained_by="test", clock=clock
@@ -277,32 +324,6 @@ def test_drain_receipt_reports_ack_and_collection_phases(tmp_path: Path) -> None
         "ack_observed",
         "receipt_collected",
     }
-
-
-def test_closeout_settle_timeout_follows_time_scale(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from tests.unit.benchmarks.sregym.adapter.test_closeout_receipt_race import _drained_record
-
-    monkeypatch.setenv("SDO_TIME_SCALE", "0.1")
-    ops = FakeOps()
-    record = _drained_record(tmp_path, ops)
-    collect = ops.collect_receipt
-
-    def unsettled(config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]:
-        receipt = collect(config, incident_id, artifacts_dir)
-        receipt["completed"] = False
-        return receipt
-
-    ops.collect_receipt = unsettled  # type: ignore[method-assign]
-    elapsed = [0.0]
-    clock = Clock(monotonic=lambda: elapsed[0], sleep=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds))
-
-    result = drain_pending_incident(
-        record, ops=ops, repository=tmp_path / "s0" / "application_workspace", drained_by="test", clock=clock
-    )
-    assert result.HasField("failure")
-    assert result.failure.incident_id == record.pending.incident_id
-
-    assert elapsed[0] == pytest.approx(12.0)
 
 
 def _config(tmp_path: Path, namespace: str = "hotel", stage: str = "s0") -> RuntimeConfig:
@@ -333,10 +354,8 @@ def _inputs(
     receipt_dir: Path | None = None,
     verification_timeout_seconds: float = 30,
     detection_timeout_seconds: float | None = None,
-    stop_on_detector_review: bool = True,
 ) -> StageInputs:
     return StageInputs(
-        stop_on_detector_review=stop_on_detector_review,
         detection_timeout_seconds=detection_timeout_seconds,
         stage_label=stage,
         application=application,
@@ -397,9 +416,7 @@ def test_runtime_config_round_trips_all_options_through_payload_and_state(tmp_pa
         reflection_session="fresh",
         reflection_guidance="generalize",
         late_findings="pull",
-        max_follow_ups=2,
         max_response_loops=6,
-        follow_up_cooldown_seconds=31,
         healthy_baseline=True,
         controller_namespace="hotel-sdo",
         reuse_existing=True,
@@ -444,6 +461,21 @@ def test_runtime_config_round_trips_all_options_through_payload_and_state(tmp_pa
     assert runtime_config_from_payload(loaded.controllers[config.namespace].runtime_config) == config
 
 
+@pytest.mark.parametrize("responder_namespaces", [(), ("policy-system", "cache")])
+def test_runtime_config_json_preserves_reviewed_responder_grants(
+    tmp_path: Path, responder_namespaces: tuple[str, ...]
+) -> None:
+    config = replace(
+        _config(tmp_path),
+        permissive_responder=True,
+        responder_namespaces=responder_namespaces,
+        deployed_manifest_paths=("deploy/app.yaml",),
+    )
+    payload = json.loads(json.dumps(runtime_config_payload(config)))
+
+    assert runtime_config_from_payload(payload) == config
+
+
 def test_recreated_namespace_regains_controller_access_before_resume_and_injection(tmp_path: Path) -> None:
     elapsed = [0.0]
 
@@ -458,7 +490,9 @@ def test_recreated_namespace_regains_controller_access_before_resume_and_injecti
             elapsed[0] += 2
             return reused
 
-        def set_maintenance(self, control_namespace: str, *, paused: bool, generation: str) -> None:
+        def set_maintenance(
+            self, control_namespace: str, *, paused: bool, generation: str, preserve_baseline: bool = False
+        ) -> None:
             if not paused:
                 assert self.grants_present, "recreated app namespace has no controller RBAC"
             super().set_maintenance(control_namespace, paused=paused, generation=generation)
@@ -474,7 +508,7 @@ def test_recreated_namespace_regains_controller_access_before_resume_and_injecti
         ops=ops,
         run_lifecycle=lambda: pytest.fail("reused controller must preserve learned memory"),
         inject=lambda: None,
-        clock=Clock(monotonic=lambda: elapsed[0], sleep=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds)),
+        clock=_elapsed_clock(elapsed),
     )
 
     assert ops.grants_present
@@ -524,7 +558,7 @@ def test_one_controller_serves_both_stages_and_the_second_skips_reinstall_and_li
     kinds = [
         event[0] for event in ops.events if event[0] in {"install", "reuse", "active", "paused", "fault", "delete"}
     ]
-    assert kinds == ["install", "active", "fault", "paused", "reuse", "active", "fault", "paused"]
+    assert kinds == ["install", "active", "fault", "reuse", "active", "fault"]
     # Each stage correlates its own incident.
     assert (first["incident_id"], second["incident_id"]) == ("incident-1", "incident-2")
 
@@ -648,6 +682,40 @@ def test_a_controller_this_pipeline_did_not_install_is_replaced(tmp_path: Path) 
     assert lifecycle_calls == ["s0"]
 
 
+@pytest.mark.parametrize("setting", ["credentials_secret", "agent_registrations", "permissive_responder", "model"])
+def test_a_controller_installed_with_other_runtime_settings_is_replaced(tmp_path: Path, setting: str) -> None:
+    """A scripted dry-run controller must never serve a later live stage with the same topology."""
+
+    ops = FakeOps()
+    lifecycle_calls: list[str] = []
+    _run(tmp_path, ops, "s0", lifecycle_calls)
+    ops.reflectable.add("incident-1")
+    inputs = _inputs(tmp_path, "s1")
+    value = {
+        "credentials_secret": "live-credentials",
+        "agent_registrations": tmp_path / "registrations",
+        "permissive_responder": True,
+        "model": "gpt-other",
+    }[setting]
+    inputs = replace(inputs, runtime_config=replace(inputs.runtime_config, **{setting: value}))
+
+    def lifecycle() -> bool:
+        lifecycle_calls.append("s1")
+        return True
+
+    result = run_persistent_stage(inputs, ops=ops, run_lifecycle=lifecycle, inject=lambda: None, clock=_clock(ops))
+
+    order = [event[:2] for event in ops.events]
+    assert order.index(("receipt", "incident-1")) < order.index(("delete", "hotel-sdo"))
+    assert lifecycle_calls == ["s0", "s1"]
+    assert ops.installs == 2
+    assert result["persistent_controller"]["installed_this_stage"] is True
+    record = PersistentState.load(inputs.state_path).controllers["hotel"]
+    assert runtime_config_from_payload(record.runtime_config) == replace(
+        inputs.runtime_config, persistent=True, wait_for_completion=False
+    )
+
+
 def test_changed_topology_drains_memory_then_reinstalls(tmp_path: Path) -> None:
     ops = FakeOps()
     lifecycle_calls: list[str] = []
@@ -724,6 +792,7 @@ def test_fail_soft_reset_restarts_controller_without_losing_drift_verdicts(tmp_p
     from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
     from benchmarks.sregym.fastloop.reset import reset_environment
+    from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import commit_accepted_source
 
     class RestartOps(FakeOps):
         def install(self, config: RuntimeConfig) -> bool:
@@ -772,9 +841,29 @@ def test_fail_soft_reset_restarts_controller_without_losing_drift_verdicts(tmp_p
         private_tmp=None,
         seed_commit="a" * 40,
     )
+    commit_accepted_source(environment.workspace, namespace="hotel")
     baseline = ApplicationBaseline("hotel", [{"kind": "Deployment", "metadata": {"name": "app"}}])
     environment.baseline_path.write_text(json.dumps({"fastloop_application": {"namespaces": [baseline.__dict__]}}))
 
+    # A reset cannot discard the just-verified incident's outstanding learning.
+    with pytest.raises(RuntimeError, match="durable terminal reflection"):
+        reset_environment(environment, ResetCluster(ops), HealthyWorker(), preserve_repository=True)
+    assert "hotel-sdo" in ops.pods
+    ops.reflectable.add("incident-1")
+    state = PersistentState.load(environment.state_path)
+    record = state.controllers["hotel"]
+    drained = drain_pending_incident(
+        record,
+        ops=ops,
+        repository=tmp_path / "s0" / "application_workspace",
+        drained_by="test-before-reset",
+        clock=_clock(ops),
+    )
+    assert not drained.HasField("failure")
+    assert ops.runtime_state("hotel-sdo")["last_acknowledged_incident_id"] == "incident-1"
+    # This is the same finalization boundary used by SdoFastloopAgent.learn.
+    record.pending = None
+    state.save(environment.state_path)
     reset_environment(environment, ResetCluster(ops), HealthyWorker(), preserve_repository=True)
     calls: list[str] = []
     resolution = run_persistent_stage(
@@ -806,7 +895,12 @@ def test_deferred_receipts_are_published_into_the_run_the_harness_already_publis
     state_path = tmp_path / "sdo_persistent_controller.json"
 
     assert teardown(state_path, ops=ops, clock=_clock(ops)) == []
+    snapshot = staging / "sdo-controller-state.json"
+    snapshot.parent.mkdir(parents=True, exist_ok=True)
+    snapshot.write_text('{"incident_id":"incident-1","path":"anon_abc"}\n')
+    snapshot_bytes = snapshot.read_bytes()
     published = publish_deferred_receipts(state_path, tmp_path / "pipeline")
+    assert (run_dir / "sdo-controller-state.json").read_bytes() == snapshot_bytes
 
     receipt_path = run_dir / STRICT_RECEIPT_FILENAME
     assert receipt_path in published
@@ -1059,7 +1153,8 @@ def test_each_stage_exports_its_runtime_evidence_when_it_ends(tmp_path: Path) ->
     assert all(seconds >= 0 for seconds in evidence["export_seconds"].values())
     order = [event[0] for event in ops.events]
     # Exported after verified recovery, so it never delays the fault or the responder.
-    assert order.index("paused") < order.index("stage_evidence")
+    assert "paused" not in order
+    assert order.index("fault") < order.index("stage_evidence")
     recorded = json.loads((receipt_dir / RESOLUTION_FILENAME).read_text(encoding="utf-8"))
     assert recorded["stage_end_runtime_artifacts"]["error"] is None
 
@@ -1100,7 +1195,7 @@ def test_a_drained_receipt_is_published_as_soon_as_the_next_stage_drains_it(tmp_
 
 @dataclass
 class _StuckOps(FakeOps):
-    """The responder reported failure, so the controller keeps the incident open for detector review."""
+    """The responder reported failure, so the incident stays unverified until the stage times out."""
 
     def inject_after_resume(
         self, control_namespace: str, generation: str, inject: Callable[[], None]
@@ -1116,8 +1211,6 @@ class _StuckOps(FakeOps):
                     "status": "failed",
                     "repair_changes": ["scripted plan stopped: no manifest defines ConfigMap x"],
                 },
-                "detector_review_required": True,
-                "detector_review_reason": "health detectors did not clear within 5m0s after responder completion",
             }
         )
         return {}
@@ -1181,7 +1274,6 @@ def test_an_incident_that_opened_keeps_the_full_verification_budget(tmp_path: Pa
                 "s0",
                 verification_timeout_seconds=60,
                 detection_timeout_seconds=10,
-                stop_on_detector_review=False,
             ),
             ops=ops,
             run_lifecycle=lambda: True,
@@ -1194,8 +1286,15 @@ def test_an_incident_that_opened_keeps_the_full_verification_budget(tmp_path: Pa
 
 
 def test_a_timeout_behind_a_permanently_failed_closure_says_so(tmp_path: Path) -> None:
+    ops = _ClosureFailedOps()
     with pytest.raises(ClosureFailedError) as raised:
-        _run(tmp_path, _ClosureFailedOps(), "s0", [])
+        _run(tmp_path, ops, "s0", [])
+
+    state_files = list(tmp_path.rglob("sdo-controller-state.json"))
+    assert len(state_files) == 1
+    captured = json.loads(state_files[0].read_text())
+    assert captured["closure_failure"]["incident_id"] == "incident-0"
+    assert list(tmp_path.rglob("sdo-controller-run-1.log"))
 
     assert "incident 'incident-0' closure permanently failed" in str(raised.value)
     assert "broker exited 1" in str(raised.value)
@@ -1203,14 +1302,13 @@ def test_a_timeout_behind_a_permanently_failed_closure_says_so(tmp_path: Path) -
 
 def test_an_unverified_incident_timeout_names_the_open_incident_and_why_it_is_stuck(tmp_path: Path) -> None:
     with pytest.raises(PersistentControllerError) as raised:
-        _run(tmp_path, _StuckOps(), "s0", [], stop_on_detector_review=False)
+        _run(tmp_path, _StuckOps(), "s0", [])
 
     message = str(raised.value)
     assert "verified no new incident within 30s" in message
     assert "incident-stuck" in message
     assert "responder status 'failed'" in message
     assert "no manifest defines ConfigMap x" in message
-    assert "health detectors did not clear" in message
 
 
 def _stage_keep_running(tmp_path: Path, ops: FakeOps, stage: str = "s0") -> dict[str, Any]:
@@ -1235,6 +1333,7 @@ def _second_closure(ops: FakeOps, incident_id: str = "incident-2") -> None:
         "dispatched_at": (DETECTED + timedelta(seconds=301)).isoformat(),
         "responder_completed_at": (DETECTED + timedelta(seconds=330)).isoformat(),
         "verified_at": (DETECTED + timedelta(seconds=350)).isoformat(),
+        "final_detector_states": [{"detector_id": "health", "status": "clear"}],
     }
 
 
@@ -1311,59 +1410,14 @@ def test_followup_refuses_to_start_while_an_incident_is_undrained(tmp_path: Path
         )
 
 
-def test_stage_fails_fast_when_the_controller_stops_for_detector_review(tmp_path: Path) -> None:
-    ops = FakeOps()
-
-    def inject_then_wedge(control: str, generation: str, inject: Callable[[], None]) -> dict[str, float]:
-        inject()
-        ops.states[control].update(
-            {
-                "incident_open": True,
-                "responder_done": True,
-                "incident_request": {"incident_id": "incident-9"},
-                "detector_review_required": True,
-                "detector_review_reason": "health detectors did not clear within 2m0s after responder completion",
-            }
-        )
-        return {}
-
-    ops.inject_after_resume = inject_then_wedge  # type: ignore[method-assign]
-
-    with pytest.raises(DetectorReviewRequiredError, match="incident-9") as raised:
-        _run(tmp_path, ops, "s0", [])
-
-    assert raised.value.incident_id == "incident-9"
-    assert "did not clear" in raised.value.reason
-
-
-def test_stage_can_wait_out_a_detector_review_stop_when_asked_to(tmp_path: Path) -> None:
-    from dataclasses import replace
-
-    ops = FakeOps()
-
-    def inject_then_wedge(control: str, generation: str, inject: Callable[[], None]) -> dict[str, float]:
-        inject()
-        ops.states[control].update({"incident_open": True, "detector_review_required": True})
-        return {}
-
-    ops.inject_after_resume = inject_then_wedge  # type: ignore[method-assign]
-
-    with pytest.raises(PersistentControllerError, match="verified no new incident") as raised:
-        run_persistent_stage(
-            replace(_inputs(tmp_path, "s0"), stop_on_detector_review=False, verification_timeout_seconds=5),
-            ops=ops,
-            run_lifecycle=lambda: True,
-            inject=lambda: None,
-            clock=_clock(ops),
-        )
-
-    assert not isinstance(raised.value, DetectorReviewRequiredError)
-
-
 def test_reflection_drain_accepts_acknowledged_closure_without_controller_relaunch() -> None:
     ops = FakeOps(states={"demo-sdo": {"last_acknowledged_incident_id": "incident-1"}})
     state = _wait_for_reflection_drain(
-        ops, "demo-sdo", "incident-1", 1.0, Clock(sleep=lambda _: pytest.fail("closure should already be drained"))
+        ops,
+        "demo-sdo",
+        "incident-1",
+        datetime.now(timezone.utc) + timedelta(seconds=1),
+        Clock(sleep=lambda _: pytest.fail("closure should already be drained")),
     )
     assert state["last_acknowledged_incident_id"] == "incident-1"
 
@@ -1379,8 +1433,6 @@ def test_driver_environment_settings_are_recorded_and_preserved_on_persistent_re
         json.dumps(
             {
                 "deployed_manifest_paths": ["kubernetes"],
-                "program_fast_path": True,
-                "program_trust_threshold": trust_threshold,
             }
         ),
     )
@@ -1422,16 +1474,12 @@ def test_driver_environment_settings_are_recorded_and_preserved_on_persistent_re
         record = PersistentState.load(state_path).controllers["hotel"]
         config = runtime_config_from_payload(record.runtime_config)
         assert config.deployed_manifest_paths == ("kubernetes",)
-        assert config.program_fast_path is True
-        assert config.program_trust_threshold == trust_threshold
         ops.reflectable.add(resolution["incident_id"])
     assert resolution["lifecycle_reused"] is True
     assert ops.installs == 1
     assert len(commands) == 1
     command = commands[0]
     assert command[command.index("--deployed-manifest-path") + 1] == "kubernetes"
-    assert "--program-fast-path" in command
-    assert command[command.index("--program-trust-threshold") + 1] == str(trust_threshold)
 
 
 def test_unrepresentable_rejected_receipt_stays_one_incidents_typed_failure(tmp_path: Path) -> None:
@@ -1467,6 +1515,19 @@ def test_unrepresentable_rejected_receipt_stays_one_incidents_typed_failure(tmp_
     assert ("fault", "s1") in ops.events
 
 
+def test_a_closure_cut_by_the_verification_timeout_reports_no_verified_timings() -> None:
+    closure = {
+        "detected_at": DETECTED.isoformat(),
+        "dispatched_at": (DETECTED + timedelta(seconds=1)).isoformat(),
+        "responder_completed_at": (DETECTED + timedelta(seconds=35)).isoformat(),
+        "verified_at": (DETECTED + timedelta(seconds=155)).isoformat(),
+    }
+
+    assert _resolution_timings(closure) == {}
+    closure["final_detector_states"] = [{"detector_id": "health", "status": "clear"}]
+    assert _resolution_timings(closure)["incident_resolution_seconds"] == 155.0
+
+
 def test_teardown_preserves_pending_state_when_controller_inventory_fails(tmp_path: Path) -> None:
     class UnavailableOps(FakeOps):
         unavailable = False
@@ -1490,6 +1551,57 @@ def test_teardown_preserves_pending_state_when_controller_inventory_fails(tmp_pa
     assert not (tmp_path / "s0" / "agent" / REJECTED_RECEIPT_FILENAME).exists()
 
 
+def test_invalid_deferred_injection_pauses_without_incident_or_receipt_wait(tmp_path: Path) -> None:
+    from benchmarks.sregym.protocol.injection import InvalidInjectionError
+
+    ops = FakeOps()
+    inputs = _inputs(tmp_path, "invalid")
+
+    def invalid():
+        raise InvalidInjectionError({"composite_valid": False})
+
+    with pytest.raises(InvalidInjectionError):
+        run_persistent_stage(inputs, ops=ops, run_lifecycle=lambda: True, inject=invalid, clock=_clock(ops))
+    assert ops.incidents == 0
+    assert ops.events[-1] == ("paused", inputs.runtime_config.control_namespace)
+    assert not any(event[0] in {"receipt", "reflected"} for event in ops.events)
+    outcome = json.loads((inputs.receipt_dir / "sdo_infrastructure_outcome.json").read_text())
+    assert outcome["infra_error"] == "injection_invalid"
+    assert outcome["incident_credit"] is False
+
+
+def test_validity_barrier_keeps_invalid_partial_injection_unobservable_to_responders() -> None:
+    from benchmarks.sregym.adapter.persistent import inject_while_paused
+    from benchmarks.sregym.protocol.injection import InvalidInjectionError
+
+    ops = FakeOps()
+    control = "hotel-sdo"
+    ops.logs[control] = []
+
+    def invalid():
+        assert ops.events[-1] == ("paused", control)
+        raise InvalidInjectionError({"partial_write": True})
+
+    with pytest.raises(InvalidInjectionError):
+        inject_while_paused(ops, control, "validity", invalid, clock=_clock(ops))
+    assert ops.events == [("paused", control)]
+
+
+def test_valid_injection_barrier_retains_the_healthy_observation_baseline() -> None:
+    from benchmarks.sregym.adapter.persistent import inject_while_paused
+
+    class BarrierOps(FakeOps):
+        def set_maintenance(self, control_namespace, *, paused, generation, preserve_baseline=False):
+            if paused:
+                assert preserve_baseline, "a valid fault must survive the observation pause"
+            super().set_maintenance(control_namespace, paused=paused, generation=generation)
+
+    ops = BarrierOps()
+    ops.logs["hotel-sdo"] = []
+    inject_while_paused(ops, "hotel-sdo", "valid", lambda: None, clock=_clock(ops))
+    assert ops.events == [("paused", "hotel-sdo"), ("active", "hotel-sdo")]
+
+
 def test_interrupted_install_retains_cleanup_target_before_controller_exists(tmp_path: Path) -> None:
     inputs = _inputs(tmp_path, "s0")
     ops = FakeOps()
@@ -1505,6 +1617,7 @@ def test_interrupted_install_retains_cleanup_target_before_controller_exists(tmp
     assert PersistentState.load(inputs.state_path).cleanup_targets["hotel"].namespace == "hotel"
 
 
+<<<<<<< HEAD
 @pytest.mark.parametrize("reflection", [False, True])
 def test_state_read_exhausting_deadline_does_not_start_one_millisecond_observer(
     monkeypatch: pytest.MonkeyPatch, reflection: bool
@@ -1524,3 +1637,188 @@ def test_state_read_exhausting_deadline_does_not_start_one_millisecond_observer(
     argument = "incident" if reflection else set()
     with pytest.raises(PersistentControllerError, match="within 60s"):
         wait(SlowRead(), "demo", argument, 60, clock)
+=======
+def test_verified_early_report_leaves_controller_active_until_outcome_recorded(tmp_path: Path) -> None:
+    ops = FakeOps()
+    _run(tmp_path, ops, "s0", [])
+    # A verified pending closure still needs active controller steps to record
+    # its outcome. Pausing here deadlocks early-report finalization.
+    assert ops.states["hotel-sdo"].get("pending_closure")
+    assert not any(event[0] == "paused" for event in ops.events)
+
+
+# The status of job/sdo-controller-run after its controller crash-looped past the backoff limit (lane 55, 2026-10-26).
+_BACKOFF_EXCEEDED_CONTROLLER_JOB: dict[str, Any] = {
+    "apiVersion": "batch/v1",
+    "kind": "Job",
+    "metadata": {"name": "sdo-controller-run", "namespace": "hotel-reservation-sdo"},
+    "status": {
+        "failed": 7,
+        "conditions": [
+            {"type": "FailureTarget", "status": "True", "reason": "BackoffLimitExceeded"},
+            {
+                "type": "Failed",
+                "status": "True",
+                "reason": "BackoffLimitExceeded",
+                "message": "Job has reached the specified backoff limit",
+            },
+        ],
+    },
+}
+
+
+def test_a_controller_job_past_its_backoff_limit_is_terminal() -> None:
+    assert (
+        controller_job_failure(_BACKOFF_EXCEEDED_CONTROLLER_JOB)
+        == "BackoffLimitExceeded: Job has reached the specified backoff limit"
+    )
+    assert controller_job_failure({"status": {"active": 1, "failed": 3}}) is None
+    assert controller_job_failure({"status": {"conditions": [{"type": "Failed", "status": "False"}]}}) is None
+
+
+def test_reflection_deadline_follows_the_controllers_busy_until(tmp_path: Path) -> None:
+    """A closure behind queued reflections waits for the controller's own bound under one per-incident deadline."""
+    from benchmarks.sregym.adapter.persistent import VerifiedIncident, reflection_deadline
+
+    now = datetime(2026, 10, 26, tzinfo=timezone.utc)
+    clock = Clock(now=lambda: now)
+    inputs = replace(_inputs(tmp_path, "s0"), reflection_wait_seconds=3600.0)
+
+    assert reflection_deadline(inputs, VerifiedIncident("a", None), clock) == now + timedelta(seconds=3600)
+    soon = VerifiedIncident("a", None, busy_until=now + timedelta(seconds=600))
+    assert reflection_deadline(inputs, soon, clock) == now + timedelta(seconds=3600)
+    behind_two = VerifiedIncident("a", None, busy_until=now + timedelta(seconds=3 * 2102))
+    assert reflection_deadline(inputs, behind_two, clock) == now + timedelta(seconds=3 * 2102 + 120)
+
+
+def test_verified_incident_records_the_controllers_bound_on_the_queue_it_waits_behind() -> None:
+    from benchmarks.sregym.adapter.persistent import _wait_for_verified_incident
+
+    state = {
+        "last_acknowledged_incident_id": "",
+        "queued_reflection_incident_ids": ["old-1", "old-2"],
+        "queued_reflections_unknown": True,
+        "busy_until": "2026-10-26T01:00:00Z",
+        "pending_closure": {"request": {"incident_id": "incident-1"}},
+    }
+    ops = FakeOps(states={"hotel-sdo": state}, logs={"hotel-sdo": []}, reflectable={"incident-1"})
+    verified = _wait_for_verified_incident(ops, "hotel-sdo", set(), 30.0, Clock(sleep=lambda _s: None))
+    assert verified.incident_id == "incident-1"
+    assert verified.busy_until == datetime(2026, 10, 26, 1, 0, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize("raises", [False, True])
+def test_missing_receipt_preserves_controller_state_and_logs(tmp_path: Path, raises: bool) -> None:
+    class MissingReceiptOps(FakeOps):
+        def collect_receipt(self, config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]:
+            if raises:
+                raise RuntimeError("native receipt missing")
+            return {}
+
+    ops = MissingReceiptOps()
+    _run(tmp_path, ops, "s0", [])
+    ops.reflectable.add("incident-1")
+    record = PersistentState.load(tmp_path / "sdo_persistent_controller.json").controllers["hotel"]
+    if raises:
+        with pytest.raises(RuntimeError, match="native receipt missing"):
+            drain_pending_incident(record, ops=ops, repository=tmp_path, drained_by="test", clock=_clock(ops))
+    else:
+        drained = drain_pending_incident(record, ops=ops, repository=tmp_path, drained_by="test", clock=_clock(ops))
+        assert drained.HasField("failure")
+    assert record.pending is not None
+    directory = record.pending.receipt_dir
+    state = json.loads((directory / "sdo-controller-state.json").read_text())
+    assert state["last_acknowledged_incident_id"] == "incident-1"
+    assert (directory / "sdo_runtime/controller_logs/sdo-controller-run-1.log").is_file()
+
+
+def test_unreadable_failure_state_still_exports_controller_log(tmp_path: Path) -> None:
+    from benchmarks.sregym.adapter import export_closure_failure_evidence
+
+    class UnreadableStateOps(FakeOps):
+        def runtime_state(self, control_namespace: str) -> dict[str, Any]:
+            raise RuntimeError("state read unavailable")
+
+    export_closure_failure_evidence(UnreadableStateOps(), "hotel-sdo", tmp_path)
+    assert (tmp_path / "sdo_runtime/controller_logs/sdo-controller-run-1.log").is_file()
+
+
+@pytest.mark.parametrize(
+    "perturbation",
+    [
+        {},
+        {"busy_until": "2026-09-27T13:00:00Z"},
+        {"queued_reflections_unknown": True},
+        {"queued_reflection_incident_ids": ["queued"]},
+        {"last_acknowledged_incident_id": "unrelated"},
+        {"last_acknowledged_incident_id": ""},
+        {"incident_open": True},
+    ],
+)
+def test_followup_uses_real_controller_ack_idle_publication(tmp_path: Path, perturbation: dict[str, Any]) -> None:
+    """Producer fixture comes from real closure/ACK execution, not a hand-written ACK."""
+    from benchmarks.sregym.adapter.persistent import _wait_for_verified_incident
+
+    fixture = Path(__file__).resolve().parents[4] / "fixtures/sdo/contracts/go/acknowledged_idle_state.json"
+    snapshot = json.loads(fixture.read_text())
+    known = {snapshot["last_acknowledged_incident_id"]}
+    snapshot.update(perturbation)
+    ops = FakeOps(states={"hotel-sdo": snapshot})
+    clock = _clock(ops)
+    started = clock.monotonic()
+    if not perturbation:
+        assert (
+            _wait_for_verified_incident(ops, "hotel-sdo", known, 600, clock, stop_when_acknowledged_idle=True) is None
+        )
+        assert clock.monotonic() == started
+    elif perturbation.get("last_acknowledged_incident_id") == "unrelated":
+        result = _wait_for_verified_incident(ops, "hotel-sdo", known, 5, clock, stop_when_acknowledged_idle=True)
+        assert result is not None
+        assert result.incident_id == "unrelated"
+    else:
+        with pytest.raises(PersistentControllerError, match="verified no new incident"):
+            _wait_for_verified_incident(ops, "hotel-sdo", known, 5, clock, stop_when_acknowledged_idle=True)
+        assert clock.monotonic() - started >= 5
+
+
+def test_first_incident_detection_does_not_end_at_previous_ack(tmp_path: Path) -> None:
+    from benchmarks.sregym.adapter.persistent import _wait_for_verified_incident
+
+    ops = FakeOps(states={"hotel-sdo": {"last_acknowledged_incident_id": "old"}})
+    clock = _clock(ops)
+    with pytest.raises(DetectionMissError):
+        _wait_for_verified_incident(ops, "hotel-sdo", {"old"}, 5, clock, detection_timeout=2)
+
+
+@pytest.mark.parametrize("resolution_path", ["agent", "deterministic"])
+@pytest.mark.parametrize("learning_decision", ["no_change", "updated"])
+def test_settled_receipt_requires_no_model_completion_event(
+    tmp_path: Path, resolution_path: str, learning_decision: str
+) -> None:
+    from benchmarks.sregym.adapter.persistent import _collect_settled_receipt
+
+    receipt = {
+        "schema_version": "sdo.production-receipt/v2",
+        "incident_id": "synthetic",
+        "native_ledger": {
+            "incident_id": "synthetic",
+            "acknowledged": True,
+            "requires_reflection": True,
+            "reflection_processed": True,
+            "reflection_decision": {"learning_decision": learning_decision},
+            "reflection_commit": "accepted" if learning_decision == "updated" else "",
+            "outcome_document": {"resolution_path": resolution_path},
+        },
+    }
+
+    class ReceiptOps(FakeOps):
+        def collect_receipt(self, config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]:
+            return receipt
+
+    ops = ReceiptOps()
+    clock = _clock(ops)
+    config = _inputs(tmp_path, "synthetic").runtime_config
+    collected = _collect_settled_receipt(ops, config, "synthetic", tmp_path, clock)
+    assert collected == receipt
+    assert clock.monotonic() == 0
+>>>>>>> origin/vic-lsh/dev/sdo-improve

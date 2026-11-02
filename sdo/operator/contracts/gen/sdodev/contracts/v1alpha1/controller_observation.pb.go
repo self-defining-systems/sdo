@@ -25,10 +25,9 @@ const (
 type ControllerObservationFailure_Code int32
 
 const (
-	ControllerObservationFailure_CODE_UNSPECIFIED              ControllerObservationFailure_Code = 0
-	ControllerObservationFailure_CODE_INVALID_SNAPSHOT         ControllerObservationFailure_Code = 1
-	ControllerObservationFailure_CODE_CLOSURE_FAILED           ControllerObservationFailure_Code = 2
-	ControllerObservationFailure_CODE_DETECTOR_REVIEW_REQUIRED ControllerObservationFailure_Code = 3
+	ControllerObservationFailure_CODE_UNSPECIFIED      ControllerObservationFailure_Code = 0
+	ControllerObservationFailure_CODE_INVALID_SNAPSHOT ControllerObservationFailure_Code = 1
+	ControllerObservationFailure_CODE_CLOSURE_FAILED   ControllerObservationFailure_Code = 2
 )
 
 // Enum value maps for ControllerObservationFailure_Code.
@@ -37,13 +36,11 @@ var (
 		0: "CODE_UNSPECIFIED",
 		1: "CODE_INVALID_SNAPSHOT",
 		2: "CODE_CLOSURE_FAILED",
-		3: "CODE_DETECTOR_REVIEW_REQUIRED",
 	}
 	ControllerObservationFailure_Code_value = map[string]int32{
-		"CODE_UNSPECIFIED":              0,
-		"CODE_INVALID_SNAPSHOT":         1,
-		"CODE_CLOSURE_FAILED":           2,
-		"CODE_DETECTOR_REVIEW_REQUIRED": 3,
+		"CODE_UNSPECIFIED":      0,
+		"CODE_INVALID_SNAPSHOT": 1,
+		"CODE_CLOSURE_FAILED":   2,
 	}
 )
 
@@ -81,7 +78,6 @@ type ControllerObservationRequest struct {
 	State            *ControllerState       `protobuf:"bytes,1,opt,name=state,proto3" json:"state,omitempty"`
 	KnownIncidentIds []string               `protobuf:"bytes,2,rep,name=known_incident_ids,json=knownIncidentIds,proto3" json:"known_incident_ids,omitempty"`
 	IncidentId       string                 `protobuf:"bytes,3,opt,name=incident_id,json=incidentId,proto3" json:"incident_id,omitempty"`
-	StopOnReview     bool                   `protobuf:"varint,4,opt,name=stop_on_review,json=stopOnReview,proto3" json:"stop_on_review,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -135,13 +131,6 @@ func (x *ControllerObservationRequest) GetIncidentId() string {
 		return x.IncidentId
 	}
 	return ""
-}
-
-func (x *ControllerObservationRequest) GetStopOnReview() bool {
-	if x != nil {
-		return x.StopOnReview
-	}
-	return false
 }
 
 type ControllerObservationFailure struct {
@@ -300,24 +289,22 @@ var File_sdodev_contracts_v1alpha1_controller_observation_proto protoreflect.Fil
 
 const file_sdodev_contracts_v1alpha1_controller_observation_proto_rawDesc = "" +
 	"\n" +
-	"6sdodev/contracts/v1alpha1/controller_observation.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a0sdodev/contracts/v1alpha1/controller_state.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\"\xdd\x01\n" +
+	"6sdodev/contracts/v1alpha1/controller_observation.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a0sdodev/contracts/v1alpha1/controller_state.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\"\xcd\x01\n" +
 	"\x1cControllerObservationRequest\x12H\n" +
 	"\x05state\x18\x01 \x01(\v2*.sdodev.contracts.v1alpha1.ControllerStateB\x06\xbaH\x03\xc8\x01\x01R\x05state\x12,\n" +
 	"\x12known_incident_ids\x18\x02 \x03(\tR\x10knownIncidentIds\x12\x1f\n" +
 	"\vincident_id\x18\x03 \x01(\tR\n" +
-	"incidentId\x12$\n" +
-	"\x0estop_on_review\x18\x04 \x01(\bR\fstopOnReview\"\xb5\x02\n" +
+	"incidentIdJ\x04\b\x04\x10\x05R\x0estop_on_review\"\xb7\x02\n" +
 	"\x1cControllerObservationFailure\x12\\\n" +
 	"\x04code\x18\x01 \x01(\x0e2<.sdodev.contracts.v1alpha1.ControllerObservationFailure.CodeB\n" +
 	"\xbaH\a\x82\x01\x04\x10\x01 \x00R\x04code\x12\x1f\n" +
 	"\vincident_id\x18\x02 \x01(\tR\n" +
 	"incidentId\x12!\n" +
-	"\amessage\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\amessage\"s\n" +
+	"\amessage\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\amessage\"u\n" +
 	"\x04Code\x12\x14\n" +
 	"\x10CODE_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15CODE_INVALID_SNAPSHOT\x10\x01\x12\x17\n" +
-	"\x13CODE_CLOSURE_FAILED\x10\x02\x12!\n" +
-	"\x1dCODE_DETECTOR_REVIEW_REQUIRED\x10\x03\"\xa9\x03\n" +
+	"\x13CODE_CLOSURE_FAILED\x10\x02\"\x04\b\x03\x10\x03*\x1dCODE_DETECTOR_REVIEW_REQUIRED\"\xa9\x03\n" +
 	"\x15ControllerObservation\x12,\n" +
 	"\x12known_incident_ids\x18\x01 \x03(\tR\x10knownIncidentIds\x12.\n" +
 	"\x13new_incident_opened\x18\x02 \x01(\bR\x11newIncidentOpened\x120\n" +

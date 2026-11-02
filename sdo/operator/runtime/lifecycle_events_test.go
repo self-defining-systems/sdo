@@ -99,7 +99,53 @@ func lifecycleController(
 }
 
 func lifecycleHealthDetector(id string, samples ...bool) *sequenceDetector {
-	return followUpHealthDetector(id, samples...)
+	findings := make([]sdk.Finding, 0, len(samples))
+	for _, active := range samples {
+		if !active {
+			findings = append(findings, sdk.Finding{})
+			continue
+		}
+		finding := stateFinding(id)
+		finding.Severity = sdk.SeverityCritical
+		findings = append(findings, finding)
+	}
+	detector := controllerDetector(id, time.Second, findings...)
+	detector.spec.Class = sdk.DetectorClassHealth
+	detector.spec.Owner = sdk.DetectorOwnerHealthJudge
+	detector.spec.Persistence = sdk.PersistencePolicy{Firing: 2, Clearing: 2}
+	detector.spec.Batching = sdk.BatchingPolicy{Severity: sdk.SeverityCritical}
+	detector.spec.OriginatingCommit = "health-objective"
+	return detector
+}
+
+// summarizingDispatcher completes every incident with a confirmed root cause.
+type summarizingDispatcher struct {
+	requests chan IncidentRequest
+}
+
+func (d *summarizingDispatcher) Dispatch(_ context.Context, request IncidentRequest) (IncidentResult, error) {
+	d.requests <- request
+	result := completedResult(request.IncidentID)
+	result.ConfirmedRootCauses = []ConfirmedRootCause{{
+		Summary:   "fixed " + request.Findings[0].DetectorID,
+		Resources: []sdk.ObjectRef{{Kind: "Deployment", Name: "x"}},
+	}}
+	return result, nil
+}
+
+// drainWorkspace executes the pending workspace preparation and processes its
+// completion, so the prepared worktree is recorded on the open incident.
+func drainWorkspace(t *testing.T, controller *Controller) {
+	t.Helper()
+	effect, ok := controller.PendingWorkspaceEffect()
+	if !ok {
+		t.Fatal("expected a pending workspace effect")
+	}
+	if err := controller.ExecuteWorkspaceEffect(context.Background(), effect); err != nil {
+		t.Fatalf("execute workspace effect: %v", err)
+	}
+	awaitBrokerResult(t, controller.workspaceResults)
+	controller.processBrokerCompletions()
 }
 
 // TestLifecycleStreamEmitsEveryTransitionOnce drives one incident through the
@@ -113,6 +159,7 @@ func TestLifecycleStreamEmitsEveryTransitionOnce(t *testing.T) {
 		closed := make(chan IncidentClosure, 1)
 		controller.OnIncidentClosed = func(closure IncidentClosure) { closed <- closure }
 
+<<<<<<< HEAD
 		step(0)
 		step(1) // health reaches its firing threshold and opens the incident
 		drainWorkspace(t, controller)
@@ -146,6 +193,41 @@ func TestLifecycleStreamEmitsEveryTransitionOnce(t *testing.T) {
 		}
 		awaitBrokerResult(t, controller.acknowledgmentResults)
 		controller.processBrokerCompletions()
+=======
+	step(0)
+	step(1) // health reaches its firing threshold and opens the incident
+	drainWorkspace(t, controller)
+	executePendingEffect(t, controller)
+	request := awaitRequest(t, dispatcher.requests)
+	awaitDispatchCompletionQueued(t, controller)
+	for second := int64(2); second <= 20; second++ {
+		step(second) // health clears, holds for the stability window, closure is cut
+	}
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("incident never closed")
+	}
+	// Commit and acknowledge the closure through the broker.
+	closureEffect, ok := controller.PendingClosureEffect()
+	if !ok {
+		t.Fatal("closure was not pending after the incident closed")
+	}
+	if err := controller.ExecuteClosureEffect(context.Background(), closureEffect); err != nil {
+		t.Fatalf("execute closure: %v", err)
+	}
+	awaitBrokerResult(t, controller.closureResults)
+	controller.processBrokerCompletions()
+	ack, ok := controller.PendingClosureAcknowledgmentEffect()
+	if !ok {
+		t.Fatal("acknowledgment was not pending after the closure committed")
+	}
+	if err := controller.ExecuteClosureAcknowledgmentEffect(context.Background(), ack); err != nil {
+		t.Fatalf("execute acknowledgment: %v", err)
+	}
+	awaitBrokerResult(t, controller.acknowledgmentResults)
+	controller.processBrokerCompletions()
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 
 		wantPhases := []string{
 			PhaseOpened, PhaseWorkspacePrepared, PhaseDispatched, PhaseResponderCompleted,
@@ -196,6 +278,7 @@ func TestLifecycleStreamEmitsEveryTransitionOnce(t *testing.T) {
 	})
 }
 
+<<<<<<< HEAD
 // TestLifecycleStreamRecordsSupersedeAndRelease drives a follow-up that
 // supersedes an open incident in place and strands the parent worktree, and
 // asserts the stranded-worktree lifecycle -- the exact class of bug (a worktree
@@ -248,6 +331,8 @@ func TestLifecycleStreamRecordsSupersedeAndRelease(t *testing.T) {
 	})
 }
 
+=======
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 // TestLifecycleFileSinkIsIdempotentAcrossReopen pins the crash-replay contract:
 // re-emitting every event after reopening the durable sink is a no-op, so the
 // stream is byte-for-byte unchanged, exactly as a restarted controller relies on.

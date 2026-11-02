@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -11,9 +12,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 
+	"sdo.dev/operator/core"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/servicehealth"
@@ -21,6 +24,7 @@ import (
 )
 
 func TestKubernetesCacheDeclaresTheMetricsWatchWithoutAnInformer(t *testing.T) {
+<<<<<<< HEAD
 	synctest.Test(t, func(t *testing.T) {
 		_, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset(), ResyncPeriod: time.Hour},
 			[]sdk.Detector{scheduledDetector{spec: sdk.DetectorSpec{
@@ -58,6 +62,39 @@ func TestKubernetesCacheRoutesServiceReachabilityNotificationsWithoutAnInformer(
 		cache.Notify(servicehealth.ReachabilityWatch)
 		awaitWatchEvent(t, cache, sdk.WatchKind{APIVersion: servicehealth.ReachabilityWatch.APIVersion, Kind: servicehealth.ReachabilityWatch.Kind, Namespace: "demo"})
 	})
+=======
+	_, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset()},
+		[]sdk.Detector{scheduledDetector{spec: sdk.DetectorSpec{
+			ID: "metrics", Interval: time.Second, Watches: []sdk.WatchKind{metrics.Watch},
+		}}})
+	if err != nil {
+		t.Fatalf("a metrics watch must not require an informer: %v", err)
+	}
+}
+
+func TestKubernetesCacheRoutesSyntheticTrafficNotificationsWithoutAnInformer(t *testing.T) {
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset()},
+		[]sdk.Detector{scheduledDetector{spec: sdk.DetectorSpec{
+			ID: "traffic", Interval: time.Second, Watches: []sdk.WatchKind{traffic.Watch},
+		}}})
+	if err != nil {
+		t.Fatalf("a synthetic watch must not require an informer: %v", err)
+	}
+	cache.Notify(traffic.Watch)
+	awaitWatchEvent(t, cache, sdk.WatchKind{APIVersion: traffic.Watch.APIVersion, Kind: traffic.Watch.Kind, Namespace: "demo"})
+}
+
+func TestKubernetesCacheRoutesServiceReachabilityNotificationsWithoutAnInformer(t *testing.T) {
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset()},
+		[]sdk.Detector{scheduledDetector{spec: sdk.DetectorSpec{
+			ID: "service-reachability", Interval: time.Second, Watches: servicehealth.ReachabilityWatches(),
+		}}})
+	if err != nil {
+		t.Fatalf("the reachability watch must not require an informer: %v", err)
+	}
+	cache.Notify(servicehealth.ReachabilityWatch)
+	awaitWatchEvent(t, cache, sdk.WatchKind{APIVersion: servicehealth.ReachabilityWatch.APIVersion, Kind: servicehealth.ReachabilityWatch.Kind, Namespace: "demo"})
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 
 func TestKubernetesCacheUsesDeclaredInformerUnionWithoutRelisting(t *testing.T) {
@@ -72,6 +109,7 @@ func TestKubernetesCacheUsesDeclaredInformerUnionWithoutRelisting(t *testing.T) 
 		client.PrependReactor("list", "deployments", countList(&deploymentLists))
 		client.PrependReactor("list", "configmaps", countList(&configMapLists))
 
+<<<<<<< HEAD
 		cache, err := NewKubernetesCache(KubernetesCacheConfig{
 			Namespace: "demo", Client: client, ResyncPeriod: time.Hour, StateConfigMapName: "sdo-controller-state",
 		}, []sdk.Detector{
@@ -112,10 +150,22 @@ func TestKubernetesCacheUsesDeclaredInformerUnionWithoutRelisting(t *testing.T) 
 		if deploymentLists.Load() != 1 || configMapLists.Load() != 1 {
 			t.Fatalf("unexpected API relists: deployments=%d configmaps=%d", deploymentLists.Load(), configMapLists.Load())
 		}
+=======
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{
+		Namespace: "demo", Client: client, StateConfigMapName: "sdo-controller-state",
+	}, []sdk.Detector{
+		scheduledDetector{spec: sdk.DetectorSpec{ID: "a", Interval: time.Second, Watches: []sdk.WatchKind{
+			{APIVersion: "apps/v1", Kind: "Deployment"}, {APIVersion: "v1", Kind: "ConfigMap"},
+		}}},
+		scheduledDetector{spec: sdk.DetectorSpec{ID: "b", Interval: time.Second, Watches: []sdk.WatchKind{
+			{APIVersion: "v1", Kind: "ConfigMap"},
+		}}},
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	})
 }
 
 func TestKubernetesCacheSnapshotsCarryTheirObservationTimeThroughTraffic(t *testing.T) {
+<<<<<<< HEAD
 	synctest.Test(t, func(t *testing.T) {
 		at := time.Unix(123, 456).UTC()
 		cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset(), ResyncPeriod: time.Hour, Clock: func() time.Time { return at }},
@@ -156,6 +206,45 @@ func TestKubernetesCacheRoutesEventsAndIgnoresUndeclaredAndInternalState(t *test
 		if err := cache.WaitForSync(ctx); err != nil {
 			t.Fatalf("wait for sync: %v", err)
 		}
+=======
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset()},
+		[]sdk.Detector{scheduledDetector{spec: sdk.DetectorSpec{
+			ID: "pods", Interval: time.Second, Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Pod"}},
+		}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := time.Now()
+	snapshot, err := TrafficSnapshotProvider{Base: cache}.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock, ok := snapshot.(sdk.ObservationClock)
+	if !ok {
+		t.Fatalf("traffic snapshot %T must expose its observation time", snapshot)
+	}
+	if observed := clock.ObservedAt(); observed.Before(before) || observed.After(time.Now()) {
+		t.Fatalf("observation time %v outside the snapshot call", observed)
+	}
+}
+
+func TestKubernetesCacheRoutesEventsAndIgnoresUndeclaredAndInternalState(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{
+		Namespace: "demo", Client: client, StateConfigMapName: "sdo-controller-state",
+	}, []sdk.Detector{scheduledDetector{spec: sdk.DetectorSpec{
+		ID: "configmaps", Interval: time.Second, Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "ConfigMap"}},
+	}}})
+	if err != nil {
+		t.Fatalf("new cache: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cache.Start(ctx)
+	if err := cache.WaitForSync(ctx); err != nil {
+		t.Fatalf("wait for sync: %v", err)
+	}
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 
 		configMap, err := client.CoreV1().ConfigMaps("demo").Create(ctx, &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{Name: "settings"},
@@ -193,6 +282,7 @@ func TestKubernetesCacheRoutesEventsAndIgnoresUndeclaredAndInternalState(t *test
 }
 
 func TestKubernetesCacheWaitForSyncHonorsCancellation(t *testing.T) {
+<<<<<<< HEAD
 	synctest.Test(t, func(t *testing.T) {
 		cache, err := NewKubernetesCache(KubernetesCacheConfig{
 			Namespace: "demo", Client: fake.NewSimpleClientset(), ResyncPeriod: time.Hour,
@@ -208,6 +298,21 @@ func TestKubernetesCacheWaitForSyncHonorsCancellation(t *testing.T) {
 			t.Fatal("expected cancelled sync")
 		}
 	})
+=======
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{
+		Namespace: "demo", Client: fake.NewSimpleClientset(),
+	}, []sdk.Detector{scheduledDetector{spec: sdk.DetectorSpec{
+		ID: "pods", Interval: time.Second, Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Pod"}},
+	}}})
+	if err != nil {
+		t.Fatalf("new cache: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := cache.WaitForSync(ctx); err == nil {
+		t.Fatal("expected cancelled sync")
+	}
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 
 func countList(counter *atomic.Int32) func(ktesting.Action) (bool, runtime.Object, error) {
@@ -235,6 +340,7 @@ func drainWatchEvents(cache *KubernetesCache) {
 }
 
 func TestKubernetesCacheResyncObservesRecreatedNamespaceAfterStop(t *testing.T) {
+<<<<<<< HEAD
 	synctest.Test(t, func(t *testing.T) {
 		client := fake.NewSimpleClientset(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "old", Namespace: "demo"}})
 		cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "demo", Client: client, ResyncPeriod: time.Hour}, []sdk.Detector{
@@ -253,6 +359,25 @@ func TestKubernetesCacheResyncObservesRecreatedNamespaceAfterStop(t *testing.T) 
 		}
 		cache.Stop()
 		drainWatchEvents(cache)
+=======
+	client := fake.NewSimpleClientset(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "old", Namespace: "demo"}})
+	cache, err := newCacheForTest(t, KubernetesCacheConfig{Namespace: "demo", Client: client}, []sdk.Detector{
+		scheduledDetector{spec: sdk.DetectorSpec{
+			ID: "pods", Interval: time.Second, Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Pod"}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("new cache: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cache.Start(ctx)
+	if err := cache.WaitForSync(ctx); err != nil {
+		t.Fatalf("wait for sync: %v", err)
+	}
+	cache.Stop()
+	drainWatchEvents(cache)
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 
 		// The application namespace is torn down and redeployed while observation is stopped.
 		if err := client.CoreV1().Pods("demo").Delete(ctx, "old", metav1.DeleteOptions{}); err != nil {
@@ -281,4 +406,21 @@ func TestKubernetesCacheResyncObservesRecreatedNamespaceAfterStop(t *testing.T) 
 		}
 		awaitWatchEvent(t, cache, sdk.WatchKind{APIVersion: "v1", Kind: "Pod", Namespace: "demo"})
 	})
+}
+
+// Every watch the controller accepts at start must have an informer, so an
+// accepted detector both loads and is notified of changes.
+func TestEverySupportedWatchHasAnInformer(t *testing.T) {
+	factory := informers.NewSharedInformerFactory(fake.NewSimpleClientset(), 0)
+	for _, key := range core.SupportedWatches() {
+		kind := key[strings.LastIndex(key, "/")+1:]
+		if strings.HasPrefix(key, "sdo.dev/") || (sdk.ObservationTarget{Kind: kind}).Cluster() {
+			// Synthetic traffic, reachability and metrics arrive without an
+			// informer; cluster-scoped kinds are read outside the namespace cache.
+			continue
+		}
+		if _, err := informerFor(factory, key); err != nil {
+			t.Errorf("supported watch %s: %v", key, err)
+		}
+	}
 }

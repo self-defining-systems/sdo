@@ -51,7 +51,7 @@ func ValidateNativeLedger(data []byte, incidentID string) (json.RawMessage, erro
 		return nil, errors.New("native ledger evidence is empty or exceeds limit")
 	}
 	ledger := &contracts.BrokerLedger{}
-	if err := wire.Unmarshal(data, ledger); err != nil {
+	if err := wire.UnmarshalDurable(data, ledger); err != nil {
 		return nil, fmt.Errorf("decode native ledger: %w", err)
 	}
 	if ledger.GetIncidentId() != incidentID {

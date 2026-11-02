@@ -1,0 +1,65 @@
+{
+  "namespace": "demo",
+  "pods": [
+    {
+      "metadata": {
+        "namespace": "demo",
+        "name": "mongo-app"
+      },
+      "spec": {
+        "containers": [
+          {
+            "name": "mongo",
+            "image": "mongo:synthetic",
+            "env": [
+              {
+                "name": "APP_DATABASE",
+                "value": "app"
+              },
+              {
+                "name": "APP_USERNAME",
+                "value": "app"
+              },
+              {
+                "name": "MONGO_AUTH_DATABASE",
+                "value": "admin"
+              },
+              {
+                "name": "APP_PASSWORD"
+              },
+              {
+                "name": "MONGO_INITDB_ROOT_USERNAME",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "name": "synthetic-credentials",
+                    "key": "mongo_initdb_root_username"
+                  }
+                }
+              },
+              {
+                "name": "MONGO_INITDB_ROOT_PASSWORD"
+              }
+            ]
+          },
+          {
+            "name": "application",
+            "image": "app:synthetic"
+          }
+        ]
+      },
+      "status": {
+        "containerStatuses": [
+          {
+            "name": "application",
+            "state": {
+              "waiting": {
+                "reason": "CrashLoopBackOff",
+                "message": "MongoDB AuthenticationFailed: application user absent"
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

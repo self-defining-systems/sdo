@@ -1,23 +1,21 @@
 package program
 
 import (
-	"context"
 	"fmt"
-	"strings"
-	"time"
-
 	"sdo.dev/operator/sdk"
+<<<<<<< HEAD
 	"sdo.dev/operator/sdk/inputs"
+=======
+	"time"
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 )
 
-type Locator func(sdk.DetectionContext) []Bindings
-
-type programDetector struct {
-	program Diagnoser
-	locate  Locator
-	spec    sdk.DetectorSpec
+type snapshotReadView struct {
+	sdk.DetectionContext
+	sdk.ScopedObservationSource
 }
 
+<<<<<<< HEAD
 // DetectorFromProgram promotes a snapshot-only diagnoser to a detector.
 func DetectorFromProgram(p Diagnoser, locate Locator, spec sdk.DetectorSpec) sdk.Detector {
 	return programDetector{program: p, locate: locate, spec: spec}
@@ -55,6 +53,8 @@ func (d programDetector) Detect(ctx context.Context, snapshot sdk.DetectionConte
 
 type snapshotReadView struct{ inputs.Carrier }
 
+=======
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 func (snapshotReadView) Logs(sdk.ObjectRef, string, time.Duration) (string, error) {
 	return "", fmt.Errorf("logs unavailable in detector context")
 }
@@ -63,9 +63,6 @@ func (snapshotReadView) ProbeTCP(sdk.ObjectRef, int32) (ProbeResult, error) {
 }
 func (snapshotReadView) ProbeHTTP(sdk.ObjectRef, HTTPProbe) (ProbeResult, error) {
 	return ProbeResult{}, fmt.Errorf("HTTP probe unavailable in detector context")
-}
-func (snapshotReadView) DiffAgainstSource(sdk.ObjectRef) (Diff, error) {
-	return Diff{}, fmt.Errorf("source diff unavailable in detector context")
 }
 func (snapshotReadView) DiffAgainstBaseline(sdk.ObjectRef) (Diff, error) {
 	return Diff{}, fmt.Errorf("baseline diff unavailable in detector context")

@@ -15,6 +15,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
@@ -26,10 +27,20 @@ import (
 )
 
 type KubernetesSnapshotProvider struct {
+<<<<<<< HEAD
 	// Clock supplies the snapshot observation time; nil uses time.Now.
 	Clock     func() time.Time
 	Namespace string
 	Client    kubernetes.Interface
+=======
+	Capture      *GenericCapture
+	PodAdmission bool
+	Scope        sdk.ObservationScope
+	Ceiling      sdk.ObservationScope
+	Generation   string
+	Namespace    string
+	Client       kubernetes.Interface
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 }
 
 func NewKubernetesSnapshotProvider(namespace string) (*KubernetesSnapshotProvider, error) {
@@ -40,7 +51,11 @@ func NewKubernetesSnapshotProvider(namespace string) (*KubernetesSnapshotProvide
 	if err != nil {
 		return nil, err
 	}
-	return &KubernetesSnapshotProvider{Namespace: namespace, Client: client}, nil
+	capture, err := NewGenericCapture(namespace)
+	if err != nil {
+		return nil, err
+	}
+	return &KubernetesSnapshotProvider{Namespace: namespace, Client: client, Capture: capture}, nil
 }
 
 // NewKubernetesClient returns a client with its own transport and rate limiter.
@@ -145,6 +160,7 @@ func (p KubernetesSnapshotProvider) Snapshot(ctx context.Context) (sdk.Detection
 		return DetectionSnapshot{}, fmt.Errorf("list events: %w", err)
 	}
 
+<<<<<<< HEAD
 	daemonSets, err := p.Client.AppsV1().DaemonSets(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return DetectionSnapshot{}, fmt.Errorf("list daemonSets: %w", err)
@@ -203,12 +219,41 @@ func (p KubernetesSnapshotProvider) Snapshot(ctx context.Context) (sdk.Detection
 		EndpointSliceList:  endpointSlices.Items,
 		NetworkPolicyList:  networkPolicies.Items,
 		EventList:          events.Items,
+=======
+	scoped, err := ObserveScoped(ctx, p.Client, p.Scope, p.Ceiling, p.Generation)
+	if err != nil {
+		return nil, err
+	}
+	var admission *sdk.PodAdmissionResult
+	if p.PodAdmission {
+		result := ObservePodAdmission(ctx, p.Client, namespace, pods.Items)
+		admission = &result
+	}
+	return DetectionSnapshot{
+		Admission:         admission,
+		GenericCapture:    p.Capture,
+		ScopedSnapshot:    scoped,
+		NamespaceName:     namespace,
+		ConfigMapList:     configMaps.Items,
+		ServiceList:       services.Items,
+		PodList:           pods.Items,
+		DeploymentList:    deployments.Items,
+		ReplicaSetList:    replicaSets.Items,
+		StatefulSetList:   statefulSets.Items,
+		HPAList:           hpas.Items,
+		PDBList:           pdbs.Items,
+		EndpointList:      endpoints.Items,
+		EndpointSliceList: endpointSlices.Items,
+		NetworkPolicyList: networkPolicies.Items,
+		EventList:         events.Items,
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 		// Stamped after every list so no listed object postdates it.
 		ObservedAtTime: now().UTC(),
 	}, nil
 }
 
 type DetectionSnapshot struct {
+<<<<<<< HEAD
 	SecretList         []sdk.SecretMetadata
 	NodeList           []corev1.Node
 	IngressList        []networkingv1.Ingress
@@ -217,6 +262,11 @@ type DetectionSnapshot struct {
 	CronJobList        []batchv1.CronJob
 	JobList            []batchv1.Job
 	DaemonSetList      []appsv1.DaemonSet
+=======
+	Admission          *sdk.PodAdmissionResult `json:"pod_admission,omitempty"`
+	GenericCapture     *GenericCapture         `json:"-"`
+	sdk.ScopedSnapshot `json:"scoped_observation,omitempty"`
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	NamespaceName      string
 	ConfigMapList      []corev1.ConfigMap
 	ServiceList        []corev1.Service
@@ -525,4 +575,29 @@ func (s DetectionSnapshot) Secrets() []sdk.SecretMetadata {
 		return lessSnapshotObject(items[i].Namespace, items[i].Name, items[j].Namespace, items[j].Name)
 	})
 	return items
+}
+
+func (s DetectionSnapshot) PodAdmission() (sdk.PodAdmissionResult, bool) {
+	if s.Admission == nil {
+		return sdk.PodAdmissionResult{}, false
+	}
+	return *s.Admission, true
+}
+
+func (s DetectionSnapshot) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error) {
+	if s.GenericCapture != nil {
+		return s.GenericCapture.CaptureObjects(refs)
+	}
+	return sdk.TypedObjects(s), nil
+}
+func (s DetectionSnapshot) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	if s.GenericCapture != nil {
+		return s.GenericCapture.Object(ref)
+	}
+	return sdk.FindObject(sdk.TypedObjects(s), ref)
+}
+
+// DiffAgainstSource requires the runtime's accepted-source read view.
+func (s DetectionSnapshot) DiffAgainstSource(ref sdk.ObjectRef) (sdk.SourceDiff, error) {
+	return sdk.SourceDiff{}, fmt.Errorf("accepted source diff unavailable for %s/%s", ref.Kind, ref.Name)
 }

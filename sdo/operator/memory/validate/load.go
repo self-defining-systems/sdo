@@ -136,6 +136,10 @@ func (s *run) load(ctx context.Context) error {
 			s.checkSecret(p)
 		}
 	}
+	// A judge refresh revalidates the existing policy even when no file changed.
+	if healthRevalidation(s.req, s.changed) {
+		s.memory = true
+	}
 	if !s.memory {
 		return nil
 	}
@@ -257,7 +261,7 @@ func (s *run) walk(ctx context.Context) error {
 var invalidIDPath = regexp.MustCompile(`^\.sdo/(?:playbooks/([^/]+)/.+|diagnostics/detectors/(?:health|incidents)/([^/]+)/.+)$`)
 
 func (s *run) visit(rel, abs string) error {
-	kind, id, ok := layout.Classify(rel)
+	kind, id, ok := s.req.classify(rel)
 	if !ok {
 		d := Diagnostic{Rule: RuleUnknownPath, Path: rel, Message: "path is not part of the operational-memory layout", Hint: "see docs/architecture.md for the .sdo/ layout, or run `sdo-operator memory ls`"}
 		if m := invalidIDPath.FindStringSubmatch(rel); m != nil {
@@ -268,12 +272,19 @@ func (s *run) visit(rel, abs string) error {
 		s.add(Structural, d)
 		return nil
 	}
+<<<<<<< HEAD
 	if kind == layout.KindOutcome {
+=======
+	if kind == layout.KindOutcome || kind == layout.KindLegacyOutcomes || kind == layout.KindRenderedLock || kind == layout.KindRenderedObject {
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 		return nil
 	}
 	info, err := os.Lstat(abs)
 	if err != nil {
 		return err
+	}
+	if kind == layout.KindCorpus && s.req.Replay == "off" {
+		return nil
 	}
 	if info.Size() > layout.MaxArtifactBytes && (kind != layout.KindCorpus || info.Size() > 8<<20) {
 		s.add(Structural, Diagnostic{Rule: RuleTooLarge, Path: rel, Message: fmt.Sprintf("file is %d bytes; the limit is %d KiB", info.Size(), layout.MaxArtifactBytes/1024), Hint: "split or shorten the file"})
@@ -404,7 +415,7 @@ func (s *run) loadManifest(class layout.Class, id string, file textFile) {
 	det.manifestText = file.content
 	manifest, err := layout.ParseDetectorManifest(file.content)
 	if err != nil {
-		s.add(Structural, Diagnostic{Rule: RuleManifestParse, Path: file.path, Line: errorLine(err, 0), Message: err.Error(), Hint: "manifest fields are listed in docs/architecture.md; unknown or duplicate keys are rejected"})
+		s.add(Structural, Diagnostic{Rule: RuleManifestParse, Path: file.path, Line: errorLine(err, 0), Message: err.Error(), Hint: "valid keys: " + layout.ManifestKeys() + "; unknown or duplicate keys are rejected"})
 		return
 	}
 	if err := manifest.Validate(); err != nil {

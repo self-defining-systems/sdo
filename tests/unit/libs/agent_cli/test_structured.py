@@ -10,18 +10,20 @@ import contextlib
 import json
 import os
 import shlex
+import shutil
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from agentshim import TokenUsage
+from agentshim import StdioMcpServer, TokenUsage
 from agentshim.providers.codex import BYPASS_FLAG, RULES_FILENAME, CodexSandboxConfig, parse_rules, parse_sandbox
 from agentshim.testing import FakeRun, scripted_turn
 
 from libs.agent_cli.structured import (
     ACCESS_MODES,
     AGENT_PROVIDERS,
+    CODEX_SESSION_SETTINGS,
     DETECTOR_GATEWAY_COMMAND,
     MEMORY_CHECK_COMMAND,
     TURN_USAGE_LOG_ENV,
@@ -749,3 +751,170 @@ def test_usage_log_records_the_shell_commands_each_turn_ran(tmp_path: Path, monk
     assert lines[0] == "kubectl get pods"
     assert lines[1].startswith("echo xxx")
     assert len(lines[1]) < 3_000
+
+
+def _git(cwd: Path, *args: str) -> str:
+    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout
+
+
+def test_a_claude_turn_keeps_its_mcp_config_out_of_commits_made_during_the_turn(tmp_path: Path) -> None:
+    """Claude writes ``<cwd>/.mcp.json`` for the turn; a responder commit must not capture it."""
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    _git(checkout, "init", "-q")
+    _git(checkout, "config", "user.email", "t@example.com")
+    _git(checkout, "config", "user.name", "t")
+    (checkout / "base.txt").write_text("base\n", encoding="utf-8")
+    committed: list[str] = []
+
+    def respond(_request: CommandRequest) -> FakeRun:
+        assert (checkout / ".mcp.json").exists()
+        (checkout / "fix.txt").write_text("fix\n", encoding="utf-8")
+        _git(checkout, "add", "--all")
+        _git(checkout, "commit", "-q", "-m", "fix")
+        committed.extend(_git(checkout, "show", "--name-only", "--format=", "HEAD").split())
+        return reply("claude", {"answer": "ok"}, session_id="s-1")
+
+    run_structured_turn(
+        "claude",
+        "prompt",
+        output_schema=_SCHEMA,
+        cwd=checkout,
+        access="danger-full-access",
+        executor=ScriptedAgent(respond).executor,
+        mcp_servers=[StdioMcpServer(name="probe", command="probe")],
+    )
+
+    assert sorted(committed) == ["base.txt", "fix.txt"]
+    exclude = _git(checkout, "rev-parse", "--git-path", "info/exclude").strip()
+    assert (checkout / exclude).read_text(encoding="utf-8").split().count("/.mcp.json") == 1
+
+
+def test_a_claude_turn_outside_a_git_checkout_still_runs(tmp_path: Path) -> None:
+    turn, _ = _run(
+        "claude", tmp_path, access="danger-full-access", mcp_servers=[StdioMcpServer(name="probe", command="probe")]
+    )
+
+    assert json.loads(turn.output_json) == {"answer": "ok"}
+
+
+@pytest.mark.parametrize("provider", AGENT_PROVIDERS)
+def test_provider_session_is_checkpointed_while_the_turn_is_running(provider: str, tmp_path: Path) -> None:
+    sessions: list[str] = []
+    turn, _ = _run(provider, tmp_path, on_session_started=sessions.append)
+    assert sessions == [turn.session_id]
+
+
+@pytest.mark.parametrize("provider", AGENT_PROVIDERS)
+def test_failed_session_checkpoint_aborts_the_turn(provider: str, tmp_path: Path) -> None:
+    def refuse(_session: str) -> None:
+        raise RuntimeError("checkpoint persistence unavailable")
+
+    with pytest.raises(RuntimeError, match="checkpoint persistence unavailable"):
+        _run(provider, tmp_path, on_session_started=refuse)
+
+
+def test_turn_usage_log_prices_setup_tokens_when_provider_omits_dollars(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentshim import cost_usd, default_pricing, price_for
+
+    log = tmp_path / "setup" / "judge" / "setup-usage.jsonl"
+    monkeypatch.setenv(TURN_USAGE_LOG_ENV, str(log))
+    usage = TokenUsage(input_tokens=1000, cached_input_tokens=200, output_tokens=100, turns=2)
+    run = scripted_turn("codex", session_id="judge", usage=usage, structured_output={"answer": "ok"})
+    turn, _ = _run("codex", tmp_path, run=run, model="gpt-6-luna")
+    record = json.loads(log.read_text())
+    entry = price_for("codex", "gpt-6-luna", default_pricing())
+    assert entry is not None
+    assert record["cost_usd"] == cost_usd(turn.usage.tokens, entry)
+    assert record["cost_usd"] > 0
+    assert record["cost_source"] == "agentshim-pricing"
+    assert record["model_requests"] == turn.model_requests
+    assert record["usage"]["input_tokens"] == turn.usage.tokens.input_tokens
+    assert record["usage"]["output_tokens"] == turn.usage.tokens.output_tokens
+
+
+def test_rejected_setup_output_still_records_spent_tokens(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    log = tmp_path / "setup-usage.jsonl"
+    monkeypatch.setenv(TURN_USAGE_LOG_ENV, str(log))
+    run = scripted_turn(
+        "codex",
+        text="no structured response",
+        session_id="judge",
+        usage=TokenUsage(input_tokens=1000, output_tokens=100, turns=1),
+    )
+    with pytest.raises(StructuredTurnError, match="no structured output"):
+        _run("codex", tmp_path, run=run, model="gpt-6-luna")
+    record = json.loads(log.read_text())
+    assert record["usage"]["input_tokens"] == 1000
+    assert record["usage"]["output_tokens"] == 100
+    assert record["cost_usd"] > 0
+
+
+def _config_overrides(argv: list[str]) -> list[str]:
+    return [argv[index + 1] for index, token in enumerate(argv) if token == "-c"]
+
+
+@pytest.mark.parametrize("access", ACCESS_MODES)
+def test_codex_turns_load_no_codex_bundled_skills_plugins_or_skill_list(access: str, tmp_path: Path) -> None:
+    """SDO skills reach the model as file pointers in its prompt, never as an injected list."""
+    _, agent = _run("codex", tmp_path, access=access)
+    (argv,) = agent.argvs
+    overrides = _config_overrides(argv)
+    for setting in (
+        "skills.include_instructions=false",
+        "skills.bundled.enabled=false",
+        "features.plugins=false",
+        "features.remote_plugin=false",
+        "features.recommended_plugins=false",
+        "features.apps=false",
+    ):
+        assert setting in overrides
+
+
+def test_resuming_a_codex_session_keeps_its_configuration(tmp_path: Path) -> None:
+    """Codex appends a resumed turn to its rollout; a changed context would be injected anew.
+
+    Reflection resumes the responder session for its prompt cache, so the
+    resumed turn must ask for exactly the configuration the fresh turn had.
+    """
+    _, fresh = _run("codex", tmp_path, access="danger-full-access")
+    _, resumed = _run(
+        "codex",
+        tmp_path,
+        access="danger-full-access",
+        resume_session_id="s-1",
+        run=reply("codex", {"answer": "ok"}, session_id=None),
+    )
+    assert _config_overrides(resumed.argvs[0]) == _config_overrides(fresh.argvs[0])
+
+
+@pytest.mark.skipif(shutil.which("codex") is None, reason="needs the Codex CLI")
+def test_the_installed_codex_shows_the_model_no_skill_list_or_bundled_skills(tmp_path: Path) -> None:
+    """The settings keep their meaning in the Codex release the image ships (no model call)."""
+    home = tmp_path / "home"
+    skill = home / "skills" / "sdo-memory"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("---\nname: sdo-memory\ndescription: synthetic\n---\nbody\n")
+    settings = [argument for setting in CODEX_SESSION_SETTINGS for argument in ("-c", setting)]
+    rendered = subprocess.run(
+        ["codex", "debug", "prompt-input", *settings, "hello"],
+        env={**os.environ, "CODEX_HOME": str(home)},
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    ).stdout
+    assert "<skills_instructions>" not in rendered
+    assert "<recommended_plugins>" not in rendered
+    assert not (home / "skills" / ".system").exists()
+
+
+def test_a_claude_turn_passes_the_configured_model_and_effort_to_the_cli(tmp_path: Path) -> None:
+    _turn, agent = _run("claude", tmp_path, model="claude-opus-5-5", reasoning_effort="medium")
+
+    (argv,) = agent.argvs
+    assert argv[argv.index("--model") + 1] == "claude-opus-5-5"
+    assert argv[argv.index("--effort") + 1] == "medium"

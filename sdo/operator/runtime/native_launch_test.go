@@ -12,6 +12,32 @@ import (
 	"time"
 )
 
+<<<<<<< HEAD
+=======
+func TestNativeLaunchRequiresProposalOnlyMountAndBuildsBroker(t *testing.T) {
+	root := nativeRepository(t)
+	config := &contracts.ControllerConfig{
+		ToolchainImage: "controller:compiler", BrokerMode: "native", WorkerMountMode: "linked", AppRoot: root, Namespace: "default",
+		BrokerWorktreeRoot: filepath.Join(t.TempDir(), "workspaces"), RepositoryMountPath: filepath.Dir(root), RepositoryPvc: "repository",
+		ValidatorImage: "validator:test", SchemaIdentity: "schema", ResponderBackend: "codex", ResponderModel: "model",
+	}
+	if _, _, err := nativeBrokerFromLaunch(context.Background(), config, fake.NewSimpleClientset()); err == nil {
+		t.Fatal("linked worker mount accepted for native broker")
+	}
+	config.WorkerMountMode = "proposal-only"
+	native, _, err := nativeBrokerFromLaunch(context.Background(), config, fake.NewSimpleClientset())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if native.Repository == nil || native.Deriver == nil || native.ResponderBackend != "codex" {
+		t.Fatalf("incomplete native broker: %+v", native)
+	}
+	if deriver, ok := native.Deriver.(ProtoOutcomeDeriver); !ok || deriver.SessionRoot != config.GetRepositoryMountPath() {
+		t.Fatal("production outcome derivation must retain the protected incident API history")
+	}
+}
+
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 func TestNativeReflectionSharesIncidentSessionWithResponder(t *testing.T) {
 	root := t.TempDir()
 	registry, err := worker_registry.New(builtInReflectorRegistration("agent:test"))
@@ -75,8 +101,8 @@ func TestAgentWorkerEnvironmentRejectsUnknownProvider(t *testing.T) {
 	if _, err := AgentWorkerEnvironment(&contracts.ControllerConfig{ResponderBackend: "gemini", ResponderModel: "m"}); err == nil {
 		t.Fatal("unknown provider accepted")
 	}
-	if environment, err := AgentWorkerEnvironment(&contracts.ControllerConfig{}); err != nil || len(environment) != 0 {
-		t.Fatalf("unconfigured provider must add nothing: %v %v", environment, err)
+	if environment, err := AgentWorkerEnvironment(&contracts.ControllerConfig{}); err != nil || len(environment) != 1 || environment["SDO_REPLAY"] != "on" {
+		t.Fatalf("unconfigured provider retains default-on replay: %v %v", environment, err)
 	}
 }
 
@@ -98,7 +124,11 @@ func TestNativeReflectionJobsCarryConfiguredProviderAndModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+<<<<<<< HEAD
 	config := &contracts.ControllerConfig{ToolchainImage: "controller:compiler", AppRoot: root, RepositoryMountPath: root, RepositoryPvc: "repo", ReflectionSession: "resume", ResponderBackend: "claude", ResponderModel: "claude-haiku-5-5"}
+=======
+	config := &contracts.ControllerConfig{ToolchainImage: "controller:compiler", ProberImage: "traffic-only:test", AppRoot: root, RepositoryMountPath: root, RepositoryPvc: "repo", ReflectionSession: "resume", Replay: "off", ResponderBackend: "claude", ResponderModel: "claude-haiku-5-5"}
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	native := &NativeIncidentBroker{LedgerRoot: filepath.Join(root, "ledger")}
 	if err := attachNativeReflector(native, config, fake.NewSimpleClientset(), registry, time.Minute); err != nil {
 		t.Fatal(err)
@@ -117,18 +147,51 @@ func TestNativeReflectionJobsCarryConfiguredProviderAndModel(t *testing.T) {
 		environments = append(environments, executor.(worker_registry.KubernetesExecutor).Environment)
 	}
 	for i, environment := range environments {
-		if environment["SDO_AGENT_PROVIDER"] != "claude" || environment["SDO_REFLECTION_MODEL"] != "claude-haiku-5-5" {
+		if environment["SDO_AGENT_PROVIDER"] != "claude" || environment["SDO_REFLECTION_MODEL"] != "claude-haiku-5-5" || environment["SDO_REPLAY"] != "off" {
 			t.Errorf("reflection executor %d lost provider/model: %v", i, environment)
 		}
 	}
 }
 
-func TestWithAgentEnvironmentOverridesResponderEnv(t *testing.T) {
-	merged, err := withAgentEnvironment(map[string]string{"SDO_AGENT_PROVIDER": "codex", "KEEP": "1"}, &contracts.ControllerConfig{ResponderBackend: "claude", ResponderModel: "m"})
+// Every reflection executor (fresh Job, resumed session, fresh-in-session) must
+// carry the config's storage and credential routes, not only provider and model.
+func TestNativeReflectionExecutorsCarryConfiguredStorageAndCredentials(t *testing.T) {
+	root := t.TempDir()
+	registry, err := worker_registry.New(builtInReflectorRegistration("agent:test"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if merged["SDO_AGENT_PROVIDER"] != "claude" || merged["SDO_RESPONDER_MODEL"] != "m" || merged["KEEP"] != "1" {
+	config := &contracts.ControllerConfig{
+		AppRoot: root, RepositoryMountPath: root, RepositoryPvc: "repo", RepositoryPvcSubpath: "sub", ReflectionSession: "resume",
+		ResponderCredentialsSecret: "creds", HealthyBaseline: true,
+	}
+	native := &NativeIncidentBroker{LedgerRoot: filepath.Join(root, "ledger")}
+	if err := attachNativeReflector(native, config, fake.NewSimpleClientset(), registry, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	worker := native.Reflector.(RegisteredReflectionWorker)
+	executors := map[string]worker_registry.KubernetesExecutor{"fresh": worker.Executor.(worker_registry.KubernetesExecutor)}
+	for name, factory := range map[string]func(string) (ReflectionTaskExecutor, error){"resume": worker.SessionExecutor, "fresh-in-session": worker.FreshSessionExecutor} {
+		executor, err := factory("incident-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		executors[name] = executor.(worker_registry.KubernetesExecutor)
+	}
+	for name, executor := range executors {
+		if executor.RepositoryPVC != "repo" || executor.RepositoryMountPath != root || executor.RepositoryPVCSubPath != "sub" ||
+			executor.CredentialsSecret != "creds" || !executor.HealthyBaseline {
+			t.Errorf("%s executor lost config routes: %+v", name, executor)
+		}
+	}
+}
+
+func TestWithAgentEnvironmentOverridesResponderEnv(t *testing.T) {
+	merged, err := withAgentEnvironment(map[string]string{"SDO_AGENT_PROVIDER": "codex", "SDO_AGENT_EFFORT": "high", "KEEP": "1"}, &contracts.ControllerConfig{ResponderBackend: "claude", ResponderModel: "m", AgentEffort: "medium"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if merged["SDO_AGENT_PROVIDER"] != "claude" || merged["SDO_RESPONDER_MODEL"] != "m" || merged["SDO_AGENT_EFFORT"] != "medium" || merged["KEEP"] != "1" {
 		t.Fatalf("launch config must be authoritative: %v", merged)
 	}
 	if untouched, err := withAgentEnvironment(map[string]string{"A": "b"}, nil); err != nil || untouched["A"] != "b" {
@@ -148,5 +211,56 @@ func TestNativeStartupRejectsMissingToolchainBeforeKubernetes(t *testing.T) {
 	}
 	if len(client.Actions()) != 0 {
 		t.Fatal("missing compiler reached Kubernetes")
+	}
+}
+
+func TestNativeReflectionTrustedCheckRequiresImmutableInputs(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		immutable, dev bool
+	}{
+		{"mutable image tags", false, false}, {"immutable images", true, false}, {"mutable development source", true, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("SDO_DEV_MOUNT", "0")
+			if test.dev {
+				t.Setenv("SDO_DEV_MOUNT", "1")
+			}
+			root := nativeRepository(t)
+			image := "example.invalid/validator:mutable"
+			compiler := "example.invalid/compiler:mutable"
+			if test.immutable {
+				image = "example.invalid/validator@sha256:" + strings.Repeat("a", 64)
+				compiler = "example.invalid/compiler@sha256:" + strings.Repeat("b", 64)
+			}
+			config := &contracts.ControllerConfig{ToolchainImage: compiler, ValidatorImage: image, SchemaIdentity: "synthetic-schema", BrokerMode: "native", WorkerMountMode: "proposal-only", AppRoot: root, Namespace: "app", BrokerWorktreeRoot: t.TempDir(), RepositoryMountPath: filepath.Dir(root), RepositoryPvc: "repo", ResponderBackend: "codex", ResponderModel: "synthetic", ReflectionSession: "resume"}
+			client := fake.NewSimpleClientset()
+			native, _, err := nativeBrokerFromLaunch(context.Background(), config, client)
+			if err != nil {
+				t.Fatal(err)
+			}
+			registry, err := worker_registry.New(builtInReflectorRegistration("agent:test"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := attachNativeReflector(native, config, client, registry, time.Minute); err != nil {
+				t.Fatal(err)
+			}
+			executor, err := native.Reflector.(RegisteredReflectionWorker).SessionExecutor("synthetic-incident")
+			if err != nil {
+				t.Fatal(err)
+			}
+			wrapped, enabled := executor.(reflectionCheckExecutor)
+			want := test.immutable && !test.dev
+			if enabled != want {
+				t.Fatalf("trusted endpoint=%v want=%v", enabled, want)
+			}
+			if enabled {
+				worker := wrapped.Executor.(worker_registry.KubernetesExecutor)
+				if worker.Environment["SDO_MEMORY_CHECK_DIR"] != "/sdo/session/tools" || worker.Environment["SDO_TOOLS_DIR"] != "/sdo/session/tools" {
+					t.Fatal("missing protected check endpoint environment")
+				}
+			}
+		})
 	}
 }

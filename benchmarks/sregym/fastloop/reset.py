@@ -4,13 +4,21 @@ from __future__ import annotations
 
 import json
 import logging
+import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
-from benchmarks.sregym.adapter import PersistentState, kubectl
+from benchmarks.sregym.adapter import PersistentState, WaitKind, kubectl, wait_for
+from benchmarks.sregym.fastloop.accepted_source import AcceptedSource
 from benchmarks.sregym.fastloop.baseline_recovery import (
+    NON_APPLICATION_NAMESPACES,
+    RESTORE_RECEIPTS,
+    WORKLOAD_KINDS,
+    ApplicationCluster,
     KubectlApplicationCluster,
+    accepted_restore_baselines,
     load_application_baseline,
-    reconcile_application,
+    reconcile_and_record,
 )
 
 if TYPE_CHECKING:
@@ -22,12 +30,49 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def ensure_application_namespace(kubeconfig: Path, namespace: str) -> None:
+    """Recreate a captured app namespace that an abort or a fault's recovery removed."""
+    if namespace.endswith("-sdo") or namespace in NON_APPLICATION_NAMESPACES:
+        raise ValueError(f"refusing to restore non-application namespace {namespace!r}")
+    result = kubectl(["get", "namespace", namespace, "-o", "name"], namespace=None, kubeconfig=kubeconfig, check=False)
+    if result.returncode == 0:
+        return
+    if "(NotFound)" not in result.stderr:
+        raise RuntimeError(f"could not inspect application namespace {namespace}: {result.stderr}")
+    kubectl(
+        ["apply", "-f", "-"],
+        namespace=None,
+        kubeconfig=kubeconfig,
+        input_text=json.dumps({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": namespace}}),
+    )
+
+
+# Record shapes the Go worker executor writes (worker_registry TaskDataKey,
+# ResultDataKey, requestDigestAnnotation and incidentExecutionLabel). Any one
+# marks a request, result, execution receipt or incident execution identity.
+WORKER_RECORD_DATA_KEYS = frozenset({"agent-task.json", "agent-result.json"})
+WORKER_RECORD_ANNOTATION = "sdo.dev/request-sha256"
+WORKER_RECORD_LABEL = "sdo.dev/incident-execution"
+
+
+def is_worker_record(configmap: dict[str, Any]) -> bool:
+    """Return whether a control-namespace ConfigMap caches one worker execution."""
+    metadata = configmap.get("metadata") or {}
+    return (
+        bool(WORKER_RECORD_DATA_KEYS & set(configmap.get("data") or {}))
+        or WORKER_RECORD_ANNOTATION in (metadata.get("annotations") or {})
+        or WORKER_RECORD_LABEL in (metadata.get("labels") or {})
+    )
+
+
 class ResetCluster(Protocol):
     def list_objects(self, namespace: str) -> list[dict[str, Any]]: ...
 
     def delete(self, namespace: str, kind: str, name: str) -> None: ...
 
     def apply(self, namespace: str, value: dict[str, Any]) -> None: ...
+
+    def create_namespace(self, namespace: str) -> None: ...
 
     def reset_controller(self, seed_commit: str, *, preserve_repository: bool = False) -> None: ...
 
@@ -97,14 +142,23 @@ class KubectlResetCluster(KubectlApplicationCluster):
                 namespace=namespace,
                 kubeconfig=self.kubeconfig,
             )
-        # Retire only transient controller state after all writers stop. The
-        # next incident must not resume an expired request/proposal checkout.
+        # Retire transient controller state and worker records after all writers
+        # stop. The next incident must not resume an expired request/proposal
+        # checkout or reuse a cached result computed against a deleted checkout.
+        # Per-incident checkpoints and the native ledger keep the evidence.
+        listing = kubectl(["get", "configmaps", "-o", "json"], namespace=namespace, kubeconfig=self.kubeconfig)
+        records = sorted(
+            item["metadata"]["name"]
+            for item in json.loads(listing.stdout or "{}").get("items", [])
+            if is_worker_record(item)
+        )
         kubectl(
             [
                 "delete",
                 "configmap",
                 "sdo-controller-state",
                 "sdo-controller-state-drift-verdicts",
+                *records,
                 "--ignore-not-found=true",
                 "--wait=true",
             ],
@@ -174,17 +228,124 @@ class KubectlResetCluster(KubectlApplicationCluster):
             )
 
 
+@dataclass
+class RestoreChecks:
+    """Full Kubernetes checks around the small restore protocol.
+
+    The CLI always supplies these. Core replay fixtures can exercise restoration
+    without implementing unrelated Kubernetes APIs.
+    """
+
+    environment: FastloopEnvironment
+    identity: dict[str, Any] | None = None
+
+    def validate(self) -> None:
+        """Reject incomplete recovery before controller or namespace mutations."""
+        from benchmarks.sregym.fastloop.recovery_closure import complete_recovery_baselines, missing_prerequisites
+
+        env = self.environment
+        baselines = load_application_baseline(env.baseline_path, env.namespace)
+        if baselines is None:
+            raise ValueError("reset requires an application baseline captured by fastloop up")
+        source = AcceptedSource.of(env)
+        baselines = complete_recovery_baselines(
+            source, accepted_restore_baselines(source, baselines, seed_commit=env.seed_commit)
+        )
+        absent = set()
+        for baseline in baselines:
+            result = kubectl(
+                ["get", "namespace", baseline.namespace, "-o", "name"],
+                namespace=None,
+                kubeconfig=env.kubeconfig,
+                check=False,
+            )
+            if result.returncode:
+                if "(NotFound)" not in result.stderr:
+                    raise RuntimeError(f"could not inspect application namespace {baseline.namespace}: {result.stderr}")
+                absent.add(baseline.namespace)
+        unsupported = []
+        for ref in missing_prerequisites(baselines):
+            # A namespaced object omitted by the baseline cannot be recreated.
+            # Existing external objects only need a name projection; never read
+            # or archive Secret payloads, and never create cluster-scoped objects.
+            if ref.namespace in absent or ref.kind in WORKLOAD_KINDS:
+                unsupported.append(ref.label())
+                continue
+            result = kubectl(
+                ["get", f"{ref.kind.lower()}/{ref.name}", "-o", "name"],
+                namespace=ref.namespace or None,
+                kubeconfig=env.kubeconfig,
+                check=False,
+            )
+            if result.returncode:
+                if "(NotFound)" not in result.stderr:
+                    raise RuntimeError(f"could not inspect recovery prerequisite {ref.label()}: {result.stderr}")
+                unsupported.append(ref.label())
+        if unsupported:
+            raise ValueError("eval: namespace recovery cannot restore prerequisites: " + ", ".join(unsupported))
+
+    def prepare(self, *, fresh: bool) -> None:
+        from benchmarks.sregym.fastloop.clean_start import restore_admission_baseline
+        from benchmarks.sregym.fastloop.rbac import reset_responder_grants
+
+        env = self.environment
+        if load_application_baseline(env.baseline_path, env.namespace) is None:
+            raise ValueError("reset requires an application baseline captured by fastloop up")
+        self.validate()
+        for baseline in load_application_baseline(env.baseline_path, env.namespace) or ():
+            ensure_application_namespace(env.kubeconfig, baseline.namespace)
+        restore_admission_baseline(env.kubeconfig, env.baseline_path, AcceptedSource.of(env))
+        if fresh:
+            reset_responder_grants(env.kubeconfig, env.namespace)
+
+    def settle(self) -> None:
+        from benchmarks.sregym.fastloop.baseline_recovery import retire_stalled_replicas
+
+        retire_stalled_replicas(self.environment.kubeconfig, self.environment.namespace)
+
+    def ready(self) -> None:
+        from benchmarks.sregym.fastloop.admission import workload_identity
+
+        self.identity = workload_identity(self.environment.kubeconfig, self.environment.namespace)
+
+    def complete(self) -> None:
+        from benchmarks.sregym.adapter import assert_stable_workloads
+        from benchmarks.sregym.fastloop.admission import workload_identity
+
+        assert_stable_workloads(
+            self.identity or {}, workload_identity(self.environment.kubeconfig, self.environment.namespace)
+        )
+
+
+def require_terminal_reflection(environment: FastloopEnvironment) -> None:
+    """Reject recovery until the native learning edge has finalized the incident."""
+    record = PersistentState.load(environment.state_path).controllers.get(environment.namespace)
+    if record is not None and record.pending is not None:
+        raise RuntimeError(
+            f"eval: recovery requires durable terminal reflection for incident {record.pending.incident_id!r}; "
+            "leave the application and controller state intact"
+        )
+
+
 def reset_environment(
-    environment: FastloopEnvironment, cluster: ResetCluster, worker: HealthWorker, *, preserve_repository: bool = False
+    environment: FastloopEnvironment,
+    cluster: ResetCluster,
+    worker: HealthWorker,
+    *,
+    preserve_repository: bool = False,
+    checks: RestoreChecks | None = None,
 ) -> None:
+    require_terminal_reflection(environment)
+    if environment.shared_accepted_id:
+        raise ValueError("shared accepted memory cannot use lane reset; retain the prepared controller")
     if not environment.seed_commit:
         raise ValueError("reset requires a seed commit captured by fastloop up")
-    baselines = load_application_baseline(environment.baseline_path, environment.namespace)
-    if baselines is None:
-        raise ValueError("reset requires an application baseline captured by fastloop up")
+    if checks:
+        checks.validate()
     cluster.reset_controller(environment.seed_commit, preserve_repository=preserve_repository)
-    for baseline in baselines:
-        reconcile_application(cluster, baseline, baseline.namespace)
+    if checks:
+        checks.prepare(fresh=not preserve_repository)
+    restore_application(environment, cluster, worker, checks=checks)
     if preserve_repository:
         state = PersistentState.load(environment.state_path)
         record = state.controllers.get(environment.namespace)
@@ -195,18 +356,78 @@ def reset_environment(
             state.save(environment.state_path)
     else:
         environment.state_path.unlink(missing_ok=True)
-    health = worker.request("health", namespace=environment.namespace, timeout=60)
+
+
+def restore_application(
+    environment: FastloopEnvironment,
+    cluster: ApplicationCluster,
+    worker: HealthWorker,
+    *,
+    checks: RestoreChecks | None = None,
+) -> None:
+    """Restore only the app, from one captured installed manifest set, once.
+
+    The controller, accepted memory and incident clocks are untouched. Restore
+    runs before admission, which only observes the resulting application.
+    """
+    require_terminal_reflection(environment)
+    baselines = load_application_baseline(environment.baseline_path, environment.namespace)
+    if baselines is None:
+        raise ValueError("reset requires an application baseline captured by fastloop up")
+    from benchmarks.sregym.fastloop.recovery_closure import complete_recovery_baselines
+
+    source = AcceptedSource.of(environment)
+    baselines = complete_recovery_baselines(
+        source, accepted_restore_baselines(source, baselines, seed_commit=environment.seed_commit)
+    )
+    worker.request("clean_start", problem_id=environment.deploy_problem, timeout=wait_for(WaitKind.ROLLOUT))
+    reconcile_and_record(cluster, baselines, source, environment.run_dir / RESTORE_RECEIPTS)
+    deadline = time.monotonic() + wait_for(WaitKind.MINUTE)
+    if checks:
+        checks.settle()
+    while True:
+        health = worker.request("health", namespace=environment.namespace, timeout=wait_for(WaitKind.SLOW_COMMAND))
+        if health.get("healthy") or time.monotonic() >= deadline:
+            break
+        time.sleep(min(1, max(0, deadline - time.monotonic())))
     if not health.get("healthy"):
         raise RuntimeError(f"reset left {environment.namespace} unhealthy: {health.get('unready')}")
-    oracle = worker.request("baseline_oracle", problem_id=environment.deploy_problem, verify_traffic=True, timeout=200)
+    if environment.namespace == "social-network":
+        from benchmarks.sregym.fastloop.social_fixture import restore_social_fixture
+
+        restore_social_fixture(environment.kubeconfig)
+    if checks and environment.app != "toy":
+        refreshed = worker.request(
+            "refresh_baseline_clients",
+            problem_id=environment.deploy_problem,
+            dependencies_only=True,
+            timeout=wait_for(WaitKind.ROLLOUT),
+        )
+        if refreshed.get("success") is not True:
+            raise RuntimeError("eval: restored application clients did not settle after dependencies")
+    oracle = worker.request(
+        "baseline_oracle",
+        problem_id=environment.deploy_problem,
+        verify_traffic=True,
+        timeout=wait_for(WaitKind.ROLLOUT),
+    )
     if not oracle.get("success"):
-        refreshed = worker.request("refresh_baseline_clients", problem_id=environment.deploy_problem, timeout=120)
+        refreshed = worker.request(
+            "refresh_baseline_clients", problem_id=environment.deploy_problem, timeout=wait_for(WaitKind.ROLLOUT)
+        )
         if refreshed.get("success") is not True:
             raise RuntimeError(
                 f"reset client refresh failed for {environment.namespace}: {refreshed}; traffic: {oracle}"
             )
         oracle = worker.request(
-            "baseline_oracle", problem_id=environment.deploy_problem, verify_traffic=True, timeout=200
+            "baseline_oracle",
+            problem_id=environment.deploy_problem,
+            verify_traffic=True,
+            timeout=wait_for(WaitKind.ROLLOUT),
         )
         if not oracle.get("success"):
             raise RuntimeError(f"reset left independent traffic failing for {environment.deploy_problem}: {oracle}")
+
+    if checks:
+        checks.ready()
+        checks.complete()

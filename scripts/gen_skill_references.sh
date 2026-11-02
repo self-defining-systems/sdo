@@ -1,9 +1,8 @@
 #!/bin/bash
-# Regenerate the detector and replay references from the Go SDK. --check fails
-# when either committed reference is stale; SDK tests run it automatically.
+# SDK indexes and topic files share one generator and drift check.
 set -euo pipefail
-
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+<<<<<<< HEAD
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 SDK_DIR="$PROJECT_ROOT/sdo/operator/sdk"
 REFERENCE_DIR="$PROJECT_ROOT/sdo/skills/sdo-detector-authoring/references"
@@ -71,3 +70,6 @@ for reference in sdk.md replay.md traffic.md; do
         render "$reference" > "$REFERENCE_DIR/$reference"
     fi
 done
+=======
+exec python3 "$SCRIPT_DIR/gen_skill_references.py" "$@"
+>>>>>>> origin/vic-lsh/dev/sdo-improve

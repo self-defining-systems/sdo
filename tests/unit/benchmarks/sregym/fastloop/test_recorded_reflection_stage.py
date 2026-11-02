@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import os
 import shutil
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -18,11 +20,22 @@ from benchmarks.sregym.fastloop.model_recording import ModelRecorder
 from benchmarks.sregym.fastloop.replay import CheckpointStore
 from benchmarks.sregym.fastloop.replay_worker import replay_script_worker
 from sdo.agents.responder import CodexSessionBackend, SessionReflector, run_reflection_task
-from sdo.contracts import AgentTask, ReflectionRequest, to_canonical_json
+from sdo.contracts import AgentResult, AgentTask, ReflectionRequest, parse_json, to_canonical_json
+from tests.context_helpers import expand_context
 from tests.structured_turns import reply
 from tests.unit.sdo.agents.responder.test_reflection_outcomes import _outcome
 from tests.unit.sdo.agents.responder.test_reflection_worker import _closure
 
+<<<<<<< HEAD
+=======
+pytestmark = pytest.mark.go_integration
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from agentshim import CommandRequest
+
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 ROOT = Path(__file__).resolve().parents[5]
 
 
@@ -32,6 +45,14 @@ def reflection_recording(
     *,
     captures: dict[str, bytes] | None = None,
     files: dict[str, bytes] | None = None,
+    file_turns: list[dict[str, bytes]] | None = None,
+    classification: str = "success",
+    verified_service: bool = False,
+    check_prompt: Callable[[str], None] | None = None,
+    tool_result_lines: list[str] | None = None,
+    covered_repeat: bool = False,
+    unrelated_playbooks: int = 0,
+    receipt: dict[str, str] | None = None,
 ) -> tuple[CheckpointStore, Path]:
     source = tmp_path / "source"
     shutil.copytree(ROOT / "tests/fixtures/sdo/missing_configmap_app", source)
@@ -55,8 +76,51 @@ def reflection_recording(
     ):
         subprocess.run(["git", "-C", str(source), *args], check=True)
     closure = _closure()
+    record = _outcome(closure.request.incident_id)
+    record.classification = classification
+    if verified_service:
+        resource = record.confirmed_root_causes[0].resources[0]
+        resource.kind, resource.namespace, resource.name = "Service", "demo", "front"
+        record.findings[0].primary_resource.CopyFrom(resource)
+        del record.repair_actions[0].resources[:]
+        record.repair_actions[0].resources.append(resource)
+        observed = max(evaluation.evaluated_at.seconds for evaluation in record.detector_history)
+        record.repair_actions[0].started_at.seconds = observed + 1
+        record.repair_actions[0].completed_at.seconds = observed + 2
+        for field, value in (receipt or {}).items():
+            setattr(record.repair_actions[0], field, value)
+        cleared = record.detector_history.add(detector_id=record.findings[0].detector_id, status="clear")
+        cleared.evaluated_at.seconds = observed + 3
+        record.timestamps.completed_at.seconds = observed + 3
+        captures = dict(captures or {})
+        fixture = ROOT / "tests/fixtures/sdo/playbook_program_app/.sdo/corpus/targetport-mismatch"
+        captures["healthy/healthy.json"] = (fixture / "healthy.json").read_bytes()
+        captures["healthy/reference"] = b"synthetic-pre-incident-source@clear-observation\n"
+        record.reflection_eligibility.version = 1
+        cause = record.reflection_eligibility.causes.add(cause_index=0)
+        cause.resources.append(resource)
+    else:
+        # These tests isolate transport and frontmatter from verified repair
+        # learning: README-only memory is judgement, so no hand repair is recorded.
+        del record.confirmed_root_causes[:]
+        if not covered_repeat:
+            del record.repair_actions[:]
+    if covered_repeat:
+        record.applied_playbooks.append("missing-configmap")
+        record.playbook_coverage.matches.add(playbook_id="missing-configmap", program_revision="accepted-program")
+        mitigation = record.prior_stages.add(stage="deterministic").mitigations.add(
+            playbook_id="missing-configmap", program_revision="accepted-program", result="applied_cleared"
+        )
+        # The accepted playbook's own application performed the recorded repair.
+        application = mitigation.apply_receipt
+        application.plan.SetInParent()
+        application.application_id = "restore"
+        application.program_ids.append("missing-configmap")
+        application.applied = application.verification_completed = application.verification_passed = True
+        application.completed_at.CopyFrom(record.repair_actions[0].completed_at)
+        record.repair_actions[0].kind = "sdo-apply"
     outcome = tmp_path / "outcome.json"
-    outcome.write_text(to_canonical_json(_outcome(closure.request.incident_id)))
+    outcome.write_text(to_canonical_json(record))
     recorder = tmp_path / "outcome.go"
     recorder.write_text("""package main
 import (
@@ -82,10 +146,12 @@ func main() {
     commit = subprocess.check_output(
         ["go", "run", str(recorder), str(source), str(outcome)], cwd=ROOT / "sdo/operator", text=True
     ).strip()
-    request = ReflectionRequest(
-        closure=closure, outcome=_outcome(closure.request.incident_id), outcome_commit=commit, session_mode="fresh"
-    )
+    request = ReflectionRequest(closure=closure, outcome=record, outcome_commit=commit, session_mode="fresh")
     request.memory_snapshot.accepted_commit = commit
+    for index in range(unrelated_playbooks):
+        request.memory_snapshot.playbooks.add(id=f"unrelated-{index}", markdown="unrelated prior learning" * 100)
+    if covered_repeat:
+        request.memory_snapshot.playbooks.add(id="missing-configmap", markdown="Existing accepted repair")
     task = AgentTask(
         schema_version="sdo.dev/v1alpha1",
         task_id="reflection-1",
@@ -100,15 +166,25 @@ func main() {
     run_dir = tmp_path / "results/run"
     session = hashlib.sha256(closure.request.incident_id.encode()).hexdigest()[:32]
     model_dir = run_dir / "000_fault/sdo_runtime/sessions" / session / "model_io"
-    runs = iter(reply("codex", output, session_id=f"recorded-{index}") for index, output in enumerate(outputs))
+    runs = iter(
+        reply("codex", output, session_id=f"recorded-{index}", branch="reflection")
+        for index, output in enumerate(outputs)
+    )
 
-    def author(_request: object):
-        authored = files if files is not None else readme_files()
+    turn_index = 0
+
+    def author(command: CommandRequest):
+        nonlocal turn_index
+        if check_prompt is not None:
+            check_prompt(command.stdin or "")
+        authored = file_turns[turn_index] if file_turns is not None else files if files is not None else readme_files()
+        turn_index += 1
         for name, data in authored.items():
             path = source / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
-        return next(runs)
+        run = next(runs)
+        return dataclasses.replace(run, stdout=[*(tool_result_lines or []), *run.stdout])
 
     executor = ModelRecorder(model_dir, request_json=wire, live=FakeExecutor(author))
 
@@ -121,7 +197,9 @@ func main() {
     capture_dir = tmp_path / "captures"
     capture_dir.mkdir()
     for name, data in (captures or {}).items():
-        (capture_dir / name).write_bytes(data)
+        path = capture_dir / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
     binary = tmp_path / "sdo-operator"
     subprocess.run(["go", "build", "-o", str(binary), "./cmd/sdo-operator"], cwd=ROOT / "sdo/operator", check=True)
     publisher = Publisher()
@@ -151,8 +229,35 @@ def frontmatter_output() -> dict:
     return {
         "summary": "Learn the service port invariant",
         "learning_decision": "updated",
-        "playbook_ids": ["service-targetport-mismatch"],
+        "proposed_artifact_ids": ["service-targetport-mismatch"],
     }
+
+
+@pytest.mark.parametrize("unrelated_playbooks", [0, 100], ids=["covered-repeat", "late-line-repeat"])
+def test_recorded_covered_reflection_finishes_in_one_request(tmp_path: Path, unrelated_playbooks: int) -> None:
+    def check_prompt(prompt: str) -> None:
+        prompt = expand_context(prompt)
+        assert "accepted-program" in prompt
+        assert "applied_cleared" in prompt
+        assert '"id": "missing-configmap"' in prompt
+        # Reflection sees every accepted ID, incident-linked entries first, with
+        # one-line descriptions; full files stay readable in the checkout.
+        assert prompt.count("unrelated-") >= unrelated_playbooks
+        if unrelated_playbooks:
+            assert prompt.index('"id": "missing-configmap"') < prompt.index('"id": "unrelated-0"')
+            assert "unrelated prior learning" * 100 not in prompt
+
+    store, source = reflection_recording(
+        tmp_path,
+        [{"summary": "Already covered", "learning_decision": "no_change", "no_change_reason": "accepted repair"}],
+        files={},
+        covered_repeat=True,
+        unrelated_playbooks=unrelated_playbooks,
+        check_prompt=check_prompt,
+    )
+    assert len(list(store.root.parent.glob("000_*/sdo_runtime/sessions/*/model_io/*/*.json"))) == 1
+    result = replay_live_worker(store, 0, "reflection", source=source, live_on_cache_miss=False)
+    assert result["status"] == "completed"
 
 
 def readme_files(*, physical: bool = False) -> dict[str, bytes]:
@@ -205,6 +310,7 @@ def test_recorded_reflection_frontmatter_reaches_real_broker(
     assert subprocess.check_output(["git", "-C", str(source), "status", "--porcelain"]) == before
 
 
+<<<<<<< HEAD
 def test_recorded_reflection_replays_repeated_correction_dispatches(tmp_path: Path) -> None:
     statuses = []
     for attempt in range(3):
@@ -229,9 +335,62 @@ def test_recorded_reflection_reports_all_rejections(tmp_path: Path) -> None:
         assert len(result["proposals"]) == 1
         assert result["proposals"][0]["status"] == "rejected"
         assert "text.physical-path" in result["proposals"][0]["error"]
+=======
+def test_recorded_reflection_over_the_old_model_io_limit_replays_to_acceptance(tmp_path: Path) -> None:
+    # Lane 52 lost a solved row when one reflection turn's tool results crossed 4 MiB.
+    result_line = json.dumps(
+        {
+            "type": "item.completed",
+            "item": {
+                "id": "item_0",
+                "type": "mcp_tool_call",
+                "server": "sdo_reflection",
+                "tool": "authoring_reference",
+                "arguments": {"topic": "sdk"},
+                "result": {"content": [{"type": "text", "text": "x" * (80 << 10)}]},
+                "status": "completed",
+            },
+        }
+    )
+    lines = [result_line + "\n"] * 64
+    assert sum(map(len, lines)) > 4 << 20
+    store, source = reflection_recording(tmp_path, [frontmatter_output()], tool_result_lines=lines)
+    result = replay_live_worker(store, 0, "reflection", source=source, live_on_cache_miss=False)
+    assert result["status"] == "completed"
+    assert result["proposals"][0]["status"] == "accepted"
 
 
-def test_recorded_program_replay_validates_capture_provenance_and_generalization(tmp_path: Path) -> None:
+def test_recorded_reflection_corrects_within_one_dispatch(tmp_path: Path) -> None:
+    store, source = reflection_recording(
+        tmp_path,
+        [frontmatter_output(), frontmatter_output()],
+        file_turns=[readme_files(physical=True), readme_files()],
+    )
+    assert len(list(store.root.parent.glob("000_*/sdo_runtime/sessions/*/model_io/*/*.json"))) == 2
+    result = replay_live_worker(store, 0, "reflection", source=source, live_on_cache_miss=False)
+    assert result["status"] == "completed"
+    assert result["proposals"][0]["status"] == "accepted"
+>>>>>>> origin/vic-lsh/dev/sdo-improve
+
+
+def test_recorded_reflection_withholds_persistently_rejected_result(tmp_path: Path) -> None:
+    store, _ = reflection_recording(
+        tmp_path,
+        [frontmatter_output()] * 4,
+        files=readme_files(physical=True),
+    )
+    # Only the typed failure is recorded; the rejected memory never leaves the worker.
+    result = parse_json(store.load(0, "reflection").result, AgentResult())
+    assert (result.status, result.failure_reason) == ("failed", "agent_failed")
+    assert "text.physical-path" in result.error_summary
+    assert not result.HasField("response")
+
+
+@pytest.mark.parametrize("classification", ["success", "failed"])
+@pytest.mark.parametrize("unrelated_playbooks", [0, 100], ids=["compact-memory", "large-memory"])
+def test_recorded_program_replay_accepts_session_fixture_without_captures(
+    tmp_path: Path, classification: str, unrelated_playbooks: int
+) -> None:
     fixture = ROOT / "tests/fixtures/sdo/playbook_program_app/.sdo"
     corpus = fixture / "corpus/targetport-mismatch"
     fixed = json.loads((corpus / "fixed.json").read_text())
@@ -244,6 +403,21 @@ def test_recorded_program_replay_validates_capture_provenance_and_generalization
         "fixed.json": json.dumps(fixed).encode(),
     }
     labels = json.loads((corpus / "labels.json").read_text())
+    # The controller appends the original repair receipt to captured recordings
+    # (memory.CaptureRepairReceipts); the authored positive case copies it.
+    incident = _closure().request.incident_id
+    observed = max(evaluation.evaluated_at.seconds for evaluation in _outcome(incident).detector_history)
+    receipt = {
+        "id": "restore",
+        "incident_id": incident,
+        "success": True,
+        "started_at": datetime.fromtimestamp(observed + 1, UTC).isoformat().replace("+00:00", "Z"),
+        "completed_at": datetime.fromtimestamp(observed + 2, UTC).isoformat().replace("+00:00", "Z"),
+        "resources": [{"api_version": "v1", "kind": "Service", "namespace": "demo", "name": "front"}],
+    }
+    recordings = [*json.loads(captures["open@detect-recordings.json"])]
+    recordings.append({"method": "RepairReceipt", "arguments": [], "result": receipt})
+    captures["open@detect-recordings.json"] = json.dumps(recordings).encode()
     files = readme_files()
     # Reuse the kept hand-written program, its library, and its module definition.
     for name in ("diagnose.go", "mitigate.go"):
@@ -251,12 +425,15 @@ def test_recorded_program_replay_validates_capture_provenance_and_generalization
         files[f".sdo/playbooks/service-targetport-mismatch/{name}"] = path.read_bytes()
     files[".sdo/lib/ports/ports.go"] = (fixture / "lib/ports/ports.go").read_bytes()
     files[".sdo/diagnostics/go.mod"] = (fixture / "diagnostics/go.mod").read_bytes()
-    labels["provenance"] = {
-        "incident_id": _closure().request.incident_id,
-        "open_at": "detect",
-        "open_sha256": hashlib.sha256(captures["open@detect.json"]).hexdigest(),
-        "fixed_sha256": hashlib.sha256(captures["fixed.json"]).hexdigest(),
-    }
+    labels["provenance"] = {"incident_id": _closure().request.incident_id}
+    # Author a detector for the verified service program, leaving the unrelated
+    # accepted ConfigMap detector and its playbook unchanged.
+    for name in ("manifest.yaml", "detector.go"):
+        data = (ROOT / "tests/fixtures/sdo/service_port_detector" / name).read_bytes()
+        files[f".sdo/diagnostics/detectors/incidents/service-targetport-mismatch/{name}"] = data.replace(
+            b"scripted-incident", _closure().request.incident_id.encode()
+        )
+
     for name, data in {
         "open.json": captures["open@detect.json"],
         "fixed.json": captures["fixed.json"],
@@ -265,6 +442,136 @@ def test_recorded_program_replay_validates_capture_provenance_and_generalization
         "labels.json": json.dumps(labels).encode(),
     }.items():
         files[f".sdo/corpus/replayed-targetport/{name}"] = data
+<<<<<<< HEAD
     store, source = reflection_recording(tmp_path, [frontmatter_output()], captures=captures, files=files)
     result = replay_script_worker(store, 0, "reflection", source=source)
     assert result["proposals"][0]["status"] == "accepted", result
+=======
+
+    def check_prompt(prompt: str) -> None:
+        # This scripted agent checks its task before authoring final Go files.
+        # It proves wiring and validation, not how a live model follows instructions.
+        assert "Every recorded hand repair needs an executable typed SDK plan or RunScript step" in prompt
+        assert "Replay is informational" in prompt
+        assert "Use recorded actions as repair evidence" in prompt
+        section = prompt.split("Current outcome:\n", 1)[1].split("\n\nOutcome history", 1)[0]
+        if section.startswith("Full: "):
+            section = Path(os.path.expandvars(section.splitlines()[0].removeprefix("Full: "))).read_text()
+            current = json.loads(section)
+        else:
+            # The renderer separates required repair evidence from optional
+            # outcome details so budget enforcement can omit only the latter.
+            current, end = json.JSONDecoder().raw_decode(section)
+            assert isinstance(json.loads(section[end:]), dict)
+            full = json.loads(Path(os.path.expandvars(current["full_current_outcome_path"])).read_text())
+            assert current["classification"] == full["classification"]
+            assert current["repair_actions"] == full["repair_actions"]
+        assert current["classification"] == classification
+        assert (
+            current["repair_actions"][0]["details"]
+            == _outcome(_closure().request.incident_id).repair_actions[0].details
+        )
+
+    store, source = reflection_recording(
+        tmp_path,
+        [frontmatter_output()],
+        captures=None,
+        files=files,
+        verified_service=True,
+        classification=classification,
+        check_prompt=check_prompt,
+        unrelated_playbooks=unrelated_playbooks,
+    )
+    result = replay_live_worker(store, 0, "reflection", source=source, live_on_cache_miss=False)
+    assert result["proposals"][0]["status"] == "accepted", result["proposals"][0].get("error", result)
+    assert result["proposals"][0]["commit"]
+    assert result["proposals"][0]["artifact_ids"] == ["service-targetport-mismatch"]
+
+
+#: The RunScript encoding of the recorded ``sdo act`` kubectl repair, with
+#: relation-derived Env. Its bytes never ran: the receipt recorded a command.
+RUNSCRIPT_PORT_REPAIR = (
+    'kubectl -n "$NAMESPACE" patch service "$SERVICE" --type=json '
+    """-p '[{"op":"replace","path":"/spec/ports/0/targetPort","value":8080}]'"""
+)
+RUNSCRIPT_MITIGATE = "\n".join(
+    [
+        "package targetport",
+        "",
+        "import (",
+        '\t"context"',
+        "",
+        '\t"sdo.dev/operator/sdk/program"',
+        ")",
+        "",
+        "func (Program) Mitigate(_ context.Context, _ program.ReadView, b program.Bindings) (program.Plan, error) {",
+        '\tref := b.Objects["service"]',
+        "\tenv := map[string]program.Value{"
+        + '"NAMESPACE": program.FromObserved(ref, "metadata.namespace"), '
+        + '"SERVICE": program.FromObserved(ref, "metadata.name")}',
+        "\treturn program.Plan{Actions: []program.Action{program.RunScript{"
+        + f"Script: `{RUNSCRIPT_PORT_REPAIR}`, "
+        + 'Env: env, Reason: "restore the recorded Service port"}}}, nil',
+        "}",
+        "",
+    ]
+)
+
+
+def test_recorded_readme_only_reflection_is_corrected_once_into_a_runscript_step(tmp_path: Path) -> None:
+    """A recorded kubectl hand repair: README-only is rejected, one correction saves RunScript."""
+
+    fixture = ROOT / "tests/fixtures/sdo/playbook_program_app/.sdo"
+    incident = _closure().request.incident_id
+    action_id = "sdo-act-00000000-0000-4000-8000-000000000001"
+    observed = max(evaluation.evaluated_at.seconds for evaluation in _outcome(incident).detector_history)
+
+    def stamp(seconds: int) -> str:
+        return datetime.fromtimestamp(seconds, UTC).isoformat().replace("+00:00", "Z")
+
+    # The controller's capture of the original receipt (memory.CaptureRepairReceipts).
+    receipt = {
+        "id": action_id,
+        "incident_id": incident,
+        "success": True,
+        "started_at": stamp(observed + 1),
+        "completed_at": stamp(observed + 2),
+        "resources": [{"api_version": "v1", "kind": "Service", "namespace": "demo", "name": "front"}],
+    }
+    program_files = readme_files()
+    program_files[".sdo/playbooks/service-targetport-mismatch/diagnose.go"] = (
+        fixture / "playbooks/service-targetport-mismatch/diagnose.go"
+    ).read_bytes()
+    program_files[".sdo/playbooks/service-targetport-mismatch/mitigate.go"] = RUNSCRIPT_MITIGATE.encode()
+    program_files[".sdo/lib/ports/ports.go"] = (fixture / "lib/ports/ports.go").read_bytes()
+    program_files[".sdo/diagnostics/go.mod"] = (fixture / "diagnostics/go.mod").read_bytes()
+    labels = {
+        "root_cause_program_ids": ["service-targetport-mismatch"],
+        "bindings": {"objects": {"service": receipt["resources"][0]}},
+        "provenance": {"incident_id": incident},
+        "script_origins": {hashlib.sha256(RUNSCRIPT_PORT_REPAIR.encode()).hexdigest(): action_id},
+    }
+    program_files[".sdo/corpus/kubectl-port-repair/labels.json"] = json.dumps(labels).encode()
+    program_files[".sdo/corpus/kubectl-port-repair/recordings.json"] = json.dumps(
+        [{"method": "RepairReceipt", "arguments": [], "result": receipt}]
+    ).encode()
+
+    prompts: list[str] = []
+    store, source = reflection_recording(
+        tmp_path,
+        [frontmatter_output(), frontmatter_output()],
+        file_turns=[readme_files(), program_files],
+        verified_service=True,
+        receipt={"action_id": action_id, "kind": "kubectl-patch"},
+        check_prompt=prompts.append,
+    )
+
+    # Exactly one correction turn, and it names the typed rule and the uncovered repair.
+    assert len(prompts) == 2
+    assert "reflection.program-required" in prompts[1]
+    assert action_id in prompts[1]
+    assert len(list(store.root.parent.glob("000_*/sdo_runtime/sessions/*/model_io/*/*.json"))) == 2
+    result = replay_live_worker(store, 0, "reflection", source=source, live_on_cache_miss=False)
+    assert result["proposals"][0]["status"] == "accepted", result["proposals"][0].get("error", result)
+    assert result["proposals"][0]["artifact_ids"] == ["service-targetport-mismatch"]
+>>>>>>> origin/vic-lsh/dev/sdo-improve

@@ -22,10 +22,16 @@ import (
 	"syscall"
 	"testing"
 	"time"
+<<<<<<< HEAD
+=======
+
+	"google.golang.org/protobuf/types/known/timestamppb"
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/internal/capturefixture"
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
@@ -68,9 +74,7 @@ func copyParityTree(t *testing.T) string {
 
 func runGit(t *testing.T, root string, args ...string) {
 	t.Helper()
-	if out, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput(); err != nil {
-		t.Fatalf("git %v: %v: %s", args, err, out)
-	}
+	testutil.Git(t, root, args...)
 }
 
 func put(t *testing.T, root, rel, content string, mode os.FileMode) {
@@ -96,6 +100,7 @@ const (
 	incidentManifest = "apiVersion: sdo.dev/v1alpha1\nkind: DetectorManifest\nsdkVersion: v0.1\nid: dns\nconstructor: New\nclass: incident\nowner: responder\nwatches:\n  - apiVersion: v1\n    kind: Pod\ninterval: 30s\npersistence:\n  firing: 1\n  clearing: 1\nbatching:\n  severity: warn\n  debounce: \"0\"\npossiblePlaybooks:\n  - %s\noriginatingIncident: inc-2\noriginatingCommit: abc\n"
 )
 
+<<<<<<< HEAD
 // TestCLIAndBrokerAgreeOnAcceptance exercises every layer through the real CLI
 // and the broker pipeline, including the bounded subprocess runner.
 // Any caller-only diagnostic or omitted layer changes these verdicts/rules.
@@ -105,13 +110,48 @@ func TestCLIAndBrokerAgreeOnAcceptance(t *testing.T) {
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build CLI: %v: %s", err, out)
 	}
+=======
+// These independently discoverable groups exercise every real CLI and broker
+// layer. Case ownership is automatic; CI schedules groups by their measured cost.
+const acceptanceShardCount = 5
+
+func TestCLIAndBrokerAgreeOnAcceptanceAutomatic0(t *testing.T) {
+	testCLIAndBrokerAgreeOnAcceptance(t, 0)
+}
+func TestCLIAndBrokerAgreeOnAcceptanceAutomatic1(t *testing.T) {
+	testCLIAndBrokerAgreeOnAcceptance(t, 1)
+}
+func TestCLIAndBrokerAgreeOnAcceptanceAutomatic2(t *testing.T) {
+	testCLIAndBrokerAgreeOnAcceptance(t, 2)
+}
+func TestCLIAndBrokerAgreeOnAcceptanceAutomatic3(t *testing.T) {
+	testCLIAndBrokerAgreeOnAcceptance(t, 3)
+}
+func TestCLIAndBrokerAgreeOnAcceptanceAutomatic4(t *testing.T) {
+	testCLIAndBrokerAgreeOnAcceptance(t, 4)
+}
+
+// Omitting the case name makes name-based placement exceptions impossible.
+func automaticAcceptanceShard(index int) int { return index % acceptanceShardCount }
+
+func testCLIAndBrokerAgreeOnAcceptance(t *testing.T, shard int) {
+	binary := operatorCLIFixture(t)
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	operatorRoot, err := filepath.Abs("..")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	baseline := t.TempDir()
+<<<<<<< HEAD
 	put(t, baseline, "healthy.json", `{"namespace":"demo","services":[],"pods":[]}`, 0644)
+=======
+	put(t, baseline, "healthy.json", string(capturefixture.FromView(t, `{"namespace":"demo","services":[],"pods":[]}`)), 0644)
+	schema, err := builder.SchemaIdentity(operatorRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 
 	type parityCase struct {
 		name            string
@@ -122,10 +162,37 @@ func TestCLIAndBrokerAgreeOnAcceptance(t *testing.T) {
 		allowAdditional bool
 	}
 	cases := []parityCase{
+		{"healthy refused service ports", validate.Responder, validate.ReflectionPhase, parityRefusedPortsDetector, []string{validate.RuleDetectorHealthyBaseline}, false},
+		{"healthy refused ports without recordings", validate.Responder, validate.ReflectionPhase, parityRefusedPortsDetector, []string{validate.RuleDetectorHealthyBaseline}, false},
+		// A closure verified healthy is the only precondition: the cause is bound
+		// by the successful repair write on its own resource, so an opening
+		// finding on another resource neither blocks nor is needed.
+		{"successful cause without matching opening finding", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			put(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector.go", parityDetector(t, "cache")+"\n// cause bound by its recorded repair write\n", 0644)
+		}, nil, false},
+		{"unverified peer gaps", validate.Responder, validate.ReflectionPhase, func(*testing.T, string) {}, nil, false},
+		{"unverified peer no verified", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			put(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector.go", parityDetector(t, "cache")+"\n// No verified cause.\n", 0644)
+		}, nil, false},
+		{"verified cause executable with unverified peer", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) { parityProgram(t, r) }, nil, false},
+		{"unverified peer program", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) { parityProgram(t, r) }, nil, false},
+		{"unverified peer script", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			put(t, r, ".sdo/playbooks/base/scripts/fix.sh", "#!/bin/bash\nset -eu\nkubectl rollout restart \"$1\"\n# unverified peer\n", 0755)
+		}, nil, false},
+		{"unverified peer library", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) { put(t, r, ".sdo/lib/unbound/helper.go", "package unbound\n", 0644) }, nil, false},
+		{"unverified peer executable", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			put(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector.go", parityDetector(t, "cache")+"\n// Unverified peer signature.\n", 0644)
+		}, nil, false},
 		{"unchanged good tree", validate.Responder, validate.ReflectionPhase, func(*testing.T, string) {}, nil, false},
 		{"responder adds a detector", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			put(t, r, ".sdo/diagnostics/detectors/incidents/dns/manifest.yaml", strings.Replace(incidentManifest, "%s", "base", 1), 0o644)
 			put(t, r, ".sdo/diagnostics/detectors/incidents/dns/detector.go", parityDetector(t, "dns"), 0o644)
+		}, nil, false},
+		{"detector watches a resource the controller cannot load", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			watchDetector(t, r, "policy", "v1", "PodDisruptionBudget")
+		}, []string{validate.RuleDetectorControllerStart}, false},
+		{"detector watches PersistentVolumeClaims", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			watchDetector(t, r, "", "v1", "PersistentVolumeClaim")
 		}, nil, false},
 		{"detector names a missing playbook", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			put(t, r, ".sdo/diagnostics/detectors/incidents/dns/manifest.yaml", strings.Replace(incidentManifest, "%s", "ghost", 1), 0o644)
@@ -178,18 +245,20 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 			}
 		}, []string{validate.RuleSnapshotProjection}, false},
 
-		{"trailing whitespace", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+		{"trailing whitespace normalized", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			replaceParityText(t, r, ".sdo/playbooks/base/README.md", "Repair", "Repair \n")
+		}, nil, false},
+		{"space before tab indent", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			replaceParityText(t, r, ".sdo/playbooks/base/README.md", "Repair", " \tRepair")
 		}, []string{validate.RuleWhitespace}, false},
 		{"aggregate snapshot budget", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			for _, id := range []string{"large-a", "large-b", "large-c"} {
 				put(t, r, ".sdo/playbooks/"+id+"/README.md", "---\nschema_version: 1\nowner: responder\nfault_class: "+id+"\noriginating_incident: incident\n---\nRepair <RESOURCE_NAME>.\n"+strings.Repeat("Verified guidance paragraph.\n", 7000), 0644)
 			}
-			replaceParityText(t, r, ".sdo/playbooks/README.md", "# Playbooks", "# Playbooks\n- [large-a](large-a/README.md)\n- [large-b](large-b/README.md)\n- [large-c](large-c/README.md)")
 		}, []string{validate.RuleSnapshotBudget}, false},
 		{"always firing on healthy baseline", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			put(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector.go", strings.Replace(parityDetector(t, "cache"), "return nil, nil", `return []sdk.Finding{{DetectorID:"cache",RuleID:"always",Status:sdk.FindingActive}}, nil`, 1), 0644)
-		}, []string{validate.RuleDetectorTest}, false},
+		}, []string{validate.RuleDetectorHealthyBaseline}, false},
 		{"missing accepted outcome", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			replaceParityText(t, r, ".sdo/playbooks/base/README.md", "Repair", "Carefully repair")
 		}, []string{validate.RuleAcceptedOutcome}, false},
@@ -226,12 +295,7 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 		"playbook-none":                 validate.RulePlaybookNone,
 		"playbook-missing-readme":       validate.RulePlaybookNoReadme,
 		"playbook-owner":                validate.RulePlaybookOwner,
-		"playbook-fault-class":          validate.RulePlaybookFaultClass,
 		"playbook-originating-incident": validate.RulePlaybookIncident,
-		"playbook-placeholder":          validate.RulePlaybookPlaceholder,
-		"index-missing":                 validate.RuleIndexMissing,
-		"index-link":                    validate.RuleIndexLink,
-		"playbook-not-indexed":          validate.RulePlaybookNotIndexed,
 		"script-unreferenced":           validate.RuleScriptUnreferenced,
 		"script-syntax":                 validate.RuleScriptSyntax,
 		"physical-path":                 validate.RulePhysicalPath,
@@ -281,7 +345,7 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 			replaceParityText(t, r, ".sdo/playbooks/base/README.md", "Repair", strings.Repeat("x", 300*1024)+"Repair")
 		}, want: []string{validate.RuleTooLarge}, allowAdditional: true},
 		{name: "initial judge needs manifest", actor: validate.HealthJudge, phase: validate.InitialPhase, edit: func(t *testing.T, r string) {
-			replaceParityText(t, r, ".sdo/playbooks/README.md", "# Playbooks", "# Playbooks\nMore")
+			put(t, r, ".sdo/playbooks/health-objective/README.md", "---\nschema_version: 1\nowner: responder\nfault_class: health-objective-failure\noriginating_incident: lifecycle-bootstrap\n---\n# Health objective\n\nRepair <AFFECTED_RESOURCE>.\n", 0644)
 		}, want: []string{validate.RuleInitialNeedsDetectors}},
 		{name: "initial judge health only", actor: validate.HealthJudge, phase: validate.InitialPhase, edit: func(t *testing.T, r string) {
 			if err := os.RemoveAll(filepath.Join(r, ".sdo/diagnostics/detectors")); err != nil {
@@ -295,6 +359,12 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 	}...)
 	cases = append(cases, []parityCase{
 		{"direct program", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) { parityProgram(t, r) }, nil, false},
+		{"program repeat has no detector", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityProgram(t, r)
+			if err := os.RemoveAll(filepath.Join(r, ".sdo/diagnostics/detectors/incidents/routing-relations")); err != nil {
+				t.Fatal(err)
+			}
+		}, nil, false},
 
 		{"program mitigation leaves target port faulty", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
@@ -302,20 +372,20 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 import ("context"; "sdo.dev/operator/sdk/program")
 func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindings)(program.Plan,error){
  verdict,err:=p.Diagnose(ctx,v,b);if err!=nil || verdict.Result!=program.Match{return program.Plan{},err}
- return program.Plan{Actions:[]program.Action{program.SetField{Ref:b["service"],Path:"spec.ports[0].targetPort",Value:9999}}},nil
+ return program.Plan{Actions:[]program.Action{program.SetField{Ref:b.Objects["service"],Path:"spec.ports[0].targetPort",Value:program.FromObserved(b.Objects["service"],"spec.ports[0].targetPort")}}},nil
 }
 `, 0644)
-		}, []string{"program.mitigation-not-repaired"}, false},
+		}, nil, false},
 		{"program mitigation skips unreplayable effect", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
 			put(t, r, ".sdo/playbooks/service-targetport-mismatch/mitigate.go", `package targetport
 import ("context"; "sdo.dev/operator/sdk/program")
 func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindings)(program.Plan,error){
  verdict,err:=p.Diagnose(ctx,v,b);if err!=nil || verdict.Result!=program.Match{return program.Plan{},err}
- return program.Plan{Actions:[]program.Action{program.ReconcileFromSource{Ref:b["service"]}}},nil
+ return program.Plan{Actions:[]program.Action{program.ReconcileFromSource{Ref:b.Objects["service"]}}},nil
 }
 `, 0644)
-		}, nil, true},
+		}, nil, false},
 
 		{"program README physical path", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
@@ -346,22 +416,35 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 		}, []string{validate.RuleDetectorCompile}, false},
 		{"program replay failure", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
-			path := ".sdo/corpus/targetport-mismatch/labels.json"
+			path := ".sdo/diagnostics/detectors/incidents/routing-relations/detector.go"
 			data, err := os.ReadFile(filepath.Join(r, path))
 			if err != nil {
 				t.Fatal(err)
 			}
-			var label map[string]any
-			if err := json.Unmarshal(data, &label); err != nil {
-				t.Fatal(err)
-			}
-			label["bindings"] = label["peer_bindings"]
-			data, err = json.Marshal(label)
+			source := strings.Replace(string(data), `ref := sdk.ObjectRefFrom("Service", "v1", &service)`, `ref := sdk.ObjectRefFrom("Service", "v1", &service); ref.Name = "not-observed"`, 1)
+			put(t, r, path, source, 0644)
+		}, nil, false},
+		{"program repeat unreachable is information", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityProgram(t, r)
+			path := ".sdo/diagnostics/detectors/incidents/routing-relations/detector.go"
+			data, err := os.ReadFile(filepath.Join(r, path))
 			if err != nil {
 				t.Fatal(err)
 			}
-			put(t, r, path, string(data), 0644)
-		}, []string{validate.RuleDetectorTest}, false},
+			source := strings.Replace(string(data), "if faulty {", `if faulty && service.Name == "" {`, 1)
+			put(t, r, path, source, 0644)
+		}, nil, false},
+		{"program detector emits an invalid finding", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityProgram(t, r)
+			path := ".sdo/diagnostics/detectors/incidents/routing-relations/detector.go"
+			data, err := os.ReadFile(filepath.Join(r, path))
+			if err != nil {
+				t.Fatal(err)
+			}
+			source := strings.Replace(string(data), `Summary: "Service targetPort has no matching container port"`, `Summary: ""`, 1)
+			put(t, r, path, source, 0644)
+		}, nil, false},
+
 		{"program corpus provenance", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
 			path := ".sdo/corpus/targetport-mismatch/labels.json"
@@ -379,7 +462,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 				t.Fatal(err)
 			}
 			put(t, r, path, string(data), 0644)
-		}, []string{"program.capture-provenance", "program.corpus-provenance"}, false},
+		}, nil, false},
 
 		{"program README shell policy", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
@@ -407,29 +490,29 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 				t.Fatal(err)
 			}
 			put(t, r, path, string(data)+" ", 0644)
-		}, []string{"program.capture-provenance"}, false},
+		}, []string{"diff.whitespace"}, false},
 
 		{"positive corpus without capture environment", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
 			if err := os.RemoveAll(filepath.Join(filepath.Dir(r), "captures")); err != nil {
 				t.Fatal(err)
 			}
-		}, []string{"program.capture-unavailable"}, false},
+		}, nil, false},
 		{"positive corpus with empty incident ID", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
 			parityLabel(t, r, func(label map[string]any) { label["provenance"].(map[string]any)["incident_id"] = "" })
-		}, []string{"program.capture-provenance", "program.corpus-provenance"}, false},
+		}, nil, false},
 		{"positive corpus references another incident", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
 			parityLabel(t, r, func(label map[string]any) { label["provenance"].(map[string]any)["incident_id"] = "other" })
-		}, []string{"program.capture-provenance"}, false},
+		}, nil, false},
 		{"existing program adds unproven positive case", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityAcceptedProgram(t, r)
 			if err := os.CopyFS(filepath.Join(r, ".sdo/corpus/another-case"), os.DirFS(filepath.Join(r, ".sdo/corpus/targetport-mismatch"))); err != nil {
 				t.Fatal(err)
 			}
 			parityCaseLabel(t, r, "another-case", func(label map[string]any) { delete(label, "provenance") })
-		}, []string{"program.capture-provenance", "program.corpus-provenance"}, false},
+		}, nil, false},
 		{"existing program adds captured positive case", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityAcceptedProgram(t, r)
 			if err := os.CopyFS(filepath.Join(r, ".sdo/corpus/another-case"), os.DirFS(filepath.Join(r, ".sdo/corpus/targetport-mismatch"))); err != nil {
@@ -486,7 +569,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 		}, []string{"program.corpus-immutable"}, false},
 		{"existing program changes accepted snapshot", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityAcceptedProgram(t, r)
-			put(t, r, ".sdo/corpus/targetport-mismatch/open.json", `{ "namespace": "forged" }`, 0644)
+			put(t, r, ".sdo/corpus/targetport-mismatch/open.json", string(capturefixture.Raw(t, "forged capture", []byte(`{ "namespace": "forged" }`))), 0644)
 		}, []string{"program.corpus-immutable"}, false},
 		{"accepted case needs no current capture", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityAcceptedProgram(t, r)
@@ -496,14 +579,17 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 			put(t, r, ".sdo/playbooks/base/README.md", "---\nschema_version: 1\nowner: responder\nfault_class: base\noriginating_incident: initial\n---\nRepair <RESOURCE_NAME>. Run fix.sh.\nAdditional guidance.\n", 0644)
 		}, nil, false},
 	}...)
-	for _, test := range cases {
+	for index, test := range cases {
+		if automaticAcceptanceShard(index) != shard {
+			continue
+		}
 		t.Run(test.name, func(t *testing.T) {
 			// Each verdict owns its repositories and captures; only the compiled
 			// CLI and read-only healthy baseline are shared. CI caps -parallel=2.
 			t.Parallel()
 			root := copyParityTree(t)
 			put(t, root, "app.txt", "base\n", 0o644)
-			runGit(t, root, "init", "-q")
+			testutil.InitGit(t, root)
 			runGit(t, root, "config", "user.name", "T")
 			runGit(t, root, "config", "user.email", "t@example.com")
 			runGit(t, root, "add", "-A")
@@ -533,15 +619,43 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 				t.Fatal(err)
 			}
 			accepted := filepath.Join(t.TempDir(), "accepted")
+<<<<<<< HEAD
 			if out, err := exec.Command("git", "clone", "--quiet", "--no-local", root, accepted).CombinedOutput(); err != nil {
 				t.Fatalf("clone accepted: %v %s", err, out)
 			}
 			repository, err := broker.New(accepted, t.TempDir(), (broker.SubprocessValidator{Binary: binary, OperatorRoot: operatorRoot, HealthyBaseline: baseline}).Validator())
+=======
+			testutil.CloneGit(t, root, accepted, "--no-local")
+			repository, err := broker.New(accepted, t.TempDir(), broker.JobValidator(subprocessParityJob{binary: binary, operatorRoot: operatorRoot, schema: schema, baseline: baseline}))
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 			if err != nil {
 				t.Fatal(err)
 			}
 			if test.phase == validate.ReflectionPhase && test.name != "missing accepted outcome" {
-				if _, err := repository.RecordOutcome(context.Background(), "incident", &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident", Classification: "success"}); err != nil {
+				outcome := &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident", Classification: "success"}
+				if len(paths) > 0 {
+					refs := []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "front"}}
+					outcome.ConfirmedRootCauses = []*contracts.ConfirmedRootCause{{Summary: "independently verified fixture repair", Resources: refs}}
+					outcome.ReflectionEligibility = &contracts.ReflectionEligibility{Version: 1, Causes: []*contracts.ReflectionCauseWork{{CauseIndex: 0, Resources: refs, Items: []*contracts.ReflectionWorkItem{{ProgramId: "base", Disposition: "covered", Reason: "verified_equivalent_repair", Resources: refs}}}}}
+				}
+				if strings.HasPrefix(test.name, "unverified peer ") || test.name == "verified cause executable with unverified peer" {
+					a := []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "verified"}}
+					if test.name == "verified cause executable with unverified peer" {
+						a[0].Name = "front"
+					}
+					b := []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "unverified"}}
+					outcome.Classification = "failed"
+					outcome.ConfirmedRootCauses = []*contracts.ConfirmedRootCause{{Summary: "verified A", Resources: a}, {Summary: "unverified B", Resources: b}}
+					outcome.ReflectionEligibility = &contracts.ReflectionEligibility{Version: 1, Causes: []*contracts.ReflectionCauseWork{{CauseIndex: 0, Resources: a}}}
+					if test.name == "unverified peer no verified" {
+						outcome.ReflectionEligibility.Causes = nil
+					}
+				}
+				parityFindingRepairProof(outcome)
+				if test.name == "successful cause without matching opening finding" {
+					outcome.Findings[0].PrimaryResource = &contracts.ObjectRef{Kind: "Service", Namespace: "demo", Name: "actual-fault"}
+				}
+				if _, err := repository.RecordOutcome(context.Background(), "incident", outcome); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -560,11 +674,44 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 			if _, err := os.Stat(capture); os.IsNotExist(err) {
 				capture = ""
 			}
+			if capture == "" {
+				capture = t.TempDir()
+			}
+			put(t, capture, "healthy/healthy.json", string(capturefixture.FromView(t, `{"namespace":"demo","services":[],"pods":[]}`)), 0644)
+			if strings.HasPrefix(test.name, "healthy refused") {
+				// The legacy/caller-authored healthy.json has no Consul ports.
+				// Only the controller capture retains the original healthy app.
+				snapshot := map[string]any{"namespace": "demo", "services": []any{map[string]any{"metadata": map[string]any{"name": "consul", "namespace": "demo"}, "spec": map[string]any{"ports": []any{map[string]any{"port": 8300}, map[string]any{"port": 8400}}}}}}
+				if test.name == "healthy refused service ports" {
+					snapshot["readings"] = []any{
+						map[string]any{"method": "ProbeTCP", "arguments": []any{map[string]any{"api_version": "v1", "kind": "Service", "namespace": "demo", "name": "consul"}, 8300}, "result": map[string]any{"success": false, "detail": "refused"}},
+						map[string]any{"method": "ProbeTCP", "arguments": []any{map[string]any{"api_version": "v1", "kind": "Service", "namespace": "demo", "name": "consul"}, 8400}, "result": map[string]any{"success": false, "detail": "refused"}},
+					}
+				}
+				put(t, capture, "healthy/healthy.json", string(capturefixture.FromView(t, snapshot)), 0644)
+			}
 			root = proposal.Path
 			decision := &contracts.ReflectionDecision{LearningDecision: "updated"}
+			if len(paths) > 0 {
+				// Coverage of this synthetic verified cause is intentionally
+				// declined; executable authorization is checked independently.
+				resource := "front"
+				decision.SdkGaps = []*contracts.SdkGap{{FaultClass: "fixture", Primitive: "fixture", Reason: "fixture coverage gap", ScratchScript: "scratch/fixture", Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: resource}}}}
+			}
 			if len(paths) == 0 {
 				decision.LearningDecision = "no_change"
 				decision.NoChangeReason = "already covered"
+			}
+			if strings.HasPrefix(test.name, "unverified peer ") || test.name == "verified cause executable with unverified peer" {
+				decision.SdkGaps = []*contracts.SdkGap{{FaultClass: "verified", Primitive: "missing", Reason: "SDK gap for verified A", ScratchScript: "scratch/a", Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "verified"}}}}
+				if test.name == "verified cause executable with unverified peer" {
+					decision.SdkGaps[0].Resources[0].Name = "front"
+				}
+				if test.name == "unverified peer gaps" {
+					decision.LearningDecision = "sdk_gap"
+					decision.NoChangeReason = "typed gaps for both verified and unverified causes"
+					decision.SdkGaps = append(decision.SdkGaps, &contracts.SdkGap{FaultClass: "unverified", Primitive: "independent-evidence", Reason: "evidence_gap", ScratchScript: "scratch/b", Resources: []*contracts.ObjectRef{{Kind: "Service", Namespace: "demo", Name: "unverified"}}})
+				}
 			}
 			ids := map[string]bool{}
 			for _, p := range paths {
@@ -586,7 +733,11 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 				decision.NoChangeReason = "covered"
 			}
 			if test.phase == validate.ReflectionPhase {
-				data, err := protojson.Marshal(decision)
+				// The decision file is the ReflectionResult the worker returns.
+				data, err := protojson.Marshal(&contracts.ReflectionResult{
+					LearningDecision: decision.LearningDecision, NoChangeReason: decision.NoChangeReason,
+					ProposedArtifactIds: decision.PlaybookIds, SdkGaps: decision.SdkGaps,
+				})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -614,12 +765,15 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 				t.Fatalf("CLI output is not a MemoryCheckReport: %v\n%s", err, stdout.String())
 			}
 
+<<<<<<< HEAD
 			if test.name == "program mitigation skips unreplayable effect" {
 				if len(report.GetMitigationReplayNotes()) != 1 || report.MitigationReplayNotes[0].GetStatus() != contracts.MitigationReplayNote_STATUS_SKIPPED_UNREPLAYABLE_EFFECT {
 					t.Fatalf("CLI accepted effect without typed skip note: %+v", report)
 				}
 			}
 			validationStart := time.Now()
+=======
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 			var publishErr error
 			var receipt broker.Receipt
 			if test.phase == validate.ReflectionPhase && test.actor == validate.Responder {
@@ -676,6 +830,21 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 			for i, want := range validate.ProtoDiagnostics(brokerDiagnostics) {
 				if got := report.Diagnostics[i]; got.Rule != want.Rule || got.Path != want.Path || got.Line != want.Line || got.Message != want.Message || got.Hint != want.Hint {
 					t.Errorf("diagnostic %d differs: CLI %v broker %v", i, got, want)
+				}
+			}
+
+			if test.name == "program mitigation leaves target port faulty" || test.name == "program mitigation skips unreplayable effect" {
+				if len(report.GetMitigationReplayNotes()) == 0 {
+					t.Fatal("CLI omitted advisory replay")
+				}
+				cliObserved := false
+				for _, gap := range report.GetCoverageGaps() {
+					cliObserved = cliObserved || gap.GetRule() == validate.RuleReplayObservation
+				}
+				// The isolated Job repeats required gates only. Optional replay
+				// observations belong to the local self-check, not publication.
+				if !cliObserved {
+					t.Fatalf("advisory replay lost: CLI=%v broker=%v", report.GetCoverageGaps(), receipt.CoverageGaps)
 				}
 			}
 			got := rules(report.Diagnostics, nil).cli
@@ -741,6 +910,20 @@ func parityDetector(t *testing.T, id string) string {
 	return source
 }
 
+// watchDetector adds an incident detector whose manifest and spec both declare
+// one watch of the given resource.
+func watchDetector(t *testing.T, root, group, version, kind string) {
+	t.Helper()
+	apiVersion := version
+	if group != "" {
+		apiVersion = group + "/" + version
+	}
+	manifest := strings.Replace(strings.Replace(incidentManifest, "%s", "base", 1), "  - apiVersion: v1\n    kind: Pod\n", "  - apiVersion: "+apiVersion+"\n    kind: "+kind+"\n", 1)
+	put(t, root, ".sdo/diagnostics/detectors/incidents/dns/manifest.yaml", manifest, 0o644)
+	source := strings.Replace(parityDetector(t, "dns"), `{APIVersion: "v1", Kind: "Pod"}`, fmt.Sprintf("{APIVersion: %q, Kind: %q}", apiVersion, kind), 1)
+	put(t, root, ".sdo/diagnostics/detectors/incidents/dns/detector.go", source, 0o644)
+}
+
 // overlayParityCase preserves executable bits and applies the fixture’s deletions.
 func overlayParityCase(t *testing.T, root, name string) {
 	t.Helper()
@@ -798,6 +981,42 @@ func replaceParityText(t *testing.T, root, rel, before, after string) {
 // subprocessParityJob replaces only cluster scheduling/isolation, which are
 // outside acceptance rules. Publication stages the real tree and invokes the
 // shipped validator binary, including healthy replay and its report transport.
+<<<<<<< HEAD
+=======
+type subprocessParityJob struct{ binary, operatorRoot, schema, baseline string }
+
+func (j subprocessParityJob) Validate(ctx context.Context, r broker.ValidationJobRequest) (broker.ValidationJobReceipt, error) {
+	args := []string{"validate", "--app", r.CandidateRoot, "--operator-root", j.operatorRoot, "--expect-schema", j.schema}
+	needed, err := validate.BaselineGateRequired(r.CandidateRoot, r.ChangedPaths)
+	if err != nil {
+		return broker.ValidationJobReceipt{}, err
+	}
+	if needed {
+		baseline := j.baseline
+		if r.HealthyBaseline != "" {
+			baseline = r.HealthyBaseline
+		}
+		args = append(args, "--healthy-baseline", baseline)
+	}
+	cmd := exec.CommandContext(ctx, j.binary, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	runErr := cmd.Run()
+	diagnostics, err := validate.ParseReport(stdout.String())
+	if err != nil {
+		return broker.ValidationJobReceipt{}, fmt.Errorf("validator subprocess: %v: %v: %s", runErr, err, stderr.String())
+	}
+	if err := validate.Err(diagnostics); err != nil {
+		return broker.ValidationJobReceipt{}, err
+	}
+	if runErr != nil {
+		return broker.ValidationJobReceipt{}, runErr
+	}
+	return broker.ValidationJobReceipt{CandidateTree: r.CandidateTree, Accepted: true, DetectorCompiled: true, SourceValidated: true, ReadOnlyMountObserved: true, NoPublishingCredentialsObserved: true, EgressIsolationCanaryPassed: true, CoverageGaps: validate.ParseReportGaps(stdout.String())}, nil
+}
+
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 func copyParityChange(t *testing.T, source, target, name string) {
 	t.Helper()
 	from, to := filepath.Join(source, name), filepath.Join(target, name)
@@ -875,12 +1094,7 @@ func parityProgram(t *testing.T, root string) {
 	if err := os.WriteFile(labels, data, 0644); err != nil {
 		t.Fatal(err)
 	}
-	index := filepath.Join(root, ".sdo/playbooks/README.md")
-	data, err = os.ReadFile(index)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(index, append(data, []byte("\n- [service-targetport-mismatch](service-targetport-mismatch/README.md)\n")...), 0644); err != nil {
+	if _, err := layout.WritePlaybookIndex(root); err != nil {
 		t.Fatal(err)
 	}
 	parityCaptures(t, root)
@@ -932,4 +1146,56 @@ func parityCaseLabel(t *testing.T, root, caseID string, edit func(map[string]any
 		t.Fatal(err)
 	}
 	put(t, root, path, string(data), 0644)
+}
+
+func parityFindingRepairProof(outcome *contracts.OutcomeRecord) {
+	at := time.Unix(100, 0)
+	for index, cause := range outcome.GetConfirmedRootCauses() {
+		verified := outcome.GetClassification() == "success"
+		for _, work := range outcome.GetReflectionEligibility().GetCauses() {
+			verified = verified || work.GetCauseIndex() == uint32(index)
+		}
+		if !verified {
+			continue
+		}
+		for _, ref := range cause.GetResources() {
+			outcome.Findings = append(outcome.Findings, &contracts.Finding{DetectorId: "fixture", RuleId: "repair", Severity: "critical", Summary: "synthetic opening fault", Evidence: "synthetic opening observation", Status: "active", Fingerprint: ref.GetName(), PrimaryResource: ref})
+			outcome.RepairActions = append(outcome.RepairActions, &contracts.RepairActionReceipt{ActionId: "sdo-program-fixture-" + ref.GetName(), Kind: "program-plan", Target: ref.GetKind() + "/" + ref.GetName(), Summary: "synthetic recorded mutation", Details: "synthetic controller receipt", Success: true, Resources: []*contracts.ObjectRef{ref}, StartedAt: timestamppb.New(at), CompletedAt: timestamppb.New(at.Add(time.Second))})
+			// These acceptance fixtures exercise edits after an already covered
+			// repair. Recorded-hand-repair requirements have their own real CLI,
+			// executable and receipt-producer tests; do not invent unrelated hand
+			// work that would prevent this fixture reaching its intended gate.
+			outcome.PlanApplications = append(outcome.PlanApplications, &contracts.PlanApplication{
+				ApplicationId: "fixture-" + ref.GetName(), ProgramIds: []string{"base"}, Applied: true,
+				Plan:      &contracts.Plan{Actions: []*contracts.Action{{Kind: &contracts.Action_ReconcileFromSource{ReconcileFromSource: &contracts.ReconcileFromSource{Ref: ref}}}}},
+				StartedAt: timestamppb.New(at), CompletedAt: timestamppb.New(at.Add(time.Second)),
+				VerificationCompleted: true, VerificationPassed: true, Verification: &contracts.Verdict{Result: contracts.Verdict_RESULT_NO_MATCH},
+			})
+
+		}
+	}
+	outcome.FinalHealthDetectorState = []*contracts.DetectorEvaluation{{DetectorId: "fixture", Status: "clear", EvaluatedAt: timestamppb.New(at.Add(2 * time.Second))}}
+}
+
+func parityRefusedPortsDetector(t *testing.T, root string) {
+	source := parityDetector(t, "cache")
+	source = strings.Replace(source, `"sdo.dev/operator/sdk"`, `"sdo.dev/operator/sdk"`+"\n"+`"sdo.dev/operator/sdk/program"`, 1)
+	start := strings.Index(source, "func (Detector) Detect(")
+	if start < 0 {
+		t.Fatal("detector fixture missing Detect")
+	}
+	source = source[:start] + `func (Detector) Detect(_ context.Context,ctx sdk.DetectionContext)([]sdk.Finding,error){
+  var findings []sdk.Finding
+  for _,service:=range ctx.Services(){
+   ref:=sdk.ObjectRef{APIVersion:"v1",Kind:"Service",Namespace:service.Namespace,Name:service.Name}
+   for _,port:=range service.Spec.Ports{
+    result,err:=program.ReadFrom(ctx).ProbeTCP(ref,port.Port)
+    if err!=nil{return nil,err}
+    if !result.Success{findings=append(findings,sdk.Finding{DetectorID:"cache",RuleID:"refused",Status:sdk.FindingActive,Severity:sdk.SeverityWarning,PrimaryResource:ref,Summary:"declared Service port refuses connections",Evidence:"recorded TCP refusal"})}
+   }
+  }
+  return findings,nil
+ }
+ `
+	put(t, root, ".sdo/diagnostics/detectors/incidents/cache/detector.go", source, 0644)
 }

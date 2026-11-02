@@ -26,6 +26,7 @@ diagnostic; look it up here.
 
 ## Watchable kinds
 
+<<<<<<< HEAD
 - A watch is `{apiVersion, kind}` and must name a kind the snapshot exposes: `apps/v1 Deployment`,
   `apps/v1 ReplicaSet`, `apps/v1 StatefulSet`, `apps/v1 DaemonSet`, `batch/v1 Job`, `batch/v1 CronJob`,
   `v1 PersistentVolumeClaim`, `v1 ServiceAccount`, `autoscaling/v2 HorizontalPodAutoscaler`,
@@ -39,6 +40,18 @@ diagnostic; look it up here.
 - The interval-driven `sdo.dev/v1alpha1 Logs` watch exposes bounded container-log counts and excerpts through
   `logs.Consumer` and `logs.Require`; declarations validate RE2 patterns and query limits at registration.
   Source errors must propagate as detector errors. Enforced by: `manifest.invalid`, `detector.compile`, `detector.test`.
+=======
+- A watch is `{apiVersion, kind}` and must name a kind the controller can load: `apps/v1 Deployment`,
+  `apps/v1 ReplicaSet`, `discovery.k8s.io/v1 EndpointSlice`, `networking.k8s.io/v1 NetworkPolicy`,
+  `v1 ConfigMap`, `v1 Endpoints`, `v1 Event`, `v1 Pod`, `v1 Service`, the change-only kinds
+  `v1 PersistentVolumeClaim`, `v1 ServiceAccount`, `apps/v1 StatefulSet`, `apps/v1 DaemonSet`, `batch/v1 Job`,
+  `batch/v1 CronJob`, and the `rbac.authorization.k8s.io/v1` kinds `Role`, `RoleBinding`, `ClusterRole`,
+  `ClusterRoleBinding` (they trigger evaluation; the snapshot has no accessor for them), the synthetic-traffic watch
+  `sdo.dev/v1alpha1 SyntheticTraffic` (health detectors over traffic workloads only), and the controller-emitted
+  `sdo.dev/v1alpha1 ServiceReachability` (detectors over Service reachability dials). Watches are unique and
+  non-empty. Memory check runs the controller's own startup validation, so a detector it rejects can never be
+  accepted. Enforced by: `manifest.invalid`, `detector.controller-start`.
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 Advice, not validator-checked: watch every kind whose snapshot accessor the detector calls; the controller
 evaluates a detector when a watched kind changes.
 
@@ -56,13 +69,11 @@ health objective needs more.
 
 ## Tests
 
-- A detector ships `detector_test.go` with a matching case and near-miss cases, using `sdktest.Snapshot`. The
-  tests run during `memory check` and fail it when they fail. Enforced by: `detector.test`.
-Advice, not validator-checked: make tests generalize by varying resource names, namespaces, and counts from the
-incident that taught the pattern.
-- Incident detectors must stay quiet on recorded healthy baselines and health detectors must not report
-  ExternalName Services for missing endpoints; the compile layer runs those generated checks. Enforced by:
-  `detector.test`.
+- Compile and vet detector source and tests. Compilation and static registration failures reject memory.
+  Enforced by: `detector.compile`, `detector.vet`, `detector.test`.
+Advice, not validator-checked: tests and recorded-state replay run as information only. Failing assertions, unavailable observations,
+  findings on healthy captures and diagnosis mismatches never reject saving. Inspect their reasons when
+  refining a detector; preserve controller-captured evidence and never substitute invented observations.
 
 ## Playbooks by ID
 

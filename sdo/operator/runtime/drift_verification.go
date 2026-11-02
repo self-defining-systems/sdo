@@ -1,87 +1,51 @@
 package runtime
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"reflect"
-	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
-	"sort"
-	"strings"
-	"time"
 )
 
+<<<<<<< HEAD
 // checkRetainedDrift never infers clearance from missing namespace bindings or
 // quiet health. Each retained learned binding must explicitly return NoMatch.
 func checkRetainedDrift(ctx context.Context, retained []sdk.Finding, view program.ReadView, registry program.ProgramRegistry, deadline time.Duration, benign func(sdk.DriftEvent) bool, now time.Time) ([]sdk.Finding, []DetectorEvaluation, []ProgramRun) {
 	unresolved := []sdk.Finding{}
 	states := map[string]DetectorEvaluation{}
 	runs := []ProgramRun{}
+=======
+// retainedDrift rechecks unexplained drift against accepted source and returns
+// the findings whose declared fields still differ. It is information for the
+// responder and the outcome; it never decides health or closure.
+func retainedDrift(retained []sdk.Finding, view program.ReadView) []sdk.Finding {
+	remaining := []sdk.Finding{}
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	for _, finding := range retained {
-		if !strings.HasPrefix(finding.DetectorID, "drift.") {
+		if finding.DetectorID != "drift.unexplained" {
 			continue
 		}
+<<<<<<< HEAD
 		state, exists := states[finding.DetectorID]
 		if !exists {
 			state = DetectorEvaluation{DetectorID: finding.DetectorID, EvaluatedAt: now.UTC(), Status: DetectorEvaluationClear}
+=======
+		events := driftEventsForFindings(nil, []sdk.Finding{finding})
+		diff, err := declaredSourceDiff(view, finding.PrimaryResource)
+		if err != nil || !sourceDriftRestored(diff, events) {
+			remaining = append(remaining, finding)
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 		}
-		clear := false
-		var err error
-		if finding.DetectorID == "drift.unexplained" {
-			events := driftEventsForFindings(nil, []sdk.Finding{finding})
-			var diff program.Diff
-			diff, err = view.DiffAgainstSource(finding.PrimaryResource)
-			if err == nil {
-				clear = !diff.Changed || driftFieldsRestored(diff, events)
-				if !clear && len(events) == 1 && benign != nil && benign(events[0]) && driftObservationCurrent(diff, events[0]) {
-					clear = true
-				}
-			}
-		} else {
-			id := strings.TrimPrefix(finding.DetectorID, "drift.")
-			if registry != nil {
-				if p, ok := registry.Diagnoser(id); ok {
-					verdict := program.RunDiagnose(ctx, p, view, finding.ParameterBindings, deadline)
-					runs = append(runs, ProgramRun{ProgramID: id, Bindings: finding.ParameterBindings, Verdict: verdict})
-					clear = verdict.Result == program.NoMatch
-				}
-			}
-		}
-		if !clear {
-			unresolved = append(unresolved, finding)
-			state.Status = DetectorEvaluationFiring
-			state.Fingerprints = append(state.Fingerprints, FindingFingerprint(finding))
-			if err != nil {
-				state.Status = DetectorEvaluationError
-				state.Error = err.Error()
-			}
-		}
-		states[finding.DetectorID] = state
 	}
-	evaluations := make([]DetectorEvaluation, 0, len(states))
-	for _, state := range states {
-		evaluations = append(evaluations, state)
-	}
-	sort.Slice(evaluations, func(i, j int) bool { return evaluations[i].DetectorID < evaluations[j].DetectorID })
-	return unresolved, evaluations, runs
+	return remaining
 }
 
 func driftDiffValues(diff program.Diff) (map[string]any, map[string]any, bool) {
-	if !strings.HasPrefix(diff.Text, "accepted: ") {
+	accepted, observed, err := diff.Sides()
+	if err != nil || accepted == nil || observed == nil {
 		return nil, nil, false
 	}
-	parts := strings.SplitN(strings.TrimPrefix(diff.Text, "accepted: "), "\nobserved: ", 2)
-	if len(parts) != 2 {
-		return nil, nil, false
-	}
-	var accepted, observed map[string]any
-	if json.Unmarshal([]byte(parts[0]), &accepted) != nil || json.Unmarshal([]byte(parts[1]), &observed) != nil {
-		return nil, nil, false
-	}
-	return flattenDriftObject(&unstructured.Unstructured{Object: accepted}), flattenDriftObject(&unstructured.Unstructured{Object: observed}), true
+	return driftComparisonValues(accepted), driftComparisonValues(observed), true
 }
 func driftFieldsRestored(diff program.Diff, events []sdk.DriftEvent) bool {
 	accepted, observed, ok := driftDiffValues(diff)
@@ -89,59 +53,44 @@ func driftFieldsRestored(diff program.Diff, events []sdk.DriftEvent) bool {
 		return false
 	}
 	for _, field := range events[0].Fields {
-		if !reflect.DeepEqual(accepted[field.Path], observed[field.Path]) {
+		left, leftExists := accepted[field.Path]
+		right, rightExists := observed[field.Path]
+		// Equal absence is restoration when both complete objects are known.
+		if leftExists != rightExists || !reflect.DeepEqual(left, right) {
 			return false
 		}
 	}
 	return true
 }
-func driftObservationCurrent(diff program.Diff, event sdk.DriftEvent) bool {
-	// The successful source comparison must still describe precisely this event.
+
+// Status and independent closure share the same complete source comparison.
+// Apply-normalized Changed alone cannot prove that admitted fields recovered.
+func sourceDriftRestored(diff program.Diff, events []sdk.DriftEvent) bool {
 	if diff.SourceAbsent {
-		parts := strings.SplitN(diff.Text, "\nobserved: ", 2)
-		if len(parts) != 2 || len(event.Fields) != 1 || event.Fields[0].Path != "spec" {
-			return false
-		}
-		var observed map[string]any
-		var spec any
-		return json.Unmarshal([]byte(parts[1]), &observed) == nil && json.Unmarshal([]byte(event.Fields[0].New), &spec) == nil && reflect.DeepEqual(observed["spec"], spec)
+		return !diff.Changed
 	}
-	accepted, observed, ok := driftDiffValues(diff)
-	if !ok {
-		return false
-	}
-	for _, field := range event.Fields {
-		if renderDriftValue(field.Path, accepted[field.Path]) != field.Source || renderDriftValue(field.Path, observed[field.Path]) != field.New {
-			return false
-		}
-	}
-	return len(event.Fields) > 0
+	return driftFieldsRestored(diff, events) || (!diff.Changed && diff.Text == "")
 }
 
-func (c *Controller) refreshRetainedDrift(ctx context.Context, now time.Time, snapshot sdk.DetectionContext) {
-	if c.drift == nil || c.drift.View == nil {
-		return
-	}
-	c.mu.Lock()
-	retained := append([]sdk.Finding(nil), c.batcher.Snapshot().Findings...)
-	if c.currentIncidentRequest != nil {
-		retained = append(retained, c.currentIncidentRequest.Findings...)
-	}
-	var assessed []sdk.DriftEvent
-	if c.currentIncidentResult != nil {
-		assessed = checkedDriftAssessments(*c.currentIncidentRequest, c.currentIncidentResult.DriftEvents)
-	}
-	c.mu.Unlock()
-	// Accepted outcomes are the only persistent benign label store. A source
-	// rollback therefore discards labels with the outcomes it rolls back.
-	if c.config.RepositoryWorktree != "" {
-		stored, err := memory.OpenReader(c.config.RepositoryWorktree).List(ctx)
-		if err == nil {
-			for _, outcome := range stored {
-				assessed = append(assessed, driftEventsState(outcome.Record.GetDriftEvents())...)
+// Preserve containers as well as leaves so an aggregate is compared as an
+// actual value, while genuine absence remains distinct from an absent object.
+func driftComparisonValues(object map[string]any) map[string]any {
+	values := map[string]any{}
+	var walk func(string, any)
+	walk = func(path string, value any) {
+		values[path] = value
+		switch value := value.(type) {
+		case map[string]any:
+			for key, child := range value {
+				walk(path+"."+key, child)
+			}
+		case []any:
+			for index, child := range value {
+				walk(fmt.Sprintf("%s[%d]", path, index), child)
 			}
 		}
 	}
+<<<<<<< HEAD
 	healthQuiet := true
 	for _, id := range c.healthDetectorIDs {
 		states, clear := c.latestEvaluations([]string{id}, time.Time{}, true)
@@ -195,5 +144,19 @@ func (c *Controller) refreshRetainedDrift(ctx context.Context, now time.Time, sn
 			c.recordEvaluation(state.DetectorID, now, findings)
 		}
 		c.recordFiring(sdk.DetectorSpec{ID: state.DetectorID, Class: sdk.DetectorClassIncident}, now, findings, changes)
+=======
+	for key, value := range comparableFields(object) {
+		walk(key, value)
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	}
+	return values
+}
+
+func hasRetainedDrift(retained []sdk.Finding) bool {
+	for _, finding := range retained {
+		if finding.DetectorID == "drift.unexplained" {
+			return true
+		}
+	}
+	return false
 }

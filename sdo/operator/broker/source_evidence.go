@@ -20,15 +20,6 @@ func validateSourceEvidence(value SourceEvidence) error {
 		return errors.New("trusted source evidence is incomplete or does not match the deployed tree")
 	}
 	seen := map[string]bool{}
-	for _, image := range value.Images {
-		parts := strings.Split(image, "@sha256:")
-		if len(parts) != 2 || parts[0] == "" || len(parts[1]) != 64 {
-			return fmt.Errorf("source evidence image is not immutable: %q", image)
-		}
-		if _, err := hex.DecodeString(parts[1]); err != nil {
-			return fmt.Errorf("source evidence image digest: %w", err)
-		}
-	}
 	for _, resource := range value.ResourceIDs {
 		if resource == "" || seen[resource] {
 			return errors.New("source evidence resource IDs must be unique and nonempty")

@@ -3,11 +3,16 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
 
+<<<<<<< HEAD
+=======
+	"google.golang.org/protobuf/types/known/timestamppb"
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -76,6 +81,7 @@ func TestOversizedControllerStateFailsWithTypedErrorNamingLargestField(t *testin
 // dispatch with a 5 MiB memory snapshot and asserts no ConfigMap the controller writes (state with its incident
 // view, failed-closure archive, worker request) exceeds the budget.
 func TestEveryControllerConfigMapStaysUnderBudgetWithLargeMemory(t *testing.T) {
+<<<<<<< HEAD
 	synctest.Test(t, func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -97,6 +103,114 @@ func TestEveryControllerConfigMapStaysUnderBudgetWithLargeMemory(t *testing.T) {
 		store := lifecycleio.NewConfigMapStateStore(client, "demo", "sdo-controller-state")
 		if err := controller.AttachStateStore(ctx, store); err != nil {
 			t.Fatal(err)
+=======
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	now := time.Unix(1000, 0).UTC()
+	root := t.TempDir()
+	client := fake.NewSimpleClientset()
+	sizes := recordConfigMapWrites(client)
+	controller := newClosureRetryController(t, ClosureRetryPolicy{MaxAttempts: 1}, mountedBroker{&rejectingIncidentBroker{rejections: 10}, root}, &now)
+	// Onboarding retains object identities, including in the incident view. It
+	// must fit alongside a large task without copying live object contents.
+	controller.namespaceOnboarding = &contracts.NamespaceOnboarding{
+		Namespace: "demo", AcceptedCommit: strings.Repeat("a", 40), EstablishedAt: timestamppb.New(now),
+	}
+	for i := range 1000 {
+		controller.namespaceOnboarding.Objects = append(controller.namespaceOnboarding.Objects,
+			&contracts.ObjectRef{ApiVersion: "v1", Kind: "ConfigMap", Namespace: "demo", Name: fmt.Sprintf("settings-%04d", i)})
+	}
+	created := make(chan *batchv1.Job, 1)
+	client.PrependReactor("create", "jobs", func(action ktesting.Action) (bool, k8sruntime.Object, error) {
+		created <- action.(ktesting.CreateAction).GetObject().(*batchv1.Job).DeepCopy()
+		return false, nil, nil
+	})
+	controller.dispatcher = KubernetesJobDispatcher{
+		Client: client, Namespace: "demo", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t),
+		ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: root,
+		Catalog: bulkyMemoryCatalog{commit: "base", bytes: 5 << 20}, PollInterval: time.Millisecond,
+	}
+	store := lifecycleio.NewConfigMapStateStore(client, "demo", "sdo-controller-state")
+	if err := controller.AttachStateStore(ctx, store); err != nil {
+		t.Fatal(err)
+	}
+	// The closed incident was dispatched with the same bulky task; its closure must not carry it.
+	controller.pendingClosure.Request.PreparedAgentTask = strings.Repeat("t", 5<<20)
+	if err := controller.PersistState(ctx); err != nil {
+		t.Fatalf("persist pending closure: %v", err)
+	}
+	attemptClosure(t, controller)
+	controller.history = testDetectorHistory(now)
+	controller.batcher.AddAt(stateFinding("next"), now)
+	if err := controller.dispatchReady(ctx, now, nil); err != nil {
+		t.Fatal(err)
+	}
+	workspace, ok := controller.PendingWorkspaceEffect()
+	if !ok {
+		t.Fatal("failed closure blocked the next incident")
+	}
+	if err := controller.PersistState(ctx); err != nil {
+		t.Fatalf("persist failed closure: %v", err)
+	}
+	if err := controller.ExecuteWorkspaceEffect(ctx, workspace); err != nil {
+		t.Fatal(err)
+	}
+	awaitBrokerResult(t, controller.workspaceResults)
+	controller.processBrokerCompletions()
+	if err := controller.PersistState(ctx); err != nil {
+		t.Fatalf("persist pending dispatch: %v", err)
+	}
+	dispatch, ok := controller.PendingDispatchEffect()
+	if !ok {
+		t.Fatal("next responder not ready")
+	}
+	// A snapshot far past the transport limit is degraded before the task is frozen, and the step is recorded on it.
+	prepared := controller.currentIncidentRequest.PreparedAgentTask
+	if len(prepared) > worker_registry.MaxRequestBytes || !strings.Contains(prepared, "clip_memory_documents") {
+		t.Fatalf("prepared task is %d bytes and did not record clipping the memory snapshot", len(prepared))
+	}
+	if err := controller.ExecuteDispatchEffect(ctx, dispatch); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case completion := <-controller.results:
+		t.Fatalf("dispatch ended before a Job was created: %v", completion.err)
+	case job := <-created:
+		if job.Name != IncidentJobName(dispatch.Request.IncidentID) {
+			t.Fatalf("created Job %q for another incident", job.Name)
+		}
+	}
+	if err := controller.PersistState(ctx); err != nil {
+		t.Fatalf("persist dispatched incident: %v", err)
+	}
+	if len(*sizes) == 0 {
+		t.Fatal("no ConfigMap writes were observed")
+	}
+	for name, size := range *sizes {
+		if size > lifecycleio.MaxConfigMapBytes {
+			t.Errorf("ConfigMap %q write is %d bytes, over the %d byte budget", name, size, lifecycleio.MaxConfigMapBytes)
+		}
+	}
+	loaded, _, err := store.Load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loaded.GetIncidentRequest().GetPreparedAgentTask(); !worker_registry.IsPreparedTaskReference(got) {
+		t.Fatalf("state holds task bytes instead of a reference: %d bytes", len(got))
+	}
+	maps, err := client.CoreV1().ConfigMaps("demo").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, configMap := range maps.Items {
+		if !strings.HasSuffix(configMap.Name, "-request") {
+			continue
+		}
+		for key, value := range configMap.Data {
+			if len(value) > worker_registry.MaxRequestBytes {
+				t.Errorf("worker request %s/%s is %d bytes after degrading, over the %d byte limit", configMap.Name, key, len(value), worker_registry.MaxRequestBytes)
+			}
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 		}
 		// The closed incident was dispatched with the same bulky task; its closure must not carry it.
 		controller.pendingClosure.Request.PreparedAgentTask = strings.Repeat("t", 5<<20)

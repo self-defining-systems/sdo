@@ -7,18 +7,27 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+<<<<<<< HEAD
 	"sdo.dev/operator/builder/internal/buildio"
+=======
+	"time"
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/memory"
 )
 
 // RunConfig binds a built application controller to its transport-neutral
 // protobuf launch contract. Storage projections and cache publication come
 // from the repository edge.
 type RunConfig struct {
+	ShellControllerBinary string
+	PrepareShell          func(context.Context) error
+
 	Build              Config
 	Controller         *contractsv1alpha1.ControllerConfig
 	ResolveDiagnostics func(context.Context, string) (DiagnosticsProjection, error)
@@ -33,8 +42,57 @@ type DiagnosticsProjection struct {
 // RunOnce builds the currently accepted diagnostics and runs one controller
 // process. The workspace remains intact until that process exits.
 func RunOnce(ctx context.Context, config RunConfig) error {
+	return runWithHealthRefresh(ctx, config, runOnce)
+}
+
+// maxHealthRefreshRestarts bounds consecutive exit-76 relaunches when no
+// installation budget (Controller.Duration) bounds them.
+const maxHealthRefreshRestarts = 16
+
+func runWithHealthRefresh(ctx context.Context, config RunConfig, run func(context.Context, RunConfig) error) error {
+	var deadline time.Time
+	if config.Controller != nil && config.Controller.GetDuration().AsDuration() > 0 {
+		deadline = time.Now().Add(config.Controller.GetDuration().AsDuration())
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, deadline)
+		defer cancel()
+		config.Controller = proto.Clone(config.Controller).(*contractsv1alpha1.ControllerConfig)
+	}
+	for restarts := 0; ; restarts++ {
+		if deadline.IsZero() && restarts > maxHealthRefreshRestarts {
+			return fmt.Errorf("health unverified: controller requested %d consecutive health refresh restarts without an installation budget", restarts)
+		}
+		if !deadline.IsZero() {
+			remaining := time.Until(deadline)
+			if remaining <= 0 {
+				return fmt.Errorf("health unverified: installation budget exhausted before controller launch: %w", context.DeadlineExceeded)
+			}
+			config.Controller.Duration = durationpb.New(remaining)
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		err := run(ctx, config)
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == memory.HealthRefreshExitCode {
+			continue
+		}
+		return err
+	}
+}
+
+func runOnce(ctx context.Context, config RunConfig) error {
 	if config.Controller == nil {
 		return errors.New("controller config is required")
+	}
+	source := config.Controller.GetCodePath().GetOverrides().GetDetectorSource()
+	if source == "shell" || (source == "" && config.Controller.GetCodePath().GetName() == "shell") {
+		if config.PrepareShell != nil {
+			if err := config.PrepareShell(ctx); err != nil {
+				return err
+			}
+		}
+		return runShellController(ctx, config)
 	}
 	if config.ResolveDiagnostics == nil {
 		return errors.New("accepted diagnostics resolver is required")
@@ -45,12 +103,16 @@ func RunOnce(ctx context.Context, config RunConfig) error {
 	}
 	buildConfig := config.Build
 	buildConfig.DiagnosticsRoot = projected.Directory
+	buildConfig.CompileOnly, err = memory.AdoptedBuild(ctx, config.Build.ApplicationRoot, projected.AcceptedRevision)
+	if err != nil {
+		return err
+	}
 	workspace, err := BuildWorkspace(ctx, buildConfig)
 	if err != nil {
 		return err
 	}
 	defer workspace.Close()
-	binary, err := workspace.ValidateAndBuild(ctx)
+	binary, err := workspace.BuildForLaunch(ctx)
 	if err != nil {
 		return err
 	}
@@ -105,5 +167,35 @@ func controllerConfigJSON(config RunConfig, built provenance) ([]byte, error) {
 	launch.DiagnosticsFingerprint = built.Fingerprint
 	launch.ControllerArtifactDigest = built.ArtifactDigest
 	launch.ControllerRevision = built.Revision
+	// Tasks investigate the source compiled with this accepted policy; deployed
+	// identity remains separate evidence for image/rendered-lock comparisons.
+	launch.SourceCommit = built.Revision
 	return wire.Marshal(launch)
+}
+
+// runShellController starts the image-bound controller directly. Accepted shell
+// scripts are activated by the runner and never enter the Go builder.
+func runShellController(ctx context.Context, config RunConfig) error {
+	directory, err := os.MkdirTemp("", "sdo-shell-controller-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(directory)
+	data, err := wire.Marshal(config.Controller)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(directory, "controller-config.json")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return err
+	}
+	binary := config.ShellControllerBinary
+	if binary == "" {
+		binary = "/usr/local/bin/sdo-shell-controller"
+	}
+	command := exec.CommandContext(ctx, binary, "--config", path)
+	command.Stdin = os.Stdin
+	command.Stdout = os.Stdout
+	command.Stderr = os.Stderr
+	return command.Run()
 }

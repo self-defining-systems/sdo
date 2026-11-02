@@ -1,0 +1,618 @@
+package runtime
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"time"
+
+	"sdo.dev/operator/sdk"
+
+	"google.golang.org/protobuf/proto"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/memory"
+	"sdo.dev/operator/worker_registry"
+)
+
+// Response continuation is controller state, separate from provider sessions and
+// apply batches. Persist it before dispatch so restart rejoins the same task.
+type responderContinuation struct {
+	Attempts            int
+	UnconfirmedPrompted bool
+	Feedback            string
+	Result              *contracts.IncidentResult
+	Done                bool
+}
+
+type agentTaskExecutor interface {
+	Execute(context.Context, *contracts.AgentTask) (*contracts.AgentResult, error)
+}
+
+func (d KubernetesJobDispatcher) executeResponder(ctx context.Context, executor worker_registry.KubernetesExecutor, task *contracts.AgentTask, loop *ResponderLoop, request IncidentRequest) (IncidentResult, error) {
+	if loop == nil {
+		return d.executeResponderTask(ctx, executor, task)
+	}
+	return d.continueResponder(ctx, executor, task, loop, request, time.Now)
+}
+
+func (d KubernetesJobDispatcher) executeResponderTask(ctx context.Context, executor agentTaskExecutor, task *contracts.AgentTask) (IncidentResult, error) {
+	result, err := executor.Execute(ctx, task)
+	if err != nil {
+		return IncidentResult{}, err
+	}
+	decoded, err := incidentResultFromAgent(result, task, d.Registry)
+	// Only controller continuation state may publish this evidence.
+	decoded.DriftReprompt = nil
+	return decoded, err
+}
+
+func (d KubernetesJobDispatcher) continueResponder(ctx context.Context, executor worker_registry.KubernetesExecutor, original *contracts.AgentTask, loop *ResponderLoop, request IncidentRequest, now func() time.Time) (IncidentResult, error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return IncidentResult{}, err
+		}
+		var state responderContinuation
+		loop.locked(func() { state = loop.continuation })
+		if state.Done && state.Result != nil {
+			return incidentResultState(state.Result), nil
+		}
+		if state.Result != nil && !now().Before(request.ResponseDeadline) {
+			result := incidentResultState(state.Result)
+			result.Status, result.ResponseLoopExhausted, result.Error = IncidentFailed, true, "original response deadline exhausted with unresolved findings"
+			state.Done = true
+			var err error
+			state.Result, err = incidentResultContract(result)
+			if err != nil {
+				return IncidentResult{}, err
+			}
+			if err := loop.saveContinuation(ctx, state); err != nil {
+				return IncidentResult{}, err
+			}
+			return result, nil
+		}
+		task := proto.Clone(original).(*contracts.AgentTask)
+		if state.Attempts > 0 {
+			task.TaskId = fmt.Sprintf("%s-continue-%d", original.GetTaskId(), state.Attempts)
+			executor.Environment["SDO_RESPONSE_CONTINUATION"] = state.Feedback
+		}
+		payload, err := wire.Canonical(task)
+		if err != nil {
+			return IncidentResult{}, err
+		}
+		executor.TaskPayload = string(payload)
+		result, err := d.executeResponderTask(ctx, executor, task)
+		if err != nil {
+			return IncidentResult{}, err
+		}
+		result.RepairActions = loop.checkDeletionReceipts(ctx, result.RepairActions)
+		result = accumulateResponderResult(state.Result, result)
+		verify := func() ToolResponse {
+			if loop.VerifyResult != nil {
+				return loop.VerifyResult(ctx, result)
+			}
+			return loop.Handle(ctx, ToolRequest{Command: "verify"})
+		}
+		verification := verify()
+		if verification.Error == "" {
+			// The controller's check observes this turn's writes.
+			loop.locked(loop.closeLoop)
+		}
+		// Observation waits belong to the controller's verification bound.
+		// Return a completed worker promptly; ContinueAfterVerification owns
+		// the one named-blocker continuation, including across restarts.
+		if err := ctx.Err(); err != nil {
+			return IncidentResult{}, err
+		}
+		if result.DriftReprompt != nil && result.DriftReprompt.FindingsAfter == nil && verification.Error == "" {
+			result.DriftReprompt.FindingsAfter = proto.Int32(int32(len(verification.Drift)))
+		}
+		result.UnresolvedFindings = append([]sdk.Finding(nil), verification.Findings...)
+		state.Attempts++
+		result.ResponseLoopsUsed = state.Attempts
+		result.VerificationEvidence = append(result.VerificationEvidence, VerificationEvidence{Name: "controller-response-verification", Passed: verification.Healthy, Details: verification.Summary, ObservedAt: now().UTC()})
+		limit := loop.MaxBatches
+		if request.MaxResponseLoops > 0 && request.MaxResponseLoops < limit {
+			limit = request.MaxResponseLoops
+		}
+		exhausted := state.Attempts >= limit || loop.Exhausted() || !now().Before(request.ResponseDeadline)
+		repairs := loop.continuationRepairs(result)
+		noProgress := responderNoProgress(state.Feedback, verification, repairs)
+		deniedNoProgress := !verification.Healthy && verification.Error == "" && authorizationDeniedNoProgress(state.Feedback, verification, repairs)
+		observationOnly := len(verification.Findings) == 0 && (verification.Error == "" || len(verification.VerificationBlockers) > 0)
+		state.Done = verification.Healthy || exhausted || noProgress || deniedNoProgress || observationOnly
+		if verification.Healthy {
+			result.Status = IncidentCompleted
+			result.FinalDetectorStates = verification.DetectorStates
+		} else if deniedNoProgress {
+			result.Status = IncidentFailed
+			result.Error = "authorization_denied_no_progress"
+		} else if noProgress {
+			result.Status = IncidentFailed
+			result.Error = "no_progress"
+		} else if exhausted && !observationOnly {
+			result.Status = IncidentFailed
+			result.ResponseLoopExhausted = true
+			result.Error = "response deadline or loop budget exhausted with unresolved findings"
+		}
+		encoded, err := continuationFeedback(state.Attempts, verification, repairs...)
+		if err != nil {
+			return IncidentResult{}, err
+		}
+		state.Feedback = string(encoded)
+		state.Result, err = incidentResultContract(result)
+		if err != nil {
+			return IncidentResult{}, err
+		}
+		if err := loop.saveContinuation(ctx, state); err != nil {
+			return IncidentResult{}, err
+		}
+		if state.Done {
+			return result, nil
+		}
+	}
+}
+
+type sdkFindingFeedback struct {
+	Resource    sdk.ObjectRef `json:"primary_resource"`
+	Fingerprint string        `json:"fingerprint"`
+	RuleID      string        `json:"rule_id"`
+	DetectorID  string        `json:"detector_id"`
+	Summary     string        `json:"summary"`
+	Evidence    string        `json:"evidence"`
+}
+
+func accumulateResponderResult(previous *contracts.IncidentResult, current IncidentResult) IncidentResult {
+	if previous == nil {
+		return current
+	}
+	prior := incidentResultState(previous)
+	if current.DriftReprompt == nil {
+		current.DriftReprompt = cloneDriftReprompt(prior.DriftReprompt)
+	}
+	// Resumed workers retain prior receipts. Merge by action identity so actions
+	// are never replayed or credited twice; usage is incremental per CLI turn.
+	seen := map[string]bool{}
+	for _, action := range current.RepairActions {
+		seen[action.ActionID] = true
+	}
+	for _, action := range prior.RepairActions {
+		if !seen[action.ActionID] {
+			current.RepairActions = append(current.RepairActions, action)
+		}
+	}
+	seenDrift := map[string]bool{}
+	for _, event := range current.DriftEvents {
+		seenDrift[driftEventKey(event)] = true
+	}
+	for _, event := range prior.DriftEvents {
+		if !seenDrift[driftEventKey(event)] {
+			current.DriftEvents = append(current.DriftEvents, event)
+		}
+	}
+	current.RepairChanges = append(prior.RepairChanges, current.RepairChanges...)
+	current.ConfirmedRootCauses = append(prior.ConfirmedRootCauses, current.ConfirmedRootCauses...)
+	current.AppliedPlaybooks = append(prior.AppliedPlaybooks, current.AppliedPlaybooks...)
+	current.VerificationEvidence = append(prior.VerificationEvidence, current.VerificationEvidence...)
+	if prior.Timing.StartedAt.Before(current.Timing.StartedAt) {
+		current.Timing.StartedAt = prior.Timing.StartedAt
+	}
+	current.Usage = *memory.AddUsage(&prior.Usage, &current.Usage)
+	return current
+}
+
+// ContinueAfterVerification lets the observation controller resume a response
+// when its later independent verification contradicts the dispatcher's check.
+// The request, workspace, provider checkpoint and original deadline stay fixed.
+func (d KubernetesJobDispatcher) ContinueAfterVerification(ctx context.Context, request IncidentRequest, verification ToolResponse, now time.Time) (bool, error) {
+	unconfirmedPrompt := !verification.Healthy && len(verification.Findings) == 0 && len(verification.VerificationBlockers) > 0
+	driftPrompt := verification.Healthy && len(verification.Drift) > 0 && len(verification.Findings) == 0 && verification.Error == ""
+	if (!driftPrompt && (verification.Healthy || (len(verification.Findings) == 0 && verification.Error == "" && !unconfirmedPrompt))) || d.LoopFactory == nil || !now.Before(request.ResponseDeadline) {
+		return false, nil
+	}
+	loop := d.LoopFactory(request)
+	if loop == nil {
+		return false, nil
+	}
+	if err := d.restoreToolState(ctx, request, loop); err != nil {
+		return false, err
+	}
+	state := loop.continuation
+	limit := loop.MaxBatches
+	if request.MaxResponseLoops > 0 && request.MaxResponseLoops < limit {
+		limit = request.MaxResponseLoops
+	}
+	if state.Result == nil {
+		return false, nil
+	}
+	if unconfirmedPrompt && state.UnconfirmedPrompted {
+		return !state.Done, nil
+	}
+	result := incidentResultState(state.Result)
+	if driftPrompt && !driftRepromptCanProgress(verification.Drift, &result) {
+		return false, nil
+	}
+	repairs := loop.continuationRepairs(result)
+	switch state.Result.GetError() {
+	case "authorization_denied_no_progress":
+		return false, nil
+	case "no_progress":
+		if responderNoProgress(state.Feedback, verification, repairs) {
+			return false, nil
+		}
+	}
+	if driftPrompt && state.Result.GetDriftReprompt() != nil {
+		// Terminal stops above also apply to replay of a pending transition.
+		return !state.Done, nil
+	}
+	if !driftPrompt && (state.Attempts >= limit || loop.Exhausted()) {
+		return false, nil
+	}
+	if !state.Done {
+		return true, nil
+	} // replay of a controller transition after a crash
+	feedback, err := continuationFeedback(state.Attempts, verification, repairs...)
+	if err != nil {
+		return false, err
+	}
+	if driftPrompt {
+		state.Result = proto.Clone(state.Result).(*contracts.IncidentResult)
+		state.Result.DriftReprompt = &contracts.DriftReprompt{FindingsBefore: int32(len(verification.Drift))}
+	}
+	state.Done = false
+	if unconfirmedPrompt {
+		state.UnconfirmedPrompted = true
+	}
+	state.Feedback = string(feedback)
+	if err := loop.saveContinuation(ctx, state); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// The optional drift turn may extend a successful response, but cannot reopen a
+// terminal response. Inventory with completed known failures has already used
+// its remediation opportunity; reporting it again cannot authorize progress.
+// Both closure and durable continuation recovery use this same admission rule.
+func driftRepromptCanProgress(drift []sdk.Finding, result *IncidentResult) bool {
+	if len(drift) == 0 || result == nil || result.Status != IncidentCompleted || result.Error != "" || result.ResponseLoopExhausted {
+		return false
+	}
+	repairs := make([]continuationRepair, 0, len(result.RepairActions))
+	for _, receipt := range result.RepairActions {
+		repairs = append(repairs, continuationRepair{ActionID: receipt.ActionID, Receipt: feedbackReceipt(receipt)})
+	}
+	for _, finding := range drift {
+		stable, _ := finding.Metadata["stable_inventory"].(bool)
+		if !inventoryFinding(finding) || !stable || inventoryEvent(finding).Source != "absent from accepted source" {
+			return true
+		}
+		if _, terminal := failedInventoryAttempts(repairs, map[sdk.ObjectRef]bool{finding.PrimaryResource: true}); !terminal {
+			return true
+		}
+	}
+	return false
+}
+
+func (l *ResponderLoop) saveContinuation(ctx context.Context, state responderContinuation) error {
+	l.operationMu.Lock()
+	defer l.operationMu.Unlock()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	previous := l.continuation
+	l.continuation = state
+	if err := l.persistToolState(ctx); err != nil {
+		l.continuation = previous
+		return err
+	}
+	return nil
+}
+
+// Both continuation paths publish the same factual schema, including object and
+// finding identity. A pending observation window is not an unhealthy finding.
+type continuationReceipt struct {
+	ScriptDigest  string          `json:"script_digest,omitempty"`
+	FailureReason string          `json:"failure_reason,omitempty"`
+	ActionID      string          `json:"action_id"`
+	Kind          string          `json:"kind"`
+	Target        string          `json:"target"`
+	Resources     []sdk.ObjectRef `json:"resources"`
+	Summary       string          `json:"summary"`
+	Details       string          `json:"details"`
+	StartedAt     time.Time       `json:"started_at"`
+	CompletedAt   time.Time       `json:"completed_at"`
+	Success       bool            `json:"success"`
+	Reversible    bool            `json:"reversible"`
+	// Owners reach the outcome for cause attribution, not the responder.
+	Owners []ResourceOwners `json:"-"`
+}
+type continuationRepair struct {
+	Kind          string              `json:"kind"`
+	ActionID      string              `json:"action_id"`
+	ApplicationID string              `json:"application_id,omitempty"`
+	ProgramIDs    []string            `json:"program_ids,omitempty"`
+	Summary       string              `json:"summary"`
+	RolledBack    bool                `json:"rolled_back,omitempty"`
+	Error         string              `json:"error,omitempty"`
+	Receipt       continuationReceipt `json:"receipt"`
+}
+type responderFeedback struct {
+	VerificationBlockers []VerificationBlocker `json:"verification_blockers,omitempty"`
+	Attempt              int                   `json:"attempt"`
+	Healthy              bool                  `json:"healthy"`
+	Error                string                `json:"error,omitempty"`
+	Summary              string                `json:"summary"`
+	StillBroken          []sdkFindingFeedback  `json:"still_broken"`
+	// SourceDifferences are objects that differ from the accepted source.
+	// They are information; only still_broken and healthy decide closure.
+	SourceDifferences []sdkFindingFeedback `json:"source_differences,omitempty"`
+	AlreadyDone       []continuationRepair `json:"already_done"`
+}
+
+func (l *ResponderLoop) continuationRepairs(result IncidentResult) []continuationRepair {
+	repairs := make([]continuationRepair, 0)
+	var previousFeedback string
+	var completed []continuationRepair
+	menuActions := map[string]MenuRoundExecution{}
+	l.locked(func() {
+		previousFeedback = l.continuation.Feedback
+		completed = l.applicationRepairsLocked()
+		for _, executions := range l.menuExecutions {
+			for _, execution := range executions {
+				for _, receipt := range l.menuRepairs {
+					if execution.ApplicationID != "" && strings.HasPrefix(receipt.ActionID, execution.ApplicationID+"-a") {
+						menuActions[receipt.ActionID] = execution
+					}
+				}
+			}
+		}
+	})
+	var previous responderFeedback
+	if previousFeedback != "" {
+		_ = json.Unmarshal([]byte(previousFeedback), &previous)
+	}
+	seen := map[string]bool{}
+	// Controller-produced receipts take precedence over provider-authored data.
+	for _, repair := range completed {
+		repairs = append(repairs, repair)
+		seen[repair.ActionID] = true
+	}
+	for _, receipt := range append(l.MenuRepairActions(), result.RepairActions...) {
+		if seen[receipt.ActionID] {
+			continue
+		}
+		seen[receipt.ActionID] = true
+		repair := continuationRepair{Kind: "recorded-action", ActionID: receipt.ActionID, Summary: receipt.Summary, Receipt: feedbackReceipt(receipt)}
+		if execution, ok := menuActions[receipt.ActionID]; ok {
+			repair.Kind = "program-application"
+			repair.ApplicationID = execution.ApplicationID
+			if execution.ProgramID != "" {
+				repair.ProgramIDs = []string{execution.ProgramID}
+			}
+			repair.RolledBack = execution.RolledBack
+			repair.Error = execution.Error
+		}
+		repairs = append(repairs, repair)
+	}
+	for _, repair := range previous.AlreadyDone {
+		if !seen[repair.ActionID] {
+			repairs = append(repairs, repair)
+			seen[repair.ActionID] = true
+		}
+	}
+	// A recorded application summarizes all of its applied action resources.
+	// Menu receipts remain durable evidence, but must not list that same repair
+	// twice in the continuation. Preserve individual receipts when no application
+	// summary exists, including restored feedback from older tool state.
+	aggregateApplications := map[string]bool{}
+	for _, repair := range repairs {
+		if repair.ApplicationID != "" && repair.Receipt.Kind == "program-plan" {
+			aggregateApplications[repair.ApplicationID] = true
+		}
+	}
+	unique := repairs[:0]
+	for _, repair := range repairs {
+		if aggregateApplications[repair.ApplicationID] && repair.Receipt.Kind != "program-plan" {
+			continue
+		}
+		unique = append(unique, repair)
+	}
+	return unique
+}
+
+// Caller holds l.mu. This projection contains immutable repair facts only;
+// execution plans, live handles and rollback preimages never enter tool state.
+func (l *ResponderLoop) applicationRepairsLocked() []continuationRepair {
+	result := append([]continuationRepair(nil), l.completedRepairs...)
+	seen := map[string]bool{}
+	for _, repair := range result {
+		seen[repair.ActionID] = true
+	}
+	for _, application := range l.applicationsLog {
+		for _, receipt := range ProgramRepairReceipts([]RecordedPlanApplication{application}, nil) {
+			repair := continuationRepair{Kind: "program-application", ActionID: receipt.ActionID, ApplicationID: application.ID, ProgramIDs: application.ProgramIDs, Summary: receipt.Summary, RolledBack: application.RolledBack, Error: application.Error, Receipt: feedbackReceipt(receipt)}
+			if seen[repair.ActionID] {
+				for i := range result {
+					if result[i].ActionID == repair.ActionID {
+						result[i] = repair
+					}
+				}
+			} else {
+				result = append(result, repair)
+				seen[repair.ActionID] = true
+			}
+		}
+	}
+	return result
+}
+
+func feedbackReceipt(receipt RepairActionReceipt) continuationReceipt {
+	return continuationReceipt{ActionID: receipt.ActionID, Kind: receipt.Kind, Target: receipt.Target, Resources: receipt.Resources, Summary: receipt.Summary, Details: receipt.Details, StartedAt: receipt.StartedAt, CompletedAt: receipt.CompletedAt, Success: receipt.Success, Reversible: receipt.Reversible, FailureReason: receipt.FailureReason, ScriptDigest: receipt.ScriptDigest, Owners: receipt.Owners}
+}
+
+func continuationFeedback(attempt int, verification ToolResponse, repairs ...continuationRepair) ([]byte, error) {
+	feedback := responderFeedback{VerificationBlockers: verification.VerificationBlockers, Attempt: attempt, Healthy: verification.Healthy, Error: verification.Error, Summary: verification.Summary, StillBroken: []sdkFindingFeedback{}, SourceDifferences: []sdkFindingFeedback{}, AlreadyDone: append([]continuationRepair{}, repairs...)}
+	for _, finding := range verification.Drift {
+		feedback.SourceDifferences = append(feedback.SourceDifferences, sdkFindingFeedback{Resource: finding.PrimaryResource, Fingerprint: FindingFingerprint(finding), DetectorID: finding.DetectorID, RuleID: finding.RuleID, Summary: finding.Summary, Evidence: finding.Evidence})
+	}
+	for _, finding := range verification.Findings {
+		feedback.StillBroken = append(feedback.StillBroken, sdkFindingFeedback{Resource: finding.PrimaryResource, Fingerprint: FindingFingerprint(finding), DetectorID: finding.DetectorID, RuleID: finding.RuleID, Summary: finding.Summary, Evidence: finding.Evidence})
+	}
+	return json.Marshal(feedback)
+}
+
+// Caller holds c.mu. Closure drift has already been freshly checked against
+// accepted source. Old clear samples await freshness without another Job;
+// named incomplete observations allow one bounded continuation.
+func (c *Controller) continuationVerificationLocked(healthVerified bool, source closureSourceReport) ToolResponse {
+	result := ToolResponse{Command: "verify", Healthy: healthVerified && len(source.Rollouts) == 0 && len(source.Effects) == 0, Findings: append([]sdk.Finding(nil), source.Rollouts...), Drift: append([]sdk.Finding(nil), source.Drift...)}
+	for _, effect := range source.Effects {
+		result.VerificationBlockers = append(result.VerificationBlockers, VerificationBlocker{DetectorID: "controller.recovery-effect", Reason: "awaiting disappearance of repaired workload child " + effect.PrimaryResource.Kind + "/" + effect.PrimaryResource.Name})
+	}
+	ids := append([]string(nil), c.healthDetectorIDs...)
+	if c.currentIncidentRequest != nil {
+		ids = c.recoveryDetectorIDs(*c.currentIncidentRequest)
+	}
+	states, _ := c.latestEvaluations(ids, time.Time{}, false)
+	result.DetectorStates = states
+	firing := map[string]map[string]bool{}
+	var errors, pending []string
+	for _, id := range ids {
+		var latest *DetectorEvaluation
+		for i := range states {
+			if states[i].DetectorID == id {
+				latest = &states[i]
+				break
+			}
+		}
+		if latest == nil || latest.Status == DetectorEvaluationPending || (len(c.healthDetectorIDs) > 0 && latest.EvaluatedAt.Before(c.recoveryObservationEpochLocked())) {
+			reason := "awaiting detector evaluation"
+			if latest != nil {
+				reason = latest.Reason
+				if reason == "" {
+					reason = "awaiting clearing confirmation or a fresh post-response evaluation"
+				}
+			}
+			description := id + ": " + reason
+			pending = append(pending, description)
+			// Old clear samples need only a fresh observation; a pending or
+			// absent detector names an actual verification blocker.
+			if latest == nil || latest.Status == DetectorEvaluationPending {
+				result.VerificationBlockers = append(result.VerificationBlockers, VerificationBlocker{DetectorID: id, Reason: description})
+			}
+			continue
+		}
+		if latest.Status == DetectorEvaluationFiring {
+			firing[id] = map[string]bool{}
+			for _, fp := range latest.Fingerprints {
+				firing[id][fp] = true
+			}
+		}
+		if latest.Status == DetectorEvaluationError {
+			errors = append(errors, id+": "+latest.Error)
+			result.VerificationBlockers = append(result.VerificationBlockers, VerificationBlocker{DetectorID: id, Reason: latest.Error})
+		}
+	}
+	for _, state := range c.tracker.Snapshot() {
+		if state.Active && firing[state.DetectorID][FindingFingerprint(state.Finding)] {
+			result.Findings = append(result.Findings, state.Finding)
+		} else if state.Active {
+			for _, id := range ids {
+				if id == state.DetectorID {
+					pending = append(pending, id)
+					result.VerificationBlockers = append(result.VerificationBlockers, VerificationBlocker{DetectorID: id, Reason: "clearing confirmation pending"})
+					break
+				}
+			}
+		}
+	}
+	sortFindings(result.Findings)
+	result.Error = strings.Join(errors, "; ")
+	switch {
+	case result.Healthy:
+		result.Summary = "controller independently verified healthy"
+		if len(result.Drift) > 0 {
+			result.Summary += fmt.Sprintf("; %d object(s) still differ from the accepted source: restore each or explain why it is intended before returning", len(result.Drift))
+		}
+	case len(result.Findings) > 0:
+		result.Summary = "controller verification retains named unresolved findings"
+	case result.Error != "":
+		result.Summary = "controller detector verification failed: " + result.Error
+	default:
+		result.Summary = fmt.Sprintf("awaiting post-response clear evaluation or clearing confirmation for %v since %s", pending, c.responderCompletedAt.UTC().Format(time.RFC3339Nano))
+	}
+	return result
+}
+
+// responderVerification uses the closure checker while a responder is still
+// running. Health/traffic persistence belongs to the observation controller;
+// admitted drift is independently compared against a fresh snapshot, just as
+// maybeCloseIncident does. A tool never advances the controller's lifecycle.
+func (c *Controller) responderVerification(ctx context.Context, incidentID string) ToolResponse {
+	return c.responderResultVerification(ctx, incidentID, nil)
+}
+func (c *Controller) responderResultVerification(ctx context.Context, incidentID string, result *IncidentResult) ToolResponse {
+	c.observationMu.Lock()
+	defer c.observationMu.Unlock()
+	snapshot, err := c.provider.Snapshot(ctx)
+	if err != nil {
+		return ToolResponse{Command: "verify", Error: "create verification snapshot: " + err.Error()}
+	}
+	c.mu.Lock()
+	current := c.currentIncidentRequest != nil && c.currentIncidentRequest.IncidentID == incidentID
+	c.mu.Unlock()
+	if !current {
+		return ToolResponse{Command: "verify", Error: "incident is no longer current"}
+	}
+	source := c.verifyClosureSource(ctx, time.Now().UTC(), snapshot, result)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.currentIncidentRequest == nil || c.currentIncidentRequest.IncidentID != incidentID {
+		return ToolResponse{Command: "verify", Error: "incident is no longer current"}
+	}
+	_, health := c.finalVerificationStates()
+	response := c.continuationVerificationLocked(health, source)
+	// A direct result check may discover contradictions, but only the running
+	// controller publishes the continuous recovery proof consumed by tools.
+	response.Healthy = response.Healthy && c.cachedVerification != nil && c.cachedIncidentID == incidentID && c.cachedVerification.Healthy
+	if !response.Healthy && len(response.Findings) == 0 && response.Error == "" {
+		response.Summary = "awaiting controller recovery stability proof"
+	}
+	return response
+}
+
+func cloneDriftReprompt(value *contracts.DriftReprompt) *contracts.DriftReprompt {
+	if value == nil {
+		return nil
+	}
+	return proto.Clone(value).(*contracts.DriftReprompt)
+}
+
+func (l *ResponderLoop) driftRepromptPending() bool {
+	if l == nil {
+		return false
+	}
+	// A busy tool already makes early closure unsafe. Never stall observation.
+	if !l.mu.TryLock() {
+		return true
+	}
+	defer l.mu.Unlock()
+	return l.continuation.Result.GetDriftReprompt() != nil && !l.continuation.Done
+}
+
+// Read the dispatcher's durable marker after its LoopFactory registered the loop.
+func (c *Controller) driftRepromptRecord() *contracts.DriftReprompt {
+	c.mu.Lock()
+	loop := c.responderLoop
+	c.mu.Unlock()
+	if loop == nil {
+		return nil
+	}
+	// Completion and observation must not wait on long-running tool I/O.
+	if !loop.mu.TryLock() {
+		return nil
+	}
+	defer loop.mu.Unlock()
+	return cloneDriftReprompt(loop.continuation.Result.GetDriftReprompt())
+}

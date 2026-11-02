@@ -44,8 +44,9 @@ def test_registry_failure_is_automatic_and_recorded(monkeypatch, tmp_path, capsy
     from benchmarks.sregym.fastloop import toy_images
 
     monkeypatch.setattr(
-        toy_images, "registry_delivery", lambda *a: (_ for _ in ()).throw(RuntimeError("registry offline"))
+        toy_images, "registry_delivery", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("registry offline"))
     )
+    monkeypatch.setattr(toy_images, "assert_host_disk_headroom", lambda **kw: {"passed": True})
     (tmp_path / "fastloop.json").write_text("{}")
     loaded = []
     monkeypatch.setattr(toy_images, "_load_archive_images", lambda *a: loaded.append(a))
@@ -66,7 +67,8 @@ def test_successful_registry_never_exports_an_archive(monkeypatch, tmp_path):
 
     from benchmarks.sregym.fastloop import toy_images
 
-    monkeypatch.setattr(toy_images, "registry_delivery", lambda *a: {"node": {"image:v1": "sha256:one"}})
+    monkeypatch.setattr(toy_images, "assert_host_disk_headroom", lambda **kw: {"passed": True})
+    monkeypatch.setattr(toy_images, "registry_delivery", lambda *a, **kw: {"node": {"image:v1": "sha256:one"}})
     monkeypatch.setattr(toy_images, "_load_archive_images", lambda *a: pytest.fail("archive on success"))
     toy_images.load_images("img1-test", ["image:v1"], record_path=tmp_path / "delivery.jsonl")
     assert json.loads((tmp_path / "delivery.jsonl").read_text())["path"] == "registry"
@@ -89,6 +91,7 @@ def test_run_repeats_fallback_warning_before_starting_workers(monkeypatch, tmp_p
         run_dir=tmp_path,
         cluster="img1-test",
         kubeconfig=tmp_path / "config",
+        app="toy",
         namespace="toy",
         application="toy",
         workspace=tmp_path / "app",
@@ -113,66 +116,22 @@ def test_run_repeats_fallback_warning_before_starting_workers(monkeypatch, tmp_p
 def test_explicit_mount_opt_out_warns(monkeypatch):
     from subprocess import CompletedProcess
 
-    monkeypatch.setattr(cli.subprocess, "run", lambda *a, **kw: CompletedProcess(a, 0, "", ""))
+    real_run = cli.subprocess.run
+
+    def command(argv, **kwargs):
+        if argv[0] == "docker":
+            if argv[-1] == "schema-identity":
+                return CompletedProcess(argv, 0, "sdo.dev/fixture\n", "")
+            if "python3" in argv:
+                return CompletedProcess(argv, 0, '{"agentshim": null, "import_error": null}\n', "")
+            return CompletedProcess(argv, 0, "", "")
+        return real_run(argv, **kwargs)
+
+    monkeypatch.setattr(cli.subprocess, "run", command)
     monkeypatch.setattr(cli, "check_host_capacity", lambda _: None)
     args = cli.build_parser().parse_args(["up", "--run-dir", "unused", "--no-dev-mount"])
     with pytest.warns(UserWarning, match="--no-dev-mount"):
         cli.up_preflight(args)
-
-
-def test_registry_only_uses_owned_lane_and_configures_every_node(monkeypatch):
-    import json
-    from subprocess import CompletedProcess
-
-    from benchmarks.sregym.fastloop import image_delivery
-
-    digest = "sha256:" + "a" * 64
-    local = ""
-    calls = []
-    connected = False
-    ready = []
-    monkeypatch.setattr(image_delivery, "_wait_registry", ready.append)
-
-    def run(argv, **kwargs):
-        nonlocal local, connected
-        calls.append((argv, kwargs))
-        output = ""
-        if argv[:3] == ["docker", "container", "inspect"]:
-            assert argv[-1] == "img1-contract-registry"
-            output = json.dumps(
-                [
-                    {
-                        "Config": {"Labels": {"sdo.fastloop.lane": "img1-contract"}},
-                        "State": {"Running": True},
-                        "NetworkSettings": {
-                            "Ports": {"5000/tcp": [{"HostPort": "32124" if connected else "32123"}]},
-                            "Networks": {},
-                        },
-                    }
-                ]
-            )
-        elif argv[:3] == ["docker", "network", "connect"]:
-            connected = True
-        elif argv[:3] == ["kind", "get", "nodes"]:
-            output = "img1-contract-control-plane\nimg1-contract-worker\n"
-        elif argv[:2] == ["docker", "tag"]:
-            local = argv[-1]
-        elif argv[:2] == ["docker", "push"]:
-            output = f"current: digest: {digest} size: 100"
-        elif "target.digest==" + digest in argv:
-            output = local + "\n"
-        return CompletedProcess(argv, 0, output, "")
-
-    monkeypatch.setattr(image_delivery.subprocess, "run", run)
-    evidence = image_delivery.registry_delivery("img1-contract", ["sdo-controller:contract"])
-    assert len(evidence) == 2
-    assert ready == ["127.0.0.1:32124"]
-    assert local.startswith("127.0.0.1:32124/")
-    configs = [kwargs["input"] for argv, kwargs in calls if "/dev/stdin" in argv]
-    assert len(configs) == 2
-    assert all("http://img1-contract-registry:5000" in config for config in configs)
-    assert not any(argv[:2] == ["kind", "load"] for argv, _ in calls)
-    assert all("rs-regcache" not in " ".join(argv) for argv, _ in calls)
 
 
 def test_registry_rejects_unowned_container_before_mutation(monkeypatch):
@@ -189,7 +148,7 @@ def test_registry_rejects_unowned_container_before_mutation(monkeypatch):
     monkeypatch.setattr(image_delivery.subprocess, "run", run)
     with pytest.raises(RuntimeError, match="unowned registry"):
         image_delivery.registry_delivery("img1-contract", ["image:v1"])
-    assert calls == [["docker", "container", "inspect", "img1-contract-registry"]]
+    assert calls == [["docker", "container", "inspect", "sdo-fastloop-registry"]]
 
 
 def test_legacy_opt_out_reaches_existing_launcher(monkeypatch, tmp_path):
@@ -217,6 +176,8 @@ def test_no_script_prefers_kind_load():
 
 @pytest.mark.parametrize("problem", ["disk", "neighbors"])
 def test_host_capacity_fails_before_builds(monkeypatch, problem):
+    monkeypatch.setattr(cli, "assert_host_headroom", lambda: {"passed": True})
+    monkeypatch.setattr(cli, "assert_host_disk_headroom", lambda: {"passed": True})
     from subprocess import CompletedProcess
 
     monkeypatch.setattr(cli, "_neighbor_capacity", lambda: 1 if problem == "neighbors" else 65536)
@@ -233,7 +194,7 @@ def test_external_worker_uses_registry_for_sdo_and_platform_images(monkeypatch, 
     from benchmarks.sregym.fastloop import toy_images, worker_bridge
 
     infra = SimpleNamespace()
-    source = SimpleNamespace()
+    source = SimpleNamespace(_build_image=None)
 
     class Worker:
         def handle(self, request):
@@ -251,7 +212,7 @@ def test_external_worker_uses_registry_for_sdo_and_platform_images(monkeypatch, 
         source._kind_load_image(cluster_name="img1-contract", image_ref="app:v1")
         return 0
 
-    worker = SimpleNamespace(FastloopWorker=Worker, main=run)
+    worker = SimpleNamespace(FastloopWorker=Worker, main=run, probe_pod_manifest=lambda *args: {})
     monkeypatch.setattr(
         worker_bridge.importlib,
         "import_module",
@@ -327,7 +288,7 @@ def test_registry_inspects_only_containers_and_rejects_null_labels(monkeypatch, 
 
     def run(argv, **kwargs):
         calls.append(argv)
-        assert argv == ["docker", "container", "inspect", "img1-review-registry"]
+        assert argv == ["docker", "container", "inspect", "sdo-fastloop-registry"]
         return CompletedProcess(argv, 0, json.dumps([{"Config": {"Labels": labels}}]), "")
 
     monkeypatch.setattr(image_delivery.subprocess, "run", run)

@@ -26,7 +26,7 @@ func LoadControllerConfig(path string) (*contractsv1alpha1.ControllerConfig, err
 		return nil, fmt.Errorf("read controller config: %w", err)
 	}
 	config := &contractsv1alpha1.ControllerConfig{}
-	if err := wire.Unmarshal(raw, config); err != nil {
+	if err := wire.UnmarshalDurable(raw, config); err != nil {
 		return nil, fmt.Errorf("controller config %s: %w", path, err)
 	}
 	return config, nil
@@ -68,6 +68,9 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 		}
 	}
 
+	str("--replay", config.GetReplay())
+	str("--code-path", config.GetCodePath().GetName())
+	args = append(args, codePathOverrideArgs(config.GetCodePath())...)
 	str("--namespace", config.GetNamespace())
 	str("--control-namespace", config.GetControlNamespace())
 	str("--app-root", config.GetAppRoot())
@@ -78,6 +81,7 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 
 	str("--dispatcher-mode", config.GetDispatcherMode())
 	str("--responder-image", config.GetResponderImage())
+	optBool("--responder-standby", config.ResponderStandby)
 	str("--agent-registration-directory", config.GetAgentRegistrationDirectory())
 	str("--responder-agent-id", config.GetResponderAgentId())
 	str("--repository-pvc", config.GetRepositoryPvc())
@@ -91,30 +95,22 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 	dur("--duration", config.GetDuration())
 	dur("--response-timeout", config.GetResponseTimeout())
 	dur("--verification-timeout", config.GetVerificationTimeout())
-	if config.GetMaxFollowUps() > 0 {
-		args = append(args, "--max-follow-ups", strconv.Itoa(int(config.GetMaxFollowUps())))
-	}
+	dur("--closure-stability-window", config.GetClosureStabilityWindow())
+	dur("--responder-report-grace", config.GetResponderReportGrace())
 	if config.GetMaxResponseLoops() > 0 {
 		args = append(args, "--max-response-loops", strconv.Itoa(int(config.GetMaxResponseLoops())))
 	}
+<<<<<<< HEAD
 	str("--memory-host-binary", config.GetMemoryHostBinary())
 	str("--memory-host-digest", config.GetMemoryHostDigest())
 	boolFlag("--program-fast-path", config.GetProgramFastPath())
 	if config.GetProgramTrustThreshold() > 0 {
 		args = append(args, "--program-trust-threshold", strconv.Itoa(int(config.GetProgramTrustThreshold())))
 	}
+=======
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	dur("--diagnosis-deadline", config.GetDiagnosisDeadline())
-	dur("--drift-sweep-interval", config.GetDriftSweepInterval())
-	dur("--program-min-duration", config.GetProgramMinDuration())
 	dur("--drift-batch-window", config.GetDriftBatchWindow())
-	if config.GetDriftDispatchesPerHour() > 0 {
-		args = append(args, "--drift-dispatches-per-hour", strconv.Itoa(int(config.GetDriftDispatchesPerHour())))
-	}
-	if config.GetDriftTokensPerHour() > 0 {
-		args = append(args, "--drift-tokens-per-hour", strconv.FormatInt(config.GetDriftTokensPerHour(), 10))
-	}
-	dur("--diagnosis-settle-delay", config.GetDiagnosisSettleDelay())
-	dur("--follow-up-cooldown", config.GetFollowUpCooldown())
 	str("--repair-policy", config.GetRepairPolicy())
 
 	str("--lease-name", config.GetLeaseName())
@@ -129,6 +125,12 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 	optBool("--synthetic-traffic", config.SyntheticTraffic)
 	dur("--synthetic-traffic-warmup", config.GetSyntheticTrafficWarmup())
 	str("--toolchain-image", config.GetToolchainImage())
+<<<<<<< HEAD
+=======
+	str("--prober-image", config.GetProberImage())
+	str("--script-image", config.GetScriptImage())
+	str("--prober-url", config.GetProberUrl())
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	str("--metrics-url", config.GetMetricsUrl())
 	str("--metrics-publish-url", config.GetMetricsPublishUrl())
 	str("--metrics-token-file", config.GetMetricsTokenFile())

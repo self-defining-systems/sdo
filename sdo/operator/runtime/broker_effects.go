@@ -4,9 +4,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
+<<<<<<< HEAD
 
+=======
+	"google.golang.org/protobuf/proto"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"log/slog"
+	"net"
+>>>>>>> origin/vic-lsh/dev/sdo-improve
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/runtime/lifecyclecore"
+	"sdo.dev/operator/sdk"
+	"slices"
+	"sort"
+	"strings"
+	"time"
 )
 
 type WorkspaceEffect struct {
@@ -16,6 +28,22 @@ type WorkspaceEffect struct {
 type ClosureEffect struct {
 	Identity string
 	Closure  IncidentClosure
+	// Freeze marks an unfrozen closure: its recheck runs once, and the closure
+	// with the recheck's notes is persisted as the incident's terminal
+	// identity before the broker receives it.
+	Freeze bool
+}
+
+// committedClosureBroker recovers the receipt of an already committed closure,
+// so a replay fetches it instead of deciding the closure again.
+type committedClosureBroker interface {
+	committedClosureReceipt(context.Context, IncidentClosure, *ClosureReceipt) (ClosureReceipt, bool, error)
+}
+
+// A committed outcome is historical evidence. Resuming its unfinished broker
+// bookkeeping cannot authorize a new repair or another outcome classification.
+type committedOutcomeClosureBroker interface {
+	committedOutcomeClosure(context.Context, IncidentClosure, *ClosureReceipt) (bool, error)
 }
 
 type ClosureAcknowledgmentEffect struct {
@@ -53,71 +81,30 @@ func (c *Controller) ExecuteWorkspaceEffect(ctx context.Context, effect Workspac
 		return err
 	}
 	broker := c.broker
+	base := c.currentIncidentRequest.RepositoryBaseCommit
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_WORKSPACE_RUNNING
 	c.mu.Unlock()
-	go func() {
+	c.goBackground(func() {
 		defer cancel()
-		workspace, prepareErr := broker.PrepareIncident(actionCtx, effect.IncidentID)
-		c.workspaceResults <- workspaceCompletion{workspace: workspace, err: prepareErr}
-	}()
-	return nil
-}
-
-type ReleaseEffect struct {
-	IncidentID string
-}
-
-// PendingReleaseEffect reports the next stranded worktree to reap. Releases are
-// serialized through releaseInFlight so the pump drives one at a time, matching
-// the single-in-flight shape of the other broker effects.
-func (c *Controller) PendingReleaseEffect() (ReleaseEffect, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.broker == nil || c.releaseInFlight != "" || len(c.pendingReleases) == 0 {
-		return ReleaseEffect{}, false
-	}
-	return ReleaseEffect{IncidentID: c.pendingReleases[0]}, true
-}
-
-func (c *Controller) ExecuteReleaseEffect(ctx context.Context, effect ReleaseEffect) error {
-	actionCtx, cancel, err := c.actionContext(ctx)
-	if err != nil {
-		return err
-	}
-	c.mu.Lock()
-	if c.broker == nil || c.releaseInFlight != "" || len(c.pendingReleases) == 0 ||
-		c.pendingReleases[0] != effect.IncidentID {
-		c.mu.Unlock()
-		cancel()
-		return fmt.Errorf("release effect is not pending")
-	}
-	if err := c.requireDurableLocked("incident worktree release", func(state *contracts.ControllerState) bool {
-		for _, id := range state.PendingReleases {
-			if id == effect.IncidentID {
-				return true
-			}
+		started := time.Now()
+		slog.Info("incident_workspace_preparing", "incident_id", effect.IncidentID, "bound_commit", base)
+		var workspace IncidentWorkspace
+		var prepareErr error
+		if bound, ok := broker.(revisionBoundIncidentBroker); ok {
+			workspace, prepareErr = bound.PrepareIncidentAt(actionCtx, effect.IncidentID, base)
+		} else {
+			workspace, prepareErr = broker.PrepareIncident(actionCtx, effect.IncidentID)
 		}
-		return false
-	}); err != nil {
-		c.mu.Unlock()
-		cancel()
-		return err
-	}
-	broker := c.broker
-	c.releaseInFlight = effect.IncidentID
-	c.mu.Unlock()
-	go func() {
-		defer cancel()
-		releaseErr := broker.ReleaseIncident(actionCtx, effect.IncidentID)
-		c.releaseResults <- releaseCompletion{incidentID: effect.IncidentID, err: releaseErr}
-	}()
+		slog.Info("incident_workspace_prepared", "incident_id", effect.IncidentID, "bound_commit", base, "base_commit", workspace.BaseCommit, "duration_ms", time.Since(started).Milliseconds(), "error", prepareErr)
+		c.workspaceResults <- workspaceCompletion{workspace: workspace, err: prepareErr}
+	})
 	return nil
 }
 
 func (c *Controller) PendingClosureEffect() (ClosureEffect, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.broker == nil {
+	if c.broker == nil || c.earlyReportPendingLocked() {
 		return ClosureEffect{}, false
 	}
 	effects, err := c.closureEffectsLocked()
@@ -125,20 +112,217 @@ func (c *Controller) PendingClosureEffect() (ClosureEffect, bool) {
 		return ClosureEffect{}, false
 	}
 	for _, effect := range effects {
-		if effect.Kind == lifecyclecore.ProcessClosure {
-			return ClosureEffect{Identity: effect.ID, Closure: incidentClosureState(effect.Closure)}, true
+		if effect.Kind == lifecyclecore.ProcessClosure || effect.Kind == lifecyclecore.FreezeClosure {
+			return ClosureEffect{Identity: effect.ID, Closure: incidentClosureState(effect.Closure), Freeze: effect.Kind == lifecyclecore.FreezeClosure}, true
 		}
 	}
 	return ClosureEffect{}, false
 }
 
 func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEffect) error {
+	c.observationMu.Lock()
+	defer c.observationMu.Unlock()
+	if err := c.requireAdoptedHealth(ctx); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	valid := c.pendingClosure != nil && c.closureState == contracts.ClosureState_CLOSURE_STATE_PENDING && sameIncidentClosure(*c.pendingClosure, effect.Closure)
+	c.mu.Unlock()
+	if !valid {
+		return fmt.Errorf("closure effect is not pending")
+	}
+	// Receipt replay is bookkeeping for a closure already committed by the
+	// native broker. Adoption can change observation generations, but must not
+	// turn fetching that exact receipt into another repair/closure decision.
+	var recovered *ClosureReceipt
+	c.mu.Lock()
+	configuredBroker := c.broker
+	c.mu.Unlock()
+	if proof, ok := configuredBroker.(committedClosureBroker); ok {
+		receipt, found, err := proof.committedClosureReceipt(ctx, effect.Closure, nil)
+		if err != nil {
+			return err
+		}
+		if found {
+			recovered = &receipt
+		}
+	}
+	committedOutcome := false
+	if proof, ok := configuredBroker.(committedOutcomeClosureBroker); ok {
+		var err error
+		committedOutcome, err = proof.committedOutcomeClosure(ctx, effect.Closure, nil)
+		if err != nil {
+			return err
+		}
+	}
+	// Only closures without an accepted outcome can make a new success decision.
+	// The recheck runs under the detectors now in force, whatever scope the
+	// incident began with.
+	var snapshot sdk.DetectionContext
+	var verificationErr error
+	// An unconfirmed closure makes no health claim. Requiring the unavailable
+	// observation again here would prevent the very receipt that records it.
+	needsRecheck := recovered == nil && !committedOutcome && effect.Closure.UnconfirmedReason == contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED
+	if needsRecheck {
+		var err error
+		snapshot, err = c.provider.Snapshot(ctx)
+		if err != nil {
+			return fmt.Errorf("verify closure observation scope: %w", err)
+		}
+	}
 	actionCtx, cancel, err := c.actionContext(ctx)
 	if err != nil {
 		return err
 	}
+	unconfirmed, denied := "", ""
+	var unconfirmedReason contracts.ClosureUnconfirmedReason
+	var unconfirmedStates []DetectorEvaluation
+	// Notes are evidence of this one recheck. Only freezing records them; a
+	// frozen closure's retry rechecks for contradiction and never adds notes.
+	var notes []string
+	var recoveryStates []DetectorEvaluation
+	var expiredHealth *closureHealthObservation
+	if needsRecheck && verificationErr == nil {
+		recheck := c.revalidateClosure(actionCtx, snapshot, effect.Closure)
+		for _, observation := range recheck.Observations {
+			if effect.Closure.ClosureStabilityWindow == 0 && observation.Status == DetectorEvaluationClear {
+				continue
+			}
+			c.recordRecoveryObservation(observation.ID, c.clock(), observation.Findings, observation.Status, observation.Error, observation.Reason)
+		}
+		if len(effect.Closure.FinalDetectorStates) > 0 {
+			c.mu.Lock()
+			response := ToolResponse{Command: "verify", Summary: recheck.Reason, DetectorStates: cloneEvaluations(recheck.States)}
+			if response.Summary == "" {
+				response.Summary = recoveryStabilitySummary
+			}
+			for _, observation := range recheck.Observations {
+				for _, finding := range observation.Findings {
+					if finding.Status == sdk.FindingActive {
+						response.Findings = append(response.Findings, finding)
+					}
+				}
+			}
+			c.cachedIncidentID = effect.Closure.Request.IncidentID
+			c.cacheVerificationLocked(response)
+			c.mu.Unlock()
+		}
+		notes = append(notes, recheck.DriftNotes...)
+		if !effect.Freeze && recheck.Verdict == closureRecheckIncomplete {
+			// The frozen identity was verified when it froze. "Not yet" after a
+			// restart cannot change it, and only a contradiction can retire it.
+			recheck.Verdict = closureRecheckConfirmed
+		}
+		if effect.Freeze && recheck.SourceOnly {
+			_ = c.closureRecheckWaitExpired(effect.Identity, recheck.Bound)
+		}
+		if len(effect.Closure.FinalDetectorStates) > 0 && effect.Closure.ClosureStabilityWindow > 0 && (recheck.Verdict == closureRecheckConfirmed || recheck.SourceOnly) {
+			c.mu.Lock()
+			clear := c.recoveryTrackersClear(effect.Closure.Request)
+			stable := clear && c.recoveryProofForEpochLocked(c.clock(), recheck.States, true, effect.Closure.VerifiedAt.Add(-effect.Closure.ClosureStabilityWindow), c.closureVerificationDeadline(effect.Closure))
+			if !clear {
+				c.closureStableSince = time.Time{}
+			}
+			c.mu.Unlock()
+			if !stable {
+				if !c.clock().Before(c.closureVerificationDeadline(effect.Closure)) {
+					if effect.Freeze {
+						cancel()
+						return c.resumeClosureVerification(ctx, effect)
+					}
+					if _, ok := configuredBroker.(unverifiedClosureBroker); ok {
+						expiredHealth = closureObservation(c.clock(), recheck)
+					} else {
+						cancel()
+						return fmt.Errorf("broker cannot finalize an expired frozen recovery observation")
+					}
+				}
+				if expiredHealth == nil {
+					c.scheduleClosureRecheck()
+					cancel()
+					return c.PersistState(ctx)
+				}
+			}
+		}
+		if len(effect.Closure.FinalDetectorStates) > 0 && expiredHealth == nil && (recheck.Verdict == closureRecheckConfirmed || recheck.SourceOnly) {
+			c.mu.Lock()
+			response := ToolResponse{Command: "verify", Healthy: true, Summary: "controller independently verified healthy", DetectorStates: cloneEvaluations(recheck.States)}
+			c.cachedIncidentID = effect.Closure.Request.IncidentID
+			c.cacheVerificationLocked(response)
+			c.mu.Unlock()
+		}
+		if expiredHealth != nil {
+			recheck.Verdict = closureRecheckConfirmed
+		}
+		switch recheck.Verdict {
+		case closureRecheckConfirmed:
+
+			recoveryStates = recheck.States
+			c.clearClosureRecheckWait()
+		case closureRecheckRecovering:
+			// A live SLO is evidence to observe, not a broker rejection. The
+			// same proof owner now requires a new continuous clear window.
+			c.mu.Lock()
+			c.closureStableSince = time.Time{}
+			c.mu.Unlock()
+			if !c.clock().Before(c.closureVerificationDeadline(effect.Closure)) {
+				if effect.Freeze {
+					cancel()
+					return c.resumeClosureVerification(ctx, effect)
+				}
+				if _, ok := configuredBroker.(unverifiedClosureBroker); ok {
+					expiredHealth = closureObservation(c.clock(), recheck)
+				} else {
+					cancel()
+					return fmt.Errorf("broker cannot finalize an expired frozen recovery observation")
+				}
+			}
+			if expiredHealth == nil {
+				c.scheduleClosureRecheck()
+				cancel()
+				return c.PersistState(ctx)
+			}
+		case closureRecheckContradicted:
+			c.clearClosureRecheckWait()
+			verificationErr = errors.New(recheck.Reason)
+		case closureRecheckIncomplete:
+			// "Not yet" is never a contradiction: wait for the window, bounded by
+			// the detectors' own clearing horizons, then commit unconfirmed.
+			if !c.closureRecheckWaitExpired(effect.Identity, recheck.Bound) {
+				c.scheduleClosureRecheck()
+				cancel()
+				return nil
+			}
+			if recheck.SourceOnly {
+				// Health alone verified the closure; the source checks that
+				// never became available are information on the outcome.
+				c.clearClosureRecheckWait()
+				notes = append(notes, recheck.SourceNotes...)
+				recoveryStates = recheck.States
+				slog.Warn("closure_source_check_unavailable", "incident_id", effect.Closure.Request.IncidentID, "notes", recheck.SourceNotes)
+				break
+			}
+			unconfirmed, unconfirmedReason = recheck.Reason, recheck.Unconfirmed
+			unconfirmedStates = recheck.IncompleteStates
+		case closureRecheckDenied:
+			c.clearClosureRecheckWait()
+			denied = recheck.Reason
+		default:
+			cancel()
+			return fmt.Errorf("closure recheck returned unknown verdict %d", recheck.Verdict)
+		}
+	}
+	if err := actionCtx.Err(); err != nil {
+		cancel()
+		return err
+	}
+	effectKind := lifecyclecore.ProcessClosure
+	if effect.Freeze {
+		effectKind = lifecyclecore.FreezeClosure
+	}
 	c.mu.Lock()
 	if c.broker == nil || c.closureState != contracts.ClosureState_CLOSURE_STATE_PENDING || c.pendingClosure == nil ||
+		effect.Identity != lifecyclecore.Identity(c.pendingClosure.Request.IncidentID, c.pendingClosure.Request.RepositoryBaseCommit, effectKind) ||
 		c.pendingClosure.Request.IncidentID != effect.Closure.Request.IncidentID || !sameIncidentClosure(*c.pendingClosure, effect.Closure) {
 		c.mu.Unlock()
 		cancel()
@@ -152,20 +336,413 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		cancel()
 		return err
 	}
+	if unconfirmed != "" {
+		_, stepErr := c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Unconfirmed, At: c.clock(), Error: unconfirmed, UnconfirmedReason: unconfirmedReason, UnconfirmedStates: evaluationsContract(unconfirmedStates)})
+		c.mu.Unlock()
+		cancel()
+		c.clearClosureRecheckWait()
+		if stepErr != nil {
+			return stepErr
+		}
+		slog.Warn("closure_unconfirmed", "incident_id", effect.Closure.Request.IncidentID, "reason", unconfirmed)
+		// The next driver pass processes the unverified closure durably.
+		return c.PersistState(ctx)
+	}
+	if verificationErr != nil || denied != "" {
+		// Retirement uses the existing durable archive path. Do not reopen the
+		// responder or reset its original verification deadline on each restart.
+		event := lifecyclecore.Event{Kind: lifecyclecore.ObserverDenied, At: c.clock(), Error: denied}
+		if verificationErr != nil {
+			event = lifecyclecore.Event{Kind: lifecyclecore.Superseded, At: c.clock(), Error: verificationErr.Error()}
+		}
+		_, retireErr := c.stepClosureLocked(event)
+		failure := cloneClosureFailure(c.closureFailure)
+		c.mu.Unlock()
+		cancel()
+		if retireErr != nil {
+			return retireErr
+		}
+		if err := c.PersistState(ctx); err != nil {
+			return err
+		}
+		if failure != nil {
+			c.reportBrokerError("retire unverified closure", *failure)
+			if c.OnClosureFailed != nil {
+				c.OnClosureFailed(*failure)
+			}
+		}
+		return nil
+	}
+	if effect.Freeze {
+		frozen, err := c.freezeClosureLocked(ctx, effect.Identity, notes, recoveryStates)
+		if err != nil {
+			c.mu.Unlock()
+			cancel()
+			return err
+		}
+		effect = frozen
+	}
 	broker := c.broker
 	effects, stepErr := c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Drive, At: c.clock(), EffectID: effect.Identity})
-	if stepErr != nil || len(effects) != 1 || effects[0].ID != effect.Identity {
+	if stepErr != nil || len(effects) != 1 || effects[0].ID != effect.Identity || effects[0].Kind != lifecyclecore.ProcessClosure {
 		c.mu.Unlock()
 		cancel()
 		return fmt.Errorf("closure effect changed before execution: %v", stepErr)
 	}
+	// The broker receives the reducer's payload for this identity: the durable
+	// frozen closure, never a copy the driver rewrote.
+	closure := incidentClosureState(effects[0].Closure)
 	c.mu.Unlock()
-	go func() {
+	slog.Info("closure_handoff", "incident_id", closure.Request.IncidentID, "verified_to_handoff_ms", c.clock().Sub(closure.VerifiedAt).Milliseconds())
+	c.goBackground(func() {
 		defer cancel()
-		receipt, processErr := broker.ProcessClosure(actionCtx, effect.Closure)
+		var receipt ClosureReceipt
+		var processErr error
+		if recovered != nil {
+			receipt = *recovered
+		} else if expiredHealth != nil {
+			receipt, processErr = broker.(unverifiedClosureBroker).processUnverifiedClosure(actionCtx, closure, *expiredHealth)
+		} else {
+			receipt, processErr = broker.ProcessClosure(actionCtx, closure)
+		}
 		c.closureResults <- closureCompletion{effectID: effect.Identity, receipt: receipt, err: processErr}
-	}()
+	})
 	return nil
+}
+
+// freezeClosureLocked records the recheck's notes on the pending closure,
+// persists it, and returns the frozen closure's broker effect. Callers hold
+// c.mu; it is released while the state is saved.
+func (c *Controller) freezeClosureLocked(ctx context.Context, identity string, notes []string, recoveryStates []DetectorEvaluation) (ClosureEffect, error) {
+	event := lifecyclecore.Event{Kind: lifecyclecore.Freeze, At: c.clock(), EffectID: identity, SourceCheckNotes: notes}
+	if c.pendingClosure != nil && c.pendingClosure.ClosureStabilityWindow > 0 && len(recoveryStates) > 0 {
+		proof := *cloneIncidentClosure(c.pendingClosure)
+		proof.VerifiedAt = c.clock()
+		proof.FinalDetectorStates = cloneEvaluations(recoveryStates)
+		proof.HealthClearedAt = c.healthClearedAtLocked(recoveryStates)
+		var err error
+		event.Closure, err = incidentClosureContract(proof)
+		if err != nil {
+			return ClosureEffect{}, err
+		}
+	}
+	if _, err := c.stepClosureLocked(event); err != nil {
+		return ClosureEffect{}, err
+	}
+	if c.pendingClosure == nil || !c.pendingClosure.Frozen {
+		return ClosureEffect{}, fmt.Errorf("closure effect changed before freezing")
+	}
+	frozen := *cloneIncidentClosure(c.pendingClosure)
+	c.mu.Unlock()
+	err := c.PersistState(ctx)
+	c.mu.Lock()
+	if err != nil {
+		return ClosureEffect{}, fmt.Errorf("persist frozen closure: %w", err)
+	}
+	effects, err := c.closureEffectsLocked()
+	if err != nil {
+		return ClosureEffect{}, err
+	}
+	for _, effect := range effects {
+		if effect.Kind == lifecyclecore.ProcessClosure && sameIncidentClosure(incidentClosureState(effect.Closure), frozen) {
+			if err := c.requireDurableLocked("frozen incident closure", func(state *contracts.ControllerState) bool {
+				return state.ClosureState == contracts.ClosureState_CLOSURE_STATE_PENDING && proto.Equal(state.PendingClosure, effect.Closure)
+			}); err != nil {
+				return ClosureEffect{}, err
+			}
+			return ClosureEffect{Identity: effect.ID, Closure: frozen}, nil
+		}
+	}
+	return ClosureEffect{}, fmt.Errorf("frozen closure has no broker effect")
+}
+
+// closureRecheckVerdict is the only result of the closure-time recheck, so a
+// caller cannot collapse an incomplete observation into a contradiction.
+type closureRecheckVerdict uint8
+
+const (
+	closureRecheckConfirmed closureRecheckVerdict = iota + 1
+	// closureRecheckIncomplete is "not yet" or "unknown": a detector's
+	// observation window is still filling, or its observer is unavailable
+	// (timeout, API 5xx, unsynced). It never retires the closure.
+	closureRecheckIncomplete
+	// closureRecheckDenied means the recheck is denied its observation scope
+	// (RBAC, undeclared or unsupported dependency): a misconfiguration that
+	// fails the closure with a typed reason, never a contradicted repair.
+	closureRecheckDenied
+	// closureRecheckContradicted means the repair did not hold: an active
+	// finding, unexplained inventory, unrestored source fields, or a detector
+	// the adopted policy no longer has.
+	closureRecheckContradicted
+	// Recovery is still in progress under the incident verification budget.
+	closureRecheckRecovering
+)
+
+type closureRecheck struct {
+	Observations []recoveryObservation
+	States       []DetectorEvaluation
+	// IncompleteStates preserve named blockers in the accepted outcome history.
+	IncompleteStates []DetectorEvaluation
+	Verdict          closureRecheckVerdict
+	Reason           string
+	// Unconfirmed is the typed reason an incomplete recheck commits with at
+	// its bound: an unavailable observer outranks an incomplete window.
+	Unconfirmed contracts.ClosureUnconfirmedReason
+	// Bound is how long an incomplete recheck may wait: the longest clearing
+	// horizon of the incomplete detectors plus two of their cadences.
+	Bound time.Duration
+	// Skipped lists incident detectors the adopted policy no longer has. They
+	// are not evidence either way; the detectors in force decided.
+	Skipped []string
+	// SourceNotes lists source checks that could not run (the accepted source
+	// would not render, the inventory is not loaded, the dry-run failed).
+	// They are information: they wait for the bound, never contradict, and
+	// never downgrade a closure that health alone has verified.
+	SourceNotes []string
+	// SourceOnly marks an incomplete recheck whose only gap is SourceNotes.
+	SourceOnly bool
+	// DriftNotes lists objects that still differ from the accepted source.
+	// They are recorded on the outcome and never hold or contradict a closure.
+	DriftNotes []string
+}
+
+// driftNote describes one object that still differs from the accepted source.
+func driftNote(finding sdk.Finding) string {
+	return fmt.Sprintf("unexplained drift remains on %s/%s: %s", finding.PrimaryResource.Kind, finding.PrimaryResource.Name, finding.Summary)
+}
+
+// closureInventoryLoadBound is how long a closure waits for the accepted-source
+// checks (inventory, field comparison) to become available before it commits
+// on health alone, with the unavailable checks noted.
+const closureInventoryLoadBound = 30 * time.Second
+
+// revalidateClosure checks live dependencies and admitted source fields, rather
+// than treating a matching policy generation as proof of continued recovery.
+// Every detector is evaluated, so a contradiction dominates an incomplete peer.
+// Source and render state are information only: an unavailable source check
+// waits and is noted, and only an observed difference contradicts.
+func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.DetectionContext, closure IncidentClosure) (result closureRecheck) {
+	var observations []recoveryObservation
+	var states []DetectorEvaluation
+	defer func() { result.Observations = observations; result.States = states }()
+	confirmed := closureRecheck{Verdict: closureRecheckConfirmed}
+	if len(closure.FinalDetectorStates) == 0 || closure.DispatchError != "" {
+		// Already unverified or without detector states to recheck; the outcome
+		// still records what differs from the accepted source.
+		driftNotes, _, _ := c.closureDriftNotes(ctx, snapshot, closure)
+		confirmed.DriftNotes = driftNotes
+		return confirmed
+	}
+	contradicted := func(format string, args ...any) closureRecheck {
+		return closureRecheck{Verdict: closureRecheckContradicted, Reason: fmt.Sprintf(format, args...)}
+	}
+	ids := map[string]bool{}
+	for _, state := range closure.FinalDetectorStates {
+		ids[state.DetectorID] = true
+	}
+	for _, id := range c.healthDetectorIDs {
+		ids[id] = true
+	}
+	ordered := make([]string, 0, len(ids))
+	for id := range ids {
+		ordered = append(ordered, id)
+	}
+	sort.Strings(ordered)
+	var incomplete, sourceNotes []string
+	var incompleteStates []DetectorEvaluation
+	var bound, sourceBound time.Duration
+	unconfirmed := contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE
+	wait := func(detector sdk.Detector, reason string) {
+		incomplete = append(incomplete, reason)
+		incompleteStates = append(incompleteStates, DetectorEvaluation{DetectorID: detector.Spec().ID, EvaluatedAt: c.clock(), Status: DetectorEvaluationPending, Reason: reason})
+		bound = max(bound, sdk.ClearingHorizon(detector, snapshot)+2*detector.Spec().Interval)
+	}
+	var denied, gone []string
+	evaluated := 0
+	var active []string
+	for _, id := range ordered {
+		detector := c.detectors[id]
+		if detector == nil && !slices.Contains(c.healthDetectorIDs, id) {
+			// The adopted policy no longer has this incident detector. The
+			// repository moving is not evidence about the cluster; the
+			// detectors in force still decide, provided one remains.
+			gone = append(gone, id)
+			continue
+		}
+		if detector == nil {
+			return contradicted("closure observation detector %s is unavailable", id)
+		}
+		evaluated++
+		findings, status, err := readRecoveryDetector(ctx, detector, snapshot)
+		observations = append(observations, recoveryObservation{ID: id, Findings: findings, Status: status, Error: err, Reason: detectorConfirmationReason(detector, snapshot)})
+		state := DetectorEvaluation{DetectorID: id, EvaluatedAt: c.clock(), Status: status, Fingerprints: findingFingerprints(findings), Reason: detectorConfirmationReason(detector, snapshot)}
+		if err != nil {
+			state.Error = err.Error()
+		}
+		states = append(states, state)
+		if err != nil {
+			reason := fmt.Sprintf("closure observation detector %s: %v", id, err)
+			if observerDenied(detector, snapshot, err) {
+				denied = append(denied, reason)
+			} else {
+				wait(detector, reason)
+				unconfirmed = contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVER_UNAVAILABLE
+			}
+			continue
+		}
+		if status == DetectorEvaluationFiring {
+			active = append(active, fmt.Sprintf("closure observation detector %s is active", id))
+		}
+
+		if !detectorConfirmed(detector, snapshot) {
+			wait(detector, fmt.Sprintf("closure observation detector %s is unconfirmed: %s", id, detectorConfirmationReason(detector, snapshot)))
+		}
+	}
+	if len(active) > 0 {
+		return closureRecheck{Verdict: closureRecheckRecovering, Reason: strings.Join(active, "; "), States: states}
+	}
+	if len(gone) > 0 && evaluated == 0 {
+		return contradicted("closure observation detector %s is unavailable", gone[0])
+	}
+	if len(gone) > 0 {
+		slog.Warn("closure_detector_skipped", "incident_id", closure.Request.IncidentID, "detectors", gone, "reason", "removed by the adopted policy")
+	}
+	driftNotes, sourceNotes, sourceBound := c.closureDriftNotes(ctx, snapshot, closure)
+	if len(denied) > 0 {
+		return closureRecheck{Verdict: closureRecheckDenied, Reason: strings.Join(denied, "; "), Skipped: gone}
+	}
+	if len(incomplete) > 0 {
+		return closureRecheck{Verdict: closureRecheckIncomplete, IncompleteStates: incompleteStates, Reason: strings.Join(incomplete, "; "), Bound: max(bound, sourceBound), Unconfirmed: unconfirmed, Skipped: gone, SourceNotes: sourceNotes, DriftNotes: driftNotes}
+	}
+	if len(sourceNotes) > 0 {
+		return closureRecheck{Verdict: closureRecheckIncomplete, Reason: strings.Join(sourceNotes, "; "), Bound: sourceBound, Skipped: gone, SourceNotes: sourceNotes, SourceOnly: true, DriftNotes: driftNotes}
+	}
+	confirmed.States = states
+	confirmed.Skipped = gone
+	confirmed.DriftNotes = driftNotes
+	return confirmed
+}
+
+// closureDriftNotes compares the accepted source with the live namespace for a
+// closure. driftNotes lists objects that still differ. sourceNotes lists checks
+// that were not available, and sourceBound is how long a closure may wait for
+// them. Neither is a verdict on health.
+func (c *Controller) closureDriftNotes(ctx context.Context, snapshot sdk.DetectionContext, closure IncidentClosure) (driftNotes, sourceNotes []string, sourceBound time.Duration) {
+	c.mu.Lock()
+	inventoryAvailable := c.drift == nil || !c.drift.Inventory || c.sourceInventoryAvailableLocked()
+	if inventoryAvailable {
+		_, remaining := c.verifySourceInventoryLocked(closure.Result)
+		for _, finding := range remaining {
+			driftNotes = append(driftNotes, driftNote(finding))
+		}
+	}
+	c.mu.Unlock()
+	if !inventoryAvailable {
+		// After a restart the inventory is rebuilt from accepted source on the
+		// next pass. Not loaded yet is not a contradiction of the repair.
+		sourceNotes = append(sourceNotes, "accepted source inventory is loading")
+		sourceBound = closureInventoryLoadBound
+	}
+	for _, finding := range closure.Request.Findings {
+		if inventoryFinding(finding) || !strings.HasPrefix(finding.DetectorID, "drift.") {
+			continue
+		}
+		events := driftEventsForFindings(nil, []sdk.Finding{finding})
+		if len(events) != 1 || len(events[0].Fields) == 0 {
+			continue
+		}
+		restored, err := c.closureSourceRestored(ctx, snapshot, finding, events)
+		if err != nil {
+			// A source that cannot be rendered or compared is not a
+			// contradiction; only a comparison that shows the field still
+			// differs is.
+			sourceNotes = append(sourceNotes, fmt.Sprintf("source fields for %s/%s were not compared: %v", finding.PrimaryResource.Kind, finding.PrimaryResource.Name, err))
+			sourceBound = closureInventoryLoadBound
+		} else if !restored {
+			driftNotes = append(driftNotes, driftNote(finding))
+		}
+	}
+	return driftNotes, sourceNotes, sourceBound
+}
+
+// observerDenied separates a permanent scope denial from an observer that is
+// only unavailable: RBAC refusals, and watched dependencies that are
+// undeclared, forbidden or unsupported. A timeout, throttle or server error is
+// unavailable whatever the detector watches, so it waits within the bound.
+func observerDenied(detector sdk.Detector, snapshot sdk.DetectionContext, err error) bool {
+	if apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) {
+		return true
+	}
+	if observerTransient(err) {
+		return false
+	}
+	source, scoped := snapshot.(sdk.ScopedObservationSource)
+	for _, watch := range detector.Spec().Watches {
+		cluster := watch.Kind == "MutatingWebhookConfiguration" || watch.Kind == "ValidatingWebhookConfiguration"
+		if !cluster && (watch.Namespace == "" || watch.Namespace == snapshot.Namespace()) {
+			continue
+		}
+		declared := false
+		if scoped {
+			for _, status := range source.ObservationStatuses() {
+				if status.Target.APIVersion != watch.APIVersion || status.Target.Kind != watch.Kind || status.Target.Namespace != watch.Namespace {
+					continue
+				}
+				declared = true
+				if status.State == "forbidden" || status.State == "unsupported" {
+					return true
+				}
+			}
+		}
+		if !declared {
+			return true
+		}
+	}
+	return false
+}
+
+// observerTransient reports an error that a later observation can clear.
+func observerTransient(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	var network net.Error
+	if errors.As(err, &network) && network.Timeout() {
+		return true
+	}
+	if apierrors.IsTimeout(err) || apierrors.IsServerTimeout(err) || apierrors.IsTooManyRequests(err) || apierrors.IsUnexpectedServerError(err) {
+		return true
+	}
+	var status apierrors.APIStatus
+	return errors.As(err, &status) && status.Status().Code >= 500
+}
+
+// closureRecheckWaitExpired records when this closure's recheck first saw an
+// incomplete window and reports whether the bound has passed. The wait is
+// process-local: a restart re-observes and waits at most one more bound.
+func (c *Controller) closureRecheckWaitExpired(identity string, bound time.Duration) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := c.clock()
+	if c.closureRecheckIdentity != identity || c.closureRecheckSince.IsZero() {
+		c.closureRecheckIdentity, c.closureRecheckSince = identity, now
+	}
+	return now.Sub(c.closureRecheckSince) >= bound
+}
+
+// A pending observation owns its next wake in both active and maintenance
+// modes. Waiting for application events can strand paused closure work.
+func (c *Controller) scheduleClosureRecheck() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closureRecheckRetryAt = c.clock().Add(time.Second)
+}
+
+func (c *Controller) clearClosureRecheckWait() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closureRecheckIdentity, c.closureRecheckSince = "", time.Time{}
+	c.closureRecheckRetryAt = time.Time{}
 }
 
 func (c *Controller) PendingClosureAcknowledgmentEffect() (ClosureAcknowledgmentEffect, bool) {
@@ -241,11 +818,11 @@ func (c *Controller) ExecuteClosureAcknowledgmentEffect(
 		return fmt.Errorf("closure acknowledgment changed before execution: %v", stepErr)
 	}
 	c.mu.Unlock()
-	go func() {
+	c.goBackground(func() {
 		defer cancel()
 		ackErr := broker.AcknowledgeClosure(actionCtx, effect.Receipt)
 		c.acknowledgmentResults <- acknowledgmentCompletion{effectID: effect.Identity, err: ackErr}
-	}()
+	})
 	return nil
 }
 
@@ -275,43 +852,19 @@ acknowledgments:
 		case completion := <-c.acknowledgmentResults:
 			c.handleAcknowledgmentCompletion(completion)
 		default:
-			goto releases
+			goto reflections
 		}
 	}
 
-releases:
+reflections:
 	for {
 		select {
-		case completion := <-c.releaseResults:
-			c.handleReleaseCompletion(completion)
+		case completion := <-c.reflectionResults:
+			c.handleReflectionCompletion(completion)
 		default:
 			return
 		}
 	}
-}
-
-func (c *Controller) handleReleaseCompletion(completion releaseCompletion) {
-	c.mu.Lock()
-	c.releaseInFlight = ""
-	if completion.err != nil {
-		// Leave the incident queued so a later pass retries it; release is
-		// idempotent so a retry cannot double-reap a live worktree.
-		c.mu.Unlock()
-		c.reportBrokerError("release incident worktree", completion.err)
-		return
-	}
-	kept := c.pendingReleases[:0]
-	for _, id := range c.pendingReleases {
-		if id != completion.incidentID {
-			kept = append(kept, id)
-		}
-	}
-	c.pendingReleases = kept
-	c.emitLifecycleLocked(&contracts.LifecycleEvent{
-		Event: PhaseWorktreeReleased, RecordedAt: contractTimestamp(c.clock()), IncidentId: completion.incidentID,
-		Reason: "superseded",
-	})
-	c.mu.Unlock()
 }
 
 func (c *Controller) handleWorkspaceCompletion(completion workspaceCompletion) {
@@ -349,6 +902,8 @@ func (c *Controller) handleClosureCompletion(completion closureCompletion) {
 	if completion.err != nil {
 		event.Kind = lifecyclecore.Rejected
 		event.Error = completion.err.Error()
+		var terminal interface{ NonRetryable() bool }
+		event.NonRetryable = errors.As(completion.err, &terminal) && terminal.NonRetryable()
 		if errors.Is(completion.err, context.DeadlineExceeded) {
 			event.Kind = lifecyclecore.AgentTimeout
 		}
@@ -409,9 +964,21 @@ func (c *Controller) handleAcknowledgmentCompletion(completion acknowledgmentCom
 		c.reportBrokerError("acknowledge incident closure", completion.err)
 		return
 	}
+	c.reflections.rescan = true
 	c.emitLifecycleLocked(&contracts.LifecycleEvent{Event: PhaseAcknowledged, RecordedAt: contractTimestamp(c.clock()), IncidentId: receipt.IncidentID, OutcomeCommit: receipt.OutcomeCommit})
 	if pending != nil {
-		c.batcher.RemoveKeys(findingKeys(pending.Request.Findings))
+		states := c.tracker.Snapshot()
+		var acknowledged []string
+		for _, key := range findingKeys(pending.Request.Findings) {
+			state, ok := states[key]
+			// A new episode after this command's proof is residual work, even
+			// when its fingerprint is identical to the original finding.
+			if ok && state.Active && state.FirstSeenAt.After(pending.VerifiedAt) {
+				continue
+			}
+			acknowledged = append(acknowledged, key)
+		}
+		c.batcher.RemoveKeys(acknowledged)
 	}
 	c.mu.Unlock()
 }

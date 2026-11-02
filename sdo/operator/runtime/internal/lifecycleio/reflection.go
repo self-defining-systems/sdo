@@ -55,19 +55,26 @@ func (d ReflectionDriver) Execute(ctx context.Context, effect lifecyclecore.Refl
 		event.Kind = lifecyclecore.ReflectionInspected
 		event.Workspace = &contracts.ProposalWorkspace{ProposalId: lifecyclecore.ReflectionTaskID(id, effect.OutcomeCommit, effect.Attempt), CheckoutPath: proposal.Path, BaseCommit: proposal.BaseCommit}
 	case lifecyclecore.DispatchReflection:
+		// A correction after a rejection is its own timeline step; phases are
+		// recorded once, so reusing the first names would hide its duration.
+		dispatch, pickedUp := "reflection_dispatch", "worker_result_picked_up"
+		if effect.Attempt > 1 {
+			dispatch, pickedUp = "reflection_retry_dispatch", "retry_worker_result_picked_up"
+		}
 		if d.Phase != nil {
-			err = d.Phase("reflection_dispatch")
+			err = d.Phase(dispatch)
 			if err != nil {
 				break
 			}
 		}
 		event.Decision, err = d.Reflect(ctx, effect)
 		if err == nil && d.Phase != nil {
-			err = d.Phase("worker_result_picked_up")
+			err = d.Phase(pickedUp)
 		}
 		event.Kind = lifecyclecore.ReflectionCompleted
 	case lifecyclecore.ReviewReflection:
-		err = validate.Err(validate.ReflectionDiagnostics(effect.Decision, effect.Paths))
+		// Retain the durable review checkpoint, but leave every content rule
+		// to the broker's complete Check over final files and committed inputs.
 		event.Kind = lifecyclecore.ReflectionReviewed
 	case lifecyclecore.PublishReflection:
 		publishCtx := ctx
@@ -77,18 +84,25 @@ func (d ReflectionDriver) Execute(ctx context.Context, effect lifecyclecore.Refl
 			if err != nil {
 				break
 			}
-			publishCtx = validate.WithCaptureSource(ctx, captureDir, id)
+			publishCtx = validate.WithCaptureSource(publishCtx, captureDir, id)
 		}
 		var accepted broker.Receipt
 		accepted, err = d.Repository.PublishReflection(publishCtx, id, effect.Decision)
 		event.Kind = lifecyclecore.ReflectionPublished
 		event.Commit, event.Paths = accepted.Commit, accepted.ChangedPaths
-	case lifecyclecore.ResetReflection, lifecyclecore.CleanupReflection:
-		err = d.Repository.ReleaseProposal(id, broker.ReflectionPhase)
-		event.Kind = lifecyclecore.ReflectionReset
-		if effect.Kind == lifecyclecore.CleanupReflection {
-			event.Kind = lifecyclecore.ReflectionCleaned
+		event.CoverageGaps = validate.ProtoDiagnostics(accepted.CoverageGaps)
+	case lifecyclecore.ResetReflection:
+		// A correction continues from its rejected work carried onto the newest
+		// accepted memory; only colliding hunks are left for it to resolve.
+		if effect.Final {
+			err = d.Repository.ReleaseProposal(id, broker.ReflectionPhase)
+		} else {
+			_, err = d.Repository.RebaseProposal(ctx, id, broker.ReflectionPhase)
 		}
+		event.Kind = lifecyclecore.ReflectionReset
+	case lifecyclecore.CleanupReflection:
+		err = d.Repository.ReleaseProposal(id, broker.ReflectionPhase)
+		event.Kind = lifecyclecore.ReflectionCleaned
 	default:
 		return event, fmt.Errorf("unknown reflection effect %d", effect.Kind)
 	}
@@ -98,6 +112,11 @@ func (d ReflectionDriver) Execute(ctx context.Context, effect lifecyclecore.Refl
 			if diagnostics, typed := broker.RejectionDiagnostics(err); typed {
 				event.Kind = lifecyclecore.ReflectionRejected
 				event.Diagnostics = diagnostics
+				if d.Phase != nil {
+					if err := d.Phase("reflection_rejected"); err != nil {
+						return event, err
+					}
+				}
 				return event, nil
 			}
 		}

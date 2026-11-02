@@ -63,7 +63,7 @@ func repeatedReplicaPlan() (sdk.ObjectRef, program.Plan, *recoveryOutageClient) 
 	client := &recoveryOutageClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: planObject(ref, map[string]any{"replicas": float64(1)})}}}
 	plan := program.Plan{}
 	for _, value := range []int{2, 3, 4} {
-		plan.Actions = append(plan.Actions, program.SetField{Ref: ref, Path: "spec.replicas", Value: value})
+		plan.Actions = append(plan.Actions, program.SetField{Ref: ref, Path: "spec.replicas", Value: testPlanValue(value)})
 	}
 	return ref, plan, client
 }

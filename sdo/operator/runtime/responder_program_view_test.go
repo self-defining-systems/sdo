@@ -31,7 +31,7 @@ func TestResponderProgramCapabilitySurvivesToolAndContractViews(t *testing.T) {
 			loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
 				return &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}
 			}
-			response := loop.Handle(context.Background(), ToolRequest{Command: "diagnose", ProgramID: "service-targetport-mismatch", Bindings: program.Bindings{"service": findings[0].PrimaryResource}})
+			response := loop.Handle(context.Background(), ToolRequest{Command: "diagnose", ProgramID: "service-targetport-mismatch", Bindings: program.Bindings{Objects: program.ObjectBindings{"service": findings[0].PrimaryResource}}})
 			if response.Error != "" || len(response.ProgramRuns) != 1 {
 				t.Fatalf("explicit diagnosis failed: %+v", response)
 			}

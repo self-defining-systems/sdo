@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-import shutil
+import threading
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -13,39 +13,20 @@ from benchmarks.sregym.adapter import ControllerInstallError, RuntimeConfig
 from benchmarks.sregym.adapter.driver import DeployedLifecycle, DeployedLifecycleContext
 from benchmarks.sregym.adapter.persistent import (
     CONTROLLER_LOGS_SUBDIR,
-    RESOLUTION_FILENAME,
+    REJECTED_RECEIPT_FILENAME,
     Clock,
+    ControllerJobFailedError,
     ControllerPod,
-    DetectorReviewRequiredError,
+    PersistentControllerError,
     PersistentState,
+    ReflectionDeadlineError,
     control_namespace_for,
-    publish_deferred_receipts,
+    drain_pending_incident,
 )
 from benchmarks.sregym.fastloop.loop import InjectionWindow, LoopConfig, run_incidents
 from benchmarks.sregym.fastloop.records import OracleVerdict, load_records
 from benchmarks.sregym.fastloop.sdo_agent import SdoAgentSettings, SdoPersistentAgent
-from benchmarks.sregym.protocol.detector_review import DETECTOR_REVIEW_FILENAME, DetectorReviewRecord
-from benchmarks.sregym.runner.runner import _stage_results_error
-
-
-def test_program_metrics_exports_fast_path_resolution() -> None:
-    from benchmarks.sregym.fastloop.sdo_agent import _program_metrics
-
-    relation = {
-        "finding_fingerprint": "health/service/api",
-        "program_id": "repair",
-        "bindings": [{"name": "deployment", "object": {"kind": "Deployment", "namespace": "app", "name": "api"}}],
-    }
-    fields = _program_metrics(
-        {
-            "resolution_path": "fast_path",
-            "fast_path_programs": ["targetport"],
-            "fast_path_relation_covered_findings": [relation],
-        }
-    )
-    assert fields["resolution_path"] == "fast_path"
-    assert fields["fast_path_programs"] == ("targetport",)
-    assert fields["fast_path_relation_covered_findings"] == (relation,)
+from tests.unit.benchmarks.sregym.adapter.test_persistent import _with_controller_busy_until
 
 
 def test_program_metrics_exports_match_evidence_and_skip_reason() -> None:
@@ -53,7 +34,6 @@ def test_program_metrics_exports_match_evidence_and_skip_reason() -> None:
 
     fields = _program_metrics(
         {
-            "fast_path_skipped_reason": "uncovered_finding",
             "program_runs": [
                 {
                     "program_id": "targetport",
@@ -70,7 +50,6 @@ def test_program_metrics_exports_match_evidence_and_skip_reason() -> None:
     )
     assert fields["match_reasons"] == ("wrong target port",)
     assert fields["binding_sources"] == ("hint", "finding")
-    assert fields["fast_path_skipped_reason"] == "uncovered_finding"
 
 
 def test_fastloop_record_persists_program_match_and_skip_evidence(tmp_path: Path) -> None:
@@ -81,16 +60,6 @@ def test_fastloop_record_persists_program_match_and_skip_evidence(tmp_path: Path
     receipt["native_ledger"] = {
         "outcome_document": {
             "resolution_path": "responder",
-            "fast_path_skipped_reason": "uncovered_finding",
-            "fast_path_relation_covered_findings": [
-                {
-                    "finding_fingerprint": "health/service/api",
-                    "program_id": "repair",
-                    "bindings": [
-                        {"name": "deployment", "object": {"kind": "Deployment", "namespace": "app", "name": "api"}}
-                    ],
-                }
-            ],
             "program_runs": [
                 {
                     "program_id": "targetport",
@@ -113,8 +82,7 @@ def test_fastloop_record_persists_program_match_and_skip_evidence(tmp_path: Path
         agent="sdo",
         problem_id="p",
         model="test",
-        injection_started_at=INJECTED,
-        injection_finished_at=INJECTED,
+        injection={"state": "injected", "started_at": INJECTED, "finished_at": INJECTED},
         **_outcome_fields(learned),
     )
     path = tmp_path / "incidents.jsonl"
@@ -122,8 +90,6 @@ def test_fastloop_record_persists_program_match_and_skip_evidence(tmp_path: Path
     row = load_records(path)[0]
     assert row.match_reasons == ["wrong target port"]
     assert row.binding_sources == ["hint", "finding"]
-    assert row.fast_path_skipped_reason == "uncovered_finding"
-    assert row.fast_path_relation_covered_findings[0]["finding_fingerprint"] == "health/service/api"
 
 
 if TYPE_CHECKING:
@@ -180,11 +146,12 @@ class FakeOps:
     #: Worktree directory names under the shared /workspace/worktrees root. Empty by
     #: default, so there is nothing for the quiescent-drain reap to remove.
     worktrees: set[str] = field(default_factory=set)
-    #: The controller stops for detector review: the responder finished, but a drift finding never clears.
-    detector_review_required: bool = False
 
     def controller_pod(self, control_namespace: str) -> ControllerPod | None:
         return self.pods.get(control_namespace)
+
+    def controller_job_failure(self, control_namespace: str) -> str | None:
+        return None
 
     def namespace_exists(self, namespace: str) -> bool:
         return namespace in self.pods
@@ -206,7 +173,9 @@ class FakeOps:
         self.logs[control] = []
         return False
 
-    def set_maintenance(self, control_namespace: str, *, paused: bool, generation: str) -> None:
+    def set_maintenance(
+        self, control_namespace: str, *, paused: bool, generation: str, preserve_baseline: bool = False
+    ) -> None:
         mode = "paused" if paused else "active"
         self.logs[control_namespace].append(
             json.dumps({"controller_maintenance": mode, "maintenance_generation": generation})
@@ -231,7 +200,7 @@ class FakeOps:
                 self._reflect(control_namespace, incident_id)
             else:
                 self.seen_closures.add((control_namespace, incident_id))
-        return state
+        return _with_controller_busy_until(state)
 
     def controller_logs(self, control_namespace: str) -> str:
         return "\n".join(self.logs.get(control_namespace, []))
@@ -242,27 +211,6 @@ class FakeOps:
         inject()
         self.incidents += 1
         incident_id = f"incident-{self.incidents}"
-        if self.detector_review_required:
-            self.states[control_namespace].update(
-                {
-                    "incident_open": True,
-                    "responder_done": True,
-                    "incident_request": {"incident_id": incident_id},
-                    "incident_result": {
-                        "confirmed_root_causes": ROOT_CAUSES,
-                        "repair_actions": REPAIRS,
-                        "usage": {"input_tokens": 300000, "output_tokens": 3000},
-                    },
-                    "incident_view": {
-                        "incident_id": incident_id,
-                        "blocking_detectors": ["drift.unexplained"],
-                        "blocking_findings": [{"detector_id": "drift.unexplained"}],
-                    },
-                    "detector_review_required": True,
-                    "detector_review_reason": "health detectors did not clear within 2m0s after responder completion",
-                }
-            )
-            return {"controller_baseline_wait": 1.5, "fault_injection_request": 6.0}
         if self.reflect_before_first_poll:
             self._reflect(control_namespace, incident_id)
             return {"controller_baseline_wait": 1.5, "fault_injection_request": 6.0}
@@ -278,6 +226,7 @@ class FakeOps:
             "dispatched_at": DETECTED.isoformat(),
             "responder_completed_at": (DETECTED + timedelta(seconds=40)).isoformat(),
             "verified_at": VERIFIED.isoformat(),
+            "final_detector_states": [{"detector_id": "health", "status": "clear"}],
         }
         return {"controller_baseline_wait": 1.5, "fault_injection_request": 6.0}
 
@@ -318,6 +267,9 @@ def _agent(
     lifecycle_calls: list[str],
     *,
     detection_timeout_seconds: float | None = None,
+    reflection_wait_seconds: float = 3600.0,
+    clock: Clock | None = None,
+    require_attestation_eligible: bool = False,
 ) -> SdoPersistentAgent:
     repository = tmp_path / "application_workspace"
     repository.mkdir(exist_ok=True)
@@ -343,6 +295,8 @@ def _agent(
         results_dir=tmp_path / "incidents",
         verification_timeout_seconds=600,
         detection_timeout_seconds=detection_timeout_seconds,
+        reflection_wait_seconds=reflection_wait_seconds,
+        require_attestation_eligible=require_attestation_eligible,
     )
     context = DeployedLifecycleContext(health_objective="objective", active_resources=[])
 
@@ -357,7 +311,7 @@ def _agent(
         ops=ops,
         lifecycle_inputs=lambda: DeployedLifecycle(context=context, fingerprint="topology-1"),
         run_lifecycle=run_lifecycle,
-        clock=_clock(),
+        clock=clock or _clock(),
     )
 
 
@@ -394,6 +348,10 @@ def test_undetected_fault_is_graded_recovered_and_next_incident_runs(tmp_path: P
             if self.incidents == 0:
                 inject()
                 self.incidents += 1
+                # A successful idle snapshot is distinct from an unavailable API.
+                self.states[control_namespace] = {
+                    "history": [{"detector_id": "health", "status": "clear", "evaluated_at": INJECTED.isoformat()}]
+                }
                 return {"controller_baseline_wait": 1.5}
             return super().inject_after_resume(control_namespace, generation, inject)
 
@@ -476,6 +434,33 @@ def test_learning_drains_reflection_and_reads_tokens_and_warm_path_from_the_stri
     assert state.controllers["hotel-reservation"].pending is None
 
 
+@pytest.mark.parametrize("exhausted", [False, True])
+def test_reflection_account_producer_reaches_learning_evidence_and_infrastructure(
+    tmp_path: Path, exhausted: bool
+) -> None:
+    from benchmarks.sregym.protocol.provider_capacity import RateLimitedRun
+    from libs.agent_cli.provider_capacity import ProviderCapacity
+
+    agent = _agent(tmp_path, FakeOps(), [])
+    resolved = agent.resolve(0, "p", _inject)
+    producer = ProviderCapacity(
+        environment={
+            "SDO_PROVIDER_WAIT_LOG": str(Path(str(resolved.artifacts_dir)) / "provider-waits.jsonl"),
+            "SDO_INCIDENT_ID": str(resolved.incident_id),
+            "SDO_PHASE": "reflection",
+        }
+    )
+    producer.record("account", "selected", account_alias="a03", reason="fallback")
+    if exhausted:
+        producer.record("account", "exhausted", reason="account_exhausted")
+        with pytest.raises(RateLimitedRun, match="account_exhausted"):
+            agent.learn(resolved)
+    else:
+        learned = agent.learn(resolved)
+        assert learned.account_events[-1].phase == "reflection"
+        assert learned.account_events[-1].account_alias == "a03"
+
+
 def test_resolved_incident_keeps_responder_cost_and_mitigation_time_when_learning_fails(tmp_path: Path) -> None:
     ops, calls = FakeOps(), []
     agent = _agent(tmp_path, ops, calls)
@@ -524,7 +509,7 @@ def test_learning_exports_monotonic_closure_phase_durations(tmp_path: Path) -> N
 
 def test_a_rejected_receipt_keeps_its_tokens_reports_the_error_and_unblocks_the_next_incident(tmp_path: Path) -> None:
     ops, calls = (
-        FakeOps(reject_receipts=True, controller_result_override={"fast_path_skipped_reason": "untrusted_program"}),
+        FakeOps(reject_receipts=True, controller_result_override={}),
         [],
     )
     agent = _agent(tmp_path, ops, calls)
@@ -534,7 +519,6 @@ def test_a_rejected_receipt_keeps_its_tokens_reports_the_error_and_unblocks_the_
     assert learned.error is not None
     assert "receipt" in learned.error
     assert learned.responder_tokens.input_tokens == 300000
-    assert learned.fast_path_skipped_reason == "untrusted_program"
     assert (
         PersistentState.load(tmp_path / "sdo_persistent_controller.json").controllers["hotel-reservation"].pending
         is None
@@ -680,36 +664,435 @@ def test_checkpoint_opt_out_preserves_resolution_and_learning(tmp_path: Path, mo
     assert learned.reflection_tokens.input_tokens > 0
 
 
-def test_a_detector_review_stop_publishes_its_evidence_and_the_runner_names_the_reason(tmp_path: Path) -> None:
-    ops = FakeOps(detector_review_required=True)
-    agent = _agent(tmp_path, ops, [])
+def test_no_repair_count_preserves_unknown_zero_and_recorded_counts() -> None:
+    from benchmarks.sregym.fastloop.sdo_agent import _receipt_no_repair_count
 
-    with pytest.raises(DetectorReviewRequiredError, match="incident-1"):
-        agent.resolve(0, "problem", _inject)
+    assert _receipt_no_repair_count({}) is None
+    assert _receipt_no_repair_count({"native_ledger": {"reflection_no_repair_count": 0}}) == 0
+    assert _receipt_no_repair_count({"native_ledger": {"reflection_no_repair_count": 2}}) == 2
+    assert _receipt_no_repair_count({"native_ledger": {"reflection_no_repair_count": True}}) is None
 
-    # SREGym publishes the staged resolution to the run directory; the deferred publication then
-    # completes it with the receipt and the controller log.
-    staging = tmp_path / "incidents" / "000_problem"
-    stage = tmp_path / "stage"
-    results = stage / "runs" / "000000_problem" / "worker_0" / "results" / "sdo_codex" / "problem" / "run_1"
-    results.mkdir(parents=True)
-    shutil.copyfile(staging / RESOLUTION_FILENAME, results / RESOLUTION_FILENAME)
-    publish_deferred_receipts(tmp_path / "sdo_persistent_controller.json", stage)
 
-    review = DetectorReviewRecord.model_validate_json((results / DETECTOR_REVIEW_FILENAME).read_text())
-    assert review.status == "detector_review_required"
-    assert review.incident_id == "incident-1"
-    assert review.blocking_detectors == ["drift.unexplained"]
-    assert review.usage == {"input_tokens": 300000, "output_tokens": 3000}
-    assert (results / CONTROLLER_LOGS_SUBDIR / "controller.log").is_file()
-    assert json.loads((results / RESOLUTION_FILENAME).read_text())["usage"] == review.usage
+def test_program_metrics_exports_incident_open_coverage() -> None:
+    from benchmarks.sregym.fastloop.sdo_agent import _program_metrics
 
-    (results / "problem_results.csv").write_text(
-        '"Diagnosis.success","Mitigation.success","problem_id"\nTrue,True,"problem"\n', encoding="utf-8"
+    coverage = {
+        "matches": [{"playbook_id": "routing", "explained_finding_fingerprints": ["one", "two"]}],
+        "unexplained_finding_fingerprints": ["three"],
+    }
+    assert _program_metrics({"playbook_coverage": coverage})["playbook_coverage"] == coverage
+
+
+def _ticking_clock() -> Clock:
+    """A clock whose wall time follows its monotonic time, as a real one does."""
+    elapsed = [0.0]
+    return Clock(
+        monotonic=lambda: elapsed[0],
+        sleep=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds),
+        now=lambda: INJECTED + timedelta(seconds=elapsed[0]),
     )
-    error = _stage_results_error(stage, require_strict_receipt=True)
-    assert error is not None
-    assert "detector review" in error
-    assert "incident-1" in error
-    assert "drift.unexplained" in error
-    assert "exactly one" not in error
+
+
+def _followup_state(outcome_incident: str, busy_until: datetime | None) -> dict[str, Any]:
+    state: dict[str, Any] = {"last_acknowledged_incident_id": outcome_incident}
+    if busy_until is not None:
+        state.update(
+            incident_open=True,
+            incident_request={"incident_id": "incident-late"},
+            busy_until=busy_until.isoformat(),
+        )
+    return state
+
+
+def test_recovery_reports_a_followup_incident_that_outlives_the_controllers_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from benchmarks.sregym.fastloop.loop import RecoveryWaitTimeout
+
+    ops, calls, clock = FakeOps(), [], _ticking_clock()
+    agent = _agent(tmp_path, ops, calls, clock=clock)
+    outcome = agent.learn(agent.resolve(0, "p", _inject))
+    started = clock.now()
+    bound = started + timedelta(seconds=480)
+    monkeypatch.setattr(ops, "runtime_state", lambda _control: _followup_state(outcome.incident_id, bound))
+
+    with pytest.raises(RecoveryWaitTimeout, match="incident-late") as raised:
+        agent.prepare_recovery(outcome)
+
+    assert raised.value.wait.graded_incident_id == outcome.incident_id
+    assert raised.value.wait.followup_incident_ids == ["incident-late"]
+    assert raised.value.wait.closed is False
+    # The controller's own bound plus one closeout margin, never a fixed 600 s.
+    assert raised.value.wait.waited_seconds == raised.value.wait.bound_seconds == 480.0 + 120.0
+
+
+def test_recovery_waits_past_ten_minutes_for_a_followup_the_controller_still_owns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """h9.5 52/012: a follow-up incident ran past a fixed 600 s recovery wait and lost the row (P4RUN2, REQUESTS)."""
+    ops, calls, clock = FakeOps(), [], _ticking_clock()
+    agent = _agent(tmp_path, ops, calls, clock=clock)
+    outcome = agent.learn(agent.resolve(0, "p", _inject))
+    started = clock.now()
+    bound = started + timedelta(seconds=2102)
+    follow_up_runs_for = 1500.0
+
+    def state(_control: str) -> dict[str, Any]:
+        running = (clock.now() - started).total_seconds() < follow_up_runs_for
+        return _followup_state(outcome.incident_id, bound if running else None)
+
+    monkeypatch.setattr(ops, "runtime_state", state)
+
+    wait = agent.prepare_recovery(outcome)
+
+    assert wait is not None
+    assert wait.closed is True
+    assert wait.followup_incident_ids == ["incident-late"]
+    assert follow_up_runs_for <= wait.waited_seconds < follow_up_runs_for + 10
+    assert wait.waited_seconds > 600.0
+    assert wait.bound_seconds >= 2102.0
+
+
+class _WebhookDriver:
+    """Injects a cluster-scoped webhook that only the fault's own recover removes."""
+
+    def __init__(self, events: list[str] | None = None) -> None:
+        self.events = events if events is not None else []
+        self.webhook = False
+
+    def inject(self, problem_id: str) -> InjectionWindow:
+        self.events.append("inject")
+        self.webhook = True
+        return _inject()
+
+    def oracle(self) -> OracleVerdict:
+        return OracleVerdict(kind="sregym-mitigation-oracle", success=True)
+
+    def recover(self) -> float:
+        self.events.append("recover")
+        self.webhook = False
+        return 0.0
+
+
+class _ClosureRetiredOps(FakeOps):
+    """SDO verifies the incident, then retires its closure permanently (the pending closure stays recorded)."""
+
+    def _reflect(self, control_namespace: str, incident_id: str) -> None:
+        self.states[control_namespace].update(
+            {
+                "closure_state": "CLOSURE_STATE_FAILED",
+                "closure_failure": {
+                    "incident_id": incident_id,
+                    "permanent": True,
+                    "last_error": "closure observation detector service-reachability is unconfirmed",
+                },
+            }
+        )
+
+
+def _single_row(tmp_path: Path) -> LoopConfig:
+    return LoopConfig(
+        run_id="leak4", problems=("webhook",), incidents=1, results_path=tmp_path / "results" / "incidents.jsonl"
+    )
+
+
+def test_a_closure_failed_row_still_recovers_the_injected_webhook(tmp_path: Path) -> None:
+    driver = _WebhookDriver()
+
+    [record] = run_incidents(_agent(tmp_path, _ClosureRetiredOps(), []), driver, _single_row(tmp_path))
+
+    assert driver.events == ["inject", "recover"]
+    assert driver.webhook is False
+    assert record.recovery_error is None
+    assert record.recovery_trigger == "closure_failed"
+    assert "closure permanently failed" in (record.error or "")
+    assert (Path(str(record.artifacts_dir)) / REJECTED_RECEIPT_FILENAME).is_file()
+    state = PersistentState.load(tmp_path / "sdo_persistent_controller.json")
+    assert state.controllers["hotel-reservation"].pending is None
+
+
+def test_a_running_reflection_delays_recovery_until_it_ends(tmp_path: Path) -> None:
+    events: list[str] = []
+
+    class SlowReflectionOps(FakeOps):
+        polls: int = 0
+
+        def runtime_state(self, control_namespace: str) -> dict[str, Any]:
+            closure = self.states[control_namespace].get("pending_closure")
+            if (
+                isinstance(closure, dict)
+                and (control_namespace, closure["request"]["incident_id"]) in self.seen_closures
+            ):
+                self.polls += 1
+                if self.polls < 3:
+                    events.append("reflecting")
+                    return _with_controller_busy_until(self.states[control_namespace])
+                events.append("reflected")
+            return super().runtime_state(control_namespace)
+
+    driver = _WebhookDriver(events)
+
+    [record] = run_incidents(_agent(tmp_path, SlowReflectionOps(), []), driver, _single_row(tmp_path))
+
+    assert events == ["inject", "reflecting", "reflecting", "reflected", "recover"]
+    assert record.recovery_trigger == "natural_closure"
+    assert record.recovery_error is None
+
+
+def test_recovery_past_the_reflection_deadline_leaves_the_closure_to_sdo(tmp_path: Path) -> None:
+    class StuckReflectionOps(FakeOps):
+        def _reflect(self, control_namespace: str, incident_id: str) -> None:
+            """Reflection never finishes."""
+
+    ops, driver = StuckReflectionOps(), _WebhookDriver()
+    agent = _agent(tmp_path, ops, [])
+    agent._settings = replace(agent._settings, reflection_wait_seconds=30)
+
+    [record] = run_incidents(agent, driver, _single_row(tmp_path))
+
+    assert driver.webhook is False
+    assert record.recovery_trigger == "reflection_deadline"
+    assert record.recovery_error is None
+    assert "learning failed" in (record.error or "")
+    state = PersistentState.load(tmp_path / "sdo_persistent_controller.json")
+    assert state.controllers["hotel-reservation"].pending is not None
+
+
+def test_a_transient_state_read_failure_does_not_skip_the_closure_fence(tmp_path: Path) -> None:
+    events: list[str] = []
+
+    class FlakyStateOps(FakeOps):
+        reads: int = 0
+
+        def runtime_state(self, control_namespace: str) -> dict[str, Any]:
+            closure = self.states[control_namespace].get("pending_closure")
+            if (
+                isinstance(closure, dict)
+                and (control_namespace, closure["request"]["incident_id"]) in self.seen_closures
+            ):
+                self.reads += 1
+                if self.reads == 1:
+                    events.append("unreadable")
+                    return {}
+                if self.reads == 2:
+                    events.append("read error")
+                    raise RuntimeError("kubectl: connection refused")
+            return super().runtime_state(control_namespace)
+
+    driver = _WebhookDriver(events)
+
+    [record] = run_incidents(_agent(tmp_path, FlakyStateOps(), []), driver, _single_row(tmp_path))
+
+    assert events == ["inject", "unreadable", "read error", "recover"]
+    assert record.recovery_trigger == "natural_closure"
+    assert record.recovery_error is None
+
+
+def test_an_unreadable_state_at_the_deadline_fails_typed_without_recovering(tmp_path: Path) -> None:
+    class UnreadableOps(FakeOps):
+        def runtime_state(self, control_namespace: str) -> dict[str, Any]:
+            closure = self.states[control_namespace].get("pending_closure")
+            if (
+                isinstance(closure, dict)
+                and (control_namespace, closure["request"]["incident_id"]) in self.seen_closures
+            ):
+                return {}
+            return super().runtime_state(control_namespace)
+
+    ops, driver = UnreadableOps(), _WebhookDriver()
+    agent = _agent(tmp_path, ops, [])
+    agent._settings = replace(agent._settings, reflection_wait_seconds=30)
+
+    [record] = run_incidents(agent, driver, _single_row(tmp_path))
+
+    assert driver.events == ["inject"], "recovery mutated the app while the closure state was unknown"
+    assert "closure state unknown" in (record.recovery_error or "")
+    assert record.recovery_trigger != "reflection_deadline"
+
+
+def _wall_clock() -> Clock:
+    """A fake clock whose wall time advances with its monotonic time, as a real one does."""
+
+    now = [0.0]
+
+    def sleep(seconds: float) -> None:
+        now[0] += seconds
+
+    return Clock(monotonic=lambda: now[0], sleep=sleep, now=lambda: INJECTED + timedelta(seconds=now[0]))
+
+
+class _NeverReflectsOps(FakeOps):
+    #: The terminal condition of the controller Job, once it has one.
+    job_failure: str | None = None
+
+    def _reflect(self, control_namespace: str, incident_id: str) -> None:
+        """Reflection never finishes."""
+
+    def controller_job_failure(self, control_namespace: str) -> str | None:
+        return self.job_failure
+
+
+def test_one_reflection_deadline_spans_every_drain_of_an_incident(tmp_path: Path) -> None:
+    ops, clock = _NeverReflectsOps(), _wall_clock()
+    outcome = _agent(tmp_path, ops, [], reflection_wait_seconds=30, clock=clock).resolve(0, "p", _inject)
+    state = PersistentState.load(tmp_path / "sdo_persistent_controller.json")
+    record = state.controllers["hotel-reservation"]
+    # A drain other than learn() (the composite loop's, or admission's) spends the incident's budget.
+    with pytest.raises(ReflectionDeadlineError):
+        drain_pending_incident(record, ops=ops, repository=tmp_path, drained_by="composite-000", clock=clock)
+    # A restarted driver settles the same persisted closure before recovery.
+    restarted = _agent(tmp_path, ops, [], reflection_wait_seconds=30, clock=clock)
+    started = clock.monotonic()
+
+    restarted.prepare_recovery(outcome)
+
+    assert restarted.last_recovery_trigger == "reflection_deadline"
+    assert clock.monotonic() - started < 30, "recovery waited a second reflection budget"
+
+
+def test_a_failed_controller_job_ends_the_closure_wait_as_a_typed_failure(tmp_path: Path) -> None:
+    ops, clock = _NeverReflectsOps(), _wall_clock()
+    agent = _agent(tmp_path, ops, [], clock=clock)
+    outcome = agent.resolve(0, "p", _inject)
+    ops.job_failure = "BackoffLimitExceeded: Job has reached the specified backoff limit"
+    started = clock.monotonic()
+
+    with pytest.raises(ControllerJobFailedError, match="BackoffLimitExceeded"):
+        agent.learn(outcome)
+    # The recovery fence still refuses to mutate the app while the dead controller's state shows the incident open.
+    with pytest.raises(PersistentControllerError, match="closed incident"):
+        agent.prepare_recovery(outcome)
+
+    assert clock.monotonic() - started < 60, "the drain waited out the deadline on a controller that cannot ACK"
+    assert agent.last_recovery_trigger == "closure_failed"
+    rejected = json.loads((Path(str(outcome.artifacts_dir)) / REJECTED_RECEIPT_FILENAME).read_text())
+    assert "BackoffLimitExceeded" in json.dumps(rejected)
+    assert (
+        PersistentState.load(tmp_path / "sdo_persistent_controller.json").controllers["hotel-reservation"].pending
+        is None
+    )
+
+
+def test_real_resolution_path_grades_before_evidence_export_and_reflection(tmp_path: Path) -> None:
+    ops = FakeOps()
+    ops.last_runtime_export = None
+    agent = _agent(tmp_path, ops, [])
+    calls: list[str] = []
+
+    class Driver:
+        def inject(self, _problem_id: str) -> InjectionWindow:
+            return _inject()
+
+        def oracle(self) -> OracleVerdict:
+            assert ops.last_runtime_export is None
+            calls.append("oracle")
+            return OracleVerdict(kind="sregym-mitigation-oracle", success=True)
+
+        def recover(self) -> float:
+            pytest.fail("tier 2 replaces post-grade per-fault recovery")
+
+    records = run_incidents(
+        agent,
+        Driver(),
+        LoopConfig(
+            run_id="closure-grade",
+            problems=("p",),
+            incidents=1,
+            results_path=tmp_path / "incidents.jsonl",
+            row_start_tier2=True,
+        ),
+    )
+    assert calls == ["oracle"]
+    assert records[0].oracle.success
+    assert records[0].cleanup_skipped_reason == "row_start_tier2"
+    assert records[0].recovery_error is None
+
+
+def test_closure_grade_rejects_an_incident_that_predates_injection(tmp_path: Path) -> None:
+    from benchmarks.sregym.protocol.injection import IncidentPredatesInjectionError
+
+    agent = _agent(tmp_path, FakeOps(), [])
+    injected = DETECTED + timedelta(seconds=1)
+    with pytest.raises(IncidentPredatesInjectionError):
+        agent.resolve_at_closure(
+            0,
+            "p",
+            lambda: InjectionWindow(started_at=injected, finished_at=injected),
+            lambda _point: pytest.fail("an unrelated incident must never receive a grade"),
+        )
+
+
+@pytest.mark.parametrize("export_status", ["complete", "failed", "foreign"])
+def test_learning_reuses_complete_post_reflection_export_from_real_drain(tmp_path: Path, export_status: str) -> None:
+    class ExportingOps(FakeOps):
+        def export_runtime_artifacts(self, config: Any, artifacts_dir: Path) -> dict[str, str | None]:
+            self.exports = getattr(self, "exports", 0) + 1
+            if self.exports == 2 and export_status == "failed":
+                return {"directory": None, "error": "synthetic failure"}
+            directory = artifacts_dir / "sdo_runtime"
+            if self.exports == 2 and export_status == "foreign":
+                directory = tmp_path / "another-incident/sdo_runtime"
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / "synthetic-evidence.json").write_text('{"fixture": true}\n')
+            return {"directory": str(directory), "error": None}
+
+    ops = ExportingOps()
+    agent = _agent(tmp_path, ops, [])
+    agent._settings = replace(agent._settings, kubeconfig="synthetic-kubeconfig", checkpoint_enabled=False)
+    resolved = agent.resolve(0, "p", _inject)
+    before = ops.exports
+    learned = agent.learn(resolved)
+    assert ops.exports - before == (1 if export_status == "complete" else 2)
+    assert learned.incident_id == resolved.incident_id
+    assert (Path(str(learned.artifacts_dir)) / "sdo_runtime/synthetic-evidence.json").is_file()
+
+
+def test_learning_with_a_lane_queue_seals_evidence_and_delivers_off_the_critical_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import benchmarks.sregym.adapter as adapter
+    from benchmarks.sregym.adapter import RuntimeSnapshot
+    from benchmarks.sregym.fastloop.evidence_queue import EvidenceExportQueue, ExportState, snapshot_id_for
+
+    class SealingOps(FakeOps):
+        def export_runtime_artifacts(self, config: Any, artifacts_dir: Path) -> dict[str, str | None]:
+            self.exports = getattr(self, "exports", 0) + 1
+            return super().export_runtime_artifacts(config, artifacts_dir)
+
+    sealed: list[str] = []
+    monkeypatch.setenv("KUBECONFIG", str(tmp_path / "kubeconfig"))
+    monkeypatch.setattr(
+        adapter,
+        "snapshot_runtime_artifacts",
+        lambda _target, snapshot_id: sealed.append(snapshot_id) or RuntimeSnapshot(snapshot_id, "a" * 64, 1, True),
+    )
+    release = threading.Event()
+    delivered: list[str] = []
+
+    def deliver(job: Any) -> None:
+        release.wait(10)
+        delivered.append(job.snapshot_id)
+
+    queue = EvidenceExportQueue(tmp_path / "lane-queue", deliver, retry_seconds=0)
+    ops = SealingOps()
+    agent = _agent(tmp_path, ops, [])
+    agent._evidence_queue = queue
+    agent._settings = replace(agent._settings, kubeconfig="synthetic-kubeconfig", checkpoint_enabled=False)
+    resolved = agent.resolve(0, "p", _inject)
+    stage_end_exports = ops.exports
+    learned = agent.learn(resolved)
+    # Learning returned while delivery was still held: export is off the critical path.
+    assert delivered == []
+    assert ops.exports == stage_end_exports
+    snapshot_id = snapshot_id_for(resolved.incident_id)
+    assert sealed == [snapshot_id]
+    job = queue.job(snapshot_id)
+    assert job is not None
+    assert job.state is ExportState.QUEUED
+    receipt = agent._receipt(Path(str(learned.artifacts_dir)))
+    assert receipt["reflection_drain"]["runtime_artifacts"]["delivery"] == "queued"
+    assert PersistentState.load(agent._settings.state_path).controllers[agent._settings.namespace].pending is None
+    release.set()
+    assert queue.drain(10) == []
+    assert delivered == [snapshot_id]
+    queue.close(drain=False)

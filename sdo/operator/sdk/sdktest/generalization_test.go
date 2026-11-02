@@ -13,7 +13,7 @@ func (sourcePhaseProgram) Spec() program.ProgramSpec {
 	return program.ProgramSpec{ID: "phase", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}
 }
 func (sourcePhaseProgram) Diagnose(_ context.Context, v program.ReadView, b program.Bindings) (program.Verdict, error) {
-	diff, err := v.DiffAgainstSource(b["service"])
+	diff, err := v.DiffAgainstSource(b.Objects["service"])
 	if err != nil {
 		return program.Verdict{}, err
 	}
@@ -24,8 +24,8 @@ func (sourcePhaseProgram) Diagnose(_ context.Context, v program.ReadView, b prog
 }
 func TestGeneralizationUsesDistinctRecordedPhases(t *testing.T) {
 	c := renameFixture(t)
-	args, _ := json.Marshal([]any{c.Bindings["service"]})
-	peer, _ := json.Marshal([]any{c.PeerBindings["service"]})
+	args, _ := json.Marshal([]any{c.Bindings.Objects["service"]})
+	peer, _ := json.Marshal([]any{c.PeerBindings.Objects["service"]})
 	// JSON decoding keeps this test executable before phase metadata is added.
 	raw := []byte(`[{"phase":"open","method":"DiffAgainstSource","arguments":` + string(args) + `,"result":{"changed":true}},{"phase":"fixed","method":"DiffAgainstSource","arguments":` + string(args) + `,"result":{"changed":false}},{"phase":"healthy","method":"DiffAgainstSource","arguments":` + string(peer) + `,"result":{"changed":false}}]`)
 	if err := json.Unmarshal(raw, &c.Recordings); err != nil {

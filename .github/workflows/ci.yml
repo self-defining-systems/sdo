@@ -1,9 +1,24 @@
 name: CI
 
 on:
+  # Durable base caches accelerate preparation. Every run publishes its own
+  # exact prepared graphs; native shards never rebuild after a cache miss.
   push:
-    branches: [main]
+    branches: [main, "vic-lsh/dev/**"]
+  workflow_dispatch:
+    inputs:
+      cold:
+        description: Ignore prepared caches to verify the cold path
+        type: boolean
+        default: false
   pull_request:
+<<<<<<< HEAD
+=======
+  # GitHub merge queue: CI must report on the queue's temporary
+  # gh-readonly-queue/... branch or the queue waits until it times out. Every
+  # fixed regression jobs run in the queue so
+  # the real merge commit is validated against the latest main.
+>>>>>>> origin/vic-lsh/dev/sdo-improve
   merge_group:
     types: [checks_requested]
   workflow_dispatch:
@@ -13,6 +28,7 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
+<<<<<<< HEAD
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -130,11 +146,337 @@ jobs:
             ci-shared-v1-${{ runner.os }}-${{ runner.arch }}-1.26.8-
             ci-go-${{ runner.os }}-${{ runner.arch }}-operator-1.26.8-
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc
+=======
+  # A cancelled base-branch run saves no cache; only PR runs replace each other.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Every action is pinned to a commit (the tag it was taken from is in the
+# comment), and uv installs exactly uv.lock.
+env:
+  # Bound parent and nested Go compilers on the two-core hosted runner.
+  GOMAXPROCS: "2"
+  GOFLAGS: "-p=2 -trimpath"
+  SDO_PYTEST_WORKERS: "2"
+
+jobs:
+  prepare-go:
+    name: prepare shared Go builds (normal)
+    env:
+      GOMAXPROCS: '4'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      schema_identity: ${{ steps.schema.outputs.value }}
+    steps:
+      - name: Select prepared compiler cache
+        run: echo "GOCACHE=${{ runner.temp }}/sdo-go-build-normal" >> "$GITHUB_ENV"
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: 1.26.8
+          cache: false
+      - name: Restore the normal compiler and module caches
+        if: inputs.cold != true
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        id: base-normal
+        with:
+          path: |
+            ${{ runner.temp }}/sdo-go-build-normal
+            ~/go/pkg/mod
+            .fastloop/test-bin
+          key: ci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            ci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
+            ci-prepared-v4-normal-${{ runner.os }}-${{ runner.arch }}-1.26.8-
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
+        with:
+          version: 0.9.24
+          python-version: '3.12'
+          enable-cache: true
+      - name: Enforce standing PR execution limits
+        run: |
+          uv sync --locked --all-extras
+          uv run python scripts/check_ci_budget.py
+      - name: Compile dependency graphs outside operation timeouts
+        id: compile
+        run: timeout --kill-after=5s 230s bash scripts/prepare_go_ci.sh "normal"
+      - name: Check formatting
+        run: bash scripts/format_code.sh --check
+      - name: Check static contracts
+        run: bash scripts/check_errors.sh --python-only
+      - name: Prepare Python adapter executables
+        run: bash scripts/python_go_tools.sh prepare
+      - name: Publish prepared Python Go tools
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: prepared-python-go-tools
+          path: .fastloop/python-go-tools.tar
+          if-no-files-found: error
+          retention-days: 1
+      - name: Keep only the source-bound test executable
+        run: |
+          current="$(python3 scripts/operator_test_binary.py)"
+          test -f "$current"
+          find .fastloop/test-bin -maxdepth 1 -type f -name 'sdo-operator-*' ! -samefile "$current" -delete
+      - name: Bind image schema to the compiled source
+        id: schema
+        run: |
+          identity="$(cd sdo/operator && go run ./cmd/sdo-operator schema-identity)"
+          echo "value=${identity}" >> "$GITHUB_OUTPUT"
+      - name: Pack Python sources and tools
+        run: bash scripts/go_ci_artifacts.sh pack python "${{ runner.temp }}/prepared-normal"
+      - name: Transfer only sources and tools to compiler-free Python jobs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: prepared-python
+          path: |
+            ${{ runner.temp }}/prepared-normal/modules.tar.zst
+            ${{ runner.temp }}/prepared-normal/tools.tar.zst
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+      - name: Save the durable normal build
+        if: inputs.cold != true && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/vic-lsh/dev/sdo-improve')
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ${{ runner.temp }}/sdo-go-build-normal
+            ~/go/pkg/mod
+            .fastloop/test-bin
+          key: ${{ steps.base-normal.outputs.cache-primary-key }}
+      - name: Publish this run's normal build
+        id: run-normal
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ${{ runner.temp }}/sdo-go-build-normal
+            ~/go/pkg/mod
+            .fastloop/test-bin
+          key: ci-run-v1-normal-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.sha }}
+  prepare-go-race:
+    name: prepare shared Go builds (race)
+    env:
+      GOMAXPROCS: '4'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Select prepared compiler cache
+        run: echo "GOCACHE=${{ runner.temp }}/sdo-go-build-race" >> "$GITHUB_ENV"
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: 1.26.8
+          cache: false
+      - name: Restore the race compiler cache
+        if: inputs.cold != true
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        id: base-race
+        with:
+          path: ${{ runner.temp }}/sdo-go-build-race
+          key: ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
+            ci-prepared-v4-race-${{ runner.os }}-${{ runner.arch }}-1.26.8-
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
+        with:
+          version: 0.9.24
+          python-version: '3.12'
+          enable-cache: true
+      - name: Enforce standing PR execution limits
+        run: |
+          uv sync --locked --all-extras
+          uv run python scripts/check_ci_budget.py
+      - name: Use all preparation CPUs for the race graph
+        run: echo "GOFLAGS=-p=4 -trimpath" >> "$GITHUB_ENV"
+      - name: Check Go static contracts and prepare selected executables
+        id: compile
+        run: |
+          eval "$(bash scripts/link_cache.sh --shell)"
+          # Start validation as soon as its operator archives exist. Runtime
+          # graph compilation overlaps those checks without compiling the
+          # operator's cold dependency graph twice.
+          export SDO_GO_OPERATOR_READY="$RUNNER_TEMP/operator-ready"
+          export SDO_GO_RUNTIME_READY="$RUNNER_TEMP/runtime-ready"
+          mkfifo "$SDO_GO_OPERATOR_READY" "$SDO_GO_RUNTIME_READY"
+          # Hold the receipts open so an early quality failure cannot block a
+          # compiler writer; the final wait still propagates that failure.
+          exec 3<> "$SDO_GO_OPERATOR_READY" 4<> "$SDO_GO_RUNTIME_READY"
+          (
+            read -r -t 230 ready < "$SDO_GO_OPERATOR_READY"
+            GOFLAGS="$GOFLAGS -race" bash scripts/check_errors.sh --go-only --defer-prepared
+          ) &
+          quality_pid=$!
+          # Python collection and its source checkout do not depend on Go's
+          # archives. Keep that discovery off the cold graph's serial tail.
+          (
+            uv run python scripts/init_test_prereqs.py
+            uv run python scripts/python_cost_plan.py --inventory-only --output .fastloop/test-bin/python-test-plan.json
+          ) &
+          inventory_pid=$!
+          trap 'kill "$quality_pid" "$inventory_pid" 2>/dev/null || true; wait "$quality_pid" 2>/dev/null || true; wait "$inventory_pid" 2>/dev/null || true' EXIT
+          timeout --kill-after=5s 230s bash scripts/prepare_go_ci.sh "race"
+          wait "$inventory_pid"
+          python3 scripts/go_cost_plan.py --prepared --include-dedicated --inventory-only --output .fastloop/test-bin/go-test-plan.json
+          python3 scripts/pr_test_plan.py --go .fastloop/test-bin/go-test-plan.json --python .fastloop/test-bin/python-test-plan.json --output .fastloop/test-bin/pr-test-plan.json --nightly-manifest "$RUNNER_TEMP/nightly-tests.md"
+          python3 scripts/prepared_contracts.py --quality-checks --plan .fastloop/test-bin/pr-test-plan.json --output "$RUNNER_TEMP/prepared-contracts"
+          for bin in 0 1; do
+            cp "$RUNNER_TEMP/nightly-tests.md" "$RUNNER_TEMP/prepared-contracts/$bin/"
+            tar -I 'zstd -T2 -3' -cf "$RUNNER_TEMP/contract-$bin.tar.zst" -C "$RUNNER_TEMP/prepared-contracts/$bin" .
+            du -h "$RUNNER_TEMP/contract-$bin.tar.zst"
+          done
+          # Compress immutable outputs while quality checks finish, but never
+          # publish a binary until every independent check has succeeded.
+          wait "$quality_pid"
+          trap - EXIT
+      - name: Save the durable race build
+        if: inputs.cold != true && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/vic-lsh/dev/sdo-improve')
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ${{ runner.temp }}/sdo-go-build-race
+          key: ${{ steps.base-race.outputs.cache-primary-key }}
+      - name: Publish selected contract executables for bin 0
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: prepared-contract-0
+          path: ${{ runner.temp }}/contract-0.tar.zst
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+      - name: Publish selected contract executables for bin 1
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: prepared-contract-1
+          path: ${{ runner.temp }}/contract-1.tar.zst
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+
+  python:
+    name: ${{ matrix.name }}
+    needs: prepare-go
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: static analysis
+            shard: fastloop
+            run: ./scripts/test_python.sh -m "not go_integration"
+          - name: unit tests
+            shard: core
+            run: ./scripts/test_python.sh -m "not go_integration"
+    steps:
+      - name: Select prepared compiler cache
+        run: echo "GOCACHE=${{ runner.temp }}/sdo-go-build-normal" >> "$GITHUB_ENV"
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # A mutable PR merge ref can change after a retarget; test this event.
+          ref: ${{ github.sha }}
+      - name: Download this run's normal build
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: prepared-python
+          path: ${{ runner.temp }}/prepared-normal
+      - name: Unpack this run's normal build
+        run: bash scripts/go_ci_artifacts.sh unpack python "${{ runner.temp }}/prepared-normal"
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        if: matrix.name == 'static analysis' || matrix.name == 'architecture' || matrix.name == 'unit tests'
+        with:
+          go-version: "1.26.8"
+          cache: false
+      - name: Enforce compiler-free Python jobs
+        run: |
+          echo "SDO_UNIT_REAL_GO=$(command -v go)" >> "$GITHUB_ENV"
+          echo "$PWD/scripts/unit-tools" >> "$GITHUB_PATH"
+      - name: Check out the SREGym harness
+        run: |
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          python3 scripts/init_test_prereqs.py
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
         with:
           version: "0.9.24"
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --locked --all-extras
+      - name: Download prepared Python Go tools
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: prepared-python-go-tools
+          path: ${{ runner.temp }}
+      - name: Verify and select prepared Python Go tools
+        run: |
+          mkdir -p .fastloop/python-go-tools
+          tar -xf "$RUNNER_TEMP/python-go-tools.tar" -C .fastloop/python-go-tools
+          bash scripts/python_go_tools.sh env >> "$GITHUB_ENV"
+      - name: Run Python shard
+        run: ${{ matrix.run }} --durations=20
+        env:
+          SDO_PYTEST_SHARD: ${{ matrix.shard }}
+          COVERAGE_FILE: .coverage.${{ matrix.shard }}
+      - name: Publish Python shard coverage
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: python-coverage-${{ matrix.shard }}
+          path: .coverage.${{ matrix.shard }}
+          include-hidden-files: true
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 1
+
+  contracts:
+    name: native contracts (${{ matrix.bin }})
+    needs: [prepare-go, prepare-go-race]
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    strategy:
+      fail-fast: false
+      matrix:
+        bin: [0, 1]
+    steps:
+      - name: Select prepared compiler cache
+        run: echo "GOCACHE=${{ runner.temp }}/sdo-go-build-normal" >> "$GITHUB_ENV"
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: "1.26.8"
+          cache: false
+      - name: Restore this run's one normal Go cache
+        uses: ./.github/actions/restore-go-caches
+        with:
+          caches: |
+            [
+              {
+                "path": "${{ runner.temp }}/sdo-go-build-normal\n~/go/pkg/mod\n.fastloop/test-bin\n",
+                "key": "ci-run-v1-normal-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.sha }}",
+                "required": true
+              }
+            ]
+      - name: Restore only this shard's selected race executables and plan
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: prepared-contract-${{ matrix.bin }}
+          path: ${{ runner.temp }}/contract-download
+      - name: Unpack selected race executables
+        run: |
+          mkdir -p "$RUNNER_TEMP/prepared-contracts"
+          tar -I zstd -xf "$RUNNER_TEMP/contract-download/contract-${{ matrix.bin }}.tar.zst" -C "$RUNNER_TEMP/prepared-contracts"
+          cp "$RUNNER_TEMP/prepared-contracts/nightly-tests.md" "$RUNNER_TEMP/nightly-tests.md"
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
+>>>>>>> origin/vic-lsh/dev/sdo-improve
+        with:
+          version: "0.9.24"
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --locked --all-extras
+<<<<<<< HEAD
       - name: All Go modules (one shared compiler and module cache)
         run: bash ./scripts/test_go_ci.sh
 
@@ -150,10 +492,66 @@ jobs:
   required-pr-ci:
     name: Required PR CI
     needs: [checks, tests]
+=======
+      - name: Share linked binaries between tests
+        run: bash scripts/link_cache.sh >> "$GITHUB_ENV"
+      - name: Run the fixed regression set
+        run: uv run --extra test python scripts/run_ci_contracts.py --plan "$RUNNER_TEMP/prepared-contracts/pr-test-plan.json" --prepared "$RUNNER_TEMP/prepared-contracts" --bin '${{ matrix.bin }}'
+        env:
+          GOPROXY: "off"
+          GOSUMDB: "off"
+          SDO_PYTEST_COST_OUTPUT: ${{ runner.temp }}/python-test-costs.json
+      - name: Record deferred checks and timings without artifact transfers
+        if: always()
+        run: |
+          if test -f "$RUNNER_TEMP/nightly-tests.md"; then
+            cat "$RUNNER_TEMP/nightly-tests.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if test -f "$RUNNER_TEMP/python-test-costs.json"; then
+            cat "$RUNNER_TEMP/python-test-costs.json"
+          fi
+
+  required-pr-ci:
+    name: Required PR CI
+    needs: [prepare-go, prepare-go-race, python, contracts]
+>>>>>>> origin/vic-lsh/dev/sdo-improve
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 1
     steps:
+<<<<<<< HEAD
       - name: Require both jobs to succeed
+=======
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Enforce prompt budget changes in every commit
+        env:
+          BUDGET_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          BUDGET_HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+        run: python3 scripts/check_prompt_budgets.py --base "$BUDGET_BASE" --head "$BUDGET_HEAD"
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
+        if: needs.python.result == 'success'
+        with:
+          version: "0.9.24"
+          python-version: "3.12"
+          enable-cache: true
+      - name: Download every Python shard's coverage
+        if: needs.python.result == 'success'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: python-coverage-*
+          path: python-coverage
+      - name: Enforce coverage on the complete Python suite
+        if: needs.python.result == 'success'
+        run: |
+          test -f python-coverage/python-coverage-core/.coverage.core
+          test -f python-coverage/python-coverage-fastloop/.coverage.fastloop
+          uv run --extra test coverage combine python-coverage/python-coverage-core python-coverage/python-coverage-fastloop
+          uv run --extra test coverage report
+      - name: Require every applicable CI job to succeed
+>>>>>>> origin/vic-lsh/dev/sdo-improve
         env:
           CHECKS: ${{ needs.checks.result }}
           TESTS: ${{ needs.tests.result }}

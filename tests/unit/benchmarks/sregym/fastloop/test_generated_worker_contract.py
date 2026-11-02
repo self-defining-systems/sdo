@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+<<<<<<< HEAD:tests/unit/benchmarks/sregym/fastloop/test_generated_worker_contract.py
 import io
+=======
+import hashlib
+>>>>>>> origin/vic-lsh/dev/sdo-improve:tests/unit/benchmarks/sregym/fastloop/test_scripted_worker_contract.py
 import json
 import os
 import shutil
@@ -18,17 +22,20 @@ from sdo.agents.responder import ReflectionTurn
 from sdo.contracts import IncidentClosure
 from tests.unit.benchmarks.sregym.fastloop import script_harness as scripts
 
+pytestmark = pytest.mark.go_integration
+
 ROOT = Path(__file__).resolve().parents[5]
 OPERATOR = ROOT / "sdo/operator"
 APP_FIXTURE = ROOT / "tests/fixtures/sdo/playbook_program_app"
 
 
-def _accepted_app(tmp_path: Path) -> Path:
+def _accepted_app(tmp_path: Path, *, verified: bool = False) -> Path:
     app = tmp_path / "app"
     shutil.copytree(APP_FIXTURE, app)
     memory = app / ".sdo"
     shutil.rmtree(memory / "playbooks/service-targetport-mismatch")
     shutil.rmtree(memory / "corpus/targetport-mismatch")
+    shutil.rmtree(memory / "diagnostics/detectors/incidents/routing-relations")
     (memory / "schema-version").write_text("3\n")
     (memory / "goal.md").write_text("---\nschema_version: 1\nowner: human\n---\n\nKeep the app healthy.\n")
     (memory / "arch.md").write_text("---\nschema_version: 1\nowner: health_judge\n---\n\nOne service.\n")
@@ -38,6 +45,51 @@ def _accepted_app(tmp_path: Path) -> Path:
         '---\nschema_version: 1\nowner: "responder"\nfault_class: "missing-configmap"\n'
         'originating_incident: "fixture"\n---\n\n' + missing.read_text().split("---\n", 2)[-1]
     )
+    outcomes = memory / "outcomes"
+    outcomes.mkdir()
+    record: dict[str, object] = {"schema_version": 1, "incident_id": "scripted-incident", "classification": "failed"}
+    if verified:
+        resource = {"api_version": "v1", "kind": "Service", "namespace": "demo", "name": "front"}
+        record["classification"] = "success"
+        record["findings"] = [
+            {
+                "detector_id": "routing-relations",
+                "rule_id": "targetport",
+                "status": "active",
+                "severity": "warn",
+                "summary": "Service target port has no listener",
+                "evidence": "selected pod exposes a different port",
+                "fingerprint": "front-targetport",
+                "primary_resource": resource,
+            }
+        ]
+        record["repair_actions"] = [
+            {
+                "action_id": "restore-front-port",
+                "kind": "kubectl",
+                "target": "Service/demo/front",
+                "summary": "restore accepted target port",
+                "details": "target port patched and read back",
+                "success": True,
+                "resources": [resource],
+                "started_at": "2026-01-01T00:00:01Z",
+                "completed_at": "2026-01-01T00:00:02Z",
+            }
+        ]
+        record["detector_history"] = [
+            {
+                "detector_id": "routing-relations",
+                "status": "clear",
+                "evaluated_at": "2026-01-01T00:00:03Z",
+            }
+        ]
+        record["confirmed_root_causes"] = [
+            {
+                "summary": "routing fault",
+                "resources": [resource],
+            }
+        ]
+    (outcomes / f"{hashlib.sha256(b'scripted-incident').hexdigest()}.json").write_text(json.dumps(record))
     for args in (
         ("init", "-q"),
         ("add", "."),
@@ -55,11 +107,33 @@ def _accepted_app(tmp_path: Path) -> Path:
     return app
 
 
+def _captured_repair_receipts(app: Path) -> str:
+    """Mirror memory.CaptureRepairReceipts: original receipts in captured recordings."""
+    record = json.loads(next((app / ".sdo/outcomes").glob("*.json")).read_text())
+    return json.dumps(
+        [
+            {
+                "method": "RepairReceipt",
+                "arguments": [],
+                "result": {
+                    "id": action["action_id"],
+                    "incident_id": record["incident_id"],
+                    "success": True,
+                    "started_at": action["started_at"],
+                    "completed_at": action["completed_at"],
+                    "resources": action["resources"],
+                },
+            }
+            for action in record.get("repair_actions", [])
+        ]
+    )
+
+
 @pytest.mark.parametrize("drift", [False, True], ids=["ordinary-repair", "verified-drift-repair"])
 def test_scripted_reflector_writes_program_that_passes_real_memory_check(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operator_binary: Path, drift: bool
 ) -> None:
-    app = _accepted_app(tmp_path)
+    app = _accepted_app(tmp_path, verified=True)
     fixture = APP_FIXTURE / ".sdo/corpus/targetport-mismatch"
     capture = tmp_path / "capture"
     capture.mkdir()
@@ -68,14 +142,12 @@ def test_scripted_reflector_writes_program_that_passes_real_memory_check(
     healthy = json.loads((fixture / "healthy.json").read_text())
     fixed["services"].extend(healthy["services"])
     fixed["pods"].extend(healthy["pods"])
-    open_at = "detect" if drift else "pre-apply"
-    (capture / f"open@{open_at}.json").write_text(json.dumps(opened))
-    (capture / f"open@{open_at}-recordings.json").write_text("[]")
-    if drift:
-        # Later captures must not replace the original drift evidence.
-        (capture / "open@pre-apply.json").write_text(json.dumps(fixed))
-        (capture / "open@pre-apply-recordings.json").write_text("[]")
+    (capture / "open@detect.json").write_text(json.dumps(opened))
+    (capture / "open@detect-recordings.json").write_text(_captured_repair_receipts(app))
     (capture / "fixed.json").write_text(json.dumps(fixed))
+    # Freeze the hand-written known-good state as the controller's reference.
+    (capture / "healthy").mkdir()
+    (capture / "healthy/healthy.json").write_text(json.dumps(fixed))
     monkeypatch.setenv("SDO_CAPTURED_CORPUS_DIR", str(capture))
     monkeypatch.setenv("SDO_ACTOR", "responder")
     monkeypatch.setenv("SDO_PHASE", "reflection")
@@ -119,10 +191,10 @@ def test_scripted_reflector_writes_program_that_passes_real_memory_check(
     assert "originating_incident: scripted-incident" in (program / "README.md").read_text()
     labels = json.loads(next((app / ".sdo/corpus").glob("*/labels.json")).read_text())
     assert labels["provenance"]["incident_id"] == "scripted-incident"
-    assert labels["provenance"]["open_at"] == open_at
+    assert labels["provenance"]["open_at"] == "detect"
     case = next((app / ".sdo/corpus").iterdir())
-    assert (case / "open.json").read_bytes() == (capture / f"open@{open_at}.json").read_bytes()
-    assert (case / "recordings.json").read_bytes() == (capture / f"open@{open_at}-recordings.json").read_bytes()
+    assert (case / "open.json").read_bytes() == (capture / "open@detect.json").read_bytes()
+    assert (case / "recordings.json").read_bytes() == (capture / "open@detect-recordings.json").read_bytes()
 
 
 def test_respond_consumes_real_go_tool_responses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -155,6 +227,7 @@ def test_respond_consumes_real_go_tool_responses(tmp_path: Path, monkeypatch: py
     plans, programs = scripts._matched_plans(diagnosis)
     assert set(programs) == {"service-targetport-mismatch", "image-pull-failure"}
     assert len(plans) == 2
+<<<<<<< HEAD:tests/unit/benchmarks/sregym/fastloop/test_generated_worker_contract.py
     assert scripts._tool("apply", *plans)["healthy"] is True
     assert scripts._tool("verify")["healthy"] is True
 
@@ -170,3 +243,61 @@ def test_respond_consumes_real_go_tool_responses(tmp_path: Path, monkeypatch: py
     }
     assert actual.verification_evidence[0].passed
     assert not actual.repair_actions
+=======
+    assert scripted_worker._tool("apply", *plans)["healthy"] is True
+    pending = json.loads((tmp_path / "verify-pending.json").read_text())
+    assert pending["healthy"] is False
+    assert not pending.get("incident_verified")
+    verified = scripted_worker._tool("verify")
+    assert verified["healthy"] is True
+    assert verified["incident_verified"]
+
+
+@pytest.mark.parametrize("verified", [False, True])
+def test_scripted_reflection_note_commits_for_verified_and_unverified_outcomes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operator_binary: Path, verified: bool
+) -> None:
+    app = _accepted_app(tmp_path, verified=verified)
+    monkeypatch.setenv("SDO_SCRIPTED_MEMORY_CHANGE", "1")
+    monkeypatch.setenv("SDO_CAPTURED_CORPUS_DIR", str(tmp_path / "no-captured-pair"))
+    monkeypatch.setenv("SDO_ACTOR", "responder")
+    monkeypatch.setenv("SDO_PHASE", "reflection")
+    monkeypatch.setenv("SDO_BASE_COMMIT", "HEAD")
+    monkeypatch.setenv("SDO_OPERATOR_ROOT", str(OPERATOR))
+    monkeypatch.setenv("SDO_INCIDENT_ID", "scripted-incident")
+    command = scripted_worker._command
+
+    def real_operator(argv: list[str], *, timeout: int = 180) -> str:
+        return command([str(operator_binary) if value == "sdo-operator" else value for value in argv], timeout=timeout)
+
+    monkeypatch.setattr(scripted_worker, "_command", real_operator)
+    closure = IncidentClosure()
+    closure.request.namespace = "demo"
+    if verified:
+        # A verified hand repair needs an executable step; README notes are
+        # judgement only and the real memory check names the uncovered repair.
+        with pytest.raises(
+            RuntimeError, match=r'reflection\.program-required: recorded hand repair "restore-front-port"'
+        ):
+            scripted_worker.ScriptedReflector().resume(worktree=app, incident_id="scripted-incident", closure=closure)
+        return
+    turn = scripted_worker.ScriptedReflector().resume(worktree=app, incident_id="scripted-incident", closure=closure)
+    assert turn.learning_decision == "updated"
+    assert turn.playbook_ids == ["verified-repair-notes"]
+    notes = app / ".sdo/playbooks/verified-repair-notes/README.md"
+    assert "scripted-incident" in notes.read_text()
+    assert "verified-repair-notes/README.md" in (app / ".sdo/playbooks/README.md").read_text()
+    assert not list((app / ".sdo/playbooks").rglob("*.go"))
+
+
+@pytest.mark.parametrize("typed", [False, True])
+def test_scripted_binding_args_extract_object_bindings(typed: bool) -> None:
+    objects = {"service": {"kind": "Service", "namespace": "app", "name": "front"}}
+    bindings = {"objects": objects, "values": {}} if typed else objects
+    assert scripted_worker._binding_args(bindings) == ["--bind", "service=Service/app/front"]
+
+
+def test_scripted_binding_args_never_drop_scalar_values() -> None:
+    with pytest.raises(ValueError, match="scalar value bindings"):
+        scripted_worker._binding_args({"objects": {}, "values": {"count": 2}})
+>>>>>>> origin/vic-lsh/dev/sdo-improve:tests/unit/benchmarks/sregym/fastloop/test_scripted_worker_contract.py
