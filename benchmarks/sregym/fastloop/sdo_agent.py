@@ -574,10 +574,9 @@ class SdoPersistentAgent:
             namespace=self._settings.runtime_config.controller_namespace,
             kubeconfig=Path(str(self._settings.kubeconfig)),
         )
-        pods = json.loads(response.stdout)["items"]
-        if len(pods) != 1:
-            raise RuntimeError("continuity requires exactly one controller pod")
-        pod = pods[0]
+        from benchmarks.sregym.fastloop.continuity import live_controller_pod
+
+        pod = live_controller_pod(json.loads(response.stdout)["items"])
         statuses = pod["status"]["containerStatuses"]
         return {
             "uid": pod["metadata"]["uid"],

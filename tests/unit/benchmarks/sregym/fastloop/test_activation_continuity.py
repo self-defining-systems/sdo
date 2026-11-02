@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from benchmarks.sregym.fastloop.continuity import check_activations
+from benchmarks.sregym.fastloop.continuity import check_activations, live_controller_pod
 
 
 def trace(gap: float = 0.2, skip: bool = False, paused: bool = False) -> str:
@@ -58,3 +58,15 @@ def test_missing_post_activation_evaluations_fail() -> None:
     rows, error = check_activations(logs, {"uid": "one"}, {"uid": "one"}, max_gap=1)
     assert error
     assert rows[0].evaluations_after == 0
+
+
+def test_live_controller_pod_ignores_pods_of_finished_job_attempts() -> None:
+    def pod(uid: str, phase: str, deleting: bool = False) -> dict:
+        metadata = {"uid": uid, **({"deletionTimestamp": "2026-01-01T00:00:00Z"} if deleting else {})}
+        return {"metadata": metadata, "status": {"phase": phase}}
+
+    # The controller exits by design after a health refresh; Kubernetes starts a replacement.
+    assert live_controller_pod([pod("old", "Failed"), pod("new", "Running")])["metadata"]["uid"] == "new"
+    for pods in ([pod("old", "Failed")], [pod("a", "Running"), pod("b", "Pending")], [pod("a", "Running", True)]):
+        with pytest.raises(RuntimeError, match="exactly one live controller pod"):
+            live_controller_pod(pods)
