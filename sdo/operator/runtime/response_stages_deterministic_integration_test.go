@@ -10,6 +10,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"sdo.dev/operator/apihistory"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -439,25 +440,30 @@ func (r *pipelineDeadlineRollout) Wait(ctx context.Context, _ []sdk.ObjectRef) e
 	return r.failure
 }
 
+// A rollout that cannot be observed in place is sampled under a one
+// millisecond bound. That bound is measured on the virtual clock: on the wall
+// clock any scheduler stall past 1 ms made the remaining wait negative.
 func TestDeterministicResponseStageRolloutResultsKeepWritesAndCapOwnWait(t *testing.T) {
 	for _, pending := range []bool{false, true} {
 		t.Run(fmt.Sprint(pending), func(t *testing.T) {
-			loop, state := pipelineTestLoop(t, true)
-			rollout := &pipelineDeadlineRollout{failure: errors.New("synthetic rollout failed")}
-			want := "rollout_failed"
-			if pending {
-				rollout.failure = context.DeadlineExceeded
-				want = "rollout_pending_at_handoff"
-			}
-			loop.Executor.Rollouts = rollout
-			report, err := (&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}).Run(context.Background(), state)
-			if err != nil {
-				t.Fatal(err)
-			}
-			attempt := report.Mitigations[0]
-			if attempt.Result != want || !attempt.ApplyReceipt.Applied || attempt.ApplyReceipt.RolledBack || attempt.PostApplyDiagnose == nil || rollout.observed <= 0 || rollout.observed > DefaultStageBudget {
-				t.Fatalf("stage rollout result %s: %v, wait=%s", want, report, rollout.observed)
-			}
+			synctest.Test(t, func(t *testing.T) {
+				loop, state := pipelineTestLoop(t, true)
+				rollout := &pipelineDeadlineRollout{failure: errors.New("synthetic rollout failed")}
+				want := "rollout_failed"
+				if pending {
+					rollout.failure = context.DeadlineExceeded
+					want = "rollout_pending_at_handoff"
+				}
+				loop.Executor.Rollouts = rollout
+				report, err := (&DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }}).Run(context.Background(), state)
+				if err != nil {
+					t.Fatal(err)
+				}
+				attempt := report.Mitigations[0]
+				if attempt.Result != want || !attempt.ApplyReceipt.Applied || attempt.ApplyReceipt.RolledBack || attempt.PostApplyDiagnose == nil || rollout.observed <= 0 || rollout.observed > DefaultStageBudget {
+					t.Fatalf("stage rollout result %s: %v, wait=%s", want, report, rollout.observed)
+				}
+			})
 		})
 	}
 }

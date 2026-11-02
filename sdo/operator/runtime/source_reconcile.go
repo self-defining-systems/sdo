@@ -272,6 +272,16 @@ func preserveSourceControllerFields(next, observed *unstructured.Unstructured) {
 	}
 }
 
+// budgetEnded is true once a context is canceled or its deadline has passed.
+// A timer may not have canceled it yet at the exact deadline instant.
+func budgetEnded(ctx context.Context) bool {
+	if ctx.Err() != nil {
+		return true
+	}
+	deadline, bounded := ctx.Deadline()
+	return bounded && lifecycleio.Until(deadline) <= 0
+}
+
 // waitSourceConvergence polls until waitCtx ends. Ordinary source-field
 // residuals are terminal after rollout; old-template capacity may still
 // disappear after Deployment status reports completion. The final readback
@@ -279,7 +289,7 @@ func preserveSourceControllerFields(next, observed *unstructured.Unstructured) {
 func (e PlanExecutor) waitSourceConvergence(waitCtx, readCtx context.Context, incident IncidentRequest, result *PlanApplicationResult) (*contracts.RolloutPending, error) {
 	for {
 		observeCtx := waitCtx
-		if waitCtx.Err() != nil {
+		if budgetEnded(waitCtx) {
 			observeCtx = readCtx
 		}
 		err := e.observeSourceResiduals(observeCtx, incident, result)
@@ -295,6 +305,11 @@ func (e PlanExecutor) waitSourceConvergence(waitCtx, readCtx context.Context, in
 			for _, path := range report.ResidualPaths {
 				rolling = rolling || strings.HasPrefix(path, "rollout.")
 			}
+		}
+		if observeCtx != readCtx && budgetEnded(waitCtx) {
+			// The wait budget ended during this pass, so its reads may have run
+			// with no time left. Read again inside the reserved share.
+			continue
 		}
 		if !rolling || observeCtx == readCtx {
 			// Preserve the last measured residual, even when the final API read can
