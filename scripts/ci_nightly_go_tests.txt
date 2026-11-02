@@ -42,9 +42,6 @@ TestAgentScriptJudgeMemoryCheckAndBroker
 TestPartialPlaybookPublication
 TestLateInitCauseDetectorPassesReflectionCheckWithReplayOff
 TestWorkedExamplesPassTheReflectionMemoryCheck
-TestInstallExistingAdoptedVerifiedSeedOnboarding
-TestAdoptionCompilesAsIsAndLaterValidationStillRejects
-TestIncidentJobCompilerMountsRunLearnedProgramTestsAndReplay
 # Merge of dev into main: slowest runtime integration tests (2 s and up on a 16-way run). Each family keeps fast contracts in PR CI.
 # Simulation campaigns (seeded schedules, crash cuts, fault injection). PRs run a three-seed prefix of every sweep (SDO_SIM_FULL=1 runs all seeds nightly) and keep TestSimScheduleDeterministicPipelineEvidence, TestSimNextIncidentAfterFailedRepair, TestSimScheduleUndetectedLearningRequiresCompleteTransition and every fuzz seed.
 TestSimHealthRefreshInterruptedAndAdopted

@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,6 +45,9 @@ func TestIncidentJobUsesControllerSeedWithoutCopy(t *testing.T) {
 		if m.MountPath == "/usr/local/go" || m.MountPath == "/go" {
 			if m.Name != "repository" || !m.ReadOnly {
 				t.Fatalf("compiler authority: %+v", m)
+			}
+			if !strings.Contains(m.SubPath, toolchain.SharedSubPath("controller:compiler")) {
+				t.Fatalf("compiler mount is not bound to the controller image: %+v", m)
 			}
 			mounts[m.MountPath] = true
 		}

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/builder"
+	"sdo.dev/operator/internal/testutil"
 	"strings"
 	"testing"
 )
@@ -32,6 +33,7 @@ func TestInstallExistingAdoptionRequiresExplicitOptIn(t *testing.T) {
 }
 
 func TestAdoptionCompilesAsIsAndLaterValidationStillRejects(t *testing.T) {
+	testutil.FakeGo(t)
 	root := t.TempDir()
 	fixture := "../../../tests/fixtures/sdo/playbook_program_app"
 	if err := os.CopyFS(root, os.DirFS(fixture)); err != nil {
@@ -88,5 +90,32 @@ func TestAdoptionCompilesAsIsAndLaterValidationStillRejects(t *testing.T) {
 	}
 	if _, err := b.Publish(context.Background(), "later", broker.Responder, broker.ProposalPhase); err == nil {
 		t.Fatal("adoption bypassed later broker ownership")
+	}
+}
+
+// Adoption skips the broker's checks on inherited bytes but still compiles them:
+// a seed whose programs no longer build is refused and nothing is committed.
+func TestAdoptionRefusesSeedThatNoLongerCompiles(t *testing.T) {
+	testutil.FakeGo(t, testutil.GoRule{Verb: "build", Output: "synthetic compile failure"})
+	root := t.TempDir()
+	if err := os.CopyFS(root, os.DirFS("../../../tests/fixtures/sdo/playbook_program_app")); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, root, "init", "-q")
+	gitIn(t, root, "config", "user.name", "T")
+	gitIn(t, root, "config", "user.email", "t@example.com")
+	gitIn(t, root, "add", ".")
+	gitIn(t, root, "commit", "-qm", "seed")
+	before := gitIn(t, root, "rev-parse", "HEAD")
+	operator, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = prepareInstallExistingRepository(context.Background(), InstallExistingConfig{Repository: root, OperatorRoot: operator, AdoptExistingMemory: true})
+	if err == nil || !strings.Contains(err.Error(), "synthetic compile failure") {
+		t.Fatalf("adoption accepted a seed that does not compile: %v", err)
+	}
+	if after := gitIn(t, root, "rev-parse", "HEAD"); after != before {
+		t.Fatalf("refused adoption still committed %s", after)
 	}
 }

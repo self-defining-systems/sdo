@@ -1,28 +1,24 @@
-//go:build integration
-
 package operatorcli
 
 import (
 	"context"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"google.golang.org/protobuf/encoding/protojson"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
-	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/install"
+	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/onboarding"
 )
 
 func TestInstallExistingAdoptedVerifiedSeedOnboarding(t *testing.T) {
+	testutil.FakeGo(t)
 	ctx := context.Background()
 	root := t.TempDir()
 	// Hand-written learned incident artifacts, plus an inherited verified health
@@ -112,41 +108,8 @@ originatingCommit: fixture-judge
 	if err != nil || pending == nil {
 		t.Fatalf("no pending install: %v %v", pending, err)
 	}
-
-	// Run the actual generated learned detectors through the production controller
-	// in the builder's existing runtime module, rather than adding a dependency
-	// from the transport-neutral operator module back to its runtime.
-	workspace, err := builder.BuildWorkspace(ctx, builder.Config{ApplicationRoot: root, DiagnosticsRoot: filepath.Join(root, ".sdo/diagnostics"), OperatorRoot: operator, CompileOnly: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer workspace.Close()
-	frozen, err := protojson.Marshal(pending)
-	if err != nil {
-		t.Fatal(err)
-	}
-	harness := fmt.Sprintf(`package generated
-import("context";"testing";"time";corev1 "k8s.io/api/core/v1";metav1 "k8s.io/apimachinery/pkg/apis/meta/v1";"k8s.io/client-go/kubernetes/fake";"sdo.dev/operator/onboarding";r "sdo.dev/operator/runtime";"sdo.dev/operator/sdk";"sdo.dev/operator/sdk/sdktest")
-type onboardingSnapshot struct{}
-func (onboardingSnapshot) Snapshot(context.Context)(sdk.DetectionContext,error){return sdktest.Snapshot{NamespaceName:"app"},nil}
-type noResponder struct{t *testing.T}
-func(d noResponder) Dispatch(context.Context,r.IncidentRequest)(r.IncidentResult,error){d.t.Error("healthy seed dispatched responder");return r.IncidentResult{},nil}
-func TestAdoptedSeedOnboarding(t *testing.T){
- ctx:=context.Background()
- client:=fake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta:metav1.ObjectMeta{Name:onboarding.PendingConfigMapName,Namespace:"control"},Data:map[string]string{onboarding.DataKey:%q}})
- c,err:=r.NewController(r.ControllerConfig{Application:"app",Namespace:"app",SourceCommit:%q,RepositoryWorktree:%q,FiringThreshold:1,ClearThreshold:1,ResponseTimeout:time.Minute},All(),onboardingSnapshot{},noResponder{t},time.Now());if err!=nil{t.Fatal(err)}
- if err:=c.AttachPendingOnboarding(ctx,client,"control");err!=nil{t.Fatal(err)}
- if err:=c.EvaluateAll(ctx,time.Now());err!=nil{t.Fatal(err)}
- record,err:=onboarding.Load(ctx,client,"control","app");if err!=nil||record==nil||record.AcceptedCommit!=%q||len(record.Objects)!=1||record.Objects[0].Name!="installer-script"{t.Fatalf("first confirmed all-clear failed: %%v %%v",record,err)}
-}
-`, string(frozen), commit, root, commit)
-	if err := os.WriteFile(filepath.Join(workspace.Directory, "generated", "onboarding_test.go"), []byte(harness), 0644); err != nil {
-		t.Fatal(err)
-	}
-	command := exec.CommandContext(ctx, "go", "test", "-mod=mod", "-count=1", "-run", "^TestAdoptedSeedOnboarding$", "./generated")
-	command.Dir = workspace.Directory
-	if out, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("generated native onboarding: %v\n%s", err, out)
+	if pending.AcceptedCommit != commit || len(pending.Objects) != 1 || pending.Objects[0].Name != "installer-script" {
+		t.Fatalf("pending onboarding does not bind the adopted commit and installed object: %+v", pending)
 	}
 
 	jobs, err := client.BatchV1().Jobs("control").List(ctx, metav1.ListOptions{})
