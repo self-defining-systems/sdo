@@ -190,8 +190,8 @@ jobs:
       - name: Enforce prompt budget changes in every commit
         if: github.event_name == 'pull_request'
         env:
-          BUDGET_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
-          BUDGET_HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          BUDGET_BASE: ${{ github.event.pull_request.base.sha }}
+          BUDGET_HEAD: ${{ github.event.pull_request.head.sha }}
         run: python3 scripts/check_prompt_budgets.py --base "$BUDGET_BASE" --head "$BUDGET_HEAD"
       - name: Require both jobs to succeed
         env:

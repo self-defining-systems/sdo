@@ -49,13 +49,9 @@ def test_required_ci_still_accounts_for_every_job() -> None:
     assert set(aggregate["needs"]) == jobs.keys() - {"required-pr-ci"}
 
 
-def test_prompt_budget_commit_policy_runs_only_where_commits_are_visible() -> None:
-    # The merge queue squashes the PR, so one mixed commit could never satisfy the per-commit policy.
+def test_required_ci_aggregate_step_runs_on_every_event() -> None:
     steps = workflow()["jobs"]["required-pr-ci"]["steps"]
-    budget = next(step for step in steps if "check_prompt_budgets" in step.get("run", ""))
-    assert budget["if"] == "github.event_name == 'pull_request'"
-    final = next(step for step in steps if "CHECKS" in step.get("env", {}))
-    assert "if" not in final
+    assert "if" not in next(step for step in steps if "CHECKS" in step.get("env", {}))
 
 
 @pytest.mark.parametrize(

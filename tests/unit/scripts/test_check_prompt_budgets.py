@@ -110,7 +110,8 @@ def test_policy_runs_inside_required_pr_ci() -> None:
     checkout = next(step for step in steps if step.get("uses", "").startswith("actions/checkout@"))
     assert checkout["with"]["fetch-depth"] == 0
     policy = next(step for step in steps if "scripts/check_prompt_budgets.py" in step.get("run", ""))
-    assert "if" not in policy
+    # The merge queue squashes the PR into one commit, so only pull_request events can be checked per commit.
+    assert policy["if"] == "github.event_name == 'pull_request'"
     assert "continue-on-error" not in policy
     assert "pull_request.base.sha" in policy["env"]["BUDGET_BASE"]
     assert "pull_request.head.sha" in policy["env"]["BUDGET_HEAD"]
