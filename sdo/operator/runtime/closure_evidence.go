@@ -37,7 +37,7 @@ type closureEvidence struct {
 // closureEvidenceNeeded reports whether verifying this incident has slow
 // evidence to gather: corpus captures, and settlement of a finished responder.
 func (c *Controller) closureEvidenceNeeded(in closureEvidenceInput) bool {
-	return c.config.CorpusSessionRoot != "" || in.Result != nil && in.Loop != nil
+	return c.config.CorpusSessionRoot != "" || in.Result != nil && in.Loop != nil || c.closureEvidence != nil
 }
 
 // gatherClosureEvidence captures the corpus and settles recovery applications.

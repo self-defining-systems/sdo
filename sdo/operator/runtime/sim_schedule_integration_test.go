@@ -99,8 +99,7 @@ func TestSimSchedule(t *testing.T) {
 		sweepSimSeedsN(t, 1, func(t *testing.T, seed uint64) { runSimSchedule(t, seed, schedule) })
 		return
 	}
-	sweepSimSeedsN(t, 4, func(t *testing.T, seed uint64) {
-
+	sweepSimSeedsPR(t, 4, 1, func(t *testing.T, seed uint64) {
 		rng := newSimRNG(seed)
 		for _, restart := range []byte{0, 255} {
 			schedule := []byte{restart}
@@ -250,6 +249,8 @@ func TestSimScheduleQueuedDriftNeverRedispatchesAfterVerifiedClosure(t *testing.
 					}})
 					c.dispatcher = simDriftDispatch{world: w}
 				}
+				// The health detector is a stub: both faults are drift only.
+				w.driftOnly = map[string]bool{simServiceName(0): true, simServiceName(1): true}
 				w.restart()
 				inject := func(index int) {
 					w.setPort(simServiceName(index), 9999)

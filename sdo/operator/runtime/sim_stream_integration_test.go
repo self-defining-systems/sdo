@@ -52,6 +52,12 @@ type simWorld struct {
 	configure      func(*Controller)
 	paused         bool
 	brokerOverride IncidentBroker
+	// beforeClosure runs between a closure effect being persisted and the
+	// controller executing it: the window a foreign actor can break health in.
+	beforeClosure func()
+	// faultObserved is the last virtual time a step ran while a health-covered
+	// Service was broken: the latest moment the controller could have seen it.
+	faultObserved time.Time
 
 	outcomes *memory.JSONStore
 
@@ -155,6 +161,16 @@ func (b *simBroker) PrepareIncident(_ context.Context, id string) (IncidentWorks
 	return IncidentWorkspace{IncidentID: id, Worktree: "/worktrees/" + id, BaseCommit: "base"}, nil
 }
 
+// processUnverifiedClosure is the edge the native broker offers when the
+// recovery window expires with health contradicted: the frozen command is
+// finalized with the controller's fresh observation and no verified states.
+func (b *simBroker) processUnverifiedClosure(ctx context.Context, closure IncidentClosure, observation closureHealthObservation) (ClosureReceipt, error) {
+	if !closure.Frozen || observation.At.IsZero() || observation.At.Before(closure.VerifiedAt) {
+		return ClosureReceipt{}, errors.New("unverified closure requires a fresh controller observation of a frozen command")
+	}
+	return b.ProcessClosure(ctx, observation.withoutRecovery(closure))
+}
+
 func (b *simBroker) ProcessClosure(_ context.Context, closure IncidentClosure) (ClosureReceipt, error) {
 	id := closure.Request.IncidentID
 	b.world.mu.Lock()
@@ -165,6 +181,25 @@ func (b *simBroker) ProcessClosure(_ context.Context, closure IncidentClosure) (
 	if reject && !b.failed[id] {
 		b.failed[id] = true
 		return ClosureReceipt{}, errors.New("simulated: broker validation rejected the closure")
+	}
+	// Health that broke after the recorded clear time voids a verified
+	// success, whether it is still broken or flapped back before this commit.
+	b.world.mu.Lock()
+	observed := b.world.faultObserved
+	b.world.mu.Unlock()
+	if len(closure.FinalDetectorStates) > 0 {
+		// Clearing persistence: the controller's own trackers must have let go
+		// of every health finding before a verified success is committed.
+		controller := b.world.controller
+		controller.mu.Lock()
+		active := !controller.recoveryTrackersClear(closure.Request)
+		controller.mu.Unlock()
+		if active {
+			b.world.violate("incident %s committed verified success while a health finding was still active in the controller's trackers", id)
+		}
+	}
+	if len(closure.FinalDetectorStates) > 0 && closure.HealthClearedAt != nil && observed.After(*closure.HealthClearedAt) {
+		b.world.violate("incident %s committed verified success although health was broken at %s, after it cleared at %s", id, observed.Sub(simEpoch), closure.HealthClearedAt.Sub(simEpoch))
 	}
 	// Only a persisted closure reaches the broker, and a retry of it must derive
 	// the identical record.
@@ -353,8 +388,18 @@ func (w *simWorld) step() {
 		}
 		return w.controller.Step(context.Background(), w.clock.Now(), nil)
 	}
+	faulty := len(w.healthFaulty()) > 0
+	iterations := w.evaluationIterations()
 	if err := step(); err != nil {
 		w.t.Fatalf("step at %s: %v", w.clock.Now(), err)
+	}
+	// A step at an instant the detectors already evaluated observes nothing.
+	if w.evaluationIterations() > iterations {
+		w.mu.Lock()
+		if faulty {
+			w.faultObserved = w.clock.Now()
+		}
+		w.mu.Unlock()
 	}
 	w.persist()
 }
@@ -391,6 +436,9 @@ func (w *simWorld) drain() {
 			w.await(func() bool { return len(w.controller.results) > 0 })
 			progressed = true
 		} else if effect, ok := w.controller.PendingClosureEffect(); ok {
+			if w.beforeClosure != nil {
+				w.beforeClosure()
+			}
 			if err := w.controller.ExecuteClosureEffect(ctx, effect); err != nil {
 				return
 			}

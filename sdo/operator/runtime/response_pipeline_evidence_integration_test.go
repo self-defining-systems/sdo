@@ -194,7 +194,8 @@ func TestDeterministicResponseStageObservationBudgetPreservesUnresolvedHealth(t 
 	loop, state := pipelineTestLoop(t, false)
 	loop.Detectors = append(loop.Detectors, &pipelineLaggingHealthDetector{remaining: -1})
 	calls := 0
-	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, RolloutTimeout: time.Millisecond, ObservationInterval: time.Millisecond}
+	// Budget bounds the shared observation; the default is a full minute of real time.
+	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, RolloutTimeout: time.Millisecond, ObservationInterval: time.Millisecond, Budget: 50 * time.Millisecond}
 	if err := RunResponseStages(context.Background(), state, []ResponseStage{stage, clearingResponseStage{"agent", &calls}}); err != nil {
 		t.Fatal(err)
 	}
