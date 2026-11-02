@@ -9,7 +9,6 @@ import (
 	"sdo.dev/operator/memoryhost"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/inputs"
-	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 	"testing"
 )
@@ -56,14 +55,6 @@ func (sourceDriftDetector) Detect(_ context.Context, view sdk.DetectionContext) 
 	return []sdk.Finding{{RuleID: "drift", Summary: "service differs from accepted source", PrimaryResource: ref}}, nil
 }
 
-// diffDetectionView is a detection context whose controller-side reads can freeze diffs.
-type diffDetectionView struct {
-	sdktest.Snapshot
-	live program.ReadView
-}
-
-func (v diffDetectionView) UnderlyingReadView() program.ReadView { return v.live }
-
 func TestRemoteDetectorReadsSourceDiffsTheControllerFroze(t *testing.T) {
 	ctx := context.Background()
 	spec := sdk.DetectorSpec{ID: "source-drift", Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Service"}}}
@@ -80,7 +71,8 @@ func TestRemoteDetectorReadsSourceDiffsTheControllerFroze(t *testing.T) {
 	snapshot := sdktest.Snapshot{NamespaceName: "toy", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "toy"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 81}}}}}}
 	source := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": "api", "namespace": "toy"}, "spec": map[string]any{"ports": []any{map[string]any{"port": float64(80)}}}}}
 	live := LiveReadView{Context: ctx, Carrier: inputs.New(snapshot), Client: fake.NewSimpleClientset(), SourceCommit: "accepted", Source: planFakeSource{source: source}}
-	findings, err := remote.Detectors[0].Detect(ctx, diffDetectionView{Snapshot: snapshot, live: live})
+	// The controller hands detectors the cycle view the snapshot provider builds around its live view.
+	findings, err := remote.Detectors[0].Detect(ctx, NewCycleReadView(live))
 	if err != nil || len(findings) != 1 || findings[0].RuleID != "drift" {
 		t.Fatal(findings, err)
 	}

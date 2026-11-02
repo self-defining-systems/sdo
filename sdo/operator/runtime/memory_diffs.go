@@ -29,6 +29,10 @@ func memoryDiffInputs(view any, refs []sdk.ObjectRef) []sdktest.PrimitiveCall {
 		}); ok {
 			return provider.MemoryDiffInputs(refs)
 		}
+		if cached, ok := view.(*cachedReadView); ok {
+			view = cached.ReadView
+			continue
+		}
 		wrapper, ok := view.(interface{ UnderlyingReadView() program.ReadView })
 		if !ok {
 			return nil
