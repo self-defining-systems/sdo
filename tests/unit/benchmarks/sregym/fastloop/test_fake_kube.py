@@ -41,7 +41,6 @@ def test_fake_api_accepts_go_snapshot_null_collections() -> None:
     assert response["items"] == []
 
 
-<<<<<<< HEAD
 def test_new_inputs_and_secret_redaction() -> None:
     snapshot = {
         "namespace": "app",
@@ -143,7 +142,6 @@ def test_go_secret_metadata_snapshot_is_replayed_without_values() -> None:
         status, secret = server.read("/api/v1/namespaces/app/secrets/auth")
         assert status == 200
         assert secret["data"] == {"password": ""}
-=======
 def test_fake_api_serves_objects_only_capture() -> None:
     snapshot = {
         "object_snapshot_version": 2,
@@ -160,4 +158,3 @@ def test_fake_api_serves_objects_only_capture() -> None:
     assert status == 200
     assert [item["metadata"]["name"] for item in pods["items"]] == ["web"]
     assert deployment["kind"] == "Deployment"
->>>>>>> origin/vic-lsh/dev/sdo-improve

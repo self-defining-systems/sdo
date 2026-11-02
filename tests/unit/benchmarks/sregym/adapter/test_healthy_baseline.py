@@ -209,7 +209,6 @@ def test_ops_wrapper_does_not_inject_when_capture_fails() -> None:
     assert "inject" not in events
 
 
-<<<<<<< HEAD
 def test_secret_baseline_contains_only_metadata_and_sorted_keys() -> None:
     secret = _item(
         "Secret", "credentials", data={"z": "c2VjcmV0", "a": "c2VjcmV0"}, stringData={"b": "secret"}, type="Opaque"
@@ -221,7 +220,6 @@ def test_secret_baseline_contains_only_metadata_and_sorted_keys() -> None:
     ]
     assert "c2VjcmV0" not in json.dumps(document)
     assert "last-applied" not in json.dumps(document)
-=======
 @pytest.mark.parametrize("count", [0, 17])
 def test_publish_rejects_invalid_snapshot_count_before_remote_exec(count: int) -> None:
     kubectl = _Kubectl()
@@ -284,4 +282,3 @@ def test_publish_admission_agrees_with_real_native_writer(operator_binary: Path,
         publish_snapshots(snapshots, control_namespace="ctl", kubectl_runner=kubectl)
     assert native.stderr.strip() in str(failure.value)
     assert kubectl.calls == []
->>>>>>> origin/vic-lsh/dev/sdo-improve

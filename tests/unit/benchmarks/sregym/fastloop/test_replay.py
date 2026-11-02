@@ -623,7 +623,6 @@ def test_capture_keeps_current_incident_protojson_strict(tmp_path: Path, payload
         capture_checkpoints(CheckpointStore(tmp_path), 0, "incident-1", tmp_path / "incident", maps)
 
 
-<<<<<<< HEAD
 def test_capture_exports_script_actions_from_live_recording(tmp_path: Path) -> None:
     from benchmarks.sregym.agent_script.cli import load
 
@@ -702,7 +701,6 @@ def test_broker_replay_pins_the_requested_operator_modules(tmp_path: Path, monke
     assert replay_broker_result(checkpoint, source=source, operator_root=operator) == {"status": "no_change"}
     assert len(observed) == 1
     assert not observed[0].exists()
-=======
 def test_checkpoint_preserves_controller_healthy_reference(tmp_path: Path) -> None:
     import hashlib
 
@@ -730,4 +728,3 @@ def test_checkpoint_rejects_unowned_nested_capture_paths(tmp_path: Path, name: s
     request, result = _task_and_result()
     with pytest.raises(CheckpointError, match="capture name"):
         CheckpointStore(tmp_path).save(0, "responder", request=request, result=result, captures={name: b"{}"})
->>>>>>> origin/vic-lsh/dev/sdo-improve

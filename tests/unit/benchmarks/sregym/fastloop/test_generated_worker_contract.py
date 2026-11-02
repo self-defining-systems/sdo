@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-<<<<<<< HEAD:tests/unit/benchmarks/sregym/fastloop/test_generated_worker_contract.py
 import io
-=======
-import hashlib
->>>>>>> origin/vic-lsh/dev/sdo-improve:tests/unit/benchmarks/sregym/fastloop/test_scripted_worker_contract.py
 import json
 import os
 import shutil
@@ -227,7 +223,6 @@ def test_respond_consumes_real_go_tool_responses(tmp_path: Path, monkeypatch: py
     plans, programs = scripts._matched_plans(diagnosis)
     assert set(programs) == {"service-targetport-mismatch", "image-pull-failure"}
     assert len(plans) == 2
-<<<<<<< HEAD:tests/unit/benchmarks/sregym/fastloop/test_generated_worker_contract.py
     assert scripts._tool("apply", *plans)["healthy"] is True
     assert scripts._tool("verify")["healthy"] is True
 
@@ -243,61 +238,3 @@ def test_respond_consumes_real_go_tool_responses(tmp_path: Path, monkeypatch: py
     }
     assert actual.verification_evidence[0].passed
     assert not actual.repair_actions
-=======
-    assert scripted_worker._tool("apply", *plans)["healthy"] is True
-    pending = json.loads((tmp_path / "verify-pending.json").read_text())
-    assert pending["healthy"] is False
-    assert not pending.get("incident_verified")
-    verified = scripted_worker._tool("verify")
-    assert verified["healthy"] is True
-    assert verified["incident_verified"]
-
-
-@pytest.mark.parametrize("verified", [False, True])
-def test_scripted_reflection_note_commits_for_verified_and_unverified_outcomes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operator_binary: Path, verified: bool
-) -> None:
-    app = _accepted_app(tmp_path, verified=verified)
-    monkeypatch.setenv("SDO_SCRIPTED_MEMORY_CHANGE", "1")
-    monkeypatch.setenv("SDO_CAPTURED_CORPUS_DIR", str(tmp_path / "no-captured-pair"))
-    monkeypatch.setenv("SDO_ACTOR", "responder")
-    monkeypatch.setenv("SDO_PHASE", "reflection")
-    monkeypatch.setenv("SDO_BASE_COMMIT", "HEAD")
-    monkeypatch.setenv("SDO_OPERATOR_ROOT", str(OPERATOR))
-    monkeypatch.setenv("SDO_INCIDENT_ID", "scripted-incident")
-    command = scripted_worker._command
-
-    def real_operator(argv: list[str], *, timeout: int = 180) -> str:
-        return command([str(operator_binary) if value == "sdo-operator" else value for value in argv], timeout=timeout)
-
-    monkeypatch.setattr(scripted_worker, "_command", real_operator)
-    closure = IncidentClosure()
-    closure.request.namespace = "demo"
-    if verified:
-        # A verified hand repair needs an executable step; README notes are
-        # judgement only and the real memory check names the uncovered repair.
-        with pytest.raises(
-            RuntimeError, match=r'reflection\.program-required: recorded hand repair "restore-front-port"'
-        ):
-            scripted_worker.ScriptedReflector().resume(worktree=app, incident_id="scripted-incident", closure=closure)
-        return
-    turn = scripted_worker.ScriptedReflector().resume(worktree=app, incident_id="scripted-incident", closure=closure)
-    assert turn.learning_decision == "updated"
-    assert turn.playbook_ids == ["verified-repair-notes"]
-    notes = app / ".sdo/playbooks/verified-repair-notes/README.md"
-    assert "scripted-incident" in notes.read_text()
-    assert "verified-repair-notes/README.md" in (app / ".sdo/playbooks/README.md").read_text()
-    assert not list((app / ".sdo/playbooks").rglob("*.go"))
-
-
-@pytest.mark.parametrize("typed", [False, True])
-def test_scripted_binding_args_extract_object_bindings(typed: bool) -> None:
-    objects = {"service": {"kind": "Service", "namespace": "app", "name": "front"}}
-    bindings = {"objects": objects, "values": {}} if typed else objects
-    assert scripted_worker._binding_args(bindings) == ["--bind", "service=Service/app/front"]
-
-
-def test_scripted_binding_args_never_drop_scalar_values() -> None:
-    with pytest.raises(ValueError, match="scalar value bindings"):
-        scripted_worker._binding_args({"objects": {}, "values": {"count": 2}})
->>>>>>> origin/vic-lsh/dev/sdo-improve:tests/unit/benchmarks/sregym/fastloop/test_scripted_worker_contract.py

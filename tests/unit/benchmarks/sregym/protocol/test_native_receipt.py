@@ -84,51 +84,8 @@ def test_native_receipt_rejects_partial_as_incomplete_closure() -> None:
 
 def test_native_receipt_accepts_success_without_diagnosis_evidence() -> None:
     ledger = _ledger()
-<<<<<<< HEAD
-    ledger["outcome_document"]["diagnosis_verification"].append({"verdict": "contradicted"})
-    with pytest.raises(ProductionReceiptValidationError, match="contradicted"):
-        _receipt(ledger)
-
-
-def test_native_receipt_accepts_verified_fast_path_without_responder_job() -> None:
-    ledger = _ledger()
-    ledger["proposal_commit"] = ""
-    ledger["receipt"]["proposal_commit"] = ""
-    ledger["outcome_document"]["repair_commit"] = ""
-    ledger["outcome_document"]["resolution_path"] = "fast_path"
-    ledger["outcome_document"]["fast_path_programs"] = ["targetport"]
-    ledger["closure"]["result"]["resolution_path"] = "fast_path"
-    ledger["closure"]["result"]["fast_path_programs"] = ["targetport"]
-    application = {
-        "application_id": "fast-path-1",
-        "program_ids": ["targetport"],
-        "applied": True,
-        "verification": {"result": "RESULT_NO_MATCH"},
-        "rolled_back": False,
-    }
-    ledger["closure"]["result"]["plan_applications"] = [application]
-    ledger["outcome_document"]["plan_applications"] = [application]
-    ledger["requires_reflection"] = False
-    ledger["reflection_processed"] = False
-    ledger["reflection_decision"] = None
-    ledger["reflection_commit"] = ""
-    ledger["reflection_skipped_reason"] = "trusted program fast path"
-    ledger["receipt"]["reflection_commit"] = ""
-    receipt = native_production_receipt(
-        ledger,
-        namespace="demo",
-        control_namespace="demo-sdo",
-        controller_image="controller:go",
-        responder_image="responder:python",
-        controller_pod_uid="pod-uid",
-        responder_job_evidence=[],
-    )
-    validate_production_receipt(receipt)
-    assert receipt["responder_job_evidence"] == []
-=======
     ledger["closure"]["result"]["confirmed_root_causes"] = []
     validate_production_receipt(_receipt(ledger))
->>>>>>> origin/vic-lsh/dev/sdo-improve
 
 
 def test_native_receipt_exports_reflection_usage() -> None:

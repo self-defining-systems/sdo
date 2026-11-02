@@ -10,11 +10,8 @@ import pytest
 
 from scripts.operator_test_binary import build_operator, source_identity, verify_operator
 
-<<<<<<< HEAD
-=======
 pytestmark = pytest.mark.go_integration
 
->>>>>>> origin/vic-lsh/dev/sdo-improve
 
 @pytest.fixture
 def module(tmp_path: Path) -> Path:
@@ -94,8 +91,6 @@ def test_build_settings_are_part_of_cache_identity(module: Path, monkeypatch: py
 def test_real_operator_embeds_its_input_identity(operator_binary: Path) -> None:
     repository = Path(__file__).resolve().parents[2]
     verify_operator(operator_binary, source_identity(repository / "sdo/operator"))
-<<<<<<< HEAD
-=======
 
 
 def test_identity_input_diagnostics_preserve_the_digest(module: Path) -> None:
@@ -110,4 +105,3 @@ def test_identity_input_diagnostics_preserve_the_digest(module: Path) -> None:
     assert source_identity(module, changed) != identity
     assert changed[label] != before
     assert changed["build environment"] == inputs["build environment"]
->>>>>>> origin/vic-lsh/dev/sdo-improve

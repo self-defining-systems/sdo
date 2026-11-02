@@ -185,7 +185,6 @@ def test_production_sdo_does_not_import_benchmark_code() -> None:
     assert not violations, f"{len(violations)} production-to-benchmark import(s) found:\n" + "\n".join(violations)
 
 
-<<<<<<< HEAD
 def _wall_clock_sleeps(source: str) -> list[tuple[str, int]]:
     """Find real time/asyncio sleeps, resolving module and function aliases."""
     tree = ast.parse(source)
@@ -233,7 +232,6 @@ def test_unit_tests_synchronize_without_wall_clock_sleeps() -> None:
             if (relative, function) not in allowed:
                 violations.append(f"{relative}:{line}: {function}: replace sleep with readiness or an injected clock")
     assert not violations, "\n".join(violations)
-=======
 def _adapter_import_errors(files: list[Path]) -> list[str]:
     """Resolve actual import statements, including Python's submodule fallback."""
     errors = []
@@ -277,4 +275,3 @@ def test_adapter_import_check_detects_missing_export(monkeypatch: pytest.MonkeyP
     assert len(errors) == 1
     assert "consumer.py:1" in errors[0]
     assert "ImageRetentionError" in errors[0]
->>>>>>> origin/vic-lsh/dev/sdo-improve

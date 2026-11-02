@@ -118,21 +118,6 @@ def test_external_base_images_are_pinned_by_digest(dockerfile: str) -> None:
     assert floating == []
 
 
-<<<<<<< HEAD
-=======
-def test_validator_image_contains_no_python_dependency_install() -> None:
-    text = (
-        (REPO_ROOT / "sdo/operator/Dockerfile.runtime")
-        .read_text(encoding="utf-8")
-        .split(" AS validator\n", 1)[1]
-        .split("\nFROM ", 1)[0]
-    )
-    assert "pip install" not in text
-    assert "python3" not in text
-    assert "COPY --from=go-runtime /usr/local/bin/sdo-operator" in text
-
-
->>>>>>> origin/vic-lsh/dev/sdo-improve
 def test_worker_image_ships_offline_program_example_and_toolchain() -> None:
     dockerfile = (REPO_ROOT / "sdo/operator/Dockerfile.runtime").read_text(encoding="utf-8")
     assert "COPY examples/playbook-programs /opt/sdo/examples/playbook-programs" in dockerfile
@@ -157,24 +142,6 @@ def test_worker_image_ships_offline_program_example_and_toolchain() -> None:
         assert (REPO_ROOT / "examples/playbook-programs" / relative).is_file(), relative
 
 
-<<<<<<< HEAD
-=======
-def test_validator_image_uses_its_immutable_offline_toolchain() -> None:
-    runtime = (REPO_ROOT / "sdo/operator/Dockerfile.runtime").read_text()
-    assert 'cd "$dir" && go mod download all' in runtime
-    assert "GOPROXY=off" in runtime
-    assert 'GOFLAGS="-mod=mod -p=2 -trimpath"' in runtime
-    assert "FROM validator-toolchain AS validator" in runtime
-    assert "ENV GOCACHEPROG=/usr/local/bin/sdo-go-cache" in runtime
-
-
-def test_health_refresh_forwards_the_typed_controller_toolchain() -> None:
-    # This launch wiring must hold before an in-cluster judge can compile health.
-    source = (REPO_ROOT / "sdo/operator/operatorcli/health_refresh.go").read_text()
-    assert re.search(r"ToolchainImage:\s*config\.GetToolchainImage\(\)", source)
-
-
->>>>>>> origin/vic-lsh/dev/sdo-improve
 def test_image_build_smokes_offline_go_tools_as_nonroot() -> None:
     script = (REPO_ROOT / "scripts/build_sdo_images.sh").read_text(encoding="utf-8")
     for image in ("sdo-controller", "sdo-responder", "sdo-sregym-responder"):

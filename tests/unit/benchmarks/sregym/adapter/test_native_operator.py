@@ -330,7 +330,6 @@ def test_install_records_abort_target_before_transport_call(tmp_path, monkeypatc
         install_existing(config)
 
 
-<<<<<<< HEAD
 def test_host_accepts_optional_goal_and_absent_goal_commit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from benchmarks.sregym.adapter import native_operator
 
@@ -346,7 +345,6 @@ def test_host_accepts_optional_goal_and_absent_goal_commit(tmp_path: Path, monke
     receipt.update(dict.fromkeys(("schema_commit", "source_commit", "architecture_commit", "judge_commit"), "a" * 40))
     monkeypatch.setattr(native_operator, "_run", lambda *args, **kwargs: receipt)
     assert launch_host(host) == receipt
-=======
 def test_adapter_agent_efforts_match_the_production_provider() -> None:
     # The adapter reads the shared manifest so SREGym's venv can import it without agentshim.
     from benchmarks.sregym.adapter import native_operator
@@ -403,4 +401,3 @@ def test_shared_identity_distinguishes_transport_readiness_and_mismatch(
     assert "hotel-sdo" in str(caught.value)
     assert "CANARY" not in str(caught.value)
     assert bool(calls) is (failure != "not_ready")
->>>>>>> origin/vic-lsh/dev/sdo-improve

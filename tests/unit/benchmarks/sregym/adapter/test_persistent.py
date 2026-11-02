@@ -1617,7 +1617,6 @@ def test_interrupted_install_retains_cleanup_target_before_controller_exists(tmp
     assert PersistentState.load(inputs.state_path).cleanup_targets["hotel"].namespace == "hotel"
 
 
-<<<<<<< HEAD
 @pytest.mark.parametrize("reflection", [False, True])
 def test_state_read_exhausting_deadline_does_not_start_one_millisecond_observer(
     monkeypatch: pytest.MonkeyPatch, reflection: bool
@@ -1637,7 +1636,6 @@ def test_state_read_exhausting_deadline_does_not_start_one_millisecond_observer(
     argument = "incident" if reflection else set()
     with pytest.raises(PersistentControllerError, match="within 60s"):
         wait(SlowRead(), "demo", argument, 60, clock)
-=======
 def test_verified_early_report_leaves_controller_active_until_outcome_recorded(tmp_path: Path) -> None:
     ops = FakeOps()
     _run(tmp_path, ops, "s0", [])
@@ -1821,4 +1819,3 @@ def test_settled_receipt_requires_no_model_completion_event(
     collected = _collect_settled_receipt(ops, config, "synthetic", tmp_path, clock)
     assert collected == receipt
     assert clock.monotonic() == 0
->>>>>>> origin/vic-lsh/dev/sdo-improve

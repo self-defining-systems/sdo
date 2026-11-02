@@ -889,7 +889,6 @@ def test_incident_row_rereads_delivery_after_source_deployment(tmp_path, failed)
     assert records[0].image_delivery_reason == "mid-run registry failure"
 
 
-<<<<<<< HEAD
 @pytest.mark.parametrize("failed", [False, True])
 def test_continuity_learning_precedes_recovery_and_survives_row_export(tmp_path: Path, failed: bool) -> None:
     from benchmarks.sregym.fastloop.continuity import check_activations
@@ -899,8 +898,6 @@ def test_continuity_learning_precedes_recovery_and_survives_row_export(tmp_path:
     events = []
 
     class ContinuousAgent(FakeAgent):
-        learn_before_recovery = True
-
         def learn(self, outcome: AgentOutcome) -> AgentOutcome:
             events.append("learn")
             checks, error = check_activations(trace(skip=failed), {"uid": "one"}, {"uid": "one"}, max_gap=1)
@@ -913,7 +910,6 @@ def test_continuity_learning_precedes_recovery_and_survives_row_export(tmp_path:
     assert loaded.memory_host_activations == records[0].memory_host_activations
     assert loaded.memory_host_activations[0].passed is not failed
     assert bool(loaded.error) is failed
-=======
 def test_grade_is_persisted_before_failed_reflection_and_never_changed(tmp_path: Path) -> None:
     clock = FakeClock()
     config = _config(tmp_path, 1)
@@ -1235,4 +1231,3 @@ def test_typed_recovery_failure_survives_row_persistence_without_reinjection(tmp
         }
     ]
     assert "CANARY" not in config.results_path.read_text()
->>>>>>> origin/vic-lsh/dev/sdo-improve

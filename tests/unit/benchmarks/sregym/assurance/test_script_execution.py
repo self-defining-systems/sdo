@@ -182,13 +182,8 @@ def _expected_usage(seed: int, kind: str, requests: int) -> dict[str, int]:
     }
 
 
-<<<<<<< HEAD:tests/unit/benchmarks/sregym/assurance/test_script_execution.py
 def test_generated_responder_repairs_through_the_real_structured_turn(
-    scripted: dict[str, Path], monkeypatch: pytest.MonkeyPatch
-=======
-def test_scripted_responder_repairs_through_the_real_structured_turn(
     scripted: dict[str, Path], monkeypatch: pytest.MonkeyPatch, prepare_reflection_memory
->>>>>>> origin/vic-lsh/dev/sdo-improve:tests/unit/benchmarks/sregym/assurance/test_scripted_codex.py
 ) -> None:
     worktree = _memory_worktree(scripted["tmp"])
     request = _request(worktree, scripted["tmp"], monkeypatch)
@@ -456,13 +451,8 @@ def test_healed_noop_claims_completed_with_no_action_once_health_is_back(
     assert healed.verification_evidence[0].passed is True
 
 
-<<<<<<< HEAD:tests/unit/benchmarks/sregym/assurance/test_script_execution.py
-def test_scripted_reflection_returns_invalid_proposal_then_corrects_after_rejection(
-    scripted: dict[str, Path], monkeypatch: pytest.MonkeyPatch
-=======
 def test_scripted_reflection_fixes_local_diagnostics_in_the_same_checkout(
     scripted: dict[str, Path], monkeypatch: pytest.MonkeyPatch, prepare_reflection_memory
->>>>>>> origin/vic-lsh/dev/sdo-improve:tests/unit/benchmarks/sregym/assurance/test_scripted_codex.py
 ) -> None:
     worktree = _memory_worktree(scripted["tmp"])
     request = _request(worktree, scripted["tmp"], monkeypatch)
@@ -477,32 +467,10 @@ def test_scripted_reflection_fixes_local_diagnostics_in_the_same_checkout(
     )
     assert turn.learning_decision == "updated"
     reflection = _turn_records(scripted["store"])[-1]
-<<<<<<< HEAD:tests/unit/benchmarks/sregym/assurance/test_script_execution.py
-    checks = [command for command in reflection["commands"] if command["command"] == "sdo-operator memory check"]
-    assert [command["exit_code"] for command in checks] == [1]
-    assert turn.learning_decision == "updated"
-    # The broker sees the invalid proposal and requests a separate correction.
-    assert "malformed README" in (worktree / ".sdo/playbooks/deny-all-networkpolicy-isolation/README.md").read_text()
-    correction = CodexSessionBackend(model="gpt-6-luna").resume(
-        session_id=responder.responder_session_id,
-        worktree=worktree,
-        prompt="You are correcting an operational-memory proposal",
-        idempotency_key=f"reflection:{request.incident_id}:{'a' * 40}",
-    )
-    assert correction.learning_decision == "updated"
-    checks = [
-        c
-        for record in _turn_records(scripted["store"])
-        for c in record["commands"]
-        if c["command"] == "sdo-operator memory check"
-    ]
-    assert [c["exit_code"] for c in checks] == [1, 0]
-=======
     checks = [
         command for command in reflection["commands"] if command["command"].startswith("sdo-operator memory check")
     ]
     assert [command["exit_code"] for command in checks] == [1, 0]
->>>>>>> origin/vic-lsh/dev/sdo-improve:tests/unit/benchmarks/sregym/assurance/test_scripted_codex.py
     assert (
         "malformed README" not in (worktree / ".sdo/playbooks/deny-all-networkpolicy-isolation/README.md").read_text()
     )

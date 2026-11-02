@@ -470,45 +470,6 @@ class Controller(FakeOps):
         return super().export_runtime_artifacts(config, directory)
 
     def _finish_reflection(self, control: str, incident: str) -> None:
-<<<<<<< HEAD
-        if incident == "incident-1":
-            turn = scripts.Reflector().resume(
-                worktree=self.app.workspace,
-                incident_id=incident,
-                closure=SimpleNamespace(request=SimpleNamespace(namespace=NAMESPACE, drift_events=[])),
-            )
-            assert turn.playbook_ids == [scripts.PROGRAM_ID]
-            directory = self.app.workspace / ".sdo/playbooks" / scripts.PROGRAM_ID
-            corpus = next((self.app.workspace / ".sdo/corpus").iterdir())
-            labels = json.loads((corpus / "labels.json").read_text())
-            assert labels["provenance"]["open_at"] == "pre-apply"
-            assert (
-                labels["provenance"]["open_sha256"] == hashlib.sha256((corpus / "open.json").read_bytes()).hexdigest()
-            )
-            assert (
-                labels["provenance"]["fixed_sha256"] == hashlib.sha256((corpus / "fixed.json").read_bytes()).hexdigest()
-            )
-            assert (corpus / "recordings.json").read_bytes() == (
-                self.capture / "open@pre-apply-recordings.json"
-            ).read_bytes()
-            subprocess.run(["git", "add", ".sdo/playbooks", ".sdo/corpus"], cwd=self.app.workspace, check=True)
-            subprocess.run(
-                ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "reflection"],
-                cwd=self.app.workspace,
-                check=True,
-            )
-            self.sweep = self.capture.parent / "sweep"
-            source = self.sweep / "programsrc"
-            source.mkdir(parents=True)
-            for name in ("diagnose.go", "mitigate.go"):
-                shutil.copyfile(directory / name, source / name)
-            (self.sweep / "go.mod").write_text(
-                "module hermetic\n\ngo 1.24\n\nrequire sdo.dev/operator/sdk v0.0.0\n"
-                f"replace sdo.dev/operator/sdk => {ROOT / 'sdo/operator/sdk'}\n"
-            )
-            (self.sweep / "main.go").write_text(SWEEP_MAIN)
-        super()._finish_reflection(control, incident)
-=======
         # Telemetry and receipt polling share this fake. Only one observer may
         # materialize/compile the learned program and acknowledge the closure.
         with self.reflection_lock:
@@ -516,39 +477,28 @@ class Controller(FakeOps):
             if not closure or closure["request"]["incident_id"] != incident:
                 return
             if incident == "incident-1":
-                turn = scripted_worker.ScriptedReflector().resume(
+                turn = scripts.Reflector().resume(
                     worktree=self.app.workspace,
                     incident_id=incident,
                     closure=SimpleNamespace(request=SimpleNamespace(namespace=NAMESPACE, drift_events=[])),
                 )
-                assert turn.playbook_ids == [scripted_worker.PROGRAM_ID]
-                directory = self.app.workspace / ".sdo/playbooks" / scripted_worker.PROGRAM_ID
+                assert turn.playbook_ids == [scripts.PROGRAM_ID]
+                directory = self.app.workspace / ".sdo/playbooks" / scripts.PROGRAM_ID
                 corpus = next((self.app.workspace / ".sdo/corpus").iterdir())
                 labels = json.loads((corpus / "labels.json").read_text())
-                assert labels["provenance"]["open_at"] == "detect"
+                assert labels["provenance"]["open_at"] == "pre-apply"
                 assert (
-                    labels["provenance"]["open_sha256"]
-                    == hashlib.sha256((corpus / "open.json").read_bytes()).hexdigest()
+                    labels["provenance"]["open_sha256"] == hashlib.sha256((corpus / "open.json").read_bytes()).hexdigest()
                 )
                 assert (
-                    labels["provenance"]["fixed_sha256"]
-                    == hashlib.sha256((corpus / "fixed.json").read_bytes()).hexdigest()
+                    labels["provenance"]["fixed_sha256"] == hashlib.sha256((corpus / "fixed.json").read_bytes()).hexdigest()
                 )
                 assert (corpus / "recordings.json").read_bytes() == (
-                    self.capture / "open@detect-recordings.json"
+                    self.capture / "open@pre-apply-recordings.json"
                 ).read_bytes()
                 subprocess.run(["git", "add", ".sdo/playbooks", ".sdo/corpus"], cwd=self.app.workspace, check=True)
                 subprocess.run(
-                    [
-                        "git",
-                        "-c",
-                        "user.name=Test",
-                        "-c",
-                        "user.email=test@example.invalid",
-                        "commit",
-                        "-qm",
-                        "reflection",
-                    ],
+                    ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "reflection"],
                     cwd=self.app.workspace,
                     check=True,
                 )
@@ -573,7 +523,6 @@ class Controller(FakeOps):
                     timeout=180,
                 )
             super()._finish_reflection(control, incident)
->>>>>>> origin/vic-lsh/dev/sdo-improve
 
     def tool(self, *args: str) -> dict[str, Any]:
         self.commands.append(args[0])
@@ -598,15 +547,8 @@ class Controller(FakeOps):
                 self.sweep_result = json.loads(completed.stdout)
                 runs = [
                     {
-<<<<<<< HEAD
                         "program_id": scripts.PROGRAM_ID,
                         "bindings": {"service": {"kind": "Service", "namespace": NAMESPACE, "name": "geo"}},
-=======
-                        "program_id": scripted_worker.PROGRAM_ID,
-                        "bindings": {
-                            "objects": {"service": {"kind": "Service", "namespace": NAMESPACE, "name": "geo"}}
-                        },
->>>>>>> origin/vic-lsh/dev/sdo-improve
                         "verdict": {"result": self.sweep_result["result"]},
                     }
                 ]

@@ -84,7 +84,6 @@ def test_detector_status_validation_includes_unconfirmed_pending() -> None:
     assert set(permitted) == {"firing", "clear", "error", "pending"}
 
 
-<<<<<<< HEAD
 def test_model_output_schema_is_pinned_to_the_incident_result_descriptor() -> None:
     schema = _incident_result_schema()
 
@@ -111,7 +110,6 @@ def test_model_output_schema_is_pinned_to_the_incident_result_descriptor() -> No
     unrequested = set(IncidentResult.DESCRIPTOR.fields_by_name) - set(schema["properties"]) - owned
     assert unrequested == {"final_detector_states", "proposed_artifact_ids"}
     assert set(schema["required"]) == set(schema["properties"])
-=======
 def test_install_environment_observations_round_trip_as_typed_contracts() -> None:
     observation = contract_proto.InstallEnvironmentObject(
         ref=contract_proto.ObjectRef(api_version="v1", kind="ConfigMap", namespace="app", name="environment"),
@@ -122,4 +120,3 @@ def test_install_environment_observations_round_trip_as_typed_contracts() -> Non
     decoded = parse_json(encoded, contract_proto.NamespaceOnboarding())
     assert decoded.environment_objects[0] == observation
     assert not decoded.HasField("established_at")
->>>>>>> origin/vic-lsh/dev/sdo-improve

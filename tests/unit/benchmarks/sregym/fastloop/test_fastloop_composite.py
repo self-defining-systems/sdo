@@ -33,7 +33,6 @@ PROBLEM = "composite3_hotel_geo_rate_recommendation"
 FAST = CompositeSettings(deadline_seconds=60, idle_seconds=5, stable_seconds=0.001, poll_seconds=0.01)
 
 
-<<<<<<< HEAD
 # Composite tests drive sampling at state transitions. BackgroundPoller has its
 # own tests; OS thread scheduling must not decide which repairs these fakes see.
 _ACTIVE_TRACKERS: list[FaultTracker] = []
@@ -70,7 +69,6 @@ def synchronous_fault_sampling(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr("benchmarks.sregym.fastloop.composite.BackgroundPoller", Poller)
     yield
     assert not _ACTIVE_TRACKERS
-=======
 @pytest.fixture(autouse=True)
 def registered_faults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
@@ -85,7 +83,6 @@ def registered_faults(monkeypatch: pytest.MonkeyPatch) -> None:
             else ()
         ),
     )
->>>>>>> origin/vic-lsh/dev/sdo-improve
 
 
 def _closure(incident_id: str, offset: int) -> dict[str, Any]:
