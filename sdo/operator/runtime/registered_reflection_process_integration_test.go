@@ -760,15 +760,27 @@ func TestReflectionInfrastructureFailureDoesNotSpendLearningRetries(t *testing.T
 }
 
 // Hand-written program and toy snapshots exercise direct-edit publication without run outputs.
+// Only the valid scenario proves that the CLI and the broker agree on a real
+// compile of a learned program. The other three are decided before or around
+// the compile (a static rule, reflection eligibility, undetected causes), so
+// they check in process through validate.Check with a simulated compile gate.
 func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
+	testReflectionLearnedProgram(t, []string{"valid"})
+}
+
+func TestReflectionLearnedProgramRulesInProcess(t *testing.T) {
+	testReflectionLearnedProgram(t, []string{"physical_path", "failed_closure", "undetected_repair"})
+}
+
+func testReflectionLearnedProgram(t *testing.T, scenarios []string) {
 	ctx := context.Background()
 	operatorRoot, err := filepath.Abs("..")
 	if err != nil {
 		t.Fatal(err)
 	}
-	binary := operatorCLIFixture(t)
-	for _, scenario := range []string{"valid", "physical_path", "failed_closure", "undetected_repair"} {
+	for _, scenario := range scenarios {
 		physical := scenario == "physical_path"
+		real := scenario == "valid"
 		t.Run(scenario, func(t *testing.T) {
 			target := nativeRepository(t)
 			copyFastloopTree(t, "../memory/validate/testdata/good/.sdo", filepath.Join(target, ".sdo"))
@@ -841,12 +853,16 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 				}
 			}
 			reflectionFixtureHealthy(t, capture)
-			compile := func(ctx context.Context, root string, _ []string) error {
-				diagnostics, err := validate.CompileCandidate(ctx, validate.Request{Root: root, OperatorRoot: operatorRoot})
-				if err != nil {
-					return err
+			var simCompiler sim.Compiler
+			compile := simCompiler.Compile
+			if real {
+				compile = func(ctx context.Context, root string, _ []string) error {
+					diagnostics, err := validate.CompileCandidate(ctx, validate.Request{Root: root, OperatorRoot: operatorRoot})
+					if err != nil {
+						return err
+					}
+					return validate.Err(diagnostics)
 				}
-				return validate.Err(diagnostics)
 			}
 			repository, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), compile)
 			if err != nil {
@@ -915,13 +931,21 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 				}
 				decision := &contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: []string{"service-targetport-mismatch"}, SdkGaps: []*contracts.SdkGap{gap}}
 				writeReflectionCheckDecision(t, checkout, decision)
-				command := exec.Command(binary, "memory", "check", "--json")
-				command.Dir = checkout
-				command.Env = append(os.Environ(), "SDO_ACTOR=responder", "SDO_PHASE=reflection", "SDO_BASE_COMMIT="+proposal.BaseCommit, "SDO_OPERATOR_ROOT="+operatorRoot, "SDO_HEALTHY_BASELINE=", "SDO_CAPTURED_CORPUS_DIR="+capture, "SDO_INCIDENT_ID="+incidentID)
-				output, err := command.Output()
-				checkErr = err
-				if err := protojson.Unmarshal(output, &report); err != nil {
-					t.Fatalf("CLI report: %v: %s", err, output)
+				if real {
+					command := exec.Command(operatorCLIFixture(t), "memory", "check", "--json")
+					command.Dir = checkout
+					command.Env = append(os.Environ(), "SDO_ACTOR=responder", "SDO_PHASE=reflection", "SDO_BASE_COMMIT="+proposal.BaseCommit, "SDO_OPERATOR_ROOT="+operatorRoot, "SDO_HEALTHY_BASELINE=", "SDO_CAPTURED_CORPUS_DIR="+capture, "SDO_INCIDENT_ID="+incidentID)
+					output, err := command.Output()
+					checkErr = err
+					if err := protojson.Unmarshal(output, &report); err != nil {
+						t.Fatalf("CLI report: %v: %s", err, output)
+					}
+				} else {
+					diagnostics := checkReflectionInProcess(t, ctx, checkout, proposal.BaseCommit, capture, incidentID, &simCompiler)
+					report.Diagnostics = validate.ProtoDiagnostics(diagnostics)
+					if len(diagnostics) > 0 {
+						checkErr = errors.New("memory check reported diagnostics")
+					}
 				}
 				nativeGit(t, checkout, "add", "-f", ".sdo")
 				authoredTree = nativeGit(t, checkout, "write-tree")
@@ -954,9 +978,10 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 				if checkErr != nil || publishErr != nil {
 					t.Fatalf("learned program rejected: CLI %v %v broker %v", checkErr, report.Diagnostics, publishErr)
 				}
-				// The proposal checkout and accepted commit contain exactly the same tree.
+				// After the CLI's own normalization, the proposal checkout and the
+				// accepted commit contain exactly the same tree.
 				acceptedTree := nativeGit(t, target, "rev-parse", receipt.Commit+"^{tree}")
-				if authoredTree != acceptedTree {
+				if real && authoredTree != acceptedTree {
 					t.Fatalf("accepted tree %s differs from authored %s", acceptedTree, authoredTree)
 				}
 			}
