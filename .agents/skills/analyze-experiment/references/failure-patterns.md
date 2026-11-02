@@ -52,9 +52,7 @@ Inspect firing/clearing thresholds, debounce state, snapshot versions, durable c
 
 The prober dials each declared edge afresh every interval and the finding needs `failures` consecutive failed dials of an edge that had connected before. The caller may still hold an old connection, so user-facing probes can stay healthy for the whole fault. Check that the edge and port are grounded in the application source, that the fix restored fresh connectivity for the same edge (the finding must clear), and that no finding appeared for an edge the prober never reached (those are never reported: the prober's own identity may simply not be admitted there). Detection time is the first failed dial plus about `failures` intervals; a link detector should not carry the scenario detector's 9 s minimum duration.
 
-<<<<<<< HEAD
 For protocol-aware links, read finding metadata `protocol`, `last_class`, `last_status`, `last_excerpt` and `last_latency_ns`, plus recent samples in Evidence. `tcp` remains the default; `http`, `grpc`, `redis`, `memcached`, `mongodb`, `postgres` and `mysql` require protocol replies. `protocol_error` means a connected peer supplied no valid reply, `not_serving` means a valid negative application response, and `refused`, `timeout`, `reset` or `transport_error` describe connection/transport failures. Redis/MongoDB auth-required replies and valid gRPC error statuses establish reachability without credentials; these probes do not prove authenticated reads or writes. Compare recovery using the same protocol and options, not a TCP-only replacement.
-=======
 ## Health clears while a write-path fault remains
 
 **Signature:** SDO health clears (no open finding, closure verified) while the grader still fails a fault in a service that only write journeys reach (for example payment behind checkout), in first and repeat alike.
@@ -66,7 +64,6 @@ Compare the health workload's scenarios (and their `DependsOn`) with the `links.
 **Signature:** SDO health clears while the grader still fails a fault that slows a service without failing it (CPU saturation behind a tight limit) or that breaks one record (one product, one key), with health traffic that does reach the service.
 
 Read the health workload's `slo.maxLatency` per scenario and the traffic findings' latency evidence: a path slowed many times over can stay under the 1.5 s default bound, and `memory check` lists every health-probe scenario on that default as `traffic.default-latency`. For a single-record fault, check whether the scenario picks one record at random per sample: the failing fraction then stays under the error budget. Classify as health-objective coverage (owner: health judge).
->>>>>>> origin/vic-lsh/dev/sdo-improve
 
 ## Workload-health finding
 

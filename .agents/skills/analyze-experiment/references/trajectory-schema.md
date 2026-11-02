@@ -45,9 +45,8 @@ Historical records may retain those fields. A reused lifecycle requires current 
 - For fastloop rows and learned-program confirmation, read [fastloop results](fastloop-results.md).
 - When reconstructing controller timing, read [telemetry and trajectories](telemetry.md).
 
-<<<<<<< HEAD
 Detector/corpus snapshot JSON now also carries `statefulSets`, `daemonSets`, `jobs`, `cronJobs`, `persistentVolumeClaims`, `serviceAccounts`, `horizontalPodAutoscalers`, `podDisruptionBudgets`, `ingresses`, `nodes` and `secrets`. Nodes are cluster-scoped observations. Each Secret entry is a value-free projection (`name`, `namespace`, `type`, `labels`, sorted `dataKeys`), not a Kubernetes Secret object; never interpret it as a value capture. Missing lists in older captures mean unrecorded, not proof of absence.
-=======
+
 ## Abstaining program refinement questions
 
 Go-owned `reflection_eligibility.causes[].items[]` can carry
@@ -71,4 +70,3 @@ observations can still justify safe abstention. Repaired objects without an
 eligible evaluation retain the generic `unbound_write` question. Historical
 outcomes lack these candidates; inspect their raw program runs before concluding
 that no existing program evaluated the object.
->>>>>>> origin/vic-lsh/dev/sdo-improve

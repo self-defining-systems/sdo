@@ -12,11 +12,6 @@ For active Go runs, inspect the configured runtime `LedgerRoot` and the Go broke
 Ledger files under `.git/sdo-broker/` and the controller's runtime-state ConfigMap are canonical ProtoJSON of `BrokerLedger` and `ControllerState` (`controller_state.proto`): snake_case keys, empty and zero fields omitted (so a missing key means the zero value), RFC3339 timestamps, enums as names, and the closure as an `IncidentClosure`. The Go structs carry no JSON tags, so pre-cutover ledgers with legacy keys (for example `playbooks` or `path` in place of `playbook_ids`) are not readable by the current tools. `reflection_rejections` lists each broker rejection of a reflection proposal (`attempt`, typed `diagnostics` of `rule`/`path`/`line`/`message`/`hint`, `rejected_at`); Go re-dispatches reflection with the previous rejection's diagnostics under the bounded correction policy, and `reflection_rejected` marks the terminal rejection after the bound (the closure completes with no reflection commit). Current native ledgers use `reflection_rejections`, `reflection_rejected`,
 `reflection_processed`, and typed `reflection_decision` (decision, reason, logical
 playbook IDs, error, SDK gaps and usage). `ReflectionDecision.playbook_ids` remains
-<<<<<<< HEAD
-wire field 3. A verified deterministic stage or fast path skips reflection; exact accepted repair replay
-or wholly trusted program repair may also record a skip reason. A failed learning
-turn preserves the committed mitigation and records its error. The closure's `request.state_changes` (absent in older ledgers or without a healthy baseline) is the controller's configuration diff against its last healthy baseline when the incident opened: `baseline_at`, `observed_at`, `changes` (`kind`, `name`, `change` of `added`/`removed`/`modified`, and field-level `before`/`after`, where ConfigMap data appears only as `sha256:` digests; current Secret fields are only `uid` and `resourceVersion`, with the object name on the change. Secret content drift is a resourceVersion change, never a data digest. Strict metadata-only list/watch has no full-object fallback; unsupported or forbidden metadata reads mark `Secret` unobserved. Secret type and key names are unavailable in PartialObjectMetadata and omitted. Older ledgers may contain Secret data digests), `omitted`, and `unobserved_kinds`; objects that existed unchanged at the baseline, such as SREGym's `failure-admin-*` decoys, never appear. The closure's `final_state_changes` (absent in ledgers before the verification-time state diff, and without a healthy baseline) is the same shape of diff, recomputed at verification time instead of dispatch time: a composite fault's later component can land a few seconds after dispatch while the incident is still open (K2's readiness-probe fault about 6s after its selector fault), so it can appear here without appearing in `request.state_changes`. `verify_diagnosis` checks `state-change` evidence against the union of both, so a diagnosis citing only the late component is `confirmed`/`unverified` rather than `contradicted`; a change absent from both is still `contradicted`. The closure's `observed_state_changes` (absent before rc2, and without a healthy baseline) lists every object the controller saw differ from the baseline while the incident was open (`kind`, `name`, `first_observed_at`): the dispatch diff, each evaluation's incident-view diff, and the closing view; it is what dates a `state-change` citation against the responder's repair. The closure's `health_cleared_at` (absent in ledgers before repair attribution, and when a gate detector had no clear streak on record) is when the closure gate's detectors began their final streak of clear evaluations; only a repair action that started by then can back a root cause. The closure's `cleaned_helpers` (absent in older ledgers) lists the responder helper pods and Jobs (`sdo.dev/responder-helper=true`) the controller deleted when the responder completed. The closure's `incident_detector_states` (absent in older ledgers) holds the latest post-response evaluation of each non-health detector that raised a finding; it is learning evidence, not a closure gate. The closure's `detector_review_required_at` and `detector_review_reason` (absent in older ledgers and when health cleared in time) mark health that cleared only after the controller's verification window expired; the broker then treats health as unverified for the responder (classification `partial`, no `verified_at`, no reflection), and the receipt's `detector_review_required_at` makes strict validation reject it. Under `recorded-actions`, a missing proposal commit is valid only when the result and outcome contain a successful structured repair action. Require incident IDs and commit hashes to agree with the receipt and outcome.
-=======
 wire field 3. Every closed incident goes through learning settlement; inspect the recorded reflection decision and any explicit skip reason independently of program counters. A failed learning
 turn preserves the committed mitigation and records its error. The frozen reflection task's
 `ReflectionRequest.depth` is `refine` (Go-decided, resumed responder session only, first attempt
@@ -31,7 +26,6 @@ complete authoring reflection. The closure's `request.state_changes` (absent in 
 
 `IncidentClosure.frozen` is set when the controller persisted the closure, with the recheck's notes folded in, before the first broker attempt. The ledger's `closure` and the controller state's `pending_closure` must then be byte-identical; a retry withholds publication on active health and never rewrites the frozen payload or downgrades it to unconfirmed. `closure differs from persisted broker evidence in <fields>` names the differing top-level closure fields and fails the closure on its first attempt (non-retryable, reason `BROKER_ERROR`); with frozen closures it is a real controller defect, not live drift. In older runs (no `frozen` key), retries recomputed notes from later live state and hit this error after any interrupted attempt.
 
->>>>>>> origin/vic-lsh/dev/sdo-improve
 
 
 ### Historical Python broker fields
@@ -113,7 +107,6 @@ For ordered stage reports and rollout handoffs, read
 
 ### Rollout receipt revisions
 
-<<<<<<< HEAD
 Skipped replay earns no origin credit. Default trust requires three independently
 verified live successes and zero failures for the unchanged revision. Equivalent
 ad-hoc repairs retain bound plan-equivalence receipts and post-repair NoMatch;
@@ -140,12 +133,3 @@ Memory-host observations contain optional input windows only. Kubernetes object
 state is selected by the completed mirror sequence; no inline snapshot fallback
 exists. A failed scheduler start leaves the previous revision serving, and crash
 recovery restores the accepted immutable revision with its requested traffic state.
-=======
-A successful `rollout_receipts` entry binds the exact incident/reflection
-expectation. Its `controller_revision` may be a later accepted descendant after a
-health refresh: trusted startup verifies HEAD, ancestry and build/tree identity.
-Then `observed_detector_fingerprint` names the later tree and may differ from
-`after_detector_fingerprint`. Exact reflection revisions must match. Strict
-receipts require exactly one success, nonempty build/revision/tree evidence and
-a valid verification timestamp.
->>>>>>> origin/vic-lsh/dev/sdo-improve

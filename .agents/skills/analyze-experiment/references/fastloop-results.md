@@ -6,10 +6,6 @@ Fastloop runs write `results/<run-id>/incidents.jsonl` and `incidents.csv`, one 
 
 For injection occurrence, grade checkpoints and per-fault probe semantics, read [fault tracking evidence](fault-tracking.md).
 
-<<<<<<< HEAD
-Native `OutcomeRecord.resolution_path` is `deterministic` (the response stage cleared every finding before any agent), `fast_path` or `responder`. `prior_stages` lists each automatic stage's attempts: `playbook_id`, `program_revision`, bindings, `result` (`applied_cleared`, `applied_still_matching`, `reverted_ineffective`, `apply_error`, `skipped`), a typed `skip_reason`, a `kept_reason` (`partial`, `irreversible`, `rollback_failed`) when an applied attempt that left its findings open was not reverted, the apply receipt and post-apply diagnosis; a deterministic result skips reflection with reason `deterministic response stage`. Native `fast_path`: `fast_path_programs` lists the programs attempted, including a failed attempt handed to the responder. `plan_applications` records each plan's verification plus `rolled_back` and `rollback_error`, and `program_failure_signals` breaks a failed program's trust streak. A fully resolved fast path has `reflection_skipped_reason: trusted program fast path`, no responder Job, and zero responder usage. The strict native receipt accepts an empty `responder_job_evidence` only for that verified outcome path. Fastloop rows carry `resolution_path` and `fast_path_programs`; composite rows use `fast_path` only when every component receipt used it and combine distinct program IDs. Older outcomes and rows omit these fields.
-=======
->>>>>>> origin/vic-lsh/dev/sdo-improve
 
 New native broker ledgers expose `closure_phase_timestamps` as UTC instants and `reflection_skipped_reason`; fastloop rows expose `closure_phase_seconds`, the elapsed seconds since each preceding observed closure phase. Missing phases mean that path did not execute or that the run predates instrumentation. Each phase is recorded once, at its first occurrence. A rejected reflection adds `reflection_rejected`, then `reflection_retry_dispatch` and `retry_worker_result_picked_up` for the correction turn (later corrections share them). `network_canaries_started` to `network_canaries_passed` is the canary Jobs alone. Rows before these phases charge correction turns and broker publication work to `network_canaries_passed`; read `reflection_rejections` in the strict receipt before calling that phase slow. The immutable outcome document is committed before reflection, so join later phases from the broker ledger using the incident ID and outcome commit.
 
@@ -105,15 +101,15 @@ The persistent fault gate keeps controller startup (including health refresh) se
 
 Warm resets require structural health and independent HTTP. Failed HTTP permits one bounded hotel-client refresh and recheck, preserving backends/memory. Failed refresh or HTTP blocks admission; restoration earns no responder credit.
 
-<<<<<<< HEAD
 Toy single-fault SDO rows include `memory_host_activations`: one entry per host
 activation since injection, containing accepted commit, activation timestamp and
 latency, before/after evaluation counts, maximum/allowed gap, controller pod and
 container identity snapshots, `controller_unchanged` and `passed`. Checks cover
 the build/catch-up interval and a cadence margin before recovery maintenance.
 An empty list establishes no activation proof. Any failed check sets the row
-error and fails the run; stage timeouts use wall time, including scripted runs.
-=======
+error and fails the run.
+
+
 ### Protected healthy references in offline checkpoints
 
 Checkpoint capture maps retain the controller's frozen `healthy/healthy.json` and
@@ -230,4 +226,3 @@ recovery message. A late open follow-on incident receives its controller-publish
 closure budget, frozen when the fence observes it; a queued reflection alone retains its
 reflection-attempt cap. A pause-admission race goes through the same bounded fence, without
 another problem injection or grading attempt.
->>>>>>> origin/vic-lsh/dev/sdo-improve

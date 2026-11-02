@@ -44,12 +44,6 @@ per probe and two seconds total. Open recordings live in the existing protected
 `*-routing.done` files prevent resampling an immutable capture. Missing, capped,
 or failed reads remain Unknown, not a refused connection.
 
-<<<<<<< HEAD
-The accepted memory host owns routing primitives even without traffic workloads.
-There is no separate prober binary, pod or URL. The controller routes reads and
-bounded responder verification through the active host RPC; a missing host is
-unavailable evidence, never proof of a refused application connection.
-=======
 Source comparisons: from REPLAY1 the controller records `DiffAgainstSource` for
 every non-derived namespace object and every accepted-source object at detect and
 pre-apply (into the phase recordings) and in the healthy baseline's `readings`,
@@ -61,19 +55,10 @@ correct repair; prefer the `readings` inside `fixed.json`, which come from the
 live snapshot. Replay answers repeated state reads from the first recorded reply
 and reports `unrecorded <Method> call with arguments ...` for a read no phase holds.
 
-The builder emits the isolated prober even when an application has no traffic
-generators or traffic-consuming detectors. Startup awaits its readiness before
-incident capture; disabling synthetic workloads still leaves routing primitives
-available. Older builds silently skipped routing capture when that prober was
-absent. New captures record `routing-probe-note.json` in the incident corpus with
-`capability: routing_probe`, `status: unavailable`, `reason` (`prober_not_configured`,
-`read_view_not_live`, `probe_failed`, or `budget_exhausted` when the capture's time
-budget skipped targets), the first affected `phase`, and optional error `detail`.
-Probe deadlines are seconds, not milliseconds, so a slow prober is waited for rather
-than recorded as a closed port. The controller logs the same gap once per incident. A note is
-capability evidence, not a TCP result or a routing diagnosis; inspect the
-adjacent recordings for actual successes, refusals and read errors.
->>>>>>> origin/vic-lsh/dev/sdo-improve
+The accepted memory host owns routing primitives even without traffic workloads.
+There is no separate prober binary, pod or URL. The controller routes reads and
+bounded responder verification through the active host RPC; a missing host is
+unavailable evidence, never proof of a refused application connection.
 
 A routing Match needs a successful candidate-port TCP result and refused faulty
 numeric target on selected ready Pods; declarations alone prove no listener.

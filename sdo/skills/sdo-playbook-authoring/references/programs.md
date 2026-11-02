@@ -27,25 +27,12 @@ The authoring reference tool supplies the routing example.
 
 ## Source restoration
 
-<<<<<<< HEAD
-Skipped replay proves no repair and earns no origin learning credit. When an
-incident opens, the controller applies a saved program itself if its diagnosis
-matches live, it has one entry point and every parameter binds from the
-findings; the agent then sees `prior_stages` and the findings that remain. Use a matching program's plan/apply tools
-when available. An ad-hoc repair can also earn a live credit when the controller
-has a pre-repair matching plan, successful receipts covering every planned
-resource, exact observed plan equivalence, a bound post-repair NoMatch and an
-independently successful outcome. Merely flipping Match to NoMatch is insufficient.
-The live executor's object/rollout checks still apply; a skipped replay does not
-authorize an unsupported mutation such as recreating a missing target.
-=======
 Choose playbooks by failure mechanism. Admission mutation, resource exhaustion and old-revision
 blockage need separate diagnoses and steps even on one Deployment; link them from findings and explain
 ordering in READMEs. Keep actions together only when one repair needs them. Unrelated unavailable reads
 must not turn a decidable source comparison into Unknown. Preserve earlier cases when refining variants.
 Judge a pending stage by its final receipt: a later verified settlement preserves the working step;
 a handoff snapshot alone does not justify rewriting it.
->>>>>>> origin/vic-lsh/dev/sdo-improve
 
 - `SetField` restores one schema-checked field; named list selectors (`env[name=X]`) and ConfigMap
   JSON/YAML entries (`DocumentFormat`, `DocumentPath`) preserve unrelated values. A missing final
@@ -61,19 +48,10 @@ a handoff snapshot alone does not justify rewriting it.
 
 ## Stalled rollouts
 
-<<<<<<< HEAD
-The controller records real TCP results even before a program exists, for finding
-Services and up to two healthy peers. It uses the phase snapshot's Pod IP through
-the read-only memory host. Sampling is limited to 24 probes, two Pods per Service, four
-backend ports per Pod, 200 ms per probe and two seconds per phase. Capped or
-unavailable observations are not negative evidence. Copy the phase recordings
-byte-for-byte, including fixed observations; choose a peer with recorded evidence.
-=======
 Mitigate may run again: while a rollout stays pending the runtime re-plans on fresh observations, at most
 three follow-ups, until a plan repeats. `StalledRolloutRelease` retires (`RetireOldRevision`) each old
 revision holding the place of a replacement that cannot be placed or created, selected by ownerReference
 and revision; it returns nothing otherwise. Scaling a current revision is refused (`replicaset_scale_refused`).
->>>>>>> origin/vic-lsh/dev/sdo-improve
 
 ## Pods and commands
 

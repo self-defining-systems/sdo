@@ -40,27 +40,6 @@ Fastloop resolution rows keep the controller's `resolution_path` and `playbook_c
 
 Native worker task/result payloads use logical `playbook_id`, `script_names`, and `proposed_artifact_ids`; direct-edit reflection results reject the deprecated `artifact_proposal` and carry logical playbook IDs in `proposed_artifact_ids`. Older runs may include typed proposals; both the judge and reflection reject them on the current path. Resolve those IDs through the accepted-commit memory catalog and broker commit when investigating learning. Old Python-run receipts may still contain `.sdo/` paths in `playbooks`, `scripts`, or `proposed_memory_changes`; treat these as legacy transport values rather than extra artifacts. The worker's IDs and local check success are claims until the broker independently checks and accepts the actual checkout diff. The native broker ledger stores `reflection_rejections` (attempt, typed `MemoryDiagnostic` findings, and timestamp) before releasing rejected files, and marks `reflection_rejected` after the retry bound; two corrections are allowed, three dispatches total. A terminal rejection completes closure without a reflection commit and remains terminal after restart. Compare diagnostic rule/path/message and accepted Git changes; infrastructure errors do not consume the learning correction budget.
 
-<<<<<<< HEAD
-Fastloop stage checkpoints live under `results/<run-id>/checkpoints/<incident-number>/<stage>/`. `request.json` and `result.json` are the exact worker ProtoJSON; `checkpoint.json` holds capture digests, a digest of the direct file-edit bundle, and the settled native broker ledger. `file_edits.json` is recorded beside each exported worker request/result before publication and stored content-addressed by the checkpoint. Its version-1 edits carry repository-relative paths, base64 file bytes (null for deletion), and executable modes, bounded to 48 MiB encoded. Replay applies them to a fresh checkout and runs the real Go broker. Old proposal-only recordings fail with an explicit error; no proposal shim is kept. Corpus files live under `checkpoints/blobs/<sha256>` and are joined by digest, not by their original session path. A checkpoint is replay evidence, not an accepted commit or a benchmark oracle verdict. Default Codex fastloop registrations record provider CLI turns under the exported incident session's `model_io/<request-digest>/<prompt-digest>.json`; those are model I/O for deterministic plumbing replay, not additional agent decisions. Compare replay's broker acceptance with the recorded ledger and accepted commit before attributing a learning change.
-
-## Generic resource saturation
-
-`resource-saturation` reports memory working sets above 90% of a configured
-container limit. That is observed capacity pressure, not by itself proof of an
-OOM or request failure; correlate it with container termination reasons, restart
-counts, kubelet samples, and application behavior. Short memory growth below
-that threshold must not forecast exhaustion: heap warm-up and garbage collection
-make RAM reclaimable. PVC bytes and inode capacity retain their bounded-window
-exhaustion forecasts. A forecast-only memory finding in an older run can therefore
-be a policy false alarm even when the arithmetic slope is positive.
-
-## Runtime artifact export and retention
-
-The resolution's `stage_end_runtime_artifacts.export_seconds` times controller-log
-and runtime-artifact exports. Both are cumulative, so export cost grows with the
-incident index. The source session directory is retained for seven days after
-durable acknowledgment, with daily pruning.
-=======
 For fastloop checkpoint contents, bounded evidence omissions and replay failures, read [checkpoint recording evidence](checkpoint-recording.md).
 
 ## ConfigMap capture values
@@ -252,4 +231,21 @@ or `response_loops_used` for interaction counts. Empty usage remains unknown
 usage rather than evidence that no interaction occurred.
 
 `verify.verification_status=awaiting_responder_completion` is controller-owned finish guidance when fresh health is clear but publication awaits the responder result. `healthy` remains false; this status is neither a recovery receipt nor mitigation/closure credit. The responder returns its evidence and source-difference dispositions; the controller retains independent stability, quiescence and publication checks.
->>>>>>> origin/vic-lsh/dev/sdo-improve
+
+## Generic resource saturation
+
+`resource-saturation` reports memory working sets above 90% of a configured
+container limit. That is observed capacity pressure, not by itself proof of an
+OOM or request failure; correlate it with container termination reasons, restart
+counts, kubelet samples, and application behavior. Short memory growth below
+that threshold must not forecast exhaustion: heap warm-up and garbage collection
+make RAM reclaimable. PVC bytes and inode capacity retain their bounded-window
+exhaustion forecasts. A forecast-only memory finding in an older run can therefore
+be a policy false alarm even when the arithmetic slope is positive.
+
+## Runtime artifact export and retention
+
+The resolution's `stage_end_runtime_artifacts.export_seconds` times controller-log
+and runtime-artifact exports. Both are cumulative, so export cost grows with the
+incident index. The source session directory is retained for seven days after
+durable acknowledgment, with daily pruning.

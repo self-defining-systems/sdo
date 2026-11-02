@@ -77,9 +77,8 @@ For oversized responder outputs, default stdout budgets and offline size audits,
 When classifying behavior, read [common failures](references/failure-patterns.md); for latent drift or toy lanes,
 also read [drift and toy failures](references/drift-failures.md).
 
-<<<<<<< HEAD
 For offline worker replay use `fastloop replay --run-dir <results/run> --incident N --stage responder|reflection|broker`: agent scripts are the only execution path, with no live fallback. Prompts, rollouts, tool calls and outcomes remain readable analysis evidence. See [the testing guide](../../../docs/testing-guide.md).
-=======
+
 For automatic repair gate changes, defaults, match selection and historical receipt provenance, read [automatic repair evidence](references/automatic-repair.md).
 
 For fastloop capability, infrastructure, ordered dispatch and image-delivery interpretation, read [dispatch evidence](references/fastloop-dispatch.md).
@@ -87,4 +86,3 @@ For fastloop capability, infrastructure, ordered dispatch and image-delivery int
 For ordered stage reports and pending rollout handoffs, read [ordered response stages](references/response-stages.md).
 
 - Remote offline catch-up and derived-index conflicts: [shared memory synchronization](references/shared-memory-sync.md).
->>>>>>> origin/vic-lsh/dev/sdo-improve
