@@ -17,6 +17,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/internal/capturefixture"
+	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory/layout"
 	programvalidation "sdo.dev/operator/memory/validate/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -136,6 +137,11 @@ func(Program) Diagnose(context.Context,program.ReadView,program.Bindings)(progra
 			}
 			if _, err := NormalizeAuthoredPlaybooks(root, paths); err != nil {
 				t.Fatal(err)
+			}
+			// Diagnose-compile keeps the real compiler. The other authored files only
+			// need the validator to place a compiler location at its authored path.
+			if file := compileFiles[mode]; file != "" && mode != "diagnose-compile" {
+				testutil.FakeGo(t, testutil.GoRule{Verb: "build", Output: file + ":3:1: undefined: undefinedMemoryValue"})
 			}
 			decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: ids, SdkGaps: []*contracts.SdkGap{{FaultClass: "admission", Primitive: "BackendAvailabilityObservation", Reason: "requires live policy judgement", ScratchScript: "inspect backend availability"}}}
 			var notes []sdktest.MitigationReplayResult
