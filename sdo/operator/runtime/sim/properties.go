@@ -113,6 +113,14 @@ func EveryIncidentEnds(log Log, cfg Config) error {
 	if ended.Sub(*quiesced) < cfg.Settle {
 		return violate(PropEveryIncidentEnds, -1, "run ends %s after its faults stop, less than the required settle time %s", ended.Sub(*quiesced), cfg.Settle)
 	}
+	// Faults are transient, so the controller process never ends on its own: a
+	// kill by the harness is a ControllerDown, an exit is the controller giving
+	// up on an error it should have retried (an API 500, a lost connection).
+	for i, entry := range log {
+		if e, ok := entry.(ControllerExited); ok {
+			return violate(PropEveryIncidentEnds, i, "the controller exited on its own at %s: %s (a transient fault must be retried, never end the process)", e.At.Format(time.RFC3339Nano), e.Reason)
+		}
+	}
 	// A controller that keeps dying after the faults stopped is wedged, however
 	// quickly it is relaunched: the restart cycle makes it look "down" to the
 	// detection check, which excuses downtime.

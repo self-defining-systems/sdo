@@ -3,7 +3,6 @@
 package e2e
 
 import (
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -23,7 +22,6 @@ func TestControllerSurvivesFaults(t *testing.T) {
 	const drift, health, later = "toy_target_port_frontend", "toy_target_port_catalog", "toy_target_port_backend"
 
 	// Phase 1: a slow API plus a crashing agent. The incident ends failed; the fault stays.
-	// (Sustained API errors are TestControllerToleratesAPIErrors: they currently kill the controller.)
 	latencyFrom := time.Now()
 	w.Proxy.Set(Faults{Latency: 250 * time.Millisecond})
 	w.SetAgentMode("crash")
@@ -117,40 +115,46 @@ func (w *World) settle(limit time.Duration) {
 	})
 }
 
-// TestControllerToleratesAPIErrors is the executable form of a finding: with a sustained 5% of API requests
-// answered 500, the controller exits on the first failed call (startup reads, the leader lease and steady-state
-// listings all return the error out of Run), and the controller Job gives up after its backoff limit, so nothing
-// is left running. It is skipped unless SDO_E2E_API_ERRORS=1 and is not part of `all` until the controller retries.
+// TestControllerToleratesAPIErrors: with a sustained 10% of API requests answered 500 the controller keeps running.
+// It is killed once with the faults on, so its startup reads (restore state, onboarding evidence, the leader Lease) run
+// under errors too, and an incident opens in the same window so the steady-state listings run under them as well.
+// Any further controller Pod is a controller that exited on a transient error. Every incident still reaches an outcome.
 func TestControllerToleratesAPIErrors(t *testing.T) {
-	if os.Getenv("SDO_E2E_API_ERRORS") != "1" {
-		t.Skip("known failing: the controller dies on transient API errors; set SDO_E2E_API_ERRORS=1 to reproduce")
-	}
 	w := NewWorld(t)
 	w.DeployToy()
 	w.InstallController()
 	w.WaitBaseline(5 * time.Minute)
-	pod := w.ControllerPod().Name
-	w.Proxy.Set(Faults{ErrorRate: 0.05})
+	before := len(w.ControllerPods())
+	w.Proxy.Set(Faults{ErrorRate: 0.10})
+	w.KillController()
+	w.Inject("toy_target_port_frontend")
 	time.Sleep(90 * time.Second)
+	t.Logf("%d of %d API requests failed", w.Proxy.Injected.Load(), w.Proxy.Requests.Load())
 	w.Proxy.Clear()
-	if now := w.ControllerPod().Name; now != pod {
-		t.Fatalf("controller exited on transient API errors (%s -> %s); %d of %d requests failed", pod, now, w.Proxy.Injected.Load(), w.Proxy.Requests.Load())
+	if exits := len(w.ControllerPods()) - before - 1; exits > 0 {
+		t.Errorf("the controller exited %d times on transient API errors; its log:\n%s", exits, w.ControllerLog())
+	}
+	w.settle(5 * time.Minute)
+	for _, v := range w.CheckNoWedge() {
+		t.Errorf("wedge: %s", v)
 	}
 }
 
-// TestControllerEndsHungAgent is the executable form of a second finding: an incident responder Job that hangs is
-// never ended. The incident request carries a response deadline, but only the worker honours it; the executor sets no
-// activeDeadlineSeconds on incident Jobs (only on reflection), so a worker that hangs holds the incident, and with it
-// every later incident, forever. Skipped unless SDO_E2E_HUNG_AGENT=1; not part of `all` until the controller ends the Job.
+// TestControllerEndsHungAgent: an incident responder that hangs is ended by the controller at its response deadline,
+// the attempt is recorded, the incident reaches an outcome, and the next incident is handled normally.
 func TestControllerEndsHungAgent(t *testing.T) {
-	if os.Getenv("SDO_E2E_HUNG_AGENT") != "1" {
-		t.Skip("known failing: a hung responder is never ended; set SDO_E2E_HUNG_AGENT=1 to reproduce")
-	}
 	w := NewWorld(t)
 	w.DeployToy()
 	w.InstallController("--response-timeout=45s")
 	w.WaitBaseline(5 * time.Minute)
 	w.SetAgentMode("hang")
 	w.Inject("toy_target_port_catalog")
-	w.waitFor(3*time.Minute, "any terminal outcome within three times the response timeout of a hanging agent", func() bool { return len(w.Outcomes()) > 0 })
+	w.waitFor(3*time.Minute, "a terminal outcome within three times the response timeout of a hanging agent", func() bool { return len(w.Outcomes()) > 0 })
+	w.SetAgentMode("normal")
+	w.Inject("toy_target_port_backend")
+	w.waitFor(4*time.Minute, "the next incident repaired after the hung responder was ended", func() bool { return w.Repaired("toy_target_port_backend") })
+	w.settle(3 * time.Minute)
+	for _, v := range w.CheckNoWedge() {
+		t.Errorf("wedge: %s", v)
+	}
 }

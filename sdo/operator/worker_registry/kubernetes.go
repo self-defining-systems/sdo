@@ -147,6 +147,22 @@ func (e *TaskTimeoutError) Error() string {
 }
 func (e *TaskTimeoutError) Unwrap() error { return context.DeadlineExceeded }
 
+// IncidentJobGrace is how long past the incident's response deadline its worker
+// Job may still run. The worker stops itself at the deadline; the Job's own
+// deadline ends one that does not.
+const IncidentJobGrace = 15 * time.Second
+
+// incidentJobDeadline is when the Job of an incident task is ended by the
+// cluster: the response deadline plus IncidentJobGrace. Without it a worker that
+// hangs holds the incident for ever.
+func incidentJobDeadline(task *contracts.AgentTask) (time.Time, bool) {
+	request := new(contracts.IncidentRequest)
+	if !task.GetRequest().MessageIs(request) || task.GetRequest().UnmarshalTo(request) != nil || request.GetResponseDeadline() == nil {
+		return time.Time{}, false
+	}
+	return request.GetResponseDeadline().AsTime().Add(IncidentJobGrace), true
+}
+
 func frozenReflectionDeadline(task *contracts.AgentTask) (time.Time, bool) {
 	if task.GetDeadline() == nil || !task.GetRequest().MessageIs(&contracts.ReflectionRequest{}) {
 		return time.Time{}, false
@@ -476,6 +492,11 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 		if remaining%time.Second > 0 {
 			seconds++
 		}
+		activeDeadlineSeconds = &seconds
+	} else if deadline, bounded := incidentJobDeadline(task); bounded {
+		// Not an error past the deadline (a controller rejoining a finished
+		// Job): the Job gets the grace and the controller ends the attempt.
+		seconds := int64(max(workerio.Until(deadline), IncidentJobGrace) / time.Second)
 		activeDeadlineSeconds = &seconds
 	}
 	backoffLimit := int32(0)

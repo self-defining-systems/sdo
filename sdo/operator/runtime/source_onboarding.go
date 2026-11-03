@@ -99,8 +99,13 @@ func (c *Controller) AttachPendingOnboarding(ctx context.Context, client kuberne
 	if reference != nil && reference.Authorization.ObjectiveDigest != c.reachabilityObjectiveDigest() {
 		reference = nil
 	}
-	c.onboardingReachability = &onboardingReachabilityState{reference: reference}
-	c.provider = onboardingSnapshotProvider{Base: c.provider, State: c.onboardingReachability}
+	// A retried attachment (a transient read failure below) reuses the wrapper.
+	if c.onboardingReachability == nil {
+		c.onboardingReachability = &onboardingReachabilityState{reference: reference}
+		c.provider = onboardingSnapshotProvider{Base: c.provider, State: c.onboardingReachability}
+	} else {
+		c.onboardingReachability.reference, c.onboardingReachability.invalid = reference, false
+	}
 	if c.namespaceOnboarding != nil {
 		return nil
 	}
