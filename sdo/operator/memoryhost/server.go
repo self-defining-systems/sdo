@@ -38,7 +38,7 @@ type Server struct {
 	readFactory func(context.Context, sdktest.Snapshot) (program.ReadView, error)
 	detectors   map[string]sdk.Detector
 	objects     map[string]*pb.MemoryObject
-	history     []mirrorVersion
+	history     []*mirrorVersion
 	namespace   string
 	generic     ObjectSource
 	protected   string
@@ -55,6 +55,9 @@ const mirrorHistory = 16
 // mirrorVersion is one immutable applied mirror state. Its map is never
 // modified after it is recorded.
 type mirrorVersion struct {
+	once      sync.Once
+	snapshot  sdktest.Snapshot
+	err       error
 	sequence  uint64
 	complete  bool
 	namespace string
@@ -161,9 +164,9 @@ func (s *Server) Apply(frame *pb.MirrorRequest) error {
 	s.namespace = namespace
 	s.identity.MirrorSequence = frame.Sequence
 	s.identity.MirrorComplete = frame.Complete
-	s.history = append(s.history, mirrorVersion{sequence: frame.Sequence, complete: frame.Complete, namespace: namespace, objects: objects})
+	s.history = append(s.history, &mirrorVersion{sequence: frame.Sequence, complete: frame.Complete, namespace: namespace, objects: objects})
 	if len(s.history) > mirrorHistory {
-		s.history = append([]mirrorVersion(nil), s.history[len(s.history)-mirrorHistory:]...)
+		s.history = append([]*mirrorVersion(nil), s.history[len(s.history)-mirrorHistory:]...)
 	}
 	return nil
 }
@@ -194,13 +197,21 @@ func (s *Server) snapshot(sequence uint64) (sdktest.Snapshot, error) {
 	var version *mirrorVersion
 	for i := range s.history {
 		if s.history[i].sequence == sequence {
-			version = &s.history[i]
+			version = s.history[i]
 		}
 	}
 	s.mu.RUnlock()
 	if version == nil || !version.complete {
 		return sdktest.Snapshot{}, errors.New("memory mirror incomplete or stale")
 	}
+	version.once.Do(func() { version.snapshot, version.err = decodeMirror(version) })
+	if version.err != nil {
+		return sdktest.Snapshot{}, version.err
+	}
+	return cloneMirrorSnapshot(version.snapshot), nil
+}
+
+func decodeMirror(version *mirrorVersion) (sdktest.Snapshot, error) {
 	fields := map[string]any{"namespace": version.namespace}
 	keys := make([]string, 0, len(version.objects))
 	for key := range version.objects {
@@ -221,6 +232,7 @@ func (s *Server) snapshot(sequence uint64) (sdktest.Snapshot, error) {
 	err = json.Unmarshal(raw, &snapshot)
 	return snapshot, err
 }
+
 func (s *Server) Evaluate(ctx context.Context, request *pb.EvaluateRequest) (*pb.EvaluateResponse, error) {
 	snapshot, err := s.snapshot(request.GetMirrorSequence())
 	if err != nil {
@@ -341,7 +353,10 @@ func decode[T any](value *structpb.Struct) (*T, error) {
 	if value == nil {
 		return nil, nil
 	}
-	data, err := value.MarshalJSON()
+	if err := validStruct(value); err != nil {
+		return nil, err
+	}
+	data, err := json.Marshal(value.AsMap())
 	if err != nil {
 		return nil, err
 	}

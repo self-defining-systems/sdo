@@ -191,9 +191,14 @@ func wireStruct(value any) (*structpb.Struct, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := &structpb.Struct{}
-	err = out.UnmarshalJSON(raw)
-	return out, err
+	var fields map[string]any
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, err
+	}
+	if fields == nil {
+		return nil, errors.New("memory observation requires a JSON object")
+	}
+	return structpb.NewStruct(fields)
 }
 func (r *RemoteMemory) observation(view sdk.DetectionContext) (*pb.MemoryObservation, error) {
 	if cycle := memoryCycle(view); cycle != nil {
@@ -423,6 +428,9 @@ func (p *remoteProgram) Mitigate(ctx context.Context, view program.ReadView, b p
 
 // capture retains the active host lease and exact mirror barrier through the RPC.
 func (r *RemoteMemory) capture(ctx context.Context, view sdk.DetectionContext) (MemoryHostRPC, uint64, func(), error) {
+	if cycle := memoryCycle(view); cycle != nil {
+		view = cycle
+	}
 	host, seq, release, err := r.rpc.Capture(ctx, view)
 	if err != nil {
 		return nil, 0, nil, err

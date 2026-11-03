@@ -25,6 +25,17 @@ func Freeze(view sdk.DetectionContext) sdktest.Snapshot {
 
 // mirrorObjects converts the SDK projection, never raw Secret bodies.
 func mirrorObjects(view sdk.DetectionContext) (map[string]*pb.MemoryObject, error) {
+	if prepared, ok := view.(interface {
+		MemoryMirror() (map[string]*pb.MemoryObject, error)
+	}); ok {
+		return prepared.MemoryMirror()
+	}
+	return ProjectSnapshot(view)
+}
+
+// ProjectSnapshot freezes the wire projection. The returned map is immutable;
+// cycle owners may share it between reference discovery and mirror publication.
+func ProjectSnapshot(view sdk.DetectionContext) (map[string]*pb.MemoryObject, error) {
 	if view.Namespace() == "" {
 		return nil, errors.New("mirror namespace required")
 	}

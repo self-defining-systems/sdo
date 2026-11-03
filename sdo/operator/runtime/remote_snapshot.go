@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 
 	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memoryhost"
@@ -34,9 +35,13 @@ func memoryCycle(view sdk.DetectionContext) *CycleReadView {
 type memoryPreparation struct {
 	mu           sync.Mutex
 	refsOnce     sync.Once
+	mirrorOnce   sync.Once
+	mirror       map[string]*pb.MemoryObject
+	mirrorErr    error
 	refs         []sdk.ObjectRef
 	refsErr      error
-	diffs        map[sdk.ObjectRef][]*pb.MemoryReadReceipt
+	diffs        map[sdk.ObjectRef]*preparedDiff
+	diffSlots    chan struct{}
 	observations map[*RemoteMemory]*preparedObservation
 }
 type preparedObservation struct {
@@ -51,7 +56,7 @@ func snapshotMemoryRefs(view sdk.DetectionContext) ([]sdk.ObjectRef, error) {
 		return memoryhost.SnapshotRefs(view)
 	}
 	p := &cycle.memory
-	p.refsOnce.Do(func() { p.refs, p.refsErr = memoryhost.SnapshotRefs(view) })
+	p.refsOnce.Do(func() { p.refs, p.refsErr = memoryhost.SnapshotRefs(cycle) })
 	return append([]sdk.ObjectRef(nil), p.refs...), p.refsErr
 }
 func frozenMemoryReads(view sdk.DetectionContext, refs []sdk.ObjectRef) ([]*pb.MemoryReadReceipt, error) {
@@ -61,24 +66,61 @@ func frozenMemoryReads(view sdk.DetectionContext, refs []sdk.ObjectRef) ([]*pb.M
 	}
 	p := &cycle.memory
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.diffs == nil {
-		p.diffs = map[sdk.ObjectRef][]*pb.MemoryReadReceipt{}
+		p.diffs = map[sdk.ObjectRef]*preparedDiff{}
+		p.diffSlots = make(chan struct{}, 8)
 	}
-	var out []*pb.MemoryReadReceipt
-	for _, ref := range refs {
-		reads, ok := p.diffs[ref]
-		if !ok {
-			var err error
-			reads, err = memoryhost.EncodeReceipts(memoryDiffInputs(view, []sdk.ObjectRef{ref}))
-			if err != nil {
-				return nil, err
-			}
-			p.diffs[ref] = reads
+	entries := make([]*preparedDiff, len(refs))
+	for i, ref := range refs {
+		entry := p.diffs[ref]
+		if entry == nil {
+			entry = &preparedDiff{}
+			p.diffs[ref] = entry
 		}
-		out = append(out, reads...)
+		entries[i] = entry
+	}
+	p.mu.Unlock()
+	var next atomic.Int64
+	var workers sync.WaitGroup
+	for range min(8, len(refs)) {
+		workers.Go(func() {
+			for {
+				i := int(next.Add(1) - 1)
+				if i >= len(refs) {
+					return
+				}
+				entry := entries[i]
+				entry.once.Do(func() {
+					p.diffSlots <- struct{}{}
+					defer func() { <-p.diffSlots }()
+					entry.reads, entry.err = memoryhost.EncodeReceipts(memoryDiffInputs(view, []sdk.ObjectRef{refs[i]}))
+				})
+			}
+		})
+	}
+	workers.Wait()
+	var out []*pb.MemoryReadReceipt
+	for _, entry := range entries {
+		if entry.err != nil {
+			return nil, entry.err
+		}
+		out = append(out, entry.reads...)
 	}
 	return out, nil
+}
+
+type preparedDiff struct {
+	once  sync.Once
+	reads []*pb.MemoryReadReceipt
+	err   error
+}
+
+// MemoryMirror shares one immutable wire projection for an explicit cycle;
+// equal timestamps or object lists never authorize reuse across cycles.
+func (v *CycleReadView) MemoryMirror() (map[string]*pb.MemoryObject, error) {
+	p := &v.memory
+	p.mirrorOnce.Do(func() { p.mirror, p.mirrorErr = memoryhost.ProjectSnapshot(v) })
+	return p.mirror, p.mirrorErr
 }
 
 type memoryScopeKey struct{}
