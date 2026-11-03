@@ -24,9 +24,13 @@ func TestHarness(t *testing.T) {
 	seeds := simSeeds(t, 64, simPRRuns)
 	for _, seed := range seeds {
 		t.Run("seed="+strconv.FormatUint(seed, 10), func(t *testing.T) {
-			t.Parallel()
-			if len(seeds) > simPRRuns && time.Now().After(deadline) {
-				t.Skip("wall budget spent")
+			// PR CI plays its few seeds one at a time so the harness does not
+			// starve the package's real-time tests; the nightly sweep fans out.
+			if len(seeds) > simPRRuns {
+				t.Parallel()
+				if time.Now().After(deadline) {
+					t.Skip("wall budget spent")
+				}
 			}
 			synctest.Test(t, func(t *testing.T) {
 				log, cfg := runHarness(t, seed)
