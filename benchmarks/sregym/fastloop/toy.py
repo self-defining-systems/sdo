@@ -153,7 +153,11 @@ def up(args: Any) -> int:
         env.worker_env.update(host_limits.worker_env())
         env.save()
         prepare_dev_mount(env.dev_mount, None, run_dir)
-        config = install_controller(env, registrations=getattr(args, "agent_registrations", None))
+        config = install_controller(
+            env,
+            registrations=getattr(args, "agent_registrations", None),
+            frozen_memory=getattr(args, "frozen_memory", False),
+        )
         record_controller(env, config)
         print(f"toy environment ready: {env.path}")
         return 0
@@ -290,7 +294,11 @@ def up(args: Any) -> int:
         credentials_hook(hook.resolve(), kubeconfig)(NAMESPACE + "-sdo")
     env.save()
     deployed = time.monotonic()
-    config = install_controller(env, registrations=getattr(args, "agent_registrations", None))
+    config = install_controller(
+        env,
+        registrations=getattr(args, "agent_registrations", None),
+        frozen_memory=getattr(args, "frozen_memory", False),
+    )
     record_controller(env, config)
     timing = {
         "prepare": create_start - started,
@@ -307,7 +315,11 @@ def up(args: Any) -> int:
 
 
 def install_controller(
-    environment: FastloopEnvironment, config: Any = None, *, registrations: Path | None = None
+    environment: FastloopEnvironment,
+    config: Any = None,
+    *,
+    registrations: Path | None = None,
+    frozen_memory: bool = False,
 ) -> Any:
     """Install the production controller and its registrations (scripted unless given), without benchmark resources."""
     from dataclasses import replace
@@ -336,11 +348,14 @@ def install_controller(
             model="gpt-6-luna",
             timeout_seconds=int(wait_for(WaitKind.RESPONSE, 2)),
             repair_policy="recorded-actions",
+            frozen_memory=frozen_memory,
             persistent=True,
             kind_cluster_name=environment.cluster,
             deployed_manifest_paths=("kubernetes",),
             agent_registrations=registrations.resolve() if registrations else None,
         )
+    if frozen_memory and not config.frozen_memory:
+        config = replace(config, frozen_memory=True)
     install = replace(native_install_config(config), registration_configmap="sdo-agent-registrations")
     resources = [
         {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": install.control_namespace}},

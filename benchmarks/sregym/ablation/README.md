@@ -44,6 +44,7 @@ uv run python -m benchmarks.sregym.fastloop run \
   --run-id detectors-only-pilot -n 1
 ```
 
-This is a command template requiring the lane and its credentials hook. A
-scripted worker registration must be passed explicitly for a model-free proof;
-the normal run registration uses real models.
+This is a command template requiring the lane and its credentials hook. For a
+model-free toy proof, use `up --frozen-memory` to skip judge refresh and pass the
+scripted worker registration explicitly on `run`; normal registrations use real
+models.

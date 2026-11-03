@@ -1611,6 +1611,7 @@ def build_parser() -> argparse.ArgumentParser:
     up = commands.add_parser("up", help="create or reuse the cluster and deploy the application once")
     up.add_argument("--run-dir", type=Path, required=True)
     up.add_argument("--app", choices=("sregym", "toy"), default="sregym")
+    up.add_argument("--frozen-memory", action="store_true", help="toy: install the supplied seed without judge refresh")
     up.add_argument("--toy-node-image", default="kindest/node:v1.34.0")
     up.add_argument("--seed", type=Path, help="git repository cloned as the application workspace (first time only)")
     up.add_argument("--problem", default=DEFAULT_PROBLEM, help="problem whose application is deployed")
