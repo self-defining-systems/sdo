@@ -1046,3 +1046,44 @@ def test_admission_reads_traffic_from_the_accepted_memory_host(lane, monkeypatch
     monkeypatch.setattr(admission, "kubectl", read)
     assert gate._windows("hotel-reservation-sdo") == windows
     assert len(calls) == 2
+
+
+@pytest.mark.parametrize("settles", [True, False])
+def test_restore_waits_for_observed_generation(monkeypatch, tmp_path, settles):
+    from benchmarks.sregym.fastloop.reset import RestoreChecks
+
+    clock = [0.0]
+    monkeypatch.setattr(admission.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(admission.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+
+    def read(*args, **kwargs):
+        result = listing(generation=2)
+        document = json.loads(result.stdout)
+        if not settles or clock[0] < 4:
+            document["items"][0]["status"]["observedGeneration"] = 1
+        return SimpleNamespace(stdout=json.dumps(document))
+
+    monkeypatch.setattr(admission, "kubectl", read)
+    checks = RestoreChecks(SimpleNamespace(kubeconfig=tmp_path / "kubeconfig", namespace="synthetic"))
+    if settles:
+        checks.ready()
+        assert checks.identity
+        assert clock[0] == 4
+    else:
+        with pytest.raises(ValueError, match="rollout not complete.*Deployment/search"):
+            checks.ready()
+        assert clock[0] == wait_for(WaitKind.ROLLOUT)
+
+
+@pytest.mark.parametrize("invalid", ["empty", "zero"])
+def test_restore_does_not_wait_for_invalid_workload_inventory(monkeypatch, tmp_path, invalid):
+    document = json.loads(listing().stdout)
+    if invalid == "empty":
+        document["items"] = []
+    else:
+        document["items"][0]["spec"]["replicas"] = 0
+        document["items"][0]["status"] = {}
+    monkeypatch.setattr(admission, "kubectl", lambda *args, **kwargs: SimpleNamespace(stdout=json.dumps(document)))
+    monkeypatch.setattr(admission.time, "sleep", lambda _: pytest.fail("invalid inventory must fail immediately"))
+    with pytest.raises(ValueError, match="no installed|scaled to zero"):
+        admission.await_workload_identity(tmp_path / "kubeconfig", "synthetic")

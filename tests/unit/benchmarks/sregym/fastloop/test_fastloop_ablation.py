@@ -58,3 +58,30 @@ def test_arm_repository_uses_problem_application(application, repository):
     )
     result = configure_arm(args, env, git=lambda *args: "a" * 40)
     assert result.repository.endswith(repository)
+
+
+def test_variant_is_the_setup_lineage_boundary(tmp_path):
+    import subprocess
+
+    from benchmarks.sregym.adapter.eval_guards import setup_lineage
+    from benchmarks.sregym.fastloop.ablation import configure_arm
+    from tests.unit.benchmarks.sregym.fastloop.test_eval_guards import _commit
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    _commit(tmp_path, "original-seed", [])
+    original = subprocess.check_output(["git", "-C", str(tmp_path), "rev-parse", "HEAD"], text=True).strip()
+    _commit(tmp_path, "offline-projection", [])
+    variant = subprocess.check_output(["git", "-C", str(tmp_path), "rev-parse", "HEAD"], text=True).strip()
+    args = build_parser().parse_args(
+        ["run", "--run-dir", "/tmp/run", "--agent", "sdo", "--ablation-arm", "detectors-only"]
+    )
+    env = SimpleNamespace(
+        problem_application="social-network", shared_accepted_id="", workspace=tmp_path, seed_commit=original
+    )
+    selected = configure_arm(args, env, git=lambda *args: variant)
+    assert env.seed_commit == selected.commit == args.planned_commit
+    _commit(tmp_path, "setup", ["SDO-Actor: health_judge", "SDO-Phase: initial", "SDO-Validation: passed"])
+    assert len(setup_lineage(tmp_path, env.seed_commit)["commits"]) == 1
+    _commit(tmp_path, "unvalidated-setup", [])
+    with pytest.raises(ValueError, match="unvalidated setup commit"):
+        setup_lineage(tmp_path, env.seed_commit)
