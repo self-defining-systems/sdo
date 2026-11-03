@@ -35,7 +35,13 @@ require (
 	sigs.k8s.io/yaml v1.4.0
 )
 
-require github.com/prometheus/client_model v0.6.1 // indirect
+require sigs.k8s.io/controller-runtime v0.18.4
+
+require (
+	github.com/evanphx/json-patch/v5 v5.9.0 // indirect
+	github.com/prometheus/client_model v0.6.1 // indirect
+	k8s.io/apiextensions-apiserver v0.30.1 // indirect
+)
 
 require (
 	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.12-20260825204119-511051f7f437.2

@@ -27,6 +27,17 @@ Other behavioral properties (fixed means verified, writes happen once, nothing i
 
 A test that maps to none of these is a candidate for deletion.
 
+## Real API server for integration tests
+
+`sdo.dev/operator/runtime/envtestio` (`integration` tag) starts a real kube-apiserver and etcd at the kind lane's
+Kubernetes version and returns a client configuration and a kubeconfig file:
+`env := envtestio.Start(t)`, then `env.Client(t)`, `env.Kubeconfig`, `env.CreateNamespace(t, "app")`. The first use
+downloads the binaries into `$SDO_ENVTEST_CACHE` (default the user cache dir; on the lane hosts export
+`SDO_ENVTEST_CACHE=/mnt/data/shli/cache/envtest`), or set `KUBEBUILDER_ASSETS` to an existing directory. There is no
+controller manager, scheduler or kubelet: nothing reconciles, Pods stay Pending, and namespaces never finish
+terminating. Tests that start it belong in the nightly list (`scripts/ci_nightly_go_tests/`) unless they stay well
+under PR CI's budget and the binaries are cached.
+
 ## Test organization
 
 Memory-host RPC tests must prepare and activate a host through Manager and capture
