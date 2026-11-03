@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ipaddress
 import json
 import subprocess
 import time
@@ -246,18 +245,27 @@ class LaneAdmission:
             raise ValueError("eval: accepted health policy declares no synthetic traffic scenarios")
 
     def _windows(self, control: str) -> dict[str, Any]:
-        env = self.environment
-        pod = json.loads(
-            kubectl(["get", "pod/sdo-prober", "-o", "json"], namespace=control, kubeconfig=env.kubeconfig).stdout
-        )
-        address = ipaddress.ip_address(pod["status"]["podIP"])
-        host = f"[{address}]" if address.version == 6 else str(address)
-        code = f"import urllib.request; print(urllib.request.urlopen('http://{host}:8080/v1/windows',timeout=5).read().decode())"
+        job = self._controller_job(control)
+        if job is None:
+            raise ValueError("eval: traffic observation requires the installed controller")
+        controller = next(row for row in job["spec"]["template"]["spec"]["containers"] if row["name"] == "controller")
+        args = controller["args"]
+        repository = args[args.index("--app") + 1]
         return json.loads(
             kubectl(
-                ["exec", "job/sdo-controller-run", "-c", "controller", "--", "python3", "-c", code],
+                [
+                    "exec",
+                    "job/sdo-controller-run",
+                    "-c",
+                    "controller",
+                    "--",
+                    "sdo-operator",
+                    "observe-traffic",
+                    "--app",
+                    repository,
+                ],
                 namespace=control,
-                kubeconfig=env.kubeconfig,
+                kubeconfig=self.environment.kubeconfig,
             ).stdout
         )
 
