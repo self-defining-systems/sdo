@@ -37,13 +37,16 @@ func main() {
 	registry, err := generated.Programs(); if err != nil { panic(err) }
 	diagnoser, ok := registry.Diagnoser("service-targetport-mismatch"); if !ok { panic("missing compiled diagnoser") }
 	mitigator, ok := registry.Mitigator("service-targetport-mismatch"); if !ok { panic("missing compiled mitigator") }
-	bindings := program.Bindings{Objects:program.ObjectBindings{"service": sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "peer"}}}
-	view := &sdktest.ReplayReadView{Snapshot: snapshot}
+	bindings := program.Bindings{Objects:program.ObjectBindings{"service": sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "peer"}}}
+	view := &sdktest.ReplayReadView{Snapshot: snapshot, Calls: snapshot.Readings}
 	verdict, err := diagnoser.Diagnose(context.Background(), view, bindings); if err != nil { panic(err) }
 	plan, err := mitigator.Mitigate(context.Background(), view, bindings); if err != nil { panic(err) }
 	if len(plan.Actions) != 1 { panic("expected one action") }
 	action, ok := plan.Actions[0].(program.SetField); if !ok { panic("expected SetField") }
-	value,_,err:=program.ResolveValue(action.Value,program.ValueInputs{Observed:func(ref sdk.ObjectRef)(map[string]any,error){for _,pod:=range snapshot.Pods(){if pod.Namespace==ref.Namespace&&pod.Name==ref.Name{raw,_:=json.Marshal(pod);var object map[string]any;err:=json.Unmarshal(raw,&object);return object,err}};return nil,os.ErrNotExist}});if err!=nil{panic(err)}
+    var source map[string]any
+    sourceFile, err := os.Open(os.Args[2]); if err != nil { panic(err) }
+    if err := json.NewDecoder(sourceFile).Decode(&source); err != nil { panic(err) }
+    value,_,err:=program.ResolveValue(action.Value,program.ValueInputs{SourceCommit:os.Args[3],Source:func(ref sdk.ObjectRef)(map[string]any,error){return source,nil}});if err!=nil{panic(err)}
  if err := json.NewEncoder(os.Stdout).Encode(map[string]any{"result": verdict.Result, "path": action.Path, "value": value}); err != nil { panic(err) }
 }
 `

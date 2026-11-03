@@ -163,6 +163,7 @@ def native_install_config(config: RuntimeConfig) -> NativeInstallConfig:
         reflection_guidance=config.reflection_guidance,
         force_reflection=config.force_reflection,
         frozen_memory=config.frozen_memory,
+        registration_configmap="sdo-agent-registrations" if config.agent_registrations else None,
         code_path=config.code_path,
         healthy_baseline=config.healthy_baseline,
         permissive_responder=config.permissive_responder,
@@ -188,7 +189,19 @@ def install_persistent_controller(config: RuntimeConfig) -> bool:
 
     if not config.persistent:
         raise ControllerInstallError("persistent install requires RuntimeConfig.persistent")
-    return install_existing(native_install_config(config)).reused
+    native = native_install_config(config)
+    if config.agent_registrations:
+        from benchmarks.sregym.adapter.driver import publish_agent_registrations
+
+        assert native.kubeconfig is not None
+        publish_agent_registrations(
+            config.agent_registrations,
+            native.control_namespace,
+            native.kubeconfig,
+            native.responder_image,
+            {native.controller_image, native.responder_image},
+        )
+    return install_existing(native).reused
 
 
 def collect_production_receipt(config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]:

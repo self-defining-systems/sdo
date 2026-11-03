@@ -198,6 +198,7 @@ class PostClosureWait(BaseModel):
 
 
 class IncidentRecord(_PersistedModel):
+    ablation_arm: str | None = None
     model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="before")

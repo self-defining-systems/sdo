@@ -49,6 +49,9 @@ func withHealthRefreshDeadline(ctx context.Context, budget time.Duration, refres
 }
 
 func refreshControllerHealthOnce(ctx context.Context, config *contracts.ControllerConfig, repository lifecycle.ProposalBroker) error {
+	if config.GetFrozenMemory() {
+		return nil
+	}
 	revision, err := memory.AcceptedHealthRevision(ctx, config.GetAppRoot())
 	if err != nil {
 		return err

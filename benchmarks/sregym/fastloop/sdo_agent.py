@@ -523,19 +523,12 @@ class SdoPersistentAgent:
         )
         activations = []
         if self.learn_before_recovery:
-            from benchmarks.sregym.fastloop.continuity import check_activations
+            from benchmarks.sregym.fastloop.continuity import activation_commits, check_activations
 
             # Leave room for post-activation evaluations before any recovery maintenance.
             allowed_gap = 5.0
             self._clock.sleep(2 * allowed_gap + 0.5)
-            commits = {
-                str(item["accepted_commit"])
-                for item in rollout_receipts
-                if isinstance(item, dict) and item.get("success") and item.get("accepted_commit")
-            }
-            reflection_commit = ledger.get("reflection_commit") or ledger.get("outcome_commit")
-            if reflection_commit:
-                commits.add(str(reflection_commit))
+            commits = activation_commits(ledger)
             activations, continuity_error = check_activations(
                 self._continuity_logs(outcome.injection.started_at),
                 self._continuity_before,

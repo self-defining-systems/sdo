@@ -62,3 +62,9 @@ func TestHealthRefreshDefaultAndParentDeadlines(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestFrozenHealthNeverDispatchesJudge(t *testing.T) {
+	if err := refreshControllerHealthOnce(context.Background(), &contracts.ControllerConfig{FrozenMemory: true}, nil); err != nil {
+		t.Fatal(err)
+	}
+}

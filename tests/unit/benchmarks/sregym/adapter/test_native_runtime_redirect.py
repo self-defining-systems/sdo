@@ -80,3 +80,25 @@ def test_replay_run_setting_reaches_native_install_arguments(tmp_path: Path, mon
         assert args[args.index("--replay") + 1] == mode
     with pytest.raises(ValueError, match="replay"):
         replace(_config(tmp_path), replay="false")
+
+
+def test_supplied_registrations_are_published_and_forwarded_before_install(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    monkeypatch.setenv("SREGYM_BASE_KUBECONFIG", str(tmp_path / "kubeconfig"))
+    config = replace(_config(tmp_path), frozen_memory=True, agent_registrations=tmp_path / "registrations")
+    events = []
+
+    def publish(*args):
+        events.append("publish")
+
+    def install(native):
+        events.append("install")
+        args = native.common_args()
+        assert args[args.index("--agent-registration-configmap") + 1] == "sdo-agent-registrations"
+        return NativeInstallReceipt(True, False, "fingerprint", "a" * 40)
+
+    monkeypatch.setattr("benchmarks.sregym.adapter.driver.publish_agent_registrations", publish)
+    monkeypatch.setattr(runtime, "install_existing", install)
+    assert runtime.install_persistent_controller(config) is False
+    assert events == ["publish", "install"]

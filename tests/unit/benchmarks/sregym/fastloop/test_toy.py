@@ -369,3 +369,41 @@ def test_retire_control_state_clears_checkpoints_and_stale_health_refresh_record
         "configmap/sdo-health-refresh-a-result",
         "--ignore-not-found=true",
     )
+
+
+def test_toy_up_can_install_frozen_seed_without_judge():
+    args = build_parser().parse_args(["up", "--app", "toy", "--run-dir", "/tmp/toy", "--frozen-memory"])
+    assert args.frozen_memory
+
+
+def test_frozen_toy_install_preserves_policy_at_native_boundary(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from benchmarks.sregym import adapter
+    from benchmarks.sregym.fastloop import toy
+
+    environment = SimpleNamespace(
+        dev_mount=tmp_path,
+        workspace=tmp_path,
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="toy",
+        application="toy",
+        cluster="toy-private",
+        images=SimpleNamespace(controller="controller:test", responder="responder:test"),
+        apply_operator_env=lambda _: None,
+    )
+    monkeypatch.setenv("KUBECONFIG", str(environment.kubeconfig))
+    monkeypatch.delenv("SREGYM_BASE_KUBECONFIG", raising=False)
+    seen = []
+
+    def install(config):
+        seen.append(config)
+        return SimpleNamespace(accepted_commit="a" * 40)
+
+    monkeypatch.setattr(toy.subprocess, "run", lambda *args, **kwargs: None)
+    monkeypatch.setattr(adapter, "publish_agent_registrations", lambda *args: None)
+    monkeypatch.setattr(adapter, "install_existing", install)
+    monkeypatch.setattr(toy, "wait_for_baseline", lambda *args: None)
+    result = toy.install_controller(environment, frozen_memory=True)
+    assert result.frozen_memory
+    assert seen[0].frozen_memory

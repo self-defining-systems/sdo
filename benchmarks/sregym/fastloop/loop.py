@@ -173,6 +173,7 @@ class LoopConfig:
     problems: tuple[str, ...]
     incidents: int
     results_path: Path
+    ablation_arm: str | None = None
     delivery_record_path: Path | None = None
     image_delivery: str = "unknown"
     image_delivery_reason: str = ""
@@ -706,6 +707,7 @@ def _run_one(
         else {"provider_waits": limited_waits, "account_events": account_events}
     )
     record = IncidentRecord(
+        ablation_arm=config.ablation_arm,
         opus_pool=config.opus_pool,
         image_delivery=delivery,
         image_delivery_reason=reason,
