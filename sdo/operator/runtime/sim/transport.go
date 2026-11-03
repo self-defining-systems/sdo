@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
@@ -22,7 +24,22 @@ var resources = map[string]string{"configmaps": "ConfigMap", "services": "Servic
 
 // Client returns a real client-go client using only the in-memory transport.
 func (w *World) Client() (kubernetes.Interface, error) {
-	return kubernetes.NewForConfigAndClient(&rest.Config{Host: "http://simulation", ContentConfig: rest.ContentConfig{ContentType: "application/json"}}, &http.Client{Transport: Transport{w}})
+	return w.ClientFor(&rest.Config{Host: "http://simulation", ContentConfig: rest.ContentConfig{ContentType: "application/json"}})
+}
+
+// ClientFor builds a client-go client over the in-memory transport from config,
+// which may set a UserAgent (the default field manager of non-apply writes).
+func (w *World) ClientFor(config *rest.Config) (kubernetes.Interface, error) {
+	config = rest.CopyConfig(config)
+	config.Transport = Transport{w}
+	if config.Host == "" {
+		config.Host = "http://simulation"
+	}
+	httpClient, err := rest.HTTPClientFor(config)
+	if err != nil {
+		return nil, err
+	}
+	return kubernetes.NewForConfigAndClient(config, httpClient)
 }
 func (tr Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	w := tr.World
@@ -72,7 +89,14 @@ func (tr Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 		return reply(200, data.Summary), nil
 	}
-	if response, handled := tr.serveAcceptedSource(req, path, reply); handled {
+	if body, ok := serveDiscovery(path); ok && req.Method == http.MethodGet {
+		return reply(http.StatusOK, body), nil
+	}
+	if len(path) == 3 && path[0] == "apis" && req.Method == http.MethodGet {
+		code, body := statusError(apierrors.NewGenericServerResponse(http.StatusNotFound, "get", schema.GroupResource{}, "", "the server could not find the requested resource", 0, false))
+		return reply(code, body), nil
+	}
+	if response, handled := tr.serveResource(req, path, reply); handled {
 		return response, nil
 	}
 	if req.Method != "GET" {

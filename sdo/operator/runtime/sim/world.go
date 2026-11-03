@@ -47,24 +47,29 @@ type Event struct {
 	At       time.Time
 }
 
+// NewWorld builds a quiet world on seed. Run wraps it in a virtual-time bubble;
+// a caller that needs real I/O beside the world (a conformance test against a
+// real API server) builds it directly.
+func NewWorld(seed uint64) *World {
+	rng := rand.New(rand.NewPCG(seed, seed^0xd1b54a32d192ed03))
+	kube := NewKube(QuietFaults())
+	w := &World{Endpoints: map[string]string{}, Logs: map[LogKey]string{}, Kubelet: map[string]KubeletSample{}, Seed: seed, RNG: rng, Kube: kube, Cache: NewCache(kube, QuietFaults())}
+	w.Faults = &Injector{rng: rng, Rules: map[string][]Fault{}}
+	kube.Clock = w.Now
+	kube.Before = func(ctx context.Context, edge string) (Fault, error) {
+		f := w.Faults.Next(edge)
+		if err := w.Sleep(ctx, f.Delay); err != nil {
+			return f, err
+		}
+		return f, f.Err
+	}
+	return w
+}
+
 // Run isolates all timers and goroutines in a virtual-time bubble.
 func Run(t *testing.T, seed uint64, body func(*testing.T, *World)) {
 	t.Helper()
-	synctest.Test(t, func(t *testing.T) {
-		rng := rand.New(rand.NewPCG(seed, seed^0xd1b54a32d192ed03))
-		kube := NewKube(QuietFaults())
-		w := &World{Endpoints: map[string]string{}, Logs: map[LogKey]string{}, Kubelet: map[string]KubeletSample{}, Seed: seed, RNG: rng, Kube: kube, Cache: NewCache(kube, QuietFaults())}
-		w.Faults = &Injector{rng: rng, Rules: map[string][]Fault{}}
-		kube.Clock = w.Now
-		kube.Before = func(ctx context.Context, edge string) (Fault, error) {
-			f := w.Faults.Next(edge)
-			if err := w.Sleep(ctx, f.Delay); err != nil {
-				return f, err
-			}
-			return f, f.Err
-		}
-		body(t, w)
-	})
+	synctest.Test(t, func(t *testing.T) { body(t, NewWorld(seed)) })
 }
 func (w *World) Now() time.Time { return time.Now() }
 

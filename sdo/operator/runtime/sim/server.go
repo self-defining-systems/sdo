@@ -5,12 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	jsonpatch "github.com/evanphx/json-patch"
-	appsv1 "k8s.io/api/apps/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sdo.dev/operator/sdk"
 	"strconv"
 )
@@ -25,67 +24,29 @@ type serverClient struct {
 	raceBeforePatch int
 }
 
-// canonicalizeSpec round-trips a Deployment spec through the typed API object,
-// as the API server's codec does: resource quantities become canonical ("1000m"
-// is stored as "1", "0.5Gi" as "512Mi") and empty optional lists are dropped.
-func canonicalizeSpec(object *unstructured.Unstructured) {
-	spec, ok := object.Object["spec"].(map[string]any)
-	if !ok || object.GetKind() != "Deployment" {
-		return
-	}
-	var typed appsv1.DeploymentSpec
-	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(spec, &typed); err != nil {
-		panic(err)
-	}
-	canonical, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&typed)
-	if err != nil {
-		panic(err)
-	}
-	object.Object["spec"] = canonical
-}
-
 // settle applies API-server normalization and defaulting and a controller-managed status bump.
 func (c *serverClient) settle(object *unstructured.Unstructured) {
-	canonicalizeSpec(object)
-	defaultObject(object)
-	spec, _ := object.Object["spec"].(map[string]any)
-	if spec != nil && object.GetKind() == "Deployment" {
-		if _, ok := spec["progressDeadlineSeconds"]; !ok {
-			spec["progressDeadlineSeconds"] = float64(600)
-		}
-		if _, ok := spec["revisionHistoryLimit"]; !ok {
-			spec["revisionHistoryLimit"] = float64(10)
-		}
-		containers, _, _ := unstructured.NestedSlice(object.Object, "spec", "template", "spec", "containers")
-		for _, item := range containers {
-			if container, ok := item.(map[string]any); ok {
-				if _, ok := container["terminationMessagePath"]; !ok {
-					container["terminationMessagePath"] = "/dev/termination-log"
-				}
-				if probe, ok := container["readinessProbe"].(map[string]any); ok {
-					for key, value := range map[string]any{"periodSeconds": float64(10), "timeoutSeconds": float64(1), "successThreshold": float64(1), "failureThreshold": float64(3)} {
-						if _, ok := probe[key]; !ok {
-							probe[key] = value
-						}
-					}
-					if get, ok := probe["httpGet"].(map[string]any); ok {
-						if _, ok := get["scheme"]; !ok {
-							get["scheme"] = "HTTP"
-						}
-					}
-				}
-			}
-		}
-		if len(containers) > 0 {
-			_ = unstructured.SetNestedSlice(object.Object, containers, "spec", "template", "spec", "containers")
+	(&apiServer{}).defaults(kindOf(object), object)
+	c.bump(object)
+}
+
+func kindOf(o *unstructured.Unstructured) kindInfo {
+	for _, k := range servedKinds {
+		if k.kind == o.GetKind() && k.groupVersion() == o.GetAPIVersion() {
+			return k
 		}
 	}
-	c.bump(object)
+	return kindInfo{kind: o.GetKind()}
 }
 
 func (c *serverClient) bump(object *unstructured.Unstructured) {
 	c.version++
 	object.SetResourceVersion(strconv.Itoa(c.version))
+	// The deployment controller, not the API server, stamps revisions and
+	// observes generations; the simulation models that for Deployments only.
+	if object.GetKind() != "Deployment" {
+		return
+	}
 	annotations := object.GetAnnotations()
 	if annotations == nil {
 		annotations = map[string]string{}
@@ -106,8 +67,12 @@ func (c *serverClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind types.
 	}
 	if metadata, ok := document["metadata"].(map[string]any); ok {
 		current := c.objects[ref]
-		// The API server reports a failed uid precondition as a conflict too.
-		if metadata["uid"] != string(current.GetUID()) || metadata["resourceVersion"] != current.GetResourceVersion() {
+		// A uid that is not the object's is an immutable-field change (invalid); a
+		// stale resourceVersion is a conflict.
+		if uid, _ := metadata["uid"].(string); uid != "" && uid != string(current.GetUID()) {
+			return apierrors.NewInvalid(current.GroupVersionKind().GroupKind(), ref.Name, field.ErrorList{field.Invalid(field.NewPath("metadata", "uid"), uid, "field is immutable")})
+		}
+		if rv, ok := metadata["resourceVersion"]; ok && rv != current.GetResourceVersion() {
 			return apierrors.NewConflict(schema.GroupResource{Group: "apps", Resource: "deployments"}, ref.Name, errors.New("the object has been modified"))
 		}
 	}
