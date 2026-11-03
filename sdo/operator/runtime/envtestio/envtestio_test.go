@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"sdo.dev/operator/runtime/envtestio"
@@ -55,11 +56,15 @@ func TestStartWithTokenAndServiceRange(t *testing.T) {
 	if err != nil || !strings.Contains(string(raw), "synthetic-admin-token") {
 		t.Fatalf("kubeconfig lacks the token: %v", err)
 	}
-	service, err := env.Client(t).CoreV1().Services("default").Get(context.Background(), "kubernetes", metav1.GetOptions{})
+	// The "kubernetes" Service is created by an asynchronous bootstrap controller; create one instead.
+	service, err := env.Client(t).CoreV1().Services("default").Create(context.Background(), &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "probe"},
+		Spec:       corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80}}},
+	}, metav1.CreateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasPrefix(service.Spec.ClusterIP, "10.96.") {
-		t.Fatalf("service range flag ignored: kubernetes ClusterIP %s", service.Spec.ClusterIP)
+		t.Fatalf("service range flag ignored: ClusterIP %s", service.Spec.ClusterIP)
 	}
 }
