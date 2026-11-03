@@ -355,7 +355,7 @@ def test_retire_control_state_clears_checkpoints_and_stale_health_refresh_record
         if args[0] == "get":
             return "\n".join(
                 ["configmap/sdo-health-refresh-a-request", "configmap/sdo-controller-state"]
-                + ["configmap/sdo-health-refresh-a-result"]
+                + ["configmap/sdo-health-refresh-a-result", "configmap/sdo-external-incident"]
             )
         return ""
 
@@ -367,6 +367,7 @@ def test_retire_control_state_clears_checkpoints_and_stale_health_refresh_record
         "delete",
         "configmap/sdo-health-refresh-a-request",
         "configmap/sdo-health-refresh-a-result",
+        "configmap/sdo-external-incident",
         "--ignore-not-found=true",
     )
 

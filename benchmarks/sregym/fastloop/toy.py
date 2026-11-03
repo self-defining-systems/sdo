@@ -484,7 +484,11 @@ def retire_control_state(environment: FastloopEnvironment, control: str) -> None
     stop_runtime(control, kubeconfig=kubeconfig)
     receipt = reset_control_state(control, kubeconfig=kubeconfig)
     names = command(kubeconfig, control, "get", "configmap", "-o", "name").split()
-    stale = [name for name in names if name.startswith("configmap/sdo-health-refresh-")]
+    stale = [
+        name
+        for name in names
+        if name.startswith("configmap/sdo-health-refresh-") or name == "configmap/sdo-external-incident"
+    ]
     if stale:
         command(kubeconfig, control, "delete", *stale, "--ignore-not-found=true")
     logger.info("Toy control state reset: %s", json.dumps({**receipt, "health_refresh": stale}, sort_keys=True))
