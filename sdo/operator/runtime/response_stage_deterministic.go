@@ -504,6 +504,13 @@ func updateStageFindings(state *IncidentState, response ToolResponse) {
 		}
 	}
 	findings := append([]sdk.Finding(nil), response.Findings...)
+	// Source rechecks retain genuine residue and errors. Consume that fresh
+	// observation just as detector observations, rather than keeping every
+	// opening drift fingerprint forever. This grants no health authority.
+	if response.driftObserved {
+		confirmed["drift.unexplained"] = true
+		findings = append(findings, response.Drift...)
+	}
 	seen := map[string]bool{}
 	for _, finding := range findings {
 		seen[FindingFingerprint(finding)] = true
