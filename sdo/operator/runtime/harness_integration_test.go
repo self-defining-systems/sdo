@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,12 +17,10 @@ import (
 	"testing"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	kruntime "k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/watch"
-	"k8s.io/client-go/kubernetes/fake"
-	ktesting "k8s.io/client-go/testing"
+	"k8s.io/client-go/kubernetes"
 
 	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memoryhost"
@@ -34,11 +33,13 @@ import (
 // time bubble against a simulated cluster, the real memory host manager with
 // in-process hosts, and an agent stand-in, then checks the recorded log.
 type harness struct {
-	t      *testing.T
-	plan   plan
-	client *fake.Clientset
-	rec    *sim.Recorder
-	repo   string
+	t     *testing.T
+	plan  plan
+	world *sim.World
+	admin kubernetes.Interface // the environment: no faults, outlives restarts
+	agent kubernetes.Interface // the agent's client: faults, outlives restarts
+	rec   *sim.Recorder
+	repo  string
 
 	quiesced atomic.Bool
 	start    time.Time
@@ -49,8 +50,8 @@ type harness struct {
 	active   *simActivationHost
 	revision planRevision
 	ctl      *Controller
-	cancel   context.CancelFunc
-	down     bool
+	inc      *incarnation
+	nextInc  int
 
 	// gate lets a harness operation that takes the host manager's locks wait
 	// until no stand-in detector is hung inside the host, and keeps one from
@@ -61,11 +62,12 @@ type harness struct {
 		hanging int
 		busy    bool
 	}
-	out           *lineLog
-	controlWrites map[string]int
-	callCounts    map[string]int
-	agentCalls    atomic.Int32
-	hung          map[string]bool
+	out        *lineLog
+	crossings  map[crashBoundary]int
+	watches    int
+	callCounts map[string]int
+	agentCalls atomic.Int32
+	hung       map[string]bool
 }
 
 const harnessControlNamespace = hotel + "-sdo"
@@ -76,129 +78,22 @@ func (h *harness) faultsOn() bool {
 	return !h.quiesced.Load() && (h.plan.Seed != 0 || len(h.plan.Agents) > 0)
 }
 
-// ---- simulated cluster with faults -------------------------------------
-
-var (
-	errHarnessAPI     = errors.New("simulated API server error")
-	errHarnessTimeout = errors.New("simulated API timeout after commit")
-)
-
-func (h *harness) installFaults() {
-	h.client.PrependReactor("*", "*", func(action ktesting.Action) (bool, kruntime.Object, error) {
-		if !h.faultsOn() {
-			return false, nil, nil
-		}
-		verb := action.GetVerb()
-		resource := action.GetResource().Resource
-		name := ""
-		if named, ok := action.(interface{ GetName() string }); ok {
-			name = named.GetName()
-		}
-		key := verb + "/" + resource + "/" + action.GetNamespace() + "/" + name
-		h.mu.Lock()
-		n := h.callCounts[key]
-		h.callCounts[key]++
-		h.mu.Unlock()
-		switch verb {
-		case "get": // informer lists are left alone: see docs/simulation-fidelity.md
-			if chance(h.plan.Seed, key, n, h.plan.ReadErrorPercent) {
-				return true, nil, errHarnessAPI
-			}
-		case "create", "update", "patch", "delete":
-			if chance(h.plan.Seed, key, n, h.plan.APIErrorPercent) {
-				return true, nil, errHarnessAPI
-			}
-			commit := func() (bool, kruntime.Object, error) { return ktesting.ObjectReaction(h.client.Tracker())(action) }
-			if chance(h.plan.Seed, "t"+key, n, h.plan.CommitThenTimeoutPercent) {
-				_, _, _ = commit()
-				return true, nil, errHarnessTimeout
-			}
-			if resource == "configmaps" && action.GetNamespace() == harnessControlNamespace {
-				h.mu.Lock()
-				h.controlWrites[""]++
-				ordinal := h.controlWrites[""]
-				h.mu.Unlock()
-				for _, crashAt := range h.plan.WriteCrashes {
-					if crashAt == ordinal {
-						handled, obj, err := commit()
-						h.crashController("write-" + fmt.Sprint(ordinal))
-						return handled, obj, err
-					}
-				}
-			}
-		}
-		return false, nil, nil
-	})
-	if h.plan.CacheLag > 0 {
-		h.client.PrependWatchReactor("*", func(action ktesting.Action) (bool, watch.Interface, error) {
-			inner, err := h.client.Tracker().Watch(action.GetResource(), action.GetNamespace())
-			if err != nil {
-				return true, nil, err
-			}
-			return true, newLaggingWatch(inner, func() time.Duration {
-				if h.faultsOn() {
-					return h.plan.CacheLag
-				}
-				return 0
-			}), nil
-		})
-	}
-}
-
-// laggingWatch holds each event back by lag(), in order: an informer cache
-// that serves stale reads while the lag lasts.
-type laggingWatch struct {
-	inner watch.Interface
-	out   chan watch.Event
-	stop  chan struct{}
-	once  sync.Once
-}
-
-func newLaggingWatch(inner watch.Interface, lag func() time.Duration) *laggingWatch {
-	w := &laggingWatch{inner: inner, out: make(chan watch.Event, 64), stop: make(chan struct{})}
-	go func() {
-		defer close(w.out)
-		for {
-			select {
-			case <-w.stop:
-				return
-			case event, ok := <-inner.ResultChan():
-				if !ok {
-					return
-				}
-				if d := lag(); d > 0 {
-					select {
-					case <-time.After(d):
-					case <-w.stop:
-						return
-					}
-				}
-				select {
-				case w.out <- event:
-				case <-w.stop:
-					return
-				}
-			}
-		}
-	}()
-	return w
-}
-func (w *laggingWatch) ResultChan() <-chan watch.Event { return w.out }
-func (w *laggingWatch) Stop()                          { w.once.Do(func() { close(w.stop); w.inner.Stop() }) }
+// ---- simulated cluster (see harness_cluster_integration_test.go) -----------
 
 func faultConfigMapName(detector string) string { return "fault-" + detector }
 
-// setBroken flips a fault object without going through the faulty API: the
-// environment's own failures are not API faults.
+// setBroken flips a fault object through the environment's own client: the
+// environment's failures are not API faults. The write still goes through the
+// simulated server, so watchers see it and resourceVersion rules apply.
 func (h *harness) setBroken(detector string, broken bool) {
-	cm, err := h.client.Tracker().Get(corev1.SchemeGroupVersion.WithResource("configmaps"), hotel, faultConfigMapName(detector))
+	ctx := context.Background()
+	cm, err := h.admin.CoreV1().ConfigMaps(hotel).Get(ctx, faultConfigMapName(detector), metav1.GetOptions{})
 	if err != nil {
 		h.t.Errorf("fault object for %s: %v", detector, err)
 		return
 	}
-	next := cm.(*corev1.ConfigMap).DeepCopy()
-	next.Data = map[string]string{"broken": fmt.Sprint(broken)}
-	if err := h.client.Tracker().Update(corev1.SchemeGroupVersion.WithResource("configmaps"), next, hotel); err != nil {
+	cm.Data = map[string]string{"broken": fmt.Sprint(broken)}
+	if _, err := h.admin.CoreV1().ConfigMaps(hotel).Update(ctx, cm, metav1.UpdateOptions{}); err != nil {
 		h.t.Errorf("flip %s: %v", detector, err)
 	}
 }
@@ -440,13 +335,28 @@ func (h *harness) recoverHost(ctx context.Context) (memoryhost.Host, string, str
 
 // ---- agent stand-in ----------------------------------------------------------
 
-type harnessAgent struct{ h *harness }
+type harnessAgent struct {
+	h   *harness
+	inc *incarnation
+}
 
 // Dispatch answers like the Job dispatcher's boundary does: a result that does
 // not satisfy the incident result contract is rejected as a dispatch error
 // before the controller sees it (KubernetesJobDispatcher.dispatch).
 func (a harnessAgent) Dispatch(ctx context.Context, request IncidentRequest) (IncidentResult, error) {
+	if a.inc.dead.Load() {
+		return IncidentResult{}, errHarnessDead
+	}
+	if a.h.boundary(crashDispatchBefore) {
+		a.h.kill(a.inc, "dispatch handed off")
+		return IncidentResult{}, errHarnessDead
+	}
 	result, err := a.respond(ctx, request)
+	if a.h.boundary(crashDispatchAfter) {
+		// The agent has acted; the process dies before it reads the answer.
+		a.h.kill(a.inc, "agent answered")
+		return IncidentResult{}, errHarnessDead
+	}
 	if err != nil {
 		return IncidentResult{}, err
 	}
@@ -500,15 +410,15 @@ func (h *harness) faultIDs() []string {
 	return out
 }
 
-// agentSet writes through the same faulty API the controller uses and retries
+// agentSet writes through the faulty API, as its own client, and retries
 // like an agent would.
 func (h *harness) agentSet(ctx context.Context, detector string, broken bool) {
 	// test-polling: allow -- the agent stand-in retries on virtual time
 	for attempt := 0; attempt < 5; attempt++ {
-		cm, err := h.client.CoreV1().ConfigMaps(hotel).Get(ctx, faultConfigMapName(detector), metav1.GetOptions{})
+		cm, err := h.agent.CoreV1().ConfigMaps(hotel).Get(ctx, faultConfigMapName(detector), metav1.GetOptions{})
 		if err == nil {
 			cm.Data = map[string]string{"broken": fmt.Sprint(broken)}
-			if _, err = h.client.CoreV1().ConfigMaps(hotel).Update(ctx, cm, metav1.UpdateOptions{}); err == nil {
+			if _, err = h.agent.CoreV1().ConfigMaps(hotel).Update(ctx, cm, metav1.UpdateOptions{}); err == nil {
 				return
 			}
 		}
@@ -518,17 +428,11 @@ func (h *harness) agentSet(ctx context.Context, detector string, broken bool) {
 
 // ---- running the controller ----------------------------------------------------
 
+// crashController kills the controller process that is running now.
 func (h *harness) crashController(why string) {
-	h.mu.Lock()
-	cancel, already := h.cancel, h.down
-	h.down = true
-	h.mu.Unlock()
-	if cancel == nil || already {
-		return
+	if inc := h.current(); inc != nil {
+		h.kill(inc, why)
 	}
-	h.t.Logf("%s crash: %s", h.now().Sub(h.start).Round(time.Millisecond), why)
-	h.rec.Add(sim.ControllerDown{At: h.now()})
-	cancel()
 }
 
 func (h *harness) runController(ctx context.Context) {
@@ -538,15 +442,17 @@ func (h *harness) runController(ctx context.Context) {
 	for ctx.Err() == nil {
 		runCtx, cancel := context.WithCancel(ctx)
 		h.mu.Lock()
-		h.cancel, h.down = cancel, false
+		h.nextInc++
+		inc := &incarnation{n: h.nextInc, cancel: cancel, conns: map[io.Closer]struct{}{}}
+		h.inc = inc
 		remote := h.remote
 		revision := h.revision
 		h.mu.Unlock()
 		err := RunWithOptions(runCtx, remote.Detectors, RuntimeOptions{
-			Args: args, Stdout: h.out, Stderr: h.out, Client: h.client, Dispatcher: harnessAgent{h},
+			Args: args, Stdout: h.out, Stderr: h.out, Client: h.clientFor("sdo-controller", inc, true), Dispatcher: harnessAgent{h, inc},
 			Programs: remote.Programs, InformerSync: fastSyncPolicy(), InformerResync: 10 * time.Minute, TerminationLogPath: filepath.Join(h.t.TempDir(), "termination-log"),
 			Wired: func(c *Controller) {
-				c.SetLifecycleSink(tapSink{h})
+				c.SetLifecycleSink(tapSink{h, inc})
 				h.mu.Lock()
 				defer h.mu.Unlock()
 				h.ctl = c
@@ -558,14 +464,15 @@ func (h *harness) runController(ctx context.Context) {
 		cancel()
 		h.mu.Lock()
 		h.ctl = nil
-		wasDown := h.down
-		h.down = true
+		h.inc = nil
 		h.mu.Unlock()
 		if ctx.Err() != nil {
 			return
 		}
-		if !wasDown {
+		if !inc.dead.Load() {
 			h.t.Logf("%s controller exited on its own: %v", h.now().Sub(h.start).Round(time.Millisecond), err)
+			inc.dead.Store(true)
+			inc.sever()
 			h.rec.Add(sim.ControllerDown{At: h.now()})
 		}
 		time.Sleep(time.Second)
@@ -597,19 +504,18 @@ func runHarness(t *testing.T, seed uint64) (sim.Log, sim.Config) {
 	}
 	t.Logf("plan: %s", p)
 	h := &harness{t: t, plan: p, rec: sim.NewRecorder(time.Now).ClosureIsTerminal(), repo: gitRepository(t), start: time.Now(),
-		out: &lineLog{start: time.Now()}, controlWrites: map[string]int{}, callCounts: map[string]int{}, hung: map[string]bool{}}
-	objects := hotelObjects()
-	seen := map[string]bool{}
-	for _, rev := range p.Revisions {
-		for _, d := range rev.Detectors {
-			if !seen[d.ID] {
-				seen[d.ID] = true
-				objects = append(objects, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: faultConfigMapName(d.ID), Namespace: hotel}, Data: map[string]string{"broken": "false"}})
-			}
+		out: &lineLog{start: time.Now()}, crossings: map[crashBoundary]int{}, callCounts: map[string]int{}, hung: map[string]bool{}}
+	h.world = sim.NewWorld(seed)
+	h.world.Kube.Clock = time.Now
+	h.world.Kube.WatchLag = func() time.Duration {
+		if h.faultsOn() {
+			return h.plan.CacheLag
 		}
+		return 0
 	}
-	h.client = fake.NewSimpleClientset(objects...)
-	h.installFaults()
+	h.admin = h.clientFor("environment", nil, false)
+	h.agent = h.clientFor("agent", nil, true)
+	h.populate()
 
 	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
@@ -664,9 +570,9 @@ func runHarness(t *testing.T, seed uint64) (sim.Log, sim.Config) {
 		}
 	}
 	if os.Getenv("SDO_SIM_STATE") != "" {
-		cm, err := h.client.Tracker().Get(corev1.SchemeGroupVersion.WithResource("configmaps"), harnessControlNamespace, controllerStateConfigMap)
+		cm, err := h.admin.CoreV1().ConfigMaps(harnessControlNamespace).Get(context.Background(), controllerStateConfigMap, metav1.GetOptions{})
 		if err == nil {
-			for k, v := range cm.(*corev1.ConfigMap).Data {
+			for k, v := range cm.Data {
 				t.Logf("state[%s] (%d bytes): %.1500s", k, len(v), v)
 			}
 		} else {
@@ -686,12 +592,18 @@ func runHarness(t *testing.T, seed uint64) (sim.Log, sim.Config) {
 		hung[id] = true
 	}
 	h.mu.Unlock()
-	return h.rec.Log(), sim.Config{GapFactor: 3, Slack: 12 * time.Second, Settle: p.Settle, Hung: hung}
+	return h.rec.Log(), sim.Config{GapFactor: 3, Slack: 12 * time.Second, Settle: p.Settle, Restart: 30 * time.Second, Hung: hung}
 }
 
-type tapSink struct{ h *harness }
+type tapSink struct {
+	h   *harness
+	inc *incarnation
+}
 
 func (s tapSink) RecordLifecycle(e *pb.LifecycleEvent) error {
+	if s.inc.dead.Load() {
+		return errHarnessDead // a dead process records nothing
+	}
 	s.h.t.Logf("%s lifecycle %s incident=%s dispatchError=%v", s.h.now().Sub(s.h.start).Round(time.Second), e.GetEvent(), e.GetIncidentId(), e.GetDispatchError())
 	return s.h.rec.RecordLifecycle(e)
 }
@@ -723,4 +635,42 @@ func (l *lineLog) lines() []string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return append([]string(nil), l.all...)
+}
+
+// populate creates the application and the fault objects through the simulated
+// API, so the server's defaults, uids and versions apply as in a cluster.
+func (h *harness) populate() {
+	ctx := context.Background()
+	check := func(err error) {
+		if err != nil {
+			h.t.Fatalf("populate: %v", err)
+		}
+	}
+	for _, object := range hotelObjects() {
+		switch o := object.(type) {
+		case *corev1.Service:
+			_, err := h.admin.CoreV1().Services(hotel).Create(ctx, o, metav1.CreateOptions{})
+			check(err)
+		case *appsv1.Deployment:
+			_, err := h.admin.AppsV1().Deployments(hotel).Create(ctx, o, metav1.CreateOptions{})
+			check(err)
+		case *corev1.ConfigMap:
+			_, err := h.admin.CoreV1().ConfigMaps(hotel).Create(ctx, o, metav1.CreateOptions{})
+			check(err)
+		case *corev1.Secret:
+			_, err := h.admin.CoreV1().Secrets(hotel).Create(ctx, o, metav1.CreateOptions{})
+			check(err)
+		}
+	}
+	seen := map[string]bool{}
+	for _, rev := range h.plan.Revisions {
+		for _, d := range rev.Detectors {
+			if !seen[d.ID] {
+				seen[d.ID] = true
+				cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: faultConfigMapName(d.ID), Namespace: hotel}, Data: map[string]string{"broken": "false"}}
+				_, err := h.admin.CoreV1().ConfigMaps(hotel).Create(ctx, cm, metav1.CreateOptions{})
+				check(err)
+			}
+		}
+	}
 }

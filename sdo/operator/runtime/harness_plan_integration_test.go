@@ -66,13 +66,28 @@ type plan struct {
 	// WriteCrashes are the ordinals of control-plane writes after which the
 	// controller crashes before it can act on the reply.
 	WriteCrashes []int
-	HostCrashes  []time.Duration
+	// Crashes are deaths at the other effect boundaries (see crashBoundary).
+	Crashes     []crashPoint
+	HostCrashes []time.Duration
 	// Agents is the agent mode of the nth dispatch; later dispatches fix.
 	Agents []agentMode
 	// APIErrorPercent and CommitThenTimeoutPercent are per write call.
 	APIErrorPercent, CommitThenTimeoutPercent, ReadErrorPercent int
 	// CacheLag is the longest a watch event is held back (a stale read).
 	CacheLag time.Duration
+	// ListErrorPercent is the chance an informer list fails; WatchExpiredPercent
+	// that a resumed watch is told its version is gone (forcing a relist);
+	// WatchCutPercent that a watch connection drops a few seconds in.
+	ListErrorPercent, WatchExpiredPercent, WatchCutPercent int
+}
+
+// crashPoints lists every planned death.
+func (p plan) crashPoints() []crashPoint {
+	var out []crashPoint
+	for _, n := range p.WriteCrashes {
+		out = append(out, crashPoint{crashControlWriteAfter, n})
+	}
+	return append(out, p.Crashes...)
 }
 
 type planBreak struct {
@@ -81,8 +96,8 @@ type planBreak struct {
 }
 
 func (p plan) String() string {
-	return fmt.Sprintf("seed=%d revisions=%d quiesce=%s crashes=%v writeCrashes=%v hostCrashes=%v agents=%v apiErr=%d%% timeout=%d%% readErr=%d%% lag=%s",
-		p.Seed, len(p.Revisions), p.Quiesce, p.ControllerCrashes, p.WriteCrashes, p.HostCrashes, p.Agents, p.APIErrorPercent, p.CommitThenTimeoutPercent, p.ReadErrorPercent, p.CacheLag)
+	return fmt.Sprintf("seed=%d revisions=%d quiesce=%s crashes=%v boundaryCrashes=%s hostCrashes=%v agents=%v apiErr=%d%% timeout=%d%% readErr=%d%% listErr=%d%% watchGone=%d%% watchCut=%d%% lag=%s",
+		p.Seed, len(p.Revisions), p.Quiesce, p.ControllerCrashes, describeCrashes(p.crashPoints()), p.HostCrashes, p.Agents, p.APIErrorPercent, p.CommitThenTimeoutPercent, p.ReadErrorPercent, p.ListErrorPercent, p.WatchExpiredPercent, p.WatchCutPercent, p.CacheLag)
 }
 
 // planFor derives a plan from a seed. Seed 0 has no faults at all.
@@ -156,6 +171,16 @@ func planFor(seed uint64) plan {
 	p.CommitThenTimeoutPercent = pick(6)
 	p.ReadErrorPercent = pick(4)
 	p.CacheLag = time.Duration(pick(4)) * time.Second
+	// Drawn last, so the choices above are the same as before the cluster moved
+	// onto the simulated API server.
+	boundaries := []crashPoint{{crashControlWriteBefore, 60}, {crashLeaseAfter, 40}, {crashListBefore, 30}, {crashDispatchBefore, 4}, {crashDispatchAfter, 4}}
+	for i, n := 0, pick(3); i < n; i++ {
+		b := boundaries[pick(len(boundaries))]
+		p.Crashes = append(p.Crashes, crashPoint{b.Boundary, 1 + pick(b.Ordinal)})
+	}
+	p.ListErrorPercent = pick(4)
+	p.WatchExpiredPercent = pick(10)
+	p.WatchCutPercent = pick(20)
 	return p
 }
 

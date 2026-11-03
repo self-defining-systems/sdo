@@ -5,9 +5,12 @@ package runtime
 import (
 	"fmt"
 	"strconv"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
+
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 
 	"sdo.dev/operator/runtime/sim"
 )
@@ -20,6 +23,7 @@ const harnessWallBudget = 200 * time.Second
 // that the controller is reliable (every incident ends) and manages its
 // detectors well (each runs within a few times its own interval).
 func TestHarness(t *testing.T) {
+	disableErrorBackoff()
 	deadline := time.Now().Add(harnessWallBudget)
 	seeds := simSeeds(t, 64, simPRRuns)
 	for _, seed := range seeds {
@@ -47,4 +51,15 @@ func TestHarness(t *testing.T) {
 			})
 		})
 	}
+}
+
+var errorBackoffOnce sync.Once
+
+// disableErrorBackoff removes client-go's global error throttle from this
+// process. It remembers the wall time of the last handled error and sleeps the
+// difference to a one millisecond period; a bubble's clock starts in 2000, so
+// the first error sleeps for decades of virtual time and an informer that hit a
+// list error never shut down. It only throttles error logging.
+func disableErrorBackoff() {
+	errorBackoffOnce.Do(func() { utilruntime.ErrorHandlers = utilruntime.ErrorHandlers[:1] })
 }

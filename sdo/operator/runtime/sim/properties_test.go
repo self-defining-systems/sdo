@@ -78,6 +78,16 @@ func TestEveryIncidentEnds(t *testing.T) {
 		log := boundedRun(open("i1", 10), sim.Outcome{At: at(50), Incident: "i1", Result: sim.Closed}, sim.Outcome{At: at(60), Incident: "i1", Result: sim.Failed})
 		wantViolation(t, sim.EveryIncidentEnds(log, cfg), sim.PropEveryIncidentEnds, "outcomes")
 	})
+	t.Run("a controller that keeps dying after the faults stop is wedged", func(t *testing.T) {
+		// Controller mutant: state restore fails on every start, so the process
+		// exits and is relaunched forever; each relaunch looks like a restart.
+		loop := cfg
+		loop.Restart = 30 * time.Second
+		restarting := boundedRun(sim.ControllerDown{At: at(110)}, sim.ControllerUp{At: at(112)})
+		wantOK(t, sim.EveryIncidentEnds(restarting, loop))
+		wedged := boundedRun(sim.ControllerDown{At: at(110)}, sim.ControllerUp{At: at(112)}, sim.ControllerDown{At: at(300)}, sim.ControllerUp{At: at(301)})
+		wantViolation(t, sim.EveryIncidentEnds(wedged, loop), sim.PropEveryIncidentEnds, "keeps failing without faults")
+	})
 	t.Run("a run without bounded faults is rejected, not passed", func(t *testing.T) {
 		wantViolation(t, sim.EveryIncidentEnds(sim.Log{open("i1", 10), sim.Outcome{At: at(20), Incident: "i1"}}, cfg), sim.PropEveryIncidentEnds, "not shown to be bounded")
 		short := sim.Config{Settle: time.Hour}
