@@ -846,10 +846,9 @@ when the affected pod has subsequently become ready. Runtime crashes use one fir
 `logs.Appeared` already requires a quiet cycle and produces a single transition. Other policies use
 firing/clearing 2/2. Forecasts require at least three samples spanning two minutes.
 
-CPU throttling is supported by the SDK constructor but disabled in bootstrap: a local synthetic
-2,000-container cAdvisor parse measured 27.2 ms, 5.97 MB allocated and 132,098 allocations per
-368 KB payload, plus an extra kubelet HTTP request per node per cycle. This excludes kubelet
-rendering and transport time. Enabling it also makes missing CFS counters fail the usage cycle;
+CPU throttling is supported by the SDK constructor but disabled in bootstrap:
+cAdvisor parsing adds allocation cost and an extra kubelet HTTP request per node
+per cycle, in addition to kubelet rendering and transport work. Enabling it also makes missing CFS counters fail the usage cycle;
 without representative live cost and availability evidence it stays opt-in. Containers without
 limits never produce memory or CPU saturation findings.
 

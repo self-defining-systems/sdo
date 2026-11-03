@@ -247,11 +247,11 @@ The fast hermetic gate renders accepted source directly (no lock) and covers
 rollout and restart, the FX1 memory publication regression, and continued
 Service drift when another object cannot render.
 
-The scripted Level 6 uses only the task's lane `luna-pilot-53`:
+The scripted Level 6 uses a private lane:
 
 ```bash
 source /mnt/data/shli/cache/env.sh
-flock /absolute/path/to/shared/lane53.lock env \
+flock /absolute/path/to/shared/rendered-lock.lock env \
   SDO_LK1_RUN_DIR=/absolute/path/outside/repository/lk1-e2e \
   bash scripts/test_rendered_lock_kind.sh
 ```
@@ -261,7 +261,7 @@ Deployment with a mutable regular and init image. The production controller,
 informer cache, SSA adoption and `sdo source` tool process two
 scripted targetPort incidents with a human memory publication and controller
 restart between them. Each incident requires a restored real HTTP route. It makes no model calls, deletes its test namespace, and
-leaves lane 53 available for inspection. It does not install a controller Pod or
+leaves the private lane available for inspection. It does not install a controller Pod or
 exercise model-authored workers; those remain separate deployment gates.
 
 ### Tier 2a: toy real cluster
@@ -271,47 +271,7 @@ This tier needs Docker, kind, kubectl, Go and local runtime images, with no
 external SREGym checkout or models. Calico is required: the unchanged production
 broker refuses reflection when its default-deny validator canary can reach the API.
 
-Measured on 2026-10-21 with two Go build workers and mounted source:
-
-| Phase | Wall time |
-| --- | ---: |
-| Prepare node image content (once) | 153 s |
-| Create kind cluster | 20.75 s |
-| Verify/unpack preloaded images | 59.77 s |
-| Install Calico and wait for readiness | 22.77 s |
-| Deploy toy app | 3.21 s |
-| Install controller and establish adopted clear baseline | 21.79 s |
-| Full cold up | 129.73 s |
-| Warm reset with Calico and a ready controller | 8.70 s |
-| Warm repeat including verification, reflection and evidence export | 14.7 s |
-| Periodic sweep of an unowned Service, full incident | 42.3 s |
-
-A schema-v3 integration recheck on the same date measured cold up **126.38 s**,
-warm reset **8.95 s**, first incident including invariant acceptance **132.12 s**,
-backend/catalog repeats **19.02/16.99 s**, image control **19.52 s**, and an actual
-periodic-sweep incident **32.24 s**. All five oracles and strict receipts passed;
-the first ledger contains a reflection commit and repeats retain hint bindings.
-The incident recheck uses a current scripted-worker dependency image with mounted
-source. Cold up used the prepared node's `unified4` images; worker-image build/load
-and its 71.53 s controller replacement were measured separately.
-Raw runs and logs stay outside Git at
-`results/toy-cluster-evidence/`; see the
-[validation report](validation/toy-cluster/README.md#integrated-architecture-recheck).
-
 Harness rehearsal gate: `uv run python -m benchmarks.sregym.assurance.rehearse_harness --code-root <freeze> --lane <id>` runs three scripted toy scenarios (baseline, controller restart inside the injection pause, source repair with judge refresh) (about 15 minutes when the host is quiet; waits end on their owner's state, not a fixed cap) and writes a pass/fail summary JSON; see [scripted rehearsals](../.agents/skills/analyze-experiment/references/scripted-rehearsals.md#harness-rehearsal-gate).
-
-The cold **60-second target remains unmet**. Image transfer/unpacking and initial
-controller setup dominate; the toy app itself deploys in about three seconds.
-The node preparation script amortizes archive transfer. The first learning
-incident took 87.7 s, including isolated validation and controller rebuild; later
-live targetPort detection took 0.1 s and mitigation about 3 s. Full wall time
-includes exported evidence and learning, and must remain beside those timings.
-
-[Recorded rows, outcomes and broker ledgers](validation/toy-cluster/) show an
-initial `drift/investigator` incident, a committed supplied Go invariant, later
-`drift/service-targetport-mismatch` findings with `binding_source=hint`, and a
-separate event whose source is `periodic program sweep`. The scripted workers
-prove integration and invariant reuse, not model learning.
 
 The toy adapter retires a read-only sync Pod only after the real exporter has
 finished and requested deletion; this avoids two 30-second sleep termination
@@ -324,19 +284,6 @@ that inspect that checkout's actual worker source or registry explicitly skip
 when those fixtures are absent; their assertions run when the checkout exists.
 
 ### Fastloop phase budget
-
-Five scripted two-incident dev-loop runs on 2026-10-21 (the `devloop1-*`
-results under `fastloop-devloop1`) had these median wall times before the
-setup changes. The figures are a budget for finding the next bottleneck, not
-an estimate of Kubernetes speed from the fake API.
-
-| Phase | First incident | Second incident |
-| --- | ---: | ---: |
-| Inventory and lifecycle | 62.7 s | 0.1 s |
-| Controller install or reuse inspection | 36.6 s | 32.6 s |
-| Controller baseline gate | 31.7 s | 1.1 s |
-| Reflection and drain | 271.1 s | 71.3 s |
-| Incident wall time | 426.4 s | 143.1 s |
 
 The install inspection is skipped after a fresh lifecycle has already
 created a controller Pod. Reused stages must still call the Go installer
@@ -1137,7 +1084,7 @@ uv run python scripts/update_prompt_goldens.py
 uv run python scripts/check_prompt_budgets.py --base origin/vic-lsh/dev/sdo-improve --head HEAD
 ```
 
-`test_context_registry.py` enumerates capability registrations and requires a production-rendered fixture for each implementation/capability. Its AST scan rejects direct provider calls, independent template evaluation and inline prompt construction outside the single owner; negative controls prove the guard fires. The template sweep enumerates every placeholder on generated ~185k-character values and requires an actionable overflow error. The always-run required-content ratchet checks all production renders and generated profiles at recorded run19 cardinalities (91 questions across 20 causes and 24 repairs), including fresh-session retries and shell guidance. Responder briefs retain every performed stage action; continuations retain every required row and exact action/finding identities, and derive their total limit from the manifest. No new template or role can silently inherit an unmeasured exception.
+`test_context_registry.py` enumerates capability registrations and requires a production-rendered fixture for each implementation/capability. Its AST scan rejects direct provider calls, independent template evaluation and inline prompt construction outside the single owner; negative controls prove the guard fires. The template sweep enumerates every placeholder on generated ~185k-character values and requires an actionable overflow error. The always-run required-content ratchet checks all production renders and generated profiles at synthetic high-cardinality profiles, including fresh-session retries and shell guidance. Responder briefs retain every performed stage action; continuations retain every required row and exact action/finding identities, and derive their total limit from the manifest. No new template or role can silently inherit an unmeasured exception.
 
 `test_production_caps.py` enumerates every CLI command and MCP registration, requires a matching real-scale fixture, and invokes the actual output boundary. CLI help/errors/stdout/stderr share a runtime cap; MCP dispatch caps every result and error. JSON callers receive a bounded envelope with the complete file path. Listing descriptions have their own caps; longer help lives in files. Full tool replies and prompt values are private, content-addressed session files under `$SDO_SESSION_SCRATCH/context/`, or `$SDO_SESSION_DIR/context/` for generic workers (standalone calls use `/tmp/sdo-context/`). Playbook inventories list logical IDs and one-line README `description:` metadata; open only relevant documents.
 

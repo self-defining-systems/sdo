@@ -378,25 +378,14 @@ architecture, indexed playbooks and health-owned Go diagnostics in schema v3.
 A Go test checks the complete seed through shared `memory/validate`, including
 detector compilation. Scripted reflection proposes and
 commits the supplied invariant program; this proves the learning machinery,
-not model learning. Measured setup and incident costs are recorded in the testing guide.
+not model learning. Keep setup and incident measurements in external experiment storage.
 
 The toy evidence exporter performs the real native export, then removes only its
 already-deleting read-only sync Pod so the next export avoids a 30-second sleep
-grace. No validation or receipt work is omitted. The full warm repeat measured
-16.2 seconds; see the testing guide for cold setup costs and remaining targets.
+grace. No validation or receipt work is omitted.
 
-
-The schema-v3 integration recheck measured cold up **126.38 s**, reset **8.95 s**,
-and first invariant acceptance **132.12 s**. Backend/catalog repeats took
-**19.02/16.99 s** (mitigation **2.72/2.59 s**); the image control took **19.52 s**.
-The separate unowned-Service periodic sweep took **32.24 s**, with
-`source="periodic program sweep"`, a learned detector and `binding_source=hint`.
-All five oracles and strict receipts passed. Cold up used preloaded `unified4`
-images; preparing/loading the current worker image and its 71.53 s controller
-replacement were separate. The scripted worker image must
-include main's generated-contract dependencies, including `protovalidate`;
-source mounts do not add missing Python packages. Raw evidence is outside Git
-at `results/toy-cluster-evidence/`.
+The scripted worker image must include the generated-contract dependencies,
+including `protovalidate`; source mounts do not add missing Python packages.
 
 ## Editable agent turns
 
@@ -664,8 +653,7 @@ the separate whole-learning-loop proof.
 Every fastloop kind node (control planes included) gets Docker CPU, memory and
 PID caps before CNI/image delivery. `up --cpu-limit 3 --memory-limit 16g
 --pids-limit 8192` shows the defaults; use `--memory-limit 24g` for a lane that
-needs more. The 16g default leaves headroom over Astronomy's recorded 9.6 GiB
-p90 lane-container working set, which excludes node/page-cache overhead.
+needs more. Include node and page-cache overhead when selecting a memory cap.
 Memory plus swap is capped at the memory limit. Docker update failure stops
 setup. Existing clusters are recapped when `up` attaches to them.
 

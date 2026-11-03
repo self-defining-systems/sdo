@@ -623,7 +623,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--lane", required=True, help="rehearsal lane id; names the private clusters reh<lane>-<n> (one per scenario)"
     )
     parser.add_argument(
-        "--run-dir", type=Path, default=None, help="default: /mnt/data/shli/sdo-exp/mixed10/LE/REH/lane<lane>"
+        "--run-dir",
+        type=Path,
+        default=None,
+        help="default: ~/sdo-exp (external experiment directory), under rehearsals/lane<lane>",
     )
     parser.add_argument(
         "--claude-worker-image", help="production worker image; opt in to one real Claude health-worker turn"
@@ -655,7 +658,7 @@ def dry_run(code_root: Path, run_dir: Path, lane: str, image_tag: str = "fastloo
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     code_root = args.code_root.resolve()
-    run_dir = (args.run_dir or Path(f"/mnt/data/shli/sdo-exp/mixed10/LE/REH/lane{args.lane}")).resolve()
+    run_dir = (args.run_dir or (Path.home() / "sdo-exp" / "rehearsals" / f"lane{args.lane}")).resolve()
     if args.dry_run:
         print(dry_run(code_root, run_dir, args.lane, args.image_tag))
         return 0

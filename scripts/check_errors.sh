@@ -30,6 +30,9 @@ check() {
     echo "Timing: $*: $((SECONDS - started))s"
 }
 
+echo "==> tracked experiment outputs"
+uv run python scripts/check_experiment_outputs.py
+
 mode="${1:-}"
 case "$mode" in
     --go-only) exec bash "$SCRIPT_DIR/check_go_errors.sh" "${@:2}" ;;
@@ -52,6 +55,7 @@ if [[ "$mode" != --python-suite ]]; then
 echo "==> Python fast repository ratchets"
 uv run --extra test python -m pytest -q -p no:tach \
     tests/unit/test_polling_policy.py \
+    tests/unit/scripts/test_check_experiment_outputs.py \
     tests/unit/benchmarks/sregym/fastloop/test_image_provenance.py::test_standalone_provenance_uses_shared_git_policy_without_site_packages \
     tests/unit/benchmarks/sregym/adapter/test_budgets.py::test_image_bound_files_do_not_import_the_budgets \
     tests/unit/benchmarks/sregym/fastloop/test_shared_git_ownership.py::test_unscoped_host_git_negative_controls \

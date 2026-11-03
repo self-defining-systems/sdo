@@ -8,7 +8,7 @@ import fcntl
 import sys
 from pathlib import Path
 
-REQUESTS = Path("/mnt/data/shli/sdo-exp/mixed10/LE/REQUESTS_C5.md")
+REQUESTS = Path.home() / "sdo-exp" / "requests.md"
 
 
 def poster(path: Path | None, sender: str):

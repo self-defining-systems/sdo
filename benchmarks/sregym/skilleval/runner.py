@@ -3,9 +3,9 @@
 Example::
 
     uv run python -m benchmarks.sregym.skilleval.runner \\
-        --scenarios /mnt/data/shli/sdo-exp/mixed10/skilleval/scenarios \\
+        --scenarios "$SCENARIOS" \\
         --skills sdo/skills --label baseline --repeat 2 --parallel 3 \\
-        --out /mnt/data/shli/sdo-exp/mixed10/skilleval/runs
+        --out "$OUTPUT_DIR"
 
 Each run copies the scenario, mounts it into the scenario's recorded responder
 image exactly where the live reflection Job had it, mounts ``--skills`` over the

@@ -46,10 +46,10 @@ from benchmarks.sregym.assurance.rehearse_harness import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-EXP_ROOT = Path("/mnt/data/shli/sdo-exp/mixed10")
-DEFAULT_PLAN = EXP_ROOT / "LE/P4/layout-b/phase4-plan.json"
-DEFAULT_DRAWS = EXP_ROOT / "stream/plan-rs.json"
-DEFAULT_OUT = EXP_ROOT / "LE/REH"
+EXP_ROOT = Path.home() / "sdo-exp"
+DEFAULT_PLAN = EXP_ROOT / "plans/phase4-plan.json"
+DEFAULT_DRAWS = EXP_ROOT / "plans/draws.json"
+DEFAULT_OUT = EXP_ROOT / "rehearsals"
 SUMMARY_JSON = "summary.json"
 SUMMARY_MD = "summary.md"
 DEFAULT_CLUSTERS = 4

@@ -15,22 +15,15 @@ As in SREGym, bundled Prometheus and browser workload traffic are disabled.
 
 The renderer applies a measured memory policy to every regular and init container:
 `limit MiB = max(stock MiB, 128, 64 * ceil(2 * observed_peak_bytes / (64 * 2^20)))`.
-The pinned observations and policy constants are in `memory-baseline.json`. Peaks
-combine 90 minutes of Prometheus total usage/working set with live cgroup v2
-`memory.peak` on luna-pilot-52 under ten Locust users, browser traffic disabled.
-Completed init containers have no retained samples and receive the 128 MiB floor.
+The pinned observations and policy constants are in `memory-baseline.json`. Completed init containers have no retained samples and receive the 128 MiB floor.
 A new container requires a baseline entry before rendering. Effective memory
 requests are preserved explicitly: Kubernetes otherwise defaults an omitted request
 to the increased limit. Containers previously without a memory request or limit
 retain a zero request. Existing CPU requests and limits are preserved. Existing limits larger than the rule are never lowered.
 
-The stock limits leave little headroom on this cgroup v2 lane: frontend-proxy
-repeatedly OOMKilled at 65 MiB; Kafka, Grafana, collector and OpenSearch approach
-or reach their limits. Total charged memory includes page cache (for example,
-accounting and OpenSearch), so RSS alone understates the required budget.
-The nodes each have a three-core quota while Envoy sees 64 online CPUs. This
-can affect worker sizing and scheduling; no causal GC claim is made without a
-controlled comparison. The traffic configuration matches the pinned harness.
+Total charged memory includes page cache, so RSS alone understates the required
+budget. Revalidate resource-sensitive faults when changing limits. The traffic
+configuration matches the pinned harness.
 
 The app collector receives application telemetry without mounting the node root
 filesystem: the hostMetrics preset is disabled. Node instrumentation belongs to
@@ -43,15 +36,11 @@ The renderer also retains the collector Prometheus reader on port 8888 and
 removes OpenSearch's unsupported Performance Analyzer port 9600; HTTP and
 transport remain on 9200/9300. Images, application flags and detectors stay pinned.
 
-**Benchmark comparability:** stream slots 6 and 8 use
-`valkey_memory_disruption` with `noeviction`. Its injector floods unbounded
-1 MB values from ten threads, with no configured Valkey `maxmemory` below the
-cgroup limit. Raising valkey-cart from 20 to 128 MiB changes its memory-fault
-threshold and may change time to failure. Those draws are memory-dependent;
-revalidate injection before comparing results. Slot 4's ad manual-GC draw also
-warrants comparison caution after increasing the ad limit, although it triggers
-explicit GC rather than exhausting a configured memory bound. Slot 0's oversized
-shipping request is CPU-based; requests remain unchanged.
+**Benchmark comparability:** `valkey_memory_disruption` with `noeviction` floods
+values without a configured Valkey `maxmemory` below the cgroup limit. Changing
+that limit changes its memory-fault threshold; revalidate injection before
+comparing results. Manual-GC and CPU-heavy faults also require independent
+comparability checks when their resource configuration changes.
 
 Changed limits from AS2 (MiB; `none` means previously unlimited):
 

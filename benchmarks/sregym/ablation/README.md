@@ -7,7 +7,7 @@ with replay off before pushing. Existing remote branches are never force pushed.
 ```bash
 SDO_OPERATOR_ROOT="$PWD/sdo/operator" uv run python -m benchmarks.sregym.ablation \
   --repository git@github.com:vibesys-playground/hotel-reservation-sdo.git \
-  --source-branch port/20261102-streamrun-pass5-v3 \
+  --source-branch "$ACCEPTED_MEMORY_BRANCH" \
   --arm detectors-only \
   --directory /tmp/ablate-hotel-detectors \
   --report /tmp/ablate-hotel-detectors.json --push
@@ -48,7 +48,7 @@ uv run python -m benchmarks.sregym.fastloop run \
   --run-dir "$HOTEL_LANE" --agent sdo --ablation-arm detectors-only \
   --credentials-hook "$CREDENTIALS_HOOK" \
   --problem k8s_target_port_misconfig_hotel_reservation__v_reservation_9999 \
-  --run-id detectors-only-pilot -n 1
+  --run-id "$RUN_ID" -n 1
 ```
 
 This is a command template requiring the lane and its credentials hook. For a
