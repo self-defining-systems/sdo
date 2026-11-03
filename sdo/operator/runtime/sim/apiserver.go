@@ -91,6 +91,7 @@ var servedKinds = []kindInfo{
 	{plural: "horizontalpodautoscalers", categories: []string{"all"}, kind: "HorizontalPodAutoscaler", group: "autoscaling", version: "v2", namespaced: true, hasStatus: true, shortNames: []string{"hpa"}},
 	{plural: "cronjobs", categories: []string{"all"}, kind: "CronJob", group: "batch", version: "v1", namespaced: true, hasStatus: true, shortNames: []string{"cj"}},
 	{plural: "jobs", categories: []string{"all"}, kind: "Job", group: "batch", version: "v1", namespaced: true, hasStatus: true, generation: true},
+	{plural: "leases", kind: "Lease", group: "coordination.k8s.io", version: "v1", namespaced: true},
 	{plural: "endpointslices", kind: "EndpointSlice", group: "discovery.k8s.io", version: "v1", namespaced: true},
 	{plural: "ingresses", kind: "Ingress", group: "networking.k8s.io", version: "v1", namespaced: true, hasStatus: true, generation: true, shortNames: []string{"ing"}},
 	{plural: "networkpolicies", kind: "NetworkPolicy", group: "networking.k8s.io", version: "v1", namespaced: true, shortNames: []string{"netpol"}},
@@ -274,15 +275,17 @@ func (tr Transport) serveResource(req *http.Request, path []string, reply func(i
 	if req.Method == http.MethodGet && r.name == "" && (r.q("watch") == "true" || r.q("watch") == "1") {
 		return server.serveWatch(r, req), true
 	}
+	// Requests arrive from many goroutines (informers, the controller loop, the
+	// agent); the store serves one at a time, as one etcd write order does.
+	server.kube.mu.Lock()
 	code, body := server.handle(r)
+	server.kube.mu.Unlock()
 	return reply(code, body), true
 }
 
 // server returns the Kube's API server logic, created on first use.
 func (k *Kube) server() *apiServer {
-	if k.api == nil {
-		k.api = newAPIServer(k)
-	}
+	k.apiOnce.Do(func() { k.api = newAPIServer(k) })
 	return k.api
 }
 
@@ -342,7 +345,7 @@ func (s *apiServer) list(r request) (any, int, error) {
 		return nil, 0, apierrors.NewBadRequest(err.Error())
 	}
 	items := []any{}
-	for _, o := range s.kube.Objects() {
+	for _, o := range s.kube.objectsLocked() {
 		if o.GetKind() != r.info.kind || o.GetAPIVersion() != r.info.groupVersion() || (r.namespace != "" && o.GetNamespace() != r.namespace) {
 			continue
 		}

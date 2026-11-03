@@ -14,6 +14,7 @@ import (
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
 	"sort"
+	"sync"
 	"time"
 )
 
@@ -68,8 +69,23 @@ type Kube struct {
 	// timeouts counts writes that committed but reported a transport error.
 	timeouts int
 	// seq numbers committed controller writes for the recorder.
-	seq uint64
-	api *apiServer
+	seq     uint64
+	api     *apiServer
+	apiOnce sync.Once
+	// mu serializes the store. The transport serves requests from many
+	// goroutines (informers, the controller loop, agents); a scenario driver
+	// that runs beside them goes through the locked methods below.
+	mu sync.Mutex
+	// WatchLag, when set, holds each watch event back by the returned duration
+	// before the stream delivers it: an informer cache that serves stale reads.
+	WatchLag func() time.Duration
+}
+
+func (k *Kube) watchLag() time.Duration {
+	if k.WatchLag == nil {
+		return 0
+	}
+	return k.WatchLag()
 }
 
 func NewKube(faults Faults, objects ...*unstructured.Unstructured) *Kube {
@@ -95,6 +111,8 @@ func (k *Kube) Patch(ctx context.Context, ref sdk.ObjectRef, kind types.PatchTyp
 			return err
 		}
 	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
 	k.patches++
 	if !k.churned {
 		k.churned, k.raceBeforePatch = true, k.faults.ChurnPerPatch()
@@ -143,13 +161,14 @@ func (c *Cache) wrote() {
 		return
 	}
 	if n := c.faults.StaleReads(); n > 0 {
-		if snapshot, err := c.live(); err == nil {
+		if snapshot, err := c.live(true); err == nil {
 			c.frozen, c.pending, c.frozenSeq = snapshot, n, c.kube.seq
 		}
 	}
 }
 
-func (c *Cache) live() (sdktest.Snapshot, error) {
+// live reads the store; held says the caller already holds the store lock.
+func (c *Cache) live(held bool) (sdktest.Snapshot, error) {
 	snapshot := sdktest.Snapshot{NamespaceName: c.kube.Namespace}
 	if c.kube.Clock != nil {
 		now := c.kube.Clock()
@@ -162,7 +181,11 @@ func (c *Cache) live() (sdktest.Snapshot, error) {
 	lists := map[string][]json.RawMessage{}
 	var secrets []sdk.SecretMetadata
 	fields := map[string]string{"ConfigMap": "configMaps", "Service": "services", "Pod": "pods", "Deployment": "deployments", "StatefulSet": "statefulSets", "ReplicaSet": "replicaSets", "HorizontalPodAutoscaler": "horizontalPodAutoscalers", "PodDisruptionBudget": "podDisruptionBudgets", "Endpoints": "endpoints", "EndpointSlice": "endpointSlices", "NetworkPolicy": "networkPolicies", "Event": "events", "DaemonSet": "daemonSets", "Job": "jobs", "CronJob": "cronJobs", "PersistentVolumeClaim": "persistentVolumeClaims", "ServiceAccount": "serviceAccounts", "Ingress": "ingresses", "Node": "nodes"}
-	for _, object := range c.kube.Objects() {
+	objects := c.kube.Objects
+	if held {
+		objects = c.kube.objectsLocked
+	}
+	for _, object := range objects() {
 		if object.GetNamespace() != snapshot.NamespaceName && object.GetKind() != "Node" {
 			continue
 		}
@@ -204,7 +227,7 @@ func (c *Cache) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
 		}
 		if f.DropWatch {
 			if c.pending == 0 {
-				c.frozen, _ = c.live()
+				c.frozen, _ = c.live(false)
 				c.frozenSeq = c.kube.seq
 			}
 			c.pending = 1 << 30
@@ -217,11 +240,18 @@ func (c *Cache) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
 		return c.frozen, nil
 	}
 	c.observed(c.kube.seq)
-	return c.live()
+	return c.live(false)
 }
 
 // Objects returns defensive copies in stable API/kind/namespace/name order.
 func (k *Kube) Objects() []*unstructured.Unstructured {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.objectsLocked()
+}
+
+// objectsLocked is Objects for a caller that holds the store lock.
+func (k *Kube) objectsLocked() []*unstructured.Unstructured {
 	result := make([]*unstructured.Unstructured, 0, len(k.objects))
 	for _, o := range k.objects {
 		result = append(result, o.DeepCopy())
@@ -235,6 +265,8 @@ func objectKey(o *unstructured.Unstructured) string {
 
 // Put models an external controller or kubelet update, preserving cache lag.
 func (k *Kube) Put(o *unstructured.Unstructured) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
 	for _, h := range k.beforeWrite {
 		h()
 	}
@@ -264,6 +296,8 @@ func (k *Kube) Get(ctx context.Context, ref sdk.ObjectRef) (*unstructured.Unstru
 			return nil, err
 		}
 	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
 	return k.objectClient.Get(ctx, ref)
 }
 

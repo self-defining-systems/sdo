@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"sync"
 	"syscall"
 	"testing"
 	"testing/synctest"
@@ -224,9 +225,13 @@ type Injector struct {
 	Rules          map[string][]Fault
 	Partition      map[string]bool
 	RandomFailures bool
+	// mu makes Next safe for the transport's concurrent requests.
+	mu sync.Mutex
 }
 
 func (i *Injector) Next(edge string) Fault {
+	i.mu.Lock()
+	defer i.mu.Unlock()
 	if i.Partition[edge] {
 		return Fault{Err: fmt.Errorf("partition: %s", edge)}
 	}
