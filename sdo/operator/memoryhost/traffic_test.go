@@ -40,12 +40,12 @@ func TestTrafficBurstDoesNotBlockDetection(t *testing.T) {
 			done <- err
 		}()
 		<-h.entered
-		// Detector calls require a read lease; a traffic RPC must permit one.
-		if m.mu.TryRLock() {
-			m.mu.RUnlock()
-		} else {
-			t.Error("burst blocks detector lease")
+		// Detector calls lease the host; a traffic burst must permit one, and a
+		// swap or failure must not wait for it either.
+		if r, err := m.Evaluate(ctx, &pb.EvaluateRequest{DetectorIds: []string{"x"}}); err != nil || r.Results[0].Error != "" {
+			t.Errorf("burst blocks detector lease: %v %v", r, err)
 		}
+		m.failed(&fakeHost{})
 		close(h.release)
 		if err := <-done; err != nil {
 			t.Fatal(err)

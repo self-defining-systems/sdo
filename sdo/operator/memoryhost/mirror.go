@@ -24,8 +24,9 @@ type mirrorState struct {
 }
 
 // Publish fans a frozen informer projection out as contiguous complete deltas.
-// Capture holds the same barrier through its RPC, so an older frozen view can
-// never silently execute against a newer host mirror.
+// Capture returns the sequence its view was published at; hosts keep recent
+// sequences readable, so an evaluation always runs against exactly its own
+// frozen view while the mirror moves on, and no lock outlives Capture.
 func (m *Manager) Publish(ctx context.Context, view sdk.DetectionContext) error {
 	m.mirror.mu.Lock()
 	defer m.mirror.mu.Unlock()
@@ -69,9 +70,9 @@ func (m *Manager) publish(ctx context.Context, view sdk.DetectionContext) error 
 	// A candidate failure removes only that candidate. An active failure leaves
 	// the call unavailable; no detector may interpret it as an empty result.
 	var activeErr error
-	m.mu.RLock()
+	m.mu.Lock()
 	active := m.active
-	m.mu.RUnlock()
+	m.mu.Unlock()
 	order := m.mirror.order[:0]
 	for _, host := range m.mirror.order {
 		sequence, present := m.mirror.hosts[host]
@@ -111,9 +112,9 @@ func (m *Manager) Prepare(ctx context.Context, h Host) (err error) {
 			_ = h.Close()
 		}
 	}()
-	m.mu.RLock()
+	m.mu.Lock()
 	closed := m.closed
-	m.mu.RUnlock()
+	m.mu.Unlock()
 	if closed {
 		return errors.New("memory host manager is closed")
 	}
@@ -155,9 +156,10 @@ func (m *Manager) Prepare(ctx context.Context, h Host) (err error) {
 func (m *Manager) Activate(ctx context.Context, h Host, commit, digest string) error {
 	m.mirror.mu.Lock()
 	defer m.mirror.mu.Unlock()
-	m.mu.RLock()
+	m.mu.Lock()
 	already := m.active == h
-	m.mu.RUnlock()
+	old := m.active
+	m.mu.Unlock()
 	if already {
 		return errors.New("host is already active")
 	}
@@ -166,9 +168,6 @@ func (m *Manager) Activate(ctx context.Context, h Host, commit, digest string) e
 		_ = h.Close()
 		return errors.New("candidate mirror unavailable")
 	}
-	m.mu.RLock()
-	old := m.active
-	m.mu.RUnlock()
 	if err := m.Swap(ctx, h, commit, digest, sequence); err != nil {
 		delete(m.mirror.hosts, h)
 		return err
@@ -178,31 +177,42 @@ func (m *Manager) Activate(ctx context.Context, h Host, commit, digest string) e
 	}
 	return nil
 }
+
+// Capture leases the active host at the sequence the view was published at. The
+// barriers it takes (the mirror and the manager state) end before it returns:
+// the lease only pins the host against retirement, so other captures, publishes,
+// failures and recoveries never wait for the call made under it.
 func (m *Manager) Capture(ctx context.Context, view sdk.DetectionContext) (Host, uint64, func(), error) {
 	m.mirror.mu.Lock()
 	if err := m.publish(ctx, view); err != nil {
 		m.mirror.mu.Unlock()
 		return nil, 0, nil, err
 	}
-	m.mu.RLock()
+	m.mu.Lock()
 	h := m.active
 	sequence, ok := m.mirror.hosts[h]
 	if h == nil || !ok {
-		m.mu.RUnlock()
+		m.mu.Unlock()
 		m.mirror.mu.Unlock()
 		go m.retryRecovery()
 		return nil, 0, nil, errors.New("memory host unavailable")
 	}
-	captured := &capturedHost{Host: h, manager: m, revision: m.revision}
+	m.pinLocked(h)
+	revision := m.revision
+	m.mu.Unlock()
+	m.mirror.mu.Unlock()
+	captured := &capturedHost{Host: h, manager: m, revision: revision}
+	var once sync.Once
 	return captured, sequence, func() {
-		m.mu.RUnlock()
-		if captured.failure != nil {
-			delete(m.mirror.hosts, h)
-		}
-		m.mirror.mu.Unlock()
-		if captured.failure != nil {
-			m.failed(h)
-		}
+		once.Do(func() {
+			m.unpin(h)
+			if captured.failure != nil {
+				m.mirror.mu.Lock()
+				delete(m.mirror.hosts, h)
+				m.mirror.mu.Unlock()
+				m.failed(h)
+			}
+		})
 	}, nil
 }
 
@@ -265,18 +275,23 @@ func (h *capturedHost) Mitigate(ctx context.Context, r *pb.MitigateRequest) (*pb
 func (m *Manager) Identity(ctx context.Context) (*pb.ReadyResponse, error) {
 	m.mirror.mu.Lock()
 	defer m.mirror.mu.Unlock()
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	sequence, ok := m.mirror.hosts[m.active]
-	if !ok || m.active == nil {
+	m.mu.Lock()
+	h := m.active
+	sequence, ok := m.mirror.hosts[h]
+	if h != nil && ok {
+		m.pinLocked(h)
+	}
+	m.mu.Unlock()
+	if h == nil || !ok {
 		go m.retryRecovery()
 		return nil, errors.New("memory host unavailable")
 	}
+	defer m.unpin(h)
 	ctx, cancel := context.WithTimeout(ctx, m.timeout)
 	defer cancel()
-	identity, err := m.active.Ready(ctx)
+	identity, err := h.Ready(ctx)
 	if err != nil {
-		go m.failed(m.active)
+		go m.failed(h)
 		return nil, err
 	}
 	if !identity.GetMirrorComplete() || identity.GetMirrorSequence() != sequence {

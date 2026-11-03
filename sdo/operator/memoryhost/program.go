@@ -168,7 +168,11 @@ func (s *Server) Mitigate(ctx context.Context, request *pb.MitigateRequest) (res
 		}
 	}()
 	checked := &checkedView{ReadView: view}
-	plan, err := p.Mitigate(ctx, checked, bindings)
+	// Programs that honor their context end before the transport gives up, so a
+	// slow program is a plan error and never a failed host.
+	budget, cancel := withinTransportBudget(ctx)
+	defer cancel()
+	plan, err := p.Mitigate(budget, checked, bindings)
 	if readErr := checked.failure(); readErr != nil {
 		err = readErr
 	}
