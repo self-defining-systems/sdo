@@ -18,7 +18,10 @@ import (
 // CycleReadView shares frozen reads across every detector in one snapshot.
 // A new snapshot must get a new view. Recording remains outside the cache so
 // offline replay sees every logical read, including repeated cached failures.
-type CycleReadView struct{ *sdktest.RecordingReadView }
+type CycleReadView struct {
+	*sdktest.RecordingReadView
+	memory memoryPreparation
+}
 
 func NewCycleReadView(view program.ReadView) *CycleReadView {
 	// BaselineSource computes the whole namespace's diff. Freeze it once for
@@ -38,7 +41,7 @@ func NewCycleReadView(view program.ReadView) *CycleReadView {
 		}
 	}
 	cached := &cachedReadView{ReadView: view, entries: map[string]*cachedRead{}}
-	return &CycleReadView{&sdktest.RecordingReadView{ReadView: cached}}
+	return &CycleReadView{RecordingReadView: &sdktest.RecordingReadView{ReadView: cached}}
 }
 func (v *CycleReadView) ObservedView() (sdk.DetectionContext, func() error) {
 	return program.CheckReads(v)

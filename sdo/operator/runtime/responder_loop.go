@@ -59,7 +59,8 @@ type ToolRequest struct {
 	// stage marks a call made by the automatic response stage. It is not
 	// decodable from a tool call, so only the stage can set it. A stage call
 	// never takes the notes queued for the agent and waits for rollouts inline.
-	stage bool
+	stage        bool
+	isolatedRead bool
 	// rolloutTimeout bounds a stage apply's rollout wait; it is not decodable
 	// either, and an agent call keeps the executor's own timeout.
 	rolloutTimeout time.Duration
@@ -219,7 +220,7 @@ type ResponderLoop struct {
 	timing                toolTiming
 	preApplyCaptured      bool
 	saveToolState         func(context.Context, []byte) error
-	operationMu           sync.Mutex
+	operationMu           sync.RWMutex
 	mu                    sync.Mutex
 	sessionID             string
 	plans                 map[string]selectedPlan
@@ -402,6 +403,8 @@ func (l *ResponderLoop) FailureSignals() []string {
 }
 
 func (l *ResponderLoop) InitialDiagnose(ctx context.Context) []ProgramRun {
+	ctx, closeMemory := withMemoryScope(ctx)
+	defer closeMemory()
 	l.operationMu.Lock()
 	defer l.operationMu.Unlock()
 	l.mu.Lock()
@@ -424,6 +427,11 @@ func (l *ResponderLoop) Exhausted() bool {
 type toolTiming struct{ capture, refresh, persist time.Duration }
 
 func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (response ToolResponse) {
+	if !request.isolatedRead && concurrentRead(request.Command) {
+		return l.handleRead(ctx, request)
+	}
+	ctx, closeMemory := withMemoryScope(ctx)
+	defer closeMemory()
 	l.operationMu.Lock()
 	defer l.operationMu.Unlock()
 	l.mu.Lock()
@@ -492,6 +500,9 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		}
 		if request.ProgramID != "" && (request.Command == "plan" || request.Command == "diagnose") && response.Error == "" {
 			response.ProgramRevisions = map[string]string{request.ProgramID: l.programRevision(request.ProgramID)}
+		}
+		if request.isolatedRead {
+			return
 		}
 		responseJSON := recordedToolResponseJSON(response, applied)
 		l.calls = append(l.calls, ToolCall{Command: request.Command, At: l.clock().UTC(), RequestJSON: string(requestJSON), ResponseJSON: string(responseJSON), Error: response.Error, Summary: response.Summary})
@@ -573,7 +584,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 	case "status":
 		response.DriftEvents = append([]sdk.DriftEvent(nil), l.Request.DriftEvents...)
 		response.Trust = l.Trust
-		response.Findings, response.ProgramRuns, response.DetectorStates, response.Error = l.refresh(ctx)
+		response.Findings, response.ProgramRuns, response.DetectorStates, response.Error = l.refresh(ctx, false)
 		response.Drift = append([]sdk.Finding(nil), l.drift...)
 		response.Healthy = response.Error == "" && len(l.findings) == 0
 		for _, state := range response.DetectorStates {
@@ -583,7 +594,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		response.Summary = fmt.Sprintf("%d open findings; %d of %d act-verify loops used", len(l.findings), l.batches, l.batchLimit()) + pendingEvaluationSummary(response.DetectorStates)
 	case "diagnose":
 		if request.ProgramID == "" {
-			response.Findings, response.ProgramRuns, response.DetectorStates, response.Error = l.refresh(ctx)
+			response.Findings, response.ProgramRuns, response.DetectorStates, response.Error = l.refresh(ctx, true)
 			response.Drift = append([]sdk.Finding(nil), l.drift...)
 		} else {
 			if l.Programs == nil {
@@ -781,14 +792,26 @@ func recordedToolResponseJSON(response ToolResponse, applied []selectedPlan) []b
 		}
 		record.ProgramRuns = append(record.ProgramRuns, compactProgramRun(run))
 	}
-	for {
-		responseJSON, _ = json.Marshal(record)
-		if len(responseJSON) <= limit || len(record.ProgramRuns) == 0 {
-			return responseJSON
+	// Find the longest prefix within budget in logarithmic encodes. Removing
+	// one run and re-encoding the entire response is quadratic on large menus.
+	runs := record.ProgramRuns
+	omitted := record.ProgramRunsOmitted
+	low, high := 0, len(runs)
+	for low < high {
+		mid := low + (high-low+1)/2
+		record.ProgramRuns = runs[:mid]
+		record.ProgramRunsOmitted = omitted + len(runs) - mid
+		candidate, _ := json.Marshal(record)
+		if len(candidate) <= limit {
+			low = mid
+		} else {
+			high = mid - 1
 		}
-		record.ProgramRuns = record.ProgramRuns[:len(record.ProgramRuns)-1]
-		record.ProgramRunsOmitted++
 	}
+	record.ProgramRuns = runs[:low]
+	record.ProgramRunsOmitted = omitted + len(runs) - low
+	responseJSON, _ = json.Marshal(record)
+	return responseJSON
 }
 
 func runOfAppliedPlan(run ProgramRun, applied []selectedPlan) bool {
@@ -861,6 +884,8 @@ func (l *ResponderLoop) snapshotView(ctx context.Context) (program.ReadView, err
 // RefreshDiagnose diagnoses the open findings against a fresh snapshot without
 // retaking a capture: the opening captures stay what the incident opened with.
 func (l *ResponderLoop) RefreshDiagnose(ctx context.Context) []ProgramRun {
+	ctx, closeMemory := withMemoryScope(ctx)
+	defer closeMemory()
 	l.operationMu.Lock()
 	defer l.operationMu.Unlock()
 	l.mu.Lock()
@@ -885,7 +910,7 @@ func (l *ResponderLoop) diagnose(ctx context.Context, findings []sdk.Finding) []
 	return runs
 }
 
-func (l *ResponderLoop) refresh(ctx context.Context) ([]sdk.Finding, []ProgramRun, []DetectorEvaluation, string) {
+func (l *ResponderLoop) refresh(ctx context.Context, diagnose bool) ([]sdk.Finding, []ProgramRun, []DetectorEvaluation, string) {
 	started := l.clock()
 	defer func() { l.timing.refresh += l.clock().Sub(started) }()
 	view, err := l.snapshotView(ctx)
@@ -916,10 +941,11 @@ func (l *ResponderLoop) refresh(ctx context.Context) ([]sdk.Finding, []ProgramRu
 	}
 	l.drift = retainedDrift(l.Request.Findings, view)
 	l.findings = findings
+	if !diagnose {
+		return findings, nil, states, ""
+	}
 	runs := SelectProgramCandidates(ctx, l.Programs, view, findings, l.deadline())
 	l.stampProgramRuns(runs)
-	l.rememberMatchedViews(ctx, runs, view)
-	l.lastDiagnosisView = view
 	l.runs = append(l.runs, runs...)
 	return findings, runs, states, ""
 }

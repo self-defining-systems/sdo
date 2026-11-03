@@ -179,7 +179,11 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser(
         "status",
         help="read findings and detector confirmation",
-        description="Read findings and detector confirmation. prior_stages lists what automatic stages already did.",
+        description=(
+            "Read fresh findings and detector confirmation without running programs or planning repairs. "
+            "Use diagnose for program verdicts and plan or menu to prepare repairs. "
+            "prior_stages lists what automatic stages already did."
+        ),
     )
     for name, help_text in (
         ("detect", "run fresh detectors; pending health is unproven"),

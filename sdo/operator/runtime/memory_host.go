@@ -118,7 +118,7 @@ func (d *remoteDetector) Detect(ctx context.Context, view sdk.DetectionContext) 
 	if err != nil {
 		return nil, err
 	}
-	rpc, sequence, release, err := d.remote.capture(ctx, view)
+	rpc, sequence, release, err := d.remote.scopedCapture(ctx, view)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +147,7 @@ func watchedDiffReads(view sdk.DetectionContext, watches []sdk.WatchKind) ([]*pb
 	if len(watches) == 0 {
 		return nil, nil
 	}
-	refs, err := memoryhost.SnapshotRefs(view)
+	refs, err := snapshotMemoryRefs(view)
 	if err != nil {
 		return nil, err
 	}
@@ -161,8 +161,7 @@ func watchedDiffReads(view sdk.DetectionContext, watches []sdk.WatchKind) ([]*pb
 			}
 		}
 	}
-	calls := memoryDiffInputs(view, watched)
-	return memoryhost.EncodeReceipts(calls)
+	return frozenMemoryReads(view, watched)
 }
 
 func wireStruct(value any) (*structpb.Struct, error) {
@@ -175,6 +174,24 @@ func wireStruct(value any) (*structpb.Struct, error) {
 	return out, err
 }
 func (r *RemoteMemory) observation(view sdk.DetectionContext) (*pb.MemoryObservation, error) {
+	if cycle := memoryCycle(view); cycle != nil {
+		p := &cycle.memory
+		p.mu.Lock()
+		if p.observations == nil {
+			p.observations = map[*RemoteMemory]*preparedObservation{}
+		}
+		observation := p.observations[r]
+		if observation == nil {
+			observation = &preparedObservation{}
+			p.observations[r] = observation
+		}
+		p.mu.Unlock()
+		observation.once.Do(func() { observation.value, observation.err = r.buildObservation(view) })
+		return observation.value, observation.err
+	}
+	return r.buildObservation(view)
+}
+func (r *RemoteMemory) buildObservation(view sdk.DetectionContext) (*pb.MemoryObservation, error) {
 	sourceView := view
 	for {
 		wrapper, ok := sourceView.(interface{ UnderlyingReadView() program.ReadView })
@@ -266,7 +283,7 @@ func (p *remoteProgram) reads(view program.ReadView, b program.Bindings) ([]*pb.
 	if err := program.ValidateBindings(p.spec, b); err != nil {
 		return nil, err
 	}
-	refs, err := memoryhost.SnapshotRefs(view)
+	refs, err := snapshotMemoryRefs(view)
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +302,7 @@ func (p *remoteProgram) reads(view program.ReadView, b program.Bindings) ([]*pb.
 			seen[ref] = true
 		}
 	}
-	return memoryhost.EncodeReceipts(memoryDiffInputs(view, refs))
+	return frozenMemoryReads(view, refs)
 }
 func (p *remoteProgram) input(view program.ReadView, b program.Bindings, sequence uint64, reads []*pb.MemoryReadReceipt) (*pb.MemoryProgramInput, error) {
 	observation, err := p.remote.observation(view)
@@ -317,7 +334,7 @@ func (p *remoteProgram) Diagnose(ctx context.Context, view program.ReadView, b p
 	if err != nil {
 		return program.Verdict{}, err
 	}
-	rpc, sequence, release, err := p.remote.capture(ctx, view)
+	rpc, sequence, release, err := p.remote.scopedCapture(ctx, view)
 	if err != nil {
 		return program.Verdict{}, err
 	}
@@ -350,7 +367,7 @@ func (p *remoteProgram) Mitigate(ctx context.Context, view program.ReadView, b p
 	if err != nil {
 		return program.Plan{}, err
 	}
-	rpc, sequence, release, err := p.remote.capture(ctx, view)
+	rpc, sequence, release, err := p.remote.scopedCapture(ctx, view)
 	if err != nil {
 		return program.Plan{}, err
 	}
