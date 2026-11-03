@@ -178,3 +178,35 @@ func TestPermissiveResponderOperateLaunchRoundTrip(t *testing.T) {
 		t.Fatalf("permissions lost in operate launch: %+v", launch.Install)
 	}
 }
+
+func TestFrozenMemoryLaunchRoundTrip(t *testing.T) {
+	cfg := optionalLaunchConfig()
+	cfg.ForceReflection = false
+	cfg.FrozenMemory = true
+	job, err := install.OperateJob(cfg, "healthy", "frozen", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	launch, err := operatorcli.ParseOperateLaunch(job.Spec.Template.Spec.Containers[0].Args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !launch.Install.FrozenMemory {
+		t.Fatal("operate lost frozen policy")
+	}
+	plan, err := install.Resources(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller, err := operatorcli.ParseControllerLaunch(plan.Job.Spec.Template.Spec.Containers[0].Args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !controller.Controller.GetFrozenMemory() {
+		t.Fatal("controller lost frozen policy")
+	}
+	cfg.ForceReflection = true
+	if _, err := install.Resources(cfg); err == nil {
+		t.Fatal("conflicting learning policy accepted")
+	}
+}

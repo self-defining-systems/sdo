@@ -64,6 +64,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	repairPolicy := flags.String("repair-policy", "recorded-actions", "repair evidence policy")
 	reflectionSession := flags.String("reflection-session", "resume", "reflection session mode: fresh or resume")
 	reflectionGuidance := flags.String("reflection-guidance", "baseline", "reflection guidance mode")
+	frozenMemory := flags.Bool("frozen-memory", false, "keep closure evidence private and disable learning")
 	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
 	maxResponseLoops := flags.Int("max-response-loops", 10, "maximum mitigation rounds the responder agent may use per incident (the automatic stage's one apply does not count)")
 	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
@@ -134,7 +135,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 		Namespace: *namespace, ControlNamespace: *controlNamespace, Application: *application,
 		ScriptImage: *scriptImage, ControllerImage: *controllerImage, ResponderImage: *responderImage,
 		RepositoryPVC: *repositoryPVC, CredentialsSecret: *credentialsSecret, Model: *model,
-		RepairPolicy: *repairPolicy, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, AgentProvider: *provider, AgentEffort: *effort, Replay: *replay,
+		RepairPolicy: *repairPolicy, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, FrozenMemory: *frozenMemory, AgentProvider: *provider, AgentEffort: *effort, Replay: *replay,
 		MaxResponseLoops: *maxResponseLoops,
 		ResponderMenu:    menu != "0",
 		LateFindings:     *lateFindings,

@@ -74,6 +74,7 @@ class NativeInstallConfig:
     reflection_session: str = "resume"
     reflection_guidance: str = "baseline"
     force_reflection: bool = False
+    frozen_memory: bool = False
     code_path: str = "go"
 
     max_response_loops: int = 10
@@ -90,6 +91,10 @@ class NativeInstallConfig:
     shared_accepted_id: str = ""
 
     def __post_init__(self) -> None:
+        if type(self.frozen_memory) is not bool:
+            raise TypeError("frozen_memory must be a boolean")
+        if self.frozen_memory and self.force_reflection:
+            raise ValueError("frozen memory conflicts with force reflection")
         if self.shared_accepted_id and not re.fullmatch(r"[0-9a-f]{32}", self.shared_accepted_id):
             raise ValueError("shared accepted identity must be a 128-bit hexadecimal ID")
         if type(self.permissive_responder) is not bool:
@@ -677,6 +682,8 @@ def install_existing(config: NativeInstallConfig) -> NativeInstallReceipt:
     args.extend(("--reflection-guidance", config.reflection_guidance))
     if config.code_path != "go":
         args.extend(("--code-path", config.code_path))
+    if config.frozen_memory:
+        args.append("--frozen-memory")
     if config.force_reflection:
         args.append("--force-reflection")
     for path in config.deployed_manifest_paths:
@@ -737,6 +744,8 @@ def launch_host(config: NativeHostConfig) -> dict[str, Any]:
     args.extend(("--reflection-guidance", config.install.reflection_guidance))
     if config.install.code_path != "go":
         args.extend(("--code-path", config.install.code_path))
+    if config.install.frozen_memory:
+        args.append("--frozen-memory")
     if config.install.force_reflection:
         args.append("--force-reflection")
 

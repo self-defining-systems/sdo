@@ -28,6 +28,9 @@ import (
 // broker from its typed launch contract. Native mode and proposal-only worker
 // mounts are one validation decision, before leader election or dispatch.
 func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfig, client kubernetes.Interface) (*NativeIncidentBroker, kubernetes.Interface, error) {
+	if config != nil && config.GetFrozenMemory() && config.GetForceReflection() {
+		return nil, nil, errors.New("frozen memory conflicts with force reflection")
+	}
 	if config == nil {
 		return nil, nil, errors.New("native broker requires typed controller config")
 	}
@@ -87,7 +90,7 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 		Replay: config.GetReplay(), Repository: repository, LedgerRoot: ledgerRoot,
 		CodePath: codePathConfigFromContract(config.GetCodePath()),
 		Deriver:  ProtoOutcomeDeriver{SessionRoot: config.GetRepositoryMountPath()}, ResponderBackend: config.GetResponderBackend(), ResponderModel: config.GetResponderModel(),
-		ForceReflection: config.GetForceReflection(), PhaseLog: os.Stdout,
+		ForceReflection: config.GetForceReflection(), FrozenMemory: config.GetFrozenMemory(), PhaseLog: os.Stdout,
 		LateFindingsVerifier: latefindings.Store{Client: client, Namespace: controlNamespace},
 		SessionRoot:          config.GetRepositoryMountPath(), SessionRetention: DefaultSessionRetention,
 	}, client, nil

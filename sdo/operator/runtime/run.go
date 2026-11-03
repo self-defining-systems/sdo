@@ -224,6 +224,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	closureStability := flags.Duration("closure-stability-window", 15*time.Second, "stable independent verification required to close a running incident")
 	reportGrace := flags.Duration("responder-report-grace", 30*time.Second, "deprecated compatibility setting; verified recovery does not wait for final narration")
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "exit after one closure is durably acknowledged")
+	frozenMemory := flags.Bool("frozen-memory", false, "keep closure evidence private and disable learning")
 	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
 	maintenanceConfigMap := flags.String(
 		"maintenance-configmap", MaintenanceConfigMapName, "maintenance ConfigMap in the control namespace",
@@ -311,6 +312,12 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		}
 		hostio.SetRecovery(hostManager, hostio.LaunchConfig{Namespace: *namespace, ProtectedNamespace: hostProtectedNamespace(*controlNamespace, *namespace), DisableSyntheticTraffic: !*syntheticTraffic, Binary: *memoryHostBinary, Digest: *memoryHostDigest, Commit: launchConfig.GetControllerRevision(), MemoryBytes: 512 << 20, Output: stderr})
 		detectors, options.Programs = remote.Detectors, remote.Programs
+	}
+	if *frozenMemory && *forceReflection {
+		return errors.New("frozen memory conflicts with force reflection")
+	}
+	if options.NativeBroker != nil {
+		options.NativeBroker.FrozenMemory = *frozenMemory
 	}
 	if options.NativeBroker != nil && *forceReflection {
 		options.NativeBroker.ForceReflection = true

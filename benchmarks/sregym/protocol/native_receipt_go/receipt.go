@@ -129,6 +129,9 @@ func validate(r *c.NativeProductionReceipt) error {
 	if request.GetRepairPolicy() != "commit" && request.GetRepairPolicy() != "recorded-actions" {
 		return errors.New("native closure lacks valid repair policy")
 	}
+	if l.GetFrozenMemory() && (l.GetOutcomeCommit() != request.GetRepositoryBaseCommit() || l.GetProposalCommit() != "" || l.GetReflectionCommit() != "" || l.GetRequiresReflection() || l.GetReflectionQueued() || l.GetReflectionSkippedReason() != "frozen_memory") {
+		return errors.New("frozen receipt must retain private evidence at the unchanged accepted base")
+	}
 	classification := outcome.GetClassification()
 	if outcome.GetSchemaVersion() != 1 || !slices.Contains([]string{"success", "cleared_without_action"}, classification) {
 		return errors.New("native outcome is not a verified closure classification")

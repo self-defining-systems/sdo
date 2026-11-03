@@ -582,6 +582,7 @@ def _runtime_config(args: argparse.Namespace, environment: FastloopEnvironment, 
         agent_provider=args.provider,
         replay=getattr(args, "replay", "on"),
         agent_effort=args.reasoning_effort,
+        frozen_memory=getattr(args, "frozen_memory", False),
         reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
         code_path=getattr(args, "code_path", "go"),
@@ -1756,6 +1757,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--diagnosis-grading", choices=("off", "deferred", "inline"), default=None)
     run.add_argument("--judge-model-id", default=None, help="SREGym JUDGE_MODEL_ID for diagnosis grading")
     run.add_argument("--replay", choices=("on", "off"), default="on", help="corpus capture and memory replay")
+    run.add_argument("--frozen-memory", action="store_true", help="keep closure evidence private and disable learning")
     run.add_argument("--reflection-session", choices=("resume", "fresh"), default="resume")
     run.add_argument("--code-path", choices=("go", "shell"), default="go")
     run.add_argument("--reflection-guidance", choices=("baseline", "generalize", "generalize-spec"), default="baseline")

@@ -141,7 +141,9 @@ type ControllerConfig struct {
 	// accepted repository local.
 	MemoryUpstream *MemoryUpstream `protobuf:"bytes,80,opt,name=memory_upstream,json=memoryUpstream,proto3" json:"memory_upstream,omitempty"`
 	// Named programming-model plugin set. An omitted value preserves Go.
-	CodePath      *CodePathConfig `protobuf:"bytes,100,opt,name=code_path,json=codePath,proto3" json:"code_path,omitempty"`
+	CodePath *CodePathConfig `protobuf:"bytes,100,opt,name=code_path,json=codePath,proto3" json:"code_path,omitempty"`
+	// Keep repeat evidence private and disable learning.
+	FrozenMemory  bool `protobuf:"varint,110,opt,name=frozen_memory,json=frozenMemory,proto3" json:"frozen_memory,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -619,6 +621,13 @@ func (x *ControllerConfig) GetCodePath() *CodePathConfig {
 	return nil
 }
 
+func (x *ControllerConfig) GetFrozenMemory() bool {
+	if x != nil {
+		return x.FrozenMemory
+	}
+	return false
+}
+
 type MemoryUpstream struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Url   string                 `protobuf:"bytes,1,opt,name=url,proto3" json:"url,omitempty"`
@@ -823,7 +832,7 @@ var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDesc
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xcf\x1f\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xf4\x1f\n" +
 	"\x10ControllerConfig\x12,\n" +
 	"\x12memory_host_binary\x18R \x01(\tR\x10memoryHostBinary\x12,\n" +
 	"\x12memory_host_digest\x18S \x01(\tR\x10memoryHostDigest\x12%\n" +
@@ -895,7 +904,8 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\x11responder_standby\x18N \x01(\bH\x03R\x10responderStandby\x88\x01\x01\x12!\n" +
 	"\fscript_image\x18O \x01(\tR\vscriptImage\x12R\n" +
 	"\x0fmemory_upstream\x18P \x01(\v2).sdodev.contracts.v1alpha1.MemoryUpstreamR\x0ememoryUpstream\x12F\n" +
-	"\tcode_path\x18d \x01(\v2).sdodev.contracts.v1alpha1.CodePathConfigR\bcodePathB\x14\n" +
+	"\tcode_path\x18d \x01(\v2).sdodev.contracts.v1alpha1.CodePathConfigR\bcodePath\x12#\n" +
+	"\rfrozen_memory\x18n \x01(\bR\ffrozenMemoryB\x14\n" +
 	"\x12_synthetic_trafficB\x1a\n" +
 	"\x18_clean_responder_helpersB\x11\n" +
 	"\x0f_state_baselineB\x14\n" +

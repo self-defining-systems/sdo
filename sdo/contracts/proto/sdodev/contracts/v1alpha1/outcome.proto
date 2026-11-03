@@ -56,7 +56,7 @@ message OutcomeRecord {
   PlaybookCoverage playbook_coverage = 35;
   repeated StageReport prior_stages = 36;
   // Controller-owned visible skip when no provider session can be resumed.
-  string reflection_skip_reason = 37 [(buf.validate.field).string = {in: ["", "no_session"]}];
+  string reflection_skip_reason = 37 [(buf.validate.field).string = {in: ["", "no_session", "frozen_memory"]}];
   // Broker-only append after reflection; incident evidence remains immutable.
   repeated SdkGap sdk_gaps = 50;
   // Controller-observed repairs with no opening finding; not health/root-cause proof.
