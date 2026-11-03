@@ -1,2 +1,0 @@
-# Kubernetes conformance: one scenario table against a pinned kube-apiserver (envtest) and the simulated API. About 20 s once the binaries are cached, but the first run downloads them, so it runs nightly only.
-TestKubeConformance

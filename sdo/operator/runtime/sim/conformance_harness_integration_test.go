@@ -294,6 +294,16 @@ func (n *normalizer) walk(path string, v any) any {
 		for i, e := range x {
 			out[i] = n.walk(path+"[]", e)
 		}
+		if strings.HasSuffix(path, ".metadata.managedFields") {
+			// Entries are ordered by a one-second timestamp, so their order
+			// depends on whether the clock ticked between two writes. Compare
+			// them as a set, keyed by owner.
+			key := func(e any) string {
+				entry, _ := e.(map[string]any)
+				return fmt.Sprint(entry["manager"], "|", entry["operation"], "|", entry["subresource"])
+			}
+			sort.SliceStable(out, func(i, j int) bool { return key(out[i]) < key(out[j]) })
+		}
 		return out
 	case string:
 		for uid, label := range n.uids {
