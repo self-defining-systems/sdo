@@ -53,3 +53,35 @@ a changed login may conservatively remain unresolved. No Secret is read and raw
 command payloads/errors never enter timelines. Unsupported targets/variants and
 missing observations remain unresolved/rejected. Plan admission proves coverage
 exists, not that a live probe can reach its endpoint or that SDO repaired a fault.
+
+## Independent footprint restoration grading
+
+Fastloop rows and immutable pre-reflection grade checkpoints now retain
+`fault_components`, `fault_reversions[]` and derived `faults_reverted`,
+`faults_total`, `faults_unknown`. Each reversion identifies the worker fault index,
+`status` (`reverted`, `not_reverted`, `unknown`) and per-footprint kind/name/field,
+status and baseline/live projections. Inventory is captured just before injection
+and again immediately before oracle grading, before learning or harness cleanup.
+Only the benchmark adapter reads it; no hidden identity goes to production.
+The ordinary `oracle` remains unchanged beside this independent measurement.
+
+A missing inventory is unknown, distinct from confirmed object absence. A known
+mismatch wins over unknown peer footprints; only all-known equal footprints prove
+restoration. Target ports compare keyed port values; node assignment and liveness
+probe faults compare their specific workload fields. Whole-object footprints
+compare declarative content and labels without server metadata or status.
+This is conservative exact restoration, not a claim that alternative repairs are
+invalid or that reverted configuration proves application health. Unsupported
+field expressions and ambiguous namespace matches remain unknown. Capture errors
+leave the oracle intact and grant no reversion credit.
+
+`uv run python -m benchmarks.sregym.analysis.regrade --batch <batch> --output <analysis>`
+produces `regraded.csv` and `regraded-summary.md` without changing original outputs
+or contacting clusters. Historical rows lacking saved grade-time projections stay
+unknown; current lane state, oracle passes and responder repair claims cannot fill
+that gap. Resolution paths are recovered from saved native outcome documents or
+strict receipts. Reports include medians (and observation counts) from both
+injection start and detection to mitigation and verified resolution; this exposes
+the end-of-injection alert advantage of playbooks-only. Non-injected and
+infrastructure-error rows remain visible but are excluded from timing/pass
+summaries. Missing endpoints are omitted, never zero.

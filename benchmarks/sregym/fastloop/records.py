@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, get_args
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, computed_field, model_validator
 
+from benchmarks.sregym.adapter import FaultReversion  # noqa: TC001 - Pydantic runtime annotation
 from benchmarks.sregym.faults.description import CapabilityMode, FaultCapability  # noqa: TC001
 from benchmarks.sregym.protocol.injection import FaultComponent  # noqa: TC001 - Pydantic resolves this at runtime.
 from benchmarks.sregym.protocol.provider_capacity import AccountEvent, ProviderWaitInterval, wait_seconds_between
@@ -225,6 +226,23 @@ class IncidentRecord(_PersistedModel):
     recovery_failures: list[RecoveryFailureReason] = Field(default_factory=list)
     injection_evidence: dict[str, Any] = Field(default_factory=dict)
     fault_components: list[FaultComponent] = Field(default_factory=list)
+    fault_reversions: list[FaultReversion] = Field(default_factory=list)
+
+    @computed_field
+    @property
+    def faults_reverted(self) -> int:
+        return sum(item.status == "reverted" for item in self.fault_reversions)
+
+    @computed_field
+    @property
+    def faults_total(self) -> int:
+        return len(self.fault_components)
+
+    @computed_field
+    @property
+    def faults_unknown(self) -> int:
+        return self.faults_total - sum(item.status != "unknown" for item in self.fault_reversions)
+
     capability_mode: CapabilityMode | None = None
     fault_capabilities: list[FaultCapability] = Field(default_factory=list)
     run_id: str = Field(min_length=1)

@@ -162,6 +162,7 @@ class SregymFaultDriver:
         self._cluster = cluster
         self.last_cleanup = RecoveryCleanup()
         self.last_components: list[FaultComponent] = []
+        self._grading_baseline: list[dict[str, Any]] | None = None
         self._health_timeout = health_timeout_seconds
         self._health_poll = health_poll_seconds
         self._monotonic = monotonic
@@ -181,6 +182,7 @@ class SregymFaultDriver:
             self._before_inject(problem_id)
         if self._injection_state is not None:
             self._injection_state.begin((problem_id,))
+        self._grading_baseline = self._capture_grading_objects()
         reply = self._worker.request("inject", problem_id=problem_id, timeout=WORKER_OP_TIMEOUT_SECONDS)
         self.last_injection_window = _window(reply)
         self.last_confounds = _notes(reply, "confounds")
@@ -208,6 +210,7 @@ class SregymFaultDriver:
             self._injection_state.begin(problems)
         faults: list[InjectedFault] = []
         self.last_components = []
+        self._grading_baseline = self._capture_grading_objects()
         for position, problem_id in enumerate(problems):
             try:
                 reply = self._worker.request(
@@ -253,6 +256,21 @@ class SregymFaultDriver:
             self._injection_state.finish(problems, self._data_faults)
         self._check_faulty_oracle()
         return CompositeInjection(faults=tuple(faults))
+
+    def _capture_grading_objects(self) -> list[dict[str, Any]] | None:
+        capture = getattr(self._cluster, "list_grading_objects", None)
+        if capture is None:
+            return None
+        try:
+            return capture(self._namespace)
+        except Exception:
+            logger.warning("footprint grading inventory unavailable", exc_info=False)
+            return None
+
+    def grade_reversion(self) -> list[Any]:
+        from benchmarks.sregym.adapter import grade_faults
+
+        return grade_faults(self.last_components, self._grading_baseline, self._capture_grading_objects())
 
     def _check_faulty_oracle(self) -> None:
         if not self._require_faulty_oracle:

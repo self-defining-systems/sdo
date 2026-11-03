@@ -1094,3 +1094,10 @@ def test_learning_with_a_lane_queue_seals_evidence_and_delivers_off_the_critical
     assert queue.drain(10) == []
     assert delivered == [snapshot_id]
     queue.close(drain=False)
+
+
+@pytest.mark.parametrize("path", ["deterministic", "responder"])
+def test_program_metrics_preserves_resolution_path(path: str) -> None:
+    from benchmarks.sregym.fastloop.sdo_agent import _program_metrics
+
+    assert _program_metrics({"resolution_path": path})["resolution_path"] == path

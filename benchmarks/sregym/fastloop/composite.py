@@ -747,7 +747,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
             program_tool_calls=calls,
             tool_commands=commands,
             response_loops_used=loops,
-            resolution_path="responder" if paths else None,
+            resolution_path="responder" if "responder" in paths else paths[0] if paths else outcome.resolution_path,
             error="; ".join(filter(None, [outcome.error, error])) or None,
         )
 
