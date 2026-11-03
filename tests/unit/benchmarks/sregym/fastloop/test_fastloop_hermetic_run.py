@@ -795,8 +795,16 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
         result = {"items": []}
         if args[:2] == ["get", "clusterroles,clusterrolebindings"]:
             result = {"items": grants}
-        elif args[:2] == ["get", "pod/sdo-prober"]:
-            result = {"status": {"podIP": "127.0.0.1"}}
+        elif args[:2] == ["get", "job/sdo-controller-run"]:
+            result = {
+                "metadata": {"uid": "synthetic-controller"},
+                "status": {"active": 1},
+                "spec": {
+                    "template": {
+                        "spec": {"containers": [{"name": "controller", "args": ["operate", "--app", str(workspace)]}]}
+                    }
+                },
+            }
         elif args[:2] == ["get", "configmap/sdo-namespace-onboarding"]:
             # The fake controller's install is already onboarded when admission starts.
             record = {"acceptedCommit": "a" * 40, "objects": [{"kind": "Deployment"}]}
@@ -807,6 +815,7 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
         ):
             return SimpleNamespace(stdout="")
         elif args[0] == "exec":
+            assert args[5:] == ["sdo-operator", "observe-traffic", "--app", str(workspace)]
             result = {
                 "windows": {
                     "health": {
