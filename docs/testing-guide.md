@@ -21,6 +21,8 @@ Accepted choice: the memory host holds write-capable Kubernetes credentials and 
 1. The controller is reliable. Under bounded faults (controller and host crashes and restarts, API errors and stale reads, agents and programs that crash, hang or return garbage) it never wedges: every incident reaches one terminal outcome after faults stop, and a failed incident never blocks a later one.
 2. The controller manages detectors well. Every detector in the active memory revision is evaluated within a few times its own configured interval, through memory swaps, closure and agent work. A detector that errors, panics or hangs does not delay the others. A newly activated revision's detectors start and removed ones stop, with no controller restart.
 
+`TestHarness` (`sdo/operator/runtime/harness_*_integration_test.go`) checks both on every run; its limits are in [simulation-fidelity.md](simulation-fidelity.md). Replay a failing seed with the command the failure prints.
+
 Other behavioral properties (fixed means verified, writes happen once, nothing is lost, saved memory gets used) are not checked now.
 
 **Honest fakes.** A few conformance tests compare the simulated Kubernetes API, fake Go and fake git with the real ones; a real run that finds a bug the simulation missed is a fidelity gap ([align-simulation](../.agents/skills/align-simulation/SKILL.md), [ledger](simulation-fidelity.md)). The scripted toy run on kind is the one end-to-end check.

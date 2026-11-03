@@ -86,6 +86,14 @@ type RuntimeOptions struct {
 	// Dispatcher, when set, replaces the Kubernetes Job dispatcher so tests
 	// can observe what the controller dispatches without a worker cluster.
 	Dispatcher Dispatcher
+	// Wired, when set, receives the controller once it is fully wired and before
+	// its loop starts, so an embedded simulation can attach sinks and reconfigure
+	// memory. Production never sets it.
+	Wired func(*Controller)
+	// InformerResync schedules informer resyncs. Zero disables them; a
+	// simulation on virtual time sets a positive interval so reflector timers
+	// stay inside its bubble.
+	InformerResync time.Duration
 }
 
 const defaultStateBaselineStartTimeout = 30 * time.Second
@@ -478,7 +486,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	kubernetesCache, err := NewKubernetesCache(KubernetesCacheConfig{
 		AcceptedScope: func(ctx context.Context) (sdk.ObservationScope, string, error) {
 			return observation.Accepted(ctx, resolvedRoot)
-		}, GenericCapture: genericCapture, Scope: scope, Ceiling: ceiling, Generation: scopeCommit, Namespace: *namespace, Client: bootstrapProvider.Client, StateConfigMapName: stateConfigMapName, TrackDrift: true, Clock: clock.Now, TimerClock: clock,
+		}, GenericCapture: genericCapture, Scope: scope, Ceiling: ceiling, Generation: scopeCommit, Namespace: *namespace, Client: bootstrapProvider.Client, StateConfigMapName: stateConfigMapName, TrackDrift: true, Clock: clock.Now, TimerClock: clock, ResyncPeriod: options.InformerResync,
 	}, detectors)
 	if err != nil {
 		return fmt.Errorf("create Kubernetes informer cache: %w", err)
@@ -580,7 +588,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return fmt.Errorf("create Secret metadata client: %w", err)
 			}
 		}
-		stateTracker = NewStateTracker(StateTrackerConfig{Scope: scope, Ceiling: ceiling, Client: bootstrapProvider.Client, MetadataClient: metadataClient, Namespace: *namespace, Settle: DefaultStateSettle})
+		stateTracker = NewStateTracker(StateTrackerConfig{Scope: scope, Ceiling: ceiling, Client: bootstrapProvider.Client, MetadataClient: metadataClient, Namespace: *namespace, Settle: DefaultStateSettle, ResyncPeriod: options.InformerResync})
 		kubernetesCache.scopedTracker = stateTracker
 		defer stateTracker.Stop()
 	}
@@ -966,6 +974,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		}
 	}
 	controller.now = clock.Now
+	if options.Wired != nil {
+		options.Wired(controller)
+	}
 	controller.OnEvaluation = func(findings []sdk.Finding) {
 		if err := encoder.Encode(map[string]any{
 			"controller_iteration": iteration,
