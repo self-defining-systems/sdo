@@ -31,14 +31,24 @@ type Source struct {
 	// Git, when set, replaces the git process edge (`git -C root args...`
 	// standard output). A simulation supplies the accepted tree without
 	// spawning a process.
-	Git func(ctx context.Context, root string, args ...string) ([]byte, error)
+	Git   func(ctx context.Context, root string, args ...string) ([]byte, error)
+	cache *manifestCache
+}
+
+// WithCache shares immutable accepted manifests across object reads. The cache
+// belongs to this source instance; it never caches live API reads or failures.
+// Configure the source and its Git reader before creating the cached instance.
+func (s Source) WithCache() Source {
+	s.ManifestPaths = append([]string(nil), s.ManifestPaths...)
+	s.cache = &manifestCache{}
+	return s
 }
 
 // AcceptedManifests returns rendered, namespace-scoped source objects that
 // the drift change feed can own. Render failures return the available objects
 // together with an explicit error; callers must not treat a partial set as complete.
 func (s Source) AcceptedManifests(ctx context.Context, revision, namespace string) ([]*unstructured.Unstructured, error) {
-	raw, err := s.RawManifests(ctx, revision, namespace)
+	raw, err := s.rawManifests(ctx, revision, namespace, false)
 	if err != nil {
 		return nil, err
 	}
@@ -63,9 +73,20 @@ func (s Source) git(ctx context.Context, args ...string) ([]byte, error) {
 }
 
 func (s Source) RawManifests(ctx context.Context, revision, namespace string) ([]*unstructured.Unstructured, error) {
-	return s.rawManifests(ctx, revision, namespace, false)
+	objects, err := s.rawManifests(ctx, revision, namespace, false)
+	return copyManifests(objects), err
 }
+
+// rawManifests is immutable inside this package. Public reads copy the objects
+// they return so no caller can change another reader's accepted source.
 func (s Source) rawManifests(ctx context.Context, revision, namespace string, qualified bool) ([]*unstructured.Unstructured, error) {
+	if s.cache != nil {
+		return s.cache.read(ctx, s, revision, namespace, qualified)
+	}
+	return s.loadManifests(ctx, revision, namespace, qualified)
+}
+
+func (s Source) loadManifests(ctx context.Context, revision, namespace string, qualified bool) ([]*unstructured.Unstructured, error) {
 	if s.Repository == "" || !gitRevision.MatchString(revision) || namespace == "" {
 		return nil, fmt.Errorf("accepted repository, full commit revision, and namespace are required")
 	}
@@ -193,7 +214,7 @@ func (s Source) AcceptedManifest(ctx context.Context, revision string, ref sdk.O
 }
 
 func (s Source) acceptedObject(ctx context.Context, revision, namespace string, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
-	raw, err := s.RawManifests(ctx, revision, namespace)
+	raw, err := s.rawManifests(ctx, revision, namespace, false)
 	if err != nil {
 		return nil, err
 	}
@@ -206,13 +227,13 @@ func (s Source) acceptedObject(ctx context.Context, revision, namespace string, 
 }
 
 func (s Source) Revision(ctx context.Context, ref sdk.ObjectRef, revision string) (*unstructured.Unstructured, error) {
-	objects, err := s.RawManifests(ctx, revision, ref.Namespace)
+	objects, err := s.rawManifests(ctx, revision, ref.Namespace, false)
 	if err != nil {
 		return nil, err
 	}
 	for _, object := range objects {
 		if object.GetAPIVersion() == ref.APIVersion && object.GetKind() == ref.Kind && object.GetName() == ref.Name && object.GetNamespace() == ref.Namespace {
-			return object, nil
+			return object.DeepCopy(), nil
 		}
 	}
 	return nil, fmt.Errorf("%w: %s/%s/%s at %s", ErrAcceptedManifestAbsent, ref.Kind, ref.Namespace, ref.Name, revision)

@@ -608,7 +608,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		kubernetesCache.scopedTracker = stateTracker
 		defer stateTracker.Stop()
 	}
-	planSource := GitPlanSource{Repository: resolvedRoot, ManifestPaths: deployedManifestPaths, Git: options.PlanGit}
+	planSource := (GitPlanSource{Repository: resolvedRoot, ManifestPaths: deployedManifestPaths, Git: options.PlanGit}).WithCache()
 	primitiveProber, _ := proberAPI.(PrimitiveProber)
 	var memoryCatalogMu sync.RWMutex
 	removalClient, err := newUnexplainedRemovalClient(planExecConfig, genericCapture, *controlNamespace)
@@ -1840,13 +1840,13 @@ func evaluateOnce(
 			return err
 		}
 		readCommit = revision
-		readSource = GitPlanSource{Repository: *appRoot, ManifestPaths: deployedManifestPaths}
+		readSource = (GitPlanSource{Repository: *appRoot, ManifestPaths: deployedManifestPaths}).WithCache()
 	}
 	if *sourceDriftReport != "" {
 		if *appRoot == "" || readClient == nil {
 			return errors.New("source-drift-report requires app-root and a Kubernetes read client")
 		}
-		source := GitPlanSource{Repository: *appRoot, ManifestPaths: deployedManifestPaths}
+		source := (GitPlanSource{Repository: *appRoot, ManifestPaths: deployedManifestPaths}).WithCache()
 		inventory, err := source.AcceptedInventory(ctx, readCommit, *namespace)
 		if err != nil {
 			return err
