@@ -16,6 +16,15 @@ BOUNDARY = "2026-10-26T08:47:00+00:00"
 AT = "2026-10-26T08:48:00+00:00"
 
 
+def _patch_kubectl(monkeypatch: pytest.MonkeyPatch, api: object) -> None:
+    """Admission and its worker-safe readiness module both read the API."""
+    from benchmarks.sregym.fastloop import admission as admission_module
+    from benchmarks.sregym.fastloop import workload_readiness
+
+    monkeypatch.setattr(admission_module, "kubectl", api)
+    monkeypatch.setattr(workload_readiness, "kubectl", api)
+
+
 def shell_evidence():
     return {
         "accepted_commit": COMMIT,
@@ -256,7 +265,7 @@ def test_shell_transport_reads_committed_executable_inventory_not_dirty_files(tm
             exec(compile(args[7], "admission-read", "exec"), {})
         return SimpleNamespace(stdout=output.getvalue())
 
-    monkeypatch.setattr(admission, "kubectl", kubectl)
+    _patch_kubectl(monkeypatch, kubectl)
     env = SimpleNamespace(workspace=tmp_path, kubeconfig=tmp_path / "kubeconfig")
     gate = admission.LaneAdmission(env, object(), tmp_path / "admission", code_path="shell")
     evidence = gate._shell_results("app-sdo")

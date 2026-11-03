@@ -87,3 +87,5 @@ For fastloop capability, infrastructure, ordered dispatch and image-delivery int
 For ordered stage reports and pending rollout handoffs, read [ordered response stages](references/response-stages.md).
 
 - Remote offline catch-up and derived-index conflicts: [shared memory synchronization](references/shared-memory-sync.md).
+
+For pre-injection failures, setup usage and allocated-field restoration grades, read [setup accounting](references/setup-accounting.md).

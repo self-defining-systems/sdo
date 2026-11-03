@@ -1123,3 +1123,20 @@ def test_reflection_cost_keeps_a_failed_turn_the_exported_rollouts_lack(tmp_path
     usage = _reflection_usage(receipt, [responder_rollout], own, logged_reflection_cost(run, "incident-3"))
 
     assert (usage.input_tokens, usage.output_tokens) == (1000, 27)
+
+
+def test_cache_heavy_luna_usage_matches_verified_standard_rate():
+    """Official short-context API rates checked 2026-11-03; includes cache in input.
+
+    https://developers.openai.com/api/docs/models/gpt-6-luna
+    """
+    from agentshim import default_pricing
+
+    from benchmarks.sregym.analysis.incident_cost import PricingContext, reported_usd
+
+    pricing = PricingContext(default_pricing()).arm("codex", "gpt-6-luna")
+    # Synthetic 1M input, 900k read from cache, 10k output:
+    # 100k * $0.10/M + 900k * $0.01/M + 10k * $0.50/M.
+    assert reported_usd(
+        {"input_tokens": 1_000_000, "cached_input_tokens": 900_000, "output_tokens": 10_000}, pricing
+    ) == pytest.approx(0.024)

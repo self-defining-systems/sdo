@@ -18,7 +18,7 @@ import json
 import logging
 import subprocess
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -324,6 +324,8 @@ class SdoPersistentAgent:
         self._run_lifecycle = run_lifecycle
         self._clock = clock or Clock()
         self.last_recovery_trigger: RecoveryTrigger | None = None
+        self.pre_injection_responder_tokens: TokenCounts | None = None
+        self.pre_injection_usage_error: str | None = None
 
     @property
     def model(self) -> str:
@@ -378,8 +380,20 @@ class SdoPersistentAgent:
         lifecycle = self._lifecycle_inputs()
         receipt_dir = settings.results_dir / f"{index:03d}_{problem_id}"
         windows: list[InjectionWindow] = []
+        setup_started = datetime.now(timezone.utc)
+        self.pre_injection_responder_tokens = None
+        self.pre_injection_usage_error = None
+
+        def capture_setup_usage() -> None:
+            from benchmarks.sregym.fastloop.setup_usage import responder_setup_usage
+
+            try:
+                self.pre_injection_responder_tokens = responder_setup_usage(self._worker_configmaps(), setup_started)
+            except (OSError, ValueError, RuntimeError, AssertionError, subprocess.SubprocessError) as exc:
+                self.pre_injection_usage_error = f"{type(exc).__name__}: {exc}"
 
         def gated_inject() -> None:
+            capture_setup_usage()
             if self.learn_before_recovery:
                 self._continuity_before = self._controller_identity()
             windows.append(inject())
@@ -401,7 +415,9 @@ class SdoPersistentAgent:
                 pause_after_verified=not self._keep_running,
                 on_verified=measure_verified,
             )
-        except RuntimeError as exc:
+        except Exception as exc:
+            if not windows:
+                capture_setup_usage()
             try:
                 self._ops.export_runtime_artifacts(
                     replace(settings.runtime_config, artifacts_dir=receipt_dir), receipt_dir

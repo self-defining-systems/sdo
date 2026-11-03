@@ -133,6 +133,15 @@ func main() {
 """
 
 
+def _patch_kubectl(monkeypatch: pytest.MonkeyPatch, api: object) -> None:
+    """Admission and its worker-safe readiness module both read the API."""
+    from benchmarks.sregym.fastloop import admission as admission_module
+    from benchmarks.sregym.fastloop import workload_readiness
+
+    monkeypatch.setattr(admission_module, "kubectl", api)
+    monkeypatch.setattr(workload_readiness, "kubectl", api)
+
+
 @pytest.fixture
 def control_api(tmp_path: Path) -> Iterator[SimpleNamespace]:
     """A control namespace API holding prior-install leftovers that a non-toy row must not delete selectively."""
@@ -904,7 +913,7 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
             free_bytes=200 * 1024**3,
         ),
     )
-    monkeypatch.setattr(admission, "kubectl", admission_api)
+    _patch_kubectl(monkeypatch, admission_api)
     monkeypatch.setattr(clean_start, "kubectl", admission_api)
     monkeypatch.setattr(rbac, "kubectl", admission_api)
     monkeypatch.setattr(cli, "_worker", lambda _environment: worker)

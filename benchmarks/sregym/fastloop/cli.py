@@ -808,9 +808,9 @@ def _application_needs_redeploy(
     current_data_faults: tuple[str, ...] = (),
 ) -> Tier2Reason | None:
     """Decide tier 2 from incoming faults, lane injection facts and live application health."""
-    from benchmarks.sregym.fastloop.admission import workload_identity
     from benchmarks.sregym.fastloop.clean_start import assert_clean_baseline
     from benchmarks.sregym.fastloop.wipe import await_healthy_pods, tier2_reason
+    from benchmarks.sregym.fastloop.workload_readiness import workload_identity
 
     def invariant() -> None:
         workload_identity(environment.kubeconfig, environment.namespace)
@@ -888,6 +888,40 @@ def _run(args: argparse.Namespace) -> int:
 
 
 def _run_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQueue | None = None) -> int:
+    """Persist failures before the incident loop owns canonical rows."""
+    from benchmarks.sregym.fastloop.records import NotInjected, append_record
+
+    args.run_id = args.run_id or f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{args.agent}"
+    environment = FastloopEnvironment.load(args.run_dir.resolve())
+    path = environment.run_dir / "results" / args.run_id / INCIDENTS_FILENAME
+    started = time.monotonic()
+    try:
+        return _execute_owned(args, evidence_queue=evidence_queue)
+    except (Exception, SystemExit) as exc:
+        if not path.exists() or not path.read_text().strip():
+            stream = load_stream_config(args.stream).incidents if args.stream else ()
+            problems = args.problem or [environment.deploy_problem]
+            slots = stream or tuple((problems[i % len(problems)],) for i in range(args.incidents))
+            for offset, ids in enumerate(slots):
+                append_record(
+                    path,
+                    IncidentRecord(
+                        run_id=args.run_id,
+                        index=args.slot_offset + offset,
+                        agent=args.agent,
+                        problem_id="+".join(ids),
+                        model=args.model,
+                        provider=args.provider,
+                        reasoning_effort=args.reasoning_effort,
+                        injection=NotInjected(stage="pre_injection"),
+                        error=f"{type(exc).__name__}: {exc}",
+                        run_prelude_phase_seconds={"failed_prelude": time.monotonic() - started},
+                    ),
+                )
+        raise
+
+
+def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQueue | None = None) -> int:
     run_started = time.monotonic()
     environment = FastloopEnvironment.load(args.run_dir.resolve())
     if environment.shared_accepted_id:
@@ -1084,9 +1118,15 @@ def _run_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQueue 
                 environment, worker, results_dir, allow_reuse=args.agent == "sdo" and environment.app != "toy"
             )
         if environment.app != "toy":
-            for problem_id in dict.fromkeys(problem for ids in incidents for problem in ids):
+            rehearsal_problems = dict.fromkeys(problem for ids in incidents for problem in ids)
+            for rehearsal_index, problem_id in enumerate(rehearsal_problems):
                 rehearsal = worker.request(
                     "rehearse_oracles", problem_id=problem_id, timeout=wait_for(WaitKind.LONG_OPERATION)
+                )
+                rehearsal_dir = results_dir / "oracle-rehearsals"
+                rehearsal_dir.mkdir(exist_ok=True)
+                (rehearsal_dir / f"{rehearsal_index:03d}.json").write_text(
+                    json.dumps({"problem_id": problem_id, "verdict": rehearsal}, indent=2) + "\n"
                 )
                 if rehearsal.get("success") is not True:
                     raise ValueError(f"eval: no-fault rehearsal has unhealthy collateral/traffic for {problem_id}")

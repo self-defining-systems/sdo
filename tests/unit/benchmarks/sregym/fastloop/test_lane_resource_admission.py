@@ -9,12 +9,21 @@ from types import SimpleNamespace
 import pytest
 
 from benchmarks.sregym.adapter import WaitKind, persistent, wait_for
-from benchmarks.sregym.fastloop import admission, cli, hotel_helpers, rbac
+from benchmarks.sregym.fastloop import admission, cli, hotel_helpers, rbac, workload_readiness
 
 EPOCH = datetime(2030, 1, 1, tzinfo=timezone.utc)
 OVERDUE = "2000-01-01T00:00:00Z"  # a busy_until the controller itself has already let lapse
 CLOSEOUT_MARGIN = wait_for(WaitKind.CLOSEOUT_SETTLE)
 CONTROLLER_JOB = {"metadata": {"uid": "job-1"}, "status": {"active": 1}}
+
+
+def _patch_kubectl(monkeypatch: pytest.MonkeyPatch, api: object) -> None:
+    """Admission and its worker-safe readiness module both read the API."""
+    from benchmarks.sregym.fastloop import admission as admission_module
+    from benchmarks.sregym.fastloop import workload_readiness
+
+    monkeypatch.setattr(admission_module, "kubectl", api)
+    monkeypatch.setattr(workload_readiness, "kubectl", api)
 
 
 @pytest.fixture
@@ -335,7 +344,7 @@ def test_rejected_onboarding_fails_at_once_with_the_controller_reason(lane, monk
     monkeypatch.setattr(
         gate, "_onboarding", lambda control: rejected if now[0] >= 30 else {**rejected, "rejected": None}
     )
-    monkeypatch.setattr(admission, "kubectl", lambda *args, **kwargs: SimpleNamespace(stdout="controller line\n"))
+    _patch_kubectl(monkeypatch, lambda *args, **kwargs: SimpleNamespace(stdout="controller line\n"))
     with pytest.raises(ValueError, match=r"rejected onboarding after 30s .*install window contradicted or expired"):
         gate.prove("hotel-reservation-sdo")
     assert "sample" not in calls
@@ -357,7 +366,7 @@ def test_failed_controller_job_fails_onboarding_at_once(lane, monkeypatch):
         "_onboarding",
         lambda control: {**pending, "controller_failed": failed if now[0] >= 40 else None},
     )
-    monkeypatch.setattr(admission, "kubectl", lambda *args, **kwargs: SimpleNamespace(stdout="pod a\npod b\n"))
+    _patch_kubectl(monkeypatch, lambda *args, **kwargs: SimpleNamespace(stdout="pod a\npod b\n"))
     with pytest.raises(ValueError, match=r"controller Job failed during onboarding after 40s .*BackoffLimitExceeded"):
         gate.prove("hotel-reservation-sdo")
     assert "sample" not in calls
@@ -375,7 +384,7 @@ def test_onboarding_reads_the_real_cluster_records(lane, monkeypatch):
         document = cluster.get(args[1])
         return SimpleNamespace(stdout=json.dumps(document) if document is not None else "")
 
-    monkeypatch.setattr(admission, "kubectl", kubectl)
+    _patch_kubectl(monkeypatch, kubectl)
     quiet = gate._onboarding("hotel-reservation-sdo")
     assert quiet == {"complete": None, "pending": None, "rejected": None, "controller_failed": None}
 
@@ -396,7 +405,7 @@ def test_unfinished_onboarding_keeps_the_controller_log(lane, monkeypatch):
     gate, _ = lane
     gate.onboarding_timeout_seconds = 120
     first_adoption(gate, monkeypatch, finishes_at=10_000)
-    monkeypatch.setattr(admission, "kubectl", lambda *args, **kwargs: SimpleNamespace(stdout="window never started\n"))
+    _patch_kubectl(monkeypatch, lambda *args, **kwargs: SimpleNamespace(stdout="window never started\n"))
     with pytest.raises(ValueError, match=r"did not finish within 120s"):
         gate.prove("hotel-reservation-sdo")
     assert (gate.directory / "onboarding-controller.log").read_text() == "window never started\n"
@@ -461,7 +470,7 @@ def test_prior_closure_wait_reads_only_the_controller_state(lane, monkeypatch):
     """No Job list, label or ConfigMap read: the controller's one published fact is the whole input."""
     gate, _ = lane
     now = previous_reflection(gate, monkeypatch, finishes_at=60, controller_bound=900)
-    monkeypatch.setattr(admission, "kubectl", lambda *args, **kwargs: pytest.fail("prior-closure wait read the API"))
+    _patch_kubectl(monkeypatch, lambda *args, **kwargs: pytest.fail("prior-closure wait read the API"))
     evidence = gate.await_prior_closure("hotel-reservation-sdo")
     assert evidence["passed"] is True
     assert now[0] >= 60
@@ -739,9 +748,7 @@ def test_a_controller_that_exits_during_admission_fails_at_once_with_a_typed_rea
     frozen_wall_clock(monkeypatch, now)
     stale_clear_rows(gate)
     monkeypatch.setattr(gate, "_controller_job", lambda control: CONTROLLER_JOB if now[0] < 54 else after_exit)
-    monkeypatch.setattr(
-        admission, "kubectl", lambda *args, **kwargs: SimpleNamespace(stdout="baseline inputs advanced\n")
-    )
+    _patch_kubectl(monkeypatch, lambda *args, **kwargs: SimpleNamespace(stdout="baseline inputs advanced\n"))
     with pytest.raises(
         admission.ControllerExitedError, match=f"controller process exited during admission.*{named}"
     ) as exited:
@@ -786,9 +793,8 @@ def test_admission_reads_the_controller_process_from_the_real_job(lane, monkeypa
     gate, _ = lane
     monkeypatch.undo()
     cluster: dict[str, object] = {"job": None}
-    monkeypatch.setattr(
-        admission,
-        "kubectl",
+    _patch_kubectl(
+        monkeypatch,
         lambda args, **kwargs: SimpleNamespace(stdout=json.dumps(cluster["job"]) if cluster["job"] else ""),
     )
     assert gate._controller_process("hotel-reservation-sdo") is None
@@ -855,7 +861,7 @@ def listing(*, generation: int = 1, pod_uid: str = "pod-a", restarts: int = 0) -
 
 
 def identity_after(monkeypatch, tmp_path, **cluster) -> dict:
-    monkeypatch.setattr(admission, "kubectl", lambda *args, **kwargs: listing(**cluster))
+    _patch_kubectl(monkeypatch, lambda *args, **kwargs: listing(**cluster))
     return admission.workload_identity(tmp_path / "kubeconfig", "hotel-reservation")
 
 
@@ -1043,7 +1049,7 @@ def test_admission_reads_traffic_from_the_accepted_memory_host(lane, monkeypatch
         ]
         return SimpleNamespace(stdout=json.dumps(windows))
 
-    monkeypatch.setattr(admission, "kubectl", read)
+    _patch_kubectl(monkeypatch, read)
     assert gate._windows("hotel-reservation-sdo") == windows
     assert len(calls) == 2
 
@@ -1063,7 +1069,7 @@ def test_restore_waits_for_observed_generation(monkeypatch, tmp_path, settles):
             document["items"][0]["status"]["observedGeneration"] = 1
         return SimpleNamespace(stdout=json.dumps(document))
 
-    monkeypatch.setattr(admission, "kubectl", read)
+    _patch_kubectl(monkeypatch, read)
     checks = RestoreChecks(SimpleNamespace(kubeconfig=tmp_path / "kubeconfig", namespace="synthetic"))
     if settles:
         checks.ready()
@@ -1083,10 +1089,10 @@ def test_restore_does_not_wait_for_invalid_workload_inventory(monkeypatch, tmp_p
     else:
         document["items"][0]["spec"]["replicas"] = 0
         document["items"][0]["status"] = {}
-    monkeypatch.setattr(admission, "kubectl", lambda *args, **kwargs: SimpleNamespace(stdout=json.dumps(document)))
+    _patch_kubectl(monkeypatch, lambda *args, **kwargs: SimpleNamespace(stdout=json.dumps(document)))
     monkeypatch.setattr(admission.time, "sleep", lambda _: pytest.fail("invalid inventory must fail immediately"))
     with pytest.raises(ValueError, match="no installed|scaled to zero"):
-        admission.await_workload_identity(tmp_path / "kubeconfig", "synthetic")
+        workload_readiness.await_workload_identity(tmp_path / "kubeconfig", "synthetic")
 
 
 def test_acceptance_generation_settles_before_admission_identity(lane, monkeypatch):
@@ -1098,7 +1104,7 @@ def test_acceptance_generation_settles_before_admission_identity(lane, monkeypat
     def identity(*_):
         calls[0] += 1
         if calls[0] == 1:
-            raise admission.WorkloadNotReadyError("generation 2 observed 1")
+            raise workload_readiness.WorkloadNotReadyError("generation 2 observed 1")
         return {"Deployment/app": {"pods": []}}
 
     monkeypatch.setattr(admission, "workload_identity", identity)

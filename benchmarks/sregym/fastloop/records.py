@@ -282,6 +282,9 @@ class IncidentRecord(_PersistedModel):
     diagnosis_grade: DiagnosisGrade | None = None
     diagnosis: str = ""
     mitigation: str = ""
+    #: Onboarding responder tasks completed before injection; null means accounting unavailable.
+    pre_injection_responder_tokens: TokenCounts | None = None
+    pre_injection_usage_error: str | None = None
     responder_tokens: TokenCounts = Field(default_factory=TokenCounts)
     drift_tokens: TokenCounts = Field(default_factory=TokenCounts)
     reflection_tokens: TokenCounts = Field(default_factory=TokenCounts)
