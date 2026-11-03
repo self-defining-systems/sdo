@@ -54,8 +54,7 @@ identifies the production executor path through this catalog simulator; it is no
 
 General object operations replay through the production executor and fake API, including
 JSON/merge/strategic patches, list edits by unique match, arbitrary apply/delete, metadata,
-cluster scopes and CRDs. `docs/sdk-action-inventory.json` is enforced by
-`TestGeneralKubectlCoverageFloor`; adding an operation requires an executable replay case.
+cluster scopes and CRDs. `docs/sdk-action-inventory.json` lists them; its coverage-floor test was deleted, so adding an operation is not enforced.
 
 `ExternalEffect` records exact observe/ensure identities and measured exit-code transitions.
 Replay requires the full pair and its before observation. `JobCompletion` supplies actual

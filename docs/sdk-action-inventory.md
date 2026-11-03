@@ -74,8 +74,8 @@ in this baseline document is not a claim that the operation already works.
 ## Implemented coverage contract
 
 `docs/sdk-action-inventory.json` is the machine-readable inventory.
-`runtime/replay.TestGeneralKubectlCoverageFloor` executes every non-excluded row
-and rejects missing, duplicate, removed or newly unimplemented operations. General
+The coverage-floor test that executed every non-excluded row was deleted with the
+legacy replay tests, so nothing enforces this inventory now. General
 object changes run the production executor against the fake API; external and
 subresource effects require exact recorded transitions. Transport tests separately
 exercise stdin-only SPDY, API options, redirect rejection and Secret boundaries.

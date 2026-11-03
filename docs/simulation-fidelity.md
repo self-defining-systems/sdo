@@ -217,12 +217,11 @@ the diagnose-compile mode of `TestPartialPlaybookPublication`).
 ## Accepted bounds
 
 HTTP connection pooling after an OS listener closes is not represented by the
-handler-backed HTTP transport or credential-free pipe peers. Pool reuse and
-fresh-dial refusal are transport implementation contracts, covered with real
-sockets by the integration-tagged
-`TestKeepAliveConnectionsWouldMaskABlockedListener` and
-`TestBlockedListenerIsClassifiedAsADialFailureWithinAFewSeconds` in
-`prober/socket_integration_test.go`. PR and nightly Go CI run both with
+handler-backed HTTP transport or credential-free pipe peers. The one real-socket
+check of the prober is the integration-tagged `TestLinkProtocolsSocketReset`
+(reset classification for every protocol over real TCP) and
+`TestLinkGRPCTLSVerifiesCertificates` in `prober/link_socket_integration_test.go`;
+pool reuse is no longer tested. PR and nightly Go CI run them with
 `-tags=integration`. No NetworkPolicy enforcement claim is implied.
 
 ## Gap ledger
@@ -236,7 +235,7 @@ sockets by the integration-tagged
 | 2026-11-02 | Runtime test reduction | Missing behavior / cost | Broker compile gate repeated real Go builds in conflict and no-change tests | Modeled within bounds above | `sim.Compiler`, `TestCompilerRecordsCallsAndRejectsUnparsableGo`; `TestHermeticSharedMemoryControllers` and `TestReflectionNoChangeAndSDKGapNeverCommit` use it; real compilation stays in the builder/validator tests and the two compiling `TestReflectionDirectFilesCLIAndBroker` scenarios |
 | 2026-11-03 | Kubernetes conformance (envtest) | Contract drift | The simulated API server diverged from a real one on defaults, server-side apply, patch, status, generation, delete and list/watch | Closed; bounds listed under Conformance bounds | `TestKubeConformance` scenarios, one per area |
 | 2026-11-03 | Controller harness on the client-go fake | Missing behavior | The simulated API could not serve the controller loop: no Leases or RBAC kinds, store not safe for concurrent clients, no watch lag, a stuck watcher blocked writers | Closed in the simulation | `lease/*`, `rbac/*`, `watch/informer-list-then-watch`, `TestTransportServesConcurrentClients` |
-| 2026-11-01 | Prober determinism migration | Transport | HTTP pool reuse after listener closure | Accepted bound | In-memory handlers intentionally omit TCP pooling; `TestKeepAliveConnectionsWouldMaskABlockedListener` and `TestBlockedListenerIsClassifiedAsADialFailureWithinAFewSeconds` retain real-socket integration coverage |
+| 2026-11-01 | Prober determinism migration | Transport | HTTP pool reuse after listener closure | Accepted bound | In-memory handlers intentionally omit TCP pooling; the pool tests were deleted, `TestLinkProtocolsSocketReset` keeps the real-socket reset check |
 
 The memory-host tests do not model OS process isolation, Unix socket permissions,
 memory limits or actual compiler latency. Staged compilation is checked by
