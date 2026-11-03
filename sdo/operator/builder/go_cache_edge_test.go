@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
 )
 
 func TestValidateAndBuildSeedsGoCacheBeforeProgramCompilation(t *testing.T) {
@@ -87,4 +86,3 @@ func TestReadThroughGoCacheDoesNotCopySeedAtStartup(t *testing.T) {
 		t.Fatal("startup materialized the cache before Go requested an entry")
 	}
 }
-
