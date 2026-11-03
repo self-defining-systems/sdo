@@ -156,7 +156,8 @@ jobs:
             tests/unit/benchmarks/sregym/adapter/test_processes.py \
             tests/unit/sdo/agents/lifecycle/test_supplied_reads.py \
             tests/unit/benchmarks/sregym/fastloop/test_sequence_scripted.py \
-            tests/unit/benchmarks/sregym/fastloop/test_host_limits.py
+            tests/unit/benchmarks/sregym/fastloop/test_host_limits.py \
+            tests/unit/benchmarks/sregym/fastloop/test_fastloop_hermetic_run.py
 
   images:
     name: controller images

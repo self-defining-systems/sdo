@@ -45,3 +45,9 @@ of vet: the inventory fixture rejects compiler-only directive errors too.
 in `check_errors.sh`. Its synthetic temporary-Git negative controls cover run
 markers, extensionless and hidden files, binary files, deletions and Git failures.
 Keep run reports and measurements in an external experiment directory.
+
+`tests/unit/sdo/operator/test_ci_speed.py` guards the fixed PR job budget and
+exact-pin SREGym input cache. The checks job caches both the harness worktree
+and nested Git objects by the committed harness SHA, then verifies all recorded
+pins on every restore. Astronomy manifest contracts use PyYAML's C safe loader
+to keep repeated large-manifest parsing out of the Python interpreter.

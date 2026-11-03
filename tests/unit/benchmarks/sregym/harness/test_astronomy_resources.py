@@ -48,7 +48,7 @@ PROVEN_LIMITS_MIB = {
 
 
 def documents():
-    return [value for value in yaml.safe_load_all(SOURCE.read_text()) if value]
+    return [value for value in yaml.load_all(SOURCE.read_text(), Loader=yaml.CSafeLoader) if value]
 
 
 def containers():

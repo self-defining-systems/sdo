@@ -347,3 +347,17 @@ def test_checks_job_delegates_duplicated_work_to_the_suites_that_run_it() -> Non
     assert "go list -export ./..." in (ROOT / "scripts/check_go_mains.sh").read_text(), (
         "go build ./... links every command"
     )
+
+
+def test_python_inputs_cache_is_pin_bound_and_still_validated() -> None:
+    steps = workflow()["jobs"]["checks"]["steps"]
+    pin = next(step for step in steps if step.get("id") == "test-input-pin")
+    assert "git rev-parse HEAD:third_party/sregym" in pin["run"]
+    cache = next(step for step in steps if step.get("id") == "test-inputs")
+    assert cache["uses"].startswith("actions/cache@")
+    assert "steps.test-input-pin.outputs.sha" in cache["with"]["key"]
+    assert "restore-keys" not in cache["with"], "only the exact recursive pin tree may be restored"
+    assert set(cache["with"]["path"].splitlines()) == {"third_party/sregym", ".git/modules/third_party/sregym"}
+    initialize = next(step for step in steps if "scripts/init_test_prereqs.py" in step.get("run", ""))
+    assert "if" not in initialize, "a cache hit must still validate every nested gitlink"
+    assert steps.index(pin) < steps.index(cache) < steps.index(initialize)

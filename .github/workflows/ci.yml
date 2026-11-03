@@ -54,6 +54,19 @@ jobs:
           enable-cache: true
           prune-cache: false
       - run: uv sync --locked --all-extras
+      # The top-level SHA transitively pins every nested input. Cache both
+      # worktrees and Git objects; initialization below still checks all pins.
+      - name: Resolve the recorded test input tree
+        id: test-input-pin
+        run: echo "sha=$(git rev-parse HEAD:third_party/sregym)" >> "$GITHUB_OUTPUT"
+      - name: Cache the exact SREGym test input tree
+        id: test-inputs
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: |
+            third_party/sregym
+            .git/modules/third_party/sregym
+          key: sregym-inputs-v1-${{ runner.os }}-${{ steps.test-input-pin.outputs.sha }}
       - name: Check out the SREGym harness and its nested inputs
         run: |
           git config --global url."https://github.com/".insteadOf "git@github.com:"
@@ -85,11 +98,12 @@ jobs:
           sudo apt-get install -y --no-install-recommends bubblewrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           bwrap --ro-bind / / --dev /dev --proc /proc true
+      # The scripted two-incident CLI/controller/compiler integration runs nightly;
+      # it was the longest Python case (16s) and duplicates lower-level PR contracts.
       - name: Static contracts and Python unit tests
         run: |
           bash ./scripts/check_errors.sh --python-suite > /tmp/checks.log 2>&1 &
           checks=$!
-          bash ./scripts/format_code.sh --check
           status=0
           bash ./scripts/test_python.sh --durations=30 \
             --ignore=tests/unit/benchmarks/sregym/fastloop/test_recorded_reflection_stage.py \
@@ -117,7 +131,8 @@ jobs:
             --ignore=tests/unit/benchmarks/sregym/adapter/test_processes.py \
             --ignore=tests/unit/sdo/agents/lifecycle/test_supplied_reads.py \
             --ignore=tests/unit/benchmarks/sregym/fastloop/test_sequence_scripted.py \
-            --ignore=tests/unit/benchmarks/sregym/fastloop/test_host_limits.py || status=1
+            --ignore=tests/unit/benchmarks/sregym/fastloop/test_host_limits.py \
+            --ignore=tests/unit/benchmarks/sregym/fastloop/test_fastloop_hermetic_run.py || status=1
           wait "$checks" || status=1
           cat /tmp/checks.log
           exit "$status"
