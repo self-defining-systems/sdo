@@ -1243,3 +1243,28 @@ def test_graded_ablation_row_retains_arm_on_disk(tmp_path: Path, arm: str) -> No
     assert records[0].oracle is not None
     assert records[0].oracle.success
     assert load_records(config.results_path)[0].ablation_arm == arm
+
+
+def test_reversion_evidence_is_frozen_before_oracle_and_cleanup(tmp_path: Path) -> None:
+    from benchmarks.sregym.adapter.fault_reversion import FaultReversion
+    from benchmarks.sregym.protocol.injection import FaultComponent
+
+    class Driver(FakeDriver):
+        last_components = [FaultComponent(fault=0, incident=0, problem_id="p1", injection_order=0)]
+
+        def grade_reversion(self):
+            assert not self.recovered
+            assert "oracle" not in self.events
+            self.events.append("reversion")
+            return [FaultReversion(fault=0, status="not_reverted")]
+
+    clock = FakeClock()
+    driver = Driver(clock)
+    config = _config(tmp_path, 1)
+    record = run_incidents(FakeAgent(clock), driver, config, monotonic=clock.monotonic)[0]
+    checkpoint = json.loads((tmp_path / "incidents.grades/000000.json").read_text())
+    assert checkpoint["faults_total"] == 1
+    assert checkpoint["fault_reversions"][0]["status"] == "not_reverted"
+    assert record.faults_reverted == 0
+    assert record.faults_unknown == 0
+    assert driver.events.index("reversion") < driver.events.index("oracle") < driver.events.index("recover")

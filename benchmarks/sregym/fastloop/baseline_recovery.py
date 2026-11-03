@@ -96,6 +96,17 @@ class KubectlApplicationCluster:
             raise ApplicationNamespaceAbsent(namespace)
         return items
 
+    def list_grading_objects(self, namespace: str) -> list[dict[str, Any]]:
+        """Bounded eval inventory, including admission resources; never read Secrets."""
+        objects = self.list_objects(namespace)
+        for resources, scope in (
+            ("mutatingwebhookconfigurations,validatingwebhookconfigurations,namespaces", None),
+            ("resourcequotas,limitranges", namespace),
+        ):
+            output = kubectl(["get", resources, "-o", "json"], namespace=scope, kubeconfig=self.kubeconfig).stdout
+            objects.extend(json.loads(output)["items"])
+        return objects
+
     def _namespace_exists(self, namespace: str) -> bool:
         return bool(
             kubectl(

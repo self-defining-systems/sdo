@@ -664,3 +664,33 @@ def test_real_worker_recovery_failure_reaches_typed_adapter_reason(monkeypatch, 
         }
     ]
     assert "CANARY" not in str(caught.value)
+
+
+def test_driver_captures_healthy_state_before_injection_and_reads_live_at_grading() -> None:
+    from benchmarks.sregym.protocol.injection import FaultComponent
+
+    events = []
+
+    class Cluster:
+        def list_grading_objects(self, namespace):
+            events.append("capture")
+            return [{"kind": "ConfigMap", "metadata": {"name": "synthetic"}, "data": {"x": "healthy"}}]
+
+    class Worker(FakeWorker):
+        def request(self, op, **kwargs):
+            events.append(op)
+            return super().request(op, **kwargs)
+
+    driver = SregymFaultDriver(Worker(), namespace="synthetic", cluster=Cluster())
+    driver.inject("synthetic")
+    driver.last_components = [
+        FaultComponent(
+            fault=0,
+            incident=0,
+            problem_id="synthetic",
+            injection_order=0,
+            identity={"footprints": [{"kind": "ConfigMap", "name": "synthetic"}]},
+        )
+    ]
+    assert driver.grade_reversion()[0].status == "reverted"
+    assert events == ["capture", "inject", "capture"]

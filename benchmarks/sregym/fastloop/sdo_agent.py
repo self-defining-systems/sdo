@@ -247,7 +247,7 @@ def _program_metrics(result: dict[str, Any], memory_reasons: tuple[str, ...] = (
     return {
         "playbook_coverage": result.get("playbook_coverage"),
         "program_diagnoses": len(runs) if isinstance(runs, list) else None,
-        "resolution_path": result.get("resolution_path") if result.get("resolution_path") == "responder" else None,
+        "resolution_path": result.get("resolution_path"),
         "match_reasons": tuple(dict.fromkeys(match_reasons)),
         "binding_sources": tuple(dict.fromkeys(binding_sources)),
         "program_verdicts": verdicts,

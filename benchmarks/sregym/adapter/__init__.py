@@ -38,6 +38,7 @@ if TYPE_CHECKING:
         terminal_incident_ids,
         wait_for_proof,
     )
+    from benchmarks.sregym.adapter.fault_reversion import FaultReversion, grade_faults
     from benchmarks.sregym.adapter.healthy_baseline import HealthyBaselineCaptureOps, kubectl_capture_ops
     from benchmarks.sregym.adapter.image_entrypoints import (
         BENCHMARK_IMAGE_ENTRY_POINTS,
@@ -110,6 +111,8 @@ if TYPE_CHECKING:
     )
 
 _EXPORTS: dict[str, str] = {
+    "FaultReversion": "fault_reversion",
+    "grade_faults": "fault_reversion",
     "run_context_preflight": "context_preflight",
     "BENCHMARK_IMAGE_ENTRY_POINTS": "image_entrypoints",
     "assert_image_entrypoints": "image_entrypoints",
@@ -201,6 +204,8 @@ _EXPORTS: dict[str, str] = {
 }
 
 __all__ = [
+    "FaultReversion",
+    "grade_faults",
     "IncidentEvidenceExport",
     "RuntimeEvidenceTarget",
     "RuntimeSnapshot",

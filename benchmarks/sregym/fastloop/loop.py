@@ -503,6 +503,7 @@ def _run_one(
     recovery_oracle: OracleVerdict | None = None
     recovery_oracle_samples: list[RecoveryOracleSample] = []
     oracle_finished_at: datetime | None = None
+    fault_reversions: list[Any] = []
     oracle_point: ResolutionGradePoint | None = None
     diagnosis_grade: DiagnosisGrade | None = None
     recovery_finished_at: datetime | None = None
@@ -519,12 +520,15 @@ def _run_one(
         return driver.oracle()
 
     def measure_resolution(point: ResolutionGradePoint | None = None) -> None:
-        nonlocal oracle, infra_error, oracle_finished_at, oracle_point
+        nonlocal oracle, infra_error, oracle_finished_at, oracle_point, fault_reversions
         if oracle_finished_at is not None:
             return
         if not windows:
             raise RuntimeError("cannot grade an incident before injection")
         oracle_point = point
+        reversion_grader = getattr(driver, "grade_reversion", None)
+        if reversion_grader is not None:
+            fault_reversions = reversion_grader()
         try:
             oracle = grade()
             raw_infra = oracle.details.get("infra_error")
@@ -555,6 +559,8 @@ def _run_one(
                 reasoning_effort=getattr(agent, "reasoning_effort", None),
                 replay=getattr(agent, "replay", None),
                 injection=Injected(started_at=windows[0].started_at, finished_at=windows[0].finished_at),
+                fault_components=getattr(driver, "last_components", []),
+                fault_reversions=fault_reversions,
                 oracle=oracle,
                 diagnosis_grade=diagnosis_grade,
                 oracle_finished_at=oracle_finished_at,
@@ -722,6 +728,7 @@ def _run_one(
         injection=_injection_state(windows, attempted=injection_attempted),
         fault_components=getattr(driver, "last_components", []),
         infra_error=infra_error,
+        fault_reversions=fault_reversions,
         oracle=oracle,
         recovery_oracle=recovery_oracle,
         recovery_oracle_samples=recovery_oracle_samples,
