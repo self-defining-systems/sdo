@@ -160,6 +160,7 @@ def qualified_scenarios(windows: dict[str, Any], required: set[str]) -> bool:
     observed = {
         row.get("scenario", {}).get("id"): row
         for window in (windows.get("windows") or {}).values()
+        if window.get("workload", {}).get("purpose", "health-probe") == "health-probe"
         for row in (window.get("scenarios") or [])
     }
     return (

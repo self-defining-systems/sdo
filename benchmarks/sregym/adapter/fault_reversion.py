@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from benchmarks.sregym.adapter.kubernetes_content import declared_manifest
+
 if TYPE_CHECKING:
     from benchmarks.sregym.protocol.injection import FaultComponent
 
@@ -68,6 +70,7 @@ def _project(obj: dict[str, Any] | None, field: str | None, class_name: str) -> 
         raise ValueError("unsupported footprint field")
     if obj is None:
         return {"exists": False}
+    obj = declared_manifest(obj)
     if field:
         return {"exists": True, "value": _field(obj, field.split("."))}
     paths = {
@@ -77,7 +80,7 @@ def _project(obj: dict[str, Any] | None, field: str | None, class_name: str) -> 
     selected = paths.get(class_name) if obj.get("kind") in {"Deployment", "StatefulSet", "DaemonSet"} else None
     if selected:
         return {"exists": True, **{path: _field(obj, path.split(".")) for path in selected}}
-    # Whole-object footprints compare declared content, never status, UIDs or resource versions.
+    # Whole-object footprints compare declared content, never API allocations.
     return {
         "exists": True,
         "labels": obj.get("metadata", {}).get("labels", {}),

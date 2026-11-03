@@ -609,3 +609,25 @@ def test_replaced_pod_under_unchanged_template_is_named_as_readiness_loss_not_ro
     assert "rollout not complete" not in message
     assert "ready 0/1" in message
     assert "currency-z4xmb Pending" in message
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_verify_burst_cannot_shadow_qualified_health_scenarios(reverse):
+    from benchmarks.sregym.adapter.eval_guards import qualified_scenarios
+
+    windows = {
+        "health": {
+            "workload": {"purpose": "health-probe"},
+            "scenarios": [{"scenario": {"id": "login"}, "qualified": True, "samples": [{}]}],
+        },
+        "verify": {
+            "workload": {"purpose": "verify-burst"},
+            "scenarios": [{"scenario": {"id": "login"}, "qualified": False, "samples": []}],
+        },
+    }
+    if reverse:
+        windows = dict(reversed(list(windows.items())))
+    assert qualified_scenarios({"windows": windows}, {"login"})
+    windows["health"]["scenarios"][0]["qualified"] = False
+    windows["verify"]["scenarios"][0].update(qualified=True, samples=[{}])
+    assert not qualified_scenarios({"windows": windows}, {"login"})

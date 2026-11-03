@@ -67,3 +67,27 @@ def test_injected_webhook_must_be_removed_even_when_existing_pods_are_ready():
 
 def test_unlisted_kinds_cannot_be_proven_absent():
     assert grade_faults([component(kind="UnsupportedKind")], [], [])[0].status == "unknown"
+
+
+def test_service_recreation_ignores_allocations_but_preserves_headless_and_ports():
+    from copy import deepcopy
+
+    fault = component(kind="Service", cls="MissingService")
+    baseline = {
+        "kind": "Service",
+        "metadata": {"name": "app", "uid": "old"},
+        "spec": {
+            "clusterIP": "10.0.0.1",
+            "clusterIPs": ["10.0.0.1"],
+            "ports": [{"port": 80, "targetPort": 8080, "nodePort": 30001}],
+        },
+    }
+    live = deepcopy(baseline)
+    live["metadata"].update(uid="new", resourceVersion="3")
+    live["spec"].update(clusterIP="10.0.0.2", clusterIPs=["10.0.0.2"])
+    live["spec"]["ports"][0]["nodePort"] = 30002
+    assert grade_faults([fault], [baseline], [live])[0].status == "reverted"
+    live["spec"]["ports"][0]["targetPort"] = 9000
+    assert grade_faults([fault], [baseline], [live])[0].status == "not_reverted"
+    baseline["spec"]["clusterIP"] = "None"
+    assert grade_faults([fault], [baseline], [live])[0].status == "not_reverted"

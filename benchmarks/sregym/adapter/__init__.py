@@ -46,6 +46,7 @@ if TYPE_CHECKING:
         image_entrypoint_script,
     )
     from benchmarks.sregym.adapter.image_retention import ImageRetentionError, retain_lane_images
+    from benchmarks.sregym.adapter.kubernetes_content import allocated_paths, declared_manifest, replace_allocated
     from benchmarks.sregym.adapter.lane_resources import (
         LaneResourcePolicy,
         allowed_namespaces,
@@ -125,6 +126,9 @@ _EXPORTS: dict[str, str] = {
     "IncidentEvidenceExport": "persistent",
     "ImageRetentionError": "image_retention",
     "retain_lane_images": "image_retention",
+    "allocated_paths": "kubernetes_content",
+    "declared_manifest": "kubernetes_content",
+    "replace_allocated": "kubernetes_content",
     "Deadline": "budgets",
     "DeadlineExhaustedError": "budgets",
     "LaneResourcePolicy": "lane_resources",
@@ -204,6 +208,9 @@ _EXPORTS: dict[str, str] = {
 }
 
 __all__ = [
+    "allocated_paths",
+    "declared_manifest",
+    "replace_allocated",
     "FaultReversion",
     "grade_faults",
     "IncidentEvidenceExport",
