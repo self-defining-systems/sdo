@@ -71,7 +71,7 @@ Tests whose subject is not compilation use `sim.Compiler` as the broker's compil
 ## Kubernetes conformance
 
 `TestKubeConformance` (`sdo/operator/runtime/sim`, `integration` tag) runs one table of scenarios against a pinned
-kube-apiserver (`envtestio`, below) and the simulated API and compares what a client sees; see
+kube-apiserver (`envtestio`, above) and the simulated API and compares what a client sees; see
 [simulation fidelity](simulation-fidelity.md#kubernetes-conformance). When the simulation must behave like the server
 in a new way, add a scenario first.
 
