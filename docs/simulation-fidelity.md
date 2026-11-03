@@ -449,3 +449,42 @@ Reuse audit (any frozen observation used after the controller wrote): `matchedVi
 (`responder_loop.go`, `l.appliedAny()`); the stage's post-apply diagnosis and `verify` call `snapshotView`, and the plan verifier calls
 `Provider.Snapshot`. `lastDiagnosisView` is read only for topology relations (selectors, labels), never for field values. Cost note: frozen diffs
 now make one dry-run apply per object that has an accepted manifest per snapshot (cached across detectors and programs of that snapshot).
+
+### Controller end-to-end: fake kubelet and limits
+
+`scripts/test_controller_e2e.sh` runs the real controller process, memory-host subprocess and broker against a real
+kube-apiserver and etcd (envtest) with a fake kubelet and the no-model agent scripts. What it models and what it does not:
+
+- The API server is real; there are no nodes and no kube-controller-manager, so the fake kubelet supplies the Node, the
+  Deployment, ReplicaSet, Endpoints, EndpointSlice and Job controllers, the default ServiceAccount, `kube-root-ca.crt` and PVC binding.
+  Rollout is simplified (Recreate waits for old Pods; RollingUpdate waits for the new Pod to be ready). There is no scheduler,
+  admission-plugin set beyond the API server's defaults, garbage collector beyond ReplicaSet and Job children, or TTL controller.
+- There are no images. Every container runs on the host's userland in a bubblewrap sandbox with the Pod's volume mounts; one
+  profile (`e2e/images_test.go`) supplies `sdo-operator`, the Go toolchain, the repository and the Python environment at the paths the
+  production images use, and a shared warm Go build cache replaces the image's cache seed. File ownership, uid 65532, read-only
+  root filesystems, resource limits, seccomp and capability drops are not enforced. A Pod's own env wins over image defaults except
+  for a few forced host adaptations (`GOCACHE`, `GOMAXPROCS`, `GOTOOLCHAIN`). Init containers named `prepare-toolchain` are skipped.
+- ConfigMap and Secret volumes are copied once when the Pod starts; a later update is not propagated. Probes are not run: a sidecar
+  counts as started when its process starts.
+- Application Pods are not executed. Their phase and readiness follow a small model of the toy application. Pods carry loopback
+  `status.podIP` (127.1.x.y) with real listeners, because agents dial Pod IPs directly; the API server rejects loopback addresses
+  in Endpoints, so Endpoints and EndpointSlices carry the 10.244.x.y twin and `targetRef` names the Pod. Anything that joins Endpoints to
+  Pods by IP instead of `targetRef` would see a mismatch.
+- There is no real network. Cluster DNS is a hosts file; each Service has a loopback forwarder that resets the connection when no
+  ready Pod listens on the target port. NetworkPolicy is not enforced. The routing prober needs a "unicast Pod IP" and reports
+  `routing_probe=unavailable` instead.
+- The kubelet's usage endpoints (`stats/summary`, `metrics/cadvisor`) return fixed plausible values, not measurements. Node proxying
+  needs a non-loopback host address (the API server refuses loopback), so the run requires one network interface with an IPv4 address.
+- API faults come from a TLS reverse proxy in front of the API server that only the controller uses (error rate, latency, blackout). Workers
+  and the harness go direct, so a crashing or hanging agent is injected by the wrapper command, not by API failure.
+- Time is real. Cold start is dominated by the controller's own compile (about 100 s with a warm Go cache), and a full run takes several minutes.
+
+Gaps this run found are recorded in the ledger below.
+
+| Date | Source run | Class | Gap | Status | Test that covers it |
+| --- | --- | --- | --- | --- | --- |
+| 2026-11-03 | controller e2e | Missing behavior | The first run had no ServiceAccount controller: `cluster-wiring` reported `ServiceAccount/default` missing for every Deployment, so no repair ever verified | Fixed in the fake kubelet (default ServiceAccount and `kube-root-ca.crt` per namespace) | every `scenario1` run (an unverifiable repair times out) |
+| 2026-11-03 | controller e2e | Missing behavior | The API server rejects loopback addresses in Endpoints; agents dial Pod IPs directly, so Pods carry loopback IPs and Endpoints carry a twin | Modeled within the bounds above | `scenario1` (the agent's drift assessment dials the Pod IP) |
+| 2026-11-03 | controller e2e | Missing behavior | The API server will not proxy node requests to a loopback address, so `resource-saturation` failed `address not allowed` | Fixed: the Node carries a routable host address | every run (`diagnose` fails without it) |
+| 2026-11-03 | controller e2e | Controller finding | The controller exits on one transient API 500 (startup reads, lease renewal, steady-state listings); the controller Job gives up after 7 failures | Open: `TestControllerToleratesAPIErrors` (opt-in) | `bash scripts/test_controller_e2e.sh api-errors` |
+| 2026-11-03 | controller e2e | Controller finding | A hung responder Job is never ended: no `activeDeadlineSeconds` on incident Jobs, the response deadline is honoured by the worker only | Open: `TestControllerEndsHungAgent` (opt-in) | `bash scripts/test_controller_e2e.sh hung-agent` |
