@@ -31,6 +31,15 @@ echo "==> protocol tools built after ${SECONDS}s"
 export SDO_NATIVE_RECEIPT_BIN="$TOOLS/sdo-native-receipt"
 export SDO_SUBMISSION_GUARD_BIN="$TOOLS/sdo-submission-guard"
 
+# tests/conftest.py builds the operator CLI once per checkout under a file lock,
+# and every xdist worker waits on it before its first test. Start that build now
+# so it overlaps collection (30-50 s on a hosted runner) instead of following it.
+# The same content-addressed binary and lock serve the workers; a failure here
+# just leaves the build to them.
+if [[ -z "${SDO_SKIP_OPERATOR_PREBUILD:-}" ]]; then
+    python3 scripts/operator_test_binary.py > /dev/null 2>&1 &
+fi
+
 # Bound shared-host parallelism; pytest-cov combines the per-worker
 # coverage so the fail_under gate still sees the whole suite. Override with
 # SDO_PYTEST_WORKERS (e.g. 0 to run in-process for a targeted local run).

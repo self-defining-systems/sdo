@@ -309,7 +309,12 @@ def test_python_runner_builds_protocol_tools_once_before_workers(tmp_path: Path)
         command.chmod(0o755)
     result = subprocess.run(
         ["bash", str(ROOT / "scripts/test_python.sh"), "--durations=30"],
-        env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "SDO_TEST_CALLS": str(calls)},
+        env={
+            **os.environ,
+            "PATH": f"{tmp_path}:{os.environ['PATH']}",
+            "SDO_TEST_CALLS": str(calls),
+            "SDO_SKIP_OPERATOR_PREBUILD": "1",  # the prebuild would write to the call log from the background
+        },
         capture_output=True,
         text=True,
         check=False,
@@ -319,6 +324,14 @@ def test_python_runner_builds_protocol_tools_once_before_workers(tmp_path: Path)
     assert len([line for line in lines if line.startswith("go build ")]) == 2
     assert lines[-1].startswith("uv run --extra test pytest ")
     assert "--durations=30" in lines[-1]
+
+
+def test_python_runner_starts_the_operator_build_before_collection() -> None:
+    """The operator CLI build is serial work every xdist worker waits on; it must overlap collection."""
+    script = (ROOT / "scripts/test_python.sh").read_text()
+    prebuild = script.index("scripts/operator_test_binary.py")
+    assert script.index("go build -o") < prebuild < script.index("uv run --extra test pytest")
+    assert script[prebuild:].split("\n", 1)[0].rstrip().endswith("&"), "the prebuild must run in the background"
 
 
 def test_architecture_delegation_requires_the_full_python_suite() -> None:
