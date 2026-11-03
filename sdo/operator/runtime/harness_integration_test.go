@@ -23,6 +23,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/memoryhost"
 	"sdo.dev/operator/runtime/sim"
 	"sdo.dev/operator/sdk"
@@ -53,15 +54,6 @@ type harness struct {
 	inc      *incarnation
 	nextInc  int
 
-	// gate lets a harness operation that takes the host manager's locks wait
-	// until no stand-in detector is hung inside the host, and keeps one from
-	// starting to hang meanwhile: a goroutine blocked on a mutex would stop the
-	// bubble's clock, so a hang could never time out.
-	gate struct {
-		sync.Mutex
-		hanging int
-		busy    bool
-	}
 	out        *lineLog
 	crossings  map[crashBoundary]int
 	watches    int
@@ -71,6 +63,24 @@ type harness struct {
 }
 
 const harnessControlNamespace = hotel + "-sdo"
+
+// The accepted repository is a value, not a git checkout: a simulation runs no
+// process, so the scope, the commit and the (empty) manifest tree are injected.
+const harnessAcceptedCommit = "0123456789abcdef0123456789abcdef01234567"
+
+func harnessAcceptedScope(context.Context, string) (sdk.ObservationScope, string, error) {
+	scope, err := observation.Parse([]byte("---\nschema_version: 1\n---\nSynthetic test architecture.\n"))
+	return scope, harnessAcceptedCommit, err
+}
+
+// harnessPlanGit answers the accepted-manifest source's tree listing: the
+// application has no manifests in source.
+func harnessPlanGit(_ context.Context, _ string, args ...string) ([]byte, error) {
+	if len(args) > 0 && args[0] == "ls-tree" {
+		return nil, nil
+	}
+	return nil, fmt.Errorf("harness repository has no object %v", args)
+}
 
 func (h *harness) now() time.Time { return time.Now() }
 
@@ -119,14 +129,11 @@ func (d standinDetector) Detect(ctx context.Context, view sdk.DetectionContext) 
 	case behavePanic:
 		panic("stand-in detector panic")
 	case behaveHang:
-		if d.h.enterStall() {
-			select {
-			case <-ctx.Done():
-			case <-time.After(time.Hour):
-			}
-			d.h.exitStall()
-			return nil, ctx.Err()
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Hour):
 		}
+		return nil, ctx.Err()
 	case behaveWrong:
 		return []sdk.Finding{d.finding(d.spec.ID + "-phantom")}, nil
 	}
@@ -230,46 +237,7 @@ func (h *harness) declsOf(rev planRevision) []sim.DetectorDecl {
 // activate is the memory host's two-commit activation the controller runs for
 // an accepted memory commit: prepare the candidate beside the active host, make
 // it active, and reconfigure the live controller without restarting it.
-// enterStall registers a detector about to stall inside the host (hang or slow),
-// unless a harness operation is under way, in which case it answers normally.
-func (h *harness) enterStall() bool {
-	h.gate.Lock()
-	defer h.gate.Unlock()
-	if h.gate.busy {
-		return false
-	}
-	h.gate.hanging++
-	return true
-}
-
-func (h *harness) exitStall() {
-	h.gate.Lock()
-	h.gate.hanging--
-	h.gate.Unlock()
-}
-
-func (h *harness) beginOperation() {
-	for {
-		h.gate.Lock()
-		h.gate.busy = true
-		idle := h.gate.hanging == 0
-		h.gate.Unlock()
-		if idle {
-			return
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-}
-
-func (h *harness) endOperation() {
-	h.gate.Lock()
-	h.gate.busy = false
-	h.gate.Unlock()
-}
-
 func (h *harness) activate(ctx context.Context, rev planRevision) error {
-	h.beginOperation()
-	defer h.endOperation()
 	host := h.newHost(rev)
 	if err := h.manager.Prepare(ctx, host); err != nil {
 		_ = host.Close()
@@ -309,9 +277,7 @@ func (h *harness) crashHost() {
 		return
 	}
 	h.rec.Add(sim.ControllerDown{At: h.now(), Host: true})
-	h.beginOperation()
 	_ = host.Close()
-	h.endOperation()
 	h.rec.Add(sim.ControllerUp{At: h.now()})
 }
 
@@ -438,7 +404,7 @@ func (h *harness) crashController(why string) {
 func (h *harness) runController(ctx context.Context) {
 	args := []string{"--namespace", hotel, "--control-namespace", harnessControlNamespace, "--app-root", h.repo,
 		"--application", "hotel", "--synthetic-traffic=false", "--lease-duration", "3s", "--drift-batch-window", "20ms",
-		"--verification-timeout", "20s", "--closure-stability-window", "5s", "--response-timeout", "30s"}
+		"--verification-timeout", "20s", "--closure-stability-window", "5s", "--response-timeout", "30s", "--source-commit", harnessAcceptedCommit}
 	for ctx.Err() == nil {
 		runCtx, cancel := context.WithCancel(ctx)
 		h.mu.Lock()
@@ -449,7 +415,7 @@ func (h *harness) runController(ctx context.Context) {
 		revision := h.revision
 		h.mu.Unlock()
 		err := RunWithOptions(runCtx, remote.Detectors, RuntimeOptions{
-			Args: args, Stdout: h.out, Stderr: h.out, Client: h.clientFor("sdo-controller", inc, true), Dispatcher: harnessAgent{h, inc},
+			Args: args, Stdout: h.out, Stderr: h.out, Client: h.clientFor("sdo-controller", inc, true), Dispatcher: harnessAgent{h, inc}, AcceptedScope: harnessAcceptedScope, PlanGit: harnessPlanGit,
 			Programs: remote.Programs, InformerSync: fastSyncPolicy(), InformerResync: 10 * time.Minute, TerminationLogPath: filepath.Join(h.t.TempDir(), "termination-log"),
 			Wired: func(c *Controller) {
 				c.SetLifecycleSink(tapSink{h, inc})
@@ -503,7 +469,7 @@ func runHarness(t *testing.T, seed uint64) (sim.Log, sim.Config) {
 		p.CacheLag = 0
 	}
 	t.Logf("plan: %s", p)
-	h := &harness{t: t, plan: p, rec: sim.NewRecorder(time.Now).ClosureIsTerminal(), repo: gitRepository(t), start: time.Now(),
+	h := &harness{t: t, plan: p, rec: sim.NewRecorder(time.Now).ClosureIsTerminal(), repo: t.TempDir(), start: time.Now(),
 		out: &lineLog{start: time.Now()}, crossings: map[crashBoundary]int{}, callCounts: map[string]int{}, hung: map[string]bool{}}
 	h.world = sim.NewWorld(seed)
 	h.world.Kube.Clock = time.Now

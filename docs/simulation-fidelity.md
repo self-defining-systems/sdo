@@ -116,7 +116,7 @@ The simulation answered only list GETs, discovery and two dry-run forms over HTT
 `TestHarness` runs `RunWithOptions`, the production controller loop, on virtual time (a `synctest` bubble) with one
 seed fixing the whole plan, and checks the two behavioral properties over the recorded log
 (`sim/properties.go`): every incident ends, and every detector of the active memory revision is evaluated within
-3 x its own interval plus 12 s. PR CI runs seeds 2, 4 and 6 (seed 1 stays out while the state-restore crash loop is open); the nightly run restores the full count.
+3 x its own interval plus 12 s. PR CI runs seeds 2, 4, 6 and 13 (seed 1 stays out while the state-restore crash loop is open); the nightly run restores the full count.
 A failing seed prints `SDO_SIM_SEED=<n> go test -tags=integration -run '^TestHarness$' ./runtime`.
 `SDO_SIM_OUT=1` prints the controller's own output, `SDO_SIM_STATE=1` the final state ConfigMap, `SDO_SIM_DUMP=1`
 the goroutines at the end, `SDO_SIM_AGENT=<mode>` forces every agent answer and `SDO_SIM_NOLAG=1` removes cache lag.
@@ -168,10 +168,9 @@ Fidelity limits, each deliberate:
 - The memory host is the real `memoryhost.Manager` with in-process gRPC hosts (bufconn). Process launch, limits and the
   build step are absent. A swap runs `Prepare`, `Activate` and `ReconfigureMemory` directly instead of
   `memoryActivation`, and does not rebuild the controller's snapshot provider. A host crash closes the active host and
-  lets the manager's own recovery relaunch it. A hung detector times out at the manager's 5 s (30 s in production); the
-  harness waits for no detector to be hung before it calls the manager's `Prepare`, because a goroutine blocked
-  on a mutex stops the bubble's clock (a hang could then never time out). The host survives a controller death, as the
-  separate host process does.
+  lets the manager's own recovery relaunch it. A hung detector is abandoned at the host's cooperative budget (the
+  manager holds no lock across a detector call, so a hang delays only its own result). The host survives a controller
+  death, as the separate host process does.
 - A kill is delivered to the process's clients, not to its goroutines: Go cannot kill a goroutine, so a dead
   controller's goroutines run until the cancelled run context stops them, and the harness waits for `RunWithOptions` to
   return before starting the next process.
@@ -180,7 +179,12 @@ Fidelity limits, each deliberate:
 - A seed fixes the plan and the fault decisions are functions of (seed, call, count), but the goroutines inside the
   controller are not serialized, so replay is reliable, not bit-exact.
 - Informer resync is set to 10 virtual minutes (`RuntimeOptions.InformerResync`) so client-go reflector timers stay in
-  the bubble; git runs as a real subprocess.
+  the bubble.
+- **No process runs in a harness.** The accepted repository is a value: the observation scope and commit
+  (`RuntimeOptions.AcceptedScope`), the source commit (`--source-commit`) and the manifest tree
+  (`RuntimeOptions.PlanGit`, with no manifests) are injected, so the controller no longer starts about 1,700 `git`
+  processes per seed. `TestHarness` fails if the process waited for any child during its seeds (the seeds fan out
+  inside one group of a serial test, so nothing else runs beside them). A seed takes about 3 s instead of 25 s.
 - `--state-baseline=false` panics (a nil `StateTracker` in the diff read); the harness keeps the baseline on.
 - Secrets are not observed (no `MetadataClient`).
 

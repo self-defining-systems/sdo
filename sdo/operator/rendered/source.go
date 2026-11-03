@@ -28,6 +28,10 @@ var gitRevision = regexp.MustCompile(`^[a-fA-F0-9]{40,64}$`)
 type Source struct {
 	Repository    string
 	ManifestPaths []string
+	// Git, when set, replaces the git process edge (`git -C root args...`
+	// standard output). A simulation supplies the accepted tree without
+	// spawning a process.
+	Git func(ctx context.Context, root string, args ...string) ([]byte, error)
 }
 
 // AcceptedManifests returns rendered, namespace-scoped source objects that
@@ -51,6 +55,13 @@ func (s Source) AcceptedManifests(ctx context.Context, revision, namespace strin
 	return objects, errors.Join(failures...)
 }
 
+func (s Source) git(ctx context.Context, args ...string) ([]byte, error) {
+	if s.Git != nil {
+		return s.Git(ctx, s.Repository, args...)
+	}
+	return renderio.Git(ctx, s.Repository, args...)
+}
+
 func (s Source) RawManifests(ctx context.Context, revision, namespace string) ([]*unstructured.Unstructured, error) {
 	return s.rawManifests(ctx, revision, namespace, false)
 }
@@ -58,7 +69,7 @@ func (s Source) rawManifests(ctx context.Context, revision, namespace string, qu
 	if s.Repository == "" || !gitRevision.MatchString(revision) || namespace == "" {
 		return nil, fmt.Errorf("accepted repository, full commit revision, and namespace are required")
 	}
-	files, err := renderio.Git(ctx, s.Repository, "ls-tree", "-r", "-z", revision)
+	files, err := s.git(ctx, "ls-tree", "-r", "-z", revision)
 	if err != nil {
 		return nil, fmt.Errorf("list manifests at %s: %w", revision, err)
 	}
@@ -83,7 +94,7 @@ func (s Source) rawManifests(ctx context.Context, revision, namespace string, qu
 		if !regular[name] {
 			return nil, fmt.Errorf("accepted input %s is not a tracked regular file", name)
 		}
-		data, err := renderio.Git(ctx, s.Repository, "show", revision+":"+name)
+		data, err := s.git(ctx, "show", revision+":"+name)
 		if err != nil || len(data) > 2<<20 {
 			return nil, fmt.Errorf("accepted input %s unavailable or exceeds 2 MiB", name)
 		}
