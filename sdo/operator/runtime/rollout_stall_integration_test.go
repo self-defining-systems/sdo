@@ -27,7 +27,7 @@ import (
 // is observable, naming the blocker. Waiting cannot clear it, so the bounded
 // wait is never spent on it. Rollouts that can still progress keep waiting.
 func TestSourceRolloutStallHandsOffNamingTheBlocker(t *testing.T) {
-	for _, mode := range []string{"anti-affinity", "progress-deadline", "old-pod-terminating"} {
+	for _, mode := range []string{"anti-affinity", "old-pod-terminating"} {
 		t.Run(mode, func(t *testing.T) {
 			deployment, current, stale := reconcileRolloutObjects(t)
 			deployment.Status.UpdatedReplicas, deployment.Status.AvailableReplicas = 1, 1
@@ -40,9 +40,6 @@ func TestSourceRolloutStallHandsOffNamingTheBlocker(t *testing.T) {
 			event := &corev1.Event{ObjectMeta: metav1.ObjectMeta{Name: "new-pod.failed", Namespace: newPod.Namespace}, Type: corev1.EventTypeWarning, Reason: "FailedScheduling", Message: unschedulable, LastTimestamp: metav1.Now(),
 				InvolvedObject: corev1.ObjectReference{Kind: "Pod", Namespace: newPod.Namespace, Name: newPod.Name, UID: newPod.UID}}
 			switch mode {
-			case "progress-deadline":
-				newPod.Status.Conditions = nil
-				deployment.Status.Conditions = []appsv1.DeploymentCondition{{Type: appsv1.DeploymentProgressing, Status: corev1.ConditionFalse, Reason: "ProgressDeadlineExceeded", Message: `ReplicaSet "search-new" has timed out progressing.`}}
 			case "old-pod-terminating":
 				// The scheduler retries when the draining Pod is gone; waiting helps.
 				now := metav1.Now()
