@@ -1731,6 +1731,20 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		*closure.Result, closure.Request.PriorStages = evidence.Result, evidence.Stages
 	}
 	if verified {
+		// The worker's last self-check precedes the controller's recovery proof
+		// (and often a rollout settling). Freeze the independently observed
+		// disposition after settlement, retaining the worker report as evidence.
+		// Dispatch failures never acquire this authority.
+		if closure.DispatchError == "" && closure.Result != nil {
+			if closure.Result.Status == IncidentFailed {
+				closure.Result.VerificationEvidence = append(closure.Result.VerificationEvidence, VerificationEvidence{
+					Name: "responder_report_before_recovery", ObservedAt: closure.ResponderCompletedAt,
+					Details: fmt.Sprintf("status=%s; unresolved_findings=%d; error=%s", closure.Result.Status, len(closure.Result.UnresolvedFindings), closure.Result.Error),
+				})
+			}
+			closure.Result.Status = IncidentCompleted
+			closure.Result.UnresolvedFindings = nil
+		}
 		c.retainSourceInventoryAcceptancesLocked(c.currentIncidentResult)
 	}
 	closure.DetectorTimeline = cloneTimeline(c.timeline)

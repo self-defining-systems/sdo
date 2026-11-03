@@ -97,3 +97,12 @@ yields `session_handoff_timeout`, and an unavailable provider session yields
 provider resume retry or implicit fresh-session fallback.
 
 Responder tool checkpoints now retain `ApplicationEvidence` as ProtoJSON application facts plus a pending marker alongside `CompletedRepairs`. Controller-only owner chains also persist alongside the display receipt, remaining excluded from responder feedback. Recovered application IDs, program IDs and verification results reach final and early-closure outcomes through the evidence-only `ApplicationEvidence()` projection. `PlanApplications()` remains process-local; restart restores neither live application handles nor rollback authority, and retains the consumed repair budget. Missing application evidence in older checkpoints can leave a program receipt unowned; do not infer hand repair from its `program-plan` kind alone.
+
+A worker's `failed` self-check can precede rollout settlement. After independent
+stable recovery, the controller freezes a completed result with no unresolved
+findings, preserving the earlier failed report in verification evidence named
+`responder_report_before_recovery`. The original worker result is unchanged.
+Dispatch/Job failures, external completion without detector authority, and
+incomplete recovery never receive this projection. Program credit still requires
+complete API history and settled application evidence; successful incident
+closure does not certify those separate facts.
