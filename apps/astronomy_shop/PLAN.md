@@ -6,9 +6,8 @@
 3. Add the workspace/source-build adapter to vic-lsh/SREGym sdo3, with failing-first
    contracts. Preserve chart topology and build application images from source.
    Open a separate harness PR; leave fault capabilities and fastloop to their owners.
-4. After PB1 releases lane52.lock, run one fully detached, recorded cold seed on
-   luna-pilot-52. Publish real deployment evidence through SDO's broker, reconcile
+4. Run one fully detached, recorded cold seed on a private lane. Publish real deployment evidence through SDO's broker, reconcile
    the rendered lock, and require zero object gaps and healthy workloads/traffic.
-5. Push validated changes, open an SDO PR against vic-lsh/dev/sdo-improve without
-   merging, and write AS1_REPORT.md outside the repository with exact heads,
+5. Push validated changes, open an SDO PR against the target integration branch without
+   merging, and write a run report outside the repository with exact heads,
    seed/lock evidence and any blockers. No live LLM calls or credential reads.

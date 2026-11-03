@@ -1,21 +1,19 @@
 # Hotel latent-fault catalog
 
-Audited at SDO `496845489`, SREGym `0a32595f82633ec0b6676eb1333a10ef9e9f1778`
-and applications `d1a7e02eb873520d2df3eea9f81f54eda5eb149d`. SREGym was read
-from the supplied `codex-composite/third_party/sregym` checkout, without mutation.
-Below, `problems/` and `oracles/` mean `sregym/conductor/` in that revision;
+Below, `problems/` and `oracles/` mean `sregym/conductor/` in the supplied
+SREGym checkout;
 variant counts come from `problems/variant_specs.py` (manual aliases do not
 add targets). The eight service targets are frontend, geo, profile, rate,
 recommendation, search, reservation and user.
 
 **Latent is relative to the accepted health objective and a 180-second detection
-window.** The recorded runs below use the readiness/endpoint `health-objective`,
-not a functional traffic SLO. Their accepted detector manifest and source are
-under each run's `application_workspace/.sdo/diagnostics/`. Numeric targetPort
+window.** For readiness/endpoint `health-objective` experiments, inspect the accepted
+detector manifest and source under each external run's
+`application_workspace/.sdo/diagnostics/`; a functional traffic SLO can change classification. Numeric targetPort
 changes preserve ready endpoints; that objective never compares ports. The
 checked-in assurance seed additionally installs `traffic-health` and
 `service-endpoints`: do not call a traffic-detected fault latent or silently
-substitute that seed for the recorded structural-health seed.
+substitute that seed for the chosen structural-health seed.
 
 Feed references (all in `sdo/operator/runtime/`):
 
@@ -83,25 +81,15 @@ latent faults. Slow liveness churn may evade a particular window but is not a
 confirmed latent class. BlueprintHotelReservation retry-storm/GC experiments use
 a different application/health setup and are outside this hotel stream.
 
-## Recorded evidence
+## Reading evidence
 
-Evidence root: `results/playbook-programs/`; row indices are zero-based.
-Read `results/<run-id>/incidents.jsonl`, and join `incident_id` to the outcome
-in `application_workspace/.sdo/outcomes/` for opening detector IDs.
-
-| Run / result ID | Rows | Injection → detection; opening detector; oracle |
-| --- | --- | --- |
-| fastloop-repeat2 / 20261021T102709Z-sdo | 0 reservation, 2 geo, 5 rate targetPort | null; no incident in 180s; oracle false for each |
-| same | 1 rate, 3 search, 6 recommendation image | 0.539 / 0.600 / 0.539 s; `health-objective`; oracle true |
-| fastloop-compose / 20261021T111327Z-sdo | 0 geo targetPort; 9 search deny-both + reservation targetPort | null; no incident in 180s; oracle false (both components in row 9) |
-| same | 3 user readiness; 6 profile wrong selector | 0.757 / 1.660 s; `health-objective`; oracle true |
-| fastloop-driftlive3 / 20261021T163200Z-sdo | 0 reservation targetPort | 42.412 s; `drift/investigator`; oracle true |
-| same | 2 geo targetPort | timing null despite a recorded incident; outcome opens with `drift/investigator`; oracle true. Count as caught, timing unknown, not a zero-second catch or a program sweep. |
-
-These runs establish targetPort misses and investigator catches, **not** learned
-sweep reuse. Mixed incidents that open through a companion's health finding do
-not establish latent detection. No catalog candidate is promoted to measured
-latent merely because a composite oracle eventually passes.
+Read `results/<run-id>/incidents.jsonl` outside the repository, and join
+`incident_id` to the outcome in `application_workspace/.sdo/outcomes/` for opening
+detector IDs. Row indices are zero-based. A recorded incident with missing timing
+is a catch with unknown latency, never a zero-second catch. Mixed incidents that
+open through a companion's health finding do not establish latent detection.
+An investigator catch does not establish learned sweep reuse, and a passing
+composite oracle does not establish that each component was latent.
 
 ## Primary stream and coverage limit
 
@@ -109,21 +97,20 @@ latent merely because a composite oracle eventually passes.
 
 | Position | Fault | Why |
 | --- | --- | --- |
-| 1 | reservation targetPort 9999 | measured latent; first catch/learning opportunity |
+| 1 | reservation targetPort 9999 | latent candidate; first catch/learning opportunity |
 | 2 | recommendation targetPort 9999 | unseen target; transfer opportunity |
-| 3 | rate nonexistent image tag | measured health-visible control |
-| 4 | geo targetPort 9999 | measured latent; unseen target |
+| 3 | rate nonexistent image tag | health-visible control |
+| 4 | geo targetPort 9999 | latent candidate; unseen target |
 | 5 | search targetPort 9999 | unseen target |
-| 6 | rate targetPort 9999 | measured latent after control recovery |
+| 6 | rate targetPort 9999 | latent candidate after control recovery |
 | 7 | frontend targetPort 9999 | different port (5000 vs backend 808x) |
-| 8 | user readiness wrong_path, 1 replica | measured health-visible control |
+| 8 | user readiness wrong_path, 1 replica | health-visible control |
 | 9 | profile targetPort 9999 | unseen target |
 | 10 | user targetPort 9999 | unseen target after control recovery |
 
 Controls are interleaved; faults are never composed. All eight registered
-hotel targetPort targets occur once. There is only one **evidenced, repeatable,
-currently first-catch-admissible** class, so the stream cannot yet test transfer
-across fault classes. Other targets' latency is inferred until measured.
+hotel targetPort targets occur once. There is only one candidate first-catch class, so the stream cannot yet test transfer
+across fault classes. Measure target latency independently.
 
 No feed-only stream is added: NetworkPolicy already has an informer; the next
 policy task needs explicit handling of newly introduced, unowned/source-absent

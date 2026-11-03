@@ -172,5 +172,3 @@ the reflection tool `capture_fields` serves typed sections for both forms.
 Provenance digests name snapshot content. `sdktest.SnapshotDigest` hashes the
 canonical form, so the version 1 and version 2 files of one capture have the
 same digest; a label digest of the exact old file bytes also still matches.
-Measured on the shared astronomy corpus (2026-10-28, 43 cases): 194.3 MB to
-64.0 MB, with replay and validation verdicts unchanged on every case.

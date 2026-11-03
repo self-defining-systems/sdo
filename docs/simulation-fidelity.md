@@ -244,7 +244,7 @@ pool reuse is no longer tested. PR and nightly Go CI run them with
 
 Rows dated before 2026-11-03 name regression tests that were later deleted with the legacy Go tests. They record how each gap was found and closed; the tests named there no longer guard it. New rows name a harness seed, conformance scenario or gate-table row.
 
-| Date | Source run | Class | Gap | Status | Simulation change and conformance test |
+| Date | Source kind | Class | Gap | Status | Simulation change and conformance test |
 | --- | --- | --- | --- | --- | --- |
 
 | 2026-10-31 | Synthetic shared-world conformance | Missing behavior / timing / fault | Shared pod, input and protocol edges | Modeled within bounds above | `TestCrashLoopRecovery`, `TestFaultSchedule` (the real-detection-input and protocol-dialer tests were deleted in the 2026-11-03 Go test reduction) |
@@ -265,86 +265,21 @@ those seams do not compile accepted repository memory into the controller.
 Bounded responder verification uses incident tool transport and the host Traffic
 RPC; no agent-to-host connection or prober pod is modeled or deployed.
 
-### Kind memory-host proof (2026-11-01)
+### Memory-host process and timing bounds
 
-The scripted Tier 2a run at `/mnt/data/shli/memory-host-toy-proof/`
-uses a private kind lane, Calico and generated responder/reflection scripts,
-without model calls. Its initial run exposed a missing fault case: a routing
-probe against the broken target exhausted its four-second caller deadline;
-`Manager.Traffic` treated that normal cancellation as a host crash, retired the
-accepted process, and made concurrent detector/responder calls unavailable.
-The smaller deterministic boundary can represent this behavior; it lacked a
-regression test; it was deleted in the 2026-11-03 Go test reduction and not recreated.
-The fix separates the caller deadline from the manager's own failure budget;
-transport disconnects and manager timeouts retain crash recovery.
+Caller cancellation must not retire a healthy accepted host. The manager separates
+caller deadlines from its own failure budget; disconnects and manager timeouts
+retain crash recovery. Compiler, process and Unix transport costs remain outside
+the virtual-time model. Harness deadlines must allow cold initialization without
+changing controller cadence. Fastloop pauses detection during baseline recovery
+before draining reflection, so pod continuity does not establish uninterrupted evaluation.
 
-| Date | Source run | Class | Gap | Status | Simulation change and conformance test |
+| Date | Source kind | Class | Gap | Status | Simulation change and conformance test |
 | --- | --- | --- | --- | --- | --- |
-| 2026-11-01 | Tier 2a `20261101T021321Z-sdo` | Missing fault coverage | Caller probe deadline retired healthy accepted host | Fixed at manager boundary | Real routing timeout ordering minimized into a synthetic virtual-time fixture. Regression test deleted in the 2026-11-03 Go test reduction; not recreated |
-
-The fixed real-kind run accepted reflection commit
-`e2fb8cd7527215c73712210cfec6cec52c4b04b8` with binary digest
-`sha256:774a6ea5a7a669f70b7cd27332d69f7b5850359c07742da94032838615214075`.
-Build, catch-up and switch took **5,561 ms**, compared with the simulation's
-injected 50 ms. The maximum interval between evaluation log records within ten
-seconds of activation was **221 ms** (configured cadence about 200 ms), with
-contiguous iteration numbers. The native ledger verified activation at
-02:19:53.402907231Z and acknowledged at 02:19:53.433047666Z. A later standalone
-backend incident fired the newly accepted `drift.service-targetport-mismatch`
-detector and passed its repair oracle, with zero model tokens and no harness errors.
-
-The matched empty-snapshot benchmark measured **0.25–0.32 ms** over bufconn,
-**0.40–0.42 ms** through a separate Unix process on the host, and **0.86–1.24 ms**
-through a separate Unix process in the controller Pod. Each used the same
-ready-endpoints detector; the Unix helper ran 5,000 calls per trial, three trials.
-These isolate mirror/adapter/transport overhead and exclude Kubernetes reads,
-process startup and compilation. The earlier approximately 0.57 ms measurement
-is not a bound on real Pod latency. OS scheduling and compiler cost remain
-fidelity bounds covered by this kind run, not virtual-time latency predictions.
-
-The documented 0.1 time scale also shortened the first run's harness verification
-budget below cold worker/validator cost: `observe-controller` received a 1 ms
-remaining deadline, although reflection later accepted and activated successfully.
-This is a timing-model alignment limit: simulated turns do not include real image,
-init-container and compiler delays. Keep controller cadence unchanged when
-comparing pod continuity and give the scripted harness sufficient wall-time budget
-(`--timeout 1800` here). Failed attempts remain alongside successful evidence;
-their result rows are not counted as passing incidents.
-
-| Date | Source run | Class | Gap | Status | Simulation change and conformance test |
-| --- | --- | --- | --- | --- | --- |
-| 2026-11-01 | Tier 2a memory-host proof, same external evidence root | Fidelity bound | Actual compiler/process/Unix transport costs exceed injected build delay and bufconn timing | Measured; not a simulation latency guarantee | Real kind activation log, contiguous evaluation trace, native ACK ledger and in-Pod Unix benchmark; no OS timing model added |
-| 2026-11-01 | Tier 2a `20261101T021638Z-sdo` | Timing model | Scaling all harness deadlines does not scale cold init/compiler work | Accepted run-budget bound | Kind rerun with 1800-second harness timeout at unchanged 0.1 controller cadence; synthetic turn times remain explicit inputs |
-
-The clean two-incident rerun (`20261101T022237Z-sdo`) passed both oracles and
-strict receipts with zero errors and zero model tokens. Incident walls were
-150.23/93.38 s; injection-to-mitigation was 39.83/34.83 s. The second repair used
-`service-targetport-mismatch` with a hint binding. Pod UID
-`a8dd5f26-a728-4b3f-bd04-632277475e85`, start `2026-11-01T02:22:21Z`, container
-start `02:22:23Z`, and restart count zero were identical before and after.
-Reflection commit `517b34983e852027fa3c28bee60fe17743ad8d5d` activated in
-4,486 ms; the later outcome revision activated in 4,675 ms, with the same binary
-digest above. First activation verification at `02:25:02.207702310Z` preceded
-ACK at `02:25:02.234315225Z`.
-
-Fastloop deliberately pauses observation during baseline recovery before draining
-reflection. Consequently the clean stream's swaps prove pod continuity and ACK
-ordering, **not uninterrupted evaluation**. The separate earlier fixed run above
-provides that trace (100 contiguous evaluations within ten seconds on either side
-of activation, maximum gap 221 ms). Its harness deadline failure remains explicit.
-This distinction prevents interpreting planned maintenance as an activation stall.
-The evidence root includes raw logs, before/after Pod JSON, native ledgers,
-telemetry, benchmark source and `summary.json`; no run artifacts belong in Git.
-
-| Date | Source run | Class | Gap | Status | Simulation change and conformance test |
-| --- | --- | --- | --- | --- | --- |
-| 2026-11-01 | Tier 2a `20261101T022237Z-sdo` | Timing / harness ordering | Fastloop recovery pauses detection before reflection drain | Observed intentional maintenance; clean stream cannot prove uninterrupted swaps | Separate active-detection trace above; do not infer no-gap behavior from pod continuity alone |
-
-The final clean-run in-Pod benchmark repeated at **0.590–0.614 ms/evaluation**
-(three trials of 5,000 calls); its raw records are `unix-pod-bench.jsonl`.
-The earlier 0.86–1.24 ms trials above were taken amid the failed-run cleanup.
-Both measurements demonstrate scheduling-dependent cost; the final repeat is
-close to, but above, the historical approximately 0.57 ms figure.
+| 2026-11-01 | kind scripted run | Missing fault coverage | Caller probe deadline retired healthy accepted host | Fixed at manager boundary | Real routing timeout ordering minimized into a synthetic virtual-time fixture. Regression test deleted in the 2026-11-03 Go test reduction; not recreated |
+| 2026-11-01 | kind scripted run | Fidelity bound | Actual compiler/process/Unix transport costs exceed injected build delay and bufconn timing | Accepted OS timing bound | No OS timing model; process and compiler latency require kind validation |
+| 2026-11-01 | kind scripted run | Timing model | Scaling all harness deadlines does not scale cold init/compiler work | Accepted run-budget bound | Harness deadlines must cover cold initialization; synthetic turn times remain explicit inputs |
+| 2026-11-01 | kind scripted run | Timing / harness ordering | Fastloop recovery pauses detection before reflection drain | Intentional maintenance; pod continuity alone cannot prove uninterrupted evaluation | Require an active-detection trace independently of pod continuity |
 
 ### Remaining host adapter and CPU bounds (2026-11-01 determinism migration)
 
@@ -374,50 +309,40 @@ certificate-store bounds; `scripts/test_go_ci.sh` runs them with
 Repeated race runs also exposed HTTP/2's unconfigured `ServeConn` fallback sharing
 error channels across independent synctest bubbles. The fixture now calls
 `http2.ConfigureServer` to obtain a per-server channel pool before `ServeConn`;
-the full protocol matrix passes twenty race-enabled repetitions. This closes a
+the protocol matrix guards channel ownership across independent bubbles. This closes a
 fixture ownership gap without changing the production protocol client.
 
-### Merged-tree toy run on kind (2026-11-02)
+### Scripted kind integration gaps
 
-The scripted Tier 2a run for the dev merge into main (`/mnt/data/shli/sdo-exp/port/merge-toy/`) found the
-gaps below. Most were not reachable by the unit tiers because each test replaced the thing that changed
-with a fixture that still described the old behavior.
-
-| Date | Source run | Class | Gap | Status | Test that now covers it |
+| Date | Source kind | Class | Gap | Status | Test that now covers it |
 | --- | --- | --- | --- | --- | --- |
-| 2026-11-02 | merge-toy | Missing fault coverage | Caller cancellation of `Manager.Evaluate` or a captured-host call retired the healthy accepted host; every detector reported `memory host unavailable` until recovery (about 15 s) | Fixed at the manager boundary | Regression test deleted in the 2026-11-03 Go test reduction; not recreated |
-| 2026-11-02 | merge-toy | Contract drift | Memory-host registration dropped `ConsumesPodAdmission`; the controller never observed admission, the host's `pod-admission` detector errored every evaluation and the lane never reached a clear baseline | Fixed | Regression test deleted in the 2026-11-03 Go test reduction; not recreated (the fix keeps pod admission in the registration) |
-| 2026-11-02 | merge-toy | Mock encodes removed behavior | Image smoke tests mocked `schema-identity` and `validation-child` arities that the binary no longer has, so every image build and `up` preflight failed on a real binary | Fixed | `test_image_build_smokes_offline_go_tools_as_nonroot` checks the child's arity; `test_fast_image_delivery.py` mocks `memory --help` |
-| 2026-11-02 | merge-toy | Missing behavior | The stand-in `codex` never wrote a session rollout, which the production responder's session recovery needs at session start | Fixed | `test_scripted_session_persists_a_rollout_before_the_worker_checkpoints_it` |
-| 2026-11-02 | merge-toy | Sandbox fidelity | The agent-script sandbox mounted the whole host read-only, but the real workspace-write sandbox lets `sdo` write `/tmp/sdo` and the session scratch | Fixed | `test_sandboxed_commands_can_persist_tool_replies_for_later_commands` |
-| 2026-11-02 | merge-toy | Transport limit | A scripted file write put the whole file in one shell argument; a captured corpus exceeds the 128 KiB single-argument limit | Fixed (stdin) | `test_write_steps_larger_than_one_command_argument_succeed` |
-| 2026-11-02 | merge-toy | Protocol drift | `sdo` prints a human summary unless `--json`; capped replies must be followed to `details_file` | Fixed | `test_tool_reads_json_and_follows_a_capped_reply_to_its_details_file` |
-| 2026-11-02 | merge-toy | Protocol drift | `sdo verify` reports `awaiting_responder_completion` while the worker runs; polling for `healthy` for two minutes ended the scripted responder as failed and the outcome as failed | Fixed | `test_verify_loop_stops_when_detectors_clear_while_the_responder_still_runs` |
-| 2026-11-02 | merge-toy | Lifecycle | A from-scratch toy install kept the previous controller checkpoint and health-refresh records; the checkpoint named a detector the reset memory did not have | Fixed | `test_retire_control_state_clears_checkpoints_and_stale_health_refresh_records` |
-| 2026-11-02 | merge-toy | Lifecycle | A preloaded standby responder read its task before awaiting the claim and crashed; the controller recreated a standby Job every 9 s | Fixed | `test_generated_launch_waits_for_standby_claim_before_reading_the_task` |
-| 2026-11-02 | merge-toy | Lifecycle | A health refresh ends the first controller attempt by design (exit 76), leaving a failed pod beside the running one; continuity required exactly one pod | Fixed | `test_live_controller_pod_ignores_pods_of_finished_job_attempts` |
-| 2026-11-02 | merge-toy | Missing behavior | After a verified program write, a co-reported finding whose detector had not re-observed it (service-reachability on the same Service) made the attempt `applied_still_matching`; the stage gave up within a second and the responder finished a mitigated incident (3 of 4 repeats) | Fixed: findings that depend on the written object keep the recovery wait going and the attempt is recorded cleared | Regression test deleted in the 2026-11-03 Go test reduction; not recreated; existing stage tests unchanged |
-| 2026-11-02 | merge-toy | Timing | Closure replays open-phase reads inside the observation lock; the program's open probe of the old targetPort waited out the 5 s probe budget (`program_reads_ms=5283`), stopping detection for 9.8 s | Bounded to 1 s (gap 9.8 s to 5.1-5.4 s); remaining closure work under the lock still exceeds the 5 s allowance by 0.15-0.4 s on the repeat | Regression test deleted in the 2026-11-03 Go test reduction; not recreated |
-| 2026-11-02 | merge-closure | Timing | Closure captured the corpus, replayed reads and settled recovery applications inside the step pass, so no detector evaluated for 5.15–5.38 s around every closure; the simulation's closure work took zero virtual time and could not show it | Fixed (evidence gathers on a goroutine; the next pass freezes the closure) | Regression test deleted in the 2026-11-03 Go test reduction; not recreated |
+| 2026-11-02 | kind scripted run | Missing fault coverage | Caller cancellation of `Manager.Evaluate` or a captured-host call retired the healthy accepted host; every detector reported `memory host unavailable` until recovery | Fixed at the manager boundary | Regression test deleted in the 2026-11-03 Go test reduction; not recreated |
+| 2026-11-02 | kind scripted run | Contract drift | Memory-host registration dropped `ConsumesPodAdmission`; the controller never observed admission, the host's `pod-admission` detector errored every evaluation and the lane never reached a clear baseline | Fixed | Regression test deleted in the 2026-11-03 Go test reduction; not recreated (the fix keeps pod admission in the registration) |
+| 2026-11-02 | kind scripted run | Mock encodes removed behavior | Image smoke tests mocked `schema-identity` and `validation-child` arities that the binary no longer has, so every image build and `up` preflight failed on a real binary | Fixed | `test_image_build_smokes_offline_go_tools_as_nonroot` checks the child's arity; `test_fast_image_delivery.py` mocks `memory --help` |
+| 2026-11-02 | kind scripted run | Missing behavior | The stand-in `codex` never wrote a session rollout, which the production responder's session recovery needs at session start | Fixed | `test_scripted_session_persists_a_rollout_before_the_worker_checkpoints_it` |
+| 2026-11-02 | kind scripted run | Sandbox fidelity | The agent-script sandbox mounted the whole host read-only, but the real workspace-write sandbox lets `sdo` write `/tmp/sdo` and the session scratch | Fixed | `test_sandboxed_commands_can_persist_tool_replies_for_later_commands` |
+| 2026-11-02 | kind scripted run | Transport limit | A scripted file write put the whole file in one shell argument; a captured corpus exceeds the 128 KiB single-argument limit | Fixed (stdin) | `test_write_steps_larger_than_one_command_argument_succeed` |
+| 2026-11-02 | kind scripted run | Protocol drift | `sdo` prints a human summary unless `--json`; capped replies must be followed to `details_file` | Fixed | `test_tool_reads_json_and_follows_a_capped_reply_to_its_details_file` |
+| 2026-11-02 | kind scripted run | Protocol drift | `sdo verify` reports `awaiting_responder_completion` while the worker runs; polling for `healthy` for two minutes ended the scripted responder as failed and the outcome as failed | Fixed | `test_verify_loop_stops_when_detectors_clear_while_the_responder_still_runs` |
+| 2026-11-02 | kind scripted run | Lifecycle | A from-scratch toy install kept the previous controller checkpoint and health-refresh records; the checkpoint named a detector the reset memory did not have | Fixed | `test_retire_control_state_clears_checkpoints_and_stale_health_refresh_records` |
+| 2026-11-02 | kind scripted run | Lifecycle | A preloaded standby responder read its task before awaiting the claim and crashed; the controller repeatedly recreated standby Jobs | Fixed | `test_generated_launch_waits_for_standby_claim_before_reading_the_task` |
+| 2026-11-02 | kind scripted run | Lifecycle | A health refresh ends the first controller attempt by design (exit 76), leaving a failed pod beside the running one; continuity required exactly one pod | Fixed | `test_live_controller_pod_ignores_pods_of_finished_job_attempts` |
+| 2026-11-02 | kind scripted run | Missing behavior | After a verified program write, a co-reported finding whose detector had not re-observed it (service-reachability on the same Service) made the attempt `applied_still_matching`; the stage gave up within a second and the responder finished a mitigated incident | Fixed: findings that depend on the written object keep the recovery wait going and the attempt is recorded cleared | Regression test deleted in the 2026-11-03 Go test reduction; not recreated; existing stage tests unchanged |
+| 2026-11-02 | kind scripted run | Timing | Closure replays open-phase reads inside the observation lock; the program's open probe of the old targetPort exhausted its probe budget and stalled detection | Probe deadline bounded; remaining closure work under the lock is still a fidelity gap | Regression test deleted in the 2026-11-03 Go test reduction; not recreated |
+| 2026-11-02 | kind scripted run | Timing | Closure captured the corpus, replayed reads and settled recovery applications inside the step pass, stalling detector evaluation during closure; the simulation's closure work took zero virtual time and could not show it | Fixed (evidence gathers on a goroutine; the next pass freezes the closure) | Regression test deleted in the 2026-11-03 Go test reduction; not recreated |
 
 Not modeled and still open: the Go simulation has no scripted-agent sandbox, standby handshake or Job
 restart on exit 76, so the standby, sandbox, restart and verify-protocol rows are covered by Python contract tests only.
 Closure work is modeled through the `closureEvidence` seam, which a test can make block; the closure recheck and the
-incident-open capture still run on the step pass (about 0.6 s and 0.2 s on the toy lane) and are not simulated.
+incident-open capture still run on the step pass and are not simulated.
 
-### Live toy run on Luna (2026-11-02)
+### Live source-normalization gaps
 
-The live run (`/mnt/data/shli/sdo-exp/port/merge-luna/`) never cleared a repeat in the deterministic stage. The
-handoff blamed a frozen pre-apply snapshot; the stage record shows otherwise. The post-apply `Diagnose` observed
-`targetPort 8080` (the repair had landed) and still matched, because the frozen source diff skipped the API
-server's default normalization and read the defaulted `protocol: TCP` as drift added since acceptance. All verifications
-take a fresh snapshot (`snapshotView`, the executor's health verifier); the stale-read sweep below found no reuse.
-
-| Date | Source run | Class | Gap | Status | Test that now covers it |
+| Date | Source kind | Class | Gap | Status | Test that now covers it |
 | --- | --- | --- | --- | --- | --- |
-| 2026-11-02 | merge-luna | Mock encodes removed behavior | Frozen diffs were computed on the live view with its API client removed, so the dry-run default normalization an in-process program gets was skipped: a repaired Service still matched, and the stage rolled back a correct repair | Fixed: diffs are the view's own answers, from the cycle cache, frozen before the host lease is taken | Regression test deleted in the 2026-11-03 Go test reduction; not recreated (it used the sim API with dry-run apply and Service defaults) |
-| 2026-11-02 | merge-luna | Contract drift | The diff walk descended only wrappers it knew; a program mitigated through the isolation view (`mitigationReadView`) got no frozen diffs and its host reads found no evidence sink | Fixed: no type walk for diffs; every wrapper that embeds a `ReadView` exposes it | `TestReadViewWrappersExposeTheViewTheyWrap` (fails for any new wrapper that hides its view); the other tests were deleted in the 2026-11-03 Go test reduction |
-| 2026-11-02 | merge-luna | Missing fault coverage | The scripted toy diagnosed from pod ports and planned from a pod, so no scripted program or detector ever called `DiffAgainstSource`; bugs above reached the first live run | Fixed: the scripted program, mitigation and incident detector are source-grounded like learned ones | `benchmarks/sregym/fastloop/scripted_program`, hermetic fastloop tests |
+| 2026-11-02 | live run | Mock encodes removed behavior | Frozen diffs were computed on the live view with its API client removed, so the dry-run default normalization an in-process program gets was skipped: a repaired Service still matched, and the stage rolled back a correct repair | Fixed: diffs are the view's own answers, from the cycle cache, frozen before the host lease is taken | Regression test deleted in the 2026-11-03 Go test reduction; not recreated (it used the sim API with dry-run apply and Service defaults) |
+| 2026-11-02 | live run | Contract drift | The diff walk descended only wrappers it knew; a program mitigated through the isolation view (`mitigationReadView`) got no frozen diffs and its host reads found no evidence sink | Fixed: no type walk for diffs; every wrapper that embeds a `ReadView` exposes it | `TestReadViewWrappersExposeTheViewTheyWrap` (fails for any new wrapper that hides its view); the other tests were deleted in the 2026-11-03 Go test reduction |
+| 2026-11-02 | live run | Missing fault coverage | The scripted toy diagnosed from pod ports and planned from a pod, so no scripted program or detector ever called `DiffAgainstSource`; bugs above reached the first live run | Fixed: the scripted program, mitigation and incident detector are source-grounded like learned ones | `benchmarks/sregym/fastloop/scripted_program`, hermetic fastloop tests |
 
 Reuse audit (any frozen observation used after the controller wrote): `matchedViews` is re-snapshotted once anything was applied
 (`responder_loop.go`, `l.appliedAny()`); the stage's post-apply diagnosis and `verify` call `snapshotView`, and the plan verifier calls
@@ -451,31 +376,28 @@ kube-apiserver and etcd (envtest) with a fake kubelet and the no-model agent scr
   needs a non-loopback host address (the API server refuses loopback), so the run requires one network interface with an IPv4 address.
 - API faults come from a TLS reverse proxy in front of the API server that only the controller uses (error rate, latency, blackout). Workers
   and the harness go direct, so a crashing or hanging agent is injected by the wrapper command, not by API failure.
-- Time is real. Cold start is dominated by the controller's own compile (about 100 s with a warm Go cache), and a full run takes several minutes.
+- Time is real; cold compilation is not represented by virtual-time inputs.
 
 Gaps this run found are recorded in the ledger below.
 
-| Date | Source run | Class | Gap | Status | Test that covers it |
+| Date | Source kind | Class | Gap | Status | Test that covers it |
 | --- | --- | --- | --- | --- | --- |
-| 2026-11-03 | controller e2e | Missing behavior | The first run had no ServiceAccount controller: `cluster-wiring` reported `ServiceAccount/default` missing for every Deployment, so no repair ever verified | Fixed in the fake kubelet (default ServiceAccount and `kube-root-ca.crt` per namespace) | every `scenario1` run (an unverifiable repair times out) |
-| 2026-11-03 | controller e2e | Missing behavior | The API server rejects loopback addresses in Endpoints; agents dial Pod IPs directly, so Pods carry loopback IPs and Endpoints carry a twin | Modeled within the bounds above | `scenario1` (the agent's drift assessment dials the Pod IP) |
-| 2026-11-03 | controller e2e | Missing behavior | The API server will not proxy node requests to a loopback address, so `resource-saturation` failed `address not allowed` | Fixed: the Node carries a routable host address | every run (`diagnose` fails without it) |
-| 2026-11-03 | ablation build envtest | Fault isolation | Killing a memory host scanned global `/proc` and could signal another World's or lane's host | Fixed: traverse only descendants of live controller sandboxes owned by the current Runtime | `TestMemoryHostFaultIsConfinedToOwnedSandbox` (also in the cheap hermetic gate) |
-| 2026-11-03 | ablation build envtest | Missing behavior | The scripted launcher replaced the incident's persistent provider home with a temporary login, discarding transcripts required by controller continuations | Fixed: preserve an explicitly supplied provider home and existing credentials; retain a temporary fallback for standalone scripts | `test_script_launcher_keeps_the_incident_provider_home_across_worker_jobs` |
-| 2026-11-03 | controller e2e | Controller finding | The controller exits on one transient API 500 (startup reads, lease renewal, steady-state listings); the controller Job gives up after 7 failures | Fixed: transient API errors are retried with backoff; `TestControllerToleratesAPIErrors` and harness check `ControllerExited` | `bash scripts/test_controller_e2e.sh api-errors` |
-| 2026-11-03 | controller e2e | Controller finding | A hung responder Job is never ended: no `activeDeadlineSeconds` on incident Jobs, the response deadline is honoured by the worker only | Fixed: Job deadline plus a controller-owned end at the response deadline; `TestControllerEndsHungAgent`, and the harness agent stand-in no longer bounds itself | `bash scripts/test_controller_e2e.sh hung-agent` |
+| 2026-11-03 | envtest | Missing behavior | The first run had no ServiceAccount controller: `cluster-wiring` reported `ServiceAccount/default` missing for every Deployment, so no repair ever verified | Fixed in the fake kubelet (default ServiceAccount and `kube-root-ca.crt` per namespace) | every `scenario1` run (an unverifiable repair times out) |
+| 2026-11-03 | envtest | Missing behavior | The API server rejects loopback addresses in Endpoints; agents dial Pod IPs directly, so Pods carry loopback IPs and Endpoints carry a twin | Modeled within the bounds above | `scenario1` (the agent's drift assessment dials the Pod IP) |
+| 2026-11-03 | envtest | Missing behavior | The API server will not proxy node requests to a loopback address, so `resource-saturation` failed `address not allowed` | Fixed: the Node carries a routable host address | every run (`diagnose` fails without it) |
+| 2026-11-03 | envtest | Fault isolation | Killing a memory host scanned global `/proc` and could signal another World's or lane's host | Fixed: traverse only descendants of live controller sandboxes owned by the current Runtime | `TestMemoryHostFaultIsConfinedToOwnedSandbox` (also in the cheap hermetic gate) |
+| 2026-11-03 | envtest | Missing behavior | The scripted launcher replaced the incident's persistent provider home with a temporary login, discarding transcripts required by controller continuations | Fixed: preserve an explicitly supplied provider home and existing credentials; retain a temporary fallback for standalone scripts | `test_script_launcher_keeps_the_incident_provider_home_across_worker_jobs` |
+| 2026-11-03 | envtest | Controller finding | The controller exits on one transient API 500 (startup reads, lease renewal, steady-state listings); the controller Job gives up after 7 failures | Fixed: transient API errors are retried with backoff; `TestControllerToleratesAPIErrors` and harness check `ControllerExited` | `bash scripts/test_controller_e2e.sh api-errors` |
+| 2026-11-03 | envtest | Controller finding | A hung responder Job is never ended: no `activeDeadlineSeconds` on incident Jobs, the response deadline is honoured by the worker only | Fixed: Job deadline plus a controller-owned end at the response deadline; `TestControllerEndsHungAgent`, and the harness agent stand-in no longer bounds itself | `bash scripts/test_controller_e2e.sh hung-agent` |
 
-| 2026-11-03 | RUNTIME2 C10 envtest | Network fidelity | A Service forwarder accepted TCP before dialing its upstream, hiding every wrong targetPort from TCP health probes | Fixed: expose the virtual Service only while its upstream accepts TCP | `TestServiceTCPProbeTracksTargetPort` |
-| 2026-11-03 | RUNTIME2 C10 envtest | Missing behavior | No garbage collector released foreground deletion finalizers; deleting Jobs could keep scheduling worker Pods and prevent verified incident publication | Fixed: delete dependents, release only the GC-owned finalizer after they disappear, and never reconcile a deleting Job | `TestDeletingJobRetiresDependentsWithoutReplacement` |
+| 2026-11-03 | envtest | Network fidelity | A Service forwarder accepted TCP before dialing its upstream, hiding every wrong targetPort from TCP health probes | Fixed: expose the virtual Service only while its upstream accepts TCP | `TestServiceTCPProbeTracksTargetPort` |
+| 2026-11-03 | envtest | Missing behavior | No garbage collector released foreground deletion finalizers; deleting Jobs could keep scheduling worker Pods and prevent verified incident publication | Fixed: delete dependents, release only the GC-owned finalizer after they disappear, and never reconcile a deleting Job | `TestDeletingJobRetiresDependentsWithoutReplacement` |
 
-### Live memory preparation cost (2026-11-03)
+### Memory preparation cost bounds
 
-The LIVEPERF scripted social-network lane exposed an observation-cost gap in the
-old tool-speed benchmark: its canned diff methods did not perform production
+Canned diff methods in the old tool-speed benchmark did not perform production
 snapshot object lookup. An individual lookup reconverted and sorted every typed
 object; a full memory pass therefore projected a snapshot once per object.
-Controller CPU profiles attributed 56.5% of samples to this projection, and the
-read-only live preparation probe allocated 8.8 GiB over three passes.
 
 The benchmark now uses the real `LiveReadView` for diffs. The cheap regressions
 `TestLiveSnapshotObjectProjectionBudget` and `TestReadSnapshotDiscoveryBudget`
@@ -488,7 +410,7 @@ precedence. The seeded harness exercises the same production cycle views.
 The simulation does not assign CPU/GC duration to reflection or serialization;
 request/projection budgets cover that bound without adding machine-speed asserts.
 
-The follow-up lane isolated a second cost driver: serialized dry-run API calls
+Serialized dry-run API calls
 held the cycle preparation mutex, blocking telemetry and unrelated detectors.
 `TestFrozenPreparationOverlapsBoundedReads` uses a synctest barrier to require
 exactly eight independent reads to overlap; existing receipt-budget tests still
@@ -498,16 +420,14 @@ contract test `TestMirrorDecodingKeepsRPCCopiesAndHistoricalVersionsPrivate`
 checks mutation isolation (including Jobs and Secret metadata) and retained
 sequences; no admission result is reused between controller snapshots.
 
-Final profiles also exposed duplicate full wire projection for reference
-enumeration versus mirror capture, and protobuf JSON encoding of already decoded
-traffic trees on every RPC. `TestMirrorProjectionSharedByRefsAndCapture` requires
+Reference enumeration and mirror capture must share wire projection; already
+decoded traffic trees must avoid repeated protobuf JSON encoding on each RPC. `TestMirrorProjectionSharedByRefsAndCapture` requires
 one projection per cycle across both consumers; `BenchmarkObservationDecode`
 models nested traffic windows. Native-map bridging retains the protobuf JSON
 failure semantics for unset values, non-finite numbers and invalid UTF-8, checked
 by `TestObservationJSONMatchesProtobufJSONSemantics`.
 
-The live block profile recorded 93 aggregate seconds waiting for client-go rate
-limit tokens. Native broker initialization was mistaken for an externally
+Native broker initialization was mistaken for an externally
 injected client, collapsing the existing state/lease isolation; responder reads
 also shared the steady detector-normalization bucket. Production now owns
 separate snapshot, state, leadership and incident-read budgets. The cheap

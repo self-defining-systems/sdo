@@ -30,7 +30,7 @@ Live runs spend real money and quota.
 7. **Credentials.** Start the keeper for the lane and confirm the agent credentials Secret exists before `run`.
 8. **Run the stream** through the [detached launcher](../../../docs/testing-guide.md#detached-launches), wrapping `fastloop run` and reusing the lane record to adopt existing work. Add `--continue-on-error`, plus `--detection-timeout` for streams with latent faults.
 9. **Check early.** After the first incident of each kind, read its row and the controller log. On a plumbing failure, stop the run, save the evidence, and go back to "When something fails" in [test-sdo](../test-sdo/SKILL.md).
-10. **Report** image delivery mode and any fallback reason from the lane and every incident row; fallback warns on stderr at delivery and run startup. Report per incident against the baseline run of the same stream. The fields and their sources are in [report.md](references/report.md).
+10. **Report** only in the external `sdo-exp` directory: run reports and measurements never belong in repository docs. Report image delivery mode and any fallback reason from the lane and every incident row; fallback warns on stderr at delivery and run startup. Report per incident against the baseline run of the same stream. The fields and their sources are in [report.md](references/report.md).
 11. **Clean up.** Kill only the processes you started, by exact PID; leave the cluster up when a rerun is planned.
 
 ## Keep the loop fast

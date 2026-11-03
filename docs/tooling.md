@@ -8,7 +8,7 @@ Use existing gates when extending a contract. New agent implementations and comm
 | `sdo/agents/prompt_templates.py` | The sole prompt renderer/provider dispatch boundary. `prompt_sections.json` enumerates every template placeholder and names its cap in `prompt_budgets.toml`. A missing cap or overflowing required section fails at runtime. Required parts survive composition unchanged; optional parts explicitly opt into ranked trimming with counts. |
 | `tests/unit/sdo/agents/prompts/test_context_registry.py` | Enumerates capability registrations, all production Python source, every prompt template and registered MCP/CLI tool. Add production render fixtures for new registered capabilities. AST negative controls guard bypasses. |
 | `tests/unit/sdo/agents/prompts/test_production_caps.py` | Real-scale generated inputs through production prompt/CLI/MCP producers. Every registered tool needs an executable fixture; unknown registrations fail. |
-| `tests/unit/sdo/agents/prompts/test_required_content.py` | Always-run required-content ratchet: every agent render, every template placeholder, fresh/retry composition and synthetic profiles at recorded run19 cardinalities (91 questions, 24 repairs). Overflow negative controls prove required content cannot be summarized; the responder-stage overflow regression also runs in `check_errors.sh`. |
+| `tests/unit/sdo/agents/prompts/test_required_content.py` | Always-run required-content ratchet: every agent render, every template placeholder, fresh/retry composition and synthetic profiles at synthetic high-cardinality profiles. Overflow negative controls prove required content cannot be summarized; the responder-stage overflow regression also runs in `check_errors.sh`. |
 | `sdo/agents/context_output.py` | Shared lossless spill/summary boundary, including JSON framing, file pointers, Unicode and byte budgets. Full values remain in private session files. |
 | `libs/agent_cli/provider_capacity.py` | Shared provider admission owner; resolves pool paths and rejects checkout-contained coordination metadata before creating files or starting a CLI. Negative controls cover the checkout itself, descendants and symlink aliases. |
 | `libs/agent_cli/claude_accounts.py`, `scripts/prepare_claude_accounts.py` | Host-local cswap inventory, private mounted account references, per-account admission and crash-safe health; alias-only account evidence and state-change posts. |
@@ -40,3 +40,8 @@ native jobs. Prepared manifests must contain every assigned quality package,
 even when the regression planner selects none of its tests. Missing quality
 entries fail closed before execution. Compiler validation remains independent
 of vet: the inventory fixture rejects compiler-only directive errors too.
+
+`scripts/check_experiment_outputs.py` scans all tracked text and root report paths
+in `check_errors.sh`. Its synthetic temporary-Git negative controls cover run
+markers, extensionless and hidden files, binary files, deletions and Git failures.
+Keep run reports and measurements in an external experiment directory.

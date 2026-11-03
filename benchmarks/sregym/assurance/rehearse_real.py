@@ -446,9 +446,7 @@ class RealApp:
         return rows
 
 
-DEFAULT_LANES = {
-    "hotel_reservation": (Path("/mnt/data/shli/sdo-exp/mixed10/LE/P4/live/lane-55b/environment"), "le-p4b")
-}
+DEFAULT_LANES = {"hotel_reservation": ((Path.home() / "sdo-exp" / "lanes/hotel/environment"), "hotel")}
 STATIC_STAGES = ("catalog",)
 
 
