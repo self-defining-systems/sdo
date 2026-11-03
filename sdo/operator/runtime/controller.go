@@ -202,11 +202,6 @@ type Controller struct {
 	firingSink FiringSink
 	// lifecycleSink receives incident lifecycle telemetry; nil disables it.
 	lifecycleSink LifecycleSink
-	// openedEmitted is the incident whose incident_opened event this process
-	// has emitted. The event follows the first durable save of the open
-	// incident, so a crash before that save leaves no event for an incident
-	// the restarted controller will open again under a new id.
-	openedEmitted string
 	// evaluationIteration counts evaluation passes that took a snapshot. It is
 	// durable so telemetry iterations keep increasing across restarts.
 	evaluationIteration int
@@ -785,9 +780,10 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 	c.incidentFindingKeys = findingKeys(batch)
 	c.noteBatchedLocked(request.IncidentID, batch)
 	c.pruneTimelineLocked(batch)
-	if c.stateStore == nil {
-		c.emitOpenedLocked()
-	}
+	c.emitLifecycleLocked(&contracts.LifecycleEvent{
+		Event: PhaseOpened, RecordedAt: contractTimestamp(c.incidentDetectedAt), IncidentId: request.IncidentID,
+		FindingKeys: append([]string(nil), c.incidentFindingKeys...), SurfacedPlaybooks: playbookIDs(request.SurfacedPlaybooks),
+	})
 	c.mu.Unlock()
 	// The batcher is drained, so the incident is open before any file I/O: an
 	// observer exporting state mid-capture reads the work, never an idle gap.
@@ -2081,9 +2077,6 @@ func (c *Controller) PersistState(ctx context.Context) error {
 	c.mu.Lock()
 	c.durable = proto.Clone(state).(*contracts.ControllerState)
 	c.checkpoint = proto.Clone(state).(*contracts.ControllerState)
-	if state.GetIncidentOpen() {
-		c.emitOpenedLocked()
-	}
 	archivedIDs := make([]string, 0, len(state.GetFailedClosures()))
 	for _, record := range state.GetFailedClosures() {
 		archivedIDs = append(archivedIDs, record.GetFailure().GetIncidentId())
