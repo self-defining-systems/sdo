@@ -15,7 +15,6 @@ import (
 // stored documents keep the old spelling, so the reader maps it to its
 // successor here instead of rejecting the document. The schema never keeps the
 // old name or value; these tables are the only place that remembers them.
-// TestRetiredTablesCoverEverySchemaRemoval fails when a removal is not listed.
 
 // retiredFieldNames maps "<message>.<old field>" to the field that replaced it,
 // or to "" when the field was removed and its stored value is dropped.
