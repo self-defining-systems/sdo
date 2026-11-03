@@ -617,6 +617,12 @@ class CompositeSdoAgent(SdoPersistentAgent):
             mitigation_applied_at=max(
                 (item.mitigation_applied_at for item in outcomes if item.mitigation_applied_at), default=None
             ),
+            dispatched_at=first.dispatched_at,
+            dispatch_missing_reason=first.dispatch_missing_reason,
+            first_mitigation_applied_at=min(
+                (item.first_mitigation_applied_at for item in outcomes if item.first_mitigation_applied_at),
+                default=None,
+            ),
             resolved_at=max((item.resolved_at for item in outcomes if item.resolved_at), default=None),
             diagnosis=" || ".join(item.diagnosis for item in outcomes if item.diagnosis),
             mitigation=" || ".join(item.mitigation for item in outcomes if item.mitigation),
@@ -722,6 +728,9 @@ class CompositeSdoAgent(SdoPersistentAgent):
         timed = self._merge(timed_outcomes)
         gap_counts = [item.reflection_no_repair_count for item in timed_outcomes]
         return outcome.with_learning(
+            dispatched_at=timed.dispatched_at,
+            first_mitigation_applied_at=timed.first_mitigation_applied_at,
+            dispatch_missing_reason=timed.dispatch_missing_reason,
             detected_at=outcome.detected_at or timed.detected_at,
             mitigation_applied_at=outcome.mitigation_applied_at or timed.mitigation_applied_at,
             resolved_at=outcome.resolved_at or timed.resolved_at,

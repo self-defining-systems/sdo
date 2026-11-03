@@ -9,20 +9,19 @@ import argparse
 import csv
 import json
 import statistics
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from benchmarks.sregym.adapter import grade_faults
+from benchmarks.sregym.analysis.dispatch_timing import recover_dispatch_timing, saved_lifecycle, timestamp
 from benchmarks.sregym.protocol.injection import FaultComponent
 
 
 def _seconds(start: Any, end: Any) -> float | None:
     if not start or not end:
         return None
-    return (
-        datetime.fromisoformat(end.replace("Z", "+00:00")) - datetime.fromisoformat(start.replace("Z", "+00:00"))
-    ).total_seconds()
+    first, last = timestamp(start), timestamp(end)
+    return (last - first).total_seconds() if first and last else None
 
 
 def regrade_row(row: dict[str, Any], receipt: dict[str, Any]) -> dict[str, Any]:
@@ -58,6 +57,7 @@ def regrade_row(row: dict[str, Any], receipt: dict[str, Any]) -> dict[str, Any]:
     ]:
         for endpoint, key in [("mitigation", "mitigation_applied_at"), ("resolution", "resolved_at")]:
             result[f"{origin}_to_{endpoint}_s"] = _seconds(start, row.get(key))
+    result.update(recover_dispatch_timing(row, receipt).json_fields())
     return result
 
 
@@ -72,13 +72,16 @@ def regrade_batch(batch: Path, output: Path) -> None:
                 receipt_path = Path(artifacts) / "sdo_production_receipt_strict.json"
                 if receipt_path.is_file():
                     receipt = json.loads(receipt_path.read_text())
-            result = regrade_row(row, receipt)
-            result["source"] = str(path)
-            if not result["arm"]:
-                result["arm"] = next(
+                if not receipt:
+                    receipt = {"incident_id": row.get("incident_id")}
+                receipt["lifecycle_events"] = saved_lifecycle(Path(artifacts), row.get("incident_id"))
+            if not row.get("ablation_arm"):
+                row["ablation_arm"] = next(
                     (arm for arm in ["playbooks-only", "detectors-only", "full", "neither"] if arm in path.parent.name),
                     "unknown",
                 )
+            result = regrade_row(row, receipt)
+            result["source"] = str(path)
             rows.append(result)
     if not rows:
         raise ValueError(f"no incident rows below {batch}")
@@ -87,7 +90,15 @@ def regrade_batch(batch: Path, output: Path) -> None:
         writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
         writer.writeheader()
         for row in rows:
-            writer.writerow({**row, "fault_reversions": json.dumps(row["fault_reversions"], sort_keys=True)})
+            writer.writerow(
+                {
+                    **row,
+                    **{
+                        key: json.dumps(row[key], sort_keys=True)
+                        for key in ("fault_reversions", "timing_missing_reasons")
+                    },
+                }
+            )
     report = [
         "# Saved-evidence regrading",
         "",
@@ -97,14 +108,18 @@ def regrade_batch(batch: Path, output: Path) -> None:
         "zero proven reversions with unknowns does not mean zero repairs. Current lane state and "
         "pre-reset captures taken after cleanup cannot establish historical grade-time restoration.",
         "",
+        "Headline TTF starts at the earliest recorded deterministic stage start or responder dispatch, "
+        "ending at the first successful repair completion. Dispatch→resolution ends at verified closure "
+        "(responder completion for playbooks-only). Missing evidence stays unknown with per-row reasons. "
         "Medians below are wall seconds to repair/verified resolution, excluding reflection. "
         "Only injected rows without infra_error contribute to pass rates and timing medians. "
         "Injection origin is injection start. Detection origin uses the recorded first detection "
         "(including the end-of-injection alert in playbooks-only). Missing endpoints are omitted.",
         "",
         "| Arm | eligible / rows | SREGym pass | proven reverted / total (unknown) | "
-        "median injection→mitigation | detection→mitigation | injection→resolution | detection→resolution |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        "median TTF (dispatch→first fix) | dispatch→resolution | injection→dispatch | "
+        "injection→mitigation | detection→mitigation | injection→resolution | detection→resolution |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for arm in sorted({str(row["arm"]) for row in rows}):
         group = [row for row in rows if row["arm"] == arm]
@@ -124,6 +139,9 @@ def regrade_batch(batch: Path, output: Path) -> None:
             + " | ".join(
                 median(key)
                 for key in [
+                    "time_to_fix_seconds",
+                    "time_to_resolution_from_dispatch_seconds",
+                    "injection_to_dispatch_seconds",
                     "injection_to_mitigation_s",
                     "detection_to_mitigation_s",
                     "injection_to_resolution_s",

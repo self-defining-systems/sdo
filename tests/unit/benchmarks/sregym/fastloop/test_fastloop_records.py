@@ -263,3 +263,22 @@ def test_playbooks_only_times_start_at_injection_end_and_keep_raw_latency():
     assert record.injection_to_responder_done_seconds == 59
     assert record.injection_to_resolution_seconds == 64
     assert record.raw_injection_to_mitigation_seconds == 40
+
+
+def test_dispatch_timing_round_trips_in_json_and_csv(tmp_path: Path) -> None:
+    record = _record(0).model_copy(
+        update={
+            "dispatched_at": T0 + timedelta(seconds=15),
+            "first_mitigation_applied_at": T0 + timedelta(seconds=25),
+        }
+    )
+    path = tmp_path / "incidents.jsonl"
+    append_record(path, record)
+    raw = json.loads(path.read_text())
+    assert raw["time_to_fix_seconds"] == 10
+    assert raw["time_to_resolution_from_dispatch_seconds"] == 55
+    assert raw["injection_to_dispatch_seconds"] == 15
+    assert raw["timing_missing_reasons"] == {}
+    assert load_records(path)[0].time_to_fix_seconds == 10
+    with path.with_suffix(".csv").open() as stream:
+        assert next(csv.DictReader(stream))["time_to_fix_seconds"] == "10.0"

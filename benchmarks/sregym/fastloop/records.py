@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, get_args
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, computed_field, model_validator
 
 from benchmarks.sregym.adapter import FaultReversion  # noqa: TC001 - Pydantic runtime annotation
+from benchmarks.sregym.analysis.dispatch_timing import DispatchTiming, recover_dispatch_timing
 from benchmarks.sregym.faults.description import CapabilityMode, FaultCapability  # noqa: TC001
 from benchmarks.sregym.protocol.injection import FaultComponent  # noqa: TC001 - Pydantic resolves this at runtime.
 from benchmarks.sregym.protocol.provider_capacity import AccountEvent, ProviderWaitInterval, wait_seconds_between
@@ -255,6 +256,9 @@ class IncidentRecord(_PersistedModel):
     reasoning_effort: str | None = None
     replay: Literal["on", "off"] | None = None
     injection: InjectionState
+    dispatched_at: AwareDatetime | None = None
+    first_mitigation_applied_at: AwareDatetime | None = None
+    dispatch_missing_reason: str | None = None
     #: First detector firing (SDO only; the raw baseline has no detector).
     detected_at: AwareDatetime | None = None
     #: Last successful repair action (SDO) or agent exit (baseline).
@@ -348,6 +352,42 @@ class IncidentRecord(_PersistedModel):
                 f"incident_predates_injection: detected {self.detected_at.isoformat()}, injected {started.isoformat()}"
             )
         return self
+
+    def _dispatch_timing(self) -> DispatchTiming:
+        timing = recover_dispatch_timing(
+            {
+                "dispatched_at": self.dispatched_at,
+                "first_mitigation_applied_at": self.first_mitigation_applied_at,
+                "resolved_at": self.resolved_at,
+                "responder_finished_at": self.responder_finished_at,
+                "ablation_arm": self.ablation_arm,
+                "injection": {"state": "injected", "started_at": self.injection_started_at},
+            },
+            {},
+        )
+        if self.dispatch_missing_reason and self.dispatched_at is None:
+            timing.timing_missing_reasons["dispatched_at"] = self.dispatch_missing_reason
+        return timing
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def time_to_fix_seconds(self) -> float | None:
+        return self._dispatch_timing().time_to_fix_seconds
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def time_to_resolution_from_dispatch_seconds(self) -> float | None:
+        return self._dispatch_timing().time_to_resolution_from_dispatch_seconds
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def injection_to_dispatch_seconds(self) -> float | None:
+        return self._dispatch_timing().injection_to_dispatch_seconds
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def timing_missing_reasons(self) -> dict[str, str]:
+        return self._dispatch_timing().timing_missing_reasons
 
     def _active_seconds(self, start: datetime | None, end: datetime | None) -> float | None:
         raw = _seconds(start, end)
