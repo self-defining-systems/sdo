@@ -37,7 +37,7 @@ def test_extended_checks_have_scheduled_and_manual_coverage() -> None:
     assert "images" in config["jobs"]
     commands = "\n".join(step.get("run", "") for step in config["jobs"]["extended"]["steps"])
     assert "scripts/test_go_ci.sh nightly" in commands
-    assert commands.count("-fuzztime=30s") == 4
+    assert commands.count("-fuzztime=30s") == 2
 
 
 def test_required_ci_still_accounts_for_every_job() -> None:

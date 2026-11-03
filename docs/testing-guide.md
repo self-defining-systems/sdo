@@ -53,8 +53,8 @@ scheduler-start rejection and disconnect recovery) and
 - `tests/unit/benchmarks/sregym/adapter/` — benchmark-adapter transport and receipt behavior.
 - `tests/unit/libs/` — shared-library contracts.
 - `tests/integration/` — cross-package and external-process behavior.
-- `sdo/operator/sdk/*_test.go` — detector SDK and test snapshots; `sdk/metrics` covers metric and alert detectors against `sdktest.Snapshot.Metrics`/`Alerts` fixtures.
-- `sdo/operator/core/*_test.go` — detector execution and validation.
+- `sdo/operator/sdk/inputs/carrier_test.go` — AST inventory of SDK input sources. The SDK's behaviour is covered by the shipped detectors' own tests, which run at the gate.
+- `sdo/operator/core/generic_capture_guard_test.go` — mutable kinds cannot enter the capture/replay path unguarded.
 - `sdo/operator/runtime/*_test.go` — scheduling, persistence, batching, dispatch, broker effects, and state; `metrics_observer_test.go` and `runtime/prometheus/` run the metrics observer and adapter against an `httptest` fake Prometheus.
 - `sdo/operator/memory/validate/skills_test.go` — skill drift: rule citations and examples. `scripts/check_go_errors.sh` runs `gen_skill_references.sh --check` and `gen_kube_read_clients.sh --check` for generated-file drift (`bash scripts/gen_skill_references.sh` regenerates the reference); no Go test repeats those checks.
 - `sdo/operator/{broker,memory,install,lifecycle}/*_test.go` — accepted state and lifecycle ownership.
@@ -595,12 +595,8 @@ that completion polls never post, and that malformed facts yield typed failures.
 Run it with `-fuzztime=30s -fuzzminimizetime=1s -parallel=2 -timeout=2m`; Nightly CI runs the same bounded target, with its seeds retained on PRs. Image scope tests verify
 separate Go compilation and binary-only copying into the benchmark worker.
 
-Uncontrolled text boundaries are fuzzed where the text is hand-written or model
-written. `sdk.FuzzObjectRefParseFormat` runs its hand-written seeds in every `go test`;
-run `go test -run '^$' -fuzz '^FuzzObjectRefParseFormat$' -fuzztime=180s` (cap 5
-minutes) in `sdo/operator/sdk` to explore further. The Go and Python object-ref
-parsers share `tests/fixtures/sdo/contracts/object_ref_grammar.json`, and Hypothesis
-covers `sdo act` receipt recording in `test_recorded_actions.py`.
+The Python object-ref parser and Hypothesis tests for `sdo act` receipt recording use
+`tests/fixtures/sdo/contracts/object_ref_grammar.json` (`test_recorded_actions.py`).
 
 SREGym discovery and worker contract tests use the pinned harness and its application
 charts without Kubernetes or model calls. Before running them in a fresh checkout,

@@ -683,7 +683,6 @@ _OBJECT_REF_CORPUS = Path(__file__).resolve().parents[4] / "fixtures" / "sdo" / 
     "case", json.loads(_OBJECT_REF_CORPUS.read_text(encoding="utf-8")), ids=lambda c: repr(c["input"])
 )
 def test_resource_ref_matches_the_shared_object_ref_corpus(case: dict[str, Any]) -> None:
-    # The Go test TestObjectRefGrammarCorpus checks the same file against ParseObjectRef.
     if case["python"] is None:
         with pytest.raises(ValueError, match="Kind/name"):
             recorded_actions.resource_ref(case["input"])
