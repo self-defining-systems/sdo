@@ -1,7 +1,7 @@
 """Three real selected rows through the runner and probes, with scripted I/O.
 
 These are runner/probe integration tests. Native controller, broker and worker
-transport are covered by test_fastloop_hermetic_run and the hermetic Go gate.
+transport are covered by test_fastloop_hermetic_run and the controller harness.
 """
 
 from __future__ import annotations

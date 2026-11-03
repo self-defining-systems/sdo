@@ -43,12 +43,6 @@ the nightly list (`scripts/ci_nightly_go_tests/`) unless they stay well under PR
 
 ## Test organization
 
-Memory-host RPC tests must prepare and activate a host through Manager and capture
-its mirror barrier. Inline MemoryObservation snapshots are unsupported. Traffic
-failure checks include `TestTrafficActivationFailureAndCrashRecovery` (manager
-scheduler-start rejection and disconnect recovery) and
-`TestSimMemoryTrafficTwoRevisions` (bufconn engine parity).
-
 - `tests/unit/sdo/` — agent and contract behavior.
 - `tests/unit/benchmarks/sregym/adapter/` — benchmark-adapter transport and receipt behavior.
 - `tests/unit/libs/` — shared-library contracts.
@@ -62,11 +56,6 @@ scheduler-start rejection and disconnect recovery) and
 For a fresh checkout or worktree, run `uv run python scripts/init_test_prereqs.py` once to initialize SREGym and every nested application/chart at the recorded SHA.
 
 ## Seeded simulation sweeps
-
-Runtime sweeps (`sweepSimSeedsN`, `sweepSimSeedsPR`) run a fixed prefix of their seed sequence in PR CI
-(three seeds; `TestSimSchedule` one; the RV6 crash schedules eight so every crash cut runs once). The nightly
-runner exports `SDO_SIM_FULL=1`, which restores each sweep's declared seed count. `SDO_SIM_RUNS` and
-`SDO_SIM_SEED` still override both. A PR failure replays under the full profile because seeds are a prefix.
 
 Tests whose subject is not compilation use `sim.Compiler` as the broker's compile hook instead of
 `validate.CompileCandidate`; keep real compilation in the builder, validator and CLI tests.
@@ -110,21 +99,16 @@ failure rejects, and how a failure is reported* do not need that: install
 `internal/testutil.FakeGo(t, rules...)`, a `go` on PATH whose stages pass unless a
 `GoRule` fails them (by verb, by package pattern covering a directory, by a marker file).
 It logs each stage, leaves an empty executable for `build -o X`, and works through child
-processes such as the operator CLI. Build any real binary (for example
-`operatorCLIFixture`) before installing it. Examples: `builder.TestStageClassificationDecidesAcceptance`,
-`operatorcli.TestMemoryCheckReportsACompilerStageFailureAtItsFile`.
-A test that asserts compiler or replay *output* (replay notes, healthy-baseline refusals,
-cache identity, link flags) keeps the real compiler and belongs on the nightly list.
+processes such as the operator CLI. Build any real binary before installing it.
 The gate table's compile rows are the FakeGo-versus-real-Go comparison: each row fails one stage on FakeGo
 and fails the same stage on the real toolchain with an edited fixture, and both must report the same rule at the same path.
+A test that asserts compiler or replay *output* (replay notes, healthy-baseline refusals,
+cache identity, link flags) needs the real compiler and the `integration` tag.
 `Workspace.Check` links the generated test binary once: `go test -json ./generated` is
 classified per test (only a failing `TestProgramCorpus` is advisory), and the
 informational pass runs every other top-level directory. A result that cannot be
 attributed to one test (build error, panic, timeout) is rerun without the corpus so the
-rejection keeps its usual diagnostics (`builder.TestCheckLinksTheGeneratedTestsOnce`).
-`broker.TestCLIAndBrokerAgree...Automatic0-4` run the CLI/broker parity table over
-`FakeGo`; `TestCLIAndBrokerAgreeOnRealCompilerVerdicts` keeps the three verdicts that
-need real compiler or replay output.
+rejection keeps its usual diagnostics.
 Use `Workspace.Check` rather than `ValidateAndBuild` unless the controller binary is the
 subject: `Check` runs the same acceptance and advisory stages without the controller link.
 
@@ -192,9 +176,8 @@ uv run pytest tests/ --cov=sdo
 
 The Go commands above run the deterministic unit tier. Real Git, compiler and
 socket contracts require `-tags=integration`. Both PR and nightly
-`scripts/test_go_ci.sh` select that tag; `scripts/run_tests.sh` and
-`scripts/test_fastloop_hermetic.sh` also retain it so their full/smoke selections
-continue to execute migrated process tests. The benchmark replay module is
+`scripts/test_go_ci.sh` select that tag; `scripts/run_tests.sh` also retains it so its
+full selection continues to execute process tests. The benchmark replay module is
 included in the full runner and both CI modes.
 
 `scripts/check_errors.sh` runs Ruff, Tach, the AST import and ownership checks in
@@ -252,79 +235,17 @@ regenerated output. The v1alpha1 schema may evolve freely, including breaking
 changes; compatibility with main is not a gate. Reserve deleted field numbers
 and names so old stored state cannot be misread as new fields.
 
-The operator Go suite includes `TestHermeticResponderProgramReuseThroughRealToolTransport`,
-`TestHermeticControllerClosureReachesNativeOutcomeBroker`, and
-`TestReflectionLearnedProgramCLIAndBroker`. Together they exercise
-the fake Kubernetes API, source repairs, native controller and broker closure,
-real responder tool transport, captured corpus phases, direct file editing, shared memory checks
-and program compilation, and bounded worker result encoding without a cluster or LLM.
-The learned-program test runs the real CLI and broker, checks exact authored-tree acceptance,
-and requires identical rejection diagnostics for a README with a physical memory path. Synthetic worker responses exercise contract decoding and the native broker.
-New replay fixtures are hand-written toy data or constructed during tests; experiment
-outputs stay outside the repository.
-
-Reflection checks its exact returned decision and final checkout through the real memory
-CLI before publishing a worker result. Failed checks resume the same provider session,
-with at most three correction turns inside the original deadline. The real-CLI tests in
-`tests/unit/sdo/agents/responder/test_reflection_final_check.py` cover both providers,
-fresh and resumed sessions, changed bytes after an earlier passing check, withheld
-invalid results, and validator process cleanup. Shared compile checks evaluate learned
-detectors over complete corpus snapshots, including unlabelled locator bindings;
-program and shared-library edits retain the healthy-baseline input. The broker parity
-tests compare exact rejection diagnostics for missing coverage, inconclusive diagnoses,
-missing source evidence, and a program-only edit against a wider healthy snapshot.
-
-
-Historical plumbing regressions have focused checks in the same suites:
-
-| Regression | Contract check |
-| --- | --- |
-| Restart live recheck | `TestResponderRestartRediagnosesWithoutUndoOrRestoredHandles` preserves fixes and budgets. `TestStateRoundTripRetainsAppliedActionsAndProgramEvidenceWithoutRollbackState` checks durable outcome evidence without rollback authority. |
-| Physical `.sdo/` tool evidence | The responder loop test rejects physical paths in recorded tool calls; `TestSyntheticWorkerResultsThroughContracts` covers typed worker envelopes; responder validation rejects physical tool evidence. |
-| Cluster grant | `sdo/operator/install` `TestEverySDOIdentityHoldsTheWildcardGrant`: every SDO ServiceAccount resolves to the `*`/`*`/`*` ClusterRole; `ensureClusterGrants` restores it. |
-| Provider writer hand-off | `tests/unit/libs/agent_cli/test_session_ownership.py` runs overlapping writer/resumer schedules, real process exit, crash recovery and malformed-record sweeps; the hermetic gate also checks typed reflection worker failures. |
-| Tool session restart permissions | The responder loop reparses real directory modes; `TestSessionToolServerIgnoresAtomicRequestTemporaryFiles` protects the CLI write protocol. |
-| Capture size and timing | `sdo/operator/operatorcli` draft tests reject oversized captures; the controller checks that the `open@detect` capture never delays or blocks dispatch. |
-| Pre-existing seed formatting | `TestReflectionLearnedProgramCLIAndBroker` authors final files over accepted memory. |
-| ConfigMap and reflection transport size | `TestHermeticFakeConfigMapEnforcesProductionLimit` rejects a state over 1 MiB; `TestReflectionLearnedProgramCLIAndBroker` checks a corpus reference stays below 700 KiB, and `TestRegisteredReflectionWorkerRejectsOversizedResultBeforeCommit` rejects an oversized envelope. |
-
 The no-LLM kind path is documented in
 `benchmarks/sregym/experiments/fastloop/README.md`. It is intentionally run by
 the experiment lead because it builds images and changes a kind cluster.
 The scripted Level 1 check in `tests/unit/benchmarks/sregym/fastloop/`
 exercises responder and reflection worker entry points with a copied hotel
 seed, typed tasks, and a fake Kubernetes API, without a cluster.
-Run `bash scripts/test_fastloop_hermetic.sh` before Level 2. Its Go test drives
-two incidents through the real controller, ConfigMap state store, native broker,
-logical memory edge, and program builder against a fake Kubernetes API. It
-checks a persisted dispatch retry, corpus references and reflection transport
-limits, compiled program reuse, verified outcomes, and the deployed image after
-source restoration. The gate also runs the real responder tool transport check
-and the ConfigMap and reflection size-limit checks. The Python test remains a
-fast CLI and result-row check with the scripted worker and fake application API.
-The gate also deploys a synthetic workload at commit A, publishes a `.sdo/`-only
-commit B, resets the configuration baseline for maintenance, and checks that
-accepted manifests still use the deployed regular and init-container images.
-Both annotated deployments and legacy deployments bound to the configured
-deployed commit are covered. A later Service targetPort change must produce unexplained drift. Separate
-coverage checks retain Service adoption and responder admission when another
-workload cannot render; application
-source changes must never reuse the old deployment images.
-The gate also runs `TestHermeticNewDetectorInputs`: the real controller and
-informer cache read the shared fastloop HTTP fake, collect per-node kubelet
-summary/cAdvisor data, and consume real MongoDB handshake results through an
-injected wire peer. A healthy baseline is quiet; StatefulSet readiness, memory
-forecast and MongoDB protocol failures open one incident with numerical and
-protocol evidence, and recovered inputs close it. Its test log includes wall
-time through fixture cleanup. `TestHermeticProtocolDialer` checks healthy,
-refused and malformed replies for all seven protocols. Fake API contract tests
-cover list/watch for every added kind and Secret redaction on creation and
-patch. The fake's subresource dispatch leaves room for independent pod log
-support without implementing the logs input.
 
-The gate needs Go and `uv`, but no cluster or container runtime.
-
-`TestHermeticBringupPersistsPendingAndRestarts` rehearses a cold native bring-up from a P35-shaped seed against one fake Kubernetes API: retained onboarding and worker-result records, the production fresh-control reset, HY clean restore through kubectl, native prepared installation, a scripted startup judge with real broker/builder validation, direct source rendering for the inventory, confirmed never-served-port observations, real ConfigMap ControllerState validation, the read-only inventory evaluator, partial event-driven batches through the real scheduler, a confirmed full sweep, six quiet probe cycles, and restart. It asserts the original 21-second simulated install-to-record schedule and uses simulated probe time and a two-minute test budget. This is the offline gate before repeating a live bring-up.
+The check before any kind or live run is the controller harness
+(`go test -tags=integration -run '^TestHarness' ./runtime` from `sdo/operator/runtime`, about 30 s)
+plus controller end-to-end scenario 1 (`bash scripts/test_controller_e2e.sh scenario1`, about 200 s).
+Neither needs a cluster, container runtime or model.
 
 ### Source rendering on a real cluster (LK1)
 
@@ -505,8 +426,6 @@ Every run checks two properties from controller logs, API state and accepted mem
 
 Scenario 1 injects one toy fault, requires a scripted-agent repair, a reflection commit, a memory-host activation and no controller restart, then injects it again and requires the repeat to be cleared with no responder Job. Scenario 2 injects API latency, a crashing agent, `kill -9` of the controller mid-incident and a killed memory host. Two opt-in tests reproduce controller findings that currently fail and so are not in `all`: `TestControllerToleratesAPIErrors` (`SDO_E2E_API_ERRORS=1`: 5% of API requests answered 500 kill the controller, and its Job gives up after the backoff limit) and `TestControllerEndsHungAgent` (`SDO_E2E_HUNG_AGENT=1`: a hung responder Job is never ended because incident Jobs have no `activeDeadlineSeconds`). Move each into `all` when its fix lands. Fidelity limits are in [simulation-fidelity.md](simulation-fidelity.md#controller-end-to-end-fake-kubelet-and-limits). Run directories are kept on failure (`SDO_E2E_DIR` picks one; `SDO_E2E_KEEP=1` keeps it on success); each Pod's container output is under `pods/<namespace>_<pod>/logs/`.
 
-## Test the lifecycle contracts
-
 ### Lifecycle separation
 
 Use backend test doubles to prove that source deployment and each health-judge attempt receive only their declared inputs. Verify fresh session identifiers, bounded correction feedback, source commit attribution, and independent acceptance.
@@ -622,12 +541,6 @@ uv run pytest tests/unit/benchmarks/sregym/adapter/test_abort.py \
   tests/unit/benchmarks/sregym/adapter/test_detached.py \
   tests/unit/benchmarks/sregym/adapter/test_native_persistent_ops.py
 ```
-
-`TestStopSeededLifecycleCuts` runs 20 seeds across install, incident, responder,
-reflection and drain cuts, including orphan Pods after Job deletion. The process
-schedule kills a real launcher at each cut and checks zero registered live
-helpers plus fake-cluster quiescence. SIGTERM/SIGINT tests exercise the abort trap.
-Stuck-deletion contracts require an error and an inventory of remaining objects.
 
 For level 6, select a disposable kind lane and its shared lock explicitly:
 
@@ -776,12 +689,6 @@ for ownership and cache details. Legacy live SREGym launches require
 
 Fastloop image delivery regressions run without Docker or a cluster:
 
-```bash
-uv run pytest -q tests/unit/benchmarks/sregym/fastloop/test_fast_image_delivery.py tests/unit/benchmarks/sregym/fastloop/test_fastloop_loop.py
-(cd sdo/operator && go test ./toolchain ./install ./operatorcli)
-(cd sdo/operator/runtime && go test -run 'TestNativeStartupRejectsMissingToolchainBeforeKubernetes|TestNativeReflection|TestControllerConfig')
-```
-
 Direct controller launches require `--toolchain-image <controller-image>`;
 `install-existing` supplies it automatically. The accepted memory host is
 independent. Missing compiler configuration fails at startup.
@@ -889,13 +796,9 @@ SDO_AGENT_SCRIPT=/absolute/script.yaml \
   uv run python -m benchmarks.sregym.agent_script launch -- \
   python -m sdo.agents.health_judge.worker
 uv run --extra test pytest -q -p no:tach tests/unit/benchmarks/sregym/test_agent_script.py
-(cd sdo/operator && go test ./broker -run '^TestAgentScriptJudgeMemoryCheckAndBroker$' -count=1)
-bash scripts/test_fastloop_hermetic.sh
 ```
 
-The broker example authors a health detector, traffic generator/workload and
-health-objective playbook through the actual judge worker, calls the real memory
-checker, and publishes through the native broker. The generic parser tests cover
+The generic parser tests cover
 all roles, turn selection, resumed reflection, assertions and checkout escape.
 
 Tier 2 uses the same script via `sdo-agent-script` ConfigMap (`script.json` key;
@@ -1033,12 +936,6 @@ production worker with the agent-script CLI. Scratch state uses the writable
 tool request exchange; the accepted checkout is changed only by script steps.
 Replay uses these generators with captured command transport.
 
-Broker compilation uses the running controller executable in a bounded subprocess.
-`go test ./broker -run TestValidationSubprocessLimits` checks deadline and aggregate
-process-group memory failures as infrastructure errors (exit 2). The CLI/broker
-parity suite exercises this production subprocess transport. No validator image
-or schema fingerprint is required; worker Jobs retain controller toolchain mounts.
-
 Unit tests must synchronize on observable readiness or drive injected clocks.
 `test_unit_tests_synchronize_without_wall_clock_sleeps` in the architecture gate
 rejects `time.sleep` and `asyncio.sleep`, including imported aliases. Its only
@@ -1089,47 +986,6 @@ The independent foreign-policy near-miss compiler test also runs in parallel. Bo
 `Nightly CI` runs daily and through `workflow_dispatch`. Its Actions conclusion
 reports failures. It retains the following extended checks:
 
-| Nightly check | Why it is off the PR path | PR replacement |
-| --- | --- | --- |
-| All four controller/validator/responder/benchmark image builds, entry-point smoke and answer-key file inspection | Docker/tool installation and layer export dominated the previous image job | Python Dockerfile scope and image-delivery contracts; Go compilation |
-| Go race instrumentation across all seven modules | Separate instrumented compiler graph and slower execution | All ordinary Go tests without race instrumentation |
-| `TestReplay*` recorded incidents | Extended recorded regression tier | Ordinary controller, outcome and receipt contract tests |
-| `TestChaos*`, `TestExhaustive*`, `TestExplorer*` | Extended interleaving/state-space campaigns | Ordinary deterministic controller tests |
-| `test_scripted_reflector_writes_program_that_passes_real_memory_check[ordinary-repair]` | Repeated real memory-check/program compilation: 55.00 s on PR #657 | `test_reflection_script.py` capture provenance, no-change and timeout contracts; Go validator/broker acceptance tests |
-| `test_scripted_reflector_writes_program_that_passes_real_memory_check[verified-drift-repair]` | Same compilation for the drift variant: 5.02 s after warming | `test_reflection_script_preserves_capture_provenance` and drift responder-script contracts |
-| `test_respond_consumes_real_go_tool_responses` | Launches a Go integration test from Python: 11.73 s; Go CI already runs `TestHermeticResponderProgramReuseThroughRealToolTransport` | That same Go integration plus `test_responder_script.py` generated result/tool parsing contracts |
-| Six 30-second fuzz mutation campaigns | Fixed mutation time adds minutes | Every checked-in fuzz seed executes in ordinary `go test` |
-
-| Additional nightly test | Reason | PR replacement |
-| --- | --- | --- |
-| `TestHermeticRoutingCaptureCompilesReplayableMitigator` | Recompiles captured routing programs through the complete validator: 64.38 s on #664 | `TestRoutingCaptureWaitsForSlowHealthyProber` records/replays TCP evidence; capture count/time budgets; `TestTargetPortFixtureCandidateClearsAfterRepair`; `TestSimTrustedFastPathNeverRollsBackACorrectFix` |
-| `TestBuildWorkspaceAcceptsValidMetricsDetectors` | Repeats successful controller/host compilation: 8.64 s on #664 | `TestGeneratedDetectorsImportAcceptedDetectors` plus `TestBuildWorkspaceRejectsInvalidMetricsDetectors`, and SDK metrics detector unit tests |
-| `TestBuildMemoryHostUsesStagedMemory` | Repeated host compilation took 69.52 s on the first #666 run | `TestMemoryHostWorkspaceStagesAcceptedMemory` checks staging and host/controller isolation; `TestRemoteMemoryPreservesInputsAndCorpusReceipts` and memory-host simulation check real in-memory RPC parity |
-| `TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder` | Repeated source-program compilation took 19.93 s on the first #666 run | `TestCreditEquivalentSourceRepairIgnoresServerDefaultsAndUnownedFields`, source render/reconcile contracts, deterministic trusted fast-path simulation and validator/broker tests |
-| `TestCompileReportsTheFailingStage` | Vet/test fixtures each rebuilt the generated controller for ~51 s on the second #666 run before failing at the intended stage | `TestCompileStageDiagnostics` drives build/vet/test failures through the existing Go process seam and checks rule, path and line; real builder syntax, registration and invalid-metrics rejection still run |
-
-`TestStopSeededLifecycleCuts` retains all 100 seed/cut cases but runs each in a
-`testing/synctest` bubble: the installer's 100 ms deletion polls use virtual time
-instead of accumulating 19 seconds of host time. No simulation seeds were cut.
-
-The exact repeated end-to-end compile tests moved to nightly are listed in
-`scripts/ci_nightly_go_tests/*.txt` (one list per package). They cover assurance seed compilation,
-CLI/broker parity across every fixture, duplicate CLI clean-tree/JSON and
-scaffold compilations, toy-seed and isolated program validation, and repeated
-builder program/host/baseline builds, plus compile-through-controller fastloop,
-foreign-policy repeat and direct-files/learned-program CLI/broker integration. The assurance-seed test alone took
-303 seconds locally. PRs retain `TestGeneratedDetectorsImportAcceptedDetectors`,
-compiler rejection tests, validator rule tests, broker ownership/acceptance
-contracts, CLI error/JSON diagnostics and SDK program unit tests. Nightly runs
-the unfiltered suite with race instrumentation. Python's
-`test_recorded_reflection_stage.py` also runs nightly: its real CLI/broker
-and generated-program builds took 66–117 seconds per case locally. The removed
-`test_scripted_worker_contract.py` was superseded by
-`test_generated_worker_contract.py`; the three moved cases are listed above. Ordinary Python reflection, worker transport,
-recording, provenance and Go broker contracts remain on PRs. Run `bash scripts/test_go_ci.sh` locally for the PR Go suite, or add
-`nightly` for the full race suite. Both emit `go test -json` timing evidence;
-Python CI logs include `--durations=30`. Keep full run logs outside the repo.
-
 
 PR #657 timing investigation (Actions runs 41243599469 and 41243997276):
 checks/Python took 241 s on the PR and 314 s before merge-group cancellation.
@@ -1171,14 +1027,8 @@ and `probe/<protocol>`. Set `Partition[edge]` to retain an outage until cleared.
 Register `w.Invariant` hooks and call `w.Emit` at the actual decision/mutation
 boundaries being tested; hooks do not infer controller decisions automatically.
 Use the fast-path sweep as an example of a real mitigation path, and
-`TestSimRealDetectionInputs` for production input collection.
 
 Source the cached environment as described above before these commands:
-
-```bash
-(cd sdo/operator/runtime && go test ./sim ./prober . -run 'TestCrashLoopRecovery|TestSnapshotKindsAndRollout|TestSeededInvariants|TestFaultSchedule|TestHermeticProtocolDialer|TestSimRealDetectionInputs|TestSimTrusted' -count=20)
-(cd sdo/operator/runtime && SDO_SIM_SEED=17 go test ./sim . -run 'TestSeededInvariants|TestSimTrusted' -count=20)
-```
 
 `SDO_SIM_RUNS` changes sweep length. The 45-second host-time budget is checked
 between seeds; individual seeds must also terminate (use `go test -timeout`).
@@ -1228,11 +1078,6 @@ clients admit a completed Job synchronously or through an injected wait.
 Command-observation tests inject commands and waits and run in the default tier.
 
 Memory-host traffic contracts use virtual time and bufconn:
-
-```bash
-source /mnt/data/shli/cache/env.sh
-(cd sdo/operator/runtime && go test . ./prober ./sim -run 'TestSimMemory|TestHostTrafficLifecycle' -count=20 -race -timeout=5m)
-```
 
 The traffic parity test uses two immutable revisions and checks stop/reset and
 failed samples without OS sockets. It remains in the ordinary PR selection;
@@ -1392,18 +1237,6 @@ client-go's pinned Go AST. Run it after updating the SDK's client-go dependency;
 selector/pagination, discovery and CRD tests. Source-bound reads and compiled
 playbook failure propagation are covered by the runtime client tests.
 ### Concurrent shared memory
-
-`TestHermeticSharedMemoryControllers` runs two real controllers with distinct
-workspace/ledger roots against one accepted Git checkout. Scripted resumed
-reflection workers overlap; independent Go compilation checks both disjoint
-playbook updates and a same-playbook conflict corrected with preserved peer intent.
-The catalog and broker tests bind snapshots to proposal commits and check merged
-validation failures, accepted incident provenance and concurrent publication:
-
-```bash
-(cd sdo/operator && go test -race ./broker ./memory -run 'TestConcurrentMemory|TestCatalogSnapshotAt')
-(cd sdo/operator/runtime && go test -race . ./lifecyclecore -run 'TestHermeticSharedMemoryControllers|TestReflectionMemoryConflict')
-```
 
 This is a hermetic plumbing proof, with no cluster or model. Cross-cluster shared
 storage and live parallel-lane runner proof are separate benchmark work.
