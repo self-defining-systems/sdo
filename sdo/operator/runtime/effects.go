@@ -67,7 +67,7 @@ func (c *Controller) ExecuteDispatchEffect(ctx context.Context, effect DispatchE
 	c.responseStagesRunning = !(len(c.codePath.Selection.ResponseStages) == 1 && c.codePath.Selection.ResponseStages[0] == "agent")
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_RUNNING
 	if c.incidentDispatchedAt.IsZero() {
-		c.incidentDispatchedAt = c.incidentDetectedAt
+		c.incidentDispatchedAt = c.clock()
 	}
 	c.mu.Unlock()
 	endBy := c.responseEndBound(effect.Request)
