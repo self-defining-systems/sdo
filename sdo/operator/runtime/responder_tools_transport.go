@@ -275,13 +275,25 @@ func (l *ResponderLoop) detect(ctx context.Context, ids []string, response *Tool
 		response.Error = err.Error()
 		return
 	}
-	view := NewCycleReadView(program.ReadFrom(snapshot))
+	readView := program.ReadFrom(snapshot)
+	if l.ReadView != nil {
+		readView = l.ReadView(snapshot)
+	}
+	view := NewCycleReadView(readView)
+	var detectors []sdk.Detector
 	for _, detector := range l.Detectors {
+		if len(selected) == 0 || selected[detector.Spec().ID] {
+			detectors = append(detectors, detector)
+		}
+	}
+	results := evaluateDetectors(ctx, detectors, view)
+	for _, detector := range detectors {
 		id := detector.Spec().ID
 		if len(selected) > 0 && !selected[id] {
 			continue
 		}
-		observed, err := sdk.DetectObserved(ctx, detector, view)
+		result := results[id]
+		observed, err := result.findings, result.err
 		state := DetectorEvaluation{DetectorID: id, EvaluatedAt: l.clock().UTC(), Status: DetectorEvaluationClear, Reason: detectorConfirmationReason(detector, view)}
 		if err == nil && len(observed) == 0 && !detectorConfirmed(detector, view) {
 			state.Status = DetectorEvaluationPending

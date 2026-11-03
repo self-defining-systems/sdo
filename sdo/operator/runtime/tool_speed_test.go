@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -13,6 +14,7 @@ import (
 	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memoryhost"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -67,7 +69,9 @@ func speedLoop() (*ResponderLoop, *speedHost) {
 	}
 	registry, _ := program.NewRegistry(ds, ms)
 	loop := NewResponderLoop(IncidentRequest{IncidentID: "synthetic", Namespace: "app"}, registry, staticProvider{snapshot}, detectors, PlanExecutor{}, 10)
-	loop.ReadView = func(v sdk.DetectionContext) program.ReadView { return program.ReadFrom(v) }
+	loop.ReadView = func(v sdk.DetectionContext) program.ReadView {
+		return LiveReadView{Carrier: inputs.New(v), Source: speedSource{}, SourceCommit: "accepted"}
+	}
 	return loop, host
 }
 
@@ -274,4 +278,46 @@ type speedSource struct{ PlanSource }
 
 func (speedSource) AcceptedManifest(_ context.Context, _ string, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
 	return &unstructured.Unstructured{Object: map[string]any{"apiVersion": ref.APIVersion, "kind": ref.Kind, "metadata": map[string]any{"name": ref.Name, "namespace": ref.Namespace}}}, nil
+}
+
+type gatedToolDetector struct {
+	id      string
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (d gatedToolDetector) Spec() sdk.DetectorSpec { return sdk.DetectorSpec{ID: d.id} }
+func (d gatedToolDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
+	d.entered <- struct{}{}
+	<-d.release
+	return nil, nil
+}
+func TestResponderToolDetectorBatchOverlaps(t *testing.T) {
+	for _, command := range []string{"status", "detect"} {
+		t.Run(command, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				loop, _ := speedLoop()
+				entered, release := make(chan struct{}, 8), make(chan struct{})
+				loop.Detectors = nil
+				for i := range 8 {
+					loop.Detectors = append(loop.Detectors, gatedToolDetector{fmt.Sprint(i), entered, release})
+				}
+				var reads atomic.Int32
+				loop.ReadView = func(v sdk.DetectionContext) program.ReadView { reads.Add(1); return program.ReadFrom(v) }
+				done := make(chan ToolResponse, 1)
+				go func() { done <- loop.Handle(context.Background(), ToolRequest{Command: command}) }()
+				synctest.Wait()
+				if got := len(entered); got != 8 {
+					t.Errorf("independent detector work serialized: entered %d want 8", got)
+				}
+				close(release)
+				if result := <-done; result.Error != "" {
+					t.Error(result.Error)
+				}
+				if reads.Load() != 1 {
+					t.Errorf("incident read factory called %d times, want 1", reads.Load())
+				}
+			})
+		})
+	}
 }

@@ -23,6 +23,7 @@ import (
 
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	policyv1 "k8s.io/api/policy/v1"
+	"sdo.dev/operator/memoryhost"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/metrics"
@@ -39,6 +40,7 @@ type PrimitiveProber interface {
 // LiveReadView adds read-only primitives to one detector snapshot. Its
 // dependencies expose reads only; no program receives a Kubernetes writer.
 type LiveReadView struct {
+	objects *memoryhost.ObjectIndex
 	inputs.Carrier
 	Context            context.Context
 	Client             kubernetes.Interface
@@ -430,6 +432,11 @@ func (v LiveReadView) Object(ref sdk.ObjectRef) (object *unstructured.Unstructur
 			if status.Target == target {
 				return v.scopedObject(ref)
 			}
+		}
+	}
+	if v.objects != nil {
+		if object, ok := v.objects.Lookup(ref); ok {
+			return object, nil
 		}
 	}
 	if source, ok := v.DetectionContext.(sdk.ObjectReader); ok {

@@ -467,3 +467,58 @@ Gaps this run found are recorded in the ledger below.
 
 | 2026-11-03 | RUNTIME2 C10 envtest | Network fidelity | A Service forwarder accepted TCP before dialing its upstream, hiding every wrong targetPort from TCP health probes | Fixed: expose the virtual Service only while its upstream accepts TCP | `TestServiceTCPProbeTracksTargetPort` |
 | 2026-11-03 | RUNTIME2 C10 envtest | Missing behavior | No garbage collector released foreground deletion finalizers; deleting Jobs could keep scheduling worker Pods and prevent verified incident publication | Fixed: delete dependents, release only the GC-owned finalizer after they disappear, and never reconcile a deleting Job | `TestDeletingJobRetiresDependentsWithoutReplacement` |
+
+### Live memory preparation cost (2026-11-03)
+
+The LIVEPERF scripted social-network lane exposed an observation-cost gap in the
+old tool-speed benchmark: its canned diff methods did not perform production
+snapshot object lookup. An individual lookup reconverted and sorted every typed
+object; a full memory pass therefore projected a snapshot once per object.
+Controller CPU profiles attributed 56.5% of samples to this projection, and the
+read-only live preparation probe allocated 8.8 GiB over three passes.
+
+The benchmark now uses the real `LiveReadView` for diffs. The cheap regressions
+`TestLiveSnapshotObjectProjectionBudget` and `TestReadSnapshotDiscoveryBudget`
+count projections and discovery requests per fresh cycle, independently of wall
+time. The latter uses the real client-go HTTP transport and preserves one fresh
+SSA normalization per object; API responses and errors are never cached across
+snapshots. `memoryhost.TestObjectIndexSharesProjectionAndReturnsPrivateCapturedObjects`
+checks concurrent reads, exact identities, private copies and captured-object
+precedence. The seeded harness exercises the same production cycle views.
+The simulation does not assign CPU/GC duration to reflection or serialization;
+request/projection budgets cover that bound without adding machine-speed asserts.
+
+The follow-up lane isolated a second cost driver: serialized dry-run API calls
+held the cycle preparation mutex, blocking telemetry and unrelated detectors.
+`TestFrozenPreparationOverlapsBoundedReads` uses a synctest barrier to require
+exactly eight independent reads to overlap; existing receipt-budget tests still
+require a single read per object and cycle. Host mirror versions now decode once
+and clone typed Kubernetes objects directly for each RPC. The public read-factory
+contract test `TestMirrorDecodingKeepsRPCCopiesAndHistoricalVersionsPrivate`
+checks mutation isolation (including Jobs and Secret metadata) and retained
+sequences; no admission result is reused between controller snapshots.
+
+Final profiles also exposed duplicate full wire projection for reference
+enumeration versus mirror capture, and protobuf JSON encoding of already decoded
+traffic trees on every RPC. `TestMirrorProjectionSharedByRefsAndCapture` requires
+one projection per cycle across both consumers; `BenchmarkObservationDecode`
+models nested traffic windows. Native-map bridging retains the protobuf JSON
+failure semantics for unset values, non-finite numbers and invalid UTF-8, checked
+by `TestObservationJSONMatchesProtobufJSONSemantics`.
+
+The live block profile recorded 93 aggregate seconds waiting for client-go rate
+limit tokens. Native broker initialization was mistaken for an externally
+injected client, collapsing the existing state/lease isolation; responder reads
+also shared the steady detector-normalization bucket. Production now owns
+separate snapshot, state, leadership and incident-read budgets. The cheap
+`TestNativeAndEmbeddedClientBudgets` injects the client factory: native roles must
+be independent, while embedded simulations must retain exactly their supplied
+API boundary. The per-client QPS/burst settings are unchanged.
+
+The responder's status/detect loops also serialized detector execution, unlike
+the controller's bounded batch, and detect bypassed the incident read factory.
+`TestResponderToolDetectorBatchOverlaps` uses a synctest barrier to require eight
+independent evaluations to enter before any may finish and one incident read
+factory call. Both tools now use the controller batch evaluator; existing tool
+scopes span detectors and program diagnosis so the mirror capture budget stays
+one per fresh snapshot.
