@@ -195,6 +195,7 @@ Fidelity limits, each deliberate:
   dropped scalar parameter kinds and defaults (a program with a scalar parameter could never bind to a finding), and a
   due dispatch retry held by another condition made `NextWake` return the due time forever (seed 10: the loop
   spun on a frozen clock).
+- **A due wake no pass consumes.** The run loop fails with `ErrWakeSpin` after 1000 timer passes with no delay inside one second, naming the `NextWake` item (`nextWake` returns its label). A gate probe of a detector that a memory revision removed was never evaluated and never dropped, so it was due forever while an incident stayed open (seed 58 in the parallel sweep); `settleGateProbes` ends every probe that came due in a pass and was not rescheduled. `TestStepConsumesGateProbeOfRemovedDetector` pins it.
 - **Informer sync never gives up.** At startup and on resume the controller retries the informer sync with backoff (`InformerSyncPolicy`: per-try timeout, 5 s doubling to 30 s) until it syncs or the run ends. It used to exit after three tries, which ended the process on a transient list error and, repeated, left the Job Failed. Seeds 8 and 48 fail without the fix.
 - `--state-baseline=false` panics (a nil `StateTracker` in the diff read); the harness keeps the baseline on.
 - Secrets are not observed (no `MetadataClient`).

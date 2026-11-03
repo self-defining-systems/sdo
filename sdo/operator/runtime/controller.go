@@ -459,6 +459,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	}
 	if len(detectors) == 0 && len(probes) == 0 && len(objectChanges) == 0 && !c.adoptionNeeded && !c.hasRetainedDrift() {
 		c.forgetGate()
+		c.settleGateProbes(now)
 		c.maybeCloseIncident(ctx, now, nil)
 		err := c.dispatchReady(ctx, now, nil)
 		c.refreshIncidentView(now, false)
@@ -603,6 +604,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	}
 	c.probeGate(ctx, now, snapshot, probes)
 	c.forgetGate()
+	c.settleGateProbes(now)
 	if len(objectChanges) > 0 {
 		c.resetEarlyStability()
 	}
@@ -901,7 +903,21 @@ func (c *Controller) Wait() {
 }
 
 func (c *Controller) NextWake() time.Time {
-	next := c.scheduler.NextRun()
+	at, _ := c.nextWake()
+	return at
+}
+
+// nextWake is NextWake with the name of the item that set the time. The run
+// loop reports the name when it makes no progress (see wakeSpinGuard).
+func (c *Controller) nextWake() (time.Time, string) {
+	var next time.Time
+	why := ""
+	consider := func(at time.Time, reason string) {
+		if !at.IsZero() && (next.IsZero() || at.Before(next)) {
+			next, why = at, reason
+		}
+	}
+	consider(c.scheduler.NextRun(), "detector schedule")
 	c.mu.Lock()
 	// A batch deadline only matters when the batch can be dispatched or
 	// attached. Otherwise an expired deadline would spin the runtime loop for
@@ -909,8 +925,8 @@ func (c *Controller) NextWake() time.Time {
 	batchActionable := (!c.incidentOpen && (!c.closureBlocksNextLocked() || c.broker == nil)) ||
 		c.canAttachBeforeLaunchLocked()
 	c.mu.Unlock()
-	if deadline, ok := c.batcher.Deadline(); ok && batchActionable && (next.IsZero() || deadline.Before(next)) {
-		return deadline
+	if deadline, ok := c.batcher.Deadline(); ok && batchActionable {
+		consider(deadline, "finding batch deadline")
 	}
 	c.mu.Lock()
 	verificationPending := c.incidentOpen && (c.responderDone || !c.verificationDeadline.IsZero()) && c.currentIncidentRequest != nil
@@ -922,27 +938,29 @@ func (c *Controller) NextWake() time.Time {
 		}
 	}
 	earlyDeadline := time.Time{}
+	earlyReason := "closure stability window"
 	if c.incidentOpen && !c.closureStableSince.IsZero() {
 		earlyDeadline = c.closureStableSince.Add(c.config.ClosureStabilityWindow)
 	}
 	if c.earlyReportPendingLocked() {
 		earlyDeadline = c.earlyReportWakeLocked()
+		earlyReason = "early report"
 	}
 	retireDeadline := c.retirementWakeLocked(c.clock())
 	c.mu.Unlock()
-	if !retireDeadline.IsZero() && (next.IsZero() || retireDeadline.Before(next)) {
-		next = retireDeadline
+	consider(retireDeadline, "incident retirement")
+	consider(earlyDeadline, earlyReason)
+	if verificationPending {
+		consider(verificationDeadline, "verification deadline")
 	}
-	if !earlyDeadline.IsZero() && (next.IsZero() || earlyDeadline.Before(next)) {
-		next = earlyDeadline
+	consider(c.nextGateProbe(), "gate probe")
+	if retry := c.dispatchRetryWake(next); !retry.Equal(next) {
+		next, why = retry, "dispatch retry"
 	}
-	if verificationPending && (next.IsZero() || verificationDeadline.Before(next)) {
-		next = verificationDeadline
+	if retry := c.closureRetryWake(next); !retry.Equal(next) {
+		next, why = retry, "closure retry"
 	}
-	if probe := c.nextGateProbe(); !probe.IsZero() && (next.IsZero() || probe.Before(next)) {
-		next = probe
-	}
-	return c.closureRetryWake(c.dispatchRetryWake(next))
+	return next, why
 }
 
 func (c *Controller) IncidentOpen() bool {
