@@ -1119,3 +1119,25 @@ def test_external_receipt_recovers_completion_time_after_ack_retired_payload():
         },
     }
     assert _receipt_closure_times(receipt) == (detected, completed)
+
+
+def test_acknowledged_closure_recovers_responder_start_and_done_times():
+    from benchmarks.sregym.fastloop.loop import AgentOutcome
+    from benchmarks.sregym.fastloop.sdo_agent import _with_receipt_times
+
+    detected = datetime(2026, 11, 3, tzinfo=timezone.utc)
+    started, completed = detected + timedelta(seconds=1), detected + timedelta(seconds=12)
+    receipt = {
+        "native_ledger": {
+            "closure": {
+                "request": {"external_message": "Investigate"},
+                "detected_at": detected.isoformat(),
+                "dispatched_at": started.isoformat(),
+                "responder_completed_at": completed.isoformat(),
+            }
+        }
+    }
+    outcome = _with_receipt_times(AgentOutcome(injection=InjectionWindow(detected, detected)), receipt)
+    assert outcome.responder_started_at == started
+    assert outcome.responder_finished_at == completed
+    assert outcome.resolved_at == completed

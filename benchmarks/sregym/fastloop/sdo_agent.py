@@ -191,6 +191,7 @@ def _receipt_closure_times(receipt: dict[str, Any]) -> tuple[datetime | None, da
 
 def _with_receipt_times(outcome: AgentOutcome, receipt: dict[str, Any]) -> AgentOutcome:
     ledger = receipt.get("native_ledger") or {}
+    closure = ledger.get("closure") or {}
     document = ledger.get("outcome_document") or {}
     timestamps = document.get("timestamps") or {}
     detected, verified = _receipt_closure_times(receipt)
@@ -205,8 +206,11 @@ def _with_receipt_times(outcome: AgentOutcome, receipt: dict[str, Any]) -> Agent
         or _first_successful_repair(receipt.get("repair_actions") or document.get("repair_actions")),
         responder_started_at=outcome.responder_started_at
         or _timestamp(timestamps.get("dispatched_at"))
+        or _timestamp(closure.get("dispatched_at"))
         or _timestamp(receipt.get("responder_started_at")),
-        responder_finished_at=outcome.responder_finished_at or _timestamp(receipt.get("responder_finished_at")),
+        responder_finished_at=outcome.responder_finished_at
+        or _timestamp(closure.get("responder_completed_at"))
+        or _timestamp(receipt.get("responder_finished_at")),
         reflection_no_repair_count=_receipt_no_repair_count(receipt),
     )
 
