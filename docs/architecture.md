@@ -1063,3 +1063,5 @@ the existing 512 KiB worker snapshot budget before publication. `outcome.code_pa
 carries `accepted_commit`, `activated_at`, `at`, per-script results and health;
 the native ledger records `closure_phase_timestamps.shell_runner_activated` after
 accepted reflection activation, without a Go controller rollout receipt.
+
+Before the first responder claim, fresh independent detectors can confirm complete recovery after a deterministic repair and skip the worker. Repair attribution remains separate: rejected settlement evidence does not force a model invocation or earn positive repair credit. Partial, pending, unavailable or firing observations retain the responder path.
