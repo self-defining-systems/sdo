@@ -5,7 +5,7 @@ description: Test SDO changes and debug SDO behavior by climbing a tier ladder f
 
 # Test SDO
 
-A live LLM run costs tens of minutes and millions of tokens, while the hermetic gate takes seconds. Find each bug at the lowest tier that can show it, and climb to a live run only when every tier below it passes.
+A live LLM run costs tens of minutes and millions of tokens, while the harness gate takes seconds. Find each bug at the lowest tier that can show it, and climb to a live run only when every tier below it passes.
 
 ## What to test
 
@@ -16,8 +16,8 @@ Test controller properties; check agent-written code only through `memory check`
 | Tier | What it exercises | Command | Cost |
 | --- | --- | --- | --- |
 | 0 | Contracts, receipts, rows, CLI | `uv run --extra test pytest -q tests/unit/benchmarks/sregym` plus the focused Go module (`(cd sdo/operator/runtime && go test ./...)`) | 30–60 s |
-| 1 | Real Go controller, broker, memory edge and builder against a fake Kubernetes API | `bash scripts/test_fastloop_hermetic.sh` | about 15 s |
-| 1e | Real controller process, memory host, broker and accepted-memory repo against a real kube-apiserver and etcd (envtest) with a fake kubelet and no-model agent scripts; no Docker, kind or model. Gate before any kind or live run | `bash scripts/test_controller_e2e.sh` | about 10 minutes; nightly CI |
+| 1 | The seeded simulation of the real controller loop (`TestHarness`): simulated Kubernetes, adversarial agent and program stand-ins, crashes at effect boundaries | `(cd sdo/operator/runtime && go test -tags=integration -run '^TestHarness' ./...)` | about 30 s |
+| 1e | Real controller process, memory host, broker and accepted-memory repo against a real kube-apiserver and etcd (envtest) with a fake kubelet and no-model agent scripts; no Docker, kind or model. The pre-live gate is tier 1 plus scenario 1 | `bash scripts/test_controller_e2e.sh scenario1` (all scenarios: about 10 minutes) | scenario 1 about 200 s; all scenarios nightly CI |
 | 2a toy cluster | Three-service kind app, Calico, real controller/broker, scripted workers | `fastloop up --app toy --dev-mount` | registry delivery on first up; mounted source and warm reset thereafter |
 | 2b | Hotel kind cluster with scripted agents and mounted source | `fastloop up --dev-mount`, then `fastloop reset --dev-mount` between runs | reset about 7 s, run a few minutes |
 | 3 | One recorded stage re-executed offline | `fastloop replay --run-dir <results/run-id> --incident 0 --stage reflection` | seconds |

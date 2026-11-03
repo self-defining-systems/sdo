@@ -192,9 +192,8 @@ uv run pytest tests/ --cov=sdo
 
 The Go commands above run the deterministic unit tier. Real Git, compiler and
 socket contracts require `-tags=integration`. Both PR and nightly
-`scripts/test_go_ci.sh` select that tag; `scripts/run_tests.sh` and
-`scripts/test_fastloop_hermetic.sh` also retain it so their full/smoke selections
-continue to execute migrated process tests. The benchmark replay module is
+`scripts/test_go_ci.sh` select that tag; `scripts/run_tests.sh` also retains it so its
+full selection continues to execute process tests. The benchmark replay module is
 included in the full runner and both CI modes.
 
 `scripts/check_errors.sh` runs Ruff, Tach, the AST import and ownership checks in
@@ -252,77 +251,17 @@ regenerated output. The v1alpha1 schema may evolve freely, including breaking
 changes; compatibility with main is not a gate. Reserve deleted field numbers
 and names so old stored state cannot be misread as new fields.
 
-The operator Go suite includes `TestHermeticResponderProgramReuseThroughRealToolTransport`,
-`TestHermeticControllerClosureReachesNativeOutcomeBroker`, and
-`TestReflectionLearnedProgramCLIAndBroker`. Together they exercise
-the fake Kubernetes API, source repairs, native controller and broker closure,
-real responder tool transport, captured corpus phases, direct file editing, shared memory checks
-and program compilation, and bounded worker result encoding without a cluster or LLM.
-The learned-program test runs the real CLI and broker, checks exact authored-tree acceptance,
-and requires identical rejection diagnostics for a README with a physical memory path. Synthetic worker responses exercise contract decoding and the native broker.
-New replay fixtures are hand-written toy data or constructed during tests; experiment
-outputs stay outside the repository.
-
-Reflection checks its exact returned decision and final checkout through the real memory
-CLI before publishing a worker result. Failed checks resume the same provider session,
-with at most three correction turns inside the original deadline. The real-CLI tests in
-`tests/unit/sdo/agents/responder/test_reflection_final_check.py` cover both providers,
-fresh and resumed sessions, changed bytes after an earlier passing check, withheld
-invalid results, and validator process cleanup. Shared compile checks evaluate learned
-detectors over complete corpus snapshots, including unlabelled locator bindings;
-program and shared-library edits retain the healthy-baseline input. The broker parity
-tests compare exact rejection diagnostics for missing coverage, inconclusive diagnoses,
-missing source evidence, and a program-only edit against a wider healthy snapshot.
-
-
-Historical plumbing regressions have focused checks in the same suites:
-
-| Regression | Contract check |
-| --- | --- |
-| Restart live recheck | `TestResponderRestartRediagnosesWithoutUndoOrRestoredHandles` preserves fixes and budgets. `TestStateRoundTripRetainsAppliedActionsAndProgramEvidenceWithoutRollbackState` checks durable outcome evidence without rollback authority. |
-| Physical `.sdo/` tool evidence | The responder loop test rejects physical paths in recorded tool calls; `TestSyntheticWorkerResultsThroughContracts` covers typed worker envelopes; responder validation rejects physical tool evidence. |
-| Cluster grant | `sdo/operator/install` `TestEverySDOIdentityHoldsTheWildcardGrant`: every SDO ServiceAccount resolves to the `*`/`*`/`*` ClusterRole; `ensureClusterGrants` restores it. |
-| Provider writer hand-off | `tests/unit/libs/agent_cli/test_session_ownership.py` runs overlapping writer/resumer schedules, real process exit, crash recovery and malformed-record sweeps; the hermetic gate also checks typed reflection worker failures. |
-| Tool session restart permissions | The responder loop reparses real directory modes; `TestSessionToolServerIgnoresAtomicRequestTemporaryFiles` protects the CLI write protocol. |
-| Capture size and timing | `sdo/operator/operatorcli` draft tests reject oversized captures; the controller checks that the `open@detect` capture never delays or blocks dispatch. |
-| Pre-existing seed formatting | `TestReflectionLearnedProgramCLIAndBroker` authors final files over accepted memory. |
-| ConfigMap and reflection transport size | `TestHermeticFakeConfigMapEnforcesProductionLimit` rejects a state over 1 MiB; `TestReflectionLearnedProgramCLIAndBroker` checks a corpus reference stays below 700 KiB, and `TestRegisteredReflectionWorkerRejectsOversizedResultBeforeCommit` rejects an oversized envelope. |
-
 The no-LLM kind path is documented in
 `benchmarks/sregym/experiments/fastloop/README.md`. It is intentionally run by
 the experiment lead because it builds images and changes a kind cluster.
 The scripted Level 1 check in `tests/unit/benchmarks/sregym/fastloop/`
 exercises responder and reflection worker entry points with a copied hotel
 seed, typed tasks, and a fake Kubernetes API, without a cluster.
-Run `bash scripts/test_fastloop_hermetic.sh` before Level 2. Its Go test drives
-two incidents through the real controller, ConfigMap state store, native broker,
-logical memory edge, and program builder against a fake Kubernetes API. It
-checks a persisted dispatch retry, corpus references and reflection transport
-limits, compiled program reuse, verified outcomes, and the deployed image after
-source restoration. The gate also runs the real responder tool transport check
-and the ConfigMap and reflection size-limit checks. The Python test remains a
-fast CLI and result-row check with the scripted worker and fake application API.
-The gate also deploys a synthetic workload at commit A, publishes a `.sdo/`-only
-commit B, resets the configuration baseline for maintenance, and checks that
-accepted manifests still use the deployed regular and init-container images.
-Both annotated deployments and legacy deployments bound to the configured
-deployed commit are covered. A later Service targetPort change must produce unexplained drift. Separate
-coverage checks retain Service adoption and responder admission when another
-workload cannot render; application
-source changes must never reuse the old deployment images.
-The gate also runs `TestHermeticNewDetectorInputs`: the real controller and
-informer cache read the shared fastloop HTTP fake, collect per-node kubelet
-summary/cAdvisor data, and consume real MongoDB handshake results through an
-injected wire peer. A healthy baseline is quiet; StatefulSet readiness, memory
-forecast and MongoDB protocol failures open one incident with numerical and
-protocol evidence, and recovered inputs close it. Its test log includes wall
-time through fixture cleanup. `TestHermeticProtocolDialer` checks healthy,
-refused and malformed replies for all seven protocols. Fake API contract tests
-cover list/watch for every added kind and Secret redaction on creation and
-patch. The fake's subresource dispatch leaves room for independent pod log
-support without implementing the logs input.
 
-The gate needs Go and `uv`, but no cluster or container runtime.
+The check before any kind or live run is the controller harness
+(`go test -tags=integration -run '^TestHarness' ./runtime` from `sdo/operator/runtime`, about 30 s)
+plus controller end-to-end scenario 1 (`bash scripts/test_controller_e2e.sh scenario1`, about 200 s).
+Neither needs a cluster, container runtime or model.
 
 `TestHermeticBringupPersistsPendingAndRestarts` rehearses a cold native bring-up from a P35-shaped seed against one fake Kubernetes API: retained onboarding and worker-result records, the production fresh-control reset, HY clean restore through kubectl, native prepared installation, a scripted startup judge with real broker/builder validation, direct source rendering for the inventory, confirmed never-served-port observations, real ConfigMap ControllerState validation, the read-only inventory evaluator, partial event-driven batches through the real scheduler, a confirmed full sweep, six quiet probe cycles, and restart. It asserts the original 21-second simulated install-to-record schedule and uses simulated probe time and a two-minute test budget. This is the offline gate before repeating a live bring-up.
 
@@ -893,13 +832,9 @@ SDO_AGENT_SCRIPT=/absolute/script.yaml \
   uv run python -m benchmarks.sregym.agent_script launch -- \
   python -m sdo.agents.health_judge.worker
 uv run --extra test pytest -q -p no:tach tests/unit/benchmarks/sregym/test_agent_script.py
-(cd sdo/operator && go test ./broker -run '^TestAgentScriptJudgeMemoryCheckAndBroker$' -count=1)
-bash scripts/test_fastloop_hermetic.sh
 ```
 
-The broker example authors a health detector, traffic generator/workload and
-health-objective playbook through the actual judge worker, calls the real memory
-checker, and publishes through the native broker. The generic parser tests cover
+The generic parser tests cover
 all roles, turn selection, resumed reflection, assertions and checkout escape.
 
 Tier 2 uses the same script via `sdo-agent-script` ConfigMap (`script.json` key;

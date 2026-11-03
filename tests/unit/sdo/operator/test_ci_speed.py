@@ -262,7 +262,7 @@ def test_go_runner_keeps_integration_coverage_in_one_package_scheduler(tmp_path:
         assert all(not re.search(skip, name) for name in nightly_names)
 
 
-@pytest.mark.parametrize("script", ["test_fastloop_hermetic.sh", "run_tests.sh"])
+@pytest.mark.parametrize("script", ["run_tests.sh"])
 def test_full_and_hermetic_runners_retain_integration_tests(tmp_path: Path, script: str) -> None:
     calls = tmp_path / "calls"
     for name, body in {
