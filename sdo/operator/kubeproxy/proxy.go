@@ -136,7 +136,7 @@ func NewWithMutationGate(upstream *url.URL, readTransport, writeTransport http.R
 					uncertain.Store(true)
 					end.Omission = "incomplete_response"
 					body = nil
-					if recorder != nil {
+					if recorder != nil && (mutating(r.Method) || e.Subresource == "exec" || e.Subresource == "attach" || e.Subresource == "portforward") {
 						recorder.Gap()
 					}
 				}
@@ -144,7 +144,7 @@ func NewWithMutationGate(upstream *url.URL, readTransport, writeTransport http.R
 					end.Partial = true
 					end.Omission = "redacted_projection_budget"
 					body = nil
-					if recorder != nil {
+					if recorder != nil && (mutating(r.Method) || e.Subresource == "exec" || e.Subresource == "attach" || e.Subresource == "portforward") {
 						recorder.Gap()
 					}
 				}
