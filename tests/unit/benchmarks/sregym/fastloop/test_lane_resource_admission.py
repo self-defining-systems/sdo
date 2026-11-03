@@ -1004,3 +1004,45 @@ def test_warm_pause_waits_for_real_ack_before_syncing_memory(lane, monkeypatch):
     )
     with pytest.raises(PersistentControllerError, match="acknowledge maintenance"):
         warm.pause()
+
+
+def test_admission_reads_traffic_from_the_accepted_memory_host(lane, monkeypatch):
+    gate, _ = lane
+    monkeypatch.undo()
+    calls = []
+    windows = {"windows": {"health": {"scenarios": []}}}
+
+    def read(args, **kwargs):
+        calls.append(args)
+        if args == ["get", "job/sdo-controller-run", "-o", "json", "--ignore-not-found=true"]:
+            return SimpleNamespace(
+                stdout=json.dumps(
+                    {
+                        "spec": {
+                            "template": {
+                                "spec": {
+                                    "containers": [
+                                        {"name": "controller", "args": ["operate", "--app", "/workspace/application"]}
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                )
+            )
+        assert args == [
+            "exec",
+            "job/sdo-controller-run",
+            "-c",
+            "controller",
+            "--",
+            "sdo-operator",
+            "observe-traffic",
+            "--app",
+            "/workspace/application",
+        ]
+        return SimpleNamespace(stdout=json.dumps(windows))
+
+    monkeypatch.setattr(admission, "kubectl", read)
+    assert gate._windows("hotel-reservation-sdo") == windows
+    assert len(calls) == 2

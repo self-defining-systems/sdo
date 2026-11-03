@@ -494,11 +494,13 @@ live row's production admission proof (`setup-proof.json`) instead. The result i
 `seed` in the report. It then restores the app, installs and
 onboards SDO with scripted registrations,
 checks fresh-memory setup lineage and exact responder RBAC against the real installer,
-requires fresh controller traffic clearance and qualified native prober scenarios,
+requires fresh controller traffic clearance and qualified native prober scenarios
+read through `sdo-operator observe-traffic --app <accepted-checkout>`,
 checks benchmark probe placement, and captures the healthy baseline. Its final
 pre-injection callback stops without injecting anything or invoking models.
-`eval-dry-run/report.json` reports each invariant; all work shares a 300-second
-process deadline (`--timeout` may lower it). Run a supported `reset` afterward
+`eval-dry-run/report.json` reports each invariant. Setup has a separate budget
+(`--setup-timeout`, capped at 900 seconds); steady proof shares a 300-second
+deadline (`--timeout` may lower it). Run a supported `reset` afterward
 before transferring the lane or selecting live registrations.
 
 Normal SDO fastloop runs enforce the same pre-injection admission: pending traffic
