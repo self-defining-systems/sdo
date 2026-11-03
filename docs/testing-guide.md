@@ -25,7 +25,7 @@ Accepted choice: the memory host holds write-capable Kubernetes credentials and 
 
 Other behavioral properties (fixed means verified, writes happen once, nothing is lost, saved memory gets used) are not checked now.
 
-**Honest fakes.** A few conformance tests compare the simulated Kubernetes API, fake Go and fake git with the real ones; a real run that finds a bug the simulation missed is a fidelity gap ([align-simulation](../.agents/skills/align-simulation/SKILL.md), [ledger](simulation-fidelity.md)). The scripted toy run on kind is the one end-to-end check.
+**Honest fakes.** A few conformance tests compare the simulated Kubernetes API, fake Go and fake git with the real ones; a real run that finds a bug the simulation missed is a fidelity gap ([align-simulation](../.agents/skills/align-simulation/SKILL.md), [ledger](simulation-fidelity.md)). The controller end-to-end run (below) is the process-level check without a cluster; the scripted toy run on kind is the one end-to-end check with real nodes and images.
 
 A test that maps to none of these is a candidate for deletion.
 
@@ -492,6 +492,25 @@ SDO_RUN_LIVE_AGENTS=1 SDO_LIVE_CODEX_MODEL=gpt-6-luna SDO_LIVE_CLAUDE_MODEL=haik
 ```
 
 Live Codex or Kubernetes tests may require explicit markers, credentials, images, a cluster, and longer timeouts; do not infer production readiness from skipped external tests.
+
+## Controller end-to-end
+
+`bash scripts/test_controller_e2e.sh [scenario1|scenario2|all]` runs the real controller with no Docker, kind, network or model. It is the gate before any kind or live run, and it runs nightly (the `controller-e2e` job). It needs bubblewrap with user namespaces, `kubectl`, Go, `uv` and the envtest binaries (`KUBEBUILDER_ASSETS`, or `setup-envtest` on `PATH`). The code is `sdo/operator/e2e` (build tags `integration controller_e2e`, so ordinary Go CI never compiles it).
+
+What runs as processes:
+
+- `kube-apiserver` and `etcd` from envtest: a real API server with no nodes and no controllers.
+- A fake kubelet (`e2e/kubelet_test.go`, `pods_test.go`, `runtime_test.go`, `network_test.go`). It is the one Node, the Deployment, ReplicaSet, Endpoints/EndpointSlice and Job controllers, the default ServiceAccount, and a container runtime that runs each Job or Pod container as a bubblewrap sandbox from the Pod spec (volumes, env, service-account token, termination message, init containers and sidecars). It serves pod logs and the usage endpoints the API server proxies to a kubelet. Application Pods are not executed: their phase follows the toy application (bad image: `ImagePullBackOff`; readiness path the app does not serve: not ready), and each gets a loopback address with a real listener, with Service forwarders and a hosts file standing in for kube-proxy and cluster DNS.
+- The controller exactly as the toy lane installs it: the production `install.Installer` creates the controller Job, so `sdo-operator controller` builds the accepted detectors, starts its memory-host subprocess and runs against the API server (through a fault-injecting proxy). A killed controller is restarted by the fake Job controller.
+- Agents: the registered no-model workers (`benchmarks/sregym/fastloop/agent_registrations`), launched as Jobs and standbys through the real worker, tool transport and broker. A wrapper command reads `/e2e/agent-mode` so a run can make the next agent crash or hang.
+- The toy application and its faults: `apps/toy` manifests, injected and checked with the toy lane's own `apps/toy/faults.py`.
+
+Every run checks two properties from controller logs, API state and accepted memory (`e2e/checks_test.go`):
+
+1. No wedge. Every incident the controller opened has one terminal outcome document once faults stop, and a failed incident never keeps a later one from getting its outcome.
+2. Detector cadence. Every detector in accepted memory appears in the controller's evaluation passes within five times its interval (at least 5 s) while a controller process is up, through memory swaps, closure and agent work; a detector added by a memory commit appears with no controller restart. A failing detector does not delay the others.
+
+Scenario 1 injects one toy fault, requires a scripted-agent repair, a reflection commit, a memory-host activation and no controller restart, then injects it again and requires the repeat to be cleared with no responder Job. Scenario 2 injects API latency, a crashing agent, `kill -9` of the controller mid-incident and a killed memory host. Two opt-in tests reproduce controller findings that currently fail and so are not in `all`: `TestControllerToleratesAPIErrors` (`SDO_E2E_API_ERRORS=1`: 5% of API requests answered 500 kill the controller, and its Job gives up after the backoff limit) and `TestControllerEndsHungAgent` (`SDO_E2E_HUNG_AGENT=1`: a hung responder Job is never ended because incident Jobs have no `activeDeadlineSeconds`). Move each into `all` when its fix lands. Fidelity limits are in [simulation-fidelity.md](simulation-fidelity.md#controller-end-to-end-fake-kubelet-and-limits). Run directories are kept on failure (`SDO_E2E_DIR` picks one; `SDO_E2E_KEEP=1` keeps it on success); each Pod's container output is under `pods/<namespace>_<pod>/logs/`.
 
 ## Test the lifecycle contracts
 

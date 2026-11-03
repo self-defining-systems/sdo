@@ -17,6 +17,7 @@ Test controller properties; check agent-written code only through `memory check`
 | --- | --- | --- | --- |
 | 0 | Contracts, receipts, rows, CLI | `uv run --extra test pytest -q tests/unit/benchmarks/sregym` plus the focused Go module (`(cd sdo/operator/runtime && go test ./...)`) | 30–60 s |
 | 1 | Real Go controller, broker, memory edge and builder against a fake Kubernetes API | `bash scripts/test_fastloop_hermetic.sh` | about 15 s |
+| 1e | Real controller process, memory host, broker and accepted-memory repo against a real kube-apiserver and etcd (envtest) with a fake kubelet and no-model agent scripts; no Docker, kind or model. Gate before any kind or live run | `bash scripts/test_controller_e2e.sh` | about 10 minutes; nightly CI |
 | 2a toy cluster | Three-service kind app, Calico, real controller/broker, scripted workers | `fastloop up --app toy --dev-mount` | registry delivery on first up; mounted source and warm reset thereafter |
 | 2b | Hotel kind cluster with scripted agents and mounted source | `fastloop up --dev-mount`, then `fastloop reset --dev-mount` between runs | reset about 7 s, run a few minutes |
 | 3 | One recorded stage re-executed offline | `fastloop replay --run-dir <results/run-id> --incident 0 --stage reflection` | seconds |
@@ -28,7 +29,7 @@ The exact flags for tiers 0–1 are in [the testing guide](../../../docs/testing
 
 Climb only as far as the change's risk requires, and only from green: run a tier after every cheaper tier that applies passes.
 
-- Concurrency, restarts or failure handling: tier 1 plus Go `-race` tests with injected failures.
+- Concurrency, restarts or failure handling: tier 1 plus Go `-race` tests with injected failures, then tier 1e (kill -9, API faults, crashing agents) before any kind or live run.
 - Credentials or secrets: time-capped property tests with canaries in every excluded field, plus an independent read-only review.
 - Classification, trust or scoring logic: tier 0 regression fixtures plus tier 3 replay.
 - Platform wiring (images, permissions, mounts, config): tier 2.
