@@ -244,13 +244,13 @@ var gateRows = []gateRow{
 			for _, dir := range []string{"playbooks/service-targetport-mismatch", "lib", "corpus"} {
 				copyTree(t, filepath.Join(gateProgramFixture, dir), filepath.Join(r, ".sdo", dir))
 			}
-			write(t, r, ".sdo/diagnostics/go.mod", readGap(t, gateProgramFixture, "diagnostics/go.mod"))
+			write(t, r, ".sdo/diagnostics/go.mod", gateRead(t, gateProgramFixture, "diagnostics/go.mod"))
 			generateIndex(t, r)
 			gateOutcome(gateClean())(t, r)
 		},
 		edit: func(t *testing.T, r string) {
 			copyTree(t, filepath.Join(r, ".sdo/corpus/targetport-mismatch"), filepath.Join(r, ".sdo/corpus/case-2"))
-			labels := readGap(t, r, ".sdo/corpus/case-2/labels.json")
+			labels := gateRead(t, r, ".sdo/corpus/case-2/labels.json")
 			write(t, r, ".sdo/corpus/case-2/labels.json", strings.Replace(labels, `{"root_cause`, `{"script_origins":{"sha256:abc":"no-such-receipt"},"root_cause`, 1))
 		},
 		request: func(r *Request) {
@@ -320,7 +320,7 @@ var gateRows = []gateRow{
 		prepare: func(t *testing.T, r string) { remove(t, r, ".sdo/diagnostics"); remove(t, r, ".sdo/playbooks") },
 		edit:    gateWrite("app.txt", "deployed\n")},
 	{name: "health judge replaced generated policy", kind: gateCheck, actor: HealthJudge, phase: InitialPhase, rules: []string{RuleGenericHealth}, edit: func(t *testing.T, r string) {
-		write(t, r, ".sdo/diagnostics/detectors/health/service-endpoints/manifest.yaml", strings.ReplaceAll(readGap(t, r, gateHealthManifest), "id: health", "id: service-endpoints"))
+		write(t, r, ".sdo/diagnostics/detectors/health/service-endpoints/manifest.yaml", strings.ReplaceAll(gateRead(t, r, gateHealthManifest), "id: health", "id: service-endpoints"))
 		write(t, r, ".sdo/diagnostics/detectors/health/service-endpoints/detector.go", "package endpoints\n\n// authored policy override\n")
 	}},
 	gateReflection("snapshot budget", gateClean(), gateUpdated("large-a", "large-b", "large-c"), func(t *testing.T, r string) {
@@ -643,4 +643,13 @@ func gateFormatted(t *testing.T, source string) string {
 		t.Fatal(err)
 	}
 	return string(out)
+}
+
+func gateRead(t *testing.T, root, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
