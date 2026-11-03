@@ -54,12 +54,13 @@ type harness struct {
 	inc      *incarnation
 	nextInc  int
 
-	out        *lineLog
-	crossings  map[crashBoundary]int
-	watches    int
-	callCounts map[string]int
-	agentCalls atomic.Int32
-	hung       map[string]bool
+	out          *lineLog
+	crossings    map[crashBoundary]int
+	watches      int
+	callCounts   map[string]int
+	agentCalls   atomic.Int32
+	programCalls counter
+	hung         map[string]bool
 }
 
 const harnessControlNamespace = hotel + "-sdo"
@@ -222,6 +223,11 @@ func (h *harness) newHost(rev planRevision) *simActivationHost {
 	if err != nil {
 		h.t.Fatal(err)
 	}
+	programs, err := h.programsOf(rev)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	server.WithPrograms(programs)
 	rpc, stop := memoryTestRPC(h.t, server)
 	return &simActivationHost{testMemoryRPC: rpc, stop: stop}
 }
@@ -401,7 +407,7 @@ func (h *harness) crashController(why string) {
 func (h *harness) runController(ctx context.Context) {
 	args := []string{"--namespace", hotel, "--control-namespace", harnessControlNamespace, "--app-root", h.repo,
 		"--application", "hotel", "--synthetic-traffic=false", "--lease-duration", "3s", "--drift-batch-window", "20ms",
-		"--verification-timeout", "20s", "--closure-stability-window", "5s", "--response-timeout", "30s", "--source-commit", harnessAcceptedCommit}
+		"--verification-timeout", "20s", "--closure-stability-window", "5s", "--response-timeout", "30s", "--source-commit", harnessAcceptedCommit, "--repository-mount-path", h.t.TempDir()}
 	for ctx.Err() == nil {
 		runCtx, cancel := context.WithCancel(ctx)
 		h.mu.Lock()
@@ -518,10 +524,10 @@ func runHarness(t *testing.T, seed uint64) (sim.Log, sim.Config) {
 	}})
 	sort.SliceStable(events, func(i, j int) bool { return events[i].at < events[j].at })
 
+	h.start = time.Now() // before any other goroutine reads it
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() { defer wg.Done(); h.runController(ctx) }()
-	h.start = time.Now()
 	for _, e := range events {
 		time.Sleep(time.Until(h.start.Add(e.at)))
 		e.do()
@@ -549,6 +555,7 @@ func runHarness(t *testing.T, seed uint64) (sim.Log, sim.Config) {
 	}
 	stop()
 	wg.Wait()
+	t.Logf("program calls:%s", h.programCalls.String())
 
 	h.mu.Lock()
 	hung := map[string]bool{}

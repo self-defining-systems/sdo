@@ -27,7 +27,10 @@ const harnessWallBudget = 200 * time.Second
 // nightly sweep. Seed 35 kills the mutant that ends the process on a transient
 // API error (startup reads under errors), and 19 the one that never ends a hung
 // agent (its first dispatch hangs, and nothing but the controller can stop it).
-var harnessPRSeeds = []uint64{1, 2, 3, 13, 19, 35}
+// Seed 10 is the regression for a due dispatch retry that something else held,
+// which made the controller loop spin on a frozen clock (NextWake kept returning
+// the due time); without the fix it hangs rather than fails.
+var harnessPRSeeds = []uint64{1, 2, 3, 10, 13, 19, 35}
 
 // TestHarness plays each seed through the production controller loop and checks
 // that the controller is reliable (every incident ends) and manages its

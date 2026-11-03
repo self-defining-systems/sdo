@@ -21,6 +21,13 @@ var programIDPath = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 var programModule = regexp.MustCompile(`(?m)^module\s+(\S+)\s*$`)
 
 func fillProgramRevisions(ctx context.Context, runs []ProgramRun, repository, commit string) {
+	fillProgramRevisionsWith(lifecycleio.GitOutput, ctx, runs, repository, commit)
+}
+
+// gitRead reads accepted repository bytes: git -C repository args... stdout.
+type gitRead func(ctx context.Context, repository string, args ...string) ([]byte, error)
+
+func fillProgramRevisionsWith(read gitRead, ctx context.Context, runs []ProgramRun, repository, commit string) {
 	cache := map[string]string{}
 	for index := range runs {
 		if strings.HasPrefix(runs[index].ProgramRevision, workingTreeRevisionPrefix) {
@@ -31,7 +38,7 @@ func fillProgramRevisions(ctx context.Context, runs []ProgramRun, repository, co
 		if !ok {
 			revision = commit
 			if programIDPath.MatchString(id) && gitRevision.MatchString(commit) {
-				if resolved, err := programDependencyRevision(ctx, repository, commit, id); err == nil {
+				if resolved, err := programDependencyRevisionWith(read, ctx, repository, commit, id); err == nil {
 					revision = resolved
 				}
 			}
@@ -44,8 +51,12 @@ func fillProgramRevisions(ctx context.Context, runs []ProgramRun, repository, co
 // Hash accepted Git objects, never mutable checkout files. Only libraries in
 // this program's import closure participate, including dependencies of helpers.
 func programDependencyRevision(ctx context.Context, repository, commit, id string, visitors ...func(revisionSource)) (string, error) {
+	return programDependencyRevisionWith(lifecycleio.GitOutput, ctx, repository, commit, id, visitors...)
+}
+
+func programDependencyRevisionWith(read gitRead, ctx context.Context, repository, commit, id string, visitors ...func(revisionSource)) (string, error) {
 	git := func(args ...string) ([]byte, error) {
-		return lifecycleio.GitOutput(ctx, repository, args...)
+		return read(ctx, repository, args...)
 	}
 	module := "app-diagnostics"
 	if data, err := git("show", commit+":.sdo/diagnostics/go.mod"); err == nil {

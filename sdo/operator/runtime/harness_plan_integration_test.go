@@ -79,6 +79,8 @@ type plan struct {
 	// that a resumed watch is told its version is gone (forcing a relist);
 	// WatchCutPercent that a watch connection drops a few seconds in.
 	ListErrorPercent, WatchExpiredPercent, WatchCutPercent int
+	// Programs is the behaviour of each detector's saved program.
+	Programs map[string]planProgram
 }
 
 // crashPoints lists every planned death.
@@ -181,6 +183,17 @@ func planFor(seed uint64) plan {
 	p.ListErrorPercent = pick(4)
 	p.WatchExpiredPercent = pick(10)
 	p.WatchCutPercent = pick(20)
+	// Drawn after everything else, so the plan above is the same as before
+	// programs were driven.
+	programModes := []programBehaviour{programRight, programRight, programRight, programWrong, programGarbage, programError, programPanic, programHang}
+	p.Programs = map[string]planProgram{}
+	for _, r := range p.Revisions {
+		for _, d := range r.Detectors {
+			if _, ok := p.Programs[d.ID]; !ok {
+				p.Programs[d.ID] = planProgram{Diagnose: programModes[pick(len(programModes))], Mitigate: programModes[pick(len(programModes))]}
+			}
+		}
+	}
 	return p
 }
 

@@ -119,6 +119,13 @@ func (c *Controller) dispatchRetryWake(next time.Time) time.Time {
 	if c.dispatchState != contracts.DispatchState_DISPATCH_STATE_PENDING || c.dispatchNextRetryAt.IsZero() {
 		return next
 	}
+	// A retry that is already due and still pending was not executed because
+	// something else holds the dispatch (an early report in flight, an expired
+	// verification deadline); that condition has its own wake. Returning the
+	// due time would spin the runtime loop until it clears.
+	if !c.dispatchNextRetryAt.After(c.clock()) {
+		return next
+	}
 	if next.IsZero() || c.dispatchNextRetryAt.Before(next) {
 		return c.dispatchNextRetryAt
 	}

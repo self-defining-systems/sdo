@@ -221,7 +221,7 @@ func (l *ResponderLoop) loadWorkingProgram(ctx context.Context, registry *workin
 	if err != nil {
 		return l.shortProgramError(id, err)
 	}
-	accepted, err := programDependencyRevision(ctx, l.Request.RepositoryWorktree, l.Request.SourceCommit, id)
+	accepted, err := programDependencyRevisionWith(l.gitRead(), ctx, l.Request.RepositoryWorktree, l.Request.SourceCommit, id)
 	if err == nil && accepted == revision {
 		if registry.overrides[id] != nil {
 			delete(registry.overrides, id)
@@ -324,7 +324,7 @@ func (l *ResponderLoop) programRevision(id string) string {
 		}
 	}
 	runs := []ProgramRun{{ProgramID: id}}
-	fillProgramRevisions(context.Background(), runs, l.Request.RepositoryWorktree, l.Request.SourceCommit)
+	fillProgramRevisionsWith(l.gitRead(), context.Background(), runs, l.Request.RepositoryWorktree, l.Request.SourceCommit)
 	return runs[0].ProgramRevision
 }
 func (l *ResponderLoop) stampProgramRuns(runs []ProgramRun) {
