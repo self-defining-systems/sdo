@@ -88,6 +88,22 @@ func (d KubernetesJobDispatcher) beforeFirstResponderClaim(ctx context.Context, 
 		proto.Reset(report)
 		proto.Merge(report, updated)
 	}
+	// Health recovery and attribution are separate facts. A historical receipt
+	// may fail settlement even though independent detectors confirm that no work
+	// remains. Such a receipt must not force a needless model invocation.
+	if len(state.Findings) == 0 && len(response.DetectorStates) > 0 {
+		clear := true
+		for _, evaluation := range response.DetectorStates {
+			clear = clear && evaluation.Status == DetectorEvaluationClear
+		}
+		if clear {
+			report.RecoveryWait = &contracts.RecoveryWait{ExitReason: contracts.RecoveryWait_EXIT_REASON_CLEARED}
+			report.RemainingFindingFingerprints = nil
+			state.ProgramToolCalls = append([]ToolCall(nil), loop.calls...)
+			state.RepairActions = ProgramRepairReceipts(loop.applicationEvidenceLocked(), nil)
+			return state, nil
+		}
+	}
 	stage := &DeterministicResponseStage{}
 	// Old checkpoints lacking the private deadline cannot mint a fresh wait on
 	// every dispatch. Bound observation from their last immutable write receipt.
