@@ -194,9 +194,27 @@ def _with_receipt_times(outcome: AgentOutcome, receipt: dict[str, Any]) -> Agent
     closure = ledger.get("closure") or {}
     document = ledger.get("outcome_document") or {}
     timestamps = document.get("timestamps") or {}
+    from benchmarks.sregym.analysis.dispatch_timing import recover_dispatch_timing, saved_lifecycle
+
     detected, verified = _receipt_closure_times(receipt)
+    evidence: dict[str, Any] = dict(receipt) if receipt else {"incident_id": outcome.incident_id}
+    if outcome.artifacts_dir:
+        evidence["lifecycle_events"] = saved_lifecycle(Path(outcome.artifacts_dir), outcome.incident_id)
+    timing = recover_dispatch_timing(
+        {
+            "incident_id": outcome.incident_id,
+            "detected_at": outcome.detected_at,
+            "dispatched_at": outcome.dispatched_at,
+            "responder_started_at": outcome.responder_started_at,
+            "first_mitigation_applied_at": outcome.first_mitigation_applied_at,
+        },
+        evidence,
+    )
     return replace(
         outcome,
+        dispatched_at=timing.dispatched_at,
+        first_mitigation_applied_at=timing.first_mitigation_applied_at,
+        dispatch_missing_reason=timing.timing_missing_reasons.get("dispatched_at"),
         detected_at=outcome.detected_at or detected,
         resolved_at=outcome.resolved_at or verified,
         mitigation_applied_at=outcome.mitigation_applied_at

@@ -112,3 +112,32 @@ learning declines from causes with no recorded repair; see [outcomes](outcome-re
 
 
 sdo3 outcomes: see [fastloop results](fastloop-results.md#sdo3-infrastructure-outcomes-and-composites).
+
+## Dispatch-relative fastloop timing (TTF)
+
+Headline `time_to_fix_seconds` is wall time from `dispatched_at` to
+`first_mitigation_applied_at`, the first successful, non-rolled-back repair's
+**completion**, not command start or the legacy last-repair `mitigation_applied_at`.
+`time_to_resolution_from_dispatch_seconds` ends at the row's independently
+verified closure (responder completion for `playbooks-only`).
+`injection_to_dispatch_seconds` reports detection/admission separately from TTF.
+These clocks include provider waits but exclude reflection and oracle grading.
+Every JSONL/CSV row carries these fields and `timing_missing_reasons`.
+
+`analysis.dispatch_timing` joins native outcome/closure timestamps, deterministic
+stage start when recorded, and incident-scoped `responder_dispatched` events in
+exported `sdo_runtime/telemetry/lifecycle-events.jsonl` (including `.1`). The origin
+is the earliest stage start or responder dispatch. Historical native
+`dispatched_at` and row `responder_started_at` copied `detected_at` (see runtime
+`effects.go`): matching detection timestamps are rejected as aliases. Historical
+`StageReport` has no start timestamp; a deterministic report without one makes
+TTF unknown even when the later responder event exists. Never substitute detection,
+injection, first apply, worker startup, or workspace preparation for stage start.
+This is an evidence gap requiring runtime instrumentation, not a zero-duration stage.
+
+Regrade saved batches read-only with
+`uv run python -m benchmarks.sregym.analysis.regrade --batch <batch> --output <analysis>`.
+It recovers first repair completions and dispatch from saved receipts/telemetry;
+legacy last-repair or closure clocks cannot establish a missing first repair.
+Per-arm medians include only injected, non-infrastructure rows with known timing,
+with sample counts. Nulls and reversed/malformed timestamps retain reasons.

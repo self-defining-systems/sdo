@@ -86,6 +86,9 @@ class AgentOutcome:
     memory_host_activations: list[ActivationContinuity] = field(default_factory=list)
     provider_waits: tuple[ProviderWaitInterval, ...] = ()
     account_events: tuple[AccountEvent, ...] = ()
+    dispatched_at: datetime | None = None
+    first_mitigation_applied_at: datetime | None = None
+    dispatch_missing_reason: str | None = None
     detected_at: datetime | None = None
     mitigation_applied_at: datetime | None = None
     first_repair_action_at: datetime | None = None
@@ -787,6 +790,9 @@ def _outcome_fields(outcome: AgentOutcome) -> dict[str, Any]:
         "memory_host_activations": outcome.memory_host_activations,
         "provider_waits": list(outcome.provider_waits),
         "account_events": list(outcome.account_events),
+        "dispatched_at": outcome.dispatched_at,
+        "first_mitigation_applied_at": outcome.first_mitigation_applied_at,
+        "dispatch_missing_reason": outcome.dispatch_missing_reason,
         "detected_at": outcome.detected_at,
         "mitigation_applied_at": outcome.mitigation_applied_at,
         "first_repair_action_at": outcome.first_repair_action_at,
