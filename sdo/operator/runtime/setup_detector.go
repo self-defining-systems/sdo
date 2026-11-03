@@ -83,12 +83,8 @@ func (c *Controller) setupHealth(ctx context.Context, snapshot sdk.DetectionCont
 	if !c.setupIncidentFree(candidate != nil) || len(c.sourceInventoryFindings) > 0 {
 		return nil, false
 	}
-	results := map[string]setupDetection{}
+	results := evaluateDetectors(ctx, detectors, snapshot)
 	healthy := true
-	for _, detector := range detectors {
-		findings, err := sdk.DetectObserved(ctx, detector, snapshot)
-		results[detector.Spec().ID] = setupDetection{findings, err}
-	}
 	for _, id := range c.healthDetectorIDs {
 		result, found := results[id]
 		if !found || result.err != nil || len(result.findings) != 0 || !detectorConfirmed(c.detectors[id], snapshot) {

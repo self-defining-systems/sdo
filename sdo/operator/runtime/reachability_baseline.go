@@ -21,6 +21,7 @@ func objectiveDigest(objective string) string {
 // finding, error, missing objective, or incident detector can authorize a baseline.
 func healthyBaselineGoal(ctx context.Context, detectors []sdk.Detector, snapshot sdk.DetectionContext) (bool, error) {
 	objective := false
+	var health []sdk.Detector
 	for _, detector := range detectors {
 		spec := detector.Spec()
 		if spec.Class != sdk.DetectorClassHealth {
@@ -29,10 +30,15 @@ func healthyBaselineGoal(ctx context.Context, detectors []sdk.Detector, snapshot
 		if spec.ID == "service-reachability" {
 			continue
 		}
+		health = append(health, detector)
+	}
+	evaluated := evaluateDetectors(ctx, health, snapshot)
+	for _, detector := range health {
+		spec := detector.Spec()
 		if spec.ID == "health-objective" {
 			objective = true
 		}
-		findings, err := sdk.DetectObserved(ctx, detector, snapshot)
+		findings, err := evaluated[spec.ID].findings, evaluated[spec.ID].err
 		if err != nil {
 			return false, fmt.Errorf("healthy baseline %s: %w", spec.ID, err)
 		}

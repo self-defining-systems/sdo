@@ -102,8 +102,53 @@ func (p plan) String() string {
 		p.Seed, len(p.Revisions), p.Quiesce, p.ControllerCrashes, describeCrashes(p.crashPoints()), p.HostCrashes, p.Agents, p.APIErrorPercent, p.CommitThenTimeoutPercent, p.ReadErrorPercent, p.ListErrorPercent, p.WatchExpiredPercent, p.WatchCutPercent, p.CacheLag)
 }
 
+// Two seeds are fixed scenarios, not drawn from the random plans: each
+// property they pin needs a coincidence a random seed reaches only rarely.
+const (
+	// hungBatchSeed: several detectors hang in the same evaluation batch as an
+	// ordinary one, which must still be evaluated within its bound.
+	hungBatchSeed = 65
+	// openedCrashSeed: the process dies the instant the incident_opened event
+	// is recorded. That incident must end or never have been announced.
+	openedCrashSeed = 66
+)
+
+// scenarioPlan is a plan of one revision whose detectors are all due every
+// second, a fault object broken for each, and no other fault.
+func scenarioPlan(seed uint64, detectors []planDetector) plan {
+	p := plan{Seed: seed, Quiesce: 90 * time.Second, Settle: 150 * time.Second}
+	for i := range detectors {
+		detectors[i].Interval = time.Second
+		p.Breaks = append(p.Breaks, planBreak{Detector: detectors[i].ID, At: time.Duration(5+i) * time.Second})
+	}
+	p.Revisions = []planRevision{{Name: "r0", Detectors: detectors}}
+	return p
+}
+
+// hungBatchPlan is one ordinary detector and four that hang.
+func hungBatchPlan() plan {
+	detectors := []planDetector{{ID: "alpha0", Behaviour: behaveNormal}}
+	for _, id := range []string{"bravo0", "charlie0", "delta0", "echo0"} {
+		detectors = append(detectors, planDetector{ID: id, Behaviour: behaveHang})
+	}
+	return scenarioPlan(hungBatchSeed, detectors)
+}
+
+// openedCrashPlan is one ordinary detector and a death at the first open event.
+func openedCrashPlan() plan {
+	p := scenarioPlan(openedCrashSeed, []planDetector{{ID: "alpha0", Behaviour: behaveNormal}})
+	p.Crashes = []crashPoint{{crashOpenedAfter, 1}}
+	return p
+}
+
 // planFor derives a plan from a seed. Seed 0 has no faults at all.
 func planFor(seed uint64) plan {
+	switch seed {
+	case hungBatchSeed:
+		return hungBatchPlan()
+	case openedCrashSeed:
+		return openedCrashPlan()
+	}
 	rng := rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
 	pick := func(n int) int { return rng.IntN(n) }
 	seconds := func(lo, hi int) time.Duration { return time.Duration(lo+pick(hi-lo+1)) * time.Second }

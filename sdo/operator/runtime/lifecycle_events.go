@@ -127,15 +127,33 @@ func (c *Controller) SetLifecycleSink(sink LifecycleSink) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.lifecycleSink = sink
+	if c.stateRestored {
+		c.reemitOpenedLocked()
+	}
 }
 
 // emitLifecycleLocked records one lifecycle transition. Callers hold c.mu; the
 // sink takes its own lock, so there is no lock-order hazard. A nil sink makes
 // this a no-op, matching emitFiringLocked.
+//
+// incident_opened waits for the durable save that contains its incident
+// (releaseLifecycle): the incident id derives from the clock, so an open
+// event for an incident that was never saved is never matched by a later one
+// and stays open forever. Every other phase names an incident that is already
+// durable, and a replay re-derives its identical id, so it is recorded at once.
 func (c *Controller) emitLifecycleLocked(event *contracts.LifecycleEvent) {
 	if c.lifecycleSink == nil {
 		return
 	}
+	c.stampLifecycleLocked(event)
+	if event.Event == PhaseOpened && c.stateStore != nil {
+		c.pendingLifecycle = append(c.pendingLifecycle, event)
+		return
+	}
+	c.recordLifecycleLocked(event)
+}
+
+func (c *Controller) stampLifecycleLocked(event *contracts.LifecycleEvent) {
 	event.SchemaVersion = LifecycleSchemaVersion
 	event.Application = c.config.Application
 	event.Namespace = c.config.Namespace
@@ -143,9 +161,48 @@ func (c *Controller) emitLifecycleLocked(event *contracts.LifecycleEvent) {
 	if event.EventId == "" {
 		event.EventId = lifecycleEventID(event.IncidentId, event.Event)
 	}
+}
+
+func (c *Controller) recordLifecycleLocked(event *contracts.LifecycleEvent) {
 	if err := c.lifecycleSink.RecordLifecycle(event); err != nil && c.OnError != nil {
 		c.OnError(fmt.Errorf("record incident lifecycle event: %w", err))
 	}
+}
+
+// queuedLifecycle is how many events a state save started now will contain:
+// each was queued in the same critical section that changed the state.
+func (c *Controller) queuedLifecycle() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.pendingLifecycle)
+}
+
+// releaseLifecycle records the first n queued events once a save that
+// contained their state is durable.
+func (c *Controller) releaseLifecycle(n int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n = min(n, len(c.pendingLifecycle))
+	for _, event := range c.pendingLifecycle[:n] {
+		c.recordLifecycleLocked(event)
+	}
+	c.pendingLifecycle = append([]*contracts.LifecycleEvent(nil), c.pendingLifecycle[n:]...)
+}
+
+// reemitOpenedLocked records incident_opened for a restored open incident. The
+// process may have died after the save and before the event was recorded; the
+// sink drops it when it was (same event id).
+func (c *Controller) reemitOpenedLocked() {
+	request := c.currentIncidentRequest
+	if c.lifecycleSink == nil || !c.incidentOpen || request == nil || c.incidentDetectedAt.IsZero() {
+		return
+	}
+	event := &contracts.LifecycleEvent{
+		Event: PhaseOpened, RecordedAt: contractTimestamp(c.incidentDetectedAt), IncidentId: request.IncidentID,
+		FindingKeys: append([]string(nil), c.incidentFindingKeys...), SurfacedPlaybooks: playbookIDs(request.SurfacedPlaybooks),
+	}
+	c.stampLifecycleLocked(event)
+	c.recordLifecycleLocked(event)
 }
 
 // TimelineEntry is one event in a reconstructed incident timeline, from either

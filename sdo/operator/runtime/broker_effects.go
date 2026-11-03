@@ -558,6 +558,13 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 	var denied, gone []string
 	evaluated := 0
 	var active []string
+	var toRead []sdk.Detector
+	for _, id := range ordered {
+		if detector := c.detectors[id]; detector != nil {
+			toRead = append(toRead, detector)
+		}
+	}
+	reads := readRecoveryDetectors(ctx, toRead, snapshot)
 	for _, id := range ordered {
 		detector := c.detectors[id]
 		if detector == nil && !slices.Contains(c.healthDetectorIDs, id) {
@@ -571,7 +578,8 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 			return contradicted("closure observation detector %s is unavailable", id)
 		}
 		evaluated++
-		findings, status, err := readRecoveryDetector(ctx, detector, snapshot)
+		read := reads[id]
+		findings, status, err := read.findings, read.status, read.err
 		observations = append(observations, recoveryObservation{ID: id, Findings: findings, Status: status, Error: err, Reason: detectorConfirmationReason(detector, snapshot)})
 		state := DetectorEvaluation{DetectorID: id, EvaluatedAt: c.clock(), Status: status, Fingerprints: findingFingerprints(findings), Reason: detectorConfirmationReason(detector, snapshot)}
 		if err != nil {

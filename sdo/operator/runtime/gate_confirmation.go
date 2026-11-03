@@ -105,9 +105,10 @@ func (c *Controller) observeGate(detectorID string, now time.Time, findings []sd
 func (c *Controller) probeGate(
 	ctx context.Context, now time.Time, snapshot sdk.DetectionContext, probes []sdk.Detector,
 ) {
+	evaluated := evaluateDetectors(ctx, probes, snapshot)
 	for _, detector := range probes {
 		spec := detector.Spec()
-		findings, err := sdk.DetectObserved(ctx, detector, snapshot)
+		findings, err := evaluated[spec.ID].findings, evaluated[spec.ID].err
 		if err == nil {
 			for index := range findings {
 				if findings[index].DetectorID == "" {
