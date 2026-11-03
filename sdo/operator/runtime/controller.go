@@ -630,7 +630,9 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		c.setupEvaluatedRevision = c.config.SourceCommit
 		c.mu.Unlock()
 	}
-	c.finishOnboarding(ctx, onboardingCandidate, sampleFindings, errored, now)
+	if err := c.finishOnboarding(ctx, onboardingCandidate, sampleFindings, errored, now); err != nil {
+		return err
+	}
 	if deferInventory && c.pendingOnboarding == nil {
 		c.observeSourceInventory(now)
 	}
@@ -983,8 +985,12 @@ func (c *Controller) nextWake() (time.Time, string) {
 		earlyDeadline = c.earlyReportWakeLocked()
 		earlyReason = "early report"
 	}
+	externalCompleted := c.config.ExternalIncidentsOnly && c.incidentOpen && c.responderDone
 	retireDeadline := c.retirementWakeLocked(c.clock())
 	c.mu.Unlock()
+	if externalCompleted {
+		consider(c.clock(), "external responder completion")
+	}
 	consider(retireDeadline, "incident retirement")
 	consider(earlyDeadline, earlyReason)
 	if verificationPending {
