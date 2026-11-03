@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"runtime"
 	"sort"
 	"sync"
@@ -261,18 +260,47 @@ func (h *harness) activate(ctx context.Context, rev planRevision) error {
 		return err
 	}
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	h.active, h.remote, h.revision = host, remote, rev
 	for _, d := range rev.Detectors {
 		if d.Behaviour == behaveHang {
 			h.hung[d.ID] = true
 		}
 	}
-	h.rec.Add(sim.Activated{At: h.now(), Revision: rev.Name, Detectors: h.declsOf(rev)})
-	if h.ctl != nil {
-		return h.ctl.ReconfigureMemory(remote, h.ctl.provider, h.now().UTC())
+	ctl := h.ctl
+	if ctl == nil {
+		h.rec.Add(sim.Activated{At: h.now(), Revision: rev.Name, Detectors: h.declsOf(rev)})
 	}
-	return nil
+	h.mu.Unlock()
+	if ctl == nil {
+		return nil
+	}
+	return h.reconfigure(ctl, remote, rev)
+}
+
+// reconfigure swaps the running controller to the activated memory. Production
+// swaps on the controller loop, between passes, and every reader of the
+// scheduler and provider holds the observation lock; this goroutine is not the
+// loop, so it takes the same lock and the swap lands between two passes. A pass
+// holds the lock across virtual time (an API call waiting out a fault), and a
+// goroutine blocked on a mutex keeps the bubble's clock from advancing, so the
+// lock is polled with a sleep. It is taken without h.mu: a pass in flight calls
+// into the fault layer, which takes h.mu.
+func (h *harness) reconfigure(c *Controller, remote *RemoteMemory, rev planRevision) error {
+	// test-polling: allow -- a mutex wait is not durable in the bubble; a sleep is
+	for !c.observationMu.TryLock() {
+		time.Sleep(10 * time.Millisecond)
+	}
+	defer c.observationMu.Unlock()
+	h.rec.Add(sim.Activated{At: h.now(), Revision: rev.Name, Detectors: h.declsOf(rev)})
+	return c.ReconfigureMemory(remote, providerOf(c), h.now().UTC())
+}
+
+// providerOf reads the controller's snapshot provider, which a memory swap
+// replaces under c.mu.
+func providerOf(c *Controller) SnapshotProvider {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.provider
 }
 
 func (h *harness) crashHost() {
@@ -419,14 +447,14 @@ func (h *harness) runController(ctx context.Context) {
 		h.mu.Unlock()
 		err := RunWithOptions(runCtx, remote.Detectors, RuntimeOptions{
 			Args: args, Stdout: h.out, Stderr: h.out, Client: h.clientFor("sdo-controller", inc, true), Dispatcher: harnessAgent{h, inc}, AcceptedScope: harnessAcceptedScope, PlanGit: harnessPlanGit,
-			Programs: remote.Programs, InformerSync: fastSyncPolicy(), InformerResync: 10 * time.Minute, TerminationLogPath: filepath.Join(h.t.TempDir(), "termination-log"),
+			Programs: remote.Programs, InformerSync: fastSyncPolicy(), InformerResync: 10 * time.Minute,
 			Wired: func(c *Controller) {
 				c.SetLifecycleSink(tapSink{h, inc})
 				h.mu.Lock()
 				defer h.mu.Unlock()
 				h.ctl = c
 				if h.revision.Name != revision.Name {
-					_ = c.ReconfigureMemory(h.remote, c.provider, h.now().UTC())
+					_ = c.ReconfigureMemory(h.remote, providerOf(c), h.now().UTC())
 				}
 			},
 		})

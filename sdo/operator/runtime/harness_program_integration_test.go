@@ -200,15 +200,16 @@ func (h *harness) responderLoop(inc *incarnation, request IncidentRequest) *Resp
 		return nil
 	}
 	client := h.clientFor("sdo-controller", inc, true)
+	provider := providerOf(c)
 	executor := PlanExecutor{
 		Client:   TypedPlanClient{Client: client},
 		Source:   rendered.Source{Repository: h.repo, Git: harnessPlanGit},
 		Now:      time.Now,
 		Sleep:    func(ctx context.Context, d time.Duration) error { return sleepContext(ctx, d) },
 		Rollouts: harnessRollouts{},
-		Verifier: PlanHealthVerifier{Detectors: remote.Detectors, Provider: c.provider, Timeout: 20 * time.Second, PollInterval: time.Second},
+		Verifier: PlanHealthVerifier{Detectors: remote.Detectors, Provider: provider, Timeout: 20 * time.Second, PollInterval: time.Second},
 	}
-	loop := NewResponderLoop(request, remote.Programs, c.provider, remote.Detectors, executor, 5)
+	loop := NewResponderLoop(request, remote.Programs, provider, remote.Detectors, executor, 5)
 	source := rendered.Source{Repository: h.repo, Git: harnessPlanGit}
 	loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
 		return LiveReadView{Carrier: inputs.New(snapshot), Context: context.Background(), Client: client, Source: source, SourceCommit: harnessAcceptedCommit}
