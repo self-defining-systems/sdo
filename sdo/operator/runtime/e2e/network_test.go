@@ -27,7 +27,7 @@ import (
 // need. Every application Pod gets a loopback twin (127.1.x.y) and a real
 // listener on each declared container port; every Service gets a loopback
 // address (127.2.x.y) whose listeners forward to a ready Pod's target port, or
-// reset the connection when there is none, as kube-proxy's reject rule does.
+// refuse the connection when the selected upstream cannot accept TCP.
 // Names resolve through a hosts file the sandboxes bind over /etc/hosts.
 type network struct {
 	mu        sync.Mutex
@@ -123,7 +123,6 @@ func (k *Kubelet) reconcileNetwork(ctx context.Context) error {
 		selector := labels.SelectorFromSet(service.Spec.Selector)
 		for _, port := range service.Spec.Ports {
 			key := fmt.Sprintf("%s:%d", serviceKey, port.Port)
-			wanted[key] = true
 			target := ""
 			if len(service.Spec.Selector) > 0 {
 				for p := range pods.Items {
@@ -147,6 +146,15 @@ func (k *Kubelet) reconcileNetwork(ctx context.Context) error {
 					break
 				}
 			}
+			// Accepting here and resetting after an upstream dial falsely makes
+			// every TCP health probe succeed, even for a broken targetPort.
+			// Only expose the virtual Service while its endpoint accepts TCP.
+			upstream, err := net.DialTimeout("tcp", target, 100*time.Millisecond)
+			if err != nil {
+				continue
+			}
+			_ = upstream.Close()
+			wanted[key] = true
 			f, ok := n.svcSocks[key]
 			if !ok {
 				l, err := net.Listen("tcp", net.JoinHostPort(ip, fmt.Sprint(port.Port)))
