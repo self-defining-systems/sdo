@@ -35,7 +35,7 @@ def test_extended_checks_have_scheduled_and_manual_coverage() -> None:
     assert "schedule" in triggers
     assert "workflow_dispatch" in triggers
     assert "images" in config["jobs"]
-    commands = "\n".join(step.get("run", "") for step in config["jobs"]["extended"]["steps"])
+    commands = "\n".join(step.get("run", "") for step in config["jobs"]["go"]["steps"])
     assert "scripts/test_go_ci.sh nightly" in commands
     assert commands.count("-fuzztime=30s") == 2
 
@@ -204,7 +204,7 @@ def test_envtest_binaries_are_cached_by_pinned_version_in_pr_and_nightly_go_jobs
     )
     assert version is not None
     nightly = yaml.safe_load((ROOT / ".github/workflows/nightly.yml").read_text())
-    for config, job in ((workflow(), "tests"), (nightly, "go-heavy")):
+    for config, job in ((workflow(), "tests"), (nightly, "go")):
         steps = [s for s in config["jobs"][job]["steps"] if s.get("with", {}).get("path") == "~/.cache/sdo-envtest"]
         assert len(steps) == 1, job
         assert steps[0]["uses"].startswith("actions/cache@"), "must save after a miss"
@@ -213,15 +213,10 @@ def test_envtest_binaries_are_cached_by_pinned_version_in_pr_and_nightly_go_jobs
 
 
 def test_kube_conformance_runs_on_every_pr() -> None:
-    listed = {
-        line
-        for path in (ROOT / "scripts/ci_nightly_go_tests").glob("*.txt")
-        for line in path.read_text().splitlines()
-        if line and not line.startswith("#")
-    }
-    assert "TestKubeConformance" not in listed
     defined = "\n".join(p.read_text() for p in (ROOT / "sdo/operator/runtime/sim").glob("*_test.go"))
-    assert re.search(r"^func TestKubeConformance\(", defined, re.MULTILINE)
+    match = re.search(r"^func TestKubeConformance\(.*?^}", defined, re.MULTILINE | re.DOTALL)
+    assert match, "TestKubeConformance moved"
+    assert "testing.Short()" not in match[0], "PR CI runs -short; conformance must not skip itself"
 
 
 @pytest.mark.parametrize("mode", ["pr", "nightly"])
@@ -236,30 +231,22 @@ def test_go_runner_keeps_integration_coverage_in_one_package_scheduler(tmp_path:
         check=True,
     )
     invocations = [shlex.split(line) for line in calls.read_text().splitlines()]
-    assert len(invocations) == (1 if mode == "pr" else 2)
+    assert len(invocations) == 1
     for args in invocations:
         assert "-tags=integration" in args
     assert "./sdo/operator/..." in invocations[0]
-    nightly_names = [
-        line
-        for path in sorted((ROOT / "scripts/ci_nightly_go_tests").glob("*.txt"))
-        for line in path.read_text().splitlines()
-        if line and not line.startswith("#")
-    ]
-    if mode == "pr":
-        skip = invocations[0][invocations[0].index("-skip") + 1]
-        for name in nightly_names:
-            assert re.search(skip, name)
-        for name in (
-            "TestGeneratedDetectorsImportAcceptedDetectors",
-            "TestCompileStageDiagnostics",
-            "TestSimTrustedFastPathNeverRollsBackACorrectFix",
-            "TestMemoryHostWorkspaceStagesAcceptedMemory",
-        ):
-            assert not re.search(skip, name)
-    else:
-        skip = invocations[0][invocations[0].index("-skip") + 1]
-        assert all(not re.search(skip, name) for name in nightly_names)
+    assert ("-short" in invocations[0]) == (mode == "pr")
+    assert ("-race" in invocations[0]) == (mode == "nightly")
+    assert "-skip" not in invocations[0], "tests choose their own tier with testing.Short; there are no name lists"
+    assert not (ROOT / "scripts/ci_nightly_go_tests").exists()
+
+
+def test_short_skips_are_only_for_tests_that_name_nightly() -> None:
+    """A -short skip must say nightly runs the test, and no test may skip silently."""
+    for path in ROOT.glob("sdo/**/*_test.go"):
+        text = path.read_text()
+        for match in re.finditer(r"if testing\.Short\(\) \{\n\s*t\.Skip\((.*)\)", text):
+            assert "nightly CI runs it without -short" in match[1], f"{path}: {match[1]}"
 
 
 @pytest.mark.parametrize("script", ["run_tests.sh"])
@@ -360,20 +347,3 @@ def test_checks_job_delegates_duplicated_work_to_the_suites_that_run_it() -> Non
     assert "go list -export ./..." in (ROOT / "scripts/check_go_mains.sh").read_text(), (
         "go build ./... links every command"
     )
-
-
-def test_nightly_lists_name_only_existing_go_tests() -> None:
-    """A stale entry silently skips nothing; each one must match a defined Go test."""
-    listed = {
-        line
-        for path in (ROOT / "scripts/ci_nightly_go_tests").glob("*.txt")
-        for line in path.read_text().splitlines()
-        if line and not line.startswith("#")
-    }
-    defined = {
-        match
-        for path in ROOT.glob("**/*_test.go")
-        if "third_party" not in path.parts and "node_modules" not in path.parts
-        for match in re.findall(r"^func ((?:Test|Fuzz)\w*)\(", path.read_text(), re.MULTILINE)
-    }
-    assert sorted(listed - defined) == []

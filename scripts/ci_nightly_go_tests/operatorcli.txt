@@ -1,7 +1,0 @@
-# Repeated end-to-end builds; PRs retain builder compilation smoke, validator
-# rule tests, broker ownership tests and CLI error/JSON diagnostic contracts.
-TestMemoryNewDetectorScaffoldsBuildVetAndPassTheirTests
-# Dev operator end-to-end checks that compile detectors through the builder
-# (10-60 s each). PRs keep validator rule tests, broker ownership tests, the CLI
-# diagnostic contracts and the non-compiling halves of each pair.
-# operatorcli: tests of 1.5 s or more. PRs keep the rest, e.g. TestSimEvidenceSchedule, TestRestartClassSnapshotTransport, TestCredentialLeavesAcrossSharedShapes.

@@ -39,7 +39,7 @@ downloads the binaries into `$SDO_ENVTEST_CACHE` (default the user cache dir; on
 controller manager, scheduler or kubelet: nothing reconciles, Pods stay Pending, and namespaces never finish
 terminating. PR and nightly CI cache the binaries in `~/.cache/sdo-envtest`, keyed by the Kubernetes version
 (bump the key with `envtestio.KubernetesVersion`); a cache miss downloads them once. Tests that start it belong in
-the nightly list (`scripts/ci_nightly_go_tests/`) unless they stay well under PR CI's budget.
+`if testing.Short() { t.Skip(...) }` (PR CI passes `-short`; nightly does not) unless they stay well under PR CI's budget.
 
 ## Test organization
 
@@ -1156,11 +1156,17 @@ The reader measures canonical Codex response items or Claude messages, including
 
 `//go:build integration` marks a test file that itself references real time, environment,
 processes or sockets (`docs/go-purity.md`). It does not decide whether a test runs in PR CI;
-the nightly list does. A file that only calls a tagged helper loses its tag when the helper
+`-short` and the nightly job do. A file that only calls a tagged helper loses its tag when the helper
 moves behind a declared edge (`internal/testutil/gitio`, `internal/testutil/toolio`) or takes an
 injected instant. Run `go vet ./...` with and without `-tags=integration` after retagging.
 
 ## Heavy tests must earn their cost
+
+PR CI runs `go test -short`; nightly runs the same packages with `-race`, without `-short`, and with full
+simulation seeds (`SDO_SIM_FULL=1`). A test that takes 10 s or more skips itself under `testing.Short()`
+and says that nightly runs it. Today: `TestAssuranceSeedsPassHealthJudgeCheck`,
+`TestWorkedExamplesPassTheReflectionMemoryCheck`, `TestMemoryNewDetectorScaffoldsBuildVetAndPassTheirTests`.
+There are no name lists.
 
 A test over about 2 s, or one that builds, spawns or connects for real, stays only if it catches a
 deliberate production fault that no cheaper test catches: apply the fault, the fast suite passes,
