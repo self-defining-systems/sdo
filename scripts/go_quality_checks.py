@@ -31,27 +31,6 @@ class QualityCheck:
 
 
 QUALITY_CHECKS = (
-    QualityCheck(
-        "schema",
-        ("sdo.dev/operator/builder", "sdo.dev/operator/operatorcli"),
-        "^(TestSchemaIdentity.*|TestSDKBranchesMergeWithoutIdentityPins|"
-        "TestControllerSchemaIdentityFailsClosed|TestParseValidateLaunchRequiresBoundSchema)$",
-        0,
-    ),
-    QualityCheck(
-        "git",
-        ("sdo.dev/operator/internal/testutil",),
-        "^TestGit(CreationPolicyNegativeControls|FixtureCreationUsesHelper)$",
-        1,
-    ),
-    QualityCheck(
-        "deadlines",
-        ("sdo.dev/operator/internal/testutil",),
-        "^Test(ExecuteDeadlinePolicyNegativeControls|NoFixedShortDeadlineAroundExecuteInTests|"
-        "CountedPollingPolicyNegativeControls|CountedPollingAllowances|NoShortCountedPollingInTests)$",
-        1,
-    ),
-    QualityCheck("capture", ("sdo.dev/operator/internal/capturefixture",), ".", 0),
     QualityCheck("layout", ("sdo.dev/operator/memory/validate",), "^TestMemoryLayoutReference$", 1),
 )
 

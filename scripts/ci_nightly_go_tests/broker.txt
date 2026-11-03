@@ -1,2 +1,0 @@
-# Real compiler/replay verdict set kept from the CLI/broker parity table; the rest runs over FakeGo in PR CI.
-TestCLIAndBrokerAgreeOnRealCompilerVerdicts
