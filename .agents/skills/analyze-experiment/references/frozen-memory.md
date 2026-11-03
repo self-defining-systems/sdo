@@ -28,3 +28,9 @@ Use the oracle result for success. `incident_resolution_scope` is
 resolution projection is the responder-completion row boundary, not a health claim.
 Trigger/detection time is controller admission after injection; first successful
 repair action and responder completion populate the ordinary timing fields.
+
+For playbooks-only, the common injection-to-detection, mitigation and resolution
+metrics start at injection end; raw injection-to-mitigation remains anchored at
+injection start. `first_repair_action_at` is the earliest successful repair's
+start; `injection_to_first_repair_action_seconds` and
+`injection_to_responder_done_seconds` use the same arm-specific origin.

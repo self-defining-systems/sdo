@@ -1101,3 +1101,21 @@ def test_program_metrics_preserves_resolution_path(path: str) -> None:
     from benchmarks.sregym.fastloop.sdo_agent import _program_metrics
 
     assert _program_metrics({"resolution_path": path})["resolution_path"] == path
+
+
+def test_external_receipt_recovers_completion_time_after_ack_retired_payload():
+    from benchmarks.sregym.fastloop.sdo_agent import _receipt_closure_times
+
+    detected = datetime(2026, 11, 3, tzinfo=timezone.utc)
+    completed = detected + timedelta(seconds=12)
+    receipt = {
+        "native_ledger": {
+            "closure": {
+                "request": {"external_message": "Investigate"},
+                "detected_at": detected.isoformat(),
+                "responder_completed_at": completed.isoformat(),
+            },
+            "outcome_document": {"classification": "unconfirmed", "timestamps": {"detected_at": detected.isoformat()}},
+        },
+    }
+    assert _receipt_closure_times(receipt) == (detected, completed)

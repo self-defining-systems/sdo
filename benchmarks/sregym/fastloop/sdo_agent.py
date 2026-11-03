@@ -172,6 +172,9 @@ def _receipt_closure_times(receipt: dict[str, Any]) -> tuple[datetime | None, da
     document = ledger.get("outcome_document") or {}
     timestamps = document.get("timestamps") or {}
     detected = _timestamp(timestamps.get("detected_at"))
+    closure = ledger.get("closure") or {}
+    if (closure.get("request") or {}).get("external_message"):
+        return detected or _timestamp(closure.get("detected_at")), _timestamp(closure.get("responder_completed_at"))
     verified = _timestamp(timestamps.get("verified_at"))
     recorded = _timestamp(receipt.get("recorded_at"))
     phases = receipt.get("phase_timings_seconds")

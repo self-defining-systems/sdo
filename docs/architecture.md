@@ -679,6 +679,7 @@ and executor checks govern execution; the benchmark adapter owns strict experime
 
 | Capability | Repository implementation | Status | Evidence and limit |
 |---|---|---|---|
+| External incident admission | `runtime/external_incident.go`, `internal/lifecycleio/external_incident.go` | Active, frozen mode | Generic namespace alerts use durable dispatch; responder completion has no detector health assertion. The benchmark owns alert timing and oracle grading. |
 | Public lifecycle | `sdo/operator/operatorcli/`, `lifecycle/`, `deployment/`, `artifacts/` | Active | Go host and in-cluster operate coordinate sequential role-owned proposals with trusted deployment and health evidence. |
 | Lifecycle decisions | `sdo/operator/lifecycle/`, `artifacts/`, `deployment/` | Active | Source receipt binds the candidate tree, observed immutable images, and selected manifest paths; architecture cites the broker-accepted source commit. The broker carries the paths through accepted source recovery into the controller launch. |
 | Modular agent registration | `sdo/contracts/proto/.../worker.proto`, `sdo/operator/worker_registry/`, `sdo/agents/registrations/` | Active | Strict ProtoJSON capabilities and typed task/result URLs select workers without assuming Python or a model provider; Kubernetes Jobs mount isolated proposal checkouts. |
@@ -738,6 +739,10 @@ Explicit memory adoption is compile-only and does not establish health provenanc
 
 ## Artifact ownership matrix
 
+External alert inboxes, completion checkpoints and frozen outcome ledgers remain
+private runtime evidence outside `.sdo/`. They add no durable artifact class and
+cannot alter accepted outcomes, program trust or prompt memory.
+
 Menu options and parameters are agent tool requests. Sessions and reports are presentation state;
 ordinary incident counters use the existing tools-state CAS document outside `.sdo/`.
 Only the broker publishes derived incident outcomes. Controller-owned `prior_stages` records retain automatic and agent-stage evidence; agents cannot author their own prior-stage receipts.
@@ -784,6 +789,8 @@ Source inventory drift compares top-level non-secret informer objects against a 
 
 | Path | Scope decision |
 |---|---|
+| `sdo/operator/runtime/external_incident.go`, `runtime/internal/lifecycleio/external_incident.go` | Production external-alert admission and Kubernetes inbox edge. No fault or oracle context. |
+| `benchmarks/sregym/fastloop/ablation.py`, `adapter/persistent.py` (external alert delivery) | Benchmark-only fixed-memory selection, post-injection generic alert and responder-completion/oracle timing. |
 | `sdo/agents/` | Production agent implementations with one capped prompt renderer, per-placeholder budgets and private session context files (outside durable memory), plus direct reflection and judge file authoring; contract types are generated protobuf messages; built-in agents may use Codex or Claude internally. |
 | `sdo/contracts/proto/`, `sdo/contracts/_gen/` | Canonical language-neutral task/result and outcome schemas, with generated Python messages. |
 | `sdo/operator/worker_registry/standby*.go`, `operatorcli/standby.go` | Production one-shot responder standby, private filesystem claim and daemon entrypoints; no benchmark imports. |
