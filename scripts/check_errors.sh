@@ -33,7 +33,9 @@ check() {
 mode="${1:-}"
 case "$mode" in
     --go-only) exec bash "$SCRIPT_DIR/check_go_errors.sh" "${@:2}" ;;
-    ""|--fix|--python-suite) check bash "$SCRIPT_DIR/check_go_errors.sh" ;;
+    ""|--fix) check bash "$SCRIPT_DIR/check_go_errors.sh" ;;
+    # The Go tests job runs the contract parity tests; skip them here.
+    --python-suite) check bash "$SCRIPT_DIR/check_go_errors.sh" --skip-go-tests ;;
     --python-only) ;;
     *) echo "unknown check mode: $mode" >&2; exit 2 ;;
 esac
@@ -44,6 +46,9 @@ uv run python scripts/check_pytest_imports.py
 
 # Source-scanning invariants must run even when focused tests omit their package.
 # Keep this selection free of integration tests and long property-test sweeps.
+# --python-suite delegates them to the concurrently running full Python suite,
+# which contains every file named here.
+if [[ "$mode" != --python-suite ]]; then
 echo "==> Python fast repository ratchets"
 uv run --extra test python -m pytest -q -p no:tach \
     tests/unit/test_polling_policy.py \
@@ -58,6 +63,7 @@ uv run --extra test python -m pytest -q -p no:tach \
     tests/unit/sdo/agents/prompts/test_context_registry.py \
     tests/unit/sdo/agents/prompts/test_required_content.py \
     tests/unit/sdo/agents/responder/test_incident_context.py::test_many_stage_attempts_cannot_displace_bounded_first_prompt
+fi
 
 echo "==> shipped skill size budgets"
 uv run python scripts/check_skill_sizes.py
@@ -95,4 +101,7 @@ fi
 echo "==> types (scripts/type_check.sh)"
 check "$SCRIPT_DIR/type_check.sh"
 
-check "$SCRIPT_DIR/check_contracts_fast.sh" --python-only
+# tests/unit/sdo/contracts is part of the full Python suite that --python-suite runs.
+if [[ "$mode" != --python-suite ]]; then
+    check "$SCRIPT_DIR/check_contracts_fast.sh" --python-only
+fi

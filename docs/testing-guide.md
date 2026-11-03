@@ -203,6 +203,11 @@ to fit one of these patterns, or put it in one of these places, so the local
 gate picks it up. For example, adding an outcome classification to the proto
 without listing its Go constant fails `TestClassificationsMatchProto` here.
 
+In hosted CI the checks job runs `check_errors.sh --python-suite`, which skips the
+Go parity tests (the Go tests job runs them), the fast Python ratchets and the
+Python contract tests (the full Python suite contains them), and compiles the
+operator with `go list -export` instead of linking every command.
+
 The responder command guide is generated from the production CLI definitions and
 checked in seconds by `scripts/check_errors.sh`. After changing the command surface,
 run `uv run python -m sdo.agents.responder.command_reference` and commit the updated

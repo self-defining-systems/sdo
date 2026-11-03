@@ -11,9 +11,13 @@ bash "$SCRIPT_DIR/check_actions.sh"
 # Local checks execute these tests here. CI prepares the same packages and
 # runs the same selections/timeouts in its existing native contract jobs.
 quality_mode=()
+run_parity=1
 case "${1:-}" in
     "") ;;
     --defer-prepared) quality_mode=(--defer-prepared) ;;
+    # The hosted Go tests job already runs the contract modules and the
+    # runtime proto-mirror tests; the checks job skips the second run.
+    --skip-go-tests) run_parity=0; quality_mode=(--defer-prepared) ;;
     *) echo "unknown Go check mode: $1" >&2; exit 2 ;;
 esac
 echo "==> generated skill references"
@@ -44,9 +48,6 @@ echo "==> Go nondeterminism ratchet"
 echo "==> go mains (benchmarks/)"
 "$SCRIPT_DIR/check_go_mains.sh"
 
-# Runtime parity tests need the full runtime test archive. Wait for its
-# independent compiler instead of starting a second cold compile of it.
-if [[ -n "${SDO_GO_RUNTIME_READY:-}" ]]; then
-    read -r -t 230 ready < "$SDO_GO_RUNTIME_READY"
+if [[ "$run_parity" == 1 ]]; then
+    "$SCRIPT_DIR/check_contracts_fast.sh" --go-only
 fi
-"$SCRIPT_DIR/check_contracts_fast.sh" --go-only

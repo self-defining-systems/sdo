@@ -329,6 +329,26 @@ def test_architecture_delegation_requires_the_full_python_suite() -> None:
     assert "--ignore=tests/unit/test_architecture.py" not in commands
 
 
+def test_checks_job_delegates_duplicated_work_to_the_suites_that_run_it() -> None:
+    """--python-suite must not repeat what the full Python suite or the Go tests job runs."""
+    script = (ROOT / "scripts/check_errors.sh").read_text()
+    ignored = {
+        Path(arg.removeprefix("--ignore=")).name
+        for step in workflow()["jobs"]["checks"]["steps"]
+        for arg in step.get("run", "").replace("\\\n", " ").split()
+        if arg.startswith("--ignore=")
+    }
+    ratchets = {Path(path.split("::")[0]).name for path in re.findall(r"tests/unit/\S+\.py(?:::\w+)?", script)}
+    assert ratchets, "the fast ratchet selection moved"
+    assert not ratchets & ignored, "a ratchet delegated to the full suite must not be ignored there"
+    go_errors = (ROOT / "scripts/check_go_errors.sh").read_text()
+    assert '--python-suite) check bash "$SCRIPT_DIR/check_go_errors.sh" --skip-go-tests' in script
+    assert "run_parity=0" in go_errors  # the Go tests job runs the parity tests
+    assert "go list -export ./..." in (ROOT / "scripts/check_go_mains.sh").read_text(), (
+        "go build ./... links every command"
+    )
+
+
 def test_nightly_lists_name_only_existing_go_tests() -> None:
     """A stale entry silently skips nothing; each one must match a defined Go test."""
     listed = {
