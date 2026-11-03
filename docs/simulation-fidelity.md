@@ -213,10 +213,10 @@ are bounded by the synthetic conformance tests.
 selection (verb, package patterns covering a directory, and a test stage that selects no test
 through `-run '^$'`) and exit status with canned output.
 It does not model type checking, vet analyzers, test execution, the Go build cache, link
-output, or replay results written by generated tests; assertions on those stay with the
-real-compiler integration tests (`TestShippedControllerKeepsItsDebugData`,
-`TestCheckReusesExactPackagesAcrossWorkspaces`, the program replay tests in `builder`, and
-the diagnose-compile mode of `TestPartialPlaybookPublication`).
+output, or replay results written by generated tests. The compile rows of the gate table
+(`memory/validate/gate_table_test.go`) run on FakeGo and on the real compiler and must agree on
+the rule and the path (`TestGateCompileRowsOnFakeGo`, `TestGateCompileRowsOnRealGo`); anything
+beyond that has no test.
 
 ## Accepted bounds
 
