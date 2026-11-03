@@ -5,9 +5,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memoryhost/hostio"
 )
 
@@ -44,6 +46,53 @@ func TestMemoryHostWorkspaceStagesAcceptedMemory(t *testing.T) {
 	source, err := os.ReadFile(filepath.Join(workspace.Directory, "detectors/incidents/missing-configmap/detector.go"))
 	if err != nil || len(source) == 0 {
 		t.Fatalf("accepted detector not staged: %v", err)
+	}
+}
+
+// The generated registration imports each accepted detector package; the
+// compiler then proves the import resolves (nightly real-compile set).
+func TestGeneratedDetectorsImportAcceptedDetectors(t *testing.T) {
+	workspace := stagedMemoryHost(t)
+	generated, err := os.ReadFile(filepath.Join(workspace.Directory, "generated", "detectors.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(generated, []byte(`d0 "fixture-diagnostics/detectors/incidents/missing-configmap"`)) {
+		t.Fatalf("generated detector import missing: %s", generated)
+	}
+}
+
+// The accepted host is linked only after the staged memory's own tests pass,
+// and an adopted (unvalidated) build never runs them.
+func TestBuildMemoryHostStagePlan(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		compileOnly bool
+	}{{"validated", false}, {"adopted compile-only", true}} {
+		t.Run(test.name, func(t *testing.T) {
+			log := testutil.FakeGo(t)
+			workspace := stagedMemoryHost(t)
+			workspace.compileOnly = test.compileOnly
+			artifact, err := workspace.BuildMemoryHost(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if digest, err := hostio.BinaryDigest(artifact.Path); err != nil || digest != artifact.Digest {
+				t.Fatalf("artifact digest %s does not describe %s: %v", artifact.Digest, artifact.Path, err)
+			}
+			tested, linked := -1, -1
+			for i, stage := range testutil.GoStages(t, log) {
+				switch {
+				case strings.HasPrefix(stage, "test ") && strings.Contains(stage, "./..."):
+					tested = i
+				case strings.HasPrefix(stage, "build ") && strings.Contains(stage, "./cmd/memory-host"):
+					linked = i
+				}
+			}
+			if linked < 0 || (!test.compileOnly && tested < 0) || (!test.compileOnly && tested > linked) || (test.compileOnly && tested >= 0) {
+				t.Fatalf("test stage %d, link stage %d (compile-only=%v)", tested, linked, test.compileOnly)
+			}
+		})
 	}
 }
 

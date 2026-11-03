@@ -1,6 +1,5 @@
 # Repeated end-to-end builds; PRs retain builder compilation smoke, validator
 # rule tests, broker ownership tests and CLI error/JSON diagnostic contracts.
-TestBuildWorkspaceRunsOptInHealthyBaseline
 # Valid metrics is a second successful controller/prober compilation. PRs keep
 # the application compile smoke and TestBuildWorkspaceRejectsInvalidMetricsDetectors.
 # #666 first hosted run: 69.52 s building the host repeatedly. PRs retain
@@ -13,9 +12,8 @@ TestBuildMemoryHostUsesStagedMemory
 # Real Go builds merged from dev (10-80 s each on the builder tests); nightly runs them.
 TestShippedControllerKeepsItsDebugData
 TestProgramRepeatUnreachableIsRecordedAsGap
-TestRetiredProgramIsNotStagedCompiledOrRegistered
 # Builder: repeated real workspace builds. PRs keep TestProgramMustCompile, TestBuildWorkspaceRejectsDetectorRegistrationDrift,
-# TestBuildReplayUsesControllerRegistrations, TestBuildWorkspaceCompilesApplicationDetectors and TestProgramValidationRejectsUnsafeMemory for compile, registration and validator rules.
+# TestBuildReplayUsesControllerRegistrations, TestGeneratedDetectorsImportAcceptedDetectors and TestProgramValidationRejectsUnsafeMemory for compile, registration and validator rules.
 TestCheckReusesExactPackagesAcrossWorkspaces
 # builder: tests of 1.0 s or more. PRs keep the rest, e.g. TestChangedProgramsAreTheCandidateEditedPlaybooks, TestProgramValidationRejectsUnsafeMemory, TestReadThroughGoCacheDoesNotCopySeedAtStartup.
 TestBuildWorkingProgramWithoutCorpusOrDetectors

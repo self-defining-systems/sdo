@@ -224,7 +224,7 @@ def test_go_runner_keeps_integration_coverage_in_one_package_scheduler(tmp_path:
         for name in nightly_names:
             assert re.search(skip, name)
         for name in (
-            "TestBuildWorkspaceCompilesApplicationDetectors",
+            "TestGeneratedDetectorsImportAcceptedDetectors",
             "TestCompileStageDiagnostics",
             "TestSimTrustedFastPathNeverRollsBackACorrectFix",
             "TestMemoryHostWorkspaceStagesAcceptedMemory",
