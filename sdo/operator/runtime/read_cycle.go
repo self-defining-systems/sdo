@@ -21,11 +21,40 @@ import (
 type CycleReadView struct{ *sdktest.RecordingReadView }
 
 func NewCycleReadView(view program.ReadView) *CycleReadView {
+	// BaselineSource computes the whole namespace's diff. Freeze it once for
+	// this snapshot, before per-object read keys fan out over that same diff.
+	freeze := func(live LiveReadView) program.ReadView {
+		if live.BaselineSource != nil {
+			live.BaselineSource = &cycleBaseline{StateBaseline: live.BaselineSource}
+		}
+		return live
+	}
+	switch live := view.(type) {
+	case LiveReadView:
+		view = freeze(live)
+	case *LiveReadView:
+		if live != nil {
+			view = freeze(*live)
+		}
+	}
 	cached := &cachedReadView{ReadView: view, entries: map[string]*cachedRead{}}
 	return &CycleReadView{&sdktest.RecordingReadView{ReadView: cached}}
 }
 func (v *CycleReadView) ObservedView() (sdk.DetectionContext, func() error) {
 	return program.CheckReads(v)
+}
+
+// Every object read in a cycle shares one immutable baseline observation.
+// A new CycleReadView owns a new source read, including after an unavailable one.
+type cycleBaseline struct {
+	StateBaseline
+	once    sync.Once
+	changes *StateChanges
+}
+
+func (b *cycleBaseline) Changes(at time.Time) *StateChanges {
+	b.once.Do(func() { b.changes = b.StateBaseline.Changes(at) })
+	return b.changes
 }
 
 type cachedRead struct {
