@@ -19,10 +19,12 @@ package envtestio
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -33,6 +35,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 )
 
@@ -95,14 +98,49 @@ type Env struct {
 	// Kubeconfig is the path of a kubeconfig file for the same identity, for a
 	// controller binary or kubectl. It lives in the test's temporary directory.
 	Kubeconfig string
-	env        *envtest.Environment
+	// Port is the secure port of the API server on 127.0.0.1.
+	Port int
+	// CA is the PEM certificate authority that signed the API server's serving
+	// certificate. A TLS endpoint that stands in front of the API server (a
+	// proxy, a fake kubelet) presents its own certificate, and a client that
+	// reaches both needs this and that certificate in one trust file.
+	CA  []byte
+	env *envtest.Environment
+}
+
+// Options change the control plane. The zero value is Start's default: a
+// certificate-authenticated cluster-admin user, RBAC, and the ServiceAccount
+// admission plugin disabled (there is no controller manager to create the
+// default ServiceAccount), with etcd not syncing to disk.
+type Options struct {
+	// AdminToken, when set, adds a static-token cluster-admin user (group
+	// system:masters, which RBAC always allows) and makes Config and Kubeconfig
+	// authenticate with it instead of a client certificate. A harness that
+	// mounts the same token into Pods needs this. Do not switch the API server
+	// to AlwaysAllow (see AuthorizationMode).
+	AdminToken string
+	// AuthorizationMode replaces --authorization-mode (default RBAC; "Node,RBAC" is
+	// typical). Never "AlwaysAllow": it turns anonymous authentication off and
+	// envtest's readiness probe is anonymous, so the control plane never becomes ready.
+	AuthorizationMode string
+	// DisabledAdmissionPlugins are disabled in addition to ServiceAccount, which is
+	// always disabled (no controller manager creates the default ServiceAccount).
+	DisabledAdmissionPlugins []string
+	// APIServerFlags set or replace other kube-apiserver flags, name without the
+	// leading dashes (for example "service-cluster-ip-range": "10.96.0.0/16",
+	// "kubelet-preferred-address-types": "InternalIP"). Use them last: the
+	// defaults above are the supported surface.
+	APIServerFlags map[string]string
 }
 
 // Start launches the API server and etcd and stops them when the test ends.
 // Missing binaries that cannot be downloaded fail the test, unless
 // SDO_ENVTEST_OPTIONAL is set, which skips it (for suites that run without
 // network access).
-func Start(t testing.TB) *Env {
+func Start(t testing.TB) *Env { return StartWith(t, Options{}) }
+
+// StartWith is Start with Options.
+func StartWith(t testing.TB, options Options) *Env {
 	t.Helper()
 	dir, err := Assets()
 	if err != nil {
@@ -112,6 +150,23 @@ func Start(t testing.TB) *Env {
 		t.Fatal(err)
 	}
 	env := &envtest.Environment{BinaryAssetsDirectory: dir}
+	args := env.ControlPlane.GetAPIServer().Configure()
+	if options.AdminToken != "" {
+		tokens := filepath.Join(t.TempDir(), "tokens.csv")
+		if err := os.WriteFile(tokens, []byte(options.AdminToken+",sdo-admin,sdo-admin-uid,\"system:masters\"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		args.Set("token-auth-file", tokens)
+	}
+	if options.AuthorizationMode != "" {
+		args.Set("authorization-mode", options.AuthorizationMode)
+	}
+	if len(options.DisabledAdmissionPlugins) > 0 {
+		args.Set("disable-admission-plugins", strings.Join(append([]string{"ServiceAccount"}, options.DisabledAdmissionPlugins...), ","))
+	}
+	for name, value := range options.APIServerFlags {
+		args.Set(name, value)
+	}
 	if _, err := env.Start(); err != nil {
 		t.Fatalf("start envtest: %v", err)
 	}
@@ -120,23 +175,50 @@ func Start(t testing.TB) *Env {
 			t.Errorf("stop envtest: %v", err)
 		}
 	})
-	user, err := env.AddUser(envtest.User{Name: "sdo-admin", Groups: []string{"system:masters"}}, nil)
+	host, err := url.Parse(env.Config.Host)
 	if err != nil {
-		t.Fatalf("add envtest admin: %v", err)
+		t.Fatal(err)
 	}
-	raw, err := user.KubeConfig()
+	port, err := strconv.Atoi(host.Port())
 	if err != nil {
-		t.Fatalf("envtest kubeconfig: %v", err)
+		t.Fatalf("envtest host %q has no port: %v", env.Config.Host, err)
+	}
+	var raw []byte
+	var admin *rest.Config
+	if options.AdminToken != "" {
+		admin = rest.CopyConfig(env.Config)
+		admin.CertData, admin.KeyData, admin.BearerToken = nil, nil, options.AdminToken
+		raw, err = clientcmd.Write(tokenKubeconfig(admin))
+		if err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		user, err := env.AddUser(envtest.User{Name: "sdo-admin", Groups: []string{"system:masters"}}, nil)
+		if err != nil {
+			t.Fatalf("add envtest admin: %v", err)
+		}
+		if raw, err = user.KubeConfig(); err != nil {
+			t.Fatalf("envtest kubeconfig: %v", err)
+		}
+		if admin, err = clientcmd.RESTConfigFromKubeConfig(raw); err != nil {
+			t.Fatal(err)
+		}
 	}
 	path := filepath.Join(t.TempDir(), "kubeconfig")
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	admin, err := clientcmd.RESTConfigFromKubeConfig(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return &Env{Config: admin, Kubeconfig: path, env: env}
+	return &Env{Config: admin, Kubeconfig: path, Port: port, CA: admin.CAData, env: env}
+}
+
+// tokenKubeconfig is the kubeconfig for a bearer-token identity.
+func tokenKubeconfig(cfg *rest.Config) clientcmdapi.Config {
+	out := clientcmdapi.NewConfig()
+	out.Clusters["envtest"] = &clientcmdapi.Cluster{Server: cfg.Host, CertificateAuthorityData: cfg.CAData}
+	out.AuthInfos["admin"] = &clientcmdapi.AuthInfo{Token: cfg.BearerToken}
+	out.Contexts["envtest"] = &clientcmdapi.Context{Cluster: "envtest", AuthInfo: "admin"}
+	out.CurrentContext = "envtest"
+	return *out
 }
 
 // Client returns a typed client-go client for the control plane.

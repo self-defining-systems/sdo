@@ -39,6 +39,6 @@ fi
 export SDO_E2E_CACHE="${SDO_E2E_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/sdo-e2e}"
 cd "$root"
 uv sync --extra test -q
-cd sdo/operator
+cd sdo/operator/runtime
 # The cluster, controller and agents are real processes: run in real time with a generous bound.
 exec go test -tags 'integration controller_e2e' ./e2e -run "$selection" -count=1 -timeout 25m -v

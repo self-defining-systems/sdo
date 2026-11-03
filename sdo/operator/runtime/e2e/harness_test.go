@@ -44,6 +44,9 @@ type World struct {
 	Commit    string
 	Install   install.Config
 	Control   string // directory shared with containers at /e2e (agent mode files)
+
+	quiesced time.Time       // when the run stopped injecting faults (Quiesce)
+	killed   map[string]bool // controller Pods the run killed on purpose
 }
 
 // RepoRoot finds the repository root from the test's working directory.
