@@ -125,15 +125,18 @@ These clocks include provider waits but exclude reflection and oracle grading.
 Every JSONL/CSV row carries these fields and `timing_missing_reasons`.
 
 `analysis.dispatch_timing` joins native outcome/closure timestamps, deterministic
-stage start when recorded, and incident-scoped `responder_dispatched` events in
+`StageReport.started_at`, and incident-scoped `responder_dispatched` events in
 exported `sdo_runtime/telemetry/lifecycle-events.jsonl` (including `.1`). The origin
 is the earliest stage start or responder dispatch. Historical native
 `dispatched_at` and row `responder_started_at` copied `detected_at` (see runtime
-`effects.go`): matching detection timestamps are rejected as aliases. Historical
+`effects.go` before the dispatch timestamp fix): matching detection timestamps
+are rejected as aliases. Current runtime records the controller execution clock
+at response-pipeline dispatch and preserves each deterministic stage's first
+execution timestamp through recovery and later passes. Historical
 `StageReport` has no start timestamp; a deterministic report without one makes
 TTF unknown even when the later responder event exists. Never substitute detection,
 injection, first apply, worker startup, or workspace preparation for stage start.
-This is an evidence gap requiring runtime instrumentation, not a zero-duration stage.
+This historical evidence gap cannot be recovered by treating the stage as zero-duration.
 
 Regrade saved batches read-only with
 `uv run python -m benchmarks.sregym.analysis.regrade --batch <batch> --output <analysis>`.

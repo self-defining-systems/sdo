@@ -282,3 +282,42 @@ def test_dispatch_timing_round_trips_in_json_and_csv(tmp_path: Path) -> None:
     assert load_records(path)[0].time_to_fix_seconds == 10
     with path.with_suffix(".csv").open() as stream:
         assert next(csv.DictReader(stream))["time_to_fix_seconds"] == "10.0"
+
+
+@pytest.mark.parametrize("arm", ["full", "detectors-only"])
+def test_native_stage_start_produces_dispatch_relative_record(tmp_path: Path, arm: str) -> None:
+    from benchmarks.sregym.fastloop.loop import AgentOutcome, InjectionWindow
+    from benchmarks.sregym.fastloop.sdo_agent import _with_receipt_times
+
+    receipt = {
+        "incident_id": "synthetic",
+        "native_ledger": {
+            "outcome_document": {
+                "timestamps": {"detected_at": (T0 + timedelta(seconds=8)).isoformat()},
+                "prior_stages": [{"stage": "deterministic", "started_at": (T0 + timedelta(seconds=15)).isoformat()}],
+                "repair_actions": [{"success": True, "completed_at": (T0 + timedelta(seconds=25)).isoformat()}],
+            },
+        },
+        "lifecycle_events": [
+            {
+                "incident_id": "synthetic",
+                "event": "responder_dispatched",
+                "recorded_at": (T0 + timedelta(seconds=20)).isoformat(),
+            },
+        ],
+    }
+    outcome = _with_receipt_times(
+        AgentOutcome(incident_id="synthetic", injection=InjectionWindow(started_at=T0, finished_at=T0)), receipt
+    )
+    record = _record(0).model_copy(
+        update={
+            "ablation_arm": arm,
+            "dispatched_at": outcome.dispatched_at,
+            "first_mitigation_applied_at": outcome.first_mitigation_applied_at,
+        }
+    )
+    path = tmp_path / "incidents.jsonl"
+    append_record(path, record)
+    row = load_records(path)[0]
+    assert row.dispatched_at == T0 + timedelta(seconds=15)
+    assert row.time_to_fix_seconds == 10

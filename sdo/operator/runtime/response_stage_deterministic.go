@@ -121,7 +121,7 @@ func (l *ResponderLoop) restoreTerminalStagePlanErrors() {
 func (*DeterministicResponseStage) Name() string { return "deterministic" }
 
 func (stage *DeterministicResponseStage) Run(ctx context.Context, state *IncidentState) (*contracts.StageReport, error) {
-	report := &contracts.StageReport{Stage: stage.Name()}
+	report := &contracts.StageReport{Stage: stage.Name(), StartedAt: contractTimestamp(lifecycleio.Now().UTC())}
 	if stage.NewLoop == nil {
 		return report, nil
 	}
@@ -129,6 +129,8 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	if loop == nil {
 		return report, nil
 	}
+	report.StartedAt = contractTimestamp(loop.clock().UTC())
+	startedAt := report.StartedAt
 	if !stage.KeepLoop {
 		defer loop.CloseWorkingPrograms()
 	}
@@ -155,6 +157,9 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		state.Request.PlaybookCoverage = cloneCoverage(progress.Coverage)
 		state.Request.InitialProgramRuns = append([]ProgramRun(nil), progress.InitialProgramRuns...)
 		loop.Request = state.Request
+	}
+	if report.StartedAt == nil {
+		report.StartedAt = startedAt
 	}
 	loop.restoreTerminalStagePlanErrors()
 

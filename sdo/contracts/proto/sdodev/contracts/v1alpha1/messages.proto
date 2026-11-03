@@ -598,6 +598,8 @@ message StageReport {
   string error = 4;
   repeated string cleared_finding_fingerprints = 5;
   RecoveryWait recovery_wait = 6;
+  // First execution of this stage; preserved across recovery and later passes.
+  google.protobuf.Timestamp started_at = 7;
 }
 
 message StageMitigation {

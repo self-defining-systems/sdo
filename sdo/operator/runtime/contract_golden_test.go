@@ -97,6 +97,8 @@ func goldenIncident(
 	if err != nil {
 		t.Fatalf("new controller: %v", err)
 	}
+	// Dispatch and Step must share the fixture clock.
+	controller.now = func() time.Time { return time.Unix(1, 0).UTC() }
 	controller.Baseline = &scriptedBaseline{changes: timeline}
 	for sample := 0; sample < 2; sample++ {
 		if err := controller.Step(context.Background(), time.Unix(int64(sample), 0), nil); err != nil {
