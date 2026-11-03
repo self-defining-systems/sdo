@@ -56,6 +56,9 @@ type Config struct {
 	// Settle is the least time a run must last after its faults stop for every
 	// incident to be expected to end.
 	Settle time.Duration
+	// Restart is how long after the faults stop the controller may still be
+	// restarting (a lease to expire, informers to sync). Later it must stay up.
+	Restart time.Duration
 }
 
 func (c Config) bound(interval time.Duration) time.Duration {
@@ -109,6 +112,14 @@ func EveryIncidentEnds(log Log, cfg Config) error {
 	}
 	if ended.Sub(*quiesced) < cfg.Settle {
 		return violate(PropEveryIncidentEnds, -1, "run ends %s after its faults stop, less than the required settle time %s", ended.Sub(*quiesced), cfg.Settle)
+	}
+	// A controller that keeps dying after the faults stopped is wedged, however
+	// quickly it is relaunched: the restart cycle makes it look "down" to the
+	// detection check, which excuses downtime.
+	for i, entry := range log {
+		if e, ok := entry.(ControllerDown); ok && e.At.After(quiesced.Add(cfg.Restart)) {
+			return violate(PropEveryIncidentEnds, i, "the controller went down at %s, %s after its faults stopped (it may restart for %s): it keeps failing without faults", e.At.Format(time.RFC3339Nano), e.At.Sub(*quiesced), cfg.Restart)
+		}
 	}
 	opened := map[string]int{}
 	var order []string
