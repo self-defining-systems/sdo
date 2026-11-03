@@ -243,35 +243,9 @@ Rows dated before 2026-11-03 name regression tests that were later deleted with 
 | 2026-11-03 | Controller harness on the client-go fake | Missing behavior | The simulated API could not serve the controller loop: no Leases or RBAC kinds, store not safe for concurrent clients, no watch lag, a stuck watcher blocked writers | Closed in the simulation | `lease/*`, `rbac/*`, `watch/informer-list-then-watch`, `TestTransportServesConcurrentClients` |
 | 2026-11-01 | Prober determinism migration | Transport | HTTP pool reuse after listener closure | Accepted bound | In-memory handlers intentionally omit TCP pooling; the pool tests were deleted, `TestLinkProtocolsSocketReset` keeps the real-socket reset check |
 
-The memory-host tests do not model OS process isolation, Unix socket permissions,
-memory limits or actual compiler latency. Staged compilation is checked by
-the integration-tagged `TestBuildMemoryHostUsesStagedMemory` in the nightly/local
-integration tier. That test also launches a real host with a synthetic kubeconfig
-and checks Ready identity; it does not exercise Kubernetes networking, OS limit
-enforcement or a live activation swap.
-`TestSimMemoryTwoAcceptedCommits` uses bufconn and injected accepted revisions;
-`TestHostActivationGatesAcknowledgment` checks durable ledger activation and ACK
-gating separately. These are boundary simulations, not a complete native broker
-and controller driver run. The modeled build delay is 50 ms of virtual time;
-it is not a production latency measurement. Runtime activation logs report actual
-build-to-activation latency. `BenchmarkMemoryHostEvaluation` compares direct SDK
-execution as a reference with mirror/adapter/bufconn overhead, excluding OS startup and compiler
-cost. A scripted real-kind hot-activation check is recorded below; it is not an LLM learning experiment.
-
-`TestSimMemoryTrafficTwoRevisions` compares the real traffic engine directly
-against host-owned execution over bufconn in one virtual-time world. It covers
-changed scenario catalogs, failed HTTP samples, scheduler stop/join, reset and
-active-revision replacement. The HTTP application is an injected credential-free
-Doer; it does not model cluster networking or DNS. `TestHostTrafficLifecycle`
-checks duplicate start/stop, closed-host rejection and invalid primitive and
-burst requests. These tests do not exercise the native controller driver or OS
-scheduler/process isolation.
-
-`TestTrafficActivationFailureAndCrashRecovery` injects scheduler-start rejection
-and a traffic RPC disconnect at the manager boundary. Failed candidates preserve
-the serving revision; crash recovery restores that revision and scheduler intent.
-It does not model an OS crash. MemoryObservation no longer carries an inline
-snapshot: transport parity tests use the same mirror capture barriers as production.
+The harness's memory host runs over bufconn: it does not model OS process isolation, Unix socket
+permissions, memory limits or actual compiler latency. The end-to-end run launches the real host
+subprocess but does not test its limits.
 
 Installed controllers have no accepted-memory imports or restart-on-memory path.
 Embedded tests may inject synthetic SDK implementations and traffic adapters;
@@ -369,12 +343,6 @@ tracker tests opt into a one-hour informer resync so client-go's disabled-resync
 channel, allocated outside the bubble, cannot pin virtual time. Production keeps
 resync disabled. Negative resync intervals are rejected at Start.
 
-Virtual time does not measure CPU consumed by `StateTracker.Changes`. The original
-one-second host-process budget remains in `TestStateChangesStayFastAndBounded`
-under `integration`; `TestStateChangesBounded` separately checks all truncation,
-omission and removal invariants in virtual time. The optional restart-storm host
-latency report also remains integration-only. These are accepted host-scheduler
-bounds, not simulated duration measurements.
 
 `state_baseline_secret_test.go` deliberately exercises the production kubeconfig
 factory, real HTTP list/watch streaming and metadata-only decoder together. Its
