@@ -826,8 +826,13 @@ controller imports runtime alone and stays long-lived across accepted revisions.
 Remote SDK adapters register from Ready; accepted detector, program and traffic
 constructors run only in the child. Evaluate, Diagnose and Mitigate use
 the typed `MemoryHostService` over gRPC on a private Unix socket. Informer snapshot projections fan out as complete, contiguous mirror deltas to
-active and prepared hosts. Each call leases its child and holds an exact frozen-view
-sequence barrier through the RPC; optional input windows remain request-local.
+active and prepared hosts. Each call leases its child (retirement waits for the
+lease) and evaluates exactly the mirror sequence its view was published at; the host keeps
+its last sixteen sequences readable. No lock or lease is held across a call into detector or
+program code, so one detector's hang or failure never delays another detector, a swap, a
+failure or recovery. The host ends a detector shortly before the transport deadline,
+reports a detector error, and never runs the same detector twice at once. Optional input
+windows remain request-local.
 Unchanged projections retain their sequence. Errors and disconnects remain
 detector/program errors, never clearance or an authorized empty plan.
 

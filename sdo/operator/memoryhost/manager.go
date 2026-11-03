@@ -20,13 +20,17 @@ type Host interface {
 	Close() error
 }
 
-// Manager keeps the old host serving while a candidate is prepared. Calls hold
-// a read lease so retirement cannot kill an evaluation already in flight.
+// Manager keeps the old host serving while a candidate is prepared. A call
+// pins the host it uses, so retirement waits for it, but no lock is held while
+// a call runs: a slow or hung evaluation never delays another evaluation, a
+// swap, a failure or a recovery. mu guards fields only; the order of the three
+// locks is mirror.mu, then swap, then mu.
 type Manager struct {
 	mirror         mirrorState
 	swap           sync.Mutex
-	mu             sync.RWMutex
+	mu             sync.Mutex
 	active         Host
+	uses           map[Host]*hostUse
 	revision       string
 	timeout        time.Duration
 	closed         bool
@@ -34,6 +38,59 @@ type Manager struct {
 	recovering     bool
 	trafficRunning bool
 	recovery       func(context.Context) (Host, string, string, uint64, error)
+}
+
+// hostUse counts the calls in flight on a host. A retired host closes when the
+// last one ends.
+type hostUse struct {
+	calls   int
+	retired bool
+}
+
+// pin leases the active host for one call; the caller must unpin a non-nil host.
+func (m *Manager) pin() Host {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.active != nil {
+		m.pinLocked(m.active)
+	}
+	return m.active
+}
+func (m *Manager) pinLocked(h Host) {
+	use := m.uses[h]
+	if use == nil {
+		use = &hostUse{}
+		if m.uses == nil {
+			m.uses = map[Host]*hostUse{}
+		}
+		m.uses[h] = use
+	}
+	use.calls++
+}
+func (m *Manager) unpin(h Host) {
+	m.mu.Lock()
+	closeNow := false
+	if use := m.uses[h]; use != nil {
+		use.calls--
+		if use.calls == 0 {
+			delete(m.uses, h)
+			closeNow = use.retired
+		}
+	}
+	m.mu.Unlock()
+	if closeNow {
+		_ = h.Close()
+	}
+}
+
+// retireLocked reports whether a host that stopped being active can close now.
+func (m *Manager) retireLocked(h Host) bool {
+	use := m.uses[h]
+	if use == nil || use.calls == 0 {
+		return true
+	}
+	use.retired = true
+	return false
 }
 
 func NewManager(timeout time.Duration) *Manager {
@@ -64,36 +121,38 @@ func (m *Manager) Swap(ctx context.Context, h Host, commit, digest string, seque
 		return errors.New("memory host identity or mirror does not match accepted revision")
 	}
 	m.mu.Lock()
-	if m.closed {
-		m.mu.Unlock()
+	closed := m.closed
+	m.mu.Unlock()
+	if closed {
 		return errors.New("memory host manager is closed")
 	}
+	// Swap, recovery and traffic changes serialize on m.swap, so the desired
+	// traffic state is stable here and the RPC runs outside m.mu.
 	if err := m.resumeTraffic(ctx, h); err != nil {
-		m.mu.Unlock()
 		return err
 	}
+	m.mu.Lock()
 	old := m.active
 	m.active = h
 	m.revision = commit
 	m.generation++
 	accepted = true
+	closeOld := old != nil && m.retireLocked(old)
 	m.mu.Unlock()
-	if old != nil {
+	if closeOld {
 		_ = old.Close()
 	}
 	return nil
 }
 func (m *Manager) Evaluate(ctx context.Context, request *pb.EvaluateRequest) (*pb.EvaluateResponse, error) {
-	m.mu.RLock()
-	h := m.active
+	h := m.pin()
 	if h == nil {
-		m.mu.RUnlock()
 		return unavailable(request, errors.New("memory host is unavailable")), nil
 	}
 	callCtx, cancel := context.WithTimeout(ctx, m.timeout)
 	response, err := h.Evaluate(callCtx, request)
 	cancel()
-	m.mu.RUnlock()
+	m.unpin(h)
 	if err == nil {
 		return response, nil
 	}
@@ -103,16 +162,22 @@ func (m *Manager) Evaluate(ctx context.Context, request *pb.EvaluateRequest) (*p
 	}
 	return unavailable(request, err), nil
 }
+
+// failed evicts a host whose transport failed and starts its replacement.
+// Calls still running on it end with the child.
 func (m *Manager) failed(h Host) {
 	// An old connection's late failure must never evict a newer accepted host.
 	m.mu.Lock()
 	failed := m.active == h
 	if failed {
 		m.active = nil
-		_ = h.Close()
+		delete(m.uses, h)
 	}
 	recovery := m.recovery
 	m.mu.Unlock()
+	if failed {
+		_ = h.Close()
+	}
 	if failed && recovery != nil {
 		go m.retryRecovery()
 	}
@@ -127,25 +192,31 @@ func unavailable(request *pb.EvaluateRequest, err error) *pb.EvaluateResponse {
 func (m *Manager) Close() error {
 	m.mirror.mu.Lock()
 	defer m.mirror.mu.Unlock()
-	defer func() {
-		for host := range m.mirror.hosts {
-			if host != m.active {
-				_ = host.Close()
-			}
-		}
-		m.mirror.hosts = nil
-	}()
 	m.swap.Lock()
 	defer m.swap.Unlock()
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.closed = true
-	if m.active == nil {
+	active := m.active
+	m.active = nil
+	// Candidates and retired hosts still serving a call close with the manager.
+	others := map[Host]bool{}
+	for host := range m.mirror.hosts {
+		others[host] = true
+	}
+	for host := range m.uses {
+		others[host] = true
+	}
+	delete(others, active)
+	m.mirror.hosts = nil
+	m.uses = nil
+	m.mu.Unlock()
+	for host := range others {
+		_ = host.Close()
+	}
+	if active == nil {
 		return nil
 	}
-	h := m.active
-	m.active = nil
-	return h.Close()
+	return active.Close()
 }
 
 // SetRecovery supplies a launcher that replays the latest mirror into a fresh
@@ -179,35 +250,42 @@ func (m *Manager) recover(generation uint64, prepare func(context.Context) (Host
 	}
 	m.swap.Lock()
 	defer m.swap.Unlock()
+	reject := func() {
+		delete(m.mirror.hosts, h)
+		_ = h.Close()
+	}
 	identity, err := h.Ready(ctx)
 	if err != nil || identity.GetMemoryCommit() != commit || identity.GetBinaryDigest() != digest || !identity.GetMirrorComplete() || identity.GetMirrorSequence() != sequence {
-		delete(m.mirror.hosts, h)
-		_ = h.Close()
+		reject()
 		return
 	}
+	// Swaps and closing hold m.swap, so only failures can change m.active now.
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.closed || m.generation != generation || m.active != nil {
-		delete(m.mirror.hosts, h)
-		_ = h.Close()
+	superseded := m.closed || m.generation != generation || m.active != nil
+	m.mu.Unlock()
+	if superseded {
+		reject()
 		return
 	}
 	if err := m.resumeTraffic(ctx, h); err != nil {
-		delete(m.mirror.hosts, h)
-		_ = h.Close()
+		reject()
 		return
 	}
+	m.mu.Lock()
 	m.active = h
 	m.revision = commit
 	m.generation++
+	m.mu.Unlock()
 }
 
 // Diagnose and Mitigate lease the same accepted child as detector evaluation.
 // Transport failure is an error, never clearance or an empty authorized plan.
 func (m *Manager) Diagnose(ctx context.Context, r *pb.DiagnoseRequest) (*pb.DiagnoseResponse, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	h, ok := m.active.(interface {
+	h := m.pin()
+	if h != nil {
+		defer m.unpin(h)
+	}
+	host, ok := h.(interface {
 		Diagnose(context.Context, *pb.DiagnoseRequest) (*pb.DiagnoseResponse, error)
 	})
 	if !ok {
@@ -215,12 +293,14 @@ func (m *Manager) Diagnose(ctx context.Context, r *pb.DiagnoseRequest) (*pb.Diag
 	}
 	ctx, cancel := context.WithTimeout(ctx, m.timeout)
 	defer cancel()
-	return h.Diagnose(ctx, r)
+	return host.Diagnose(ctx, r)
 }
 func (m *Manager) Mitigate(ctx context.Context, r *pb.MitigateRequest) (*pb.MitigateResponse, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	h, ok := m.active.(interface {
+	h := m.pin()
+	if h != nil {
+		defer m.unpin(h)
+	}
+	host, ok := h.(interface {
 		Mitigate(context.Context, *pb.MitigateRequest) (*pb.MitigateResponse, error)
 	})
 	if !ok {
@@ -228,7 +308,7 @@ func (m *Manager) Mitigate(ctx context.Context, r *pb.MitigateRequest) (*pb.Miti
 	}
 	ctx, cancel := context.WithTimeout(ctx, m.timeout)
 	defer cancel()
-	return h.Mitigate(ctx, r)
+	return host.Mitigate(ctx, r)
 }
 
 // retryRecovery retries a failed restart on the next demand, without spinning

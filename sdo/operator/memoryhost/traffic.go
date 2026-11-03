@@ -15,13 +15,20 @@ type TrafficRPC interface {
 }
 
 func (m *Manager) Traffic(ctx context.Context, r *pb.TrafficRequest) (*pb.TrafficResponse, error) {
-	m.swap.Lock()
-	defer m.swap.Unlock()
-	m.mu.RLock()
-	h := m.active
+	// Only a change of the desired scheduler state serializes with swaps and
+	// recovery. Bursts and reads lease the host like a detector call, so a long
+	// workload never holds up a swap, a failure or a recovery.
+	switch r.GetOperation() {
+	case pb.TrafficRequest_OPERATION_START, pb.TrafficRequest_OPERATION_STOP:
+		m.swap.Lock()
+		defer m.swap.Unlock()
+	}
+	h := m.pin()
+	if h != nil {
+		defer m.unpin(h)
+	}
 	rpc, ok := h.(TrafficRPC)
 	if !ok {
-		m.mu.RUnlock()
 		go m.retryRecovery()
 		return nil, errors.New("memory host traffic unavailable")
 	}
@@ -41,7 +48,6 @@ func (m *Manager) Traffic(ctx context.Context, r *pb.TrafficRequest) (*pb.Traffi
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	response, err := rpc.Traffic(ctx, r)
 	cancel()
-	m.mu.RUnlock()
 	// Caller cancellation bounds a probe, not the lifetime of its serving host.
 	if caller.Err() == nil && (status.Code(err) == codes.Unavailable || status.Code(err) == codes.DeadlineExceeded) {
 		m.failed(h)
@@ -49,7 +55,7 @@ func (m *Manager) Traffic(ctx context.Context, r *pb.TrafficRequest) (*pb.Traffi
 	return response, err
 }
 
-// resumeTraffic is called while the active-host lease is exclusively held.
+// resumeTraffic is called with m.swap held, which guards the desired state.
 // Prepared hosts remain idle until activation; recovery restores the desired
 // scheduler state without retaining samples from a different process/revision.
 func (m *Manager) resumeTraffic(ctx context.Context, h Host) error {

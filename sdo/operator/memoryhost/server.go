@@ -8,6 +8,7 @@ import (
 	"io"
 	"sort"
 	"sync"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
@@ -37,9 +38,27 @@ type Server struct {
 	readFactory func(context.Context, sdktest.Snapshot) (program.ReadView, error)
 	detectors   map[string]sdk.Detector
 	objects     map[string]*pb.MemoryObject
+	history     []mirrorVersion
 	namespace   string
 	generic     ObjectSource
 	protected   string
+
+	runMu   sync.Mutex
+	running map[string]bool
+}
+
+// mirrorHistory is how many applied mirror sequences the host keeps readable.
+// An evaluation is built against the sequence its caller froze; later frames
+// must not invalidate it, so a lease never has to block the mirror's progress.
+const mirrorHistory = 16
+
+// mirrorVersion is one immutable applied mirror state. Its map is never
+// modified after it is recorded.
+type mirrorVersion struct {
+	sequence  uint64
+	complete  bool
+	namespace string
+	objects   map[string]*pb.MemoryObject
 }
 
 func NewServer(commit, digest string, detectors []sdk.Detector) (*Server, error) {
@@ -125,19 +144,27 @@ func (s *Server) Apply(frame *pb.MirrorRequest) error {
 			}
 		}
 	}
-	if frame.ResetMirror {
-		s.objects = map[string]*pb.MemoryObject{}
-		s.namespace = namespace
-		s.identity.MirrorComplete = false
+	// Copy on write: a recorded version is read without the lock by evaluations.
+	objects := make(map[string]*pb.MemoryObject, len(s.objects)+len(frame.Upserts))
+	if !frame.ResetMirror {
+		for key, item := range s.objects {
+			objects[key] = item
+		}
 	}
 	for _, item := range frame.Upserts {
-		s.objects[objectKey(item.Ref)] = proto.Clone(item).(*pb.MemoryObject)
+		objects[objectKey(item.Ref)] = proto.Clone(item).(*pb.MemoryObject)
 	}
 	for _, ref := range frame.Deletes {
-		delete(s.objects, objectKey(ref))
+		delete(objects, objectKey(ref))
 	}
+	s.objects = objects
+	s.namespace = namespace
 	s.identity.MirrorSequence = frame.Sequence
 	s.identity.MirrorComplete = frame.Complete
+	s.history = append(s.history, mirrorVersion{sequence: frame.Sequence, complete: frame.Complete, namespace: namespace, objects: objects})
+	if len(s.history) > mirrorHistory {
+		s.history = append([]mirrorVersion(nil), s.history[len(s.history)-mirrorHistory:]...)
+	}
 	return nil
 }
 func (s *Server) Mirror(stream grpc.ClientStreamingServer[pb.MirrorRequest, pb.MirrorResponse]) error {
@@ -159,20 +186,29 @@ func (s *Server) Mirror(stream grpc.ClientStreamingServer[pb.MirrorRequest, pb.M
 
 var snapshotFields = map[string]string{"ConfigMap": "configMaps", "Service": "services", "Pod": "pods", "Deployment": "deployments", "StatefulSet": "statefulSets", "DaemonSet": "daemonSets", "Job": "jobs", "CronJob": "cronJobs", "PersistentVolumeClaim": "persistentVolumeClaims", "ServiceAccount": "serviceAccounts", "HorizontalPodAutoscaler": "horizontalPodAutoscalers", "PodDisruptionBudget": "podDisruptionBudgets", "Ingress": "ingresses", "Node": "nodes", "Secret": "secrets", "ReplicaSet": "replicaSets", "Endpoints": "endpoints", "EndpointSlice": "endpointSlices", "NetworkPolicy": "networkPolicies", "Event": "events"}
 
+// snapshot builds the view of exactly the requested sequence. A complete
+// sequence among the last mirrorHistory is served even after newer frames
+// arrived; nothing else is.
 func (s *Server) snapshot(sequence uint64) (sdktest.Snapshot, error) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if !s.identity.MirrorComplete || sequence != s.identity.MirrorSequence {
+	var version *mirrorVersion
+	for i := range s.history {
+		if s.history[i].sequence == sequence {
+			version = &s.history[i]
+		}
+	}
+	s.mu.RUnlock()
+	if version == nil || !version.complete {
 		return sdktest.Snapshot{}, errors.New("memory mirror incomplete or stale")
 	}
-	fields := map[string]any{"namespace": s.namespace}
-	keys := make([]string, 0, len(s.objects))
-	for key := range s.objects {
+	fields := map[string]any{"namespace": version.namespace}
+	keys := make([]string, 0, len(version.objects))
+	for key := range version.objects {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		item := s.objects[key]
+		item := version.objects[key]
 		field := snapshotFields[item.Ref.Kind]
 		items, _ := fields[field].([]any)
 		fields[field] = append(items, item.Object.AsMap())
@@ -199,17 +235,71 @@ func (s *Server) Evaluate(ctx context.Context, request *pb.EvaluateRequest) (*pb
 	}
 	snapshot.Readings = append(snapshot.Readings[:len(snapshot.Readings):len(snapshot.Readings)], reads...)
 	response := &pb.EvaluateResponse{}
+	ctx, cancel := withinTransportBudget(ctx)
+	defer cancel()
 	for _, id := range request.DetectorIds {
 		result := &pb.MemoryDetectorResult{DetectorId: id}
 		d := s.detectors[id]
 		if d == nil {
 			result.Error = "detector is not registered"
 		} else {
-			result.Findings, result.Error = detect(ctx, d, s.detectionView(snapshot))
+			result.Findings, result.Error = s.runDetector(ctx, d, s.detectionView(snapshot))
 		}
 		response.Results = append(response.Results, result)
 	}
 	return response, nil
+}
+
+// transportMargin is how long before the caller's deadline agent code is ended,
+// so the host can still answer. The package reads no clock: it only moves the
+// deadline the caller sent.
+const transportMargin = 250 * time.Millisecond
+
+// withinTransportBudget ends agent code a little before the caller's transport
+// deadline, so a hang is a detector error and never a failure of the host.
+func withinTransportBudget(ctx context.Context) (context.Context, context.CancelFunc) {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return context.WithCancel(ctx)
+	}
+	return context.WithDeadline(ctx, deadline.Add(-transportMargin))
+}
+
+// runDetector runs one detector, abandoning it when it outlives ctx. A detector
+// that ignores its context keeps its goroutine, so it is never started twice
+// concurrently: the leak is bounded by the number of detectors.
+func (s *Server) runDetector(ctx context.Context, d sdk.Detector, view sdk.DetectionContext) ([]*pb.Finding, string) {
+	id := d.Spec().ID
+	s.runMu.Lock()
+	if s.running[id] {
+		s.runMu.Unlock()
+		return nil, "detector is still running a previous evaluation"
+	}
+	if s.running == nil {
+		s.running = map[string]bool{}
+	}
+	s.running[id] = true
+	s.runMu.Unlock()
+	type outcome struct {
+		findings []*pb.Finding
+		failure  string
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		defer func() {
+			s.runMu.Lock()
+			delete(s.running, id)
+			s.runMu.Unlock()
+		}()
+		findings, failure := detect(ctx, d, view)
+		done <- outcome{findings, failure}
+	}()
+	select {
+	case got := <-done:
+		return got.findings, got.failure
+	case <-ctx.Done():
+		return nil, fmt.Sprintf("detector evaluation abandoned: %v", ctx.Err())
+	}
 }
 func detect(ctx context.Context, d sdk.Detector, snapshot sdk.DetectionContext) (findings []*pb.Finding, failure string) {
 	defer func() {

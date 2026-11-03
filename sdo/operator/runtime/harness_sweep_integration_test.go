@@ -24,8 +24,11 @@ const harnessWallBudget = 200 * time.Second
 // restore crash loop (a controller dying with "state references unknown
 // detector") is open: a real kill on seed 1 reaches it, and it fails the nightly
 // sweep with the other seeds that reach it. These three together kill both
-// recorded controller mutants and take about 50 s.
-var harnessPRSeeds = []uint64{2, 4, 6}
+// recorded controller mutants and take about 50 s. Seed 13 is the regression for
+// a hung detector plus a host crash delaying every other detector (the manager
+// held locks across the evaluation); seeds 23 and 27 reach the same path in the
+// nightly sweep.
+var harnessPRSeeds = []uint64{2, 4, 6, 13}
 
 // TestHarness plays each seed through the production controller loop and checks
 // that the controller is reliable (every incident ends) and manages its
