@@ -53,8 +53,8 @@ scheduler-start rejection and disconnect recovery) and
 - `tests/unit/benchmarks/sregym/adapter/` — benchmark-adapter transport and receipt behavior.
 - `tests/unit/libs/` — shared-library contracts.
 - `tests/integration/` — cross-package and external-process behavior.
-- `sdo/operator/sdk/*_test.go` — detector SDK and test snapshots; `sdk/metrics` covers metric and alert detectors against `sdktest.Snapshot.Metrics`/`Alerts` fixtures.
-- `sdo/operator/core/*_test.go` — detector execution and validation.
+- `sdo/operator/sdk/inputs/carrier_test.go` — AST inventory of SDK input sources. The SDK's behaviour is covered by the shipped detectors' own tests, which run at the gate.
+- `sdo/operator/core/generic_capture_guard_test.go` — mutable kinds cannot enter the capture/replay path unguarded.
 - `sdo/operator/runtime/*_test.go` — scheduling, persistence, batching, dispatch, broker effects, and state; `metrics_observer_test.go` and `runtime/prometheus/` run the metrics observer and adapter against an `httptest` fake Prometheus.
 - `sdo/operator/memory/validate/skills_test.go` — skill drift: rule citations and examples. `scripts/check_go_errors.sh` runs `gen_skill_references.sh --check` and `gen_kube_read_clients.sh --check` for generated-file drift (`bash scripts/gen_skill_references.sh` regenerates the reference); no Go test repeats those checks.
 - `sdo/operator/{broker,memory,install,lifecycle}/*_test.go` — accepted state and lifecycle ownership.
@@ -607,28 +607,8 @@ checks malformed snapshots, closed lifecycle enums, incident correlation and a
 rejected snapshot followed by a good one. Run it with `-fuzztime=30s
 -fuzzminimizetime=1s -parallel=2 -timeout=2m`; Nightly CI runs the bounded target, with its seeds retained on PRs. Fake controller bookkeeping stays outside the generated snapshot shape.
 
-Uncontrolled text boundaries are fuzzed where the text is hand-written or model
-written. `sdk.FuzzObjectRefParseFormat` runs its hand-written seeds in every `go test`;
-run `go test -run '^$' -fuzz '^FuzzObjectRefParseFormat$' -fuzztime=180s` (cap 5
-minutes) in `sdo/operator/sdk` to explore further. The Go and Python object-ref
-parsers share `tests/fixtures/sdo/contracts/object_ref_grammar.json`, and Hypothesis
-covers `sdo act` receipt recording in `test_recorded_actions.py`.
-
-Proxy forwarding acceptance runs in the operator CI job:
-`GOMAXPROCS=2 go test -p 1 -count=3 -run '^(TestProxyWarmAddedP95|TestLargeResponseWarmAddedP95|TestProjectionTailLatency)$' -v ./kubeproxy ./operatorcli`.
-The large-response check uses a blocked upstream to prove that response bytes
-stream before completion, then checks exact forwarding, the projection cap and
-durable recording-gap evidence. It also runs under `-race`.
-`TestRecordAdmissionWithStalledConsumers` holds the queue or all projection
-workers full and checks that admission completes with a gap and no queued raw
-body. These ordering and capacity checks remain deterministic under CI load.
-The small-response `!race` test retains its 10 ms paired added-p95 check.
-For large-response performance measurements, run
-`go test -run '^$' -bench '^BenchmarkLargeResponseWarmAddedP95$' -benchtime=1x -count=3 ./operatorcli`
-from `sdo/operator`. It retains the three balanced windows and reports the
-control-adjusted budget ratio; host scheduling is not a correctness verdict.
-
-Record-admission latency also uses 50 warmups and 200 paced normal-build samples, with a 10 ms p95 limit. Its metadata-only omission, bounded admission and dropped/incomplete checks remain in the race suite.
+The Python object-ref parser and Hypothesis tests for `sdo act` receipt recording use
+`tests/fixtures/sdo/contracts/object_ref_grammar.json` (`test_recorded_actions.py`).
 
 SREGym discovery and worker contract tests use the pinned harness and its application
 charts without Kubernetes or model calls. Before running them in a fresh checkout,
