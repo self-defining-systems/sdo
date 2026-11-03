@@ -403,7 +403,12 @@ func (l *ResponderLoop) recoveryOwnerRefs(ctx context.Context, refs []sdk.Object
 // Reject overlapping later corrective effects, not independent causes or
 // diagnostic helper writes. Unknown ordering is deliberately not positive proof.
 func (l *ResponderLoop) recoverySuperseded(ctx context.Context, app RecordedPlanApplication, result IncidentResult, applications []RecordedPlanApplication, observedWrites []RepairActionReceipt, automatic bool) bool {
-	if app.StartedAt.IsZero() || app.CompletedAt.IsZero() || len(result.RepairChanges) > 0 {
+	// RepairChanges is a narrative (including summaries of this application's
+	// own writes), not a mutation receipt. The caller requires complete API
+	// history; competing effects below retain their exact scopes and ordering.
+	// Without a responder history source, narrated repairs remain unscoped.
+	if app.StartedAt.IsZero() || app.CompletedAt.IsZero() ||
+		(len(result.RepairChanges) > 0 && (l.RecoverySessionRoot == "" || result.ResponderSessionID == "")) {
 		return true
 	}
 	// Worker-returned applications are immutable history too; their absence

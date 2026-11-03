@@ -65,6 +65,7 @@ func stageLifecycleEffects(snapshot sdk.DetectionContext, applications []Recorde
 
 func lifecycleEffects(snapshot sdk.DetectionContext, findings []sdk.Finding, repaired map[types.UID]bool, draining bool) recoveryEffects {
 	sets := map[types.UID]appsv1.ReplicaSet{}
+	replaced := map[types.UID]bool{}
 	for _, rs := range snapshot.ReplicaSets() {
 		owner := metav1.GetControllerOf(&rs)
 		if owner == nil || owner.Kind != "Deployment" || owner.APIVersion != "apps/v1" || !repaired[owner.UID] || rs.UID == "" {
@@ -73,6 +74,7 @@ func lifecycleEffects(snapshot sdk.DetectionContext, findings []sdk.Finding, rep
 		for _, d := range snapshot.Deployments() {
 			if d.UID == owner.UID && d.Name == owner.Name && d.Namespace == rs.Namespace && (draining || !sameRolloutTemplate(rs.Spec.Template, d.Spec.Template)) {
 				sets[rs.UID] = rs
+				replaced[rs.UID] = !sameRolloutTemplate(rs.Spec.Template, d.Spec.Template)
 			}
 		}
 	}
@@ -85,11 +87,11 @@ func lifecycleEffects(snapshot sdk.DetectionContext, findings []sdk.Finding, rep
 	}
 	for _, pod := range snapshot.Pods() {
 		owner := metav1.GetControllerOf(&pod)
-		if owner == nil || owner.Kind != "ReplicaSet" || owner.APIVersion != "apps/v1" || pod.UID == "" || pod.DeletionTimestamp == nil {
+		if owner == nil || owner.Kind != "ReplicaSet" || owner.APIVersion != "apps/v1" || pod.UID == "" {
 			continue
 		}
 		rs, ok := sets[owner.UID]
-		if ok && rs.Name == owner.Name && rs.Namespace == pod.Namespace {
+		if ok && rs.Name == owner.Name && rs.Namespace == pod.Namespace && (pod.DeletionTimestamp != nil || replaced[rs.UID] || (rs.Spec.Replicas != nil && *rs.Spec.Replicas == 0)) {
 			p := pod
 			eligible[sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: pod.Namespace, Name: pod.Name}] = &p
 		}

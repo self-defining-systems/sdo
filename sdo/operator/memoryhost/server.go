@@ -44,7 +44,13 @@ type Server struct {
 	protected   string
 
 	runMu   sync.Mutex
-	running map[string]bool
+	running map[string]*detectorEvaluation
+}
+
+// A canceled predecessor may be ignoring cancellation; do not queue behind it.
+type detectorEvaluation struct {
+	finished chan struct{}
+	context  context.Context
 }
 
 // mirrorHistory is how many applied mirror sequences the host keeps readable.
@@ -282,28 +288,51 @@ func withinTransportBudget(ctx context.Context) (context.Context, context.Cancel
 // concurrently: the leak is bounded by the number of detectors.
 func (s *Server) runDetector(ctx context.Context, d sdk.Detector, view sdk.DetectionContext) ([]*pb.Finding, string) {
 	id := d.Spec().ID
-	s.runMu.Lock()
-	if s.running[id] {
+	// Serialize fresh evaluations instead of treating ordinary concurrent
+	// observers as detector failures. A stuck predecessor still consumes only
+	// one goroutine; waiting is bounded by this caller's existing context.
+	var finished chan struct{}
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Sprintf("detector evaluation abandoned: %v", err)
+		}
+		s.runMu.Lock()
+		previous := s.running[id]
+		if previous == nil {
+			if s.running == nil {
+				s.running = map[string]*detectorEvaluation{}
+			}
+			finished = make(chan struct{})
+			s.running[id] = &detectorEvaluation{finished: finished, context: ctx}
+			s.runMu.Unlock()
+			break
+		}
 		s.runMu.Unlock()
-		return nil, "detector is still running a previous evaluation"
+		select {
+		case <-previous.finished:
+		case <-previous.context.Done():
+			return nil, "detector is still running a previous evaluation"
+		case <-ctx.Done():
+			return nil, fmt.Sprintf("detector evaluation abandoned: %v", ctx.Err())
+		}
 	}
-	if s.running == nil {
-		s.running = map[string]bool{}
-	}
-	s.running[id] = true
-	s.runMu.Unlock()
 	type outcome struct {
 		findings []*pb.Finding
 		failure  string
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		defer func() {
-			s.runMu.Lock()
-			delete(s.running, id)
-			s.runMu.Unlock()
+		findings, failure := func() ([]*pb.Finding, string) {
+			defer func() {
+				s.runMu.Lock()
+				delete(s.running, id)
+				close(finished)
+				s.runMu.Unlock()
+			}()
+			return detect(ctx, d, view)
 		}()
-		findings, failure := detect(ctx, d, view)
+		// Release serialization before returning a result to a caller that may
+		// immediately cancel its context and begin the next observation.
 		done <- outcome{findings, failure}
 	}()
 	select {
