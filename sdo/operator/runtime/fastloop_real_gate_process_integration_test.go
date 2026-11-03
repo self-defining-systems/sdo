@@ -250,7 +250,10 @@ func runHermeticFastloopRealGoGate(t *testing.T, mode fastloopGateMode) {
 	if err := os.WriteFile(filepath.Join(accepted, "peer.yaml"), []byte("apiVersion: v1\nkind: Service\nmetadata:\n  name: peer\n  namespace: app\nspec:\n  ports:\n  - port: 80\n    targetPort: 8080\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	nativeGit(t, accepted, "add", "peer.yaml")
+	if err := os.WriteFile(filepath.Join(accepted, "api.yaml"), []byte("apiVersion: v1\nkind: Service\nmetadata:\n  name: api\n  namespace: app\nspec:\n  ports:\n  - port: 80\n    targetPort: 8080\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	nativeGit(t, accepted, "add", "peer.yaml", "api.yaml")
 	nativeGit(t, accepted, "commit", "-qm", "synthetic accepted Service")
 	fixture := filepath.Join("..", "..", "..", "tests", "fixtures", "sdo", "playbook_program_app", ".sdo")
 	copyFastloopTree(t, filepath.Join(fixture, "diagnostics"), filepath.Join(accepted, ".sdo", "diagnostics"))

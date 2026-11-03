@@ -550,6 +550,9 @@ func (n NativeIncidentBroker) QueuedReflections() ([]string, error) {
 // under the broker lock, so memory publication stays serialized with every
 // closure. It is idempotent: a finished or unqueued ledger is a no-op.
 func (n NativeIncidentBroker) ProcessQueuedReflection(ctx context.Context, incidentID string) error {
+	if n.FrozenMemory {
+		return errors.New("frozen memory cannot resume queued learning")
+	}
 	return n.withLock(func() error {
 		ledger, err := n.readLedger(incidentID)
 		if err != nil {

@@ -7,6 +7,7 @@ import (
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk"
+	"strings"
 	"testing"
 	"time"
 )
@@ -68,4 +69,11 @@ func nativeDetectorManifest(class, id, incident string) string {
 		owner, origin = "responder", "originatingIncident: "+incident+"\n"
 	}
 	return "apiVersion: sdo.dev/v1alpha1\nkind: DetectorManifest\nsdkVersion: v0.1\nid: " + id + "\nconstructor: New\nclass: " + class + "\nowner: " + owner + "\nwatches:\n  - apiVersion: v1\n    kind: Pod\ninterval: 30s\npersistence:\n  firing: 1\n  clearing: 1\nbatching:\n  severity: critical\n  debounce: 500ms\npossiblePlaybooks:\n  - base\n" + origin + "originatingCommit: initial\n"
+}
+
+func TestFrozenBrokerRejectsQueuedLearning(t *testing.T) {
+	native := NativeIncidentBroker{FrozenMemory: true}
+	if err := native.ProcessQueuedReflection(context.Background(), "historical"); err == nil || !strings.Contains(err.Error(), "frozen memory") {
+		t.Fatalf("queued learning not rejected by policy: %v", err)
+	}
 }
