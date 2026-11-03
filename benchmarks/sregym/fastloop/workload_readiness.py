@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from benchmarks.sregym.adapter import Deadline, WaitKind, kubectl, wait_for
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 
@@ -107,7 +108,12 @@ def workload_identity(kubeconfig: Path, namespace: str) -> dict[str, Any]:
 
 
 def await_workload_identity(kubeconfig: Path, namespace: str) -> dict[str, Any]:
-    """Wait for rollout and pod readiness before taking the restore identity.
+    """Wait for rollout and pod readiness before taking the restore identity."""
+    return await_identity(lambda: workload_identity(kubeconfig, namespace))
+
+
+def await_identity(read: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    """Retry ``read`` while workloads are still rolling out or becoming Ready.
 
     Only a not-yet-Ready workload is retryable. Malformed inventory, zero
     replicas and an empty application remain immediate restore failures.
@@ -115,7 +121,7 @@ def await_workload_identity(kubeconfig: Path, namespace: str) -> dict[str, Any]:
     budget = Deadline.after(wait_for(WaitKind.ROLLOUT), "restore workloads", time.monotonic)
     while True:
         try:
-            identity = workload_identity(kubeconfig, namespace)
+            identity = read()
             budget.remaining()
             return identity
         except WorkloadNotReadyError as exc:

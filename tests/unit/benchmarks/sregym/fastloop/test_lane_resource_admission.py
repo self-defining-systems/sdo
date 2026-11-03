@@ -1104,9 +1104,9 @@ def test_acceptance_generation_settles_before_admission_identity(lane, monkeypat
     def identity(*_):
         calls[0] += 1
         if calls[0] == 1:
-            raise admission.WorkloadNotReadyError("generation 2 observed 1")
+            raise workload_readiness.WorkloadNotReadyError("generation 2 observed 1")
         return {"Deployment/app": {"pods": []}}
 
-    monkeypatch.setattr(workload_readiness, "workload_identity", identity)
+    monkeypatch.setattr(admission, "workload_identity", identity)
     assert gate.prove("control")["passed"]
     assert calls[0] >= 3

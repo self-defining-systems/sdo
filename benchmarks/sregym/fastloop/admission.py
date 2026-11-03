@@ -30,7 +30,8 @@ from benchmarks.sregym.adapter import (
     wait_for_proof,
 )
 from benchmarks.sregym.fastloop.clean_start import assert_clean_baseline
-from benchmarks.sregym.fastloop.workload_readiness import await_workload_identity, workload_identity
+from benchmarks.sregym.fastloop.workload_readiness import WorkloadNotReadyError as WorkloadNotReadyError
+from benchmarks.sregym.fastloop.workload_readiness import await_identity, workload_identity
 from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
@@ -39,6 +40,11 @@ if TYPE_CHECKING:
 
     from benchmarks.sregym.adapter import ClusterOps, NativeInstallConfig
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+
+
+def await_workload_identity(kubeconfig: Path, namespace: str) -> dict[str, Any]:
+    """Admission's readiness wait reads through this module's ``workload_identity``."""
+    return await_identity(lambda: workload_identity(kubeconfig, namespace))
 
 
 def active_incident(state: dict[str, Any]) -> str | None:
