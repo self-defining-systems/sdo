@@ -155,6 +155,8 @@ func gateUpdated(ids ...string) *contracts.ReflectionDecision {
 
 func gateClean() *contracts.OutcomeRecord { return &contracts.OutcomeRecord{Classification: "success"} }
 
+func gateShell(r *Request) { r.CodePath = "shell" }
+
 func gatePlaybookEdit(t *testing.T, root string) {
 	write(t, root, gateReadme, gateReadmeText("New guidance.\n"))
 }
@@ -173,6 +175,19 @@ var gateRows = []gateRow{
 			r.Decision = gateNoChange
 			r.Publication = &PublicationContext{BaseCommit: "HEAD", IncidentID: gateIncident}
 		}},
+
+	// The shell code path (CodePath "shell"): the same Check, with markdown
+	// notes and shell scripts as the only authored files.
+	{name: "shell: a playbook note passes", kind: gateCheck, actor: Responder, phase: ReflectionPhase,
+		request: gateShell, edit: gateWrite(".sdo/playbooks/base/notes.md", "# Notes\n\nRestart the pod.\n")},
+	{name: "shell: a shell author edits a detector manifest", kind: gateCheck, actor: Responder, phase: ReflectionPhase,
+		rules: []string{"shell.format"}, path: gateCacheManifest, request: gateShell,
+		edit: func(t *testing.T, root string) {
+			write(t, root, gateCacheManifest, gateRead(t, root, gateCacheManifest)+"# edited\n")
+		}},
+	{name: "shell: a judge writes a playbook note it does not own", kind: gateCheck, actor: HealthJudge, phase: InitialPhase,
+		rules: []string{RuleOwnershipDenied}, path: ".sdo/playbooks/base/notes.md", request: gateShell,
+		edit: gateWrite(".sdo/playbooks/base/notes.md", "# Notes\n")},
 
 	// Structure and semantics, one bad tree per rule.
 	{name: "unknown path", kind: gateStatic, rules: []string{RuleUnknownPath}, path: ".sdo/notes.txt", edit: gateOverlay("unknown-path")},
@@ -582,7 +597,14 @@ var gateRuleCoverage = map[string]string{
 	RuleTrafficDefaultLatency: "no row yet: informational, same as traffic.undriven-edge",
 	RuleDetectorNone:          "never emitted: memory without detectors is valid (good row above)",
 	RulePlaybookNone:          "never emitted: memory without playbooks is valid (good row above)",
+	// Rules emitted outside Check's pipeline; ruleIDs reads rules.go only.
+	"memory.conflict": "the broker's rule: it needs two proposals on a real repository, so it is tested in broker/memory_conflict_integration_test.go",
 }
+
+// gateRulesOutsideRulesGo are rule IDs that are string literals elsewhere in
+// the package or in the broker, listed here so the coverage test notices them.
+// shell.format has table rows (the "shell:" rows).
+var gateRulesOutsideRulesGo = []string{"shell.format", "memory.conflict"}
 
 func TestGateTableNamesEveryRule(t *testing.T) {
 	covered := map[string]bool{}
@@ -601,7 +623,7 @@ func TestGateTableNamesEveryRule(t *testing.T) {
 		covered[row.rule] = true
 	}
 	var missing []string
-	for _, id := range ruleIDs(t) {
+	for _, id := range append(ruleIDs(t), gateRulesOutsideRulesGo...) {
 		if !covered[id] && gateRuleCoverage[id] == "" {
 			missing = append(missing, id)
 		}
