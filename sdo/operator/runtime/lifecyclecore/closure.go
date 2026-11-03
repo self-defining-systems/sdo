@@ -288,6 +288,10 @@ func Step(state *contracts.ControllerState, event Event) (*contracts.ControllerS
 			return next, nil
 		}
 		next.LastAcknowledgedIncidentId = id
+		next.LastAcknowledgedExternalIncidentId = ""
+		if next.PendingClosure.GetRequest().GetExternalMessage() != "" {
+			next.LastAcknowledgedExternalIncidentId = id
+		}
 		next.PendingClosure, next.ClosureReceipt, next.ClosureFailure = nil, nil, nil
 		next.ClosureState = contracts.ClosureState_CLOSURE_STATE_UNSPECIFIED
 	}

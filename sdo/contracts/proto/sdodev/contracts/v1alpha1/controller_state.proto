@@ -214,6 +214,8 @@ message ControllerState {
   google.protobuf.Timestamp verification_deadline_at = 45;
   string setup_evaluated_revision = 46;
   repeated DisabledSetupDetector disabled_setup_detectors = 47;
+  // Preserve completion policy when the acknowledged closure payload is retired.
+  string last_acknowledged_external_incident_id = 48;
   reserved 32, 33, 34;
   reserved "drift_investigation", "drift_admission", "program_sweep_cursors";
 }

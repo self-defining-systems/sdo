@@ -36,7 +36,7 @@ def configure_arm(
     if environment.shared_accepted_id:
         raise ValueError("ablation arms require private memory, without shared writers")
     arm = args.ablation_arm
-    if arm not in ("full", "detectors-only"):
+    if arm not in ("full", "detectors-only", "playbooks-only"):
         raise ValueError(f"unsupported ablation arm: {arm}")
     app = environment.problem_application.replace("_", "-")
     if app == "opentelemetry-demo-astronomy-shop":
@@ -68,6 +68,7 @@ def configure_arm(
     # Restore and lineage admission must use the same revision as the row-start wipe.
     environment.seed_commit = commit
     args.planned_commit = commit
+    args.external_incidents = arm == "playbooks-only"
     args.frozen_memory = True
     args.replay = "off"
     return ArmMemory(arm, repository, branch, commit)

@@ -64,9 +64,6 @@ func ControllerFingerprint(ctx context.Context, repository, revision string) (st
 	if err != nil {
 		return "", fmt.Errorf("read accepted controller source trees: %w: %s", err, strings.TrimSpace(string(output)))
 	}
-	if len(output) == 0 {
-		return "", errors.New("accepted controller source trees are missing")
-	}
 	return fmt.Sprintf("%x", sha256.Sum256(output)), nil
 }
 
@@ -85,20 +82,18 @@ func CandidateDiagnostics(repository string) (string, error) {
 		info, err := os.Lstat(part)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
-				return "", ErrDiagnosticsNotBootstrapped
+				if part == filepath.Join(root, layout.Dir) {
+					return "", ErrDiagnosticsNotBootstrapped
+				}
+				// Artifact classes are optional; a missing diagnostic directory
+				// is an empty compilation input, not an uninitialized repository.
+				continue
 			}
 			return "", fmt.Errorf("inspect diagnostics storage: %w", err)
 		}
 		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			return "", errors.New("diagnostics storage must be a real directory")
 		}
-	}
-	registered, err := layout.HasDetectors(root)
-	if err != nil {
-		return "", fmt.Errorf("inspect diagnostics manifests: %w", err)
-	}
-	if !registered {
-		return "", ErrDiagnosticsNotBootstrapped
 	}
 	return filepath.Join(root, layout.DiagnosticsDir), nil
 }

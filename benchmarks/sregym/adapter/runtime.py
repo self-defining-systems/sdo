@@ -54,6 +54,7 @@ class RuntimeConfig:
     reflection_guidance: str = "baseline"
     force_reflection: bool = False
     frozen_memory: bool = False
+    external_incidents: bool = False
     code_path: str = "go"
 
     late_findings: str = "off"
@@ -77,6 +78,10 @@ class RuntimeConfig:
     shared_accepted_id: str = ""
 
     def __post_init__(self) -> None:
+        if type(self.external_incidents) is not bool:
+            raise TypeError("external_incidents must be a boolean")
+        if self.external_incidents and not self.frozen_memory:
+            raise ValueError("external incidents require frozen memory")
         if type(self.frozen_memory) is not bool:
             raise TypeError("frozen_memory must be a boolean")
         if self.frozen_memory and self.force_reflection:
@@ -163,6 +168,7 @@ def native_install_config(config: RuntimeConfig) -> NativeInstallConfig:
         reflection_guidance=config.reflection_guidance,
         force_reflection=config.force_reflection,
         frozen_memory=config.frozen_memory,
+        external_incidents=config.external_incidents,
         registration_configmap="sdo-agent-registrations" if config.agent_registrations else None,
         code_path=config.code_path,
         healthy_baseline=config.healthy_baseline,

@@ -17,3 +17,20 @@ Startup refresh is suppressed; health inputs must still match the compiled input
 
 Frozen receipts name an existing base, so they do not require a new memory-host
 activation. Activation continuity remains required for published-memory commits.
+
+Playbooks-only uses `IncidentRequest.external_message`, with no findings/history,
+health catalog or automatic stage. `ControllerObservation.completed_external_incident_id`
+is completion, not verified health (also preserved after ACK). The frozen broker
+outcome remains `unconfirmed`; strict receipts accept this only with explicit external
+completion, a completed responder, no detector authority and unchanged accepted base.
+Use the oracle result for success. `incident_resolution_scope` is
+`external_trigger_to_responder_completion`; `verified_at` in the common benchmark
+resolution projection is the responder-completion row boundary, not a health claim.
+Trigger/detection time is controller admission after injection; first successful
+repair action and responder completion populate the ordinary timing fields.
+
+For playbooks-only, the common injection-to-detection, mitigation and resolution
+metrics start at injection end; raw injection-to-mitigation remains anchored at
+injection start. `first_repair_action_at` is the earliest successful repair's
+start; `injection_to_first_repair_action_seconds` and
+`injection_to_responder_done_seconds` use the same arm-specific origin.

@@ -25,7 +25,7 @@ separate fastloop concerns.
 
 ## Repeat runs with fixed memory
 
-`fastloop run --agent sdo --ablation-arm {full,detectors-only}` fetches
+`fastloop run --agent sdo --ablation-arm {full,detectors-only,playbooks-only}` fetches
 `ablate/20261103-<arm>` from the problem application's private memory repository,
 pins the row-start reset to that commit, forces `--frozen-memory` and replay off,
 and installs the supplied memory without deployment or judge agents. Use a
@@ -34,7 +34,12 @@ are rejected. `--ablation-repository` overrides the repository for a local toy
 proof. The fetched revision is the setup-lineage boundary as well as the restore seed:
 offline variant commits are inputs, and subsequent setup commits still require
 broker validation. It is recorded in `ablation-memory.json`; rows carry
-`ablation_arm`. The playbooks-only runtime is not implemented yet.
+`ablation_arm`. Playbooks-only selects external incident admission: after injection
+completes the benchmark sends only the generic alert and namespace. Detectors,
+startup health/traffic gates, automatic stages and reflection are disabled. The
+responder uses live reads and may run programs; its completed result ends the
+response, then the benchmark oracle grades. The private outcome stays unconfirmed
+and never grants program trust. Timing scope is `external_trigger_to_responder_completion`.
 
 For an existing private hotel lane, one supported invocation is:
 

@@ -271,7 +271,9 @@ def _responder_prompt(request: IncidentRequest, *, incident_data: str) -> Render
         raise ValueError("incident responder requires a logical memory snapshot")
     prompt = render_prompt(
         "responder",
-        "incident_shell"
+        "incident_external_instructions"
+        if request.external_message
+        else "incident_shell"
         if agent_guidance() == "shell"
         else "incident_reuse_instructions"
         if request.prior_stages
@@ -282,7 +284,8 @@ def _responder_prompt(request: IncidentRequest, *, incident_data: str) -> Render
         repair_policy=request.repair_policy,
         branch_instruction=branch_instruction("incident_result"),
     )
-    prompt += late_findings_guidance(request)
+    if not request.external_message:
+        prompt += late_findings_guidance(request)
     extra = "\n".join(
         part
         for part in (metrics_context(request.metrics_source), os.getenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "").strip())

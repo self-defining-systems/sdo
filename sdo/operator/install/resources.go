@@ -54,6 +54,7 @@ type Config struct {
 	ReflectionSession, ReflectionGuidance        string
 	ForceReflection                              bool
 	FrozenMemory                                 bool
+	ExternalIncidents                            bool
 	LateFindings                                 string
 	MaxResponseLoops                             int
 	HealthyBaseline                              bool
@@ -126,6 +127,9 @@ func (c Config) controlNamespace() string {
 	return c.Namespace
 }
 func (c Config) validate() error {
+	if c.ExternalIncidents && !c.FrozenMemory {
+		return errors.New("external incidents require frozen memory")
+	}
 	if c.FrozenMemory && c.ForceReflection {
 		return errors.New("frozen memory conflicts with force reflection")
 	}
@@ -357,6 +361,9 @@ func controllerJob(c Config) *batchv1.Job {
 	}
 	args = append(args, "--reflection-session", reflectionSession(c))
 	args = append(args, "--reflection-guidance", reflectionGuidance(c))
+	if c.ExternalIncidents {
+		args = append(args, "--external-incidents")
+	}
 	if c.FrozenMemory {
 		args = append(args, "--frozen-memory")
 	}

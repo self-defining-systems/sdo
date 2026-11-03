@@ -1826,3 +1826,54 @@ def test_settled_receipt_requires_no_model_completion_event(
     collected = _collect_settled_receipt(ops, config, "synthetic", tmp_path, clock)
     assert collected == receipt
     assert clock.monotonic() == 0
+
+
+def test_external_stage_delivers_only_after_injection_and_skips_health_baseline(tmp_path):
+    class ExternalOps(FakeOps):
+        def inject_after_resume(self, *_args, **_kwargs):
+            pytest.fail("external incidents must not run a detector baseline")
+
+        def open_external_incident(self, control_namespace, namespace, incident_id):
+            assert self.events[-1] == ("fault", "external")
+            self.events.append(("external", incident_id, namespace))
+            self.states[control_namespace]["pending_closure"] = {
+                "request": {"incident_id": incident_id, "namespace": namespace, "external_message": "Investigate"},
+                "result": {"status": "completed"},
+                "detected_at": DETECTED.isoformat(),
+                "dispatched_at": (DETECTED + timedelta(seconds=1)).isoformat(),
+                "responder_completed_at": (DETECTED + timedelta(seconds=35)).isoformat(),
+                "verified_at": (DETECTED + timedelta(seconds=35)).isoformat(),
+                "unconfirmed_reason": "CLOSURE_UNCONFIRMED_REASON_EXTERNAL_COMPLETION",
+            }
+
+    ops = ExternalOps()
+    inputs = _inputs(tmp_path, "external")
+    inputs = replace(inputs, runtime_config=replace(inputs.runtime_config, frozen_memory=True, external_incidents=True))
+    resolution = run_persistent_stage(
+        inputs,
+        ops=ops,
+        run_lifecycle=lambda: True,
+        inject=lambda: ops.events.append(("fault", "external")),
+        clock=_clock(ops),
+    )
+    assert resolution["incident_resolution_scope"] == "external_trigger_to_responder_completion"
+    assert resolution["incident_resolution_seconds"] == 35
+    assert resolution["responder_finished_at"] == (DETECTED + timedelta(seconds=35)).isoformat()
+
+
+def test_external_ingress_payload_has_no_problem_or_oracle_context(monkeypatch):
+    from benchmarks.sregym.adapter import persistent
+
+    calls = []
+    monkeypatch.setattr(persistent, "kubectl", lambda *args, **kwargs: calls.append((args, kwargs)))
+    persistent.KubectlClusterOps().open_external_incident("app-sdo", "app", "external-opaque")
+    document = json.loads(calls[0][1]["input_text"])
+    alert = json.loads(document["data"]["incident.json"])
+    assert alert == {
+        "id": "external-opaque",
+        "namespace": "app",
+        "message": (
+            "You are an SRE agent. Something is wrong in the application running in this cluster. "
+            "Find and fix the problem."
+        ),
+    }

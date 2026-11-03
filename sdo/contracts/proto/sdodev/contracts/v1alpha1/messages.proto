@@ -255,13 +255,25 @@ message InstallEnvironmentObject {
   string digest = 2;
 }
 
+// A transport-neutral alert. Identity makes delivery retries idempotent.
+message ExternalIncident {
+  string id = 1 [(buf.validate.field).string.min_len = 1];
+  string namespace = 2 [(buf.validate.field).string.min_len = 1];
+  string message = 3 [(buf.validate.field).string = {min_len: 1, max_len: 4096}];
+}
+
 message IncidentRequest {
+  option (buf.validate.message).cel = {
+    id: "incident.trigger"
+    message: "detected incidents require findings and history; external incidents carry no detector evidence"
+    expression: "this.external_message == '' ? (size(this.findings) > 0 && size(this.detector_history) > 0) : (size(this.findings) == 0 && size(this.detector_history) == 0 && size(this.drift_events) == 0 && !has(this.state_changes) && size(this.disabled_setup_detectors) == 0)"
+  };
   string schema_version = 1 [(buf.validate.field).string.const = "sdo.dev/v1alpha1"];
   string application = 2 [(buf.validate.field).string.min_len = 1];
   string namespace = 3 [(buf.validate.field).string.min_len = 1];
   string incident_id = 4 [(buf.validate.field).string.min_len = 1];
-  repeated Finding findings = 5 [(buf.validate.field).repeated.min_items = 1];
-  repeated DetectorEvaluation detector_history = 6 [(buf.validate.field).repeated.min_items = 1];
+  repeated Finding findings = 5;
+  repeated DetectorEvaluation detector_history = 6;
   repeated SurfacedPlaybook surfaced_playbooks = 7;
   repeated PriorOutcomeEvidence relevant_outcomes = 8 [(buf.validate.field).repeated.max_items = 3];
   string source_commit = 9 [(buf.validate.field).string.min_len = 1];
@@ -292,6 +304,8 @@ message IncidentRequest {
   repeated ResponseProgress prior_response_progress = 31;
   repeated DisabledSetupDetector disabled_setup_detectors = 32;
   MetricsSource metrics_source = 33;
+  // External alerts close when the responder returns; they assert no verified health.
+  string external_message = 34 [(buf.validate.field).string.max_len = 4096];
 }
 
 message ResponseProgress {
@@ -571,6 +585,8 @@ enum ClosureUnconfirmedReason {
   CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE = 1;
   // An observer stayed unavailable (timeout, API 5xx, unsynced) until the bound.
   CLOSURE_UNCONFIRMED_REASON_OBSERVER_UNAVAILABLE = 2;
+  // Response completed without independent detector verification.
+  CLOSURE_UNCONFIRMED_REASON_EXTERNAL_COMPLETION = 3;
 }
 
 // Controller-owned evidence from one response stage. Finding credit describes

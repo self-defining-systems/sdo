@@ -39,4 +39,7 @@ message ControllerObservation {
   bool acknowledged = 5;
   string open_incident_summary = 6;
   ControllerObservationFailure failure = 7;
+  // Completion has no independent health assertion.
+  string completed_external_incident_id = 8;
+  IncidentClosure completed_external_closure = 9;
 }

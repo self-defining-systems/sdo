@@ -35,9 +35,10 @@ type Config struct {
 var advisoryDuration = regexp.MustCompile(`(?m)(?:\t(?:[0-9]+\.[0-9]+s|\(cached\))| \([0-9]+\.[0-9]+s\))$`)
 
 type Workspace struct {
-	Directory   string
-	ModulePath  string
-	compileOnly bool
+	Directory     string
+	ModulePath    string
+	compileOnly   bool
+	detectorCount int
 	// StageTimings lists each Go toolchain stage run by Check or
 	// ValidateAndBuild, including a rejected final stage.
 	StageTimings        []StageTiming
@@ -149,11 +150,16 @@ func (workspace *Workspace) validate(ctx context.Context, vet, classifyGenerated
 		}
 		// Detector and generated safety contracts remain acceptance gates. Only
 		// authored playbook tests and the program corpus replay are advisory.
-		args := []string{"test", "./detectors/..."}
+		args := []string{"test"}
+		if workspace.detectorCount > 0 {
+			args = append(args, "./detectors/...")
+		}
 		if _, err := os.Stat(filepath.Join(workspace.Directory, "traffic", "generators")); err == nil {
 			args = append(args, "./traffic/...")
 		}
-		stages = append(stages, args)
+		if len(args) > 1 {
+			stages = append(stages, args)
+		}
 		if !classifyGenerated {
 			stages = append(stages, []string{"test", "-skip", "^" + corpusTest + "$", "./generated"})
 		}
@@ -257,7 +263,11 @@ func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error
 			_ = os.RemoveAll(directory)
 		}
 	}()
-	if err := copyTree(ctx, diagnostics, directory); err != nil {
+	if _, err := os.Lstat(diagnostics); err == nil {
+		if err := copyTree(ctx, diagnostics, directory); err != nil {
+			return nil, err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
 	goModPath := filepath.Join(directory, "go.mod")
@@ -320,7 +330,7 @@ func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error
 	if err != nil {
 		return nil, err
 	}
-	return &Workspace{Directory: directory, ModulePath: module, compileOnly: config.CompileOnly, advisorySetupErrors: setupErrors}, nil
+	return &Workspace{Directory: directory, ModulePath: module, compileOnly: config.CompileOnly, detectorCount: len(detectors), advisorySetupErrors: setupErrors}, nil
 }
 
 func validateDetectors(detectors []layout.Detector) error {

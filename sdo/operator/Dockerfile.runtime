@@ -23,7 +23,8 @@ FROM go-modules AS go-dep-list
 COPY sdo/operator ./sdo/operator
 RUN mkdir /deps \
     && for dir in sdo/operator/sdk sdo/operator/core sdo/operator/runtime sdo/operator; do \
-      (cd "$dir" && go list -deps -test ./... | grep -vE '^sdo\.dev|[ ]|\.test$' | sort -u) > "/deps/$(echo "$dir" | tr / _).txt"; \
+      (cd "$dir" && go list -deps -test ./...) > /tmp/module-deps.txt || exit 1; \
+      grep -vE '^sdo\.dev|[ ]|\.test$' /tmp/module-deps.txt | sort -u > "/deps/$(echo "$dir" | tr / _).txt"; \
     done
 
 FROM go-modules AS go-deps

@@ -352,6 +352,8 @@ class ClusterOps(Protocol):
         self, control_namespace: str, generation: str, inject: Callable[[], None]
     ) -> dict[str, float]: ...
 
+    def open_external_incident(self, control_namespace: str, namespace: str, incident_id: str) -> None: ...
+
     def collect_receipt(self, config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]: ...
 
     def export_runtime_artifacts(self, config: RuntimeConfig, artifacts_dir: Path) -> dict[str, str | None]: ...
@@ -754,6 +756,28 @@ class KubectlClusterOps:
             poll_seconds=POLL_SECONDS,
         )
 
+    def open_external_incident(self, control_namespace: str, namespace: str, incident_id: str) -> None:
+        alert = {
+            "id": incident_id,
+            "namespace": namespace,
+            "message": (
+                "You are an SRE agent. Something is wrong in the application running in this cluster. "
+                "Find and fix the problem."
+            ),
+        }
+        kubectl(
+            ["apply", "-f", "-"],
+            namespace=control_namespace,
+            input_text=json.dumps(
+                {
+                    "apiVersion": "v1",
+                    "kind": "ConfigMap",
+                    "metadata": {"name": "sdo-external-incident", "namespace": control_namespace},
+                    "data": {"incident.json": json.dumps(alert)},
+                }
+            ),
+        )
+
     def collect_receipt(self, config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]:
         return collect_production_receipt(config, incident_id, artifacts_dir)
 
@@ -971,9 +995,20 @@ def run_persistent_stage(
             )
         known.update(_known_incident_ids(state))
         inject()
+        if config.external_incidents:
+            ops.open_external_incident(control, inputs.namespace, f"external-{uuid.uuid4().hex}")
 
     try:
-        gate_timings = ops.inject_after_resume(control, generation, inject_binding_incidents)
+        if config.external_incidents:
+            # Wait for a ready paused controller, without running a health baseline.
+            started_gate = clock.monotonic()
+            ops.set_maintenance(control, paused=True, generation=generation)
+            wait_for_maintenance_ack(ops, control, generation, clock)
+            inject_binding_incidents()
+            ops.set_maintenance(control, paused=False, generation=f"{generation}-injected")
+            gate_timings = {"controller_ready_wait": clock.monotonic() - started_gate}
+        else:
+            gate_timings = ops.inject_after_resume(control, generation, inject_binding_incidents)
     except InvalidInjectionError as exc:
         # No incident exists: settle maintenance without waiting for response, reflection,
         # acknowledgment, or a strict receipt, and retain a benchmark terminal record.
@@ -1007,6 +1042,7 @@ def run_persistent_stage(
             inputs.verification_timeout_seconds,
             clock,
             inputs.detection_timeout_seconds,
+            external_completion=config.external_incidents,
         )
     except PersistentControllerError:
         export_closure_failure_evidence(ops, control, inputs.receipt_dir)
@@ -1905,6 +1941,18 @@ def _resolution_timings(closure: dict[str, Any]) -> dict[str, Any]:
     dispatched = _timestamp(closure.get("dispatched_at"))
     responder_completed = _timestamp(closure.get("responder_completed_at"))
     verified = _timestamp(closure.get("verified_at"))
+    if (closure.get("request") or {}).get("external_message"):
+        if detected is None or responder_completed is None:
+            return {}
+        return {
+            "incident_resolution_seconds": (responder_completed - detected).total_seconds(),
+            "incident_resolution_scope": "external_trigger_to_responder_completion",
+            "detected_at": detected.isoformat(),
+            "responder_started_at": dispatched.isoformat() if dispatched else None,
+            "responder_finished_at": responder_completed.isoformat(),
+            # Common row boundary; the explicit scope carries no health claim.
+            "verified_at": responder_completed.isoformat(),
+        }
     # A closure cut by the verification timeout carries no final detector states: health never cleared.
     if detected is None or verified is None or not closure.get("final_detector_states"):
         return {}
@@ -1976,6 +2024,7 @@ def _wait_for_verified_incident(
     detection_timeout: float | None = None,
     *,
     stop_when_acknowledged_idle: bool = False,
+    external_completion: bool = False,
 ) -> VerifiedIncident | None:
     """Return the first new incident the controller verified healthy, before reflection finishes.
 
@@ -2007,6 +2056,14 @@ def _wait_for_verified_incident(
         if detection_timeout is not None and not detected and clock.monotonic() - started >= detection_timeout:
             raise DetectionMissError(
                 f"controller in {control!r}: no incident opened within {detection_timeout:.0f}s of fault injection"
+            )
+        if external_completion and observed.completed_external_incident_id:
+            return VerifiedIncident(
+                incident_id=observed.completed_external_incident_id,
+                closure=json_format.MessageToDict(
+                    observed.completed_external_closure, preserving_proto_field_name=True
+                ),
+                busy_until=busy_until(state),
             )
         if observed.verified_incident_id:
             closure = (

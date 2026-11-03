@@ -54,6 +54,7 @@ type PriorOutcomeEvidence struct {
 }
 
 type IncidentRequest struct {
+	ExternalMessage        string
 	MetricsSource          *contracts.MetricsSource
 	DisabledSetupDetectors []*contracts.DisabledSetupDetector
 	NamespaceOnboarding    *contracts.NamespaceOnboarding

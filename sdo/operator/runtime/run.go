@@ -234,6 +234,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	reportGrace := flags.Duration("responder-report-grace", 30*time.Second, "deprecated compatibility setting; verified recovery does not wait for final narration")
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "exit after one closure is durably acknowledged")
 	frozenMemory := flags.Bool("frozen-memory", false, "keep closure evidence private and disable learning")
+	externalIncidents := flags.Bool("external-incidents", false, "accept external alerts only; close on responder completion")
 	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
 	maintenanceConfigMap := flags.String(
 		"maintenance-configmap", MaintenanceConfigMapName, "maintenance ConfigMap in the control namespace",
@@ -288,6 +289,14 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		return errors.New("SDO_RESPONDER_MENU must be 0 or 1")
 	}
 
+	if *externalIncidents && !*frozenMemory {
+		return errors.New("external incidents require frozen memory")
+	}
+	if *externalIncidents {
+		detectors = nil
+		*syntheticTraffic = false
+		*stateBaseline = false
+	}
 	var hostManager *memoryhost.Manager
 	if launchConfig != nil {
 		hostManager = memoryhost.NewManager(30 * time.Second)
@@ -321,6 +330,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		}
 		hostio.SetRecovery(hostManager, hostio.LaunchConfig{Namespace: *namespace, ProtectedNamespace: hostProtectedNamespace(*controlNamespace, *namespace), DisableSyntheticTraffic: !*syntheticTraffic, Binary: *memoryHostBinary, Digest: *memoryHostDigest, Commit: launchConfig.GetControllerRevision(), MemoryBytes: 512 << 20, Output: stderr})
 		detectors, options.Programs = remote.Detectors, remote.Programs
+		if *externalIncidents {
+			detectors = nil
+		}
 	}
 	if *frozenMemory && *forceReflection {
 		return errors.New("frozen memory conflicts with force reflection")
@@ -331,6 +343,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if options.NativeBroker != nil && *forceReflection {
 		options.NativeBroker.ForceReflection = true
 	}
+
 	if *maxResponseLoops < 1 || *diagnosisDeadline <= 0 || *driftBatchWindow <= 0 {
 		return errors.New("response loops, diagnosis deadline and drift batch window must be positive")
 	}
@@ -785,7 +798,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if options.NativeBroker != nil {
 		corpusSessionRoot = options.NativeBroker.SessionRoot
 	}
-	controller, err = NewController(ControllerConfig{MetricsSource: configuredMetricsSource(*metricsURL, *metricsPublishURL),
+	controller, err = NewController(ControllerConfig{ExternalIncidentsOnly: *externalIncidents, MetricsSource: configuredMetricsSource(*metricsURL, *metricsPublishURL),
 		CodePath: selectedPathConfig, CodePathRegistry: codePathRegistry,
 		Application: *application, Namespace: *namespace,
 		SourceCommit: resolvedSourceCommit, DeployedCommit: resolvedDeployedCommit,
@@ -808,15 +821,25 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	// Registered before the run context's cancel, so it runs after it: the
 	// caller may remove the repository mount once this function returns.
 	defer controller.Wait()
-	controller.ConfigureDrift(DriftControllerConfig{Inventory: true, Events: kubernetesCache, Source: planSource, Client: bootstrapProvider.Client, BatchWindow: *driftBatchWindow,
-		View: func(snapshot sdk.DetectionContext) program.ReadView {
-			if cycle, ok := snapshot.(*CycleReadView); ok {
-				return cycle
+	if !*externalIncidents {
+		controller.ConfigureDrift(DriftControllerConfig{Inventory: true, Events: kubernetesCache, Source: planSource, Client: bootstrapProvider.Client, BatchWindow: *driftBatchWindow,
+			View: func(snapshot sdk.DetectionContext) program.ReadView {
+				if cycle, ok := snapshot.(*CycleReadView); ok {
+					return cycle
+				}
+				return NewCycleReadView(LiveReadView{Carrier: inputs.New(snapshot), Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, Prober: primitiveProber,
+					Source: planSource, SourceCommit: controller.CurrentAcceptedCommit(), BaselineSource: baselineOf(stateTracker)})
+			},
+		})
+	} else {
+		controller.ExternalIncidents = func(ctx context.Context) (*ExternalIncident, error) {
+			alert, err := lifecycleio.ReadExternalIncident(ctx, bootstrapProvider.Client, *controlNamespace)
+			if err != nil || alert == nil {
+				return nil, err
 			}
-			return NewCycleReadView(LiveReadView{Carrier: inputs.New(snapshot), Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, Prober: primitiveProber,
-				Source: planSource, SourceCommit: controller.CurrentAcceptedCommit(), BaselineSource: baselineOf(stateTracker)})
-		},
-	})
+			return &ExternalIncident{ID: alert.Id, Namespace: alert.Namespace, Message: alert.Message}, nil
+		}
+	}
 	if options.NativeBroker != nil {
 		if err := controller.SetIncidentBroker(*options.NativeBroker); err != nil {
 			return err
@@ -864,6 +887,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			remote, err := NewRemoteMemory(ready, hostManager)
 			if err != nil {
 				return err
+			}
+			if *externalIncidents {
+				remote.Detectors = nil
 			}
 			if err := core.ValidateDetectors(remote.Detectors); err != nil {
 				return err
@@ -1196,7 +1222,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	// controller: a baseline it cannot measure is an unavailable state that
 	// later passes measure again.
 	acceptBaseline := func(gate func(context.Context, *Controller, string, string, bool, *ServiceReachabilityObserver, SnapshotProvider, *ReachabilityReference, []sdk.Detector)) {
-		if launchConfig != nil && options.NativeBroker != nil {
+		if !*externalIncidents && launchConfig != nil && options.NativeBroker != nil {
 			gate(runCtx, controller, resolvedRoot, *repositoryMountPath, launchConfig.GetHealthyBaseline(), reachabilityObserver, snapshotProvider, reachabilityReference, detectors)
 		}
 	}

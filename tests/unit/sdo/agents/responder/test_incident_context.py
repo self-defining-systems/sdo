@@ -605,3 +605,21 @@ def test_residual_finding_playbooks_remain_available_without_a_program_match() -
         books = _brief(rendered)["stage_playbooks"]
         assert Path(books["unmatched-fault"]).read_text().startswith("# Unmatched fault")
         assert books["missing-readme"] is None
+
+
+def test_external_prompt_has_no_health_gate_and_fits_existing_budget():
+    from sdo.agents.responder.codex import _responder_prompt
+
+    request = IncidentRequest(
+        incident_id="external",
+        namespace="app",
+        external_message="Investigate the namespace",
+        repair_policy="recorded-actions",
+    )
+    request.memory_snapshot.accepted_commit = "a" * 40
+    request.memory_snapshot.playbooks.add(id="repair", markdown="Inspect live source differences.")
+    with prepared_incident_data(request) as data:
+        prompt = str(_responder_prompt(request, incident_data=data))
+    assert "No detector gate exists" in prompt
+    assert "Investigate the namespace" in prompt
+    assert "repair" in prompt

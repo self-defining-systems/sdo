@@ -134,6 +134,7 @@ MitigationSessionCheckpoint = mitigation_menu_pb2.MitigationSessionCheckpoint
 
 ControllerConfig = controller_config_pb2.ControllerConfig
 
+ExternalIncident = messages_pb2.ExternalIncident
 Finding = messages_pb2.Finding
 DetectorEvaluation = messages_pb2.DetectorEvaluation
 SurfacedPlaybook = messages_pb2.SurfacedPlaybook
