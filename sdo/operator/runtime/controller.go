@@ -462,7 +462,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		// Persist known contradictions before snapshot acquisition or an idle
 		// return: either may fail, and a restart must not erase this evidence.
 		if c.onboardingReachability != nil && c.onboardingReachability.invalid {
-			if err := c.rejectPendingOnboarding(ctx, "install boundary contradicted or interrupted"); err != nil {
+			if err := c.rejectPendingOnboarding(ctx, c.onboardingRejectionReason(false)); err != nil {
 				return err
 			}
 			deferInventory = false
@@ -506,9 +506,18 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	snapshot = c.prepareOnboardingReachability(ctx, now, snapshot, onboardingDetectors)
 	var onboardingCandidate *contracts.NamespaceOnboarding
 	confirmed := detectorsConfirmed(onboardingDetectors, snapshot)
+	if !confirmed && c.pendingOnboarding != nil {
+		var reasons []string
+		for _, detector := range onboardingDetectors {
+			if !detectorConfirmed(detector, snapshot) {
+				reasons = append(reasons, detector.Spec().ID+": "+detectorConfirmationReason(detector, snapshot))
+			}
+		}
+		c.waitForOnboarding(ctx, strings.Join(reasons, "; "))
+	}
 	confirmationExpired := c.onboardingConfirmationExpired(now, snapshot)
 	if c.pendingOnboarding != nil && (confirmationExpired || c.onboardingReachability != nil && c.onboardingReachability.invalid) {
-		if err := c.rejectPendingOnboarding(ctx, "install window contradicted or expired"); err != nil {
+		if err := c.rejectPendingOnboarding(ctx, c.onboardingRejectionReason(confirmationExpired)); err != nil {
 			return err
 		}
 	}

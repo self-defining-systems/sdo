@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"reflect"
@@ -16,6 +17,7 @@ import (
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/sdk/servicehealth"
+	"sdo.dev/operator/sdk/traffic"
 )
 
 // Confirmation is an optional detector contract. No findings alone cannot
@@ -85,6 +87,7 @@ type onboardingReachabilityState struct {
 	candidate      *servicehealth.ReachabilityBaseline
 	configurations map[string]string
 	invalid        bool
+	invalidReason  string
 	startedAt      time.Time
 	waitReason     string
 	resumedAt      time.Time
@@ -170,6 +173,7 @@ func (c *Controller) prepareOnboardingReachability(ctx context.Context, now time
 	}
 	if !verified {
 		state.invalid = true
+		state.invalidReason = "accepted install lineage changed"
 		return snapshot
 	}
 	c.mu.Lock()
@@ -177,14 +181,14 @@ func (c *Controller) prepareOnboardingReachability(ctx context.Context, now time
 	c.mu.Unlock()
 	if busy {
 		state.invalid = true
+		state.invalidReason = "incident work interrupted install window"
 		return snapshot
 	}
 	window, ok := servicehealth.ReachabilityFrom(snapshot)
 	if !ok {
 		return snapshot
 	}
-	if _, err := healthyBaselineGoal(ctx, c.detectorList(), snapshot); err != nil {
-		state.invalid = true
+	if !c.checkOnboardingHealth(ctx, snapshot) {
 		return snapshot
 	}
 	if state.servedTargets == nil {
@@ -202,13 +206,14 @@ func (c *Controller) prepareOnboardingReachability(ctx context.Context, now time
 	for _, target := range targets {
 		config, ok := servicehealth.ReachabilityTargetConfiguration(snapshot, target)
 		if !ok {
-			state.invalid = true
+			c.waitForOnboarding(ctx, "target configuration unavailable: "+target.ID())
 			return snapshot
 		}
 		current[target.ID()] = config
 	}
 	if state.configurations != nil && !reflect.DeepEqual(state.configurations, current) {
 		state.invalid = true
+		state.invalidReason = fmt.Sprintf("target configuration changed: before=%v after=%v", state.configurations, current)
 	}
 	state.configurations = current
 	if state.invalid || !detectorsConfirmed(detectors, snapshot) || !onboardingSamplesSince(window, state.resumedAt) {
@@ -291,7 +296,28 @@ func (c *Controller) onboardingConfirmationExpired(now time.Time, snapshot sdk.D
 			count = w.Failures
 		}
 	}
-	expired := !now.Before(c.onboardingReachability.startedAt.Add(time.Duration(count)*interval + 4*timeout))
+	budget := time.Duration(count)*interval + 4*timeout
+	// Consumers can need longer than the TCP observer to prove their own
+	// observation window. Bound missing or stalled consumers at five minutes.
+	for _, detector := range c.detectorList() {
+		if consumer, ok := detector.(traffic.Consumer); ok {
+			for _, name := range consumer.TrafficWorkloads() {
+				local := traffic.NewDetector(detector.Spec(), name)
+				if window, ok := local.(interface {
+					EvaluationWindow(sdk.DetectionContext) time.Duration
+				}); ok {
+					budget = max(budget, 2*window.EvaluationWindow(snapshot))
+				}
+			}
+		}
+		if consumer, ok := detector.(interface {
+			EvaluationWindow(sdk.DetectionContext) time.Duration
+		}); ok {
+			budget = max(budget, 2*consumer.EvaluationWindow(snapshot))
+		}
+	}
+	budget = min(budget, 5*time.Minute)
+	expired := !now.Before(c.onboardingReachability.startedAt.Add(budget))
 	if expired && c.OnError != nil {
 		c.OnError(fmt.Errorf("onboarding confirmation window expired without confirmed detector verdicts"))
 	}
@@ -333,4 +359,33 @@ func onboardingSamplesSince(window servicehealth.ReachabilityWindow, since time.
 		}
 	}
 	return true
+}
+
+// Incomplete reads cannot authorize onboarding and cannot contradict it.
+func (c *Controller) checkOnboardingHealth(ctx context.Context, snapshot sdk.DetectionContext) bool {
+	_, err := healthyBaselineGoal(ctx, c.detectorList(), snapshot)
+	if err == nil {
+		return true
+	}
+	var contradiction *baselineContradictionError
+	if errors.As(err, &contradiction) {
+		c.onboardingReachability.invalid = true
+		c.onboardingReachability.invalidReason = err.Error()
+	} else {
+		c.waitForOnboarding(ctx, err.Error())
+	}
+	return false
+}
+
+func (c *Controller) onboardingRejectionReason(expired bool) string {
+	if state := c.onboardingReachability; state != nil && state.invalid {
+		if state.invalidReason != "" {
+			return "install window contradicted: " + state.invalidReason
+		}
+		return "install boundary contradicted or interrupted"
+	}
+	if expired {
+		return "install observation window expired; incomplete observations: " + c.onboardingReachability.waitReason
+	}
+	return ""
 }
