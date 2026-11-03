@@ -72,7 +72,9 @@ const harnessControlNamespace = hotel + "-sdo"
 
 func (h *harness) now() time.Time { return time.Now() }
 
-func (h *harness) faultsOn() bool { return !h.quiesced.Load() && (h.plan.Seed != 0 || len(h.plan.Agents) > 0) }
+func (h *harness) faultsOn() bool {
+	return !h.quiesced.Load() && (h.plan.Seed != 0 || len(h.plan.Agents) > 0)
+}
 
 // ---- simulated cluster with faults -------------------------------------
 
@@ -222,22 +224,14 @@ func (d standinDetector) Detect(ctx context.Context, view sdk.DetectionContext) 
 	case behavePanic:
 		panic("stand-in detector panic")
 	case behaveHang:
-		d.h.gate.Lock()
-		if !d.h.gate.busy {
-			d.h.gate.hanging++
-			d.h.gate.Unlock()
+		if d.h.enterStall() {
 			select {
 			case <-ctx.Done():
 			case <-time.After(time.Hour):
 			}
-			d.h.gate.Lock()
-			d.h.gate.hanging--
-			d.h.gate.Unlock()
+			d.h.exitStall()
 			return nil, ctx.Err()
 		}
-		d.h.gate.Unlock()
-	case behaveSlow:
-		time.Sleep(3 * d.spec.Interval)
 	case behaveWrong:
 		return []sdk.Finding{d.finding(d.spec.ID + "-phantom")}, nil
 	}
@@ -341,6 +335,24 @@ func (h *harness) declsOf(rev planRevision) []sim.DetectorDecl {
 // activate is the memory host's two-commit activation the controller runs for
 // an accepted memory commit: prepare the candidate beside the active host, make
 // it active, and reconfigure the live controller without restarting it.
+// enterStall registers a detector about to stall inside the host (hang or slow),
+// unless a harness operation is under way, in which case it answers normally.
+func (h *harness) enterStall() bool {
+	h.gate.Lock()
+	defer h.gate.Unlock()
+	if h.gate.busy {
+		return false
+	}
+	h.gate.hanging++
+	return true
+}
+
+func (h *harness) exitStall() {
+	h.gate.Lock()
+	h.gate.hanging--
+	h.gate.Unlock()
+}
+
 func (h *harness) beginOperation() {
 	for {
 		h.gate.Lock()
@@ -455,10 +467,13 @@ func (a harnessAgent) respond(ctx context.Context, request IncidentRequest) (Inc
 	case agentCrash:
 		return IncidentResult{}, errors.New("agent crashed")
 	case agentHang:
+		// The dispatcher, not the controller, owns the response timeout: the
+		// Job executor gives up at request.ResponseDeadline.
 		select {
 		case <-ctx.Done():
 			return IncidentResult{}, ctx.Err()
-		case <-time.After(time.Hour):
+		case <-time.After(time.Until(request.ResponseDeadline)):
+			return IncidentResult{}, errors.New("agent did not answer before the response deadline")
 		}
 	case agentGarbage:
 		return IncidentResult{IncidentID: "not-" + request.IncidentID, Status: "garbage"}, nil
