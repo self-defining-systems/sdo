@@ -20,11 +20,12 @@ const (
 	// not accept fresh TCP connections on one or more Service ports.
 	RuleServicePortUnreachable = "service-port-unreachable"
 
-	DefaultReachabilityInterval = 10 * time.Second
+	DefaultReachabilityInterval = 1 * time.Second
 	DefaultReachabilityTimeout  = 1 * time.Second
-	// DefaultReachabilityFailures consecutive failed dials, at least two
-	// intervals apart end to end, report a port.
-	DefaultReachabilityFailures = 3
+	// DefaultReachabilityFailures consecutive failed dials span four seconds
+	// at the default cadence, clearing three-second data-plane stalls with
+	// margin while reporting sustained failures within five seconds.
+	DefaultReachabilityFailures = 5
 	// MaxReachabilityTargets bounds the dialed Service ports per namespace.
 	MaxReachabilityTargets = 64
 )

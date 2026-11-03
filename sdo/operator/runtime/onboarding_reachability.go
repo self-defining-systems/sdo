@@ -296,7 +296,8 @@ func (c *Controller) onboardingConfirmationExpired(now time.Time, snapshot sdk.D
 			count = w.Failures
 		}
 	}
-	budget := time.Duration(count)*interval + 4*timeout
+	// Admission budget is independent of faster TCP sampling.
+	budget := max(34*time.Second, time.Duration(count)*interval+4*timeout)
 	// Consumers can need longer than the TCP observer to prove their own
 	// observation window. Bound missing or stalled consumers at five minutes.
 	for _, detector := range c.detectorList() {
