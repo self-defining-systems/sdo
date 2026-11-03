@@ -1,0 +1,118 @@
+package runtime
+
+import (
+	"context"
+	"fmt"
+	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/sdktest"
+	"sync"
+	"testing"
+	"time"
+)
+
+type sequenceDetector struct {
+	spec    sdk.DetectorSpec
+	samples [][]sdk.Finding
+	errors  map[int]error
+	calls   int
+}
+
+func (d *sequenceDetector) Spec() sdk.DetectorSpec { return d.spec }
+
+func (d *sequenceDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
+	index := d.calls
+	d.calls++
+	if err := d.errors[index]; err != nil {
+		return nil, err
+	}
+	if index >= len(d.samples) {
+		return d.samples[len(d.samples)-1], nil
+	}
+	return d.samples[index], nil
+}
+
+type staticProvider struct{ snapshot sdk.DetectionContext }
+
+func (p staticProvider) Snapshot(context.Context) (sdk.DetectionContext, error) {
+	if p.snapshot == nil {
+		return sdktest.Snapshot{}, nil
+	}
+	return p.snapshot, nil
+}
+
+type recordingDispatcher struct {
+	requests chan IncidentRequest
+	mu       sync.Mutex
+	calls    int
+}
+
+func (d *recordingDispatcher) Dispatch(_ context.Context, request IncidentRequest) (IncidentResult, error) {
+	d.mu.Lock()
+	d.calls++
+	d.mu.Unlock()
+	d.requests <- request
+	return completedResult(request.IncidentID), nil
+}
+
+func (d *recordingDispatcher) callCount() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.calls
+}
+
+func controllerDetector(id string, interval time.Duration, samples ...sdk.Finding) *sequenceDetector {
+	sequences := make([][]sdk.Finding, 0, len(samples))
+	for _, finding := range samples {
+		if finding.RuleID == "" {
+			sequences = append(sequences, nil)
+			continue
+		}
+		finding.DetectorID = id
+		sequences = append(sequences, []sdk.Finding{finding})
+	}
+	return &sequenceDetector{
+		spec: sdk.DetectorSpec{ID: id, Interval: interval}, samples: sequences, errors: make(map[int]error),
+	}
+}
+
+func testControllerConfig() ControllerConfig {
+	return ControllerConfig{
+		Application: "demo", Namespace: "demo", SourceCommit: "source", DeployedCommit: "deployed",
+		RepositoryWorktree: "/tmp/demo",
+		ResponseTimeout:    time.Minute, FiringThreshold: 2, ClearThreshold: 2,
+	}
+}
+
+func completedResult(incidentID string) IncidentResult {
+	now := time.Unix(100, 0).UTC()
+	return IncidentResult{
+		SchemaVersion: ProtocolSchemaVersion, IncidentID: incidentID, Status: IncidentCompleted,
+		Usage: UsageMetrics{}, Timing: TimingMetrics{StartedAt: now, CompletedAt: now},
+	}
+}
+
+func awaitRequest(t *testing.T, requests <-chan IncidentRequest) IncidentRequest {
+	t.Helper()
+	return <-requests
+}
+
+func awaitDispatchCompletionQueued(t *testing.T, controller *Controller) {
+	t.Helper()
+	// Observe and restore the queued message: downstream controller steps still
+	// own consumption, and the channel receive synchronizes with the worker.
+	result := <-controller.results
+	controller.results <- result
+}
+
+func executePendingEffect(t *testing.T, controller *Controller) {
+	t.Helper()
+	effect, ok := controller.PendingDispatchEffect()
+	if !ok {
+		t.Fatal("expected pending dispatch effect")
+	}
+	if err := controller.ExecuteDispatchEffect(context.Background(), effect); err != nil {
+		t.Fatalf("execute dispatch effect: %v", err)
+	}
+}
+
+func (d *sequenceDetector) String() string { return fmt.Sprintf("detector(%s)", d.spec.ID) }

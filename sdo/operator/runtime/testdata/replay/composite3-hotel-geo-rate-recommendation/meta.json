@@ -1,9 +1,0 @@
-{
-  "source": "clc-runs/mi-mini-b/results/mi-mini-b-6/000_composite3_hotel_geo_rate_recommendation",
-  "description": "Real recorded incident: a three-fault composite on Hotel Reservation (geo, rate, recommendation), detected to independently-verified health. 125 firing-stream transitions across the incident; the responder fixed the fault and health cleared. An incident-class detector fired only after dispatch (before=false, after=true, no_incident=false).",
-  "scrubbed": [
-    "detector-firings.jsonl: copied verbatim. Its fields carry no environment-specific detail (no absolute paths, pod/session ids, cluster names, git SHAs, or IPs). The incident_id is an app-name+epoch-nanos token and recorded_at timestamps are kept, because event_id is content-addressed over them and the replay re-derives the real recorded ids.",
-    "closure.json: extracted from sdo_production_receipt_strict.json -- only the detector_timeline and the three analysis booleans (the IncidentClosure fields the replay re-derives). The receipt's environment-specific fields (controller_pod_uid, responder_session_id, runtime_artifacts absolute directory, source/deployed commit SHAs, controller/responder/validator image refs) are deliberately NOT copied.",
-    "No RuntimeState dump exists in stored results (the controller's state ConfigMap is not exported per incident), so this fixture has no state.json and the state-round-trip dimension does not run for it."
-  ]
-}

@@ -2,16 +2,20 @@ package runtime
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 )
 
 // Stage 1 vertical slice of the proto single-source-of-truth track
@@ -114,5 +118,49 @@ func TestProtoObjectRefContract(t *testing.T) {
 	minimal := protoContractJSON(t, &contractsv1alpha1.ObjectRef{Kind: "Service", Name: "api"})
 	if bytes.Contains(minimal, []byte("api_version")) || bytes.Contains(minimal, []byte("namespace")) {
 		t.Fatalf("empty optional fields must be omitted, got: %s", minimal)
+	}
+}
+
+// A runtime closure and a plan application must map to their protobuf
+// contracts: these two cases pin the Go side of the wire parity.
+func TestProtoOutcomeDeriverAcceptsRuntimeClosure(t *testing.T) {
+	now := lifecycleio.Now().UTC()
+	finding := sdk.Finding{DetectorID: "health", RuleID: "health", Status: sdk.FindingActive, Severity: sdk.SeverityWarning, Summary: "fault", Evidence: "evidence",
+		PrimaryResource: sdk.ObjectRef{Kind: "Deployment", Name: "health"}, Fingerprint: "health"}
+	closure := IncidentClosure{
+		Request: IncidentRequest{
+			SchemaVersion: ProtocolSchemaVersion, Application: "app", Namespace: "default", IncidentID: "inc-proto",
+			Findings:        []sdk.Finding{finding},
+			DetectorHistory: []DetectorEvaluation{{DetectorID: "health", EvaluatedAt: now, Status: DetectorEvaluationFiring}}, SourceCommit: "base", DeployedCommit: "base",
+			RepositoryWorktree: "/proposal", RepositoryBaseCommit: "base",
+			ResponseDeadline: now.Add(time.Minute), CancellationToken: "token", RepairPolicy: "commit",
+		},
+		Result: &IncidentResult{
+			SchemaVersion: ProtocolSchemaVersion, IncidentID: "inc-proto", Status: IncidentCompleted,
+			Timing: TimingMetrics{StartedAt: now, CompletedAt: now.Add(time.Second)},
+		},
+		FinalDetectorStates: []DetectorEvaluation{{DetectorID: "health", EvaluatedAt: now.Add(time.Second), Status: DetectorEvaluationClear}},
+		DetectedAt:          now, DispatchedAt: now, ResponderCompletedAt: now.Add(time.Second), VerifiedAt: now.Add(time.Second),
+		Frozen: true,
+	}
+	derived, err := (ProtoOutcomeDeriver{}).Derive(context.Background(), closure, "", "test", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if derived.Record.GetIncidentId() != "inc-proto" {
+		t.Fatalf("wrong outcome: %+v", derived.Record)
+	}
+}
+
+func TestPlanApplicationResultMapsToProto(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}
+	plan := program.Plan{Actions: []program.Action{program.SetField{Value: program.FromParam("fixture")}}}
+	bound := program.BindPlanValues(plan, program.ValueInputs{Spec: program.ProgramSpec{Params: []program.ParamSpec{{Name: "fixture", ValueKind: program.IntValue, Default: 2}}}})
+	value := bound.Actions[0].(program.SetField).Value
+	action := program.SetField{Ref: ref, Path: "spec.replicas", Value: value, Reason: "restore capacity"}
+	result := PlanApplicationResult{Plan: program.Plan{Actions: []program.Action{action}}, Applied: true, ActionsApplied: []program.Action{action}, VerificationPassed: true, VerificationCompleted: true}
+	encoded, err := result.Proto()
+	if err != nil || !encoded.GetApplied() || encoded.GetDryRun() || encoded.GetVerification().GetResult() != contractsv1alpha1.Verdict_RESULT_NO_MATCH || len(encoded.GetPlan().GetActions()) != 1 || encoded.GetPlan().GetActions()[0].GetSetField().GetValue().GetParameter() != "fixture" {
+		t.Fatalf("proto application = %+v, err = %v", encoded, err)
 	}
 }
