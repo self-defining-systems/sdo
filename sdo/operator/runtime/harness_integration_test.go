@@ -576,7 +576,11 @@ func (s tapSink) RecordLifecycle(e *pb.LifecycleEvent) error {
 		return errHarnessDead // a dead process records nothing
 	}
 	s.h.t.Logf("%s lifecycle %s incident=%s dispatchError=%v", s.h.now().Sub(s.h.start).Round(time.Second), e.GetEvent(), e.GetIncidentId(), e.GetDispatchError())
-	return s.h.rec.RecordLifecycle(e)
+	err := s.h.rec.RecordLifecycle(e)
+	if e.GetEvent() == PhaseOpened && s.h.boundary(crashOpenedAfter) {
+		s.h.kill(s.inc, "incident opened")
+	}
+	return err
 }
 
 // lineLog keeps the controller's stdout and stderr lines.

@@ -90,6 +90,9 @@ const (
 	// reads the answer.
 	crashDispatchBefore crashBoundary = "dispatch-before"
 	crashDispatchAfter  crashBoundary = "dispatch-after"
+	// crashOpenedAfter: the nth incident_opened event reaches the sink and the
+	// process dies before it does anything else.
+	crashOpenedAfter crashBoundary = "opened-after"
 )
 
 // crashPoint is one planned death: the ordinal-th crossing of a boundary, counted

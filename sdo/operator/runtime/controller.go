@@ -202,6 +202,9 @@ type Controller struct {
 	firingSink FiringSink
 	// lifecycleSink receives incident lifecycle telemetry; nil disables it.
 	lifecycleSink LifecycleSink
+	// pendingLifecycle holds incident_opened events until the state that
+	// contains their incident is saved.
+	pendingLifecycle []*contracts.LifecycleEvent
 	// evaluationIteration counts evaluation passes that took a snapshot. It is
 	// durable so telemetry iterations keep increasing across restarts.
 	evaluationIteration int
@@ -512,14 +515,29 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	c.evaluationIteration++
 	c.evaluationAt = now.UTC()
 	c.mu.Unlock()
+	// Evaluate the batch concurrently, then apply the results below in batch
+	// order: a hung detector must not delay the others, and what the controller
+	// decides must not depend on which detector answered first.
+	skipLearned := onboardingCandidate == nil && (c.pendingOnboarding != nil || setupSweep && !confirmed && !confirmationExpired)
+	var fresh []sdk.Detector
 	for _, detector := range detectors {
 		spec := detector.Spec()
-		if onboardingCandidate == nil && (c.pendingOnboarding != nil || setupSweep && !confirmed && !confirmationExpired) && learnedIncidentDetector(spec) {
+		if skipLearned && learnedIncidentDetector(spec) {
+			continue
+		}
+		if _, cached := setupResults[spec.ID]; !cached {
+			fresh = append(fresh, detector)
+		}
+	}
+	evaluated := evaluateDetectors(ctx, fresh, snapshot)
+	for _, detector := range detectors {
+		spec := detector.Spec()
+		if skipLearned && learnedIncidentDetector(spec) {
 			continue
 		}
 		result, cached := setupResults[spec.ID]
 		if !cached {
-			result.findings, result.err = sdk.DetectObserved(ctx, detector, snapshot)
+			result = evaluated[spec.ID]
 		}
 		findings, status, detectErr := validateDetectorObservation(detector, snapshot, result.findings, result.err)
 		if detectErr != nil {
@@ -2030,6 +2048,7 @@ func (c *Controller) PersistState(ctx context.Context) error {
 		return err
 	}
 	defer cancel()
+	queued := c.queuedLifecycle()
 	state, err := c.ExportState()
 	if err == nil {
 		err = validateRuntimeState(state)
@@ -2073,6 +2092,7 @@ func (c *Controller) PersistState(ctx context.Context) error {
 		return err
 	}
 	c.stateRevision = revision
+	c.releaseLifecycle(queued)
 	c.releaseStaleStagedTask(stagedIncident)
 	c.mu.Lock()
 	c.durable = proto.Clone(state).(*contracts.ControllerState)

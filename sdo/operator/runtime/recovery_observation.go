@@ -56,13 +56,6 @@ func (c *Controller) recoveryTrackersClear(request IncidentRequest) bool {
 	return true
 }
 
-// readRecoveryDetector is shared by the proof producer and closure consumer.
-// A successful transport read alone cannot turn incomplete observations green.
-func readRecoveryDetector(ctx context.Context, detector sdk.Detector, snapshot sdk.DetectionContext) ([]sdk.Finding, DetectorEvaluationStatus, error) {
-	findings, err := sdk.DetectObserved(ctx, detector, snapshot)
-	return validateDetectorObservation(detector, snapshot, findings, err)
-}
-
 func validateDetectorObservation(detector sdk.Detector, snapshot sdk.DetectionContext, findings []sdk.Finding, err error) ([]sdk.Finding, DetectorEvaluationStatus, error) {
 	if err != nil {
 		return nil, DetectorEvaluationError, err
@@ -95,6 +88,8 @@ func validateDetectorObservation(detector sdk.Detector, snapshot sdk.DetectionCo
 // already taken by this controller step are reused; persistence is never counted
 // twice for one observation. Call under observationMu, outside c.mu.
 func (c *Controller) observeRecoveryHealth(ctx context.Context, now time.Time, snapshot sdk.DetectionContext, request IncidentRequest) {
+	var pending []string
+	var detectors []sdk.Detector
 	for _, id := range c.recoveryDetectorIDs(request) {
 		states, _ := c.latestEvaluations([]string{id}, time.Time{}, false)
 		if len(states) > 0 && states[0].EvaluatedAt.Equal(now) {
@@ -105,8 +100,13 @@ func (c *Controller) observeRecoveryHealth(ctx context.Context, now time.Time, s
 			c.recordDetectorError(id, now, fmt.Errorf("health detector unavailable"))
 			continue
 		}
-		findings, status, err := readRecoveryDetector(ctx, detector, snapshot)
-		c.recordRecoveryObservation(id, now, findings, status, err, detectorConfirmationReason(detector, snapshot))
+		pending = append(pending, id)
+		detectors = append(detectors, detector)
+	}
+	reads := readRecoveryDetectors(ctx, detectors, snapshot)
+	for i, id := range pending {
+		read := reads[id]
+		c.recordRecoveryObservation(id, now, read.findings, read.status, read.err, detectorConfirmationReason(detectors[i], snapshot))
 	}
 }
 
