@@ -67,12 +67,10 @@ func TestFirstIncidentLearnsThenRepeatIsDeterministic(t *testing.T) {
 	if now := w.ControllerPod().Name; now != pod {
 		t.Errorf("controller restarted: %s -> %s", pod, now)
 	}
+	w.Quiesce()
 	w.settle(2 * time.Minute)
-	for _, v := range w.CheckNoWedge() {
-		t.Errorf("wedge: %s", v)
-	}
-	for _, v := range w.CheckCadence(nil) {
-		t.Errorf("cadence: %s", v)
+	for _, v := range w.CheckProperties(nil) {
+		t.Errorf("property: %s", v)
 	}
 	coverage := w.CadenceCoverage()
 	t.Logf("detector passes: %v", coverage)

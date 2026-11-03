@@ -69,12 +69,10 @@ func TestControllerSurvivesFaults(t *testing.T) {
 	w.waitFor(4*time.Minute, "repair after the memory host was killed", func() bool { return w.Repaired(later) })
 	hostWindow := Window{From: killedAt, To: time.Now().Add(20 * time.Second)}
 
+	w.Quiesce()
 	w.settle(3 * time.Minute)
-	for _, v := range w.CheckNoWedge() {
-		t.Errorf("wedge: %s", v)
-	}
-	for _, v := range w.CheckCadence(nil, hostWindow, latencyWindow) {
-		t.Errorf("cadence: %s", v)
+	for _, v := range w.CheckProperties(nil, hostWindow, latencyWindow) {
+		t.Errorf("property: %s", v)
 	}
 	t.Logf("detector passes: %v", w.CadenceCoverage())
 	t.Logf("incidents: %d, outcomes: %d", len(w.OpenedIncidents()), len(w.Outcomes()))
@@ -134,9 +132,10 @@ func TestControllerToleratesAPIErrors(t *testing.T) {
 	if exits := len(w.ControllerPods()) - before - 1; exits > 0 {
 		t.Errorf("the controller exited %d times on transient API errors; its log:\n%s", exits, w.ControllerLog())
 	}
+	w.Quiesce()
 	w.settle(5 * time.Minute)
-	for _, v := range w.CheckNoWedge() {
-		t.Errorf("wedge: %s", v)
+	for _, v := range w.CheckEveryIncidentEnds() {
+		t.Errorf("property: %s", v)
 	}
 }
 
@@ -153,8 +152,9 @@ func TestControllerEndsHungAgent(t *testing.T) {
 	w.SetAgentMode("normal")
 	w.Inject("toy_target_port_backend")
 	w.waitFor(4*time.Minute, "the next incident repaired after the hung responder was ended", func() bool { return w.Repaired("toy_target_port_backend") })
+	w.Quiesce()
 	w.settle(3 * time.Minute)
-	for _, v := range w.CheckNoWedge() {
-		t.Errorf("wedge: %s", v)
+	for _, v := range w.CheckEveryIncidentEnds() {
+		t.Errorf("property: %s", v)
 	}
 }

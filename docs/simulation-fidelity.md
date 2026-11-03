@@ -431,7 +431,7 @@ kube-apiserver and etcd (envtest) with a fake kubelet and the no-model agent scr
   Rollout is simplified (Recreate waits for old Pods; RollingUpdate waits for the new Pod to be ready). There is no scheduler,
   admission-plugin set beyond the API server's defaults, garbage collector beyond ReplicaSet and Job children, or TTL controller.
 - There are no images. Every container runs on the host's userland in a bubblewrap sandbox with the Pod's volume mounts; one
-  profile (`e2e/images_test.go`) supplies `sdo-operator`, the Go toolchain, the repository and the Python environment at the paths the
+  profile (`runtime/e2e/images_test.go`) supplies `sdo-operator`, the Go toolchain, the repository and the Python environment at the paths the
   production images use, and a shared warm Go build cache replaces the image's cache seed. File ownership, uid 65532, read-only
   root filesystems, resource limits, seccomp and capability drops are not enforced. A Pod's own env wins over image defaults except
   for a few forced host adaptations (`GOCACHE`, `GOMAXPROCS`, `GOTOOLCHAIN`). Init containers named `prepare-toolchain` are skipped.

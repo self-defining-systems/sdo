@@ -22,6 +22,12 @@ func (w *World) SetAgentMode(mode string) {
 // KillController sends SIGKILL to the controller container's whole sandbox (a kill -9 of the process tree).
 func (w *World) KillController() {
 	w.T.Helper()
+	if pod := w.ControllerPod(); pod != nil {
+		if w.killed == nil {
+			w.killed = map[string]bool{}
+		}
+		w.killed[pod.Name] = true
+	}
 	if n := w.Kubelet.Run.Signal(ControlNamespace, "sdo-controller-run", syscall.SIGKILL); n == 0 {
 		w.T.Fatal("no running controller to kill")
 	}
