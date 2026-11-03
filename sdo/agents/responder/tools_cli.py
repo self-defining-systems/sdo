@@ -186,13 +186,18 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     for name, help_text in (
-        ("detect", "run fresh detectors; external incidents await responder completion"),
+        ("detect", "run fresh detectors; pending health is unproven"),
         (
             "check",
-            "run detectors and verify closure; external incidents await completion; --detector ID selects detectors",
+            "run detectors and verify closure; --detector ID selects detectors",
         ),
     ):
-        check = commands.add_parser(name, help=help_text)
+        check = commands.add_parser(
+            name,
+            help=help_text,
+            description=help_text
+            + ". External incidents have no detector gate; return your completed result after live checks.",
+        )
         check.add_argument(
             "--detector",
             action="extend",

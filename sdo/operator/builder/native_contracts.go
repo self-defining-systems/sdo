@@ -26,18 +26,12 @@ func generateRegistrationTest(root string, detectors []layout.Detector) error {
 		}
 	}
 	var source strings.Builder
-	source.WriteString(`package generated
-
-import (
-    "reflect"
-    "testing"
-    "time"
-    "sdo.dev/operator/sdk"
-)
-
-func TestRegistrationContracts(t *testing.T) {
-    detectors := All()
-`)
+	source.WriteString("package generated\n\nimport (\n\"testing\"\n")
+	if len(detectors) > 0 {
+		source.WriteString("\"reflect\"\n\"time\"\n\"sdo.dev/operator/sdk\"\n")
+	}
+	source.WriteString(")\n\nfunc TestRegistrationContracts(t *testing.T) {\n detectors := All()\n")
+	fmt.Fprintf(&source, "if len(detectors) != %d { t.Fatalf(\"registered %%d detectors; expected %d\", len(detectors)) }\n", len(detectors), len(detectors))
 	for index, detector := range detectors {
 		item := detector.Manifest
 		interval, _ := time.ParseDuration(item.Interval)

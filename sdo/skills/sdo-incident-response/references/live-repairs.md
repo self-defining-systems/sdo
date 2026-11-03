@@ -3,6 +3,7 @@
 For detector-driven incidents, SDO's independent verification is the source of truth; wait on it instead of sleeping.
 Use only help-confirmed options; on a usage error, read help, don't guess.
 Flag possible regressions with a complete JSON report: evidence/errors/schema.
+For blocking operations, finish in one call instead of polling across model turns.
 
 Use recorded actions for live mutations (declare every changed resource); never hand-write receipts. One wrapper; client-go reads; commit source repairs. Restore namespace drift to accepted source unless live evidence establishes an intended difference; uncertainty alone doesn't block it. Explain benign drift with live evidence. When an admission control blocks recovery and its backend is gone, restore the backend if you can. Otherwise a scoped fail-open or removal that restores availability is acceptable; report it. CA: `SyncWebhookCA` ([ref](webhook-ca.md)). Repairs stay on app objects; never widen a selector or policy to other namespaces.
 
