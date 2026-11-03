@@ -34,7 +34,11 @@ def generate(repository: str, source_branch: str, arm: str, directory: Path, *, 
     edits = transform(directory, arm)
     git("add", "--", ".sdo")
     if git("diff", "--cached", "--name-only"):
-        git("commit", "-m", f"bench: project {arm} from {source}")
+        git(
+            "commit",
+            "-m",
+            f"bench: project {arm} from {source}\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>",
+        )
     execute_operator("memory", ["check", "--accepted", "--root", str(directory), "--replay", "off"], timeout=900)
     listing = read_listing(directory)
     counts = {kind + "s": len(artifact_ids(listing, kind)) for kind in ("detector", "playbook", "program")}
