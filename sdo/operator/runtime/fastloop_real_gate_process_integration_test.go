@@ -34,6 +34,7 @@ import (
 
 func fastloopGateIncident(t *testing.T, ctx context.Context, client *fake.Clientset, native NativeIncidentBroker, accepted, captureRoot, stateName string, at time.Time, retry bool, configure ...func(*Controller)) (*Controller, *fastloopGateDispatch, IncidentRequest) {
 	t.Helper()
+	ctx, cancel := context.WithCancel(ctx)
 	dispatcher := &fastloopGateDispatch{requests: make(chan IncidentRequest, 1), results: make(chan IncidentResult, 1), failFirst: retry}
 	commit := nativeGit(t, accepted, "rev-parse", "HEAD")
 	config := ControllerConfig{Application: "app", Namespace: "app", SourceCommit: commit, DeployedCommit: commit, RepositoryWorktree: accepted, CorpusSessionRoot: captureRoot, ResponseTimeout: time.Minute, VerificationTimeout: time.Minute, FiringThreshold: 1, ClearThreshold: 1, RepairPolicy: "recorded-actions"}
@@ -41,7 +42,16 @@ func fastloopGateIncident(t *testing.T, ctx context.Context, client *fake.Client
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(controller.Wait)
+	t.Cleanup(func() {
+		cancel()
+		controller.mu.Lock()
+		stop := controller.responderCancel
+		controller.mu.Unlock()
+		if stop != nil {
+			stop()
+		}
+		controller.Wait()
+	})
 	controller.OnError = func(err error) { t.Logf("controller effect: %v", err) }
 	if err := controller.SetIncidentBroker(native); err != nil {
 		t.Fatal(err)
@@ -237,6 +247,11 @@ func runHermeticFastloopRealGoGate(t *testing.T, mode fastloopGateMode) {
 	client := fastloopClient("good:v1")
 	accepted := nativeRepository(t)
 	nativeMemoryFixture(t, accepted)
+	if err := os.WriteFile(filepath.Join(accepted, "peer.yaml"), []byte("apiVersion: v1\nkind: Service\nmetadata:\n  name: peer\n  namespace: app\nspec:\n  ports:\n  - port: 80\n    targetPort: 8080\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	nativeGit(t, accepted, "add", "peer.yaml")
+	nativeGit(t, accepted, "commit", "-qm", "synthetic accepted Service")
 	fixture := filepath.Join("..", "..", "..", "tests", "fixtures", "sdo", "playbook_program_app", ".sdo")
 	copyFastloopTree(t, filepath.Join(fixture, "diagnostics"), filepath.Join(accepted, ".sdo", "diagnostics"))
 	// This test learns the routing detector during reflection, after the seed.
@@ -554,6 +569,11 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 	if err != nil {
 		t.Fatal(err)
 	}
+	recorder := &sdktest.RecordingReadView{ReadView: serviceDriftView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot}}}
+	if _, err := recorder.DiffAgainstSource(sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "peer"}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot.Readings = recorder.SnapshotCalls()
 	snapshotPath := filepath.Join(t.TempDir(), "second.json")
 	data, err := json.Marshal(snapshot)
 	if err != nil {
@@ -575,7 +595,20 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("build reflected program runner: %v: %s", err, output)
 	}
-	output, stderr, err := commandStdout(exec.CommandContext(ctx, bin, snapshotPath))
+	sourceCommit := nativeGit(t, accepted, "rev-parse", "HEAD")
+	sourceObject, err := (GitPlanSource{Repository: accepted, ManifestPaths: []string{"peer.yaml"}}).AcceptedManifest(ctx, sourceCommit, sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "peer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceData, err := json.Marshal(sourceObject.Object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourcePath := filepath.Join(t.TempDir(), "source.json")
+	if err := os.WriteFile(sourcePath, sourceData, 0600); err != nil {
+		t.Fatal(err)
+	}
+	output, stderr, err := commandStdout(exec.CommandContext(ctx, bin, snapshotPath, sourcePath, sourceCommit))
 	if err != nil {
 		t.Fatalf("run reflected program: %v: %s%s", err, output, stderr)
 	}

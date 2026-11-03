@@ -22,3 +22,28 @@ whether the verified branch was pushed. No Markdown is rewritten.
 
 These commands prepare memory; incident triggering and frozen-run behavior are
 separate fastloop concerns.
+
+## Repeat runs with fixed memory
+
+`fastloop run --agent sdo --ablation-arm {full,detectors-only}` fetches
+`ablate/20261103-<arm>` from the problem application's private memory repository,
+pins the row-start reset to that commit, forces `--frozen-memory` and replay off,
+and installs the supplied memory without deployment or judge agents. Use a
+private lane and its credentials hook; shared writers and warm-controller reuse
+are rejected. `--ablation-repository` overrides the repository for a local toy
+proof. The fetched revision is recorded in `ablation-memory.json`; rows carry
+`ablation_arm`. The playbooks-only runtime is not implemented yet.
+
+For an existing private hotel lane, one supported invocation is:
+
+```bash
+uv run python -m benchmarks.sregym.fastloop run \
+  --run-dir "$HOTEL_LANE" --agent sdo --ablation-arm detectors-only \
+  --credentials-hook "$CREDENTIALS_HOOK" \
+  --problem k8s_target_port_misconfig_hotel_reservation__v_reservation_9999 \
+  --run-id detectors-only-pilot -n 1
+```
+
+This is a command template requiring the lane and its credentials hook. A
+scripted worker registration must be passed explicitly for a model-free proof;
+the normal run registration uses real models.

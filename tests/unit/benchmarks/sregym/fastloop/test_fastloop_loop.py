@@ -1233,3 +1233,13 @@ def test_typed_recovery_failure_survives_row_persistence_without_reinjection(tmp
         }
     ]
     assert "CANARY" not in config.results_path.read_text()
+
+
+@pytest.mark.parametrize("arm", ["full", "detectors-only"])
+def test_graded_ablation_row_retains_arm_on_disk(tmp_path: Path, arm: str) -> None:
+    clock = FakeClock()
+    config = replace(_config(tmp_path, 1), ablation_arm=arm)
+    records = run_incidents(FakeAgent(clock), FakeDriver(clock), config, monotonic=clock.monotonic)
+    assert records[0].oracle is not None
+    assert records[0].oracle.success
+    assert load_records(config.results_path)[0].ablation_arm == arm

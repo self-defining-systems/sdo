@@ -668,6 +668,11 @@ def _sdo_agent(
 
             inspect_existing(native_install_config(runtime_config))
             return True
+        if getattr(args, "ablation_arm", None):
+            from benchmarks.sregym.adapter import install_existing, native_install_config
+
+            install_existing(native_install_config(runtime_config))
+            return False
         if environment.app == "toy":
             # Setup runs only for a from-scratch install on the planned commit, so a retained checkpoint or
             # health-refresh record from an earlier install would describe memory this install no longer has.
@@ -891,6 +896,21 @@ def _run_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQueue 
     run_id = args.run_id or f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{args.agent}"
     args.run_id = run_id
     results_dir = environment.run_dir / "results" / run_id
+    arm_memory = None
+    if getattr(args, "ablation_arm", None):
+        from benchmarks.sregym.fastloop.ablation import configure_arm
+
+        arm_memory = configure_arm(args, environment)
+        if getattr(args, "warm_lane", False):
+            raise ValueError("ablation arms require a fresh install of their pinned memory")
+        results_dir.mkdir(parents=True, exist_ok=True)
+        (results_dir / "ablation-memory.json").write_text(json.dumps(asdict(arm_memory), indent=2) + "\n")
+        if environment.app == "toy":
+            from benchmarks.sregym.adapter import control_namespace_for
+            from benchmarks.sregym.fastloop.toy import retire_control_state
+
+            retire_control_state(environment, control_namespace_for(environment.namespace))
+            subprocess.run(host_git_command(environment.workspace, "reset", "--hard", arm_memory.commit), check=True)
     stream_config = load_stream_config(args.stream) if args.stream else None
     stream: tuple[tuple[str, ...], ...] = stream_config.incidents if stream_config else ()
     grading_mode = args.diagnosis_grading or (stream_config.diagnosis_grading if stream_config else "off")
@@ -1015,6 +1035,7 @@ def _run_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQueue 
         encoding="utf-8",
     )
     config = LoopConfig(
+        ablation_arm=arm_memory.arm if arm_memory else None,
         row_start_tier2=tier1 is not None and (len(stream) if stream else args.incidents) == 1,
         delivery_record_path=environment.run_dir / "image_delivery.jsonl",
         image_delivery=environment.image_delivery,
@@ -1757,6 +1778,10 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--diagnosis-grading", choices=("off", "deferred", "inline"), default=None)
     run.add_argument("--judge-model-id", default=None, help="SREGym JUDGE_MODEL_ID for diagnosis grading")
     run.add_argument("--replay", choices=("on", "off"), default="on", help="corpus capture and memory replay")
+    run.add_argument("--ablation-arm", choices=("full", "detectors-only"))
+    run.add_argument(
+        "--ablation-repository", help="override the per-app variant repository (toy proof uses a local repo)"
+    )
     run.add_argument("--frozen-memory", action="store_true", help="keep closure evidence private and disable learning")
     run.add_argument("--reflection-session", choices=("resume", "fresh"), default="resume")
     run.add_argument("--code-path", choices=("go", "shell"), default="go")
