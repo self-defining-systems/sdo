@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 	"slices"
 	"sort"
 	"strings"
@@ -269,11 +270,12 @@ func (l *ResponderLoop) detect(ctx context.Context, ids []string, response *Tool
 		response.Error = "fresh detector snapshot provider is unavailable"
 		return
 	}
-	view, err := l.Provider.Snapshot(ctx)
+	snapshot, err := l.Provider.Snapshot(ctx)
 	if err != nil {
 		response.Error = err.Error()
 		return
 	}
+	view := NewCycleReadView(program.ReadFrom(snapshot))
 	for _, detector := range l.Detectors {
 		id := detector.Spec().ID
 		if len(selected) > 0 && !selected[id] {

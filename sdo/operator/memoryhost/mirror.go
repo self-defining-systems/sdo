@@ -206,7 +206,7 @@ func (m *Manager) Capture(ctx context.Context, view sdk.DetectionContext) (Host,
 	return captured, sequence, func() {
 		once.Do(func() {
 			m.unpin(h)
-			if captured.failure != nil {
+			if captured.transportFailed() {
 				m.mirror.mu.Lock()
 				delete(m.mirror.hosts, h)
 				m.mirror.mu.Unlock()
@@ -220,9 +220,10 @@ func (m *Manager) Capture(ctx context.Context, view sdk.DetectionContext) (Host,
 // happens on release, after all read locks have been returned.
 type capturedHost struct {
 	Host
-	manager  *Manager
-	failure  error
-	revision string
+	failureMu sync.Mutex
+	manager   *Manager
+	failure   error
+	revision  string
 }
 
 func (h *capturedHost) Evaluate(ctx context.Context, r *pb.EvaluateRequest) (*pb.EvaluateResponse, error) {
@@ -240,7 +241,11 @@ func (h *capturedHost) record(caller context.Context, err error) {
 	if err != nil && caller.Err() != nil {
 		return
 	}
-	h.failure = err
+	if err != nil {
+		h.failureMu.Lock()
+		defer h.failureMu.Unlock()
+		h.failure = err
+	}
 }
 func (h *capturedHost) Diagnose(ctx context.Context, r *pb.DiagnoseRequest) (*pb.DiagnoseResponse, error) {
 	caller := ctx
@@ -302,3 +307,9 @@ func (m *Manager) Identity(ctx context.Context) (*pb.ReadyResponse, error) {
 
 // MemoryCommit binds adapters and revision-scoped trust to the leased child.
 func (h *capturedHost) MemoryCommit() string { return h.revision }
+
+func (h *capturedHost) transportFailed() bool {
+	h.failureMu.Lock()
+	defer h.failureMu.Unlock()
+	return h.failure != nil
+}
