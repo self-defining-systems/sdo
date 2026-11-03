@@ -310,10 +310,10 @@ class RestoreChecks:
 
     def complete(self) -> None:
         from benchmarks.sregym.adapter import assert_stable_workloads
-        from benchmarks.sregym.fastloop.admission import workload_identity
+        from benchmarks.sregym.fastloop.admission import await_workload_identity
 
         assert_stable_workloads(
-            self.identity or {}, workload_identity(self.environment.kubeconfig, self.environment.namespace)
+            self.identity or {}, await_workload_identity(self.environment.kubeconfig, self.environment.namespace)
         )
 
 

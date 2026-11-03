@@ -582,7 +582,7 @@ class LaneAdmission:
         (self.directory / "rbac.json").write_text(json.dumps(rbac, indent=2) + "\n")
         if self.progress:
             self.progress("rbac_equality", evidence=str(self.directory / "rbac.json"))
-        self._identity = workload_identity(env.kubeconfig, env.namespace)
+        self._identity = await_workload_identity(env.kubeconfig, env.namespace)
         self._sequence += 1
         path = self.directory / f"stabilization-{self._sequence:03d}.jsonl"
 

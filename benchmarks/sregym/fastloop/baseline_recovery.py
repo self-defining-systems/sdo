@@ -11,7 +11,18 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any, Protocol
 
-from benchmarks.sregym.adapter import kubectl
+from benchmarks.sregym.adapter import (
+    allocated_paths as _allocated_paths,
+)
+from benchmarks.sregym.adapter import (
+    declared_manifest as _manifest,
+)
+from benchmarks.sregym.adapter import (
+    kubectl,
+)
+from benchmarks.sregym.adapter import (
+    replace_allocated as _replace_allocated,
+)
 
 if TYPE_CHECKING:
     from benchmarks.sregym.fastloop.accepted_source import AcceptedSource
@@ -266,76 +277,6 @@ def _managed(value: dict[str, Any], namespace: str) -> bool:
         and (value.get("kind") != "Pod" or not metadata.get("ownerReferences"))
         and not _harness_owned(value)
     )
-
-
-# Paths shared by capture, comparison, and restore. A wildcard selects list items.
-ALLOCATED_FIELDS = (
-    ("*", ("status",)),
-    *(
-        ("*", ("metadata", name))
-        for name in ("uid", "resourceVersion", "creationTimestamp", "generation", "managedFields", "selfLink")
-    ),
-    *(
-        ("Service", ("spec", name))
-        for name in ("clusterIP", "clusterIPs", "ipFamilies", "ipFamilyPolicy", "healthCheckNodePort")
-    ),
-    ("Service", ("spec", "ports", "*", "nodePort")),
-    ("PersistentVolumeClaim", ("spec", "volumeName")),
-    ("Pod", ("spec", "nodeName")),
-    ("Job", ("spec", "selector")),
-    *(
-        ("Job", (*prefix, label))
-        for prefix in (("metadata", "labels"), ("spec", "template", "metadata", "labels"))
-        for label in ("controller-uid", "batch.kubernetes.io/controller-uid")
-    ),
-)
-
-
-def _allocated_paths(value: dict[str, Any]) -> list[tuple[str, ...]]:
-    headless = value["kind"] == "Service" and value.get("spec", {}).get("clusterIP") == "None"
-    return [
-        path
-        for kind, path in ALLOCATED_FIELDS
-        if kind in ("*", value["kind"]) and not (headless and path in (("spec", "clusterIP"), ("spec", "clusterIPs")))
-    ]
-
-
-def _replace_allocated(target: Any, live: Any, path: tuple[str, ...]) -> None:
-    key, *remaining = path
-    if key == "*":
-        if not isinstance(target, list):
-            return
-        current = live if isinstance(live, list) else []
-        for index, item in enumerate(target):
-            # Service ports retain allocations by name when the desired list moves.
-            matches = [
-                v
-                for v in current
-                if isinstance(v, dict) and isinstance(item, dict) and item.get("name") and v.get("name") == item["name"]
-            ]
-            prior = matches[0] if matches else current[index] if index < len(current) else None
-            _replace_allocated(item, prior, tuple(remaining))
-        return
-    if not isinstance(target, dict):
-        return
-    current = live if isinstance(live, dict) else {}
-    if not remaining:
-        if key in current:
-            target[key] = deepcopy(current[key])
-        else:
-            target.pop(key, None)
-        return
-    if key not in target and key in current and isinstance(current[key], dict):
-        target[key] = {}
-    if key in target:
-        _replace_allocated(target[key], current.get(key), tuple(remaining))
-
-
-def _manifest(value: dict[str, Any]) -> dict[str, Any]:
-    result = deepcopy(value)
-    for path in _allocated_paths(result):
-        _replace_allocated(result, None, path)
-    return result
 
 
 def _identity(value: dict[str, Any]) -> tuple[str, str]:

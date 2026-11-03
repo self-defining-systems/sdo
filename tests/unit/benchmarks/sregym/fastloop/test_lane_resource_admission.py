@@ -1087,3 +1087,20 @@ def test_restore_does_not_wait_for_invalid_workload_inventory(monkeypatch, tmp_p
     monkeypatch.setattr(admission.time, "sleep", lambda _: pytest.fail("invalid inventory must fail immediately"))
     with pytest.raises(ValueError, match="no installed|scaled to zero"):
         admission.await_workload_identity(tmp_path / "kubeconfig", "synthetic")
+
+
+def test_acceptance_generation_settles_before_admission_identity(lane, monkeypatch):
+    gate, _ = lane
+    monkeypatch.setattr(admission, "assert_lane_resources", lambda *a, **kw: {"passed": True})
+    calls = [0]
+    monkeypatch.setattr(admission.time, "sleep", lambda _: None)
+
+    def identity(*_):
+        calls[0] += 1
+        if calls[0] == 1:
+            raise admission.WorkloadNotReadyError("generation 2 observed 1")
+        return {"Deployment/app": {"pods": []}}
+
+    monkeypatch.setattr(admission, "workload_identity", identity)
+    assert gate.prove("control")["passed"]
+    assert calls[0] >= 3
