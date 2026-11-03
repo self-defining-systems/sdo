@@ -59,6 +59,7 @@ type harness struct {
 	watches    int
 	callCounts map[string]int
 	agentCalls atomic.Int32
+	programCalls counter
 	hung       map[string]bool
 }
 
@@ -222,6 +223,11 @@ func (h *harness) newHost(rev planRevision) *simActivationHost {
 	if err != nil {
 		h.t.Fatal(err)
 	}
+	programs, err := h.programsOf(rev)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	server.WithPrograms(programs)
 	rpc, stop := memoryTestRPC(h.t, server)
 	return &simActivationHost{testMemoryRPC: rpc, stop: stop}
 }
@@ -549,6 +555,7 @@ func runHarness(t *testing.T, seed uint64) (sim.Log, sim.Config) {
 	}
 	stop()
 	wg.Wait()
+	t.Logf("program calls:%s", h.programCalls.String())
 
 	h.mu.Lock()
 	hung := map[string]bool{}

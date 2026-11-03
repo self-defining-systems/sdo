@@ -74,7 +74,11 @@ func NewRemoteMemory(ready *pb.ReadyResponse, rpc MirroredMemoryRPC) (*RemoteMem
 			if p == nil {
 				return nil, errors.New("nil program parameter")
 			}
-			spec.Params = append(spec.Params, program.ParamSpec{Name: p.Name, Kind: program.Kind(p.Kind), Required: p.Required})
+			param := program.ParamSpec{Name: p.Name, Kind: program.Kind(p.Kind), Required: p.Required, ValueKind: program.ValueKind(p.ValueKind)}
+			if p.Default != nil {
+				param.Default = p.Default.AsInterface()
+			}
+			spec.Params = append(spec.Params, param)
 		}
 		p := &remoteProgram{spec: spec, remote: r}
 		ds = append(ds, p)

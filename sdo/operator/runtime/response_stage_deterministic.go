@@ -207,11 +207,11 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		var runs []ProgramRun
 		if state.Refresh {
 			runs = loop.RefreshDiagnose(ctx)
-			fillProgramRevisions(ctx, runs, state.Request.RepositoryWorktree, state.Request.SourceCommit)
+			fillProgramRevisionsWith(loop.gitRead(), ctx, runs, state.Request.RepositoryWorktree, state.Request.SourceCommit)
 			runs = append(append([]ProgramRun(nil), state.Request.InitialProgramRuns...), runs...)
 		} else {
 			runs = loop.InitialDiagnose(ctx)
-			fillProgramRevisions(ctx, runs, state.Request.RepositoryWorktree, state.Request.SourceCommit)
+			fillProgramRevisionsWith(loop.gitRead(), ctx, runs, state.Request.RepositoryWorktree, state.Request.SourceCommit)
 		}
 		state.Request.InitialProgramRuns = runs
 		state.Coverage = buildPlaybookCoverage(state.Findings, state.Request.InitialProgramRuns, loop.lastDiagnosisView, loop.Trust)
