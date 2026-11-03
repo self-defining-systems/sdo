@@ -11,7 +11,7 @@ import (
 // These are SDK/proto projections at the driver edge, not transition policy.
 // Callers hold c.mu. Only lifecyclecore.Step changes closure lifecycle state.
 func (c *Controller) closureCoreStateLocked() (*contracts.ControllerState, error) {
-	state := &contracts.ControllerState{ClosureState: c.closureState, ClosureReceipt: closureReceiptContract(c.closureReceipt), ClosureFailure: closureFailureContract(c.closureFailure), FailedClosures: c.failedClosures, LastAcknowledgedIncidentId: c.lastAcknowledgedIncidentID}
+	state := &contracts.ControllerState{ClosureState: c.closureState, ClosureReceipt: closureReceiptContract(c.closureReceipt), ClosureFailure: closureFailureContract(c.closureFailure), FailedClosures: c.failedClosures, LastAcknowledgedIncidentId: c.lastAcknowledgedIncidentID, LastAcknowledgedExternalIncidentId: c.lastAcknowledgedExternalIncidentID}
 	if c.pendingClosure != nil {
 		var err error
 		state.PendingClosure, err = incidentClosureContract(*c.pendingClosure)
@@ -33,6 +33,7 @@ func (c *Controller) applyClosureCoreLocked(state *contracts.ControllerState) {
 	}
 	c.failedClosures = state.FailedClosures
 	c.lastAcknowledgedIncidentID = state.LastAcknowledgedIncidentId
+	c.lastAcknowledgedExternalIncidentID = state.LastAcknowledgedExternalIncidentId
 }
 
 func (c *Controller) stepClosureLocked(event lifecyclecore.Event) ([]lifecyclecore.Effect, error) {

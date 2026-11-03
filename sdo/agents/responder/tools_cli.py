@@ -186,8 +186,11 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     for name, help_text in (
-        ("detect", "run fresh detectors; pending health is unproven"),
-        ("check", "run detectors and verify closure; --detector ID selects detectors"),
+        ("detect", "run fresh detectors; external incidents await responder completion"),
+        (
+            "check",
+            "run detectors and verify closure; external incidents await completion; --detector ID selects detectors",
+        ),
     ):
         check = commands.add_parser(name, help=help_text)
         check.add_argument(
@@ -350,7 +353,8 @@ def _parser() -> argparse.ArgumentParser:
     verify = commands.add_parser(
         "verify",
         help="read cached controller verification; optionally await a stable verdict",
-        description="Reads the controller's shared recovery proof: fresh health after the last repair, "
+        description="External incidents have no detector gate: return your completed result after live checks. "
+        "Otherwise reads the controller's shared recovery proof: fresh health after the last repair, "
         "observed write effects, and the unchanged 15-second stability window. drift[] lists objects that still "
         "differ from accepted source and never decides healthy. "
         "verification_status=awaiting_responder_completion: finish with evidence; proof follows your result. "

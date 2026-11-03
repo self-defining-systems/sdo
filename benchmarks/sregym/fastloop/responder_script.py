@@ -85,6 +85,21 @@ if not first.get("healthy"):
         json_format.MessageToDict(finding.primary_resource, preserving_proto_field_name=True)
         for finding in request.findings
     )
+    if request.external_message:
+        live_services = json.loads(_command(["kubectl", "-n", request.namespace, "get", "services", "-o", "json"]))
+        for service in live_services.get("items", []):
+            name = service["metadata"]["name"]
+            source = _tool("source", f"Service/{request.namespace}/{name}")["source"]
+            desired = source.get("spec", {}).get("ports", [])
+            actual = service.get("spec", {}).get("ports", [])
+            # Compare only source-authored fields, ignoring API defaults.
+            if len(actual) != len(desired) or any(
+                any(observed.get(key) != value for key, value in wanted.items())
+                for wanted, observed in zip(desired, actual, strict=False)
+            ):
+                candidates.append({
+                    "api_version": "v1", "kind": "Service", "namespace": request.namespace, "name": name,
+                })
     for ref in candidates:
         if ref["kind"] not in {"Service", "Deployment"}:
             continue

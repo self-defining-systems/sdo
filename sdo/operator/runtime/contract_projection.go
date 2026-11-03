@@ -206,6 +206,7 @@ func stateChangesContract(state *StateChanges) *contracts.StateChanges {
 
 func incidentRequestContract(request IncidentRequest) (*contracts.IncidentRequest, error) {
 	result := &contracts.IncidentRequest{
+		ExternalMessage:       request.ExternalMessage,
 		MetricsSource:         request.MetricsSource,
 		ObservationGeneration: request.ObservationGeneration,
 		SchemaVersion:         request.SchemaVersion, Application: request.Application, Namespace: request.Namespace,
@@ -543,6 +544,7 @@ func incidentRequestState(message *contracts.IncidentRequest) *IncidentRequest {
 		return nil
 	}
 	result := &IncidentRequest{
+		ExternalMessage:        message.GetExternalMessage(),
 		MetricsSource:          message.GetMetricsSource(),
 		PriorResponseProgress:  cloneResponseProgress(message.GetPriorResponseProgress()),
 		ObservationGeneration:  message.GetObservationGeneration(),

@@ -5,6 +5,8 @@ description: Fix incidents
 
 Accepted source and developer changes express intent. Operational memory is fallible advice. Recovery requires evidence from the intended application behavior. [CLI](references/commands.md). Use only help-confirmed options; on a usage error, read help, don't guess. [Auth](references/database-credentials.md). [CA](references/webhook-ca.md).
 
+For an `external_message` request, investigate from the message and namespace with live reads. No detector findings, automatic stage, or health verification are available. You may inspect and run retained playbooks/programs. Self-check application behavior, then return your completed result; `awaiting_responder_completion` means the controller waits for this result and makes no health assertion. Do not invent detector evidence.
+
 1. Start from checked stage receipts and residual findings; keep settled repairs. Clear blockers first; re-trigger stalled saved repairs, re-check saved diagnoses. Use `playbook_coverage` and [matches](references/coverage.md).
 2. Report one cause per independently fixable fault, plus late faults. Start independent repairs together; combine edits to one object, keeping each cause's evidence separate.
 3. Use recorded actions for mutations; declare every changed resource and never hand-write receipts. Use one wrapper, client-go reads and commit source repairs. Follow [repairs](references/live-repairs.md) for drift and blocked admission.

@@ -37,6 +37,10 @@ func encodeIncidentAgentTask(request IncidentRequest, registry *worker_registry.
 			return nil, nil, fmt.Errorf("memory snapshot differs from broker proposal base commit")
 		}
 		typedRequest.MemorySnapshot = snapshots[0]
+		if request.ExternalMessage != "" {
+			typedRequest.MemorySnapshot = proto.Clone(snapshots[0]).(*contracts.OperationalMemorySnapshot)
+			typedRequest.MemorySnapshot.Detectors = nil
+		}
 	}
 	taskType, err := registry.TaskType(agentID, typedRequest)
 	if err != nil {

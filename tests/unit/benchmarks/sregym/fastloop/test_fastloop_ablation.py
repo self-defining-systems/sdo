@@ -8,7 +8,7 @@ import pytest
 from benchmarks.sregym.fastloop.cli import build_parser
 
 
-@pytest.mark.parametrize("arm", ["full", "detectors-only"])
+@pytest.mark.parametrize("arm", ["full", "detectors-only", "playbooks-only"])
 def test_arm_selects_read_only_variant_and_forces_repeat_policy(arm):
     from benchmarks.sregym.fastloop.ablation import configure_arm
 
@@ -27,6 +27,7 @@ def test_arm_selects_read_only_variant_and_forces_repeat_policy(arm):
     assert selected.branch == f"ablate/20261103-{arm}"
     assert selected.repository == "git@github.com:vibesys-playground/hotel-reservation-sdo.git"
     assert selected.commit == revision
+    assert args.external_incidents == (arm == "playbooks-only")
     assert args.frozen_memory
     assert args.replay == "off"
     assert args.planned_commit == revision

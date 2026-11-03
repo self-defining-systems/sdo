@@ -269,3 +269,49 @@ func TestFrozenReceiptGradesPrivateEvidence(t *testing.T) {
 		t.Fatal(got.GetFailure())
 	}
 }
+
+func externalFixture() *c.NativeProductionReceipt {
+	r := fixture()
+	l := r.NativeLedger
+	l.FrozenMemory = proto.Bool(true)
+	l.ProposalCommit = ""
+	l.ReflectionCommit = ""
+	l.RequiresReflection = false
+	l.ReflectionProcessed = false
+	l.ReflectionDecision = nil
+	l.ReflectionSkippedReason = "frozen_memory"
+	l.Closure.Request.RepositoryBaseCommit = l.OutcomeCommit
+	l.Closure.Request.ExternalMessage = "Something is wrong. Find and fix it."
+	l.Closure.FinalDetectorStates = nil
+	l.Closure.UnconfirmedReason = c.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_EXTERNAL_COMPLETION
+	l.Closure.ResponderCompletedAt = l.Closure.VerifiedAt
+	l.Closure.DispatchedAt = l.Closure.VerifiedAt
+	l.Receipt.ProposalCommit = ""
+	l.Receipt.ReflectionCommit = ""
+	l.OutcomeDocument.Classification = "unconfirmed"
+	l.OutcomeDocument.RepairCommit = nil
+	return r
+}
+func TestExternalCompletionReceiptDoesNotAssertHealth(t *testing.T) {
+	r := externalFixture()
+	if got := Evaluate(encoded(t, r), true); got.Failure != nil || got.Receipt.Resolution != "sdo_unconfirmed" {
+		t.Fatal(got)
+	}
+	for name, mutate := range map[string]func(*c.NativeProductionReceipt){
+		"verified classification": func(r *c.NativeProductionReceipt) { r.NativeLedger.OutcomeDocument.Classification = "success" },
+		"detector claim": func(r *c.NativeProductionReceipt) {
+			r.NativeLedger.Closure.FinalDetectorStates = []*c.DetectorEvaluation{{DetectorId: "health", Status: "clear"}}
+		},
+		"missing completion":   func(r *c.NativeProductionReceipt) { r.NativeLedger.Closure.ResponderCompletedAt = nil },
+		"failed responder":     func(r *c.NativeProductionReceipt) { r.NativeLedger.Closure.Result.Status = "failed" },
+		"ordinary unconfirmed": func(r *c.NativeProductionReceipt) { r.NativeLedger.Closure.Request.ExternalMessage = "" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := proto.Clone(r).(*c.NativeProductionReceipt)
+			mutate(bad)
+			if got := Evaluate(encoded(t, bad), true); got.Failure == nil {
+				t.Fatal("accepted conflicting external completion")
+			}
+		})
+	}
+}

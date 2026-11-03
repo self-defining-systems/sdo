@@ -132,8 +132,14 @@ func validate(r *c.NativeProductionReceipt) error {
 	if l.GetFrozenMemory() && (l.GetOutcomeCommit() != request.GetRepositoryBaseCommit() || l.GetProposalCommit() != "" || l.GetReflectionCommit() != "" || l.GetRequiresReflection() || l.GetReflectionQueued() || l.GetReflectionSkippedReason() != "frozen_memory") {
 		return errors.New("frozen receipt must retain private evidence at the unchanged accepted base")
 	}
+	external := request.GetExternalMessage() != ""
+	if external {
+		if !l.GetFrozenMemory() || response.GetStatus() != "completed" || closure.GetDispatchError() != "" || closure.GetUnconfirmedReason() != c.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_EXTERNAL_COMPLETION || outcome.GetClassification() != "unconfirmed" || len(closure.GetFinalDetectorStates()) != 0 || len(request.GetFindings()) != 0 || len(request.GetDetectorHistory()) != 0 || closure.GetResponderCompletedAt() == nil || closure.GetResponderCompletedAt().CheckValid() != nil || closure.GetDispatchedAt() == nil || closure.GetDispatchedAt().CheckValid() != nil || closure.GetResponderCompletedAt().AsTime().Before(closure.GetDispatchedAt().AsTime()) {
+			return errors.New("external completion requires a completed responder, frozen private evidence and no detector authority")
+		}
+	}
 	classification := outcome.GetClassification()
-	if outcome.GetSchemaVersion() != 1 || !slices.Contains([]string{"success", "cleared_without_action"}, classification) {
+	if outcome.GetSchemaVersion() != 1 || (!external && !slices.Contains([]string{"success", "cleared_without_action"}, classification)) {
 		return errors.New("native outcome is not a verified closure classification")
 	}
 	for _, field := range []struct {
@@ -156,7 +162,7 @@ func validate(r *c.NativeProductionReceipt) error {
 	if err := nonempty(accepted.GetAckToken(), "acknowledgment token"); err != nil {
 		return err
 	}
-	if len(closure.GetFinalDetectorStates()) == 0 {
+	if !external && len(closure.GetFinalDetectorStates()) == 0 {
 		return errors.New("native closure lacks independently clear health detectors")
 	}
 	for _, state := range closure.GetFinalDetectorStates() {

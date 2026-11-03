@@ -161,6 +161,10 @@ func (l *ResponderLoop) prepareDispatch(ctx context.Context, request IncidentReq
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.Trust = trust
+	if request.ExternalMessage != "" {
+		request.MaxResponseLoops = l.MaxBatches
+		return request
+	}
 	l.capturePhase = "open@detect"
 	defer func() { l.capturePhase = "" }()
 	request.InitialProgramRuns = l.diagnose(ctx, l.findings)

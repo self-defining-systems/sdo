@@ -33,10 +33,11 @@ type Dispatcher interface {
 }
 
 type ControllerConfig struct {
-	MetricsSource    *contracts.MetricsSource
-	Replay           string
-	CodePath         CodePathConfig
-	CodePathRegistry *CodePathRegistry
+	ExternalIncidentsOnly bool
+	MetricsSource         *contracts.MetricsSource
+	Replay                string
+	CodePath              CodePathConfig
+	CodePathRegistry      *CodePathRegistry
 
 	Application            string
 	Namespace              string
@@ -74,8 +75,9 @@ type dispatchCompletion struct {
 }
 
 type Controller struct {
-	memoryRefresh func(context.Context) (bool, error)
-	config        ControllerConfig
+	ExternalIncidents func(context.Context) (*ExternalIncident, error)
+	memoryRefresh     func(context.Context) (bool, error)
+	config            ControllerConfig
 	// closureRecheckIdentity/Since bound an incomplete closure-time recheck.
 	closureRecheckIdentity      string
 	closureRecheckSince         time.Time
@@ -174,23 +176,24 @@ type Controller struct {
 	// detectorClearSince maps each detector to the start of its current
 	// streak of clear evaluations; a firing or erroring evaluation ends
 	// the streak. Guarded by mu.
-	detectorClearSince         map[string]time.Time
-	pendingClosure             *IncidentClosure
-	closureState               contracts.ClosureState
-	closureReceipt             *ClosureReceipt
-	closureFailure             *ClosureFailure
-	failedClosures             []*contracts.FailedIncidentClosure
-	dispatchFailureAttempts    int
-	dispatchNextRetryAt        time.Time
-	lastAcknowledgedIncidentID string
-	incidentView               *IncidentView
-	broker                     IncidentBroker
-	workspaceResults           chan workspaceCompletion
-	closureResults             chan closureCompletion
-	acknowledgmentResults      chan acknowledgmentCompletion
-	reflectionResults          chan reflectionCompletion
-	reflections                reflectionQueueState
-	busy                       busyWindow
+	detectorClearSince                 map[string]time.Time
+	pendingClosure                     *IncidentClosure
+	closureState                       contracts.ClosureState
+	closureReceipt                     *ClosureReceipt
+	closureFailure                     *ClosureFailure
+	failedClosures                     []*contracts.FailedIncidentClosure
+	dispatchFailureAttempts            int
+	dispatchNextRetryAt                time.Time
+	lastAcknowledgedIncidentID         string
+	lastAcknowledgedExternalIncidentID string
+	incidentView                       *IncidentView
+	broker                             IncidentBroker
+	workspaceResults                   chan workspaceCompletion
+	closureResults                     chan closureCompletion
+	acknowledgmentResults              chan acknowledgmentCompletion
+	reflectionResults                  chan reflectionCompletion
+	reflections                        reflectionQueueState
+	busy                               busyWindow
 
 	// Baseline, when set, records healthy configuration and attaches the
 	// diff against it to each new incident request.
@@ -253,6 +256,10 @@ func NewController(
 	}
 	if config.Replay == "off" {
 		config.CorpusSessionRoot = ""
+	}
+	if config.ExternalIncidentsOnly {
+		detectors = nil
+		config.CodePath.Overrides.ResponseStages = []string{"agent"}
 	}
 	registry := config.CodePathRegistry
 	if registry == nil {
@@ -428,6 +435,22 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	c.processBrokerCompletions()
 	if err := c.driveQueuedReflections(ctx, now); err != nil {
 		return err
+	}
+	if c.config.ExternalIncidentsOnly {
+		c.maybeCloseIncident(ctx, now, nil)
+		if c.ExternalIncidents != nil {
+			alert, err := c.ExternalIncidents(ctx)
+			if err != nil {
+				return err
+			}
+			if alert != nil {
+				if err := c.openExternalIncident(now, *alert); err != nil && !errors.Is(err, ErrExternalIncidentBusy) {
+					return err
+				}
+			}
+		}
+		c.refreshIncidentView(now, false)
+		return nil
 	}
 	c.attachPendingDrift()
 	if err := c.prepareSourceInventory(ctx); err != nil {
@@ -773,6 +796,22 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 	if c.Baseline != nil {
 		request.StateChanges = cloneStateChanges(c.Baseline.Changes(now))
 	}
+	c.beginIncident(now, request, batch)
+	// The batcher is drained, so the incident is open before any file I/O: an
+	// observer exporting state mid-capture reads the work, never an idle gap.
+	// The responder starts only after this step returns, so it still finds the
+	// capture in place.
+	if c.config.CorpusSessionRoot != "" {
+		if err := c.bindIncidentHealthyBaseline(request.IncidentID); err != nil {
+			c.reportHealthyCaptureError(err)
+		}
+		c.captureOpenDetect(ctx, snapshot, request)
+	}
+	return nil
+}
+
+// beginIncident records intent before workspace/dispatch effects may run.
+func (c *Controller) beginIncident(now time.Time, request IncidentRequest, batch []sdk.Finding) {
 	c.mu.Lock()
 	c.cachedVerification = nil
 	c.cachedIncidentID = ""
@@ -805,17 +844,6 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 		FindingKeys: append([]string(nil), c.incidentFindingKeys...), SurfacedPlaybooks: playbookIDs(request.SurfacedPlaybooks),
 	})
 	c.mu.Unlock()
-	// The batcher is drained, so the incident is open before any file I/O: an
-	// observer exporting state mid-capture reads the work, never an idle gap.
-	// The responder starts only after this step returns, so it still finds the
-	// capture in place.
-	if c.config.CorpusSessionRoot != "" {
-		if err := c.bindIncidentHealthyBaseline(request.IncidentID); err != nil {
-			c.reportHealthyCaptureError(err)
-		}
-		c.captureOpenDetect(ctx, snapshot, request)
-	}
-	return nil
 }
 
 // captureOpenDetect stores the open@detect corpus snapshot for the incident
@@ -1314,6 +1342,10 @@ func (c *Controller) cleanupHelpers() {
 }
 
 func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snapshot sdk.DetectionContext) {
+	if c.config.ExternalIncidentsOnly {
+		c.closeExternalIncident(now)
+		return
+	}
 	if !c.settleBoundedContinuation(ctx, now) {
 		return
 	}
@@ -1890,7 +1922,7 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 		DispatchState:          dispatchState,
 		IncidentFindingKeys:    append([]string(nil), c.incidentFindingKeys...), ClosureState: c.closureState,
 		ClosureReceipt: closureReceiptContract(c.closureReceipt), ClosureFailure: closureFailureContract(c.closureFailure), FailedClosures: cloneFailedClosures(c.failedClosures),
-		LastAcknowledgedIncidentId: c.lastAcknowledgedIncidentID, QueuedReflectionIncidentIds: append([]string(nil), c.reflections.queued...), QueuedReflectionsUnknown: c.reflections.unknown,
+		LastAcknowledgedIncidentId: c.lastAcknowledgedIncidentID, LastAcknowledgedExternalIncidentId: c.lastAcknowledgedExternalIncidentID, QueuedReflectionIncidentIds: append([]string(nil), c.reflections.queued...), QueuedReflectionsUnknown: c.reflections.unknown,
 		EvaluationIteration: int32(c.evaluationIteration), StepCount: c.stepCount, DetectorTimeline: timeline, IncidentView: view,
 		NamespaceOnboarding: cloneNamespaceOnboarding(c.namespaceOnboarding),
 		AcceptedSourceDrift: driftEventsContract(c.acceptedSourceDrift), AcceptedSourceDriftRevision: c.acceptedSourceDriftRevision,
@@ -1920,6 +1952,11 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 }
 
 func (c *Controller) RestoreState(state *contracts.ControllerState) error {
+	for _, request := range []*contracts.IncidentRequest{state.GetIncidentRequest(), state.GetPendingClosure().GetRequest()} {
+		if request != nil && (request.GetExternalMessage() != "") != c.config.ExternalIncidentsOnly {
+			return fmt.Errorf("incident admission policy differs from persisted request")
+		}
+	}
 	state, err := c.resolvePreparedTask(state)
 	if err != nil {
 		return err
@@ -1985,6 +2022,7 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 		return err
 	}
 	c.lastAcknowledgedIncidentID = state.GetLastAcknowledgedIncidentId()
+	c.lastAcknowledgedExternalIncidentID = state.GetLastAcknowledgedExternalIncidentId()
 	c.evaluationIteration = int(state.GetEvaluationIteration())
 	c.stepCount = state.GetStepCount()
 	c.timeline = cloneTimeline(detectorTimelineState(state.GetDetectorTimeline()))

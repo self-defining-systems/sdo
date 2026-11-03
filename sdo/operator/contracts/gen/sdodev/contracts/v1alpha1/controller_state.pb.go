@@ -806,8 +806,10 @@ type ControllerState struct {
 	VerificationDeadlineAt *timestamppb.Timestamp   `protobuf:"bytes,45,opt,name=verification_deadline_at,json=verificationDeadlineAt,proto3" json:"verification_deadline_at,omitempty"`
 	SetupEvaluatedRevision string                   `protobuf:"bytes,46,opt,name=setup_evaluated_revision,json=setupEvaluatedRevision,proto3" json:"setup_evaluated_revision,omitempty"`
 	DisabledSetupDetectors []*DisabledSetupDetector `protobuf:"bytes,47,rep,name=disabled_setup_detectors,json=disabledSetupDetectors,proto3" json:"disabled_setup_detectors,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// Preserve completion policy when the acknowledged closure payload is retired.
+	LastAcknowledgedExternalIncidentId string `protobuf:"bytes,48,opt,name=last_acknowledged_external_incident_id,json=lastAcknowledgedExternalIncidentId,proto3" json:"last_acknowledged_external_incident_id,omitempty"`
+	unknownFields                      protoimpl.UnknownFields
+	sizeCache                          protoimpl.SizeCache
 }
 
 func (x *ControllerState) Reset() {
@@ -1111,6 +1113,13 @@ func (x *ControllerState) GetDisabledSetupDetectors() []*DisabledSetupDetector {
 		return x.DisabledSetupDetectors
 	}
 	return nil
+}
+
+func (x *ControllerState) GetLastAcknowledgedExternalIncidentId() string {
+	if x != nil {
+		return x.LastAcknowledgedExternalIncidentId
+	}
+	return ""
 }
 
 // ReflectionDecision is the learning decision the broker recorded for an
@@ -1892,7 +1901,7 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\tpermanent\x18\b \x01(\bR\tpermanent\x12\x16\n" +
 	"\x06action\x18\t \x01(\tR\x06action\x12Q\n" +
 	"\x06reason\x18\n" +
-	" \x01(\x0e2/.sdodev.contracts.v1alpha1.ClosureFailureReasonB\b\xbaH\x05\x82\x01\x02\x10\x01R\x06reason\"\xd9#\n" +
+	" \x01(\x0e2/.sdodev.contracts.v1alpha1.ClosureFailureReasonB\b\xbaH\x05\x82\x01\x02\x10\x01R\x06reason\"\xad$\n" +
 	"\x0fControllerState\x122\n" +
 	"\aversion\x18\x01 \x01(\tB\x18\xbaH\x15r\x13\n" +
 	"\x11sdo.controller/v1R\aversion\x12s\n" +
@@ -1936,7 +1945,8 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"step_count\x18, \x01(\x03R\tstepCount\x12T\n" +
 	"\x18verification_deadline_at\x18- \x01(\v2\x1a.google.protobuf.TimestampR\x16verificationDeadlineAt\x128\n" +
 	"\x18setup_evaluated_revision\x18. \x01(\tR\x16setupEvaluatedRevision\x12j\n" +
-	"\x18disabled_setup_detectors\x18/ \x03(\v20.sdodev.contracts.v1alpha1.DisabledSetupDetectorR\x16disabledSetupDetectors\x1aa\n" +
+	"\x18disabled_setup_detectors\x18/ \x03(\v20.sdodev.contracts.v1alpha1.DisabledSetupDetectorR\x16disabledSetupDetectors\x12R\n" +
+	"&last_acknowledged_external_incident_id\x180 \x01(\tR\"lastAcknowledgedExternalIncidentId\x1aa\n" +
 	"\x17SchedulerDeadlinesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x120\n" +
 	"\x05value\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05value:\x028\x01\x1ai\n" +

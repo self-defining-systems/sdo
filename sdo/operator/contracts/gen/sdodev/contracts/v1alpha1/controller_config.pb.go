@@ -143,9 +143,11 @@ type ControllerConfig struct {
 	// Named programming-model plugin set. An omitted value preserves Go.
 	CodePath *CodePathConfig `protobuf:"bytes,100,opt,name=code_path,json=codePath,proto3" json:"code_path,omitempty"`
 	// Keep repeat evidence private and disable learning.
-	FrozenMemory  bool `protobuf:"varint,110,opt,name=frozen_memory,json=frozenMemory,proto3" json:"frozen_memory,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	FrozenMemory bool `protobuf:"varint,110,opt,name=frozen_memory,json=frozenMemory,proto3" json:"frozen_memory,omitempty"`
+	// Disable detector admission/verification; accept external alerts only.
+	ExternalIncidents bool `protobuf:"varint,111,opt,name=external_incidents,json=externalIncidents,proto3" json:"external_incidents,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *ControllerConfig) Reset() {
@@ -628,6 +630,13 @@ func (x *ControllerConfig) GetFrozenMemory() bool {
 	return false
 }
 
+func (x *ControllerConfig) GetExternalIncidents() bool {
+	if x != nil {
+		return x.ExternalIncidents
+	}
+	return false
+}
+
 type MemoryUpstream struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Url   string                 `protobuf:"bytes,1,opt,name=url,proto3" json:"url,omitempty"`
@@ -832,7 +841,7 @@ var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDesc
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xf4\x1f\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xa3 \n" +
 	"\x10ControllerConfig\x12,\n" +
 	"\x12memory_host_binary\x18R \x01(\tR\x10memoryHostBinary\x12,\n" +
 	"\x12memory_host_digest\x18S \x01(\tR\x10memoryHostDigest\x12%\n" +
@@ -905,7 +914,8 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\fscript_image\x18O \x01(\tR\vscriptImage\x12R\n" +
 	"\x0fmemory_upstream\x18P \x01(\v2).sdodev.contracts.v1alpha1.MemoryUpstreamR\x0ememoryUpstream\x12F\n" +
 	"\tcode_path\x18d \x01(\v2).sdodev.contracts.v1alpha1.CodePathConfigR\bcodePath\x12#\n" +
-	"\rfrozen_memory\x18n \x01(\bR\ffrozenMemoryB\x14\n" +
+	"\rfrozen_memory\x18n \x01(\bR\ffrozenMemory\x12-\n" +
+	"\x12external_incidents\x18o \x01(\bR\x11externalIncidentsB\x14\n" +
 	"\x12_synthetic_trafficB\x1a\n" +
 	"\x18_clean_responder_helpersB\x11\n" +
 	"\x0f_state_baselineB\x14\n" +

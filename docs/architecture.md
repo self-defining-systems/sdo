@@ -65,6 +65,23 @@ The architecture reader inventory and per-reader decisions are documented in
 [onboarding reader inventory](onboarding-reader-inventory.md).
 `sdo-operator host` starts the active production lifecycle; the installed `sdo-operator operate` continues it in the cluster. Go coordinates optional Human goal, Upkeep schema, source-deployment and Go inventory, and HealthJudge bootstrap proposals. The source stage requires a trusted deployment receipt bound to the exact candidate Git tree and immutable running images before publishing; architecture cites the broker-returned accepted source commit. The controller then runs deterministic detectors and independently verifies recovery. At incident open, Go builds finding-bound playbook coverage and runs configured `ResponseStage` implementations. SDO applies a learned playbook automatically when its diagnose matches live and every parameter binds (stage [deterministic, agent]); the agent is told the result and handles what remains; no automatic rollback, no trust gate. The default `deterministic,agent` pipeline first applies accepted playbooks with a fresh Match, one mitigation entry point and complete finding bindings; it waits at most 30 seconds for its own rollouts and retains completed writes. The registered responder receives remaining findings and typed `prior_stages` reports, including receipts, post-apply diagnoses and skip reasons, and chooses further repairs through the menu. `response_stages: [agent]` selects the baseline. A stage never closes an incident; independent controller verification does. Incidents cleared without a responder still receive fresh reflection with stage evidence. Go independently verifies recovery; only the responder decides rollback. Verified program success/failure counts are information, never write authority. Before recording each successful outcome, Go settles learning by confirmed cause. Exact covered repairs and fixed-capture false matches get deterministic corpus cases through normal validation; questions or rejected cases go to in-session reflection. Trust consumes only the persisted covered instances. A full host-to-controller kind smoke passed with live clear detector evaluations; deployment still depends on the target cluster, registry, credentials, and application manifests.
 
+## External incident admission
+
+`Controller.OpenExternalIncident` accepts a stable alert ID, namespace and message
+through a transport-neutral API. External-only mode disables detector scheduling,
+source-drift admission, health/traffic startup gates, and automatic response stages.
+The Kubernetes edge reads a single-slot `sdo-external-incident` ConfigMap with typed
+`incident.json`; producers retain the same ID until durable acknowledgment. The
+controller uses its existing workspace/dispatch/closure state machine and preserves
+external completion identity across ACK/restart. Completion carries no independent
+health assertion and currently requires frozen memory: evidence stays private and
+never grants learned trust or changes accepted source. Worker snapshots omit the
+detector catalog and detector tools report awaiting responder completion.
+
+The benchmark adapter alone sends the generic alert after injection and grades the
+cluster with its oracle after responder completion. Fault identity, injection metadata
+and oracle answers never enter the production alert or worker request.
+
 ## Component boundaries
 
 Controller observations compose through `sdk/inputs.Carrier`, a copy-on-write carrier of the optional SDK input sources above the Kubernetes snapshot. Runtime observers add frozen sources to that carrier; they do not wrap and selectively forward detection contexts. Program `ReadView` includes the complete `inputs.Sources` contract, so checked diagnosis, recording, and replay preserve those inputs and the observation clock. An SDK interface inventory test requires every new optional source to join this contract.
@@ -303,6 +320,7 @@ The controller is split by stability and privilege:
 | `sdo/operator/core/` | Detector execution, snapshot validation, finding emission, and playbook-path validation |
 | `sdo/operator/runtime/prober/` | Host-owned routing and traffic engine: continuous probes, bounded bursts, read-only primitives and stateless reachability rounds (no Kubernetes dependency) |
 | `sdo/operator/memoryhost/` | Accepted detector/program/traffic execution, mirror barriers, candidate activation, leased retirement and crash recovery; the host never mutates. Each call carries the frozen scoped observation and pod-admission result in `MemoryObservation`; generic `Object`/`CaptureObjects` reads use the host's own discovery-backed reader, which refuses the SDO control namespace |
+| `sdo/operator/runtime/internal/lifecycleio/external_incident.go` | Kubernetes alert inbox edge; decodes generic typed alerts, without benchmark or health authority |
 | `sdo/operator/runtime/` (including `jitview/`) | Kubernetes cache, scheduler, finding state, batching, playbook coverage, responder jobs, incident-scoped program selection and loop, plan execution, broker effects, leader election, durable state, remote memory-host routing observations, and the Service reachability observer that derives dial targets from the snapshot |
 | `sdo/operator/runtime/prometheus/` | Prometheus HTTP API adapter (`/api/v1/query`, `query_range`, `alerts`) behind the runtime's transport-neutral `MetricsAPI` |
 | `sdo/operator/builder/` | Validate diagnostics, playbook programs, shared libraries, and corpus cases in an isolated workspace; compile a stable controller and immutable accepted memory host, or one working playbook for agent-requested execution without publication |
@@ -353,9 +371,16 @@ Detectors may consume high-level metrics from a Prometheus-compatible API, an op
 
 New installs include an SDO-owned single-replica Prometheus (pinned upstream image, emptyDir, six-hour and 1 GB retention bounds) in the control namespace. `--no-observability-stack` (`install.Config.DisableObservability`) opts out. It scrapes application pods annotated `prometheus.io/scrape: "true"`, `prometheus.io/port` and optional `prometheus.io/path` (default `/metrics`), plus kubelet/cAdvisor on nodes hosting running application pods via authenticated API-server proxies. cAdvisor samples are restricted to the application namespace. Its ClusterRole allows pod/node discovery and node proxy reads. The internal Service also accepts OTLP HTTP metric pushes at `/api/v1/otlp/v1/metrics`; storage is ephemeral. No public ingress is installed. The installer automatically supplies the controller query URL; explicit `--metrics-url` wins. Typed `MetricsSource` fields on judge, responder and reflection tasks state the query URL and independent annotation/OTLP publishing capabilities; external query URLs alone imply no publishing support. When an operator passes `--metrics-url` to `operate`, `host`, `install-existing` or the controller (`install.Config.MetricsURL`, `ControllerConfig.metrics_url`), the controller receives it, and the broker and the judge's `memory check` (`SDO_METRICS_DETECTORS`) install the generic `metrics-alerts` health detector through `memory.PrepareHealthWith`. Threshold detectors are application-specific and judge-authored.
 
+External incident admission belongs to production runtime; generic alert delivery,
+oracle grading and ablation selection remain in `benchmarks/sregym/`. Neither may
+publish learned memory in frozen mode.
+
 ## Operational memory
 
 The application repository is the shared durable memory. Six artifact classes live under `.sdo/`:
+
+External alert inboxes and frozen outcome ledgers are private runtime evidence,
+not durable operational-memory artifacts; the six owners below are unchanged.
 
 | Artifact | Owner | Contract |
 |---|---|---|

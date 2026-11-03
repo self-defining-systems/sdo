@@ -39,7 +39,7 @@ class ControllerObservationFailure(_message.Message):
     def __init__(self, code: _Optional[_Union[ControllerObservationFailure.Code, str]] = ..., incident_id: _Optional[str] = ..., message: _Optional[str] = ...) -> None: ...
 
 class ControllerObservation(_message.Message):
-    __slots__ = ("known_incident_ids", "new_incident_opened", "verified_incident_id", "verified_closure", "acknowledged", "open_incident_summary", "failure")
+    __slots__ = ("known_incident_ids", "new_incident_opened", "verified_incident_id", "verified_closure", "acknowledged", "open_incident_summary", "failure", "completed_external_incident_id", "completed_external_closure")
     KNOWN_INCIDENT_IDS_FIELD_NUMBER: _ClassVar[int]
     NEW_INCIDENT_OPENED_FIELD_NUMBER: _ClassVar[int]
     VERIFIED_INCIDENT_ID_FIELD_NUMBER: _ClassVar[int]
@@ -47,6 +47,8 @@ class ControllerObservation(_message.Message):
     ACKNOWLEDGED_FIELD_NUMBER: _ClassVar[int]
     OPEN_INCIDENT_SUMMARY_FIELD_NUMBER: _ClassVar[int]
     FAILURE_FIELD_NUMBER: _ClassVar[int]
+    COMPLETED_EXTERNAL_INCIDENT_ID_FIELD_NUMBER: _ClassVar[int]
+    COMPLETED_EXTERNAL_CLOSURE_FIELD_NUMBER: _ClassVar[int]
     known_incident_ids: _containers.RepeatedScalarFieldContainer[str]
     new_incident_opened: bool
     verified_incident_id: str
@@ -54,4 +56,6 @@ class ControllerObservation(_message.Message):
     acknowledged: bool
     open_incident_summary: str
     failure: ControllerObservationFailure
-    def __init__(self, known_incident_ids: _Optional[_Iterable[str]] = ..., new_incident_opened: _Optional[bool] = ..., verified_incident_id: _Optional[str] = ..., verified_closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., acknowledged: _Optional[bool] = ..., open_incident_summary: _Optional[str] = ..., failure: _Optional[_Union[ControllerObservationFailure, _Mapping]] = ...) -> None: ...
+    completed_external_incident_id: str
+    completed_external_closure: _messages_pb2.IncidentClosure
+    def __init__(self, known_incident_ids: _Optional[_Iterable[str]] = ..., new_incident_opened: _Optional[bool] = ..., verified_incident_id: _Optional[str] = ..., verified_closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., acknowledged: _Optional[bool] = ..., open_incident_summary: _Optional[str] = ..., failure: _Optional[_Union[ControllerObservationFailure, _Mapping]] = ..., completed_external_incident_id: _Optional[str] = ..., completed_external_closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ...) -> None: ...

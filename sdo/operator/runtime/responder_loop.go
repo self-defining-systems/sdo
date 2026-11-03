@@ -283,6 +283,9 @@ func NewResponderLoopWithOptions(request IncidentRequest, programs program.Progr
 	if err != nil || len(decoded) != 16 || hex.EncodeToString(decoded) != session {
 		return nil, fmt.Errorf("responder session ID must be 32 lowercase hexadecimal characters")
 	}
+	if request.ExternalMessage != "" {
+		detectors = nil
+	}
 	detectors = withoutDisabledSetupDetectors(detectors, request.SourceCommit, request.DisabledSetupDetectors)
 	loop := &ResponderLoop{sessionID: session, Request: request, Programs: programs, Provider: provider, Detectors: detectors, Executor: executor, MaxBatches: maxBatches, plans: map[string]selectedPlan{}, applications: map[string]PlanApplicationResult{}, matchedViews: map[string]program.ReadView{}, matchedPlans: map[string]PlanApplicationResult{}, findings: append([]sdk.Finding(nil), request.Findings...)}
 	priorRecorder := executor.RecordPrimitive
@@ -460,6 +463,11 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 	}
 	response = ToolResponse{Command: request.Command, LoopsUsed: l.batches, LoopsAllowed: l.batchLimit(),
 		MitigationRoundsUsed: l.batches, MitigationRoundsAllowed: l.batchLimit(), ResponseLoopsUsed: l.continuation.Attempts, ResponseLoopsAllowed: l.MaxBatches}
+	if l.Request.ExternalMessage != "" && (request.Command == "detect" || request.Command == "check" || request.Command == "verify") {
+		response.VerificationStatus = VerificationAwaitingResponderCompletion
+		response.Summary = "External incident: detectors are disabled. Investigate with live reads and return your completed result when done."
+		return response
+	}
 	if l.Request.MaxResponseLoops > 0 {
 		response.ResponseLoopsAllowed = min(response.ResponseLoopsAllowed, l.Request.MaxResponseLoops)
 	}
@@ -483,6 +491,12 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			response.Summary = response.Error
 		}
 		requestJSON, _ := json.Marshal(request)
+		if l.Request.ExternalMessage != "" {
+			response.Healthy = false
+			response.DetectorStates = nil
+			response.IncidentVerified = nil
+			response.VerificationStatus = VerificationAwaitingResponderCompletion
+		}
 		response = logicalToolResponse(response)
 		var applied []selectedPlan
 		if request.Command == "apply" {

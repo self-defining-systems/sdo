@@ -88,6 +88,7 @@ class AgentOutcome:
     account_events: tuple[AccountEvent, ...] = ()
     detected_at: datetime | None = None
     mitigation_applied_at: datetime | None = None
+    first_repair_action_at: datetime | None = None
     resolved_at: datetime | None = None
     responder_started_at: datetime | None = None
     responder_finished_at: datetime | None = None
@@ -788,6 +789,7 @@ def _outcome_fields(outcome: AgentOutcome) -> dict[str, Any]:
         "account_events": list(outcome.account_events),
         "detected_at": outcome.detected_at,
         "mitigation_applied_at": outcome.mitigation_applied_at,
+        "first_repair_action_at": outcome.first_repair_action_at,
         "resolved_at": outcome.resolved_at,
         "responder_started_at": outcome.responder_started_at,
         "responder_finished_at": outcome.responder_finished_at,

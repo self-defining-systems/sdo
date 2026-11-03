@@ -555,6 +555,9 @@ func (c *Controller) responderVerification(ctx context.Context, incidentID strin
 }
 func (c *Controller) responderResultVerification(ctx context.Context, incidentID string, result *IncidentResult) ToolResponse {
 	defer c.lockObservation("responder_verify")()
+	if c.config.ExternalIncidentsOnly {
+		return ToolResponse{Command: "verify", VerificationStatus: VerificationAwaitingResponderCompletion, Summary: "External incident: declare completion by returning your result. No detector verification is available."}
+	}
 	snapshot, err := c.provider.Snapshot(ctx)
 	if err != nil {
 		return ToolResponse{Command: "verify", Error: "create verification snapshot: " + err.Error()}

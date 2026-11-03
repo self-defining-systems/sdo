@@ -68,12 +68,21 @@ func ObserveController(data []byte) *c.ControllerObservation {
 	closure := state.GetPendingClosure()
 	id := closure.GetRequest().GetIncidentId()
 	if id != "" && !slices.Contains(request.GetKnownIncidentIds(), id) && observedTimestamp(closure.GetVerifiedAt()) {
-		result.VerifiedIncidentId = id
-		result.VerifiedClosure = proto.Clone(closure).(*c.IncidentClosure)
+		if closure.GetRequest().GetExternalMessage() != "" {
+			result.CompletedExternalIncidentId = id
+			result.CompletedExternalClosure = proto.Clone(closure).(*c.IncidentClosure)
+		} else {
+			result.VerifiedIncidentId = id
+			result.VerifiedClosure = proto.Clone(closure).(*c.IncidentClosure)
+		}
 		return result
 	}
 	if id = state.GetLastAcknowledgedIncidentId(); id != "" && !slices.Contains(request.GetKnownIncidentIds(), id) {
-		result.VerifiedIncidentId = id
+		if state.GetLastAcknowledgedExternalIncidentId() == id {
+			result.CompletedExternalIncidentId = id
+		} else {
+			result.VerifiedIncidentId = id
+		}
 		return result
 	}
 	return result

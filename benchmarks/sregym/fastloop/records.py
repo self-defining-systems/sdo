@@ -259,6 +259,7 @@ class IncidentRecord(_PersistedModel):
     detected_at: AwareDatetime | None = None
     #: Last successful repair action (SDO) or agent exit (baseline).
     mitigation_applied_at: AwareDatetime | None = None
+    first_repair_action_at: AwareDatetime | None = None
     #: Independently verified health (SDO) or agent exit (baseline).
     resolved_at: AwareDatetime | None = None
     responder_started_at: AwareDatetime | None = None
@@ -404,10 +405,24 @@ class IncidentRecord(_PersistedModel):
     def injection_finished_at(self) -> datetime | None:
         return self.injection.finished_at if isinstance(self.injection, Injected) else None
 
+    @property
+    def _incident_timing_origin(self) -> datetime | None:
+        return self.injection_finished_at if self.ablation_arm == "playbooks-only" else self.injection_started_at
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def injection_to_first_repair_action_seconds(self) -> float | None:
+        return self._active_seconds(self._incident_timing_origin, self.first_repair_action_at)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def injection_to_responder_done_seconds(self) -> float | None:
+        return self._active_seconds(self._incident_timing_origin, self.responder_finished_at)
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def injection_to_detection_seconds(self) -> float | None:
-        return _seconds(self.injection_started_at, self.detected_at)
+        return _seconds(self._incident_timing_origin, self.detected_at)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -417,12 +432,12 @@ class IncidentRecord(_PersistedModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def injection_to_mitigation_seconds(self) -> float | None:
-        return self._active_seconds(self.injection_started_at, self.mitigation_applied_at)
+        return self._active_seconds(self._incident_timing_origin, self.mitigation_applied_at)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def injection_to_resolution_seconds(self) -> float | None:
-        return self._active_seconds(self.injection_started_at, self.resolved_at)
+        return self._active_seconds(self._incident_timing_origin, self.resolved_at)
 
     @computed_field  # type: ignore[prop-decorator]
     @property

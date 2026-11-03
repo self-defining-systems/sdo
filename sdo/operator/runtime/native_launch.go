@@ -28,6 +28,9 @@ import (
 // broker from its typed launch contract. Native mode and proposal-only worker
 // mounts are one validation decision, before leader election or dispatch.
 func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfig, client kubernetes.Interface) (*NativeIncidentBroker, kubernetes.Interface, error) {
+	if config != nil && config.GetExternalIncidents() && !config.GetFrozenMemory() {
+		return nil, nil, errors.New("external incidents require frozen memory")
+	}
 	if config != nil && config.GetFrozenMemory() && config.GetForceReflection() {
 		return nil, nil, errors.New("frozen memory conflicts with force reflection")
 	}

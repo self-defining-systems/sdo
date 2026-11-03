@@ -234,6 +234,14 @@ func (n NativeIncidentBroker) processUnverifiedClosure(ctx context.Context, clos
 }
 
 func (n NativeIncidentBroker) processClosure(ctx context.Context, closure IncidentClosure, observation *closureHealthObservation) (ClosureReceipt, error) {
+	if closure.Request.ExternalMessage != "" {
+		if !n.FrozenMemory {
+			return ClosureReceipt{}, errors.New("external completion requires private frozen evidence")
+		}
+		if len(closure.FinalDetectorStates) != 0 || closure.HealthClearedAt != nil || closure.VerifiedWhileResponderRunning || closure.UnconfirmedReason != contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_EXTERNAL_COMPLETION {
+			return ClosureReceipt{}, errors.New("external completion cannot assert independent detector health")
+		}
+	}
 	if n.FrozenMemory && n.ForceReflection {
 		return ClosureReceipt{}, errors.New("frozen memory conflicts with force reflection")
 	}
@@ -1151,7 +1159,7 @@ func (n NativeIncidentBroker) committedClosureReceipt(ctx context.Context, closu
 			return err
 		}
 		stored := closureReceiptState(ledger.Receipt)
-		if stored == nil || stored.IncidentID != closure.Request.IncidentID || stored.BaseCommit != closure.Request.RepositoryBaseCommit || (!ledger.GetFrozenMemory() && stored.ProposalCommit == "") || stored.OutcomeCommit == "" || stored.AckToken == "" || !proto.Equal(ledger.Closure, projected) || ledger.OutcomeDocument == nil || len(closure.FinalDetectorStates) == 0 {
+		if stored == nil || stored.IncidentID != closure.Request.IncidentID || stored.BaseCommit != closure.Request.RepositoryBaseCommit || (!ledger.GetFrozenMemory() && stored.ProposalCommit == "") || stored.OutcomeCommit == "" || stored.AckToken == "" || !proto.Equal(ledger.Closure, projected) || ledger.OutcomeDocument == nil || (len(closure.FinalDetectorStates) == 0 && closure.Request.ExternalMessage == "") {
 			return nil
 		}
 		if ledger.GetFrozenMemory() {

@@ -317,6 +317,9 @@ def responder_brief(request: IncidentRequest, *, details_file: str, full: dict[s
         brief["prior_response_progress"] = prior_response_summary(request)
     if releases := release_lines(_rollout_pending(request)):
         brief["rollout_releases"] = releases
+    if request.external_message:
+        brief["external_message"] = request.external_message
+        brief["completion_policy"] = "responder_done_without_detector_verification"
     if "playbook_documents" in full:
         brief["playbook_documents"] = dict(full["playbook_documents"])
         brief["playbook_index"] = {item["id"]: _clip(item["description"], 120) for item in full["playbook_index"]}

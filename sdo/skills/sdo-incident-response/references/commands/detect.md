@@ -1,6 +1,6 @@
 ## detect
 
-run fresh detectors; pending health is unproven
+run fresh detectors; external incidents await responder completion
 
 ```text
 sdo detect [-h] [--detector ID [ID ...]]

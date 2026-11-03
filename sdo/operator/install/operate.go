@@ -126,6 +126,9 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 		"--reflection-guidance", reflectionGuidance(cfg),
 	}
 	args = append(args, codePathArgs(cfg)...)
+	if cfg.ExternalIncidents {
+		args = append(args, "--external-incidents")
+	}
 	if cfg.FrozenMemory {
 		args = append(args, "--frozen-memory")
 	}

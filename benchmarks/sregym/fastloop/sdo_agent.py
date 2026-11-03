@@ -155,6 +155,17 @@ def _last_successful_repair(repairs: object) -> datetime | None:
     return max(completions) if completions else None
 
 
+def _first_successful_repair(repairs: object) -> datetime | None:
+    starts = [
+        at
+        for item in (repairs if isinstance(repairs, list) else [])
+        if isinstance(item, dict) and item.get("success") is True
+        for at in [_timestamp(item.get("started_at"))]
+        if at is not None
+    ]
+    return min(starts) if starts else None
+
+
 def _receipt_closure_times(receipt: dict[str, Any]) -> tuple[datetime | None, datetime | None]:
     """Prefer durable outcome timestamps; older receipts carry equivalent phase timings."""
     ledger = receipt.get("native_ledger") or {}
@@ -187,6 +198,8 @@ def _with_receipt_times(outcome: AgentOutcome, receipt: dict[str, Any]) -> Agent
         mitigation_applied_at=outcome.mitigation_applied_at
         or _timestamp(timestamps.get("mitigated_at"))
         or _last_successful_repair(receipt.get("repair_actions") or document.get("repair_actions")),
+        first_repair_action_at=outcome.first_repair_action_at
+        or _first_successful_repair(receipt.get("repair_actions") or document.get("repair_actions")),
         responder_started_at=outcome.responder_started_at
         or _timestamp(timestamps.get("dispatched_at"))
         or _timestamp(receipt.get("responder_started_at")),
@@ -409,6 +422,7 @@ class SdoPersistentAgent:
             responder_started_at=_timestamp(resolution.get("responder_started_at")),
             responder_finished_at=_timestamp(resolution.get("responder_finished_at")),
             mitigation_applied_at=_last_successful_repair(repairs),
+            first_repair_action_at=_first_successful_repair(repairs),
             resolved_at=verified,
             diagnosis=_summaries(resolution.get("confirmed_root_causes")),
             mitigation=_summaries(repairs, successful_only=True),

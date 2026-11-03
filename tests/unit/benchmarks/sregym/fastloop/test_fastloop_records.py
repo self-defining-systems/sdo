@@ -247,3 +247,19 @@ def test_a_row_records_the_provider_model_and_effort_its_agents_ran_with(tmp_pat
 
     (loaded,) = load_records(path)
     assert (loaded.provider, loaded.model, loaded.reasoning_effort) == ("claude", "claude-opus-5-5", "medium")
+
+
+def test_playbooks_only_times_start_at_injection_end_and_keep_raw_latency():
+    record = _record(0).model_copy(
+        update={
+            "ablation_arm": "playbooks-only",
+            "first_repair_action_at": T0 + timedelta(seconds=12),
+            "responder_finished_at": T0 + timedelta(seconds=65),
+        }
+    )
+    assert record.injection_to_detection_seconds == 2
+    assert record.injection_to_first_repair_action_seconds == 6
+    assert record.injection_to_mitigation_seconds == 34
+    assert record.injection_to_responder_done_seconds == 59
+    assert record.injection_to_resolution_seconds == 64
+    assert record.raw_injection_to_mitigation_seconds == 40

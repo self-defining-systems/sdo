@@ -202,8 +202,11 @@ type ControllerObservation struct {
 	Acknowledged        bool                          `protobuf:"varint,5,opt,name=acknowledged,proto3" json:"acknowledged,omitempty"`
 	OpenIncidentSummary string                        `protobuf:"bytes,6,opt,name=open_incident_summary,json=openIncidentSummary,proto3" json:"open_incident_summary,omitempty"`
 	Failure             *ControllerObservationFailure `protobuf:"bytes,7,opt,name=failure,proto3" json:"failure,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// Completion has no independent health assertion.
+	CompletedExternalIncidentId string           `protobuf:"bytes,8,opt,name=completed_external_incident_id,json=completedExternalIncidentId,proto3" json:"completed_external_incident_id,omitempty"`
+	CompletedExternalClosure    *IncidentClosure `protobuf:"bytes,9,opt,name=completed_external_closure,json=completedExternalClosure,proto3" json:"completed_external_closure,omitempty"`
+	unknownFields               protoimpl.UnknownFields
+	sizeCache                   protoimpl.SizeCache
 }
 
 func (x *ControllerObservation) Reset() {
@@ -285,6 +288,20 @@ func (x *ControllerObservation) GetFailure() *ControllerObservationFailure {
 	return nil
 }
 
+func (x *ControllerObservation) GetCompletedExternalIncidentId() string {
+	if x != nil {
+		return x.CompletedExternalIncidentId
+	}
+	return ""
+}
+
+func (x *ControllerObservation) GetCompletedExternalClosure() *IncidentClosure {
+	if x != nil {
+		return x.CompletedExternalClosure
+	}
+	return nil
+}
+
 var File_sdodev_contracts_v1alpha1_controller_observation_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_controller_observation_proto_rawDesc = "" +
@@ -304,7 +321,7 @@ const file_sdodev_contracts_v1alpha1_controller_observation_proto_rawDesc = "" +
 	"\x04Code\x12\x14\n" +
 	"\x10CODE_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15CODE_INVALID_SNAPSHOT\x10\x01\x12\x17\n" +
-	"\x13CODE_CLOSURE_FAILED\x10\x02\"\x04\b\x03\x10\x03*\x1dCODE_DETECTOR_REVIEW_REQUIRED\"\xa9\x03\n" +
+	"\x13CODE_CLOSURE_FAILED\x10\x02\"\x04\b\x03\x10\x03*\x1dCODE_DETECTOR_REVIEW_REQUIRED\"\xd8\x04\n" +
 	"\x15ControllerObservation\x12,\n" +
 	"\x12known_incident_ids\x18\x01 \x03(\tR\x10knownIncidentIds\x12.\n" +
 	"\x13new_incident_opened\x18\x02 \x01(\bR\x11newIncidentOpened\x120\n" +
@@ -312,7 +329,9 @@ const file_sdodev_contracts_v1alpha1_controller_observation_proto_rawDesc = "" +
 	"\x10verified_closure\x18\x04 \x01(\v2*.sdodev.contracts.v1alpha1.IncidentClosureR\x0fverifiedClosure\x12\"\n" +
 	"\facknowledged\x18\x05 \x01(\bR\facknowledged\x122\n" +
 	"\x15open_incident_summary\x18\x06 \x01(\tR\x13openIncidentSummary\x12Q\n" +
-	"\afailure\x18\a \x01(\v27.sdodev.contracts.v1alpha1.ControllerObservationFailureR\afailureB\x8d\x02\n" +
+	"\afailure\x18\a \x01(\v27.sdodev.contracts.v1alpha1.ControllerObservationFailureR\afailure\x12C\n" +
+	"\x1ecompleted_external_incident_id\x18\b \x01(\tR\x1bcompletedExternalIncidentId\x12h\n" +
+	"\x1acompleted_external_closure\x18\t \x01(\v2*.sdodev.contracts.v1alpha1.IncidentClosureR\x18completedExternalClosureB\x8d\x02\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\x1aControllerObservationProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 
 var (
@@ -342,11 +361,12 @@ var file_sdodev_contracts_v1alpha1_controller_observation_proto_depIdxs = []int3
 	0, // 1: sdodev.contracts.v1alpha1.ControllerObservationFailure.code:type_name -> sdodev.contracts.v1alpha1.ControllerObservationFailure.Code
 	5, // 2: sdodev.contracts.v1alpha1.ControllerObservation.verified_closure:type_name -> sdodev.contracts.v1alpha1.IncidentClosure
 	2, // 3: sdodev.contracts.v1alpha1.ControllerObservation.failure:type_name -> sdodev.contracts.v1alpha1.ControllerObservationFailure
-	4, // [4:4] is the sub-list for method output_type
-	4, // [4:4] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	5, // 4: sdodev.contracts.v1alpha1.ControllerObservation.completed_external_closure:type_name -> sdodev.contracts.v1alpha1.IncidentClosure
+	5, // [5:5] is the sub-list for method output_type
+	5, // [5:5] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_controller_observation_proto_init() }
