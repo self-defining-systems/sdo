@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/sdk/inputs"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -348,4 +350,49 @@ func TestCycleReadProbeTimeoutIsRecorded(t *testing.T) {
 			t.Fatalf("timeout lost during replay: %v", err)
 		}
 	})
+}
+
+type countedCycleBaseline struct {
+	calls   atomic.Int32
+	changes *StateChanges
+}
+
+func (b *countedCycleBaseline) Observe(time.Time, bool) {}
+
+func (b *countedCycleBaseline) Changes(time.Time) *StateChanges { b.calls.Add(1); return b.changes }
+
+func TestCycleBaselineDiffIsComputedOnceAndRefreshesNextSnapshot(t *testing.T) {
+	baseline := &countedCycleBaseline{changes: &StateChanges{}}
+	raw := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app"}), BaselineSource: baseline}
+	cycle := NewCycleReadView(raw)
+	var readers sync.WaitGroup
+	for i := range 64 {
+		readers.Add(1)
+		go func(i int) {
+			defer readers.Done()
+			ref := sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: strconv.Itoa(i)}
+			if _, err := cycle.DiffAgainstBaseline(ref); err != nil {
+				t.Error(err)
+			}
+		}(i)
+	}
+	readers.Wait()
+
+	if baseline.calls.Load() != 1 {
+		t.Fatalf("whole baseline rebuilt %d times for one snapshot", baseline.calls.Load())
+	}
+	baseline.changes = &StateChanges{Changes: []StateChange{{Kind: "Service", Name: "repaired", Change: StateChangeModified}}}
+	ref := sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "repaired"}
+	if diff, err := cycle.DiffAgainstBaseline(ref); err != nil || diff.Changed {
+		t.Fatalf("snapshot changed under reader: %+v %v", diff, err)
+	}
+	for _, view := range []program.ReadView{raw, &raw} {
+		next := NewCycleReadView(view)
+		if diff, err := next.DiffAgainstBaseline(ref); err != nil || !diff.Changed {
+			t.Fatalf("next snapshot missed current state: %+v %v", diff, err)
+		}
+	}
+	if baseline.calls.Load() != 3 {
+		t.Fatalf("new snapshots reused old baseline: %d", baseline.calls.Load())
+	}
 }
