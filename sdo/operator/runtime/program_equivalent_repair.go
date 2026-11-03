@@ -151,6 +151,10 @@ func equivalentPlanResources(preview PlanApplicationResult, repairs []RepairActi
 }
 
 func finalPlanFieldsMatch(preview PlanApplicationResult, getFinal func(sdk.ObjectRef) *unstructured.Unstructured) bool {
+	return finalPlanDesiredFieldsMatch(preview, getFinal, true)
+}
+
+func finalPlanDesiredFieldsMatch(preview PlanApplicationResult, getFinal func(sdk.ObjectRef) *unstructured.Unstructured, requireChange bool) bool {
 	if len(preview.PreImages) == 0 {
 		return false
 	}
@@ -236,7 +240,7 @@ func finalPlanFieldsMatch(preview PlanApplicationResult, getFinal func(sdk.Objec
 			}
 		}
 		expectedFields := planComparableFields(want, want, owner, changed)
-		if reflect.DeepEqual(planComparableFields(baseline, want, owner, changed), expectedFields) ||
+		if (requireChange && reflect.DeepEqual(planComparableFields(baseline, want, owner, changed), expectedFields)) ||
 			!reflect.DeepEqual(planComparableFields(current, want, owner, changed), expectedFields) {
 			return false
 		}

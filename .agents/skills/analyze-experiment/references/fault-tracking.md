@@ -85,3 +85,19 @@ injection start and detection to mitigation and verified resolution; this expose
 the end-of-injection alert advantage of playbooks-only. Non-injected and
 infrastructure-error rows remain visible but are excluded from timing/pass
 summaries. Missing endpoints are omitted, never zero.
+
+## Program panic boundary evidence
+
+`memory_program_panic` in controller/memory-host logs records `operation`,
+`program_id`, `memory_commit`, `binary_digest`, `panic`, and the original `stack`.
+Its `captured_case` is JSON with schema `sdo.program-panic/v1`: `input` is the
+original ProtoJSON MemoryProgramInput (bindings, observation, mirror sequence,
+prefetched reads); `snapshot` is the exact frozen SDK snapshot after observation
+overlay, and `calls` are recorded read arguments, results and errors through the
+panic. Restore the original input observation overlay as `memoryhost.programView`
+does (snapshot JSON omits some ephemeral fields), then replay with
+`sdktest.ReplayReadView{Snapshot: snapshot, Calls: calls}` and the original input
+bindings against the recorded memory revision/binary. These
+are diagnostic captures in logs, not broker-accepted corpus or successful
+outcomes. Unknown diagnosis and planner errors remain failures. A missing
+capture or non-null `input_error`/`capture_error` means replay is incomplete.

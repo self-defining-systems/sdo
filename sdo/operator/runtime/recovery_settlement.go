@@ -485,7 +485,18 @@ func recoveryApplicationSucceeded(outcome *contracts.OutcomeRecord, app *contrac
 // UID-bound delete followed by a fresh direct NotFound, never a failed GET.
 // Remaining document effects use the existing field-equivalence predicate.
 func (l *ResponderLoop) recoveryPlanFieldsMatch(result PlanApplicationResult, getFinal func(sdk.ObjectRef) *unstructured.Unstructured, absent func(sdk.ObjectRef) bool) bool {
-	if writes := l.applicationWriteRefs(result); writes != nil {
+	// Source reconciliation may already be converged while its rollout is
+	// pending. Confirm its desired fields without inventing a configuration
+	// transition; the equivalent-repair path still requires a real change.
+	sourceOnly := len(result.Plan.Actions) > 0
+	for _, action := range result.Plan.Actions {
+		switch action.(type) {
+		case program.ReconcileFromSource, *program.ReconcileFromSource:
+		default:
+			sourceOnly = false
+		}
+	}
+	if writes := l.applicationWriteRefs(result); writes != nil && !(sourceOnly && len(*writes) == 0) {
 		original := result.PreImages
 		result.PreImages = nil
 		for _, image := range original {
@@ -513,7 +524,7 @@ func (l *ResponderLoop) recoveryPlanFieldsMatch(result PlanApplicationResult, ge
 			remaining.PreImages = append(remaining.PreImages, image)
 		}
 	}
-	return len(remaining.PreImages) == 0 || finalPlanFieldsMatch(remaining, getFinal)
+	return len(remaining.PreImages) == 0 || finalPlanDesiredFieldsMatch(remaining, getFinal, false)
 }
 
 // recoveryRolloutRefs retains write/conflict scope while removing only exact

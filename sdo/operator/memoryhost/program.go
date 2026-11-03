@@ -38,7 +38,7 @@ func (s *Server) WithPrograms(registry program.ProgramRegistry) *Server {
 	}
 	return s
 }
-func (s *Server) programView(ctx context.Context, input *pb.MemoryProgramInput) (*sdktest.RecordingReadView, program.Bindings, error) {
+func (s *Server) programView(ctx context.Context, input *pb.MemoryProgramInput) (*programRecording, program.Bindings, error) {
 	if input == nil {
 		return nil, program.Bindings{}, errors.New("program input required")
 	}
@@ -91,17 +91,20 @@ func (s *Server) programView(ctx context.Context, input *pb.MemoryProgramInput) 
 	}
 	recorder := &sdktest.RecordingReadView{ReadView: s.programObjects(view, snapshot)}
 
-	return recorder, bindings, nil
+	return &programRecording{RecordingReadView: recorder, snapshot: snapshot}, bindings, nil
 }
 func (s *Server) Diagnose(ctx context.Context, request *pb.DiagnoseRequest) (response *pb.DiagnoseResponse, err error) {
 	response = &pb.DiagnoseResponse{}
+	var view *programRecording
+	var bindings program.Bindings
 	defer func() {
 		if value := recover(); value != nil {
+			s.recordProgramPanic("diagnose", request.GetInput(), view, value)
 			response.Verdict = nil
 			response.Error = fmt.Sprintf("program panic: %v", value)
 		}
 	}()
-	view, bindings, err := s.programView(ctx, request.GetInput())
+	view, bindings, err = s.programView(ctx, request.GetInput())
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +123,7 @@ func (s *Server) Diagnose(ctx context.Context, request *pb.DiagnoseRequest) (res
 			response.Reads, err = EncodeReceipts(view.SnapshotCalls())
 		}
 	}()
-	verdict := program.RunDiagnose(ctx, p, view, bindings, time.Hour)
+	verdict := program.RunDiagnose(ctx, recordingDiagnoser{Diagnoser: p, record: func(value any) { s.recordProgramPanic("diagnose", request.GetInput(), view, value) }}, view, bindings, time.Hour)
 	result := pb.Verdict_RESULT_UNKNOWN
 	switch verdict.Result {
 	case program.Match:
@@ -138,13 +141,16 @@ func (s *Server) Diagnose(ctx context.Context, request *pb.DiagnoseRequest) (res
 }
 func (s *Server) Mitigate(ctx context.Context, request *pb.MitigateRequest) (response *pb.MitigateResponse, err error) {
 	response = &pb.MitigateResponse{}
+	var view *programRecording
+	var bindings program.Bindings
 	defer func() {
 		if value := recover(); value != nil {
+			s.recordProgramPanic("mitigate", request.GetInput(), view, value)
 			response.Plan = nil
 			response.Error = fmt.Sprintf("program panic: %v", value)
 		}
 	}()
-	view, bindings, err := s.programView(ctx, request.GetInput())
+	view, bindings, err = s.programView(ctx, request.GetInput())
 	if err != nil {
 		return nil, err
 	}
