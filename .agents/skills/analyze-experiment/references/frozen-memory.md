@@ -14,3 +14,6 @@ Fastloop ablation rows carry `ablation_arm` (`full` or `detectors-only`).
 immutable commit used as the row-start planned revision. These arms force replay
 off and frozen memory, and install supplied memory without lifecycle/judge work.
 Startup refresh is suppressed; health inputs must still match the compiled inputs.
+
+Frozen receipts name an existing base, so they do not require a new memory-host
+activation. Activation continuity remains required for published-memory commits.

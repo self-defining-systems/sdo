@@ -105,6 +105,7 @@ if TYPE_CHECKING:
     from benchmarks.sregym.adapter.runtime import (
         ControllerInstallError,
         RuntimeConfig,
+        install_persistent_controller,
         native_install_config,
     )
 
@@ -161,6 +162,7 @@ _EXPORTS: dict[str, str] = {
     "deployed_lifecycle": "driver",
     "launch_native_lifecycle": "driver",
     "native_install_config": "runtime",
+    "install_persistent_controller": "runtime",
     "ControllerInstallError": "runtime",
     "execute_operator": "native_operator",
     "inspect_existing": "native_operator",
@@ -270,6 +272,7 @@ __all__ = [
     "deployed_lifecycle",
     "launch_native_lifecycle",
     "native_install_config",
+    "install_persistent_controller",
     "sync_existing",
     "ControllerInstallError",
     "execute_operator",

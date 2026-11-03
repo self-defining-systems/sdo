@@ -70,3 +70,21 @@ def test_live_controller_pod_ignores_pods_of_finished_job_attempts() -> None:
     for pods in ([pod("old", "Failed")], [pod("a", "Running"), pod("b", "Pending")], [pod("a", "Running", True)]):
         with pytest.raises(RuntimeError, match="exactly one live controller pod"):
             live_controller_pod(pods)
+
+
+def test_frozen_private_evidence_does_not_require_an_activation():
+    from benchmarks.sregym.fastloop.continuity import activation_commits
+
+    ledger = {"frozen_memory": True, "outcome_commit": "unchanged-base"}
+    _, error = check_activations(
+        "", {"uid": "one"}, {"uid": "one"}, max_gap=1, expected_commits=activation_commits(ledger)
+    )
+    assert error is None
+    _, error = check_activations(
+        "",
+        {"uid": "one"},
+        {"uid": "one"},
+        max_gap=1,
+        expected_commits=activation_commits({"outcome_commit": "published"}),
+    )
+    assert error

@@ -24,6 +24,22 @@ class ActivationContinuity(BaseModel):
     passed: bool
 
 
+def activation_commits(ledger: dict[str, Any]) -> set[str]:
+    """Only published memory needs activation; frozen receipts name the existing base."""
+    if ledger.get("frozen_memory") is True:
+        return set()
+    receipts = ledger.get("rollout_receipts") or []
+    commits = {
+        str(item["accepted_commit"])
+        for item in receipts
+        if isinstance(item, dict) and item.get("success") and item.get("accepted_commit")
+    }
+    final = ledger.get("reflection_commit") or ledger.get("outcome_commit")
+    if final:
+        commits.add(str(final))
+    return commits
+
+
 def check_activations(
     logs: str,
     before: dict[str, Any],

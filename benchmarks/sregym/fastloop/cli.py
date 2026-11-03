@@ -669,9 +669,9 @@ def _sdo_agent(
             inspect_existing(native_install_config(runtime_config))
             return True
         if getattr(args, "ablation_arm", None):
-            from benchmarks.sregym.adapter import install_existing, native_install_config
+            from benchmarks.sregym.adapter import install_persistent_controller
 
-            install_existing(native_install_config(runtime_config))
+            install_persistent_controller(runtime_config)
             return False
         if environment.app == "toy":
             # Setup runs only for a from-scratch install on the planned commit, so a retained checkpoint or
