@@ -69,6 +69,7 @@ type Kube struct {
 	timeouts int
 	// seq numbers committed controller writes for the recorder.
 	seq uint64
+	api *apiServer
 }
 
 func NewKube(faults Faults, objects ...*unstructured.Unstructured) *Kube {
@@ -108,6 +109,7 @@ func (k *Kube) Patch(ctx context.Context, ref sdk.ObjectRef, kind types.PatchTyp
 		}
 	}
 	if err == nil {
+		k.record(k.objects[ref], true)
 		k.churned = false
 		if fault.CommitThenTimeout || k.faults.FailAfterCommit() {
 			k.timeouts++
@@ -241,7 +243,10 @@ func (k *Kube) Put(o *unstructured.Unstructured) {
 		o.SetUID(types.UID("uid-" + o.GetName()))
 	}
 	k.bump(o)
-	k.objects[sdk.ObjectRef{APIVersion: o.GetAPIVersion(), Kind: o.GetKind(), Namespace: o.GetNamespace(), Name: o.GetName()}] = o
+	ref := sdk.ObjectRef{APIVersion: o.GetAPIVersion(), Kind: o.GetKind(), Namespace: o.GetNamespace(), Name: o.GetName()}
+	_, existed := k.objects[ref]
+	k.objects[ref] = o
+	k.record(o, existed)
 }
 
 // CatchUp delivers a relist after a write or dropped watch.

@@ -27,9 +27,14 @@ The simulated API server (`sdo/operator/runtime/sim`) models:
 - memory-host two-commit activation through Manager, detection during injected
   compilation delay, changed program plans, retained finding state, candidate
   failure, leased-call retirement, complete mirror deltas and same-revision crash recovery;
-- API discovery, server-side apply dry runs over a live object and dry-run creates of accepted source (the
-  default render a source comparison asks for), with Service defaults (port protocol, type, session affinity,
-  IP families), so a program's source diff runs end to end against the simulated API;
+- the Kubernetes API a client sees over HTTP, for the 20 kinds the snapshot reads (see
+  [Kubernetes conformance](#kubernetes-conformance)): get, list (name order, label and field selectors, metadata-only
+  `Accept`), create, update, merge, strategic-merge, JSON and server-side apply patches (real ownership through the
+  server's own field manager and its OpenAPI schema, conflicts, `force`, `dryRun`), delete (preconditions,
+  finalizers, `deletionTimestamp`), the `status` and `scale` subresources, `metadata.generation`, resourceVersion
+  ordering, watch (replay after a version, then live), discovery, and the defaults the registry and admission fill in
+  for Pods, Services, Deployments, StatefulSets, DaemonSets, ReplicaSets, Jobs, PVCs, NetworkPolicies, Secrets and
+  Nodes;
 - registered invariant hooks and a 45-second host-time seed-sweep budget;
 - an ordered event log (`Recorder`) of controller writes, observations, detector evaluations, incident lifecycle, and memory activations, with the two behavioral checks over it, every incident ends and detection keeps running (`sim/properties.go`);
 - the memory broker's independent compile gate (`sim.Compiler`): it records each call, honors cancellation and
@@ -38,6 +43,70 @@ The simulated API server (`sdo/operator/runtime/sim`) models:
 
 The pure lifecycle core (`runtime/lifecyclecore`) is covered by exhaustive explorers of closure and
 reflection under bounded API faults, restarts and worker attempts (see `docs/lifecycle-state-machine.md`).
+
+## Kubernetes conformance
+
+`sdo/operator/runtime/sim/conformance_*_integration_test.go` runs one table of small scenarios (`TestKubeConformance`)
+against a real kube-apiserver and etcd (controller-runtime `envtest`, version 1.34.0 to match the kind node image) and
+against the simulated API, and requires the observable results to match: status code, reason, error causes, and the
+normalized body, including `managedFields`. Each scenario is a list of HTTP-level steps, so the simulation is tested
+on the wire the controller and memory host use (the accepted-source client, plan executor, informers and discovery).
+
+Run it: `go test -tags=integration ./sim/ -run TestKubeConformance` in `sdo/operator/runtime` (about 20 s once the
+binaries are cached; the first run downloads them through `envtestio`, see the testing guide). Nightly CI runs it in
+the runtime shard. `SDO_CONFORMANCE_DUMP=<dir>` writes both sides' normalized results
+per scenario. After a Kubernetes version bump, `SDO_REGEN_SIM_SCHEMA=1 go test ... -run TestRegenerateSimSchema`
+refreshes `sim/testdata/openapi-subset.json`, the real server's OpenAPI v3 schema (descriptions removed) for the
+served kinds, which the simulation's server-side apply needs for list-map keys and field ownership.
+
+A scenario may list `Accepted` differences, each with its reason; a listed difference that no longer differs fails the
+test, so the list cannot go stale. To add behavior to the simulation, add a scenario first and watch it fail.
+
+| Area | Scenarios |
+| --- | --- |
+| Server defaults | `defaults/*`: Service (ClusterIP, headless, NodePort, ExternalName), Deployment (strategy, probes, env, volumes, quantities), Pod, ConfigMap, StatefulSet, Job |
+| Server-side apply | `ssa/*`: create, no-op, change, conflict and force, field removal, disjoint owners, list-map merge by key, update-owned field taken by apply, dry-run apply, dry-run create default render, acceptance record, validation errors |
+| Patch and update | `patch/*`, `update/*`: merge-patch null and list semantics, no-op keeps the version, strategic merge, JSON patch, resourceVersion and uid preconditions, missing object, unsupported type, PUT versions, duplicate create |
+| Status and generation | `status/*`, `scale/*`: generation rules, status and scale subresources, main resource ignores status |
+| Delete | `delete/*`: preconditions, dry run, finalizers (terminating, adding a finalizer, release), pod delete and recreate identity |
+| List and watch | `list/*`, `watch/*`: name order, label and field selectors, list version at least its items', replay after a version, initial state, selected watch, status writes and finalizer deletion in the stream |
+| Discovery | `discovery/*`: `/api`, `/apis`, group-version resource lists for the served groups |
+| Other | `cluster-scoped/node`, `metadata-only/secret-reads` |
+| Bounds | `bounds/*` keep the accepted differences below visible as scenarios |
+
+### Conformance gaps found and closed (2026-11-03)
+
+The simulation answered only list GETs, discovery and two dry-run forms over HTTP, and everything else through the Go
+`Kube` object, so its behavior was never compared with a server.
+
+| Class | Gap | Resolution |
+| --- | --- | --- |
+| Missing behavior | Server-side apply was a JSON merge patch: lists were replaced whole, no ownership, no conflicts, no `force`, no `managedFields`, so source comparison and the drift code that reads `managedFields` ran on data a real server never produces | Real field manager and OpenAPI schema: `ssa/*` |
+| Missing behavior | Defaults existed only for Services (and part of Deployments); Pods, StatefulSets, DaemonSets, ReplicaSets, Jobs, PVCs, NetworkPolicies, Secrets and Nodes were stored as written | Defaults and registry work added: `defaults/*`, `cluster-scoped/node`, `metadata-only/secret-reads` |
+| Mock encodes wrong behavior | Defaults that registry or admission set after ownership is recorded (cluster IP, IP families, node ports, Pod priority and tolerations, status) looked owned by the writer | Applied after the field manager runs: `defaults/*` managedFields |
+| Mock encodes wrong behavior | The deployment-controller revision annotation and `observedGeneration` were stamped on every object, including Services and ConfigMaps | Deployments only (the controller manager is modeled, not the API server) |
+| Missing behavior | `metadata.generation` was never set or bumped | Set to 1 on create for kinds that track it, bumped on spec change (and on annotation change for Deployments): `status/*`, `patch/*` |
+| Wrong behavior | A recreated object got the same uid; a patch naming another uid was a conflict (real: 422 invalid) and any patch with a `metadata` key but no resourceVersion conflicted | Unique uids; invalid for a changed uid; conflict only for a stale resourceVersion present in the patch: `patch/preconditions-and-missing` |
+| Missing behavior | List items carried `kind`/`apiVersion`, the list version was always 1, no selectors, Secrets were blanked instead of served as metadata-only objects | Real list shape, selectors, `PartialObjectMetadata`: `list/*`, `metadata-only/secret-reads` |
+| Missing behavior | No delete preconditions, finalizers, `deletionTimestamp`, or Pod terminating object; no rule against adding a finalizer to a terminating object | `delete/*` |
+| Missing behavior | No status or scale subresource, so a write to the main resource could change status and an autoscaler's ownership of `replicas` was not representable | Status split and scale entry: `status/*`, `scale/*` |
+| Missing behavior | No watch | Replay-then-stream watch with the same event order and versions: `watch/*` |
+| Wrong behavior | Writes carried no field manager, so ownership could not distinguish writers | Manager from `fieldManager` or the user agent; `World.ClientFor` sets the user agent |
+
+### Conformance bounds (accepted)
+
+| Bound | Reason |
+| --- | --- |
+| No object validation (name format, immutable fields such as a Deployment selector, required fields), `bounds/validation` | Validation is a large rule set that no controller decision reads; a refusal can be injected as a scripted API error. A kind lane catches a wrong manifest |
+| Namespaces are not objects: a create in a missing namespace succeeds, `bounds/missing-namespace` | Worlds are built without Namespace objects; adding them would touch most simulation tests |
+| Discovery lists only the served kinds, versions (`autoscaling/v1`) and the `status` and `scale` subresources | The controller resolves kinds it was configured with; other groups are not modeled |
+| No controllers beyond explicit scheduled transitions: no garbage collection or `propagationPolicy`, no ReplicaSet, Endpoints or scheduler work, no graceful termination of scheduled Pods | The kubelet and controller manager are scenario inputs ([Not yet modeled](#not-yet-modeled)) |
+| Watch has no bookmarks, no `410 Gone` or compaction, no `sendInitialEvents`; list has no `limit`/`continue`; no `deleteCollection` | No SDO code depends on them; client-go informers relist on error |
+| Admission plugins other than Priority, DefaultTolerationSeconds, TaintNodesByCondition are absent (ServiceAccount token volumes, quotas, mutating webhooks) | Envtest runs with the ServiceAccount plugin off; webhooks are cluster specific |
+| Cluster IPs and node ports are allocated in sequence, not from a CIDR or the 30000-32767 range | Controllers read presence and equality of these values, never their number |
+| Timestamps are whole seconds; uid and generated names are deterministic | Deliberate: runs replay by seed |
+| The `scale` subresource moves `spec.replicas` ownership by direct edit of `managedFields`, not through the server's scale handler | The result matches the server for the scenarios; other fields cannot be written through `scale` |
+| OpenAPI schema is a snapshot of Kubernetes 1.34.0 for the served kinds | Refreshed with `SDO_REGEN_SIM_SCHEMA=1` when the kind image version moves |
 
 ## Not yet modeled
 
@@ -90,6 +159,7 @@ sockets by the integration-tagged
 
 | 2026-10-31 | Synthetic memory-host slice 1 | Transport / evidence | Detector and program execution outside the controller | Modeled at RPC boundary | `TestSimMemoryHostParityAndCrash`, `TestRemoteMemoryPreservesInputsAndCorpusReceipts`; same world, bufconn, host-owned log reads and typed receipt replay |
 | 2026-11-02 | Runtime test reduction | Missing behavior / cost | Broker compile gate repeated real Go builds in conflict and no-change tests | Modeled within bounds above | `sim.Compiler`, `TestCompilerRecordsCallsAndRejectsUnparsableGo`; `TestHermeticSharedMemoryControllers` and `TestReflectionNoChangeAndSDKGapNeverCommit` use it; real compilation stays in the builder/validator tests and the two compiling `TestReflectionDirectFilesCLIAndBroker` scenarios |
+| 2026-11-03 | Kubernetes conformance (envtest) | Contract drift | The simulated API server diverged from a real one on defaults, server-side apply, patch, status, generation, delete and list/watch | Closed; bounds listed under Conformance bounds | `TestKubeConformance` scenarios, one per area |
 | 2026-11-01 | Prober determinism migration | Transport | HTTP pool reuse after listener closure | Accepted bound | In-memory handlers intentionally omit TCP pooling; `TestKeepAliveConnectionsWouldMaskABlockedListener` and `TestBlockedListenerIsClassifiedAsADialFailureWithinAFewSeconds` retain real-socket integration coverage |
 
 The memory-host tests do not model OS process isolation, Unix socket permissions,

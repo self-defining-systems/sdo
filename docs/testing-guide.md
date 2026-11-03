@@ -68,6 +68,13 @@ runner exports `SDO_SIM_FULL=1`, which restores each sweep's declared seed count
 Tests whose subject is not compilation use `sim.Compiler` as the broker's compile hook instead of
 `validate.CompileCandidate`; keep real compilation in the builder, validator and CLI tests.
 
+## Kubernetes conformance
+
+`TestKubeConformance` (`sdo/operator/runtime/sim`, `integration` tag) runs one table of scenarios against a pinned
+kube-apiserver (`envtestio`, below) and the simulated API and compares what a client sees; see
+[simulation fidelity](simulation-fidelity.md#kubernetes-conformance). When the simulation must behave like the server
+in a new way, add a scenario first.
+
 ## Capture boundary fixtures
 
 Tests that write capture boundaries (`open*.json`, `fixed.json`, `healthy.json`)
