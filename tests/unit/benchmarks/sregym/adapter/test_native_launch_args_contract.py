@@ -1,9 +1,8 @@
 """The adapter's emitted Go-operator arguments are pinned against the Go flag parsers.
 
-The fixture is the exact argv the adapter emits with every option set. The Go test
-``TestAdapterEmittedLaunchArgsParse`` (``sdo/operator/operatorcli``) feeds it to the
-real flag parsers, so a flag that one side adds or removes without the other fails
-both suites. Regenerate with ``SDO_UPDATE_LAUNCH_ARGS_FIXTURE=1``.
+The fixture is the exact argv the adapter emits with every option set, so an
+adapter change that adds or removes a flag fails this suite. Regenerate with
+``SDO_UPDATE_LAUNCH_ARGS_FIXTURE=1``.
 """
 
 from __future__ import annotations
