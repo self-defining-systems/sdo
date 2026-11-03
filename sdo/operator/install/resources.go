@@ -53,6 +53,7 @@ type Config struct {
 	Replay                                       string
 	ReflectionSession, ReflectionGuidance        string
 	ForceReflection                              bool
+	FrozenMemory                                 bool
 	LateFindings                                 string
 	MaxResponseLoops                             int
 	HealthyBaseline                              bool
@@ -125,6 +126,9 @@ func (c Config) controlNamespace() string {
 	return c.Namespace
 }
 func (c Config) validate() error {
+	if c.FrozenMemory && c.ForceReflection {
+		return errors.New("frozen memory conflicts with force reflection")
+	}
 
 	if err := c.ObservationCeiling.Validate(); err != nil {
 		return err
@@ -353,6 +357,9 @@ func controllerJob(c Config) *batchv1.Job {
 	}
 	args = append(args, "--reflection-session", reflectionSession(c))
 	args = append(args, "--reflection-guidance", reflectionGuidance(c))
+	if c.FrozenMemory {
+		args = append(args, "--frozen-memory")
+	}
 	if c.ForceReflection {
 		args = append(args, "--force-reflection")
 	}

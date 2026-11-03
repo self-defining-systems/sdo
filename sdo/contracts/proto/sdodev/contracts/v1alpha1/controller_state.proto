@@ -323,6 +323,8 @@ message BrokerLedger {
   // cause without a program, a skipped healthy replay, an unreachable repeat).
   // The count is the number of entries; the committed outcome file stays immutable.
   repeated MemoryDiagnostic reflection_coverage_gaps = 30;
+  // Presence binds publication policy across retries and restarts.
+  optional bool frozen_memory = 31;
 }
 
 // Source field ownership adoption survives controller restarts.

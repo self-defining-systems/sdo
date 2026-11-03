@@ -60,6 +60,7 @@
   "sdodev.contracts.v1alpha1.BrokerLedger.acknowledged_at",
   "sdodev.contracts.v1alpha1.BrokerLedger.closure",
   "sdodev.contracts.v1alpha1.BrokerLedger.closure_phase_timestamps",
+  "sdodev.contracts.v1alpha1.BrokerLedger.frozen_memory",
   "sdodev.contracts.v1alpha1.BrokerLedger.incident_id",
   "sdodev.contracts.v1alpha1.BrokerLedger.outcome_commit",
   "sdodev.contracts.v1alpha1.BrokerLedger.outcome_document",

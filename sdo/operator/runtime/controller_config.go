@@ -112,6 +112,7 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 
 	boolFlag("--exit-after-closure", config.GetExitAfterClosure())
 	boolFlag("--force-reflection", config.GetForceReflection())
+	boolFlag("--frozen-memory", config.GetFrozenMemory())
 	str("--maintenance-configmap", config.GetMaintenanceConfigmap())
 	dur("--maintenance-poll-interval", config.GetMaintenancePollInterval())
 	dur("--resume-sync-timeout", config.GetResumeSyncTimeout())

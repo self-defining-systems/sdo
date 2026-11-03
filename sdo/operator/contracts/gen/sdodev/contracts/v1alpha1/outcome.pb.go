@@ -640,7 +640,7 @@ var File_sdodev_contracts_v1alpha1_outcome_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_outcome_proto_rawDesc = "" +
 	"\n" +
-	"'sdodev/contracts/v1alpha1/outcome.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a1sdodev/contracts/v1alpha1/controller_config.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a&sdodev/contracts/v1alpha1/common.proto\x1a1sdodev/contracts/v1alpha1/memory_diagnostic.proto\x1a'sdodev/contracts/v1alpha1/program.proto\"\xa3\x18\n" +
+	"'sdodev/contracts/v1alpha1/outcome.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a1sdodev/contracts/v1alpha1/controller_config.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a&sdodev/contracts/v1alpha1/common.proto\x1a1sdodev/contracts/v1alpha1/memory_diagnostic.proto\x1a'sdodev/contracts/v1alpha1/program.proto\"\xb2\x18\n" +
 	"\rOutcomeRecord\x12F\n" +
 	"\tcode_path\x18d \x01(\v2).sdodev.contracts.v1alpha1.CodePathConfigR\bcodePath\x12.\n" +
 	"\x0eschema_version\x18\x01 \x01(\x05B\a\xbaH\x04\x1a\x02\b\x01R\rschemaVersion\x12,\n" +
@@ -678,9 +678,9 @@ const file_sdodev_contracts_v1alpha1_outcome_proto_rawDesc = "" +
 	"\x0fresolution_path\x18\x1e \x01(\tB!\xbaH\x1er\x1cR\x00R\tresponderR\rdeterministicR\x0eresolutionPath\x12g\n" +
 	"\x16reflection_eligibility\x18\" \x01(\v20.sdodev.contracts.v1alpha1.ReflectionEligibilityR\x15reflectionEligibility\x12X\n" +
 	"\x11playbook_coverage\x18# \x01(\v2+.sdodev.contracts.v1alpha1.PlaybookCoverageR\x10playbookCoverage\x12I\n" +
-	"\fprior_stages\x18$ \x03(\v2&.sdodev.contracts.v1alpha1.StageReportR\vpriorStages\x12I\n" +
-	"\x16reflection_skip_reason\x18% \x01(\tB\x13\xbaH\x10r\x0eR\x00R\n" +
-	"no_sessionR\x14reflectionSkipReason\x12<\n" +
+	"\fprior_stages\x18$ \x03(\v2&.sdodev.contracts.v1alpha1.StageReportR\vpriorStages\x12X\n" +
+	"\x16reflection_skip_reason\x18% \x01(\tB\"\xbaH\x1fr\x1dR\x00R\n" +
+	"no_sessionR\rfrozen_memoryR\x14reflectionSkipReason\x12<\n" +
 	"\bsdk_gaps\x182 \x03(\v2!.sdodev.contracts.v1alpha1.SdkGapR\asdkGaps\x12W\n" +
 	"\x11undetected_causes\x183 \x03(\v2*.sdodev.contracts.v1alpha1.UndetectedCauseR\x10undetectedCauses\x12a\n" +
 	"\x15reflection_rejections\x184 \x03(\v2,.sdodev.contracts.v1alpha1.ProposalRejectionR\x14reflectionRejections\x12,\n" +

@@ -244,3 +244,28 @@ func TestReceiptRolloutRevisionCorrelation(t *testing.T) {
 		}
 	}
 }
+
+func TestFrozenReceiptRejectsPublishedLearning(t *testing.T) {
+	r := fixture()
+	r.NativeLedger.FrozenMemory = proto.Bool(true)
+	if got := Evaluate(encoded(t, r), true); got.GetFailure() == nil {
+		t.Fatal("frozen receipt accepted published learning")
+	}
+}
+
+func TestFrozenReceiptGradesPrivateEvidence(t *testing.T) {
+	r := fixture()
+	l := r.NativeLedger
+	l.FrozenMemory = proto.Bool(true)
+	l.ProposalCommit, l.ReflectionCommit = "", ""
+	l.OutcomeDocument.RepairCommit = nil
+	l.Closure.Request.RepositoryBaseCommit = l.OutcomeCommit
+	l.Receipt.BaseCommit = l.OutcomeCommit
+	l.Receipt.ProposalCommit, l.Receipt.ReflectionCommit = "", ""
+	l.RequiresReflection, l.ReflectionProcessed = false, false
+	l.ReflectionDecision = nil
+	l.ReflectionSkippedReason = "frozen_memory"
+	if got := Evaluate(encoded(t, r), true); got.GetFailure() != nil {
+		t.Fatal(got.GetFailure())
+	}
+}

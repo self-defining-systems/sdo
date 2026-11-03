@@ -53,6 +53,7 @@ class RuntimeConfig:
     reflection_session: str = "resume"
     reflection_guidance: str = "baseline"
     force_reflection: bool = False
+    frozen_memory: bool = False
     code_path: str = "go"
 
     late_findings: str = "off"
@@ -76,6 +77,10 @@ class RuntimeConfig:
     shared_accepted_id: str = ""
 
     def __post_init__(self) -> None:
+        if type(self.frozen_memory) is not bool:
+            raise TypeError("frozen_memory must be a boolean")
+        if self.frozen_memory and self.force_reflection:
+            raise ValueError("frozen memory conflicts with force reflection")
         if type(self.permissive_responder) is not bool:
             raise TypeError("permissive_responder must be a boolean")
         if self.responder_namespaces and not self.permissive_responder:
@@ -157,6 +162,7 @@ def native_install_config(config: RuntimeConfig) -> NativeInstallConfig:
         reflection_session=config.reflection_session,
         reflection_guidance=config.reflection_guidance,
         force_reflection=config.force_reflection,
+        frozen_memory=config.frozen_memory,
         code_path=config.code_path,
         healthy_baseline=config.healthy_baseline,
         permissive_responder=config.permissive_responder,

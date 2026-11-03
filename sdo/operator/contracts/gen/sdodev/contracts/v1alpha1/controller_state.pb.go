@@ -1477,8 +1477,10 @@ type BrokerLedger struct {
 	// cause without a program, a skipped healthy replay, an unreachable repeat).
 	// The count is the number of entries; the committed outcome file stays immutable.
 	ReflectionCoverageGaps []*MemoryDiagnostic `protobuf:"bytes,30,rep,name=reflection_coverage_gaps,json=reflectionCoverageGaps,proto3" json:"reflection_coverage_gaps,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// Presence binds publication policy across retries and restarts.
+	FrozenMemory  *bool `protobuf:"varint,31,opt,name=frozen_memory,json=frozenMemory,proto3,oneof" json:"frozen_memory,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *BrokerLedger) Reset() {
@@ -1705,6 +1707,13 @@ func (x *BrokerLedger) GetReflectionCoverageGaps() []*MemoryDiagnostic {
 		return x.ReflectionCoverageGaps
 	}
 	return nil
+}
+
+func (x *BrokerLedger) GetFrozenMemory() bool {
+	if x != nil && x.FrozenMemory != nil {
+		return *x.FrozenMemory
+	}
+	return false
 }
 
 // Source field ownership adoption survives controller restarts.
@@ -1971,7 +1980,7 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\x1dobserved_detector_fingerprint\x18\x04 \x01(\tR\x1bobservedDetectorFingerprint\x12\x18\n" +
 	"\asuccess\x18\x05 \x01(\bR\asuccess\x12;\n" +
 	"\vverified_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"verifiedAt\"\xcf\x12\n" +
+	"verifiedAt\"\x8b\x13\n" +
 	"\fBrokerLedger\x12\x1f\n" +
 	"\vincident_id\x18\x01 \x01(\tR\n" +
 	"incidentId\x12D\n" +
@@ -2002,12 +2011,14 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\x1areflection_no_repair_count\x18\x1b \x01(\rH\x00R\x17reflectionNoRepairCount\x88\x01\x01\x12+\n" +
 	"\x11reflection_queued\x18\x1c \x01(\bR\x10reflectionQueued\x12L\n" +
 	"\x14reflection_queued_at\x18\x1d \x01(\v2\x1a.google.protobuf.TimestampR\x12reflectionQueuedAt\x12e\n" +
-	"\x18reflection_coverage_gaps\x18\x1e \x03(\v2+.sdodev.contracts.v1alpha1.MemoryDiagnosticR\x16reflectionCoverageGaps\x1ae\n" +
+	"\x18reflection_coverage_gaps\x18\x1e \x03(\v2+.sdodev.contracts.v1alpha1.MemoryDiagnosticR\x16reflectionCoverageGaps\x12(\n" +
+	"\rfrozen_memory\x18\x1f \x01(\bH\x01R\ffrozenMemory\x88\x01\x01\x1ae\n" +
 	"\x1bClosurePhaseTimestampsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x120\n" +
 	"\x05value\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05value:\x028\x01:\xf1\x01\xbaH\xed\x01\x1a\xea\x01\n" +
 	"+broker_ledger.terminal_rejection_has_record\x12Va terminal reflection rejection requires a recorded rejection and no reflection commit\x1ac!this.reflection_rejected || (size(this.reflection_rejections) > 0 && this.reflection_commit == '')B\x1d\n" +
-	"\x1b_reflection_no_repair_countJ\x04\b\x13\x10\x14J\x04\b\x14\x10\x15\"\xaf\x03\n" +
+	"\x1b_reflection_no_repair_countB\x10\n" +
+	"\x0e_frozen_memoryJ\x04\b\x13\x10\x14J\x04\b\x14\x10\x15\"\xaf\x03\n" +
 	"\x17OwnershipAdoptionStatus\x12#\n" +
 	"\rsource_commit\x18\x01 \x01(\tR\fsourceCommit\x12'\n" +
 	"\x0fadopted_objects\x18\x02 \x01(\x05R\x0eadoptedObjects\x120\n" +

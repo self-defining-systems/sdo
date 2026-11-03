@@ -101,6 +101,7 @@ type NativeIncidentBroker struct {
 	SessionRetention     time.Duration
 	PhaseLog             io.Writer
 	ForceReflection      bool
+	FrozenMemory         bool
 	Programs             program.ProgramRegistry
 	LateFindingsVerifier interface {
 		VerifyPull(context.Context, string, uint32, string, []string, []string) error
@@ -233,6 +234,9 @@ func (n NativeIncidentBroker) processUnverifiedClosure(ctx context.Context, clos
 }
 
 func (n NativeIncidentBroker) processClosure(ctx context.Context, closure IncidentClosure, observation *closureHealthObservation) (ClosureReceipt, error) {
+	if n.FrozenMemory && n.ForceReflection {
+		return ClosureReceipt{}, errors.New("frozen memory conflicts with force reflection")
+	}
 	if n.Repository == nil || n.Deriver == nil || n.ResponderBackend == "" || n.ResponderModel == "" {
 		return ClosureReceipt{}, errors.New("native broker requires repository, outcome deriver, and responder identity")
 	}
@@ -259,6 +263,11 @@ func (n NativeIncidentBroker) processClosure(ctx context.Context, closure Incide
 		if err != nil {
 			return err
 		}
+		if ledger.FrozenMemory != nil && ledger.GetFrozenMemory() != n.FrozenMemory {
+			return errors.New("closure memory policy differs from durable broker state")
+		}
+		policy := n.FrozenMemory
+		ledger.FrozenMemory = &policy
 		if err := n.recordPhase(ledger, "closure_start"); err != nil {
 			return err
 		}
@@ -290,6 +299,38 @@ func (n NativeIncidentBroker) processClosure(ctx context.Context, closure Incide
 			return nil
 		}
 
+		if ledger.GetFrozenMemory() {
+			// Outcomes alter trust and prompts: retain evidence only in the private ledger.
+			// The receipt names the unchanged accepted base, with no publication.
+			if ledger.OutcomeDocument == nil {
+				evidenceClosure := closure
+				if observation != nil {
+					evidenceClosure = observation.withoutRecovery(closure)
+				}
+				derived, err := n.Deriver.Derive(ctx, evidenceClosure, "", n.ResponderBackend, n.ResponderModel)
+				if err != nil {
+					return fmt.Errorf("derive private outcome: %w", err)
+				}
+				if derived.Record == nil || derived.Record.GetIncidentId() != id {
+					return errors.New("outcome deriver returned invalid private record")
+				}
+				ledger.OutcomeDocument = proto.Clone(derived.Record).(*contracts.OutcomeRecord)
+				ledger.OutcomeDocument.CodePath = codePathContract(n.CodePath)
+				ledger.OutcomeDocument.ReflectionSkipReason = "frozen_memory"
+			}
+			ledger.OutcomeCommit = closure.Request.RepositoryBaseCommit
+			ledger.RequiresReflection = false
+			ledger.ReflectionSkippedReason = "frozen_memory"
+			receipt = ClosureReceipt{IncidentID: id, Worktree: closure.Request.RepositoryWorktree, BaseCommit: closure.Request.RepositoryBaseCommit, OutcomeCommit: closure.Request.RepositoryBaseCommit}
+			data, err := wire.Canonical(ledger.OutcomeDocument)
+			if err != nil {
+				return err
+			}
+			digest := sha256.Sum256(append([]byte(id+"\x00"+receipt.BaseCommit+"\x00"), data...))
+			receipt.AckToken = fmt.Sprintf("%x", digest)
+			ledger.Receipt = closureReceiptContract(&receipt)
+			return n.saveLedger(ledger)
+		}
 		if observation != nil && ledger.OutcomeCommit == "" {
 			// Recover an accepted write before considering a new health fact.
 			// A lost ledger acknowledgement never rewrites a historical outcome.
@@ -1107,7 +1148,14 @@ func (n NativeIncidentBroker) committedClosureReceipt(ctx context.Context, closu
 			return err
 		}
 		stored := closureReceiptState(ledger.Receipt)
-		if stored == nil || stored.IncidentID != closure.Request.IncidentID || stored.BaseCommit != closure.Request.RepositoryBaseCommit || stored.ProposalCommit == "" || stored.OutcomeCommit == "" || stored.AckToken == "" || !proto.Equal(ledger.Closure, projected) || ledger.OutcomeDocument == nil || len(closure.FinalDetectorStates) == 0 {
+		if stored == nil || stored.IncidentID != closure.Request.IncidentID || stored.BaseCommit != closure.Request.RepositoryBaseCommit || (!ledger.GetFrozenMemory() && stored.ProposalCommit == "") || stored.OutcomeCommit == "" || stored.AckToken == "" || !proto.Equal(ledger.Closure, projected) || ledger.OutcomeDocument == nil || len(closure.FinalDetectorStates) == 0 {
+			return nil
+		}
+		if ledger.GetFrozenMemory() {
+			if !n.FrozenMemory || (receipt != nil && *receipt != *stored) {
+				return nil
+			}
+			recovered, ok = *stored, true
 			return nil
 		}
 		if receipt != nil && *receipt != *stored {
@@ -1154,6 +1202,9 @@ func (n NativeIncidentBroker) committedOutcomeClosure(ctx context.Context, closu
 	}
 	if receipt != nil && (ledger.Receipt == nil || !proto.Equal(ledger.Receipt, closureReceiptContract(receipt))) {
 		return false, nil
+	}
+	if ledger.GetFrozenMemory() {
+		return n.FrozenMemory && ledger.Receipt != nil && ledger.Receipt.OutcomeCommit == closure.Request.RepositoryBaseCommit, nil
 	}
 	if ledger.ReflectionProcessed && ledger.Receipt == nil {
 		return false, nil

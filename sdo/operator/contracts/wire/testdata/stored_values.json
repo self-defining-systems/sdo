@@ -172,6 +172,7 @@
   ],
   "sdodev.contracts.v1alpha1.OutcomeRecord.reflection_skip_reason": [
     "",
+    "frozen_memory",
     "no_session"
   ],
   "sdodev.contracts.v1alpha1.OutcomeRecord.resolution_path": [
