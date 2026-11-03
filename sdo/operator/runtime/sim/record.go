@@ -185,14 +185,26 @@ type Recorder struct {
 	seen map[string]bool
 	// failedIncidents holds incidents whose dispatch failed, until acknowledged.
 	failedIncidents map[string]bool
-	observations    int
-	lastObservation int
-	writes          uint64
+	// closureIsTerminal makes incident_closed the terminal outcome, for a run
+	// with no broker to acknowledge closures (incident_acknowledged never comes).
+	closureIsTerminal bool
+	observations      int
+	lastObservation   int
+	writes            uint64
 }
 
 // NewRecorder returns a recorder stamping entries with now (World.Now).
 func NewRecorder(now func() time.Time) *Recorder {
 	return &Recorder{now: now, seen: map[string]bool{}, failedIncidents: map[string]bool{}}
+}
+
+// ClosureIsTerminal records an incident's outcome at incident_closed instead of
+// at incident_acknowledged. A run without a closure broker never acknowledges.
+func (r *Recorder) ClosureIsTerminal() *Recorder {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.closureIsTerminal = true
+	return r
 }
 
 // Add appends an entry.
@@ -292,7 +304,13 @@ func (r *Recorder) RecordLifecycle(event *contracts.LifecycleEvent) error {
 	case "responder_dispatched":
 		r.log = append(r.log, Handler{At: at, Incident: id, Kind: ByAgent, ID: "responder"})
 	case "incident_closed":
-		if event.GetDispatchError() {
+		if r.closureIsTerminal {
+			result := Closed
+			if event.GetDispatchError() {
+				result = Failed
+			}
+			r.log = append(r.log, Outcome{At: at, Incident: id, Result: result})
+		} else if event.GetDispatchError() {
 			r.failedIncidents[id] = true
 		}
 	case "incident_acknowledged":

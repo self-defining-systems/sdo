@@ -108,14 +108,61 @@ The simulation answered only list GETs, discovery and two dry-run forms over HTT
 | The `scale` subresource moves `spec.replicas` ownership by direct edit of `managedFields`, not through the server's scale handler | The result matches the server for the scenarios; other fields cannot be written through `scale` |
 | OpenAPI schema is a snapshot of Kubernetes 1.34.0 for the served kinds | Refreshed with `SDO_REGEN_SIM_SCHEMA=1` when the kind image version moves |
 
+## Controller harness (`runtime/harness_*_integration_test.go`)
+
+`TestHarness` runs `RunWithOptions`, the production controller loop, on virtual time (a `synctest` bubble) with one
+seed fixing the whole plan, and checks the two behavioral properties over the recorded log
+(`sim/properties.go`): every incident ends, and every detector of the active memory revision is evaluated within
+3 x its own interval plus 12 s. PR CI runs the first three seeds; the nightly run restores the full count.
+A failing seed prints `SDO_SIM_SEED=<n> go test -tags=integration -run '^TestHarness$' ./runtime`.
+`SDO_SIM_OUT=1` prints the controller's own output, `SDO_SIM_STATE=1` the final state ConfigMap, `SDO_SIM_DUMP=1`
+the goroutines at the end, `SDO_SIM_AGENT=<mode>` forces every agent answer and `SDO_SIM_NOLAG=1` removes cache lag.
+
+What a seed chooses: 2 to 4 revisions of 1 to 5 stand-in detectors (normal, error, panic, hang, slow, wrong
+answer), swaps between them, when each fault object breaks, controller restarts, controller restarts right after a
+control-plane ConfigMap write commits, host crashes, the agent's answer to each dispatch (fix, nothing, worsen,
+crash, hang, garbage), API errors, commit-then-timeout writes, get errors and watch lag. All faults stop at
+quiesce; afterwards every detector behaves, the agent fixes, and the run lasts 150 s more.
+
+Fidelity limits, each deliberate:
+
+- Cluster: the client-go fake clientset (the stand-in every `RunWithOptions` test uses) with a fault layer, not
+  `sim.Kube`. It has no server-side defaulting, resourceVersion preconditions or admission. Moving the loop onto the
+  simulated API needs watch, Lease and create support there first.
+- Stale reads are watch events held back by a fixed lag, not missed updates followed by a relist. API errors are
+  injected on get and on writes, never on informer lists: a list error at startup left `RunWithOptions` blocked in
+  the informer factory's `Shutdown` for the whole run (seed 3 before list errors were removed from the plan) and is
+  not yet understood.
+- The agent stand-in sits at the `Dispatcher` boundary, with the Job dispatcher's own result validation applied
+  (`validateIncidentResultFor`). The responder tool transport, Job executor, worker registry, PVC, memory
+  repository, reflection, the broker and incident acknowledgement are not run, so an incident is terminal at
+  `incident_closed`, and a closure that exhausts its retries is not exercised. Programs are not driven (no Diagnose or
+  Mitigate calls).
+- The memory host is the real `memoryhost.Manager` with in-process gRPC hosts (bufconn). Process launch, limits and the
+  build step are absent. A swap runs `Prepare`, `Activate` and `ReconfigureMemory` directly instead of
+  `memoryActivation`, and does not rebuild the controller's snapshot provider. A host crash closes the active host and
+  lets the manager's own recovery relaunch it. A hung detector times out at the manager's 5 s (30 s in production); the
+  harness waits for no detector to be hung before it calls the manager's `Prepare`, because a goroutine blocked
+  on a mutex stops the bubble's clock (a hang could then never time out).
+- A controller crash cancels the run context, so deferred cleanups (lease release) still run. It is not a kill -9. The
+  only effect boundary hooked is the commit of a control-namespace ConfigMap write (state, maintenance).
+- A seed fixes the plan and the fault decisions are functions of (seed, call, count), but the goroutines inside the
+  controller are not serialized, so replay is reliable, not bit-exact.
+- `ControllerUp` is recorded when the harness relaunches the controller, so informer sync and lease takeover count
+  against the detection bound (the 12 s slack). A detector the plan makes hang is exempt from its own bound only.
+- Informer resync is set to 10 virtual minutes (`RuntimeOptions.InformerResync`) so client-go reflector timers stay in
+  the bubble; git runs as a real subprocess.
+- `--state-baseline=false` panics (a nil `StateTracker` in the diff read); the harness keeps the baseline on.
+
 ## Not yet modeled
 
 These are open gaps the simulation harness work closes; until then, cover them with integration-tagged
 tests or kind runs.
 
-- the production controller loop (`RunWithOptions`: informers, the state ConfigMap store, leases and executors). The
-  runtime tests' `simWorld` already steps the real `Controller` through `Step` and the pending-effect pump with a
-  scripted responder and broker under seeded faults, but it does not run that loop;
+- the controller loop on the simulated Kubernetes API (`sim.Kube` and its HTTP transport serve snapshot lists only: no
+  watch, lease or create). The controller harness below runs the loop on a client-go fake instead;
+- the agent tool transport, the Job executor and the closure, reflection and acknowledgement path
+  (`NativeIncidentBroker`) under the harness (see its limits);
 - operating-system memory-host process launch, resource limits and activation swap;
 - NetworkPolicy enforcement and DNS.
 
