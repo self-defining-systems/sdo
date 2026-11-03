@@ -62,6 +62,8 @@ uv run --extra test python -m pytest -q -p no:tach \
     tests/unit/sdo/agents/test_prompt_generalization.py \
     tests/unit/sdo/agents/prompts/test_context_registry.py \
     tests/unit/sdo/agents/prompts/test_required_content.py \
+    tests/unit/sdo/agents/prompts/test_golden.py::test_prompt_goldens \
+    tests/unit/sdo/agents/responder/test_incident_response_workflow.py::test_incident_workflow_installs_from_the_shipped_skill_root \
     tests/unit/sdo/agents/responder/test_incident_context.py::test_many_stage_attempts_cannot_displace_bounded_first_prompt
 fi
 
@@ -70,6 +72,7 @@ uv run python scripts/check_skill_sizes.py
 
 echo "==> responder command reference"
 uv run python -m sdo.agents.responder.command_reference --check
+uv run python -m sdo.agents.responder.skill_contracts --check
 
 # A merge that keeps this branch's older SREGym pin silently reverts the base
 # branch's pin; the base pin must be an ancestor of (or equal to) this one.
