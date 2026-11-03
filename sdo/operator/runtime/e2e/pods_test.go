@@ -28,6 +28,11 @@ func (k *Kubelet) reconcilePods(ctx context.Context) error {
 		pod := &pods.Items[i]
 		if pod.DeletionTimestamp != nil {
 			k.Run.kill(pod.UID)
+			if removeForegroundFinalizer(pod) {
+				if _, err := client.CoreV1().Pods(pod.Namespace).Update(ctx, pod, metav1.UpdateOptions{}); err != nil {
+					return err
+				}
+			}
 			if err := client.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{GracePeriodSeconds: new(int64)}); err != nil {
 				return err
 			}

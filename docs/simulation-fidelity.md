@@ -444,8 +444,8 @@ kube-apiserver and etcd (envtest) with a fake kubelet and the no-model agent scr
   `status.podIP` (127.1.x.y) with real listeners, because agents dial Pod IPs directly; the API server rejects loopback addresses
   in Endpoints, so Endpoints and EndpointSlices carry the 10.244.x.y twin and `targetRef` names the Pod. Anything that joins Endpoints to
   Pods by IP instead of `targetRef` would see a mismatch.
-- There is no real network. Cluster DNS is a hosts file; each Service has a loopback forwarder that resets the connection when no
-  ready Pod listens on the target port. NetworkPolicy is not enforced. The routing prober needs a "unicast Pod IP" and reports
+- There is no real network. Cluster DNS is a hosts file; each Service exposes a loopback forwarder only while its selected upstream accepts TCP, so a missing
+  ready endpoint or closed target port refuses the initial handshake. NetworkPolicy is not enforced. The routing prober needs a "unicast Pod IP" and reports
   `routing_probe=unavailable` instead.
 - The kubelet's usage endpoints (`stats/summary`, `metrics/cadvisor`) return fixed plausible values, not measurements. Node proxying
   needs a non-loopback host address (the API server refuses loopback), so the run requires one network interface with an IPv4 address.
@@ -464,3 +464,6 @@ Gaps this run found are recorded in the ledger below.
 | 2026-11-03 | ablation build envtest | Missing behavior | The scripted launcher replaced the incident's persistent provider home with a temporary login, discarding transcripts required by controller continuations | Fixed: preserve an explicitly supplied provider home and existing credentials; retain a temporary fallback for standalone scripts | `test_script_launcher_keeps_the_incident_provider_home_across_worker_jobs` |
 | 2026-11-03 | controller e2e | Controller finding | The controller exits on one transient API 500 (startup reads, lease renewal, steady-state listings); the controller Job gives up after 7 failures | Fixed: transient API errors are retried with backoff; `TestControllerToleratesAPIErrors` and harness check `ControllerExited` | `bash scripts/test_controller_e2e.sh api-errors` |
 | 2026-11-03 | controller e2e | Controller finding | A hung responder Job is never ended: no `activeDeadlineSeconds` on incident Jobs, the response deadline is honoured by the worker only | Fixed: Job deadline plus a controller-owned end at the response deadline; `TestControllerEndsHungAgent`, and the harness agent stand-in no longer bounds itself | `bash scripts/test_controller_e2e.sh hung-agent` |
+
+| 2026-11-03 | RUNTIME2 C10 envtest | Network fidelity | A Service forwarder accepted TCP before dialing its upstream, hiding every wrong targetPort from TCP health probes | Fixed: expose the virtual Service only while its upstream accepts TCP | `TestServiceTCPProbeTracksTargetPort` |
+| 2026-11-03 | RUNTIME2 C10 envtest | Missing behavior | No garbage collector released foreground deletion finalizers; deleting Jobs could keep scheduling worker Pods and prevent verified incident publication | Fixed: delete dependents, release only the GC-owned finalizer after they disappear, and never reconcile a deleting Job | `TestDeletingJobRetiresDependentsWithoutReplacement` |

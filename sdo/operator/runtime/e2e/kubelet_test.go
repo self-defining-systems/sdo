@@ -550,6 +550,27 @@ func (k *Kubelet) reconcileJobs(ctx context.Context) error {
 	live := map[types.UID]bool{}
 	for i := range jobs.Items {
 		job := &jobs.Items[i]
+		if job.DeletionTimestamp != nil {
+			// envtest has no garbage collector. Foreground deletion must retire
+			// dependents and release its finalizer, never schedule another worker.
+			dependents := false
+			for _, pod := range pods.Items {
+				if pod.Namespace == job.Namespace && ownedBy(&pod, "Job", job.UID) {
+					dependents = true
+					if pod.DeletionTimestamp == nil {
+						if err := client.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+							return err
+						}
+					}
+				}
+			}
+			if !dependents && removeForegroundFinalizer(job) {
+				if _, err := client.BatchV1().Jobs(job.Namespace).Update(ctx, job, metav1.UpdateOptions{}); err != nil && !apierrors.IsNotFound(err) {
+					return err
+				}
+			}
+			continue
+		}
 		live[job.UID] = true
 		if err := k.reconcileJob(ctx, job, pods.Items); err != nil {
 			return err
@@ -709,4 +730,22 @@ func (k *Kubelet) backoffElapsed(pods []*corev1.Pod, failed int32) bool {
 		}
 	}
 	return newest.IsZero() || time.Since(newest) >= delay
+}
+
+// Only the GC-owned finalizer belongs to this harness controller.
+func removeForegroundFinalizer(object metav1.Object) bool {
+	old := object.GetFinalizers()
+	var kept []string
+	removed := false
+	for _, finalizer := range old {
+		if finalizer == metav1.FinalizerDeleteDependents {
+			removed = true
+		} else {
+			kept = append(kept, finalizer)
+		}
+	}
+	if removed {
+		object.SetFinalizers(kept)
+	}
+	return removed
 }
