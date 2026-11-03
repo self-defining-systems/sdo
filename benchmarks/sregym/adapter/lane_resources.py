@@ -333,13 +333,15 @@ def assert_lane_resources(
 
     Runs on the local kind host, as fastloop does. The floor measures that host;
     a remote cluster must supply its host measurement to evaluate_lane_resources.
-    All Kubernetes reads together are capped at one snapshot-read budget.
+    Each sequential Kubernetes query has one snapshot-read budget, including
+    retries. Measurement attempts are bounded separately; a completed query must
+    not consume the next query's request budget.
     """
     if not kubeconfig.is_absolute():
         raise ValueError("eval: lane resource admission requires an absolute trusted kubeconfig")
-    budget = Deadline.after(wait_for(WaitKind.SNAPSHOT_READ), "lane inventory read", time.monotonic)
 
     def get(args: list[str]) -> dict[str, Any]:
+        budget = Deadline.after(wait_for(WaitKind.SNAPSHOT_READ), "lane inventory read", time.monotonic)
         errors: list[str] = []
         last_error: Exception | None = None
         backoff = 0.1
@@ -414,7 +416,7 @@ def assert_lane_resources(
                     policy=policy,
                 )
             except LaneMeasurementUnavailable as exc:
-                if attempt == _MEASUREMENT_ATTEMPTS or budget.left() <= wait_for(WaitKind.POLL_FAST):
+                if attempt == _MEASUREMENT_ATTEMPTS:
                     raise
                 logging.getLogger(__name__).warning("eval: lane measurement attempt %s: %s; re-reading", attempt, exc)
                 time.sleep(wait_for(WaitKind.POLL_FAST))

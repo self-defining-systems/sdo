@@ -31,7 +31,9 @@ pins the row-start reset to that commit, forces `--frozen-memory` and replay off
 and installs the supplied memory without deployment or judge agents. Use a
 private lane and its credentials hook; shared writers and warm-controller reuse
 are rejected. `--ablation-repository` overrides the repository for a local toy
-proof. The fetched revision is recorded in `ablation-memory.json`; rows carry
+proof. The fetched revision is the setup-lineage boundary as well as the restore seed:
+offline variant commits are inputs, and subsequent setup commits still require
+broker validation. It is recorded in `ablation-memory.json`; rows carry
 `ablation_arm`. The playbooks-only runtime is not implemented yet.
 
 For an existing private hotel lane, one supported invocation is:

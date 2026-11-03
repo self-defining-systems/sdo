@@ -64,6 +64,9 @@ def configure_arm(
     commit = git("rev-parse", "FETCH_HEAD^{commit}")
     if args.planned_commit and args.planned_commit != commit:
         raise ValueError("--planned-commit conflicts with selected ablation variant")
+    # The variant is the row's input, not a controller-authored setup commit.
+    # Restore and lineage admission must use the same revision as the row-start wipe.
+    environment.seed_commit = commit
     args.planned_commit = commit
     args.frozen_memory = True
     args.replay = "off"

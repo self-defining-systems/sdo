@@ -40,6 +40,10 @@ if TYPE_CHECKING:
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 
 
+class WorkloadNotReadyError(ValueError):
+    """The installed workload has not finished rolling out or becoming Ready."""
+
+
 def workload_identity(kubeconfig: Path, namespace: str) -> dict[str, Any]:
     listing = json.loads(
         kubectl(
@@ -77,6 +81,8 @@ def workload_identity(kubeconfig: Path, namespace: str) -> dict[str, Any]:
             )
         observed, generation = status.get("observedGeneration", -1), metadata.get("generation", 0)
         label = f"{row['kind']}/{metadata['name']}"
+        if desired == 0:
+            raise ValueError(f"restore invariant: installed workload scaled to zero: {row['kind']}/{metadata['name']}")
         # A rollout is a template change still in progress; an unchanged
         # template whose pods lost readiness (crash, eviction, responder
         # restart) is a different cause and is named as such.
@@ -86,7 +92,7 @@ def workload_identity(kubeconfig: Path, namespace: str) -> dict[str, Any]:
             or current != desired
             or (row["kind"] == "StatefulSet" and status.get("currentRevision") != status.get("updateRevision"))
         ):
-            raise ValueError(
+            raise WorkloadNotReadyError(
                 f"restore invariant: rollout not complete: {label} "
                 f"(generation {generation} observed {observed}; updated {updated}/{desired}; current {current})"
             )
@@ -95,9 +101,9 @@ def workload_identity(kubeconfig: Path, namespace: str) -> dict[str, Any]:
                 f"{pod['metadata'].get('name', pod['metadata'].get('uid'))} {pod.get('status', {}).get('phase')}"
                 for pod in selected
             )
-            raise ValueError(f"restore invariant: workload not Ready: {label} (ready {ready}/{desired}; pods: {pods})")
-        if desired == 0:
-            raise ValueError(f"restore invariant: installed workload scaled to zero: {row['kind']}/{metadata['name']}")
+            raise WorkloadNotReadyError(
+                f"restore invariant: workload not Ready: {label} (ready {ready}/{desired}; pods: {pods})"
+            )
         if not selected or any(
             not any(
                 condition.get("type") == "Ready" and condition.get("status") == "True"
@@ -105,7 +111,7 @@ def workload_identity(kubeconfig: Path, namespace: str) -> dict[str, Any]:
             )
             for pod in selected
         ):
-            raise ValueError(f"restore invariant: workload not Ready: {row['kind']}/{metadata['name']}")
+            raise WorkloadNotReadyError(f"restore invariant: workload not Ready: {row['kind']}/{metadata['name']}")
         # A roll is a pod replaced or restarted. The object's generation is no roll signal: SDO's own
         # acceptance apply bumps it on an unchanged workload (a recreated Deployment's first adoption).
         workloads[f"{row['kind']}/{metadata['name']}"] = {
@@ -122,6 +128,24 @@ def workload_identity(kubeconfig: Path, namespace: str) -> dict[str, Any]:
     if not workloads:
         raise ValueError("restore invariant: no installed application workloads")
     return workloads
+
+
+def await_workload_identity(kubeconfig: Path, namespace: str) -> dict[str, Any]:
+    """Wait for rollout and pod readiness before taking the restore identity.
+
+    Only a not-yet-Ready workload is retryable. Malformed inventory, zero
+    replicas and an empty application remain immediate restore failures.
+    """
+    budget = Deadline.after(wait_for(WaitKind.ROLLOUT), "restore workloads", time.monotonic)
+    while True:
+        try:
+            identity = workload_identity(kubeconfig, namespace)
+            budget.remaining()
+            return identity
+        except WorkloadNotReadyError as exc:
+            time.sleep(min(wait_for(WaitKind.SAMPLE), budget.left()))
+            if budget.left() <= 0:
+                raise WorkloadNotReadyError(f"{exc}; restore readiness deadline exhausted; no injection") from exc
 
 
 def active_incident(state: dict[str, Any]) -> str | None:

@@ -271,7 +271,7 @@ def test_inventory_rejects_success_returned_after_deadline(snapshot, monkeypatch
 
     def late(command, **kwargs):
         if command[4] == "pods":
-            clock[0] = 16
+            clock[0] += kwargs["timeout"] + 1
         return subprocess.CompletedProcess(command, 0, json.dumps(responses[command[4]]), "")
 
     monkeypatch.setattr(lanes.subprocess, "run", late)
@@ -555,3 +555,24 @@ def test_container_started_between_the_two_reads_is_measured_on_the_next_read(sn
     assert "hotel-reservation-sdo/validator-canary/network-canary" in {
         row["component"] for row in evidence["containers"]
     }
+
+
+def test_sequential_inventory_reads_each_get_their_request_budget(snapshot, monkeypatch, tmp_path):
+    clock = [0.0]
+    responses = {
+        "namespaces": snapshot["namespaces"],
+        "nodes": snapshot["nodes"],
+        "--raw": snapshot["summary"],
+        "pods": snapshot["pods"],
+    }
+    monkeypatch.setattr(lanes.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(lanes, "host_available_memory", lambda: 32 * Gi)
+
+    def run(command, **kwargs):
+        assert kwargs["timeout"] == pytest.approx(15)
+        clock[0] += 5
+        return subprocess.CompletedProcess(command, 0, json.dumps(responses[command[4]]), "")
+
+    monkeypatch.setattr(lanes.subprocess, "run", run)
+    assert lanes.assert_lane_resources(tmp_path / "kubeconfig", app_namespaces={"hotel-reservation"}, now=NOW)["passed"]
+    assert clock[0] == 20
