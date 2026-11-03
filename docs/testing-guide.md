@@ -6,7 +6,7 @@ SDO spans Python agents, Go operator modules, generated detector workspaces, and
 
 Prove each guarantee at the cheapest level that can hold it (the `design-for-verification` order).
 
-**Who owns what.** Controller properties are tested. Agent-written code (detectors, programs) is checked at the gate: `sdo-operator memory check`, the same check the broker runs, must reject bad code. Agent behaviour (repairing a fault, saving a useful program) is measured in live runs and never unit-tested.
+**Who owns what.** Controller properties are tested. Agent-written code (detectors, programs) is checked at the gate: `sdo-operator memory check`, the same check the broker runs, must reject bad code. The gate table (`memory/validate/gate_table_test.go`) holds one row per validator rule: a bad change that must be rejected for that rule, plus good changes that must pass. `TestGateTableNamesEveryRule` fails when a rule has neither a row nor a stated reason. Compile rows run on FakeGo on every PR and on the real `go` under the `integration` tag (`gate_real_integration_test.go`); both must produce the same rejection. Agent behaviour (repairing a fault, saving a useful program) is measured in live runs and never unit-tested.
 
 **By construction.** These hold through the architecture and are guarded by static checks, not runtime tests:
 
@@ -25,7 +25,7 @@ Accepted choice: the memory host holds write-capable Kubernetes credentials and 
 
 Other behavioral properties (fixed means verified, writes happen once, nothing is lost, saved memory gets used) are not checked now.
 
-**Honest fakes.** A few conformance tests compare the simulated Kubernetes API, fake Go and fake git with the real ones; a real run that finds a bug the simulation missed is a fidelity gap ([align-simulation](../.agents/skills/align-simulation/SKILL.md), [ledger](simulation-fidelity.md)). The controller end-to-end run (below) is the process-level check without a cluster; the scripted toy run on kind is the one end-to-end check with real nodes and images.
+**Honest fakes.** Conformance tests compare the simulated Kubernetes API (`TestKubeConformance`) and fake Go (the compile rows of the gate table, below) with the real ones. There is no fake git: tests run the real binary through `internal/testutil`, and `TestGitHelpersObserveWhatPlainGitObserves` checks the helpers add nothing a test observes. a real run that finds a bug the simulation missed is a fidelity gap ([align-simulation](../.agents/skills/align-simulation/SKILL.md), [ledger](simulation-fidelity.md)). The controller end-to-end run (below) is the process-level check without a cluster; the scripted toy run on kind is the one end-to-end check with real nodes and images.
 
 A test that maps to none of these is a candidate for deletion.
 
@@ -115,6 +115,8 @@ processes such as the operator CLI. Build any real binary (for example
 `operatorcli.TestMemoryCheckReportsACompilerStageFailureAtItsFile`.
 A test that asserts compiler or replay *output* (replay notes, healthy-baseline refusals,
 cache identity, link flags) keeps the real compiler and belongs on the nightly list.
+The gate table's compile rows are the FakeGo-versus-real-Go comparison: each row fails one stage on FakeGo
+and fails the same stage on the real toolchain with an edited fixture, and both must report the same rule at the same path.
 `Workspace.Check` links the generated test binary once: `go test -json ./generated` is
 classified per test (only a failing `TestProgramCorpus` is advisory), and the
 informational pass runs every other top-level directory. A result that cannot be
