@@ -190,7 +190,9 @@ def test_production_context_omits_simulation_with_excluded_fixtures(image_repo):
     image_repo.commit(
         {
             ".dockerignore": (ROOT / ".dockerignore").read_text(),
-            "sdo/operator/runtime/sim/apiserver.go": 'package sim\nimport _ "embed"\n//go:embed testdata/schema.json\nvar schema string\n',
+            "sdo/operator/runtime/sim/apiserver.go": (
+                'package sim\nimport _ "embed"\n//go:embed testdata/schema.json\nvar schema string\n'
+            ),
             "sdo/operator/runtime/sim/testdata/schema.json": "{}",
         },
         "simulation with embedded fixture",
