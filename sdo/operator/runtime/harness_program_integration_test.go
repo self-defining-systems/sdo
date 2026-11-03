@@ -205,7 +205,7 @@ func (h *harness) responderLoop(inc *incarnation, request IncidentRequest) *Resp
 		Source:   rendered.Source{Repository: h.repo, Git: harnessPlanGit},
 		Now:      time.Now,
 		Sleep:    func(ctx context.Context, d time.Duration) error { return sleepContext(ctx, d) },
-		Rollouts: &planFakeRollout{},
+		Rollouts: harnessRollouts{},
 		Verifier: PlanHealthVerifier{Detectors: remote.Detectors, Provider: c.provider, Timeout: 20 * time.Second, PollInterval: time.Second},
 	}
 	loop := NewResponderLoop(request, remote.Programs, c.provider, remote.Detectors, executor, 5)
@@ -226,3 +226,8 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 		return nil
 	}
 }
+
+// harnessRollouts: the simulation has no controller manager, so no rollout is ever pending.
+type harnessRollouts struct{}
+
+func (harnessRollouts) Wait(context.Context, []sdk.ObjectRef) error { return nil }
