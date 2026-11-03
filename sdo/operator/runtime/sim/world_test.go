@@ -236,7 +236,7 @@ func TestTransportServesConcurrentClients(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer stream.Stop()
-		start := time.Now()
+		start := w.Now()
 		done := make(chan error, 8)
 		for i := 0; i < 8; i++ {
 			go func() {
@@ -260,7 +260,7 @@ func TestTransportServesConcurrentClients(t *testing.T) {
 				t.Fatalf("event %d: %v", i, event.Type)
 			}
 		}
-		if lag := time.Since(start); lag < 2*time.Second {
+		if lag := w.Now().Sub(start); lag < 2*time.Second {
 			t.Fatalf("watch delivered after %v, want the 2s lag", lag)
 		}
 		if got := len(w.Kube.Objects()); got != 8 {

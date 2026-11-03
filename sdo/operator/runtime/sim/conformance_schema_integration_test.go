@@ -18,7 +18,7 @@ var schemaRoots = []string{
 	"apps.v1.Deployment", "apps.v1.StatefulSet", "apps.v1.DaemonSet", "apps.v1.ReplicaSet",
 	"batch.v1.Job", "batch.v1.CronJob",
 	"networking.v1.Ingress", "networking.v1.NetworkPolicy",
-	"autoscaling.v2.HorizontalPodAutoscaler", "policy.v1.PodDisruptionBudget", "discovery.v1.EndpointSlice", "coordination.v1.Lease",
+	"autoscaling.v2.HorizontalPodAutoscaler", "policy.v1.PodDisruptionBudget", "discovery.v1.EndpointSlice", "coordination.v1.Lease", "rbac.v1.Role", "rbac.v1.RoleBinding", "rbac.v1.ClusterRole", "rbac.v1.ClusterRoleBinding",
 }
 
 // TestRegenerateSimSchema rewrites sim/testdata/openapi-subset.json from the
@@ -48,7 +48,7 @@ func TestRegenerateSimSchema(t *testing.T) {
 		Definitions map[string]map[string]any `json:"definitions"`
 	}
 	doc.Definitions = map[string]map[string]any{}
-	for _, group := range []string{"api/v1", "apis/apps/v1", "apis/batch/v1", "apis/networking.k8s.io/v1", "apis/autoscaling/v2", "apis/policy/v1", "apis/discovery.k8s.io/v1", "apis/coordination.k8s.io/v1"} {
+	for _, group := range []string{"api/v1", "apis/apps/v1", "apis/batch/v1", "apis/networking.k8s.io/v1", "apis/autoscaling/v2", "apis/policy/v1", "apis/discovery.k8s.io/v1", "apis/coordination.k8s.io/v1", "apis/rbac.authorization.k8s.io/v1"} {
 		entry, ok := index.Paths[group]
 		if !ok {
 			t.Fatalf("openapi v3 index lacks %s", group)
