@@ -1,6 +1,7 @@
 package sim
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -43,7 +44,14 @@ func (l *watchLog) publish(kind string, object *unstructured.Unstructured, versi
 	l.events = append(l.events, event)
 	for w := range l.watchers {
 		if w.matches(event.Object) {
-			w.out <- event
+			select {
+			case w.out <- event:
+			default:
+				// A watcher that cannot keep up is cut off, as the real server
+				// does; its client relists.
+				delete(l.watchers, w)
+				close(w.out)
+			}
 		}
 	}
 }
@@ -91,6 +99,7 @@ func (s *apiServer) serveWatch(r request, req *http.Request) *http.Response {
 		haveFrom = true
 	}
 	var replay []watchEvent
+	s.kube.mu.Lock()
 	s.log.mu.Lock()
 	if haveFrom {
 		for _, e := range s.log.events {
@@ -99,7 +108,7 @@ func (s *apiServer) serveWatch(r request, req *http.Request) *http.Response {
 			}
 		}
 	} else {
-		for _, o := range s.kube.Objects() {
+		for _, o := range s.kube.objectsLocked() {
 			if w.matches(o) {
 				replay = append(replay, watchEvent{Type: "ADDED", Object: o})
 			}
@@ -110,8 +119,10 @@ func (s *apiServer) serveWatch(r request, req *http.Request) *http.Response {
 	}
 	s.log.watchers[w] = struct{}{}
 	s.log.mu.Unlock()
+	s.kube.mu.Unlock()
 
-	reader, writer := io.Pipe()
+	pipeReader, writer := io.Pipe()
+	reader := &watchBody{PipeReader: pipeReader, closed: make(chan struct{})}
 	ctx := req.Context()
 	timeout := make(<-chan time.Time)
 	if secs, err := strconv.Atoi(r.q("timeoutSeconds")); err == nil && secs > 0 {
@@ -136,11 +147,21 @@ func (s *apiServer) serveWatch(r request, req *http.Request) *http.Response {
 		}
 		for {
 			select {
-			case e := <-w.out:
+			case e, open := <-w.out:
+				if !open {
+					return
+				}
+				if lag := s.kube.watchLag(); lag > 0 {
+					if err := waitFor(ctx, reader.closed, lag); err != nil {
+						return
+					}
+				}
 				if !send(e) {
 					return
 				}
 			case <-ctx.Done():
+				return
+			case <-reader.closed:
 				return
 			case <-timeout:
 				return
@@ -148,4 +169,31 @@ func (s *apiServer) serveWatch(r request, req *http.Request) *http.Response {
 		}
 	}()
 	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: reader, Request: req}
+}
+
+// waitFor sleeps d or until ctx ends.
+func waitFor(ctx context.Context, closed <-chan struct{}, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-closed:
+		return io.ErrClosedPipe
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// watchBody is the response body of a watch; closing it ends the stream, as a
+// client dropping the connection does.
+type watchBody struct {
+	*io.PipeReader
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (b *watchBody) Close() error {
+	b.once.Do(func() { close(b.closed) })
+	return b.PipeReader.Close()
 }

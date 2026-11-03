@@ -32,7 +32,9 @@ The simulated API server (`sdo/operator/runtime/sim`) models:
   `Accept`), create, update, merge, strategic-merge, JSON and server-side apply patches (real ownership through the
   server's own field manager and its OpenAPI schema, conflicts, `force`, `dryRun`), delete (preconditions,
   finalizers, `deletionTimestamp`), the `status` and `scale` subresources, `metadata.generation`, resourceVersion
-  ordering, watch (replay after a version, then live), discovery, and the defaults the registry and admission fill in
+  ordering, watch (replay after a version, then live; optional delivery lag; a watcher that falls 1024 events behind is cut
+  off), Leases (leader election), RBAC Roles, RoleBindings, ClusterRoles and ClusterRoleBindings (the state
+  tracker lists them), discovery, and the defaults the registry and admission fill in
   for Pods, Services, Deployments, StatefulSets, DaemonSets, ReplicaSets, Jobs, PVCs, NetworkPolicies, Secrets and
   Nodes;
 - registered invariant hooks and a 45-second host-time seed-sweep budget;
@@ -69,6 +71,7 @@ test, so the list cannot go stale. To add behavior to the simulation, add a scen
 | Patch and update | `patch/*`, `update/*`: merge-patch null and list semantics, no-op keeps the version, strategic merge, JSON patch, resourceVersion and uid preconditions, missing object, unsupported type, PUT versions, duplicate create |
 | Status and generation | `status/*`, `scale/*`: generation rules, status and scale subresources, main resource ignores status |
 | Delete | `delete/*`: preconditions, dry run, finalizers (terminating, adding a finalizer, release), pod delete and recreate identity |
+| Leases and RBAC | `rbac/*`: Role, RoleBinding, ClusterRole, ClusterRoleBinding create, get, list, patch, delete. `lease/*`: create, renew with the right and a stale version, release, takeover, duplicate create, watch from a list version |
 | List and watch | `list/*`, `watch/*`: name order, label and field selectors, list version at least its items', replay after a version, initial state, selected watch, status writes and finalizer deletion in the stream |
 | Discovery | `discovery/*`: `/api`, `/apis`, group-version resource lists for the served groups |
 | Other | `cluster-scoped/node`, `metadata-only/secret-reads` |
@@ -207,6 +210,7 @@ sockets by the integration-tagged
 | 2026-10-31 | Synthetic memory-host slice 1 | Transport / evidence | Detector and program execution outside the controller | Modeled at RPC boundary | `TestSimMemoryHostParityAndCrash`, `TestRemoteMemoryPreservesInputsAndCorpusReceipts`; same world, bufconn, host-owned log reads and typed receipt replay |
 | 2026-11-02 | Runtime test reduction | Missing behavior / cost | Broker compile gate repeated real Go builds in conflict and no-change tests | Modeled within bounds above | `sim.Compiler`, `TestCompilerRecordsCallsAndRejectsUnparsableGo`; `TestHermeticSharedMemoryControllers` and `TestReflectionNoChangeAndSDKGapNeverCommit` use it; real compilation stays in the builder/validator tests and the two compiling `TestReflectionDirectFilesCLIAndBroker` scenarios |
 | 2026-11-03 | Kubernetes conformance (envtest) | Contract drift | The simulated API server diverged from a real one on defaults, server-side apply, patch, status, generation, delete and list/watch | Closed; bounds listed under Conformance bounds | `TestKubeConformance` scenarios, one per area |
+| 2026-11-03 | Controller harness on the client-go fake | Missing behavior | The simulated API could not serve the controller loop: no Leases or RBAC kinds, store not safe for concurrent clients, no watch lag, a stuck watcher blocked writers | Closed in the simulation | `lease/*`, `rbac/*`, `watch/informer-list-then-watch`, `TestTransportServesConcurrentClients` |
 | 2026-11-01 | Prober determinism migration | Transport | HTTP pool reuse after listener closure | Accepted bound | In-memory handlers intentionally omit TCP pooling; `TestKeepAliveConnectionsWouldMaskABlockedListener` and `TestBlockedListenerIsClassifiedAsADialFailureWithinAFewSeconds` retain real-socket integration coverage |
 
 The memory-host tests do not model OS process isolation, Unix socket permissions,

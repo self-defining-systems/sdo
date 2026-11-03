@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/rest"
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/runtime/sim"
 	"sdo.dev/operator/sdk"
@@ -215,6 +216,55 @@ func TestRecoveryStopsBackoffEvents(t *testing.T) {
 		}
 		if events := view.Events(); len(events) != 1 || events[0].Count != 1 {
 			t.Fatalf("recovered pod continued backoff: %+v", events)
+		}
+	})
+}
+
+// TestTransportServesConcurrentClients checks the store serializes requests from
+// many goroutines (informers, the controller loop and agents all share it), and
+// that a watch sees every write and honors the configured delivery lag.
+func TestTransportServesConcurrentClients(t *testing.T) {
+	sim.Run(t, 3, func(t *testing.T, w *sim.World) {
+		client, err := w.ClientFor(&rest.Config{QPS: -1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.Kube.WatchLag = func() time.Duration { return 2 * time.Second }
+		ctx := context.Background()
+		stream, err := client.CoreV1().ConfigMaps("app").Watch(ctx, metav1.ListOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer stream.Stop()
+		start := w.Now()
+		done := make(chan error, 8)
+		for i := 0; i < 8; i++ {
+			go func() {
+				cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("cm-%d", i), Namespace: "app"}}
+				if _, err := client.CoreV1().ConfigMaps("app").Create(ctx, cm, metav1.CreateOptions{}); err != nil {
+					done <- err
+					return
+				}
+				_, err := client.CoreV1().ConfigMaps("app").List(ctx, metav1.ListOptions{})
+				done <- err
+			}()
+		}
+		for i := 0; i < 8; i++ {
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+		}
+		for i := 0; i < 8; i++ {
+			event := <-stream.ResultChan()
+			if event.Type != "ADDED" {
+				t.Fatalf("event %d: %v", i, event.Type)
+			}
+		}
+		if lag := w.Now().Sub(start); lag < 2*time.Second {
+			t.Fatalf("watch delivered after %v, want the 2s lag", lag)
+		}
+		if got := len(w.Kube.Objects()); got != 8 {
+			t.Fatalf("store has %d objects, want 8", got)
 		}
 	})
 }

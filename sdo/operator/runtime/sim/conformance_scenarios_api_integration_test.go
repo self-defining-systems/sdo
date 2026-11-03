@@ -240,6 +240,55 @@ var apiScenarios = []scenario{
 		step{Name: "watch-deployments", Method: "WATCH", Path: depPath},
 		step{Name: "watch-configmaps", Method: "WATCH", Path: cmPath, Query: map[string]string{"resourceVersion": "@dep"}},
 	}},
+	{Name: "rbac/roles-and-cluster-roles", Steps: []step{
+		create("role", rolePath, obj{"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "Role", "metadata": meta("reader"), "rules": []any{obj{"apiGroups": []any{""}, "resources": []any{"pods"}, "verbs": []any{"get", "list"}}}}),
+		create("binding", "/apis/rbac.authorization.k8s.io/v1/namespaces/{ns}/rolebindings", obj{"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "RoleBinding", "metadata": meta("reader"),
+			"roleRef": obj{"apiGroup": "rbac.authorization.k8s.io", "kind": "Role", "name": "reader"}, "subjects": []any{obj{"kind": "ServiceAccount", "name": "default", "namespace": "{ns}"}}}),
+		step{Name: "cluster-role", Method: "POST", Path: "/apis/rbac.authorization.k8s.io/v1/clusterroles", Body: obj{"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRole", "metadata": obj{"name": "reader-{ns}"}, "rules": []any{obj{"apiGroups": []any{""}, "resources": []any{"nodes"}, "verbs": []any{"get"}}}}},
+		step{Name: "cluster-binding", Method: "POST", Path: "/apis/rbac.authorization.k8s.io/v1/clusterrolebindings", Body: obj{"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRoleBinding", "metadata": obj{"name": "reader-{ns}"},
+			"roleRef": obj{"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": "reader-{ns}"}, "subjects": []any{obj{"kind": "ServiceAccount", "name": "default", "namespace": "{ns}"}}}},
+		get("get-role", rolePath+"/reader"),
+		get("list-roles", rolePath),
+		step{Name: "get-cluster-role", Method: "GET", Path: "/apis/rbac.authorization.k8s.io/v1/clusterroles/reader-{ns}"},
+		patchStep("patch-role", rolePath+"/reader", mergeType, obj{"metadata": obj{"labels": obj{"k": "v"}}}),
+		step{Name: "delete-cluster-binding", Method: "DELETE", Path: "/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/reader-{ns}"},
+		step{Name: "delete-cluster-role", Method: "DELETE", Path: "/apis/rbac.authorization.k8s.io/v1/clusterroles/reader-{ns}"},
+	}},
+	{Name: "lease/acquire-renew-release", Steps: []step{
+		create("acquire", leasePath, lease("leader", "controller-a", 3, "2026-11-03T10:00:00.000000Z", nil)),
+		get("get", leasePath+"/leader"),
+		step{Name: "renew", Method: "PUT", Path: leasePath + "/leader", Fn: func(r *run) any {
+			return lease("leader", "controller-a", 3, "2026-11-03T10:00:00.000000Z", obj{"resourceVersion": r.rv("acquire"), "renewTime": "2026-11-03T10:00:01.500000Z"})
+		}},
+		step{Name: "renew-stale", Method: "PUT", Path: leasePath + "/leader", Fn: func(r *run) any {
+			return lease("leader", "controller-a", 3, "2026-11-03T10:00:00.000000Z", obj{"resourceVersion": r.rv("acquire"), "renewTime": "2026-11-03T10:00:02.000000Z"})
+		}},
+		step{Name: "release", Method: "PUT", Path: leasePath + "/leader", Fn: func(r *run) any {
+			return lease("leader", "", 1, "2026-11-03T10:00:00.000000Z", obj{"resourceVersion": r.rv("renew")})
+		}},
+		create("create-again", leasePath, lease("leader", "controller-b", 3, "2026-11-03T10:00:09.000000Z", nil)),
+		get("after-release", leasePath+"/leader"),
+	}},
+	{Name: "lease/takeover-and-watch", Steps: []step{
+		create("acquire", leasePath, lease("leader", "controller-a", 3, "2026-11-03T10:00:00.000000Z", nil)),
+		get("list-before", leasePath),
+		step{Name: "takeover", Method: "PUT", Path: leasePath + "/leader", Fn: func(r *run) any {
+			return lease("leader", "controller-b", 3, "2026-11-03T10:00:04.000000Z", obj{"resourceVersion": r.rv("acquire"), "leaseTransitions": 1})
+		}},
+		step{Name: "loser-write", Method: "PUT", Path: leasePath + "/leader", Fn: func(r *run) any {
+			return lease("leader", "controller-a", 3, "2026-11-03T10:00:05.000000Z", obj{"resourceVersion": r.rv("acquire")})
+		}},
+		step{Name: "delete", Method: "DELETE", Path: leasePath + "/leader"},
+		step{Name: "watch-from-list", Method: "WATCH", Path: leasePath, Query: map[string]string{"resourceVersion": "@list-before"}},
+	}},
+	{Name: "watch/informer-list-then-watch", Steps: []step{
+		create("a", cmPath, cm("a", obj{"k": "1"})),
+		get("list", cmPath),
+		create("b", cmPath, cm("b", obj{"k": "2"})),
+		patchStep("patch-a", cmPath+"/a", mergeType, obj{"data": obj{"k": "3"}}),
+		step{Name: "watch-after-list", Method: "WATCH", Path: cmPath, Query: map[string]string{"resourceVersion": "@list"}},
+		step{Name: "watch-bookmarks", Method: "WATCH", Path: cmPath, Query: map[string]string{"resourceVersion": "@list", "allowWatchBookmarks": "true", "timeoutSeconds": "1"}},
+	}},
 	{Name: "scale/autoscaler-owns-replicas", Steps: []step{
 		create("create", depPath, deployment("web", obj{"name": "app", "image": "nginx:1"}, obj{"replicas": 2})),
 		step{Name: "get-scale", Method: "GET", Path: depPath + "/web/scale"},
@@ -326,4 +375,25 @@ func projectDiscovery(step string, object any) any {
 	}
 	_ = json.Marshal
 	return m
+}
+
+const rolePath = "/apis/rbac.authorization.k8s.io/v1/namespaces/{ns}/roles"
+
+const leasePath = "/apis/coordination.k8s.io/v1/namespaces/{ns}/leases"
+
+// lease builds a Lease the way the controller's leader election writes one.
+func lease(name, holder string, seconds int, acquired string, extra obj) obj {
+	spec := obj{"leaseDurationSeconds": seconds, "acquireTime": acquired, "renewTime": acquired}
+	if holder != "" {
+		spec["holderIdentity"] = holder
+	}
+	metadata := meta(name)
+	for k, v := range extra {
+		if k == "resourceVersion" {
+			metadata[k] = v
+		} else {
+			spec[k] = v
+		}
+	}
+	return obj{"apiVersion": "coordination.k8s.io/v1", "kind": "Lease", "metadata": metadata, "spec": spec}
 }
