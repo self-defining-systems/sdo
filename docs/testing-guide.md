@@ -14,9 +14,9 @@ Prove each guarantee at the cheapest level that can hold it (the `design-for-ver
 - Agent code cannot reach the network or the cluster: the memory check enforces an import allowlist.
 - Accepted memory comes only from broker commits.
 
-Known gap: the memory host holds write-capable Kubernetes credentials and pod exec, so "the host never writes" is convention in our host code today, not construction.
+Accepted choice: the memory host holds write-capable Kubernetes credentials and pod exec. The host is a small amount of SDO's own trusted code, and agent code is the boundary the import allowlist enforces.
 
-**Behavioral properties.** One seeded simulation of the real controller, with simulated Kubernetes, adversarial agent and program stand-ins and crashes at every effect, checks these at every step:
+**Behavioral properties.** One seeded simulation of the real controller, with simulated Kubernetes, adversarial agent and program stand-ins and crashes at every effect, checks these at every step (precise definitions are the doc comments in `sdo/operator/runtime/sim/properties.go`):
 
 1. A finding is marked fixed only by a fresh observation made after the last write.
 2. Each write happens at most once, across controller restarts, host crashes and retries.

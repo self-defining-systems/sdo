@@ -54,6 +54,8 @@ type Kube struct {
 	Namespace string
 	Before    func(context.Context, string) (Fault, error)
 	Clock     func() time.Time
+	// Recorder, when set, receives every controller write and cache observation.
+	Recorder *Recorder
 	*serverClient
 	faults Faults
 	// beforeWrite runs before every patch is committed, so caches can capture
@@ -65,6 +67,8 @@ type Kube struct {
 	churned bool
 	// timeouts counts writes that committed but reported a transport error.
 	timeouts int
+	// seq numbers committed controller writes for the recorder.
+	seq uint64
 }
 
 func NewKube(faults Faults, objects ...*unstructured.Unstructured) *Kube {
@@ -98,6 +102,11 @@ func (k *Kube) Patch(ctx context.Context, ref sdk.ObjectRef, kind types.PatchTyp
 		hook()
 	}
 	err := k.serverClient.Patch(ctx, ref, kind, patch)
+	if k.Recorder != nil {
+		if seq := k.Recorder.write(AttributionFrom(ctx), ref, string(kind), patch, err == nil); seq != 0 {
+			k.seq = seq
+		}
+	}
 	if err == nil {
 		k.churned = false
 		if fault.CommitThenTimeout || k.faults.FailAfterCommit() {
@@ -116,6 +125,8 @@ type Cache struct {
 	pending   int
 	frozen    sdktest.Snapshot
 	snapshots int
+	// frozenSeq is the write sequence the frozen snapshot reflects.
+	frozenSeq uint64
 }
 
 func NewCache(kube *Kube, faults Faults) *Cache {
@@ -131,7 +142,7 @@ func (c *Cache) wrote() {
 	}
 	if n := c.faults.StaleReads(); n > 0 {
 		if snapshot, err := c.live(); err == nil {
-			c.frozen, c.pending = snapshot, n
+			c.frozen, c.pending, c.frozenSeq = snapshot, n, c.kube.seq
 		}
 	}
 }
@@ -192,6 +203,7 @@ func (c *Cache) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
 		if f.DropWatch {
 			if c.pending == 0 {
 				c.frozen, _ = c.live()
+				c.frozenSeq = c.kube.seq
 			}
 			c.pending = 1 << 30
 		}
@@ -199,8 +211,10 @@ func (c *Cache) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
 	c.snapshots++
 	if c.pending > 0 {
 		c.pending--
+		c.observed(c.frozenSeq)
 		return c.frozen, nil
 	}
+	c.observed(c.kube.seq)
 	return c.live()
 }
 
@@ -251,3 +265,10 @@ func (k *Kube) Get(ctx context.Context, ref sdk.ObjectRef) (*unstructured.Unstru
 // SetFaults changes the seeded API/cache profile without creating another world.
 func (k *Kube) SetFaults(f Faults)  { k.faults = f }
 func (c *Cache) SetFaults(f Faults) { c.faults = f }
+
+// observed records a snapshot read that reflects writes through seq.
+func (c *Cache) observed(seq uint64) {
+	if c.kube.Recorder != nil {
+		c.kube.Recorder.observe(seq)
+	}
+}
