@@ -4,6 +4,7 @@ package prober
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -75,5 +76,41 @@ func TestLinkGRPCTLSVerifiesCertificates(t *testing.T) {
 	_, _, class, err := probeProtocol(ctx, c, traffic.Link{To: "backend", Protocol: traffic.LinkProtocolGRPC, GRPC: &traffic.LinkGRPCOptions{TLS: true}})
 	if err == nil || class != traffic.LinkFailureTransport {
 		t.Fatalf("untrusted TLS: class=%s err=%v", class, err)
+	}
+}
+
+// checkLinkProtocol dials one link through dial and checks the probe classified it as mode says.
+func checkLinkProtocol(t *testing.T, protocol, mode string, dial func(context.Context, string, string) (net.Conn, error)) {
+	address := "backend:1234"
+	docs := map[string][]byte{"links": []byte(fmt.Sprintf(`{"apiVersion":"sdo.dev/v1alpha1","kind":"TrafficWorkload","name":"links","purpose":"link-probe","timeout":"50ms","links":[{"from":"web","to":"backend","port":1234,"protocol":%q}]}`, protocol))}
+	ws, e := ParseWorkloads(docs)
+	if e != nil {
+		t.Fatal(e)
+	}
+	p, e := New(Config{Namespace: "test", Catalog: traffic.Catalog{{ID: "dummy", Target: traffic.Target{Service: "web", Port: 80}, SideEffect: traffic.SideEffectRead, Steps: []traffic.Step{{Name: "dummy", Endpoint: traffic.GET("/", nil)}}}}, Workloads: ws, LinkAddress: func(traffic.Link) string { return address }, DialContext: dial})
+	if e != nil {
+		t.Fatal(e)
+	}
+	state := &linkState{link: ws[0].Links[0]}
+	p.dialLink(context.Background(), ws[0], state)
+	if len(state.samples) != 1 {
+		t.Fatal(state.samples)
+	}
+	s := state.samples[0]
+	want := ""
+	switch mode {
+	case "protocol":
+		want = "protocol_error"
+	case "refused":
+		want = "refused"
+	case "timeout":
+		want = "timeout"
+	case "not-serving", "unknown-health":
+		want = "not_serving"
+	case "reset":
+		want = "reset"
+	}
+	if s.OK != (mode == "reachable" || mode == "auth" || mode == "unimplemented" || mode == "other-status") || string(s.Class) != want || s.Duration <= 0 {
+		t.Fatalf("sample %+v; want class %q", s, want)
 	}
 }
