@@ -240,7 +240,7 @@ type ResponderLoop struct {
 	// GitRead, when set, replaces the git process that reads accepted program
 	// sources for revisions; a simulation serves them from memory.
 	GitRead func(ctx context.Context, repository string, args ...string) ([]byte, error)
-	drift                []sdk.Finding
+	drift   []sdk.Finding
 	// batches counts the agent's response loops, the budget the agent is told.
 	// A loop is one act→verify cycle: loopOpen is set by the first write after a
 	// verification and cleared by the next one. applySeq numbers every apply,

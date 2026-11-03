@@ -164,7 +164,7 @@ Fidelity limits, each deliberate:
   worker registry, a memory repository and session directories, none of which the harness has; the tool handler
   (`ResponderLoop.Handle`) is only reachable through that dispatcher. The Job executor, broker, reflection and
   acknowledgement are not run, so an incident is terminal at `incident_closed`, and a closure that exhausts its retries
-  is not exercised. Programs are not driven (no Diagnose or Mitigate calls).
+  is not exercised. Saved programs are driven: see below.
 - The memory host is the real `memoryhost.Manager` with in-process gRPC hosts (bufconn). Process launch, limits and the
   build step are absent. A swap runs `Prepare`, `Activate` and `ReconfigureMemory` directly instead of
   `memoryActivation`, and does not rebuild the controller's snapshot provider. A host crash closes the active host and
@@ -185,6 +185,15 @@ Fidelity limits, each deliberate:
   (`RuntimeOptions.PlanGit`, with no manifests) are injected, so the controller no longer starts about 1,700 `git`
   processes per seed. `TestHarness` fails if the process waited for any child during its seeds (the seeds fan out
   inside one group of a serial test, so nothing else runs beside them). A seed takes about 3 s instead of 25 s.
+- **Saved programs misbehave.** Each detector has a stand-in program in the host whose Diagnose and Mitigate the seed
+  makes right, wrong (opposite verdict, or a write to another object), garbage (invalid verdict or plan), failing,
+  panicking or hanging, for the whole run. The controller's automatic response stage runs over them through the
+  harness agent (`DeterministicResponseStage`), with the memory host serving the registry, the controller's snapshot
+  provider and a plan executor writing through the faulty API. Program revisions and the manifest tree are
+  served from memory (`ResponderLoop.GitRead`). The first run found two controller bugs: the remote program registry
+  dropped scalar parameter kinds and defaults (a program with a scalar parameter could never bind to a finding), and a
+  due dispatch retry held by another condition made `NextWake` return the due time forever (seed 10: the loop
+  spun on a frozen clock).
 - `--state-baseline=false` panics (a nil `StateTracker` in the diff read); the harness keeps the baseline on.
 - Secrets are not observed (no `MetadataClient`).
 
