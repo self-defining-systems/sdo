@@ -19,6 +19,12 @@ func objectiveDigest(objective string) string {
 
 // healthyBaselineGoal is independent of the generic reachability policy. No
 // finding, error, missing objective, or incident detector can authorize a baseline.
+type baselineContradictionError struct{ detector string }
+
+func (e *baselineContradictionError) Error() string {
+	return "healthy baseline " + e.detector + " is firing"
+}
+
 func healthyBaselineGoal(ctx context.Context, detectors []sdk.Detector, snapshot sdk.DetectionContext) (bool, error) {
 	objective := false
 	var health []sdk.Detector
@@ -44,7 +50,7 @@ func healthyBaselineGoal(ctx context.Context, detectors []sdk.Detector, snapshot
 		}
 		for _, finding := range findings {
 			if finding.Status == sdk.FindingActive {
-				return false, fmt.Errorf("healthy baseline %s is firing", spec.ID)
+				return false, &baselineContradictionError{detector: spec.ID}
 			}
 		}
 	}

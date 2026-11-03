@@ -246,11 +246,16 @@ func (c *Controller) observePendingOnboarding(ctx context.Context, now time.Time
 	busy := c.incidentOpen || c.currentIncidentRequest != nil || c.closureBlocksNextLocked() || c.lastAcknowledgedIncidentID != "" || !c.incidentDetectedAt.IsZero() || len(c.failedClosures) != 0
 	c.mu.Unlock()
 	verified, err := c.onboardingCommitReady(ctx, c.pendingOnboarding.AcceptedCommit)
-	if busy || err == nil && !verified {
+	if busy {
 		c.onboardingReachability.invalid = true
+		c.onboardingReachability.invalidReason = "incident work interrupted install window"
+	} else if err == nil && !verified {
+		c.onboardingReachability.invalid = true
+		c.onboardingReachability.invalidReason = "accepted install lineage changed"
 	}
 	if findings, observed := c.pendingInventoryFindings(c.pendingOnboarding, now); observed && len(findings) != 0 {
 		c.onboardingReachability.invalid = true
+		c.onboardingReachability.invalidReason = fmt.Sprintf("source inventory contradicted install: %v", findings)
 	}
 }
 
