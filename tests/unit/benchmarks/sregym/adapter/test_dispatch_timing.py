@@ -133,3 +133,45 @@ def test_saved_batch_joins_incident_scoped_telemetry(tmp_path: Path) -> None:
     assert result["time_to_fix_seconds"] == "10.0"
     assert result["time_to_resolution_from_dispatch_seconds"] == "20.0"
     assert "10.0 (n=1)" in (output / "regraded-summary.md").read_text()
+
+
+def test_final_verified_application_supplies_clock_after_partial_stage_handoff() -> None:
+    """Final application evidence survives a stale unsuccessful repair summary."""
+    from benchmarks.sregym.analysis.dispatch_timing import recover_dispatch_timing
+
+    application = {
+        "applied": True,
+        "verification_completed": True,
+        "verification_passed": True,
+        "final_equivalence_verified": True,
+        "final_verification_basis": "recovery-settled",
+        "completed_at": "2026-01-01T00:00:17Z",
+    }
+    row = {"incident_id": "synthetic", "dispatched_at": "2026-01-01T00:00:10Z"}
+    receipt = {
+        "incident_id": "synthetic",
+        "native_ledger": {
+            "closure": {
+                "result": {
+                    "repair_actions": [{"completed_at": "2026-01-01T00:00:17Z"}],
+                    "plan_applications": [application],
+                }
+            }
+        },
+    }
+    assert recover_dispatch_timing(row, receipt).time_to_fix_seconds == 7
+    for field, value in [
+        ("rolled_back", True),
+        ("rollback_error", "conflict"),
+        ("error", "failed"),
+        ("verification_passed", False),
+        ("verification_completed", False),
+        ("final_equivalence_verified", False),
+        ("rollout_pending", {"pending": True}),
+        ("settlement_rejection_reason", "SETTLEMENT_REJECTION_REASON_INTERFERENCE"),
+    ]:
+        previous = application.copy()
+        application[field] = value
+        assert recover_dispatch_timing(row, receipt).time_to_fix_seconds is None, field
+        application.clear()
+        application.update(previous)

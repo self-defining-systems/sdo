@@ -107,6 +107,24 @@ def recover_dispatch_timing(row: dict[str, Any], receipt: dict[str, Any]) -> Dis
             for action in owner.get("repair_actions") or []
             if action.get("success") is True and not action.get("rolled_back")
         )
+    # A partial deterministic stage can hand off before settlement. Its repair
+    # summary may remain unsuccessful even after the authoritative application
+    # is independently settled. Read the final application, never infer success
+    # from an applied write or from health/oracle clearance alone.
+    applications = list((closure.get("result") or {}).get("plan_applications") or [])
+    repairs.extend(
+        application.get("completed_at")
+        for application in applications
+        if application.get("applied") is True
+        and application.get("verification_completed") is True
+        and application.get("verification_passed") is True
+        and application.get("final_equivalence_verified") is True
+        and not any(
+            application.get(key)
+            for key in ("rolled_back", "rollback_error", "error", "rollout_pending", "pending_action", "rolling_back")
+        )
+        and application.get("settlement_rejection_reason") in (None, "", "SETTLEMENT_REJECTION_REASON_UNSPECIFIED", 0)
+    )
     first = min((at for value in repairs if (at := timestamp(value)) is not None), default=None)
     resolution = timestamp(row.get("resolved_at")) or timestamp(times.get("verified_at"))
     if row.get("ablation_arm") == "playbooks-only":
