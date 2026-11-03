@@ -438,10 +438,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err != nil {
 		return err
 	}
-	bootstrapProvider, leaseClient, stateClient, err := controllerKubernetesClients(*namespace, options.Client)
+	clients, err := newControllerClients(*namespace, options.Client, clientInjected, core.NewKubernetesClient)
 	if err != nil {
 		return err
 	}
+	bootstrapProvider, leaseClient, stateClient := clients.snapshot, clients.lease, clients.state
 	planExecConfig, genericCapture, err := initializePlanTransports(options, clientInjected, *namespace)
 	if err != nil {
 		return err
@@ -751,7 +752,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					}
 				}
 				loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
-					return LiveReadView{Carrier: inputs.New(snapshot), Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, Prober: primitiveProber,
+					return LiveReadView{Carrier: inputs.New(snapshot), Context: ctx, Client: clients.incidentRead, DatabaseExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, Prober: primitiveProber,
 						Source: planSource, SourceCommit: request.SourceCommit, Baseline: request.StateChanges, BaselineSource: baselineOf(stateTracker)}
 				}
 				controller.mu.Lock()

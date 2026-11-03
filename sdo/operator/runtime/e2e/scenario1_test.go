@@ -67,6 +67,18 @@ func TestFirstIncidentLearnsThenRepeatIsDeterministic(t *testing.T) {
 	if now := w.ControllerPod().Name; now != pod {
 		t.Errorf("controller restarted: %s -> %s", pod, now)
 	}
+	// Repair/learning speed does not determine cadence coverage. Collect the
+	// same minimum evidence even when both incidents finish before five of
+	// the slower detector intervals have elapsed.
+	w.waitFor(2*time.Minute, "five passes for every detector", func() bool {
+		coverage := w.CadenceCoverage()
+		for _, detector := range w.Detectors() {
+			if coverage[detector.ID] < 5 {
+				return false
+			}
+		}
+		return true
+	})
 	w.Quiesce()
 	w.settle(2 * time.Minute)
 	for _, v := range w.CheckProperties(nil) {

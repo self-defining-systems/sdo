@@ -32,8 +32,13 @@ func detectorDeadline(spec sdk.DetectorSpec) time.Duration {
 // not depend on which detector finished first. A panic or a missed deadline is
 // that detector's error and delays no other detector's evaluation.
 func evaluateDetectors(ctx context.Context, detectors []sdk.Detector, snapshot sdk.DetectionContext) map[string]setupDetection {
-	ctx, releaseScope := withMemoryScope(ctx)
-	defer releaseScope()
+	// Tool calls already own a scope across detector and program evaluation.
+	// Reuse it so both phases pin the same mirror instead of capturing twice.
+	if scope, _ := ctx.Value(memoryScopeKey{}).(*memoryScope); scope == nil {
+		var releaseScope func()
+		ctx, releaseScope = withMemoryScope(ctx)
+		defer releaseScope()
+	}
 	results := make([]setupDetection, len(detectors))
 	slots := make(chan struct{}, maxConcurrentDetectors)
 	var wg sync.WaitGroup

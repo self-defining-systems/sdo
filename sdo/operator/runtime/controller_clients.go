@@ -6,24 +6,32 @@ import (
 	"sdo.dev/operator/core"
 )
 
-// Controller state and leadership must not queue behind incident observation,
-// worker or validation traffic. Each production client owns its token bucket;
-// injected clients keep embedded runs entirely on their supplied API boundary.
-func controllerKubernetesClients(namespace string, injected kubernetes.Interface) (*core.KubernetesSnapshotProvider, kubernetes.Interface, kubernetes.Interface, error) {
-	if injected != nil {
-		return &core.KubernetesSnapshotProvider{Namespace: namespace, Client: injected}, injected, injected, nil
+type controllerClientSet struct {
+	snapshot                   *core.KubernetesSnapshotProvider
+	state, lease, incidentRead kubernetes.Interface
+}
+
+// Native broker initialization supplies a configured client too; only the
+// caller's original injection establishes an embedded API boundary. Production
+// state, leadership and incident observations each own a token bucket so steady
+// detector normalization cannot starve a responder's fresh reads.
+func newControllerClients(namespace string, configured kubernetes.Interface, embedded bool, create func() (kubernetes.Interface, error)) (*controllerClientSet, error) {
+	if namespace == "" {
+		return nil, fmt.Errorf("namespace is required")
 	}
-	provider, err := core.NewKubernetesSnapshotProvider(namespace)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("create Kubernetes snapshot provider: %w", err)
+	if embedded {
+		if configured == nil {
+			return nil, fmt.Errorf("embedded controller requires its injected Kubernetes client")
+		}
+		return &controllerClientSet{snapshot: &core.KubernetesSnapshotProvider{Namespace: namespace, Client: configured}, state: configured, lease: configured, incidentRead: configured}, nil
 	}
-	state, err := core.NewKubernetesClient()
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("create dedicated controller-state client: %w", err)
+	clients := make([]kubernetes.Interface, 4)
+	for i, role := range []string{"snapshot", "controller-state", "leader-election", "incident-read"} {
+		client, err := create()
+		if err != nil {
+			return nil, fmt.Errorf("create dedicated %s client: %w", role, err)
+		}
+		clients[i] = client
 	}
-	lease, err := core.NewKubernetesClient()
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("create dedicated leader-election client: %w", err)
-	}
-	return provider, lease, state, nil
+	return &controllerClientSet{snapshot: &core.KubernetesSnapshotProvider{Namespace: namespace, Client: clients[0]}, state: clients[1], lease: clients[2], incidentRead: clients[3]}, nil
 }

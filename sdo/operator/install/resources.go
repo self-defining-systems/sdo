@@ -468,7 +468,8 @@ func controllerJob(c Config) *batchv1.Job {
 			{Name: "GIT_COMMITTER_EMAIL", Value: "sdo-controller@invalid"},
 		},
 		SecurityContext: containerSecurity(),
-		Resources:       limits("250m", "512Mi", "2", "4Gi"),
+		// Controller and memory host each use the image's two-processor Go budget.
+		Resources: limits("250m", "512Mi", "4", "4Gi"),
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: "repository", MountPath: "/workspace"},
 			{Name: "scratch", MountPath: "/tmp"},

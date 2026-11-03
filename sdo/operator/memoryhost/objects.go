@@ -28,6 +28,7 @@ func (s *Server) WithObjects(source ObjectSource, protectedNamespace string) *Se
 // objectReads gives detectors and programs the object reads the controller's
 // own views have: scoped targets, mirrored kinds, then the generic reader.
 type objectReads struct {
+	index     *ObjectIndex
 	base      sdk.ObjectReader
 	scoped    sdk.ScopedObservationSource
 	capture   sdk.ObjectCaptureSource
@@ -49,6 +50,11 @@ func (r objectReads) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, erro
 			if status.Target == target {
 				return sdk.ScopedObject(r.scoped, ref)
 			}
+		}
+	}
+	if r.index != nil {
+		if object, ok := r.index.Lookup(ref); ok {
+			return object, nil
 		}
 	}
 	object, err := r.base.Object(ref)
@@ -84,11 +90,11 @@ func (v detectionView) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unst
 }
 
 func (s *Server) detectionView(snapshot sdktest.Snapshot) sdk.DetectionContext {
-	return detectionView{Snapshot: snapshot, reads: s.objectReads(snapshot, snapshot, snapshot, snapshot.Namespace())}
+	return detectionView{Snapshot: snapshot, reads: s.objectReads(snapshot, snapshot, snapshot, snapshot)}
 }
 
-func (s *Server) objectReads(base sdk.ObjectReader, scoped sdk.ScopedObservationSource, capture sdk.ObjectCaptureSource, namespace string) objectReads {
-	return objectReads{base: base, scoped: scoped, capture: capture, source: s.generic, protected: s.protected, namespace: namespace}
+func (s *Server) objectReads(base sdk.ObjectReader, scoped sdk.ScopedObservationSource, capture sdk.ObjectCaptureSource, snapshot sdktest.Snapshot) objectReads {
+	return objectReads{base: base, scoped: scoped, capture: capture, source: s.generic, protected: s.protected, namespace: snapshot.Namespace(), index: NewObjectIndex(snapshot, snapshot.Objects)}
 }
 
 // programObjects layers the same reads over a program's read view.
@@ -105,5 +111,5 @@ func (v programObjects) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Uns
 }
 
 func (s *Server) programObjects(view program.ReadView, snapshot sdktest.Snapshot) program.ReadView {
-	return programObjects{ReadView: view, reads: s.objectReads(view, view, view, snapshot.Namespace())}
+	return programObjects{ReadView: view, reads: s.objectReads(view, view, view, snapshot)}
 }

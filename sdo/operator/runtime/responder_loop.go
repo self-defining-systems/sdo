@@ -933,8 +933,10 @@ func (l *ResponderLoop) refresh(ctx context.Context, diagnose bool) ([]sdk.Findi
 	}
 	findings := make([]sdk.Finding, 0)
 	states := make([]DetectorEvaluation, 0, len(l.Detectors))
+	results := evaluateDetectors(ctx, l.Detectors, view)
 	for _, detector := range l.Detectors {
-		observed, err := sdk.DetectObserved(ctx, detector, view)
+		result := results[detector.Spec().ID]
+		observed, err := result.findings, result.err
 		state := DetectorEvaluation{DetectorID: detector.Spec().ID, EvaluatedAt: l.clock().UTC(), Status: DetectorEvaluationClear, Reason: detectorConfirmationReason(detector, view)}
 		if err == nil && len(observed) == 0 && !detectorConfirmed(detector, view) {
 			state.Status = DetectorEvaluationPending
@@ -1241,8 +1243,10 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 	}
 	findings := make([]sdk.Finding, 0)
 	states := make([]DetectorEvaluation, 0, len(l.Detectors))
+	results := evaluateDetectors(ctx, l.Detectors, view)
 	for _, detector := range l.Detectors {
-		observed, err := sdk.DetectObserved(ctx, detector, view)
+		result := results[detector.Spec().ID]
+		observed, err := result.findings, result.err
 		state := DetectorEvaluation{DetectorID: detector.Spec().ID, EvaluatedAt: l.clock().UTC(), Status: DetectorEvaluationClear, Reason: detectorConfirmationReason(detector, view)}
 		if err == nil && len(observed) == 0 && !detectorConfirmed(detector, view) {
 			state.Status = DetectorEvaluationPending
