@@ -13,8 +13,8 @@ import (
 	"sdo.dev/operator/internal/testutil/gitio"
 )
 
-// There is no fake git: tests run the real binary through Git, InitGit and
-// CloneGit, which only add a waited command and repository-local maintenance
+// There is no fake git: tests run the real binary through Git and InitGit,
+// which only add a waited command and repository-local maintenance
 // and identity settings. This table shows the helpers change nothing a test
 // observes: one command sequence runs in a helper repository and in a plain
 // `git init` repository, and every query returns the same text.

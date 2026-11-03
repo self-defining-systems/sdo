@@ -101,22 +101,4 @@ done
 	return stageLog
 }
 
-// GoStages returns the argument lines of the stages a FakeGo log recorded.
-func GoStages(t testing.TB, stageLog string) []string {
-	t.Helper()
-	data, err := os.ReadFile(stageLog)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var stages []string
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		if line == "" {
-			continue
-		}
-		_, args, _ := strings.Cut(line, "\t")
-		stages = append(stages, args)
-	}
-	return stages
-}
-
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }

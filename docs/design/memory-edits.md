@@ -20,7 +20,7 @@ and `docs/design/drift-and-invariants.md` (foreign NetworkPolicy admission).
 | Part | Implementation status at these revisions |
 |---|---|
 | Layout, per-detector manifests, logical IDs, validator, CLI, skills | Built in the memory series; CLI defaults to structural/semantic checks, ownership needs a base, compile is separate |
-| CLI/broker parity | Built for static validation only (`broker/parity_test.go`) |
+| CLI/broker parity | Both call `validate.Check`; the gate table covers the rules (the CLI-versus-broker subprocess test was deleted in the 2026-11-03 Go test reduction) |
 | Typed diagnostic retry | Specified/implemented by #19, not in this checkout |
 | Programs, generated generalization/rename tests, captured corpus references | Built on drift-p1; still use typed proposals/materialization |
 | Full acceptance entry point, input bundle, direct-edit workers | Unbuilt; this design |
@@ -361,7 +361,7 @@ Prefixes below are relative to `sdo/operator/` unless stated otherwise.
 | 14 | `runtime/registered_reflection.go`, `sdo/agents/responder/reflection*.py`, `worker.proto`: direct edits/result slot | 90m | Fake worker edits, green update, no-change/gap and #19 retry |
 | 15 | `lifecycle/coordinator.go`, `artifacts/bootstrap.go`, `sdo/agents/health_judge/worker.py`, `lifecycle.proto`: judge direct edits | 90m | Initial/refinement ownership, independent health evidence |
 | 17 | Delete materializer/draft/propose paths and tests; regenerate contracts; update `sdo/skills/` | 90m | No active legacy references, buf compatibility, skill examples |
-| 18 | `broker/parity_test.go`, runtime integration fixtures, `docs/architecture.md`, `.agents/skills/analyze-experiment/references/` | 90m | Scenario matrix, full Go/Python suites, format/error checks |
+| 18 | runtime integration fixtures, `docs/architecture.md`, `.agents/skills/analyze-experiment/references/` | 90m | Scenario matrix, full Go/Python suites, format/error checks |
 
 The scenario suite executes the real `sdo-operator memory check` subprocess
 with only provisioned environment (repeat with `--json`) and real broker
@@ -383,9 +383,7 @@ successful broker commits must contain exactly that tree. No mocked validator.
 
 Run focused operator/SDK/runtime/worker tests per step, then repository
 `scripts/format_code.sh` and `scripts/check_errors.sh`; cap fuzzing at 5m.
-Document-only baseline verification: existing
-`go test ./broker -run TestCLIAndBrokerAgreeOnStaticValidation -count=1`
-passes; the expanded scenario suite above is an implementation deliverable.
+The expanded scenario suite above is an implementation deliverable.
 
 ## Open decisions and recommended answers
 

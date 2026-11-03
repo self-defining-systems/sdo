@@ -55,9 +55,11 @@ setup in [the testing guide](../../../../docs/testing-guide.md#writing-a-determi
 before every Go command. From the repository root:
 
 ```bash
-(cd sdo/operator/runtime && go test ./sim ./prober . -run 'TestCrashLoopRecovery|TestSnapshotKindsAndRollout|TestSeededInvariants|TestFaultSchedule|TestHermeticProtocolDialer|TestSimRealDetectionInputs|TestSimTrusted' -count=20)
-(cd sdo/operator/runtime && SDO_SIM_SEED=17 go test ./sim . -run 'TestSeededInvariants|TestSimTrusted' -count=20)
-(cd sdo/operator/runtime && go test -race ./sim ./prober . -run 'TestCrashLoopRecovery|TestFaultSchedule|TestHermeticProtocolDialer|TestSimRealDetectionInputs|TestSimTrusted')
+(cd sdo/operator/runtime && go test ./sim -run 'TestCrashLoopRecovery|TestSnapshotKindsAndRollout|TestSeededInvariants|TestFaultSchedule' -count=20)
+(cd sdo/operator/runtime && SDO_SIM_SEED=17 go test ./sim -run 'TestSeededInvariants' -count=20)
+(cd sdo/operator/runtime && go test -race ./sim -run 'TestCrashLoopRecovery|TestFaultSchedule')
+# The controller harness (seeded schedules over the same world):
+(cd sdo/operator/runtime && go test -tags=integration . -run '^TestHarness$' -count=1)
 ```
 
 Use `World.Client()` to exercise real snapshot/input collection, `World.Dial` for
