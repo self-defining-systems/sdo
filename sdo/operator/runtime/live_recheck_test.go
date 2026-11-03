@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"sdo.dev/operator/runtime/internal/lifecycleio"
@@ -138,9 +139,10 @@ func TestResponderFailedVerificationIsRecordedAndLeftInPlace(t *testing.T) {
 				t.Fatal(planned.Error)
 			}
 			applied := loop.Handle(context.Background(), ToolRequest{Command: "apply", PlanIDs: []string{planned.PlanID}})
-			if applied.Error != "" {
-				t.Fatalf("apply must report, not fail: %+v", applied)
+			if applied.Error != "" && (!diagnosisFails || applied.RolloutPending == nil || !strings.HasPrefix(applied.Error, "rollout_pending:")) {
+				t.Fatalf("apply must retain writes and report verification or a typed pending state: %+v", applied)
 			}
+
 			service, _ := kube.CoreV1().Services("app").Get(context.Background(), "api", metav1.GetOptions{})
 			if service.Spec.Ports[0].TargetPort.IntVal == 9999 {
 				t.Fatal("the responder, not apply, decides to roll back")
