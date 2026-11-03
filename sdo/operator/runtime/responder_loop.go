@@ -77,8 +77,8 @@ type VerificationStatus string
 const VerificationAwaitingResponderCompletion VerificationStatus = "awaiting_responder_completion"
 
 type ToolResponse struct {
-	// driftObserved distinguishes a fresh source recheck from an omitted field.
-	driftObserved       bool
+	// driftObserved binds a fresh source recheck to exact opening findings.
+	driftObserved       map[string]bool
 	Burst               *prober.BurstResult `json:"burst,omitempty"`
 	VerificationStatus  VerificationStatus  `json:"verification_status,omitempty"`
 	MemoryCheckReport   json.RawMessage     `json:"memory_check_report,omitempty"`
@@ -1285,7 +1285,12 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 	}
 	response.Findings, response.DetectorStates = append([]sdk.Finding(nil), findings...), states
 	response.Drift = append([]sdk.Finding(nil), l.drift...)
-	response.driftObserved = true
+	response.driftObserved = map[string]bool{}
+	for _, finding := range l.Request.Findings {
+		if finding.DetectorID == "drift.unexplained" {
+			response.driftObserved[FindingFingerprint(finding)] = true
+		}
+	}
 	if len(findings) > 0 {
 		runs := SelectProgramCandidates(ctx, l.Programs, view, findings, l.deadline())
 		l.stampProgramRuns(runs)

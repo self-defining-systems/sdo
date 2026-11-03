@@ -45,3 +45,18 @@ func TestStageUsesFreshDriftObservationWithoutDiscardingResidue(t *testing.T) {
 		})
 	}
 }
+
+func TestStageRetainsDriftOutsideFreshObservation(t *testing.T) {
+	opening := sdk.Finding{DetectorID: "drift.unexplained", RuleID: "opening", Status: sdk.FindingActive}
+	newer := sdk.Finding{DetectorID: "drift.unexplained", RuleID: "newer", Status: sdk.FindingActive}
+	request := IncidentRequest{IncidentID: "synthetic", Findings: []sdk.Finding{opening}}
+	loop := NewResponderLoop(request, nil, staticProvider{}, []sdk.Detector{controllerDetector("health", time.Second, sdk.Finding{})}, PlanExecutor{}, 2)
+	loop.ReadView = func(v sdk.DetectionContext) program.ReadView { return stageDriftView{ReadView: program.ReadFrom(v)} }
+	response := ToolResponse{}
+	loop.verify(context.Background(), nil, &response, true)
+	state := &IncidentState{Request: request, Findings: []sdk.Finding{opening, newer}}
+	updateStageFindings(state, response)
+	if len(state.Findings) != 1 || state.Findings[0].RuleID != "newer" {
+		t.Fatalf("unobserved drift discarded: %v", state.Findings)
+	}
+}
