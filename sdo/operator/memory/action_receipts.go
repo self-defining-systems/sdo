@@ -17,7 +17,7 @@ import (
 // IncidentActionReceipts reads the same append-only command journal the worker
 // merges at return. A missing final report never erases completed receipts.
 func IncidentActionReceipts(repositoryMount, incidentID string) ([]*contracts.RepairActionReceipt, bool, string, error) {
-	relative, err := PrepareIncidentSession(repositoryMount, "", incidentID)
+	relative, err := IncidentSessionSubPath("", incidentID)
 	if err != nil {
 		return nil, true, "", err
 	}
