@@ -2,7 +2,12 @@ package runtime
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
+
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/sdk"
 	"testing"
 	"time"
@@ -12,7 +17,7 @@ func TestExternalIncidentHasNoDetectorAuthorityAndClosesOnResponderDone(t *testi
 	now := time.Unix(1000, 0).UTC()
 	cfg := testControllerConfig()
 	cfg.ExternalIncidentsOnly = true
-	c, err := NewController(cfg, []sdk.Detector{inventoryHealth()}, failingSnapshotProvider{}, &recordingDispatcher{}, now)
+	c, err := NewController(cfg, []sdk.Detector{externalHealthDetector()}, externalUnavailableSnapshots{}, &recordingDispatcher{}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +54,7 @@ func TestExternalIncidentHasNoDetectorAuthorityAndClosesOnResponderDone(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	restored, err := NewController(cfg, nil, failingSnapshotProvider{}, &recordingDispatcher{}, now)
+	restored, err := NewController(cfg, nil, externalUnavailableSnapshots{}, &recordingDispatcher{}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +67,7 @@ func TestExternalIncidentHasNoDetectorAuthorityAndClosesOnResponderDone(t *testi
 }
 
 func TestExternalIncidentContractRejectsFabricatedDetectorEvidence(t *testing.T) {
-	request := goldenRequest(t)
+	request := externalGoldenRequest(t)
 	request.Findings = nil
 	request.DetectorHistory = nil
 	if err := validateIncidentRequest(request); err == nil {
@@ -72,22 +77,54 @@ func TestExternalIncidentContractRejectsFabricatedDetectorEvidence(t *testing.T)
 	if err := validateIncidentRequest(request); err != nil {
 		t.Fatal(err)
 	}
-	request.Findings = goldenRequest(t).Findings
+	request.Findings = externalGoldenRequest(t).Findings
 	if err := validateIncidentRequest(request); err == nil {
 		t.Fatal("external alert accepted detector evidence")
 	}
 }
 
 func TestExternalToolsCannotExecuteDetectorsOrClaimHealthy(t *testing.T) {
-	request := goldenRequest(t)
+	request := externalGoldenRequest(t)
 	request.ExternalMessage = "Investigate"
 	request.Findings = nil
 	request.DetectorHistory = nil
-	loop := NewResponderLoop(request, nil, staticProvider{}, []sdk.Detector{inventoryHealth()}, PlanExecutor{}, 2)
+	loop := NewResponderLoop(request, nil, staticProvider{}, []sdk.Detector{externalHealthDetector()}, PlanExecutor{}, 2)
 	for _, command := range []string{"detect", "check", "verify", "status"} {
 		response := loop.Handle(context.Background(), ToolRequest{Command: command})
 		if len(response.DetectorStates) != 0 || response.Healthy || response.IncidentVerified != nil || response.VerificationStatus != VerificationAwaitingResponderCompletion {
 			t.Fatalf("%s grants detector authority: %+v", command, response)
 		}
 	}
+}
+
+func externalHealthDetector() sdk.Detector {
+	health := controllerDetector("health", time.Second, sdk.Finding{})
+	health.spec.Class = sdk.DetectorClassHealth
+	health.spec.Owner = sdk.DetectorOwnerHealthJudge
+	health.spec.Batching = sdk.BatchingPolicy{Severity: sdk.SeverityWarning}
+	health.spec.OriginatingCommit = "health-objective"
+	health.spec.Persistence = sdk.PersistencePolicy{Firing: 1, Clearing: 1}
+	return health
+}
+
+// externalUnavailableSnapshots fails every read, so an external-only
+// controller that tries to observe health fails the test.
+type externalUnavailableSnapshots struct{}
+
+func (externalUnavailableSnapshots) Snapshot(context.Context) (sdk.DetectionContext, error) {
+	return nil, errors.New("api server unavailable")
+}
+
+// externalGoldenRequest loads the canonical incident request fixture.
+func externalGoldenRequest(t *testing.T) IncidentRequest {
+	t.Helper()
+	content, err := os.ReadFile(filepath.Join("..", "..", "..", "tests", "fixtures", "sdo", "contracts", "incident_request.json"))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	message := &contracts.IncidentRequest{}
+	if err := wire.Unmarshal(content, message); err != nil {
+		t.Fatalf("fixture is not canonical ProtoJSON: %v", err)
+	}
+	return *incidentRequestState(message)
 }
