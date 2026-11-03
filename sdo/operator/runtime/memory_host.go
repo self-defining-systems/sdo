@@ -113,21 +113,43 @@ func (d *remoteDetector) ConsumesAlerts() bool                  { return d.Alert
 func (d *remoteDetector) ConsumesPodAdmission() bool            { return d.PodAdmission }
 func (d *remoteDetector) TrafficWorkloads() []string            { return d.Traffic }
 func (d *remoteDetector) Detect(ctx context.Context, view sdk.DetectionContext) ([]sdk.Finding, error) {
-	// Diffs may call the API server, so they are frozen before the host lease and mirror barrier are taken.
-	reads, err := watchedDiffReads(view, d.DetectorSpec.Watches)
-	if err != nil {
-		return nil, err
-	}
-	rpc, sequence, release, err := d.remote.scopedCapture(ctx, view)
+	prepared, release, err := d.prepareDetection(ctx, view)
 	if err != nil {
 		return nil, err
 	}
 	defer release()
+	return prepared.Detect(ctx, view)
+}
+
+// prepareDetection freezes controller-owned inputs before the authored
+// detector's execution budget begins. Source normalization may perform many
+// API calls; it is not execution of the detector in the memory host.
+func (d *remoteDetector) prepareDetection(ctx context.Context, view sdk.DetectionContext) (sdk.Detector, func(), error) {
+	// Diffs may call the API server, so they are frozen before the host lease and mirror barrier are taken.
+	reads, err := watchedDiffReads(view, d.DetectorSpec.Watches)
+	if err != nil {
+		return nil, nil, err
+	}
+	rpc, sequence, release, err := d.remote.scopedCapture(ctx, view)
+	if err != nil {
+		return nil, nil, err
+	}
 	observation, err := d.remote.observation(view)
 	if err != nil {
-		return nil, err
+		release()
+		return nil, nil, err
 	}
-	response, err := rpc.Evaluate(ctx, &pb.EvaluateRequest{DetectorIds: []string{d.ID}, MirrorSequence: sequence, Observation: observation, Reads: reads})
+	return &preparedRemoteDetector{remoteDetector: d, rpc: rpc, request: &pb.EvaluateRequest{DetectorIds: []string{d.ID}, MirrorSequence: sequence, Observation: observation, Reads: reads}}, release, nil
+}
+
+type preparedRemoteDetector struct {
+	*remoteDetector
+	rpc     MemoryHostRPC
+	request *pb.EvaluateRequest
+}
+
+func (d *preparedRemoteDetector) Detect(ctx context.Context, _ sdk.DetectionContext) ([]sdk.Finding, error) {
+	response, err := d.rpc.Evaluate(ctx, d.request)
 	if err != nil {
 		return nil, fmt.Errorf("memory host evaluate: %w", err)
 	}

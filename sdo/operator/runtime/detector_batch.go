@@ -32,6 +32,8 @@ func detectorDeadline(spec sdk.DetectorSpec) time.Duration {
 // not depend on which detector finished first. A panic or a missed deadline is
 // that detector's error and delays no other detector's evaluation.
 func evaluateDetectors(ctx context.Context, detectors []sdk.Detector, snapshot sdk.DetectionContext) map[string]setupDetection {
+	ctx, releaseScope := withMemoryScope(ctx)
+	defer releaseScope()
 	results := make([]setupDetection, len(detectors))
 	slots := make(chan struct{}, maxConcurrentDetectors)
 	var wg sync.WaitGroup
@@ -47,6 +49,17 @@ func evaluateDetectors(ctx context.Context, detectors []sdk.Detector, snapshot s
 					results[i] = setupDetection{err: fmt.Errorf("detector %q panicked: %v", spec.ID, r)}
 				}
 			}()
+			if preparation, ok := detector.(interface {
+				prepareDetection(context.Context, sdk.DetectionContext) (sdk.Detector, func(), error)
+			}); ok {
+				prepared, release, err := preparation.prepareDetection(ctx, snapshot)
+				if err != nil {
+					results[i] = setupDetection{err: err}
+					return
+				}
+				defer release()
+				detector = prepared
+			}
 			bounded, cancel := context.WithTimeout(ctx, detectorDeadline(spec))
 			defer cancel()
 			findings, err := sdk.DetectObserved(bounded, detector, snapshot)
