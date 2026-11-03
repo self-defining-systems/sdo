@@ -14,16 +14,14 @@ Prove each guarantee at the cheapest level that can hold it (the `design-for-ver
 - Agent code cannot reach the network or the cluster: the memory check enforces an import allowlist.
 - Accepted memory comes only from broker commits.
 
-Known gap: the memory host holds write-capable Kubernetes credentials and pod exec, so "the host never writes" is convention in our host code today, not construction.
+Accepted choice: the memory host holds write-capable Kubernetes credentials and pod exec. The host is a small amount of SDO's own trusted code, and agent code is the boundary the import allowlist enforces.
 
-**Behavioral properties.** One seeded simulation of the real controller, with simulated Kubernetes, adversarial agent and program stand-ins and crashes at every effect, checks these at every step:
+**Behavioral properties.** For now we check two things, both on one seeded simulation of the real controller loop, with simulated Kubernetes, adversarial agent and program stand-ins, and crashes at effect boundaries (precise definitions are the doc comments in `sdo/operator/runtime/sim/properties.go`):
 
-1. A finding is marked fixed only by a fresh observation made after the last write.
-2. Each write happens at most once, across controller restarts, host crashes and retries.
-3. Every incident reaches an outcome, and no incident's failure blocks the next.
-4. Detection keeps running within its bound during activation, closure and agent work.
-5. A fault seen during an incident survives its closure.
-6. Once a memory revision is active, a matching saved program is applied before any agent, with no controller restart.
+1. The controller is reliable. Under bounded faults (controller and host crashes and restarts, API errors and stale reads, agents and programs that crash, hang or return garbage) it never wedges: every incident reaches one terminal outcome after faults stop, and a failed incident never blocks a later one.
+2. The controller manages detectors well. Every detector in the active memory revision is evaluated within a few times its own configured interval, through memory swaps, closure and agent work. A detector that errors, panics or hangs does not delay the others. A newly activated revision's detectors start and removed ones stop, with no controller restart.
+
+Other behavioral properties (fixed means verified, writes happen once, nothing is lost, saved memory gets used) are not checked now.
 
 **Honest fakes.** A few conformance tests compare the simulated Kubernetes API, fake Go and fake git with the real ones; a real run that finds a bug the simulation missed is a fidelity gap ([align-simulation](../.agents/skills/align-simulation/SKILL.md), [ledger](simulation-fidelity.md)). The scripted toy run on kind is the one end-to-end check.
 
