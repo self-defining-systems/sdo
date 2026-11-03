@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"sdo.dev/operator/core"
@@ -41,6 +42,9 @@ func (c *Controller) ReconfigureMemory(remote *RemoteMemory, provider SnapshotPr
 	sort.Strings(health)
 	c.scheduler = entries
 	c.detectors = byID
+	// Findings of a removed detector would never be evaluated or cleared again.
+	c.tracker.Retain(c.knownDetector)
+	c.batcher.Retain(c.knownDetector)
 	c.detectorSpecs = specs
 	c.healthDetectorIDs = health
 	if c.onboardingReachability != nil {
@@ -49,6 +53,13 @@ func (c *Controller) ReconfigureMemory(remote *RemoteMemory, provider SnapshotPr
 	}
 	c.provider = provider
 	return nil
+}
+
+// knownDetector reports whether findings carrying this detector ID belong in
+// controller state: the active memory revision has the detector, or the
+// controller itself raises findings under the ID.
+func (c *Controller) knownDetector(id string) bool {
+	return c.detectors[id] != nil || id == "drift.unexplained" || strings.HasPrefix(id, "controller.")
 }
 
 type memoryCandidate struct {

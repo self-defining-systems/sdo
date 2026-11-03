@@ -271,6 +271,15 @@ func (t *FindingStateTracker) Snapshot() map[string]FindingState {
 	return result
 }
 
+// Retain drops the states of detectors for which keep is false.
+func (t *FindingStateTracker) Retain(keep func(detectorID string) bool) {
+	for key, state := range t.states {
+		if !keep(state.DetectorID) {
+			delete(t.states, key)
+		}
+	}
+}
+
 func (t *FindingStateTracker) Restore(states map[string]FindingState) {
 	t.states = make(map[string]*FindingState, len(states))
 	for fingerprint, state := range states {

@@ -171,6 +171,19 @@ func (b *Batcher) DrainDetectorPrefix(prefix string) []sdk.Finding {
 	return result
 }
 
+// Retain drops pending findings of detectors for which keep is false.
+func (b *Batcher) Retain(keep func(detectorID string) bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for key, finding := range b.findings {
+		if !keep(finding.DetectorID) {
+			delete(b.findings, key)
+			delete(b.deadlines, key)
+		}
+	}
+	b.recomputeDeadline()
+}
+
 // RemoveKeys retracts findings that cleared while they were still waiting for
 // their debounce deadline. FindingChanges uses the same detector-qualified
 // keys, so identical fingerprints from independent detectors remain isolated.

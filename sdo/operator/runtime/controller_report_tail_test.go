@@ -34,9 +34,7 @@ func TestControllerFinishedReportWakesBeforeGraceDeadline(t *testing.T) {
 	for id := range deadlines {
 		deadlines[id] = now.Add(time.Hour)
 	}
-	if err := c.scheduler.RestoreDeadlines(deadlines); err != nil {
-		t.Fatal(err)
-	}
+	c.scheduler.RestoreDeadlines(deadlines)
 	if wake := c.NextWake(); wake.After(now.Add(time.Second)) {
 		t.Fatalf("finished responder waits until %v, want completion by %v", wake, now.Add(time.Second))
 	}

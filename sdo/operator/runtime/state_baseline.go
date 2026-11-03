@@ -137,6 +137,16 @@ func NewStateTracker(config StateTrackerConfig) *StateTracker {
 	return &StateTracker{config: config}
 }
 
+// baselineOf is the tracker as a StateBaseline, or a nil interface when state
+// tracking is off: a nil *StateTracker stored in the interface is non-nil and
+// panics on first use.
+func baselineOf(t *StateTracker) StateBaseline {
+	if t == nil {
+		return nil
+	}
+	return t
+}
+
 // Start probes which kinds may be read, starts their informers and waits for
 // the initial sync. A kind that may not be read is reported, not fatal. ctx
 // bounds only the probes and the initial sync: the informers keep observing
