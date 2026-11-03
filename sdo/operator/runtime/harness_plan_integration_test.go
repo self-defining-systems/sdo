@@ -113,6 +113,11 @@ const (
 	openedCrashSeed = 66
 )
 
+func init() {
+	registerPRSeed(hungBatchSeed, "hung detectors delayed the rest of their evaluation batch")
+	registerPRSeed(openedCrashSeed, "incident_opened was recorded before the incident was saved")
+}
+
 // scenarioPlan is a plan of one revision whose detectors are all due every
 // second, a fault object broken for each, and no other fault.
 func scenarioPlan(seed uint64, detectors []planDetector) plan {

@@ -58,13 +58,20 @@ func TestLinkRealRedis(t *testing.T) {
 	}
 }
 
+// tlsHangGuard bounds a handshake that never finishes; it is far above any
+// loaded-host handshake time so the outcome never depends on it.
+const tlsHangGuard = time.Minute
+
 func TestLinkGRPCTLSVerifiesCertificates(t *testing.T) {
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { t.Error("untrusted TLS connection reached handler") }))
 	server.EnableHTTP2 = true
 	server.Config.ErrorLog = log.New(io.Discard, "", 0)
 	server.StartTLS()
 	defer server.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	// The class must come from the certificate check, never from the clock: a
+	// loaded host can stretch a real handshake past any short budget and turn
+	// the failure into a timeout. The deadline only bounds a genuine hang.
+	ctx, cancel := context.WithTimeout(context.Background(), tlsHangGuard)
 	defer cancel()
 	c, err := (&net.Dialer{}).DialContext(ctx, "tcp", server.Listener.Addr().String())
 	if err != nil {

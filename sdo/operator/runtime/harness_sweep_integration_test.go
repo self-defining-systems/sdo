@@ -4,7 +4,9 @@ package runtime
 
 import (
 	"fmt"
+	"maps"
 	"os"
+	"slices"
 	"strconv"
 	"sync"
 	"syscall"
@@ -20,20 +22,28 @@ import (
 // harnessWallBudget stops seeds that have not started when it is spent.
 const harnessWallBudget = 200 * time.Second
 
-// harnessPRSeeds are the seeds PR CI plays. Seeds 1 to 3 together kill both
-// recorded controller mutants and take about 50 s. Seed 13 is the regression for
-// a hung detector plus a host crash delaying every other detector (the manager
-// held locks across the evaluation); seeds 23 and 27 reach the same path in the
-// nightly sweep. Seed 35 kills the mutant that ends the process on a transient
-// API error (startup reads under errors), and 19 the one that never ends a hung
-// agent (its first dispatch hangs, and nothing but the controller can stop it).
-// Seed 10 is the regression for a due dispatch retry that something else held,
-// which made the controller loop spin on a frozen clock (NextWake kept returning
-// the due time); without the fix it hangs rather than fails.
-// Seed 65 is the regression for hung detectors delaying the rest of their batch
-// (the controller evaluated a batch one detector at a time); seed 66 for an
-// incident_opened event recorded before the incident was saved.
-var harnessPRSeeds = []uint64{1, 2, 3, 10, 13, 19, 35, hungBatchSeed, openedCrashSeed}
+// The seeds PR CI plays are registered, not listed: a PR that pins a regression
+// calls registerPRSeed from an init next to its scenario or fix, so no two PRs
+// edit the same line.
+// Each seed costs CI time, so keep the set small.
+var prSeeds = map[uint64]string{}
+
+// registerPRSeed adds a seed to the PR CI set with the reason it is there. A
+// seed registered twice is a mistake and panics.
+func registerPRSeed(seed uint64, why string) {
+	if why == "" {
+		panic(fmt.Sprintf("harness seed %d registered without a reason", seed))
+	}
+	if prev, dup := prSeeds[seed]; dup {
+		panic(fmt.Sprintf("harness seed %d registered twice (%q and %q)", seed, prev, why))
+	}
+	prSeeds[seed] = why
+}
+
+// harnessPRSeeds returns the registered seeds in ascending order.
+func harnessPRSeeds() []uint64 {
+	return slices.Sorted(maps.Keys(prSeeds))
+}
 
 // TestHarness plays each seed through the production controller loop and checks
 // that the controller is reliable (every incident ends) and manages its
@@ -43,7 +53,7 @@ func TestHarness(t *testing.T) {
 	deadline := time.Now().Add(harnessWallBudget)
 	seeds := simSeeds(t, 64, simPRRuns)
 	if os.Getenv("SDO_SIM_FULL") == "" && os.Getenv("SDO_SIM_SEED") == "" && os.Getenv("SDO_SIM_RUNS") == "" {
-		seeds = harnessPRSeeds
+		seeds = harnessPRSeeds()
 	}
 	// The seeds fan out inside one group that this serial test waits for, so
 	// no other test of the package runs beside them: the children the process
@@ -99,4 +109,19 @@ var errorBackoffOnce sync.Once
 // list error never shut down. It only throttles error logging.
 func disableErrorBackoff() {
 	errorBackoffOnce.Do(func() { utilruntime.ErrorHandlers = utilruntime.ErrorHandlers[:1] })
+}
+
+// TestPRSeedRegistry checks the set PR CI plays is sorted, reasoned and cannot
+// take a seed twice, so registrations from separate PRs never silently merge.
+func TestPRSeedRegistry(t *testing.T) {
+	seeds := harnessPRSeeds()
+	if len(seeds) == 0 || !slices.IsSorted(seeds) {
+		t.Fatalf("PR seeds %v: want a non-empty ascending set", seeds)
+	}
+	defer func() {
+		if recover() == nil {
+			t.Fatal("registering a seed twice did not panic")
+		}
+	}()
+	registerPRSeed(seeds[0], "again")
 }
