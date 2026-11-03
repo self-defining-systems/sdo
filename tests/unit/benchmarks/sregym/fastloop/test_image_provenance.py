@@ -182,3 +182,18 @@ def test_standalone_provenance_uses_shared_git_policy_without_site_packages(imag
     )
     assert result.returncode == 0, result.stderr
     assert re.fullmatch(r"tree-v2:[0-9a-f]{64}\n", result.stdout)
+
+
+def test_production_context_omits_simulation_with_excluded_fixtures(image_repo):
+    from benchmarks.sregym.fastloop.image_provenance import image_source
+
+    image_repo.commit(
+        {
+            ".dockerignore": (ROOT / ".dockerignore").read_text(),
+            "sdo/operator/runtime/sim/apiserver.go": 'package sim\nimport _ "embed"\n//go:embed testdata/schema.json\nvar schema string\n',
+            "sdo/operator/runtime/sim/testdata/schema.json": "{}",
+        },
+        "simulation with embedded fixture",
+    )
+    files = dict(image_source(image_repo.path, "HEAD", "controller").objects)
+    assert not [path for path in files if path.startswith("sdo/operator/runtime/sim/")]

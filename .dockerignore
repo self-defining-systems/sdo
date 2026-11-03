@@ -12,3 +12,6 @@ worktrees
 **/*_test.go
 **/testdata
 sdo/operator/**/*.md
+
+# Simulation is test infrastructure and embeds fixtures excluded above.
+sdo/operator/runtime/sim
