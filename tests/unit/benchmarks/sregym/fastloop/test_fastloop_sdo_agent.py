@@ -1141,3 +1141,40 @@ def test_acknowledged_closure_recovers_responder_start_and_done_times():
     assert outcome.responder_started_at == started
     assert outcome.responder_finished_at == completed
     assert outcome.resolved_at == completed
+
+
+def test_onboarding_usage_is_captured_before_injection(tmp_path, monkeypatch):
+    agent = _agent(tmp_path, FakeOps(), [])
+
+    def configmaps():
+        return [
+            {
+                "metadata": {"creationTimestamp": datetime.now(timezone.utc).isoformat()},
+                "data": {
+                    "agent-task.json": json.dumps(
+                        {
+                            "task_id": "setup",
+                            "request": {"@type": "type.googleapis.com/sdodev.contracts.v1alpha1.IncidentRequest"},
+                        }
+                    )
+                },
+            },
+            {
+                "data": {
+                    "agent-result.json": json.dumps(
+                        {"task_id": "setup", "response": {"usage": {"input_tokens": "100", "output_tokens": "5"}}}
+                    )
+                }
+            },
+        ]
+
+    monkeypatch.setattr(agent, "_worker_configmaps", configmaps)
+
+    def inject():
+        assert agent.pre_injection_responder_tokens.total_tokens == 105
+        return _inject()
+
+    outcome = agent.resolve(0, "synthetic", inject)
+    assert agent.pre_injection_usage_error is None
+    assert agent.pre_injection_responder_tokens.total_tokens == 105
+    assert outcome.responder_tokens.total_tokens != 105

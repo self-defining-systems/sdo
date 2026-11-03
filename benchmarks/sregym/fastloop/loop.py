@@ -554,6 +554,8 @@ def _run_one(
                 }
             )
             checkpoint = IncidentRecord(
+                pre_injection_responder_tokens=getattr(agent, "pre_injection_responder_tokens", None),
+                pre_injection_usage_error=getattr(agent, "pre_injection_usage_error", None),
                 run_id=config.run_id,
                 index=index,
                 agent=agent.name,
@@ -597,6 +599,8 @@ def _run_one(
             except Exception as recovery_exc:
                 cleanup_error = f"invalid injection cleanup failed: {_describe(recovery_exc)}"
         return IncidentRecord(
+            pre_injection_responder_tokens=getattr(agent, "pre_injection_responder_tokens", None),
+            pre_injection_usage_error=getattr(agent, "pre_injection_usage_error", None),
             opus_pool=config.opus_pool,
             run_id=config.run_id,
             index=index,
@@ -717,6 +721,8 @@ def _run_one(
         else {"provider_waits": limited_waits, "account_events": account_events}
     )
     record = IncidentRecord(
+        pre_injection_responder_tokens=getattr(agent, "pre_injection_responder_tokens", None),
+        pre_injection_usage_error=getattr(agent, "pre_injection_usage_error", None),
         ablation_arm=config.ablation_arm,
         opus_pool=config.opus_pool,
         image_delivery=delivery,

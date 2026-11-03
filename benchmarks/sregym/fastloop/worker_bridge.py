@@ -124,16 +124,19 @@ def main() -> int:
         if not hasattr(self, "_rehearse_oracles") and os.environ.get("FASTLOOP_ORACLE_BASELINES"):
             assert worker.__file__ is not None
 
-            def confirm_healthy(problem: Any) -> bool:
+            def confirm_healthy(problem: Any) -> dict[str, Any]:
+                from benchmarks.sregym.fastloop.admission import await_workload_identity
                 from benchmarks.sregym.fastloop.seed_recovery import verify_baseline_traffic
 
-                if not self._health_probe(problem.namespace).get("healthy"):
-                    return False
-                return (
-                    verify_baseline_traffic(problem, {"kind": "health-check", "success": True, "details": {}})[
-                        "success"
-                    ]
-                    is True
+                await_workload_identity(Path(os.environ["KUBECONFIG"]), problem.namespace)
+                health = self._health_probe(problem.namespace)
+                return verify_baseline_traffic(
+                    problem,
+                    {
+                        "kind": "health-check",
+                        "success": health.get("healthy") is True,
+                        "details": health,
+                    },
                 )
 
             self._rehearse_oracles = install_oracle_baselines(

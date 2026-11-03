@@ -207,3 +207,22 @@ def test_excluded_single_fault_still_requires_current_application_health(tmp_pat
     )
     assert rehearse("p")["success"] is True
     assert worker._grade(worker._problem_factory("p"))["success"] is False
+
+
+def test_rehearsal_preserves_independent_traffic_failure_evidence(tmp_path):
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.fastloop.oracle_baseline import install_oracle_baselines
+
+    health = {
+        "kind": "health-check",
+        "success": False,
+        "details": {"traffic_phase": "Failed", "traffic_detail": "HTTP 500"},
+    }
+    worker = SimpleNamespace(_problem_factory=lambda _: SimpleNamespace(), _grade=lambda *_: pytest.fail("unhealthy"))
+    rehearse = install_oracle_baselines(
+        worker, OracleBaselines(tmp_path / "baseline.json", "seed"), confirm_healthy=lambda _: health
+    )
+    verdict = rehearse("p")
+    assert verdict["details"]["traffic_detail"] == "HTTP 500"
+    assert verdict["details"]["collateral_ok"] is False

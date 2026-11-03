@@ -102,7 +102,7 @@ class OracleBaselines:
 
 
 def install_oracle_baselines(
-    worker: Any, baselines: OracleBaselines, *, confirm_healthy: Callable[[Any], bool] | None = None
+    worker: Any, baselines: OracleBaselines, *, confirm_healthy: Callable[[Any], bool | dict[str, Any]] | None = None
 ) -> Callable[..., dict[str, Any]]:
     """Bind factory identities and the real worker's grading consumer to one cache."""
     factory, grade = worker._problem_factory, worker._grade
@@ -122,14 +122,20 @@ def install_oracle_baselines(
         if filtered_grade.get("details", {}).get("status") == "oracle_invalid" and confirm_healthy is not None:
             # A plain problem has no aggregate collateral/traffic oracle. Once
             # its fault oracle is excluded, grade the current application.
-            filtered_grade["success"] = confirm_healthy(problem)
+            health = confirm_healthy(problem)
+            filtered_grade["success"] = health.get("success") is True if isinstance(health, dict) else health
         return filtered_grade
 
     def rehearse(problem_id: str, *, fresh: bool = False) -> dict[str, Any]:
         def evaluate() -> dict[str, Any]:
             problem = identified(problem_id)
-            if confirm_healthy is not None and not confirm_healthy(problem):
-                return {"kind": "health-check", "success": False, "details": {"collateral_ok": False}}
+            if confirm_healthy is not None:
+                health = confirm_healthy(problem)
+                if isinstance(health, dict):
+                    if health.get("success") is not True:
+                        return {**health, "details": {**health.get("details", {}), "collateral_ok": False}}
+                elif not health:
+                    return {"kind": "health-check", "success": False, "details": {"collateral_ok": False}}
             return grade(problem)
 
         return baselines.rehearse(problem_id, evaluate, fresh=fresh)
