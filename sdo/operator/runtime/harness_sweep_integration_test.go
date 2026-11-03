@@ -24,8 +24,10 @@ const harnessWallBudget = 200 * time.Second
 // recorded controller mutants and take about 50 s. Seed 13 is the regression for
 // a hung detector plus a host crash delaying every other detector (the manager
 // held locks across the evaluation); seeds 23 and 27 reach the same path in the
-// nightly sweep.
-var harnessPRSeeds = []uint64{1, 2, 3, 13}
+// nightly sweep. Seed 35 kills the mutant that ends the process on a transient
+// API error (startup reads under errors), and 19 the one that never ends a hung
+// agent (its first dispatch hangs, and nothing but the controller can stop it).
+var harnessPRSeeds = []uint64{1, 2, 3, 13, 19, 35}
 
 // TestHarness plays each seed through the production controller loop and checks
 // that the controller is reliable (every incident ends) and manages its

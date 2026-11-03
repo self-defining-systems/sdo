@@ -5,9 +5,7 @@
 # envtest, a fake kubelet, and the no-model agent scripts through the real
 # worker and tool transport. See docs/testing-guide.md#controller-end-to-end.
 #
-#   bash scripts/test_controller_e2e.sh [scenario1|scenario2|all|api-errors|hung-agent]
-#
-# api-errors and hung-agent reproduce two open controller findings (they fail today) and are not part of `all`.
+#   bash scripts/test_controller_e2e.sh [scenario1|scenario2|api-errors|hung-agent|all]
 #
 # Needs: bubblewrap with user namespaces, git, kubectl, Go, uv, and the envtest
 # binaries (KUBEBUILDER_ASSETS, else `setup-envtest use` is tried).
@@ -17,10 +15,10 @@ scenario="${1:-all}"
 case "$scenario" in
     scenario1) selection='^TestFirstIncidentLearnsThenRepeatIsDeterministic$' ;;
     scenario2) selection='^TestControllerSurvivesFaults$' ;;
-    all) selection='^(TestFirstIncidentLearnsThenRepeatIsDeterministic|TestControllerSurvivesFaults)$' ;;
-    api-errors) selection='^TestControllerToleratesAPIErrors$'; export SDO_E2E_API_ERRORS=1 ;;
-    hung-agent) selection='^TestControllerEndsHungAgent$'; export SDO_E2E_HUNG_AGENT=1 ;;
-    *) echo "usage: $0 [scenario1|scenario2|all|api-errors|hung-agent]" >&2; exit 2 ;;
+    api-errors) selection='^TestControllerToleratesAPIErrors$' ;;
+    hung-agent) selection='^TestControllerEndsHungAgent$' ;;
+    all) selection='^(TestFirstIncidentLearnsThenRepeatIsDeterministic|TestControllerSurvivesFaults|TestControllerToleratesAPIErrors|TestControllerEndsHungAgent)$' ;;
+    *) echo "usage: $0 [scenario1|scenario2|api-errors|hung-agent|all]" >&2; exit 2 ;;
 esac
 for tool in bwrap git kubectl go uv; do
     command -v "$tool" >/dev/null || { echo "missing required tool: $tool" >&2; exit 2; }

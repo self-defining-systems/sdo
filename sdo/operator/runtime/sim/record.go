@@ -145,22 +145,32 @@ type ControllerDown struct {
 }
 type ControllerUp struct{ At time.Time }
 
+// ControllerExited is the controller process ending on its own: nothing killed
+// it and nobody stopped it. Every fault a run injects is bounded and clears, so
+// a controller that cannot ride one out has a bug. A kill is a ControllerDown
+// alone.
+type ControllerExited struct {
+	At     time.Time
+	Reason string
+}
+
 // FaultsQuiesced is the instant after which the run injects no more faults;
 // RunEnded is the end of the run.
 type FaultsQuiesced struct{ At time.Time }
 type RunEnded struct{ At time.Time }
 
-func (e Opened) Time() time.Time         { return e.At }
-func (e Outcome) Time() time.Time        { return e.At }
-func (e Handler) Time() time.Time        { return e.At }
-func (e Activated) Time() time.Time      { return e.At }
-func (e Observation) Time() time.Time    { return e.At }
-func (e Evaluated) Time() time.Time      { return e.At }
-func (e Write) Time() time.Time          { return e.At }
-func (e ControllerDown) Time() time.Time { return e.At }
-func (e ControllerUp) Time() time.Time   { return e.At }
-func (e FaultsQuiesced) Time() time.Time { return e.At }
-func (e RunEnded) Time() time.Time       { return e.At }
+func (e Opened) Time() time.Time           { return e.At }
+func (e Outcome) Time() time.Time          { return e.At }
+func (e Handler) Time() time.Time          { return e.At }
+func (e Activated) Time() time.Time        { return e.At }
+func (e Observation) Time() time.Time      { return e.At }
+func (e Evaluated) Time() time.Time        { return e.At }
+func (e Write) Time() time.Time            { return e.At }
+func (e ControllerDown) Time() time.Time   { return e.At }
+func (e ControllerUp) Time() time.Time     { return e.At }
+func (e ControllerExited) Time() time.Time { return e.At }
+func (e FaultsQuiesced) Time() time.Time   { return e.At }
+func (e RunEnded) Time() time.Time         { return e.At }
 
 type attributionKey struct{}
 

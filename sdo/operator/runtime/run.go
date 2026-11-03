@@ -442,10 +442,17 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		stateStartTimeout = defaultStateBaselineStartTimeout
 	}
 	elector := NewLeaseElectorWithClock(leaseClient, *controlNamespace, *leaseName, *identity, *leaseDuration, clock)
+	// Startup reads retry on transient API errors, as the steady loop does.
+	retryStartup := func(call func() error) error {
+		return retryTransient(ctx, clock, func(err error) { fmt.Fprintf(stderr, "transient API error at startup, retrying: %v\n", err) }, call)
+	}
 	for {
 		leader, acquireErr := elector.TryAcquireOrRenew(ctx)
 		if acquireErr != nil {
-			return fmt.Errorf("acquire controller leadership: %w", acquireErr)
+			if !transientAPIError(acquireErr) || ctx.Err() != nil {
+				return fmt.Errorf("acquire controller leadership: %w", acquireErr)
+			}
+			fmt.Fprintf(stderr, "transient API error acquiring leadership, retrying: %v\n", acquireErr)
 		}
 		if leader {
 			break
@@ -938,17 +945,23 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	controller.CanAct = elector.IsLeader
 	controller.GuardAction = elector.GuardContext
 	stateStore := lifecycleio.NewConfigMapStateStore(stateClient, *controlNamespace, controllerStateConfigMap, filepath.Join(*repositoryMountPath, ".sdo-runtime", "controller-evidence"))
-	if err := controller.AttachStateStore(ctx, stateStore); err != nil {
+	if err := retryStartup(func() error { return controller.AttachStateStore(ctx, stateStore) }); err != nil {
 		return fmt.Errorf("restore controller state: %w", err)
 	}
-	acknowledgement, err := onboarding.Load(ctx, bootstrapProvider.Client, *controlNamespace, *namespace)
+	var acknowledgement *contractsv1alpha1.NamespaceOnboarding
+	err = retryStartup(func() (loadErr error) {
+		acknowledgement, loadErr = onboarding.Load(ctx, bootstrapProvider.Client, *controlNamespace, *namespace)
+		return loadErr
+	})
 	if err != nil {
 		return err
 	}
 	if err := controller.SetNamespaceOnboarding(acknowledgement); err != nil {
 		return err
 	}
-	if err := controller.AttachPendingOnboarding(ctx, bootstrapProvider.Client, *controlNamespace); err != nil {
+	if err := retryStartup(func() error {
+		return controller.AttachPendingOnboarding(ctx, bootstrapProvider.Client, *controlNamespace)
+	}); err != nil {
 		return fmt.Errorf("load namespace onboarding evidence: %w", err)
 	}
 	snapshotProvider = controller.provider
@@ -1027,7 +1040,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	maintenance := MaintenanceWatcher{Clock: clock,
 		Client: bootstrapProvider.Client, Namespace: *controlNamespace, Name: *maintenanceConfigMap,
 	}
-	desired, err := maintenance.Read(runCtx)
+	var desired MaintenanceState
+	err = retryStartup(func() (readErr error) {
+		desired, readErr = maintenance.Read(runCtx)
+		return readErr
+	})
 	if err != nil {
 		return err
 	}
@@ -1202,14 +1219,14 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			return fmt.Errorf("sync Kubernetes informer cache: %w", err)
 		}
 		acceptBaseline(acceptStartupReachabilityBaseline)
-		if err := controller.Step(runCtx, clock.Now().UTC(), nil); err != nil {
+		if err := retryStartup(func() error { return controller.Step(runCtx, clock.Now().UTC(), nil) }); err != nil {
 			if runCtx.Err() != nil {
 				return nil
 			}
 			return err
 		}
 	}
-	if err := controller.retireExpiredIncident(runCtx, lifecycleio.Now().UTC()); err != nil {
+	if err := retryStartup(func() error { return controller.retireExpiredIncident(runCtx, lifecycleio.Now().UTC()) }); err != nil {
 		return err
 	}
 	persistControllerState()
@@ -1217,11 +1234,13 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	// the closure acknowledgment waiting on it, so deferring it until resume restarts the controller in a loop.
 	// The handoff verifies the build's provenance against the accepted tree, not an evaluation.
 	if options.NativeBroker != nil {
-		if err := completeNativeRolloutHandoffs(ctx, *options.NativeBroker, launchConfig, resolvedRoot); err != nil {
+		if err := retryStartup(func() error {
+			return completeNativeRolloutHandoffs(ctx, *options.NativeBroker, launchConfig, resolvedRoot)
+		}); err != nil {
 			return err
 		}
 	}
-	if err := executeStartupEffects(runCtx, controller, desired.Paused); err != nil {
+	if err := retryStartup(func() error { return executeStartupEffects(runCtx, controller, desired.Paused) }); err != nil {
 		if runCtx.Err() != nil {
 			return nil
 		}
@@ -1286,6 +1305,28 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		}
 		return nil
 	}
+	// survive keeps an API error that clears on its own from ending the
+	// controller: the failed pass is retried after a backoff, with every detector
+	// due again. Errors a retry cannot fix still leave Run.
+	var stepBackoff transientBackoff
+	var retryAt time.Time
+	survive := func(err error) error {
+		if err == nil {
+			stepBackoff.reset()
+			retryAt = time.Time{}
+			return nil
+		}
+		// Leadership that lapsed because a renewal failed is regained by the
+		// renewal loop; a Lease another holder took ends the run through
+		// renewalErrors.
+		if runCtx.Err() != nil || !transientAPIError(err) && !errors.Is(err, ErrLeadershipInactive) {
+			return err
+		}
+		fmt.Fprintf(stderr, "transient API error, retrying: %v\n", err)
+		retryAt = clock.Now().Add(stepBackoff.next())
+		controller.scheduler.ExpediteAll(retryAt)
+		return nil
+	}
 	for {
 		if *exitAfterClosure && controller.LastAcknowledgedIncidentID() != "" {
 			return nil
@@ -1309,6 +1350,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				delay = min(delay, retry.Sub(clock.Now()))
 			}
 		}
+		if !retryAt.IsZero() {
+			delay = min(delay, retryAt.Sub(clock.Now()))
+		}
 		if delay < 0 {
 			delay = 0
 		}
@@ -1319,7 +1363,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			return nil
 		case <-memoryActivationNotifications(activation):
 			stopTimerForRuntimeEvent(runCtx, timer)
-			if err := executePendingEffects(runCtx, controller); err != nil {
+			if err := survive(executePendingEffects(runCtx, controller)); err != nil {
 				return err
 			}
 			persistControllerState()
@@ -1344,7 +1388,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				}
 				continue
 			}
-			if err := resume(); err != nil {
+			if err := survive(resume()); err != nil {
 				return err
 			}
 		case <-kubernetesCache.Notifications():
@@ -1362,14 +1406,14 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if reachabilityObserver != nil && slices.ContainsFunc(events, func(event sdk.WatchKind) bool { return event.APIVersion == "v1" && event.Kind == "Pod" }) {
 				reachabilityObserver.Wake()
 			}
-			if err := controller.StepEvents(runCtx, clock.Now().UTC(), events); err != nil {
+			if err := survive(controller.StepEvents(runCtx, clock.Now().UTC(), events)); err != nil {
 				if runCtx.Err() != nil {
 					return nil
 				}
 				return err
 			}
 			persistControllerState()
-			if err := executePendingEffects(runCtx, controller); err != nil {
+			if err := survive(executePendingEffects(runCtx, controller)); err != nil {
 				if runCtx.Err() != nil {
 					return nil
 				}
@@ -1381,7 +1425,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			}
 			controller.handleDispatchCompletion(completion, clock.Now().UTC())
 			persistControllerState()
-			if err := executeStartupEffects(runCtx, controller, applied.Paused); err != nil {
+			if err := survive(executeStartupEffects(runCtx, controller, applied.Paused)); err != nil {
 				if runCtx.Err() != nil {
 					return nil
 				}
@@ -1393,7 +1437,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			}
 			controller.handleWorkspaceCompletion(completion)
 			persistControllerState()
-			if err := executeStartupEffects(runCtx, controller, applied.Paused); err != nil {
+			if err := survive(executeStartupEffects(runCtx, controller, applied.Paused)); err != nil {
 				if runCtx.Err() != nil {
 					return nil
 				}
@@ -1408,7 +1452,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if err := ClosureFailureError(controller); err != nil && *exitAfterClosure {
 				return err
 			}
-			if err := executeStartupEffects(runCtx, controller, applied.Paused); err != nil {
+			if err := survive(executeStartupEffects(runCtx, controller, applied.Paused)); err != nil {
 				if runCtx.Err() != nil {
 					return nil
 				}
@@ -1419,12 +1463,12 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return nil
 			}
 			controller.handleAcknowledgmentCompletion(completion)
-			driveErr := controller.driveQueuedReflections(runCtx, controller.clock())
+			driveErr := survive(controller.driveQueuedReflections(runCtx, controller.clock()))
 			persistControllerState()
 			if driveErr != nil {
 				return driveErr
 			}
-			if err := executeStartupEffects(runCtx, controller, applied.Paused); err != nil {
+			if err := survive(executeStartupEffects(runCtx, controller, applied.Paused)); err != nil {
 				if runCtx.Err() != nil {
 					return nil
 				}
@@ -1438,7 +1482,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return nil
 			}
 			controller.handleReflectionCompletion(completion)
-			driveErr := controller.driveQueuedReflections(runCtx, controller.clock())
+			driveErr := survive(controller.driveQueuedReflections(runCtx, controller.clock()))
 			persistControllerState()
 			if driveErr != nil {
 				return driveErr
@@ -1460,14 +1504,14 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if applied != desired || applied.Paused {
 				continue
 			}
-			if err := controller.Step(runCtx, clock.Now().UTC(), nil); err != nil {
+			if err := survive(controller.Step(runCtx, clock.Now().UTC(), nil)); err != nil {
 				if runCtx.Err() != nil {
 					return nil
 				}
 				return err
 			}
 			persistControllerState()
-			if err := executePendingEffects(runCtx, controller); err != nil {
+			if err := survive(executePendingEffects(runCtx, controller)); err != nil {
 				if runCtx.Err() != nil {
 					return nil
 				}
@@ -1478,13 +1522,13 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return nil
 			}
 			if applied != desired {
-				if err := resume(); err != nil {
+				if err := survive(resume()); err != nil {
 					return err
 				}
 				continue
 			}
 			if applied.Paused {
-				if err := executePausedEffects(runCtx, controller); err != nil {
+				if err := survive(executePausedEffects(runCtx, controller)); err != nil {
 					if runCtx.Err() != nil {
 						return nil
 					}
@@ -1492,14 +1536,14 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				}
 				continue
 			}
-			if err := controller.Step(runCtx, clock.Now().UTC(), nil); err != nil {
+			if err := survive(controller.Step(runCtx, clock.Now().UTC(), nil)); err != nil {
 				if runCtx.Err() != nil {
 					return nil
 				}
 				return err
 			}
 			persistControllerState()
-			if err := executePendingEffects(runCtx, controller); err != nil {
+			if err := survive(executePendingEffects(runCtx, controller)); err != nil {
 				if runCtx.Err() != nil {
 					return nil
 				}
@@ -1589,7 +1633,12 @@ func maintainLeadership(
 				leader, err := elector.TryAcquireOrRenew(attemptCtx)
 				cancelAttempt()
 				if err != nil {
-					if elector.IsLeader() {
+					// A renewal that fails on a transient API error is retried
+					// even after the Lease expired locally: the controller
+					// stops acting meanwhile (the guard refuses effects), and
+					// only a Lease another holder took, or an error retrying
+					// cannot fix, ends the process.
+					if elector.IsLeader() || transientAPIError(err) {
 						continue
 					}
 					errors <- fmt.Errorf("renew controller leadership before Lease expiry: %w", err)

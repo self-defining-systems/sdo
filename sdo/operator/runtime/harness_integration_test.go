@@ -343,14 +343,11 @@ func (a harnessAgent) respond(ctx context.Context, request IncidentRequest) (Inc
 	case agentCrash:
 		return IncidentResult{}, errors.New("agent crashed")
 	case agentHang:
-		// The dispatcher, not the controller, owns the response timeout: the
-		// Job executor gives up at request.ResponseDeadline.
-		select {
-		case <-ctx.Done():
-			return IncidentResult{}, ctx.Err()
-		case <-time.After(time.Until(request.ResponseDeadline)):
-			return IncidentResult{}, errors.New("agent did not answer before the response deadline")
-		}
+		// A hung agent never answers and never gives up. Only the controller
+		// can end it (by cancelling the dispatch, or by retiring the incident):
+		// the stand-in bounds itself by nothing, as a hung Job would not.
+		<-ctx.Done()
+		return IncidentResult{}, ctx.Err()
 	case agentGarbage:
 		return IncidentResult{IncidentID: "not-" + request.IncidentID, Status: "garbage"}, nil
 	case agentFix:
@@ -439,6 +436,7 @@ func (h *harness) runController(ctx context.Context) {
 			h.t.Logf("%s controller exited on its own: %v", h.now().Sub(h.start).Round(time.Millisecond), err)
 			inc.dead.Store(true)
 			inc.sever()
+			h.rec.Add(sim.ControllerExited{At: h.now(), Reason: fmt.Sprint(err)})
 			h.rec.Add(sim.ControllerDown{At: h.now()})
 		}
 		time.Sleep(time.Second)

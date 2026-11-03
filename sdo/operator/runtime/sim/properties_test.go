@@ -88,6 +88,14 @@ func TestEveryIncidentEnds(t *testing.T) {
 		wedged := boundedRun(sim.ControllerDown{At: at(110)}, sim.ControllerUp{At: at(112)}, sim.ControllerDown{At: at(300)}, sim.ControllerUp{At: at(301)})
 		wantViolation(t, sim.EveryIncidentEnds(wedged, loop), sim.PropEveryIncidentEnds, "keeps failing without faults")
 	})
+	t.Run("a controller that exits on its own is a failure, a kill is not", func(t *testing.T) {
+		// Controller mutant: an API 500 returned out of the run loop ends the
+		// process. The harness relaunches it, which looks like a restart.
+		killed := boundedRun(sim.ControllerDown{At: at(40)}, sim.ControllerUp{At: at(42)})
+		wantOK(t, sim.EveryIncidentEnds(killed, cfg))
+		exited := boundedRun(sim.ControllerExited{At: at(40), Reason: "enumerate responder Jobs: 500"}, sim.ControllerDown{At: at(40)}, sim.ControllerUp{At: at(42)})
+		wantViolation(t, sim.EveryIncidentEnds(exited, cfg), sim.PropEveryIncidentEnds, "exited on its own at")
+	})
 	t.Run("a run without bounded faults is rejected, not passed", func(t *testing.T) {
 		wantViolation(t, sim.EveryIncidentEnds(sim.Log{open("i1", 10), sim.Outcome{At: at(20), Incident: "i1"}}, cfg), sim.PropEveryIncidentEnds, "not shown to be bounded")
 		short := sim.Config{Settle: time.Hour}

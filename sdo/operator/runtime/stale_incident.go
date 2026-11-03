@@ -2,8 +2,12 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/runtime/lifecyclecore"
@@ -237,4 +241,26 @@ func (c *Controller) clearIncidentLocked() {
 	c.incidentFindingKeys = nil
 	c.cleanedHelpers = nil
 	c.resetDispatchRetryLocked()
+}
+
+// EndIncidentWork deletes the incident's active responder Jobs, so a responder
+// the controller gave up on stops holding the incident and its resources. A Job
+// that is already gone or finished is left alone.
+func (d KubernetesJobDispatcher) EndIncidentWork(ctx context.Context, incidentID string) error {
+	inventory, err := d.responderExecutions(ctx, incidentID, 0)
+	if err != nil {
+		return err
+	}
+	background := metav1.DeletePropagationBackground
+	var failures []error
+	for _, job := range inventory.jobs {
+		if !inventory.names[job.Name] || terminalResponderJob(job) || job.DeletionTimestamp != nil {
+			continue
+		}
+		err := d.Client.BatchV1().Jobs(d.Namespace).Delete(ctx, job.Name, metav1.DeleteOptions{PropagationPolicy: &background})
+		if err != nil && !apierrors.IsNotFound(err) {
+			failures = append(failures, fmt.Errorf("delete responder Job %s: %w", job.Name, err))
+		}
+	}
+	return errors.Join(failures...)
 }
