@@ -314,7 +314,8 @@ func (c *KubernetesCache) Resync(ctx context.Context) error {
 
 // InformerSyncError reports the informers whose initial list never completed,
 // by apiVersion/kind. A controller that cannot observe a kind is blind to it,
-// so callers fail with this error instead of continuing on a partial cache.
+// so callers retry the sync (InformerSyncPolicy) instead of continuing on a
+// partial cache.
 type InformerSyncError struct {
 	Kinds []string
 	Err   error

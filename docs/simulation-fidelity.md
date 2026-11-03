@@ -116,7 +116,7 @@ The simulation answered only list GETs, discovery and two dry-run forms over HTT
 `TestHarness` runs `RunWithOptions`, the production controller loop, on virtual time (a `synctest` bubble) with one
 seed fixing the whole plan, and checks the two behavioral properties over the recorded log
 (`sim/properties.go`): every incident ends, and every detector of the active memory revision is evaluated within
-3 x its own interval plus 12 s. PR CI runs seeds 2, 4, 6 and 13 (seed 1 stays out while the state-restore crash loop is open); the nightly run restores the full count.
+3 x its own interval plus 12 s. PR CI runs the registered seeds (`registerPRSeed`); the nightly run plays all 64, with `-race`.
 A failing seed prints `SDO_SIM_SEED=<n> go test -tags=integration -run '^TestHarness$' ./runtime`.
 `SDO_SIM_OUT=1` prints the controller's own output, `SDO_SIM_STATE=1` the final state ConfigMap, `SDO_SIM_DUMP=1`
 the goroutines at the end, `SDO_SIM_AGENT=<mode>` forces every agent answer and `SDO_SIM_NOLAG=1` removes cache lag.
@@ -167,7 +167,8 @@ Fidelity limits, each deliberate:
   is not exercised. Saved programs are driven: see below.
 - The memory host is the real `memoryhost.Manager` with in-process gRPC hosts (bufconn). Process launch, limits and the
   build step are absent. A swap runs `Prepare`, `Activate` and `ReconfigureMemory` directly instead of
-  `memoryActivation`, and does not rebuild the controller's snapshot provider. A host crash closes the active host and
+  `memoryActivation`, and does not rebuild the controller's snapshot provider. The swap
+  takes the controller's observation lock (the one every pass holds) by polling `TryLock` on virtual time, so it lands between two passes as it does on the loop in production; a blocking lock wait would stop the bubble's clock. A host crash closes the active host and
   lets the manager's own recovery relaunch it. A hung detector is abandoned at the host's cooperative budget (the
   manager holds no lock across a detector call, so a hang delays only its own result). The host survives a controller
   death, as the separate host process does.
@@ -194,6 +195,7 @@ Fidelity limits, each deliberate:
   dropped scalar parameter kinds and defaults (a program with a scalar parameter could never bind to a finding), and a
   due dispatch retry held by another condition made `NextWake` return the due time forever (seed 10: the loop
   spun on a frozen clock).
+- **Informer sync never gives up.** At startup and on resume the controller retries the informer sync with backoff (`InformerSyncPolicy`: per-try timeout, 5 s doubling to 30 s) until it syncs or the run ends. It used to exit after three tries, which ended the process on a transient list error and, repeated, left the Job Failed. Seeds 8 and 48 fail without the fix.
 - `--state-baseline=false` panics (a nil `StateTracker` in the diff read); the harness keeps the baseline on.
 - Secrets are not observed (no `MetadataClient`).
 
