@@ -392,6 +392,8 @@ def test_frozen_toy_install_preserves_policy_at_native_boundary(tmp_path, monkey
         images=SimpleNamespace(controller="controller:test", responder="responder:test"),
         apply_operator_env=lambda _: None,
     )
+    monkeypatch.setenv("KUBECONFIG", str(environment.kubeconfig))
+    monkeypatch.delenv("SREGYM_BASE_KUBECONFIG", raising=False)
     seen = []
 
     def install(config):
