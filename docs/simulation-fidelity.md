@@ -230,6 +230,8 @@ pool reuse is no longer tested. PR and nightly Go CI run them with
 
 ## Gap ledger
 
+Rows dated before 2026-11-03 name regression tests that were later deleted with the legacy Go tests. They record how each gap was found and closed; the tests named there no longer guard it. New rows name a harness seed, conformance scenario or gate-table row.
+
 | Date | Source run | Class | Gap | Status | Simulation change and conformance test |
 | --- | --- | --- | --- | --- | --- |
 
