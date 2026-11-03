@@ -56,8 +56,8 @@ func TestControllerSurvivesFaults(t *testing.T) {
 		p := w.ControllerPod()
 		return p != nil && p.Name != pod && p.Status.Phase == "Running"
 	})
-	// The interrupted incident must reach a terminal outcome. Whether its repair succeeds is not asked: the stand-in
-	// model keeps no resumable transcript, so a responder continued after the restart ends "interrupted" (a fidelity limit).
+	// The interrupted incident must reach a terminal outcome. Its repair may fail
+	// when the controller is killed before the worker has durably checkpointed.
 	w.settle(5 * time.Minute)
 	t.Logf("phase 2: every incident ended after kill -9 of %s (repaired=%v)", pod, w.Repaired(health))
 
