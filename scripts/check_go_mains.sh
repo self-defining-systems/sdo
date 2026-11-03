@@ -6,9 +6,11 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # A package's tests can accidentally supply declarations missing from production.
-# Build without test sources before any generated-workspace or integration suite.
+# Compile without test sources before any generated-workspace or integration
+# suite. `go list -export` compiles every package, main ones included, and
+# skips the link step that `go build ./...` repeats for each command.
 for module in "$root/sdo/operator" "$root/sdo/operator/runtime"; do
-    (cd "$module" && go build ./...)
+    (cd "$module" && go list -export ./... > /dev/null)
 done
 
 # Standalone modules (own go.mod, fixtures and generated seeds excluded).
