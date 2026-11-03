@@ -13,20 +13,19 @@ import (
 )
 
 // This file is the recorder: one ordered event log of what the controller does.
-// The six behavioral checks in properties.go are plain functions over that log,
-// so a harness records during a simulated run and checks after every step.
+// The two behavioral checks in properties.go are plain functions over that log,
+// so a harness records during a simulated run and checks it afterwards.
 //
 // The recorder hooks at seams production already has, and production never
 // imports it:
 //
 //   - Kube.Patch and Cache.Snapshot record cluster writes and observations;
-//   - *Recorder implements runtime.LifecycleSink and runtime.FiringSink
-//     structurally (it cannot import runtime), so it receives incident opens,
-//     agent dispatches, terminal outcomes and finding activations/clearings;
+//   - *Recorder implements runtime.LifecycleSink structurally (it cannot import
+//     runtime), so it receives incident opens, agent dispatches and terminal
+//     outcomes;
 //   - Recorder.Detector wraps any sdk.Detector to record each evaluation;
-//   - the remaining entries (fixed marks, program handling, memory activation,
-//     crashes, run bounds, tracked-finding snapshots) are recorded by explicit
-//     calls from the harness at the points listed in the PROP-1 handoff.
+//   - the remaining entries (memory activation, crashes, run bounds) are
+//     recorded by explicit calls from the harness.
 
 // Entry is one record of the log. Entries are plain values; a test may build a
 // log by hand to show that a check fails.
@@ -83,39 +82,18 @@ type Handler struct {
 	Revision string
 }
 
-// ProgramDiagnosed records a program's diagnosis for an incident. A program
-// that did not match, or errored, may be followed by an agent.
-type ProgramDiagnosed struct {
-	At       time.Time
-	Incident string
-	Program  string
-	Revision string
-	Result   DiagnosisResult
-}
-
-// DiagnosisResult is a program diagnosis outcome.
-type DiagnosisResult string
-
-const (
-	Matched   DiagnosisResult = "match"
-	NoMatch   DiagnosisResult = "no_match"
-	DiagError DiagnosisResult = "error"
-)
-
-// ProgramDecl is a saved program as declared in a revision: the detectors whose
-// findings it is bound to.
-type ProgramDecl struct {
-	ID        string
-	Detectors []string
+// DetectorDecl is a detector of a revision with its configured evaluation interval.
+type DetectorDecl struct {
+	ID       string
+	Interval time.Duration
 }
 
 // Activated records that a memory revision became active: from this entry the
-// controller runs exactly these detectors and may apply these programs.
+// controller runs exactly these detectors, each at its own interval.
 type Activated struct {
 	At        time.Time
 	Revision  string
-	Detectors []string
-	Programs  []ProgramDecl
+	Detectors []DetectorDecl
 }
 
 // Observation is one read of the cluster the controller made. ThroughSeq is the
@@ -127,13 +105,14 @@ type Observation struct {
 	ThroughSeq uint64
 }
 
-// Evaluated is one detector evaluation over an observation (ID 0 when
-// unknown) and the finding keys that detector reported active.
+// Evaluated is one detector evaluation attempt over an observation (ID 0 when
+// unknown). Failed is set when the evaluation returned an error or panicked; a
+// failed attempt still counts as the detector having been scheduled.
 type Evaluated struct {
 	At          time.Time
 	Detector    string
 	Observation int
-	Active      []string
+	Failed      bool
 }
 
 // Attribution says which incident, binding and attempt a cluster write serves.
@@ -158,38 +137,6 @@ type Write struct {
 	Committed bool
 }
 
-// Fixed records a finding marked fixed, the observation it relied on, and the
-// finding's scope: the objects its evidence depends on (empty means unknown,
-// so every write counts).
-type Fixed struct {
-	At          time.Time
-	Incident    string
-	Finding     FindingRef
-	Scope       []sdk.ObjectRef
-	Observation int
-}
-
-// Seen is a finding activating. Incident is the incident whose responder was in
-// flight when it activated, empty when none was open.
-type Seen struct {
-	At       time.Time
-	Finding  FindingRef
-	Incident string
-}
-
-// Cleared is a finding reaching its clear threshold.
-type Cleared struct {
-	At      time.Time
-	Finding FindingRef
-}
-
-// Tracked is a snapshot of the finding keys the controller currently tracks as
-// active, taken from its finding-state tracker.
-type Tracked struct {
-	At   time.Time
-	Keys []string
-}
-
 // ControllerDown is a controller restart or host crash beginning; ControllerUp
 // is the controller serving again. Detection is not expected between them.
 type ControllerDown struct {
@@ -203,22 +150,17 @@ type ControllerUp struct{ At time.Time }
 type FaultsQuiesced struct{ At time.Time }
 type RunEnded struct{ At time.Time }
 
-func (e Opened) Time() time.Time           { return e.At }
-func (e Outcome) Time() time.Time          { return e.At }
-func (e Handler) Time() time.Time          { return e.At }
-func (e ProgramDiagnosed) Time() time.Time { return e.At }
-func (e Activated) Time() time.Time        { return e.At }
-func (e Observation) Time() time.Time      { return e.At }
-func (e Evaluated) Time() time.Time        { return e.At }
-func (e Write) Time() time.Time            { return e.At }
-func (e Fixed) Time() time.Time            { return e.At }
-func (e Seen) Time() time.Time             { return e.At }
-func (e Cleared) Time() time.Time          { return e.At }
-func (e Tracked) Time() time.Time          { return e.At }
-func (e ControllerDown) Time() time.Time   { return e.At }
-func (e ControllerUp) Time() time.Time     { return e.At }
-func (e FaultsQuiesced) Time() time.Time   { return e.At }
-func (e RunEnded) Time() time.Time         { return e.At }
+func (e Opened) Time() time.Time         { return e.At }
+func (e Outcome) Time() time.Time        { return e.At }
+func (e Handler) Time() time.Time        { return e.At }
+func (e Activated) Time() time.Time      { return e.At }
+func (e Observation) Time() time.Time    { return e.At }
+func (e Evaluated) Time() time.Time      { return e.At }
+func (e Write) Time() time.Time          { return e.At }
+func (e ControllerDown) Time() time.Time { return e.At }
+func (e ControllerUp) Time() time.Time   { return e.At }
+func (e FaultsQuiesced) Time() time.Time { return e.At }
+func (e RunEnded) Time() time.Time       { return e.At }
 
 type attributionKey struct{}
 
@@ -313,22 +255,18 @@ type recordingDetector struct {
 	rec *Recorder
 }
 
-func (d recordingDetector) Detect(ctx context.Context, view sdk.DetectionContext) ([]sdk.Finding, error) {
-	findings, err := d.Detector.Detect(ctx, view)
+func (d recordingDetector) Detect(ctx context.Context, view sdk.DetectionContext) (findings []sdk.Finding, err error) {
 	id := d.Spec().ID
-	var active []string
-	for _, f := range findings {
-		if f.Status == sdk.FindingActive {
-			fp := f.Fingerprint
-			if fp == "" {
-				fp = f.DetectorID + "/" + f.RuleID + "/" + f.PrimaryResource.Namespace + "/" + f.PrimaryResource.Kind + "/" + f.PrimaryResource.Name
-			}
-			active = append(active, id+"\x00"+fp)
+	completed := false
+	defer func() {
+		// A panic is recorded as a failed attempt and then continues unwinding.
+		if !completed {
+			d.rec.Add(Evaluated{At: d.rec.Now(), Detector: id, Observation: d.rec.LastObservation(), Failed: true})
 		}
-	}
-	if err == nil {
-		d.rec.Add(Evaluated{At: d.rec.Now(), Detector: id, Observation: d.rec.LastObservation(), Active: active})
-	}
+	}()
+	findings, err = d.Detector.Detect(ctx, view)
+	completed = true
+	d.rec.Add(Evaluated{At: d.rec.Now(), Detector: id, Observation: d.rec.LastObservation(), Failed: err != nil})
 	return findings, err
 }
 
@@ -364,31 +302,6 @@ func (r *Recorder) RecordLifecycle(event *contracts.LifecycleEvent) error {
 		}
 		delete(r.failedIncidents, id)
 		r.log = append(r.log, Outcome{At: at, Incident: id, Result: result})
-	}
-	return nil
-}
-
-// Record implements runtime.FiringSink: finding activations and clearings.
-func (r *Recorder) Record(record *contracts.FiringRecord) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if id := record.GetEventId(); id != "" {
-		if r.seen[id] {
-			return nil
-		}
-		r.seen[id] = true
-	}
-	finding := FindingRef{Key: record.GetDetectorId() + "\x00" + record.GetFingerprint(), Detector: record.GetDetectorId()}
-	at := record.GetRecordedAt().AsTime()
-	switch record.GetEvent() {
-	case "activated":
-		incident := ""
-		if record.GetDispatchRelation() == "after_dispatch" {
-			incident = record.GetIncidentId()
-		}
-		r.log = append(r.log, Seen{At: at, Finding: finding, Incident: incident})
-	case "cleared":
-		r.log = append(r.log, Cleared{At: at, Finding: finding})
 	}
 	return nil
 }

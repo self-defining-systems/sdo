@@ -31,7 +31,7 @@ The simulated API server (`sdo/operator/runtime/sim`) models:
   default render a source comparison asks for), with Service defaults (port protocol, type, session affinity,
   IP families), so a program's source diff runs end to end against the simulated API;
 - registered invariant hooks and a 45-second host-time seed-sweep budget;
-- an ordered event log (`Recorder`) of controller writes, observations, detector evaluations, incident lifecycle, finding activations and memory activations, with the six behavioral property checks over it (`sim/properties.go`);
+- an ordered event log (`Recorder`) of controller writes, observations, detector evaluations, incident lifecycle, and memory activations, with the two behavioral checks over it, every incident ends and detection keeps running (`sim/properties.go`);
 - the memory broker's independent compile gate (`sim.Compiler`): it records each call, honors cancellation and
   rejects changed Go files that do not parse, with an injectable typed verdict. It does not type-check, link or run
   detector tests.
