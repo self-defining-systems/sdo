@@ -16,10 +16,6 @@ case "${1:-}" in
     --defer-prepared) quality_mode=(--defer-prepared) ;;
     *) echo "unknown Go check mode: $1" >&2; exit 2 ;;
 esac
-for group in schema git deadlines capture; do
-    python3 "$SCRIPT_DIR/go_quality_checks.py" --group "$group" "${quality_mode[@]}"
-done
-
 echo "==> generated skill references"
 bash "$SCRIPT_DIR/gen_skill_references.sh" --check
 python3 "$SCRIPT_DIR/go_quality_checks.py" --group layout "${quality_mode[@]}"

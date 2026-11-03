@@ -267,7 +267,7 @@ func (f *faultTransport) forward(req *http.Request, info requestInfo) (*http.Res
 			// The connection drops a few seconds in; the client resumes from its
 			// last version.
 			timer := time.AfterFunc(time.Duration(2+n%7)*time.Second, func() { _ = body.Close() })
-			body.stop = timer.Stop
+			body.setStop(timer.Stop)
 		}
 	}
 	response.Body = body
@@ -284,15 +284,25 @@ func (h *harness) nextWatch() int {
 type trackedBody struct {
 	io.ReadCloser
 	inc  *incarnation
+	mu   sync.Mutex // guards stop: the cut timer can fire as it is set
 	stop func() bool
 	once sync.Once
+}
+
+func (b *trackedBody) setStop(stop func() bool) {
+	b.mu.Lock()
+	b.stop = stop
+	b.mu.Unlock()
 }
 
 func (b *trackedBody) Close() error {
 	var err error
 	b.once.Do(func() {
-		if b.stop != nil {
-			b.stop()
+		b.mu.Lock()
+		stop := b.stop
+		b.mu.Unlock()
+		if stop != nil {
+			stop()
 		}
 		if b.inc != nil {
 			b.inc.untrack(b)

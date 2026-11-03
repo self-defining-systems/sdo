@@ -491,9 +491,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			deadlines := c.scheduler.Deadlines()
 			c.scheduler.ExpediteAll(now)
 			detectors = c.enabledSetupDetectors(c.scheduler.SelectEvents(now, nil))
-			if err := c.scheduler.RestoreDeadlines(deadlines); err != nil {
-				return err
-			}
+			c.scheduler.RestoreDeadlines(deadlines)
 		}
 	}
 	if confirmed || confirmationExpired {
@@ -1898,29 +1896,16 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	if err := validateRuntimeState(state); err != nil {
 		return err
 	}
-	if err := c.scheduler.RestoreDeadlines(timestampsState(state.GetSchedulerDeadlines())); err != nil {
-		return err
-	}
-	// Retired proactive playbooks are not scheduled detectors. Keep genuine
-	// registered detector IDs and accepted-source drift, but retire their old
-	// synthetic tracker and batch entries instead of re-running Diagnose.
-	retired := func(id string) bool {
-		return strings.HasPrefix(id, "drift.") && id != "drift.unexplained" && c.detectors[id] == nil
-	}
-	findings := findingStatesState(state.GetFindingStates())
-	for key, finding := range findings {
-		if retired(finding.DetectorID) {
-			delete(findings, key)
-		}
-	}
-	c.tracker.Restore(findings)
-	pending := []sdk.Finding{}
-	for _, finding := range findingsState(state.GetPendingBatch().GetFindings()) {
-		if !retired(finding.DetectorID) {
-			pending = append(pending, finding)
-		}
-	}
-	c.batcher.Restore(BatcherState{Findings: pending, Deadlines: timestampsState(state.GetPendingBatch().GetDeadlines()), Deadline: controllerTime(state.GetPendingBatch().GetDeadline())})
+	c.scheduler.RestoreDeadlines(timestampsState(state.GetSchedulerDeadlines()))
+	// The state was written under an earlier memory revision. Findings of a
+	// detector the active revision no longer has (including retired proactive
+	// playbooks) are dropped: nothing would ever evaluate or clear them, so
+	// they would hold the controller non-quiet and open incidents no detector
+	// can verify.
+	c.tracker.Restore(findingStatesState(state.GetFindingStates()))
+	c.tracker.Retain(c.knownDetector)
+	c.batcher.Restore(BatcherState{Findings: findingsState(state.GetPendingBatch().GetFindings()), Deadlines: timestampsState(state.GetPendingBatch().GetDeadlines()), Deadline: controllerTime(state.GetPendingBatch().GetDeadline())})
+	c.batcher.Retain(c.knownDetector)
 	c.history = append([]DetectorEvaluation(nil), evaluationsState(state.GetHistory())...)
 	c.mu.Lock()
 	defer c.mu.Unlock()

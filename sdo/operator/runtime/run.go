@@ -90,6 +90,11 @@ type RuntimeOptions struct {
 	// its loop starts, so an embedded simulation can attach sinks and reconfigure
 	// memory. Production never sets it.
 	Wired func(*Controller)
+	// AcceptedScope replaces the read of the observation scope and commit from
+	// the accepted repository (a git process); nil reads it with git.
+	AcceptedScope func(ctx context.Context, root string) (sdk.ObservationScope, string, error)
+	// PlanGit replaces the git process edge of the accepted-manifest source.
+	PlanGit func(ctx context.Context, root string, args ...string) ([]byte, error)
 	// InformerResync schedules informer resyncs. Zero disables them; a
 	// simulation on virtual time sets a positive interval so reflector timers
 	// stay inside its bubble.
@@ -476,7 +481,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err != nil {
 		return err
 	}
-	scope, scopeCommit, err := observation.Accepted(ctx, resolvedRoot)
+	acceptedScope := options.AcceptedScope
+	if acceptedScope == nil {
+		acceptedScope = observation.Accepted
+	}
+	scope, scopeCommit, err := acceptedScope(ctx, resolvedRoot)
 	if err != nil {
 		return err
 	}
@@ -485,7 +494,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 	kubernetesCache, err := NewKubernetesCache(KubernetesCacheConfig{
 		AcceptedScope: func(ctx context.Context) (sdk.ObservationScope, string, error) {
-			return observation.Accepted(ctx, resolvedRoot)
+			return acceptedScope(ctx, resolvedRoot)
 		}, GenericCapture: genericCapture, Scope: scope, Ceiling: ceiling, Generation: scopeCommit, Namespace: *namespace, Client: bootstrapProvider.Client, StateConfigMapName: stateConfigMapName, TrackDrift: true, Clock: clock.Now, TimerClock: clock, ResyncPeriod: options.InformerResync,
 	}, detectors)
 	if err != nil {
@@ -592,7 +601,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		kubernetesCache.scopedTracker = stateTracker
 		defer stateTracker.Stop()
 	}
-	planSource := GitPlanSource{Repository: resolvedRoot, ManifestPaths: deployedManifestPaths}
+	planSource := GitPlanSource{Repository: resolvedRoot, ManifestPaths: deployedManifestPaths, Git: options.PlanGit}
 	primitiveProber, _ := proberAPI.(PrimitiveProber)
 	var memoryCatalogMu sync.RWMutex
 	removalClient, err := newUnexplainedRemovalClient(planExecConfig, genericCapture, *controlNamespace)
@@ -727,7 +736,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				}
 				loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
 					return LiveReadView{Carrier: inputs.New(snapshot), Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, Prober: primitiveProber,
-						Source: planSource, SourceCommit: request.SourceCommit, Baseline: request.StateChanges, BaselineSource: stateTracker}
+						Source: planSource, SourceCommit: request.SourceCommit, Baseline: request.StateChanges, BaselineSource: baselineOf(stateTracker)}
 				}
 				controller.mu.Lock()
 				controller.responderLoop = loop
@@ -765,7 +774,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return controller.CurrentAcceptedCommit()
 			}
 			return resolvedSourceCommit
-		}, BaselineSource: stateTracker}
+		}, BaselineSource: baselineOf(stateTracker)}
 	}
 	snapshotProvider = ReadSnapshotProvider{Base: snapshotProvider, View: liveView}
 	start := clock.Now().UTC()
@@ -802,7 +811,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return cycle
 			}
 			return NewCycleReadView(LiveReadView{Carrier: inputs.New(snapshot), Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, Prober: primitiveProber,
-				Source: planSource, SourceCommit: controller.CurrentAcceptedCommit(), BaselineSource: stateTracker})
+				Source: planSource, SourceCommit: controller.CurrentAcceptedCommit(), BaselineSource: baselineOf(stateTracker)})
 		},
 	})
 	if options.NativeBroker != nil {

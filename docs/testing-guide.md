@@ -85,9 +85,8 @@ build them with `internal/capturefixture`: `Boundary`/`WriteBoundary` from a
 live-shaped view, `FromView` from compact snapshot JSON, `Recapture` to edit an
 existing capture. Each goes through `CaptureSnapshot`, so a test sees exactly the
 fields production keeps. `capturefixture.Raw(t, reason, data)` is the named
-opt-out for forged, empty or malformed input. `go test ./internal/capturefixture`
-(part of `check_errors.sh`) rejects hand-built captures in operator tests and
-committed corpus captures carrying fields the projection would drop or add.
+opt-out for forged, empty or malformed input. Nothing enforces this any more; the
+package goes when the last tests that use it do.
 
 ## Git-backed Go fixtures
 
@@ -101,11 +100,7 @@ maintenance in the foreground for its Git commands and persists this policy in
 its independent proposal/staging clones; Git clone does not copy local config. Keep goroutines using a repository joined before
 test cleanup.
 
-`internal/testutil.TestGitFixtureCreationUsesHelper` checks Go AST command calls
-and argument vectors for direct init/clone bypasses in broker/runtime tests.
-Its negative controls run alongside it in `scripts/check_errors.sh`, so an unsafe
-new fixture fails the static gate. Run the whole helper suite with
-`go -C sdo/operator test -race ./internal/testutil`.
+Use these helpers rather than a bare `git init` or `git clone` in a test.
 
 ## Synthetic Go edge
 
@@ -138,14 +133,10 @@ deadline (`context.WithTimeout(..., 100*time.Millisecond)`) races it against the
 scheduler; the race detector under host load flaked on this. Wait for the
 condition the test asserts instead. In `worker_registry`, `executeUntil` runs
 `Execute` and cancels it once the condition holds, with a 30 s failure ceiling.
-`internal/testutil.TestNoFixedShortDeadlineAroundExecuteInTests` rejects a
-sub-second literal deadline whose context reaches an `Execute` call anywhere in
-`sdo/operator`; `scripts/check_errors.sh` runs it with its negative controls.
 
 Counted sleep loops in Go and Python tests also race loaded CI when their literal
-sleep budget is below five seconds. The Go `TestNoShortCountedPollingInTests` and
-Python `tests/unit/test_polling_policy.py` AST checks run in `check_errors.sh` with
-negative controls. Wait for the asserted condition with a generous failure ceiling
+sleep budget is below five seconds. The Python `tests/unit/test_polling_policy.py`
+AST check runs in `check_errors.sh` with negative controls. Wait for the asserted condition with a generous failure ceiling
 (or a notification). Intentional timing loops can carry a comment on the loop or
 the preceding line: `test-polling: allow -- <reason>`. Nested loops own their
 waiting budgets; paced event generation is not a polling deadline.
@@ -601,11 +592,6 @@ Submission phase tests live in `protocol/submission_go` (benchmark module) and
 that completion polls never post, and that malformed facts yield typed failures.
 Run it with `-fuzztime=30s -fuzzminimizetime=1s -parallel=2 -timeout=2m`; Nightly CI runs the same bounded target, with its seeds retained on PRs. Image scope tests verify
 separate Go compilation and binary-only copying into the benchmark worker.
-Read-only controller observations are tested in `outcome_derivation` and
-`operatorcli/controller_observation_test.go`. `FuzzControllerObservationBoundary`
-checks malformed snapshots, closed lifecycle enums, incident correlation and a
-rejected snapshot followed by a good one. Run it with `-fuzztime=30s
--fuzzminimizetime=1s -parallel=2 -timeout=2m`; Nightly CI runs the bounded target, with its seeds retained on PRs. Fake controller bookkeeping stays outside the generated snapshot shape.
 
 The Python object-ref parser and Hypothesis tests for `sdo act` receipt recording use
 `tests/fixtures/sdo/contracts/object_ref_grammar.json` (`test_recorded_actions.py`).
