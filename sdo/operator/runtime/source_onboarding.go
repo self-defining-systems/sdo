@@ -173,11 +173,17 @@ func (c *Controller) beginOnboarding(ctx context.Context, detectors []sdk.Detect
 			if loadErr == nil {
 				loadErr = c.SetNamespaceOnboarding(existing)
 			}
+			if loadErr == nil && existing == nil {
+				loadErr = c.rejectPendingOnboarding(ctx, "install evaluation attempt was already consumed without completion")
+			}
 			if loadErr == nil {
 				loadErr = c.prepareSourceInventory(ctx)
 			}
-			if loadErr != nil && c.OnError != nil {
-				c.OnError(loadErr)
+			if loadErr != nil {
+				c.pendingOnboarding = record
+				if c.OnError != nil {
+					c.OnError(loadErr)
+				}
 			}
 		}
 		return nil
@@ -186,20 +192,25 @@ func (c *Controller) beginOnboarding(ctx context.Context, detectors []sdk.Detect
 	return record
 }
 
-func (c *Controller) finishOnboarding(ctx context.Context, record *contracts.NamespaceOnboarding, findings []sdk.Finding, errored bool, now time.Time) {
+func (c *Controller) finishOnboarding(ctx context.Context, record *contracts.NamespaceOnboarding, findings []sdk.Finding, errored bool, now time.Time) (err error) {
 	if record == nil {
-		return
+		return nil
 	}
+	defer func() {
+		if err != nil && c.namespaceOnboarding == nil {
+			c.pendingOnboarding = record
+		}
+	}()
 	commitVerified := c.onboardingCommitVerified(ctx, record.AcceptedCommit)
 	c.mu.Lock()
 	eligible := !c.incidentOpen && !c.closureBlocksNextLocked() && c.lastAcknowledgedIncidentID == "" && c.incidentDetectedAt.IsZero() && len(c.failedClosures) == 0 && commitVerified
 	c.mu.Unlock()
 	if !eligible || (c.onboardingReachability != nil && c.onboardingReachability.invalid) || errored || len(findings) != 0 || len(c.healthDetectorIDs) == 0 || !c.pendingInventoryClear(record, now) {
-		return
+		return c.rejectPendingOnboarding(ctx, "first install evaluation was not healthy, quiet and source verified")
 	}
 	actionCtx, cancel, err := c.actionContext(ctx)
 	if err != nil {
-		return
+		return err
 	}
 	defer cancel()
 	var reference *servicehealth.ReachabilityBaseline
@@ -226,6 +237,7 @@ func (c *Controller) finishOnboarding(ctx context.Context, record *contracts.Nam
 	} else {
 		slog.InfoContext(ctx, "namespace onboarding established", "accepted_commit", record.AcceptedCommit, "install_to_record", lifecycleio.Since(record.EstablishedAt.AsTime()))
 	}
+	return err
 }
 
 // Preview acknowledgement only to distinguish install identities from later

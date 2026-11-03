@@ -128,3 +128,31 @@ func externalGoldenRequest(t *testing.T) IncidentRequest {
 	}
 	return *incidentRequestState(message)
 }
+
+// The runtime consumes completions outside StepEvents. With no detectors an
+// external controller has no scheduled observation to advance closure.
+func TestExternalCompletionSchedulesClosureImmediately(t *testing.T) {
+	now := time.Unix(1000, 0).UTC()
+	cfg := testControllerConfig()
+	cfg.ExternalIncidentsOnly = true
+	c, err := NewController(cfg, nil, externalUnavailableSnapshots{}, &recordingDispatcher{}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.now = func() time.Time { return now }
+	if err := c.OpenExternalIncident(context.Background(), now, ExternalIncident{ID: "external-wake", Namespace: cfg.Namespace, Message: "investigate"}); err != nil {
+		t.Fatal(err)
+	}
+	c.responderDone = true
+	c.responderCompletedAt = now
+	c.verificationDeadline = now.Add(5 * time.Minute)
+	if wake := c.NextWake(); wake.After(now) || wake.IsZero() {
+		t.Fatalf("completed external responder must wake now, got %v", wake)
+	}
+	if err := c.Step(context.Background(), now, nil); err != nil {
+		t.Fatal(err)
+	}
+	if c.incidentOpen || c.pendingClosure == nil {
+		t.Fatal("external completion did not close on its wake")
+	}
+}
