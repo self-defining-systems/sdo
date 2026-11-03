@@ -78,7 +78,7 @@ func resolveAssets() (string, error) {
 	if _, err := os.Stat(filepath.Join(cached, "kube-apiserver")); err == nil {
 		return cached, nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "go", "run", setupEnvtest, "use", KubernetesVersion, "--bin-dir", filepath.Join(cache, "bin"), "-p", "path")
 	out, err := cmd.Output()
