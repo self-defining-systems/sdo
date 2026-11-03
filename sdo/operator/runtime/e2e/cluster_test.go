@@ -101,7 +101,7 @@ func StartCluster(t testing.TB, dir string) *Cluster {
 		t.Fatal(err)
 	}
 	config := rest.CopyConfig(env.Config)
-	config.QPS, config.Burst, config.WarningHandler = 200, 400, rest.NoWarnings{}
+	config.WarningHandler = rest.NoWarnings{}
 	client, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		t.Fatal(err)
