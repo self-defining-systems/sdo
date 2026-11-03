@@ -166,6 +166,19 @@ func (c *Controller) forgetGate() {
 	}
 }
 
+// settleGateProbes ends the gate probes that came due in this pass and were
+// not rescheduled: observeGate and resetGate move or remove the probe of every
+// detector the pass evaluated, so one that is still due belongs to a detector
+// the pass could not evaluate (removed by a memory revision, or skipped).
+// NextWake would report it due forever.
+func (c *Controller) settleGateProbes(now time.Time) {
+	for detectorID, due := range c.gateProbes {
+		if !now.Before(due) {
+			delete(c.gateProbes, detectorID)
+		}
+	}
+}
+
 // dueGateProbes returns the detectors whose gate re-evaluation is due and
 // that the scheduler did not already select.
 func (c *Controller) dueGateProbes(now time.Time, selected []sdk.Detector) []sdk.Detector {

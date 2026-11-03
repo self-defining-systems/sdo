@@ -1301,6 +1301,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	// controller: the failed pass is retried after a backoff, with every detector
 	// due again. Errors a retry cannot fix still leave Run.
 	var stepBackoff transientBackoff
+	var spin wakeSpinGuard
 	var retryAt time.Time
 	survive := func(err error) error {
 		if err == nil {
@@ -1327,6 +1328,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			acceptBaseline(retryReachabilityBaseline)
 		}
 		var delay time.Duration
+		var wake time.Time
+		wakeReason := ""
 		switch {
 		case applied != desired:
 			// A resume is waiting for the application namespace to become observable.
@@ -1337,13 +1340,14 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				delay = wake.Sub(clock.Now())
 			}
 		default:
-			delay = controller.NextWake().Sub(clock.Now())
-			if retry := reachabilityReference.retryAt(); !retry.IsZero() {
-				delay = min(delay, retry.Sub(clock.Now()))
+			wake, wakeReason = controller.nextWake()
+			delay = wake.Sub(clock.Now())
+			if retry := reachabilityReference.retryAt(); !retry.IsZero() && retry.Sub(clock.Now()) < delay {
+				delay, wake, wakeReason = retry.Sub(clock.Now()), retry, "reachability retry"
 			}
 		}
-		if !retryAt.IsZero() {
-			delay = min(delay, retryAt.Sub(clock.Now()))
+		if !retryAt.IsZero() && retryAt.Sub(clock.Now()) < delay {
+			delay, wake, wakeReason = retryAt.Sub(clock.Now()), retryAt, "transient error retry"
 		}
 		if delay < 0 {
 			delay = 0
@@ -1527,6 +1531,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					return err
 				}
 				continue
+			}
+			if err := spin.pass(clock.Now(), delay, wake, wakeReason); err != nil {
+				return err
 			}
 			if err := survive(controller.Step(runCtx, clock.Now().UTC(), nil)); err != nil {
 				if runCtx.Err() != nil {
