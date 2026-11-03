@@ -3,7 +3,10 @@ package operatorcli
 import (
 	"bytes"
 	"context"
+	"os"
 	"path/filepath"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
 	"testing"
 )
 
@@ -34,5 +37,31 @@ func TestMemoryCheckNoFlagsFailsClosedWithoutAcceptanceInputs(t *testing.T) {
 		if code != 2 || stderr == "" {
 			t.Fatalf("missing inputs accepted: env=%v code=%d stderr=%s", env, code, stderr)
 		}
+	}
+}
+
+func TestMemoryListCountsProgramPackages(t *testing.T) {
+	root := t.TempDir()
+	for name, body := range map[string]string{
+		".sdo/schema-version":            "3\n",
+		".sdo/playbooks/fix/README.md":   "---\nschema_version: 1\nowner: responder\nfault_class: fix\noriginating_incident: synthetic\n---\n# Fix\n",
+		".sdo/playbooks/fix/diagnose.go": "package fix\n",
+		".sdo/playbooks/fix/mitigate.go": "package fix\n",
+	} {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	code, stdout, stderr := runMemory(t, nil, "ls", "--root", root, "--kind", "program", "--json")
+	listing := &contracts.MemoryListing{}
+	if err := wire.UnmarshalDurable([]byte(stdout), listing); err != nil {
+		t.Fatal(err)
+	}
+	if code != 0 || len(listing.Artifacts) != 1 || listing.Artifacts[0].Kind != "program" {
+		t.Fatalf("program listing: %d %s %s", code, stdout, stderr)
 	}
 }

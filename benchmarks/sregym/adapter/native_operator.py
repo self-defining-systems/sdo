@@ -276,7 +276,7 @@ def execute_operator(command: str, args: list[str], *, timeout: float, input_tex
     except (OSError, subprocess.SubprocessError) as exc:
         raise NativeOperatorError(f"Go operator {command} could not run: {exc}") from exc
     if result.returncode != 0:
-        detail = (result.stderr or result.stdout).strip()[-4096:]
+        detail = "\n".join(part.strip()[-2048:] for part in (result.stderr, result.stdout) if part.strip())
         raise NativeOperatorError(f"Go operator {command} failed ({result.returncode}): {detail}")
     return result.stdout
 

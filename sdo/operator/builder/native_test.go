@@ -47,3 +47,16 @@ func TestBuildWorkspaceRejectsNetworkTrafficGenerator(t *testing.T) {
 		t.Fatalf("networked generator was accepted or rejected for wrong reason: %v", err)
 	}
 }
+
+func TestBuildWorkspaceAllowsNoDetectors(t *testing.T) {
+	app := t.TempDir()
+	diagnostics := filepath.Join(app, ".sdo", "diagnostics")
+	if err := os.MkdirAll(diagnostics, 0755); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := BuildWorkspace(context.Background(), Config{ApplicationRoot: app, DiagnosticsRoot: diagnostics, OperatorRoot: ".."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(workspace.Directory)
+}
