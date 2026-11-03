@@ -1,0 +1,655 @@
+package validate
+
+import (
+	"context"
+	"encoding/json"
+	"go/format"
+	"os"
+	"path/filepath"
+	"slices"
+	"sort"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/types/known/timestamppb"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/internal/testutil"
+	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/sdk/sdktest"
+)
+
+// The gate table. validate.Check is the one acceptance check: agents run it
+// through `sdo-operator memory check` and the broker repeats it before it
+// publishes. Each row is a candidate change (bad program, bad detector, bad
+// playbook, bad edit by an actor in a phase) with the rule it must be rejected
+// for, or a good change that must pass. Every rule in rules.go has a row here
+// (TestGateTableNamesEveryRule), so a rule that stops firing is noticed.
+//
+// Rows that need the Go toolchain are gateCompileRows; they run through FakeGo
+// here and through the real `go` in gate_real_integration_test.go.
+
+const gateProgramFixture = "../../../../tests/fixtures/sdo/playbook_program_app/.sdo"
+
+const gateProgramInvalid = "program.invalid"
+
+const (
+	gateCache          = ".sdo/diagnostics/detectors/incidents/cache/detector.go"
+	gateCacheManifest  = ".sdo/diagnostics/detectors/incidents/cache/manifest.yaml"
+	gateHealth         = ".sdo/diagnostics/detectors/health/health/detector.go"
+	gateHealthManifest = ".sdo/diagnostics/detectors/health/health/manifest.yaml"
+	gateReadme         = ".sdo/playbooks/base/README.md"
+	gateIncident       = "inc-1"
+)
+
+func gateIncidentManifest(id, firing, origin string) string {
+	return "apiVersion: sdo.dev/v1alpha1\nkind: DetectorManifest\nsdkVersion: v0.1\nid: " + id + "\nconstructor: New\nclass: incident\nowner: responder\nwatches:\n  - apiVersion: v1\n    kind: Pod\ninterval: 30s\npersistence:\n  firing: " + firing + "\n  clearing: 1\nbatching:\n  severity: warn\n  debounce: \"0\"\npossiblePlaybooks:\n  - base\noriginatingIncident: " + origin + "\noriginatingCommit: abc\n"
+}
+
+func gateReadmeText(extra string) string {
+	return "---\nschema_version: 1\nowner: responder\nfault_class: base\noriginating_incident: initial\n---\nRepair <RESOURCE_NAME>. Run fix.sh to restart it.\n" + extra
+}
+
+type gateKind int
+
+const (
+	// gateStatic validates the tree as it is: structure and semantics only.
+	gateStatic gateKind = iota
+	// gateOwnership validates a change against the committed base for an actor and phase.
+	gateOwnership
+	// gateCheck runs the complete pipeline (validate.Check) on a change, with a
+	// compile runner that accepts: the compile layer has its own rows.
+	gateCheck
+)
+
+type gateRow struct {
+	name string
+	kind gateKind
+	// rules is the exact set of blocking rules; empty means the change must pass.
+	rules []string
+	// path, when set, is where the last listed rule must point.
+	path string
+	// notes are informational rules the check must report without rejecting.
+	notes []string
+
+	actor Actor
+	phase Phase
+	// prepare shapes the base tree before it is committed; baseMessage is its commit message.
+	prepare     func(t *testing.T, root string)
+	baseMessage string
+	// edit is the candidate change on top of the base.
+	edit    func(t *testing.T, root string)
+	request func(*Request)
+}
+
+func gateOverlay(name string) func(*testing.T, string) {
+	return func(t *testing.T, root string) { applyCase(t, root, name) }
+}
+
+func gateWrite(rel, content string) func(*testing.T, string) {
+	return func(t *testing.T, root string) { write(t, root, rel, content) }
+}
+
+// gateOutcome commits a controller outcome for gateIncident with the trailers
+// the broker puts on an accepted outcome commit.
+func gateOutcome(outcome *contracts.OutcomeRecord) func(*testing.T, string) {
+	return func(t *testing.T, root string) {
+		outcome.SchemaVersion, outcome.IncidentId = 1, gateIncident
+		for _, action := range outcome.RepairActions {
+			action.Target, action.Summary, action.Details = "Service/app/api", "synthetic repair", "synthetic receipt"
+			if action.StartedAt == nil {
+				action.StartedAt = timestamppb.New(time.Unix(101, 0))
+				action.CompletedAt = action.StartedAt
+			}
+		}
+		raw, err := protojson.Marshal(outcome)
+		if err != nil {
+			t.Fatal(err)
+		}
+		write(t, root, layout.OutcomePath(gateIncident), string(raw)+"\n")
+	}
+}
+
+const gateOutcomeMessage = "outcome\n\nSDO-Incident: " + gateIncident + "\nSDO-Phase: outcome"
+
+func gateRepairOutcome() *contracts.OutcomeRecord {
+	at := timestamppb.New(time.Unix(100, 0))
+	ref := &contracts.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}
+	app := &contracts.PlanApplication{ApplicationId: "apply-1", ProgramIds: []string{"base"}, Applied: true, VerificationCompleted: true, VerificationPassed: true, CompletedAt: at, Plan: &contracts.Plan{}}
+	return &contracts.OutcomeRecord{Classification: "success",
+		AppliedPlaybooks: []string{"base"},
+		RepairActions:    []*contracts.RepairActionReceipt{{ActionId: "sdo-program-apply-1", Kind: "program-plan", Success: true, Resources: []*contracts.ObjectRef{ref}, StartedAt: at, CompletedAt: at}},
+		PlanApplications: []*contracts.PlanApplication{app},
+		PriorStages:      []*contracts.StageReport{{Stage: "deterministic", Mitigations: []*contracts.StageMitigation{{PlaybookId: "base", Result: "applied_cleared", ApplyReceipt: app}}}},
+	}
+}
+
+func gateHandRepair(o *contracts.OutcomeRecord) *contracts.OutcomeRecord {
+	o.RepairActions = append(o.RepairActions, &contracts.RepairActionReceipt{ActionId: "manual-port", Kind: "exec", Success: true})
+	return o
+}
+
+func gateStaleOutcome() *contracts.OutcomeRecord {
+	o := gateRepairOutcome()
+	o.PriorStages[0].Mitigations[0].Result = "apply_error"
+	return o
+}
+
+// gateReflection is a responder reflection over a committed accepted outcome.
+func gateReflection(name string, outcome *contracts.OutcomeRecord, decision *contracts.ReflectionDecision, edit func(*testing.T, string), rules ...string) gateRow {
+	return gateRow{name: name, kind: gateCheck, actor: Responder, phase: ReflectionPhase, rules: rules, edit: edit,
+		prepare: gateOutcome(outcome), baseMessage: gateOutcomeMessage,
+		request: func(r *Request) {
+			r.Decision = decision
+			r.Publication = &PublicationContext{BaseCommit: "HEAD", IncidentID: gateIncident}
+		}}
+}
+
+var gateNoChange = &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "already covered"}
+
+func gateUpdated(ids ...string) *contracts.ReflectionDecision {
+	return &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: ids}
+}
+
+func gateClean() *contracts.OutcomeRecord { return &contracts.OutcomeRecord{Classification: "success"} }
+
+func gatePlaybookEdit(t *testing.T, root string) {
+	write(t, root, gateReadme, gateReadmeText("New guidance.\n"))
+}
+
+func gateTrafficEdit(name, content string) func(*testing.T, string) {
+	return gateWrite(".sdo/diagnostics/traffic/workloads/"+name+".yaml", content)
+}
+
+var gateRows = []gateRow{
+	// Good trees: each must pass, including the optional classes.
+	{name: "good tree", kind: gateStatic},
+	{name: "memory without detectors is valid (detector.none is not enforced)", kind: gateStatic, edit: gateOverlay("detector-none")},
+	{name: "memory without playbooks is valid (playbook.none is not enforced)", kind: gateStatic, edit: gateOverlay("playbook-none")},
+	{name: "unchanged good tree passes the whole pipeline", kind: gateCheck, actor: Responder, phase: ReflectionPhase,
+		prepare: gateOutcome(gateClean()), baseMessage: gateOutcomeMessage, request: func(r *Request) {
+			r.Decision = gateNoChange
+			r.Publication = &PublicationContext{BaseCommit: "HEAD", IncidentID: gateIncident}
+		}},
+
+	// Structure and semantics, one bad tree per rule.
+	{name: "unknown path", kind: gateStatic, rules: []string{RuleUnknownPath}, path: ".sdo/notes.txt", edit: gateOverlay("unknown-path")},
+	{name: "invalid id", kind: gateStatic, rules: []string{RuleInvalidID}, path: ".sdo/playbooks/Bad_ID/README.md", edit: gateOverlay("invalid-id")},
+	{name: "secret path", kind: gateStatic, rules: []string{RuleSecretPath}, path: ".sdo/diagnostics/traffic/generators/secret-token.go", edit: gateOverlay("secret-path")},
+	{name: "legacy manifest", kind: gateStatic, rules: []string{RuleLegacyManifest}, path: ".sdo/diagnostics/manifest.yaml", edit: gateOverlay("legacy-manifest")},
+	{name: "schema version", kind: gateStatic, rules: []string{RuleSchemaVersion}, path: ".sdo/schema-version", edit: gateOverlay("schema-version")},
+	{name: "yaml parse", kind: gateStatic, rules: []string{RuleYAMLParse}, path: ".sdo/diagnostics/traffic/workloads/health.yaml", edit: gateOverlay("yaml-parse")},
+	{name: "go syntax", kind: gateStatic, rules: []string{RuleGoSyntax}, path: gateCache, edit: gateOverlay("go-syntax")},
+	{name: "document parse", kind: gateStatic, rules: []string{RuleDocumentParse}, path: ".sdo/arch.md", edit: gateOverlay("document-parse")},
+	{name: "manifest parse", kind: gateStatic, rules: []string{RuleManifestParse}, path: gateCacheManifest, edit: gateOverlay("manifest-parse")},
+	{name: "manifest invalid", kind: gateStatic, rules: []string{RuleManifestInvalid}, path: gateCacheManifest, edit: gateOverlay("manifest-invalid")},
+	{name: "manifest names a playbook by path", kind: gateStatic, rules: []string{RuleManifestInvalid}, path: gateCacheManifest, edit: gateOverlay("manifest-playbook-path")},
+	{name: "manifest location", kind: gateStatic, rules: []string{RuleManifestLocation}, path: gateHealthManifest, edit: gateOverlay("manifest-location")},
+	{name: "architecture missing", kind: gateStatic, rules: []string{RuleArchitectureMissing}, path: ".sdo/arch.md", edit: gateOverlay("architecture-missing")},
+	{name: "goal owner", kind: gateStatic, rules: []string{RuleGoalOwner}, path: ".sdo/goal.md", edit: gateOverlay("goal-owner")},
+	{name: "manifest missing", kind: gateStatic, rules: []string{RuleManifestMissing}, path: ".sdo/diagnostics/detectors/incidents/orphan", edit: gateOverlay("manifest-missing")},
+	{name: "detector without Go source", kind: gateStatic, rules: []string{RuleDetectorNoSource}, path: ".sdo/diagnostics/detectors/incidents/cache", edit: gateOverlay("detector-no-source")},
+	{name: "duplicate id", kind: gateStatic, rules: []string{RuleDuplicateID}, path: ".sdo/diagnostics/detectors/incidents/health/manifest.yaml", edit: gateOverlay("duplicate-id")},
+	{name: "detector names an unknown playbook", kind: gateStatic, rules: []string{RuleUnknownPlaybook}, path: gateCacheManifest, edit: gateOverlay("unknown-playbook")},
+	{name: "playbook without README", kind: gateStatic, rules: []string{RulePlaybookNoReadme}, path: ".sdo/playbooks/extra", edit: gateOverlay("playbook-missing-readme")},
+	{name: "playbook owner", kind: gateStatic, rules: []string{RulePlaybookOwner}, path: gateReadme, edit: gateOverlay("playbook-owner")},
+	{name: "playbook originating incident", kind: gateStatic, rules: []string{RulePlaybookIncident}, path: gateReadme, edit: gateOverlay("playbook-originating-incident")},
+	{name: "playbook status", kind: gateStatic, rules: []string{gateProgramInvalid, RulePlaybookStatus}, path: gateReadme,
+		edit: gateWrite(gateReadme, "---\nschema_version: 1\nowner: responder\nfault_class: base\noriginating_incident: initial\nstatus: paused\n---\nRepair <RESOURCE_NAME>. Run fix.sh to restart it.\n")},
+	{name: "playbook index missing", kind: gateStatic, rules: []string{RuleIndexMissing}, path: ".sdo/playbooks/README.md", edit: gateOverlay("index-missing")},
+	{name: "playbook index hand written", kind: gateStatic, rules: []string{RuleIndexGenerated}, path: ".sdo/playbooks/README.md", edit: gateOverlay("index-generated")},
+	{name: "script unreferenced", kind: gateStatic, rules: []string{RuleScriptUnreferenced}, path: ".sdo/playbooks/base/scripts/other.sh", edit: gateOverlay("script-unreferenced")},
+	{name: "script syntax", kind: gateStatic, rules: []string{RuleScriptSyntax}, path: ".sdo/playbooks/base/scripts/fix.sh", edit: gateOverlay("script-syntax")},
+	{name: "script not executable", kind: gateStatic, rules: []string{RuleScriptNotExecutable}, edit: func(t *testing.T, root string) {
+		if err := os.Chmod(filepath.Join(root, ".sdo/playbooks/base/scripts/fix.sh"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}},
+	{name: "physical path in a playbook", kind: gateStatic, rules: []string{RulePhysicalPath}, path: gateReadme, edit: gateOverlay("physical-path")},
+	{name: "physical path in a detector", kind: gateStatic, rules: []string{RulePhysicalPath}, path: gateCache, edit: gateOverlay("detector-physical-path")},
+	{name: "symlink", kind: gateStatic, rules: []string{RuleSymlink}, edit: func(t *testing.T, root string) {
+		if err := os.Symlink("/etc/passwd", filepath.Join(root, ".sdo", "link.md")); err != nil {
+			t.Fatal(err)
+		}
+	}},
+	{name: "not a regular file", kind: gateStatic, rules: []string{RuleNotRegular}, edit: func(t *testing.T, root string) {
+		if err := syscall.Mkfifo(filepath.Join(root, ".sdo", "goal.pipe"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}},
+	{name: "file too large", kind: gateStatic, rules: []string{RuleTooLarge}, edit: gateWrite(gateReadme, gateReadmeText(strings.Repeat("x", 300*1024)))},
+
+	{name: "program imports a forbidden package", kind: gateStatic, rules: []string{gateProgramInvalid}, path: ".sdo/playbooks",
+		edit: gateWrite(".sdo/playbooks/base/diagnose.go", "package base\n\nimport \"os/exec\"\n\ntype Diagnose struct{}\n\nfunc (Diagnose) Spec()     {}\nfunc (Diagnose) Diagnose() { _ = exec.Command }\n")},
+	{name: "Go source is not gofmt formatted", kind: gateStatic, rules: []string{gateProgramInvalid, "go.format"}, path: ".sdo/playbooks/base/diagnose.go",
+		edit: gateWrite(".sdo/playbooks/base/diagnose.go", "package base\ntype Diagnose struct{}\nfunc(Diagnose)Spec(){}\nfunc(Diagnose)Diagnose(){}\n")},
+	{name: "observation scope is malformed", kind: gateStatic, rules: []string{"observation.scope"}, path: ".sdo/arch.md",
+		edit: gateWrite(".sdo/arch.md", "---\nschema_version: 1\ngenerated_at_commit: base\napplication: demo\nobservation_scope: {version: 2}\n---\nx\n")},
+	{name: "detector watches outside the observation scope", kind: gateStatic, rules: []string{"observation.watch"}, path: ".sdo/arch.md",
+		request: func(r *Request) { r.ApplicationNamespace = "demo" },
+		edit: func(t *testing.T, r string) {
+			write(t, r, ".sdo/arch.md", "---\nschema_version: 1\ngenerated_at_commit: base\napplication: demo\nobservation_scope:\n  version: 1\n---\nx\n")
+			edit(t, r, gateCacheManifest, "    kind: Pod", "    kind: Pod\n    namespace: other")
+		}},
+	{name: "program that decides on diff text is noted, not rejected", kind: gateStatic, rules: []string{gateProgramInvalid}, notes: []string{RuleProgramDiffText},
+		edit: func(t *testing.T, r string) {
+			remove(t, r, ".sdo/playbooks/base/scripts")
+			write(t, r, ".sdo/playbooks/base/diagnose.go", gateFormatted(t, gateDiffTextProgram))
+		}},
+	{name: "corpus case claims a script origin with no receipt", kind: gateCheck, actor: Responder, phase: ReflectionPhase, rules: []string{RuleProgramMitigationRepair},
+		baseMessage: gateOutcomeMessage,
+		prepare: func(t *testing.T, r string) {
+			for _, dir := range []string{"playbooks/service-targetport-mismatch", "lib", "corpus"} {
+				copyTree(t, filepath.Join(gateProgramFixture, dir), filepath.Join(r, ".sdo", dir))
+			}
+			write(t, r, ".sdo/diagnostics/go.mod", gateRead(t, gateProgramFixture, "diagnostics/go.mod"))
+			generateIndex(t, r)
+			gateOutcome(gateClean())(t, r)
+		},
+		edit: func(t *testing.T, r string) {
+			copyTree(t, filepath.Join(r, ".sdo/corpus/targetport-mismatch"), filepath.Join(r, ".sdo/corpus/case-2"))
+			labels := gateRead(t, r, ".sdo/corpus/case-2/labels.json")
+			write(t, r, ".sdo/corpus/case-2/labels.json", strings.Replace(labels, `{"root_cause`, `{"script_origins":{"sha256:abc":"no-such-receipt"},"root_cause`, 1))
+		},
+		request: func(r *Request) {
+			r.Decision = gateUpdated()
+			r.Publication = &PublicationContext{BaseCommit: "HEAD", IncidentID: gateIncident}
+		}},
+
+	// Ownership: who may change what, in which phase.
+	{name: "responder edits an incident detector in reflection", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, edit: gateWrite(gateCache, "package cache\n\n// tuned\n")},
+	{name: "responder adds an incident detector in reflection", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, edit: func(t *testing.T, r string) {
+		write(t, r, ".sdo/diagnostics/detectors/incidents/dns/manifest.yaml", gateIncidentManifest("dns", "1", "inc-2"))
+		write(t, r, ".sdo/diagnostics/detectors/incidents/dns/detector.go", "package dns\n")
+	}},
+	{name: "responder edits source in a proposal", kind: gateOwnership, actor: Responder, phase: ProposalPhase, edit: gateWrite("app.txt", "repair\n")},
+	{name: "health judge edits health detectors in initial", kind: gateOwnership, actor: HealthJudge, phase: InitialPhase, edit: func(t *testing.T, r string) {
+		write(t, r, gateHealth, "package objective\n\n// edit\n")
+		edit(t, r, gateHealthManifest, "interval: 30s", "interval: 20s")
+	}},
+	{name: "human edits the goal in initial", kind: gateOwnership, actor: Human, phase: InitialPhase, edit: gateWrite(layout.GoalFile, "---\nschema_version: 1\nowner: human\n---\nNew goal\n")},
+	{name: "deployer edits source in initial", kind: gateOwnership, actor: Deployer, phase: InitialPhase, edit: gateWrite("app.txt", "deployed\n")},
+	{name: "upkeep stamps the schema alone", kind: gateOwnership, actor: Upkeep, phase: InitialPhase, edit: func(t *testing.T, r string) {
+		write(t, r, layout.SchemaVersionFile, "3\n")
+		write(t, r, layout.DiagnosticsGoModFile, "module m\n")
+	}},
+	{name: "responder cannot edit the goal", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleOwnershipDenied}, path: layout.GoalFile,
+		edit: gateWrite(layout.GoalFile, "---\nschema_version: 1\nowner: human\n---\nNew goal\n")},
+	{name: "responder cannot edit outcomes", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleOwnershipDenied}, edit: gateWrite(layout.OutcomePath("inc"), "{}\n")},
+	{name: "responder cannot edit source in reflection", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleOwnershipDenied}, path: "app.txt", edit: gateWrite("app.txt", "changed\n")},
+	{name: "responder cannot edit memory in a proposal", kind: gateOwnership, actor: Responder, phase: ProposalPhase, rules: []string{RuleOwnershipDenied}, edit: gateWrite(gateCache, "package cache\n\n// early\n")},
+	{name: "responder cannot edit health detector source", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleOwnershipDenied}, path: gateHealth, edit: gateWrite(gateHealth, "package objective\n\n// edit\n")},
+	{name: "responder cannot edit an unclassified memory path", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleOwnershipDenied}, edit: gateWrite(".sdo/notes.txt", "x\n")},
+	{name: "responder cannot change a health manifest", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleOwnershipDenied, RuleProtectedDetector},
+		edit: func(t *testing.T, r string) { edit(t, r, gateHealthManifest, "interval: 30s", "interval: 20s") }},
+	{name: "responder incident detector must fire on first match", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleResponderFiring}, edit: func(t *testing.T, r string) {
+		write(t, r, ".sdo/diagnostics/detectors/incidents/dns/manifest.yaml", gateIncidentManifest("dns", "2", "inc-2"))
+		write(t, r, ".sdo/diagnostics/detectors/incidents/dns/detector.go", "package dns\n")
+	}},
+	{name: "responder cannot rewrite detector provenance", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleProvenanceRewrite},
+		edit: func(t *testing.T, r string) {
+			edit(t, r, gateCacheManifest, "originatingIncident: inc-1", "originatingIncident: inc-9")
+		}},
+	{name: "health judge cannot add an incident detector", kind: gateOwnership, actor: HealthJudge, phase: InitialPhase, rules: []string{RuleOwnershipDenied, RuleProtectedDetector}, edit: func(t *testing.T, r string) {
+		write(t, r, ".sdo/diagnostics/detectors/incidents/dns/manifest.yaml", gateIncidentManifest("dns", "1", "inc-2"))
+		write(t, r, ".sdo/diagnostics/detectors/incidents/dns/detector.go", "package dns\n")
+	}},
+	{name: "health judge initial memory must install detectors", kind: gateOwnership, actor: HealthJudge, phase: InitialPhase, rules: []string{RuleInitialNeedsDetectors},
+		edit: gateWrite(".sdo/playbooks/health-objective/README.md", "x\n")},
+	{name: "health judge may add only health detectors to empty memory", kind: gateOwnership, actor: HealthJudge, phase: InitialPhase, rules: []string{RuleOwnershipDenied, RuleInitialHealthOnly},
+		prepare: func(t *testing.T, r string) { remove(t, r, ".sdo/diagnostics") },
+		edit: func(t *testing.T, r string) {
+			copyTree(t, filepath.Join("testdata", "good", ".sdo", "diagnostics"), filepath.Join(r, ".sdo", "diagnostics"))
+		}},
+	{name: "upkeep cannot change detectors without a schema migration", kind: gateOwnership, actor: Upkeep, phase: InitialPhase, rules: []string{RuleUpkeepMigration}, edit: gateWrite(gateCache, "package cache\n\n// x\n")},
+	{name: "unknown actor", kind: gateOwnership, actor: Actor("intern"), phase: InitialPhase, rules: []string{RuleUnknownActor}, edit: gateWrite("app.txt", "x\n")},
+	{name: "unknown phase", kind: gateOwnership, actor: Responder, phase: Phase("whenever"), rules: []string{RuleUnknownPhase}, edit: gateWrite("app.txt", "x\n")},
+	{name: "unsafe path", kind: gateOwnership, actor: Responder, phase: ProposalPhase, rules: []string{RuleUnsafePath}, edit: gateWrite(`we\ird.txt`, "x\n")},
+
+	// Publication content and lifecycle: the full pipeline.
+	{name: "empty proposal", kind: gateCheck, actor: Responder, phase: ProposalPhase, rules: []string{RuleEmptyDiff}},
+	gateReflection("whitespace in authored memory", gateClean(), gateUpdated("base"), gateWrite(gateReadme, gateReadmeText("Recovery guidance. \n")), RuleWhitespace),
+	{name: "whitespace in application bytes is not judged", kind: gateCheck, actor: Responder, phase: ProposalPhase,
+		edit: gateWrite("kubernetes/geo/script.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: s\ndata:\n  init.sh: |\n    echo   \n    \n")},
+	{name: "reflection without an accepted outcome", kind: gateCheck, actor: Responder, phase: ReflectionPhase, rules: []string{RuleAcceptedOutcome}, edit: gatePlaybookEdit,
+		request: func(r *Request) { r.Decision = gateUpdated("base") }},
+	{name: "initial phase closed after detectors are accepted", kind: gateCheck, actor: Responder, phase: InitialPhase, rules: []string{RuleBootstrapClosed, RuleOwnershipDenied}, edit: gatePlaybookEdit},
+	{name: "initial source needs a verified source tree", kind: gateCheck, actor: Deployer, phase: InitialPhase, rules: []string{RuleVerifiedSource},
+		prepare: func(t *testing.T, r string) { remove(t, r, ".sdo/diagnostics"); remove(t, r, ".sdo/playbooks") },
+		edit:    gateWrite("app.txt", "deployed\n")},
+	{name: "health judge replaced generated policy", kind: gateCheck, actor: HealthJudge, phase: InitialPhase, rules: []string{RuleGenericHealth}, edit: func(t *testing.T, r string) {
+		write(t, r, ".sdo/diagnostics/detectors/health/service-endpoints/manifest.yaml", strings.ReplaceAll(gateRead(t, r, gateHealthManifest), "id: health", "id: service-endpoints"))
+		write(t, r, ".sdo/diagnostics/detectors/health/service-endpoints/detector.go", "package endpoints\n\n// authored policy override\n")
+	}},
+	gateReflection("snapshot budget", gateClean(), gateUpdated("large-a", "large-b", "large-c"), func(t *testing.T, r string) {
+		for _, id := range []string{"large-a", "large-b", "large-c"} {
+			write(t, r, ".sdo/playbooks/"+id+"/README.md", "---\nschema_version: 1\nowner: responder\nfault_class: "+id+"\noriginating_incident: incident\n---\nRepair <RESOURCE_NAME>.\n"+strings.Repeat("Verified guidance paragraph.\n", 7000))
+		}
+		generateIndex(t, r)
+	}, RuleSnapshotBudget),
+	gateReflection("cluster-local value in memory", gateClean(), gateUpdated(), gateTrafficEdit("incident-x", "name: incident-x\nclusterIP: 10.96.0.12\n"), RuleClusterLocal),
+	gateReflection("Secret data in memory", gateClean(), gateUpdated(), gateTrafficEdit("incident-x", "apiVersion: v1\nkind: Secret\nmetadata:\n  name: db\ndata:\n  password: c2VjcmV0\n"), RuleSecretData),
+	gateReflection("reflection without a decision", gateClean(), nil, gatePlaybookEdit, RuleReflectionDecision),
+	gateReflection("reflection updates a playbook", gateClean(), gateUpdated("base"), gatePlaybookEdit),
+	gateReflection("applied playbook failed and was not updated", gateStaleOutcome(), gateNoChange, func(*testing.T, string) {}, RuleReflectionStalePlaybook),
+	gateReflection("hand repair has no program", gateHandRepair(gateRepairOutcome()), gateNoChange, func(*testing.T, string) {}, RuleReflectionProgramRequired),
+	gateReflection("sdk gap that is free text", gateHandRepair(gateRepairOutcome()),
+		&contracts.ReflectionDecision{LearningDecision: "sdk_gap", NoChangeReason: "needs a primitive", SdkGaps: []*contracts.SdkGap{{FaultClass: "routing", Primitive: "do the repair by hand", Reason: "no primitive", ScratchScript: "inspect"}}},
+		func(*testing.T, string) {}, RuleReflectionSDKGapUnavailable, RuleReflectionProgramRequired),
+	{name: "accepted corpus case rewritten", kind: gateCheck, actor: Responder, phase: ReflectionPhase, rules: []string{gateProgramInvalid, RuleCorpusImmutable},
+		prepare: func(t *testing.T, r string) {
+			gateOutcome(gateClean())(t, r)
+			write(t, r, ".sdo/corpus/case-1/labels.json", "{}\n")
+		},
+		baseMessage: gateOutcomeMessage,
+		edit:        gateWrite(".sdo/corpus/case-1/labels.json", `{"changed":true}`+"\n"),
+		request: func(r *Request) {
+			r.Decision = gateUpdated()
+			r.Publication = &PublicationContext{BaseCommit: "HEAD", IncidentID: gateIncident}
+		}},
+}
+
+func gateStubCompile(context.Context, Request) ([]Diagnostic, error) { return nil, nil }
+
+func runGateRow(t *testing.T, row gateRow) {
+	root := goodTree(t)
+	if row.prepare != nil {
+		row.prepare(t, root)
+	}
+	var notes []Diagnostic
+	request := Request{Root: root, CoverageGaps: &notes}
+	var diagnostics []Diagnostic
+	if row.kind == gateStatic {
+		if row.edit != nil {
+			row.edit(t, root)
+		}
+		if row.request != nil {
+			row.request(&request)
+		}
+		request.Layers = Structural | Semantic
+		diagnostics = diagnose(t, request)
+	} else {
+		message := row.baseMessage
+		if message == "" {
+			message = "base"
+		}
+		commit(t, root, message)
+		if row.edit != nil {
+			row.edit(t, root)
+		}
+		request.Base, request.Actor, request.Phase = "HEAD", row.actor, row.phase
+		if row.request != nil {
+			row.request(&request)
+		}
+		if row.kind == gateOwnership {
+			request.Layers = Ownership
+			diagnostics = diagnose(t, request)
+		} else {
+			var err error
+			if diagnostics, err = Check(context.Background(), request, gateStubCompile); err != nil {
+				t.Fatalf("Check returned an infrastructure error: %v", err)
+			}
+		}
+	}
+	if got := ruleSet(diagnostics); !same(got, row.rules) {
+		t.Fatalf("rules = %v, want %v\n%v", got, row.rules, diagnostics)
+	}
+	for _, d := range diagnostics {
+		if d.Message == "" {
+			t.Errorf("diagnostic without a message: %+v", d)
+		}
+	}
+	if row.path != "" {
+		last := row.rules[len(row.rules)-1]
+		if !slices.ContainsFunc(diagnostics, func(d Diagnostic) bool { return d.Rule == last && d.Path == row.path }) {
+			t.Fatalf("no %s diagnostic at %s: %v", last, row.path, diagnostics)
+		}
+	}
+	for _, want := range row.notes {
+		if !slices.ContainsFunc(notes, func(d Diagnostic) bool { return d.Rule == want }) {
+			t.Errorf("no %s note: %v", want, notes)
+		}
+	}
+}
+
+func TestGateTable(t *testing.T) {
+	for _, row := range gateRows {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			runGateRow(t, row)
+		})
+	}
+}
+
+// A compile row is a candidate that passes every static layer and fails one Go
+// stage. fake makes FakeGo fail that stage on the unchanged fixture; real edits
+// the fixture so the real toolchain fails it. Both must produce the same
+// rejection, which is what makes FakeGo an honest stand-in for the rows that do
+// not need the compiler's own output.
+type gateCompileRow struct {
+	name string
+	rule string
+	// path is where the rejection points.
+	path string
+	fake testutil.GoRule
+	// real mutates the compile fixture; baseline, if set, is written as the healthy capture.
+	real     func(t *testing.T, root string)
+	baseline bool
+}
+
+const (
+	gateFixtureDetector = ".sdo/diagnostics/detectors/incidents/missing-configmap/detector.go"
+	gateFixtureTest     = ".sdo/diagnostics/detectors/incidents/missing-configmap/detector_test.go"
+)
+
+var gateCompileRows = []gateCompileRow{
+	{name: "does not build", rule: RuleDetectorCompile, path: gateFixtureDetector,
+		fake: testutil.GoRule{Verb: "build", Output: "detectors/incidents/missing-configmap/detector.go:17: undefined: undefinedValue"},
+		real: func(t *testing.T, root string) {
+			edit(t, root, gateFixtureDetector, "return Detector{}", "return undefinedValue")
+		}},
+	{name: "fails go vet", rule: RuleDetectorVet, path: gateFixtureDetector,
+		fake: testutil.GoRule{Verb: "vet", Output: "detectors/incidents/missing-configmap/detector.go:17: fmt.Sprintf format %d has arg of wrong type string"},
+		real: func(t *testing.T, root string) {
+			edit(t, root, gateFixtureDetector, "return Detector{}", "_ = fmt.Sprintf(\"%d\", \"not a number\")\n\treturn Detector{}")
+		}},
+	{name: "fails its own test", rule: RuleDetectorTest, path: layout.DiagnosticsDir,
+		fake: testutil.GoRule{Verb: "test", Output: "--- FAIL: TestDetectorGeneralizesAcrossNamesAndIgnoresOptionalReferences\n    detector_test.go:20: sentinel detector failure"},
+		real: func(t *testing.T, root string) {
+			edit(t, root, gateFixtureTest, "len(findings) != 1", "len(findings) == 1")
+		}},
+	{name: "fires on the healthy baseline", rule: RuleDetectorHealthyBaseline, path: layout.DiagnosticsDir, baseline: true,
+		fake: testutil.GoRule{Verb: "test", Output: "detector.healthy-baseline: missing-configmap fired on the healthy capture"},
+		real: func(t *testing.T, root string) {
+			edit(t, root, gateFixtureDetector, "findings := make([]sdk.Finding, 0)", "findings := make([]sdk.Finding, 0)\n\tif len(snapshot.Deployments()) == 0 {\n\t\treturn []sdk.Finding{{RuleID: \"missing-configmap\", Status: sdk.FindingActive, Severity: sdk.SeverityCritical, Summary: \"always\", Evidence: \"always\", Fingerprint: \"always\"}}, nil\n\t}")
+		}},
+	{name: "controller would refuse to start it", rule: RuleDetectorControllerStart, path: layout.DiagnosticsDir,
+		fake: testutil.GoRule{Verb: "test", Output: "detector.controller-start: the controller would refuse to start: detector \"missing-configmap\": interval must be greater than zero"},
+		real: func(t *testing.T, root string) {
+			edit(t, root, gateFixtureDetector, "30 * time.Second", "-time.Second")
+		}},
+}
+
+// gateBaseline writes the controller's healthy capture: an empty namespace.
+func gateBaseline(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	snapshot, err := sdktest.CaptureSnapshot(sdktest.Snapshot{NamespaceName: "demo"}, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, dir, "empty-namespace.json", string(raw))
+	return dir
+}
+
+func gateCompileDiagnostics(t *testing.T, row gateCompileRow, root string) []Diagnostic {
+	request := compileRequest(root)
+	if row.baseline {
+		request.HealthyBaseline = gateBaseline(t)
+	}
+	diagnostics, err := CompileCandidate(context.Background(), request)
+	if err != nil {
+		t.Fatalf("CompileCandidate returned an infrastructure error: %v", err)
+	}
+	return diagnostics
+}
+
+func assertGateCompile(t *testing.T, row gateCompileRow, diagnostics []Diagnostic) {
+	t.Helper()
+	if got := ruleSet(diagnostics); !same(got, []string{row.rule}) {
+		t.Fatalf("rules = %v, want %s\n%v", got, row.rule, diagnostics)
+	}
+	if diagnostics[0].Path != row.path {
+		t.Fatalf("rejection points at %q, want %q: %+v", diagnostics[0].Path, row.path, diagnostics[0])
+	}
+}
+
+func TestGateCompileRowsOnFakeGo(t *testing.T) {
+	for _, row := range gateCompileRows {
+		t.Run(row.name, func(t *testing.T) {
+			testutil.FakeGo(t, row.fake)
+			assertGateCompile(t, row, gateCompileDiagnostics(t, row, compileTree(t)))
+		})
+	}
+	t.Run("a candidate every stage accepts", func(t *testing.T) {
+		testutil.FakeGo(t)
+		if got := gateCompileDiagnostics(t, gateCompileRow{}, compileTree(t)); len(got) != 0 {
+			t.Fatalf("rejected: %v", got)
+		}
+	})
+}
+
+// An informational rule never rejects: the candidate passes and the check
+// reports the rule as a note.
+type gateNoteRow struct {
+	name, rule string
+	notes      func(t *testing.T) []Diagnostic
+}
+
+func gateCompileNotes(t *testing.T) []Diagnostic {
+	testutil.FakeGo(t)
+	var notes []Diagnostic
+	request := compileRequest(compileTree(t))
+	request.HealthyBaseline = filepath.Join(t.TempDir(), "missing")
+	request.CoverageGaps = &notes
+	if ds, err := CompileCandidate(context.Background(), request); err != nil || len(ds) != 0 {
+		t.Fatalf("informational notes rejected the candidate: %v %v", ds, err)
+	}
+	return notes
+}
+
+// gateUndetectedCause is a verified repair of Service demo/front whose
+// finding is on another object, so no detector binds the program's roles.
+func gateUndetectedCause(t *testing.T) []Diagnostic {
+	root := t.TempDir()
+	copyTree(t, gateProgramFixture, filepath.Join(root, ".sdo"))
+	front := &contracts.ObjectRef{Kind: "Service", Namespace: "demo", Name: "front"}
+	at := time.Unix(100, 0)
+	outcome := &contracts.OutcomeRecord{IncidentId: "first", Classification: "success",
+		ConfirmedRootCauses:      []*contracts.ConfirmedRootCause{{Resources: []*contracts.ObjectRef{front}}},
+		Findings:                 []*contracts.Finding{{DetectorId: "fixture", Status: "active", Fingerprint: "other", PrimaryResource: &contracts.ObjectRef{Kind: "Service", Namespace: "demo", Name: "other"}}},
+		RepairActions:            []*contracts.RepairActionReceipt{{ActionId: "fixture-front", Success: true, Resources: []*contracts.ObjectRef{front}, StartedAt: timestamppb.New(at), CompletedAt: timestamppb.New(at.Add(time.Second))}},
+		FinalHealthDetectorState: []*contracts.DetectorEvaluation{{DetectorId: "fixture", Status: "clear", EvaluatedAt: timestamppb.New(at.Add(2 * time.Second))}},
+	}
+	return ReflectionCoverageGaps(root, outcome, gateUpdated("service-targetport-mismatch"))
+}
+
+var gateNoteRows = []gateNoteRow{
+	{"verified cause has a program no detector binds", RuleReflectionDetectorRequired, gateUndetectedCause},
+	{"healthy replay input is missing", RuleReplayObservation, gateCompileNotes},
+}
+
+func TestGateNotes(t *testing.T) {
+	for _, row := range gateNoteRows {
+		t.Run(row.name, func(t *testing.T) {
+			if !slices.ContainsFunc(row.notes(t), func(d Diagnostic) bool { return d.Rule == row.rule }) {
+				t.Fatalf("no %s note", row.rule)
+			}
+		})
+	}
+}
+
+// gateRuleCoverage names the rules with no bad row, each with the reason.
+var gateRuleCoverage = map[string]string{
+	RuleSnapshotProjection:    "no row yet: a defensive check behind the static layers; no authored change reaches it",
+	RuleTrafficUndrivenEdge:   "no row yet: informational, needs generated traffic replay results from the real toolchain on a tree with declared edges",
+	RuleTrafficDefaultLatency: "no row yet: informational, same as traffic.undriven-edge",
+	RuleDetectorNone:          "never emitted: memory without detectors is valid (good row above)",
+	RulePlaybookNone:          "never emitted: memory without playbooks is valid (good row above)",
+}
+
+func TestGateTableNamesEveryRule(t *testing.T) {
+	covered := map[string]bool{}
+	for _, row := range gateRows {
+		for _, rule := range row.rules {
+			covered[rule] = true
+		}
+		for _, rule := range row.notes {
+			covered[rule] = true
+		}
+	}
+	for _, row := range gateCompileRows {
+		covered[row.rule] = true
+	}
+	for _, row := range gateNoteRows {
+		covered[row.rule] = true
+	}
+	var missing []string
+	for _, id := range ruleIDs(t) {
+		if !covered[id] && gateRuleCoverage[id] == "" {
+			missing = append(missing, id)
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Fatalf("rules without a gate table row: %v", missing)
+	}
+}
+
+const gateDiffTextProgram = `package base
+
+import (
+	"context"
+	"strings"
+
+	"sdo.dev/operator/sdk/program"
+)
+
+type Program struct{}
+
+func (Program) Diagnose(_ context.Context, v program.ReadView, b program.Bindings) (program.Verdict, error) {
+	diff, err := v.DiffAgainstSource(b.Objects["deployment"])
+	if err != nil {
+		return program.Verdict{}, err
+	}
+	if !strings.Contains(diff.Text, "image") {
+		return program.Verdict{Result: program.NoMatch}, nil
+	}
+	return program.Verdict{Result: program.Match, Evidence: []program.Evidence{{Observed: diff.Text}}}, nil
+}
+
+`
+
+func gateFormatted(t *testing.T, source string) string {
+	t.Helper()
+	out, err := format.Source([]byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out)
+}
+
+func gateRead(t *testing.T, root, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
