@@ -49,6 +49,19 @@ func TestMemoryHostWorkspaceStagesAcceptedMemory(t *testing.T) {
 	}
 }
 
+// The generated registration imports each accepted detector package; the
+// compiler then proves the import resolves (nightly real-compile set).
+func TestGeneratedDetectorsImportAcceptedDetectors(t *testing.T) {
+	workspace := stagedMemoryHost(t)
+	generated, err := os.ReadFile(filepath.Join(workspace.Directory, "generated", "detectors.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(generated, []byte(`d0 "fixture-diagnostics/detectors/incidents/missing-configmap"`)) {
+		t.Fatalf("generated detector import missing: %s", generated)
+	}
+}
+
 // The accepted host is linked only after the staged memory's own tests pass,
 // and an adopted (unvalidated) build never runs them.
 func TestBuildMemoryHostStagePlan(t *testing.T) {

@@ -13,7 +13,7 @@ TestBuildMemoryHostUsesStagedMemory
 TestShippedControllerKeepsItsDebugData
 TestProgramRepeatUnreachableIsRecordedAsGap
 # Builder: repeated real workspace builds. PRs keep TestProgramMustCompile, TestBuildWorkspaceRejectsDetectorRegistrationDrift,
-# TestBuildReplayUsesControllerRegistrations, TestBuildWorkspaceCompilesApplicationDetectors and TestProgramValidationRejectsUnsafeMemory for compile, registration and validator rules.
+# TestBuildReplayUsesControllerRegistrations, TestGeneratedDetectorsImportAcceptedDetectors and TestProgramValidationRejectsUnsafeMemory for compile, registration and validator rules.
 TestCheckReusesExactPackagesAcrossWorkspaces
 # builder: tests of 1.0 s or more. PRs keep the rest, e.g. TestChangedProgramsAreTheCandidateEditedPlaybooks, TestProgramValidationRejectsUnsafeMemory, TestReadThroughGoCacheDoesNotCopySeedAtStartup.
 TestBuildWorkingProgramWithoutCorpusOrDetectors

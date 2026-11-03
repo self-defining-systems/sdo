@@ -1050,8 +1050,7 @@ The Go job also restores current-toolchain caches across dependency-hash changes
 Go validates compiler entries by content. Hash discovery can change after
 submodule initialization, so an exact-hash-only fallback repeatedly restored
 an obsolete cache on #664. Real compiler tests use the
-`integration` tag in the same invocation (PR and nightly), including the separate
-`builder/compiletest` package so the compile smoke overlaps builder validation.
+`integration` tag in the same invocation (PR and nightly).
 The independent foreign-policy near-miss compiler test also runs in parallel. Both validation jobs have five-minute limits.
 
 `Nightly CI` runs daily and through `workflow_dispatch`. Its Actions conclusion
@@ -1071,7 +1070,7 @@ reports failures. It retains the following extended checks:
 | Additional nightly test | Reason | PR replacement |
 | --- | --- | --- |
 | `TestHermeticRoutingCaptureCompilesReplayableMitigator` | Recompiles captured routing programs through the complete validator: 64.38 s on #664 | `TestRoutingCaptureWaitsForSlowHealthyProber` records/replays TCP evidence; capture count/time budgets; `TestTargetPortFixtureCandidateClearsAfterRepair`; `TestSimTrustedFastPathNeverRollsBackACorrectFix` |
-| `TestBuildWorkspaceAcceptsValidMetricsDetectors` | Repeats successful controller/host compilation: 8.64 s on #664 | `TestBuildWorkspaceCompilesApplicationDetectors` plus `TestBuildWorkspaceRejectsInvalidMetricsDetectors`, and SDK metrics detector unit tests |
+| `TestBuildWorkspaceAcceptsValidMetricsDetectors` | Repeats successful controller/host compilation: 8.64 s on #664 | `TestGeneratedDetectorsImportAcceptedDetectors` plus `TestBuildWorkspaceRejectsInvalidMetricsDetectors`, and SDK metrics detector unit tests |
 | `TestBuildMemoryHostUsesStagedMemory` | Repeated host compilation took 69.52 s on the first #666 run | `TestMemoryHostWorkspaceStagesAcceptedMemory` checks staging and host/controller isolation; `TestRemoteMemoryPreservesInputsAndCorpusReceipts` and memory-host simulation check real in-memory RPC parity |
 | `TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder` | Repeated source-program compilation took 19.93 s on the first #666 run | `TestCreditEquivalentSourceRepairIgnoresServerDefaultsAndUnownedFields`, source render/reconcile contracts, deterministic trusted fast-path simulation and validator/broker tests |
 | `TestCompileReportsTheFailingStage` | Vet/test fixtures each rebuilt the generated controller for ~51 s on the second #666 run before failing at the intended stage | `TestCompileStageDiagnostics` drives build/vet/test failures through the existing Go process seam and checks rule, path and line; real builder syntax, registration and invalid-metrics rejection still run |
@@ -1086,7 +1085,7 @@ CLI/broker parity across every fixture, duplicate CLI clean-tree/JSON and
 scaffold compilations, toy-seed and isolated program validation, and repeated
 builder program/host/baseline builds, plus compile-through-controller fastloop,
 foreign-policy repeat and direct-files/learned-program CLI/broker integration. The assurance-seed test alone took
-303 seconds locally. PRs retain `TestBuildWorkspaceCompilesApplicationDetectors`,
+303 seconds locally. PRs retain `TestGeneratedDetectorsImportAcceptedDetectors`,
 compiler rejection tests, validator rule tests, broker ownership/acceptance
 contracts, CLI error/JSON diagnostics and SDK program unit tests. Nightly runs
 the unfiltered suite with race instrumentation. Python's
@@ -1217,7 +1216,7 @@ does not use synctest. Only the shell-based generated-reference check gains an
 Builder compiler/cache-seed process tests live in `native_integration_test.go`;
 manifest-location and prohibited-import rejection tests remain untagged.
 PR and nightly `scripts/test_go_ci.sh` already include `-tags=integration`,
-including the existing `builder/compiletest` smoke package. Nightly-only
+including the real-compiler builder tests. Nightly-only
 compilation selections and the five-minute PR deadlines are unchanged.
 CLI evidence commands and Git-backed memory fixtures require `integration`.
 The pure host parser and memory admission-error checks stay untagged.
