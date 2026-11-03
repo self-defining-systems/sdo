@@ -197,6 +197,33 @@ def test_go_job_saves_its_own_cache_without_racing_python_checks() -> None:
     assert "ci-shared-v1-${{ runner.os }}-${{ runner.arch }}-1.26.8-" in fallbacks
 
 
+def test_envtest_binaries_are_cached_by_pinned_version_in_pr_and_nightly_go_jobs() -> None:
+    """Conformance runs on every PR, so the apiserver download must be a cache miss only."""
+    version = re.search(
+        r'KubernetesVersion = "([^"]+)"', (ROOT / "sdo/operator/runtime/envtestio/envtestio.go").read_text()
+    )
+    assert version is not None
+    nightly = yaml.safe_load((ROOT / ".github/workflows/nightly.yml").read_text())
+    for config, job in ((workflow(), "tests"), (nightly, "go-heavy")):
+        steps = [s for s in config["jobs"][job]["steps"] if s.get("with", {}).get("path") == "~/.cache/sdo-envtest"]
+        assert len(steps) == 1, job
+        assert steps[0]["uses"].startswith("actions/cache@"), "must save after a miss"
+        assert version[1] in steps[0]["with"]["key"]
+    assert "if" not in [s for s in workflow()["jobs"]["tests"]["steps"] if "sdo-envtest" in str(s.get("with"))][0]
+
+
+def test_kube_conformance_runs_on_every_pr() -> None:
+    listed = {
+        line
+        for path in (ROOT / "scripts/ci_nightly_go_tests").glob("*.txt")
+        for line in path.read_text().splitlines()
+        if line and not line.startswith("#")
+    }
+    assert "TestKubeConformance" not in listed
+    defined = "\n".join(p.read_text() for p in (ROOT / "sdo/operator/runtime/sim").glob("*_test.go"))
+    assert re.search(r"^func TestKubeConformance\(", defined, re.MULTILINE)
+
+
 @pytest.mark.parametrize("mode", ["pr", "nightly"])
 def test_go_runner_keeps_integration_coverage_in_one_package_scheduler(tmp_path: Path, mode: str) -> None:
     calls = tmp_path / "calls"

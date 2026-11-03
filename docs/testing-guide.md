@@ -35,8 +35,9 @@ Kubernetes version and returns a client configuration and a kubeconfig file:
 downloads the binaries into `$SDO_ENVTEST_CACHE` (default the user cache dir; on the lane hosts export
 `SDO_ENVTEST_CACHE=/mnt/data/shli/cache/envtest`), or set `KUBEBUILDER_ASSETS` to an existing directory. There is no
 controller manager, scheduler or kubelet: nothing reconciles, Pods stay Pending, and namespaces never finish
-terminating. Tests that start it belong in the nightly list (`scripts/ci_nightly_go_tests/`) unless they stay well
-under PR CI's budget and the binaries are cached.
+terminating. PR and nightly CI cache the binaries in `~/.cache/sdo-envtest`, keyed by the Kubernetes version
+(bump the key with `envtestio.KubernetesVersion`); a cache miss downloads them once. Tests that start it belong in
+the nightly list (`scripts/ci_nightly_go_tests/`) unless they stay well under PR CI's budget.
 
 ## Test organization
 
@@ -71,7 +72,7 @@ Tests whose subject is not compilation use `sim.Compiler` as the broker's compil
 ## Kubernetes conformance
 
 `TestKubeConformance` (`sdo/operator/runtime/sim`, `integration` tag) runs one table of scenarios against a pinned
-kube-apiserver (`envtestio`, above) and the simulated API and compares what a client sees; see
+kube-apiserver (`envtestio`, above) and the simulated API and compares what a client sees (about 17 s, runs on every PR); see
 [simulation fidelity](simulation-fidelity.md#kubernetes-conformance). When the simulation must behave like the server
 in a new way, add a scenario first.
 

@@ -53,8 +53,8 @@ normalized body, including `managedFields`. Each scenario is a list of HTTP-leve
 on the wire the controller and memory host use (the accepted-source client, plan executor, informers and discovery).
 
 Run it: `go test -tags=integration ./sim/ -run TestKubeConformance` in `sdo/operator/runtime` (about 20 s once the
-binaries are cached; the first run downloads them through `envtestio`, see the testing guide). Nightly CI runs it in
-the runtime shard. `SDO_CONFORMANCE_DUMP=<dir>` writes both sides' normalized results
+binaries are cached; the first run downloads them through `envtestio`, see the testing guide). PR CI runs it in the Go job, with the binaries
+cached by Kubernetes version. `SDO_CONFORMANCE_DUMP=<dir>` writes both sides' normalized results
 per scenario. After a Kubernetes version bump, `SDO_REGEN_SIM_SCHEMA=1 go test ... -run TestRegenerateSimSchema`
 refreshes `sim/testdata/openapi-subset.json`, the real server's OpenAPI v3 schema (descriptions removed) for the
 served kinds, which the simulation's server-side apply needs for list-map keys and field ownership.
