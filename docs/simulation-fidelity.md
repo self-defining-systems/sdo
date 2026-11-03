@@ -244,10 +244,10 @@ Rows dated before 2026-11-03 name regression tests that were later deleted with 
 | Date | Source run | Class | Gap | Status | Simulation change and conformance test |
 | --- | --- | --- | --- | --- | --- |
 
-| 2026-10-31 | Synthetic shared-world conformance | Missing behavior / timing / fault | Shared pod, input and protocol edges | Modeled within bounds above | `TestCrashLoopRecovery`, `TestSimRealDetectionInputs`, `TestFaultSchedule`, `TestHermeticProtocolDialer` |
+| 2026-10-31 | Synthetic shared-world conformance | Missing behavior / timing / fault | Shared pod, input and protocol edges | Modeled within bounds above | `TestCrashLoopRecovery`, `TestFaultSchedule` (the real-detection-input and protocol-dialer tests were deleted in the 2026-11-03 Go test reduction) |
 
-| 2026-10-31 | Synthetic memory-host slice 1 | Transport / evidence | Detector and program execution outside the controller | Modeled at RPC boundary | `TestSimMemoryHostParityAndCrash`, `TestRemoteMemoryPreservesInputsAndCorpusReceipts`; same world, bufconn, host-owned log reads and typed receipt replay |
-| 2026-11-02 | Runtime test reduction | Missing behavior / cost | Broker compile gate repeated real Go builds in conflict and no-change tests | Modeled within bounds above | `sim.Compiler`, `TestCompilerRecordsCallsAndRejectsUnparsableGo`; `TestHermeticSharedMemoryControllers` and `TestReflectionNoChangeAndSDKGapNeverCommit` use it; real compilation stays in the builder/validator tests and the two compiling `TestReflectionDirectFilesCLIAndBroker` scenarios |
+| 2026-10-31 | Synthetic memory-host slice 1 | Transport / evidence | Detector and program execution outside the controller | Modeled at RPC boundary | Same world, bufconn, host-owned log reads and typed receipt replay. Regression test deleted in the 2026-11-03 Go test reduction; not recreated |
+| 2026-11-02 | Runtime test reduction | Missing behavior / cost | Broker compile gate repeated real Go builds in conflict and no-change tests | Modeled within bounds above | `sim.Compiler` stands in for the Go compiler where a test needs a compile gate without real builds; its recording test and the controller tests that used it were deleted in the 2026-11-03 Go test reduction. Real compilation stays in the builder and validator tests |
 | 2026-11-03 | Kubernetes conformance (envtest) | Contract drift | The simulated API server diverged from a real one on defaults, server-side apply, patch, status, generation, delete and list/watch | Closed; bounds listed under Conformance bounds | `TestKubeConformance` scenarios, one per area |
 | 2026-11-03 | Controller harness on the client-go fake | Missing behavior | The simulated API could not serve the controller loop: no Leases or RBAC kinds, store not safe for concurrent clients, no watch lag, a stuck watcher blocked writers | Closed in the simulation | `lease/*`, `rbac/*`, `watch/informer-list-then-watch`, `TestTransportServesConcurrentClients` |
 | 2026-11-01 | Prober determinism migration | Transport | HTTP pool reuse after listener closure | Accepted bound | In-memory handlers intentionally omit TCP pooling; the pool tests were deleted, `TestLinkProtocolsSocketReset` keeps the real-socket reset check |
@@ -271,14 +271,13 @@ probe against the broken target exhausted its four-second caller deadline;
 `Manager.Traffic` treated that normal cancellation as a host crash, retired the
 accepted process, and made concurrent detector/responder calls unavailable.
 The smaller deterministic boundary can represent this behavior; it lacked a
-regression. `TestTrafficCallerDeadlinePreservesAcceptedHost` reproduces that
-ordering under `synctest` and requires the same accepted host to remain available.
+regression test; it was deleted in the 2026-11-03 Go test reduction and not recreated.
 The fix separates the caller deadline from the manager's own failure budget;
 transport disconnects and manager timeouts retain crash recovery.
 
 | Date | Source run | Class | Gap | Status | Simulation change and conformance test |
 | --- | --- | --- | --- | --- | --- |
-| 2026-11-01 | Tier 2a `20261101T021321Z-sdo` | Missing fault coverage | Caller probe deadline retired healthy accepted host | Fixed at manager boundary | `TestTrafficCallerDeadlinePreservesAcceptedHost`; real routing timeout ordering minimized into synthetic virtual-time fixture |
+| 2026-11-01 | Tier 2a `20261101T021321Z-sdo` | Missing fault coverage | Caller probe deadline retired healthy accepted host | Fixed at manager boundary | Real routing timeout ordering minimized into a synthetic virtual-time fixture. Regression test deleted in the 2026-11-03 Go test reduction; not recreated |
 
 The fixed real-kind run accepted reflection commit
 `e2fb8cd7527215c73712210cfec6cec52c4b04b8` with binary digest
@@ -353,16 +352,6 @@ channel, allocated outside the bubble, cannot pin virtual time. Production keeps
 resync disabled. Negative resync intervals are rejected at Start.
 
 
-`state_baseline_secret_test.go` deliberately exercises the production kubeconfig
-factory, real HTTP list/watch streaming and metadata-only decoder together. Its
-socket test stays under `integration`; the canary, no typed Secret reads, strict
-Accept headers, failed discovery and Secret identity assertions are unchanged.
-The simulation does not model OS kubeconfig discovery or HTTP streaming framing.
-The live kubelet logs and proxy-usage checks also require real cluster sockets
-and retain their existing opt-in environment gates under `integration`.
-`scripts/test_go_ci.sh` supplies `-tags=integration` for these tests; this move
-changes no CI selections or opt-in prerequisites.
-
 ### Protocol wire conformance boundary (2026-11-01)
 
 Link protocol handshakes and malformed/authentication/status replies now run over
@@ -393,8 +382,8 @@ with a fixture that still described the old behavior.
 
 | Date | Source run | Class | Gap | Status | Test that now covers it |
 | --- | --- | --- | --- | --- | --- |
-| 2026-11-02 | merge-toy | Missing fault coverage | Caller cancellation of `Manager.Evaluate` or a captured-host call retired the healthy accepted host; every detector reported `memory host unavailable` until recovery (about 15 s) | Fixed at the manager boundary | `TestEvaluateCallerCancelPreservesAcceptedHost`, `TestCapturedEvaluateCallerCancelPreservesAcceptedHost` |
-| 2026-11-02 | merge-toy | Contract drift | Memory-host registration dropped `ConsumesPodAdmission`; the controller never observed admission, the host's `pod-admission` detector errored every evaluation and the lane never reached a clear baseline | Fixed | `TestRegistrationRetainsOptionalInputs` (now includes pod admission) |
+| 2026-11-02 | merge-toy | Missing fault coverage | Caller cancellation of `Manager.Evaluate` or a captured-host call retired the healthy accepted host; every detector reported `memory host unavailable` until recovery (about 15 s) | Fixed at the manager boundary | Regression test deleted in the 2026-11-03 Go test reduction; not recreated |
+| 2026-11-02 | merge-toy | Contract drift | Memory-host registration dropped `ConsumesPodAdmission`; the controller never observed admission, the host's `pod-admission` detector errored every evaluation and the lane never reached a clear baseline | Fixed | Regression test deleted in the 2026-11-03 Go test reduction; not recreated (the fix keeps pod admission in the registration) |
 | 2026-11-02 | merge-toy | Mock encodes removed behavior | Image smoke tests mocked `schema-identity` and `validation-child` arities that the binary no longer has, so every image build and `up` preflight failed on a real binary | Fixed | `test_image_build_smokes_offline_go_tools_as_nonroot` checks the child's arity; `test_fast_image_delivery.py` mocks `memory --help` |
 | 2026-11-02 | merge-toy | Missing behavior | The stand-in `codex` never wrote a session rollout, which the production responder's session recovery needs at session start | Fixed | `test_scripted_session_persists_a_rollout_before_the_worker_checkpoints_it` |
 | 2026-11-02 | merge-toy | Sandbox fidelity | The agent-script sandbox mounted the whole host read-only, but the real workspace-write sandbox lets `sdo` write `/tmp/sdo` and the session scratch | Fixed | `test_sandboxed_commands_can_persist_tool_replies_for_later_commands` |
@@ -404,9 +393,9 @@ with a fixture that still described the old behavior.
 | 2026-11-02 | merge-toy | Lifecycle | A from-scratch toy install kept the previous controller checkpoint and health-refresh records; the checkpoint named a detector the reset memory did not have | Fixed | `test_retire_control_state_clears_checkpoints_and_stale_health_refresh_records` |
 | 2026-11-02 | merge-toy | Lifecycle | A preloaded standby responder read its task before awaiting the claim and crashed; the controller recreated a standby Job every 9 s | Fixed | `test_generated_launch_waits_for_standby_claim_before_reading_the_task` |
 | 2026-11-02 | merge-toy | Lifecycle | A health refresh ends the first controller attempt by design (exit 76), leaving a failed pod beside the running one; continuity required exactly one pod | Fixed | `test_live_controller_pod_ignores_pods_of_finished_job_attempts` |
-| 2026-11-02 | merge-toy | Missing behavior | After a verified program write, a co-reported finding whose detector had not re-observed it (service-reachability on the same Service) made the attempt `applied_still_matching`; the stage gave up within a second and the responder finished a mitigated incident (3 of 4 repeats) | Fixed: findings that depend on the written object keep the recovery wait going and the attempt is recorded cleared | `TestWriteVerifiedForSettling`, `TestPromoteSettledAttemptsRecordsTheClearedFindings`; existing stage tests unchanged |
-| 2026-11-02 | merge-toy | Timing | Closure replays open-phase reads inside the observation lock; the program's open probe of the old targetPort waited out the 5 s probe budget (`program_reads_ms=5283`), stopping detection for 9.8 s | Bounded to 1 s (gap 9.8 s to 5.1-5.4 s); remaining closure work under the lock still exceeds the 5 s allowance by 0.15-0.4 s on the repeat | `TestClosureReplayProbeIsBounded` |
-| 2026-11-02 | merge-closure | Timing | Closure captured the corpus, replayed reads and settled recovery applications inside the step pass, so no detector evaluated for 5.15–5.38 s around every closure; the simulation's closure work took zero virtual time and could not show it | Fixed (evidence gathers on a goroutine; the next pass freezes the closure) | `TestSimSlowClosureEvidenceDoesNotStopDetection` |
+| 2026-11-02 | merge-toy | Missing behavior | After a verified program write, a co-reported finding whose detector had not re-observed it (service-reachability on the same Service) made the attempt `applied_still_matching`; the stage gave up within a second and the responder finished a mitigated incident (3 of 4 repeats) | Fixed: findings that depend on the written object keep the recovery wait going and the attempt is recorded cleared | Regression test deleted in the 2026-11-03 Go test reduction; not recreated; existing stage tests unchanged |
+| 2026-11-02 | merge-toy | Timing | Closure replays open-phase reads inside the observation lock; the program's open probe of the old targetPort waited out the 5 s probe budget (`program_reads_ms=5283`), stopping detection for 9.8 s | Bounded to 1 s (gap 9.8 s to 5.1-5.4 s); remaining closure work under the lock still exceeds the 5 s allowance by 0.15-0.4 s on the repeat | Regression test deleted in the 2026-11-03 Go test reduction; not recreated |
+| 2026-11-02 | merge-closure | Timing | Closure captured the corpus, replayed reads and settled recovery applications inside the step pass, so no detector evaluated for 5.15–5.38 s around every closure; the simulation's closure work took zero virtual time and could not show it | Fixed (evidence gathers on a goroutine; the next pass freezes the closure) | Regression test deleted in the 2026-11-03 Go test reduction; not recreated |
 
 Not modeled and still open: the Go simulation has no scripted-agent sandbox, standby handshake or Job
 restart on exit 76, so the standby, sandbox, restart and verify-protocol rows are covered by Python contract tests only.
@@ -423,8 +412,8 @@ take a fresh snapshot (`snapshotView`, the executor's health verifier); the stal
 
 | Date | Source run | Class | Gap | Status | Test that now covers it |
 | --- | --- | --- | --- | --- | --- |
-| 2026-11-02 | merge-luna | Mock encodes removed behavior | Frozen diffs were computed on the live view with its API client removed, so the dry-run default normalization an in-process program gets was skipped: a repaired Service still matched, and the stage rolled back a correct repair | Fixed: diffs are the view's own answers, from the cycle cache, frozen before the host lease is taken | `TestSimRemoteProgramDiagnoseSeesTheRepairAfterTheWrite` (sim API with dry-run apply and Service defaults) |
-| 2026-11-02 | merge-luna | Contract drift | The diff walk descended only wrappers it knew; a program mitigated through the isolation view (`mitigationReadView`) got no frozen diffs and its host reads found no evidence sink | Fixed: no type walk for diffs; every wrapper that embeds a `ReadView` exposes it | `TestSimRemoteProgramMitigateReadsSourceDiffsThroughTheMitigationView`, `TestReadViewWrappersExposeTheViewTheyWrap` (fails for any new wrapper that hides its view), `TestRemoteDetectorReadsSourceDiffsTheControllerFroze` |
+| 2026-11-02 | merge-luna | Mock encodes removed behavior | Frozen diffs were computed on the live view with its API client removed, so the dry-run default normalization an in-process program gets was skipped: a repaired Service still matched, and the stage rolled back a correct repair | Fixed: diffs are the view's own answers, from the cycle cache, frozen before the host lease is taken | Regression test deleted in the 2026-11-03 Go test reduction; not recreated (it used the sim API with dry-run apply and Service defaults) |
+| 2026-11-02 | merge-luna | Contract drift | The diff walk descended only wrappers it knew; a program mitigated through the isolation view (`mitigationReadView`) got no frozen diffs and its host reads found no evidence sink | Fixed: no type walk for diffs; every wrapper that embeds a `ReadView` exposes it | `TestReadViewWrappersExposeTheViewTheyWrap` (fails for any new wrapper that hides its view); the other tests were deleted in the 2026-11-03 Go test reduction |
 | 2026-11-02 | merge-luna | Missing fault coverage | The scripted toy diagnosed from pod ports and planned from a pod, so no scripted program or detector ever called `DiffAgainstSource`; bugs above reached the first live run | Fixed: the scripted program, mitigation and incident detector are source-grounded like learned ones | `benchmarks/sregym/fastloop/scripted_program`, hermetic fastloop tests |
 
 Reuse audit (any frozen observation used after the controller wrote): `matchedViews` is re-snapshotted once anything was applied

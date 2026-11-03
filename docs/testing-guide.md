@@ -49,7 +49,7 @@ the nightly list (`scripts/ci_nightly_go_tests/`) unless they stay well under PR
 - `tests/integration/` — cross-package and external-process behavior.
 - `sdo/operator/sdk/inputs/carrier_test.go` — AST inventory of SDK input sources. The SDK's behaviour is covered by the shipped detectors' own tests, which run at the gate.
 - `sdo/operator/core/generic_capture_guard_test.go` — mutable kinds cannot enter the capture/replay path unguarded.
-- `sdo/operator/runtime/*_test.go` — scheduling, persistence, batching, dispatch, broker effects, and state; `metrics_observer_test.go` and `runtime/prometheus/` run the metrics observer and adapter against an `httptest` fake Prometheus.
+- `sdo/operator/runtime/*_test.go` — the controller harness (`TestHarness`), contract and proto parity, and source-scanning ratchets; the remaining `*_support_test.go` files hold helpers those tests need.
 - `sdo/operator/memory/validate/skills_test.go` — skill drift: rule citations and examples. `scripts/check_go_errors.sh` runs `gen_skill_references.sh --check` and `gen_kube_read_clients.sh --check` for generated-file drift (`bash scripts/gen_skill_references.sh` regenerates the reference); no Go test repeats those checks.
 - `sdo/operator/{broker,memory,install,lifecycle}/*_test.go` — accepted state and lifecycle ownership.
 
@@ -67,20 +67,9 @@ kube-apiserver (`envtestio`, above) and the simulated API and compares what a cl
 [simulation fidelity](simulation-fidelity.md#kubernetes-conformance). When the simulation must behave like the server
 in a new way, add a scenario first.
 
-## Capture boundary fixtures
-
-Tests that write capture boundaries (`open*.json`, `fixed.json`, `healthy.json`)
-build them with `internal/capturefixture`: `Boundary`/`WriteBoundary` from a
-live-shaped view, `FromView` from compact snapshot JSON, `Recapture` to edit an
-existing capture. Each goes through `CaptureSnapshot`, so a test sees exactly the
-fields production keeps. `capturefixture.Raw(t, reason, data)` is the named
-opt-out for forged, empty or malformed input. Nothing enforces this any more; the
-package goes when the last tests that use it do.
-
 ## Git-backed Go fixtures
 
-Broker and runtime tests initialize temporary repositories with
-`internal/testutil.InitGit(t, root)` and clone them with `CloneGit(t, source, destination, options...)`.
+Tests initialize temporary repositories with `internal/testutil.InitGit(t, root)`.
 The helper disables automatic GC/maintenance and detachment in repository-local
 configuration, which also protects production Git calls and linked worktrees.
 `testutil.Git` runs commands synchronously with a bounded context; callers cannot
@@ -89,7 +78,7 @@ maintenance in the foreground for its Git commands and persists this policy in
 its independent proposal/staging clones; Git clone does not copy local config. Keep goroutines using a repository joined before
 test cleanup.
 
-Use these helpers rather than a bare `git init` or `git clone` in a test.
+Use these helpers rather than a bare `git init` in a test.
 
 ## Synthetic Go edge
 
@@ -396,7 +385,7 @@ Use `scripts/run_tests.sh` for the repository-wide suite.
 
 Pytest and `scripts/test_python.sh` use six workers by default; `pytest-cov` combines the per-worker coverage so the 70% `fail_under` gate still sees the whole suite. Set `SDO_PYTEST_WORKERS=0` for an in-process run through the script, or pass `-n 0` to pytest, when iterating on a single test. Generated detector compilation is covered by the Go builder and broker suites.
 
-Go-to-Python contract shapes are pinned by fixtures under `tests/fixtures/sdo/contracts/go/` (`sdo/operator/runtime/contract_golden_test.go`) and Python's strict models parse them (`tests/unit/sdo/contracts/test_go_contract_fixtures.py`). After an intentional Go encoding change, regenerate them with `go test . -run TestGoContractFixtures -update-go-contract-fixtures` in `sdo/operator/runtime` and rerun the Python tests. `TestContractShapesNeverEncodeNullCollections` fails on any `null` in those shapes: Python rejects `null` for a list field.
+Go-to-Python contract shapes are pinned by fixtures under `tests/fixtures/sdo/contracts/go/` (`sdo/operator/runtime/contract_golden_test.go`) and Python's strict models parse them (`tests/unit/sdo/contracts/test_go_contract_fixtures.py`). After an intentional Go encoding change, regenerate them with `go test . -run TestGoContractFixtures -update-go-contract-fixtures` in `sdo/operator/runtime` and rerun the Python tests. Python rejects `null` for a list field, so the fixtures must not contain one.
 
 Agent turns are tested with agentshim's `FakeExecutor` through `tests/structured_turns.py`, which replays each provider's real stream format. Tests marked `live_agents` run the real Codex and Claude Code CLIs and are opt-in; cheap models keep them inexpensive:
 
@@ -532,10 +521,9 @@ the discovery gate runs instead of silently skipping its cross-repository checks
 
 ## Abort and quiescence
 
-Start with the stop/abort contracts and deterministic lifecycle cuts:
+Start with the stop/abort contracts (Python; the Go stop tests were deleted, and the kind smoke below covers the real thing):
 
 ```bash
-(cd sdo/operator && go test ./install ./operatorcli -run 'TestStop|TestParseStop' -count=1)
 uv run pytest tests/unit/benchmarks/sregym/adapter/test_abort.py \
   tests/unit/benchmarks/sregym/adapter/test_processes.py \
   tests/unit/benchmarks/sregym/adapter/test_detached.py \
@@ -581,11 +569,7 @@ The expiry guard archives abandoned requests
 with typed `AGENT_TIMEOUT` evidence, and open work that lost its owner (a running
 dispatch with no Job, or a finished responder with no closure past the
 verification bound plus a grace) with `OWNER_LOST`, also while paused; both
-require fresh observations for a new incident. These hermetic regressions run with:
-
-```bash
-(cd sdo/operator/runtime && go test -race . ./lifecyclecore -run 'TestExpiredIncident|TestOwnerless|TestResponseExpiry|TestLearningTrustUsesAccepted|TestMissingOptionalLearning|TestMissingLearningCommit|TestPreparedResponderRequestSurvives|TestLearningEvidenceGitError' -count=1 -timeout=5m)
-```
+require fresh observations for a new incident. The controller harness and the end-to-end scenarios exercise these paths.
 
 ### Detached launches
 
@@ -983,20 +967,9 @@ an obsolete cache on #664. Real compiler tests use the
 `integration` tag in the same invocation (PR and nightly).
 The independent foreign-policy near-miss compiler test also runs in parallel. Both validation jobs have five-minute limits.
 
-`Nightly CI` runs daily and through `workflow_dispatch`. Its Actions conclusion
-reports failures. It retains the following extended checks:
-
-
-PR #657 timing investigation (Actions runs 41243599469 and 41243997276):
-checks/Python took 241 s on the PR and 314 s before merge-group cancellation.
-The Python suite took 190 s on the PR; the merge group was cancelled before
-printing its durations table. Go cache restoration grew from 14 s to 69 s
-(670 MB); uv sync took 2 s, pinned proto installation 8 s on a miss / 0 s on a
-hit, and bubblewrap installation 5–7 s. Formatting plus overlapped static checks
-and tests took 192 s / 217 s (cancelled). The generated-worker cases above
-now run in the existing nightly integration step with bubblewrap installed.
-The PR selection guard requires every ignored Python integration file to appear
-in nightly, and keeps the cheap reflection/responder contracts on PRs.
+`Nightly CI` runs daily and through `workflow_dispatch`; its Actions conclusion reports failures. It has one
+Go job (every package under `-race`, without `-short`, with full simulation seeds, then the bounded fuzz campaigns),
+the controller end-to-end scenarios, the slow Python suites that PR CI ignores, and the image builds.
 
 ## Writing a deterministic Go simulation test
 
@@ -1037,14 +1010,6 @@ Tests that need processes or real sockets must be integration-tagged. Use the
 cluster coverage; the memory-host and full controller driver remain follow-up work.
 
 
-Installer Git/archive coverage lives in `install/process_integration_test.go` and
-`install/seed_sync_test.go`, both requiring `integration`. These retain the
-accepted-commit, prepared-install RBAC, explicit kubeconfig and stale-file cleanup
-checks. `scripts/test_go_ci.sh` passes `-tags=integration` in both PR and nightly
-modes, so the move preserves their existing CI selection. The remaining installer
-fake-client tests run without the tag and admit ready sync Pods synchronously;
-the expired-claim test uses virtual time in a `testing/synctest` bubble.
-
 ## Go deterministic simulation policy
 
 The Go codebase (operator modules and benchmark Go) uses deterministic tests by
@@ -1059,151 +1024,35 @@ bash scripts/check_go_determinism.sh
 bash scripts/check_go_determinism.sh --update
 ```
 
-Real compiler/CLI/kind tests belong behind `//go:build integration`, with an
-explicit `go test -tags integration` invocation in the CI job that owns them.
-The initial ratchet rollout does **not** retag existing tests or change suite
-selection: all existing real-compile, CLI, socket and kind violations remain on
-the allowlist, so no coverage silently disappears. Before retagging a legacy
-file, change the relevant CI invocation to retain its coverage. Tests newly
-marked integration must likewise run in the owning integration job; tagging is
-not a way to remove tests from CI. PR jobs retain their five-minute deadlines.
+Real compiler, CLI, socket and kind tests carry `//go:build integration`, and PR and nightly
+`scripts/test_go_ci.sh` both pass `-tags=integration`, so tagging never removes a test from CI. The
+determinism allowlist is empty and cannot grow. `split_go_integration.sh` reports AST dependency
+candidates for retagging and moves explicitly selected declarations, preserving embedded Go strings;
+compile both build selections after a move.
 
-Memory Git-backed snapshot, inventory, ownership and validator checks require
-`integration`; PR and nightly `scripts/test_go_ci.sh` already pass that tag.
-Filesystem-only helpers and static checks remain available without it.
+Production code exposes these seams so tests can use virtual time and seeded randomness (a
+`testing/synctest` bubble, one clock per run):
 
-Deployment Git-backed registry, raw-strategy, health and BuildKit checks
-require `integration` and retain their PR/nightly invocation. BuildKit fake
-clients admit a completed Job synchronously or through an injected wait.
-Command-observation tests inject commands and waits and run in the default tier.
+- `RuntimeOptions.Clock` drives controller wakeups, timestamps, observers, lease renewal and executor waits;
+  `NewLeaseElectorWithClock` shares it with the Lease.
+- `PlanExecutor.Now`, `.Sleep` and `.Jitter` serve program and responder receipts, diagnosis and trusted
+  fast-path settling, and resource-version retries.
+- `KubernetesCacheConfig.ResyncPeriod` lets a real client-go informer run in a bubble: its disabled-resync path
+  selects on a package-global channel created outside the bubble, so tests set a positive virtual resync.
+- `NewResponderLoopWithOptions` accepts a replayable session-ID source (a 32-character lowercase hex namespace).
+- Maintenance, traffic, Service reachability, rollout and informer-observation polling accept client-go clock
+  interfaces.
 
-Memory-host traffic contracts use virtual time and bufconn:
-
-The traffic parity test uses two immutable revisions and checks stop/reset and
-failed samples without OS sockets. It remains in the ordinary PR selection;
-compiler and process coverage retains the integration tag and existing CI budget.
-
-Core snapshot observation-time tests inject a fixed clock and compare the exact
-observed timestamp. Core retains its Go 1.24 floor and uses no synctest; no tests
-are integration-tagged for this migration.
-SDK traffic tests use HTTP recorders, a fake transport and an injected clock,
-including virtual request-deadline cancellation. The SDK retains Go 1.24 and
-does not use synctest. Only the shell-based generated-reference check gains an
-`integration` tag; both PR and nightly `scripts/test_go_ci.sh` run it with
-`-tags=integration` within the existing five-minute PR budget.
-Builder compiler/cache-seed process tests live in `native_integration_test.go`;
-manifest-location and prohibited-import rejection tests remain untagged.
-PR and nightly `scripts/test_go_ci.sh` already include `-tags=integration`,
-including the real-compiler builder tests. Nightly-only
-compilation selections and the five-minute PR deadlines are unchanged.
-CLI evidence commands and Git-backed memory fixtures require `integration`.
-The pure host parser and memory admission-error checks stay untagged.
-`scripts/test_go_ci.sh` keeps these tests in their existing PR/nightly selections
-with `-tags=integration`; no CI timeout or selection changes are needed.
-Broker Git checkout/commit, CLI/compiler parity, agent-script and validator
-process-limit tests require `integration`. They continue in
-`scripts/test_go_ci.sh` with `-tags=integration` on PRs and nightly; the existing
-nightly-only parity selection and five-minute PR budget are unchanged.
-
-Runtime drift, ownership-adoption, read-view and usage observer tests use a
-synchronous handler RoundTripper through client-go, preserving wire encoding
-without real sockets. Cache observation timestamps accept an injected clock;
-logs, metrics and usage retain their injected clocks with defaults owned by
-`runtime/internal/lifecycleio`. This migration adds no integration tags.
-
-Program and responder receipts share `PlanExecutor.Now`; candidate diagnosis
-duration accepts `CandidateOptions.Clock`. Retained-drift evaluations use the
-caller's evaluation time, and baseline diffs use their snapshot's observation
-time. These clock seams remain in the default test tier.
-
-Prober traffic, primitive-handler, link and reachability tests run with virtual
-clock time, handler-backed HTTP and injected in-memory dial outcomes. Real
-connection-pool/listener-closure contracts remain in
-`prober/socket_integration_test.go`; PR and nightly `scripts/test_go_ci.sh`
-already include `-tags=integration`, retaining both tests and the five-minute
-PR budget.
-
-Responder diagnosis settling and trusted fast-path settling share
-`PlanExecutor.Sleep`; resource-version retry jitter accepts `PlanExecutor.Jitter`.
-Tests can advance one simulation clock and seeded RNG through these seams.
-Cancellation still prevents the post-settle diagnosis or apply.
-
-Metrics observer and Prometheus adapter unit tests use injected handler-backed
-HTTP and virtual deadlines, including a source that ignores cancellation.
-The three real CLI metrics-URL wiring tests and default-client redirect wiring
-run with `integration` in the existing PR/nightly `scripts/test_go_ci.sh`
-invocations; unit fixtures do not claim real HTTP transport coverage.
-
-Controller dispatch, persistence, admission and effect-durability tests use
-virtual time and quiescence before negative dispatch assertions. Broker and
-dispatch queue helpers synchronize by receiving and restoring the buffered
-result, preserving controller ownership of consumption. Informer notification
-helpers await the event directly instead of host-clock polling.
-
-The real client-go informer/restart test sets a positive virtual resync interval.
-Client-go's disabled-resync path selects on a package-global channel created
-outside the synctest bubble, preventing virtual timers from advancing.
-`KubernetesCacheConfig.ResyncPeriod` leaves production's disabled-resync default
-unchanged while allowing that scheduling boundary to remain in-bubble. This
-does not add client-go watch streams to the simulation world's model.
-
-Maintenance, traffic, Service reachability, rollout and informer-observation
-polling accept client-go clock interfaces. Lease timestamps and expiry callbacks
-share an injected clock via `NewLeaseElectorWithClock`; the default constructor
-keeps production time. An expiry callback retires its fired timer handle before
-revoking authority, so it never tries to stop the timer currently firing.
-
-`RuntimeOptions.Clock` drives controller wakeups, startup/evaluation timestamps,
-observer clocks, lease renewal and executor waits. The metrics-URL integration
-contract checks its clock through the emitted finding's `observed_at` metadata;
-real HTTP wiring remains in the existing integration CI tier.
-
-`NewResponderLoopWithOptions` accepts a replayable session-ID source while
-validating its 32-character lowercase hex namespace. Session tool polling and
-temporary reply IDs can be injected; collision tests retain exclusive file
-creation and prove an existing reply temporary cannot be overwritten.
-
-Closure health/state-diff and firing telemetry, lifecycle events, maintenance,
-lease timing, responder settle/mitigator deadlines and cache write observation
-run in synctest bubbles. Their positive timeout and mutex-release assertions
-retain virtual deadlines; the fake informer uses a positive virtual resync.
-
-Chaos replay controls are explicit test flags: from the runtime module, use
-`go test . -run '^TestChaos' -chaos-seed=17 -timeout=5m`, or set
-`-chaos-runs=128` for a fixed sweep. These replace `SDO_CHAOS_SEED` and
-`SDO_CHAOS_RUNS`. Sweeps always run their configured seeds; they no longer
-silently truncate coverage based on machine speed. Closure/reflection explorers
-retain their state bounds, and campaign invocations (including nightly CI) use
-`-timeout=5m` as the wall-clock cap.
-
-Runtime accepted-Git, broker/CLI/compiler/Python-process and recorded worker
-fixtures require `integration`; their shared pure detectors, read views and
-non-process tests stay in the default suite. PR and nightly `test_go_ci.sh`
-already include `-tags=integration`, with the existing nightly-only compiler
-selection and five-minute PR budget unchanged. `split_go_integration.sh` reports
-AST dependency candidates and moves explicitly selected declarations, preserving
-embedded Go strings; review candidates and compile both build selections.
-
-Cache observation-time contracts compare an exact injected timestamp. Dispatcher
-Job waiting, fast-path restarts and worker completion run in virtual time, with
-an explicit virtual restart boundary for fresh evidence. Process-only fastloop
-wait helpers stay with their integration fixtures. Simulated protocol peers use
-the world clock for safety deadlines; default peer behavior is unchanged.
-
-Checks/Python compiler-cache restores fall back across dependency hashes within
-Go 1.26.8 before considering legacy caches. Submodule initialization changes
-`hashFiles('**/go.sum')` between restore and save; an exact-hash-only fallback
-restored a 639 MB pre-refactor cache on main run 41272152156 and spent 113.18 s
-and 62.49 s rebuilding the receipt checker and submission guard. The Python
-runner now builds each protocol executable once from the current checkout into
-a temporary directory shared by its workers; executables are never restored.
-The uv download cache retains Pyright's bundled engine (`prune-cache: false`);
-the runner supplies Node. Pinned proto tools and the verified golangci-lint
-binary share a versioned tool cache. Formatting overlaps static checks, and
-`check_errors.sh --python-suite` delegates architecture tests to the full Python
-suite rather than running them twice. Default local static checks still run
-the complete architecture file. Per-check timing lines and `--durations=30`
-remain in hosted logs. No additional Python tests move to nightly.
+Checks/Python CI facts that still hold: compiler-cache restores fall back across dependency hashes within one
+Go version (submodule initialization changes `hashFiles('**/go.sum')` between restore and save, so an
+exact-hash-only fallback restored a stale cache). The Python runner builds each protocol executable once from
+the current checkout into a temporary directory shared by its workers; executables are never restored. The uv
+download cache retains Pyright's bundled engine (`prune-cache: false`); the runner supplies Node. Pinned proto
+tools and the verified golangci-lint binary share a versioned tool cache. Formatting overlaps static checks, and
+`check_errors.sh --python-suite` delegates the architecture tests, the fast Python ratchets and the Python
+contract tests to the full Python suite, and the Go parity tests to the Go tests job (default local runs run
+them all). Per-check timing lines and `--durations=30` remain in hosted logs. Identical code has run in 115 s or
+187 s on different runners, so compare a job time with several runs, not one.
 
 ### Go-backed Python contracts
 
@@ -1232,10 +1081,7 @@ GOCACHE=$(mktemp -d) uv run --extra test pytest -q -p no:tach \
 
 `scripts/gen_kube_read_clients.sh` derives the read-only built-in interfaces from
 client-go's pinned Go AST. Run it after updating the SDK's client-go dependency;
-`--check` reports drift without writing files. The SDK's
-`TestReadClientMatchesPinnedKubernetesAPI` runs this check alongside recording,
-selector/pagination, discovery and CRD tests. Source-bound reads and compiled
-playbook failure propagation are covered by the runtime client tests.
+`--check` reports drift without writing files; `check_go_errors.sh` runs it.
 ### Concurrent shared memory
 
 This is a hermetic plumbing proof, with no cluster or model. Cross-cluster shared

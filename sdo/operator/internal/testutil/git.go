@@ -33,20 +33,6 @@ func InitGit(t testing.TB, root string) {
 	configureGit(t, root)
 }
 
-// CloneGit applies the same lifetime policy when a fixture needs an independent
-// repository rather than a linked worktree (clone does not copy local config).
-func CloneGit(t testing.TB, source, destination string, options ...string) {
-	t.Helper()
-	args := []string{"clone", "--quiet"}
-	// Clone can run maintenance itself. Write the lifetime policy before its
-	// first fetch, rather than configuring the repository after it returns.
-	for _, setting := range gitFixtureConfig() {
-		args = append(args, "--config", setting[0]+"="+setting[1])
-	}
-	args = append(args, options...)
-	Git(t, source, append(args, source, destination)...)
-}
-
 func configureGit(t testing.TB, root string) {
 	t.Helper()
 	for _, setting := range gitFixtureConfig() {

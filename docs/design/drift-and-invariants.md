@@ -168,11 +168,11 @@ The deployed drift flag is `--drift-batch-window`. Removed investigator config t
 
 ### Hermetic coverage and churn
 
-At `8ec987c83`, `TestHermeticForeignNetworkPolicyOpensLatentIncident` exercises the actual cache handler, classifier, ordinary responder admission, latent incident and deletion clearance. `TestHermeticForeignNetworkPolicyInvariantRepeat` uses its real open/fixed captures, existing primitive recordings, typed proposal assembly/materialization and builder corpus/rename validation. It executes the compiled `networkpolicy-service-isolation` artifact through the registry on a second policy name and opposite direction, opening `drift.networkpolicy-service-isolation` without a responder classification session. The repeat closes after deletion and explicit `NoMatch`, while a failed source read returning `Unknown` keeps it open. These checks establish hermetic plumbing and scripted learning, not live connectivity or mitigation-oracle results.
+At `8ec987c83` the hermetic tests drove the actual cache handler, classifier, ordinary responder admission, latent incident and deletion clearance, and executed the compiled `networkpolicy-service-isolation` artifact through the registry on a second policy name and opposite direction, opening `drift.networkpolicy-service-isolation` without a responder classification session. The repeat closed after deletion and explicit `NoMatch`, while a failed source read returning `Unknown` kept it open. Those tests were deleted in the 2026-11-03 Go test reduction; they were not recreated. These checks established hermetic plumbing and scripted learning, not live connectivity or mitigation-oracle results.
 
 The scripted invariant is diagnosis-only: a source-absent policy fully isolates a pod selected by an unchanged accepted Service with declared ports. It checks ingress and egress separately and conservatively suppresses matches when another selecting policy has allow rules. Partial rules require judgement. The scripted reflector can propose this class from a removed policy and a retained healthy policy peer (the existing same-kind corpus requirement; an application with no remaining policy peer needs a separate deletion-corpus abstraction); targetPort proposal behavior remains available. These existing fixtures do not establish autonomous live policy mitigation.
 
-`TestForeignDriftNormalChurn` covers every supported informer kind. HPA is not an informer kind; `TestDriftClassifierIgnoresHPAOwnedReplicas` separately covers its Deployment writes.
+The normal-churn tests (every supported informer kind, and HPA-owned Deployment writes, since HPA is not an informer kind) were deleted in the 2026-11-03 Go test reduction.
 
 | Kind | Feed | New events in controller-owned/unowned normal-churn snapshot | Foreign standalone admission |
 |---|---|---:|---|
@@ -214,7 +214,7 @@ Delete `runtime/{drift_investigation,registered_drift}.go`, completion/state/wak
 
 **D3 — accounting (accepted):** retain fastloop `drift_tokens` as legacy zero for new runs; charge merged reasoning once to `responder_tokens`. Old runs keep recorded investigator costs. Document accounting version in run metadata.
 
-Three failing-test-first steps, **2.75 h total**, extracting only a small shared drift-check helper:
+Three failing-test-first steps, **2.75 h total**, extracting only a small shared drift-check helper. The Go tests named in the table were deleted in the 2026-11-03 Go test reduction; the plan is kept as a record of the steps:
 
 | Step | Estimate | Change and hermetic exit |
 |---|---:|---|

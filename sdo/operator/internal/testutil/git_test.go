@@ -16,11 +16,9 @@ func TestGitRepositoriesDisableBackgroundMaintenance(t *testing.T) {
 	original := t.TempDir()
 	InitGit(t, original)
 	Git(t, original, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-qm", "base")
-	clone := filepath.Join(t.TempDir(), "clone")
-	CloneGit(t, original, clone)
 	worktree := filepath.Join(t.TempDir(), "worktree")
 	Git(t, original, "worktree", "add", "--detach", "-q", worktree)
-	for _, root := range []string{original, clone, worktree} {
+	for _, root := range []string{original, worktree} {
 		for key, want := range map[string]string{
 			"gc.auto": "0", "maintenance.auto": "false",
 			"gc.autoDetach": "false", "maintenance.autoDetach": "false",
