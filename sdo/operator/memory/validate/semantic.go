@@ -61,12 +61,7 @@ func (s *run) completeness() {
 	if s.arch == nil && !s.hasFile(layout.ArchitectureFile) {
 		s.add(Semantic, Diagnostic{Rule: RuleArchitectureMissing, Path: layout.ArchitectureFile, Message: "arch.md is missing"})
 	}
-	if len(s.playbooks) == 0 {
-		s.add(Semantic, Diagnostic{Rule: RulePlaybookNone, Path: layout.PlaybooksDir, Message: "at least one playbook is required", Hint: "create .sdo/playbooks/<id>/README.md"})
-	}
-	if len(s.detectors) == 0 {
-		s.add(Semantic, Diagnostic{Rule: RuleDetectorNone, Path: layout.DetectorsDir, Message: "memory registers no detectors"})
-	}
+
 }
 
 // hasFile reports whether a classified file exists even though it failed to parse.
@@ -173,7 +168,9 @@ func (s *run) detectorRules() {
 			if !layout.ValidPlaybookID(reference) {
 				continue
 			}
-			if book := s.playbooks[reference]; book == nil || !book.hasReadme {
+			// Suggested playbooks are advisory when the entire optional class is absent.
+			// With a catalog present, misspelled or incomplete entries remain errors.
+			if book := s.playbooks[reference]; len(s.playbooks) > 0 && (book == nil || !book.hasReadme) {
 				s.add(Semantic, Diagnostic{Rule: RuleUnknownPlaybook, Path: det.manifestAt, Line: firstLine(det.manifestText, func(line string) bool { return strings.Contains(line, reference) }), Message: fmt.Sprintf("detector %s names playbook %q, which does not exist", det.id, reference), Hint: "create the playbook or remove it from possiblePlaybooks"})
 			}
 		}

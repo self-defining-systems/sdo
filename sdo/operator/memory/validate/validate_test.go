@@ -44,11 +44,9 @@ func TestStructuralAndSemanticRules(t *testing.T) {
 		{"architecture-missing", []string{RuleArchitectureMissing}, ".sdo/arch.md", 0},
 		{"goal-owner", []string{RuleGoalOwner}, ".sdo/goal.md", 0},
 		{"manifest-missing", []string{RuleManifestMissing}, ".sdo/diagnostics/detectors/incidents/orphan", 0},
-		{"detector-none", []string{RuleDetectorNone}, ".sdo/diagnostics/detectors", 0},
 		{"detector-no-source", []string{RuleDetectorNoSource}, ".sdo/diagnostics/detectors/incidents/cache", 0},
 		{"duplicate-id", []string{RuleDuplicateID}, ".sdo/diagnostics/detectors/incidents/health/manifest.yaml", 0},
 		{"unknown-playbook", []string{RuleUnknownPlaybook}, ".sdo/diagnostics/detectors/incidents/cache/manifest.yaml", 20},
-		{"playbook-none", []string{RuleDetectorNone, RulePlaybookNone}, ".sdo/playbooks", 0},
 		{"playbook-missing-readme", []string{RulePlaybookNoReadme}, ".sdo/playbooks/extra", 0},
 		{"playbook-owner", []string{RulePlaybookOwner}, ".sdo/playbooks/base/README.md", 0},
 		{"playbook-originating-incident", []string{RulePlaybookIncident}, ".sdo/playbooks/base/README.md", 0},
@@ -146,8 +144,8 @@ func TestPartialMemoryIsAcceptedOnlyDuringBootstrapStages(t *testing.T) {
 	}{
 		{Human, InitialPhase, nil},
 		{Deployer, InitialPhase, nil},
-		{HealthJudge, InitialPhase, []string{RuleArchitectureMissing, RuleDetectorNone, RulePlaybookNone, RuleSchemaVersion}},
-		{Responder, ReflectionPhase, []string{RuleArchitectureMissing, RuleDetectorNone, RulePlaybookNone, RuleSchemaVersion}},
+		{HealthJudge, InitialPhase, []string{RuleArchitectureMissing, RuleSchemaVersion}},
+		{Responder, ReflectionPhase, []string{RuleArchitectureMissing, RuleSchemaVersion}},
 	} {
 		got := ruleSet(diagnose(t, Request{Root: root, Actor: test.actor, Phase: test.phase, Layers: Structural | Semantic}))
 		if !same(got, test.want) {

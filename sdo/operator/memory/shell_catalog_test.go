@@ -3,6 +3,7 @@ package memory
 import (
 	"os"
 	"path/filepath"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"strings"
 	"testing"
 )
@@ -31,5 +32,23 @@ func TestShellCatalogProjectsNotesAndIgnoresControllerOwnedRecords(t *testing.T)
 	}
 	if len(snapshot.Playbooks) != 1 || !strings.Contains(snapshot.Playbooks[0].Markdown, files[".sdo/playbooks/notes/custom.md"]) {
 		t.Fatal("free notes lost")
+	}
+}
+
+func TestSnapshotsAllowNoDetectors(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".sdo"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"schema-version": "3\n", "arch.md": "---\nschema_version: 1\n---\nApplication\n", "goal.md": "---\nschema_version: 1\nowner: human\n---\nAvailable\n"} {
+		if err := os.WriteFile(filepath.Join(root, ".sdo", name), []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, snapshot := range []func(string, string) (*contracts.OperationalMemorySnapshot, error){CandidateSnapshot, CandidateShellSnapshot} {
+		got, err := snapshot(root, strings.Repeat("a", 40))
+		if err != nil || len(got.GetDetectors()) != 0 {
+			t.Fatalf("empty detector class: %v %v", got, err)
+		}
 	}
 }

@@ -135,7 +135,7 @@ func CandidateShellSnapshot(root, commit string) (*contracts.OperationalMemorySn
 		snapshot.Playbooks = append(snapshot.Playbooks, books[id])
 	}
 	snapshot.PlaybookIndexMarkdown = strings.Join(ids, "\n")
-	if snapshot.GoalMarkdown == "" || snapshot.ArchitectureMarkdown == "" || len(snapshot.Detectors) == 0 {
+	if snapshot.GoalMarkdown == "" || snapshot.ArchitectureMarkdown == "" {
 		return nil, ErrSnapshotIncomplete
 	}
 	if proto.Size(snapshot) > MaxSnapshotBytes {

@@ -324,9 +324,6 @@ func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error
 }
 
 func validateDetectors(detectors []layout.Detector) error {
-	if len(detectors) == 0 {
-		return errors.New("diagnostics register no detectors")
-	}
 	for _, detector := range detectors {
 		hasGo := false
 		for _, file := range detector.Files {

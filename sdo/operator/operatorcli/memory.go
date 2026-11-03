@@ -382,7 +382,7 @@ func diagnosticLine(d validate.Diagnostic) string {
 	return line.String()
 }
 
-var listKinds = []string{"goal", "architecture", "playbook", "script", "detector"}
+var listKinds = []string{"goal", "architecture", "playbook", "script", "detector", "program"}
 
 func memoryList(args []string, stdout io.Writer) error {
 	flags := flag.NewFlagSet("memory ls", flag.ContinueOnError)
@@ -428,6 +428,9 @@ func memoryList(args []string, stdout io.Writer) error {
 			return err
 		}
 		add("playbook", playbook.ID, readme, "")
+		if len(playbook.Programs) > 0 {
+			add("program", playbook.ID, layout.PlaybookDir(playbook.ID), "")
+		}
 		for _, script := range playbook.Scripts {
 			add("script", playbook.ID+"/"+script.Name, layout.PlaybookScriptPath(playbook.ID, script.Name), "")
 		}
