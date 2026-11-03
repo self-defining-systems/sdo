@@ -30,9 +30,7 @@ class QualityCheck:
         re.compile(self.pattern)
 
 
-QUALITY_CHECKS = (
-    QualityCheck("layout", ("sdo.dev/operator/memory/validate",), "^TestMemoryLayoutReference$", 1),
-)
+QUALITY_CHECKS = (QualityCheck("layout", ("sdo.dev/operator/memory/validate",), "^TestMemoryLayoutReference$", 1),)
 
 
 def main() -> None:
