@@ -1,2 +1,0 @@
-# apihistory: tests of 1.5 s or more. PRs keep the rest, e.g. FuzzRV3bOpaqueLeaves, TestSimHistoryFaultSchedule, TestSimHistoryCredentialLeaves.
-TestVerificationFenceEndsTheResponderTurn
