@@ -661,13 +661,13 @@ def test_reused_benchmark_image_imports_real_entrypoint_transitively(tmp_path, f
             parent = parent.parent
         path.write_text(content)
 
+    # Production benchmark images intentionally omit the scripted worker launcher.
     for name in (
         "sdo.agents.responder.worker",
         "libs.agent_cli",
         "agentshim",
         "benchmarks.sregym.adapter.submission",
         "benchmarks.sregym.adapter.submission_relay",
-        "benchmarks.sregym.fastloop.generated_worker",
     ):
         module(name)
     module("benchmarks.sregym.fastloop.recording_worker", "from .checkpoint_limits import MAX_TASK_BYTES\n")
