@@ -2,6 +2,33 @@
 
 SDO spans Python agents, Go operator modules, generated detector workspaces, and optional Kubernetes smoke tests. Validate the narrowest affected contract first, then expand in proportion to risk.
 
+## What we test
+
+Prove each guarantee at the cheapest level that can hold it (the `design-for-verification` order).
+
+**Who owns what.** Controller properties are tested. Agent-written code (detectors, programs) is checked at the gate: `sdo-operator memory check`, the same check the broker runs, must reject bad code. Agent behaviour (repairing a fault, saving a useful program) is measured in live runs and never unit-tested.
+
+**By construction.** These hold through the architecture and are guarded by static checks, not runtime tests:
+
+- Only the controller writes to the cluster: programs return plan values, and the SDK read views have no write methods.
+- Agent code cannot reach the network or the cluster: the memory check enforces an import allowlist.
+- Accepted memory comes only from broker commits.
+
+Known gap: the memory host holds write-capable Kubernetes credentials and pod exec, so "the host never writes" is convention in our host code today, not construction.
+
+**Behavioral properties.** One seeded simulation of the real controller, with simulated Kubernetes, adversarial agent and program stand-ins and crashes at every effect, checks these at every step:
+
+1. A finding is marked fixed only by a fresh observation made after the last write.
+2. Each write happens at most once, across controller restarts, host crashes and retries.
+3. Every incident reaches an outcome, and no incident's failure blocks the next.
+4. Detection keeps running within its bound during activation, closure and agent work.
+5. A fault seen during an incident survives its closure.
+6. Once a memory revision is active, a matching saved program is applied before any agent, with no controller restart.
+
+**Honest fakes.** A few conformance tests compare the simulated Kubernetes API, fake Go and fake git with the real ones; a real run that finds a bug the simulation missed is a fidelity gap ([align-simulation](../.agents/skills/align-simulation/SKILL.md), [ledger](simulation-fidelity.md)). The scripted toy run on kind is the one end-to-end check.
+
+A test that maps to none of these is a candidate for deletion.
+
 ## Test organization
 
 Memory-host RPC tests must prepare and activate a host through Manager and capture
