@@ -7,6 +7,10 @@ description: Test SDO changes and debug SDO behavior by climbing a tier ladder f
 
 A live LLM run costs tens of minutes and millions of tokens, while the hermetic gate takes seconds. Find each bug at the lowest tier that can show it, and climb to a live run only when every tier below it passes.
 
+## What to test
+
+Test controller properties; check agent-written code only through `memory check`; judge agent behaviour only in live runs. Do not runtime-test what holds by construction. The structural guarantees and the six behavioral properties the simulation checks are in [the testing guide](../../../docs/testing-guide.md#what-we-test); keep the simulation faithful with [align-simulation](../align-simulation/SKILL.md).
+
 ## Tier ladder
 
 | Tier | What it exercises | Command | Cost |
