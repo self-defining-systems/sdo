@@ -22,6 +22,7 @@ export GOMAXPROCS="$hermetic_jobs" GOFLAGS="${GOFLAGS:-} -p=$hermetic_jobs"
 
 (
     cd "$root/sdo/operator"
+    go test -tags='integration controller_e2e' ./e2e -run '^TestMemoryHostFaultIsConfinedToOwnedSandbox$' -count=1
     go test -tags=integration ./broker -run '^TestAgentScriptJudgeMemoryCheckAndBroker$' -count=1
     go test -tags=integration ./operatorcli -run '^TestTrafficObservationUsesLiveAcceptedHost$' -count=1
     go test -tags=integration ./install -run '^TestObservabilityPlanAndApply$' -count=1

@@ -148,9 +148,14 @@ def script_environment():
         env.setdefault("SDO_AGENT_SCRIPT_STATE", str(directory / "state"))
         # Resolve role providers without requiring a real login or a model API.
         env["SDO_AGENT_PROVIDER"] = "codex"
-        login = directory / "login"
-        login.mkdir()
-        (login / "auth.json").write_text('{"tokens":"agent-script-no-model"}')
+        # The operator mounts the incident's provider home across worker Jobs.
+        # Replacing it with a temporary login would discard accepted transcripts
+        # and make a controller continuation impossible to resume.
+        login = Path(env.get("CODEX_HOME") or directory / "login")
+        login.mkdir(parents=True, exist_ok=True)
+        auth = login / "auth.json"
+        if not auth.exists():
+            auth.write_text('{"tokens":"agent-script-no-model"}')
         env["CODEX_HOME"] = str(login)
         yield env
 

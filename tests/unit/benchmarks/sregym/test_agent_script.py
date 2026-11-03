@@ -637,6 +637,39 @@ def test_scripted_session_persists_a_rollout_before_the_worker_checkpoints_it(sc
     assert started[0][0].stat().st_size > 0
 
 
+def test_script_launcher_keeps_the_incident_provider_home_across_worker_jobs(scripted_cli, tmp_path, monkeypatch):
+    """A continuation must find the transcript accepted by the previous worker."""
+    from benchmarks.sregym.agent_script.cli import script_environment
+    from benchmarks.sregym.agent_script.wire import Rollout
+
+    plan, _ = scripted_cli
+    plan.write_text(json.dumps(script()))
+    home = tmp_path / "incident" / "codex"
+    home.mkdir(parents=True)
+    auth = home / "auth.json"
+    auth.write_text("existing-credential-canary")
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    with script_environment() as first:
+        assert Path(first["CODEX_HOME"]) == home
+        rollout = Rollout.create(home, cwd=str(tmp_path), session_id="scripted-session")
+    with script_environment() as continued:
+        resumed = Rollout.resume(Path(continued["CODEX_HOME"]), "scripted-session")
+        assert resumed.path == rollout.path
+        assert auth.read_text() == "existing-credential-canary"
+
+
+def test_script_launcher_without_incident_home_uses_a_temporary_home(scripted_cli, monkeypatch):
+    from benchmarks.sregym.agent_script.cli import script_environment
+
+    plan, _ = scripted_cli
+    plan.write_text(json.dumps(script()))
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    with script_environment() as environment:
+        home = Path(environment["CODEX_HOME"])
+        assert (home / "auth.json").is_file()
+    assert not home.exists()
+
+
 def test_sandboxed_commands_can_persist_tool_replies_for_later_commands(scripted_cli, tmp_path, monkeypatch):
     """`sdo` writes each reply under /tmp/sdo and the next command reads it back."""
     from libs.agent_cli.structured import run_structured_turn
