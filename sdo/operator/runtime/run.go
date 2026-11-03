@@ -727,7 +727,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				}
 				loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
 					return LiveReadView{Carrier: inputs.New(snapshot), Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, Prober: primitiveProber,
-						Source: planSource, SourceCommit: request.SourceCommit, Baseline: request.StateChanges, BaselineSource: stateTracker}
+						Source: planSource, SourceCommit: request.SourceCommit, Baseline: request.StateChanges, BaselineSource: baselineOf(stateTracker)}
 				}
 				controller.mu.Lock()
 				controller.responderLoop = loop
@@ -765,7 +765,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return controller.CurrentAcceptedCommit()
 			}
 			return resolvedSourceCommit
-		}, BaselineSource: stateTracker}
+		}, BaselineSource: baselineOf(stateTracker)}
 	}
 	snapshotProvider = ReadSnapshotProvider{Base: snapshotProvider, View: liveView}
 	start := clock.Now().UTC()
@@ -802,7 +802,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return cycle
 			}
 			return NewCycleReadView(LiveReadView{Carrier: inputs.New(snapshot), Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, Prober: primitiveProber,
-				Source: planSource, SourceCommit: controller.CurrentAcceptedCommit(), BaselineSource: stateTracker})
+				Source: planSource, SourceCommit: controller.CurrentAcceptedCommit(), BaselineSource: baselineOf(stateTracker)})
 		},
 	})
 	if options.NativeBroker != nil {

@@ -177,9 +177,7 @@ assert len(prompt)<=1500, len(prompt)
 	for id := range deadlines {
 		deadlines[id] = now.Add(time.Hour)
 	}
-	if err := controller.scheduler.RestoreDeadlines(deadlines); err != nil {
-		t.Fatal(err)
-	}
+	controller.scheduler.RestoreDeadlines(deadlines)
 	if wake := controller.NextWake(); wake.IsZero() || wake.After(now.Add(cfg.VerificationTimeout)) {
 		t.Fatalf("running continuation lost verification wake: %v", wake)
 	}

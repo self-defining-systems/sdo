@@ -1,7 +1,6 @@
 package runtime
 
 import (
-	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -112,17 +111,17 @@ func (s *Scheduler) Deadlines() map[string]time.Time {
 	return result
 }
 
-func (s *Scheduler) RestoreDeadlines(deadlines map[string]time.Time) error {
+// RestoreDeadlines reinstates persisted next-run times. A deadline for a
+// detector the active memory revision no longer has is dropped: the state was
+// written under an earlier revision, and refusing it would fail every restart.
+func (s *Scheduler) RestoreDeadlines(deadlines map[string]time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for id, deadline := range deadlines {
-		entry, ok := s.entries[id]
-		if !ok {
-			return fmt.Errorf("state references unknown detector %q", id)
+		if entry, ok := s.entries[id]; ok {
+			entry.nextRun = deadline
 		}
-		entry.nextRun = deadline
 	}
-	return nil
 }
 
 func watchesEvent(watches []sdk.WatchKind, event sdk.WatchKind) bool {

@@ -105,9 +105,7 @@ func TestSetupLearnedDetectorQuarantine(t *testing.T) {
 			restarted.config.SourceCommit = "new-memory-revision"
 			// Restore a realistic skewed schedule: the learned detector is due before
 			// health. Revision adoption must still take one fresh complete setup sweep.
-			if err := restarted.scheduler.RestoreDeadlines(map[string]time.Time{"health": time.Unix(1000, 0), "learned": time.Unix(104, 0)}); err != nil {
-				t.Fatal(err)
-			}
+			restarted.scheduler.RestoreDeadlines(map[string]time.Time{"health": time.Unix(1000, 0), "learned": time.Unix(104, 0)})
 			if err := restarted.Step(ctx, time.Unix(104, 0), nil); err != nil {
 				t.Fatal(err)
 			}

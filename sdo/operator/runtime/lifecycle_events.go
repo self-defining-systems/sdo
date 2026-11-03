@@ -148,6 +148,22 @@ func (c *Controller) emitLifecycleLocked(event *contracts.LifecycleEvent) {
 	}
 }
 
+// emitOpenedLocked emits incident_opened for the open incident once per process.
+// The event id derives from the incident id, so the first save after a restart
+// that finds the incident open emits it again and the sink drops the duplicate.
+// Callers hold c.mu.
+func (c *Controller) emitOpenedLocked() {
+	request := c.currentIncidentRequest
+	if request == nil || request.IncidentID == c.openedEmitted {
+		return
+	}
+	c.openedEmitted = request.IncidentID
+	c.emitLifecycleLocked(&contracts.LifecycleEvent{
+		Event: PhaseOpened, RecordedAt: contractTimestamp(c.incidentDetectedAt), IncidentId: request.IncidentID,
+		FindingKeys: append([]string(nil), c.incidentFindingKeys...), SurfacedPlaybooks: playbookIDs(request.SurfacedPlaybooks),
+	})
+}
+
 // TimelineEntry is one event in a reconstructed incident timeline, from either
 // durable stream. It carries the source record so a caller can inspect the full
 // detail after locating the transition.
