@@ -59,6 +59,7 @@ type KubernetesJobDispatcher struct {
 // PrepareDispatch freezes the worker task before the controller records its
 // pending dispatch. Retries use this task even if observations later change.
 func (d KubernetesJobDispatcher) PrepareDispatch(ctx context.Context, request IncidentRequest) (IncidentRequest, error) {
+	defer dispatchPreparationTiming(request.IncidentID, "prepare_task")()
 	if err := validateIncidentRequest(request); err != nil {
 		return IncidentRequest{}, fmt.Errorf("validate incident request: %w", err)
 	}
@@ -139,7 +140,9 @@ func (d KubernetesJobDispatcher) PrepareDispatch(ctx context.Context, request In
 		return IncidentRequest{}, errors.New("native responder requires logical operational memory")
 	}
 	if d.Catalog != nil {
+		finished := dispatchPreparationTiming(request.IncidentID, "memory_snapshot")
 		snapshot, err := memory.SnapshotAt(ctx, d.Catalog, request.RepositoryBaseCommit)
+		finished()
 		if err != nil {
 			return IncidentRequest{}, fmt.Errorf("read logical operational memory: %w", err)
 		}
@@ -407,9 +410,14 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 }
 
 func (d KubernetesJobDispatcher) programTrust(ctx context.Context, request IncidentRequest) (map[string]ProgramTrust, error) {
-	if d.Outcomes == nil {
+	// External alerts deliberately carry no Go detector/coverage authority.
+	// Trust is only diagnostic metadata for that coverage, not an execution gate.
+	// Do not walk all outcomes and executable corpus history twice before
+	// claiming a worker that cannot consume that evidence.
+	if request.ExternalMessage != "" || d.Outcomes == nil {
 		return nil, nil
 	}
+	defer dispatchPreparationTiming(request.IncidentID, "program_trust")()
 	stored, _, err := memory.ListOutcomes(ctx, d.Outcomes, "program trust")
 	if err != nil {
 		return nil, fmt.Errorf("read program trust outcomes: %w", err)
@@ -487,4 +495,12 @@ func (d KubernetesJobDispatcher) reopenWithdrawnRecovery(ctx context.Context, re
 		return fmt.Errorf("reopen withdrawn recovery fence: %w", err)
 	}
 	return nil
+}
+
+// Keep preparation visible separately from worker startup and model time.
+func dispatchPreparationTiming(incident, phase string) func() {
+	started := lifecycleio.Now()
+	return func() {
+		slog.Info("responder_dispatch_preparation", "incident_id", incident, "phase", phase, "duration_ms", lifecycleio.Since(started).Milliseconds())
+	}
 }
