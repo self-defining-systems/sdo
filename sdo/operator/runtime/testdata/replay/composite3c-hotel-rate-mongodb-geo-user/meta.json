@@ -1,9 +1,0 @@
-{
-  "source": "clc-runs/cstream-b/results/cstream-b-C10/000_composite3c_hotel_rate_mongodb_geo_user",
-  "description": "Real recorded heavy composite incident: a four-component composite (hotel rate, mongodb, geo, user) with 261 firing-stream transitions -- the stress fixture for the firing sink and event-id attribution at scale.",
-  "scrubbed": [
-    "detector-firings.jsonl: copied verbatim; its fields carry no environment-specific detail. incident_id (app-name+epoch-nanos) and recorded_at kept because event_id is content-addressed over them and the replay re-derives the real recorded ids.",
-    "closure.json: only detector_timeline + the three analysis booleans extracted from sdo_production_receipt_strict.json; the receipt's pod uid, session id, absolute artifact paths, commit SHAs, and image refs are not copied.",
-    "No per-incident RuntimeState dump exists in stored results, so no state.json; the state-round-trip dimension does not run for this fixture."
-  ]
-}

@@ -1,9 +1,0 @@
-{
-  "source": "clc-runs/mi-mini-a/results/mi-mini-a-1/000_network_policy_block",
-  "description": "Real recorded single-fault incident: a NetworkPolicy block on Hotel Reservation. The smallest complete stream (3 firing transitions). Only a health detector fired and it cleared after the responder's fix, so no incident-class detector participated (before=false, after=false, no_incident=true) -- a distinct analysis-boolean combination from the composite fixtures.",
-  "scrubbed": [
-    "detector-firings.jsonl: copied verbatim; its fields carry no environment-specific detail. incident_id (app-name+epoch-nanos) and recorded_at kept because event_id is content-addressed over them and the replay re-derives the real recorded ids.",
-    "closure.json: only detector_timeline + the three analysis booleans extracted from sdo_production_receipt_strict.json; the receipt's pod uid, session id, absolute artifact paths, commit SHAs, and image refs are not copied.",
-    "No per-incident RuntimeState dump exists in stored results, so no state.json; the state-round-trip dimension does not run for this fixture."
-  ]
-}
