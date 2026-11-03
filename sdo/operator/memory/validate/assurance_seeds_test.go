@@ -67,6 +67,9 @@ func seedCases(t *testing.T) []seedCase {
 // preserve any existing generic packages byte for byte. Newly installed Go policies
 // are constructed in the temporary checkout rather than copied into app fixtures.
 func TestAssuranceSeedsPassHealthJudgeCheck(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds the diagnostics module of every seed (about 30 s); nightly CI runs it without -short")
+	}
 	operatorRoot, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)

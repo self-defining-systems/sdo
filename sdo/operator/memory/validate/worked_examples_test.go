@@ -25,6 +25,9 @@ const workedExamples = "../../../skills/sdo-playbook-authoring/assets/examples"
 // incident detector compiles and loads with them. One tree and
 // one check cover every example, so a new example costs no extra compile.
 func TestWorkedExamplesPassTheReflectionMemoryCheck(t *testing.T) {
+	if testing.Short() {
+		t.Skip("compiles every worked example (about 10 s); nightly CI runs it without -short")
+	}
 	entries, err := os.ReadDir(filepath.Join(workedExamples, "playbooks"))
 	if err != nil {
 		t.Fatal(err)

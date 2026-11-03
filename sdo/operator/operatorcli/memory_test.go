@@ -297,6 +297,9 @@ func TestMemoryOutcomesPrintsStoredRecords(t *testing.T) {
 }
 
 func TestMemoryNewDetectorScaffoldsBuildVetAndPassTheirTests(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and vets scaffolded detectors (about 10 s); nightly CI runs it without -short")
+	}
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".sdo"), 0o755); err != nil {
 		t.Fatal(err)

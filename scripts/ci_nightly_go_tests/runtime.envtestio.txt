@@ -1,2 +1,0 @@
-# envtest starts a real kube-apiserver and etcd and downloads them on first use (cached under ~/.cache/sdo-envtest in the nightly runtime shard).
-TestStartServesTheAPIAndAKubeconfig
