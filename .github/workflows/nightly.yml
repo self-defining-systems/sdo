@@ -90,6 +90,12 @@ jobs:
           sudo apt-get install -y --no-install-recommends bubblewrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           bwrap --ro-bind / / --dev /dev --proc /proc true
+      - name: Cache the envtest kube-apiserver and etcd
+        if: matrix.shard == 'runtime'
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: ~/.cache/sdo-envtest
+          key: envtest-assets-${{ runner.os }}-${{ runner.arch }}-v1
       - name: Race suite for the ${{ matrix.shard }} packages
         run: bash scripts/test_go_ci.sh nightly ${{ matrix.shard }}
 
