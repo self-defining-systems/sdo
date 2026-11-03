@@ -808,9 +808,9 @@ def _application_needs_redeploy(
     current_data_faults: tuple[str, ...] = (),
 ) -> Tier2Reason | None:
     """Decide tier 2 from incoming faults, lane injection facts and live application health."""
-    from benchmarks.sregym.fastloop.admission import workload_identity
     from benchmarks.sregym.fastloop.clean_start import assert_clean_baseline
     from benchmarks.sregym.fastloop.wipe import await_healthy_pods, tier2_reason
+    from benchmarks.sregym.fastloop.workload_readiness import workload_identity
 
     def invariant() -> None:
         workload_identity(environment.kubeconfig, environment.namespace)

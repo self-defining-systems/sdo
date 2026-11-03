@@ -125,8 +125,8 @@ def main() -> int:
             assert worker.__file__ is not None
 
             def confirm_healthy(problem: Any) -> dict[str, Any]:
-                from benchmarks.sregym.fastloop.admission import await_workload_identity
                 from benchmarks.sregym.fastloop.seed_recovery import verify_baseline_traffic
+                from benchmarks.sregym.fastloop.workload_readiness import await_workload_identity
 
                 await_workload_identity(Path(os.environ["KUBECONFIG"]), problem.namespace)
                 health = self._health_probe(problem.namespace)

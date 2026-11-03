@@ -304,13 +304,13 @@ class RestoreChecks:
         retire_stalled_replicas(self.environment.kubeconfig, self.environment.namespace)
 
     def ready(self) -> None:
-        from benchmarks.sregym.fastloop.admission import await_workload_identity
+        from benchmarks.sregym.fastloop.workload_readiness import await_workload_identity
 
         self.identity = await_workload_identity(self.environment.kubeconfig, self.environment.namespace)
 
     def complete(self) -> None:
         from benchmarks.sregym.adapter import assert_stable_workloads
-        from benchmarks.sregym.fastloop.admission import await_workload_identity
+        from benchmarks.sregym.fastloop.workload_readiness import await_workload_identity
 
         assert_stable_workloads(
             self.identity or {}, await_workload_identity(self.environment.kubeconfig, self.environment.namespace)

@@ -18,6 +18,15 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+def _patch_kubectl(monkeypatch: pytest.MonkeyPatch, api: object) -> None:
+    """Admission and its worker-safe readiness module both read the API."""
+    from benchmarks.sregym.fastloop import admission as admission_module
+    from benchmarks.sregym.fastloop import workload_readiness
+
+    monkeypatch.setattr(admission_module, "kubectl", api)
+    monkeypatch.setattr(workload_readiness, "kubectl", api)
+
+
 class FakeCluster:
     def __init__(self) -> None:
         self.objects = [
@@ -243,7 +252,7 @@ def test_failed_learning_keeps_program_for_third_incident(tmp_path: Path, monkey
     # Expose its actual ready workload through the Kubernetes read boundary.
     from types import SimpleNamespace
 
-    from benchmarks.sregym.fastloop import admission, baseline_recovery, clean_start
+    from benchmarks.sregym.fastloop import baseline_recovery, clean_start
 
     document = json.loads(environment.baseline_path.read_text())
     document.update(mutating_webhook_configs=[], validating_webhook_configs=[])
@@ -268,7 +277,7 @@ def test_failed_learning_keeps_program_for_third_incident(tmp_path: Path, monkey
         return SimpleNamespace(stdout=json.dumps({"items": objects}), returncode=0, stderr="")
 
     monkeypatch.setattr(reset, "kubectl", api)
-    monkeypatch.setattr(admission, "kubectl", api)
+    _patch_kubectl(monkeypatch, api)
     monkeypatch.setattr(baseline_recovery, "kubectl", api)
     monkeypatch.setattr(clean_start, "kubectl", api)
     now = datetime(2026, 10, 21, tzinfo=timezone.utc)

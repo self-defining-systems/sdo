@@ -15,6 +15,15 @@ from benchmarks.sregym.fastloop import clean_start
 from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import commit_accepted_source
 
 
+def _patch_kubectl(monkeypatch: pytest.MonkeyPatch, api: object) -> None:
+    """Admission and its worker-safe readiness module both read the API."""
+    from benchmarks.sregym.fastloop import admission as admission_module
+    from benchmarks.sregym.fastloop import workload_readiness
+
+    monkeypatch.setattr(admission_module, "kubectl", api)
+    monkeypatch.setattr(workload_readiness, "kubectl", api)
+
+
 @pytest.mark.parametrize("namespace", ["hotel-reservation", "astronomy-shop", "social-network"])
 def test_probe_placement_preserves_app_dns(namespace):
     value = {
@@ -368,9 +377,7 @@ def test_old_ready_pods_do_not_prove_current_workload_rollout(monkeypatch, statu
         "metadata": {"uid": "old", "labels": {"app": "api"}},
         "status": {"conditions": [{"type": "Ready", "status": "True"}]},
     }
-    monkeypatch.setattr(
-        admission, "kubectl", lambda *a, **kw: SimpleNamespace(stdout=json.dumps({"items": [workload, pod]}))
-    )
+    _patch_kubectl(monkeypatch, lambda *a, **kw: SimpleNamespace(stdout=json.dumps({"items": [workload, pod]})))
     with pytest.raises(ValueError, match="rollout not complete"):
         admission.workload_identity(Path("unused"), "any-app")
 
@@ -600,9 +607,7 @@ def test_replaced_pod_under_unchanged_template_is_named_as_readiness_loss_not_ro
         "metadata": {"uid": "new", "name": "currency-z4xmb", "labels": {"app": "currency"}},
         "status": {"phase": "Pending", "conditions": [{"type": "Ready", "status": "False"}]},
     }
-    monkeypatch.setattr(
-        admission, "kubectl", lambda *a, **kw: SimpleNamespace(stdout=json.dumps({"items": [workload, pod]}))
-    )
+    _patch_kubectl(monkeypatch, lambda *a, **kw: SimpleNamespace(stdout=json.dumps({"items": [workload, pod]})))
     with pytest.raises(ValueError, match="workload not Ready: Deployment/currency") as refused:
         admission.workload_identity(Path("unused"), "any-app")
     message = str(refused.value)
