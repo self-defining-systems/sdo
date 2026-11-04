@@ -315,6 +315,15 @@ func publicationChecks(ctx context.Context, r Request, structurallyValid bool) (
 
 	ds = append(ds, clusterLocalDiagnostics(r.Root, paths)...)
 	ds = append(ds, secretDataDiagnostics(r.Root, paths)...)
+	ds = append(ds, liveObjectNameDiagnostics(r.Root, paths)...)
+	ds = append(ds, normalizedReadDiagnostics(r.Root, paths)...)
+	if structurallyValid {
+		duplicates, err := duplicateRepairDiagnostics(ctx, r, paths)
+		if err != nil {
+			return nil, err
+		}
+		ds = append(ds, duplicates...)
+	}
 	// A scratch index includes new files and agent-local commits while leaving
 	// the proposal index unchanged. Git itself defines the whitespace policy.
 	if structurallyValid {
