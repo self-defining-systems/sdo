@@ -170,6 +170,9 @@ func lifecycleChecks(ctx context.Context, r Request, paths []string, structurall
 				if err := wire.UnmarshalLenientMigrating([]byte(raw), outcome); err != nil {
 					return nil, err
 				}
+				if r.RepairVerified != nil && r.Decision.GetLearningDecision() == "updated" && !r.RepairVerified(outcome) {
+					ds = append(ds, Diagnostic{Rule: RuleReflectionRepairRequired, Message: "this closure has no independently verified repaired cause, so updated learning (README-only edits included) is never published", Hint: "return no_change with a no-recorded-repair reason or a typed SDK gap, and revert your edits"})
+				}
 				if structurallyValid {
 					ds = append(ds, ReflectionRepairDiagnostics(r.Root, outcome, r.Decision, paths, r.Replay)...)
 				}

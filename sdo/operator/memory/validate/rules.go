@@ -13,6 +13,7 @@ const (
 	RuleReflectionStalePlaybook     = "reflection.stale-playbook"
 	RuleReflectionSDKGapUnavailable = "reflection.sdk-gap-unavailable"
 	RuleReflectionProgramRequired   = "reflection.program-required"
+	RuleReflectionRepairRequired    = "reflection.repair-required"
 	RuleReflectionDetectorRequired  = "reflection.detector-required"
 	RuleWhitespace                  = "diff.whitespace"
 	RuleSnapshotBudget              = "memory.snapshot-budget"

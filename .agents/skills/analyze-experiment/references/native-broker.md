@@ -63,7 +63,7 @@ are rejected. `runtime/internal/lifecycleio` persists generated messages.
 reset/done; `reflection_results` retains completed decisions after rejection.
 A queued reflection ends with one closure phase: `reflection_committed` only after the
 broker found `reflection_commit` on the accepted branch, `reflection_failed` for a failed
-decision (including Go turning an `updated` with no verified repaired cause into `failed`),
+decision,
 or `reflection_without_commit`; ledgers before this rule logged `reflection_committed` for all three.
 Frozen requests live under the ledger's `reflection-tasks/` directory.
 `ControllerState.failed_closures` is an outbox, archived before the next state CAS

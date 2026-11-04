@@ -62,7 +62,10 @@ The worker resumes that session by default, independently of the response budget
 and benchmark cleanup. Settled corpus work does not bypass this dispatch.
 Without a verified repaired cause, reflection may return `no_change` with a
 concrete no-recorded-repair reason or typed SDK gaps; it cannot publish an `updated`
-README or executable claim. `decline_reason=no_recorded_repair` also records one verified cause with no recorded repair write on its own resources (an owner-chained write only) beside an `updated` decision; the replayable causes are still learned and the validator no longer demands a program for the recorded one. A responder Job failure preserves its provider checkpoint from the incident tool
+README or executable claim. The shared check enforces this as `reflection.repair-required`
+(the broker sets `Request.RepairVerified` from the same partial-learning view the worker
+receives), so the agent's `check_memory` rejects `updated` up front; the local CLI
+self-check does not judge it. A rejection feeds the normal correction loop, not a `failed` decision. `decline_reason=no_recorded_repair` also records one verified cause with no recorded repair write on its own resources (an owner-chained write only) beside an `updated` decision; the replayable causes are still learned and the validator no longer demands a program for the recorded one. A responder Job failure preserves its provider checkpoint from the incident tool
 state even when no worker result was delivered. When no resumable session exists,
 the accepted outcome carries `reflection_skip_reason=no_session`; reflection
 never falls back to a fresh session. The ledger's skip decision also names

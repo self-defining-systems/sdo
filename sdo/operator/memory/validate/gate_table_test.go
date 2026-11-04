@@ -147,6 +147,18 @@ func gateReflection(name string, outcome *contracts.OutcomeRecord, decision *con
 		}}
 }
 
+// gateWithRepairVerifier gives the check the controller's closure fact: whether
+// the committed outcome holds an independently verified repaired cause.
+func gateWithRepairVerifier(name string, verified bool, row gateRow) gateRow {
+	row.name = name
+	inner := row.request
+	row.request = func(r *Request) {
+		inner(r)
+		r.RepairVerified = func(*contracts.OutcomeRecord) bool { return verified }
+	}
+	return row
+}
+
 // gateUnscopedBinding rewrites the cache incident detector to bind a role by
 // name, with the given manifest and Spec playbook declarations.
 func gateUnscopedBinding(manifestPlaybooks, specPlaybooks string) func(*testing.T, string) {
@@ -461,6 +473,9 @@ var gateRows = []gateRow{
 	gateReflection("Secret data in memory", gateClean(), gateUpdated(), gateTrafficEdit("incident-x", "apiVersion: v1\nkind: Secret\nmetadata:\n  name: db\ndata:\n  password: c2VjcmV0\n"), RuleSecretData),
 	gateReflection("reflection without a decision", gateClean(), nil, gatePlaybookEdit, RuleReflectionDecision),
 	gateReflection("reflection updates a playbook", gateClean(), gateUpdated("base"), gatePlaybookEdit),
+	gateWithRepairVerifier("README-only learning without a verified repaired cause", false, gateReflection("unverified closure updates a playbook", gateClean(), gateUpdated("base"), gatePlaybookEdit, RuleReflectionRepairRequired)),
+	gateWithRepairVerifier("no_change without a verified repaired cause", false, gateReflection("unverified closure declines", gateClean(), gateNoChange, func(*testing.T, string) {})),
+	gateWithRepairVerifier("README learning with a verified repaired cause", true, gateReflection("verified closure updates a playbook", gateClean(), gateUpdated("base"), gatePlaybookEdit)),
 	gateReflection("applied playbook failed and was not updated", gateStaleOutcome(), gateNoChange, func(*testing.T, string) {}, RuleReflectionStalePlaybook),
 	gateReflection("hand repair has no program", gateHandRepair(gateRepairOutcome()), gateNoChange, func(*testing.T, string) {}, RuleReflectionProgramRequired),
 	gateReflection("sdk gap that is free text", gateHandRepair(gateRepairOutcome()),

@@ -85,6 +85,9 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 	if err != nil {
 		return nil, nil, fmt.Errorf("native repository broker: %w", err)
 	}
+	if memoryCodePath == "go" {
+		repository.RepairVerified = reflectionRepairVerified
+	}
 	ledgerRoot, err := broker.NativeLedgerRoot(config.GetBrokerWorktreeRoot())
 	if err != nil {
 		return nil, nil, err

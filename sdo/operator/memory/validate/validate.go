@@ -93,6 +93,12 @@ type Request struct {
 	// Publication is broker-derived context. CLI callers load its provisioned
 	// copy from the proposal's private Git directory; the broker never trusts it.
 	Publication *PublicationContext
+	// RepairVerified is the controller's closure fact for reflection: whether
+	// the committed outcome holds an independently verified repaired cause (or
+	// a verified healthy closure). When set and it reports false, an updated
+	// reflection cannot publish. Nil means the caller does not judge it, as in a
+	// local CLI self-check. It is fixed broker policy, not a per-call input.
+	RepairVerified func(*contracts.OutcomeRecord) bool `json:"-"`
 	// Decision is the intended reflection result, checked against the actual diff.
 	Decision *contracts.ReflectionDecision
 	// Base is the Git revision, resolvable inside Root, that the candidate
