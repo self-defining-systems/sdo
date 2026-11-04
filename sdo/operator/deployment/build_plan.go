@@ -45,7 +45,11 @@ func planImageBuilds(checkout string, builds []*contracts.ImageBuild) ([]planned
 		seen[build.Image] = true
 		label := fmt.Sprintf("image_builds[%d] (%s)", index, build.Image)
 		contextRel, contextProblem := resolveBuildPath(checkout, build.ContextPath, label+" context_path", true)
-		dockerfileRel, dockerfileProblem := resolveBuildPath(checkout, build.DockerfilePath, label+" dockerfile_path", false)
+		dockerfilePath := build.DockerfilePath
+		if contextProblem == "" {
+			dockerfilePath = dockerfileInContext(checkout, contextRel, build.DockerfilePath)
+		}
+		dockerfileRel, dockerfileProblem := resolveBuildPath(checkout, dockerfilePath, label+" dockerfile_path", false)
 		if contextProblem != "" {
 			problems = append(problems, contextProblem)
 		}
@@ -61,6 +65,28 @@ func planImageBuilds(checkout string, builds []*contracts.ImageBuild) ([]planned
 		return nil, fmt.Errorf("the plan's image_builds do not match the checkout, so no build was started. All paths are relative to the checkout root. %s", strings.Join(problems, " "))
 	}
 	return planned, nil
+}
+
+// dockerfileInContext applies the one convention for dockerfile_path: it is
+// relative to the checkout root, like context_path. A path that does not exist
+// there but does exist below the build context is the docker-CLI habit of
+// naming the Dockerfile relative to the context; that reading is unambiguous
+// and is accepted. When both exist the checkout-root reading wins.
+func dockerfileInContext(checkout, contextRel, raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || filepath.IsAbs(trimmed) || contextRel == "." {
+		return raw
+	}
+	for _, candidate := range []string{raw, trimmed} {
+		if _, err := os.Stat(filepath.Join(checkout, candidate)); err == nil {
+			return raw
+		}
+	}
+	inContext := filepath.Join(contextRel, trimmed)
+	if stat, err := os.Stat(filepath.Join(checkout, inContext)); err == nil && stat.Mode().IsRegular() {
+		return inContext
+	}
+	return raw
 }
 
 // resolveBuildPath returns the checkout-relative form of raw. Surrounding
@@ -115,6 +141,9 @@ func missingPathProblem(checkout, raw, label string, wantDirectory bool) string 
 	kind := "directory"
 	if !wantDirectory {
 		kind = "file"
+	}
+	if !wantDirectory {
+		note += " dockerfile_path is relative to the checkout root, not to the build context (for context services/api write services/api/Dockerfile)."
 	}
 	return fmt.Sprintf("%s %q does not exist in the checkout (expected a %s).%s%s", label, raw, kind, note, hint)
 }

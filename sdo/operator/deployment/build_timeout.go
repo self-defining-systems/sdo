@@ -23,9 +23,9 @@ func (e *BuildTimeoutError) Error() string {
 	if e.Budget {
 		scope = fmt.Sprintf("the shared build budget of %s for all image builds", e.Limit)
 	}
-	return fmt.Sprintf("building image %s timed out: it exceeded %s. This is a build-time limit, not a plan error: the plan's paths were validated against the checkout. "+
-		"Resubmit the same image_builds unchanged unless the Dockerfile itself can be made cheaper (for example installing a prebuilt package instead of compiling from source). "+
-		"Do not change context_path or dockerfile_path because of this error", e.Image, scope)
+	return fmt.Sprintf("building image %s timed out: it exceeded %s. THE PLAN WAS FINE: this is a time limit, not a plan error, and nothing about the context, Dockerfile, base images or package mirrors was judged wrong. "+
+		"Resubmit exactly the same image_builds and leave the Dockerfile, base images, package sources and context_path unchanged; the build only needs more time, and the operator retries it with the registry layer cache of earlier builds. "+
+		"Rewriting the plan after this error makes it worse", e.Image, scope)
 }
 
 // InfrastructureTimeout marks the error for the lifecycle coordinator, which
