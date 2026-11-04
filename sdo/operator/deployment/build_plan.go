@@ -59,6 +59,10 @@ func planImageBuilds(checkout string, builds []*contracts.ImageBuild) ([]planned
 		if contextProblem != "" || dockerfileProblem != "" {
 			continue
 		}
+		if problem := copySourceProblem(checkout, label, contextRel, dockerfileRel); problem != "" {
+			problems = append(problems, problem)
+			continue
+		}
 		planned = append(planned, plannedBuild{Build: build, ContextRel: contextRel, DockerfileRel: dockerfileRel})
 	}
 	if len(problems) > 0 {
