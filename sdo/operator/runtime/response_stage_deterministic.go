@@ -398,7 +398,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			}
 			continue
 		}
-		if loop.sameWriteInProgress(report, loop.plans[planResponse.PlanID].plan) {
+		if loop.sameWriteInProgress(ctx, stage.stageNow(), report, loop.plans[planResponse.PlanID].plan) {
 			if err := skip(stageAlreadyAttempted); err != nil {
 				return report, err
 			}

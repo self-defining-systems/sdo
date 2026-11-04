@@ -1,10 +1,15 @@
 package runtime
 
 import (
+	"context"
 	"fmt"
 	"reflect"
+	"slices"
+	"time"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	deploymentpkg "sdo.dev/operator/deployment"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -17,18 +22,32 @@ const stageAlreadyAttempted = "already_attempted"
 
 // sameWriteInProgress reports whether every write of plan repeats a write of
 // an earlier attempt in report whose effect has not settled yet. The caller
-// holds the loop mutex.
-func (l *ResponderLoop) sameWriteInProgress(report *contracts.StageReport, plan program.Plan) bool {
+// holds the loop mutex. now is the stage clock.
+func (l *ResponderLoop) sameWriteInProgress(ctx context.Context, now time.Time, report *contracts.StageReport, plan program.Plan) bool {
 	writes := planWrites(plan)
 	if len(writes) == 0 {
 		return false
 	}
+	var live *liveRollouts
 	var inProgress []program.Action
 	for _, earlier := range report.GetMitigations() {
-		if !stageWriteInProgress(earlier) {
+		if !stageWriteUnsettled(earlier) {
 			continue
 		}
-		for _, application := range l.applicationsLog {
+		if live == nil {
+			live = &liveRollouts{loop: l, ctx: ctx}
+		}
+		// The recorded label says what the attempt looked like when it was
+		// applied. Whether its effect is still under way is read now: its
+		// workloads still rolling out, or the recovery window after the write
+		// still open.
+		if !live.incomplete(earlier) && !recoveryWindowOpen(now, earlier) {
+			continue
+		}
+		// A restored controller holds earlier applications only in the archive,
+		// decoded from the journal. Their parameter and observed values have no
+		// bound inputs, so a write using one is never "the same" (write on doubt).
+		for _, application := range append(slices.Clone(l.applicationsLog), l.archivedApplications...) {
 			if application.ID == earlier.GetApplyReceipt().GetApplicationId() {
 				inProgress = append(inProgress, planWrites(attemptApplication(application, earlier).Result.Plan)...)
 			}
@@ -46,14 +65,54 @@ func (l *ResponderLoop) sameWriteInProgress(report *contracts.StageReport, plan 
 	return true
 }
 
-// stageWriteInProgress is an applied, unreverted attempt that neither failed
-// nor settled, and whose own diagnosis no longer matches: its rollout or the
-// recovery it waits for is still under way.
-func stageWriteInProgress(attempt *contracts.StageMitigation) bool {
+// stageWriteUnsettled is an applied, unreverted attempt that neither failed
+// nor settled, and whose own diagnosis no longer matches. It is only a
+// candidate for "in progress"; the live state decides.
+func stageWriteUnsettled(attempt *contracts.StageMitigation) bool {
 	receipt := attempt.GetApplyReceipt()
 	unsettled := attempt.GetResult() == "rollout_pending_at_handoff" || attempt.GetResult() == "applied_still_matching"
 	return unsettled && receipt.GetApplied() && !receipt.GetRolledBack() &&
 		attempt.GetPostApplyDiagnose().GetVerdict().GetResult() == contracts.Verdict_RESULT_NO_MATCH
+}
+
+// recoveryWindowOpen is the bounded time after a write in which its recovery
+// is still awaited; a write older than that no longer explains a standing fault.
+func recoveryWindowOpen(now time.Time, attempt *contracts.StageMitigation) bool {
+	completed := attempt.GetApplyReceipt().GetCompletedAt()
+	return completed != nil && now.Before(completed.AsTime().Add(DefaultMitigationRolloutTimeout))
+}
+
+// liveRollouts reads the cluster once per decision, lazily.
+type liveRollouts struct {
+	loop    *ResponderLoop
+	ctx     context.Context
+	view    program.ReadView
+	fetched bool
+}
+
+// incomplete reports whether a Deployment the attempt wrote is still rolling
+// out. An unreadable cluster says nothing; the recovery window then decides.
+func (r *liveRollouts) incomplete(attempt *contracts.StageMitigation) bool {
+	if !r.fetched {
+		r.fetched = true
+		if view, err := r.loop.snapshotView(r.ctx); err == nil {
+			r.view = view
+		}
+	}
+	if r.view == nil {
+		return false
+	}
+	for _, touched := range attempt.GetTouchedObjects() {
+		if touched.GetKind() != "Deployment" {
+			continue
+		}
+		for _, deployment := range r.view.Deployments() {
+			if deployment.Name == touched.GetName() && deployment.Namespace == touched.GetNamespace() && !deploymentpkg.DeploymentRolloutComplete(&deployment) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // planWrites are the plan's actions that change cluster state.
@@ -155,4 +214,12 @@ func valueIdentity(value program.Value) any {
 		return nil
 	}
 	return map[string]any{"origin": string(value.Origin()), "value": writeIdentity(reflect.ValueOf(resolved), false)}
+}
+
+// stageNow is the stage clock the recovery window is measured on.
+func (stage *DeterministicResponseStage) stageNow() time.Time {
+	if stage.recoveryNow != nil {
+		return stage.recoveryNow()
+	}
+	return lifecycleio.Now()
 }
