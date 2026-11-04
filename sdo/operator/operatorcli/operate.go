@@ -79,6 +79,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	verificationTimeout := flags.Duration("verification-timeout", 5*time.Minute, "independent verification timeout")
 	buildTimeout := flags.Duration("build-timeout", settings.DefaultBuildTimeout, "deadline of one source image build")
 	buildBudget := flags.Duration("build-budget", settings.DefaultBuildBudget, "deadline of all source image builds of one deployment attempt")
+	rolloutTimeout := flags.Duration("rollout-timeout", settings.DefaultRolloutTimeout, "how long to wait for each applied workload to finish rolling out")
 	registryInsecure := flags.Bool("registry-insecure", false, "allow an explicitly configured HTTP image registry")
 	permissiveResponder := flags.Bool("permissive-responder", false, "broad lane repair permissions excluding Secret and credential APIs")
 	var responderNamespaces repeatable
@@ -188,7 +189,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,
 			LateFindings: *lateFindings, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, FrozenMemory: *frozenMemory, ExternalIncidents: *externalIncidents,
 			MaxResponseLoops: *maxResponseLoops,
-			TimeoutSeconds:   int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()), BuildTimeoutSeconds: int(buildTimeout.Seconds()), BuildBudgetSeconds: int(buildBudget.Seconds()), RepairPolicy: *repairPolicy,
+			TimeoutSeconds:   int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()), BuildTimeoutSeconds: int(buildTimeout.Seconds()), BuildBudgetSeconds: int(buildBudget.Seconds()), RolloutTimeoutSeconds: int(rolloutTimeout.Seconds()), RepairPolicy: *repairPolicy,
 			NativeCommand:         []string{"/usr/local/bin/sdo-operator"},
 			ReuseExisting:         true,
 			RegistrationConfigMap: *registrationConfigMap, RegistrationDirectory: *registrations,

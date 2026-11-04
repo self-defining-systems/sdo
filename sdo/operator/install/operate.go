@@ -94,7 +94,7 @@ func (i Installer) markPreparedCommit(ctx context.Context, cfg Config) error {
 }
 
 func operateBuildArgs(cfg Config) []string {
-	return []string{"--build-timeout", fmt.Sprintf("%ds", int(buildTimeout(cfg).Seconds())), "--build-budget", fmt.Sprintf("%ds", int(buildBudget(cfg).Seconds()))}
+	return []string{"--build-timeout", fmt.Sprintf("%ds", int(buildTimeout(cfg).Seconds())), "--build-budget", fmt.Sprintf("%ds", int(buildBudget(cfg).Seconds())), "--rollout-timeout", fmt.Sprintf("%ds", int(rolloutTimeout(cfg).Seconds()))}
 }
 
 func OperateJobName(operationID string) string {
@@ -182,7 +182,7 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 	}
 	zero := int32(0)
 	ttl := int32(600)
-	deadline := int64((cfg.TimeoutSeconds+int(buildBudget(cfg).Seconds()))*maxAttempts + 600)
+	deadline := int64((cfg.TimeoutSeconds+int(buildBudget(cfg).Seconds())+int(rolloutTimeout(cfg).Seconds()))*maxAttempts + 600)
 	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: OperateJobName(operationID), Namespace: cfg.controlNamespace(), Annotations: map[string]string{PreparedCommitAnnotation: cfg.AcceptedCommit}}, Spec: batchv1.JobSpec{BackoffLimit: &zero, TTLSecondsAfterFinished: &ttl, ActiveDeadlineSeconds: &deadline}}
 	job.Spec.Template.Labels = map[string]string{"app.kubernetes.io/name": "sdo-operate", "sdo.dev/operation": OperateJobName(operationID)}
 	pod := &job.Spec.Template.Spec

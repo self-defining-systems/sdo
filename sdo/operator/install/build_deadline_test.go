@@ -27,9 +27,24 @@ func TestBuildDeadlinesValidateTogether(t *testing.T) {
 
 func TestOperateJobCarriesBuildDeadlines(t *testing.T) {
 	cfg := Config{BuildTimeoutSeconds: 1200, BuildBudgetSeconds: 2400}
-	args := []string{"--build-timeout", "1200s", "--build-budget", "2400s"}
+	args := []string{"--build-timeout", "1200s", "--build-budget", "2400s", "--rollout-timeout", "600s"}
 	got := operateBuildArgs(cfg)
 	if !slices.Equal(got, args) {
 		t.Fatalf("operate args = %v, want %v", got, args)
+	}
+}
+
+func TestRolloutTimeoutIsConfigurableAndSizedForInitContainers(t *testing.T) {
+	if got := rolloutTimeout(Config{}); got < 8*time.Minute {
+		t.Fatalf("default rollout wait %s cannot cover a 3 minute init container with margin", got)
+	}
+	if got := rolloutTimeout(Config{RolloutTimeoutSeconds: 90}); got != 90*time.Second {
+		t.Fatalf("configured rollout wait ignored: %s", got)
+	}
+	if !slices.Contains(operateBuildArgs(Config{RolloutTimeoutSeconds: 900}), "900s") {
+		t.Fatal("operate Job must carry --rollout-timeout")
+	}
+	if err := (Config{RolloutTimeoutSeconds: -1}).validate(); err == nil {
+		t.Fatal("negative rollout timeout must be rejected")
 	}
 }

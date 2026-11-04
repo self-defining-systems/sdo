@@ -62,7 +62,9 @@ type Config struct {
 	TimeoutSeconds, VerificationTimeoutSeconds int
 	// BuildTimeoutSeconds bounds one source image build and BuildBudgetSeconds all builds of one
 	// deployment attempt; zero selects the deployment package defaults.
-	BuildTimeoutSeconds, BuildBudgetSeconds      int
+	BuildTimeoutSeconds, BuildBudgetSeconds int
+	// RolloutTimeoutSeconds bounds the wait for one workload rollout; zero selects the default.
+	RolloutTimeoutSeconds                        int
 	ControllerDurationSeconds                    int
 	ExitAfterClosure                             bool
 	NativeCommand, NativeArgs                    []string
@@ -193,6 +195,9 @@ func (c Config) validate() error {
 	}
 	if c.BuildTimeoutSeconds < 0 || c.BuildBudgetSeconds < 0 {
 		return errors.New("build timeout and budget cannot be negative")
+	}
+	if c.RolloutTimeoutSeconds < 0 {
+		return errors.New("rollout timeout cannot be negative")
 	}
 	if c.BuildTimeoutSeconds > 0 && c.BuildBudgetSeconds > 0 && c.BuildTimeoutSeconds > c.BuildBudgetSeconds {
 		return errors.New("per-build timeout cannot exceed the build budget")
@@ -523,6 +528,12 @@ func buildTimeout(c Config) time.Duration {
 		return time.Duration(c.BuildTimeoutSeconds) * time.Second
 	}
 	return settings.DefaultBuildTimeout
+}
+func rolloutTimeout(c Config) time.Duration {
+	if c.RolloutTimeoutSeconds > 0 {
+		return time.Duration(c.RolloutTimeoutSeconds) * time.Second
+	}
+	return settings.DefaultRolloutTimeout
 }
 func buildBudget(c Config) time.Duration {
 	if c.BuildBudgetSeconds > 0 {
