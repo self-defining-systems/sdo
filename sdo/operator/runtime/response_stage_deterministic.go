@@ -398,6 +398,12 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			}
 			continue
 		}
+		if loop.sameWriteInProgress(report, loop.plans[planResponse.PlanID].plan) {
+			if err := skip(stageAlreadyAttempted); err != nil {
+				return report, err
+			}
+			continue
+		}
 		if err := stage.applyMatch(ctx, loop, state, stagePlanned{match: match, attempt: attempt, bindings: bindings, planID: planResponse.PlanID}, save); err != nil {
 			return report, err
 		}

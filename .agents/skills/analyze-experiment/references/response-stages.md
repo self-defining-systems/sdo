@@ -25,6 +25,10 @@ Results distinguish `applied_cleared`, `applied_still_matching` (with `kept_reas
 `reverted_ineffective` (writes restored before handoff), `rollout_failed`,
 `rollout_pending_at_handoff`, `apply_error`, and `skipped` with `skip_reason`
 (historical `stage_budget` meant observation exhaustion; current observation exhaustion never suppresses an admitted write).
+`already_attempted` now means every write of the match (same action, object and resolved values; `Reason` ignored)
+repeats a write an earlier attempt of the same stage applied whose effect is unsettled (`rollout_pending_at_handoff`
+or `applied_still_matching` with post-apply NO_MATCH); the earlier attempt keeps settlement credit. Before this
+rule, a second program restarting the same Deployment superseded the first (`SETTLEMENT_REJECTION_REASON_SUPERSEDED`).
 `rollout_pending_at_handoff` whose `rollout_pending` reason says `cannot progress
 without another actor` is a stall handoff, a few seconds after the write: the
 replacement Pod is unschedulable, its ReplicaSet cannot create it (non-webhook

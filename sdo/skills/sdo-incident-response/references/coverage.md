@@ -34,6 +34,8 @@ saved diagnoses before closing. The brief is enough to start; no mandatory skill
 `stage_actions` retains controller result labels and adds `blockers` from the saved rollout conditions
 and warning events, beside the affected program. `applied_cleared` is shown as `cleared`;
 `rollout_pending_at_handoff` means applied but rollout pending; failed and skipped results remain explicit.
+`skipped (already_attempted)` means another program planned the same write that an earlier stage action had
+already applied and that was still settling; SDO did not repeat it, and recovery belongs to that earlier action.
 Blocker messages are observations at handoff, so confirm whether they still apply. Absence of a blocker
 message is not proof that a rollout can progress. Full unabridged facts stay in `details_file`.
 `stage_playbooks` maps involved program IDs to accepted README files (null if unavailable), including
