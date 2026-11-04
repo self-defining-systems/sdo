@@ -70,6 +70,9 @@ def prior_timeout() -> ValidationResult | None:
 # Failed check_memory calls one reflection attempt may make. Each correction
 # turn starts a new tool server, so the count lives beside the attempt's
 # timeout latch. P7 spent up to 13M tokens on a fault no edit could fix.
+# This is a cost guard, not a safety property: the worker can see the file,
+# and deleting it resets the count to the current server's own. Acceptance
+# never depends on it; the broker's check runs regardless.
 MAX_FAILED_MEMORY_CHECKS = 6
 _FAILED_CHECKS_SUFFIX = ".failed-checks"
 
@@ -80,7 +83,7 @@ def failed_checks(local: int) -> int:
         try:
             return max(local, int(Path(path + _FAILED_CHECKS_SUFFIX).read_text(encoding="utf-8")))
         except ValueError:
-            # A worker-writable counter can only spend the budget, never grant checks.
+            # A corrupt counter spends the budget; deletion resets it (see above).
             return MAX_FAILED_MEMORY_CHECKS
     return local
 

@@ -33,8 +33,8 @@ Work in the proposal checkout, in this order. Open other files only when a step 
    in Mitigate, as `webhook-ca-sync` does.
 <!-- /replay:on -->
 6. **Check**: `check_memory` with `learning_decision: updated`, `proposed_artifact_ids` = the changed
-   playbook IDs, and a summary. Fix each blocking diagnostic as its hint says; follow `next`. A fault on
-   a detector you did not change is a pre-existing note: do not edit it. Six failures end checks.
+   playbook IDs, and a summary. Fix each blocking diagnostic as its hint says; follow `next`. A healthy-replay
+   fault the accepted base also has is pre-existing: do not edit it. Six failures end checks.
 7. When `next` says return, return the same decision and IDs; do not polish passing memory.
 
 Keep revisions that applied cleanly unless this incident shows failure or incompleteness; add or narrowly edit, never rewrite working steps. Preserve verified partial steps. Separate independent source-repair causes
