@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -27,6 +28,8 @@ type sameWriteWorld struct {
 	healthy  atomic.Bool
 	observed atomic.Int32
 	restarts atomic.Int32
+	// stuck keeps rollouts from ever completing.
+	stuck atomic.Bool
 }
 
 func (w *sameWriteWorld) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
@@ -48,7 +51,7 @@ func (w *sameWriteWorld) Observe(ctx context.Context, refs []sdk.ObjectRef) erro
 		return &RolloutPendingError{Pending: &contracts.RolloutPending{Reason: "synthetic rollout in progress"}}
 	}
 	for _, ref := range refs {
-		if ref.Kind != "Deployment" {
+		if ref.Kind != "Deployment" || w.stuck.Load() {
 			continue
 		}
 		deployment, err := w.client.AppsV1().Deployments(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
@@ -203,6 +206,104 @@ func TestDeterministicStageSkipsSameWriteInProgress(t *testing.T) {
 		return
 	}
 	t.Fatalf("settlement lost the first restart: %v", settled)
+}
+
+// The skip survives a controller restart: the first restart's application is
+// restored from the tool state journal (no bound inputs, only the archive), and
+// the second program's identical restart is still skipped.
+func TestDeterministicStageSkipsSameWriteAfterRestore(t *testing.T) {
+	ctx := context.Background()
+	_, first, state := sameWriteLoop(t)
+	var saved [][]byte
+	first.saveToolState = func(_ context.Context, payload []byte) error {
+		saved = append(saved, append([]byte(nil), payload...))
+		return nil
+	}
+	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return first }, KeepLoop: true,
+		recoveryWait: func(context.Context, time.Duration) error { return nil }}
+	if _, err := stage.Run(ctx, state); err != nil {
+		t.Fatal(err)
+	}
+	// The journal as the controller left it when it died after the first apply.
+	var checkpoint []byte
+	for _, payload := range saved {
+		var tool responderToolState
+		if err := json.Unmarshal(payload, &tool); err != nil {
+			t.Fatal(err)
+		}
+		if len(tool.ApplicationEvidence) == 1 {
+			for _, progress := range tool.StageProgress {
+				if mitigations := progress.Report.GetMitigations(); len(mitigations) == 1 && mitigations[0].GetResult() == "rollout_pending_at_handoff" {
+					checkpoint = payload
+				}
+			}
+		}
+	}
+	if checkpoint == nil {
+		t.Fatalf("no journal entry between the two attempts (%d saves)", len(saved))
+	}
+	world, second, restored := sameWriteLoop(t)
+	if err := second.restoreToolSnapshot(checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	resumed := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return second }, KeepLoop: true,
+		recoveryWait: func(context.Context, time.Duration) error { return nil }}
+	report, err := resumed.Run(ctx, restored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var skipped bool
+	for _, attempt := range report.Mitigations {
+		if attempt.PlaybookId == "blind-restart" {
+			skipped = attempt.Result == "skipped" && attempt.SkipReason == stageAlreadyAttempted
+		}
+	}
+	if !skipped || world.restarts.Load() != 0 {
+		t.Fatalf("restored stage repeated the restart (writes=%d, skipped=%v): %v", world.restarts.Load(), skipped, report)
+	}
+}
+
+// "In progress" is read from the cluster when the decision is made, not from
+// the label recorded at apply. Past the recovery window, a Deployment whose
+// rollout finished is not in progress, so a fault that came back is written
+// again; one still rolling out stays in progress however old the write is.
+func TestSameWriteInProgressIsReadLive(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		rolledOut  bool
+		later      time.Duration
+		wantWrites int32
+	}{
+		{"window open", true, 0, 1},
+		{"window closed, rollout finished", true, 2 * DefaultMitigationRolloutTimeout, 2},
+		{"window closed, still rolling out", false, 2 * DefaultMitigationRolloutTimeout, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			world, loop, state := sameWriteLoop(t)
+			if !tc.rolledOut {
+				deployment, err := world.client.AppsV1().Deployments("app").Get(context.Background(), "api", metav1.GetOptions{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				world.stuck.Store(true)
+				deployment.Status.AvailableReplicas = 0
+				if _, err := world.client.AppsV1().Deployments("app").UpdateStatus(context.Background(), deployment, metav1.UpdateOptions{}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			start := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+			loop.Now = func() time.Time { return start }
+			clock := func() time.Time { return start.Add(tc.later) }
+			stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, KeepLoop: true,
+				recoveryWait: func(context.Context, time.Duration) error { return nil }, recoveryNow: clock}
+			if _, err := stage.Run(context.Background(), state); err != nil {
+				t.Fatal(err)
+			}
+			if got := world.restarts.Load(); got != tc.wantWrites {
+				t.Fatalf("Deployment written %d times, want %d", got, tc.wantWrites)
+			}
+		})
+	}
 }
 
 // A write's identity is its action kind, object and resolved arguments, for

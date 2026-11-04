@@ -27,7 +27,9 @@ Results distinguish `applied_cleared`, `applied_still_matching` (with `kept_reas
 (historical `stage_budget` meant observation exhaustion; current observation exhaustion never suppresses an admitted write).
 `already_attempted` now means every write of the match (same action, object and resolved values; `Reason` ignored)
 repeats a write an earlier attempt of the same stage applied whose effect is unsettled (`rollout_pending_at_handoff`
-or `applied_still_matching` with post-apply NO_MATCH); the earlier attempt keeps settlement credit. Before this
+or `applied_still_matching` with post-apply NO_MATCH) and that is still in progress when the match is decided (read live: a
+touched Deployment still rolling out, or the 90 s recovery window after the write still open; the same holds after a
+controller restart, where the write is found in the restored applications); the earlier attempt keeps settlement credit. Before this
 rule, a second program restarting the same Deployment superseded the first (`SETTLEMENT_REJECTION_REASON_SUPERSEDED`).
 `rollout_pending_at_handoff` whose `rollout_pending` reason says `cannot progress
 without another actor` is a stall handoff, a few seconds after the write: the
