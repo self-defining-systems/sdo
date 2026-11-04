@@ -238,11 +238,22 @@ func (b KubernetesBuildBackend) job(name, subPath, contextRel, dockerfileRel, im
 	}
 	ttl := int32(300)
 	// Variables are passed as environment values, never interpolated into the script.
-	script := `buildctl-daemonless.sh build --frontend dockerfile.v0 --local "context=$SDO_CONTEXT" --local dockerfile=/workspace --opt "filename=$SDO_DOCKERFILE" --output "$SDO_OUTPUT" --metadata-file /tmp/sdo-metadata.json
+	// The layer cache lives beside the image in the same app repository, one
+	// tag per image that each build overwrites, so it is namespaced to the app
+	// and bounded by the registry's own retention. Import of a missing cache is
+	// a warning, and a failed export never fails a build that succeeded.
+	cacheRef := imageRepository(image) + ":sdo-buildcache"
+	flags := "--oci-worker-no-process-sandbox"
+	script := `buildctl-daemonless.sh build --frontend dockerfile.v0 --local "context=$SDO_CONTEXT" --local dockerfile=/workspace --opt "filename=$SDO_DOCKERFILE" --import-cache "type=registry,ref=$SDO_CACHE_REF" --export-cache "type=registry,ref=$SDO_CACHE_REF,mode=max,ignore-error=true" --output "$SDO_OUTPUT" --metadata-file /tmp/sdo-metadata.json
 printf 'SDO_BUILD_METADATA='; cat /tmp/sdo-metadata.json; printf '\n'`
 	output := "type=image,name=" + image + ",push=true"
 	if b.RegistryInsecure {
 		output += ",registry.insecure=true"
+		// The cache client resolves the registry through buildkitd's own
+		// configuration, not the exporter attribute.
+		flags += " --config /tmp/buildkitd.toml"
+		script = `printf '[registry."%s"]\n  http = true\n  insecure = true\n' "$SDO_REGISTRY_HOST" > /tmp/buildkitd.toml
+` + script
 	}
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: b.Namespace, Labels: map[string]string{"app.kubernetes.io/managed-by": "sdo", "sdo.dev/component": "image-build"}},
@@ -250,7 +261,7 @@ printf 'SDO_BUILD_METADATA='; cat /tmp/sdo-metadata.json; printf '\n'`
 			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{RestartPolicy: corev1.RestartPolicyNever, ServiceAccountName: b.ServiceAccount, AutomountServiceAccountToken: &no,
 				SecurityContext: &corev1.PodSecurityContext{RunAsUser: ptr64(1000), RunAsGroup: ptr64(1000), SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeUnconfined}},
 				Containers: []corev1.Container{{Name: "buildkit", Image: b.BuildKitImage, Command: []string{"/bin/sh", "-ec"}, Args: []string{script},
-					Env:          []corev1.EnvVar{{Name: "BUILDKITD_FLAGS", Value: "--oci-worker-no-process-sandbox"}, {Name: "DOCKER_CONFIG", Value: "/docker-config"}, {Name: "SDO_OUTPUT", Value: output}, {Name: "SDO_CONTEXT", Value: path.Join("/workspace", contextRel)}, {Name: "SDO_DOCKERFILE", Value: dockerfileRel}},
+					Env:          []corev1.EnvVar{{Name: "BUILDKITD_FLAGS", Value: flags}, {Name: "SDO_CACHE_REF", Value: cacheRef}, {Name: "SDO_REGISTRY_HOST", Value: b.AllowedRegistryHost}, {Name: "DOCKER_CONFIG", Value: "/docker-config"}, {Name: "SDO_OUTPUT", Value: output}, {Name: "SDO_CONTEXT", Value: path.Join("/workspace", contextRel)}, {Name: "SDO_DOCKERFILE", Value: dockerfileRel}},
 					VolumeMounts: []corev1.VolumeMount{{Name: "candidate", MountPath: "/workspace", SubPath: subPath, ReadOnly: true}, {Name: "registry-auth", MountPath: "/docker-config/config.json", SubPath: ".dockerconfigjson", ReadOnly: true}, {Name: "buildkit-state", MountPath: "/home/user/.local/share/buildkit"}},
 					// RootlessKit needs newuidmap's setuid transition to create a
 					// subordinate UID map. Disabling privilege escalation breaks

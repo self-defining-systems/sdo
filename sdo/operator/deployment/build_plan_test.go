@@ -137,7 +137,7 @@ func TestBuildBudgetTimeoutIsNotAPlanError(t *testing.T) {
 	if !errors.As(err, &timeout) || !timeout.Budget {
 		t.Fatalf("budget expiry must be a BuildTimeoutError, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "not a plan error") || !strings.Contains(err.Error(), "unchanged") {
+	if !strings.Contains(err.Error(), "not a plan error") || !strings.Contains(err.Error(), "THE PLAN WAS FINE") || !strings.Contains(err.Error(), "Dockerfile") {
 		t.Fatalf("timeout feedback must tell the deployer to keep the plan: %v", err)
 	}
 }
@@ -151,5 +151,27 @@ func TestCallerCancellationIsNotATimeout(t *testing.T) {
 	var timeout *BuildTimeoutError
 	if err == nil || errors.As(err, &timeout) {
 		t.Fatalf("cancellation must stay a plain error, got %v", err)
+	}
+}
+
+// dockerfile_path is checkout-relative; the context-relative habit is accepted
+// only when it is unambiguous, and the rejection names the right form.
+func TestDockerfilePathConvention(t *testing.T) {
+	checkout := sourceCheckout(t)
+	planned, err := planImageBuilds(checkout, []*contracts.ImageBuild{imageBuild("api", "services/api", "Dockerfile")})
+	if err != nil || planned[0].DockerfileRel != "services/api/Dockerfile" {
+		t.Fatalf("context-relative Dockerfile must resolve below the context: %v %v", planned, err)
+	}
+	// Both readings exist: the checkout-root one wins.
+	if err := os.WriteFile(filepath.Join(checkout, "Dockerfile"), []byte("FROM scratch\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	planned, err = planImageBuilds(checkout, []*contracts.ImageBuild{imageBuild("api", "services/api", "Dockerfile")})
+	if err != nil || planned[0].DockerfileRel != "Dockerfile" {
+		t.Fatalf("an existing checkout-relative path must not be reinterpreted: %v %v", planned, err)
+	}
+	_, err = planImageBuilds(checkout, []*contracts.ImageBuild{imageBuild("api", "services/api", "Dockerfile.prod")})
+	if err == nil || !strings.Contains(err.Error(), "relative to the checkout root, not to the build context") {
+		t.Fatalf("rejection must name the convention: %v", err)
 	}
 }
