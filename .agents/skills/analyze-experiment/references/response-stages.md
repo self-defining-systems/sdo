@@ -152,7 +152,14 @@ stage re-entry. Missing telemetry in historical receipts is unknown, never zero.
 This measures the recovery observation interval, not apply duration or dispatch
 latency. A health finding may wait on a pending write through typed resource
 relations (including Service selectors and traffic-related resources); this does
-not add authored coverage or grant attribution. Action completion uses every
+not add authored coverage or grant attribution. An applied, completely executed
+write whose rollout is pending keeps the wait open; once it has taken effect,
+its open findings that depend on it may wait out their detector's rolling window
+(sdk.WindowedDetector or a traffic consumer's workload window, plus one clearing
+interval), incident-class findings included, counted from the first observation
+of the effect. Past that window, or for an incident detector without a window,
+the wait exits `FAILED`. On `CLEARED` an attempt is promoted to
+`applied_cleared` only when its latest post-apply diagnose is `NO_MATCH`. Action completion uses every
 indexed action report, including successful WaitFor and satisfied EnsureExec,
 not the number of mutations. Rollout-only source residuals and unavailable
 readback are pending; actual configuration residuals remain partial failures.
