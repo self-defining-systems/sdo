@@ -52,6 +52,9 @@ message ReceiptFailure {
     CODE_INVALID_WIRE = 1;
     CODE_REJECTED_EVIDENCE = 2;
     CODE_CHECKER_UNAVAILABLE = 3;
+    // The receipt is valid except that the outcome SDO itself classified (failed or
+    // unconfirmed) verified nothing. The flat summary names the classification.
+    CODE_UNVERIFIED_OUTCOME = 4;
   }
   string incident_id = 1;
   Code code = 2 [(buf.validate.field).enum = {defined_only: true, not_in: [0]}];

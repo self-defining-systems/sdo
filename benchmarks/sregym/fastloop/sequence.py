@@ -185,9 +185,9 @@ def _row_receipt(directory: Path, index: int) -> tuple[Path, dict[str, Any]]:
         return strict, json.loads(strict.read_text())
     rejected = directory / REJECTED_RECEIPT_FILENAME
     if rejected.is_file():
-        document = json.loads(rejected.read_text()).get("receipt")
-        if isinstance(document, dict) and unverified_outcome(document) is not None:
-            return rejected, document
+        rejection = json.loads(rejected.read_text())
+        if isinstance(rejection, dict) and unverified_outcome(rejection) is not None:
+            return rejected, rejection["receipt"]
     raise RuntimeError(f"eval: row {index} has no strict receipt or SDO-unverified outcome receipt; hold the sequence")
 
 

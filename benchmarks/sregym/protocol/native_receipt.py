@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from google.protobuf import json_format
 
 from benchmarks.sregym.protocol._receipt_checker import ReceiptCheckerError, evaluate_receipt
 from benchmarks.sregym.protocol.receipt import ProductionReceiptValidationError
 from sdo.contracts import NATIVE_RECEIPT_SCHEMA_VERSION, NativeProductionReceipt, ReceiptFailure
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class NativeReceiptValidationError(ProductionReceiptValidationError):
@@ -55,22 +58,36 @@ def _evaluate(receipt: dict[str, Any], *, build: bool) -> dict[str, Any]:
     return receipt
 
 
-#: Resolutions Go gives a rejected receipt whose outcome SDO itself classified as not verified.
-UNVERIFIED_RESOLUTIONS = frozenset({"sdo_failed", "sdo_unconfirmed"})
+def unverified_outcome(rejection: dict[str, Any]) -> tuple[str, str] | None:
+    """``(classification, resolution)`` when Go rejected a receipt only because SDO's own outcome verified nothing.
 
-
-def unverified_outcome(receipt: dict[str, Any]) -> tuple[str, str] | None:
-    """``(classification, resolution)`` when SDO's own outcome says the closure was not verified.
-
-    A ``failed`` or ``unconfirmed`` outcome is a measurement of SDO, not a harness fault: its
-    receipt is rejected by design (nothing was verified) yet its Go-derived summary is intact.
-    Wire corruption carries no such summary, so it is never mistaken for one.
+    ``rejection`` is the rejected-receipt document (``failure`` and ``receipt``). A ``failed`` or
+    ``unconfirmed`` outcome is a measurement of SDO, not a harness fault. Go names that case with
+    ``CODE_UNVERIFIED_OUTCOME`` after every other check passed, so any other rejection (wire
+    corruption, disagreeing identities, a missing commit) is never mistaken for one.
     """
 
+    failure, receipt = _mapping(rejection.get("failure")), _mapping(rejection.get("receipt"))
+    if failure.get("code") != "CODE_UNVERIFIED_OUTCOME":
+        return None
     classification, resolution = receipt.get("outcome_classification"), receipt.get("resolution")
-    if isinstance(classification, str) and isinstance(resolution, str) and resolution in UNVERIFIED_RESOLUTIONS:
+    if isinstance(classification, str) and isinstance(resolution, str):
         return classification, resolution
     return None
+
+
+def _mapping(value: object) -> dict[str, Any]:
+    return cast("dict[str, Any]", value) if isinstance(value, dict) else {}
+
+
+def unverified_outcome_file(rejected: Path) -> tuple[str, str] | None:
+    """``unverified_outcome`` of a rejected-receipt file; ``None`` when absent or unreadable."""
+
+    try:
+        document = json.loads(rejected.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return unverified_outcome(_mapping(document))
 
 
 def native_receipt_resolution(receipt: dict[str, Any]) -> str:

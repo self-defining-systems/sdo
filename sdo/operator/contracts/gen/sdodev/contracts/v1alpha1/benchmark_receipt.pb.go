@@ -34,6 +34,9 @@ const (
 	ReceiptFailure_CODE_INVALID_WIRE        ReceiptFailure_Code = 1
 	ReceiptFailure_CODE_REJECTED_EVIDENCE   ReceiptFailure_Code = 2
 	ReceiptFailure_CODE_CHECKER_UNAVAILABLE ReceiptFailure_Code = 3
+	// The receipt is valid except that the outcome SDO itself classified (failed or
+	// unconfirmed) verified nothing. The flat summary names the classification.
+	ReceiptFailure_CODE_UNVERIFIED_OUTCOME ReceiptFailure_Code = 4
 )
 
 // Enum value maps for ReceiptFailure_Code.
@@ -43,12 +46,14 @@ var (
 		1: "CODE_INVALID_WIRE",
 		2: "CODE_REJECTED_EVIDENCE",
 		3: "CODE_CHECKER_UNAVAILABLE",
+		4: "CODE_UNVERIFIED_OUTCOME",
 	}
 	ReceiptFailure_Code_value = map[string]int32{
 		"CODE_UNSPECIFIED":         0,
 		"CODE_INVALID_WIRE":        1,
 		"CODE_REJECTED_EVIDENCE":   2,
 		"CODE_CHECKER_UNAVAILABLE": 3,
+		"CODE_UNVERIFIED_OUTCOME":  4,
 	}
 )
 
@@ -631,18 +636,19 @@ const file_sdodev_contracts_v1alpha1_benchmark_receipt_proto_rawDesc = "" +
 	"resolutionB\x12\n" +
 	"\x10_proposal_commitB\x14\n" +
 	"\x12_reflection_commitB\x1c\n" +
-	"\x1a_reflection_skipped_reasonJ\x04\b\v\x10\fR\x0fvalidator_image\"\x93\x02\n" +
+	"\x1a_reflection_skipped_reasonJ\x04\b\v\x10\fR\x0fvalidator_image\"\xb1\x02\n" +
 	"\x0eReceiptFailure\x12\x1f\n" +
 	"\vincident_id\x18\x01 \x01(\tR\n" +
 	"incidentId\x12N\n" +
 	"\x04code\x18\x02 \x01(\x0e2..sdodev.contracts.v1alpha1.ReceiptFailure.CodeB\n" +
 	"\xbaH\a\x82\x01\x04\x10\x01 \x00R\x04code\x12!\n" +
-	"\amessage\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\amessage\"m\n" +
+	"\amessage\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\amessage\"\x8a\x01\n" +
 	"\x04Code\x12\x14\n" +
 	"\x10CODE_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11CODE_INVALID_WIRE\x10\x01\x12\x1a\n" +
 	"\x16CODE_REJECTED_EVIDENCE\x10\x02\x12\x1c\n" +
-	"\x18CODE_CHECKER_UNAVAILABLE\x10\x03\"\xa8\x01\n" +
+	"\x18CODE_CHECKER_UNAVAILABLE\x10\x03\x12\x1b\n" +
+	"\x17CODE_UNVERIFIED_OUTCOME\x10\x04\"\xa8\x01\n" +
 	"\x13NativeReceiptResult\x12L\n" +
 	"\areceipt\x18\x01 \x01(\v22.sdodev.contracts.v1alpha1.NativeProductionReceiptR\areceipt\x12C\n" +
 	"\afailure\x18\x02 \x01(\v2).sdodev.contracts.v1alpha1.ReceiptFailureR\afailure\"\xb1\x01\n" +

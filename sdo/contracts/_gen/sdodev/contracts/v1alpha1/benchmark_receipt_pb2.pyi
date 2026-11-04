@@ -78,10 +78,12 @@ class ReceiptFailure(_message.Message):
         CODE_INVALID_WIRE: _ClassVar[ReceiptFailure.Code]
         CODE_REJECTED_EVIDENCE: _ClassVar[ReceiptFailure.Code]
         CODE_CHECKER_UNAVAILABLE: _ClassVar[ReceiptFailure.Code]
+        CODE_UNVERIFIED_OUTCOME: _ClassVar[ReceiptFailure.Code]
     CODE_UNSPECIFIED: ReceiptFailure.Code
     CODE_INVALID_WIRE: ReceiptFailure.Code
     CODE_REJECTED_EVIDENCE: ReceiptFailure.Code
     CODE_CHECKER_UNAVAILABLE: ReceiptFailure.Code
+    CODE_UNVERIFIED_OUTCOME: ReceiptFailure.Code
     INCIDENT_ID_FIELD_NUMBER: _ClassVar[int]
     CODE_FIELD_NUMBER: _ClassVar[int]
     MESSAGE_FIELD_NUMBER: _ClassVar[int]

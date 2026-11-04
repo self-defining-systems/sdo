@@ -525,7 +525,7 @@ def test_a_rejected_receipt_keeps_its_tokens_reports_the_error_and_unblocks_the_
     assert ops.incidents == 2
 
 
-def _unverified_native_receipt(classification: str) -> dict[str, Any]:
+def _unverified_native_receipt(classification: str, *, other_incident: bool = False) -> dict[str, Any]:
     """A Go-rejected v2 receipt whose outcome SDO itself classified as not verified."""
     from benchmarks.sregym.protocol.native_receipt import NativeReceiptValidationError, native_production_receipt
 
@@ -535,10 +535,15 @@ def _unverified_native_receipt(classification: str) -> dict[str, Any]:
         "closure": {
             "request": {"incident_id": "incident-1", "namespace": "demo", "repair_policy": "recorded-actions"},
             "result": {"incident_id": "incident-1", "status": "failed"},
+            "verified_at": "2026-09-27T12:00:00Z",
         },
         "outcome_document": {"schema_version": 1, "incident_id": "incident-1", "classification": classification},
         "outcome_commit": sha,
-        "receipt": {"incident_id": "incident-1", "outcome_commit": sha, "ack_token": "token"},
+        "receipt": {
+            "incident_id": "other-incident" if other_incident else "incident-1",
+            "outcome_commit": sha,
+            "ack_token": "token",
+        },
         "acknowledged": True,
     }
     with pytest.raises(NativeReceiptValidationError) as rejected:
@@ -568,6 +573,17 @@ def test_an_unverified_sdo_outcome_is_recorded_with_its_classification_not_as_a_
     assert learned.error is None
     assert learned.sdo_outcome_classification == classification
     assert learned.sdo_resolution == resolution
+
+
+def test_a_failed_outcome_with_another_defect_is_still_a_drain_error(tmp_path: Path) -> None:
+    """Go names the unverified outcome only when nothing else is wrong with the receipt."""
+    ops, calls = FakeOps(receipt_override=_unverified_native_receipt("failed", other_incident=True)), []
+    agent = _agent(tmp_path, ops, calls)
+
+    learned = agent.learn(agent.resolve(0, "p", _inject))
+
+    assert learned.error is not None
+    assert learned.sdo_resolution != "sdo_failed"
 
 
 def test_an_incident_cleared_without_sdo_action_is_recorded_as_such_not_as_a_mitigation(tmp_path: Path) -> None:
