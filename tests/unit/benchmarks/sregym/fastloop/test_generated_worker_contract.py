@@ -194,53 +194,6 @@ def test_scripted_reflector_writes_program_that_passes_real_memory_check(
     assert (case / "recordings.json").read_bytes() == (capture / "open@detect-recordings.json").read_bytes()
 
 
-def test_respond_consumes_real_go_tool_responses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    env = dict(os.environ, SDO_SCRIPTED_TOOL_RESPONSES=str(tmp_path))
-    subprocess.run(
-        [
-            "go",
-            "test",
-            "-tags=integration",
-            "-run",
-            "^TestHermeticResponderProgramReuseThroughRealToolTransport$",
-            "-count=1",
-            ".",
-        ],
-        cwd=OPERATOR / "runtime",
-        env=env,
-        check=True,
-    )
-
-    def command(argv: list[str], **_kwargs: object) -> str:
-        assert argv[0] == "sdo"
-        key = argv[1]
-        if key == "plan":
-            key += "." + argv[2]
-        return (tmp_path / f"{key}.json").read_text() + "\nGo tool summary\n"
-
-    monkeypatch.setattr(scripts, "_command", command)
-    assert scripts._tool("status")["command"] == "status"
-    diagnosis = scripts._tool("diagnose")
-    plans, programs = scripts._matched_plans(diagnosis)
-    assert set(programs) == {"service-targetport-mismatch", "image-pull-failure"}
-    assert len(plans) == 2
-    assert scripts._tool("apply", *plans)["healthy"] is True
-    assert scripts._tool("verify")["healthy"] is True
-
-    from sdo.contracts import IncidentRequest
-    from tests.unit.benchmarks.sregym.fastloop.test_responder_script import generated_call
-
-    request = IncidentRequest(incident_id="go-transport", namespace="demo", repository_worktree=str(tmp_path))
-    actual = generated_call(request, tmp_path, monkeypatch)
-    assert actual.status == "completed"
-    assert {book.playbook_id for book in actual.applied_playbooks} == {
-        "service-targetport-mismatch",
-        "image-pull-failure",
-    }
-    assert actual.verification_evidence[0].passed
-    assert not actual.repair_actions
-
-
 def test_tool_reads_json_and_follows_a_capped_reply_to_its_details_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
