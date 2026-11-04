@@ -575,11 +575,35 @@ func (n NativeIncidentBroker) ProcessQueuedReflection(ctx context.Context, incid
 		if err := n.Repository.ReleaseProposal(incidentID, broker.ReflectionPhase); err != nil {
 			return err
 		}
-		if err := n.recordPhase(ledger, "reflection_committed"); err != nil {
+		phase, err := n.reflectionResultPhase(ctx, ledger)
+		if err != nil {
+			return err
+		}
+		if err := n.recordPhase(ledger, phase); err != nil {
 			return err
 		}
 		return n.saveLedger(ledger)
 	})
+}
+
+// reflectionResultPhase names what a finished reflection left on the accepted
+// branch. "reflection_committed" is recorded only after the broker finds the
+// reflection commit in accepted ancestry; a no-op or a decision Go turned into
+// a failure (for example README-only learning without a verified repaired
+// cause) publishes nothing and says so.
+func (n NativeIncidentBroker) reflectionResultPhase(ctx context.Context, ledger *contracts.BrokerLedger) (string, error) {
+	if commit := ledger.GetReflectionCommit(); commit != "" {
+		if _, ok, err := n.Repository.AcceptedCommitAt(ctx, ledger.IncidentId, broker.ReflectionPhase, commit); err != nil {
+			return "", err
+		} else if !ok {
+			return "", fmt.Errorf("reflection commit %s is not on the accepted branch", commit)
+		}
+		return "reflection_committed", nil
+	}
+	if ledger.GetReflectionDecision().GetLearningDecision() == "failed" {
+		return "reflection_failed", nil
+	}
+	return "reflection_without_commit", nil
 }
 
 // QueuedReflectionRolloutPending reports whether an incident's queued
