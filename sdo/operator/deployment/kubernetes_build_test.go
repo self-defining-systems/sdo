@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -80,5 +81,46 @@ func TestTimedOutBuildJobIsDeleted(t *testing.T) {
 	jobs, err := client.BatchV1().Jobs("sdo-control").List(context.Background(), metav1.ListOptions{})
 	if err != nil || len(jobs.Items) != 0 {
 		t.Fatalf("abandoned build Job must be deleted: %v, err %v", jobs.Items, err)
+	}
+}
+
+func jobEnvironment(t *testing.T, backend KubernetesBuildBackend, image string) (map[string]string, string) {
+	t.Helper()
+	job := backend.job("j", "proposal", ".", "svc/Dockerfile", image, time.Minute)
+	container := job.Spec.Template.Spec.Containers[0]
+	environment := map[string]string{}
+	for _, variable := range container.Env {
+		environment[variable.Name] = variable.Value
+	}
+	return environment, container.Args[0]
+}
+
+// Layers survive across build Jobs through the app's own registry repository,
+// so a retry or the next proposal does not recompile from scratch.
+func TestBuildJobSharesLayerCacheThroughTheImageRepository(t *testing.T) {
+	backend := testBackend(t.TempDir(), fake.NewSimpleClientset(), time.Minute)
+	environment, script := jobEnvironment(t, backend, "reg.example/app/api:1")
+	if environment["SDO_CACHE_REF"] != "reg.example/app/api:sdo-buildcache" {
+		t.Fatalf("cache ref = %q", environment["SDO_CACHE_REF"])
+	}
+	for _, want := range []string{`--import-cache "type=registry,ref=$SDO_CACHE_REF"`, `--export-cache "type=registry,ref=$SDO_CACHE_REF,mode=max,ignore-error=true"`} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("build script lacks %s:\n%s", want, script)
+		}
+	}
+	if strings.Contains(environment["BUILDKITD_FLAGS"], "--config") {
+		t.Fatal("a TLS registry needs no buildkitd registry config")
+	}
+}
+
+func TestBuildJobCacheReachesAnInsecureLaneRegistry(t *testing.T) {
+	backend := testBackend(t.TempDir(), fake.NewSimpleClientset(), time.Minute)
+	backend.RegistryInsecure = true
+	environment, script := jobEnvironment(t, backend, "reg.example/app/api:1")
+	if environment["SDO_REGISTRY_HOST"] != "reg.example" || !strings.Contains(environment["BUILDKITD_FLAGS"], "--config /tmp/buildkitd.toml") {
+		t.Fatalf("insecure registry must be configured for the cache client too: %v", environment)
+	}
+	if !strings.Contains(script, "http = true") {
+		t.Fatalf("script must write the registry config:\n%s", script)
 	}
 }
