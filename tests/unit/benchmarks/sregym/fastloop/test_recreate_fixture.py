@@ -40,3 +40,12 @@ def test_recreated_application_restores_the_social_fixture(monkeypatch, tmp_path
     # The fixture is seeded before the new baseline is captured, so the baseline includes it.
     expected = [("fixture", Path("/lane/kubeconfig")), ("baseline", None)] if seeded else [("baseline", None)]
     assert calls == expected
+
+
+def test_goal_addendum_extends_only_a_given_requirement():
+    assert cli.lifecycle_objective("Deployments remain available.", None) == "Deployments remain available."
+    assert cli.lifecycle_objective("Deployments remain available.", "  ") == "Deployments remain available."
+    assert (
+        cli.lifecycle_objective("Deployments remain available.", "Users can post and read back posts.")
+        == "Deployments remain available. Users can post and read back posts."
+    )
