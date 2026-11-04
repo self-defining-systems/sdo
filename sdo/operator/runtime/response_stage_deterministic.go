@@ -11,6 +11,7 @@ import (
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -99,7 +100,10 @@ type DeterministicResponseStage struct {
 }
 
 type responseStageProgress struct {
-	RecoveryDeadline   time.Time
+	RecoveryDeadline time.Time
+	// EffectSettled is when each application's effect was first seen complete,
+	// by application ID, so a restart cannot grant a write a fresh window.
+	EffectSettled      map[string]time.Time
 	Report             *contracts.StageReport
 	Coverage           *contracts.PlaybookCoverage
 	InitialProgramRuns []ProgramRun
@@ -166,7 +170,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	save := func(complete bool) error {
 		retainAdmissionStageFindings(state, report)
 		report.RemainingFindingFingerprints = findingFingerprints(state.Findings)
-		loop.stageProgress[stage.Name()] = responseStageProgress{Report: report, Coverage: cloneCoverage(state.Coverage), InitialProgramRuns: append([]ProgramRun(nil), state.Request.InitialProgramRuns...), Complete: complete, RecoveryDeadline: progress.RecoveryDeadline}
+		loop.stageProgress[stage.Name()] = responseStageProgress{Report: report, Coverage: cloneCoverage(state.Coverage), InitialProgramRuns: append([]ProgramRun(nil), state.Request.InitialProgramRuns...), Complete: complete, RecoveryDeadline: progress.RecoveryDeadline, EffectSettled: progress.EffectSettled}
 		return loop.persistToolState(ctx)
 	}
 	// Always reobserve after recovery. A recorded attempt is never replayed,
@@ -541,6 +545,7 @@ func recordedPlanContract(application RecordedPlanApplication) (*contracts.PlanA
 // This type owns that storage edge so all checkpoints use ProtoJSON.
 type encodedResponseStageProgress struct {
 	RecoveryDeadline   time.Time
+	EffectSettled      map[string]time.Time `json:",omitempty"`
 	Report             json.RawMessage
 	Coverage           json.RawMessage
 	InitialProgramRuns []ProgramRun
@@ -548,7 +553,7 @@ type encodedResponseStageProgress struct {
 }
 
 func (progress responseStageProgress) MarshalJSON() ([]byte, error) {
-	encoded := encodedResponseStageProgress{RecoveryDeadline: progress.RecoveryDeadline, InitialProgramRuns: progress.InitialProgramRuns, Complete: progress.Complete}
+	encoded := encodedResponseStageProgress{RecoveryDeadline: progress.RecoveryDeadline, EffectSettled: progress.EffectSettled, InitialProgramRuns: progress.InitialProgramRuns, Complete: progress.Complete}
 	if progress.Report != nil {
 		raw, err := protojson.Marshal(progress.Report)
 		if err != nil {
@@ -570,7 +575,7 @@ func (progress *responseStageProgress) UnmarshalJSON(raw []byte) error {
 	if err := json.Unmarshal(raw, &encoded); err != nil {
 		return err
 	}
-	*progress = responseStageProgress{RecoveryDeadline: encoded.RecoveryDeadline, Complete: encoded.Complete, InitialProgramRuns: encoded.InitialProgramRuns}
+	*progress = responseStageProgress{RecoveryDeadline: encoded.RecoveryDeadline, EffectSettled: encoded.EffectSettled, Complete: encoded.Complete, InitialProgramRuns: encoded.InitialProgramRuns}
 	if len(encoded.Report) > 0 && string(encoded.Report) != "null" {
 		progress.Report = &contracts.StageReport{}
 		if err := protojson.Unmarshal(encoded.Report, progress.Report); err != nil {
@@ -814,7 +819,22 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 	started := now()
 	elapsed := report.GetRecoveryWait().GetDuration().AsDuration()
 	exit := contracts.RecoveryWait_EXIT_REASON_FAILED
+	// Every finding of this incident as last observed, and the ones a wait that
+	// could not prove recovery hands back to the responder.
+	seen := map[string]sdk.Finding{}
+	for _, finding := range append(append([]sdk.Finding(nil), state.Request.Findings...), state.Findings...) {
+		seen[FindingFingerprint(finding)] = finding
+	}
+	var held []sdk.Finding
+	heldReason := ""
 	defer func() {
+		if exit != contracts.RecoveryWait_EXIT_REASON_CLEARED && len(state.Findings) == 0 && len(held) > 0 {
+			// Detector clearance without proof is not recovery: the responder gets
+			// the findings that cleared without it.
+			slog.Info("recovery_wait_unproven", "incident_id", state.Request.IncidentID, "exit", exit.String(), "reason", heldReason)
+			state.Findings = held
+			state.refreshUnexplained()
+		}
 		observation := &contracts.RecoveryWait{ExitReason: exit, Duration: durationpb.New(elapsed + max(0, now().Sub(started)))}
 		report.RecoveryWait = observation
 		ids := map[string]bool{}
@@ -868,8 +888,12 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 	}
 	effects := recoveryEffects{}
 	// When each application's effect was first seen complete, so windowed
-	// detectors get their own window from that point and no longer.
-	effectSettled := map[string]time.Time{}
+	// detectors get their own window from that point and no longer. It is
+	// checkpointed: a restart resumes the window, it does not grant a new one.
+	if progress.EffectSettled == nil {
+		progress.EffectSettled = map[string]time.Time{}
+	}
+	effectSettled := progress.EffectSettled
 	for {
 		pending := false
 		applied := false
@@ -900,7 +924,7 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 					pending = true
 					continue
 				}
-				if _, seen := effectSettled[attempt.GetApplyReceipt().GetApplicationId()]; !seen {
+				if _, settled := effectSettled[attempt.GetApplyReceipt().GetApplicationId()]; !settled {
 					effectSettled[attempt.GetApplyReceipt().GetApplicationId()] = now()
 				}
 				settling = append(settling, attempt)
@@ -912,9 +936,9 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			exit = contracts.RecoveryWait_EXIT_REASON_UNCOVERED
 			return nil
 		}
-		if !pending && len(state.Findings) == 0 {
+		if !applied && !pending && len(state.Findings) == 0 {
+			// No write of this stage to prove: detector clearance decides.
 			exit = contracts.RecoveryWait_EXIT_REASON_CLEARED
-			promoteSettledAttempts(settling)
 			return nil
 		}
 		if recoveryTimeLeft(stage, progress.RecoveryDeadline, 0) == 0 {
@@ -925,7 +949,13 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 		if viewErr != nil {
 			// The stage cannot observe recovery, so another actor takes over; say why.
 			slog.Warn("recovery_wait_snapshot_unavailable", "incident_id", state.Request.IncidentID, "error", viewErr)
+			if len(held) == 0 {
+				held, heldReason = sortedFindings(seen), "recovery could not be observed"
+			}
 			return nil
+		}
+		for _, finding := range state.Findings {
+			seen[FindingFingerprint(finding)] = finding
 		}
 		state.Findings = retireDisappearedRecoveryEffects(view, state.Findings)
 		for fp, effect := range stageLifecycleEffects(view, loop.applicationEvidenceLocked(), state.Findings) {
@@ -933,11 +963,6 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 		}
 		state.Findings = effects.observe(view, state.Findings)
 		state.refreshUnexplained()
-		if !pending && len(state.Findings) == 0 {
-			exit = contracts.RecoveryWait_EXIT_REASON_CLEARED
-			promoteSettledAttempts(settling)
-			return nil
-		}
 		health := map[string]sdk.Detector{}
 		detectors := map[string]sdk.Detector{}
 		for _, detector := range loop.Detectors {
@@ -946,7 +971,22 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 				health[detector.Spec().ID] = detector
 			}
 		}
+		if !pending && len(state.Findings) == 0 {
+			clearance := recoveryClearance(view, detectors, seen, report.Mitigations, effectSettled, now())
+			if clearance.proven() {
+				exit = contracts.RecoveryWait_EXIT_REASON_CLEARED
+				promoteSettledAttempts(settling)
+				return nil
+			}
+			held, heldReason = clearance.held, clearance.reason
+			if !clearance.keepWaiting {
+				return nil
+			}
+		}
 		for _, attempt := range settling {
+			if len(state.Findings) == 0 {
+				break // recoveryClearance above decides while nothing is open.
+			}
 			if !remainingFindingsSettle(view, detectors, state.Findings, attempt, now().Sub(effectSettled[attempt.GetApplyReceipt().GetApplicationId()])) {
 				return nil
 			}
@@ -1107,22 +1147,10 @@ func remainingFindingsSettle(view sdk.DetectionContext, detectors map[string]sdk
 // current state. A traffic consumer's window is its workloads' traffic window,
 // whether or not the detector declares one itself.
 func settlingHorizon(detector sdk.Detector, view sdk.DetectionContext) time.Duration {
-	var window time.Duration
-	if windowed, ok := detector.(sdk.WindowedDetector); ok {
-		window = windowed.EvaluationWindow(view)
-	} else if consumer, ok := detector.(traffic.Consumer); ok {
-		// The SDK's SLO detector owns the window bound of a traffic workload.
-		for _, workload := range consumer.TrafficWorkloads() {
-			if slo, ok := traffic.NewDetector(sdk.DetectorSpec{}, workload).(sdk.WindowedDetector); ok {
-				window = max(window, slo.EvaluationWindow(view))
-			}
-		}
-	}
-	if window <= 0 {
+	if detectorWindow(detector, view) <= 0 {
 		return 0
 	}
-	clearing := max(detector.Spec().Persistence.Clearing, 1)
-	return window + time.Duration(clearing)*detector.Spec().Interval
+	return detectorClearingHorizon(detector, view)
 }
 
 // promoteSettledAttempts records attempts whose remaining findings cleared on
@@ -1175,4 +1203,109 @@ func recoveryTimeLeft(stage *DeterministicResponseStage, deadline time.Time, leg
 		now = lifecycleio.Now
 	}
 	return max(0, deadline.Sub(now()))
+}
+
+// stageClearance is whether findings that all cleared prove the stage's writes
+// recovered the incident.
+type stageClearance struct {
+	// held are the cleared findings handed to the responder when not proven.
+	held   []sdk.Finding
+	reason string
+	// keepWaiting is set while proof may still arrive within the recovery bound.
+	keepWaiting bool
+}
+
+func (c stageClearance) proven() bool { return c.reason == "" }
+
+// recoveryClearance decides a recovery wait whose findings have all cleared.
+// Clearance is recovery only on positive evidence:
+//   - every traffic detector that reported the incident has fresh samples
+//     after the latest write took effect (recoveryTrafficEvidence); until they
+//     arrive the wait keeps observing, and the recovery bound hands off;
+//   - no applied program still diagnoses the fault. Its own diagnosis may read
+//     the same lagging window, so the wait keeps observing for the longest
+//     window among the incident's detectors from the write's effect; a program
+//     still matching after that (one blind to its own repair, or a fault the
+//     detectors stopped seeing) goes to the responder with its findings.
+//
+// A program whose diagnose did not run or failed has no verdict either way,
+// so it neither proves nor holds recovery.
+func recoveryClearance(view sdk.DetectionContext, detectors map[string]sdk.Detector, seen map[string]sdk.Finding, attempts []*contracts.StageMitigation, effectSettled map[string]time.Time, now time.Time) stageClearance {
+	var since time.Time
+	var matching []*contracts.StageMitigation
+	for _, attempt := range attempts {
+		receipt := attempt.GetApplyReceipt()
+		if !receipt.GetApplied() || receipt.GetRolledBack() {
+			continue
+		}
+		effect, ok := effectSettled[receipt.GetApplicationId()]
+		if !ok && receipt.GetCompletedAt() != nil {
+			effect = receipt.GetCompletedAt().AsTime()
+		}
+		if effect.After(since) {
+			since = effect
+		}
+		if attempt.GetPostApplyDiagnose().GetVerdict().GetResult() == contracts.Verdict_RESULT_MATCH {
+			matching = append(matching, attempt)
+		}
+	}
+	byDetector := map[string][]sdk.Finding{}
+	for _, finding := range sortedFindings(seen) {
+		byDetector[finding.DetectorID] = append(byDetector[finding.DetectorID], finding)
+	}
+	ids := make([]string, 0, len(byDetector))
+	for id := range byDetector {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	clearance := stageClearance{}
+	var reasons []string
+	heldFingerprints := map[string]bool{}
+	hold := func(findings ...sdk.Finding) {
+		for _, finding := range findings {
+			if fp := FindingFingerprint(finding); !heldFingerprints[fp] {
+				heldFingerprints[fp] = true
+				clearance.held = append(clearance.held, finding)
+			}
+		}
+	}
+	var horizon time.Duration
+	for _, id := range ids {
+		detector := detectors[id]
+		if detector == nil {
+			continue
+		}
+		horizon = max(horizon, settlingHorizon(detector, view))
+		if reason := recoveryTrafficEvidence(detector, view, since); reason != "" {
+			reasons = append(reasons, fmt.Sprintf("detector %s cleared without fresh traffic: %s", id, reason))
+			hold(byDetector[id]...)
+			clearance.keepWaiting = true
+		}
+	}
+	for _, attempt := range matching {
+		reasons = append(reasons, fmt.Sprintf("program %s still diagnoses the fault after its write", attempt.GetPlaybookId()))
+		for _, fp := range append(append([]string(nil), attempt.RemainingFindingFingerprints...), attempt.ClearedFindingFingerprints...) {
+			if finding, ok := seen[fp]; ok {
+				hold(finding)
+			}
+		}
+		if len(attempt.RemainingFindingFingerprints)+len(attempt.ClearedFindingFingerprints) == 0 {
+			hold(sortedFindings(seen)...)
+		}
+		if now.Sub(since) < horizon {
+			clearance.keepWaiting = true
+		}
+	}
+	sortFindings(clearance.held)
+	clearance.reason = strings.Join(reasons, "; ")
+	return clearance
+}
+
+func sortedFindings(byFingerprint map[string]sdk.Finding) []sdk.Finding {
+	findings := make([]sdk.Finding, 0, len(byFingerprint))
+	for _, finding := range byFingerprint {
+		findings = append(findings, finding)
+	}
+	sortFindings(findings)
+	return findings
 }

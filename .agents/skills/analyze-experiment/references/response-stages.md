@@ -158,8 +158,19 @@ its open findings that depend on it may wait out their detector's rolling window
 (sdk.WindowedDetector or a traffic consumer's workload window, plus one clearing
 interval), incident-class findings included, counted from the first observation
 of the effect. Past that window, or for an incident detector without a window,
-the wait exits `FAILED`. On `CLEARED` an attempt is promoted to
-`applied_cleared` only when its latest post-apply diagnose is `NO_MATCH`. Action completion uses every
+the wait exits `FAILED`. The window start is checkpointed (`EffectSettled` in
+the stage progress), so a controller restart resumes it. Findings that all
+clear end the wait `CLEARED` only on positive evidence: every traffic consumer
+that reported the incident has at least its SLO's minSamples fresh samples per
+qualified scenario after the latest write took effect, meeting the SLO, and no
+applied program's latest post-apply diagnose is `MATCH`. A still-matching
+program keeps the wait open for the incident detectors' longest window; then,
+like missing samples at the deadline, the wait exits non-`CLEARED` and hands the
+cleared findings to the responder (log `recovery_wait_unproven`). On `CLEARED`
+an attempt is promoted to `applied_cleared` only when its latest post-apply
+diagnose is `NO_MATCH`. A learned traffic detector without its own confirmation
+is pending, not clear, while its workloads lack usable samples, and its
+workload window bounds the closure recheck. Action completion uses every
 indexed action report, including successful WaitFor and satisfied EnsureExec,
 not the number of mutations. Rollout-only source residuals and unavailable
 readback are pending; actual configuration residuals remain partial failures.
