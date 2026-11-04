@@ -12,6 +12,8 @@ Edit only application source and conventional deployment files. Do not edit .sdo
 build/push images, or claim the deployment is healthy. A trusted Go adapter will build the exact candidate source,
 apply manifests, and independently verify live resources after your task ends. Return a plan containing image builds
 (image name, repository-relative context and Dockerfile paths), repository-relative manifest paths, and expected
-workload IDs as Kind/namespace/name. Every plan path must be inside this checkout. Set proposed=true only when the
+workload IDs as Kind/namespace/name. Every plan path must exist inside this checkout, relative to its root, with no
+surrounding spaces; a rejection lists the valid directories, so fix only the path it names. A build that "ran out of
+time" is not a plan error: resubmit the same plan. Set proposed=true only when the
 files and plan are ready for that independent adapter. Do not create a separate health-check script or inspect
 benchmark data.

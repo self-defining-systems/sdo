@@ -13,8 +13,8 @@ max_chars = 100
 reason = "Baseline synthetic fixture maximum: 92 Unicode code points; byte-identical template extraction."
 
 [source_deployment.instructions]
-max_chars = 1400
-reason = "Baseline synthetic fixture maximum: 1072 Unicode code points; raised for the tag-pinning sentence (about 250 characters)."
+max_chars = 1700
+reason = "Baseline synthetic fixture maximum: 1072 Unicode code points; raised for the tag-pinning sentence (about 250 characters); raised again for plan-path and build-timeout guidance (about 220 characters)."
 
 [health_judge.health_objective]
 max_chars = 2000

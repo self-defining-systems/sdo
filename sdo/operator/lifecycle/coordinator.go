@@ -318,7 +318,7 @@ func (c Coordinator) deploy(ctx context.Context, id string, cfg Config, attempt 
 	readiness, err := c.Readiness.ApplyAndVerify(ctx, proposal.Path, response.GetPlan())
 	if err != nil {
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
-		return broker.Receipt{}, DeploymentReceipt{}, false, "independent source deployment failed: " + err.Error(), nil
+		return broker.Receipt{}, DeploymentReceipt{}, false, deploymentFailureFeedback(err), nil
 	}
 	if !completeDeploymentReceipt(readiness) {
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
@@ -334,6 +334,17 @@ func (c Coordinator) deploy(ctx context.Context, id string, cfg Config, attempt 
 		return broker.Receipt{}, DeploymentReceipt{}, false, "broker rejected deployment: " + err.Error(), nil
 	}
 	return receipt, readiness, true, "", nil
+}
+
+// deploymentFailureFeedback is the correction feedback for a failed
+// independent deployment. A timeout is an infrastructure outcome, so it is
+// worded as one: otherwise the deployer rewrites a correct plan.
+func deploymentFailureFeedback(err error) string {
+	var timeout interface{ InfrastructureTimeout() bool }
+	if errors.As(err, &timeout) && timeout.InfrastructureTimeout() {
+		return "independent source deployment ran out of time (not a plan rejection): " + err.Error()
+	}
+	return "independent source deployment failed: " + err.Error()
 }
 
 func completeDeploymentReceipt(receipt DeploymentReceipt) bool {

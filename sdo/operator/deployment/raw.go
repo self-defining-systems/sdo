@@ -50,6 +50,17 @@ type RawStrategy struct {
 	// Resolver pins workload images named by tag that no image build covers.
 	// Without it such images are rejected with guidance.
 	Resolver ImageResolver
+	// BuildBudget bounds all image builds of one apply together; zero means
+	// only the backend's per-build deadline applies.
+	BuildBudget time.Duration
+}
+
+// buildContext derives the context shared by the builds of one apply.
+func (strategy RawStrategy) buildContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if strategy.BuildBudget <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, strategy.BuildBudget)
 }
 
 // tagImageRejection tells the deployer what to do about an unpinned tag. A
@@ -78,8 +89,19 @@ func tagImageRejection(path, image string, cause error) error {
 // cannot hold an admission for images x timeout.
 const resolveBudget = 90 * time.Second
 
-func RawRegistration(id, namespace string, backend RawBackend, resolver ImageResolver) Registration {
+// RawOption adjusts a raw registration.
+type RawOption func(*RawStrategy)
+
+// WithBuildBudget bounds all image builds of one deployment attempt.
+func WithBuildBudget(budget time.Duration) RawOption {
+	return func(strategy *RawStrategy) { strategy.BuildBudget = budget }
+}
+
+func RawRegistration(id, namespace string, backend RawBackend, resolver ImageResolver, options ...RawOption) Registration {
 	strategy := RawStrategy{Namespace: namespace, Backend: backend, Resolver: resolver}
+	for _, option := range options {
+		option(&strategy)
+	}
 	return Registration{
 		ID: id, Config: &contracts.RawManifestStrategy{},
 		Apply: func(ctx context.Context, checkout, tree string, message proto.Message) (Observation, error) {
@@ -145,32 +167,36 @@ func (strategy RawStrategy) ApplyAndVerify(ctx context.Context, checkout, tree s
 	}
 	imageRefs := map[string]string{}
 	imageInputs := map[string]rendered.ImageInputs{}
-	for _, build := range plan.ImageBuilds {
-		if build == nil || build.Image == "" || build.ContextPath == "" || build.DockerfilePath == "" {
-			return Observation{}, errors.New("image build needs image, context, and Dockerfile")
-		}
-		if _, exists := imageRefs[build.Image]; exists {
-			return Observation{}, fmt.Errorf("duplicate image build %q", build.Image)
-		}
-		contextPath, err := safeCandidatePath(checkout, build.ContextPath)
+	planned, err := planImageBuilds(checkout, plan.ImageBuilds)
+	if err != nil {
+		return Observation{}, err
+	}
+	buildCtx, stopBuilds := strategy.buildContext(ctx)
+	defer stopBuilds()
+	for _, item := range planned {
+		build := item.Build
+		contextPath, err := safeCandidatePath(checkout, item.ContextRel)
 		if err != nil {
 			return Observation{}, err
 		}
-		dockerfilePath, err := safeCandidatePath(checkout, build.DockerfilePath)
+		dockerfilePath, err := safeCandidatePath(checkout, item.DockerfileRel)
 		if err != nil {
 			return Observation{}, err
 		}
 		resolved := proto.Clone(build).(*contracts.ImageBuild)
 		resolved.ContextPath, resolved.DockerfilePath = contextPath, dockerfilePath
-		immutable, err := strategy.Backend.BuildImage(ctx, checkout, resolved)
+		immutable, err := strategy.Backend.BuildImage(buildCtx, checkout, resolved)
 		if err != nil {
+			if timeout := buildTimeout(ctx, buildCtx, build.Image, strategy.BuildBudget, err); timeout != nil {
+				return Observation{}, timeout
+			}
 			return Observation{}, fmt.Errorf("build image %s: %w", build.Image, err)
 		}
 		if !digestReference.MatchString(immutable) || imageRepository(immutable) != imageRepository(build.Image) {
 			return Observation{}, fmt.Errorf("builder returned wrong or mutable image for %s: %q", build.Image, immutable)
 		}
 		imageRefs[build.Image] = immutable
-		imageInputs[build.Image] = rendered.ImageInputs{SourceImage: build.Image, ContextPath: filepath.ToSlash(filepath.Clean(build.ContextPath)), DockerfilePath: filepath.ToSlash(filepath.Clean(build.DockerfilePath))}
+		imageInputs[build.Image] = rendered.ImageInputs{SourceImage: build.Image, ContextPath: item.ContextRel, DockerfilePath: item.DockerfileRel}
 	}
 	pinnedImages := map[string]string{}
 	pinCtx, stopPinning := context.WithTimeout(ctx, resolveBudget)
