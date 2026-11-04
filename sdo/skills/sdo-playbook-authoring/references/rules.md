@@ -38,15 +38,14 @@ diagnostic; look it up here.
 ## One playbook per repair method
 
 - A playbook is one repair method, named for the repair (`workload-restart`, `redis-acl-restore`), not for a
-  symptom or a service. Its roles bind the component it repairs, so the same repair on another component reuses
+  symptom or a service; its roles bind the component it repairs, so the same repair on another component reuses
   it. A new repair method is a new playbook, never an extra action in a symptom-named one; when an applied
-  playbook did not fix this incident, narrow its Diagnose so it no longer matches this cause.
-- Never add a required role that no detector binds; derive related objects (a workload's Pods) through
-  ReadView. Diagnose needs positive evidence on the bound component: a healthy, source-matching object is not.
-- A new playbook may not copy an existing program (the same parameter kinds, Diagnose and Mitigate apart from
-  names, prose and identifier spelling): refine that playbook instead. Enforced by: `playbook.duplicate-repair`.
-  A new playbook that repeats only another's Mitigate is noted (`playbook.shared-repair`): refine the other
-  unless this Diagnose needs evidence it lacks.
+  playbook did not fix this incident, narrow its Diagnose so it no longer matches this cause. Never add a
+  required role that no detector binds; derive related objects (a workload's Pods) through ReadView. A new
+  playbook may not copy an existing program (the same parameter kinds, Diagnose and Mitigate apart from names,
+  prose and identifier spelling): refine that playbook instead. A new playbook that repeats only another's
+  Mitigate is noted: refine the other unless this Diagnose needs evidence it lacks. Enforced by:
+  `playbook.duplicate-repair`, `playbook.shared-repair`.
 - Programs, libraries, scripts and incident detectors never name a generated Pod (`<owner>-<hash>-<suffix>`).
   Bind the owning workload, find its Pods through ReadView by owner, and exec with a typed `Command` or
   `EnsureExec`. Enforced by: `playbook.live-object-name`.
@@ -68,6 +67,9 @@ Replay results are information only.
 
 ## Diagnosis
 
+- Diagnose must observe its own repair. Read bookkeeping annotations (`kubectl.kubernetes.io/restartedAt`,
+  revisions, last-applied) from the live object: source and baseline comparisons strip them, so a lookup there
+  never changes and the program matches again after its own restart. Enforced by: `program.normalized-read`.
 - Diagnose compares typed fields (`diff.ContainerChanges`, `diff.Field`), never a substring of `diff.Text`;
   such programs still load but are noted for rewrite. Enforced by: `program.diff-text-match`.
 

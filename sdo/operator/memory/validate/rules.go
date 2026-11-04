@@ -22,6 +22,7 @@ const (
 	RuleLiveObjectName              = "playbook.live-object-name"
 	RuleDuplicateRepair             = "playbook.duplicate-repair"
 	RuleSharedRepair                = "playbook.shared-repair"
+	RuleProgramNormalizedRead       = "program.normalized-read"
 
 	// Structural.
 	RuleUnknownPath      = "layout.unknown-path"

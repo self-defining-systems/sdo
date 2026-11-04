@@ -183,6 +183,41 @@ func gateDuplicateRepair(name string, change func(diagnose, mitigate string) (st
 	return row
 }
 
+// gateStrippedRead is a Diagnose that looks for a restart through from: a
+// source diff field (stripped bookkeeping, never observable) or the live object.
+func gateStrippedRead(from string) string {
+	return `package base
+
+import (
+	"context"
+
+	"sdo.dev/operator/sdk/program"
+)
+
+func (Program) Diagnose(_ context.Context, v program.ReadView, b program.Bindings) (program.Verdict, error) {
+	ref := b.Objects["deployment"]
+	diff, err := v.DiffAgainstSource(ref)
+	if err != nil {
+		return program.Verdict{}, err
+	}
+	annotations, err := diff.Field("spec.template.metadata.annotations")
+	if err != nil {
+		return program.Verdict{}, err
+	}
+	for _, live := range v.Deployments() {
+		if restarted(` + from + `, "kubectl.kubernetes.io/restartedAt") {
+			return program.Verdict{Result: program.NoMatch}, nil
+		}
+		_ = live
+	}
+	_ = annotations
+	return program.Verdict{Result: program.Match}, nil
+}
+
+func restarted(value any, key string) bool { m, _ := value.(map[string]string); return m[key] != "" }
+`
+}
+
 var gateNoChange = &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "already covered"}
 
 func gateUpdated(ids ...string) *contracts.ReflectionDecision {
@@ -402,6 +437,14 @@ var gateRows = []gateRow{
 	gateDuplicateRepair("new playbook with a different repair passes", func(diagnose, mitigate string) (string, string) {
 		return diagnose, strings.ReplaceAll(mitigate, "spec.ports[%d].targetPort", "spec.ports[%d].port")
 	}),
+	gateReflection("diagnosis reads an annotation source comparison strips", gateClean(), gateUpdated("base"), func(t *testing.T, r string) {
+		gatePlaybookEdit(t, r)
+		write(t, r, ".sdo/playbooks/base/diagnose.go", gateFormatted(t, gateStrippedRead("annotations.Observed")))
+	}, gateProgramInvalid, RuleProgramNormalizedRead),
+	gateReflection("diagnosis reads the restart annotation on the live object", gateClean(), gateUpdated("base"), func(t *testing.T, r string) {
+		gatePlaybookEdit(t, r)
+		write(t, r, ".sdo/playbooks/base/diagnose.go", gateFormatted(t, gateStrippedRead("live.Spec.Template.Annotations")))
+	}, gateProgramInvalid),
 	gateReflection("program names a live Pod", gateClean(), gateUpdated("base"), func(t *testing.T, r string) {
 		gatePlaybookEdit(t, r)
 		write(t, r, ".sdo/playbooks/base/mitigate.go", "package base\n\nconst repair = `kubectl -n app exec cache-b4d5dbdbf-vdxd5 -- redis-cli ACL SETUSER default +@read`\n")

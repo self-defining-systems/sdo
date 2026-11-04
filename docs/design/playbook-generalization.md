@@ -99,6 +99,18 @@ An independent review found that the note blamed the wrong mechanism first and t
 - `detector.literal-binding` is dropped: once named bindings are scoped to the detector's own playbooks, a
   literal binding no longer leaks into other programs.
 
+## Programs that cannot observe their own repair (added scope)
+
+PX1 found `user-timeline-request-stall` reading `kubectl.kubernetes.io/restartedAt` from
+`DiffAgainstSource(...).Field(...)`. Source comparisons strip that annotation, so the Diagnose matches after its
+own restart, repeats it and loses attribution. The requested gate, "replay each playbook's plan on its corpus case
+and require Diagnose to stop matching", would make replay verdicts a publication gate, which CLAUDE.md forbids
+("replay outcomes are informational"); that is a decision for the user. What ships instead fixes the class
+statically and deterministically: `program.normalized-read` rejects changed program code that looks up a stripped
+bookkeeping annotation in a value derived from a source/baseline comparison. The validator's annotation list is
+pinned to the controller's comparison policy by a runtime parity test. The live-object read
+(`home-timeline-request-stall`) passes.
+
 ## Testing (deterministic)
 
 - `sdk/localize`: table tests over synthetic traffic windows and reachability windows (single journey,

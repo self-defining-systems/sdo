@@ -372,3 +372,119 @@ func normalizeLeaf(node ast.Node, identifiers map[string]string, helpers map[str
 	}
 	return true
 }
+
+// SourceBookkeepingAnnotations are the annotations SDO removes from both sides
+// of every source and baseline comparison. It mirrors the controller's
+// comparison policy; a runtime test keeps the two lists equal.
+var SourceBookkeepingAnnotations = []string{
+	"sdo.dev/source-tree",
+	"sdo.dev/accepted-paths",
+	"deployment.kubernetes.io/revision",
+	"deprecated.daemonset.template.generation",
+	"kubectl.kubernetes.io/last-applied-configuration",
+	"kubectl.kubernetes.io/restartedAt",
+}
+
+// diffMethods return a source or baseline comparison, or a field of one.
+var diffMethods = map[string]bool{"DiffAgainstSource": true, "DiffAgainstBaseline": true, "Field": true}
+
+// normalizedReadDiagnostics rejects changed program code that looks up a
+// bookkeeping annotation in a source or baseline comparison. SDO strips those
+// annotations before comparing, so the lookup never sees a value: a Diagnose
+// built on it keeps matching after its own repair (a restart it cannot see)
+// and repeats the repair. The live object carries the annotation.
+func normalizedReadDiagnostics(root string, paths []string) []Diagnostic {
+	var diagnostics []Diagnostic
+	for _, p := range paths {
+		kind, _, ok := layout.Classify(p)
+		if !ok || kind != layout.KindPlaybookProgram && kind != layout.KindLibrary || !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
+			continue
+		}
+		parsed, err := parser.ParseFile(token.NewFileSet(), filepath.Join(root, filepath.FromSlash(p)), nil, parser.SkipObjectResolution)
+		if err != nil {
+			continue
+		}
+		for _, decl := range parsed.Decls {
+			function, ok := decl.(*ast.FuncDecl)
+			if !ok || function.Body == nil {
+				continue
+			}
+			if key, ok := strippedLookup(function.Body); ok {
+				diagnostics = append(diagnostics, Diagnostic{Rule: RuleProgramNormalizedRead, Path: p,
+					Message: fmt.Sprintf("%s looks up %q in a source or baseline comparison, which strips that annotation; the read never changes, so the program cannot observe its own repair", function.Name.Name, key),
+					Hint:    "read bookkeeping annotations (restartedAt, revision) from the live object (v.Deployments(), KubernetesRead), and use the comparison only for fields it keeps"})
+				break
+			}
+		}
+	}
+	return diagnostics
+}
+
+// strippedLookup finds a call or index expression that combines a value
+// derived from a comparison with a stripped annotation key.
+func strippedLookup(body *ast.BlockStmt) (string, bool) {
+	derived := map[string]bool{}
+	fromDiff := func(expr ast.Expr) bool {
+		found := false
+		ast.Inspect(expr, func(node ast.Node) bool {
+			switch n := node.(type) {
+			case *ast.CallExpr:
+				if selector, ok := n.Fun.(*ast.SelectorExpr); ok && diffMethods[selector.Sel.Name] {
+					found = true
+				}
+			case *ast.Ident:
+				found = found || derived[n.Name]
+			}
+			return !found
+		})
+		return found
+	}
+	// Two passes reach values assigned from earlier derived values.
+	for range 2 {
+		ast.Inspect(body, func(node ast.Node) bool {
+			if assign, ok := node.(*ast.AssignStmt); ok {
+				for _, value := range assign.Rhs {
+					if fromDiff(value) {
+						for _, target := range assign.Lhs {
+							if ident, ok := target.(*ast.Ident); ok && ident.Name != "_" {
+								derived[ident.Name] = true
+							}
+						}
+					}
+				}
+			}
+			return true
+		})
+	}
+	key, found := "", false
+	ast.Inspect(body, func(node ast.Node) bool {
+		var operands []ast.Expr
+		switch n := node.(type) {
+		case *ast.CallExpr:
+			operands = append(append(operands, n.Fun), n.Args...)
+		case *ast.IndexExpr:
+			operands = []ast.Expr{n.X, n.Index}
+		default:
+			return !found
+		}
+		literal, fromComparison := "", false
+		for _, operand := range operands {
+			if lit, ok := operand.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+				if text, err := strconv.Unquote(lit.Value); err == nil {
+					for _, annotation := range SourceBookkeepingAnnotations {
+						if strings.Contains(text, annotation) {
+							literal = annotation
+						}
+					}
+				}
+				continue
+			}
+			fromComparison = fromComparison || fromDiff(operand)
+		}
+		if literal != "" && fromComparison {
+			key, found = literal, true
+		}
+		return !found
+	})
+	return key, found
+}
