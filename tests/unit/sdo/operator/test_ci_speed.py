@@ -215,7 +215,9 @@ def test_envtest_binaries_are_cached_by_pinned_version_in_pr_and_nightly_go_jobs
 def test_envtest_binaries_are_installed_by_the_pinned_script_not_by_a_test() -> None:
     """A test-time `go run setup-envtest` is a network call per run; CI installs once, verified."""
     script = (ROOT / "scripts/install_envtest.sh").read_text()
-    version = re.search(r'KubernetesVersion = "([^"]+)"', (ROOT / "sdo/operator/runtime/envtestio/envtestio.go").read_text())
+    version = re.search(
+        r'KubernetesVersion = "([^"]+)"', (ROOT / "sdo/operator/runtime/envtestio/envtestio.go").read_text()
+    )
     assert version is not None
     assert f'version="{version[1]}"' in script
     assert len(re.findall(r"sha512=[0-9a-f]{128}", script)) == 4
