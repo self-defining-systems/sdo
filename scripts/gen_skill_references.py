@@ -318,7 +318,7 @@ def main() -> None:
             ),
             "sdk",
         ),
-        ("sdo-detector-authoring", "Synthetic traffic SDK reference", ("./traffic",), "traffic"),
+        ("sdo-detector-authoring", "Synthetic traffic SDK reference", ("./traffic", "./localize"), "traffic"),
         ("sdo-detector-authoring", "Detector replay reference", ("./sdktest",), "replay"),
         ("sdo-playbook-authoring", "Program SDK", ("./program", "./routing"), "program-sdk"),
     )
