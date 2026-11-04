@@ -51,13 +51,14 @@ from benchmarks.sregym.fastloop.records import AgentName, PostClosureWait, Recov
 from benchmarks.sregym.fastloop.replay import CheckpointStore, capture_checkpoints
 from benchmarks.sregym.protocol import receipt_resolution
 from benchmarks.sregym.protocol.injection import ensure_incident_follows_injection
-from benchmarks.sregym.protocol.native_receipt import unverified_outcome
+from benchmarks.sregym.protocol.native_receipt import unverified_outcome_file
 from benchmarks.sregym.protocol.provider_capacity import (
     RateLimitedRun,
     capacity_prevented_completion,
     read_provider_waits,
 )
 from libs.agent_cli.errors import rate_limit_failure
+from sdo.contracts import ReceiptFailure
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -511,7 +512,7 @@ class SdoPersistentAgent:
                 clock=self._clock,
                 evidence=self._queued_evidence(receipt_dir),
             )
-            if drained.HasField("failure") and unverified_outcome(self._receipt(receipt_dir)) is None:
+            if drained.HasField("failure") and drained.failure.code != ReceiptFailure.CODE_UNVERIFIED_OUTCOME:
                 error = f"strict receipt rejected: {drained.failure.message}"
         finally:
             queued = self._evidence_queue is not None and (
@@ -547,7 +548,7 @@ class SdoPersistentAgent:
             raise RuntimeError(f"incident {outcome.incident_id!r} receipt missing after reflection drain")
         # Only a receipt that passed strict validation states a verified closure; a rejected receipt
         # still names SDO's own unverified outcome.
-        unverified = unverified_outcome(receipt)
+        unverified = unverified_outcome_file(receipt_dir / REJECTED_RECEIPT_FILENAME)
         if (receipt_dir / STRICT_RECEIPT_FILENAME).is_file():
             resolution = receipt.get("resolution") or receipt_resolution(receipt)
         else:

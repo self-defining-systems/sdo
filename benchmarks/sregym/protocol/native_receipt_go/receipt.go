@@ -15,6 +15,16 @@ import (
 	"sdo.dev/operator/contracts/wire"
 )
 
+// errUnverifiedOutcome is the one rejection that is not a defect of the
+// receipt: SDO's own outcome says the closure verified nothing.
+var errUnverifiedOutcome = errors.New("native outcome is not a verified closure classification")
+
+// unverifiedByDesign is a classification whose receipt is rejected because the
+// outcome itself says nothing was verified, not because evidence is missing.
+func unverifiedByDesign(classification string) bool {
+	return slices.Contains([]string{"failed", "unconfirmed"}, classification)
+}
+
 var commitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 // Evaluate converts either wire corruption or rejected evidence into data for
@@ -31,7 +41,11 @@ func Evaluate(data []byte, build bool) *c.NativeReceiptResult {
 		summarize(receipt)
 	}
 	if err := validate(receipt); err != nil {
-		result.Failure = &c.ReceiptFailure{IncidentId: receipt.GetIncidentId(), Code: c.ReceiptFailure_CODE_REJECTED_EVIDENCE, Message: err.Error()}
+		code := c.ReceiptFailure_CODE_REJECTED_EVIDENCE
+		if errors.Is(err, errUnverifiedOutcome) {
+			code = c.ReceiptFailure_CODE_UNVERIFIED_OUTCOME
+		}
+		result.Failure = &c.ReceiptFailure{IncidentId: receipt.GetIncidentId(), Code: code, Message: err.Error()}
 	}
 	return result
 }
@@ -139,7 +153,8 @@ func validate(r *c.NativeProductionReceipt) error {
 		}
 	}
 	classification := outcome.GetClassification()
-	if outcome.GetSchemaVersion() != 1 || (!external && !slices.Contains([]string{"success", "cleared_without_action"}, classification)) {
+	unverified := !external && unverifiedByDesign(classification)
+	if outcome.GetSchemaVersion() != 1 || (!external && !unverified && !slices.Contains([]string{"success", "cleared_without_action"}, classification)) {
 		return errors.New("native outcome is not a verified closure classification")
 	}
 	for _, field := range []struct {
@@ -162,11 +177,12 @@ func validate(r *c.NativeProductionReceipt) error {
 	if err := nonempty(accepted.GetAckToken(), "acknowledgment token"); err != nil {
 		return err
 	}
-	if !external && len(closure.GetFinalDetectorStates()) == 0 {
+	// An unverified outcome never claims the health detectors cleared.
+	if !external && !unverified && len(closure.GetFinalDetectorStates()) == 0 {
 		return errors.New("native closure lacks independently clear health detectors")
 	}
 	for _, state := range closure.GetFinalDetectorStates() {
-		if state.GetStatus() != "clear" || len(state.GetFingerprints()) != 0 {
+		if !unverified && (state.GetStatus() != "clear" || len(state.GetFingerprints()) != 0) {
 			return errors.New("native closure lacks independently clear health detectors")
 		}
 	}
@@ -226,24 +242,27 @@ func validate(r *c.NativeProductionReceipt) error {
 			return errors.New("native rollout verified_at must be an ISO timestamp")
 		}
 	}
-	jobs := r.GetResponderJobEvidence()
-	if len(jobs) == 0 {
-		// A controller may intentionally retire the Job after an early report.
-		// Validate its durable lifecycle, frozen request/result and broker ACK,
-		// rather than inventing a successful Kubernetes Job.
-		dispatched, completed := closure.GetDispatchedAt(), closure.GetResponderCompletedAt()
-		if dispatched == nil || dispatched.CheckValid() != nil || completed == nil || completed.CheckValid() != nil || completed.AsTime().Before(dispatched.AsTime()) || response.GetStatus() != "completed" {
-			return errors.New("native receipt lacks durable responder dispatch and completion")
-		}
-	} else {
-		if len(jobs) != 1 || jobs[0].GetIncidentId() != id || !jobs[0].GetSucceeded() {
-			return errors.New("native receipt requires one correlated successful responder Job")
-		}
-		if err := nonempty(jobs[0].GetJobUid(), "responder Job UID"); err != nil {
-			return err
-		}
-		if err := nonempty(jobs[0].GetJobName(), "responder Job name"); err != nil {
-			return err
+	// A responder that failed is how an outcome becomes failed or unconfirmed, so
+	// an unverified outcome owes no completed dispatch or successful Job.
+	if jobs := r.GetResponderJobEvidence(); !unverified {
+		if len(jobs) == 0 {
+			// A controller may intentionally retire the Job after an early report.
+			// Validate its durable lifecycle, frozen request/result and broker ACK,
+			// rather than inventing a successful Kubernetes Job.
+			dispatched, completed := closure.GetDispatchedAt(), closure.GetResponderCompletedAt()
+			if dispatched == nil || dispatched.CheckValid() != nil || completed == nil || completed.CheckValid() != nil || completed.AsTime().Before(dispatched.AsTime()) || response.GetStatus() != "completed" {
+				return errors.New("native receipt lacks durable responder dispatch and completion")
+			}
+		} else {
+			if len(jobs) != 1 || jobs[0].GetIncidentId() != id || !jobs[0].GetSucceeded() {
+				return errors.New("native receipt requires one correlated successful responder Job")
+			}
+			if err := nonempty(jobs[0].GetJobUid(), "responder Job UID"); err != nil {
+				return err
+			}
+			if err := nonempty(jobs[0].GetJobName(), "responder Job name"); err != nil {
+				return err
+			}
 		}
 	}
 	if r.GetOutcomeCommit() != l.GetOutcomeCommit() || r.GetReflectionCommit() != l.GetReflectionCommit() || r.GetProposalCommit() != l.GetProposalCommit() {
@@ -251,6 +270,9 @@ func validate(r *c.NativeProductionReceipt) error {
 	}
 	if r.GetResolution() != resolution(classification) {
 		return errors.New("native resolution disagrees with independently derived outcome")
+	}
+	if unverified {
+		return errUnverifiedOutcome
 	}
 	return nil
 }

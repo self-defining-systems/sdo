@@ -167,9 +167,66 @@ func TestReceiptPolicyCoversEveryOutcomeClassification(t *testing.T) {
 			r := fixture()
 			r.NativeLedger.OutcomeDocument.Classification = classification
 			got := Evaluate(encoded(t, r), true)
-			want := classification == "success" || classification == "cleared_without_action"
-			if (got.GetFailure() == nil) != want {
-				t.Fatalf("classification %s acceptance drifted: %v", classification, got)
+			want := c.ReceiptFailure_CODE_REJECTED_EVIDENCE
+			switch classification {
+			case "success", "cleared_without_action":
+				want = c.ReceiptFailure_CODE_UNSPECIFIED
+			case "failed", "unconfirmed":
+				want = c.ReceiptFailure_CODE_UNVERIFIED_OUTCOME
+			}
+			if got.GetFailure().GetCode() != want {
+				t.Fatalf("classification %s rejection code drifted: want %v: %v", classification, want, got)
+			}
+		})
+	}
+}
+
+// An outcome SDO classified as unverified is rejected by design, and the
+// rejection says so only when nothing else is wrong with the receipt. Health
+// detectors need not be clear for such an outcome; every other check still runs.
+func TestUnverifiedOutcomeIsNamedOnlyWhenNothingElseIsWrong(t *testing.T) {
+	unverified := func(r *c.NativeProductionReceipt) {
+		r.NativeLedger.OutcomeDocument.Classification = "failed"
+		r.NativeLedger.Closure.FinalDetectorStates = nil
+	}
+	for name, mutate := range map[string]func(*c.NativeProductionReceipt){
+		"valid except the outcome": func(*c.NativeProductionReceipt) {},
+		"responder failed": func(r *c.NativeProductionReceipt) {
+			r.NativeLedger.Closure.Result.Status = "failed"
+			failure := "synthetic responder Job failed"
+			r.NativeLedger.Closure.DispatchError = &failure
+			r.NativeLedger.Closure.ResponderCompletedAt = nil
+			r.ResponderJobEvidence = nil
+		},
+		"detectors still firing": func(r *c.NativeProductionReceipt) {
+			r.NativeLedger.Closure.FinalDetectorStates = []*c.DetectorEvaluation{{DetectorId: "health", Status: "firing", Fingerprints: []string{"x"}}}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := fixture()
+			unverified(r)
+			mutate(r)
+			got := Evaluate(encoded(t, r), true)
+			if got.GetFailure().GetCode() != c.ReceiptFailure_CODE_UNVERIFIED_OUTCOME || got.GetReceipt().GetResolution() != "sdo_failed" {
+				t.Fatalf("want the unverified outcome named: %v", got)
+			}
+		})
+	}
+	for name, mutate := range map[string]func(*c.NativeProductionReceipt){
+		"identities disagree": func(r *c.NativeProductionReceipt) { r.NativeLedger.Receipt.IncidentId = "other" },
+		"outcome commit absent": func(r *c.NativeProductionReceipt) {
+			r.NativeLedger.OutcomeCommit = ""
+			r.NativeLedger.Receipt.OutcomeCommit = ""
+		},
+		"ledger not acknowledged": func(r *c.NativeProductionReceipt) { r.NativeLedger.Acknowledged = false },
+		"no closure":              func(r *c.NativeProductionReceipt) { r.NativeLedger.Closure = nil },
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := fixture()
+			unverified(r)
+			mutate(r)
+			if got := Evaluate(encoded(t, r), true); got.GetFailure().GetCode() != c.ReceiptFailure_CODE_REJECTED_EVIDENCE {
+				t.Fatalf("a receipt with another defect must stay rejected evidence: %v", got)
 			}
 		})
 	}

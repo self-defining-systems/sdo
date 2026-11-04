@@ -92,8 +92,8 @@ classification summary and evidence checks run in the benchmark-only Go receipt
 checker. `sdo_rejected_production_receipt.json` keeps `validation_error`, the
 structured `receipt` when representable, and exact `receipt_json` for malformed
 transport evidence. Its generated `failure` has `incident_id`, `code`
-(`CODE_INVALID_WIRE`, `CODE_REJECTED_EVIDENCE`, or
-`CODE_CHECKER_UNAVAILABLE`) and `message`. A checker transport failure is
+(`CODE_INVALID_WIRE`, `CODE_REJECTED_EVIDENCE`,
+`CODE_CHECKER_UNAVAILABLE`, or `CODE_UNVERIFIED_OUTCOME`, a valid receipt whose SDO outcome is failed or unconfirmed) and `message`. A checker transport failure is
 infrastructure evidence, distinct from rejected incident evidence; run validity
 classifies it as `invalid_infra`, while evidence rejections remain `agent_failure`. Do not count
 either as a verified mitigation. The drain returns a typed failure for that one

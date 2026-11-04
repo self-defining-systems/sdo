@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter import (
+    REJECTED_RECEIPT_FILENAME,
     ClosureFailedError,
     ControllerStalledError,
     Deadline,
@@ -49,7 +50,8 @@ from benchmarks.sregym.fastloop.fault_tracker import (
 from benchmarks.sregym.fastloop.loop import AgentOutcome
 from benchmarks.sregym.fastloop.records import TokenCounts
 from benchmarks.sregym.fastloop.sdo_agent import SdoPersistentAgent, _timestamp
-from benchmarks.sregym.protocol.native_receipt import unverified_outcome
+from benchmarks.sregym.protocol.native_receipt import unverified_outcome_file
+from sdo.contracts import ReceiptFailure
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -647,7 +649,6 @@ class CompositeSdoAgent(SdoPersistentAgent):
         record = state.controllers.get(settings.namespace)
         error: str | None = None
         if record is not None and record.pending is not None:
-            receipt_dir = record.pending.receipt_dir
             drained = drain_pending_incident(
                 record,
                 ops=self._ops,
@@ -655,7 +656,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
                 drained_by=f"fastloop-learn-{outcome.incident_id}",
                 clock=self._clock,
             )
-            if drained.HasField("failure") and unverified_outcome(self._receipt(receipt_dir)) is None:
+            if drained.HasField("failure") and drained.failure.code != ReceiptFailure.CODE_UNVERIFIED_OUTCOME:
                 error = f"drain failed: {drained.failure.message}"
             record.pending = None
             state.save(settings.state_path)
@@ -694,7 +695,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
             classification = receipt.get("outcome_classification")
             if isinstance(classification, str):
                 classifications.append(classification)
-            unverified = unverified_outcome(receipt)
+            unverified = unverified_outcome_file(Path(item["receipt_dir"]) / REJECTED_RECEIPT_FILENAME)
             if unverified is not None:
                 unverified_resolutions.append(unverified[1])
             phases, skipped = _receipt_closure_fields(receipt)
