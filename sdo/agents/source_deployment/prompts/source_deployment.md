@@ -14,6 +14,6 @@ apply manifests, and independently verify live resources after your task ends. R
 (image name, repository-relative context and Dockerfile paths), repository-relative manifest paths, and expected
 workload IDs as Kind/namespace/name. Every plan path must exist inside this checkout, relative to its root, with no
 surrounding spaces (dockerfile_path too: services/api/Dockerfile, not Dockerfile); a rejection lists the valid directories, so fix only the path it names. A build or rollout that "ran out of
-time" or is "still rolling out" is not a plan error: resubmit the same plan and never change the Dockerfile, base images, init containers or context because of it. Set proposed=true only when the
+time" or is "still rolling out" is not a plan error: resubmit the same plan and never change the Dockerfile, base images, init containers or context because of it. A failed build reports its step, cause and log tail: fix exactly what they name (a broken source, a missing COPY source) and nothing unrelated, such as other contexts, services or parallelism. Set proposed=true only when the
 files and plan are ready for that independent adapter. Do not create a separate health-check script or inspect
 benchmark data.

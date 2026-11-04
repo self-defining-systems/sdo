@@ -120,7 +120,7 @@ func (b KubernetesBuildBackend) BuildImage(ctx context.Context, checkout string,
 				if condition.Reason == "DeadlineExceeded" {
 					return "", &BuildTimeoutError{Image: build.GetImage(), Limit: limit}
 				}
-				return "", fmt.Errorf("BuildKit Job %s failed: %s", name, condition.Message)
+				return "", b.buildFailure(bounded, build.GetImage(), name, condition.Message)
 			}
 			if condition.Type == batchv1.JobComplete {
 				finished = true
@@ -281,6 +281,16 @@ func (b KubernetesBuildBackend) deleteJob(ctx context.Context, name string) {
 	_ = b.Client.BatchV1().Jobs(b.Namespace).Delete(cleanup, name, metav1.DeleteOptions{PropagationPolicy: &propagation})
 }
 
+// buildFailure reads the failed Job's log and returns the typed failure. When
+// the log cannot be read, the Job condition is all there is to report.
+func (b KubernetesBuildBackend) buildFailure(ctx context.Context, image, job, condition string) error {
+	logs, err := b.logs(ctx, job)
+	if err != nil || len(logs) == 0 {
+		return fmt.Errorf("BuildKit Job %s failed: %s (the build log could not be read: %v)", job, condition, err)
+	}
+	return ClassifyBuildLog(image, job, string(logs))
+}
+
 func (b KubernetesBuildBackend) logs(ctx context.Context, name string) ([]byte, error) {
 	if b.ReadJobLogs != nil {
 		return b.ReadJobLogs(ctx, b.Namespace, name)
@@ -292,7 +302,7 @@ func (b KubernetesBuildBackend) logs(ctx context.Context, name string) ([]byte, 
 	if len(pods.Items) != 1 {
 		return nil, fmt.Errorf("expected one BuildKit pod for %s, found %d", name, len(pods.Items))
 	}
-	return b.Client.CoreV1().Pods(b.Namespace).GetLogs(pods.Items[0].Name, &corev1.PodLogOptions{Container: "buildkit"}).DoRaw(ctx)
+	return b.Client.CoreV1().Pods(b.Namespace).GetLogs(pods.Items[0].Name, &corev1.PodLogOptions{Container: "buildkit", TailLines: ptr64(2000)}).DoRaw(ctx)
 }
 
 func parseBuildMetadata(logs []byte) (string, error) {
