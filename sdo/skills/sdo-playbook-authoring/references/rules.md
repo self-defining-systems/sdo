@@ -39,7 +39,7 @@ diagnostic; look it up here.
 
 - A playbook is one repair method, named for the repair (`workload-restart`, `redis-acl-restore`), not for a
   symptom or a service; its roles bind the component it repairs, so the same repair on another component reuses
-  it. A new repair method is a new playbook, never an extra action in a symptom-named one; when an applied
+  it; list a reused playbook in every detector whose binding it needs. A new repair method is a new playbook, never an extra action in a symptom-named one; when an applied
   playbook did not fix this incident, narrow its Diagnose so it no longer matches this cause. Never add a
   required role that no detector binds; derive related objects (a workload's Pods) through ReadView. A new
   playbook may not copy an existing program (the same parameter kinds, Diagnose and Mitigate apart from names,

@@ -98,6 +98,21 @@ An independent review found that the note blamed the wrong mechanism first and t
   Unknown. It ships after the binding fix, which delivers most of the reuse-wave value.
 - `detector.literal-binding` is dropped: once named bindings are scoped to the detector's own playbooks, a
   literal binding no longer leaks into other programs.
+- A second review (SWEEP1) found two gaps in that scoping. (1) `reflection.detector-required` still bound
+  recorded findings as if they listed every playbook, so reflection could publish a reused playbook the
+  firing finding never binds and pass the check. It now runs `program.BindFinding` with the program's own
+  ID and the finding's playbook list (recorded, plus what its detector declares in the candidate tree, so
+  editing the detector to list the playbook counts), and names the detector that would bind it if it
+  listed the playbook. The rule stays a coverage note (never refused), as before; replay's
+  `program.repeat-unreachable` note checks the edited detector code itself. (2) Scoping was opt-in: a finding
+  that lists no playbook still offers its named bindings to every program. That broad offer stays for
+  controller drift and source-inventory findings, which list none by design. A responder's incident
+  detector that sets named bindings (`ParameterBindings`, `localize.BindSuspects`) must declare its
+  playbooks: the blocking rule `detector.unscoped-binding` (changed incident detectors only) replaces the
+  dropped literal-binding rule. A literal binding in a scoped detector reaches only that detector's own
+  playbooks, so it is still allowed.
+- `program.BindFinding` compares a finding's playbooks by logical ID only (the `Finding.Playbooks`
+  contract the controller enforces); its own path normalizer, a second copy of `layout.PlaybookID`, is gone.
 
 ## Programs that cannot observe their own repair (added scope)
 

@@ -61,7 +61,7 @@ Keep revisions that applied cleanly unless this incident shows failure or incomp
 
 - Credentials stay references (env or ConfigMap key); never read Secret data. Learn into incident playbooks. The health judge owns `health-objective` and health detectors: never edit
   them; when its generic program applied and hand repairs followed, encode those in an incident playbook.
-- When the check reports that no finding binds a program's roles (`reflection.detector-required`), copy
+- `reflection.detector-required`: list the playbook in the detector it names, or copy
   `assets/examples/detectors/crashloop-script-repair/` to `.sdo/diagnostics/detectors/incidents/<id>/`,
   keep its manifest and `Spec` in step, and bind the role in `ParameterBindings`.
 

@@ -23,6 +23,7 @@ const (
 	RuleDuplicateRepair             = "playbook.duplicate-repair"
 	RuleSharedRepair                = "playbook.shared-repair"
 	RuleProgramNormalizedRead       = "program.normalized-read"
+	RuleDetectorUnscopedBinding     = "detector.unscoped-binding"
 
 	// Structural.
 	RuleUnknownPath      = "layout.unknown-path"

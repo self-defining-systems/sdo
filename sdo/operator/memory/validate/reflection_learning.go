@@ -46,8 +46,10 @@ func ReflectionCoverageGaps(root string, outcome *contracts.OutcomeRecord, decis
 	if err != nil {
 		return nil
 	}
+	declared := declaredPlaybooks(root)
 	for _, cause := range causes {
 		hasProgram, hasDetector := false, false
+		var programs, unlisted []string
 		for _, spec := range specs {
 			if spec.Mitigator == "" {
 				continue
@@ -61,7 +63,16 @@ func ReflectionCoverageGaps(root string, outcome *contracts.OutcomeRecord, decis
 					continue
 				}
 				hasProgram = true
-				hasDetector = hasDetector || findingBindsCase(outcome, c.Bindings.Objects)
+				bound, scoped := findingBindsCase(outcome, declared, spec.ID, c.Bindings.Objects)
+				hasDetector = hasDetector || bound
+				if !slices.Contains(programs, spec.ID) {
+					programs = append(programs, spec.ID)
+				}
+				for _, detector := range scoped {
+					if !slices.Contains(unlisted, detector+" -> "+spec.ID) {
+						unlisted = append(unlisted, detector+" -> "+spec.ID)
+					}
+				}
 			}
 		}
 		resources := make([]string, 0, len(cause.GetResources()))
@@ -71,8 +82,15 @@ func ReflectionCoverageGaps(root string, outcome *contracts.OutcomeRecord, decis
 		switch {
 		case !hasProgram:
 			gaps = append(gaps, Diagnostic{Rule: RuleReflectionProgramRequired, Message: fmt.Sprintf("verified cause %d (%s) has no replayable diagnose and mitigation program", cause.GetCauseIndex(), strings.Join(resources, ", "))})
+		case !hasDetector && len(unlisted) > 0:
+			sort.Strings(unlisted)
+			gaps = append(gaps, Diagnostic{Rule: RuleReflectionDetectorRequired,
+				Message: fmt.Sprintf("verified cause %d (%s) has programs %s, but no finding binds their roles: a finding's named bindings bind only the playbooks it lists, and detector -> playbook %s would bind if listed", cause.GetCauseIndex(), strings.Join(resources, ", "), strings.Join(programs, ", "), strings.Join(unlisted, ", ")),
+				Hint:    "add the playbook to that incident detector's possiblePlaybooks and Spec Playbooks (and to any Playbooks its findings set); a reused playbook must be listed by the detector whose binding it needs"})
 		case !hasDetector:
-			gaps = append(gaps, Diagnostic{Rule: RuleReflectionDetectorRequired, Message: fmt.Sprintf("verified cause %d (%s) has a program, but no finding binds its roles", cause.GetCauseIndex(), strings.Join(resources, ", "))})
+			gaps = append(gaps, Diagnostic{Rule: RuleReflectionDetectorRequired,
+				Message: fmt.Sprintf("verified cause %d (%s) has programs %s, but no finding binds their roles", cause.GetCauseIndex(), strings.Join(resources, ", "), strings.Join(programs, ", ")),
+				Hint:    "bind each required role in an incident detector's ParameterBindings and list the playbook in its possiblePlaybooks"})
 		}
 	}
 	return gaps
@@ -106,41 +124,71 @@ func bindingsCoverCause(bindings map[string]sdk.ObjectRef, resources []*contract
 	return true
 }
 
-// findingBindsCase reports whether the automatic stage can bind the recorded
-// case from one incident finding: program.BindFinding, the stage's binding
-// rule, fills every role the case binds with that same object. A listed
-// playbook without these bindings is diagnosed unbound and never runs.
-func findingBindsCase(outcome *contracts.OutcomeRecord, bindings map[string]sdk.ObjectRef) bool {
+// findingBindsCase reports whether the automatic stage binds program id's
+// recorded case from one incident finding: program.BindFinding, the stage's
+// binding rule, run with the program's own ID, fills every role the case binds
+// with that same object. A finding lists the playbooks it recorded plus those
+// its detector declares in this tree, so a detector edited to list the program
+// counts. scoped names the incident detectors whose finding would bind the
+// case if it listed the program.
+func findingBindsCase(outcome *contracts.OutcomeRecord, declared map[string][]string, id string, bindings map[string]sdk.ObjectRef) (bound bool, scoped []string) {
 	if len(bindings) == 0 {
-		return false
+		return false, nil
 	}
-	spec := program.ProgramSpec{ID: "recorded-case"}
+	spec := program.ProgramSpec{ID: id}
 	for role, ref := range bindings {
 		spec.Params = append(spec.Params, program.ParamSpec{Name: role, Kind: program.Kind(ref.Kind), Required: true})
 	}
 	sort.Slice(spec.Params, func(i, j int) bool { return spec.Params[i].Name < spec.Params[j].Name })
-	for _, finding := range outcome.GetFindings() {
-		bound, err := program.BindFinding(spec, findingForBinding(finding))
+	binds := func(finding sdk.Finding) bool {
+		got, err := program.BindFinding(spec, finding)
 		if err != nil {
-			continue
+			return false
 		}
-		all := true
 		for role, want := range bindings {
-			got := bound.Objects[role]
-			all = all && got.Kind == want.Kind && got.Namespace == want.Namespace && got.Name == want.Name
+			if g := got.Objects[role]; g.Kind != want.Kind || g.Namespace != want.Namespace || g.Name != want.Name {
+				return false
+			}
 		}
-		if all {
-			return true
+		return true
+	}
+	for _, recorded := range outcome.GetFindings() {
+		finding := findingForBinding(recorded, declared[recorded.GetDetectorId()])
+		if binds(finding) {
+			return true, nil
+		}
+		// Only an incident detector is the responder's to edit.
+		_, incident := declared[recorded.GetDetectorId()]
+		finding.Playbooks = append(finding.Playbooks, id)
+		if incident && binds(finding) && !slices.Contains(scoped, recorded.GetDetectorId()) {
+			scoped = append(scoped, recorded.GetDetectorId())
 		}
 	}
-	return false
+	return false, scoped
 }
 
-func findingForBinding(finding *contracts.Finding) sdk.Finding {
+// declaredPlaybooks maps each incident detector in the tree to the playbooks
+// its manifest declares. Unreadable detectors declare nothing: the structural
+// layers report them.
+func declaredPlaybooks(root string) map[string][]string {
+	detectors, err := layout.ReadDetectors(filepath.Join(root, layout.DiagnosticsDir))
+	if err != nil {
+		return nil
+	}
+	declared := map[string][]string{}
+	for _, detector := range detectors {
+		if detector.Class == layout.ClassIncident {
+			declared[detector.Manifest.ID] = detector.Manifest.PossiblePlaybooks
+		}
+	}
+	return declared
+}
+
+func findingForBinding(finding *contracts.Finding, declared []string) sdk.Finding {
 	ref := func(r *contracts.ObjectRef) sdk.ObjectRef {
 		return sdk.ObjectRef{APIVersion: r.GetApiVersion(), Kind: r.GetKind(), Namespace: r.GetNamespace(), Name: r.GetName()}
 	}
-	result := sdk.Finding{PrimaryResource: ref(finding.GetPrimaryResource())}
+	result := sdk.Finding{DetectorID: finding.GetDetectorId(), PrimaryResource: ref(finding.GetPrimaryResource())}
 	for _, related := range finding.GetRelatedResources() {
 		result.RelatedResources = append(result.RelatedResources, ref(related))
 	}
@@ -149,6 +197,12 @@ func findingForBinding(finding *contracts.Finding) sdk.Finding {
 			result.ParameterBindings = map[string]sdk.ObjectRef{}
 		}
 		result.ParameterBindings[role] = ref(bound)
+	}
+	result.Playbooks = append([]string(nil), finding.GetPlaybookIds()...)
+	for _, id := range declared {
+		if !slices.Contains(result.Playbooks, id) {
+			result.Playbooks = append(result.Playbooks, id)
+		}
 	}
 	return result
 }
