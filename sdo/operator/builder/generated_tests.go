@@ -15,6 +15,30 @@ import (
 // failures never reject a workspace, every other generated test does.
 const corpusTest = "TestProgramCorpus"
 
+// healthyBaselineTestName is the generated healthy-baseline replay. It runs as its
+// own stage after every other generated test passed, so its violations never
+// share output with, or hide, another gate's failure, and the detector IDs it
+// names have already passed the registration and controller-start contracts.
+const healthyBaselineTestName = "TestIncidentDetectorsStayQuietOnHealthyBaseline"
+
+// separateStages are the generated tests the main generated stage skips.
+const separateStages = "^(" + corpusTest + "|" + healthyBaselineTestName + ")$"
+
+// IsHealthyBaselineStage reports whether a rejected stage is the healthy-baseline
+// replay alone, so its output holds only that test's violations.
+func IsHealthyBaselineStage(stage *StageError) bool {
+	return stage != nil && strings.HasSuffix(stage.Stage, healthyBaselineStageSuffix)
+}
+
+const healthyBaselineStageSuffix = "-run ^" + healthyBaselineTestName + "$ ./generated"
+
+func (workspace *Workspace) runHealthyBaseline(ctx context.Context) error {
+	if !workspace.healthyBaseline {
+		return nil
+	}
+	return workspace.runGo(ctx, "test", "-timeout=30s", "-run", "^"+healthyBaselineTestName+"$", "./generated")
+}
+
 // runGeneratedTests links the generated test binary once and classifies its
 // result per test. A failing corpus replay becomes an advisory note; any other
 // failing test, or a result that cannot be attributed to individual tests
@@ -23,7 +47,7 @@ const corpusTest = "TestProgramCorpus"
 func (workspace *Workspace) runGeneratedTests(ctx context.Context) error {
 	workspace.generatedClassified = true
 	workspace.corpusAdvisory = ""
-	err := workspace.runGo(ctx, "test", "-json", "-timeout=30s", "./generated")
+	err := workspace.runGo(ctx, "test", "-json", "-timeout=30s", "-skip", "^"+healthyBaselineTestName+"$", "./generated")
 	var stage *buildio.StageError
 	if err == nil || !errors.As(err, &stage) {
 		return err
@@ -38,7 +62,7 @@ func (workspace *Workspace) runGeneratedTests(ctx context.Context) error {
 	}
 	// Not attributable to individual tests: rerun without the corpus so the
 	// rejection (or pass) is what the unclassified acceptance stage reports.
-	if err := workspace.runGo(ctx, "test", "-skip", "^"+corpusTest+"$", "./generated"); err != nil {
+	if err := workspace.runGo(ctx, "test", "-skip", separateStages, "./generated"); err != nil {
 		return err
 	}
 	workspace.corpusAdvisory = text

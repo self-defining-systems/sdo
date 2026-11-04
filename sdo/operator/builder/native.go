@@ -48,6 +48,8 @@ type Workspace struct {
 	// ran once, classified per test, so the informational pass skips it.
 	generatedClassified bool
 	corpusAdvisory      string
+	// healthyBaseline records that the healthy-baseline replay was generated.
+	healthyBaseline bool
 }
 
 // StageTiming is the wall-clock cost of one Go toolchain stage.
@@ -161,7 +163,7 @@ func (workspace *Workspace) validate(ctx context.Context, vet, classifyGenerated
 			stages = append(stages, args)
 		}
 		if !classifyGenerated {
-			stages = append(stages, []string{"test", "-skip", "^" + corpusTest + "$", "./generated"})
+			stages = append(stages, []string{"test", "-skip", separateStages, "./generated"})
 		}
 	}
 	for _, args := range stages {
@@ -171,6 +173,11 @@ func (workspace *Workspace) validate(ctx context.Context, vet, classifyGenerated
 	}
 	if classifyGenerated && !workspace.compileOnly {
 		if err := workspace.runGeneratedTests(ctx); err != nil {
+			return "", err
+		}
+	}
+	if !workspace.compileOnly {
+		if err := workspace.runHealthyBaseline(ctx); err != nil {
 			return "", err
 		}
 	}
@@ -317,9 +324,12 @@ func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error
 		return nil, err
 	}
 	var setupErrors []string
+	healthyBaseline := false
 	if config.HealthyBaseline != "" {
 		if err := generateHealthyBaselineTest(config.HealthyBaseline, directory); err != nil {
 			setupErrors = append(setupErrors, "healthy replay unverified: "+strings.ReplaceAll(err.Error(), config.HealthyBaseline, "<healthy input>"))
+		} else {
+			healthyBaseline = true
 		}
 	}
 	main := "package main\nimport \"sdo.dev/operator/runtime\"\nfunc main(){runtime.Run()}\n"
@@ -330,7 +340,7 @@ func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error
 	if err != nil {
 		return nil, err
 	}
-	return &Workspace{Directory: directory, ModulePath: module, compileOnly: config.CompileOnly, detectorCount: len(detectors), advisorySetupErrors: setupErrors}, nil
+	return &Workspace{Directory: directory, ModulePath: module, compileOnly: config.CompileOnly, detectorCount: len(detectors), advisorySetupErrors: setupErrors, healthyBaseline: healthyBaseline}, nil
 }
 
 func validateDetectors(detectors []layout.Detector) error {
