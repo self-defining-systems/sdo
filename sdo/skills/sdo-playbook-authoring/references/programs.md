@@ -29,7 +29,8 @@ The authoring reference tool supplies the routing example.
 
 A playbook binds the component it repairs (`deployment`, `statefulset`), so one program serves every component
 with that failure. For a journey symptom, gate Diagnose on the component being a suspect of the failing
-journeys, then check the repair's own evidence on it (an exec, status, log):
+journeys ([localize SDK](../../sdo-detector-authoring/references/traffic.md)), then check the
+repair's own evidence on it (an exec, status, log):
 
 ```go
 result, err := localize.FromContext(v, "health") // ErrNoTraffic: return it (Unknown)
