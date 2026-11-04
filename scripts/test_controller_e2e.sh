@@ -8,7 +8,7 @@
 #   bash scripts/test_controller_e2e.sh [scenario1|scenario2|api-errors|hung-agent|all]
 #
 # Needs: bubblewrap with user namespaces, git, kubectl, Go, uv, and the envtest
-# binaries (KUBEBUILDER_ASSETS, else `setup-envtest use` is tried).
+# binaries (KUBEBUILDER_ASSETS, else scripts/install_envtest.sh installs them).
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 scenario="${1:-all}"
@@ -28,13 +28,8 @@ bwrap --ro-bind / / --dev /dev --proc /proc true 2>/dev/null || {
     exit 2
 }
 if [[ -z "${KUBEBUILDER_ASSETS:-}" ]]; then
-    if command -v setup-envtest >/dev/null; then
-        KUBEBUILDER_ASSETS="$(setup-envtest use 1.34.x -p path)"
-        export KUBEBUILDER_ASSETS
-    else
-        echo "set KUBEBUILDER_ASSETS to a directory with etcd and kube-apiserver (go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest)" >&2
-        exit 2
-    fi
+    KUBEBUILDER_ASSETS="$(bash "$root/scripts/install_envtest.sh")"
+    export KUBEBUILDER_ASSETS
 fi
 export SDO_E2E_CACHE="${SDO_E2E_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/sdo-e2e}"
 cd "$root"

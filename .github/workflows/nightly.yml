@@ -48,6 +48,8 @@ jobs:
         with:
           path: ~/.cache/sdo-envtest
           key: envtest-assets-1.34.0-${{ runner.os }}-${{ runner.arch }}
+      - name: Install the pinned envtest binaries (checksum-verified, retried; a cache hit skips it)
+        run: echo "KUBEBUILDER_ASSETS=$(bash scripts/install_envtest.sh)" >> "$GITHUB_ENV"
       - name: Every Go test under the race detector, without -short, with full simulation seeds
         run: bash scripts/test_go_ci.sh nightly
       - name: Bounded fuzz campaigns (seed cases also run on every PR)
@@ -87,8 +89,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends bubblewrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           bwrap --ro-bind / / --dev /dev --proc /proc true
-          go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
-          echo "KUBEBUILDER_ASSETS=$("$(go env GOPATH)/bin/setup-envtest" use 1.34.x -p path)" >> "$GITHUB_ENV"
+          echo "KUBEBUILDER_ASSETS=$(bash scripts/install_envtest.sh)" >> "$GITHUB_ENV"
       - name: Controller end to end (first incident and repeat, then faults)
         run: bash scripts/test_controller_e2e.sh all
 

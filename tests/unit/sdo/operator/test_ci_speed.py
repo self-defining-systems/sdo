@@ -212,6 +212,21 @@ def test_envtest_binaries_are_cached_by_pinned_version_in_pr_and_nightly_go_jobs
     assert "if" not in [s for s in workflow()["jobs"]["tests"]["steps"] if "sdo-envtest" in str(s.get("with"))][0]
 
 
+def test_envtest_binaries_are_installed_by_the_pinned_script_not_by_a_test() -> None:
+    """A test-time `go run setup-envtest` is a network call per run; CI installs once, verified."""
+    script = (ROOT / "scripts/install_envtest.sh").read_text()
+    version = re.search(r'KubernetesVersion = "([^"]+)"', (ROOT / "sdo/operator/runtime/envtestio/envtestio.go").read_text())
+    assert version is not None
+    assert f'version="{version[1]}"' in script
+    assert len(re.findall(r"sha512=[0-9a-f]{128}", script)) == 4
+    assert "--retry" in script
+    nightly = yaml.safe_load((ROOT / ".github/workflows/nightly.yml").read_text())
+    for config, job in ((workflow(), "tests"), (nightly, "go"), (nightly, "controller-e2e")):
+        runs = [s.get("run", "") for s in config["jobs"][job]["steps"]]
+        assert any("KUBEBUILDER_ASSETS=$(bash scripts/install_envtest.sh)" in r for r in runs), job
+        assert not any("setup-envtest" in r for r in runs), job
+
+
 def test_kube_conformance_runs_on_every_pr() -> None:
     defined = "\n".join(p.read_text() for p in (ROOT / "sdo/operator/runtime/sim").glob("*_test.go"))
     match = re.search(r"^func TestKubeConformance\(.*?^}", defined, re.MULTILINE | re.DOTALL)

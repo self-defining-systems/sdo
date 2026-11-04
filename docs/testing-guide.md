@@ -38,7 +38,7 @@ downloads the binaries into `$SDO_ENVTEST_CACHE` (default the user cache dir; on
 `SDO_ENVTEST_CACHE=/mnt/data/shli/cache/envtest`), or set `KUBEBUILDER_ASSETS` to an existing directory. There is no
 controller manager, scheduler or kubelet: nothing reconciles, Pods stay Pending, and namespaces never finish
 terminating. PR and nightly CI cache the binaries in `~/.cache/sdo-envtest`, keyed by the Kubernetes version
-(bump the key with `envtestio.KubernetesVersion`); a cache miss downloads them once. Tests that start it belong in
+(bump the key with `envtestio.KubernetesVersion`); a cache miss runs `scripts/install_envtest.sh` once (pinned controller-tools release, SHA-512 checked, retried) and CI exports `KUBEBUILDER_ASSETS`; tests do not download in CI. Locally the same script, or the first test, fills the cache. Tests that start it belong in
 `if testing.Short() { t.Skip(...) }` (PR CI passes `-short`; nightly does not) unless they stay well under PR CI's budget.
 
 ## Test organization

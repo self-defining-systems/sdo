@@ -17,6 +17,7 @@
 package envtestio
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/url"
@@ -84,9 +85,11 @@ func resolveAssets() (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "go", "run", setupEnvtest, "use", KubernetesVersion, "--bin-dir", filepath.Join(cache, "bin"), "-p", "path")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("download envtest assets with %s: %w (set KUBEBUILDER_ASSETS to an existing directory to skip the download)", setupEnvtest, err)
+		return "", fmt.Errorf("download envtest assets with %s: %w: %s (run scripts/install_envtest.sh, or set KUBEBUILDER_ASSETS to an existing directory, to skip the download)", setupEnvtest, err, strings.TrimSpace(stderr.String()))
 	}
 	return strings.TrimSpace(string(out)), nil
 }
