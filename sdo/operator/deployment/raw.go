@@ -35,13 +35,33 @@ type RawBackend interface {
 	Observe(context.Context, string) (WorkloadObservation, error)
 }
 
+// ImageResolver pins a mutable image reference (a tag) to its current
+// manifest digest. It is trusted Go code: the deployer never supplies digests,
+// so an LLM cannot choose or invent the bytes that run.
+type ImageResolver interface {
+	// ResolveImage returns repository@sha256:<digest> for ref.
+	ResolveImage(ctx context.Context, ref string) (string, error)
+}
+
 type RawStrategy struct {
 	Namespace string
 	Backend   RawBackend
+	// Resolver pins workload images named by tag that no image build covers.
+	// Without it such images are rejected with guidance.
+	Resolver ImageResolver
 }
 
-func RawRegistration(id, namespace string, backend RawBackend) Registration {
-	strategy := RawStrategy{Namespace: namespace, Backend: backend}
+func tagImageRejection(path, image string, cause error) error {
+	detail := "the operator has no image resolver configured"
+	if cause != nil {
+		detail = "the operator could not resolve it: " + cause.Error()
+	}
+	return fmt.Errorf("manifest %s: image %q is not immutable and %s. Name an existing tag of a public registry image, "+
+		"write the reference as <repository>@sha256:<64 hex digest>, or build it from source by listing it in image_builds under the trusted registry", path, image, detail)
+}
+
+func RawRegistration(id, namespace string, backend RawBackend, resolver ImageResolver) Registration {
+	strategy := RawStrategy{Namespace: namespace, Backend: backend, Resolver: resolver}
 	return Registration{
 		ID: id, Config: &contracts.RawManifestStrategy{},
 		Apply: func(ctx context.Context, checkout, tree string, message proto.Message) (Observation, error) {
@@ -134,6 +154,7 @@ func (strategy RawStrategy) ApplyAndVerify(ctx context.Context, checkout, tree s
 		imageRefs[build.Image] = immutable
 		imageInputs[build.Image] = rendered.ImageInputs{SourceImage: build.Image, ContextPath: filepath.ToSlash(filepath.Clean(build.ContextPath)), DockerfilePath: filepath.ToSlash(filepath.Clean(build.DockerfilePath))}
 	}
+	pinnedImages := map[string]string{}
 	var documents bytes.Buffer
 	namedImages := []rendered.DeployedImage{}
 	workloads := map[string][]string{}
@@ -164,6 +185,7 @@ func (strategy RawStrategy) ApplyAndVerify(ctx context.Context, checkout, tree s
 			if len(document) == 0 {
 				continue
 			}
+			var resolveErr error
 			id, images, err := RenderManifest(document, strategy.Namespace, tree, func(kind, name, container string, init bool, image string) string {
 				inputs := imageInputs[image]
 				if inputs.SourceImage == "" {
@@ -171,6 +193,13 @@ func (strategy RawStrategy) ApplyAndVerify(ctx context.Context, checkout, tree s
 				}
 				if built := imageRefs[image]; built != "" {
 					image = built
+				} else if !digestReference.MatchString(image) && strategy.Resolver != nil && resolveErr == nil {
+					pinned, err := strategy.pin(ctx, image, pinnedImages)
+					if err != nil {
+						resolveErr = tagImageRejection(path, image, err)
+					} else {
+						image = pinned
+					}
 				}
 				apiVersion, _ := document["apiVersion"].(string)
 				metadata, _ := document["metadata"].(map[string]any)
@@ -178,6 +207,10 @@ func (strategy RawStrategy) ApplyAndVerify(ctx context.Context, checkout, tree s
 				namedImages = append(namedImages, rendered.DeployedImage{Ref: sdk.ObjectRef{APIVersion: apiVersion, Kind: kind, Namespace: namespace, Name: name}, Name: container, Init: init, Applied: image, Digest: image, Inputs: inputs})
 				return image
 			})
+			if resolveErr != nil {
+				_ = file.Close()
+				return Observation{}, resolveErr
+			}
 			if err != nil {
 				_ = file.Close()
 				return Observation{}, fmt.Errorf("manifest %s: %w", path, err)
@@ -185,7 +218,7 @@ func (strategy RawStrategy) ApplyAndVerify(ctx context.Context, checkout, tree s
 			for _, image := range images {
 				if !digestReference.MatchString(image) {
 					_ = file.Close()
-					return Observation{}, fmt.Errorf("manifest %s: workload image is not immutable: %q", path, image)
+					return Observation{}, tagImageRejection(path, image, nil)
 				}
 			}
 			if id != "" {
@@ -261,6 +294,23 @@ func (strategy RawStrategy) ApplyAndVerify(ctx context.Context, checkout, tree s
 		allImages = append(allImages, observed.Images...)
 	}
 	return Observation{ContainerImages: verifiedImages, Revision: tree, Images: allImages, ResourceIDs: ids, Ready: true}, nil
+}
+
+// pin resolves one unbuilt tag reference once per plan, so every container
+// naming it runs the same bytes.
+func (strategy RawStrategy) pin(ctx context.Context, image string, cache map[string]string) (string, error) {
+	if pinned, ok := cache[image]; ok {
+		return pinned, nil
+	}
+	pinned, err := strategy.Resolver.ResolveImage(ctx, image)
+	if err != nil {
+		return "", err
+	}
+	if !digestReference.MatchString(pinned) {
+		return "", fmt.Errorf("resolver returned a mutable reference %q", pinned)
+	}
+	cache[image] = pinned
+	return pinned, nil
 }
 
 // RenderManifest applies the common deployment and lock renderer.
