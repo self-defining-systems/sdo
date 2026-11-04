@@ -49,6 +49,12 @@ type Source interface {
 	TrafficWindow(workload string) (Window, bool)
 }
 
+// WindowSet is implemented by sources that can list every window they carry,
+// so a capture of the detection context keeps them for replay.
+type WindowSet interface {
+	TrafficWindows() map[string]Window
+}
+
 // WindowFrom returns the observations of workload, when the context carries them.
 func WindowFrom(ctx sdk.DetectionContext, workload string) (Window, bool) {
 	source, ok := ctx.(Source)

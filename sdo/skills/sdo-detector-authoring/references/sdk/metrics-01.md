@@ -224,6 +224,12 @@ func ResultFrom(ctx sdk.DetectionContext, id string) (Result, bool)
     ResultFrom returns the frozen result of query id, when the context carries
     it.
 
+type ResultSet interface {
+	MetricResults() map[string]Result
+}
+    ResultSet is implemented by sources that can list every frozen result they
+    carry, so a capture of the detection context keeps them for replay.
+
 type Sample struct {
 	At    time.Time
 	Value float64

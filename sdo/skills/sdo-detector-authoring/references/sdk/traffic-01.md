@@ -112,6 +112,7 @@ type Verdict struct{ ... }
     func Pass() Verdict
 type Window struct{ ... }
     func WindowFrom(ctx sdk.DetectionContext, workload string) (Window, bool)
+type WindowSet interface{ ... }
 type Workload struct{ ... }
     func ParseWorkloadJSON(data []byte) (Workload, error)
 type WorkloadScenario struct{ ... }

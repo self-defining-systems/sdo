@@ -9,6 +9,9 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/metrics"
+	"sdo.dev/operator/sdk/servicehealth"
+	"sdo.dev/operator/sdk/traffic"
 )
 
 const MaxCapturedSnapshotBytes = 4 << 20
@@ -34,6 +37,25 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string, refs ...sdk.Ob
 		s.Alerts = original.Alerts
 		s.Readings = original.Readings
 		s.Reachability = original.Reachability
+	} else {
+		// A live composed view: keep the observation windows detectors read,
+		// so replay of the capture sees what the live evaluation saw.
+		if set, ok := view.(traffic.WindowSet); ok {
+			s.Traffic = set.TrafficWindows()
+		}
+		if set, ok := view.(metrics.ResultSet); ok {
+			s.Metrics = set.MetricResults()
+		}
+		if source, ok := view.(metrics.AlertSource); ok {
+			if alerts, ok := source.AlertsResult(); ok {
+				s.Alerts = &alerts
+			}
+		}
+		if source, ok := view.(servicehealth.ReachabilitySource); ok {
+			if window, ok := source.ServiceReachability(); ok {
+				s.Reachability = &window
+			}
+		}
 	}
 	if clock, ok := view.(sdk.ObservationClock); ok && !clock.ObservedAt().IsZero() {
 		observed := clock.ObservedAt().UTC()

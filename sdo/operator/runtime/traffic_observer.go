@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"maps"
 	kclock "k8s.io/utils/clock"
 	"sort"
 	"sync"
@@ -329,6 +330,9 @@ type trafficContext struct {
 type trafficWindows map[string]traffic.Window
 
 func (w trafficWindows) TrafficWindow(id string) (traffic.Window, bool) { v, ok := w[id]; return v, ok }
+
+// TrafficWindows implements traffic.WindowSet so captures keep every window.
+func (w trafficWindows) TrafficWindows() map[string]traffic.Window { return maps.Clone(w) }
 
 type reachabilityWindow struct {
 	window *servicehealth.ReachabilityWindow

@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"maps"
 	"context"
 	"errors"
 	"fmt"
@@ -260,6 +261,24 @@ func (p MetricsSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionCon
 type metricsContext struct {
 	inputs.Carrier
 	frozen *frozenMetrics
+}
+
+// MetricResults implements metrics.ResultSet so captures keep every result
+// this cycle froze, including dynamic queries already evaluated.
+func (f *frozenMetrics) MetricResults() map[string]metrics.Result {
+	f.load()
+	results := maps.Clone(f.results)
+	if results == nil {
+		results = map[string]metrics.Result{}
+	}
+	f.dynamicMu.Lock()
+	defer f.dynamicMu.Unlock()
+	for q, r := range f.dynamic {
+		if _, ok := results[q.ID]; !ok {
+			results[q.ID] = r
+		}
+	}
+	return results
 }
 
 func (f *frozenMetrics) MetricResult(id string) (metrics.Result, bool) {
