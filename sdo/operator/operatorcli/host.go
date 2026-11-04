@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/operatorcli/internal/processio"
 	"strings"
 	"time"
@@ -76,6 +77,8 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	maxResponseLoops := flags.Int("max-response-loops", 10, "maximum mitigation rounds the responder agent may use per incident (the automatic stage's one apply does not count)")
 	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
 	verificationTimeout := flags.Duration("verification-timeout", 5*time.Minute, "independent verification timeout")
+	buildTimeout := flags.Duration("build-timeout", settings.DefaultBuildTimeout, "deadline of one source image build")
+	buildBudget := flags.Duration("build-budget", settings.DefaultBuildBudget, "deadline of all source image builds of one deployment attempt")
 	registryInsecure := flags.Bool("registry-insecure", false, "allow an explicitly configured HTTP image registry")
 	permissiveResponder := flags.Bool("permissive-responder", false, "broad lane repair permissions excluding Secret and credential APIs")
 	var responderNamespaces repeatable
@@ -185,7 +188,7 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 		ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,
 		LateFindings: *lateFindings, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, FrozenMemory: *frozenMemory, ExternalIncidents: *externalIncidents,
 		MaxResponseLoops: *maxResponseLoops,
-		TimeoutSeconds:   int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()), RepairPolicy: *repairPolicy,
+		TimeoutSeconds:   int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()), BuildTimeoutSeconds: int(buildTimeout.Seconds()), BuildBudgetSeconds: int(buildBudget.Seconds()), RepairPolicy: *repairPolicy,
 		NativeCommand:         []string{"/usr/local/bin/sdo-operator"},
 		RegistrationConfigMap: *registrationConfigMap,
 	}

@@ -20,6 +20,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/deployment/internal/deploymentio"
 )
 
@@ -77,7 +78,7 @@ func (b KubernetesBuildBackend) BuildImage(ctx context.Context, checkout string,
 	}
 	limit := b.Timeout
 	if limit <= 0 {
-		limit = 10 * time.Minute
+		limit = settings.DefaultBuildTimeout
 	}
 	bounded, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
@@ -90,6 +91,14 @@ func (b KubernetesBuildBackend) BuildImage(ctx context.Context, checkout string,
 	if _, err := b.Client.BatchV1().Jobs(b.Namespace).Create(bounded, job, metav1.CreateOptions{}); err != nil {
 		return "", fmt.Errorf("create BuildKit Job: %w", err)
 	}
+	// An abandoned build (timeout, shared budget, cancellation) must not keep
+	// compiling on the node: the Job outlives the context that bounded it.
+	finished := false
+	defer func() {
+		if !finished {
+			b.deleteJob(ctx, name)
+		}
+	}()
 	interval := b.PollInterval
 	if interval <= 0 {
 		interval = time.Second
@@ -97,6 +106,9 @@ func (b KubernetesBuildBackend) BuildImage(ctx context.Context, checkout string,
 	for {
 		observed, err := b.Client.BatchV1().Jobs(b.Namespace).Get(bounded, name, metav1.GetOptions{})
 		if err != nil {
+			if errors.Is(bounded.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+				return "", &BuildTimeoutError{Image: build.GetImage(), Limit: limit}
+			}
 			return "", fmt.Errorf("observe BuildKit Job: %w", err)
 		}
 		for _, condition := range observed.Status.Conditions {
@@ -104,9 +116,14 @@ func (b KubernetesBuildBackend) BuildImage(ctx context.Context, checkout string,
 				continue
 			}
 			if condition.Type == batchv1.JobFailed {
+				finished = true
+				if condition.Reason == "DeadlineExceeded" {
+					return "", &BuildTimeoutError{Image: build.GetImage(), Limit: limit}
+				}
 				return "", fmt.Errorf("BuildKit Job %s failed: %s", name, condition.Message)
 			}
 			if condition.Type == batchv1.JobComplete {
+				finished = true
 				finalTree, err := broker.ProposalTreeDigest(bounded, checkout)
 				if err != nil || finalTree != initialTree {
 					return "", fmt.Errorf("candidate tree changed during image build: %v", err)
@@ -123,6 +140,9 @@ func (b KubernetesBuildBackend) BuildImage(ctx context.Context, checkout string,
 			}
 		}
 		if err := b.wait(bounded, interval); err != nil {
+			if errors.Is(bounded.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+				return "", &BuildTimeoutError{Image: build.GetImage(), Limit: limit}
+			}
 			return "", fmt.Errorf("BuildKit Job %s did not complete: %w", name, err)
 		}
 	}
@@ -241,6 +261,13 @@ printf 'SDO_BUILD_METADATA='; cat /tmp/sdo-metadata.json; printf '\n'`
 			}},
 		},
 	}
+}
+
+func (b KubernetesBuildBackend) deleteJob(ctx context.Context, name string) {
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer cancel()
+	propagation := metav1.DeletePropagationBackground
+	_ = b.Client.BatchV1().Jobs(b.Namespace).Delete(cleanup, name, metav1.DeleteOptions{PropagationPolicy: &propagation})
 }
 
 func (b KubernetesBuildBackend) logs(ctx context.Context, name string) ([]byte, error) {

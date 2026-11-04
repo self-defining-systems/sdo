@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sdo.dev/operator/contracts/settings"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -87,8 +88,9 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		AllowedRegistryHost: config.Install.RegistryHost,
 		RegistryInsecure:    config.Install.RegistryInsecure,
 		ServiceAccount:      "sdo-image-builder",
+		Timeout:             time.Duration(config.Install.BuildTimeoutSeconds) * time.Second,
 	}
-	readiness, err := deployment.NewRegistry(deployment.RawRegistration("raw-manifests-v1", config.Lifecycle.Namespace, buildBackend, &deployment.RegistryResolver{InsecureHost: insecureRegistryHost(config), Cluster: nodeImages{client: client}}))
+	readiness, err := deployment.NewRegistry(deployment.RawRegistration("raw-manifests-v1", config.Lifecycle.Namespace, buildBackend, &deployment.RegistryResolver{InsecureHost: insecureRegistryHost(config), Cluster: nodeImages{client: client}}, deployment.WithBuildBudget(time.Duration(config.Install.BuildBudgetSeconds)*time.Second)))
 	if err != nil {
 		return lifecycle.Result{}, err
 	}

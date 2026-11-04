@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -42,23 +43,26 @@ const (
 type Config struct {
 	CodePath *contracts.CodePathConfig
 
-	ResponderMenu                                bool
-	ObservationCeiling                           sdk.ObservationScope
-	Namespace, ControlNamespace, Application     string
-	ControllerImage, ResponderImage              string
-	ScriptImage                                  string
-	RepositoryPVC, CredentialsSecret, Model      string
-	AcceptedCommit                               string
-	RepairPolicy, AgentProvider, AgentEffort     string
-	Replay                                       string
-	ReflectionSession, ReflectionGuidance        string
-	ForceReflection                              bool
-	FrozenMemory                                 bool
-	ExternalIncidents                            bool
-	LateFindings                                 string
-	MaxResponseLoops                             int
-	HealthyBaseline                              bool
-	TimeoutSeconds, VerificationTimeoutSeconds   int
+	ResponderMenu                              bool
+	ObservationCeiling                         sdk.ObservationScope
+	Namespace, ControlNamespace, Application   string
+	ControllerImage, ResponderImage            string
+	ScriptImage                                string
+	RepositoryPVC, CredentialsSecret, Model    string
+	AcceptedCommit                             string
+	RepairPolicy, AgentProvider, AgentEffort   string
+	Replay                                     string
+	ReflectionSession, ReflectionGuidance      string
+	ForceReflection                            bool
+	FrozenMemory                               bool
+	ExternalIncidents                          bool
+	LateFindings                               string
+	MaxResponseLoops                           int
+	HealthyBaseline                            bool
+	TimeoutSeconds, VerificationTimeoutSeconds int
+	// BuildTimeoutSeconds bounds one source image build and BuildBudgetSeconds all builds of one
+	// deployment attempt; zero selects the deployment package defaults.
+	BuildTimeoutSeconds, BuildBudgetSeconds      int
 	ControllerDurationSeconds                    int
 	ExitAfterClosure                             bool
 	NativeCommand, NativeArgs                    []string
@@ -186,6 +190,12 @@ func (c Config) validate() error {
 	}
 	if c.ControllerDurationSeconds < 0 {
 		return errors.New("controller duration must be nonnegative")
+	}
+	if c.BuildTimeoutSeconds < 0 || c.BuildBudgetSeconds < 0 {
+		return errors.New("build timeout and budget cannot be negative")
+	}
+	if c.BuildTimeoutSeconds > 0 && c.BuildBudgetSeconds > 0 && c.BuildTimeoutSeconds > c.BuildBudgetSeconds {
+		return errors.New("per-build timeout cannot exceed the build budget")
 	}
 	if c.VerificationTimeoutSeconds < 0 {
 		return errors.New("verification timeout cannot be negative")
@@ -507,6 +517,18 @@ func verificationTimeout(c Config) int {
 		return c.VerificationTimeoutSeconds
 	}
 	return 300
+}
+func buildTimeout(c Config) time.Duration {
+	if c.BuildTimeoutSeconds > 0 {
+		return time.Duration(c.BuildTimeoutSeconds) * time.Second
+	}
+	return settings.DefaultBuildTimeout
+}
+func buildBudget(c Config) time.Duration {
+	if c.BuildBudgetSeconds > 0 {
+		return time.Duration(c.BuildBudgetSeconds) * time.Second
+	}
+	return settings.DefaultBuildBudget
 }
 func hasArg(args []string, want string) bool {
 	for _, arg := range args {
