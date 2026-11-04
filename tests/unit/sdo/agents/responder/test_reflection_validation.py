@@ -410,3 +410,42 @@ async def test_launch_contract_preserves_cache_helper_into_real_validation_proce
             result = await session.call_tool("check_memory", {"learning_decision": "no_change", "summary": "s"})
             (block,) = result.content
             assert json.loads(block.text)["exit_code"] == 0
+
+
+async def test_check_memory_stops_after_its_failed_check_budget_across_tool_processes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P7: one reflection ran 12+ failing checks on a fault it could not fix.
+
+    The budget spans every check_memory server of one reflection attempt (each
+    correction turn starts a new one), so a fresh process cannot reset it.
+    """
+    from sdo.agents.responder.memory_check import MAX_FAILED_MEMORY_CHECKS, VALIDATION_TIMEOUT_FILE_ENV
+
+    calls = tmp_path / "calls"
+    _validator(
+        tmp_path,
+        f"""import json, sys
+with open({str(calls)!r}, "a") as f:
+    f.write("x")
+print(json.dumps({{"diagnostics": [{{"rule": "detector.healthy-baseline", "message": "unfixable"}}]}}))
+sys.exit(1)
+""",
+        monkeypatch,
+    )
+    monkeypatch.setenv(VALIDATION_TIMEOUT_FILE_ENV, str(tmp_path / "timeout.json"))
+    decision = {"learning_decision": "updated", "summary": "s", "proposed_artifact_ids": ["book"]}
+    for _ in range(MAX_FAILED_MEMORY_CHECKS - 1):
+        (block,) = await validation_server(tmp_path).call_tool("check_memory", decision)
+        assert "budget" not in json.loads(block.text)["next"]
+    (block,) = await validation_server(tmp_path).call_tool("check_memory", decision)
+    last = json.loads(block.text)
+    assert "unfixable" in last["stdout"]
+    assert "budget" in last["next"]
+    assert "return" in last["next"]
+    (block,) = await validation_server(tmp_path).call_tool("check_memory", decision)
+    spent = json.loads(block.text)
+    assert spent["exit_code"] == 1
+    assert "budget" in spent["next"]
+    assert "return" in spent["next"]
+    assert len(calls.read_text()) == MAX_FAILED_MEMORY_CHECKS

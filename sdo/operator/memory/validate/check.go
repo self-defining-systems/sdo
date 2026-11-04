@@ -96,7 +96,11 @@ func Check(ctx context.Context, request Request, compile CompileRunner) ([]Diagn
 		return nil, err
 	}
 	request.Layers = Compile
-	return compile(ctx, request)
+	diagnostics, err = compile(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	return separatePreexisting(ctx, request, diagnostics)
 }
 
 // CompileCandidate is the runner body shared by local memory checks and the

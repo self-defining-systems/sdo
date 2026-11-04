@@ -625,8 +625,8 @@ var gateCompileRows = []gateCompileRow{
 		real: func(t *testing.T, root string) {
 			edit(t, root, gateFixtureTest, "len(findings) != 1", "len(findings) == 1")
 		}},
-	{name: "fires on the healthy baseline", rule: RuleDetectorHealthyBaseline, path: layout.DiagnosticsDir, baseline: true,
-		fake: testutil.GoRule{Verb: "test", Output: "detector.healthy-baseline: missing-configmap fired on the healthy capture"},
+	{name: "fires on the healthy baseline", rule: RuleDetectorHealthyBaseline, path: layout.DetectorDir(layout.ClassIncident, "missing-configmap"), baseline: true,
+		fake: testutil.GoRule{Verb: "test", Output: "    healthy_baseline_test.go:15: detector.healthy-baseline[missing-configmap]: detector \"missing-configmap\" reported an active finding on healthy baseline snapshot empty-namespace.json"},
 		real: func(t *testing.T, root string) {
 			edit(t, root, gateFixtureDetector, "findings := make([]sdk.Finding, 0)", "findings := make([]sdk.Finding, 0)\n\tif len(snapshot.Deployments()) == 0 {\n\t\treturn []sdk.Finding{{RuleID: \"missing-configmap\", Status: sdk.FindingActive, Severity: sdk.SeverityCritical, Summary: \"always\", Evidence: \"always\", Fingerprint: \"always\"}}, nil\n\t}")
 		}},

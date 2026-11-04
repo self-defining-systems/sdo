@@ -22,10 +22,13 @@ from mcp.types import TextContent
 from sdo.agents.context_output import budget_for, save_context
 from sdo.agents.replay import replay_mode
 from sdo.agents.responder.memory_check import (
+    MAX_FAILED_MEMORY_CHECKS,
     VALIDATION_TIMEOUT_EXIT_CODE,
     VALIDATION_TIMEOUT_SECONDS,
     ValidationResult,
+    failed_checks,
     prior_timeout,
+    remember_failed_check,
     remember_timeout,
     validation_output,
 )
@@ -117,6 +120,15 @@ class CheckMemoryReply:
     timed_out: bool
     stdout: str
     stderr: str
+
+    @classmethod
+    def budget_spent(cls, result: ValidationResult) -> CheckMemoryReply:
+        step = (
+            f"check budget spent: {MAX_FAILED_MEMORY_CHECKS} checks failed in this reflection. Stop editing and "
+            "return your decision now; Go records what still fails. Diagnostics marked pre-existing are notes, "
+            "not yours to fix."
+        )
+        return cls(step, result.exit_code, result.timed_out, result.stdout, result.stderr)
 
     @classmethod
     def after(cls, result: ValidationResult, decision: str | None, ids: list[str]) -> CheckMemoryReply:
@@ -219,6 +231,7 @@ def validation_server(
     install_authoring_tools(server, checkout)
     install_evidence_tools(server)
     terminal_timeout: ValidationResult | None = None
+    failed = 0
     check_lock = asyncio.Lock()
 
     @server.tool()
@@ -236,6 +249,7 @@ def validation_server(
         Supply typed decision fields; this tool writes JSON outside authored memory.
         Return the same decision and logical IDs. It gofmt-formats changed Go under .sdo/.
         Follow next: return on pass, fix diagnostics, or report terminal timeout without retry.
+        Faults of unchanged detectors are pre-existing notes. After six failed checks, return.
         Broker deadlines are terminal too. Legacy decision_path files are supported.
         One call waits for final diagnostics. Responder incident detectors use the same
         check; health detectors are judge-owned. Compile/import/format/provenance remain required.
@@ -262,14 +276,25 @@ def validation_server(
                     )
                 )
                 result = await run_check(str(decision))
-            return CheckMemoryReply.after(result, learning_decision, proposed_artifact_ids or [])
-        return CheckMemoryReply.after(await run_check(decision_path), None, [])
+            return reply(result, learning_decision, proposed_artifact_ids or [])
+        return reply(await run_check(decision_path), None, [])
+
+    def reply(result: ValidationResult, decision: str | None, ids: list[str]) -> CheckMemoryReply:
+        if result.exit_code != 0 and not result.timed_out and failed_checks(failed) >= MAX_FAILED_MEMORY_CHECKS:
+            return CheckMemoryReply.budget_spent(result)
+        return CheckMemoryReply.after(result, decision, ids)
 
     async def run_check(decision_path: str | None) -> ValidationResult:
         # Providers can issue parallel calls. One owned check may run at a time;
         # callers queued behind a timeout observe its terminal result.
+        nonlocal failed
         async with check_lock:
-            return await run_serial_check(decision_path)
+            if failed_checks(failed) >= MAX_FAILED_MEMORY_CHECKS:
+                return ValidationResult(1, False, "", "memory check budget spent; no check was run")
+            result = await run_serial_check(decision_path)
+            if result.exit_code != 0 and not result.timed_out:
+                failed = remember_failed_check(failed)
+            return result
 
     async def run_serial_check(decision_path: str | None) -> ValidationResult:
         nonlocal terminal_timeout
