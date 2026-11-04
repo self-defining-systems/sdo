@@ -96,6 +96,11 @@ type Broker struct {
 	// metrics source is configured.
 	MetricsDetectors bool
 
+	// RepairVerified is the controller's closure fact for reflection checks:
+	// whether a committed outcome holds an independently verified repaired
+	// cause. The same value reaches the agent's check and the publication gate.
+	RepairVerified func(*contracts.OutcomeRecord) bool
+
 	observationCeiling   sdk.ObservationScope
 	applicationNamespace string
 	target               string

@@ -51,7 +51,7 @@ type replayKey struct{}
 // validationRequest is the single source of all acceptance inputs. Attestations
 // serialize this same request so future policy fields cannot be omitted.
 func (b *Broker) validationRequest(root, base string, actor Actor, phase Phase, publication *validate.PublicationContext, decision *contracts.ReflectionDecision, gaps *[]validate.Diagnostic) validate.Request {
-	return validate.Request{Replay: b.replay, CodePath: b.codePath, ObservationCeiling: b.observationCeiling, ApplicationNamespace: b.applicationNamespace, Root: root, Base: base, Actor: actor, Phase: phase, Publication: publication, Decision: decision, MetricsDetectors: b.MetricsDetectors, CoverageGaps: gaps}
+	return validate.Request{Replay: b.replay, CodePath: b.codePath, ObservationCeiling: b.observationCeiling, ApplicationNamespace: b.applicationNamespace, Root: root, Base: base, Actor: actor, Phase: phase, Publication: publication, Decision: decision, MetricsDetectors: b.MetricsDetectors, CoverageGaps: gaps, RepairVerified: b.RepairVerified}
 }
 
 // coverageGapsKey carries the broker's collector for the validator's gaps.

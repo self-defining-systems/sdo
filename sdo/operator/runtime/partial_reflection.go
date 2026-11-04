@@ -8,6 +8,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	outcomeclass "sdo.dev/operator/contracts/outcome"
 	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/sdk"
 )
@@ -247,6 +248,19 @@ func partialReflectionEligibility(eligibility *contracts.ReflectionEligibility, 
 	count := uint32(len(gaps))
 	result.NoRepairCount = &count
 	return result
+}
+
+// reflectionRepairVerified is the closure fact behind the shared check's
+// reflection.repair-required rule. A failed or no-op closure with no
+// independently verified repaired cause may explain that no repair was
+// recorded, but cannot publish README-only learning or turn the responder's
+// unverified repair claims into executable memory. The check applies it to the
+// same learning view the worker receives.
+func reflectionRepairVerified(outcome *contracts.OutcomeRecord) bool {
+	if outcome.GetClassification() == outcomeclass.Success {
+		return true
+	}
+	return len(validate.VerifiedReflectionCauses(partialReflectionOutcome(outcome))) > 0
 }
 
 // partialReflectionOutcome is a learning view. The broker retains the complete
