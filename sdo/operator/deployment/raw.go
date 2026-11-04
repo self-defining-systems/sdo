@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 	"gopkg.in/yaml.v3"
@@ -51,14 +52,31 @@ type RawStrategy struct {
 	Resolver ImageResolver
 }
 
+// tagImageRejection tells the deployer what to do about an unpinned tag. A
+// transient failure (rate limit, timeout, network) is not a defect of the
+// manifest, so the advice is to retry; a missing or private image needs a
+// different reference.
 func tagImageRejection(path, image string, cause error) error {
-	detail := "the operator has no image resolver configured"
-	if cause != nil {
-		detail = "the operator could not resolve it: " + cause.Error()
+	var resolve *ResolveError
+	switch {
+	case cause == nil:
+		return fmt.Errorf("manifest %s: image %q is not immutable and the operator has no image resolver configured. "+
+			"Write the reference as <repository>@sha256:<64 hex digest>, or build it from source by listing it in image_builds under the trusted registry", path, image)
+	case errors.As(cause, &resolve) && resolve.Kind == ResolveTransient:
+		return fmt.Errorf("manifest %s: image %q could not be pinned to a digest right now (%s). This is a transient registry or network problem, "+
+			"not a defect of the manifest: keep the reference and retry the deploy in a minute. If it keeps failing, write the reference as "+
+			"<repository>@sha256:<64 hex digest> or build it from source by listing it in image_builds", path, image, cause.Error())
+	case errors.As(cause, &resolve) && resolve.Kind == ResolveRefused:
+		return fmt.Errorf("manifest %s: image %q cannot be pinned: %s. Use an image on a public registry name, write the reference as "+
+			"<repository>@sha256:<64 hex digest>, or build it from source by listing it in image_builds under the trusted registry", path, image, cause.Error())
 	}
-	return fmt.Errorf("manifest %s: image %q is not immutable and %s. Name an existing tag of a public registry image, "+
-		"write the reference as <repository>@sha256:<64 hex digest>, or build it from source by listing it in image_builds under the trusted registry", path, image, detail)
+	return fmt.Errorf("manifest %s: image %q is not immutable and the operator could not resolve it: %s. Name an existing tag of a public registry image, "+
+		"write the reference as <repository>@sha256:<64 hex digest>, or build it from source by listing it in image_builds under the trusted registry", path, image, cause.Error())
 }
+
+// resolveBudget bounds all tag resolution of one apply, so a slow registry
+// cannot hold an admission for images x timeout.
+const resolveBudget = 90 * time.Second
 
 func RawRegistration(id, namespace string, backend RawBackend, resolver ImageResolver) Registration {
 	strategy := RawStrategy{Namespace: namespace, Backend: backend, Resolver: resolver}
@@ -155,6 +173,8 @@ func (strategy RawStrategy) ApplyAndVerify(ctx context.Context, checkout, tree s
 		imageInputs[build.Image] = rendered.ImageInputs{SourceImage: build.Image, ContextPath: filepath.ToSlash(filepath.Clean(build.ContextPath)), DockerfilePath: filepath.ToSlash(filepath.Clean(build.DockerfilePath))}
 	}
 	pinnedImages := map[string]string{}
+	pinCtx, stopPinning := context.WithTimeout(ctx, resolveBudget)
+	defer stopPinning()
 	var documents bytes.Buffer
 	namedImages := []rendered.DeployedImage{}
 	workloads := map[string][]string{}
@@ -194,7 +214,7 @@ func (strategy RawStrategy) ApplyAndVerify(ctx context.Context, checkout, tree s
 				if built := imageRefs[image]; built != "" {
 					image = built
 				} else if !digestReference.MatchString(image) && strategy.Resolver != nil && resolveErr == nil {
-					pinned, err := strategy.pin(ctx, image, pinnedImages)
+					pinned, err := strategy.pin(pinCtx, image, pinnedImages)
 					if err != nil {
 						resolveErr = tagImageRejection(path, image, err)
 					} else {

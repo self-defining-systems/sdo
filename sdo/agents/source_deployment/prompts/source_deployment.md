@@ -5,7 +5,8 @@ Feedback from the prior independently verified attempt: ${correction_feedback}.
 The operator's trusted image registry is ${registry_host}; every image build target must start with
 ${registry_host_2}. Use an image path under that host in manifests as well.
 Third-party images the source does not build (redis:6.2.4, mongo) may keep their tag: the operator pins each to
-its registry digest. Never write digests or copy third-party images; "not immutable" means the tag does not exist.
+its registry digest. Never write digests or copy third-party images. If a rejection calls the pin transient (rate limit, timeout),
+retry unchanged; change the reference only for "no such tag" or "private".
 
 Edit only application source and conventional deployment files. Do not edit .sdo/. Do not run kubectl apply,
 build/push images, or claim the deployment is healthy. A trusted Go adapter will build the exact candidate source,
