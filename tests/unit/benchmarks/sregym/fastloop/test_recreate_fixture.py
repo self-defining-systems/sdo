@@ -42,10 +42,7 @@ def test_recreated_application_restores_the_social_fixture(monkeypatch, tmp_path
     assert calls == expected
 
 
-def test_goal_addendum_extends_only_a_given_requirement():
+def test_a_given_goal_replaces_the_generated_one():
     assert cli.lifecycle_objective("Deployments remain available.", None) == "Deployments remain available."
     assert cli.lifecycle_objective("Deployments remain available.", "  ") == "Deployments remain available."
-    assert (
-        cli.lifecycle_objective("Deployments remain available.", "Users can post and read back posts.")
-        == "Deployments remain available. Users can post and read back posts."
-    )
+    assert cli.lifecycle_objective("Deployments remain available.", " Users can post. ") == "Users can post."
