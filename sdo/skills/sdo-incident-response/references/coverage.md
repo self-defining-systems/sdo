@@ -46,6 +46,9 @@ It waits while its writes roll out and then for the rolling window of each detec
 depends on them, within its recovery deadline. It hands off for uncovered work, verified blockers,
 failures, findings that outlived their window, or its recovery deadline: an `applied_still_matching`
 action you receive has had that window, so do not just wait for it again.
+Clearance alone does not close the incident: it needs fresh traffic samples after the write, and no
+applied program still diagnosing the fault. Otherwise you receive the findings that cleared without
+that proof. Read the program's diagnose evidence and live traffic, not only detector states.
 The same decision is rechecked before a first worker claim; prepared requests alone
 do not force a model call after recovery. Existing worker ownership is rejoined.
 `prior_stages[].recovery_wait` records typed `exit_reason` and measured `duration`;

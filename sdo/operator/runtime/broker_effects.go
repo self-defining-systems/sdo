@@ -553,7 +553,7 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 	wait := func(detector sdk.Detector, reason string) {
 		incomplete = append(incomplete, reason)
 		incompleteStates = append(incompleteStates, DetectorEvaluation{DetectorID: detector.Spec().ID, EvaluatedAt: c.clock(), Status: DetectorEvaluationPending, Reason: reason})
-		bound = max(bound, sdk.ClearingHorizon(detector, snapshot)+2*detector.Spec().Interval)
+		bound = max(bound, detectorClearingHorizon(detector, snapshot)+2*detector.Spec().Interval)
 	}
 	var denied, gone []string
 	evaluated := 0

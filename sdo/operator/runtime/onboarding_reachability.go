@@ -35,9 +35,14 @@ func detectorsNeedConfirmation(detectors []sdk.Detector) bool {
 	return false
 }
 
+// A traffic consumer without its own contract is confirmed by the samples of
+// the workloads it consumes (trafficConfirmationReason).
 func detectorConfirmed(detector sdk.Detector, snapshot sdk.DetectionContext) bool {
 	if d, ok := detector.(confirmedDetector); ok {
 		return d.Confirmed(snapshot)
+	}
+	if consumer, ok := detector.(traffic.Consumer); ok {
+		return trafficConfirmationReason(consumer, snapshot) == ""
 	}
 	return true
 }
@@ -48,6 +53,11 @@ func detectorConfirmationReason(detector sdk.Detector, snapshot sdk.DetectionCon
 		ConfirmationReason(sdk.DetectionContext) string
 	}); ok {
 		return d.ConfirmationReason(snapshot)
+	}
+	if _, own := detector.(confirmedDetector); !own {
+		if consumer, ok := detector.(traffic.Consumer); ok {
+			return trafficConfirmationReason(consumer, snapshot)
+		}
 	}
 	if !detectorConfirmed(detector, snapshot) {
 		return "observation window is incomplete"
