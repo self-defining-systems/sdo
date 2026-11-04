@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -23,10 +24,14 @@ import (
 
 // Inventory SDK source interfaces from disk, not a hand-maintained count. Adding
 // an optional source requires registering it in Sources and this contract table.
+var contentSet = regexp.MustCompile(`^[A-Z][a-z]+Set$`)
+
 func TestSDKInputInterfaceInventory(t *testing.T) {
 	registered := map[string]reflect.Type{
 		"sdk.ObservationClock":             reflect.TypeFor[sdk.ObservationClock](),
 		"traffic.Source":                   reflect.TypeFor[traffic.Source](),
+		"traffic.WindowSet":                reflect.TypeFor[traffic.WindowSet](),
+		"metrics.ResultSet":                reflect.TypeFor[metrics.ResultSet](),
 		"servicehealth.ReachabilitySource": reflect.TypeFor[servicehealth.ReachabilitySource](),
 		"metrics.Source":                   reflect.TypeFor[metrics.Source](),
 		"metrics.AlertSource":              reflect.TypeFor[metrics.AlertSource](),
@@ -63,7 +68,9 @@ func TestSDKInputInterfaceInventory(t *testing.T) {
 					continue
 				}
 				name := s.Name.Name
-				if name != "ObservationClock" && !strings.HasSuffix(name, "Source") {
+				// Content sets (traffic.WindowSet, metrics.ResultSet) list a
+				// source's whole content; snapshot capture copies them.
+				if name != "ObservationClock" && !strings.HasSuffix(name, "Source") && !contentSet.MatchString(name) {
 					continue
 				}
 				key := f.Name.Name + "." + name

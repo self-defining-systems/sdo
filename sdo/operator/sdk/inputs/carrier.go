@@ -19,10 +19,14 @@ import (
 )
 
 // Sources is the complete optional input contract. New SDK input interfaces must
-// be registered here and covered by the interface inventory test.
+// be registered here and covered by the interface inventory test. program.ReadView
+// embeds it, so every read-view wrapper forwards each input, including the
+// window and result sets that snapshot capture copies for replay.
 type Sources interface {
 	sdk.ObservationClock
 	traffic.Source
+	traffic.WindowSet
+	metrics.ResultSet
 	servicehealth.ReachabilitySource
 	metrics.Source
 	metrics.AlertSource
@@ -103,6 +107,7 @@ func (c Carrier) TrafficWindow(id string) (traffic.Window, bool) {
 	}
 	return c.traffic.TrafficWindow(id)
 }
+
 // TrafficWindows lists the carried windows when the traffic source can.
 func (c Carrier) TrafficWindows() map[string]traffic.Window {
 	if set, ok := c.traffic.(traffic.WindowSet); ok {
@@ -127,6 +132,7 @@ func (c Carrier) MetricResult(id string) (metrics.Result, bool) {
 	}
 	return c.metrics.MetricResult(id)
 }
+
 // MetricResults lists the carried results when the metrics source can.
 func (c Carrier) MetricResults() map[string]metrics.Result {
 	if set, ok := c.metrics.(metrics.ResultSet); ok {

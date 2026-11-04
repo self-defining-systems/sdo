@@ -154,6 +154,13 @@ func (v *View) MetricResult(a0 string) (r0 p2.Result, r1 bool) {
 	}
 	return
 }
+func (v *View) MetricResults() (r0 map[string]p2.Result) {
+	err := v.call("MetricResults", []any{}, []any{&r0})
+	if err != nil {
+		panic(err)
+	}
+	return
+}
 func (v *View) MutatingWebhookConfiguration(a0 string) (r0 *p13.MutatingWebhookConfiguration, r1 error) {
 	err := v.call("MutatingWebhookConfiguration", []any{a0}, []any{&r0})
 	r1 = err
@@ -351,6 +358,13 @@ func (v *View) StatefulSets() (r0 []p6.StatefulSet) {
 }
 func (v *View) TrafficWindow(a0 string) (r0 p17.Window, r1 bool) {
 	err := v.call("TrafficWindow", []any{a0}, []any{&r0, &r1})
+	if err != nil {
+		panic(err)
+	}
+	return
+}
+func (v *View) TrafficWindows() (r0 map[string]p17.Window) {
+	err := v.call("TrafficWindows", []any{}, []any{&r0})
 	if err != nil {
 		panic(err)
 	}

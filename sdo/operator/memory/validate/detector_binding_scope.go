@@ -19,6 +19,14 @@ import (
 // the detector's literal or localized target would then reach every program
 // with a role of that name. Controller-generated drift findings keep that
 // broad offer; a responder's incident detector must scope its claim.
+//
+// Limit: this is a name match in the detector's own non-test files. Bindings
+// set inside a shared .sdo/lib helper, or in a Finding literal built outside
+// the detector directory, are not seen, so such a detector keeps the broad
+// offer. The sound check sits at the binding call (core.ValidateFinding
+// refusing an incident-class finding with ParameterBindings and no
+// Playbooks); it is not enforced yet because it would turn accepted
+// detectors that bind this way into evaluation errors at runtime.
 func unscopedBindingDiagnostics(root string, paths []string) []Diagnostic {
 	changed := map[string]bool{}
 	for _, p := range paths {

@@ -196,6 +196,9 @@ func (s Snapshot) MarshalJSON() ([]byte, error)
 func (s Snapshot) MetricResult(id string) (metrics.Result, bool)
     MetricResult implements metrics.Source.
 
+func (s Snapshot) MetricResults() map[string]metrics.Result
+    MetricResults implements metrics.ResultSet: the recorded results.
+
 func (s Snapshot) Namespace() string
 
 func (s Snapshot) NetworkPolicies() []networkingv1.NetworkPolicy
@@ -229,8 +232,4 @@ func (s Snapshot) PodsForService(namespace string, service string) []corev1.Pod
 func (s Snapshot) QueryMetrics(q metrics.Query) metrics.Result
 
 func (s Snapshot) ReadyEndpointCountForService(namespace string, service string) int
-
-func (s Snapshot) RecentEventsFor(namespace string, kind string, name string) []corev1.Event
-
-func (s Snapshot) ReplicaSets() []appsv1.ReplicaSet
 ```

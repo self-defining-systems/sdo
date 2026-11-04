@@ -243,8 +243,9 @@ type Source interface {
 	MetricResult(id string) (Result, bool)
 }
 
-// ResultSet is implemented by sources that can list every frozen result they
-// carry, so a capture of the detection context keeps them for replay.
+// ResultSet lists every frozen result a source carries, so a capture of the
+// detection context keeps them for replay. Every program.ReadView and recorded
+// snapshot implements it; a source without metrics returns an empty map.
 type ResultSet interface {
 	MetricResults() map[string]Result
 }

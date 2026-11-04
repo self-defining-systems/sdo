@@ -231,8 +231,10 @@ func (w Window) SLO() SLO
 type WindowSet interface {
 	TrafficWindows() map[string]Window
 }
-    WindowSet is implemented by sources that can list every window they carry,
-    so a capture of the detection context keeps them for replay.
+    WindowSet lists every window a source carries, so a capture of the detection
+    context keeps them for replay. Every program.ReadView, the controller's
+    live view, the memory host's view and recorded snapshots implement it;
+    a source without traffic returns an empty map.
 
 type Workload struct {
 	APIVersion       string             `json:"apiVersion"`
@@ -263,7 +265,4 @@ func ParseWorkloadJSON(data []byte) (Workload, error)
 
 func (w Workload) ScenarioSLO(id string) SLO
     ScenarioSLO is the effective SLO of one scenario of the workload.
-
-func (w Workload) Validate() error
-    Validate reports the first problem that makes the workload unsafe.
 ```
