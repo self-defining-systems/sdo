@@ -87,7 +87,7 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		RegistryInsecure:    config.Install.RegistryInsecure,
 		ServiceAccount:      "sdo-image-builder",
 	}
-	readiness, err := deployment.NewRegistry(deployment.RawRegistration("raw-manifests-v1", config.Lifecycle.Namespace, buildBackend))
+	readiness, err := deployment.NewRegistry(deployment.RawRegistration("raw-manifests-v1", config.Lifecycle.Namespace, buildBackend, deployment.RegistryResolver{InsecureHost: insecureRegistryHost(config)}))
 	if err != nil {
 		return lifecycle.Result{}, err
 	}
@@ -129,4 +129,12 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		}, Installer: installer,
 	}
 	return coordinator.Run(ctx, config.Lifecycle)
+}
+
+// insecureRegistryHost is the only registry the controller may read over HTTP.
+func insecureRegistryHost(config OperateConfig) string {
+	if config.Install.RegistryInsecure {
+		return config.Install.RegistryHost
+	}
+	return ""
 }
