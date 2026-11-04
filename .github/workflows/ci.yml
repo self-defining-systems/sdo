@@ -163,12 +163,15 @@ jobs:
       - run: uv sync --locked --all-extras
       # TestKubeConformance starts a real kube-apiserver and etcd. The key names
       # the pinned Kubernetes version (envtestio.KubernetesVersion); a miss
-      # makes the test download the binaries once and this step saves them.
+      # runs scripts/install_envtest.sh (pinned release, SHA-512 checked) and this
+      # step saves the result; tests never download.
       - name: Cache the envtest kube-apiserver and etcd
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
         with:
           path: ~/.cache/sdo-envtest
           key: envtest-assets-1.34.0-${{ runner.os }}-${{ runner.arch }}
+      - name: Install the pinned envtest binaries (checksum-verified, retried; a cache hit skips it)
+        run: echo "KUBEBUILDER_ASSETS=$(bash scripts/install_envtest.sh)" >> "$GITHUB_ENV"
       - name: All Go modules (one shared compiler and module cache)
         run: bash ./scripts/test_go_ci.sh
 
