@@ -628,7 +628,10 @@ func clearVerifiedStageTargets(state *IncidentState, attempt *contracts.StageMit
 
 // Health observations after complete repairs may consume this wait, including
 // opening traffic symptoms whose rolling windows still contain pre-repair errors.
-// Failed repairs, pending writes and incident findings require investigation.
+// An incident finding that depends on a completely executed write and comes
+// from a windowed detector may wait out that window once, counted from when the
+// write took effect; any other incident finding, a failed or superseded repair,
+// or a finding that outlives its window requires investigation.
 // ResponderStepPanicError reports a panic inside one step that ran with the
 // responder loop locks released. The step fails with this error; the
 // controller keeps running.
@@ -864,6 +867,9 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 		interval = 250 * time.Millisecond
 	}
 	effects := recoveryEffects{}
+	// When each application's effect was first seen complete, so windowed
+	// detectors get their own window from that point and no longer.
+	effectSettled := map[string]time.Time{}
 	for {
 		pending := false
 		applied := false
@@ -885,10 +891,17 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 				pending = true
 			case "applied_cleared", "skipped":
 			case "applied_still_matching":
-				// The write verified and the program no longer matches; findings that only
-				// wait for their detectors to re-observe it are checked below, once a view exists.
-				if !writeVerifiedForSettling(attempt) {
+				// A write still taking effect, or one whose remaining findings only wait
+				// for their detectors to re-observe it, is checked below once a view exists.
+				if !writeVerifiedForSettling(attempt) && !writeTakingEffect(attempt) {
 					return nil
+				}
+				if attempt.GetApplyReceipt().GetRolloutPending() != nil {
+					pending = true
+					continue
+				}
+				if _, seen := effectSettled[attempt.GetApplyReceipt().GetApplicationId()]; !seen {
+					effectSettled[attempt.GetApplyReceipt().GetApplicationId()] = now()
 				}
 				settling = append(settling, attempt)
 			default:
@@ -926,13 +939,15 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			return nil
 		}
 		health := map[string]sdk.Detector{}
+		detectors := map[string]sdk.Detector{}
 		for _, detector := range loop.Detectors {
+			detectors[detector.Spec().ID] = detector
 			if detector.Spec().Class == sdk.DetectorClassHealth {
 				health[detector.Spec().ID] = detector
 			}
 		}
 		for _, attempt := range settling {
-			if !remainingFindingsSettle(view, health, state.Findings, attempt) {
+			if !remainingFindingsSettle(view, detectors, state.Findings, attempt, now().Sub(effectSettled[attempt.GetApplyReceipt().GetApplicationId()])) {
 				return nil
 			}
 		}
@@ -1013,35 +1028,108 @@ func writeVerifiedForSettling(attempt *contracts.StageMitigation) bool {
 		attempt.GetPostApplyDiagnose().GetVerdict().GetResult() == contracts.Verdict_RESULT_NO_MATCH
 }
 
-// remainingFindingsSettle reports whether every finding still open for the attempt is a health
-// finding that depends on an object the attempt wrote, so the recovery wait can keep observing.
-func remainingFindingsSettle(view sdk.DetectionContext, health map[string]sdk.Detector, findings []sdk.Finding, attempt *contracts.StageMitigation) bool {
+// writeTakingEffect reports an applied, unreverted, completely executed write
+// that settlement has not refuted: its rollout may still be in progress, or the
+// only objections are health or a diagnosis that may read the same windowed
+// evidence. Superseded, failed, partial or unobservable writes are refuted.
+func writeTakingEffect(attempt *contracts.StageMitigation) bool {
+	receipt := attempt.GetApplyReceipt()
+	if !receipt.GetApplied() || receipt.GetRolledBack() || receipt.GetDryRun() || receipt.GetRollbackError() != "" {
+		return false
+	}
+	if len(receipt.GetActionReports()) != len(receipt.GetPlan().GetActions()) {
+		return false
+	}
+	for _, report := range receipt.GetActionReports() {
+		if report.GetStatus() != "applied" || report.GetFailureReason() != "" || report.GetRecordingError() != "" {
+			return false
+		}
+	}
+	switch receipt.GetSettlementRejectionReason() {
+	case contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED,
+		contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_ROLLOUT_PENDING,
+		contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_HEALTH_NOT_CLEAR,
+		contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_DIAGNOSIS_NOT_CLEAR:
+		return true
+	}
+	return false
+}
+
+// remainingFindingsSettle reports whether the recovery wait can keep observing
+// an attempt whose write has taken effect: every finding still open for it
+// depends on an object it wrote, and is either a health finding of a verified
+// write, or comes from a detector that judges a rolling window which, counted
+// from when the write took effect (since), has not yet rolled over. The
+// window is what separates a detector catching up from a fault that persists;
+// an incident finding without one still goes to investigation at once.
+func remainingFindingsSettle(view sdk.DetectionContext, detectors map[string]sdk.Detector, findings []sdk.Finding, attempt *contracts.StageMitigation, since time.Duration) bool {
 	remaining := map[string]bool{}
 	for _, fp := range attempt.RemainingFindingFingerprints {
 		remaining[fp] = true
 	}
+	verified := writeVerifiedForSettling(attempt)
+	var horizon time.Duration
+	windowed := false
 	for _, finding := range findings {
-		if !remaining[FindingFingerprint(finding)] {
-			continue
-		}
-		detector := health[finding.DetectorID]
-		if detector == nil {
-			return false
-		}
+		detector := detectors[finding.DetectorID]
 		depends := false
 		for _, ref := range attempt.TouchedObjects {
-			depends = depends || stageFindingDependsOnWrite(view, detector, finding, objectRefState(ref))
+			depends = depends || (detector != nil && stageFindingDependsOnWrite(view, detector, finding, objectRefState(ref)))
+		}
+		if !remaining[FindingFingerprint(finding)] {
+			// Other open findings that depend on the write lag behind it alike.
+			if depends {
+				horizon = max(horizon, settlingHorizon(detector, view))
+			}
+			continue
 		}
 		if !depends {
 			return false
 		}
+		window := settlingHorizon(detector, view)
+		horizon = max(horizon, window)
+		switch {
+		case window > 0 && (detector.Spec().Class == sdk.DetectorClassIncident || !verified):
+			windowed = true
+		case detector.Spec().Class == sdk.DetectorClassHealth && verified:
+		default:
+			return false
+		}
 	}
-	return true
+	if verified && !windowed {
+		return true
+	}
+	return since < horizon
 }
 
-// promoteSettledAttempts records attempts whose remaining findings cleared on their own as cleared.
+// settlingHorizon is how long after a repair takes effect the detector may
+// still report the fault from its rolling window, or zero when it judges
+// current state. A traffic consumer's window is its workloads' traffic window,
+// whether or not the detector declares one itself.
+func settlingHorizon(detector sdk.Detector, view sdk.DetectionContext) time.Duration {
+	var window time.Duration
+	if windowed, ok := detector.(sdk.WindowedDetector); ok {
+		window = windowed.EvaluationWindow(view)
+	} else if consumer, ok := detector.(traffic.Consumer); ok {
+		for _, workload := range consumer.TrafficWorkloads() {
+			window = max(window, traffic.WorkloadEvaluationWindow(view, workload))
+		}
+	}
+	if window <= 0 {
+		return 0
+	}
+	clearing := max(detector.Spec().Persistence.Clearing, 1)
+	return window + time.Duration(clearing)*detector.Spec().Interval
+}
+
+// promoteSettledAttempts records attempts whose remaining findings cleared on
+// their own as cleared, when the program's latest diagnosis no longer matches.
+// A program that still matches after recovery is not credited with it.
 func promoteSettledAttempts(attempts []*contracts.StageMitigation) {
 	for _, attempt := range attempts {
+		if attempt.GetPostApplyDiagnose().GetVerdict().GetResult() != contracts.Verdict_RESULT_NO_MATCH {
+			continue
+		}
 		attempt.ClearedFindingFingerprints = append(attempt.ClearedFindingFingerprints, attempt.RemainingFindingFingerprints...)
 		attempt.RemainingFindingFingerprints = nil
 		attempt.Result = "applied_cleared"

@@ -57,10 +57,17 @@ func (d sloDetector) Spec() sdk.DetectorSpec { return d.spec }
 func (d sloDetector) TrafficWorkloads() []string { return []string{d.workload} }
 
 // EvaluationWindow bounds how long a repaired scenario can keep violating its
-// SLO: pre-repair samples age out after MaxAge, and the window needs MinSamples
-// fresh samples, plus one arrival at the scenario's share of the workload rate.
+// SLO (see WorkloadEvaluationWindow).
 func (d sloDetector) EvaluationWindow(ctx sdk.DetectionContext) time.Duration {
-	window, ok := WindowFrom(ctx, d.workload)
+	return WorkloadEvaluationWindow(ctx, d.workload)
+}
+
+// WorkloadEvaluationWindow bounds how long a repaired scenario of a traffic
+// workload can keep failing in its window: pre-repair samples age out after
+// MaxAge, and the window needs MinSamples fresh samples, plus one arrival at
+// the scenario's share of the workload rate. Zero when the view has no window.
+func WorkloadEvaluationWindow(ctx sdk.DetectionContext, workload string) time.Duration {
+	window, ok := WindowFrom(ctx, workload)
 	if !ok {
 		return 0
 	}

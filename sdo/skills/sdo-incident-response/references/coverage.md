@@ -42,7 +42,10 @@ message is not proof that a rollout can progress. Full unabridged facts stay in 
 finding-linked playbooks without a current match, settled programs and matches whose findings have since cleared. Other playbooks remain optional context.
 
 The automatic stage observes saved writes together while dependent health and traffic settle.
-It hands off for uncovered work, verified blockers, failures or its recovery deadline.
+It waits while its writes roll out and then for the rolling window of each detector whose finding
+depends on them, within its recovery deadline. It hands off for uncovered work, verified blockers,
+failures, findings that outlived their window, or its recovery deadline: an `applied_still_matching`
+action you receive has had that window, so do not just wait for it again.
 The same decision is rechecked before a first worker claim; prepared requests alone
 do not force a model call after recovery. Existing worker ownership is rejoined.
 `prior_stages[].recovery_wait` records typed `exit_reason` and measured `duration`;
