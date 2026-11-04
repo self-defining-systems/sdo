@@ -15,12 +15,15 @@ the judged traffic window of one workload (scenario paths are the scenario's
 target Service plus its DependsOn list) and, when a detector consumes it,
 the Service reachability window.
 
-A component scores 2 when it is on every failing scenario path, 1 more when it
-is on no healthy evaluated scenario path, and 2 more when its own Service has
-a sustained run of failed dials. Suspects are the components with the highest
-score. Scores rank evidence; they never prove a cause: a program still checks
-its own evidence on the bound component (an exec, a status, a source diff)
-before it matches.
+Suspects are the components on every failing scenario path (or, when the failing
+paths share none, on any failing path) plus every Service with a sustained run
+of failed dials of its own, even one no scenario lists. A healthy scenario
+never removes a suspect: requests skip dependencies (cache hits, empty results,
+writes that do not exercise the faulty path), so a culprit can sit on a healthy
+path. Scores only order the suspects: 2 for being on every failing path,
+1 for being on no healthy path, 2 for failed dials. Suspects rank evidence;
+they never prove a cause: a program still checks its own evidence on the bound
+component (an exec, a status, a source diff) before it matches.
 
 VARIABLES
 
@@ -34,8 +37,10 @@ FUNCTIONS
 func BindSuspects(finding sdk.Finding, r Result, role string) []sdk.Finding
     BindSuspects returns one copy of finding per suspect workload, with role
     bound to that workload in ParameterBindings and a fingerprint suffixed by
-    it, so each suspect is diagnosed on its own. It returns nothing when no
-    suspect has a backing workload.
+    it, so each suspect is a distinct finding diagnosed on its own. The suffix
+    extends the finding's own fingerprint, or the controller's default one when
+    the detector set none. It returns nothing when no suspect has a backing
+    workload.
 
 
 TYPES
@@ -43,11 +48,14 @@ TYPES
 type Component struct {
 	Service   string          `json:"service"`
 	Workloads []sdk.ObjectRef `json:"workloads,omitempty"`
-	Score     int             `json:"score"`
-	Reasons   []string        `json:"reasons"`
+	// Suspect is true for a component on every failing path or with failed
+	// dials of its own; Score orders suspects and never removes one.
+	Suspect bool     `json:"suspect"`
+	Score   int      `json:"score"`
+	Reasons []string `json:"reasons"`
 }
-    Component is one Service on a failing scenario path and the workloads that
-    back it.
+    Component is one Service on a failing scenario path, or with failed dials,
+    and the workloads that back it.
 
 type Inputs struct {
 	// Workload is the traffic workload to judge, "health" when empty.
@@ -87,5 +95,5 @@ func (r Result) Implicates(ref sdk.ObjectRef) (bool, string)
     suspect, with the reasons as evidence text for a Verdict.
 
 func (r Result) Suspects() []Component
-    Suspects are the highest-scoring components.
+    Suspects are the suspect components, highest score first.
 ```

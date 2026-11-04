@@ -82,11 +82,14 @@ func TestSuspectsFollowTheFailingJourneys(t *testing.T) {
 		reachability servicehealth.ReachabilityWindow
 		want         []string
 	}{
-		{"one journey fails: its own components", []string{"read-a"}, servicehealth.ReachabilityWindow{}, []string{"cache-a", "handler-a"}},
-		{"both reads fail: the shared tier", []string{"read-a", "read-b"}, servicehealth.ReachabilityWindow{}, []string{"storage", "storage-db"}},
-		{"dial failures narrow the shared tier", []string{"read-a", "read-b"}, unreachable("storage"), []string{"storage"}},
+		// Components a healthy journey also lists stay suspects, ranked after
+		// the ones only the failing journey reaches.
+		{"one journey fails: its whole path, its own components first", []string{"read-a"}, servicehealth.ReachabilityWindow{}, []string{"cache-a", "handler-a", "gateway", "storage", "storage-db"}},
+		{"both reads fail: the shared components", []string{"read-a", "read-b"}, servicehealth.ReachabilityWindow{}, []string{"storage", "storage-db", "gateway"}},
+		{"dial failures rank first and narrow nothing", []string{"read-a", "read-b"}, unreachable("storage"), []string{"storage", "storage-db", "gateway"}},
+		{"a Service no scenario lists is a suspect when its own dials fail", []string{"read-a", "read-b"}, unreachable("auth"), []string{"auth", "storage", "storage-db", "gateway"}},
 		{"everything fails: the gateway is on every path", []string{"landing", "read-a", "read-b"}, servicehealth.ReachabilityWindow{}, []string{"gateway"}},
-		{"nothing fails: no suspects", nil, servicehealth.ReachabilityWindow{}, nil},
+		{"nothing fails: no suspects", nil, unreachable("auth"), nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := suspects(localize.Localize(window(tc.failing...), tc.reachability, snapshot()))
@@ -94,6 +97,31 @@ func TestSuspectsFollowTheFailingJourneys(t *testing.T) {
 				t.Fatalf("suspects = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// A revoked cache ACL fails the reads through the cache while a healthy write
+// journey lists the same cache (it never exercises the revoked command), and
+// TCP dials still succeed. The cache must stay a suspect: subtracting healthy
+// journeys would leave only the handler, and its restart would not repair.
+func TestACLRevokedCacheOnAHealthyPathStaysImplicated(t *testing.T) {
+	w := window("read-a")
+	write := traffic.ScenarioObservations{Qualified: true, Scenario: traffic.Descriptor{ID: "write-a", Target: traffic.Target{Service: "gateway"}, DependsOn: []string{"cache-a"}}}
+	for i := 0; i < 20; i++ {
+		write.Samples = append(write.Samples, traffic.Sample{At: now.Add(-time.Duration(20-i) * time.Second), Outcome: traffic.OutcomeOK, Latency: 10 * time.Millisecond})
+	}
+	w.Scenarios = append(w.Scenarios, write)
+	r := localize.Localize(w, servicehealth.ReachabilityWindow{}, snapshot())
+	cache := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "cache-a"}
+	if ok, why := r.Implicates(cache); !ok {
+		t.Fatalf("cache-a not implicated: %s", why)
+	}
+	var bound []string
+	for _, f := range localize.BindSuspects(sdk.Finding{RuleID: "read-a"}, r, "workload") {
+		bound = append(bound, f.ParameterBindings["workload"].Name)
+	}
+	if !slices.Contains(bound, "cache-a") {
+		t.Fatalf("BindSuspects bound %v, want cache-a among them", bound)
 	}
 }
 
@@ -111,8 +139,8 @@ func TestUnevaluatedAndUnqualifiedScenariosAreNotHealthyEvidence(t *testing.T) {
 	if len(r.Healthy) != 0 {
 		t.Fatalf("healthy = %v, want none", r.Healthy)
 	}
-	// With no healthy path to subtract, every component of the failing path ties.
-	if got := suspects(r); len(got) != len(paths["read-a"]) {
+	// With no healthy path, every component of the failing path ties.
+	if got := suspects(r); len(got) != len(paths["read-a"]) || r.Suspects()[0].Score != r.Suspects()[len(got)-1].Score {
 		t.Fatalf("suspects = %v, want the whole read-a path", got)
 	}
 }
@@ -132,9 +160,27 @@ func TestImplicatesAndBindSuspectsUseBackingWorkloads(t *testing.T) {
 	for _, f := range bound {
 		targets = append(targets, f.ParameterBindings["workload"].Kind+"/"+f.ParameterBindings["workload"].Name+"="+f.Fingerprint)
 	}
-	want := []string{"Deployment/storage=stall/Deployment/storage", "StatefulSet/storage-db=stall/StatefulSet/storage-db"}
+	want := []string{"Deployment/storage=stall/Deployment/storage", "StatefulSet/storage-db=stall/StatefulSet/storage-db", "Deployment/gateway=stall/Deployment/gateway"}
 	if !slices.Equal(targets, want) {
 		t.Fatalf("bound = %v, want %v", targets, want)
+	}
+}
+
+// The controller keys finding state by fingerprint, so copies without a
+// detector-set fingerprint must still be distinct findings, one per suspect.
+func TestBindSuspectsCopiesAreDistinctWithoutAFingerprint(t *testing.T) {
+	r := localize.Localize(window("read-a", "read-b"), servicehealth.ReachabilityWindow{}, snapshot())
+	finding := sdk.Finding{RuleID: "stall", Status: sdk.FindingActive, PrimaryResource: sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "gateway"}}
+	seen := map[string]bool{}
+	bound := localize.BindSuspects(finding, r, "workload")
+	for _, f := range bound {
+		if f.Fingerprint == "" || seen[f.Fingerprint] {
+			t.Fatalf("copy for %s has fingerprint %q, want a distinct one", f.ParameterBindings["workload"].Name, f.Fingerprint)
+		}
+		seen[f.Fingerprint] = true
+	}
+	if len(bound) < 2 {
+		t.Fatalf("bound %d copies, want one per suspect workload", len(bound))
 	}
 }
 
@@ -154,7 +200,7 @@ func TestFromContextNeedsTheTrafficWindow(t *testing.T) {
 	s := snapshot()
 	s.Traffic = map[string]traffic.Window{"health": window("read-a")}
 	r, err := localize.FromContext(s, "")
-	if err != nil || !slices.Equal(suspects(r), []string{"cache-a", "handler-a"}) {
+	if err != nil || !slices.Equal(suspects(r)[:2], []string{"cache-a", "handler-a"}) {
 		t.Fatalf("FromContext = %v, %v", suspects(r), err)
 	}
 }

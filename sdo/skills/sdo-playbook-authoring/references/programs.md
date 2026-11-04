@@ -44,7 +44,8 @@ if ok, why := result.Implicates(ref); !ok {
 }
 ```
 
-`Implicates` alone is not a diagnosis; a healthy, source-matching workload is not evidence either. Find the
+`Implicates` (on every failing journey's path, or failing its own dials; a healthy journey that also lists
+the component never clears it) alone is not a diagnosis; a healthy, source-matching workload is not evidence either. Find the
 workload's Pods by owner (ReplicaSet, then Pod) for `Command{Pod: ...}` instead of naming a Pod.
 
 ## Source restoration

@@ -8,12 +8,16 @@
 // scenario's target Service plus its DependsOn list) and, when a detector
 // consumes it, the Service reachability window.
 //
-// A component scores 2 when it is on every failing scenario path, 1 more when
-// it is on no healthy evaluated scenario path, and 2 more when its own Service
-// has a sustained run of failed dials. Suspects are the components with the
-// highest score. Scores rank evidence; they never prove a cause: a program
-// still checks its own evidence on the bound component (an exec, a status, a
-// source diff) before it matches.
+// Suspects are the components on every failing scenario path (or, when the
+// failing paths share none, on any failing path) plus every Service with a
+// sustained run of failed dials of its own, even one no scenario lists. A
+// healthy scenario never removes a suspect: requests skip dependencies (cache
+// hits, empty results, writes that do not exercise the faulty path), so a
+// culprit can sit on a healthy path. Scores only order the suspects: 2 for
+// being on every failing path, 1 for being on no healthy path, 2 for failed
+// dials. Suspects rank evidence; they never prove a cause: a program still
+// checks its own evidence on the bound component (an exec, a status, a source
+// diff) before it matches.
 package localize
 
 import (
@@ -32,13 +36,16 @@ import (
 // Diagnose returns it (Unknown), never NoMatch: the evidence is unavailable.
 var ErrNoTraffic = errors.New("localize: synthetic traffic window unavailable")
 
-// Component is one Service on a failing scenario path and the workloads that
-// back it.
+// Component is one Service on a failing scenario path, or with failed dials,
+// and the workloads that back it.
 type Component struct {
 	Service   string          `json:"service"`
 	Workloads []sdk.ObjectRef `json:"workloads,omitempty"`
-	Score     int             `json:"score"`
-	Reasons   []string        `json:"reasons"`
+	// Suspect is true for a component on every failing path or with failed
+	// dials of its own; Score orders suspects and never removes one.
+	Suspect bool     `json:"suspect"`
+	Score   int      `json:"score"`
+	Reasons []string `json:"reasons"`
 }
 
 // Result is the ranked localization of the current traffic failures.
@@ -112,61 +119,90 @@ func Localize(window traffic.Window, reachability servicehealth.ReachabilityWind
 		return result
 	}
 	unreachable := unreachableServices(reachability)
-	seen := map[string]bool{}
+	var services []string
 	for _, id := range result.Failing {
 		for _, service := range paths[id] {
-			if seen[service] {
-				continue
+			if !slices.Contains(services, service) {
+				services = append(services, service)
 			}
-			seen[service] = true
-			component := Component{Service: service}
-			onAll := true
-			for _, other := range result.Failing {
-				onAll = onAll && slices.Contains(paths[other], service)
-			}
-			if onAll {
-				component.Score += 2
-				component.Reasons = append(component.Reasons, "on every failing scenario path ("+strings.Join(result.Failing, ", ")+")")
-			}
-			var healthy []string
-			for _, other := range result.Healthy {
-				if slices.Contains(paths[other], service) {
-					healthy = append(healthy, other)
-				}
-			}
-			if len(healthy) == 0 {
-				component.Score++
-				component.Reasons = append(component.Reasons, "on no healthy scenario path")
-			} else {
-				component.Reasons = append(component.Reasons, "also on healthy scenario paths ("+strings.Join(healthy, ", ")+")")
-			}
-			if detail, ok := unreachable[service]; ok {
-				component.Score += 2
-				component.Reasons = append(component.Reasons, detail)
-			}
-			if objects != nil {
-				component.Workloads = backingWorkloads(objects, service)
-			}
-			result.Components = append(result.Components, component)
 		}
 	}
-	sort.SliceStable(result.Components, func(i, j int) bool {
-		if result.Components[i].Score != result.Components[j].Score {
-			return result.Components[i].Score > result.Components[j].Score
+	anyOnAll := false
+	for _, service := range services {
+		anyOnAll = anyOnAll || onEvery(paths, result.Failing, service)
+	}
+	for service := range unreachable {
+		if !slices.Contains(services, service) {
+			services = append(services, service)
 		}
-		return result.Components[i].Service < result.Components[j].Service
+	}
+	for _, service := range services {
+		component := Component{Service: service}
+		onFailing := false
+		for _, id := range result.Failing {
+			onFailing = onFailing || slices.Contains(paths[id], service)
+		}
+		onAll := onEvery(paths, result.Failing, service)
+		if onAll {
+			component.Score += 2
+			component.Reasons = append(component.Reasons, "on every failing scenario path ("+strings.Join(result.Failing, ", ")+")")
+		} else if onFailing {
+			component.Reasons = append(component.Reasons, "on some failing scenario paths")
+		} else {
+			component.Reasons = append(component.Reasons, "on no failing scenario path")
+		}
+		var healthy []string
+		for _, other := range result.Healthy {
+			if slices.Contains(paths[other], service) {
+				healthy = append(healthy, other)
+			}
+		}
+		if len(healthy) == 0 {
+			component.Score++
+			component.Reasons = append(component.Reasons, "on no healthy scenario path")
+		} else {
+			component.Reasons = append(component.Reasons, "also on healthy scenario paths ("+strings.Join(healthy, ", ")+")")
+		}
+		detail, failsDials := unreachable[service]
+		if failsDials {
+			component.Score += 2
+			component.Reasons = append(component.Reasons, detail)
+		}
+		component.Suspect = onAll || failsDials || onFailing && !anyOnAll
+		if objects != nil {
+			component.Workloads = backingWorkloads(objects, service)
+		}
+		result.Components = append(result.Components, component)
+	}
+	sort.SliceStable(result.Components, func(i, j int) bool {
+		a, b := result.Components[i], result.Components[j]
+		if a.Suspect != b.Suspect {
+			return a.Suspect
+		}
+		if a.Score != b.Score {
+			return a.Score > b.Score
+		}
+		return a.Service < b.Service
 	})
 	return result
 }
 
-// Suspects are the highest-scoring components.
+func onEvery(paths map[string][]string, scenarios []string, service string) bool {
+	for _, id := range scenarios {
+		if !slices.Contains(paths[id], service) {
+			return false
+		}
+	}
+	return len(scenarios) > 0
+}
+
+// Suspects are the suspect components, highest score first.
 func (r Result) Suspects() []Component {
 	var suspects []Component
 	for _, component := range r.Components {
-		if len(suspects) > 0 && component.Score < suspects[0].Score {
-			break
+		if component.Suspect {
+			suspects = append(suspects, component)
 		}
-		suspects = append(suspects, component)
 	}
 	return suspects
 }
@@ -195,8 +231,10 @@ func (r Result) Implicates(ref sdk.ObjectRef) (bool, string) {
 
 // BindSuspects returns one copy of finding per suspect workload, with role
 // bound to that workload in ParameterBindings and a fingerprint suffixed by
-// it, so each suspect is diagnosed on its own. It returns nothing when no
-// suspect has a backing workload.
+// it, so each suspect is a distinct finding diagnosed on its own. The suffix
+// extends the finding's own fingerprint, or the controller's default one when
+// the detector set none. It returns nothing when no suspect has a backing
+// workload.
 func BindSuspects(finding sdk.Finding, r Result, role string) []sdk.Finding {
 	var findings []sdk.Finding
 	for _, component := range r.Suspects() {
@@ -209,9 +247,7 @@ func BindSuspects(finding sdk.Finding, r Result, role string) []sdk.Finding {
 			bound.ParameterBindings[role] = workload
 			bound.RelatedResources = append(append([]sdk.ObjectRef(nil), finding.RelatedResources...), workload)
 			bound.Evidence = strings.TrimSpace(finding.Evidence + " Localized to " + workload.Kind + "/" + workload.Name + ": " + strings.Join(component.Reasons, "; ") + ".")
-			if finding.Fingerprint != "" {
-				bound.Fingerprint = finding.Fingerprint + "/" + workload.Kind + "/" + workload.Name
-			}
+			bound.Fingerprint = sdk.FindingFingerprint(finding) + "/" + workload.Kind + "/" + workload.Name
 			findings = append(findings, bound)
 		}
 	}
