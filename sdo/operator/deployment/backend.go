@@ -16,6 +16,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
 )
@@ -94,11 +95,12 @@ func (b CommandBackend) Observe(ctx context.Context, resourceID string) (Workloa
 	}
 	limit := b.ObserveLimit
 	if limit <= 0 {
-		limit = 2 * time.Minute
+		limit = settings.DefaultRolloutTimeout
 	}
 	bounded, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
 	var lastErr error
+	var lastObject []byte
 	for {
 		args := b.kubectlArgs("get", parts[0], parts[2], "--namespace", parts[1], "--output=json")
 		output, err := b.run(bounded, b.kubectl(), args, nil)
@@ -112,9 +114,13 @@ func (b CommandBackend) Observe(ctx context.Context, resourceID string) (Workloa
 			if observed.Ready {
 				return observed, nil
 			}
+			lastObject = output
 			lastErr = fmt.Errorf("workload %s has not completed its rollout", resourceID)
 		}
 		if err := b.wait(bounded, 2*time.Second); err != nil {
+			if errors.Is(bounded.Err(), context.DeadlineExceeded) && ctx.Err() == nil && lastObject != nil {
+				return WorkloadObservation{}, b.rolloutTimeout(resourceID, limit, lastObject)
+			}
 			return WorkloadObservation{}, fmt.Errorf("observe workload %s: %w: %v", resourceID, err, lastErr)
 		}
 	}

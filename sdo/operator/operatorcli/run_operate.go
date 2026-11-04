@@ -82,7 +82,8 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	config.Lifecycle.MetricsSource = config.Install.MetricsSource()
 	repository.MetricsDetectors = config.Install.MetricsURL != ""
 	buildBackend := deployment.KubernetesBuildBackend{
-		Client: client, Namespace: control, RepositoryPVC: config.Install.RepositoryPVC,
+		CommandBackend: deployment.CommandBackend{ObserveLimit: time.Duration(config.Install.RolloutTimeoutSeconds) * time.Second},
+		Client:         client, Namespace: control, RepositoryPVC: config.Install.RepositoryPVC,
 		ProposalRoot: config.WorktreeRoot, RepositoryPVCSubPath: proposalSubPath,
 		BuildKitImage: config.BuildKitImage, RegistrySecret: config.RegistryPushSecret,
 		AllowedRegistryHost: config.Install.RegistryHost,
