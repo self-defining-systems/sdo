@@ -202,6 +202,36 @@ def test_partial_cleanup_cannot_advance_the_sequence(plan: SequencePlan, updates
         run_sequence(plan, execute=execute)
 
 
+def test_row_whose_outcome_sdo_classified_unverified_is_journaled_from_its_rejected_receipt(
+    plan: SequencePlan,
+) -> None:
+    def execute(p: SequencePlan, index: int, path: Path) -> None:
+        finish(p, index, path)
+        strict = path.parent / "native/sdo_production_receipt_strict.json"
+        receipt = json.loads(strict.read_text())
+        strict.unlink()
+        receipt.update(outcome_classification="failed", resolution="sdo_failed")
+        (path.parent / "native/sdo_rejected_production_receipt.json").write_text(
+            json.dumps(
+                {"validation_error": "native outcome is not a verified closure classification", "receipt": receipt}
+            )
+        )
+
+    run_sequence(plan, execute=execute)
+    row = json.loads((plan.journal_dir / "000" / "finished.json").read_text())
+    assert row["outcome_classification"] == "failed"
+    assert row["outcome_commit"] == plan.code_sha
+
+
+def test_row_without_any_receipt_is_still_held(plan: SequencePlan) -> None:
+    def execute(p: SequencePlan, index: int, path: Path) -> None:
+        finish(p, index, path)
+        (path.parent / "native/sdo_production_receipt_strict.json").unlink()
+
+    with pytest.raises(RuntimeError, match="receipt"):
+        run_sequence(plan, execute=execute)
+
+
 def test_native_ledger_must_belong_to_the_row_incident(plan: SequencePlan) -> None:
     def execute(p: SequencePlan, index: int, path: Path) -> None:
         finish(p, index, path)

@@ -118,6 +118,9 @@ class AgentOutcome:
     #: How the strict receipt says the incident closed (``sdo_mitigated``, ``external_recovery`` or
     #: ``cleared_without_sdo_action``); ``None`` when no receipt validated. Only ``sdo_mitigated`` is SDO's own fix.
     sdo_resolution: str | None = None
+    #: SDO's own outcome classification (``success``, ``cleared_without_action``, ``unconfirmed``, ``failed``)
+    #: from the receipt, strict or rejected; ``None`` when no receipt exists.
+    sdo_outcome_classification: str | None = None
     reflection_seconds: float | None = None
     baseline_gate_seconds: float | None = None
     #: One-time setup paid inside this incident (lifecycle and controller install), excluded from resolution.
@@ -825,6 +828,7 @@ def _outcome_fields(outcome: AgentOutcome) -> dict[str, Any]:
         "driver_phase_timings_seconds": dict(outcome.driver_phase_timings_seconds),
         "fault_gate_timings_seconds": dict(outcome.fault_gate_timings_seconds),
         "sdo_resolution": outcome.sdo_resolution,
+        "sdo_outcome_classification": outcome.sdo_outcome_classification,
         "reflection_seconds": outcome.reflection_seconds,
         "baseline_gate_seconds": outcome.baseline_gate_seconds,
         "setup_seconds": outcome.setup_seconds,

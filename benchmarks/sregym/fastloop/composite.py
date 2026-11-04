@@ -49,6 +49,7 @@ from benchmarks.sregym.fastloop.fault_tracker import (
 from benchmarks.sregym.fastloop.loop import AgentOutcome
 from benchmarks.sregym.fastloop.records import TokenCounts
 from benchmarks.sregym.fastloop.sdo_agent import SdoPersistentAgent, _timestamp
+from benchmarks.sregym.protocol.native_receipt import unverified_outcome
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -646,6 +647,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
         record = state.controllers.get(settings.namespace)
         error: str | None = None
         if record is not None and record.pending is not None:
+            receipt_dir = record.pending.receipt_dir
             drained = drain_pending_incident(
                 record,
                 ops=self._ops,
@@ -653,7 +655,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
                 drained_by=f"fastloop-learn-{outcome.incident_id}",
                 clock=self._clock,
             )
-            if drained.HasField("failure"):
+            if drained.HasField("failure") and unverified_outcome(self._receipt(receipt_dir)) is None:
                 error = f"drain failed: {drained.failure.message}"
             record.pending = None
             state.save(settings.state_path)
@@ -676,6 +678,8 @@ class CompositeSdoAgent(SdoPersistentAgent):
         skipped_reasons: list[str] = []
         paths: list[str] = []
         timed_outcomes: list[AgentOutcome] = []
+        classifications: list[str] = []
+        unverified_resolutions: list[str] = []
         for item in self._incidents:
             receipt = self._receipt(Path(item["receipt_dir"]))
             timed_outcomes.append(_with_receipt_times(item["outcome"], receipt))
@@ -687,6 +691,12 @@ class CompositeSdoAgent(SdoPersistentAgent):
             if not receipt:
                 continue
             receipts_seen += 1
+            classification = receipt.get("outcome_classification")
+            if isinstance(classification, str):
+                classifications.append(classification)
+            unverified = unverified_outcome(receipt)
+            if unverified is not None:
+                unverified_resolutions.append(unverified[1])
             phases, skipped = _receipt_closure_fields(receipt)
             for name, seconds in phases.items():
                 closure_phases[name] = closure_phases.get(name, 0.0) + seconds
@@ -757,6 +767,9 @@ class CompositeSdoAgent(SdoPersistentAgent):
             tool_commands=commands,
             response_loops_used=loops,
             resolution_path="responder" if "responder" in paths else paths[0] if paths else outcome.resolution_path,
+            sdo_outcome_classification=",".join(dict.fromkeys(classifications)) or None,
+            sdo_resolution=outcome.sdo_resolution
+            or (unverified_resolutions[0] if len(set(unverified_resolutions)) == 1 else None),
             error="; ".join(filter(None, [outcome.error, error])) or None,
         )
 

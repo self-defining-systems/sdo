@@ -525,6 +525,51 @@ def test_a_rejected_receipt_keeps_its_tokens_reports_the_error_and_unblocks_the_
     assert ops.incidents == 2
 
 
+def _unverified_native_receipt(classification: str) -> dict[str, Any]:
+    """A Go-rejected v2 receipt whose outcome SDO itself classified as not verified."""
+    from benchmarks.sregym.protocol.native_receipt import NativeReceiptValidationError, native_production_receipt
+
+    sha = "a" * 40
+    ledger: dict[str, Any] = {
+        "incident_id": "incident-1",
+        "closure": {
+            "request": {"incident_id": "incident-1", "namespace": "demo", "repair_policy": "recorded-actions"},
+            "result": {"incident_id": "incident-1", "status": "failed"},
+        },
+        "outcome_document": {"schema_version": 1, "incident_id": "incident-1", "classification": classification},
+        "outcome_commit": sha,
+        "receipt": {"incident_id": "incident-1", "outcome_commit": sha, "ack_token": "token"},
+        "acknowledged": True,
+    }
+    with pytest.raises(NativeReceiptValidationError) as rejected:
+        native_production_receipt(
+            ledger,
+            namespace="demo",
+            control_namespace="demo-sdo",
+            controller_image="controller:go",
+            responder_image="responder:python",
+            controller_pod_uid="pod-uid",
+            responder_job_evidence=[],
+        )
+    return rejected.value.receipt
+
+
+@pytest.mark.parametrize(
+    ("classification", "resolution"), [("failed", "sdo_failed"), ("unconfirmed", "sdo_unconfirmed")]
+)
+def test_an_unverified_sdo_outcome_is_recorded_with_its_classification_not_as_a_drain_failure(
+    tmp_path: Path, classification: str, resolution: str
+) -> None:
+    ops, calls = FakeOps(receipt_override=_unverified_native_receipt(classification)), []
+    agent = _agent(tmp_path, ops, calls)
+
+    learned = agent.learn(agent.resolve(0, "p", _inject))
+
+    assert learned.error is None
+    assert learned.sdo_outcome_classification == classification
+    assert learned.sdo_resolution == resolution
+
+
 def test_an_incident_cleared_without_sdo_action_is_recorded_as_such_not_as_a_mitigation(tmp_path: Path) -> None:
     fixtures = Path(__file__).resolve().parents[4] / "fixtures" / "sregym" / "phase1_rejected_receipts"
     real = json.loads((fixtures / "c5.json").read_text(encoding="utf-8"))["receipt"]

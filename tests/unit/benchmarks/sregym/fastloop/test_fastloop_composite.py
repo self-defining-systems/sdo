@@ -726,3 +726,17 @@ def test_composite_grades_first_closure_before_its_internal_reflection_drain(tmp
     report = json.loads((tmp_path / "reports" / f"composite_000_{PROBLEM}.json").read_text())
     assert len(report["incidents"]) == 2
     assert rows[0].recovery_error is None
+
+
+def test_composite_row_records_an_unverified_sdo_outcome_instead_of_a_drain_failure(tmp_path: Path) -> None:
+    from tests.unit.benchmarks.sregym.fastloop.test_fastloop_sdo_agent import _unverified_native_receipt
+
+    ops = FakeOps(second_incident=False)
+    ops.collect_receipt = lambda *_args: _unverified_native_receipt("failed")  # type: ignore[method-assign,assignment]
+    agent = _agent(tmp_path, ops)
+
+    learned = agent.learn(agent.resolve(0, PROBLEM, _inject))
+
+    assert learned.error is None
+    assert learned.sdo_outcome_classification == "failed"
+    assert learned.sdo_resolution == "sdo_failed"

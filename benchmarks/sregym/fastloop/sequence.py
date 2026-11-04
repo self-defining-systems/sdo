@@ -15,15 +15,16 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Self
+from typing import TYPE_CHECKING, Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from benchmarks.sregym.adapter import WaitKind, wait_for
+from benchmarks.sregym.adapter import REJECTED_RECEIPT_FILENAME, WaitKind, wait_for
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 from benchmarks.sregym.fastloop.parallel_memory import memory_ancestry, memory_head
 from benchmarks.sregym.fastloop.records import EVAL_CLEANUP_PASSES, load_records
 from benchmarks.sregym.fastloop.reset_provenance import RESET_GENERATION, read_reset_generation
+from benchmarks.sregym.protocol.native_receipt import unverified_outcome
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -173,6 +174,23 @@ def never_injected(record: IncidentRecord) -> bool:
     )
 
 
+def _row_receipt(directory: Path, index: int) -> tuple[Path, dict[str, Any]]:
+    """The strict receipt, or the rejected receipt of an outcome SDO itself classified as unverified.
+
+    A ``failed`` or ``unconfirmed`` closure is rejected by design but is still a measured result
+    whose acknowledged ledger carries the accepted memory; any other rejection is held.
+    """
+    strict = directory / "sdo_production_receipt_strict.json"
+    if strict.is_file():
+        return strict, json.loads(strict.read_text())
+    rejected = directory / REJECTED_RECEIPT_FILENAME
+    if rejected.is_file():
+        document = json.loads(rejected.read_text()).get("receipt")
+        if isinstance(document, dict) and unverified_outcome(document) is not None:
+            return rejected, document
+    raise RuntimeError(f"eval: row {index} has no strict receipt or SDO-unverified outcome receipt; hold the sequence")
+
+
 def _terminal(plan: SequencePlan, index: int, results: Path) -> dict[str, object]:
     if not results.exists():
         raise RuntimeError(f"eval: row {index} incomplete; recover native work, never reinject an uncertain row")
@@ -209,8 +227,7 @@ def _terminal(plan: SequencePlan, index: int, results: Path) -> dict[str, object
         or "learning failed:" in (record.error or "")
     ):
         raise RuntimeError(f"eval: row {index} did not pass recovery and learning; hold before the next injection")
-    receipt_path = Path(record.artifacts_dir or "") / "sdo_production_receipt_strict.json"
-    receipt = json.loads(receipt_path.read_text())
+    receipt_path, receipt = _row_receipt(Path(record.artifacts_dir or ""), index)
     ledger = receipt.get("native_ledger", {})
     if (
         receipt.get("incident_id") != record.incident_id
@@ -224,6 +241,7 @@ def _terminal(plan: SequencePlan, index: int, results: Path) -> dict[str, object
         "native_result": str(results),
         "receipt": str(receipt_path),
         "outcome_commit": ledger["outcome_commit"],
+        "outcome_classification": receipt.get("outcome_classification"),
         "oracle": record.oracle.model_dump() if record.oracle else None,
     }
 
