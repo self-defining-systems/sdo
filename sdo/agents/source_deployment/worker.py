@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from sdo.agents.prompt_templates import render_prompt
+from sdo.agents.prompt_templates import named_prompt, render_prompt
 from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
 from sdo.agents.provider import ResolvedAgent, resolve_agent
 from sdo.agents.responder import (
@@ -99,8 +99,11 @@ def propose_source(request: SourceDeploymentRequest, checkout: Path) -> SourceDe
         part="source_deployment.instructions",
         application=repr(request.application),
         namespace=repr(request.namespace),
-        health_objective=request.health_objective,
-        correction_feedback=request.correction_feedback or "none",
+        # Producer text is unbounded: it stays inline when it fits and spills to a pointed-at file otherwise.
+        health_objective=named_prompt("source_deployment.health_objective", request.health_objective, required=False),
+        correction_feedback=named_prompt(
+            "source_deployment.correction_feedback", request.correction_feedback or "none", required=False
+        ),
         registry_host=repr(request.registry_host),
         registry_host_2=repr(request.registry_host + "/"),
     )

@@ -1,5 +1,13 @@
 # Unicode code points in production-rendered prompts; measured limits include explicit headroom.
 
+[source_deployment.health_objective]
+max_chars = 2000
+reason = "Human goal substituted into the deployer prompt; matches the health judge's goal budget. Optional so an oversized goal spills to a file the prompt points at instead of crashing the deployer."
+
+[source_deployment.correction_feedback]
+max_chars = 4000
+reason = "Controller feedback from the prior verified attempt (observed 317 characters; the template field budget was 256). Optional so longer verifier output spills to a file the prompt points at."
+
 [source_deployment.incident_data]
 max_chars = 100
 reason = "Baseline synthetic fixture maximum: 92 Unicode code points; byte-identical template extraction."
@@ -11,6 +19,10 @@ reason = "Baseline synthetic fixture maximum: 1072 Unicode code points; byte-ide
 [health_judge.health_objective]
 max_chars = 2000
 reason = "SEEDBUDGET1: real fresh hotel/social/astronomy objectives measure 866/101/972 characters. Preserve the full required goal with at least 100% headroom over the observed maximum; synthetic 17-character fixtures missed seed preparation."
+
+[health_judge.feedback]
+max_chars = 6000
+reason = "Controller correction feedback for the health judge, joined ahead of metrics context and broker diagnostics; optional so it spills to a pointed-at file instead of exceeding the 2000-character template field."
 
 [health_judge.architecture]
 max_chars = 12000
