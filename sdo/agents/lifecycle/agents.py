@@ -98,8 +98,10 @@ class CodexLifecycleBackend:
         resources: list[TopologyResourceDTO],
         correction_feedback: str | None,
     ) -> HealthJudgeArtifact:
-        feedback = correction_feedback or render_prompt(
-            "health_judge", "run_health_judge_01", part="health_judge.instructions"
+        feedback = (
+            named_prompt("health_judge.feedback", correction_feedback, required=False)
+            if correction_feedback
+            else render_prompt("health_judge", "run_health_judge_01", part="health_judge.instructions")
         )
         prompt = render_prompt(
             "health_judge",
@@ -110,6 +112,7 @@ class CodexLifecycleBackend:
             health_objective=named_prompt(
                 "health_judge.health_objective",
                 health_objective or "No goal supplied; infer application health from source.",
+                required=False,
             ),
             architecture=named_prompt("health_judge.architecture", architecture, required=False),
             resources=named_prompt(
