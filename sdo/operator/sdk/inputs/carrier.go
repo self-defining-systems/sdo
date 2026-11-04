@@ -51,6 +51,7 @@ type Carrier struct {
 	podUsage     metrics.UsageSource
 	capture      sdk.ObjectCaptureSource
 	scoped       sdk.ScopedObservationSource
+	admission    *sdk.PodAdmissionResult
 }
 
 // New adopts existing optional inputs once, or copies an existing carrier.
@@ -74,6 +75,19 @@ func New(base sdk.DetectionContext) Carrier {
 	c.capture, _ = base.(sdk.ObjectCaptureSource)
 	c.scoped, _ = base.(sdk.ScopedObservationSource)
 	return c
+}
+
+// WithPodAdmission replaces the base view's dry-run admission result with one
+// frozen for this observation cycle.
+func (c Carrier) WithPodAdmission(result sdk.PodAdmissionResult) Carrier {
+	c.admission = &result
+	return c
+}
+func (c Carrier) PodAdmission() (sdk.PodAdmissionResult, bool) {
+	if c.admission != nil {
+		return *c.admission, true
+	}
+	return c.DetectionContext.PodAdmission()
 }
 func (c Carrier) WithClock(source sdk.ObservationClock) Carrier { c.clock = source; return c }
 func (c Carrier) ObservedAt() time.Time {

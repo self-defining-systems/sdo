@@ -28,14 +28,13 @@ import (
 
 type KubernetesSnapshotProvider struct {
 	// Clock supplies the snapshot observation time; nil uses time.Now.
-	Clock        func() time.Time
-	Capture      *GenericCapture
-	PodAdmission bool
-	Scope        sdk.ObservationScope
-	Ceiling      sdk.ObservationScope
-	Generation   string
-	Namespace    string
-	Client       kubernetes.Interface
+	Clock      func() time.Time
+	Capture    *GenericCapture
+	Scope      sdk.ObservationScope
+	Ceiling    sdk.ObservationScope
+	Generation string
+	Namespace  string
+	Client     kubernetes.Interface
 }
 
 func NewKubernetesSnapshotProvider(namespace string) (*KubernetesSnapshotProvider, error) {
@@ -202,13 +201,7 @@ func (p KubernetesSnapshotProvider) Snapshot(ctx context.Context) (sdk.Detection
 	if err != nil {
 		return nil, err
 	}
-	var admission *sdk.PodAdmissionResult
-	if p.PodAdmission {
-		result := ObservePodAdmission(ctx, p.Client, namespace, pods.Items)
-		admission = &result
-	}
 	return DetectionSnapshot{
-		Admission:          admission,
 		GenericCapture:     p.Capture,
 		ScopedSnapshot:     scoped,
 		NamespaceName:      namespace,

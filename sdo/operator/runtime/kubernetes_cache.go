@@ -75,7 +75,6 @@ type KubernetesCache struct {
 	scopedPrevious   map[string]map[string]*unstructured.Unstructured
 	scopedStatuses   map[string]string
 	scopedTracker    *StateTracker
-	podAdmission     bool
 	config           KubernetesCacheConfig
 	declared         map[string]sdk.WatchKind
 
@@ -110,7 +109,7 @@ func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) 
 		return nil, fmt.Errorf("Kubernetes client is required")
 	}
 	result := &KubernetesCache{
-		podAdmission: sdk.ConsumesPodAdmission(detectors), config: config, pending: make(map[string]sdk.WatchKind), changes: make(map[string]ObjectChange), notify: make(chan struct{}, 1),
+		config: config, pending: make(map[string]sdk.WatchKind), changes: make(map[string]ObjectChange), notify: make(chan struct{}, 1),
 	}
 	declared := make(map[string]sdk.WatchKind)
 	for _, d := range detectors {
@@ -510,10 +509,6 @@ func (c *KubernetesCache) Snapshot(ctx context.Context) (sdk.DetectionContext, e
 		}
 	}
 	c.informerMu.RUnlock()
-	if c.podAdmission {
-		r := controllercore.ObservePodAdmission(ctx, c.config.Client, c.config.Namespace, snapshot.PodList)
-		snapshot.Admission = &r
-	}
 	return snapshot, nil
 }
 

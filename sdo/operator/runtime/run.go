@@ -165,7 +165,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		args = append(controllerConfigToArgs(config), args[2:]...)
 	}
 	if len(args) > 0 && args[0] == "--evaluate-once" {
-		return evaluateOnce(ctx, detectors, args[1:], stdout, stderr, options.Provider, options.Traffic, clock)
+		return evaluateOnce(ctx, detectors, args[1:], stdout, stderr, options.Provider, options.Client, options.Traffic, clock)
 	}
 
 	flags := flag.NewFlagSet("sdo-controller", flag.ContinueOnError)
@@ -562,13 +562,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if trafficObserver != nil {
 		defer trafficObserver.Stop()
 	}
-	snapshotProvider = withUsage(snapshotProvider, detectors, bootstrapProvider.Client, clock.Now)
-	logsObserver, err := NewLogsObserver(bootstrapProvider.Client, detectors, LogsObserverOptions{Clock: clock.Now})
-	if err != nil {
-		return err
-	}
-	snapshotProvider = LogsSnapshotProvider{Base: snapshotProvider, Observer: logsObserver}
-	snapshotProvider, metricsObserver, err := withMetrics(snapshotProvider, detectors, *metricsURL, *metricsTokenFile, false, clock.Now)
+	observations := detectorObservations{Client: bootstrapProvider.Client, Clock: clock.Now, MetricsURL: *metricsURL, MetricsTokenFile: *metricsTokenFile}
+	snapshotProvider, metricsObserver, err := observations.compose(snapshotProvider, detectors)
 	if err != nil {
 		return err
 	}
@@ -896,13 +891,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return err
 			}
 			var next SnapshotProvider = TrafficSnapshotProvider{Base: kubernetesCache, Observer: trafficObserver, Reachability: reachabilityObserver}
-			next = withUsage(next, remote.Detectors, bootstrapProvider.Client, clock.Now)
-			nextLogs, err := NewLogsObserver(bootstrapProvider.Client, remote.Detectors, LogsObserverOptions{Clock: clock.Now})
-			if err != nil {
-				return err
-			}
-			next = LogsSnapshotProvider{Base: next, Observer: nextLogs}
-			next, nextMetrics, err := withMetrics(next, remote.Detectors, *metricsURL, *metricsTokenFile, false, clock.Now)
+			next, nextMetrics, err := observations.compose(next, remote.Detectors)
 			if err != nil {
 				return err
 			}
@@ -1756,6 +1745,7 @@ func evaluateOnce(
 	stdout io.Writer,
 	stderr io.Writer,
 	provider SnapshotProvider,
+	client kubernetes.Interface,
 	trafficAPI ProberAPI,
 	clock kclock.WithTicker,
 ) error {
@@ -1843,21 +1833,9 @@ func evaluateOnce(
 			kubernetesProvider.Generation = revision
 		}
 		provider = kubernetesProvider
-		provider = withUsage(provider, detectors, kubernetesProvider.Client, clock.Now)
+		client = kubernetesProvider.Client
 	}
-	var logClient kubernetes.Interface
-	if kp, ok := provider.(*core.KubernetesSnapshotProvider); ok {
-		logClient = kp.Client
-	}
-	logObserver, err := NewLogsObserver(logClient, detectors, LogsObserverOptions{Clock: clock.Now})
-	if err != nil {
-		return err
-	}
-	var readClient kubernetes.Interface
-	if kube, ok := provider.(*core.KubernetesSnapshotProvider); ok {
-		kube.PodAdmission = sdk.ConsumesPodAdmission(detectors)
-		readClient = kube.Client
-	}
+	readClient := client
 	var readSource PlanSource
 	readCommit := ""
 	if *appRoot != "" {
@@ -1938,8 +1916,7 @@ func evaluateOnce(
 	if trafficProvider.Observer != nil || trafficProvider.Reachability != nil {
 		provider = trafficProvider
 	}
-	provider = LogsSnapshotProvider{Base: provider, Observer: logObserver}
-	provider, _, err = withMetrics(provider, detectors, *metricsURL, *metricsTokenFile, true, clock.Now)
+	provider, _, err := detectorObservations{Client: client, Clock: clock.Now, MetricsURL: *metricsURL, MetricsTokenFile: *metricsTokenFile, RequireMetrics: true}.compose(provider, detectors)
 	if err != nil {
 		return err
 	}
