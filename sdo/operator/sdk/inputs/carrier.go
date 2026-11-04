@@ -103,6 +103,13 @@ func (c Carrier) TrafficWindow(id string) (traffic.Window, bool) {
 	}
 	return c.traffic.TrafficWindow(id)
 }
+// TrafficWindows lists the carried windows when the traffic source can.
+func (c Carrier) TrafficWindows() map[string]traffic.Window {
+	if set, ok := c.traffic.(traffic.WindowSet); ok {
+		return set.TrafficWindows()
+	}
+	return nil
+}
 func (c Carrier) WithReachability(source servicehealth.ReachabilitySource) Carrier {
 	c.reachability = source
 	return c
@@ -119,6 +126,13 @@ func (c Carrier) MetricResult(id string) (metrics.Result, bool) {
 		return metrics.Result{}, false
 	}
 	return c.metrics.MetricResult(id)
+}
+// MetricResults lists the carried results when the metrics source can.
+func (c Carrier) MetricResults() map[string]metrics.Result {
+	if set, ok := c.metrics.(metrics.ResultSet); ok {
+		return set.MetricResults()
+	}
+	return nil
 }
 func (c Carrier) WithAlerts(source metrics.AlertSource) Carrier { c.alerts = source; return c }
 func (c Carrier) AlertsResult() (metrics.AlertsResult, bool) {

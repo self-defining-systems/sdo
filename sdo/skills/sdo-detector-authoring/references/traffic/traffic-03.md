@@ -228,6 +228,12 @@ func WindowFrom(ctx sdk.DetectionContext, workload string) (Window, bool)
 func (w Window) SLO() SLO
     SLO returns the workload's effective SLO, defaults included.
 
+type WindowSet interface {
+	TrafficWindows() map[string]Window
+}
+    WindowSet is implemented by sources that can list every window they carry,
+    so a capture of the detection context keeps them for replay.
+
 type Workload struct {
 	APIVersion       string             `json:"apiVersion"`
 	Kind             string             `json:"kind"`
@@ -260,8 +266,4 @@ func (w Workload) ScenarioSLO(id string) SLO
 
 func (w Workload) Validate() error
     Validate reports the first problem that makes the workload unsafe.
-
-func (w Workload) ValidateAgainst(catalog Catalog) error
-    ValidateAgainst checks that every scenario the workload names exists in the
-    catalog, and that a health probe includes at least one read scenario.
 ```

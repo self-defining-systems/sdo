@@ -243,6 +243,12 @@ type Source interface {
 	MetricResult(id string) (Result, bool)
 }
 
+// ResultSet is implemented by sources that can list every frozen result they
+// carry, so a capture of the detection context keeps them for replay.
+type ResultSet interface {
+	MetricResults() map[string]Result
+}
+
 // QuerySource evaluates a typed PromQL query through the runtime.
 // Results (including failures) are frozen for the evaluation cycle.
 type QuerySource interface {
