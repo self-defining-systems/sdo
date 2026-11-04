@@ -785,6 +785,11 @@ def recreate_application(
         )
         if deployed.get("deployed") is not True or not deployed.get("health", {}).get("healthy"):
             raise RuntimeError("eval: recreated application did not prove healthy deployment")
+        if environment.namespace == "social-network":
+            # A recreated namespace has empty stores; rows read the same fixture `reset` restores.
+            from benchmarks.sregym.fastloop.social_fixture import restore_social_fixture
+
+            restore_social_fixture(environment.kubeconfig)
         _recapture_application_baseline(environment)
 
     run_tier2(
