@@ -136,7 +136,10 @@ and require Diagnose to stop matching", would make replay verdicts a publication
 statically and deterministically: `program.normalized-read` rejects changed program code that looks up a stripped
 bookkeeping annotation in a value derived from a source/baseline comparison. The validator's annotation list is
 pinned to the controller's comparison policy by a runtime parity test. The live-object read
-(`home-timeline-request-stall`) passes.
+(`home-timeline-request-stall`) passes. The rule follows values by variable, not by name (a
+shadowed or reused name is a different variable), ignores a comparison's error result and text built by
+`fmt`/`errors`/`log`, and does not judge a variable that is also assigned anything else: it may miss a read,
+but it does not reject a valid program for a name it shares.
 
 ## Testing (deterministic)
 

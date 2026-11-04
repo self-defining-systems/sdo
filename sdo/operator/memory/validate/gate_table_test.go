@@ -230,6 +230,36 @@ func restarted(value any, key string) bool { m, _ := value.(map[string]string); 
 `
 }
 
+// gateLiveReadReusingNames compares against source, then reads the restart
+// annotation from the live object under a shadowed name, and mentions the key
+// in an error message built from the comparison's error. Nothing reads the
+// annotation from the comparison.
+const gateLiveReadReusingNames = `package base
+
+import (
+	"context"
+	"fmt"
+
+	"sdo.dev/operator/sdk/program"
+)
+
+func (Program) Diagnose(_ context.Context, v program.ReadView, b program.Bindings) (program.Verdict, error) {
+	ref := b.Objects["deployment"]
+	annotations, err := v.DiffAgainstSource(ref)
+	if err != nil {
+		return program.Verdict{}, fmt.Errorf("compare before reading kubectl.kubernetes.io/restartedAt: %w", err)
+	}
+	_ = annotations
+	for _, live := range v.Deployments() {
+		annotations := live.Spec.Template.Annotations
+		if annotations["kubectl.kubernetes.io/restartedAt"] != "" {
+			return program.Verdict{Result: program.NoMatch}, nil
+		}
+	}
+	return program.Verdict{Result: program.Match}, nil
+}
+`
+
 var gateNoChange = &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "already covered"}
 
 func gateUpdated(ids ...string) *contracts.ReflectionDecision {
@@ -456,6 +486,10 @@ var gateRows = []gateRow{
 	gateReflection("diagnosis reads the restart annotation on the live object", gateClean(), gateUpdated("base"), func(t *testing.T, r string) {
 		gatePlaybookEdit(t, r)
 		write(t, r, ".sdo/playbooks/base/diagnose.go", gateFormatted(t, gateStrippedRead("live.Spec.Template.Annotations")))
+	}, gateProgramInvalid),
+	gateReflection("diagnosis reuses a comparison's variable names for live reads", gateClean(), gateUpdated("base"), func(t *testing.T, r string) {
+		gatePlaybookEdit(t, r)
+		write(t, r, ".sdo/playbooks/base/diagnose.go", gateFormatted(t, gateLiveReadReusingNames))
 	}, gateProgramInvalid),
 	gateReflection("program names a live Pod", gateClean(), gateUpdated("base"), func(t *testing.T, r string) {
 		gatePlaybookEdit(t, r)

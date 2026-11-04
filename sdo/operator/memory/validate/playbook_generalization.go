@@ -8,6 +8,7 @@ import (
 	"go/parser"
 	"go/printer"
 	"go/token"
+	"go/types"
 	"os"
 	"path"
 	"path/filepath"
@@ -385,8 +386,11 @@ var SourceBookkeepingAnnotations = []string{
 	"kubectl.kubernetes.io/restartedAt",
 }
 
-// diffMethods return a source or baseline comparison, or a field of one.
-var diffMethods = map[string]bool{"DiffAgainstSource": true, "DiffAgainstBaseline": true, "Field": true}
+// comparisonMethods return a source or baseline comparison.
+var comparisonMethods = map[string]bool{"DiffAgainstSource": true, "DiffAgainstBaseline": true}
+
+// messagePackages build text, not reads: a key in an error message is not a lookup.
+var messagePackages = map[string]bool{"fmt": true, "errors": true, "log": true, "log/slog": true}
 
 // normalizedReadDiagnostics rejects changed program code that looks up a
 // bookkeeping annotation in a source or baseline comparison. SDO strips those
@@ -400,16 +404,18 @@ func normalizedReadDiagnostics(root string, paths []string) []Diagnostic {
 		if !ok || kind != layout.KindPlaybookProgram && kind != layout.KindLibrary || !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
 			continue
 		}
-		parsed, err := parser.ParseFile(token.NewFileSet(), filepath.Join(root, filepath.FromSlash(p)), nil, parser.SkipObjectResolution)
+		fset := token.NewFileSet()
+		parsed, err := parser.ParseFile(fset, filepath.Join(root, filepath.FromSlash(p)), nil, parser.SkipObjectResolution)
 		if err != nil {
 			continue
 		}
+		info := resolveIdentifiers(fset, parsed)
 		for _, decl := range parsed.Decls {
 			function, ok := decl.(*ast.FuncDecl)
 			if !ok || function.Body == nil {
 				continue
 			}
-			if key, ok := strippedLookup(function.Body); ok {
+			if key, ok := strippedLookup(function.Body, info); ok {
 				diagnostics = append(diagnostics, Diagnostic{Rule: RuleProgramNormalizedRead, Path: p,
 					Message: fmt.Sprintf("%s looks up %q in a source or baseline comparison, which strips that annotation; the read never changes, so the program cannot observe its own repair", function.Name.Name, key),
 					Hint:    "read bookkeeping annotations (restartedAt, revision) from the live object (v.Deployments(), KubernetesRead), and use the comparison only for fields it keeps"})
@@ -420,54 +426,120 @@ func normalizedReadDiagnostics(root string, paths []string) []Diagnostic {
 	return diagnostics
 }
 
-// strippedLookup finds a call or index expression that combines a value
-// derived from a comparison with a stripped annotation key.
-func strippedLookup(body *ast.BlockStmt) (string, bool) {
-	derived := map[string]bool{}
-	fromDiff := func(expr ast.Expr) bool {
+// resolveIdentifiers binds each identifier to the variable it denotes, so two
+// variables that share a name in different scopes stay distinct. Imports are
+// not loaded: the file is checked alone and type errors are ignored; only the
+// scope resolution is used.
+func resolveIdentifiers(fset *token.FileSet, file *ast.File) *types.Info {
+	info := &types.Info{Defs: map[*ast.Ident]types.Object{}, Uses: map[*ast.Ident]types.Object{}}
+	config := types.Config{Error: func(error) {}, Importer: emptyImporter{}}
+	_, _ = config.Check(file.Name.Name, fset, []*ast.File{file}, info)
+	return info
+}
+
+// emptyImporter gives every import an empty package: the check needs only
+// local scopes and the import path of each package name.
+type emptyImporter struct{}
+
+func (emptyImporter) Import(importPath string) (*types.Package, error) {
+	pkg := types.NewPackage(importPath, path.Base(importPath))
+	pkg.MarkComplete()
+	return pkg, nil
+}
+
+// strippedLookup finds an index or call expression that combines a value
+// derived from a comparison with a stripped annotation key. A variable is
+// derived when every assignment to it holds a comparison, a field of one, or
+// another derived variable; the error result of a comparison is not derived,
+// and a variable also assigned anything else is not judged.
+func strippedLookup(body *ast.BlockStmt, info *types.Info) (string, bool) {
+	object := func(ident *ast.Ident) types.Object {
+		if defined := info.Defs[ident]; defined != nil {
+			return defined
+		}
+		return info.Uses[ident]
+	}
+	derived, other := map[types.Object]bool{}, map[types.Object]bool{}
+	var fromComparison func(ast.Expr) bool
+	fromComparison = func(expr ast.Expr) bool {
 		found := false
 		ast.Inspect(expr, func(node ast.Node) bool {
 			switch n := node.(type) {
 			case *ast.CallExpr:
-				if selector, ok := n.Fun.(*ast.SelectorExpr); ok && diffMethods[selector.Sel.Name] {
+				if selector, ok := n.Fun.(*ast.SelectorExpr); ok && (comparisonMethods[selector.Sel.Name] || selector.Sel.Name == "Field" && fromComparison(selector.X)) {
 					found = true
 				}
 			case *ast.Ident:
-				found = found || derived[n.Name]
+				if o := object(n); o != nil && derived[o] && !other[o] {
+					found = true
+				}
 			}
 			return !found
 		})
 		return found
 	}
-	// Two passes reach values assigned from earlier derived values.
-	for range 2 {
+	assign := func(lhs []ast.Expr, rhs []ast.Expr) {
+		for index, target := range lhs {
+			ident, ok := target.(*ast.Ident)
+			if !ok || ident.Name == "_" {
+				continue
+			}
+			o := object(ident)
+			if o == nil {
+				continue
+			}
+			switch {
+			case len(rhs) == len(lhs) && fromComparison(rhs[index]),
+				len(rhs) == 1 && index == 0 && fromComparison(rhs[0]):
+				derived[o] = true
+			case len(rhs) == 1 && index > 0:
+				// The second result of a comparison or Field call is its error.
+			default:
+				other[o] = true
+			}
+		}
+	}
+	// Repeat until no variable changes: values flow through earlier assignments.
+	for {
+		before := len(derived) + len(other)
 		ast.Inspect(body, func(node ast.Node) bool {
-			if assign, ok := node.(*ast.AssignStmt); ok {
-				for _, value := range assign.Rhs {
-					if fromDiff(value) {
-						for _, target := range assign.Lhs {
-							if ident, ok := target.(*ast.Ident); ok && ident.Name != "_" {
-								derived[ident.Name] = true
-							}
-						}
+			switch n := node.(type) {
+			case *ast.AssignStmt:
+				assign(n.Lhs, n.Rhs)
+			case *ast.ValueSpec:
+				if len(n.Values) > 0 {
+					lhs := make([]ast.Expr, len(n.Names))
+					for i, name := range n.Names {
+						lhs[i] = name
 					}
+					assign(lhs, n.Values)
 				}
 			}
 			return true
 		})
+		if len(derived)+len(other) == before {
+			break
+		}
 	}
 	key, found := "", false
 	ast.Inspect(body, func(node ast.Node) bool {
 		var operands []ast.Expr
 		switch n := node.(type) {
 		case *ast.CallExpr:
+			if selector, ok := n.Fun.(*ast.SelectorExpr); ok {
+				if ident, ok := selector.X.(*ast.Ident); ok {
+					if name, ok := object(ident).(*types.PkgName); ok && messagePackages[name.Imported().Path()] {
+						return true
+					}
+				}
+			}
 			operands = append(append(operands, n.Fun), n.Args...)
 		case *ast.IndexExpr:
 			operands = []ast.Expr{n.X, n.Index}
 		default:
 			return !found
 		}
-		literal, fromComparison := "", false
+		literal, comparison := "", false
 		for _, operand := range operands {
 			if lit, ok := operand.(*ast.BasicLit); ok && lit.Kind == token.STRING {
 				if text, err := strconv.Unquote(lit.Value); err == nil {
@@ -479,9 +551,9 @@ func strippedLookup(body *ast.BlockStmt) (string, bool) {
 				}
 				continue
 			}
-			fromComparison = fromComparison || fromDiff(operand)
+			comparison = comparison || fromComparison(operand)
 		}
-		if literal != "" && fromComparison {
+		if literal != "" && comparison {
 			key, found = literal, true
 		}
 		return !found
