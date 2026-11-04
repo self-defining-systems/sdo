@@ -48,7 +48,6 @@ func NewDetector(spec sdk.DetectorSpec, workload string) sdk.Detector
 func NewLinkDetector(spec sdk.DetectorSpec, workload string) sdk.Detector
 func ScenarioFinding(spec sdk.DetectorSpec, namespace string, workload Workload, ...) sdk.Finding
 func UndrivenLinkNote(link Link) string
-func WorkloadEvaluationWindow(ctx sdk.DetectionContext, workload string) time.Duration
 type Arrival string
     const ArrivalUniform Arrival = "uniform" ...
 type Catalog []Scenario

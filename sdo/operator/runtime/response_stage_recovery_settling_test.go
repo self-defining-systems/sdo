@@ -16,6 +16,7 @@ import (
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
+	"sdo.dev/operator/sdk/traffic"
 )
 
 // settlingClock is the one clock of a recovery-settling world: the stage's
@@ -213,5 +214,25 @@ func TestRecoveryWaitSettlesWhileEffectsAndWindowsCatchUp(t *testing.T) {
 				t.Fatalf("responder dispatched = %v, want %v (remaining %v)", agent.dispatched, tc.wantDispatched, report.RemainingFindingFingerprints)
 			}
 		})
+	}
+}
+
+// trafficStallDetector is a learned stall detector as the memory host serves
+// it: it consumes a traffic workload but declares no window of its own.
+type trafficStallDetector struct{ settlingDetector }
+
+func (trafficStallDetector) TrafficWorkloads() []string { return []string{"health"} }
+
+// A traffic consumer that declares no window still lags behind a repair by
+// its workload's window, so the wait gives its findings that window; a
+// detector that judges current state gets none.
+func TestSettlingHorizonOfTrafficConsumers(t *testing.T) {
+	view := sdktest.Snapshot{NamespaceName: "app", Traffic: map[string]traffic.Window{"health": {Workload: traffic.Workload{Name: "health", RatePerSecond: 3, Scenarios: []traffic.WorkloadScenario{{ID: "read", Weight: 1}}}}}}
+	stall := settlingDetector{id: "learned-stall", class: sdk.DetectorClassIncident}
+	if got := settlingHorizon(trafficStallDetector{stall}, view); got < traffic.DefaultMaxAge {
+		t.Fatalf("traffic consumer horizon = %s, want at least the workload window %s", got, traffic.DefaultMaxAge)
+	}
+	if got := settlingHorizon(stall, view); got != 0 {
+		t.Fatalf("current-state detector horizon = %s, want 0", got)
 	}
 }

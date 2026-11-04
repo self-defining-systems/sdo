@@ -1111,8 +1111,11 @@ func settlingHorizon(detector sdk.Detector, view sdk.DetectionContext) time.Dura
 	if windowed, ok := detector.(sdk.WindowedDetector); ok {
 		window = windowed.EvaluationWindow(view)
 	} else if consumer, ok := detector.(traffic.Consumer); ok {
+		// The SDK's SLO detector owns the window bound of a traffic workload.
 		for _, workload := range consumer.TrafficWorkloads() {
-			window = max(window, traffic.WorkloadEvaluationWindow(view, workload))
+			if slo, ok := traffic.NewDetector(sdk.DetectorSpec{}, workload).(sdk.WindowedDetector); ok {
+				window = max(window, slo.EvaluationWindow(view))
+			}
 		}
 	}
 	if window <= 0 {

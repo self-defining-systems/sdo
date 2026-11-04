@@ -180,12 +180,6 @@ func UndrivenLinkNote(link Link) string
     UndrivenLinkNote is the non-blocking memory-check note for an edge
     UndrivenLinks returns.
 
-func WorkloadEvaluationWindow(ctx sdk.DetectionContext, workload string) time.Duration
-    WorkloadEvaluationWindow bounds how long a repaired scenario of a traffic
-    workload can keep failing in its window: pre-repair samples age out after
-    MaxAge, and the window needs MinSamples fresh samples, plus one arrival at
-    the scenario's share of the workload rate. Zero when the view has no window.
-
 
 TYPES
 
@@ -247,4 +241,13 @@ func (d Duration) Duration() time.Duration
 func (d Duration) MarshalJSON() ([]byte, error)
 
 func (d *Duration) UnmarshalJSON(data []byte) error
+
+type Endpoint interface {
+	Build(ctx context.Context, rng *rand.Rand, state State) (Request, error)
+	Check(response Response, state State) Verdict
+}
+    Endpoint builds one request and judges its response. Build must derive
+    every varying value from rng and state; the engine seeds rng per iteration,
+    so the same iteration always builds the same requests. Check may save values
+    into state for later steps. Neither may measure time or send requests.
 ```
