@@ -18,7 +18,9 @@ func (b *Broker) checkCandidate(ctx context.Context, root, base string, actor Ac
 			ctx = context.WithValue(ctx, replayKey{}, request.Replay)
 			var jobGaps []validate.Diagnostic
 			ctx = context.WithValue(ctx, coverageGapsKey{}, &jobGaps)
-			err := runner(ctx, root, paths)
+			// request.Root is the candidate, or the accepted base tree Check
+			// replays to establish pre-existing healthy-baseline faults.
+			err := runner(ctx, request.Root, paths)
 			var failure *validate.Failure
 			if errors.As(err, &failure) {
 				return failure.Diagnostics, nil

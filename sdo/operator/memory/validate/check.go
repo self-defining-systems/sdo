@@ -100,7 +100,7 @@ func Check(ctx context.Context, request Request, compile CompileRunner) ([]Diagn
 	if err != nil {
 		return nil, err
 	}
-	return separatePreexisting(ctx, request, diagnostics)
+	return separatePreexisting(ctx, request, diagnostics, compile)
 }
 
 // CompileCandidate is the runner body shared by local memory checks and the

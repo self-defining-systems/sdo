@@ -248,7 +248,7 @@ Run the complete memory check and wait for final diagnostics (at most 300s).
 Supply typed decision fields; this tool writes JSON outside authored memory.
 Return the same decision and logical IDs. It gofmt-formats changed Go under .sdo/.
 Follow next: return on pass, fix diagnostics, or report terminal timeout without retry.
-Faults of unchanged detectors are pre-existing notes. After six failed checks, return.
+Healthy-replay faults the base also has are pre-existing notes. After six failed checks, return.
 Broker deadlines are terminal too. Legacy decision_path files are supported.
 One call waits for final diagnostics. Responder incident detectors use the same
 check; health detectors are judge-owned. Compile/import/format/provenance remain required.

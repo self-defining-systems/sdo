@@ -116,9 +116,10 @@ state) and the legacy caller-supplied baseline never replace it. Missing require
 `detector.healthy-baseline` (one diagnostic per detector, path = its detector directory; the
 replay runs as its own stage only after every other generated test passed, so it never hides a
 registration or `detector.controller-start` failure); a
-missing reference only skips the replay and is recorded as a coverage gap. A failure on a
-detector the candidate did not change (its directory, `.sdo/lib` and shared diagnostics files
-unchanged since the base) is pre-existing: it becomes a `pre-existing (unchanged since <base>)`
+missing reference only skips the replay and is recorded as a coverage gap. A failure is
+pre-existing only when Check replays the accepted base tree through the same compile runner on the
+same healthy sample and the base fails with the same detector and violation (cached per base
+commit and sample). It becomes a `pre-existing (also fails at <base>)`
 coverage gap (an `SDO-Coverage-Gap` commit trailer on acceptance), not a rejection. Baseline TCP sampling is bounded; an omitted read is
 an evidence gap, never a fabricated successful probe. This replay establishes
 quietness on the known healthy app, separately from positive repair replay.
