@@ -103,10 +103,11 @@ func (s *run) compile(ctx context.Context) error {
 	case strings.HasPrefix(stage.Stage, "test"):
 		rule = RuleDetectorTest
 	}
-	if strings.Contains(stage.Output, RuleDetectorHealthyBaseline) {
+	if builder.IsHealthyBaselineStage(stage) {
 		const hint = "incident detectors must stay quiet on the controller-captured healthy state"
-		// Each violation names its detector, so Check can tell a fault of
-		// the candidate's detector from one of an unchanged accepted detector.
+		// The replay runs alone, after the registration and controller-start
+		// contracts passed, so each violation's detector ID names exactly one
+		// detector directory and Check can compare it with the base.
 		matches := healthyBaselineViolation.FindAllStringSubmatch(stage.Output, -1)
 		seen := map[string]bool{}
 		for _, match := range matches {

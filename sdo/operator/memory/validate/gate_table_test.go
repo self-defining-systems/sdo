@@ -626,15 +626,33 @@ var gateCompileRows = []gateCompileRow{
 			edit(t, root, gateFixtureTest, "len(findings) != 1", "len(findings) == 1")
 		}},
 	{name: "fires on the healthy baseline", rule: RuleDetectorHealthyBaseline, path: layout.DetectorDir(layout.ClassIncident, "missing-configmap"), baseline: true,
-		fake: testutil.GoRule{Verb: "test", Output: "    healthy_baseline_test.go:15: detector.healthy-baseline[missing-configmap]: detector \"missing-configmap\" reported an active finding on healthy baseline snapshot empty-namespace.json"},
+		fake: testutil.GoRule{Verb: "test", ArgContains: gateHealthyBaselineStage, Output: "    healthy_baseline_test.go:15: detector.healthy-baseline[missing-configmap]: detector \"missing-configmap\" reported an active finding on healthy baseline snapshot empty-namespace.json"},
+		real: gateFiresOnHealthyBaseline},
+	// A healthy-baseline fault never hides another failure of the generated
+	// tests: here a copied detector keeps the accepted Spec ID, so the
+	// controller would refuse to start. The fault is reported, not the replay.
+	{name: "healthy-baseline fault beside a duplicate detector ID", rule: RuleDetectorControllerStart, path: layout.DiagnosticsDir, baseline: true,
+		fake: testutil.GoRule{Verb: "test", ArgContains: "./generated", ArgAbsent: gateHealthyBaselineStage, Output: "    healthy_baseline_test.go:15: detector.healthy-baseline[missing-configmap]: detector \"missing-configmap\" reported an active finding on healthy baseline snapshot empty-namespace.json\n--- FAIL: TestDetectorsLoadInController\n    controller_start_test.go:9: detector.controller-start: the controller would refuse to start: duplicate detector ID \"missing-configmap\""},
 		real: func(t *testing.T, root string) {
-			edit(t, root, gateFixtureDetector, "findings := make([]sdk.Finding, 0)", "findings := make([]sdk.Finding, 0)\n\tif len(snapshot.Deployments()) == 0 {\n\t\treturn []sdk.Finding{{RuleID: \"missing-configmap\", Status: sdk.FindingActive, Severity: sdk.SeverityCritical, Summary: \"always\", Evidence: \"always\", Fingerprint: \"always\"}}, nil\n\t}")
+			gateFiresOnHealthyBaseline(t, root)
+			from := filepath.Join(root, filepath.Dir(gateFixtureDetector))
+			to := filepath.Join(filepath.Dir(from), "copied-configmap")
+			copyTree(t, from, to)
+			edit(t, root, ".sdo/diagnostics/detectors/incidents/copied-configmap/manifest.yaml", "id: missing-configmap", "id: copied-configmap")
 		}},
 	{name: "controller would refuse to start it", rule: RuleDetectorControllerStart, path: layout.DiagnosticsDir,
 		fake: testutil.GoRule{Verb: "test", Output: "detector.controller-start: the controller would refuse to start: detector \"missing-configmap\": interval must be greater than zero"},
 		real: func(t *testing.T, root string) {
 			edit(t, root, gateFixtureDetector, "30 * time.Second", "-time.Second")
 		}},
+}
+
+// gateHealthyBaselineStage selects the generated healthy-baseline replay stage.
+const gateHealthyBaselineStage = "-run ^TestIncidentDetectorsStayQuietOnHealthyBaseline$"
+
+// gateFiresOnHealthyBaseline makes the fixture detector fire on an empty namespace.
+func gateFiresOnHealthyBaseline(t *testing.T, root string) {
+	edit(t, root, gateFixtureDetector, "findings := make([]sdk.Finding, 0)", "findings := make([]sdk.Finding, 0)\n\tif len(snapshot.Deployments()) == 0 {\n\t\treturn []sdk.Finding{{RuleID: \"missing-configmap\", Status: sdk.FindingActive, Severity: sdk.SeverityCritical, Summary: \"always\", Evidence: \"always\", Fingerprint: \"always\"}}, nil\n\t}")
 }
 
 // gateBaseline writes the controller's healthy capture: an empty namespace.

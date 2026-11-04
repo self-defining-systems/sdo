@@ -113,7 +113,9 @@ cannot replace that incident's reference. `StateTracker.BaselineAt()` and closur
 Reflection acceptance selects this frozen reference through shared memory check
 on both the CLI and broker. An agent-authored corpus `healthy.json` (often a fixed
 state) and the legacy caller-supplied baseline never replace it. Missing required observations and active learned findings fail with
-`detector.healthy-baseline` (one diagnostic per detector, path = its detector directory); a
+`detector.healthy-baseline` (one diagnostic per detector, path = its detector directory; the
+replay runs as its own stage only after every other generated test passed, so it never hides a
+registration or `detector.controller-start` failure); a
 missing reference only skips the replay and is recorded as a coverage gap. A failure on a
 detector the candidate did not change (its directory, `.sdo/lib` and shared diagnostics files
 unchanged since the base) is pre-existing: it becomes a `pre-existing (unchanged since <base>)`
