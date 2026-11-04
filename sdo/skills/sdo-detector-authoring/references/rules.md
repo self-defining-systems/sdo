@@ -72,6 +72,9 @@ Advice, not validator-checked: tests and recorded-state replay run as informatio
   `^[a-z][a-z0-9_-]*$`, never paths. Every listed ID names an existing playbook. Enforced by: `manifest.invalid`,
   `ref.unknown-playbook`, `detector.compile`.
 - Detector source must not contain physical `.sdo/` paths. Enforced by: `text.physical-path`.
+- A finding's named `ParameterBindings` bind only the playbooks it lists, so an incident detector that binds roles
+  (`ParameterBindings`, `localize.BindSuspects`) declares the playbooks those bindings are for; a reused playbook
+  is listed by every detector whose binding it needs. Enforced by: `detector.unscoped-binding`.
 
 ## Ownership
 

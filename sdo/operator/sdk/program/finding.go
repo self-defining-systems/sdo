@@ -2,7 +2,7 @@ package program
 
 import (
 	"fmt"
-	"strings"
+	"slices"
 
 	"sdo.dev/operator/sdk"
 )
@@ -13,13 +13,15 @@ import (
 // read by Diagnose through ReadView, by name or relation.
 //
 // Named bindings are the finding detector's claim about what its own playbooks
-// repair, so they bind only programs the finding lists. A finding that lists
-// no playbook (drift, generated and generic health findings) offers them to
-// every program.
+// repair, so they bind only programs the finding lists by logical ID (the
+// Finding.Playbooks contract; the controller rejects any other reference). A
+// finding that lists no playbook (drift and source-inventory findings) offers
+// them to every program; the memory check refuses an incident detector that
+// sets named bindings without declaring its playbooks.
 func BindFinding(spec ProgramSpec, finding sdk.Finding) (Bindings, error) {
 	b := Bindings{Objects: ObjectBindings{}}
 	used := map[objectIdentity]bool{}
-	named := len(finding.Playbooks) == 0 || listsPlaybook(finding.Playbooks, spec.ID)
+	named := len(finding.Playbooks) == 0 || slices.Contains(finding.Playbooks, spec.ID)
 	for _, p := range spec.Params {
 		if p.ValueKind != "" || !named {
 			continue
@@ -124,17 +126,4 @@ type objectIdentity struct{ kind, namespace, name string }
 
 func identity(ref sdk.ObjectRef) objectIdentity {
 	return objectIdentity{ref.Kind, ref.Namespace, ref.Name}
-}
-
-// listsPlaybook reports whether a finding's playbook references name id, as a
-// logical ID or as its README path.
-func listsPlaybook(references []string, id string) bool {
-	for _, reference := range references {
-		reference = strings.TrimPrefix(reference, ".sdo/playbooks/")
-		reference = strings.TrimSuffix(strings.TrimSuffix(reference, "/README.md"), ".md")
-		if reference == id {
-			return true
-		}
-	}
-	return false
 }

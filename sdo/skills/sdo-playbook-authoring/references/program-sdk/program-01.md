@@ -215,9 +215,11 @@ func BindFinding(spec ProgramSpec, finding sdk.Finding) (Bindings, error)
     read by Diagnose through ReadView, by name or relation.
 
     Named bindings are the finding detector's claim about what its own playbooks
-    repair, so they bind only programs the finding lists. A finding that lists
-    no playbook (drift, generated and generic health findings) offers them to
-    every program.
+    repair, so they bind only programs the finding lists by logical ID (the
+    Finding.Playbooks contract; the controller rejects any other reference).
+    A finding that lists no playbook (drift and source-inventory findings)
+    offers them to every program; the memory check refuses an incident detector
+    that sets named bindings without declaring its playbooks.
 
 func (b Bindings) Clone() Bindings
 
