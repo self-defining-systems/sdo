@@ -101,19 +101,29 @@ func recordedRepairProgramDiagnostics(root string, outcome *contracts.OutcomeRec
 // verbatim cannot miss a field. Replay stays informational.
 func programRequiredHint(incident string, receipt *contracts.RepairActionReceipt, linked bool, covered []bool) string {
 	var unbound []string
+	owned := false
 	for index, ref := range receipt.GetResources() {
 		if !linked || !covered[index] {
+			// A generated Pod dies with its incident: bind the workload that
+			// owns it, from which Mitigate finds the current Pod.
+			if owner := owningWorkload(receipt, ref); owner != nil {
+				ref, owned = owner, true
+			}
 			// The exact ref to bind: cluster-scoped objects carry no namespace.
 			exact, _ := json.Marshal(sdk.ObjectRef{APIVersion: ref.GetApiVersion(), Kind: ref.GetKind(), Namespace: ref.GetNamespace(), Name: ref.GetName()})
 			unbound = append(unbound, string(exact))
 		}
 	}
+	alternative := " (or a recorded owner)"
+	if owned {
+		alternative = " (the recorded owner of the repaired Pod; Mitigate finds its current Pod through ReadView)"
+	}
 	bind := ""
 	if len(unbound) > 0 {
-		bind = " and bind " + strings.Join(unbound, ", ") + " (or a recorded owner) as a role under labels.json bindings.objects"
+		bind = " and bind " + strings.Join(unbound, ", ") + alternative + " as a role under labels.json bindings.objects"
 	}
 	if linked {
-		return "a case already links this receipt; in that case, bind " + strings.Join(unbound, ", ") + " (or a recorded owner) as a role under labels.json bindings.objects, exactly as written; replay results stay informational"
+		return "a case already links this receipt; in that case, bind " + strings.Join(unbound, ", ") + alternative + " as a role under labels.json bindings.objects, exactly as written; replay results stay informational"
 	}
 	link := program.ScriptOriginReceipt{ID: receipt.GetActionId(), IncidentID: incident, Success: true, StartedAt: receipt.GetStartedAt().AsTime(), CompletedAt: receipt.GetCompletedAt().AsTime(), ScriptDigest: receipt.GetScriptDigest()}
 	for _, ref := range receipt.GetResources() {
@@ -122,6 +132,26 @@ func programRequiredHint(incident string, receipt *contracts.RepairActionReceipt
 	result, _ := json.Marshal(link)
 	entry, _ := json.Marshal(sdktest.PrimitiveCall{Method: "RepairReceipt", Arguments: json.RawMessage("{}"), Result: result})
 	return "encode it in a mitigate.go of a playbook listed in proposed_artifact_ids; in a corpus case (.sdo/corpus/<case>/) whose labels.json root_cause_program_ids lists that playbook" + bind + ", append this entry to its recordings.json: " + string(entry)
+}
+
+// owningWorkload is the outermost recorded workload owner of a repaired Pod.
+func owningWorkload(receipt *contracts.RepairActionReceipt, ref *contracts.ObjectRef) *contracts.ObjectRef {
+	if ref.GetKind() != "Pod" {
+		return nil
+	}
+	var workload *contracts.ObjectRef
+	for _, owners := range receipt.GetOwners() {
+		if !equalCauseResource(owners.GetResource(), ref) {
+			continue
+		}
+		for _, owner := range owners.GetOwnerChain() {
+			switch owner.GetKind() {
+			case "Deployment", "StatefulSet", "DaemonSet":
+				workload = owner
+			}
+		}
+	}
+	return workload
 }
 
 func caseHasRepairReceipt(c sdktest.CorpusCase, incident string, receipt *contracts.RepairActionReceipt) bool {

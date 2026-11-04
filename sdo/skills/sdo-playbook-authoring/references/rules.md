@@ -35,6 +35,22 @@ diagnostic; look it up here.
 - Scripts contain no secrets and no symlinks, and each file stays under 256 KiB. Enforced by:
   `layout.secret-path`, `layout.symlink`, `layout.too-large`.
 
+## One playbook per repair method
+
+- A playbook is one repair method, named for the repair (`workload-restart`, `redis-acl-restore`), not for a
+  symptom or a service. Its roles bind the component it repairs, so the same repair on another component reuses
+  it. A new repair method is a new playbook, never an extra action in a symptom-named one; when an applied
+  playbook did not fix this incident, narrow its Diagnose so it no longer matches this cause.
+- Never add a required role that no detector binds; derive related objects (a workload's Pods) through
+  ReadView. Diagnose needs positive evidence on the bound component: a healthy, source-matching object is not.
+- A new playbook may not copy an existing program (the same parameter kinds, Diagnose and Mitigate apart from
+  names, prose and identifier spelling): refine that playbook instead. Enforced by: `playbook.duplicate-repair`.
+  A new playbook that repeats only another's Mitigate is noted (`playbook.shared-repair`): refine the other
+  unless this Diagnose needs evidence it lacks.
+- Programs, libraries, scripts and incident detectors never name a generated Pod (`<owner>-<hash>-<suffix>`).
+  Bind the owning workload, find its Pods through ReadView by owner, and exec with a typed `Command` or
+  `EnsureExec`. Enforced by: `playbook.live-object-name`.
+
 ## References from detectors
 
 - A detector surfaces a playbook by ID in `possiblePlaybooks`; the playbook must exist. Enforced by:

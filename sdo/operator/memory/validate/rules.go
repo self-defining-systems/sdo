@@ -19,6 +19,9 @@ const (
 	RuleSnapshotProjection          = "memory.snapshot"
 	RuleClusterLocal                = "memory.cluster-local"
 	RuleSecretData                  = "memory.secret-data"
+	RuleLiveObjectName              = "playbook.live-object-name"
+	RuleDuplicateRepair             = "playbook.duplicate-repair"
+	RuleSharedRepair                = "playbook.shared-repair"
 
 	// Structural.
 	RuleUnknownPath      = "layout.unknown-path"

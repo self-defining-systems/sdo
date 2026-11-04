@@ -10,14 +10,14 @@ Work in the proposal checkout, in this order. Open other files only when a step 
 1. **Consider detection coverage.** If generic detection lagged a visible cause, use [detector authoring](../sdo-detector-authoring/SKILL.md) to add or refine a cause-specific incident detector on the resource it reads; aim for seconds on recurrence. Health detectors remain judge-owned. **Ask the check what is left.** Use supplied diagnostics without repeating a rejected probe. Otherwise call `check_memory` with `learning_decision: no_change` and a one-line `no_change_reason`.
    If it passes and no detection gap remains, return that decision immediately. Its diagnostics identify required work: uncovered hand
    repairs (`reflection.program-required`), applied playbooks that failed, left findings unresolved or needed a later hand repair
-   (`reflection.stale-playbook`: update or retire with a reason), and the decision to return when Go
+   (`reflection.stale-playbook`: update, narrow its Diagnose off a cause it does not fix, or retire), and the decision to return when Go
    already settled evidence in this checkout. Do not investigate or polish a passing covered incident.
-2. **Map each hand repair to a step.** Make a ledger from **all successful hand repairs** in the current outcome
-   (`repair_actions`, `plan_applications`), not only receipts named by diagnostics. Include generic menu
-   repairs and dependent Pod replacements; distinguish them from accepted playbook applications. Map each
-   receipt and repaired target to a program/action. Keep the exact API version, Kind and action
-   semantics from receipts when adapting an example. Each needs an executable step: the typed action matching what ran, or `RunScript` with the recorded bytes. README text and `sdk_gaps` never replace
-   a step; work not encoded yet is not an SDK gap. Group by failure mechanism; one program may cover several targets, but leave no performed repair unencoded.
+2. **Map each hand repair to a step.** Ledger **all successful hand repairs** in the outcome (`repair_actions`,
+   `plan_applications`), not only receipts diagnostics name, including generic menu repairs and dependent Pod
+   replacements, apart from accepted playbook applications. Map each receipt and target to a program/action,
+   keeping the receipt's API version, Kind and semantics. Each needs an executable step: the typed action that
+   ran, or `RunScript` with the recorded bytes; README text and `sdk_gaps` never replace a step (work
+   not encoded yet is not an SDK gap). Group by repair method; one program covers every component it repairs.
 3. **Copy the closest worked example** from `assets/examples/` (`playbooks/<id>/`, each passing the memory check): `deployment-source-drift`, `webhook-ca-sync`,
    `database-user-recovery`, `crashloop-script-repair` (RunScript). Exact signatures are on the
    [SDK card](references/sdk-card.md), grouped by fault.
@@ -37,19 +37,21 @@ Work in the proposal checkout, in this order. Open other files only when a step 
    then check again. Its `next` field says what to do: return or fix diagnostics.
 7. When `next` says return, return the same decision and IDs; do not polish passing memory.
 
-Keep revisions that applied cleanly unless this incident shows failure or incompleteness; add or narrowly edit, never rewrite working steps. Preserve verified partial steps. For source repairs, separate independent causes as described in
-[program notes](references/programs.md#source-restoration).
+Keep revisions that applied cleanly unless this incident shows failure or incompleteness; add or narrowly edit, never rewrite working steps. Preserve verified partial steps. Separate independent source-repair causes
+([program notes](references/programs.md#source-restoration)).
 
 ## Program rules
 
+- [One playbook per repair method](references/rules.md#one-playbook-per-repair-method), not per symptom or service.
 - Roles come from findings: one `ParamSpec` per object Kind. Read other objects through ReadView by
   relation (selector, owner, mount), never by app name; put unavoidable app facts in the README.
 - Write values only as `FromSource`, `FromObserved` or `FromParam` (a declared scalar with a default).
-- Diagnose returns Match on positive evidence, NoMatch when the fault is absent, and an error (Unknown)
-  when a read is unavailable. Check what the action needs, e.g. that the cause is gone before a restart.
+- Diagnose returns Match on positive evidence about the bound component, NoMatch when absent, an error
+  (Unknown) when a read is unavailable. A healthy, source-matching object is no evidence.
 - Mitigate returns to accepted or observed state; intended-state changes are source repairs. Prefer a
   narrow `SetField`; `ReconcileFromSource` restores a whole object. After a workload write, append
   `program.StalledRolloutRelease(v, ref)`.
+- A recorded `kubectl exec <pod>` becomes `EnsureExec` on a Pod of the bound workload, never a Pod name.
 - `RunScript`: inline bash byte-identical to the recorded command, application inputs only through
   relation-derived Env, and a successful accepted receipt for those bytes; preserve
   [each script revision's original receipt](references/script-receipts.md).
@@ -57,8 +59,7 @@ Keep revisions that applied cleanly unless this incident shows failure or incomp
   Link the script digest to its receipt ID in the case's `script_origins`.
 <!-- /replay:on -->
 
-- Credentials stay references (env or ConfigMap key); never read Secret data.
-- Learn into incident playbooks. The health judge owns `health-objective` and health detectors: never edit
+- Credentials stay references (env or ConfigMap key); never read Secret data. Learn into incident playbooks. The health judge owns `health-objective` and health detectors: never edit
   them; when its generic program applied and hand repairs followed, encode those in an incident playbook.
 - When the check reports that no finding binds a program's roles (`reflection.detector-required`), copy
   `assets/examples/detectors/crashloop-script-repair/` to `.sdo/diagnostics/detectors/incidents/<id>/`,
@@ -93,8 +94,7 @@ A case is `.sdo/corpus/<case-id>/`. Use a new ID; never edit or delete an accept
   [recorded client](references/kubernetes-client.md).
 - Stalled rollouts, database catalogs, routing probes, Service ports, per-cause work:
   [program notes](references/programs.md).
-- Full generated API: [program SDK](references/program-sdk.md).
-
-Generated API sections: [program-01](references/program-sdk/program-01.md),
-[program-02](references/program-sdk/program-02.md), [program-03](references/program-sdk/program-03.md),
-[program-04](references/program-sdk/program-04.md), [routing-01](references/program-sdk/routing-01.md).
+- Full generated API: [program SDK](references/program-sdk.md), sections
+  [01](references/program-sdk/program-01.md), [02](references/program-sdk/program-02.md),
+  [03](references/program-sdk/program-03.md), [04](references/program-sdk/program-04.md),
+  [routing](references/program-sdk/routing-01.md).

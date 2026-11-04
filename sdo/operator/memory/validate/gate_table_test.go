@@ -147,6 +147,42 @@ func gateReflection(name string, outcome *contracts.OutcomeRecord, decision *con
 		}}
 }
 
+// gateDuplicateRepair adds a second copy of an accepted program, reshaped by
+// change, as a new playbook in reflection.
+func gateDuplicateRepair(name string, change func(diagnose, mitigate string) (string, string), rules ...string) gateRow {
+	const source = ".sdo/playbooks/service-targetport-mismatch/"
+	row := gateRow{name: name, kind: gateCheck, actor: Responder, phase: ReflectionPhase, rules: rules,
+		baseMessage: gateOutcomeMessage,
+		prepare: func(t *testing.T, r string) {
+			for _, dir := range []string{"playbooks/service-targetport-mismatch", "lib"} {
+				copyTree(t, filepath.Join(gateProgramFixture, dir), filepath.Join(r, ".sdo", dir))
+			}
+			write(t, r, ".sdo/diagnostics/go.mod", gateRead(t, gateProgramFixture, "diagnostics/go.mod"))
+			generateIndex(t, r)
+			gateOutcome(gateClean())(t, r)
+		},
+		edit: func(t *testing.T, r string) {
+			rename := func(text string) string {
+				text = strings.ReplaceAll(text, "package targetport", "package apiport")
+				text = strings.ReplaceAll(text, `ID: "service-targetport-mismatch"`, `ID: "api-port-repair"`)
+				return strings.ReplaceAll(text, "Program checks whether", "Program decides whether")
+			}
+			diagnose, mitigate := change(rename(gateRead(t, r, source+"diagnose.go")), rename(gateRead(t, r, source+"mitigate.go")))
+			write(t, r, ".sdo/playbooks/api-port-repair/diagnose.go", diagnose)
+			write(t, r, ".sdo/playbooks/api-port-repair/mitigate.go", mitigate)
+			write(t, r, ".sdo/playbooks/api-port-repair/README.md", "---\nschema_version: 1\nowner: responder\nfault_class: api-port-repair\noriginating_incident: "+gateIncident+"\n---\n\nRestore the api Service port.\n")
+			generateIndex(t, r)
+		},
+		request: func(r *Request) {
+			r.Decision = gateUpdated("api-port-repair")
+			r.Publication = &PublicationContext{BaseCommit: "HEAD", IncidentID: gateIncident}
+		}}
+	if len(rules) > 0 {
+		row.path = ".sdo/playbooks/api-port-repair"
+	}
+	return row
+}
+
 var gateNoChange = &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "already covered"}
 
 func gateUpdated(ids ...string) *contracts.ReflectionDecision {
@@ -353,6 +389,29 @@ var gateRows = []gateRow{
 	gateReflection("sdk gap that is free text", gateHandRepair(gateRepairOutcome()),
 		&contracts.ReflectionDecision{LearningDecision: "sdk_gap", NoChangeReason: "needs a primitive", SdkGaps: []*contracts.SdkGap{{FaultClass: "routing", Primitive: "do the repair by hand", Reason: "no primitive", ScratchScript: "inspect"}}},
 		func(*testing.T, string) {}, RuleReflectionSDKGapUnavailable, RuleReflectionProgramRequired),
+	gateDuplicateRepair("new playbook copies an existing program modulo names and prose", func(diagnose, mitigate string) (string, string) {
+		return diagnose, strings.ReplaceAll(strings.ReplaceAll(mitigate, "use a selected pod port", "restore the api Service port"), "replacementValue", "value")
+	}, RuleDuplicateRepair),
+	func() gateRow {
+		row := gateDuplicateRepair("new playbook that repeats only the repair is noted", func(diagnose, mitigate string) (string, string) {
+			return strings.Replace(diagnose, "if len(pods) == 0 {", "if len(pods) < 2 {", 1), mitigate
+		})
+		row.notes = []string{RuleSharedRepair}
+		return row
+	}(),
+	gateDuplicateRepair("new playbook with a different repair passes", func(diagnose, mitigate string) (string, string) {
+		return diagnose, strings.ReplaceAll(mitigate, "spec.ports[%d].targetPort", "spec.ports[%d].port")
+	}),
+	gateReflection("program names a live Pod", gateClean(), gateUpdated("base"), func(t *testing.T, r string) {
+		gatePlaybookEdit(t, r)
+		write(t, r, ".sdo/playbooks/base/mitigate.go", "package base\n\nconst repair = `kubectl -n app exec cache-b4d5dbdbf-vdxd5 -- redis-cli ACL SETUSER default +@read`\n")
+	}, gateProgramInvalid, RuleLiveObjectName),
+	gateReflection("script names a live Pod", gateClean(), gateUpdated("base"), func(t *testing.T, r string) {
+		edit(t, r, ".sdo/playbooks/base/scripts/fix.sh", "\n", "\nkubectl exec api-7c9d8b6f45-x2lzq -- true\n")
+	}, RuleLiveObjectName),
+	gateReflection("script names a StatefulSet Pod and a Service", gateClean(), gateUpdated("base"), func(t *testing.T, r string) {
+		edit(t, r, ".sdo/playbooks/base/scripts/fix.sh", "\n", "\nkubectl exec cache-0 -- true # svc/post-storage-service\n")
+	}),
 	{name: "accepted corpus case rewritten", kind: gateCheck, actor: Responder, phase: ReflectionPhase, rules: []string{gateProgramInvalid, RuleCorpusImmutable},
 		prepare: func(t *testing.T, r string) {
 			gateOutcome(gateClean())(t, r)

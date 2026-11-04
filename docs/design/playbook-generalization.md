@@ -1,6 +1,6 @@
 # Playbook generalization: localize, deduplicate, organize by repair method
 
-Status: proposed (2026-11-04). Evidence: live SREGym rounds P4/P5 on social-network
+Status: proposed (2026-11-04), revised after an adversarial review (see "Review changes"). Evidence: live SREGym rounds P4/P5 on social-network
 (process_frozen, pod network impairment, Redis ACL revoked).
 
 ## Problem
@@ -63,12 +63,9 @@ validating until edited):
   dropped, local identifiers and role names canonicalized by first use / spec order, prose fields
   (`Reason`, `Rationale`, `Fact`, `Observed`, `Expected`, `Summary`, `Description`) erased, and the
   program ID and accepted-source object names replaced by placeholders. Exact match only, no
-  thresholds. Hint: refine the existing playbook (widen its `Diagnose` or incident detector, bind the
-  component by role) instead of adding a per-symptom or per-service copy.
-- `detector.literal-binding`: a changed responder incident detector assigns `ParameterBindings` an
-  `ObjectRef` whose `Name` is a string literal. Hint: bind from the finding's resources or
-  `localize.BindSuspects`. (Lands with (a), so the hint names an API that exists.)
-
+  thresholds. A copy of the whole program (Diagnose too) is rejected; repeating only the Mitigate is the
+  non-blocking note `playbook.shared-repair` (see "Review changes"). Hint: refine the existing playbook
+  instead of adding a per-symptom or per-service copy.
 ### (c) Skill guidance (same PRs as the behavior)
 
 `sdo-playbook-authoring` and `sdo-detector-authoring`: a playbook is one repair method, named for the
@@ -77,6 +74,30 @@ component; a new cause for an existing repair widens that playbook's `Diagnose`;
 a new playbook, not an extra action in a symptom playbook; never add a required role no detector binds
 (derive Pods from the bound workload); gate diagnose on `Implicates`; when a recorded command names a
 live Pod, encode a typed exec instead of `RunScript`. Rule references in `references/rules.md`.
+
+## Review changes
+
+An independent review found that the note blamed the wrong mechanism first and that two checks were unsafe:
+
+- Over-binding comes from the SDK: `program.BindFinding` applies a finding's named `ParameterBindings` to every
+  program with a role of that name, whatever the finding's `Playbooks` list says. The home-timeline detector's
+  binding therefore reached the user-timeline program (C3: wrong Redis) and vice versa (B4). Fix the class in
+  the SDK: named bindings apply only to programs the finding lists (or to all when it lists none). This fixes
+  existing memory without relearning; unnamed binding from finding resources is unchanged.
+- The validator itself steered C1 to a `redis-pod` role: the `reflection.program-required` hint told reflection
+  to bind the receipt's Pod. The hint now names the Pod's recorded owning workload.
+- A blocking "same Mitigate" rule would have rejected the first stall playbook in favour of
+  `workload-stale-oom-restart` (identical Mitigate) and invited merging a vacuous Diagnose into a broad playbook.
+  Now: an exact copy of a whole program (Diagnose and Mitigate) is rejected (`playbook.duplicate-repair`); a
+  new playbook that repeats only the Mitigate is a non-blocking note (`playbook.shared-repair`).
+- Folding (a new repair added to a symptom playbook) is not caught by any static rule; the skill text owns it,
+  including "narrow a stale playbook's Diagnose off a cause it does not fix".
+- Localization by subtracting healthy journeys is unsound when requests skip dependencies (cache hits, empty
+  timelines); `localize` therefore ranks components (on every failing path; own reachability/link failures)
+  instead of hard subtraction, consumes traffic and reachability explicitly, and treats a missing window as
+  Unknown. It ships after the binding fix, which delivers most of the reuse-wave value.
+- `detector.literal-binding` is dropped: once named bindings are scoped to the detector's own playbooks, a
+  literal binding no longer leaks into other programs.
 
 ## Testing (deterministic)
 
