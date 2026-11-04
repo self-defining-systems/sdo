@@ -8,6 +8,7 @@ import (
 	"sdo.dev/operator/runtime/prober"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/inputs"
+	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/sdk/traffic"
@@ -62,5 +63,41 @@ func TestCapturedSnapshotKeepsTheObservationsDetectorsRead(t *testing.T) {
 	detector := traffic.NewDetector(sdk.DetectorSpec{ID: "journey-stall", Class: sdk.DetectorClassIncident}, "health")
 	if violations := sdktest.HealthyBaselineViolations(detector, []sdktest.Snapshot{captured}); len(violations) > 0 {
 		t.Fatalf("traffic detector fails the healthy replay of a capture: %v", violations)
+	}
+}
+
+// The controller evaluates detectors on its cycle read view (P8: learned
+// detectors guarding on traffic.WindowSet never fired live) (a recording,
+// caching wrapper around the live view). Every observation the capture keeps
+// must pass through that wrapper too: P8's healthy capture of the cycle view
+// had reachability and alerts but no traffic windows or metric results.
+func TestCycleReadViewCaptureKeepsEveryObservationWindow(t *testing.T) {
+	now := time.Unix(1000, 0).UTC()
+	source := sdktest.Snapshot{NamespaceName: "app", ObservedAtTime: &now,
+		Traffic:      map[string]traffic.Window{"health": {Workload: traffic.Workload{Name: "health"}, ObservedAt: now}},
+		Metrics:      map[string]metrics.Result{"p99": {Error: "synthetic"}},
+		Alerts:       &metrics.AlertsResult{Error: "synthetic"},
+		Reachability: &servicehealth.ReachabilityWindow{ObservedAt: now, Failures: 3}}
+	want, err := sdktest.CaptureSnapshot(source, "app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cycle := NewCycleReadView(LiveReadView{Carrier: inputs.New(source), Context: context.Background()})
+	// Live detection: learned detectors guard on these sets of the view they
+	// are evaluated on; a guard that is always false never fires.
+	var view sdk.DetectionContext = cycle
+	if set, ok := view.(traffic.WindowSet); !ok || len(set.TrafficWindows()) != 1 {
+		t.Fatal("detectors on the cycle read view cannot list traffic windows")
+	}
+	if set, ok := view.(metrics.ResultSet); !ok || len(set.MetricResults()) != 1 {
+		t.Fatal("detectors on the cycle read view cannot list metric results")
+	}
+	got, err := sdktest.CaptureSnapshot(cycle, "app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Traffic) != len(want.Traffic) || len(got.Metrics) != len(want.Metrics) || (got.Alerts == nil) != (want.Alerts == nil) || (got.Reachability == nil) != (want.Reachability == nil) {
+		t.Fatalf("cycle-view capture lost observations: traffic %d/%d metrics %d/%d alerts %v reachability %v",
+			len(got.Traffic), len(want.Traffic), len(got.Metrics), len(want.Metrics), got.Alerts != nil, got.Reachability != nil)
 	}
 }

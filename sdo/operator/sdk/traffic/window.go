@@ -49,8 +49,10 @@ type Source interface {
 	TrafficWindow(workload string) (Window, bool)
 }
 
-// WindowSet is implemented by sources that can list every window they carry,
-// so a capture of the detection context keeps them for replay.
+// WindowSet lists every window a source carries, so a capture of the
+// detection context keeps them for replay. Every program.ReadView, the
+// controller's live view, the memory host's view and recorded snapshots
+// implement it; a source without traffic returns an empty map.
 type WindowSet interface {
 	TrafficWindows() map[string]Window
 }

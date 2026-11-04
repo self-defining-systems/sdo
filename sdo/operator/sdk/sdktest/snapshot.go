@@ -3,6 +3,7 @@ package sdktest
 import (
 	batchv1 "k8s.io/api/batch/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"maps"
 	"sort"
 	"time"
 
@@ -115,6 +116,12 @@ func (s Snapshot) TrafficWindow(workload string) (traffic.Window, bool) {
 	window, ok := s.Traffic[workload]
 	return window, ok
 }
+
+// TrafficWindows implements traffic.WindowSet: the recorded windows.
+func (s Snapshot) TrafficWindows() map[string]traffic.Window { return maps.Clone(s.Traffic) }
+
+// MetricResults implements metrics.ResultSet: the recorded results.
+func (s Snapshot) MetricResults() map[string]metrics.Result { return maps.Clone(s.Metrics) }
 
 // MetricResult implements metrics.Source.
 func (s Snapshot) MetricResult(id string) (metrics.Result, bool) {
