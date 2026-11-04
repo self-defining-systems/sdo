@@ -571,6 +571,28 @@ def _wait_for_installed_controller(
             time.sleep(wait_for(WaitKind.POLL))
 
 
+_PRODUCTION_REGISTRATIONS = Path(__file__).resolve().parents[3] / "sdo" / "agents" / "registrations"
+_LIFECYCLE_ROLES = ("source-deployment", "health-judge")
+
+
+def lifecycle_workers_unchanged(override: Path, production: Path = _PRODUCTION_REGISTRATIONS) -> bool:
+    """A fresh install may use an override (such as the live recorder) whose lifecycle workers are the
+    production ones: same agent, capabilities and command; only the image may differ."""
+
+    def worker(directory: Path, role: str) -> tuple[Any, ...] | None:
+        try:
+            value = json.loads((directory / f"{role}.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        job = value.get("kubernetes_job") or {}
+        return (value.get("agent_id"), json.dumps(value.get("capabilities"), sort_keys=True), job.get("command"))
+
+    return all(
+        worker(override, role) is not None and worker(override, role) == worker(production, role)
+        for role in _LIFECYCLE_ROLES
+    )
+
+
 def _has_accepted_lifecycle(repository: Path) -> bool:
     """Select seeded installation; the Go installer independently validates memory.
 
@@ -648,7 +670,11 @@ def _launch_native_lifecycle(
 ) -> dict[str, Any]:
     """Provision benchmark transport, then run the production Go host lifecycle."""
 
-    if args.agent_registrations and not _has_accepted_lifecycle(repository):
+    if (
+        args.agent_registrations
+        and not _has_accepted_lifecycle(repository)
+        and not lifecycle_workers_unchanged(Path(args.agent_registrations))
+    ):
         raise ValueError("worker registration override requires an accepted lifecycle seed")
     kind_cluster_name = (args.kind_cluster_name or os.getenv("SREGYM_KIND_CLUSTER_NAME", "")).strip()
     if not kind_cluster_name:
