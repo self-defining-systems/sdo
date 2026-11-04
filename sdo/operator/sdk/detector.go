@@ -149,6 +149,17 @@ type Finding struct {
 	Metadata          map[string]any       `json:"metadata,omitempty"`
 }
 
+// FindingFingerprint is a finding's identity within its detector: its own
+// Fingerprint, or by default its detector, rule and primary resource. Two
+// active findings of one detector with the same fingerprint are one finding.
+func FindingFingerprint(finding Finding) string {
+	if finding.Fingerprint != "" {
+		return finding.Fingerprint
+	}
+	resource := finding.PrimaryResource
+	return finding.DetectorID + "/" + finding.RuleID + "/" + resource.Namespace + "/" + resource.Kind + "/" + resource.Name
+}
+
 // ServiceExpectsEndpoints reports whether Kubernetes can back a Service with
 // Endpoints, EndpointSlices, or selected pods. ExternalName Services are DNS
 // aliases: Kubernetes never gives them endpoints, even when a selector is left

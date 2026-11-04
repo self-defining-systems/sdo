@@ -45,6 +45,11 @@ func DecodeTypedObjects(target any, objects []unstructured.Unstructured) error
     map. New kinds remain in Objects and are available through ObjectReader.
 
 func FindObject(objects []unstructured.Unstructured, ref ObjectRef) (*unstructured.Unstructured, error)
+func FindingFingerprint(finding Finding) string
+    FindingFingerprint is a finding's identity within its detector: its own
+    Fingerprint, or by default its detector, rule and primary resource. Two
+    active findings of one detector with the same fingerprint are one finding.
+
 func FormatObjectRef(ref ObjectRef) (string, error)
     FormatObjectRef returns canonical text. Non-default API versions are
     retained explicitly. JSON is used when slash text would select legacy
@@ -243,20 +248,4 @@ const (
 	DetectorOwnerHealthJudge DetectorOwner = "health_judge"
 	DetectorOwnerResponder   DetectorOwner = "responder"
 )
-type DetectorSpec struct {
-	ID          string
-	Class       DetectorClass
-	Owner       DetectorOwner
-	Description string
-	Watches     []WatchKind
-	Interval    time.Duration
-	Persistence PersistencePolicy
-	Batching    BatchingPolicy
-	// Playbooks are logical playbook IDs (for example "cache-pressure"), never paths.
-	Playbooks           []string
-	OriginatingIncident string
-	OriginatingCommit   string
-}
-
-type DriftClassification string
 ```

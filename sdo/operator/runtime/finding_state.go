@@ -299,11 +299,7 @@ func persistedLongEnough(policy sdk.PersistencePolicy, firstSeenAt time.Time, no
 }
 
 func FindingFingerprint(finding sdk.Finding) string {
-	if finding.Fingerprint != "" {
-		return finding.Fingerprint
-	}
-	resource := finding.PrimaryResource
-	return finding.DetectorID + "/" + finding.RuleID + "/" + resource.Namespace + "/" + resource.Kind + "/" + resource.Name
+	return sdk.FindingFingerprint(finding)
 }
 
 func FindingStateKey(detectorID string, fingerprint string) string {

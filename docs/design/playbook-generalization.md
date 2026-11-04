@@ -29,18 +29,23 @@ program (no new observation, no runtime or proto change):
 
 - `localize.FromContext(ctx sdk.DetectionContext, workload string) Result` judges the health traffic
   window (`traffic.Judge`) and does path algebra over scenario paths (`Target.Service` + `DependsOn`):
-  suspects = intersection of failing paths minus every path of a healthy, evaluated scenario (if the
-  intersection is empty, the union of per-failing differences). When the service-reachability window
-  shows sustained dial failures for some suspects, the set narrows to those. Each suspect Service maps
-  to its backing Deployment/StatefulSet by selector, sorted, with an evidence string.
+  suspects = the components on every failing path (when the failing paths share none, on any failing
+  path) plus every Service with sustained dial failures of its own, even one no scenario lists. A
+  healthy scenario never removes a suspect, and dial failures never narrow the set: membership of a
+  healthy path and dial failures only order suspects (see "Review changes"). Each suspect Service maps
+  to its backing Deployment/StatefulSet by selector, with an evidence string.
 - `Result.Implicates(ref) (bool, string)`: diagnose gate; a program returns NoMatch for a component the
   current findings do not implicate.
 - `localize.BindSuspects(f sdk.Finding, r Result, role string) []sdk.Finding`: an incident detector
   emits one finding per suspect workload with `ParameterBindings[role]`, instead of a literal name.
+  Each copy's fingerprint is the finding's fingerprint (or the controller default,
+  `sdk.FindingFingerprint`) suffixed by the workload, so the copies stay distinct findings.
 
 Examples (synthetic shapes of P5 rows): post-storage delay fails both timeline reads while the landing
-page is healthy -> {post-storage-service, its cache, its store}, narrowed by reachability;
-home-timeline Redis ACL -> {home-timeline-service, home-timeline-redis}; the ACL program's own
+page is healthy -> {post-storage-service, its cache, its store} first, then the front end both reads
+share (reachability failures rank first);
+home-timeline Redis ACL -> {home-timeline-service, home-timeline-redis} (plus any front end on the
+failing path), even when a healthy write lists the Redis; the ACL program's own
 evidence (an `Observe` of `ACL DRYRUN` on the bound Redis's Pod) then selects the Redis.
 
 Ownership: SDK (production, deterministic, no I/O). Health detectors and the judge are unchanged.
@@ -96,6 +101,13 @@ An independent review found that the note blamed the wrong mechanism first and t
   timelines); `localize` therefore ranks components (on every failing path; own reachability/link failures)
   instead of hard subtraction, consumes traffic and reachability explicitly, and treats a missing window as
   Unknown. It ships after the binding fix, which delivers most of the reuse-wave value.
+- A second review (SWEEP1) found that keeping only the top score still subtracted: a culprit a healthy
+  journey also lists (an ACL-revoked Redis that a healthy write lists, with TCP dials still succeeding)
+  scored below its handler and was excluded. Suspects are now every component on every failing path plus
+  every Service failing its own dials, scores only order them, and BindSuspects copies without a
+  detector fingerprint get distinct ones. The cost is precision: a shared front end on every failing path
+  is a suspect too, so a program must gate on its own evidence on the bound component, never on
+  `Implicates` alone.
 - `detector.literal-binding` is dropped: once named bindings are scoped to the detector's own playbooks, a
   literal binding no longer leaks into other programs.
 
