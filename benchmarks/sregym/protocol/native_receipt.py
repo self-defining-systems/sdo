@@ -55,6 +55,24 @@ def _evaluate(receipt: dict[str, Any], *, build: bool) -> dict[str, Any]:
     return receipt
 
 
+#: Resolutions Go gives a rejected receipt whose outcome SDO itself classified as not verified.
+UNVERIFIED_RESOLUTIONS = frozenset({"sdo_failed", "sdo_unconfirmed"})
+
+
+def unverified_outcome(receipt: dict[str, Any]) -> tuple[str, str] | None:
+    """``(classification, resolution)`` when SDO's own outcome says the closure was not verified.
+
+    A ``failed`` or ``unconfirmed`` outcome is a measurement of SDO, not a harness fault: its
+    receipt is rejected by design (nothing was verified) yet its Go-derived summary is intact.
+    Wire corruption carries no such summary, so it is never mistaken for one.
+    """
+
+    classification, resolution = receipt.get("outcome_classification"), receipt.get("resolution")
+    if isinstance(classification, str) and isinstance(resolution, str) and resolution in UNVERIFIED_RESOLUTIONS:
+        return classification, resolution
+    return None
+
+
 def native_receipt_resolution(receipt: dict[str, Any]) -> str:
     """Read the Go-derived classification summary without crediting validation."""
 

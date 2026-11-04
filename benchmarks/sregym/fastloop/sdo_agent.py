@@ -51,6 +51,7 @@ from benchmarks.sregym.fastloop.records import AgentName, PostClosureWait, Recov
 from benchmarks.sregym.fastloop.replay import CheckpointStore, capture_checkpoints
 from benchmarks.sregym.protocol import receipt_resolution
 from benchmarks.sregym.protocol.injection import ensure_incident_follows_injection
+from benchmarks.sregym.protocol.native_receipt import unverified_outcome
 from benchmarks.sregym.protocol.provider_capacity import (
     RateLimitedRun,
     capacity_prevented_completion,
@@ -510,7 +511,7 @@ class SdoPersistentAgent:
                 clock=self._clock,
                 evidence=self._queued_evidence(receipt_dir),
             )
-            if drained.HasField("failure"):
+            if drained.HasField("failure") and unverified_outcome(self._receipt(receipt_dir)) is None:
                 error = f"strict receipt rejected: {drained.failure.message}"
         finally:
             queued = self._evidence_queue is not None and (
@@ -544,12 +545,15 @@ class SdoPersistentAgent:
 
             export_closure_failure_evidence(self._ops, settings.runtime_config.control_namespace, receipt_dir)
             raise RuntimeError(f"incident {outcome.incident_id!r} receipt missing after reflection drain")
-        # Only a receipt that passed strict validation states how the incident closed.
-        resolution = (
-            receipt.get("resolution") or receipt_resolution(receipt)
-            if (receipt_dir / STRICT_RECEIPT_FILENAME).is_file()
-            else None
-        )
+        # Only a receipt that passed strict validation states a verified closure; a rejected receipt
+        # still names SDO's own unverified outcome.
+        unverified = unverified_outcome(receipt)
+        if (receipt_dir / STRICT_RECEIPT_FILENAME).is_file():
+            resolution = receipt.get("resolution") or receipt_resolution(receipt)
+        else:
+            # SDO's own unverified outcome (failed, unconfirmed) is a result, labelled by Go's rejection.
+            resolution = unverified[1] if unverified else None
+        classification = receipt.get("outcome_classification")
         memory = receipt.get("memory_reuse")
         memory = memory if isinstance(memory, dict) else {}
         skipped = receipt.get("reflection_skipped_reason")
@@ -610,6 +614,7 @@ class SdoPersistentAgent:
             reflection_no_repair_count=_receipt_no_repair_count(receipt),
             closure_phase_seconds=closure_phases,
             sdo_resolution=resolution if isinstance(resolution, str) else None,
+            sdo_outcome_classification=classification if isinstance(classification, str) else None,
             **program_metrics,
             error=error,
         )

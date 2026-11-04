@@ -304,6 +304,8 @@ class IncidentRecord(_PersistedModel):
     #: ``sdo_mitigated``, ``external_recovery`` or ``cleared_without_sdo_action`` from the validated strict
     #: receipt; ``None`` for the baseline or when no receipt validated.
     sdo_resolution: str | None = None
+    #: SDO's own outcome classification from its receipt, including ``failed`` and ``unconfirmed`` closures.
+    sdo_outcome_classification: str | None = None
     #: Wall time from verified recovery until reflection and detector rollout were live.
     reflection_seconds: float | None = None
     baseline_gate_seconds: float | None = None
