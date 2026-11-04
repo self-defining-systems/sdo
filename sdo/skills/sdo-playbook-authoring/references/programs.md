@@ -25,6 +25,25 @@ The authoring reference tool supplies the routing example.
   names in documented built-in selections against the executor descriptor; object namespaces belong in
   their typed references, not invented top-level parameters. Prefer typed executable steps over recipes.
 
+## Localized components
+
+A playbook binds the component it repairs (`deployment`, `statefulset`), so one program serves every component
+with that failure. For a journey symptom, gate Diagnose on the component being a suspect of the failing
+journeys, then check the repair's own evidence on it (an exec, status, log):
+
+```go
+result, err := localize.FromContext(v, "health") // ErrNoTraffic: return it (Unknown)
+if err != nil {
+	return program.Verdict{}, err
+}
+if ok, why := result.Implicates(ref); !ok {
+	return program.Verdict{Result: program.NoMatch, Evidence: []program.Evidence{{Resource: ref, Fact: "localization", Observed: why}}}, nil
+}
+```
+
+`Implicates` alone is not a diagnosis; a healthy, source-matching workload is not evidence either. Find the
+workload's Pods by owner (ReplicaSet, then Pod) for `Command{Pod: ...}` instead of naming a Pod.
+
 ## Source restoration
 
 Choose playbooks by failure mechanism. Admission mutation, resource exhaustion and old-revision

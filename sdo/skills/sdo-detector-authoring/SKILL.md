@@ -22,8 +22,7 @@ clock, network access or benchmark data. Measure ages with `sdk.ObservationTime(
 4. Explore matching cases and near misses with the [generated replay API](references/replay.md).
 <!-- /replay:on -->
    Replay and test verdicts are information, never a save gate; keep unavailable observations explicit.
-   The [restart-loop source](assets/restart-loop/detector.go) and
-   [tests](assets/restart-loop/detector_test.go) show the current detector interface.
+   The [restart-loop source](assets/restart-loop/detector.go) and [tests](assets/restart-loop/detector_test.go) show the interface.
 5. Use shell tools to inspect and edit the proposal; run the complete memory check before returning. The broker repeats it independently.
 
 For synthetic traffic scenarios, workloads and links, read the [traffic reference](references/traffic.md).
@@ -37,9 +36,11 @@ Use `program.ReadFrom(ctx)` for the shared detector/Diagnose surface; read the
 Use the [recorded Kubernetes client](../sdo-playbook-authoring/references/kubernetes-client.md) for typed or dynamic API reads.
 Detectors can call `ctx.DiffAgainstSource(ref)` directly.
 `Changed` covers field drift and source-absent objects; `SourceAbsent` requires a successful accepted-source lookup.
-Bind playbooks through findings. The shared view adds `LogsWithOptions` (previous instances), `PodUsage`/`NodeUsage`, probes, baseline diffs, metric queries, alerts and traffic.
-The runtime caches identical reads per snapshot and records actual results and failures for offline replay.
-Logs are capped at 64 KiB / 5 s; probes at 5 s. Read failures are errors/Unknown, never clearance;
+Bind playbooks through findings, to the faulty component only: for a journey failure embed `localize.Inputs` and
+return `localize.BindSuspects` of `localize.FromContext`, not a literal name.
+The shared view adds previous-instance logs, usage, probes, baseline diffs, metric queries, alerts and traffic.
+The runtime caches reads per snapshot and records results and failures for replay.
+Logs cap at 64 KiB/5 s, probes at 5 s. Read failures are errors/Unknown, never clearance;
 a successful probe with `Success:false` is an observed failure. Keep always-on reads cheap and use Diagnose for depth.
 Test using `sdktest.Snapshot.Readings` plus phase recordings; never fill absent evidence with healthy answers.
 
