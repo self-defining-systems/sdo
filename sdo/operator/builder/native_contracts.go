@@ -193,7 +193,7 @@ func TestIncidentDetectorsStayQuietOnHealthyBaseline(t *testing.T) {
     for _, detector := range All() {
         if detector.Spec().Class != sdk.DetectorClassIncident { continue }
         for _, violation := range sdktest.HealthyBaselineViolations(detector, snapshots) {
-            t.Fatal("detector.healthy-baseline: " + violation)
+            t.Error("detector.healthy-baseline[" + detector.Spec().ID + "]: " + violation)
         }
     }
 }

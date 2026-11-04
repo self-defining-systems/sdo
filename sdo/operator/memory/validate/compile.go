@@ -24,6 +24,10 @@ var goTestDuration = regexp.MustCompile(`(?m)(?:\t(?:[0-9]+\.[0-9]+s|\(cached\))
 // output can retain a relative or absolute path to an earlier isolated build.
 var goLocation = regexp.MustCompile(`(?m)^(?:vet: )?(?:\./)?(?:(?:[^\r\n:]*/)?sdo-operator-build-[^/\s:]+/)?((?:detectors|traffic|playbooks|lib|generated)/[^\s:]+\.go):(\d+)(?::\d+)?: (.+)$`)
 
+// healthyBaselineViolation is one generated healthy-baseline test failure:
+// the incident detector ID and the violation.
+var healthyBaselineViolation = regexp.MustCompile(`(?m)detector\.healthy-baseline\[([a-z0-9][a-z0-9_.-]*)\]: (.+?)\s*$`)
+
 // compile builds the detectors against the SDK in an isolated workspace, then
 // vets and tests them. It executes detector code: the broker invokes it in
 // its bounded subprocess; agent self-checks invoke the same runner locally.
@@ -100,7 +104,20 @@ func (s *run) compile(ctx context.Context) error {
 		rule = RuleDetectorTest
 	}
 	if strings.Contains(stage.Output, RuleDetectorHealthyBaseline) {
-		s.add(Compile, Diagnostic{Rule: RuleDetectorHealthyBaseline, Path: layout.DiagnosticsDir, Message: goTestDuration.ReplaceAllString(stage.Output, ""), Hint: "incident detectors must stay quiet on the controller-captured healthy state"})
+		const hint = "incident detectors must stay quiet on the controller-captured healthy state"
+		// Each violation names its detector, so Check can tell a fault of
+		// the candidate's detector from one of an unchanged accepted detector.
+		matches := healthyBaselineViolation.FindAllStringSubmatch(stage.Output, -1)
+		seen := map[string]bool{}
+		for _, match := range matches {
+			if key := match[1] + "\x00" + match[2]; !seen[key] {
+				seen[key] = true
+				s.add(Compile, Diagnostic{Rule: RuleDetectorHealthyBaseline, Path: layout.DetectorDir(layout.ClassIncident, match[1]), Message: match[2], Hint: hint})
+			}
+		}
+		if len(matches) == 0 {
+			s.add(Compile, Diagnostic{Rule: RuleDetectorHealthyBaseline, Path: layout.DiagnosticsDir, Message: goTestDuration.ReplaceAllString(stage.Output, ""), Hint: hint})
+		}
 		return nil
 	}
 	if strings.Contains(stage.Output, RuleDetectorControllerStart) {

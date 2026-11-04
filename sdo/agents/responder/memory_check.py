@@ -67,6 +67,32 @@ def prior_timeout() -> ValidationResult | None:
     return None
 
 
+# Failed check_memory calls one reflection attempt may make. Each correction
+# turn starts a new tool server, so the count lives beside the attempt's
+# timeout latch. P7 spent up to 13M tokens on a fault no edit could fix.
+MAX_FAILED_MEMORY_CHECKS = 6
+_FAILED_CHECKS_SUFFIX = ".failed-checks"
+
+
+def failed_checks(local: int) -> int:
+    """Failed checks this reflection attempt has made, at least ``local``."""
+    if (path := os.environ.get(VALIDATION_TIMEOUT_FILE_ENV)) and Path(path + _FAILED_CHECKS_SUFFIX).is_file():
+        try:
+            return max(local, int(Path(path + _FAILED_CHECKS_SUFFIX).read_text(encoding="utf-8")))
+        except ValueError:
+            # A worker-writable counter can only spend the budget, never grant checks.
+            return MAX_FAILED_MEMORY_CHECKS
+    return local
+
+
+def remember_failed_check(local: int) -> int:
+    """Count one more failed check for this reflection attempt and return the total."""
+    count = failed_checks(local) + 1
+    if path := os.environ.get(VALIDATION_TIMEOUT_FILE_ENV):
+        Path(path + _FAILED_CHECKS_SUFFIX).write_text(str(count), encoding="utf-8")
+    return count
+
+
 def validation_output(raw: bytes) -> str:
     return raw.decode("utf-8", errors="replace")
 
