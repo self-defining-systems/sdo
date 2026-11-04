@@ -59,7 +59,15 @@ class OracleBaselines:
             parts = details.get("oracles", [])
             if len(parts) != len(baseline_parts):
                 raise ValueError("oracle component contract changed since healthy rehearsal")
-            invalid = [i for i, part in enumerate(baseline_parts) if part.get("success") is not True]
+            # An oracle that is inconclusive while healthy (it needs state its own injection records,
+            # such as a seeded-data snapshot) is not shown invalid by the rehearsal: once it gives a
+            # conclusive verdict, that verdict is graded. It stays excluded while it is inconclusive.
+            invalid = [
+                i
+                for i, part in enumerate(baseline_parts)
+                if part.get("success") is not True
+                and not (part.get("inconclusive") is True and parts[i].get("inconclusive") is not True)
+            ]
             if not invalid:
                 return grade
             if any(

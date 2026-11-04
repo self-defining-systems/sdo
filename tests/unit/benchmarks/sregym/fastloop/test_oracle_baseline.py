@@ -226,3 +226,30 @@ def test_rehearsal_preserves_independent_traffic_failure_evidence(tmp_path):
     verdict = rehearse("p")
     assert verdict["details"]["traffic_detail"] == "HTTP 500"
     assert verdict["details"]["collateral_ok"] is False
+
+
+def _inconclusive(name="fault_0:Synthetic"):
+    return {"name": name, "success": False, "inconclusive": True, "reason": "inconclusive"}
+
+
+def _grade_parts(parts):
+    ok = all(part.get("success") is True for part in parts)
+    return {
+        "kind": "sregym-mitigation-oracle",
+        "success": ok,
+        "details": {"success": ok, "collateral_ok": True, "traffic_ok": True, "oracles": parts},
+    }
+
+
+def test_oracle_inconclusive_while_healthy_still_grades_its_conclusive_verdict(tmp_path):
+    baseline = OracleBaselines(tmp_path / "oracles.json", "seed")
+    prepared = baseline.rehearse("p", lambda: _grade_parts([_inconclusive()]))
+    # The no-fault rehearsal and the post-recovery check cannot judge it, so they do not fail on it.
+    assert prepared["success"] is True
+    assert baseline.apply("p", _grade_parts([_inconclusive()]))["success"] is True
+    # After injection the oracle is conclusive: a failed verdict (a decoy) fails, a pass passes.
+    failed = baseline.apply("p", _grade_parts([{"name": "fault_0:Synthetic", "success": False}]))
+    assert failed["success"] is False
+    assert failed["details"].get("oracle_invalid", 0) == 0
+    passed = baseline.apply("p", _grade_parts([{"name": "fault_0:Synthetic", "success": True}]))
+    assert passed["success"] is True

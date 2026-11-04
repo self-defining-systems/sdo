@@ -686,7 +686,8 @@ def _sdo_agent(
 
             install_controller(environment, runtime_config)
         else:
-            launch_native_lifecycle(runtime_config, context.health_objective, "")  # type: ignore[attr-defined]
+            objective = lifecycle_objective(context.health_objective, getattr(args, "goal", None))  # type: ignore[attr-defined]
+            launch_native_lifecycle(runtime_config, objective, "")
         return False
 
     agent_arguments = {
@@ -712,6 +713,12 @@ def _sdo_agent(
         check_continuity=environment.app == "toy",
         evidence_queue=evidence_queue,
     )
+
+
+def lifecycle_objective(generated: str, goal: str | None) -> str:
+    """The human goal a fresh-memory install publishes: the operator's own goal when one is given
+    (the deployer prompt budgets it at 256 characters), else the adapter's generated objective."""
+    return goal.strip() if goal and goal.strip() else generated
 
 
 def _wipes_at_row_start(args: argparse.Namespace, environment: FastloopEnvironment) -> bool:
@@ -785,6 +792,11 @@ def recreate_application(
         )
         if deployed.get("deployed") is not True or not deployed.get("health", {}).get("healthy"):
             raise RuntimeError("eval: recreated application did not prove healthy deployment")
+        if environment.namespace == "social-network":
+            # A recreated namespace has empty stores; rows read the same fixture `reset` restores.
+            from benchmarks.sregym.fastloop.social_fixture import restore_social_fixture
+
+            restore_social_fixture(environment.kubeconfig)
         _recapture_application_baseline(environment)
 
     run_tier2(
@@ -1773,6 +1785,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="executable the lane keeper provides; called with the SDO namespace to re-provision its credentials "
         "after the row-start wipe (required for non-toy SDO rows)",
+    )
+    run.add_argument(
+        "--goal",
+        help="fresh-memory installs only: the human goal to publish instead of the generated one (for example "
+        "one naming write journeys the health judge must check); at most 256 characters",
     )
     run.add_argument(
         "--planned-commit",
