@@ -115,3 +115,29 @@ func TestRawTagRejectionIsActionable(t *testing.T) {
 		})
 	}
 }
+
+type failingResolver struct{ err error }
+
+func (f failingResolver) ResolveImage(context.Context, string) (string, error) { return "", f.err }
+
+// The deployer is told what fits the failure: retry for a rate limit or a
+// network error, a different reference for a missing or private image.
+func TestRawTagRejectionAdviceFollowsTheFailure(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err         error
+		want, avoid string
+	}{
+		"rate limited": {&ResolveError{Kind: ResolveTransient, Err: errors.New("registry answered 429")}, "retry the deploy", "Name an existing tag"},
+		"missing":      {&ResolveError{Kind: ResolveMissing, Err: errors.New("registry has no such tag")}, "Name an existing tag", "retry the deploy"},
+		"private":      {&ResolveError{Kind: ResolveUnauthorized, Err: errors.New("denied")}, "Name an existing tag", "retry the deploy"},
+		"refused":      {&ResolveError{Kind: ResolveRefused, Err: errors.New("not a public registry name")}, "public registry name", "retry the deploy"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			strategy := RawStrategy{Namespace: "demo", Backend: &fakeRawBackend{}, Resolver: failingResolver{tc.err}}
+			_, err := strategy.ApplyAndVerify(context.Background(), writeTagManifest(t, "redis:6.2.4"), "tree", rawPlan())
+			if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), tc.avoid) || !strings.Contains(err.Error(), "@sha256:") {
+				t.Fatalf("advice %v must contain %q and not %q", err, tc.want, tc.avoid)
+			}
+		})
+	}
+}

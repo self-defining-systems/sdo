@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sdo.dev/operator/contracts/settings"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"sdo.dev/operator/artifacts"
@@ -87,7 +88,7 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		RegistryInsecure:    config.Install.RegistryInsecure,
 		ServiceAccount:      "sdo-image-builder",
 	}
-	readiness, err := deployment.NewRegistry(deployment.RawRegistration("raw-manifests-v1", config.Lifecycle.Namespace, buildBackend, deployment.RegistryResolver{InsecureHost: insecureRegistryHost(config)}))
+	readiness, err := deployment.NewRegistry(deployment.RawRegistration("raw-manifests-v1", config.Lifecycle.Namespace, buildBackend, &deployment.RegistryResolver{InsecureHost: insecureRegistryHost(config), Cluster: nodeImages{client: client}}))
 	if err != nil {
 		return lifecycle.Result{}, err
 	}
@@ -137,4 +138,22 @@ func insecureRegistryHost(config OperateConfig) string {
 		return config.Install.RegistryHost
 	}
 	return ""
+}
+
+// nodeImages reports the image names the cluster's nodes hold, so the image
+// resolver pins a tag the cluster already has to the digest the cluster has.
+type nodeImages struct{ client kubernetes.Interface }
+
+func (n nodeImages) NodeImageNames(ctx context.Context) ([][]string, error) {
+	nodes, err := n.client.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	var images [][]string
+	for _, node := range nodes.Items {
+		for _, image := range node.Status.Images {
+			images = append(images, image.Names)
+		}
+	}
+	return images, nil
 }
