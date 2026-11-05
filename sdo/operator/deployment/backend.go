@@ -31,6 +31,8 @@ type CommandBackend struct {
 	ObserveLimit  time.Duration
 	Run           func(context.Context, string, []string, []byte) ([]byte, error)
 	Wait          func(context.Context, time.Duration) error
+	// Now is the clock used to age pods while observing a rollout.
+	Now func() time.Time
 }
 
 func (b CommandBackend) docker() string {
@@ -101,6 +103,8 @@ func (b CommandBackend) Observe(ctx context.Context, resourceID string) (Workloa
 	defer cancel()
 	var lastErr error
 	var lastObject []byte
+	started := b.now()
+	lastCheck := started
 	for {
 		args := b.kubectlArgs("get", parts[0], parts[2], "--namespace", parts[1], "--output=json")
 		output, err := b.run(bounded, b.kubectl(), args, nil)
@@ -116,6 +120,12 @@ func (b CommandBackend) Observe(ctx context.Context, resourceID string) (Workloa
 			}
 			lastObject = output
 			lastErr = fmt.Errorf("workload %s has not completed its rollout", resourceID)
+		}
+		if waited := b.now().Sub(started); lastObject != nil && waited >= rolloutCheckAfter && b.now().Sub(lastCheck) >= rolloutCheckEvery {
+			lastCheck = b.now()
+			if stuck := b.stuckRollout(resourceID, limit, waited, lastObject); stuck != nil {
+				return WorkloadObservation{}, stuck
+			}
 		}
 		if err := b.wait(bounded, 2*time.Second); err != nil {
 			if errors.Is(bounded.Err(), context.DeadlineExceeded) && ctx.Err() == nil && lastObject != nil {

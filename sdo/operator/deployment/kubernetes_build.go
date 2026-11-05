@@ -120,7 +120,7 @@ func (b KubernetesBuildBackend) BuildImage(ctx context.Context, checkout string,
 				if condition.Reason == "DeadlineExceeded" {
 					return "", &BuildTimeoutError{Image: build.GetImage(), Limit: limit}
 				}
-				return "", b.buildFailure(bounded, build.GetImage(), name, condition.Message)
+				return "", b.buildFailure(bounded, build.GetImage(), name, condition.Message, filepath.Join(checkout, filepath.FromSlash(contextRel)), filepath.Join(checkout, filepath.FromSlash(dockerfileRel)))
 			}
 			if condition.Type == batchv1.JobComplete {
 				finished = true
@@ -283,12 +283,14 @@ func (b KubernetesBuildBackend) deleteJob(ctx context.Context, name string) {
 
 // buildFailure reads the failed Job's log and returns the typed failure. When
 // the log cannot be read, the Job condition is all there is to report.
-func (b KubernetesBuildBackend) buildFailure(ctx context.Context, image, job, condition string) error {
+func (b KubernetesBuildBackend) buildFailure(ctx context.Context, image, job, condition, contextDir, dockerfileAbs string) error {
 	logs, err := b.logs(ctx, job)
 	if err != nil || len(logs) == 0 {
 		return fmt.Errorf("BuildKit Job %s failed: %s (the build log could not be read: %v)", job, condition, err)
 	}
-	return ClassifyBuildLog(image, job, string(logs))
+	failure := ClassifyBuildLog(image, job, string(logs))
+	failure.ExplainExclusions(contextDir, dockerfileAbs)
+	return failure
 }
 
 func (b KubernetesBuildBackend) logs(ctx context.Context, name string) ([]byte, error) {

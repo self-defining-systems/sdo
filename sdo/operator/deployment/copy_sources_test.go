@@ -106,9 +106,8 @@ func TestPlanAdmissionAcceptsTheContextHoldingTheCopySources(t *testing.T) {
 func TestCopySourceAdmissionAllowsWhatItCannotDecide(t *testing.T) {
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string]string{
-		"svc/Dockerfile":    "FROM x\nARG DIR\nCOPY ${DIR}/app /app\nCOPY *.missing /x/\nCOPY --from=builder /o /o\nADD https://example.com/a /a\nCOPY present.txt /p\nCOPY ignored.txt /i\n",
+		"svc/Dockerfile":    "FROM x\nARG DIR\nCOPY ${DIR}/app /app\nCOPY *.missing /x/\nCOPY --from=builder /o /o\nADD https://example.com/a /a\nCOPY present.txt /p\n",
 		"svc/present.txt":   "x",
-		"svc/ignored.txt":   "x",
 		"svc/.dockerignore": "ignored.txt\n",
 	})
 	if _, err := planImageBuilds(dir, buildPlan(imageBuild("a", "svc", "svc/Dockerfile")).ImageBuilds); err != nil {
@@ -122,5 +121,44 @@ func TestCopySourceAdmissionWithNoContainingDirectorySaysSo(t *testing.T) {
 	_, err := planImageBuilds(dir, buildPlan(imageBuild("a", "svc", "svc/Dockerfile")).ImageBuilds)
 	if err == nil || !strings.Contains(err.Error(), "No directory in the checkout contains all of them") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestPlanAdmissionFlagsCopySourcesExcludedByDockerignore(t *testing.T) {
+	cases := []struct {
+		name, ignore, dockerfileIgnore string
+		reject                         bool
+	}{
+		{"exact file", "conf/app.conf\n", "", true},
+		{"glob", "conf/*.conf\n", "", true},
+		{"parent directory", "conf\n", "", true},
+		{"double star", "**/app.conf\n", "", true},
+		{"negated exception keeps it", "conf\n!conf/app.conf\n", "", false},
+		{"unrelated pattern", "*.log\nnode_modules\n# conf\n", "", false},
+		{"dockerfile-specific ignore wins", "conf\n", "node_modules\n", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			files := map[string]string{"svc/Dockerfile": "FROM x\nCOPY conf/app.conf /etc/app.conf\n", "svc/conf/app.conf": "x", "svc/.dockerignore": tc.ignore}
+			if tc.dockerfileIgnore != "" {
+				files["svc/Dockerfile.dockerignore"] = tc.dockerfileIgnore
+			}
+			writeFiles(t, dir, files)
+			_, err := planImageBuilds(dir, buildPlan(imageBuild("a", "svc", "svc/Dockerfile")).ImageBuilds)
+			if (err != nil) != tc.reject {
+				t.Fatalf("reject=%t, got %v", tc.reject, err)
+			}
+			if err != nil {
+				for _, want := range []string{"excluded by", ".dockerignore", `"conf/app.conf"`, "do not change context_path"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Fatalf("rejection lacks %q: %v", want, err)
+					}
+				}
+				if strings.Contains(err.Error(), "do not exist") {
+					t.Fatalf("an existing file is excluded, not missing: %v", err)
+				}
+			}
+		})
 	}
 }
