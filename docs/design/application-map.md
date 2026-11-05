@@ -69,10 +69,12 @@ Field rules (all blocking unless marked note):
    - `read-later`: listed in health-probe workload `probe-read-later`; side effect `read`; its path contains
      at least one `holds_data` component.
    Each scenario appears in exactly one of these workloads, and every scenario in them has a probe entry.
+   A health-probe workload may hold only write scenarios (the SDK no longer requires a read scenario per
+   health probe; that change ships with the designer skill).
 
 ## Coverage (what the shared memory check verifies)
 
-- Every operation is in some `call` probe.
+- Every operation is in some `call` or `write-read` probe (a write-read probe also calls its operations).
 - Every operation with `writes: true` is in some `write-read` probe.
 - Every `holds_data` component that lies on the path of a writing operation lies on the path of some
   `read-later` probe.

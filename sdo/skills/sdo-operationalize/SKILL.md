@@ -1,77 +1,92 @@
 ---
 name: sdo-operationalize
-description: Decide which detectors and synthetic traffic an application needs, from its source at bootstrap or after an incident gap. Maps each check to the SDK input and lists what is already installed.
+description: Detection design for an application. Map its operations, components and call edges, write probes and detectors from the map, and calibrate them on the live application.
 ---
 
-# Operationalizing an application
+# Detection design
 
-This skill decides what to monitor. Write each detector with the `sdo-detector-authoring` skill and use the
-`sdo-memory` commands. Detectors page agents, not people: a false alarm costs one agent turn, while a missed or
-unlocalized fault costs the whole incident. So aim for high recall and precise evidence at low runtime cost.
+The detection designer (task actor `health_judge`) decides what SDO watches. It works in three steps: map the
+application, write probes and detectors from the map, and calibrate them on the live application. Keep the
+result small and general: the map and the three probe kinds should catch whatever breaks an operation, a hop
+or stored data. Write probes with the `sdo-detector-authoring` traffic reference; use the `sdo-memory` commands.
 
-## Two rules generate the detector set
+## 1. Map the application
 
-1. **Declared versus actual.** Everything the source declares must be observed as declared: workloads, ports,
-   selectors, config references and keys, service-to-service calls, routes and seeded data.
-2. **Healthy versus now.** Everything measured on the healthy application stays within its healthy range.
+Read the source, its config and the manifests (the Go inventory in the architecture text lists every manifest
+resource). Then look at the live application. Write the map in the format of [map](references/map.md), between
+the map markers in the architecture file. Only the text between the markers is yours.
 
-## Procedure
+- **Operations**: every user-facing route at the entry point (router, mux, proxy config), with its Service,
+  port, method and path. `writes: true` when it changes stored state.
+- **Components**: one per application workload, with the Services that select it. `holds_data: true` when it is
+  the only place some user-visible data lives: losing its contents loses data. A cache that refills from
+  another component on a miss does not hold data.
+- **Edges**: caller to callee. `config` evidence cites the source file that names the callee (a client address,
+  an env value, a config entry). `observed` evidence says how you saw the call on the live application.
+- **Paths**: for each operation, follow its handler through the code and the edges, and list every component
+  it reaches, entry component first.
 
-1. Inventory the source and note the file each fact came from:
-   - user-facing routes (HTTP handlers, routers) and what a correct response contains;
-   - internal APIs and their protocols;
-   - outbound calls (client dials, env, args or config values naming a Service and port);
-   - data stores and queues the code uses;
-   - config files and the keys the code reads, with their formats;
-   - records the application seeds at startup;
-   - error strings the code logs, and log lines the healthy application always emits;
-   - metrics the code exports, and the publishing capabilities in task.metrics_source;
-   - caller timeouts and deadlines.
-2. List what already runs, so you do not duplicate it: `sdo-operator memory ls --kind detector`, and the
-   Go-installed checks under "Already covered" in the [detector catalog](references/catalog.md).
-3. Walk the [detector catalog](references/catalog.md) layer by layer. Write every item that applies to
-   something in your inventory, using the input the catalog names. Every layer your inventory touches gets a
-   detector or a line under `Not monitored` saying why it cannot be observed; lack of time is not a reason.
-4. User journeys come first. Every user-facing route gets a scenario that checks the response body. Every write
-   route gets a journey that writes synthetic data, reads it back and cleans up. A read-only scenario set for an
-   application with write paths is incomplete. A write that leaves anything behind (a new row, a counter, used
-   capacity) is not idempotent: it runs in a bounded journey workload, never in the continuous health workload.
-   When the application offers no read-back or cleanup route, pick the write with the smallest lasting effect,
-   mark it, run it only as a bounded journey, and record the missing read-back under `Not monitored`.
-5. Set firing, severity and thresholds as [methods](references/methods.md) describes.
-6. Test each detector: a case that fires, near misses that stay quiet, and a healthy case, with resource names
-   different from any you saw.
-7. Record blind spots. For each inventory item that no available input can observe (catalog "Not expressible
-   yet"), add a line under a `Not monitored` heading in the health-objective playbook. Name the item and the
-   missing input, so responders know where detectors cannot see. Never ship a check that cannot observe its
-   condition.
-8. Run `sdo-operator memory check` until it exits 0.
+## 2. Write probes and detectors
 
-## Principles
+Three probe kinds, each a set of traffic scenarios in its own continuous health workload:
 
-- Symptoms decide health; causes localize. Write both. A journey check says users are affected. A cause check,
-  such as "a Service selector matches no pods", says where. The responder needs both.
-- One detector per mechanism, and one finding per affected object with a stable fingerprint. Then the controller
-  folds the findings of one fault into one incident instead of starting several agents on it.
-- Author ordinary health detectors with IDs, watches, severity and persistence chosen for each mechanism.
-  The health-objective playbook is the default repair guide, not a required detector or fixed Spec.
-- Evidence is the agent's only view of the alert. Put the observed value, the expected value, the source of the
-  expectation and how it was computed in `Finding.Evidence`.
-- Cheapest input first: snapshot reads are free; traffic costs requests; usage, logs and metrics cost one read
-  per cycle. Never probe
-  faster than the judge task's traffic limits.
-- Derive every expectation from observed relations or from the source, never from one deployment's names or
-  values. A check must stay true after a legitimate redeploy.
-- Never weaken a user-journey check to silence it. Fix the threshold or the scenario instead.
+| Kind | Workload | One scenario per | It checks |
+|---|---|---|---|
+| call | `probe-call` | read operation | status, latency, and body content the healthy application returns |
+| write-read | `probe-write` | writing operation | the write succeeds and a read operation then returns the written value |
+| read-later | `probe-read-later` | data-holding component on a write path | a fixture written earlier is still returned |
+
+- Go installs one generic persistent-failure detector per health workload (`traffic-<workload>`). Do not write
+  detector code for these probes. Do not lower their persistence.
+- Every scenario's `DependsOn` lists the Services of every component on its map path, and nothing else. A
+  failing probe then names its suspects.
+- Add a `probes` entry to the map for every scenario: its kind and the operations its steps exercise.
+- Writes use a dedicated test identity (a synthetic user, account or key whose name contains the scenario's
+  `Marker`), never real users' data. Put the marker in every write request. Make the read-back check a value
+  the write chose (`SaveJSON`/`FromPrevious`, or a unique marked value from the rng).
+- Clean up what a write creates when the application has a delete or overwrite route
+  (`SideEffectWriteWithCleanup`). Without one, keep every write on the fixed test identity, declare
+  `SideEffectIdempotentWrite`, use the lowest rate that fills the window, and record the growth under
+  `Probe costs` in the health-objective playbook.
+- A read-later fixture is data the application's own deployment seeds when there is any. Otherwise, write the
+  fixture once, during calibration, through the application's own write operation, on the test identity and
+  with the marker. The read-later scenario is a read: it must find the fixture's value. Record the exact
+  requests that re-create the fixture under `Fixtures` in the health-objective playbook.
+- Keep the link workload for every map edge between Services (traffic authoring rules).
+- Rates: each scenario needs at least the SLO's `minSamples` within `maxAge` (defaults 3 in 30s, so at least
+  0.1 iterations per second per scenario). Keep all probe requests together under 5% of the application's
+  normal request rate when you can measure it, and under 2 requests per second otherwise.
+
+## 3. Calibrate on the live application
+
+From your session, reach the live application through its Services (cluster DNS, or `kubectl` when available).
+
+1. Send each scenario's requests once by hand. Each must pass on the healthy application. Write the read-later
+   fixtures now and read them back.
+2. Check the observed path: for each probe, confirm that every component on its map path served it, using what
+   the application offers (trace spans, access logs, or connection and request counters on each pod). Add an
+   observed edge you did not map; recheck the source for a mapped hop you never saw.
+3. Set each scenario's `maxLatency` from its measured healthy latency (with headroom), or from a client timeout
+   the source states.
+4. Compute the probe request rate (iterations per second times requests per iteration, summed over the three
+   workloads) and compare it with the application's request rate if you can observe it.
+5. Write a `Calibration` section in the health-objective playbook: what passed, the observed paths, the probe
+   rate and anything you could not check (no live access counts; say so). Then run `sdo-operator memory check`
+   until it exits 0.
+
+## Other detectors
+
+Go already installs generic checks of workloads, Services and nodes. Add a source-specific cause detector only
+for a mechanism the probes and generic checks cannot localize ([catalog](references/catalog.md),
+[methods](references/methods.md)). Never weaken a probe to silence it; fix the scenario or the threshold.
 
 ## After an incident (reflection)
 
-- A fault that only a journey check caught, with no cause check naming it: add an incident detector for its
-  mechanism from catalog layers 1-7, never one the Go-installed checks already cover. The next occurrence is then caught earlier and localized.
-- A detector that fired while nothing was wrong: tighten it with the outcome's evidence. It must still fire on
-  its captured cases and stay quiet on recorded healthy baselines.
-- Responders own incident detectors and the health judge owns health detectors. The `sdo-detector-authoring`
-  rules enforce this.
+- A fault that only a probe caught, with no cause check naming it: add an incident detector for its mechanism,
+  never one the Go-installed checks already cover.
+- A detector that fired while nothing was wrong: tighten it with the outcome's evidence; it must still fire on
+  its captured cases and stay quiet on healthy baselines.
+- Responders own incident detectors and the detection designer owns health detectors and the map.
 
 ## Application instrumentation
 

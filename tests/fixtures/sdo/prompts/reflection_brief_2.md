@@ -32,9 +32,9 @@ Post-response incident detector states: none recorded
 No responder result was recorded (dispatch error: none).
 
 Full: <context file>
-Summary (1582 chars; partial):
+Summary (1585 chars; partial):
 ## Existing operational memory (trusted logical snapshot)
-Health detectors (judge-owned, never edit): none
+Health detectors (designer-owned, never edit): none
 - detector-0 (watches: v1/Service, firing: 0, playbooks: ['repair-0'], originatingIncident: prior-toy) [raised a finding in this incident]
   Description: Toy service port mismatch
 ```
@@ -52,7 +52,7 @@ Excerpt of playbook repair-0:
 ```
 Full: <context file>
 Summary (9000 chars; partial):
-手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手
+手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手手
 
 ## Responder shell commands
 The responder's shell commands are not available for this session.

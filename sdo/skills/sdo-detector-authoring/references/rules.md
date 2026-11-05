@@ -11,7 +11,7 @@ diagnostic; look it up here.
   `detector.no-go-source`.
 - The ID matches `^[a-z0-9][a-z0-9_.-]*$` and is unique across both classes. Enforced by: `id.pattern`,
   `id.duplicate`.
-- Memory registers at least one detector; the initial health-judge proposal installs detector manifests. Enforced
+- Memory registers at least one detector; the initial detection-designer proposal installs detector manifests. Enforced
   by: `detector.none`, `ownership.initial-needs-detectors`.
 - `manifest.yaml` is strict YAML: no unknown fields, no duplicate keys. It carries `apiVersion: sdo.dev/v1alpha1`,
   `kind: DetectorManifest`, `sdkVersion: v0.1`, `id`, `constructor` (default `New`), `class`, `owner`, `watches`,
@@ -86,9 +86,9 @@ Advice, not validator-checked: tests and recorded-state replay run as informatio
 
 ## Ownership
 
-- The health judge owns health detectors and the responder owns incident detectors; neither may add, change, or
+- The detection designer owns health detectors and the responder owns incident detectors; neither may add, change, or
   remove the other's. Enforced by: `ownership.protected-detector`, `ownership.denied`.
-- The initial health-judge proposal adds health detectors only. Enforced by: `ownership.initial-health-only`.
+- The initial detection-designer proposal adds health detectors only. Enforced by: `ownership.initial-health-only`.
 - A responder keeps the provenance (`originatingIncident`, `originatingCommit`) of an existing detector. Enforced
   by: `ownership.provenance-rewrite`.
 - Detector files are changed only in the phase and by the actor the task names. Enforced by: `ownership.denied`.
@@ -108,6 +108,6 @@ segmentation faults; `logs.Appeared` supplies transition persistence (firing 1, 
 Cause detectors batch at warn so cause findings open incidents. Workload unavailability is critical.
 Use source-specific detectors for config parsing, named peers, journeys, domain logs and metrics.
 
-Health judges author ordinary health detectors; no detector ID, package, watch set or Spec is reserved
+Detection designers author ordinary health detectors; no detector ID, package, watch set or Spec is reserved
 for the human goal. No goal digest or authoring-round metadata is required. Use the health-objective
 playbook as the default repair guide and run the shared memory check before returning logical IDs.

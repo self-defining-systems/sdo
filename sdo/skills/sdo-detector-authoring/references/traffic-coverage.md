@@ -4,7 +4,7 @@ Health traffic sees only what it calls. A link probe proves only that a fresh co
 dependency that accepts connections but fails requests stays invisible unless a continuously probed scenario sends a
 request across that edge.
 
-- Give each service-to-service edge in `links.yaml` at least one scenario of the `health` (health-probe) workload whose
+- Give each service-to-service edge in `links.yaml` at least one scenario of a health-probe workload whose
   target or `DependsOn` names both ends and whose request really crosses the edge.
 - Reads rarely reach services that only writes call. Include the application's own write journeys (an order, a
   booking, a post), modelled on its tests or clients, so a broken write-path dependency fails a scenario.
@@ -21,7 +21,7 @@ request across that edge.
 
 ## Latency and saturation
 
-A path is healthy only while it is also fast. A saturated service (CPU at its limit, a cache out of memory) usually
+A path is healthy only while it is also fast. A saturated service usually
 slows its path many times over before any request fails: a CPU-throttled service moved one read's median from 7 ms to
 350 ms, still under the 1.5 s default bound.
 

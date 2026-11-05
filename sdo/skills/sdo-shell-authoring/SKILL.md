@@ -7,7 +7,7 @@ Keep useful operational memory as Markdown notes and shell scripts. Use whatever
 organization helps future investigations within the owned artifact directories.
 
 Health detectors belong under `.sdo/diagnostics/detectors/health/<id>/` and are
-owned by the health judge. Incident detectors belong under
+owned by the detection designer. Incident detectors belong under
 `.sdo/diagnostics/detectors/incidents/<id>/` and are owned by responders during
 reflection. Detectors are executable `.sh` files. Playbook notes and scripts
 belong under `.sdo/playbooks/<id>/`. Preserve other roles' artifacts.

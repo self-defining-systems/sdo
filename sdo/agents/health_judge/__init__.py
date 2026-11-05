@@ -1,4 +1,4 @@
-"""Built-in independent health judge agent implementation."""
+"""Built-in independent detection designer agent implementation."""
 
 from typing import TYPE_CHECKING, Any
 

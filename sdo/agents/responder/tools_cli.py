@@ -376,7 +376,9 @@ def _parser() -> argparse.ArgumentParser:
         "Verified recovery fences writes and publishes the outcome without waiting for final narration; "
         "worker quiescence and outcome/reflection work continue during maintenance pauses.",
     )
-    verify.add_argument("--workload", help="traffic workload to burst (default: the health judge's verify workload)")
+    verify.add_argument(
+        "--workload", help="traffic workload to burst (default: the detection designer's verify workload)"
+    )
     verify.add_argument("--scenario", action="append", default=[], help="traffic scenario ID to burst; repeatable")
     verify.add_argument(
         "--wait",

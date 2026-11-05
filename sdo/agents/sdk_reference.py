@@ -1,6 +1,6 @@
 """Compact, trusted reference for the Go detector SDK that agents author against.
 
-Detector authors (the health judge and the responder's reflection) receive this text
+Detector authors (the detection designer and the responder's reflection) receive this text
 instead of exploring ``sdo/operator/sdk``, which is outside the application checkout.
 """
 

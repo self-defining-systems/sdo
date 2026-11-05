@@ -1,6 +1,6 @@
 // Package traffic is SDO's app-agnostic synthetic-traffic health machinery.
 //
-// The health judge writes, in the application's operational memory, Go
+// The detection designer writes, in the application's operational memory, Go
 // generators (.sdo/diagnostics/traffic/generators/) that describe user
 // journeys as Scenarios: ordered Steps whose Endpoints build requests from a
 // seeded random source and shared per-iteration State, and check responses.

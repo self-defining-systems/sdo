@@ -62,8 +62,8 @@ diagnostic; look it up here.
 
 ## Ownership
 
-- The responder writes playbooks and scripts during reflection. The health judge writes only the
-  health-objective playbook during the initial health-judge stage. Enforced by: `ownership.denied`.
+- The responder writes playbooks and scripts during reflection. The detection designer writes only the
+  health-objective playbook during the initial detection-designer stage. Enforced by: `ownership.denied`.
 
 Compilation, imports, changed-source formatting, ownership and receipt provenance are required.
 <!-- replay:on -->

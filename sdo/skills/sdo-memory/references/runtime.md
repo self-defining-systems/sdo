@@ -160,8 +160,8 @@ continue during maintenance pauses.
 
 options:
   -h, --help           show this help message and exit
-  --workload WORKLOAD  traffic workload to burst (default: the health judge's
-                       verify workload)
+  --workload WORKLOAD  traffic workload to burst (default: the detection
+                       designer's verify workload)
   --scenario SCENARIO  traffic scenario ID to burst; repeatable
   --wait SECONDS       wait for stable verification, a new/reactivated
                        finding, or this timeout (0: cached and instant)
@@ -251,7 +251,7 @@ Follow next: return on pass, fix diagnostics, or report terminal timeout without
 Healthy-replay faults the base also has are pre-existing notes. After six failed checks, return.
 Broker deadlines are terminal too. Legacy decision_path files are supported.
 One call waits for final diagnostics. Responder incident detectors use the same
-check; health detectors are judge-owned. Compile/import/format/provenance remain required.
+check; health detectors are designer-owned. Compile/import/format/provenance remain required.
 SDO_REPLAY defaults on; off skips corpus/replay. RunScript still needs its successful
 accepted receipt. Replay verdicts are information. Broker acceptance may reuse an isolated
 check only for identical bytes, accepted base, policy and toolchain.

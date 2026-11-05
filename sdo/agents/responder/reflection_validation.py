@@ -181,7 +181,7 @@ def _diff_text_matches(stdout: str) -> list[str]:
 def _replay_disagreements(stdout: str, own: set[str] | None) -> list[str]:
     """The agent's programs whose replay does not Match their fault capture or NoMatch healthy.
 
-    Cases Go settled for other playbooks (the health judge's included) are not the agent's to refine.
+    Cases Go settled for other playbooks (the detection designer's included) are not the agent's to refine.
     """
     try:
         notes = json.loads(stdout).get("mitigation_replay_notes") or []
@@ -252,7 +252,7 @@ def validation_server(
         Healthy-replay faults the base also has are pre-existing notes. After six failed checks, return.
         Broker deadlines are terminal too. Legacy decision_path files are supported.
         One call waits for final diagnostics. Responder incident detectors use the same
-        check; health detectors are judge-owned. Compile/import/format/provenance remain required.
+        check; health detectors are designer-owned. Compile/import/format/provenance remain required.
         SDO_REPLAY defaults on; off skips corpus/replay. RunScript still needs its successful
         accepted receipt. Replay verdicts are information. Broker acceptance may reuse an isolated
         check only for identical bytes, accepted base, policy and toolchain.
