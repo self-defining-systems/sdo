@@ -201,11 +201,25 @@ func main() {
 		old, err := os.ReadFile(target)
 		if err != nil || !bytes.Equal(old, formatted) {
 			fmt.Fprintln(os.Stderr, "read client facade is stale: run bash scripts/gen_kube_read_clients.sh")
+			reportStale(target, old, formatted)
 			os.Exit(1)
 		}
 		return
 	}
 	if err = os.WriteFile(target, formatted, 0644); err != nil {
 		panic(err)
+	}
+}
+
+// reportStale names the first differing line and the client-go directory so a
+// stale report from another machine is diagnosable without reproducing it.
+func reportStale(target string, old, generated []byte) {
+	a, b := strings.Split(string(old), "\n"), strings.Split(string(generated), "\n")
+	fmt.Fprintf(os.Stderr, "client-go dir: %s\ncommitted %d lines, generated %d lines\n", os.Args[1], len(a), len(b))
+	for i := 0; i < len(a) && i < len(b); i++ {
+		if a[i] != b[i] {
+			fmt.Fprintf(os.Stderr, "first difference at %s:%d\n  committed: %s\n  generated: %s\n", target, i+1, a[i], b[i])
+			return
+		}
 	}
 }
