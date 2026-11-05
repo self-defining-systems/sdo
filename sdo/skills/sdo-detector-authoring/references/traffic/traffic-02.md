@@ -17,12 +17,13 @@ func (e *Engine) Descriptors() []Descriptor
     Descriptors describe the workload's scenarios in workload order.
 
 func (e *Engine) Iterate(ctx context.Context, iteration uint64) (string, Sample)
-    Iterate runs iteration once and never returns an error: every failure is a
-    sample. A scenario's setup steps run first until they succeed once in this
-    engine; a failed setup step fails the sample, and setup time is not part of
-    its latency. Cleanup steps of a write-with-cleanup scenario run after any
-    request was sent, even when a step failed; their failures are reported in
-    CleanupError and do not change the outcome.
+    Iterate runs iteration once and never returns an error: every failure is
+    a sample. A scenario's setup steps run first until they succeed once in
+    this engine (or an engine it shares setup with); a failed setup step fails
+    the sample, and setup time is not part of its latency. Cleanup steps of a
+    write-with-cleanup scenario run after any request was sent, even when a step
+    failed; their failures are reported in CleanupError and do not change the
+    outcome.
 
 func (e *Engine) Plan(ctx context.Context, iteration uint64) ([]Request, error)
     Plan builds, without sending, the requests of iteration assuming every step
@@ -43,6 +44,14 @@ func (e *Engine) ScenarioAt(iteration uint64) Scenario
     ScenarioAt is the scenario iteration runs. The schedule is a smooth weighted
     round-robin cycle, so every scenario runs at its weight's share and the
     choice depends only on the iteration number.
+
+func (e *Engine) ShareSetup(source *Engine)
+    ShareSetup makes e use source's record of completed setup steps,
+    so a scenario set up by either engine is never set up again by the other.
+    A process that runs the same catalog in several engines (a continuous probe
+    and its verify bursts) shares one record: data a setup step wrote and that
+    was lost afterwards then fails every engine instead of being written again.
+    Both engines must run the same catalog.
 
 func (e *Engine) Workload() Workload
     Workload returns the engine's workload with defaults applied.
@@ -246,15 +255,4 @@ func Const(value string) Param
 
 func DateRange(from string, to string) Param
     DateRange picks a calendar date (YYYY-MM-DD) in [from, to].
-
-func DaysAfter(param string, min int, max int) Param
-    DaysAfter is a date between min and max days after another date parameter of
-    the same request, such as a check-out date after a check-in date.
-
-func FloatBetween(low float64, high float64, decimals int) Param
-    FloatBetween picks a decimal in [low, high] rounded to decimals places.
-
-func FromPrevious(key string) Param
-    FromPrevious is a value an earlier step of the same iteration saved in
-    State, for example with SaveJSON.
 ```

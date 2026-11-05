@@ -12,7 +12,7 @@ request across that edge.
   (`SideEffectIdempotentWrite`, one whose repeats leave the same synthetic state) or a self-cleaning one
   (`SideEffectWriteWithCleanup` with `Cleanup` steps), and never touch real users' data.
 - A scenario creates the test identities and data it needs in `Setup` steps (marked writes, run once per prober
-  start until they succeed), never relying on data set up by hand. End each with `OrExisting(status, text)`, the
+  start until they succeed; verify bursts reuse that setup), never relying on data set up by hand. End each with `OrExisting(status, text)`, the
   application's answer for a duplicate, so it passes on a fresh application and on one that has the data.
 - Send form bodies with `WithForm(params)` and JSON bodies with `WithJSON(template, params)`: each `{key}` in the
   template is filled from `params` or from an earlier step's `SaveJSON`, escaped for a JSON string; write `"{key}"`

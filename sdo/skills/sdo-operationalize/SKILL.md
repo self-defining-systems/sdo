@@ -47,9 +47,10 @@ Three probe kinds, each a set of traffic scenarios in its own continuous health 
 - Probes are self-contained: each passes on a freshly deployed application with nothing set up by hand. A
   scenario creates its test identities and data in `Setup` steps, through the application's write operations,
   with the marker. Each setup step is an ensure step: `OrExisting(status, text)` accepts the application's
-  duplicate answer (from the handler's source, confirmed live). Setup runs once per prober start, so data lost
-  later fails the steps instead of being re-created. Steps read only data a setup or earlier step wrote, or
-  records the deployment itself seeds (confirmed live).
+  duplicate answer (from the handler's source, confirmed live). Setup runs once per prober start and verify
+  bursts reuse it, so data lost later fails the steps (bursts too) until it comes back; only a controller
+  restart writes it again. Steps read only data a setup or earlier step wrote, or records the deployment itself
+  seeds (confirmed live).
 - Clean up what a write creates when the application has a delete or overwrite route
   (`SideEffectWriteWithCleanup`). Without one, keep every write on the fixed test identity, declare
   `SideEffectIdempotentWrite`, use the lowest rate that fills the window, and record the growth under

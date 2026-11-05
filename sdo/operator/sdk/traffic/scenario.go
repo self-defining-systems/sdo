@@ -147,7 +147,8 @@ type Target struct {
 // fixture a later read must find) so the scenario never depends on data set up
 // by hand. The engine runs them before the first iteration and again only
 // until they succeed once; data lost afterwards then fails the Steps instead
-// of being written again. Setup requests may write in any scenario and must
+// of being written again, also in the controller's verify bursts, which share
+// the continuous probe's setup. Setup requests may write in any scenario and must
 // carry the Marker; make them idempotent (OrExisting) because a restarted
 // prober runs them again. Values they save are visible to every iteration.
 type Scenario struct {
