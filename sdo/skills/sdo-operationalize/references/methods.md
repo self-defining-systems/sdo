@@ -56,3 +56,14 @@ Write `Finding.Evidence` so that a responder can act without re-deriving the che
 - what was observed (object, field, value);
 - what was expected, and the relation or source fact that implies it;
 - for metrics, the query, value, threshold and labels (the SDK fills these in).
+
+## Application instrumentation
+
+When a health objective or incident cannot be localized with existing inputs, add instrumentation to the
+application's own source through the normal source-repair path. Export request and error counters, latency
+histograms and queue depth; keep labels bounded. Reflection records the need for a source repair rather than
+editing source itself. Use the task's typed `metrics_source`: annotate pod templates with
+`prometheus.io/scrape: "true"`, `prometheus.io/port` and `prometheus.io/path` when annotated scraping is enabled,
+or publish OTLP HTTP metrics to its full `otlp_metrics_url`. Do not infer publishing support from a query URL.
+Write source-grounded PromQL rules with `sdo.dev/operator/sdk/metrics`, declare `metrics.Watch`, and use
+`metrics.NewThresholdDetector`; the controller queries and freezes results, and detectors never perform I/O.

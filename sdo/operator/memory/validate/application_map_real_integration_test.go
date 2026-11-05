@@ -31,7 +31,10 @@ func Scenarios() traffic.Catalog {
 		Detects: []traffic.FaultClass{traffic.FaultWrongBody},
 		Steps:   []traffic.Step{{Name: "add", Endpoint: traffic.POST("/items", traffic.Params{"name": traffic.Const("sdo-synthetic")}).Contains("ok")}},
 	}
-	return traffic.Catalog{read("call-all", "web", "api", "db"), write, read("items-later", "web", "api", "db")}
+	later := read("items-later", "web", "api", "db")
+	later.Marker = "sdo-synthetic"
+	later.Setup = []traffic.Step{{Name: "ensure", Endpoint: traffic.POST("/items", traffic.Params{"name": traffic.Const("sdo-synthetic-fixture")}).OrExisting(409, "exists")}}
+	return traffic.Catalog{read("call-all", "web", "api", "db"), write, later}
 }
 `
 

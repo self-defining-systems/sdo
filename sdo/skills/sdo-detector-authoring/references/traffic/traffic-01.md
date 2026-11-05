@@ -221,6 +221,7 @@ type Descriptor struct {
 	Target      Target       `json:"target"`
 	DependsOn   []string     `json:"dependsOn,omitempty"`
 	SideEffect  SideEffect   `json:"sideEffect"`
+	Setup       []string     `json:"setup,omitempty"`
 	Steps       []string     `json:"steps"`
 	Detects     []FaultClass `json:"detects"`
 }

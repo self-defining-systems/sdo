@@ -140,7 +140,7 @@ func TestShopMapIsClean(t *testing.T) {
 	scenarios := []Scenario{
 		{ID: "call-all", SideEffect: "read", DependsOn: []string{"web", "api", "db"}},
 		{ID: "write-item", SideEffect: "write-with-cleanup", DependsOn: []string{"web", "api", "db-headless"}},
-		{ID: "items-later", SideEffect: "read", DependsOn: []string{"web", "api", "db"}},
+		{ID: "items-later", SideEffect: "read", DependsOn: []string{"web", "api", "db"}, SetupSteps: 1},
 	}
 	if got := m.CheckScenarios(scenarios); len(got) != 0 {
 		t.Fatalf("scenario findings: %+v", got)
@@ -247,7 +247,7 @@ func TestCheckScenariosComparesTheCatalogWithTheMap(t *testing.T) {
 	good := []Scenario{
 		{ID: "call-all", SideEffect: "read", DependsOn: []string{"web", "api", "db"}},
 		{ID: "write-item", SideEffect: "idempotent-write", DependsOn: []string{"web", "api", "db"}},
-		{ID: "items-later", SideEffect: "read", DependsOn: []string{"web", "api", "db"}},
+		{ID: "items-later", SideEffect: "read", DependsOn: []string{"web", "api", "db"}, SetupSteps: 1},
 	}
 	with := func(index int, edit func(*Scenario)) []Scenario {
 		out := append([]Scenario(nil), good...)
@@ -265,6 +265,7 @@ func TestCheckScenariosComparesTheCatalogWithTheMap(t *testing.T) {
 		{"write-read scenario that only reads", with(1, func(s *Scenario) { s.SideEffect = "read" }), RuleSchema, "write-item"},
 		{"read-later scenario that writes", with(2, func(s *Scenario) { s.SideEffect = "idempotent-write" }), RuleSchema, "items-later"},
 		{"probe without a scenario", good[:2], RuleSchema, "items-later"},
+		{"read-later scenario reading data nothing creates", with(2, func(s *Scenario) { s.SetupSteps = 0 }), RuleSchema, "setup"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := m.CheckScenarios(tc.scenarios)

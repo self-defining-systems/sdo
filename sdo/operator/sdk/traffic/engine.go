@@ -88,6 +88,10 @@ type Engine struct {
 	client    Doer
 	baseURL   func(Target) string
 	clock     Clock
+
+	setupMu sync.Mutex
+	// setUp holds, per scenario whose setup steps succeeded, the State they saved.
+	setUp map[string]State
 }
 
 // NewEngine validates workload against catalog and prepares its schedule.
@@ -116,7 +120,7 @@ func NewEngine(workload Workload, catalog Catalog, client Doer, baseURL func(Tar
 	}
 	return &Engine{
 		workload: workload, scenarios: scenarios, schedule: weightedSchedule(workload.Scenarios),
-		client: client, baseURL: baseURL, clock: clock,
+		client: client, baseURL: baseURL, clock: clock, setUp: map[string]State{},
 	}, nil
 }
 
@@ -163,20 +167,27 @@ func (e *Engine) Plan(ctx context.Context, iteration uint64) ([]Request, error) 
 }
 
 // Iterate runs iteration once and never returns an error: every failure is
-// a sample. Cleanup steps of a write-with-cleanup scenario run after any
+// a sample. A scenario's setup steps run first until they succeed once in this
+// engine; a failed setup step fails the sample, and setup time is not part of
+// its latency. Cleanup steps of a write-with-cleanup scenario run after any
 // request was sent, even when a step failed; their failures are reported in
 // CleanupError and do not change the outcome.
 func (e *Engine) Iterate(ctx context.Context, iteration uint64) (string, Sample) {
 	scenario := e.ScenarioAt(iteration)
 	rng := e.Rand(iteration)
 	state := State{}
-	started := e.clock.Now()
-	sample := Sample{At: started.UTC(), Iteration: iteration, Outcome: OutcomeOK}
+	sample := Sample{At: e.clock.Now().UTC(), Iteration: iteration, Outcome: OutcomeOK}
 	iterationCtx, cancel := e.withTimeout(ctx, e.workload.IterationTimeout.Duration())
 	defer cancel()
 	base := e.baseURL(scenario.normalizedTarget())
+	// Setup draws from its own copy of the iteration's source, so the steps
+	// build the same requests whether or not setup ran first.
+	if failed := e.setup(iterationCtx, scenario, e.Rand(iteration), state, base, &sample); failed {
+		return scenario.ID, sample
+	}
+	started := e.clock.Now()
 	for _, step := range scenario.Steps {
-		result := e.step(iterationCtx, scenario, step, rng, state, base, false)
+		result := e.step(iterationCtx, scenario, step, rng, state, base, phaseStep)
 		sample.Requests += result.sent
 		if result.status != 0 {
 			sample.Status = result.status
@@ -192,7 +203,7 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (string, Sample)
 		cleanupCtx, cancelCleanup := e.withTimeout(context.WithoutCancel(ctx), e.workload.IterationTimeout.Duration())
 		defer cancelCleanup()
 		for _, step := range scenario.Cleanup {
-			result := e.step(cleanupCtx, scenario, step, rng, state, base, true)
+			result := e.step(cleanupCtx, scenario, step, rng, state, base, phaseCleanup)
 			if result.outcome != OutcomeOK {
 				sample.CleanupError = bounded(step.Name + ": " + result.err)
 				break
@@ -200,6 +211,42 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (string, Sample)
 		}
 	}
 	return scenario.ID, sample
+}
+
+// setup runs scenario's setup steps unless they already succeeded in this
+// engine, and copies the State they saved into state. It reports whether a
+// setup step failed; the failure is then recorded in sample.
+func (e *Engine) setup(ctx context.Context, scenario Scenario, rng *rand.Rand, state State, base string, sample *Sample) bool {
+	if len(scenario.Setup) == 0 {
+		return false
+	}
+	e.setupMu.Lock()
+	saved, done := e.setUp[scenario.ID]
+	e.setupMu.Unlock()
+	if !done {
+		started := e.clock.Now()
+		saved = State{}
+		for _, step := range scenario.Setup {
+			result := e.step(ctx, scenario, step, rng, saved, base, phaseSetup)
+			sample.Requests += result.sent
+			if result.status != 0 {
+				sample.Status = result.status
+			}
+			if result.outcome != OutcomeOK {
+				sample.Outcome, sample.Step, sample.Request, sample.Error = result.outcome, step.Name, result.request, result.err
+				sample.DialFailed = result.dial
+				sample.Latency = e.since(started)
+				return true
+			}
+		}
+		e.setupMu.Lock()
+		e.setUp[scenario.ID] = saved
+		e.setupMu.Unlock()
+	}
+	for key, value := range saved {
+		state[key] = value
+	}
+	return false
 }
 
 type stepResult struct {
@@ -211,13 +258,13 @@ type stepResult struct {
 	dial    bool
 }
 
-func (e *Engine) step(ctx context.Context, scenario Scenario, step Step, rng *rand.Rand, state State, base string, cleanup bool) stepResult {
+func (e *Engine) step(ctx context.Context, scenario Scenario, step Step, rng *rand.Rand, state State, base string, phase stepPhase) stepResult {
 	request, err := step.Endpoint.Build(ctx, rng, state)
 	if err != nil {
 		return stepResult{outcome: OutcomeInvalid, err: bounded("build: " + err.Error())}
 	}
 	line := requestLine(request)
-	if err := checkRequest(scenario, request, cleanup); err != nil {
+	if err := checkRequest(scenario, request, phase); err != nil {
 		return stepResult{outcome: OutcomeInvalid, request: line, err: bounded(err.Error())}
 	}
 	requestCtx, cancel := e.withTimeout(ctx, e.workload.Timeout.Duration())

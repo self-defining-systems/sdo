@@ -234,6 +234,14 @@ type HTTPEndpoint struct {
 	ExpectStatus []int
 	ExpectBody   []string
 	Saves        map[string]string
+	// existing lists the answers (status, body text) meaning the data an
+	// ensure step creates is already there; see OrExisting.
+	existing []existingAnswer
+}
+
+type existingAnswer struct {
+	status int
+	text   string
 }
 
 // GET is a read endpoint with generated query parameters.
@@ -280,6 +288,16 @@ func (e *HTTPEndpoint) WithHeader(name string, value string) *HTTPEndpoint {
 
 // Status replaces the accepted statuses; by default any 2xx is accepted.
 func (e *HTTPEndpoint) Status(codes ...int) *HTTPEndpoint { e.ExpectStatus = codes; return e }
+
+// OrExisting makes the step an ensure step: a response with status whose body
+// contains text means the data the step creates already exists, and the step
+// passes without its Contains and SaveJSON checks. Use it for setup steps that
+// create a test identity or fixture, which must pass on a fresh application
+// and on one that already has the data.
+func (e *HTTPEndpoint) OrExisting(status int, text string) *HTTPEndpoint {
+	e.existing = append(e.existing, existingAnswer{status: status, text: text})
+	return e
+}
 
 // Contains requires the response body to contain text.
 func (e *HTTPEndpoint) Contains(text string) *HTTPEndpoint {
@@ -375,6 +393,11 @@ func (e *HTTPEndpoint) jsonBody(rng *rand.Rand, state State) (string, error) {
 
 // Check implements Endpoint.
 func (e *HTTPEndpoint) Check(response Response, state State) Verdict {
+	for _, existing := range e.existing {
+		if response.Status == existing.status && existing.text != "" && strings.Contains(string(response.Body), existing.text) {
+			return Pass()
+		}
+	}
 	if !statusAccepted(e.ExpectStatus, response.Status) {
 		return Fail("HTTP %d: %s", response.Status, bodyExcerpt(response.Body, response.Status))
 	}

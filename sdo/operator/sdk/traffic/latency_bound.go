@@ -35,6 +35,6 @@ func DefaultLatencyScenarios(workloads []Workload) []string {
 // DefaultLatencyScenarios returns.
 func DefaultLatencyNote(id string) string {
 	return fmt.Sprintf("health-probe scenario %s keeps the default p%d latency bound of %s: bound its median "+
-		"(slo.latencyPercentile 50, slo.maxLatency) near its healthy latency so a slowed or saturated service on its "+
-		"path fires", id, DefaultLatencyPercentile, DefaultMaxLatency)
+		"(slo.latencyPercentile 50, slo.maxLatency) at three times its slowest healthy iteration under load, at least 1s, "+
+		"so a service slowed many times over on its path fires", id, DefaultLatencyPercentile, DefaultMaxLatency)
 }

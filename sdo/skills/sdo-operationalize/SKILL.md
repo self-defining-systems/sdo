@@ -9,6 +9,7 @@ The detection designer (task actor `health_judge`) decides what SDO watches. It 
 application, write probes and detectors from the map, and calibrate them on the live application. Keep the
 result small and general: the map and the three probe kinds should catch whatever breaks an operation, a hop
 or stored data. Write probes with the `sdo-detector-authoring` traffic reference; use the `sdo-memory` commands.
+The memory check enforces the map [rules](references/rules.md).
 
 ## 1. Map the application
 
@@ -34,24 +35,28 @@ Three probe kinds, each a set of traffic scenarios in its own continuous health 
 |---|---|---|---|
 | call | `probe-call` | read operation | status, latency, and body content the healthy application returns |
 | write-read | `probe-write` | writing operation | the write succeeds and a read operation then returns the written value |
-| read-later | `probe-read-later` | data-holding component on a write path | a fixture written earlier is still returned |
+| read-later | `probe-read-later` | data-holding component on a write path | a fixture its setup wrote earlier is still returned |
 
 - Go installs one generic persistent-failure detector per health workload (`traffic-<workload>`). Do not write
   detector code for these probes. Do not lower their persistence.
-- Every scenario's `DependsOn` lists the Services of every component on its map path, and nothing else. A
-  failing probe then names its suspects.
+- Every scenario's `DependsOn` lists the Services of every component on its map path, and nothing else.
 - Add a `probes` entry to the map for every scenario: its kind and the operations its steps exercise.
 - Writes use a dedicated test identity (a synthetic user, account or key whose name contains the scenario's
   `Marker`), never real users' data. Put the marker in every write request. Make the read-back check a value
   the write chose (`SaveJSON`/`FromPrevious`, or a unique marked value from the rng).
+- Probes are self-contained: each passes on a freshly deployed application with nothing set up by hand. A
+  scenario creates its test identities and data in `Setup` steps, through the application's write operations,
+  with the marker. Each setup step is an ensure step: `OrExisting(status, text)` accepts the application's
+  duplicate answer (from the handler's source, confirmed live). Setup runs once per prober start, so data lost
+  later fails the steps instead of being re-created. Steps read only data a setup or earlier step wrote, or
+  records the deployment itself seeds (confirmed live).
 - Clean up what a write creates when the application has a delete or overwrite route
   (`SideEffectWriteWithCleanup`). Without one, keep every write on the fixed test identity, declare
   `SideEffectIdempotentWrite`, use the lowest rate that fills the window, and record the growth under
   `Probe costs` in the health-objective playbook.
-- A read-later fixture is data the application's own deployment seeds when there is any. Otherwise, write the
-  fixture once, during calibration, through the application's own write operation, on the test identity and
-  with the marker. The read-later scenario is a read: it must find the fixture's value. Record the exact
-  requests that re-create the fixture under `Fixtures` in the health-objective playbook.
+- A read-later scenario is a read (`SideEffectRead`) with a `Marker`: its `Setup` writes a fixed marked
+  fixture through the writing operation whose data it checks; its steps read that value back. List the
+  identities and fixtures setup creates under `Fixtures` in the health-objective playbook.
 - Keep the link workload for every map edge between Services (traffic authoring rules).
 - Rates: give every scenario (workload rate times its weight share) at least 0.2 iterations per second, twice
   the SLO default of 3 samples in 30s, or health is never confirmed; chain operations rather than lower rates.
@@ -62,13 +67,15 @@ Three probe kinds, each a set of traffic scenarios in its own continuous health 
 Always calibrate, also when a map and probes already exist: an earlier session's bounds and rates can be wrong.
 Reach the live application through its Services (cluster DNS, or `kubectl` when available).
 
-1. Send each scenario's requests once by hand. Each must pass on the healthy application. Write the read-later
-   fixtures now and read them back.
+1. Send each scenario's setup and step requests by hand. Each must pass on the healthy application. Send every
+   setup request twice: the second answer must match its `OrExisting` status and text.
 2. Check the observed path: for each probe, confirm that every component on its map path served it, using what
    the application offers (trace spans, access logs, or connection and request counters on each pod). Add an
    observed edge you did not map; recheck the source for a mapped hop you never saw.
-3. Time each whole scenario (all its steps together) over at least ten healthy iterations. Set `maxLatency` to at
-   least twice the slowest, or to a client timeout the source states; the bound judges the median of all steps.
+3. Detect by correctness first (status, body, read-back); a latency bound is a backstop that must never page
+   on a busy healthy host. Time each whole scenario (all steps, no setup) over at least 20 healthy iterations
+   at the workload's rate, never single requests. Set `maxLatency` to the larger of three times the slowest
+   and 1 s, below the iteration timeout. Record fastest, median, slowest and the bound in `Calibration`.
 4. Compute the probe request rate (iterations per second times requests per iteration, summed over the three
    workloads) and compare it with the application's request rate if you can observe it.
 5. Write a `Calibration` section in the health-objective playbook: what passed, the observed paths, the probe
@@ -79,7 +86,9 @@ Reach the live application through its Services (cluster DNS, or `kubectl` when 
 
 Go already installs generic checks of workloads, Services and nodes. Add a source-specific cause detector only
 for a mechanism the probes and generic checks cannot localize ([catalog](references/catalog.md),
-[methods](references/methods.md)). Never weaken a probe to silence it; fix the scenario or the threshold.
+[methods](references/methods.md)). Never weaken a probe to silence it; fix the scenario or the threshold. When
+existing inputs cannot localize a failure, instrument the application's source through the source-repair path
+([application instrumentation](references/methods.md#application-instrumentation)).
 
 ## After an incident (reflection)
 
@@ -87,14 +96,3 @@ for a mechanism the probes and generic checks cannot localize ([catalog](referen
   never one the Go-installed checks already cover.
 - A detector that fired while nothing was wrong: tighten it with the outcome's evidence (fire on captured cases).
 - Responders own incident detectors and the detection designer owns health detectors and the map.
-
-## Application instrumentation
-
-When a health objective or incident cannot be localized with existing inputs, add instrumentation to the
-application's own source through the normal source-repair path. Export request and error counters, latency
-histograms and queue depth; keep labels bounded. Reflection records the need for a source repair rather than
-editing source itself. Use the task's typed `metrics_source`: annotate pod templates with
-`prometheus.io/scrape: "true"`, `prometheus.io/port` and `prometheus.io/path` when annotated scraping is enabled,
-or publish OTLP HTTP metrics to its full `otlp_metrics_url`. Do not infer publishing support from a query URL.
-Write source-grounded PromQL rules with `sdo.dev/operator/sdk/metrics`, declare `metrics.Watch`, and use
-`metrics.NewThresholdDetector`; the controller queries and freezes results, and detectors never perform I/O.

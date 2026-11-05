@@ -67,7 +67,8 @@ Field rules (all blocking unless marked note):
    - `write-read`: listed in health-probe workload `probe-write`; side effect `idempotent-write` or
      `write-with-cleanup`; at least one of its operations has `writes: true`.
    - `read-later`: listed in health-probe workload `probe-read-later`; side effect `read`; its path contains
-     at least one `holds_data` component.
+     at least one `holds_data` component; it has `Setup` steps that write the fixture it reads (once per prober
+     start, as an idempotent ensure step), so it never depends on data set up by hand.
    Each scenario appears in exactly one of these workloads, and every scenario in them has a probe entry.
    A health-probe workload may hold only write scenarios (the SDK no longer requires a read scenario per
    health probe; that change ships with the designer skill).

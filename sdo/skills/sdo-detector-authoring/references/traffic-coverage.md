@@ -11,6 +11,9 @@ request across that edge.
 - Writes use dedicated synthetic data: set a `Marker` that appears in every write request, prefer an idempotent write
   (`SideEffectIdempotentWrite`, one whose repeats leave the same synthetic state) or a self-cleaning one
   (`SideEffectWriteWithCleanup` with `Cleanup` steps), and never touch real users' data.
+- A scenario creates the test identities and data it needs in `Setup` steps (marked writes, run once per prober
+  start until they succeed), never relying on data set up by hand. End each with `OrExisting(status, text)`, the
+  application's answer for a duplicate, so it passes on a fresh application and on one that has the data.
 - Send form bodies with `WithForm(params)` and JSON bodies with `WithJSON(template, params)`: each `{key}` in the
   template is filled from `params` or from an earlier step's `SaveJSON`, escaped for a JSON string; write `"{key}"`
   for a string and `{key}` for a number.
@@ -30,9 +33,11 @@ slows its path many times over before any request fails: a CPU-throttled service
 - Bound the median (the default `latencyPercentile: 50`); a scenario may explicitly override it. Over the default five-sample window p90 is the slowest sample, so a
   single pause fires a tight p90 bound, and a write journey's healthy tail can cross even the default (an order took
   40 ms to 1.8 s while healthy, median 170 ms). Saturation moves the median; one pause does not.
-- Base the bound on what the path does: a read that crosses one or two in-cluster services has a median of tens of
-  milliseconds, so a median bound of 100 to 250 ms leaves room for a loaded cluster and still sees a service slowed
-  many times over. Give multi-service writes about a second.
+- Detect by correctness first (status, body content, read-back); a latency bound is a backstop that must never
+  page on a healthy but busy host. Measure the whole scenario over at least 20 healthy iterations at the
+  workload's rate, never from single requests or a quiet moment: host load moved a four-step scenario's median
+  from about 100 ms to over 500 ms with nothing broken. Set the bound to the larger of three times the slowest
+  healthy iteration and 1 s. A service slowed many times over still crosses it.
 - `sdo-operator memory check` lists each health-probe scenario left on the default bound as a
   `traffic.default-latency` coverage gap. It never fails the check.
 - Memory saturation that kills a container (OOMKilled, restarts) is already reported by `workload-health`. Latency

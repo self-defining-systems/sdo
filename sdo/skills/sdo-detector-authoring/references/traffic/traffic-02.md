@@ -17,8 +17,10 @@ func (e *Engine) Descriptors() []Descriptor
     Descriptors describe the workload's scenarios in workload order.
 
 func (e *Engine) Iterate(ctx context.Context, iteration uint64) (string, Sample)
-    Iterate runs iteration once and never returns an error: every failure is
-    a sample. Cleanup steps of a write-with-cleanup scenario run after any
+    Iterate runs iteration once and never returns an error: every failure is a
+    sample. A scenario's setup steps run first until they succeed once in this
+    engine; a failed setup step fails the sample, and setup time is not part of
+    its latency. Cleanup steps of a write-with-cleanup scenario run after any
     request was sent, even when a step failed; their failures are reported in
     CleanupError and do not change the outcome.
 
@@ -71,6 +73,8 @@ type HTTPEndpoint struct {
 	ExpectStatus []int
 	ExpectBody   []string
 	Saves        map[string]string
+
+	// Has unexported fields.
 }
     HTTPEndpoint is the SDK's declarative Endpoint: a method and path, generated
     query and form parameters or a JSON body, and response expectations. Build
@@ -97,6 +101,13 @@ func (e *HTTPEndpoint) Check(response Response, state State) Verdict
 
 func (e *HTTPEndpoint) Contains(text string) *HTTPEndpoint
     Contains requires the response body to contain text.
+
+func (e *HTTPEndpoint) OrExisting(status int, text string) *HTTPEndpoint
+    OrExisting makes the step an ensure step: a response with status whose body
+    contains text means the data the step creates already exists, and the step
+    passes without its Contains and SaveJSON checks. Use it for setup steps that
+    create a test identity or fixture, which must pass on a fresh application
+    and on one that already has the data.
 
 func (e *HTTPEndpoint) SaveJSON(path string, key string) *HTTPEndpoint
     SaveJSON stores the JSON field at dotted path (for example "id" or
@@ -246,20 +257,4 @@ func FloatBetween(low float64, high float64, decimals int) Param
 func FromPrevious(key string) Param
     FromPrevious is a value an earlier step of the same iteration saved in
     State, for example with SaveJSON.
-
-func FromSeed(count int, render func(index int) string) Param
-    FromSeed picks one of the count records the application seeds at startup
-    and renders it, for example a seeded user name. Use FromSeedPair when two
-    parameters must describe the same record.
-
-func IntBetween(low int, high int) Param
-    IntBetween picks an integer in [low, high].
-
-func OneOf(values ...string) Param
-    OneOf picks one of values uniformly.
-
-type Params map[string]Param
-    Params maps parameter names to generators. Parameters are generated in
-    sorted name order, except that parameters derived from another parameter of
-    the same request (DaysAfter) come after the one they derive from.
 ```
