@@ -117,8 +117,7 @@ func instructionSources(args string, line int) []copySource {
 // copySourceProblem reports the Dockerfile COPY/ADD sources that do not exist
 // under the build context, and the directories that do contain them all. It
 // returns "" when everything exists or nothing can be decided. A source that
-// exists on disk is never rejected, whatever .dockerignore says, so an
-// uncertain case is allowed.
+// exists but is excluded by .dockerignore is reported as excluded, not missing.
 func copySourceProblem(checkout, label, contextRel, dockerfileRel string) string {
 	data, err := os.ReadFile(filepath.Join(checkout, filepath.FromSlash(dockerfileRel)))
 	if err != nil {
@@ -130,10 +129,17 @@ func copySourceProblem(checkout, label, contextRel, dockerfileRel string) string
 	}
 	contextDir := filepath.Join(checkout, filepath.FromSlash(contextRel))
 	var missing []copySource
+	var excluded []string
+	rules := loadDockerignore(contextDir, filepath.Join(checkout, filepath.FromSlash(dockerfileRel)))
 	for _, source := range sources {
 		if !existsUnder(contextDir, source.Path) {
 			missing = append(missing, source)
+		} else if pattern, ok := rules.Excluded(source.Path); ok {
+			excluded = append(excluded, fmt.Sprintf("%q (Dockerfile line %d, excluded by %q in %s)", source.Path, source.Line, pattern, rules.File))
 		}
+	}
+	if len(missing) == 0 && len(excluded) > 0 {
+		return fmt.Sprintf("%s: the Dockerfile %q COPY/ADD sources %s exist under context_path %q but are excluded by %s, so BuildKit will not find them. Remove or narrow that pattern (or add a \"!path\" exception) in %s; do not change context_path.", label, dockerfileRel, listLimited2(excluded), contextRel, rules.File, rules.File)
 	}
 	if len(missing) == 0 {
 		return ""

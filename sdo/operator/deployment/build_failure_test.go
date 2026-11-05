@@ -93,3 +93,75 @@ func TestFailedBuildJobReturnsTypedFailureWithLog(t *testing.T) {
 	}
 	_ = metav1.ObjectMeta{}
 }
+
+// Hand-written BuildKit plain-progress logs. On a cold cache the registry
+// cache import fails non-fatally before any build step.
+const coldCacheImportLine = `#1 [internal] load build definition from Dockerfile
+#1 DONE 0.0s
+
+#2 importing cache manifest from reg.example/app:sdo-buildcache
+#2 ERROR: reg.example/app:sdo-buildcache: not found
+
+#3 [internal] load metadata for docker.io/library/ubuntu:20.04
+#3 DONE 0.4s
+`
+
+func TestClassifyBuildLogIgnoresCacheImportNoise(t *testing.T) {
+	cases := []struct {
+		name, log, step, message string
+		cause                    BuildFailureCause
+	}{
+		{"cold cache then compile failure", coldCacheImportLine + compileLog, "[builder 5/8] RUN make -j4", "exit code: 2", BuildFailureCompile},
+		{"cold cache then missing source", coldCacheImportLine + missingSourceLog, "[3/6] COPY nginx.vh.default.conf", "/nginx.vh.default.conf", BuildFailureMissingSource},
+		{"newer buildkit wording", "#4 ERROR: failed to configure registry cache importer: reg.example/app:sdo-buildcache: not found\n" + aptLog, "[2/4] RUN apt-get update", "exit code: 100", BuildFailureNetwork},
+		{"cache export error after real failure", compileLog + "#13 exporting cache to registry\n#13 ERROR: error writing layer blob: 500\n", "[builder 5/8] RUN make -j4", "exit code: 2", BuildFailureCompile},
+		{"cache import line after the failure", compileLog + "#14 importing cache manifest from reg.example/app:sdo-buildcache\n#14 ERROR: reg.example/app:sdo-buildcache: not found\n", "[builder 5/8] RUN make -j4", "exit code: 2", BuildFailureCompile},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			failure := ClassifyBuildLog("reg/app:1", "job", tc.log)
+			if !strings.Contains(failure.Step, tc.step) || !strings.Contains(failure.Message, tc.message) || failure.Cause != tc.cause {
+				t.Fatalf("step=%q message=%q cause=%q", failure.Step, failure.Message, failure.Cause)
+			}
+			if strings.Contains(failure.Message, "cache") {
+				t.Fatalf("headline is cache noise: %q", failure.Message)
+			}
+		})
+	}
+}
+
+func TestClassifyBuildLogKeepsCacheErrorWhenItIsTheOnlyFailure(t *testing.T) {
+	failure := ClassifyBuildLog("reg/app:1", "job", "#13 exporting cache to registry\n#13 ERROR: error writing layer blob: 500\n")
+	if !strings.Contains(failure.Message, "error writing layer blob") {
+		t.Fatalf("message=%q", failure.Message)
+	}
+}
+
+func TestClassifierNamesDockerignoreExclusionInsteadOfMissingSource(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{"svc/Dockerfile": "FROM x\n", "svc/nginx.vh.default.conf": "x", "svc/.dockerignore": "*.conf\n"})
+	failure := ClassifyBuildLog("reg/app:1", "job", missingSourceLog)
+	failure.ExplainExclusions(dir+"/svc", dir+"/svc/Dockerfile")
+	if failure.Cause != BuildFailureExcluded || len(failure.Missing) != 0 {
+		t.Fatalf("cause=%q missing=%v", failure.Cause, failure.Missing)
+	}
+	message := failure.Error()
+	for _, want := range []string{"nginx.vh.default.conf", "excluded", ".dockerignore", "do not change context_path"} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("feedback lacks %q: %s", want, message)
+		}
+	}
+	if strings.Contains(message, "do not exist under this build's context_path") {
+		t.Fatalf("must not call an existing file missing: %s", message)
+	}
+}
+
+func TestClassifierKeepsMissingWhenTheFileReallyIsAbsent(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{"svc/Dockerfile": "FROM x\n", "svc/.dockerignore": "*.conf\n"})
+	failure := ClassifyBuildLog("reg/app:1", "job", missingSourceLog)
+	failure.ExplainExclusions(dir+"/svc", dir+"/svc/Dockerfile")
+	if failure.Cause != BuildFailureMissingSource || len(failure.Missing) != 1 {
+		t.Fatalf("cause=%q missing=%v", failure.Cause, failure.Missing)
+	}
+}
