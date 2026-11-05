@@ -10,6 +10,7 @@ import (
 	jsonpatch "github.com/evanphx/json-patch"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	"sdo.dev/operator/planwire"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -53,8 +54,8 @@ func (l *ResponderLoop) CreditEquivalentRepairs(ctx context.Context, repairs []R
 	for index := range l.applicationsLog {
 		app := &l.applicationsLog[index]
 		if app.Result.Applied {
-			if hasAppliedScript(app.Result.Plan.Actions) {
-				if l.finalScriptApplication(ctx, *app, view) {
+			if planwire.HasNonObjectEffect(app.Result.Plan.Actions) {
+				if l.finalTransitionApplication(ctx, *app, view) {
 					app.Result.FinalVerificationBasis = "observed-transition"
 				}
 				continue

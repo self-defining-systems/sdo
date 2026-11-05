@@ -43,7 +43,9 @@ finding-linked playbooks without a current match, settled programs and matches w
 
 The automatic stage observes saved writes together while dependent health and traffic settle.
 It waits while its writes roll out and then for the rolling window of each detector whose finding
-depends on them, within its recovery deadline. It hands off for uncovered work, verified blockers,
+depends on them, within its recovery deadline. A repair outside Kubernetes objects (a container command,
+HTTP call, database user, Job or script) is proved when its own result succeeded and its program's
+diagnosis stops matching; the findings it targeted wait on it like on a write. It hands off for uncovered work, verified blockers,
 failures, findings that outlived their window, or its recovery deadline: an `applied_still_matching`
 action you receive has had that window, so do not just wait for it again.
 Clearance alone does not close the incident: it needs fresh traffic samples after the write, and no

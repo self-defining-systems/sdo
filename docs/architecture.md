@@ -132,7 +132,9 @@ script ran. Live reuse goes through the ordinary apply→Diagnose and targeted
 finding-clearance loop, while global health continues to own closure. Final
 settlement records `final_verification_basis: observed-transition` after a fresh
 bound diagnosis and scoped health sample; it never claims exact typed-effect
-equivalence for a script.
+equivalence for a script. The same basis settles every action kind whose effect
+lies outside Kubernetes objects (`planwire.NonObjectEffect`: exec, ensure, database
+user, Job, script), after each such action's own recorded success.
 
 | Package | Responsibility |
 |---|---|

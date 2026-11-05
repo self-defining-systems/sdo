@@ -477,6 +477,11 @@ var gateRows = []gateRow{
 	gateWithRepairVerifier("no_change without a verified repaired cause", false, gateReflection("unverified closure declines", gateClean(), gateNoChange, func(*testing.T, string) {})),
 	gateWithRepairVerifier("README learning with a verified repaired cause", true, gateReflection("verified closure updates a playbook", gateClean(), gateUpdated("base"), gatePlaybookEdit)),
 	gateReflection("applied playbook failed and was not updated", gateStaleOutcome(), gateNoChange, func(*testing.T, string) {}, RuleReflectionStalePlaybook),
+	// R6': without a verified repaired cause no update may publish, so the
+	// check must not also demand that the applied playbook change; the two
+	// rules together would refuse every result.
+	gateWithRepairVerifier("unsettled playbook in a closure without a verified repair", false, gateReflection("unverified closure keeps its playbook", gateStaleOutcome(), gateNoChange, func(*testing.T, string) {})),
+	gateWithRepairVerifier("failed playbook in a closure with a verified repair", true, gateReflection("verified closure keeps a failed playbook", gateStaleOutcome(), gateNoChange, func(*testing.T, string) {}, RuleReflectionStalePlaybook)),
 	gateReflection("hand repair has no program", gateHandRepair(gateRepairOutcome()), gateNoChange, func(*testing.T, string) {}, RuleReflectionProgramRequired),
 	gateReflection("sdk gap that is free text", gateHandRepair(gateRepairOutcome()),
 		&contracts.ReflectionDecision{LearningDecision: "sdk_gap", NoChangeReason: "needs a primitive", SdkGaps: []*contracts.SdkGap{{FaultClass: "routing", Primitive: "do the repair by hand", Reason: "no primitive", ScratchScript: "inspect"}}},

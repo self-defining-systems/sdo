@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/planwire"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"slices"
 	"time"
@@ -163,8 +164,11 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 				run := ProgramRun{ProgramID: attempt.PlaybookId, ProgramRevision: attempt.ProgramRevision, Bindings: programBindingsState(attempt.Bindings), Verdict: verdict}
 				l.runs = append(l.runs, run)
 				attempt.PostApplyDiagnose = programRunContract(run)
-				scripted := hasAppliedScript(app.Result.Plan.Actions)
-				exact := !scripted && l.recoveryPlanFieldsMatch(app.Result, getFinal, func(ref sdk.ObjectRef) bool { getFinal(ref); return apierrors.IsNotFound(readErrors[ref]) })
+				// A non-object effect (a command, HTTP call, catalog change, Job or
+				// script) leaves no final object fields to compare; it is proved by
+				// its own success evidence and the observed transition instead.
+				nonObject := planwire.HasNonObjectEffect(app.Result.Plan.Actions)
+				exact := !nonObject && l.recoveryPlanFieldsMatch(app.Result, getFinal, func(ref sdk.ObjectRef) bool { getFinal(ref); return apierrors.IsNotFound(readErrors[ref]) })
 				healthy := false
 				targets := append(append([]string(nil), attempt.ClearedFindingFingerprints...), attempt.RemainingFindingFingerprints...)
 				verifier := scopedMitigationVerifier(executor.Verifier, app.Result.Plan, l.mitigationIncident([]selectedPlan{{programID: attempt.PlaybookId, bindings: programBindingsState(attempt.Bindings), targetFingerprints: targets}}).Findings)
@@ -173,13 +177,16 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 				} else if executor.Verifier != nil {
 					healthy, _ = executor.Verifier.Verify(ctx)
 				}
+				// The observed transition: the plan was prepared from this binding's
+				// MATCH, and after the action succeeded the same bound diagnosis is
+				// NO_MATCH on fresh state while its targeted health is clear.
 				transition := false
-				if scripted && healthy && rolloutErr == nil && sourceErr == nil && verdict.Result == program.NoMatch {
-					proof := *app
-					proof.Result.VerificationCompleted, proof.Result.VerificationPassed, proof.Error = true, true, ""
-					transition = l.finalScriptApplication(ctx, proof, view, selectedPlan{programID: attempt.PlaybookId, revision: attempt.ProgramRevision, bindings: programBindingsState(attempt.Bindings)})
+				if nonObject && healthy && rolloutErr == nil && sourceErr == nil && verdict.Result == program.NoMatch {
+					if wire, wireErr := app.Result.Proto(); wireErr == nil {
+						transition = nonObjectEffectsSucceeded(wire.GetPlan().GetActions(), wire.GetActionReports())
+					}
 				}
-				if !scripted {
+				if !nonObject {
 					app.Result.FinalEquivalenceVerified = &exact
 				}
 				switch {

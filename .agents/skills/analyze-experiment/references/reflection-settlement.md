@@ -9,7 +9,9 @@ application and plan contain every applied action and confirmed lifecycle effect
 the same bound program revision returns NoMatch, its own findings clear, and a
 later independent successful closure has only clear final health detectors.
 Application identity, action reports, timestamps and exact effect targets must
-agree. Missing or ambiguous proof remains stale. Later same-resource hand repairs
+agree. Missing or ambiguous proof remains stale. When the closure has no verified
+repaired cause, `reflection.repair-required` forbids `updated`, so the check does
+not also raise stale-playbook (P8 R6' refused both results that way). Later same-resource hand repairs
 and unresolved own findings still require learning. This does not grant early
 repair credit or change automatic program execution.
 

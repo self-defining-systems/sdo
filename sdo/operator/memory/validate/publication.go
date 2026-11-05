@@ -170,11 +170,20 @@ func lifecycleChecks(ctx context.Context, r Request, paths []string, structurall
 				if err := wire.UnmarshalLenientMigrating([]byte(raw), outcome); err != nil {
 					return nil, err
 				}
-				if r.RepairVerified != nil && r.Decision.GetLearningDecision() == "updated" && !r.RepairVerified(outcome) {
+				repairVerified := r.RepairVerified == nil || r.RepairVerified(outcome)
+				if r.Decision.GetLearningDecision() == "updated" && !repairVerified {
 					ds = append(ds, Diagnostic{Rule: RuleReflectionRepairRequired, Message: "this closure has no independently verified repaired cause, so updated learning (README-only edits included) is never published", Hint: "return no_change with a no-recorded-repair reason or a typed SDK gap, and revert your edits"})
 				}
 				if structurallyValid {
-					ds = append(ds, ReflectionRepairDiagnostics(r.Root, outcome, r.Decision, paths, r.Replay)...)
+					for _, d := range ReflectionRepairDiagnostics(r.Root, outcome, r.Decision, paths, r.Replay) {
+						// Without a verified repaired cause no update may publish, so the
+						// check cannot also demand that an applied playbook change: the
+						// pair would refuse every result. The outcome keeps its failure.
+						if d.Rule == RuleReflectionStalePlaybook && !repairVerified {
+							continue
+						}
+						ds = append(ds, d)
+					}
 				}
 				if r.Replay != "off" {
 					r.noteGaps(ReflectionCoverageGaps(r.Root, outcome, r.Decision)...)
