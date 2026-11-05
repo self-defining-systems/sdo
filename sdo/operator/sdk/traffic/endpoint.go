@@ -234,14 +234,14 @@ type HTTPEndpoint struct {
 	ExpectStatus []int
 	ExpectBody   []string
 	Saves        map[string]string
-	Existing     []ExistingAnswer
+	// existing lists the answers (status, body text) meaning the data an
+	// ensure step creates is already there; see OrExisting.
+	existing []existingAnswer
 }
 
-// ExistingAnswer is the response an ensure step gets when the data it creates
-// is already there: this status with a body containing Text.
-type ExistingAnswer struct {
-	Status int
-	Text   string
+type existingAnswer struct {
+	status int
+	text   string
 }
 
 // GET is a read endpoint with generated query parameters.
@@ -295,7 +295,7 @@ func (e *HTTPEndpoint) Status(codes ...int) *HTTPEndpoint { e.ExpectStatus = cod
 // create a test identity or fixture, which must pass on a fresh application
 // and on one that already has the data.
 func (e *HTTPEndpoint) OrExisting(status int, text string) *HTTPEndpoint {
-	e.Existing = append(e.Existing, ExistingAnswer{Status: status, Text: text})
+	e.existing = append(e.existing, existingAnswer{status: status, text: text})
 	return e
 }
 
@@ -393,8 +393,8 @@ func (e *HTTPEndpoint) jsonBody(rng *rand.Rand, state State) (string, error) {
 
 // Check implements Endpoint.
 func (e *HTTPEndpoint) Check(response Response, state State) Verdict {
-	for _, existing := range e.Existing {
-		if response.Status == existing.Status && existing.Text != "" && strings.Contains(string(response.Body), existing.Text) {
+	for _, existing := range e.existing {
+		if response.Status == existing.status && existing.text != "" && strings.Contains(string(response.Body), existing.text) {
 			return Pass()
 		}
 	}

@@ -47,13 +47,6 @@ func (e *Engine) ScenarioAt(iteration uint64) Scenario
 func (e *Engine) Workload() Workload
     Workload returns the engine's workload with defaults applied.
 
-type ExistingAnswer struct {
-	Status int
-	Text   string
-}
-    ExistingAnswer is the response an ensure step gets when the data it creates
-    is already there: this status with a body containing Text.
-
 type FaultClass string
     FaultClass is a failure a scenario must detect. Every scenario must detect
     FaultUnreachable and FaultErrorStatus; the others are declared when the
@@ -80,7 +73,8 @@ type HTTPEndpoint struct {
 	ExpectStatus []int
 	ExpectBody   []string
 	Saves        map[string]string
-	Existing     []ExistingAnswer
+
+	// Has unexported fields.
 }
     HTTPEndpoint is the SDK's declarative Endpoint: a method and path, generated
     query and form parameters or a JSON body, and response expectations. Build
@@ -259,4 +253,8 @@ func DaysAfter(param string, min int, max int) Param
 
 func FloatBetween(low float64, high float64, decimals int) Param
     FloatBetween picks a decimal in [low, high] rounded to decimals places.
+
+func FromPrevious(key string) Param
+    FromPrevious is a value an earlier step of the same iteration saved in
+    State, for example with SaveJSON.
 ```
