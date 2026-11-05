@@ -16,7 +16,7 @@ Schema version: 3. Paths are repository-relative and used only while editing a p
 | --- | --- | --- | --- |
 | `.sdo/schema-version` | `schema-version` | `—` | changeable by upkeep in the initial phase |
 | `.sdo/goal.md` | `goal` | `—` | changeable by human in the initial phase |
-| `.sdo/arch.md` | `architecture` | `—` | changeable by upkeep in the initial phase |
+| `.sdo/arch.md` | `architecture` | `—` | changeable by health_judge in the initial phase or upkeep in the initial phase |
 | `.sdo/lifecycle-provenance.yaml` | `lifecycle-provenance` | `—` | no agent may change this file; the controller owns it |
 | `.sdo/diagnostics/go.mod` | `diagnostics-module` | `go.mod` | changeable by upkeep in the initial phase |
 | `.sdo/diagnostics/go.sum` | `diagnostics-module` | `go.sum` | changeable by upkeep in the initial phase |
@@ -50,5 +50,7 @@ Schema version: 3. Paths are repository-relative and used only while editing a p
 | `.sdo/outcomes/<sha256(incident-id)>.json` | `outcome` | `<sha256(incident-id)>` | no agent may change this file; the controller owns it |
 
 The controller also writes bootstrap schema/module metadata and immutable corpus captures through trusted storage edges; these are not agent grants. The import phase admits human-supplied learned memory; upkeep migrates existing formats. No agent writes outcomes, rendered objects or lifecycle provenance. Source files outside this layout belong to the deployer in the initial phase or responder in the proposal phase.
+
+In `arch.md` the health judge (the detection designer) may change only the application-map region between the `sdo:application-map` marker lines; everything else in it is Go upkeep's, which carries the region verbatim.
 
 Detector packages may contain additional source/test files; traffic generators may contain package files. Program files are `diagnose.go`, optional `mitigate.go` and `*_test.go`. Incident traffic is the `incident` generator and `incident-*` workloads; all other traffic belongs to the detection designer. Legacy manifest and outcome paths exist for migration only. Preserve accepted provenance and corpus cases.
