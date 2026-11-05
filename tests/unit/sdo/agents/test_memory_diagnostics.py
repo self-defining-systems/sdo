@@ -42,3 +42,23 @@ def test_memory_conflict_renders_paths_provenance_and_validator_errors() -> None
     assert ".sdo/playbooks/base/README.md" in text
     assert "program.replay" in text
     assert "replay failed" in text
+
+
+def test_many_diagnostics_of_one_rule_render_within_budget() -> None:
+    rows = [
+        MemoryDiagnostic(
+            rule="map.unknown-name",
+            path=".sdo/arch.md",
+            message=f'component c{index}: workload "Deployment/c{index}" is not in the accepted source inventory',
+            hint="workload is Kind/name as listed in the manifest inventory",
+        )
+        for index in range(60)
+    ]
+    rows.append(MemoryDiagnostic(rule="detector.compile", message="undefined: x"))
+    text = expand_context(render_validation_feedback(2, rows))
+    assert "[map.unknown-name]" in text
+    assert "component c0:" in text
+    assert "more [map.unknown-name] diagnostics" in text
+    assert text.count("[map.unknown-name]") < 10
+    assert "sdo-operator memory check" in text
+    assert "[detector.compile] undefined: x" in text

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from google.protobuf import json_format
 
+from sdo.agents.context_output import budget_for
 from sdo.agents.prompt_templates import RenderedPrompt, join_prompts, named_prompt, render_prompt
 
 if TYPE_CHECKING:
@@ -35,8 +36,9 @@ def render_validation_feedback(
             validation_attempt=validation_attempt,
         )
     ]
-    for row in rows:
-        location = row.path if not row.line else f"{row.path}:{row.line}"
+    shown, omitted = _fitting_rows(rows)
+    for row in shown:
+        location = _location(row)
         text = render_prompt(
             "lifecycle",
             "render_validation_feedback_02",
@@ -59,6 +61,58 @@ def render_validation_feedback(
                 ),
             )
         lines.append(text)
+    for rule, count in omitted.items():
+        lines.append(
+            named_prompt(
+                "reflection.validation_feedback",
+                f"- {count} more [{rule}] diagnostics; run `sdo-operator memory check` to list them all",
+            )
+        )
     return join_prompts("\n", lines, part="reflection.validation_feedback") + named_prompt(
         "reflection.validation_feedback", "\n"
     )
+
+
+_ROW_FIELDS = ("rule", "value", "message")
+
+
+def _location(row: MemoryDiagnostic) -> str:
+    return row.path if not row.line else f"{row.path}:{row.line}"
+
+
+def _fitting_rows(rows: list[MemoryDiagnostic]) -> tuple[list[MemoryDiagnostic], dict[str, int]]:
+    """Choose the diagnostics whose fields fit their shared placeholder budgets.
+
+    Each placeholder budget bounds the sum over every rendered row, so a long
+    list cannot be shown whole. The first diagnostic of each rule comes first,
+    then repeats; the rest are counted by rule for the agent to list itself.
+    """
+    budgets = {
+        field: budget_for(f"template_data.lifecycle-render_validation_feedback_02-{field}") for field in _ROW_FIELDS
+    }
+    budgets["hint"] = budget_for("template_data.lifecycle-render_validation_feedback_03-hint")
+    used = dict.fromkeys(budgets, 0)
+    seen: set[str] = set()
+    firsts, repeats = [], []
+    for row in rows:
+        (repeats if row.rule in seen else firsts).append(row)
+        seen.add(row.rule)
+    shown: list[MemoryDiagnostic] = []
+    omitted: dict[str, int] = {}
+    for row in firsts + repeats:
+        location = _location(row)
+        sizes = {
+            "rule": len(row.rule),
+            "value": len(location) + 2 if location else 0,
+            "message": len(row.message),
+            "hint": len(row.hint),
+        }
+        if all(used[field] + size <= budgets[field] for field, size in sizes.items()):
+            for field, size in sizes.items():
+                used[field] += size
+            shown.append(row)
+        else:
+            omitted[row.rule] = omitted.get(row.rule, 0) + 1
+    order = {id(row): index for index, row in enumerate(rows)}
+    shown.sort(key=lambda row: order[id(row)])
+    return shown, omitted
