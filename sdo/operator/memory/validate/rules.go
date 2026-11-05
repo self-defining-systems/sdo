@@ -23,6 +23,8 @@ const (
 	RuleLiveObjectName              = "playbook.live-object-name"
 	RuleDuplicateRepair             = "playbook.duplicate-repair"
 	RuleSharedRepair                = "playbook.shared-repair"
+	RulePlaybookComponentCopy       = "playbook.component-copy"
+	RuleDetectorComponentCopy       = "detector.component-copy"
 	RuleProgramNormalizedRead       = "program.normalized-read"
 	RuleDetectorUnscopedBinding     = "detector.unscoped-binding"
 

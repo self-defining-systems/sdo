@@ -44,8 +44,10 @@ diagnostic; look it up here.
   required role that no detector binds; derive related objects (a workload's Pods) through ReadView. A new
   playbook may not copy an existing program (the same parameter kinds, Diagnose and Mitigate apart from names,
   prose and identifier spelling): refine that playbook instead. A new playbook that repeats only another's
-  Mitigate is noted: refine the other unless this Diagnose needs evidence it lacks. Enforced by:
-  `playbook.duplicate-repair`, `playbook.shared-repair`.
+  Mitigate is noted: refine the other unless this Diagnose needs evidence it lacks. A new playbook whose Diagnose
+  differs from an existing one only in the components it names (scenario, workload, Service) is the same failure
+  on another component: parameterize the existing playbook by its role instead. Enforced by:
+  `playbook.duplicate-repair`, `playbook.component-copy`, `playbook.shared-repair`.
 - Programs, libraries, scripts and incident detectors never name a generated Pod (`<owner>-<hash>-<suffix>`).
   Bind the owning workload, find its Pods through ReadView by owner, and exec with a typed `Command` or
   `EnsureExec`. Enforced by: `playbook.live-object-name`.
