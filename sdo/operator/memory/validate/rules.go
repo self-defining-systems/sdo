@@ -78,6 +78,22 @@ const (
 	RuleInitialHealthOnly     = "ownership.initial-health-only"
 	RuleInitialNeedsDetectors = "ownership.initial-needs-detectors"
 
+	// Application map (the region of .sdo/arch.md the detection designer owns).
+	// Blocking for the designer's commits once a map exists, notes for other
+	// actors; map.missing and map.unexercised-edge are always notes.
+	RuleMapMissing         = "map.missing"
+	RuleMapSchema          = "map.schema"
+	RuleMapUnknownName     = "map.unknown-name"
+	RuleMapPathMismatch    = "map.path-mismatch"
+	RuleMapUncoveredOp     = "map.uncovered-operation"
+	RuleMapUncoveredWrite  = "map.uncovered-write"
+	RuleMapUncoveredData   = "map.uncovered-data"
+	RuleMapUnexercisedEdge = "map.unexercised-edge"
+	// Ownership of the map region: the designer changes nothing outside it,
+	// and nobody else changes it.
+	RuleMapOutsideRegion = "ownership.map-outside-region"
+	RuleMapRegionOwner   = "ownership.map-region-owner"
+
 	// Explicit Go health-bootstrap preparation.
 	RuleGenericHealth = "bootstrap.generic-health"
 

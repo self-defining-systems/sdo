@@ -87,6 +87,13 @@ func (s *run) compile(ctx context.Context) error {
 		for _, bound := range bounds {
 			s.req.noteGaps(Diagnostic{Rule: RuleTrafficDefaultLatency, Path: layout.TrafficWorkloadsDir, Message: bound})
 		}
+		mapFindings, mapErr := workspace.ApplicationMapFindings()
+		if mapErr != nil {
+			s.req.noteGaps(Diagnostic{Rule: RuleMapSchema, Path: layout.ArchitectureFile, Message: "application map scenario check unverified: " + mapErr.Error()})
+		}
+		for _, finding := range mapFindings {
+			s.mapFinding(Compile, finding, 0)
+		}
 		for _, note := range notes {
 			s.req.noteGaps(Diagnostic{Rule: RuleReplayObservation, Path: layout.PlaybookDir(note.ProgramID), Message: fmt.Sprintf("program=%s case=%s replay=%s: %s", note.ProgramID, note.CaseID, note.Status, strings.Join(note.Effects, "; "))})
 		}

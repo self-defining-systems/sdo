@@ -70,6 +70,9 @@ var grants = []grant{
 		layout.KindHealthDetectorManifest, layout.KindIncidentDetectorManifest, layout.KindHealthDetectorSource, layout.KindIncidentDetectorSource,
 	}},
 	{actor: HealthJudge, phase: InitialPhase, kinds: []layout.Kind{layout.KindHealthDetectorManifest, layout.KindHealthDetectorSource}},
+	// The designer edits arch.md only between the application-map markers;
+	// architectureRegionOwnership enforces that, since a grant is per file.
+	{actor: HealthJudge, phase: InitialPhase, kinds: []layout.Kind{layout.KindArchitecture}},
 	{actor: HealthJudge, phase: InitialPhase, kinds: []layout.Kind{layout.KindTrafficGenerator, layout.KindTrafficWorkload}, only: notIncidentTraffic},
 	{actor: HealthJudge, phase: InitialPhase, kinds: []layout.Kind{layout.KindPlaybookIndex, layout.KindPlaybook}, only: healthObjectiveOnly},
 	{actor: Responder, phase: ReflectionPhase, kinds: []layout.Kind{
@@ -161,6 +164,11 @@ func (s *run) ownership(ctx context.Context) error {
 
 func (s *run) ownershipPolicy(ctx context.Context) error {
 	actor, phase := s.req.Actor, s.req.Phase
+	if containsPath(s.changed, layout.ArchitectureFile) {
+		if err := s.architectureRegionOwnership(ctx); err != nil {
+			return err
+		}
+	}
 	manifests := changesManifests(s.changed)
 	if phase == InitialPhase && actor == HealthJudge && !changesDetectors(s.changed) && !healthRevalidation(s.req, s.changed) {
 		s.add(Ownership, Diagnostic{Rule: RuleInitialNeedsDetectors, Path: layout.DetectorsDir, Message: "the initial health-judge proposal must install detector manifests"})

@@ -26,6 +26,7 @@ func (s *run) semantic(ctx context.Context) error {
 		s.completeness()
 		s.documents()
 		s.observationRules()
+		s.applicationMap()
 		if err := s.playbookIndex(); err != nil {
 			return err
 		}

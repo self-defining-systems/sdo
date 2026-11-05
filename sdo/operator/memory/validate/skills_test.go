@@ -30,6 +30,17 @@ var internalRules = map[string]string{
 	RuleUnknownPhase:            "the controller supplies the phase; an agent cannot choose it",
 	RuleUnsafePath:              "a path-traversal guard against malformed diffs, not an authoring decision",
 
+	RuleMapMissing:         "application-map rule: the diagnostic itself names the operation, component or probe kind to add; the detection designer's map skill (owned separately) should cite it in a references/rules.md and drop it from this list",
+	RuleMapSchema:          "application-map rule: the diagnostic itself names the operation, component or probe kind to add; the detection designer's map skill (owned separately) should cite it in a references/rules.md and drop it from this list",
+	RuleMapUnknownName:     "application-map rule: the diagnostic itself names the operation, component or probe kind to add; the detection designer's map skill (owned separately) should cite it in a references/rules.md and drop it from this list",
+	RuleMapPathMismatch:    "application-map rule: the diagnostic itself names the operation, component or probe kind to add; the detection designer's map skill (owned separately) should cite it in a references/rules.md and drop it from this list",
+	RuleMapUncoveredOp:     "application-map rule: the diagnostic itself names the operation, component or probe kind to add; the detection designer's map skill (owned separately) should cite it in a references/rules.md and drop it from this list",
+	RuleMapUncoveredWrite:  "application-map rule: the diagnostic itself names the operation, component or probe kind to add; the detection designer's map skill (owned separately) should cite it in a references/rules.md and drop it from this list",
+	RuleMapUncoveredData:   "application-map rule: the diagnostic itself names the operation, component or probe kind to add; the detection designer's map skill (owned separately) should cite it in a references/rules.md and drop it from this list",
+	RuleMapUnexercisedEdge: "application-map rule: the diagnostic itself names the operation, component or probe kind to add; the detection designer's map skill (owned separately) should cite it in a references/rules.md and drop it from this list",
+	RuleMapOutsideRegion:   "application-map rule: the diagnostic itself names the operation, component or probe kind to add; the detection designer's map skill (owned separately) should cite it in a references/rules.md and drop it from this list",
+	RuleMapRegionOwner:     "application-map rule: the diagnostic itself names the operation, component or probe kind to add; the detection designer's map skill (owned separately) should cite it in a references/rules.md and drop it from this list",
+
 	RuleReflectionDetectorRequired: "a coverage-gap name, recorded and never refused; the skills teach linking detectors",
 	RuleTrafficUndrivenEdge:        "a coverage-gap name, recorded and never refused; the detector-authoring skill teaches driving every edge",
 	RuleTrafficDefaultLatency:      "a coverage-gap name, recorded and never refused; the detector-authoring skill teaches latency bounds",
