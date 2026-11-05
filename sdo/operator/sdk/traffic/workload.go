@@ -279,23 +279,15 @@ func (w Workload) Validate() error {
 }
 
 // ValidateAgainst checks that every scenario the workload names exists in the
-// catalog, and that a health probe includes at least one read scenario.
+// catalog. A health probe may hold only write scenarios.
 func (w Workload) ValidateAgainst(catalog Catalog) error {
 	if w.Purpose == PurposeLinkProbe {
 		return nil
 	}
-	reads := 0
 	for _, selected := range w.Scenarios {
-		scenario, ok := catalog.Scenario(selected.ID)
-		if !ok {
+		if _, ok := catalog.Scenario(selected.ID); !ok {
 			return fmt.Errorf("traffic workload %s: scenario %q is not provided by the generators", w.Name, selected.ID)
 		}
-		if scenario.SideEffect == SideEffectRead {
-			reads++
-		}
-	}
-	if w.Purpose == PurposeHealthProbe && reads == 0 {
-		return fmt.Errorf("traffic workload %s: a health probe needs at least one read scenario", w.Name)
 	}
 	return nil
 }

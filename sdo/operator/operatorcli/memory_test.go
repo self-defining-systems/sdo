@@ -88,7 +88,8 @@ func TestMemoryCheckCleanTreeExitsZero(t *testing.T) {
 	env := memoryCheckEnv(t)
 	t.Chdir(root)
 	code, stdout, stderr := runMemory(t, env, "check")
-	if code != 0 || stdout != "" {
+	// The fixture has no application map: the only output is that one note.
+	if code != 0 || (stdout != "" && !(strings.HasPrefix(stdout, "coverage_gap .sdo/arch.md: map.missing:") && strings.Count(stdout, "\n") == 1)) {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout, stderr)
 	}
 }

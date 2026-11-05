@@ -8,7 +8,7 @@ func (w Workload) Validate() error
 
 func (w Workload) ValidateAgainst(catalog Catalog) error
     ValidateAgainst checks that every scenario the workload names exists in the
-    catalog, and that a health probe includes at least one read scenario.
+    catalog. A health probe may hold only write scenarios.
 
 func (w Workload) WithDefaults() Workload
     WithDefaults fills unset fields.

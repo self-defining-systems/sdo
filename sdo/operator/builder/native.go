@@ -340,6 +340,9 @@ func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error
 	if err != nil {
 		return nil, err
 	}
+	if err := generateApplicationMapTest(config.ApplicationRoot, directory); err != nil {
+		return nil, err
+	}
 	return &Workspace{Directory: directory, ModulePath: module, compileOnly: config.CompileOnly, detectorCount: len(detectors), advisorySetupErrors: setupErrors, healthyBaseline: healthyBaseline}, nil
 }
 

@@ -36,6 +36,7 @@ type run struct {
 
 	goal, arch *parsedDocument
 	index      *textFile
+	workloads  map[string]textFile // traffic workloads by name
 	playbooks  map[string]*playbook
 	detectors  map[string]*detector
 }
@@ -114,6 +115,7 @@ func (s *run) load(ctx context.Context) error {
 	s.playbooks = map[string]*playbook{}
 	s.parseFailed = map[string]bool{}
 	s.detectors = map[string]*detector{}
+	s.workloads = map[string]textFile{}
 	s.memory = true
 	if s.req.Base != "" {
 		changed, err := ChangedPaths(ctx, s.req.Root, s.req.Base)
@@ -350,6 +352,9 @@ func (s *run) visit(rel, abs string) error {
 			s.checkGo(rel, abs, data)
 		}
 	case layout.KindTrafficWorkload, layout.KindLifecycleProvenance:
+		if kind == layout.KindTrafficWorkload {
+			s.workloads[id] = file
+		}
 		s.checkYAML(file)
 	case layout.KindLegacyDetectorManifest:
 		s.legacyPath = rel

@@ -33,7 +33,7 @@ Historical sections (not requirements for current runs):
 - `health_judge_rounds`: ordered structured attempts with distinct session IDs, round numbers, objective digest, covered resources, source, and tests.
 - Historical `validation` attestations keyed on validator images do not authorize reuse. The current controller independently compiles every candidate through its bounded subprocess and shared Go build cache.
 
-For current runs, correlate the accepted source commit with Git and Go's manifest inventory in `arch.md`.
+For current runs, correlate the accepted source commit with Git and Go's manifest inventory in `arch.md`. After the inventory, `arch.md` may hold the detection designer's application map between `sdo:application-map` marker lines (operations, data-holding components, call edges, probes); the validator's `map.*` diagnostics are blocking for the designer and notes for other actors.
 The goal is optional free text; do not require objective digests, coverage echoes or adversarial rounds.
 Historical records may retain those fields. A reused lifecycle requires current source and detector validation.
 

@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/memory/layout"
 )
 
@@ -65,6 +66,11 @@ func WriteArchitecture(checkout, application, acceptedSourceCommit, summary stri
 	}
 	content := fmt.Sprintf("---\nschema_version: 1\ngenerated_at_commit: %s\napplication: %s\n---\n%s\n",
 		acceptedSourceCommit, strconv.Quote(application), strings.TrimSpace(summary))
+	// The inventory is Go's; the application map between its markers is the
+	// detection designer's, so a rewrite carries it over verbatim.
+	if previous, err := os.ReadFile(filepath.Join(checkout, filepath.FromSlash(layout.ArchitectureFile))); err == nil {
+		content = appmap.Carry(string(previous), content)
+	}
 	return writeBootstrapFile(checkout, layout.ArchitectureFile, content)
 }
 

@@ -49,8 +49,8 @@ func CheckDetects(ctx context.Context, scenario Scenario, class FaultClass) erro
 	}
 	catalog := Catalog{scenario}
 	if scenario.SideEffect != SideEffectRead {
-		// A health probe needs a read scenario; conformance checks one
-		// scenario at a time, so run writes under a journey profile.
+		// Conformance runs a write once under a bounded journey profile
+		// rather than a continuous probe.
 		workload.Purpose, workload.Duration = PurposeJourney, Duration(time.Second)
 	}
 	engine, err := NewEngine(workload, catalog, faultDoer{class: class}, func(Target) string {
