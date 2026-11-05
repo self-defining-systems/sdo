@@ -56,6 +56,9 @@ func main() {
 	if len(os.Args) < 2 || len(os.Args) > 3 {
 		panic("client-go module directory and optional --check required")
 	}
+	if _, err := os.Stat(filepath.Join(os.Args[1], "kubernetes", "typed")); err != nil {
+		panic("client-go module directory is not usable: " + err.Error())
+	}
 	groups, _ := filepath.Glob(filepath.Join(os.Args[1], "kubernetes/typed/*/*/*_client.go"))
 	var body strings.Builder
 	for _, groupFile := range groups {
