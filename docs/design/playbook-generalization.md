@@ -126,6 +126,42 @@ An independent review found that the note blamed the wrong mechanism first and t
 - `program.BindFinding` compares a finding's playbooks by logical ID only (the `Finding.Playbooks`
   contract the controller enforces); its own path normalizer, a second copy of `layout.PlaybookID`, is gone.
 
+## Addendum (2026-11-05): copies modulo component identity
+
+Live round P8 (after #799/#800/#801/#805) still learned per component: reflection published
+`home-timeline-redis-acl` and then `user-timeline-redis-acl`, each with its own detector. Why the first round
+did not stop it:
+
+- `playbook.duplicate-repair` replaced accepted-source object names, but not traffic scenario IDs, so the
+  scenario filter (`"home-timeline-read"`) and error text (`"home-timeline health ..."`) kept the two Diagnose
+  apart. It also compared printed source, so layout (a one-line `Evidence` literal) and `var x T = v` against
+  `x := v` differed.
+- It required the Mitigate to match too, and the second reflection's Mitigate differed in one argument
+  (`ACL SETUSER default on +@all` against `... default +@all`). A rule that needs whole-program equality misses
+  any copy that also varies the repair a little.
+- Nothing compared incident detectors: the second detector differed only in the scenario it filtered and the
+  literal Deployment it bound. No learned detector used `localize.BindSuspects`, and the skill text alone did not
+  make reflection parameterize an existing playbook.
+
+What changed (shared `validate.Check`, added playbooks and incident detectors only):
+
+- Signatures compare syntax trees without positions (layout and comments ignored), rewrite `var x T = v` to
+  `x := v`, and treat `fmt.Errorf`/`errors.New` text and provenance fields as prose. Component names are
+  accepted-source object names plus the scenario IDs of `.sdo/diagnostics/traffic/workloads/`.
+- `playbook.component-copy` (blocking): a new playbook whose Diagnose equals an active playbook's once component
+  names are set aside, while the two name different components, is the same failure on another component. The
+  hint names the existing playbook and its roles: parameterize it by role. The Mitigate is not compared, so a
+  varied repair does not hide the copy. Safety kept: a Diagnose that names no component (or the same one) is not
+  a component copy, so an alternative repair for one diagnosis still passes, and a new playbook that repeats only
+  the Mitigate stays the `playbook.shared-repair` note.
+- `detector.component-copy` (blocking): a new incident detector equal to an existing one apart from IDs, prose
+  and the components it names. Hint: widen the existing detector to bind the component from the failure.
+- On the P8 memory (not committed), the user-timeline playbook is a `playbook.component-copy` of the
+  home-timeline one and its detector a `detector.component-copy`.
+
+Limit: container names are not in the source inventory; they are caught only when they equal a workload name,
+as in the P8 pair.
+
 ## Programs that cannot observe their own repair (added scope)
 
 PX1 found `user-timeline-request-stall` reading `kubectl.kubernetes.io/restartedAt` from
