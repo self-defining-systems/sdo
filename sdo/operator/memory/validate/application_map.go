@@ -1,9 +1,11 @@
 package validate
 
 import (
+	"context"
 	"slices"
 
 	"gopkg.in/yaml.v3"
+	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/memory/layout"
 )
@@ -41,7 +43,7 @@ type workloadScenarios struct {
 // applicationMap checks the application-map region of arch.md against the
 // source inventory and the traffic workloads. Rules that need the compiled
 // scenarios (side effect, DependsOn) run in the compile layer.
-func (s *run) applicationMap() {
+func (s *run) applicationMap(ctx context.Context) {
 	if s.arch == nil {
 		return
 	}
@@ -75,7 +77,31 @@ func (s *run) applicationMap() {
 		}
 		workloads = append(workloads, w)
 	}
-	for _, f := range parsed.Check(appmap.ParseInventory(source), workloads) {
+	for _, f := range parsed.Check(s.mapInventory(ctx), workloads) {
 		s.mapFinding(Semantic, f, region.Line)
 	}
+}
+
+// mapInventory is the inventory the map's names resolve against: the manifest
+// lines in arch.md, or for older memories that lack them the accepted source
+// commit arch.md names, read through the same storage edge that writes them.
+// When neither resolves, the empty inventory makes every name a finding.
+func (s *run) mapInventory(ctx context.Context) appmap.Inventory {
+	source := s.arch.doc.Source
+	inventory := appmap.ParseInventory(source)
+	if len(inventory.Workloads) > 0 {
+		return inventory
+	}
+	commit, _ := s.arch.doc.Meta["generated_at_commit"].(string)
+	facts, err := memory.SourceInventory(ctx, s.req.Root, commit)
+	if err != nil {
+		return inventory
+	}
+	for _, resource := range facts.Resources {
+		if resource.Kind == "Service" {
+			inventory.Services[resource.Name] = true
+		}
+		inventory.Workloads[resource.Kind+"/"+resource.Name] = true
+	}
+	return inventory
 }
