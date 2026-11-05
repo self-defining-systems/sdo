@@ -337,6 +337,7 @@ func publicationChecks(ctx context.Context, r Request, structurallyValid bool) (
 		}
 		ds = append(ds, duplicates...)
 		ds = append(ds, detectorCopyDiagnostics(ctx, r, paths)...)
+		ds = append(ds, componentLiteralDiagnostics(ctx, r, paths)...)
 	}
 	// A scratch index includes new files and agent-local commits while leaving
 	// the proposal index unchanged. Git itself defines the whitespace policy.

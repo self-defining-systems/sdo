@@ -180,7 +180,8 @@ func toCarts(text string) string {
 }
 
 // gateComponentCopy commits the orders playbook and detector, then adds the
-// carts files that change returns (nil skips one) in reflection.
+// carts files that change returns (nil skips one) in reflection. The carts
+// files name their component, so every row also meets the literal rules.
 func gateComponentCopy(name string, change func(t *testing.T, diagnose, mitigate, detector string) (string, string, string), rules ...string) gateRow {
 	// The decision lists the new playbook only when the row adds one.
 	decision := gateUpdated()
@@ -238,26 +239,26 @@ var componentCopyRows = []gateRow{
 			t.Fatal("respelling did not apply")
 		}
 		return diagnose, mitigate, ""
-	}, RuleDuplicateRepair),
+	}, RulePlaybookComponentLiteral, RuleDuplicateRepair),
 	gateComponentCopy("new playbook diagnoses the same failure on another component with a varied repair", func(t *testing.T, diagnose, mitigate, _ string) (string, string, string) {
 		diagnose, mitigate = componentRespell(diagnose, mitigate)
 		return diagnose, strings.Replace(mitigate, `"default", "on", "+@all"`, `"default", "+@all"`, 1), ""
-	}, RulePlaybookComponentCopy),
+	}, RulePlaybookComponentLiteral, RulePlaybookComponentCopy),
 	gateComponentCopy("new playbook with the same generic diagnosis and another repair passes", func(t *testing.T, diagnose, mitigate, _ string) (string, string, string) {
 		// The same Diagnose on the same component: an alternative repair for one
 		// diagnosis, not a copy for another component.
 		diagnose = strings.NewReplacer("orderscacheacl", "cartscacheacl", `"orders-cache-acl"`, `"carts-cache-acl"`).Replace(componentDiagnose)
 		return diagnose, strings.Replace(mitigate, `"ACL", "SETUSER", "default", "on", "+@all"`, `"CONFIG", "SET", "maxmemory", "0"`, 1), ""
-	}),
+	}, RulePlaybookComponentLiteral),
 	gateComponentCopy("new playbook with different evidence on another component passes", func(t *testing.T, diagnose, mitigate, _ string) (string, string, string) {
 		return strings.Replace(diagnose, `"NOPERM"`, `"OOM"`, 1), strings.Replace(mitigate, `"ACL", "SETUSER", "default", "on", "+@all"`, `"CONFIG", "SET", "maxmemory", "0"`, 1), ""
-	}),
+	}, RulePlaybookComponentLiteral),
 	gateComponentCopy("new incident detector copies another for a different component", func(t *testing.T, _, _, detector string) (string, string, string) {
 		return "", "", strings.ReplaceAll(detector, "filtered", "kept")
-	}, RuleDetectorComponentCopy),
+	}, RuleDetectorComponentCopy, RuleDetectorComponentLiteral),
 	gateComponentCopy("new incident detector with its own evidence passes", func(t *testing.T, _, _, detector string) (string, string, string) {
 		return "", "", strings.Replace(detector, `"NOPERM"`, `"OOM"`, 1)
-	}),
+	}, RuleDetectorComponentLiteral),
 }
 
 // The rows join the gate table, so TestGateTable runs them and

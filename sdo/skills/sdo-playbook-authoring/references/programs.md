@@ -49,6 +49,31 @@ if ok, why := result.Implicates(ref); !ok {
 the component never clears it) alone is not a diagnosis; a healthy, source-matching workload is not evidence either. Find the
 workload's Pods by owner (ReplicaSet, then Pod) for `Command{Pod: ...}` instead of naming a Pod.
 
+Nothing in the program or its detector names a component: the second Redis with the same fault must reuse the
+playbook, not copy it. Derive per-component values from the bound role, match every failing journey through it
+(not one scenario ID), and let one detector bind each suspect:
+
+```go
+container := "" // the bound workload's container, not its name
+for _, d := range v.Deployments() {
+	if d.Namespace == ref.Namespace && d.Name == ref.Name && len(d.Spec.Template.Spec.Containers) > 0 {
+		container = d.Spec.Template.Spec.Containers[0].Name
+	}
+}
+// Detector: embeds localize.Inputs, result is localize.FromContext(snapshot, "health"), Spec and manifest list the playbook
+for _, f := range findings { // traffic.NewDetector(d.Spec(), "health").Detect(ctx, snapshot)
+	if strings.HasPrefix(f.RuleID, traffic.RuleIDPrefix) && strings.Contains(f.Evidence, "NOPERM") {
+		f.Playbooks = []string{"redis-acl-restore"}
+		bound = append(bound, localize.BindSuspects(f, result, "redisDeployment")...)
+	}
+}
+```
+
+Suspects include the journey's handler and front end, so Diagnose still needs its own evidence on the bound
+workload. A second incident of the same repair on another component widens this playbook's Diagnose and its
+detector; a new copy is rejected (`playbook.component-copy`, `detector.component-copy`), and so is a new
+component name in either (`playbook.component-literal`, `detector.component-literal`).
+
 ## Source restoration
 
 Choose playbooks by failure mechanism. Admission mutation, resource exhaustion and old-revision

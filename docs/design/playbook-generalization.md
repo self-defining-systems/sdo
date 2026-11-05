@@ -162,6 +162,24 @@ What changed (shared `validate.Check`, added playbooks and incident detectors on
 Limit: container names are not in the source inventory; they are caught only when they equal a workload name,
 as in the P8 pair.
 
+The copy rules catch the second incident, but reflection could still "refine" by enumerating a second name
+(`id == "home-timeline-read" || id == "user-timeline-read"`), and the first incident still taught a literal
+form. So the generalized form is checked too:
+
+- `playbook.component-literal` (blocking): a changed program that declares a role adds a component name to a
+  string literal outside its Spec, prose and error text. `detector.component-literal` (blocking): the same for a
+  changed incident detector that binds roles (`ParameterBindings`, `localize.BindSuspects`). Names the accepted
+  version of that playbook or detector already had are left alone, so editing old memory needs no rewrite; a
+  new playbook must take its component from the role from the first incident. This restores, for
+  generalization rather than leakage, the literal-binding check dropped above.
+- Skill: `programs.md` "Localized components" shows the generalized pair (container from the bound workload;
+  a detector that accepts every scenario finding and calls `localize.BindSuspects`); the detector rules link it.
+- The playbook rule was refused at the first incident on the P8 pair as well (`home-timeline-redis-acl`
+  names `home-timeline-read` and `home-timeline-redis`).
+
+Limits: `.sdo/lib` helpers are not checked; a component name inside a `strings.Contains` argument counts like
+any other literal, so a workload literally named like an image word (`redis`) would be flagged.
+
 ## Programs that cannot observe their own repair (added scope)
 
 PX1 found `user-timeline-request-stall` reading `kubectl.kubernetes.io/restartedAt` from
