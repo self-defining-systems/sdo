@@ -14,6 +14,11 @@ request across that edge.
 - A scenario creates the test identities and data it needs in `Setup` steps (marked writes, run once per prober
   start until they succeed; verify bursts reuse that setup), never relying on data set up by hand. End each with `OrExisting(status, text)`, the
   application's answer for a duplicate, so it passes on a fresh application and on one that has the data.
+- Check content, not only the status: `JSONEquals` for the exact value a write chose, `ExactSet` for the exact
+  set of the probe's own data, `Each` for the shape of every returned member, `Contains` for text pages. A
+  write-read iteration reads back the change it just made; re-applying the same write each iteration hides lost
+  state. Log in as a test identity Setup created (`SaveCookie`, `WithHeader` placeholders), never with forged
+  credentials.
 - Send form bodies with `WithForm(params)` and JSON bodies with `WithJSON(template, params)`: each `{key}` in the
   template is filled from `params` or from an earlier step's `SaveJSON`, escaped for a JSON string; write `"{key}"`
   for a string and `{key}` for a number.

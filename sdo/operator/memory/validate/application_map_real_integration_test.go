@@ -81,4 +81,14 @@ func TestApplicationMapAgainstCompiledScenarios(t *testing.T) {
 			t.Fatalf("no map.path-mismatch note: %v", notes)
 		}
 	})
+	t.Run("a probe that checks only the status blocks the designer", func(t *testing.T) {
+		t.Parallel()
+		root := mapCompileTree(t, `func() traffic.Scenario { s := read("call-all", "web", "api", "db"); s.Detects = nil; s.Steps = []traffic.Step{{Name: "list", Endpoint: traffic.GET("/items", traffic.Params{})}}; return s }()`)
+		request := compileRequest(root)
+		request.Actor, request.Phase = HealthJudge, InitialPhase
+		got, err := CompileCandidate(ctx, request)
+		if err != nil || len(got) != 1 || got[0].Rule != RuleMapSchema || !strings.Contains(got[0].Message, "only the status") {
+			t.Fatalf("designer: %v %v", got, err)
+		}
+	})
 }

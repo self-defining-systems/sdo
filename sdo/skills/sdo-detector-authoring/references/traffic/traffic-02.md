@@ -108,8 +108,31 @@ func (e *HTTPEndpoint) Build(_ context.Context, rng *rand.Rand, state State) (Re
 func (e *HTTPEndpoint) Check(response Response, state State) Verdict
     Check implements Endpoint.
 
+func (e *HTTPEndpoint) ChecksContent() bool
+    ChecksContent reports whether the endpoint checks anything beyond the
+    status: body text, saved JSON fields or cookies, or exact JSON content.
+
 func (e *HTTPEndpoint) Contains(text string) *HTTPEndpoint
     Contains requires the response body to contain text.
+
+func (e *HTTPEndpoint) Each(path string, field string, pattern string) *HTTPEndpoint
+    Each requires the JSON array at dotted path ("" for the whole body) to be
+    non-empty and every member's value at field ("" for the element itself) to
+    match the RE2 pattern, so one malformed or dangling member fails the step.
+
+func (e *HTTPEndpoint) ExactSet(path string, field string, want ...string) *HTTPEndpoint
+    ExactSet requires the JSON array at dotted path ("" for the whole body)
+    to hold exactly the members want, in any order: none missing, none extra,
+    no duplicates. field is the dotted path of each member's value inside an
+    array element ("" when the elements are the values). Each {key} in want is
+    filled from State. Use it when the probe owns the data, so the healthy set
+    is known exactly.
+
+func (e *HTTPEndpoint) JSONEquals(path string, want string) *HTTPEndpoint
+    JSONEquals requires the JSON value at dotted path (object keys and array
+    indexes, for example "data.items.0.id") to equal want exactly. Each {key} in
+    want is replaced by the State value an earlier step saved, so a read-back
+    can require exactly the value the write chose.
 
 func (e *HTTPEndpoint) OrExisting(status int, text string) *HTTPEndpoint
     OrExisting makes the step an ensure step: a response with status whose body
@@ -117,6 +140,11 @@ func (e *HTTPEndpoint) OrExisting(status int, text string) *HTTPEndpoint
     passes without its Contains and SaveJSON checks. Use it for setup steps that
     create a test identity or fixture, which must pass on a fresh application
     and on one that already has the data.
+
+func (e *HTTPEndpoint) SaveCookie(name string, key string) *HTTPEndpoint
+    SaveCookie stores the value of the response's Set-Cookie named name in State
+    under key; a response without it fails. Use it on a login step of a test
+    identity the scenario created, and send the session with WithHeader.
 
 func (e *HTTPEndpoint) SaveJSON(path string, key string) *HTTPEndpoint
     SaveJSON stores the JSON field at dotted path (for example "id" or
@@ -129,7 +157,9 @@ func (e *HTTPEndpoint) WithForm(form Params) *HTTPEndpoint
     WithForm adds a URL-encoded form body.
 
 func (e *HTTPEndpoint) WithHeader(name string, value string) *HTTPEndpoint
-    WithHeader sets a request header.
+    WithHeader sets a request header. Each {key} in value is replaced by
+    the State value an earlier step saved, for example a session cookie
+    ("session={session}") a login step stored with SaveCookie.
 
 func (e *HTTPEndpoint) WithJSON(template string, params Params) *HTTPEndpoint
     WithJSON adds a JSON body, for the many write APIs that take one. template
@@ -203,56 +233,4 @@ type LinkObservations struct {
 
 type LinkProtocol string
     LinkProtocol is how an edge is probed.
-
-const (
-	LinkProtocolTCP       LinkProtocol = "tcp"
-	LinkProtocolHTTP      LinkProtocol = "http"
-	LinkProtocolGRPC      LinkProtocol = "grpc"
-	LinkProtocolRedis     LinkProtocol = "redis"
-	LinkProtocolMemcached LinkProtocol = "memcached"
-	LinkProtocolMongoDB   LinkProtocol = "mongodb"
-	LinkProtocolPostgres  LinkProtocol = "postgres"
-	LinkProtocolMySQL     LinkProtocol = "mysql"
-)
-    Link protocols select the credential-free handshake sent on a fresh
-    connection.
-
-type LinkSample struct {
-	At       time.Time        `json:"at"`
-	Duration time.Duration    `json:"durationNs"`
-	OK       bool             `json:"ok"`
-	Error    string           `json:"error,omitempty"`
-	Class    LinkFailureClass `json:"class,omitempty"`
-	Status   string           `json:"status,omitempty"`
-	Excerpt  string           `json:"excerpt,omitempty"`
-}
-    LinkSample is one fresh connection and protocol handshake of a link.
-
-func LinkFailing(window Window, observed LinkObservations) ([]LinkSample, bool)
-    LinkFailing reports whether the link's most recent dials, at least the
-    workload's Failures many and none older than the workload's MaxAge,
-    all failed.
-
-type Outcome string
-    Outcome classifies one iteration of a scenario.
-
-const (
-	OutcomeOK      Outcome = "ok"
-	OutcomeError   Outcome = "error"
-	OutcomeTimeout Outcome = "timeout"
-	// OutcomeInvalid marks a generator bug: a request could not be built or
-	// broke a safety rule, so nothing was sent. It is not a health signal.
-	OutcomeInvalid Outcome = "invalid"
-)
-type Param interface {
-	Value(rng *rand.Rand, state State, generated map[string]string) (string, error)
-}
-    Param generates one request parameter from the iteration's random source,
-    its shared State, and the parameters of the same request generated so far.
-
-func Const(value string) Param
-    Const is a fixed value.
-
-func DateRange(from string, to string) Param
-    DateRange picks a calendar date (YYYY-MM-DD) in [from, to].
 ```

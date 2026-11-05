@@ -266,6 +266,8 @@ func TestCheckScenariosComparesTheCatalogWithTheMap(t *testing.T) {
 		{"read-later scenario that writes", with(2, func(s *Scenario) { s.SideEffect = "idempotent-write" }), RuleSchema, "items-later"},
 		{"probe without a scenario", good[:2], RuleSchema, "items-later"},
 		{"read-later scenario reading data nothing creates", with(2, func(s *Scenario) { s.SetupSteps = 0 }), RuleSchema, "setup"},
+		{"call probe that checks only status", with(0, func(s *Scenario) { s.StatusOnly = true }), RuleSchema, "only the status"},
+		{"write-read probe that checks only status", with(1, func(s *Scenario) { s.StatusOnly = true }), RuleSchema, "write-item"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := m.CheckScenarios(tc.scenarios)
