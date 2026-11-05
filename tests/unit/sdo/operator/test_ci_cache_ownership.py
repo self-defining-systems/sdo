@@ -38,3 +38,18 @@ def test_checks_restore_current_compiler_cache_across_fixture_hash_changes() -> 
     fallbacks = restore["with"]["restore-keys"].splitlines()
     assert prefix in fallbacks, "submodule go.sum discovery must not force an obsolete compiler cache"
     assert fallbacks.index(prefix) < next(i for i, key in enumerate(fallbacks) if key.startswith("ci-go-"))
+
+
+def test_checks_fall_back_to_the_cache_main_saves_when_the_shared_one_is_gone() -> None:
+    # Only main pushes save caches, and a cold checks job overruns its timeout
+    # and never saves, so the checks job must also read the tests job's cache.
+    configuration = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    restore = next(
+        step
+        for step in configuration["jobs"]["checks"]["steps"]
+        if step.get("uses", "").startswith("actions/cache/restore@")
+    )
+    fallbacks = restore["with"]["restore-keys"].splitlines()
+    tests_prefix = "ci-tests-v2-${{ runner.os }}-${{ runner.arch }}-1.26.8-"
+    assert tests_prefix in fallbacks
+    assert fallbacks.index(tests_prefix) < next(i for i, key in enumerate(fallbacks) if key.startswith("ci-go-"))
