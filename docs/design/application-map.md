@@ -68,7 +68,9 @@ Field rules (all blocking unless marked note):
      `write-with-cleanup`; at least one of its operations has `writes: true`.
    - `read-later`: listed in health-probe workload `probe-read-later`; side effect `read`; its path contains
      at least one `holds_data` component; it has `Setup` steps that write the fixture it reads (once per prober
-     start, as an idempotent ensure step), so it never depends on data set up by hand.
+     start, as an idempotent ensure step), so it never depends on data set up by hand. Verify bursts share
+     the continuous probe's completed setup, so a lost fixture stays failing until the data returns; only a
+     controller restart writes it again.
    Each scenario appears in exactly one of these workloads, and every scenario in them has a probe entry.
    A health-probe workload may hold only write scenarios (the SDK no longer requires a read scenario per
    health probe; that change ships with the designer skill).

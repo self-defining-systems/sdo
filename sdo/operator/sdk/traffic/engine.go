@@ -89,9 +89,16 @@ type Engine struct {
 	baseURL   func(Target) string
 	clock     Clock
 
-	setupMu sync.Mutex
-	// setUp holds, per scenario whose setup steps succeeded, the State they saved.
-	setUp map[string]State
+	// setups records the scenarios whose setup steps succeeded; engines that
+	// ShareSetup use one record.
+	setups *setupRecord
+}
+
+// setupRecord holds, per scenario whose setup steps succeeded, the State
+// they saved.
+type setupRecord struct {
+	mu    sync.Mutex
+	saved map[string]State
 }
 
 // NewEngine validates workload against catalog and prepares its schedule.
@@ -120,9 +127,17 @@ func NewEngine(workload Workload, catalog Catalog, client Doer, baseURL func(Tar
 	}
 	return &Engine{
 		workload: workload, scenarios: scenarios, schedule: weightedSchedule(workload.Scenarios),
-		client: client, baseURL: baseURL, clock: clock, setUp: map[string]State{},
+		client: client, baseURL: baseURL, clock: clock, setups: &setupRecord{saved: map[string]State{}},
 	}, nil
 }
+
+// ShareSetup makes e use source's record of completed setup steps, so a
+// scenario set up by either engine is never set up again by the other. A
+// process that runs the same catalog in several engines (a continuous probe
+// and its verify bursts) shares one record: data a setup step wrote and that
+// was lost afterwards then fails every engine instead of being written again.
+// Both engines must run the same catalog.
+func (e *Engine) ShareSetup(source *Engine) { e.setups = source.setups }
 
 // Workload returns the engine's workload with defaults applied.
 func (e *Engine) Workload() Workload { return e.workload }
@@ -168,7 +183,7 @@ func (e *Engine) Plan(ctx context.Context, iteration uint64) ([]Request, error) 
 
 // Iterate runs iteration once and never returns an error: every failure is
 // a sample. A scenario's setup steps run first until they succeed once in this
-// engine; a failed setup step fails the sample, and setup time is not part of
+// engine (or an engine it shares setup with); a failed setup step fails the sample, and setup time is not part of
 // its latency. Cleanup steps of a write-with-cleanup scenario run after any
 // request was sent, even when a step failed; their failures are reported in
 // CleanupError and do not change the outcome.
@@ -214,15 +229,15 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (string, Sample)
 }
 
 // setup runs scenario's setup steps unless they already succeeded in this
-// engine, and copies the State they saved into state. It reports whether a
+// engine or one it shares setup with, and copies the State they saved into state. It reports whether a
 // setup step failed; the failure is then recorded in sample.
 func (e *Engine) setup(ctx context.Context, scenario Scenario, rng *rand.Rand, state State, base string, sample *Sample) bool {
 	if len(scenario.Setup) == 0 {
 		return false
 	}
-	e.setupMu.Lock()
-	saved, done := e.setUp[scenario.ID]
-	e.setupMu.Unlock()
+	e.setups.mu.Lock()
+	saved, done := e.setups.saved[scenario.ID]
+	e.setups.mu.Unlock()
 	if !done {
 		started := e.clock.Now()
 		saved = State{}
@@ -239,9 +254,9 @@ func (e *Engine) setup(ctx context.Context, scenario Scenario, rng *rand.Rand, s
 				return true
 			}
 		}
-		e.setupMu.Lock()
-		e.setUp[scenario.ID] = saved
-		e.setupMu.Unlock()
+		e.setups.mu.Lock()
+		e.setups.saved[scenario.ID] = saved
+		e.setups.mu.Unlock()
 	}
 	for key, value := range saved {
 		state[key] = value

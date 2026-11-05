@@ -102,6 +102,10 @@ type Prober struct {
 	links  map[string]*linkProbe
 	bursts map[string]traffic.Workload
 	next   uint64
+	// setups is the engine whose record of completed setup steps every
+	// engine of this prober shares, so a verify burst never writes setup
+	// data the continuous probe already wrote (and may since have lost).
+	setups *traffic.Engine
 }
 
 // New validates the catalog and workloads and prepares their engines.
@@ -169,9 +173,21 @@ func New(config Config) (*Prober, error) {
 		if err != nil {
 			return nil, err
 		}
+		prober.shareSetup(engine)
 		prober.probes[workload.Name] = newProbe(engine)
 	}
 	return prober, nil
+}
+
+// shareSetup makes engine use the prober's one record of completed setup
+// steps. Data a setup step wrote is written again only by a new prober (a
+// controller restart). The caller holds p.mu once the prober runs.
+func (p *Prober) shareSetup(engine *traffic.Engine) {
+	if p.setups == nil {
+		p.setups = engine
+		return
+	}
+	engine.ShareSetup(p.setups)
 }
 
 func newProbe(engine *traffic.Engine) *probe {
@@ -331,6 +347,9 @@ func (p *Prober) Burst(ctx context.Context, request BurstRequest) (BurstResult, 
 	if err != nil {
 		return BurstResult{}, err
 	}
+	p.mu.Lock()
+	p.shareSetup(engine)
+	p.mu.Unlock()
 	state := newProbe(engine)
 	var mu sync.Mutex
 	p.mu.Lock()
