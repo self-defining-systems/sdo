@@ -236,7 +236,8 @@ func (s Scenario) normalizedTarget() Target {
 
 // Validate reports the first problem that makes the scenario unsafe or
 // ambiguous. Rules that depend on built requests (read scenarios send only
-// GET/HEAD; writes carry the marker) are enforced by the engine per request.
+// GET/HEAD; writes carry the marker) are enforced by the engine per request;
+// a declarative HTTPEndpoint step of a read scenario is also checked here.
 func (s Scenario) Validate() error {
 	if !scenarioPattern.MatchString(s.ID) {
 		return fmt.Errorf("scenario id %q must be lowercase letters, digits, '.', '_', or '-'", s.ID)
@@ -282,6 +283,11 @@ func (s Scenario) Validate() error {
 	case SideEffectRead:
 		if len(s.Cleanup) > 0 || (s.Marker != "" && len(s.Setup) == 0) {
 			return fmt.Errorf("scenario %s: a read scenario has no cleanup, and a marker only for its setup steps", s.ID)
+		}
+		for _, step := range s.Steps {
+			if endpoint, ok := step.Endpoint.(*HTTPEndpoint); ok && endpoint.Method != http.MethodGet && endpoint.Method != http.MethodHead {
+				return fmt.Errorf("scenario %s: read scenario step %s sends %s; move the write to a setup step or declare a write side effect", s.ID, step.Name, endpoint.Method)
+			}
 		}
 	case SideEffectIdempotentWrite, SideEffectWriteWithCleanup:
 		if strings.TrimSpace(s.Marker) == "" || len(s.Marker) < 6 {
