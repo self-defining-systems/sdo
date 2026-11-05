@@ -142,6 +142,14 @@ type Target struct {
 // path, as described in .sdo/arch.md, so a failing scenario localizes the
 // fault. Writes must use dedicated synthetic data whose Marker appears in
 // every write request.
+//
+// Setup steps create the scenario's own test data (a test identity, a
+// fixture a later read must find) so the scenario never depends on data set up
+// by hand. The engine runs them before the first iteration and again only
+// until they succeed once; data lost afterwards then fails the Steps instead
+// of being written again. Setup requests may write in any scenario and must
+// carry the Marker; make them idempotent (OrExisting) because a restarted
+// prober runs them again. Values they save are visible to every iteration.
 type Scenario struct {
 	ID          string
 	Description string
@@ -149,6 +157,7 @@ type Scenario struct {
 	DependsOn   []string
 	SideEffect  SideEffect
 	Marker      string
+	Setup       []Step
 	Steps       []Step
 	Cleanup     []Step
 	Detects     []FaultClass
@@ -163,21 +172,29 @@ type Descriptor struct {
 	Target      Target       `json:"target"`
 	DependsOn   []string     `json:"dependsOn,omitempty"`
 	SideEffect  SideEffect   `json:"sideEffect"`
+	Setup       []string     `json:"setup,omitempty"`
 	Steps       []string     `json:"steps"`
 	Detects     []FaultClass `json:"detects"`
 }
 
 // Describe returns the scenario's descriptor with its effective fault classes.
 func (s Scenario) Describe() Descriptor {
-	steps := make([]string, 0, len(s.Steps))
-	for _, step := range s.Steps {
-		steps = append(steps, step.Name)
+	names := func(steps []Step) []string {
+		out := make([]string, 0, len(steps))
+		for _, step := range steps {
+			out = append(out, step.Name)
+		}
+		return out
 	}
-	return Descriptor{
+	descriptor := Descriptor{
 		ID: s.ID, Description: s.Description, Target: s.normalizedTarget(),
 		DependsOn: append([]string(nil), s.DependsOn...), SideEffect: s.SideEffect,
-		Steps: steps, Detects: s.FaultClasses(),
+		Steps: names(s.Steps), Detects: s.FaultClasses(),
 	}
+	if len(s.Setup) > 0 {
+		descriptor.Setup = names(s.Setup)
+	}
+	return descriptor
 }
 
 // FaultClasses returns the required classes followed by the declared ones.
@@ -228,10 +245,10 @@ func (s Scenario) Validate() error {
 	if len(s.Steps) == 0 || len(s.Steps) > MaxSteps {
 		return fmt.Errorf("scenario %s: needs 1 to %d steps", s.ID, MaxSteps)
 	}
-	if len(s.Cleanup) > MaxSteps {
-		return fmt.Errorf("scenario %s: at most %d cleanup steps", s.ID, MaxSteps)
+	if len(s.Cleanup) > MaxSteps || len(s.Setup) > MaxSteps {
+		return fmt.Errorf("scenario %s: at most %d setup and %d cleanup steps", s.ID, MaxSteps, MaxSteps)
 	}
-	for _, step := range append(append([]Step(nil), s.Steps...), s.Cleanup...) {
+	for _, step := range append(append(append([]Step(nil), s.Setup...), s.Steps...), s.Cleanup...) {
 		if !scenarioPattern.MatchString(step.Name) {
 			return fmt.Errorf("scenario %s: step name %q must be lowercase letters, digits, '.', '_', or '-'", s.ID, step.Name)
 		}
@@ -244,10 +261,13 @@ func (s Scenario) Validate() error {
 			return fmt.Errorf("scenario %s: unknown fault class %q", s.ID, class)
 		}
 	}
+	if len(s.Setup) > 0 && (strings.TrimSpace(s.Marker) == "" || len(s.Marker) < 6) {
+		return fmt.Errorf("scenario %s: setup steps write; they need a Marker of at least 6 characters naming their synthetic data", s.ID)
+	}
 	switch s.SideEffect {
 	case SideEffectRead:
-		if s.Marker != "" || len(s.Cleanup) > 0 {
-			return fmt.Errorf("scenario %s: marker and cleanup apply only to write scenarios", s.ID)
+		if len(s.Cleanup) > 0 || (s.Marker != "" && len(s.Setup) == 0) {
+			return fmt.Errorf("scenario %s: a read scenario has no cleanup, and a marker only for its setup steps", s.ID)
 		}
 	case SideEffectIdempotentWrite, SideEffectWriteWithCleanup:
 		if strings.TrimSpace(s.Marker) == "" || len(s.Marker) < 6 {
@@ -298,8 +318,9 @@ func (c Catalog) Scenario(id string) (Scenario, bool) {
 }
 
 // checkRequest enforces the per-request safety rules the engine applies to
-// every built request.
-func checkRequest(scenario Scenario, request Request, cleanup bool) error {
+// every built request. Writes and cleanup requests carry the marker; a read
+// scenario writes only in its setup steps.
+func checkRequest(scenario Scenario, request Request, phase stepPhase) error {
 	if !methods[request.Method] {
 		return fmt.Errorf("method %q is not one of GET, HEAD, POST, PUT, PATCH, DELETE", request.Method)
 	}
@@ -313,14 +334,24 @@ func checkRequest(scenario Scenario, request Request, cleanup bool) error {
 		}
 	}
 	write := request.Method != "GET" && request.Method != "HEAD"
-	if write && scenario.SideEffect == SideEffectRead {
-		return fmt.Errorf("read scenario sent %s; declare a write side effect", request.Method)
+	if write && scenario.SideEffect == SideEffectRead && phase != phaseSetup {
+		return fmt.Errorf("read scenario sent %s; declare a write side effect or move the write to a setup step", request.Method)
 	}
-	if (write || cleanup) && scenario.SideEffect != SideEffectRead && !requestMentions(request, scenario.Marker) {
+	marked := phase == phaseCleanup || (write && (phase == phaseSetup || scenario.SideEffect != SideEffectRead))
+	if marked && !requestMentions(request, scenario.Marker) {
 		return fmt.Errorf("write request does not carry the synthetic marker %q", scenario.Marker)
 	}
 	return nil
 }
+
+// stepPhase is the part of a scenario a step belongs to.
+type stepPhase int
+
+const (
+	phaseStep stepPhase = iota
+	phaseSetup
+	phaseCleanup
+)
 
 func requestMentions(request Request, marker string) bool {
 	if marker == "" {

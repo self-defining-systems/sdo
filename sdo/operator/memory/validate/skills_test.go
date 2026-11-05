@@ -30,17 +30,6 @@ var internalRules = map[string]string{
 	RuleUnknownPhase:            "the controller supplies the phase; an agent cannot choose it",
 	RuleUnsafePath:              "a path-traversal guard against malformed diffs, not an authoring decision",
 
-	RuleMapMissing:         "application-map rule: the diagnostic itself names the operation, component or probe kind to add; the detection designer's map skill (owned separately) should cite it in a references/rules.md and drop it from this list",
-	RuleMapSchema:          "application-map rule: the diagnostic itself names the operation, component or probe kind to add; the detection designer's map skill (owned separately) should cite it in a references/rules.md and drop it from this list",
-	RuleMapUnknownName:     "application-map rule: the diagnostic itself names the operation, component or probe kind to add; the detection designer's map skill (owned separately) should cite it in a references/rules.md and drop it from this list",
-	RuleMapPathMismatch:    "application-map rule: the diagnostic itself names the operation, component or probe kind to add; the detection designer's map skill (owned separately) should cite it in a references/rules.md and drop it from this list",
-	RuleMapUncoveredOp:     "application-map rule: the diagnostic itself names the operation, component or probe kind to add; the detection designer's map skill (owned separately) should cite it in a references/rules.md and drop it from this list",
-	RuleMapUncoveredWrite:  "application-map rule: the diagnostic itself names the operation, component or probe kind to add; the detection designer's map skill (owned separately) should cite it in a references/rules.md and drop it from this list",
-	RuleMapUncoveredData:   "application-map rule: the diagnostic itself names the operation, component or probe kind to add; the detection designer's map skill (owned separately) should cite it in a references/rules.md and drop it from this list",
-	RuleMapUnexercisedEdge: "application-map rule: the diagnostic itself names the operation, component or probe kind to add; the detection designer's map skill (owned separately) should cite it in a references/rules.md and drop it from this list",
-	RuleMapOutsideRegion:   "application-map rule: the diagnostic itself names the operation, component or probe kind to add; the detection designer's map skill (owned separately) should cite it in a references/rules.md and drop it from this list",
-	RuleMapRegionOwner:     "application-map rule: the diagnostic itself names the operation, component or probe kind to add; the detection designer's map skill (owned separately) should cite it in a references/rules.md and drop it from this list",
-
 	RuleReflectionDetectorRequired: "a coverage-gap name, recorded and never refused; the skills teach linking detectors",
 	RuleTrafficUndrivenEdge:        "a coverage-gap name, recorded and never refused; the detector-authoring skill teaches driving every edge",
 	RuleTrafficDefaultLatency:      "a coverage-gap name, recorded and never refused; the detector-authoring skill teaches latency bounds",
@@ -85,8 +74,8 @@ var (
 func citedRules(t *testing.T) map[string][]string {
 	t.Helper()
 	files, err := filepath.Glob(filepath.Join(skillsRoot, "*", "references", "rules.md"))
-	if err != nil || len(files) != 3 {
-		t.Fatalf("want the three skills' rules.md, got %v (%v)", files, err)
+	if err != nil || len(files) != 4 {
+		t.Fatalf("want the four skills' rules.md, got %v (%v)", files, err)
 	}
 	cited := map[string][]string{}
 	for _, file := range files {
@@ -175,7 +164,8 @@ func TestSkillsShipTheirDocumentedFiles(t *testing.T) {
 		"sdo-playbook-authoring/SKILL.md", "sdo-playbook-authoring/references/rules.md",
 		"sdo-playbook-authoring/assets/restart-loop/README.md",
 		"sdo-operationalize/SKILL.md", "sdo-operationalize/references/catalog.md",
-		"sdo-operationalize/references/methods.md",
+		"sdo-operationalize/references/methods.md", "sdo-operationalize/references/map.md",
+		"sdo-operationalize/references/rules.md",
 	} {
 		if _, err := os.Stat(filepath.Join(skillsRoot, filepath.FromSlash(rel))); err != nil {
 			missing = append(missing, rel)

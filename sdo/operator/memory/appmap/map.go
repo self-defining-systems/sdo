@@ -433,11 +433,14 @@ type Scenario struct {
 	ID         string
 	SideEffect string
 	DependsOn  []string
+	// SetupSteps counts the setup steps that create the scenario's own data.
+	SetupSteps int
 }
 
 // CheckScenarios applies the rules that need the compiled scenarios: each
 // probe's side effect matches its kind, and its DependsOn names a Service of
-// every component on the probe's path and none outside it.
+// every component on the probe's path and none outside it; a read-later
+// scenario creates the data it reads in its own setup steps.
 func (m Map) CheckScenarios(scenarios []Scenario) []Finding {
 	c := &checker{m: m, byName: map[string]Component{}, ops: opPaths(m.Operations)}
 	for _, comp := range m.Components {
@@ -461,6 +464,9 @@ func (m Map) CheckScenarios(scenarios []Scenario) []Finding {
 		case KindReadLater:
 			if s.SideEffect != "read" {
 				c.add(RuleSchema, "a read-later scenario declares SideEffect read", "probe %s is read-later but scenario side effect is %q", p.Scenario, s.SideEffect)
+			}
+			if s.SetupSteps == 0 {
+				c.add(RuleSchema, "write the fixture the scenario reads in its Setup steps, through the application's own write operation, with the Marker and an ensure step (OrExisting); never rely on data set up by hand", "probe %s is read-later but its scenario has no setup steps, so on a freshly deployed application nothing creates the data it reads", p.Scenario)
 			}
 		}
 		path := map[string]bool{}
