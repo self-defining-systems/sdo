@@ -94,6 +94,7 @@ def test_scan_covers_the_prompt_builders_and_templates() -> None:
         "sdo/skills/sdo-operationalize/SKILL.md",
         "sdo/skills/sdo-operationalize/references/catalog.md",
         "sdo/skills/sdo-operationalize/references/methods.md",
+        "sdo/skills/sdo-operationalize/references/map.md",
         "sdo/skills/sdo-detector-authoring/assets/restart-loop/detector_test.go",
         "sdo/operator/runtime/deploy/rbac.yaml",
         "benchmarks/sregym/adapter/driver.py",

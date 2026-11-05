@@ -55,8 +55,8 @@ Spend your detectors on what only the source can tell: the layers below list tho
 
 - Each user-facing read route: a scenario whose step checks content that the healthy application returns
   (`.Contains`). Draw parameters from seeded records.
-- Each write route: a journey workload with `SideEffectWriteWithCleanup`, a `Marker`, and a following step that
-  reads back what was written (`SaveJSON`, `FromPrevious`). The read-back is the data-correctness check.
+- Each write route: the skill's write-read probe in the `probe-write` workload, with a `Marker`, a test identity
+  and a following step that reads back what was written (`SaveJSON`, `FromPrevious`).
 - Login and session flows: chain the steps the way a client does.
 - The web page and its static assets: one GET each, checking a marker the page always contains.
 - Failures reported inside a success status: check the body and declare `traffic.FaultWrongBody`.
@@ -67,7 +67,7 @@ Spend your detectors on what only the source can tell: the layers below list tho
 - Each internal HTTP API: a scenario aimed at that Service directly, with `DependsOn` naming its downstream
   Services. When a journey fails, these show which hop broke.
 - Each service-to-service call the source declares, data stores included: a link with the protocol the caller
-  uses, following the link rules in the judge task. Use `tcp` only when no protocol fits.
+  uses, following the link rules in the detection designer task. Use `tcp` only when no protocol fits.
 - A grpc link works on any gRPC server: one without the health service answers UNIMPLEMENTED, which counts as
   reachable.
 - Not expressible yet: request-level calls to gRPC, Thrift or other non-HTTP APIs, and UDP. A grpc link proves
@@ -99,10 +99,8 @@ detector so the observed value, limit and window are in Evidence.
 
 ## 5. Data stores and queues
 
-- Data presence: a journey that reads a seeded record through the application (layer 1). It catches lost,
-  wiped or unreachable data end to end.
-- Store and queue health from exporters the source deploys (Metrics): replication state, cache hit ratio
-  falling, connections near maximum, consumer lag growing, dead-letter growth.
+- Data presence: the read-later probe of the skill. It reads data written earlier through the application.
+- Store and queue health from exporters the source deploys (Metrics), against their healthy range.
 - Store reachability: a link with the store's protocol (mongodb, redis, memcached, postgres, mysql) from each
   Service that uses it.
 - Not expressible yet: authenticated queries, data contents outside the application, and message brokers.

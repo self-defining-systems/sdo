@@ -1,1 +1,1 @@
-Health detectors (judge-owned, never edit): 
+Health detectors (designer-owned, never edit): 

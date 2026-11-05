@@ -7,10 +7,10 @@ package traffic // import "sdo.dev/operator/sdk/traffic"
 
 Package traffic is SDO's app-agnostic synthetic-traffic health machinery.
 
-The health judge writes, in the application's operational memory, Go generators
-(.sdo/diagnostics/traffic/generators/) that describe user journeys as Scenarios:
-ordered Steps whose Endpoints build requests from a seeded random source
-and shared per-iteration State, and check responses. Workload profiles
+The detection designer writes, in the application's operational memory,
+Go generators (.sdo/diagnostics/traffic/generators/) that describe user journeys
+as Scenarios: ordered Steps whose Endpoints build requests from a seeded random
+source and shared per-iteration State, and check responses. Workload profiles
 (.sdo/diagnostics/traffic/workloads/<name>.yaml) say which scenarios run,
 how often, and against which SLO.
 

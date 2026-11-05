@@ -19,9 +19,9 @@ _ENVIRONMENT = json.loads((Path(__file__).resolve().parents[1] / "contracts" / "
 #: The worker environment the controller sets (``worker_registry.AgentEnvironment``); one manifest names it for
 #: both languages.
 PROVIDER_ENV: str = _ENVIRONMENT["provider"]
-#: Model variable by role: ``responder``, ``reflection``, ``lifecycle`` (health judge, architect) or ``deployment``.
+#: Model variable by role: ``responder``, ``reflection``, ``lifecycle`` (designer, architect) or ``deployment``.
 MODEL_ENV: dict[str, str] = dict(_ENVIRONMENT["models"])
-#: The one reasoning effort every SDO agent (deployer, health judge, responder, reflection) runs at.
+#: The one reasoning effort every SDO agent (deployer, detection designer, responder, reflection) runs at.
 EFFORT_ENV: str = _ENVIRONMENT["effort"]
 DEFAULT_AGENT_EFFORT: str = _ENVIRONMENT["default_effort"]
 AGENT_EFFORTS: tuple[str, ...] = tuple(_ENVIRONMENT["efforts"])

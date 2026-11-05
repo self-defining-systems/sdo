@@ -1,4 +1,4 @@
-"""Typed health judge worker for a role-scoped proposal checkout."""
+"""Typed detection designer worker for a role-scoped proposal checkout."""
 
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ def author_health_diagnostics(request: HealthJudgeRequest, checkout: Path) -> He
 
     summary = request.architecture_summary_markdown.strip()
     if not summary:
-        raise ValueError("health judge requires accepted architecture summary")
+        raise ValueError("detection designer requires accepted architecture summary")
     resources = [
         TopologyResourceDTO(
             kind=row.kind,
@@ -104,13 +104,13 @@ def _judge_feedback(request: HealthJudgeRequest) -> str | None:
 def _validate_judge_draft(artifact: _JudgeDraft) -> None:
     """Check logical detector metadata before authoritative Go validation."""
     if not artifact.failure_patterns:
-        raise ValueError("health judge must enumerate failure patterns")
+        raise ValueError("detection designer must enumerate failure patterns")
     if not artifact.detector_ids or any(
         not re.fullmatch(r"[a-z0-9][a-z0-9_.-]*", item) for item in artifact.detector_ids
     ):
-        raise ValueError("health judge must return logical detector IDs")
+        raise ValueError("detection designer must return logical detector IDs")
     if len(set(artifact.detector_ids)) != len(artifact.detector_ids):
-        raise ValueError("health judge detector IDs must be unique")
+        raise ValueError("detection designer detector IDs must be unique")
 
 
 def run_judge_task(
@@ -123,23 +123,23 @@ def run_judge_task(
     task = cast("AgentTask", parse_json(task_path.read_text(encoding="utf-8"), AgentTask()))
     validate(task)
     if not task.workspace.proposal_id or not task.workspace.checkout_path or not task.workspace.base_commit:
-        raise ValueError("health judge requires an accepted proposal checkout")
+        raise ValueError("detection designer requires an accepted proposal checkout")
     request = HealthJudgeRequest()
     if not task.request.Unpack(request):
-        raise ValueError("health judge request has wrong type")
+        raise ValueError("detection designer request has wrong type")
     if not request.application or not request.namespace or request.attempt < 1:
-        raise ValueError("health judge request is incomplete")
+        raise ValueError("detection designer request is incomplete")
     checkout = Path(task.workspace.checkout_path)
     if not request.accepted_source_commit or not request.architecture_summary_markdown:
-        raise ValueError("health judge requires accepted source and architecture context")
+        raise ValueError("detection designer requires accepted source and architecture context")
     if any(not (row.kind and row.name and row.namespace and row.source) for row in request.source_resources):
-        raise ValueError("health judge received an incomplete source inventory resource")
+        raise ValueError("detection designer received an incomplete source inventory resource")
     typed = execute(request, checkout)
     if typed.HasField("artifact_proposal"):
-        raise ValueError("direct-edit health judge rejects deprecated artifact_proposal")
+        raise ValueError("direct-edit detection designer rejects deprecated artifact_proposal")
     validate(typed)
     if typed.authored and not typed.detector_ids:
-        raise ValueError("health judge must return logical detector IDs")
+        raise ValueError("detection designer must return logical detector IDs")
     result = AgentResult(
         schema_version=SCHEMA_VERSION,
         task_id=task.task_id,

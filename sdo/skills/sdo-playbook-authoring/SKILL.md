@@ -7,7 +7,7 @@ description: Start here for reflection. Turn recorded hand repairs into validate
 
 Work in the proposal checkout, in this order. Open other files only when a step or a diagnostic names them.
 
-1. **Consider detection coverage.** If generic detection lagged a visible cause, use [detector authoring](../sdo-detector-authoring/SKILL.md) to add or refine a cause-specific incident detector on the resource it reads. Health detectors remain judge-owned. **Ask the check what is left.** Use supplied diagnostics without repeating a rejected probe. Otherwise call `check_memory` with `learning_decision: no_change` and a one-line `no_change_reason`.
+1. **Consider detection coverage.** If generic detection lagged a visible cause, use [detector authoring](../sdo-detector-authoring/SKILL.md) to add or refine a cause-specific incident detector on the resource it reads. Health detectors remain designer-owned. **Ask the check what is left.** Use supplied diagnostics without repeating a rejected probe. Otherwise call `check_memory` with `learning_decision: no_change` and a one-line `no_change_reason`.
    If it passes and no detection gap remains, return that decision immediately. Its diagnostics identify required work: uncovered hand
    repairs (`reflection.program-required`), applied playbooks that failed, left findings unresolved or needed a later hand repair
    (`reflection.stale-playbook`: update, narrow its Diagnose off a cause it does not fix, or retire), no verified repair at all (`reflection.repair-required`: return `no_change`), and the decision to return when Go
@@ -59,7 +59,7 @@ Keep revisions that applied cleanly unless this incident shows failure or incomp
   Link the script digest to its receipt ID in the case's `script_origins`.
 <!-- /replay:on -->
 
-- Credentials stay references (env or ConfigMap key); never read Secret data. Learn into incident playbooks. The health judge owns `health-objective` and health detectors: never edit
+- Credentials stay references (env or ConfigMap key); never read Secret data. Learn into incident playbooks. The detection designer owns `health-objective` and health detectors: never edit
   them; when its generic program applied and hand repairs followed, encode those in an incident playbook.
 - `reflection.detector-required`: list the playbook in the detector it names, or copy
   `assets/examples/detectors/crashloop-script-repair/` to `.sdo/diagnostics/detectors/incidents/<id>/`,
