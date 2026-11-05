@@ -53,21 +53,22 @@ Three probe kinds, each a set of traffic scenarios in its own continuous health 
   with the marker. The read-later scenario is a read: it must find the fixture's value. Record the exact
   requests that re-create the fixture under `Fixtures` in the health-objective playbook.
 - Keep the link workload for every map edge between Services (traffic authoring rules).
-- Rates: each scenario needs at least the SLO's `minSamples` within `maxAge` (defaults 3 in 30s, so at least
-  0.1 iterations per second per scenario). Keep all probe requests together under 5% of the application's
-  normal request rate when you can measure it, and under 2 requests per second otherwise.
+- Rates: give every scenario (workload rate times its weight share) at least 0.2 iterations per second, twice
+  the SLO default of 3 samples in 30s, or health is never confirmed; chain operations rather than lower rates.
+  Keep all probe requests under 5% of the app's request rate when measurable, else under 3 per second.
 
 ## 3. Calibrate on the live application
 
-From your session, reach the live application through its Services (cluster DNS, or `kubectl` when available).
+Always calibrate, also when a map and probes already exist: an earlier session's bounds and rates can be wrong.
+Reach the live application through its Services (cluster DNS, or `kubectl` when available).
 
 1. Send each scenario's requests once by hand. Each must pass on the healthy application. Write the read-later
    fixtures now and read them back.
 2. Check the observed path: for each probe, confirm that every component on its map path served it, using what
    the application offers (trace spans, access logs, or connection and request counters on each pod). Add an
    observed edge you did not map; recheck the source for a mapped hop you never saw.
-3. Set each scenario's `maxLatency` from its measured healthy latency (with headroom), or from a client timeout
-   the source states.
+3. Time each whole scenario (all its steps together) over at least ten healthy iterations. Set `maxLatency` to at
+   least twice the slowest, or to a client timeout the source states; the bound judges the median of all steps.
 4. Compute the probe request rate (iterations per second times requests per iteration, summed over the three
    workloads) and compare it with the application's request rate if you can observe it.
 5. Write a `Calibration` section in the health-objective playbook: what passed, the observed paths, the probe
@@ -84,8 +85,7 @@ for a mechanism the probes and generic checks cannot localize ([catalog](referen
 
 - A fault that only a probe caught, with no cause check naming it: add an incident detector for its mechanism,
   never one the Go-installed checks already cover.
-- A detector that fired while nothing was wrong: tighten it with the outcome's evidence; it must still fire on
-  its captured cases and stay quiet on healthy baselines.
+- A detector that fired while nothing was wrong: tighten it with the outcome's evidence (fire on captured cases).
 - Responders own incident detectors and the detection designer owns health detectors and the map.
 
 ## Application instrumentation
