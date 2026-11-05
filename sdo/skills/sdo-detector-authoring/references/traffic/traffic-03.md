@@ -236,7 +236,8 @@ func (s Scenario) StatusOnly() bool
 func (s Scenario) Validate() error
     Validate reports the first problem that makes the scenario unsafe or
     ambiguous. Rules that depend on built requests (read scenarios send only
-    GET/HEAD; writes carry the marker) are enforced by the engine per request.
+    GET/HEAD; writes carry the marker) are enforced by the engine per request;
+    a declarative HTTPEndpoint step of a read scenario is also checked here.
 
 type ScenarioObservations struct {
 	Scenario Descriptor `json:"scenario"`
