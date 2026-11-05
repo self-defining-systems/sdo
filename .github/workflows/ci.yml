@@ -27,9 +27,7 @@ jobs:
   checks:
     name: checks and Python
     runs-on: ubuntu-latest
-    # A cold module cache (the shared cache is saved only by main runs) puts this
-    # job at 4-5 minutes, so a 5-minute cap cancelled it at random.
-    timeout-minutes: 8
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
