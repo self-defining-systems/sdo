@@ -59,7 +59,8 @@ Three probe kinds, each a set of traffic scenarios in its own continuous health 
 
 ## 3. Calibrate on the live application
 
-From your session, reach the live application through its Services (cluster DNS, or `kubectl` when available).
+Always calibrate, also when a map and probes already exist: an earlier session's bounds and rates can be wrong.
+Reach the live application through its Services (cluster DNS, or `kubectl` when available).
 
 1. Send each scenario's requests once by hand. Each must pass on the healthy application. Write the read-later
    fixtures now and read them back.
@@ -84,8 +85,7 @@ for a mechanism the probes and generic checks cannot localize ([catalog](referen
 
 - A fault that only a probe caught, with no cause check naming it: add an incident detector for its mechanism,
   never one the Go-installed checks already cover.
-- A detector that fired while nothing was wrong: tighten it with the outcome's evidence; it must still fire on
-  its captured cases and stay quiet on healthy baselines.
+- A detector that fired while nothing was wrong: tighten it with the outcome's evidence (fire on captured cases).
 - Responders own incident detectors and the detection designer owns health detectors and the map.
 
 ## Application instrumentation
