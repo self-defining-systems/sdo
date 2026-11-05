@@ -33,17 +33,19 @@ Three probe kinds, each a set of traffic scenarios in its own continuous health 
 
 | Kind | Workload | One scenario per | It checks |
 |---|---|---|---|
-| call | `probe-call` | read operation | status, latency, and body content the healthy application returns |
-| write-read | `probe-write` | writing operation | the write succeeds and a read operation then returns the written value |
-| read-later | `probe-read-later` | data-holding component on a write path | a fixture its setup wrote earlier is still returned |
+| call | `probe-call` | read operation | status, latency, and the exact content the healthy application returns |
+| write-read | `probe-write` | writing operation | a change the iteration just made, read back exactly |
+| read-later | `probe-read-later` | data-holding component on a write path | a fixture its setup wrote once is still returned exactly |
 
 - Go installs one generic persistent-failure detector per health workload (`traffic-<workload>`). Do not write
   detector code for these probes. Do not lower their persistence.
 - Every scenario's `DependsOn` lists the Services of every component on its map path, and nothing else.
 - Add a `probes` entry to the map for every scenario: its kind and the operations its steps exercise.
 - Writes use a dedicated test identity (a synthetic user, account or key whose name contains the scenario's
-  `Marker`), never real users' data. Put the marker in every write request. Make the read-back check a value
-  the write chose (`SaveJSON`/`FromPrevious`, or a unique marked value from the rng).
+  `Marker`), never real users' data. Put the marker in every write request. Never forge credentials or tokens
+  from application secrets or config: log in as a test identity Setup created.
+- Check exact content, never only statuses, and read back exactly the change each write-read iteration just
+  made ([strict probes](references/probes.md)): re-applying one write every iteration re-heals what it reads.
 - Probes are self-contained: each passes on a freshly deployed application with nothing set up by hand. A
   scenario creates its test identities and data in `Setup` steps, through the application's write operations,
   with the marker. Each setup step is an ensure step: `OrExisting(status, text)` accepts the application's
@@ -52,12 +54,10 @@ Three probe kinds, each a set of traffic scenarios in its own continuous health 
   restart writes it again. Steps read only data a setup or earlier step wrote, or records the deployment itself
   seeds (confirmed live).
 - Clean up what a write creates when the application has a delete or overwrite route
-  (`SideEffectWriteWithCleanup`). Without one, keep every write on the fixed test identity, declare
-  `SideEffectIdempotentWrite`, use the lowest rate that fills the window, and record the growth under
-  `Probe costs` in the health-objective playbook.
+  (`SideEffectWriteWithCleanup`); otherwise bound and record its growth ([strict probes](references/probes.md#cost)).
 - A read-later scenario is a read (`SideEffectRead`) with a `Marker`: its `Setup` writes a fixed marked
-  fixture through the writing operation whose data it checks; its steps read that value back. List the
-  identities and fixtures setup creates under `Fixtures` in the health-objective playbook.
+  fixture, on an identity no other scenario writes, through the writing operation whose data it checks; its
+  steps read it back. List setup's identities and fixtures under `Fixtures` in the health-objective playbook.
 - Keep the link workload for every map edge between Services (traffic authoring rules).
 - Rates: give every scenario (workload rate times its weight share) at least 0.2 iterations per second, twice
   the SLO default of 3 samples in 30s, or health is never confirmed; chain operations rather than lower rates.

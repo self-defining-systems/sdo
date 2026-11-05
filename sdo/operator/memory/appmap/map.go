@@ -435,12 +435,15 @@ type Scenario struct {
 	DependsOn  []string
 	// SetupSteps counts the setup steps that create the scenario's own data.
 	SetupSteps int
+	// StatusOnly is true when no step checks more than the response status.
+	StatusOnly bool
 }
 
 // CheckScenarios applies the rules that need the compiled scenarios: each
 // probe's side effect matches its kind, and its DependsOn names a Service of
 // every component on the probe's path and none outside it; a read-later
-// scenario creates the data it reads in its own setup steps.
+// scenario creates the data it reads in its own setup steps; no probe checks
+// only statuses.
 func (m Map) CheckScenarios(scenarios []Scenario) []Finding {
 	c := &checker{m: m, byName: map[string]Component{}, ops: opPaths(m.Operations)}
 	for _, comp := range m.Components {
@@ -468,6 +471,9 @@ func (m Map) CheckScenarios(scenarios []Scenario) []Finding {
 			if s.SetupSteps == 0 {
 				c.add(RuleSchema, "write the fixture the scenario reads in its Setup steps, through the application's own write operation, with the Marker and an ensure step (OrExisting); never rely on data set up by hand", "probe %s is read-later but its scenario has no setup steps, so on a freshly deployed application nothing creates the data it reads", p.Scenario)
 			}
+		}
+		if s.StatusOnly {
+			c.add(RuleSchema, "check the content the healthy application returns: the exact value a write chose (JSONEquals), the exact set of the probe's own data (ExactSet), the shape of every returned member (Each), or at least a text it always contains", "probe %s: its scenario checks only the status of every step, so a wrong or empty answer passes", p.Scenario)
 		}
 		path := map[string]bool{}
 		for _, id := range p.Operations {

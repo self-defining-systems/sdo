@@ -198,6 +198,19 @@ func (s Scenario) Describe() Descriptor {
 	return descriptor
 }
 
+// StatusOnly reports whether every step (setup excluded) is a declarative
+// HTTPEndpoint that checks nothing but the status, so the scenario cannot
+// tell a wrong or empty answer from a correct one.
+func (s Scenario) StatusOnly() bool {
+	for _, step := range s.Steps {
+		endpoint, ok := step.Endpoint.(*HTTPEndpoint)
+		if !ok || endpoint.ChecksContent() {
+			return false
+		}
+	}
+	return len(s.Steps) > 0
+}
+
 // FaultClasses returns the required classes followed by the declared ones.
 func (s Scenario) FaultClasses() []FaultClass {
 	classes := append([]FaultClass(nil), RequiredFaultClasses...)

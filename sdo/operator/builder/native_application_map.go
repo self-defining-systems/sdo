@@ -53,14 +53,14 @@ import (
 
 // TestApplicationMapMatchesScenarios records, as findings the memory check
 // classifies, where the probes' compiled scenarios disagree with the map: side
-// effect against probe kind, DependsOn against the probe's path, and the
-// read-later setup that creates the data it reads.
+// effect against probe kind, DependsOn against the probe's path, the
+// read-later setup that creates the data it reads, and status-only checks.
 func TestApplicationMapMatchesScenarios(t *testing.T) {
     m, err := appmap.Parse(ApplicationMapYAML)
     if err != nil { t.Fatal(err) }
     scenarios := []appmap.Scenario{}
     for _, s := range TrafficCatalog() {
-        scenarios = append(scenarios, appmap.Scenario{ID: s.ID, SideEffect: string(s.SideEffect), DependsOn: s.DependsOn, SetupSteps: len(s.Setup)})
+        scenarios = append(scenarios, appmap.Scenario{ID: s.ID, SideEffect: string(s.SideEffect), DependsOn: s.DependsOn, SetupSteps: len(s.Setup), StatusOnly: s.StatusOnly()})
     }
     findings := m.CheckScenarios(scenarios)
     if findings == nil { findings = []appmap.Finding{} }

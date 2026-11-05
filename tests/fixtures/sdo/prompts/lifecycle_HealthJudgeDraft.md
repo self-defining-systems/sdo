@@ -57,8 +57,11 @@ covers breaks.
    traffic.Params{"page": traffic.IntBetween(1, 3)}).Contains("expected text")}`. Other parameter generators:
    Const, OneOf, IntBetween, FloatBetween, DateRange, DaysAfter, FromSeed(count, render), FromSeedPair(key, count,
    first, second), FromPrevious(key); chain steps with .SaveJSON(field, key) and "{key}" path segments; send a
-   body with .WithForm(params) or .WithJSON(template, params). Use .Contains(...) whenever the application reports
-   failures inside a successful status. Generators only build requests and check responses: never import net, os,
+   body with .WithForm(params) or .WithJSON(template, params). Check exact content, never only the status:
+   .JSONEquals(path, "{key}") for a value the probe wrote, .ExactSet(path, field, values...) for the probe's own
+   collection, .Each(path, field, pattern) for every member of other data, .Contains(...) only for text pages; log
+   in as the test identity (.SaveCookie(name, key), then .WithHeader("Cookie", "name={key}")), never with a token
+   forged from application secrets. Generators only build requests and check responses: never import net, os,
    or the clock, and draw randomness only from the rng the engine passes.
 2. Workloads: files `.sdo/diagnostics/traffic/workloads/<name>.yaml` with apiVersion sdo.dev/v1alpha1, kind
    TrafficWorkload, name equal to the file name, purpose, ratePerSecond and scenarios [{id, weight}]. Write the

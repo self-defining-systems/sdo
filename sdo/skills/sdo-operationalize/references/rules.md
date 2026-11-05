@@ -20,7 +20,8 @@ see them as notes. The diagnostic names the operation, component, edge or probe 
   non-empty edge evidence from `[config, observed]`, logical names only (no memory paths). Each probe entry lists the operations
   its steps exercise, and each scenario of the three probe workloads has exactly one probe entry of the matching
   kind. A write-read scenario writes; a read-later scenario is a read, reaches a data-holding component, and
-  creates the data it reads in its own setup steps. Enforced by: `map.schema`.
+  creates the data it reads in its own setup steps. A probe scenario checks more than statuses in at least one
+  step ([strict probes](probes.md)). Enforced by: `map.schema`.
 - Components, workloads and Services exist in the manifest inventory; edge ends, path entries and probe
   operations name map entries. Enforced by: `map.unknown-name`.
 - An operation's path starts at the component whose Service is its entry and reaches every component through

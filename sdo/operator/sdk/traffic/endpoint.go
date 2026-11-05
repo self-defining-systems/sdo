@@ -237,6 +237,10 @@ type HTTPEndpoint struct {
 	// existing lists the answers (status, body text) meaning the data an
 	// ensure step creates is already there; see OrExisting.
 	existing []existingAnswer
+	// jsonChecks are the exact-content checks of JSONEquals, ExactSet and Each.
+	jsonChecks []func(document any, state State) error
+	// cookies maps State keys to the response cookies SaveCookie stores.
+	cookies map[string]string
 }
 
 type existingAnswer struct {
@@ -277,7 +281,9 @@ func (e *HTTPEndpoint) WithJSON(template string, params Params) *HTTPEndpoint {
 	return e
 }
 
-// WithHeader sets a request header.
+// WithHeader sets a request header. Each {key} in value is replaced by the
+// State value an earlier step saved, for example a session cookie
+// ("session={session}") a login step stored with SaveCookie.
 func (e *HTTPEndpoint) WithHeader(name string, value string) *HTTPEndpoint {
 	if e.Headers == nil {
 		e.Headers = map[string]string{}
@@ -305,6 +311,115 @@ func (e *HTTPEndpoint) Contains(text string) *HTTPEndpoint {
 	return e
 }
 
+// JSONEquals requires the JSON value at dotted path (object keys and array
+// indexes, for example "data.items.0.id") to equal want exactly. Each {key}
+// in want is replaced by the State value an earlier step saved, so a read-back
+// can require exactly the value the write chose.
+func (e *HTTPEndpoint) JSONEquals(path string, want string) *HTTPEndpoint {
+	e.jsonChecks = append(e.jsonChecks, func(document any, state State) error {
+		expected, err := fillState(want, state)
+		if err != nil {
+			return err
+		}
+		value, found := jsonLookup(document, path)
+		got, scalar := jsonScalar(value)
+		if !found || !scalar {
+			return fmt.Errorf("body has no value at %q", path)
+		}
+		if got != expected {
+			return fmt.Errorf("%q is %q, want exactly %q", path, bounded(got), bounded(expected))
+		}
+		return nil
+	})
+	return e
+}
+
+// ExactSet requires the JSON array at dotted path ("" for the whole body) to
+// hold exactly the members want, in any order: none missing, none extra, no
+// duplicates. field is the dotted path of each member's value inside an
+// array element ("" when the elements are the values). Each {key} in want is
+// filled from State. Use it when the probe owns the data, so the healthy set
+// is known exactly.
+func (e *HTTPEndpoint) ExactSet(path string, field string, want ...string) *HTTPEndpoint {
+	e.jsonChecks = append(e.jsonChecks, func(document any, state State) error {
+		members, err := jsonMembers(document, path, field)
+		if err != nil {
+			return err
+		}
+		counts := map[string]int{}
+		for _, member := range members {
+			counts[member]++
+		}
+		var missing []string
+		for _, template := range want {
+			expected, err := fillState(template, state)
+			if err != nil {
+				return err
+			}
+			if counts[expected] == 0 {
+				missing = append(missing, expected)
+				continue
+			}
+			counts[expected]--
+		}
+		var extra []string
+		for member, count := range counts {
+			for ; count > 0; count-- {
+				extra = append(extra, member)
+			}
+		}
+		sort.Strings(extra)
+		if len(missing) > 0 || len(extra) > 0 {
+			return fmt.Errorf("%q members differ from the expected set: missing %s, unexpected %s", path, bounded(fmt.Sprint(missing)), bounded(fmt.Sprint(extra)))
+		}
+		return nil
+	})
+	return e
+}
+
+// Each requires the JSON array at dotted path ("" for the whole body) to be
+// non-empty and every member's value at field ("" for the element itself) to
+// match the RE2 pattern, so one malformed or dangling member fails the step.
+func (e *HTTPEndpoint) Each(path string, field string, pattern string) *HTTPEndpoint {
+	compiled, compileErr := regexp.Compile(pattern)
+	e.jsonChecks = append(e.jsonChecks, func(document any, _ State) error {
+		if compileErr != nil {
+			return fmt.Errorf("Each pattern %q: %w", pattern, compileErr)
+		}
+		members, err := jsonMembers(document, path, field)
+		if err != nil {
+			return err
+		}
+		if len(members) == 0 {
+			return fmt.Errorf("%q has no members", path)
+		}
+		for index, member := range members {
+			if !compiled.MatchString(member) {
+				return fmt.Errorf("%q member %d is %q, which does not match %q", path, index, bounded(member), pattern)
+			}
+		}
+		return nil
+	})
+	return e
+}
+
+// ChecksContent reports whether the endpoint checks anything beyond the
+// status: body text, saved JSON fields or cookies, or exact JSON content.
+func (e *HTTPEndpoint) ChecksContent() bool {
+	return len(e.ExpectBody) > 0 || len(e.Saves) > 0 || len(e.jsonChecks) > 0 || len(e.cookies) > 0
+}
+
+// SaveCookie stores the value of the response's Set-Cookie named name in
+// State under key; a response without it fails. Use it on a login step of a
+// test identity the scenario created, and send the session with WithHeader.
+func (e *HTTPEndpoint) SaveCookie(name string, key string) *HTTPEndpoint {
+	if e.cookies == nil {
+		e.cookies = map[string]string{}
+	}
+	e.cookies[key] = name
+	return e
+}
+
 // SaveJSON stores the JSON field at dotted path (for example "id" or
 // "data.id") of the response in State under key; a missing field fails.
 func (e *HTTPEndpoint) SaveJSON(path string, key string) *HTTPEndpoint {
@@ -329,7 +444,11 @@ func (e *HTTPEndpoint) Build(_ context.Context, rng *rand.Rand, state State) (Re
 	if len(e.Headers) > 0 {
 		request.Headers = make(map[string]string, len(e.Headers))
 		for name, value := range e.Headers {
-			request.Headers[name] = value
+			filled, err := fillState(value, state)
+			if err != nil {
+				return Request{}, fmt.Errorf("%s %s: header %s: %w", e.Method, e.Path, name, err)
+			}
+			request.Headers[name] = filled
 		}
 	}
 	if e.JSON != "" {
@@ -407,12 +526,31 @@ func (e *HTTPEndpoint) Check(response Response, state State) Verdict {
 			return Fail("HTTP %d body lacks %q: %s", response.Status, text, bodyExcerpt(response.Body, response.Status))
 		}
 	}
-	if len(e.Saves) == 0 {
+	if len(e.cookies) > 0 {
+		keys := make([]string, 0, len(e.cookies))
+		for key := range e.cookies {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			value, ok := responseCookie(response.Header, e.cookies[key])
+			if !ok {
+				return Fail("HTTP %d sets no cookie %q", response.Status, e.cookies[key])
+			}
+			state[key] = value
+		}
+	}
+	if len(e.Saves) == 0 && len(e.jsonChecks) == 0 {
 		return Pass()
 	}
 	var document any
 	if err := json.Unmarshal(response.Body, &document); err != nil {
 		return Fail("HTTP %d body is not JSON: %s", response.Status, bodyExcerpt(response.Body, response.Status))
+	}
+	for _, check := range e.jsonChecks {
+		if err := check(document, state); err != nil {
+			return Fail("HTTP %d body: %v", response.Status, err)
+		}
 	}
 	keys := make([]string, 0, len(e.Saves))
 	for key := range e.Saves {
@@ -458,18 +596,44 @@ func statusAccepted(accepted []int, status int) bool {
 }
 
 func jsonField(document any, path string) (string, bool) {
+	value, found := jsonLookup(document, path)
+	if !found {
+		return "", false
+	}
+	return jsonScalar(value)
+}
+
+// jsonLookup walks a dotted path of object keys and array indexes; the empty
+// path is the document itself.
+func jsonLookup(document any, path string) (any, bool) {
 	current := document
+	if path == "" {
+		return current, true
+	}
 	for _, part := range strings.Split(path, ".") {
-		object, ok := current.(map[string]any)
-		if !ok {
-			return "", false
-		}
-		current, ok = object[part]
-		if !ok {
-			return "", false
+		switch node := current.(type) {
+		case map[string]any:
+			next, ok := node[part]
+			if !ok {
+				return nil, false
+			}
+			current = next
+		case []any:
+			index, err := strconv.Atoi(part)
+			if err != nil || index < 0 || index >= len(node) {
+				return nil, false
+			}
+			current = node[index]
+		default:
+			return nil, false
 		}
 	}
-	switch value := current.(type) {
+	return current, true
+}
+
+// jsonScalar renders a JSON value as text; null has no text.
+func jsonScalar(value any) (string, bool) {
+	switch value := value.(type) {
 	case string:
 		return value, true
 	case float64:
@@ -482,6 +646,54 @@ func jsonField(document any, path string) (string, bool) {
 		encoded, err := json.Marshal(value)
 		return string(encoded), err == nil
 	}
+}
+
+// jsonMembers renders the value at field of every element of the array at
+// path.
+func jsonMembers(document any, path string, field string) ([]string, error) {
+	value, found := jsonLookup(document, path)
+	array, isArray := value.([]any)
+	if !found || !isArray {
+		return nil, fmt.Errorf("%q is not an array", path)
+	}
+	members := make([]string, 0, len(array))
+	for index, element := range array {
+		value, found := jsonLookup(element, field)
+		member, scalar := jsonScalar(value)
+		if !found || !scalar {
+			return nil, fmt.Errorf("%q member %d has no value at %q", path, index, field)
+		}
+		members = append(members, member)
+	}
+	return members, nil
+}
+
+func responseCookie(header http.Header, name string) (string, bool) {
+	for _, line := range header.Values("Set-Cookie") {
+		cookie, err := http.ParseSetCookie(line)
+		if err == nil && cookie.Name == name && cookie.Value != "" {
+			return cookie.Value, true
+		}
+	}
+	return "", false
+}
+
+// fillState replaces each {key} in template with the State value an earlier
+// step saved.
+func fillState(template string, state State) (string, error) {
+	var missing string
+	filled := placeholderPattern.ReplaceAllStringFunc(template, func(match string) string {
+		key := match[1 : len(match)-1]
+		value, ok := state[key]
+		if !ok && missing == "" {
+			missing = key
+		}
+		return value
+	})
+	if missing != "" {
+		return "", fmt.Errorf("no earlier step saved %q", missing)
+	}
+	return filled, nil
 }
 
 func bodyExcerpt(body []byte, status int) string {
