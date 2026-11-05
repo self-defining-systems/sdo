@@ -25,6 +25,8 @@ const (
 	RuleSharedRepair                = "playbook.shared-repair"
 	RulePlaybookComponentCopy       = "playbook.component-copy"
 	RuleDetectorComponentCopy       = "detector.component-copy"
+	RulePlaybookComponentLiteral    = "playbook.component-literal"
+	RuleDetectorComponentLiteral    = "detector.component-literal"
 	RuleProgramNormalizedRead       = "program.normalized-read"
 	RuleDetectorUnscopedBinding     = "detector.unscoped-binding"
 

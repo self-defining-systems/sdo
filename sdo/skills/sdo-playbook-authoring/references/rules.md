@@ -48,6 +48,9 @@ diagnostic; look it up here.
   differs from an existing one only in the components it names (scenario, workload, Service) is the same failure
   on another component: parameterize the existing playbook by its role instead. Enforced by:
   `playbook.duplicate-repair`, `playbook.component-copy`, `playbook.shared-repair`.
+- A program with a role never adds a component name (an accepted-source object or traffic scenario ID) outside
+  its Spec, prose and error text: derive it from the bound object ([localized components](programs.md#localized-components)).
+  Names the accepted version already had are left alone. Enforced by: `playbook.component-literal`.
 - Programs, libraries, scripts and incident detectors never name a generated Pod (`<owner>-<hash>-<suffix>`).
   Bind the owning workload, find its Pods through ReadView by owner, and exec with a typed `Command` or
   `EnsureExec`. Enforced by: `playbook.live-object-name`.
