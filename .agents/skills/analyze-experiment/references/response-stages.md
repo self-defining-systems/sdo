@@ -124,8 +124,15 @@ At recovery their observations appear in the existing `agent` stage report.
 Shared batch receipts require every bound scope to settle. Confirmed unchanged
 objects and admission requeues retain ADMIT1's observation-only scope when
 checking desired fields. Confirmed UID-bound deletes require a fresh direct
-NotFound; generic GET errors never prove deletion. Saved scripts retain the
-existing `observed-transition` proof and never claim field equivalence.
+NotFound; generic GET errors never prove deletion. Every action kind whose
+effect lies outside Kubernetes object fields (`planwire.NonObjectEffect`: Exec,
+EnsureExec, EnsureHTTP, EnsureDatabaseUser, RunJob, RunScript) settles on the
+`observed-transition` proof instead of field equivalence: each such action
+recorded its own success (exit 0; an ensure observed off Expect before and at
+Expect after; catalog read-back; Job status; script receipt), then the bound
+Diagnose that matched before the plan is NoMatch with scoped health clear. They
+never claim field equivalence. Before PX10 only scripts had this proof, so an
+EnsureExec repair always settled `EFFECT_NOT_CONFIRMED` / `rollout_failed`.
 Transient post-apply Match/new-finding observations remain typed diagnoses and
 findings rather than additional failure strings. Historical stored failure
 signals and accepted outcomes remain immutable. `rollout_stalled` is the durable
@@ -150,7 +157,12 @@ Stage recovery telemetry is `prior_stages[].recovery_wait` and the same field on
 `duration` is measured observation time (protobuf Duration), accumulated across
 stage re-entry. Missing telemetry in historical receipts is unknown, never zero.
 This measures the recovery observation interval, not apply duration or dispatch
-latency. A health finding may wait on a pending write through typed resource
+latency. The controller logs `recovery_wait_exit` with the exit and the branch
+that ended the wait (refuted write, failed attempt, findings that do not settle,
+a finding that depends on no write, unproven clearance). A confirmed non-object
+effect touches no object a finding can be joined to, so the findings its
+attempt targeted, and health findings on the same primary resource, depend on
+it, and it counts as a verified write once its post-apply diagnose is NoMatch. A health finding may wait on a pending write through typed resource
 relations (including Service selectors and traffic-related resources); this does
 not add authored coverage or grant attribution. An applied, completely executed
 write whose rollout is pending keeps the wait open; once it has taken effect,

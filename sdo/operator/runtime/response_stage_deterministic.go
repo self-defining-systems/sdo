@@ -827,7 +827,10 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 	}
 	var held []sdk.Finding
 	heldReason := ""
+	// branch names why the wait ended, for the exit log.
+	branch := ""
 	defer func() {
+		slog.Info("recovery_wait_exit", "incident_id", state.Request.IncidentID, "exit", exit.String(), "branch", branch)
 		if exit != contracts.RecoveryWait_EXIT_REASON_CLEARED && len(state.Findings) == 0 && len(held) > 0 {
 			// Detector clearance without proof is not recovery: the responder gets
 			// the findings that cleared without it.
@@ -918,6 +921,7 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 				// A write still taking effect, or one whose remaining findings only wait
 				// for their detectors to re-observe it, is checked below once a view exists.
 				if !writeVerifiedForSettling(attempt) && !writeTakingEffect(attempt) {
+					branch = "write refuted: " + attempt.GetPlaybookId() + " " + attempt.GetApplyReceipt().GetSettlementRejectionReason().String()
 					return nil
 				}
 				if attempt.GetApplyReceipt().GetRolloutPending() != nil {
@@ -929,7 +933,9 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 				}
 				settling = append(settling, attempt)
 			default:
-				return nil // Real failure or a verified dependency needs another actor.
+				// Real failure or a verified dependency needs another actor.
+				branch = "attempt " + attempt.GetPlaybookId() + " " + attempt.Result
+				return nil
 			}
 		}
 		if !applied && len(state.Findings) > 0 {
@@ -980,6 +986,7 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			}
 			held, heldReason = clearance.held, clearance.reason
 			if !clearance.keepWaiting {
+				branch = "clearance unproven"
 				return nil
 			}
 		}
@@ -988,6 +995,7 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 				break // recoveryClearance above decides while nothing is open.
 			}
 			if !remainingFindingsSettle(view, detectors, state.Findings, attempt, now().Sub(effectSettled[attempt.GetApplyReceipt().GetApplicationId()])) {
+				branch = "findings of " + attempt.GetPlaybookId() + " do not settle"
 				return nil
 			}
 		}
@@ -1019,7 +1027,13 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 					}
 				}
 			}
+			if health[finding.DetectorID] != nil && !settling {
+				for _, attempt := range report.Mitigations {
+					settling = settling || nonObjectEffectExplains(attempt, seen, finding)
+				}
+			}
 			if !settling {
+				branch = "finding " + FindingFingerprint(finding) + " depends on no write"
 				exit = contracts.RecoveryWait_EXIT_REASON_UNCOVERED
 				return nil
 			}
@@ -1062,10 +1076,50 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 
 // writeVerifiedForSettling reports an applied, unreverted write whose scoped verification passed and
 // whose program no longer matches, so any remaining finding is waiting on detector observation.
+// A confirmed non-object effect counts as verified: no object read can verify it.
 func writeVerifiedForSettling(attempt *contracts.StageMitigation) bool {
 	receipt := attempt.GetApplyReceipt()
-	return receipt.GetApplied() && !receipt.GetRolledBack() && receipt.GetVerificationPassed() &&
+	return receipt.GetApplied() && !receipt.GetRolledBack() && (receipt.GetVerificationPassed() || nonObjectEffectConfirmed(attempt)) &&
 		attempt.GetPostApplyDiagnose().GetVerdict().GetResult() == contracts.Verdict_RESULT_NO_MATCH
+}
+
+// nonObjectEffectConfirmed reports an applied, unreverted attempt whose own
+// actions changed state outside Kubernetes objects and each recorded its
+// success (planwire.NonObjectEffect, nonObjectEffectsSucceeded). Such an
+// effect touches no object a finding could be joined to, so the findings the
+// attempt was matched against are its dependents.
+func nonObjectEffectConfirmed(attempt *contracts.StageMitigation) bool {
+	receipt := attempt.GetApplyReceipt()
+	if !receipt.GetApplied() || receipt.GetRolledBack() || receipt.GetDryRun() || receipt.GetRollbackError() != "" {
+		return false
+	}
+	actions, reports := receipt.GetPlan().GetActions(), receipt.GetActionReports()
+	if count := int(attempt.GetPlanActionCount()); count > 0 {
+		start := int(attempt.GetPlanActionStart())
+		if start < 0 || start+count > len(actions) || start+count > len(reports) {
+			return false
+		}
+		actions, reports = actions[start:start+count], reports[start:start+count]
+	}
+	return nonObjectEffectsSucceeded(actions, reports)
+}
+
+// nonObjectEffectExplains reports a confirmed non-object attempt that targeted
+// this finding, or another finding about the same resource (the judge's
+// health finding on the journey its incident finding reported).
+func nonObjectEffectExplains(attempt *contracts.StageMitigation, seen map[string]sdk.Finding, finding sdk.Finding) bool {
+	if !nonObjectEffectConfirmed(attempt) {
+		return false
+	}
+	for _, fp := range append(append([]string(nil), attempt.ClearedFindingFingerprints...), attempt.RemainingFindingFingerprints...) {
+		if fp == FindingFingerprint(finding) {
+			return true
+		}
+		if target, ok := seen[fp]; ok && sameResource(target.PrimaryResource, finding.PrimaryResource) {
+			return true
+		}
+	}
+	return false
 }
 
 // writeTakingEffect reports an applied, unreverted, completely executed write
@@ -1097,7 +1151,8 @@ func writeTakingEffect(attempt *contracts.StageMitigation) bool {
 
 // remainingFindingsSettle reports whether the recovery wait can keep observing
 // an attempt whose write has taken effect: every finding still open for it
-// depends on an object it wrote, and is either a health finding of a verified
+// depends on an object it wrote (or the attempt targeted it with a confirmed
+// non-object effect), and is either a health finding of a verified
 // write, or comes from a detector that judges a rolling window which, counted
 // from when the write took effect (since), has not yet rolled over. The
 // window is what separates a detector catching up from a fault that persists;
@@ -1107,12 +1162,16 @@ func remainingFindingsSettle(view sdk.DetectionContext, detectors map[string]sdk
 	for _, fp := range attempt.RemainingFindingFingerprints {
 		remaining[fp] = true
 	}
+	open := map[string]sdk.Finding{}
+	for _, finding := range findings {
+		open[FindingFingerprint(finding)] = finding
+	}
 	verified := writeVerifiedForSettling(attempt)
 	var horizon time.Duration
 	windowed := false
 	for _, finding := range findings {
 		detector := detectors[finding.DetectorID]
-		depends := false
+		depends := detector != nil && nonObjectEffectExplains(attempt, open, finding)
 		for _, ref := range attempt.TouchedObjects {
 			depends = depends || (detector != nil && stageFindingDependsOnWrite(view, detector, finding, objectRefState(ref)))
 		}

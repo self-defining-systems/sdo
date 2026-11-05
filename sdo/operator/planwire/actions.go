@@ -272,6 +272,46 @@ func IsExternalAction(a program.Action) bool {
 	return false
 }
 
+// NonObjectEffect reports whether an action kind changes state outside
+// Kubernetes object fields: in a container's process or files, behind an HTTP
+// endpoint, in a database catalog, or in the body of a Job or script. No read
+// of a final object can confirm such an effect; only the action's own success
+// evidence followed by its program's observed diagnosis transition can.
+// Every kind of the wire vocabulary is classified here, and an unclassified
+// kind counts as non-object so an object read never credits it.
+func NonObjectEffect(action *contracts.Action) bool {
+	nonObject, _ := classifyEffect(action)
+	return nonObject
+}
+
+// HasNonObjectEffect reports whether any action of a plan has a non-object
+// effect, or cannot be put in wire form to be classified.
+func HasNonObjectEffect(actions []program.Action) bool {
+	for _, action := range actions {
+		wire, err := ActionProto(action)
+		if err != nil || NonObjectEffect(wire) {
+			return true
+		}
+	}
+	return false
+}
+
+func classifyEffect(action *contracts.Action) (nonObject, known bool) {
+	switch action.GetKind().(type) {
+	case *contracts.Action_Exec, *contracts.Action_EnsureDatabaseUser, *contracts.Action_EnsureExec,
+		*contracts.Action_EnsureHttp, *contracts.Action_RunJob, *contracts.Action_RunScript:
+		return true, true
+	case *contracts.Action_ReconcileFromSource, *contracts.Action_Rollback, *contracts.Action_SetField,
+		*contracts.Action_RestartRollout, *contracts.Action_CreateFromSource, *contracts.Action_DeleteObject,
+		*contracts.Action_DeletePod, *contracts.Action_ScaleWorkload, *contracts.Action_RemoveServicePort,
+		*contracts.Action_PatchObject, *contracts.Action_ApplyObject, *contracts.Action_KubernetesRequest,
+		*contracts.Action_WaitFor, *contracts.Action_SyncWebhookCa, *contracts.Action_RetireOldRevision,
+		*contracts.Action_RetryAdmission:
+		return false, true
+	}
+	return true, false
+}
+
 func commandProto(c program.Command) *contracts.Command {
 	return &contracts.Command{Pod: refProto(c.Pod), Container: c.Container, Args: c.Args, Stdin: c.Stdin}
 }
