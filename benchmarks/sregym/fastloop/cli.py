@@ -1665,6 +1665,12 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument("--run-dir", type=Path, required=True)
     up.add_argument("--app", choices=("sregym", "toy"), default="sregym")
     up.add_argument("--frozen-memory", action="store_true", help="toy: install the supplied seed without judge refresh")
+    up.add_argument(
+        "--fresh-memory",
+        action="store_true",
+        help="toy: start with source only and onboard it with SDO's lifecycle agents (needs live agents)",
+    )
+    up.add_argument("--goal", help="toy --fresh-memory: the human goal to publish instead of the default")
     up.add_argument("--toy-node-image", default="kindest/node:v1.34.0")
     up.add_argument("--seed", type=Path, help="git repository cloned as the application workspace (first time only)")
     up.add_argument("--problem", default=DEFAULT_PROBLEM, help="problem whose application is deployed")

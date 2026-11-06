@@ -347,6 +347,12 @@ cluster without its environment record. The source mount is mandatory internally
 and defaults to this worktree. `run` and `reset` rebuild the host operator, so code
 changes need no runtime image rebuild. Generated responder and reflector registrations are the toy default. No model calls are needed.
 
+For a from-scratch onboarding of the toy (no seed `.sdo/`), add `--fresh-memory` (and optionally `--goal TEXT`) to
+`up --app toy`. The workspace then holds source only and `up` runs the production Go host lifecycle (source
+deployment agent, health judge, goal publication) through the same `launch_native_lifecycle` SREGym uses, with the
+production worker registrations unless `--agent-registrations` supplies a live override whose lifecycle workers are
+the production ones. It needs real agents, credentials (`--credentials-hook`) and a registry-capable kind lane.
+
 After that stream has accepted the program, run `toy_sweep.json` with
 `--timeout 900` and the same other run flags. It models a healthy imported Service
 by clearing field ownership before introducing targetPort 9999. The production
@@ -449,7 +455,7 @@ Every incident dispatches the responder with a playbook coverage view. `recorded
 
 One trusted match is selected by distinct findings covered, then program ID and canonical bindings. Uncovered findings and unexplained drift do not prevent the attempt. Whole-incident verification still decides success; failure rolls back reversible writes and dispatches the responder sequentially with the attempt summary. No source-plan policy file is needed, even when the deployed application name differs from its benchmark name. See [automatic repair checks](../../../../docs/plan-safety-authority.md).
 
-For a private scripted lane (no model calls), set `SDO_TOY_CLUSTER=gs1-toy` for `up --app toy --dev-mount "$PWD"` and use a fresh run directory outside the repository. `--cluster-prefix gs1-` selects an isolated toy cluster with the configured worker ID; `SDO_TOY_CLUSTER` remains an explicit override. Subsequent commands use the saved kubeconfig and environment. A target-port incident followed by a repeat exercises learning, save-time validation and agent-selected program reuse.
+For a private scripted lane (no model calls), run `up --app toy --dev-mount "$PWD"` with a fresh run directory outside the repository. `--cluster-prefix gs1-` selects an isolated toy cluster named prefix plus worker ID (`gs1-0` by default); claim that exact name in the host lease. Subsequent commands use the saved kubeconfig and environment. A target-port incident followed by a repeat exercises learning, save-time validation and agent-selected program reuse.
 
 ### Fresh memory and namespace control state
 

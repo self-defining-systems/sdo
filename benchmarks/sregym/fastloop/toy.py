@@ -24,8 +24,11 @@ ROOT = Path(__file__).resolve().parents[3]
 APP = ROOT / "apps/toy"
 NAMESPACE = "sdo-toy"
 CONTROLLER_REPOSITORY = "/workspace/application"  # the controller Job's --app
-#: The kind cluster name; a scratch run sets ``SDO_TOY_CLUSTER`` to avoid the shared default.
-CLUSTER = os.environ.get("SDO_TOY_CLUSTER", "sdo-toy")
+#: The goal a fresh-memory install publishes unless ``--goal`` overrides it (the deployer budgets 256 characters).
+DEFAULT_GOAL = (
+    "Keep the frontend, backend and catalog Deployments available with ready Service endpoints, "
+    "and the frontend /journey endpoint answering HTTP 200 through the backend."
+)
 
 
 class ToyWorker:
@@ -109,6 +112,73 @@ def cluster_name(args: Any) -> str:
     return f"{args.cluster_prefix}{args.worker_id}"
 
 
+def prepare_workspace(workspace: Path, image: str, *, fresh: bool) -> str:
+    """Commit the toy source into ``workspace``; return the commit SDO starts from.
+
+    Seeded (default): the hand-authored ``.sdo`` seed is committed on top of the source. Fresh: the workspace
+    carries source only, so SDO's own lifecycle (source deployment, health judge) onboards it.
+    """
+    shutil.copytree(APP / "kubernetes", workspace / "kubernetes")
+    for manifest in (workspace / "kubernetes").glob("*.yaml"):
+        manifest.write_text(manifest.read_text().replace(IMAGE, image))
+    for name in ("main.go", "Dockerfile"):
+        shutil.copy(APP / name, workspace / name)
+
+    def head() -> str:
+        return subprocess.run(
+            host_git_command(workspace, "rev-parse", "HEAD"), check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    for git_args in (
+        ["init", "-q"],
+        ["add", "."],
+        ["-c", "user.name=toy", "-c", "user.email=toy@invalid", "commit", "-qm", "feat: seed toy application"],
+    ):
+        subprocess.run(host_git_command(workspace, *git_args), check=True)
+    source_commit = head()
+    if fresh:
+        return source_commit
+    shutil.copytree(APP / "seed/.sdo", workspace / ".sdo")
+    arch = workspace / ".sdo/arch.md"
+    topology = hashlib.sha256(
+        b"".join(path.read_bytes() for path in sorted((workspace / "kubernetes").glob("*.yaml")))
+    ).hexdigest()
+    arch.write_text(arch.read_text().replace("SOURCE_COMMIT", source_commit).replace("TOPOLOGY_FINGERPRINT", topology))
+    subprocess.run(host_git_command(workspace, "add", ".sdo"), check=True)
+    subprocess.run(
+        host_git_command(
+            workspace,
+            "-c",
+            "user.name=toy",
+            "-c",
+            "user.email=toy@invalid",
+            "commit",
+            "-qm",
+            "feat: seed toy operational memory",
+        ),
+        check=True,
+    )
+    return head()
+
+
+def fresh_objective(args: Any) -> str | None:
+    """The goal a fresh-memory toy install publishes, or None for the seeded default.
+
+    Fresh onboarding needs real lifecycle agents, so it excludes the frozen seed install.
+    """
+    goal = getattr(args, "goal", None)
+    fresh = bool(getattr(args, "fresh_memory", False))
+    if goal is not None and not fresh:
+        raise ValueError("--goal applies to fresh-memory installs only; add --fresh-memory")
+    if not fresh:
+        return None
+    if getattr(args, "frozen_memory", False):
+        raise ValueError("--fresh-memory onboards with agents; it cannot be combined with --frozen-memory")
+    from benchmarks.sregym.fastloop.cli import lifecycle_objective
+
+    return lifecycle_objective(DEFAULT_GOAL, goal)
+
+
 def up(args: Any) -> int:
     from benchmarks.sregym.fastloop.baseline_recovery import (
         KubectlApplicationCluster,
@@ -120,6 +190,7 @@ def up(args: Any) -> int:
 
     if args.dev_mount is None:
         raise ValueError("toy lanes require a development mount; omit --no-dev-mount")
+    objective = fresh_objective(args)
     host_limits = HostLimits(args.host_lock_dir.resolve(), args.host_redeploys)
     cluster = cluster_name(args)
     image = f"{IMAGE}-{cluster}"
@@ -214,44 +285,7 @@ def up(args: Any) -> int:
     loaded = time.monotonic()
     workspace = run_dir / "application_workspace"
     workspace.mkdir()
-    shutil.copytree(APP / "kubernetes", workspace / "kubernetes")
-    for manifest in (workspace / "kubernetes").glob("*.yaml"):
-        manifest.write_text(manifest.read_text().replace(IMAGE, image))
-    for name in ("main.go", "Dockerfile"):
-        shutil.copy(APP / name, workspace / name)
-    for git_args in (
-        ["init", "-q"],
-        ["add", "."],
-        ["-c", "user.name=toy", "-c", "user.email=toy@invalid", "commit", "-qm", "feat: seed toy application"],
-    ):
-        subprocess.run(host_git_command(workspace, *git_args), check=True)
-    seed = subprocess.run(
-        host_git_command(workspace, "rev-parse", "HEAD"), check=True, capture_output=True, text=True
-    ).stdout.strip()
-    source_commit = seed
-    shutil.copytree(APP / "seed/.sdo", workspace / ".sdo")
-    arch = workspace / ".sdo/arch.md"
-    topology = hashlib.sha256(
-        b"".join(path.read_bytes() for path in sorted((workspace / "kubernetes").glob("*.yaml")))
-    ).hexdigest()
-    arch.write_text(arch.read_text().replace("SOURCE_COMMIT", source_commit).replace("TOPOLOGY_FINGERPRINT", topology))
-    subprocess.run(host_git_command(workspace, "add", ".sdo"), check=True)
-    subprocess.run(
-        host_git_command(
-            workspace,
-            "-c",
-            "user.name=toy",
-            "-c",
-            "user.email=toy@invalid",
-            "commit",
-            "-qm",
-            "feat: seed toy operational memory",
-        ),
-        check=True,
-    )
-    seed = subprocess.run(
-        host_git_command(workspace, "rev-parse", "HEAD"), check=True, capture_output=True, text=True
-    ).stdout.strip()
+    seed = prepare_workspace(workspace, image, fresh=objective is not None)
     command(str(kubeconfig), "default", "create", "namespace", NAMESPACE)
     with host_limits.admit("redeploy"):
         apply_accepted_source(workspace, NAMESPACE, kubeconfig)
@@ -298,6 +332,7 @@ def up(args: Any) -> int:
         env,
         registrations=getattr(args, "agent_registrations", None),
         frozen_memory=getattr(args, "frozen_memory", False),
+        objective=objective,
     )
     record_controller(env, config)
     timing = {
@@ -320,8 +355,13 @@ def install_controller(
     *,
     registrations: Path | None = None,
     frozen_memory: bool = False,
+    objective: str | None = None,
 ) -> Any:
-    """Install the production controller and its registrations (scripted unless given), without benchmark resources."""
+    """Install the production controller and its registrations (scripted unless given), without benchmark resources.
+
+    With ``objective`` the memory is fresh: the production Go host lifecycle (source deployment, health judge,
+    goal publication) onboards the workspace, with the production worker registrations unless given.
+    """
     from dataclasses import replace
 
     from benchmarks.sregym.adapter import (
@@ -378,6 +418,12 @@ def install_controller(
         check=True,
         capture_output=True,
     )
+    if objective is not None:
+        from benchmarks.sregym.adapter import launch_native_lifecycle
+
+        receipt = launch_native_lifecycle(config, objective, "")
+        wait_for_baseline(environment, receipt["judge_commit"])
+        return config
     publish_agent_registrations(
         config.agent_registrations or ROOT / "benchmarks/sregym/fastloop/agent_registrations",
         install.control_namespace,
