@@ -1,3 +1,4 @@
+//archcheck:allow R4 until=S3-11c reason="path-list flag is converted to raw and kustomize configs in core until the flag is removed"
 package rendered
 
 import (

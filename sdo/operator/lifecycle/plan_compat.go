@@ -3,6 +3,7 @@
 // to the render seam. Deleted by S3-13b.
 //
 //archcheck:ratchet R5 count=1 until=S3-13b
+//archcheck:allow R4 until=S3-13b reason="core decodes and builds plugin config types to translate a new-form plan to the legacy strategy"
 package lifecycle
 
 import (
