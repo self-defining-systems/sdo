@@ -36,6 +36,9 @@ and warning events, beside the affected program. `applied_cleared` is shown as `
 `rollout_pending_at_handoff` means applied but rollout pending; failed and skipped results remain explicit.
 `skipped (already_attempted)` means another program planned the same write that an earlier stage action had
 already applied and that was still settling; SDO did not repeat it, and recovery belongs to that earlier action.
+`skipped (holds_data)` means the program would have restarted, deleted, rewritten or scaled down a workload the
+application map marks `holds_data`, so SDO did not run it. The line names the action; the object is unchanged and the
+finding is yours. The restart may still be right, but look at what holds the data and what it holds first.
 Blocker messages are observations at handoff, so confirm whether they still apply. Absence of a blocker
 message is not proof that a rollout can progress. Full unabridged facts stay in `details_file`.
 `stage_playbooks` maps involved program IDs to accepted README files (null if unavailable), including
