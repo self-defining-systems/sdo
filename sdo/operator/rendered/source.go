@@ -38,9 +38,25 @@ type Source struct {
 	// Git, when set, replaces the git process edge (`git -C root args...`
 	// standard output). A simulation supplies the accepted tree without
 	// spawning a process.
-	Git   GitFunc
+	Git GitFunc
+	// Pins, when set, are the deployment receipt's image pins. Reads of the
+	// commit whose tree is Pins.BaseTree return each pinned container with
+	// the digest the deployment applied instead of the tag the source
+	// declares, so restoring from source cannot move a workload onto
+	// whatever the tag points at now (N5). Digests of the render are
+	// unchanged: the pins apply after rendering.
+	Pins  ReceiptPins
 	cache *manifestCache
 }
+
+// ReceiptPins are the container images a verified deployment applied, bound to
+// the accepted base tree they were applied for.
+type ReceiptPins struct {
+	BaseTree string
+	Images   []DeployedImage
+}
+
+func (p ReceiptPins) active() bool { return p.BaseTree != "" && len(p.Images) > 0 }
 
 // WithCache shares immutable accepted manifests across object reads. The cache
 // belongs to this source instance; it never caches live API reads or failures.
@@ -105,11 +121,18 @@ func (s Source) env(namespace string) render.Env {
 // loadManifests renders revision^{tree} and keeps the non-ephemeral objects,
 // with Secrets reduced to identity (defense in depth beyond SecretsOmit).
 func (s Source) loadManifests(ctx context.Context, revision, namespace string) ([]DesiredObject, error) {
-	set, err := s.desired(ctx, revision, namespace)
+	set, base, err := s.desiredAt(ctx, revision, namespace)
 	if err != nil {
 		return nil, err
 	}
 	objects := set.Objects()
+	if base == s.Pins.BaseTree && s.Pins.active() {
+		for _, object := range objects {
+			if object.Workload {
+				s.Pins.apply(object.Object.Object, object.Ref)
+			}
+		}
+	}
 	for i, object := range objects {
 		if strings.EqualFold(object.Ref.Kind, "Secret") {
 			objects[i].Object = &unstructured.Unstructured{Object: render.SecretIdentity(object.Object.Object)}
@@ -152,38 +175,53 @@ func (s Source) ShapeOf(namespace string) func(ctx context.Context, repository, 
 // effectiveAt resolves revision's tree and its effective tree. The caller
 // closes the result.
 func (s Source) effectiveAt(ctx context.Context, revision string) (EffectiveTree, error) {
+	effective, _, err := s.effectiveAtBase(ctx, revision)
+	return effective, err
+}
+
+// effectiveAtBase is effectiveAt that also returns the revision's base tree.
+func (s Source) effectiveAtBase(ctx context.Context, revision string) (EffectiveTree, string, error) {
 	if s.Repository == "" || !gitRevision.MatchString(revision) {
-		return EffectiveTree{}, sourceErrorf(SourceInvalid, "accepted repository and full commit revision are required")
+		return EffectiveTree{}, "", sourceErrorf(SourceInvalid, "accepted repository and full commit revision are required")
 	}
 	store := ObjectStore{Dir: s.Repository, Git: s.Git}
 	tree, err := store.git(ctx, "rev-parse", "--verify", "--quiet", revision+"^{tree}")
 	if err != nil {
-		return EffectiveTree{}, sourceErrorf(SourceUnavailable, "resolve the tree of %s: %w", revision, err)
+		return EffectiveTree{}, "", sourceErrorf(SourceUnavailable, "resolve the tree of %s: %w", revision, err)
 	}
-	return Effective(ctx, store, BaseTree(strings.TrimSpace(string(tree))))
+	base := strings.TrimSpace(string(tree))
+	effective, err := Effective(ctx, store, BaseTree(base))
+	return effective, base, err
 }
 
 func (s Source) desired(ctx context.Context, revision, namespace string) (DesiredSet, error) {
+	set, _, err := s.desiredAt(ctx, revision, namespace)
+	return set, err
+}
+
+// desiredAt is desired that also returns the revision's base tree.
+func (s Source) desiredAt(ctx context.Context, revision, namespace string) (DesiredSet, string, error) {
 	if s.Deployment == nil {
-		return DesiredSet{}, &SourceError{Kind: SourceUnconfigured, Err: errors.New("no deployment source is configured")}
+		return DesiredSet{}, "", &SourceError{Kind: SourceUnconfigured, Err: errors.New("no deployment source is configured")}
 	}
 	if namespace == "" {
-		return DesiredSet{}, sourceErrorf(SourceInvalid, "accepted repository, full commit revision, and namespace are required")
+		return DesiredSet{}, "", sourceErrorf(SourceInvalid, "accepted repository, full commit revision, and namespace are required")
 	}
-	effective, err := s.effectiveAt(ctx, revision)
+	effective, base, err := s.effectiveAtBase(ctx, revision)
 	if err != nil {
-		return DesiredSet{}, err
+		return DesiredSet{}, "", err
 	}
 	defer effective.Close()
 	fsys, err := GitTreeFS(ctx, effective)
 	if err != nil {
-		return DesiredSet{}, err
+		return DesiredSet{}, "", err
 	}
 	deployment, err := legacyReadSource(fsys, s.Deployment)
 	if err != nil {
-		return DesiredSet{}, err
+		return DesiredSet{}, "", err
 	}
-	return Desired(ctx, fsys, s.env(namespace), s.Catalog, deployment)
+	set, err := Desired(ctx, fsys, s.env(namespace), s.Catalog, deployment)
+	return set, base, err
 }
 
 func (s Source) AcceptedManifest(ctx context.Context, revision string, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
@@ -247,4 +285,32 @@ func (s Source) AcceptedScopedManifest(ctx context.Context, revision, applicatio
 // observations still use the separately restricted AcceptedScopedManifest.
 func (s Source) AcceptedApplicationManifest(ctx context.Context, revision, namespace string, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
 	return s.acceptedObject(ctx, revision, namespace, ref)
+}
+
+// apply replaces the image of each container of the workload that a pin names.
+func (p ReceiptPins) apply(document map[string]any, ref sdk.ObjectRef) {
+	for _, field := range []string{"initContainers", "containers"} {
+		containers, found, _ := unstructured.NestedSlice(document, "spec", "template", "spec", field)
+		if !found {
+			continue
+		}
+		changed := false
+		for _, raw := range containers {
+			container, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			name, _ := container["name"].(string)
+			for _, pin := range p.Images {
+				if pin.Ref.Kind == ref.Kind && pin.Ref.Namespace == ref.Namespace && pin.Ref.Name == ref.Name &&
+					pin.Name == name && pin.Init == (field == "initContainers") && pin.Applied != "" {
+					container["image"] = pin.Applied
+					changed = true
+				}
+			}
+		}
+		if changed {
+			_ = unstructured.SetNestedSlice(document, containers, "spec", "template", "spec", field)
+		}
+	}
 }

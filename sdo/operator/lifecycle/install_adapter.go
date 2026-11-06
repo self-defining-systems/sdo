@@ -44,13 +44,13 @@ func (s KubernetesInstallStrategy) InstallPrepared(ctx context.Context, config i
 
 // WithVerifiedDeployment binds acknowledgement to this independently healthy
 // native deployment; verification is completed by the in-cluster controller.
-func (s KubernetesInstallStrategy) WithVerifiedDeployment(root, commit, namespace string, deployment *contracts.DeploymentSource, environment *contracts.RenderEnvironment) InstallStrategy {
+func (s KubernetesInstallStrategy) WithVerifiedDeployment(root, commit, namespace string, deployment *contracts.DeploymentSource, environment *contracts.RenderEnvironment, pins rendered.ReceiptPins) InstallStrategy {
 	s.Installer.BeforeControllerStart = func(ctx context.Context, config install.Config) error {
 		control := config.ControlNamespace
 		if control == "" {
 			control = namespace
 		}
-		source := rendered.Source{Repository: root, Deployment: deployment, Catalog: s.Renderers, Environment: environment}
+		source := rendered.Source{Repository: root, Deployment: deployment, Catalog: s.Renderers, Environment: environment, Pins: pins}
 		objects, err := source.RawManifests(ctx, commit, namespace)
 		if err != nil {
 			return fmt.Errorf("onboarding accepted source: %w", err)
@@ -116,9 +116,9 @@ func (a NativeInstallAdapter) InstallDeployment(ctx context.Context, acceptedCom
 		return err
 	}
 	if strategy, ok := a.Strategy.(interface {
-		WithVerifiedDeployment(string, string, string, *contracts.DeploymentSource, *contracts.RenderEnvironment) InstallStrategy
+		WithVerifiedDeployment(string, string, string, *contracts.DeploymentSource, *contracts.RenderEnvironment, rendered.ReceiptPins) InstallStrategy
 	}); ok {
-		a.Strategy = strategy.WithVerifiedDeployment(a.AcceptedRepository, acceptedCommit, namespace, receipt.Source, receipt.Environment)
+		a.Strategy = strategy.WithVerifiedDeployment(a.AcceptedRepository, acceptedCommit, namespace, receipt.Source, receipt.Environment, rendered.ReceiptPins{BaseTree: receipt.BaseTree, Images: receipt.ContainerImages})
 	}
 	environment, err := renderenv.Format(receipt.Environment)
 	if err != nil {

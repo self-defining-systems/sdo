@@ -147,6 +147,14 @@ func patchPaths(err error) []string {
 	return nil
 }
 
+// ClassifyRender maps a render or source error to a cause for adapters outside
+// this package (the live deployment checks use the same table). Cancellation and
+// unavailable I/O are infrastructure; an invalid or unconfigured source is
+// invalid; an error of an unknown shape is internal.
+func ClassifyRender(err error, invalid operability.Cause) operability.Cause {
+	return classifyRender(err, invalid)
+}
+
 // classifyRender maps a render or source error: cancellation and unavailable
 // I/O are infrastructure, an invalid or unconfigured source is the given cause,
 // and an error of an unknown shape is an internal defect.
