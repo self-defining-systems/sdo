@@ -69,6 +69,30 @@ def manifest_paths_for_environment(environment: Any) -> tuple[str, ...]:
 
 
 @dataclass(frozen=True)
+class RenderedWorkloads:
+    """What a deployment plan needs from a render: ``Kind/namespace/name`` IDs and the images the workloads run.
+
+    Go owns which kinds are workloads (the pod-template table behind ``render-source``); nothing here lists kinds.
+    """
+
+    workload_ids: tuple[str, ...]
+    images: tuple[str, ...]
+
+    @classmethod
+    def from_render(cls, value: Any) -> RenderedWorkloads:
+        if (
+            not isinstance(value, dict)
+            or not isinstance(value.get("workloads"), list)
+            or not isinstance(value.get("images"), list)
+        ):
+            raise ValueError("render-source returned an invalid workload summary")
+        return cls(
+            tuple(str(workload["id"]) for workload in value["workloads"]),
+            tuple(str(image) for image in value["images"]),
+        )
+
+
+@dataclass(frozen=True)
 class AcceptedSource:
     """Rendered manifests of the accepted commit checked out at ``workspace``."""
 
@@ -122,28 +146,37 @@ class AcceptedSource:
         return value
 
     @cached_property
+    def workloads(self) -> RenderedWorkloads:
+        """The plan's view of the render: workload IDs and images, derived by Go from its pod-template table."""
+        return RenderedWorkloads.from_render(self._render("workloads"))
+
+    @cached_property
     def manifests(self) -> tuple[dict[str, Any], ...]:
         """Use the production renderer for plain manifests and generators alike."""
-        try:
-            rendered = json.loads(
-                execute_operator(
-                    "render-source",
-                    [],
-                    timeout=wait_for(WaitKind.COMMAND),
-                    input_text=json.dumps(
-                        {
-                            "repository": str(self.workspace.resolve()),
-                            "revision": self.revision,
-                            "namespace": self.namespace,
-                            "deployment_source": self.deployment_source,
-                        }
-                    ),
-                )
-            )
-        except RuntimeError as error:
-            raise ValueError(f"accepted source render failed at {self.revision}: {error}") from error
+        rendered = self._render("objects")
         if not isinstance(rendered, list) or any(
             not isinstance(obj, dict) or obj.get("kind") == "Secret" for obj in rendered
         ):
             raise ValueError("accepted source renderer returned invalid non-secret inventory")
         return tuple(rendered)
+
+    def _render(self, output: str) -> Any:
+        request: dict[str, Any] = {
+            "repository": str(self.workspace.resolve()),
+            "revision": self.revision,
+            "namespace": self.namespace,
+            "deployment_source": self.deployment_source,
+        }
+        if output != "objects":
+            request["output"] = output
+        try:
+            return json.loads(
+                execute_operator(
+                    "render-source",
+                    [],
+                    timeout=wait_for(WaitKind.COMMAND),
+                    input_text=json.dumps(request),
+                )
+            )
+        except RuntimeError as error:
+            raise ValueError(f"accepted source render failed at {self.revision}: {error}") from error

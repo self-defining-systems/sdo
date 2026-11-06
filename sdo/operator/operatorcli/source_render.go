@@ -22,7 +22,8 @@ import (
 //
 // The request names its DeploymentSource as ProtoJSON in deployment_source.
 // The legacy path list is the transitional raw form; a request carries one
-// or the other.
+// or the other. Output "workloads" answers with the workload IDs and images
+// of the inventory instead of its objects.
 func RunSourceRender(ctx context.Context, input io.Reader, output io.Writer) error {
 	var request struct {
 		Repository       string          `json:"repository"`
@@ -33,6 +34,10 @@ func RunSourceRender(ctx context.Context, input io.Reader, output io.Writer) err
 		// RenderEnvironment is the lane's recorded install-time environment
 		// (ProtoJSON); absent is unknown, the renderer defaults.
 		RenderEnvironment json.RawMessage `json:"render_environment"`
+		// Output selects the answer: "objects" (default) is the inventory;
+		// "workloads" is the plan's view of it (workload IDs and images,
+		// derived from the pod-template table).
+		Output string `json:"output"`
 	}
 	decoder := json.NewDecoder(io.LimitReader(input, 1<<20))
 	decoder.DisallowUnknownFields()
@@ -42,6 +47,9 @@ func RunSourceRender(ctx context.Context, input io.Reader, output io.Writer) err
 	var trailing any
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		return fmt.Errorf("source render request must contain exactly one object")
+	}
+	if request.Output != "" && request.Output != "objects" && request.Output != "workloads" {
+		return fmt.Errorf("unknown source render output %q", request.Output)
 	}
 	deployment, err := renderRequestSource(request.DeploymentSource, request.ManifestPaths)
 	if err != nil {
@@ -57,6 +65,9 @@ func RunSourceRender(ctx context.Context, input io.Reader, output io.Writer) err
 	inventory, err := source.AcceptedInventory(ctx, request.Revision, request.Namespace)
 	if err != nil {
 		return err
+	}
+	if request.Output == "workloads" {
+		return json.NewEncoder(output).Encode(rendered.SummarizeWorkloads(inventory.Objects, request.Namespace))
 	}
 	if len(inventory.Objects) == 0 {
 		return json.NewEncoder(output).Encode([]any{})

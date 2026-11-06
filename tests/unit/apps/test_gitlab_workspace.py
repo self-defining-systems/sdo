@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import io
 import os
+import re
 import shutil
 import subprocess
 import tarfile
@@ -24,6 +25,8 @@ from benchmarks.sregym.adapter import helm_source
 from benchmarks.sregym.fastloop.accepted_source import AcceptedSource
 
 pytestmark = pytest.mark.go_integration
+
+ROOT = Path(__file__).resolve().parents[3]
 
 Identity = tuple[str, str, str]
 FILES = {
@@ -55,6 +58,18 @@ metadata: {name: "{{ .Release.Name }}-webservice"}
 spec:
   ingressClassName: {{ .Values.global.ingress.class }}
   rules: [{host: gitlab.invalid}]
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata: {name: "{{ .Release.Name }}-cleanup"}
+spec:
+  schedule: "0 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          containers: [{name: cleanup, image: "registry.invalid/cron:1"}]
 """,
     "gitlab/templates/shared-secrets.yaml": """apiVersion: batch/v1
 kind: Job
@@ -106,6 +121,34 @@ def real_archive(directory: Path) -> Path | None:
     if os.environ.get("SDO_GITLAB_FETCH") == "1":
         return lane.fetch_chart(lane.load_pins(), directory)
     return None
+
+
+def go_pod_kinds() -> tuple[str, ...]:
+    """The kinds of Go's pod-template table (the one source of truth for what a workload is), read from its source."""
+    source = (ROOT / "sdo/operator/rendered/podtemplate.go").read_text()
+    table = source.split("var podKinds = map[string][]string{", 1)[1].split("\n}\n", 1)[0]
+    kinds = tuple(re.findall(r'^\s*"(\w+)":', table, flags=re.MULTILINE))
+    assert {"Deployment", "CronJob", "Pod"} <= set(kinds), "podKinds table not parsed"
+    return kinds
+
+
+def helm_workload_ids(objects: list[dict[str, Any]]) -> list[str]:
+    """Independent oracle: workload IDs of ``helm template`` objects, by Go's table of kinds."""
+    kinds = go_pod_kinds()
+    return [f"{o['kind']}/gitlab/{o['metadata']['name']}" for o in objects if o["kind"] in kinds]
+
+
+def helm_images(objects: list[dict[str, Any]]) -> set[str]:
+    """Independent oracle: images of the pod templates of ``helm template`` objects."""
+    images: set[str] = set()
+    for obj in objects:
+        spec = obj.get("spec") or {}
+        if obj["kind"] == "CronJob":
+            spec = (spec.get("jobTemplate") or {}).get("spec") or {}
+        pod = spec if obj["kind"] == "Pod" else (spec.get("template") or {}).get("spec") or {}
+        for container in (*(pod.get("containers") or ()), *(pod.get("initContainers") or ())):
+            images.add(container["image"])
+    return images
 
 
 def helm_objects(chart: Path) -> list[dict[str, Any]]:
@@ -208,17 +251,16 @@ def test_stand_in_plan_is_derived_from_the_render(tmp_path: Path, operator_binar
     plan = gitlab_lane.provided_plan(tmp_path / "ws")
     expected = helm_objects(tmp_path / "ws/chart")
     # The expected side comes from `helm template`, not from SDO's render: workloads that are not hooks.
-    assert sorted(plan["expected_workload_ids"]) == sorted(
-        f"{o['kind']}/gitlab/{o['metadata']['name']}"
-        for o in expected
-        if o["kind"] in ("Deployment", "StatefulSet", "DaemonSet", "Job")
-    )
+    assert sorted(plan["expected_workload_ids"]) == sorted(helm_workload_ids(expected))
     assert "Deployment/gitlab/gitlab-webservice" in plan["expected_workload_ids"]
+    # A CronJob is a workload too (Go's pod-template table), so the plan must name it.
+    assert "CronJob/gitlab/gitlab-cleanup" in plan["expected_workload_ids"]
+    assert "registry.invalid/cron:1" in {image["image"] for image in plan["images"]}
     images = {image["image"] for image in plan["images"]}
     assert "registry.invalid/web:1" in images
     # Hook and test-only images are not part of the rendered inventory.
     assert not images & {"registry.invalid/kubectl:1", "registry.invalid/t:1"}
-    assert images == set(gitlab_lane.rendered_images(expected))
+    assert images == helm_images(expected)
     assert {image["source_id"] for image in plan["images"]} == {"prebuilt"}
 
 
@@ -267,10 +309,6 @@ def test_real_chart_plan_is_printed(tmp_path: Path, operator_binary: Path, monke
     def family(workload_id: str) -> str:
         return workload_id.rsplit("-", 1)[0] if workload_id.startswith("Job/") else workload_id
 
-    assert {family(i) for i in plan["expected_workload_ids"]} == {
-        family(f"{o['kind']}/gitlab/{o['metadata']['name']}")
-        for o in expected
-        if o["kind"] in ("Deployment", "StatefulSet", "DaemonSet", "Job")
-    }
-    assert set(gitlab_lane.rendered_images(expected)) == {image["image"] for image in plan["images"]}
+    assert {family(i) for i in plan["expected_workload_ids"]} == {family(i) for i in helm_workload_ids(expected)}
+    assert helm_images(expected) == {image["image"] for image in plan["images"]}
     assert len(plan["images"]) >= 8

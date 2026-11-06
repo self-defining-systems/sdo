@@ -593,7 +593,10 @@ def test_non_raw_variant_cannot_be_seeded(tmp_path):
         toy.prepare_workspace(tmp_path, "toy:test", fresh=False, variant="helm")
 
 
-def test_non_raw_install_declares_no_deployment_source_and_raw_declares_kubernetes(tmp_path, monkeypatch):
+@pytest.mark.go_integration
+def test_non_raw_install_declares_no_deployment_source_and_raw_declares_kubernetes(
+    tmp_path, monkeypatch, operator_binary
+):
     from subprocess import CompletedProcess
     from types import SimpleNamespace
 
@@ -610,9 +613,19 @@ def test_non_raw_install_declares_no_deployment_source_and_raw_declares_kubernet
         images=SimpleNamespace(controller="controller:test", responder="responder:test"),
         apply_operator_env=lambda _: None,
     )
+    toy.prepare_workspace(tmp_path, "toy:test", fresh=True, variant="helm")
+    monkeypatch.setenv("SDO_OPERATOR_BIN", str(operator_binary))
     monkeypatch.setenv("KUBECONFIG", str(environment.kubeconfig))
     monkeypatch.delenv("SREGYM_BASE_KUBECONFIG", raising=False)
-    monkeypatch.setattr(toy.subprocess, "run", lambda *args, **kwargs: CompletedProcess(args, 0))
+    real_run = toy.subprocess.run
+
+    def run(argv, *args, **kwargs):
+        # Cluster calls are faked; the plan's render (git, the operator binary) is real.
+        if "kubectl" in str(argv[0]):
+            return CompletedProcess(argv, 0)
+        return real_run(argv, *args, **kwargs)
+
+    monkeypatch.setattr(toy.subprocess, "run", run)
     monkeypatch.setattr(adapter, "launch_native_lifecycle", lambda *args: {"judge_commit": "j" * 40})
     monkeypatch.setattr(toy, "wait_for_baseline", lambda *args: None)
     helm = toy.install_controller(environment, objective="keep it up", variant="helm")

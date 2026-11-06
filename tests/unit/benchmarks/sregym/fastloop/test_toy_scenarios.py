@@ -261,16 +261,21 @@ def test_pod_parsers():
     assert sc.pod_failure_count(pods) == 3
 
 
-def test_helm_onboarding_provides_the_plan_of_the_assembled_source(tmp_path: Path):
+@pytest.mark.go_integration
+def test_helm_onboarding_provides_the_plan_of_the_assembled_source(
+    tmp_path: Path, operator_binary: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("SDO_OPERATOR_BIN", str(operator_binary))
     prepare_workspace(tmp_path, "unused:v1", fresh=True, variant="helm")
-    plan = provided_deployment_plan("helm", "sdo-toy")
+    plan = provided_deployment_plan("helm", "sdo-toy", tmp_path)
     assert plan is not None
     source = plan["source"]
     assert (tmp_path / source["config"]["chart_path"] / "Chart.yaml").is_file()
     assert (tmp_path / plan["images"][0]["config"]["dockerfile_path"]).is_file()
-    assert plan["expected_workload_ids"] == [
+    # Derived from SDO's render of the chart (Go's pod-template table), in render order.
+    assert sorted(plan["expected_workload_ids"]) == sorted(
         f"Deployment/sdo-toy/{name}" for name in ("frontend", "backend", "catalog")
-    ]
+    )
     values = (tmp_path / "chart" / "values.yaml").read_text()
     image = plan["images"][0]["image"]
     repository, _, tag = image.rpartition(":")
@@ -286,18 +291,17 @@ def test_helm_onboarding_provides_the_plan_of_the_assembled_source(tmp_path: Pat
     assert decoded["images"][0]["source_id"] == "buildkit"
 
 
-def test_only_helm_and_kustomize_provide_a_plan():
-    assert [provided_deployment_plan(v, "ns") is not None for v in ("raw", "kustomize", "helm", "compose")] == [
-        False,
-        True,
-        True,
-        False,
-    ]
+def test_raw_and_compose_provide_no_plan(tmp_path: Path):
+    assert [provided_deployment_plan(v, "ns", tmp_path) for v in ("raw", "compose")] == [None, None]
 
 
-def test_kustomize_overlay_deploys_the_plans_registry_image(tmp_path: Path):
+@pytest.mark.go_integration
+def test_kustomize_overlay_deploys_the_plans_registry_image(
+    tmp_path: Path, operator_binary: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("SDO_OPERATOR_BIN", str(operator_binary))
     prepare_workspace(tmp_path, "unused:v1", fresh=True, variant="kustomize")
-    plan = provided_deployment_plan("kustomize", "sdo-toy")
+    plan = provided_deployment_plan("kustomize", "sdo-toy", tmp_path)
     assert plan is not None
     overlay = tmp_path / plan["source"]["config"]["path"] / "kustomization.yaml"
     image = plan["images"][0]["image"]

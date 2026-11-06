@@ -14,6 +14,7 @@ from google.protobuf import json_format
 
 from apps.gitlab import assemble
 from benchmarks.sregym.fastloop import gitlab_lane
+from benchmarks.sregym.fastloop.accepted_source import RenderedWorkloads
 from benchmarks.sregym.fastloop.cli import build_parser
 from tests.unit.apps.test_gitlab_workspace import stand_in_archive
 
@@ -62,7 +63,7 @@ def test_runtime_config_installs_the_provided_source_without_manifest_paths(tmp_
         images=SimpleNamespace(controller="controller:x", responder="responder:x"),
         cluster="fastloop-w0",
     )
-    plan = gitlab_lane.plan_from_render(_objects(), environment.namespace)
+    plan = gitlab_lane.plan_from_workloads(_workloads())
     config = gitlab_lane.lane_runtime_config(environment, plan)
     assert config.deployment_plan == plan
     assert config.deployment_source == gitlab_lane.deployment_source()
@@ -100,29 +101,17 @@ def test_pins_agree_with_the_chart_values_and_the_umbrella_dependency() -> None:
     assert pins["namespace"] == gitlab_lane.NAMESPACE
 
 
-def _objects() -> list[dict]:
-    pod = {"containers": [{"name": "a", "image": "registry.invalid/web:1"}], "initContainers": [{"image": "busybox:1"}]}
-    return [
-        {"kind": "Deployment", "metadata": {"name": "web"}, "spec": {"template": {"spec": pod}}},
-        {
-            "kind": "StatefulSet",
-            "metadata": {"name": "db", "namespace": "other"},
-            "spec": {"template": {"spec": {"containers": [{"image": "postgres:17@sha256:" + "a" * 64}]}}},
-        },
-        {
-            "kind": "CronJob",
-            "metadata": {"name": "tick"},
-            "spec": {"jobTemplate": {"spec": {"template": {"spec": {"containers": [{"image": "busybox:1"}]}}}}},
-        },
-        {"kind": "Job", "metadata": {"name": "migrate"}, "spec": {"template": {"spec": {"containers": []}}}},
-        {"kind": "Service", "metadata": {"name": "web"}, "spec": {}},
-    ]
+def _workloads() -> RenderedWorkloads:
+    return RenderedWorkloads(
+        ("Deployment/gitlab/web", "StatefulSet/other/db", "CronJob/gitlab/tick", "Job/gitlab/migrate"),
+        ("busybox:1", "postgres:17@sha256:" + "a" * 64, "registry.invalid/web:1"),
+    )
 
 
-def test_plan_from_render_declares_every_rendered_image_prebuilt_and_every_workload() -> None:
+def test_plan_declares_every_rendered_image_prebuilt_and_every_workload() -> None:
     from sdo.contracts.proto import DeploymentPlan
 
-    plan = gitlab_lane.plan_from_render(_objects(), "gitlab")
+    plan = gitlab_lane.plan_from_workloads(_workloads())
     message = json_format.ParseDict(plan, DeploymentPlan())
     assert plan["source"] == gitlab_lane.deployment_source()
     assert [image.image for image in message.images] == [
@@ -135,13 +124,14 @@ def test_plan_from_render_declares_every_rendered_image_prebuilt_and_every_workl
     assert list(message.expected_workload_ids) == [
         "Deployment/gitlab/web",
         "StatefulSet/other/db",
+        "CronJob/gitlab/tick",
         "Job/gitlab/migrate",
     ]
 
 
 def test_plan_with_no_workloads_is_rejected() -> None:
     with pytest.raises(ValueError, match="workload"):
-        gitlab_lane.plan_from_render([{"kind": "Service", "metadata": {"name": "x"}}], "gitlab")
+        gitlab_lane.plan_from_workloads(RenderedWorkloads((), ()))
 
 
 def test_onboarding_hands_the_plan_to_the_native_lifecycle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -163,7 +153,7 @@ def test_onboarding_hands_the_plan_to_the_native_lifecycle(monkeypatch: pytest.M
         images=SimpleNamespace(controller="controller:x", responder="responder:x"),
         cluster="fastloop-w0",
     )
-    plan = gitlab_lane.plan_from_render(_objects(), "gitlab")
+    plan = gitlab_lane.plan_from_workloads(_workloads())
     config = gitlab_lane.lane_runtime_config(environment, plan)
     assert gitlab_lane.onboard(environment, config, "goal") == {"judge_commit": "c"}
     assert seen == {"plan": plan, "objective": "goal"}
