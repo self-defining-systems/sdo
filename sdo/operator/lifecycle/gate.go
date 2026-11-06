@@ -57,9 +57,19 @@ func (c Coordinator) candidateReport(ctx context.Context, cfg Config, candidate 
 	}
 	// Staging ran the shared validator and rejected nothing: no blocking finding.
 	checks := append(live, offline.CheckMemory(offline.Memory{Notes: gaps, OwnershipChecked: true})...)
-	if failing(live) {
+	var applyChecks []operability.Check
+	if !failing(live) {
+		if applyChecks, err = c.applyTelemetry(ctx, candidate.Path); err != nil {
+			return operability.Report{}, err
+		}
+		checks = append(checks, applyChecks...)
+	}
+	switch {
+	case failing(live):
 		checks = append(checks, operability.Check{ID: "O4.detectors", Phase: operability.PhaseLive, Status: operability.StatusSkipped, Detail: "not run: a deployment check failed"})
-	} else {
+	case failing(applyChecks):
+		checks = append(checks, operability.Check{ID: "O4.detectors", Phase: operability.PhaseLive, Status: operability.StatusSkipped, Detail: "not run: the telemetry apply phase failed"})
+	default:
 		verdict, err := c.awaitVerdict(ctx, cfg, func() (HealthVerdict, error) {
 			return c.Verifier.VerifyCandidate(ctx, candidate.Path, candidate.Commit, cfg.Namespace, cfg.HealthObjective, deployment)
 		})

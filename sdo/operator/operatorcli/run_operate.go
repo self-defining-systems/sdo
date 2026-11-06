@@ -21,6 +21,7 @@ import (
 	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/operatorcli/catalog/renderers"
 	"sdo.dev/operator/operatorcli/internal/processio"
+	"sdo.dev/operator/telemetryapply"
 	"sdo.dev/operator/telemetrycontext"
 	"sdo.dev/operator/worker_registry"
 )
@@ -150,6 +151,9 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		Renderers: readiness.Renderers, ImageSources: readiness.Images,
 		Broker: repository, Bootstrap: artifacts.BootstrapStore{}, Registry: registry,
 		Workers: workers, Readiness: readiness,
+		// The designer's telemetry backends are applied under the same
+		// policy the broker validated them against.
+		TelemetryApply: telemetryapply.NewApplier(client, repository.Telemetry, config.Install.BackendRecipes),
 		Verifier: deployment.IndependentHealthVerifier{
 			AcceptedRoot: config.ApplicationRoot, OperatorRoot: config.OperatorRoot, Readiness: &readiness, Probe: healthProbe,
 		}, Installer: installer,
