@@ -56,6 +56,7 @@ func TestCheckLivePassesForARealDeployment(t *testing.T) {
 	root, source := depRawFixture(t)
 	plan := depPlan(t, source, depRawWeb)
 	deployer, _ := depDeployer(t, root, &clusterFake{})
+	deployer.Environment = &contracts.RenderEnvironment{KubeVersion: "v1.34.0", ApiVersions: []string{"apps/v1", "apps/v1/Deployment", "v1", "v1/ConfigMap", "v1/Service", "v1/Secret"}}
 	receipt, err := deployer.ApplyAndVerify(context.Background(), root, plan)
 	if err != nil {
 		t.Fatal(err)
@@ -188,5 +189,27 @@ func TestLiveChecksForAFailedDeployment(t *testing.T) {
 	}
 	if d := report.Decide(operability.O1, operability.O2, operability.O6); d.Kind != operability.Retry {
 		t.Fatalf("decision = %+v, want retry", d)
+	}
+}
+
+// O1.apis is part of the live report: it passes with a recorded discovery that
+// serves every rendered kind, is not evaluated (skipped, never silently absent)
+// when no discovery was recorded, and fails with the render cause when the
+// deployer refused the set for an unserved API.
+func TestLiveChecksReportServedAPIs(t *testing.T) {
+	unknown := statusOf(LiveChecks(LiveInput{}), "O1.apis")
+	if unknown.ID == "" || unknown.Status != operability.StatusSkipped {
+		t.Fatalf("no discovery recorded: %+v", unknown)
+	}
+	refused := LiveChecks(LiveInput{Err: &rendered.UnservedAPIError{Objects: []string{"policy/v1beta1 PodDisruptionBudget app/web"}}})
+	if c := statusOf(refused, "O1.apis"); c.Status != operability.StatusFail || c.Cause != operability.CauseRender {
+		t.Fatalf("unserved API: %+v", c)
+	}
+	if c := statusOf(refused, "O1.deploy"); c.Status != operability.StatusFail || c.Cause != operability.CauseRender {
+		t.Fatalf("deploy: %+v", c)
+	}
+	other := LiveChecks(LiveInput{Err: &RolloutTimeoutError{Resource: "Deployment/a/b", Stalled: true}})
+	if c := statusOf(other, "O1.apis"); c.Status != operability.StatusSkipped {
+		t.Fatalf("other failure: %+v", c)
 	}
 }

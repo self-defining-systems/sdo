@@ -53,7 +53,7 @@ type Deployment struct {
 	// ExpectedWorkloads are the plan's expected workload IDs.
 	ExpectedWorkloads []string
 	// ServedAPIs are the recorded discovery's group/version and
-	// group/version/Kind entries; empty is unknown and skips O1.apis.
+	// group/version/Kind entries; empty is unknown and O1.apis is reported skipped.
 	ServedAPIs []string
 	// Declared are the plan's image declarations.
 	Declared []imagesrc.Declared
@@ -108,7 +108,10 @@ func CheckDeployment(ctx context.Context, d Deployment) Result {
 		add(pass("O1.workloads", "expected workloads match the rendered workloads"))
 	}
 
-	if len(d.ServedAPIs) > 0 {
+	switch {
+	case len(d.ServedAPIs) == 0:
+		add(operability.Check{ID: "O1.apis", Phase: operability.PhaseOffline, Status: operability.StatusSkipped, Detail: "not run: no cluster discovery was recorded"})
+	default:
 		if err := rendered.CheckServedAPIs(first, d.ServedAPIs); err != nil {
 			add(failure("O1.apis", operability.CauseRender, err, nil))
 		} else {
@@ -132,7 +135,7 @@ func CheckPolicy(set rendered.DesiredSet, p Policy) []operability.Check {
 
 // Checks that depend on an earlier one, in the order CheckDeployment runs them.
 func afterRender() []string {
-	return []string{"O1.deterministic", "O1.workloads", "O2.images", "O6.scope", "O6.allowlist"}
+	return []string{"O1.deterministic", "O1.workloads", "O1.apis", "O2.images", "O6.scope", "O6.allowlist"}
 }
 
 func afterPatches() []string { return append([]string{"O1.render"}, afterRender()...) }
