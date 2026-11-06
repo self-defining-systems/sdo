@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"runtime"
 	"testing"
 	"time"
 
@@ -18,6 +19,20 @@ func init() {
 		var held [][]byte
 		for {
 			held = append(held, bytes.Repeat([]byte("x"), 64<<20))
+		}
+	})
+	// Fills the data limit with touched heap (below the soft heap limit, so the
+	// GC never runs), then asks the runtime for threads whose stacks cannot fit.
+	sandboxio.Register("test-threads", func([]byte) []byte {
+		held := make([][]byte, 0, 64)
+		for i := 0; i < 12; i++ { // 12 x 16 MiB of the 256 MiB data limit, then stacks
+			held = append(held, bytes.Repeat([]byte("x"), 16<<20))
+		}
+		_ = held
+		block := make(chan struct{})
+		for {
+			go func() { runtime.LockOSThread(); <-block }()
+			runtime.Gosched()
 		}
 	})
 	sandboxio.Register("test-spin", func([]byte) []byte {
@@ -89,5 +104,33 @@ func TestRunningChildFailureIsNotASpawnFailure(t *testing.T) {
 	_, err := sandboxio.Run(t.Context(), "test-panic", nil, sandboxio.Limits{})
 	if !errors.Is(err, sandboxio.ErrChild) || errors.Is(err, sandboxio.ErrSpawn) {
 		t.Fatalf("crash = %v, want ErrChild and not ErrSpawn", err)
+	}
+}
+
+// RLIMIT_DATA counts thread stacks, so a child near its limit can fail to
+// create a thread before the heap itself is refused. That is still the memory
+// limit being hit (a verdict on the request), not a generic crash.
+func TestThreadStarvationUnderTheLimitIsMemory(t *testing.T) {
+	_, err := sandboxio.Run(t.Context(), "test-threads", nil, small)
+	var serr *sandboxio.Error
+	if !errors.As(err, &serr) || serr.Kind != sandboxio.KindMemory {
+		t.Fatalf("want a memory child error, got %v", err)
+	}
+}
+
+// The runtime reports a refused thread stack as a pthread_create failure. At a
+// large peak that is the memory limit; at a small one it is the host (pid or
+// process limits), which must not be blamed on the request.
+func TestThreadCreationFailureIsMemoryOnlyNearTheLimit(t *testing.T) {
+	const msg = "runtime/cgo: pthread_create failed: Resource temporarily unavailable\nSIGABRT"
+	limits := sandboxio.Limits{Memory: 512 << 20}
+	for name, tc := range map[string]struct {
+		peak int64
+		want sandboxio.Kind
+	}{"near the limit": {400 << 20, sandboxio.KindMemory}, "small peak": {20 << 20, sandboxio.KindCrash}} {
+		var serr *sandboxio.Error
+		if err := sandboxio.Classify(msg, tc.peak, limits); !errors.As(err, &serr) || serr.Kind != tc.want {
+			t.Errorf("%s: got %v, want %s", name, err, tc.want)
+		}
 	}
 }

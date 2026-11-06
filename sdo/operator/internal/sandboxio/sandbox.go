@@ -205,20 +205,43 @@ func Run(ctx context.Context, name string, request []byte, limits Limits) ([]byt
 	case overflow:
 		return nil, &Error{Name: name, Kind: KindOutput, Detail: fmt.Sprintf("response passed %d bytes", limits.Output)}
 	case waitErr != nil:
-		return nil, classify(name, waitErr, stderr.String(), limits)
+		return nil, classify(name, waitErr, stderr.String(), peakBytes(cmd.ProcessState), limits)
 	case readErr != nil:
 		return nil, fmt.Errorf("sandboxed %s: read response: %w", name, readErr)
 	}
 	return response, nil
 }
 
-func classify(name string, waitErr error, stderr string, limits Limits) error {
+// threadFailures are the runtime's fatal messages when it cannot get memory
+// for a new OS thread (its stack counts against RLIMIT_DATA, like the heap).
+var threadFailures = []string{
+	"pthread_create failed",          // cgo runtime
+	"failed to create new OS thread", // pure-Go runtime
+	"cannot allocate memory",         // mmap/ENOMEM fatals
+}
+
+// classify names why a started child failed. Running into RLIMIT_DATA is
+// reported by the Go runtime in one of several ways depending on what asks for
+// memory first: the heap (out of memory) or a new thread whose stack no longer
+// fits (pthread_create/clone failed). Both are the memory limit when the child
+// had grown to a large share of it; the same thread failure at a small peak is
+// a host condition (process or pid limits), so it stays a crash.
+func classify(name string, waitErr error, stderr string, peak int64, limits Limits) error {
 	detail := strings.TrimSpace(stderr)
 	if i := strings.IndexByte(detail, '\n'); i >= 0 {
 		// The first line of a Go fatal names it; the rest is a stack trace.
 		detail = detail[:i]
 	}
-	if strings.Contains(stderr, "out of memory") {
+	memoryExit := strings.Contains(stderr, "out of memory")
+	if !memoryExit && peak >= limits.Memory/2 {
+		for _, m := range threadFailures {
+			if strings.Contains(stderr, m) {
+				memoryExit = true
+				break
+			}
+		}
+	}
+	if memoryExit {
 		return &Error{Name: name, Kind: KindMemory, Detail: fmt.Sprintf("exceeded the %d MiB memory limit (%s)", limits.Memory>>20, detail)}
 	}
 	if detail == "" {

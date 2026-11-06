@@ -38,3 +38,11 @@ func start(cmd *exec.Cmd) error {
 
 // executable is the running binary even if its file was replaced on disk.
 func executable() (string, error) { return "/proc/self/exe", nil }
+
+// peakBytes is the child's peak resident set, 0 when unknown.
+func peakBytes(ps *os.ProcessState) int64 {
+	if ru, ok := ps.SysUsage().(*syscall.Rusage); ok {
+		return ru.Maxrss << 10
+	}
+	return 0
+}
