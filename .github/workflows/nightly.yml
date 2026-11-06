@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '17 3 * * *'
   workflow_dispatch:
+    inputs:
+      scenario:
+        description: "Run only the controller end-to-end job, for this scenario (scenario1, scenario2, api-errors, hung-agent, all); empty runs everything"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -13,6 +18,7 @@ permissions:
 jobs:
   go:
     name: race suite, slow tests and fuzz
+    if: inputs.scenario == ''
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -91,10 +97,25 @@ jobs:
           bwrap --ro-bind / / --dev /dev --proc /proc true
           echo "KUBEBUILDER_ASSETS=$(bash scripts/install_envtest.sh)" >> "$GITHUB_ENV"
       - name: Controller end to end (first incident and repeat, then faults)
-        run: bash scripts/test_controller_e2e.sh all
+        env:
+          SCENARIO: ${{ inputs.scenario || 'all' }}
+        run: bash scripts/test_controller_e2e.sh "$SCENARIO"
+      # A failed world keeps its run directory (pod logs, termination messages); a hosted runner
+      # discards it, so a failure that only happens there could not be diagnosed.
+      - name: Keep the failed worlds' run directories
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-run-directories
+          path: |
+            ${{ runner.temp }}/sdo-e2e-*
+            /tmp/sdo-e2e-*
+          if-no-files-found: ignore
+          retention-days: 3
 
   python:
     name: slow Python suites
+    if: inputs.scenario == ''
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -158,6 +179,14 @@ jobs:
             tests/unit/sdo/agents/lifecycle/test_supplied_reads.py \
             tests/unit/benchmarks/sregym/fastloop/test_sequence_scripted.py \
             tests/unit/benchmarks/sregym/fastloop/test_host_limits.py
+      - name: Property tests at full example counts (pull requests sample fewer)
+        env:
+          SDO_PROPERTY_EXAMPLES: "300"
+          SDO_PROPERTY_FULL: "1"
+        run: |
+          uv run pytest -n 2 \
+            "tests/unit/sdo/agents/responder/test_recorded_actions.py::test_arbitrary_command_text_round_trips_through_the_recorded_receipts" \
+            "tests/unit/benchmarks/sregym/fastloop/test_runtime_fault_probes.py::test_private_transport_errors_are_sanitized_for_every_operation"
       - name: Quarantined Python tests (pull requests skip them; see .github/ci_quarantine.json)
         run: |
           mapfile -t ids < <(python3 scripts/ci_quarantine.py pytest-ids)
@@ -167,6 +196,7 @@ jobs:
 
   images:
     name: controller images
+    if: inputs.scenario == ''
     timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:

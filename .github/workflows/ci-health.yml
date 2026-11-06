@@ -1,8 +1,15 @@
 name: CI health
 
+# GitHub delays or drops scheduled runs on a busy repository (this one saw no hourly run in
+# three hours, and the nightly started about seven hours late), so the alarm also runs after
+# every main CI run, which is the moment the numbers change.
 on:
   schedule:
     - cron: '23 * * * *'
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
 
 permissions:

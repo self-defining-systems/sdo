@@ -132,6 +132,19 @@ def test_slow_test_script_fails_on_an_unlisted_offender(tmp_path: Path) -> None:
     assert ok.returncode == 0
 
 
+def test_slow_test_script_warns_about_a_test_over_half_the_budget(tmp_path: Path) -> None:
+    log = tmp_path / "go.json"
+    log.write_text(go_event("pass", "sdo.dev/new", "TestVaries", 6) + "\n")
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/check_slow_tests.py"), "--go", str(log)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, "a warning never fails the job"
+    assert "::warning::sdo.dev/new TestVaries took 6.0s" in result.stdout
+
+
 @pytest.mark.parametrize(("limit", "oversize"), [(1, True), (100000, False)])
 def test_cache_guard_flags_an_oversize_cache(tmp_path: Path, limit: int, oversize: bool) -> None:
     (tmp_path / "cache").mkdir()
@@ -211,10 +224,11 @@ def test_queue_latency_and_outcome_rates() -> None:
     assert health.outcome_rates(runs) == {"cancelled": 1 / 3, "rerun": 1 / 3, "ejected": 1 / 3}
 
 
-def test_health_workflow_is_hourly_read_only() -> None:
+def test_health_workflow_runs_hourly_and_after_every_main_ci_run_read_only() -> None:
     config = workflow("ci-health.yml")
     triggers = config.get("on", config.get(True, {}))
     assert triggers["schedule"] == [{"cron": "23 * * * *"}]
+    assert triggers["workflow_run"] == {"workflows": ["CI"], "types": ["completed"], "branches": ["main"]}
     assert set(config["permissions"].values()) == {"read"}
 
 
