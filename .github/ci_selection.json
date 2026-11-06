@@ -60,6 +60,9 @@
     "tests/unit/test_*.py"
   ],
   "python_shards": {
+    "adapter": [
+      "tests/unit/benchmarks/sregym/adapter/**"
+    ],
     "fastloop": [
       "tests/unit/benchmarks/sregym/fastloop/**"
     ]
