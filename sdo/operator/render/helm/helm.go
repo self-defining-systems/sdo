@@ -3,9 +3,13 @@
 // no repository, cluster, registry or process is touched. Only Helm's pure
 // packages (chart loading, values coalescing, the template engine and the
 // manifest sorter) are linked; pkg/action, pkg/kube and the registry client
-// stay out. Charts are checked by the static policy first (no lookup, no
-// clock or random functions, vendored subcharts only, no crds/, only
-// pre-install and post-install hooks).
+// stay out. Like helm install, the renderer first processes the chart's
+// dependencies (conditions, tags, import-values), so everything after that
+// (the static policy, rendering, hooks) sees only the release set: enabled
+// subcharts, vendored, without lookup, clock or random functions that reach
+// the output, and without crds/. Hooks are chosen by the events of the
+// rendered operation (install): pre-install and post-install become phases,
+// hooks of other operations (upgrade, delete, rollback, test) are left out.
 package helm
 
 import (
@@ -14,6 +18,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"strconv"
 	"strings"
 
 	"google.golang.org/protobuf/types/known/structpb"
@@ -36,13 +41,14 @@ import (
 const ID = "helm"
 
 // DefaultKubeVersion is the .Capabilities.KubeVersion used when Env carries
-// none: the Kubernetes line SDO links.
+// none: the Kubernetes line SDO links. An Env without APIVersions gets the
+// APIs that version still serves.
 const DefaultKubeVersion = "v1.30.0"
 
 // Doc tells an agent what the helm renderer does and when to choose it.
 const Doc = `Renders a Helm chart from the source tree the way helm template does, with no cluster or registry access. Choose it when the application ships a chart (a directory with Chart.yaml) in the tree.
 Config: chart_path, the tree-relative chart directory; value_files, tree-relative values files merged in order after the chart's values.yaml; values, an inline object merged last (like --set-json), for settings such as image tags or replica counts.
-Charts must be self-contained: subcharts are vendored in charts/, and lookup, clock and random template functions, crds/ directories and hooks other than pre-install and post-install are rejected.`
+Charts must be self-contained: enabled subcharts are vendored in charts/ (disabled ones, by condition or tag, are ignored), and lookup, clock and random template functions that reach the rendered output, and crds/ directories of enabled charts, are rejected. Hooks with a pre-install or post-install event become phases; hooks of other events (upgrade, delete, rollback, test) are not part of a deploy.`
 
 // Register adds the helm renderer to c under ID.
 func Register(c *render.Catalog) error {
@@ -61,10 +67,16 @@ func renderChart(ctx context.Context, fsys render.FS, env render.Env, cfg *contr
 	if err != nil {
 		return render.Result{}, err
 	}
-	if err := policy.Check(chrt); err != nil {
+	overrides, err := userValues(fsys, cfg)
+	if err != nil {
 		return render.Result{}, err
 	}
-	overrides, err := userValues(fsys, cfg)
+	// As helm install does, before anything else: disabled subcharts leave the
+	// release set, import-values merge into the parent.
+	if err := chartutil.ProcessDependenciesWithMerge(chrt, overrides); err != nil {
+		return render.Result{}, fmt.Errorf("helm dependencies of %s: %w", root, err)
+	}
+	conditional, err := policy.Check(chrt)
 	if err != nil {
 		return render.Result{}, err
 	}
@@ -81,9 +93,18 @@ func renderChart(ctx context.Context, fsys render.FS, env render.Env, cfg *contr
 	if err := ctx.Err(); err != nil {
 		return render.Result{}, err
 	}
+	// A template that fails or emits something that is not a manifest may do so
+	// because of a forbidden function: say which files hold one.
+	fail := func(err error) (render.Result, error) {
+		err = fmt.Errorf("helm render of %s: %w", root, err)
+		if findings := conditional.Resolve(func(string) bool { return true }); findings != nil {
+			err = errors.Join(err, findings)
+		}
+		return render.Result{}, err
+	}
 	files, err := engine.Render(chrt, values)
 	if err != nil {
-		return render.Result{}, fmt.Errorf("helm render of %s: %w", root, err)
+		return fail(err)
 	}
 	for name := range files {
 		// NOTES.txt is user documentation, not a manifest (as in helm install).
@@ -93,9 +114,16 @@ func renderChart(ctx context.Context, fsys render.FS, env render.Env, cfg *contr
 	}
 	hooks, manifests, err := releaseutil.SortManifests(files, caps.APIVersions, releaseutil.InstallOrder)
 	if err != nil {
-		return render.Result{}, fmt.Errorf("helm render of %s: %w", root, err)
+		return fail(err)
 	}
-	return phases(chrt.Name(), env, hooks, manifests)
+	res, kept, err := phases(policy.OperationInstall, env, hooks, manifests)
+	if err != nil {
+		return fail(err)
+	}
+	if err := conditional.Resolve(func(file string) bool { return kept[file] }); err != nil {
+		return render.Result{}, err
+	}
+	return res, nil
 }
 
 // loadChart reads every file under root through fsys (honoring .helmignore)
@@ -211,30 +239,82 @@ func capabilities(env render.Env) (*chartutil.Capabilities, error) {
 	caps.KubeVersion = *kv
 	if env.APIVersions != nil {
 		caps.APIVersions = chartutil.VersionSet(append([]string(nil), env.APIVersions...))
+	} else {
+		// Unknown: Helm's default set lists every API its client library has
+		// ever known, including ones the cluster no longer serves.
+		minor, _ := strconv.Atoi(strings.TrimRight(kv.Minor, "+"))
+		caps.APIVersions = servedAPIVersions(caps.APIVersions, kv.Major, minor)
 	}
 	return caps, nil
 }
 
-// phases builds pre-install, main and post-install phases. Hooks are ordered
-// by weight then name (the sorter's order); main objects follow Helm's install
-// order.
-func phases(chartName string, env render.Env, hooks []*release.Hook, manifests []releaseutil.Manifest) (render.Result, error) {
+// removedAPIs lists, by the Kubernetes minor version (1.x) that stopped
+// serving them, the group versions removed from the API (Kubernetes
+// deprecation guide). Only whole group versions are listed.
+var removedAPIs = []struct {
+	minor         int
+	groupVersions []string
+}{
+	{22, []string{"extensions/v1beta1", "networking.k8s.io/v1beta1", "admissionregistration.k8s.io/v1beta1", "apiextensions.k8s.io/v1beta1",
+		"rbac.authorization.k8s.io/v1beta1", "rbac.authorization.k8s.io/v1alpha1", "scheduling.k8s.io/v1beta1", "scheduling.k8s.io/v1alpha1",
+		"storage.k8s.io/v1beta1", "storage.k8s.io/v1alpha1", "certificates.k8s.io/v1beta1", "coordination.k8s.io/v1beta1",
+		"authentication.k8s.io/v1beta1", "authorization.k8s.io/v1beta1"}},
+	{25, []string{"batch/v1beta1", "discovery.k8s.io/v1beta1", "events.k8s.io/v1beta1", "autoscaling/v2beta1", "policy/v1beta1", "node.k8s.io/v1beta1", "node.k8s.io/v1alpha1"}},
+	{26, []string{"autoscaling/v2beta2", "flowcontrol.apiserver.k8s.io/v1beta1"}},
+	{29, []string{"flowcontrol.apiserver.k8s.io/v1beta2"}},
+	{32, []string{"flowcontrol.apiserver.k8s.io/v1beta3"}},
+}
+
+// servedAPIVersions drops from known the group versions (and their kinds)
+// that a Kubernetes major.minor no longer serves.
+func servedAPIVersions(known chartutil.VersionSet, major string, minor int) chartutil.VersionSet {
+	removed := map[string]bool{}
+	if major == "1" {
+		for _, r := range removedAPIs {
+			if minor >= r.minor {
+				for _, gv := range r.groupVersions {
+					removed[gv] = true
+				}
+			}
+		}
+	}
+	var out chartutil.VersionSet
+	for _, v := range known {
+		gv := v
+		if parts := strings.Split(v, "/"); len(parts) == 3 {
+			gv = parts[0] + "/" + parts[1]
+		}
+		if !removed[gv] {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// phases builds the pre, main and post phases of operation op. Hooks join the
+// phases their events name for op and are ordered by weight then name (the
+// sorter's order); hooks without such an event are left out. Main objects
+// follow Helm's install order. kept is the set of template files that
+// contributed an object.
+func phases(op policy.Operation, env render.Env, hooks []*release.Hook, manifests []releaseutil.Manifest) (render.Result, map[string]bool, error) {
 	var pre, post, main []*unstructured.Unstructured
+	kept := map[string]bool{}
 	for _, h := range hooks {
 		events := make([]string, len(h.Events))
 		for i, e := range h.Events {
 			events[i] = string(e)
 		}
-		joined, err := policy.HookPhases(chartName, h.Path, events)
-		if err != nil {
-			return render.Result{}, err
+		joined := policy.HookPhases(op, events)
+		if len(joined) == 0 {
+			continue
 		}
+		kept[h.Path] = true
 		obj, err := decode(h.Path, h.Manifest, env)
 		if err != nil {
-			return render.Result{}, err
+			return render.Result{}, nil, err
 		}
 		for _, phase := range joined {
-			if phase == "pre-install" {
+			if phase == "pre-"+string(op) {
 				pre = append(pre, obj.DeepCopy())
 			} else {
 				post = append(post, obj.DeepCopy())
@@ -244,21 +324,22 @@ func phases(chartName string, env render.Env, hooks []*release.Hook, manifests [
 	for _, m := range manifests {
 		obj, err := decode(m.Name, m.Content, env)
 		if err != nil {
-			return render.Result{}, err
+			return render.Result{}, nil, err
 		}
+		kept[m.Name] = true
 		main = append(main, obj)
 	}
 	var res render.Result
 	if len(pre) > 0 {
-		res.Phases = append(res.Phases, render.Phase{Name: "pre-install", Objects: pre, Gate: render.GateReady, Ephemeral: true})
+		res.Phases = append(res.Phases, render.Phase{Name: "pre-" + string(op), Objects: pre, Gate: render.GateReady, Ephemeral: true})
 	}
 	if len(main) > 0 {
 		res.Phases = append(res.Phases, render.Phase{Name: "main", Objects: main, Gate: render.GateReady})
 	}
 	if len(post) > 0 {
-		res.Phases = append(res.Phases, render.Phase{Name: "post-install", Objects: post, Gate: render.GateReady, Ephemeral: true})
+		res.Phases = append(res.Phases, render.Phase{Name: "post-" + string(op), Objects: post, Gate: render.GateReady, Ephemeral: true})
 	}
-	return res, nil
+	return res, kept, nil
 }
 
 func decode(file, content string, env render.Env) (*unstructured.Unstructured, error) {

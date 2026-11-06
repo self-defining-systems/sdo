@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -218,18 +219,6 @@ func TestHooksBecomePhases(t *testing.T) {
 	}
 }
 
-func TestUnsupportedHookKindsAreRejected(t *testing.T) {
-	for _, event := range []string{"pre-upgrade", "post-upgrade", "pre-delete", "post-delete", "pre-rollback", "post-rollback", "test", "pre-install,pre-upgrade"} {
-		t.Run(event, func(t *testing.T) {
-			fsys := minimal(map[string]string{"c/templates/hook.yaml": "apiVersion: v1\nkind: Pod\nmetadata:\n  name: h\n  annotations: {\"helm.sh/hook\": \"" + event + "\"}\n"})
-			_, err := renderChart(t, fsys, render.Env{Namespace: "n", Release: "r"}, cfg("c"))
-			if !policy.Violates(err, policy.RuleUnsupportedHook) {
-				t.Fatalf("want an unsupported-hook violation, got %v", err)
-			}
-		})
-	}
-}
-
 func TestPolicyRejectsUnsafeCharts(t *testing.T) {
 	env := render.Env{Namespace: "n", Release: "r"}
 	tpl := func(body string) rendertest.MapFS {
@@ -249,8 +238,8 @@ func TestPolicyRejectsUnsafeCharts(t *testing.T) {
 		"getHostByName":        {tpl(`getHostByName "example.com"`), policy.RuleForbiddenFunction},
 		"in a helper":          {minimal(map[string]string{"c/templates/_h.tpl": `{{ define "h" }}{{ randInt 1 5 }}{{ end }}`}), policy.RuleForbiddenFunction},
 		"in a nested pipeline": {tpl(`list 1 2 | join (toString (randInt 1 3))`), policy.RuleForbiddenFunction},
-		"inside if/with/range": {minimal(map[string]string{"c/templates/x.yaml": "{{ if .Values.a }}{{ with .Values.b }}{{ range .Values.c }}{{ uuidv4 }}{{ end }}{{ end }}{{ end }}"}), policy.RuleForbiddenFunction},
-		"in an else branch":    {minimal(map[string]string{"c/templates/x.yaml": "{{ if .Values.a }}a{{ else }}{{ shuffle (list 1 2) }}{{ end }}"}), policy.RuleForbiddenFunction},
+		"inside if/with/range": {minimal(map[string]string{"c/values.yaml": "a: true\nb: {k: 1}\nc: [1]\n", "c/templates/x.yaml": "{{ if .Values.a }}{{ with .Values.b }}{{ range .Values.c }}{{ uuidv4 }}{{ end }}{{ end }}{{ end }}"}), policy.RuleForbiddenFunction},
+		"in an else branch":    {minimal(map[string]string{"c/values.yaml": "a: false\n", "c/templates/x.yaml": "{{ if .Values.a }}a{{ else }}{{ shuffle (list 1 2) }}{{ end }}"}), policy.RuleForbiddenFunction},
 		"in a subchart": {minimal(map[string]string{
 			"c/Chart.yaml":                "apiVersion: v2\nname: c\nversion: 0.1.0\ndependencies:\n- {name: s, version: 0.1.0, repository: 'x'}\n",
 			"c/charts/s/Chart.yaml":       "apiVersion: v2\nname: s\nversion: 0.1.0\n",
@@ -313,6 +302,39 @@ func TestCapabilitiesDefaultAndOverride(t *testing.T) {
 	}
 }
 
+func TestUnknownAPIVersionsFollowTheKubeVersion(t *testing.T) {
+	// Charts pick the Ingress and PodDisruptionBudget API from capabilities.
+	tpl := `{{ range $gv := list "extensions/v1beta1" "networking.k8s.io/v1beta1" "networking.k8s.io/v1" "policy/v1beta1" "policy/v1" "batch/v1beta1" }}{{ if $.Capabilities.APIVersions.Has $gv }}{{ $gv }} {{ end }}{{ end }}`
+	fsys := minimal(map[string]string{"c/templates/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: cm}\ndata:\n  apis: \"" + tpl + "\"\n"})
+	apis := func(env render.Env) string {
+		t.Helper()
+		res, err := renderChart(t, fsys, env, cfg("c"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		v, _, _ := unstructuredNestedString(res.Objects()[0].Object, "data", "apis")
+		return strings.TrimSpace(v)
+	}
+	base := render.Env{Namespace: "n", Release: "r"}
+	if got := apis(base); got != "networking.k8s.io/v1 policy/v1" {
+		t.Fatalf("default (v1.30) serves %q", got)
+	}
+	// Negative control: a cluster that still serves them keeps the old APIs.
+	base.KubeVersion = "v1.21.0"
+	if got := apis(base); got != "extensions/v1beta1 networking.k8s.io/v1beta1 networking.k8s.io/v1 policy/v1beta1 policy/v1 batch/v1beta1" {
+		t.Fatalf("v1.21 serves %q", got)
+	}
+	base.KubeVersion = "v1.24.0"
+	if got := apis(base); got != "networking.k8s.io/v1 policy/v1beta1 policy/v1 batch/v1beta1" {
+		t.Fatalf("v1.24 serves %q", got)
+	}
+	// An explicit set is used as given.
+	base.APIVersions = []string{"v1", "extensions/v1beta1"}
+	if got := apis(base); got != "extensions/v1beta1" {
+		t.Fatalf("explicit set gave %q", got)
+	}
+}
+
 func TestSecretsOmitDropsDataIncludeKeepsIt(t *testing.T) {
 	c := &contracts.HelmRenderConfig{ChartPath: "chart", Values: mustStruct(t, map[string]any{"token": "hunter2"})}
 	for mode, wantData := range map[render.SecretMode]bool{render.SecretsOmit: false, render.SecretsInclude: true} {
@@ -363,4 +385,208 @@ func TestInputsRecordSchemaProbeAndSkipIgnoredFiles(t *testing.T) {
 			t.Error(".helmignore'd template rendered")
 		}
 	}
+}
+
+func objectNames(res render.Result) []string {
+	var out []string
+	for _, p := range res.Phases {
+		for _, o := range p.Objects {
+			out = append(out, p.Name+"/"+o.GetName())
+		}
+	}
+	return out
+}
+
+// subchart is a vendored subchart with one ConfigMap, a CRD, and a template
+// that calls a forbidden function: everything policy must not see while the
+// subchart is disabled.
+func subchart(name string) map[string]string {
+	return map[string]string{
+		"c/charts/" + name + "/Chart.yaml":          "apiVersion: v2\nname: " + name + "\nversion: 0.1.0\n",
+		"c/charts/" + name + "/values.yaml":         "exported: {key: from-" + name + "}\n",
+		"c/charts/" + name + "/crds/crd.yaml":       "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata: {name: x.example.com}\n",
+		"c/charts/" + name + "/templates/cm.yaml":   "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: " + name + "-cm}\n",
+		"c/charts/" + name + "/templates/_rnd.tpl":  `{{ define "` + name + `.rnd" }}{{ randAlphaNum 4 }}{{ end }}`,
+		"c/charts/" + name + "/templates/lkup.yaml": "{{ lookup \"v1\" \"Namespace\" \"\" \"x\" }}",
+	}
+}
+
+func parentChart(deps string, values string, extra ...map[string]string) rendertest.MapFS {
+	files := map[string]string{
+		"c/Chart.yaml":  "apiVersion: v2\nname: c\nversion: 0.1.0\ndependencies:\n" + deps,
+		"c/values.yaml": values,
+	}
+	for _, e := range extra {
+		for k, v := range e {
+			files[k] = v
+		}
+	}
+	return minimal(files)
+}
+
+func renderWith(t *testing.T, fsys rendertest.MapFS, values map[string]any) (render.Result, error) {
+	t.Helper()
+	c := cfg("c")
+	if values != nil {
+		c.Values = mustStruct(t, values)
+	}
+	return renderChart(t, fsys, render.Env{Namespace: "n", Release: "r"}, c)
+}
+
+func TestDisabledSubchartsAreNotPartOfTheReleaseSet(t *testing.T) {
+	deps := "- {name: a, version: 0.1.0, repository: 'file://a', condition: a.enabled}\n" +
+		"- {name: t, version: 0.1.0, repository: 'file://t', tags: [extra]}\n" +
+		"- {name: gone, version: 0.1.0, repository: 'https://charts.invalid/gone', condition: gone.enabled}\n"
+	build := func() rendertest.MapFS {
+		return parentChart(deps, "a: {enabled: false}\ntags: {extra: false}\ngone: {enabled: false}\n", subchart("a"), subchart("t"))
+	}
+	res, err := renderWith(t, build(), nil)
+	if err != nil {
+		t.Fatalf("disabled subcharts must not be checked or rendered: %v", err)
+	}
+	if got := strings.Join(objectNames(res), " "); got != "main/cm" {
+		t.Fatalf("objects %q, want only the parent's", got)
+	}
+
+	// Negative controls: each rule fires once the same subchart is enabled.
+	enableA := map[string]any{"a": map[string]any{"enabled": true}}
+	if _, err := renderWith(t, build(), enableA); !policy.Violates(err, policy.RuleCRDs) || !policy.Violates(err, policy.RuleForbiddenFunction) {
+		t.Fatalf("enabled subchart a must be rejected for its crds and helper, got %v", err)
+	}
+	if _, err := renderWith(t, build(), map[string]any{"tags": map[string]any{"extra": true}}); !policy.Violates(err, policy.RuleCRDs) {
+		t.Fatalf("enabling by tag must put the subchart under policy, got %v", err)
+	}
+	if _, err := renderWith(t, build(), map[string]any{"gone": map[string]any{"enabled": true}}); !policy.Violates(err, policy.RuleDependencyNotVendored) {
+		t.Fatalf("an enabled dependency that is not vendored must be rejected, got %v", err)
+	}
+}
+
+func TestEnabledSubchartRendersAndImportValuesMerge(t *testing.T) {
+	deps := "- {name: a, version: 0.1.0, repository: 'file://a', condition: a.enabled, import-values: [{child: exported, parent: imported}]}\n"
+	sub := subchart("a")
+	delete(sub, "c/charts/a/crds/crd.yaml")
+	delete(sub, "c/charts/a/templates/_rnd.tpl")
+	delete(sub, "c/charts/a/templates/lkup.yaml")
+	fsys := parentChart(deps, "a: {enabled: true}\n", sub, map[string]string{
+		"c/templates/imp.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: imp}\ndata:\n  key: {{ .Values.imported.key }}\n",
+	})
+	res, err := renderWith(t, fsys, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := objectNames(res)
+	slices.Sort(names)
+	if got := strings.Join(names, " "); got != "main/a-cm main/cm main/imp" {
+		t.Fatalf("objects %q", got)
+	}
+	for _, o := range res.Objects() {
+		if o.GetName() == "imp" {
+			if v, _, _ := unstructuredNestedString(o.Object, "data", "key"); v != "from-a" {
+				t.Fatalf("import-values did not merge the child's value: %q", v)
+			}
+		}
+	}
+	// Negative control: disabling the subchart removes its objects and the import.
+	if _, err := renderWith(t, fsys, map[string]any{"a": map[string]any{"enabled": false}}); err == nil {
+		t.Fatal("without the subchart the imported value is absent and the template must fail")
+	}
+}
+
+func unstructuredNestedString(obj map[string]any, fields ...string) (string, bool, error) {
+	var cur any = obj
+	for _, f := range fields {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return "", false, nil
+		}
+		cur = m[f]
+	}
+	s, ok := cur.(string)
+	return s, ok, nil
+}
+
+func hookTemplate(name, events, body string) map[string]string {
+	return map[string]string{"c/templates/" + name + ".yaml": "apiVersion: v1\nkind: Pod\nmetadata:\n  name: " + body + "\n  annotations: {\"helm.sh/hook\": \"" + events + "\"}\n"}
+}
+
+func TestHooksAreSelectedByTheInstallEvent(t *testing.T) {
+	fsys := minimal(map[string]string{})
+	for name, events := range map[string]string{
+		"both": "pre-install,pre-upgrade", "upgrade-only": "pre-upgrade", "post-upgrade": "post-upgrade",
+		"delete": "pre-delete,post-delete", "rollback": "pre-rollback", "test": "test", "legacy-test": "test-success",
+	} {
+		fsys = with(fsys, hookTemplate(name, events, name))
+	}
+	res, err := renderWith(t, fsys, nil)
+	if err != nil {
+		t.Fatalf("hooks of other operations must not reject the chart: %v", err)
+	}
+	if got := strings.Join(objectNames(res), " "); got != "pre-install/both main/cm" {
+		t.Fatalf("objects %q, want the install hook and the main object only", got)
+	}
+	// Negative control: an install event on the same template keeps it.
+	res, err = renderWith(t, with(fsys, hookTemplate("upgrade-only", "pre-install", "upgrade-only")), nil)
+	if err != nil || !strings.Contains(strings.Join(objectNames(res), " "), "pre-install/upgrade-only") {
+		t.Fatalf("an install event must keep the hook: %v %v", objectNames(res), err)
+	}
+}
+
+func TestForbiddenFunctionsAreJudgedByWhatExecutes(t *testing.T) {
+	// The name suffix is random: only acceptable while the file's output is dropped.
+	podName := `name-{{ randAlphaNum 5 }}`
+	t.Run("a test hook is dropped, so its randomness never reaches the release", func(t *testing.T) {
+		res, err := renderWith(t, minimal(hookTemplate("t", "test", podName)), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Join(objectNames(res), " "); got != "main/cm" {
+			t.Fatalf("objects %q", got)
+		}
+	})
+	t.Run("an upgrade-only hook is dropped for install", func(t *testing.T) {
+		if _, err := renderWith(t, minimal(hookTemplate("u", "pre-upgrade", podName)), nil); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("a template whose guard renders nothing executes nothing", func(t *testing.T) {
+		fsys := minimal(map[string]string{
+			"c/values.yaml":      "on: false\n",
+			"c/templates/g.yaml": "{{ if .Values.on }}apiVersion: v1\nkind: ConfigMap\nmetadata: {name: g-{{ randAlphaNum 5 }}}\n{{ end }}",
+		})
+		if _, err := renderWith(t, fsys, nil); err != nil {
+			t.Fatal(err)
+		}
+		// Negative control: the same template with the guard on is rejected.
+		if _, err := renderWith(t, fsys, map[string]any{"on": true}); !policy.Violates(err, policy.RuleForbiddenFunction) {
+			t.Fatalf("an executing forbidden function must be rejected, got %v", err)
+		}
+	})
+	t.Run("negative controls: install hook and plain manifest are rejected", func(t *testing.T) {
+		for name, files := range map[string]map[string]string{
+			"install hook":   hookTemplate("t", "pre-install", podName),
+			"plain manifest": {"c/templates/p.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: " + podName + "}\n"},
+			"mixed file":     {"c/templates/m.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: " + podName + "}\n---\napiVersion: v1\nkind: Pod\nmetadata:\n  name: p\n  annotations: {\"helm.sh/hook\": \"test\"}\n"},
+		} {
+			if _, err := renderWith(t, minimal(files), nil); !policy.Violates(err, policy.RuleForbiddenFunction) {
+				t.Errorf("%s: want a forbidden-function violation, got %v", name, err)
+			}
+		}
+	})
+	t.Run("a helper is checked wherever it is used", func(t *testing.T) {
+		fsys := minimal(map[string]string{"c/templates/_h.tpl": `{{ define "h" }}{{ randAlphaNum 4 }}{{ end }}`})
+		if _, err := renderWith(t, fsys, nil); !policy.Violates(err, policy.RuleForbiddenFunction) {
+			t.Fatalf("an unused helper may still be included by a template, got %v", err)
+		}
+	})
+	t.Run("NOTES.txt is rendered and discarded", func(t *testing.T) {
+		if _, err := renderWith(t, minimal(map[string]string{"c/templates/NOTES.txt": "{{ randAlphaNum 5 }}"}), nil); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("lookup is still rejected where its output is kept", func(t *testing.T) {
+		fsys := minimal(map[string]string{"c/templates/l.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: l}\ndata: {v: '{{ lookup \"v1\" \"Namespace\" \"\" \"x\" | toJson }}'}\n"})
+		if _, err := renderWith(t, fsys, nil); !policy.Violates(err, policy.RuleForbiddenFunction) {
+			t.Fatalf("got %v", err)
+		}
+	})
 }

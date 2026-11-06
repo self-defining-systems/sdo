@@ -1,6 +1,8 @@
-// Package policy holds the static rules a Helm chart must pass before the
-// helm renderer executes it. Every rule is a typed Error so callers and tests
-// can tell which rule rejected a chart without matching text.
+// Package policy holds the rules a Helm chart must pass for the helm
+// renderer. They apply to the processed release set (see Check), never to the
+// raw chart: subcharts that dependency conditions or tags disable are not part
+// of it. Every rule is a typed Error so callers and tests can tell which rule
+// rejected a chart without matching text.
 package policy
 
 import (
@@ -28,9 +30,6 @@ const (
 	RuleCRDs Rule = "crds"
 	// RuleTemplateSyntax rejects a template that does not parse.
 	RuleTemplateSyntax Rule = "template-syntax"
-	// RuleUnsupportedHook rejects a hook event other than pre-install and
-	// post-install.
-	RuleUnsupportedHook Rule = "unsupported-hook"
 )
 
 // Error is one violation of a Rule.
@@ -86,15 +85,51 @@ func forbidden(name string) (string, bool) {
 	return "", false
 }
 
-// Check applies every static rule to the loaded chart and its vendored
-// subcharts. It returns all violations joined; nil means the chart may render.
-func Check(ch *chart.Chart) error {
+// Conditional holds forbidden-function findings in template files whose
+// rendered output decides whether they matter, keyed by the template's path in
+// the render output (the engine's file name, "chart/charts/sub/templates/x.yaml").
+type Conditional map[string][]*Error
+
+// Resolve returns the findings of every file whose output belongs to the
+// release set (kept), joined; nil when no kept file holds a finding. A file
+// that rendered nothing or only hooks the operation does not run produces no
+// object whose content depends on the forbidden function, so its findings do
+// not apply.
+func (c Conditional) Resolve(kept func(file string) bool) error {
+	files := make([]string, 0, len(c))
+	for file := range c {
+		files = append(files, file)
+	}
+	sort.Strings(files)
 	var errs []error
-	checkChart(ch, ch.Name(), &errs)
+	for _, file := range files {
+		if !kept(file) {
+			continue
+		}
+		for _, e := range c[file] {
+			errs = append(errs, e)
+		}
+	}
 	return errors.Join(errs...)
 }
 
-func checkChart(ch *chart.Chart, name string, errs *[]error) {
+// Check applies the structural rules to the processed chart (Helm's
+// dependency processing has already removed disabled subcharts) and returns
+// the forbidden-function findings that depend on rendering. Structural errors
+// come back joined: a dependency that is enabled but not vendored, crds/
+// files, templates that do not parse, and forbidden functions in helper
+// templates (files named _*, and files that define named templates), which any
+// template may include. Findings in an output file are returned as
+// Conditional, to be resolved against what that file rendered. NOTES.txt is
+// rendered and discarded, so it is exempt.
+func Check(ch *chart.Chart) (Conditional, error) {
+	var errs []error
+	conditional := Conditional{}
+	checkChart(ch, ch.Name(), &errs, conditional)
+	return conditional, errors.Join(errs...)
+}
+
+func checkChart(ch *chart.Chart, name string, errs *[]error, conditional Conditional) {
 	add := func(rule Rule, file, format string, args ...any) {
 		*errs = append(*errs, &Error{Rule: rule, Chart: name, File: file, Detail: fmt.Sprintf(format, args...)})
 	}
@@ -105,7 +140,7 @@ func checkChart(ch *chart.Chart, name string, errs *[]error) {
 	if ch.Metadata != nil {
 		for _, dep := range ch.Metadata.Dependencies {
 			if !vendored[dep.Name] {
-				add(RuleDependencyNotVendored, "Chart.yaml", "dependency %q is not vendored under charts/ (repository %q is never fetched)", dep.Name, dep.Repository)
+				add(RuleDependencyNotVendored, "Chart.yaml", "dependency %q is enabled but not vendored under charts/ (repository %q is never fetched)", dep.Name, dep.Repository)
 			}
 		}
 	}
@@ -115,25 +150,41 @@ func checkChart(ch *chart.Chart, name string, errs *[]error) {
 		}
 	}
 	for _, t := range ch.Templates {
-		if err := checkTemplate(t.Name, string(t.Data), func(fn, why string) {
-			add(RuleForbiddenFunction, t.Name, "template function %q %s", fn, why)
-		}); err != nil {
+		var found []*Error
+		defines, err := checkTemplate(t.Name, string(t.Data), func(fn, why string) {
+			found = append(found, &Error{Rule: RuleForbiddenFunction, Chart: name, File: t.Name,
+				Detail: fmt.Sprintf("template function %q %s", fn, why)})
+		})
+		if err != nil {
 			add(RuleTemplateSyntax, t.Name, "%v", err)
+			continue
+		}
+		base := path.Base(t.Name)
+		switch {
+		case base == "NOTES.txt":
+		case strings.HasPrefix(base, "_") || defines:
+			for _, e := range found {
+				*errs = append(*errs, e)
+			}
+		case len(found) > 0:
+			conditional[path.Join(ch.ChartFullPath(), t.Name)] = found
 		}
 	}
 	for _, sub := range ch.Dependencies() {
-		checkChart(sub, name+"/"+sub.Name(), errs)
+		checkChart(sub, name+"/"+sub.Name(), errs, conditional)
 	}
 }
 
-func checkTemplate(name, text string, report func(fn, why string)) error {
+// checkTemplate reports every forbidden function the template mentions and
+// whether it defines named templates besides its own.
+func checkTemplate(name, text string, report func(fn, why string)) (defines bool, err error) {
 	trees := map[string]*parse.Tree{}
 	tree := parse.New(path.Base(name))
 	// Function existence is the renderer's concern; here every identifier is
 	// kept so a forbidden one cannot hide behind an unknown-function error.
 	tree.Mode = parse.SkipFuncCheck
 	if _, err := tree.Parse(text, "{{", "}}", trees); err != nil {
-		return err
+		return false, err
 	}
 	seen := map[string]bool{}
 	names := make([]string, 0, len(trees))
@@ -149,7 +200,12 @@ func checkTemplate(name, text string, report func(fn, why string)) error {
 			}
 		})
 	}
-	return nil
+	for n := range trees {
+		if n != path.Base(name) {
+			defines = true
+		}
+	}
+	return defines, nil
 }
 
 func walk(n parse.Node, visit func(string)) {
@@ -194,18 +250,28 @@ func walkBranch(b *parse.BranchNode, visit func(string)) {
 	walk(b.ElseList, visit)
 }
 
-// HookPhases maps a hook's events to the phase names it joins. pre-install and
-// post-install are phases; every other event is a typed rejection.
-func HookPhases(chartName, hook string, events []string) ([]string, error) {
+// Operation is the Helm operation a render stands for. Hooks are selected by
+// the events of that operation, as Helm does.
+type Operation string
+
+const (
+	// OperationInstall runs pre-install and post-install hooks.
+	OperationInstall Operation = "install"
+	// OperationUpgrade runs pre-upgrade and post-upgrade hooks (release replay).
+	OperationUpgrade Operation = "upgrade"
+)
+
+// HookPhases maps a hook's events to the phase names it joins in operation op:
+// the operation's pre and post events become phases of the same name. Every
+// other event (the other operations' events, delete, rollback, test) belongs
+// to a different operation and contributes none, so a hook with no event of
+// op yields no phase and is left out of the render, as Helm leaves it out.
+func HookPhases(op Operation, events []string) []string {
 	var phases []string
 	for _, e := range events {
-		switch e {
-		case "pre-install", "post-install":
+		if e == "pre-"+string(op) || e == "post-"+string(op) {
 			phases = append(phases, e)
-		default:
-			return nil, &Error{Rule: RuleUnsupportedHook, Chart: chartName, File: hook,
-				Detail: fmt.Sprintf("hook event %q is not supported; only pre-install and post-install map to phases (upgrade, delete, rollback and test hooks need the later phases work)", e)}
 		}
 	}
-	return phases, nil
+	return phases
 }
