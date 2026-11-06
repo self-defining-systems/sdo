@@ -72,6 +72,7 @@ var operatorOwned = map[string]string{
 	"operatorcli/program.go":                         reasonCLI,
 	"operatorcli/runtime_artifacts.go":               reasonCLI,
 	"operatorcli/script_runner.go":                   reasonCLI,
+	"operatorcli/telemetry_policy.go":                reasonCLI,
 	"patchset/checkout.go":                           "pruneEmpty removes only empty directories after safefs.Remove checked the parents",
 	"patchset/internal/gitio/gitio.go":               reasonScratch,
 	"rendered/internal/renderio/git.go":              reasonRendered,
