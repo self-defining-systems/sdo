@@ -22,6 +22,7 @@ import (
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/operability"
 	"sdo.dev/operator/patchset"
 	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/rendered"
@@ -95,6 +96,11 @@ type SourceEvidence struct {
 	ResourceIDs       []string
 	Ready             bool
 	AcceptedCommit    string
+	// OperabilityDigest is the digest of the stage-deployment operability
+	// report PublishVerifiedSource accepted; the report itself is in the
+	// evidence store (Broker.OperabilityReport). Empty for deployments that
+	// carry no report (advances, repairs).
+	OperabilityDigest string
 }
 
 type Broker struct {
@@ -316,21 +322,35 @@ func (b *Broker) Publish(ctx context.Context, incidentID string, actor Actor, ph
 // PublishVerifiedSource accepts an initial source proposal only when its full
 // Git tree still matches the tree deployed and observed by the trusted adapter.
 // The check and accepted commit occur under the broker's publishing lock.
-func (b *Broker) PublishVerifiedSource(ctx context.Context, incidentID string, evidence SourceEvidence) (Receipt, error) {
+//
+// The stage-deployment operability report must be accepted by operability.Decide
+// (recomputed here, never trusted) and bind to the evidence's trees and digests
+// and to the proposal's base commit. The broker records the report in the
+// evidence store, its digest in the evidence and an SDO-Operability trailer on
+// the accepted commit.
+func (b *Broker) PublishVerifiedSource(ctx context.Context, incidentID string, evidence SourceEvidence, report operability.Report) (Receipt, error) {
 	if err := validateSourceEvidence(evidence); err != nil {
 		return Receipt{}, err
 	}
-	return b.publish(ctx, incidentID, Deployer, InitialPhase, evidence.BaseTree, &evidence, nil)
+	digest, err := deploymentReportDigest(report, evidence)
+	if err != nil {
+		return Receipt{}, err
+	}
+	if evidence.OperabilityDigest != "" && evidence.OperabilityDigest != digest {
+		return Receipt{}, fmt.Errorf("%w: evidence names report %s, the report is %s", ErrOperabilityUnbound, evidence.OperabilityDigest, digest)
+	}
+	evidence.OperabilityDigest = digest
+	return b.publishOrStage(ctx, incidentID, Deployer, InitialPhase, evidence.BaseTree, &evidence, &report, nil, nil)
 }
 
 func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, phase Phase, expectedSourceTree string, evidence *SourceEvidence, decision *contracts.ReflectionDecision) (Receipt, error) {
-	return b.publishOrStage(ctx, incidentID, actor, phase, expectedSourceTree, evidence, decision, nil)
+	return b.publishOrStage(ctx, incidentID, actor, phase, expectedSourceTree, evidence, nil, decision, nil)
 }
 
 // publishOrStage is one publication: validate, commit in a private stage, then
 // advance the accepted head. With held non-nil (StageCandidate) it stops after
 // the commit and records the stage in held; the head is untouched.
-func (b *Broker) publishOrStage(ctx context.Context, incidentID string, actor Actor, phase Phase, expectedSourceTree string, evidence *SourceEvidence, decision *contracts.ReflectionDecision, held *Candidate) (Receipt, error) {
+func (b *Broker) publishOrStage(ctx context.Context, incidentID string, actor Actor, phase Phase, expectedSourceTree string, evidence *SourceEvidence, report *operability.Report, decision *contracts.ReflectionDecision, held *Candidate) (Receipt, error) {
 	if err := validate.Err(validate.PhaseDiagnostics(phase)); err != nil {
 		return Receipt{}, err
 	}
@@ -358,6 +378,9 @@ func (b *Broker) publishOrStage(ctx context.Context, incidentID string, actor Ac
 				}
 				claimed := *evidence
 				claimed.AcceptedCommit = prior.Commit
+				// The report is not part of the deployment's identity: a
+				// redelivery keeps the report recorded at acceptance.
+				claimed.OperabilityDigest = stored.OperabilityDigest
 				if !sameSourceEvidence(stored, claimed) {
 					return errors.New("accepted source evidence differs from verified deployment")
 				}
@@ -462,6 +485,12 @@ func (b *Broker) publishOrStage(ctx context.Context, incidentID string, actor Ac
 			if actualTree != expectedSourceTree {
 				return errors.New("source proposal tree changed after deployment verification")
 			}
+			if err := requireDeploymentSubject(*report, proposal.BaseCommit); err != nil {
+				return err
+			}
+			if err := b.writeOperabilityReport(incidentID, operability.StageDeployment, *report); err != nil {
+				return err
+			}
 			if err := b.writeSourceEvidence(incidentID, *evidence); err != nil {
 				return err
 			}
@@ -530,7 +559,11 @@ func (b *Broker) publishOrStage(ctx context.Context, incidentID string, actor Ac
 		if err != nil {
 			return err
 		}
-		receipt, err = b.commitStage(ctx, stage, incidentID, actor, phase, paths, nil, gaps...)
+		var trailers []string
+		if evidence != nil {
+			trailers = append(trailers, operabilityTrailer(operability.StageDeployment, evidence.OperabilityDigest))
+		}
+		receipt, err = b.commitStage(ctx, stage, incidentID, actor, phase, paths, trailers, gaps...)
 		if err != nil {
 			return err
 		}

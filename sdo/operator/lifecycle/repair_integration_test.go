@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/operability"
 	"sdo.dev/operator/patchset"
 	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/rendered"
@@ -75,27 +76,48 @@ type repairGit struct {
 func newRepairGit(t *testing.T) *repairGit {
 	t.Helper()
 	w := &repairGit{gateWorld: newGateWorld(t)}
+	w.source = w.onboard(t)
+	return w
+}
+
+// onboard deploys the world's source through the real broker with a passing
+// stage-deployment report, so the accepted head has deployment evidence, and
+// returns the deployment source.
+func (w *gateWorld) onboard(t *testing.T) *contracts.DeploymentSource {
+	t.Helper()
 	config, err := anypb.New(&contracts.RawRenderConfig{Paths: []string{"k8s"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.source = &contracts.DeploymentSource{RendererId: "raw", Config: config}
+	source := &contracts.DeploymentSource{RendererId: "raw", Config: config}
 	p, err := w.broker.CreateProposalForPhase(context.Background(), "onboard", broker.InitialPhase)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := planfile.Write(p.Path, &contracts.DeploymentPlan{Source: w.source, ExpectedWorkloadIds: []string{"Deployment/ns/app"}}); err != nil {
+	if err := planfile.Write(p.Path, &contracts.DeploymentPlan{Source: source, ExpectedWorkloadIds: []string{"Deployment/ns/app"}}); err != nil {
 		t.Fatal(err)
 	}
 	deployer := &repairDeployerFake{}
-	receipt, err := deployer.ApplyAndVerify(context.Background(), p.Path, &contracts.DeploymentPlan{Source: w.source})
+	receipt, err := deployer.ApplyAndVerify(context.Background(), p.Path, &contracts.DeploymentPlan{Source: source})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.broker.PublishVerifiedSource(context.Background(), "onboard", deploymentToBroker(receipt)); err != nil {
+	subject := operability.Subject{
+		AcceptedCommit: p.BaseCommit, BaseTree: receipt.BaseTree, EffectiveTree: receipt.EffectiveTree, PatchesDigest: receipt.PatchesDigest,
+		RenderDigest: receipt.RenderDigest, EnvDigest: receipt.EnvDigest,
+	}
+	report, err := operability.New(operability.StageDeployment, subject).With(
+		operability.Check{ID: "O1.deploy", Phase: operability.PhaseLive, Status: operability.StatusPass},
+		operability.Check{ID: "O2.stamps", Phase: operability.PhaseLive, Status: operability.StatusPass},
+		operability.Check{ID: "O6.budget", Phase: operability.PhaseLive, Status: operability.StatusPass},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.broker.PublishVerifiedSource(context.Background(), "onboard", deploymentToBroker(receipt), report); err != nil {
 		t.Fatalf("onboard: %v", err)
 	}
-	return w
+	return source
 }
 
 // responderPatch captures an edit of app.txt as the responder's patch.

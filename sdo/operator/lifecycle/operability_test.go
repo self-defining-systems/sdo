@@ -180,3 +180,34 @@ func TestReadinessWithoutOfflineChecksSkipsTheGate(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// The deployed source is published with a stage-deployment report that holds the
+// offline checks and the receipt's live checks, bound to the receipt's identity
+// and to the commit the deployer's proposal was based on.
+func TestDeployedSourceIsPublishedWithItsDeploymentReport(t *testing.T) {
+	h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{clear}})
+	withOffline(h, offlineResult{checks: passing()})
+	if _, err := h.coordinator.Run(context.Background(), config()); err != nil {
+		t.Fatal(err)
+	}
+	fake := h.coordinator.Broker.(*fakeBroker)
+	report, found, err := fake.OperabilityReport(context.Background(), "op-source-1", operability.StageDeployment)
+	if err != nil || !found {
+		t.Fatalf("no deployment report was published: found=%v err=%v", found, err)
+	}
+	if report.Stage != operability.StageDeployment || report.Subject.EffectiveTree != "effective" || report.Subject.AcceptedCommit == "" || report.Subject.AcceptedCommit == operability.Unavailable {
+		t.Fatalf("report subject/stage = %+v %s", report.Subject, report.Stage)
+	}
+	if decision := report.Decide(operability.StageItems(operability.StageDeployment)...); decision.Kind != operability.Accepted {
+		t.Fatalf("published report is not accepted: %+v", decision)
+	}
+	ids := map[string]bool{}
+	for _, item := range report.Items {
+		for _, check := range item.Checks {
+			ids[check.ID] = true
+		}
+	}
+	if !ids["O1.deploy"] || !ids["O6.budget"] {
+		t.Fatalf("report lacks the receipt's live checks: %v", ids)
+	}
+}

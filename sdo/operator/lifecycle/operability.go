@@ -98,3 +98,44 @@ func asOperabilityError(err error) (*OperabilityError, bool) {
 	var opErr *OperabilityError
 	return opErr, errors.As(err, &opErr)
 }
+
+// deploymentReport is the stage-deployment report of an applied deployment: the
+// offline checks the gate ran (none when the verifier cannot check offline)
+// and the live checks of the receipt, bound to the receipt's identity and to
+// the commit the proposal was based on. The broker recomputes the binding and
+// the decision from it at PublishVerifiedSource.
+func (c Coordinator) deploymentReport(ctx context.Context, cfg Config, proposal broker.Proposal, plan *contracts.DeploymentPlan, offline operability.Report, receipt DeploymentReceipt) (report operability.Report, decision operability.Decision, err error) {
+	mode := c.mode(cfg)
+	err = c.retryInfrastructure(ctx, cfg, "live operability checks", func() error {
+		live, err := c.Readiness.(LiveChecker).CheckLive(ctx, proposal.Path, plan, receipt, nil)
+		if err != nil {
+			return err
+		}
+		var checks []operability.Check
+		for _, item := range offline.Items {
+			checks = append(checks, item.Checks...)
+		}
+		subject := operability.Subject{
+			AcceptedCommit: proposal.BaseCommit, BaseTree: receipt.BaseTree, EffectiveTree: receipt.EffectiveTree,
+			PatchesDigest: receipt.PatchesDigest, RenderDigest: receipt.RenderDigest, EnvDigest: receipt.EnvDigest,
+		}
+		if report, err = operability.New(operability.StageDeployment, subject).With(append(checks, live...)...); err != nil {
+			return err
+		}
+		decision = report.DecideIn(mode, operability.StageItems(operability.StageDeployment)...)
+		if decision.Kind == operability.Retry {
+			return &retryOffline{decision}
+		}
+		return nil
+	})
+	return report, decision, err
+}
+
+// deployedOutcome turns a non-accepted decision about an applied deployment
+// into a correction for the deployer or a terminal *OperabilityError.
+func deployedOutcome(report operability.Report, decision operability.Decision) (feedback string, err error) {
+	if decision.Kind == operability.Correct && decision.Owner == operability.OwnerDeployer {
+		return "the deployment was applied but failed the operability checks:\n" + decision.Feedback(), nil
+	}
+	return "", &OperabilityError{Report: report, Decision: decision}
+}

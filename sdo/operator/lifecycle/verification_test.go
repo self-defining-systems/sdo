@@ -29,7 +29,9 @@ type fakeBroker struct {
 	mu       sync.Mutex
 	accepted map[string]broker.Receipt
 	evidence map[string]broker.SourceEvidence
-	head     int
+	// reports are the operability reports PublishVerifiedSource received.
+	reports map[string]operability.Report
+	head    int
 	// root holds the proposal checkouts: the lifecycle writes plan.yaml there.
 	root string
 	// scratch holds the patch.uncaptured feedback returned once per entry.
@@ -82,13 +84,25 @@ func (b *fakeBroker) Publish(_ context.Context, id string, _ broker.Actor, _ bro
 	return b.accept(id), nil
 }
 
-func (b *fakeBroker) PublishVerifiedSource(_ context.Context, id string, evidence broker.SourceEvidence) (broker.Receipt, error) {
+func (b *fakeBroker) PublishVerifiedSource(_ context.Context, id string, evidence broker.SourceEvidence, report operability.Report) (broker.Receipt, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	receipt := b.accept(id)
 	evidence.AcceptedCommit = receipt.Commit
 	b.evidence[id] = evidence
+	if b.reports == nil {
+		b.reports = map[string]operability.Report{}
+	}
+	b.reports[id] = report
 	return receipt, nil
+}
+
+// OperabilityReport returns the report PublishVerifiedSource was given.
+func (b *fakeBroker) OperabilityReport(_ context.Context, id string, _ operability.Stage) (operability.Report, bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	report, ok := b.reports[id]
+	return report, ok, nil
 }
 
 func (b *fakeBroker) SourceEvidence(_ context.Context, id string) (broker.SourceEvidence, bool, error) {

@@ -123,7 +123,7 @@ func TestPublishNeverCarriesAppFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFiles(t, p.Path, map[string]string{"app.txt": "one\ntwo\nthree deployed\n"})
-	_, err = w.broker.PublishVerifiedSource(ctx, "inc-app", advanceEvidence(t, p.Path, "app"))
+	_, err = w.broker.PublishVerifiedSource(ctx, "inc-app", advanceEvidence(t, p.Path, "app"), deploymentReportFor(t, advanceEvidence(t, p.Path, "app"), p.BaseCommit))
 	if err == nil {
 		t.Fatal("a deployer publication with an uncaptured app edit was accepted")
 	}

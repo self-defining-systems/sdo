@@ -50,8 +50,10 @@ func TestCleanCandidateIsVerifiedStagedThenAccepted(t *testing.T) {
 	if want := candidate.Path + "@" + candidate.Commit; len(h.verifier.candidateRoots) != 1 || h.verifier.candidateRoots[0] != want {
 		t.Fatalf("VerifyCandidate ran on %v, want the staged checkout %s", h.verifier.candidateRoots, want)
 	}
-	if len(h.readiness.liveCalls) != 1 || h.readiness.liveCalls[0] != candidate.Path {
-		t.Fatalf("live checks ran on %v, want the staged checkout", h.readiness.liveCalls)
+	// The first live call is the deployment's (stage deployment), the second the
+	// staged candidate's (stage complete).
+	if len(h.readiness.liveCalls) != 2 || h.readiness.liveCalls[1] != candidate.Path {
+		t.Fatalf("live checks ran on %v, want the deployment, then the staged checkout", h.readiness.liveCalls)
 	}
 	evidence := fake.evidence2[0]
 	if evidence.Commit != candidate.Commit || evidence.EffectiveTree != "effective" || evidence.PatchesDigest != "patches" {
@@ -151,7 +153,7 @@ func TestFloorFiringGoesToTheDeployerFirst(t *testing.T) {
 func TestLiveDeploymentFailureRoutesByCauseWithoutEvaluatingDetectors(t *testing.T) {
 	t.Run("rollout goes to the deployer", func(t *testing.T) {
 		h, _ := gateHarness(t, clear)
-		h.readiness.live = [][]operability.Check{failLive("O1.ready", operability.CauseRollout), passLive()}
+		h.readiness.live = [][]operability.Check{passLive(), failLive("O1.ready", operability.CauseRollout), passLive()}
 		if _, err := h.coordinator.Run(context.Background(), config()); err != nil {
 			t.Fatal(err)
 		}
@@ -164,7 +166,7 @@ func TestLiveDeploymentFailureRoutesByCauseWithoutEvaluatingDetectors(t *testing
 	})
 	t.Run("an attribution defect ends the run", func(t *testing.T) {
 		h, fake := gateHarness(t, clear)
-		h.readiness.live = [][]operability.Check{failLive("O2.stamps", operability.CauseAttribution)}
+		h.readiness.live = [][]operability.Check{passLive(), failLive("O2.stamps", operability.CauseAttribution)}
 		_, err := h.coordinator.Run(context.Background(), config())
 		var terminal *lifecycle.OperabilityError
 		if !errors.As(err, &terminal) || terminal.Decision.Owner != operability.OwnerOperator {
@@ -176,11 +178,11 @@ func TestLiveDeploymentFailureRoutesByCauseWithoutEvaluatingDetectors(t *testing
 	})
 	t.Run("infrastructure is retried without spending an attempt", func(t *testing.T) {
 		h, fake := gateHarness(t, clear)
-		h.readiness.live = [][]operability.Check{failLive("O1.deploy", operability.CauseInfrastructure), passLive()}
+		h.readiness.live = [][]operability.Check{passLive(), failLive("O1.deploy", operability.CauseInfrastructure), passLive()}
 		if _, err := h.coordinator.Run(context.Background(), config()); err != nil {
 			t.Fatal(err)
 		}
-		if len(h.readiness.liveCalls) != 2 || h.workers.deployerAttempts() != 1 || h.workers.judgeRuns != 1 || fake.accepts != 1 {
+		if len(h.readiness.liveCalls) != 3 || h.workers.deployerAttempts() != 1 || h.workers.judgeRuns != 1 || fake.accepts != 1 {
 			t.Fatalf("live calls=%d deployer attempts=%d judge runs=%d accepts=%d", len(h.readiness.liveCalls), h.workers.deployerAttempts(), h.workers.judgeRuns, fake.accepts)
 		}
 	})
