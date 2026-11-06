@@ -99,7 +99,7 @@ spec:
             storage: {{ .Values.storage }}
 {{- if .Values.buckets }}
 ---
-# Creates the buckets GitLab and the registry use once the store answers (idempotent). A regular Job, not a hook:
+# Creates the buckets GitLab and the registry use once the store answers (idempotent: existing buckets are skipped). A regular Job, not a hook:
 # the registry cannot become ready without its bucket, and a post-install hook would wait for the registry.
 apiVersion: batch/v1
 kind: Job
@@ -120,10 +120,25 @@ spec:
             - sh
             - -c
             - |
-              set -e
-              for i in $(seq 1 60); do
-                ( {{- range .Values.buckets }} echo "s3.bucket.create -name {{ . }}";{{ end }} ) | weed shell -master={{ .Values.name }}:9333 && exit 0
-                sleep 5
+              # Idempotent: a bucket that already exists (retained PVC, Job recreated on upgrade) counts as done.
+              # Existence is decided by listing, never by the exit status of create, because weed shell
+              # reports "already exists" as an error. A bucket that is neither listed nor creatable
+              # within the bounded retries (store still starting, real error) fails the Job.
+              master={{ .Values.name }}:9333
+              has_bucket() {
+                echo "s3.bucket.list" | weed shell -master="$master" 2>/dev/null | grep -Eq "^[[:space:]]*$1([[:space:]]|\$)"
+              }
+              for bucket in{{ range .Values.buckets }} {{ . }}{{ end }}; do
+                i=0
+                until has_bucket "$bucket"; do
+                  i=$((i + 1))
+                  if [ "$i" -gt 60 ]; then
+                    echo "bucket $bucket was neither listed nor created after 60 attempts" >&2
+                    exit 1
+                  fi
+                  echo "s3.bucket.create -name $bucket" | weed shell -master="$master" || true
+                  has_bucket "$bucket" || sleep 5
+                done
+                echo "bucket $bucket exists"
               done
-              exit 1
 {{- end }}

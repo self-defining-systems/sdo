@@ -332,3 +332,82 @@ def test_real_chart_plan_is_printed(tmp_path: Path, operator_binary: Path, monke
         first = image["image"].split("/", 1)[0]
         host = first if "/" in image["image"] and ("." in first or ":" in first) else "docker.io"
         assert host in gitlab_lane.IMAGE_REGISTRIES, image["image"]
+
+
+def _bucket_job_script() -> str:
+    if shutil.which("helm") is None:
+        if os.environ.get("CI"):
+            pytest.fail("helm is required in CI to render the GitLab lane")
+        pytest.skip("helm is not installed")
+    chart = Path(lane.__file__).parent / "chart" / "charts" / "objectstore"
+    rendered = subprocess.run(
+        [
+            "helm",
+            "template",
+            "objectstore",
+            str(chart),
+            "--set",
+            "buckets={gitlab-uploads,registry}",
+            "--set",
+            "accessKey=a",
+            "--set",
+            "secretKey=b",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    jobs = [d for d in yaml.safe_load_all(rendered) if d and d["kind"] == "Job"]
+    assert len(jobs) == 1
+    return jobs[0]["spec"]["template"]["spec"]["containers"][0]["command"][-1]
+
+
+_FAKE_WEED = """#!/bin/sh
+# Stand-in for `weed shell`: bucket state lives in $STORE; like the real shell, creating an existing
+# bucket prints an error and (as the original Job's failure showed) cannot be relied on for exit status.
+cmd=$(cat)
+case "$cmd" in
+  s3.bucket.list) [ -f "$STORE" ] && sed 's/^/  /' "$STORE"; exit 0 ;;
+  "s3.bucket.create -name "*) name=${cmd#s3.bucket.create -name }
+    if grep -qx "$name" "$STORE" 2>/dev/null; then echo "error: bucket $name already exists"; exit 1; fi
+    [ -n "$BROKEN" ] && { echo "error: cannot reach filer"; exit 1; }
+    echo "$name" >> "$STORE"; exit 0 ;;
+esac
+"""
+
+
+def _run_bucket_job(tmp_path: Path, existing: list[str], broken: bool = False) -> tuple[int, list[str]]:
+    script = _bucket_job_script().replace("sleep 5", "true").replace("-gt 60", "-gt 3")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    weed = bin_dir / "weed"
+    weed.write_text(_FAKE_WEED)
+    weed.chmod(0o755)
+    store = tmp_path / "store"
+    store.write_text("".join(f"{b}\n" for b in existing))
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "STORE": str(store),
+        "BROKEN": "1" if broken else "",
+    }
+    result = subprocess.run(["sh", "-c", script], env=env, capture_output=True, text=True)
+    return result.returncode, sorted(store.read_text().split())
+
+
+def test_bucket_job_creates_missing_buckets(tmp_path: Path) -> None:
+    assert _run_bucket_job(tmp_path, []) == (0, ["gitlab-uploads", "registry"])
+
+
+def test_bucket_job_succeeds_when_buckets_already_exist_on_a_retained_volume(tmp_path: Path) -> None:
+    assert _run_bucket_job(tmp_path, ["gitlab-uploads", "registry"]) == (0, ["gitlab-uploads", "registry"])
+
+
+def test_bucket_job_creates_only_the_missing_bucket(tmp_path: Path) -> None:
+    assert _run_bucket_job(tmp_path, ["registry"]) == (0, ["gitlab-uploads", "registry"])
+
+
+def test_bucket_job_fails_on_a_real_error_after_bounded_retries(tmp_path: Path) -> None:
+    code, buckets = _run_bucket_job(tmp_path, [], broken=True)
+    assert code == 1
+    assert buckets == []
