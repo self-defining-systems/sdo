@@ -30,6 +30,7 @@ Production code must not import from SREGym packages. Benchmark adapters may imp
 
 - `.sdo/` contains the six durable artifact classes: goal, architecture, playbooks, diagnostics, outcomes, and deployment (`.sdo/deployment/`: plan, authored files, telemetry overlay slot, source patches; schema 4).
 - Artifact ownership is enforced by the Go commit broker. Agents edit files in isolated checkouts; only validated commits reach the operational branch.
+- Acceptance of a deployment, health commit or upstream advance is the Go operability report (`sdo/operator/operability`, items O1-O6): a typed, subject-bound aggregate of results SDO's mechanisms already compute, with no verdict field; the broker and every reader recompute `Decide`, and failures route by cause to the deployer, designer, responder or a human. The report is persisted outside `.sdo/` (evidence store, `SDO-Operability` trailer, `sdo-operability` ConfigMap); harnesses read only that JSON.
 - The detection designer owns health detectors. Responders may add or refine incident detectors and playbooks after independently verified outcomes.
 - Detector runtime code is deterministic Go using `sdo/operator/sdk`; it must not call an LLM or inspect benchmark verdicts.
 - `sdo/operator/runtime` remains transport-neutral. SREGym submission relays and receipts stay behind the benchmark adapter.
