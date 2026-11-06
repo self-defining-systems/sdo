@@ -16,6 +16,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/imagesrc"
 	"sdo.dev/operator/lifecycle"
+	"sdo.dev/operator/patchset"
 	"sdo.dev/operator/upstream"
 )
 
@@ -43,6 +44,7 @@ type advWorld struct {
 	noPlan         bool
 	plan           *contracts.DeploymentPlan
 	conflicts      []string
+	proposeErr     error
 	shapes         map[string]string
 	shapeErr       map[string]error
 	busy           string
@@ -92,6 +94,10 @@ func (w *advWorld) AcceptedSourceEvidence(context.Context) (broker.SourceEvidenc
 
 func (w *advWorld) ProposeAdvance(_ context.Context, id, base, upstreamCommit string) (broker.Proposal, string, []string, error) {
 	w.log("propose %s", id)
+	if w.proposeErr != nil {
+		// The real broker removes the checkout before it reports a patch hold.
+		return broker.Proposal{}, "", nil, w.proposeErr
+	}
 	if w.proposed == nil {
 		w.proposed = map[string]bool{}
 	}
@@ -438,4 +444,68 @@ func count(events []string, prefix string) int {
 		}
 	}
 	return n
+}
+
+// A patch that does not apply is a typed hold decided before the cluster is
+// touched: no pause, no apply, no publish, and the hold text names what an
+// operator or the deployment agent needs. The broker raises it when it
+// composes the candidate; the same error out of the impact render (which reads
+// the effective tree) is the same hold.
+func TestAdvanceHoldsAPatchThatDoesNotApplyBeforeAnyClusterEffect(t *testing.T) {
+	conflict := &patchset.PatchError{Kind: patchset.KindConflict, Patch: "0001-pin-base.patch", Paths: []string{"vendor/lib.go"}, Detail: "hunk #1 failed\nat line 12"}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*advWorld)
+		hold   lifecycle.HoldReason
+		want   []string
+	}{
+		{name: "conflict from the broker", mutate: func(w *advWorld) {
+			w.proposeErr = &broker.PatchHoldError{Candidate: advCandidate, Patch: conflict, Owner: "deployer", UpstreamCommits: []string{"abc1234 rewrite lib", "def5678 rename helper"}}
+		}, hold: lifecycle.HoldPatchConflict, want: []string{"patch 0001-pin-base.patch (owner deployer): conflict, hunk #1 failed at line 12", "abc1234 rewrite lib, def5678 rename helper"}},
+		{name: "conflict from the impact render", mutate: func(w *advWorld) {
+			w.shapeErr = map[string]error{advCandidate: fmt.Errorf("render: %w", conflict)}
+		}, hold: lifecycle.HoldPatchConflict, want: []string{"patch 0001-pin-base.patch: conflict"}},
+		{name: "missing file is a conflict", mutate: func(w *advWorld) {
+			w.proposeErr = &broker.PatchHoldError{Patch: &patchset.PatchError{Kind: patchset.KindMissingFile, Patch: "0002-x.patch", Paths: []string{"gone.go"}}}
+		}, hold: lifecycle.HoldPatchConflict, want: []string{"missing_file"}},
+		{name: "upstreamed", mutate: func(w *advWorld) {
+			w.proposeErr = &broker.PatchHoldError{Patch: &patchset.PatchError{Kind: patchset.KindUpstreamed, Patch: "0001-fix.patch", Paths: []string{"a.go"}}, Owner: "responder"}
+		}, hold: lifecycle.HoldPatchUpstreamed, want: []string{"owner responder", "retire this patch"}},
+		{name: "invalid", mutate: func(w *advWorld) {
+			w.proposeErr = &broker.PatchHoldError{Patch: &patchset.PatchError{Kind: patchset.KindForbidden, Patch: "0003-bad.patch", Detail: "binary"}}
+		}, hold: lifecycle.HoldPatchInvalid, want: []string{"forbidden"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newAdvWorld(t)
+			tc.mutate(w)
+			result, err := w.run(t)
+			if err != nil || result.Outcome != lifecycle.AdvanceHeld || result.Hold != tc.hold {
+				t.Fatalf("result = %+v, err = %v; want hold %s", result, err, tc.hold)
+			}
+			out := result.FollowerOutcome()
+			if out.Kind != upstream.Refused || !strings.HasPrefix(out.Reason, string(tc.hold)+": ") {
+				t.Fatalf("follower outcome = %+v", out)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(out.Reason, want) {
+					t.Errorf("hold %q lacks %q", out.Reason, want)
+				}
+			}
+			for _, never := range []string{"pause", "apply", "verify", "publish"} {
+				if count(w.events, never) != 0 {
+					t.Fatalf("%s ran for a patch hold: %q", never, w.events)
+				}
+			}
+		})
+	}
+}
+
+// Negative control: an unrelated propose failure is a retry, never a patch hold.
+func TestAdvanceDoesNotMistakeAProposeFailureForAPatchHold(t *testing.T) {
+	w := newAdvWorld(t)
+	w.proposeErr = errors.New("disk full")
+	result, err := w.run(t)
+	if err == nil || result.Outcome == lifecycle.AdvanceHeld {
+		t.Fatalf("result = %+v, err = %v", result, err)
+	}
 }

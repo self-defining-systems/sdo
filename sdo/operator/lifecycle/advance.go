@@ -12,6 +12,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/imagesrc"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/patchset"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/upstream"
 )
@@ -100,6 +101,11 @@ const (
 	HoldUnavailable   HoldReason = "materialize"    // the revision cannot be fetched (not transient)
 	HoldMergeConflict HoldReason = "merge_conflict" // E1
 	HoldRender        HoldReason = "render"         // E2, before any cluster effect
+	// The deployment patch series does not apply to the candidate (E1), found
+	// before any cluster effect. The kinds are patchset.PatchError kinds.
+	HoldPatchConflict   HoldReason = "patch_conflict"   // context no longer matches, or the file is gone
+	HoldPatchUpstreamed HoldReason = "patch_upstreamed" // the change is already upstream; retire the patch
+	HoldPatchInvalid    HoldReason = "patch_invalid"    // malformed or forbidden; cannot happen to accepted patches
 	// HoldShapeChange is the MVP stand-in for the designer route (E4-E6).
 	HoldShapeChange HoldReason = "shape_change"
 	HoldBuild       HoldReason = "build"   // E3, images resolve before any apply
@@ -233,6 +239,12 @@ func (a Advancer) Advance(ctx context.Context, cfg AdvanceConfig, request upstre
 	id := AdvanceID(commit)
 	proposal, candidate, conflicts, err := a.Broker.ProposeAdvance(ctx, id, request.Prev, commit)
 	if err != nil {
+		// The broker applies the patch series to the candidate and removes
+		// the checkout itself when it does not apply.
+		if hold, detail, paths, ok := patchHold(err); ok {
+			result.Paths = paths
+			return held(result, hold, detail), nil
+		}
 		return result, fmt.Errorf("propose advance: %w", err)
 	}
 	published := false
@@ -248,7 +260,8 @@ func (a Advancer) Advance(ctx context.Context, cfg AdvanceConfig, request upstre
 	if candidate == "" {
 		return result, errors.New("advance proposal has neither a candidate nor conflicts")
 	}
-	if hold, detail, err := a.impact(ctx, proposal, candidate, plan.GetSource()); err != nil || hold != "" {
+	if hold, detail, paths, err := a.impact(ctx, proposal, candidate, plan.GetSource()); err != nil || hold != "" {
+		result.Paths = paths
 		return held(result, hold, detail), err
 	}
 	return a.deployAndAccept(ctx, cfg, result, proposal, candidate, plan, request.Prev, &published)
@@ -257,22 +270,74 @@ func (a Advancer) Advance(ctx context.Context, cfg AdvanceConfig, request upstre
 // impact renders the accepted HEAD and the candidate with the same source.
 // A candidate that does not render, or whose shape differs, is held before
 // anything touches the cluster.
-func (a Advancer) impact(ctx context.Context, proposal broker.Proposal, candidate string, source *contracts.DeploymentSource) (HoldReason, string, error) {
+func (a Advancer) impact(ctx context.Context, proposal broker.Proposal, candidate string, source *contracts.DeploymentSource) (HoldReason, string, []string, error) {
 	base, err := a.Shape(ctx, proposal.Path, proposal.BaseCommit, source)
 	if err != nil {
-		return "", "", fmt.Errorf("render accepted source %s: %w", proposal.BaseCommit, err)
+		return "", "", nil, fmt.Errorf("render accepted source %s: %w", proposal.BaseCommit, err)
 	}
 	next, err := a.Shape(ctx, proposal.Path, candidate, source)
 	if err != nil {
 		if ctx.Err() != nil {
-			return "", "", ctx.Err()
+			return "", "", nil, ctx.Err()
 		}
-		return HoldRender, err.Error(), nil
+		// Shape reads the effective tree, so a patch that fails there is the
+		// same typed hold the broker raises when it composes the candidate.
+		if hold, detail, paths, ok := patchHold(err); ok {
+			return hold, detail, paths, nil
+		}
+		return HoldRender, err.Error(), nil, nil
 	}
 	if next != base {
-		return HoldShapeChange, "desired-state shape changed; the designer route is not available yet", nil
+		return HoldShapeChange, "desired-state shape changed; the designer route is not available yet", nil, nil
 	}
-	return "", "", nil
+	return "", "", nil, nil
+}
+
+const maxHoldDetail = 600
+
+// patchHold classifies a failure of the deployment patch series against a
+// candidate. The detail names the patch, its owner, the failing step and, when
+// the broker found them, the upstream commits that touched the same paths;
+// it is what the follower persists and an operator reads.
+func patchHold(err error) (HoldReason, string, []string, bool) {
+	var patchErr *patchset.PatchError
+	if !errors.As(err, &patchErr) {
+		return "", "", nil, false
+	}
+	var hold *broker.PatchHoldError
+	errors.As(err, &hold)
+	reason := HoldPatchConflict
+	switch patchErr.Kind {
+	case patchset.KindUpstreamed:
+		reason = HoldPatchUpstreamed
+	case patchset.KindMalformed, patchset.KindForbidden:
+		reason = HoldPatchInvalid
+	}
+	var b strings.Builder
+	if patchErr.Patch != "" {
+		b.WriteString("patch " + patchErr.Patch)
+	} else {
+		b.WriteString("patch series")
+	}
+	if hold != nil && hold.Owner != "" {
+		b.WriteString(" (owner " + hold.Owner + ")")
+	}
+	b.WriteString(": ")
+	b.WriteString(string(patchErr.Kind))
+	if patchErr.Detail != "" {
+		b.WriteString(", " + strings.Join(strings.Fields(patchErr.Detail), " "))
+	}
+	detail := b.String()
+	if len(detail) > maxHoldDetail {
+		detail = detail[:maxHoldDetail] + "..."
+	}
+	if reason == HoldPatchUpstreamed {
+		detail += "; the change is already in upstream, retire this patch"
+	}
+	if hold != nil && len(hold.UpstreamCommits) > 0 {
+		detail += "; upstream commits touching these paths: " + strings.Join(hold.UpstreamCommits, ", ")
+	}
+	return reason, detail, append([]string(nil), patchErr.Paths...), true
 }
 
 func (a Advancer) deployAndAccept(ctx context.Context, cfg AdvanceConfig, result AdvanceResult, proposal broker.Proposal, candidate string, plan *contracts.DeploymentPlan, prev string, published *bool) (_ AdvanceResult, err error) {

@@ -225,6 +225,13 @@ func (b *Broker) proposeCandidate(ctx context.Context, proposal Proposal, id, ba
 	if status != "" {
 		return fmt.Errorf("advance checkout is not clean at its candidate:\n%s", status)
 	}
+	tree, err := gitText(ctx, proposal.Path, "rev-parse", *candidate+"^{tree}")
+	if err != nil {
+		return err
+	}
+	if err := checkEffective(ctx, proposal.Path, tree); err != nil {
+		return effectiveError(ctx, proposal.Path, *candidate, tree, base, upstream, err)
+	}
 	return nil
 }
 
@@ -352,6 +359,15 @@ func (b *Broker) PublishAdvance(ctx context.Context, id, upstream, base string, 
 		if tree != evidence.BaseTree {
 			return fmt.Errorf("merged advance tree %s differs from the deployed tree %s", tree, evidence.BaseTree)
 		}
+		// The deployed tree is the effective one: the patch series must apply
+		// to the tree being accepted, however the proposal got there.
+		if err := checkEffective(ctx, stage, tree); err != nil {
+			return effectiveError(ctx, stage, "", tree, base, upstream, err)
+		}
+		mirror, err := mirrorState(ctx, stage, current, base, upstream)
+		if err != nil {
+			return err
+		}
 		paths, err := validate.ChangedPaths(ctx, stage, current)
 		if err != nil {
 			return err
@@ -368,7 +384,7 @@ func (b *Broker) PublishAdvance(ctx context.Context, id, upstream, base string, 
 		if err := b.writeSourceEvidence(id, evidence); err != nil {
 			return err
 		}
-		trailers := []string{upstreamTrailer + ": " + upstream, upstreamBaseTrailer + ": " + base}
+		trailers := []string{upstreamTrailer + ": " + upstream, upstreamBaseTrailer + ": " + base, mirrorTrailer + ": " + mirror}
 		receipt, err = b.acceptWithTrailers(ctx, stage, id, UpstreamActor, AdvancePhase, paths, trailers, gaps...)
 		if err != nil {
 			return err

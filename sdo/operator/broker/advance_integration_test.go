@@ -17,6 +17,9 @@ import (
 	"sdo.dev/operator/memory/layout"
 )
 
+// vendorText is a vendored file long enough for patches with real context.
+const vendorText = "v01\nv02\nv03\nv04\nv05\nv06\nv07\nv08\nv09\nv10\nv11\nv12\nv13\nv14\nv15\nv16\n"
+
 const advanceGoal = "---\nschema_version: 1\nowner: human\napplication: \"test\"\n---\n# Health objective\n\nGoal\n"
 
 // advanceWorld is a synthetic followed source: an upstream repository whose
@@ -46,10 +49,7 @@ func gitOut(t *testing.T, root string, args ...string) string {
 	return strings.TrimSpace(testutil.Git(t, root, args...))
 }
 
-func newAdvanceWorld(t *testing.T) *advanceWorld {
-	t.Helper()
-	return newOnboardedWorld(t, true)
-}
+func newAdvanceWorld(t *testing.T) *advanceWorld { return newOnboardedWorld(t, true) }
 
 // newOnboardedWorld onboards the synthetic source; editedByDeployer false is a
 // provided deployment: the accepted source is deployed exactly as it stands.
@@ -61,7 +61,7 @@ func newOnboardedWorld(t *testing.T, editedByDeployer bool) *advanceWorld {
 		t.Fatal(err)
 	}
 	testutil.InitGit(t, w.upstream)
-	writeFiles(t, w.upstream, map[string]string{"app.txt": "one\ntwo\nthree\n", "Dockerfile": "FROM scratch\n"})
+	writeFiles(t, w.upstream, map[string]string{"app.txt": "one\ntwo\nthree\n", "Dockerfile": "FROM scratch\n", "lib/vendor.txt": vendorText})
 	testutil.Git(t, w.upstream, "add", ".")
 	// A user commit cannot start following by spelling the broker's trailer.
 	testutil.Git(t, w.upstream, "commit", "-qm", "seed\n\nSDO-Upstream: "+strings.Repeat("f", 40))
