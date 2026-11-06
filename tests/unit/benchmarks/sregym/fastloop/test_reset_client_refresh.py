@@ -19,7 +19,10 @@ class Lane:
                 "apiVersion": "apps/v1",
                 "kind": "Deployment",
                 "metadata": {"name": "frontend", "namespace": "hotel-reservation"},
-                "spec": {"replicas": 1},
+                "spec": {
+                    "replicas": 1,
+                    "template": {"spec": {"containers": [{"name": "app", "image": "example.invalid/app:1"}]}},
+                },
             }
         ]
         self.client_registered = False
