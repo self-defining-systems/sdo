@@ -57,6 +57,10 @@ func TestFakeSourceConforms(t *testing.T) {
 	})
 }
 
+func TestCatalogContractOnFake(t *testing.T) {
+	imagesrctest.TestCatalogContract(t, catalogWith(t, "fake", &imagesrctest.Fake{}, imagesrc.Options{}), "fake")
+}
+
 func TestConformanceCatchesNonconformingSources(t *testing.T) {
 	bad := funcSource(func(_ context.Context, req imagesrc.Request) (imagesrc.Resolved, error) {
 		return imagesrc.Resolved{Ref: req.Image}, nil // tag, not a digest
@@ -126,7 +130,7 @@ func TestResolveAllRejectsBadDeclarations(t *testing.T) {
 	}{
 		{"no default", []string{"r/a:1"}, nil, "no default"},
 		{"unknown source", []string{"r/a:1"}, []imagesrc.Declared{{Image: "r/a:1", SourceID: "nope"}}, "unknown source"},
-		{"unused declaration", []string{"r/a:1"}, []imagesrc.Declared{{Image: "r/b:1", SourceID: "fake"}}, "no object uses"},
+		{"unused declaration", []string{"r/a:1"}, []imagesrc.Declared{{Image: "r/b:1", SourceID: "fake"}}, "no rendered container uses"},
 		{"duplicate declaration", []string{"r/a:1"}, []imagesrc.Declared{{Image: "r/a:1", SourceID: "fake"}, {Image: "r/a:1", SourceID: "str"}}, "twice"},
 		{"wrong config type", []string{"r/a:1"}, []imagesrc.Declared{{Image: "r/a:1", SourceID: "str", Config: wrongType}}, "takes config"},
 		{"empty image", []string{""}, nil, "empty image"},
@@ -180,6 +184,37 @@ func TestResolveAllVerifiesRefs(t *testing.T) {
 	}
 }
 
+func TestPushRegistryImagesMustBeDeclared(t *testing.T) {
+	c := catalogWith(t, "fake", &imagesrctest.Fake{}, imagesrc.Options{})
+	must(t, c.SetTrustedPushHost("push.example:5000"))
+	if err := c.SetTrustedPushHost("bad/host"); err == nil {
+		t.Fatal("bad host accepted")
+	}
+	_, err := c.ResolveAll(context.Background(), []string{"push.example:5000/app:v1"}, nil, imagesrc.Request{})
+	if err == nil || !strings.Contains(err.Error(), "must be declared") {
+		t.Fatalf("err = %v", err)
+	}
+	declared := []imagesrc.Declared{{Image: "push.example:5000/app:v1", SourceID: "fake"}}
+	if _, err := c.ResolveAll(context.Background(), []string{"push.example:5000/app:v1", "docker.io/x:1"}, declared, imagesrc.Request{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestResolveErrorIsClassifiableByCore(t *testing.T) {
+	cause := &imagesrc.ResolveError{Kind: imagesrc.ResolveMissing, Err: errors.New("no such tag")}
+	src := funcSource(func(context.Context, imagesrc.Request) (imagesrc.Resolved, error) { return imagesrc.Resolved{}, cause })
+	c := catalogWith(t, "s", src, imagesrc.Options{})
+	_, err := c.ResolveAll(context.Background(), []string{"r/a:1"}, nil, imagesrc.Request{})
+	var re *imagesrc.ResolveError
+	if !errors.As(err, &re) || re.Kind != imagesrc.ResolveMissing {
+		t.Fatalf("err = %#v", err)
+	}
+	var timeout interface{ InfrastructureTimeout() bool }
+	if errors.As(err, &timeout) {
+		t.Fatal("a missing tag is not an infrastructure timeout")
+	}
+}
+
 func TestErrorKeepsTypedCause(t *testing.T) {
 	cause := &typedCause{"registry refused"}
 	src := funcSource(func(context.Context, imagesrc.Request) (imagesrc.Resolved, error) { return imagesrc.Resolved{}, cause })
@@ -199,8 +234,8 @@ func TestBudgetIsSharedPerSourceAndClassified(t *testing.T) {
 	})
 	c := catalogWith(t, "slow", slow, imagesrc.Options{Budget: 20 * time.Millisecond})
 	_, err := c.ResolveAll(context.Background(), []string{"r/a:1", "r/b:1"}, nil, imagesrc.Request{})
-	var budget *imagesrc.BudgetError
-	if !errors.As(err, &budget) || budget.Image != "r/a:1" || budget.SourceID != "slow" || budget.Limit != 20*time.Millisecond {
+	var budget *imagesrc.TimeoutError
+	if !errors.As(err, &budget) || budget.Image != "r/a:1" || !budget.Budget || budget.Limit != 20*time.Millisecond {
 		t.Fatalf("err = %#v", err)
 	}
 	if !errors.Is(err, context.DeadlineExceeded) {
@@ -235,7 +270,7 @@ func TestCallerCancellationIsNotABudgetError(t *testing.T) {
 	})
 	c := catalogWith(t, "s", src, imagesrc.Options{Budget: time.Minute})
 	_, err := c.ResolveAll(ctx, []string{"r/a:1"}, nil, imagesrc.Request{})
-	var budget *imagesrc.BudgetError
+	var budget *imagesrc.TimeoutError
 	if errors.As(err, &budget) || !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %#v", err)
 	}

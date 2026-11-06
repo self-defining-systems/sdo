@@ -71,23 +71,56 @@ func (e *Error) Error() string {
 
 func (e *Error) Unwrap() error { return e.Err }
 
-// BudgetError reports that the shared budget of one source ran out while the
-// caller's own context was still live. It is an infrastructure outcome, not a
-// verdict on the plan. It unwraps to context.DeadlineExceeded.
-type BudgetError struct {
-	Image    string // the image being resolved when the budget ran out
-	SourceID string
-	Limit    time.Duration
+// ResolveErrorKind says what to do about a failed resolution.
+type ResolveErrorKind string
+
+const (
+	// ResolveTransient is a rate limit, timeout or network failure: the reference
+	// may be fine, so retrying later is the right advice.
+	ResolveTransient ResolveErrorKind = "transient"
+	// ResolveMissing is a registry that has no such repository or tag.
+	ResolveMissing ResolveErrorKind = "missing"
+	// ResolveUnauthorized is an image that needs credentials (private).
+	ResolveUnauthorized ResolveErrorKind = "unauthorized"
+	// ResolveRefused is a target the operator will not contact, or an invalid reference.
+	ResolveRefused ResolveErrorKind = "refused"
+)
+
+// ResolveError is a classified resolution failure. Core inspects it with
+// errors.As, so it is defined here and implementations return it.
+type ResolveError struct {
+	Kind ResolveErrorKind
+	Err  error
 }
 
-func (e *BudgetError) Error() string {
-	return fmt.Sprintf("resolving image %s: the shared budget of %s for source %s ran out", e.Image, e.Limit, e.SourceID)
+func (e *ResolveError) Error() string { return e.Err.Error() }
+func (e *ResolveError) Unwrap() error { return e.Err }
+
+// TimeoutError reports that resolving an image ran out of time. It is an
+// infrastructure outcome, not a verdict on the plan. ResolveAll returns it
+// when a source's shared budget expires while the caller's context is live;
+// a source may return it for its own per-image deadline.
+type TimeoutError struct {
+	Image string
+	Limit time.Duration
+	// Budget is true when the shared budget of all images of the source ran
+	// out, false when the single resolution hit its own deadline.
+	Budget bool
 }
 
-func (e *BudgetError) Unwrap() error { return context.DeadlineExceeded }
+func (e *TimeoutError) Error() string {
+	scope := fmt.Sprintf("its per-image deadline of %s", e.Limit)
+	if e.Budget {
+		scope = fmt.Sprintf("the shared budget of %s for all images of its source", e.Limit)
+	}
+	return fmt.Sprintf("resolving image %s timed out: it exceeded %s. This is a time limit, not a plan error: resubmit the same plan unchanged", e.Image, scope)
+}
+
+// Unwrap lets errors.Is(err, context.DeadlineExceeded) hold.
+func (e *TimeoutError) Unwrap() error { return context.DeadlineExceeded }
 
 // InfrastructureTimeout marks the error as a time limit, not a plan error.
-func (e *BudgetError) InfrastructureTimeout() bool { return true }
+func (e *TimeoutError) InfrastructureTimeout() bool { return true }
 
 var digestReference = regexp.MustCompile(`^[^@\s]+@sha256:[a-f0-9]{64}$`)
 
@@ -117,7 +150,7 @@ func (c *Catalog) ResolveAll(ctx context.Context, images []string, declared []De
 	choice := make(map[string]Declared, len(declared))
 	for _, d := range declared {
 		if !wanted[d.Image] {
-			return nil, fmt.Errorf("imagesrc: image %q is declared with source %q but no object uses it", d.Image, d.SourceID)
+			return nil, fmt.Errorf("imagesrc: image %q is declared with source %q but no rendered container uses it", d.Image, d.SourceID)
 		}
 		if prior, dup := choice[d.Image]; dup {
 			return nil, fmt.Errorf("imagesrc: image %q is declared twice (sources %q and %q)", d.Image, prior.SourceID, d.SourceID)
@@ -142,6 +175,9 @@ func (c *Catalog) ResolveAll(ctx context.Context, images []string, declared []De
 		}
 		d, ok := choice[image]
 		if !ok {
+			if c.pushHost != "" && registryHost(image) == c.pushHost {
+				return nil, fmt.Errorf("imagesrc: image %q is under the trusted push registry %q but no source is declared for it; images the operator pushes must be declared (a typo or a rewritten name would otherwise pin a stale earlier push)", image, c.pushHost)
+			}
 			if c.defaultID == "" {
 				return nil, fmt.Errorf("imagesrc: image %q declares no source and the catalog has no default", image)
 			}
@@ -167,7 +203,7 @@ func (c *Catalog) ResolveAll(ctx context.Context, images []string, declared []De
 		resolved, err := e.resolve(sourceCtx, req, config)
 		if err != nil {
 			if ctx.Err() == nil && e.budget > 0 && errors.Is(sourceCtx.Err(), context.DeadlineExceeded) {
-				return nil, &BudgetError{Image: image, SourceID: d.SourceID, Limit: e.budget}
+				return nil, &TimeoutError{Image: image, Limit: e.budget, Budget: true}
 			}
 			return nil, &Error{Image: image, SourceID: d.SourceID, Err: err}
 		}
@@ -187,6 +223,16 @@ func verify(image, ref string, sameRepository bool) error {
 		return fmt.Errorf("source returned %q, which is outside the requested repository %q", ref, repository(image))
 	}
 	return nil
+}
+
+// registryHost is the first path segment of an image reference.
+func registryHost(image string) string {
+	for i := 0; i < len(image); i++ {
+		if image[i] == '/' {
+			return image[:i]
+		}
+	}
+	return ""
 }
 
 // repository strips a digest or tag from a reference.

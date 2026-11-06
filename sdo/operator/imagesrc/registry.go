@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -31,6 +32,7 @@ type Options struct {
 type Catalog struct {
 	entries   map[string]entry
 	defaultID string
+	pushHost  string
 }
 
 type entry struct {
@@ -92,6 +94,16 @@ func (c *Catalog) SetDefault(id string) error {
 		return fmt.Errorf("imagesrc: default source %q is not registered", id)
 	}
 	c.defaultID = id
+	return nil
+}
+
+// SetTrustedPushHost names the registry host the operator pushes built images
+// to. ResolveAll then rejects an undeclared image under that host.
+func (c *Catalog) SetTrustedPushHost(host string) error {
+	if host == "" || strings.ContainsAny(host, "/@ ") {
+		return fmt.Errorf("imagesrc: push host %q must be a bare registry host", host)
+	}
+	c.pushHost = host
 	return nil
 }
 

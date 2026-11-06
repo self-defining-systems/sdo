@@ -166,3 +166,17 @@ func declare(t *testing.T, id string, tc Case) ([]imagesrc.Declared, imagesrc.Re
 	}
 	return []imagesrc.Declared{d}, imagesrc.Request{Tree: "tree-for-" + tc.Name, FS: files}
 }
+
+// TestCatalogContract checks the declaration rules of a wired catalog that
+// has source id registered: a declared image that no rendered container uses
+// is an error and nothing is resolved, and an unregistered source is rejected.
+func TestCatalogContract(t *testing.T, c *imagesrc.Catalog, id string) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := c.ResolveAll(ctx, []string{"r.example/a:1"}, []imagesrc.Declared{{Image: "r.example/typo:1", SourceID: id}}, imagesrc.Request{}); err == nil {
+		t.Error("a declared image matching no rendered container was accepted")
+	}
+	if _, err := c.ResolveAll(ctx, []string{"r.example/a:1"}, []imagesrc.Declared{{Image: "r.example/a:1", SourceID: "no-such-source"}}, imagesrc.Request{}); err == nil {
+		t.Error("an unregistered source was accepted")
+	}
+}
