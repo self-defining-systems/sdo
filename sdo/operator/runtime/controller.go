@@ -1529,7 +1529,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 			verification.Summary = recoveryStabilitySummary
 		}
 		c.cacheVerificationLocked(verification)
-		if !verified && (early || now.Before(c.verificationDeadlineLocked())) {
+		if !verified && (early || now.Before(c.verificationDeadlineLocked()) || c.recoveryWindowRunningLocked()) {
 			c.mu.Unlock()
 			return
 		}
