@@ -71,4 +71,10 @@ esac
 # Tach's plugin only selects impacted tests when asked (--tach); otherwise it
 # adds about ten seconds of git analysis to every xdist worker's collection.
 # Module boundaries are enforced by `tach check` in check_errors.sh.
-uv run --extra test pytest -p no:tach -n "$WORKERS" "${coverage[@]}" "$@" "${paths[@]}"
+# SDO_PYTEST_LOG keeps the output (with --durations) for scripts/check_slow_tests.py.
+if [[ -n "${SDO_PYTEST_LOG:-}" ]]; then
+    set -o pipefail
+    uv run --extra test pytest -p no:tach -n "$WORKERS" "${coverage[@]}" "$@" "${paths[@]}" | tee "$SDO_PYTEST_LOG"
+else
+    uv run --extra test pytest -p no:tach -n "$WORKERS" "${coverage[@]}" "$@" "${paths[@]}"
+fi

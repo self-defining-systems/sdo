@@ -11,8 +11,11 @@ on:
 permissions:
   contents: read
 
+# A push to main is never cancelled: every merged commit is tested in full and
+# refreshes the caches. Each gets its own group; PRs share one per ref and
+# cancel their superseded runs.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.event_name == 'push' && format('ci-push-{0}', github.sha) || format('ci-{0}', github.ref) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -91,14 +94,21 @@ jobs:
       - name: Drop compiler entries this run did not use
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: find ~/.cache/go-build -type f -mmin +120 -delete
-      - name: Save shared Go cache on main
+      - name: Check the cache size before saving
+        id: cache-size
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: bash scripts/ci_cache_guard.sh "$(python3 -c 'import json;print(json.load(open(".github/ci_budgets.json"))["cache_limit_mb"])')" ~/.cache/go-build ~/go/pkg/mod
+      - name: Save shared Go cache on main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cache-size.outputs.oversize != 'true'
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
           key: ci-shared-v1-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+      - name: Fail on an oversize cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cache-size.outputs.oversize == 'true'
+        run: exit 1
 
   python:
     name: Python tests (${{ matrix.shard }})
@@ -152,7 +162,7 @@ jobs:
         env:
           SDO_PYTEST_SHARD: ${{ matrix.shard }}
         run: |
-          bash ./scripts/test_python.sh --durations=30 \
+          SDO_PYTEST_LOG="$RUNNER_TEMP/pytest.log" bash ./scripts/test_python.sh --durations=30 \
             --ignore=tests/unit/benchmarks/sregym/fastloop/test_recorded_reflection_stage.py \
             --ignore=tests/unit/benchmarks/sregym/fastloop/test_generated_worker_contract.py \
             --ignore=tests/unit/sdo/agents/responder/test_reflection_final_check.py \
@@ -179,6 +189,8 @@ jobs:
             --ignore=tests/unit/sdo/agents/lifecycle/test_supplied_reads.py \
             --ignore=tests/unit/benchmarks/sregym/fastloop/test_sequence_scripted.py \
             --ignore=tests/unit/benchmarks/sregym/fastloop/test_host_limits.py
+      - name: PR-tier tests stay under the slow-test budget
+        run: python3 scripts/check_slow_tests.py --pytest "$RUNNER_TEMP/pytest.log"
       - name: Publish this shard's coverage data
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -190,14 +202,21 @@ jobs:
       - name: Drop compiler entries that are no longer used
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: find ~/.cache/go-build -type f -mmin +120 -delete
-      - name: Save this shard's Go cache on main
+      - name: Check the cache size before saving
+        id: cache-size
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: bash scripts/ci_cache_guard.sh "$(python3 -c 'import json;print(json.load(open(".github/ci_budgets.json"))["cache_limit_mb"])')" ~/.cache/go-build ~/go/pkg/mod
+      - name: Save this shard's Go cache on main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cache-size.outputs.oversize != 'true'
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
           key: ci-py-v3-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ matrix.shard }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+      - name: Fail on an oversize cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cache-size.outputs.oversize == 'true'
+        run: exit 1
 
   tests:
     name: Go tests (${{ matrix.shard }})
@@ -246,7 +265,11 @@ jobs:
       - name: Install the pinned envtest binaries (checksum-verified, retried; a cache hit skips it)
         run: echo "KUBEBUILDER_ASSETS=$(bash scripts/install_envtest.sh)" >> "$GITHUB_ENV"
       - name: Go modules, ${{ matrix.shard }} shard (shared compiler and module cache)
+        env:
+          SDO_GO_TEST_LOG: ${{ runner.temp }}/go-test.json
         run: bash ./scripts/test_go_ci.sh pr ${{ matrix.shard }}
+      - name: PR-tier tests stay under the slow-test budget
+        run: python3 scripts/check_slow_tests.py --go "$RUNNER_TEMP/go-test.json"
 
       # Go refreshes the mtime of every compiler entry it reads that is over an hour
       # old, so an entry untouched for two hours is stale. Saving only live entries
@@ -254,14 +277,21 @@ jobs:
       - name: Drop compiler entries this run did not use
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: find ~/.cache/go-build -type f -mmin +120 -delete
-      - name: Save shared Go cache on main
+      - name: Check the cache size before saving
+        id: cache-size
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: bash scripts/ci_cache_guard.sh "$(python3 -c 'import json;print(json.load(open(".github/ci_budgets.json"))["cache_limit_mb"])')" ~/.cache/go-build ~/go/pkg/mod
+      - name: Save shared Go cache on main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cache-size.outputs.oversize != 'true'
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
           key: ci-tests-v2-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ matrix.shard }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+      - name: Fail on an oversize cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cache-size.outputs.oversize == 'true'
+        run: exit 1
 
   required-pr-ci:
     name: Required PR CI
