@@ -3,25 +3,26 @@
 from __future__ import annotations
 
 import json
+import shutil
 from contextlib import ExitStack, contextmanager
-from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
 
 from google.protobuf import json_format
 
 from sdo.agents.context_output import budget_for
 from sdo.agents.prompt_templates import PromptBudgetError, count_chars, render_prompt
-from sdo.agents.responder.reflection_evidence import playbook_description
+from sdo.agents.responder.recorded_actions import scratch_directory
 from sdo.agents.responder.rollout_release import release_lines
 from sdo.agents.responder.tool_output import write_json
 from sdo.agents.responder.tools_cli import command_purposes, command_surface
 from sdo.contracts import Verdict
 
 MAX_INCIDENT_SUMMARY_CHARS = budget_for("responder.incident_data")
+PLAYBOOK_DIRECTORY = "playbooks"
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Iterable, Iterator, Mapping
+    from pathlib import Path
 
     from sdo.contracts import Finding, IncidentRequest, ObjectRef, ProgramRun, StageReport
 
@@ -33,7 +34,6 @@ def incident_data_view(request: IncidentRequest) -> dict[str, Any]:
         document.pop(name, None)
     snapshot = request.memory_snapshot
     document["intent"] = {"goal": snapshot.goal_markdown, "architecture": snapshot.architecture_markdown}
-    document["available_playbook_ids"] = sorted({item.id for item in snapshot.playbooks})
     latest = {}
     for evaluation in sorted(request.detector_history, key=lambda item: item.evaluated_at.ToNanoseconds()):
         latest[evaluation.detector_id] = evaluation
@@ -293,7 +293,9 @@ def _rollout_pending(request: IncidentRequest) -> list[dict[str, Any]]:
     return [json_format.MessageToDict(item, preserving_proto_field_name=True) for item in pending]
 
 
-def responder_brief(request: IncidentRequest, *, details_file: str, full: dict[str, Any]) -> dict[str, Any]:
+def responder_brief(
+    request: IncidentRequest, *, details_file: str, full: dict[str, Any], playbook_paths: Mapping[str, str]
+) -> dict[str, Any]:
     """The first message: open findings, one line per automatic action, pointers to the rest."""
     findings = sorted(request.findings, key=lambda item: _SEVERITY_ORDER.get(item.severity, 1))
     brief: dict[str, Any] = {
@@ -320,9 +322,6 @@ def responder_brief(request: IncidentRequest, *, details_file: str, full: dict[s
     if request.external_message:
         brief["external_message"] = request.external_message
         brief["completion_policy"] = "responder_done_without_detector_verification"
-    if "playbook_documents" in full:
-        brief["playbook_documents"] = dict(full["playbook_documents"])
-        brief["playbook_index"] = {item["id"]: _clip(item["description"], 120) for item in full["playbook_index"]}
     if request.prior_stages:
         involved = {attempt.playbook_id for stage in request.prior_stages for attempt in stage.mitigations}
         involved.update(match.playbook_id for match in request.playbook_coverage.matches)
@@ -330,11 +329,7 @@ def responder_brief(request: IncidentRequest, *, details_file: str, full: dict[s
         involved.update(
             run.program_id for run in request.initial_program_runs if run.verdict.result == Verdict.RESULT_MATCH
         )
-        brief["stage_playbooks"] = {
-            program: brief.get("playbook_documents", {}).pop(program, None) for program in sorted(involved)
-        }
-        for program in involved:
-            brief.get("playbook_index", {}).pop(program, None)
+        brief["stage_playbooks"] = {program: playbook_paths.get(program) for program in sorted(involved)}
     surface = full["incident_tools"]
     brief["incident_tools"] = {
         "commands": command_purposes(),
@@ -351,7 +346,6 @@ def _fit(brief: dict[str, Any]) -> dict[str, Any]:
 
     def lists() -> dict[str, list[Any]]:
         return {
-            "playbook_documents": list(brief.get("playbook_documents", {})),
             "program_runs": brief.get("program_runs", []),
             "playbook_coverage.matches": brief["playbook_coverage"]["matches"],
             "findings": brief["findings"],
@@ -369,40 +363,49 @@ def _fit(brief: dict[str, Any]) -> dict[str, Any]:
                 f"budget is {MAX_INCIDENT_SUMMARY_CHARS}; performed repair actions cannot be omitted"
             )
         name, items = candidates[0]
-        if name == "playbook_documents":
-            brief["playbook_documents"].pop(items[-1])
-            brief["playbook_index"].pop(items[-1], None)
-        else:
-            items.pop()
+        items.pop()
         owner, key = (brief["playbook_coverage"], "matches") if "." in name else (brief, name)
         owner[f"{key}_omitted"] = owner.get(f"{key}_omitted", 0) + 1
     return brief
 
 
+def playbook_directory() -> Path:
+    """Stable per-session location of the learned playbooks: `<id>/README.md` plus its programs."""
+    return scratch_directory() / PLAYBOOK_DIRECTORY
+
+
+def write_playbooks(request: IncidentRequest) -> dict[str, str]:
+    """Write each accepted playbook under the session's playbook directory; return README paths by ID."""
+    root = playbook_directory()
+    shutil.rmtree(root, ignore_errors=True)
+    paths: dict[str, str] = {}
+    for playbook in sorted(request.memory_snapshot.playbooks, key=lambda item: item.id):
+        directory = root / playbook.id
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        readme = directory / "README.md"
+        readme.write_text(playbook.markdown, encoding="utf-8")
+        for script in playbook.scripts:
+            target = directory / script.name
+            if not target.resolve().is_relative_to(directory.resolve()):
+                raise ValueError(f"playbook {playbook.id!r} script escapes its directory: {script.name!r}")
+            target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            target.write_text(script.content, encoding="utf-8")
+        paths[playbook.id] = str(readme)
+    return paths
+
+
 @contextmanager
 def prepared_incident_data(request: IncidentRequest) -> Iterator[str]:
-    """Inline only what the responder must act on; complete facts stay private for the whole turn."""
+    """Inline only what the responder must act on; complete facts stay private for the whole turn.
+
+    The accepted playbooks are not listed in the incident data; the skill names their directory.
+    """
     document = incident_data_view(request)
     document["incident_tools"] = command_surface()
     with ExitStack() as stack:
-        if request.memory_snapshot.playbooks:
-            directory = Path(stack.enter_context(TemporaryDirectory(prefix="sdo-playbooks-")))
-            documents = {}
-            for index, playbook in enumerate(sorted(request.memory_snapshot.playbooks, key=lambda item: item.id)):
-                path = directory / f"{index}.md"
-                path.touch(mode=0o600)
-                path.write_text(playbook.markdown, encoding="utf-8")
-                documents[playbook.id] = str(path)
-            document["playbook_documents"] = documents
-            document["playbook_index"] = [
-                {
-                    "id": playbook.id,
-                    "description": playbook_description(playbook.markdown),
-                    "path": documents[playbook.id],
-                }
-                for playbook in sorted(request.memory_snapshot.playbooks, key=lambda item: item.id)
-            ]
+        paths = write_playbooks(request)
+        if paths:
             document["memory_accepted_commit"] = request.memory_snapshot.accepted_commit
         facts = write_json(document, command="incident", incident_id=request.incident_id)
         stack.callback(facts.unlink, missing_ok=True)
-        yield _render_data(responder_brief(request, details_file=str(facts), full=document))
+        yield _render_data(responder_brief(request, details_file=str(facts), full=document, playbook_paths=paths))
