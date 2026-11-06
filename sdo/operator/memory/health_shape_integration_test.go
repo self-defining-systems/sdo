@@ -121,3 +121,69 @@ func TestAcceptedHealthRevisionOfASeedWithoutJudgeCommitNeedsRefresh(t *testing.
 		t.Fatalf("after the judge commit with nothing changed: NeedsRefresh = %v, err = %v; want false", rev.NeedsRefresh, err)
 	}
 }
+
+// installedRepo is a judged install: the installed commit is the judge commit.
+func installedRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	gitIn(t, dir, "init", "-q")
+	writeFile(t, dir, ".sdo/goal.md", goalFile)
+	writeFile(t, dir, ".sdo/schema-version", "3\n")
+	writeFile(t, dir, "main.go", "package main // v1\n")
+	gitIn(t, dir, "add", "-A")
+	gitIn(t, dir, "commit", "-q", "-m", "judge\n\nSDO-Actor: health_judge\nSDO-Phase: initial\nSDO-Validation: passed")
+	return dir
+}
+
+const upkeepTrailers = "\n\nSDO-Incident: memory-migration\nSDO-Actor: upkeep\nSDO-Phase: initial\nSDO-Validation: passed"
+
+func headOf(t *testing.T, dir string) string { return gitIn(t, dir, "rev-parse", "HEAD") }
+
+func TestInstallSurvivesUpkeepSchemaMigration(t *testing.T) {
+	dir := installedRepo(t)
+	installed := headOf(t, dir)
+	writeFile(t, dir, ".sdo/schema-version", "4\n")
+	gitIn(t, dir, "add", "-A")
+	gitIn(t, dir, "commit", "-q", "-m", "sdo(memory-migration): validated initial"+upkeepTrailers)
+	ok, err := memory.HealthRefreshPreservesInstall(context.Background(), dir, installed, headOf(t, dir))
+	if err != nil || !ok {
+		t.Fatalf("validated upkeep migration must preserve the install: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestInstallWindowRejectsUpkeepCommitThatIsNotAMigration(t *testing.T) {
+	dir := installedRepo(t)
+	installed := headOf(t, dir)
+	writeFile(t, dir, ".sdo/playbooks/p/README.md", "x\n")
+	gitIn(t, dir, "add", "-A")
+	gitIn(t, dir, "commit", "-q", "-m", "upkeep without a schema stamp"+upkeepTrailers)
+	if ok, err := memory.HealthRefreshPreservesInstall(context.Background(), dir, installed, headOf(t, dir)); err != nil || ok {
+		t.Fatalf("an upkeep commit that does not stamp the schema must contradict: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestInstallWindowRejectsUpkeepMigrationThatChangesSource(t *testing.T) {
+	dir := installedRepo(t)
+	installed := headOf(t, dir)
+	writeFile(t, dir, ".sdo/schema-version", "4\n")
+	writeFile(t, dir, "main.go", "package main // v3\n")
+	gitIn(t, dir, "add", "-A")
+	gitIn(t, dir, "commit", "-q", "-m", "migration plus source"+upkeepTrailers)
+	if ok, err := memory.HealthRefreshPreservesInstall(context.Background(), dir, installed, headOf(t, dir)); err != nil || ok {
+		t.Fatalf("source change must contradict: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestInstallWindowRejectsUnrelatedCommitAfterMigration(t *testing.T) {
+	dir := installedRepo(t)
+	installed := headOf(t, dir)
+	writeFile(t, dir, ".sdo/schema-version", "4\n")
+	gitIn(t, dir, "add", "-A")
+	gitIn(t, dir, "commit", "-q", "-m", "migration"+upkeepTrailers)
+	writeFile(t, dir, ".sdo/playbooks/p/README.md", "x\n")
+	gitIn(t, dir, "add", "-A")
+	gitIn(t, dir, "commit", "-q", "-m", "responder change\n\nSDO-Actor: responder\nSDO-Phase: initial\nSDO-Validation: passed")
+	if ok, err := memory.HealthRefreshPreservesInstall(context.Background(), dir, installed, headOf(t, dir)); err != nil || ok {
+		t.Fatalf("a non-migration commit in the window must contradict: ok=%v err=%v", ok, err)
+	}
+}
