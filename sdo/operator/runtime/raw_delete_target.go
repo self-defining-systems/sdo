@@ -1,7 +1,9 @@
 package runtime
 
 import (
+	"encoding/json"
 	"fmt"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/discovery"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -78,4 +80,34 @@ func resolveDeletePath(discover discovery.DiscoveryInterface, request program.Ku
 		return ref, program.ValidateGeneralRef(ref)
 	}
 	return sdk.ObjectRef{}, fmt.Errorf("DELETE target resource is unavailable in discovery")
+}
+
+// Bind receipt identity to the actual DELETE, preserving caller options and
+// refusing contradictory preconditions before any request crosses the API.
+func bindRawDelete(request program.KubernetesRequest, before *unstructured.Unstructured) (program.KubernetesRequest, error) {
+	options := map[string]any{}
+	if len(request.Body) > 0 {
+		if err := json.Unmarshal(request.Body, &options); err != nil || options == nil {
+			return request, fmt.Errorf("DELETE options must be an object")
+		}
+	}
+	conditions := map[string]any{}
+	if raw, exists := options["preconditions"]; exists {
+		var ok bool
+		conditions, ok = raw.(map[string]any)
+		if !ok {
+			return request, fmt.Errorf("DELETE preconditions must be an object")
+		}
+	}
+	for key, value := range map[string]string{"uid": string(before.GetUID()), "resourceVersion": before.GetResourceVersion()} {
+		if previous, exists := conditions[key]; exists && previous != value {
+			return request, fmt.Errorf("DELETE %s precondition differs from observed object", key)
+		}
+		conditions[key] = value
+	}
+	options["preconditions"] = conditions
+	var err error
+	request.Body, err = json.Marshal(options)
+	request.ContentType = "application/json"
+	return request, err
 }
