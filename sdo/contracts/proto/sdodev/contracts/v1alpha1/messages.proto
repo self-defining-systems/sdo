@@ -306,6 +306,8 @@ message IncidentRequest {
   MetricsSource metrics_source = 33;
   // External alerts close when the responder returns; they assert no verified health.
   string external_message = 34 [(buf.validate.field).string.max_len = 4096];
+  // When the controller opened this incident.
+  google.protobuf.Timestamp detected_at = 35;
 }
 
 message ResponseProgress {
@@ -587,6 +589,9 @@ enum ClosureUnconfirmedReason {
   CLOSURE_UNCONFIRMED_REASON_OBSERVER_UNAVAILABLE = 2;
   // Response completed without independent detector verification.
   CLOSURE_UNCONFIRMED_REASON_EXTERNAL_COMPLETION = 3;
+  // Health cleared, but a workload the application map marks holds_data lost its
+  // Pods during the incident with nothing persistent to restore it from.
+  CLOSURE_UNCONFIRMED_REASON_DATA_MAY_BE_LOST = 4;
 }
 
 // Controller-owned evidence from one response stage. Finding credit describes

@@ -144,10 +144,27 @@ def test_current_outcome_keeps_findings_evidence_and_repairs_verbatim() -> None:
     assert {key: value for key, value in view.items() if key != "detector_history"} == {
         key: value
         for key, value in full.items()
-        if key not in {"detector_history", "source_check_notes", "disabled_setup_detectors"}
+        if key
+        not in {
+            "detector_history",
+            "source_check_notes",
+            "disabled_setup_detectors",
+        }
     }
     assert len(view["detector_history"]) == 2
     assert len(json.dumps(view)) < len(json.dumps(full))
+
+
+def test_current_outcome_says_when_data_may_be_lost() -> None:
+    outcome = _outcome("synthetic-incident")
+    assert "data_at_risk" not in current_outcome_view(outcome)
+
+    outcome.classification = "unconfirmed"
+    reason = "StatefulSet/store holds data and has no persistent storage"
+    outcome.detector_history.append(
+        DetectorEvaluation(detector_id="controller.data-at-risk", status="pending", reason=reason)
+    )
+    assert current_outcome_view(outcome)["data_at_risk"] == [reason]
 
 
 def test_current_outcome_shows_source_check_notes_only_when_recorded() -> None:

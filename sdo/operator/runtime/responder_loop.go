@@ -83,6 +83,7 @@ type ToolResponse struct {
 	MemoryCheckTimedOut bool                `json:"memory_check_timed_out,omitempty"`
 
 	VerificationBlockers       []VerificationBlocker          `json:"verification_blockers,omitempty"`
+	DataAtRisk                 []string                       `json:"data_at_risk,omitempty"`
 	ActionReports              []PlanActionReport             `json:"action_reports,omitempty"`
 	SelectionSchema            *MenuSchema                    `json:"selection_schema,omitempty"`
 	SelectionSetSchema         *MenuSchema                    `json:"selection_set_schema,omitempty"`
@@ -173,6 +174,8 @@ type ResponderLoop struct {
 	scriptRefusals map[string]error
 
 	stageProgress       map[string]responseStageProgress
+	dataWorkloads       map[string]bool
+	dataWorkloadsRead   bool
 	applicationBindings map[string][]recoveryBinding
 	// WorkingProgramRoot is set by the production loop factory to the mounted
 	// proposal checkout. Embedders with an in-memory registry may leave it empty.
@@ -741,6 +744,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		}
 		if response.Error == "" {
 			l.closeLoop()
+			response.DataAtRisk = l.incidentDataAtRisk(ctx)
 		}
 	case "rollback":
 		l.rollbackApplication(ctx, request, &response)
