@@ -63,6 +63,11 @@ func ReachabilityEligible(service corev1.Service) bool
     translation, selector-less Services have hand-managed backends, and Services
     SDO creates for itself are not the application's.
 
+func ReachabilityEvaluationWindow(ctx sdk.DetectionContext) time.Duration
+    ReachabilityEvaluationWindow is the settling window of any detector that
+    judges consecutive dials, as read from the context's dial observations,
+    or zero without them.
+
 func ReachabilityTargetConfiguration(ctx sdk.DetectionContext, target ReachabilityTarget) (string, bool)
     ReachabilityTargetConfiguration binds a target to its observed Service,
     selected backend configuration, referenced ConfigMaps and selecting network

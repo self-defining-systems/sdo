@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"time"
 
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -17,6 +18,7 @@ import (
 	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
+	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/usage"
 )
 
@@ -57,7 +59,12 @@ func NewRemoteMemory(ready *pb.ReadyResponse, rpc MirroredMemoryRPC) (*RemoteMem
 		}
 		seen[spec.ID] = true
 		r.registrations = append(r.registrations, spec)
-		r.Detectors = append(r.Detectors, &remoteDetector{Registration: spec, remote: r})
+		remote := &remoteDetector{Registration: spec, remote: r}
+		if spec.Windowed {
+			r.Detectors = append(r.Detectors, &windowedRemoteDetector{remoteDetector: remote})
+		} else {
+			r.Detectors = append(r.Detectors, remote)
+		}
 	}
 	mitigators := map[string]bool{}
 	for _, id := range ready.MitigatorIds {
@@ -140,6 +147,20 @@ func (d *remoteDetector) prepareDetection(ctx context.Context, view sdk.Detectio
 		return nil, nil, err
 	}
 	return &preparedRemoteDetector{remoteDetector: d, rpc: rpc, request: &pb.EvaluateRequest{DetectorIds: []string{d.ID}, MirrorSequence: sequence, Observation: observation, Reads: reads}}, release, nil
+}
+
+// windowedRemoteDetector keeps sdk.WindowedDetector across the host boundary:
+// a windowed detector's repair is visible to it only after its window turns
+// over, which the deterministic stage waits for. The window follows from the
+// declared inputs, the same way the compiled detectors derive it.
+type windowedRemoteDetector struct{ *remoteDetector }
+
+func (d *windowedRemoteDetector) EvaluationWindow(view sdk.DetectionContext) time.Duration {
+	var window time.Duration
+	if d.Reachability {
+		window = servicehealth.ReachabilityEvaluationWindow(view)
+	}
+	return max(window, trafficConsumerWindow(d.Traffic, view))
 }
 
 type preparedRemoteDetector struct {
