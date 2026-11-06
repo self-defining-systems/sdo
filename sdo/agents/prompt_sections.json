@@ -15,7 +15,7 @@
     "feedback": "template_data.health_judge-health_judge-feedback",
     "skills_root": "template_data.health_judge-health_judge-skills_root",
     "traffic_authoring": "template_data.health_judge-health_judge-traffic_authoring",
-    "metrics_authoring": "template_data.health_judge-health_judge-metrics_authoring"
+    "telemetry_authoring": "template_data.health_judge-health_judge-telemetry_authoring"
   },
   "health_judge/health_judge_shell": {
     "skills_root": "template_data.health_judge-health_judge_shell-skills_root",
@@ -24,7 +24,7 @@
     "architecture": "template_data.health_judge-health_judge_shell-architecture",
     "feedback": "template_data.health_judge-health_judge_shell-feedback"
   },
-  "health_judge/metrics_authoring": {},
+  "health_judge/telemetry_authoring": {},
   "health_judge/run_health_judge_01": {},
   "health_judge/traffic_authoring": {},
   "lifecycle/memory_conflict": {

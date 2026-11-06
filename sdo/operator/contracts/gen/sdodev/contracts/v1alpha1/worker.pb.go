@@ -565,7 +565,7 @@ func (x *AgentResult) GetFailureReason() string {
 // outcome. Its worker may propose file edits, but cannot publish them.
 type ReflectionRequest struct {
 	state          protoimpl.MessageState     `protogen:"open.v1"`
-	MetricsSource  *MetricsSource             `protobuf:"bytes,17,opt,name=metrics_source,json=metricsSource,proto3" json:"metrics_source,omitempty"`
+	Telemetry      *TelemetryContext          `protobuf:"bytes,18,opt,name=telemetry,proto3" json:"telemetry,omitempty"`
 	Closure        *IncidentClosure           `protobuf:"bytes,1,opt,name=closure,proto3" json:"closure,omitempty"`
 	ProposalCommit string                     `protobuf:"bytes,4,opt,name=proposal_commit,json=proposalCommit,proto3" json:"proposal_commit,omitempty"`
 	OutcomeCommit  string                     `protobuf:"bytes,5,opt,name=outcome_commit,json=outcomeCommit,proto3" json:"outcome_commit,omitempty"`
@@ -619,9 +619,9 @@ func (*ReflectionRequest) Descriptor() ([]byte, []int) {
 	return file_sdodev_contracts_v1alpha1_worker_proto_rawDescGZIP(), []int{7}
 }
 
-func (x *ReflectionRequest) GetMetricsSource() *MetricsSource {
+func (x *ReflectionRequest) GetTelemetry() *TelemetryContext {
 	if x != nil {
-		return x.MetricsSource
+		return x.Telemetry
 	}
 	return nil
 }
@@ -863,9 +863,9 @@ const file_sdodev_contracts_v1alpha1_worker_proto_rawDesc = "" +
 	"\vproposal_id\x18\x05 \x01(\tR\n" +
 	"proposalId\x12#\n" +
 	"\rerror_summary\x18\x06 \x01(\tR\ferrorSummary\x12\xc8\x01\n" +
-	"\x0efailure_reason\x18\a \x01(\tB\xa0\x01\xbaH\x9c\x01r\x99\x01R\x00R\ragent_timeoutR\fagent_failedR\frate_limitedR\x11account_exhaustedR\x17session_handoff_timeoutR\x17session_handoff_invalidR\x13session_unavailableR\x10result_too_largeR\rfailureReason\"\xd4\t\n" +
-	"\x11ReflectionRequest\x12O\n" +
-	"\x0emetrics_source\x18\x11 \x01(\v2(.sdodev.contracts.v1alpha1.MetricsSourceR\rmetricsSource\x12D\n" +
+	"\x0efailure_reason\x18\a \x01(\tB\xa0\x01\xbaH\x9c\x01r\x99\x01R\x00R\ragent_timeoutR\fagent_failedR\frate_limitedR\x11account_exhaustedR\x17session_handoff_timeoutR\x17session_handoff_invalidR\x13session_unavailableR\x10result_too_largeR\rfailureReason\"\xe4\t\n" +
+	"\x11ReflectionRequest\x12I\n" +
+	"\ttelemetry\x18\x12 \x01(\v2+.sdodev.contracts.v1alpha1.TelemetryContextR\ttelemetry\x12D\n" +
 	"\aclosure\x18\x01 \x01(\v2*.sdodev.contracts.v1alpha1.IncidentClosureR\aclosure\x12'\n" +
 	"\x0fproposal_commit\x18\x04 \x01(\tR\x0eproposalCommit\x12%\n" +
 	"\x0eoutcome_commit\x18\x05 \x01(\tR\routcomeCommit\x12]\n" +
@@ -884,7 +884,7 @@ const file_sdodev_contracts_v1alpha1_worker_proto_rawDesc = "" +
 	"\n" +
 	"compaction\x18\x10 \x03(\tR\n" +
 	"compaction:\xcb\x01\xbaH\xc7\x01\x1a\xc4\x01\n" +
-	",reflection_request.diagnostics_only_on_retry\x12Lprevious_diagnostics are carried exactly by a retry (validation_attempt > 1)\x1aF(this.validation_attempt > 1) == (size(this.previous_diagnostics) > 0)J\x04\b\x02\x10\x03J\x04\b\x03\x10\x04J\x04\b\r\x10\x0eR\foutcome_jsonR\x12prior_outcome_jsonR\x05depth\"\xf3\x04\n" +
+	",reflection_request.diagnostics_only_on_retry\x12Lprevious_diagnostics are carried exactly by a retry (validation_attempt > 1)\x1aF(this.validation_attempt > 1) == (size(this.previous_diagnostics) > 0)J\x04\b\x11\x10\x12J\x04\b\x02\x10\x03J\x04\b\x03\x10\x04J\x04\b\r\x10\x0eR\x0emetrics_sourceR\foutcome_jsonR\x12prior_outcome_jsonR\x05depth\"\xf3\x04\n" +
 	"\x10ReflectionResult\x12\x18\n" +
 	"\asummary\x18\x01 \x01(\tR\asummary\x12O\n" +
 	"\x11learning_decision\x18\x02 \x01(\tB\"\xbaH\x1fr\x1dR\aupdatedR\tno_changeR\asdk_gapR\x10learningDecision\x12(\n" +
@@ -921,7 +921,7 @@ var file_sdodev_contracts_v1alpha1_worker_proto_goTypes = []any{
 	(*ReflectionResult)(nil),            // 8: sdodev.contracts.v1alpha1.ReflectionResult
 	(*anypb.Any)(nil),                   // 9: google.protobuf.Any
 	(*timestamppb.Timestamp)(nil),       // 10: google.protobuf.Timestamp
-	(*MetricsSource)(nil),               // 11: sdodev.contracts.v1alpha1.MetricsSource
+	(*TelemetryContext)(nil),            // 11: sdodev.contracts.v1alpha1.TelemetryContext
 	(*IncidentClosure)(nil),             // 12: sdodev.contracts.v1alpha1.IncidentClosure
 	(*OperationalMemorySnapshot)(nil),   // 13: sdodev.contracts.v1alpha1.OperationalMemorySnapshot
 	(*OutcomeRecord)(nil),               // 14: sdodev.contracts.v1alpha1.OutcomeRecord
@@ -939,7 +939,7 @@ var file_sdodev_contracts_v1alpha1_worker_proto_depIdxs = []int32{
 	4,  // 4: sdodev.contracts.v1alpha1.AgentTask.workspace:type_name -> sdodev.contracts.v1alpha1.ProposalWorkspace
 	10, // 5: sdodev.contracts.v1alpha1.AgentTask.deadline:type_name -> google.protobuf.Timestamp
 	9,  // 6: sdodev.contracts.v1alpha1.AgentResult.response:type_name -> google.protobuf.Any
-	11, // 7: sdodev.contracts.v1alpha1.ReflectionRequest.metrics_source:type_name -> sdodev.contracts.v1alpha1.MetricsSource
+	11, // 7: sdodev.contracts.v1alpha1.ReflectionRequest.telemetry:type_name -> sdodev.contracts.v1alpha1.TelemetryContext
 	12, // 8: sdodev.contracts.v1alpha1.ReflectionRequest.closure:type_name -> sdodev.contracts.v1alpha1.IncidentClosure
 	13, // 9: sdodev.contracts.v1alpha1.ReflectionRequest.memory_snapshot:type_name -> sdodev.contracts.v1alpha1.OperationalMemorySnapshot
 	14, // 10: sdodev.contracts.v1alpha1.ReflectionRequest.outcome:type_name -> sdodev.contracts.v1alpha1.OutcomeRecord

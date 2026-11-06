@@ -41,7 +41,7 @@ controller evaluates one configured namespace: never embed the literal "default"
 DetectionContext.Namespace() for absent resources and each observed object's Namespace otherwise.
 
 ${traffic_authoring}
-${metrics_authoring}
+${telemetry_authoring}
 Run `sdo-operator memory ls` to inspect memory and `sdo-operator memory check` after editing; fix every named
 diagnostic and rerun until it exits zero. The environment is set to SDO_ACTOR=health_judge, SDO_PHASE=initial
 and the accepted SDO_BASE_COMMIT; never override it. The Go broker repeats the same validation.

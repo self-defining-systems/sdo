@@ -397,7 +397,7 @@ func (x *ImageBuild) GetDockerfilePath() string {
 // The independent health judge authors diagnostics after source is accepted.
 type HealthJudgeRequest struct {
 	state                       protoimpl.MessageState `protogen:"open.v1"`
-	MetricsSource               *MetricsSource         `protobuf:"bytes,12,opt,name=metrics_source,json=metricsSource,proto3" json:"metrics_source,omitempty"`
+	Telemetry                   *TelemetryContext      `protobuf:"bytes,13,opt,name=telemetry,proto3" json:"telemetry,omitempty"`
 	Application                 string                 `protobuf:"bytes,1,opt,name=application,proto3" json:"application,omitempty"`
 	Namespace                   string                 `protobuf:"bytes,2,opt,name=namespace,proto3" json:"namespace,omitempty"`
 	HealthObjective             string                 `protobuf:"bytes,3,opt,name=health_objective,json=healthObjective,proto3" json:"health_objective,omitempty"`
@@ -445,9 +445,9 @@ func (*HealthJudgeRequest) Descriptor() ([]byte, []int) {
 	return file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDescGZIP(), []int{5}
 }
 
-func (x *HealthJudgeRequest) GetMetricsSource() *MetricsSource {
+func (x *HealthJudgeRequest) GetTelemetry() *TelemetryContext {
 	if x != nil {
-		return x.MetricsSource
+		return x.Telemetry
 	}
 	return nil
 }
@@ -713,9 +713,9 @@ const file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDesc = "" +
 	"ImageBuild\x12\x14\n" +
 	"\x05image\x18\x01 \x01(\tR\x05image\x12!\n" +
 	"\fcontext_path\x18\x02 \x01(\tR\vcontextPath\x12'\n" +
-	"\x0fdockerfile_path\x18\x03 \x01(\tR\x0edockerfilePath\"\xed\x06\n" +
-	"\x12HealthJudgeRequest\x12O\n" +
-	"\x0emetrics_source\x18\f \x01(\v2(.sdodev.contracts.v1alpha1.MetricsSourceR\rmetricsSource\x12 \n" +
+	"\x0fdockerfile_path\x18\x03 \x01(\tR\x0edockerfilePath\"\xfd\x06\n" +
+	"\x12HealthJudgeRequest\x12I\n" +
+	"\ttelemetry\x18\r \x01(\v2+.sdodev.contracts.v1alpha1.TelemetryContextR\ttelemetry\x12 \n" +
 	"\vapplication\x18\x01 \x01(\tR\vapplication\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12)\n" +
 	"\x10health_objective\x18\x03 \x01(\tR\x0fhealthObjective\x124\n" +
@@ -727,8 +727,8 @@ const file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDesc = "" +
 	"\x12validation_attempt\x18\n" +
 	" \x01(\rR\x11validationAttempt\x12^\n" +
 	"\x14previous_diagnostics\x18\v \x03(\v2+.sdodev.contracts.v1alpha1.MemoryDiagnosticR\x13previousDiagnostics:\xcd\x01\xbaH\xc9\x01\x1a\xc6\x01\n" +
-	".health_judge_request.diagnostics_only_on_retry\x12Lprevious_diagnostics are carried exactly by a retry (validation_attempt > 1)\x1aF(this.validation_attempt > 1) == (size(this.previous_diagnostics) > 0)J\x04\b\t\x10\n" +
-	"R\x1bsource_topology_fingerprint\"\x92\x01\n" +
+	".health_judge_request.diagnostics_only_on_retry\x12Lprevious_diagnostics are carried exactly by a retry (validation_attempt > 1)\x1aF(this.validation_attempt > 1) == (size(this.previous_diagnostics) > 0)J\x04\b\f\x10\rJ\x04\b\t\x10\n" +
+	"R\x0emetrics_sourceR\x1bsource_topology_fingerprint\"\x92\x01\n" +
 	"\x0eSourceResource\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1c\n" +
@@ -769,7 +769,7 @@ var file_sdodev_contracts_v1alpha1_lifecycle_proto_goTypes = []any{
 	(*anypb.Any)(nil),                   // 9: google.protobuf.Any
 	(*DeploymentSource)(nil),            // 10: sdodev.contracts.v1alpha1.DeploymentSource
 	(*ImageSource)(nil),                 // 11: sdodev.contracts.v1alpha1.ImageSource
-	(*MetricsSource)(nil),               // 12: sdodev.contracts.v1alpha1.MetricsSource
+	(*TelemetryContext)(nil),            // 12: sdodev.contracts.v1alpha1.TelemetryContext
 	(*MemoryDiagnostic)(nil),            // 13: sdodev.contracts.v1alpha1.MemoryDiagnostic
 	(*OperationalArtifactProposal)(nil), // 14: sdodev.contracts.v1alpha1.OperationalArtifactProposal
 }
@@ -781,7 +781,7 @@ var file_sdodev_contracts_v1alpha1_lifecycle_proto_depIdxs = []int32{
 	10, // 4: sdodev.contracts.v1alpha1.DeploymentPlan.source:type_name -> sdodev.contracts.v1alpha1.DeploymentSource
 	11, // 5: sdodev.contracts.v1alpha1.DeploymentPlan.images:type_name -> sdodev.contracts.v1alpha1.ImageSource
 	4,  // 6: sdodev.contracts.v1alpha1.RawManifestStrategy.image_builds:type_name -> sdodev.contracts.v1alpha1.ImageBuild
-	12, // 7: sdodev.contracts.v1alpha1.HealthJudgeRequest.metrics_source:type_name -> sdodev.contracts.v1alpha1.MetricsSource
+	12, // 7: sdodev.contracts.v1alpha1.HealthJudgeRequest.telemetry:type_name -> sdodev.contracts.v1alpha1.TelemetryContext
 	6,  // 8: sdodev.contracts.v1alpha1.HealthJudgeRequest.source_resources:type_name -> sdodev.contracts.v1alpha1.SourceResource
 	13, // 9: sdodev.contracts.v1alpha1.HealthJudgeRequest.previous_diagnostics:type_name -> sdodev.contracts.v1alpha1.MemoryDiagnostic
 	14, // 10: sdodev.contracts.v1alpha1.HealthJudgeResult.artifact_proposal:type_name -> sdodev.contracts.v1alpha1.OperationalArtifactProposal

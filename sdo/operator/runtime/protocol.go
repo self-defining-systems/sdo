@@ -55,7 +55,7 @@ type PriorOutcomeEvidence struct {
 
 type IncidentRequest struct {
 	ExternalMessage        string
-	MetricsSource          *contracts.MetricsSource
+	Telemetry              *contracts.TelemetryContext
 	DisabledSetupDetectors []*contracts.DisabledSetupDetector
 	// NamespaceOnboarding is the namespace's installer record. Every incident of
 	// an onboarded namespace carries it; it does not mean onboarding is under way.

@@ -35,6 +35,8 @@ type Environment struct {
 	// MetricsPublishURL is the base URL applications may push OTLP metrics to,
 	// informational for agents; empty when the environment offers none.
 	MetricsPublishURL string `json:"metricsPublishUrl,omitempty"`
+	// Capabilities are the installer-granted cluster reads agents may rely on.
+	Capabilities []ClusterCapability `json:"capabilities,omitempty"`
 }
 
 // ParseEnvironment decodes and validates an environment document strictly.
@@ -102,6 +104,11 @@ func (e Environment) Validate() error {
 			if e.CredentialDir == "" {
 				return fmt.Errorf("telemetry environment source %q names credential %q but the environment has no credentialDir", b.ID, b.Endpoint.Credential)
 			}
+		}
+	}
+	for _, c := range e.Capabilities {
+		if !c.Valid() {
+			return fmt.Errorf("telemetry environment capability %q is not a known cluster capability", c)
 		}
 	}
 	if e.CredentialDir != "" && !filepath.IsAbs(e.CredentialDir) {

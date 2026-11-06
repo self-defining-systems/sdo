@@ -169,7 +169,8 @@ type Coordinator struct {
 }
 
 type Config struct {
-	MetricsSource                                        *contracts.MetricsSource
+	// Telemetry is the environment's telemetry context for the judge.
+	Telemetry                                            *contracts.TelemetryContext
 	OperationID, Application, Namespace, HealthObjective string
 	RegistryHost                                         string
 	// Sources are the upstream sources to follow, published with the human
@@ -774,7 +775,7 @@ func (c Coordinator) judgeOnce(ctx context.Context, id string, cfg Config, attem
 	if err != nil {
 		return broker.Receipt{}, false, "", nil, fmt.Errorf("read accepted source inventory: %w", err)
 	}
-	request := &contracts.HealthJudgeRequest{MetricsSource: cfg.MetricsSource, Application: cfg.Application, Namespace: cfg.Namespace, HealthObjective: cfg.HealthObjective, AcceptedSourceCommit: sourceCommit, CorrectionFeedback: feedback, Attempt: uint32(attempt), ArchitectureSummaryMarkdown: architectureSummary, SourceResources: facts.Resources, ValidationAttempt: validationAttempt, PreviousDiagnostics: previous}
+	request := &contracts.HealthJudgeRequest{Telemetry: cfg.Telemetry, Application: cfg.Application, Namespace: cfg.Namespace, HealthObjective: cfg.HealthObjective, AcceptedSourceCommit: sourceCommit, CorrectionFeedback: feedback, Attempt: uint32(attempt), ArchitectureSummaryMarkdown: architectureSummary, SourceResources: facts.Resources, ValidationAttempt: validationAttempt, PreviousDiagnostics: previous}
 	taskID := id
 	if validationAttempt > 1 {
 		// A retry is a new task: its Job and request must not collide with the

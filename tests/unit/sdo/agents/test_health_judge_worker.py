@@ -105,9 +105,12 @@ def test_judge_authors_final_files_in_writable_session(
     task = parse_json(judge_task(tmp_path).read_text(), AgentTask())
     request = HealthJudgeRequest()
     assert task.request.Unpack(request)
-    request.metrics_source.query_url = "http://metrics"
-    request.metrics_source.annotated_pod_scraping = True
-    request.metrics_source.otlp_metrics_url = "http://metrics/api/v1/otlp/v1/metrics"
+    request.telemetry.mode = "open"
+    source = request.telemetry.sources.add(
+        id="prom", kinds=["metrics"], adapter="prometheus", dialect="PromQL", default=True, endpoint="http://metrics"
+    )
+    source.publish.scrape_annotations = True
+    source.publish.otlp_metrics_url = "http://metrics/api/v1/otlp/v1/metrics"
     if retry:
         request.validation_attempt = 2
         request.previous_diagnostics.add(rule="detector.manifest", path="m.yaml", line=2, message="bad", hint="fix")

@@ -128,7 +128,7 @@ def run_reflection_task(
     history = list(request.prior_outcomes)
     closure = IncidentClosure()
     closure.CopyFrom(request.closure)
-    closure.request.metrics_source.CopyFrom(request.metrics_source)
+    closure.request.telemetry.CopyFrom(request.telemetry)
     if closure.HasField("result"):
         # The request carries the responder's raw evidence once, in the outcome derived from it.
         if not closure.result.program_runs:

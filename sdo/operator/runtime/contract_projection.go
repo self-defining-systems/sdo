@@ -207,7 +207,7 @@ func stateChangesContract(state *StateChanges) *contracts.StateChanges {
 func incidentRequestContract(request IncidentRequest) (*contracts.IncidentRequest, error) {
 	result := &contracts.IncidentRequest{
 		ExternalMessage:       request.ExternalMessage,
-		MetricsSource:         request.MetricsSource,
+		Telemetry:             request.Telemetry,
 		ObservationGeneration: request.ObservationGeneration,
 		DetectedAt:            optionalTimestamp(request.DetectedAt),
 		SchemaVersion:         request.SchemaVersion, Application: request.Application, Namespace: request.Namespace,
@@ -546,7 +546,7 @@ func incidentRequestState(message *contracts.IncidentRequest) *IncidentRequest {
 	}
 	result := &IncidentRequest{
 		ExternalMessage:        message.GetExternalMessage(),
-		MetricsSource:          message.GetMetricsSource(),
+		Telemetry:              message.GetTelemetry(),
 		PriorResponseProgress:  cloneResponseProgress(message.GetPriorResponseProgress()),
 		ObservationGeneration:  message.GetObservationGeneration(),
 		DetectedAt:             controllerTime(message.GetDetectedAt()),

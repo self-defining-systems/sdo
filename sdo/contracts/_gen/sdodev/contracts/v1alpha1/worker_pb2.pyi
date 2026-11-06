@@ -106,8 +106,8 @@ class AgentResult(_message.Message):
     def __init__(self, schema_version: _Optional[str] = ..., task_id: _Optional[str] = ..., status: _Optional[str] = ..., response: _Optional[_Union[_any_pb2.Any, _Mapping]] = ..., proposal_id: _Optional[str] = ..., error_summary: _Optional[str] = ..., failure_reason: _Optional[str] = ...) -> None: ...
 
 class ReflectionRequest(_message.Message):
-    __slots__ = ("metrics_source", "closure", "proposal_commit", "outcome_commit", "memory_snapshot", "session_mode", "guidance", "outcome", "prior_outcomes", "validation_attempt", "previous_diagnostics", "cause_work", "unassigned_work", "compaction")
-    METRICS_SOURCE_FIELD_NUMBER: _ClassVar[int]
+    __slots__ = ("telemetry", "closure", "proposal_commit", "outcome_commit", "memory_snapshot", "session_mode", "guidance", "outcome", "prior_outcomes", "validation_attempt", "previous_diagnostics", "cause_work", "unassigned_work", "compaction")
+    TELEMETRY_FIELD_NUMBER: _ClassVar[int]
     CLOSURE_FIELD_NUMBER: _ClassVar[int]
     PROPOSAL_COMMIT_FIELD_NUMBER: _ClassVar[int]
     OUTCOME_COMMIT_FIELD_NUMBER: _ClassVar[int]
@@ -121,7 +121,7 @@ class ReflectionRequest(_message.Message):
     CAUSE_WORK_FIELD_NUMBER: _ClassVar[int]
     UNASSIGNED_WORK_FIELD_NUMBER: _ClassVar[int]
     COMPACTION_FIELD_NUMBER: _ClassVar[int]
-    metrics_source: _messages_pb2.MetricsSource
+    telemetry: _messages_pb2.TelemetryContext
     closure: _messages_pb2.IncidentClosure
     proposal_commit: str
     outcome_commit: str
@@ -135,7 +135,7 @@ class ReflectionRequest(_message.Message):
     cause_work: _containers.RepeatedCompositeFieldContainer[_program_pb2.ReflectionCauseWork]
     unassigned_work: _containers.RepeatedCompositeFieldContainer[_program_pb2.ReflectionWorkItem]
     compaction: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, metrics_source: _Optional[_Union[_messages_pb2.MetricsSource, _Mapping]] = ..., closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., proposal_commit: _Optional[str] = ..., outcome_commit: _Optional[str] = ..., memory_snapshot: _Optional[_Union[_messages_pb2.OperationalMemorySnapshot, _Mapping]] = ..., session_mode: _Optional[str] = ..., guidance: _Optional[str] = ..., outcome: _Optional[_Union[_outcome_pb2.OutcomeRecord, _Mapping]] = ..., prior_outcomes: _Optional[_Iterable[_Union[_outcome_pb2.OutcomeRecord, _Mapping]]] = ..., validation_attempt: _Optional[int] = ..., previous_diagnostics: _Optional[_Iterable[_Union[_memory_diagnostic_pb2.MemoryDiagnostic, _Mapping]]] = ..., cause_work: _Optional[_Iterable[_Union[_program_pb2.ReflectionCauseWork, _Mapping]]] = ..., unassigned_work: _Optional[_Iterable[_Union[_program_pb2.ReflectionWorkItem, _Mapping]]] = ..., compaction: _Optional[_Iterable[str]] = ...) -> None: ...
+    def __init__(self, telemetry: _Optional[_Union[_messages_pb2.TelemetryContext, _Mapping]] = ..., closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., proposal_commit: _Optional[str] = ..., outcome_commit: _Optional[str] = ..., memory_snapshot: _Optional[_Union[_messages_pb2.OperationalMemorySnapshot, _Mapping]] = ..., session_mode: _Optional[str] = ..., guidance: _Optional[str] = ..., outcome: _Optional[_Union[_outcome_pb2.OutcomeRecord, _Mapping]] = ..., prior_outcomes: _Optional[_Iterable[_Union[_outcome_pb2.OutcomeRecord, _Mapping]]] = ..., validation_attempt: _Optional[int] = ..., previous_diagnostics: _Optional[_Iterable[_Union[_memory_diagnostic_pb2.MemoryDiagnostic, _Mapping]]] = ..., cause_work: _Optional[_Iterable[_Union[_program_pb2.ReflectionCauseWork, _Mapping]]] = ..., unassigned_work: _Optional[_Iterable[_Union[_program_pb2.ReflectionWorkItem, _Mapping]]] = ..., compaction: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class ReflectionResult(_message.Message):
     __slots__ = ("summary", "learning_decision", "no_change_reason", "proposed_artifact_ids", "artifact_proposal", "sdk_gaps", "decline_reason")

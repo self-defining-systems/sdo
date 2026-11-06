@@ -588,6 +588,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err != nil {
 		return err
 	}
+	telemetryContext, err := telemetrySources.context(initialTelemetrySources)
+	if err != nil {
+		return err
+	}
 	replayMode, err := settings.Replay(*replay)
 	if err != nil {
 		return err
@@ -824,7 +828,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if options.NativeBroker != nil {
 		corpusSessionRoot = options.NativeBroker.SessionRoot
 	}
-	controller, err = NewController(ControllerConfig{ExternalIncidentsOnly: *externalIncidents, MetricsSource: telemetrySources.metricsSource(),
+	controller, err = NewController(ControllerConfig{ExternalIncidentsOnly: *externalIncidents, Telemetry: telemetryContext,
 		CodePath: selectedPathConfig, CodePathRegistry: codePathRegistry,
 		Application: *application, Namespace: *namespace,
 		SourceCommit: resolvedSourceCommit, DeployedCommit: resolvedDeployedCommit,
@@ -923,6 +927,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			var next SnapshotProvider = TrafficSnapshotProvider{Base: kubernetesCache, Observer: trafficObserver, Reachability: reachabilityObserver}
 			next, nextMetrics, err := observations.compose(next, remote.Detectors, remote.TelemetrySources)
 			if err != nil {
+				return err
+			}
+			if remote.Telemetry, err = observations.Telemetry.context(remote.TelemetrySources); err != nil {
 				return err
 			}
 			// Detectors keep reading through the same capped runtime view after a swap.

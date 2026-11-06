@@ -52,7 +52,7 @@ class HealthJudgeArtifact(HealthJudgeDraft):
 TRAFFIC_AUTHORING = render_prompt("health_judge", "traffic_authoring", part="health_judge.traffic_authoring")
 
 #: Metrics are an optional detector input, present only when an operator configured a metrics source.
-METRICS_AUTHORING = render_prompt("health_judge", "metrics_authoring", part="health_judge.metrics_authoring")
+TELEMETRY_AUTHORING = render_prompt("health_judge", "telemetry_authoring", part="health_judge.telemetry_authoring")
 
 
 class LifecycleAgentBackend(Protocol):
@@ -122,7 +122,7 @@ class CodexLifecycleBackend:
             ),
             feedback=feedback,
             traffic_authoring=TRAFFIC_AUTHORING,
-            metrics_authoring=METRICS_AUTHORING,
+            telemetry_authoring=TELEMETRY_AUTHORING,
         )
         draft, session_id = self._execute(repository, prompt, HealthJudgeDraft)
         return HealthJudgeArtifact(**draft.model_dump(), session_id=session_id)

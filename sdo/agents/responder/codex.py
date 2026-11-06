@@ -11,7 +11,6 @@ from google.protobuf import json_format
 from libs.agent_cli.structured import AGENT_PROVIDERS, StructuredTurnError, StructuredTurnInterrupted, turn_usage
 from libs.agent_cli.usage_checkpoint import UsageCheckpoint
 from sdo.agents.code_paths import agent_guidance
-from sdo.agents.metrics_context import metrics_context
 from sdo.agents.prompt_templates import RenderedPrompt, named_prompt, render_prompt
 from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
 from sdo.agents.provider import MODEL_ENV, agent_effort, resolve_agent
@@ -29,6 +28,7 @@ from sdo.agents.responder.session_turn import (
     session_turn_options,
     unwrap_branch,
 )
+from sdo.agents.telemetry_context import telemetry_context
 from sdo.contracts import (
     IncidentRequest,
     IncidentResult,
@@ -288,7 +288,10 @@ def _responder_prompt(request: IncidentRequest, *, incident_data: str) -> Render
         prompt += late_findings_guidance(request)
     extra = "\n".join(
         part
-        for part in (metrics_context(request.metrics_source), os.getenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "").strip())
+        for part in (
+            telemetry_context(request.telemetry, "responder"),
+            os.getenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "").strip(),
+        )
         if part
     )
     if extra:

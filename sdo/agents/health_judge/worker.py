@@ -15,7 +15,6 @@ from sdo.agents.lifecycle import (
     TopologyResourceDTO,
 )
 from sdo.agents.memory_diagnostics import render_validation_feedback
-from sdo.agents.metrics_context import metrics_context
 from sdo.agents.provider import resolve_agent
 from sdo.agents.responder import (
     KubernetesResultPublisher,
@@ -24,6 +23,7 @@ from sdo.agents.responder import (
     record_worker_failure,
     records_worker_failure,
 )
+from sdo.agents.telemetry_context import telemetry_context
 from sdo.contracts import (
     SCHEMA_VERSION,
     AgentResult,
@@ -94,7 +94,7 @@ def _judge_feedback(request: HealthJudgeRequest) -> str | None:
     """Whole-attempt verifier feedback plus Go's typed broker rejection diagnostics."""
 
     parts = [
-        metrics_context(request.metrics_source),
+        telemetry_context(request.telemetry, "designer"),
         request.correction_feedback,
         render_validation_feedback(request.validation_attempt or 1, request.previous_diagnostics),
     ]
