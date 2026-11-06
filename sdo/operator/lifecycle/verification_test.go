@@ -100,6 +100,7 @@ type fakeWorkers struct {
 	mu        sync.Mutex
 	deployer  []*contracts.SourceDeploymentRequest
 	judgeRuns int
+	plan      *contracts.DeploymentPlan // proposed instead of the default legacy plan when set
 }
 
 func (w *fakeWorkers) Execute(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
@@ -110,7 +111,11 @@ func (w *fakeWorkers) Execute(_ context.Context, task *contracts.AgentTask) (*co
 	if err := task.GetRequest().UnmarshalTo(deployerRequest); err == nil {
 		w.deployer = append(w.deployer, deployerRequest)
 		config, _ := anypb.New(&contracts.RawManifestStrategy{})
-		response = &contracts.SourceDeploymentResult{Proposed: true, AgentSessionId: "session", Plan: &contracts.DeploymentPlan{StrategyId: "raw", StrategyConfig: config}}
+		plan := &contracts.DeploymentPlan{StrategyId: "raw", StrategyConfig: config}
+		if w.plan != nil {
+			plan = w.plan
+		}
+		response = &contracts.SourceDeploymentResult{Proposed: true, AgentSessionId: "session", Plan: plan}
 	} else {
 		w.judgeRuns++
 		response = &contracts.HealthJudgeResult{Authored: true, DetectorIds: []string{"detector"}, AgentSessionId: "session"}
@@ -131,10 +136,12 @@ func (w *fakeWorkers) deployerAttempts() int {
 type fakeReadiness struct {
 	errors []error // consumed one per ApplyAndVerify call
 	calls  int
+	plans  []*contracts.DeploymentPlan
 }
 
-func (r *fakeReadiness) ApplyAndVerify(context.Context, string, *contracts.DeploymentPlan) (lifecycle.DeploymentReceipt, error) {
+func (r *fakeReadiness) ApplyAndVerify(_ context.Context, _ string, plan *contracts.DeploymentPlan) (lifecycle.DeploymentReceipt, error) {
 	r.calls++
+	r.plans = append(r.plans, plan)
 	if len(r.errors) > 0 {
 		err := r.errors[0]
 		r.errors = r.errors[1:]
@@ -142,7 +149,7 @@ func (r *fakeReadiness) ApplyAndVerify(context.Context, string, *contracts.Deplo
 			return lifecycle.DeploymentReceipt{}, err
 		}
 	}
-	return lifecycle.DeploymentReceipt{ProposalTreeDigest: "tree", ObservedRevision: "rev", StrategyID: "raw", Images: []string{"img"}, ResourceIDs: []string{"deployment/app"}, Ready: true}, nil
+	return lifecycle.DeploymentReceipt{ProposalTreeDigest: "tree", ObservedRevision: "rev", StrategyID: plan.GetStrategyId(), Images: []string{"img"}, ResourceIDs: []string{"deployment/app"}, Ready: true}, nil
 }
 
 func (r *fakeReadiness) VerifyAccepted(_ context.Context, _, _ string, receipt lifecycle.DeploymentReceipt) (lifecycle.DeploymentReceipt, error) {
@@ -295,5 +302,32 @@ func TestTransientVerificationErrorRetriesTheEvaluation(t *testing.T) {
 	}
 	if h.verifier.calls != 2 || h.workers.deployerAttempts() != 1 {
 		t.Fatalf("verify calls=%d deployer attempts=%d", h.verifier.calls, h.workers.deployerAttempts())
+	}
+}
+
+func TestNewFormPlanIsTranslatedForTheDeploymentRegistry(t *testing.T) {
+	h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{clear}})
+	rawConfig, _ := anypb.New(&contracts.RawRenderConfig{Paths: []string{"k8s"}})
+	h.workers.plan = &contracts.DeploymentPlan{Source: &contracts.DeploymentSource{RendererId: "raw", Config: rawConfig}}
+	if _, err := h.coordinator.Run(context.Background(), config()); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.readiness.plans) != 1 || h.readiness.plans[0].GetSource() != nil || h.readiness.plans[0].GetStrategyId() != "raw-manifests-v1" {
+		t.Fatalf("registry saw %v, want the legacy raw strategy", h.readiness.plans)
+	}
+}
+
+func TestUndeployableNewFormPlanFeedsBackToTheDeployer(t *testing.T) {
+	h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{clear}})
+	kustomize, _ := anypb.New(&contracts.KustomizeRenderConfig{Path: "k"})
+	h.workers.plan = &contracts.DeploymentPlan{Source: &contracts.DeploymentSource{RendererId: "kustomize", Config: kustomize}}
+	if _, err := h.coordinator.Run(context.Background(), config()); err == nil {
+		t.Fatal("run succeeded with a plan that is not deployable yet")
+	}
+	if h.readiness.calls != 0 {
+		t.Fatalf("registry called %d times for a rejected plan", h.readiness.calls)
+	}
+	if h.workers.deployerAttempts() < 2 || !strings.Contains(h.workers.deployer[1].GetCorrectionFeedback(), "S3-13b") {
+		t.Fatalf("deployer attempts=%d, feedback lacks the rejection", h.workers.deployerAttempts())
 	}
 }

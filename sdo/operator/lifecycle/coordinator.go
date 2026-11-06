@@ -322,14 +322,18 @@ func (c Coordinator) deploy(ctx context.Context, id string, cfg Config, attempt 
 		}
 		return broker.Receipt{}, DeploymentReceipt{}, false, err.Error(), nil
 	}
-	if !response.GetProposed() || strings.TrimSpace(response.GetAgentSessionId()) == "" ||
-		response.GetPlan() == nil || response.GetPlan().GetStrategyId() == "" || response.GetPlan().GetStrategyConfig() == nil {
+	if !response.GetProposed() || strings.TrimSpace(response.GetAgentSessionId()) == "" || response.GetPlan() == nil {
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return broker.Receipt{}, DeploymentReceipt{}, false, "deployment worker did not propose a complete source plan: " + response.GetSummary(), nil
 	}
+	plan, err := admitPlan(response.GetPlan())
+	if err != nil {
+		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
+		return broker.Receipt{}, DeploymentReceipt{}, false, "deployment worker did not propose a deployable source plan: " + err.Error(), nil
+	}
 	var readiness DeploymentReceipt
 	err = c.retryInfrastructure(ctx, cfg, "independent source deployment", func() (err error) {
-		readiness, err = c.Readiness.ApplyAndVerify(ctx, proposal.Path, response.GetPlan())
+		readiness, err = c.Readiness.ApplyAndVerify(ctx, proposal.Path, plan)
 		return err
 	})
 	if err != nil {
@@ -344,7 +348,7 @@ func (c Coordinator) deploy(ctx context.Context, id string, cfg Config, attempt 
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return broker.Receipt{}, DeploymentReceipt{}, false, "independent source deployment returned incomplete evidence", nil
 	}
-	if readiness.StrategyID != response.GetPlan().GetStrategyId() {
+	if readiness.StrategyID != plan.GetStrategyId() {
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return broker.Receipt{}, DeploymentReceipt{}, false, "independent deployment strategy differs from proposal", nil
 	}
