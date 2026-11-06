@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
@@ -100,5 +102,35 @@ func TestOnboardingClaimAlwaysReachesTerminalRecord(t *testing.T) {
 				t.Fatal("failed attempt granted authority")
 			}
 		})
+	}
+}
+
+// A firing health detector while a workload rolls out is the rollout, not a
+// contradiction of the install window: the install waits for the rollout.
+func TestOnboardingWaitsForARolloutInsteadOfRejecting(t *testing.T) {
+	d := controllerDetector("workload-health", time.Second, sdk.Finding{RuleID: "workload-deployment-unavailable", Status: sdk.FindingActive})
+	d.spec.Class = sdk.DetectorClassHealth
+	d.spec.Owner = sdk.DetectorOwnerHealthJudge
+	c := &Controller{onboardingReachability: &onboardingReachabilityState{}, detectors: map[string]sdk.Detector{d.spec.ID: d}}
+	one := int32(1)
+	rolling := appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "web", Generation: 2},
+		Spec:   appsv1.DeploymentSpec{Replicas: &one},
+		Status: appsv1.DeploymentStatus{ObservedGeneration: 2, Replicas: 2, UpdatedReplicas: 1}}
+	if c.checkOnboardingHealth(context.Background(), sdktest.Snapshot{DeploymentList: []appsv1.Deployment{rolling}}) {
+		t.Fatal("a rolling workload authorized onboarding")
+	}
+	if c.onboardingReachability.invalid {
+		t.Fatalf("a rollout rejected the install window: %s", c.onboardingReachability.invalidReason)
+	}
+	if !strings.Contains(c.onboardingReachability.waitReason, "Deployment/web") {
+		t.Fatalf("wait reason does not name the rollout: %q", c.onboardingReachability.waitReason)
+	}
+	settled := rolling
+	settled.Status.Replicas = 1
+	if c.checkOnboardingHealth(context.Background(), sdktest.Snapshot{DeploymentList: []appsv1.Deployment{settled}}) {
+		t.Fatal("unhealthy settled workload authorized onboarding")
+	}
+	if !c.onboardingReachability.invalid {
+		t.Fatal("a firing detector outside any rollout must still contradict the install")
 	}
 }
