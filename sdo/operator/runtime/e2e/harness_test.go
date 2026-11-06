@@ -234,9 +234,36 @@ func (w *World) waitFor(limit time.Duration, what string, check func() bool) {
 	deadline := time.Now().Add(limit)
 	for !check() {
 		if time.Now().After(deadline) {
+			w.logControllerTail(40)
 			w.T.Fatalf("timed out after %s waiting for %s", limit, what)
 		}
 		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// logControllerTail prints the end of the controller's output (and the state of its Pods) so a
+// timeout on a hosted runner, where the run directory is gone, says what the controller was doing.
+func (w *World) logControllerTail(n int) {
+	w.T.Helper()
+	pods, err := w.Cluster.Client.CoreV1().Pods(ControlNamespace).List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		w.T.Logf("controller diagnosis: listing pods: %v", err)
+		return
+	}
+	for _, pod := range pods.Items {
+		w.T.Logf("controller diagnosis: pod %s phase=%s", pod.Name, pod.Status.Phase)
+		for _, status := range append(append([]corev1.ContainerStatus{}, pod.Status.InitContainerStatuses...), pod.Status.ContainerStatuses...) {
+			w.T.Logf("controller diagnosis:   container %s ready=%v state=%+v", status.Name, status.Ready, status.State)
+		}
+	}
+	for _, name := range w.ControllerPods() {
+		lines := w.Kubelet.Run.Lines(ControlNamespace, name, "controller")
+		if len(lines) > n {
+			lines = lines[len(lines)-n:]
+		}
+		for _, line := range lines {
+			w.T.Logf("controller diagnosis: %s: %s", name, line.Text)
+		}
 	}
 }
 
