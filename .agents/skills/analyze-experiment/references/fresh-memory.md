@@ -15,7 +15,7 @@ lane kubeconfig as `<kubeconfig>.<namespace>.last-injection.json`, independently
 Missing, malformed or pending injection state forces tier 2; a seeded first-try record is never lane history.
 The receipt also records
 `tier2_reason`, `tier2_namespaces` (deleted with their PVCs before the redeploy) and `force_finalized`
-(`namespace/kind/name` of objects whose finalizers the wipe cleared so a Terminating namespace could finish). Toy lanes still stop the runtime and run
+(`namespace/kind/name` of objects whose finalizers the wipe cleared so a Terminating namespace could finish) and `helpers_removed` (`kind/name` of foreign helper pods and workloads a prior row left in `sregym-injector`, deleted at row start). Toy lanes still stop the runtime and run
 `sdo-operator reset-control-state --control-namespace <app>-sdo` before install; it deletes only the three
 SDO-managed onboarding ConfigMaps and the controller checkpoint and never reads Secrets.
 The next confirmed healthy install evaluation must create a new reference;
