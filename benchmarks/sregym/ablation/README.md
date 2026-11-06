@@ -3,6 +3,7 @@
 Generate one of `full`, `detectors-only`, or `playbooks-only` in an isolated
 checkout outside this repository. The command audits the whole accepted tree
 with replay off before pushing. Existing remote branches are never force pushed.
+The output branch defaults to `ablate/20261103-<arm>`; `--branch` names another (for example a new date).
 
 ```bash
 SDO_OPERATOR_ROOT="$PWD/sdo/operator" uv run python -m benchmarks.sregym.ablation \
@@ -26,7 +27,7 @@ separate fastloop concerns.
 ## Repeat runs with fixed memory
 
 `fastloop run --agent sdo --ablation-arm {full,detectors-only,playbooks-only}` fetches
-`ablate/20261103-<arm>` from the problem application's private memory repository,
+`ablate/20261103-<arm>` (or the branch named by `--ablation-branch`) from the problem application's private memory repository,
 pins the row-start reset to that commit, forces `--frozen-memory` and replay off,
 and installs the supplied memory without deployment or judge agents. Use a
 private lane and its credentials hook; shared writers and warm-controller reuse
@@ -35,7 +36,7 @@ proof. The fetched revision is the setup-lineage boundary as well as the restore
 offline variant commits are inputs, and subsequent setup commits still require
 broker validation. It is recorded in `ablation-memory.json`; rows carry
 `ablation_arm`. Playbooks-only selects external incident admission: after injection
-completes the benchmark sends only the generic alert and namespace. Detectors,
+completes the benchmark sends only the generic page (`operator page: users of <app> report errors`) and namespace. Detectors,
 startup health/traffic gates, automatic stages and reflection are disabled. The
 responder uses live reads and may run programs; its completed result ends the
 response, then the benchmark oracle grades. The private outcome stays unconfirmed

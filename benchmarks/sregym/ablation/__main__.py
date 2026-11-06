@@ -13,7 +13,9 @@ from benchmarks.sregym.memory_cli import artifact_ids, read_listing
 from benchmarks.sregym.repository_git import host_git_command
 
 
-def generate(repository: str, source_branch: str, arm: str, directory: Path, *, push: bool) -> dict[str, object]:
+def generate(
+    repository: str, source_branch: str, arm: str, directory: Path, *, push: bool, branch: str | None = None
+) -> dict[str, object]:
     """Clone the named remote revision; publish only after a clean accepted audit."""
     if arm not in ARMS:
         raise ValueError(f"unknown ablation arm: {arm}")
@@ -29,7 +31,7 @@ def generate(repository: str, source_branch: str, arm: str, directory: Path, *, 
         return subprocess.check_output(host_git_command(directory, *args), text=True, timeout=120).strip()
 
     source = git("rev-parse", "HEAD")
-    branch = f"ablate/20261103-{arm}"
+    branch = branch or f"ablate/20261103-{arm}"
     git("switch", "-c", branch)
     edits = transform(directory, arm)
     git("add", "--", ".sdo")
@@ -65,11 +67,14 @@ def main() -> None:
     parser.add_argument("--repository", required=True)
     parser.add_argument("--source-branch", required=True)
     parser.add_argument("--arm", choices=ARMS, required=True)
+    parser.add_argument("--branch", help="output branch name (default ablate/20261103-<arm>)")
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--push", action="store_true")
     args = parser.parse_args()
-    report = generate(args.repository, args.source_branch, args.arm, args.directory.resolve(), push=args.push)
+    report = generate(
+        args.repository, args.source_branch, args.arm, args.directory.resolve(), push=args.push, branch=args.branch
+    )
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(report, indent=2) + "\n")
 

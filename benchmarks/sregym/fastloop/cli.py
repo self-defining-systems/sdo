@@ -1847,6 +1847,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--replay", choices=("on", "off"), default="on", help="corpus capture and memory replay")
     run.add_argument("--ablation-arm", choices=("full", "detectors-only", "playbooks-only"))
     run.add_argument(
+        "--ablation-branch", help="variant branch to fetch (default ablate/20261103-<arm>); the branch carries its date"
+    )
+    run.add_argument(
         "--ablation-repository", help="override the per-app variant repository (toy proof uses a local repo)"
     )
     run.add_argument("--frozen-memory", action="store_true", help="keep closure evidence private and disable learning")
