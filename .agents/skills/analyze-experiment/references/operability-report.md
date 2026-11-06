@@ -37,7 +37,7 @@ and the responder's in an advance; `scope`, `allowlist`, `budget`, `environment`
 `detector_fault`, `probe_unavailable` are the designer's; `source_fault` is the deployer's in onboarding and the
 responder's in an advance; `infrastructure` is retried without costing an attempt; `attribution` is an SDO defect.
 Two terminal causes end a lifecycle agent task without another round: `agent_not_converging` (the judge or deployer
-was rejected twice in a row for the same `rule@path` set, or spent its retry budget; the decision owner is the
+was rejected twice in a row with the same normalized diagnostics (rule, path, message), or spent its retry budget; the decision owner is the
 agent's role, `designer` or `deployer`, the check is `O5.agent_not_converging` / `O1.agent_not_converging`, and the
 detail names the repeated rules) and `base_invalid` (the accepted base fails the shared validator before any agent
 edit, owner `operator`, check `O5.base_invalid`, zero agent turns spent). Both reach the `SDO-OPERABILITY` stderr line

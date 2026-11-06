@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -95,35 +96,63 @@ func NewBaseInvalidError(commit string, diagnostics []*contracts.MemoryDiagnosti
 		OperabilityError: terminalStop(operability.OwnerOperator, operability.O5, "base_invalid", operability.CauseBaseInvalid, commit, "base fails validation before any agent edit: "+strings.Join(lines, "; "), paths)}
 }
 
-// rejectionSignature is the sorted set of "rule@path" a rejection carries, or
-// nil when the rejection says nothing about the agent's work: a lost worker is
-// infrastructure, and an operability-gate correction has its own discriminator
-// (reattribute) that turns a repeated designer firing into the application's
-// fault.
-func rejectionSignature(rejection *contracts.ProposalRejection) []string {
-	var set []string
+// rejectionSignature is what one rejection says about the agent's work: the
+// sorted full normalized diagnostics (rule, path, message) it carries, and the
+// sorted "rule@path" set for naming them. Both are nil when the rejection says
+// nothing about the agent's work: a lost worker is infrastructure, and an
+// operability-gate correction has its own discriminator (reattribute) that
+// turns a repeated designer firing into the application's fault.
+func rejectionSignature(rejection *contracts.ProposalRejection) (full, named []string) {
 	for _, d := range rejection.GetDiagnostics() {
 		rule := d.GetRule()
 		if strings.HasPrefix(rule, operabilityRulePrefix) || rule == vanishedWorkerRule || rule == jobFailedRule {
-			return nil
+			return nil, nil
 		}
 		key := rule + "@" + d.GetPath()
-		if !slices.Contains(set, key) {
-			set = append(set, key)
+		if !slices.Contains(named, key) {
+			named = append(named, key)
+		}
+		if detail := key + ": " + normalizeDiagnosticMessage(d.GetMessage()); !slices.Contains(full, detail) {
+			full = append(full, detail)
 		}
 	}
-	slices.Sort(set)
-	return set
+	slices.Sort(full)
+	slices.Sort(named)
+	return full, named
+}
+
+var (
+	volatileTimestamp = regexp.MustCompile(`\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?`)
+	volatileDigest    = regexp.MustCompile(`\b(?:[0-9a-f]{7,64}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b`)
+	spaceRun          = regexp.MustCompile(`\s+`)
+)
+
+// normalizeDiagnosticMessage removes the parts of a diagnostic message that
+// change between identical failures: timestamps, commit and content digests,
+// UUIDs, and whitespace layout. Everything else (names, counts, wording) stays,
+// so a changed failure of the same rule at the same path is a different
+// rejection.
+func normalizeDiagnosticMessage(message string) string {
+	message = volatileTimestamp.ReplaceAllString(message, "<time>")
+	message = volatileDigest.ReplaceAllStringFunc(message, func(m string) string {
+		if strings.ContainsAny(m, "0123456789") {
+			return "<digest>"
+		}
+		return m
+	})
+	return strings.TrimSpace(spaceRun.ReplaceAllString(message, " "))
 }
 
 // judgeStop says whether the judge's rejection log ends the run: the retry
-// budget is spent, or the last two rejections name the same rules and paths.
+// budget is spent, or the last two rejections carry the same normalized
+// diagnostics (rule, path and message).
 func judgeStop(log *contracts.ProposalRejectionLog, commit string) error {
 	rejections := log.GetRejections()
 	if n := len(rejections); n >= 2 {
-		last := rejectionSignature(rejections[n-1])
-		if len(last) > 0 && slices.Equal(last, rejectionSignature(rejections[n-2])) {
-			return NewAgentNotConvergingError(operability.OwnerDesigner, commit, last, false)
+		last, named := rejectionSignature(rejections[n-1])
+		previous, _ := rejectionSignature(rejections[n-2])
+		if len(last) > 0 && slices.Equal(last, previous) {
+			return NewAgentNotConvergingError(operability.OwnerDesigner, commit, named, false)
 		}
 	}
 	if log.GetTerminal() {
