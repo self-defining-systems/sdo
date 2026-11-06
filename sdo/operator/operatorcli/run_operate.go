@@ -21,6 +21,7 @@ import (
 	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/operatorcli/catalog/renderers"
 	"sdo.dev/operator/operatorcli/internal/processio"
+	"sdo.dev/operator/telemetrycontext"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -83,7 +84,9 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	// The generic alerts detector and every detector query resolve against the
 	// effective telemetry sources, computed from this one policy by the broker
 	// and by the judge's own check.
-	config.Lifecycle.MetricsSource = metricsSource(config.Install.TelemetryEnvironment())
+	if config.Lifecycle.Telemetry, err = telemetrycontext.Build(telemetryRegistry(), config.Install.TelemetryEnvironment(), nil); err != nil {
+		return lifecycle.Result{}, err
+	}
 	repository.PlanCatalogs = planCatalogs()
 	repository.Telemetry, err = installTelemetryPolicy(config.Install, config.Lifecycle.Namespace, control)
 	if err != nil {

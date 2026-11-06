@@ -25,6 +25,9 @@ func (c *Controller) ReconfigureMemory(remote *RemoteMemory, provider SnapshotPr
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if remote.Telemetry != nil {
+		c.config.Telemetry = remote.Telemetry
+	}
 	entries := NewScheduler(remote.Detectors, at)
 	byID := map[string]sdk.Detector{}
 	specs := map[string]sdk.DetectorSpec{}

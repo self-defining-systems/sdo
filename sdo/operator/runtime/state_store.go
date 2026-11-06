@@ -35,8 +35,8 @@ func cloneIncidentRequest(request *IncidentRequest) *IncidentRequest {
 		return nil
 	}
 	copy := *request
-	if request.MetricsSource != nil {
-		copy.MetricsSource = proto.Clone(request.MetricsSource).(*contracts.MetricsSource)
+	if request.Telemetry != nil {
+		copy.Telemetry = proto.Clone(request.Telemetry).(*contracts.TelemetryContext)
 	}
 	// Lists stay lists when empty: the responder's and the broker's schemas
 	// reject null (a cold incident surfaces no playbook and no outcome).

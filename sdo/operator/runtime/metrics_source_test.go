@@ -166,15 +166,41 @@ func TestTelemetrySourcesRejectWhatCannotBeBound(t *testing.T) {
 	}
 }
 
-func TestMetricsSourceViewCarriesTheEnvironmentsDefaultAndPublishingBase(t *testing.T) {
+func TestTelemetryContextCarriesModeSourcesDialectAndPublishing(t *testing.T) {
+	var endpoint telemetry.Endpoint
+	var env telemetry.Env
+	registry := fakeRegistry(t, telemetrytest.NewFake(telemetry.KindMetrics, seriesFor("x")), &endpoint, &env)
 	environment := providedDefault(t.TempDir())
 	environment.MetricsPublishURL = "http://prom.test:9090/"
-	got := TelemetrySources{Environment: environment}.metricsSource()
-	if got.GetQueryUrl() != "http://prom.test:9090" || !got.GetAnnotatedPodScraping() || got.GetOtlpMetricsUrl() != "http://prom.test:9090/api/v1/otlp/v1/metrics" {
-		t.Fatalf("metrics source = %v", got)
+	environment.Capabilities = []telemetry.ClusterCapability{telemetry.CapPodDiscovery}
+	sources := TelemetrySources{Registry: registry, Environment: environment}
+	got, err := sources.context([]byte(designerSourcesYAML))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if empty := (TelemetrySources{}).metricsSource(); empty.GetQueryUrl() != "" || empty.GetOtlpMetricsUrl() != "" {
-		t.Fatalf("an environment providing nothing offers no URL: %v", empty)
+	if got.GetMode() != "open" || len(got.GetCapabilities()) != 1 || got.GetCapabilities()[0] != "pod-discovery" || len(got.GetSources()) != 2 {
+		t.Fatalf("context = %v", got)
+	}
+	provided := got.GetSources()[0]
+	if provided.GetEndpoint() != "http://prom.test:9090" || !provided.GetDefault() || provided.GetOrigin() != "operator" || provided.GetDialect() == "" ||
+		!provided.GetPublish().GetScrapeAnnotations() || provided.GetPublish().GetOtlpMetricsUrl() != "http://prom.test:9090/api/v1/otlp/v1/metrics" {
+		t.Fatalf("provided source = %v", provided)
+	}
+	if designer := got.GetSources()[1]; designer.GetId() != "prom-extra" {
+		t.Fatalf("designer source = %v", designer)
+	}
+	pinned := environment
+	pinned.Mode = telemetry.ModePinned
+	if got, err = (TelemetrySources{Registry: registry, Environment: pinned}).context([]byte(designerSourcesYAML)); err != nil || got.GetMode() != "pinned" || len(got.GetSources()) != 1 {
+		t.Fatalf("pinned context = %v, err = %v; want the provided source only", got, err)
+	}
+	floor := environment
+	floor.Mode = telemetry.ModeFloor
+	if got, err = (TelemetrySources{Registry: registry, Environment: floor}).context(nil); err != nil || got.GetMode() != "floor" || len(got.GetSources()) != 0 {
+		t.Fatalf("floor context = %v, err = %v; want no sources", got, err)
+	}
+	if _, err = sources.context([]byte("version: 2\n")); err == nil {
+		t.Fatal("an unparsable accepted sources file must fail the context")
 	}
 }
 

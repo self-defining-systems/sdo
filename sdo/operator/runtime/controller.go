@@ -34,10 +34,12 @@ type Dispatcher interface {
 
 type ControllerConfig struct {
 	ExternalIncidentsOnly bool
-	MetricsSource         *contracts.MetricsSource
-	Replay                string
-	CodePath              CodePathConfig
-	CodePathRegistry      *CodePathRegistry
+	// Telemetry is the launch revision's telemetry context; a memory swap
+	// replaces it with the new revision's (RemoteMemory.Telemetry).
+	Telemetry        *contracts.TelemetryContext
+	Replay           string
+	CodePath         CodePathConfig
+	CodePathRegistry *CodePathRegistry
 
 	Application            string
 	Namespace              string
@@ -1118,7 +1120,7 @@ func (c *Controller) detectorOrigins() map[string]string {
 func (c *Controller) incidentRequest(now time.Time, findings []sdk.Finding) IncidentRequest {
 	incidentID := fmt.Sprintf("%s-%d", c.config.Application, now.UnixNano())
 	driftEvents := driftEventsForFindings(c.driftEvents, findings)
-	return IncidentRequest{MetricsSource: c.config.MetricsSource,
+	return IncidentRequest{Telemetry: c.config.Telemetry,
 		SchemaVersion: ProtocolSchemaVersion, Application: c.config.Application, Namespace: c.config.Namespace,
 		IncidentID: incidentID, Findings: findings,
 		PriorResponseProgress:  priorResponseProgress(c.config.RepositoryWorktree, findings),

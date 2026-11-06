@@ -3,8 +3,6 @@ package runtime
 import (
 	"errors"
 	"fmt"
-	"slices"
-	"strings"
 	"time"
 
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -12,6 +10,7 @@ import (
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/telemetry"
+	"sdo.dev/operator/telemetrycontext"
 )
 
 // TelemetrySources builds the observer's metrics source for one accepted
@@ -78,22 +77,6 @@ func (t TelemetrySources) open(designerSources []byte) (MetricsAPI, error) {
 	return newResolverMetrics(resolver), nil
 }
 
-// metricsSource is the incident-facing view of the environment's default
-// metrics source: the query URL and the publishing base the environment offers.
-func (t TelemetrySources) metricsSource() *contractsv1alpha1.MetricsSource {
-	source := &contractsv1alpha1.MetricsSource{}
-	for _, binding := range t.Environment.ProvidedBindings() {
-		if binding.Default && slices.Contains(binding.Kinds, telemetry.KindMetrics) {
-			source.QueryUrl = binding.Endpoint.URL
-		}
-	}
-	if publish := t.Environment.MetricsPublishURL; publish != "" {
-		source.AnnotatedPodScraping = true
-		source.OtlpMetricsUrl = strings.TrimRight(publish, "/") + "/api/v1/otlp/v1/metrics"
-	}
-	return source
-}
-
 // withMetrics adds frozen metric results to provider's snapshots when a
 // detector consumes metrics or alerts. With requireSource, such detectors
 // without an address are an error; otherwise they run unconfigured and report
@@ -127,4 +110,10 @@ func withMetricsAPI(
 		return nil, nil, errors.New("metrics health evaluation requires a bound telemetry source (the environment provides none and the accepted revision binds none)")
 	}
 	return MetricsSnapshotProvider{Base: provider, Observer: observer}, observer, nil
+}
+
+// context is the task-facing telemetry view for the revision whose host
+// reported designerSources.
+func (t TelemetrySources) context(designerSources []byte) (*contractsv1alpha1.TelemetryContext, error) {
+	return telemetrycontext.Build(t.Registry, t.Environment, designerSources)
 }

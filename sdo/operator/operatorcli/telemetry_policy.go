@@ -5,10 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
-	"strings"
 
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/operatorcli/catalog/telemetrysources"
 	"sdo.dev/operator/telemetry"
@@ -53,22 +50,6 @@ func installTelemetryPolicy(config install.Config, application, control string) 
 		policy.Provided = append(policy.Provided, provided)
 	}
 	return policy, nil
-}
-
-// metricsSource is the incident-facing view of the environment's default
-// metrics source: its query URL and the publishing base the profile offers.
-func metricsSource(env telemetry.Environment) *contracts.MetricsSource {
-	source := &contracts.MetricsSource{}
-	for _, binding := range env.Provided {
-		if binding.Default && slices.Contains(binding.Kinds, telemetry.KindMetrics) {
-			source.QueryUrl = binding.Endpoint.URL
-		}
-	}
-	if publish := env.MetricsPublishURL; publish != "" {
-		source.AnnotatedPodScraping = true
-		source.OtlpMetricsUrl = strings.TrimRight(publish, "/") + "/api/v1/otlp/v1/metrics"
-	}
-	return source
 }
 
 // memoryTelemetryPolicy reads the policy an agent check runs under. With no

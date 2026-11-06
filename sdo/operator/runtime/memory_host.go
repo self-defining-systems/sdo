@@ -41,9 +41,12 @@ type RemoteMemory struct {
 	// TelemetrySources is the accepted revision's telemetry sources file as
 	// the host compiled it in; empty when the revision binds none.
 	TelemetrySources []byte
-	rpc              MirroredMemoryRPC
-	memoryCommit     string
-	registrations    []memoryhost.Registration
+	// Telemetry is the task-facing telemetry context for this revision, set by
+	// the entry point that knows the environment; nil leaves the previous one.
+	Telemetry     *pb.TelemetryContext
+	rpc           MirroredMemoryRPC
+	memoryCommit  string
+	registrations []memoryhost.Registration
 }
 
 func NewRemoteMemory(ready *pb.ReadyResponse, rpc MirroredMemoryRPC) (*RemoteMemory, error) {

@@ -43,6 +43,7 @@ func TestParseEnvironmentRejectsBadDocuments(t *testing.T) {
 		"relative cred dir":    `{"version":1,"credentialDir":"c"}`,
 		"publish not http":     `{"version":1,"metricsPublishUrl":"ftp://x"}`,
 		"publish without host": `{"version":1,"metricsPublishUrl":"http://"}`,
+		"unknown capability":   `{"version":1,"capabilities":["root"]}`,
 	}
 	for name, doc := range cases {
 		if _, err := ParseEnvironment([]byte(doc)); err == nil {

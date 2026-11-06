@@ -20,7 +20,6 @@ from libs.agent_cli.structured import (
 from sdo.agents.code_paths import agent_guidance
 from sdo.agents.context_output import ContextText, save_context
 from sdo.agents.memory_diagnostics import render_validation_feedback
-from sdo.agents.metrics_context import metrics_context
 from sdo.agents.prompt_templates import RenderedPrompt, join_prompts, named_prompt, render_prompt
 from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
 from sdo.agents.provider import DEFAULT_AGENT_EFFORT
@@ -45,6 +44,7 @@ from sdo.agents.responder.session_turn import (
     session_turn_options,
     unwrap_branch,
 )
+from sdo.agents.telemetry_context import telemetry_context
 from sdo.contracts import ReflectionResult, model_output_schema, validate, worker_result_payload
 from sdo.contracts import SdkGap as ProtoSdkGap
 
@@ -379,7 +379,9 @@ def _logical_learning_request(
         current_outcome_view_json=outcome_prompt,
         history_section=named_prompt("reflection.history", _history_section(outcome, history)),
     )
-    prompt = named_prompt("reflection.metrics", metrics_context(closure.request.metrics_source) + "\n") + prompt
+    prompt = (
+        named_prompt("reflection.telemetry", telemetry_context(closure.request.telemetry, "responder") + "\n") + prompt
+    )
     if closure.request.HasField("namespace_onboarding"):
         prompt += render_prompt(
             "responder",

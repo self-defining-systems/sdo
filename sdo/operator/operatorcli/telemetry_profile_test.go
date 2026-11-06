@@ -10,6 +10,7 @@ import (
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/operatorcli/catalog/telemetrysources"
 	"sdo.dev/operator/telemetry"
+	"sdo.dev/operator/telemetrycontext"
 )
 
 func mustBuiltin(t *testing.T, name, control string) telemetry.Profile {
@@ -66,8 +67,9 @@ func TestTelemetryProfileNoneInstallsNothingAndSourcesAreProvided(t *testing.T) 
 	if len(env.Provided) != 1 || env.Provided[0].ID != "ops" || !env.Provided[0].Default || env.MetricsPublishURL != "" {
 		t.Fatalf("environment = %+v", env)
 	}
-	if source := metricsSource(env); source.QueryUrl != "http://prom.ops.svc:9090" || source.AnnotatedPodScraping {
-		t.Fatalf("metrics source = %+v", source)
+	context, err := telemetrycontext.Build(telemetryRegistry(), env, nil)
+	if err != nil || len(context.GetSources()) != 1 || context.GetSources()[0].GetEndpoint() != "http://prom.ops.svc:9090" || context.GetSources()[0].GetPublish() != nil {
+		t.Fatalf("telemetry context = %v, err = %v", context, err)
 	}
 }
 

@@ -220,12 +220,36 @@ message OperationalArtifactProposal {
   repeated string delete_playbook_ids = 6;
 }
 
-// Explicit publishing capabilities; an empty query_url means no configured source.
-message MetricsSource {
-  string query_url = 1;
-  bool annotated_pod_scraping = 2;
+// The application-telemetry sources and cluster capabilities a task may use.
+// Go builds it from the environment and the accepted revision's bindings.
+message TelemetryContext {
+  // open, pinned or floor.
+  string mode = 1 [(buf.validate.field).string = {in: ["open", "pinned", "floor"]}];
+  repeated TelemetrySource sources = 2;
+  // Installer-granted cluster reads (pod-discovery, node-proxy, pod-logs).
+  repeated string capabilities = 3;
+}
+
+// One bound telemetry source as detectors and agents see it.
+message TelemetrySource {
+  string id = 1;
+  repeated string kinds = 2;
+  string adapter = 3;
+  // Query dialect from the adapter descriptor, for example "PromQL (Prometheus HTTP API v1)".
+  string dialect = 4;
+  bool default = 5;
+  repeated string capabilities = 6;
+  // operator, designer-backend or app-shipped.
+  string origin = 7;
+  string endpoint = 8;
+  // What applications may push to this source; empty when nothing is offered.
+  TelemetryPublish publish = 9;
+}
+
+message TelemetryPublish {
+  bool scrape_annotations = 1;
   // Full OTLP HTTP metrics URL, not a gRPC endpoint.
-  string otlp_metrics_url = 3;
+  string otlp_metrics_url = 2;
 }
 
 // Controller-owned exclusion, valid only at the exact accepted memory revision.
@@ -303,11 +327,14 @@ message IncidentRequest {
   // Information from failed episodes of the same continuously open problem.
   repeated ResponseProgress prior_response_progress = 31;
   repeated DisabledSetupDetector disabled_setup_detectors = 32;
-  MetricsSource metrics_source = 33;
+  reserved 33;
+  reserved "metrics_source";
   // External alerts close when the responder returns; they assert no verified health.
   string external_message = 34 [(buf.validate.field).string.max_len = 4096];
   // When the controller opened this incident.
   google.protobuf.Timestamp detected_at = 35;
+  // Go-owned: the telemetry bindings of the accepted memory revision plus the environment.
+  TelemetryContext telemetry = 36;
 }
 
 message ResponseProgress {

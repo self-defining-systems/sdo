@@ -147,7 +147,9 @@ StateChanges = messages_pb2.StateChanges
 InstallEnvironmentObject = messages_pb2.InstallEnvironmentObject
 DisabledSetupDetector = messages_pb2.DisabledSetupDetector
 NamespaceOnboarding = messages_pb2.NamespaceOnboarding
-MetricsSource = messages_pb2.MetricsSource
+TelemetryContext = messages_pb2.TelemetryContext
+TelemetryPublish = messages_pb2.TelemetryPublish
+TelemetrySource = messages_pb2.TelemetrySource
 IncidentRequest = messages_pb2.IncidentRequest
 RootCauseEvidence = messages_pb2.RootCauseEvidence
 ConfirmedRootCause = messages_pb2.ConfirmedRootCause
@@ -300,7 +302,9 @@ __all__ = [
     "SCHEMA_VERSION",
     "validate",
     "IncidentClosure",
-    "MetricsSource",
+    "TelemetryContext",
+    "TelemetryPublish",
+    "TelemetrySource",
     "IncidentRequest",
     "NamespaceOnboarding",
     "DisabledSetupDetector",

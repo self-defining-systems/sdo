@@ -1,6 +1,6 @@
 The controller has committed its authoritative incident outcome.
 Reflect using the same incident context.
-Task metrics_source: metrics source not configured; omit metrics detectors.
+Task telemetry (mode open): no source is bound; omit telemetry detectors. Bindings are read-only.
 Memory speeds later repairs. Compare applied playbooks, matching detectors and unchanged source. If playbooks match and no detection gap or new evidence remains, return no_change with a reason. Every recorded hand repair needs an executable typed SDK plan or RunScript step; README holds only judgement and ordering, and sdk_gaps name actually unavailable observations or effects, never work not encoded yet. Update or retire applied playbooks that failed, left findings unresolved or needed later hand repair.
 
 For a visible cause detected late by generic health, learn an incident detector watching its read resource to fire within seconds. Health stays designer-owned.

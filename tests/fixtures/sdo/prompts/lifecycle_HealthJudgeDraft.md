@@ -92,15 +92,15 @@ covers breaks.
    saying why no synthetic request can safely cross it.
 Omit synthetic traffic only for an application that serves no HTTP.
 
-Metrics (optional input). When the supplied task.metrics_source.query_url is non-empty,
-a health detector may judge application metrics: import "sdo.dev/operator/sdk/metrics",
-declare `Watches: []sdk.WatchKind{metrics.Watch}`, and build it with `metrics.NewThresholdDetector(spec, rules)`.
-Each rule names a query ID and a PromQL expression you ground in metrics the application actually exports, a
-comparison, a threshold, and the label names that identify its Deployment, Pod or Service. Include saturation
-(CPU throttling, memory near its limit) of the services on each critical path. The controller runs each query once
-per cycle; the detector never does I/O, and an unreachable source is a detector error, not a clear. Use task.metrics_source for availability and publishing instructions;
-without a query URL, omit these detectors. The shared check installs the generic alerts detector itself
-when a source is configured.
+Application telemetry (optional input). task.telemetry lists the bound sources, each with its kinds and query
+dialect. A health detector may judge a bound metrics source: import "sdo.dev/operator/sdk/metrics", declare
+`Watches: []sdk.WatchKind{metrics.Watch}`, and build it with `metrics.NewThresholdDetector(spec, rules)`.
+Each rule names a query ID, a source ID (omit it only for the default source), an expression in that source's
+dialect grounded in what the application exports, a comparison, a threshold, and the label names that identify
+its Deployment, Pod or Service. Cover saturation of the services on each critical path. The controller runs each
+query once per cycle; the detector never does I/O, and an unreachable source is a detector error, not a clear.
+Never query an unbound source; with no bound source, omit these detectors. Read task.telemetry.mode for whether
+you may bind sources (sdo-operationalize references/telemetry.md). The shared check installs the alerts detector.
 Run `sdo-operator memory ls` to inspect memory and `sdo-operator memory check` after editing; fix every named
 diagnostic and rerun until it exits zero. The environment is set to SDO_ACTOR=health_judge, SDO_PHASE=initial
 and the accepted SDO_BASE_COMMIT; never override it. The Go broker repeats the same validation.

@@ -49,3 +49,10 @@ func TestWithSourceDefaultsTheFirstMetricsSourceOnly(t *testing.T) {
 		t.Fatal("duplicate id accepted")
 	}
 }
+
+func TestProfileEnvironmentCarriesGrantedCapabilities(t *testing.T) {
+	p := telemetry.Profile{Name: "x", Capabilities: []telemetry.ClusterCapability{telemetry.CapPodDiscovery}}
+	if got := p.Environment().Capabilities; len(got) != 1 || got[0] != telemetry.CapPodDiscovery {
+		t.Fatalf("environment capabilities = %v", got)
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/url"
 	"regexp"
+	"slices"
 )
 
 // MaxProfileBytes bounds a profile document.
@@ -152,7 +153,7 @@ func (p Profile) WithSource(s ProfileSource) (Profile, error) {
 
 // Environment is the document the controller reads, derived from the profile.
 func (p Profile) Environment() Environment {
-	env := Environment{Version: EnvironmentVersion, Mode: p.Mode, MetricsPublishURL: p.MetricsPublishURL}
+	env := Environment{Version: EnvironmentVersion, Mode: p.Mode, MetricsPublishURL: p.MetricsPublishURL, Capabilities: slices.Clone(p.Capabilities)}
 	for _, s := range p.Sources {
 		env.Provided = append(env.Provided, s.Binding())
 	}
