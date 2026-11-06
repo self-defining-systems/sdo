@@ -1146,7 +1146,17 @@ not prove provenance. An image's identity covers exactly the files its build
 context sends: `image_provenance.py` derives the roots from the Bake target and
 Dockerfile stage graph and drops what `.dockerignore` lists (Go `_test.go` files,
 `testdata`, operator Markdown), so test-only, docs-only and eval-only commits keep
-built images valid and any change to an image input invalidates them. Focused regressions live in
+built images valid and any change to an image input invalidates them. Every SDO-built
+image (controller, responder, benchmark) records `dev.sdo.image-target`, the revision, the
+full `dev.sdo.source-tree` and a `dev.sdo.manifest-tree` over what a development mount cannot
+replace (Dockerfiles, Bake blocks, `go.mod`/`go.sum`); the benchmark image also records its
+`dev.sdo.worker-target` (plain or scripted worker). `fastloop up` (every app) and
+`fastloop preflight` read those labels first, in seconds, before any container runs: with a dev
+mount the manifest identity must match, without one the full source identity must. A stale or
+unlabelled image fails with the exact `SDO_IMAGES=... bash scripts/build_sdo_images.sh` line.
+`--allow-stale-images` is the explicit override for deliberate frozen-image experiments and is
+recorded in the lane environment so later `run` commands skip the source-bound image check.
+Focused regressions live in `test_lane_image_freshness.py`,
 `tests/unit/benchmarks/sregym/fastloop/test_source_preflight.py` and `test_dev.py`.
 
 

@@ -10,17 +10,6 @@ if [[ -n "${source_changes}" ]]; then
   exit 1
 fi
 export SDO_SOURCE_REVISION="$(git -C "${repo_root}" rev-parse HEAD)"
-# Source-checked images also carry the identity of exactly the files their build
-# context sends (image_provenance.py), so commits outside those files reuse them.
-provenance="${repo_root}/benchmarks/sregym/fastloop/image_provenance.py"
-for target in controller; do
-  built_changes="$(cd "${repo_root}" && python3 "${provenance}" dirty "${target}" HEAD)"
-  if [[ -n "${built_changes}" ]]; then
-    echo "image source has uncommitted changes; commit before building source-bound images: ${built_changes}" >&2
-    exit 1
-  fi
-done
-export SDO_CONTROLLER_SOURCE_TREE="$(cd "${repo_root}" && python3 "${provenance}" identity controller HEAD)"
 # CI builds only changed targets through Bake, then uses these same smoke gates.
 read -r -a selected <<<"${SDO_IMAGES:-controller responder benchmark script-tools}"
 for image in "${selected[@]}"; do
@@ -32,13 +21,30 @@ for image in "${selected[@]}"; do
     ;;
   esac
 done
+# The benchmark image is the plain responder or the scripted worker; its identity names the stage.
+export SDO_WORKER_TARGET=sregym-responder
+if [[ "${SDO_SCRIPTED_WORKER:-0}" == "1" ]]; then
+  export SDO_WORKER_TARGET=scripted-worker
+fi
+# Source-checked images also carry the identity of exactly the files their build
+# context sends (image_provenance.py), so commits outside those files reuse them, and
+# the identity of the manifests a development mount cannot replace (Dockerfiles,
+# Go modules), which `fastloop up` compares before it starts a lane.
+provenance="${repo_root}/benchmarks/sregym/fastloop/image_provenance.py"
+for target in "${selected[@]}"; do
+  [[ "${target}" == "script-tools" ]] && continue
+  built_changes="$(cd "${repo_root}" && python3 "${provenance}" dirty "${target}" HEAD)"
+  if [[ -n "${built_changes}" ]]; then
+    echo "image source has uncommitted changes; commit before building source-bound images: ${built_changes}" >&2
+    exit 1
+  fi
+  upper="${target^^}"
+  export "SDO_${upper}_SOURCE_TREE=$(cd "${repo_root}" && python3 "${provenance}" identity "${target}" HEAD)"
+  export "SDO_${upper}_MANIFEST_TREE=$(cd "${repo_root}" && python3 "${provenance}" manifest "${target}" HEAD)"
+done
 selected_image() { [[ " ${selected[*]} " == *" $1 "* ]]; }
 if [[ "${SDO_SKIP_IMAGE_BUILD:-0}" != "1" ]]; then
   export SDO_IMAGE_TAG="${tag}"
-  export SDO_WORKER_TARGET=sregym-responder
-  if [[ "${SDO_SCRIPTED_WORKER:-0}" == "1" ]]; then
-    export SDO_WORKER_TARGET=scripted-worker
-  fi
   (cd "${repo_root}" && docker buildx bake --file scripts/sdo-images.hcl --load "${selected[@]}")
 fi
 for target in "${selected[@]}"; do

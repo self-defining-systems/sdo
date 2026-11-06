@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import runpy
 import shlex
@@ -34,6 +35,16 @@ host_git_command = cast(
 
 BAKE_FILE = "scripts/sdo-images.hcl"
 SOURCE_TREE_LABEL = "dev.sdo.source-tree"
+#: Identity of the files a development mount does not replace: Dockerfiles, Bake blocks and Go module manifests.
+MANIFEST_TREE_LABEL = "dev.sdo.manifest-tree"
+#: Which Bake target built the image (controller, responder, benchmark).
+IMAGE_TARGET_LABEL = "dev.sdo.image-target"
+#: The Dockerfile stage the benchmark image was built as (the scripted worker bakes extra tools).
+WORKER_TARGET_LABEL = "dev.sdo.worker-target"
+DEFAULT_WORKER_TARGET = "sregym-responder"
+SCRIPTED_WORKER_TARGET = "scripted-worker"
+IMAGE_TARGETS = ("controller", "responder", "benchmark")
+MANIFEST_BASENAMES = frozenset({"go.mod", "go.sum", ".dockerignore"})
 REVISION_LABEL = "org.opencontainers.image.revision"
 # The build context filter changes which bytes COPY sends.
 _CONTEXT_FILES = (".dockerignore",)
@@ -54,17 +65,37 @@ class ImageSource:
     stage: str
     roots: tuple[str, ...]
     objects: tuple[tuple[str, str], ...]
+    #: Further (dockerfile, stage) pairs the image is assembled from, such as the benchmark image's responder base.
+    bases: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         if not self.objects:
             raise ValueError(f"image source for {self.target} has no build paths")
 
+    def _digest(self, objects: tuple[tuple[str, str], ...]) -> str:
+        digest = hashlib.sha256(f"{self.dockerfile}\0{self.stage}\0".encode())
+        for dockerfile, stage in self.bases:
+            digest.update(f"{dockerfile}\0{stage}\0".encode())
+        for path, object_id in objects:
+            digest.update(f"{path}\0{object_id}\0".encode())
+        return digest.hexdigest()
+
     @property
     def identity(self) -> str:
-        digest = hashlib.sha256(f"{self.dockerfile}\0{self.stage}\0".encode())
-        for path, object_id in self.objects:
-            digest.update(f"{path}\0{object_id}\0".encode())
-        return f"tree-v2:{digest.hexdigest()}"
+        return f"tree-v2:{self._digest(self.objects)}"
+
+    @property
+    def manifest_objects(self) -> tuple[tuple[str, str], ...]:
+        """Build inputs a development mount does not replace: they decide tools and module caches baked in."""
+        return tuple((path, object_id) for path, object_id in self.objects if self.is_manifest_path(path))
+
+    def is_manifest_path(self, path: str) -> bool:
+        dockerfiles = {self.dockerfile, *(dockerfile for dockerfile, _ in self.bases)}
+        return path in dockerfiles or path.startswith(f"{BAKE_FILE}") or path.rsplit("/", 1)[-1] in MANIFEST_BASENAMES
+
+    @property
+    def manifest_identity(self) -> str:
+        return f"manifest-v1:{self._digest(self.manifest_objects)}"
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -85,10 +116,23 @@ def _bake_block(bake: str, target: str) -> str:
     return block[1]
 
 
-def bake_target(bake: str, target: str) -> tuple[str, str]:
-    """Return the Dockerfile and stage of a Bake target built from the repository root."""
+def bake_target(bake: str, target: str, variables: dict[str, str] | None = None) -> tuple[str, str]:
+    """Return the Dockerfile and stage of a Bake target built from the repository root.
+
+    ``variables`` overrides the defaults of Bake variables a field may name unquoted
+    (the benchmark image's ``target = SDO_WORKER_TARGET``).
+    """
     block = _bake_block(bake, target)
+    values = {
+        **dict(re.findall(r'^variable "(\w+)" \{ default = "([^"]*)" \}', bake, re.MULTILINE)),
+        **(variables or {}),
+    }
     fields = dict(re.findall(r'^\s*(\w+)\s*=\s*"([^"]*)"\s*$', block, re.MULTILINE))
+    fields.update(
+        (name, values[reference])
+        for name, reference in re.findall(r"^\s*(\w+)\s*=\s*([A-Z_]+)\s*$", block, re.MULTILINE)
+        if reference in values
+    )
     if fields.get("context") != "." or "contexts" in re.findall(r"^\s*(\w+)\s*=", block, re.MULTILINE):
         raise ValueError(f"Bake target {target} must build from the repository root without named contexts")
     if "dockerfile" not in fields or "target" not in fields:
@@ -192,10 +236,20 @@ def _dockerignore(repo: Path, commit: str) -> str:
     return result.stdout if result.returncode == 0 else ""
 
 
-def image_source(repo: Path, commit: str, target: str) -> ImageSource:
-    """Describe ``target`` as built from ``commit`` using that commit's build files."""
-    bake = _show(repo, commit, BAKE_FILE)
-    dockerfile, stage = bake_target(bake, target)
+def _component(
+    repo: Path, commit: str, bake: str, target: str, variables: dict[str, str], *, composed: bool = False
+) -> tuple[str, str, set[str], dict[str, str]]:
+    """One Bake target's Dockerfile, stage, context roots and the blobs under them.
+
+    ``composed`` accepts the ``target:`` named contexts of the benchmark image; its bases are added by the caller.
+    """
+    block = _bake_block(bake, target)
+    declared = re.findall(r"^\s*(\w+)\s*=", block, re.MULTILINE)
+    if composed and "contexts" in declared:
+        stripped = re.sub(r"^\s*contexts\s*=.*$", "", block, flags=re.MULTILINE)
+        dockerfile, stage = bake_target(bake.replace(block, stripped), target, variables)
+    else:
+        dockerfile, stage = bake_target(bake, target, variables)
     roots = _covering({dockerfile, *_CONTEXT_FILES, *stage_sources(_show(repo, commit, dockerfile), stage)})
     matcher = _ignore_matcher(_dockerignore(repo, commit))
     listing = _git(repo, "ls-tree", "-r", "-z", commit, "--", *roots)
@@ -209,10 +263,38 @@ def image_source(repo: Path, commit: str, target: str) -> ImageSource:
     for root in roots:
         if not any(path == root or path.startswith(f"{root}/") for path in blobs):
             blobs[root] = _MISSING
-    block = hashlib.sha256(_bake_block(bake, target).encode()).hexdigest()
-    blobs[_BAKE_BLOCK.format(bake=BAKE_FILE, target=target)] = block
+    blobs[_BAKE_BLOCK.format(bake=BAKE_FILE, target=target)] = hashlib.sha256(block.encode()).hexdigest()
+    return dockerfile, stage, set(roots), blobs
+
+
+def bases_of(target: str, stage: str) -> tuple[str, ...]:
+    """Bake targets whose output a target's own Dockerfile stage starts from."""
+    if target != "benchmark":
+        return ()
+    return ("responder", "scripted-runtime") if stage == SCRIPTED_WORKER_TARGET else ("responder",)
+
+
+def image_source(repo: Path, commit: str, target: str, worker_target: str | None = None) -> ImageSource:
+    """Describe ``target`` as built from ``commit`` using that commit's build files.
+
+    ``worker_target`` is the Dockerfile stage of the benchmark image (``SDO_WORKER_TARGET`` at build time).
+    """
+    bake = _show(repo, commit, BAKE_FILE)
+    variables = {"SDO_WORKER_TARGET": worker_target} if worker_target else {}
+    dockerfile, stage, roots, blobs = _component(repo, commit, bake, target, variables, composed=True)
+    bases = []
+    for base in bases_of(target, stage):
+        base_dockerfile, base_stage, base_roots, base_blobs = _component(repo, commit, bake, base, variables)
+        bases.append((base_dockerfile, base_stage))
+        roots |= base_roots
+        blobs.update(base_blobs)
     return ImageSource(
-        target=target, dockerfile=dockerfile, stage=stage, roots=roots, objects=tuple(sorted(blobs.items()))
+        target=target,
+        dockerfile=dockerfile,
+        stage=stage,
+        roots=_covering(roots),
+        objects=tuple(sorted(blobs.items())),
+        bases=tuple(bases),
     )
 
 
@@ -233,20 +315,23 @@ def uncommitted_build_files(repo: Path, sources: list[ImageSource]) -> list[str]
 
 def changed_build_paths(built: ImageSource, current: ImageSource) -> list[str]:
     """Name the files that differ between two descriptions of one image."""
-    if (built.dockerfile, built.stage) != (current.dockerfile, current.stage):
+    if (built.dockerfile, built.stage, built.bases) != (current.dockerfile, current.stage, current.bases):
         return [f"{BAKE_FILE} target {current.target}"]
     differing = sorted({path for path, _ in dict(built.objects).items() ^ dict(current.objects).items()})
     return [BAKE_FILE if path.startswith(f"{BAKE_FILE}#") else path for path in differing]
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 3 or argv[0] not in {"identity", "paths", "dirty"}:
-        print("usage: image_provenance.py identity|paths|dirty <bake-target> <commit>", file=sys.stderr)
+    if len(argv) != 3 or argv[0] not in {"identity", "manifest", "paths", "dirty"}:
+        print("usage: image_provenance.py identity|manifest|paths|dirty <bake-target> <commit>", file=sys.stderr)
         return 2
     command, target, commit = argv
-    source = image_source(Path.cwd(), commit, target)
+    # The benchmark image's stage is the build's SDO_WORKER_TARGET.
+    source = image_source(Path.cwd(), commit, target, os.environ.get("SDO_WORKER_TARGET") or None)
     if command == "identity":
         print(source.identity)
+    elif command == "manifest":
+        print(source.manifest_identity)
     elif command == "paths":
         print("\n".join(source.roots))
     else:

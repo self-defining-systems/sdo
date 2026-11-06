@@ -75,6 +75,10 @@ logger = logging.getLogger(__name__)
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_SREGYM_DIR = REPO_ROOT / "third_party" / "sregym"
 INCIDENTS_FILENAME = "incidents.jsonl"
+STALE_IMAGES_HELP = (
+    "skip the check that lane images were built from this tree's Dockerfiles and Go modules "
+    "(deliberate frozen-image experiments only)"
+)
 CLUSTER_OP_TIMEOUT_SECONDS = wait_for(WaitKind.CLUSTER_OP)
 DEPLOY_OP_TIMEOUT_SECONDS = wait_for(WaitKind.DEPLOY_OP)
 
@@ -87,9 +91,10 @@ def _worker(environment: FastloopEnvironment) -> SregymWorker:
     from benchmarks.sregym.fastloop.source_preflight import assert_harness_sources, assert_runtime_images
 
     assert_harness_sources(environment.sregym_dir)
-    assert_runtime_images(
-        environment.images, environment.dev_mount or REPO_ROOT, dev_mount=environment.dev_mount is not None
-    )
+    if not environment.allow_stale_images:
+        assert_runtime_images(
+            environment.images, environment.dev_mount or REPO_ROOT, dev_mount=environment.dev_mount is not None
+        )
     if not node_images_match(environment.cluster, environment.images):
         raise ValueError("eval: lane image source differs from the checked local images; redeliver with fastloop up")
     return SregymWorker(
@@ -270,13 +275,29 @@ def up_preflight(args: argparse.Namespace) -> None:
         assert_harness_sources(getattr(args, "sregym_dir", DEFAULT_SREGYM_DIR))
     from benchmarks.sregym.adapter import BENCHMARK_IMAGE_ENTRY_POINTS, assert_image_entrypoints
 
-    for image, modules in (
+    lane_images = (
         (args.controller_image, ()),
         (args.responder_image, BENCHMARK_IMAGE_ENTRY_POINTS),
-    ):
+    )
+    for image, _modules in lane_images:
+        if image is not None:
+            subprocess.run(["docker", "image", "inspect", image], check=True, capture_output=True, text=True)
+    if not getattr(args, "allow_stale_images", False):
+        # Label reads only: a stale image fails here in seconds, not after a live run's refresh budget.
+        from benchmarks.sregym.fastloop.source_preflight import assert_images_fresh
+
+        assert_images_fresh(
+            {
+                role: image
+                for role, image in (("controller", args.controller_image), ("responder", args.responder_image))
+                if image
+            },
+            args.dev_mount.resolve() if args.dev_mount is not None else REPO_ROOT,
+            dev_mount=args.dev_mount is not None,
+        )
+    for image, modules in lane_images:
         if image is None:
             continue
-        subprocess.run(["docker", "image", "inspect", image], check=True, capture_output=True, text=True)
         assert_image_entrypoints(image, modules, source_root=args.dev_mount if modules else None, run=subprocess.run)
 
 
@@ -400,6 +421,7 @@ def _up(args: argparse.Namespace) -> int:
         seed_commit=seed_commit,
         dev_mount=args.dev_mount,
         images=images,
+        allow_stale_images=getattr(args, "allow_stale_images", False),
         worker_env=worker_env,
         parallel_root=parallel_root,
     )
@@ -1663,6 +1685,7 @@ def build_parser() -> argparse.ArgumentParser:
     preflight.add_argument(
         "--plan", type=Path, help="require attributable probes for every problem in this plan before host checks"
     )
+    preflight.add_argument("--allow-stale-images", action="store_true", help=STALE_IMAGES_HELP)
     preflight.add_argument("--sregym-dir", type=Path, default=DEFAULT_SREGYM_DIR)
     preflight.set_defaults(handler=_preflight)
 
@@ -1734,6 +1757,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="toy: executable the lane keeper provides; called with the SDO namespace to provision its credentials",
     )
+    up.add_argument("--allow-stale-images", action="store_true", help=STALE_IMAGES_HELP)
     up.add_argument("--controller-image", default=Images().controller)
     up.add_argument("--responder-image", default=Images().responder)
     up.add_argument("--sregym-dir", type=Path, default=DEFAULT_SREGYM_DIR)

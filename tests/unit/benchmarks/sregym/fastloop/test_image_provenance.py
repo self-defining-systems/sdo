@@ -145,12 +145,15 @@ def test_build_paths_follow_the_real_dockerfile_stage_graph():
 def test_every_source_checked_image_is_labelled_with_its_tree():
     bake = (ROOT / "scripts/sdo-images.hcl").read_text()
     build = (ROOT / "scripts/build_sdo_images.sh").read_text()
-    for target in ("controller",):
+    for target in ("controller", "responder", "benchmark"):
         block = re.search(rf'^target "{target}" \{{(.*?)^\}}', bake, re.MULTILINE | re.DOTALL)
         assert block is not None
-        variable = f"SDO_{target.upper()}_SOURCE_TREE"
-        assert f'"dev.sdo.source-tree" = {variable}' in block[1]
-        assert f"export {variable}=" in build
+        for label, kind in (("source-tree", "SOURCE_TREE"), ("manifest-tree", "MANIFEST_TREE")):
+            assert f'"dev.sdo.{label}" = SDO_{target.upper()}_{kind}' in block[1]
+        assert f'"dev.sdo.image-target" = "{target}"' in block[1]
+        assert '"org.opencontainers.image.revision" = SDO_SOURCE_REVISION' in block[1]
+    assert 'export "SDO_${upper}_SOURCE_TREE=' in build
+    assert 'export "SDO_${upper}_MANIFEST_TREE=' in build
 
 
 def test_unsupported_build_shapes_fail_closed():
@@ -158,6 +161,10 @@ def test_unsupported_build_shapes_fail_closed():
 
     with pytest.raises(ValueError, match="named contexts"):
         bake_target((ROOT / "scripts/sdo-images.hcl").read_text(), "benchmark")
+    with pytest.raises(ValueError, match="named contexts"):
+        bake_target(
+            (ROOT / "scripts/sdo-images.hcl").read_text(), "benchmark", {"SDO_WORKER_TARGET": "scripted-worker"}
+        )
     with pytest.raises(ValueError, match="bind-mounts"):
         stage_sources("FROM x AS a\nRUN --mount=type=bind,target=/src make\n", "a")
     graph = 'FROM x AS a\nCOPY a.txt ./\nFROM a AS b\nCOPY --from=a /a /a\nADD ["b", "/b"]\n'

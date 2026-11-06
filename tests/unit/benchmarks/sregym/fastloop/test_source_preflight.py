@@ -167,6 +167,7 @@ def test_explicit_fastloop_preflight_checks_every_reused_image(tmp_path, monkeyp
             sregym_dir=tmp_path,
             controller_image="controller:reused",
             responder_image="benchmark:reused",
+            allow_stale_images=True,
         )
     )
     assert smoked == [

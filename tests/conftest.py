@@ -97,6 +97,7 @@ def image_build_source(tmp_path: Path) -> Path:
         "scripts/build_sdo_images.sh",
         "scripts/sdo-images.hcl",
         "sdo/operator/Dockerfile.runtime",
+        "benchmarks/sregym/Dockerfile.worker",
         ".dockerignore",
         "benchmarks/sregym/fastloop/image_provenance.py",
         "benchmarks/sregym/repository_git.py",
