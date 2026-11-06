@@ -64,7 +64,8 @@ def test_python_shards_cover_every_test_path_and_gate_combined_coverage() -> Non
     commands = "\n".join(step.get("run", "") for step in steps)
     assert "coverage combine" in commands
     assert "--cov-fail-under=0" in script
-    assert "coverage report" in commands and "--fail-under" not in commands, "pyproject owns the floor"
+    assert "coverage report" in commands
+    assert "--fail-under" not in commands, "pyproject owns the floor"
     uploads = [
         s for s in workflow()["jobs"]["python"]["steps"] if s.get("uses", "").startswith("actions/upload-artifact@")
     ]
@@ -92,7 +93,8 @@ def test_go_shards_partition_the_pr_packages(tmp_path: Path, shard: str) -> None
         assert packages == ["./sdo/operator/memory/validate"]
     else:
         assert packages == ["sdo.dev/operator/runtime"]
-    assert "-short" in test[0] and "-tags=integration" in test[0]
+    assert "-short" in test[0]
+    assert "-tags=integration" in test[0]
 
 
 @pytest.mark.parametrize(
