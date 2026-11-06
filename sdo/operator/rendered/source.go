@@ -64,7 +64,15 @@ type PinProvider interface {
 // exactly when the rendered inputs change.
 type ReceiptPins struct {
 	EffectiveTree string
-	Images        []DeployedImage
+	// BaseTree is the commit tree the deployment applied. With it a later
+	// effective tree can verify which pins its image inputs still match.
+	// Empty keeps exact-tree binding only.
+	BaseTree string
+	Images   []DeployedImage
+
+	// inherited marks pins carried to a later effective tree: each applies
+	// only to a container still declaring the image it was built from.
+	inherited bool
 }
 
 // AcceptedImagePins makes ReceiptPins a PinProvider.
@@ -135,7 +143,15 @@ func (s Source) env(namespace string) render.Env {
 // loadManifests renders revision^{tree} and keeps the non-ephemeral objects,
 // with Secrets reduced to identity (defense in depth beyond SecretsOmit).
 func (s Source) loadManifests(ctx context.Context, revision, namespace string) ([]DesiredObject, error) {
-	set, effective, err := s.desiredAt(ctx, revision, namespace)
+	if err := s.requireDesired(namespace); err != nil {
+		return nil, err
+	}
+	effective, err := s.effectiveAt(ctx, revision)
+	if err != nil {
+		return nil, err
+	}
+	defer effective.Close()
+	set, err := s.desiredFrom(ctx, effective, namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -203,40 +219,50 @@ func (s Source) effectiveAt(ctx context.Context, revision string) (EffectiveTree
 }
 
 func (s Source) desired(ctx context.Context, revision, namespace string) (DesiredSet, error) {
-	set, _, err := s.desiredAt(ctx, revision, namespace)
-	return set, err
-}
-
-// desiredAt is desired that also returns the revision's effective tree ID.
-func (s Source) desiredAt(ctx context.Context, revision, namespace string) (DesiredSet, string, error) {
-	if s.Deployment == nil {
-		return DesiredSet{}, "", &SourceError{Kind: SourceUnconfigured, Err: errors.New("no deployment source is configured")}
-	}
-	if namespace == "" {
-		return DesiredSet{}, "", sourceErrorf(SourceInvalid, "accepted repository, full commit revision, and namespace are required")
+	if err := s.requireDesired(namespace); err != nil {
+		return DesiredSet{}, err
 	}
 	effective, err := s.effectiveAt(ctx, revision)
 	if err != nil {
-		return DesiredSet{}, "", err
+		return DesiredSet{}, err
 	}
 	defer effective.Close()
+	return s.desiredFrom(ctx, effective, namespace)
+}
+
+func (s Source) requireDesired(namespace string) error {
+	if s.Deployment == nil {
+		return &SourceError{Kind: SourceUnconfigured, Err: errors.New("no deployment source is configured")}
+	}
+	if namespace == "" {
+		return sourceErrorf(SourceInvalid, "accepted repository, full commit revision, and namespace are required")
+	}
+	return nil
+}
+
+// desiredFrom renders an already resolved effective tree.
+func (s Source) desiredFrom(ctx context.Context, effective EffectiveTree, namespace string) (DesiredSet, error) {
 	fsys, err := GitTreeFS(ctx, effective)
 	if err != nil {
-		return DesiredSet{}, "", err
+		return DesiredSet{}, err
 	}
 	deployment, err := legacyReadSource(fsys, s.Deployment)
 	if err != nil {
-		return DesiredSet{}, "", err
+		return DesiredSet{}, err
 	}
-	set, err := Desired(ctx, fsys, s.env(namespace), s.Catalog, deployment)
-	return set, effective.ID, err
+	return Desired(ctx, fsys, s.env(namespace), s.Catalog, deployment)
 }
 
-// pinsFor returns the pins that apply to effective: none when no provider is
-// set or the newest accepted deployment is of another effective tree. A
-// provider failure fails the read; falling back to tags would report the
-// deployed digests as drift.
-func (s Source) pinsFor(ctx context.Context, effective string) (ReceiptPins, error) {
+// pinsFor returns the pins that apply to effective. A provider failure fails
+// the read; falling back to tags would report the deployed digests as drift.
+//
+// Pins are bound to the effective tree the deployment applied. A later
+// effective tree (an accepted responder patch, a values or overlay change, any
+// source commit) has no deployment evidence of its own, so each pinned
+// container inherits its pin when nothing its image was built from changed
+// (see inheritedPins); a container whose image inputs changed has no pin and
+// reads the source image until a deployment builds it and records new pins.
+func (s Source) pinsFor(ctx context.Context, effective EffectiveTree) (ReceiptPins, error) {
 	if s.Pins == nil {
 		return ReceiptPins{}, nil
 	}
@@ -244,10 +270,88 @@ func (s Source) pinsFor(ctx context.Context, effective string) (ReceiptPins, err
 	if err != nil {
 		return ReceiptPins{}, sourceErrorf(SourceUnavailable, "read accepted deployment image pins: %w", err)
 	}
-	if pins.EffectiveTree != effective {
+	if !pins.active() {
 		return ReceiptPins{}, nil
 	}
-	return pins, nil
+	if pins.EffectiveTree == effective.ID {
+		return pins, nil
+	}
+	return s.inheritedPins(ctx, pins, effective)
+}
+
+// inheritedPins keeps the pins of the deployed tree whose image inputs are
+// unchanged in effective: the declared source image (checked against the
+// rendered container at apply) and, for a built image, the Git objects at its
+// recorded context and Dockerfile paths. Unknown inputs (the zero ImageInputs)
+// and an unverifiable deployed tree inherit nothing: a pin is never carried on
+// a guess. A context of "." covers the whole effective tree, so any source or
+// deployment-view change moves it; that errs toward requiring a deployment.
+func (s Source) inheritedPins(ctx context.Context, pins ReceiptPins, effective EffectiveTree) (ReceiptPins, error) {
+	if pins.BaseTree == "" {
+		return ReceiptPins{}, nil
+	}
+	store := ObjectStore{Dir: s.Repository, Git: s.Git}
+	deployed, err := Effective(ctx, store, BaseTree(pins.BaseTree))
+	if err != nil {
+		var sourceErr *SourceError
+		if errors.As(err, &sourceErr) && sourceErr.Kind == SourceUnavailable {
+			return ReceiptPins{}, err
+		}
+		return ReceiptPins{}, nil
+	}
+	defer deployed.Close()
+	if deployed.ID != pins.EffectiveTree {
+		return ReceiptPins{}, nil
+	}
+	kept := ReceiptPins{EffectiveTree: effective.ID, inherited: true}
+	for _, pin := range pins.Images {
+		same, err := sameImageInputs(ctx, pin.Inputs, deployed, effective)
+		if err != nil {
+			return ReceiptPins{}, err
+		}
+		if same {
+			kept.Images = append(kept.Images, pin)
+		}
+	}
+	return kept, nil
+}
+
+func sameImageInputs(ctx context.Context, inputs ImageInputs, deployed, current EffectiveTree) (bool, error) {
+	if inputs.SourceImage == "" || inputs.Validate() != nil {
+		return false, nil
+	}
+	for _, p := range []string{inputs.ContextPath, inputs.DockerfilePath} {
+		if p == "" {
+			continue
+		}
+		before, err := pathObject(ctx, deployed, p)
+		if err != nil {
+			return false, err
+		}
+		after, err := pathObject(ctx, current, p)
+		if err != nil {
+			return false, err
+		}
+		if before != after {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// pathObject names what a tree holds at p: the tree ID itself for ".", the
+// ls-tree entry (mode, type, object ID) otherwise, empty when absent.
+func pathObject(ctx context.Context, tree EffectiveTree, p string) (string, error) {
+	if p == "." {
+		return tree.ID, nil
+	}
+	out, err := tree.Store.git(ctx, "ls-tree", "-z", tree.ID, "--", p)
+	if err != nil {
+		return "", sourceErrorf(SourceUnavailable, "read %s of effective tree %s: %w", p, tree.ID, err)
+	}
+	entry, _, _ := strings.Cut(string(out), "\x00")
+	meta, _, _ := strings.Cut(entry, "\t")
+	return meta, nil
 }
 
 func (s Source) AcceptedManifest(ctx context.Context, revision string, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
@@ -329,7 +433,8 @@ func (p ReceiptPins) apply(document map[string]any, ref sdk.ObjectRef) {
 			name, _ := container["name"].(string)
 			for _, pin := range p.Images {
 				if pin.Ref.Kind == ref.Kind && pin.Ref.Namespace == ref.Namespace && pin.Ref.Name == ref.Name &&
-					pin.Name == name && pin.Init == (field == "initContainers") && pin.Applied != "" {
+					pin.Name == name && pin.Init == (field == "initContainers") && pin.Applied != "" &&
+					(!p.inherited || container["image"] == pin.Inputs.SourceImage) {
 					container["image"] = pin.Applied
 					changed = true
 				}

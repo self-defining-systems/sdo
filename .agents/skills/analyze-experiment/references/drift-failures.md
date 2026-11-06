@@ -74,9 +74,12 @@ No rendered lock exists. `AcceptedManifest(s)`, adoption, drift and closure rend
 directly, like `kubectl diff` and `kubectl apply`, with the accepted deployment's image pins applied:
 the controller reads them from the broker evidence ledger (`Broker.AcceptedImagePins`, keyed by the
 effective tree), so a BuildKit or prebuilt deploy's digest is desired state, not drift. Without pins
-(no deployment evidence, or source moved off the deployed tree) the image string is the source's
-(tag or digest). A `drift.unexplained` on an image right after install means the pins did not apply
-(ledger record for another effective tree, or none). A restart before the accepted-source
+(no deployment evidence, or the container's build inputs or declared image changed since the
+deployed tree) the image string is the source's (tag or digest). A later accepted tree with no
+deployment of its own (responder patch, values edit) keeps each pin whose image inputs are unchanged.
+A `drift.unexplained` on an image right after install means the pins did not apply (ledger record
+without inputs or base tree, or none); after an accepted patch it means that image's inputs changed
+and a deployment must record new pins. A restart before the accepted-source
 inventory loads makes a verified closure wait (bounded), never retire.
 Publication errors retain the last accepted revision or explicitly recover the
 broker's advanced HEAD; an empty publication result must never clear it.

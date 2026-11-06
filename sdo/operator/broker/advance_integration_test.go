@@ -488,7 +488,7 @@ func TestAcceptedImagePinsFollowTheNewestAcceptedDeployment(t *testing.T) {
 		t.Fatalf("AcceptedSourceEvidence = %v %v", found, err)
 	}
 	pins, err := b.AcceptedImagePins(ctx)
-	if err != nil || pins.EffectiveTree != onboarded.Evidence.EffectiveTree {
+	if err != nil || pins.EffectiveTree != onboarded.Evidence.EffectiveTree || pins.BaseTree != onboarded.Evidence.BaseTree {
 		t.Fatalf("pins after onboarding = %+v %v, want the onboarded effective tree", pins, err)
 	}
 
@@ -507,7 +507,7 @@ func TestAcceptedImagePinsFollowTheNewestAcceptedDeployment(t *testing.T) {
 	}
 	for _, step := range []string{"advance", "after a memory commit"} {
 		pins, err = b.AcceptedImagePins(ctx)
-		if err != nil || pins.EffectiveTree != evidence.EffectiveTree || pins.EffectiveTree == onboarded.Evidence.EffectiveTree ||
+		if err != nil || pins.EffectiveTree != evidence.EffectiveTree || pins.BaseTree != evidence.BaseTree || pins.EffectiveTree == onboarded.Evidence.EffectiveTree ||
 			len(pins.Images) != 1 || pins.Images[0].Applied != digest {
 			t.Fatalf("pins %s = %+v %v, want the advance's tree %s and image", step, pins, err, evidence.EffectiveTree)
 		}
