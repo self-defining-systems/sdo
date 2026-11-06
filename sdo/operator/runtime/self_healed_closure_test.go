@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -19,6 +20,12 @@ type blockingDispatcher struct {
 	// StopResponder reports the Job still terminating.
 	stopAfter time.Time
 	clock     func() time.Time
+}
+
+func (d *blockingDispatcher) hasStarted() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.started
 }
 
 func (d *blockingDispatcher) StopResponder(context.Context, string, int) error {
@@ -79,9 +86,6 @@ func selfHealedIncident(t *testing.T, terminating time.Duration) {
 	broker := &riskBroker{}
 	controller.broker = broker
 	healedAt := opened.Add(20 * time.Second)
-	controller.OnIncidentClosed = func(c IncidentClosure) {
-		t.Logf("OnIncidentClosed at %s early=%v", controller.clock(), c.VerifiedWhileResponderRunning)
-	}
 	for step := 0; step < 1200 && len(broker.closures()) == 0; step++ {
 		clockMu.Lock()
 		at := now
@@ -101,6 +105,10 @@ func selfHealedIncident(t *testing.T, terminating time.Duration) {
 		} else if effect, ok := controller.PendingDispatchEffect(); ok {
 			if err := controller.ExecuteDispatchEffect(ctx, effect); err != nil {
 				t.Fatal(err)
+			}
+			// The responder runs in a goroutine; the scenario starts once it is working.
+			for !dispatcher.hasStarted() {
+				runtime.Gosched()
 			}
 		} else if effect, ok := controller.PendingClosureEffect(); ok {
 			if err := controller.ExecuteClosureEffect(ctx, effect); err != nil {
