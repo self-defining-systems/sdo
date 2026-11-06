@@ -138,3 +138,16 @@ device/inode readback. It binds only the owning node, never stacks an unexpected
 mount, and never resets the accepted checkout. If an already-running controller
 does not see the repaired mount, native shared-identity inspection still refuses
 admission; controller recovery remains separate.
+
+## Generic fault stream on a steady lane
+
+`gitlab_faults` runs N application-agnostic faults one at a time against a steady lane (`generic_faults.py` chooses
+targets from the lane's workload inventory; nothing is named by hand). Each fault: healthy baseline and no open
+incident, inject, wait for SDO's incident, wait for its verified closure, re-verify the baseline, record. The harness
+reverts a fault only when SDO did not recover it, and says so in the row (`recovery_error`, `harness_reverted`). Rows
+are `incidents.jsonl`/CSV `IncidentRecord`s; totals (resolution rate, MTTR, human edits) are `fault-stream.json`.
+`--dry-run --inventory LISTING.json` prints the selected faults and their `kubectl` actions with no lane.
+
+```bash
+uv run python -m benchmarks.sregym.fastloop.gitlab_faults faults --run-dir LANE --count 10 --seed 1 --dry-run
+```
