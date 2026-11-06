@@ -981,3 +981,4 @@ func transferReplicas(entries []metav1.ManagedFieldsEntry, manager, apiVersion s
 		FieldsV1: &metav1.FieldsV1{Raw: []byte(`{"f:spec":{"f:replicas":{}}}`)}}
 	return append([]metav1.ManagedFieldsEntry{entry}, out...)
 }
+// ci-c4 measurement 1
