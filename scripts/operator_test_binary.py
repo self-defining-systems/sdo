@@ -66,13 +66,16 @@ def _go_json_objects(output: str) -> list[dict[str, Any]]:
 def source_identity(module: Path, inputs: dict[str, str] | None = None) -> str:
     """Hash selected source bytes, module metadata and effective build settings."""
     environment = subprocess.check_output(["go", "env", "-json", *_BUILD_ENV], cwd=module, text=True)
-    packages = _go_json_objects(
-        subprocess.check_output(
-            ["go", "list", "-mod=readonly", "-deps", "-json", "./cmd/sdo-operator"],
-            cwd=module,
-            text=True,
-        )
+    # -buildvcs=false matches the build: a merge_group checkout has no usable VCS status.
+    listing = subprocess.run(
+        ["go", "list", "-mod=readonly", "-buildvcs=false", "-deps", "-json", "./cmd/sdo-operator"],
+        cwd=module,
+        text=True,
+        capture_output=True,
     )
+    if listing.returncode:
+        raise RuntimeError(f"go list failed ({listing.returncode}) in {module}: {listing.stderr.strip()}")
+    packages = _go_json_objects(listing.stdout)
     digest = hashlib.sha256(b"sdo-test-cli-v1\0-buildvcs=false\0-mod=readonly\0")
 
     def add(label: str, content: bytes) -> None:
