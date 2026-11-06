@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"sdo.dev/operator/lifecycle/internal/waitio"
+	"sdo.dev/operator/operability"
 )
 
 // VerificationOutcome is what independent verification concluded. Only a
@@ -184,6 +185,9 @@ type ProvidedPlanError struct {
 	// Stage is "deploy" (admission, deployment, evidence) or "verify".
 	Stage  string
 	Reason string
+	// Report is the operability report that stopped the deploy stage, when
+	// the offline checks did; nil for other failures.
+	Report *operability.Report
 }
 
 func (e *ProvidedPlanError) Error() string {

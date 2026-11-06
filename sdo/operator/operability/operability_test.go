@@ -466,3 +466,17 @@ func TestNoVerdictOrBenchmarkVocabulary(t *testing.T) {
 		}
 	}
 }
+
+func TestWithUnavailableFillsOnlyEmptyFieldsAndNeverBinds(t *testing.T) {
+	got := Subject{BaseTree: "t"}.WithUnavailable()
+	if got.BaseTree != "t" || got.EffectiveTree != Unavailable || got.DiagnosticsTree != Unavailable {
+		t.Fatalf("filled = %+v", got)
+	}
+	r := New(StageComplete, got)
+	if err := r.Validate(); err != nil {
+		t.Fatalf("a filled subject must validate: %v", err)
+	}
+	if err := got.BindsTo(subject()); err == nil {
+		t.Fatal("an unavailable subject bound to a recomputed one")
+	}
+}

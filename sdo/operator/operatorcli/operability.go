@@ -46,11 +46,6 @@ const OperabilityUsage = `usage: sdo-operator operability check --offline [--roo
         Exit 0 when every offline item of the stage is accepted, 1 when a check
         fails or is missing, 2 for usage or infrastructure errors.`
 
-// unavailable fills subject fields the checkout could not produce, so a failed
-// offline report still encodes. It never equals a recomputed value, so such a
-// report binds to nothing.
-const unavailable = "unavailable"
-
 // RunOperability runs "sdo-operator operability <args>" and returns the exit code.
 func RunOperability(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) int {
 	if getenv == nil {
@@ -118,13 +113,8 @@ func operabilityCheck(ctx context.Context, args []string, getenv func(string) st
 		}
 	}
 
-	subject := operability.Subject{
-		AcceptedCommit: unavailable, BaseTree: unavailable, EffectiveTree: unavailable,
-		PatchesDigest: unavailable, RenderDigest: unavailable, EnvDigest: unavailable, DiagnosticsTree: unavailable,
-	}
-	if head := processio.HeadCommit(ctx, absolute); head != "" {
-		subject.AcceptedCommit = head
-	}
+	var subject operability.Subject
+	subject.AcceptedCommit = processio.HeadCommit(ctx, absolute)
 	checks, err := offlineDeploymentChecks(ctx, absolute, *namespace, policy, &subject)
 	if err != nil {
 		return exitInfra, err
@@ -136,7 +126,7 @@ func operabilityCheck(ctx context.Context, args []string, getenv func(string) st
 		}
 		checks = append(checks, offline.CheckMemory(memory)...)
 	}
-	report, err := operability.New(stage, subject).With(checks...)
+	report, err := operability.New(stage, subject.WithUnavailable()).With(checks...)
 	if err != nil {
 		return exitInfra, err
 	}
