@@ -974,6 +974,34 @@ Every number lives in `.github/ci_budgets.json` and is enforced in code
 - Cache size: main saves a Go cache only if `scripts/ci_cache_guard.sh` measures its compressed archive (what Actions uploads) at or under `cache_limit_mb` (1 GB); otherwise it skips the save and fails the job.
 - `CI health` (hourly, `scripts/ci_health.py`) summarizes per-job p50/p95, merge-queue enqueue-to-merge latency and cancelled/rerun/ejected rates over the last `health.runs` runs created after `health.since`, and fails when any PR job p95 exceeds 180 s or queue p95 exceeds 8 min. After a fix, move `health.since` forward so the old runs leave the window.
 
+#### Affected-test selection on PRs
+
+Pull request runs execute only the tests their changes can affect; merge-group and
+main runs always run the full suite, so `main` stays protected. `scripts/ci_select.py plan`
+(run by each Python and Go test job; rules in `.github/ci_selection.json`, tests in
+`tests/unit/sdo/operator/test_ci_selection.py`) diffs the merge commit against its first parent:
+
+- Go: changed files map to their package (nearest directory with Go files), then to every package
+  that imports it, across the workspace modules (`go list -json` imports and test imports). A changed
+  `_test.go` selects its own package only. A Go test that reads a file outside its package
+  (a `"../"` literal, a repository-relative path) is selected when that file changes.
+- Python: the AST import graph over every tracked `.py` file (not tach's module graph: tach covers about
+  a third of the production files, and its `--tach` impact analysis needs a coverage baseline). Importers
+  are selected transitively. A file that names another file's dotted module (`-m pkg.mod`), path, or unique
+  basename counts as a dependent. Tests that run the Go executables (`python_go_consumers`) rerun when a
+  package in an executable's dependency closure changes, or when `go_consumer_modules` change. The
+  repository-wide guards in `python_always` run with every change except a pure Go-test change.
+- Full suite instead of a selection, listed as data in `full_suite`: `go.mod`/`go.sum`/`go.work`,
+  `uv.lock`, `pyproject.toml`, `.github/**`, `scripts/**`, protos and generated code, `tests/conftest.py`,
+  test helpers and fixtures, lint and tach configuration, `third_party/**`, any deleted non-test file, and any
+  changed file the mapping cannot attribute. A selection failure also runs everything.
+- Static checks (format, lint, archcheck, proto drift) always run in full. A shard with nothing selected skips
+  its setup and passes. A partial run publishes no coverage data, so the combined floor is enforced on full runs.
+- Selection misses: when a merge-group or main run fails a test that the pull request's selection would have
+  skipped, the job summary prints `SELECTION MISS` (`ci_select.py misses`). Each miss gets a case in
+  `test_recorded_misses` (the changed file and the test it must select) before the PR that caused it is forgotten;
+  fix the mapping, not the test.
+
 `Nightly CI` runs daily and through `workflow_dispatch`; its Actions conclusion reports failures. It has one
 Go job (every package under `-race`, without `-short`, with full simulation seeds, then the bounded fuzz campaigns),
 the controller end-to-end scenarios, the slow Python suites that PR CI ignores, and the image builds.
