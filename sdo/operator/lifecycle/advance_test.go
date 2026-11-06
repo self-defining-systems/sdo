@@ -27,6 +27,7 @@ var (
 	advHead      = strings.Repeat("3", 40)
 	advCandidate = strings.Repeat("4", 40)
 	advTree      = strings.Repeat("5", 40)
+	advEffective = strings.Repeat("7", 40)
 	advDigest    = strings.Repeat("6", 64)
 )
 
@@ -58,7 +59,9 @@ type advWorld struct {
 	published []broker.SourceEvidence
 }
 
-func (w *advWorld) log(format string, args ...any) { w.events = append(w.events, fmt.Sprintf(format, args...)) }
+func (w *advWorld) log(format string, args ...any) {
+	w.events = append(w.events, fmt.Sprintf(format, args...))
+}
 
 func (w *advWorld) Materialize(_ context.Context, id string, config *anypb.Any, rev upstream.Revision, gitDir string) (string, error) {
 	w.log("materialize %s %s", id, rev.ID)
@@ -122,7 +125,7 @@ func (w *advWorld) PublishAdvance(_ context.Context, id, upstreamCommit, base st
 		return broker.Receipt{}, errors.New("no open advance proposal")
 	case upstreamCommit != advRevision || base != advPrev:
 		return broker.Receipt{}, errors.New("trailers differ from the proposal's merge")
-	case evidence.BaseTree != advTree || evidence.ObservedRevision != advTree || !evidence.Ready:
+	case evidence.BaseTree != advTree || evidence.EffectiveTree != advEffective || evidence.ObservedRevision != advEffective || !evidence.Ready:
 		return broker.Receipt{}, errors.New("evidence is not of the candidate tree")
 	case !proto.Equal(evidence.Plan, w.plan) || !proto.Equal(evidence.DeploymentSource, w.plan.GetSource()):
 		return broker.Receipt{}, errors.New("evidence does not carry the accepted plan")
@@ -179,7 +182,7 @@ func (w *advWorld) ApplyAndVerify(_ context.Context, checkout string, plan *cont
 			return lifecycle.DeploymentReceipt{}, err
 		}
 	}
-	receipt := lifecycle.DeploymentReceipt{Source: proto.Clone(plan.GetSource()).(*contracts.DeploymentSource), BaseTree: advTree, ObservedRevision: advTree, RenderDigest: advDigest, EnvDigest: advDigest, Images: []string{"toy@sha256:" + advDigest}, ResourceIDs: []string{"Deployment/toy/toy"}, Ready: true}
+	receipt := lifecycle.DeploymentReceipt{Source: proto.Clone(plan.GetSource()).(*contracts.DeploymentSource), BaseTree: advTree, EffectiveTree: advEffective, PatchesDigest: advDigest, ObservedRevision: advEffective, RenderDigest: advDigest, EnvDigest: advDigest, Images: []string{"toy@sha256:" + advDigest}, ResourceIDs: []string{"Deployment/toy/toy"}, Ready: true}
 	if w.receipt != nil {
 		receipt = w.receipt(receipt)
 	}
@@ -407,7 +410,7 @@ func TestAdvanceWithoutAnAcceptedPlanIsUnavailable(t *testing.T) {
 func TestFakeBrokerRefusesEvidenceOfAnotherTree(t *testing.T) {
 	w := newAdvWorld(t)
 	w.receipt = func(r lifecycle.DeploymentReceipt) lifecycle.DeploymentReceipt {
-		r.BaseTree, r.ObservedRevision = strings.Repeat("9", 40), strings.Repeat("9", 40)
+		r.BaseTree, r.EffectiveTree, r.ObservedRevision = strings.Repeat("9", 40), strings.Repeat("9", 40), strings.Repeat("9", 40)
 		return r
 	}
 	w.verdicts = []lifecycle.HealthVerdict{{Outcome: lifecycle.VerificationClear}}
@@ -433,7 +436,7 @@ func TestAdvanceRejectsIncompleteWiring(t *testing.T) {
 
 type infrastructureFailure struct{}
 
-func (*infrastructureFailure) Error() string              { return "registry rate limited" }
+func (*infrastructureFailure) Error() string               { return "registry rate limited" }
 func (*infrastructureFailure) InfrastructureOutcome() bool { return true }
 
 func count(events []string, prefix string) int {

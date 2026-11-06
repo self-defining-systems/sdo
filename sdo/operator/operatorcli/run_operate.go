@@ -90,7 +90,7 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	}
 	readiness, err := operateIdentity(config).deployer(client, deployTarget{
 		Namespace: config.Lifecycle.Namespace, ControlNamespace: control,
-		AcceptedRoot: config.ApplicationRoot, ProposalRoot: config.WorktreeRoot,
+		AcceptedRoot: config.ApplicationRoot, WorkspaceRoot: config.WorktreeRoot,
 		RepositoryMount: config.RepositoryMount, RepositoryPVC: config.Install.RepositoryPVC,
 	}, environment)
 	if err != nil {

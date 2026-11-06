@@ -9,6 +9,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/deployment/internal/deploymentio"
 	"sdo.dev/operator/lifecycle"
+	"sdo.dev/operator/patchset"
 	"sdo.dev/operator/render"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/renderenv"
@@ -27,6 +28,30 @@ type RendererChangedError struct {
 func (e *RendererChangedError) Error() string {
 	return fmt.Sprintf("accepted source renders differently than when it was deployed (%s digest %s, now %s): the renderer or its environment changed, not the running application", e.What, e.Want, e.Got)
 }
+
+// PatchSetChangedError reports that the accepted commit's deployment patch
+// series no longer yields the effective tree that was deployed: a patch was
+// edited or removed outside the broker's evidence, or applying the same patches
+// now gives a different tree (a git behavior change). It is neither drift of
+// the running application nor a renderer change.
+type PatchSetChangedError struct {
+	// What names the difference: "patch series digest", "effective tree" or
+	// "patch application".
+	What string
+	Want string
+	Got  string
+	// Err is the application failure when What is "patch application".
+	Err error
+}
+
+func (e *PatchSetChangedError) Error() string {
+	if e.Err != nil {
+		return fmt.Sprintf("accepted deployment patches no longer apply to the accepted source (they applied when it was deployed): %v", e.Err)
+	}
+	return fmt.Sprintf("accepted deployment patches yield a different %s than when it was deployed (%s, now %s): the patch set or patch application changed, not the running application", e.What, e.Want, e.Got)
+}
+
+func (e *PatchSetChangedError) Unwrap() error { return e.Err }
 
 func (d Deployer) git(ctx context.Context, args ...string) (string, error) {
 	var (
@@ -53,7 +78,7 @@ func (d Deployer) VerifyAccepted(ctx context.Context, commit, namespace string, 
 	if err := d.validate(); err != nil {
 		return lifecycle.DeploymentReceipt{}, err
 	}
-	if d.AcceptedRoot == "" || commit == "" || namespace == "" || !prior.Ready || prior.BaseTree == "" || len(prior.ResourceIDs) == 0 {
+	if d.AcceptedRoot == "" || commit == "" || namespace == "" || !prior.Ready || prior.BaseTree == "" || prior.EffectiveTree == "" || len(prior.ResourceIDs) == 0 {
 		return lifecycle.DeploymentReceipt{}, errors.New("accepted repository, commit, namespace, and trusted source evidence are required")
 	}
 	if namespace != d.Namespace {
@@ -76,7 +101,7 @@ func (d Deployer) VerifyAccepted(ctx context.Context, commit, namespace string, 
 		if err != nil {
 			return lifecycle.DeploymentReceipt{}, err
 		}
-		if !observed.Ready || observed.ResourceID != id || observed.Revision != prior.BaseTree {
+		if !observed.Ready || observed.ResourceID != id || observed.Revision != prior.EffectiveTree {
 			return lifecycle.DeploymentReceipt{}, fmt.Errorf("workload %s no longer matches accepted source", id)
 		}
 		if len(prior.ContainerImages) > 0 {
@@ -99,7 +124,8 @@ func (d Deployer) VerifyAccepted(ctx context.Context, commit, namespace string, 
 }
 
 // acceptedTree checks that commit is in the accepted branch and has exactly the
-// tree the receipt deployed, and returns that tree.
+// base tree the receipt deployed, and returns that tree. The effective tree is
+// then recomputed by verifyRendered.
 func acceptedTree(ctx context.Context, git func(context.Context, ...string) (string, error), commit string, prior lifecycle.DeploymentReceipt) (string, error) {
 	head, err := git(ctx, "rev-parse", "HEAD")
 	if err != nil {
@@ -112,23 +138,41 @@ func acceptedTree(ctx context.Context, git func(context.Context, ...string) (str
 	if err != nil {
 		return "", err
 	}
-	if tree != prior.BaseTree || prior.ObservedRevision != tree {
+	if tree != prior.BaseTree || prior.ObservedRevision != prior.EffectiveTree {
 		return "", errors.New("accepted source tree differs from persisted deployment evidence")
 	}
 	return tree, nil
 }
 
-// renderedDigests renders source at tree with the shared desired-state
-// function and returns its render and environment digests.
-func renderedDigests(ctx context.Context, store rendered.ObjectStore, tree string, env render.Env, catalog *render.Catalog, source *contracts.DeploymentSource) (rendered.DesiredSet, error) {
+// effectiveFor recomputes the effective tree of base and requires the patch
+// series digest and tree ID the receipt recorded (*PatchSetChangedError). The
+// caller closes the tree.
+func effectiveFor(ctx context.Context, store rendered.ObjectStore, base string, prior lifecycle.DeploymentReceipt) (rendered.EffectiveTree, error) {
+	effective, err := rendered.Effective(ctx, store, rendered.BaseTree(base))
+	if err != nil {
+		var patchErr *patchset.PatchError
+		if errors.As(err, &patchErr) {
+			return rendered.EffectiveTree{}, &PatchSetChangedError{What: "patch application", Err: err}
+		}
+		return rendered.EffectiveTree{}, fmt.Errorf("compute effective tree of accepted source: %w", err)
+	}
+	if effective.PatchesDigest != prior.PatchesDigest {
+		defer effective.Close()
+		return rendered.EffectiveTree{}, &PatchSetChangedError{What: "patch series digest", Want: prior.PatchesDigest, Got: effective.PatchesDigest}
+	}
+	if effective.ID != prior.EffectiveTree {
+		defer effective.Close()
+		return rendered.EffectiveTree{}, &PatchSetChangedError{What: "effective tree", Want: prior.EffectiveTree, Got: effective.ID}
+	}
+	return effective, nil
+}
+
+// renderedDigests renders source from the effective tree with the shared
+// desired-state function and returns its render and environment digests.
+func renderedDigests(ctx context.Context, effective rendered.EffectiveTree, env render.Env, catalog *render.Catalog, source *contracts.DeploymentSource) (rendered.DesiredSet, error) {
 	if catalog == nil || source == nil || env.Namespace == "" {
 		return rendered.DesiredSet{}, errors.New("a renderer catalog, namespace and deployment source are required to digest the deployment")
 	}
-	effective, err := rendered.Effective(ctx, store, rendered.BaseTree(tree))
-	if err != nil {
-		return rendered.DesiredSet{}, err
-	}
-	defer effective.Close()
 	fsys, err := rendered.GitTreeFS(ctx, effective)
 	if err != nil {
 		return rendered.DesiredSet{}, err
@@ -136,13 +180,20 @@ func renderedDigests(ctx context.Context, store rendered.ObjectStore, tree strin
 	return rendered.Desired(ctx, fsys, env, catalog, source)
 }
 
-// verifyRendered re-renders the receipt's source at tree and requires the
-// recorded digests; a mismatch is *RendererChangedError, not drift.
-func verifyRendered(ctx context.Context, store rendered.ObjectStore, tree string, env render.Env, catalog *render.Catalog, prior lifecycle.DeploymentReceipt) error {
-	if prior.Source == nil || prior.RenderDigest == "" || prior.EnvDigest == "" {
-		return errors.New("deployment evidence names no source or digests")
+// verifyRendered recomputes the effective tree of base (requiring the
+// recorded patch series and tree, *PatchSetChangedError otherwise), re-renders
+// the receipt's source from it and requires the recorded digests; a mismatch
+// is *RendererChangedError, not drift.
+func verifyRendered(ctx context.Context, store rendered.ObjectStore, base string, env render.Env, catalog *render.Catalog, prior lifecycle.DeploymentReceipt) error {
+	if prior.Source == nil || prior.RenderDigest == "" || prior.EnvDigest == "" || prior.EffectiveTree == "" || prior.PatchesDigest == "" {
+		return errors.New("deployment evidence names no source, effective tree or digests")
 	}
-	set, err := renderedDigests(ctx, store, tree, env, catalog, prior.Source)
+	effective, err := effectiveFor(ctx, store, base, prior)
+	if err != nil {
+		return err
+	}
+	defer effective.Close()
+	set, err := renderedDigests(ctx, effective, env, catalog, prior.Source)
 	if err != nil {
 		return fmt.Errorf("re-render accepted source: %w", err)
 	}

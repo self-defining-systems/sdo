@@ -3,7 +3,6 @@ package buildkit
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,8 +36,7 @@ func proposalCheckout(t *testing.T) (root, checkout string) {
 
 func testBackend(root string, client *fake.Clientset, timeout time.Duration) Builder {
 	return Builder{
-		TreeDigest: func(context.Context, string) (string, error) { return "tree", nil },
-		Client:     client, Namespace: "sdo-control", RepositoryPVC: "repo", ProposalRoot: root,
+		Client:     client, Namespace: "sdo-control", RepositoryPVC: "repo", CheckoutRoot: root,
 		BuildKitImage:  "reg.example/buildkit@" + synthDigest,
 		RegistrySecret: "push", AllowedRegistryHost: "reg.example", ServiceAccount: "builder",
 		PollInterval: time.Millisecond, Timeout: timeout, JobSuffix: func() string { return "t" },
@@ -138,29 +136,13 @@ func completedBuild(root string) (Builder, *fake.Clientset) {
 	return b, client
 }
 
-// The injected TreeDigest is the check that the candidate tree did not change
-// while the Job read it.
-func TestBuildFailsWhenTheTreeChangesDuringTheBuild(t *testing.T) {
+// The build input is an immutable materialized effective tree, so a finished
+// Job is accepted without re-reading the directory.
+func TestBuildOfAMaterializedTreeNeedsNoTreeGuard(t *testing.T) {
 	root, checkout := proposalCheckout(t)
 	b, _ := completedBuild(root)
-	calls := 0
-	b.TreeDigest = func(context.Context, string) (string, error) { calls++; return fmt.Sprint("tree-", calls), nil }
-	if _, err := b.buildImage(context.Background(), checkout, testBuild(checkout)); err == nil || !strings.Contains(err.Error(), "tree changed") {
-		t.Fatalf("a tree that changed mid-build must fail the build, got %v", err)
-	}
-	b.TreeDigest = func(context.Context, string) (string, error) { return "same", nil }
-	b.JobSuffix = func() string { return "second" }
 	ref, err := b.buildImage(context.Background(), checkout, testBuild(checkout))
 	if err != nil || ref != "reg.example/app/api@"+synthDigest {
-		t.Fatalf("stable tree: ref %q err %v", ref, err)
-	}
-}
-
-func TestBuilderRequiresATreeDigest(t *testing.T) {
-	root, checkout := proposalCheckout(t)
-	b, _ := completedBuild(root)
-	b.TreeDigest = nil
-	if _, err := b.buildImage(context.Background(), checkout, testBuild(checkout)); err == nil {
-		t.Fatal("a builder without a tree digest must refuse to build")
+		t.Fatalf("ref %q err %v", ref, err)
 	}
 }

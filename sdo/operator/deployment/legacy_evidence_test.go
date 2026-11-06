@@ -23,7 +23,8 @@ const (
 	legacyRegistryRenderDigest = "2125c7471ddba75fef39d7ea09f1a23b23294ca2a4fcc939df10916eb22a44af"
 )
 
-// A lane whose accepted evidence was written by the legacy registry restarts
+// Digests of evidence written by the legacy registry (S3-13b; effective tree
+// fields added by S5-3b) restart
 // under the Deployer: with the production render environment (no install
 // configuration beyond the namespace) the Deployer binds the same digests and
 // re-verifies that evidence instead of reporting a renderer change.
@@ -41,7 +42,7 @@ func TestDeployerWithTheProductionEnvAcceptsLegacyRegistryEvidence(t *testing.T)
 	}
 	// The registry recorded the raw source of its manifest paths.
 	legacy := lifecycle.DeploymentReceipt{
-		Source: depSource(t, raw.ID, &contracts.RawRenderConfig{Paths: []string{"k8s"}}), BaseTree: receipt.BaseTree, ObservedRevision: receipt.BaseTree,
+		Source: depSource(t, raw.ID, &contracts.RawRenderConfig{Paths: []string{"k8s"}}), BaseTree: receipt.BaseTree, EffectiveTree: receipt.EffectiveTree, PatchesDigest: receipt.PatchesDigest, ObservedRevision: receipt.EffectiveTree,
 		RenderDigest: legacyRegistryRenderDigest, EnvDigest: legacyRegistryEnvDigest,
 		Images: receipt.Images, ResourceIDs: receipt.ResourceIDs, Ready: true,
 	}

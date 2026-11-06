@@ -364,6 +364,9 @@ func (b *Broker) PublishAdvance(ctx context.Context, id, upstream, base string, 
 		if err := checkEffective(ctx, stage, tree); err != nil {
 			return effectiveError(ctx, stage, "", tree, base, upstream, err)
 		}
+		if err := requireEffectiveEvidence(ctx, stage, evidence); err != nil {
+			return err
+		}
 		mirror, err := mirrorState(ctx, stage, current, base, upstream)
 		if err != nil {
 			return err

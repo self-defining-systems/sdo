@@ -24,7 +24,7 @@ func operateTestDeployer(t *testing.T, config OperateConfig) deployment.Deployer
 	t.Helper()
 	deployer, err := operateIdentity(config).deployer(fake.NewSimpleClientset(), deployTarget{
 		Namespace: config.Lifecycle.Namespace, ControlNamespace: "sdo-system", AcceptedRoot: config.ApplicationRoot,
-		ProposalRoot: config.WorktreeRoot, RepositoryMount: config.RepositoryMount, RepositoryPVC: "repo",
+		WorkspaceRoot: config.WorktreeRoot, RepositoryMount: config.RepositoryMount, RepositoryPVC: "repo",
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -63,7 +63,7 @@ func TestOperateDeployerKeepsTheLegacyRenderEnvironment(t *testing.T) {
 
 func TestDeployerProposalsMustBeOnTheRepositoryMount(t *testing.T) {
 	config := operateTestConfig("registry.local:5000")
-	_, err := operateIdentity(config).deployer(fake.NewSimpleClientset(), deployTarget{Namespace: "demo", ControlNamespace: "sdo-system", AcceptedRoot: config.ApplicationRoot, ProposalRoot: "/elsewhere", RepositoryMount: "/repo", RepositoryPVC: "repo"}, nil)
+	_, err := operateIdentity(config).deployer(fake.NewSimpleClientset(), deployTarget{Namespace: "demo", ControlNamespace: "sdo-system", AcceptedRoot: config.ApplicationRoot, WorkspaceRoot: "/elsewhere", RepositoryMount: "/repo", RepositoryPVC: "repo"}, nil)
 	if err == nil {
 		t.Fatal("proposal root outside the repository mount accepted")
 	}

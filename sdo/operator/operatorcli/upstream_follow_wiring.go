@@ -59,7 +59,7 @@ func (d deployIdentity) Enabled() bool { return d.BuildKitImage != "" && d.Regis
 // deployTarget is where a deployIdentity deploys.
 type deployTarget struct {
 	Namespace, ControlNamespace    string
-	AcceptedRoot, ProposalRoot     string
+	AcceptedRoot, WorkspaceRoot    string
 	RepositoryMount, RepositoryPVC string
 }
 
@@ -69,7 +69,7 @@ type deployTarget struct {
 // discovery, or the controller's --render-env, which the operate Job recorded
 // with the deployment evidence.
 func (d deployIdentity) deployer(client kubernetes.Interface, target deployTarget, environment *contracts.RenderEnvironment) (deployment.Deployer, error) {
-	subPath, err := filepath.Rel(target.RepositoryMount, target.ProposalRoot)
+	subPath, err := filepath.Rel(target.RepositoryMount, target.WorkspaceRoot)
 	if err != nil || subPath == "." || subPath == ".." || filepath.IsAbs(subPath) || strings.HasPrefix(subPath, "../") {
 		return deployment.Deployer{}, errors.New("broker proposals must be inside the shared repository mount")
 	}
@@ -79,17 +79,20 @@ func (d deployIdentity) deployer(client kubernetes.Interface, target deployTarge
 	}
 	pre := &prebuilt.Source{InsecureHost: insecure, Cluster: nodeImages{client: client}}
 	var sources *imagesrc.Catalog
+	var materializer *rendered.Materializer
 	if d.RegistryHost == "" { // nowhere to push a build
 		sources, err = images.PrebuiltOnly(pre)
 	} else {
 		sources, err = images.Catalog(images.Config{Prebuilt: pre, BuildBudget: d.BuildBudget, Builder: buildkit.Builder{
-			TreeDigest: broker.ProposalTreeDigest,
-			Client:     client, Namespace: target.ControlNamespace, RepositoryPVC: target.RepositoryPVC,
-			ProposalRoot: target.ProposalRoot, RepositoryPVCSubPath: subPath,
+			Client: client, Namespace: target.ControlNamespace, RepositoryPVC: target.RepositoryPVC,
+			CheckoutRoot: target.WorkspaceRoot, RepositoryPVCSubPath: subPath,
 			BuildKitImage: d.BuildKitImage, RegistrySecret: d.RegistryPushSecret,
 			AllowedRegistryHost: d.RegistryHost, RegistryInsecure: d.RegistryInsecure,
 			ServiceAccount: "sdo-image-builder", Timeout: d.BuildTimeout,
 		}})
+		// Builds read the effective tree, materialized beside the broker's
+		// proposals on the shared repository volume (the Job mounts it).
+		materializer = &rendered.Materializer{Root: filepath.Join(target.WorkspaceRoot, "effective")}
 	}
 	if err != nil {
 		return deployment.Deployer{}, err
@@ -97,7 +100,7 @@ func (d deployIdentity) deployer(client kubernetes.Interface, target deployTarge
 	return deployment.Deployer{
 		Namespace: target.Namespace, Renderers: renderers.Catalog(), Images: sources,
 		Applier:    deployment.CommandBackend{ObserveLimit: d.RolloutTimeout},
-		TreeDigest: broker.ProposalTreeDigest, Environment: environment, AcceptedRoot: target.AcceptedRoot,
+		TreeDigest: broker.ProposalTreeDigest, Environment: environment, AcceptedRoot: target.AcceptedRoot, Materializer: materializer,
 	}, nil
 }
 
@@ -209,7 +212,7 @@ func newUpstreamFollowing(ctx context.Context, launch *contracts.ControllerConfi
 func controllerAdvancer(launch *contracts.ControllerConfig, operatorRoot string, identity deployIdentity, client kubernetes.Interface, repository *broker.Broker, catalog *upstream.Catalog) (lifecycle.Advancer, lifecycle.AdvanceConfig, error) {
 	deployer, err := identity.deployer(client, deployTarget{
 		Namespace: launch.GetNamespace(), ControlNamespace: controlNamespace(launch),
-		AcceptedRoot: launch.GetAppRoot(), ProposalRoot: launch.GetBrokerWorktreeRoot(),
+		AcceptedRoot: launch.GetAppRoot(), WorkspaceRoot: launch.GetBrokerWorktreeRoot(),
 		RepositoryMount: launch.GetRepositoryMountPath(), RepositoryPVC: launch.GetRepositoryPvc(),
 	}, launch.GetRenderEnvironment())
 	if err != nil {

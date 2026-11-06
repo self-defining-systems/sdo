@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"sdo.dev/operator/imagesrc"
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/patchset"
 	"sdo.dev/operator/render"
@@ -61,7 +62,8 @@ func TestDeployAndVerifyRenderTheEffectiveTree(t *testing.T) {
 }
 
 // A receipt made without the patch does not verify a tree that carries one:
-// the render digest moves, which is a RendererChangedError and not drift.
+// the patch series digest moves, a *PatchSetChangedError and not a renderer
+// change or drift.
 func TestVerifyRenderedSeesAPatchTheReceiptDidNotHave(t *testing.T) {
 	root, source := depRawFixture(t)
 	deployer, _ := depDeployer(t, root, &clusterFake{})
@@ -72,10 +74,125 @@ func TestVerifyRenderedSeesAPatchTheReceiptDidNotHave(t *testing.T) {
 	}
 	patchWeb(t, root)
 	tree := testutil.Git(t, root, "rev-parse", "HEAD^{tree}")
-	store := rendered.ObjectStore{Dir: root}
-	err = verifyRendered(ctx, store, tree, renderenv.For(nil, depNamespace, render.SecretsOmit), deployer.Renderers, receipt)
-	var changed *RendererChangedError
-	if !errors.As(err, &changed) || changed.What != "render" {
-		t.Fatalf("err = %v, want a render RendererChangedError", err)
+	err = verifyRendered(ctx, rendered.ObjectStore{Dir: root}, tree, renderenv.For(nil, depNamespace, render.SecretsOmit), deployer.Renderers, receipt)
+	var changed *PatchSetChangedError
+	if !errors.As(err, &changed) || changed.What != "patch series digest" || changed.Want != receipt.PatchesDigest {
+		t.Fatalf("err = %v, want a patch series PatchSetChangedError", err)
+	}
+	var renderer *RendererChangedError
+	if errors.As(err, &renderer) {
+		t.Fatal("a changed patch set is not a renderer change")
+	}
+}
+
+func TestVerifyAcceptedRequiresTheRecordedEffectiveTree(t *testing.T) {
+	root, source := depRawFixture(t)
+	patchWeb(t, root)
+	deployer, _ := depDeployer(t, root, &clusterFake{})
+	ctx := context.Background()
+	receipt, err := deployer.ApplyAndVerify(ctx, root, depPlan(t, source, depRawWeb))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.EffectiveTree == receipt.BaseTree || receipt.ObservedRevision != receipt.EffectiveTree {
+		t.Fatalf("a patched tree deploys under the effective tree ID: %+v", receipt)
+	}
+	commit := depHead(t, root)
+	t.Run("another effective tree with the same patch digest", func(t *testing.T) {
+		changed := receipt
+		changed.EffectiveTree = strings.Repeat("3", 40)
+		changed.ObservedRevision = changed.EffectiveTree
+		_, err := deployer.VerifyAccepted(ctx, commit, depNamespace, changed)
+		var patchErr *PatchSetChangedError
+		if !errors.As(err, &patchErr) || patchErr.What != "effective tree" {
+			t.Fatalf("err = %v, want an effective tree PatchSetChangedError", err)
+		}
+	})
+	t.Run("a revision that is not the effective tree", func(t *testing.T) {
+		changed := receipt
+		changed.ObservedRevision = receipt.BaseTree
+		if _, err := deployer.VerifyAccepted(ctx, commit, depNamespace, changed); err == nil {
+			t.Fatal("evidence observed at the base tree stamp was accepted")
+		}
+	})
+	t.Run("patches that no longer apply", func(t *testing.T) {
+		// A later upstream-style change moves the patched lines.
+		file := filepath.Join(root, "k8s", "web.yaml")
+		body, _ := os.ReadFile(file)
+		if err := os.WriteFile(file, []byte(strings.ReplaceAll(string(body), "web:1", "web:9")), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		testutil.Git(t, root, "commit", "-qam", "upstream moves")
+		tree := testutil.Git(t, root, "rev-parse", "HEAD^{tree}")
+		err := verifyRendered(ctx, rendered.ObjectStore{Dir: root}, tree, renderenv.For(nil, depNamespace, render.SecretsOmit), deployer.Renderers, receipt)
+		var patchErr *PatchSetChangedError
+		if !errors.As(err, &patchErr) || patchErr.What != "patch application" {
+			t.Fatalf("err = %v, want a patch application PatchSetChangedError", err)
+		}
+	})
+}
+
+// The pod-template stamp is the effective tree ID, so a memory-only commit
+// does not change what a redeploy applies.
+func TestStampIsTheEffectiveTreeID(t *testing.T) {
+	root, source := depRawFixture(t)
+	patchWeb(t, root)
+	cluster := &clusterFake{}
+	deployer, _ := depDeployer(t, root, cluster)
+	receipt, err := deployer.ApplyAndVerify(context.Background(), root, depPlan(t, source, depRawWeb))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, document := range cluster.applied {
+		if document["kind"] != "Deployment" {
+			continue
+		}
+		meta := document["metadata"].(map[string]any)["annotations"].(map[string]any)
+		template := document["spec"].(map[string]any)["template"].(map[string]any)["metadata"].(map[string]any)["annotations"].(map[string]any)
+		if meta["sdo.dev/source-tree"] != receipt.EffectiveTree || template["sdo.dev/source-tree"] != receipt.EffectiveTree || receipt.EffectiveTree == receipt.BaseTree {
+			t.Fatalf("stamps %v / %v, effective %s, base %s", meta, template, receipt.EffectiveTree, receipt.BaseTree)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".sdo", "playbooks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".sdo", "playbooks", "p.md"), []byte("memory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, root, "add", ".")
+	testutil.Git(t, root, "commit", "-qm", "memory only")
+	again, err := deployer.ApplyAndVerify(context.Background(), root, depPlan(t, source, depRawWeb))
+	if err != nil || again.EffectiveTree != receipt.EffectiveTree || again.BaseTree == receipt.BaseTree {
+		t.Fatalf("memory-only commit: effective %s -> %s, base %s -> %s, %v", receipt.EffectiveTree, again.EffectiveTree, receipt.BaseTree, again.BaseTree, err)
+	}
+}
+
+// Image builds read a materialization of the effective tree, never the
+// agent's checkout: patched content, no memory, and a directory that stays
+// the same when the checkout is edited afterwards.
+func TestImageBuildsReadTheMaterializedEffectiveTree(t *testing.T) {
+	root, source := depRawFixture(t)
+	patchWeb(t, root)
+	deployer, fake := depDeployer(t, root, &clusterFake{})
+	deployer.Materializer = &rendered.Materializer{Root: filepath.Join(t.TempDir(), "effective")}
+	var checkouts []string
+	fake.Hook = func(_ context.Context, req imagesrc.Request) error {
+		checkouts = append(checkouts, req.Checkout)
+		body, err := os.ReadFile(filepath.Join(req.Checkout, "k8s", "web.yaml"))
+		if err != nil || !strings.Contains(string(body), "web:2") {
+			return errors.New("build input does not carry the patch: " + string(body))
+		}
+		if _, err := os.Stat(filepath.Join(req.Checkout, ".sdo", "deployment", "patches")); err == nil {
+			return errors.New("build input carries the patch series")
+		}
+		// An edit of the agent's checkout during the build does not reach it.
+		return os.WriteFile(filepath.Join(root, "k8s", "web.yaml"), []byte("scratch edit"), 0o644)
+	}
+	receipt, err := deployer.ApplyAndVerify(context.Background(), root, depPlan(t, source, depRawWeb))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(checkouts) == 0 || checkouts[0] == root || filepath.Base(checkouts[0]) != receipt.EffectiveTree[:12] {
+		t.Fatalf("checkouts = %v, effective %s", checkouts, receipt.EffectiveTree)
 	}
 }
