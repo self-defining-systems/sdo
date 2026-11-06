@@ -190,9 +190,11 @@ func (o *TrafficObserver) Reset(ctx context.Context) error {
 	return o.api.Reset(ctx)
 }
 
-// WaitWarm polls until every scenario of every consumed workload has a
-// sample, so the next evaluation, which may be the all-clear that precedes a
-// fault, judges observed traffic. It reports whether that happened in time.
+// WaitWarm polls until every consumed workload holds what its own SLO needs
+// to be judged (traffic.Window.Ready: each scenario's minimum usable samples,
+// each link's first sample), so the next evaluation, which may be the
+// all-clear that precedes a fault, judges observed traffic. It reports
+// whether that happened in time.
 func (o *TrafficObserver) WaitWarm(ctx context.Context, timeout time.Duration) bool {
 	deadline := timerClock(o.Clock).NewTimer(timeout)
 	defer deadline.Stop()
@@ -213,23 +215,29 @@ func (o *TrafficObserver) WaitWarm(ctx context.Context, timeout time.Duration) b
 	}
 }
 
+// WarmupBudget is how long a cold prober needs to satisfy warm, from the last
+// poll: the declared minimum samples at the workload's own rate, plus slack
+// for scheduling. Zero before any window was read.
+func (o *TrafficObserver) WarmupBudget() time.Duration {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	var longest time.Duration
+	for _, name := range o.workloads {
+		longest = max(longest, o.windows[name].WarmupHorizon())
+	}
+	if longest == 0 {
+		return 0
+	}
+	return 2*longest + 5*time.Second
+}
+
 func (o *TrafficObserver) warm() bool {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	for _, name := range o.workloads {
 		window, ok := o.windows[name]
-		if !ok || len(window.Scenarios)+len(window.Links) == 0 {
+		if !ok || !window.Ready() {
 			return false
-		}
-		for _, observed := range window.Links {
-			if len(observed.Samples) == 0 {
-				return false
-			}
-		}
-		for _, observed := range window.Scenarios {
-			if len(observed.Samples) == 0 {
-				return false
-			}
 		}
 	}
 	return true

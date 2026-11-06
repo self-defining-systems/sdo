@@ -1744,6 +1744,10 @@ type evaluationResult struct {
 	DetectorStates []DetectorEvaluation    `json:"detector_states,omitempty"`
 }
 
+// evaluateOnceWarmupBudget is the least time a one-shot evaluation waits for the
+// prober to warm; accepted workloads that need longer extend it.
+const evaluateOnceWarmupBudget = 30 * time.Second
+
 func evaluateOnce(
 	ctx context.Context,
 	detectors []sdk.Detector,
@@ -1896,9 +1900,12 @@ func evaluateOnce(
 		}
 		observer := NewTrafficObserver(trafficAPI, workloads, nil, 0)
 		observer.Clock = clock
-		if !observer.WaitWarm(ctx, 30*time.Second) {
-			return errors.New("traffic prober did not produce a complete bounded health window")
-		}
+		// The wait is bounded by what the accepted workloads declare they need
+		// (minimum samples at their rate), never below the base budget. When
+		// the bound expires the detectors judge what was observed and report
+		// a typed pending reason naming the scenarios that lacked samples.
+		observer.Poll(ctx)
+		observer.WaitWarm(ctx, max(evaluateOnceWarmupBudget, observer.WarmupBudget()))
 		trafficProvider.Observer = observer
 	}
 	var unavailable []unavailableEvaluation
