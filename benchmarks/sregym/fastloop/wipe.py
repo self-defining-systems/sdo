@@ -54,6 +54,8 @@ CLUSTER_KINDS: tuple[str, ...] = (
     "namespace",
 )
 NAMESPACE_KIND = "namespace"
+# What a fault's foreign helper can be: a bare pod or any workload that would recreate one.
+HELPER_KINDS = "cronjob,job,deployment,statefulset,daemonset,replicaset,pod"
 INVENTORY_SUFFIX = ".lane-inventory.json"
 MARKER_NAME = "attempt-in-progress"
 RECEIPT_NAME = "wipe-receipt.json"
@@ -83,6 +85,10 @@ class LaneCluster(Protocol):
 
     def delete(self, identity: str) -> None:
         """Request deletion; an already absent object is not an error."""
+        ...
+
+    def clear_helpers(self, namespace: str) -> tuple[str, ...]:
+        """Delete every workload and pod in ``namespace``, wait until gone; return them as ``kind/name``."""
         ...
 
     def blocking_objects(self, namespace: str) -> tuple[str, ...]:
@@ -154,6 +160,7 @@ class Tier1Receipt:
     removed: tuple[str, ...]
     inventory_bootstrapped: bool
     force_finalized: tuple[str, ...]
+    helpers_removed: tuple[str, ...] = ()
 
 
 def release_stuck_namespaces(cluster: LaneCluster, remaining: Collection[str], released: list[str]) -> tuple[str, ...]:
@@ -240,11 +247,16 @@ def run_tier1(
     poll_seconds: float = wait_for(WaitKind.SAMPLE),
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
+    helper_namespace: str | None = None,
 ) -> Tier1Receipt:
     """Wipe what the harness and SDO own on this lane, then re-provision and re-seed SDO's inputs.
 
     A lane with no recorded inventory adopts its current cluster-scoped objects as its baseline after the
     namespaces are wiped; ``fastloop up`` records one for every new lane.
+
+    ``helper_namespace`` is the harness's kept namespace for foreign pods (load generators, connection hogs). Its
+    namespace survives every row, so a fault that was never recovered leaves its helper running there; the wipe
+    removes every workload and pod in it and records them.
     """
     started = clock()
     current = cluster.list_objects()
@@ -258,10 +270,13 @@ def run_tier1(
     )
     if bootstrapped:
         save_inventory(inventory, baseline)
+    helpers_removed = cluster.clear_helpers(helper_namespace) if helper_namespace else ()
     provision_credentials(control_namespace)
     reseed()
     forget_controller()
-    return Tier1Receipt(round(clock() - started, 3), tuple(sorted(removed)), bootstrapped, force_finalized)
+    return Tier1Receipt(
+        round(clock() - started, 3), tuple(sorted(removed)), bootstrapped, force_finalized, helpers_removed
+    )
 
 
 def wipe_environment(
@@ -275,7 +290,7 @@ def wipe_environment(
     provenance_path: Path | None = None,
 ) -> Tier1Receipt:
     """Tier 1 for one fastloop lane: its SDO control namespace, harness leftovers, seed and controller registry."""
-    from benchmarks.sregym.adapter import allowed_namespaces, control_namespace_for
+    from benchmarks.sregym.adapter import HELPER_NAMESPACE, allowed_namespaces, control_namespace_for
     from benchmarks.sregym.fastloop.evidence_queue import settle_lane_exports
     from benchmarks.sregym.fastloop.parallel_memory import memory_head
     from benchmarks.sregym.fastloop.reset_provenance import publish_reset_generation
@@ -295,6 +310,7 @@ def wipe_environment(
         reseed=lambda: reseed_workspace(environment.workspace, planned_commit),
         forget_controller=lambda: environment.state_path.unlink(missing_ok=True),
         timeout_seconds=timeout_seconds,
+        helper_namespace=HELPER_NAMESPACE,
     )
     if environment.parallel_root is not None:
         from benchmarks.sregym.fastloop.shared_memory import provision_parallel_volume
@@ -547,6 +563,7 @@ class WipeReceipt:
     force_finalized: tuple[str, ...]
     previous_row_data_faults: tuple[str, ...]
     current_row_data_faults: tuple[str, ...]
+    helpers_removed: tuple[str, ...] = ()
 
     def write(self, directory: Path) -> Path:
         directory.mkdir(parents=True, exist_ok=True)
@@ -607,6 +624,7 @@ def run_tier2(
         if reason is not None and reason.trigger is Tier2Trigger.LANE_LAST_INJECTION_DATA_FAULTS
         else (),
         reason.data_faults if reason is not None and reason.trigger is Tier2Trigger.CURRENT_ROW_DATA_FAULTS else (),
+        tier1.helpers_removed,
     )
 
 
@@ -660,6 +678,24 @@ class KubectlLaneCluster:
             namespace=None,
             kubeconfig=self._kubeconfig,
         )
+
+    def clear_helpers(self, namespace: str) -> tuple[str, ...]:
+        from benchmarks.sregym.adapter import kubectl
+
+        # Controllers first in the list so none recreates a pod; --wait returns once the pods are gone.
+        listing = kubectl(
+            ["get", HELPER_KINDS, "-o", "name", "--ignore-not-found=true"],
+            namespace=namespace,
+            kubeconfig=self._kubeconfig,
+        ).stdout
+        names = tuple(sorted(line.strip() for line in listing.splitlines() if line.strip()))
+        if names:
+            kubectl(
+                ["delete", *names, "--ignore-not-found=true", "--wait=true", "--timeout=120s"],
+                namespace=namespace,
+                kubeconfig=self._kubeconfig,
+            )
+        return names
 
     def blocking_objects(self, namespace: str) -> tuple[str, ...]:
         from benchmarks.sregym.adapter import kubectl

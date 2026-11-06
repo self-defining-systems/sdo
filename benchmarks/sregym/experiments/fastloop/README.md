@@ -146,6 +146,10 @@ deadline, and records each as `namespace/kind/name` in `force_finalized` of `wip
 touches a namespace it did not ask to delete; if the namespace still does not finish, the row fails closed
 naming the objects.
 
+The harness helper namespace (`sregym-injector`) is kept across rows, so a foreign helper a fault left running
+(a connection hog, a load generator) would outlive its row. Tier 1 deletes every workload and pod in it and
+records them as `kind/name` in `helpers_removed` of `wipe-receipt.json`.
+
 The lane-resource entry check and the restore invariant stay: they are the measurement-validity checks.
 
 `up --redeploy` is repeatable for every app. The worker bridge routes SREGym's `Helm.install`, the

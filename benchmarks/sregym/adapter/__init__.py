@@ -60,6 +60,7 @@ if TYPE_CHECKING:
     from benchmarks.sregym.adapter.image_retention import ImageRetentionError, retain_lane_images
     from benchmarks.sregym.adapter.kubernetes_content import allocated_paths, declared_manifest, replace_allocated
     from benchmarks.sregym.adapter.lane_resources import (
+        HELPER_NAMESPACE,
         LaneResourcePolicy,
         allowed_namespaces,
         assert_host_disk_headroom,
@@ -144,6 +145,7 @@ _EXPORTS: dict[str, str] = {
     "replace_allocated": "kubernetes_content",
     "Deadline": "budgets",
     "DeadlineExhaustedError": "budgets",
+    "HELPER_NAMESPACE": "lane_resources",
     "LaneResourcePolicy": "lane_resources",
     "allowed_namespaces": "lane_resources",
     "assert_host_disk_headroom": "lane_resources",
@@ -259,6 +261,7 @@ __all__ = [
     "retain_lane_images",
     "Deadline",
     "DeadlineExhaustedError",
+    "HELPER_NAMESPACE",
     "LaneResourcePolicy",
     "allowed_namespaces",
     "assert_host_disk_headroom",

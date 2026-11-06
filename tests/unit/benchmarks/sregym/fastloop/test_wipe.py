@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from benchmarks.sregym.adapter import allowed_namespaces
+from benchmarks.sregym.adapter import HELPER_NAMESPACE, allowed_namespaces
 from benchmarks.sregym.fastloop.records import Injected, NotInjected
 from benchmarks.sregym.fastloop.wipe import (
     AttemptMarker,
@@ -68,6 +68,10 @@ class FakeLane:
         self.deleted: list[str] = []
         self.finalizers = set(finalizers or ())
         self.released: list[tuple[str, str]] = []
+        self.helpers: dict[str, set[str]] = {}
+
+    def clear_helpers(self, namespace: str) -> tuple[str, ...]:
+        return tuple(sorted(self.helpers.pop(namespace, set())))
 
     def list_objects(self) -> frozenset[str]:
         for name in list(self.terminating):
@@ -118,6 +122,7 @@ def tier1(lane: FakeLane, tmp_path: Path, **overrides):
         "timeout_seconds": 30,
         "poll_seconds": 0,
         "sleep": lambda _seconds: None,
+        "helper_namespace": HELPER_NAMESPACE,
     }
     arguments.update(overrides)
     receipt = run_tier1(lane, **arguments)
@@ -133,6 +138,49 @@ def lane_with(contents: dict[str, set[str]] | None = None, extra: set[str] = fro
 
 def recorded_baseline(tmp_path: Path) -> None:
     save_inventory(tmp_path / "lane.inventory.json", {i for i in LANE if not i.startswith("namespace/")})
+
+
+def test_tier_1_removes_helpers_a_prior_row_left_in_the_helper_namespace_and_records_them(tmp_path: Path) -> None:
+    lane = lane_with()
+    lane.helpers[HELPER_NAMESPACE] = {"pod/connection-hog-a1", "job/load-gen"}
+    recorded_baseline(tmp_path)
+    receipt, _, _ = tier1(lane, tmp_path)
+    assert lane.helpers == {}
+    assert receipt.helpers_removed == ("job/load-gen", "pod/connection-hog-a1")
+    assert f"namespace/{HELPER_NAMESPACE}" not in receipt.removed, "the namespace itself stays for the next injector"
+
+
+def test_tier_1_with_no_helpers_records_none(tmp_path: Path) -> None:
+    recorded_baseline(tmp_path)
+    receipt, _, _ = tier1(lane_with(), tmp_path)
+    assert receipt.helpers_removed == ()
+
+
+def test_the_receipt_file_records_removed_helpers(tmp_path: Path) -> None:
+    from benchmarks.sregym.fastloop.wipe import WipeReceipt
+
+    receipt = WipeReceipt(1.0, (), False, False, 0.0, None, None, (), (), (), (), ("pod/connection-hog-a1",))
+    written = json.loads(receipt.write(tmp_path).read_text(encoding="utf-8"))
+    assert written["helpers_removed"] == ["pod/connection-hog-a1"]
+
+
+def test_kubectl_lane_cluster_deletes_every_workload_and_pod_in_the_helper_namespace(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_kubectl(args, *, namespace, kubeconfig=None, input_text=None, check=True):
+        calls.append([*args, f"-n={namespace}"])
+        out = "pod/connection-hog-a1\njob.batch/load-gen\n" if args[0] == "get" else ""
+        return SimpleNamespace(stdout=out, returncode=0, stderr="")
+
+    monkeypatch.setattr("benchmarks.sregym.adapter.kubectl", fake_kubectl)
+    cluster = KubectlLaneCluster(tmp_path.resolve() / "kubeconfig")
+    assert cluster.clear_helpers(HELPER_NAMESPACE) == ("job.batch/load-gen", "pod/connection-hog-a1")
+    delete = next(call for call in calls if call[0] == "delete")
+    assert f"-n={HELPER_NAMESPACE}" in delete
+    assert "pod/connection-hog-a1" in delete
+    assert "job.batch/load-gen" in delete
 
 
 def test_stale_worker_state_from_a_killed_attempt_does_not_survive_tier_1(tmp_path: Path) -> None:
