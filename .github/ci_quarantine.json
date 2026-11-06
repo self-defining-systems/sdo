@@ -1,12 +1,4 @@
 {
   "_comment": "Tests quarantined out of the PR and queue tiers; the nightly run still runs them. Each entry needs id, kind (go: '<package import path> <TopLevelTest>', pytest: node id), owner, reason and an ISO deadline. scripts/ci_quarantine.py check fails when a deadline has passed or the test no longer exists. Policy: docs/testing-guide.md#flaky-tests.",
-  "tests": [
-    {
-      "id": "tests/unit/sdo/agents/responder/test_recorded_actions.py::test_arbitrary_command_text_round_trips_through_the_recorded_receipts",
-      "kind": "pytest",
-      "owner": "vic-lsh",
-      "reason": "Hypothesis round-trip ran 10.5s against the 10s PR slow-test budget on a loaded runner (PR #893); needs a smaller example budget",
-      "deadline": "2026-11-13"
-    }
-  ]
+  "tests": []
 }
