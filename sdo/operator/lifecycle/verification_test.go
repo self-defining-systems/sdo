@@ -558,3 +558,23 @@ func TestPlanWithoutSourceFeedsBackToTheDeployer(t *testing.T) {
 		})
 	}
 }
+
+// An advance's deployment correction is one deployer task over the advance
+// checkout, with the hold as the request, through the same registry and workers
+// as onboarding; it does not release the checkout and it names the task by the
+// advance and the attempt so a restart re-attaches to it.
+func TestCorrectDeploymentDispatchesOneDeployerTaskForTheHold(t *testing.T) {
+	h := newHarness(t, &fakeVerifier{})
+	proposal := broker.Proposal{IncidentID: "advance-abc", Path: "/synthetic/advance/checkout", BaseCommit: strings.Repeat("3", 40)}
+	plan, err := h.coordinator.CorrectDeployment(context.Background(), config(), lifecycle.DeploymentCorrection{AdvanceID: "advance-abc", Proposal: proposal, Feedback: "cause=render owner=deployer items=O1 render: bad value", Attempt: 2})
+	if err != nil || plan.GetSource() == nil {
+		t.Fatalf("CorrectDeployment = %v, %v", plan, err)
+	}
+	if len(h.workers.deployer) != 1 {
+		t.Fatalf("deployer tasks = %d, want 1", len(h.workers.deployer))
+	}
+	request := h.workers.deployer[0]
+	if request.GetAttempt() != 2 || request.GetApplication() != "app" || !strings.Contains(request.GetCorrectionFeedback(), "bad value") || !strings.Contains(request.GetCorrectionFeedback(), "upstream advance") {
+		t.Fatalf("request = %v", request)
+	}
+}

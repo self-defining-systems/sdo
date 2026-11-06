@@ -42,6 +42,12 @@ type AdvanceBroker interface {
 	// checkout's HEAD: candidate. Conflicting paths are returned, not an error;
 	// the checkout then has no candidate.
 	ProposeAdvance(ctx context.Context, id, base, upstream string) (proposal broker.Proposal, candidate string, conflicts []string, err error)
+	// CorrectAdvance commits the deployment agent's edits of the advance
+	// checkout (only deployment files and patches; the broker validates them as
+	// the deployer's advance route) and writes plan as the canonical
+	// .sdo/deployment/plan.yaml. It returns the new candidate commit, or the
+	// validator's rejection text (empty on success) with the checkout reset.
+	CorrectAdvance(ctx context.Context, id string, plan *contracts.DeploymentPlan) (candidate, rejection string, err error)
 	// PublishAdvance accepts the candidate of proposal id with evidence of its
 	// live deployment and the upstream/base trailers.
 	// The stage-advance operability report must bind to the evidence and the
@@ -82,6 +88,30 @@ type ShapeChange struct {
 type DesignerRefresher interface {
 	RefreshDetection(ctx context.Context, change ShapeChange) error
 }
+
+// DeploymentCorrection is one request to the deployment agent in an advance:
+// the advance checkout (the accepted tree merged with upstream, where the agent
+// edits deployment files and patches), the accepted plan, and the hold that the
+// operability report named, as the correction feedback.
+type DeploymentCorrection struct {
+	AdvanceID string
+	Proposal  broker.Proposal
+	Plan      *contracts.DeploymentPlan
+	Feedback  string
+	// Attempt counts the corrections of this advance, from 1.
+	Attempt int
+}
+
+// DeploymentCorrector dispatches the deployment agent for an advance held by a
+// cause the deployer owns (operability.RouteIn ModeAdvance: patch, render,
+// build). It returns the plan the agent proposes for the advance checkout.
+type DeploymentCorrector interface {
+	CorrectDeployment(ctx context.Context, correction DeploymentCorrection) (*contracts.DeploymentPlan, error)
+}
+
+// DefaultMaxCorrections bounds the deployment agent's corrections of one
+// advance revision (a Go-side budget, like the onboarding attempts).
+const DefaultMaxCorrections = 2
 
 // MaintenanceWindow pauses and resumes the controller's evaluation (the
 // controller maintenance ConfigMap) around an advance's cluster changes.
@@ -143,6 +173,10 @@ const (
 	HoldBuild    HoldReason = "build"   // E3, images resolve before any apply
 	HoldRollout  HoldReason = "rollout" // E7, cluster left as is
 	HoldHealth   HoldReason = "health"  // E8, cluster left as is
+	// HoldDeployer: the deployment agent was dispatched for a deployer-owned
+	// hold and did not converge: it was given the same correction twice, or its
+	// corrections spent the budget. Terminal for this revision; a person looks.
+	HoldDeployer HoldReason = "deployer_not_converging"
 	// HoldScope: the offline operability checks found the candidate outside
 	// the install's scope or registry allowlist, before any cluster effect.
 	HoldScope HoldReason = "scope"
@@ -179,6 +213,7 @@ var holdRouting = map[HoldReason]struct {
 	HoldBuild:           {operability.CauseBuild, []operability.ItemID{operability.O2}},
 	HoldRollout:         {operability.CauseRollout, []operability.ItemID{operability.O1}},
 	HoldHealth:          {operability.CauseSourceFault, []operability.ItemID{operability.O4}},
+	HoldDeployer:        {operability.CauseAgentNotConverging, []operability.ItemID{operability.O1}},
 	HoldScope:           {operability.CauseScope, []operability.ItemID{operability.O6}},
 	HoldOperability:     {operability.CauseInternal, nil},
 }
@@ -269,9 +304,17 @@ type Advancer struct {
 	Shape     ShapeDigest
 	// Designer refreshes detection after an advance changed the shape. Nil
 	// holds a shape change before anything is deployed.
-	Designer    DesignerRefresher
-	Maintenance MaintenanceWindow
-	Activity    ControllerActivity
+	Designer DesignerRefresher
+	// Deployer is dispatched when the advance is held by a cause the deployer
+	// owns, before any cluster effect: it corrects the deployment files, patches
+	// and plan of the advance checkout, and the same checks run again. Nil
+	// holds those revisions as before.
+	Deployer DeploymentCorrector
+	// MaxCorrections bounds Deployer's dispatches per revision; zero selects
+	// DefaultMaxCorrections.
+	MaxCorrections int
+	Maintenance    MaintenanceWindow
+	Activity       ControllerActivity
 	// Wait pauses between bounded re-evaluations and infrastructure retries;
 	// nil waits on a timer.
 	Wait func(context.Context, time.Duration) error
@@ -337,14 +380,24 @@ func (a Advancer) Advance(ctx context.Context, cfg AdvanceConfig, request upstre
 	plan := accepted.Plan
 	id := AdvanceID(commit)
 	proposal, candidate, conflicts, err := a.Broker.ProposeAdvance(ctx, id, request.Prev, commit)
+	var patchHeld *AdvanceResult
 	if err != nil {
-		// The broker applies the patch series to the candidate and removes
-		// the checkout itself when it does not apply.
-		if hold, detail, paths, ok := patchHold(err); ok {
-			result.Paths = paths
+		// The broker applies the patch series to the candidate. It removes the
+		// checkout itself when it does not apply, unless a deployment agent can
+		// correct the patches: then it keeps the checkout and the candidate.
+		hold, detail, paths, ok := patchHold(err)
+		if !ok {
+			return result, fmt.Errorf("propose advance: %w", err)
+		}
+		result.Paths = paths
+		if a.Deployer == nil || proposal.Path == "" || candidate == "" {
+			if proposal.Path != "" {
+				_ = a.Broker.ReleaseAdvance(id)
+			}
 			return held(result, hold, detail), nil
 		}
-		return result, fmt.Errorf("propose advance: %w", err)
+		first := held(result, hold, detail)
+		patchHeld = &first
 	}
 	published := false
 	defer func() {
@@ -359,21 +412,11 @@ func (a Advancer) Advance(ctx context.Context, cfg AdvanceConfig, request upstre
 	if candidate == "" {
 		return result, errors.New("advance proposal has neither a candidate nor conflicts")
 	}
-	hold, detail, paths, shapeChanged, err := a.impact(ctx, proposal, candidate, plan.GetSource())
-	if err != nil || hold != "" {
-		result.Paths = paths
-		return held(result, hold, detail), err
+	screen, candidate, plan, err := a.screenWithCorrections(ctx, cfg, id, proposal, candidate, plan, result, patchHeld)
+	if err != nil || screen.result.Outcome == AdvanceHeld {
+		return screen.result, err
 	}
-	if shapeChanged && a.Designer == nil {
-		return held(result, HoldShapeChange, "desired-state shape changed and no detection designer is configured to refresh the detectors"), nil
-	}
-	offlineChecks, decision, err := a.offlineChecks(ctx, cfg, proposal, plan)
-	if err != nil {
-		return result, err
-	}
-	if decision.Kind != operability.Accepted {
-		return heldBy(result, holdForCause(decision.Cause), decision), nil
-	}
+	result, shapeChanged, offlineChecks := screen.result, screen.shapeChanged, screen.checks
 	result, err = a.deployAndAccept(ctx, cfg, result, proposal, candidate, plan, request.Prev, offlineChecks, &published)
 	if err != nil || result.Outcome != AdvanceAccepted || !shapeChanged {
 		return result, err
@@ -391,6 +434,100 @@ func (a Advancer) Advance(ctx context.Context, cfg AdvanceConfig, request upstre
 	}
 	result.Owed = nil
 	return result, nil
+}
+
+// screening is one offline look at an advance candidate: the hold it found (the
+// result's Outcome is AdvanceHeld), or the checks it passed and whether the
+// desired-state shape changed.
+type screening struct {
+	result       AdvanceResult
+	shapeChanged bool
+	checks       []operability.Check
+}
+
+// screen runs everything an advance decides before the cluster is touched:
+// render impact, the designer's availability for a shape change, and the
+// offline operability checks.
+func (a Advancer) screen(ctx context.Context, cfg AdvanceConfig, proposal broker.Proposal, candidate string, plan *contracts.DeploymentPlan, result AdvanceResult) (screening, error) {
+	hold, detail, paths, shapeChanged, err := a.impact(ctx, proposal, candidate, plan.GetSource())
+	if err != nil || hold != "" {
+		result.Paths = paths
+		return screening{result: held(result, hold, detail)}, err
+	}
+	if shapeChanged && a.Designer == nil {
+		return screening{result: held(result, HoldShapeChange, "desired-state shape changed and no detection designer is configured to refresh the detectors")}, nil
+	}
+	checks, decision, err := a.offlineChecks(ctx, cfg, proposal, plan)
+	if err != nil {
+		return screening{result: result}, err
+	}
+	if decision.Kind != operability.Accepted {
+		return screening{result: heldBy(result, holdForCause(decision.Cause), decision)}, nil
+	}
+	return screening{result: result, shapeChanged: shapeChanged, checks: checks}, nil
+}
+
+// screenWithCorrections is screen with the deployment agent behind it. A hold
+// the deployer owns before any cluster effect starts a deployer task whose
+// request is the hold (a correction of the advance checkout), then screens the
+// corrected candidate again. It is bounded like the lifecycle's other agent
+// rounds: the same hold twice in a row, or MaxCorrections dispatches, ends in a
+// typed agent_not_converging hold. Holds owned by anyone else are returned as
+// they are: nobody here dispatches them (see holdRouting).
+func (a Advancer) screenWithCorrections(ctx context.Context, cfg AdvanceConfig, id string, proposal broker.Proposal, candidate string, plan *contracts.DeploymentPlan, result AdvanceResult, first *AdvanceResult) (screening, string, *contracts.DeploymentPlan, error) {
+	budget := a.MaxCorrections
+	if budget <= 0 {
+		budget = DefaultMaxCorrections
+	}
+	var tracker feedbackTracker
+	for attempt := 0; ; attempt++ {
+		var screen screening
+		if first != nil {
+			screen, first = screening{result: *first}, nil
+		} else {
+			var err error
+			if screen, err = a.screen(ctx, cfg, proposal, candidate, plan, result); err != nil {
+				return screen, candidate, plan, err
+			}
+		}
+		current := screen.result
+		if current.Outcome != AdvanceHeld || current.Owner != operability.OwnerDeployer || a.Deployer == nil {
+			return screen, candidate, plan, nil
+		}
+		feedback := current.reason()
+		var stop error
+		if attempt >= budget {
+			stop = NewAgentNotConvergingError(operability.OwnerDeployer, proposal.BaseCommit, []string{operability.Clip(feedback)}, true)
+		} else {
+			stop = tracker.repeated(operability.OwnerDeployer, proposal.BaseCommit, feedback)
+		}
+		if stop != nil {
+			return screening{result: held(result, HoldDeployer, stop.Error()+"; last hold: "+operability.Clip(feedback))}, candidate, plan, nil
+		}
+		proposed, err := a.Deployer.CorrectDeployment(ctx, DeploymentCorrection{AdvanceID: id, Proposal: proposal, Plan: plan, Feedback: feedback, Attempt: attempt + 1})
+		if err != nil {
+			if ctx.Err() != nil {
+				return screen, candidate, plan, ctx.Err()
+			}
+			// The agent task failed (not a verdict on the revision): the failure
+			// is the next round's hold text, so a repeating failure ends it.
+			again := current
+			again.Detail += "; the deployment agent failed: " + err.Error()
+			first = &again
+			continue
+		}
+		next, rejection, err := a.Broker.CorrectAdvance(ctx, id, proposed)
+		if err != nil {
+			return screen, candidate, plan, fmt.Errorf("correct advance: %w", err)
+		}
+		if rejection != "" {
+			again := current
+			again.Detail += "; the correction was rejected: " + rejection
+			first = &again
+			continue
+		}
+		candidate, plan = next, proposed
+	}
 }
 
 // impact renders the accepted HEAD and the candidate with the same source.

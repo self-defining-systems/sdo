@@ -13,6 +13,7 @@ import (
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/operability"
+	"sdo.dev/operator/patchset"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/upstream"
 )
@@ -260,7 +261,10 @@ func (b *Broker) deployedBy(ctx context.Context, incidentID, commit string) (boo
 // the checkout is left clean. Conflicting paths are returned, not an error,
 // and the checkout is reset to the accepted HEAD. base must be the accepted
 // source's upstream revision (LastUpstream), an ancestor of upstream, and
-// upstream may not change operational memory.
+// upstream may not change operational memory. A candidate whose patch series
+// does not apply keeps its checkout and is returned with the patch error (a
+// *patchset.PatchError inside), for a deployment agent to correct
+// (CorrectAdvance); the caller releases it otherwise.
 func (b *Broker) ProposeAdvance(ctx context.Context, id, base, upstream string) (Proposal, string, []string, error) {
 	if err := checkIncidentID(id); err != nil {
 		return Proposal{}, "", nil, err
@@ -268,6 +272,7 @@ func (b *Broker) ProposeAdvance(ctx context.Context, id, base, upstream string) 
 	var proposal Proposal
 	var candidate string
 	var conflicts []string
+	var keptHold error
 	err := b.locked(func() error {
 		if err := checkUpstreamChange(ctx, b.target, base, upstream); err != nil {
 			return err
@@ -284,6 +289,13 @@ func (b *Broker) ProposeAdvance(ctx context.Context, id, base, upstream string) 
 			return err
 		}
 		if err := b.proposeCandidate(ctx, proposal, id, base, upstream, &candidate, &conflicts); err != nil {
+			var patchErr *patchset.PatchError
+			if candidate != "" && errors.As(err, &patchErr) {
+				// A patch series that does not apply is the deployment agent's to
+				// correct: keep the checkout and its committed candidate.
+				keptHold = err
+				return nil
+			}
 			return errors.Join(err, b.lockedAt(b.proposalRoot(id, AdvancePhase)+".lock", func() error {
 				return os.RemoveAll(b.proposalRoot(id, AdvancePhase))
 			}))
@@ -292,6 +304,9 @@ func (b *Broker) ProposeAdvance(ctx context.Context, id, base, upstream string) 
 	})
 	if err != nil {
 		return Proposal{}, "", nil, err
+	}
+	if keptHold != nil {
+		return proposal, candidate, nil, keptHold
 	}
 	return proposal, candidate, conflicts, nil
 }
@@ -459,6 +474,37 @@ func (b *Broker) PublishAdvance(ctx context.Context, id, upstream, base string, 
 		if len(conflicts) > 0 {
 			return fmt.Errorf("upstream %s conflicts with accepted source: %s", upstream, strings.Join(conflicts, ", "))
 		}
+		var gaps []validate.Diagnostic
+		var diagnostics []validate.Diagnostic
+		// checkAs judges the stage's changes since base as actor, whose grants
+		// decide them. The merge is the upstream actor's; a correction replayed
+		// onto it is the deployer's, judged against the merge it corrects.
+		checkAs := func(actor Actor, base, tree string) error {
+			changed, err := validate.ChangedPaths(ctx, stage, base)
+			if err != nil {
+				return err
+			}
+			publication := &validate.PublicationContext{BaseCommit: base, IncidentID: id, VerifiedSourceTree: tree}
+			more, err := b.checkAttestedCandidate(ctx, stage, base, actor, AdvancePhase, changed, publication, nil, &gaps)
+			diagnostics = append(diagnostics, more...)
+			return err
+		}
+		correction, err := b.advanceCorrection(ctx, proposal)
+		if err != nil {
+			return err
+		}
+		if correction != nil {
+			merged, err := advanceTreeDigest(ctx, stage)
+			if err != nil {
+				return err
+			}
+			if err := checkAs(UpstreamActor, current, merged); err != nil {
+				return fmt.Errorf("advance validation: %w", err)
+			}
+			if err := b.replayCorrection(ctx, stage, proposal, correction); err != nil {
+				return err
+			}
+		}
 		tree, err := advanceTreeDigest(ctx, stage)
 		if err != nil {
 			return err
@@ -485,9 +531,11 @@ func (b *Broker) PublishAdvance(ctx context.Context, id, upstream, base string, 
 		if err != nil {
 			return err
 		}
-		publication := &validate.PublicationContext{BaseCommit: current, IncidentID: id, VerifiedSourceTree: tree}
-		var gaps []validate.Diagnostic
-		diagnostics, err := b.checkAttestedCandidate(ctx, stage, current, UpstreamActor, AdvancePhase, paths, publication, nil, &gaps)
+		if correction != nil {
+			err = checkAs(Deployer, correction.merge, tree)
+		} else {
+			err = checkAs(UpstreamActor, current, tree)
+		}
 		if err != nil {
 			return fmt.Errorf("advance validation: %w", err)
 		}
@@ -501,6 +549,9 @@ func (b *Broker) PublishAdvance(ctx context.Context, id, upstream, base string, 
 			return err
 		}
 		trailers := []string{upstreamTrailer + ": " + upstream, upstreamBaseTrailer + ": " + base, mirrorTrailer + ": " + mirror, operabilityTrailer(operability.StageAdvance, digest)}
+		if correction != nil {
+			trailers = append(trailers, advanceCorrectionTrailer+": "+string(Deployer))
+		}
 		receipt, err = b.acceptWithTrailers(ctx, stage, id, UpstreamActor, AdvancePhase, paths, trailers, gaps...)
 		if err != nil {
 			return err

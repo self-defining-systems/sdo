@@ -71,53 +71,13 @@ func refreshControllerHealthOnce(ctx context.Context, scope string, config *cont
 	if !revision.NeedsRefresh {
 		return nil
 	}
-	var registry *worker_registry.Registry
-	if config.GetAgentRegistrationDirectory() == "" {
-		registry, err = worker_registry.LoadBuiltIn("", config.GetResponderImage())
-	} else {
-		registry, err = worker_registry.LoadDirectory(config.GetAgentRegistrationDirectory())
-	}
+	registry, client, workers, err := controllerAgentWorkers(config)
 	if err != nil {
 		return err
-	}
-	restConfig, err := rest.InClusterConfig()
-	if err != nil {
-		return fmt.Errorf("health refresh credentials: %w", err)
-	}
-	client, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		return err
-	}
-	environment, err := worker_registry.AgentEnvironment(config.GetResponderBackend(), config.GetResponderModel(), config.GetAgentEffort())
-	if err != nil {
-		return err
-	}
-	replay, err := settings.Replay(config.GetReplay())
-	if err != nil {
-		return err
-	}
-	environment[settings.ReplayEnvironment] = replay
-	environment = codePathWorkerEnvironment(config.GetCodePath(), environment)
-	// The judge's self-check runs under the policy the broker validates with.
-	policy, err := broker.ControllerPolicyEnvironment(config, telemetryRegistry())
-	if err != nil {
-		return err
-	}
-	for name, value := range policy {
-		environment[name] = value
-	}
-	environment["CODEX_HOME"], environment["CLAUDE_CONFIG_DIR"] = "/tmp/codex", "/tmp/claude"
-	namespace := config.GetControlNamespace()
-	if namespace == "" {
-		namespace = config.GetNamespace()
 	}
 	source, err := acceptedDeploymentSource(config.GetAppRoot())
 	if err != nil {
 		return err
-	}
-	workers := worker_registry.KubernetesExecutor{
-		ToolchainImage: config.GetToolchainImage(),
-		Client:         client, Namespace: namespace, Registry: registry, ServiceAccount: "sdo-responder", RepositoryPVC: config.GetRepositoryPvc(), RepositoryMountPath: config.GetRepositoryMountPath(), RepositoryPVCSubPath: config.GetRepositoryPvcSubpath(), CredentialsSecret: config.GetResponderCredentialsSecret(), HealthyBaseline: config.GetHealthyBaseline(), Environment: environment,
 	}
 	coordinator, err := healthRefreshCoordinator(config, operatorRoot, client, repository, registry, workers)
 	if err != nil {
@@ -138,6 +98,61 @@ func refreshControllerHealthOnce(ctx context.Context, scope string, config *cont
 		return fmt.Errorf("health unverified: source, objective or detectors advanced during refresh")
 	}
 	return nil
+}
+
+// controllerAgentWorkers is the controller's agent transport: the agent
+// registry, the in-cluster client and the Kubernetes Job executor with the
+// install's backend, effort, replay, code path and the policy the broker
+// validates under, in the control namespace. Every agent the controller
+// dispatches on its own (the health judge's refresh, an advance's deployment
+// correction) runs through it.
+func controllerAgentWorkers(config *contracts.ControllerConfig) (*worker_registry.Registry, kubernetes.Interface, worker_registry.KubernetesExecutor, error) {
+	var registry *worker_registry.Registry
+	var err error
+	if config.GetAgentRegistrationDirectory() == "" {
+		registry, err = worker_registry.LoadBuiltIn("", config.GetResponderImage())
+	} else {
+		registry, err = worker_registry.LoadDirectory(config.GetAgentRegistrationDirectory())
+	}
+	if err != nil {
+		return nil, nil, worker_registry.KubernetesExecutor{}, err
+	}
+	restConfig, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, nil, worker_registry.KubernetesExecutor{}, fmt.Errorf("agent credentials: %w", err)
+	}
+	client, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return nil, nil, worker_registry.KubernetesExecutor{}, err
+	}
+	environment, err := worker_registry.AgentEnvironment(config.GetResponderBackend(), config.GetResponderModel(), config.GetAgentEffort())
+	if err != nil {
+		return nil, nil, worker_registry.KubernetesExecutor{}, err
+	}
+	replay, err := settings.Replay(config.GetReplay())
+	if err != nil {
+		return nil, nil, worker_registry.KubernetesExecutor{}, err
+	}
+	environment[settings.ReplayEnvironment] = replay
+	environment = codePathWorkerEnvironment(config.GetCodePath(), environment)
+	// The judge's self-check runs under the policy the broker validates with.
+	policy, err := broker.ControllerPolicyEnvironment(config, telemetryRegistry())
+	if err != nil {
+		return nil, nil, worker_registry.KubernetesExecutor{}, err
+	}
+	for name, value := range policy {
+		environment[name] = value
+	}
+	environment["CODEX_HOME"], environment["CLAUDE_CONFIG_DIR"] = "/tmp/codex", "/tmp/claude"
+	namespace := config.GetControlNamespace()
+	if namespace == "" {
+		namespace = config.GetNamespace()
+	}
+	workers := worker_registry.KubernetesExecutor{
+		ToolchainImage: config.GetToolchainImage(),
+		Client:         client, Namespace: namespace, Registry: registry, ServiceAccount: "sdo-responder", RepositoryPVC: config.GetRepositoryPvc(), RepositoryMountPath: config.GetRepositoryMountPath(), RepositoryPVCSubPath: config.GetRepositoryPvcSubpath(), CredentialsSecret: config.GetResponderCredentialsSecret(), HealthyBaseline: config.GetHealthyBaseline(), Environment: environment,
+	}
+	return registry, client, workers, nil
 }
 
 // healthShapeOf binds the judge refresh to the desired-state shape of the

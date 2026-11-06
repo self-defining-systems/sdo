@@ -67,4 +67,8 @@ func TestControllerAdvancerWiresTheOnboardingDeployer(t *testing.T) {
 	if designer, ok := advancer.Designer.(designerRefresh); !ok || designer.launch != run.Controller {
 		t.Fatalf("designer = %#v", advancer.Designer)
 	}
+	// A hold the deployer owns routes to the deployment agent (E1-E3).
+	if corrector, ok := advancer.Deployer.(deployerCorrection); !ok || corrector.launch != run.Controller {
+		t.Fatalf("deployer correction = %#v", advancer.Deployer)
+	}
 }

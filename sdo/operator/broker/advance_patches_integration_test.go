@@ -105,10 +105,19 @@ func holdOf(t *testing.T, err error) *PatchHoldError {
 	return hold
 }
 
+// requireNoAdvanceState checks that a patch hold kept its checkout for a
+// deployment agent to correct, that nothing was accepted, and that releasing
+// the advance (what the caller does when no agent corrects it) leaves no state.
 func (w *patchWorld) requireNoAdvanceState(t *testing.T, id, accepted string) {
 	t.Helper()
 	if w.head(t) != accepted {
 		t.Fatalf("accepted HEAD moved from %s to %s", accepted, w.head(t))
+	}
+	if _, err := os.Stat(w.broker.proposalRoot(id, AdvancePhase)); err != nil {
+		t.Fatalf("a patch hold must keep its checkout for correction: %v", err)
+	}
+	if err := w.broker.ReleaseAdvance(id); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := os.Stat(w.broker.proposalRoot(id, AdvancePhase)); !os.IsNotExist(err) {
 		t.Fatalf("held advance left its checkout: %v", err)
@@ -158,8 +167,8 @@ func TestAdvanceHoldsAPatchWhoseContextChanged(t *testing.T) {
 	accepted := w.head(t)
 	_, candidate, conflicts, err := w.broker.ProposeAdvance(ctx, id, w.seed, upstream)
 	hold := holdOf(t, err)
-	if candidate != "" || len(conflicts) > 0 {
-		t.Fatalf("candidate %q conflicts %v with a patch hold", candidate, conflicts)
+	if candidate == "" || len(conflicts) > 0 {
+		t.Fatalf("candidate %q conflicts %v with a patch hold: the checkout and its candidate are kept for correction", candidate, conflicts)
 	}
 	if hold.Patch.Kind != patchset.KindConflict || hold.Patch.Patch != name || hold.Owner != "deployer" || len(hold.Patch.Paths) != 1 || hold.Patch.Paths[0] != "lib/vendor.txt" {
 		t.Fatalf("hold = %+v / %+v", hold, hold.Patch)
