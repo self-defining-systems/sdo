@@ -39,6 +39,9 @@ func stubResponse(request *http.Request, status int, body string) *http.Response
 // returns an error unless the scenario fails the way a probe must: with an
 // error or timeout, not by being unable to build its requests.
 func CheckDetects(ctx context.Context, scenario Scenario, class FaultClass) error {
+	if ctx == nil {
+		return fmt.Errorf("CheckDetects: ctx is nil; pass context.Background()")
+	}
 	if !knownFaultClasses[class] {
 		return fmt.Errorf("unknown fault class %q", class)
 	}

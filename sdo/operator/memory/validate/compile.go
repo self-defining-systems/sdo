@@ -174,6 +174,12 @@ func (s *run) compile(ctx context.Context) error {
 		}
 		s.add(Compile, Diagnostic{Rule: rule, Path: path, Line: line, Message: strings.TrimSpace(m[3]), Hint: "go " + stage.Stage + " failed"})
 	}
+	if len(located) == 0 && rule == RuleDetectorTest {
+		if message, path := summarizeGoTest(goTestDuration.ReplaceAllString(stage.Output, "")); message != "" {
+			s.add(Compile, Diagnostic{Rule: rule, Path: path, Message: message, Hint: "go " + stage.Stage + " failed; fix the failing test or the code it exercises, the useful lines are the failing tests, the panic and the first frame in your source"})
+			return nil
+		}
+	}
 	if len(located) == 0 {
 		output := goTestDuration.ReplaceAllString(stage.Output, "")
 		if len(output) > maxCompileOutput {
@@ -182,4 +188,45 @@ func (s *run) compile(ctx context.Context) error {
 		s.add(Compile, Diagnostic{Rule: rule, Path: layout.DiagnosticsDir, Message: "go " + stage.Stage + " failed: " + output})
 	}
 	return nil
+}
+
+// goTestSourceFrame is a stack frame inside the isolated workspace's authored
+// source (not the Go runtime, testing package or SDK).
+var goTestSourceFrame = regexp.MustCompile(`sdo-operator-build-[^/\s]+/((?:detectors|traffic|playbooks|lib|generated)/[^\s:]+\.go):(\d+)`)
+
+// goTestLogLine is a failing test's t.Error/t.Fatal output, `file_test.go:16: msg`.
+var goTestLogLine = regexp.MustCompile(`^\s+[^\s:/]+\.go:\d+: `)
+
+// summarizeGoTest reduces raw `go test` output to what a repair needs: failing
+// test names, their log lines, the panic message and the first stack frame in
+// authored source (returned as the diagnostic path). Passing packages, the
+// goroutine dump and runtime frames are dropped. It returns "" when the output
+// has none of these, so the caller keeps the raw tail.
+func summarizeGoTest(output string) (message string, path string) {
+	var kept []string
+	frame := ""
+	for _, line := range strings.Split(output, "\n") {
+		switch {
+		case strings.HasPrefix(line, "--- FAIL"), strings.HasPrefix(line, "panic: "), strings.HasPrefix(line, "FAIL\t"):
+			kept = append(kept, strings.TrimRight(line, " \t\r"))
+		case goTestLogLine.MatchString(line):
+			kept = append(kept, strings.TrimRight(line, " \t\r"))
+		case frame == "" && goTestSourceFrame.MatchString(line) && strings.HasPrefix(line, "\t"):
+			m := goTestSourceFrame.FindStringSubmatch(line)
+			frame = m[1] + ":" + m[2]
+			kept = append(kept, "first frame in your source: "+frame)
+		}
+	}
+	if len(kept) == 0 {
+		return "", layout.DiagnosticsDir
+	}
+	path = layout.DiagnosticsDir
+	if frame != "" {
+		path = layout.DiagnosticsDir + "/" + frame[:strings.LastIndex(frame, ":")]
+	}
+	message = strings.Join(kept, "\n")
+	if len(message) > maxCompileOutput {
+		message = message[:maxCompileOutput]
+	}
+	return message, path
 }

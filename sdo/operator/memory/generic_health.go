@@ -101,12 +101,21 @@ func PrepareHealthWith(root string, options HealthOptions) error {
 			return err
 		}
 	}
+	return prepareTrafficDetectors(root)
+}
+
+// trafficDetectorPrefix starts the ID of every Go-installed traffic-probe
+// detector; the rest of the ID is the workload it consumes.
+const trafficDetectorPrefix = "traffic-"
+
+// prepareTrafficDetectors installs one detector per probe workload file and
+// removes the Go-installed ones whose workload is gone or no longer a probe,
+// so deleting a workload never leaves a stale package consuming it.
+func prepareTrafficDetectors(root string) error {
+	wanted := map[string]bool{}
 	directory := filepath.Join(root, layout.TrafficWorkloadsDir)
 	entries, err := os.ReadDir(directory)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	for _, entry := range entries {
@@ -135,9 +144,42 @@ func PrepareHealthWith(root string, options HealthOptions) error {
 		if workload.GetPurpose() != "health-probe" && workload.GetPurpose() != "link-probe" {
 			continue
 		}
-		id := "traffic-" + workload.GetName()
+		id := trafficDetectorPrefix + workload.GetName()
 		manifest := genericManifest(id, "10s", []layout.Watch{{APIVersion: "sdo.dev/v1alpha1", Kind: "SyntheticTraffic"}})
 		if err := writeGenericDetector(root, manifest, trafficSource(id, workload.GetName(), workload.GetPurpose() == "link-probe")); err != nil {
+			return err
+		}
+		wanted[id] = true
+	}
+	return pruneStaleTrafficDetectors(root, wanted)
+}
+
+// pruneStaleTrafficDetectors removes Go-installed traffic detector packages
+// (manifest originating commit "lifecycle-bootstrap") that no probe workload
+// file backs. Judge-authored traffic-* packages are never touched.
+func pruneStaleTrafficDetectors(root string, wanted map[string]bool) error {
+	base := layout.DetectorDir(layout.ClassHealth, "")
+	entries, err := os.ReadDir(filepath.Join(root, base))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		id := entry.Name()
+		if !entry.IsDir() || !strings.HasPrefix(id, trafficDetectorPrefix) || wanted[id] {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(root, layout.DetectorManifestPath(layout.ClassHealth, id)))
+		if err != nil {
+			continue
+		}
+		manifest, err := layout.ParseDetectorManifest(data)
+		if err != nil || manifest.OriginatingCommit != "lifecycle-bootstrap" {
+			continue
+		}
+		if err := safefs.RemoveAll(root, layout.DetectorDir(layout.ClassHealth, id)); err != nil {
 			return err
 		}
 	}

@@ -274,12 +274,17 @@ func TestTrafficDetectorsConsumeContinuousProbeWorkloads(t *testing.T) {
     if err != nil { t.Fatal(err) }
     purposes := map[string]traffic.Purpose{}
     for _, workload := range workloads { purposes[workload.Name] = workload.Purpose }
+    // A Go-installed traffic-<workload> package is regenerated from the
+    // workload files, so a missing workload means a stale package.
     for _, detector := range All() {
         consumer, ok := detector.(traffic.Consumer)
         if !ok { continue }
         for _, name := range consumer.TrafficWorkloads() {
-            if purposes[name] != traffic.PurposeHealthProbe && purposes[name] != traffic.PurposeLinkProbe {
-                t.Errorf("detector %s consumes %q, which is not a health-probe workload", detector.Spec().ID, name)
+            purpose, present := purposes[name]
+            if !present {
+                t.Errorf("detector %s consumes workload %q, but the file .sdo/diagnostics/traffic/workloads/%s.yaml does not exist; restore the workload or run sdo-operator memory check so Go removes the stale package .sdo/diagnostics/detectors/health/%s", detector.Spec().ID, name, name, detector.Spec().ID)
+            } else if purpose != traffic.PurposeHealthProbe && purpose != traffic.PurposeLinkProbe {
+                t.Errorf("detector %s consumes workload %q, whose purpose is %q, not a health-probe or link-probe", detector.Spec().ID, name, purpose)
             }
         }
     }
