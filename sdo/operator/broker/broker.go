@@ -22,6 +22,7 @@ import (
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/patchset"
 	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
@@ -290,6 +291,11 @@ func (b *Broker) createProposal(ctx context.Context, incidentID string, phase Ph
 		if phase == ReflectionPhase {
 			if err := b.carryWorkingPrograms(ctx, incidentID, checkout); err != nil {
 				return err
+			}
+		}
+		if materializesPatches(phase) {
+			if _, err := patchset.Materialize(ctx, checkout); err != nil {
+				return fmt.Errorf("materialize the effective view of %s: %w", base, err)
 			}
 		}
 		proposal = Proposal{IncidentID: incidentID, Path: checkout, BaseCommit: base}
