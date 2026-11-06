@@ -371,13 +371,9 @@ func TestObligationOutlivesObservationOfTheAcceptedRevision(t *testing.T) {
 		t.Fatalf("not due after the backoff")
 	}
 	o := f.Obligations()[0]
-	f.Retried(now, o, "again")
-	for range 20 {
-		o = f.Obligations()[0]
-		f.Retried(now, o, "again")
-	}
-	if wait := f.Obligations()[0].Next.Sub(now); wait != upstream.ObligationBackoffMax {
-		t.Fatalf("backoff = %s, want the cap %s", wait, upstream.ObligationBackoffMax)
+	f.Retried(now, o, "again", nil)
+	if wait := f.Obligations()[0].Next.Sub(now); wait != 2*upstream.ObligationBackoffBase {
+		t.Fatalf("second backoff = %s, want a doubled wait", wait)
 	}
 	if !f.Settle(f.Obligations()[0]) || len(f.Obligations()) != 0 {
 		t.Fatal("settle did not close the obligation")
@@ -390,11 +386,99 @@ func TestObligationsCodecRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := upstream.DecodeObligations(data)
-	if err != nil || len(out) != 1 || out[0].Accepted != "c1" || out[0].Attempts != 2 || !out[0].Since.Equal(in[0].Since) {
-		t.Fatalf("round trip = %+v, %v", out, err)
+	out, bad := upstream.DecodeObligations(data)
+	if len(bad) != 0 || len(out) != 1 || out[0].Accepted != "c1" || out[0].Attempts != 2 || !out[0].Since.Equal(in[0].Since) {
+		t.Fatalf("round trip = %+v, %v", out, bad)
 	}
-	if _, err := upstream.DecodeObligations(map[string]string{"junk": "{}"}); err == nil {
-		t.Fatal("foreign key accepted")
+}
+
+// One malformed record is quarantined by itself: the valid obligations beside
+// it still decode, and every bad record names its key and reason.
+func TestDecodeObligationsQuarantinesOnlyTheBadRecords(t *testing.T) {
+	good := upstream.Obligation{Path: ".", Kind: upstream.ObligationDesignerRefresh, Accepted: "c1", Reason: "x", Attempts: 1, Since: time.Unix(1_700_000_000, 0).UTC(), Held: "agent_not_converging", HeldOwner: "designer"}
+	data, err := upstream.EncodeObligations([]upstream.Obligation{good})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data["junk"] = "{}"
+	data["obligation-0123456789abcdef"] = "{not json"
+	out, bad := upstream.DecodeObligations(data)
+	if len(out) != 1 || out[0] != good {
+		t.Fatalf("valid = %+v, want the held obligation intact beside the bad records", out)
+	}
+	if len(bad) != 2 || bad[0].Key != "junk" || bad[1].Key != "obligation-0123456789abcdef" || bad[0].Reason == "" {
+		t.Fatalf("quarantined = %+v", bad)
+	}
+}
+
+func openedObligation(t *testing.T, f *upstream.Follower, now time.Time, cause string) {
+	t.Helper()
+	if _, err := f.Owe(now, upstream.Obligation{Path: ".", Kind: upstream.ObligationDesignerRefresh, Accepted: "c1", Cause: cause, Owner: "designer", Reason: "judge down"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Each retry is a full judge run, so the budget is bounded: the advance's own
+// failure is attempt 1, and after MaxObligationAttempts failures the
+// obligation is a typed hold (owner designer) that is no longer due and does
+// not wake the follower.
+func TestObligationIsHeldAfterTheAttemptBudget(t *testing.T) {
+	f := newFollower(t, src(t, ".", "r", time.Minute))
+	now := time.Unix(1_700_000_000, 0)
+	openedObligation(t, f, now, "coverage")
+	for i := 1; i < upstream.MaxObligationAttempts; i++ {
+		o := f.Obligations()[0]
+		if o.Held != "" {
+			t.Fatalf("held after %d attempts, want %d", o.Attempts, upstream.MaxObligationAttempts)
+		}
+		f.Retried(now, o, "again", nil)
+	}
+	held := f.Obligations()[0]
+	if held.Held != upstream.ObligationAttemptsExhausted || held.HeldOwner != "designer" || held.Attempts != upstream.MaxObligationAttempts {
+		t.Fatalf("obligation = %+v, want held as attempts_exhausted, owner designer", held)
+	}
+	if due := f.DueObligations(now.Add(24 * time.Hour)); len(due) != 0 {
+		t.Fatalf("a held obligation is due: %+v", due)
+	}
+	if _, ok := f.NextObligation(); ok {
+		t.Fatal("a held obligation wakes the follower")
+	}
+}
+
+// A failure no retry can fix holds the obligation at once, with the terminal
+// stop's cause and owner; so does an advance that already ended on one.
+func TestObligationIsHeldAtOnceForATerminalCause(t *testing.T) {
+	f := newFollower(t, src(t, ".", "r", time.Minute))
+	now := time.Unix(1_700_000_000, 0)
+	openedObligation(t, f, now, "coverage")
+	f.Retried(now, f.Obligations()[0], "agent_not_converging: the designer agent repeated the same rejection", &upstream.ObligationHold{Cause: "agent_not_converging", Owner: "designer"})
+	if o := f.Obligations()[0]; o.Held != "agent_not_converging" || o.HeldOwner != "designer" || o.Attempts != 2 {
+		t.Fatalf("obligation = %+v", o)
+	}
+	g := newFollower(t, src(t, ".", "r", time.Minute))
+	openedObligation(t, g, now, "agent_not_converging")
+	if o := g.Obligations()[0]; o.Held != "agent_not_converging" || len(g.DueObligations(now.Add(time.Hour))) != 0 {
+		t.Fatalf("obligation owed after a terminal advance = %+v, want held without a retry", o)
+	}
+}
+
+// A held obligation is reopened by newer work (another accepted commit owes it
+// afresh) and by a restart, each with a fresh budget.
+func TestHeldObligationReopens(t *testing.T) {
+	f := newFollower(t, src(t, ".", "r", time.Minute))
+	now := time.Unix(1_700_000_000, 0)
+	openedObligation(t, f, now, "agent_not_converging")
+	if _, err := f.Owe(now, upstream.Obligation{Path: ".", Kind: upstream.ObligationDesignerRefresh, Accepted: "c2", Cause: "coverage", Owner: "designer", Reason: "new shape"}); err != nil {
+		t.Fatal(err)
+	}
+	if o := f.Obligations()[0]; o.Held != "" || o.Accepted != "c2" || o.Attempts != 1 {
+		t.Fatalf("after newer work = %+v, want an open obligation with a fresh budget", o)
+	}
+	held := f.Obligations()[0]
+	held.Held, held.HeldOwner, held.Attempts = upstream.ObligationAttemptsExhausted, "designer", upstream.MaxObligationAttempts
+	restarted := newFollower(t, src(t, ".", "r", time.Minute))
+	restarted.LoadObligations(now, []upstream.Obligation{held})
+	if o := restarted.Obligations()[0]; o.Held != "" || o.Attempts != 0 || len(restarted.DueObligations(now)) != 1 {
+		t.Fatalf("after restart = %+v, want reopened and due", o)
 	}
 }

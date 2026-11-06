@@ -61,15 +61,16 @@ type configMapObligations struct {
 	Namespace string
 }
 
-func (s configMapObligations) Load(ctx context.Context) ([]upstream.Obligation, error) {
+func (s configMapObligations) Load(ctx context.Context) ([]upstream.Obligation, []upstream.Quarantined, error) {
 	configMap, err := s.Client.CoreV1().ConfigMaps(s.Namespace).Get(ctx, upstream.ObligationsConfigMapName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return upstream.DecodeObligations(configMap.Data)
+	owed, quarantined := upstream.DecodeObligations(configMap.Data)
+	return owed, quarantined, nil
 }
 
 func (s configMapObligations) Save(ctx context.Context, owed []upstream.Obligation) error {
@@ -84,6 +85,14 @@ func (s configMapObligations) Save(ctx context.Context, owed []upstream.Obligati
 	case apierrors.IsNotFound(err):
 		_, err = configMaps.Create(ctx, want, metav1.CreateOptions{})
 	case err == nil:
+		// A quarantined record is a person's to repair or delete: Save never
+		// drops it, and never lets it displace a valid obligation's key.
+		_, quarantined := upstream.DecodeObligations(prior.Data)
+		for _, q := range quarantined {
+			if _, taken := want.Data[q.Key]; !taken {
+				want.Data[q.Key] = prior.Data[q.Key]
+			}
+		}
 		want.ResourceVersion = prior.ResourceVersion
 		_, err = configMaps.Update(ctx, want, metav1.UpdateOptions{})
 	}

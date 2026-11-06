@@ -25,7 +25,8 @@ and install), `advance` (O1, O2, O4, O6; gates `PublishAdvance`). Check statuses
 - ConfigMap `sdo-operability` in the control namespace, current state only: `summary.json`
   `{accepted_commit, stage, digest, observed_at, items:[{id, status, first_failed_check, cause, owner}]}` and
   `report.json`, plus `obligations.json`: the open upstream obligations as a JSON list (`kind`, `accepted`, `cause`,
-  `owner`, `attempts`, `reason`, `since`; `[]` when none; absent until the follower first saves). A new report keeps it.
+  `owner`, `attempts`, `reason`, `since`, and `held`/`held_owner` once the obligation is a typed hold that is no
+  longer retried; `[]` when none; absent until the follower first saves). A new report keeps it.
   Read `kubectl -n <control> get cm sdo-operability -o json`.
 - Operate Job termination message `{summary, decision, owner}` when onboarding stops on a report.
 
@@ -65,6 +66,11 @@ An accepted shape-change advance whose designer refresh failed also leaves an op
 ConfigMap (one JSON record per source and kind: `kind=designer_refresh`, `accepted` commit, `cause`, `owner`, `attempts`,
 `reason`, `since`). Unlike a hold it survives the next poll (upstream equals accepted) and is retried with 30 s..10 min
 backoff and at controller start; the record disappears when a refresh succeeds (`upstream_obligation_settled` log).
+Retries are bounded (each is a full judge run): after 5 attempts the record gains `held=attempts_exhausted`, `held_owner=designer`,
+and at once `held=<cause>` (`agent_not_converging`, `base_invalid`, `policy`) when the refresh ended on that terminal stop
+(`upstream_obligation_held` log); a held record is not retried until a newer accepted commit owes it or the controller restarts.
+A record that cannot be decoded is logged as `upstream_obligation_quarantined` (cause `record_invalid`, owner `operator`),
+kept in the ConfigMap, and does not stop following.
 
 ## Toy harness assertion
 
