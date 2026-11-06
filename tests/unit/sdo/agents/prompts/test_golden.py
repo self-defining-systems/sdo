@@ -16,7 +16,7 @@ def normalize_prompt(prompt: str) -> str:
         prompt,
     )
     prompt = re.sub(r'"/tmp/sdo/[^"\n]+-incident\.json"', '"<temporary incident facts file>"', prompt)
-    prompt = re.sub(r'"[^"\n]*/sdo-playbooks-[^/"\n]+/(\d+\.md)"', r'"<temporary playbook documents>/\1"', prompt)
+    prompt = re.sub(r'"[^"\n]*/playbooks/([^/"\n]+)/README\.md"', r'"<session scratch>/playbooks/\1/README.md"', prompt)
     prompt = re.sub(
         r'("full_outcome_path": ")[^"]*/sdo-reflection-history-[^/"]+/([^"]+)(")',
         r"\1<temporary reflection history>/\2\3",

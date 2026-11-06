@@ -7,7 +7,7 @@ description: Find and use operational memory by logical ID, or validate authoriz
 
 Memory exists so later incidents are fixed faster and cheaper. Read and reason across all accepted memory; incident-linked entries come first and full files remain readable in the checkout. Edit only the artifact classes and proposal checkout your task authorizes.
 
-1. Read the supplied playbook index (ID and one-line description), then open only relevant READMEs; read a playbook before using it. Check its diagnosis against current resources first, or after applying when the match is ready to mitigate.
+1. Learned playbooks are in `$SDO_SESSION_SCRATCH/playbooks/<id>/README.md` (plus programs). Grep them for the error text or component you observed before repairing from scratch; read a playbook before using it, and check its diagnosis against current resources first, or after applying when the match is ready to mitigate.
 2. For reflection, follow [`sdo-playbook-authoring`](../sdo-playbook-authoring/SKILL.md): it is the reflection entry point. For detector changes, read [`sdo-detector-authoring`](../sdo-detector-authoring/SKILL.md).
 3. The [generated layout and ownership map](references/layout.md) lists every `.sdo/` path and its owner; preserve accepted provenance, and the task's actor, phase, accepted base and incident identity.
 4. Validate final edits with [check_memory](references/runtime.md#check_memory), supply typed decision fields directly, and return the same decision and logical IDs; correct named diagnostics before checking again. The broker owns acceptance; it reuses a trusted check only for identical final bytes, accepted base, policy and toolchain.
