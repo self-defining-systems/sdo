@@ -43,6 +43,7 @@ third_party/sregym/logs/<run-or-pipeline>/
         │       ├── usage/controller-turns.jsonl   # broker + reflection turns
         │       ├── usage/responder-turns.jsonl    # responder Job turns
         │       ├── telemetry/detector-firings.jsonl(.1)  # raw firing stream from the PVC
+        │       ├── tasks/<task-key>/{task,request,result|error}.json, setup-usage.jsonl, codex/sessions/.../rollout-*.jsonl  # lifecycle judge/deployer tasks, one dir per task ID
         │       ├── sessions/<session-dir>/codex/sessions/YYYY/MM/DD/rollout-*-<session>.jsonl
         │       ├── sessions/<session-dir>/claude/projects/...  # Claude provider only
         │       ├── codex/sessions/...             # legacy shared session exports

@@ -1,8 +1,19 @@
 # Setup and responder accounting
 
-Native exports retain health-judge turn logs separately at
-`sdo_runtime/setup/<sha256(canonical AgentTask)>/setup-usage.jsonl`.
-The writable setup PVC mount and usage destination are provisioned before
+Native exports retain every lifecycle agent task (health judge, deployer) in
+its own directory `sdo_runtime/tasks/<task-id-slug>-<sha256(task_id)[:12]>/`:
+`task.json` (exact `task_id`, agent, task type), `request.json` (the AgentTask),
+`result.json` or `error.json` (the outcome; a failed or retried attempt is a
+separate task ID with its own directory), `setup-usage.jsonl` (turn usage),
+`agent-resolved.jsonl`, and the agent CLI's rollout under
+`codex/sessions/YYYY/MM/DD/rollout-*.jsonl` (`claude/projects/` for Claude). The
+provider login is removed when the task ends. Exports before this layout kept
+only `sdo_runtime/setup/<sha256(canonical AgentTask)>/setup-usage.jsonl` for
+the judge, with no rollouts. `sdo-operator runtime-artifacts` exports while the
+operate Job runs by reading through its running Pod (an exported rollout of a
+live session is a prefix); without a running controller or operate Pod it uses
+the sync Pod as before.
+The writable task PVC mount and usage destination are provisioned before
 worker launch, so a failed result publication cannot discard completed-turn
 accounting, including model turns rejected for invalid structured output. This is setup cost, never incident responder or reflection cost.
 Each JSONL record retains provider/model, session ID, model requests, token
