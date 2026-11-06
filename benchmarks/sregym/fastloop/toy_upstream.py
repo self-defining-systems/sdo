@@ -25,7 +25,7 @@ from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Callable, Iterator, Sequence
 
 COMMITS_DIR = Path(__file__).resolve().parents[3] / "apps" / "toy" / "commits"
 GIT_PORT = 9418
@@ -164,14 +164,20 @@ def seed_upstream(workspace: Path, remote: str, layout: UpstreamLayout) -> str:
     return head
 
 
-def replay_commit(name: str, remote: str, layout: UpstreamLayout, *, directory: Path = COMMITS_DIR) -> str:
-    """Apply ``<name>.patch`` on a fresh clone of the followed ref and push it (fast-forward only).
+def push_change(
+    remote: str,
+    layout: UpstreamLayout,
+    message: str,
+    change: Callable[[Path], None],
+    *,
+    identity: Sequence[str] = _IDENTITY,
+) -> str:
+    """Clone the followed ref, let ``change`` edit its work tree, commit everything and push (fast-forward only).
 
-    Returns the pushed commit SHA. A patch that does not apply, or a push the remote rejects, raises
-    ``UpstreamError`` and changes nothing upstream.
+    Returns the pushed commit SHA. A change that raises, or a push the remote rejects, raises ``UpstreamError`` (or
+    the change's own error) and changes nothing upstream. Shared by every replayer: what differs is the change.
     """
-    patch = patch_path(name, directory)
-    with tempfile.TemporaryDirectory(prefix="toy-replay-") as scratch:
+    with tempfile.TemporaryDirectory(prefix="upstream-replay-") as scratch:
         clone = Path(scratch) / "clone"
         cloned = subprocess.run(
             ["git", "clone", "-q", "--no-tags", "--branch", layout.ref, "--", remote, str(clone)],
@@ -181,11 +187,26 @@ def replay_commit(name: str, remote: str, layout: UpstreamLayout, *, directory: 
         )
         if cloned.returncode != 0:
             raise UpstreamError(f"clone {remote} {layout.ref} failed: {cloned.stderr.strip()}")
-        _git(clone, "apply", "--index", str(patch.resolve()))
-        _git(clone, *_IDENTITY, "commit", "-q", "-m", f"toy upstream: {name}")
+        change(clone)
+        _git(clone, "add", "--all")
+        _git(clone, *identity, "commit", "-q", "-m", message)
         sha = _git(clone, "rev-parse", "HEAD").stdout.strip()
         _git(clone, "push", "--", remote, f"HEAD:refs/heads/{layout.ref}")
     return sha
+
+
+def replay_commit(name: str, remote: str, layout: UpstreamLayout, *, directory: Path = COMMITS_DIR) -> str:
+    """Apply ``<name>.patch`` on a fresh clone of the followed ref and push it (fast-forward only).
+
+    Returns the pushed commit SHA. A patch that does not apply, or a push the remote rejects, raises
+    ``UpstreamError`` and changes nothing upstream.
+    """
+    patch = patch_path(name, directory)
+
+    def apply(clone: Path) -> None:
+        _git(clone, "apply", "--index", str(patch.resolve()))
+
+    return push_change(remote, layout, f"toy upstream: {name}", apply)
 
 
 def _environment() -> dict[str, str]:

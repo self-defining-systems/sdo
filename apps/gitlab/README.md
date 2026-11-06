@@ -61,6 +61,17 @@ Known blocker: the helm policy on main (`render/helm/internal/policy`) rejects t
 `duration` and a computed `include` in its helpers), so the real-chart tests below fail until that policy or a lane
 workaround changes. The synthetic stand-in passes.
 
+## Releases and the followed upstream
+
+`releases.json` lists the chart releases of the 10.5 line (plus the 10.4.2 baseline before it), each with the archive
+URL, sha256 and what it changes against the release before it: changed image references, added or removed values keys,
+values schema, added or removed workloads, object count. The changes were measured by rendering both releases through the
+umbrella chart (the `derivation` field says how). `fastloop up --app gitlab --chart-release 10.5.0` starts the lane at
+any listed release (`assemble.py` also declares that release as the umbrella dependency); the default is `pins.json`.
+
+The lane follows a Git ref (`--source-kind git`): `fastloop up` serves a Git remote in `gitlab-upstream` (the toy's
+server), seeded with the workspace commit. Release replay pushes later releases to it (see the fastloop README).
+
 ## Cluster prerequisites (the environment's job)
 
 Installed by `fastloop up --app gitlab` (`gitlab_lane.install_prerequisites`), not part of the deployment source:

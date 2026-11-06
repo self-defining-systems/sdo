@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import shutil
 import tarfile
 import tempfile
@@ -72,6 +73,19 @@ def vendor_chart(archive: Path, chart_dir: Path, pins: dict[str, Any]) -> Path:
     return vendored
 
 
+def bump_dependency(chart_yaml: Path, name: str, version: str) -> bool:
+    """Set the umbrella dependency ``name`` to ``version`` in ``chart_yaml`` (a release bump); True when it changed."""
+    text = chart_yaml.read_text()
+    pattern = re.compile(rf"(- name: {re.escape(name)}\n\s+version: )(\S+)")
+    match = pattern.search(text)
+    if match is None:
+        raise ValueError(f"{chart_yaml} has no dependency {name!r}")
+    if match.group(2) == version:
+        return False
+    chart_yaml.write_text(pattern.sub(rf"\g<1>{version}", text, count=1))
+    return True
+
+
 def assemble(dest: Path, *, archive: Path | None = None, pins: dict[str, Any] | None = None) -> Path:
     """Write the lane workspace into the empty ``dest``; fetch the upstream chart unless ``archive`` is given."""
     pins = pins or load_pins()
@@ -79,6 +93,8 @@ def assemble(dest: Path, *, archive: Path | None = None, pins: dict[str, Any] | 
         raise ValueError(f"destination {dest} is not empty")
     dest.mkdir(parents=True, exist_ok=True)
     shutil.copytree(CHART, dest / "chart")
+    # A lane assembled at another release declares that release as its dependency, as an upstream bump commit would.
+    bump_dependency(dest / "chart" / "Chart.yaml", pins["gitlab_chart"]["name"], pins["gitlab_chart"]["version"])
     if archive is not None:
         vendor_chart(archive, dest / "chart", pins)
     else:
