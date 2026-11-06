@@ -77,10 +77,6 @@ type SourceEvidence struct {
 	ContainerImages []rendered.DeployedImage
 	// DeploymentSource rendered the deployment; opaque to the broker.
 	DeploymentSource *contracts.DeploymentSource
-	// Plan is the admitted new-form DeploymentPlan (source, image
-	// declarations, expected workloads), nil for a legacy-form plan.
-	// Transitional home: slice 5 moves the plan into .sdo/deployment/.
-	Plan *contracts.DeploymentPlan
 	// BaseTree is the accepted commit's tree; EffectiveTree is
 	// rendered.Effective(BaseTree).ID (base plus deployment patches, memory
 	// projected away) and PatchesDigest the digest of that patch series. The
@@ -407,6 +403,11 @@ func (b *Broker) publishOrStage(ctx context.Context, incidentID string, actor Ac
 				return err
 			}
 		}
+		if scratchChecked(actor, phase) {
+			if paths, err = requireCapturedScratch(ctx, proposal.Path, paths); err != nil {
+				return err
+			}
+		}
 		candidateRoot := proposal.Path
 		if actor == Responder && phase == ProposalPhase {
 			paths = SourceRepairPaths(paths)
@@ -504,19 +505,20 @@ func (b *Broker) publishOrStage(ctx context.Context, incidentID string, actor Ac
 			// and judge commits). The proposal was replayed onto it; the replay
 			// must carry exactly the verified source, whatever memory history
 			// landed in between.
-			stagedTree, verifiedTree := "", expectedSourceTree
-			if current == proposal.BaseCommit {
-				stagedTree, err = ProposalTreeDigest(ctx, stage)
-			} else if stagedTree, err = proposalSourceTreeDigest(ctx, stage); err == nil {
-				verifiedTree, err = proposalSourceTreeDigest(ctx, candidateRoot)
-			}
+			// A moved head carries memory history the verified tree does not
+			// have, so the replay is bound by its effective identity (below);
+			// at an unmoved head the whole tree must be the verified one.
+			stagedTree, err := ProposalTreeDigest(ctx, stage)
 			if err != nil {
 				return err
 			}
-			if stagedTree != verifiedTree {
+			if current == proposal.BaseCommit && stagedTree != expectedSourceTree {
 				return errors.New("staged source tree differs from verified deployment")
 			}
-			if err := requireEffectiveEvidence(ctx, stage, *evidence); err != nil {
+			if err := requireEffectiveEvidence(ctx, stage, stagedTree, *evidence); err != nil {
+				return err
+			}
+			if err := requirePlanEvidence(ctx, stage, *evidence, b.PlanCatalogs); err != nil {
 				return err
 			}
 		}
@@ -906,19 +908,39 @@ func gitText(ctx context.Context, cwd string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
-// ProposalTreeDigest computes the complete candidate Git tree without changing
-// the checkout's index. Both deployment and publish use this exact convention.
+// ProposalTreeDigest computes the candidate Git tree an agent can publish: the
+// base tree (the checkout's recorded base when it has an effective view, else
+// HEAD) with the working .sdo/ directory in place. Agents write only .sdo/, so
+// app files never participate: scratch edits in the working tree are not part
+// of the candidate. The index is not changed. Both deployment and publish use
+// this exact convention.
 func ProposalTreeDigest(ctx context.Context, checkout string) (string, error) {
-	return proposalTreeDigest(ctx, checkout, false)
+	return candidateTreeDigest(ctx, checkout, treeSDOOnly)
 }
 
-// proposalSourceTreeDigest is ProposalTreeDigest without operational memory,
-// so two trees that differ only in accepted .sdo history compare equal.
-func proposalSourceTreeDigest(ctx context.Context, checkout string) (string, error) {
-	return proposalTreeDigest(ctx, checkout, true)
+// advanceTreeDigest is the complete working tree of an upstream advance's
+// merge checkout. The advance is the one actor that changes app files, so the
+// merged files (staged by the three-way merge, not committed) are part of its
+// tree.
+func advanceTreeDigest(ctx context.Context, checkout string) (string, error) {
+	return candidateTreeDigest(ctx, checkout, treeComplete)
 }
 
-func proposalTreeDigest(ctx context.Context, checkout string, sourceOnly bool) (string, error) {
+// advanceSourceTreeDigest is advanceTreeDigest without .sdo/: the source as
+// upstream knows it, for the mirror invariant.
+func advanceSourceTreeDigest(ctx context.Context, checkout string) (string, error) {
+	return candidateTreeDigest(ctx, checkout, treeNonSDO)
+}
+
+type treeScope int
+
+const (
+	treeSDOOnly treeScope = iota
+	treeComplete
+	treeNonSDO
+)
+
+func candidateTreeDigest(ctx context.Context, checkout string, scope treeScope) (string, error) {
 	root, err := filepath.Abs(checkout)
 	if err != nil {
 		return "", err
@@ -929,20 +951,49 @@ func proposalTreeDigest(ctx context.Context, checkout string, sourceOnly bool) (
 	}
 	defer os.RemoveAll(indexDir)
 	index := filepath.Join(indexDir, "index")
+	env := []string{"GIT_INDEX_FILE=" + index}
 	run := func(args ...string) (string, error) {
-		output, err := runGitEnv(ctx, root, []string{"GIT_INDEX_FILE=" + index}, args...)
+		output, err := runGitEnv(ctx, root, env, args...)
 		return strings.TrimSpace(string(output)), err
 	}
-	if _, err := run("read-tree", "HEAD"); err != nil {
+	base := "HEAD"
+	if scope == treeSDOOnly {
+		// An agent's local commit (for example of materialized patched files)
+		// must not move the base: the checkout recorded it at creation.
+		view, ok, err := patchset.LoadView(ctx, root)
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			base = view.BaseTree
+		}
+	}
+	if _, err := run("read-tree", base); err != nil {
 		return "", err
 	}
-	if _, err := run("add", "-A"); err != nil {
+	switch scope {
+	case treeSDOOnly:
+		if _, err := os.Lstat(filepath.Join(root, layout.Dir)); err == nil {
+			if _, err := run("add", "-A", "--", layout.Dir); err != nil {
+				return "", err
+			}
+		} else if os.IsNotExist(err) {
+			// The working tree has no .sdo/: a base that had one is deleted.
+			if _, err := run("rm", "-r", "--cached", "--ignore-unmatch", "-q", "--", layout.Dir); err != nil {
+				return "", err
+			}
+		} else {
+			return "", err
+		}
+	default:
+		if _, err := run("add", "-A"); err != nil {
+			return "", err
+		}
+	}
+	if err := addIgnoredOperationalMemory(ctx, root, env); err != nil {
 		return "", err
 	}
-	if err := addIgnoredOperationalMemory(ctx, root, []string{"GIT_INDEX_FILE=" + index}); err != nil {
-		return "", err
-	}
-	if sourceOnly {
+	if scope == treeNonSDO {
 		if _, err := run("rm", "-r", "--cached", "--ignore-unmatch", "-q", "--", layout.Dir); err != nil {
 			return "", err
 		}

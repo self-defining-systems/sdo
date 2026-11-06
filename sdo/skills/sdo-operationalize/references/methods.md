@@ -60,7 +60,8 @@ Write `Finding.Evidence` so that a responder can act without re-deriving the che
 ## Application instrumentation
 
 When a health objective or incident cannot be localized with existing inputs, add instrumentation to the
-application's own source through the normal source-repair path. Export request and error counters, latency
+application's own source as a source repair: a responder or deployer captures it as a reasoned patch
+(`sdo-operator patch create`, sdo-patching skill); app files are never committed. Export request and error counters, latency
 histograms and queue depth; keep labels bounded. Reflection records the need for a source repair rather than
 editing source itself. Use the task's typed `metrics_source`: annotate pod templates with
 `prometheus.io/scrape: "true"`, `prometheus.io/port` and `prometheus.io/path` when annotated scraping is enabled,

@@ -34,7 +34,9 @@ func healthGit(ctx context.Context, repository string, args ...string) ([]byte, 
 }
 
 // HealthInputs reads one immutable revision. ls-tree includes modes, symlinks,
-// and submodule IDs: builds can consume any tracked input outside memory.
+// and submodule IDs: builds can consume any tracked input outside memory and
+// the effective deployment inputs under .sdo/deployment (agents write only
+// .sdo/, so patches and deployment files are where source changes live).
 func HealthInputs(ctx context.Context, repository, revision string) (HealthRevision, error) {
 	commit, err := healthGit(ctx, repository, "rev-parse", "--verify", revision+"^{commit}")
 	if err != nil {
@@ -55,7 +57,7 @@ func HealthInputs(ctx context.Context, repository, revision string) (HealthRevis
 			return HealthRevision{}, errors.New("invalid health provenance tree")
 		}
 		name := string(path)
-		if !layout.IsMemoryPath(name) {
+		if !layout.IsMemoryPath(name) || layout.IsEffectiveDeploymentInput(name) {
 			source.Write(entry)
 			source.Write([]byte{0})
 		}

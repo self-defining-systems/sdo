@@ -52,6 +52,9 @@ const (
 	RulePatchInvalid      = "patch.invalid"
 	RulePatchOwner        = "patch.owner"
 	RulePatchUpstreamBase = "patch.upstream-base"
+	// RulePatchUncaptured is the broker publish rule: app files of the agent's
+	// checkout that the patch series does not reproduce are never published.
+	RulePatchUncaptured = "patch.uncaptured"
 	RuleDeploymentInvalid = "deployment.invalid"
 
 	// Semantic.

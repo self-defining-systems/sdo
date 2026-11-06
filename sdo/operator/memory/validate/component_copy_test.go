@@ -11,31 +11,19 @@ import (
 // only in the component they name (scenario, container, binding literal),
 // plus formatting, local spelling and one extra command argument.
 
-const componentApp = `apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: orders-cache
-  namespace: shop
-spec:
-  selector:
-    matchLabels:
-      app: orders-cache
+// componentArchitecture is the architecture Go writes from the rendered
+// accepted source: the manifest inventory lines. Component names come from
+// these lines, never from the source tree.
+const componentArchitecture = `---
+schema_version: 1
+generated_at_commit: base
+application: shop
 ---
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: carts-cache
-  namespace: shop
-spec:
-  selector:
-    matchLabels:
-      app: carts-cache
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: orders-api
-  namespace: shop
+# Manifest inventory
+
+- Deployment/shop/orders-cache (source: raw)
+- Deployment/shop/carts-cache (source: raw)
+- Service/shop/orders-api (source: raw)
 `
 
 const componentWorkload = "apiVersion: sdo.dev/v1alpha1\nkind: TrafficWorkload\nname: health\npurpose: health-probe\nratePerSecond: 1\nscenarios:\n- id: orders-read\n  weight: 1\n- id: carts-read\n  weight: 1\n"
@@ -188,7 +176,7 @@ func gateComponentCopy(name string, change func(t *testing.T, diagnose, mitigate
 	return gateRow{name: name, kind: gateCheck, actor: Responder, phase: ReflectionPhase, rules: rules,
 		baseMessage: gateOutcomeMessage,
 		prepare: func(t *testing.T, r string) {
-			write(t, r, "kubernetes/shop.yaml", componentApp)
+			write(t, r, ".sdo/arch.md", componentArchitecture)
 			write(t, r, ".sdo/diagnostics/traffic/workloads/health.yaml", componentWorkload)
 			write(t, r, ".sdo/playbooks/orders-cache-acl/diagnose.go", componentDiagnose)
 			write(t, r, ".sdo/playbooks/orders-cache-acl/mitigate.go", componentMitigate)

@@ -204,7 +204,6 @@ def responder_script(request: IncidentRequest) -> AgentScript:
         (*common, responder_steps._binding_args, responder_steps._matched_plans),
         (
             *common,
-            responder_steps._manifest,
             responder_steps._patch_from_source,
             responder_steps._assess_drift,
             responder_steps._assess_policy_drift,

@@ -8,8 +8,10 @@ import (
 	"slices"
 	"strings"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/upstream"
 )
 
@@ -123,24 +125,64 @@ func lastUpstream(ctx context.Context, repository, revision string) (string, boo
 	return "", false, nil
 }
 
+// AcceptedSource is the accepted deployment an advance builds on: the
+// evidence of the newest deployment and the plan the accepted HEAD declares
+// in .sdo/deployment/plan.yaml.
+type AcceptedSource struct {
+	Evidence SourceEvidence
+	Plan     *contracts.DeploymentPlan
+}
+
 // AcceptedSourceEvidence returns the trusted deployment evidence that is
 // current for the accepted HEAD: the record of the newest source deployment
 // on the first-parent history (onboarding's deployer commit or an upstream
 // advance). Later memory commits do not change it; a later responder source
 // repair is not a deployment and leaves it as it was. found is false when no
-// such deployment is recorded (a seeded install).
-func (b *Broker) AcceptedSourceEvidence(ctx context.Context) (SourceEvidence, bool, error) {
+// such deployment is recorded (a seeded install). The plan is read from the
+// accepted HEAD's tree, not from the evidence.
+func (b *Broker) AcceptedSourceEvidence(ctx context.Context) (AcceptedSource, bool, error) {
 	var value SourceEvidence
 	var found bool
+	var plan *contracts.DeploymentPlan
 	err := b.locked(func() error {
-		commit, incidentID, ok, err := b.newestDeployment(ctx)
-		if err != nil || !ok {
+		var err error
+		value, found, err = b.acceptedEvidenceLocked(ctx)
+		if err != nil || !found {
 			return err
 		}
-		value, found, err = b.sourceEvidenceLocked(ctx, incidentID, Receipt{IncidentID: incidentID, Commit: commit})
+		plan, err = planAtTree(ctx, b.target, "HEAD^{tree}", b.PlanCatalogs)
 		return err
 	})
-	return value, found, err
+	return AcceptedSource{Evidence: value, Plan: plan}, found, err
+}
+
+// acceptedEvidenceLocked is the evidence of the newest source deployment.
+func (b *Broker) acceptedEvidenceLocked(ctx context.Context) (SourceEvidence, bool, error) {
+	commit, incidentID, ok, err := b.newestDeployment(ctx)
+	if err != nil || !ok {
+		return SourceEvidence{}, false, err
+	}
+	return b.sourceEvidenceLocked(ctx, incidentID, Receipt{IncidentID: incidentID, Commit: commit})
+}
+
+// AcceptedImagePins are the images the newest accepted deployment applied,
+// bound to the effective tree it deployed. They are the image part of desired
+// state (rendered.PinProvider): the controller reads them from the same
+// ledger record that backs the accepted commit, so a source change that moves
+// images gets new pins only through a new accepted deployment (onboarding or
+// an advance), and a memory-only commit leaves them as they were. With no
+// recorded deployment (a seeded install) there are no pins.
+func (b *Broker) AcceptedImagePins(ctx context.Context) (rendered.ReceiptPins, error) {
+	var pins rendered.ReceiptPins
+	err := b.locked(func() error {
+		evidence, found, err := b.acceptedEvidenceLocked(ctx)
+		if err != nil || !found {
+			return err
+		}
+		pins = rendered.ReceiptPins{EffectiveTree: evidence.EffectiveTree, Images: evidence.ContainerImages}
+		return nil
+	})
+	return pins, err
 }
 
 func (b *Broker) newestDeployment(ctx context.Context) (commit, incidentID string, found bool, err error) {
@@ -307,9 +349,6 @@ func (b *Broker) PublishAdvance(ctx context.Context, id, upstream, base string, 
 	if err := validateSourceEvidence(evidence); err != nil {
 		return Receipt{}, err
 	}
-	if evidence.Plan == nil {
-		return Receipt{}, errors.New("advance evidence must carry the deployment plan of the next advance")
-	}
 	var receipt Receipt
 	err := b.locked(b.withUpstream(ctx, func() error {
 		if prior, ok, err := b.findAccepted(ctx, id, AdvancePhase); err != nil {
@@ -352,7 +391,7 @@ func (b *Broker) PublishAdvance(ctx context.Context, id, upstream, base string, 
 		if len(conflicts) > 0 {
 			return fmt.Errorf("upstream %s conflicts with accepted source: %s", upstream, strings.Join(conflicts, ", "))
 		}
-		tree, err := ProposalTreeDigest(ctx, stage)
+		tree, err := advanceTreeDigest(ctx, stage)
 		if err != nil {
 			return err
 		}
@@ -364,7 +403,10 @@ func (b *Broker) PublishAdvance(ctx context.Context, id, upstream, base string, 
 		if err := checkEffective(ctx, stage, tree); err != nil {
 			return effectiveError(ctx, stage, "", tree, base, upstream, err)
 		}
-		if err := requireEffectiveEvidence(ctx, stage, evidence); err != nil {
+		if err := requireEffectiveEvidence(ctx, stage, tree, evidence); err != nil {
+			return err
+		}
+		if err := requirePlanEvidence(ctx, stage, evidence, b.PlanCatalogs); err != nil {
 			return err
 		}
 		mirror, err := mirrorState(ctx, stage, current, base, upstream)

@@ -324,6 +324,15 @@ func IncidentTraffic(kind Kind, id string) bool {
 // Every caller that decides what may touch memory uses this predicate.
 func IsMemoryPath(p string) bool { return p == Dir || strings.HasPrefix(p, Dir+"/") }
 
+// IsEffectiveDeploymentInput reports a path whose bytes shape what is deployed
+// although it lives in memory: authored values, manifests and build files,
+// overlays and patches (the inputs of the effective tree). plan.yaml and every
+// other memory path are not.
+func IsEffectiveDeploymentInput(p string) bool {
+	kind, _, ok := Classify(p)
+	return ok && (kind == KindDeploymentFile || kind == KindDeploymentOverlay || kind == KindDeploymentPatch)
+}
+
 // DetectorDir is the repository-relative directory of a detector package.
 func DetectorDir(class Class, id string) string {
 	return path.Join(DetectorsDir, class.Dir(), id)

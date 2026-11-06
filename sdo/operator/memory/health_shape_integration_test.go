@@ -122,6 +122,50 @@ func TestAcceptedHealthRevisionOfASeedWithoutJudgeCommitNeedsRefresh(t *testing.
 	}
 }
 
+// The deployment inputs under .sdo/deployment (values, manifests, build files,
+// overlays, patches) are source for the deployed system even though they live
+// in memory. A commit that changes only them must change SourceInputs, so it is
+// evaluated for a refresh; plan.yaml and other memory do not.
+func TestHealthSourceInputsCoverEffectiveDeploymentInputs(t *testing.T) {
+	ctx := context.Background()
+	inputs := func(dir string) string {
+		t.Helper()
+		rev, err := memory.HealthInputs(ctx, dir, "HEAD")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rev.SourceInputs
+	}
+	for _, path := range []string{
+		".sdo/deployment/values/prod.yaml",
+		".sdo/deployment/manifests/app/deploy.yaml",
+		".sdo/deployment/build/Dockerfile",
+		".sdo/deployment/overlays/telemetry/patch.yaml",
+		".sdo/deployment/patches/0001-fix.patch",
+	} {
+		dir := judgedRepo(t)
+		before := inputs(dir)
+		writeFile(t, dir, path, "synthetic\n")
+		gitIn(t, dir, "add", "-A")
+		gitIn(t, dir, "commit", "-qm", "deployment input")
+		if inputs(dir) == before {
+			t.Errorf("%s: a deployment-only commit left SourceInputs unchanged", path)
+		}
+	}
+	for _, path := range []string{layoutPlan, ".sdo/outcomes/x.json", ".sdo/playbooks/p/README.md"} {
+		dir := judgedRepo(t)
+		before := inputs(dir)
+		writeFile(t, dir, path, "synthetic\n")
+		gitIn(t, dir, "add", "-A")
+		gitIn(t, dir, "commit", "-qm", "memory only")
+		if inputs(dir) != before {
+			t.Errorf("%s: memory-only commit moved SourceInputs", path)
+		}
+	}
+}
+
+const layoutPlan = ".sdo/deployment/plan.yaml"
+
 // installedRepo is a judged install: the installed commit is the judge commit.
 func installedRepo(t *testing.T) string {
 	t.Helper()

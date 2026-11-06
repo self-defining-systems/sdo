@@ -76,9 +76,10 @@ var deploymentRuleRows = []gateRow{
 
 	// patch.owner: the header names the writing actor.
 	// The initial phase is closed once detectors exist, so the deployer row
-	// also carries lifecycle.bootstrap-closed; the owner rule is the point.
+	// also carries lifecycle.bootstrap-closed, and a deployer's patch is source
+	// that needs a verified tree; the owner rule is the point.
 	deploymentCheckRow("deployer writes a patch owned by the responder", Deployer, InitialPhase,
-		gateWrite(gatePatchDir+"0001-x.patch", gateResponderPatch("")), RuleBootstrapClosed, RulePatchOwner),
+		gateWrite(gatePatchDir+"0001-x.patch", gateResponderPatch("")), RuleBootstrapClosed, RuleVerifiedSource, RulePatchOwner),
 	deploymentCheckRow("responder writes a patch owned by the deployer", Responder, ProposalPhase,
 		gateWrite(gatePatchDir+"0001-x.patch", gateDeployerPatch), RulePatchOwner),
 	deploymentCheckRow("responder writes its own patch", Responder, ProposalPhase,

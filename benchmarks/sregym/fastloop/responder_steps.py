@@ -7,7 +7,6 @@ Their script and transport contracts are tested with synthetic scenarios.
 from __future__ import annotations
 
 import json
-import logging
 import re
 import socket
 import subprocess
@@ -15,11 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from sdo.contracts import DriftEvent, IncidentRequest
-
-LOG = logging.getLogger(__name__)
 
 
 def _now() -> str:
@@ -42,25 +37,6 @@ def _tool(*args: str) -> dict[str, Any]:
     if not isinstance(response, dict) or response.get("error"):
         raise RuntimeError(f"sdo {' '.join(args)}: {response.get('error') if isinstance(response, dict) else output}")
     return response
-
-
-def _manifest(root: Path, kind: str, name: str) -> dict[str, Any]:
-    manifest_root = root / "kubernetes" if (root / "kubernetes").is_dir() else root
-    for path in sorted((*manifest_root.rglob("*.yaml"), *manifest_root.rglob("*.yml"))):
-        if "templates" in path.relative_to(manifest_root).parts:
-            continue
-        try:
-            documents = list(yaml.safe_load_all(path.read_text(encoding="utf-8")))
-        except (OSError, UnicodeError, yaml.YAMLError) as exc:
-            LOG.warning("skipping unparseable source manifest %s: %s", path, exc)
-            continue
-        for document in documents:
-            if not isinstance(document, dict) or document.get("kind") != kind:
-                continue
-            metadata = document.get("metadata")
-            if isinstance(metadata, dict) and metadata.get("name") == name:
-                return document
-    raise RuntimeError(f"accepted source has no {kind}/{name} manifest")
 
 
 def _patch_from_source(request: IncidentRequest, ref: dict[str, str]) -> None:
@@ -155,7 +131,7 @@ def _assess_drift(request: IncidentRequest, event: DriftEvent) -> DriftEvent:
     if match is None:
         return label
     try:
-        source = _manifest(Path(request.repository_worktree), "Service", event.ref.name)
+        source = _tool("source", f"Service/{request.namespace}/{event.ref.name}")["source"]
         source_port = source["spec"]["ports"][int(match.group(1))].get("targetPort")
         live = json.loads(
             _command(["kubectl", "-n", request.namespace, "get", "service", event.ref.name, "-o", "json"])

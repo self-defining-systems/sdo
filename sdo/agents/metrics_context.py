@@ -15,7 +15,8 @@ def metrics_context(source: MetricsSource) -> str:
     if source.otlp_metrics_url:
         parts.append(f"Publish OTLP HTTP metrics to {source.otlp_metrics_url} (full metrics endpoint).")
     parts.append(
-        "Add needed instrumentation to application source through the normal source-repair path; "
+        "Needed instrumentation is a source repair a responder captures as a patch (sdo-patching); "
+        "never edit application source; "
         "use sdo-operationalize for instrumentation and sdo.dev/operator/sdk/metrics for deterministic detectors."
     )
     return " ".join(parts)

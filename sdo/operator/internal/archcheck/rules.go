@@ -69,7 +69,7 @@ func Rules() Config {
 		// Generated files cannot carry directives; only the serial proto PRs
 		// (S3-01, S3-11c, S3-15) edit these entries.
 		Ratchet: []RatchetEntry{
-			{File: "contracts/gen/sdodev/contracts/v1alpha1/controller_config.pb.go", Count: 5, Reason: "generated wire field", Slice: "S3-11c"},
+			{File: "contracts/gen/sdodev/contracts/v1alpha1/controller_config.pb.go", Count: 1, Reason: "generated wire field", Slice: "S3-11c"},
 			{File: "contracts/gen/sdodev/contracts/v1alpha1/lifecycle.pb.go", Count: 5, Reason: "generated wire field", Slice: "S3-15"},
 		},
 		TransitionalPRs: TransitionalPRs,

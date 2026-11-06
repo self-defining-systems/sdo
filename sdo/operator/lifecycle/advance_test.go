@@ -17,6 +17,7 @@ import (
 	"sdo.dev/operator/imagesrc"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/patchset"
+	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/upstream"
 )
 
@@ -43,6 +44,7 @@ type advWorld struct {
 	changed        []string
 	noEvidence     bool
 	noPlan         bool
+	planAbsent     bool
 	plan           *contracts.DeploymentPlan
 	conflicts      []string
 	proposeErr     error
@@ -84,15 +86,18 @@ func (w *advWorld) UpstreamChange(_ context.Context, base, upstreamCommit string
 	return !w.notAncestor, slices.Clone(w.changed), nil
 }
 
-func (w *advWorld) AcceptedSourceEvidence(context.Context) (broker.SourceEvidence, bool, error) {
+func (w *advWorld) AcceptedSourceEvidence(context.Context) (broker.AcceptedSource, bool, error) {
 	if w.noEvidence {
-		return broker.SourceEvidence{}, false, nil
+		return broker.AcceptedSource{}, false, nil
 	}
-	evidence := broker.SourceEvidence{DeploymentSource: w.plan.GetSource(), Plan: w.plan, AcceptedCommit: advHead}
+	if w.planAbsent {
+		return broker.AcceptedSource{}, true, fmt.Errorf("the tree has no plan: %w", planfile.ErrAbsent)
+	}
+	accepted := broker.AcceptedSource{Evidence: broker.SourceEvidence{DeploymentSource: w.plan.GetSource(), AcceptedCommit: advHead}, Plan: w.plan}
 	if w.noPlan {
-		evidence.Plan = nil
+		accepted.Plan = nil
 	}
-	return evidence, true, nil
+	return accepted, true, nil
 }
 
 func (w *advWorld) ProposeAdvance(_ context.Context, id, base, upstreamCommit string) (broker.Proposal, string, []string, error) {
@@ -127,8 +132,8 @@ func (w *advWorld) PublishAdvance(_ context.Context, id, upstreamCommit, base st
 		return broker.Receipt{}, errors.New("trailers differ from the proposal's merge")
 	case evidence.BaseTree != advTree || evidence.EffectiveTree != advEffective || evidence.ObservedRevision != advEffective || !evidence.Ready:
 		return broker.Receipt{}, errors.New("evidence is not of the candidate tree")
-	case !proto.Equal(evidence.Plan, w.plan) || !proto.Equal(evidence.DeploymentSource, w.plan.GetSource()):
-		return broker.Receipt{}, errors.New("evidence does not carry the accepted plan")
+	case !proto.Equal(evidence.DeploymentSource, w.plan.GetSource()):
+		return broker.Receipt{}, errors.New("evidence does not name the accepted plan's source")
 	case evidence.RenderDigest == "" || evidence.EnvDigest == "" || len(evidence.Images) == 0 || len(evidence.ResourceIDs) == 0:
 		return broker.Receipt{}, errors.New("incomplete evidence")
 	case w.publishErr != nil:
@@ -391,8 +396,9 @@ func TestAdvanceDefersWhileTheControllerIsBusy(t *testing.T) {
 
 func TestAdvanceWithoutAnAcceptedPlanIsUnavailable(t *testing.T) {
 	for name, mutate := range map[string]func(*advWorld){
-		"no evidence":          func(w *advWorld) { w.noEvidence = true },
-		"evidence has no plan": func(w *advWorld) { w.noPlan = true },
+		"no evidence":                  func(w *advWorld) { w.noEvidence = true },
+		"no plan in the accepted tree": func(w *advWorld) { w.noPlan = true },
+		"tree has no plan.yaml":        func(w *advWorld) { w.planAbsent = true },
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := newAdvWorld(t)

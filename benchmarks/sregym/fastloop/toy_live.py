@@ -73,10 +73,15 @@ class KubectlScenarioOps:
         return self._json(self.control, "get", "pods", "-l", CONTROLLER_SELECTOR)["items"]
 
     def _ready_controller(self) -> str:
-        for pod in self._controller_pods():
-            if pod.get("status", {}).get("phase") == "Running" and not pod["metadata"].get("deletionTimestamp"):
-                return str(pod["metadata"]["name"])
-        raise RuntimeError("no running controller pod")
+        """The running controller pod, waiting out a relaunch (a Job retry or in-process rebuild leaves a gap)."""
+        deadline = self.clock() + wait_for(WaitKind.MINUTE, 2)
+        while True:
+            for pod in self._controller_pods():
+                if pod.get("status", {}).get("phase") == "Running" and not pod["metadata"].get("deletionTimestamp"):
+                    return str(pod["metadata"]["name"])
+            if self.clock() >= deadline:
+                raise RuntimeError("no running controller pod")
+            self.sleep(wait_for(WaitKind.POLL))
 
     def _accepted(self, *git_args: str) -> str:
         pod = self._ready_controller()

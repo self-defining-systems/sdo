@@ -160,7 +160,7 @@ def test_baseline_wait_ends_on_the_controllers_exported_state_not_a_fixed_two_mi
     }
     monkeypatch.setattr(toy.subprocess, "run", kubectl)
     monkeypatch.setattr(toy, "command", lambda *_args: json.dumps({"items": [pod]}))
-    monkeypatch.setattr(toy, "accepted_head", lambda *_args: "accepted")
+    monkeypatch.setattr(toy, "adopted_source", lambda *_args: "accepted")
     environment = SimpleNamespace(kubeconfig=Path("/kubeconfig"), namespace="toy")
 
     toy.wait_for_baseline(environment, "accepted")
@@ -168,8 +168,8 @@ def test_baseline_wait_ends_on_the_controllers_exported_state_not_a_fixed_two_mi
     assert ready_at <= now[0] < ready_at + 5, "the wait ended on the exported state"
 
 
-def test_baseline_adoption_follows_the_head_the_judge_refresh_advanced(monkeypatch):
-    """Install commits refreshed health detectors above the installed commit; the controller adopts that head."""
+def test_baseline_adoption_is_checked_by_lineage_to_the_installed_commit(monkeypatch):
+    """Install commits refreshed health detectors above the installed commit; the controller adopts that commit."""
     import json
     from types import SimpleNamespace
 
@@ -206,22 +206,75 @@ def test_baseline_adoption_follows_the_head_the_judge_refresh_advanced(monkeypat
     toy.wait_for_baseline(environment, "a" * 40)
 
     exec_call = next(args for args in calls if args[0] == "exec")
-    assert "a" * 40 in exec_call, "the head must be checked to contain the installed commit"
+    assert "a" * 40 in exec_call, "adoption must descend from the installed commit"
+    assert refreshed in exec_call
 
 
-def test_accepted_head_is_none_when_the_head_does_not_contain_the_installed_commit(monkeypatch):
+def _git(repo: Path, *args: str) -> str:
     import subprocess
-    from types import SimpleNamespace
+
+    return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True).stdout.strip()
+
+
+def _repository_with_lineage(tmp_path: Path) -> tuple[Path, dict[str, str]]:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "config", "user.email", "t@example.invalid")
+    _git(repo, "config", "user.name", "t")
+    commits: dict[str, str] = {}
+    for name in ("install", "adopted", "outcome"):
+        (repo / f"{name}.txt").write_text(name)
+        _git(repo, "add", ".")
+        _git(repo, "commit", "-q", "-m", name)
+        commits[name] = _git(repo, "rev-parse", "HEAD")
+    return repo, commits
+
+
+def _run_in_repository(repo: Path, monkeypatch):
+    import subprocess
 
     from benchmarks.sregym.fastloop import toy
 
-    def not_ancestor(*_args, **_kwargs):
-        raise subprocess.CalledProcessError(1, "git")
+    def local(*args: str, **_kwargs: object) -> str:
+        # kubectl exec <pod> -c controller -- sh -c <script> sh <repo> <args>: run the script on the local repository.
+        script = args[args.index("-c", args.index("--")) + 1]
+        positional = list(args[args.index("-c", args.index("--")) + 3 :])
+        positional[0] = str(repo)
+        return subprocess.run(
+            ["sh", "-c", script, "sh", *positional], check=True, capture_output=True, text=True
+        ).stdout
 
-    monkeypatch.setattr(toy, "command", not_ancestor)
+    monkeypatch.setattr(toy, "command", local)
+    return toy
+
+
+def test_adopted_source_survives_outcome_commits_that_move_head(tmp_path, monkeypatch):
+    """Outcome commits move HEAD past the adoption record; `up` must not report a false baseline failure."""
+    from types import SimpleNamespace
+
+    repo, commits = _repository_with_lineage(tmp_path)
+    toy = _run_in_repository(repo, monkeypatch)
     environment = SimpleNamespace(kubeconfig=Path("/kubeconfig"), namespace="toy")
 
-    assert toy.accepted_head(environment, "pod", "a" * 40) is None
+    assert toy.adopted_source(environment, "pod", commits["install"], commits["adopted"]) == commits["adopted"]
+
+
+def test_adopted_source_is_none_without_lineage(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    repo, commits = _repository_with_lineage(tmp_path)
+    toy = _run_in_repository(repo, monkeypatch)
+    environment = SimpleNamespace(kubeconfig=Path("/kubeconfig"), namespace="toy")
+
+    # Adoption older than the install: the controller adopted something before the installed commit.
+    assert toy.adopted_source(environment, "pod", commits["adopted"], commits["install"]) is None
+    # A commit HEAD no longer contains (rewritten history) is not an adoption of this repository.
+    _git(repo, "checkout", "-q", "-b", "other", commits["install"])
+    (repo / "other.txt").write_text("other")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "other")
+    assert toy.adopted_source(environment, "pod", commits["install"], commits["adopted"]) is None
 
 
 def test_toy_kind_configuration_requires_network_policy_enforcement(tmp_path, monkeypatch):
@@ -574,20 +627,24 @@ def test_helm_onboarding_assertions_accept_the_expected_evidence_and_name_each_v
     good = toy.OnboardingEvidence(
         renderer_id="helm",
         image_builders=("buildkit", "buildkit", "buildkit"),
-        controller_args=("--app", "/workspace/application", "--deployment-source", "{}"),
+        plan_renderer_id="helm",
     )
     assert toy.onboarding_violations(good, "helm") == []
-    assert toy.onboarding_violations(
-        toy.OnboardingEvidence("raw", good.image_builders, good.controller_args), "helm"
-    ) == ["accepted evidence plan renderer_id is 'raw', expected 'helm'"]
-    prebuilt = toy.OnboardingEvidence("helm", ("buildkit", "prebuilt"), good.controller_args)
-    assert toy.onboarding_violations(prebuilt, "helm") == ["images not built by buildkit: prebuilt"]
-    assert toy.onboarding_violations(toy.OnboardingEvidence("helm", (), good.controller_args), "helm") == [
-        "accepted evidence plan declares no images"
+    assert toy.onboarding_violations(toy.OnboardingEvidence("raw", good.image_builders, "raw"), "helm") == [
+        "accepted deployment renderer_id is 'raw', expected 'helm'"
     ]
-    bare = toy.OnboardingEvidence("helm", good.image_builders, ("--app", "/workspace/application"))
-    assert toy.onboarding_violations(bare, "helm") == ["controller args carry no --deployment-source"]
-    assert toy.onboarding_violations(good, "raw") == ["accepted evidence plan renderer_id is 'helm', expected 'raw'"]
+    prebuilt = toy.OnboardingEvidence("helm", ("buildkit", "prebuilt"), "helm")
+    assert toy.onboarding_violations(prebuilt, "helm") == ["images not built by buildkit: prebuilt"]
+    assert toy.onboarding_violations(toy.OnboardingEvidence("helm", (), "helm"), "helm") == [
+        "accepted deployment plan declares no images"
+    ]
+    bare = toy.OnboardingEvidence("helm", good.image_builders, None)
+    assert toy.onboarding_violations(bare, "helm") == ["accepted tree has no .sdo/deployment/plan.yaml"]
+    drifted = toy.OnboardingEvidence("helm", good.image_builders, "raw")
+    assert toy.onboarding_violations(drifted, "helm") == [
+        "accepted tree plan.yaml renderer_id is 'raw', deployment evidence says 'helm'"
+    ]
+    assert toy.onboarding_violations(good, "raw") == ["accepted deployment renderer_id is 'helm', expected 'raw'"]
 
 
 class _RestartOps:

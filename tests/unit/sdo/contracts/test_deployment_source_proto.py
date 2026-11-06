@@ -38,13 +38,12 @@ def test_deployment_plan_carries_source_images_and_workloads() -> None:
     assert list(raw.paths) == ["deploy", "extra.yaml"]
 
 
-def test_controller_config_carries_deployment_source() -> None:
-    config = contracts.ControllerConfig(
-        deployment_source=contracts.DeploymentSource(
-            renderer_id="kustomize", config=_packed(contracts.KustomizeRenderConfig(path="overlay"))
-        )
-    )
-    assert json_format.Parse(json_format.MessageToJson(config), contracts.ControllerConfig()) == config
+def test_controller_config_no_longer_carries_a_deployment_source() -> None:
+    """The source is the accepted tree's plan.yaml; fields 63 and 112 are reserved, never reused."""
+    descriptor = contracts.ControllerConfig.DESCRIPTOR
+    assert "deployment_source" not in descriptor.fields_by_name
+    assert "deployed_manifest_paths" not in descriptor.fields_by_name
+    assert {number for number in (63, 112) if number in descriptor.fields_by_number} == set()
 
 
 @pytest.mark.parametrize("renderer_id", ["Raw", "1raw", "raw_v1", ""])

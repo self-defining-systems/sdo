@@ -42,9 +42,10 @@ func acceptedEvidence(t *testing.T, h *harness) broker.SourceEvidence {
 	return evidence
 }
 
-// Accepted evidence binds the source the deployer rendered, its digests and
-// the admitted new-form plan (image declarations and expected workloads).
-func TestAcceptedEvidenceRecordsTheSourceDigestsAndPlan(t *testing.T) {
+// Accepted evidence binds the source the deployer rendered and its digests;
+// the admitted plan (image declarations and expected workloads) is written by
+// Go into the proposal as .sdo/deployment/plan.yaml.
+func TestAcceptedEvidenceRecordsTheSourceAndDigestsAndGoWritesThePlan(t *testing.T) {
 	h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{clear}})
 	plan := rawSourcePlan(t, "k8s")
 	h.workers.plan = plan
@@ -52,8 +53,11 @@ func TestAcceptedEvidenceRecordsTheSourceDigestsAndPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	evidence := acceptedEvidence(t, h)
-	if !rendered.SameDeploymentSource(evidence.DeploymentSource, plan.GetSource()) || !proto.Equal(evidence.Plan, plan) {
-		t.Fatalf("evidence source %v plan %v, want %v", evidence.DeploymentSource, evidence.Plan, plan)
+	if !rendered.SameDeploymentSource(evidence.DeploymentSource, plan.GetSource()) {
+		t.Fatalf("evidence source %v, want %v", evidence.DeploymentSource, plan.GetSource())
+	}
+	if written := h.coordinator.Broker.(*fakeBroker).plan(t, "op-source-1"); !proto.Equal(written, plan) {
+		t.Fatalf("plan.yaml of the proposal = %v, want the admitted plan %v", written, plan)
 	}
 	if evidence.BaseTree != "tree" || evidence.EffectiveTree != "effective" || evidence.PatchesDigest != "patches" || evidence.RenderDigest != "render" || evidence.EnvDigest != "env" {
 		t.Fatalf("evidence = %+v", evidence)
@@ -131,9 +135,10 @@ func (s *capturingStrategy) WithVerifiedDeployment(_, _, _ string, source *contr
 	return s
 }
 
-// The installed controller reads the deployed source through
-// --deployment-source; manifest paths are never forwarded.
-func TestInstallDeploymentForwardsTheDeploymentSource(t *testing.T) {
+// The installed controller reads the deployed source from the accepted tree's
+// plan.yaml: no source or manifest path flag is forwarded, and onboarding
+// stages the receipt's source.
+func TestInstallDeploymentStagesTheDeploymentSourceAndForwardsNoFlag(t *testing.T) {
 	strategy := &capturingStrategy{}
 	adapter := lifecycle.NativeInstallAdapter{Strategy: strategy, AcceptedRepository: t.TempDir(), Config: install.Config{ExtraControllerArgs: []string{"--duration=1s"}}}
 	source := rawSourcePlan(t, "k8s").GetSource()
@@ -141,12 +146,8 @@ func TestInstallDeploymentForwardsTheDeploymentSource(t *testing.T) {
 	if err := adapter.InstallDeployment(context.Background(), commit, "ns", lifecycle.DeploymentReceipt{Source: source}); err != nil {
 		t.Fatal(err)
 	}
-	encoded, err := rendered.FormatDeploymentSource(source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := []string{"--duration=1s", "--deployment-source=" + encoded}; !slices.Equal(strategy.config.ExtraControllerArgs, want) {
-		t.Fatalf("controller args = %v, want %v", strategy.config.ExtraControllerArgs, want)
+	if want := []string{"--duration=1s"}; !slices.Equal(strategy.config.ExtraControllerArgs, want) {
+		t.Fatalf("controller args = %v, want %v: the controller reads the source from plan.yaml", strategy.config.ExtraControllerArgs, want)
 	}
 	if strategy.verified != source {
 		t.Fatalf("onboarding staged %v, want the receipt's source", strategy.verified)
@@ -172,7 +173,7 @@ func TestInstallDeploymentForwardsTheRenderEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strategy.config.ExtraControllerArgs; len(got) != 2 || got[1] != "--render-env="+encoded {
+	if got := strategy.config.ExtraControllerArgs; len(got) != 1 || got[0] != "--render-env="+encoded {
 		t.Fatalf("controller args = %v, want --render-env=%s", got, encoded)
 	}
 	if !renderenv.Same(strategy.environment, environment) {
@@ -190,20 +191,20 @@ func TestInstallDeploymentForwardsTheRenderEnvironment(t *testing.T) {
 	}
 }
 
-// Onboarding stages the objects the deployment applied: the receipt's base
-// tree and container pins reach it, so the staged baseline carries the applied
-// digests rather than the source tags (N5).
+// Onboarding stages the objects the deployment applied: the receipt's
+// effective tree and container pins reach it, so the staged baseline carries
+// the applied digests rather than the source tags.
 func TestInstallDeploymentForwardsTheReceiptPins(t *testing.T) {
 	strategy := &capturingStrategy{}
 	adapter := lifecycle.NativeInstallAdapter{Strategy: strategy, AcceptedRepository: t.TempDir()}
 	receipt := lifecycle.DeploymentReceipt{
-		Source: rawSourcePlan(t, "k8s").GetSource(), BaseTree: "tree",
+		Source: rawSourcePlan(t, "k8s").GetSource(), EffectiveTree: "tree",
 		ContainerImages: []rendered.DeployedImage{{Name: "web", Applied: "web@sha256:" + strings.Repeat("a", 64)}},
 	}
 	if err := adapter.InstallDeployment(context.Background(), strings.Repeat("a", 40), "ns", receipt); err != nil {
 		t.Fatal(err)
 	}
-	if strategy.pins.BaseTree != "tree" || len(strategy.pins.Images) != 1 || strategy.pins.Images[0].Name != "web" {
+	if strategy.pins.EffectiveTree != "tree" || len(strategy.pins.Images) != 1 || strategy.pins.Images[0].Name != "web" {
 		t.Fatalf("pins = %+v, want the receipt's", strategy.pins)
 	}
 }

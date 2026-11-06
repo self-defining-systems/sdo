@@ -106,27 +106,22 @@ func (a NativeInstallAdapter) Install(ctx context.Context, acceptedCommit, names
 
 // InstallDeployment installs the controller for the accepted commit and the
 // DeploymentSource the receipt deployed: onboarding stages that source's
-// objects and the controller reads it through --deployment-source.
+// objects (the controller reads it from the accepted tree's plan.yaml).
 func (a NativeInstallAdapter) InstallDeployment(ctx context.Context, acceptedCommit, namespace string, receipt DeploymentReceipt) error {
 	if receipt.Source == nil {
 		return errors.New("verified deployment names no deployment source")
 	}
-	encoded, err := rendered.FormatDeploymentSource(receipt.Source)
-	if err != nil {
-		return err
-	}
 	if strategy, ok := a.Strategy.(interface {
 		WithVerifiedDeployment(string, string, string, *contracts.DeploymentSource, *contracts.RenderEnvironment, rendered.ReceiptPins) InstallStrategy
 	}); ok {
-		a.Strategy = strategy.WithVerifiedDeployment(a.AcceptedRepository, acceptedCommit, namespace, receipt.Source, receipt.Environment, rendered.ReceiptPins{BaseTree: receipt.BaseTree, Images: receipt.ContainerImages})
+		a.Strategy = strategy.WithVerifiedDeployment(a.AcceptedRepository, acceptedCommit, namespace, receipt.Source, receipt.Environment, rendered.ReceiptPins{EffectiveTree: receipt.EffectiveTree, Images: receipt.ContainerImages})
 	}
 	environment, err := renderenv.Format(receipt.Environment)
 	if err != nil {
 		return err
 	}
-	a.Config.ExtraControllerArgs = append(slices.Clone(a.Config.ExtraControllerArgs), "--deployment-source="+encoded)
 	if environment != "" {
-		a.Config.ExtraControllerArgs = append(a.Config.ExtraControllerArgs, "--render-env="+environment)
+		a.Config.ExtraControllerArgs = append(slices.Clone(a.Config.ExtraControllerArgs), "--render-env="+environment)
 	}
 	return a.Install(ctx, acceptedCommit, namespace)
 }

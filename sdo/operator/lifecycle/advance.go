@@ -13,6 +13,7 @@ import (
 	"sdo.dev/operator/imagesrc"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/patchset"
+	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/upstream"
 )
@@ -32,8 +33,8 @@ type AdvanceBroker interface {
 	// ancestor of upstream and which paths upstream changed relative to base.
 	UpstreamChange(ctx context.Context, base, upstream string) (ancestor bool, paths []string, err error)
 	// AcceptedSourceEvidence is the deployment evidence of the accepted HEAD
-	// (found is false when nothing is recorded).
-	AcceptedSourceEvidence(ctx context.Context) (evidence broker.SourceEvidence, found bool, err error)
+	// with the plan its tree declares (found is false when nothing is recorded).
+	AcceptedSourceEvidence(ctx context.Context) (accepted broker.AcceptedSource, found bool, err error)
 	// ProposeAdvance creates the isolated advance checkout at accepted HEAD
 	// (proposal.BaseCommit), merges upstream into it three-way with base as
 	// the merge base and, without conflicts, commits the result as the
@@ -72,9 +73,9 @@ type ControllerActivity interface {
 	Busy(ctx context.Context) (reason string, busy bool, err error)
 }
 
-// ErrNoAcceptedPlan means the accepted deployment evidence carries no
-// admitted DeploymentPlan (for example a seeded install), so nothing can
-// redeploy an upstream revision. The host stops following the source.
+// ErrNoAcceptedPlan means no deployment of this installation is recorded, or
+// the accepted tree has no .sdo/deployment/plan.yaml (for example a seeded
+// install), so nothing can redeploy an upstream revision. The host stops following the source.
 var ErrNoAcceptedPlan = errors.New("accepted deployment evidence has no deployment plan; upstream advance is unavailable for this installation")
 
 // AdvanceOutcome is what an advance concluded.
@@ -228,14 +229,17 @@ func (a Advancer) Advance(ctx context.Context, cfg AdvanceConfig, request upstre
 		result.Paths = memory
 		return held(result, HoldMemoryTouched, "upstream changes operational memory"), nil
 	}
-	evidence, found, err := a.Broker.AcceptedSourceEvidence(ctx)
+	accepted, found, err := a.Broker.AcceptedSourceEvidence(ctx)
+	if errors.Is(err, planfile.ErrAbsent) {
+		return result, fmt.Errorf("%w: %w", ErrNoAcceptedPlan, err)
+	}
 	if err != nil {
 		return result, fmt.Errorf("accepted deployment evidence: %w", err)
 	}
-	if !found || evidence.Plan == nil || evidence.Plan.GetSource() == nil {
+	if !found || accepted.Plan.GetSource() == nil {
 		return result, ErrNoAcceptedPlan
 	}
-	plan := evidence.Plan
+	plan := accepted.Plan
 	id := AdvanceID(commit)
 	proposal, candidate, conflicts, err := a.Broker.ProposeAdvance(ctx, id, request.Prev, commit)
 	if err != nil {
@@ -393,12 +397,12 @@ func (a Advancer) deployAndAccept(ctx context.Context, cfg AdvanceConfig, result
 	if verdict.Outcome != VerificationClear {
 		return held(result, HoldHealth, verdict.Feedback()), nil
 	}
-	accepted, err := a.Broker.PublishAdvance(ctx, AdvanceID(result.Upstream), result.Upstream, prev, deploymentToBroker(receipt, plan))
+	receiptOfAdvance, err := a.Broker.PublishAdvance(ctx, AdvanceID(result.Upstream), result.Upstream, prev, deploymentToBroker(receipt))
 	if err != nil {
 		return result, fmt.Errorf("publish advance: %w", err)
 	}
 	*published = true
-	result.Outcome, result.Receipt = AdvanceAccepted, accepted
+	result.Outcome, result.Receipt = AdvanceAccepted, receiptOfAdvance
 	return result, nil
 }
 

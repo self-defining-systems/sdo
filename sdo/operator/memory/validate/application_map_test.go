@@ -280,53 +280,10 @@ func TestCheckLetsReflectionPassWithADesignerGap(t *testing.T) {
 	}
 }
 
-// oldArchitecture is the shape older memories have: a one-line summary with no
-// manifest inventory, pinned to the accepted source commit.
-func oldArchitecture(commit, region string) string {
-	return "---\nschema_version: 1\ngenerated_at_commit: " + commit + "\napplication: shop\n---\nA small shop.\n\n" + region
-}
-
-func manifest(kind, name string) string {
-	return "apiVersion: v1\nkind: " + kind + "\nmetadata:\n  name: " + name + "\n"
-}
-
-// shopSource commits the shop's manifests and returns the accepted commit.
-func shopSource(t *testing.T, root string) string {
-	t.Helper()
-	for _, c := range [][2]string{{"Deployment", "web"}, {"Service", "web"}, {"Deployment", "api"}, {"Service", "api"},
-		{"StatefulSet", "db"}, {"Service", "db"}, {"Deployment", "cache"}, {"Service", "cache"}} {
-		write(t, root, "k8s/"+strings.ToLower(c[0])+"-"+c[1]+".yaml", manifest(c[0], c[1]))
-	}
-	commit(t, root, "source")
-	return strings.TrimSpace(gitIn(t, root, "rev-parse", "HEAD"))
-}
-
-func TestApplicationMapResolvesAgainstSourceWhenArchitectureHasNoInventory(t *testing.T) {
+func TestApplicationMapWithoutAnInventoryRejectsUnknownNames(t *testing.T) {
 	yaml := mapYAML
 	root := mapTree(t, &yaml)
-	accepted := shopSource(t, root)
-	write(t, root, layout.ArchitectureFile, oldArchitecture(accepted, mapRegion(yaml)))
-	blocking, _ := staticMapCheck(t, root, HealthJudge)
-	if got := mapRules(blocking); len(got) != 0 {
-		t.Fatalf("an old memory's components were rejected despite the accepted source declaring them: %v", blocking)
-	}
-}
-
-func TestApplicationMapStillRejectsNamesTheSourceLacks(t *testing.T) {
-	yaml := strings.Replace(mapYAML, "Deployment/cache", "Deployment/ghost", 1)
-	root := mapTree(t, &yaml)
-	accepted := shopSource(t, root)
-	write(t, root, layout.ArchitectureFile, oldArchitecture(accepted, mapRegion(yaml)))
-	blocking, _ := staticMapCheck(t, root, HealthJudge)
-	if got := mapRules(blocking); !slices.Contains(got, RuleMapUnknownName) {
-		t.Fatalf("a workload absent from source was accepted: %v", blocking)
-	}
-}
-
-func TestApplicationMapWithoutInventoryOrResolvableSourceKeepsRejectingUnknownNames(t *testing.T) {
-	yaml := mapYAML
-	root := mapTree(t, &yaml)
-	write(t, root, layout.ArchitectureFile, oldArchitecture("base", mapRegion(yaml)))
+	write(t, root, layout.ArchitectureFile, "---\nschema_version: 1\ngenerated_at_commit: base\napplication: shop\n---\nA small shop.\n\n"+mapRegion(yaml))
 	blocking, _ := staticMapCheck(t, root, HealthJudge)
 	if got := mapRules(blocking); !slices.Contains(got, RuleMapUnknownName) {
 		t.Fatalf("expected unknown-name findings: %v", blocking)

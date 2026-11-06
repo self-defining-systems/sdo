@@ -460,7 +460,7 @@ def test_program_prompt_guides_codex_and_claude_sessions() -> None:
     request = from_dict(IncidentRequest, raw)
     prompt = _responder_prompt(request)
     assert "learned mitigations first, repair the rest" in prompt
-    assert "Commit source repairs" in prompt
+    assert "sdo-operator patch create" in prompt
     assert "self-check" in prompt
     assert "targetport" in prompt
 

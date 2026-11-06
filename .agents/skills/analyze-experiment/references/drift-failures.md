@@ -10,7 +10,7 @@ Unexplained inventory drift attaches to the open incident or batches for its own
 
 Adoption compiles memory without health authority. Matching broker `health_judge/initial/passed` inputs/objective suppress refresh; legacy prose or changed inputs require a judge and validation Job. Report setup cost separately. Refresh never consumes onboarding's attempt. A successful refresh may advance accepted health memory before the controller starts: onboarding retains its original install commit, identities and time only across a continuous single-parent chain of validated judge commits only, preserving source and objective. Source/objective changes, merges and unrelated publications reject that exception. Compare final and pending snapshots; inspect accepted lineage without rewriting evidence.
 
-Controller iteration logs identify `evaluated_detectors`. Each `findings` list contains only the selected detectors' fresh samples. An empty list on a resource-only iteration does not clear an omitted traffic detector; inspect its actual evaluation history and firing timeline before diagnosing a flap. The generated controller's read-only `--evaluate-once --namespace NS --app-root REPO --deployed-manifest-path PATH --source-drift-report /absolute/full.json` prints a compact count and saves the complete inventory findings without starting probers, adopting fields, dispatching workers or writing to Kubernetes.
+Controller iteration logs identify `evaluated_detectors`. Each `findings` list contains only the selected detectors' fresh samples. An empty list on a resource-only iteration does not clear an omitted traffic detector; inspect its actual evaluation history and firing timeline before diagnosing a flap. The generated controller's read-only `--evaluate-once --namespace NS --app-root REPO --source-drift-report /absolute/full.json` (the deployment source comes from `REPO`'s `.sdo/deployment/plan.yaml`) prints a compact count and saves the complete inventory findings without starting probers, adopting fields, dispatching workers or writing to Kubernetes.
 
 Reset must cancel and await all Jobs before cleaning capture sessions or checkouts. Fail-soft reset retains accepted outcomes and clears saved controller Pod identity; seed rollback drops benign labels with those outcomes. Compare drift clearance with timely attributed repair receipts before granting mitigation credit. A benign no-op closes as `cleared_without_action` without learning credit. New run metadata marks `responder-drift/v2` accounting: merged reasoning is charged once to responder tokens, and legacy `drift_tokens` is zero. Keep historical recorded costs intact.
 
@@ -70,10 +70,13 @@ predicate and informational repair-to-NoMatch replay through the shared compiler
 
 ## Accepted source rendering
 
-No rendered lock and no image evidence exist. `AcceptedManifest(s)`, adoption, drift and `sdo source` render accepted source
-directly, like `kubectl diff` and `kubectl apply`. The image string is compared
-and applied exactly as source writes it (tag or digest). No deployer receipt or
-image ledger is required. A restart before the accepted-source
+No rendered lock exists. `AcceptedManifest(s)`, adoption, drift and closure render accepted source
+directly, like `kubectl diff` and `kubectl apply`, with the accepted deployment's image pins applied:
+the controller reads them from the broker evidence ledger (`Broker.AcceptedImagePins`, keyed by the
+effective tree), so a BuildKit or prebuilt deploy's digest is desired state, not drift. Without pins
+(no deployment evidence, or source moved off the deployed tree) the image string is the source's
+(tag or digest). A `drift.unexplained` on an image right after install means the pins did not apply
+(ledger record for another effective tree, or none). A restart before the accepted-source
 inventory loads makes a verified closure wait (bounded), never retire.
 Publication errors retain the last accepted revision or explicitly recover the
 broker's advanced HEAD; an empty publication result must never clear it.

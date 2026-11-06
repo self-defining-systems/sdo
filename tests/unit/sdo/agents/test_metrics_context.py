@@ -19,6 +19,6 @@ def test_metrics_capabilities_are_explicit():
         "prometheus.io/port",
         "prometheus.io/path",
         "http://owned/api/v1/otlp/v1/metrics",
-        "source-repair",
+        "source repair",
     ):
         assert text in owned

@@ -23,7 +23,6 @@ func syntheticEvidence(t *testing.T) broker.SourceEvidence {
 	tree, effective := strings.Repeat("a", 40), strings.Repeat("f", 40)
 	return broker.SourceEvidence{
 		DeploymentSource: source,
-		Plan:             &contracts.DeploymentPlan{Source: proto.Clone(source).(*contracts.DeploymentSource), ExpectedWorkloadIds: []string{"Deployment/ns/app"}},
 		BaseTree:         tree, EffectiveTree: effective, PatchesDigest: strings.Repeat("e", 64), ObservedRevision: effective,
 		RenderDigest: strings.Repeat("b", 64), EnvDigest: strings.Repeat("c", 64),
 		RenderEnvironment: &contracts.RenderEnvironment{KubeVersion: "v1.31.2", ApiVersions: []string{"apps/v1", "v1"}},
@@ -31,13 +30,13 @@ func syntheticEvidence(t *testing.T) broker.SourceEvidence {
 	}
 }
 
-func TestSourceEvidenceRecordRoundTripsTheSourceAndPlan(t *testing.T) {
+func TestSourceEvidenceRecordRoundTripsTheSourceAndDigests(t *testing.T) {
 	want := syntheticEvidence(t)
 	encoded, err := json.Marshal(want)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{`"deployment_source"`, `"plan"`, `"base_tree"`, `"effective_tree"`, `"patches_digest"`, `"render_digest"`, `"env_digest"`, `"render_environment"`} {
+	for _, field := range []string{`"deployment_source"`, `"base_tree"`, `"effective_tree"`, `"patches_digest"`, `"render_digest"`, `"env_digest"`, `"render_environment"`} {
 		if !strings.Contains(string(encoded), field) {
 			t.Fatalf("record %s lacks %s", encoded, field)
 		}
@@ -46,7 +45,7 @@ func TestSourceEvidenceRecordRoundTripsTheSourceAndPlan(t *testing.T) {
 	if err := json.Unmarshal(encoded, &got); err != nil {
 		t.Fatal(err)
 	}
-	if !proto.Equal(got.DeploymentSource, want.DeploymentSource) || !proto.Equal(got.Plan, want.Plan) || got.BaseTree != want.BaseTree || got.EffectiveTree != want.EffectiveTree || got.PatchesDigest != want.PatchesDigest || got.RenderDigest != want.RenderDigest || got.EnvDigest != want.EnvDigest || !proto.Equal(got.RenderEnvironment, want.RenderEnvironment) {
+	if !proto.Equal(got.DeploymentSource, want.DeploymentSource) || got.BaseTree != want.BaseTree || got.EffectiveTree != want.EffectiveTree || got.PatchesDigest != want.PatchesDigest || got.RenderDigest != want.RenderDigest || got.EnvDigest != want.EnvDigest || !proto.Equal(got.RenderEnvironment, want.RenderEnvironment) {
 		t.Fatalf("round trip = %+v, want %+v", got, want)
 	}
 }
@@ -91,6 +90,25 @@ func TestSourceEvidenceWithoutAnEffectiveTreeIsRejected(t *testing.T) {
 	}
 }
 
+// The plan moved into the accepted tree: a record that still carries it was
+// written by an older operator and fails with the reinstall message.
+func TestSourceEvidenceThatCarriesAPlanIsRejected(t *testing.T) {
+	good, err := json.Marshal(syntheticEvidence(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(good, &fields); err != nil {
+		t.Fatal(err)
+	}
+	fields["plan"] = json.RawMessage(`{"expectedWorkloadIds":["Deployment/ns/app"]}`)
+	old, _ := json.Marshal(fields)
+	var got broker.SourceEvidence
+	if err := json.Unmarshal(old, &got); !errors.Is(err, broker.ErrSourceEvidenceCarriesPlan) || !strings.Contains(err.Error(), "reinstall") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestPublishVerifiedSourceRequiresSourceAndDigests(t *testing.T) {
 	// Each mutation is rejected for its own reason, so the unmutated synthetic
 	// evidence is otherwise valid.
@@ -98,13 +116,9 @@ func TestPublishVerifiedSourceRequiresSourceAndDigests(t *testing.T) {
 		mutate func(*broker.SourceEvidence)
 		reason string
 	}{
-		"no source":        {func(e *broker.SourceEvidence) { e.DeploymentSource = nil }, "names no deployment source"},
-		"no render digest": {func(e *broker.SourceEvidence) { e.RenderDigest = "" }, "digests"},
-		"no env digest":    {func(e *broker.SourceEvidence) { e.EnvDigest = "" }, "digests"},
-		"plan of another source": {func(e *broker.SourceEvidence) {
-			other, _ := anypb.New(&contracts.RawRenderConfig{Paths: []string{"other"}})
-			e.Plan.Source = &contracts.DeploymentSource{RendererId: "raw", Config: other}
-		}, "another source"},
+		"no source":                  {func(e *broker.SourceEvidence) { e.DeploymentSource = nil }, "names no deployment source"},
+		"no render digest":           {func(e *broker.SourceEvidence) { e.RenderDigest = "" }, "digests"},
+		"no env digest":              {func(e *broker.SourceEvidence) { e.EnvDigest = "" }, "digests"},
 		"no effective tree":          {func(e *broker.SourceEvidence) { e.EffectiveTree = "" }, "does not match the deployed tree"},
 		"no patches digest":          {func(e *broker.SourceEvidence) { e.PatchesDigest = "" }, "does not match the deployed tree"},
 		"revision differs from tree": {func(e *broker.SourceEvidence) { e.ObservedRevision = strings.Repeat("e", 40) }, "does not match the deployed tree"},

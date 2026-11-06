@@ -360,13 +360,28 @@ func (n NativeIncidentBroker) processClosure(ctx context.Context, closure Incide
 				ledger.ProposalCommit = accepted.Commit
 			}
 			if ledger.ProposalCommit == "" {
-				changed, err := n.Repository.ChangedPaths(ctx, id, broker.ProposalPhase)
+				partition, err := n.Repository.ProposalPartition(ctx, id, broker.ProposalPhase)
 				if err != nil {
 					return err
 				}
 				// An unverified (timed-out) closure never publishes its repair.
 				verified := len(closure.FinalDetectorStates) > 0
-				if len(broker.SourceRepairPaths(changed)) > 0 && verified {
+				// Agents write only .sdo/: a source repair is a deployment patch,
+				// and the patch files are the non-working-program .sdo/ paths.
+				// App-file edits are scratch; one the series does not reproduce
+				// ends the closure with the patch.uncaptured correction text (the
+				// agent's turn is over, so there is nobody left to correct and
+				// publishing would only fail the same rule late).
+				if verified {
+					feedback, err := n.Repository.ScratchFeedback(ctx, id, broker.ProposalPhase)
+					if err != nil {
+						return err
+					}
+					if feedback != "" {
+						return fmt.Errorf("responder source repair is not published: %s", feedback)
+					}
+				}
+				if len(broker.SourceRepairPaths(partition.SDO)) > 0 && verified {
 					accepted, err := n.Repository.Publish(ctx, id, broker.Responder, broker.ProposalPhase)
 					if err != nil {
 						return err

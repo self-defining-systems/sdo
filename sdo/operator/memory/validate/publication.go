@@ -207,20 +207,23 @@ func lifecycleChecks(ctx context.Context, r Request, paths []string, structurall
 		}
 	}
 	if r.Phase == InitialPhase && r.Actor == Deployer {
-		source, architecture := false, false
+		// Deployment inputs (plan, values, manifests, build files, patches) are
+		// source for the deployed system: they publish only through
+		// PublishVerifiedSource, bound to the tree the deployer verified.
+		deployment, architecture := false, false
 		for _, p := range paths {
-			source = source || !layout.IsMemoryPath(p)
+			deployment = deployment || deployerOwnedDeployment(p)
 			architecture = architecture || p == layout.ArchitectureFile
 		}
 		tree := ""
 		if r.Publication != nil {
 			tree = r.Publication.VerifiedSourceTree
 		}
-		if source && tree == "" {
-			add(RuleVerifiedSource, "initial source must use PublishVerifiedSource", "trusted deployment verification must provision the candidate tree")
+		if deployment && tree == "" {
+			add(RuleVerifiedSource, "deployment inputs must use PublishVerifiedSource", "trusted deployment verification must provision the candidate tree")
 		}
-		if tree != "" && ((!source && len(paths) > 0) || architecture) {
-			add(RuleVerifiedSource, "verified source publish requires source files without architecture", "")
+		if tree != "" && ((!deployment && len(paths) > 0) || architecture) {
+			add(RuleVerifiedSource, "verified deployment publish requires deployment files without architecture", "")
 		}
 	}
 	if r.Phase == AdvancePhase && (r.Publication == nil || r.Publication.VerifiedSourceTree == "") {
@@ -419,4 +422,12 @@ func healthRevalidation(r Request, paths []string) bool {
 // deployed tree, so the proposal may leave the accepted source untouched.
 func providedSource(r Request) bool {
 	return r.Phase == InitialPhase && r.Actor == Deployer && r.Publication != nil && r.Publication.VerifiedSourceTree != ""
+}
+
+// deployerOwnedDeployment reports whether p is a deployment-class path the
+// deployer publishes with its verified source: the plan, the values, manifests
+// and build files, and patches. Overlays belong to the detection designer.
+func deployerOwnedDeployment(p string) bool {
+	kind, _, ok := layout.Classify(p)
+	return ok && (kind == layout.KindDeploymentPlan || kind == layout.KindDeploymentFile || kind == layout.KindDeploymentPatch)
 }

@@ -16,7 +16,15 @@ from typing import Any, Protocol
 
 from apps.toy.faults import IMAGE, SERVICES, command, fault_spec
 from apps.toy.variants.assemble import VARIANTS, assemble
-from benchmarks.sregym.adapter import WaitKind, buildkit_image, deployment_plan, helm_source, raw_source, wait_for
+from benchmarks.sregym.adapter import (
+    WaitKind,
+    buildkit_image,
+    deployment_plan,
+    helm_source,
+    kustomize_source,
+    raw_source,
+    wait_for,
+)
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment, Images
 from benchmarks.sregym.fastloop.host_limits import HostLimits, NodeLimits, apply_node_limits
 from benchmarks.sregym.fastloop.toy_upstream import UpstreamLayout, serve_upstream, source_config
@@ -139,15 +147,35 @@ def point_chart_at_registry(workspace: Path, namespace: str) -> None:
     values.write_text(text.replace("pullPolicy: Never", "pullPolicy: IfNotPresent"), encoding="utf-8")
 
 
+def point_kustomization_at_registry(workspace: Path, namespace: str) -> None:
+    """Make the kustomize overlay deploy the registry-qualified image SDO builds, pulled from the registry."""
+    overlay = workspace / "deploy" / "overlays" / "default" / "kustomization.yaml"
+    repository = registry_image(namespace).rpartition(":")[0]
+    overlay.write_text(
+        overlay.read_text(encoding="utf-8").replace(
+            "- name: sdo-toy-app\n", f"- name: sdo-toy-app\n  newName: {repository}\n"
+        ),
+        encoding="utf-8",
+    )
+    for manifest in (workspace / "deploy" / "base").glob("*.yaml"):
+        manifest.write_text(
+            manifest.read_text(encoding="utf-8").replace("imagePullPolicy: Never", "imagePullPolicy: IfNotPresent")
+        )
+
+
+#: Variants whose deployment the harness provides (SDO deploys it as given, no deployer agent).
+PROVIDED_VARIANTS = ("helm", "kustomize")
+
+
 def provided_deployment_plan(variant: str, namespace: str) -> dict[str, Any] | None:
     """The deployment the harness provides for a variant that ships one (helm); SDO deploys it, no agent authors it.
 
     The raw lane is seeded and the remaining variants are still authored by the deployer agent.
     """
-    if variant != "helm":
+    if variant not in PROVIDED_VARIANTS:
         return None
     return deployment_plan(
-        helm_source("chart"),
+        helm_source("chart") if variant == "helm" else kustomize_source("deploy/overlays/default"),
         images=(buildkit_image(registry_image(namespace), ".", "Dockerfile"),),
         expected_workload_ids=[f"Deployment/{namespace}/{service}" for service in SERVICES],
     )
@@ -169,6 +197,8 @@ def prepare_workspace(workspace: Path, image: str, *, fresh: bool, variant: str 
         assemble(variant, workspace)
         if variant == "helm":
             point_chart_at_registry(workspace, NAMESPACE)
+        if variant == "kustomize":
+            point_kustomization_at_registry(workspace, NAMESPACE)
     else:
         shutil.copytree(APP / "kubernetes", workspace / "kubernetes")
         for manifest in (workspace / "kubernetes").glob("*.yaml"):
@@ -393,8 +423,8 @@ def up(args: Any) -> int:
 
         credentials_hook(hook.resolve(), kubeconfig)(NAMESPACE + "-sdo")
     env.save()
-    if variant == "helm":
-        # The provided helm deployment follows an upstream the harness serves (seeded with the accepted source SHA).
+    if variant in PROVIDED_VARIANTS:
+        # The provided deployment follows an upstream the harness serves (seeded with the accepted source SHA).
         serve_upstream(kubeconfig, workspace, UpstreamLayout(NAMESPACE), images.controller)
     deployed = time.monotonic()
     config = install_controller(
@@ -466,8 +496,10 @@ def install_controller(
             kind_cluster_name=environment.cluster,
             deployment_source=raw_source(("kubernetes",)) if variant == "raw" else None,
             deployment_plan=provided_deployment_plan(variant, environment.namespace),
-            source_kind="git" if variant == "helm" else "",
-            source_config=json.dumps(source_config(UpstreamLayout(environment.namespace))) if variant == "helm" else "",
+            source_kind="git" if variant in PROVIDED_VARIANTS else "",
+            source_config=json.dumps(source_config(UpstreamLayout(environment.namespace)))
+            if variant in PROVIDED_VARIANTS
+            else "",
             agent_registrations=registrations.resolve() if registrations else None,
         )
     if frozen_memory and not config.frozen_memory:
@@ -590,7 +622,12 @@ def wait_for_baseline(environment: FastloopEnvironment, accepted_commit: str) ->
                     for item in pod.get("status", {}).get("conditions", [])
                 )
             ]
-            head = len(ready) == 1 and accepted_head(environment, ready[0]["metadata"]["name"], accepted_commit)
+            adopted = state.get("ownership_adoption", {}).get("source_commit")
+            head = (
+                len(ready) == 1
+                and bool(adopted)
+                and adopted_source(environment, ready[0]["metadata"]["name"], accepted_commit, adopted)
+            )
             if head and baseline_ready(state, head, ready[0]["metadata"]["creationTimestamp"]):
                 break
         time.sleep(0.2)
@@ -616,11 +653,14 @@ def retire_control_state(environment: FastloopEnvironment, control: str) -> None
     logger.info("Toy control state reset: %s", json.dumps({**receipt, "health_refresh": stale}, sort_keys=True))
 
 
-def accepted_head(environment: FastloopEnvironment, pod_name: str, install_commit: str) -> str | None:
-    """The controller's accepted HEAD if it contains the installed commit, else None.
+def adopted_source(
+    environment: FastloopEnvironment, pod_name: str, install_commit: str, adopted_commit: str
+) -> str | None:
+    """The controller's adopted source commit if it descends from the install and HEAD still contains it.
 
-    Install runs the judge refresh, which commits health detectors on top of the installed commit; the
-    controller then serves and adopts that head, so adoption is judged against it, not the install commit.
+    Install runs the judge refresh, which commits health detectors on top of the installed commit, and every
+    outcome or memory commit moves HEAD further. Adoption records the source commit the controller adopted, so it
+    is judged by lineage (install <= adopted <= HEAD), never by equality with HEAD.
     """
     try:
         return (
@@ -634,10 +674,12 @@ def accepted_head(environment: FastloopEnvironment, pod_name: str, install_commi
                 "--",
                 "sh",
                 "-c",
-                'git -C "$1" merge-base --is-ancestor "$2" HEAD && git -C "$1" rev-parse HEAD',
+                'git -C "$1" merge-base --is-ancestor "$2" "$3" && git -C "$1" merge-base --is-ancestor "$3" HEAD'
+                ' && git -C "$1" rev-parse "$3"',
                 "sh",
                 CONTROLLER_REPOSITORY,
                 install_commit,
+                adopted_commit,
             ).strip()
             or None
         )
@@ -645,7 +687,7 @@ def accepted_head(environment: FastloopEnvironment, pod_name: str, install_commi
         return None
 
 
-def baseline_ready(state: dict[str, Any], accepted_head: str, observed_after: str | None = None) -> bool:
+def baseline_ready(state: dict[str, Any], adopted: str, observed_after: str | None = None) -> bool:
     """Closed historical firings do not invalidate a currently clear controller."""
     latest = {item["detector_id"]: item for item in state.get("history", [])}
     return bool(
@@ -662,17 +704,18 @@ def baseline_ready(state: dict[str, Any], accepted_head: str, observed_after: st
             )
         )
         and all(item.get("status") == "clear" for item in latest.values())
-        and state.get("ownership_adoption", {}).get("source_commit") == accepted_head
+        and state.get("ownership_adoption", {}).get("source_commit") == adopted
     )
 
 
 @dataclass(frozen=True)
 class OnboardingEvidence:
-    """What a fresh variant onboarding must show, read from the accepted evidence plan and controller Job."""
+    """What a fresh variant onboarding must show, read from the accepted tree's plan and the deployment evidence."""
 
     renderer_id: str
     image_builders: tuple[str, ...]
-    controller_args: tuple[str, ...]
+    # Renderer ID declared by the accepted tree's ``.sdo/deployment/plan.yaml``; ``None`` when it has none.
+    plan_renderer_id: str | None
 
 
 def onboarding_violations(evidence: OnboardingEvidence, variant: str) -> list[str]:
@@ -682,13 +725,18 @@ def onboarding_violations(evidence: OnboardingEvidence, variant: str) -> list[st
     """
     violations: list[str] = []
     if evidence.renderer_id != variant:
-        violations.append(f"accepted evidence plan renderer_id is {evidence.renderer_id!r}, expected {variant!r}")
+        violations.append(f"accepted deployment renderer_id is {evidence.renderer_id!r}, expected {variant!r}")
     if not evidence.image_builders:
-        violations.append("accepted evidence plan declares no images")
+        violations.append("accepted deployment plan declares no images")
     elif other := sorted({builder for builder in evidence.image_builders if builder != "buildkit"}):
         violations.append(f"images not built by buildkit: {', '.join(other)}")
-    if "--deployment-source" not in evidence.controller_args:
-        violations.append("controller args carry no --deployment-source")
+    if evidence.plan_renderer_id is None:
+        violations.append("accepted tree has no .sdo/deployment/plan.yaml")
+    elif evidence.plan_renderer_id != evidence.renderer_id:
+        violations.append(
+            f"accepted tree plan.yaml renderer_id is {evidence.plan_renderer_id!r}, "
+            f"deployment evidence says {evidence.renderer_id!r}"
+        )
     return violations
 
 

@@ -10,12 +10,13 @@ import (
 	"strings"
 	"testing"
 
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/rendered"
+	"sdo.dev/operator/sdk"
 )
 
 // vendorText is a vendored file long enough for patches with real context.
@@ -25,7 +26,8 @@ const advanceGoal = "---\nschema_version: 1\nowner: human\napplication: \"test\"
 
 // advanceWorld is a synthetic followed source: an upstream repository whose
 // first commit seeds the accepted repository, a Human goal commit that starts
-// following it, and an onboarding deployment that edited the source.
+// following it, and an onboarding deployment of the source as it stands (a
+// legacy world has a source edit committed before it).
 type advanceWorld struct {
 	upstream, accepted string
 	seed               string
@@ -79,18 +81,43 @@ func newOnboardedWorld(t *testing.T, editedByDeployer bool) *advanceWorld {
 		t.Fatalf("LastUpstream before following = found %v, %v; a user trailer is not trusted", found, err)
 	}
 	publishHumanGoal(t, w.accepted, "goal", map[string]string{layout.GoalFile: advanceGoal, layout.SourcesFile: syntheticSources})
-	// Onboarding deployed an edited source (third line) with a plan.
+	if editedByDeployer {
+		// A repository from before agents wrote only .sdo/: a source edit is
+		// already in the accepted history (a plain commit; no agent can
+		// publish one any more), so the mirror invariant does not hold.
+		writeFiles(t, w.accepted, map[string]string{"app.txt": "one\ntwo\nthree deployed\n"})
+		testutil.Git(t, w.accepted, "add", ".")
+		testutil.Git(t, w.accepted, "commit", "-qm", "legacy source edit")
+	}
+	// Onboarding deployed the accepted source with a plan.
 	p, err := b.CreateProposalForPhase(context.Background(), "onboard", InitialPhase)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if editedByDeployer {
-		writeFiles(t, p.Path, map[string]string{"app.txt": "one\ntwo\nthree deployed\n"})
-	}
+	writeSyntheticPlan(t, p.Path, "k8s")
 	if _, err := b.PublishVerifiedSource(context.Background(), "onboard", advanceEvidence(t, p.Path, "onboard")); err != nil {
 		t.Fatal(err)
 	}
 	return w
+}
+
+// syntheticPlan declares a raw source over path; the deployer's evidence for
+// it names the same source.
+func syntheticPlan(t *testing.T, path string) *contracts.DeploymentPlan {
+	t.Helper()
+	config, err := anypb.New(&contracts.RawRenderConfig{Paths: []string{path}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &contracts.DeploymentPlan{Source: &contracts.DeploymentSource{RendererId: "raw", Config: config}, ExpectedWorkloadIds: []string{"Deployment/ns/app"}}
+}
+
+// writeSyntheticPlan writes the plan.yaml the lifecycle writes at admission.
+func writeSyntheticPlan(t *testing.T, root, path string) {
+	t.Helper()
+	if err := planfile.Write(root, syntheticPlan(t, path)); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func advanceEvidence(t *testing.T, checkout, image string) SourceEvidence {
@@ -103,7 +130,8 @@ func advanceEvidence(t *testing.T, checkout, image string) SourceEvidence {
 // tests that attest a tree the broker must refuse).
 func advanceEvidenceFor(t *testing.T, checkout, image string, applied bool) SourceEvidence {
 	t.Helper()
-	tree, err := ProposalTreeDigest(context.Background(), checkout)
+	// The complete working tree: an advance stage holds its merge uncommitted.
+	tree, err := advanceTreeDigest(context.Background(), checkout)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +150,6 @@ func advanceEvidenceFor(t *testing.T, checkout, image string, applied bool) Sour
 	}
 	return SourceEvidence{
 		DeploymentSource: source,
-		Plan:             &contracts.DeploymentPlan{Source: proto.Clone(source).(*contracts.DeploymentSource), ExpectedWorkloadIds: []string{"Deployment/ns/app"}},
 		BaseTree:         tree, EffectiveTree: effective.ID, PatchesDigest: effective.PatchesDigest, ObservedRevision: effective.ID,
 		RenderDigest: strings.Repeat("b", 64), EnvDigest: strings.Repeat("c", 64),
 		Images: []string{image + "@sha256:" + strings.Repeat("d", 64)}, ResourceIDs: []string{"Deployment/ns/app"}, Ready: true,
@@ -176,7 +203,7 @@ func TestPublishAdvanceAcceptsTheDeployedThreeWayMerge(t *testing.T) {
 		t.Fatalf("LastUpstream = %q %v %v, want the seed %s", last, found, err, w.seed)
 	}
 	onboarded, found, err := b.AcceptedSourceEvidence(ctx)
-	if err != nil || !found || onboarded.Plan == nil || onboarded.Images[0] != "onboard@sha256:"+strings.Repeat("d", 64) {
+	if err != nil || !found || !rendered.SameDeploymentSource(onboarded.Plan.GetSource(), syntheticPlan(t, "k8s").GetSource()) || onboarded.Evidence.Images[0] != "onboard@sha256:"+strings.Repeat("d", 64) {
 		t.Fatalf("AcceptedSourceEvidence after onboarding = %+v %v %v", onboarded, found, err)
 	}
 	upstream := w.push(t, w.seed, map[string]*string{"app.txt": text("ONE\ntwo\nthree\n"), "new.txt": text("new\n"), "Dockerfile": nil})
@@ -232,7 +259,7 @@ func TestPublishAdvanceAcceptsTheDeployedThreeWayMerge(t *testing.T) {
 		t.Fatalf("LastUpstream after advance = %q %v %v", last, found, err)
 	}
 	current, found, err := b.AcceptedSourceEvidence(ctx)
-	if err != nil || !found || current.AcceptedCommit != receipt.Commit || current.Images[0] != evidence.Images[0] || current.Plan == nil {
+	if err != nil || !found || current.Evidence.AcceptedCommit != receipt.Commit || current.Evidence.Images[0] != evidence.Images[0] || current.Plan == nil {
 		t.Fatalf("AcceptedSourceEvidence after advance = %+v %v %v", current, found, err)
 	}
 	if _, err := os.Stat(b.proposalRoot(id, AdvancePhase)); !os.IsNotExist(err) {
@@ -282,7 +309,7 @@ func TestPublishAdvanceRefusesWhatWasNotDeployedOrMayNotMerge(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		writeFiles(t, proposal.Path, map[string]string{"app.txt": "tampered\n"})
+		writeFiles(t, proposal.Path, map[string]string{".sdo/deployment/values/tampered.yaml": "tampered: true\n"})
 		evidence := advanceEvidence(t, proposal.Path, "tampered")
 		if _, err := b.PublishAdvance(ctx, id, upstream, w.seed, evidence); err == nil || !strings.Contains(err.Error(), "differs from the deployed tree") {
 			t.Fatalf("PublishAdvance of another tree = %v", err)
@@ -401,7 +428,7 @@ func TestPublishVerifiedSourceRecomputesTheEffectiveTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeFiles(t, p.Path, map[string]string{"app.txt": "one\ntwo\nthree again\n"})
+	writeFiles(t, p.Path, map[string]string{".sdo/deployment/values/second.yaml": "replicas: 2\n"})
 	for name, mutate := range map[string]func(*SourceEvidence){
 		"effective tree": func(e *SourceEvidence) {
 			e.EffectiveTree = strings.Repeat("9", 40)
@@ -417,5 +444,73 @@ func TestPublishVerifiedSourceRecomputesTheEffectiveTree(t *testing.T) {
 	}
 	if _, err := w.broker.PublishVerifiedSource(ctx, "second", advanceEvidence(t, p.Path, "second")); err != nil {
 		t.Fatalf("matching evidence must publish: %v", err)
+	}
+}
+
+// The plan is part of the staged tree: evidence for a tree whose plan.yaml is
+// missing, or names another source than the deployed one, is never accepted.
+func TestPublishVerifiedSourceRequiresThePlanToNameTheDeployedSource(t *testing.T) {
+	ctx := context.Background()
+	w := newAdvanceWorld(t)
+	for name, c := range map[string]struct {
+		prepare func(root string)
+		want    string
+	}{
+		"no plan": {func(root string) {
+			if err := os.Remove(filepath.Join(root, filepath.FromSlash(layout.DeploymentPlanFile))); err != nil {
+				t.Fatal(err)
+			}
+		}, "plan.yaml"},
+		"another source": {func(root string) { writeSyntheticPlan(t, root, "elsewhere") }, "another deployment source"},
+	} {
+		id := "plan-" + strings.ReplaceAll(name, " ", "-")
+		p, err := w.broker.CreateProposalForPhase(ctx, id, InitialPhase)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeFiles(t, p.Path, map[string]string{".sdo/deployment/values/" + id + ".yaml": "replicas: 2\n"})
+		c.prepare(p.Path)
+		if _, err := w.broker.PublishVerifiedSource(ctx, id, advanceEvidence(t, p.Path, id)); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Fatalf("%s: PublishVerifiedSource = %v, want %q", name, err, c.want)
+		}
+	}
+}
+
+// The controller's desired state includes the images the newest accepted
+// deployment applied, bound to its effective tree: onboarding's pins, then the
+// advance's (new tree, new pins); a memory-only commit changes neither.
+func TestAcceptedImagePinsFollowTheNewestAcceptedDeployment(t *testing.T) {
+	ctx := context.Background()
+	w := newAdvanceWorld(t)
+	b := w.broker
+	onboarded, found, err := b.AcceptedSourceEvidence(ctx)
+	if err != nil || !found {
+		t.Fatalf("AcceptedSourceEvidence = %v %v", found, err)
+	}
+	pins, err := b.AcceptedImagePins(ctx)
+	if err != nil || pins.EffectiveTree != onboarded.Evidence.EffectiveTree {
+		t.Fatalf("pins after onboarding = %+v %v, want the onboarded effective tree", pins, err)
+	}
+
+	upstream := w.push(t, w.seed, map[string]*string{"app.txt": text("ONE\ntwo\nthree\n")})
+	id := "advance-" + upstream[:12]
+	proposal, _, _, err := b.ProposeAdvance(ctx, id, w.seed, upstream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence := advanceEvidence(t, proposal.Path, "advanced")
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "ns", Name: "app"}
+	digest := "advanced@sha256:" + strings.Repeat("e", 64)
+	evidence.ContainerImages = []rendered.DeployedImage{{Ref: ref, Name: "app", Applied: digest, Digest: digest}}
+	if _, err := b.PublishAdvance(ctx, id, upstream, w.seed, evidence); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []string{"advance", "after a memory commit"} {
+		pins, err = b.AcceptedImagePins(ctx)
+		if err != nil || pins.EffectiveTree != evidence.EffectiveTree || pins.EffectiveTree == onboarded.Evidence.EffectiveTree ||
+			len(pins.Images) != 1 || pins.Images[0].Applied != digest {
+			t.Fatalf("pins %s = %+v %v, want the advance's tree %s and image", step, pins, err, evidence.EffectiveTree)
+		}
+		publishHumanGoal(t, w.accepted, "goal", map[string]string{layout.GoalFile: advanceGoal + "\nmore " + step + "\n"})
 	}
 }

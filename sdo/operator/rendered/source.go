@@ -39,24 +39,38 @@ type Source struct {
 	// standard output). A simulation supplies the accepted tree without
 	// spawning a process.
 	Git GitFunc
-	// Pins, when set, are the deployment receipt's image pins. Reads of the
-	// commit whose tree is Pins.BaseTree return each pinned container with
-	// the digest the deployment applied instead of the tag the source
-	// declares, so restoring from source cannot move a workload onto
-	// whatever the tag points at now (N5). Digests of the render are
-	// unchanged: the pins apply after rendering.
-	Pins  ReceiptPins
+	// Pins supplies the image pins of the accepted deployment. Reads of a
+	// revision whose effective tree is the pins' EffectiveTree return each
+	// pinned container with the digest the deployment applied instead of the
+	// tag the source declares: the deployed image is part of desired state, so
+	// drift, restore and closure never compare a digest-pinned workload with a
+	// bare tag. Another effective tree keeps the source image until a new
+	// accepted deployment pins it. Digests of the render are unchanged: the
+	// pins apply after rendering. Nil means no pins.
+	Pins  PinProvider
 	cache *manifestCache
 }
 
-// ReceiptPins are the container images a verified deployment applied, bound to
-// the accepted base tree they were applied for.
-type ReceiptPins struct {
-	BaseTree string
-	Images   []DeployedImage
+// PinProvider supplies the image pins of the newest accepted deployment.
+// ReceiptPins is the fixed form (onboarding staging holds the receipt it just
+// verified); the commit broker supplies them from its durable evidence ledger.
+type PinProvider interface {
+	AcceptedImagePins(ctx context.Context) (ReceiptPins, error)
 }
 
-func (p ReceiptPins) active() bool { return p.BaseTree != "" && len(p.Images) > 0 }
+// ReceiptPins are the container images a verified deployment applied, bound to
+// the effective tree they were applied for. The effective tree, not the commit
+// tree, is the key: it does not move for memory-only commits, and it changes
+// exactly when the rendered inputs change.
+type ReceiptPins struct {
+	EffectiveTree string
+	Images        []DeployedImage
+}
+
+// AcceptedImagePins makes ReceiptPins a PinProvider.
+func (p ReceiptPins) AcceptedImagePins(context.Context) (ReceiptPins, error) { return p, nil }
+
+func (p ReceiptPins) active() bool { return p.EffectiveTree != "" && len(p.Images) > 0 }
 
 // WithCache shares immutable accepted manifests across object reads. The cache
 // belongs to this source instance; it never caches live API reads or failures.
@@ -121,16 +135,18 @@ func (s Source) env(namespace string) render.Env {
 // loadManifests renders revision^{tree} and keeps the non-ephemeral objects,
 // with Secrets reduced to identity (defense in depth beyond SecretsOmit).
 func (s Source) loadManifests(ctx context.Context, revision, namespace string) ([]DesiredObject, error) {
-	set, base, err := s.desiredAt(ctx, revision, namespace)
+	set, effective, err := s.desiredAt(ctx, revision, namespace)
 	if err != nil {
 		return nil, err
 	}
 	objects := set.Objects()
-	if base == s.Pins.BaseTree && s.Pins.active() {
-		for _, object := range objects {
-			if object.Workload {
-				s.Pins.apply(object.Object.Object, object.Ref)
-			}
+	pins, err := s.pinsFor(ctx, effective)
+	if err != nil {
+		return nil, err
+	}
+	for _, object := range objects {
+		if object.Workload && pins.active() {
+			pins.apply(object.Object.Object, object.Ref)
 		}
 	}
 	for i, object := range objects {
@@ -175,23 +191,15 @@ func (s Source) ShapeOf(namespace string) func(ctx context.Context, repository, 
 // effectiveAt resolves revision's tree and its effective tree. The caller
 // closes the result.
 func (s Source) effectiveAt(ctx context.Context, revision string) (EffectiveTree, error) {
-	effective, _, err := s.effectiveAtBase(ctx, revision)
-	return effective, err
-}
-
-// effectiveAtBase is effectiveAt that also returns the revision's base tree.
-func (s Source) effectiveAtBase(ctx context.Context, revision string) (EffectiveTree, string, error) {
 	if s.Repository == "" || !gitRevision.MatchString(revision) {
-		return EffectiveTree{}, "", sourceErrorf(SourceInvalid, "accepted repository and full commit revision are required")
+		return EffectiveTree{}, sourceErrorf(SourceInvalid, "accepted repository and full commit revision are required")
 	}
 	store := ObjectStore{Dir: s.Repository, Git: s.Git}
 	tree, err := store.git(ctx, "rev-parse", "--verify", "--quiet", revision+"^{tree}")
 	if err != nil {
-		return EffectiveTree{}, "", sourceErrorf(SourceUnavailable, "resolve the tree of %s: %w", revision, err)
+		return EffectiveTree{}, sourceErrorf(SourceUnavailable, "resolve the tree of %s: %w", revision, err)
 	}
-	base := strings.TrimSpace(string(tree))
-	effective, err := Effective(ctx, store, BaseTree(base))
-	return effective, base, err
+	return Effective(ctx, store, BaseTree(strings.TrimSpace(string(tree))))
 }
 
 func (s Source) desired(ctx context.Context, revision, namespace string) (DesiredSet, error) {
@@ -199,7 +207,7 @@ func (s Source) desired(ctx context.Context, revision, namespace string) (Desire
 	return set, err
 }
 
-// desiredAt is desired that also returns the revision's base tree.
+// desiredAt is desired that also returns the revision's effective tree ID.
 func (s Source) desiredAt(ctx context.Context, revision, namespace string) (DesiredSet, string, error) {
 	if s.Deployment == nil {
 		return DesiredSet{}, "", &SourceError{Kind: SourceUnconfigured, Err: errors.New("no deployment source is configured")}
@@ -207,7 +215,7 @@ func (s Source) desiredAt(ctx context.Context, revision, namespace string) (Desi
 	if namespace == "" {
 		return DesiredSet{}, "", sourceErrorf(SourceInvalid, "accepted repository, full commit revision, and namespace are required")
 	}
-	effective, base, err := s.effectiveAtBase(ctx, revision)
+	effective, err := s.effectiveAt(ctx, revision)
 	if err != nil {
 		return DesiredSet{}, "", err
 	}
@@ -221,7 +229,25 @@ func (s Source) desiredAt(ctx context.Context, revision, namespace string) (Desi
 		return DesiredSet{}, "", err
 	}
 	set, err := Desired(ctx, fsys, s.env(namespace), s.Catalog, deployment)
-	return set, base, err
+	return set, effective.ID, err
+}
+
+// pinsFor returns the pins that apply to effective: none when no provider is
+// set or the newest accepted deployment is of another effective tree. A
+// provider failure fails the read; falling back to tags would report the
+// deployed digests as drift.
+func (s Source) pinsFor(ctx context.Context, effective string) (ReceiptPins, error) {
+	if s.Pins == nil {
+		return ReceiptPins{}, nil
+	}
+	pins, err := s.Pins.AcceptedImagePins(ctx)
+	if err != nil {
+		return ReceiptPins{}, sourceErrorf(SourceUnavailable, "read accepted deployment image pins: %w", err)
+	}
+	if pins.EffectiveTree != effective {
+		return ReceiptPins{}, nil
+	}
+	return pins, nil
 }
 
 func (s Source) AcceptedManifest(ctx context.Context, revision string, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
