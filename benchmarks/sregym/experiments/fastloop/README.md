@@ -347,6 +347,12 @@ cluster without its environment record. The source mount is mandatory internally
 and defaults to this worktree. `run` and `reset` rebuild the host operator, so code
 changes need no runtime image rebuild. Generated responder and reflector registrations are the toy default. No model calls are needed.
 
+For a from-scratch onboarding of the toy (no seed `.sdo/`), add `--fresh-memory` (and optionally `--goal TEXT`) to
+`up --app toy`. The workspace then holds source only and `up` runs the production Go host lifecycle (source
+deployment agent, health judge, goal publication) through the same `launch_native_lifecycle` SREGym uses, with the
+production worker registrations unless `--agent-registrations` supplies a live override whose lifecycle workers are
+the production ones. It needs real agents, credentials (`--credentials-hook`) and a registry-capable kind lane.
+
 After that stream has accepted the program, run `toy_sweep.json` with
 `--timeout 900` and the same other run flags. It models a healthy imported Service
 by clearing field ownership before introducing targetPort 9999. The production

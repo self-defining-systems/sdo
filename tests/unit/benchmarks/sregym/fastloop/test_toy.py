@@ -408,3 +408,88 @@ def test_frozen_toy_install_preserves_policy_at_native_boundary(tmp_path, monkey
     result = toy.install_controller(environment, frozen_memory=True)
     assert result.frozen_memory
     assert seen[0].frozen_memory
+
+
+def _workspace(tmp_path, *, fresh):
+    import subprocess
+
+    from benchmarks.sregym.fastloop import toy
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    commit = toy.prepare_workspace(workspace, "toy:test", fresh=fresh)
+    log = subprocess.run(
+        ["git", "-C", str(workspace), "log", "--format=%H"], check=True, capture_output=True, text=True
+    ).stdout.split()
+    return workspace, commit, log
+
+
+def test_fresh_toy_workspace_is_source_only_so_onboarding_has_nothing_to_adopt(tmp_path):
+    workspace, commit, log = _workspace(tmp_path, fresh=True)
+    assert not (workspace / ".sdo").exists()
+    assert log == [commit]
+    assert (workspace / "main.go").is_file()
+    assert (workspace / "Dockerfile").is_file()
+    manifests = "".join(path.read_text() for path in (workspace / "kubernetes").glob("*.yaml"))
+    assert "toy:test" in manifests
+
+
+def test_seeded_toy_workspace_still_commits_the_seed_on_top_of_source(tmp_path):
+    workspace, commit, log = _workspace(tmp_path, fresh=False)
+    assert len(log) == 2
+    assert log[0] == commit
+    arch = (workspace / ".sdo/arch.md").read_text()
+    assert "SOURCE_COMMIT" not in arch
+    assert log[1] in arch
+
+
+def test_fresh_memory_is_toy_only_live_and_names_its_goal():
+    from benchmarks.sregym.fastloop import toy
+
+    def parse(*extra):
+        return build_parser().parse_args(["up", "--app", "toy", "--run-dir", "/tmp/toy", *extra])
+
+    assert toy.fresh_objective(parse()) is None
+    assert toy.fresh_objective(parse("--fresh-memory")) == toy.DEFAULT_GOAL
+    assert len(toy.DEFAULT_GOAL) <= 256
+    assert toy.fresh_objective(parse("--fresh-memory", "--goal", " keep it up ")) == "keep it up"
+    with pytest.raises(ValueError, match="--fresh-memory"):
+        toy.fresh_objective(parse("--goal", "keep it up"))
+    with pytest.raises(ValueError, match="frozen"):
+        toy.fresh_objective(parse("--fresh-memory", "--frozen-memory"))
+
+
+def test_fresh_toy_install_runs_the_host_lifecycle_not_the_seed_install(tmp_path, monkeypatch):
+    from subprocess import CompletedProcess
+    from types import SimpleNamespace
+
+    from benchmarks.sregym import adapter
+    from benchmarks.sregym.fastloop import toy
+
+    environment = SimpleNamespace(
+        dev_mount=tmp_path,
+        workspace=tmp_path,
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="toy",
+        application="toy",
+        cluster="toy-private",
+        images=SimpleNamespace(controller="controller:test", responder="responder:test"),
+        apply_operator_env=lambda _: None,
+    )
+    monkeypatch.setenv("KUBECONFIG", str(environment.kubeconfig))
+    monkeypatch.delenv("SREGYM_BASE_KUBECONFIG", raising=False)
+    launched, waited = [], []
+    monkeypatch.setattr(toy.subprocess, "run", lambda *args, **kwargs: CompletedProcess(args, 0))
+    monkeypatch.setattr(
+        adapter, "launch_native_lifecycle", lambda *args: launched.append(args) or {"judge_commit": "j" * 40}
+    )
+    monkeypatch.setattr(adapter, "install_existing", lambda *_: pytest.fail("seed install used for fresh memory"))
+    monkeypatch.setattr(adapter, "publish_agent_registrations", lambda *_: pytest.fail("scripted registrations"))
+    monkeypatch.setattr(toy, "wait_for_baseline", lambda *args: waited.append(args))
+    config = toy.install_controller(environment, objective="keep it up")
+    ((launched_config, objective, api_base),) = launched
+    assert launched_config is config
+    assert (objective, api_base) == ("keep it up", "")
+    assert not config.frozen_memory
+    assert config.agent_registrations is None
+    assert waited == [(environment, "j" * 40)]
