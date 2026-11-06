@@ -2001,11 +2001,27 @@ def build_parser() -> argparse.ArgumentParser:
 
     add_toy_parser(commands)
 
+    gitlab = commands.add_parser("gitlab", help="gitlab lane maintenance commands")
+    gitlab_commands = gitlab.add_subparsers(dest="gitlab_command", required=True)
+    reonboard = gitlab_commands.add_parser(
+        "reonboard", help="rerun only the onboarding step on an existing gitlab lane (not a clean install)"
+    )
+    reonboard.add_argument("--run-dir", type=Path, required=True)
+    reonboard.add_argument("--goal", help="the human goal to publish instead of the default")
+    reonboard.add_argument("--agent-registrations", type=Path, default=None)
+    reonboard.set_defaults(handler=_gitlab_reonboard)
+
     down = commands.add_parser("down", help="drain and remove the persistent SDO controller")
     down.add_argument("--run-dir", type=Path, required=True)
     down.add_argument("--delete-cluster", action="store_true")
     down.set_defaults(handler=_down)
     return parser
+
+
+def _gitlab_reonboard(args: argparse.Namespace) -> int:
+    from benchmarks.sregym.fastloop.gitlab_lane import reonboard
+
+    return reonboard(args)
 
 
 def _replay(args: argparse.Namespace) -> int:

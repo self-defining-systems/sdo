@@ -251,6 +251,31 @@ def onboard_retaining_evidence(environment: Any, config: Any, objective: str, op
         (directory / "export.json").write_text(json.dumps(exported, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def reonboard(args: Any) -> int:
+    """``fastloop gitlab reonboard``: run only the onboarding step again on an existing gitlab lane.
+
+    ``up`` refuses an existing lane, so a failed or abandoned onboarding on a Ready cluster would
+    otherwise cost a full cluster rebuild. This is the same ``onboard_retaining_evidence`` ``up`` ends with,
+    on the saved environment; it is not a clean install.
+    """
+    from benchmarks.sregym.fastloop import toy
+    from benchmarks.sregym.fastloop.cli import lifecycle_objective
+    from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+
+    environment = FastloopEnvironment.load(args.run_dir.resolve())
+    if environment.app != "gitlab":
+        raise ValueError(f"{environment.run_dir} is a {environment.app} lane; reonboard handles gitlab lanes only")
+    runtime = lane_runtime_config(
+        environment,
+        provided_plan(environment.workspace, NAMESPACE),
+        registrations=getattr(args, "agent_registrations", None),
+    )
+    onboard_retaining_evidence(environment, runtime, lifecycle_objective(DEFAULT_GOAL, getattr(args, "goal", None)))
+    toy.record_controller(environment, runtime)
+    print(json.dumps({"reonboarded": environment.cluster, "run_dir": str(environment.run_dir)}))
+    return 0
+
+
 def up(args: Any) -> int:
     """``fastloop up --app gitlab``: cluster, prerequisites, source workspace, SDO install with the provided source."""
     from benchmarks.sregym.fastloop import toy
