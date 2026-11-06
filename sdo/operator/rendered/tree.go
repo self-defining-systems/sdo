@@ -2,7 +2,6 @@ package rendered
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -17,11 +16,6 @@ type BaseTree string
 // EffectiveTree is what renderers see: BaseTree plus .sdo/deployment patches
 // (slice 5). Only Effective produces one, so no path can skip the seam.
 type EffectiveTree string
-
-// ErrTreeUnavailable marks a failure to read a Git tree: the repository, the
-// object or the git process is unavailable, which is not the same as the
-// tree being wrong. Callers retry it.
-var ErrTreeUnavailable = errors.New("source tree is unavailable")
 
 // GitFunc is the git process edge: standard output of `git -C dir args...`.
 // A simulation supplies trees without spawning a process.
@@ -62,7 +56,7 @@ func Effective(ctx context.Context, objects ObjectStore, base BaseTree) (Effecti
 func requireTree(ctx context.Context, objects ObjectStore, id string) error {
 	out, err := objects.git(ctx, "cat-file", "-t", id)
 	if err != nil {
-		return fmt.Errorf("%w: %s in %s: %w", ErrTreeUnavailable, id, objects.Dir, err)
+		return sourceErrorf(SourceUnavailable, "%s in %s: %w", id, objects.Dir, err)
 	}
 	if kind := strings.TrimSpace(string(out)); kind != "tree" {
 		return fmt.Errorf("%s is a %s, not a tree", id, kind)

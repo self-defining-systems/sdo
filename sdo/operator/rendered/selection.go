@@ -3,26 +3,23 @@ package rendered
 
 import (
 	"errors"
-	"fmt"
 	"path"
 	"sort"
 	"strings"
 )
-
-var ErrManifestSelectionUnavailable = errors.New("deployed manifest paths are unavailable")
 
 // SelectManifestPaths resolves the paths named by the accepted deployment
 // strategy against files in the accepted source tree. A path may name one
 // manifest or a directory deployed recursively.
 func SelectManifestPaths(available, selected []string) ([]string, error) {
 	if len(selected) == 0 {
-		return nil, ErrManifestSelectionUnavailable
+		return nil, &SourceError{Kind: SourceUnconfigured, Err: errors.New("no deployed manifest paths are configured")}
 	}
 	seen := map[string]bool{}
 	for _, selection := range selected {
 		clean := path.Clean(selection)
 		if selection == "" || clean != selection || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || strings.HasPrefix(clean, "/") {
-			return nil, fmt.Errorf("%w: invalid path %q", ErrManifestSelectionUnavailable, selection)
+			return nil, sourceErrorf(SourceInvalid, "invalid manifest path %q", selection)
 		}
 		matched := false
 		for _, candidate := range available {
@@ -34,12 +31,12 @@ func SelectManifestPaths(available, selected []string) ([]string, error) {
 			}
 			matched = true
 			if seen[candidate] {
-				return nil, fmt.Errorf("%w: manifest %s is selected twice", ErrManifestSelectionUnavailable, candidate)
+				return nil, sourceErrorf(SourceInvalid, "manifest %s is selected twice", candidate)
 			}
 			seen[candidate] = true
 		}
 		if !matched {
-			return nil, fmt.Errorf("%w: path %s has no manifests", ErrManifestSelectionUnavailable, selection)
+			return nil, sourceErrorf(SourceInvalid, "path %s has no manifests", selection)
 		}
 	}
 	paths := make([]string, 0, len(seen))

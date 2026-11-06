@@ -8,8 +8,6 @@ import (
 	"sdo.dev/operator/rendered"
 )
 
-var ErrManifestSelectionUnavailable = rendered.ErrManifestSelectionUnavailable
-
 func SelectManifestPaths(available, selected []string) ([]string, error) {
 	return rendered.SelectManifestPaths(available, selected)
 }

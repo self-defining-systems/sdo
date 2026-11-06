@@ -46,7 +46,7 @@ func GitTreeFS(ctx context.Context, objects ObjectStore, tree EffectiveTree) (re
 	}
 	out, err := objects.git(ctx, "ls-tree", "-r", "-z", "--full-tree", "-l", id)
 	if err != nil {
-		return nil, fmt.Errorf("%w: list %s in %s: %w", ErrTreeUnavailable, id, objects.Dir, err)
+		return nil, sourceErrorf(SourceUnavailable, "list %s in %s: %w", id, objects.Dir, err)
 	}
 	t := &treeFS{ctx: ctx, objects: objects, files: map[string]treeFile{}, dirs: map[string][]string{}}
 	for _, record := range bytes.Split(out, []byte{0}) {
@@ -56,7 +56,7 @@ func GitTreeFS(ctx context.Context, objects ObjectStore, tree EffectiveTree) (re
 		meta, name, ok := strings.Cut(string(record), "\t")
 		fields := strings.Fields(meta)
 		if !ok || len(fields) != 4 {
-			return nil, fmt.Errorf("%w: malformed ls-tree record %q", ErrTreeUnavailable, record)
+			return nil, sourceErrorf(SourceUnavailable, "malformed ls-tree record %q", record)
 		}
 		var mode fs.FileMode
 		switch fields[0] {
@@ -72,7 +72,7 @@ func GitTreeFS(ctx context.Context, objects ObjectStore, tree EffectiveTree) (re
 		}
 		size, err := strconv.ParseInt(fields[3], 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("%w: malformed size in ls-tree record %q", ErrTreeUnavailable, record)
+			return nil, sourceErrorf(SourceUnavailable, "malformed size in ls-tree record %q", record)
 		}
 		t.files[name] = treeFile{blob: fields[2], size: size, mode: mode}
 	}
@@ -139,7 +139,7 @@ func (t *treeFS) ReadFile(name string) ([]byte, error) {
 	}
 	data, err := t.objects.git(t.ctx, "cat-file", "blob", f.blob)
 	if err != nil {
-		return nil, &fs.PathError{Op: "read", Path: name, Err: fmt.Errorf("%w: blob %s: %w", ErrTreeUnavailable, f.blob, err)}
+		return nil, &fs.PathError{Op: "read", Path: name, Err: sourceErrorf(SourceUnavailable, "blob %s: %w", f.blob, err)}
 	}
 	return data, nil
 }

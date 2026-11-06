@@ -177,8 +177,8 @@ func TestProposalTreeIsReadFromTheCheckoutObjectStore(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	if _, err := Effective(ctx, ObjectStore{Dir: accepted}, proposal); !errors.Is(err, ErrTreeUnavailable) {
-		t.Fatalf("proposal tree in the accepted root = %v, want ErrTreeUnavailable", err)
+	if _, err := Effective(ctx, ObjectStore{Dir: accepted}, proposal); !errors.Is(err, ErrSourceUnavailable) {
+		t.Fatalf("proposal tree in the accepted root = %v, want ErrSourceUnavailable", err)
 	}
 	fsys, _ := openTree(t, ObjectStore{Dir: checkout}, proposal)
 	data, err := fsys.ReadFile("app/new.yaml")
@@ -199,7 +199,7 @@ func TestEffectiveAndGitTreeFSRejectNonTrees(t *testing.T) {
 	dir, _ := fixtureRepo(t)
 	commit := runGit(t, dir, "rev-parse", "HEAD")
 	ctx := context.Background()
-	if _, err := Effective(ctx, ObjectStore{Dir: dir}, BaseTree(commit)); err == nil || errors.Is(err, ErrTreeUnavailable) {
+	if _, err := Effective(ctx, ObjectStore{Dir: dir}, BaseTree(commit)); err == nil || errors.Is(err, ErrSourceUnavailable) {
 		t.Fatalf("a commit is not a tree: %v", err)
 	}
 	for _, id := range []string{"HEAD", "HEAD^{tree}", "", "abc"} {
@@ -226,7 +226,7 @@ func TestGitTreeFSReadFailureMidRenderIsUnavailable(t *testing.T) {
 	}}
 	fsys, _ := openTree(t, objects, base)
 	fail = true
-	if _, err := fsys.ReadFile("top.txt"); !errors.Is(err, ErrTreeUnavailable) || errors.Is(err, fs.ErrNotExist) {
+	if _, err := fsys.ReadFile("top.txt"); !errors.Is(err, ErrSourceUnavailable) || errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("ReadFile = %v", err)
 	}
 }

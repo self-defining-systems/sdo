@@ -12,10 +12,10 @@ func TestGitTreeFSClassifiesGitFailureAsUnavailable(t *testing.T) {
 	boom := errors.New("boom")
 	objects := ObjectStore{Dir: "x", Git: func(context.Context, string, ...string) ([]byte, error) { return nil, boom }}
 	id := strings.Repeat("b", 40)
-	if _, err := Effective(context.Background(), objects, BaseTree(id)); !errors.Is(err, ErrTreeUnavailable) || !errors.Is(err, boom) {
+	if _, err := Effective(context.Background(), objects, BaseTree(id)); !errors.Is(err, ErrSourceUnavailable) || !errors.Is(err, boom) {
 		t.Fatalf("Effective = %v", err)
 	}
-	if _, err := GitTreeFS(context.Background(), objects, EffectiveTree(id)); !errors.Is(err, ErrTreeUnavailable) {
+	if _, err := GitTreeFS(context.Background(), objects, EffectiveTree(id)); !errors.Is(err, ErrSourceUnavailable) {
 		t.Fatalf("GitTreeFS = %v", err)
 	}
 }
@@ -68,7 +68,7 @@ func TestGitTreeFSRejectsMalformedListing(t *testing.T) {
 		}
 		return []byte("garbage\x00"), nil
 	}}
-	if _, err := GitTreeFS(context.Background(), objects, EffectiveTree(strings.Repeat("c", 40))); !errors.Is(err, ErrTreeUnavailable) {
+	if _, err := GitTreeFS(context.Background(), objects, EffectiveTree(strings.Repeat("c", 40))); !errors.Is(err, ErrSourceUnavailable) {
 		t.Fatalf("err = %v", err)
 	}
 }

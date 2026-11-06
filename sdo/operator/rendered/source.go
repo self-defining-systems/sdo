@@ -63,7 +63,7 @@ func (s Source) AcceptedManifests(ctx context.Context, revision, namespace strin
 		}
 		objects = append(objects, rendered)
 	}
-	return objects, errors.Join(failures...)
+	return objects, classifySource(errors.Join(failures...))
 }
 
 func (s Source) git(ctx context.Context, args ...string) ([]byte, error) {
@@ -82,9 +82,11 @@ func (s Source) RawManifests(ctx context.Context, revision, namespace string) ([
 // they return so no caller can change another reader's accepted source.
 func (s Source) rawManifests(ctx context.Context, revision, namespace string, qualified bool) ([]*unstructured.Unstructured, error) {
 	if s.cache != nil {
-		return s.cache.read(ctx, s, revision, namespace, qualified)
+		objects, err := s.cache.read(ctx, s, revision, namespace, qualified)
+		return objects, classifySource(err)
 	}
-	return s.loadManifests(ctx, revision, namespace, qualified)
+	objects, err := s.loadManifests(ctx, revision, namespace, qualified)
+	return objects, classifySource(err)
 }
 
 func (s Source) loadManifests(ctx context.Context, revision, namespace string, qualified bool) ([]*unstructured.Unstructured, error) {
@@ -93,7 +95,7 @@ func (s Source) loadManifests(ctx context.Context, revision, namespace string, q
 	}
 	files, err := s.git(ctx, "ls-tree", "-r", "-z", revision)
 	if err != nil {
-		return nil, fmt.Errorf("list manifests at %s: %w", revision, err)
+		return nil, sourceErrorf(SourceUnavailable, "list manifests at %s: %w", revision, err)
 	}
 	available := []string{}
 	regular := map[string]bool{}
@@ -117,8 +119,11 @@ func (s Source) loadManifests(ctx context.Context, revision, namespace string, q
 			return nil, fmt.Errorf("accepted input %s is not a tracked regular file", name)
 		}
 		data, err := s.git(ctx, "show", revision+":"+name)
-		if err != nil || len(data) > 2<<20 {
-			return nil, fmt.Errorf("accepted input %s unavailable or exceeds 2 MiB", name)
+		if err != nil {
+			return nil, sourceErrorf(SourceUnavailable, "accepted input %s unavailable: %w", name, err)
+		}
+		if len(data) > 2<<20 {
+			return nil, fmt.Errorf("accepted input %s exceeds 2 MiB", name)
 		}
 		totalBytes += len(data)
 		if totalBytes > 16<<20 {
@@ -197,7 +202,7 @@ func (s Source) loadManifests(ctx context.Context, revision, namespace string, q
 			ref := sdk.ObjectRef{APIVersion: object.GetAPIVersion(), Kind: object.GetKind(), Namespace: objectNamespace, Name: object.GetName()}
 
 			if seen[ref] {
-				return nil, fmt.Errorf("%w: duplicate accepted manifest for %s/%s", ErrManifestSelectionUnavailable, ref.Kind, ref.Name)
+				return nil, sourceErrorf(SourceInvalid, "duplicate accepted manifest for %s/%s", ref.Kind, ref.Name)
 			}
 			seen[ref] = true
 			if strings.EqualFold(object.GetKind(), "Secret") {
