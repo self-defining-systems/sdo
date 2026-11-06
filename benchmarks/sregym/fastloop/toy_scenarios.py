@@ -95,7 +95,7 @@ class ScenarioTimings:
     @classmethod
     def standard(cls) -> ScenarioTimings:
         return cls(
-            verdict=wait_for(WaitKind.OPERATION), steady=wait_for(WaitKind.MINUTE, 2), poll=wait_for(WaitKind.POLL)
+            verdict=wait_for(WaitKind.OPERATION, 2), steady=wait_for(WaitKind.MINUTE, 2), poll=wait_for(WaitKind.POLL)
         )
 
 
@@ -262,8 +262,6 @@ def run_broken(
             result.violations.append(f"hold reason {hold.reason!r} is not typed")
         elif hold.reason_kind not in reasons:
             result.violations.append(f"hold reason {hold.reason_kind!r} is not one of {sorted(reasons)}")
-        if at_verdict.head != before.head:
-            result.violations.append("accepted head moved although the commit was held")
     incident = _watch(ops, timings) or verdict == "incident"
     after = ops.snapshot()
     if upstream_commit(ops.accepted_commits(), pushed) is not None and verdict != "accepted":

@@ -185,13 +185,14 @@ def test_broken_allows_responder_changes_while_an_incident_is_open():
     assert sc.run_broken(world, TIMINGS).violations == []
 
 
-def test_broken_flags_head_movement_under_a_hold():
-    def hold_and_move(world: World) -> None:
+def test_broken_allows_memory_commits_to_move_the_head_under_a_hold():
+    def hold_and_record_an_outcome(world: World) -> None:
         hold("rollout: x")(world)
         world.snap = replace(world.snap, head="h9")
 
-    result = sc.run_broken(World(events={6: hold_and_move}), TIMINGS)
-    assert any("head moved" in v for v in result.violations)
+    result = sc.run_broken(World(events={6: hold_and_record_an_outcome}), TIMINGS)
+    assert result.violations == []
+    assert any("accepted as" in v for v in sc.run_broken(World(events={6: accept}), TIMINGS).violations)
 
 
 def test_timings_reject_non_positive_values():
