@@ -70,7 +70,15 @@ umbrella chart (the `derivation` field says how). `fastloop up --app gitlab --ch
 any listed release (`assemble.py` also declares that release as the umbrella dependency); the default is `pins.json`.
 
 The lane follows a Git ref (`--source-kind git`): `fastloop up` serves a Git remote in `gitlab-upstream` (the toy's
-server), seeded with the workspace commit. Release replay pushes later releases to it (see the fastloop README).
+server), seeded with the workspace commit.
+
+`fastloop gitlab replay --run-dir <lane>` (`benchmarks/sregym/fastloop/gitlab_replay.py`) replays the releases after the
+chart the lane's accepted source holds: per release it replaces `chart/charts/gitlab` with the verified archive, bumps the
+umbrella dependency, commits and pushes to the followed ref, then waits for SDO's outcome (advanced, held, repaired,
+incident) and records agent tasks, wall time and human edits (0). It starts only on a steady lane (green operability report,
+no incident) and stops on a hold that no agent role can act on. The record format is in the analyze-experiment
+`operability-report.md` reference. Typical: `fastloop up --app gitlab --chart-release 10.4.2 ...`, onboard, run the generic
+fault stream, then `fastloop gitlab replay`.
 
 ## Cluster prerequisites (the environment's job)
 

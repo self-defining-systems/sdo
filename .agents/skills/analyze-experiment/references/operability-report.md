@@ -73,3 +73,24 @@ a lane installed before the report existed is expected: reinstall the lane.
 The scripted broken commit must also be held with a routed prefix: cause `rollout` or `source_fault`, owner
 `responder`; `toy_operability.HOLD_ROUTES` is the harness's own per-kind table (checked, never derived from SDO), and a
 reason without the prefix is "not typed".
+
+## GitLab release replay records
+
+`fastloop gitlab replay --run-dir <lane>` (`benchmarks/sregym/fastloop/gitlab_replay.py`, releases in
+`apps/gitlab/releases.json`) pushes each later chart release to the lane's followed ref (`<namespace>-upstream`) and
+writes, in the lane run directory, `gitlab-replay.json` (rewritten after every release) and one
+`replay-gitlab-<version>.json` per attempted release. Summary: `baseline` (chart the accepted source held), `planned`,
+`preflight` (violations of the steady-lane check, which stops before any push), `stopped` (empty when every planned
+release ran), `human_edits`, `agent_tasks`, `wall_seconds`, `passed`, `results`.
+
+Per release: `outcome` is `advanced` (adopted, no agent commit), `repaired` (adopted after agent commits; `repair_commits`
+lists actor and changed paths, all under `.sdo/`), `held` (a typed hold: `hold` = kind, cause, owner, items, reason),
+`incident` (an incident opened and the revision was not adopted by an agent-free path) or `timeout`. Also
+`accepted_commit`, `operability_digest` (the `SDO-Operability` trailer of the advance commit), `agent_tasks` (new agent
+request ConfigMaps, the replay's agent-turn count), `wall_seconds` (push to resolution), `human_edits` (new accepted
+commits with `SDO-Actor: human`; must be 0), `changed_workloads` (workloads whose running image ID changed),
+`pod_failures`, `controller_relaunches`, `expected` (what `releases.json` says the release changes), `operability` (the
+ConfigMap summary read after the verdict; it is not refreshed by advances) and `violations`. A hold whose owner is not
+deployer, designer or responder, a hold with no routing prefix, an agent owner that never acts (`owner_action` window), an
+unfinished owner (`resolution` window), a verdict timeout and an incident in the quiet window set `stop_reason` and end the
+replay; the replayer never edits anything for SDO.
