@@ -80,6 +80,18 @@ func deploymentReportDigest(report operability.Report, evidence SourceEvidence) 
 	return checkOperability(report, operability.StageDeployment, want)
 }
 
+// advanceReportDigest checks a stage-advance report against the advance's
+// deployment evidence: the deployed merged tree, its effective tree and the
+// render and environment digests. The report's AcceptedCommit, the accepted
+// head the advance was merged onto, is compared at publication.
+func advanceReportDigest(report operability.Report, evidence SourceEvidence) (string, error) {
+	want := operability.Subject{
+		AcceptedCommit: report.Subject.AcceptedCommit, BaseTree: evidence.BaseTree, EffectiveTree: evidence.EffectiveTree,
+		PatchesDigest: evidence.PatchesDigest, RenderDigest: evidence.RenderDigest, EnvDigest: evidence.EnvDigest,
+	}
+	return checkOperability(report, operability.StageAdvance, want)
+}
+
 // requireDeploymentSubject binds a stage-deployment report to the commit the
 // proposal was based on: the accepted source commit does not exist yet, so the
 // report names the head the source was deployed from.
@@ -115,7 +127,11 @@ func (b *Broker) OperabilityReport(ctx context.Context, key string, stage operab
 	var report operability.Report
 	var found bool
 	err := b.locked(func() error {
-		receipt, accepted, err := b.findAccepted(ctx, key, InitialPhase)
+		phase := InitialPhase
+		if stage == operability.StageAdvance {
+			phase = AdvancePhase
+		}
+		receipt, accepted, err := b.findAccepted(ctx, key, phase)
 		if err != nil || !accepted {
 			return err
 		}
@@ -147,6 +163,31 @@ func (b *Broker) OperabilityReport(ctx context.Context, key string, stage operab
 			}
 			if digest != evidence.OperabilityDigest {
 				return fmt.Errorf("%w: stored report %s, evidence names %s", ErrOperabilityUnbound, digest, evidence.OperabilityDigest)
+			}
+		case operability.StageAdvance:
+			evidence, evidenceFound, err := b.sourceEvidenceLocked(ctx, key, receipt)
+			if err != nil {
+				return err
+			}
+			if !evidenceFound {
+				return errors.New("accepted advance has no trusted deployment evidence")
+			}
+			if evidence.OperabilityDigest == "" {
+				return fmt.Errorf("advance evidence of %s names no operability report: %w", key, ErrSourceEvidencePredatesOperability)
+			}
+			digest, err := advanceReportDigest(report, evidence)
+			if err != nil {
+				return err
+			}
+			if digest != evidence.OperabilityDigest {
+				return fmt.Errorf("%w: stored report %s, evidence names %s", ErrOperabilityUnbound, digest, evidence.OperabilityDigest)
+			}
+			parent, err := gitText(ctx, b.target, "rev-parse", receipt.Commit+"^")
+			if err != nil {
+				return err
+			}
+			if err := requireDeploymentSubject(report, parent); err != nil {
+				return err
 			}
 		case operability.StageComplete:
 			tree, err := DiagnosticsTree(ctx, b.target, receipt.Commit)

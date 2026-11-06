@@ -480,3 +480,23 @@ func TestWithUnavailableFillsOnlyEmptyFieldsAndNeverBinds(t *testing.T) {
 		t.Fatal("an unavailable subject bound to a recomputed one")
 	}
 }
+
+func TestAdvanceStageRequiresDeploymentItemsAndTheDetectorVerdict(t *testing.T) {
+	if got := StageItems(StageAdvance); len(got) != 4 || got[0] != O1 || got[1] != O2 || got[2] != O4 || got[3] != O6 {
+		t.Fatalf("advance stage items = %v, want O1 O2 O4 O6", got)
+	}
+	r := report(t, StageAdvance, chk("O1.ok", StatusPass, ""), chk("O2.ok", StatusPass, ""), chk("O6.ok", StatusPass, ""))
+	if err := r.Validate(); err != nil {
+		t.Fatalf("an advance report must validate without O3 and O5: %v", err)
+	}
+	if d := r.Decide(StageItems(StageAdvance)...); d.Kind != Hold || len(d.Checks) != 1 || d.Checks[0].ID != "O4.present" {
+		t.Fatalf("an advance without a detector verdict must fail closed: %+v", d)
+	}
+	r, err := r.With(chk("O4.detectors", StatusPass, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := r.Decide(StageItems(StageAdvance)...); d.Kind != Accepted {
+		t.Fatalf("complete advance report: %+v", d)
+	}
+}

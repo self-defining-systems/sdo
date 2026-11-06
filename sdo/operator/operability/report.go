@@ -71,6 +71,12 @@ const (
 	StageDeployment Stage = "deployment"
 	// StageComplete gates acceptance of the health commit and install: all items.
 	StageComplete Stage = "complete"
+	// StageAdvance gates acceptance of an upstream advance: the deployment
+	// items and the independent detector verdict, O1, O2, O4, O6. The advance
+	// changes no operational memory and an unchanged shape needs no new
+	// detectors, so O3 and O5 are not its items; a changed shape is routed to
+	// the detection designer after acceptance.
+	StageAdvance Stage = "advance"
 )
 
 // StageItems returns the items a report of the stage must satisfy.
@@ -80,6 +86,8 @@ func StageItems(s Stage) []ItemID {
 		return []ItemID{O1, O2, O6}
 	case StageComplete:
 		return AllItems()
+	case StageAdvance:
+		return []ItemID{O1, O2, O4, O6}
 	}
 	return nil
 }
@@ -267,7 +275,7 @@ func (r Report) Validate() error {
 	if r.Schema != SchemaVersion {
 		return fmt.Errorf("operability report schema %d is not supported (want %d)", r.Schema, SchemaVersion)
 	}
-	if r.Stage != StageDeployment && r.Stage != StageComplete {
+	if StageItems(r.Stage) == nil {
 		return fmt.Errorf("operability report stage %q is unknown", r.Stage)
 	}
 	if err := r.Subject.validate(r.Stage == StageComplete); err != nil {

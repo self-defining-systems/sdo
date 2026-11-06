@@ -133,7 +133,7 @@ func TestAdvanceReappliesPatchesAndRecordsTheMirror(t *testing.T) {
 	if !strings.Contains(got, "v08 patched\n") || !strings.Contains(got, "v14 upstream\n") {
 		t.Fatalf("effective vendor.txt = %q, want the patch on the new upstream", got)
 	}
-	receipt, err := w.broker.PublishAdvance(ctx, id, upstream, w.seed, advanceEvidence(t, proposal.Path, "benign"))
+	receipt, err := publishAdvance(ctx, w.broker, id, upstream, w.seed, advanceEvidence(t, proposal.Path, "benign"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +243,7 @@ func TestPublishAdvanceRefusesATreeWhosePatchesDoNotApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	accepted := w.head(t)
-	_, err := w.broker.PublishAdvance(ctx, id, broken, w.seed, evidence)
+	_, err := publishAdvance(ctx, w.broker, id, broken, w.seed, evidence)
 	hold := holdOf(t, err)
 	if hold.Patch.Kind != patchset.KindConflict {
 		t.Fatalf("hold = %+v", hold.Patch)
@@ -264,7 +264,7 @@ func TestAdvanceRecordsALegacyMirror(t *testing.T) {
 	if err != nil || candidate == "" {
 		t.Fatalf("ProposeAdvance = %q %v", candidate, err)
 	}
-	receipt, err := w.broker.PublishAdvance(ctx, id, upstream, w.seed, advanceEvidence(t, proposal.Path, "legacy"))
+	receipt, err := publishAdvance(ctx, w.broker, id, upstream, w.seed, advanceEvidence(t, proposal.Path, "legacy"))
 	if err != nil {
 		t.Fatal(err)
 	}

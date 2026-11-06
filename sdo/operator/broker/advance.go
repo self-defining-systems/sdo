@@ -12,6 +12,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/operability"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/upstream"
 )
@@ -377,15 +378,29 @@ func (b *Broker) mergeUpstream(ctx context.Context, checkout, base, upstream str
 // that tree to be the deployed tree in evidence. The accepted commit is
 // single-parent with SDO-Upstream and SDO-Upstream-Base trailers, and
 // evidence (with its plan) becomes the accepted deployment evidence.
-func (b *Broker) PublishAdvance(ctx context.Context, id, upstream, base string, evidence SourceEvidence) (Receipt, error) {
+//
+// The stage-advance operability report must be accepted by operability.Decide
+// (recomputed here, never trusted) and bind to the evidence's trees and digests
+// and to the accepted head the advance was merged onto. The broker records it in
+// the evidence store, its digest in the evidence and an SDO-Operability trailer
+// on the advance commit.
+func (b *Broker) PublishAdvance(ctx context.Context, id, upstream, base string, evidence SourceEvidence, report operability.Report) (Receipt, error) {
 	if err := checkIncidentID(id); err != nil {
 		return Receipt{}, err
 	}
 	if err := validateSourceEvidence(evidence); err != nil {
 		return Receipt{}, err
 	}
+	digest, err := advanceReportDigest(report, evidence)
+	if err != nil {
+		return Receipt{}, err
+	}
+	if evidence.OperabilityDigest != "" && evidence.OperabilityDigest != digest {
+		return Receipt{}, fmt.Errorf("%w: evidence names report %s, the report is %s", ErrOperabilityUnbound, evidence.OperabilityDigest, digest)
+	}
+	evidence.OperabilityDigest = digest
 	var receipt Receipt
-	err := b.locked(b.withUpstream(ctx, func() error {
+	err = b.locked(b.withUpstream(ctx, func() error {
 		if prior, ok, err := b.findAccepted(ctx, id, AdvancePhase); err != nil {
 			return err
 		} else if ok {
@@ -404,6 +419,9 @@ func (b *Broker) PublishAdvance(ctx context.Context, id, upstream, base string, 
 		}
 		if current != proposal.BaseCommit {
 			return fmt.Errorf("accepted HEAD moved from %s to %s since the advance was proposed", proposal.BaseCommit, current)
+		}
+		if err := requireDeploymentSubject(report, current); err != nil {
+			return err
 		}
 		if err := b.requireUpstreamBase(ctx, current, base); err != nil {
 			return err
@@ -461,10 +479,13 @@ func (b *Broker) PublishAdvance(ctx context.Context, id, upstream, base string, 
 		if err := validate.Err(diagnostics); err != nil {
 			return fmt.Errorf("advance validation: %w", err)
 		}
+		if err := b.writeOperabilityReport(id, operability.StageAdvance, report); err != nil {
+			return err
+		}
 		if err := b.writeSourceEvidence(id, evidence); err != nil {
 			return err
 		}
-		trailers := []string{upstreamTrailer + ": " + upstream, upstreamBaseTrailer + ": " + base, mirrorTrailer + ": " + mirror}
+		trailers := []string{upstreamTrailer + ": " + upstream, upstreamBaseTrailer + ": " + base, mirrorTrailer + ": " + mirror, operabilityTrailer(operability.StageAdvance, digest)}
 		receipt, err = b.acceptWithTrailers(ctx, stage, id, UpstreamActor, AdvancePhase, paths, trailers, gaps...)
 		if err != nil {
 			return err
@@ -527,6 +548,8 @@ func (b *Broker) samePublishedAdvance(ctx context.Context, prior Receipt, id, up
 	}
 	claimed := evidence
 	claimed.AcceptedCommit = prior.Commit
+	// A redelivery keeps the first report: live observations differ per attempt.
+	claimed.OperabilityDigest = stored.OperabilityDigest
 	if !sameSourceEvidence(stored, claimed) {
 		return errors.New("accepted advance evidence differs from the verified deployment")
 	}
