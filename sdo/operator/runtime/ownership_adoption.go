@@ -399,6 +399,14 @@ const adoptionConflictRetries = 5
 // classified as drift and never overwritten.
 func applyAdoption(ctx context.Context, resource acceptedResource, ref sdk.ObjectRef, source, normalized *unstructured.Unstructured) (*unstructured.Unstructured, error) {
 	declared := flattenDriftPaths(source)
+	// The deployer's own apply stamped the live object and its pod template.
+	// The accepted source is unstamped, and a server-side apply under the same
+	// manager that omits an owned field deletes it: without the carried stamp
+	// every adopted workload would roll once for a change to nothing but
+	// SDO's bookkeeping.
+	if live, err := resource.get(ctx, ref); err == nil {
+		source = carrySourceTreeStamp(source, live)
+	}
 	for attempt := 1; ; attempt++ {
 		applied, err := resource.apply(ctx, ref, source, false)
 		if err == nil || !apierrors.IsConflict(err) || attempt >= adoptionConflictRetries {
@@ -409,9 +417,30 @@ func applyAdoption(ctx context.Context, resource acceptedResource, ref sdk.Objec
 			live.GetUID() == "" || live.GetUID() != source.GetUID() {
 			return nil, err
 		}
-		source = source.DeepCopy()
+		source = carrySourceTreeStamp(source, live)
 		source.SetResourceVersion(live.GetResourceVersion())
 	}
+}
+
+// sourceTreeAnnotation is the deployer's effective-tree stamp.
+const sourceTreeAnnotation = "sdo.dev/source-tree"
+
+// carrySourceTreeStamp returns a copy of source that keeps live's
+// sdo.dev/source-tree stamp on the object and on its pod template, so applying
+// it as the deployer leaves the stamp, and with it the pod template, unchanged.
+func carrySourceTreeStamp(source, live *unstructured.Unstructured) *unstructured.Unstructured {
+	out := source.DeepCopy()
+	for _, fields := range [][]string{{"metadata", "annotations"}, {"spec", "template", "metadata", "annotations"}} {
+		stamp, found, _ := unstructured.NestedString(live.Object, append(append([]string(nil), fields...), sourceTreeAnnotation)...)
+		if !found || stamp == "" {
+			continue
+		}
+		if _, declared, _ := unstructured.NestedString(out.Object, append(append([]string(nil), fields...), sourceTreeAnnotation)...); declared {
+			continue
+		}
+		_ = unstructured.SetNestedField(out.Object, stamp, append(append([]string(nil), fields...), sourceTreeAnnotation)...)
+	}
+	return out
 }
 
 func adoptedAndRecorded(live, source *unstructured.Unstructured) bool {
