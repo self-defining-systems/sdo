@@ -765,12 +765,16 @@ var gateCompileRows = []gateCompileRow{
 		}},
 }
 
-// gateQueriesSource makes the fixture detector declare one metrics query that
-// names source ("" names none, so the default-source rule applies).
-func gateQueriesSource(t *testing.T, root, source string) {
+// gateQueriesSource makes the fixture detector declare one metrics query per
+// given source ("" names none, so the default-source rule applies).
+func gateQueriesSource(t *testing.T, root string, sources ...string) {
 	t.Helper()
+	queries := ""
+	for i, source := range sources {
+		queries += fmt.Sprintf("{ID: \"q%d\", Source: %q, Expr: \"up\"}, ", i, source)
+	}
 	edit(t, root, gateFixtureDetector, "\"sdo.dev/operator/sdk\"\n)", "\"sdo.dev/operator/sdk\"\n\t\"sdo.dev/operator/sdk/metrics\"\n)")
-	edit(t, root, gateFixtureDetector, "func (Detector) Spec()", "func (Detector) MetricQueries() []metrics.Query {\n\treturn []metrics.Query{{ID: \"q\", Source: \""+source+"\", Expr: \"up\"}}\n}\n\nfunc (Detector) Spec()")
+	edit(t, root, gateFixtureDetector, "func (Detector) Spec()", "func (Detector) MetricQueries() []metrics.Query {\n\treturn []metrics.Query{"+queries+"}\n}\n\nfunc (Detector) Spec()")
 }
 
 // gateHealthyBaselineStage selects the generated healthy-baseline replay stage.

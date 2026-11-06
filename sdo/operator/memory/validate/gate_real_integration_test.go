@@ -21,6 +21,19 @@ func TestGateCompileRowsOnRealGo(t *testing.T) {
 			t.Fatalf("rejected: %v", got)
 		}
 	})
+	// A bare query takes the provided default and a named one its source, in one
+	// compile (the refusals are gate rows).
+	t.Run("queries resolve against the provided sources", func(t *testing.T) {
+		t.Parallel()
+		root := compileTree(t)
+		gateQueriesSource(t, root, "", "ops")
+		request := compileRequest(root)
+		request.Telemetry = telemetry.Policy{Provided: []telemetry.Source{{ID: "ops", Kinds: []telemetry.Kind{telemetry.KindMetrics}, Adapter: "prometheus", Default: true, Origin: telemetry.OriginOperator}}}
+		got, err := CompileCandidate(context.Background(), request)
+		if err != nil || len(got) != 0 {
+			t.Fatalf("rejected: %v, %v", got, err)
+		}
+	})
 	for _, row := range gateCompileRows {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
@@ -71,51 +84,6 @@ func TestPreexistingHealthyBaselineFaultsOnRealGo(t *testing.T) {
 			}
 			if !tc.blocking && (len(notes) != 1 || !strings.Contains(notes[0].Message, "pre-existing (also fails at HEAD)")) {
 				t.Fatalf("notes = %v, want one pre-existing note", notes)
-			}
-		})
-	}
-}
-
-// A detector's metrics query resolves against the effective sources through
-// the real toolchain: a provided source answers the default rule and a named
-// query, a source of another kind is refused, and a bare query with no default
-// is unbound.
-func TestDetectorQueriesResolveAgainstEffectiveSourcesOnRealGo(t *testing.T) {
-	provided := func(kinds ...telemetry.Kind) func(*Request) {
-		return func(r *Request) {
-			r.Telemetry = telemetry.Policy{Provided: []telemetry.Source{{ID: "ops", Kinds: kinds, Adapter: "prometheus", Default: true, Origin: telemetry.OriginOperator}}}
-		}
-	}
-	for _, tc := range []struct {
-		name, source string
-		request      func(*Request)
-		rule         string
-	}{
-		{"a bare query resolves to the provided default", "", provided(telemetry.KindMetrics), ""},
-		{"a named query resolves to the provided source", "ops", provided(telemetry.KindMetrics), ""},
-		{"a source that does not serve metrics", "ops", provided(telemetry.KindLogs), RuleTelemetryKind},
-		{"a bare query with no source bound", "", nil, RuleTelemetryUnbound},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			root := compileTree(t)
-			gateQueriesSource(t, root, tc.source)
-			request := compileRequest(root)
-			if tc.request != nil {
-				tc.request(&request)
-			}
-			got, err := CompileCandidate(context.Background(), request)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if tc.rule == "" {
-				if len(got) != 0 {
-					t.Fatalf("rejected: %v", got)
-				}
-				return
-			}
-			if len(got) != 1 || got[0].Rule != tc.rule {
-				t.Fatalf("diagnostics = %v, want one %s", got, tc.rule)
 			}
 		})
 	}
