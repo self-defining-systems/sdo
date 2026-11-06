@@ -227,14 +227,12 @@ func (s *run) ownershipPolicy(ctx context.Context) error {
 	manifests := changesManifests(s.changed)
 	if phase == InitialPhase && actor == HealthJudge && len(s.changed) > 0 && !healthRevalidation(s.req, s.changed) {
 		// An empty diff is reported once, by diff.empty; this rule covers a
-		// diff whose resulting tree installs no detector. Go's generic
-		// detectors usually sit in the base, so the tree decides, not the diff.
+		// diff whose resulting tree lacks a declared probe's traffic detector.
+		// Go's detectors count as present before it has written them, so the
+		// tree as Go will publish it decides, not the diff.
 		if missing := s.missingInitialDetectors(); len(missing) > 0 {
 			hint := "run `sdo-operator memory check` in the checkout: it installs Go's generic detectors (services, workloads, traffic-<workload>), which must stay in the tree; do not delete them"
-			message := "the initial health-judge proposal must install detector manifests"
-			if missing[0] != "" {
-				message = "the resulting tree lacks the traffic detectors for the probe workloads the application map declares: " + strings.Join(missing, ", ")
-			}
+			message := "the resulting tree lacks the traffic detectors for the probe workloads the application map declares: " + strings.Join(missing, ", ")
 			s.add(Ownership, Diagnostic{Rule: RuleInitialNeedsDetectors, Path: layout.DetectorsDir, Message: message, Hint: hint})
 		}
 	}
@@ -464,29 +462,29 @@ func migrationDetectorFiles(root string) (map[string]string, error) {
 	return files, err
 }
 
-// missingInitialDetectors evaluates the resulting tree (base plus diff): it is
-// empty when the tree holds a health detector and a traffic-<workload>
-// detector for every probe workload the authored application map declares and
-// the tree carries. A tree with no health detector returns one empty name.
+// missingInitialDetectors evaluates the resulting tree (base plus diff) as Go
+// will publish it: every detector the tree holds or Go prepares for it
+// (memory.PreparedHealthDetectorIDs, the set PrepareHealthWith installs: the
+// generic health detectors and traffic-<workload> per probe workload) counts
+// as present. It returns the traffic detectors of the probe workloads the
+// authored application map declares that neither the tree nor Go provides.
 func (s *run) missingInitialDetectors() []string {
-	hasHealth := false
 	have := map[string]bool{}
 	for _, d := range s.detectors {
 		if d.class == layout.ClassHealth && d.hasManifest {
-			hasHealth = true
 			have[d.id] = true
 		}
 	}
-	if !hasHealth {
-		return []string{""}
+	files := map[string][]byte{}
+	for name, workload := range s.workloads {
+		files[name+".yaml"] = workload.content
+	}
+	for _, id := range memory.PreparedHealthDetectorIDs(memory.HealthOptions{}, files) {
+		have[id] = true
 	}
 	var missing []string
 	for _, workload := range s.declaredProbeWorkloads() {
-		// Go installs traffic-<workload> for every probe workload file when it
-		// prepares the tree (memory check and publication), so the detector
-		// counts as present when it is already there or Go will write it.
-		id := "traffic-" + workload
-		if prepared, ok := memory.PreparedTrafficDetector(workload+".yaml", s.workloads[workload].content); !have[id] && !(ok && prepared == id) {
+		if id := "traffic-" + workload; !have[id] {
 			missing = append(missing, id)
 		}
 	}
