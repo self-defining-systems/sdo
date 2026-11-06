@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"sdo.dev/operator/safefs"
 )
 
 // MaxArtifactBytes bounds every memory file the layout reads.
@@ -128,26 +130,19 @@ func WriteDetector(root string, detector Detector) error {
 	if !detector.Class.valid() || !ValidDetectorID(detector.Manifest.ID) {
 		return fmt.Errorf("invalid detector class %q or id %q", detector.Class, detector.Manifest.ID)
 	}
-	directory := filepath.Join(root, filepath.FromSlash(DetectorDir(detector.Class, detector.Manifest.ID)))
-	if err := os.MkdirAll(directory, 0o755); err != nil {
-		return err
-	}
+	directory := DetectorDir(detector.Class, detector.Manifest.ID)
 	encoded, err := MarshalDetectorManifest(detector.Manifest)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(directory, ManifestFileName), encoded, 0o644); err != nil {
+	if err := safefs.WriteFile(root, path.Join(directory, ManifestFileName), encoded, 0o644); err != nil {
 		return err
 	}
 	for _, file := range detector.Files {
 		if file.Name == ManifestFileName || !fs.ValidPath(file.Name) || file.Name == "." {
 			return fmt.Errorf("invalid detector file name %q", file.Name)
 		}
-		target := filepath.Join(directory, filepath.FromSlash(file.Name))
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return err
-		}
-		if err := os.WriteFile(target, file.Content, 0o644); err != nil {
+		if err := safefs.WriteFile(root, path.Join(directory, file.Name), file.Content, 0o644); err != nil {
 			return err
 		}
 	}
@@ -159,7 +154,8 @@ func RemoveDetector(root string, class Class, id string) error {
 	if !class.valid() || !ValidDetectorID(id) {
 		return fmt.Errorf("invalid detector class %q or id %q", class, id)
 	}
-	return os.RemoveAll(filepath.Join(root, filepath.FromSlash(DetectorDir(class, id))))
+	dir := DetectorDir(class, id)
+	return safefs.RemoveAll(root, dir)
 }
 
 type collector struct {

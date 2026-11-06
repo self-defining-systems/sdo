@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"sdo.dev/operator/safefs"
 )
 
 // HealthObjectivePlaybook is the health judge's playbook ID. Its fault class
@@ -147,14 +149,7 @@ func readCapped(path string) ([]byte, error) {
 }
 
 func writeMemoryFile(root, rel string, content []byte, mode fs.FileMode) error {
-	target := filepath.Join(root, filepath.FromSlash(rel))
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(target, content, mode); err != nil {
-		return err
-	}
-	return os.Chmod(target, mode)
+	return safefs.WriteFile(root, rel, content, mode)
 }
 
 // PlaybookRetired validates optional lifecycle metadata. An omitted status is

@@ -10,6 +10,7 @@ import (
 	"slices"
 
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/safefs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -42,14 +43,10 @@ func RecordFixedNoMatchCorpus(root, captures, incident string, instances map[str
 			if err != nil {
 				return nil, err
 			}
-			directory := filepath.Join(root, relative)
-			if err := os.MkdirAll(directory, 0755); err != nil {
-				return nil, err
-			}
 			// Open and healthy are this fixed snapshot; the case references it.
 			files := map[string][]byte{"fixed.json": fixed, "recordings.json": recordings, "labels.json": raw}
 			for _, name := range slices.Sorted(maps.Keys(files)) {
-				if err := os.WriteFile(filepath.Join(directory, name), files[name], 0644); err != nil {
+				if err := safefs.WriteFile(root, filepath.ToSlash(filepath.Join(relative, name)), files[name], 0644); err != nil {
 					return nil, err
 				}
 				paths = append(paths, filepath.ToSlash(filepath.Join(relative, name)))

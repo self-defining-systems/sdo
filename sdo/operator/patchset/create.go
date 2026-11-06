@@ -5,12 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"sdo.dev/operator/safefs"
 )
 
 // Format renders a patch file: the strict preamble, a blank line, the diff.
@@ -178,20 +179,7 @@ func Create(ctx context.Context, root string, req CreateRequest) (Created, error
 	if err := c.persist(ctx, view.BaseTree, applied.Tree, changes); err != nil {
 		return Created{}, err
 	}
-	dir := filepath.Join(c.root, filepath.FromSlash(Directory))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return Created{}, err
-	}
-	f, err := os.OpenFile(filepath.Join(dir, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if err != nil {
-		return Created{}, err
-	}
-	if _, err := f.Write(raw); err != nil {
-		f.Close()
-		os.Remove(f.Name())
-		return Created{}, err
-	}
-	if err := f.Close(); err != nil {
+	if err := safefs.WriteFile(c.root, Directory+"/"+name, raw, 0o644); err != nil {
 		return Created{}, err
 	}
 	view.EffectiveTree = applied.Tree
