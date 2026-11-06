@@ -17,6 +17,9 @@ const (
 	BuildFailureNetwork       BuildFailureCause = "network or package-manager error"
 	BuildFailureCompile       BuildFailureCause = "compile error"
 	BuildFailureOther         BuildFailureCause = "build step failed"
+	// BuildFailureInfrastructure is a BuildKit daemon that never started: no
+	// build step ran, so nothing about the plan or source was judged.
+	BuildFailureInfrastructure BuildFailureCause = "BuildKit daemon unavailable"
 )
 
 const (
@@ -43,6 +46,11 @@ type BuildFailureError struct {
 	LogTail  string
 }
 
+// InfrastructureOutcome marks a build that never reached its first step.
+func (e *BuildFailureError) InfrastructureOutcome() bool {
+	return e.Cause == BuildFailureInfrastructure
+}
+
 func (e *BuildFailureError) Error() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "BuildKit Job %s for image %s failed (%s)", e.Job, e.Image, e.Cause)
@@ -58,6 +66,8 @@ func (e *BuildFailureError) Error() string {
 		fmt.Fprintf(&b, "Sources %s do not exist under this build's context_path: COPY/ADD sources resolve relative to the context, so pick the directory that contains them (or fix the COPY path); other contexts and the manifests are not at fault. ", strings.Join(e.Missing, ", "))
 	case BuildFailureExcluded:
 		fmt.Fprintf(&b, "Sources %s exist in the checkout but a .dockerignore pattern excludes them from the build context: remove or narrow that pattern (or add a \"!path\" exception); do not change context_path. ", strings.Join(e.Excluded, ", "))
+	case BuildFailureInfrastructure:
+		b.WriteString("The BuildKit daemon did not start, so no build step ran: this is not a plan or source problem. ")
 	case BuildFailureNetwork:
 		b.WriteString("A download or package install failed: if the package or URL is wrong fix that line, otherwise this is a transient mirror/network failure and the same plan can be resubmitted; contexts and parallelism are not the cause. ")
 	case BuildFailureCompile:
@@ -78,6 +88,7 @@ var (
 	missingSource    = regexp.MustCompile(`failed to calculate checksum of ref \S+: "([^"]+)": not found`)
 	networkPattern   = regexp.MustCompile(`(?i)could not resolve|temporary failure resolving|failed to fetch|unable to locate package|dial tcp|i/o timeout|connection (refused|timed out|reset)|tls handshake|name or service not known|404\s+not found|no such host|received http code|couldn't connect|gnutls_handshake|hash sum mismatch|unable to fetch some archives`)
 	compilePattern   = regexp.MustCompile(`(?i)\berror:|\berror\[E|undefined reference|compilation terminated|make(\[\d+\])?: \*\*\*|npm ERR!|cannot find package|no matching function|syntax error|SyntaxError|cannot find symbol|BUILD FAILURE|ld returned`)
+	daemonDown       = regexp.MustCompile(`could not connect to \S*buildkitd\S* after \d+ trials`)
 	summaryLine      = regexp.MustCompile(`(?m)^(#\d+ ERROR: |error: failed to solve).*$`)
 	solveFailurePart = regexp.MustCompile(`^error: failed to solve: (.*)$`)
 )
@@ -136,6 +147,8 @@ func ClassifyBuildLog(image, job, log string) *BuildFailureError {
 		}
 	}
 	switch {
+	case daemonDown.MatchString(text) && failingID == "":
+		failure.Cause = BuildFailureInfrastructure
 	case len(failure.Missing) > 0:
 		failure.Cause = BuildFailureMissingSource
 	case networkPattern.MatchString(body) && !compilePattern.MatchString(tailLines(lines, 60)):

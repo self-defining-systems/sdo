@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -82,7 +83,7 @@ type SourceReadinessVerifier interface {
 // HealthVerifier judges the accepted detector against the live application.
 // Its verdict is independent of the agent's HealthJudgeResult assertion.
 type HealthVerifier interface {
-	Verify(ctx context.Context, acceptedCommit, namespace, objective string, source DeploymentReceipt) (healthy bool, feedback string, err error)
+	Verify(ctx context.Context, acceptedCommit, namespace, objective string, source DeploymentReceipt) (HealthVerdict, error)
 }
 
 type RuntimeInstaller interface {
@@ -104,6 +105,9 @@ type Coordinator struct {
 	// SourceFacts reads a trusted projection from the accepted source commit.
 	// The default implementation is the operational-memory storage edge.
 	SourceFacts func(context.Context, string, string) (memory.SourceFacts, error)
+	// Wait pauses between bounded re-evaluations and infrastructure retries;
+	// nil waits on a timer.
+	Wait func(context.Context, time.Duration) error
 }
 
 type Config struct {
@@ -112,6 +116,12 @@ type Config struct {
 	RegistryHost                                         string
 	DeployerAgentID, JudgeAgentID                        string
 	MaxAttempts                                          int
+	// MaxAttempts bounds deployer correction attempts only. The fields below
+	// bound the waits that never consume one; zero selects the default.
+	PendingEvaluations    int
+	PendingInterval       time.Duration
+	InfrastructureTries   int
+	InfrastructureBackoff time.Duration
 }
 
 type Result struct {
@@ -171,12 +181,12 @@ func (c Coordinator) Run(ctx context.Context, cfg Config) (Result, error) {
 			continue
 		}
 		result.JudgeCommit = judgeReceipt.Commit
-		healthy, finding, err := c.Verifier.Verify(ctx, judgeReceipt.Commit, cfg.Namespace, cfg.HealthObjective, deployment)
+		verdict, err := c.verifyHealth(ctx, cfg, judgeReceipt.Commit, deployment)
 		if err != nil {
 			return result, fmt.Errorf("independent verification: %w", err)
 		}
-		if !healthy {
-			feedback = finding
+		if verdict.Outcome != VerificationClear {
+			feedback = verdict.Feedback()
 			continue
 		}
 		install := func() error {
@@ -317,10 +327,18 @@ func (c Coordinator) deploy(ctx context.Context, id string, cfg Config, attempt 
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return broker.Receipt{}, DeploymentReceipt{}, false, "deployment worker did not propose a complete source plan: " + response.GetSummary(), nil
 	}
-	readiness, err := c.Readiness.ApplyAndVerify(ctx, proposal.Path, response.GetPlan())
+	var readiness DeploymentReceipt
+	err = c.retryInfrastructure(ctx, cfg, "independent source deployment", func() (err error) {
+		readiness, err = c.Readiness.ApplyAndVerify(ctx, proposal.Path, response.GetPlan())
+		return err
+	})
 	if err != nil {
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
-		return broker.Receipt{}, DeploymentReceipt{}, false, deploymentFailureFeedback(err), nil
+		var infrastructure *InfrastructureError
+		if errors.As(err, &infrastructure) || ctx.Err() != nil {
+			return broker.Receipt{}, DeploymentReceipt{}, false, "", err
+		}
+		return broker.Receipt{}, DeploymentReceipt{}, false, "independent source deployment failed: " + err.Error(), nil
 	}
 	if !completeDeploymentReceipt(readiness) {
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
@@ -336,17 +354,6 @@ func (c Coordinator) deploy(ctx context.Context, id string, cfg Config, attempt 
 		return broker.Receipt{}, DeploymentReceipt{}, false, "broker rejected deployment: " + err.Error(), nil
 	}
 	return receipt, readiness, true, "", nil
-}
-
-// deploymentFailureFeedback is the correction feedback for a failed
-// independent deployment. A timeout is an infrastructure outcome, so it is
-// worded as one: otherwise the deployer rewrites a correct plan.
-func deploymentFailureFeedback(err error) string {
-	var timeout interface{ InfrastructureTimeout() bool }
-	if errors.As(err, &timeout) && timeout.InfrastructureTimeout() {
-		return "independent source deployment ran out of time (not a plan rejection): " + err.Error()
-	}
-	return "independent source deployment failed: " + err.Error()
 }
 
 func completeDeploymentReceipt(receipt DeploymentReceipt) bool {

@@ -28,9 +28,9 @@ func (e *BuildTimeoutError) Error() string {
 		"Rewriting the plan after this error makes it worse", e.Image, scope)
 }
 
-// InfrastructureTimeout marks the error for the lifecycle coordinator, which
-// words the deployer's correction feedback accordingly.
-func (e *BuildTimeoutError) InfrastructureTimeout() bool { return true }
+// InfrastructureOutcome marks the error for the lifecycle coordinator, which
+// retries the trusted step instead of consuming a deployer attempt.
+func (e *BuildTimeoutError) InfrastructureOutcome() bool { return true }
 
 // buildTimeout classifies err as a timeout when the shared budget expired or
 // the backend reported its per-build deadline, while the caller's own context

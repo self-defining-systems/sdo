@@ -35,7 +35,7 @@ func TestObserveTimeoutForSlowInitContainerIsTypedAndNotAPlanError(t *testing.T)
 	if !errors.As(err, &timeout) {
 		t.Fatalf("want RolloutTimeoutError, got %v", err)
 	}
-	if !timeout.InfrastructureTimeout() {
+	if !timeout.InfrastructureOutcome() {
 		t.Fatal("a still-starting rollout is a time limit, not a plan rejection")
 	}
 	for _, want := range []string{"still rolling out", "phase=Pending", "init git running", "THE PLAN WAS FINE"} {
@@ -49,7 +49,7 @@ func TestObserveTimeoutForFailingPodsIsNotBlamedOnTime(t *testing.T) {
 	pods := `{"items":[{"metadata":{"name":"web-1"},"status":{"phase":"Pending","containerStatuses":[{"name":"web","ready":false,"state":{"waiting":{"reason":"ImagePullBackOff"}}}]}}]}`
 	_, err := rolloutBackend(pods, 20*time.Millisecond).Observe(context.Background(), "Deployment/demo/web")
 	var timeout *RolloutTimeoutError
-	if !errors.As(err, &timeout) || timeout.InfrastructureTimeout() {
+	if !errors.As(err, &timeout) || timeout.InfrastructureOutcome() {
 		t.Fatalf("failing pods must not be classed as a time limit: %v", err)
 	}
 	if !strings.Contains(err.Error(), "ImagePullBackOff") || strings.Contains(err.Error(), "THE PLAN WAS FINE") {
@@ -126,7 +126,7 @@ func TestObserveTimeoutForNotProgressingPodsIsAPlanOutcome(t *testing.T) {
 	backend.Now = func() time.Time { t, _ := time.Parse(time.RFC3339, testNow); return t }
 	_, err := backend.Observe(context.Background(), "Deployment/demo/web")
 	var timeout *RolloutTimeoutError
-	if !errors.As(err, &timeout) || timeout.InfrastructureTimeout() {
+	if !errors.As(err, &timeout) || timeout.InfrastructureOutcome() {
 		t.Fatalf("a running-but-never-ready pod is a plan outcome: %v", err)
 	}
 	for _, want := range []string{"not progressing", "plan problem", "readinessProbe"} {
@@ -155,7 +155,7 @@ func TestObserveFailsFastWhenRolloutIsClearlyStuck(t *testing.T) {
 	}
 	_, err := backend.Observe(context.Background(), "Deployment/demo/web")
 	var timeout *RolloutTimeoutError
-	if !errors.As(err, &timeout) || timeout.InfrastructureTimeout() || timeout.Waited >= 10*time.Minute {
+	if !errors.As(err, &timeout) || timeout.InfrastructureOutcome() || timeout.Waited >= 10*time.Minute {
 		t.Fatalf("want early plan outcome, got %v", err)
 	}
 	if !strings.Contains(err.Error(), "CrashLoopBackOff") || waits > 6 {
