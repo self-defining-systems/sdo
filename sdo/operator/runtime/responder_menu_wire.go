@@ -130,7 +130,7 @@ func (r ToolResponse) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	menu, err = menuParameterJSON(menu, r.MenuParameters)
+	menu, err = menuParameterJSON(menu, r.MenuParameters, r.MenuCommands)
 	if err != nil {
 		return nil, err
 	}
@@ -200,7 +200,7 @@ func (r truncatedToolResponse) MarshalJSON() ([]byte, error) {
 	return json.Marshal(fields)
 }
 
-func menuParameterJSON(menu json.RawMessage, parameters map[string][]MenuParameter) (json.RawMessage, error) {
+func menuParameterJSON(menu json.RawMessage, parameters map[string][]MenuParameter, commands map[string]string) (json.RawMessage, error) {
 	if len(menu) == 0 || parameters == nil {
 		return menu, nil
 	}
@@ -220,6 +220,13 @@ func menuParameterJSON(menu json.RawMessage, parameters map[string][]MenuParamet
 			return nil, err
 		}
 		option["parameters"] = schema
+		if command := commands[id]; command != "" {
+			encoded, err := json.Marshal(command)
+			if err != nil {
+				return nil, err
+			}
+			option["command"] = encoded
+		}
 	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(menu, &fields); err != nil {

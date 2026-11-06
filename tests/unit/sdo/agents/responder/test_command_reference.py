@@ -83,7 +83,7 @@ def test_mutation_reference_distinguishes_envelope_from_complete_file(capsys: py
     from sdo.agents.responder.command_reference import render_reference_bundle
 
     reference = "\n".join(render_reference_bundle().values())
-    for name in ("act", "apply", "mitigate", "rollback"):
+    for name in ("act", "mitigate", "rollback"):
         section = reference.split(f"## {name}\n", 1)[1].split("\n## ", 1)[0]
         assert "Complete report fields (`details_file`)" in section
         with pytest.raises(SystemExit):
@@ -101,7 +101,7 @@ def test_reference_keeps_new_help_notes_without_repeating_shared_help(monkeypatc
     def changed_parser() -> argparse.ArgumentParser:
         parser = original()
         commands = next(action for action in parser._actions if isinstance(action, argparse._SubParsersAction))
-        for name in ("act", "apply", "mitigate", "rollback"):
+        for name in ("act", "mitigate", "rollback"):
             command = commands.choices[name]
             command.epilog = (command.epilog or "") + "\n\n" + shared
         command = commands.choices["mitigate"]
@@ -112,4 +112,4 @@ def test_reference_keeps_new_help_notes_without_repeating_shared_help(monkeypatc
     generated = "\n".join(render_reference_bundle().values())
     assert added in generated
     assert generated.count(shared) == 1
-    assert "apply, mitigate, act, rollback" in generated
+    assert "mitigate, act, rollback" in generated

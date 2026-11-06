@@ -23,7 +23,7 @@ def release_lines(pending: Iterable[Mapping[str, Any]]) -> list[str]:
                     continue
                 line = (
                     f"{_ref(blocker.get('ref') or {})} cannot roll out beside its old revision: "
-                    f"sdo mitigate RetireOldRevision --ref {_ref(retire.get('ref') or {})}"
+                    f"sdo mitigate RetireOldRevision --bind ref={_ref(retire.get('ref') or {})}"
                 )
                 if line not in lines:
                     lines.append(line)

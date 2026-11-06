@@ -1,17 +1,13 @@
 ## diagnose
 
-evaluate a bound program
+evaluate a playbook; a match names its fix
 
 ```text
-sdo diagnose [-h] [--bind NAME=Kind/namespace/name] [program_id]
+sdo diagnose [-h] [--bind NAME=VALUE] [NAME]
 ```
 
-Program commands use the current checkout, including shared libraries and new playbook IDs. Edits compile on demand; fix compile errors in place and retry. Live authoring has ordinary shell access; broker ownership and memory validation govern publication. Revision receipts use working-tree:<source digest> for unpublished code. Reusable API reads use program.Kubernetes(view) with upstream client-go options; reads are recorded for replay.
+Evaluate a playbook against live state. A match with a fix prints the command to run. A wrong or missing role is an error that says what the playbook takes.
 
-- `--bind`: named program parameter; repeat for each binding
+- `--bind`: a playbook parameter: an object is NAME=Kind/NAMESPACE/NAME; repeat for each
 
-```text
-Example: sdo diagnose targetport --bind service=Service/app/api
-```
-
-Key JSON fields: `program_runs[].{program_id, program_revision, verdict, can_mitigate}, program_revisions`.
+Key JSON fields: `program_runs[].{program_id, program_revision, verdict, can_mitigate, mitigate_command}, program_revisions`.

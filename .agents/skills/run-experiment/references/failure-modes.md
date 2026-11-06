@@ -6,7 +6,7 @@ Signs seen in live runs, what they meant, and where to look. Each fix has a regr
 | --- | --- | --- |
 | Grading or judge crashes on application files | The frozen worktree's SREGym applications checkout is empty | The adapter now checks the parent gitlink, nested revision, and required chart/manifests before a worker starts |
 | A learned match is absent from the responder coverage view | Diagnosis did not match a loaded program or the finding has no resource relation to its bindings | The outcome's `playbook_coverage`, `program_runs` and opening finding resources; counters never gate offering or execution |
-| A program matched but the responder's `sdo plan` returned an empty plan | The plan read a later snapshot than the match | The outcome's `program_runs` against `program_tool_calls` |
+| A program matched but the responder's `sdo mitigate` planned nothing | The plan read a later snapshot than the match | The outcome's `program_runs` against `program_tool_calls` |
 | Verified success counters stay zero although programs are applied | The revision changed or the application lacks independently bound repair evidence | The outcome's `reflection_eligibility`, `plan_applications[].verification` and `program_runs[].program_revision`; counters are information for the responder |
 | A latent fault times out with drift seen but no incident | The investigator never ran, or ran blind | Drift deferral reasons in controller status; drift result ConfigMaps (`sdo-drift-*-result`); a verdict reason that mentions blocked `kubectl` or a read-only filesystem |
 | The same pre-existing drift is investigated every incident | Verdicts were lost across resets | The drift verdict ConfigMap's age against the control namespace's age |

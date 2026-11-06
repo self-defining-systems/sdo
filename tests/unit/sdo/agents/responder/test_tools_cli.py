@@ -34,7 +34,7 @@ def test_sdo_cli_exchanges_typed_request_with_fake_controller(tmp_path, monkeypa
         {
             "command": "diagnose",
             "program_id": "targetport",
-            "bindings": {"service": "Service/app/api"},
+            "parameters": {"service": "Service/app/api"},
         }
     ]
     output = expand_context(capsys.readouterr().out)
@@ -61,23 +61,31 @@ def test_sdo_source_cli_sends_a_namespaced_resource(monkeypatch, capsys):
     assert '"source": {"kind": "Deployment"}' in expand_context(capsys.readouterr().out)
 
 
-@pytest.mark.parametrize("command", [[], ["source"], ["plan"]])
+@pytest.mark.parametrize("command", [[], ["source"], ["mitigate"]])
 def test_cli_help_shows_concrete_source_and_named_binding_examples(command, capsys):
     with pytest.raises(SystemExit) as captured:
         tools_cli.main(["--json", *command, "--help"])
     assert captured.value.code == 0
     output = expand_context(capsys.readouterr().out)
-    if command != ["plan"]:
+    if command != ["mitigate"]:
         assert "sdo source Deployment/app/api" in output
     if command != ["source"]:
-        assert "sdo plan targetport --bind service=Service/app/api" in output
+        assert "sdo mitigate targetport --bind service=Service/app/api" in output
 
 
-def test_status_and_apply_help_point_at_stage_results(capsys):
-    for command in ("status", "apply"):
-        with pytest.raises(SystemExit):
-            tools_cli.main([command, "--help"])
-        assert "prior_stages" in capsys.readouterr().out
+def test_mitigate_help_is_short_and_names_one_form(capsys):
+    with pytest.raises(SystemExit):
+        tools_cli.main(["mitigate", "--help"])
+    output = capsys.readouterr().out
+    assert len(output) < 2500
+    for removed in ("--option", "--param", "--selection", "--match", "sdo plan", "sdo apply"):
+        assert removed not in output
+
+
+def test_status_help_points_at_stage_results(capsys):
+    with pytest.raises(SystemExit):
+        tools_cli.main(["status", "--help"])
+    assert "prior_stages" in capsys.readouterr().out
 
 
 def test_skill_explains_prior_stages():
@@ -100,9 +108,8 @@ def test_documented_cli_examples_send_valid_requests(monkeypatch):
         "ref": "Deployment/app/api",
     }
     assert seen[-1] == {
-        "command": "plan",
-        "program_id": "targetport",
-        "bindings": {"service": "Service/app/api"},
+        "command": "mitigate",
+        "targets": [{"name": "targetport", "parameters": {"service": "Service/app/api"}}],
     }
 
 
@@ -133,8 +140,8 @@ def test_cli_passes_agent_ref_text_to_go_without_parsing(raw, monkeypatch):
     monkeypatch.setattr(tools_cli, "_exchange", lambda request, _: seen.append(request) or {"summary": "ok"})
     assert tools_cli.main(["--json", "source", raw]) == 0
     assert seen == [{"command": "source", "ref": raw}]
-    assert tools_cli.main(["--json", "plan", "toy", "--bind", "resource=" + raw]) == 0
-    assert seen[-1]["bindings"] == {"resource": raw}
+    assert tools_cli.main(["--json", "mitigate", "toy", "--bind", "resource=" + raw]) == 0
+    assert seen[-1]["targets"] == [{"name": "toy", "parameters": {"resource": raw}}]
 
 
 def test_sdo_cli_start_does_not_import_the_responder_stack():
@@ -217,79 +224,6 @@ def test_act_waits_for_controller_capture_before_running(tmp_path, monkeypatch, 
     assert seen == ["capture", "mutation"]
 
 
-def test_mitigate_option_uses_fresh_menu_and_incident_round_allowance(monkeypatch):
-    seen = []
-    menu = {
-        "version": 1,
-        "incident_id": "incident",
-        "session_id": "session",
-        "dispatch_epoch": "1",
-        "menu_id": "fresh-menu",
-        "source_commit": "source",
-        "scope_digest": "scope",
-        "policy_digest": "policy",
-        "round_limit": 4,
-        "remaining_batches": 4,
-        "bindings": [],
-        "options": [
-            {
-                "option_id": "route",
-                "program_id": "routing",
-                "program_revision": "revision",
-                "dependency_revision": "dependencies",
-                "bindings": [],
-            }
-        ],
-    }
-
-    def exchange(request, _directory):
-        seen.append(request)
-        return {"menu": menu, "summary": "menu"} if request["command"] == "menu" else {"summary": "report"}
-
-    monkeypatch.setattr(tools_cli, "_exchange", exchange)
-    assert tools_cli.main(["--json", "mitigate", "route", "--rounds", "3"]) == 0
-    assert [request["command"] for request in seen] == ["menu", "mitigate"]
-    assert seen[1]["selection"]["round_limit"] == 3
-    assert seen[1]["selection"]["option_id"] == "route"
-    assert seen[1]["selection"]["request_id"]
-
-
-def test_mitigate_passes_named_parameters_for_controller_schema_parsing(monkeypatch):
-    seen = []
-
-    def exchange(request, _directory):
-        seen.append(request)
-        if request["command"] == "menu":
-            return {"menu": {"round_limit": 5, "options": [{"option_id": "ScaleWorkload"}]}}
-        return {"summary": "report"}
-
-    monkeypatch.setattr(tools_cli, "_exchange", exchange)
-    assert (
-        tools_cli.main(["--json", "mitigate", "ScaleWorkload", "--ref", "Deployment/app/api", "--replicas", "3"]) == 0
-    )
-    assert seen[-1]["parameters"] == {"ref": "Deployment/app/api", "replicas": "3"}
-    assert seen[-1]["selection"]["round_limit"] == 1
-
-
-@pytest.mark.parametrize("error", [None, "unknown mitigation option"])
-def test_mitigate_resolves_previously_advertised_id_in_controller_catalog(monkeypatch, error):
-    seen = []
-    advertised = "program-previous-explicit-bindings"
-
-    def exchange(request, _directory):
-        seen.append(request)
-        if request["command"] == "menu":
-            # The current presentation omits the previously advertised binding.
-            return {"menu": {"remaining_batches": 3, "options": [{"option_id": "ScaleWorkload"}]}}
-        assert request["selection"]["option_id"] == advertised
-        assert request["selection"]["round_limit"] == 2
-        return {"error": error} if error else {"summary": "applied retained option"}
-
-    monkeypatch.setattr(tools_cli, "_exchange", exchange)
-    assert tools_cli.main(["--json", "mitigate", advertised, "--rounds", "2"]) == int(error is not None)
-    assert [request["command"] for request in seen] == ["menu", "mitigate"]
-
-
 def test_menu_does_not_gate_direct_act(monkeypatch):
     monkeypatch.setenv("SDO_MITIGATION_SESSION", "1")
     seen = []
@@ -307,27 +241,12 @@ def test_detect_repeated_detector_selection(monkeypatch: pytest.MonkeyPatch) -> 
     assert seen == [{"command": "detect"}, {"command": "detect", "detector_ids": ["a", "b", "c"]}]
 
 
-@pytest.mark.parametrize("command", ["plan", "mitigate"])
-def test_repair_cli_preserves_explicit_target_finding_fingerprints(monkeypatch, command):
+def test_mitigate_cli_preserves_explicit_target_finding_fingerprints(monkeypatch):
     seen = []
-
-    def exchange(request, _directory):
-        seen.append(request)
-        return {
-            "menu": {
-                "round_limit": 3,
-                "remaining_batches": 3,
-                "options": [{"option_id": "repair", "program_id": "repair"}],
-            },
-            "summary": "ok",
-        }
-
-    monkeypatch.setattr(tools_cli, "_exchange", exchange)
-    assert (
-        tools_cli.main(["--json", command, "repair", "--finding", "health/api/config", "--finding", "health/api/ready"])
-        == 0
-    )
-    assert seen[-1]["finding_fingerprints"] == ["health/api/config", "health/api/ready"]
+    monkeypatch.setattr(tools_cli, "_exchange", lambda request, _: seen.append(request) or {"summary": "ok"})
+    argv = ["--json", "mitigate", "repair", "--finding", "health/api/config", "--finding", "health/api/ready"]
+    assert tools_cli.main(argv) == 0
+    assert seen[-1]["targets"][0]["finding_fingerprints"] == ["health/api/config", "health/api/ready"]
 
 
 @pytest.mark.parametrize("detection_error", [False, True])
@@ -491,166 +410,6 @@ def test_client_side_failures_also_produce_compact_output_and_complete_json(monk
         details.unlink()
 
 
-def test_mitigate_selection_set_has_independent_parameters(tmp_path, monkeypatch):
-    selection = tmp_path / "selection.json"
-    selection.write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "options": [
-                    {"option_id": "ScaleWorkload", "parameters": {"ref": "Deployment/app/a", "replicas": "2"}},
-                    {"option_id": "ScaleWorkload", "parameters": {"ref": "Deployment/app/b", "replicas": "3"}},
-                ],
-            }
-        )
-    )
-    seen = []
-    monkeypatch.setattr(tools_cli, "_exchange", lambda request, _: seen.append(request) or {"summary": "ok"})
-    assert tools_cli.main(["--json", "mitigate", "--selection-set", str(selection)]) == 0
-    assert seen[0]["selection_set"]["options"][1]["parameters"]["replicas"] == "3"
-
-
-def test_mitigate_repeated_options_group_parameters(monkeypatch):
-    seen = []
-    monkeypatch.setattr(tools_cli, "_exchange", lambda request, _: seen.append(request) or {"summary": "ok"})
-    assert (
-        tools_cli.main(
-            [
-                "--json",
-                "mitigate",
-                "--option",
-                "ScaleWorkload",
-                "--param",
-                "ref=Deployment/app/a",
-                "--param",
-                "replicas=2",
-                "--option",
-                "ScaleWorkload",
-                "--param",
-                "ref=Deployment/app/b",
-                "--param",
-                "replicas=3",
-            ]
-        )
-        == 0
-    )
-    assert seen[0]["selection_set"]["options"] == [
-        {"option_id": "ScaleWorkload", "parameters": {"ref": "Deployment/app/a", "replicas": "2"}},
-        {"option_id": "ScaleWorkload", "parameters": {"ref": "Deployment/app/b", "replicas": "3"}},
-    ]
-
-
-def _coverage_menu(*options):
-    return {"menu": {"round_limit": 5, "remaining_batches": 5, "options": list(options)}}
-
-
-def _drift_option(option_id, name, **extra):
-    return {
-        "option_id": option_id,
-        "program_id": "deployment-source-drift",
-        "bindings": [{"name": "workload", "object": {"kind": "Deployment", "namespace": "app", "name": name}}],
-        **extra,
-    }
-
-
-def test_mitigate_match_applies_every_ready_option_of_a_playbook_in_one_call(monkeypatch):
-    seen = []
-
-    def exchange(request, _directory):
-        seen.append(request)
-        if request["command"] == "menu":
-            return _coverage_menu(
-                _drift_option("program-a", "api"),
-                _drift_option("program-b", "web"),
-                {"option_id": "program-other", "program_id": "other"},
-            )
-        return {"summary": "applied"}
-
-    monkeypatch.setattr(tools_cli, "_exchange", exchange)
-    assert tools_cli.main(["--json", "mitigate", "--match", "deployment-source-drift"]) == 0
-    assert [request["command"] for request in seen] == ["menu", "mitigate"]
-    assert seen[0]["program_id"] == "deployment-source-drift"
-    assert seen[0]["match"] is True
-    assert seen[1]["selection_set"] == {
-        "version": 1,
-        "options": [{"option_id": "program-a"}, {"option_id": "program-b"}],
-    }
-
-
-def test_mitigate_match_narrows_by_binding_and_skips_disabled_options(monkeypatch):
-    seen = []
-
-    def exchange(request, _directory):
-        seen.append(request)
-        if request["command"] == "menu":
-            return _coverage_menu(
-                _drift_option("program-b", "web"),
-                _drift_option("program-c", "web", disabled_reason="blocked"),
-            )
-        return {"summary": "applied"}
-
-    monkeypatch.setattr(tools_cli, "_exchange", exchange)
-    argv = ["--json", "mitigate", "--match", "deployment-source-drift", "--bind", "workload=Deployment/app/web"]
-    assert tools_cli.main(argv) == 0
-    assert seen[0]["bindings"] == {"workload": "Deployment/app/web"}
-    assert seen[1]["selection_set"]["options"] == [{"option_id": "program-b"}]
-
-
-@pytest.mark.parametrize(
-    ("options", "message"),
-    [
-        ([], "no ready option"),
-        ([_drift_option("program-a", "api", disabled_reason="blocked")], "blocked"),
-    ],
-)
-def test_mitigate_match_without_a_ready_option_fails_before_any_write(monkeypatch, capsys, options, message):
-    seen = []
-
-    def exchange(request, _directory):
-        seen.append(request["command"])
-        return _coverage_menu(*options)
-
-    monkeypatch.setattr(tools_cli, "_exchange", exchange)
-    assert tools_cli.main(["--json", "mitigate", "--match", "deployment-source-drift"]) == 1
-    assert seen == ["menu"]
-    assert message in capsys.readouterr().err
-
-
-@pytest.mark.parametrize(
-    "extra",
-    [
-        ["route"],
-        ["--selection", "file.json"],
-        ["--selection-set", "file.json"],
-        ["--option", "route"],
-        ["--param", "a=b"],
-        ["--rounds", "2"],
-    ],
-)
-def test_mitigate_match_rejects_hand_built_selection_inputs(monkeypatch, capsys, extra):
-    seen = []
-    monkeypatch.setattr(tools_cli, "_exchange", lambda request, _: seen.append(request) or {"summary": "ok"})
-    assert tools_cli.main(["--json", "mitigate", "--match", "deployment-source-drift", *extra]) == 1
-    assert seen == []
-    assert "--match" in capsys.readouterr().err
-
-
-def test_mitigate_match_is_discoverable_in_help_and_generated_reference(capsys):
-    with pytest.raises(SystemExit):
-        tools_cli.main(["mitigate", "--help"])
-    assert "--match ID" in expand_context(capsys.readouterr().out)
-    assert "sdo mitigate --help" in tools_cli.command_surface()["commands"]["mitigate"]
-
-
-def test_multi_option_help_and_generated_surface_are_discoverable(capsys):
-    with pytest.raises(SystemExit):
-        tools_cli.main(["mitigate", "--help"])
-    help_text = expand_context(capsys.readouterr().out)
-    assert "independent options" in help_text
-    assert "overlapping" in help_text.lower()
-    assert "independent options" in tools_cli.command_surface()["commands"]["mitigate"]
-
-
 def test_act_does_not_bypass_pending_mutation_refusal(monkeypatch):
     called = []
     monkeypatch.setattr(
@@ -661,32 +420,6 @@ def test_act_does_not_bypass_pending_mutation_refusal(monkeypatch):
     monkeypatch.setattr(tools_cli.recorded_actions, "run_and_record", lambda *_args, **_kw: called.append(True) or 0)
     assert tools_cli.main(["act", "--resource", "Deployment/app/api", "--", "true"]) == 2
     assert not called
-
-
-def test_repeated_options_keep_finding_scope_per_option(monkeypatch):
-    seen = []
-    monkeypatch.setattr(tools_cli, "_exchange", lambda request, _: seen.append(request) or {"summary": "ok"})
-    assert (
-        tools_cli.main(
-            [
-                "--json",
-                "mitigate",
-                "--option",
-                "one",
-                "--finding",
-                "fault-one",
-                "--option",
-                "two",
-                "--finding",
-                "fault-two",
-            ]
-        )
-        == 0
-    )
-    assert [option["finding_fingerprints"] for option in seen[0]["selection_set"]["options"]] == [
-        ["fault-one"],
-        ["fault-two"],
-    ]
 
 
 def test_verify_wait_uses_cached_controller_protocol(monkeypatch, capsys):
@@ -703,74 +436,17 @@ def test_verify_wait_rejects_invalid_timeouts(value, monkeypatch):
     assert tools_cli.main(["verify", "--wait", value]) == 1
 
 
-def test_mitigation_help_preserves_database_reference_details(capsys: pytest.CaptureFixture[str]) -> None:
-    with pytest.raises(SystemExit) as stopped:
-        tools_cli.main(["mitigate", "--help"])
-    assert stopped.value.code == 0
-    help_text = " ".join(expand_context(capsys.readouterr().out).split())
-    assert "EnsureDatabaseUser" in help_text
-    assert "config_map" in help_text
-    assert "assignment" in help_text
-    assert "complete findings/evidence" in help_text
+def test_fix_reference_keeps_the_detail_the_short_help_dropped():
+    reference = (
+        Path(__file__).resolve().parents[5] / "sdo/skills/sdo-incident-response/references/fixes.md"
+    ).read_text()
+    for detail in ("EnsureDatabaseUser", "config_map", "assignment", "diagnosis_persists", "working-tree:", "--"):
+        assert detail in reference
 
 
-@pytest.mark.parametrize("command", ["diagnose", "plan", "mitigate"])
-def test_program_help_explains_current_checkout_and_revision(command, capsys, monkeypatch):
-    monkeypatch.setenv("COLUMNS", "100000")  # help wrapping may split "working-tree:" at its hyphen
-    with pytest.raises(SystemExit) as stopped:
-        tools_cli.main([command, "--help"])
-    assert stopped.value.code == 0
-    output = " ".join(expand_context(capsys.readouterr().out).split())
-    assert "current checkout" in output
-    assert "compile" in output
-    assert "working-tree:" in output
-
-
-def test_mitigate_preserves_actionable_program_compile_error(monkeypatch, capsys):
-    message = "playbook broken compile failed: undefined: Missing; fix checkout source and retry"
-    monkeypatch.setattr(
-        tools_cli,
-        "_exchange",
-        lambda *_: {
-            "menu": {
-                "round_limit": 5,
-                "options": [{"option_id": "program-broken", "program_id": "broken", "disabled_reason": message}],
-            }
-        },
-    )
-    assert tools_cli.main(["--json", "mitigate", "broken"]) == 1
-    assert message in capsys.readouterr().err
-
-
-def test_selection_set_accepts_structured_parameters(tmp_path):
-    path = tmp_path / "selection.json"
-    parameters = {
-        "target": {
-            "engine": "mongodb",
-            "pod": {"api_version": "v1", "kind": "Pod", "namespace": "app", "name": "db"},
-            "container": "mongo",
-            "database": "app",
-        },
-        "roles": [{"database": "app", "name": "readWrite"}],
-        "password": {"config_map": {"name": "bootstrap", "key": "init.sh", "assignment": "PASSWORD"}},
-        "allow_empty": False,
-        "port": 80,
-    }
-    path.write_text(
-        json.dumps({"version": 1, "options": [{"option_id": "EnsureDatabaseUser", "parameters": parameters}]})
-    )
-    result = tools_cli._selection_set(path)["options"][0]["parameters"]
-    for name, value in parameters.items():
-        assert json.loads(result[name]) == value
-
-
-def test_selection_set_reports_field_shape_without_echoing_values(tmp_path):
-    path = tmp_path / "selection.json"
-    path.write_text(
-        json.dumps({"version": 1, "options": [{"option_id": "EnsureDatabaseUser", "parameters": ["PRIVATE_CANARY"]}]})
-    )
-    with pytest.raises(ValueError, match="expected object") as error:
-        tools_cli._selection_set(path)
-    assert "options[0].parameters" in str(error.value)
-    assert "object" in str(error.value)
-    assert "PRIVATE_CANARY" not in str(error.value)
+def test_mitigate_passes_structured_values_as_json_text(monkeypatch):
+    seen = []
+    monkeypatch.setattr(tools_cli, "_exchange", lambda request, _: seen.append(request) or {"summary": "ok"})
+    roles = '[{"database": "app", "name": "readWrite"}]'
+    assert tools_cli.main(["--json", "mitigate", "EnsureDatabaseUser", "--bind", "roles=" + roles]) == 0
+    assert json.loads(seen[0]["targets"][0]["parameters"]["roles"]) == [{"database": "app", "name": "readWrite"}]

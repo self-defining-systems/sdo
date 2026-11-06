@@ -183,12 +183,11 @@ same session reflects at the end.
    the matching playbook READMEs and the architecture summary.
 2. Each iteration:
    - The responder chooses, per open finding:
-     - `sdo plan <playbook> --bind …`, which shows a dry-run plan (choosing
-       counts as approval);
+     - `sdo mitigate <playbook> --bind …`, which applies the playbook's fix;
      - more probing with kubectl or `sdo diagnose`;
      - or a session-only bash fix.
-   - `sdo apply <plans…>` applies the batch through the repair policy, with one
-     redeploy.
+   - Independent fixes can be applied together with `sdo mitigate A … -- B …`
+     through the repair policy.
    - SDO verifies and returns the result to the session: each applied
      playbook's `Diagnose` again (expecting `NoMatch`), all detectors again,
      and `Diagnose` again on candidates for remaining or new findings. Faults
@@ -200,7 +199,7 @@ same session reflects at the end.
    call that writes nothing spends none.
 4. Ad-hoc fixes go through the same verification (`sdo verify`).
 
-Tools: `sdo status`, `sdo diagnose`, `sdo plan`, `sdo apply`, `sdo verify`,
+Tools: `sdo status`, `sdo diagnose`, `sdo mitigate`, `sdo verify`,
 `sdo rollback`. Every call is logged to the outcome.
 
 Failure signals recorded for reflection, the corpus and trust:

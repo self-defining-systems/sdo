@@ -33,10 +33,6 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 		return
 	}
 	l.openDirectMenuSession(response)
-	response.SelectionSchema = menuMessageSchema((&contracts.MitigationSelection{}).ProtoReflect().Descriptor())
-	response.SelectionSetSchema = menuMessageSchema((&contracts.MitigationSelectionSet{}).ProtoReflect().Descriptor())
-	optionSchema := response.SelectionSetSchema.Properties["options"].Items
-	optionSchema.Properties["parameters"].AdditionalProperties = &MenuSchema{AnyOf: []*MenuSchema{{Type: "string"}, {Type: "number"}, {Type: "boolean"}, {Type: "object", AdditionalProperties: true}, {Type: "array", Items: &MenuSchema{}}}, Description: "Shapes are published per option in parameters[].schema."}
 	entries := rawMenuActions()
 	if capabilities, ok := l.Executor.Client.(interface{ unavailableMenuActions() map[string]bool }); ok {
 		for action, unavailable := range capabilities.unavailableMenuActions() {
@@ -73,12 +69,7 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 				continue
 			}
 			bindings := []program.Bindings{}
-			if request.Match {
-				bindings = coverageMatchBindings(l.Request.PlaybookCoverage, spec.ID, request.Bindings)
-				if len(bindings) == 0 {
-					continue
-				}
-			} else if request.ProgramID != "" && len(request.Parameters) > 0 {
+			if request.ProgramID != "" && len(request.Parameters) > 0 {
 				bound, err := menuBindProgram(menuEntry{spec: spec, bindings: request.Bindings}, request.Parameters)
 				if err == nil {
 					err = program.ValidateBindings(spec, bound)
@@ -136,8 +127,10 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 	}
 	sort.Strings(ids)
 	response.MenuParameters = map[string][]MenuParameter{}
+	response.MenuCommands = map[string]string{}
 	for _, id := range ids {
 		entry := entries[id]
+		response.MenuCommands[id] = menuEntryCommand(id, entry)
 		if entry.action != nil {
 			response.MenuParameters[id] = menuActionParameters(entry.action)
 		} else {
@@ -408,6 +401,13 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 		}
 		report.FailedPhase = "verification"
 		report.ReasonCode = "direct_verification_unresolved"
+		if applyErr == nil && result.Applied && !result.RolledBack && targetVerdict.Result == program.NoMatch {
+			// The fix is in and its own diagnosis has cleared; independent
+			// verification is still waiting for recovery. This only names the
+			// state: the verdict above is unchanged.
+			report.FailedPhase = "recovery"
+			report.ReasonCode = AppliedAwaitingRecovery
+		}
 		if applyErr != nil {
 			rr.Verification = verdictContract(program.Verdict{Result: program.Unknown})
 			if !result.Applied {
@@ -436,7 +436,14 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 	l.menuExecutions[attempt] = cloneMenuExecution(response.MenuExecution)
 	response.Report = report
 	response.Summary = "mitigation " + report.Status.String()
+	if report.ReasonCode == AppliedAwaitingRecovery {
+		response.Summary = "fix applied; waiting for traffic to recover; next: sdo verify --wait 60"
+	}
 }
+
+// AppliedAwaitingRecovery is the report reason for a fix that applied and whose
+// diagnosis no longer matches while independent verification still waits.
+const AppliedAwaitingRecovery = "applied_awaiting_recovery"
 
 func (l *ResponderLoop) prepareMenuPlan(ctx context.Context, entry menuEntry, parameters map[string]string, bindings program.Bindings) (program.Plan, error) {
 	plan := program.Plan{}
@@ -526,4 +533,23 @@ func coverageMatchBindings(coverage *contracts.PlaybookCoverage, playbookID stri
 		}
 	}
 	return result
+}
+
+// menuEntryCommand is the command that selects one menu entry by name.
+func menuEntryCommand(id string, entry menuEntry) string {
+	switch {
+	case entry.action != nil:
+		command := "sdo mitigate " + id
+		for _, p := range menuActionParameters(entry.action) {
+			if p.Required {
+				command += " --bind " + p.Name + "=..."
+			}
+		}
+		return command
+	case entry.compileError != "":
+		return ""
+	case entry.plan != nil:
+		return ""
+	}
+	return mitigateCommand(entry.programID, entry.bindings)
 }

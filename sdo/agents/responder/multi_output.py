@@ -12,6 +12,9 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+AWAITING_RECOVERY = "applied_awaiting_recovery"
+
+
 def option_action_results(response: dict[str, Any]) -> list[dict[str, Any]]:
     """Keep every option's typed report and execution together in the full file."""
     reports = response.get("option_reports")
@@ -30,6 +33,7 @@ def option_action_results(response: dict[str, Any]) -> list[dict[str, Any]]:
         action["option_id"] = report.get("option_id", execution.get("option_id", ""))
         action["application_id"] = report.get("application_id", execution.get("application_id", ""))
         action["pending"] = bool(execution.get("pending"))
+        action["waiting"] = report.get("reason_code") == AWAITING_RECOVERY and not action["pending"]
         action["summary"] = f"{action['option_id']}: {status}"
         action["targeted_healthy"] = status == "STATUS_SUCCESS"
         if not action["pending"]:
@@ -94,7 +98,7 @@ def format_selection_response(
             return clamp_mutation_summary("\n".join(lines), path, response, json_output=json_output), path
         return text, path
     actions = option_action_results(response)
-    pending = sum(action["pending"] for action in actions)
+    pending = sum(action["pending"] or action["waiting"] for action in actions)
     failed = sum(bool(action.get("error")) for action in actions if not action["pending"])
     succeeded = sum(action["targeted_healthy"] for action in actions)
     unresolved = len(actions) - pending - failed - succeeded
@@ -105,12 +109,14 @@ def format_selection_response(
     for action in actions:
         execution = (action["report"].get("execution") or [{}])[0]
         effect = _action_effect(execution)
-        status = (
-            "pending"
-            if action["pending"]
-            else action["report"].get("status", "STATUS_UNRESOLVED").removeprefix("STATUS_").lower()
-        )
-        row = f"option: {_brief(action['option_id'], 48)} {status} application={_brief(action['application_id'], 64)}"
+        if action["waiting"]:
+            status = "applied, waiting for recovery"
+        elif action["pending"]:
+            status = "pending"
+        else:
+            status = action["report"].get("status", "STATUS_UNRESOLVED").removeprefix("STATUS_").lower()
+        name = execution.get("program_id") or action["option_id"]
+        row = f"fix: {_brief(name, 48)} {status} application={_brief(action['application_id'], 64)}"
         rows.append(f"{row} effect={_brief(effect, 96)}" if effect else row)
     # Keep verdicts/counts/schema intact. Make room for option identities by
     # moving only displayed finding details to the already complete report.

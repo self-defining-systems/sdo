@@ -33,7 +33,7 @@ func buildPlaybookCoverage(findings []sdk.Finding, runs []ProgramRun, view sdk.D
 			canMitigate := run.CanMitigate != nil && *run.CanMitigate
 			match = &contracts.PlaybookMatch{PlaybookId: run.ProgramID, ProgramRevision: run.ProgramRevision, Bindings: programBindingsContract(run.Bindings), CanMitigate: canMitigate}
 			if canMitigate {
-				match.MitigationSelection = "program-" + menuDigest([]any{run.ProgramID, run.Bindings})
+				match.MitigateCommand = mitigateCommand(run.ProgramID, run.Bindings)
 			}
 			state := stats[run.ProgramID]
 			match.VerifiedSuccesses = int32(state.VerifiedSuccesses)

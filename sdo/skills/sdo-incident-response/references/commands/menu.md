@@ -1,13 +1,13 @@
 ## menu
 
-list controller mitigation options
+list fixes as commands
 
 ```text
-sdo menu [-h] [--bind NAME=Kind/namespace/name] [program_id]
+sdo menu [-h] [--bind NAME=VALUE] [NAME]
 ```
 
-Program commands use the current checkout, including shared libraries and new playbook IDs. Edits compile on demand; fix compile errors in place and retry. Live authoring has ordinary shell access; broker ownership and memory validation govern publication. Revision receipts use working-tree:<source digest> for unpublished code. Reusable API reads use program.Kubernetes(view) with upstream client-go options; reads are recorded for replay.
+List the fixes you can apply as commands; NAME narrows to one playbook.
 
-- `--bind`: named program parameter; repeat for each binding
+- `--bind`: a playbook parameter: an object is NAME=Kind/NAMESPACE/NAME; repeat for each
 
-Key JSON fields: `menu.options[].{option_id, program_id, program_revision, disabled_reason, parameters}, selection_schema, selection_set_schema, unexplained_removal_blockers[]`.
+Key JSON fields: `menu.options[].{command, program_id, program_revision, disabled_reason, parameters}, unexplained_removal_blockers[]`.

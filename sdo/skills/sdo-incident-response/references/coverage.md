@@ -1,8 +1,8 @@
 # Coverage and learned repairs
 
-`playbook_coverage`: matches/bindings, mitigation, unexplained findings. Counts inform; never permission gates. Diagnosis-only matches supply evidence. Apply `can_mitigate` matches by playbook ID; check rollout, current status, late findings, preconditions and accepted-source values. Investigate contradictions. Keep verified stage receipts; `plan_not_executable` is terminal for that revision and binding, while other bindings remain eligible; `ineffective` means the playbook already applied here and left those findings open. Partial playbooks: stages/`sdo mitigate` handle mechanics; README guides judgement.
+`playbook_coverage`: matches/bindings, mitigation, unexplained findings. Counts inform; never permission gates. Diagnosis-only matches supply evidence. Apply `can_mitigate` matches by running their `mitigate_command`; check rollout, current status, late findings, preconditions and accepted-source values. Investigate contradictions. Keep verified stage receipts; `plan_not_executable` is terminal for that revision and binding, while other bindings remain eligible; `ineffective` means the playbook already applied here and left those findings open. Partial playbooks: stages/`sdo mitigate NAME` handle mechanics; README guides judgement.
 
-Ready matches include named object/scalar bindings and their mitigation selection. Use that supplied
+Ready matches include named object/scalar bindings and the command that applies them. Use that supplied
 evidence to act on useful independent matches together; spend further investigation on contradictions or
 missing preconditions. Stage actions have already happened; begin with the remaining work.
 
@@ -28,7 +28,7 @@ hold outcome publication after recovery and worker quiescence.
 
 For staged multi-fault work, clear blockers that prevent other repairs (admission, quota, scheduling,
 security policy) first, then re-run or re-trigger stalled saved repairs instead of re-deriving them.
-Start independent repairs together; combine repairs editing one object into one edit. Re-check with
+Start independent repairs together (`sdo mitigate A --bind ... -- B --bind ...`); combine repairs editing one object into one edit. Re-check with
 saved diagnoses before closing. The brief is enough to start; no mandatory skill reread.
 
 `stage_actions` retains controller result labels and adds `blockers` from the saved rollout conditions

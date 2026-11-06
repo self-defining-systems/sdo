@@ -88,8 +88,8 @@ def test_combined_summary_uses_shared_progress_and_retains_complete_aggregate(tm
     }
     text, path = format_selection_response(before, [], response)
     assert "1 succeeded; 1 pending; 0 failed" in text
-    assert "option: one success application=applied-one" in text
-    assert "option: two pending application=pending-two" in text
+    assert "fix: one success application=applied-one" in text
+    assert "fix: two pending application=pending-two" in text
     assert "fixed by/since this action: 1" in text
     assert "Incident: NOT verified" in text
     assert len(text.encode()) <= 2048
@@ -224,5 +224,5 @@ def test_stalled_mitigation_names_its_standard_release(tmp_path, monkeypatch):
     for text in (single, batch):
         assert (
             "Deployment/app/web cannot roll out beside its old revision: "
-            "sdo mitigate RetireOldRevision --ref ReplicaSet/app/web-old"
+            "sdo mitigate RetireOldRevision --bind ref=ReplicaSet/app/web-old"
         ) in text.splitlines()[:3]

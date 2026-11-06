@@ -78,6 +78,9 @@ def bound_reply(text: str, *, tool: str, budget: int = MAX_TOOL_REPLY_BYTES) -> 
     return cap_text(text, budget, bytes_limit=True)
 
 
+MENU_OPTIONS_SHOWN = 10
+
+
 def summarize_response(response: dict[str, Any], details_file: str) -> dict[str, Any]:
     """Preserve status and selected identifiers; never imply omitted evidence is complete."""
     summary: dict[str, Any] = {"details_file": details_file, "summarized": True}
@@ -144,17 +147,27 @@ def summarize_response(response: dict[str, Any], details_file: str) -> dict[str,
         }
     menu = response.get("menu")
     if isinstance(menu, dict):
-        summary["option_count"] = len(menu.get("options", []))
+        options = [option for option in menu.get("options", []) if isinstance(option, dict)]
+        # Playbooks first, then built-in actions; hashes never reach the agent.
+        options.sort(key=lambda option: str(option.get("program_id", "")).startswith("action:"))
+        summary["option_count"] = len(options)
         summary["options"] = [
-            {
-                name: _brief(option[name], 100)
-                for name in ("option_id", "program_id", "disabled_reason")
-                if name in option
+            {"command": _brief(option["command"], 160)}
+            if option.get("command")
+            else {
+                "playbook": _brief(option.get("program_id", ""), 100),
+                "disabled": _brief(option.get("disabled_reason", ""), 100),
             }
-            for option in menu.get("options", [])[:4]
-            if isinstance(option, dict)
+            for option in options[:MENU_OPTIONS_SHOWN]
         ]
-        summary["options_omitted"] = max(0, len(menu.get("options", [])) - 4)
+        summary["options_omitted"] = max(0, len(options) - MENU_OPTIONS_SHOWN)
+    fixes = (
+        [_brief(run["mitigate_command"], 240) for run in runs if isinstance(run, dict) and run.get("mitigate_command")]
+        if isinstance(runs, list)
+        else []
+    )
+    if fixes:
+        summary["to_fix"] = fixes[:3]
     receipt = response.get("receipt")
     if isinstance(receipt, dict):
         summary["changed"] = {
@@ -163,13 +176,15 @@ def summarize_response(response: dict[str, Any], details_file: str) -> dict[str,
             if name in receipt
         }
     if response.get("error") or response.get("exit_code"):
-        summary["next_commands"] = ["status", "source", "diagnose"]
+        summary["next_commands"] = ["sdo status", "sdo source", "sdo diagnose"]
     elif response.get("healthy"):
         summary["next_commands"] = []
-    elif response.get("command") in ("apply", "mitigate", "act"):
-        summary["next_commands"] = ["check", "report"]
+    elif response.get("command") in ("mitigate", "act"):
+        summary["next_commands"] = ["sdo verify --wait 60"]
+    elif summary.get("to_fix"):
+        summary["next_commands"] = []
     else:
-        summary["next_commands"] = ["mitigate", "act", "check"]
+        summary["next_commands"] = ["sdo act", "sdo check"]
     summary["details"] = "Full findings, options, source and receipts are in details_file; extract only what you need."
     # If several large sections coexist, retain the repair verdict and counts;
     # all per-item evidence is still available in the complete JSON.
@@ -217,9 +232,15 @@ def render_summary(summary: dict[str, Any]) -> str:
     if counts:
         lines.append(" ".join(counts))
     for name in ("still_broken", "diagnoses", "options"):
-        lines.extend(
-            name + ": " + " ".join(f"{key}={value}" for key, value in item.items()) for item in summary.get(name, [])
-        )
+        if name == "options":
+            lines.extend(
+                item.get("command") or "playbook: " + " ".join(item.values()) for item in summary.get(name, [])
+            )
+        else:
+            lines.extend(
+                name + ": " + " ".join(f"{key}={value}" for key, value in item.items())
+                for item in summary.get(name, [])
+            )
         if summary.get(name + "_omitted"):
             lines.append(f"{name}_omitted={summary[name + '_omitted']}")
     lines.extend(
@@ -227,6 +248,8 @@ def render_summary(summary: dict[str, Any]) -> str:
         for name in ("report", "changed")
         if summary.get(name)
     )
-    lines.append("Next commands: " + ", ".join(summary.get("next_commands", [])))
+    lines.extend("To fix: " + command for command in summary.get("to_fix", []))
+    if summary.get("next_commands"):
+        lines.append("Next: " + ", ".join(summary["next_commands"]))
     lines.append("Full JSON: " + str(summary["details_file"]))
     return "\n".join(lines)

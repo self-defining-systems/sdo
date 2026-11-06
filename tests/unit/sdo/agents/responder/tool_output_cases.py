@@ -37,7 +37,7 @@ def large_response(command: str, count: int) -> dict[str, Any]:
     }
     if command in ("status", "detect", "verify"):
         response.update(findings=findings, drift_events=[{"summary": "drift " * 1000}] * count)
-    if command in ("status", "diagnose", "apply"):
+    if command in ("status", "diagnose"):
         response["program_runs"] = [
             {"program_id": f"repair-{i}", "can_mitigate": True, "verdict": {"result": "Match", "evidence": findings[i]}}
             for i in range(min(count, 2))
@@ -51,7 +51,7 @@ def large_response(command: str, count: int) -> dict[str, Any]:
                 for name in ("repair-0", "repair-1", *ACTION_OPTIONS)
             ],
         }
-    if command in ("mitigate", "apply", "rollback"):
+    if command in ("mitigate", "rollback"):
         response.update(
             application_id="application",
             targeted_healthy=True,
@@ -63,11 +63,6 @@ def large_response(command: str, count: int) -> dict[str, Any]:
         response["mitigation_health"] = {"findings": findings, "healthy": False, "targeted_healthy": True}
     if command == "report":
         response["report"] = {"status": "STATUS_UNRESOLVED", "attempt_id": "attempt", "rounds": findings}
-    if command == "plan":
-        response.update(
-            plan_id="plan",
-            patches=[{"ref": finding["primary_resource"], "changes": "patch " * 1000} for finding in findings],
-        )
     if command == "source":
         response["source"] = {"spec": {"data": "complete accepted manifest " * 1000}}
     return response
@@ -81,9 +76,7 @@ def rendered_stdout_cases() -> dict[str, str]:
         "check": [],
         "menu": [],
         "diagnose": ["repair-0"],
-        "plan": ["repair-0"],
         "mitigate": ["repair-0"],
-        "apply": ["plan"],
         "source": ["Service/toy/api"],
         "verify": [],
         "rollback": ["application"],
@@ -108,7 +101,7 @@ def rendered_stdout_cases() -> dict[str, str]:
                 text = output.getvalue()
                 details = Path(text.split("Full JSON: ", 1)[1].splitlines()[0])
                 full = json.loads(details.read_text())
-                if command in {"mitigate", "act", "apply", "rollback"}:
+                if command in {"mitigate", "act", "rollback"}:
                     assert len(full["actions"]) == 1
                     full = full["actions"][0]
                 assert full["command"] == command
@@ -134,7 +127,7 @@ def rendered_stdout_cases() -> dict[str, str]:
             text = output.getvalue()
             details = Path(text.split("Full JSON: ", 1)[1].splitlines()[0])
             full = json.loads(details.read_text())
-            if command in {"mitigate", "act", "apply", "rollback"}:
+            if command in {"mitigate", "act", "rollback"}:
                 full = full["actions"][0]
             assert full["error"]
             samples[f"{command}.error"] = text

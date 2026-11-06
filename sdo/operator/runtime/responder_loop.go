@@ -52,10 +52,13 @@ type ToolRequest struct {
 	Command             string                                 `json:"command"`
 	Ref                 *sdk.ObjectRef                         `json:"ref,omitempty"`
 	ProgramID           string                                 `json:"program_id,omitempty"`
-	Match               bool                                   `json:"match,omitempty"`
-	Bindings            program.Bindings                       `json:"bindings,omitempty"`
-	PlanIDs             []string                               `json:"plan_ids,omitempty"`
-	ApplicationID       string                                 `json:"application_id,omitempty"`
+	// Targets are the playbooks or built-in actions a mitigate call applies,
+	// named as the responder typed them. Go resolves each to its exact selection.
+	Targets       []MitigateTarget `json:"targets,omitempty"`
+	Rounds        uint32           `json:"rounds,omitempty"`
+	Bindings      program.Bindings `json:"bindings,omitempty"`
+	PlanIDs       []string         `json:"plan_ids,omitempty"`
+	ApplicationID string           `json:"application_id,omitempty"`
 	// stage marks a call made by the automatic response stage. It is not
 	// decodable from a tool call, so only the stage can set it. A stage call
 	// never takes the notes queued for the agent and waits for rollouts inline.
@@ -85,8 +88,6 @@ type ToolResponse struct {
 	VerificationBlockers       []VerificationBlocker          `json:"verification_blockers,omitempty"`
 	DataAtRisk                 []string                       `json:"data_at_risk,omitempty"`
 	ActionReports              []PlanActionReport             `json:"action_reports,omitempty"`
-	SelectionSchema            *MenuSchema                    `json:"selection_schema,omitempty"`
-	SelectionSetSchema         *MenuSchema                    `json:"selection_set_schema,omitempty"`
 	ProgramRevisions           map[string]string              `json:"program_revisions,omitempty"`
 	OptionReports              []*contracts.MitigationReport  `json:"-"`
 	UnexplainedRemovalBlockers []UnexplainedRemovalBlocker    `json:"unexplained_removal_blockers,omitempty"`
@@ -105,6 +106,7 @@ type ToolResponse struct {
 	RolloutPending             *contracts.RolloutPending      `json:"rollout_pending,omitempty"`
 	MenuExecution              []MenuRoundExecution           `json:"-"`
 	MenuParameters             map[string][]MenuParameter     `json:"-"`
+	MenuCommands               map[string]string              `json:"-"`
 	Menu                       *contracts.MitigationMenu      `json:"-"`
 	Report                     *contracts.MitigationReport    `json:"-"`
 	Session                    *contracts.MitigationSession   `json:"-"`
@@ -576,6 +578,14 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			}
 		}
 	case "mitigate":
+		if err := l.loadTargetPrograms(ctx, request.Targets); err != nil {
+			response.Error = err.Error()
+			return response
+		}
+		if err := l.resolveMitigateTargets(&request); err != nil {
+			response.Error = err.Error()
+			return response
+		}
 		if err := l.loadSelectedWorkingPrograms(ctx, request); err != nil {
 			response.Error = err.Error()
 			return response
@@ -623,6 +633,14 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 				response.Error = fmt.Sprintf("unknown program %q", request.ProgramID)
 				break
 			}
+			if spec, found := l.programSpec(request.ProgramID); found {
+				bound, err := diagnoseBindings(spec, request)
+				if err != nil {
+					response.Error = err.Error()
+					break
+				}
+				request.Bindings = bound
+			}
 			view, err := l.snapshotView(ctx)
 			if err != nil {
 				response.Error = err.Error()
@@ -632,6 +650,9 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			verdict := program.RunDiagnose(ctx, p, view, request.Bindings, l.deadline())
 			_, canMitigate := l.Programs.Mitigator(request.ProgramID)
 			run := ProgramRun{ProgramRevision: l.programRevision(request.ProgramID), CanMitigate: &canMitigate, ProgramID: request.ProgramID, Bindings: request.Bindings, Verdict: verdict, Duration: l.clock().Sub(started)}
+			if canMitigate && verdict.Result == program.Match {
+				run.MitigateCommand = mitigateCommand(request.ProgramID, request.Bindings)
+			}
 			response.ProgramRuns = []ProgramRun{run}
 			l.runs = append(l.runs, run)
 		}
