@@ -87,8 +87,8 @@ func TestAssessRolloutClassifiesOnPositiveEvidenceOnly(t *testing.T) {
 		{"container creating without failure events", podOpen + `{"phase":"Pending","containerStatuses":[{"name":"web","state":{"waiting":{"reason":"ContainerCreating"}}}]}` + podClose, warning("Unhealthy", "unrelated") + "", true, false, nil},
 		{"running just started", podOpen + `{"phase":"Running","containerStatuses":[{"name":"web","ready":false,"state":{"running":{` + justNow + `}}}]}` + podClose, "", true, false, []string{"web running (ready=false)"}},
 		{"running never ready (bad probe)", podOpen + `{"phase":"Running","containerStatuses":[{"name":"web","ready":false,"state":{"running":{` + longAgo + `}}}]}` + podClose, warning("Unhealthy", "Readiness probe failed: connection refused"), false, false, []string{"readinessProbe", "Readiness probe failed"}},
-		{"crash loop sampled while running", podOpen + `{"phase":"Running","containerStatuses":[{"name":"web","ready":false,"restartCount":4,"lastState":{"terminated":{"exitCode":1,"reason":"Error"}},"state":{"running":{` + justNow + `}}}]}` + podClose, "", false, true, []string{"restarts=4", "last exit 1 Error", "keeps crashing"}},
-		{"one restart while running is not yet stuck", podOpen + `{"phase":"Running","containerStatuses":[{"name":"web","ready":false,"restartCount":1,"lastState":{"terminated":{"exitCode":1,"reason":"Error"}},"state":{"running":{` + justNow + `}}}]}` + podClose, "", false, false, []string{"restarts=1"}},
+		{"crash loop sampled while running", podOpen + `{"phase":"Running","containerStatuses":[{"name":"web","ready":false,"restartCount":4,"lastState":{"terminated":{"exitCode":1,"reason":"Error"}},"state":{"running":{` + justNow + `}}}]}` + podClose, "", false, true, []string{"restarts=4", "last exit 1 Error", "deadline exceeded while container web"}},
+		{"one restart past the deadline", podOpen + `{"phase":"Running","containerStatuses":[{"name":"web","ready":false,"restartCount":1,"lastState":{"terminated":{"exitCode":1,"reason":"Error"}},"state":{"running":{` + justNow + `}}}]}` + podClose, "", false, true, []string{"restarts=1"}},
 		{"crashloopbackoff", podOpen + `{"phase":"Running","containerStatuses":[{"name":"web","restartCount":2,"state":{"waiting":{"reason":"CrashLoopBackOff"}}}]}` + podClose, "", false, true, []string{"CrashLoopBackOff"}},
 		{"unschedulable pending", podOpen + `{"phase":"Pending","conditions":[{"type":"PodScheduled","status":"False","reason":"Unschedulable","message":"0/3 nodes are available: 3 Insufficient cpu."}]}` + podClose, warning("FailedScheduling", "0/3 nodes are available"), false, true, []string{"Unschedulable", "Insufficient cpu", "cannot be scheduled", "FailedScheduling"}},
 		{"unbound pvc pending without conditions", podOpen + `{"phase":"Pending"}` + podClose, warning("FailedScheduling", "pod has unbound immediate PersistentVolumeClaims"), false, true, []string{"Pending with no container statuses", "unbound immediate", "PersistentVolumeClaim"}},
@@ -143,7 +143,7 @@ func TestObserveTimeoutForNotProgressingPodsIsAPlanOutcome(t *testing.T) {
 }
 
 func TestObserveFailsFastWhenRolloutIsClearlyStuck(t *testing.T) {
-	pods := podOpen + `{"phase":"Running","containerStatuses":[{"name":"web","restartCount":3,"state":{"waiting":{"reason":"CrashLoopBackOff"}}}]}` + podClose
+	pods := podOpen + `{"phase":"Pending","containerStatuses":[{"name":"web","state":{"waiting":{"reason":"InvalidImageName"}}}]}` + podClose
 	clock, _ := time.Parse(time.RFC3339, testNow)
 	waits := 0
 	backend := rolloutBackend(pods, 10*time.Minute)
@@ -152,7 +152,7 @@ func TestObserveFailsFastWhenRolloutIsClearlyStuck(t *testing.T) {
 		waits++
 		clock = clock.Add(10 * time.Second)
 		if waits > 100 {
-			t.Fatal("kept waiting on a crash-looping rollout")
+			t.Fatal("kept waiting on an invalid image")
 		}
 		return nil
 	}
@@ -161,7 +161,7 @@ func TestObserveFailsFastWhenRolloutIsClearlyStuck(t *testing.T) {
 	if !errors.As(err, &timeout) || timeout.InfrastructureOutcome() || timeout.Waited >= 10*time.Minute {
 		t.Fatalf("want early plan outcome, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "CrashLoopBackOff") || waits > 6 {
+	if !strings.Contains(err.Error(), "InvalidImageName") || waits > 6 {
 		t.Fatalf("waits=%d err=%v", waits, err)
 	}
 }
@@ -204,7 +204,7 @@ func TestInitContainerRetriesAreNotStuckBeforeTheDeadline(t *testing.T) {
 		t.Fatalf("init retry while a Job runs must not be stuck: %+v", got)
 	}
 	got = assessRollout("Deployment/demo/web", pods, []byte(`{"items":[]}`), now, pastDeadline)
-	if !got.Stuck || got.Progressing || !got.InitDeadline || got.reason() != RolloutReasonInitRetryDeadline {
+	if !got.Stuck || got.Progressing || got.RetryKind != retryInit || got.reason() != RolloutReasonInitRetryDeadline {
 		t.Fatalf("init retry past the deadline must be stuck with its own reason: %+v", got)
 	}
 	for _, want := range []string{"deadline exceeded while init container dependencies was retrying", "last exit 1 Error", "waiting for synthetic-job"} {
@@ -293,5 +293,59 @@ func TestObserveUsesProgressDeadlineForInitRetries(t *testing.T) {
 	}
 	if waited < 120*time.Second || waited > 150*time.Second {
 		t.Fatalf("stalled after %s, want about the 120s progress deadline", waited)
+	}
+}
+
+const retryingMainPod = `{"phase":"Running","initContainerStatuses":[{"name":"dependencies","ready":true,"state":{"terminated":{"exitCode":0,"reason":"Completed"}}}],"containerStatuses":[{"name":"app","restartCount":3,"state":{"waiting":{"reason":"CrashLoopBackOff"}},"lastState":{"terminated":{"exitCode":1,"reason":"Error","message":"database not migrated"}}}]}`
+
+// A main container that crash-loops is not yet progressed, never stuck, while a
+// Job of the same or an earlier phase runs, and until the progress deadline after.
+func TestMainContainerRestartsAreNotStuckBeforeTheDeadline(t *testing.T) {
+	now := mustTime(testNow)
+	pods := []byte(podOpen + retryingMainPod + podClose)
+	for name, in := range map[string]rolloutInputs{
+		"before deadline": {Waited: 3 * time.Minute, Deadline: 10 * time.Minute},
+		"job running":     {Waited: time.Hour, Deadline: 10 * time.Minute, RunningJobs: []string{"Job/demo/migrate"}},
+	} {
+		got := assessRollout("Deployment/demo/web", pods, []byte(`{"items":[]}`), now, in)
+		if got.Stuck || !got.Progressing {
+			t.Fatalf("%s: main container retry must not be stuck: %+v", name, got)
+		}
+	}
+	got := assessRollout("Deployment/demo/web", pods, []byte(`{"items":[]}`), now, pastDeadline)
+	if !got.Stuck || got.Progressing || got.reason() != RolloutReasonContainerRetryDeadline {
+		t.Fatalf("past the deadline: want stuck with the container reason: %+v", got)
+	}
+	for _, want := range []string{"container app was retrying", "database not migrated"} {
+		if !strings.Contains(got.Detail+got.Advice, want) {
+			t.Fatalf("evidence lacks %q: %s | %s", want, got.Detail, got.Advice)
+		}
+	}
+}
+
+func TestMainContainerRetryGraceDoesNotHideFastFailures(t *testing.T) {
+	jobs := rolloutInputs{Waited: time.Second, Deadline: 10 * time.Minute, RunningJobs: []string{"Job/demo/migrate"}}
+	pods := podOpen + `{"phase":"Running","containerStatuses":[{"name":"app","restartCount":3,"state":{"waiting":{"reason":"CrashLoopBackOff"}}},{"name":"side","state":{"waiting":{"reason":"CreateContainerConfigError"}}}]}` + podClose
+	got := assessRollout("Deployment/demo/web", []byte(pods), []byte(`{"items":[]}`), mustTime(testNow), jobs)
+	if !got.Stuck || got.Progressing {
+		t.Fatalf("a config error beside a retrying container must fail fast: %+v", got)
+	}
+}
+
+func TestObserveDoesNotFailMainContainerRestartsWhileEarlierJobRuns(t *testing.T) {
+	pods := podOpen + retryingMainPod + podClose
+	runningJob := `{"metadata":{"name":"migrate"},"spec":{"completions":1},"status":{"active":1}}`
+	ctx := withJobsInFlight(context.Background(), []string{"Job/demo/migrate"})
+	_, err := observeWithClock(jobBackend(pods, runningJob, rollingDeployment, 20*time.Millisecond), ctx, 10*time.Second, 0)
+	var timeout *RolloutTimeoutError
+	if !errors.As(err, &timeout) || timeout.Stalled || timeout.Reason != RolloutReasonProgressing {
+		t.Fatalf("a running Job makes main restarts a time limit: %v", err)
+	}
+	waited, err := observeWithClock(jobBackend(pods, "", rollingDeployment, 10*time.Minute), context.Background(), 10*time.Second, 100)
+	if !errors.As(err, &timeout) || timeout.Reason != RolloutReasonContainerRetryDeadline {
+		t.Fatalf("want container retry deadline, got %v", err)
+	}
+	if waited < 10*time.Minute {
+		t.Fatalf("failed after %s, before the 10m deadline", waited)
 	}
 }
