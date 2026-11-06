@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/onboarding"
+	"sdo.dev/operator/operability"
 	"sdo.dev/operator/render"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/renderenv"
@@ -42,6 +44,12 @@ func (s KubernetesInstallStrategy) InstallPrepared(ctx context.Context, config i
 	return s.Installer.InstallPrepared(ctx, config, acceptedRoot)
 }
 
+// PublishOperability exposes a verified operability report as the
+// sdo-operability ConfigMap of the control namespace.
+func (s KubernetesInstallStrategy) PublishOperability(ctx context.Context, control string, report operability.Report, observedAt time.Time) error {
+	return install.PublishOperability(ctx, s.Installer.Client, control, report, observedAt)
+}
+
 // WithVerifiedDeployment binds acknowledgement to this independently healthy
 // native deployment; verification is completed by the in-cluster controller.
 func (s KubernetesInstallStrategy) WithVerifiedDeployment(root, commit, namespace string, deployment *contracts.DeploymentSource, environment *contracts.RenderEnvironment, pins rendered.ReceiptPins) InstallStrategy {
@@ -71,6 +79,9 @@ type NativeInstallAdapter struct {
 	Config             install.Config
 	AcceptedRepository string
 	Prepared           bool
+	// Now stamps the exposed operability summary; it is injected, never read
+	// from the process clock here.
+	Now func() time.Time
 }
 
 func (a NativeInstallAdapter) Install(ctx context.Context, acceptedCommit, namespace string) error {
@@ -102,6 +113,31 @@ func (a NativeInstallAdapter) Install(ctx context.Context, acceptedCommit, names
 		return fmt.Errorf("install accepted commit %s: %w", acceptedCommit, err)
 	}
 	return nil
+}
+
+// operabilityStrategy is an install strategy that can expose the report.
+type operabilityStrategy interface {
+	PublishOperability(ctx context.Context, control string, report operability.Report, observedAt time.Time) error
+}
+
+var _ operabilityStrategy = KubernetesInstallStrategy{}
+
+// PublishOperability exposes the verified report in the control namespace
+// (Config.ControlNamespace, else the application namespace). A strategy that
+// cannot expose it (a fake) exposes nothing.
+func (a NativeInstallAdapter) PublishOperability(ctx context.Context, namespace string, report operability.Report) error {
+	strategy, ok := a.Strategy.(operabilityStrategy)
+	if !ok {
+		return nil
+	}
+	control := a.Config.ControlNamespace
+	if control == "" {
+		control = namespace
+	}
+	if a.Now == nil {
+		return errors.New("exposing the operability summary requires a clock (NativeInstallAdapter.Now)")
+	}
+	return strategy.PublishOperability(ctx, control, report, a.Now())
 }
 
 // InstallDeployment installs the controller for the accepted commit and the

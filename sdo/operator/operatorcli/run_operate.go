@@ -19,6 +19,7 @@ import (
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/operatorcli/catalog/renderers"
+	"sdo.dev/operator/operatorcli/internal/processio"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -126,7 +127,7 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	workers.Environment[memoryTelemetryPolicyEnv] = string(policy)
 	installer := lifecycle.NativeInstallAdapter{
 		Strategy: lifecycle.KubernetesInstallStrategy{Installer: install.Installer{Client: client}, Renderers: renderers.Catalog()},
-		Config:   config.Install, AcceptedRepository: config.ApplicationRoot, Prepared: true,
+		Config:   config.Install, AcceptedRepository: config.ApplicationRoot, Prepared: true, Now: processio.Now,
 	}
 	var healthProbe deployment.HealthProbe = deployment.AcceptedDetectorProbe{Replay: config.Install.Replay, MetricsURL: config.Install.MetricsURL}
 	if runner, enabled := install.ShellRunnerConfig(config.Install); enabled {
