@@ -53,7 +53,6 @@ func (v SubprocessValidator) Validator() Validator {
 		if err != nil {
 			return err
 		}
-		args := []string{"validation-child", candidate, root}
 		needed, err := validate.BaselineGateRequired(candidate, paths)
 		if err != nil {
 			return err
@@ -70,7 +69,7 @@ func (v SubprocessValidator) Validator() Validator {
 		if err != nil {
 			return err
 		}
-		args = append(args, baseline, replay, policy)
+		args := childArguments(candidate, root, baseline, replay, policy)
 		scratch, err := os.MkdirTemp("", "sdo-validation-")
 		if err != nil {
 			return err
@@ -96,6 +95,24 @@ func (v SubprocessValidator) Validator() Validator {
 		}
 		return nil
 	}
+}
+
+// childArguments is the validation child's argv after the program name.
+func childArguments(candidate, operatorRoot, baseline, replay, policy string) []string {
+	return []string{"validation-child", candidate, operatorRoot, baseline, replay, policy}
+}
+
+// ChildRequest is the compile request the validation subprocess would run for
+// the check in ctx, built through the same argument encoding and decoding the
+// subprocess uses. A caller that stubs the compile step (a test of the
+// onboarding broker's telemetry) resolves telemetry from it exactly as the
+// child would, without building detectors.
+func ChildRequest(ctx context.Context, candidate string, registry *telemetry.Registry) (validate.Request, error) {
+	policy, err := childTelemetryArgument(ctx)
+	if err != nil {
+		return validate.Request{}, err
+	}
+	return validationChildRequest(append([]string{"sdo-operator"}, childArguments(candidate, "/operator", "", "", policy)...), registry)
 }
 
 // childTelemetryArgument is the check's telemetry policy as the validation
