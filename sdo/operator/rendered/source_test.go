@@ -437,8 +437,7 @@ func TestKustomizeReadFailureKeepsItsKind(t *testing.T) {
 // question 1 (N5): desired-state reads return the image exactly as source
 // declares it. A deploy that resolved the tag to a digest is invisible here,
 // so restore writes repo:tag back over a digest-pinned workload. The planned
-// fix gives rendered.Source the receipt's pins for the same BaseTree; when it
-// lands, this test changes deliberately.
+// fix is Source.Pins (the test below); with no pins, reads keep the source tag.
 func TestReadsKeepTheSourceImageTagNotTheDeployedDigest(t *testing.T) {
 	source := rendered.Source{Repository: "/synthetic", Deployment: rawSource(t, "loose.yaml"), Catalog: catalog(t), Git: treeGit(rawTree)}
 	object, err := source.AcceptedManifest(context.Background(), syntheticCommit, sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "web"})
@@ -448,5 +447,47 @@ func TestReadsKeepTheSourceImageTagNotTheDeployedDigest(t *testing.T) {
 	containers, _, _ := unstructured.NestedSlice(object.Object, "spec", "template", "spec", "containers")
 	if image := containers[0].(map[string]any)["image"]; image != "example/web:1" {
 		t.Fatalf("read image = %v, want the source tag example/web:1", image)
+	}
+}
+
+// With the receipt's pins for the same base tree, reads return the applied
+// digest for the pinned container; pins for another tree, or for another
+// container, change nothing, and the render digest is the same either way.
+func TestReadsReturnTheReceiptPinsForTheSameBaseTree(t *testing.T) {
+	const digest = "example/web@sha256:" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	webRef := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "web"}
+	image := func(t *testing.T, pins rendered.ReceiptPins) any {
+		t.Helper()
+		source := rendered.Source{Repository: "/synthetic", Deployment: rawSource(t, "loose.yaml"), Catalog: catalog(t), Git: treeGit(rawTree), Pins: pins}
+		object, err := source.AcceptedManifest(context.Background(), syntheticCommit, webRef)
+		if err != nil {
+			t.Fatal(err)
+		}
+		containers, _, _ := unstructured.NestedSlice(object.Object, "spec", "template", "spec", "containers")
+		return containers[0].(map[string]any)["image"]
+	}
+	container := func(name string) rendered.DeployedImage {
+		return rendered.DeployedImage{Ref: webRef, Name: name, Applied: digest, Digest: digest}
+	}
+	first := image(t, rendered.ReceiptPins{})
+	name, _ := func() (string, bool) {
+		source := rendered.Source{Repository: "/synthetic", Deployment: rawSource(t, "loose.yaml"), Catalog: catalog(t), Git: treeGit(rawTree)}
+		object, _ := source.AcceptedManifest(context.Background(), syntheticCommit, webRef)
+		containers, _, _ := unstructured.NestedSlice(object.Object, "spec", "template", "spec", "containers")
+		n, ok := containers[0].(map[string]any)["name"].(string)
+		return n, ok
+	}()
+	if got := image(t, rendered.ReceiptPins{BaseTree: syntheticTree, Images: []rendered.DeployedImage{container(name)}}); got != digest {
+		t.Fatalf("pinned read image = %v, want %s", got, digest)
+	}
+	for label, pins := range map[string]rendered.ReceiptPins{
+		"another tree":      {BaseTree: "ffffffffffffffffffffffffffffffffffffffff", Images: []rendered.DeployedImage{container(name)}},
+		"another container": {BaseTree: syntheticTree, Images: []rendered.DeployedImage{container("sidecar")}},
+		"init role":         {BaseTree: syntheticTree, Images: []rendered.DeployedImage{{Ref: webRef, Name: name, Init: true, Applied: digest}}},
+		"no tree":           {Images: []rendered.DeployedImage{container(name)}},
+	} {
+		if got := image(t, pins); got != first {
+			t.Errorf("%s: image = %v, want the source image %v", label, got, first)
+		}
 	}
 }
