@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- ../../base
+images:
+- name: sdo-toy-app
+  newTag: v1
+replicas:
+- name: frontend
+  count: 1
+- name: backend
+  count: 1
+- name: catalog
+  count: 1

@@ -1,0 +1,13 @@
+image:
+  repository: sdo-toy-app
+  tag: v1
+  pullPolicy: Never
+replicas: 1
+port: 8080
+# One entry per service; env is extra environment for that service only.
+services:
+  backend: {}
+  catalog: {}
+  frontend:
+    env:
+      DEPENDENCY: http://backend:8080/
