@@ -1,13 +1,16 @@
 // Package helm is the render plugin for Helm charts. It renders a chart the
 // way `helm template` does, over the in-memory files read through render.FS:
 // no repository, cluster, registry or process is touched. Only Helm's pure
-// packages (chart loading, values coalescing, the template engine and the
-// manifest sorter) are linked; pkg/action, pkg/kube and the registry client
+// packages (chart loading, values coalescing, the manifest sorter) and a
+// trimmed copy of its template engine are linked; pkg/action, pkg/kube and the registry client
 // stay out. Like helm install, the renderer first processes the chart's
 // dependencies (conditions, tags, import-values), so everything after that
 // (the static policy, rendering, hooks) sees only the release set: enabled
-// subcharts, vendored, without lookup, clock or random functions that reach
-// the output, and without crds/. Hooks are chosen by the events of the
+// subcharts, vendored, and without crds/. The engine is a trimmed copy of Helm's
+// with its function map restricted by the policy (internal/policy.Restrict):
+// every function that reads the clock, the cluster, the environment or a random
+// source fails the render when executed, however it was reached (tpl, include,
+// helpers), while tpl, include and duration run freely over values from Git. Hooks are chosen by the events of the
 // rendered operation (install): pre-install and post-install become phases,
 // hooks of other operations (upgrade, delete, rollback, test) are left out.
 package helm
@@ -20,12 +23,12 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"text/template"
 
 	"google.golang.org/protobuf/types/known/structpb"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/chartutil"
-	"helm.sh/helm/v3/pkg/engine"
 	"helm.sh/helm/v3/pkg/ignore"
 	"helm.sh/helm/v3/pkg/release"
 	"helm.sh/helm/v3/pkg/releaseutil"
@@ -34,6 +37,7 @@ import (
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/render"
+	"sdo.dev/operator/render/helm/internal/engine"
 	"sdo.dev/operator/render/helm/internal/policy"
 )
 
@@ -48,7 +52,7 @@ const DefaultKubeVersion = "v1.30.0"
 // Doc tells an agent what the helm renderer does and when to choose it.
 const Doc = `Renders a Helm chart from the source tree the way helm template does, with no cluster or registry access. Choose it when the application ships a chart (a directory with Chart.yaml) in the tree.
 Config: chart_path, the tree-relative chart directory; value_files, tree-relative values files merged in order after the chart's values.yaml; values, an inline object merged last (like --set-json), for settings such as image tags or replica counts.
-Charts must be self-contained: enabled subcharts are vendored in charts/ (disabled ones, by condition or tag, are ignored), and lookup, clock and random template functions that reach the rendered output, and crds/ directories of enabled charts, are rejected. Hooks with a pre-install or post-install event become phases; hooks of other events (upgrade, delete, rollback, test) are not part of a deploy.`
+Charts must be self-contained: enabled subcharts are vendored in charts/ (disabled ones, by condition or tag, are ignored), and crds/ directories of enabled charts are rejected. tpl, include and the pure template functions work; the render fails when a template executes lookup, env, a clock or date function, or a random or key-generating function (for example a random suffix in a test hook), so such parts must be disabled by values. Hooks with a pre-install or post-install event become phases; hooks of other events (upgrade, delete, rollback, test) are not part of a deploy.`
 
 // Register adds the helm renderer to c under ID.
 func Register(c *render.Catalog) error {
@@ -79,8 +83,7 @@ func renderChart(ctx context.Context, fsys render.FS, env render.Env, cfg *contr
 	if err := chartutil.ProcessDependenciesWithMerge(chrt, overrides); err != nil {
 		return render.Result{}, fmt.Errorf("helm dependencies of %s: %w", root, err)
 	}
-	conditional, err := policy.Check(chrt)
-	if err != nil {
+	if err := policy.Check(chrt); err != nil {
 		return render.Result{}, err
 	}
 	caps, err := capabilities(env)
@@ -96,18 +99,9 @@ func renderChart(ctx context.Context, fsys render.FS, env render.Env, cfg *contr
 	if err := ctx.Err(); err != nil {
 		return render.Result{}, err
 	}
-	// A template that fails or emits something that is not a manifest may do so
-	// because of a forbidden function: say which files hold one.
-	fail := func(err error) (render.Result, error) {
-		err = fmt.Errorf("helm render of %s: %w", root, err)
-		if findings := conditional.Resolve(func(string) bool { return true }); findings != nil {
-			err = errors.Join(err, findings)
-		}
-		return render.Result{}, err
-	}
-	files, err := engine.Render(chrt, values)
+	files, err := engine.Engine{Funcs: policy.Restrict}.Render(chrt, values)
 	if err != nil {
-		return fail(err)
+		return render.Result{}, renderError(root, err)
 	}
 	for name := range files {
 		// NOTES.txt is user documentation, not a manifest (as in helm install).
@@ -117,16 +111,36 @@ func renderChart(ctx context.Context, fsys render.FS, env render.Env, cfg *contr
 	}
 	hooks, manifests, err := releaseutil.SortManifests(files, caps.APIVersions, releaseutil.InstallOrder)
 	if err != nil {
-		return fail(err)
+		return render.Result{}, fmt.Errorf("helm render of %s: %w", root, err)
 	}
-	res, kept, err := phases(policy.OperationInstall, env, hooks, manifests)
-	if err != nil {
-		return fail(err)
+	return phases(policy.OperationInstall, env, hooks, manifests)
+}
+
+// renderError names a policy violation raised by a stubbed function with the
+// template that called it and the output file whose render reached it (the
+// same file unless the call sits in a helper or a tpl string); any other
+// render failure is wrapped as is.
+func renderError(root string, err error) error {
+	var perr *policy.Error
+	if !errors.As(err, &perr) {
+		return fmt.Errorf("helm render of %s: %w", root, err)
 	}
-	if err := conditional.Resolve(func(file string) bool { return kept[file] }); err != nil {
-		return render.Result{}, err
+	var outer, inner string
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		if ee, ok := e.(template.ExecError); ok {
+			if outer == "" {
+				outer = ee.Name
+			}
+			inner = ee.Name
+		}
 	}
-	return res, nil
+	out := *perr
+	out.Chart = path.Base(root)
+	out.File = inner
+	if outer != "" && outer != inner {
+		out.Detail += fmt.Sprintf(" (reached from %s)", outer)
+	}
+	return &out
 }
 
 // loadChart reads every file under root through fsys (honoring .helmignore)
@@ -297,11 +311,9 @@ func servedAPIVersions(known chartutil.VersionSet, major string, minor int) char
 // phases builds the pre, main and post phases of operation op. Hooks join the
 // phases their events name for op and are ordered by weight then name (the
 // sorter's order); hooks without such an event are left out. Main objects
-// follow Helm's install order. kept is the set of template files that
-// contributed an object.
-func phases(op policy.Operation, env render.Env, hooks []*release.Hook, manifests []releaseutil.Manifest) (render.Result, map[string]bool, error) {
+// follow Helm's install order.
+func phases(op policy.Operation, env render.Env, hooks []*release.Hook, manifests []releaseutil.Manifest) (render.Result, error) {
 	var pre, post, main []*unstructured.Unstructured
-	kept := map[string]bool{}
 	for _, h := range hooks {
 		events := make([]string, len(h.Events))
 		for i, e := range h.Events {
@@ -311,10 +323,9 @@ func phases(op policy.Operation, env render.Env, hooks []*release.Hook, manifest
 		if len(joined) == 0 {
 			continue
 		}
-		kept[h.Path] = true
 		obj, err := decode(h.Path, h.Manifest, env)
 		if err != nil {
-			return render.Result{}, nil, err
+			return render.Result{}, err
 		}
 		for _, phase := range joined {
 			if phase == "pre-"+string(op) {
@@ -327,9 +338,8 @@ func phases(op policy.Operation, env render.Env, hooks []*release.Hook, manifest
 	for _, m := range manifests {
 		obj, err := decode(m.Name, m.Content, env)
 		if err != nil {
-			return render.Result{}, nil, err
+			return render.Result{}, err
 		}
-		kept[m.Name] = true
 		main = append(main, obj)
 	}
 	var res render.Result
@@ -342,7 +352,7 @@ func phases(op policy.Operation, env render.Env, hooks []*release.Hook, manifest
 	if len(post) > 0 {
 		res.Phases = append(res.Phases, render.Phase{Name: "post-" + string(op), Objects: post, Gate: render.GateReady, Ephemeral: true})
 	}
-	return res, kept, nil
+	return res, nil
 }
 
 func decode(file, content string, env render.Env) (*unstructured.Unstructured, error) {
