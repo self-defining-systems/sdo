@@ -45,10 +45,10 @@ func Catalog(cfg Config) (*imagesrc.Catalog, error) {
 		pre = &prebuilt.Source{}
 	}
 	c := imagesrc.NewCatalog()
-	if err := imagesrc.Register[*v1alpha1.PrebuiltImageConfig](c, prebuilt.ID, pre, imagesrc.Options{Budget: ResolveBudget}); err != nil {
+	if err := imagesrc.Register[*v1alpha1.PrebuiltImageConfig](c, prebuilt.ID, pre, imagesrc.Options{Budget: ResolveBudget}, imagesrc.WithDoc(prebuilt.Doc)); err != nil {
 		return nil, fmt.Errorf("images: register %s: %w", prebuilt.ID, err)
 	}
-	if err := imagesrc.Register[*v1alpha1.BuildKitImageConfig](c, buildkit.ID, cfg.Builder, imagesrc.Options{Budget: cfg.BuildBudget, SameRepository: true}); err != nil {
+	if err := imagesrc.Register[*v1alpha1.BuildKitImageConfig](c, buildkit.ID, cfg.Builder, imagesrc.Options{Budget: cfg.BuildBudget, SameRepository: true}, imagesrc.WithDoc(buildkit.Doc)); err != nil {
 		return nil, fmt.Errorf("images: register %s: %w", buildkit.ID, err)
 	}
 	if err := c.SetDefault(prebuilt.ID); err != nil {
@@ -56,6 +56,22 @@ func Catalog(cfg Config) (*imagesrc.Catalog, error) {
 	}
 	if err := c.SetTrustedPushHost(cfg.Builder.AllowedRegistryHost); err != nil {
 		return nil, fmt.Errorf("images: %w", err)
+	}
+	return c, nil
+}
+
+// PrebuiltOnly returns a catalog holding only the prebuilt source, for
+// operations that have no registry to push builds to.
+func PrebuiltOnly(pre *prebuilt.Source) (*imagesrc.Catalog, error) {
+	if pre == nil {
+		pre = &prebuilt.Source{}
+	}
+	c := imagesrc.NewCatalog()
+	if err := imagesrc.Register[*v1alpha1.PrebuiltImageConfig](c, prebuilt.ID, pre, imagesrc.Options{Budget: ResolveBudget}, imagesrc.WithDoc(prebuilt.Doc)); err != nil {
+		return nil, fmt.Errorf("images: register %s: %w", prebuilt.ID, err)
+	}
+	if err := c.SetDefault(prebuilt.ID); err != nil {
+		return nil, err
 	}
 	return c, nil
 }

@@ -30,6 +30,10 @@ import (
 // ID is the source ID this package registers under in an imagesrc.Catalog.
 const ID = "prebuilt"
 
+// Doc tells an agent what the prebuilt source does and when to choose it.
+const Doc = `Uses an image that already exists in a registry: the operator pins the tag the manifests name to its immutable digest. It is the default for every image without a declared source. Choose it for third-party or already-published images (databases, caches, public base images).
+Config: none (empty object). It never builds, so an image that only exists as source in this tree needs the buildkit source instead. Private images that need credentials cannot be resolved.`
+
 const maxManifestBytes = 4 << 20
 
 // resolveCacheTTL bounds how long one tag keeps its pinned digest. Retried

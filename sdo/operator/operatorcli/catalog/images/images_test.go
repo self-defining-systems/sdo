@@ -1,6 +1,7 @@
 package images_test
 
 import (
+	"encoding/json"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -119,4 +120,38 @@ func runsCatalogContract(t *testing.T, dir string) bool {
 		})
 	}
 	return found
+}
+
+// TestEveryRegisteredSourceIsDescribed keeps the agent-facing catalog
+// complete: a source cannot be added without a usage doc, and its config
+// schema must be valid JSON.
+func TestEveryRegisteredSourceIsDescribed(t *testing.T) {
+	c, err := images.Catalog(testConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	descs := c.Describe()
+	if len(descs) != len(c.IDs()) {
+		t.Fatalf("Describe returned %d entries for %d sources", len(descs), len(c.IDs()))
+	}
+	for _, d := range descs {
+		t.Run(d.ID, func(t *testing.T) {
+			if strings.TrimSpace(d.Doc) == "" {
+				t.Error("source has no Doc; export Doc from its package and pass imagesrc.WithDoc(Doc)")
+			}
+			if d.ConfigType == "" || !json.Valid([]byte(d.ConfigSchemaJSON)) {
+				t.Errorf("descriptor is incomplete: %+v", d)
+			}
+		})
+	}
+}
+
+func TestPrebuiltOnlyOffersNoBuilder(t *testing.T) {
+	c, err := images.PrebuiltOnly(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.IDs(); !reflect.DeepEqual(got, []string{"prebuilt"}) || c.Default() != "prebuilt" {
+		t.Fatalf("IDs = %v default %q", got, c.Default())
+	}
 }

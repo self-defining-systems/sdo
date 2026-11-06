@@ -15,11 +15,13 @@ import (
 	"sdo.dev/operator/artifacts"
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/deployment"
+	"sdo.dev/operator/imagesrc"
 	"sdo.dev/operator/imagesrc/buildkit"
 	"sdo.dev/operator/imagesrc/prebuilt"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory/observation"
+	"sdo.dev/operator/operatorcli/catalog/images"
 	"sdo.dev/operator/operatorcli/catalog/renderers"
 	"sdo.dev/operator/worker_registry"
 )
@@ -132,7 +134,26 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	if runner, enabled := install.ShellRunnerConfig(config.Install); enabled {
 		healthProbe = deployment.ShellDetectorProbe{Config: runner}
 	}
+	// The agent is offered what the legacy deployer above can deploy: the raw
+	// renderer and the prebuilt and buildkit image sources.
+	// Transitional: replaced by the full catalogs when the render-seam
+	// deployer replaces the legacy registry.
+	offeredRenderers, err := renderers.Subset("raw")
+	if err != nil {
+		return lifecycle.Result{}, err
+	}
+	offeredPrebuilt := &prebuilt.Source{InsecureHost: insecureRegistryHost(config), Cluster: nodeImages{client: client}}
+	var offeredSources *imagesrc.Catalog
+	if config.Install.RegistryHost == "" { // nowhere to push a build
+		offeredSources, err = images.PrebuiltOnly(offeredPrebuilt)
+	} else {
+		offeredSources, err = images.Catalog(images.Config{Prebuilt: offeredPrebuilt, Builder: buildBackend.Builder, BuildBudget: time.Duration(config.Install.BuildBudgetSeconds) * time.Second})
+	}
+	if err != nil {
+		return lifecycle.Result{}, err
+	}
 	coordinator := lifecycle.Coordinator{
+		Renderers: offeredRenderers, ImageSources: offeredSources,
 		Broker: repository, Bootstrap: artifacts.BootstrapStore{}, Registry: registry,
 		Workers: workers, Readiness: readiness,
 		Verifier: deployment.IndependentHealthVerifier{

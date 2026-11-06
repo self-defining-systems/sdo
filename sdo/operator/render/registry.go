@@ -11,6 +11,8 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
+	"sdo.dev/operator/plugindesc"
 )
 
 var rendererID = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
@@ -28,6 +30,7 @@ type Catalog struct {
 
 type entry struct {
 	id        string
+	desc      plugindesc.Descriptor
 	typeURL   string
 	newConfig func() proto.Message
 	render    func(context.Context, FS, Env, proto.Message) (Result, error)
@@ -43,10 +46,19 @@ func (c *Catalog) WithLimits(l Limits) *Catalog {
 	return &Catalog{entries: c.entries, types: c.types, limits: l.withDefaults()}
 }
 
+// Option adjusts one Register call.
+type Option func(*registration)
+
+type registration struct{ doc string }
+
+// WithDoc sets the usage doc an agent reads in Describe: what the renderer
+// does and when to choose it. The implementation package exports it as Doc.
+func WithDoc(doc string) Option { return func(r *registration) { r.doc = doc } }
+
 // Register binds id to r with config type C. C's message type is the only
 // config the id accepts; Any payloads of another type are rejected. The single
 // type assertion to C lives here, so no other package asserts a config type.
-func Register[C proto.Message](c *Catalog, id string, r Renderer[C]) error {
+func Register[C proto.Message](c *Catalog, id string, r Renderer[C], opts ...Option) error {
 	if !rendererID.MatchString(id) {
 		return fmt.Errorf("renderer id %q must match %s", id, rendererID)
 	}
@@ -57,7 +69,15 @@ func Register[C proto.Message](c *Catalog, id string, r Renderer[C]) error {
 	if any(zero) == nil {
 		return fmt.Errorf("renderer %q: config type must be a concrete message pointer, not an interface", id)
 	}
+	var reg registration
+	for _, o := range opts {
+		o(&reg)
+	}
 	mt := zero.ProtoReflect().Type()
+	desc, err := plugindesc.Describe(id, mt.Descriptor(), reg.doc)
+	if err != nil {
+		return fmt.Errorf("renderer %q: %w", id, err)
+	}
 	typeURL := "type.googleapis.com/" + string(mt.Descriptor().FullName())
 	if _, dup := c.entries[id]; dup {
 		return fmt.Errorf("renderer %q already registered", id)
@@ -67,6 +87,7 @@ func Register[C proto.Message](c *Catalog, id string, r Renderer[C]) error {
 	}
 	c.entries[id] = entry{
 		id:        id,
+		desc:      desc,
 		typeURL:   typeURL,
 		newConfig: func() proto.Message { return mt.New().Interface() },
 		render: func(ctx context.Context, f FS, e Env, m proto.Message) (Result, error) {
@@ -89,6 +110,19 @@ func (c *Catalog) IDs() []string {
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+// Describe lists what an agent may choose from, sorted by ID: each renderer's
+// ID, config message, JSON Schema and doc. A nil catalog describes nothing.
+func (c *Catalog) Describe() []plugindesc.Descriptor {
+	if c == nil {
+		return nil
+	}
+	out := make([]plugindesc.Descriptor, 0, len(c.entries))
+	for _, id := range c.IDs() {
+		out = append(out, c.entries[id].desc)
+	}
+	return out
 }
 
 // Decode checks that id is registered and config unpacks to its type. It is

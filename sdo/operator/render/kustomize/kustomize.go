@@ -27,9 +27,13 @@ import (
 // ID is the renderer ID of this plugin.
 const ID = "kustomize"
 
+// Doc tells an agent what the kustomize renderer does and when to choose it.
+const Doc = `Builds a kustomization directory (base plus overlay) into manifests. Choose it when the source tree deploys through a kustomization.yaml, typically an overlay such as overlays/prod, rather than through plain manifests or a Helm chart.
+Config: path, the tree-relative directory that holds the kustomization file. Only local, tracked files are used: remote bases, plugins, exec generators and Helm chart inflation are rejected, as are kustomization fields outside a small allowlist (resources, generators, namespace, name prefix and suffix, labels, annotations, images, replicas).`
+
 // Register adds the kustomize renderer to c under ID.
 func Register(c *render.Catalog) error {
-	return render.Register[*contracts.KustomizeRenderConfig](c, ID, render.RendererFunc[*contracts.KustomizeRenderConfig](renderRoot))
+	return render.Register[*contracts.KustomizeRenderConfig](c, ID, render.RendererFunc[*contracts.KustomizeRenderConfig](renderRoot), render.WithDoc(Doc))
 }
 
 var kustomizationFiles = []string{"kustomization.yaml", "kustomization.yml", "Kustomization"}

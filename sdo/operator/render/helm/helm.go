@@ -39,9 +39,14 @@ const ID = "helm"
 // none: the Kubernetes line SDO links.
 const DefaultKubeVersion = "v1.30.0"
 
+// Doc tells an agent what the helm renderer does and when to choose it.
+const Doc = `Renders a Helm chart from the source tree the way helm template does, with no cluster or registry access. Choose it when the application ships a chart (a directory with Chart.yaml) in the tree.
+Config: chart_path, the tree-relative chart directory; value_files, tree-relative values files merged in order after the chart's values.yaml; values, an inline object merged last (like --set-json), for settings such as image tags or replica counts.
+Charts must be self-contained: subcharts are vendored in charts/, and lookup, clock and random template functions, crds/ directories and hooks other than pre-install and post-install are rejected.`
+
 // Register adds the helm renderer to c under ID.
 func Register(c *render.Catalog) error {
-	return render.Register[*contracts.HelmRenderConfig](c, ID, render.RendererFunc[*contracts.HelmRenderConfig](renderChart))
+	return render.Register[*contracts.HelmRenderConfig](c, ID, render.RendererFunc[*contracts.HelmRenderConfig](renderChart), render.WithDoc(Doc))
 }
 
 func renderChart(ctx context.Context, fsys render.FS, env render.Env, cfg *contracts.HelmRenderConfig) (render.Result, error) {

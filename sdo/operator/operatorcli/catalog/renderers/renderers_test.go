@@ -1,6 +1,7 @@
 package renderers_test
 
 import (
+	"encoding/json"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -87,4 +88,37 @@ func isSelector(e ast.Expr, pkg, name string) bool {
 	}
 	x, ok := sel.X.(*ast.Ident)
 	return ok && x.Name == pkg
+}
+
+// TestEveryRegisteredRendererIsDescribed keeps the agent-facing catalog
+// complete: a renderer cannot be added without a usage doc, and its config
+// schema must be valid JSON.
+func TestEveryRegisteredRendererIsDescribed(t *testing.T) {
+	descs := renderers.Catalog().Describe()
+	if len(descs) != len(renderers.Catalog().IDs()) {
+		t.Fatalf("Describe returned %d entries for %d renderers", len(descs), len(renderers.Catalog().IDs()))
+	}
+	for _, d := range descs {
+		t.Run(d.ID, func(t *testing.T) {
+			if strings.TrimSpace(d.Doc) == "" {
+				t.Error("renderer has no Doc; export Doc from its package and pass render.WithDoc(Doc)")
+			}
+			if d.ConfigType == "" || !json.Valid([]byte(d.ConfigSchemaJSON)) {
+				t.Errorf("descriptor is incomplete: %+v", d)
+			}
+		})
+	}
+}
+
+func TestSubsetHoldsOnlyTheNamedBuiltIns(t *testing.T) {
+	c, err := renderers.Subset("raw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.IDs(); !reflect.DeepEqual(got, []string{"raw"}) {
+		t.Fatalf("IDs = %v", got)
+	}
+	if _, err := renderers.Subset("nope"); err == nil {
+		t.Fatal("unknown built-in accepted")
+	}
 }

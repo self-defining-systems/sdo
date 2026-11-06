@@ -24,3 +24,20 @@ func Catalog() *render.Catalog {
 	}
 	return c
 }
+
+// Subset returns a catalog holding only the named built-ins. The operate path
+// uses it to offer the agent exactly the renderers its deployer can deploy.
+func Subset(ids ...string) (*render.Catalog, error) {
+	registers := map[string]func(*render.Catalog) error{raw.ID: raw.Register, kustomize.ID: kustomize.Register, helm.ID: helm.Register}
+	c := render.NewCatalog()
+	for _, id := range ids {
+		register, ok := registers[id]
+		if !ok {
+			return nil, fmt.Errorf("renderers: no built-in renderer %q", id)
+		}
+		if err := register(c); err != nil {
+			return nil, fmt.Errorf("renderers: register %s: %w", id, err)
+		}
+	}
+	return c, nil
+}

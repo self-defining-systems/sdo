@@ -33,6 +33,10 @@ var buildImageNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$`)
 // ID is the source ID this package registers under in an imagesrc.Catalog.
 const ID = "buildkit"
 
+// Doc tells an agent what the buildkit source does and when to choose it.
+const Doc = `Builds the image from a Dockerfile in the source tree and pushes it to the operator's registry. Choose it for each image whose code lives in this repository, and declare it for the exact image name the manifests use; an undeclared image under the operator's registry host is rejected.
+Config: context_path, the tree-relative build context directory; dockerfile_path, the tree-relative Dockerfile. Paths are checked before any build starts, so a wrong path costs no build time. Builds run in a bounded rootless job that sees only the proposal checkout.`
+
 // Builder builds candidate source in a bounded rootless BuildKit Job. The Job
 // sees only the proposal checkout, mounted read-only, and its own registry-push
 // Secret. The accepted checkout and broker credentials are absent. It is the

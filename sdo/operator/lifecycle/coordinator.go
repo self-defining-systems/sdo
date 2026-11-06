@@ -17,7 +17,10 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/imagesrc"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/plugindesc"
+	"sdo.dev/operator/render"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/worker_registry"
 )
@@ -105,6 +108,11 @@ type Coordinator struct {
 	// SourceFacts reads a trusted projection from the accepted source commit.
 	// The default implementation is the operational-memory storage edge.
 	SourceFacts func(context.Context, string, string) (memory.SourceFacts, error)
+	// Renderers and ImageSources are the deployer's own catalogs. The deployer
+	// request describes exactly these, so the agent is offered what the
+	// deployer can deploy and nothing else. Nil offers none.
+	Renderers    *render.Catalog
+	ImageSources *imagesrc.Catalog
 	// Wait pauses between bounded re-evaluations and infrastructure retries;
 	// nil waits on a timer.
 	Wait func(context.Context, time.Duration) error
@@ -309,7 +317,7 @@ func (c Coordinator) deploy(ctx context.Context, id string, cfg Config, attempt 
 	if err != nil {
 		return broker.Receipt{}, DeploymentReceipt{}, false, "", err
 	}
-	request := &contracts.SourceDeploymentRequest{Application: cfg.Application, Namespace: cfg.Namespace, HealthObjective: cfg.HealthObjective, CorrectionFeedback: feedback, Attempt: uint32(attempt), RegistryHost: cfg.RegistryHost}
+	request := &contracts.SourceDeploymentRequest{Application: cfg.Application, Namespace: cfg.Namespace, HealthObjective: cfg.HealthObjective, CorrectionFeedback: feedback, Attempt: uint32(attempt), RegistryHost: cfg.RegistryHost, Renderers: pluginDescriptors(c.Renderers.Describe()), ImageSources: pluginDescriptors(c.ImageSources.Describe())}
 	task, err := c.newTask(id, cfg.DeployerAgentID, proposal, request)
 	if err != nil {
 		return broker.Receipt{}, DeploymentReceipt{}, false, "", err
@@ -588,4 +596,12 @@ func (c Coordinator) execute(ctx context.Context, task *contracts.AgentTask, res
 		return fmt.Errorf("worker %s: %s", result.GetStatus(), result.GetErrorSummary())
 	}
 	return result.GetResponse().UnmarshalTo(response)
+}
+
+func pluginDescriptors(descs []plugindesc.Descriptor) []*contracts.PluginDescriptor {
+	out := make([]*contracts.PluginDescriptor, 0, len(descs))
+	for _, d := range descs {
+		out = append(out, &contracts.PluginDescriptor{Id: d.ID, ConfigType: d.ConfigType, ConfigSchemaJson: d.ConfigSchemaJSON, Doc: d.Doc})
+	}
+	return out
 }

@@ -28,9 +28,14 @@ import (
 // ID is the renderer ID under which Register adds the raw renderer.
 const ID = "raw"
 
+// Doc tells an agent what the raw renderer does and when to choose it.
+const Doc = `Deploys plain Kubernetes manifests exactly as they are committed. Choose it when the source tree holds ready-to-apply YAML or JSON manifests and needs no templating or overlays.
+Config: paths, a list of tree-relative manifest files or directories. A directory is deployed recursively; every YAML or JSON document with apiVersion, kind and metadata.name becomes an object. List only what must be deployed (for example the deploy manifests, not CI or docs files).
+A path that is a kustomization file or root is rejected: use the kustomize renderer for kustomization directories and the helm renderer for charts.`
+
 // Register adds the raw renderer to c.
 func Register(c *render.Catalog) error {
-	return render.Register[*v1alpha1.RawRenderConfig](c, ID, render.RendererFunc[*v1alpha1.RawRenderConfig](renderRaw))
+	return render.Register[*v1alpha1.RawRenderConfig](c, ID, render.RendererFunc[*v1alpha1.RawRenderConfig](renderRaw), render.WithDoc(Doc))
 }
 
 func renderRaw(_ context.Context, fsys render.FS, env render.Env, config *v1alpha1.RawRenderConfig) (render.Result, error) {
