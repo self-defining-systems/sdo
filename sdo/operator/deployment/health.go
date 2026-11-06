@@ -2,6 +2,7 @@ package deployment
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -16,12 +17,33 @@ import (
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/rendered"
+	"sdo.dev/operator/sdk"
 )
 
 // HealthProbe evaluates the compiled, accepted detectors against live state.
 // The default implementation builds from the accepted repository first.
 type HealthProbe interface {
-	Evaluate(context.Context, string, string, string) (HealthEvaluation, error)
+	Evaluate(ctx context.Context, root, operatorRoot, namespace string, scope HealthScope) (HealthEvaluation, error)
+}
+
+// HealthScope says what a verification judges. Classes are the detector
+// classes that gate (evaluation.GatingClasses; empty means every class). Pins
+// are the images the deployment under verification applied: desired-state
+// reads in the evaluation return them, so a detector comparing live workloads
+// with the accepted source compares with the candidate's own deployment, not
+// with the source's unpinned tags.
+type HealthScope struct {
+	Classes []sdk.DetectorClass
+	Pins    rendered.ReceiptPins
+}
+
+// scopeOf is the scope of verifying the deployment source describes.
+func scopeOf(source lifecycle.DeploymentReceipt) HealthScope {
+	return HealthScope{
+		Classes: evaluation.GatingClasses,
+		Pins:    rendered.ReceiptPins{EffectiveTree: source.EffectiveTree, BaseTree: source.BaseTree, Images: source.ContainerImages},
+	}
 }
 
 // HealthEvaluation is one probe result: the aggregate status and, when the
@@ -39,7 +61,7 @@ type AcceptedDetectorProbe struct {
 	Limit           time.Duration
 }
 
-func (probe AcceptedDetectorProbe) Evaluate(ctx context.Context, acceptedRoot, operatorRoot, namespace string) (HealthEvaluation, error) {
+func (probe AcceptedDetectorProbe) Evaluate(ctx context.Context, acceptedRoot, operatorRoot, namespace string, scope HealthScope) (HealthEvaluation, error) {
 	limit := probe.Limit
 	if limit <= 0 {
 		limit = 5 * time.Minute
@@ -63,7 +85,18 @@ func (probe AcceptedDetectorProbe) Evaluate(ctx context.Context, acceptedRoot, o
 	if err != nil {
 		return HealthEvaluation{}, fmt.Errorf("compile accepted memory host: %w", err)
 	}
-	args := append(probe.evaluationArgs(acceptedRoot, namespace), "--memory-host-binary", artifact.Path, "--memory-host-digest", artifact.Digest, "--memory-commit", projected.AcceptedRevision)
+	pinsFile := ""
+	if len(scope.Pins.Images) > 0 {
+		pinsFile = filepath.Join(workspace.Directory, "image-pins.json")
+		encoded, err := json.Marshal(scope.Pins)
+		if err == nil {
+			err = os.WriteFile(pinsFile, encoded, 0o600)
+		}
+		if err != nil {
+			return HealthEvaluation{}, fmt.Errorf("write image pins: %w", err)
+		}
+	}
+	args := append(probe.evaluationArgs(acceptedRoot, namespace, scope, pinsFile), "--memory-host-binary", artifact.Path, "--memory-host-digest", artifact.Digest, "--memory-commit", projected.AcceptedRevision)
 	var environment []string
 	if probe.Kubeconfig != "" {
 		environment = append(environment, "KUBECONFIG="+probe.Kubeconfig)
@@ -219,7 +252,7 @@ func (v IndependentHealthVerifier) VerifyCandidate(ctx context.Context, root, co
 	if probe == nil {
 		probe = AcceptedDetectorProbe{}
 	}
-	evaluation, err := probe.Evaluate(ctx, root, v.OperatorRoot, namespace)
+	evaluation, err := probe.Evaluate(ctx, root, v.OperatorRoot, namespace, scopeOf(source))
 	if err != nil {
 		return lifecycle.HealthVerdict{}, err
 	}
@@ -252,8 +285,14 @@ func (v IndependentHealthVerifier) Validate() error {
 	return nil
 }
 
-func (probe AcceptedDetectorProbe) evaluationArgs(acceptedRoot, namespace string) []string {
+func (probe AcceptedDetectorProbe) evaluationArgs(acceptedRoot, namespace string, scope HealthScope, pinsFile string) []string {
 	args := []string{"--evaluate-once", "--namespace", namespace, "--app-root", acceptedRoot}
+	if len(scope.Classes) > 0 {
+		args = append(args, "--classes", evaluation.FormatClasses(scope.Classes))
+	}
+	if pinsFile != "" {
+		args = append(args, "--image-pins", pinsFile)
+	}
 	if probe.RequireComplete {
 		args = append(args, "--accept-seed")
 	}

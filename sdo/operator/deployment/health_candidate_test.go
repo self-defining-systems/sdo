@@ -4,12 +4,16 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"sdo.dev/operator/evaluation"
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/rendered"
+	"sdo.dev/operator/sdk"
 )
 
 var _ lifecycle.CandidateVerifier = IndependentHealthVerifier{}
@@ -17,10 +21,14 @@ var _ lifecycle.CandidateVerifier = IndependentHealthVerifier{}
 type recordingProbe struct {
 	status string
 	roots  *[]string
+	scopes *[]HealthScope
 }
 
-func (p recordingProbe) Evaluate(_ context.Context, root, _, _ string) (HealthEvaluation, error) {
+func (p recordingProbe) Evaluate(_ context.Context, root, _, _ string, scope HealthScope) (HealthEvaluation, error) {
 	*p.roots = append(*p.roots, root)
+	if p.scopes != nil {
+		*p.scopes = append(*p.scopes, scope)
+	}
 	return HealthEvaluation{Status: p.status}, nil
 }
 
@@ -123,5 +131,42 @@ func TestVerifyCandidateReportsAFiringCandidateAsASourceFault(t *testing.T) {
 	verdict, err := verifier.VerifyCandidate(context.Background(), candidate, commit, depNamespace, "serve", receipt)
 	if err != nil || verdict.Outcome != lifecycle.VerificationSourceFault {
 		t.Fatalf("verdict = %+v, err = %v", verdict, err)
+	}
+}
+
+// An advance is judged by the gating detector set (the health objective and the
+// designer's health detectors, never learned incident detectors), against the
+// candidate's own deployment: the probe is told the classes and receives the
+// images the candidate applied as pins.
+func TestVerifyCandidateScopesTheProbeToGatingClassesAndTheCandidatesImages(t *testing.T) {
+	accepted, candidate, commit, deployer, receipt := candidateFixture(t)
+	receipt.ContainerImages = []rendered.DeployedImage{{Name: "web", Applied: "example.invalid/web@sha256:" + strings.Repeat("a", 64)}}
+	var roots []string
+	var scopes []HealthScope
+	verifier := IndependentHealthVerifier{AcceptedRoot: accepted, OperatorRoot: t.TempDir(), Readiness: deployer, Probe: recordingProbe{status: "clear", roots: &roots, scopes: &scopes}}
+	if _, err := verifier.VerifyCandidate(context.Background(), candidate, commit, depNamespace, "serve", receipt); err != nil {
+		t.Fatal(err)
+	}
+	if len(scopes) != 1 {
+		t.Fatalf("probe calls = %d", len(scopes))
+	}
+	got := scopes[0]
+	if !slices.Equal(got.Classes, []sdk.DetectorClass{sdk.DetectorClassHealth}) {
+		t.Fatalf("gating classes = %v, want health only (incident detectors do not gate an advance)", got.Classes)
+	}
+	if got.Pins.EffectiveTree == "" || got.Pins.EffectiveTree != receipt.EffectiveTree || got.Pins.BaseTree != receipt.BaseTree || len(got.Pins.Images) != 1 || got.Pins.Images[0].Applied != receipt.ContainerImages[0].Applied {
+		t.Fatalf("pins = %+v, want the candidate receipt's images", got.Pins)
+	}
+}
+
+func TestAcceptedDetectorProbePassesTheScopeToEvaluateOnce(t *testing.T) {
+	args := AcceptedDetectorProbe{}.evaluationArgs("/root", "ns", HealthScope{Classes: evaluation.GatingClasses}, "/tmp/pins.json")
+	for _, want := range [][]string{{"--classes", "health"}, {"--image-pins", "/tmp/pins.json"}} {
+		if i := slices.Index(args, want[0]); i < 0 || args[i+1] != want[1] {
+			t.Fatalf("args %v lack %v", args, want)
+		}
+	}
+	if args := (AcceptedDetectorProbe{}).evaluationArgs("/root", "ns", HealthScope{}, ""); slices.Contains(args, "--classes") || slices.Contains(args, "--image-pins") {
+		t.Fatalf("unscoped args = %v", args)
 	}
 }
