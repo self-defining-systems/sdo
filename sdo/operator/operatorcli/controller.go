@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"time"
@@ -55,8 +56,14 @@ func RunController(ctx context.Context, args []string) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	following := make(chan struct{})
+	// A deployment that violates the policy in force is a typed hold: detection
+	// keeps running, no upstream revision is deployed.
+	refused := controllerPolicyHold(ctx, run.Controller, identity, slog.Default())
 	go func() {
 		defer close(following)
+		if refused != nil {
+			return
+		}
 		followUpstream(ctx, run.Controller, run.Build.OperatorRoot, identity)
 	}()
 	err = builder.Run(ctx, run, builder.RestartPolicy{})
@@ -208,7 +215,7 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, er
 			if err != nil {
 				return err
 			}
-			return refreshControllerHealth(ctx, "", launch, *operatorRoot, repository)
+			return holdRefreshOnPolicy(refreshControllerHealth(ctx, "", launch, *operatorRoot, repository), slog.Default())
 		},
 		ResolveDiagnostics: func(ctx context.Context, root string) (builder.DiagnosticsProjection, error) {
 			repository, err := openMigrationBroker(launch)
@@ -223,7 +230,7 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, er
 			if err != nil {
 				return builder.DiagnosticsProjection{}, err
 			}
-			if err := refreshControllerHealth(ctx, "", launch, *operatorRoot, repository); err != nil {
+			if err := holdRefreshOnPolicy(refreshControllerHealth(ctx, "", launch, *operatorRoot, repository), slog.Default()); err != nil {
 				return builder.DiagnosticsProjection{}, err
 			}
 			return builder.DiagnosticsProjection{Directory: projected.Directory, Fingerprint: projected.Fingerprint, AcceptedRevision: projected.AcceptedRevision}, nil

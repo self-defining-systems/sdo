@@ -135,7 +135,7 @@ func (c Coordinator) acceptedDeployment(ctx context.Context, cfg Config, commit 
 	recorded := deploymentFromBroker(accepted.Evidence)
 	live, err := c.Readiness.VerifyAccepted(ctx, commit, cfg.Namespace, recorded)
 	if err != nil {
-		return DeploymentReceipt{}, fmt.Errorf("verify accepted source: %w", err)
+		return DeploymentReceipt{}, fmt.Errorf("verify accepted source: %w", refusedByPolicy(err, commit))
 	}
 	if !completeDeploymentReceipt(live) || !sameDeploymentIdentity(recorded, live) {
 		return DeploymentReceipt{}, errors.New("accepted source has incomplete or changed deployment evidence")

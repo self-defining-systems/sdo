@@ -179,6 +179,7 @@ func TestRouteTable(t *testing.T) {
 		CauseInternal:               {OwnerHuman, OwnerHuman, OwnerHuman},
 		CauseAgentNotConverging:     {OwnerHuman, OwnerHuman, OwnerHuman},
 		CauseBaseInvalid:            {OwnerOperator, OwnerOperator, OwnerOperator},
+		CausePolicy:                 {OwnerOperator, OwnerOperator, OwnerOperator},
 	}
 	for _, c := range Causes() {
 		w, ok := want[c]

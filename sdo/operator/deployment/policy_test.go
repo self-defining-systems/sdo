@@ -119,6 +119,11 @@ func TestVerifyAcceptedEnforcesTheCurrentPolicy(t *testing.T) {
 	if !errors.As(err, &policy) || policy.Checks[0].ID != "O6.allowlist" {
 		t.Fatalf("err = %v, want a PolicyError on O6.allowlist", err)
 	}
+	// The start-up check is the same policy decision without the cluster, so a
+	// restart with no health refresh due still finds the violation.
+	if err := deployer.CheckAcceptedPolicy(context.Background(), commit, depNamespace, receipt); !errors.As(err, &policy) {
+		t.Fatalf("CheckAcceptedPolicy err = %v, want a PolicyError", err)
+	}
 	deployer.Policy = &contracts.DeploymentPolicy{GrantedNamespaces: []string{"x"}}
 	if _, err := deployer.VerifyAccepted(context.Background(), commit, depNamespace, receipt); err == nil {
 		t.Fatal("an invalid policy was accepted at start")

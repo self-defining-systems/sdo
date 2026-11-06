@@ -294,6 +294,8 @@ type fakeReadiness struct {
 	// VerifyAccepted returns.
 	receipt  func(*lifecycle.DeploymentReceipt)
 	reverify func(*lifecycle.DeploymentReceipt)
+	// reverifyErr fails every VerifyAccepted.
+	reverifyErr error
 	// live replaces the passing live checks CheckLive returns, one result per
 	// call (the last repeats); liveCalls records the checkout of each call.
 	live      [][]operability.Check
@@ -332,6 +334,9 @@ func (r *fakeReadiness) ApplyAndVerify(_ context.Context, _ string, plan *contra
 }
 
 func (r *fakeReadiness) VerifyAccepted(_ context.Context, _, _ string, receipt lifecycle.DeploymentReceipt) (lifecycle.DeploymentReceipt, error) {
+	if r.reverifyErr != nil {
+		return lifecycle.DeploymentReceipt{}, r.reverifyErr
+	}
 	if r.reverify != nil {
 		r.reverify(&receipt)
 	}

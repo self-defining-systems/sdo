@@ -70,33 +70,45 @@ func (d Deployer) git(ctx context.Context, args ...string) (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
+// CheckAcceptedPolicy re-renders the recorded accepted deployment and checks it
+// against the source evidence and the policy in force (a *PolicyError when it
+// violates it), without touching the cluster. VerifyAccepted runs it first; a
+// controller start runs it alone, so a restart under a tightened policy is
+// found whether or not a health refresh is due.
+func (d Deployer) CheckAcceptedPolicy(ctx context.Context, commit, namespace string, prior lifecycle.DeploymentReceipt) error {
+	if err := d.validate(); err != nil {
+		return err
+	}
+	if d.AcceptedRoot == "" || commit == "" || namespace == "" || !prior.Ready || prior.BaseTree == "" || prior.EffectiveTree == "" || len(prior.ResourceIDs) == 0 {
+		return errors.New("accepted repository, commit, namespace, and trusted source evidence are required")
+	}
+	if namespace != d.Namespace {
+		return errors.New("accepted source namespace differs from the deployer's namespace")
+	}
+	tree, err := acceptedTree(ctx, d.git, commit, prior)
+	if err != nil {
+		return err
+	}
+	// The policy in force now binds the accepted deployment too: a restart
+	// under a tightened policy refuses a deployment that violates it.
+	for _, policy := range []*contracts.DeploymentPolicy{d.Policy, prior.Policy} {
+		if err := deploymentpolicy.Validate(policy); err != nil {
+			return err
+		}
+	}
+	if err := verifyRendered(ctx, rendered.ObjectStore{Dir: d.AcceptedRoot, Git: d.Git}, tree, renderenv.For(prior.Environment, d.Namespace, render.SecretsOmit), d.Renderers, prior, d.enforcePolicy); err != nil {
+		return err
+	}
+	return nil
+}
+
 // VerifyAccepted rechecks persisted deployment evidence after a restart: the
 // commit must be in the accepted branch with exactly the deployed tree, the
 // accepted source must still render to the recorded digests (otherwise
 // *RendererChangedError), and every recorded workload must still be ready at
 // that revision with the recorded images.
 func (d Deployer) VerifyAccepted(ctx context.Context, commit, namespace string, prior lifecycle.DeploymentReceipt) (lifecycle.DeploymentReceipt, error) {
-	if err := d.validate(); err != nil {
-		return lifecycle.DeploymentReceipt{}, err
-	}
-	if d.AcceptedRoot == "" || commit == "" || namespace == "" || !prior.Ready || prior.BaseTree == "" || prior.EffectiveTree == "" || len(prior.ResourceIDs) == 0 {
-		return lifecycle.DeploymentReceipt{}, errors.New("accepted repository, commit, namespace, and trusted source evidence are required")
-	}
-	if namespace != d.Namespace {
-		return lifecycle.DeploymentReceipt{}, errors.New("accepted source namespace differs from the deployer's namespace")
-	}
-	tree, err := acceptedTree(ctx, d.git, commit, prior)
-	if err != nil {
-		return lifecycle.DeploymentReceipt{}, err
-	}
-	// The policy in force now binds the accepted deployment too: a restart
-	// under a tightened policy refuses a deployment that violates it.
-	for _, policy := range []*contracts.DeploymentPolicy{d.Policy, prior.Policy} {
-		if err := deploymentpolicy.Validate(policy); err != nil {
-			return lifecycle.DeploymentReceipt{}, err
-		}
-	}
-	if err := verifyRendered(ctx, rendered.ObjectStore{Dir: d.AcceptedRoot, Git: d.Git}, tree, renderenv.For(prior.Environment, d.Namespace, render.SecretsOmit), d.Renderers, prior, d.enforcePolicy); err != nil {
+	if err := d.CheckAcceptedPolicy(ctx, commit, namespace, prior); err != nil {
 		return lifecycle.DeploymentReceipt{}, err
 	}
 	var images []string

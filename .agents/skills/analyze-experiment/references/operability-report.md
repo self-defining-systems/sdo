@@ -42,6 +42,10 @@ agent's role, `designer` or `deployer`, the check is `O5.agent_not_converging` /
 detail names the repeated rules) and `base_invalid` (the accepted base fails the shared validator before any agent
 edit, owner `operator`, check `O5.base_invalid`, zero agent turns spent). Both reach the `SDO-OPERABILITY` stderr line
 and the termination message like any terminal operability stop.
+`policy` (owner `operator`, check `O6.policy`) is the typed hold of an accepted deployment that violates the
+install-time deployment policy in force: the operate Job ends on it, and a controller start (checked on every start,
+refresh due or not) publishes it to the `sdo-operability` ConfigMap, keeps detecting, and deploys no upstream
+revision until the policy is relaxed or the deployment advanced.
 A correction to a designer is typed diagnostics `operability.<check id>`; the count of designer corrections is in
 the durable rejection log.
 
