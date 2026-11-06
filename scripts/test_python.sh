@@ -19,7 +19,19 @@ python3 scripts/init_test_prereqs.py --check
 selected=()
 if [[ -n "${SDO_CI_PLAN:-}" && "$(python3 scripts/ci_select.py mode --plan "$SDO_CI_PLAN")" == selected ]]; then
     mapfile -t selected < <(python3 scripts/ci_select.py python-paths --plan "$SDO_CI_PLAN" --shard "${SDO_PYTEST_SHARD:-core}")
-    if [[ ${#selected[@]} -eq 0 || -z "${selected[0]}" ]]; then
+    # pytest runs an explicitly named file even when --ignore excludes it, so a selected file the
+    # caller excludes (the nightly-tier suites) must be dropped here or it runs in the pull request.
+    kept=()
+    for path in "${selected[@]}"; do
+        [[ -n "$path" ]] || continue
+        excluded=false
+        for arg in "$@"; do
+            [[ "$arg" == "--ignore=$path" ]] && excluded=true
+        done
+        $excluded || kept+=("$path")
+    done
+    selected=("${kept[@]}")
+    if [[ ${#selected[@]} -eq 0 ]]; then
         echo "no Python tests selected for the ${SDO_PYTEST_SHARD:-core} shard"
         exit 0
     fi

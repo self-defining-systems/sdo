@@ -105,6 +105,13 @@ func RunDir(t testing.TB) string {
 func NewWorld(t testing.TB) *World {
 	t.Helper()
 	root := RepoRoot(t)
+	lockCtx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	defer cancel()
+	release, err := lockHost(lockCtx, hostLockPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(release)
 	dir := RunDir(t)
 	w := &World{T: t, Root: root, Dir: dir}
 	binary := filepath.Join(dir, "bin", "sdo-operator")
