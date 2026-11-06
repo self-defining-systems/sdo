@@ -31,6 +31,14 @@ const (
 	RuleCRDs Rule = "crds"
 	// RuleTemplateSyntax rejects a template that does not parse.
 	RuleTemplateSyntax Rule = "template-syntax"
+	// RuleRenderDepth fails a render whose tpl or include calls nest deeper
+	// than the engine allows (a template that expands itself). Unbounded
+	// recursion would overflow the Go stack, which no recover() can catch.
+	RuleRenderDepth Rule = "render-depth"
+	// RuleRenderBudget fails a render that exceeds its CPU-time deadline, one
+	// output buffer's byte cap, or asks a template function for an
+	// amplification (until, repeat, indent, ...) beyond the engine's cap.
+	RuleRenderBudget Rule = "render-budget"
 )
 
 // Error is one violation of a Rule.

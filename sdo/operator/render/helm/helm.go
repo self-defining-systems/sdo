@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+	"time"
 
 	"google.golang.org/protobuf/types/known/structpb"
 	"helm.sh/helm/v3/pkg/chart"
@@ -58,6 +59,10 @@ Charts must be self-contained: enabled subcharts are vendored in charts/ (disabl
 func Register(c *render.Catalog) error {
 	return render.Register[*contracts.HelmRenderConfig](c, ID, render.RendererFunc[*contracts.HelmRenderConfig](renderChart), render.WithDoc(Doc))
 }
+
+// renderTimeLimit bounds one chart render's wall-clock time. The largest real
+// charts render in well under a second.
+const renderTimeLimit = 30 * time.Second
 
 func renderChart(ctx context.Context, fsys render.FS, env render.Env, cfg *contracts.HelmRenderConfig) (render.Result, error) {
 	root := path.Clean(cfg.GetChartPath())
@@ -99,7 +104,13 @@ func renderChart(ctx context.Context, fsys render.FS, env render.Env, cfg *contr
 	if err := ctx.Err(); err != nil {
 		return render.Result{}, err
 	}
-	files, err := engine.Engine{Funcs: policy.Restrict}.Render(chrt, values)
+	// The engine checks this deadline on every template function call; a
+	// template that expands without end fails with a typed budget error instead
+	// of holding the controller.
+	renderCtx, stop := context.WithTimeoutCause(ctx, renderTimeLimit,
+		&policy.Error{Rule: policy.RuleRenderBudget, Chart: path.Base(root), Detail: fmt.Sprintf("rendering took longer than %s", renderTimeLimit)})
+	defer stop()
+	files, err := engine.Engine{Funcs: policy.Restrict, Context: renderCtx}.Render(chrt, values)
 	if err != nil {
 		return render.Result{}, renderError(root, err)
 	}
