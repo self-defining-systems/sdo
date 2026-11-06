@@ -5,6 +5,7 @@ package broker
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -251,7 +252,35 @@ func TestFinalizeAcceptedDeploymentIgnoresEvidenceOfAnotherTree(t *testing.T) {
 	if err := w.broker.locked(func() error { return w.broker.writeSourceEvidence(candidate.IncidentID, other) }); err != nil {
 		t.Fatal(err)
 	}
-	if deployed, err := w.broker.FinalizeAcceptedDeployment(ctx, candidate.IncidentID); err == nil && deployed {
-		t.Fatal("evidence of another tree made the accepted commit a deployment")
+	deployed, err := w.broker.FinalizeAcceptedDeployment(ctx, candidate.IncidentID)
+	if deployed || err == nil || !strings.Contains(err.Error(), "differs from trusted deployment evidence") {
+		t.Fatalf("FinalizeAcceptedDeployment = %v, %v; want false and the tree-mismatch error", deployed, err)
+	}
+}
+
+// Without evidence nothing was deployed, so the stage checkout is kept: a
+// later finalization or deployment of the accepted repair still has it.
+func TestFinalizeAcceptedDeploymentKeepsTheStageWithoutEvidence(t *testing.T) {
+	ctx := context.Background()
+	w := newPatchWorld(t, false)
+	candidate := stageResponderPatch(t, w, "inc-no-evidence")
+	// The head moved (a publication that crashed before removing the stage)
+	// and no deployment evidence was ever recorded.
+	if err := w.broker.locked(func() error { return w.broker.advanceHead(ctx, candidate.Path, candidate.Commit) }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.broker.StageCandidate(ctx, candidate.IncidentID, Responder, ProposalPhase); err != nil {
+		t.Fatal(err)
+	}
+	root := w.broker.candidateRoot(candidate.IncidentID, ProposalPhase)
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	deployed, err := w.broker.FinalizeAcceptedDeployment(ctx, candidate.IncidentID)
+	if err != nil || deployed {
+		t.Fatalf("FinalizeAcceptedDeployment = %v, %v; want false, nil", deployed, err)
+	}
+	if _, err := os.Stat(root); err != nil {
+		t.Fatalf("stage checkout lost without deployment evidence: %v", err)
 	}
 }

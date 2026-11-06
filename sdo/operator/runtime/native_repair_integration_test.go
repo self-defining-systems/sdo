@@ -220,6 +220,7 @@ func TestClosureDoesNotAcceptAHeldSourceRepair(t *testing.T) {
 // records that as its own phase, never as a deployment.
 func TestClosureWithoutARepairerRecordsTheRepairAsUndeployed(t *testing.T) {
 	w := newRepairClosureWorld(t, "commit", nil)
+	w.native.Repairs = PlainPublication{Repository: w.repo, Reason: PublishesUndeployedShellDetectors}
 	receipt, err := w.native.ProcessClosure(context.Background(), w.closure("commit"))
 	if err != nil || receipt.ProposalCommit == "" {
 		t.Fatalf("receipt = %+v, err = %v", receipt, err)
@@ -231,5 +232,21 @@ func TestClosureWithoutARepairerRecordsTheRepairAsUndeployed(t *testing.T) {
 	}
 	if _, ok := phases["source_repair_published_undeployed"]; !ok {
 		t.Fatalf("phases %v lack source_repair_published_undeployed", phases)
+	}
+}
+
+// A configuration that has a repairer can never publish a deployment-input
+// repair plainly: a missing repairer is a typed error, nothing is accepted,
+// and the ledger claims no repair phase. Only a declared PlainPublication
+// (shell detectors, frozen memory) takes that path.
+func TestClosureWithoutAnyRepairerRefusesADeploymentInputRepair(t *testing.T) {
+	w := newRepairClosureWorld(t, "commit", nil)
+	before := w.head(t)
+	_, err := w.native.ProcessClosure(context.Background(), w.closure("commit"))
+	if !errors.Is(err, ErrRepairerRequired) {
+		t.Fatalf("err = %v, want ErrRepairerRequired", err)
+	}
+	if w.head(t) != before {
+		t.Fatal("the repair was accepted without a repairer")
 	}
 }

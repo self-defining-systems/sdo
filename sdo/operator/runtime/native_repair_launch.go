@@ -23,13 +23,17 @@ type RepairDeployerFactory func(config *contracts.ControllerConfig, client kuber
 // child's own broker.
 //
 // Candidate verification needs the Go detector runner: with shell detectors
-// it evaluates only the accepted checkout, so no repairer is configured and a
-// repair is published without a deployment, as before. Every other launch
+// it evaluates only the accepted checkout, so the repairer is a declared
+// PlainPublication: a repair is published without a deployment, as before. Every other launch
 // requires the factory: a missing one fails the launch instead of silently
 // publishing repairs undeployed.
 func repairsFromLaunch(config *contracts.ControllerConfig, client kubernetes.Interface, repository *broker.Broker, factory RepairDeployerFactory) (SourceRepairer, error) {
-	if source := config.GetCodePath().GetOverrides().GetDetectorSource(); config.GetFrozenMemory() || source == "shell" || source == "" && config.GetCodePath().GetName() == "shell" {
-		return nil, nil
+	source := config.GetCodePath().GetOverrides().GetDetectorSource()
+	if config.GetFrozenMemory() {
+		return PlainPublication{Repository: repository, Reason: PublishesUndeployedFrozenMemory}, nil
+	}
+	if source == "shell" || source == "" && config.GetCodePath().GetName() == "shell" {
+		return PlainPublication{Repository: repository, Reason: PublishesUndeployedShellDetectors}, nil
 	}
 	if factory == nil {
 		return nil, errors.New("source repair deployer is not wired into this controller")

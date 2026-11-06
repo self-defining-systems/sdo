@@ -68,3 +68,27 @@ func TestDeploymentRepairerNeedsTheAcceptedObjective(t *testing.T) {
 	}
 	var _ SourceRepairer = repairer
 }
+
+func TestPlainPublicationNeedsADeclaredReason(t *testing.T) {
+	if _, err := (PlainPublication{Repository: repairFakePublisher{}}).Repair(context.Background(), "incident-1"); err == nil {
+		t.Fatal("a plain publication without a reason was accepted")
+	}
+	got, err := PlainPublication{Repository: repairFakePublisher{paths: []string{".sdo/deployment/values/values.yaml"}}, Reason: PublishesUndeployedFrozenMemory}.Repair(context.Background(), "incident-1")
+	if err != nil || got != (SourceRepair{Commit: "accepted", Undeployed: true}) {
+		t.Fatalf("Repair = %+v, %v", got, err)
+	}
+	got, err = PlainPublication{Repository: repairFakePublisher{paths: []string{".sdo/playbooks/p/program.go"}}, Reason: PublishesUndeployedFrozenMemory}.Repair(context.Background(), "incident-1")
+	if err != nil || got != (SourceRepair{Commit: "accepted"}) {
+		t.Fatalf("Repair of a pure .sdo change = %+v, %v", got, err)
+	}
+}
+
+type repairFakePublisher struct{ paths []string }
+
+func (p repairFakePublisher) ChangedPaths(context.Context, string, broker.Phase) ([]string, error) {
+	return p.paths, nil
+}
+
+func (p repairFakePublisher) Publish(_ context.Context, id string, _ broker.Actor, phase broker.Phase) (broker.Receipt, error) {
+	return broker.Receipt{IncidentID: id, Phase: phase, Commit: "accepted"}, nil
+}

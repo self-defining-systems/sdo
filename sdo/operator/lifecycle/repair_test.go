@@ -26,6 +26,10 @@ type repairWorld struct {
 	accepts      []broker.SourceEvidence
 	// alreadyAccepted makes StageCandidate report a redelivery of an accepted repair.
 	alreadyAccepted bool
+	// recordedEvidence is the deployment evidence the broker holds for the
+	// accepted commit, as the real broker's FinalizeAcceptedDeployment
+	// reports it (AcceptDeployed records it; a plain publication never does).
+	recordedEvidence bool
 }
 
 func newRepairWorld(t *testing.T, paths ...string) *repairWorld {
@@ -61,12 +65,13 @@ func (w *repairWorld) AcceptDeployed(_ context.Context, candidate broker.Candida
 		return broker.Receipt{}, broker.ErrCandidateStale
 	}
 	w.accepts = append(w.accepts, evidence)
+	w.recordedEvidence = true
 	return broker.Receipt{IncidentID: candidate.IncidentID, Phase: candidate.Phase, Commit: candidate.Commit}, nil
 }
 
 func (w *repairWorld) FinalizeAcceptedDeployment(_ context.Context, id string) (bool, error) {
 	w.log("finalize %s", id)
-	return true, nil
+	return w.recordedEvidence, nil
 }
 
 func (w *repairWorld) DiscardCandidate(id string, phase broker.Phase) error {
@@ -176,6 +181,7 @@ func TestRepairHoldsACandidateTheDeploymentOrDetectorsRefuse(t *testing.T) {
 func TestRepairRedeliveredAfterAcceptanceFinalizesTheEvidence(t *testing.T) {
 	w := newRepairWorld(t, repairPatch)
 	w.alreadyAccepted = true
+	w.recordedEvidence = true
 	result, err := w.run()
 	if err != nil || result.Outcome != lifecycle.RepairDeployed {
 		t.Fatalf("result = %+v, err = %v", result, err)
@@ -183,6 +189,21 @@ func TestRepairRedeliveredAfterAcceptanceFinalizesTheEvidence(t *testing.T) {
 	want := []string{"changed inc-1 proposal", "stage inc-1", "finalize inc-1"}
 	if !slices.Equal(w.events, want) {
 		t.Fatalf("events\n got %q\nwant %q", w.events, want)
+	}
+}
+
+// A redelivery of a repair that was accepted by a plain publication (no
+// deployment evidence exists) reports it undeployed, as the first delivery
+// did, never deployed.
+func TestRepairRedeliveredAfterUndeployedAcceptanceStaysUndeployed(t *testing.T) {
+	w := newRepairWorld(t, repairPatch)
+	w.alreadyAccepted = true
+	result, err := w.run()
+	if err != nil || result.Outcome != lifecycle.RepairUndeployed || result.Receipt.Commit != advCandidate || result.Detail == "" {
+		t.Fatalf("result = %+v, err = %v, want published_undeployed with the accepted commit", result, err)
+	}
+	if count(w.events, "apply") != 0 {
+		t.Fatalf("redelivery deployed again: %q", w.events)
 	}
 }
 
