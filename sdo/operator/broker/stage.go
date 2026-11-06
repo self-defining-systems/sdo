@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -254,7 +255,16 @@ func (b *Broker) FinalizeAcceptedDeployment(ctx context.Context, incidentID stri
 		if err != nil || !ok {
 			return err
 		}
-		if _, deployed, err = b.sourceEvidenceLocked(ctx, incidentID, prior); err != nil {
+		_, deployed, err = b.sourceEvidenceLocked(ctx, incidentID, prior)
+		var stale *StalePendingEvidenceError
+		if errors.As(err, &stale) {
+			// A pending record of another tree is never this commit's
+			// evidence and retrying cannot change that: discard it and report
+			// the accepted repair as not deployed.
+			slog.Warn("stale_pending_source_evidence_discarded", "incident_id", incidentID, "recorded_tree", stale.Recorded, "accepted_tree", stale.Accepted)
+			deployed, err = false, os.Remove(b.sourceEvidencePath(incidentID))
+		}
+		if err != nil {
 			return err
 		}
 		if !deployed {
