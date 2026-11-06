@@ -3,11 +3,17 @@ package memory
 import (
 	"context"
 	"strings"
+
+	"sdo.dev/operator/memory/layout"
 )
 
 // HealthRefreshPreservesInstall admits only an unbroken first-parent chain of
-// validated initial-judge publications after installation. It preserves
-// the frozen install snapshot; it does not grant health authority to adoption.
+// validated initial-judge publications and Upkeep schema migrations after
+// installation. Memory older than the build is migrated right after install;
+// that is the install, not a change to it. Either kind may change only memory
+// files: application inputs and the objective must equal the install's. It
+// preserves the frozen install snapshot; it does not grant health authority to
+// adoption.
 func HealthRefreshPreservesInstall(ctx context.Context, repository, installed, current string) (bool, error) {
 	if repository == "" || installed == "" || current == "" {
 		return false, nil
@@ -36,12 +42,16 @@ func HealthRefreshPreservesInstall(ctx context.Context, repository, installed, c
 			return false, nil
 		}
 		trailers := "\n" + strings.TrimSpace(parts[1]) + "\n"
-		judge := true
-		for _, required := range []string{"SDO-Actor: health_judge", "SDO-Phase: initial", "SDO-Validation: passed"} {
-			judge = judge && strings.Contains(trailers, "\n"+required+"\n")
-		}
-		if !judge {
-			return false, nil
+		if !hasTrailers(trailers, "health_judge") {
+			migration := hasTrailers(trailers, "upkeep")
+			if migration {
+				if migration, err = stampsSchema(ctx, repository, revision); err != nil {
+					return false, err
+				}
+			}
+			if !migration {
+				return false, nil
+			}
 		}
 		inputs, err := HealthInputs(ctx, repository, revision)
 		if err != nil {
@@ -53,4 +63,29 @@ func HealthRefreshPreservesInstall(ctx context.Context, repository, installed, c
 		revision = parents[0]
 	}
 	return true, nil
+}
+
+func hasTrailers(trailers, actor string) bool {
+	for _, required := range []string{"SDO-Actor: " + actor, "SDO-Phase: initial", "SDO-Validation: passed"} {
+		if !strings.Contains(trailers, "\n"+required+"\n") {
+			return false
+		}
+	}
+	return true
+}
+
+// stampsSchema reports whether the commit rewrites the schema-version file. The
+// broker lets Upkeep change detectors only together with that stamp, so it
+// marks a migration commit for every schema version, present and future.
+func stampsSchema(ctx context.Context, repository, revision string) (bool, error) {
+	raw, err := healthGit(ctx, repository, "diff-tree", "-r", "--no-commit-id", "--name-only", revision)
+	if err != nil {
+		return false, err
+	}
+	for _, name := range strings.Fields(string(raw)) {
+		if name == layout.SchemaVersionFile {
+			return true, nil
+		}
+	}
+	return false, nil
 }
