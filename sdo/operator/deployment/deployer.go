@@ -157,6 +157,9 @@ func (e *PolicyError) Error() string {
 	return "deployment violates the install-time policy (" + strings.Join(details, "; ") + ")"
 }
 
+// PolicyChecks are the policy's failed checks (lifecycle.PolicyViolation).
+func (e *PolicyError) PolicyChecks() []operability.Check { return e.Checks }
+
 func (d Deployer) enforcePolicy(set rendered.DesiredSet) error {
 	var failed []operability.Check
 	for _, c := range offline.CheckPolicy(set, deploymentpolicy.Offline(d.Policy)) {

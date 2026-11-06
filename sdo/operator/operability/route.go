@@ -30,6 +30,11 @@ const (
 	// CauseBaseInvalid: the accepted base fails validation before any agent
 	// edit. SDO's defect; no agent turn is spent.
 	CauseBaseInvalid Cause = "base_invalid"
+	// CausePolicy: the accepted deployment violates the install-time
+	// deployment policy in force (a restart under a tightened policy).
+	// Retrying cannot change it and no agent may: the operator relaxes the
+	// policy or advances the deployment.
+	CausePolicy Cause = "policy"
 )
 
 // Causes lists every Cause constant. A test keeps it equal to the constants
@@ -40,7 +45,7 @@ func Causes() []Cause {
 		CauseAttribution, CauseScope, CauseAllowlist, CauseBudget, CauseBinding,
 		CauseCoverage, CauseMemoryInvalid, CauseDetectorFault, CauseSourceFault,
 		CauseProbeUnavailable, CauseInfrastructure, CauseEnvironment, CauseInternal,
-		CauseAgentNotConverging, CauseBaseInvalid,
+		CauseAgentNotConverging, CauseBaseInvalid, CausePolicy,
 	}
 }
 
@@ -105,7 +110,7 @@ func route(c Cause) (routing, bool) {
 		return routing{OwnerDeployer, OwnerHuman, OwnerHuman, rankDeployer}, true
 	case CauseSourceFault:
 		return routing{OwnerDeployer, OwnerHuman, OwnerResponder, rankDeployer}, true
-	case CauseAttribution, CauseBaseInvalid:
+	case CauseAttribution, CauseBaseInvalid, CausePolicy:
 		return routing{OwnerOperator, OwnerOperator, OwnerOperator, rankInternal}, true
 	case CauseBinding, CauseCoverage, CauseMemoryInvalid, CauseProbeUnavailable, CauseDetectorFault:
 		return routing{OwnerDesigner, OwnerDesigner, OwnerDesigner, rankDesigner}, true
