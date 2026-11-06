@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from benchmarks.sregym.fastloop.fault_tracker import probes_for
@@ -388,7 +390,9 @@ def test_private_transport_errors_are_sanitized_for_every_operation():
     from benchmarks.sregym.fastloop.fault_tracker import FaultTracker
     from benchmarks.sregym.fastloop.runtime_observation import KubectlObservationTransport, ReadOnlyObservation
 
-    @settings(max_examples=48, deadline=1000)
+    # 9 operations x 4 failures per example: 48 examples took 10.9 s on a loaded hosted runner (budget 10 s).
+    # Pull requests sample 12; the nightly sets SDO_PROPERTY_FULL for all 48.
+    @settings(max_examples=48 if os.environ.get("SDO_PROPERTY_FULL") else 12, deadline=1000)
     @given(st.text(min_size=1, max_size=64))
     def check_canary(fragment):
         canary = "PRIVATE_CREDENTIAL_" + fragment + "_CANARY"
