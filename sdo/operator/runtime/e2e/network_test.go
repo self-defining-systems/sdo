@@ -87,6 +87,27 @@ func claimSlot(base int) (hold net.Listener, pods, services int, err error) {
 	return nil, 0, 0, fmt.Errorf("all %d loopback slots (127.0.0.1:%d..) are held by other controller end-to-end runs", loopbackSlots, base)
 }
 
+// hostLockPort is held for the whole life of a world. Pod processes share the host's
+// loopback, and some listen on a fixed pod-local address (the API-history sidecar on
+// 127.0.0.1:18080) that a real Pod has to itself; one world per host at a time keeps
+// that true. Waiting is bounded by the context so a stuck holder fails the run.
+const hostLockPort = loopbackSlotPort - 1
+
+// lockHost waits for the host lock on port and returns its release.
+func lockHost(ctx context.Context, port int) (release func(), err error) {
+	for {
+		l, listenErr := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if listenErr == nil {
+			return func() { _ = l.Close() }, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("another controller end-to-end world holds this host (127.0.0.1:%d): %w", port, ctx.Err())
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
+
 func claimLoopbackSlot() {
 	loopbackOnce.Do(func() {
 		var err error

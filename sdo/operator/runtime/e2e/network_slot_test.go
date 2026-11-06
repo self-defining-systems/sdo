@@ -7,6 +7,7 @@ import (
 	"net"
 	"path/filepath"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -62,4 +63,28 @@ func TestAListenFailureIsAReconcileErrorNotASilentSkip(t *testing.T) {
 	if err := k.reconcileNetwork(context.Background()); err == nil {
 		t.Fatal("a Pod whose address is already bound by another world must fail the reconcile, not silently run without a listener")
 	}
+}
+
+// Pods share the host's loopback, so a fixed pod-local port (the API-history sidecar's
+// 127.0.0.1:18080) is one port for every world on the host: with four worlds running at
+// once the sidecars of three failed to bind and their incidents never saw API history.
+// Worlds therefore run one at a time per host.
+func TestWorldsOnOneHostRunOneAtATime(t *testing.T) {
+	const port = loopbackSlotPort + 2000
+	release, err := lockHost(context.Background(), port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if second, err := lockHost(ctx, port); err == nil {
+		second()
+		t.Fatal("a second world must wait while the first holds the host")
+	}
+	release()
+	second, err := lockHost(context.Background(), port)
+	if err != nil {
+		t.Fatalf("the host is free once the first world finishes: %v", err)
+	}
+	second()
 }
