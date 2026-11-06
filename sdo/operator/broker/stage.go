@@ -235,6 +235,32 @@ func (b *Broker) acceptStaged(ctx context.Context, candidate Candidate, evidence
 	return receipt, err
 }
 
+// FinalizeAcceptedDeployment completes the deployment evidence of a responder
+// repair that is already accepted: AcceptDeployed records the evidence before
+// the head moves and finalizes it after, so a crash or a failed write between
+// the two leaves the repair accepted with pending evidence. A redelivery finds
+// the incident accepted (StageCandidate reports it) and calls this instead of
+// deploying again. It finalizes the pending record when it is the deployment
+// of the accepted commit's tree and reports whether the accepted commit is a
+// recorded deployment; it never writes evidence the deployer did not record.
+func (b *Broker) FinalizeAcceptedDeployment(ctx context.Context, incidentID string) (bool, error) {
+	if err := checkIncidentID(incidentID); err != nil {
+		return false, err
+	}
+	var deployed bool
+	err := b.locked(func() error {
+		prior, ok, err := b.findAccepted(ctx, incidentID, ProposalPhase)
+		if err != nil || !ok {
+			return err
+		}
+		if _, deployed, err = b.sourceEvidenceLocked(ctx, incidentID, prior); err != nil {
+			return err
+		}
+		return os.RemoveAll(b.candidateRoot(incidentID, ProposalPhase))
+	})
+	return deployed, err
+}
+
 // DiscardCandidate removes a staged candidate that verification rejected. The
 // accepted head and the proposal checkout are untouched.
 func (b *Broker) DiscardCandidate(incidentID string, phase Phase) error {
