@@ -112,7 +112,7 @@ type NativeIncidentBroker struct {
 	// Repairs accepts the responder's source repair: a change to deployment
 	// inputs is deployed and verified by the trusted Deployer first. A
 	// configuration that cannot deploy declares PlainPublication; nil refuses
-	// a deployment-input repair (ErrRepairerRequired).
+	// a deployment-input repair (held, ErrRepairerRequired names why).
 	Repairs SourceRepairer
 }
 
@@ -529,13 +529,16 @@ func (n NativeIncidentBroker) processClosure(ctx context.Context, closure Incide
 // acceptSourceRepair accepts the responder's source repair through Repairs
 // (shell detectors and frozen memory declare a PlainPublication). Without
 // any repairer only a repair that changes no deployment input is published;
-// one that does is ErrRepairerRequired, never an undeployed publication.
+// one that does is held (ErrRepairerRequired names the reason), never an
+// undeployed publication and never a retried error.
 func (n NativeIncidentBroker) acceptSourceRepair(ctx context.Context, id string, paths []string) (SourceRepair, error) {
 	if n.Repairs != nil {
 		return n.Repairs.Repair(ctx, id)
 	}
 	if slices.ContainsFunc(paths, layout.IsEffectiveDeploymentInput) {
-		return SourceRepair{}, fmt.Errorf("incident %s: %w", id, ErrRepairerRequired)
+		// A configuration without a repairer stays without one on every retry:
+		// the typed hold is recorded once, never an error that is retried.
+		return SourceRepair{Held: fmt.Sprintf("repairer_required: incident %s: %s", id, ErrRepairerRequired)}, nil
 	}
 	accepted, err := n.Repository.Publish(ctx, id, broker.Responder, broker.ProposalPhase)
 	return SourceRepair{Commit: accepted.Commit}, err

@@ -236,18 +236,27 @@ func TestClosureWithoutARepairerRecordsTheRepairAsUndeployed(t *testing.T) {
 	}
 }
 
-// A configuration that has a repairer can never publish a deployment-input
-// repair plainly: a missing repairer is a typed error, nothing is accepted,
-// and the ledger claims no repair phase. Only a declared PlainPublication
-// (shell detectors, frozen memory) takes that path.
-func TestClosureWithoutAnyRepairerRefusesADeploymentInputRepair(t *testing.T) {
-	w := newRepairClosureWorld(t, "commit", nil)
+// A configuration that has no repairer can never publish a deployment-input
+// repair plainly, and the missing repairer is a permanent configuration
+// condition: the closure holds the repair once (ledger phase source_repair_held),
+// nothing is accepted, and it never claims a repair or fails as a retried error.
+// Only a declared PlainPublication (shell detectors, frozen memory) publishes.
+func TestClosureWithoutAnyRepairerHoldsADeploymentInputRepair(t *testing.T) {
+	w := newRepairClosureWorld(t, "recorded-actions", nil)
 	before := w.head(t)
-	_, err := w.native.ProcessClosure(context.Background(), w.closure("commit"))
-	if !errors.Is(err, ErrRepairerRequired) {
-		t.Fatalf("err = %v, want ErrRepairerRequired", err)
+	receipt, err := w.native.ProcessClosure(context.Background(), w.closure("recorded-actions"))
+	if err != nil || receipt.ProposalCommit != "" {
+		t.Fatalf("receipt = %+v, err = %v, want a closure with no accepted repair", receipt, err)
 	}
-	if w.head(t) != before {
+	if strings.Contains(repairGit(t, w.accepted, "log", "--format=%B", before+"..HEAD"), "SDO-Phase: proposal") {
 		t.Fatal("the repair was accepted without a repairer")
+	}
+	ledger, _ := w.native.readLedger("incident-1")
+	phases := ledger.GetClosurePhaseTimestamps()
+	if _, ok := phases["source_repair_held"]; !ok {
+		t.Fatalf("phases %v lack source_repair_held", phases)
+	}
+	if _, ok := phases["source_repair_deployed"]; ok {
+		t.Fatal("a missing repairer claimed a deployment")
 	}
 }

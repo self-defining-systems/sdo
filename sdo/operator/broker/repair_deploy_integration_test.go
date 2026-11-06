@@ -240,7 +240,9 @@ func TestAcceptedRepairWithPendingEvidenceIsFinalizedOnRedelivery(t *testing.T) 
 
 // Pending evidence of another tree (a later staged deployment of the same
 // incident whose head never moved) never makes an accepted commit a deployment.
-func TestFinalizeAcceptedDeploymentIgnoresEvidenceOfAnotherTree(t *testing.T) {
+// It is stale for good, so it is discarded and the accepted repair is reported
+// as not deployed once: a retry must not meet the same error forever.
+func TestFinalizeAcceptedDeploymentDiscardsPendingEvidenceOfAnotherTree(t *testing.T) {
 	ctx := context.Background()
 	w := newPatchWorld(t, false)
 	candidate := stageResponderPatch(t, w, "inc-other-tree")
@@ -249,12 +251,41 @@ func TestFinalizeAcceptedDeploymentIgnoresEvidenceOfAnotherTree(t *testing.T) {
 		t.Fatal(err)
 	}
 	other.BaseTree = strings.Repeat("a", 40)
+	other.AcceptedCommit = ""
 	if err := w.broker.locked(func() error { return w.broker.writeSourceEvidence(candidate.IncidentID, other) }); err != nil {
 		t.Fatal(err)
 	}
-	deployed, err := w.broker.FinalizeAcceptedDeployment(ctx, candidate.IncidentID)
-	if deployed || err == nil || !strings.Contains(err.Error(), "differs from trusted deployment evidence") {
-		t.Fatalf("FinalizeAcceptedDeployment = %v, %v; want false and the tree-mismatch error", deployed, err)
+	for attempt := 1; attempt <= 2; attempt++ {
+		deployed, err := w.broker.FinalizeAcceptedDeployment(ctx, candidate.IncidentID)
+		if deployed || err != nil {
+			t.Fatalf("attempt %d: FinalizeAcceptedDeployment = %v, %v; want false and no error", attempt, deployed, err)
+		}
+	}
+	if _, err := os.Stat(w.broker.sourceEvidencePath(candidate.IncidentID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the stale pending record was kept: %v", err)
+	}
+}
+
+// A record bound to another accepted commit is an integrity failure, not a
+// stale leftover: it is never discarded.
+func TestFinalizeAcceptedDeploymentKeepsEvidenceBoundToAnotherCommit(t *testing.T) {
+	ctx := context.Background()
+	w := newPatchWorld(t, false)
+	candidate := stageResponderPatch(t, w, "inc-bound-other")
+	other := advanceEvidenceFor(t, candidate.Path, "repaired", true)
+	if _, err := w.broker.Accept(ctx, candidate, boundEvidence(t, candidate)); err != nil {
+		t.Fatal(err)
+	}
+	other.BaseTree = strings.Repeat("a", 40)
+	other.AcceptedCommit = strings.Repeat("b", 40)
+	if err := w.broker.locked(func() error { return w.broker.writeSourceEvidence(candidate.IncidentID, other) }); err != nil {
+		t.Fatal(err)
+	}
+	if deployed, err := w.broker.FinalizeAcceptedDeployment(ctx, candidate.IncidentID); deployed || err == nil {
+		t.Fatalf("FinalizeAcceptedDeployment = %v, %v; want the integrity error", deployed, err)
+	}
+	if _, err := os.Stat(w.broker.sourceEvidencePath(candidate.IncidentID)); err != nil {
+		t.Fatalf("evidence bound to another commit was discarded: %v", err)
 	}
 }
 

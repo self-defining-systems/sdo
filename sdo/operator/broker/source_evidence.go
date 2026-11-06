@@ -284,6 +284,9 @@ func (b *Broker) sourceEvidenceLocked(ctx context.Context, incidentID string, re
 		return SourceEvidence{}, false, err
 	}
 	if value.BaseTree != acceptedTree {
+		if persistedCommit == "" {
+			return SourceEvidence{}, false, &StalePendingEvidenceError{IncidentID: incidentID, Recorded: value.BaseTree, Accepted: acceptedTree}
+		}
 		return SourceEvidence{}, false, errors.New("accepted source tree differs from trusted deployment evidence")
 	}
 	value.AcceptedCommit = receipt.Commit
@@ -293,6 +296,19 @@ func (b *Broker) sourceEvidenceLocked(ctx context.Context, incidentID string, re
 		}
 	}
 	return value, true, nil
+}
+
+// StalePendingEvidenceError is a pending deployment record (not yet bound to an
+// accepted commit) for a different tree than the incident's accepted commit:
+// the leftover of a staged deployment whose head never moved. It can never
+// become the evidence of this commit, so it is not an integrity failure to
+// retry: FinalizeAcceptedDeployment discards it and reports no deployment.
+type StalePendingEvidenceError struct {
+	IncidentID, Recorded, Accepted string
+}
+
+func (e *StalePendingEvidenceError) Error() string {
+	return fmt.Sprintf("accepted source tree differs from trusted deployment evidence: pending record of incident %s is for tree %s, the accepted commit has tree %s", e.IncidentID, e.Recorded, e.Accepted)
 }
 
 func (b *Broker) sourceEvidencePath(incidentID string) string {
