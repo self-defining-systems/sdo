@@ -138,8 +138,11 @@ func (b Builder) BuildImage(ctx context.Context, checkout string, build *contrac
 			if condition.Type == batchv1.JobComplete {
 				finished = true
 				finalTree, err := b.TreeDigest(bounded, checkout)
-				if err != nil || finalTree != initialTree {
-					return "", fmt.Errorf("candidate tree changed during image build: %v", err)
+				if err != nil {
+					return "", fmt.Errorf("re-check candidate tree after image build: %w", err)
+				}
+				if finalTree != initialTree {
+					return "", errors.New("candidate tree changed during image build")
 				}
 				logs, err := b.logs(bounded, name)
 				if err != nil {

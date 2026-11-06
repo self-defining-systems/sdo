@@ -191,7 +191,7 @@ func (n nodeImages) NodeImageNames(ctx context.Context) ([][]string, error) {
 
 // rawBackend composes the trusted command backend (Apply, Observe) with the
 // BuildKit builder (BuildImage) for the raw deployment strategy. Transitional:
-// removed when the deployer takes images from the imagesrc catalog.
+// removed (S3-13b) when the deployer takes images from the imagesrc catalog.
 type rawBackend struct {
 	deployment.CommandBackend
 	Builder buildkit.Builder

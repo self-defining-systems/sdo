@@ -24,7 +24,7 @@ const (
 // admitPlan returns the plan the legacy deployment registry executes. A plan
 // without source is the legacy form and passes through. A plan with source is
 // translated down; renderers and image sources that have no legacy equivalent
-// are rejected until the render-seam deployer lands.
+// are rejected with feedback that says what is supported.
 func admitPlan(plan *contracts.DeploymentPlan) (*contracts.DeploymentPlan, error) {
 	if plan == nil {
 		return nil, errors.New("deployment plan is missing")
@@ -39,7 +39,7 @@ func admitPlan(plan *contracts.DeploymentPlan) (*contracts.DeploymentPlan, error
 		return nil, errors.New("deployment plan sets both source and strategy; use source")
 	}
 	if id := plan.GetSource().GetRendererId(); id != rawRendererID {
-		return nil, fmt.Errorf("deployment renderer %q is not deployable until the render-seam deployer lands (S3-13b)", id)
+		return nil, fmt.Errorf("deployment renderer %q is not supported yet: the renderer must be %q", id, rawRendererID)
 	}
 	if plan.GetSource().GetConfig() == nil {
 		return nil, errors.New("deployment source config is required")
@@ -65,7 +65,7 @@ func admitPlan(plan *contracts.DeploymentPlan) (*contracts.DeploymentPlan, error
 			strategy.ImageBuilds = append(strategy.ImageBuilds, &contracts.ImageBuild{Image: image.GetImage(), ContextPath: build.GetContextPath(), DockerfilePath: build.GetDockerfilePath()})
 		case prebuiltSourceID:
 		default:
-			return nil, fmt.Errorf("image %q: image source %q is not deployable until the render-seam deployer lands (S3-13b)", image.GetImage(), id)
+			return nil, fmt.Errorf("image %q: image source %q is not supported yet: the source must be %q or %q", image.GetImage(), id, buildkitSourceID, prebuiltSourceID)
 		}
 	}
 	config, err := anypb.New(strategy)

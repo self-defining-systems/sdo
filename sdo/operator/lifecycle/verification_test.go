@@ -327,7 +327,14 @@ func TestUndeployableNewFormPlanFeedsBackToTheDeployer(t *testing.T) {
 	if h.readiness.calls != 0 {
 		t.Fatalf("registry called %d times for a rejected plan", h.readiness.calls)
 	}
-	if h.workers.deployerAttempts() < 2 || !strings.Contains(h.workers.deployer[1].GetCorrectionFeedback(), "S3-13b") {
-		t.Fatalf("deployer attempts=%d, feedback lacks the rejection", h.workers.deployerAttempts())
+	if h.workers.deployerAttempts() < 2 {
+		t.Fatalf("deployer attempts=%d, want a correction round", h.workers.deployerAttempts())
+	}
+	feedback := h.workers.deployer[1].GetCorrectionFeedback()
+	if !strings.Contains(feedback, `the renderer must be "raw"`) {
+		t.Fatalf("feedback %q does not say what is supported", feedback)
+	}
+	if strings.Contains(feedback, "S3-") {
+		t.Fatalf("feedback %q names an internal plan row", feedback)
 	}
 }

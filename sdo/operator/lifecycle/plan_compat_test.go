@@ -75,10 +75,10 @@ func TestAdmitPlanRejections(t *testing.T) {
 	}{
 		"empty":                   {&contracts.DeploymentPlan{}, "neither source nor strategy"},
 		"both":                    {both, "both source and strategy"},
-		"kustomize":               {newForm(t, "kustomize"), "S3-13b"},
+		"kustomize":               {newForm(t, "kustomize"), `renderer "kustomize" is not supported yet: the renderer must be "raw"`},
 		"no paths":                {noPaths, "no paths"},
 		"wrong config":            {wrongConfig, "decode raw render config"},
-		"unknown image":           {newForm(t, "raw", &contracts.ImageSource{Image: "x", SourceId: "ko"}), "S3-13b"},
+		"unknown image":           {newForm(t, "raw", &contracts.ImageSource{Image: "x", SourceId: "ko"}), `source must be "buildkit" or "prebuilt"`},
 		"buildkit without config": {newForm(t, "raw", &contracts.ImageSource{Image: "x", SourceId: "buildkit"}), "config is required"},
 	}
 	for name, c := range cases {
@@ -86,6 +86,9 @@ func TestAdmitPlanRejections(t *testing.T) {
 			_, err := admitPlan(c.plan)
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("error %v, want containing %q", err, c.want)
+			}
+			if strings.Contains(err.Error(), "S3-") {
+				t.Fatalf("error %q reaches the deployer agent and names an internal plan row", err)
 			}
 		})
 	}
