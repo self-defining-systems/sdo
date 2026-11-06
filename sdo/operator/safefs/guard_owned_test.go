@@ -101,6 +101,7 @@ var operatorOwned = map[string]string{
 // subprocessOwned lists every file that can start a subprocess. These are the
 // determinism edges (internal/*io packages) plus a few tool entry points.
 var subprocessOwned = map[string]string{
+	"internal/sandboxio/sandbox.go":               "re-executes the caller's own binary (/proc/self/exe) as a memory-limited render child that receives its request on stdin and writes only stdout",
 	"broker/internal/processio/git.go":            reasonExec,
 	"broker/internal/processio/validation.go":     reasonExec,
 	"builder/internal/buildio/build.go":           reasonExec,
