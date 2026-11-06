@@ -1,6 +1,7 @@
 package builder
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/telemetry"
 )
 
 func generateRegistrationTest(root string, detectors []layout.Detector) error {
@@ -215,4 +217,77 @@ func TestMetricsDetectorsDeclareValidQueries(t *testing.T) {
 // threshold constructor accepts.
 func generateMetricsTest(root string) error {
 	return os.WriteFile(filepath.Join(root, "generated", "metrics_contract_test.go"), []byte(metricsContractTest), 0o644)
+}
+
+// TelemetryBindings are the effective telemetry sources of the tree under
+// check: operator-provided plus the designer's own. Core never parses a query
+// dialect, so the one static link between detectors and bindings is the source
+// name each query carries.
+type TelemetryBindings struct {
+	Sources []telemetry.Source
+}
+
+const telemetrySourcesFile = "testdata/telemetry-sources.json"
+
+const telemetryBindingTest = `package generated
+
+import (
+    "encoding/json"
+    "errors"
+    "os"
+    "testing"
+    "sdo.dev/operator/sdk/metrics"
+    "sdo.dev/operator/telemetry"
+)
+
+func TestDetectorQueriesResolveToBoundSources(t *testing.T) {
+    data, err := os.ReadFile("testdata/telemetry-sources.json")
+    if err != nil { t.Fatalf("telemetry.unbound: cannot read the effective telemetry sources: %v", err) }
+    var sources []telemetry.Source
+    if err := json.Unmarshal(data, &sources); err != nil { t.Fatalf("telemetry.unbound: cannot decode the effective telemetry sources: %v", err) }
+    bound := make([]telemetry.Bound, len(sources))
+    for i, source := range sources { bound[i] = telemetry.Bound{Source: source} }
+    resolver, err := telemetry.NewResolver(bound)
+    if err != nil { t.Fatalf("telemetry.unbound: the effective telemetry sources are inconsistent: %v", err) }
+    for _, detector := range All() {
+        id := detector.Spec().ID
+        if consumer, ok := detector.(metrics.Consumer); ok {
+            for _, query := range consumer.MetricQueries() {
+                if _, err := resolver.Resolve(query.Source, telemetry.KindMetrics); err != nil {
+                    rule := "telemetry.unbound"
+                    if errors.Is(err, telemetry.ErrKind) { rule = "telemetry.kind" }
+                    t.Errorf("%s[%s]: query %q: %v", rule, id, query.ID, err)
+                }
+            }
+        }
+        if consumer, ok := detector.(metrics.AlertConsumer); ok && consumer.ConsumesAlerts() && len(resolver.AlertSources()) == 0 {
+            t.Errorf("telemetry.unbound[%s]: reads alerts but no bound source serves alerts", id)
+        }
+    }
+}
+`
+
+// generateTelemetryBindingTest writes the query-to-source binding check and the
+// effective sources it resolves against. With no bindings supplied it writes
+// nothing.
+func generateTelemetryBindingTest(root string, bindings *TelemetryBindings) error {
+	if bindings == nil {
+		return nil
+	}
+	sources := bindings.Sources
+	if sources == nil {
+		sources = []telemetry.Source{}
+	}
+	data, err := json.Marshal(sources)
+	if err != nil {
+		return err
+	}
+	directory := filepath.Join(root, "generated", "testdata")
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(root, "generated", telemetrySourcesFile), data, 0o644); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(root, "generated", "telemetry_binding_test.go"), []byte(telemetryBindingTest), 0o644)
 }

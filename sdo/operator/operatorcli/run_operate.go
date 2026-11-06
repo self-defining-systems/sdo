@@ -79,13 +79,17 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	if err != nil {
 		return lifecycle.Result{}, fmt.Errorf("open accepted repository broker: %w", err)
 	}
-	// The generic metrics detectors are installed only where a metrics source
-	// is configured; the judge's own check and the broker must agree.
+	// The generic alerts detector and every detector query resolve against the
+	// effective telemetry sources, computed from this one policy by the broker
+	// and by the judge's own check.
 	config.Install.MetricsURL = config.Install.EffectiveMetricsURL()
 	config.Lifecycle.MetricsSource = config.Install.MetricsSource()
-	repository.MetricsDetectors = config.Install.MetricsURL != ""
 	repository.PlanCatalogs = planCatalogs()
-	repository.Telemetry, repository.TelemetryRegistry = installTelemetryPolicy(config.Install, config.Lifecycle.Namespace, control), telemetryRegistry()
+	repository.Telemetry, err = installTelemetryPolicy(config.Install, config.Lifecycle.Namespace, control)
+	if err != nil {
+		return lifecycle.Result{}, err
+	}
+	repository.TelemetryRegistry = telemetryRegistry()
 	environment, err := renderenv.Discover(client.Discovery())
 	if err != nil {
 		return lifecycle.Result{}, fmt.Errorf("discover render environment: %w", err)
@@ -116,9 +120,6 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		Environment:       agentEnvironment,
 	}
 	workers.Environment = codePathWorkerEnvironment(config.Install.CodePath, workers.Environment)
-	if config.Install.MetricsURL != "" {
-		workers.Environment[memoryMetricsEnv] = "1"
-	}
 	policy, err := json.Marshal(repository.Telemetry)
 	if err != nil {
 		return lifecycle.Result{}, fmt.Errorf("encode telemetry policy: %w", err)

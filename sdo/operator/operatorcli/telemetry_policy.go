@@ -17,17 +17,34 @@ const memoryTelemetryPolicyEnv = "SDO_TELEMETRY_POLICY"
 // same catalog wiring the controller opens clients from.
 func telemetryRegistry() *telemetry.Registry { return telemetrysources.Registry() }
 
+// legacyMetricsSourceID names the operator-provided source that stands for
+// the controller's --metrics-url until the telemetry profile replaces the flag.
+const legacyMetricsSourceID = "default"
+
 // installTelemetryPolicy derives the policy from what the installer grants.
 // Until the telemetry profile lands, the observability stack decides it: the
 // Prometheus recipe and its pod-discovery and node-proxy reads exist exactly
-// when the stack is installed. No source is operator-provided yet.
-func installTelemetryPolicy(config install.Config, application, control string) telemetry.Policy {
+// when the stack is installed. The configured metrics URL (config.MetricsURL,
+// already the effective one) is the single operator-provided source `default`,
+// the same binding the controller synthesizes from --metrics-url, so the
+// broker, the judge's check and the controller agree on which sources exist.
+func installTelemetryPolicy(config install.Config, application, control string) (telemetry.Policy, error) {
 	policy := telemetry.Policy{Mode: telemetry.ModeOpen, ControlNamespace: control, ApplicationNamespace: application}
 	if !config.DisableObservability {
 		policy.Capabilities = []telemetry.ClusterCapability{telemetry.CapPodDiscovery, telemetry.CapNodeProxy}
 		policy.Recipes = []telemetry.Recipe{{Name: "prometheus", Declares: policy.Capabilities}}
 	}
-	return policy
+	if config.MetricsURL != "" {
+		source, err := telemetryRegistry().Source(telemetry.Binding{
+			ID: legacyMetricsSourceID, Adapter: "prometheus", Kinds: []telemetry.Kind{telemetry.KindMetrics},
+			Endpoint: telemetry.Endpoint{URL: config.MetricsURL}, Default: true, Origin: telemetry.OriginOperator,
+		})
+		if err != nil {
+			return telemetry.Policy{}, fmt.Errorf("metrics URL as a telemetry source: %w", err)
+		}
+		policy.Provided = []telemetry.Source{source}
+	}
+	return policy, nil
 }
 
 // memoryTelemetryPolicy reads the policy an agent check runs under. With no

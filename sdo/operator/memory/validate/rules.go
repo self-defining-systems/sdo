@@ -69,6 +69,10 @@ const (
 	RuleTelemetryBackend    = "telemetry.backend"
 	RuleTelemetryMode       = "telemetry.mode"
 	RuleTelemetryOrigin     = "telemetry.origin"
+	// Compile layer: a detector query that names (or defaults to) no bound
+	// source, or a source that does not serve the query's kind.
+	RuleTelemetryUnbound = "telemetry.unbound"
+	RuleTelemetryKind    = "telemetry.kind"
 
 	// Semantic.
 	RuleArchitectureMissing = "memory.architecture-missing"

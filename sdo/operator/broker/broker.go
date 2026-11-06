@@ -106,11 +106,6 @@ type Broker struct {
 	codePath string
 	replay   string
 
-	// MetricsDetectors installs the optional generic metrics detectors when
-	// the health judge's initial memory is accepted. Set it only where a
-	// metrics source is configured.
-	MetricsDetectors bool
-
 	// Telemetry is the environment's policy for the designer's telemetry
 	// bindings and TelemetryRegistry the adapter registry they are checked
 	// against; both are trusted installer wiring like PlanCatalogs.
