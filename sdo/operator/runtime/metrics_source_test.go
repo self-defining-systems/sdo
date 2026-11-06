@@ -20,7 +20,7 @@ func fakeRegistry(t *testing.T, fake *telemetrytest.Fake, opened *telemetry.Endp
 	registry := telemetry.NewRegistry()
 	err := telemetry.Register(registry, telemetry.Adapter[struct{}]{
 		Name: "prometheus", Kinds: []telemetry.Kind{telemetry.KindMetrics}, Dialect: "PromQL",
-		Caps:     []telemetry.Capability{telemetry.CapAlerts},
+		Caps:     []telemetry.Capability{telemetry.CapAlerts, telemetry.CapRange},
 		Validate: func(struct{}, telemetry.Endpoint) error { return nil },
 		Open: func(_ struct{}, endpoint telemetry.Endpoint, e telemetry.Env) (telemetry.Client, error) {
 			*opened, *env = endpoint, e

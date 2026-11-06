@@ -50,6 +50,9 @@ func (d alertsDetector) Detect(_ context.Context, ctx sdk.DetectionContext) ([]s
 	namespace := ctx.Namespace()
 	unlabelled := 0
 	findings := make([]sdk.Finding, 0)
+	// One alert reported by several sources is one finding: the fingerprint
+	// ignores the source, so the first source's report stands.
+	seen := map[string]bool{}
 	for _, alert := range frozen.Alerts {
 		if alert.State != AlertFiringState {
 			continue
@@ -62,7 +65,12 @@ func (d alertsDetector) Detect(_ context.Context, ctx sdk.DetectionContext) ([]s
 		if alertNamespace != namespace {
 			continue
 		}
-		findings = append(findings, d.finding(namespace, frozen, alert))
+		finding := d.finding(namespace, frozen, alert)
+		if seen[finding.Fingerprint] {
+			continue
+		}
+		seen[finding.Fingerprint] = true
+		findings = append(findings, finding)
 	}
 	for index := range findings {
 		findings[index].Metadata["alerts_without_namespace_label"] = unlabelled
@@ -113,7 +121,7 @@ func (d alertsDetector) finding(namespace string, frozen AlertsResult, alert Ale
 	if len(details) > 0 {
 		evidence += "; annotations: " + strings.Join(details, ", ")
 	}
-	return sdk.Finding{
+	finding := sdk.Finding{
 		DetectorID:       d.spec.ID,
 		RuleID:           ruleID,
 		Status:           sdk.FindingActive,
@@ -134,4 +142,8 @@ func (d alertsDetector) finding(namespace string, frozen AlertsResult, alert Ale
 			"annotations": annotations,
 		},
 	}
+	if alert.Source != "" {
+		finding.Metadata["source"] = alert.Source
+	}
+	return finding
 }

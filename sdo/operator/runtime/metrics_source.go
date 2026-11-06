@@ -1,7 +1,6 @@
 package runtime
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/url"
@@ -10,7 +9,6 @@ import (
 	"time"
 
 	"sdo.dev/operator/sdk"
-	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/telemetry"
 )
 
@@ -24,7 +22,10 @@ const (
 )
 
 // newMetricsSource opens the Prometheus-compatible source at address through
-// the telemetry registry, or returns nil when none is configured. The
+// the telemetry registry, or returns nil when none is configured. The flag
+// synthesizes the single binding {id: default} (temporary; the controller will
+// read bindings from the accepted memory revision instead), so a detector's
+// Query.Source is empty or "default". The
 // registry is wired by the entry point (operatorcli/catalog/telemetrysources);
 // this package names no adapter implementation.
 func newMetricsSource(registry *telemetry.Registry, address string, tokenFile string) (MetricsAPI, error) {
@@ -57,33 +58,15 @@ func newMetricsSource(registry *telemetry.Registry, address string, tokenFile st
 	if err != nil {
 		return nil, err
 	}
-	return telemetryMetrics{client: client}, nil
-}
-
-// telemetryMetrics adapts a telemetry.Client to the observer's MetricsAPI.
-type telemetryMetrics struct{ client telemetry.Client }
-
-func (m telemetryMetrics) Query(ctx context.Context, query metrics.Query, at time.Time) ([]metrics.Series, error) {
-	request := telemetry.Query{SourceID: flagSourceID, Kind: telemetry.KindMetrics, Text: query.Expr}
-	if query.Range > 0 {
-		request.Range, request.Step = query.Range, query.EffectiveStep()
-	}
-	result, err := m.client.Query(ctx, request, at)
+	source, err := registry.Source(binding)
 	if err != nil {
 		return nil, err
 	}
-	if result.Truncated {
-		return nil, errors.New("source truncated the answer; narrow the expression")
+	resolver, err := telemetry.NewResolver([]telemetry.Bound{{Source: source, Client: client}})
+	if err != nil {
+		return nil, err
 	}
-	return result.Series, nil
-}
-
-func (m telemetryMetrics) Alerts(ctx context.Context) ([]metrics.Alert, error) {
-	reader, ok := m.client.(telemetry.AlertReader)
-	if !ok {
-		return nil, errors.New("source does not serve alerts")
-	}
-	return reader.Alerts(ctx)
+	return newResolverMetrics(resolver), nil
 }
 
 // withMetrics adds frozen metric results to provider's snapshots when a
