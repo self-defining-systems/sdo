@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/patchset"
 	"sdo.dev/operator/telemetry"
@@ -223,10 +224,18 @@ func (s *run) ownershipPolicy(ctx context.Context) error {
 		return err
 	}
 	manifests := changesManifests(s.changed)
-	if phase == InitialPhase && actor == HealthJudge && len(s.changed) > 0 && !changesDetectors(s.changed) && !healthRevalidation(s.req, s.changed) {
+	if phase == InitialPhase && actor == HealthJudge && len(s.changed) > 0 && !healthRevalidation(s.req, s.changed) {
 		// An empty diff is reported once, by diff.empty; this rule covers a
-		// diff that changes files but installs no detector.
-		s.add(Ownership, Diagnostic{Rule: RuleInitialNeedsDetectors, Path: layout.DetectorsDir, Message: "the initial health-judge proposal must install detector manifests", Hint: "run `sdo-operator memory check` in the checkout: it installs Go's generic detectors (services, workloads, traffic-<workload>), which must stay in the diff; do not delete them"})
+		// diff whose resulting tree installs no detector. Go's generic
+		// detectors usually sit in the base, so the tree decides, not the diff.
+		if missing := s.missingInitialDetectors(); len(missing) > 0 {
+			hint := "run `sdo-operator memory check` in the checkout: it installs Go's generic detectors (services, workloads, traffic-<workload>), which must stay in the tree; do not delete them"
+			message := "the initial health-judge proposal must install detector manifests"
+			if missing[0] != "" {
+				message = "the resulting tree lacks the traffic detectors for the probe workloads the application map declares: " + strings.Join(missing, ", ")
+			}
+			s.add(Ownership, Diagnostic{Rule: RuleInitialNeedsDetectors, Path: layout.DetectorsDir, Message: message, Hint: hint})
+		}
 	}
 	needsBase := (actor == Upkeep && changesDetectors(s.changed)) || (actor == Responder || actor == HealthJudge || actor == Human && phase == ImportPhase) && manifests
 	if !needsBase {
@@ -452,4 +461,56 @@ func migrationDetectorFiles(root string) (map[string]string, error) {
 		return nil
 	})
 	return files, err
+}
+
+// missingInitialDetectors evaluates the resulting tree (base plus diff): it is
+// empty when the tree holds a health detector and a traffic-<workload>
+// detector for every probe workload the authored application map declares and
+// the tree carries. A tree with no health detector returns one empty name.
+func (s *run) missingInitialDetectors() []string {
+	hasHealth := false
+	have := map[string]bool{}
+	for _, d := range s.detectors {
+		if d.class == layout.ClassHealth && d.hasManifest {
+			hasHealth = true
+			have[d.id] = true
+		}
+	}
+	if !hasHealth {
+		return []string{""}
+	}
+	var missing []string
+	for _, workload := range s.declaredProbeWorkloads() {
+		if id := "traffic-" + workload; !have[id] {
+			missing = append(missing, id)
+		}
+	}
+	slices.Sort(missing)
+	return missing
+}
+
+// declaredProbeWorkloads names the probe workloads, present in the tree, that
+// the authored application map's probes live in.
+func (s *run) declaredProbeWorkloads() []string {
+	if s.arch == nil {
+		return nil
+	}
+	region, found, err := appmap.Find(s.arch.doc.Source)
+	if !found || err != nil {
+		return nil
+	}
+	parsed, err := appmap.Parse(region.YAML)
+	if err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var names []string
+	for _, probe := range parsed.Probes {
+		name := appmap.WorkloadForKind[probe.Kind]
+		if _, present := s.workloads[name]; name != "" && present && !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	return names
 }
