@@ -1,6 +1,9 @@
 package policy_test
 
 import (
+	"runtime/debug"
+
+	"github.com/Masterminds/sprig/v3"
 	"errors"
 	"fmt"
 	"slices"
@@ -54,5 +57,67 @@ func TestConditionalResolveReportsOnlyKeptFiles(t *testing.T) {
 	var perr *policy.Error
 	if !errors.As(err, &perr) || perr.File != "templates/b.yaml" || strings.Contains(err.Error(), "a.yaml") {
 		t.Fatalf("only b.yaml may be reported: %v", err)
+	}
+}
+
+// TestEveryTemplateFunctionIsClassified fails when the pinned Helm or sprig
+// function map holds a name the policy has not classified, and when the
+// classification names a function the maps no longer have.
+func TestEveryTemplateFunctionIsClassified(t *testing.T) {
+	known := policy.KnownFunctions()
+	for name := range sprig.TxtFuncMap() {
+		if !known[name] {
+			t.Errorf("sprig function %q is not classified in policy", name)
+		}
+	}
+	for _, name := range policy.HelmFunctions() {
+		if !known[name] {
+			t.Errorf("helm function %q is not classified in policy", name)
+		}
+	}
+	universe := map[string]bool{}
+	for name := range sprig.TxtFuncMap() {
+		universe[name] = true
+	}
+	for _, n := range policy.HelmFunctions() {
+		universe[n] = true
+	}
+	for _, n := range policy.BuiltinFunctions() {
+		universe[n] = true
+	}
+	for name := range known {
+		if !universe[name] {
+			t.Errorf("classified function %q exists in no function map", name)
+		}
+	}
+}
+
+func TestClassificationHasNoOverlapAndForbidsTheNondeterministic(t *testing.T) {
+	for _, name := range []string{"tpl", "lookup", "now", "date", "date_in_zone", "dateInZone", "date_modify", "unixEpoch", "toDate", "ago", "env", "expandenv", "randAlpha", "uuidv4", "genCA", "bcrypt", "encryptAES", "getHostByName", "shuffle"} {
+		if _, bad := policy.Forbidden(name); !bad {
+			t.Errorf("%s must be forbidden", name)
+		}
+	}
+	for _, name := range []string{"include", "toYaml", "required", "default", "printf", "index", "sha256sum", "quote", "derivePassword"} {
+		if why, bad := policy.Forbidden(name); bad {
+			t.Errorf("%s must be allowed, got %q", name, why)
+		}
+	}
+	if _, bad := policy.Forbidden("noSuchFunction"); !bad {
+		t.Error("an unclassified name must be forbidden")
+	}
+}
+
+// The classification is reviewed against one Helm version; a bump must
+// re-read its function map (HelmFunctions) before this constant moves.
+func TestClassificationMatchesThePinnedHelm(t *testing.T) {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		t.Skip("no build info")
+	}
+	for _, d := range info.Deps {
+		if d.Path == "helm.sh/helm/v3" && d.Version != policy.ReviewedHelmVersion {
+			t.Fatalf("helm %s is pinned but the function classification was reviewed for %s: re-read pkg/engine/funcs.go and update HelmFunctions", d.Version, policy.ReviewedHelmVersion)
+		}
 	}
 }

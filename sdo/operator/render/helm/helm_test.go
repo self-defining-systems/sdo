@@ -238,6 +238,16 @@ func TestPolicyRejectsUnsafeCharts(t *testing.T) {
 		"uuidv4":               {tpl(`uuidv4`), policy.RuleForbiddenFunction},
 		"genCA":                {tpl(`(genCA "x" 1).Cert`), policy.RuleForbiddenFunction},
 		"bcrypt":               {tpl(`bcrypt "pw"`), policy.RuleForbiddenFunction},
+		// Bypasses of the former name denylist (review-2 B2).
+		"date_in_zone alias":   {tpl(`date_in_zone "2006-01-02T15:04:05" "x" "UTC"`), policy.RuleForbiddenFunction},
+		"tpl over a literal":   {tpl(`tpl "{{ randAlphaNum 8 }}" .`), policy.RuleForbiddenFunction},
+		"tpl over values": {minimal(map[string]string{"c/values.yaml": "s: \"{{ now }}\"\n",
+			"c/templates/x.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: x}\ndata:\n  v: {{ tpl .Values.s . }}\n"}), policy.RuleForbiddenFunction},
+		"unclassified function": {tpl(`someFutureFunction 1`), policy.RuleForbiddenFunction},
+		"dynamic include":       {tpl(`include (printf "%s" "h") .`), policy.RuleForbiddenFunction},
+		"include of an output file": {minimal(map[string]string{
+			"c/templates/hidden.yaml": "{{ randAlphaNum 4 | printf \"\" }}",
+			"c/templates/x.yaml":      "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: x}\ndata:\n  v: {{ include \"c/templates/hidden.yaml\" . }}\n"}), policy.RuleForbiddenFunction},
 		"getHostByName":        {tpl(`getHostByName "example.com"`), policy.RuleForbiddenFunction},
 		"in a helper":          {minimal(map[string]string{"c/templates/_h.tpl": `{{ define "h" }}{{ randInt 1 5 }}{{ end }}`}), policy.RuleForbiddenFunction},
 		"in a nested pipeline": {tpl(`list 1 2 | join (toString (randInt 1 3))`), policy.RuleForbiddenFunction},

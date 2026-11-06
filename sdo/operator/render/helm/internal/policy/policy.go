@@ -60,31 +60,6 @@ func Violates(err error, rule Rule) bool {
 	return errors.Is(err, &Error{Rule: rule})
 }
 
-// forbiddenFunctions are Helm and sprig template functions whose result is
-// not a pure function of the chart, values and release.
-// The date family is rejected outright: date and its siblings fall back to the
-// current time for any argument that is not a time or an integer, which a
-// static check cannot rule out.
-var forbiddenFunctions = map[string]string{
-	"lookup": "reads the live cluster", "getHostByName": "resolves names over the network",
-	"now": "reads the clock", "date": "may read the clock", "dateInZone": "may read the clock",
-	"htmlDate": "may read the clock", "htmlDateInZone": "may read the clock", "ago": "reads the clock",
-	"randAlpha": "is random", "randAlphaNum": "is random", "randNumeric": "is random", "randAscii": "is random",
-	"randInt": "is random", "randBytes": "is random", "uuidv4": "is random", "shuffle": "is random",
-	"genCA": "is random", "genCAWithKey": "is random", "genPrivateKey": "is random",
-	"htpasswd": "is salted randomly", "bcrypt": "is salted randomly", "encryptAES": "may use a random IV",
-}
-
-func forbidden(name string) (string, bool) {
-	if why, ok := forbiddenFunctions[name]; ok {
-		return why, true
-	}
-	if strings.HasPrefix(name, "genSelfSignedCert") || strings.HasPrefix(name, "genSignedCert") {
-		return "is random", true
-	}
-	return "", false
-}
-
 // Conditional holds forbidden-function findings in template files whose
 // rendered output decides whether they matter, keyed by the template's path in
 // the render output (the engine's file name, "chart/charts/sub/templates/x.yaml").
@@ -125,11 +100,11 @@ func (c Conditional) Resolve(kept func(file string) bool) error {
 func Check(ch *chart.Chart) (Conditional, error) {
 	var errs []error
 	conditional := Conditional{}
-	checkChart(ch, ch.Name(), &errs, conditional)
+	checkChart(ch, ch.Name(), outputFiles(ch), &errs, conditional)
 	return conditional, errors.Join(errs...)
 }
 
-func checkChart(ch *chart.Chart, name string, errs *[]error, conditional Conditional) {
+func checkChart(ch *chart.Chart, name string, files map[string]bool, errs *[]error, conditional Conditional) {
 	add := func(rule Rule, file, format string, args ...any) {
 		*errs = append(*errs, &Error{Rule: rule, Chart: name, File: file, Detail: fmt.Sprintf(format, args...)})
 	}
@@ -151,7 +126,7 @@ func checkChart(ch *chart.Chart, name string, errs *[]error, conditional Conditi
 	}
 	for _, t := range ch.Templates {
 		var found []*Error
-		defines, err := checkTemplate(t.Name, string(t.Data), func(fn, why string) {
+		defines, err := checkTemplate(t.Name, string(t.Data), files, func(fn, why string) {
 			found = append(found, &Error{Rule: RuleForbiddenFunction, Chart: name, File: t.Name,
 				Detail: fmt.Sprintf("template function %q %s", fn, why)})
 		})
@@ -171,13 +146,13 @@ func checkChart(ch *chart.Chart, name string, errs *[]error, conditional Conditi
 		}
 	}
 	for _, sub := range ch.Dependencies() {
-		checkChart(sub, name+"/"+sub.Name(), errs, conditional)
+		checkChart(sub, name+"/"+sub.Name(), files, errs, conditional)
 	}
 }
 
 // checkTemplate reports every forbidden function the template mentions and
 // whether it defines named templates besides its own.
-func checkTemplate(name, text string, report func(fn, why string)) (defines bool, err error) {
+func checkTemplate(name, text string, files map[string]bool, report func(fn, why string)) (defines bool, err error) {
 	trees := map[string]*parse.Tree{}
 	tree := parse.New(path.Base(name))
 	// Function existence is the renderer's concern; here every identifier is
@@ -194,9 +169,14 @@ func checkTemplate(name, text string, report func(fn, why string)) (defines bool
 	sort.Strings(names)
 	for _, n := range names {
 		walk(trees[n].Root, func(id string) {
-			if why, bad := forbidden(id); bad && !seen[id] {
+			if why, bad := Forbidden(id); bad && !seen[id] {
 				seen[id] = true
 				report(id, why)
+			}
+		}, func(fn, target string, literal bool) {
+			if (!literal || files[target]) && !seen[fn+" "+target] {
+				seen[fn+" "+target] = true
+				report(fn, dynamicInclude(fn))
 			}
 		})
 	}
@@ -208,46 +188,58 @@ func checkTemplate(name, text string, report func(fn, why string)) (defines bool
 	return defines, nil
 }
 
-func walk(n parse.Node, visit func(string)) {
+func walk(n parse.Node, visit func(string), call func(fn, target string, literal bool)) {
 	switch n := n.(type) {
 	case nil:
 	case *parse.ListNode:
 		if n != nil {
 			for _, c := range n.Nodes {
-				walk(c, visit)
+				walk(c, visit, call)
 			}
 		}
 	case *parse.ActionNode:
-		walk(n.Pipe, visit)
+		walk(n.Pipe, visit, call)
 	case *parse.PipeNode:
 		if n != nil {
 			for _, c := range n.Cmds {
-				walk(c, visit)
+				walk(c, visit, call)
 			}
 		}
 	case *parse.CommandNode:
+		if len(n.Args) > 0 {
+			if id, ok := n.Args[0].(*parse.IdentifierNode); ok && id.Ident == "include" {
+				target, literal := "", false
+				if len(n.Args) > 1 {
+					if str, ok := n.Args[1].(*parse.StringNode); ok {
+						target, literal = str.Text, true
+					}
+				}
+				call("include", target, literal)
+			}
+		}
 		for _, a := range n.Args {
-			walk(a, visit)
+			walk(a, visit, call)
 		}
 	case *parse.IdentifierNode:
 		visit(n.Ident)
 	case *parse.ChainNode:
-		walk(n.Node, visit)
+		walk(n.Node, visit, call)
 	case *parse.IfNode:
-		walkBranch(&n.BranchNode, visit)
+		walkBranch(&n.BranchNode, visit, call)
 	case *parse.RangeNode:
-		walkBranch(&n.BranchNode, visit)
+		walkBranch(&n.BranchNode, visit, call)
 	case *parse.WithNode:
-		walkBranch(&n.BranchNode, visit)
+		walkBranch(&n.BranchNode, visit, call)
 	case *parse.TemplateNode:
-		walk(n.Pipe, visit)
+		call("template", n.Name, true)
+		walk(n.Pipe, visit, call)
 	}
 }
 
-func walkBranch(b *parse.BranchNode, visit func(string)) {
-	walk(b.Pipe, visit)
-	walk(b.List, visit)
-	walk(b.ElseList, visit)
+func walkBranch(b *parse.BranchNode, visit func(string), call func(fn, target string, literal bool)) {
+	walk(b.Pipe, visit, call)
+	walk(b.List, visit, call)
+	walk(b.ElseList, visit, call)
 }
 
 // Operation is the Helm operation a render stands for. Hooks are selected by
@@ -274,4 +266,23 @@ func HookPhases(op Operation, events []string) []string {
 		}
 	}
 	return phases
+}
+
+// outputFiles names every template file of the chart tree as the engine does
+// ("chart/charts/sub/templates/x.yaml"). A file is not a named template to
+// include: whether its forbidden functions matter is decided by what it
+// renders on its own, which an include would bypass.
+func outputFiles(ch *chart.Chart) map[string]bool {
+	files := map[string]bool{}
+	var collect func(*chart.Chart)
+	collect = func(c *chart.Chart) {
+		for _, t := range c.Templates {
+			files[path.Join(c.ChartFullPath(), t.Name)] = true
+		}
+		for _, sub := range c.Dependencies() {
+			collect(sub)
+		}
+	}
+	collect(ch)
+	return files
 }
