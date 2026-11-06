@@ -43,6 +43,16 @@ func Rules() Config {
 				OwnerPkg: module + "/render/kustomize",
 			},
 			{
+				Name:     "HelmRenderConfig",
+				Import:   module + "/contracts/gen/sdodev/contracts/v1alpha1",
+				OwnerPkg: module + "/render/helm",
+			},
+			{
+				Name:     "GitPollConfig",
+				Import:   module + "/contracts/gen/sdodev/contracts/v1alpha1",
+				OwnerPkg: module + "/upstream/gitpoll",
+			},
+			{
 				Name:     "BuildKitImageConfig",
 				Import:   module + "/contracts/gen/sdodev/contracts/v1alpha1",
 				OwnerPkg: module + "/imagesrc/buildkit",
@@ -54,9 +64,9 @@ func Rules() Config {
 			},
 		},
 		ConfigTypeSource: ConfigTypeSource{
-			Dir:    "contracts/gen/sdodev/contracts/v1alpha1",
+			Dir: "contracts/gen/sdodev/contracts/v1alpha1",
 			// "Strategy" goes with RawManifestStrategy in S3-15.
-			Suffixes: []string{"Strategy", "RenderConfig", "ImageConfig"},
+			Suffixes: []string{"Strategy", "RenderConfig", "ImageConfig", "PollConfig"},
 		},
 		RatchetTokens: []string{"ManifestPaths", "manifest_paths"},
 		// Generated files cannot carry directives; only the serial proto PRs

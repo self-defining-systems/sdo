@@ -12,20 +12,24 @@ from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 DESCRIPTOR: _descriptor.FileDescriptor
 
 class SourceDeploymentRequest(_message.Message):
-    __slots__ = ("application", "namespace", "health_objective", "correction_feedback", "attempt", "registry_host")
+    __slots__ = ("application", "namespace", "health_objective", "correction_feedback", "attempt", "registry_host", "renderers", "image_sources")
     APPLICATION_FIELD_NUMBER: _ClassVar[int]
     NAMESPACE_FIELD_NUMBER: _ClassVar[int]
     HEALTH_OBJECTIVE_FIELD_NUMBER: _ClassVar[int]
     CORRECTION_FEEDBACK_FIELD_NUMBER: _ClassVar[int]
     ATTEMPT_FIELD_NUMBER: _ClassVar[int]
     REGISTRY_HOST_FIELD_NUMBER: _ClassVar[int]
+    RENDERERS_FIELD_NUMBER: _ClassVar[int]
+    IMAGE_SOURCES_FIELD_NUMBER: _ClassVar[int]
     application: str
     namespace: str
     health_objective: str
     correction_feedback: str
     attempt: int
     registry_host: str
-    def __init__(self, application: _Optional[str] = ..., namespace: _Optional[str] = ..., health_objective: _Optional[str] = ..., correction_feedback: _Optional[str] = ..., attempt: _Optional[int] = ..., registry_host: _Optional[str] = ...) -> None: ...
+    renderers: _containers.RepeatedCompositeFieldContainer[_deployment_source_pb2.PluginDescriptor]
+    image_sources: _containers.RepeatedCompositeFieldContainer[_deployment_source_pb2.PluginDescriptor]
+    def __init__(self, application: _Optional[str] = ..., namespace: _Optional[str] = ..., health_objective: _Optional[str] = ..., correction_feedback: _Optional[str] = ..., attempt: _Optional[int] = ..., registry_host: _Optional[str] = ..., renderers: _Optional[_Iterable[_Union[_deployment_source_pb2.PluginDescriptor, _Mapping]]] = ..., image_sources: _Optional[_Iterable[_Union[_deployment_source_pb2.PluginDescriptor, _Mapping]]] = ...) -> None: ...
 
 class SourceDeploymentResult(_message.Message):
     __slots__ = ("proposed", "summary", "agent_session_id", "plan")

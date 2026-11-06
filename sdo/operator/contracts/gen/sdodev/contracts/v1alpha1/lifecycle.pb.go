@@ -33,7 +33,10 @@ type SourceDeploymentRequest struct {
 	CorrectionFeedback string                 `protobuf:"bytes,4,opt,name=correction_feedback,json=correctionFeedback,proto3" json:"correction_feedback,omitempty"`
 	Attempt            uint32                 `protobuf:"varint,5,opt,name=attempt,proto3" json:"attempt,omitempty"`
 	// Trusted registry target chosen by the operator, never by the worker.
-	RegistryHost  string `protobuf:"bytes,6,opt,name=registry_host,json=registryHost,proto3" json:"registry_host,omitempty"`
+	RegistryHost string `protobuf:"bytes,6,opt,name=registry_host,json=registryHost,proto3" json:"registry_host,omitempty"`
+	// What the deployer can deploy; the agent chooses only from these.
+	Renderers     []*PluginDescriptor `protobuf:"bytes,7,rep,name=renderers,proto3" json:"renderers,omitempty"`
+	ImageSources  []*PluginDescriptor `protobuf:"bytes,8,rep,name=image_sources,json=imageSources,proto3" json:"image_sources,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -108,6 +111,20 @@ func (x *SourceDeploymentRequest) GetRegistryHost() string {
 		return x.RegistryHost
 	}
 	return ""
+}
+
+func (x *SourceDeploymentRequest) GetRenderers() []*PluginDescriptor {
+	if x != nil {
+		return x.Renderers
+	}
+	return nil
+}
+
+func (x *SourceDeploymentRequest) GetImageSources() []*PluginDescriptor {
+	if x != nil {
+		return x.ImageSources
+	}
+	return nil
 }
 
 type SourceDeploymentResult struct {
@@ -666,14 +683,16 @@ var File_sdodev_contracts_v1alpha1_lifecycle_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDesc = "" +
 	"\n" +
-	")sdodev/contracts/v1alpha1/lifecycle.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x19google/protobuf/any.proto\x1a1sdodev/contracts/v1alpha1/deployment_source.proto\x1a1sdodev/contracts/v1alpha1/memory_diagnostic.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\"\xf4\x01\n" +
+	")sdodev/contracts/v1alpha1/lifecycle.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x19google/protobuf/any.proto\x1a1sdodev/contracts/v1alpha1/deployment_source.proto\x1a1sdodev/contracts/v1alpha1/memory_diagnostic.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\"\x91\x03\n" +
 	"\x17SourceDeploymentRequest\x12 \n" +
 	"\vapplication\x18\x01 \x01(\tR\vapplication\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12)\n" +
 	"\x10health_objective\x18\x03 \x01(\tR\x0fhealthObjective\x12/\n" +
 	"\x13correction_feedback\x18\x04 \x01(\tR\x12correctionFeedback\x12\x18\n" +
 	"\aattempt\x18\x05 \x01(\rR\aattempt\x12#\n" +
-	"\rregistry_host\x18\x06 \x01(\tR\fregistryHost\"\xb7\x01\n" +
+	"\rregistry_host\x18\x06 \x01(\tR\fregistryHost\x12I\n" +
+	"\trenderers\x18\a \x03(\v2+.sdodev.contracts.v1alpha1.PluginDescriptorR\trenderers\x12P\n" +
+	"\rimage_sources\x18\b \x03(\v2+.sdodev.contracts.v1alpha1.PluginDescriptorR\fimageSources\"\xb7\x01\n" +
 	"\x16SourceDeploymentResult\x12\x1a\n" +
 	"\bproposed\x18\x01 \x01(\bR\bproposed\x12\x18\n" +
 	"\asummary\x18\x02 \x01(\tR\asummary\x12(\n" +
@@ -746,28 +765,31 @@ var file_sdodev_contracts_v1alpha1_lifecycle_proto_goTypes = []any{
 	(*HealthJudgeRequest)(nil),          // 5: sdodev.contracts.v1alpha1.HealthJudgeRequest
 	(*SourceResource)(nil),              // 6: sdodev.contracts.v1alpha1.SourceResource
 	(*HealthJudgeResult)(nil),           // 7: sdodev.contracts.v1alpha1.HealthJudgeResult
-	(*anypb.Any)(nil),                   // 8: google.protobuf.Any
-	(*DeploymentSource)(nil),            // 9: sdodev.contracts.v1alpha1.DeploymentSource
-	(*ImageSource)(nil),                 // 10: sdodev.contracts.v1alpha1.ImageSource
-	(*MetricsSource)(nil),               // 11: sdodev.contracts.v1alpha1.MetricsSource
-	(*MemoryDiagnostic)(nil),            // 12: sdodev.contracts.v1alpha1.MemoryDiagnostic
-	(*OperationalArtifactProposal)(nil), // 13: sdodev.contracts.v1alpha1.OperationalArtifactProposal
+	(*PluginDescriptor)(nil),            // 8: sdodev.contracts.v1alpha1.PluginDescriptor
+	(*anypb.Any)(nil),                   // 9: google.protobuf.Any
+	(*DeploymentSource)(nil),            // 10: sdodev.contracts.v1alpha1.DeploymentSource
+	(*ImageSource)(nil),                 // 11: sdodev.contracts.v1alpha1.ImageSource
+	(*MetricsSource)(nil),               // 12: sdodev.contracts.v1alpha1.MetricsSource
+	(*MemoryDiagnostic)(nil),            // 13: sdodev.contracts.v1alpha1.MemoryDiagnostic
+	(*OperationalArtifactProposal)(nil), // 14: sdodev.contracts.v1alpha1.OperationalArtifactProposal
 }
 var file_sdodev_contracts_v1alpha1_lifecycle_proto_depIdxs = []int32{
-	2,  // 0: sdodev.contracts.v1alpha1.SourceDeploymentResult.plan:type_name -> sdodev.contracts.v1alpha1.DeploymentPlan
-	8,  // 1: sdodev.contracts.v1alpha1.DeploymentPlan.strategy_config:type_name -> google.protobuf.Any
-	9,  // 2: sdodev.contracts.v1alpha1.DeploymentPlan.source:type_name -> sdodev.contracts.v1alpha1.DeploymentSource
-	10, // 3: sdodev.contracts.v1alpha1.DeploymentPlan.images:type_name -> sdodev.contracts.v1alpha1.ImageSource
-	4,  // 4: sdodev.contracts.v1alpha1.RawManifestStrategy.image_builds:type_name -> sdodev.contracts.v1alpha1.ImageBuild
-	11, // 5: sdodev.contracts.v1alpha1.HealthJudgeRequest.metrics_source:type_name -> sdodev.contracts.v1alpha1.MetricsSource
-	6,  // 6: sdodev.contracts.v1alpha1.HealthJudgeRequest.source_resources:type_name -> sdodev.contracts.v1alpha1.SourceResource
-	12, // 7: sdodev.contracts.v1alpha1.HealthJudgeRequest.previous_diagnostics:type_name -> sdodev.contracts.v1alpha1.MemoryDiagnostic
-	13, // 8: sdodev.contracts.v1alpha1.HealthJudgeResult.artifact_proposal:type_name -> sdodev.contracts.v1alpha1.OperationalArtifactProposal
-	9,  // [9:9] is the sub-list for method output_type
-	9,  // [9:9] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	8,  // 0: sdodev.contracts.v1alpha1.SourceDeploymentRequest.renderers:type_name -> sdodev.contracts.v1alpha1.PluginDescriptor
+	8,  // 1: sdodev.contracts.v1alpha1.SourceDeploymentRequest.image_sources:type_name -> sdodev.contracts.v1alpha1.PluginDescriptor
+	2,  // 2: sdodev.contracts.v1alpha1.SourceDeploymentResult.plan:type_name -> sdodev.contracts.v1alpha1.DeploymentPlan
+	9,  // 3: sdodev.contracts.v1alpha1.DeploymentPlan.strategy_config:type_name -> google.protobuf.Any
+	10, // 4: sdodev.contracts.v1alpha1.DeploymentPlan.source:type_name -> sdodev.contracts.v1alpha1.DeploymentSource
+	11, // 5: sdodev.contracts.v1alpha1.DeploymentPlan.images:type_name -> sdodev.contracts.v1alpha1.ImageSource
+	4,  // 6: sdodev.contracts.v1alpha1.RawManifestStrategy.image_builds:type_name -> sdodev.contracts.v1alpha1.ImageBuild
+	12, // 7: sdodev.contracts.v1alpha1.HealthJudgeRequest.metrics_source:type_name -> sdodev.contracts.v1alpha1.MetricsSource
+	6,  // 8: sdodev.contracts.v1alpha1.HealthJudgeRequest.source_resources:type_name -> sdodev.contracts.v1alpha1.SourceResource
+	13, // 9: sdodev.contracts.v1alpha1.HealthJudgeRequest.previous_diagnostics:type_name -> sdodev.contracts.v1alpha1.MemoryDiagnostic
+	14, // 10: sdodev.contracts.v1alpha1.HealthJudgeResult.artifact_proposal:type_name -> sdodev.contracts.v1alpha1.OperationalArtifactProposal
+	11, // [11:11] is the sub-list for method output_type
+	11, // [11:11] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_lifecycle_proto_init() }

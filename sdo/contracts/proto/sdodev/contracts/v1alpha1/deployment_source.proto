@@ -4,6 +4,8 @@ package sdodev.contracts.v1alpha1;
 
 import "buf/validate/validate.proto";
 import "google/protobuf/any.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/struct.proto";
 
 option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
 
@@ -23,8 +25,8 @@ message ImageSource {
   google.protobuf.Any config = 3;
 }
 
-// Plugin configs. Owner packages: render/raw, render/kustomize,
-// imagesrc/buildkit, imagesrc/prebuilt.
+// Plugin configs. Owner packages: render/raw, render/kustomize, render/helm,
+// imagesrc/buildkit, imagesrc/prebuilt, upstream/gitpoll.
 
 // Files or directories, recursive, *.yaml|*.yml|*.json.
 message RawRenderConfig {
@@ -42,3 +44,45 @@ message BuildKitImageConfig {
 }
 
 message PrebuiltImageConfig {}
+
+// Directory holding Chart.yaml in the effective tree.
+message HelmRenderConfig {
+  string chart_path = 1;
+  // Tree paths merged in order after the chart's values.yaml.
+  repeated string value_files = 2;
+  // Inline overrides, merged last (like --set-json).
+  google.protobuf.Struct values = 3;
+}
+
+// Follows a ref of a Git repository by polling it.
+message GitPollConfig {
+  string repository = 1 [(buf.validate.field).string.min_len = 1];
+  string ref = 2 [(buf.validate.field).string.min_len = 1];
+  google.protobuf.Duration poll_interval = 3;
+}
+
+// PluginDescriptor tells an agent one catalog entry it may choose, with the
+// proto type of its config and a JSON Schema generated from that type.
+message PluginDescriptor {
+  string id = 1 [(buf.validate.field).string.pattern = "^[a-z][a-z0-9-]*$"];
+  // Full proto name, e.g. sdodev.contracts.v1alpha1.HelmRenderConfig.
+  string config_type = 2;
+  string config_schema_json = 3;
+  // Short usage doc from the implementation package.
+  string doc = 4;
+}
+
+// SourcesFile is the decoded form of .sdo/goal/sources.yaml: the upstream
+// sources SDO follows. config is the watcher's proto in YAML/JSON form; the
+// loader decodes it into the watcher's registered config type.
+message SourcesFile {
+  repeated UpstreamSource sources = 1;
+}
+
+message UpstreamSource {
+  // Tree path the source is mounted at; "." in the MVP.
+  string path = 1 [(buf.validate.field).string.min_len = 1];
+  // Upstream watcher catalog ID.
+  string kind = 2 [(buf.validate.field).string.pattern = "^[a-z][a-z0-9-]*$"];
+  google.protobuf.Struct config = 3 [(buf.validate.field).required = true];
+}
