@@ -150,7 +150,8 @@ class LaneAdmission:
         self.synchronize, self.progress = synchronize, progress
         self.before_proof = before_proof
         self.pre_onboarding_hook = pre_onboarding_hook
-        self.required_detectors = {"workload-health", "service-endpoints", "service-reachability", "traffic-health"}
+        # Filled from the accepted memory's health manifests by _policy(); no detector id is assumed.
+        self.required_detectors: set[str] = set()
         self.required_scenarios: set[str] = set()
         self._identity: dict[str, Any] | None = None
         self._sequence = 0
@@ -161,7 +162,9 @@ class LaneAdmission:
             self.required_scenarios = set()
             return
         root = self.environment.workspace / ".sdo/diagnostics"
-        self.required_detectors.update(path.parent.name for path in (root / "detectors/health").glob("*/manifest.yaml"))
+        self.required_detectors = {path.parent.name for path in (root / "detectors/health").glob("*/manifest.yaml")}
+        if not self.required_detectors:
+            raise ValueError("eval: accepted health policy declares no health detectors")
         self.required_scenarios = set()
         for path in (root / "traffic/workloads").glob("*.yaml"):
             document = yaml.safe_load(path.read_text())
