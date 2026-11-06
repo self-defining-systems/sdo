@@ -233,8 +233,18 @@ func (strategy RawStrategy) ApplyAndVerify(ctx context.Context, checkout, tree s
 			if len(document) == 0 {
 				continue
 			}
+			ref, workload, err := rendered.Normalize(document, strategy.Namespace)
+			if err != nil {
+				_ = file.Close()
+				return Observation{}, fmt.Errorf("manifest %s: %w", path, err)
+			}
+			id := ""
+			if workload {
+				id = ref.Kind + "/" + ref.Namespace + "/" + ref.Name
+			}
 			var resolveErr error
-			id, images, err := RenderManifest(document, strategy.Namespace, tree, func(kind, name, container string, init bool, image string) string {
+			images, err := Stamp(document, rendered.BaseTree(tree), func(site ImageSite) string {
+				image := site.Image
 				inputs := imageInputs[image]
 				if inputs.SourceImage == "" {
 					inputs.SourceImage = image
@@ -249,10 +259,7 @@ func (strategy RawStrategy) ApplyAndVerify(ctx context.Context, checkout, tree s
 						image = pinned
 					}
 				}
-				apiVersion, _ := document["apiVersion"].(string)
-				metadata, _ := document["metadata"].(map[string]any)
-				namespace, _ := metadata["namespace"].(string)
-				namedImages = append(namedImages, rendered.DeployedImage{Ref: sdk.ObjectRef{APIVersion: apiVersion, Kind: kind, Namespace: namespace, Name: name}, Name: container, Init: init, Applied: image, Digest: image, Inputs: inputs})
+				namedImages = append(namedImages, rendered.DeployedImage{Ref: sdk.ObjectRef{APIVersion: ref.APIVersion, Kind: site.Kind, Namespace: ref.Namespace, Name: site.Name}, Name: site.Container, Init: site.Init, Applied: image, Digest: image, Inputs: inputs})
 				return image
 			})
 			if resolveErr != nil {
@@ -359,11 +366,6 @@ func (strategy RawStrategy) pin(ctx context.Context, image string, cache map[str
 	}
 	cache[image] = pinned
 	return pinned, nil
-}
-
-// RenderManifest applies the common deployment and lock renderer.
-func RenderManifest(document map[string]any, namespace, tree string, imageFor func(string, string, string, bool, string) string) (string, []string, error) {
-	return rendered.RenderManifest(document, namespace, tree, imageFor)
 }
 
 func safeCandidatePath(root, raw string) (string, error) {

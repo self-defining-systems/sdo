@@ -249,7 +249,7 @@ func (s Source) Revision(ctx context.Context, ref sdk.ObjectRef, revision string
 // exactly as source declares them.
 func (s Source) render(object *unstructured.Unstructured) (*unstructured.Unstructured, error) {
 	document := object.DeepCopy().Object
-	if _, _, err := RenderManifest(document, object.GetNamespace(), "", nil); err != nil {
+	if _, _, err := Normalize(document, object.GetNamespace()); err != nil {
 		return nil, fmt.Errorf("render accepted manifest %s/%s: %w", object.GetKind(), object.GetName(), err)
 	}
 	return &unstructured.Unstructured{Object: document}, nil
