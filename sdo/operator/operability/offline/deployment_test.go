@@ -385,3 +385,16 @@ func TestO1APIsIsAlwaysReported(t *testing.T) {
 	got = byID(t, offline.CheckDeployment(context.Background(), d).Checks)
 	want(t, got, "O1.apis", operability.StatusSkipped, "")
 }
+
+// DeploymentCheckIDs is exactly what CheckDeployment emits when nothing fails.
+func TestDeploymentCheckIDsAreWhatCheckDeploymentEmits(t *testing.T) {
+	d := deployment(t, rendertest.MapFS{"k8s/web.yaml": web})
+	d.ServedAPIs = []string{"v1", "apps/v1", "apps/v1/Deployment"}
+	var ids []string
+	for _, c := range offline.CheckDeployment(context.Background(), d).Checks {
+		ids = append(ids, c.ID)
+	}
+	if strings.Join(ids, ",") != strings.Join(offline.DeploymentCheckIDs(), ",") {
+		t.Fatalf("emitted %v, DeploymentCheckIDs %v", ids, offline.DeploymentCheckIDs())
+	}
+}

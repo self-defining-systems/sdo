@@ -225,6 +225,32 @@ func (r Report) clone() Report {
 	return out
 }
 
+// Combine joins the offline and live checks of one stage into one list with
+// each check ID exactly once. A check both phases can evaluate (O1.apis: the
+// offline gate reads the recorded discovery, the live phase re-reads it after
+// apply) is reported once: the live result supersedes the offline one in the
+// offline check's position, except that a live skip never replaces an offline
+// result that evaluated, because a skip says nothing was checked. Every stage
+// assembler (deployment, advance, candidate) joins its groups through here.
+func Combine(offline, live []Check) []Check {
+	out := append([]Check{}, offline...)
+	at := map[string]int{}
+	for i, c := range out {
+		at[c.ID] = i
+	}
+	for _, c := range live {
+		i, both := at[c.ID]
+		switch {
+		case !both:
+			at[c.ID] = len(out)
+			out = append(out, c)
+		case c.Status != StatusSkipped || out[i].Status == StatusSkipped:
+			out[i] = c
+		}
+	}
+	return out
+}
+
 // Merge combines an offline and a live report of one subject and stage. A check
 // ID present in both is an error: a live result never overwrites an offline one.
 func Merge(offline, live Report) (Report, error) {
