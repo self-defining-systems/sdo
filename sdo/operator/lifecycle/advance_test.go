@@ -62,6 +62,10 @@ type advWorld struct {
 	// pass); liveCalls counts them.
 	live      []operability.Check
 	liveCalls int
+	// offline replaces the offline checks CheckOffline returns (nil: all
+	// pass); offlineErrs is consumed one per call (infrastructure failures).
+	offline     []operability.Check
+	offlineErrs []error
 
 	applied   lifecycle.DeploymentReceipt
 	proposed  map[string]bool
@@ -212,8 +216,22 @@ func (w *advWorld) ApplyAndVerify(_ context.Context, checkout string, plan *cont
 func (w *advWorld) CheckLive(_ context.Context, checkout string, plan *contracts.DeploymentPlan, receipt lifecycle.DeploymentReceipt, outcome error) ([]operability.Check, error) {
 	w.log("live")
 	w.liveCalls++
-	if checkout != advCheckout || !proto.Equal(plan, w.plan) || outcome != nil {
+	if checkout != advCheckout || !proto.Equal(plan, w.plan) {
 		return nil, errors.New("live checks of another checkout or plan")
+	}
+	if outcome != nil {
+		// What deployment.ClassifyDeploymentError does by type.
+		cause := operability.CauseRollout
+		var image *imagesrc.Error
+		if errors.As(outcome, &image) {
+			cause = operability.CauseBuild
+		}
+		fail := operability.Check{ID: "O1.deploy", Phase: operability.PhaseLive, Status: operability.StatusFail, Cause: cause, Detail: outcome.Error()}
+		rest := []operability.Check{fail}
+		for _, id := range []string{"O1.ready", "O2.stamps", "O6.budget"} {
+			rest = append(rest, operability.Check{ID: id, Phase: operability.PhaseLive, Status: operability.StatusSkipped, Detail: "not run: O1.deploy failed"})
+		}
+		return rest, nil
 	}
 	if w.live != nil {
 		return slices.Clone(w.live), nil
@@ -223,6 +241,25 @@ func (w *advWorld) CheckLive(_ context.Context, checkout string, plan *contracts
 		checks = append(checks, operability.Check{ID: id, Phase: operability.PhaseLive, Status: operability.StatusPass})
 	}
 	return checks, nil
+}
+
+func (w *advWorld) CheckOffline(_ context.Context, checkout string, plan *contracts.DeploymentPlan) (lifecycle.OfflineChecks, error) {
+	w.log("offline")
+	if checkout != advCheckout || !proto.Equal(plan, w.plan) {
+		return lifecycle.OfflineChecks{}, errors.New("offline checks of another checkout or plan")
+	}
+	if len(w.offlineErrs) > 0 {
+		err := w.offlineErrs[0]
+		w.offlineErrs = w.offlineErrs[1:]
+		return lifecycle.OfflineChecks{}, err
+	}
+	checks := slices.Clone(w.offline)
+	if w.offline == nil {
+		for _, id := range []string{"O1.patches", "O1.render", "O2.images", "O6.scope"} {
+			checks = append(checks, operability.Check{ID: id, Phase: operability.PhaseOffline, Status: operability.StatusPass})
+		}
+	}
+	return lifecycle.OfflineChecks{Checks: checks, BaseTree: advTree, EffectiveTree: advEffective, PatchesDigest: advDigest, RenderDigest: advDigest, EnvDigest: advDigest}, nil
 }
 
 func (w *advWorld) VerifyAccepted(context.Context, string, string, lifecycle.DeploymentReceipt) (lifecycle.DeploymentReceipt, error) {
@@ -295,7 +332,7 @@ func TestAdvanceAcceptsADeployedAndVerifiedRevision(t *testing.T) {
 		t.Fatalf("result = %+v, err = %v", result, err)
 	}
 	id := lifecycle.AdvanceID(advRevision)
-	want := []string{"materialize git " + advRevision, "change 1111..2222", "propose " + id, "shape 3333", "shape 4444", "pause", "apply", "live", "verify 4444", "publish " + id, "resume"}
+	want := []string{"materialize git " + advRevision, "change 1111..2222", "propose " + id, "shape 3333", "shape 4444", "offline", "pause", "apply", "live", "verify 4444", "publish " + id, "resume"}
 	if !slices.Equal(w.events, want) {
 		t.Fatalf("events\n got %q\nwant %q", w.events, want)
 	}
@@ -317,31 +354,33 @@ func TestAdvanceHoldsEveryRefusedRevision(t *testing.T) {
 		hold    lifecycle.HoldReason
 		paths   []string
 		touched bool
+		// routing is the persisted prefix: cause, owner and the report items.
+		routing string
 	}{
-		{name: "ref rewritten", mutate: func(w *advWorld) { w.notAncestor = true }, hold: lifecycle.HoldRefRewritten},
-		{name: "upstream edits operational memory", mutate: func(w *advWorld) { w.changed = []string{"main.go", ".sdo/goal/goal.md"} }, hold: lifecycle.HoldMemoryTouched, paths: []string{".sdo/goal/goal.md"}},
-		{name: "merge conflict", mutate: func(w *advWorld) { w.conflicts = []string{"Dockerfile"} }, hold: lifecycle.HoldMergeConflict, paths: []string{"Dockerfile"}},
-		{name: "candidate does not render", mutate: func(w *advWorld) { w.shapeErr = map[string]error{advCandidate: errors.New("template: bad")} }, hold: lifecycle.HoldRender},
-		{name: "shape change", mutate: func(w *advWorld) { w.shapes[advCandidate] = "shape-b" }, hold: lifecycle.HoldShapeChange},
+		{name: "ref rewritten", mutate: func(w *advWorld) { w.notAncestor = true }, hold: lifecycle.HoldRefRewritten, routing: "cause=environment owner=human items=-"},
+		{name: "upstream edits operational memory", mutate: func(w *advWorld) { w.changed = []string{"main.go", ".sdo/goal/goal.md"} }, hold: lifecycle.HoldMemoryTouched, routing: "cause=scope owner=human items=O6", paths: []string{".sdo/goal/goal.md"}},
+		{name: "merge conflict", mutate: func(w *advWorld) { w.conflicts = []string{"Dockerfile"} }, hold: lifecycle.HoldMergeConflict, routing: "cause=patch owner=deployer items=O1", paths: []string{"Dockerfile"}},
+		{name: "candidate does not render", mutate: func(w *advWorld) { w.shapeErr = map[string]error{advCandidate: errors.New("template: bad")} }, hold: lifecycle.HoldRender, routing: "cause=render owner=deployer items=O1"},
+		{name: "shape change", mutate: func(w *advWorld) { w.shapes[advCandidate] = "shape-b" }, hold: lifecycle.HoldShapeChange, routing: "cause=coverage owner=designer items=O3"},
 		{name: "image build fails", mutate: func(w *advWorld) {
 			w.applyErrs = []error{fmt.Errorf("resolve images: %w", &imagesrc.Error{Image: "toy", SourceID: "buildkit", Err: errors.New("compile error")})}
-		}, hold: lifecycle.HoldBuild, touched: true},
-		{name: "rollout fails", mutate: func(w *advWorld) { w.applyErrs = []error{errors.New("workload toy not ready")} }, hold: lifecycle.HoldRollout, touched: true},
+		}, hold: lifecycle.HoldBuild, touched: true, routing: "cause=build owner=deployer items=O1"},
+		{name: "rollout fails", mutate: func(w *advWorld) { w.applyErrs = []error{errors.New("workload toy not ready")} }, hold: lifecycle.HoldRollout, touched: true, routing: "cause=rollout owner=responder items=O1"},
 		{name: "receipt of another source", mutate: func(w *advWorld) {
 			w.receipt = func(r lifecycle.DeploymentReceipt) lifecycle.DeploymentReceipt {
 				r.Source = &contracts.DeploymentSource{RendererId: "other", Config: r.Source.GetConfig()}
 				return r
 			}
-		}, hold: lifecycle.HoldRollout, touched: true},
+		}, hold: lifecycle.HoldRollout, touched: true, routing: "cause=rollout owner=responder items=O1"},
 		{name: "incomplete receipt", mutate: func(w *advWorld) {
 			w.receipt = func(r lifecycle.DeploymentReceipt) lifecycle.DeploymentReceipt { r.Ready = false; return r }
-		}, hold: lifecycle.HoldRollout, touched: true},
+		}, hold: lifecycle.HoldRollout, touched: true, routing: "cause=rollout owner=responder items=O1"},
 		{name: "health regression", mutate: func(w *advWorld) {
 			w.verdicts = []lifecycle.HealthVerdict{{Outcome: lifecycle.VerificationSourceFault, Summary: "firing"}}
-		}, hold: lifecycle.HoldHealth, touched: true},
+		}, hold: lifecycle.HoldHealth, touched: true, routing: "cause=source_fault owner=responder items=O4"},
 		{name: "health never settles", mutate: func(w *advWorld) {
 			w.verdicts = []lifecycle.HealthVerdict{{Outcome: lifecycle.VerificationPending}}
-		}, hold: lifecycle.HoldHealth, touched: true},
+		}, hold: lifecycle.HoldHealth, touched: true, routing: "cause=probe_unavailable owner=designer items=O4"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newAdvWorld(t)
@@ -353,8 +392,8 @@ func TestAdvanceHoldsEveryRefusedRevision(t *testing.T) {
 			if tc.paths != nil && !slices.Equal(result.Paths, tc.paths) {
 				t.Fatalf("paths = %v, want %v", result.Paths, tc.paths)
 			}
-			if out := result.FollowerOutcome(); out.Kind != upstream.Refused || !strings.HasPrefix(out.Reason, string(tc.hold)) {
-				t.Fatalf("follower outcome = %+v", out)
+			if out := result.FollowerOutcome(); out.Kind != upstream.Refused || !strings.HasPrefix(out.Reason, tc.routing+" "+string(tc.hold)) {
+				t.Fatalf("follower outcome = %+v, want the prefix %q", out, tc.routing+" "+string(tc.hold))
 			}
 			if len(w.published) != 0 || count(w.events, "publish") != 0 {
 				t.Fatalf("a held revision was published: %q", w.events)
@@ -534,7 +573,7 @@ func TestAdvanceHoldsAPatchThatDoesNotApplyBeforeAnyClusterEffect(t *testing.T) 
 				t.Fatalf("result = %+v, err = %v; want hold %s", result, err, tc.hold)
 			}
 			out := result.FollowerOutcome()
-			if out.Kind != upstream.Refused || !strings.HasPrefix(out.Reason, string(tc.hold)+": ") {
+			if out.Kind != upstream.Refused || !strings.HasPrefix(out.Reason, "cause=patch owner=deployer items=O1 "+string(tc.hold)+": ") {
 				t.Fatalf("follower outcome = %+v", out)
 			}
 			for _, want := range tc.want {
@@ -573,7 +612,7 @@ func TestAdvanceRoutesAShapeChangeToTheDetectionDesigner(t *testing.T) {
 		t.Fatalf("result = %+v, err = %v", result, err)
 	}
 	id := lifecycle.AdvanceID(advRevision)
-	want := []string{"materialize git " + advRevision, "change 1111..2222", "propose " + id, "shape 3333", "shape 4444", "pause", "apply", "live", "verify 4444", "publish " + id, "resume", "designer 2222"}
+	want := []string{"materialize git " + advRevision, "change 1111..2222", "propose " + id, "shape 3333", "shape 4444", "offline", "pause", "apply", "live", "verify 4444", "publish " + id, "resume", "designer 2222"}
 	if !slices.Equal(w.events, want) {
 		t.Fatalf("events\n got %q\nwant %q", w.events, want)
 	}
@@ -591,7 +630,7 @@ func TestAdvanceHoldsOnlyWhenTheDesignerRefreshFails(t *testing.T) {
 	if result.Receipt.Commit == "" || len(w.published) != 1 || !strings.Contains(result.Detail, result.Receipt.Commit) || !strings.Contains(result.Detail, "operability gate") {
 		t.Fatalf("the hold must name the accepted commit and the refresh failure: %+v", result)
 	}
-	if out := result.FollowerOutcome(); out.Kind != upstream.Refused || !strings.HasPrefix(out.Reason, string(lifecycle.HoldDesigner)) {
+	if out := result.FollowerOutcome(); out.Kind != upstream.Refused || !strings.Contains(out.Reason, " "+string(lifecycle.HoldDesigner)+": ") {
 		t.Fatalf("follower outcome = %+v", out)
 	}
 	if count(w.events, "apply") != 1 || count(w.events, "pause") != count(w.events, "resume") {
@@ -645,7 +684,7 @@ func TestAdvancePublishesTheStageAdvanceReport(t *testing.T) {
 			ids = append(ids, c.ID)
 		}
 	}
-	if want := []string{"O1.deploy", "O1.ready", "O2.stamps", "O4.detectors", "O6.budget"}; !slices.Equal(ids, want) {
+	if want := []string{"O1.patches", "O1.render", "O1.deploy", "O1.ready", "O2.images", "O2.stamps", "O4.detectors", "O6.scope", "O6.budget"}; !slices.Equal(ids, want) {
 		t.Fatalf("report checks = %v, want %v", ids, want)
 	}
 }
@@ -672,5 +711,146 @@ func TestAdvanceRequiresLiveChecks(t *testing.T) {
 	advancer.Readiness = readinessWithoutLiveChecks{w}
 	if _, err := advancer.Advance(context.Background(), advConfig, advRequest(t)); err == nil || len(w.events) != 0 {
 		t.Fatalf("err = %v, events = %q", err, w.events)
+	}
+}
+
+func offlineFailure(id string, cause operability.Cause) []operability.Check {
+	return []operability.Check{
+		{ID: "O1.patches", Phase: operability.PhaseOffline, Status: operability.StatusPass},
+		{ID: id, Phase: operability.PhaseOffline, Status: operability.StatusFail, Cause: cause, Detail: "synthetic " + string(cause), Paths: []string{"deploy/values.yaml"}},
+		{ID: "O2.images", Phase: operability.PhaseOffline, Status: operability.StatusPass},
+		{ID: "O6.allowlist", Phase: operability.PhaseOffline, Status: operability.StatusPass},
+	}
+}
+
+// The offline subset runs before the maintenance pause: a failing offline check
+// holds the revision with the cause, owner and items of the check and no
+// cluster effect at all.
+func TestAdvanceHoldsAnOfflineFailureBeforeAnyClusterEffect(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		checks  []operability.Check
+		hold    lifecycle.HoldReason
+		routing string
+	}{
+		{"render", offlineFailure("O1.render", operability.CauseRender), lifecycle.HoldRender, "cause=render owner=deployer items=O1"},
+		{"nondeterministic render", offlineFailure("O1.deterministic", operability.CauseRenderNondeterministic), lifecycle.HoldRender, "cause=render_nondeterministic owner=deployer items=O1"},
+		{"patch", offlineFailure("O1.patches", operability.CausePatch), lifecycle.HoldPatchConflict, "cause=patch owner=deployer items=O1"},
+		{"image declaration", offlineFailure("O2.images", operability.CauseBuild), lifecycle.HoldBuild, "cause=build owner=deployer items=O2"},
+		{"scope", offlineFailure("O6.scope", operability.CauseScope), lifecycle.HoldScope, "cause=scope owner=human items=O6"},
+		{"registry allowlist", offlineFailure("O6.allowlist", operability.CauseAllowlist), lifecycle.HoldScope, "cause=allowlist owner=human items=O6"},
+		{"an SDO defect", offlineFailure("O2.images", operability.CauseAttribution), lifecycle.HoldOperability, "cause=attribution owner=operator items=O2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newAdvWorld(t)
+			w.offline = tc.checks
+			result, err := w.run(t)
+			if err != nil || result.Outcome != lifecycle.AdvanceHeld || result.Hold != tc.hold {
+				t.Fatalf("result = %+v, err = %v; want hold %s", result, err, tc.hold)
+			}
+			if out := result.FollowerOutcome(); !strings.HasPrefix(out.Reason, tc.routing+" "+string(tc.hold)+": ") || !strings.Contains(out.Reason, "(deploy/values.yaml)") {
+				t.Fatalf("reason = %q, want prefix %q", out.Reason, tc.routing)
+			}
+			for _, effect := range []string{"pause", "apply", "live", "verify", "publish"} {
+				if count(w.events, effect) != 0 {
+					t.Fatalf("%s ran after an offline failure: %q", effect, w.events)
+				}
+			}
+			if count(w.events, "propose") != count(w.events, "release") {
+				t.Fatalf("proposal leaked: %q", w.events)
+			}
+		})
+	}
+}
+
+// An infrastructure failure of the offline checks is retried and never a hold;
+// one that persists ends the attempt as an error for the follower to retry.
+func TestAdvanceRetriesOfflineInfrastructureWithoutAHold(t *testing.T) {
+	w := newAdvWorld(t)
+	w.offlineErrs = []error{&infrastructureFailure{}}
+	if result, err := w.run(t); err != nil || result.Outcome != lifecycle.AdvanceAccepted || count(w.events, "offline") != 2 {
+		t.Fatalf("result = %+v, err = %v, events = %q", result, err, w.events)
+	}
+	w = newAdvWorld(t)
+	w.offline = offlineFailure("O1.patches", operability.CauseInfrastructure)
+	result, err := w.run(t)
+	if err == nil || result.Outcome == lifecycle.AdvanceHeld || count(w.events, "pause") != 0 {
+		t.Fatalf("result = %+v, err = %v, events = %q", result, err, w.events)
+	}
+}
+
+type liveOnlyReadiness struct {
+	lifecycle.SourceReadinessVerifier
+	lifecycle.LiveChecker
+}
+
+// A verifier that cannot check offline contributes no offline checks (the live
+// subset still runs); the offline checks of one that can are in the report the
+// broker records.
+func TestAdvanceOfflineChecksAreOptionalButRecorded(t *testing.T) {
+	w := newAdvWorld(t)
+	advancer := w.advancer()
+	advancer.Readiness = liveOnlyReadiness{w, w}
+	if result, err := advancer.Advance(context.Background(), advConfig, advRequest(t)); err != nil || result.Outcome != lifecycle.AdvanceAccepted || count(w.events, "offline") != 0 {
+		t.Fatalf("result = %+v, err = %v, events = %q", result, err, w.events)
+	}
+	offline := newAdvWorld(t)
+	if result, err := offline.run(t); err != nil || result.Outcome != lifecycle.AdvanceAccepted {
+		t.Fatalf("result = %+v, err = %v", result, err)
+	}
+	var found bool
+	for _, item := range offline.reports[0].Items {
+		for _, c := range item.Checks {
+			found = found || c.ID == "O1.patches"
+		}
+	}
+	if !found {
+		t.Fatal("the offline checks are not in the report the broker records")
+	}
+}
+
+// E8 after the cluster changed: Go's provenance rule routes a firing detector
+// the operator wrote (the floor) to the responder as an application fault, and
+// only the designer's own detectors firing to the designer. Neither is accepted,
+// and the cluster is left as it is.
+func TestAdvanceRoutesAHealthRegressionByDetectorProvenance(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		verdict lifecycle.HealthVerdict
+		routing string
+	}{
+		{"floor detector fires", firing, "cause=source_fault owner=responder items=O4"},
+		{"only the designer's detector fires", judgeFiring, "cause=detector_fault owner=designer items=O4"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newAdvWorld(t)
+			w.verdicts = []lifecycle.HealthVerdict{tc.verdict}
+			result, err := w.run(t)
+			if err != nil || result.Outcome != lifecycle.AdvanceHeld || result.Hold != lifecycle.HoldHealth {
+				t.Fatalf("result = %+v, err = %v", result, err)
+			}
+			if out := result.FollowerOutcome(); !strings.HasPrefix(out.Reason, tc.routing+" health: ") {
+				t.Fatalf("reason = %q, want prefix %q", out.Reason, tc.routing)
+			}
+			if len(w.published) != 0 || count(w.events, "apply") != 1 {
+				t.Fatalf("events = %q", w.events)
+			}
+		})
+	}
+}
+
+// E7 after apply: a rollout failure is the responder's (an incident), never a
+// correction for the deployer, whose candidate is already applied.
+func TestAdvanceRoutesARolloutFailureToTheResponder(t *testing.T) {
+	w := newAdvWorld(t)
+	w.applyErrs = []error{errors.New("workload toy not ready")}
+	result, err := w.run(t)
+	if err != nil || result.Hold != lifecycle.HoldRollout || result.Owner != operability.OwnerResponder || result.Cause != operability.CauseRollout {
+		t.Fatalf("result = %+v, err = %v", result, err)
+	}
+	w = newAdvWorld(t)
+	w.live = failLive("O1.ready", operability.CauseRollout)
+	if result, err := w.run(t); err != nil || result.Hold != lifecycle.HoldRollout || result.Owner != operability.OwnerResponder {
+		t.Fatalf("a receipt whose workloads are not ready: result = %+v, err = %v", result, err)
 	}
 }
