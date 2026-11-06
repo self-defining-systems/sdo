@@ -105,15 +105,15 @@ def test_public_admission_uses_selected_arm(tmp_path, monkeypatch, code_path, ru
     traffic = tmp_path / ".sdo/diagnostics/traffic/workloads"
     traffic.mkdir(parents=True)
     (traffic / "health.yaml").write_text("purpose: health-probe\nscenarios:\n- id: frontend\n")
+    declared = {"workload-health", "service-endpoints", "service-reachability", "traffic-health"}
+    for detector in declared:
+        (tmp_path / ".sdo/diagnostics/detectors/health" / detector).mkdir(parents=True)
+        (tmp_path / ".sdo/diagnostics/detectors/health" / detector / "manifest.yaml").write_text("id: fixture\n")
     environment = SimpleNamespace(
         workspace=tmp_path, kubeconfig=tmp_path / "kubeconfig", namespace="app", deploy_problem="fixture"
     )
     calls = []
-    keys = (
-        {"shell.detectors"}
-        if code_path == "shell"
-        else {"workload-health", "service-endpoints", "service-reachability", "traffic-health"}
-    )
+    keys = {"shell.detectors"} if code_path == "shell" else declared
 
     def state(_control):
         return {

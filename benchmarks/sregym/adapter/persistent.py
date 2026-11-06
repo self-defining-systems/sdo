@@ -352,7 +352,9 @@ class ClusterOps(Protocol):
         self, control_namespace: str, generation: str, inject: Callable[[], None]
     ) -> dict[str, float]: ...
 
-    def open_external_incident(self, control_namespace: str, namespace: str, incident_id: str) -> None: ...
+    def open_external_incident(
+        self, control_namespace: str, namespace: str, incident_id: str, application: str
+    ) -> None: ...
 
     def collect_receipt(self, config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]: ...
 
@@ -756,14 +758,14 @@ class KubectlClusterOps:
             poll_seconds=POLL_SECONDS,
         )
 
-    def open_external_incident(self, control_namespace: str, namespace: str, incident_id: str) -> None:
+    def open_external_incident(
+        self, control_namespace: str, namespace: str, incident_id: str, application: str
+    ) -> None:
+        # The page states only what an on-call human would know: users see errors. It never names a fault.
         alert = {
             "id": incident_id,
             "namespace": namespace,
-            "message": (
-                "You are an SRE agent. Something is wrong in the application running in this cluster. "
-                "Find and fix the problem."
-            ),
+            "message": f"operator page: users of {application} report errors",
         }
         kubectl(
             ["apply", "-f", "-"],
@@ -996,7 +998,7 @@ def run_persistent_stage(
         known.update(_known_incident_ids(state))
         inject()
         if config.external_incidents:
-            ops.open_external_incident(control, inputs.namespace, f"external-{uuid.uuid4().hex}")
+            ops.open_external_incident(control, inputs.namespace, f"external-{uuid.uuid4().hex}", inputs.application)
 
     try:
         if config.external_incidents:

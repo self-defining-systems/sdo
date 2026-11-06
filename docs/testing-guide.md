@@ -942,22 +942,34 @@ The stop simulation continues using virtual time for production wait adapters.
 
 ### PR CI budget
 
-PRs and merge groups run three jobs: `checks and Python`, `Go tests`, and
-`Required PR CI`. The aggregate requires both validation jobs to succeed;
-skips and cancellation fail closed. Static checks overlap Python tests within
-one job. `check_errors.sh` already includes types, architecture and proto;
-CI does not repeat those as separate jobs. Go modules use one temporary workspace and one `go test` invocation to schedule
-packages across all modules, one compiler/module cache and normal package parallelism, with `-trimpath` allowing compiler entries
-to survive generated-workspace path changes. No prepared-cache job or shard
-matrix sits on the critical path. The Go job saves to its own `ci-tests-v2`
-cache namespace on main: Actions caches are immutable, so sharing a save key with
-Python checks let the first finisher discard the other job's generated builds.
-The Go job also restores current-toolchain caches across dependency-hash changes;
-Go validates compiler entries by content. Hash discovery can change after
-submodule initialization, so an exact-hash-only fallback repeatedly restored
-an obsolete cache on #664. Real compiler tests use the
-`integration` tag in the same invocation (PR and nightly).
-The independent foreign-policy near-miss compiler test also runs in parallel. Both validation jobs have five-minute limits.
+PRs and merge groups run `static checks`, two `Python tests` shards (`core`, and
+`fastloop`, split by `SDO_PYTEST_SHARD` in `test_python.sh`), two `Go tests` shards
+(`validate`, the compiler-backed memory validator, and `rest`; `test_go_ci.sh pr <shard>`),
+and `Required PR CI`. Shards are independent jobs that each build from the Go
+caches (no compiler artifact transfer); every job has a five-minute cap and
+targets about three minutes. The aggregate requires every job to succeed (skips and
+cancellation fail closed), combines the Python shards' coverage data and enforces the
+`pyproject.toml` floor over their union. `check_errors.sh --python-suite` already
+includes types, architecture and proto; the architecture tests run in the Python
+`core` shard. Go modules use one temporary workspace per shard and one `go test`
+invocation, with `-trimpath` allowing compiler entries to survive generated-workspace
+path changes. Main saves each Go job's cache under its own key (`ci-shared-v1` for static
+checks, `ci-tests-v2-...-<shard>` per Go shard) after deleting compiler entries the run
+did not touch, so restores stay small; Actions caches are immutable, so sharing a save key
+would let the first finisher discard another job's builds. Restores fall back across
+dependency-hash changes; Go validates compiler entries by content. Real compiler tests use
+the `integration` tag in the same invocation (PR and nightly).
+
+#### CI budgets and ratchets
+
+Every number lives in `.github/ci_budgets.json` and is enforced in code
+(`tests/unit/sdo/operator/test_ci_guards.py`); lower a number there when a job gets faster, never raise one to make a job pass.
+
+- Timeouts: `timeout_minutes` per workflow job is a ratchet; a job whose `timeout-minutes` exceeds its entry (or is missing from the table) fails the test.
+- Main push runs are never cancelled (`ci.yml` gives each push its own concurrency group), so each merged commit is fully tested and refreshes the caches. `Required PR CI` stays the single aggregate required check over every shard.
+- Slow tests: a PR-tier test over `slow_test_seconds` (10 s) fails its job (`scripts/check_slow_tests.py` reads `go test -json` and pytest `--durations`). Fix it, move it to the nightly/integration tier (`testing.Short` skip or the nightly ignore list), or as a last resort add it with a reason to `slow_tests`. Go keys are `<package> <TopLevelTest>`; Python keys are node ids without a parameter suffix.
+- Cache size: main saves a Go cache only if `scripts/ci_cache_guard.sh` measures its compressed archive (what Actions uploads) at or under `cache_limit_mb` (1 GB); otherwise it skips the save and fails the job.
+- `CI health` (hourly, `scripts/ci_health.py`) summarizes per-job p50/p95, merge-queue enqueue-to-merge latency and cancelled/rerun/ejected rates over the last `health.runs` runs created after `health.since`, and fails when any PR job p95 exceeds 180 s or queue p95 exceeds 8 min. After a fix, move `health.since` forward so the old runs leave the window.
 
 `Nightly CI` runs daily and through `workflow_dispatch`; its Actions conclusion reports failures. It has one
 Go job (every package under `-race`, without `-short`, with full simulation seeds, then the bounded fuzz campaigns),

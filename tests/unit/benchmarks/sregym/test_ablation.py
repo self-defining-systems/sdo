@@ -84,3 +84,32 @@ def test_failed_audit_never_publishes(tmp_path: Path, monkeypatch: pytest.Monkey
     with pytest.raises(RuntimeError, match="audit rejected"):
         generator.generate(str(source), "ported", "full", tmp_path / "variant", push=True)
     assert not git("branch", "--list", "ablate/*")
+
+
+def test_generator_names_the_branch_the_caller_chose(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess
+
+    from benchmarks.sregym.ablation import __main__ as generator
+    from benchmarks.sregym.repository_git import host_git_command
+
+    source = tmp_path / "source"
+    source.mkdir()
+
+    def git(directory: Path, *args: str) -> str:
+        return subprocess.check_output(host_git_command(directory, *args), text=True).strip()
+
+    git(source, "init", "-b", "ported")
+    (source / ".sdo").mkdir()
+    (source / ".sdo/schema-version").write_text("3\n")
+    git(source, "add", ".")
+    git(source, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "synthetic")
+
+    def rejected(*args: object, **kwargs: object) -> str:
+        raise RuntimeError("audit rejected")
+
+    monkeypatch.setattr(generator, "execute_operator", rejected)
+    with pytest.raises(RuntimeError, match="audit rejected"):
+        generator.generate(
+            str(source), "ported", "playbooks-only", tmp_path / "variant", push=False, branch="ablate/20261106-x"
+        )
+    assert git(tmp_path / "variant", "branch", "--show-current") == "ablate/20261106-x"

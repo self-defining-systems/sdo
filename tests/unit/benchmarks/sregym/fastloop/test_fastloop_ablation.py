@@ -86,3 +86,38 @@ def test_variant_is_the_setup_lineage_boundary(tmp_path):
     _commit(tmp_path, "unvalidated-setup", [])
     with pytest.raises(ValueError, match="unvalidated setup commit"):
         setup_lineage(tmp_path, env.seed_commit)
+
+
+def test_arm_branch_is_chosen_by_the_caller_and_defaults_to_the_recorded_date():
+    from benchmarks.sregym.fastloop.ablation import configure_arm
+
+    env = SimpleNamespace(
+        app="sregym", problem_application="social-network", shared_accepted_id="", workspace=Path("/workspace")
+    )
+    calls = []
+
+    def git(*arguments):
+        calls.append(arguments)
+        return "a" * 40
+
+    args = build_parser().parse_args(
+        ["run", "--run-dir", "/tmp/run", "--agent", "sdo", "--ablation-arm", "playbooks-only"]
+    )
+    assert configure_arm(args, env, git=git).branch == "ablate/20261103-playbooks-only"
+    args = build_parser().parse_args(
+        [
+            "run",
+            "--run-dir",
+            "/tmp/run",
+            "--agent",
+            "sdo",
+            "--ablation-arm",
+            "playbooks-only",
+            "--ablation-branch",
+            "ablate/20261106-playbooks-only",
+        ]
+    )
+    selected = configure_arm(args, env, git=git)
+    assert selected.branch == "ablate/20261106-playbooks-only"
+    assert calls[-2] == ("fetch", "--no-tags", selected.repository, "ablate/20261106-playbooks-only")
+    assert args.external_incidents

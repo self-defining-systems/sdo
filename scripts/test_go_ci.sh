@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # All modules use Go's content-addressed compiler/module caches. No per-module
 # cache or serial preparation job; package parallelism uses the runner's CPUs.
+# Usage: test_go_ci.sh [pr|nightly] [validate|rest]
+# The optional shard splits the PR run across two hosted jobs. "validate" is the
+# memory validator, whose compiler-backed tests dominate wall time; "rest" is every
+# other package. Without a shard, one invocation schedules every package.
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 args=(-tags=integration -json -timeout=5m)
@@ -34,5 +38,22 @@ patterns=()
     echo ')'
 } > "$GOWORK"
 cd "$root"
+validate_pattern="./sdo/operator/memory/validate"
+case "${2:-}" in
+    "") ;;
+    validate) patterns=("$validate_pattern") ;;
+    rest)
+        # The package list is fixed here; go test then schedules it as one run.
+        mapfile -t patterns < <(go list -tags=integration "${patterns[@]}" |
+            grep -v "^sdo.dev/operator/memory/validate$" || true)
+        [[ ${#patterns[@]} -gt 0 ]] || { echo "no packages outside the validate shard" >&2; exit 1; }
+        ;;
+    *) echo "unknown Go test shard: $2" >&2; exit 2 ;;
+esac
 # Nested builder tests must select their own isolated modules.
-go test -exec 'env GOWORK=off' "${args[@]}" "${patterns[@]}"
+# SDO_GO_TEST_LOG keeps the JSON stream for scripts/check_slow_tests.py.
+if [[ -n "${SDO_GO_TEST_LOG:-}" ]]; then
+    go test -exec 'env GOWORK=off' "${args[@]}" "${patterns[@]}" | tee "$SDO_GO_TEST_LOG"
+else
+    go test -exec 'env GOWORK=off' "${args[@]}" "${patterns[@]}"
+fi

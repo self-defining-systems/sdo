@@ -11,8 +11,11 @@ on:
 permissions:
   contents: read
 
+# A push to main is never cancelled: every merged commit is tested in full and
+# refreshes the caches. Each gets its own group; PRs share one per ref and
+# cancel their superseded runs.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.event_name == 'push' && format('ci-push-{0}', github.sha) || format('ci-{0}', github.ref) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -25,7 +28,7 @@ env:
 
 jobs:
   checks:
-    name: checks and Python
+    name: static checks
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -78,6 +81,75 @@ jobs:
           curl --fail --location --retry 3 https://github.com/protocolbuffers/protobuf/releases/download/v33.4/protoc-33.4-linux-x86_64.zip -o /tmp/protoc.zip
           unzip -j /tmp/protoc.zip bin/protoc -d "$(go env GOPATH)/bin"
       # check_errors already includes types, architecture, proto and Go mains.
+      # check_errors already includes types, architecture, proto and Go mains.
+      # Its Python-suite mode leaves tests that the sharded Python jobs run to them.
+      - name: Static contracts
+        run: |
+          bash ./scripts/format_code.sh --check
+          bash ./scripts/check_errors.sh --python-suite
+
+      # Go refreshes the mtime of every compiler entry it reads that is over an hour
+      # old, so an entry untouched for two hours is stale. Saving only live entries
+      # keeps the cache small; restoring it is the largest fixed cost of every job.
+      - name: Drop compiler entries this run did not use
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: find ~/.cache/go-build -type f -mmin +120 -delete
+      - name: Check the cache size before saving
+        id: cache-size
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: bash scripts/ci_cache_guard.sh "$(python3 -c 'import json;print(json.load(open(".github/ci_budgets.json"))["cache_limit_mb"])')" ~/.cache/go-build ~/go/pkg/mod
+      - name: Save shared Go cache on main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cache-size.outputs.oversize != 'true'
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ci-shared-v1-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+      - name: Fail on an oversize cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cache-size.outputs.oversize == 'true'
+        run: exit 1
+
+  python:
+    name: Python tests (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [core, fastloop]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
+        with:
+          go-version: "1.26.8"
+          cache: false
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ci-py-v3-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ matrix.shard }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            ci-py-v3-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ matrix.shard }}-
+            ci-shared-v1-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
+            ci-shared-v1-${{ runner.os }}-${{ runner.arch }}-1.26.8-
+            ci-tests-v2-${{ runner.os }}-${{ runner.arch }}-1.26.8-
+            ci-go-${{ runner.os }}-${{ runner.arch }}-operator-1.26.8-
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc
+        with:
+          version: "0.9.24"
+          python-version: "3.12"
+          enable-cache: true
+          prune-cache: false
+      - run: uv sync --locked --all-extras
+      - name: Check out the SREGym harness and its nested inputs
+        run: |
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          python3 scripts/init_test_prereqs.py
       # Agent-script stand-in turns sandbox their commands with bubblewrap, as
       # real workspace-write turns are confined. Ubuntu 24.04 runners restrict
       # unprivileged user namespaces through AppArmor; lift that for bwrap.
@@ -86,13 +158,11 @@ jobs:
           sudo apt-get install -y --no-install-recommends bubblewrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           bwrap --ro-bind / / --dev /dev --proc /proc true
-      - name: Static contracts and Python unit tests
+      - name: Python unit tests (${{ matrix.shard }} shard)
+        env:
+          SDO_PYTEST_SHARD: ${{ matrix.shard }}
         run: |
-          bash ./scripts/check_errors.sh --python-suite > /tmp/checks.log 2>&1 &
-          checks=$!
-          bash ./scripts/format_code.sh --check
-          status=0
-          bash ./scripts/test_python.sh --durations=30 \
+          SDO_PYTEST_LOG="$RUNNER_TEMP/pytest.log" bash ./scripts/test_python.sh --durations=30 \
             --ignore=tests/unit/benchmarks/sregym/fastloop/test_recorded_reflection_stage.py \
             --ignore=tests/unit/benchmarks/sregym/fastloop/test_generated_worker_contract.py \
             --ignore=tests/unit/sdo/agents/responder/test_reflection_final_check.py \
@@ -118,24 +188,44 @@ jobs:
             --ignore=tests/unit/benchmarks/sregym/adapter/test_processes.py \
             --ignore=tests/unit/sdo/agents/lifecycle/test_supplied_reads.py \
             --ignore=tests/unit/benchmarks/sregym/fastloop/test_sequence_scripted.py \
-            --ignore=tests/unit/benchmarks/sregym/fastloop/test_host_limits.py || status=1
-          wait "$checks" || status=1
-          cat /tmp/checks.log
-          exit "$status"
+            --ignore=tests/unit/benchmarks/sregym/fastloop/test_host_limits.py
+      - name: PR-tier tests stay under the slow-test budget
+        run: python3 scripts/check_slow_tests.py --pytest "$RUNNER_TEMP/pytest.log"
+      - name: Publish this shard's coverage data
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-${{ matrix.shard }}
+          path: .coverage
+          include-hidden-files: true
+          retention-days: 1
 
-      - name: Save shared Go cache on main
+      - name: Drop compiler entries that are no longer used
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: find ~/.cache/go-build -type f -mmin +120 -delete
+      - name: Check the cache size before saving
+        id: cache-size
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: bash scripts/ci_cache_guard.sh "$(python3 -c 'import json;print(json.load(open(".github/ci_budgets.json"))["cache_limit_mb"])')" ~/.cache/go-build ~/go/pkg/mod
+      - name: Save this shard's Go cache on main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cache-size.outputs.oversize != 'true'
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: ci-shared-v1-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          key: ci-py-v3-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ matrix.shard }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+      - name: Fail on an oversize cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cache-size.outputs.oversize == 'true'
+        run: exit 1
 
   tests:
-    name: Go tests
+    name: Go tests (${{ matrix.shard }})
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [validate, rest]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -149,8 +239,9 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: ci-tests-v2-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          key: ci-tests-v2-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ matrix.shard }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
           restore-keys: |
+            ci-tests-v2-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ matrix.shard }}-
             ci-tests-v2-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
             ci-tests-v2-${{ runner.os }}-${{ runner.arch }}-1.26.8-
             ci-shared-v1-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
@@ -173,21 +264,38 @@ jobs:
           key: envtest-assets-1.34.0-${{ runner.os }}-${{ runner.arch }}
       - name: Install the pinned envtest binaries (checksum-verified, retried; a cache hit skips it)
         run: echo "KUBEBUILDER_ASSETS=$(bash scripts/install_envtest.sh)" >> "$GITHUB_ENV"
-      - name: All Go modules (one shared compiler and module cache)
-        run: bash ./scripts/test_go_ci.sh
+      - name: Go modules, ${{ matrix.shard }} shard (shared compiler and module cache)
+        env:
+          SDO_GO_TEST_LOG: ${{ runner.temp }}/go-test.json
+        run: bash ./scripts/test_go_ci.sh pr ${{ matrix.shard }}
+      - name: PR-tier tests stay under the slow-test budget
+        run: python3 scripts/check_slow_tests.py --go "$RUNNER_TEMP/go-test.json"
 
-      - name: Save shared Go cache on main
+      # Go refreshes the mtime of every compiler entry it reads that is over an hour
+      # old, so an entry untouched for two hours is stale. Saving only live entries
+      # keeps the cache small; restoring it is the largest fixed cost of every job.
+      - name: Drop compiler entries this run did not use
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: find ~/.cache/go-build -type f -mmin +120 -delete
+      - name: Check the cache size before saving
+        id: cache-size
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: bash scripts/ci_cache_guard.sh "$(python3 -c 'import json;print(json.load(open(".github/ci_budgets.json"))["cache_limit_mb"])')" ~/.cache/go-build ~/go/pkg/mod
+      - name: Save shared Go cache on main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cache-size.outputs.oversize != 'true'
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684
         with:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: ci-tests-v2-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          key: ci-tests-v2-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ matrix.shard }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+      - name: Fail on an oversize cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cache-size.outputs.oversize == 'true'
+        run: exit 1
 
   required-pr-ci:
     name: Required PR CI
-    needs: [checks, tests]
+    needs: [checks, python, tests]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 1
@@ -204,8 +312,22 @@ jobs:
           BUDGET_BASE: ${{ github.event.pull_request.base.sha }}
           BUDGET_HEAD: ${{ github.event.pull_request.head.sha }}
         run: python3 scripts/check_prompt_budgets.py --base "$BUDGET_BASE" --head "$BUDGET_HEAD"
-      - name: Require both jobs to succeed
+      - name: Require every job to succeed
         env:
           CHECKS: ${{ needs.checks.result }}
+          PYTHON: ${{ needs.python.result }}
           TESTS: ${{ needs.tests.result }}
-        run: test "$CHECKS" = success && test "$TESTS" = success
+        run: test "$CHECKS" = success && test "$PYTHON" = success && test "$TESTS" = success
+      # Each Python shard measures its own files; the gate is over their union.
+      - name: Download the Python shards' coverage data
+        if: needs.python.result == 'success'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: coverage-*
+          path: coverage-data
+      - name: Enforce the combined Python coverage floor
+        if: needs.python.result == 'success'
+        run: |
+          python3 -m pip install --quiet coverage==7.13.2
+          python3 -m coverage combine coverage-data/*/.coverage
+          python3 -m coverage report

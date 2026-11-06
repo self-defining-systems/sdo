@@ -17,6 +17,7 @@ from benchmarks.sregym.adapter.native_operator import (
     NativeInstallConfig,
     collect_native_receipt,
     install_existing,
+    validate_code_path_overrides,
 )
 from benchmarks.sregym.protocol import ProductionReceiptValidationError
 from benchmarks.sregym.protocol import validate_production_receipt as validate_receipt_contract
@@ -56,6 +57,7 @@ class RuntimeConfig:
     frozen_memory: bool = False
     external_incidents: bool = False
     code_path: str = "go"
+    code_path_overrides: str = ""
 
     late_findings: str = "off"
     max_response_loops: int = 10
@@ -117,6 +119,7 @@ class RuntimeConfig:
             raise ValueError("reflection_session must be fresh or resume")
         if self.code_path not in ("go", "shell"):
             raise ValueError("code_path must be go or shell")
+        validate_code_path_overrides(self.code_path_overrides)
         if self.reflection_guidance not in ("baseline", "generalize", "generalize-spec"):
             raise ValueError("invalid reflection_guidance")
         if self.late_findings not in ("off", "pull"):
@@ -171,6 +174,7 @@ def native_install_config(config: RuntimeConfig) -> NativeInstallConfig:
         external_incidents=config.external_incidents,
         registration_configmap="sdo-agent-registrations" if config.agent_registrations else None,
         code_path=config.code_path,
+        code_path_overrides=config.code_path_overrides,
         healthy_baseline=config.healthy_baseline,
         permissive_responder=config.permissive_responder,
         responder_namespaces=config.responder_namespaces,
