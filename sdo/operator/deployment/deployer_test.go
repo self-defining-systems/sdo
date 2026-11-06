@@ -45,6 +45,8 @@ type clusterFake struct {
 	live     map[string]WorkloadObservation
 	applyErr error
 	notReady map[string]bool
+	// jobsInFlight is what each Observe was told about unfinished Jobs.
+	jobsInFlight map[string][]string
 }
 
 func (c *clusterFake) Apply(_ context.Context, documents []byte) error {
@@ -81,8 +83,12 @@ func (c *clusterFake) Apply(_ context.Context, documents []byte) error {
 	return nil
 }
 
-func (c *clusterFake) Observe(_ context.Context, id string) (WorkloadObservation, error) {
+func (c *clusterFake) Observe(ctx context.Context, id string) (WorkloadObservation, error) {
 	c.events = append(c.events, "observe "+id)
+	if c.jobsInFlight == nil {
+		c.jobsInFlight = map[string][]string{}
+	}
+	c.jobsInFlight[id], _ = ctx.Value(jobsInFlightKey{}).([]string)
 	observed, ok := c.live[id]
 	if !ok {
 		return WorkloadObservation{}, fmt.Errorf("workload %s not found", id)
@@ -177,6 +183,25 @@ func registerPhased(c *render.Catalog) error {
 			}}
 		}
 		return &unstructured.Unstructured{Object: o}
+	}
+	workload := func(kind, name string) *unstructured.Unstructured {
+		o := object("Deployment", name, name+":1")
+		o.SetKind(kind)
+		if kind == "Job" {
+			o.SetAPIVersion("batch/v1")
+			o.Object["spec"] = map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"name": name, "image": name + ":1"}}}}}
+		}
+		return o
+	}
+	if err := render.Register[*wrapperspb.Int32Value](c, "jobphased", render.RendererFunc[*wrapperspb.Int32Value](
+		func(context.Context, render.FS, render.Env, *wrapperspb.Int32Value) (render.Result, error) {
+			return render.Result{Phases: []render.Phase{
+				{Name: "first", Gate: render.GateNone, Objects: []*unstructured.Unstructured{workload("Job", "migrate"), workload("Deployment", "a")}},
+				{Name: "second", Gate: render.GateReady, Objects: []*unstructured.Unstructured{workload("Deployment", "b")}},
+				{Name: "third", Gate: render.GateReady, Objects: []*unstructured.Unstructured{workload("Job", "late")}},
+			}}, nil
+		})); err != nil {
+		return err
 	}
 	return render.Register[*wrapperspb.StringValue](c, "phased", render.RendererFunc[*wrapperspb.StringValue](
 		func(context.Context, render.FS, render.Env, *wrapperspb.StringValue) (render.Result, error) {
@@ -650,3 +675,22 @@ func TestVerifyAcceptedChecksDigestsAndLiveWorkloads(t *testing.T) {
 }
 
 func registerHelm(c *render.Catalog) error { return helm.Register(c, helm.InProcess) }
+
+// A workload's init containers may wait for a Job of the same or an earlier
+// phase, so observing it tells the backend which of those Jobs are unfinished;
+// a Job of a later phase is not a dependency.
+func TestObserveTellsTheBackendWhichEarlierJobsAreUnfinished(t *testing.T) {
+	root := depCommit(t, rendertest.MapFS{"x": "x"})
+	source := depSource(t, "jobphased", &wrapperspb.Int32Value{})
+	cluster := &clusterFake{}
+	deployer, _ := depDeployer(t, root, cluster)
+	if _, err := deployer.ApplyAndVerify(context.Background(), root, depPlan(t, source, "Deployment/demo/a", "Deployment/demo/b", "Job/demo/late", "Job/demo/migrate")); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(cluster.jobsInFlight["Deployment/demo/b"], ","); got != "Job/demo/migrate" {
+		t.Fatalf("Deployment b observed with jobs %q, want only the earlier-phase Job", got)
+	}
+	if got := cluster.jobsInFlight["Job/demo/migrate"]; len(got) != 0 {
+		t.Fatalf("a Job is never its own dependency: %v", got)
+	}
+}
