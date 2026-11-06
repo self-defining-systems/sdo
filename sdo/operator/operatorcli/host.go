@@ -18,6 +18,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"sdo.dev/operator/deploymentpolicy"
 	"sdo.dev/operator/imagesrc/buildkit"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/rendered"
@@ -54,6 +55,11 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	sourceKind := flags.String("source-kind", "", "upstream watcher kind to follow (published as .sdo/goal/sources.yaml)")
 	sourceConfig := flags.String("source-config", "", "JSON config of the followed upstream")
 	deploymentPlan := flags.String("deployment-plan", "", "provided DeploymentPlan as ProtoJSON (source, image sources, expected workload IDs): the deployer agent is skipped and the plan is deployed as given")
+	var policyFlags deploymentpolicy.Flags
+	flags.StringVar(&policyFlags.AllowedRegistries, "allow-registry", "", "comma-separated registry hosts deployments may pull from (enforced; empty: no allowlist)")
+	flags.BoolVar(&policyFlags.ScopeBlocking, "scope-blocking", false, "refuse foreign-namespace and cluster-scoped objects unless granted")
+	flags.StringVar(&policyFlags.GrantedNamespaces, "grant-namespace", "", "comma-separated foreign namespaces deployments may write to (needs --scope-blocking)")
+	flags.StringVar(&policyFlags.GrantedClusterKinds, "grant-cluster-kind", "", "comma-separated cluster-scoped Kinds deployments may contain (needs --scope-blocking)")
 	operationID := flags.String("operation-id", "", "durable operation identity")
 	maxAttempts := flags.Int("max-attempts", 3, "maximum deployment attempts")
 	controllerImage := flags.String("controller-image", "", "compiled operator image")
@@ -187,6 +193,10 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	if len(sources) > 0 && strings.TrimSpace(*objective) == "" {
 		return HostConfig{}, errors.New("a followed source is published with the human goal and requires a health objective")
 	}
+	deploymentPolicy, err := encodedPolicy(policyFlags)
+	if err != nil {
+		return HostConfig{}, err
+	}
 	providedPlan, err := rendered.ParseDeploymentPlan(*deploymentPlan)
 	if err != nil {
 		return HostConfig{}, err
@@ -196,7 +206,7 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 		return HostConfig{}, err
 	}
 	config := install.Config{
-		SourceKind: *sourceKind, SourceConfig: *sourceConfig, DeploymentPlan: compactPlan,
+		SourceKind: *sourceKind, SourceConfig: *sourceConfig, DeploymentPlan: compactPlan, DeploymentPolicy: deploymentPolicy,
 		CodePath:           selectedCodePath,
 		ResponderMenu:      menuEnabled,
 		ObservationCeiling: ceiling,
@@ -289,4 +299,14 @@ func RunHost(ctx context.Context, launch HostConfig) (install.OperateResult, err
 
 func acceptedHead(ctx context.Context, repository string) (string, error) {
 	return processio.AcceptedHead(ctx, repository)
+}
+
+// encodedPolicy is the install-time deployment policy of the human flags in
+// the compact form install.Config carries; empty when none is set.
+func encodedPolicy(flags deploymentpolicy.Flags) (string, error) {
+	policy, err := deploymentpolicy.FromFlags(flags)
+	if err != nil {
+		return "", err
+	}
+	return deploymentpolicy.Format(policy)
 }

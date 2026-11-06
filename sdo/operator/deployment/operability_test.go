@@ -12,7 +12,6 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/operability"
-	"sdo.dev/operator/operability/offline"
 	"sdo.dev/operator/patchset"
 )
 
@@ -147,7 +146,7 @@ func TestCheckOfflineAppliesTheInstallPolicy(t *testing.T) {
 	if c := checksByID(t, got.Checks)["O6.allowlist"]; c.Status != operability.StatusSkipped {
 		t.Fatalf("no allowlist configured: %+v", c)
 	}
-	deployer.Policy = offline.Policy{AllowedRegistries: []string{"ghcr.io"}}
+	deployer.Policy = &contracts.DeploymentPolicy{AllowedRegistries: []string{"ghcr.io"}}
 	got, err = deployer.CheckOffline(context.Background(), root, plan)
 	if err != nil {
 		t.Fatal(err)

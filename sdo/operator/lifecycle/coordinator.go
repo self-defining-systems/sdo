@@ -104,6 +104,9 @@ type DeploymentReceipt struct {
 	// computed with (renderenv.Discover); nil is unknown (renderer defaults),
 	// as in evidence recorded before discovery existed.
 	Environment *contracts.RenderEnvironment
+	// Policy is the install-time deployment policy the deployment was checked
+	// against (recorded for audit; not part of restart identity). Nil is none.
+	Policy      *contracts.DeploymentPolicy
 	Images      []string
 	ResourceIDs []string
 	Ready       bool
@@ -580,6 +583,9 @@ func deploymentToBroker(receipt DeploymentReceipt) broker.SourceEvidence {
 	if receipt.Environment != nil {
 		evidence.RenderEnvironment = proto.Clone(receipt.Environment).(*contracts.RenderEnvironment)
 	}
+	if receipt.Policy != nil {
+		evidence.DeploymentPolicy = proto.Clone(receipt.Policy).(*contracts.DeploymentPolicy)
+	}
 	if receipt.Source != nil {
 		evidence.DeploymentSource = proto.Clone(receipt.Source).(*contracts.DeploymentSource)
 	}
@@ -594,6 +600,9 @@ func deploymentFromBroker(evidence broker.SourceEvidence) DeploymentReceipt {
 	}
 	if evidence.DeploymentSource != nil {
 		receipt.Source = proto.Clone(evidence.DeploymentSource).(*contracts.DeploymentSource)
+	}
+	if evidence.DeploymentPolicy != nil {
+		receipt.Policy = proto.Clone(evidence.DeploymentPolicy).(*contracts.DeploymentPolicy)
 	}
 	if evidence.RenderEnvironment != nil {
 		receipt.Environment = proto.Clone(evidence.RenderEnvironment).(*contracts.RenderEnvironment)

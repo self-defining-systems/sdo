@@ -17,6 +17,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/deploymentpolicy"
 	"sdo.dev/operator/operatorcli/deploywire"
 	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/renderenv"
@@ -118,6 +119,7 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, er
 	upstreamSSH := flags.String("memory-upstream-ssh-dir", "", "read-only directory with the ssh identity and known_hosts for the memory remote")
 	var responderEnv repeatable
 	flags.Var(&responderEnv, "responder-env", "responder environment NAME=VALUE")
+	deploymentPolicyFlag := flags.String("deployment-policy", "", "install-time deployment policy (DeploymentPolicy as ProtoJSON); empty is no policy")
 	renderEnvFlag := flags.String("render-env", "", "install-time render environment (RenderEnvironment as ProtoJSON); empty is unknown")
 	// The deploy identity: the parent deploys upstream advances with it, the
 	// child (through the launch config) a responder's source repair.
@@ -140,6 +142,10 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, er
 		return builder.RunConfig{}, deployIdentity{}, fmt.Errorf("unexpected controller arguments: %v", flags.Args())
 	}
 	renderEnvironment, err := renderenv.Parse(*renderEnvFlag)
+	if err != nil {
+		return builder.RunConfig{}, deployIdentity{}, err
+	}
+	deploymentPolicy, err := deploymentpolicy.Parse(*deploymentPolicyFlag)
 	if err != nil {
 		return builder.RunConfig{}, deployIdentity{}, err
 	}
@@ -172,8 +178,8 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, er
 		ResponderStandby: standby,
 		Namespace:        *namespace, ControlNamespace: *controlNamespace, AppRoot: *app, Application: *application,
 		SourceCommit: *sourceCommit, DeployedCommit: *deployedCommit,
-		RenderEnvironment: renderEnvironment,
-		Dispatcher:        "python3", DispatcherMode: "job", DispatcherArgs: []string{"-m", "sdo.agents.responder.worker"},
+		RenderEnvironment: renderEnvironment, DeploymentPolicy: deploymentPolicy,
+		Dispatcher: "python3", DispatcherMode: "job", DispatcherArgs: []string{"-m", "sdo.agents.responder.worker"},
 		ResponderImage: *responderImage, ResponderEnv: responderEnv,
 		RepositoryPvc: *repositoryPVC, RepositoryMountPath: *repositoryMount, RepositoryPvcSubpath: *repositorySubPath,
 		ResponderCredentialsSecret: *credentialsSecret, BrokerWorktreeRoot: *worktreeRoot,

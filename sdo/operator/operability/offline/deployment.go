@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -32,6 +33,10 @@ type Policy struct {
 	// GrantForeign and GrantClusterScoped are install grants that permit those
 	// objects even when ScopeBlocking is on.
 	GrantForeign, GrantClusterScoped bool
+	// GrantedNamespaces permit foreign-namespace objects in those namespaces,
+	// and GrantedClusterKinds permit cluster-scoped objects of those Kinds
+	// (the cluster-scope ceiling), even when ScopeBlocking is on.
+	GrantedNamespaces, GrantedClusterKinds []string
 	// AllowedRegistries are the registry hosts images may be pulled from. Empty
 	// means no allowlist is configured.
 	AllowedRegistries []string
@@ -101,9 +106,17 @@ func CheckDeployment(ctx context.Context, d Deployment) Result {
 	}
 
 	add(images(first, d.Declared))
-	add(scope(first, d.Policy))
-	add(allowlist(first, d.Policy))
+	for _, c := range CheckPolicy(first, d.Policy) {
+		add(c)
+	}
 	return res
+}
+
+// CheckPolicy runs the install-policy checks (O6 scope and allowlist) over a
+// desired set. The deployer runs the same function before it applies, so the
+// advisory report and the enforcement cannot differ.
+func CheckPolicy(set rendered.DesiredSet, p Policy) []operability.Check {
+	return []operability.Check{scope(set, p), allowlist(set, p)}
 }
 
 // Checks that depend on an earlier one, in the order CheckDeployment runs them.
@@ -239,9 +252,13 @@ func scope(set rendered.DesiredSet, p Policy) operability.Check {
 		name := o.Ref.Kind + "/" + o.Ref.Name
 		switch {
 		case o.Foreign:
-			foreign = append(foreign, o.Ref.Namespace+"/"+name)
+			if !slices.Contains(p.GrantedNamespaces, o.Ref.Namespace) {
+				foreign = append(foreign, o.Ref.Namespace+"/"+name)
+			}
 		case o.Ref.Namespace == "" && rendered.ClusterScopedKind(o.Ref.Kind):
-			cluster = append(cluster, name)
+			if !slices.Contains(p.GrantedClusterKinds, o.Ref.Kind) {
+				cluster = append(cluster, name)
+			}
 		}
 	}
 	sort.Strings(foreign)

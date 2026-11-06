@@ -30,6 +30,29 @@ message RenderEnvironment {
   repeated string api_versions = 2;
 }
 
+// DeploymentPolicy is the install-time limit on what a deployment may contain,
+// set by whoever installs the controller and never by an agent. The deployer
+// enforces it on every apply and the offline operability gate reports it. An
+// absent message or an empty one is today's behavior: no registry allowlist
+// (O6.allowlist is skipped) and foreign-namespace or cluster-scoped objects
+// are reported as notes, not refused.
+message DeploymentPolicy {
+  // allowed_registries are the registry hosts images may be pulled from
+  // ("ghcr.io", "registry.example:5000"; docker.io for unqualified names).
+  // Empty configures no allowlist.
+  repeated string allowed_registries = 1;
+  // scope_blocking refuses objects outside the application namespace and
+  // cluster-scoped objects unless granted below.
+  bool scope_blocking = 2;
+  // granted_namespaces are the foreign namespaces a deployment may write to
+  // while scope_blocking is on.
+  repeated string granted_namespaces = 3;
+  // granted_cluster_kinds are the cluster-scoped Kinds ("ClusterRole",
+  // "Namespace") a deployment may contain while scope_blocking is on: the
+  // cluster-scope ceiling.
+  repeated string granted_cluster_kinds = 4;
+}
+
 // ImageSource declares how one rendered image reference is produced. Images
 // that no ImageSource names use the operator's default source (prebuilt).
 message ImageSource {

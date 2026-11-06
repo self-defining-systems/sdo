@@ -137,6 +137,9 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 	if cfg.DeploymentPlan != "" {
 		args = append(args, "--deployment-plan", cfg.DeploymentPlan)
 	}
+	if cfg.DeploymentPolicy != "" {
+		args = append(args, "--deployment-policy", cfg.DeploymentPolicy)
+	}
 	if cfg.ExternalIncidents {
 		args = append(args, "--external-incidents")
 	}

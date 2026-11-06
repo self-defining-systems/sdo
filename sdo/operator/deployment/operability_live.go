@@ -52,7 +52,10 @@ func ClassifyDeploymentError(err error) operability.Cause {
 	var rollout *RolloutTimeoutError
 	var imageErr *imagesrc.Error
 	var source *rendered.SourceError
+	var policy *PolicyError
 	switch {
+	case errors.As(err, &policy):
+		return policy.Checks[0].Cause
 	case errors.As(err, &rendererChanged):
 		return operability.CauseEnvironment
 	case errors.As(err, &patchChanged):

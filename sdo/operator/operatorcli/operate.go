@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"sdo.dev/operator/deploymentpolicy"
 	"sdo.dev/operator/imagesrc/buildkit"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/lifecycle"
@@ -49,6 +50,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	sourceKind := flags.String("source-kind", "", "upstream watcher kind to follow (published as .sdo/goal/sources.yaml)")
 	sourceConfig := flags.String("source-config", "", "JSON config of the followed upstream")
 	deploymentPlan := flags.String("deployment-plan", "", "provided DeploymentPlan as ProtoJSON; the deployer agent is skipped and the plan is deployed as given")
+	deploymentPolicyFlag := flags.String("deployment-policy", "", "install-time DeploymentPolicy as ProtoJSON (registry allowlist, scope grants); empty is no policy")
 	operationID := flags.String("operation-id", "", "durable operation identity")
 	maxAttempts := flags.Int("max-attempts", 3, "maximum deployment attempts")
 	controllerImage := flags.String("controller-image", "", "controller image")
@@ -181,6 +183,9 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	if len(sources) > 0 && strings.TrimSpace(*objective) == "" {
 		return OperateConfig{}, errors.New("a followed source is published with the human goal and requires --health-objective")
 	}
+	if _, err := deploymentpolicy.Parse(*deploymentPolicyFlag); err != nil {
+		return OperateConfig{}, err
+	}
 	providedPlan, err := rendered.ParseDeploymentPlan(*deploymentPlan)
 	if err != nil {
 		return OperateConfig{}, err
@@ -198,7 +203,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			ResponderMenu:      menuEnabled,
 			ObservationCeiling: ceiling,
 			Namespace:          *namespace, ControlNamespace: control, Application: *application,
-			SourceKind: *sourceKind, SourceConfig: *sourceConfig, DeploymentPlan: *deploymentPlan,
+			SourceKind: *sourceKind, SourceConfig: *sourceConfig, DeploymentPlan: *deploymentPlan, DeploymentPolicy: *deploymentPolicyFlag,
 			ControllerImage: *controllerImage, ResponderImage: *responderImage,
 			ScriptImage: *scriptImage, DisableObservability: *disableObservability, RepositoryPVC: *repositoryPVC,
 			CredentialsSecret: *credentialsSecret, Model: *model, AgentProvider: *provider, AgentEffort: *effort, Replay: *replay,

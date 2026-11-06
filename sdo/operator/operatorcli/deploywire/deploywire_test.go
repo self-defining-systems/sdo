@@ -107,7 +107,7 @@ func TestRepairDeployerWithoutABuildIdentityIsPrebuiltOnly(t *testing.T) {
 func TestDeployerNeedsProposalsInsideTheRepositoryMount(t *testing.T) {
 	config := launch()
 	config.BrokerWorktreeRoot = "/elsewhere"
-	if _, err := fullIdentity().Deployer(fake.NewSimpleClientset(), TargetOf(config), nil); err == nil {
+	if _, err := fullIdentity().Deployer(fake.NewSimpleClientset(), TargetOf(config), nil, nil); err == nil {
 		t.Fatal("proposals outside the shared repository mount were accepted")
 	}
 	if got := ControlNamespace(&contracts.ControllerConfig{Namespace: "shop"}); got != "shop" {
@@ -130,5 +130,20 @@ func TestRepairFromLaunch(t *testing.T) {
 	invalid := &contracts.ControllerConfig{DeployIdentity: &contracts.DeployIdentity{BuildkitImage: "x"}}
 	if _, err := RepairFromLaunch(invalid, fake.NewSimpleClientset(), &broker.Broker{}); err == nil {
 		t.Fatal("an invalid identity was accepted")
+	}
+}
+
+// A responder's source repair deploys under the same install-time policy as
+// onboarding and upstream advances: the policy rides the launch config.
+func TestRepairDeployerCarriesTheInstallPolicy(t *testing.T) {
+	config := launch()
+	config.DeploymentPolicy = &contracts.DeploymentPolicy{AllowedRegistries: []string{"ghcr.io"}}
+	repair, err := RepairDeployer(fullIdentity(), config, "/opt/sdo/sdo/operator", fake.NewSimpleClientset(), &broker.Broker{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployer := repair.Readiness.(deployment.Deployer)
+	if len(deployer.Policy.GetAllowedRegistries()) != 1 || deployer.Policy.GetAllowedRegistries()[0] != "ghcr.io" {
+		t.Fatalf("repair deployer policy = %v", deployer.Policy)
 	}
 }

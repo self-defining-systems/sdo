@@ -28,6 +28,18 @@ class RenderEnvironment(_message.Message):
     api_versions: _containers.RepeatedScalarFieldContainer[str]
     def __init__(self, kube_version: _Optional[str] = ..., api_versions: _Optional[_Iterable[str]] = ...) -> None: ...
 
+class DeploymentPolicy(_message.Message):
+    __slots__ = ("allowed_registries", "scope_blocking", "granted_namespaces", "granted_cluster_kinds")
+    ALLOWED_REGISTRIES_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_BLOCKING_FIELD_NUMBER: _ClassVar[int]
+    GRANTED_NAMESPACES_FIELD_NUMBER: _ClassVar[int]
+    GRANTED_CLUSTER_KINDS_FIELD_NUMBER: _ClassVar[int]
+    allowed_registries: _containers.RepeatedScalarFieldContainer[str]
+    scope_blocking: bool
+    granted_namespaces: _containers.RepeatedScalarFieldContainer[str]
+    granted_cluster_kinds: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, allowed_registries: _Optional[_Iterable[str]] = ..., scope_blocking: _Optional[bool] = ..., granted_namespaces: _Optional[_Iterable[str]] = ..., granted_cluster_kinds: _Optional[_Iterable[str]] = ...) -> None: ...
+
 class ImageSource(_message.Message):
     __slots__ = ("image", "source_id", "config")
     IMAGE_FIELD_NUMBER: _ClassVar[int]

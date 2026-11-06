@@ -39,8 +39,8 @@ func (d deployIdentity) Enabled() bool { return deploywire.Identity(d).Enabled()
 type deployTarget deploywire.Target
 
 // deployer is the trusted Deployer of the identity (deploywire.Identity.Deployer).
-func (d deployIdentity) deployer(client kubernetes.Interface, target deployTarget, environment *contracts.RenderEnvironment) (deployment.Deployer, error) {
-	return deploywire.Identity(d).Deployer(client, deploywire.Target(target), environment)
+func (d deployIdentity) deployer(client kubernetes.Interface, target deployTarget, environment *contracts.RenderEnvironment, policy *contracts.DeploymentPolicy) (deployment.Deployer, error) {
+	return deploywire.Identity(d).Deployer(client, deploywire.Target(target), environment, policy)
 }
 
 // followUpstream runs the controller parent's upstream follower beside the
@@ -149,7 +149,7 @@ func newUpstreamFollowing(ctx context.Context, launch *contracts.ControllerConfi
 // shape of the accepted deployment source, the maintenance ConfigMap and the
 // child's persisted state.
 func controllerAdvancer(launch *contracts.ControllerConfig, operatorRoot string, identity deployIdentity, client kubernetes.Interface, repository *broker.Broker, catalog *upstream.Catalog) (lifecycle.Advancer, lifecycle.AdvanceConfig, error) {
-	deployer, err := identity.deployer(client, deployTarget(deploywire.TargetOf(launch)), launch.GetRenderEnvironment())
+	deployer, err := identity.deployer(client, deployTarget(deploywire.TargetOf(launch)), launch.GetRenderEnvironment(), launch.GetDeploymentPolicy())
 	if err != nil {
 		return lifecycle.Advancer{}, lifecycle.AdvanceConfig{}, err
 	}

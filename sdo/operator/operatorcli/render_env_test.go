@@ -37,7 +37,7 @@ func TestUpstreamDeployerCarriesTheLaunchEnvironment(t *testing.T) {
 	deployer, err := operateIdentity(config).deployer(nil, deployTarget{
 		Namespace: "demo", ControlNamespace: "sdo-system", AcceptedRoot: config.ApplicationRoot,
 		WorkspaceRoot: config.WorktreeRoot, RepositoryMount: config.RepositoryMount, RepositoryPVC: "repo",
-	}, environment)
+	}, environment, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
