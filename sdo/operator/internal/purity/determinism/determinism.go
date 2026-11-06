@@ -36,6 +36,7 @@ var Edges = map[string]bool{
 	"sdo/operator/apihistory/internal/apiio":                 true, // API-history clock, timers and identifier randomness
 	"sdo/operator/kubeproxy/internal/proxyio":                true, // API proxy clock and request-ID randomness
 	"sdo/operator/rendered/internal/renderio":                true, // Rendered-source Git reads
+	"sdo/operator/upstream/gitpoll/internal/gitio":           true, // Git ls-remote and fetch processes
 	"sdo/operator/shellpath/internal/shellio":                true, // Shell detector processes, runner server, timers and environment
 	"sdo/operator/worker_registry/internal/workerio":         true, // Worker clocks, warm-standby processes, sockets and environment
 	"sdo/operator/cmd/sdo-go-cache/internal/cacheio":         true, // Go cache helper environment and clock
