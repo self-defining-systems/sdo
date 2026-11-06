@@ -27,7 +27,11 @@ func RepairDeployer(identity Identity, launch *contracts.ControllerConfig, opera
 	if err != nil {
 		return lifecycle.RepairDeployer{}, err
 	}
-	return lifecycle.RepairDeployer{Broker: repository, Readiness: deployer, Verifier: Verifier(launch, operatorRoot, &deployer)}, nil
+	verifier, err := AppliedVerifier(launch, operatorRoot, &deployer, client)
+	if err != nil {
+		return lifecycle.RepairDeployer{}, err
+	}
+	return lifecycle.RepairDeployer{Broker: repository, Readiness: deployer, Verifier: verifier}, nil
 }
 
 // The controller's broker is the repair's broker.

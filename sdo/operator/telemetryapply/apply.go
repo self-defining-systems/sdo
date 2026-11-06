@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -128,6 +129,11 @@ func (a Applier) applyOne(ctx context.Context, backend layout.TelemetryBackend) 
 	}
 	if mode := a.Policy.EffectiveMode(); mode != telemetry.ModeOpen {
 		return AppliedBackend{}, denied("the environment's telemetry mode is %s; only an open environment lets the designer deploy backends", mode)
+	}
+	if len(backend.Params) > 0 {
+		// No recipe takes parameters yet; ignoring them silently would let the
+		// designer believe a setting (retention, say) was applied.
+		return AppliedBackend{}, denied("recipe %q takes no parameters, but the backend sets %s", backend.Recipe, strings.Join(slices.Sorted(maps.Keys(backend.Params)), ", "))
 	}
 	policyRecipe, ok := a.Policy.Recipe(backend.Recipe)
 	if !ok {

@@ -136,6 +136,7 @@ func TestApplyFailsClosedWithATypedReason(t *testing.T) {
 		"capability not declared": {deny(func(p *telemetry.Policy) { p.Recipes[0].Declares = nil }), oneBackend, "does not declare"},
 		"unknown recipe":          {deny(func(*telemetry.Policy) {}), strings.Replace(oneBackend, "fake", "ghost", 1), "not offered"},
 		"unknown capability":      {deny(func(*telemetry.Policy) {}), strings.Replace(oneBackend, "pod-discovery", "root", 1), "unknown capability"},
+		"params no recipe takes":  {deny(func(*telemetry.Policy) {}), oneBackend + "    params:\n      retention: 30d\n", "takes no parameters"},
 		"malformed file":          {deny(func(*telemetry.Policy) {}), "version: 9\n", "version"},
 	} {
 		_, err := test.applier.Apply(context.Background(), checkoutWith(t, test.backend))

@@ -209,8 +209,14 @@ func healthRefreshCoordinator(config *contracts.ControllerConfig, operatorRoot s
 	if err != nil {
 		return lifecycle.Coordinator{}, fmt.Errorf("health refresh deployer: %w", err)
 	}
+	apply, err := deploywire.TelemetryApplier(config, client)
+	if err != nil {
+		return lifecycle.Coordinator{}, err
+	}
 	return lifecycle.Coordinator{
 		Broker: repository, Bootstrap: artifacts.BootstrapStore{}, Registry: registry, Renderers: renderers.Catalog(), Workers: workers,
-		Readiness: deployer, Verifier: deploywire.Verifier(config, operatorRoot, &deployer),
+		// The judge's backends are deployed under the policy its candidate
+		// was validated under before the detectors are judged.
+		TelemetryApply: apply, Readiness: deployer, Verifier: deploywire.Verifier(config, operatorRoot, &deployer),
 	}, nil
 }
