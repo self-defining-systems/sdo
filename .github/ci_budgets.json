@@ -19,6 +19,59 @@
   },
   "slow_test_seconds": 10,
   "cache_limit_mb": 1024,
+  "cache": {
+    "_comment": "GitHub Actions cache budget (scripts/ci_cache_budget.py). A family is a cache key without its lockfile hash, commit sha and tool versions; main prunes keys beyond `keep` after each save and the hourly health job fails on a family over budget, a key in no family, or total usage at alarm_fraction of repo_limit_mb. Lowering is free; raising needs review. The budgets sum to at most 70% of repo_limit_mb, leaving room for the superseded keys that live a few minutes before the next prune.",
+    "repo_limit_mb": 10240,
+    "alarm_fraction": 0.8,
+    "slack_keys": 1,
+    "min_idle_minutes": 3,
+    "families": {
+      "ci-shared-v1-Linux-X64": {
+        "keep": 1,
+        "max_mb": 700
+      },
+      "ci-py-v3-Linux-X64-core": {
+        "keep": 1,
+        "max_mb": 480
+      },
+      "ci-py-v3-Linux-X64-fastloop": {
+        "keep": 1,
+        "max_mb": 660
+      },
+      "ci-py-v3-Linux-X64-adapter": {
+        "keep": 1,
+        "max_mb": 720
+      },
+      "ci-tests-v2-Linux-X64-rest": {
+        "keep": 1,
+        "max_mb": 800
+      },
+      "ci-tests-v2-Linux-X64-validate": {
+        "keep": 1,
+        "max_mb": 620
+      },
+      "ci-controller-e2e-v1-Linux-X64": {
+        "keep": 1,
+        "max_mb": 1050
+      },
+      "ci-go-Linux-X64-images": {
+        "keep": 1,
+        "max_mb": 800
+      },
+      "envtest-assets-": {
+        "keep": 1,
+        "max_mb": 60
+      },
+      "proto-lint-tools-": {
+        "keep": 1,
+        "max_mb": 60
+      },
+      "setup-uv-1-": {
+        "keep": 2,
+        "max_mb": 300
+      }
+    }
+  },
   "health": {
     "since": "2026-11-06T01:42:00Z",
     "runs": 50,
