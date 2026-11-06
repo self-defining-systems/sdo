@@ -33,7 +33,10 @@ version: 10.5.4
 dependencies:
   - {name: pages, version: 0.1.0, repository: "", condition: global.pages.enabled}
 """,
-    "gitlab/values.yaml": "global:\n  pages: {enabled: false}\n  ingress: {class: nginx}\nreplicas: 1\n",
+    "gitlab/values.yaml": (
+        "global:\n  pages: {enabled: false}\n  ingress: {class: nginx}\nreplicas: 1\n"
+        "gitlab: {webservice: {helmTests: {enabled: true}}}\n"
+    ),
     "gitlab/templates/web.yaml": """apiVersion: apps/v1
 kind: Deployment
 metadata: {name: "{{ .Release.Name }}-webservice"}
@@ -64,7 +67,7 @@ spec:
       restartPolicy: Never
       containers: [{name: secrets, image: "registry.invalid/kubectl:1"}]
 """,
-    "gitlab/templates/tests/test-runner.yaml": """apiVersion: v1
+    "gitlab/templates/tests/test-runner.yaml": """{{ if .Values.gitlab.webservice.helmTests.enabled }}apiVersion: v1
 kind: Pod
 metadata:
   name: "{{ .Release.Name }}-test-{{ randAlphaNum 5 }}"
@@ -72,7 +75,7 @@ metadata:
 spec:
   restartPolicy: Never
   containers: [{name: t, image: "registry.invalid/t:1"}]
-""",
+{{ end }}""",
     "gitlab/charts/pages/Chart.yaml": "apiVersion: v2\nname: pages\nversion: 0.1.0\n",
     "gitlab/charts/pages/crds/pages.yaml": (
         "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata: {name: pages.example.invalid}\n"
@@ -186,7 +189,8 @@ def test_stand_in_workspace_renders_through_sdo_as_helm_does(
     workspace = lane.assemble(tmp_path / "ws", archive=archive, pins=pins)
     expected = helm_identities(workspace / "chart")
     actual = sdo_identities(workspace)
-    # The disabled subchart (CRD, random function) is absent; hooks (install, upgrade-only, test) are not inventory.
+    # The disabled subchart (CRD, random function) is absent and the lane's values switch off the test hook's random
+    # name (Helm executes every template, so a random function that runs is rejected); hooks are not inventory.
     assert not any(kind == "CustomResourceDefinition" or name == "pages" for kind, name, _ in actual)
     assert {"Deployment", "Ingress", "StatefulSet"} <= {kind for kind, _, _ in actual}
     assert non_secret(actual) == non_secret(expected)
