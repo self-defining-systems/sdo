@@ -1,0 +1,58 @@
+{{- range $name, $svc := .Values.services }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+spec:
+  replicas: {{ $.Values.replicas }}
+  selector:
+    matchLabels:
+      app: {{ $name }}
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: {{ $name }}
+    spec:
+      containers:
+      - name: {{ $name }}
+        image: {{ $.Values.image.repository }}:{{ $.Values.image.tag }}
+        imagePullPolicy: {{ $.Values.image.pullPolicy }}
+        env:
+        - name: SERVICE_NAME
+          value: {{ $name }}
+        {{- range $key, $value := ($svc.env | default dict) }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+        ports:
+        - containerPort: {{ $.Values.port }}
+          name: http
+        readinessProbe:
+          failureThreshold: 1
+          httpGet:
+            path: /ready
+            port: {{ $.Values.port }}
+          periodSeconds: 1
+        resources:
+          limits:
+            cpu: 100m
+            memory: 32Mi
+          requests:
+            cpu: 5m
+            memory: 8Mi
+      terminationGracePeriodSeconds: 0
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+spec:
+  ports:
+  - port: {{ $.Values.port }}
+    targetPort: {{ $.Values.port }}
+  selector:
+    app: {{ $name }}
+{{- end }}

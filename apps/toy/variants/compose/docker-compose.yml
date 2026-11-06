@@ -1,0 +1,23 @@
+# Compose description of the toy app; deliberately has no Kubernetes config.
+services:
+  frontend:
+    image: sdo-toy-app:v1
+    environment:
+      SERVICE_NAME: frontend
+      DEPENDENCY: http://backend:8080/
+    depends_on:
+    - backend
+    ports:
+    - "8080"
+  backend:
+    image: sdo-toy-app:v1
+    environment:
+      SERVICE_NAME: backend
+    ports:
+    - "8080"
+  catalog:
+    image: sdo-toy-app:v1
+    environment:
+      SERVICE_NAME: catalog
+    ports:
+    - "8080"

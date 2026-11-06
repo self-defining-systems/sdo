@@ -31,3 +31,34 @@ ingress; its oracle requires the injected policy to be removed. This fault is
 provided for network validation; the default scripted latent stream exercises
 targetPort drift and an image control. See [the design decision](../../docs/toy-cluster-design.md)
 and [fastloop usage](../../benchmarks/sregym/experiments/fastloop/README.md).
+
+## Deployment variants
+
+The same toy code ships in four deployment shapes so SDO can be checked on
+onboarding an app whatever its deployment technology. `variants/` holds only
+deployment files; `variants/assemble.py` builds a standalone source root (toy
+`main.go` and `Dockerfile` plus one variant's files):
+
+```bash
+python apps/toy/variants/assemble.py <raw|kustomize|helm|compose> <empty-dest>
+```
+
+| variant | files in the source root | what SDO must do |
+| --- | --- | --- |
+| `raw` | `kubernetes/*.yaml` (the original manifests) | apply them as they are |
+| `kustomize` | `deploy/base/`, `deploy/overlays/default/` | render the `default` overlay |
+| `helm` | `chart/` (image, replicas and port are values) | render the chart with default values |
+| `compose` | `docker-compose.yml` only | author the Kubernetes config itself |
+
+`tests/unit/apps/test_toy_variants.py` renders the kustomize overlay
+(`kubectl kustomize`) and the chart (`helm template`) and requires the objects
+to equal the raw manifests. It ignores only object-level `metadata.labels` and
+`annotations`; pod template labels and selectors are compared. It skips locally
+when the tool is missing and fails when `CI` is set, since GitHub runners ship
+both tools. Edit a variant and the raw manifests together.
+
+Harness selection (a later change): the toy lane takes a variant name, calls
+`assemble(variant, workspace)` to produce the source root, and treats the
+deployed objects as the same expected result for `raw`, `kustomize` and `helm`.
+For `compose` the agent-authored Kubernetes config is judged by the same
+deployed-state checks instead of a file comparison.
