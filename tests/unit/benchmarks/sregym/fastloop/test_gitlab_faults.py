@@ -188,6 +188,10 @@ class FakeLane:
         self.stuck_after_injection = False
         self.spec_reverts: set[Action] = set()
         self._healed_by_platform = False
+        self.restorer: str | None = None  # field manager that last changed the fault's object after injection
+        self.restored: tuple[str, datetime] | None = None
+        self.leftover: gf.OutcomeRead | None = None  # an incident from before the injection, closing in PRECHECK
+        self.leftover_closes_at = 10.0
 
     def clock(self) -> float:
         return self.t
@@ -200,6 +204,9 @@ class FakeLane:
         self._react()
 
     def _react(self) -> None:
+        if self.leftover is not None and self.t >= self.leftover_closes_at:
+            self.docs.append(self.leftover)
+            self.leftover, self.open = None, False
         if self.injected_at is None:
             return
         age = self.t - self.injected_at
@@ -212,6 +219,8 @@ class FakeLane:
         if self.behaviour in CLOSING and age >= self.fix_after and (self.broken or self.behaviour in SELF_HEALING):
             self.broken = None
             self.open = False
+            if self.restorer and self.restored is None:
+                self.restored = (self.restorer, self.now())
             stamps = lambda s: (EPOCH + timedelta(seconds=self.injected_at + s)).isoformat().replace("+00:00", "Z")  # noqa: E731
             self.docs.append(
                 gf.parse_outcome(
@@ -267,6 +276,21 @@ class FakeLane:
 
     def human_edits(self) -> int:
         return self.human
+
+    def restored_by(self, fault: Any, since: datetime) -> str | None:
+        return self.restored[0] if self.restored and self.restored[1] >= since else None
+
+
+def pre_incident(at: float) -> gf.OutcomeRead:
+    """A closed incident that opened ``at`` seconds on the lane clock (negative: before the injection)."""
+    stamp = (EPOCH + timedelta(seconds=at)).isoformat().replace("+00:00", "Z")
+    return gf.parse_outcome(
+        {
+            "incident_id": "inc-pre",
+            "classification": "success",
+            "timestamps": {"detected_at": stamp, "verified_at": stamp},
+        }
+    )
 
 
 def config(**overrides: float) -> gf.StreamConfig:
@@ -397,6 +421,124 @@ def test_open_incident_before_injection_blocks_the_fault() -> None:
     lane = FakeLane("resolve")
     lane.open = True
     assert run(lane, baseline=20).infra_stage == "pre_injection"
+
+
+def test_incident_that_closes_during_precheck_is_not_the_faults_incident() -> None:
+    """Live4: a spontaneous incident closed while PRECHECK waited and was taken as the fault's detection."""
+    lane = FakeLane("resolve")
+    lane.open = True
+    lane.leftover = pre_incident(-30)
+    result = run(lane)
+    assert result.outcome is gf.Outcome.RESOLVED
+    assert result.incident is not None
+    assert result.incident.incident_id == "inc-1"
+    assert result.injected is not None
+    assert result.detected_at is not None
+    assert result.detected_at >= result.injected[0]
+    gf.record_for(result, config())  # must not raise incident_predates_injection
+
+
+def test_outcome_that_predates_injection_is_set_aside_not_attributed() -> None:
+    """An outcome document that lands after the snapshot but opened before the injection is not this fault's."""
+    lane = FakeLane("resolve")
+    original = lane.apply
+
+    def apply(actions: Sequence[Action]) -> None:
+        original(actions)
+        if not lane.docs:
+            lane.docs.append(pre_incident(-5))
+
+    lane.apply = apply  # type: ignore[method-assign]
+    result = run(lane)
+    assert result.incident is not None
+    assert result.incident.incident_id == "inc-1"
+    assert result.preexisting_incidents == ["inc-pre"]
+    assert gf.record_for(result, config()).injection_evidence["preexisting_incidents"] == ["inc-pre"]
+
+
+def test_incident_still_open_after_the_settle_bound_is_a_typed_row_not_an_injection() -> None:
+    lane = FakeLane("resolve")
+    lane.open = True
+    result = run(lane, baseline=20)
+    assert result.outcome is gf.Outcome.INFRA_ERROR
+    assert result.infra_stage == "pre_injection"
+    assert result.error is not None
+    assert result.error.startswith("incident_open_before_injection")
+    assert lane.applied == []
+    assert gf.record_for(result, config()).infra_error == "incident_open_before_injection"
+
+
+def test_next_fault_waits_for_the_previous_incident_and_is_not_credited_with_it(tmp_path: Path) -> None:
+    lane = FakeLane("resolve")
+    first, second = (spec(FaultKind.BAD_IMAGE, "web"), spec(FaultKind.BAD_IMAGE, "worker"))
+    lane.spec_reverts = {first.revert[0], second.revert[0]}
+    lane.docs.append(pre_incident(-100))  # the previous fault's incident, already closed
+    lane.open = True  # ... but a late one is still open when the next fault starts
+    lane.leftover = pre_incident(-20)
+    summary = gf.run_stream(lane, [first, second], config(), tmp_path)
+    ids = [r["incident_id"] for r in summary["faults_detail"]]
+    assert "inc-pre" not in ids
+    assert len(set(ids)) == 2
+    assert all(r["outcome"] == "resolved_by_sdo" for r in summary["faults_detail"])
+
+
+def test_sdo_restore_without_an_incident_action_is_credited_to_sdo() -> None:
+    """Live4 service_selector: the controller's accepted-source apply restored the Service; no responder action."""
+    lane = FakeLane("cleared_self_heal")
+    lane.restorer = "sdo-deployer"
+    result = run(lane, spec(FaultKind.SERVICE_SELECTOR))
+    assert result.outcome is gf.Outcome.RESOLVED
+    assert result.restored_by == "sdo-deployer"
+    record = gf.record_for(result, config())
+    assert record.sdo_resolution == "sdo_mitigated"
+    assert record.injection_evidence["restored_by"] == "sdo-deployer"
+
+
+def test_external_restore_is_not_credited_to_sdo() -> None:
+    lane = FakeLane("cleared_self_heal")
+    lane.restorer = "kubectl-patch"
+    result = run(lane, spec(FaultKind.SERVICE_SELECTOR))
+    assert result.outcome is gf.Outcome.CLEARED
+    assert gf.record_for(result, config()).sdo_resolution is None
+
+
+def test_restore_before_the_injection_is_not_credited_to_sdo() -> None:
+    lane = FakeLane("cleared_self_heal")
+    lane.restored = ("sdo-deployer", EPOCH - timedelta(seconds=500))
+    assert run(lane, spec(FaultKind.SERVICE_SELECTOR)).outcome is gf.Outcome.CLEARED
+
+
+def test_selector_and_workload_faults_name_the_object_to_inspect() -> None:
+    web = next(w for w in workloads() if w.name == "web")
+    selector = build(FaultKind.SERVICE_SELECTOR, web)
+    scale = build(FaultKind.SCALE_ZERO, web)
+    kill = build(FaultKind.POD_KILL, web)
+    assert selector is not None
+    assert scale is not None
+    assert kill is not None
+    assert selector.target == "service/web"
+    assert scale.target == web.ref
+    assert kill.target is None
+
+
+def test_kubectl_restorer_reads_sdo_managed_fields_after_the_injection() -> None:
+    def ops_with(entries: list[dict[str, Any]]) -> gf.KubectlFaultOps:
+        ops = gf.KubectlFaultOps.__new__(gf.KubectlFaultOps)
+        ops.namespace = NS
+
+        class Done:
+            stdout = json.dumps({"metadata": {"managedFields": entries}})
+
+        ops._kubectl = lambda *a, **k: Done()  # type: ignore[method-assign, assignment]
+        return ops
+
+    fault = spec(FaultKind.SERVICE_SELECTOR)
+    since = EPOCH + timedelta(seconds=100, microseconds=500_000)
+    late = (EPOCH + timedelta(seconds=100)).isoformat().replace("+00:00", "Z")  # same second as the injection
+    early = (EPOCH + timedelta(seconds=50)).isoformat().replace("+00:00", "Z")
+    assert ops_with([{"manager": "sdo-deployer", "time": late}]).restored_by(fault, since) == "sdo-deployer"
+    assert ops_with([{"manager": "sdo-deployer", "time": early}]).restored_by(fault, since) is None
+    assert ops_with([{"manager": "kubectl-patch", "time": late}]).restored_by(fault, since) is None
 
 
 def test_failed_injection_is_recorded_not_raised() -> None:
