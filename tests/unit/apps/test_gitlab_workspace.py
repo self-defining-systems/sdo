@@ -241,6 +241,18 @@ def test_stand_in_workspace_renders_through_sdo_as_helm_does(
     assert non_secret(actual) == non_secret(expected)
 
 
+def _family(workload_id: str) -> str:
+    """A Job's generated name suffix (the plan's ``*``, helm's hash) removed; every other ID is its own family."""
+    return workload_id.rsplit("-", 1)[0] if workload_id.startswith("Job/") else workload_id
+
+
+def _repository(image: str) -> str:
+    """The image without tag and digest."""
+    image = image.split("@", 1)[0]
+    head, _, tail = image.rpartition("/")
+    return (head + "/" if head else "") + tail.split(":", 1)[0]
+
+
 def test_stand_in_plan_is_derived_from_the_render(tmp_path: Path, operator_binary: Path, monkeypatch) -> None:
     from benchmarks.sregym.fastloop import gitlab_lane
 
@@ -251,16 +263,19 @@ def test_stand_in_plan_is_derived_from_the_render(tmp_path: Path, operator_binar
     plan = gitlab_lane.provided_plan(tmp_path / "ws")
     expected = helm_objects(tmp_path / "ws/chart")
     # The expected side comes from `helm template`, not from SDO's render: workloads that are not hooks.
-    assert sorted(plan["expected_workload_ids"]) == sorted(helm_workload_ids(expected))
+    assert sorted(_family(i) for i in plan["expected_workload_ids"]) == sorted(
+        _family(i) for i in helm_workload_ids(expected)
+    )
     assert "Deployment/gitlab/gitlab-webservice" in plan["expected_workload_ids"]
     # A CronJob is a workload too (Go's pod-template table), so the plan must name it.
     assert "CronJob/gitlab/gitlab-cleanup" in plan["expected_workload_ids"]
-    assert "registry.invalid/cron:1" in {image["image"] for image in plan["images"]}
+    # Images are declared by repository, so a release that only bumps tags keeps matching.
     images = {image["image"] for image in plan["images"]}
-    assert "registry.invalid/web:1" in images
+    assert "registry.invalid/cron" in images
+    assert "registry.invalid/web" in images
     # Hook and test-only images are not part of the rendered inventory.
-    assert not images & {"registry.invalid/kubectl:1", "registry.invalid/t:1"}
-    assert images == helm_images(expected)
+    assert not images & {"registry.invalid/kubectl", "registry.invalid/t"}
+    assert images == {_repository(image) for image in helm_images(expected)}
     assert {image["source_id"] for image in plan["images"]} == {"prebuilt"}
 
 
@@ -310,7 +325,7 @@ def test_real_chart_plan_is_printed(tmp_path: Path, operator_binary: Path, monke
         return workload_id.rsplit("-", 1)[0] if workload_id.startswith("Job/") else workload_id
 
     assert {family(i) for i in plan["expected_workload_ids"]} == {family(i) for i in helm_workload_ids(expected)}
-    assert helm_images(expected) == {image["image"] for image in plan["images"]}
+    assert {_repository(image) for image in helm_images(expected)} == {image["image"] for image in plan["images"]}
     assert len(plan["images"]) >= 8
     # The lane's install-time policy admits every image of the real chart (Go's RegistryHost rule).
     for image in plan["images"]:

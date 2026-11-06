@@ -90,14 +90,16 @@ def deployment_policy() -> DeploymentPolicyConfig:
 def plan_from_workloads(workloads: RenderedWorkloads) -> dict[str, Any]:
     """The provided ``DeploymentPlan``: the lane's helm source, prebuilt upstream images, the rendered workloads.
 
-    Nothing here is maintained by hand: images and workload IDs come from SDO's own render of the chart (Go decides
-    which kinds are workloads), so a chart bump or a values change moves the plan with it. Hooks are not in the
-    rendered inventory (SDO renders them as ephemeral install phases).
+    Nothing here is maintained by hand: Go proposes the plan's entries from SDO's own render of the chart. They are
+    the release-independent forms (workload identities with generated name suffixes as ``*``, image repositories
+    without tags), so an upstream release that only changes image tags, and with them a hash-named Job, still matches
+    the plan and advances without an agent. Hooks are not in the rendered inventory (SDO renders them as ephemeral
+    install phases).
     """
     return deployment_plan(
         deployment_source(),
-        images=[prebuilt_image(image) for image in workloads.images],
-        expected_workload_ids=list(workloads.workload_ids),
+        images=[prebuilt_image(repository) for repository in workloads.repositories],
+        expected_workload_ids=list(workloads.identities),
     )
 
 

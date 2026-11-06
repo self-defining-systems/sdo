@@ -128,3 +128,23 @@ func TestSourceShapeOfTracksShapeAcrossRevisions(t *testing.T) {
 		t.Fatal("a source-less install falls back to the effective tree ID, never to nil")
 	}
 }
+
+// A Job named after a hash of its inputs is renamed by every release that
+// changes them. The shape (what the health judge's policy is written against)
+// keeps its stable identity, so an image-only release is not a shape change;
+// a renamed Deployment or a differently named Job still is.
+func TestShapeDigestKeepsAGeneratedJobNameStable(t *testing.T) {
+	job := func(name, image string) string {
+		return shapeBase + "---\napiVersion: batch/v1\nkind: Job\nmetadata: {name: " + name + "}\nspec: {template: {spec: {containers: [{name: m, image: '" + image + "'}]}}}\n"
+	}
+	base := shapeOf(t, job("migrate-d63dd88", "example/migrate:1"))
+	if got := shapeOf(t, job("migrate-0a1b2c3", "example/migrate:2")); got != base {
+		t.Error("a Job renamed by its generated suffix moved the shape")
+	}
+	if got := shapeOf(t, job("seed-0a1b2c3", "example/migrate:1")); got == base {
+		t.Error("a Job with another stable name kept the shape")
+	}
+	if got := shapeOf(t, strings.Replace(job("migrate-d63dd88", "example/migrate:1"), "name: web,", "name: web2,", 1)); got == base {
+		t.Error("a renamed Deployment kept the shape")
+	}
+}

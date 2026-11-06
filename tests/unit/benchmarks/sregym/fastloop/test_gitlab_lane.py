@@ -134,27 +134,27 @@ def _workloads() -> RenderedWorkloads:
     return RenderedWorkloads(
         ("Deployment/gitlab/web", "StatefulSet/other/db", "CronJob/gitlab/tick", "Job/gitlab/migrate"),
         ("busybox:1", "postgres:17@sha256:" + "a" * 64, "registry.invalid/web:1"),
+        ("CronJob/gitlab/tick", "Deployment/gitlab/web", "Job/gitlab/migrate-*", "StatefulSet/other/db"),
+        ("busybox", "postgres", "registry.invalid/web"),
     )
 
 
-def test_plan_declares_every_rendered_image_prebuilt_and_every_workload() -> None:
+def test_plan_declares_release_independent_identities_and_repositories() -> None:
     from sdo.contracts.proto import DeploymentPlan
 
     plan = gitlab_lane.plan_from_workloads(_workloads())
     message = json_format.ParseDict(plan, DeploymentPlan())
     assert plan["source"] == gitlab_lane.deployment_source()
-    assert [image.image for image in message.images] == [
-        "busybox:1",
-        "postgres:17@sha256:" + "a" * 64,
-        "registry.invalid/web:1",
-    ]
+    # No tag and no digest: a release that only bumps tags still matches the declaration.
+    assert [image.image for image in message.images] == ["busybox", "postgres", "registry.invalid/web"]
     assert {image.source_id for image in message.images} == {"prebuilt"}
     assert all(image.config.TypeName().endswith(".PrebuiltImageConfig") for image in message.images)
+    # A Job named after a hash of its images is declared by its stable prefix, not by this release's name.
     assert list(message.expected_workload_ids) == [
-        "Deployment/gitlab/web",
-        "StatefulSet/other/db",
         "CronJob/gitlab/tick",
-        "Job/gitlab/migrate",
+        "Deployment/gitlab/web",
+        "Job/gitlab/migrate-*",
+        "StatefulSet/other/db",
     ]
 
 

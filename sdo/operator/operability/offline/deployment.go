@@ -225,14 +225,10 @@ func images(set rendered.DesiredSet, declared []imagesrc.Declared) operability.C
 	if err := imagesrc.CheckDeclared(sites, declared); err != nil {
 		return failure("O2.images", operability.CauseBuild, err, nil)
 	}
-	declaredSet := map[string]bool{}
-	for _, d := range declared {
-		declaredSet[d.Image] = true
-	}
 	var undeclared []string
 	seen := map[string]bool{}
 	for _, image := range sites {
-		if !declaredSet[image] && !strings.Contains(image, "@sha256:") && !seen[image] {
+		if _, ok := imagesrc.Match(declared, image); !ok && !strings.Contains(image, "@sha256:") && !seen[image] {
 			seen[image] = true
 			undeclared = append(undeclared, image)
 		}

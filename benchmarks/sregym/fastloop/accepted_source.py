@@ -77,6 +77,10 @@ class RenderedWorkloads:
 
     workload_ids: tuple[str, ...]
     images: tuple[str, ...]
+    #: Release-independent forms Go proposes for a plan that must keep matching later renders: workload identities
+    #: (a generated Job name suffix replaced by ``*``) and image repositories (no tag, no digest).
+    identities: tuple[str, ...] = ()
+    repositories: tuple[str, ...] = ()
 
     @classmethod
     def from_render(cls, value: Any) -> RenderedWorkloads:
@@ -89,6 +93,8 @@ class RenderedWorkloads:
         return cls(
             tuple(str(workload["id"]) for workload in value["workloads"]),
             tuple(str(image) for image in value["images"]),
+            tuple(str(identity) for identity in value.get("identities") or ()),
+            tuple(str(repository) for repository in value.get("repositories") or ()),
         )
 
 

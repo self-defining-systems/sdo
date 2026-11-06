@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io/fs"
 	"regexp"
+	"slices"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -242,16 +243,12 @@ func checkDeclared(images []string, declared []Declared, known func(sourceID str
 			return nil, errors.New("imagesrc: empty image reference")
 		}
 	}
-	wanted := make(map[string]bool, len(images))
-	for _, image := range images {
-		wanted[image] = true
-	}
-	choice := make(map[string]Declared, len(declared))
+	seen := make(map[string]Declared, len(declared))
 	for _, d := range declared {
-		if !wanted[d.Image] {
+		if !slices.ContainsFunc(images, func(image string) bool { return d.covers(image) }) {
 			return nil, fmt.Errorf("imagesrc: image %q is declared with source %q but no rendered container uses it", d.Image, d.SourceID)
 		}
-		if prior, dup := choice[d.Image]; dup {
+		if prior, dup := seen[d.Image]; dup {
 			return nil, fmt.Errorf("imagesrc: image %q is declared twice (sources %q and %q)", d.Image, prior.SourceID, d.SourceID)
 		}
 		if known != nil {
@@ -259,9 +256,40 @@ func checkDeclared(images []string, declared []Declared, known func(sourceID str
 				return nil, fmt.Errorf("imagesrc: image %q %w", d.Image, err)
 			}
 		}
-		choice[d.Image] = d
+		seen[d.Image] = d
+	}
+	choice := make(map[string]Declared, len(images))
+	for _, image := range images {
+		if d, ok := Match(declared, image); ok {
+			choice[image] = d
+		}
 	}
 	return choice, nil
+}
+
+// covers reports whether the declaration names image: exactly, or, when it
+// names a repository (no tag and no digest), any tag or digest of it.
+func (d Declared) covers(image string) bool {
+	return d.Image == image || (Repository(d.Image) == d.Image && Repository(image) == d.Image)
+}
+
+// Match returns the declaration that names image. An exact declaration wins
+// over a repository declaration, which covers every tag and digest of its
+// repository, so a plan stays valid across releases that only change tags.
+func Match(declared []Declared, image string) (Declared, bool) {
+	var byRepository *Declared
+	for i := range declared {
+		switch {
+		case declared[i].Image == image:
+			return declared[i], true
+		case byRepository == nil && declared[i].covers(image):
+			byRepository = &declared[i]
+		}
+	}
+	if byRepository != nil {
+		return *byRepository, true
+	}
+	return Declared{}, false
 }
 
 func registryHost(image string) string {

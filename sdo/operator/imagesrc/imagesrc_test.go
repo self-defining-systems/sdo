@@ -365,3 +365,63 @@ func TestCheckDeclaredIsTheResolveAllPreflight(t *testing.T) {
 		})
 	}
 }
+
+// A declaration that names a repository, with no tag or digest, covers every
+// rendered tag and digest of it, so a release that only bumps image tags
+// still matches the plan. An exact declaration wins for its own reference.
+func TestRepositoryDeclarationCoversEveryRenderedTag(t *testing.T) {
+	strs := &stringSource{}
+	fake := &imagesrctest.Fake{}
+	c := imagesrc.NewCatalog()
+	must(t, imagesrc.Register(c, "fake", imagesrc.Source[*emptypb.Empty](fake), imagesrc.Options{}))
+	must(t, imagesrc.Register(c, "str", imagesrc.Source[*wrapperspb.StringValue](strs), imagesrc.Options{}))
+	must(t, c.SetDefault("fake"))
+	cfg, err := anypb.New(wrapperspb.String("pinned"))
+	must(t, err)
+	declared := []imagesrc.Declared{
+		{Image: "reg.example/app/web", SourceID: "str", Config: cfg},
+		{Image: "reg.example/app/api:7", SourceID: "fake"},
+	}
+	for _, sites := range [][]string{
+		{"reg.example/app/web:v1", "reg.example/app/api:7"},
+		{"reg.example/app/web:v2", "reg.example/app/web@" + imagesrctest.Digest("x"), "reg.example/app/api:7"},
+	} {
+		strs.got = nil
+		if err := imagesrc.CheckDeclared(sites, declared); err != nil {
+			t.Fatalf("CheckDeclared(%v) = %v", sites, err)
+		}
+		if _, err := c.ResolveAll(context.Background(), sites, declared, imagesrc.Request{}); err != nil {
+			t.Fatalf("ResolveAll(%v) = %v", sites, err)
+		}
+		webs := 0
+		for _, site := range sites {
+			if strings.HasPrefix(site, "reg.example/app/web") {
+				webs++
+			}
+		}
+		if len(strs.got) != webs {
+			t.Fatalf("the repository declaration resolved %d of %d web sites", len(strs.got), webs)
+		}
+	}
+	// A repository no container uses is still an unused declaration, and an
+	// exact tag still names only that tag.
+	if err := imagesrc.CheckDeclared([]string{"reg.example/app/web:v1"}, []imagesrc.Declared{{Image: "reg.example/app/other", SourceID: "fake"}}); err == nil || !strings.Contains(err.Error(), "no rendered container uses it") {
+		t.Fatalf("unused repository declaration: %v", err)
+	}
+	if err := imagesrc.CheckDeclared([]string{"reg.example/app/web:v2"}, []imagesrc.Declared{{Image: "reg.example/app/web:v1", SourceID: "fake"}}); err == nil {
+		t.Fatal("an exact tag declaration matched another tag")
+	}
+	if err := imagesrc.CheckDeclared([]string{"r/a:1"}, []imagesrc.Declared{{Image: "r/a", SourceID: "x"}, {Image: "r/a", SourceID: "y"}}); err == nil || !strings.Contains(err.Error(), "declared twice") {
+		t.Fatalf("two declarations of one repository: %v", err)
+	}
+}
+
+func TestDeclaredCoversReportsWhichDeclarationMatches(t *testing.T) {
+	declared := []imagesrc.Declared{{Image: "r/web", SourceID: "a"}, {Image: "r/api:7", SourceID: "b"}}
+	for image, want := range map[string]string{"r/web:1": "a", "r/web": "a", "r/api:7": "b", "r/api:8": "", "r/other:1": ""} {
+		got, ok := imagesrc.Match(declared, image)
+		if (want != "") != ok || got.SourceID != want {
+			t.Errorf("Match(%q) = %+v %v, want source %q", image, got, ok, want)
+		}
+	}
+}
