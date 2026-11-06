@@ -904,22 +904,23 @@ The stop simulation continues using virtual time for production wait adapters.
 
 ### PR CI budget
 
-PRs and merge groups run three jobs: `checks and Python`, `Go tests`, and
-`Required PR CI`. The aggregate requires both validation jobs to succeed;
-skips and cancellation fail closed. Static checks overlap Python tests within
-one job. `check_errors.sh` already includes types, architecture and proto;
-CI does not repeat those as separate jobs. Go modules use one temporary workspace and one `go test` invocation to schedule
-packages across all modules, one compiler/module cache and normal package parallelism, with `-trimpath` allowing compiler entries
-to survive generated-workspace path changes. No prepared-cache job or shard
-matrix sits on the critical path. The Go job saves to its own `ci-tests-v2`
-cache namespace on main: Actions caches are immutable, so sharing a save key with
-Python checks let the first finisher discard the other job's generated builds.
-The Go job also restores current-toolchain caches across dependency-hash changes;
-Go validates compiler entries by content. Hash discovery can change after
-submodule initialization, so an exact-hash-only fallback repeatedly restored
-an obsolete cache on #664. Real compiler tests use the
-`integration` tag in the same invocation (PR and nightly).
-The independent foreign-policy near-miss compiler test also runs in parallel. Both validation jobs have five-minute limits.
+PRs and merge groups run `static checks`, two `Python tests` shards (`core`, and
+`fastloop`, split by `SDO_PYTEST_SHARD` in `test_python.sh`), two `Go tests` shards
+(`validate`, the compiler-backed memory validator, and `rest`; `test_go_ci.sh pr <shard>`),
+and `Required PR CI`. Shards are independent jobs that each build from the Go
+caches (no compiler artifact transfer); every job has a five-minute cap and
+targets about three minutes. The aggregate requires every job to succeed (skips and
+cancellation fail closed), combines the Python shards' coverage data and enforces the
+`pyproject.toml` floor over their union. `check_errors.sh --python-suite` already
+includes types, architecture and proto; the architecture tests run in the Python
+`core` shard. Go modules use one temporary workspace per shard and one `go test`
+invocation, with `-trimpath` allowing compiler entries to survive generated-workspace
+path changes. Main saves each Go job's cache under its own key (`ci-shared-v1` for static
+checks, `ci-tests-v2-...-<shard>` per Go shard) after deleting compiler entries the run
+did not touch, so restores stay small; Actions caches are immutable, so sharing a save key
+would let the first finisher discard another job's builds. Restores fall back across
+dependency-hash changes; Go validates compiler entries by content. Real compiler tests use
+the `integration` tag in the same invocation (PR and nightly).
 
 `Nightly CI` runs daily and through `workflow_dispatch`; its Actions conclusion reports failures. It has one
 Go job (every package under `-race`, without `-short`, with full simulation seeds, then the bounded fuzz campaigns),
