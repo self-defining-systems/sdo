@@ -14,6 +14,8 @@ cd "$PROJECT_ROOT"
 # reason; fail here, once, with the remedy printed.
 python3 scripts/init_test_prereqs.py --check
 
+source "$PROJECT_ROOT/scripts/isolate_git_config.sh"
+
 # A pull request run names the test files its changes can affect (scripts/ci_select.py);
 # without a plan, or when the plan is the full suite, the whole shard runs.
 selected=()

@@ -28,6 +28,9 @@ env:
 
 jobs:
   checks:
+    permissions:
+      actions: write
+      contents: read
     name: static checks
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -106,11 +109,20 @@ jobs:
             ~/.cache/go-build
             ~/go/pkg/mod
           key: ci-shared-v1-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+      - name: Prune the superseded caches of this family
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 scripts/ci_cache_budget.py prune "ci-shared-v1-${{ runner.os }}-${{ runner.arch }}"
       - name: Fail on an oversize cache
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cache-size.outputs.oversize == 'true'
         run: exit 1
 
   python:
+    permissions:
+      actions: write
+      contents: read
     name: Python tests (${{ matrix.shard }})
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -237,11 +249,20 @@ jobs:
             ~/.cache/go-build
             ~/go/pkg/mod
           key: ci-py-v3-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ matrix.shard }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+      - name: Prune the superseded caches of this family
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 scripts/ci_cache_budget.py prune "ci-py-v3-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}"
       - name: Fail on an oversize cache
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cache-size.outputs.oversize == 'true'
         run: exit 1
 
   tests:
+    permissions:
+      actions: write
+      contents: read
     name: Go tests (${{ matrix.shard }})
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -333,6 +354,12 @@ jobs:
             ~/.cache/go-build
             ~/go/pkg/mod
           key: ci-tests-v2-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ matrix.shard }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+      - name: Prune the superseded caches of this family
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 scripts/ci_cache_budget.py prune "ci-tests-v2-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}"
       - name: Fail on an oversize cache
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cache-size.outputs.oversize == 'true'
         run: exit 1

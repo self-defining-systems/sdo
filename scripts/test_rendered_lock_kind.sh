@@ -3,6 +3,7 @@
 # Caller must hold the shared lane-53 flock for this entire command.
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$root/scripts/isolate_git_config.sh"
 : "${SDO_LK1_RUN_DIR:?set an evidence directory outside the repository}"
 case "$(realpath -m "$SDO_LK1_RUN_DIR")" in
     "$root"|"$root"/*) echo "LK1 evidence directory must be outside the repository" >&2; exit 1 ;;

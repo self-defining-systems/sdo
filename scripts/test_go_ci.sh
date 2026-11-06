@@ -7,6 +7,7 @@
 # other package. Without a shard, one invocation schedules every package.
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$root/scripts/isolate_git_config.sh"
 args=(-tags=integration -json -timeout=5m)
 if [[ "${1:-pr}" == nightly ]]; then
     # -race needs far more than the default per-package budget.

@@ -64,6 +64,9 @@ jobs:
           (cd benchmarks/sregym/protocol/submission_go && timeout 300s go test -run '^$' -fuzz '^FuzzSubmissionPhaseBoundary$' -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m .)
 
   controller-e2e:
+    permissions:
+      actions: write
+      contents: read
     name: controller end-to-end (envtest, fake kubelet, scripted agents)
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -75,7 +78,7 @@ jobs:
         with:
           go-version: "1.26.8"
           cache: false
-      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
         with:
           path: |
             ~/.cache/go-build
@@ -100,6 +103,19 @@ jobs:
         env:
           SCENARIO: ${{ inputs.scenario || 'all' }}
         run: bash scripts/test_controller_e2e.sh "$SCENARIO"
+      - name: Save the end-to-end cache
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/.cache/sdo-e2e
+          key: ci-controller-e2e-v1-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+      - name: Prune the superseded end-to-end caches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 scripts/ci_cache_budget.py prune ci-controller-e2e-v1
       # A failed world keeps its run directory (pod logs, termination messages); a hosted runner
       # discards it, so a failure that only happens there could not be diagnosed.
       - name: Keep the failed worlds' run directories
