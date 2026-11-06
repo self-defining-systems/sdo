@@ -26,7 +26,7 @@ type OfflineChecks struct {
 	BaseTree, EffectiveTree, PatchesDigest, RenderDigest, EnvDigest string
 }
 
-// OperabilityError is a terminal offline-gate outcome: no agent can correct it
+// OperabilityError is a terminal outcome of the offline gate or the candidate gate: no agent can correct it
 // (the cause belongs to a person, to SDO itself, or the plan was supplied by a
 // person). It carries the report and the decision recomputed from it.
 type OperabilityError struct {
@@ -35,7 +35,7 @@ type OperabilityError struct {
 }
 
 func (e *OperabilityError) Error() string {
-	return fmt.Sprintf("offline operability checks failed (owner %s):\n%s", e.Decision.Owner, e.Decision.Feedback())
+	return fmt.Sprintf("operability checks failed (owner %s):\n%s", e.Decision.Owner, e.Decision.Feedback())
 }
 
 // retryOffline marks an infrastructure cause found by the offline checks so the

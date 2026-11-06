@@ -17,6 +17,7 @@ import (
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/operability"
 	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/worker_registry"
 	"sdo.dev/operator/worker_registry/registrytest"
@@ -33,11 +34,21 @@ type fakeBroker struct {
 	root string
 	// scratch holds the patch.uncaptured feedback returned once per entry.
 	scratch []string
+	// rejections is the durable rejection log of each proposal.
+	rejections map[string]*contracts.ProposalRejectionLog
+	// stages, accepts and discards record the candidate protocol; staleAccepts
+	// makes that many Accept calls fail with ErrCandidateStale (the head moved),
+	// stageErrors is consumed one per StageCandidate call.
+	stages, accepts, discards int
+	staleAccepts              int
+	stageErrors               []error
+	candidates                []broker.Candidate
+	evidence2                 []broker.CandidateEvidence
 }
 
 func newFakeBroker(t *testing.T) *fakeBroker {
 	t.Helper()
-	return &fakeBroker{accepted: map[string]broker.Receipt{}, evidence: map[string]broker.SourceEvidence{}, root: t.TempDir()}
+	return &fakeBroker{accepted: map[string]broker.Receipt{}, evidence: map[string]broker.SourceEvidence{}, rejections: map[string]*contracts.ProposalRejectionLog{}, root: t.TempDir()}
 }
 
 // plan reads back the plan.yaml the lifecycle wrote into proposal id.
@@ -108,11 +119,60 @@ func (b *fakeBroker) ScratchFeedback(context.Context, string, broker.Phase) (str
 	return feedback, nil
 }
 func (b *fakeBroker) ReleaseProposal(string, broker.Phase) error { return nil }
-func (b *fakeBroker) Rejections(string) (*contracts.ProposalRejectionLog, error) {
-	return &contracts.ProposalRejectionLog{}, nil
+func (b *fakeBroker) Rejections(id string) (*contracts.ProposalRejectionLog, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if log, ok := b.rejections[id]; ok {
+		return log, nil
+	}
+	return &contracts.ProposalRejectionLog{ProposalId: id}, nil
 }
-func (b *fakeBroker) RecordRejection(string, []*contracts.MemoryDiagnostic) (*contracts.ProposalRejectionLog, error) {
-	return &contracts.ProposalRejectionLog{}, nil
+func (b *fakeBroker) RecordRejection(id string, diagnostics []*contracts.MemoryDiagnostic) (*contracts.ProposalRejectionLog, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	log, ok := b.rejections[id]
+	if !ok {
+		log = &contracts.ProposalRejectionLog{ProposalId: id}
+		b.rejections[id] = log
+	}
+	log.Rejections = append(log.Rejections, broker.NewProposalRejection(uint32(len(log.Rejections)+1), diagnostics))
+	log.Terminal = broker.RetriesExhausted(log.Rejections)
+	return log, nil
+}
+
+func (b *fakeBroker) StageCandidate(_ context.Context, id string, _ broker.Actor, phase broker.Phase) (broker.Candidate, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.stages++
+	if len(b.stageErrors) > 0 {
+		err := b.stageErrors[0]
+		b.stageErrors = b.stageErrors[1:]
+		if err != nil {
+			return broker.Candidate{}, err
+		}
+	}
+	candidate := broker.Candidate{IncidentID: id, Actor: broker.HealthJudge, Phase: phase, Path: filepath.Join(b.root, id), Parent: b.commit(), Commit: fmt.Sprintf("candidate-%d", b.stages), Tree: "candidate-tree"}
+	b.candidates = append(b.candidates, candidate)
+	return candidate, nil
+}
+
+func (b *fakeBroker) Accept(_ context.Context, candidate broker.Candidate, evidence broker.CandidateEvidence) (broker.Receipt, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.accepts++
+	b.evidence2 = append(b.evidence2, evidence)
+	if b.staleAccepts > 0 {
+		b.staleAccepts--
+		return broker.Receipt{}, fmt.Errorf("%w: head moved", broker.ErrCandidateStale)
+	}
+	return b.accept(candidate.IncidentID), nil
+}
+
+func (b *fakeBroker) DiscardCandidate(string, broker.Phase) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.discards++
+	return nil
 }
 
 type fakeArtifacts struct{}
@@ -136,10 +196,11 @@ func (fakeArtifacts) ReadArchitecture(string) (string, error)                 { 
 // fakeWorkers answers the deployer and the judge. It records each deployer
 // request, which is how a test observes attempts and correction feedback.
 type fakeWorkers struct {
-	mu        sync.Mutex
-	deployer  []*contracts.SourceDeploymentRequest
-	judgeRuns int
-	plan      *contracts.DeploymentPlan // proposed instead of the default raw plan when set
+	mu            sync.Mutex
+	deployer      []*contracts.SourceDeploymentRequest
+	judgeRuns     int
+	plan          *contracts.DeploymentPlan // proposed instead of the default raw plan when set
+	judgeRequests []*contracts.HealthJudgeRequest
 	// judgeFailures is how many judge dispatches report no authored detectors
 	// before one succeeds.
 	judgeFailures int
@@ -160,6 +221,10 @@ func (w *fakeWorkers) Execute(_ context.Context, task *contracts.AgentTask) (*co
 		response = &contracts.SourceDeploymentResult{Proposed: true, AgentSessionId: "session", Plan: plan}
 	} else {
 		w.judgeRuns++
+		judgeRequest := &contracts.HealthJudgeRequest{}
+		if err := task.GetRequest().UnmarshalTo(judgeRequest); err == nil {
+			w.judgeRequests = append(w.judgeRequests, judgeRequest)
+		}
 		response = &contracts.HealthJudgeResult{Authored: true, DetectorIds: []string{"detector"}, AgentSessionId: "session"}
 		if w.judgeRuns <= w.judgeFailures {
 			response = &contracts.HealthJudgeResult{Summary: "no detectors this time"}
@@ -186,6 +251,23 @@ type fakeReadiness struct {
 	// VerifyAccepted returns.
 	receipt  func(*lifecycle.DeploymentReceipt)
 	reverify func(*lifecycle.DeploymentReceipt)
+	// live replaces the passing live checks CheckLive returns, one result per
+	// call (the last repeats); liveCalls records the checkout of each call.
+	live      [][]operability.Check
+	liveCalls []string
+}
+
+// CheckLive reports the live deployment checks of the staged checkout.
+func (r *fakeReadiness) CheckLive(_ context.Context, checkout string, _ *contracts.DeploymentPlan, receipt lifecycle.DeploymentReceipt, _ error) ([]operability.Check, error) {
+	r.liveCalls = append(r.liveCalls, checkout)
+	if len(r.live) > 0 {
+		checks := r.live[min(len(r.liveCalls)-1, len(r.live)-1)]
+		return checks, nil
+	}
+	pass := func(id string) operability.Check {
+		return operability.Check{ID: id, Phase: operability.PhaseLive, Status: operability.StatusPass}
+	}
+	return []operability.Check{pass("O1.deploy"), pass("O1.ready"), pass("O2.stamps"), pass("O6.budget")}, nil
 }
 
 // ApplyAndVerify binds the plan's source to the receipt, as the deployer does.
@@ -217,6 +299,13 @@ type fakeVerifier struct {
 	verdicts []lifecycle.HealthVerdict // the last one repeats
 	errors   []error
 	calls    int
+	// candidateRoots records the root of each VerifyCandidate call.
+	candidateRoots []string
+}
+
+func (v *fakeVerifier) VerifyCandidate(ctx context.Context, root, commit, namespace, objective string, source lifecycle.DeploymentReceipt) (lifecycle.HealthVerdict, error) {
+	v.candidateRoots = append(v.candidateRoots, root+"@"+commit)
+	return v.Verify(ctx, commit, namespace, objective, source)
 }
 
 func (v *fakeVerifier) Verify(context.Context, string, string, string, lifecycle.DeploymentReceipt) (lifecycle.HealthVerdict, error) {
@@ -269,7 +358,10 @@ func config() lifecycle.Config {
 var (
 	clear   = lifecycle.HealthVerdict{Outcome: lifecycle.VerificationClear, Summary: "accepted health detectors report clear"}
 	pending = lifecycle.HealthVerdict{Outcome: lifecycle.VerificationPending, Summary: "accepted health detectors report pending", Detectors: []lifecycle.DetectorState{{DetectorID: "traffic-window", Status: "pending", Reason: "observation window incomplete"}}}
-	firing  = lifecycle.HealthVerdict{Outcome: lifecycle.VerificationSourceFault, Summary: "accepted health detectors report firing", Detectors: []lifecycle.DetectorState{{DetectorID: "frontend-available", Status: "firing", Reason: "frontend has 0 ready replicas"}}}
+	firing  = lifecycle.HealthVerdict{Outcome: lifecycle.VerificationSourceFault, Summary: "accepted health detectors report firing", Detectors: []lifecycle.DetectorState{{DetectorID: "workload-health", Status: "firing", Reason: "frontend has 0 ready replicas"}}}
+	// judgeFiring is a detector the health judge authored tripping: the
+	// designer owns the correction first.
+	judgeFiring = lifecycle.HealthVerdict{Outcome: lifecycle.VerificationSourceFault, Summary: "accepted health detectors report firing", Detectors: []lifecycle.DetectorState{{DetectorID: "frontend-available", Status: "firing", Reason: "frontend has 0 ready replicas"}}}
 )
 
 func TestPendingThenClearSucceedsWithoutAnotherDeployerAttempt(t *testing.T) {
@@ -310,7 +402,7 @@ func TestFiringVerdictReachesTheDeployerWithDetectorDetail(t *testing.T) {
 		t.Fatalf("deployer attempts = %d, want 2", h.workers.deployerAttempts())
 	}
 	feedback := h.workers.deployer[1].GetCorrectionFeedback()
-	if !strings.Contains(feedback, "frontend-available") || !strings.Contains(feedback, "frontend has 0 ready replicas") {
+	if !strings.Contains(feedback, "workload-health") || !strings.Contains(feedback, "frontend has 0 ready replicas") {
 		t.Fatalf("correction feedback lacks detector detail: %q", feedback)
 	}
 }

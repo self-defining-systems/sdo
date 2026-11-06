@@ -101,7 +101,7 @@ func TestProvidedPlanThatVerifiesUnhealthyIsTerminal(t *testing.T) {
 	h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{firing}})
 	_, err := h.coordinator.Run(context.Background(), providedConfig(providedPlans(t)["raw"]))
 	var terminal *lifecycle.ProvidedPlanError
-	if !errors.As(err, &terminal) || terminal.Stage != "verify" || !strings.Contains(err.Error(), "frontend-available") {
+	if !errors.As(err, &terminal) || terminal.Stage != "verify" || !strings.Contains(err.Error(), "workload-health") {
 		t.Fatalf("error = %v, want a verify-stage ProvidedPlanError naming the detector", err)
 	}
 	if h.readiness.calls != 1 || h.workers.deployerAttempts() != 0 || h.installer.installs != 0 {

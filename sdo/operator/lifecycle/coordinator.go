@@ -41,6 +41,13 @@ type ProposalBroker interface {
 	// whose app-file edits no patch reproduces, or "" when consistent.
 	ScratchFeedback(context.Context, string, broker.Phase) (string, error)
 	ReleaseProposal(string, broker.Phase) error
+	// StageCandidate, Accept and DiscardCandidate split publication of the
+	// health judge's proposal: the broker validates and stages the commit
+	// without moving the accepted head, the coordinator verifies the staged
+	// checkout, and only an accepted decision is fast-forwarded.
+	StageCandidate(context.Context, string, broker.Actor, broker.Phase) (broker.Candidate, error)
+	Accept(context.Context, broker.Candidate, broker.CandidateEvidence) (broker.Receipt, error)
+	DiscardCandidate(string, broker.Phase) error
 	// Rejections and RecordRejection are the durable retry state for a
 	// proposal rejected by validator diagnostics.
 	Rejections(string) (*contracts.ProposalRejectionLog, error)
@@ -108,6 +115,7 @@ type SourceReadinessVerifier interface {
 // HealthVerifier judges the accepted detector against the live application.
 // Its verdict is independent of the agent's HealthJudgeResult assertion.
 type HealthVerifier interface {
+	CandidateVerifier
 	Verify(ctx context.Context, acceptedCommit, namespace, objective string, source DeploymentReceipt) (HealthVerdict, error)
 }
 
@@ -163,6 +171,10 @@ type Config struct {
 	DeploymentSource  *contracts.DeploymentSource
 	RenderEnvironment *contracts.RenderEnvironment
 	MaxAttempts       int
+	// DesignerAttempts is how many operability corrections the health judge
+	// gets for its own detectors before a detector set that still fires
+	// unchanged is attributed to the application; zero selects 2.
+	DesignerAttempts int
 	// MaxAttempts bounds deployer correction attempts only. The fields below
 	// bound the waits that never consume one; zero selects the default.
 	PendingEvaluations    int
@@ -234,8 +246,17 @@ func (c Coordinator) Run(ctx context.Context, cfg Config) (Result, error) {
 		}
 		result.ArchitectureCommit = architectureReceipt.Commit
 		judgeID := fmt.Sprintf("%s-judge-%d", cfg.OperationID, attempt)
+		// A judge commit accepted by an earlier run was verified before it was
+		// accepted; only a crash between acceptance and install gets here.
+		_, resumed, err := c.Broker.AcceptedCommit(ctx, judgeID, broker.InitialPhase)
+		if err != nil {
+			return result, err
+		}
 		judgeReceipt, judgeReady, nextFeedback, err := c.judge(ctx, judgeID, cfg, attempt, sourceReceipt.Commit, architectureReceipt.Commit, feedback, deployment)
 		if err != nil {
+			if isTerminalOperability(err) {
+				return result, err
+			}
 			return result, fmt.Errorf("health judge attempt %d: %w", attempt, err)
 		}
 		if !judgeReady {
@@ -243,16 +264,10 @@ func (c Coordinator) Run(ctx context.Context, cfg Config) (Result, error) {
 			continue
 		}
 		result.JudgeCommit = judgeReceipt.Commit
-		verdict, err := c.verifyHealth(ctx, cfg, judgeReceipt.Commit, deployment)
-		if err != nil {
-			return result, fmt.Errorf("independent verification: %w", err)
-		}
-		if verdict.Outcome != VerificationClear {
-			if cfg.ProvidedPlan != nil {
-				return result, &ProvidedPlanError{Stage: "verify", Reason: verdict.Feedback()}
+		if resumed {
+			if err := c.verifyResumed(ctx, cfg, judgeReceipt.Commit, deployment); err != nil {
+				return result, err
 			}
-			feedback = verdict.Feedback()
-			continue
 		}
 		install := func() error {
 			if typed, ok := c.Installer.(deploymentPlanInstaller); ok {
@@ -266,6 +281,29 @@ func (c Coordinator) Run(ctx context.Context, cfg Config) (Result, error) {
 		return result, nil
 	}
 	return result, fmt.Errorf("deployment exhausted %d attempts; last rejection: %s", cfg.MaxAttempts, feedback)
+}
+
+func isTerminalOperability(err error) bool {
+	var provided *ProvidedPlanError
+	_, offlineGate := asOperabilityError(err)
+	return offlineGate || errors.As(err, &provided)
+}
+
+// verifyResumed re-verifies a judge commit that was accepted before this run
+// started. Nothing can correct an accepted commit, so anything but a clear
+// verdict ends the run.
+func (c Coordinator) verifyResumed(ctx context.Context, cfg Config, commit string, deployment DeploymentReceipt) error {
+	verdict, err := c.verifyHealth(ctx, cfg, commit, deployment)
+	if err != nil {
+		return fmt.Errorf("independent verification: %w", err)
+	}
+	if verdict.Outcome == VerificationClear {
+		return nil
+	}
+	if cfg.ProvidedPlan != nil {
+		return &ProvidedPlanError{Stage: "verify", Reason: verdict.Feedback()}
+	}
+	return fmt.Errorf("accepted health diagnostics %s fail independent verification and can no longer be corrected: %s", shortCommit(commit), verdict.Feedback())
 }
 
 // MigrateMemory has the Upkeep actor bring an already-bootstrapped repository's
@@ -289,6 +327,9 @@ func (c Coordinator) validate(cfg Config) error {
 	}
 	if cfg.OperationID == "" || cfg.Application == "" || cfg.Namespace == "" || cfg.MaxAttempts < 1 {
 		return errors.New("operation ID, application, namespace and positive max attempts are required")
+	}
+	if _, ok := c.Readiness.(LiveChecker); !ok {
+		return errors.New("source readiness must implement the live operability checks (LiveChecker)")
 	}
 	if len(cfg.Sources) > 0 && strings.TrimSpace(cfg.HealthObjective) == "" {
 		return errors.New("followed sources are published with the human goal and require a health objective")
@@ -700,15 +741,11 @@ func (c Coordinator) judgeOnce(ctx context.Context, id string, cfg Config, attem
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return fail("direct-edit health judge rejects deprecated artifact_proposal")
 	}
-	receipt, err := c.Broker.Publish(ctx, id, broker.HealthJudge, broker.InitialPhase)
+	outcome, err := c.gateCandidate(ctx, id, cfg, deployment, log)
 	if err != nil {
-		if diagnostics, typed := broker.RejectionDiagnostics(err); typed {
-			return broker.Receipt{}, false, "", diagnostics, nil
-		}
-		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
-		return fail("broker rejected health diagnostics: " + err.Error())
+		return broker.Receipt{}, false, "", nil, err
 	}
-	return receipt, true, "", nil, nil
+	return outcome.receipt, outcome.ready, outcome.feedback, outcome.rejected, nil
 }
 
 func (c Coordinator) newTask(id, configuredAgent string, proposal broker.Proposal, request proto.Message) (*contracts.AgentTask, error) {
