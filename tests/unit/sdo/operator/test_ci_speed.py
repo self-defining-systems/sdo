@@ -18,12 +18,14 @@ def workflow() -> dict:
     return yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
 
 
-def test_pr_ci_has_at_most_three_jobs_without_matrix_or_path_skips() -> None:
+def test_pr_ci_shards_are_fixed_small_and_never_skipped_by_path() -> None:
     config = workflow()
-    assert len(config["jobs"]) <= 3
+    assert set(config["jobs"]) == {"checks", "python", "tests", "required-pr-ci"}
     assert "merge_group" in config.get("on", config.get(True, {}))
+    assert config["jobs"]["python"]["strategy"]["matrix"]["shard"] == ["core", "fastloop"]
+    assert config["jobs"]["tests"]["strategy"]["matrix"]["shard"] == ["validate", "rest"]
     for name, job in config["jobs"].items():
-        assert "matrix" not in job.get("strategy", {})
+        assert job.get("strategy", {}).get("fail-fast", False) is False
         if name != "required-pr-ci":
             assert "if" not in job
             assert job["timeout-minutes"] <= 5
@@ -51,6 +53,48 @@ def test_required_ci_still_accounts_for_every_job() -> None:
 def test_required_ci_aggregate_step_runs_on_every_event() -> None:
     steps = workflow()["jobs"]["required-pr-ci"]["steps"]
     assert "if" not in next(step for step in steps if "CHECKS" in step.get("env", {}))
+
+
+def test_python_shards_cover_every_test_path_and_gate_combined_coverage() -> None:
+    """Core is everything outside fastloop; the combined floor is enforced after the shards finish."""
+    script = (ROOT / "scripts/test_python.sh").read_text()
+    assert "--ignore=tests/unit/benchmarks/sregym/fastloop tests" in script
+    assert "paths=(tests/unit/benchmarks/sregym/fastloop)" in script
+    steps = workflow()["jobs"]["required-pr-ci"]["steps"]
+    commands = "\n".join(step.get("run", "") for step in steps)
+    assert "coverage combine" in commands
+    assert "--cov-fail-under=0" in script
+    assert "coverage report" in commands
+    assert "--fail-under" not in commands, "pyproject owns the floor"
+    uploads = [
+        s for s in workflow()["jobs"]["python"]["steps"] if s.get("uses", "").startswith("actions/upload-artifact@")
+    ]
+    assert uploads[0]["with"]["name"] == "coverage-${{ matrix.shard }}"
+
+
+@pytest.mark.parametrize("shard", ["validate", "rest"])
+def test_go_shards_partition_the_pr_packages(tmp_path: Path, shard: str) -> None:
+    calls = tmp_path / "calls"
+    command = tmp_path / "go"
+    command.write_text(
+        '#!/bin/sh\nprintf "%s\\n" "$*" >> "$SDO_TEST_CALLS"\n'
+        '[ "$1" = list ] && printf "sdo.dev/operator/memory/validate\\nsdo.dev/operator/runtime\\n"\nexit 0\n'
+    )
+    command.chmod(0o755)
+    subprocess.run(
+        ["bash", str(ROOT / "scripts/test_go_ci.sh"), "pr", shard],
+        env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "SDO_TEST_CALLS": str(calls)},
+        check=True,
+    )
+    test = [shlex.split(line) for line in calls.read_text().splitlines() if line.startswith("test ")]
+    assert len(test) == 1
+    packages = [a for a in test[0] if a.startswith(("./", "sdo.dev/"))]
+    if shard == "validate":
+        assert packages == ["./sdo/operator/memory/validate"]
+    else:
+        assert packages == ["sdo.dev/operator/runtime"]
+    assert "-short" in test[0]
+    assert "-tags=integration" in test[0]
 
 
 @pytest.mark.parametrize(
@@ -121,7 +165,7 @@ def test_required_ci_rejects_any_applicable_unsuccessful_job(result: str, accept
     step = next(step for step in workflow()["jobs"]["required-pr-ci"]["steps"] if "CHECKS" in step.get("env", {}))
     completed = subprocess.run(
         ["bash", "-e", "-c", step["run"]],
-        env={**os.environ, "CHECKS": result, "TESTS": "success"},
+        env={**os.environ, "CHECKS": result, "PYTHON": "success", "TESTS": "success"},
         capture_output=True,
         text=True,
         check=False,
@@ -163,7 +207,7 @@ def test_native_artifact_guard_rejects_every_artifact_name(command: str, artifac
 
 
 def test_nightly_compile_integrations_keep_fast_pr_contracts() -> None:
-    pr_commands = "\n".join(step.get("run", "") for step in workflow()["jobs"]["checks"]["steps"])
+    pr_commands = "\n".join(step.get("run", "") for step in workflow()["jobs"]["python"]["steps"])
     nightly = yaml.safe_load((ROOT / ".github/workflows/nightly.yml").read_text())
     nightly_commands = "\n".join(
         step.get("run", "") for job in nightly["jobs"].values() for step in job.get("steps", [])
@@ -339,7 +383,8 @@ def test_python_runner_starts_the_operator_build_before_collection() -> None:
 
 
 def test_architecture_delegation_requires_the_full_python_suite() -> None:
-    commands = "\n".join(step.get("run", "") for step in workflow()["jobs"]["checks"]["steps"])
+    jobs = workflow()["jobs"]
+    commands = "\n".join(step.get("run", "") for step in jobs["checks"]["steps"] + jobs["python"]["steps"])
     assert "check_errors.sh --python-suite" in commands
     assert "scripts/test_python.sh --durations=30" in commands
     assert "--tach" not in commands
@@ -351,7 +396,7 @@ def test_checks_job_delegates_duplicated_work_to_the_suites_that_run_it() -> Non
     script = (ROOT / "scripts/check_errors.sh").read_text()
     ignored = {
         Path(arg.removeprefix("--ignore=")).name
-        for step in workflow()["jobs"]["checks"]["steps"]
+        for step in workflow()["jobs"]["python"]["steps"]
         for arg in step.get("run", "").replace("\\\n", " ").split()
         if arg.startswith("--ignore=")
     }
