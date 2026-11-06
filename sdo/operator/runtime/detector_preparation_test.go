@@ -5,6 +5,7 @@ package runtime
 import (
 	"context"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -39,14 +40,17 @@ func (h *slowPreparationHost) Evaluate(ctx context.Context, r *pb.EvaluateReques
 }
 
 func TestRemotePreparationDoesNotSpendDetectorExecutionBudget(t *testing.T) {
-	host := &slowPreparationHost{delay: minDetectorDeadline + 20*time.Millisecond}
-	remote := &RemoteMemory{rpc: host, memoryCommit: "accepted"}
-	detector := &remoteDetector{Registration: memoryhost.Registration{DetectorSpec: sdk.DetectorSpec{ID: "healthy"}}, remote: remote}
-	view := NewCycleReadView(program.ReadFrom(sdktest.Snapshot{NamespaceName: "app"}))
-	result := evaluateDetectors(context.Background(), []sdk.Detector{detector}, view)["healthy"]
-	if result.err != nil {
-		t.Fatalf("input preparation consumed execution budget: %v", result.err)
-	}
+	// The bubble's clock makes the ten-second preparation instant and exact.
+	synctest.Test(t, func(t *testing.T) {
+		host := &slowPreparationHost{delay: minDetectorDeadline + 20*time.Millisecond}
+		remote := &RemoteMemory{rpc: host, memoryCommit: "accepted"}
+		detector := &remoteDetector{Registration: memoryhost.Registration{DetectorSpec: sdk.DetectorSpec{ID: "healthy"}}, remote: remote}
+		view := NewCycleReadView(program.ReadFrom(sdktest.Snapshot{NamespaceName: "app"}))
+		result := evaluateDetectors(context.Background(), []sdk.Detector{detector}, view)["healthy"]
+		if result.err != nil {
+			t.Fatalf("input preparation consumed execution budget: %v", result.err)
+		}
+	})
 }
 
 func TestRemotePreparationHonorsParentCancellation(t *testing.T) {
