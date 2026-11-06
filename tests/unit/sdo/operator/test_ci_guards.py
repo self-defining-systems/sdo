@@ -519,3 +519,37 @@ def test_every_cache_save_has_a_family_budget_and_a_prune_step(name: str) -> Non
 def test_health_workflow_checks_the_cache_budget_read_only() -> None:
     steps = workflow("ci-health.yml")["jobs"]["health"]["steps"]
     assert any("ci_cache_budget.py check" in str(step.get("run", "")) for step in steps)
+
+
+TEST_SCRIPTS = [
+    "check_errors.sh",
+    "test_controller_e2e.sh",
+    "test_go_ci.sh",
+    "test_go_foundation.sh",
+    "test_python.sh",
+    "test_rendered_lock_kind.sh",
+]
+
+
+@pytest.mark.parametrize("name", TEST_SCRIPTS)
+def test_test_scripts_run_with_an_isolated_git_config(name: str) -> None:
+    assert "isolate_git_config.sh" in (ROOT / "scripts" / name).read_text()
+
+
+def test_isolated_git_config_makes_an_identity_dependent_commit_fail_like_a_hosted_runner(tmp_path: Path) -> None:
+    ambient = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "dev",
+        "GIT_AUTHOR_EMAIL": "dev@example.com",
+        "GIT_COMMITTER_NAME": "dev",
+        "GIT_COMMITTER_EMAIL": "dev@example.com",
+    }
+    script = (
+        f'source "{ROOT}/scripts/isolate_git_config.sh"; cd "{tmp_path}"; git init -q . && '
+        'git commit -q --allow-empty -m x; echo "rc=$?"; '
+        'git -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m y; echo "rc=$?"'
+    )
+    result = subprocess.run(["bash", "-c", script], env=ambient, capture_output=True, text=True, check=False)
+    assert "rc=128" in result.stdout, result
+    assert result.stdout.rstrip().endswith("rc=0"), result
+    assert "Author identity unknown" in result.stderr or "empty ident" in result.stderr
