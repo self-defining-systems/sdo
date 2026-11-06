@@ -22,6 +22,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
+	"sdo.dev/operator/telemetry"
 )
 
 // Actor is the party that authored a candidate change.
@@ -100,6 +101,13 @@ type Request struct {
 	// A nil registry leaves that lookup unchecked; the structural decode of
 	// plan.yaml always runs.
 	PlanCatalogs planfile.Catalogs `json:"-"`
+	// Telemetry is the environment's telemetry policy and TelemetryRegistry the
+	// adapter registry the bindings under .sdo/diagnostics/telemetry are checked
+	// against. Both are caller-owned wiring, never candidate input; the
+	// registry is rebuilt by each process (the policy travels as data). A nil
+	// registry fails any binding file closed, since adapters cannot be checked.
+	Telemetry         telemetry.Policy
+	TelemetryRegistry *telemetry.Registry `json:"-"`
 	// Root is the checkout to validate.
 	Root string
 	// Publication is broker-derived context. CLI callers load its provisioned

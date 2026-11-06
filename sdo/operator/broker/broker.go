@@ -26,6 +26,7 @@ import (
 	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/telemetry"
 )
 
 // Actor and Phase are defined by the validator, which owns the ownership
@@ -109,6 +110,12 @@ type Broker struct {
 	// the health judge's initial memory is accepted. Set it only where a
 	// metrics source is configured.
 	MetricsDetectors bool
+
+	// Telemetry is the environment's policy for the designer's telemetry
+	// bindings and TelemetryRegistry the adapter registry they are checked
+	// against; both are trusted installer wiring like PlanCatalogs.
+	Telemetry         telemetry.Policy
+	TelemetryRegistry *telemetry.Registry
 
 	// RepairVerified is the controller's closure fact for reflection checks:
 	// whether a committed outcome holds an independently verified repaired

@@ -48,7 +48,11 @@ func memoryMigrate(ctx context.Context, args []string, getenv func(string) strin
 	if err != nil {
 		return err
 	}
-	diagnostics, err := validate.CheckAccepted(ctx, validate.Request{Root: root, OperatorRoot: *operator, Replay: mode}, validate.CompileCandidate)
+	auditPolicy, err := memoryTelemetryPolicy(getenv, "")
+	if err != nil {
+		return err
+	}
+	diagnostics, err := validate.CheckAccepted(ctx, validate.Request{Telemetry: auditPolicy, TelemetryRegistry: telemetryRegistry(), Root: root, OperatorRoot: *operator, Replay: mode}, validate.CompileCandidate)
 	if err != nil {
 		return err
 	}

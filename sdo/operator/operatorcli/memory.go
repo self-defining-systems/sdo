@@ -229,7 +229,11 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 		if _, err := processio.AcceptedHead(ctx, absolute); err != nil {
 			return exitInfra, err
 		}
-		diagnostics, err := validate.CheckAccepted(ctx, validate.Request{Root: absolute, OperatorRoot: operatorRootDefault(getenv), Replay: replay, CodePath: memoryValidationCodePath(getenv)}, validate.CompileCandidate)
+		acceptedPolicy, err := memoryTelemetryPolicy(getenv, "")
+		if err != nil {
+			return exitInfra, err
+		}
+		diagnostics, err := validate.CheckAccepted(ctx, validate.Request{Telemetry: acceptedPolicy, TelemetryRegistry: telemetryRegistry(), Root: absolute, OperatorRoot: operatorRootDefault(getenv), Replay: replay, CodePath: memoryValidationCodePath(getenv)}, validate.CompileCandidate)
 		if err != nil {
 			return exitInfra, err
 		}
@@ -324,7 +328,12 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 		ceiling = publication.ObservationCeiling
 		appNamespace = publication.ApplicationNamespace
 	}
+	telemetryPolicy, err := memoryTelemetryPolicy(getenv, appNamespace)
+	if err != nil {
+		return exitInfra, err
+	}
 	diagnostics, err := validate.Check(ctx, validate.Request{
+		Telemetry: telemetryPolicy, TelemetryRegistry: telemetryRegistry(),
 		Replay: replay, CodePath: memoryValidationCodePath(getenv), PlanCatalogs: planCatalogs(),
 		ObservationCeiling: ceiling, ApplicationNamespace: appNamespace,
 		MitigationReplayNotes: &replayNotes, CoverageGaps: &coverageGaps,

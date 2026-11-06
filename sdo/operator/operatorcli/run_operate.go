@@ -2,6 +2,7 @@ package operatorcli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -84,6 +85,7 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	config.Lifecycle.MetricsSource = config.Install.MetricsSource()
 	repository.MetricsDetectors = config.Install.MetricsURL != ""
 	repository.PlanCatalogs = planCatalogs()
+	repository.Telemetry, repository.TelemetryRegistry = installTelemetryPolicy(config.Install, config.Lifecycle.Namespace, control), telemetryRegistry()
 	environment, err := renderenv.Discover(client.Discovery())
 	if err != nil {
 		return lifecycle.Result{}, fmt.Errorf("discover render environment: %w", err)
@@ -117,6 +119,11 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	if config.Install.MetricsURL != "" {
 		workers.Environment[memoryMetricsEnv] = "1"
 	}
+	policy, err := json.Marshal(repository.Telemetry)
+	if err != nil {
+		return lifecycle.Result{}, fmt.Errorf("encode telemetry policy: %w", err)
+	}
+	workers.Environment[memoryTelemetryPolicyEnv] = string(policy)
 	installer := lifecycle.NativeInstallAdapter{
 		Strategy: lifecycle.KubernetesInstallStrategy{Installer: install.Installer{Client: client}, Renderers: renderers.Catalog()},
 		Config:   config.Install, AcceptedRepository: config.ApplicationRoot, Prepared: true,

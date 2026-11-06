@@ -58,6 +58,9 @@ const (
 	// logical ID only; version 4 adds the deployment class (.sdo/deployment) and
 	// retires the unused rendered class. Version 4 needs no conversion: no
 	// repository holds deployment files before it.
+	// The optional telemetry binding files under .sdo/diagnostics/telemetry are
+	// additive and not bumped: the version moves when the controller starts to
+	// read them.
 	CurrentSchemaVersion = 4
 )
 
@@ -88,6 +91,8 @@ const (
 	KindDeploymentFile           Kind = "deployment-file"
 	KindDeploymentOverlay        Kind = "deployment-overlay"
 	KindDeploymentPatch          Kind = "deployment-patch"
+	KindTelemetrySources         Kind = "telemetry-sources"
+	KindTelemetryBackends        Kind = "telemetry-backends"
 	KindOutcome                  Kind = "outcome"
 )
 
@@ -286,6 +291,10 @@ func classifyDiagnostics(parts []string) (Kind, string, bool) {
 		return KindDiagnosticsModule, parts[0], true
 	case len(parts) == 1 && parts[0] == ManifestFileName:
 		return KindLegacyDetectorManifest, "", true
+	case len(parts) == 2 && parts[0] == "telemetry" && parts[1] == "sources.yaml":
+		return KindTelemetrySources, "", true
+	case len(parts) == 2 && parts[0] == "telemetry" && parts[1] == "backends.yaml":
+		return KindTelemetryBackends, "", true
 	case len(parts) >= 4 && parts[0] == "detectors":
 		class, ok := classOfDir(parts[1])
 		if !ok || !ValidDetectorID(parts[2]) {
