@@ -432,19 +432,22 @@ def test_cache_family_drops_the_lockfile_hash_commit_and_tool_versions() -> None
     assert cache_budget.family_of(f"ci-shared-v1-Linux-X64-1.26.8-{HASH64}-{SHA40}") == "ci-shared-v1-Linux-X64"
 
 
-def test_prune_keeps_the_newest_key_and_spares_a_key_used_moments_ago() -> None:
+def test_prune_keeps_the_newest_key_and_spares_a_key_used_seconds_ago() -> None:
     now = cache_budget.parse_time("2026-01-01T12:00:00Z")
     family = f"ci-tests-v2-Linux-X64-1.26.8-rest-{HASH64}"
     rows = [
         cache_row(f"{family}-{'1' * 40}", 1, "2026-01-01T09:00:00Z", "2026-01-01T09:30:00Z"),
-        cache_row(f"{family}-{'2' * 40}", 2, "2026-01-01T10:00:00Z", "2026-01-01T11:59:00Z"),
+        cache_row(f"{family}-{'2' * 40}", 2, "2026-01-01T10:00:00Z", "2026-01-01T11:59:40Z"),
         cache_row(f"{family}-{'3' * 40}", 3, "2026-01-01T11:00:00Z", "2026-01-01T11:00:00Z"),
         cache_row(f"{family}-{'4' * 40}", 4, "2026-01-01T07:00:00Z", "2026-01-01T07:00:00Z"),
+        # The previous main push's key, restored by the next push's job at its start two minutes
+        # before this prune (two merges a minute or two apart): superseded, not "in use".
+        cache_row(f"{family}-{'5' * 40}", 5, "2026-01-01T10:30:00Z", "2026-01-01T11:58:00Z"),
     ]
     deleted: list[int] = []
     removed = cache_budget.prune(CACHE, rows, deleted.append, now)
-    assert sorted(deleted) == [1, 4]  # 3 is the newest; 2 was restored a minute ago
-    assert sorted(row["id"] for row in removed) == [1, 4]
+    assert sorted(deleted) == [1, 4, 5]  # 3 is the newest; 2 was restored seconds ago
+    assert sorted(row["id"] for row in removed) == [1, 4, 5]
 
 
 def test_prune_honours_a_family_prefix() -> None:
