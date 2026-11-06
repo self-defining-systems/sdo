@@ -94,6 +94,14 @@ func newOnboardedWorld(t *testing.T, editedByDeployer bool) *advanceWorld {
 
 func advanceEvidence(t *testing.T, checkout, image string) SourceEvidence {
 	t.Helper()
+	return advanceEvidenceFor(t, checkout, image, true)
+}
+
+// advanceEvidenceFor builds evidence for checkout's tree. With applied false
+// the tree's patches need not apply: the effective fields are placeholders (for
+// tests that attest a tree the broker must refuse).
+func advanceEvidenceFor(t *testing.T, checkout, image string, applied bool) SourceEvidence {
+	t.Helper()
 	tree, err := ProposalTreeDigest(context.Background(), checkout)
 	if err != nil {
 		t.Fatal(err)
@@ -103,11 +111,14 @@ func advanceEvidence(t *testing.T, checkout, image string) SourceEvidence {
 		t.Fatal(err)
 	}
 	source := &contracts.DeploymentSource{RendererId: "raw", Config: config}
-	effective, err := rendered.Effective(context.Background(), rendered.ObjectStore{Dir: checkout}, rendered.BaseTree(tree))
-	if err != nil {
-		t.Fatal(err)
+	effective := rendered.EffectiveTree{ID: strings.Repeat("0", 40), PatchesDigest: strings.Repeat("0", 64)}
+	if applied {
+		var err error
+		if effective, err = rendered.Effective(context.Background(), rendered.ObjectStore{Dir: checkout}, rendered.BaseTree(tree)); err != nil {
+			t.Fatal(err)
+		}
+		defer effective.Close()
 	}
-	defer effective.Close()
 	return SourceEvidence{
 		DeploymentSource: source,
 		Plan:             &contracts.DeploymentPlan{Source: proto.Clone(source).(*contracts.DeploymentSource), ExpectedWorkloadIds: []string{"Deployment/ns/app"}},
@@ -391,8 +402,11 @@ func TestPublishVerifiedSourceRecomputesTheEffectiveTree(t *testing.T) {
 	}
 	writeFiles(t, p.Path, map[string]string{"app.txt": "one\ntwo\nthree again\n"})
 	for name, mutate := range map[string]func(*SourceEvidence){
-		"effective tree": func(e *SourceEvidence) { e.EffectiveTree = strings.Repeat("9", 40); e.ObservedRevision = e.EffectiveTree },
-		"patch series":   func(e *SourceEvidence) { e.PatchesDigest = strings.Repeat("9", 64) },
+		"effective tree": func(e *SourceEvidence) {
+			e.EffectiveTree = strings.Repeat("9", 40)
+			e.ObservedRevision = e.EffectiveTree
+		},
+		"patch series": func(e *SourceEvidence) { e.PatchesDigest = strings.Repeat("9", 64) },
 	} {
 		evidence := advanceEvidence(t, p.Path, "second")
 		mutate(&evidence)

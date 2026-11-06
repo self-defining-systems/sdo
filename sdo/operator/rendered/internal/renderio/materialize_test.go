@@ -79,19 +79,21 @@ func TestExtractTarWritesFilesDirsAndModes(t *testing.T) {
 
 func TestPruneKeepsHeldRecentAndNewestAndDropsStalePartials(t *testing.T) {
 	root := t.TempDir()
-	old := time.Now().Add(-2 * time.Hour)
+	old := time.Unix(1_000_000_000, 0) // long ago
 	mk := func(name string, at time.Time) {
 		if err := os.Mkdir(filepath.Join(root, name), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		_ = os.Chtimes(filepath.Join(root, name), at, at)
+		if !at.IsZero() {
+			_ = os.Chtimes(filepath.Join(root, name), at, at)
+		}
 	}
 	mk("held", old)
 	mk("newest", old.Add(time.Minute))
 	mk("stale", old)
-	mk("recent", time.Now())
+	mk("recent", time.Time{}) // created now
 	mk(".extract-old", old)
-	mk(".extract-live", time.Now())
+	mk(".extract-live", time.Time{})
 	if err := Prune(root, map[string]bool{"held": true}, 1, time.Hour); err != nil {
 		t.Fatal(err)
 	}

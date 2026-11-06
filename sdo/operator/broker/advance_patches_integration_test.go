@@ -234,7 +234,7 @@ func TestPublishAdvanceRefusesATreeWhosePatchesDoNotApply(t *testing.T) {
 	if conflicts, err := w.broker.mergeUpstream(ctx, stage, w.seed, broken); err != nil || len(conflicts) > 0 {
 		t.Fatalf("merge = %v %v", conflicts, err)
 	}
-	evidence := advanceEvidence(t, stage, "skipped")
+	evidence := advanceEvidenceFor(t, stage, "skipped", false)
 	if err := w.broker.locked(func() error {
 		_, err := w.broker.createProposal(ctx, id, AdvancePhase, "")
 		return err
