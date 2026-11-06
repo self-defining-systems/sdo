@@ -376,12 +376,12 @@ func TestCodecRoundTripDigestAndStrictness(t *testing.T) {
 	}
 	s := string(b)
 	for name, in := range map[string]string{
-		"unknown field": strings.Replace(s, `"stage"`, `"verdict":"accepted","stage"`, 1),
-		"trailing":      s + "{}",
-		"schema":        strings.Replace(s, `"schema":1`, `"schema":2`, 1),
-		"empty":         "",
-		"not json":      "accepted",
-		"unknown check field":   strings.Replace(s, `"checks":[{`, `"checks":[{"nope":1,`, 1),
+		"unknown field":       strings.Replace(s, `"stage"`, `"verdict":"accepted","stage"`, 1),
+		"trailing":            s + "{}",
+		"schema":              strings.Replace(s, `"schema":1`, `"schema":2`, 1),
+		"empty":               "",
+		"not json":            "accepted",
+		"unknown check field": strings.Replace(s, `"checks":[{`, `"checks":[{"nope":1,`, 1),
 	} {
 		if _, err := Decode([]byte(in)); err == nil {
 			t.Errorf("%s: decoded", name)

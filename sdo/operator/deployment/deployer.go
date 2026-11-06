@@ -104,11 +104,11 @@ func (d Deployer) ApplyAndVerify(ctx context.Context, checkout string, plan *con
 		defer release()
 		request.Checkout = dir
 	}
-	resolved, err := d.Images.ResolveAll(ctx, imageSites(set), declared, request)
+	resolved, err := d.Images.ResolveAll(ctx, rendered.ImageSites(set), declared, request)
 	if err != nil {
 		return lifecycle.DeploymentReceipt{}, fmt.Errorf("resolve images: %w", err)
 	}
-	if err := checkExpectedWorkloads(set, plan.GetExpectedWorkloadIds()); err != nil {
+	if err := rendered.CheckExpectedWorkloads(set, plan.GetExpectedWorkloadIds()); err != nil {
 		return lifecycle.DeploymentReceipt{}, err
 	}
 	run := &applyRun{deployer: d, base: base, effective: effective, resolved: resolved, workloads: map[string]*workloadRecord{}}
@@ -125,49 +125,6 @@ func (d Deployer) ApplyAndVerify(ctx context.Context, checkout string, plan *con
 		receipt.Environment = proto.Clone(d.Environment).(*contracts.RenderEnvironment)
 	}
 	return receipt, nil
-}
-
-// imageSites lists every container image of every workload in apply order,
-// including ephemeral phases (their pods run those images too).
-func imageSites(set rendered.DesiredSet) []string {
-	var images []string
-	for _, phase := range set.Phases {
-		for _, object := range phase.Objects {
-			if !object.Workload {
-				continue
-			}
-			_, _ = Stamp(object.Object.DeepCopy().Object, "", func(site ImageSite) string {
-				images = append(images, site.Image)
-				return site.Image
-			})
-		}
-	}
-	return images
-}
-
-func checkExpectedWorkloads(set rendered.DesiredSet, expected []string) error {
-	wanted := map[string]bool{}
-	for _, id := range expected {
-		if id == "" || wanted[id] {
-			return errors.New("expected workload IDs must be unique and nonempty")
-		}
-		wanted[id] = true
-	}
-	rendered := map[string]bool{}
-	for _, object := range set.Objects() {
-		if object.Workload {
-			rendered[object.Ref.Kind+"/"+object.Ref.Namespace+"/"+object.Ref.Name] = true
-		}
-	}
-	for id := range rendered {
-		if !wanted[id] {
-			return fmt.Errorf("workload %s is missing from deployment plan", id)
-		}
-	}
-	if len(wanted) != len(rendered) {
-		return errors.New("expected workload IDs differ from rendered manifests")
-	}
-	return nil
 }
 
 // workloadRecord is what one applied workload must look like when observed.
