@@ -39,6 +39,7 @@ Production code must not import from SREGym packages. Benchmark adapters may imp
 - SDO applies a learned playbook automatically when its diagnose matches live and every parameter binds (stage [deterministic, agent]); independent detector-confirmed recovery skips the responder; otherwise the agent is told the result and handles what remains; no automatic rollback, no trust gate.
 - Program trust is bound to the accepted source revision and independently verified outcomes. Deterministic controller plans, drift assessment, and live reads remain production APIs; benchmark scripted workers, grading, and recording stay under `benchmarks/`.
 - The active Go broker stores one versioned outcome document per incident at `.sdo/outcomes/<sha256(incident_id)>.json`. Only the current operational-memory schema is supported; incompatible repositories fail before memory is read. No Python broker remains on the production path.
+- Production SDO code, skills and prompts never name specific applications (`scripts/check_app_names.py`; existing uses are a shrink-only ratchet in `scripts/app_name_allowlist.json`).
 
 When changing operational-memory formats or experiment result structures, update `.agents/skills/analyze-experiment/references/`. When moving production or benchmark boundaries, update `docs/architecture.md` (including its component map, artifact ownership matrix, and repository scope table).
 

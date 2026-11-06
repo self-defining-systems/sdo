@@ -676,6 +676,10 @@ not replace captures, pre-apply checkpoints or action receipts, and is not a
 replay source, coverage policy or `no_recorded_repair` implementation. Direct network
 traffic, alternate kubeconfigs and controller SDK reads remain outside its view.
 
+## Application-name genericity
+
+Production SDO (`sdo/**` Go, Python and protos, `sdo/skills/**`, and agent prompt templates) must not name specific applications. The denylist is data: the directory names under `apps/` plus the SREGym application names and `gitlab` in `scripts/app_name_rules.json` (`toy`, the synthetic fixture, is exempt). `scripts/check_app_names.py` matches them case-insensitively on word boundaries, with spaces, `_` or `-` between words optional, and runs from `check_errors.sh`. Existing occurrences are a per-file ratchet in `scripts/app_name_allowlist.json` with a reason each; counts may only drop, and a stale count fails until lowered. Describe a behavior generically instead of citing the application that exposed it.
+
 ## Component map
 
 The Go responder loop owns convenience-menu execution through the ordinary PlanExecutor; the Python
