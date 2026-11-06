@@ -301,3 +301,96 @@ def test_flake_report_reads_attempts_through_the_api() -> None:
     )
     assert "| 1 | py | `t.py::test_x` |" in report
     assert "| [2](https://github.com/o/r/actions/runs/2) | push | cancelled |" in report
+
+
+def test_queue_latency_counts_from_the_enqueue_event_when_it_is_known() -> None:
+    runs = [
+        {
+            "event": "merge_group",
+            "head_branch": "gh-readonly-queue/main/pr-7-abc",
+            "created_at": "2026-01-01T00:02:00Z",
+            "conclusion": "success",
+            "run_attempt": 1,
+        }
+    ]
+    merged = {7: "2026-01-01T00:06:00Z"}
+    enqueued = {7: "2026-01-01T00:00:30Z"}
+    assert health.queue_latencies(runs, merged.get, enqueued.get) == [330.0]
+    assert health.queue_latencies(runs, merged.get, {}.get) == [240.0], "falls back to the merge-group run"
+
+
+def push(sha: str, created: str, conclusion: str) -> dict:
+    return {"event": "push", "head_sha": sha, "created_at": created, "conclusion": conclusion}
+
+
+def test_main_health_reports_completion_red_time_and_post_merge_failures() -> None:
+    runs = [
+        push("a", "2026-01-01T00:00:00Z", "success"),
+        push("b", "2026-01-01T00:10:00Z", "failure"),
+        push("c", "2026-01-01T00:25:00Z", "cancelled"),
+        push("d", "2026-01-01T00:40:00Z", "success"),
+    ]
+    main = health.main_health(runs)
+    assert main["completion"] == 3 / 4
+    assert main["red_minutes"] == [30.0], "red from the failing push until the next green one"
+    assert [r["head_sha"] for r in main["failures"]] == ["b"]
+
+
+def test_a_cancelled_run_that_a_later_push_superseded_is_counted_apart() -> None:
+    def run(number: int, created: str, conclusion: str) -> dict:
+        return {
+            "id": number,
+            "event": "pull_request",
+            "head_branch": "feature",
+            "created_at": created,
+            "conclusion": conclusion,
+            "run_attempt": 1,
+        }
+
+    runs = [
+        run(3, "2026-01-01T00:10:00Z", "success"),
+        run(2, "2026-01-01T00:05:00Z", "cancelled"),
+        run(1, "2026-01-01T00:00:00Z", "cancelled"),
+    ]
+    assert [r["id"] for r in health.superseded(runs)] == [2, 1]
+    assert health.superseded(runs[:1] + [run(9, "2026-01-01T00:20:00Z", "cancelled")]) == []
+
+
+def test_the_health_report_covers_queue_enqueue_time_and_main() -> None:
+    runs = [
+        {
+            "id": 1,
+            "event": "merge_group",
+            "head_branch": "gh-readonly-queue/main/pr-7-abc",
+            "head_sha": "m",
+            "created_at": "2026-01-01T00:01:00Z",
+            "conclusion": "success",
+            "run_attempt": 1,
+        },
+        push("a", "2026-01-01T00:07:00Z", "failure"),
+        push("b", "2026-01-01T00:20:00Z", "success"),
+    ]
+    jobs = [
+        {
+            "name": "py",
+            "conclusion": "success",
+            "started_at": "2026-01-01T00:01:00Z",
+            "completed_at": "2026-01-01T00:03:00Z",
+        }
+    ]
+
+    def api(path: str) -> object:
+        if path.startswith("actions/workflows"):
+            return {"workflow_runs": runs}
+        if path.startswith("actions/runs/"):
+            return {"jobs": jobs}
+        if path == "pulls/7":
+            return {"merged_at": "2026-01-01T00:06:00Z"}
+        assert path.startswith("issues/7/timeline")
+        return [{"event": "added_to_merge_queue", "created_at": "2026-01-01T00:00:00Z"}]
+
+    measured = health.gather(api, {"since": "2025-01-01T00:00:00Z", "runs": 50})
+    assert measured.latencies == [360.0]
+    report = health.render(measured)
+    assert "| merge_group | 1 | 6.0 | 6.0 |" in report
+    assert "| push runs | 100% | 1 | 1 | 13 |" in report

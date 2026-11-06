@@ -12,6 +12,7 @@ health.since are ignored so a fixed regression stops failing once it leaves the 
 
 from __future__ import annotations
 
+import argparse
 import json
 import math
 import os
@@ -22,7 +23,7 @@ from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 BUDGETS = Path(__file__).resolve().parents[1] / ".github" / "ci_budgets.json"
 PR_EVENTS = ("pull_request", "merge_group")
@@ -61,8 +62,16 @@ def job_durations(jobs_by_run: Iterable[Iterable[Json]]) -> dict[str, list[float
     return durations
 
 
-def queue_latencies(runs: Iterable[Json], merged_at: Callable[[int], str | None]) -> list[float]:
-    """Seconds from a merge-group run's creation (enqueue) to the PR's merge."""
+def queue_latencies(
+    runs: Iterable[Json],
+    merged_at: Callable[[int], str | None],
+    enqueued_at: Callable[[int], str | None] = lambda _number: None,
+) -> list[float]:
+    """Seconds from a PR entering the merge queue to its merge.
+
+    The enqueue time is the PR timeline's ``added_to_merge_queue`` event; without one the merge-group
+    run's creation stands in for it (it starts a little after the enqueue).
+    """
     latencies = []
     for run in runs:
         if run["event"] != "merge_group":
@@ -70,8 +79,47 @@ def queue_latencies(runs: Iterable[Json], merged_at: Callable[[int], str | None]
         match = re.search(r"/pr-(\d+)-", run.get("head_branch") or "")
         merged = merged_at(int(match[1])) if match else None
         if merged:
-            latencies.append((parse_time(merged) - parse_time(run["created_at"])).total_seconds())
+            start = enqueued_at(int(match[1])) or run["created_at"]
+            latencies.append((parse_time(merged) - parse_time(start)).total_seconds())
     return latencies
+
+
+def superseded(runs: Iterable[Json]) -> list[Json]:
+    """Cancelled pull-request runs that a later run on the same branch replaced (concurrency doing its job)."""
+    listed = list(runs)
+    return [
+        r
+        for r in listed
+        if r["conclusion"] == "cancelled"
+        and r["event"] == "pull_request"
+        and any(
+            o["event"] == r["event"]
+            and o["head_branch"] == r["head_branch"]
+            and parse_time(o["created_at"]) > parse_time(r["created_at"])
+            for o in listed
+        )
+    ]
+
+
+def main_health(push_runs: Iterable[Json]) -> dict[str, Any]:
+    """Main branch: share of pushes that ran to completion, red intervals, and the failing runs."""
+    ordered = sorted(push_runs, key=lambda r: parse_time(r["created_at"]))
+    red_since: datetime | None = None
+    red_minutes: list[float] = []
+    for run in ordered:
+        created = parse_time(run["created_at"])
+        if run["conclusion"] == "failure" and red_since is None:
+            red_since = created
+        elif run["conclusion"] == "success" and red_since is not None:
+            red_minutes.append((created - red_since).total_seconds() / 60)
+            red_since = None
+    done = sum(r["conclusion"] in ("success", "failure") for r in ordered)
+    return {
+        "completion": done / len(ordered) if ordered else 1.0,
+        "red_minutes": red_minutes,
+        "still_red": red_since is not None,
+        "failures": [r for r in ordered if r["conclusion"] == "failure"],
+    }
 
 
 def outcome_rates(runs: list[Json]) -> dict[str, float]:
@@ -98,37 +146,67 @@ def evaluate(budget: Json, durations: Mapping[str, list[float]], latencies: list
     return failures
 
 
-def render(
-    durations: Mapping[str, list[float]],
-    latencies: list[float],
-    pr_rates: dict[str, float],
-    push_rates: dict[str, float],
-) -> str:
+class Measured(NamedTuple):
+    durations: dict[str, list[float]]
+    latencies: list[float]
+    pr_runs: list[Json]
+    push_runs: list[Json]
+
+
+def render(measured: Measured) -> str:
     lines = ["## CI health", "", "| job | samples | p50 s | p95 s |", "|---|---|---|---|"]
-    for name, values in sorted(durations.items()):
+    for name, values in sorted(measured.durations.items()):
         lines.append(f"| {name} | {len(values)} | {percentile(values, 0.5):.0f} | {percentile(values, 0.95):.0f} |")
+    latencies = measured.latencies
     lines += ["", "| merge queue (enqueue to merge) | samples | p50 min | p95 min |", "|---|---|---|---|"]
     p50, p95 = percentile(latencies, 0.5) / 60, percentile(latencies, 0.95) / 60
     lines.append(f"| merge_group | {len(latencies)} | {p50:.1f} | {p95:.1f} |")
-    lines += ["", "| runs | cancelled | rerun | ejected |", "|---|---|---|---|"]
-    for label, rates in (("PR and merge group", pr_rates), ("push to main", push_rates)):
-        lines.append(f"| {label} | {rates['cancelled']:.0%} | {rates['rerun']:.0%} | {rates['ejected']:.0%} |")
+    pr_rates, push_rates = outcome_rates(measured.pr_runs), outcome_rates(measured.push_runs)
+    replaced = len(superseded(measured.pr_runs)) / (len(measured.pr_runs) or 1)
+    lines += ["", "| runs | samples | cancelled | of which superseded by a push | rerun | ejected |"]
+    lines.append("|---|---|---|---|---|---|")
+    for label, runs, rates, shown in (
+        ("PR and merge group", measured.pr_runs, pr_rates, f"{replaced:.0%}"),
+        ("push to main", measured.push_runs, push_rates, "n/a"),
+    ):
+        cells = [
+            label,
+            len(runs),
+            f"{rates['cancelled']:.0%}",
+            shown,
+            f"{rates['rerun']:.0%}",
+            f"{rates['ejected']:.0%}",
+        ]
+        lines.append("| " + " | ".join(str(cell) for cell in cells) + " |")
+    main = main_health(measured.push_runs)
+    red = main["red_minutes"]
+    lines += [
+        "",
+        "| main | completed | failed pushes | red intervals | longest red min |",
+        "|---|---|---|---|---|",
+        f"| push runs | {main['completion']:.0%} | {len(main['failures'])} | {len(red)}"
+        f"{' (still red)' if main['still_red'] else ''} | {max(red, default=0):.0f} |",
+    ]
     return "\n".join(lines) + "\n"
 
 
-def gather(api: Api, budget: Json) -> tuple[dict[str, list[float]], list[float], dict[str, float], dict[str, float]]:
+def gather(api: Api, budget: Json) -> Measured:
     since = parse_time(budget["since"])
     listing = api("actions/workflows/ci.yml/runs?per_page=100&status=completed")["workflow_runs"]
     runs = [r for r in listing if parse_time(r["created_at"]) >= since]
     pr_runs = [r for r in runs if r["event"] in PR_EVENTS][: budget["runs"]]
     push_runs = [r for r in runs if r["event"] == "push"][: budget["runs"]]
     jobs = [api(f"actions/runs/{r['id']}/jobs?per_page=100&filter=latest")["jobs"] for r in pr_runs]
-    durations = job_durations(jobs)
 
     def merged_at(number: int) -> str | None:
         return api(f"pulls/{number}").get("merged_at")
 
-    return durations, queue_latencies(pr_runs, merged_at), outcome_rates(pr_runs), outcome_rates(push_runs)
+    def enqueued_at(number: int) -> str | None:
+        events = [e for e in api(f"issues/{number}/timeline?per_page=100") if e.get("event") == "added_to_merge_queue"]
+        return events[-1]["created_at"] if events else None
+
+    latencies = queue_latencies(pr_runs, merged_at, enqueued_at)
+    return Measured(job_durations(jobs), latencies, pr_runs, push_runs)
 
 
 def failed_tests(log: str) -> list[str]:
@@ -264,10 +342,15 @@ def gh_text(path: str) -> str:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--since", help="ISO time overriding health.since (measure a different window)")
+    parser.add_argument("--runs", type=int, help="most recent runs per event, overriding health.runs")
+    args = parser.parse_args()
     budget = json.loads(BUDGETS.read_text())["health"]
-    durations, latencies, pr_rates, push_rates = gather(gh_api, budget)
-    report = render(durations, latencies, pr_rates, push_rates)
-    failures = evaluate(budget, durations, latencies)
+    budget = {**budget, **{k: v for k, v in (("since", args.since), ("runs", args.runs)) if v}}
+    measured = gather(gh_api, budget)
+    report = render(measured)
+    failures = evaluate(budget, measured.durations, measured.latencies)
     if failures:
         report += "\n### Budget exceeded\n\n" + "\n".join(f"- {f}" for f in failures) + "\n"
     report += flake_report(gh_api, gh_text, os.environ["GITHUB_REPOSITORY"], parse_time(budget["since"]))
