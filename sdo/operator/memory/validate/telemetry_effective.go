@@ -70,8 +70,9 @@ func EffectiveTelemetrySources(root string, policy telemetry.Policy, registry *t
 	return out, nil
 }
 
-// HasAlertSource reports whether any effective source serves alerts. It is the
+// HasAlertSource reports whether any effective source serves alerts
+// (telemetry.Source.ServesAlerts, the resolver's predicate). It is the
 // condition for installing the generic alerts detector.
 func HasAlertSource(sources []telemetry.Source) bool {
-	return slices.ContainsFunc(sources, func(s telemetry.Source) bool { return slices.Contains(s.Capabilities, telemetry.CapAlerts) })
+	return slices.ContainsFunc(sources, telemetry.Source.ServesAlerts)
 }

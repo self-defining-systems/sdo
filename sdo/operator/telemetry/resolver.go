@@ -193,7 +193,7 @@ func (r *Resolver) Query(ctx context.Context, q Query, at time.Time) (Result, er
 func (r *Resolver) AlertSources() []string {
 	var ids []string
 	for _, s := range r.sources {
-		if s.Serves(KindMetrics) && s.Has(CapAlerts) {
+		if s.ServesAlerts() {
 			ids = append(ids, s.ID)
 		}
 	}

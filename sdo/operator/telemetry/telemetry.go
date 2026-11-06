@@ -102,6 +102,11 @@ func (s Source) Serves(k Kind) bool {
 	return false
 }
 
+// ServesAlerts reports whether the source answers alert reads: an alerts
+// capability on a metrics source. The resolver's alert sources and the
+// condition for installing the generic alerts detector are this one predicate.
+func (s Source) ServesAlerts() bool { return s.Serves(KindMetrics) && s.Has(CapAlerts) }
+
 // Has reports whether the source advertises capability c.
 func (s Source) Has(c Capability) bool {
 	for _, have := range s.Capabilities {

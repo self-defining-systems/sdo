@@ -75,3 +75,25 @@ func TestEffectiveTelemetrySourcesFailClosed(t *testing.T) {
 		t.Fatalf("no file, no sources: %v, %v", got, err)
 	}
 }
+
+// The alerts detector is installed exactly where the compile check finds an
+// alert source to read: a source with the alerts capability but no metrics
+// kind serves no alerts to the detector, so it must not install it either.
+func TestHasAlertSourceAgreesWithTheResolver(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		source telemetry.Source
+	}{
+		{"metrics with alerts", telemetry.Source{ID: "a", Kinds: []telemetry.Kind{telemetry.KindMetrics}, Capabilities: []telemetry.Capability{telemetry.CapAlerts}}},
+		{"metrics without alerts", telemetry.Source{ID: "a", Kinds: []telemetry.Kind{telemetry.KindMetrics}}},
+		{"logs with alerts", telemetry.Source{ID: "a", Kinds: []telemetry.Kind{telemetry.KindLogs}, Capabilities: []telemetry.Capability{telemetry.CapAlerts}}},
+	} {
+		resolver, err := telemetry.NewResolver([]telemetry.Bound{{Source: tc.source}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := HasAlertSource([]telemetry.Source{tc.source}), len(resolver.AlertSources()) > 0; got != want {
+			t.Errorf("%s: HasAlertSource = %v, resolver alert sources = %v", tc.name, got, want)
+		}
+	}
+}
