@@ -161,7 +161,11 @@ jobs:
       - name: Property tests at full example counts (pull requests sample fewer)
         env:
           SDO_PROPERTY_EXAMPLES: "300"
-        run: uv run pytest -n 2 "tests/unit/sdo/agents/responder/test_recorded_actions.py::test_arbitrary_command_text_round_trips_through_the_recorded_receipts"
+          SDO_PROPERTY_FULL: "1"
+        run: |
+          uv run pytest -n 2 \
+            "tests/unit/sdo/agents/responder/test_recorded_actions.py::test_arbitrary_command_text_round_trips_through_the_recorded_receipts" \
+            "tests/unit/benchmarks/sregym/fastloop/test_runtime_fault_probes.py::test_private_transport_errors_are_sanitized_for_every_operation"
       - name: Quarantined Python tests (pull requests skip them; see .github/ci_quarantine.json)
         run: |
           mapfile -t ids < <(python3 scripts/ci_quarantine.py pytest-ids)
