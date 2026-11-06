@@ -135,7 +135,13 @@ func newUpstreamFollowing(ctx context.Context, launch *contracts.ControllerConfi
 			run.HealthObjective = objective
 			return advancer.Advance(ctx, run, request)
 		},
-		Holds:      configMapHolds{Client: client, Namespace: controlNamespace(launch)},
+		Holds:       configMapHolds{Client: client, Namespace: controlNamespace(launch)},
+		Obligations: configMapObligations{Client: client, Namespace: controlNamespace(launch)},
+		// The retry is the advance's own refresh: same scoped publication ID
+		// (re-attaches after a restart) and a no-op once detection is current.
+		Refresh: func(ctx context.Context, o upstream.Obligation) error {
+			return advancer.Designer.RefreshDetection(ctx, lifecycle.ShapeChange{Upstream: o.Upstream, Accepted: o.Accepted})
+		},
 		Now:        processio.Now,
 		SleepUntil: processio.SleepUntil,
 		Log:        log,

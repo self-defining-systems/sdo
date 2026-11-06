@@ -167,6 +167,9 @@ type Follower struct {
 	cfg     FollowerConfig
 	sources map[string]*tracked
 	holds   map[string]Hold
+	// obligations are accepted-revision work still owed; unlike holds the
+	// observation of an accepted revision never clears them.
+	obligations map[string]Obligation
 }
 
 type tracked struct {
@@ -181,7 +184,7 @@ func NewFollower(cfg FollowerConfig) (*Follower, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
-	return &Follower{cfg: cfg, sources: map[string]*tracked{}, holds: map[string]Hold{}}, nil
+	return &Follower{cfg: cfg, sources: map[string]*tracked{}, holds: map[string]Hold{}, obligations: map[string]Obligation{}}, nil
 }
 
 // LoadHolds installs holds decoded from the ConfigMap. Call it before the

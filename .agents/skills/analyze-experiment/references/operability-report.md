@@ -49,6 +49,11 @@ detection; no agent task is dispatched by a hold), a firing designer-only detect
 scope/allowlist/environment/unknown are the human's. An offline hold has zero cluster effect; an infrastructure cause is
 retried, never held.
 
+An accepted shape-change advance whose designer refresh failed also leaves an open obligation in the `sdo-upstream-obligations`
+ConfigMap (one JSON record per source and kind: `kind=designer_refresh`, `accepted` commit, `cause`, `owner`, `attempts`,
+`reason`, `since`). Unlike a hold it survives the next poll (upstream equals accepted) and is retried with 30 s..10 min
+backoff and at controller start; the record disappears when a refresh succeeds (`upstream_obligation_settled` log).
+
 ## Toy harness assertion
 
 `benchmarks/sregym/fastloop/toy_scenarios.py` (via `toy_operability.py`) requires, before each scripted push, the

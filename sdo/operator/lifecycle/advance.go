@@ -135,9 +135,10 @@ const (
 	HoldShapeChange HoldReason = "shape_change"
 	// HoldDesigner: the advance was deployed, verified and ACCEPTED, but the
 	// detection designer's refresh for the changed shape failed. The accepted
-	// detectors are those of the previous shape until a refresh succeeds (the
-	// controller's start-up health refresh retries it); AdvanceResult.Receipt
-	// names the accepted commit.
+	// detectors are those of the previous shape until a refresh succeeds;
+	// AdvanceResult.Receipt names the accepted commit and AdvanceResult.Owed
+	// carries the obligation the host retries (the hold itself is superseded
+	// by the follower's next poll, the obligation is not).
 	HoldDesigner HoldReason = "designer_refresh"
 	HoldBuild    HoldReason = "build"   // E3, images resolve before any apply
 	HoldRollout  HoldReason = "rollout" // E7, cluster left as is
@@ -195,6 +196,11 @@ type AdvanceResult struct {
 	Paths   []string
 	Receipt broker.Receipt
 	Verdict HealthVerdict
+	// Owed is set when the advance was accepted but the detection designer's
+	// refresh did not complete (failed or was interrupted): the accepted
+	// detectors describe the previous shape. The host keeps it as an open
+	// obligation bound to Receipt.Commit and retries until a refresh succeeds.
+	Owed *ShapeChange
 }
 
 // FollowerOutcome maps the result to the follower's bookkeeping.
@@ -367,12 +373,17 @@ func (a Advancer) Advance(ctx context.Context, cfg AdvanceConfig, request upstre
 		return result, err
 	}
 	// Maintenance is resumed: the designer runs while the controller detects.
-	if err := a.Designer.RefreshDetection(ctx, ShapeChange{Upstream: result.Upstream, Accepted: result.Receipt.Commit}); err != nil {
+	// The accepted commit owes a refresh until one succeeds; the owed state is
+	// returned even with an interrupted context so the host can persist it.
+	change := ShapeChange{Upstream: result.Upstream, Accepted: result.Receipt.Commit}
+	result.Owed = &change
+	if err := a.Designer.RefreshDetection(ctx, change); err != nil {
 		if ctx.Err() != nil {
-			return result, ctx.Err()
+			return held(result, HoldDesigner, "accepted "+result.Receipt.Commit+", but the detection designer's refresh was interrupted: "+ctx.Err().Error()), ctx.Err()
 		}
 		return held(result, HoldDesigner, "accepted "+result.Receipt.Commit+", but the detection designer's refresh failed: "+err.Error()), nil
 	}
+	result.Owed = nil
 	return result, nil
 }
 

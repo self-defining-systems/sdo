@@ -43,6 +43,27 @@ func TestHoldsConfigMapRoundTrip(t *testing.T) {
 	}
 }
 
+func TestObligationsConfigMapRoundTripAndReset(t *testing.T) {
+	ctx := context.Background()
+	store := configMapObligations{Client: fake.NewSimpleClientset(), Namespace: testControl}
+	if owed, err := store.Load(ctx); err != nil || owed != nil {
+		t.Fatalf("absent ConfigMap = %v, %v", owed, err)
+	}
+	want := []upstream.Obligation{{Path: ".", Kind: upstream.ObligationDesignerRefresh, Accepted: "c1", Cause: "coverage", Owner: "designer", Reason: "synthetic", Attempts: 1, Since: time.Unix(1_700_000_000, 0).UTC()}}
+	for range 2 {
+		if err := store.Save(ctx, want); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, err := store.Load(ctx); err != nil || len(got) != 1 || got[0] != want[0] {
+		t.Fatalf("obligations = %+v, %v", got, err)
+	}
+	deleted, err := onboarding.ResetControlState(ctx, store.Client, testControl)
+	if err != nil || len(deleted) != 1 || deleted[0] != upstream.ObligationsConfigMapName {
+		t.Fatalf("reset deleted %v, %v", deleted, err)
+	}
+}
+
 // A from-scratch reinstall must not inherit holds of the previous run.
 func TestResetControlStateClearsHolds(t *testing.T) {
 	ctx := context.Background()
