@@ -141,7 +141,9 @@ def test_propose_source_emits_new_form_plan(tmp_path: Path, monkeypatch: pytest.
     assert (build.context_path, build.dockerfile_path) == ("app", "app/Dockerfile")
 
 
-def _plan_with_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manifest: str, dockerfile: str):
+def _plan_with_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manifest: str, dockerfile: str, context: str = "app"
+):
     import json
     from types import SimpleNamespace
 
@@ -150,7 +152,7 @@ def _plan_with_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manifes
             "proposed": True,
             "summary": "ready",
             "image_builds": [
-                {"image": "registry.synthetic:5000/app:v1", "context_path": "app", "dockerfile_path": dockerfile}
+                {"image": "registry.synthetic:5000/app:v1", "context_path": context, "dockerfile_path": dockerfile}
             ],
             "manifest_paths": [manifest],
             "expected_workload_ids": ["Deployment/demo/api"],
@@ -178,6 +180,13 @@ def test_plan_paths_may_name_authored_deployment_files(tmp_path: Path, monkeypat
     build = BuildKitImageConfig()
     assert plan.images[0].config.Unpack(build)
     assert build.dockerfile_path == ".sdo/deployment/build/app/Dockerfile"
+
+
+def test_plan_build_context_may_be_the_repository_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plan = _plan_with_manifest(tmp_path, monkeypatch, "kubernetes/app.yaml", "Dockerfile", context=".")
+    build = BuildKitImageConfig()
+    assert plan.images[0].config.Unpack(build)
+    assert build.context_path == "."
 
 
 @pytest.mark.parametrize(

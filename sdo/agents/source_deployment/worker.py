@@ -79,7 +79,7 @@ def _source_path(value: str) -> str:
     path = Path(value)
     if not value or path.is_absolute() or ".." in path.parts or value != value.strip():
         raise ValueError(f"deployment plan path must stay in the effective tree: {value!r}")
-    if path.parts[0] == ".sdo" and not _authored_deployment_path(path):
+    if path.parts[:1] == (".sdo",) and not _authored_deployment_path(path):
         raise ValueError(
             "deployment plan path under .sdo/ must be .sdo/deployment/{values,manifests,build,overlays}/...: "
             f"{value!r}"
