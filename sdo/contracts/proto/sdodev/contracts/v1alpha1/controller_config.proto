@@ -176,6 +176,23 @@ message ControllerConfig {
   RenderEnvironment render_environment = 113;
   // Disable detector admission/verification; accept external alerts only.
   bool external_incidents = 111;
+  // The trusted in-cluster build and apply identity the controller deploys
+  // with: the parent's upstream advances and the child's accepted responder
+  // source repairs. Absent means nothing can build an image.
+  DeployIdentity deploy_identity = 114;
+}
+
+// DeployIdentity is the BuildKit Job image, the registry push Secret and the
+// bounds one trusted Deployer builds and applies with. buildkit_image and
+// registry_push_secret are set together; registry_insecure needs registry_host.
+message DeployIdentity {
+  string buildkit_image = 1;
+  string registry_push_secret = 2;
+  string registry_host = 3;
+  bool registry_insecure = 4;
+  google.protobuf.Duration build_timeout = 5;
+  google.protobuf.Duration build_budget = 6;
+  google.protobuf.Duration rollout_timeout = 7;
 }
 
 message MemoryUpstream {

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"sdo.dev/operator/install"
+	"sdo.dev/operator/operatorcli/deploywire"
 )
 
 // The controller parent deploys upstream advances with the operate Job's
@@ -59,5 +60,29 @@ func TestControllerWithoutIdentityDoesNotDeploy(t *testing.T) {
 		if _, _, err := parseControllerLaunch(controllerLaunchArgs(args...)); err == nil {
 			t.Fatalf("%v accepted", args)
 		}
+	}
+}
+
+// The identity the parent parsed from the controller Job's arguments is the
+// one the child reads from its typed launch config.
+func TestControllerLaunchCarriesItsDeployIdentityToTheChild(t *testing.T) {
+	run, identity, err := parseControllerLaunch(controllerLaunchArgs(
+		"--buildkit-image", "buildkit@sha256:"+strings.Repeat("a", 64), "--registry-push-secret", "push",
+		"--registry-host", "registry.synthetic.invalid:5000", "--build-timeout", "7m", "--build-budget", "11m", "--rollout-timeout", "3m"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := deploywire.IdentityOf(run.Controller)
+	if err != nil || got != deploywire.Identity(identity) || got.RolloutTimeout != 3*time.Minute || !got.Enabled() {
+		t.Fatalf("child identity = %+v, %v, want the parent's %+v", got, err, identity)
+	}
+	// No identity flags: the child's identity cannot build, so it deploys only
+	// prebuilt images.
+	run, _, err = parseControllerLaunch(controllerLaunchArgs())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bare, err := deploywire.IdentityOf(run.Controller); err != nil || bare.Enabled() || bare.RegistryHost != "" {
+		t.Fatalf("child identity without flags = %+v, %v", bare, err)
 	}
 }

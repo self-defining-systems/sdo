@@ -17,6 +17,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/operatorcli/deploywire"
 	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/renderenv"
 	"sdo.dev/operator/toolchain"
@@ -118,7 +119,8 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, er
 	var responderEnv repeatable
 	flags.Var(&responderEnv, "responder-env", "responder environment NAME=VALUE")
 	renderEnvFlag := flags.String("render-env", "", "install-time render environment (RenderEnvironment as ProtoJSON); empty is unknown")
-	// The parent's deploy identity (upstream advances); the child never sees it.
+	// The deploy identity: the parent deploys upstream advances with it, the
+	// child (through the launch config) a responder's source repair.
 	var identity deployIdentity
 	flags.StringVar(&identity.BuildKitImage, "buildkit-image", "", "digest-pinned image builder for upstream advances")
 	flags.StringVar(&identity.RegistryPushSecret, "registry-push-secret", "", "image registry push Secret for upstream advances")
@@ -182,6 +184,9 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, er
 		BrokerMode: *brokerMode, WorkerMountMode: *workerMountMode,
 		ResponderBackend: *backend, ResponderModel: *model, AgentEffort: *effort, Replay: *replay, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, FrozenMemory: *frozenMemory, ExternalIncidents: *externalIncidents, HealthyBaseline: *healthyBaseline, MetricsUrl: *metricsURL, MetricsPublishUrl: *metricsPublishURL,
 	}
+	// The child deploys a responder's source repair with the identity the
+	// parent deploys upstream advances with.
+	launch.DeployIdentity = deploywire.Identity(identity).Proto()
 	if *duration > 0 {
 		launch.Duration = durationpb.New(*duration)
 	}

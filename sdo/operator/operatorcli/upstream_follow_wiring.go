@@ -7,101 +7,40 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
-	"time"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/deployment"
-	"sdo.dev/operator/imagesrc"
-	"sdo.dev/operator/imagesrc/buildkit"
-	"sdo.dev/operator/imagesrc/prebuilt"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
-	"sdo.dev/operator/operatorcli/catalog/images"
 	"sdo.dev/operator/operatorcli/catalog/renderers"
 	"sdo.dev/operator/operatorcli/catalog/upstreams"
+	"sdo.dev/operator/operatorcli/deploywire"
 	"sdo.dev/operator/operatorcli/internal/processio"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/upstream"
 )
 
-// deployIdentity is the trusted in-cluster build and apply identity: the
-// BuildKit Job image, the registry push Secret and the build and rollout
-// bounds. The operate Job deploys onboarding with it; the controller parent
-// deploys upstream advances with the same one.
-type deployIdentity struct {
-	BuildKitImage, RegistryPushSecret, RegistryHost string
-	RegistryInsecure                                bool
-	BuildTimeout, BuildBudget, RolloutTimeout       time.Duration
-}
+// deployIdentity is the trusted in-cluster build and apply identity (see
+// deploywire.Identity). The operate Job deploys onboarding with it, the
+// controller parent deploys upstream advances with it and the controller
+// child deploys a responder's source repair with it.
+type deployIdentity deploywire.Identity
 
-func (d deployIdentity) validate() error {
-	if (d.BuildKitImage == "") != (d.RegistryPushSecret == "") {
-		return errors.New("--buildkit-image and --registry-push-secret go together")
-	}
-	if d.RegistryInsecure && d.RegistryHost == "" {
-		return errors.New("--registry-insecure requires --registry-host")
-	}
-	if d.BuildTimeout < 0 || d.BuildBudget < 0 || d.RolloutTimeout < 0 {
-		return errors.New("build and rollout timeouts must not be negative")
-	}
-	return nil
-}
+func (d deployIdentity) validate() error { return deploywire.Identity(d).Validate() }
 
-// Enabled reports whether the identity can build: without a BuildKit image
-// and push Secret nothing can redeploy a source change.
-func (d deployIdentity) Enabled() bool { return d.BuildKitImage != "" && d.RegistryPushSecret != "" }
+// Enabled reports whether the identity can build.
+func (d deployIdentity) Enabled() bool { return deploywire.Identity(d).Enabled() }
 
 // deployTarget is where a deployIdentity deploys.
-type deployTarget struct {
-	Namespace, ControlNamespace    string
-	AcceptedRoot, WorkspaceRoot    string
-	RepositoryMount, RepositoryPVC string
-}
+type deployTarget deploywire.Target
 
-// deployer is the trusted Deployer with every built-in renderer and the
-// deployer's image catalog. Its render environment carries only the
-// environment is the install-time one (renderenv): the operate Job's
-// discovery, or the controller's --render-env, which the operate Job recorded
-// with the deployment evidence.
+// deployer is the trusted Deployer of the identity (deploywire.Identity.Deployer).
 func (d deployIdentity) deployer(client kubernetes.Interface, target deployTarget, environment *contracts.RenderEnvironment) (deployment.Deployer, error) {
-	subPath, err := filepath.Rel(target.RepositoryMount, target.WorkspaceRoot)
-	if err != nil || subPath == "." || subPath == ".." || filepath.IsAbs(subPath) || strings.HasPrefix(subPath, "../") {
-		return deployment.Deployer{}, errors.New("broker proposals must be inside the shared repository mount")
-	}
-	insecure := ""
-	if d.RegistryInsecure {
-		insecure = d.RegistryHost
-	}
-	pre := &prebuilt.Source{InsecureHost: insecure, Cluster: nodeImages{client: client}}
-	var sources *imagesrc.Catalog
-	var materializer *rendered.Materializer
-	if d.RegistryHost == "" { // nowhere to push a build
-		sources, err = images.PrebuiltOnly(pre)
-	} else {
-		sources, err = images.Catalog(images.Config{Prebuilt: pre, BuildBudget: d.BuildBudget, Builder: buildkit.Builder{
-			Client: client, Namespace: target.ControlNamespace, RepositoryPVC: target.RepositoryPVC,
-			CheckoutRoot: target.WorkspaceRoot, RepositoryPVCSubPath: subPath,
-			BuildKitImage: d.BuildKitImage, RegistrySecret: d.RegistryPushSecret,
-			AllowedRegistryHost: d.RegistryHost, RegistryInsecure: d.RegistryInsecure,
-			ServiceAccount: "sdo-image-builder", Timeout: d.BuildTimeout,
-		}})
-		// Builds read the effective tree, materialized beside the broker's
-		// proposals on the shared repository volume (the Job mounts it).
-		materializer = &rendered.Materializer{Root: filepath.Join(target.WorkspaceRoot, "effective")}
-	}
-	if err != nil {
-		return deployment.Deployer{}, err
-	}
-	return deployment.Deployer{
-		Namespace: target.Namespace, Renderers: renderers.Catalog(), Images: sources,
-		Applier:    deployment.CommandBackend{ObserveLimit: d.RolloutTimeout},
-		TreeDigest: broker.ProposalTreeDigest, Environment: environment, AcceptedRoot: target.AcceptedRoot, Materializer: materializer,
-	}, nil
+	return deploywire.Identity(d).Deployer(client, deploywire.Target(target), environment)
 }
 
 // followUpstream runs the controller parent's upstream follower beside the
@@ -189,7 +128,7 @@ func newUpstreamFollowing(ctx context.Context, launch *contracts.ControllerConfi
 			return catalog.Latest(ctx, source.Kind, source.Config)
 		},
 		Advance: func(ctx context.Context, request upstream.Request) (lifecycle.AdvanceResult, error) {
-			objective, err := acceptedHealthObjective(launch.GetAppRoot())
+			objective, err := memory.AcceptedHealthObjective(launch.GetAppRoot())
 			if err != nil {
 				return lifecycle.AdvanceResult{}, err
 			}
@@ -210,11 +149,7 @@ func newUpstreamFollowing(ctx context.Context, launch *contracts.ControllerConfi
 // shape of the accepted deployment source, the maintenance ConfigMap and the
 // child's persisted state.
 func controllerAdvancer(launch *contracts.ControllerConfig, operatorRoot string, identity deployIdentity, client kubernetes.Interface, repository *broker.Broker, catalog *upstream.Catalog) (lifecycle.Advancer, lifecycle.AdvanceConfig, error) {
-	deployer, err := identity.deployer(client, deployTarget{
-		Namespace: launch.GetNamespace(), ControlNamespace: controlNamespace(launch),
-		AcceptedRoot: launch.GetAppRoot(), WorkspaceRoot: launch.GetBrokerWorktreeRoot(),
-		RepositoryMount: launch.GetRepositoryMountPath(), RepositoryPVC: launch.GetRepositoryPvc(),
-	}, launch.GetRenderEnvironment())
+	deployer, err := identity.deployer(client, deployTarget(deploywire.TargetOf(launch)), launch.GetRenderEnvironment())
 	if err != nil {
 		return lifecycle.Advancer{}, lifecycle.AdvanceConfig{}, err
 	}
@@ -224,10 +159,7 @@ func controllerAdvancer(launch *contracts.ControllerConfig, operatorRoot string,
 		Upstreams: catalog,
 		Broker:    repository,
 		Readiness: deployer,
-		Verifier: deployment.IndependentHealthVerifier{
-			AcceptedRoot: launch.GetAppRoot(), OperatorRoot: operatorRoot, Readiness: &deployer,
-			Probe: deployment.AcceptedDetectorProbe{Replay: launch.GetReplay(), MetricsURL: launch.GetMetricsUrl()},
-		},
+		Verifier:  deploywire.Verifier(launch, operatorRoot, &deployer),
 		Shape: func(ctx context.Context, root, revision string, source *contracts.DeploymentSource) (string, error) {
 			return rendered.Source{Deployment: source, Catalog: shapes, Repository: root, Environment: launch.GetRenderEnvironment()}.ShapeDigest(ctx, revision, namespace)
 		},
@@ -238,25 +170,5 @@ func controllerAdvancer(launch *contracts.ControllerConfig, operatorRoot string,
 }
 
 func controlNamespace(launch *contracts.ControllerConfig) string {
-	if launch.GetControlNamespace() != "" {
-		return launch.GetControlNamespace()
-	}
-	return launch.GetNamespace()
-}
-
-// acceptedHealthObjective reads the human health objective from the accepted
-// goal (the body under its "# Health objective" heading).
-func acceptedHealthObjective(appRoot string) (string, error) {
-	data, err := os.ReadFile(filepath.Join(appRoot, filepath.FromSlash(layout.GoalFile)))
-	if err != nil {
-		return "", fmt.Errorf("read accepted goal: %w", err)
-	}
-	text := string(data)
-	if _, body, found := strings.Cut(text, "# Health objective\n"); found {
-		text = body
-	}
-	if strings.TrimSpace(text) == "" {
-		return "", errors.New("accepted goal has no health objective")
-	}
-	return strings.TrimSpace(text), nil
+	return deploywire.ControlNamespace(launch)
 }

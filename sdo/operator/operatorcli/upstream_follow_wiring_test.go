@@ -10,7 +10,6 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/deployment"
-	"sdo.dev/operator/memory"
 	"sdo.dev/operator/operatorcli/catalog/upstreams"
 	"sdo.dev/operator/upstream"
 )
@@ -58,24 +57,5 @@ func TestControllerAdvancerWiresTheOnboardingDeployer(t *testing.T) {
 	}
 	if _, ok := advancer.Activity.(controllerActivity); !ok {
 		t.Fatalf("activity = %T", advancer.Activity)
-	}
-}
-
-func TestAcceptedHealthObjective(t *testing.T) {
-	root := t.TempDir()
-	if _, err := acceptedHealthObjective(root); err == nil {
-		t.Fatal("missing goal accepted")
-	}
-	if err := memory.WriteGoal(root, "toy", "  serve every request\n", nil); err != nil {
-		t.Fatal(err)
-	}
-	if got, err := acceptedHealthObjective(root); err != nil || got != "serve every request" {
-		t.Fatalf("objective = %q, %v", got, err)
-	}
-	if err := memory.WriteGoal(root, "toy", " ", nil); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := acceptedHealthObjective(root); err == nil {
-		t.Fatal("empty objective accepted")
 	}
 }
