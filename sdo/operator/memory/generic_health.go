@@ -45,11 +45,13 @@ func IsGenericHealthDetector(id string) bool {
 
 // HealthOptions selects the optional generic policy detectors.
 type HealthOptions struct {
-	// Metrics installs the alerts detector. It reads Prometheus alerts through
-	// the controller's metrics source, so it is installed only where a metrics
-	// URL is configured: without a source it could only report itself
-	// unavailable.
-	Metrics bool
+	// AlertSources installs the alerts detector. It reads the alerts of every
+	// alert-capable telemetry source, so it is installed only where the
+	// effective bindings include one: without such a source it could only
+	// report itself unavailable. The caller computes it from the tree being
+	// checked and the environment policy, so the judge's check and the broker
+	// agree.
+	AlertSources bool
 }
 
 // PrepareHealth installs the default generic policy detectors.
@@ -92,7 +94,7 @@ func PrepareHealthWith(root string, options HealthOptions) error {
 			return err
 		}
 	}
-	if options.Metrics {
+	if options.AlertSources {
 		alerts := genericManifest(MetricsAlertsDetectorID, "30s", []layout.Watch{{APIVersion: "sdo.dev/v1alpha1", Kind: "Metrics"}})
 		alerts.Batching.Severity = string(sdk.SeverityWarning)
 		if err := writeGenericDetector(root, alerts, metricsAlertsSource()); err != nil {

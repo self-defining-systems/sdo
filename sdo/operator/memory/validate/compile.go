@@ -24,6 +24,9 @@ var goTestDuration = regexp.MustCompile(`(?m)(?:\t(?:[0-9]+\.[0-9]+s|\(cached\))
 // output can retain a relative or absolute path to an earlier isolated build.
 var goLocation = regexp.MustCompile(`(?m)^(?:vet: )?(?:\./)?(?:(?:[^\r\n:]*/)?sdo-operator-build-[^/\s:]+/)?((?:detectors|traffic|playbooks|lib|generated)/[^\s:]+\.go):(\d+)(?::\d+)?: (.+)$`)
 
+// telemetryBindingViolation is one generated query-to-source binding failure.
+var telemetryBindingViolation = regexp.MustCompile(`(?m)(telemetry\.(?:unbound|kind))(?:\[[a-z0-9][a-z0-9_.-]*\])?: .+?$`)
+
 // healthyBaselineViolation is one generated healthy-baseline test failure:
 // the incident detector ID and the violation.
 var healthyBaselineViolation = regexp.MustCompile(`(?m)detector\.healthy-baseline\[([a-z0-9][a-z0-9_.-]*)\]: (.+?)\s*$`)
@@ -39,8 +42,14 @@ func (s *run) compile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	sources, err := EffectiveTelemetrySources(s.req.Root, s.req.Telemetry, s.req.TelemetryRegistry)
+	if err != nil {
+		s.add(Compile, Diagnostic{Rule: RuleTelemetrySchema, Path: layout.TelemetryDir, Message: err.Error(), Hint: "fix the telemetry bindings so detector queries can be checked against them"})
+		return nil
+	}
 	workspace, err := builder.BuildWorkspace(ctx, builder.Config{
 		Replay: s.req.Replay, ApplicationRoot: s.req.Root, DiagnosticsRoot: diagnostics, OperatorRoot: s.req.OperatorRoot, HealthyBaseline: s.req.HealthyBaseline,
+		Telemetry: &builder.TelemetryBindings{Sources: sources},
 	})
 	if err != nil {
 		if ctx.Err() != nil {
@@ -134,6 +143,17 @@ func (s *run) compile(ctx context.Context) error {
 			message = message[:maxCompileOutput]
 		}
 		s.add(Compile, Diagnostic{Rule: RuleDetectorControllerStart, Path: layout.DiagnosticsDir, Message: message, Hint: "accepted detectors must load in the controller"})
+		return nil
+	}
+	if bindings := telemetryBindingViolation.FindAllStringSubmatch(stage.Output, -1); len(bindings) > 0 {
+		const hint = "every detector query names a bound source (or none, when a default source of its kind exists); bind the source in .sdo/diagnostics/telemetry/sources.yaml or name one that is bound"
+		seen := map[string]bool{}
+		for _, match := range bindings {
+			if !seen[match[0]] {
+				seen[match[0]] = true
+				s.add(Compile, Diagnostic{Rule: match[1], Path: layout.DiagnosticsDir, Message: strings.TrimSpace(match[0]), Hint: hint})
+			}
+		}
 		return nil
 	}
 	located := goLocation.FindAllStringSubmatch(stage.Output, -1)

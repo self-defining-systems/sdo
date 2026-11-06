@@ -1,7 +1,6 @@
 package validate
 
 import (
-	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -206,16 +205,12 @@ func (s *run) checkAdapter(path string, src layout.TelemetrySource, kinds []tele
 	if bad || !telemetry.SourceIDPattern.MatchString(src.ID) {
 		return
 	}
-	options, err := json.Marshal(src.Options)
+	binding, err := telemetryBinding(src, kinds)
 	if err != nil {
-		s.telemetryDiag(RuleTelemetryOptions, path, fmt.Sprintf("source %q options are not JSON-compatible: %v", src.ID, err), "options are plain YAML mappings, strings, numbers and lists")
+		s.telemetryDiag(RuleTelemetryOptions, path, err.Error(), "options are plain YAML mappings, strings, numbers and lists")
 		return
 	}
-	if len(src.Options) == 0 {
-		options = nil
-	}
-	err = registry.Check(telemetry.Binding{ID: src.ID, Adapter: src.Adapter, Kinds: kinds, Endpoint: telemetry.Endpoint{URL: src.Endpoint, Credential: src.Credential}, Default: src.Default, Options: options})
-	if err != nil {
+	if err := registry.Check(binding); err != nil {
 		s.telemetryDiag(RuleTelemetryOptions, path, err.Error(), fmt.Sprintf("the %s adapter decodes options strictly; remove keys it does not define", src.Adapter))
 	}
 }

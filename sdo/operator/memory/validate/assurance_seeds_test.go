@@ -13,6 +13,8 @@ import (
 	"sdo.dev/operator/builder"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/operatorcli/catalog/telemetrysources"
+	"sdo.dev/operator/telemetry"
 )
 
 // assuranceSeeds is the directory of checked-in benchmark operational-memory
@@ -223,4 +225,68 @@ func treeDrift(before, after map[string][]byte) []string {
 	}
 	sort.Strings(drift)
 	return drift
+}
+
+// The judge's check installs the generic alerts detector exactly when an
+// effective telemetry source serves alerts, whether the environment provided it
+// or the designer bound it. Nothing else (no flag, no environment switch)
+// decides it, so the broker and the judge's own check agree by construction.
+func TestHealthJudgeCheckInstallsTheAlertsDetectorFromEffectiveSources(t *testing.T) {
+	seed := seedCases(t)[0]
+	provided := telemetry.Policy{Provided: []telemetry.Source{{ID: "default", Kinds: []telemetry.Kind{telemetry.KindMetrics}, Adapter: "prometheus", Default: true, Capabilities: []telemetry.Capability{telemetry.CapAlerts}, Origin: telemetry.OriginOperator}}}
+	noAlerts := provided
+	noAlerts.Provided = []telemetry.Source{{ID: "default", Kinds: []telemetry.Kind{telemetry.KindMetrics}, Adapter: "prometheus", Default: true, Origin: telemetry.OriginOperator}}
+	bound := telemetryTestPolicy()
+	bound.Provided = nil
+	for _, tc := range []struct {
+		name    string
+		policy  telemetry.Policy
+		sources string
+		want    bool
+	}{
+		{"no source", telemetry.Policy{}, "", false},
+		{"a provided alert-capable source", provided, "", true},
+		{"a provided source without the alerts capability", noAlerts, "", false},
+		{"a designer-bound alert-capable source", bound, telemetrySources(telemetryPromSource), true},
+		{"a floor environment ignores its provided source", telemetry.Policy{Mode: telemetry.ModeFloor, Provided: provided.Provided}, "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			sdo := filepath.Join(root, layout.Dir)
+			for _, source := range seed.sources {
+				copyTree(t, source, sdo)
+			}
+			judged := t.TempDir()
+			for _, rel := range []string{layout.DiagnosticsDir, layout.PlaybooksDir} {
+				moveTree(t, filepath.Join(root, rel), filepath.Join(judged, rel))
+			}
+			moveTree(t, filepath.Join(judged, layout.DiagnosticsGoModFile), filepath.Join(root, layout.DiagnosticsGoModFile))
+			commit(t, root, "human goal, deployer architecture, and diagnostics module")
+			copyTree(t, judged, root)
+			if err := memory.PrepareHealth(root); err != nil {
+				t.Fatal(err)
+			}
+			if tc.sources != "" {
+				write(t, root, layout.TelemetrySourcesFile, tc.sources)
+			}
+			alerts := filepath.Join(root, layout.DetectorDir(layout.ClassHealth, memory.MetricsAlertsDetectorID))
+			if _, err := os.Stat(alerts); err == nil {
+				t.Fatal("the seed already holds the alerts detector; the test would prove nothing")
+			}
+			noCompile := func(context.Context, Request) ([]Diagnostic, error) { return nil, nil }
+			diagnostics, err := Check(context.Background(), Request{
+				Root: root, Base: "HEAD", Actor: HealthJudge, Phase: InitialPhase, OperatorRoot: filepath.Join("..", ".."),
+				Telemetry: tc.policy, TelemetryRegistry: telemetrysources.Registry(),
+			}, noCompile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, d := range diagnostics {
+				t.Errorf("%s %s %s", d.Rule, d.Path, d.Message)
+			}
+			if _, err := os.Stat(alerts); (err == nil) != tc.want {
+				t.Fatalf("alerts detector installed = %v, want %v", err == nil, tc.want)
+			}
+		})
+	}
 }

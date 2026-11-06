@@ -43,6 +43,8 @@ var internalRules = map[string]string{
 	RuleTelemetryDefault:    "hint-taught until the telemetry authoring reference lands (row T7)",
 	RuleTelemetryBackend:    "hint-taught until the telemetry authoring reference lands (row T7)",
 	RuleTelemetryMode:       "hint-taught until the telemetry authoring reference lands (row T7)",
+	RuleTelemetryUnbound:    "hint-taught until the telemetry authoring reference lands (row T7)",
+	RuleTelemetryKind:       "hint-taught until the telemetry authoring reference lands (row T7)",
 	RuleTelemetryOrigin:     "hint-taught until the telemetry authoring reference lands (row T7)",
 
 	RuleReflectionDetectorRequired: "a coverage-gap name, recorded and never refused; the skills teach linking detectors",

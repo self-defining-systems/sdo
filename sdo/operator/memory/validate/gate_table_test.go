@@ -20,6 +20,7 @@ import (
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/sdk/sdktest"
+	"sdo.dev/operator/telemetry"
 )
 
 // The gate table. validate.Check is the one acceptance check: agents run it
@@ -708,6 +709,8 @@ type gateCompileRow struct {
 	// real mutates the compile fixture; baseline, if set, is written as the healthy capture.
 	real     func(t *testing.T, root string)
 	baseline bool
+	// request adjusts the check request, for rows that need environment policy.
+	request func(*Request)
 }
 
 const (
@@ -746,11 +749,32 @@ var gateCompileRows = []gateCompileRow{
 			copyTree(t, from, to)
 			edit(t, root, ".sdo/diagnostics/detectors/incidents/copied-configmap/manifest.yaml", "id: missing-configmap", "id: copied-configmap")
 		}},
+	{name: "a query names a source nothing binds", rule: RuleTelemetryUnbound, path: layout.DiagnosticsDir,
+		fake: testutil.GoRule{Verb: "test", Output: "--- FAIL: TestDetectorQueriesResolveToBoundSources\n    telemetry_binding_test.go:30: telemetry.unbound[missing-configmap]: query \"q\": telemetry source \"nope\" is not bound; bound: none"},
+		real: func(t *testing.T, root string) { gateQueriesSource(t, root, "nope") }},
+	{name: "a query names a source of another kind", rule: RuleTelemetryKind, path: layout.DiagnosticsDir,
+		request: func(r *Request) {
+			r.Telemetry = telemetry.Policy{Provided: []telemetry.Source{{ID: "lines", Kinds: []telemetry.Kind{telemetry.KindLogs}, Adapter: "loki", Origin: telemetry.OriginOperator}}}
+		},
+		fake: testutil.GoRule{Verb: "test", Output: "--- FAIL: TestDetectorQueriesResolveToBoundSources\n    telemetry_binding_test.go:30: telemetry.kind[missing-configmap]: query \"q\": telemetry source \"lines\" does not serve kind \"metrics\"; bound: lines"},
+		real: func(t *testing.T, root string) { gateQueriesSource(t, root, "lines") }},
 	{name: "controller would refuse to start it", rule: RuleDetectorControllerStart, path: layout.DiagnosticsDir,
 		fake: testutil.GoRule{Verb: "test", Output: "detector.controller-start: the controller would refuse to start: detector \"missing-configmap\": interval must be greater than zero"},
 		real: func(t *testing.T, root string) {
 			edit(t, root, gateFixtureDetector, "30 * time.Second", "-time.Second")
 		}},
+}
+
+// gateQueriesSource makes the fixture detector declare one metrics query per
+// given source ("" names none, so the default-source rule applies).
+func gateQueriesSource(t *testing.T, root string, sources ...string) {
+	t.Helper()
+	queries := ""
+	for i, source := range sources {
+		queries += fmt.Sprintf("{ID: \"q%d\", Source: %q, Expr: \"up\"}, ", i, source)
+	}
+	edit(t, root, gateFixtureDetector, "\"sdo.dev/operator/sdk\"\n)", "\"sdo.dev/operator/sdk\"\n\t\"sdo.dev/operator/sdk/metrics\"\n)")
+	edit(t, root, gateFixtureDetector, "func (Detector) Spec()", "func (Detector) MetricQueries() []metrics.Query {\n\treturn []metrics.Query{"+queries+"}\n}\n\nfunc (Detector) Spec()")
 }
 
 // gateHealthyBaselineStage selects the generated healthy-baseline replay stage.
@@ -779,6 +803,9 @@ func gateBaseline(t *testing.T) string {
 
 func gateCompileDiagnostics(t *testing.T, row gateCompileRow, root string) []Diagnostic {
 	request := compileRequest(root)
+	if row.request != nil {
+		row.request(&request)
+	}
 	if row.baseline {
 		request.HealthyBaseline = gateBaseline(t)
 	}

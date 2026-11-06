@@ -78,7 +78,7 @@ a source exists.
 - Query IDs are unique and non-empty, expressions non-empty, at most `metrics.MaxQueries` per bundle.
 - `Query.Source` (optional): [metrics sources](references/metrics-sources.md).
 - `memory.PrepareHealth` installs the generic `metrics-alerts` detector (`metrics.NewAlertsDetector`: firing alerts of
-  the application namespace, one finding each) only when a metrics URL is configured; do not author it.
+  the application namespace, one finding each) only when a bound source serves alerts; do not author it.
 
 ## Generic reachability baseline
 

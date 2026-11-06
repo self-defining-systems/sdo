@@ -32,7 +32,7 @@ scenarios, workloads and links.
   below desired availability or past their progress deadline.
 - `service-reachability`: Service ports that refuse connections while their pods are Ready.
 - `traffic-health` and `traffic-links`: generated from the workloads you author.
-- `metrics-alerts`: firing Prometheus alerts in the application namespace, when a metrics source is configured.
+- `metrics-alerts`: firing Prometheus alerts in the application namespace, when a bound telemetry source serves alerts.
   This includes alert rules the application ships, once its Prometheus loads them.
 - `cluster-wiring`: Service selectors matching no pods or several workloads, named target ports no container
   declares, missing pod-template references and keys (ConfigMap, Secret, PVC, ServiceAccount), unbound PVCs,

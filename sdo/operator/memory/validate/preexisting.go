@@ -123,7 +123,13 @@ func baseFaultCachePath(commit string, request Request) string {
 		return ""
 	}
 	hash := sha256.New()
-	fmt.Fprintf(hash, "v1\x00%s\x00%s\x00%s\x00%t\x00", commit, request.Replay, request.OperatorRoot, request.MetricsDetectors)
+	// The telemetry policy decides which generic detectors the base tree gets
+	// (the alerts detector needs an alert-capable source), so it keys the cache.
+	policy, err := json.Marshal(request.Telemetry)
+	if err != nil {
+		return ""
+	}
+	fmt.Fprintf(hash, "v2\x00%s\x00%s\x00%s\x00%s\x00", commit, request.Replay, request.OperatorRoot, policy)
 	if executable, err := os.Executable(); err == nil {
 		if info, err := os.Stat(executable); err == nil {
 			fmt.Fprintf(hash, "%s\x00%d\x00%d\x00", executable, info.Size(), info.ModTime().UnixNano())

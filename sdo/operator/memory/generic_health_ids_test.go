@@ -13,7 +13,7 @@ import (
 // must equal what PrepareHealthWith actually writes.
 func TestGenericHealthDetectorIDsMatchWhatPrepareHealthWrites(t *testing.T) {
 	root := t.TempDir()
-	if err := PrepareHealthWith(root, HealthOptions{Metrics: true}); err != nil {
+	if err := PrepareHealthWith(root, HealthOptions{AlertSources: true}); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := os.ReadDir(filepath.Join(root, layout.DetectorDir(layout.ClassHealth, "")))

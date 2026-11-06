@@ -28,6 +28,11 @@ type Config struct {
 	// ProgramModule pins JIT imports to the accepted diagnostics module name.
 	// It never compiles checkout detector code.
 	ProgramModule string
+	// Telemetry, when set, makes the generated tests also check that every
+	// detector query resolves to a bound telemetry source. Unset, that check is
+	// not generated: callers that rebuild an already accepted tree (the health
+	// probe, memory host builds) have no bindings to check against.
+	Telemetry *TelemetryBindings
 	// CompileOnly is reserved for an explicit, unvalidated adoption build.
 	CompileOnly bool
 }
@@ -322,6 +327,9 @@ func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error
 		return nil, err
 	}
 	if err := generateMetricsTest(directory); err != nil {
+		return nil, err
+	}
+	if err := generateTelemetryBindingTest(directory, config.Telemetry); err != nil {
 		return nil, err
 	}
 	if err := generateControllerStartTest(directory); err != nil {

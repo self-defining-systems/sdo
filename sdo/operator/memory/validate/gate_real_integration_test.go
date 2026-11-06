@@ -6,6 +6,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"sdo.dev/operator/telemetry"
 )
 
 // The compile rows of the gate table through the real `go` toolchain. They
@@ -17,6 +19,19 @@ func TestGateCompileRowsOnRealGo(t *testing.T) {
 		t.Parallel()
 		if got := gateCompileDiagnostics(t, gateCompileRow{}, compileTree(t)); len(got) != 0 {
 			t.Fatalf("rejected: %v", got)
+		}
+	})
+	// A bare query takes the provided default and a named one its source, in one
+	// compile (the refusals are gate rows).
+	t.Run("queries resolve against the provided sources", func(t *testing.T) {
+		t.Parallel()
+		root := compileTree(t)
+		gateQueriesSource(t, root, "", "ops")
+		request := compileRequest(root)
+		request.Telemetry = telemetry.Policy{Provided: []telemetry.Source{{ID: "ops", Kinds: []telemetry.Kind{telemetry.KindMetrics}, Adapter: "prometheus", Default: true, Origin: telemetry.OriginOperator}}}
+		got, err := CompileCandidate(context.Background(), request)
+		if err != nil || len(got) != 0 {
+			t.Fatalf("rejected: %v, %v", got, err)
 		}
 	})
 	for _, row := range gateCompileRows {
