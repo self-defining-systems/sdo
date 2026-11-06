@@ -23,6 +23,7 @@ import (
 	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/operatorcli/catalog/images"
 	"sdo.dev/operator/operatorcli/catalog/renderers"
+	"sdo.dev/operator/render"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -105,6 +106,7 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		return lifecycle.Result{}, err
 	}
 	readiness.AcceptedRoot = config.ApplicationRoot
+	readiness.Renderers, readiness.Env = renderers.Catalog(), render.Env{Namespace: config.Lifecycle.Namespace}
 	agentEnvironment, err := worker_registry.AgentEnvironment(config.Install.AgentProvider, config.Install.Model, config.Install.AgentEffort)
 	if err != nil {
 		return lifecycle.Result{}, err

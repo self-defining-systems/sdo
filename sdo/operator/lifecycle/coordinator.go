@@ -1,7 +1,5 @@
 // Package lifecycle owns the accepted operation sequence. Agent workers only
 // propose role-scoped changes; the broker decides which edits become durable.
-//
-//archcheck:ratchet R5 count=7 until=S3-13b
 package lifecycle
 
 import (
@@ -64,16 +62,22 @@ type VanishedDiscarder interface {
 }
 
 // DeploymentReceipt binds an independently observed rollout to the exact
-// candidate source tree. Empty or incomplete evidence cannot be accepted.
+// candidate source tree, the DeploymentSource that rendered it, and the digests
+// of what that source rendered to (canonical desired objects and install
+// environment). Empty or incomplete evidence cannot be accepted.
 type DeploymentReceipt struct {
-	ContainerImages    []rendered.DeployedImage
-	ProposalTreeDigest string
-	ObservedRevision   string
-	StrategyID         string
-	Images             []string
-	ResourceIDs        []string
-	ManifestPaths      []string
-	Ready              bool
+	ContainerImages []rendered.DeployedImage
+	// Source is the DeploymentSource the deployment rendered; opaque here.
+	Source *contracts.DeploymentSource
+	// BaseTree is the deployed source tree (broker.ProposalTreeDigest).
+	BaseTree         string
+	ObservedRevision string
+	// RenderDigest and EnvDigest are rendered.DesiredSet's digests at BaseTree.
+	RenderDigest string
+	EnvDigest    string
+	Images       []string
+	ResourceIDs  []string
+	Ready        bool
 }
 
 // SourceReadinessVerifier is a trusted Go build/apply/observe adapter. The
@@ -356,11 +360,16 @@ func (c Coordinator) deploy(ctx context.Context, id string, cfg Config, attempt 
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return broker.Receipt{}, DeploymentReceipt{}, false, "independent source deployment returned incomplete evidence", nil
 	}
-	if readiness.StrategyID != plan.GetStrategyId() {
+	proposed := response.GetPlan()
+	if proposed.GetSource() == nil {
+		// Transitional legacy-form plan (S3-13b requires source): the
+		// accepted evidence carries the source the deployer derived, no plan.
+		proposed = nil
+	} else if !rendered.SameDeploymentSource(readiness.Source, proposed.GetSource()) {
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
-		return broker.Receipt{}, DeploymentReceipt{}, false, "independent deployment strategy differs from proposal", nil
+		return broker.Receipt{}, DeploymentReceipt{}, false, "independent deployment source differs from proposal", nil
 	}
-	receipt, err := c.Broker.PublishVerifiedSource(ctx, id, deploymentToBroker(readiness))
+	receipt, err := c.Broker.PublishVerifiedSource(ctx, id, deploymentToBroker(readiness, proposed))
 	if err != nil {
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return broker.Receipt{}, DeploymentReceipt{}, false, "broker rejected deployment: " + err.Error(), nil
@@ -369,31 +378,50 @@ func (c Coordinator) deploy(ctx context.Context, id string, cfg Config, attempt 
 }
 
 func completeDeploymentReceipt(receipt DeploymentReceipt) bool {
-	return receipt.Ready && receipt.ProposalTreeDigest != "" && receipt.ObservedRevision != "" && receipt.StrategyID != "" && len(receipt.Images) > 0 && len(receipt.ResourceIDs) > 0
+	return receipt.Ready && receipt.Source != nil && receipt.BaseTree != "" && receipt.ObservedRevision != "" && receipt.RenderDigest != "" && receipt.EnvDigest != "" && len(receipt.Images) > 0 && len(receipt.ResourceIDs) > 0
 }
 
 func sameDeploymentIdentity(left, right DeploymentReceipt) bool {
-	if left.ProposalTreeDigest != right.ProposalTreeDigest || left.ObservedRevision != right.ObservedRevision || left.StrategyID != right.StrategyID {
+	if left.BaseTree != right.BaseTree || left.ObservedRevision != right.ObservedRevision || left.RenderDigest != right.RenderDigest || left.EnvDigest != right.EnvDigest || !rendered.SameDeploymentSource(left.Source, right.Source) {
 		return false
 	}
 	leftImages, rightImages := slices.Clone(left.Images), slices.Clone(right.Images)
 	leftResources, rightResources := slices.Clone(left.ResourceIDs), slices.Clone(right.ResourceIDs)
-	leftPaths, rightPaths := slices.Clone(left.ManifestPaths), slices.Clone(right.ManifestPaths)
 	slices.Sort(leftImages)
 	slices.Sort(rightImages)
 	slices.Sort(leftResources)
 	slices.Sort(rightResources)
-	slices.Sort(leftPaths)
-	slices.Sort(rightPaths)
-	return reflect.DeepEqual(left.ContainerImages, right.ContainerImages) && slices.Equal(leftImages, rightImages) && slices.Equal(leftResources, rightResources) && slices.Equal(leftPaths, rightPaths)
+	return reflect.DeepEqual(left.ContainerImages, right.ContainerImages) && slices.Equal(leftImages, rightImages) && slices.Equal(leftResources, rightResources)
 }
 
-func deploymentToBroker(receipt DeploymentReceipt) broker.SourceEvidence {
-	return broker.SourceEvidence{ContainerImages: append([]rendered.DeployedImage(nil), receipt.ContainerImages...), ProposalTreeDigest: receipt.ProposalTreeDigest, ObservedRevision: receipt.ObservedRevision, StrategyID: receipt.StrategyID, Images: append([]string(nil), receipt.Images...), ResourceIDs: append([]string(nil), receipt.ResourceIDs...), ManifestPaths: append([]string(nil), receipt.ManifestPaths...), Ready: receipt.Ready}
+// deploymentToBroker records the receipt and, for a new-form plan, the
+// admitted plan itself: the accepted image declarations and expected workloads
+// have no other durable home until slice 5 moves the plan into .sdo/.
+func deploymentToBroker(receipt DeploymentReceipt, plan *contracts.DeploymentPlan) broker.SourceEvidence {
+	evidence := broker.SourceEvidence{
+		ContainerImages: append([]rendered.DeployedImage(nil), receipt.ContainerImages...), BaseTree: receipt.BaseTree, ObservedRevision: receipt.ObservedRevision,
+		RenderDigest: receipt.RenderDigest, EnvDigest: receipt.EnvDigest,
+		Images: append([]string(nil), receipt.Images...), ResourceIDs: append([]string(nil), receipt.ResourceIDs...), Ready: receipt.Ready,
+	}
+	if receipt.Source != nil {
+		evidence.DeploymentSource = proto.Clone(receipt.Source).(*contracts.DeploymentSource)
+	}
+	if plan != nil {
+		evidence.Plan = proto.Clone(plan).(*contracts.DeploymentPlan)
+	}
+	return evidence
 }
 
 func deploymentFromBroker(evidence broker.SourceEvidence) DeploymentReceipt {
-	return DeploymentReceipt{ContainerImages: append([]rendered.DeployedImage(nil), evidence.ContainerImages...), ProposalTreeDigest: evidence.ProposalTreeDigest, ObservedRevision: evidence.ObservedRevision, StrategyID: evidence.StrategyID, Images: append([]string(nil), evidence.Images...), ResourceIDs: append([]string(nil), evidence.ResourceIDs...), ManifestPaths: append([]string(nil), evidence.ManifestPaths...), Ready: evidence.Ready}
+	receipt := DeploymentReceipt{
+		ContainerImages: append([]rendered.DeployedImage(nil), evidence.ContainerImages...), BaseTree: evidence.BaseTree, ObservedRevision: evidence.ObservedRevision,
+		RenderDigest: evidence.RenderDigest, EnvDigest: evidence.EnvDigest,
+		Images: append([]string(nil), evidence.Images...), ResourceIDs: append([]string(nil), evidence.ResourceIDs...), Ready: evidence.Ready,
+	}
+	if evidence.DeploymentSource != nil {
+		receipt.Source = proto.Clone(evidence.DeploymentSource).(*contracts.DeploymentSource)
+	}
+	return receipt
 }
 
 func (c Coordinator) architecture(ctx context.Context, id string, cfg Config, sourceCommit string) (broker.Receipt, bool, string, error) {

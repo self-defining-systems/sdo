@@ -27,6 +27,7 @@ import (
 	"sdo.dev/operator/imagesrc"
 	"sdo.dev/operator/imagesrc/imagesrctest"
 	"sdo.dev/operator/internal/testutil"
+	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/render"
 	"sdo.dev/operator/render/helm"
 	"sdo.dev/operator/render/kustomize"
@@ -375,13 +376,13 @@ func TestDeployPathObjectsEqualReadObjects(t *testing.T) {
 			}
 			cluster := &clusterFake{}
 			deployer, _ := depDeployer(t, root, cluster)
-			receipt, evidence, err := deployer.ApplyAndVerify(ctx, root, &contracts.DeploymentPlan{Source: source, ExpectedWorkloadIds: expected})
+			receipt, err := deployer.ApplyAndVerify(ctx, root, &contracts.DeploymentPlan{Source: source, ExpectedWorkloadIds: expected})
 			if err != nil {
 				t.Fatal(err)
 			}
 			// The Include render's digest is the Omit render's digest, so a
 			// restart can verify what deploy recorded.
-			if _, err := deployer.VerifyAccepted(ctx, depHead(t, root), depNamespace, receipt, evidence); err != nil {
+			if _, err := deployer.VerifyAccepted(ctx, depHead(t, root), depNamespace, receipt); err != nil {
 				t.Fatalf("verify after deploy: %v", err)
 			}
 			got := map[string]string{}
@@ -438,13 +439,13 @@ func TestReceiptRecordsResolvedImagesAndEvidence(t *testing.T) {
 	root, source := depRawFixture(t)
 	cluster := &clusterFake{}
 	deployer, fake := depDeployer(t, root, cluster)
-	receipt, evidence, err := deployer.ApplyAndVerify(context.Background(), root, depPlan(t, source, depRawWeb))
+	receipt, err := deployer.ApplyAndVerify(context.Background(), root, depPlan(t, source, depRawWeb))
 	if err != nil {
 		t.Fatal(err)
 	}
 	tree := depHead(t, root)
-	if tree = testutil.Git(t, root, "rev-parse", "HEAD^{tree}"); receipt.ProposalTreeDigest != tree || receipt.ObservedRevision != tree || evidence.BaseTree != tree {
-		t.Fatalf("receipt tree %q / %q, evidence %q, want %q", receipt.ProposalTreeDigest, receipt.ObservedRevision, evidence.BaseTree, tree)
+	if tree = testutil.Git(t, root, "rev-parse", "HEAD^{tree}"); receipt.BaseTree != tree || receipt.ObservedRevision != tree {
+		t.Fatalf("receipt tree %q / %q, want %q", receipt.BaseTree, receipt.ObservedRevision, tree)
 	}
 	if !receipt.Ready || len(receipt.ResourceIDs) != 1 || receipt.ResourceIDs[0] != depRawWeb {
 		t.Fatalf("receipt = %+v", receipt)
@@ -457,8 +458,8 @@ func TestReceiptRecordsResolvedImagesAndEvidence(t *testing.T) {
 	if calls := fake.Calls(); strings.Join(calls, ",") != "busybox:1,web:1" {
 		t.Fatalf("each distinct image resolves once in order, calls = %v", calls)
 	}
-	if evidence.RenderDigest == "" || evidence.EnvDigest == "" || evidence.Source == nil || evidence.Source == source {
-		t.Fatalf("evidence = %+v (source must be a clone)", evidence)
+	if receipt.RenderDigest == "" || receipt.EnvDigest == "" || receipt.Source == nil || receipt.Source == source || !proto.Equal(receipt.Source, source) {
+		t.Fatalf("receipt source/digests = %v %q %q (source must be an equal clone)", receipt.Source, receipt.RenderDigest, receipt.EnvDigest)
 	}
 	if len(receipt.ContainerImages) != 0 {
 		t.Fatalf("the fake reports no per-container identities, receipt must not invent them: %+v", receipt.ContainerImages)
@@ -480,7 +481,7 @@ func TestDeployerRejectsPlansBeforeApplying(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cluster := &clusterFake{}
 			deployer, _ := depDeployer(t, root, cluster)
-			if _, _, err := deployer.ApplyAndVerify(context.Background(), root, plan); err == nil {
+			if _, err := deployer.ApplyAndVerify(context.Background(), root, plan); err == nil {
 				t.Fatal("plan was accepted")
 			}
 			if len(cluster.events) != 0 {
@@ -503,7 +504,7 @@ func TestDeployerRechecksTreeAfterResolvingImages(t *testing.T) {
 		}
 		return digest, err
 	}
-	_, _, err := deployer.ApplyAndVerify(context.Background(), root, depPlan(t, source, depRawWeb))
+	_, err := deployer.ApplyAndVerify(context.Background(), root, depPlan(t, source, depRawWeb))
 	if err == nil || !strings.Contains(err.Error(), "tree changed") {
 		t.Fatalf("err = %v, want tree changed", err)
 	}
@@ -519,7 +520,7 @@ func TestImageResolutionFailureIsClassifiedAndNothingIsApplied(t *testing.T) {
 	fake.Hook = func(context.Context, imagesrc.Request) error {
 		return &imagesrc.ResolveError{Kind: imagesrc.ResolveTransient, Err: errors.New("rate limited")}
 	}
-	_, _, err := deployer.ApplyAndVerify(context.Background(), root, depPlan(t, source, depRawWeb))
+	_, err := deployer.ApplyAndVerify(context.Background(), root, depPlan(t, source, depRawWeb))
 	var resolve *imagesrc.ResolveError
 	if !errors.As(err, &resolve) || resolve.Kind != imagesrc.ResolveTransient {
 		t.Fatalf("err = %v, want the classified resolve error preserved", err)
@@ -534,7 +535,7 @@ func TestPhasesApplyInOrderAndGateReadyObservesBeforeTheNextPhase(t *testing.T) 
 	source := depSource(t, "phased", &wrapperspb.StringValue{})
 	cluster := &clusterFake{}
 	deployer, _ := depDeployer(t, root, cluster)
-	receipt, _, err := deployer.ApplyAndVerify(context.Background(), root, depPlan(t, source, "Deployment/demo/a", "Deployment/demo/b"))
+	receipt, err := deployer.ApplyAndVerify(context.Background(), root, depPlan(t, source, "Deployment/demo/a", "Deployment/demo/b"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -558,7 +559,7 @@ func TestEphemeralPhasesGateButStayOutOfTheReceipt(t *testing.T) {
 	root := depCommit(t, fixture.files)
 	cluster := &clusterFake{}
 	deployer, _ := depDeployer(t, root, cluster)
-	receipt, _, err := deployer.ApplyAndVerify(context.Background(), root, depPlan(t, fixture.source(t), "Deployment/demo/web"))
+	receipt, err := deployer.ApplyAndVerify(context.Background(), root, depPlan(t, fixture.source(t), "Deployment/demo/web"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -580,7 +581,7 @@ func TestGateReadyFailureStopsLaterPhases(t *testing.T) {
 	source := depSource(t, "phased", &wrapperspb.StringValue{})
 	cluster := &clusterFake{notReady: map[string]bool{"Deployment/demo/b": true}}
 	deployer, _ := depDeployer(t, root, cluster)
-	_, _, err := deployer.ApplyAndVerify(context.Background(), root, depPlan(t, source, "Deployment/demo/a", "Deployment/demo/b"))
+	_, err := deployer.ApplyAndVerify(context.Background(), root, depPlan(t, source, "Deployment/demo/a", "Deployment/demo/b"))
 	if err == nil || !strings.Contains(err.Error(), "not ready") {
 		t.Fatalf("err = %v, want not ready", err)
 	}
@@ -590,7 +591,7 @@ func TestApplyFailureNamesThePhase(t *testing.T) {
 	root, source := depRawFixture(t)
 	cluster := &clusterFake{applyErr: errors.New("boom")}
 	deployer, _ := depDeployer(t, root, cluster)
-	_, _, err := deployer.ApplyAndVerify(context.Background(), root, depPlan(t, source, depRawWeb))
+	_, err := deployer.ApplyAndVerify(context.Background(), root, depPlan(t, source, depRawWeb))
 	if err == nil || !strings.Contains(err.Error(), `phase "default"`) || !errors.Is(err, cluster.applyErr) {
 		t.Fatalf("err = %v", err)
 	}
@@ -600,24 +601,24 @@ func TestVerifyAcceptedChecksDigestsAndLiveWorkloads(t *testing.T) {
 	root, source := depRawFixture(t)
 	cluster := &clusterFake{}
 	deployer, _ := depDeployer(t, root, cluster)
-	receipt, evidence, err := deployer.ApplyAndVerify(context.Background(), root, depPlan(t, source, depRawWeb))
+	receipt, err := deployer.ApplyAndVerify(context.Background(), root, depPlan(t, source, depRawWeb))
 	if err != nil {
 		t.Fatal(err)
 	}
 	commit := depHead(t, root)
 	ctx := context.Background()
-	if got, err := deployer.VerifyAccepted(ctx, commit, depNamespace, receipt, evidence); err != nil || got.ProposalTreeDigest != receipt.ProposalTreeDigest {
+	if got, err := deployer.VerifyAccepted(ctx, commit, depNamespace, receipt); err != nil || got.BaseTree != receipt.BaseTree {
 		t.Fatalf("verify = %+v, %v", got, err)
 	}
 
-	for name, mutate := range map[string]func(*Evidence){
-		"render digest": func(e *Evidence) { e.RenderDigest = strings.Repeat("0", 64) },
-		"env digest":    func(e *Evidence) { e.EnvDigest = strings.Repeat("0", 64) },
+	for name, mutate := range map[string]func(*lifecycle.DeploymentReceipt){
+		"render digest": func(r *lifecycle.DeploymentReceipt) { r.RenderDigest = strings.Repeat("0", 64) },
+		"env digest":    func(r *lifecycle.DeploymentReceipt) { r.EnvDigest = strings.Repeat("0", 64) },
 	} {
 		t.Run(name, func(t *testing.T) {
-			changed := evidence
+			changed := receipt
 			mutate(&changed)
-			_, err := deployer.VerifyAccepted(ctx, commit, depNamespace, receipt, changed)
+			_, err := deployer.VerifyAccepted(ctx, commit, depNamespace, changed)
 			var renderer *RendererChangedError
 			if !errors.As(err, &renderer) || renderer.Want == renderer.Got {
 				t.Fatalf("err = %v, want RendererChangedError", err)
@@ -628,7 +629,7 @@ func TestVerifyAcceptedChecksDigestsAndLiveWorkloads(t *testing.T) {
 	t.Run("renderer environment changed", func(t *testing.T) {
 		other := deployer
 		other.Env.Release = "other"
-		_, err := other.VerifyAccepted(ctx, commit, depNamespace, receipt, evidence)
+		_, err := other.VerifyAccepted(ctx, commit, depNamespace, receipt)
 		var renderer *RendererChangedError
 		if !errors.As(err, &renderer) || renderer.What != "env" {
 			t.Fatalf("err = %v, want RendererChangedError on env", err)
@@ -637,24 +638,24 @@ func TestVerifyAcceptedChecksDigestsAndLiveWorkloads(t *testing.T) {
 	t.Run("workload no longer at the accepted revision", func(t *testing.T) {
 		cluster.live[depRawWeb] = WorkloadObservation{ResourceID: depRawWeb, Revision: "stale", Images: cluster.live[depRawWeb].Images, Ready: true}
 		defer func() { cluster.live[depRawWeb] = WorkloadObservation{} }()
-		if _, err := deployer.VerifyAccepted(ctx, commit, depNamespace, receipt, evidence); err == nil || !strings.Contains(err.Error(), "no longer matches") {
+		if _, err := deployer.VerifyAccepted(ctx, commit, depNamespace, receipt); err == nil || !strings.Contains(err.Error(), "no longer matches") {
 			t.Fatalf("err = %v", err)
 		}
 	})
 	t.Run("wrong namespace", func(t *testing.T) {
-		if _, err := deployer.VerifyAccepted(ctx, commit, "elsewhere", receipt, evidence); err == nil {
+		if _, err := deployer.VerifyAccepted(ctx, commit, "elsewhere", receipt); err == nil {
 			t.Fatal("namespace mismatch accepted")
 		}
 	})
 	t.Run("evidence of another tree", func(t *testing.T) {
-		changed := evidence
+		changed := receipt
 		changed.BaseTree = strings.Repeat("1", 40)
-		if _, err := deployer.VerifyAccepted(ctx, commit, depNamespace, receipt, changed); err == nil {
+		if _, err := deployer.VerifyAccepted(ctx, commit, depNamespace, changed); err == nil {
 			t.Fatal("foreign evidence accepted")
 		}
 	})
 	t.Run("commit not in the accepted branch", func(t *testing.T) {
-		if _, err := deployer.VerifyAccepted(ctx, strings.Repeat("2", 40), depNamespace, receipt, evidence); err == nil {
+		if _, err := deployer.VerifyAccepted(ctx, strings.Repeat("2", 40), depNamespace, receipt); err == nil {
 			t.Fatal("unknown commit accepted")
 		}
 	})

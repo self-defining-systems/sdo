@@ -1,3 +1,4 @@
+//archcheck:ratchet R5 count=2 until=S3-13b
 package lifecycle_test
 
 import (
@@ -15,6 +16,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/worker_registry"
 	"sdo.dev/operator/worker_registry/registrytest"
 )
@@ -110,8 +112,8 @@ func (w *fakeWorkers) Execute(_ context.Context, task *contracts.AgentTask) (*co
 	deployerRequest := &contracts.SourceDeploymentRequest{}
 	if err := task.GetRequest().UnmarshalTo(deployerRequest); err == nil {
 		w.deployer = append(w.deployer, deployerRequest)
-		config, _ := anypb.New(&contracts.RawManifestStrategy{})
-		plan := &contracts.DeploymentPlan{StrategyId: "raw", StrategyConfig: config}
+		config, _ := anypb.New(&contracts.RawManifestStrategy{ManifestPaths: []string{"k8s"}})
+		plan := &contracts.DeploymentPlan{StrategyId: "raw-manifests-v1", StrategyConfig: config}
 		if w.plan != nil {
 			plan = w.plan
 		}
@@ -137,8 +139,14 @@ type fakeReadiness struct {
 	errors []error // consumed one per ApplyAndVerify call
 	calls  int
 	plans  []*contracts.DeploymentPlan
+	// receipt adjusts each receipt ApplyAndVerify returns; reverify each one
+	// VerifyAccepted returns.
+	receipt  func(*lifecycle.DeploymentReceipt)
+	reverify func(*lifecycle.DeploymentReceipt)
 }
 
+// ApplyAndVerify reports the raw source the admitted legacy strategy names,
+// as the deployment registry does.
 func (r *fakeReadiness) ApplyAndVerify(_ context.Context, _ string, plan *contracts.DeploymentPlan) (lifecycle.DeploymentReceipt, error) {
 	r.calls++
 	r.plans = append(r.plans, plan)
@@ -149,10 +157,25 @@ func (r *fakeReadiness) ApplyAndVerify(_ context.Context, _ string, plan *contra
 			return lifecycle.DeploymentReceipt{}, err
 		}
 	}
-	return lifecycle.DeploymentReceipt{ProposalTreeDigest: "tree", ObservedRevision: "rev", StrategyID: plan.GetStrategyId(), Images: []string{"img"}, ResourceIDs: []string{"deployment/app"}, Ready: true}, nil
+	strategy := &contracts.RawManifestStrategy{}
+	if err := plan.GetStrategyConfig().UnmarshalTo(strategy); err != nil {
+		return lifecycle.DeploymentReceipt{}, err
+	}
+	source, err := rendered.LegacyRawSource(strategy.GetManifestPaths())
+	if err != nil {
+		return lifecycle.DeploymentReceipt{}, err
+	}
+	receipt := lifecycle.DeploymentReceipt{Source: source, BaseTree: "tree", ObservedRevision: "tree", RenderDigest: "render", EnvDigest: "env", Images: []string{"img"}, ResourceIDs: []string{"deployment/app"}, Ready: true}
+	if r.receipt != nil {
+		r.receipt(&receipt)
+	}
+	return receipt, nil
 }
 
 func (r *fakeReadiness) VerifyAccepted(_ context.Context, _, _ string, receipt lifecycle.DeploymentReceipt) (lifecycle.DeploymentReceipt, error) {
+	if r.reverify != nil {
+		r.reverify(&receipt)
+	}
 	return receipt, nil
 }
 

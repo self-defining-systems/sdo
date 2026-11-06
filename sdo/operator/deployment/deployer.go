@@ -26,17 +26,6 @@ type Applier interface {
 	Observe(ctx context.Context, resourceID string) (WorkloadObservation, error)
 }
 
-// Evidence is what a deployment binds beyond the receipt's workload facts: the
-// source that produced it and the digests VerifyAccepted re-derives. S3-12
-// moves these fields into the lifecycle receipt; until then the caller keeps
-// them next to it.
-type Evidence struct {
-	Source       *contracts.DeploymentSource
-	BaseTree     string
-	RenderDigest string
-	EnvDigest    string
-}
-
 // Deployer deploys a candidate checkout from a DeploymentPlan: one desired
 // state (rendered.Desired, shared with every read), image resolution through
 // the imagesrc catalog, source-tree stamping, phased apply with readiness
@@ -73,33 +62,33 @@ func (d Deployer) validate() error {
 }
 
 // ApplyAndVerify deploys the checkout's tree as plan describes and returns the
-// receipt of what is actually running plus the evidence to re-verify it.
-func (d Deployer) ApplyAndVerify(ctx context.Context, checkout string, plan *contracts.DeploymentPlan) (lifecycle.DeploymentReceipt, Evidence, error) {
+// receipt of what is actually running, bound to the source and its digests.
+func (d Deployer) ApplyAndVerify(ctx context.Context, checkout string, plan *contracts.DeploymentPlan) (lifecycle.DeploymentReceipt, error) {
 	if err := d.validate(); err != nil {
-		return lifecycle.DeploymentReceipt{}, Evidence{}, err
+		return lifecycle.DeploymentReceipt{}, err
 	}
 	if plan == nil || plan.GetSource() == nil {
-		return lifecycle.DeploymentReceipt{}, Evidence{}, errors.New("deployment plan needs a source")
+		return lifecycle.DeploymentReceipt{}, errors.New("deployment plan needs a source")
 	}
 	if len(plan.GetExpectedWorkloadIds()) == 0 {
-		return lifecycle.DeploymentReceipt{}, Evidence{}, errors.New("deployment plan needs expected workloads")
+		return lifecycle.DeploymentReceipt{}, errors.New("deployment plan needs expected workloads")
 	}
 	base, err := d.TreeDigest(ctx, checkout)
 	if err != nil {
-		return lifecycle.DeploymentReceipt{}, Evidence{}, err
+		return lifecycle.DeploymentReceipt{}, err
 	}
 	store := rendered.ObjectStore{Dir: checkout, Git: d.Git}
 	effective, err := rendered.Effective(ctx, store, rendered.BaseTree(base))
 	if err != nil {
-		return lifecycle.DeploymentReceipt{}, Evidence{}, err
+		return lifecycle.DeploymentReceipt{}, err
 	}
 	fsys, err := rendered.GitTreeFS(ctx, store, effective)
 	if err != nil {
-		return lifecycle.DeploymentReceipt{}, Evidence{}, err
+		return lifecycle.DeploymentReceipt{}, err
 	}
 	set, err := rendered.Desired(ctx, fsys, d.env(render.SecretsInclude), d.Renderers, plan.GetSource())
 	if err != nil {
-		return lifecycle.DeploymentReceipt{}, Evidence{}, fmt.Errorf("render deployment source: %w", err)
+		return lifecycle.DeploymentReceipt{}, fmt.Errorf("render deployment source: %w", err)
 	}
 	declared := make([]imagesrc.Declared, 0, len(plan.GetImages()))
 	for _, image := range plan.GetImages() {
@@ -107,23 +96,25 @@ func (d Deployer) ApplyAndVerify(ctx context.Context, checkout string, plan *con
 	}
 	resolved, err := d.Images.ResolveAll(ctx, imageSites(set), declared, imagesrc.Request{Tree: string(effective), FS: fsys, Checkout: checkout})
 	if err != nil {
-		return lifecycle.DeploymentReceipt{}, Evidence{}, fmt.Errorf("resolve images: %w", err)
+		return lifecycle.DeploymentReceipt{}, fmt.Errorf("resolve images: %w", err)
 	}
 	if again, err := d.TreeDigest(ctx, checkout); err != nil || again != base {
-		return lifecycle.DeploymentReceipt{}, Evidence{}, fmt.Errorf("candidate tree changed during image resolution (was %s, now %q, err %v)", base, again, err)
+		return lifecycle.DeploymentReceipt{}, fmt.Errorf("candidate tree changed during image resolution (was %s, now %q, err %v)", base, again, err)
 	}
 	if err := checkExpectedWorkloads(set, plan.GetExpectedWorkloadIds()); err != nil {
-		return lifecycle.DeploymentReceipt{}, Evidence{}, err
+		return lifecycle.DeploymentReceipt{}, err
 	}
 	run := &applyRun{deployer: d, base: base, resolved: resolved, workloads: map[string]*workloadRecord{}}
 	if err := run.apply(ctx, set); err != nil {
-		return lifecycle.DeploymentReceipt{}, Evidence{}, err
+		return lifecycle.DeploymentReceipt{}, err
 	}
 	receipt, err := run.receipt(ctx)
 	if err != nil {
-		return lifecycle.DeploymentReceipt{}, Evidence{}, err
+		return lifecycle.DeploymentReceipt{}, err
 	}
-	return receipt, Evidence{Source: proto.Clone(plan.GetSource()).(*contracts.DeploymentSource), BaseTree: base, RenderDigest: set.RenderDigest, EnvDigest: set.EnvDigest}, nil
+	receipt.Source = proto.Clone(plan.GetSource()).(*contracts.DeploymentSource)
+	receipt.RenderDigest, receipt.EnvDigest = set.RenderDigest, set.EnvDigest
+	return receipt, nil
 }
 
 // imageSites lists every container image of every workload in apply order,
@@ -274,7 +265,7 @@ func (r *applyRun) receipt(ctx context.Context) (lifecycle.DeploymentReceipt, er
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
-	receipt := lifecycle.DeploymentReceipt{ProposalTreeDigest: r.base, ObservedRevision: r.base, ResourceIDs: ids, Ready: true}
+	receipt := lifecycle.DeploymentReceipt{BaseTree: r.base, ObservedRevision: r.base, ResourceIDs: ids, Ready: true}
 	for _, id := range ids {
 		record := r.workloads[id]
 		receipt.Images = append(receipt.Images, record.observed.Images...)

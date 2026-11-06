@@ -125,7 +125,7 @@ func RawRegistration(id, namespace string, backend RawBackend, resolver ImageRes
 }
 
 func (strategy RawStrategy) VerifyAccepted(ctx context.Context, receipt lifecycle.DeploymentReceipt) (Observation, error) {
-	if strategy.Backend == nil || !receipt.Ready || receipt.StrategyID == "" || len(receipt.ResourceIDs) == 0 {
+	if strategy.Backend == nil || !receipt.Ready || receipt.Source == nil || len(receipt.ResourceIDs) == 0 {
 		return Observation{}, errors.New("trusted raw deployment evidence is required")
 	}
 	images := []string{}
@@ -139,7 +139,7 @@ func (strategy RawStrategy) VerifyAccepted(ctx context.Context, receipt lifecycl
 		if err != nil {
 			return Observation{}, err
 		}
-		if !observed.Ready || observed.ResourceID != id || observed.Revision != receipt.ProposalTreeDigest {
+		if !observed.Ready || observed.ResourceID != id || observed.Revision != receipt.BaseTree {
 			return Observation{}, fmt.Errorf("workload %s no longer matches accepted source", id)
 		}
 		if len(receipt.ContainerImages) > 0 {
@@ -159,7 +159,7 @@ func (strategy RawStrategy) VerifyAccepted(ctx context.Context, receipt lifecycl
 	if !equalStrings(images, receipt.Images) {
 		return Observation{}, errors.New("accepted workload images differ from deployed images")
 	}
-	return Observation{ContainerImages: receipt.ContainerImages, Revision: receipt.ProposalTreeDigest, Images: images, ResourceIDs: ids, Ready: true}, nil
+	return Observation{ContainerImages: receipt.ContainerImages, Revision: receipt.BaseTree, Images: images, ResourceIDs: ids, Ready: true}, nil
 }
 
 func (strategy RawStrategy) ApplyAndVerify(ctx context.Context, checkout, tree string, plan *contracts.RawManifestStrategy) (Observation, error) {

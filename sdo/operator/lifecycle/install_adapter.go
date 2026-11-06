@@ -1,4 +1,3 @@
-//archcheck:ratchet R5 count=2 until=S3-12
 package lifecycle
 
 import (
@@ -6,11 +5,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
+
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/install"
 	"sdo.dev/operator/onboarding"
 	"sdo.dev/operator/render"
 	"sdo.dev/operator/rendered"
-
-	"sdo.dev/operator/install"
 )
 
 // InstallStrategy keeps the lifecycle independent of installer transport and
@@ -42,15 +43,11 @@ func (s KubernetesInstallStrategy) InstallPrepared(ctx context.Context, config i
 
 // WithVerifiedDeployment binds acknowledgement to this independently healthy
 // native deployment; verification is completed by the in-cluster controller.
-func (s KubernetesInstallStrategy) WithVerifiedDeployment(root, commit, namespace string, paths []string) InstallStrategy {
+func (s KubernetesInstallStrategy) WithVerifiedDeployment(root, commit, namespace string, deployment *contracts.DeploymentSource) InstallStrategy {
 	s.Installer.BeforeControllerStart = func(ctx context.Context, config install.Config) error {
 		control := config.ControlNamespace
 		if control == "" {
 			control = namespace
-		}
-		deployment, err := rendered.LegacyRawSource(paths)
-		if err != nil {
-			return err
 		}
 		source := rendered.Source{Repository: root, Deployment: deployment, Catalog: s.Renderers}
 		objects, err := source.RawManifests(ctx, commit, namespace)
@@ -106,14 +103,22 @@ func (a NativeInstallAdapter) Install(ctx context.Context, acceptedCommit, names
 	return nil
 }
 
+// InstallDeployment installs the controller for the accepted commit and the
+// DeploymentSource the receipt deployed: onboarding stages that source's
+// objects and the controller reads it through --deployment-source.
 func (a NativeInstallAdapter) InstallDeployment(ctx context.Context, acceptedCommit, namespace string, receipt DeploymentReceipt) error {
+	if receipt.Source == nil {
+		return errors.New("verified deployment names no deployment source")
+	}
+	encoded, err := rendered.FormatDeploymentSource(receipt.Source)
+	if err != nil {
+		return err
+	}
 	if strategy, ok := a.Strategy.(interface {
-		WithVerifiedDeployment(string, string, string, []string) InstallStrategy
+		WithVerifiedDeployment(string, string, string, *contracts.DeploymentSource) InstallStrategy
 	}); ok {
-		a.Strategy = strategy.WithVerifiedDeployment(a.AcceptedRepository, acceptedCommit, namespace, receipt.ManifestPaths)
+		a.Strategy = strategy.WithVerifiedDeployment(a.AcceptedRepository, acceptedCommit, namespace, receipt.Source)
 	}
-	for _, path := range receipt.ManifestPaths {
-		a.Config.ExtraControllerArgs = append(a.Config.ExtraControllerArgs, "--deployed-manifest-path="+path)
-	}
+	a.Config.ExtraControllerArgs = append(slices.Clone(a.Config.ExtraControllerArgs), "--deployment-source="+encoded)
 	return a.Install(ctx, acceptedCommit, namespace)
 }

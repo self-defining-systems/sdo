@@ -1,7 +1,5 @@
 // Package broker owns the only path from agent proposals to accepted Git state.
 // Agent clones have independent Git metadata and no publishing remote.
-//
-//archcheck:ratchet R5 count=2 until=S3-12
 package broker
 
 import (
@@ -13,7 +11,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"sdo.dev/operator/broker/internal/processio"
 	"sdo.dev/operator/contracts/settings"
 	"strings"
@@ -69,19 +66,26 @@ type Receipt struct {
 	CoverageGaps []validate.Diagnostic
 }
 
-// SourceEvidence is produced by a trusted deployment strategy, never by an
-// agent. Its ledger record is staged before source acceptance and reconciled
-// against the attributed Git commit after an interrupted publish.
+// SourceEvidence is produced by the trusted deployer, never by an agent. Its
+// ledger record is staged before source acceptance and reconciled against the
+// attributed Git commit after an interrupted publish. Its JSON form is in
+// source_evidence.go.
 type SourceEvidence struct {
-	ContainerImages    []rendered.DeployedImage `json:"container_images,omitempty"`
-	ProposalTreeDigest string                   `json:"proposal_tree_digest"`
-	ObservedRevision   string                   `json:"observed_revision"`
-	StrategyID         string                   `json:"strategy_id"`
-	Images             []string                 `json:"images"`
-	ResourceIDs        []string                 `json:"resource_ids"`
-	ManifestPaths      []string                 `json:"manifest_paths,omitempty"`
-	Ready              bool                     `json:"ready"`
-	AcceptedCommit     string                   `json:"accepted_commit,omitempty"`
+	ContainerImages []rendered.DeployedImage
+	// DeploymentSource rendered the deployment; opaque to the broker.
+	DeploymentSource *contracts.DeploymentSource
+	// Plan is the admitted new-form DeploymentPlan (source, image
+	// declarations, expected workloads), nil for a legacy-form plan.
+	// Transitional home: slice 5 moves the plan into .sdo/deployment/.
+	Plan             *contracts.DeploymentPlan
+	BaseTree         string
+	ObservedRevision string
+	RenderDigest     string
+	EnvDigest        string
+	Images           []string
+	ResourceIDs      []string
+	Ready            bool
+	AcceptedCommit   string
 }
 
 type Broker struct {
@@ -297,7 +301,7 @@ func (b *Broker) PublishVerifiedSource(ctx context.Context, incidentID string, e
 	if err := validateSourceEvidence(evidence); err != nil {
 		return Receipt{}, err
 	}
-	return b.publish(ctx, incidentID, Deployer, InitialPhase, evidence.ProposalTreeDigest, &evidence, nil)
+	return b.publish(ctx, incidentID, Deployer, InitialPhase, evidence.BaseTree, &evidence, nil)
 }
 
 func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, phase Phase, expectedSourceTree string, evidence *SourceEvidence, decision *contracts.ReflectionDecision) (Receipt, error) {
@@ -322,7 +326,7 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 				}
 				claimed := *evidence
 				claimed.AcceptedCommit = prior.Commit
-				if !reflect.DeepEqual(stored, claimed) {
+				if !sameSourceEvidence(stored, claimed) {
 					return errors.New("accepted source evidence differs from verified deployment")
 				}
 			}

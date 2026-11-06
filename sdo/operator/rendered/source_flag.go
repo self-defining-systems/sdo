@@ -53,3 +53,17 @@ func DeploymentSourceFromFlags(encoded string, paths []string) (*contracts.Deplo
 	}
 	return LegacyRawSource(paths)
 }
+
+// SameDeploymentSource reports whether two sources are the same deployment
+// input. It compares the canonical encoding, not Any bytes: a source decoded
+// from durable evidence re-encodes its config, and wire bytes of the same
+// message may differ (map order, another language's encoder). Two nil sources
+// are the same; a source that cannot be encoded equals nothing.
+func SameDeploymentSource(left, right *contracts.DeploymentSource) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	a, errA := FormatDeploymentSource(left)
+	b, errB := FormatDeploymentSource(right)
+	return errA == nil && errB == nil && a == b
+}

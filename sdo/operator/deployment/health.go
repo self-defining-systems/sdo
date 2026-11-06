@@ -181,7 +181,7 @@ func (v IndependentHealthVerifier) Verify(ctx context.Context, acceptedCommit, n
 	sourceCommit := ""
 	for _, line := range strings.Split(ancestorTrees, "\n") {
 		parts := strings.Fields(line)
-		if len(parts) == 2 && parts[1] == source.ProposalTreeDigest {
+		if len(parts) == 2 && parts[1] == source.BaseTree {
 			sourceCommit = parts[0]
 			break
 		}
