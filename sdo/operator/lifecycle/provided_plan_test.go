@@ -51,8 +51,11 @@ func TestProvidedPlanIsDeployedAndRecordedWithoutTheDeployerAgent(t *testing.T) 
 				t.Fatalf("trusted deployer saw %v, want the provided plan unchanged", h.readiness.plans)
 			}
 			evidence, ok := fake.evidence["op-source-1"]
-			if !ok || !proto.Equal(evidence.Plan, plan) || evidence.DeploymentSource.GetRendererId() != name {
-				t.Fatalf("broker evidence = %+v, want the provided plan recorded", evidence)
+			if !ok || evidence.DeploymentSource.GetRendererId() != name {
+				t.Fatalf("broker evidence = %+v, want the provided source recorded", evidence)
+			}
+			if written := fake.plan(t, "op-source-1"); !proto.Equal(written, plan) {
+				t.Fatalf("plan.yaml of the proposal = %v, want the provided plan", written)
 			}
 			if result.SourceCommit == "" || result.JudgeCommit == "" || h.installer.installs != 1 || h.workers.judgeRuns != 1 {
 				t.Fatalf("result %+v installs=%d judge runs=%d: everything after the deploy must run as usual", result, h.installer.installs, h.workers.judgeRuns)

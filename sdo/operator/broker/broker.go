@@ -77,10 +77,6 @@ type SourceEvidence struct {
 	ContainerImages []rendered.DeployedImage
 	// DeploymentSource rendered the deployment; opaque to the broker.
 	DeploymentSource *contracts.DeploymentSource
-	// Plan is the admitted new-form DeploymentPlan (source, image
-	// declarations, expected workloads), nil for a legacy-form plan.
-	// Transitional home: slice 5 moves the plan into .sdo/deployment/.
-	Plan *contracts.DeploymentPlan
 	// BaseTree is the accepted commit's tree; EffectiveTree is
 	// rendered.Effective(BaseTree).ID (base plus deployment patches, memory
 	// projected away) and PatchesDigest the digest of that patch series. The
@@ -504,6 +500,9 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 				return errors.New("staged source tree differs from verified deployment")
 			}
 			if err := requireEffectiveEvidence(ctx, stage, *evidence); err != nil {
+				return err
+			}
+			if err := requirePlanEvidence(ctx, stage, *evidence, b.PlanCatalogs); err != nil {
 				return err
 			}
 		}

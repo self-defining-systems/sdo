@@ -574,20 +574,24 @@ def test_helm_onboarding_assertions_accept_the_expected_evidence_and_name_each_v
     good = toy.OnboardingEvidence(
         renderer_id="helm",
         image_builders=("buildkit", "buildkit", "buildkit"),
-        controller_args=("--app", "/workspace/application", "--deployment-source", "{}"),
+        plan_renderer_id="helm",
     )
     assert toy.onboarding_violations(good, "helm") == []
-    assert toy.onboarding_violations(
-        toy.OnboardingEvidence("raw", good.image_builders, good.controller_args), "helm"
-    ) == ["accepted evidence plan renderer_id is 'raw', expected 'helm'"]
-    prebuilt = toy.OnboardingEvidence("helm", ("buildkit", "prebuilt"), good.controller_args)
-    assert toy.onboarding_violations(prebuilt, "helm") == ["images not built by buildkit: prebuilt"]
-    assert toy.onboarding_violations(toy.OnboardingEvidence("helm", (), good.controller_args), "helm") == [
-        "accepted evidence plan declares no images"
+    assert toy.onboarding_violations(toy.OnboardingEvidence("raw", good.image_builders, "raw"), "helm") == [
+        "accepted deployment renderer_id is 'raw', expected 'helm'"
     ]
-    bare = toy.OnboardingEvidence("helm", good.image_builders, ("--app", "/workspace/application"))
-    assert toy.onboarding_violations(bare, "helm") == ["controller args carry no --deployment-source"]
-    assert toy.onboarding_violations(good, "raw") == ["accepted evidence plan renderer_id is 'helm', expected 'raw'"]
+    prebuilt = toy.OnboardingEvidence("helm", ("buildkit", "prebuilt"), "helm")
+    assert toy.onboarding_violations(prebuilt, "helm") == ["images not built by buildkit: prebuilt"]
+    assert toy.onboarding_violations(toy.OnboardingEvidence("helm", (), "helm"), "helm") == [
+        "accepted deployment plan declares no images"
+    ]
+    bare = toy.OnboardingEvidence("helm", good.image_builders, None)
+    assert toy.onboarding_violations(bare, "helm") == ["accepted tree has no .sdo/deployment/plan.yaml"]
+    drifted = toy.OnboardingEvidence("helm", good.image_builders, "raw")
+    assert toy.onboarding_violations(drifted, "helm") == [
+        "accepted tree plan.yaml renderer_id is 'raw', deployment evidence says 'helm'"
+    ]
+    assert toy.onboarding_violations(good, "raw") == ["accepted deployment renderer_id is 'helm', expected 'raw'"]
 
 
 class _RestartOps:

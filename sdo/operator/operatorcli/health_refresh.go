@@ -54,7 +54,10 @@ func refreshControllerHealthOnce(ctx context.Context, config *contracts.Controll
 	if config.GetFrozenMemory() {
 		return nil
 	}
-	shapeOf := healthShapeOf(config)
+	shapeOf, err := healthShapeOf(config)
+	if err != nil {
+		return err
+	}
 	revision, err := memory.AcceptedHealthRevision(ctx, config.GetAppRoot(), shapeOf)
 	if err != nil {
 		return err
@@ -121,10 +124,14 @@ func refreshControllerHealthOnce(ctx context.Context, config *contracts.Controll
 }
 
 // healthShapeOf binds the judge refresh to the desired-state shape of the
-// launch's DeploymentSource. No source returns nil: the bytes fallback
-// (transitional, removed with S3-11c).
-func healthShapeOf(config *contracts.ControllerConfig) memory.ShapeOf {
-	return rendered.Source{Deployment: config.GetDeploymentSource(), Catalog: renderers.Catalog(), Environment: config.GetRenderEnvironment()}.ShapeOf(config.GetNamespace())
+// deployment source the accepted checkout declares in plan.yaml. A checkout
+// without a plan has no source: the shape is then the effective tree's ID.
+func healthShapeOf(config *contracts.ControllerConfig) (memory.ShapeOf, error) {
+	source, err := acceptedDeploymentSource(config.GetAppRoot())
+	if err != nil {
+		return nil, err
+	}
+	return rendered.Source{Deployment: source, Catalog: renderers.Catalog(), Environment: config.GetRenderEnvironment()}.ShapeOf(config.GetNamespace()), nil
 }
 
 // A Go seed cannot satisfy shell onboarding merely by retaining Go provenance.

@@ -113,12 +113,11 @@ type ControllerConfig struct {
 	ReflectionGuidance string `protobuf:"bytes,53,opt,name=reflection_guidance,json=reflectionGuidance,proto3" json:"reflection_guidance,omitempty"`
 	// Replays incident detectors on benchmark-supplied healthy snapshots. The
 	// validator receives only the bounded snapshot directory, read-only.
-	HealthyBaseline       bool                 `protobuf:"varint,54,opt,name=healthy_baseline,json=healthyBaseline,proto3" json:"healthy_baseline,omitempty"`
-	MaxResponseLoops      int32                `protobuf:"varint,55,opt,name=max_response_loops,json=maxResponseLoops,proto3" json:"max_response_loops,omitempty"`
-	DiagnosisDeadline     *durationpb.Duration `protobuf:"bytes,56,opt,name=diagnosis_deadline,json=diagnosisDeadline,proto3" json:"diagnosis_deadline,omitempty"`
-	DriftBatchWindow      *durationpb.Duration `protobuf:"bytes,66,opt,name=drift_batch_window,json=driftBatchWindow,proto3" json:"drift_batch_window,omitempty"`
-	ForceReflection       bool                 `protobuf:"varint,62,opt,name=force_reflection,json=forceReflection,proto3" json:"force_reflection,omitempty"`
-	DeployedManifestPaths []string             `protobuf:"bytes,63,rep,name=deployed_manifest_paths,json=deployedManifestPaths,proto3" json:"deployed_manifest_paths,omitempty"`
+	HealthyBaseline   bool                 `protobuf:"varint,54,opt,name=healthy_baseline,json=healthyBaseline,proto3" json:"healthy_baseline,omitempty"`
+	MaxResponseLoops  int32                `protobuf:"varint,55,opt,name=max_response_loops,json=maxResponseLoops,proto3" json:"max_response_loops,omitempty"`
+	DiagnosisDeadline *durationpb.Duration `protobuf:"bytes,56,opt,name=diagnosis_deadline,json=diagnosisDeadline,proto3" json:"diagnosis_deadline,omitempty"`
+	DriftBatchWindow  *durationpb.Duration `protobuf:"bytes,66,opt,name=drift_batch_window,json=driftBatchWindow,proto3" json:"drift_batch_window,omitempty"`
+	ForceReflection   bool                 `protobuf:"varint,62,opt,name=force_reflection,json=forceReflection,proto3" json:"force_reflection,omitempty"`
 	// Prometheus-compatible API that metric and alert detectors query once per
 	// evaluation cycle. Unset runs no metrics source: detectors that need one
 	// report an error instead of health. The token file holds an optional bearer
@@ -144,8 +143,6 @@ type ControllerConfig struct {
 	CodePath *CodePathConfig `protobuf:"bytes,100,opt,name=code_path,json=codePath,proto3" json:"code_path,omitempty"`
 	// Keep repeat evidence private and disable learning.
 	FrozenMemory bool `protobuf:"varint,110,opt,name=frozen_memory,json=frozenMemory,proto3" json:"frozen_memory,omitempty"`
-	// Transitional: replaces deployed_manifest_paths (63) when the controller switches.
-	DeploymentSource *DeploymentSource `protobuf:"bytes,112,opt,name=deployment_source,json=deploymentSource,proto3" json:"deployment_source,omitempty"`
 	// render_environment is the install-time render environment of the accepted
 	// deployment; absent means unknown (renderer defaults).
 	RenderEnvironment *RenderEnvironment `protobuf:"bytes,113,opt,name=render_environment,json=renderEnvironment,proto3" json:"render_environment,omitempty"`
@@ -551,13 +548,6 @@ func (x *ControllerConfig) GetForceReflection() bool {
 	return false
 }
 
-func (x *ControllerConfig) GetDeployedManifestPaths() []string {
-	if x != nil {
-		return x.DeployedManifestPaths
-	}
-	return nil
-}
-
 func (x *ControllerConfig) GetMetricsUrl() string {
 	if x != nil {
 		return x.MetricsUrl
@@ -633,13 +623,6 @@ func (x *ControllerConfig) GetFrozenMemory() bool {
 		return x.FrozenMemory
 	}
 	return false
-}
-
-func (x *ControllerConfig) GetDeploymentSource() *DeploymentSource {
-	if x != nil {
-		return x.DeploymentSource
-	}
-	return nil
 }
 
 func (x *ControllerConfig) GetRenderEnvironment() *RenderEnvironment {
@@ -860,7 +843,7 @@ var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDesc
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\x1a1sdodev/contracts/v1alpha1/deployment_source.proto\"\xda!\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\x1a1sdodev/contracts/v1alpha1/deployment_source.proto\"\x80!\n" +
 	"\x10ControllerConfig\x12,\n" +
 	"\x12memory_host_binary\x18R \x01(\tR\x10memoryHostBinary\x12,\n" +
 	"\x12memory_host_digest\x18S \x01(\tR\x10memoryHostDigest\x12%\n" +
@@ -920,8 +903,7 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\x12max_response_loops\x187 \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\x10maxResponseLoops\x12H\n" +
 	"\x12diagnosis_deadline\x188 \x01(\v2\x19.google.protobuf.DurationR\x11diagnosisDeadline\x12G\n" +
 	"\x12drift_batch_window\x18B \x01(\v2\x19.google.protobuf.DurationR\x10driftBatchWindow\x12)\n" +
-	"\x10force_reflection\x18> \x01(\bR\x0fforceReflection\x126\n" +
-	"\x17deployed_manifest_paths\x18? \x03(\tR\x15deployedManifestPaths\x12\x1f\n" +
+	"\x10force_reflection\x18> \x01(\bR\x0fforceReflection\x12\x1f\n" +
 	"\vmetrics_url\x18F \x01(\tR\n" +
 	"metricsUrl\x12.\n" +
 	"\x13metrics_publish_url\x18Q \x01(\tR\x11metricsPublishUrl\x12,\n" +
@@ -933,15 +915,14 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\fscript_image\x18O \x01(\tR\vscriptImage\x12R\n" +
 	"\x0fmemory_upstream\x18P \x01(\v2).sdodev.contracts.v1alpha1.MemoryUpstreamR\x0ememoryUpstream\x12F\n" +
 	"\tcode_path\x18d \x01(\v2).sdodev.contracts.v1alpha1.CodePathConfigR\bcodePath\x12#\n" +
-	"\rfrozen_memory\x18n \x01(\bR\ffrozenMemory\x12X\n" +
-	"\x11deployment_source\x18p \x01(\v2+.sdodev.contracts.v1alpha1.DeploymentSourceR\x10deploymentSource\x12[\n" +
+	"\rfrozen_memory\x18n \x01(\bR\ffrozenMemory\x12[\n" +
 	"\x12render_environment\x18q \x01(\v2,.sdodev.contracts.v1alpha1.RenderEnvironmentR\x11renderEnvironment\x12-\n" +
 	"\x12external_incidents\x18o \x01(\bR\x11externalIncidentsB\x14\n" +
 	"\x12_synthetic_trafficB\x1a\n" +
 	"\x18_clean_responder_helpersB\x11\n" +
 	"\x0f_state_baselineB\x14\n" +
-	"\x12_responder_standbyJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x17\x10\x18J\x04\b\x18\x10\x19J\x04\b\x1e\x10\x1fJ\x04\b$\x10%J\x04\b%\x10&J\x04\b&\x10'J\x04\b/\x100J\x04\b0\x101J\x04\b9\x10:J\x04\b:\x10;J\x04\b;\x10<J\x04\b<\x10=J\x04\b=\x10>J\x04\bC\x10DJ\x04\bD\x10EJ\x04\b@\x10AJ\x04\bA\x10BJ\x04\bE\x10FJ\x04\bH\x10IJ\x04\bI\x10JJ\x04\bJ\x10KR\vmemory_hostR\x06brokerR\vbroker_argsR\x0emax_follow_upsR\x12follow_up_cooldownR\x15restart_after_closureR\rprober_binaryR\fprober_imageR\n" +
-	"prober_urlR\x0fvalidator_imageR\x0fschema_identityR\x14drift_sweep_intervalR\x1adrift_investigation_windowR'drift_investigation_dispatches_per_hourR#drift_investigation_tokens_per_hourR\x19drift_dispatches_per_hourR\x15drift_tokens_per_hourR\x14program_min_durationR\x17plan_safety_policy_jsonR\x19plan_safety_policy_sha256R\x17plan_source_policy_json\"e\n" +
+	"\x12_responder_standbyJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x17\x10\x18J\x04\b\x18\x10\x19J\x04\b\x1e\x10\x1fJ\x04\b$\x10%J\x04\b%\x10&J\x04\b&\x10'J\x04\b/\x100J\x04\b0\x101J\x04\b9\x10:J\x04\b:\x10;J\x04\b;\x10<J\x04\b<\x10=J\x04\b=\x10>J\x04\bC\x10DJ\x04\bD\x10EJ\x04\b?\x10@J\x04\b@\x10AJ\x04\bA\x10BJ\x04\bE\x10FJ\x04\bH\x10IJ\x04\bI\x10JJ\x04\bJ\x10KJ\x04\bp\x10qR\vmemory_hostR\x06brokerR\vbroker_argsR\x0emax_follow_upsR\x12follow_up_cooldownR\x15restart_after_closureR\rprober_binaryR\fprober_imageR\n" +
+	"prober_urlR\x0fvalidator_imageR\x0fschema_identityR\x14drift_sweep_intervalR\x1adrift_investigation_windowR'drift_investigation_dispatches_per_hourR#drift_investigation_tokens_per_hourR\x19drift_dispatches_per_hourR\x15drift_tokens_per_hourR\x17deployed_manifest_pathsR\x14program_min_durationR\x17plan_safety_policy_jsonR\x19plan_safety_policy_sha256R\x17plan_source_policy_jsonR\x11deployment_source\"e\n" +
 	"\x0eMemoryUpstream\x12\x19\n" +
 	"\x03url\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x03url\x12\x1f\n" +
 	"\x06branch\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06branch\x12\x17\n" +
@@ -979,8 +960,7 @@ var file_sdodev_contracts_v1alpha1_controller_config_proto_goTypes = []any{
 	(*CodePathConfig)(nil),      // 2: sdodev.contracts.v1alpha1.CodePathConfig
 	(*CodePathOverrides)(nil),   // 3: sdodev.contracts.v1alpha1.CodePathOverrides
 	(*durationpb.Duration)(nil), // 4: google.protobuf.Duration
-	(*DeploymentSource)(nil),    // 5: sdodev.contracts.v1alpha1.DeploymentSource
-	(*RenderEnvironment)(nil),   // 6: sdodev.contracts.v1alpha1.RenderEnvironment
+	(*RenderEnvironment)(nil),   // 5: sdodev.contracts.v1alpha1.RenderEnvironment
 }
 var file_sdodev_contracts_v1alpha1_controller_config_proto_depIdxs = []int32{
 	4,  // 0: sdodev.contracts.v1alpha1.ControllerConfig.duration:type_name -> google.protobuf.Duration
@@ -996,14 +976,13 @@ var file_sdodev_contracts_v1alpha1_controller_config_proto_depIdxs = []int32{
 	4,  // 10: sdodev.contracts.v1alpha1.ControllerConfig.responder_report_grace:type_name -> google.protobuf.Duration
 	1,  // 11: sdodev.contracts.v1alpha1.ControllerConfig.memory_upstream:type_name -> sdodev.contracts.v1alpha1.MemoryUpstream
 	2,  // 12: sdodev.contracts.v1alpha1.ControllerConfig.code_path:type_name -> sdodev.contracts.v1alpha1.CodePathConfig
-	5,  // 13: sdodev.contracts.v1alpha1.ControllerConfig.deployment_source:type_name -> sdodev.contracts.v1alpha1.DeploymentSource
-	6,  // 14: sdodev.contracts.v1alpha1.ControllerConfig.render_environment:type_name -> sdodev.contracts.v1alpha1.RenderEnvironment
-	3,  // 15: sdodev.contracts.v1alpha1.CodePathConfig.overrides:type_name -> sdodev.contracts.v1alpha1.CodePathOverrides
-	16, // [16:16] is the sub-list for method output_type
-	16, // [16:16] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	5,  // 13: sdodev.contracts.v1alpha1.ControllerConfig.render_environment:type_name -> sdodev.contracts.v1alpha1.RenderEnvironment
+	3,  // 14: sdodev.contracts.v1alpha1.CodePathConfig.overrides:type_name -> sdodev.contracts.v1alpha1.CodePathOverrides
+	15, // [15:15] is the sub-list for method output_type
+	15, // [15:15] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_controller_config_proto_init() }

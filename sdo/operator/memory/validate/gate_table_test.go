@@ -88,6 +88,9 @@ func gateOverlay(name string) func(*testing.T, string) {
 	return func(t *testing.T, root string) { applyCase(t, root, name) }
 }
 
+// gateDeploymentPlan is a structurally valid plan.yaml.
+const gateDeploymentPlan = `{"source":{"rendererId":"raw","config":{"@type":"type.googleapis.com/sdodev.contracts.v1alpha1.RawRenderConfig","paths":["k8s"]}}}` + "\n"
+
 func gateWrite(rel, content string) func(*testing.T, string) {
 	return func(t *testing.T, root string) { write(t, root, rel, content) }
 }
@@ -504,6 +507,15 @@ var gateRows = []gateRow{
 	{name: "initial source needs a verified source tree", kind: gateCheck, actor: Deployer, phase: InitialPhase, rules: []string{RuleVerifiedSource},
 		prepare: func(t *testing.T, r string) { remove(t, r, ".sdo/diagnostics"); remove(t, r, ".sdo/playbooks") },
 		edit:    gateWrite("app.txt", "deployed\n")},
+	{name: "the deployer's plan alone needs a verified source tree", kind: gateCheck, actor: Deployer, phase: InitialPhase, rules: []string{RuleVerifiedSource},
+		prepare: func(t *testing.T, r string) { remove(t, r, ".sdo/diagnostics"); remove(t, r, ".sdo/playbooks") },
+		edit:    gateWrite(layout.DeploymentPlanFile, gateDeploymentPlan)},
+	{name: "a verified deployment may publish only its plan", kind: gateCheck, actor: Deployer, phase: InitialPhase,
+		prepare: func(t *testing.T, r string) { remove(t, r, ".sdo/diagnostics"); remove(t, r, ".sdo/playbooks") },
+		edit:    gateWrite(layout.DeploymentPlanFile, gateDeploymentPlan),
+		request: func(r *Request) {
+			r.Publication = &PublicationContext{BaseCommit: "HEAD", IncidentID: "source", VerifiedSourceTree: strings.Repeat("a", 40)}
+		}},
 	{name: "upstream advance needs a verified source tree", kind: gateCheck, actor: Upstream, phase: AdvancePhase, rules: []string{RuleVerifiedSource}, edit: gateWrite("app.txt", "upstream\n")},
 	{name: "verified upstream advance passes", kind: gateCheck, actor: Upstream, phase: AdvancePhase, edit: gateWrite("app.txt", "upstream\n"),
 		request: func(r *Request) {

@@ -209,7 +209,7 @@ func lifecycleChecks(ctx context.Context, r Request, paths []string, structurall
 	if r.Phase == InitialPhase && r.Actor == Deployer {
 		source, architecture := false, false
 		for _, p := range paths {
-			source = source || !layout.IsMemoryPath(p)
+			source = source || !layout.IsMemoryPath(p) || deployerOwnedDeployment(p)
 			architecture = architecture || p == layout.ArchitectureFile
 		}
 		tree := ""
@@ -419,4 +419,12 @@ func healthRevalidation(r Request, paths []string) bool {
 // deployed tree, so the proposal may leave the accepted source untouched.
 func providedSource(r Request) bool {
 	return r.Phase == InitialPhase && r.Actor == Deployer && r.Publication != nil && r.Publication.VerifiedSourceTree != ""
+}
+
+// deployerOwnedDeployment reports whether p is a deployment-class path the
+// deployer publishes with its verified source: the plan, the values, manifests
+// and build files, and patches. Overlays belong to the detection designer.
+func deployerOwnedDeployment(p string) bool {
+	kind, _, ok := layout.Classify(p)
+	return ok && (kind == layout.KindDeploymentPlan || kind == layout.KindDeploymentFile || kind == layout.KindDeploymentPatch)
 }

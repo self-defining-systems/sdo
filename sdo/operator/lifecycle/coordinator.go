@@ -18,6 +18,7 @@ import (
 	"sdo.dev/operator/imagesrc"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/plugindesc"
 	"sdo.dev/operator/render"
 	"sdo.dev/operator/rendered"
@@ -371,6 +372,12 @@ func (c Coordinator) deploy(ctx context.Context, id string, cfg Config, attempt 
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return broker.Receipt{}, DeploymentReceipt{}, false, "the deployment plan is not deployable: " + err.Error(), nil
 	}
+	// Go writes the canonical plan into the proposal, whatever the agent left
+	// at that path: the accepted tree then answers "what is deployed and how".
+	if err := planfile.Write(proposal.Path, plan); err != nil {
+		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
+		return broker.Receipt{}, DeploymentReceipt{}, false, "", fmt.Errorf("write deployment plan: %w", err)
+	}
 	var readiness DeploymentReceipt
 	err = c.retryInfrastructure(ctx, cfg, "independent source deployment", func() (err error) {
 		readiness, err = c.Readiness.ApplyAndVerify(ctx, proposal.Path, plan)
@@ -392,7 +399,7 @@ func (c Coordinator) deploy(ctx context.Context, id string, cfg Config, attempt 
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return broker.Receipt{}, DeploymentReceipt{}, false, "independent deployment source differs from proposal", nil
 	}
-	receipt, err := c.Broker.PublishVerifiedSource(ctx, id, deploymentToBroker(readiness, plan))
+	receipt, err := c.Broker.PublishVerifiedSource(ctx, id, deploymentToBroker(readiness))
 	if err != nil {
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return broker.Receipt{}, DeploymentReceipt{}, false, "broker rejected deployment: " + err.Error(), nil
@@ -452,10 +459,9 @@ func sameDeploymentIdentity(left, right DeploymentReceipt) bool {
 	return reflect.DeepEqual(left.ContainerImages, right.ContainerImages) && slices.Equal(leftImages, rightImages) && slices.Equal(leftResources, rightResources)
 }
 
-// deploymentToBroker records the receipt and the
-// admitted plan itself: the accepted image declarations and expected workloads
-// have no other durable home until slice 5 moves the plan into .sdo/.
-func deploymentToBroker(receipt DeploymentReceipt, plan *contracts.DeploymentPlan) broker.SourceEvidence {
+// deploymentToBroker records the receipt. The admitted plan is not part of it:
+// it is the accepted tree's .sdo/deployment/plan.yaml.
+func deploymentToBroker(receipt DeploymentReceipt) broker.SourceEvidence {
 	evidence := broker.SourceEvidence{
 		ContainerImages: append([]rendered.DeployedImage(nil), receipt.ContainerImages...), BaseTree: receipt.BaseTree, EffectiveTree: receipt.EffectiveTree, PatchesDigest: receipt.PatchesDigest, ObservedRevision: receipt.ObservedRevision,
 		RenderDigest: receipt.RenderDigest, EnvDigest: receipt.EnvDigest,
@@ -466,9 +472,6 @@ func deploymentToBroker(receipt DeploymentReceipt, plan *contracts.DeploymentPla
 	}
 	if receipt.Source != nil {
 		evidence.DeploymentSource = proto.Clone(receipt.Source).(*contracts.DeploymentSource)
-	}
-	if plan != nil {
-		evidence.Plan = proto.Clone(plan).(*contracts.DeploymentPlan)
 	}
 	return evidence
 }

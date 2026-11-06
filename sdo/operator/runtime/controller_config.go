@@ -1,8 +1,6 @@
-//archcheck:ratchet R5 count=3 until=S3-11c
 package runtime
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -11,7 +9,6 @@ import (
 
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
-	"sdo.dev/operator/rendered"
 )
 
 // LaunchConfigFlag is the controller entry point's single-argument launch mode:
@@ -43,7 +40,7 @@ func LoadControllerConfig(path string) (*contractsv1alpha1.ControllerConfig, err
 // them. Optional bools are emitted as `--flag=<bool>` only when present, so an
 // omitted synthetic_traffic/clean_responder_helpers/state_baseline keeps its
 // true default.
-func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) ([]string, error) {
+func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string {
 	var args []string
 	str := func(flag, value string) {
 		if value != "" {
@@ -80,17 +77,6 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) ([]strin
 	str("--application", config.GetApplication())
 	str("--source-commit", config.GetSourceCommit())
 	str("--deployed-commit", config.GetDeployedCommit())
-	repeated("--deployed-manifest-path", config.GetDeployedManifestPaths())
-	if config.GetDeploymentSource() != nil {
-		if len(config.GetDeployedManifestPaths()) > 0 {
-			return nil, errors.New("controller config sets both deployment_source and deployed_manifest_paths")
-		}
-		encoded, err := rendered.FormatDeploymentSource(config.GetDeploymentSource())
-		if err != nil {
-			return nil, err
-		}
-		str("--deployment-source", encoded)
-	}
 
 	str("--dispatcher-mode", config.GetDispatcherMode())
 	str("--responder-image", config.GetResponderImage())
@@ -140,5 +126,5 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) ([]strin
 	optBool("--clean-responder-helpers", config.CleanResponderHelpers)
 	optBool("--state-baseline", config.StateBaseline)
 
-	return args, nil
+	return args
 }

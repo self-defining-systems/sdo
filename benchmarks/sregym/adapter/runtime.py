@@ -76,7 +76,8 @@ class RuntimeConfig:
     kind_cluster_name: str | None = None
     max_deployment_attempts: int = 3
     agent_registrations: Path | None = None
-    # ProtoJSON DeploymentSource (see ``deployment_source.py``); ``None`` declares no source.
+    # ProtoJSON DeploymentSource (see ``deployment_source.py``) recorded as ``.sdo/deployment/plan.yaml`` by
+    # install-existing; ``None`` requires the seeded repository to carry a plan already.
     deployment_source: dict[str, Any] | None = None
     # ProtoJSON DeploymentPlan the human provides (see ``deployment_source.py``); ``None``: agent-authored.
     deployment_plan: dict[str, Any] | None = None

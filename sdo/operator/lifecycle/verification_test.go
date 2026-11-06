@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/worker_registry"
 	"sdo.dev/operator/worker_registry/registrytest"
 )
@@ -27,10 +29,23 @@ type fakeBroker struct {
 	accepted map[string]broker.Receipt
 	evidence map[string]broker.SourceEvidence
 	head     int
+	// root holds the proposal checkouts: the lifecycle writes plan.yaml there.
+	root string
 }
 
-func newFakeBroker() *fakeBroker {
-	return &fakeBroker{accepted: map[string]broker.Receipt{}, evidence: map[string]broker.SourceEvidence{}}
+func newFakeBroker(t *testing.T) *fakeBroker {
+	t.Helper()
+	return &fakeBroker{accepted: map[string]broker.Receipt{}, evidence: map[string]broker.SourceEvidence{}, root: t.TempDir()}
+}
+
+// plan reads back the plan.yaml the lifecycle wrote into proposal id.
+func (b *fakeBroker) plan(t *testing.T, id string) *contracts.DeploymentPlan {
+	t.Helper()
+	plan, err := planfile.Read(filepath.Join(b.root, id), planfile.Catalogs{})
+	if err != nil {
+		t.Fatalf("plan.yaml of proposal %s: %v", id, err)
+	}
+	return plan
 }
 
 func (b *fakeBroker) commit() string { return fmt.Sprintf("commit-%d", b.head) }
@@ -38,7 +53,7 @@ func (b *fakeBroker) commit() string { return fmt.Sprintf("commit-%d", b.head) }
 func (b *fakeBroker) CreateProposalForPhase(_ context.Context, id string, _ broker.Phase) (broker.Proposal, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return broker.Proposal{IncidentID: id, Path: "/checkout/" + id, BaseCommit: b.commit()}, nil
+	return broker.Proposal{IncidentID: id, Path: filepath.Join(b.root, id), BaseCommit: b.commit()}, nil
 }
 
 func (b *fakeBroker) accept(id string) broker.Receipt {
@@ -210,7 +225,7 @@ func newHarness(t *testing.T, verifier *fakeVerifier) *harness {
 	t.Helper()
 	h := &harness{workers: &fakeWorkers{}, readiness: &fakeReadiness{}, verifier: verifier, installer: &fakeInstaller{}}
 	h.coordinator = lifecycle.Coordinator{
-		Broker: newFakeBroker(), Bootstrap: fakeArtifacts{}, Registry: registrytest.BuiltIn(t),
+		Broker: newFakeBroker(t), Bootstrap: fakeArtifacts{}, Registry: registrytest.BuiltIn(t),
 		Workers: h.workers, Readiness: h.readiness, Verifier: verifier, Installer: h.installer,
 		SourceFacts: func(context.Context, string, string) (memory.SourceFacts, error) { return memory.SourceFacts{}, nil },
 		Wait:        func(_ context.Context, d time.Duration) error { h.waits = append(h.waits, d); return nil },

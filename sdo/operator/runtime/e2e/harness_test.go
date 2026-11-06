@@ -203,6 +203,15 @@ func (w *World) DeployToy() {
 	if err := os.WriteFile(arch, text, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// The deployment source is part of the accepted tree: the controller reads
+	// it from .sdo/deployment/plan.yaml.
+	planPath := filepath.Join(workspace, ".sdo/deployment/plan.yaml")
+	if err := os.MkdirAll(filepath.Dir(planPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(planPath, []byte(`{"source":{"rendererId":"raw","config":{"@type":"type.googleapis.com/sdodev.contracts.v1alpha1.RawRenderConfig","paths":["kubernetes"]}}}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	git("add", ".sdo")
 	git("commit", "-qm", "feat: seed toy operational memory")
 	w.Workspace, w.Commit = workspace, git("rev-parse", "HEAD")
@@ -325,7 +334,7 @@ func (w *World) InstallController(extra ...string) {
 		TimeoutSeconds: 300, VerificationTimeoutSeconds: 120,
 		NativeCommand: []string{"/usr/local/bin/sdo-operator"}, ReuseExisting: true,
 		RegistrationConfigMap: "sdo-agent-registrations", RegistrationDirectory: "/sdo/registrations",
-		DisableObservability: true, ExtraControllerArgs: append([]string{`--deployment-source={"renderer_id":"raw","config":{"@type":"type.googleapis.com/sdodev.contracts.v1alpha1.RawRenderConfig","paths":["kubernetes"]}}`}, extra...),
+		DisableObservability: true, ExtraControllerArgs: extra,
 	}
 	seed := func(ctx context.Context, c install.Config) error {
 		destination := filepath.Join(w.Kubelet.Run.PVCDir(c.ControlNamespace, c.RepositoryPVC), "application")

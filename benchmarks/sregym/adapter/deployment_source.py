@@ -1,6 +1,8 @@
 """Benchmark-side builders for the production ``DeploymentSource`` (ProtoJSON), the one launcher edge format.
 
-The controller takes ``--deployment-source <json>``; launchers never pass manifest path lists. Raw is the default
+``sdo-operator install-existing`` takes ``--deployment-source <json>`` and records it as the accepted tree's
+``.sdo/deployment/plan.yaml`` (the controller reads the source from there and takes no source flag); launchers
+never pass manifest path lists. Raw is the default
 renderer; SREGym ``hotelReservation`` is a kustomize root (``kubernetes/kustomization.yaml``).
 """
 
@@ -109,5 +111,5 @@ def plan_flag_value(plan: dict[str, Any]) -> str:
 
 
 def source_flag_value(source: dict[str, Any]) -> str:
-    """The compact JSON the controller's ``--deployment-source`` flag takes."""
+    """The compact JSON ``install-existing --deployment-source`` takes (written to ``plan.yaml``)."""
     return json.dumps(source, separators=(",", ":"), sort_keys=True)

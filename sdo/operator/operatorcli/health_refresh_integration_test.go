@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/rendered"
 )
 
@@ -51,13 +52,16 @@ func TestRefreshNeedsJudgeOnShapeNotSourceBytes(t *testing.T) {
 	shapeWrite(t, dir, ".sdo/goal.md", "---\nkind: goal\n---\n# Health objective\nkeep it up\n")
 	shapeWrite(t, dir, "k8s/web.yaml", shapeWeb)
 	shapeWrite(t, dir, "main.go", "package main // v1\n")
-	shapeGit(t, dir, "add", "-A")
-	shapeGit(t, dir, "commit", "-q", "-m", "judge\n\nSDO-Actor: health_judge\nSDO-Phase: initial\nSDO-Validation: passed")
 	source, err := rendered.LegacyRawSource([]string{"k8s"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	config := &contracts.ControllerConfig{AppRoot: dir, Namespace: "app", DeploymentSource: source, Duration: durationpb.New(0)}
+	if err := planfile.Write(dir, &contracts.DeploymentPlan{Source: source}); err != nil {
+		t.Fatal(err)
+	}
+	shapeGit(t, dir, "add", "-A")
+	shapeGit(t, dir, "commit", "-q", "-m", "judge\n\nSDO-Actor: health_judge\nSDO-Phase: initial\nSDO-Validation: passed")
+	config := &contracts.ControllerConfig{AppRoot: dir, Namespace: "app", Duration: durationpb.New(0)}
 
 	shapeWrite(t, dir, "main.go", "package main // v2\n")
 	shapeGit(t, dir, "commit", "-qam", "benign")

@@ -1,7 +1,5 @@
 // Package operatorcli translates installation arguments into the controller's
 // typed launch contract. The compiled child receives only ControllerConfig.
-//
-//archcheck:ratchet R5 count=3 until=S3-11c
 package operatorcli
 
 import (
@@ -19,7 +17,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/contracts/wire"
-	"sdo.dev/operator/rendered"
+	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/renderenv"
 	"sdo.dev/operator/toolchain"
 )
@@ -46,6 +44,11 @@ func RunController(ctx context.Context, args []string) error {
 	run, identity, err := parseControllerLaunch(args)
 	if err != nil {
 		return err
+	}
+	// The accepted tree is the only home of the deployment source; a lane
+	// without .sdo/deployment/plan.yaml has nothing to read desired state from.
+	if _, err := planfile.Read(run.Controller.GetAppRoot(), planCatalogs()); err != nil {
+		return fmt.Errorf("controller cannot start: %w", err)
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -114,9 +117,6 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, er
 	upstreamSSH := flags.String("memory-upstream-ssh-dir", "", "read-only directory with the ssh identity and known_hosts for the memory remote")
 	var responderEnv repeatable
 	flags.Var(&responderEnv, "responder-env", "responder environment NAME=VALUE")
-	var deployedManifestPaths repeatable
-	flags.Var(&deployedManifestPaths, "deployed-manifest-path", "manifest path selected by the accepted deployment plan")
-	deploymentSourceFlag := flags.String("deployment-source", "", "accepted DeploymentSource as ProtoJSON; exclusive with --deployed-manifest-path")
 	renderEnvFlag := flags.String("render-env", "", "install-time render environment (RenderEnvironment as ProtoJSON); empty is unknown")
 	// The parent's deploy identity (upstream advances); the child never sees it.
 	var identity deployIdentity
@@ -136,10 +136,6 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, er
 
 	if flags.NArg() != 0 {
 		return builder.RunConfig{}, deployIdentity{}, fmt.Errorf("unexpected controller arguments: %v", flags.Args())
-	}
-	deploymentSource, err := rendered.DeploymentSourceFromFlags(*deploymentSourceFlag, deployedManifestPaths)
-	if err != nil {
-		return builder.RunConfig{}, deployIdentity{}, err
 	}
 	renderEnvironment, err := renderenv.Parse(*renderEnvFlag)
 	if err != nil {
@@ -174,8 +170,8 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, er
 		ResponderStandby: standby,
 		Namespace:        *namespace, ControlNamespace: *controlNamespace, AppRoot: *app, Application: *application,
 		SourceCommit: *sourceCommit, DeployedCommit: *deployedCommit,
-		DeploymentSource: deploymentSource, RenderEnvironment: renderEnvironment,
-		Dispatcher: "python3", DispatcherMode: "job", DispatcherArgs: []string{"-m", "sdo.agents.responder.worker"},
+		RenderEnvironment: renderEnvironment,
+		Dispatcher:        "python3", DispatcherMode: "job", DispatcherArgs: []string{"-m", "sdo.agents.responder.worker"},
 		ResponderImage: *responderImage, ResponderEnv: responderEnv,
 		RepositoryPvc: *repositoryPVC, RepositoryMountPath: *repositoryMount, RepositoryPvcSubpath: *repositorySubPath,
 		ResponderCredentialsSecret: *credentialsSecret, BrokerWorktreeRoot: *worktreeRoot,

@@ -10,11 +10,11 @@ import (
 	"strings"
 	"testing"
 
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/rendered"
 )
 
@@ -87,10 +87,30 @@ func newOnboardedWorld(t *testing.T, editedByDeployer bool) *advanceWorld {
 	if editedByDeployer {
 		writeFiles(t, p.Path, map[string]string{"app.txt": "one\ntwo\nthree deployed\n"})
 	}
+	writeSyntheticPlan(t, p.Path, "k8s")
 	if _, err := b.PublishVerifiedSource(context.Background(), "onboard", advanceEvidence(t, p.Path, "onboard")); err != nil {
 		t.Fatal(err)
 	}
 	return w
+}
+
+// syntheticPlan declares a raw source over path; the deployer's evidence for
+// it names the same source.
+func syntheticPlan(t *testing.T, path string) *contracts.DeploymentPlan {
+	t.Helper()
+	config, err := anypb.New(&contracts.RawRenderConfig{Paths: []string{path}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &contracts.DeploymentPlan{Source: &contracts.DeploymentSource{RendererId: "raw", Config: config}, ExpectedWorkloadIds: []string{"Deployment/ns/app"}}
+}
+
+// writeSyntheticPlan writes the plan.yaml the lifecycle writes at admission.
+func writeSyntheticPlan(t *testing.T, root, path string) {
+	t.Helper()
+	if err := planfile.Write(root, syntheticPlan(t, path)); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func advanceEvidence(t *testing.T, checkout, image string) SourceEvidence {
@@ -122,7 +142,6 @@ func advanceEvidenceFor(t *testing.T, checkout, image string, applied bool) Sour
 	}
 	return SourceEvidence{
 		DeploymentSource: source,
-		Plan:             &contracts.DeploymentPlan{Source: proto.Clone(source).(*contracts.DeploymentSource), ExpectedWorkloadIds: []string{"Deployment/ns/app"}},
 		BaseTree:         tree, EffectiveTree: effective.ID, PatchesDigest: effective.PatchesDigest, ObservedRevision: effective.ID,
 		RenderDigest: strings.Repeat("b", 64), EnvDigest: strings.Repeat("c", 64),
 		Images: []string{image + "@sha256:" + strings.Repeat("d", 64)}, ResourceIDs: []string{"Deployment/ns/app"}, Ready: true,
@@ -176,7 +195,7 @@ func TestPublishAdvanceAcceptsTheDeployedThreeWayMerge(t *testing.T) {
 		t.Fatalf("LastUpstream = %q %v %v, want the seed %s", last, found, err, w.seed)
 	}
 	onboarded, found, err := b.AcceptedSourceEvidence(ctx)
-	if err != nil || !found || onboarded.Plan == nil || onboarded.Images[0] != "onboard@sha256:"+strings.Repeat("d", 64) {
+	if err != nil || !found || !rendered.SameDeploymentSource(onboarded.Plan.GetSource(), syntheticPlan(t, "k8s").GetSource()) || onboarded.Evidence.Images[0] != "onboard@sha256:"+strings.Repeat("d", 64) {
 		t.Fatalf("AcceptedSourceEvidence after onboarding = %+v %v %v", onboarded, found, err)
 	}
 	upstream := w.push(t, w.seed, map[string]*string{"app.txt": text("ONE\ntwo\nthree\n"), "new.txt": text("new\n"), "Dockerfile": nil})
@@ -232,7 +251,7 @@ func TestPublishAdvanceAcceptsTheDeployedThreeWayMerge(t *testing.T) {
 		t.Fatalf("LastUpstream after advance = %q %v %v", last, found, err)
 	}
 	current, found, err := b.AcceptedSourceEvidence(ctx)
-	if err != nil || !found || current.AcceptedCommit != receipt.Commit || current.Images[0] != evidence.Images[0] || current.Plan == nil {
+	if err != nil || !found || current.Evidence.AcceptedCommit != receipt.Commit || current.Evidence.Images[0] != evidence.Images[0] || current.Plan == nil {
 		t.Fatalf("AcceptedSourceEvidence after advance = %+v %v %v", current, found, err)
 	}
 	if _, err := os.Stat(b.proposalRoot(id, AdvancePhase)); !os.IsNotExist(err) {
@@ -417,5 +436,34 @@ func TestPublishVerifiedSourceRecomputesTheEffectiveTree(t *testing.T) {
 	}
 	if _, err := w.broker.PublishVerifiedSource(ctx, "second", advanceEvidence(t, p.Path, "second")); err != nil {
 		t.Fatalf("matching evidence must publish: %v", err)
+	}
+}
+
+// The plan is part of the staged tree: evidence for a tree whose plan.yaml is
+// missing, or names another source than the deployed one, is never accepted.
+func TestPublishVerifiedSourceRequiresThePlanToNameTheDeployedSource(t *testing.T) {
+	ctx := context.Background()
+	w := newAdvanceWorld(t)
+	for name, c := range map[string]struct {
+		prepare func(root string)
+		want    string
+	}{
+		"no plan": {func(root string) {
+			if err := os.Remove(filepath.Join(root, filepath.FromSlash(layout.DeploymentPlanFile))); err != nil {
+				t.Fatal(err)
+			}
+		}, "plan.yaml"},
+		"another source": {func(root string) { writeSyntheticPlan(t, root, "elsewhere") }, "another deployment source"},
+	} {
+		id := "plan-" + strings.ReplaceAll(name, " ", "-")
+		p, err := w.broker.CreateProposalForPhase(ctx, id, InitialPhase)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeFiles(t, p.Path, map[string]string{"app.txt": "one\ntwo\nthree " + name + "\n"})
+		c.prepare(p.Path)
+		if _, err := w.broker.PublishVerifiedSource(ctx, id, advanceEvidence(t, p.Path, id)); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Fatalf("%s: PublishVerifiedSource = %v, want %q", name, err, c.want)
+		}
 	}
 }

@@ -668,11 +668,12 @@ def baseline_ready(state: dict[str, Any], accepted_head: str, observed_after: st
 
 @dataclass(frozen=True)
 class OnboardingEvidence:
-    """What a fresh variant onboarding must show, read from the accepted evidence plan and controller Job."""
+    """What a fresh variant onboarding must show, read from the accepted tree's plan and the deployment evidence."""
 
     renderer_id: str
     image_builders: tuple[str, ...]
-    controller_args: tuple[str, ...]
+    # Renderer ID declared by the accepted tree's ``.sdo/deployment/plan.yaml``; ``None`` when it has none.
+    plan_renderer_id: str | None
 
 
 def onboarding_violations(evidence: OnboardingEvidence, variant: str) -> list[str]:
@@ -682,13 +683,18 @@ def onboarding_violations(evidence: OnboardingEvidence, variant: str) -> list[st
     """
     violations: list[str] = []
     if evidence.renderer_id != variant:
-        violations.append(f"accepted evidence plan renderer_id is {evidence.renderer_id!r}, expected {variant!r}")
+        violations.append(f"accepted deployment renderer_id is {evidence.renderer_id!r}, expected {variant!r}")
     if not evidence.image_builders:
-        violations.append("accepted evidence plan declares no images")
+        violations.append("accepted deployment plan declares no images")
     elif other := sorted({builder for builder in evidence.image_builders if builder != "buildkit"}):
         violations.append(f"images not built by buildkit: {', '.join(other)}")
-    if "--deployment-source" not in evidence.controller_args:
-        violations.append("controller args carry no --deployment-source")
+    if evidence.plan_renderer_id is None:
+        violations.append("accepted tree has no .sdo/deployment/plan.yaml")
+    elif evidence.plan_renderer_id != evidence.renderer_id:
+        violations.append(
+            f"accepted tree plan.yaml renderer_id is {evidence.plan_renderer_id!r}, "
+            f"deployment evidence says {evidence.renderer_id!r}"
+        )
     return violations
 
 

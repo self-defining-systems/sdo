@@ -11,6 +11,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -98,4 +101,38 @@ func Format(plan *contracts.DeploymentPlan) ([]byte, error) {
 	}
 	compact.WriteByte('\n')
 	return compact.Bytes(), nil
+}
+
+// ErrAbsent marks a checkout without .sdo/deployment/plan.yaml.
+var ErrAbsent = errors.New("no .sdo/deployment/plan.yaml: write it with `sdo-operator install-existing --deployment-source` (or let the deployment agent propose one)")
+
+// Read loads the plan of a checkout (the accepted repository, or a proposal
+// or candidate root). A missing file is ErrAbsent, wrapped with the path.
+func Read(checkout string, catalogs Catalogs) (*contracts.DeploymentPlan, error) {
+	path := filepath.Join(checkout, filepath.FromSlash(layout.DeploymentPlanFile))
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("%s: %w", checkout, ErrAbsent)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read deployment plan: %w", err)
+	}
+	plan, err := Parse(data, catalogs)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return plan, nil
+}
+
+// Write stores plan at its canonical path in checkout, creating directories.
+func Write(checkout string, plan *contracts.DeploymentPlan) error {
+	data, err := Format(plan)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(checkout, filepath.FromSlash(layout.DeploymentPlanFile))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
 }

@@ -15,6 +15,8 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/rendered"
 )
 
@@ -29,6 +31,11 @@ var ErrSourceEvidencePredatesDeploymentSource = errors.New("deployment evidence 
 // must be reinstalled.
 var ErrSourceEvidencePredatesEffectiveTree = errors.New("deployment evidence predates effective_tree and patches_digest (written by an older operator); persistent lanes must reinstall the operator (`sdo-operator install --fresh` / lane reset)")
 
+// ErrSourceEvidenceCarriesPlan marks a ledger record written while the plan
+// lived in the evidence. The plan is now .sdo/deployment/plan.yaml in the
+// accepted tree, which such a lane does not have: it must be reinstalled.
+var ErrSourceEvidenceCarriesPlan = errors.New("deployment evidence carries its deployment plan (written by an older operator); the plan now lives in .sdo/deployment/plan.yaml, so persistent lanes must reinstall the operator (`sdo-operator install --fresh` / lane reset)")
+
 func validateSourceEvidence(value SourceEvidence) error {
 	if value.AcceptedCommit != "" {
 		return errors.New("deployment evidence cannot claim an accepted commit")
@@ -41,9 +48,6 @@ func validateSourceEvidence(value SourceEvidence) error {
 	}
 	if !validSHA256(value.RenderDigest) || !validSHA256(value.EnvDigest) {
 		return errors.New("trusted source evidence lacks its render and environment digests")
-	}
-	if value.Plan != nil && !rendered.SameDeploymentSource(value.Plan.GetSource(), value.DeploymentSource) {
-		return errors.New("accepted deployment plan names another source than the deployment evidence")
 	}
 	seen := map[string]bool{}
 	for _, resource := range value.ResourceIDs {
@@ -75,6 +79,38 @@ func requireEffectiveEvidence(ctx context.Context, root string, evidence SourceE
 	return nil
 }
 
+// requirePlanEvidence requires the plan.yaml of root's candidate tree to
+// declare the deployment source the deployer verified. The plan is what the
+// controller and the next advance read, so a tree whose plan names another
+// source than the deployed one is never accepted.
+func requirePlanEvidence(ctx context.Context, root string, evidence SourceEvidence, catalogs planfile.Catalogs) error {
+	tree, err := ProposalTreeDigest(ctx, root)
+	if err != nil {
+		return err
+	}
+	plan, err := planAtTree(ctx, root, tree, catalogs)
+	if err != nil {
+		return err
+	}
+	if !rendered.SameDeploymentSource(plan.GetSource(), evidence.DeploymentSource) {
+		return errors.New("the staged tree's .sdo/deployment/plan.yaml names another deployment source than the verified deployment")
+	}
+	return nil
+}
+
+// planAtTree reads and decodes .sdo/deployment/plan.yaml of a tree object.
+func planAtTree(ctx context.Context, repository, tree string, catalogs planfile.Catalogs) (*contracts.DeploymentPlan, error) {
+	data, err := runGit(ctx, repository, "cat-file", "blob", tree+":"+layout.DeploymentPlanFile)
+	if err != nil {
+		return nil, fmt.Errorf("the tree has no %s (%w): %w", layout.DeploymentPlanFile, err, planfile.ErrAbsent)
+	}
+	plan, err := planfile.Parse(data, catalogs)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", layout.DeploymentPlanFile, err)
+	}
+	return plan, nil
+}
+
 func validSHA256(value string) bool {
 	return len(value) == 64 && validGitID(value)
 }
@@ -84,7 +120,6 @@ func validSHA256(value string) bool {
 type sourceEvidenceRecord struct {
 	ContainerImages   []rendered.DeployedImage `json:"container_images,omitempty"`
 	DeploymentSource  json.RawMessage          `json:"deployment_source"`
-	Plan              json.RawMessage          `json:"plan,omitempty"`
 	BaseTree          string                   `json:"base_tree"`
 	EffectiveTree     string                   `json:"effective_tree"`
 	PatchesDigest     string                   `json:"patches_digest"`
@@ -116,11 +151,6 @@ func (e SourceEvidence) MarshalJSON() ([]byte, error) {
 			return nil, fmt.Errorf("encode render environment: %w", err)
 		}
 	}
-	if e.Plan != nil {
-		if record.Plan, err = canonicalProtoJSON(e.Plan); err != nil {
-			return nil, fmt.Errorf("encode deployment plan: %w", err)
-		}
-	}
 	return json.Marshal(record)
 }
 
@@ -138,6 +168,9 @@ func (e *SourceEvidence) UnmarshalJSON(data []byte) error {
 	}
 	if tree, found := fields["effective_tree"]; !found || string(tree) == "null" || string(tree) == `""` {
 		return ErrSourceEvidencePredatesEffectiveTree
+	}
+	if _, found := fields["plan"]; found {
+		return ErrSourceEvidenceCarriesPlan
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -158,12 +191,6 @@ func (e *SourceEvidence) UnmarshalJSON(data []byte) error {
 		value.RenderEnvironment = &contracts.RenderEnvironment{}
 		if err := protojson.Unmarshal(record.RenderEnvironment, value.RenderEnvironment); err != nil {
 			return fmt.Errorf("decode render environment: %w", err)
-		}
-	}
-	if len(record.Plan) > 0 {
-		value.Plan = &contracts.DeploymentPlan{}
-		if err := protojson.Unmarshal(record.Plan, value.Plan); err != nil {
-			return fmt.Errorf("decode deployment plan: %w", err)
 		}
 	}
 	*e = value
