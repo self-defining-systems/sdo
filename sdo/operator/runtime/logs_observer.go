@@ -12,6 +12,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"sdo.dev/operator/sdk"
@@ -296,6 +297,18 @@ func projectLogCycle(c logs.Cycle, q logs.Query) logs.Cycle {
 	}
 	return c
 }
+
+// noPreviousLog reports that a previous-instance read found no log: the API
+// server answers 404, or 400 "previous terminated container ... not found",
+// once the kubelet has garbage-collected the terminated container. That is the
+// absence of evidence, not a failed read, so every previous-log read shares it.
+func noPreviousLog(err error) bool {
+	if apierrors.IsNotFound(err) {
+		return true
+	}
+	return apierrors.IsBadRequest(err) && strings.Contains(err.Error(), "previous terminated container") && strings.Contains(err.Error(), "not found")
+}
+
 func (o *LogsObserver) fetch(ctx context.Context, ns, pod, container string, previous, tail bool, state *logState, at time.Time, budget int64) (logs.Cycle, int64) {
 	c := logs.Cycle{End: at, Matches: map[string]logs.Match{}}
 	opt := &corev1.PodLogOptions{Container: container, Previous: previous, Timestamps: true, LimitBytes: &budget}
@@ -310,6 +323,9 @@ func (o *LogsObserver) fetch(ctx context.Context, ns, pod, container string, pre
 	defer cancel()
 	stream, err := o.read(request, ns, pod, opt)
 	if err != nil {
+		if previous && noPreviousLog(err) {
+			return c, 0
+		}
 		c.Error = err.Error()
 		return c, 0
 	}
