@@ -83,13 +83,13 @@ func (b CommandBackend) Observe(ctx context.Context, resourceID string) (Workloa
 		}
 		if waited := b.now().Sub(started); lastObject != nil && waited >= rolloutCheckAfter && b.now().Sub(lastCheck) >= rolloutCheckEvery {
 			lastCheck = b.now()
-			if stuck := b.stuckRollout(resourceID, limit, waited, lastObject); stuck != nil {
+			if stuck := b.stuckRollout(ctx, resourceID, limit, waited, lastObject); stuck != nil {
 				return WorkloadObservation{}, stuck
 			}
 		}
 		if err := b.wait(bounded, 2*time.Second); err != nil {
 			if errors.Is(bounded.Err(), context.DeadlineExceeded) && ctx.Err() == nil && lastObject != nil {
-				return WorkloadObservation{}, b.rolloutTimeout(resourceID, limit, lastObject)
+				return WorkloadObservation{}, b.rolloutTimeout(ctx, resourceID, limit, lastObject)
 			}
 			return WorkloadObservation{}, fmt.Errorf("observe workload %s: %w: %v", resourceID, err, lastErr)
 		}

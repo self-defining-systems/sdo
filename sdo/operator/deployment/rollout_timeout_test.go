@@ -70,6 +70,9 @@ func warning(reason, message string) string {
 	return `{"reason":"` + reason + `","message":"` + message + `","involvedObject":{"kind":"Pod","name":"web-1"}}`
 }
 
+// pastDeadline is the observation state of a rollout that has run to its deadline with no Job running.
+var pastDeadline = rolloutInputs{Waited: 10 * time.Minute, Deadline: 10 * time.Minute}
+
 func TestAssessRolloutClassifiesOnPositiveEvidenceOnly(t *testing.T) {
 	now, _ := time.Parse(time.RFC3339, testNow)
 	cases := []struct {
@@ -92,7 +95,7 @@ func TestAssessRolloutClassifiesOnPositiveEvidenceOnly(t *testing.T) {
 		{"missing configmap volume", podOpen + `{"phase":"Pending","containerStatuses":[{"name":"web","state":{"waiting":{"reason":"ContainerCreating"}}}]}` + podClose, warning("FailedMount", `configmap \"web-conf\" not found`), false, true, []string{"FailedMount", "web-conf", "cannot be mounted"}},
 		{"image pull backoff", podOpen + `{"phase":"Pending","containerStatuses":[{"name":"web","state":{"waiting":{"reason":"ImagePullBackOff"}}}]}` + podClose, "", false, true, []string{"ImagePullBackOff", "cannot be pulled"}},
 		{"main container exited nonzero", podOpen + `{"phase":"Failed","containerStatuses":[{"name":"web","state":{"terminated":{"exitCode":2,"reason":"Error"}}}]}` + podClose, "", false, true, []string{"exit 2"}},
-		{"init container failing", podOpen + `{"phase":"Pending","initContainerStatuses":[{"name":"wait-db","restartCount":5,"state":{"waiting":{"reason":"CrashLoopBackOff"}}}],"containerStatuses":[{"name":"web","state":{"waiting":{"reason":"PodInitializing"}}}]}` + podClose, "", false, true, []string{"init wait-db", "init container wait-db"}},
+		{"init container failing past the deadline", podOpen + `{"phase":"Pending","initContainerStatuses":[{"name":"wait-db","restartCount":5,"state":{"waiting":{"reason":"CrashLoopBackOff"}}}],"containerStatuses":[{"name":"web","state":{"waiting":{"reason":"PodInitializing"}}}]}` + podClose, "", false, true, []string{"init wait-db", "init container wait-db"}},
 		{"zero pods and replicaset cannot create", `{"items":[]}`, `{"reason":"FailedCreate","message":"error looking up service account demo/web: not found","involvedObject":{"kind":"ReplicaSet","name":"web-5d9"}}`, false, true, []string{"no pods exist", "service account", "cannot create pods"}},
 		{"zero pods no events", `{"items":[]}`, "", false, false, []string{"no pods exist"}},
 		{"ready pod beside a progressing one", `{"items":[{"metadata":{"name":"web-0",` + podAge + `},"status":{"phase":"Running","containerStatuses":[{"name":"web","ready":true,"state":{"running":{` + longAgo + `}}}]}},{"metadata":{"name":"web-1",` + podAge + `},"status":{"phase":"Pending","containerStatuses":[{"name":"web","state":{"waiting":{"reason":"ContainerCreating"}}}]}}]}`, "", true, false, []string{"ready"}},
@@ -103,7 +106,7 @@ func TestAssessRolloutClassifiesOnPositiveEvidenceOnly(t *testing.T) {
 			if tc.events != "" {
 				events = tc.events
 			}
-			got := assessRollout("Deployment/demo/web", []byte(tc.pods), []byte(`{"items":[`+events+`]}`), now)
+			got := assessRollout("Deployment/demo/web", []byte(tc.pods), []byte(`{"items":[`+events+`]}`), now, pastDeadline)
 			if got.Progressing != tc.progressing || got.Stuck != tc.stuck {
 				t.Fatalf("progressing=%t stuck=%t, want %t/%t: %s", got.Progressing, got.Stuck, tc.progressing, tc.stuck, got.Detail)
 			}
@@ -182,3 +185,113 @@ func TestObserveKeepsWaitingWhileInitContainerRuns(t *testing.T) {
 }
 
 func mustTime(s string) time.Time { t, _ := time.Parse(time.RFC3339, s); return t }
+
+const retryingInitPod = `{"phase":"Pending","initContainerStatuses":[{"name":"dependencies","restartCount":4,"state":{"waiting":{"reason":"CrashLoopBackOff"}},"lastState":{"terminated":{"exitCode":1,"reason":"Error","message":"waiting for synthetic-job"}}}],"containerStatuses":[{"name":"web","state":{"waiting":{"reason":"PodInitializing"}}}]}`
+
+// A restarting init container is not yet progressed, not stuck, until the
+// progress deadline, and never while a Job of the same or an earlier phase runs.
+func TestInitContainerRetriesAreNotStuckBeforeTheDeadline(t *testing.T) {
+	now := mustTime(testNow)
+	pods := []byte(podOpen + retryingInitPod + podClose)
+	early := rolloutInputs{Waited: 80 * time.Second, Deadline: 10 * time.Minute}
+	got := assessRollout("Deployment/demo/web", pods, []byte(`{"items":[]}`), now, early)
+	if got.Stuck || !got.Progressing {
+		t.Fatalf("init retry before the deadline must not be stuck: %+v", got)
+	}
+	jobs := rolloutInputs{Waited: time.Hour, Deadline: 10 * time.Minute, RunningJobs: []string{"Job/demo/migrate"}}
+	got = assessRollout("Deployment/demo/web", pods, []byte(`{"items":[]}`), now, jobs)
+	if got.Stuck || !got.Progressing || !strings.Contains(got.Detail, "last exit 1") {
+		t.Fatalf("init retry while a Job runs must not be stuck: %+v", got)
+	}
+	got = assessRollout("Deployment/demo/web", pods, []byte(`{"items":[]}`), now, pastDeadline)
+	if !got.Stuck || got.Progressing || !got.InitDeadline || got.reason() != RolloutReasonInitRetryDeadline {
+		t.Fatalf("init retry past the deadline must be stuck with its own reason: %+v", got)
+	}
+	for _, want := range []string{"deadline exceeded while init container dependencies was retrying", "last exit 1 Error", "waiting for synthetic-job"} {
+		if !strings.Contains(got.Detail+got.Advice, want) {
+			t.Fatalf("evidence lacks %q: %s | %s", want, got.Detail, got.Advice)
+		}
+	}
+}
+
+func TestInitRetryGraceDoesNotHideFastFailures(t *testing.T) {
+	now := mustTime(testNow)
+	jobs := rolloutInputs{Waited: time.Second, Deadline: 10 * time.Minute, RunningJobs: []string{"Job/demo/migrate"}}
+	for name, pods := range map[string]string{
+		"image pull":    podOpen + `{"phase":"Pending","containerStatuses":[{"name":"web","state":{"waiting":{"reason":"ImagePullBackOff"}}}]}` + podClose,
+		"invalid image": podOpen + `{"phase":"Pending","containerStatuses":[{"name":"web","state":{"waiting":{"reason":"InvalidImageName"}}}]}` + podClose,
+		"unschedulable": podOpen + `{"phase":"Pending","conditions":[{"type":"PodScheduled","status":"False","reason":"Unschedulable"}]}` + podClose,
+	} {
+		got := assessRollout("Deployment/demo/web", []byte(pods), []byte(`{"items":[]}`), now, jobs)
+		if !got.Stuck && name != "image pull" {
+			t.Fatalf("%s must keep its fast fail: %+v", name, got)
+		}
+		if got.Progressing {
+			t.Fatalf("%s must not be progressing: %+v", name, got)
+		}
+	}
+}
+
+func jobBackend(pods, job, deployment string, limit time.Duration) CommandBackend {
+	return CommandBackend{
+		ObserveLimit: limit,
+		Run: func(_ context.Context, _ string, args []string, _ []byte) ([]byte, error) {
+			switch {
+			case len(args) > 1 && args[1] == "pods":
+				return []byte(pods), nil
+			case len(args) > 1 && args[1] == "job":
+				return []byte(job), nil
+			}
+			return []byte(deployment), nil
+		},
+	}
+}
+
+func observeWithClock(b CommandBackend, ctx context.Context, step time.Duration, maxWaits int) (time.Duration, error) {
+	clock := mustTime(testNow)
+	waits := 0
+	b.Now = func() time.Time { return clock }
+	b.Wait = func(ctx context.Context, _ time.Duration) error {
+		waits++
+		clock = clock.Add(step)
+		if waits > maxWaits {
+			<-ctx.Done()
+			return ctx.Err()
+		}
+		return nil
+	}
+	_, err := b.Observe(ctx, "Deployment/demo/web")
+	return time.Duration(waits) * step, err
+}
+
+func TestObserveDoesNotFailInitRetriesWhileEarlierJobRuns(t *testing.T) {
+	pods := podOpen + retryingInitPod + podClose
+	runningJob := `{"metadata":{"name":"migrate"},"spec":{"completions":1},"status":{"active":1}}`
+	ctx := withJobsInFlight(context.Background(), []string{"Job/demo/migrate"})
+	_, err := observeWithClock(jobBackend(pods, runningJob, rollingDeployment, 20*time.Millisecond), ctx, 10*time.Second, 0)
+	var timeout *RolloutTimeoutError
+	if !errors.As(err, &timeout) || timeout.Stalled || timeout.Reason != RolloutReasonProgressing {
+		t.Fatalf("a running Job makes init retries a time limit, never a stall: %v", err)
+	}
+	finished := `{"metadata":{"name":"migrate"},"spec":{"completions":1},"status":{"succeeded":1}}`
+	_, err = observeWithClock(jobBackend(pods, finished, rollingDeployment, 20*time.Millisecond), ctx, 10*time.Second, 0)
+	if !errors.As(err, &timeout) || !timeout.Stalled || timeout.Reason != RolloutReasonInitRetryDeadline {
+		t.Fatalf("with no Job running the deadline ends the wait with the init reason: %v", err)
+	}
+	if !strings.Contains(err.Error(), "dependencies") || !strings.Contains(err.Error(), "waiting for synthetic-job") {
+		t.Fatalf("error must name the container and its last message: %v", err)
+	}
+}
+
+func TestObserveUsesProgressDeadlineForInitRetries(t *testing.T) {
+	deployment := strings.Replace(rollingDeployment, `"spec":{"replicas":1,`, `"spec":{"progressDeadlineSeconds":120,"replicas":1,`, 1)
+	pods := podOpen + retryingInitPod + podClose
+	waited, err := observeWithClock(jobBackend(pods, "", deployment, 10*time.Minute), context.Background(), 10*time.Second, 100)
+	var timeout *RolloutTimeoutError
+	if !errors.As(err, &timeout) || timeout.Reason != RolloutReasonInitRetryDeadline {
+		t.Fatalf("want init retry deadline, got %v", err)
+	}
+	if waited < 120*time.Second || waited > 150*time.Second {
+		t.Fatalf("stalled after %s, want about the 120s progress deadline", waited)
+	}
+}

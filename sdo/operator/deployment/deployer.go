@@ -204,7 +204,7 @@ func (r *applyRun) observe(ctx context.Context, record *workloadRecord) error {
 	if record.observed != nil {
 		return nil
 	}
-	observed, err := r.deployer.Applier.Observe(ctx, record.id)
+	observed, err := r.deployer.Applier.Observe(withJobsInFlight(ctx, r.jobsInFlight(record)), record.id)
 	if err != nil {
 		return fmt.Errorf("observe workload %s: %w", record.id, err)
 	}
@@ -223,6 +223,18 @@ func (r *applyRun) observe(ctx context.Context, record *workloadRecord) error {
 	}
 	record.observed = &observed
 	return nil
+}
+
+// jobsInFlight lists the Jobs applied so far (the current phase and every
+// earlier one) other than record that are not yet observed complete.
+func (r *applyRun) jobsInFlight(record *workloadRecord) []string {
+	var ids []string
+	for _, id := range r.order {
+		if other := r.workloads[id]; other != record && other.observed == nil && strings.HasPrefix(id, "Job/") {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 func (r *applyRun) receipt(ctx context.Context) (lifecycle.DeploymentReceipt, error) {
