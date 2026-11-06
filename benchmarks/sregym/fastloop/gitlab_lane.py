@@ -22,8 +22,9 @@ from benchmarks.sregym.adapter import WaitKind, deployment_plan, helm_source, pr
 from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
     from pathlib import Path
+
+    from benchmarks.sregym.fastloop.accepted_source import RenderedWorkloads
 
 NAMESPACE = "gitlab"
 APPLICATION = "gitlab"
@@ -60,51 +61,17 @@ def deployment_source() -> dict[str, Any]:
     return helm_source("chart", assemble.VALUE_FILES)
 
 
-#: Workload kinds whose Pods the plan must see roll out. Hooks are not in the rendered inventory (SDO renders them as
-#: ephemeral install phases), so every Job here is a regular object of the release.
-WORKLOAD_KINDS = ("Deployment", "StatefulSet", "DaemonSet", "Job")
-
-
-def _pod_specs(obj: dict[str, Any]) -> list[dict[str, Any]]:
-    spec = obj.get("spec") or {}
-    kind = obj.get("kind")
-    if kind == "Pod":
-        return [spec]
-    if kind == "CronJob":
-        spec = (spec.get("jobTemplate") or {}).get("spec") or {}
-    return [(spec.get("template") or {}).get("spec") or {}]
-
-
-def rendered_images(objects: Sequence[dict[str, Any]]) -> list[str]:
-    """Every container and init container image the rendered objects run, sorted and unique."""
-    images: set[str] = set()
-    for obj in objects:
-        for pod in _pod_specs(obj):
-            for container in (*(pod.get("containers") or ()), *(pod.get("initContainers") or ())):
-                if container.get("image"):
-                    images.add(container["image"])
-    return sorted(images)
-
-
-def expected_workload_ids(objects: Sequence[dict[str, Any]], namespace: str) -> list[str]:
-    """``Kind/namespace/name`` of the rendered workloads, in render order."""
-    return [
-        f"{obj['kind']}/{obj['metadata'].get('namespace') or namespace}/{obj['metadata']['name']}"
-        for obj in objects
-        if obj.get("kind") in WORKLOAD_KINDS
-    ]
-
-
-def plan_from_render(objects: Sequence[dict[str, Any]], namespace: str) -> dict[str, Any]:
+def plan_from_workloads(workloads: RenderedWorkloads) -> dict[str, Any]:
     """The provided ``DeploymentPlan``: the lane's helm source, prebuilt upstream images, the rendered workloads.
 
-    Nothing here is maintained by hand: images and workload IDs come from the chart render, so a chart bump or a
-    values change moves the plan with it.
+    Nothing here is maintained by hand: images and workload IDs come from SDO's own render of the chart (Go decides
+    which kinds are workloads), so a chart bump or a values change moves the plan with it. Hooks are not in the
+    rendered inventory (SDO renders them as ephemeral install phases).
     """
     return deployment_plan(
         deployment_source(),
-        images=[prebuilt_image(image) for image in rendered_images(objects)],
-        expected_workload_ids=expected_workload_ids(objects, namespace),
+        images=[prebuilt_image(image) for image in workloads.images],
+        expected_workload_ids=list(workloads.workload_ids),
     )
 
 
@@ -113,7 +80,7 @@ def provided_plan(workspace: Path, namespace: str = NAMESPACE) -> dict[str, Any]
     from benchmarks.sregym.fastloop.accepted_source import AcceptedSource
 
     source = AcceptedSource(workspace, namespace, ("chart",), renderer_source=deployment_source())
-    return plan_from_render(source.manifests, namespace)
+    return plan_from_workloads(source.workloads)
 
 
 def prepare_workspace(workspace: Path, *, archive: Path | None = None, pins: dict[str, Any] | None = None) -> str:

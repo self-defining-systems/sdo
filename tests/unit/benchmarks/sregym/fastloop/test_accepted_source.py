@@ -318,3 +318,24 @@ def test_no_caller_keys_manifests_by_the_renamed_application() -> None:
         and any(isinstance(a, ast.Attribute) and a.attr == "application" for a in node.args)
     ]
     assert offenders == []
+
+
+def test_workloads_ask_go_for_the_plan_view_and_never_list_kinds(tmp_path, monkeypatch):
+    from benchmarks.sregym.fastloop import accepted_source
+
+    source = commit_accepted_source(tmp_path / "source", [_config("input")])
+    answer = {"workloads": [{"id": "CronJob/app/tick", "images": ["i:1"]}], "images": ["i:1"]}
+    requests = []
+
+    def render(command, args, **kwargs):
+        requests.append(json.loads(kwargs["input_text"])["output"])
+        return json.dumps(answer)
+
+    monkeypatch.setattr(accepted_source, "execute_operator", render)
+    assert source.workloads.workload_ids == ("CronJob/app/tick",)
+    assert source.workloads.images == ("i:1",)
+    assert requests == ["workloads"]
+    monkeypatch.setattr(accepted_source, "execute_operator", lambda *a, **k: "[]")
+    bad = commit_accepted_source(tmp_path / "other", [_config("x")])
+    with pytest.raises(ValueError, match="invalid workload summary"):
+        _ = bad.workloads

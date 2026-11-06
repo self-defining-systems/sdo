@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
 
-from apps.toy.faults import IMAGE, SERVICES, command, fault_spec
+from apps.toy.faults import IMAGE, command, fault_spec
 from apps.toy.variants.assemble import VARIANTS, assemble
 from benchmarks.sregym.adapter import (
     WaitKind,
@@ -25,6 +25,7 @@ from benchmarks.sregym.adapter import (
     raw_source,
     wait_for,
 )
+from benchmarks.sregym.fastloop.accepted_source import AcceptedSource
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment, Images
 from benchmarks.sregym.fastloop.host_limits import HostLimits, NodeLimits, apply_node_limits
 from benchmarks.sregym.fastloop.toy_upstream import UpstreamLayout, serve_upstream, source_config
@@ -109,7 +110,6 @@ class ToyWorker:
 
 
 def apply_accepted_source(workspace: Path, namespace: str, kubeconfig: Path) -> None:
-    from benchmarks.sregym.fastloop.accepted_source import AcceptedSource
     from benchmarks.sregym.fastloop.baseline_recovery import KubectlApplicationCluster
 
     source = AcceptedSource(workspace, namespace, ("kubernetes",))
@@ -167,17 +167,22 @@ def point_kustomization_at_registry(workspace: Path, namespace: str) -> None:
 PROVIDED_VARIANTS = ("helm", "kustomize")
 
 
-def provided_deployment_plan(variant: str, namespace: str) -> dict[str, Any] | None:
-    """The deployment the harness provides for a variant that ships one (helm); SDO deploys it, no agent authors it.
+def provided_deployment_plan(variant: str, namespace: str, workspace: Path) -> dict[str, Any] | None:
+    """The deployment the harness provides for a variant that ships one; SDO deploys it, no agent authors it.
 
-    The raw lane is seeded and the remaining variants are still authored by the deployer agent.
+    The expected workloads come from SDO's own render of the committed ``workspace`` (Go decides which kinds are
+    workloads), never from a list here. The raw lane is seeded and the remaining variants are still authored by
+    the deployer agent.
     """
     if variant not in PROVIDED_VARIANTS:
         return None
+    source = helm_source("chart") if variant == "helm" else kustomize_source("deploy/overlays/default")
+    path = "chart" if variant == "helm" else "deploy"
+    workloads = AcceptedSource(workspace, namespace, (path,), renderer_source=source).workloads
     return deployment_plan(
-        helm_source("chart") if variant == "helm" else kustomize_source("deploy/overlays/default"),
+        source,
         images=(buildkit_image(registry_image(namespace), ".", "Dockerfile"),),
-        expected_workload_ids=[f"Deployment/{namespace}/{service}" for service in SERVICES],
+        expected_workload_ids=list(workloads.workload_ids),
     )
 
 
@@ -495,7 +500,7 @@ def install_controller(
             persistent=True,
             kind_cluster_name=environment.cluster,
             deployment_source=raw_source(("kubernetes",)) if variant == "raw" else None,
-            deployment_plan=provided_deployment_plan(variant, environment.namespace),
+            deployment_plan=provided_deployment_plan(variant, environment.namespace, environment.workspace),
             source_kind="git" if variant in PROVIDED_VARIANTS else "",
             source_config=json.dumps(source_config(UpstreamLayout(environment.namespace)))
             if variant in PROVIDED_VARIANTS
