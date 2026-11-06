@@ -1,6 +1,7 @@
 """Resource admission must fence setup and the real pre-injection proof."""
 
 import json
+import shutil
 from datetime import datetime, timedelta, timezone
 from functools import partial
 from pathlib import Path
@@ -14,6 +15,7 @@ from benchmarks.sregym.fastloop import admission, cli, hotel_helpers, rbac, work
 EPOCH = datetime(2030, 1, 1, tzinfo=timezone.utc)
 OVERDUE = "2000-01-01T00:00:00Z"  # a busy_until the controller itself has already let lapse
 CLOSEOUT_MARGIN = wait_for(WaitKind.CLOSEOUT_SETTLE)
+DECLARED_HEALTH_DETECTORS = ("workload-health", "service-endpoints", "service-reachability", "traffic-health")
 CONTROLLER_JOB = {"metadata": {"uid": "job-1"}, "status": {"active": 1}}
 
 
@@ -31,6 +33,9 @@ def lane(tmp_path, monkeypatch):
     traffic = tmp_path / ".sdo/diagnostics/traffic/workloads"
     traffic.mkdir(parents=True)
     (traffic / "health.yaml").write_text("purpose: health-probe\nscenarios:\n- id: frontend\n")
+    for detector in DECLARED_HEALTH_DETECTORS:
+        (tmp_path / ".sdo/diagnostics/detectors/health" / detector).mkdir(parents=True)
+        (tmp_path / ".sdo/diagnostics/detectors/health" / detector / "manifest.yaml").write_text("id: fixture\n")
     environment = SimpleNamespace(
         workspace=tmp_path, namespace="hotel-reservation", kubeconfig=tmp_path / "kubeconfig", deploy_problem="fixture"
     )
@@ -41,7 +46,7 @@ def lane(tmp_path, monkeypatch):
         return {
             "history": [
                 {"detector_id": key, "status": "clear", "evaluated_at": datetime.now(timezone.utc).isoformat()}
-                for key in ("workload-health", "service-endpoints", "service-reachability", "traffic-health")
+                for key in DECLARED_HEALTH_DETECTORS
             ]
         }
 
@@ -1110,3 +1115,43 @@ def test_acceptance_generation_settles_before_admission_identity(lane, monkeypat
     monkeypatch.setattr(admission, "workload_identity", identity)
     assert gate.prove("control")["passed"]
     assert calls[0] >= 3
+
+
+def test_stabilization_requires_exactly_the_health_detectors_the_accepted_memory_declares(lane):
+    """A memory whose designer chose other detector ids must not be held to a hardcoded id."""
+    gate, _calls = lane
+    health = gate.environment.workspace / ".sdo/diagnostics/detectors/health"
+    shutil.rmtree(health)
+    for name in ("workload-health", "traffic-probe-call"):
+        (health / name).mkdir(parents=True)
+        (health / name / "manifest.yaml").write_text("id: fixture\n")
+    gate._policy()
+    assert gate.required_detectors == {"workload-health", "traffic-probe-call"}
+
+
+def test_proof_passes_on_a_memory_that_has_no_traffic_health_detector(lane, monkeypatch):
+    """The detection designer names its own detectors; admission waits only for the ones the memory declares."""
+    gate, _calls = lane
+    monkeypatch.setattr(admission, "assert_lane_resources", lambda *args, **kwargs: {"passed": True})
+    declared = ("workload-health", "traffic-probe-call")
+    health = gate.environment.workspace / ".sdo/diagnostics/detectors/health"
+    shutil.rmtree(health)
+    for name in declared:
+        (health / name).mkdir(parents=True)
+        (health / name / "manifest.yaml").write_text("id: fixture\n")
+    gate.ops = SimpleNamespace(
+        runtime_state=lambda _control: {
+            "history": [
+                {"detector_id": key, "status": "clear", "evaluated_at": datetime.now(timezone.utc).isoformat()}
+                for key in declared
+            ]
+        }
+    )
+    assert gate.prove("hotel-reservation-sdo")["passed"] is True
+
+
+def test_policy_rejects_memory_without_health_detectors(lane):
+    gate, _calls = lane
+    shutil.rmtree(gate.environment.workspace / ".sdo/diagnostics/detectors/health")
+    with pytest.raises(ValueError, match="no health detectors"):
+        gate._policy()
