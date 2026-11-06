@@ -186,7 +186,7 @@ def upstream_commit(commits: list[AcceptedCommit], pushed: str) -> AcceptedCommi
     return next((c for c in commits if c.trailers.get(UPSTREAM_TRAILER) == pushed), None)
 
 
-def _wait_verdict(
+def wait_verdict(
     ops: ScenarioOps, timings: ScenarioTimings, pushed: str
 ) -> tuple[str, AcceptedCommit | None, HoldRecord | None]:
     """Poll until the push is accepted, held, or an incident is open; "" when none happens in time."""
@@ -203,7 +203,7 @@ def _wait_verdict(
         ops.sleep(timings.poll)
 
 
-def _watch(ops: ScenarioOps, timings: ScenarioTimings) -> bool:
+def watch_for_incident(ops: ScenarioOps, timings: ScenarioTimings) -> bool:
     """Whether an incident was open at any poll of the steady window (one more look at its end)."""
     end = ops.clock() + timings.steady
     seen = False
@@ -224,7 +224,7 @@ def run_benign(ops: ScenarioOps, timings: ScenarioTimings, commit: str = "benign
     pushed = ops.push(commit)
     result = ScenarioResult(commit, pushed)
     _report_green(ops, result)
-    verdict, accepted, hold = _wait_verdict(ops, timings, pushed)
+    verdict, accepted, hold = wait_verdict(ops, timings, pushed)
     result.verdict = verdict
     if verdict == "":
         result.violations.append(f"pushed {pushed[:12]} was neither accepted nor held within {timings.verdict:g}s")
@@ -239,7 +239,7 @@ def run_benign(ops: ScenarioOps, timings: ScenarioTimings, commit: str = "benign
             result.violations.append(
                 f"accepted commit {accepted.sha[:12]} has {ACTOR_TRAILER} {actor!r}, expected upstream"
             )
-    incident = _watch(ops, timings)
+    incident = watch_for_incident(ops, timings)
     after = ops.snapshot()
     if incident:
         result.violations.append("an incident opened during the steady window")
@@ -273,7 +273,7 @@ def run_broken(
     pushed = ops.push(commit)
     result = ScenarioResult(commit, pushed)
     _report_green(ops, result)
-    verdict, accepted, hold = _wait_verdict(ops, timings, pushed)
+    verdict, accepted, hold = wait_verdict(ops, timings, pushed)
     result.verdict = verdict
     at_verdict = ops.snapshot()
     if verdict == "":
@@ -291,7 +291,7 @@ def run_broken(
             result.violations.extend(table_violations(hold.reason))
             if reasons == BROKEN_COMMIT_REASONS:
                 result.violations.extend(routing_violations(hold.reason, BROKEN_EXPECTATION))
-    incident = _watch(ops, timings) or verdict == "incident"
+    incident = watch_for_incident(ops, timings) or verdict == "incident"
     after = ops.snapshot()
     if upstream_commit(ops.accepted_commits(), pushed) is not None and verdict != "accepted":
         result.violations.append("the broken commit was accepted after the verdict")
