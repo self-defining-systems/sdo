@@ -54,7 +54,7 @@ func (s *run) telemetryRules() {
 }
 
 const (
-	sourcesHint  = "a sources file is `version: 1` and `sources:` entries with id, kinds, adapter and endpoint; see the telemetry section of the detector-authoring references"
+	sourcesHint  = "a sources file is `version: 1` and `sources:` entries with id, kinds, adapter and endpoint; see sdo-operationalize references/telemetry.md"
 	backendsHint = "a backends file is `version: 1` and `backends:` entries with id, recipe, uses and params"
 )
 

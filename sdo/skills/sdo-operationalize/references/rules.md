@@ -36,3 +36,24 @@ see them as notes. The diagnostic names the operation, component, edge or probe 
   `map.uncovered-data`.
 - An edge no operation path crosses is noted, never refused: add the operation that uses it, or keep it as a
   known gap. Enforced by: `map.unexercised-edge`.
+
+## Telemetry bindings
+
+Bindings are `.sdo/diagnostics/telemetry/sources.yaml` and `backends.yaml`; see [telemetry](telemetry.md). Only the
+detection designer writes them, in the initial phase, and only in open mode.
+
+- A bindings file is one strict YAML document: version 1, no unknown fields or duplicate keys, at most 32 KiB, unique
+  well-formed ids, known kinds, and a complete `ready` block when present. Enforced by: `telemetry.schema`.
+- A source names a registered adapter that serves every kind it lists, once each. Enforced by: `telemetry.adapter`.
+- An endpoint is a Service in the control or application namespace or an allowlisted host, with no IP literal,
+  `localhost`, userinfo, query or fragment; publish URLs follow the same rule. Enforced by: `telemetry.endpoint`.
+- A credential is a granted name, never a value. Enforced by: `telemetry.credential`.
+- Adapter options contain only keys the adapter defines. Enforced by: `telemetry.options`.
+- At most one default source per kind across operator-provided and designer sources. Enforced by: `telemetry.default`.
+- A backend names an offered recipe and uses only capabilities the environment granted and the recipe declares; a
+  source's `backend` is defined in `backends.yaml`. Enforced by: `telemetry.backend`.
+- Pinned and floor environments admit no designer bindings. Enforced by: `telemetry.mode`.
+- Go assigns origins and operator-provided ids are not redefined. Enforced by: `telemetry.origin`.
+- Every detector query resolves to a bound source, and an alerts consumer has an alert-capable source. Enforced by:
+  `telemetry.unbound`.
+- The resolved source serves the query's kind. Enforced by: `telemetry.kind`.

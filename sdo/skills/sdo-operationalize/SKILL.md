@@ -90,7 +90,7 @@ Go already installs generic checks of workloads, Services and nodes. Add a sourc
 for a mechanism the probes and generic checks cannot localize ([catalog](references/catalog.md),
 [methods](references/methods.md)). Never weaken a probe to silence it; fix the scenario or the threshold. When
 existing inputs cannot localize a failure, instrument the application's source through the source-repair path
-([application instrumentation](references/methods.md#application-instrumentation)).
+([application instrumentation](references/methods.md#application-instrumentation), [telemetry](references/telemetry.md)).
 
 ## After an incident (reflection)
 

@@ -17,9 +17,9 @@ Each item says what to check, which source fact it comes from, and the input tha
   and total line counts per container per cycle, a few short excerpts, truncation flags, and optionally the tail
   of the previous terminated container. At most 64 KiB per container per cycle; collected only while a detector
   watches `logs.Watch`.
-- **Metrics**: PromQL threshold rules (`sdo.dev/operator/sdk/metrics`). Only when the task says a metrics source
-  is configured; the SDO stack is installed by default when the task says so. Use only series whose exporter
-  you can find in source, and the task’s explicit annotation or OTLP publishing capabilities.
+- **Metrics**: threshold rules (`sdo.dev/operator/sdk/metrics`) over a bound source, in its dialect. Only when the
+  task lists a metrics source ([telemetry](telemetry.md)). Use only series whose exporter you can find in source, and
+  the source's explicit `publish` block.
 
 The `sdo-detector-authoring` skill has the exact types: its SDK reference, and its traffic reference for
 scenarios, workloads and links.
@@ -32,8 +32,8 @@ scenarios, workloads and links.
   below desired availability or past their progress deadline.
 - `service-reachability`: Service ports that refuse connections while their pods are Ready.
 - `traffic-health` and `traffic-links`: generated from the workloads you author.
-- `metrics-alerts`: firing Prometheus alerts in the application namespace, when a bound telemetry source serves alerts.
-  This includes alert rules the application ships, once its Prometheus loads them.
+- `metrics-alerts`: firing alerts of alert-capable sources in the application namespace, when a bound telemetry source serves alerts.
+  This includes alert rules the application ships, once its backend loads them.
 - `cluster-wiring`: Service selectors matching no pods or several workloads, named target ports no container
   declares, missing pod-template references and keys (ConfigMap, Secret, PVC, ServiceAccount), unbound PVCs,
   missing Ingress backends, NetworkPolicies isolating all ingress or egress of pods behind a Service, and
