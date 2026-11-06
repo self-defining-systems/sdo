@@ -96,3 +96,28 @@ func TestAcceptedHealthRevisionShapeErrorIsNotSwallowed(t *testing.T) {
 		t.Fatal("ShapeOf failure must surface")
 	}
 }
+
+// A seed has no health_judge commit, so its provenance is unknown and the install
+// must run the (scripted) judge refresh: this is by design, not a regression of
+// shape-keyed revisions, which only compare when a judge commit exists.
+func TestAcceptedHealthRevisionOfASeedWithoutJudgeCommitNeedsRefresh(t *testing.T) {
+	dir := t.TempDir()
+	gitIn(t, dir, "init", "-q")
+	writeFile(t, dir, "main.go", "package main\n")
+	gitIn(t, dir, "add", "-A")
+	gitIn(t, dir, "commit", "-q", "-m", "feat: seed application")
+	writeFile(t, dir, ".sdo/goal.md", goalFile)
+	gitIn(t, dir, "add", "-A")
+	gitIn(t, dir, "commit", "-q", "-m", "feat: seed operational memory")
+	same := func(context.Context, string, string) (string, error) { return "shape-1", nil }
+	for name, shapeOf := range map[string]memory.ShapeOf{"bytes": nil, "shape": same} {
+		rev, err := memory.AcceptedHealthRevision(context.Background(), dir, shapeOf)
+		if err != nil || !rev.NeedsRefresh || rev.JudgeCommit != "" {
+			t.Fatalf("%s: NeedsRefresh = %v, JudgeCommit = %q, err = %v; want a refresh with no judge commit", name, rev.NeedsRefresh, rev.JudgeCommit, err)
+		}
+	}
+	gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "judge\n\nSDO-Actor: health_judge\nSDO-Phase: initial\nSDO-Validation: passed")
+	if rev, err := memory.AcceptedHealthRevision(context.Background(), dir, same); err != nil || rev.NeedsRefresh {
+		t.Fatalf("after the judge commit with nothing changed: NeedsRefresh = %v, err = %v; want false", rev.NeedsRefresh, err)
+	}
+}

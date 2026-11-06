@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from benchmarks.sregym.adapter.image_entrypoints import (
         BENCHMARK_IMAGE_ENTRY_POINTS,
         assert_image_entrypoints,
+        assert_image_executables,
         image_entrypoint_script,
     )
     from benchmarks.sregym.adapter.image_retention import ImageRetentionError, retain_lane_images
@@ -127,6 +128,7 @@ _EXPORTS: dict[str, str] = {
     "run_context_preflight": "context_preflight",
     "BENCHMARK_IMAGE_ENTRY_POINTS": "image_entrypoints",
     "assert_image_entrypoints": "image_entrypoints",
+    "assert_image_executables": "image_entrypoints",
     "image_entrypoint_script": "image_entrypoints",
     "NativeInstallConfig": "native_operator",
     "RuntimeEvidenceTarget": "native_operator",
@@ -247,6 +249,7 @@ __all__ = [
     "run_context_preflight",
     "BENCHMARK_IMAGE_ENTRY_POINTS",
     "assert_image_entrypoints",
+    "assert_image_executables",
     "image_entrypoint_script",
     "NativeInstallConfig",
     "ImageRetentionError",

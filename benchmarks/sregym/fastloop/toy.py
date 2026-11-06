@@ -214,6 +214,10 @@ def fresh_objective(args: Any) -> str | None:
     return lifecycle_objective(DEFAULT_GOAL, goal)
 
 
+#: Executables the scripted agent runner invokes inside the responder image.
+SCRIPTED_WORKER_EXECUTABLES = ("bwrap",)
+
+
 def up(args: Any) -> int:
     from benchmarks.sregym.fastloop.baseline_recovery import (
         KubectlApplicationCluster,
@@ -227,6 +231,11 @@ def up(args: Any) -> int:
         raise ValueError("toy lanes require a development mount; omit --no-dev-mount")
     objective = fresh_objective(args)
     variant = toy_variant(args)
+    if objective is None and not getattr(args, "frozen_memory", False):
+        # A seed carries no judge provenance, so the install runs the scripted health refresh in the responder image.
+        from benchmarks.sregym.adapter import assert_image_executables
+
+        assert_image_executables(args.responder_image, SCRIPTED_WORKER_EXECUTABLES, run=subprocess.run)
     prebuilt = variant == "raw"  # other variants are built from source by SDO's deployment source
     host_limits = HostLimits(args.host_lock_dir.resolve(), args.host_redeploys)
     cluster = cluster_name(args)

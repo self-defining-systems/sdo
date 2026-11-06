@@ -120,3 +120,46 @@ def assert_image_entrypoints(
         error = result.stderr.strip() or "entrypoint import probe returned no valid result"
     if result.returncode or error:
         raise ValueError(f"eval: image {ref} entrypoint smoke failed: {error or result.stderr.strip()}")
+
+
+def assert_image_executables(
+    ref: str,
+    names: Sequence[str],
+    *,
+    run: Callable[..., Any] = subprocess.run,
+) -> None:
+    """Fail fast when an image lacks executables its scripted workers invoke.
+
+    The scripted agent runner executes every step under ``bwrap``; the production
+    responder target omits it, so a lane with that image burns its whole health
+    refresh budget on ``No such file or directory: 'bwrap'``.
+    """
+    result = run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--network",
+            "none",
+            "--entrypoint",
+            "sh",
+            ref,
+            "-c",
+            'for name in "$@"; do command -v "$name" >/dev/null || echo "$name"; done',
+            "sh",
+            *names,
+        ],
+        check=False,
+        text=True,
+        capture_output=True,
+        timeout=wait_for(WaitKind.SLOW_COMMAND),
+    )
+    if result.returncode:
+        raise ValueError(f"eval: image {ref} executable probe failed: {result.stderr.strip()}")
+    missing = result.stdout.split()
+    if missing:
+        raise ValueError(
+            f"eval: image {ref} lacks {', '.join(missing)}, which scripted workers run under. Build the benchmark "
+            "variant from the same commit (SDO_SCRIPTED_WORKER=1 SDO_IMAGES=benchmark "
+            "SDO_IMAGE_TAG=<tag>-scripted bash scripts/build_sdo_images.sh) and point the lane's responder image at it"
+        )
