@@ -10,7 +10,7 @@ import (
 )
 
 func main() {
-	if err := runtime.RunWithOptions(context.Background(), nil, runtime.RuntimeOptions{}); err != nil {
+	if err := runtime.RunWithOptions(context.Background(), nil, runtime.RuntimeOptions{Renderers: nil}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

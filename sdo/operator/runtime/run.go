@@ -42,6 +42,7 @@ import (
 	"sdo.dev/operator/memoryhost"
 	"sdo.dev/operator/memoryhost/hostio"
 	"sdo.dev/operator/onboarding"
+	"sdo.dev/operator/render"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -97,6 +98,9 @@ type RuntimeOptions struct {
 	// simulation on virtual time sets a positive interval so reflector timers
 	// stay inside its bubble.
 	InformerResync time.Duration
+	// Renderers is the deployment-renderer catalog the controller reads
+	// desired state through. Nil means no renderers are wired.
+	Renderers *render.Catalog
 }
 
 const defaultStateBaselineStartTimeout = 30 * time.Second
@@ -110,9 +114,10 @@ func (values *repeatedFlag) Set(value string) error {
 }
 
 // Run launches the stable controller; accepted code executes in the memory host.
-func Run() {
+// renderers is the deployment-renderer catalog; nil wires none.
+func Run(renderers *render.Catalog) {
 	broker.RunValidationChild()
-	if err := RunWithOptions(context.Background(), nil, RuntimeOptions{}); err != nil {
+	if err := RunWithOptions(context.Background(), nil, RuntimeOptions{Renderers: renderers}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		if errors.Is(err, memory.ErrHealthRefreshRequired) {
 			os.Exit(memory.HealthRefreshExitCode)
