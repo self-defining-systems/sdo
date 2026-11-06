@@ -24,8 +24,6 @@ ROOT = Path(__file__).resolve().parents[3]
 APP = ROOT / "apps/toy"
 NAMESPACE = "sdo-toy"
 CONTROLLER_REPOSITORY = "/workspace/application"  # the controller Job's --app
-#: The kind cluster name; a scratch run sets ``SDO_TOY_CLUSTER`` to avoid the shared default.
-CLUSTER = os.environ.get("SDO_TOY_CLUSTER", "sdo-toy")
 #: The goal a fresh-memory install publishes unless ``--goal`` overrides it (the deployer budgets 256 characters).
 DEFAULT_GOAL = (
     "Keep the frontend, backend and catalog Deployments available with ready Service endpoints, "

@@ -455,7 +455,7 @@ Every incident dispatches the responder with a playbook coverage view. `recorded
 
 One trusted match is selected by distinct findings covered, then program ID and canonical bindings. Uncovered findings and unexplained drift do not prevent the attempt. Whole-incident verification still decides success; failure rolls back reversible writes and dispatches the responder sequentially with the attempt summary. No source-plan policy file is needed, even when the deployed application name differs from its benchmark name. See [automatic repair checks](../../../../docs/plan-safety-authority.md).
 
-For a private scripted lane (no model calls), set `SDO_TOY_CLUSTER=gs1-toy` for `up --app toy --dev-mount "$PWD"` and use a fresh run directory outside the repository. `--cluster-prefix gs1-` selects an isolated toy cluster with the configured worker ID; `SDO_TOY_CLUSTER` remains an explicit override. Subsequent commands use the saved kubeconfig and environment. A target-port incident followed by a repeat exercises learning, save-time validation and agent-selected program reuse.
+For a private scripted lane (no model calls), run `up --app toy --dev-mount "$PWD"` with a fresh run directory outside the repository. `--cluster-prefix gs1-` selects an isolated toy cluster named prefix plus worker ID (`gs1-0` by default); claim that exact name in the host lease. Subsequent commands use the saved kubeconfig and environment. A target-port incident followed by a repeat exercises learning, save-time validation and agent-selected program reuse.
 
 ### Fresh memory and namespace control state
 
