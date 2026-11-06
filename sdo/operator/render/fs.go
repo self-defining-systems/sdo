@@ -45,12 +45,19 @@ func GitBlobID(data []byte) string {
 // Limits bounds what one render may read.
 type Limits struct {
 	// FileBytes caps one file. TotalBytes caps the distinct files read.
-	// Zero fields take the defaults.
-	FileBytes, TotalBytes int64
+	// OutputBytes caps the JSON-encoded size of every object a render
+	// returns, ephemeral phases included. Zero fields take the defaults.
+	FileBytes, TotalBytes, OutputBytes int64
 }
 
-// DefaultLimits are 2 MiB per file and 16 MiB per render.
-var DefaultLimits = Limits{FileBytes: 2 << 20, TotalBytes: 16 << 20}
+// DefaultLimits are 2 MiB per file, 16 MiB read per render and 16 MiB
+// rendered. The output bound equals the total input bound: a render may not
+// emit more manifest bytes than the whole input budget it was allowed to read,
+// which still leaves room for a template or generator to amplify a small chart
+// by far more than any real application needs (the largest synthetic and real
+// fixtures render to well under 1 MiB). Template expansion is the only
+// amplification a renderer has, and this is the one place that caps it.
+var DefaultLimits = Limits{FileBytes: 2 << 20, TotalBytes: 16 << 20, OutputBytes: 16 << 20}
 
 func (l Limits) withDefaults() Limits {
 	if l.FileBytes <= 0 {
@@ -59,11 +66,29 @@ func (l Limits) withDefaults() Limits {
 	if l.TotalBytes <= 0 {
 		l.TotalBytes = DefaultLimits.TotalBytes
 	}
+	if l.OutputBytes <= 0 {
+		l.OutputBytes = DefaultLimits.OutputBytes
+	}
 	return l
 }
 
 // ErrLimit marks an input that exceeds Limits.
 var ErrLimit = errors.New("render input exceeds limit")
+
+// OutputLimitError reports a render whose objects, once encoded, exceed
+// Limits.OutputBytes. It is a verdict on the source (Invalid), never retried.
+// It matches ErrLimit through errors.Is.
+type OutputLimitError struct {
+	Bytes, Limit int64 // encoded size reached (a lower bound when stopped early) and the cap
+	Objects      int   // objects counted when the cap was crossed
+}
+
+func (e *OutputLimitError) Error() string {
+	return fmt.Sprintf("render output exceeds limit: %d bytes after %d objects, output limit %d", e.Bytes, e.Objects, e.Limit)
+}
+
+// Is makes the error match ErrLimit.
+func (e *OutputLimitError) Is(target error) bool { return target == ErrLimit }
 
 // InputKind says how a render touched an input.
 type InputKind int

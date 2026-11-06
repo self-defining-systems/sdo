@@ -19,7 +19,7 @@ const (
 )
 
 func TestCatalogRegistersBuiltIns(t *testing.T) {
-	if got, want := renderers.Catalog().IDs(), []string{"kustomize", "raw"}; !reflect.DeepEqual(got, want) {
+	if got, want := renderers.Catalog().IDs(), []string{"helm", "kustomize", "raw"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("IDs = %v, want %v", got, want)
 	}
 }

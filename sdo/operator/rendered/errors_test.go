@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io/fs"
 	"testing"
+
+	"sdo.dev/operator/render"
 )
 
 func TestSourceErrorKinds(t *testing.T) {
@@ -49,6 +51,7 @@ func TestClassifySourceByCause(t *testing.T) {
 		"wrapped read":  {fmt.Errorf("render: %w", &fs.PathError{Op: "read", Path: "a", Err: errors.New("i/o error")}), ErrSourceUnavailable},
 		"not exist":     {&fs.PathError{Op: "read", Path: "a", Err: fs.ErrNotExist}, ErrSourceInvalid},
 		"cancelled":     {context.Canceled, ErrSourceUnavailable},
+		"output limit":  {fmt.Errorf("render helm: %w", &render.OutputLimitError{Bytes: 2, Limit: 1, Objects: 1}), ErrSourceInvalid},
 		"uncategorized": {errors.New("bad yaml"), ErrSourceInvalid},
 	} {
 		if got := classifySource(tc.err); !errors.Is(got, tc.want) {

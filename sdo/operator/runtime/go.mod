@@ -38,8 +38,24 @@ require (
 require sigs.k8s.io/controller-runtime v0.18.4
 
 require (
+	github.com/BurntSushi/toml v1.3.2 // indirect
+	github.com/Masterminds/goutils v1.1.1 // indirect
+	github.com/Masterminds/semver/v3 v3.2.1 // indirect
+	github.com/Masterminds/sprig/v3 v3.2.3 // indirect
+	github.com/cyphar/filepath-securejoin v0.2.4 // indirect
 	github.com/evanphx/json-patch/v5 v5.9.0 // indirect
+	github.com/gobwas/glob v0.2.3 // indirect
+	github.com/huandu/xstrings v1.4.0 // indirect
+	github.com/mitchellh/copystructure v1.2.0 // indirect
+	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	github.com/prometheus/client_model v0.6.1 // indirect
+	github.com/shopspring/decimal v1.3.1 // indirect
+	github.com/spf13/cast v1.5.0 // indirect
+	github.com/xeipuuv/gojsonpointer v0.0.0-20190905194746-02993c407bfb // indirect
+	github.com/xeipuuv/gojsonreference v0.0.0-20180127040603-bd5ef7bd5415 // indirect
+	github.com/xeipuuv/gojsonschema v1.2.0 // indirect
+	golang.org/x/crypto v0.55.0 // indirect
+	helm.sh/helm/v3 v3.15.4 // indirect
 	k8s.io/apiextensions-apiserver v0.30.3 // indirect
 )
 

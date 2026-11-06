@@ -2,6 +2,7 @@ package render
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -125,6 +126,9 @@ func (c *Catalog) Render(ctx context.Context, fsys FS, env Env, id string, confi
 	if err := validateResult(res, env); err != nil {
 		return Result{}, fmt.Errorf("render %s: %w", id, err)
 	}
+	if err := checkOutputLimit(res, c.limits.withDefaults().OutputBytes); err != nil {
+		return Result{}, fmt.Errorf("render %s: %w", id, err)
+	}
 	res.Inputs = rec.Inputs()
 	return res, nil
 }
@@ -160,6 +164,26 @@ func validateObject(obj *unstructured.Unstructured, env Env) error {
 			if _, present := obj.Object[field]; present {
 				return fmt.Errorf("Secret %s carries %s under SecretsOmit", obj.GetName(), field)
 			}
+		}
+	}
+	return nil
+}
+
+// checkOutputLimit is the single bound on rendered output for every renderer.
+// It runs before the Result is returned, so no caller holds an oversized
+// render. It stops encoding at the first object that crosses the cap.
+func checkOutputLimit(res Result, limit int64) error {
+	var total int64
+	count := 0
+	for _, obj := range res.Objects() {
+		count++
+		b, err := json.Marshal(obj.Object)
+		if err != nil {
+			return fmt.Errorf("encode %s %s: %w", obj.GetKind(), obj.GetName(), err)
+		}
+		total += int64(len(b))
+		if total > limit {
+			return &OutputLimitError{Bytes: total, Limit: limit, Objects: count}
 		}
 	}
 	return nil
