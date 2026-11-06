@@ -37,6 +37,18 @@ responder's in an advance; `infrastructure` is retried without costing an attemp
 A correction to a designer is typed diagnostics `operability.<check id>`; the count of designer corrections is in
 the durable rejection log.
 
+## Typed hold causes (`sdo-upstream-holds`)
+
+Every held upstream revision persists its reason as `cause=<c> owner=<o> items=<O1,O3|-> <hold>: <detail> (<paths>)`
+(`items=-` when no item failed). Parse the prefix with `^cause=(\w+) owner=(\w+) items=([A-Za-z0-9,]+|-) `; the text
+after it is the hold kind (`rollout`, `health`, `render`, `build`, `merge_conflict`, `patch_conflict`, `shape_change`,
+`memory_touched`, `scope`, `ref_rewritten`, `materialize`, `designer_refresh`, `operability`). Advance-mode owners: a
+failed rollout or firing Go floor detector (`cause=source_fault`) is the responder's (the cluster is left for ordinary
+detection; no agent task is dispatched by a hold), a firing designer-only detector or pending probe is the designer's
+(`detector_fault`, `probe_unavailable`), patch/render/build are the deployer's and are held before any cluster effect,
+scope/allowlist/environment/unknown are the human's. An offline hold has zero cluster effect; an infrastructure cause is
+retried, never held.
+
 ## Toy harness assertion
 
 `benchmarks/sregym/fastloop/toy_scenarios.py` (via `toy_operability.py`) requires, before each scripted push, the
@@ -44,3 +56,7 @@ ConfigMap present, stage `complete`, O1-O6 each present with status not `fail`/`
 `report.json`, and `accepted_commit` equal to an accepted first-parent commit. Its violations appear in
 `scenario-<commit>.json` (`violations`, and `operability` holds the summary the harness read). An absent ConfigMap on
 a lane installed before the report existed is expected: reinstall the lane.
+
+The scripted broken commit must also be held with a routed prefix: cause `rollout` or `source_fault`, owner
+`responder`; `toy_operability.HOLD_ROUTES` is the harness's own per-kind table (checked, never derived from SDO), and a
+reason without the prefix is "not typed".

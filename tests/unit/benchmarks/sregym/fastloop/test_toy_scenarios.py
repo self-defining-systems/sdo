@@ -96,7 +96,7 @@ def benign_world() -> World:
 
 
 def broken_world() -> World:
-    return World(events={6: hold("rollout: backend did not become ready")})
+    return World(events={6: hold("cause=rollout owner=responder items=O1 rollout: backend did not become ready")})
 
 
 def test_benign_passes_on_a_clean_advance():
@@ -137,7 +137,7 @@ def test_benign_fails_on_an_incident_in_the_steady_window():
 
 
 def test_benign_fails_when_the_commit_is_held_or_never_moves():
-    held = World(events={6: hold("rollout: stalled")})
+    held = World(events={6: hold("cause=rollout owner=responder items=O1 rollout: stalled")})
     assert any("was held" in v for v in sc.run_benign(held, TIMINGS).violations)
     silent = sc.run_benign(World(), TIMINGS)
     assert any("neither accepted nor held" in v for v in silent.violations)
@@ -169,7 +169,9 @@ def test_broken_negative_controls():
     assert any("neither held" in v for v in sc.run_broken(World(), TIMINGS).violations)
     untyped = sc.run_broken(World(events={6: hold("it broke")}), TIMINGS)
     assert any("not typed" in v for v in untyped.violations)
-    other = sc.run_broken(World(events={6: hold("merge_conflict: main.go")}), TIMINGS)
+    other = sc.run_broken(
+        World(events={6: hold("cause=patch owner=deployer items=O1 merge_conflict: main.go")}), TIMINGS
+    )
     assert any("not one of" in v for v in other.violations)
 
 
@@ -194,7 +196,7 @@ def test_broken_allows_responder_changes_while_an_incident_is_open():
 
 def test_broken_allows_memory_commits_to_move_the_head_under_a_hold():
     def hold_and_record_an_outcome(world: World) -> None:
-        hold("rollout: x")(world)
+        hold("cause=rollout owner=responder items=O1 rollout: x")(world)
         world.snap = replace(world.snap, head="h9")
 
     result = sc.run_broken(World(events={6: hold_and_record_an_outcome}), TIMINGS)
@@ -209,7 +211,8 @@ def test_timings_reject_non_positive_values():
 
 
 def test_hold_reason_kind():
-    assert sc.HoldRecord("r", "rollout: stalled").reason_kind == "rollout"
+    assert sc.HoldRecord("r", "cause=rollout owner=responder items=O1 rollout: stalled").reason_kind == "rollout"
+    assert sc.HoldRecord("r", "rollout: stalled").reason_kind == ""
     assert sc.HoldRecord("r", "stalled").reason_kind == ""
 
 
@@ -373,5 +376,39 @@ def test_benign_requires_a_green_operability_report():
 
 
 def test_broken_requires_a_green_operability_report():
-    result = sc.run_broken(World(events={6: hold("rollout: backend did not become ready")}, report=None), TIMINGS)
+    result = sc.run_broken(
+        World(
+            events={6: hold("cause=rollout owner=responder items=O1 rollout: backend did not become ready")},
+            report=None,
+        ),
+        TIMINGS,
+    )
     assert any("operability" in v for v in result.violations)
+
+
+def test_broken_requires_the_routing_prefix():
+    result = sc.run_broken(World(events={6: hold("rollout: backend did not become ready")}), TIMINGS)
+    assert any("not typed" in v for v in result.violations)
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "cause=rollout owner=deployer items=O1 rollout: x",  # onboarding owner, not the advance owner
+        "cause=patch owner=responder items=O1 rollout: x",  # cause outside the table for the kind
+    ],
+)
+def test_broken_rejects_misrouted_holds(reason):
+    result = sc.run_broken(World(events={6: hold(reason)}), TIMINGS)
+    assert any("routed to" in v or "owner is" in v or "cause" in v for v in result.violations)
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "cause=rollout owner=responder items=O1 rollout: backend did not become ready",
+        "cause=source_fault owner=responder items=O4 health: floor detector fired",
+    ],
+)
+def test_broken_accepts_responder_routed_holds(reason):
+    assert sc.run_broken(World(events={6: hold(reason)}), TIMINGS).violations == []

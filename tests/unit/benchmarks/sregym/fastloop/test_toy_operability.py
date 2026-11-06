@@ -64,3 +64,21 @@ def test_routing_expectation():
     bad = op.routing_violations("cause=patch owner=deployer items=O1 merge_conflict: x", op.BROKEN_EXPECTATION)
     assert len(bad) == 2
     assert op.routing_violations("health: x", op.BROKEN_EXPECTATION)
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "cause=patch owner=deployer items=O1 merge_conflict (Dockerfile)",
+        "cause=coverage owner=designer items=O3 shape_change: component added",
+        "cause=scope owner=human items=O6 memory_touched: .sdo/goal/goal.md",
+        "cause=environment owner=human items=- ref_rewritten: not an ancestor",
+    ],
+)
+def test_every_documented_hold_route_matches_the_table(reason):
+    assert op.table_violations(reason) == []
+
+
+def test_table_rejects_a_route_outside_it():
+    assert op.table_violations("cause=patch owner=human items=O1 merge_conflict: x")
+    assert op.hold_kind("cause=render owner=deployer items=O1 render (a, b)") == "render"

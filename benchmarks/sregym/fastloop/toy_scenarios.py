@@ -18,7 +18,14 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
 from benchmarks.sregym.adapter import WaitKind, wait_for
-from benchmarks.sregym.fastloop.toy_operability import OperabilityRead, report_violations
+from benchmarks.sregym.fastloop.toy_operability import (
+    BROKEN_EXPECTATION,
+    OperabilityRead,
+    hold_kind,
+    report_violations,
+    routing_violations,
+    table_violations,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -30,7 +37,17 @@ UPSTREAM_TRAILER = "SDO-Upstream"
 #: Hold reasons a failed rollout may legitimately carry (E7 rollout, E8 health); the rest are other holds.
 BROKEN_COMMIT_REASONS = frozenset({"rollout", "health"})
 KNOWN_REASONS = frozenset(
-    {"ref_rewritten", "memory_touched", "materialize", "merge_conflict", "render", "shape_change", "build"}
+    {
+        "ref_rewritten",
+        "memory_touched",
+        "materialize",
+        "merge_conflict",
+        "patch_conflict",
+        "render",
+        "shape_change",
+        "build",
+        "scope",
+    }
     | BROKEN_COMMIT_REASONS
 )
 #: ``git log`` arguments whose output ``parse_accepted_log`` reads; run in the accepted repository.
@@ -51,9 +68,8 @@ class HoldRecord:
 
     @property
     def reason_kind(self) -> str:
-        """The typed part of the reason, before the first colon (empty when the reason is untyped)."""
-        kind, sep, _ = self.reason.partition(":")
-        return kind.strip() if sep else ""
+        """The typed hold kind after the ``cause= owner= items=`` prefix (empty when the reason carries no prefix)."""
+        return hold_kind(self.reason)
 
 
 @dataclass(frozen=True)
@@ -271,6 +287,10 @@ def run_broken(
             result.violations.append(f"hold reason {hold.reason!r} is not typed")
         elif hold.reason_kind not in reasons:
             result.violations.append(f"hold reason {hold.reason_kind!r} is not one of {sorted(reasons)}")
+        else:
+            result.violations.extend(table_violations(hold.reason))
+            if reasons == BROKEN_COMMIT_REASONS:
+                result.violations.extend(routing_violations(hold.reason, BROKEN_EXPECTATION))
     incident = _watch(ops, timings) or verdict == "incident"
     after = ops.snapshot()
     if upstream_commit(ops.accepted_commits(), pushed) is not None and verdict != "accepted":
