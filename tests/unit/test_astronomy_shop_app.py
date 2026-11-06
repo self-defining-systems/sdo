@@ -10,7 +10,7 @@ APP = Path(__file__).resolve().parents[2] / "apps" / "astronomy_shop"
 
 
 def test_astronomy_shop_deployment_matches_harness_contract() -> None:
-    objects = list(yaml.safe_load_all((APP / "kubernetes" / "astronomy-shop.yaml").read_text()))
+    objects = list(yaml.load_all((APP / "kubernetes" / "astronomy-shop.yaml").read_text(), Loader=yaml.CSafeLoader))
     indexed = {(obj["kind"], obj["metadata"]["name"]): obj for obj in objects}
     assert len(indexed) == len(objects)
     assert all(obj["metadata"].get("namespace") == "astronomy-shop" for obj in objects)
@@ -67,7 +67,7 @@ def test_astronomy_shop_source_pins_are_explicit() -> None:
 
 
 def test_astronomy_baseline_resources_and_metrics_match_running_components() -> None:
-    objects = list(yaml.safe_load_all((APP / "kubernetes/astronomy-shop.yaml").read_text()))
+    objects = list(yaml.load_all((APP / "kubernetes/astronomy-shop.yaml").read_text(), Loader=yaml.CSafeLoader))
     indexed = {(o["kind"], o["metadata"]["name"]): o for o in objects}
     expected = {
         ("accounting", "accounting"): "384Mi",
@@ -103,7 +103,7 @@ def test_astronomy_renderer_preserves_baseline_policy(tmp_path, monkeypatch) -> 
     monkeypatch.setattr(module, "__file__", str(tmp_path / "render.py"))
     # The checked-in pre-fix chart output is the input shape. Reset only the
     # policy fields, so a no-op renderer cannot satisfy this contract.
-    objects = list(yaml.safe_load_all((APP / "kubernetes/astronomy-shop.yaml").read_text()))
+    objects = list(yaml.load_all((APP / "kubernetes/astronomy-shop.yaml").read_text(), Loader=yaml.CSafeLoader))
     for o in objects:
         if o["kind"] == "Deployment" and o["metadata"]["name"] in {"accounting", "shipping", "flagd"}:
             for c in o["spec"]["template"]["spec"]["containers"]:
@@ -132,7 +132,7 @@ def test_astronomy_renderer_preserves_baseline_policy(tmp_path, monkeypatch) -> 
 
     monkeypatch.setattr(module.subprocess, "check_output", command)
     module.main()
-    output = list(yaml.safe_load_all((tmp_path / "kubernetes/astronomy-shop.yaml").read_text()))
+    output = list(yaml.load_all((tmp_path / "kubernetes/astronomy-shop.yaml").read_text(), Loader=yaml.CSafeLoader))
     deployment = next(o for o in output if o["kind"] == "Deployment" and o["metadata"]["name"] == "shipping")
     assert deployment["spec"]["template"]["spec"]["containers"][0]["resources"]["limits"]["memory"] == "128Mi"
     collector = next(o for o in output if o["kind"] == "ConfigMap" and o["metadata"]["name"] == "otel-collector-agent")
@@ -155,7 +155,7 @@ def test_astronomy_memory_rule_covers_every_container_and_preserves_requests() -
     spec.loader.exec_module(module)
     policy = json.loads((APP / "memory-baseline.json").read_text())
     measurements = {(r["kind"], r["workload"], r["container"], r["init"]): r for r in policy["containers"]}
-    objects = list(yaml.safe_load_all((APP / "kubernetes/astronomy-shop.yaml").read_text()))
+    objects = list(yaml.load_all((APP / "kubernetes/astronomy-shop.yaml").read_text(), Loader=yaml.CSafeLoader))
     seen = set()
     for obj in objects:
         if obj["kind"] not in {"Deployment", "StatefulSet", "DaemonSet"}:
@@ -194,7 +194,7 @@ def test_astronomy_memory_rule_covers_every_container_and_preserves_requests() -
 
 def test_astronomy_collector_parallelism_is_explicit_without_more_resources() -> None:
     """A host's advertised cores must not multiply collector GC workers."""
-    objects = list(yaml.safe_load_all((APP / "kubernetes/astronomy-shop.yaml").read_text()))
+    objects = list(yaml.load_all((APP / "kubernetes/astronomy-shop.yaml").read_text(), Loader=yaml.CSafeLoader))
     collector = next(o for o in objects if o["kind"] == "DaemonSet" and o["metadata"]["name"] == "otel-collector-agent")
     container = collector["spec"]["template"]["spec"]["containers"][0]
     env = {item["name"]: item.get("value") for item in container["env"]}
@@ -207,7 +207,7 @@ def test_astronomy_collector_parallelism_is_explicit_without_more_resources() ->
 
 def test_app_collector_does_not_replicate_the_node_mount_tree() -> None:
     """Host-wide instrumentation belongs to the infrastructure collector."""
-    objects = list(yaml.safe_load_all((APP / "kubernetes/astronomy-shop.yaml").read_text()))
+    objects = list(yaml.load_all((APP / "kubernetes/astronomy-shop.yaml").read_text(), Loader=yaml.CSafeLoader))
     daemon = next(o for o in objects if o["kind"] == "DaemonSet" and o["metadata"]["name"] == "otel-collector-agent")
     pod = daemon["spec"]["template"]["spec"]
     assert not any(v.get("hostPath", {}).get("path") == "/" for v in pod["volumes"])
