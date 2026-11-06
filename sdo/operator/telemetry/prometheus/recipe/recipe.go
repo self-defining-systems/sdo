@@ -43,6 +43,12 @@ func OTLPMetricsURL(controlNamespace string) string {
 	return QueryURL(controlNamespace) + "/api/v1/otlp/v1/metrics"
 }
 
+// Capabilities implements telemetry.BackendRecipe: pod discovery and the
+// kubelet/cAdvisor proxy reads of the scrape jobs.
+func (Recipe) Capabilities() []telemetry.ClusterCapability {
+	return []telemetry.ClusterCapability{telemetry.CapPodDiscovery, telemetry.CapNodeProxy}
+}
+
 // Build implements telemetry.BackendRecipe.
 func (Recipe) Build(p telemetry.BackendParams) telemetry.BackendObjects {
 	ns := p.ControlNamespace

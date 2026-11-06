@@ -83,8 +83,7 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	// The generic alerts detector and every detector query resolve against the
 	// effective telemetry sources, computed from this one policy by the broker
 	// and by the judge's own check.
-	config.Install.MetricsURL = config.Install.EffectiveMetricsURL()
-	config.Lifecycle.MetricsSource = config.Install.MetricsSource()
+	config.Lifecycle.MetricsSource = metricsSource(config.Install.TelemetryEnvironment())
 	repository.PlanCatalogs = planCatalogs()
 	repository.Telemetry, err = installTelemetryPolicy(config.Install, config.Lifecycle.Namespace, control)
 	if err != nil {

@@ -29,3 +29,33 @@ func Registry() *telemetry.Registry {
 func Recipes() []telemetry.BackendRecipe {
 	return []telemetry.BackendRecipe{recipe.New()}
 }
+
+// Built-in profile names. DefaultProfileName is what an operator gets without
+// --telemetry-profile.
+const (
+	DefaultProfileName = "prometheus-default"
+	NoneProfileName    = "none"
+)
+
+// BuiltinProfile returns a named built-in profile for the control namespace:
+// prometheus-default applies the SDO Prometheus recipe and provides it as the
+// default source `prom`, with the pod-discovery and node-proxy reads and
+// OTLP publishing; none installs and provides nothing.
+func BuiltinProfile(name, controlNamespace string) (telemetry.Profile, bool) {
+	switch name {
+	case DefaultProfileName:
+		return telemetry.Profile{
+			Name: name, Mode: telemetry.ModeOpen,
+			Recipes:      []string{recipe.RecipeName},
+			Capabilities: recipe.New().Capabilities(),
+			Sources: []telemetry.ProfileSource{{
+				ID: "prom", Adapter: "prometheus", Kinds: []telemetry.Kind{telemetry.KindMetrics},
+				Endpoint: recipe.QueryURL(controlNamespace), Default: true,
+			}},
+			MetricsPublishURL: recipe.QueryURL(controlNamespace),
+		}, true
+	case NoneProfileName:
+		return telemetry.Profile{Name: name, Mode: telemetry.ModeOpen}, true
+	}
+	return telemetry.Profile{}, false
+}

@@ -21,6 +21,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sdo.dev/operator/install"
+	"sdo.dev/operator/telemetry"
 )
 
 const (
@@ -334,7 +335,7 @@ func (w *World) InstallController(extra ...string) {
 		TimeoutSeconds: 300, VerificationTimeoutSeconds: 120,
 		NativeCommand: []string{"/usr/local/bin/sdo-operator"}, ReuseExisting: true,
 		RegistrationConfigMap: "sdo-agent-registrations", RegistrationDirectory: "/sdo/registrations",
-		DisableObservability: true, ExtraControllerArgs: extra,
+		TelemetryProfile: telemetry.Profile{Name: "none"}, ExtraControllerArgs: extra,
 	}
 	seed := func(ctx context.Context, c install.Config) error {
 		destination := filepath.Join(w.Kubelet.Run.PVCDir(c.ControlNamespace, c.RepositoryPVC), "application")

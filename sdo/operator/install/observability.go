@@ -7,42 +7,32 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/telemetry"
 )
 
-// PrometheusName is the Service name of the SDO-owned Prometheus recipe.
-const PrometheusName = "sdo-prometheus"
-
-// prometheusRecipe is the recipe the observability stack applies.
-const prometheusRecipe = "prometheus"
-
-// EffectiveMetricsURL preserves an explicit external source even when the stack is enabled.
-func (c Config) EffectiveMetricsURL() string {
-	if c.MetricsURL != "" {
-		return c.MetricsURL
-	}
-	if c.DisableObservability {
-		return ""
-	}
-	return fmt.Sprintf("http://%s.%s.svc:9090", PrometheusName, c.controlNamespace())
-}
-
-// addObservability asks the configured Prometheus recipe for its objects.
+// addObservability applies the backend recipes the telemetry profile selects.
 func addObservability(p *Plan, c Config) error {
-	var recipe telemetry.BackendRecipe
-	for _, r := range c.BackendRecipes {
-		if r.Name() == prometheusRecipe {
-			recipe = r
+	for _, name := range c.TelemetryProfile.Recipes {
+		var recipe telemetry.BackendRecipe
+		for _, r := range c.BackendRecipes {
+			if r.Name() == name {
+				recipe = r
+			}
 		}
+		if recipe == nil {
+			return fmt.Errorf("install: telemetry profile %q applies backend recipe %q, which is not in Config.BackendRecipes", c.TelemetryProfile.Name, name)
+		}
+		objects := recipe.Build(telemetry.BackendParams{ApplicationNamespace: c.Namespace, ControlNamespace: c.controlNamespace(), PodSecurity: podSecurity(), ContainerSecurity: containerSecurity()})
+		p.Backend.ConfigMaps = append(p.Backend.ConfigMaps, objects.ConfigMaps...)
+		p.Backend.ServiceAccounts = append(p.Backend.ServiceAccounts, objects.ServiceAccounts...)
+		p.Backend.ClusterRoles = append(p.Backend.ClusterRoles, objects.ClusterRoles...)
+		p.Backend.ClusterBindings = append(p.Backend.ClusterBindings, objects.ClusterBindings...)
+		p.Backend.Services = append(p.Backend.Services, objects.Services...)
+		p.Backend.Deployments = append(p.Backend.Deployments, objects.Deployments...)
+		p.ServiceAccounts = append(p.ServiceAccounts, objects.ServiceAccounts...)
+		p.ClusterRoles = append(p.ClusterRoles, objects.ClusterRoles...)
+		p.ClusterBindings = append(p.ClusterBindings, objects.ClusterBindings...)
 	}
-	if recipe == nil {
-		return fmt.Errorf("install: the observability stack needs the %q backend recipe in Config.BackendRecipes", prometheusRecipe)
-	}
-	p.Backend = recipe.Build(telemetry.BackendParams{ApplicationNamespace: c.Namespace, ControlNamespace: c.controlNamespace(), PodSecurity: podSecurity(), ContainerSecurity: containerSecurity()})
-	p.ServiceAccounts = append(p.ServiceAccounts, p.Backend.ServiceAccounts...)
-	p.ClusterRoles = append(p.ClusterRoles, p.Backend.ClusterRoles...)
-	p.ClusterBindings = append(p.ClusterBindings, p.Backend.ClusterBindings...)
 	return nil
 }
 
@@ -108,22 +98,10 @@ func TelemetryEnvironmentFile() string {
 	return TelemetryEnvironmentDir + "/" + telemetryEnvironmentFile
 }
 
-// TelemetryEnvironment is the environment document the controller reads: the
-// effective metrics URL as the operator-provided source `default` and the
-// SDO-owned publishing base. Until the telemetry profile replaces the legacy
-// install fields, this is the single place they become controller input.
+// TelemetryEnvironment is the environment document the controller reads,
+// derived from the telemetry profile. An unset profile provides nothing.
 func (c Config) TelemetryEnvironment() telemetry.Environment {
-	env := telemetry.Environment{Version: telemetry.EnvironmentVersion}
-	if url := c.EffectiveMetricsURL(); url != "" {
-		env.Provided = []telemetry.Binding{{
-			ID: "default", Adapter: "prometheus", Kinds: []telemetry.Kind{telemetry.KindMetrics},
-			Endpoint: telemetry.Endpoint{URL: url}, Default: true, Origin: telemetry.OriginOperator,
-		}}
-	}
-	if !c.DisableObservability {
-		env.MetricsPublishURL = fmt.Sprintf("http://%s.%s.svc:9090", PrometheusName, c.controlNamespace())
-	}
-	return env
+	return c.TelemetryProfile.Environment()
 }
 
 func telemetryEnvironmentConfigMap(c Config) (*corev1.ConfigMap, error) {
@@ -154,15 +132,6 @@ func (i Installer) ensureTelemetryEnvironment(ctx context.Context, p Plan) error
 		return fmt.Errorf("ensure telemetry environment: %w", err)
 	}
 	return nil
-}
-
-func (c Config) MetricsSource() *contracts.MetricsSource {
-	source := &contracts.MetricsSource{QueryUrl: c.EffectiveMetricsURL()}
-	if !c.DisableObservability {
-		source.AnnotatedPodScraping = true
-		source.OtlpMetricsUrl = fmt.Sprintf("http://%s.%s.svc:9090/api/v1/otlp/v1/metrics", PrometheusName, c.controlNamespace())
-	}
-	return source
 }
 
 func rule(group string, resources []string, verbs ...string) rbacv1.PolicyRule {

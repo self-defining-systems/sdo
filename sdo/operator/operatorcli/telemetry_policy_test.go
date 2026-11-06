@@ -6,11 +6,12 @@ import (
 	"testing"
 
 	"sdo.dev/operator/install"
+	"sdo.dev/operator/operatorcli/catalog/telemetrysources"
 	"sdo.dev/operator/telemetry"
 )
 
 func TestInstallTelemetryPolicyFollowsTheObservabilityStack(t *testing.T) {
-	on, err := installTelemetryPolicy(install.Config{}, "shop", "sdo-ctl")
+	on, err := installTelemetryPolicy(install.Config{BackendRecipes: telemetrysources.Recipes(), TelemetryProfile: mustBuiltin(t, "prometheus-default", "sdo-ctl")}, "shop", "sdo-ctl")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +25,7 @@ func TestInstallTelemetryPolicyFollowsTheObservabilityStack(t *testing.T) {
 	if !ok || !on.Granted(telemetry.CapNodeProxy) || len(recipe.Declares) != 2 {
 		t.Fatalf("with the stack, the prometheus recipe and its reads are granted: %+v", on)
 	}
-	off, err := installTelemetryPolicy(install.Config{DisableObservability: true}, "shop", "sdo-ctl")
+	off, err := installTelemetryPolicy(install.Config{BackendRecipes: telemetrysources.Recipes(), TelemetryProfile: mustBuiltin(t, "none", "sdo-ctl")}, "shop", "sdo-ctl")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +35,7 @@ func TestInstallTelemetryPolicyFollowsTheObservabilityStack(t *testing.T) {
 }
 
 func TestMemoryTelemetryPolicyRoundTripsTheBrokersPolicy(t *testing.T) {
-	want, err := installTelemetryPolicy(install.Config{}, "shop", "sdo-ctl")
+	want, err := installTelemetryPolicy(install.Config{BackendRecipes: telemetrysources.Recipes(), TelemetryProfile: mustBuiltin(t, "prometheus-default", "sdo-ctl")}, "shop", "sdo-ctl")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,8 +66,9 @@ func TestMemoryTelemetryPolicyDefaultsAndRejects(t *testing.T) {
 	}
 }
 
-func TestInstallTelemetryPolicyProvidesTheMetricsURLAsTheDefaultSource(t *testing.T) {
-	policy, err := installTelemetryPolicy(install.Config{MetricsURL: "http://prom.ops.svc:9090"}, "shop", "sdo-ctl")
+func TestInstallTelemetryPolicyProvidesTheProfileSources(t *testing.T) {
+	profile := withSource(t, mustBuiltin(t, "none", "sdo-ctl"), "ops=http://prom.ops.svc:9090")
+	policy, err := installTelemetryPolicy(install.Config{BackendRecipes: telemetrysources.Recipes(), TelemetryProfile: profile}, "shop", "sdo-ctl")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,13 +76,18 @@ func TestInstallTelemetryPolicyProvidesTheMetricsURLAsTheDefaultSource(t *testin
 		t.Fatalf("provided = %+v", policy.Provided)
 	}
 	got := policy.Provided[0]
-	if got.ID != "default" || !got.Default || got.Origin != telemetry.OriginOperator || !got.Serves(telemetry.KindMetrics) {
+	if got.ID != "ops" || !got.Default || got.Origin != telemetry.OriginOperator || !got.Serves(telemetry.KindMetrics) {
 		t.Fatalf("source = %+v", got)
 	}
 	if !slices.Contains(got.Capabilities, telemetry.CapAlerts) {
 		t.Fatalf("the prometheus adapter serves alerts, so the source must: %+v", got)
 	}
-	if _, err := installTelemetryPolicy(install.Config{MetricsURL: "not a url"}, "shop", "sdo-ctl"); err == nil {
-		t.Fatal("an unusable metrics URL must fail, not silently drop the source")
+	bad := telemetry.Profile{Name: "bad", Sources: []telemetry.ProfileSource{{ID: "x", Adapter: "nosuch", Kinds: []telemetry.Kind{telemetry.KindMetrics}, Endpoint: "http://x.ops.svc"}}}
+	if _, err := installTelemetryPolicy(install.Config{TelemetryProfile: bad}, "shop", "sdo-ctl"); err == nil {
+		t.Fatal("an unknown adapter must fail, not silently drop the source")
+	}
+	missing := telemetry.Profile{Name: "r", Recipes: []string{"nosuch"}}
+	if _, err := installTelemetryPolicy(install.Config{BackendRecipes: telemetrysources.Recipes(), TelemetryProfile: missing}, "shop", "sdo-ctl"); err == nil {
+		t.Fatal("an unknown recipe must fail")
 	}
 }

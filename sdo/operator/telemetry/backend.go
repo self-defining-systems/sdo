@@ -31,5 +31,7 @@ type BackendObjects struct {
 // Prometheus recipe). Build is pure.
 type BackendRecipe interface {
 	Name() string
+	// Capabilities are the cluster reads the recipe needs the environment to grant.
+	Capabilities() []ClusterCapability
 	Build(BackendParams) BackendObjects
 }
