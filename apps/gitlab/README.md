@@ -51,11 +51,12 @@ onboards through `host --deployment-plan` (no deployer agent; architecture and t
 the plan from that render, nothing is maintained by hand:
 
 - `source`: the helm source above (`chart`, `chart/values-kind.yaml`).
-- `images`: one `prebuilt` image source for every container and init container image of the rendered objects
-  (upstream CNG images by tag, datastores by digest); SDO pins the tags to digests at deploy. Hook-only images (the
+- `images`: one `prebuilt` image source per image repository of the rendered containers (no tag, no digest), so a
+  release that only bumps tags still matches; SDO pins each rendered tag to a digest at deploy. Hook-only images (the
   upstream shared-secrets and bucket Jobs) are not in the accepted inventory and fall to the default prebuilt source.
 - `expected_workload_ids`: the Deployments, StatefulSets, DaemonSets and Jobs of the render (hooks are not objects of
-  the main phase), as `Kind/gitlab/name`. The migrations Job name carries a hash of the Helm version.
+  the main phase), as `Kind/gitlab/name`, in the stable form Go proposes: the migrations Job, whose name carries a hash
+  of its images, is `Job/gitlab/gitlab-migrations-*`, so every release's render matches.
 
 Known blocker: the helm policy on main (`render/helm/internal/policy`) rejects the real upstream chart (`tpl`,
 `duration` and a computed `include` in its helpers), so the real-chart tests below fail until that policy or a lane

@@ -439,6 +439,25 @@ type onbOutcome struct {
 	judgeID    string
 	judge      *onbJudge
 	installs   []string
+	// client is the fake API server the agent Jobs went through: one Job per
+	// agent task, so its Jobs count the agent turns of the run.
+	client *fake.Clientset
+}
+
+// onbOptions vary an onboarding from the default synthetic raw-manifest
+// application: how the source repository is made, what is deployed from it and
+// how, and which upstream it follows.
+type onbOptions struct {
+	// prepare writes the application source into root before its first commit;
+	// nil writes app.manifests under k8s/.
+	prepare func(t *testing.T, root string)
+	// plan is the provided deployment plan; nil is the raw source over k8s/ with
+	// app.workloads as the expected workloads.
+	plan *contracts.DeploymentPlan
+	// readiness replaces the scripted deployer.
+	readiness lifecycle.SourceReadiness
+	// sources are the upstreams followed (the repository is their clone).
+	sources []layout.Source
 }
 
 // onboard runs the production lifecycle for app under profile with the
@@ -446,20 +465,29 @@ type onbOutcome struct {
 // transport.
 func onboard(t *testing.T, app onbApp, profile telemetry.Profile, proposals ...[]onbEdit) onbOutcome {
 	t.Helper()
+	return onboardWith(t, app, profile, onbOptions{}, proposals...)
+}
+
+func onboardWith(t *testing.T, app onbApp, profile telemetry.Profile, options onbOptions, proposals ...[]onbEdit) onbOutcome {
+	t.Helper()
 	testutil.FakeGo(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	mount := t.TempDir()
 	root := filepath.Join(mount, "application")
-	if err := os.MkdirAll(filepath.Join(root, "k8s"), 0o755); err != nil {
-		t.Fatal(err)
+	if options.prepare != nil {
+		options.prepare(t, root)
+	} else {
+		if err := os.MkdirAll(filepath.Join(root, "k8s"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "k8s", "app.yaml"), []byte(app.manifests), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		testutil.InitGit(t, root)
+		testutil.Git(t, root, "add", ".")
+		testutil.Git(t, root, "commit", "-qm", "synthetic application source")
 	}
-	if err := os.WriteFile(filepath.Join(root, "k8s", "app.yaml"), []byte(app.manifests), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	testutil.InitGit(t, root)
-	testutil.Git(t, root, "add", ".")
-	testutil.Git(t, root, "commit", "-qm", "synthetic application source")
 	operatorRoot, err := filepath.Abs("..")
 	if err != nil {
 		t.Fatal(err)
@@ -470,6 +498,7 @@ func onboard(t *testing.T, app onbApp, profile telemetry.Profile, proposals ...[
 		Lifecycle: lifecycle.Config{
 			OperationID: "onb", Application: app.name, Namespace: app.namespace, HealthObjective: "every synthetic workload stays available",
 			MaxAttempts: 1, PendingEvaluations: 1, InfrastructureTries: 1,
+			Sources: options.sources,
 		},
 	}
 	registry, err := lifecycleRegistry(config, filepath.Join(operatorRoot, "..", "agents", "registrations"))
@@ -498,19 +527,25 @@ func onboard(t *testing.T, app onbApp, profile telemetry.Profile, proposals ...[
 	coordinator := lifecycle.Coordinator{
 		Renderers: renderers.Catalog(),
 		Broker:    repository, Bootstrap: artifacts.BootstrapStore{}, Registry: registry, Workers: workers,
-		Readiness: onbReadiness{app: app}, Verifier: onbVerifier{}, Installer: installer,
+		Readiness: options.readiness, Verifier: onbVerifier{}, Installer: installer,
 	}
-	source, err := anypb.New(&contracts.RawRenderConfig{Paths: []string{"k8s"}})
-	if err != nil {
-		t.Fatal(err)
+	if coordinator.Readiness == nil {
+		coordinator.Readiness = onbReadiness{app: app}
 	}
-	config.Lifecycle.ProvidedPlan = &contracts.DeploymentPlan{Source: &contracts.DeploymentSource{RendererId: "raw", Config: source}, ExpectedWorkloadIds: app.workloads}
+	config.Lifecycle.ProvidedPlan = options.plan
+	if config.Lifecycle.ProvidedPlan == nil {
+		source, err := anypb.New(&contracts.RawRenderConfig{Paths: []string{"k8s"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		config.Lifecycle.ProvidedPlan = &contracts.DeploymentPlan{Source: &contracts.DeploymentSource{RendererId: "raw", Config: source}, ExpectedWorkloadIds: app.workloads}
+	}
 	result, runErr := coordinator.Run(ctx, config.Lifecycle)
 	stopRunner()
 	if err := <-runner; err != nil {
 		t.Fatalf("agent Job runner: %v", err)
 	}
-	return onbOutcome{result: result, err: runErr, repository: repository, accepted: root, judgeID: "onb-judge-1", judge: judge, installs: installer.commits}
+	return onbOutcome{result: result, err: runErr, repository: repository, accepted: root, judgeID: "onb-judge-1", judge: judge, installs: installer.commits, client: client}
 }
 
 func onbRules(diagnostics []*contracts.MemoryDiagnostic) []string {

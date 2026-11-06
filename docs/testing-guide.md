@@ -114,6 +114,12 @@ typed diagnostics from the judge's check and the broker, and that a changed reje
 Each top-level test is one onboarding (about 6 s, mostly broker git processes); run it before a live
 onboarding: `go test -tags=integration -short -run TestOnboarding ./operatorcli/` in `sdo/operator`.
 
+`operatorcli/advance_lifecycle_integration_test.go` extends the harness to an upstream advance: a synthetic Helm
+chart with a hash-named Job is onboarded from a provided plan in the stable form Go proposes
+(`rendered.SummarizeWorkloads`: workload identities and image repositories), upstream then releases a revision that
+only bumps image tags, and the production `lifecycle.Advancer` (real broker, helm render and Deployer over a fake
+cluster) must accept it with no agent Job. It takes about 15 s: an onboarding spawns about 500 git processes.
+
 ## Waiting in Go tests
 
 `Execute` polls until its context ends, so running it under a fixed short

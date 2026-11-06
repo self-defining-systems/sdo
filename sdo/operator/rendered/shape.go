@@ -26,7 +26,7 @@ import (
 func shapeDigest(objects []DesiredObject) (string, error) {
 	items := make([]map[string]any, 0, len(objects))
 	for _, object := range objects {
-		item := map[string]any{"ref": refKey(object.Ref)}
+		item := map[string]any{"ref": shapeRef(object)}
 		doc := object.Object.Object
 		switch {
 		case object.Workload:
@@ -43,6 +43,18 @@ func shapeDigest(objects []DesiredObject) (string, error) {
 	}
 	sum := sha256.Sum256(encoded)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+// shapeRef is the object's identity in the shape. A Job's generated name
+// suffix is not part of it (StableWorkloadID): a release that changes only the
+// inputs the suffix hashes renames the Job without changing the topology.
+func shapeRef(object DesiredObject) string {
+	if object.Workload && object.Ref.Kind == "Job" {
+		ref := object.Ref
+		ref.Name = StableWorkloadName(ref.Kind, ref.Name)
+		return refKey(ref)
+	}
+	return refKey(object.Ref)
 }
 
 func workloadShape(doc map[string]any) map[string][]map[string]any {
