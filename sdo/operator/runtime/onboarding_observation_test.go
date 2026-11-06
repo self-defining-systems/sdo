@@ -134,3 +134,23 @@ func TestOnboardingWaitsForARolloutInsteadOfRejecting(t *testing.T) {
 		t.Fatal("a firing detector outside any rollout must still contradict the install")
 	}
 }
+
+// No health detector ID is reserved for the human goal: the shared check
+// installs the generic health detectors and the judge may author others. A
+// baseline is authorized by any independently evaluated health detector, and
+// by none when no health detector exists (only incident detectors, or none).
+func TestHealthyBaselineGoalNeedsAHealthDetectorNotAReservedID(t *testing.T) {
+	health := controllerDetector("workload-health", time.Second, sdk.Finding{})
+	health.spec.Class = sdk.DetectorClassHealth
+	health.spec.Owner = sdk.DetectorOwnerHealthJudge
+	if ok, err := healthyBaselineGoal(context.Background(), []sdk.Detector{health}, sdktest.Snapshot{}); err != nil || !ok {
+		t.Fatalf("generic health detector did not authorize the baseline: %v", err)
+	}
+	incident := controllerDetector("crash", time.Second, sdk.Finding{})
+	if ok, err := healthyBaselineGoal(context.Background(), []sdk.Detector{incident}, sdktest.Snapshot{}); err == nil || ok {
+		t.Fatal("an incident detector authorized the baseline")
+	}
+	if ok, err := healthyBaselineGoal(context.Background(), nil, sdktest.Snapshot{}); err == nil || ok {
+		t.Fatal("no detectors authorized the baseline")
+	}
+}
