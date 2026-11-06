@@ -18,6 +18,8 @@ import (
 	"sdo.dev/operator/renderenv"
 )
 
+var _ lifecycle.LiveChecker = Deployer{}
+
 // LiveInput is what the live deployment checks read: the outcome of
 // ApplyAndVerify (or VerifyAccepted), the desired set of the effective tree and,
 // when the outcome is a failure, the error.

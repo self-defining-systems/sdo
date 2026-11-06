@@ -7,6 +7,7 @@ import (
 	"go/format"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -22,6 +23,24 @@ import (
 // MetricsAlertsDetectorID names the generic detector that reports firing
 // alerts of the application namespace from the configured metrics source.
 const MetricsAlertsDetectorID = "metrics-alerts"
+
+// GenericHealthDetectorIDs lists the detector IDs Go itself writes into every
+// accepted health diagnostics tree (PrepareHealthWith with every option), in no
+// particular order. A detector with one of these IDs is Go's floor, not the
+// health judge's authorship; traffic-probe detectors are not listed because
+// they come from the judge's traffic workload files.
+func GenericHealthDetectorIDs() []string {
+	return []string{
+		"service-endpoints", "pod-admission", workloadHealthID, "service-reachability",
+		"cluster-wiring", "workload-controllers", "warning-events", "node-health",
+		"resource-saturation", "runtime-crashes", MetricsAlertsDetectorID,
+	}
+}
+
+// IsGenericHealthDetector reports whether id is one of GenericHealthDetectorIDs.
+func IsGenericHealthDetector(id string) bool {
+	return slices.Contains(GenericHealthDetectorIDs(), id)
+}
 
 // HealthOptions selects the optional generic policy detectors.
 type HealthOptions struct {
