@@ -393,7 +393,12 @@ jobs:
   required-pr-ci:
     name: Required PR CI
     needs: [checks, python, tests]
-    if: always()
+    # Not always(): a run that concurrency cancelled (a stack restack force-pushes
+    # head and base in one second, so two runs start for one SHA) must skip this
+    # job rather than fail it, or the dead run leaves a failing required check next
+    # to the live run's passing one. A job that merely timed out is not a cancelled
+    # run, so it still fails the gate.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 1
     steps:

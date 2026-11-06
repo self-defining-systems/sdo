@@ -66,6 +66,12 @@ def test_one_aggregate_check_covers_every_shard() -> None:
     assert set(aggregates[0]["needs"]) == set(jobs) - {"required-pr-ci"}
 
 
+def test_a_run_cancelled_by_concurrency_never_reports_a_failing_required_check() -> None:
+    aggregate = workflow("ci.yml")["jobs"]["required-pr-ci"]
+    # always() runs the gate in a cancelled run, where its cancelled needs fail it.
+    assert aggregate["if"] == "${{ !cancelled() }}"
+
+
 def test_main_cache_saves_are_guarded_by_the_size_check() -> None:
     for name, job in workflow("ci.yml")["jobs"].items():
         steps = job["steps"]
