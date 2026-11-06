@@ -209,8 +209,8 @@ func TestResolveErrorIsClassifiableByCore(t *testing.T) {
 	if !errors.As(err, &re) || re.Kind != imagesrc.ResolveMissing {
 		t.Fatalf("err = %#v", err)
 	}
-	var timeout interface{ InfrastructureTimeout() bool }
-	if errors.As(err, &timeout) {
+	var timeout interface{ InfrastructureOutcome() bool }
+	if errors.As(err, &timeout) && timeout.InfrastructureOutcome() {
 		t.Fatal("a missing tag is not an infrastructure timeout")
 	}
 }

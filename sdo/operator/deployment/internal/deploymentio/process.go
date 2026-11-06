@@ -7,8 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"time"
-
-	"k8s.io/apimachinery/pkg/util/rand"
 )
 
 func Run(ctx context.Context, name string, args []string, input []byte) ([]byte, error) {
@@ -28,7 +26,6 @@ func Wait(ctx context.Context, d time.Duration) error {
 		return nil
 	}
 }
-func JobSuffix() string { return rand.String(8) }
 
 // Evaluate runs binary in directory with the process environment plus extraEnv.
 func Evaluate(ctx context.Context, directory, binary string, args, extraEnv []string) ([]byte, []byte, error) {

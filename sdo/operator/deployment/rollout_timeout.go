@@ -471,3 +471,10 @@ func eventLines(events []rolloutEvent) string {
 	}
 	return strings.Join(lines, " | ")
 }
+
+func clip(s string, max int) string {
+	if runes := []rune(s); len(runes) > max {
+		return string(runes[:max]) + "..."
+	}
+	return s
+}

@@ -92,6 +92,10 @@ func (e *InfrastructureError) Unwrap() error { return e.Err }
 // errors (build, registry resolution, rollout) that are not source faults.
 type infrastructureOutcome interface{ InfrastructureOutcome() bool }
 
+// IsInfrastructureOutcome reports whether err, or an error it wraps, marks a
+// failure of a trusted step (not a source fault) with InfrastructureOutcome.
+func IsInfrastructureOutcome(err error) bool { return isInfrastructure(err) }
+
 func isInfrastructure(err error) bool {
 	var marker infrastructureOutcome
 	return errors.As(err, &marker) && marker.InfrastructureOutcome()

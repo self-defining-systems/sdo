@@ -18,7 +18,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
-	"sdo.dev/operator/deployment"
+	"sdo.dev/operator/imagesrc/buildkit"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/worker_registry"
@@ -151,7 +151,7 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 		return HostConfig{}, errors.New("host launch requires digest-pinned BuildKit image and separate registry push Secret")
 	}
 	if *registryHost != "" {
-		if err := deployment.ValidateRegistryHost(*registryHost); err != nil {
+		if err := buildkit.ValidateRegistryHost(*registryHost); err != nil {
 			return HostConfig{}, fmt.Errorf("invalid trusted registry host: %w", err)
 		}
 	}

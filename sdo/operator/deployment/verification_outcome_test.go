@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"sdo.dev/operator/imagesrc"
+	"sdo.dev/operator/imagesrc/buildkit"
 	"sdo.dev/operator/lifecycle"
 )
 
@@ -46,38 +47,39 @@ func TestVerdictOfClassifiesEveryProbeStatus(t *testing.T) {
 	}
 }
 
-const buildkitStartupLog = "could not connect to unix:///run/user/1000/buildkit/buildkitd.sock after 10 trials\n========== log ==========\n"
-
-func TestBuildKitStartupFailureIsInfrastructureNotPlan(t *testing.T) {
-	failure := ClassifyBuildLog("reg/app:1", "job", buildkitStartupLog)
-	if failure.Cause != BuildFailureInfrastructure || !failure.InfrastructureOutcome() {
-		t.Fatalf("cause = %q", failure.Cause)
+// Every infrastructure kind a trusted step can produce must be recognised by
+// the classifier the coordinator really uses (lifecycle.IsInfrastructureOutcome),
+// directly, wrapped by this package, and wrapped by the catalog's attribution.
+func TestEveryInfrastructureKindIsRecognisedByLifecycle(t *testing.T) {
+	resolve := func(kind imagesrc.ResolveErrorKind) error {
+		return &imagesrc.ResolveError{Kind: kind, Err: errors.New("registry said no")}
 	}
-	real := ClassifyBuildLog("reg/app:1", "job", compileLog)
-	if real.InfrastructureOutcome() {
-		t.Fatal("a compile error is a source fault")
-	}
-}
-
-func TestInfrastructureOutcomeCoversExistingClassifiers(t *testing.T) {
-	type marker interface{ InfrastructureOutcome() bool }
 	cases := map[string]struct {
 		err  error
 		want bool
 	}{
-		"build timeout":       {&BuildTimeoutError{}, true},
-		"progressing rollout": {&RolloutTimeoutError{}, true},
-		"stalled rollout":     {&RolloutTimeoutError{Stalled: true}, false},
-		"registry transient":  {&imagesrc.ResolveError{Kind: imagesrc.ResolveTransient, Err: errors.New("rate limited")}, true},
-		"registry missing":    {&imagesrc.ResolveError{Kind: imagesrc.ResolveMissing, Err: errors.New("no tag")}, false},
-		"pin rejection":       {tagImageRejection("m.yaml", "img:1", &imagesrc.ResolveError{Kind: imagesrc.ResolveTransient, Err: errors.New("429")}), true},
-		"pin missing":         {tagImageRejection("m.yaml", "img:1", &imagesrc.ResolveError{Kind: imagesrc.ResolveMissing, Err: errors.New("404")}), false},
+		"build timeout":            {&BuildTimeoutError{}, true},
+		"image timeout per image":  {&imagesrc.TimeoutError{Image: "r/a:1"}, true},
+		"image timeout budget":     {&imagesrc.TimeoutError{Image: "r/a:1", Budget: true}, true},
+		"progressing rollout":      {&RolloutTimeoutError{}, true},
+		"stalled rollout":          {&RolloutTimeoutError{Stalled: true}, false},
+		"registry transient":       {resolve(imagesrc.ResolveTransient), true},
+		"registry missing":         {resolve(imagesrc.ResolveMissing), false},
+		"registry unauthorized":    {resolve(imagesrc.ResolveUnauthorized), false},
+		"registry refused":         {resolve(imagesrc.ResolveRefused), false},
+		"build daemon unavailable": {&buildkit.BuildFailureError{Cause: buildkit.BuildFailureInfrastructure}, true},
+		"build compile error":      {&buildkit.BuildFailureError{Cause: buildkit.BuildFailureCompile}, false},
+		"build network error":      {&buildkit.BuildFailureError{Cause: buildkit.BuildFailureNetwork}, false},
+		"pin transient":            {tagImageRejection("m.yaml", "img:1", resolve(imagesrc.ResolveTransient)), true},
+		"pin missing":              {tagImageRejection("m.yaml", "img:1", resolve(imagesrc.ResolveMissing)), false},
+		"plain error":              {errors.New("boom"), false},
 	}
 	for name, tc := range cases {
-		var found marker
-		got := errors.As(fmt.Errorf("deploy: %w", tc.err), &found) && found.InfrastructureOutcome()
-		if got != tc.want {
-			t.Errorf("%s: infrastructure = %v, want %v", name, got, tc.want)
+		attributed := &imagesrc.Error{Image: "r/a:1", SourceID: "s", Err: tc.err}
+		for form, err := range map[string]error{"bare": tc.err, "wrapped": fmt.Errorf("deploy: %w", tc.err), "attributed": fmt.Errorf("deploy: %w", attributed)} {
+			if got := lifecycle.IsInfrastructureOutcome(err); got != tc.want {
+				t.Errorf("%s (%s): infrastructure = %v, want %v", name, form, got, tc.want)
+			}
 		}
 	}
 }

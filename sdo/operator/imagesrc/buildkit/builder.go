@@ -1,4 +1,4 @@
-package deployment
+package buildkit
 
 import (
 	"context"
@@ -18,23 +18,27 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes"
-	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/settings"
-	"sdo.dev/operator/deployment/internal/deploymentio"
+	"sdo.dev/operator/imagesrc"
+	"sdo.dev/operator/imagesrc/buildkit/internal/jobio"
 )
 
 const buildMetadataPrefix = "SDO_BUILD_METADATA="
 
+var digestReference = regexp.MustCompile(`^[^@\s]+@sha256:[a-f0-9]{64}$`)
 var buildDigestPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 var buildImageNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$`)
 
-// KubernetesBuildBackend builds candidate source in a bounded rootless BuildKit
-// Job. The Job sees only the proposal checkout, mounted read-only, and its own
-// registry-push Secret. The accepted checkout and broker credentials are absent.
-// Apply and Observe remain the trusted command backend's responsibility.
-type KubernetesBuildBackend struct {
-	CommandBackend
+// Builder builds candidate source in a bounded rootless BuildKit Job. The Job
+// sees only the proposal checkout, mounted read-only, and its own registry-push
+// Secret. The accepted checkout and broker credentials are absent. It is the
+// imagesrc source "buildkit" (see Resolve) and, until the deployment strategy
+// switch, also the BuildImage half of the raw deployment backend.
+type Builder struct {
+	// TreeDigest fingerprints a checkout's tracked tree (broker.ProposalTreeDigest).
+	// A build fails when the tree changes while the Job runs.
+	TreeDigest           func(ctx context.Context, checkout string) (string, error)
 	Client               kubernetes.Interface
 	Namespace            string
 	RepositoryPVC        string
@@ -48,12 +52,14 @@ type KubernetesBuildBackend struct {
 	PollInterval         time.Duration
 	Timeout              time.Duration
 	JobSuffix            func() string
-	ReadJobLogs          func(context.Context, string, string) ([]byte, error)
+	// Wait sleeps between Job polls; nil uses a timer. Tests inject it.
+	Wait        func(context.Context, time.Duration) error
+	ReadJobLogs func(context.Context, string, string) ([]byte, error)
 }
 
-func (b KubernetesBuildBackend) BuildImage(ctx context.Context, checkout string, build *contracts.ImageBuild) (string, error) {
-	if b.Client == nil || b.Namespace == "" || b.RepositoryPVC == "" || b.ProposalRoot == "" || b.BuildKitImage == "" || b.RegistrySecret == "" || b.ServiceAccount == "" || build == nil || build.GetImage() == "" {
-		return "", errors.New("Kubernetes image builder requires client, namespace, proposal PVC, pinned BuildKit image, registry Secret, service account, and image build")
+func (b Builder) BuildImage(ctx context.Context, checkout string, build *contracts.ImageBuild) (string, error) {
+	if b.Client == nil || b.TreeDigest == nil || b.Namespace == "" || b.RepositoryPVC == "" || b.ProposalRoot == "" || b.BuildKitImage == "" || b.RegistrySecret == "" || b.ServiceAccount == "" || build == nil || build.GetImage() == "" {
+		return "", errors.New("Kubernetes image builder requires tree digest, client, namespace, proposal PVC, pinned BuildKit image, registry Secret, service account, and image build")
 	}
 	if !digestReference.MatchString(b.BuildKitImage) {
 		return "", errors.New("BuildKit Job image must be pinned by digest")
@@ -72,7 +78,7 @@ func (b KubernetesBuildBackend) BuildImage(ctx context.Context, checkout string,
 	if err != nil {
 		return "", err
 	}
-	initialTree, err := broker.ProposalTreeDigest(ctx, checkout)
+	initialTree, err := b.TreeDigest(ctx, checkout)
 	if err != nil {
 		return "", fmt.Errorf("snapshot candidate tree before image build: %w", err)
 	}
@@ -84,7 +90,7 @@ func (b KubernetesBuildBackend) BuildImage(ctx context.Context, checkout string,
 	defer cancel()
 	suffix := b.JobSuffix
 	if suffix == nil {
-		suffix = deploymentio.JobSuffix
+		suffix = jobio.JobSuffix
 	}
 	name := "sdo-image-build-" + suffix()
 	job := b.job(name, subPath, contextRel, dockerfileRel, build.GetImage(), limit)
@@ -107,7 +113,7 @@ func (b KubernetesBuildBackend) BuildImage(ctx context.Context, checkout string,
 		observed, err := b.Client.BatchV1().Jobs(b.Namespace).Get(bounded, name, metav1.GetOptions{})
 		if err != nil {
 			if errors.Is(bounded.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
-				return "", &BuildTimeoutError{Image: build.GetImage(), Limit: limit}
+				return "", &imagesrc.TimeoutError{Image: build.GetImage(), Limit: limit}
 			}
 			return "", fmt.Errorf("observe BuildKit Job: %w", err)
 		}
@@ -118,13 +124,13 @@ func (b KubernetesBuildBackend) BuildImage(ctx context.Context, checkout string,
 			if condition.Type == batchv1.JobFailed {
 				finished = true
 				if condition.Reason == "DeadlineExceeded" {
-					return "", &BuildTimeoutError{Image: build.GetImage(), Limit: limit}
+					return "", &imagesrc.TimeoutError{Image: build.GetImage(), Limit: limit}
 				}
 				return "", b.buildFailure(bounded, build.GetImage(), name, condition.Message, filepath.Join(checkout, filepath.FromSlash(contextRel)), filepath.Join(checkout, filepath.FromSlash(dockerfileRel)))
 			}
 			if condition.Type == batchv1.JobComplete {
 				finished = true
-				finalTree, err := broker.ProposalTreeDigest(bounded, checkout)
+				finalTree, err := b.TreeDigest(bounded, checkout)
 				if err != nil || finalTree != initialTree {
 					return "", fmt.Errorf("candidate tree changed during image build: %v", err)
 				}
@@ -136,12 +142,12 @@ func (b KubernetesBuildBackend) BuildImage(ctx context.Context, checkout string,
 				if err != nil {
 					return "", err
 				}
-				return imageRepository(build.GetImage()) + "@" + digest, nil
+				return repository(build.GetImage()) + "@" + digest, nil
 			}
 		}
-		if err := b.wait(bounded, interval); err != nil {
+		if err := b.pause(bounded, interval); err != nil {
 			if errors.Is(bounded.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
-				return "", &BuildTimeoutError{Image: build.GetImage(), Limit: limit}
+				return "", &imagesrc.TimeoutError{Image: build.GetImage(), Limit: limit}
 			}
 			return "", fmt.Errorf("BuildKit Job %s did not complete: %w", name, err)
 		}
@@ -167,7 +173,7 @@ func ValidateRegistryHost(host string) error {
 	return nil
 }
 
-func (b KubernetesBuildBackend) proposalPaths(checkout string, build *contracts.ImageBuild) (string, string, string, error) {
+func (b Builder) proposalPaths(checkout string, build *contracts.ImageBuild) (string, string, string, error) {
 	root, err := filepath.Abs(b.ProposalRoot)
 	if err != nil {
 		return "", "", "", err
@@ -230,7 +236,7 @@ func (b KubernetesBuildBackend) proposalPaths(checkout string, build *contracts.
 	return path.Join(prefix, filepath.ToSlash(relative)), contextRel, dockerfileRel, nil
 }
 
-func (b KubernetesBuildBackend) job(name, subPath, contextRel, dockerfileRel, image string, limit time.Duration) *batchv1.Job {
+func (b Builder) job(name, subPath, contextRel, dockerfileRel, image string, limit time.Duration) *batchv1.Job {
 	no := false
 	deadline := int64(limit.Seconds())
 	if deadline < 1 {
@@ -242,7 +248,7 @@ func (b KubernetesBuildBackend) job(name, subPath, contextRel, dockerfileRel, im
 	// tag per image that each build overwrites, so it is namespaced to the app
 	// and bounded by the registry's own retention. Import of a missing cache is
 	// a warning, and a failed export never fails a build that succeeded.
-	cacheRef := imageRepository(image) + ":sdo-buildcache"
+	cacheRef := repository(image) + ":sdo-buildcache"
 	flags := "--oci-worker-no-process-sandbox"
 	script := `buildctl-daemonless.sh build --frontend dockerfile.v0 --local "context=$SDO_CONTEXT" --local dockerfile=/workspace --opt "filename=$SDO_DOCKERFILE" --import-cache "type=registry,ref=$SDO_CACHE_REF" --export-cache "type=registry,ref=$SDO_CACHE_REF,mode=max,ignore-error=true" --output "$SDO_OUTPUT" --metadata-file /tmp/sdo-metadata.json
 printf 'SDO_BUILD_METADATA='; cat /tmp/sdo-metadata.json; printf '\n'`
@@ -274,7 +280,7 @@ printf 'SDO_BUILD_METADATA='; cat /tmp/sdo-metadata.json; printf '\n'`
 	}
 }
 
-func (b KubernetesBuildBackend) deleteJob(ctx context.Context, name string) {
+func (b Builder) deleteJob(ctx context.Context, name string) {
 	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 	defer cancel()
 	propagation := metav1.DeletePropagationBackground
@@ -283,7 +289,7 @@ func (b KubernetesBuildBackend) deleteJob(ctx context.Context, name string) {
 
 // buildFailure reads the failed Job's log and returns the typed failure. When
 // the log cannot be read, the Job condition is all there is to report.
-func (b KubernetesBuildBackend) buildFailure(ctx context.Context, image, job, condition, contextDir, dockerfileAbs string) error {
+func (b Builder) buildFailure(ctx context.Context, image, job, condition, contextDir, dockerfileAbs string) error {
 	logs, err := b.logs(ctx, job)
 	if err != nil || len(logs) == 0 {
 		return fmt.Errorf("BuildKit Job %s failed: %s (the build log could not be read: %v)", job, condition, err)
@@ -293,7 +299,7 @@ func (b KubernetesBuildBackend) buildFailure(ctx context.Context, image, job, co
 	return failure
 }
 
-func (b KubernetesBuildBackend) logs(ctx context.Context, name string) ([]byte, error) {
+func (b Builder) logs(ctx context.Context, name string) ([]byte, error) {
 	if b.ReadJobLogs != nil {
 		return b.ReadJobLogs(ctx, b.Namespace, name)
 	}
@@ -332,3 +338,45 @@ func parseBuildMetadata(logs []byte) (string, error) {
 func ptr32(value int32) *int32 { return &value }
 func ptr64(value int64) *int64 { return &value }
 func ptrBool(value bool) *bool { return &value }
+
+// repository strips a digest or tag from an image reference.
+func repository(image string) string {
+	if at := strings.IndexByte(image, '@'); at >= 0 {
+		return image[:at]
+	}
+	lastSlash := strings.LastIndexByte(image, '/')
+	if colon := strings.LastIndexByte(image, ':'); colon > lastSlash {
+		return image[:colon]
+	}
+	return image
+}
+
+// Resolve implements imagesrc.Source: it builds the context and Dockerfile the
+// config names, relative to the request's checkout, and returns the pushed
+// digest reference. Paths are validated against the checkout first, so a wrong
+// path costs no build time.
+func (b Builder) Resolve(ctx context.Context, req imagesrc.Request, config *contracts.BuildKitImageConfig) (imagesrc.Resolved, error) {
+	if req.Checkout == "" {
+		return imagesrc.Resolved{}, errors.New("buildkit source needs a materialized checkout")
+	}
+	planned, err := PlanBuilds(req.Checkout, []*contracts.ImageBuild{{Image: req.Image, ContextPath: config.GetContextPath(), DockerfilePath: config.GetDockerfilePath()}})
+	if err != nil {
+		return imagesrc.Resolved{}, err
+	}
+	build, err := planned[0].Absolute(req.Checkout)
+	if err != nil {
+		return imagesrc.Resolved{}, err
+	}
+	ref, err := b.BuildImage(ctx, req.Checkout, build)
+	if err != nil {
+		return imagesrc.Resolved{}, err
+	}
+	return imagesrc.Resolved{Ref: ref, Inputs: imagesrc.Inputs{SourceImage: req.Image, ContextPath: planned[0].ContextRel, DockerfilePath: planned[0].DockerfileRel}}, nil
+}
+
+func (b Builder) pause(ctx context.Context, d time.Duration) error {
+	if b.Wait != nil {
+		return b.Wait(ctx, d)
+	}
+	return jobio.Wait(ctx, d)
+}

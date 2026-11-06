@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/settings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"sdo.dev/operator/artifacts"
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/deployment"
+	"sdo.dev/operator/imagesrc/buildkit"
 	"sdo.dev/operator/imagesrc/prebuilt"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/lifecycle"
@@ -82,15 +84,18 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	config.Install.MetricsURL = config.Install.EffectiveMetricsURL()
 	config.Lifecycle.MetricsSource = config.Install.MetricsSource()
 	repository.MetricsDetectors = config.Install.MetricsURL != ""
-	buildBackend := deployment.KubernetesBuildBackend{
+	buildBackend := rawBackend{
 		CommandBackend: deployment.CommandBackend{ObserveLimit: time.Duration(config.Install.RolloutTimeoutSeconds) * time.Second},
-		Client:         client, Namespace: control, RepositoryPVC: config.Install.RepositoryPVC,
-		ProposalRoot: config.WorktreeRoot, RepositoryPVCSubPath: proposalSubPath,
-		BuildKitImage: config.BuildKitImage, RegistrySecret: config.RegistryPushSecret,
-		AllowedRegistryHost: config.Install.RegistryHost,
-		RegistryInsecure:    config.Install.RegistryInsecure,
-		ServiceAccount:      "sdo-image-builder",
-		Timeout:             time.Duration(config.Install.BuildTimeoutSeconds) * time.Second,
+		Builder: buildkit.Builder{
+			TreeDigest: broker.ProposalTreeDigest,
+			Client:     client, Namespace: control, RepositoryPVC: config.Install.RepositoryPVC,
+			ProposalRoot: config.WorktreeRoot, RepositoryPVCSubPath: proposalSubPath,
+			BuildKitImage: config.BuildKitImage, RegistrySecret: config.RegistryPushSecret,
+			AllowedRegistryHost: config.Install.RegistryHost,
+			RegistryInsecure:    config.Install.RegistryInsecure,
+			ServiceAccount:      "sdo-image-builder",
+			Timeout:             time.Duration(config.Install.BuildTimeoutSeconds) * time.Second,
+		},
 	}
 	readiness, err := deployment.NewRegistry(deployment.RawRegistration("raw-manifests-v1", config.Lifecycle.Namespace, buildBackend, &prebuilt.Source{InsecureHost: insecureRegistryHost(config), Cluster: nodeImages{client: client}}, deployment.WithBuildBudget(time.Duration(config.Install.BuildBudgetSeconds)*time.Second)))
 	if err != nil {
@@ -160,4 +165,16 @@ func (n nodeImages) NodeImageNames(ctx context.Context) ([][]string, error) {
 		}
 	}
 	return images, nil
+}
+
+// rawBackend composes the trusted command backend (Apply, Observe) with the
+// BuildKit builder (BuildImage) for the raw deployment strategy. Transitional:
+// removed when the deployer takes images from the imagesrc catalog.
+type rawBackend struct {
+	deployment.CommandBackend
+	Builder buildkit.Builder
+}
+
+func (b rawBackend) BuildImage(ctx context.Context, checkout string, build *contracts.ImageBuild) (string, error) {
+	return b.Builder.BuildImage(ctx, checkout, build)
 }

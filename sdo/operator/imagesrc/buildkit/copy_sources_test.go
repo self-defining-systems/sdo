@@ -1,10 +1,10 @@
-package deployment
+package buildkit
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"reflect"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"strings"
 	"testing"
 )
@@ -75,15 +75,11 @@ func socialNetworkCheckout(t *testing.T) string {
 // any build starts.
 func TestPlanAdmissionRejectsMissingCopySourcesAndNamesTheContainingDirectory(t *testing.T) {
 	checkout := socialNetworkCheckout(t)
-	backend := &recordingBuilds{}
-	_, err := (RawStrategy{Namespace: "demo", Backend: backend}).ApplyAndVerify(context.Background(), checkout, "tree", buildPlan(
+	_, err := PlanBuilds(checkout, []*contracts.ImageBuild{
 		imageBuild("proxy", "docker/openresty-thrift/xenial", "docker/openresty-thrift/xenial/Dockerfile"),
-	))
+	})
 	if err == nil {
 		t.Fatal("a context lacking the COPY sources must be rejected")
-	}
-	if len(backend.contexts) != 0 {
-		t.Fatalf("no build may start: %v", backend.contexts)
 	}
 	for _, want := range []string{`"lua-thrift"`, `"nginx.vh.default.conf"`, "line 2", `"docker/openresty-thrift"`, "image_builds[0]", "no build was started"} {
 		if !strings.Contains(err.Error(), want) {
@@ -97,8 +93,8 @@ func TestPlanAdmissionRejectsMissingCopySourcesAndNamesTheContainingDirectory(t 
 
 func TestPlanAdmissionAcceptsTheContextHoldingTheCopySources(t *testing.T) {
 	checkout := socialNetworkCheckout(t)
-	plan := buildPlan(imageBuild("proxy", "docker/openresty-thrift", "docker/openresty-thrift/xenial/Dockerfile"))
-	if _, err := planImageBuilds(checkout, plan.ImageBuilds); err != nil {
+	plan := []*contracts.ImageBuild{imageBuild("proxy", "docker/openresty-thrift", "docker/openresty-thrift/xenial/Dockerfile")}
+	if _, err := PlanBuilds(checkout, plan); err != nil {
 		t.Fatalf("correct context rejected: %v", err)
 	}
 }
@@ -110,7 +106,7 @@ func TestCopySourceAdmissionAllowsWhatItCannotDecide(t *testing.T) {
 		"svc/present.txt":   "x",
 		"svc/.dockerignore": "ignored.txt\n",
 	})
-	if _, err := planImageBuilds(dir, buildPlan(imageBuild("a", "svc", "svc/Dockerfile")).ImageBuilds); err != nil {
+	if _, err := PlanBuilds(dir, []*contracts.ImageBuild{imageBuild("a", "svc", "svc/Dockerfile")}); err != nil {
 		t.Fatalf("undecidable sources must be allowed: %v", err)
 	}
 }
@@ -118,7 +114,7 @@ func TestCopySourceAdmissionAllowsWhatItCannotDecide(t *testing.T) {
 func TestCopySourceAdmissionWithNoContainingDirectorySaysSo(t *testing.T) {
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string]string{"svc/Dockerfile": "FROM x\nCOPY nowhere.txt /x\n"})
-	_, err := planImageBuilds(dir, buildPlan(imageBuild("a", "svc", "svc/Dockerfile")).ImageBuilds)
+	_, err := PlanBuilds(dir, []*contracts.ImageBuild{imageBuild("a", "svc", "svc/Dockerfile")})
 	if err == nil || !strings.Contains(err.Error(), "No directory in the checkout contains all of them") {
 		t.Fatalf("got %v", err)
 	}
@@ -145,7 +141,7 @@ func TestPlanAdmissionFlagsCopySourcesExcludedByDockerignore(t *testing.T) {
 				files["svc/Dockerfile.dockerignore"] = tc.dockerfileIgnore
 			}
 			writeFiles(t, dir, files)
-			_, err := planImageBuilds(dir, buildPlan(imageBuild("a", "svc", "svc/Dockerfile")).ImageBuilds)
+			_, err := PlanBuilds(dir, []*contracts.ImageBuild{imageBuild("a", "svc", "svc/Dockerfile")})
 			if (err != nil) != tc.reject {
 				t.Fatalf("reject=%t, got %v", tc.reject, err)
 			}

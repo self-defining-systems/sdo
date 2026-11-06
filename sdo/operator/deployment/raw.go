@@ -1,3 +1,4 @@
+//archcheck:allow R1 until=S3-13b reason="raw strategy plans BuildKit builds via buildkit.PlanBuilds until the deployer takes images from the catalog"
 //archcheck:allow R4 until=S3-13b reason="raw strategy decoded in core deployment package"
 //archcheck:ratchet R5 count=3 until=S3-13b
 package deployment
@@ -18,6 +19,7 @@ import (
 	"gopkg.in/yaml.v3"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/imagesrc"
+	"sdo.dev/operator/imagesrc/buildkit"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
@@ -170,7 +172,7 @@ func (strategy RawStrategy) ApplyAndVerify(ctx context.Context, checkout, tree s
 	}
 	imageRefs := map[string]string{}
 	imageInputs := map[string]rendered.ImageInputs{}
-	planned, err := planImageBuilds(checkout, plan.ImageBuilds)
+	planned, err := buildkit.PlanBuilds(checkout, plan.ImageBuilds)
 	if err != nil {
 		return Observation{}, err
 	}
@@ -178,16 +180,10 @@ func (strategy RawStrategy) ApplyAndVerify(ctx context.Context, checkout, tree s
 	defer stopBuilds()
 	for _, item := range planned {
 		build := item.Build
-		contextPath, err := safeCandidatePath(checkout, item.ContextRel)
+		resolved, err := item.Absolute(checkout)
 		if err != nil {
 			return Observation{}, err
 		}
-		dockerfilePath, err := safeCandidatePath(checkout, item.DockerfileRel)
-		if err != nil {
-			return Observation{}, err
-		}
-		resolved := proto.Clone(build).(*contracts.ImageBuild)
-		resolved.ContextPath, resolved.DockerfilePath = contextPath, dockerfilePath
 		immutable, err := strategy.Backend.BuildImage(buildCtx, checkout, resolved)
 		if err != nil {
 			if timeout := buildTimeout(ctx, buildCtx, build.Image, strategy.BuildBudget, err); timeout != nil {

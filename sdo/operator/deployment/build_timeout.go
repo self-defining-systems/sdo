@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"sdo.dev/operator/imagesrc"
 )
 
 // BuildTimeoutError reports that an image build ran out of time. It is an
@@ -34,7 +36,8 @@ func (e *BuildTimeoutError) InfrastructureOutcome() bool { return true }
 
 // buildTimeout classifies err as a timeout when the shared budget expired or
 // the backend reported its per-build deadline, while the caller's own context
-// is still live. It returns nil for every other failure.
+// is still live; the builder reports its own deadline as *imagesrc.TimeoutError.
+// It returns nil for every other failure.
 func buildTimeout(parent, build context.Context, image string, budget time.Duration, err error) error {
 	if parent.Err() != nil {
 		return nil
@@ -42,7 +45,7 @@ func buildTimeout(parent, build context.Context, image string, budget time.Durat
 	if budget > 0 && errors.Is(build.Err(), context.DeadlineExceeded) {
 		return &BuildTimeoutError{Image: image, Limit: budget, Budget: true}
 	}
-	var existing *BuildTimeoutError
+	var existing *imagesrc.TimeoutError
 	if errors.As(err, &existing) {
 		return existing
 	}

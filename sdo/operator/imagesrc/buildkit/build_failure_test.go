@@ -1,4 +1,4 @@
-package deployment
+package buildkit
 
 import (
 	"context"
@@ -163,5 +163,18 @@ func TestClassifierKeepsMissingWhenTheFileReallyIsAbsent(t *testing.T) {
 	failure.ExplainExclusions(dir+"/svc", dir+"/svc/Dockerfile")
 	if failure.Cause != BuildFailureMissingSource || len(failure.Missing) != 1 {
 		t.Fatalf("cause=%q missing=%v", failure.Cause, failure.Missing)
+	}
+}
+
+const buildkitStartupLog = "could not connect to unix:///run/user/1000/buildkit/buildkitd.sock after 10 trials\n========== log ==========\n"
+
+func TestBuildKitStartupFailureIsInfrastructureNotPlan(t *testing.T) {
+	failure := ClassifyBuildLog("reg/app:1", "job", buildkitStartupLog)
+	if failure.Cause != BuildFailureInfrastructure || !failure.InfrastructureOutcome() {
+		t.Fatalf("cause = %q", failure.Cause)
+	}
+	real := ClassifyBuildLog("reg/app:1", "job", compileLog)
+	if real.InfrastructureOutcome() {
+		t.Fatal("a compile error is a source fault")
 	}
 }

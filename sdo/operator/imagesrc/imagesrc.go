@@ -56,6 +56,11 @@ type Declared struct {
 	Config   *anypb.Any
 }
 
+// Every error type of this package that can be an infrastructure outcome
+// (ResolveError, TimeoutError) implements InfrastructureOutcome() bool, the one
+// marker the lifecycle coordinator checks. Implementations that add a classified
+// failure (for example the BuildKit build failure) implement the same method.
+
 // Error attributes a failure to the image and the source that produced it. It
 // unwraps to the source's own typed cause (ResolveError, BuildFailureError, and
 // so on), so callers keep using errors.As.
@@ -123,8 +128,9 @@ func (e *TimeoutError) Error() string {
 // Unwrap lets errors.Is(err, context.DeadlineExceeded) hold.
 func (e *TimeoutError) Unwrap() error { return context.DeadlineExceeded }
 
-// InfrastructureTimeout marks the error as a time limit, not a plan error.
-func (e *TimeoutError) InfrastructureTimeout() bool { return true }
+// InfrastructureOutcome marks the error as a time limit, not a plan error. It
+// is the one marker the lifecycle coordinator checks.
+func (e *TimeoutError) InfrastructureOutcome() bool { return true }
 
 var digestReference = regexp.MustCompile(`^[^@\s]+@sha256:[a-f0-9]{64}$`)
 

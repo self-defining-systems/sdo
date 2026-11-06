@@ -71,8 +71,9 @@ The exact declared edge-package list is:
 - `sdo/operator/runtime/prometheus`: Prometheus HTTP adapter.
 - `sdo/operator/memoryhost/hostio`: memory-host process launcher, Unix socket server/client and read-only network adapter.
 - `sdo/operator/memory/internal/memoryio`: Git reads, isolated-index whitespace checks, shell syntax and toolchain lookup. No process handles escape.
-- `sdo/operator/deployment/internal/deploymentio`: trusted deployment processes, bounded health process execution, wait timers and Job-name suffixes.
+- `sdo/operator/deployment/internal/deploymentio`: trusted deployment processes, bounded health process execution, and wait timers.
 - `sdo/operator/imagesrc/prebuilt/internal/registryio`: guarded public-registry HTTP client (sockets) and the digest-cache clock.
+- `sdo/operator/imagesrc/buildkit/internal/jobio`: BuildKit Job-name suffixes and the Job poll timer.
 - `sdo/operator/apihistory/internal/apiio`: API-history clock, timers and identifier randomness.
 - `sdo/operator/kubeproxy/internal/proxyio`: API proxy clock and request-ID randomness.
 - `sdo/operator/rendered/internal/renderio`: rendered-source Git reads.

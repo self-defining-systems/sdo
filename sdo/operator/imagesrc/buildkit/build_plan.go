@@ -1,4 +1,4 @@
-package deployment
+package buildkit
 
 import (
 	"errors"
@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
 
@@ -20,19 +21,19 @@ const (
 	nearbyDepth = 4
 )
 
-// plannedBuild is an image build whose context and Dockerfile are proven to
+// Planned is an image build whose context and Dockerfile are proven to
 // exist in the checkout. Relative paths are checkout-relative and slash-form.
-type plannedBuild struct {
+type Planned struct {
 	Build         *contracts.ImageBuild
 	ContextRel    string
 	DockerfileRel string
 }
 
-// planImageBuilds validates every image build against the checkout before any
+// PlanBuilds validates every image build against the checkout before any
 // build starts, so a wrong path costs no build time and the deployer learns
 // every wrong path at once.
-func planImageBuilds(checkout string, builds []*contracts.ImageBuild) ([]plannedBuild, error) {
-	planned := make([]plannedBuild, 0, len(builds))
+func PlanBuilds(checkout string, builds []*contracts.ImageBuild) ([]Planned, error) {
+	planned := make([]Planned, 0, len(builds))
 	seen := map[string]bool{}
 	var problems []string
 	for index, build := range builds {
@@ -63,7 +64,7 @@ func planImageBuilds(checkout string, builds []*contracts.ImageBuild) ([]planned
 			problems = append(problems, problem)
 			continue
 		}
-		planned = append(planned, plannedBuild{Build: build, ContextRel: contextRel, DockerfileRel: dockerfileRel})
+		planned = append(planned, Planned{Build: build, ContextRel: contextRel, DockerfileRel: dockerfileRel})
 	}
 	if len(problems) > 0 {
 		return nil, fmt.Errorf("the plan's image_builds do not match the checkout, so no build was started. All paths are relative to the checkout root. %s", strings.Join(problems, " "))
@@ -261,4 +262,39 @@ func listLimited(values []string) string {
 		quoted = append(quoted, fmt.Sprintf("%q", value))
 	}
 	return strings.Join(quoted, ", ")
+}
+
+// Absolute returns the build with context and Dockerfile resolved to real
+// paths inside the checkout, the form BuildImage takes.
+func (p Planned) Absolute(checkout string) (*contracts.ImageBuild, error) {
+	contextPath, err := safeCandidatePath(checkout, p.ContextRel)
+	if err != nil {
+		return nil, err
+	}
+	dockerfilePath, err := safeCandidatePath(checkout, p.DockerfileRel)
+	if err != nil {
+		return nil, err
+	}
+	resolved := proto.Clone(p.Build).(*contracts.ImageBuild)
+	resolved.ContextPath, resolved.DockerfilePath = contextPath, dockerfilePath
+	return resolved, nil
+}
+
+// safeCandidatePath resolves raw inside root, rejecting paths that leave it.
+func safeCandidatePath(root, raw string) (string, error) {
+	if raw == "" || filepath.IsAbs(raw) || raw == ".." || strings.HasPrefix(filepath.Clean(raw), ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("candidate path escapes proposal: %q", raw)
+	}
+	base, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", err
+	}
+	path, err := filepath.EvalSymlinks(filepath.Join(base, raw))
+	if err != nil {
+		return "", err
+	}
+	if rel, err := filepath.Rel(base, path); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("candidate path escapes proposal: %q", raw)
+	}
+	return path, nil
 }

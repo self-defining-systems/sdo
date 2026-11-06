@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"testing"
 
-
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/imagesrc"
 	"sdo.dev/operator/imagesrc/imagesrctest"

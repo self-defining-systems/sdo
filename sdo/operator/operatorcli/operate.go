@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"sdo.dev/operator/deployment"
+	"sdo.dev/operator/imagesrc/buildkit"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory/observation"
@@ -135,7 +135,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 		return OperateConfig{}, errors.New("operate requires a digest-pinned BuildKit image and separate registry push Secret")
 	}
 	if *registryHost != "" {
-		if err := deployment.ValidateRegistryHost(*registryHost); err != nil {
+		if err := buildkit.ValidateRegistryHost(*registryHost); err != nil {
 			return OperateConfig{}, fmt.Errorf("invalid trusted registry host: %w", err)
 		}
 	}

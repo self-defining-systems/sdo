@@ -154,6 +154,7 @@ user, Job, script), after each such action's own recorded success.
 | `sdo/operator/apihistory/internal/apiio/` | API-history clock, timers and identifier randomness; private production I/O adapter, without artifact publication authority |
 | `sdo/operator/kubeproxy/internal/proxyio/` | API proxy clock and request-ID randomness; private production I/O adapter, without artifact publication authority |
 | `sdo/operator/rendered/internal/renderio/` | Rendered-source Git reads; private production I/O adapter, without artifact publication authority |
+| `sdo/operator/imagesrc/buildkit/internal/jobio/` | BuildKit Job-name suffix randomness and poll timer; private production I/O adapter, without artifact publication authority |
 | `sdo/operator/shellpath/internal/shellio/` | Shell detector processes, runner server, timers and environment; private production I/O adapter, without artifact publication authority |
 | `sdo/operator/worker_registry/internal/workerio/` | Worker clocks, warm-standby processes, sockets and environment; private production I/O adapter, without artifact publication authority |
 | `sdo/operator/cmd/sdo-go-cache/internal/cacheio/` | Go cache helper environment and clock; private production I/O adapter, without artifact publication authority |
@@ -168,6 +169,7 @@ user, Job, script), after each such action's own recorded success.
 | `sdo/operator/render/raw/` | Raw-manifest renderer (`raw`): pure function over `render.FS` selecting YAML/JSON manifests, rejecting kustomize roots, projecting Secrets to identity under `SecretsOmit`; no core imports |
 | `sdo/operator/render/kustomize/` | Kustomize renderer (`kustomize`): restricted kustomization (files, generators, no remote bases or plugins) built by krusty on a private in-memory FS from `render.FS`; Secret inputs only declared under `SecretsOmit` |
 | `sdo/operator/operatorcli/catalog/renderers/` | Sole wiring of built-in renderers into one `render.Catalog` (`Catalog()`), imported by controller builds and the CLI; a test requires every registered ID to run the conformance suite and have a row here |
+| `sdo/operator/imagesrc/buildkit/` | Image source `buildkit`: validates build paths and COPY sources against the checkout, runs a bounded rootless BuildKit Job that sees only the proposal checkout and its own push Secret, classifies build failures, and returns the pushed digest; infrastructure outcomes (`*imagesrc.TimeoutError`, daemon-unavailable `BuildFailureError`) carry `InfrastructureOutcome()`; the tree-unchanged check is an injected `TreeDigest` |
 | `sdo/operator/rendered/` | Production deployment renderer and selected-manifest reader; no benchmark dependencies. |
 | `sdo/operator/broker/`, `memory/` (including `memory/layout` and `memory/validate`), `outcome_derivation/` | Go commit authority (including repository-wide serialization, optional remote-branch replication, validated stale-diff replay, source-only repair projection, working playbook carry into reflection and append-only reflection SDK-gap annotations), logical snapshots and explicit generic-health preparation, the single operational-memory validator, outcome store with physical JSON adapter, controller-derived three-class outcomes without diagnosis verification, and read-only controller observations |
 | `sdo/operator/memoryhost/`, `memoryhost/hostio/` | Sole accepted-memory execution path: mirror barriers, immutable activation, read-only execution and host process transport; no publication authority |
@@ -814,6 +816,7 @@ Source inventory drift compares top-level non-secret informer objects against a 
 | `sdo/operator/apihistory/internal/apiio/` | Production-only private adapter: aPI-history clock, timers and identifier randomness; benchmark code cannot import it |
 | `sdo/operator/kubeproxy/internal/proxyio/` | Production-only private adapter: aPI proxy clock and request-ID randomness; benchmark code cannot import it |
 | `sdo/operator/rendered/internal/renderio/` | Production-only private adapter: rendered-source Git reads; benchmark code cannot import it |
+| `sdo/operator/imagesrc/buildkit/internal/jobio/` | Production-only private adapter: BuildKit Job-name suffix randomness and poll timer; benchmark code cannot import it |
 | `sdo/operator/shellpath/internal/shellio/` | Production-only private adapter: shell detector processes, runner server, timers and environment; benchmark code cannot import it |
 | `sdo/operator/worker_registry/internal/workerio/` | Production-only private adapter: worker clocks, warm-standby processes, sockets and environment; benchmark code cannot import it |
 | `sdo/operator/cmd/sdo-go-cache/internal/cacheio/` | Production-only private adapter: go cache helper environment and clock; benchmark code cannot import it |
