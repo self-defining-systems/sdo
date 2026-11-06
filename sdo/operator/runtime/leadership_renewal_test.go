@@ -116,19 +116,11 @@ func TestTakenLeaseIsTheTypedLeadershipLoss(t *testing.T) {
 	defer cancel()
 	errs := maintainLeadership(ctx, elector, 5*time.Second, clock)
 	<-clock.ticker
-	for spins := 0; ; spins++ {
-		if spins > 1_000_000 {
-			t.Fatal("no stop signal")
-		}
-		select {
-		case err := <-errs:
-			if !errors.Is(err, ErrLeadershipLost) {
-				t.Fatalf("want ErrLeadershipLost, got %v", err)
-			}
-			return
-		default:
-			clock.Step(5 * time.Second)
-			runtime.Gosched()
-		}
+	// The ticker exists, so one step delivers the one tick; the attempt finds
+	// the Lease held by someone else and the loop reports it. Block for the
+	// signal rather than spinning the clock against the scheduler.
+	clock.Step(5 * time.Second)
+	if err := <-errs; !errors.Is(err, ErrLeadershipLost) {
+		t.Fatalf("want ErrLeadershipLost, got %v", err)
 	}
 }

@@ -114,6 +114,11 @@ func selfHealedIncident(t *testing.T, terminating time.Duration) {
 			if err := controller.ExecuteClosureEffect(ctx, effect); err != nil {
 				t.Fatal(err)
 			}
+			// The broker call runs in a goroutine. Wait for it before the
+			// virtual clock moves on, so the elapsed time below is the
+			// controller's decision latency, not goroutine scheduling.
+			completion := <-controller.closureResults
+			controller.closureResults <- completion
 		}
 		clockMu.Lock()
 		now = now.Add(time.Second)
