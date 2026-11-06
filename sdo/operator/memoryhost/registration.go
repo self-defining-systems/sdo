@@ -26,6 +26,9 @@ type Registration struct {
 	Alerts       bool
 	PodAdmission bool
 	Traffic      []string
+	// Windowed marks a detector that judges a rolling window (sdk.WindowedDetector).
+	// The window itself is derived from the declared inputs and the view.
+	Windowed bool
 }
 
 func registration(d sdk.Detector) Registration {
@@ -52,6 +55,7 @@ func registration(d sdk.Detector) Registration {
 	if c, ok := d.(traffic.Consumer); ok {
 		r.Traffic = c.TrafficWorkloads()
 	}
+	_, r.Windowed = d.(sdk.WindowedDetector)
 	return r
 }
 func DecodeRegistration(wire *pb.MemoryDetectorRegistration) (Registration, error) {
