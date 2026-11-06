@@ -93,6 +93,13 @@ def buildkit_image(image: str, context_path: str, dockerfile_path: str, source_i
     }
 
 
+def prebuilt_image(image: str, source_id: str = "prebuilt") -> dict[str, Any]:
+    """ProtoJSON ``ImageSource``: ``image`` already exists in a registry; SDO pins its tag to a digest at deploy."""
+    if not image:
+        raise ValueError("an image source needs the image reference")
+    return {"image": image, "source_id": source_id, "config": {"@type": _CONFIG_TYPE + "PrebuiltImageConfig"}}
+
+
 def deployment_plan(
     source: dict[str, Any],
     *,

@@ -13,14 +13,11 @@ require (
 )
 
 require (
-	github.com/BurntSushi/toml v1.3.2 // indirect
 	github.com/Masterminds/goutils v1.1.1 // indirect
 	github.com/Masterminds/semver/v3 v3.2.1 // indirect
-	github.com/Masterminds/sprig/v3 v3.2.3 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/cyphar/filepath-securejoin v0.2.4 // indirect
 	github.com/go-errors/errors v1.4.2 // indirect
-	github.com/gobwas/glob v0.2.3 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
 	github.com/huandu/xstrings v1.4.0 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
@@ -39,6 +36,9 @@ require (
 )
 
 require (
+	github.com/BurntSushi/toml v1.3.2
+	github.com/Masterminds/sprig/v3 v3.2.3
+	github.com/gobwas/glob v0.2.3
 	google.golang.org/grpc v1.79.3
 	helm.sh/helm/v3 v3.15.4
 	k8s.io/utils v0.0.0-20230726121419-3b25d923346b
@@ -72,7 +72,7 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/mxk/go-flowrate v0.0.0-20140419014527-cca7078d478f // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
-	github.com/pkg/errors v0.9.1 // indirect
+	github.com/pkg/errors v0.9.1
 	github.com/spf13/pflag v1.0.5 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/exp v0.0.0-20260820142414-ca536658362e // indirect

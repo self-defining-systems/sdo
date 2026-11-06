@@ -88,6 +88,28 @@ Each gap is one diagnostic naming the operation, component or edge (`map.uncover
 for the designer's commits once a map exists; for other actors they are notes, so reflection never fails on a
 designer gap.
 
+## What the deterministic stage does with it
+
+The stage refuses a matched program whose plan would restart, delete, scale down or otherwise rewrite a workload the
+accepted map marks `holds_data`, or one of its Pods. The attempt is recorded as `skipped` with `skip_reason:
+holds_data` and an error naming the action, and the finding goes to the responder, who may act by hand. Creating the
+workload, scaling it up, and `Exec` or `RunScript` steps run as before: the plan cannot see inside a command. This
+is a rule about one kind of action, not a trust gate. Without a map nothing is refused. The shared memory check has no
+matching rule because a program binds its workload from live findings, so its source does not say which one it will
+touch.
+
+## Repairs that may have lost data
+
+As a health-clear closure freezes, the controller checks the Pods of every `holds_data` workload. If one was created,
+or (with no `emptyDir`) one of its containers started, since the incident opened, and the Pod has only volumes that
+die with it, the closure commits `unconfirmed` with reason `DATA_MAY_BE_LOST` and a detail naming the workload. The
+signal is the Pod's own timestamps, so a program, a hand repair and a crash all count, and it survives a controller
+restart with no tracking. Health cannot rule the loss out because probes read only the data they wrote. The outcome
+says why through a pending `controller.data-at-risk` entry in `detector_history`, as any unconfirmed closure names its
+blockers. Reflection gets it as `data_at_risk` and may not publish learning from the closure, and the responder sees the
+same fact as `data_at_risk[]` from `sdo verify`. A Pod replaced before the
+incident opened does not count.
+
 ## What the map does not hold
 
 No fault kinds, no edge semantics (cache, queue, replica), no thresholds and no live measurements. Detectors stay

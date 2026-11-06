@@ -18,13 +18,19 @@ func detectorWindow(detector sdk.Detector, view sdk.DetectionContext) time.Durat
 	if windowed, ok := detector.(sdk.WindowedDetector); ok {
 		return windowed.EvaluationWindow(view)
 	}
-	var window time.Duration
 	if consumer, ok := detector.(traffic.Consumer); ok {
-		// The SDK's SLO detector owns the window bound of a traffic workload.
-		for _, workload := range consumer.TrafficWorkloads() {
-			if slo, ok := traffic.NewDetector(sdk.DetectorSpec{}, workload).(sdk.WindowedDetector); ok {
-				window = max(window, slo.EvaluationWindow(view))
-			}
+		return trafficConsumerWindow(consumer.TrafficWorkloads(), view)
+	}
+	return 0
+}
+
+// trafficConsumerWindow is the longest SLO window among the workloads a traffic
+// consumer judges; the SDK's SLO detector owns the bound of each.
+func trafficConsumerWindow(workloads []string, view sdk.DetectionContext) time.Duration {
+	var window time.Duration
+	for _, workload := range workloads {
+		if slo, ok := traffic.NewDetector(sdk.DetectorSpec{}, workload).(sdk.WindowedDetector); ok {
+			window = max(window, slo.EvaluationWindow(view))
 		}
 	}
 	return window

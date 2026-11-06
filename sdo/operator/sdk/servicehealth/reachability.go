@@ -223,6 +223,13 @@ func (d reachabilityDetector) ConsumesServiceReachability() bool { return true }
 // EvaluationWindow is one more dial and its timeout: a single successful dial
 // ends a run of consecutive failures.
 func (d reachabilityDetector) EvaluationWindow(ctx sdk.DetectionContext) time.Duration {
+	return ReachabilityEvaluationWindow(ctx)
+}
+
+// ReachabilityEvaluationWindow is the settling window of any detector that
+// judges consecutive dials, as read from the context's dial observations, or
+// zero without them.
+func ReachabilityEvaluationWindow(ctx sdk.DetectionContext) time.Duration {
 	w, ok := ReachabilityFrom(ctx)
 	if !ok {
 		return 0

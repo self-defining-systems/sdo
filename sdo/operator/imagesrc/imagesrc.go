@@ -148,27 +148,14 @@ func (c *Catalog) ResolveAll(ctx context.Context, images []string, declared []De
 	if c == nil {
 		return nil, errors.New("imagesrc: nil catalog")
 	}
-	for _, image := range images {
-		if image == "" {
-			return nil, errors.New("imagesrc: empty image reference")
+	choice, err := checkDeclared(images, declared, func(sourceID string) error {
+		if _, ok := c.entries[sourceID]; !ok {
+			return fmt.Errorf("names unknown source %q (registered: %v)", sourceID, c.IDs())
 		}
-	}
-	wanted := make(map[string]bool, len(images))
-	for _, image := range images {
-		wanted[image] = true
-	}
-	choice := make(map[string]Declared, len(declared))
-	for _, d := range declared {
-		if !wanted[d.Image] {
-			return nil, fmt.Errorf("imagesrc: image %q is declared with source %q but no rendered container uses it", d.Image, d.SourceID)
-		}
-		if prior, dup := choice[d.Image]; dup {
-			return nil, fmt.Errorf("imagesrc: image %q is declared twice (sources %q and %q)", d.Image, prior.SourceID, d.SourceID)
-		}
-		if _, ok := c.entries[d.SourceID]; !ok {
-			return nil, fmt.Errorf("imagesrc: image %q names unknown source %q (registered: %v)", d.Image, d.SourceID, c.IDs())
-		}
-		choice[d.Image] = d
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	budgets := map[string]context.Context{}
@@ -236,6 +223,47 @@ func verify(image, ref string, sameRepository bool) error {
 }
 
 // registryHost is the first path segment of an image reference.
+// CheckDeclared applies the declaration rules ResolveAll enforces before it
+// resolves anything, without a catalog: no empty image, every declaration names
+// an image some rendered container uses, and no image is declared twice. The
+// offline operability report calls it so a bad declaration fails before any
+// cluster effect.
+func CheckDeclared(images []string, declared []Declared) error {
+	_, err := checkDeclared(images, declared, nil)
+	return err
+}
+
+// checkDeclared returns the declaration chosen for each image. known, when
+// non-nil, vets a declaration's source ID; its error text completes
+// "imagesrc: image %q ".
+func checkDeclared(images []string, declared []Declared, known func(sourceID string) error) (map[string]Declared, error) {
+	for _, image := range images {
+		if image == "" {
+			return nil, errors.New("imagesrc: empty image reference")
+		}
+	}
+	wanted := make(map[string]bool, len(images))
+	for _, image := range images {
+		wanted[image] = true
+	}
+	choice := make(map[string]Declared, len(declared))
+	for _, d := range declared {
+		if !wanted[d.Image] {
+			return nil, fmt.Errorf("imagesrc: image %q is declared with source %q but no rendered container uses it", d.Image, d.SourceID)
+		}
+		if prior, dup := choice[d.Image]; dup {
+			return nil, fmt.Errorf("imagesrc: image %q is declared twice (sources %q and %q)", d.Image, prior.SourceID, d.SourceID)
+		}
+		if known != nil {
+			if err := known(d.SourceID); err != nil {
+				return nil, fmt.Errorf("imagesrc: image %q %w", d.Image, err)
+			}
+		}
+		choice[d.Image] = d
+	}
+	return choice, nil
+}
+
 func registryHost(image string) string {
 	for i := 0; i < len(image); i++ {
 		if image[i] == '/' {

@@ -188,6 +188,7 @@ type Controller struct {
 	lastAcknowledgedExternalIncidentID string
 	incidentView                       *IncidentView
 	broker                             IncidentBroker
+	gitRead                            gitRead
 	workspaceResults                   chan workspaceCompletion
 	closureResults                     chan closureCompletion
 	acknowledgmentResults              chan acknowledgmentCompletion
@@ -835,6 +836,7 @@ func (c *Controller) beginIncident(now time.Time, request IncidentRequest, batch
 	c.incidentOpen = true
 	c.setupEvaluatedRevision = c.config.SourceCommit
 	c.responderDone = false
+	request.DetectedAt = now.UTC()
 	c.currentIncidentRequest = cloneIncidentRequest(&request)
 	c.currentIncidentResult = nil
 	c.dispatchError = ""

@@ -3,13 +3,15 @@ package policy_test
 import (
 	"runtime/debug"
 
-	"github.com/Masterminds/sprig/v3"
 	"errors"
 	"fmt"
+	"github.com/Masterminds/sprig/v3"
 	"slices"
 	"strings"
 	"testing"
+	"text/template"
 
+	"sdo.dev/operator/render/helm/internal/engine"
 	"sdo.dev/operator/render/helm/internal/policy"
 )
 
@@ -45,22 +47,7 @@ func TestHookPhasesSelectByOperation(t *testing.T) {
 	}
 }
 
-func TestConditionalResolveReportsOnlyKeptFiles(t *testing.T) {
-	c := policy.Conditional{
-		"c/templates/a.yaml": {{Rule: policy.RuleForbiddenFunction, Chart: "c", File: "templates/a.yaml"}},
-		"c/templates/b.yaml": {{Rule: policy.RuleForbiddenFunction, Chart: "c", File: "templates/b.yaml"}},
-	}
-	if err := c.Resolve(func(string) bool { return false }); err != nil {
-		t.Fatalf("no kept file: %v", err)
-	}
-	err := c.Resolve(func(f string) bool { return f == "c/templates/b.yaml" })
-	var perr *policy.Error
-	if !errors.As(err, &perr) || perr.File != "templates/b.yaml" || strings.Contains(err.Error(), "a.yaml") {
-		t.Fatalf("only b.yaml may be reported: %v", err)
-	}
-}
-
-// TestEveryTemplateFunctionIsClassified fails when the pinned Helm or sprig
+// TestEveryTemplateFunctionIsClassified fails when the pinned Helm engine or sprig
 // function map holds a name the policy has not classified, and when the
 // classification names a function the maps no longer have.
 func TestEveryTemplateFunctionIsClassified(t *testing.T) {
@@ -70,17 +57,15 @@ func TestEveryTemplateFunctionIsClassified(t *testing.T) {
 			t.Errorf("sprig function %q is not classified in policy", name)
 		}
 	}
-	for _, name := range policy.HelmFunctions() {
-		if !known[name] {
-			t.Errorf("helm function %q is not classified in policy", name)
-		}
-	}
 	universe := map[string]bool{}
 	for name := range sprig.TxtFuncMap() {
 		universe[name] = true
 	}
-	for _, n := range policy.HelmFunctions() {
-		universe[n] = true
+	for _, name := range engine.FuncNames() {
+		universe[name] = true
+		if !known[name] {
+			t.Errorf("engine function %q is not classified in policy", name)
+		}
 	}
 	for _, n := range policy.BuiltinFunctions() {
 		universe[n] = true
@@ -93,12 +78,12 @@ func TestEveryTemplateFunctionIsClassified(t *testing.T) {
 }
 
 func TestClassificationHasNoOverlapAndForbidsTheNondeterministic(t *testing.T) {
-	for _, name := range []string{"tpl", "lookup", "now", "date", "date_in_zone", "dateInZone", "date_modify", "unixEpoch", "toDate", "ago", "env", "expandenv", "randAlpha", "uuidv4", "genCA", "bcrypt", "encryptAES", "getHostByName", "shuffle"} {
+	for _, name := range []string{"lookup", "now", "date", "date_in_zone", "dateInZone", "date_modify", "unixEpoch", "toDate", "ago", "env", "expandenv", "randAlpha", "uuidv4", "genCA", "bcrypt", "encryptAES", "getHostByName", "shuffle"} {
 		if _, bad := policy.Forbidden(name); !bad {
 			t.Errorf("%s must be forbidden", name)
 		}
 	}
-	for _, name := range []string{"include", "toYaml", "required", "default", "printf", "index", "sha256sum", "quote", "derivePassword"} {
+	for _, name := range []string{"include", "tpl", "duration", "durationRound", "toYaml", "required", "default", "printf", "index", "sha256sum", "quote", "derivePassword"} {
 		if why, bad := policy.Forbidden(name); bad {
 			t.Errorf("%s must be allowed, got %q", name, why)
 		}
@@ -110,6 +95,29 @@ func TestClassificationHasNoOverlapAndForbidsTheNondeterministic(t *testing.T) {
 
 // The classification is reviewed against one Helm version; a bump must
 // re-read its function map (HelmFunctions) before this constant moves.
+// Restrict stubs every forbidden or unclassified function of a map, adds the
+// forbidden ones a map lacks (env and expandenv, which Helm deletes), and keeps
+// the allowed ones.
+func TestRestrictStubsForbiddenAndUnclassifiedFunctions(t *testing.T) {
+	keep := func(string) string { return "kept" }
+	funcs := template.FuncMap{"upper": keep, "now": keep, "someFutureFunction": keep}
+	policy.Restrict(funcs)
+	if got := funcs["upper"].(func(string) string)("x"); got != "kept" {
+		t.Fatalf("an allowed function must be left alone, got %q", got)
+	}
+	for _, name := range []string{"now", "someFutureFunction", "env", "expandenv", "lookup"} {
+		stub, ok := funcs[name].(func(...any) (any, error))
+		if !ok {
+			t.Fatalf("%s is not a stub: %T", name, funcs[name])
+		}
+		_, err := stub(1, "x")
+		var perr *policy.Error
+		if !errors.As(err, &perr) || perr.Rule != policy.RuleForbiddenFunction || !strings.Contains(perr.Detail, `"`+name+`"`) {
+			t.Fatalf("%s: stub error %v", name, err)
+		}
+	}
+}
+
 func TestClassificationMatchesThePinnedHelm(t *testing.T) {
 	info, ok := debug.ReadBuildInfo()
 	if !ok {

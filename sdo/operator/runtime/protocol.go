@@ -60,22 +60,24 @@ type IncidentRequest struct {
 	NamespaceOnboarding    *contracts.NamespaceOnboarding
 	// ObservationGeneration binds the incident to accepted scope and installer policy.
 	ObservationGeneration string
-	SchemaVersion         string
-	Application           string
-	Namespace             string
-	IncidentID            string
-	Findings              []sdk.Finding
-	DriftEvents           []sdk.DriftEvent
-	DetectorHistory       []DetectorEvaluation
-	SurfacedPlaybooks     []SurfacedPlaybook
-	RelevantOutcomes      []PriorOutcomeEvidence
-	SourceCommit          string
-	DeployedCommit        string
-	RepositoryWorktree    string
-	RepositoryBaseCommit  string
-	ResponseDeadline      time.Time
-	CancellationToken     string
-	RepairPolicy          string
+	// DetectedAt is when the controller opened this incident.
+	DetectedAt           time.Time
+	SchemaVersion        string
+	Application          string
+	Namespace            string
+	IncidentID           string
+	Findings             []sdk.Finding
+	DriftEvents          []sdk.DriftEvent
+	DetectorHistory      []DetectorEvaluation
+	SurfacedPlaybooks    []SurfacedPlaybook
+	RelevantOutcomes     []PriorOutcomeEvidence
+	SourceCommit         string
+	DeployedCommit       string
+	RepositoryWorktree   string
+	RepositoryBaseCommit string
+	ResponseDeadline     time.Time
+	CancellationToken    string
+	RepairPolicy         string
 	// StateChanges is the application's configuration diff against its last
 	// healthy baseline when the incident opened; nil without a baseline.
 	StateChanges          *StateChanges

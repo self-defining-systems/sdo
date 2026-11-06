@@ -18,6 +18,7 @@ import (
 	"sdo.dev/operator/imagesrc"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/operability"
 	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/plugindesc"
 	"sdo.dev/operator/render"
@@ -205,6 +206,9 @@ func (c Coordinator) Run(ctx context.Context, cfg Config) (Result, error) {
 		}
 		sourceReceipt, deployment, sourceReady, nextFeedback, err := c.deploy(ctx, deployerID, cfg, attempt, feedback)
 		if err != nil {
+			if opErr, ok := asOperabilityError(err); ok && cfg.ProvidedPlan != nil {
+				return result, &ProvidedPlanError{Stage: "deploy", Reason: opErr.Decision.Feedback(), Report: &opErr.Report}
+			}
 			return result, fmt.Errorf("deployment attempt %d: %w", attempt, err)
 		}
 		if !sourceReady {
@@ -403,6 +407,14 @@ func (c Coordinator) deploy(ctx context.Context, id string, cfg Config, attempt 
 	if err := planfile.Write(proposal.Path, plan); err != nil {
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return broker.Receipt{}, DeploymentReceipt{}, false, "", fmt.Errorf("write deployment plan: %w", err)
+	}
+	if report, decision, checked, err := c.offlineGate(ctx, cfg, proposal, plan); err != nil {
+		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
+		return broker.Receipt{}, DeploymentReceipt{}, false, "", err
+	} else if checked && decision.Kind != operability.Accepted {
+		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
+		reason, err := offlineOutcome(report, decision)
+		return broker.Receipt{}, DeploymentReceipt{}, false, reason, err
 	}
 	var readiness DeploymentReceipt
 	err = c.retryInfrastructure(ctx, cfg, "independent source deployment", func() (err error) {

@@ -34,6 +34,28 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 _GO_TOOL_CONSUMERS = ("tests/unit/benchmarks/sregym/", "tests/unit/sdo/operator/", "tests/unit/test_")
 
 
+def _warm_hypothesis(session: pytest.Session) -> None:
+    """Pay Hypothesis's one-time costs here, not inside the first property test a process runs.
+
+    On its first draws a process parses the source of every repository module imported so far (to seed
+    strings and numbers found in local code) and builds its Unicode tables: about a second locally, ten on a
+    cold runner whose xdist workers do it at once. The slow-test budget charged that to whichever property
+    test ran first (receipt round-trip 10.5 s, transport sanitizer 10.9 s). Collection has imported every
+    test module, so one throwaway property test here leaves nothing to scan later.
+    """
+    if not any(hasattr(getattr(item, "obj", None), "hypothesis") for item in session.items):
+        return
+    from hypothesis import given, settings
+    from hypothesis import strategies as st
+
+    @settings(max_examples=100, database=None, deadline=None, derandomize=True)
+    @given(st.text(max_size=20))
+    def warm(_: str) -> None:
+        pass
+
+    warm()
+
+
 def pytest_collection_finish(session: pytest.Session) -> None:
     """Prepare the real adapter executables once, outside the per-test compiler guard.
 
@@ -41,6 +63,7 @@ def pytest_collection_finish(session: pytest.Session) -> None:
     export prepared tools; a focused local run builds the same three content-addressed executables here,
     and only when a collected test uses one.
     """
+    _warm_hypothesis(session)
     names = {
         "SDO_OPERATOR_BIN": None,
         "SDO_NATIVE_RECEIPT_BIN": ("native_receipt_go", "sdo-native-receipt"),

@@ -231,27 +231,36 @@ func TestPolicyRejectsUnsafeCharts(t *testing.T) {
 		fs   rendertest.MapFS
 		rule policy.Rule
 	}{
-		"lookup":               {tpl(`(lookup "v1" "Namespace" "" "kube-system").metadata.name`), policy.RuleForbiddenFunction},
-		"now":                  {tpl(`now | date "2006"`), policy.RuleForbiddenFunction},
-		"date with a string":   {tpl(`date "2006" "garbage"`), policy.RuleForbiddenFunction},
-		"randAlphaNum":         {tpl(`randAlphaNum 8`), policy.RuleForbiddenFunction},
-		"uuidv4":               {tpl(`uuidv4`), policy.RuleForbiddenFunction},
-		"genCA":                {tpl(`(genCA "x" 1).Cert`), policy.RuleForbiddenFunction},
-		"bcrypt":               {tpl(`bcrypt "pw"`), policy.RuleForbiddenFunction},
+		"lookup":             {tpl(`(lookup "v1" "Namespace" "" "kube-system").metadata.name`), policy.RuleForbiddenFunction},
+		"now":                {tpl(`now | date "2006"`), policy.RuleForbiddenFunction},
+		"date with a string": {tpl(`date "2006" "garbage"`), policy.RuleForbiddenFunction},
+		"randAlphaNum":       {tpl(`randAlphaNum 8`), policy.RuleForbiddenFunction},
+		"uuidv4":             {tpl(`uuidv4`), policy.RuleForbiddenFunction},
+		"genCA":              {tpl(`(genCA "x" 1).Cert`), policy.RuleForbiddenFunction},
+		"bcrypt":             {tpl(`bcrypt "pw"`), policy.RuleForbiddenFunction},
 		// Bypasses of the former name denylist (review-2 B2).
-		"date_in_zone alias":   {tpl(`date_in_zone "2006-01-02T15:04:05" "x" "UTC"`), policy.RuleForbiddenFunction},
-		"tpl over a literal":   {tpl(`tpl "{{ randAlphaNum 8 }}" .`), policy.RuleForbiddenFunction},
+		"date_in_zone alias": {tpl(`date_in_zone "2006-01-02T15:04:05" "x" "UTC"`), policy.RuleForbiddenFunction},
+		"tpl over a literal": {tpl(`tpl "{{ randAlphaNum 8 }}" .`), policy.RuleForbiddenFunction},
 		"tpl over values": {minimal(map[string]string{"c/values.yaml": "s: \"{{ now }}\"\n",
 			"c/templates/x.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: x}\ndata:\n  v: {{ tpl .Values.s . }}\n"}), policy.RuleForbiddenFunction},
-		"unclassified function": {tpl(`someFutureFunction 1`), policy.RuleForbiddenFunction},
-		"dynamic include":       {tpl(`include (printf "%s" "h") .`), policy.RuleForbiddenFunction},
+		"computed include of a forbidden helper": {minimal(map[string]string{
+			"c/templates/_h.tpl": `{{ define "h" }}{{ randInt 1 5 }}{{ end }}`,
+			"c/templates/x.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: x}\ndata:\n  v: {{ include (printf \"%s\" \"h\") . }}\n"}), policy.RuleForbiddenFunction},
+		"env":       {tpl(`env "HOME"`), policy.RuleForbiddenFunction},
+		"expandenv": {tpl(`expandenv "$HOME"`), policy.RuleForbiddenFunction},
+		"unixEpoch": {tpl(`now | unixEpoch`), policy.RuleForbiddenFunction},
+		"tpl reaching a helper": {minimal(map[string]string{
+			"c/values.yaml":      "s: '{{ include \"h\" . }}'\n",
+			"c/templates/_h.tpl": `{{ define "h" }}{{ uuidv4 }}{{ end }}`,
+			"c/templates/x.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: x}\ndata:\n  v: {{ tpl .Values.s . }}\n"}), policy.RuleForbiddenFunction},
 		"include of an output file": {minimal(map[string]string{
 			"c/templates/hidden.yaml": "{{ randAlphaNum 4 | printf \"\" }}",
 			"c/templates/x.yaml":      "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: x}\ndata:\n  v: {{ include \"c/templates/hidden.yaml\" . }}\n"}), policy.RuleForbiddenFunction},
-		"getHostByName":        {tpl(`getHostByName "example.com"`), policy.RuleForbiddenFunction},
-		"in a helper":          {minimal(map[string]string{"c/templates/_h.tpl": `{{ define "h" }}{{ randInt 1 5 }}{{ end }}`}), policy.RuleForbiddenFunction},
+		"getHostByName": {tpl(`getHostByName "example.com"`), policy.RuleForbiddenFunction},
+		"in a used helper": {minimal(map[string]string{"c/templates/_h.tpl": `{{ define "h" }}{{ randInt 1 5 }}{{ end }}`,
+			"c/templates/x.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: x}\ndata:\n  v: {{ include \"h\" . }}\n"}), policy.RuleForbiddenFunction},
 		"in a nested pipeline": {tpl(`list 1 2 | join (toString (randInt 1 3))`), policy.RuleForbiddenFunction},
-		"inside if/with/range": {minimal(map[string]string{"c/values.yaml": "a: true\nb: {k: 1}\nc: [1]\n", "c/templates/x.yaml": "{{ if .Values.a }}{{ with .Values.b }}{{ range .Values.c }}{{ uuidv4 }}{{ end }}{{ end }}{{ end }}"}), policy.RuleForbiddenFunction},
+		"inside if/with/range": {minimal(map[string]string{"c/values.yaml": "a: true\nb: {k: 1}\nc: [1]\n", "c/templates/x.yaml": "{{ if .Values.a }}{{ with .Values.b }}{{ range $.Values.c }}{{ uuidv4 }}{{ end }}{{ end }}{{ end }}"}), policy.RuleForbiddenFunction},
 		"in an else branch":    {minimal(map[string]string{"c/values.yaml": "a: false\n", "c/templates/x.yaml": "{{ if .Values.a }}a{{ else }}{{ shuffle (list 1 2) }}{{ end }}"}), policy.RuleForbiddenFunction},
 		"in a subchart": {minimal(map[string]string{
 			"c/Chart.yaml":                "apiVersion: v2\nname: c\nversion: 0.1.0\ndependencies:\n- {name: s, version: 0.1.0, repository: 'x'}\n",
@@ -271,6 +280,9 @@ func TestPolicyRejectsUnsafeCharts(t *testing.T) {
 			var perr *policy.Error
 			if !errors.As(err, &perr) || perr.Chart == "" {
 				t.Fatalf("violation is not a typed policy.Error naming the chart: %v", err)
+			}
+			if tc.rule == policy.RuleForbiddenFunction && (perr.File == "" || !strings.Contains(perr.Detail, "template function")) {
+				t.Fatalf("a function violation must name the function and the template: %+v", perr)
 			}
 		})
 	}
@@ -463,8 +475,13 @@ func TestDisabledSubchartsAreNotPartOfTheReleaseSet(t *testing.T) {
 
 	// Negative controls: each rule fires once the same subchart is enabled.
 	enableA := map[string]any{"a": map[string]any{"enabled": true}}
-	if _, err := renderWith(t, build(), enableA); !policy.Violates(err, policy.RuleCRDs) || !policy.Violates(err, policy.RuleForbiddenFunction) {
-		t.Fatalf("enabled subchart a must be rejected for its crds and helper, got %v", err)
+	if _, err := renderWith(t, build(), enableA); !policy.Violates(err, policy.RuleCRDs) {
+		t.Fatalf("enabled subchart a must be rejected for its crds, got %v", err)
+	}
+	noCRDs := build()
+	delete(noCRDs, "c/charts/a/crds/crd.yaml")
+	if _, err := renderWith(t, noCRDs, enableA); !policy.Violates(err, policy.RuleForbiddenFunction) {
+		t.Fatalf("enabled subchart a must be rejected for the lookup it executes, got %v", err)
 	}
 	if _, err := renderWith(t, build(), map[string]any{"tags": map[string]any{"extra": true}}); !policy.Violates(err, policy.RuleCRDs) {
 		t.Fatalf("enabling by tag must put the subchart under policy, got %v", err)
@@ -545,26 +562,12 @@ func TestHooksAreSelectedByTheInstallEvent(t *testing.T) {
 }
 
 func TestForbiddenFunctionsAreJudgedByWhatExecutes(t *testing.T) {
-	// The name suffix is random: only acceptable while the file's output is dropped.
 	podName := `name-{{ randAlphaNum 5 }}`
-	t.Run("a test hook is dropped, so its randomness never reaches the release", func(t *testing.T) {
-		res, err := renderWith(t, minimal(hookTemplate("t", "test", podName)), nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := strings.Join(objectNames(res), " "); got != "main/cm" {
-			t.Fatalf("objects %q", got)
-		}
-	})
-	t.Run("an upgrade-only hook is dropped for install", func(t *testing.T) {
-		if _, err := renderWith(t, minimal(hookTemplate("u", "pre-upgrade", podName)), nil); err != nil {
-			t.Fatal(err)
-		}
-	})
-	t.Run("a template whose guard renders nothing executes nothing", func(t *testing.T) {
+	manifest := func(name string) string { return "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: " + name + "}\n" }
+	t.Run("a template whose guard is off executes nothing", func(t *testing.T) {
 		fsys := minimal(map[string]string{
 			"c/values.yaml":      "on: false\n",
-			"c/templates/g.yaml": "{{ if .Values.on }}apiVersion: v1\nkind: ConfigMap\nmetadata: {name: g-{{ randAlphaNum 5 }}}\n{{ end }}",
+			"c/templates/g.yaml": "{{ if .Values.on }}" + manifest("g-{{ randAlphaNum 5 }}") + "{{ end }}",
 		})
 		if _, err := renderWith(t, fsys, nil); err != nil {
 			t.Fatal(err)
@@ -574,32 +577,76 @@ func TestForbiddenFunctionsAreJudgedByWhatExecutes(t *testing.T) {
 			t.Fatalf("an executing forbidden function must be rejected, got %v", err)
 		}
 	})
-	t.Run("negative controls: install hook and plain manifest are rejected", func(t *testing.T) {
-		for name, files := range map[string]map[string]string{
-			"install hook":   hookTemplate("t", "pre-install", podName),
-			"plain manifest": {"c/templates/p.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: " + podName + "}\n"},
-			"mixed file":     {"c/templates/m.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: " + podName + "}\n---\napiVersion: v1\nkind: Pod\nmetadata:\n  name: p\n  annotations: {\"helm.sh/hook\": \"test\"}\n"},
-		} {
-			if _, err := renderWith(t, minimal(files), nil); !policy.Violates(err, policy.RuleForbiddenFunction) {
-				t.Errorf("%s: want a forbidden-function violation, got %v", name, err)
+	t.Run("hooks are executed whatever their events, so randomness in one is rejected", func(t *testing.T) {
+		for _, event := range []string{"test", "pre-upgrade", "pre-install"} {
+			if _, err := renderWith(t, minimal(hookTemplate("t", event, podName)), nil); !policy.Violates(err, policy.RuleForbiddenFunction) {
+				t.Errorf("%s hook: want a forbidden-function violation, got %v", event, err)
 			}
 		}
 	})
-	t.Run("a helper is checked wherever it is used", func(t *testing.T) {
+	t.Run("a helper nobody calls is not executed", func(t *testing.T) {
 		fsys := minimal(map[string]string{"c/templates/_h.tpl": `{{ define "h" }}{{ randAlphaNum 4 }}{{ end }}`})
-		if _, err := renderWith(t, fsys, nil); !policy.Violates(err, policy.RuleForbiddenFunction) {
-			t.Fatalf("an unused helper may still be included by a template, got %v", err)
+		if _, err := renderWith(t, fsys, nil); err != nil {
+			t.Fatal(err)
 		}
 	})
-	t.Run("NOTES.txt is rendered and discarded", func(t *testing.T) {
+	t.Run("NOTES.txt is discarded, so it is not executed", func(t *testing.T) {
 		if _, err := renderWith(t, minimal(map[string]string{"c/templates/NOTES.txt": "{{ randAlphaNum 5 }}"}), nil); err != nil {
 			t.Fatal(err)
 		}
 	})
-	t.Run("lookup is still rejected where its output is kept", func(t *testing.T) {
-		fsys := minimal(map[string]string{"c/templates/l.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: l}\ndata: {v: '{{ lookup \"v1\" \"Namespace\" \"\" \"x\" | toJson }}'}\n"})
-		if _, err := renderWith(t, fsys, nil); !policy.Violates(err, policy.RuleForbiddenFunction) {
-			t.Fatalf("got %v", err)
+	t.Run("the error names the template that called the function and the file that reached it", func(t *testing.T) {
+		fsys := minimal(map[string]string{
+			"c/templates/_h.tpl": `{{ define "h" }}{{ uuidv4 }}{{ end }}`,
+			"c/templates/x.yaml": manifest(`{{ include "h" . }}`),
+		})
+		_, err := renderWith(t, fsys, nil)
+		var perr *policy.Error
+		if !errors.As(err, &perr) || perr.File != "h" || !strings.Contains(perr.Detail, `"uuidv4"`) || !strings.Contains(perr.Detail, "reached from c/templates/x.yaml") {
+			t.Fatalf("got %+v (%v)", perr, err)
 		}
 	})
+}
+
+// Real charts compute values with tpl, computed include and duration. Each of
+// these is deterministic over the chart, its values and the release, so they
+// render; whatever they evaluate still runs under the restricted function map.
+func TestDeterministicDynamicTemplatesRender(t *testing.T) {
+	cm := func(data string) string {
+		return "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: x}\ndata:\n  v: " + data + "\n"
+	}
+	cases := map[string]struct {
+		files map[string]string
+		want  string
+	}{
+		"tpl over values": {map[string]string{
+			"c/values.yaml":      "name: web\nhost: '{{ .Values.name }}.{{ .Release.Namespace }}'\n",
+			"c/templates/x.yaml": cm(`{{ tpl .Values.host . | quote }}`)}, "web.n"},
+		"tpl over a literal": {map[string]string{"c/templates/x.yaml": cm(`{{ tpl "{{ add 1 2 }}" . | quote }}`)}, "3"},
+		"computed include": {map[string]string{
+			"c/values.yaml":      "kind: db\n",
+			"c/templates/_h.tpl": `{{ define "name.db" }}database{{ end }}{{ define "name.web" }}frontend{{ end }}`,
+			"c/templates/x.yaml": cm(`{{ include (printf "name.%s" .Values.kind) . | quote }}`)}, "database"},
+		"tpl calling a computed include": {map[string]string{
+			"c/values.yaml":      "kind: web\ns: '{{ include (printf \"name.%s\" .Values.kind) . }}'\n",
+			"c/templates/_h.tpl": `{{ define "name.web" }}frontend{{ end }}`,
+			"c/templates/x.yaml": cm(`{{ tpl .Values.s . | quote }}`)}, "frontend"},
+		"duration": {map[string]string{"c/templates/x.yaml": cm(`{{ duration (int64 3661) | quote }}`)}, "1h1m1s"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			res, err := renderWith(t, minimal(tc.files), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, o := range res.Objects() {
+				if o.GetKind() == "ConfigMap" {
+					if got, _, _ := unstructuredNestedString(o.Object, "data", "v"); got == tc.want {
+						return
+					}
+				}
+			}
+			t.Fatalf("no ConfigMap with data.v %q in %v", tc.want, objectNames(res))
+		})
+	}
 }

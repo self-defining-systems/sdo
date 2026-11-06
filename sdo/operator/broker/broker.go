@@ -322,6 +322,13 @@ func (b *Broker) PublishVerifiedSource(ctx context.Context, incidentID string, e
 }
 
 func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, phase Phase, expectedSourceTree string, evidence *SourceEvidence, decision *contracts.ReflectionDecision) (Receipt, error) {
+	return b.publishOrStage(ctx, incidentID, actor, phase, expectedSourceTree, evidence, decision, nil)
+}
+
+// publishOrStage is one publication: validate, commit in a private stage, then
+// advance the accepted head. With held non-nil (StageCandidate) it stops after
+// the commit and records the stage in held; the head is untouched.
+func (b *Broker) publishOrStage(ctx context.Context, incidentID string, actor Actor, phase Phase, expectedSourceTree string, evidence *SourceEvidence, decision *contracts.ReflectionDecision, held *Candidate) (Receipt, error) {
 	if err := validate.Err(validate.PhaseDiagnostics(phase)); err != nil {
 		return Receipt{}, err
 	}
@@ -330,6 +337,12 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 	}
 	var receipt Receipt
 	err := b.locked(b.withUpstream(ctx, func() error {
+		if held != nil {
+			// A new stage replaces the previous candidate, accepted or not.
+			if err := os.RemoveAll(b.candidateRoot(incidentID, phase)); err != nil {
+				return err
+			}
+		}
 		if prior, ok, err := b.findAccepted(ctx, incidentID, phase); err != nil {
 			return err
 		} else if ok {
@@ -454,7 +467,7 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 		if b.validator == nil && b.codePath != "shell" {
 			return errors.New("proposal validation is not configured")
 		}
-		stage, cleanup, err := b.privateClone(ctx)
+		stage, cleanup, err := b.stageCheckout(ctx, incidentID, phase, held)
 		if err != nil {
 			return err
 		}
@@ -515,8 +528,15 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 		if err != nil {
 			return err
 		}
-		receipt, err = b.accept(ctx, stage, incidentID, actor, phase, paths, gaps...)
+		receipt, err = b.commitStage(ctx, stage, incidentID, actor, phase, paths, nil, gaps...)
 		if err != nil {
+			return err
+		}
+		if held != nil {
+			*held, err = b.holdCandidate(ctx, stage, actor, current, receipt)
+			return err
+		}
+		if err := b.advanceHead(ctx, stage, receipt.Commit); err != nil {
 			return err
 		}
 		if evidence != nil {
@@ -582,6 +602,9 @@ func (b *Broker) ReleaseProposal(incidentID string, phase Phase) error {
 						delete(b.attestations, identity)
 					}
 				}
+			}
+			if err := os.RemoveAll(b.candidateRoot(incidentID, phase)); err != nil {
+				return err
 			}
 			return os.RemoveAll(b.proposalRoot(incidentID, phase))
 		})
@@ -667,15 +690,20 @@ func (b *Broker) privateClone(ctx context.Context) (string, func(), error) {
 	}
 	cleanup := func() { os.RemoveAll(dir) }
 	stage := filepath.Join(dir, "checkout")
-	if err := cloneGit(ctx, b.target, stage); err != nil {
-		cleanup()
-		return "", nil, err
-	}
-	if _, err := runGit(ctx, stage, "remote", "remove", "origin"); err != nil {
+	if err := b.cloneStage(ctx, stage); err != nil {
 		cleanup()
 		return "", nil, err
 	}
 	return stage, cleanup, nil
+}
+
+// cloneStage clones the accepted repository at its head with no remote.
+func (b *Broker) cloneStage(ctx context.Context, stage string) error {
+	if err := cloneGit(ctx, b.target, stage); err != nil {
+		return err
+	}
+	_, err := runGit(ctx, stage, "remote", "remove", "origin")
+	return err
 }
 
 func (b *Broker) requireClean(ctx context.Context) error {
@@ -731,6 +759,19 @@ func (b *Broker) accept(ctx context.Context, stage, incidentID string, actor Act
 // acceptWithTrailers commits the staged tree with the broker trailers plus
 // the given "Key: value" trailer lines and fast-forwards the accepted branch.
 func (b *Broker) acceptWithTrailers(ctx context.Context, stage, incidentID string, actor Actor, phase Phase, paths []string, trailers []string, gaps ...validate.Diagnostic) (Receipt, error) {
+	receipt, err := b.commitStage(ctx, stage, incidentID, actor, phase, paths, trailers, gaps...)
+	if err != nil {
+		return Receipt{}, err
+	}
+	if err := b.advanceHead(ctx, stage, receipt.Commit); err != nil {
+		return Receipt{}, err
+	}
+	return receipt, nil
+}
+
+// commitStage commits the staged tree with the broker identity and trailers.
+// The accepted head does not move.
+func (b *Broker) commitStage(ctx context.Context, stage, incidentID string, actor Actor, phase Phase, paths []string, trailers []string, gaps ...validate.Diagnostic) (Receipt, error) {
 	if err := checkIncidentID(incidentID); err != nil {
 		return Receipt{}, err
 	}
@@ -773,16 +814,22 @@ func (b *Broker) acceptWithTrailers(ctx context.Context, stage, incidentID strin
 	if err != nil {
 		return Receipt{}, err
 	}
+	return Receipt{IncidentID: incidentID, Phase: phase, Commit: commit, ChangedPaths: paths, CoverageGaps: gaps}, nil
+}
+
+// advanceHead replicates a staged commit to the memory remote, then
+// fast-forwards the accepted branch to it. Call under the publication lock.
+func (b *Broker) advanceHead(ctx context.Context, stage, commit string) error {
 	if err := b.replicate(ctx, stage, commit); err != nil {
-		return Receipt{}, err
+		return err
 	}
 	if _, err := runGit(ctx, b.target, "fetch", "--no-tags", "--quiet", stage, commit); err != nil {
-		return Receipt{}, err
+		return err
 	}
 	if _, err := runGit(ctx, b.target, "merge", "--ff-only", "--quiet", commit); err != nil {
-		return Receipt{}, fmt.Errorf("accepted branch changed during publish: %w", err)
+		return fmt.Errorf("accepted branch changed during publish: %w", err)
 	}
-	return Receipt{IncidentID: incidentID, Phase: phase, Commit: commit, ChangedPaths: paths, CoverageGaps: gaps}, nil
+	return nil
 }
 
 // AcceptedCommitAt authenticates an exact historical broker commit still in

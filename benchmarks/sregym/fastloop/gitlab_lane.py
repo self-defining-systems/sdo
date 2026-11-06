@@ -18,10 +18,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from apps.gitlab import assemble
-from benchmarks.sregym.adapter import WaitKind, helm_source, wait_for
+from benchmarks.sregym.adapter import WaitKind, deployment_plan, helm_source, prebuilt_image, wait_for
 from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
 NAMESPACE = "gitlab"
@@ -57,6 +58,62 @@ RESOURCE_CLAIM = ResourceClaim(
 def deployment_source() -> dict[str, Any]:
     """The provided DeploymentSource: the helm renderer over the umbrella chart with the kind values."""
     return helm_source("chart", assemble.VALUE_FILES)
+
+
+#: Workload kinds whose Pods the plan must see roll out. Hooks are not in the rendered inventory (SDO renders them as
+#: ephemeral install phases), so every Job here is a regular object of the release.
+WORKLOAD_KINDS = ("Deployment", "StatefulSet", "DaemonSet", "Job")
+
+
+def _pod_specs(obj: dict[str, Any]) -> list[dict[str, Any]]:
+    spec = obj.get("spec") or {}
+    kind = obj.get("kind")
+    if kind == "Pod":
+        return [spec]
+    if kind == "CronJob":
+        spec = (spec.get("jobTemplate") or {}).get("spec") or {}
+    return [(spec.get("template") or {}).get("spec") or {}]
+
+
+def rendered_images(objects: Sequence[dict[str, Any]]) -> list[str]:
+    """Every container and init container image the rendered objects run, sorted and unique."""
+    images: set[str] = set()
+    for obj in objects:
+        for pod in _pod_specs(obj):
+            for container in (*(pod.get("containers") or ()), *(pod.get("initContainers") or ())):
+                if container.get("image"):
+                    images.add(container["image"])
+    return sorted(images)
+
+
+def expected_workload_ids(objects: Sequence[dict[str, Any]], namespace: str) -> list[str]:
+    """``Kind/namespace/name`` of the rendered workloads, in render order."""
+    return [
+        f"{obj['kind']}/{obj['metadata'].get('namespace') or namespace}/{obj['metadata']['name']}"
+        for obj in objects
+        if obj.get("kind") in WORKLOAD_KINDS
+    ]
+
+
+def plan_from_render(objects: Sequence[dict[str, Any]], namespace: str) -> dict[str, Any]:
+    """The provided ``DeploymentPlan``: the lane's helm source, prebuilt upstream images, the rendered workloads.
+
+    Nothing here is maintained by hand: images and workload IDs come from the chart render, so a chart bump or a
+    values change moves the plan with it.
+    """
+    return deployment_plan(
+        deployment_source(),
+        images=[prebuilt_image(image) for image in rendered_images(objects)],
+        expected_workload_ids=expected_workload_ids(objects, namespace),
+    )
+
+
+def provided_plan(workspace: Path, namespace: str = NAMESPACE) -> dict[str, Any]:
+    """Plan for the committed ``workspace``, rendered through SDO's production ``render-source``."""
+    from benchmarks.sregym.fastloop.accepted_source import AcceptedSource
+
+    source = AcceptedSource(workspace, namespace, ("chart",), renderer_source=deployment_source())
+    return plan_from_render(source.manifests, namespace)
 
 
 def prepare_workspace(workspace: Path, *, archive: Path | None = None, pins: dict[str, Any] | None = None) -> str:
@@ -123,8 +180,8 @@ def install_prerequisites(kubeconfig: Path, *, pins: dict[str, Any] | None = Non
     )
 
 
-def lane_runtime_config(environment: Any, *, registrations: Path | None = None) -> Any:
-    """The controller install for the lane: the provided source, no manifest paths, persistent, recorded actions."""
+def lane_runtime_config(environment: Any, plan: dict[str, Any], *, registrations: Path | None = None) -> Any:
+    """The controller install for the lane: the provided plan, no manifest paths, persistent, recorded actions."""
     from benchmarks.sregym.adapter import RuntimeConfig
 
     return RuntimeConfig(
@@ -142,28 +199,18 @@ def lane_runtime_config(environment: Any, *, registrations: Path | None = None) 
         persistent=True,
         kind_cluster_name=environment.cluster,
         deployment_source=deployment_source(),
+        deployment_plan=plan,
         agent_registrations=registrations.resolve() if registrations else None,
     )
 
 
-class ProvidedPlanUnavailable(RuntimeError):
-    """The Go host cannot yet admit a harness-provided deployment instead of dispatching the deployer agent."""
-
-
 def onboard(environment: Any, config: Any, objective: str) -> dict[str, Any]:
-    """Run SDO's host lifecycle with the provided deployment (no from-scratch onboarding agent).
+    """Run SDO's host lifecycle with the provided plan: no deployer agent; the judge still runs."""
+    from benchmarks.sregym.adapter import launch_native_lifecycle
 
-    HOOK, blocked: the host's coordinator must admit a provided plan (source plus image declarations and expected
-    workloads; a source alone is not a plan) and skip the deployer task. That row (``host --deployment-plan``) is not
-    on dev. Running the host today would ignore the provided source and author a deployment with the agent, which
-    this lane must not do, so this refuses. Once the row lands, call ``launch_native_lifecycle`` here with the plan.
-    ``sdo-operator install-existing --deployment-source`` is the adoption path for a lane whose accepted memory
-    already exists.
-    """
-    raise ProvidedPlanUnavailable(
-        "the Go host has no --deployment-plan yet (U6c follow-up row); refusing to let the deployer agent author "
-        f"GitLab's deployment for objective {objective!r} in {environment.namespace}"
-    )
+    if config.deployment_plan is None:
+        raise ValueError(f"the GitLab lane needs a provided deployment plan for {environment.namespace}")
+    return launch_native_lifecycle(config, objective, "")
 
 
 def up(args: Any) -> int:
@@ -240,7 +287,9 @@ def up(args: Any) -> int:
     )
     env.baseline_path.write_text("{}\n", encoding="utf-8")
     env.save()
-    runtime = lane_runtime_config(env, registrations=getattr(args, "agent_registrations", None))
+    runtime = lane_runtime_config(
+        env, provided_plan(workspace, NAMESPACE), registrations=getattr(args, "agent_registrations", None)
+    )
     onboard(env, runtime, objective)
     toy.record_controller(env, runtime)
     print(json.dumps({"up_total": time.monotonic() - started, "workspace": str(workspace), "commit": seed}))

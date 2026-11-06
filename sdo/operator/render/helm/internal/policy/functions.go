@@ -3,6 +3,7 @@ package policy
 import (
 	"fmt"
 	"strings"
+	"text/template"
 )
 
 // ReviewedHelmVersion is the Helm release whose function map (HelmFunctions
@@ -12,21 +13,18 @@ const ReviewedHelmVersion = "v3.15.4"
 
 // The policy is a classification, not a denylist: every name a template may
 // call is either allowed (a pure function of its arguments) or forbidden with
-// a reason, and a name in neither set is forbidden. TestEveryTemplateFunctionIsClassified
-// fails when the pinned sprig or Helm map holds a name that is in neither set,
-// so a new function must be classified before the chart policy accepts it.
+// a reason, and a name in neither set is forbidden. Restrict applies it at
+// execution: each forbidden or unclassified function of the engine's map is
+// replaced by a stub that fails the render, so the policy holds however a
+// call is reached (include, tpl, helpers, branches the values select).
+// TestEveryTemplateFunctionIsClassified fails when the pinned engine map holds
+// a name that is in neither set, so a new function must be classified before
+// the chart policy accepts it.
 
 // builtinFunctions are text/template's predefined functions.
 var builtinFunctions = []string{
 	"and", "call", "html", "index", "slice", "js", "len", "not", "or", "print", "printf", "println", "urlquery",
 	"eq", "ge", "gt", "le", "lt", "ne",
-}
-
-// helmFunctions are the functions pkg/engine adds to sprig's map (funcMap in
-// engine/funcs.go), minus env and expandenv, which Helm deletes.
-var helmFunctions = []string{
-	"toToml", "toYaml", "toYamlPretty", "fromYaml", "fromYamlArray", "toJson", "fromJson", "fromJsonArray",
-	"include", "tpl", "required", "lookup",
 }
 
 // allowedFunctions are pure functions of their arguments.
@@ -44,18 +42,20 @@ regexReplaceAllLiteral regexSplit repeat replace rest reverse round semver semve
 sha256sum slice snakecase sortAlpha split splitList splitn squote sub subf substr swapcase ternary title
 toDecimal toJson toPrettyJson toRawJson toString toStrings trim trimAll trimPrefix trimSuffix trimall trunc tuple
 typeIs typeIsLike typeOf uniq unset until untilStep untitle upper urlJoin urlParse values without wrap wrapWith
-toToml toYaml toYamlPretty fromYaml fromYamlArray toJson fromJson fromJsonArray include required
+toToml toYaml fromYaml fromYamlArray toJson fromJson fromJsonArray include tpl required
+duration durationRound
 `)
 
 // forbiddenFunctions are the functions whose result is not a pure function of
-// the chart, values and release, or that evaluate text the static pass cannot
-// see. Everything touching time is forbidden, not only the clock readers:
-// date and its siblings fall back to the current time for an argument that is
-// not a time or an integer, and a static check cannot rule that out.
+// the chart, values and release, or that read the cluster or environment.
+// Everything that produces or formats a point in time is forbidden, not only
+// the clock readers: date and its siblings fall back to the current time for
+// an argument that is not a time or an integer. duration and durationRound
+// stay allowed: they format a number or string, and with every time producer
+// forbidden no time.Time reaches durationRound's clock-reading branch.
 var forbiddenFunctions = map[string]string{
 	"lookup": "reads the live cluster", "getHostByName": "resolves names over the network",
 	"env": "reads the process environment", "expandenv": "reads the process environment",
-	"tpl": "renders text computed at render time, which the static check cannot see",
 
 	"now": "reads the clock", "ago": "reads the clock",
 	"date": "may read the clock", "dateInZone": "may read the clock", "date_in_zone": "may read the clock",
@@ -63,8 +63,7 @@ var forbiddenFunctions = map[string]string{
 	"dateModify": "belongs to the date family", "date_modify": "belongs to the date family",
 	"mustDateModify": "belongs to the date family", "must_date_modify": "belongs to the date family",
 	"toDate": "belongs to the date family", "mustToDate": "belongs to the date family",
-	"unixEpoch": "belongs to the date family", "duration": "belongs to the date family",
-	"durationRound": "belongs to the date family",
+	"unixEpoch": "belongs to the date family",
 
 	"randAlpha": "is random", "randAlphaNum": "is random", "randNumeric": "is random", "randAscii": "is random",
 	"randInt": "is random", "randBytes": "is random", "uuidv4": "is random", "shuffle": "is random",
@@ -110,14 +109,26 @@ func KnownFunctions() map[string]bool {
 	return m
 }
 
-// HelmFunctions lists the names Helm's engine adds to sprig's function map.
-func HelmFunctions() []string { return append([]string(nil), helmFunctions...) }
-
 // BuiltinFunctions lists text/template's predefined functions.
 func BuiltinFunctions() []string { return append([]string(nil), builtinFunctions...) }
 
-// dynamicInclude explains why an include or template call is rejected.
-func dynamicInclude(fn string) string {
-	return fmt.Sprintf("%s must name a template with a string literal that is not an output file: a computed or file-path name can run a template whose forbidden functions the static check treats as conditional", fn)
+// Restrict applies the classification to an engine function map: every
+// forbidden or unclassified function in funcs, and every forbidden function
+// the engine does not define (env and expandenv, which Helm deletes), becomes
+// a stub whose call fails with a *Error naming the function.
+func Restrict(funcs template.FuncMap) {
+	for name := range funcs {
+		if why, bad := Forbidden(name); bad {
+			funcs[name] = stub(name, why)
+		}
+	}
+	for name, why := range forbiddenFunctions {
+		funcs[name] = stub(name, why)
+	}
 }
 
+func stub(name, why string) func(...any) (any, error) {
+	return func(...any) (any, error) {
+		return nil, &Error{Rule: RuleForbiddenFunction, Detail: fmt.Sprintf("template function %q %s", name, why)}
+	}
+}

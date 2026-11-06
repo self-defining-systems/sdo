@@ -344,3 +344,24 @@ func must(t *testing.T, err error) {
 		t.Fatal(err)
 	}
 }
+
+func TestCheckDeclaredIsTheResolveAllPreflight(t *testing.T) {
+	images := []string{"r/a:1", "r/b:1"}
+	for name, tc := range map[string]struct {
+		images   []string
+		declared []imagesrc.Declared
+		want     string
+	}{
+		"ok":     {images, []imagesrc.Declared{{Image: "r/b:1", SourceID: "any"}}, ""},
+		"empty":  {[]string{""}, nil, "empty image"},
+		"unused": {images, []imagesrc.Declared{{Image: "r/c:1", SourceID: "any"}}, "no rendered container uses it"},
+		"twice":  {images, []imagesrc.Declared{{Image: "r/a:1", SourceID: "x"}, {Image: "r/a:1", SourceID: "y"}}, "declared twice"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := imagesrc.CheckDeclared(tc.images, tc.declared)
+			if (tc.want == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), tc.want)) {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
