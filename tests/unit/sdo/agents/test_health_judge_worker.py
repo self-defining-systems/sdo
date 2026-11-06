@@ -160,3 +160,21 @@ def test_judge_authors_final_files_in_writable_session(
         "failure_patterns",
         "detector_ids",
     }
+
+
+def _judge_prompt_text(name: str) -> str:
+    root = Path(__file__).resolve().parents[4] / "sdo/agents/health_judge/prompts"
+    return " ".join((root / name).read_text().split())
+
+
+def test_judge_prompt_allows_omitting_an_empty_probe_kind() -> None:
+    text = _judge_prompt_text("traffic_authoring.md")
+    assert "only for a kind that has at least one scenario" in text
+    assert "omit that kind's file" in text
+
+
+def test_judge_prompt_points_traffic_coverage_at_the_generated_test() -> None:
+    text = _judge_prompt_text("health_judge.md")
+    assert "TestTrafficGeneratorsDetectTheirFaultClasses" in text
+    assert "do not call traffic.CheckDetects" in text
+    assert "Write the three files together" in text

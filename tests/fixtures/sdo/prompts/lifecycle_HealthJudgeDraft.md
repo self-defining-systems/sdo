@@ -20,10 +20,13 @@ Edit files directly in this checkout:
 - the application map, only between the map markers at the end of `.sdo/arch.md` (add the markers if absent);
   leave the rest of that file byte-identical;
 - traffic generators and workloads under `.sdo/diagnostics/traffic/`;
-- optional source-specific health detectors under `.sdo/diagnostics/detectors/health/<id>/` (manifest.yaml,
-  detector.go exporting New() sdk.Detector, detector_test.go with matching and near-miss tests; manifest
-  apiVersion: sdo.dev/v1alpha1, kind: DetectorManifest, sdkVersion: v0.1, constructor: New, class: health,
-  owner: health_judge, possiblePlaybooks: [health-objective]);
+- optional source-specific health detectors under `.sdo/diagnostics/detectors/health/<id>/`, only for a check of
+  cluster state that no traffic scenario can express. Write the three files together: manifest.yaml
+  (apiVersion: sdo.dev/v1alpha1, kind: DetectorManifest, sdkVersion: v0.1, constructor: New, class: health,
+  owner: health_judge, possiblePlaybooks: [health-objective]), detector.go exporting New() sdk.Detector, and
+  detector_test.go with matching and near-miss tests over cluster state. Run gofmt on every Go file you write.
+  Traffic scenarios need no test of yours: the generated TestTrafficGeneratorsDetectTheirFaultClasses already
+  checks every scenario's fault classes (do not call traffic.CheckDetects from detector_test.go);
 - `.sdo/playbooks/health-objective/README.md` with front matter schema_version: 1, owner: responder,
   fault_class: health-objective-failure, originating_incident: lifecycle-bootstrap, then repair guidance with
   logical IDs and placeholders such as <AFFECTED_RESOURCE>, plus the skill's Fixtures, Probe costs and
@@ -65,9 +68,11 @@ covers breaks.
    or the clock, and draw randomness only from the rng the engine passes.
 2. Workloads: files `.sdo/diagnostics/traffic/workloads/<name>.yaml` with apiVersion sdo.dev/v1alpha1, kind
    TrafficWorkload, name equal to the file name, purpose, ratePerSecond and scenarios [{id, weight}]. Write the
-   three health-probe workloads `probe-call`, `probe-write` and `probe-read-later` (one per probe kind, each
-   scenario in exactly one), and `verify` (purpose verify-burst, ratePerSecond about 12, duration 3s, the call and
-   read-later scenarios). Optional: timeout (2s) and slo {window, minSamples, maxAge, maxErrorRate,
+   health-probe workloads `probe-call`, `probe-write` and `probe-read-later` (one per probe kind, each
+   scenario in exactly one) only for a kind that has at least one scenario: a workload file with no scenario is
+   invalid, so omit that kind's file (and its probe-kind rows in the map) when the application has none, for
+   example no `probe-read-later` without a data-holding component on a write path. Also write `verify` (purpose verify-burst, ratePerSecond about 12, duration 3s, the call and
+   read-later scenarios that exist). Optional: timeout (2s) and slo {window, minSamples, maxAge, maxErrorRate,
    maxTimeoutRate, latencyPercentile, maxLatency}; set maxLatency per scenario to three times its slowest healthy
    iteration under load, at least 1s (memory check notes each one left on the default as
    `traffic.default-latency`). Journey workloads run only on demand and never feed detection.

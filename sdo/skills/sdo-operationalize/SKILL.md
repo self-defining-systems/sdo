@@ -30,7 +30,7 @@ the map markers in the architecture file. Only the text between the markers is y
 
 ## 2. Write probes and detectors
 
-Three probe kinds, each a set of traffic scenarios in its own continuous health workload:
+Three probe kinds, each a set of traffic scenarios in its own continuous health workload (write a kind's workload only if it has a scenario; omit its file and map rows otherwise):
 
 | Kind | Workload | One scenario per | It checks |
 |---|---|---|---|

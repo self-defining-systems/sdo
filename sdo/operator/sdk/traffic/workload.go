@@ -255,7 +255,7 @@ func (w Workload) Validate() error {
 		return nil
 	}
 	if len(w.Scenarios) == 0 {
-		return fmt.Errorf("traffic workload %s: at least one scenario is required", w.Name)
+		return fmt.Errorf("traffic workload %s: at least one scenario is required; delete workloads/%s.yaml if no scenario belongs in this probe kind", w.Name, w.Name)
 	}
 	seen := make(map[string]bool, len(w.Scenarios))
 	for _, scenario := range w.Scenarios {
