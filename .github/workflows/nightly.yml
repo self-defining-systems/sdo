@@ -195,7 +195,10 @@ jobs:
             tests/unit/sdo/agents/lifecycle/test_supplied_reads.py \
             tests/unit/benchmarks/sregym/fastloop/test_sequence_scripted.py \
             tests/unit/benchmarks/sregym/fastloop/test_host_limits.py \
-            tests/unit/benchmarks/sregym/fastloop/test_clean_start_real_wrk2.py
+            tests/unit/benchmarks/sregym/fastloop/test_clean_start_real_wrk2.py \
+            tests/unit/benchmarks/sregym/fastloop/test_fastloop_hermetic_program_reuse.py \
+            tests/unit/benchmarks/sregym/fastloop/test_request_envelope_real_go.py \
+            tests/unit/benchmarks/sregym/fastloop/test_idempotent_helm_real_sregym.py
       - name: Property tests at full example counts (pull requests sample fewer)
         env:
           SDO_PROPERTY_EXAMPLES: "300"

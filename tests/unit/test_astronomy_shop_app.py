@@ -91,8 +91,19 @@ def test_astronomy_baseline_resources_and_metrics_match_running_components() -> 
     assert {p["containerPort"] for p in container["ports"]} == {9200, 9300}
 
 
+def _use_libyaml(monkeypatch) -> None:
+    """Parse and emit the full chart with libyaml: the pure-Python loader costs 10 s on a hosted runner."""
+    from functools import partial
+
+    monkeypatch.setattr(yaml, "safe_load", partial(yaml.load, Loader=yaml.CSafeLoader))
+    monkeypatch.setattr(yaml, "safe_load_all", partial(yaml.load_all, Loader=yaml.CSafeLoader))
+    monkeypatch.setattr(yaml, "safe_dump", partial(yaml.dump, Dumper=yaml.CSafeDumper))
+    monkeypatch.setattr(yaml, "safe_dump_all", partial(yaml.dump_all, Dumper=yaml.CSafeDumper))
+
+
 def test_astronomy_renderer_preserves_baseline_policy(tmp_path, monkeypatch) -> None:
     """Regenerating the pinned chart must retain the independently verified fixes."""
+    _use_libyaml(monkeypatch)
     spec = importlib.util.spec_from_file_location("astronomy_render", APP / "render.py")
     assert spec is not None
     assert spec.loader is not None

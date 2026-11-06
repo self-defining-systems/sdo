@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -91,8 +92,11 @@ def installer_rbac(namespace: str, config: NativeInstallConfig | None = None) ->
         )
     if config.namespace != namespace:
         raise ValueError("RBAC installer configuration namespace differs from admission namespace")
+    # A prepared executable (scripts/test_python.sh builds one per job) skips a `go run` compile per call.
+    prepared = os.environ.get("SDO_RBAC_HELPER_BIN", "").strip()
+    command = [prepared] if prepared else ["go", "run", str(Path(__file__).with_name("rbac_go") / "main.go")]
     result = subprocess.run(
-        ["go", "run", str(Path(__file__).with_name("rbac_go") / "main.go"), "install-existing", *config.common_args()],
+        [*command, "install-existing", *config.common_args()],
         cwd=root / "sdo/operator",
         capture_output=True,
         text=True,

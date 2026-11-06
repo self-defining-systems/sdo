@@ -52,10 +52,14 @@ for spec in 'native_receipt_go sdo-native-receipt' 'submission_go sdo-submission
     (cd "benchmarks/sregym/protocol/$module" && go build -o "$TOOLS/$binary" "./cmd/$binary") &
     builds+=($!)
 done
+# The fastloop RBAC expectation helper is invoked many times per run; a `go run` compiles it each time.
+(cd sdo/operator && go build -o "$TOOLS/sdo-rbac-helper" "$PROJECT_ROOT/benchmarks/sregym/fastloop/rbac_go/main.go") &
+builds+=($!)
 for build in "${builds[@]}"; do wait "$build"; done
 echo "==> protocol tools built after ${SECONDS}s"
 export SDO_NATIVE_RECEIPT_BIN="$TOOLS/sdo-native-receipt"
 export SDO_SUBMISSION_GUARD_BIN="$TOOLS/sdo-submission-guard"
+export SDO_RBAC_HELPER_BIN="$TOOLS/sdo-rbac-helper"
 
 # tests/conftest.py builds the operator CLI once per checkout under a file lock,
 # and every xdist worker waits on it before its first test. Start that build now

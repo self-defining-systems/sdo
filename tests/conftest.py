@@ -91,7 +91,7 @@ def pytest_collection_finish(session: pytest.Session) -> None:
     """Prepare the real adapter executables once, outside the per-test compiler guard.
 
     Unmarked tests may run these executables but never compile them. CI and ``scripts/test_python.sh``
-    export prepared tools; a focused local run builds the same three content-addressed executables here,
+    export prepared tools; a focused local run builds the same four executables here,
     and only when a collected test uses one.
     """
     _warm_hypothesis(session)
@@ -99,6 +99,7 @@ def pytest_collection_finish(session: pytest.Session) -> None:
         "SDO_OPERATOR_BIN": None,
         "SDO_NATIVE_RECEIPT_BIN": ("native_receipt_go", "sdo-native-receipt"),
         "SDO_SUBMISSION_GUARD_BIN": ("submission_go", "sdo-submission-guard"),
+        "SDO_RBAC_HELPER_BIN": "rbac",
     }
     missing = [name for name in names if not os.environ.get(name)]
     if not missing or not any(item.nodeid.startswith(_GO_TOOL_CONSUMERS) for item in session.items):
@@ -109,6 +110,18 @@ def pytest_collection_finish(session: pytest.Session) -> None:
         spec = names[name]
         if spec is None:
             os.environ[name] = str(build_operator(repository / "sdo/operator", directory))
+            continue
+        if spec == "rbac":
+            target = directory / "rbac" / "sdo-rbac-helper"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(
+                ["go", "build", "-o", str(target), str(repository / "benchmarks/sregym/fastloop/rbac_go/main.go")],
+                cwd=repository / "sdo/operator",
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            os.environ[name] = str(target)
             continue
         module, binary = spec
         target = directory / "protocol" / binary
