@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -25,6 +26,7 @@ import (
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/shellpath"
@@ -390,7 +392,7 @@ func (n NativeIncidentBroker) processClosure(ctx context.Context, closure Incide
 					// A hold is final for this closure: a retry never deploys again.
 					repair := SourceRepair{Held: "held by an earlier attempt of this closure"}
 					if _, held := ledger.GetClosurePhaseTimestamps()["source_repair_held"]; !held {
-						if repair, err = n.acceptSourceRepair(ctx, id); err != nil {
+						if repair, err = n.acceptSourceRepair(ctx, id, broker.SourceRepairPaths(partition.SDO)); err != nil {
 							return err
 						}
 					}
@@ -406,6 +408,15 @@ func (n NativeIncidentBroker) processClosure(ctx context.Context, closure Incide
 						}
 					case repair.Deployed:
 						if err := n.recordPhase(ledger, "source_repair_deployed"); err != nil {
+							return err
+						}
+						ledger.ProposalCommit = repair.Commit
+					case repair.Undeployed:
+						// Accepted, but no SDO deployment applied it: the effective
+						// tree now differs from what runs, and pins follow the last
+						// deployment. Say so in the ledger and the log.
+						slog.Warn("source_repair_published_undeployed", "incident_id", id, "commit", repair.Commit)
+						if err := n.recordPhase(ledger, "source_repair_published_undeployed"); err != nil {
 							return err
 						}
 						ledger.ProposalCommit = repair.Commit
@@ -515,13 +526,15 @@ func (n NativeIncidentBroker) processClosure(ctx context.Context, closure Incide
 }
 
 // acceptSourceRepair accepts the responder's source repair through Repairs
-// when configured, else by a plain publication.
-func (n NativeIncidentBroker) acceptSourceRepair(ctx context.Context, id string) (SourceRepair, error) {
+// when configured (shell detectors and frozen memory configure none), else by
+// a plain publication. A plain publication of a change to deployment inputs
+// deploys nothing, so it is reported as Undeployed.
+func (n NativeIncidentBroker) acceptSourceRepair(ctx context.Context, id string, paths []string) (SourceRepair, error) {
 	if n.Repairs != nil {
 		return n.Repairs.Repair(ctx, id)
 	}
 	accepted, err := n.Repository.Publish(ctx, id, broker.Responder, broker.ProposalPhase)
-	return SourceRepair{Commit: accepted.Commit}, err
+	return SourceRepair{Commit: accepted.Commit, Undeployed: slices.ContainsFunc(paths, layout.IsEffectiveDeploymentInput)}, err
 }
 
 // reflectLocked runs reflection and records its typed SDK gaps and rejections

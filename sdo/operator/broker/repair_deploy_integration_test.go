@@ -41,11 +41,12 @@ func seedIfNeeded(t *testing.T, w *patchWorld) {
 	}
 }
 
-// Characterization of the behavior this PR replaces: Publish accepts a
-// responder's patch, but nothing deploys it and no deployment evidence is
-// recorded, so the accepted evidence and the image pins still describe the
-// onboarding's effective tree.
-func TestPlainPublishOfAResponderPatchRecordsNoDeployment(t *testing.T) {
+// A plain accept (the controller without a repairer: shell detectors or frozen
+// memory) takes a responder's patch, but nothing deploys it and no deployment
+// evidence is recorded, so the accepted evidence and the image pins still
+// describe the last deployed effective tree. The closure records that path as
+// source_repair_published_undeployed.
+func TestPlainAcceptOfAResponderPatchLeavesEvidenceAndPinsAtTheLastDeployment(t *testing.T) {
 	ctx := context.Background()
 	w := newPatchWorld(t, false)
 	before, found, err := w.broker.AcceptedSourceEvidence(ctx)

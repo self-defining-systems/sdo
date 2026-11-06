@@ -215,15 +215,21 @@ func TestClosureDoesNotAcceptAHeldSourceRepair(t *testing.T) {
 	})
 }
 
-// Without a repairer the closure keeps its plain publication: nothing deploys.
-func TestClosureWithoutARepairerPublishesPlainly(t *testing.T) {
+// Without a repairer (shell detectors or frozen memory) the closure still
+// accepts a repair of deployment inputs, but nothing deploys it: the ledger
+// records that as its own phase, never as a deployment.
+func TestClosureWithoutARepairerRecordsTheRepairAsUndeployed(t *testing.T) {
 	w := newRepairClosureWorld(t, "commit", nil)
 	receipt, err := w.native.ProcessClosure(context.Background(), w.closure("commit"))
 	if err != nil || receipt.ProposalCommit == "" {
 		t.Fatalf("receipt = %+v, err = %v", receipt, err)
 	}
 	ledger, _ := w.native.readLedger("incident-1")
-	if _, ok := ledger.GetClosurePhaseTimestamps()["source_repair_deployed"]; ok {
+	phases := ledger.GetClosurePhaseTimestamps()
+	if _, ok := phases["source_repair_deployed"]; ok {
 		t.Fatal("a plain publication claimed a deployment")
+	}
+	if _, ok := phases["source_repair_published_undeployed"]; !ok {
+		t.Fatalf("phases %v lack source_repair_published_undeployed", phases)
 	}
 }
