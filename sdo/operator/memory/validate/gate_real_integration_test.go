@@ -34,6 +34,18 @@ func TestGateCompileRowsOnRealGo(t *testing.T) {
 			t.Fatalf("rejected: %v, %v", got, err)
 		}
 	})
+	// An authored pod read compiles, generates its contract test and loads in the
+	// controller; the same declaration without a Pod watch is a gate row.
+	t.Run("a pod read with a Pod watch", func(t *testing.T) {
+		t.Parallel()
+		root := compileTree(t)
+		gatePodRead(t, root)
+		edit(t, root, gateFixtureDetector, `{APIVersion: "v1", Kind: "ConfigMap"},`, `{APIVersion: "v1", Kind: "ConfigMap"}, {APIVersion: "v1", Kind: "Pod"},`)
+		edit(t, root, ".sdo/diagnostics/detectors/incidents/missing-configmap/manifest.yaml", "      kind: ConfigMap\n", "      kind: ConfigMap\n    - apiVersion: v1\n      kind: Pod\n")
+		if got := gateCompileDiagnostics(t, gateCompileRow{}, root); len(got) != 0 {
+			t.Fatalf("rejected: %v", got)
+		}
+	})
 	for _, row := range gateCompileRows {
 		t.Run(row.name, func(t *testing.T) {
 			t.Parallel()
