@@ -75,7 +75,7 @@ def environment(tmp_path: Path) -> FastloopEnvironment:
         private_tmp=None,
         seed_commit="a" * 40,
     )
-    commit_accepted_source(env.workspace, Lane().objects, namespace="hotel-reservation")
+    commit_accepted_source(env.workspace, Lane().objects, namespace="hotel-reservation", kustomize_root=True)
     baseline = ApplicationBaseline("hotel-reservation", Lane().objects)
     env.baseline_path.write_text(json.dumps({"fastloop_application": {"namespaces": [baseline.__dict__]}}))
     return env

@@ -9,9 +9,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from benchmarks.sregym.adapter.deployment_source import helm_source
 from benchmarks.sregym.fastloop import toy_scenarios as sc
 from benchmarks.sregym.fastloop import toy_upstream as up
-from benchmarks.sregym.fastloop.accepted_source import helm_deployment_source
 from benchmarks.sregym.fastloop.toy import prepare_workspace
 
 if TYPE_CHECKING:
@@ -263,7 +263,7 @@ def test_pod_parsers():
 
 def test_helm_onboarding_provides_the_chart_of_the_assembled_source(tmp_path: Path):
     prepare_workspace(tmp_path, "unused:v1", fresh=True, variant="helm")
-    source = helm_deployment_source("chart")
+    source = helm_source("chart")
     assert (tmp_path / source["config"]["chart_path"] / "Chart.yaml").is_file()
     flags = sc.helm_onboarding_arguments(source)
     assert flags[0] == "--deployment-source"

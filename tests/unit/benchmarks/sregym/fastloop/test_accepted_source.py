@@ -11,9 +11,9 @@ from typing import Any
 import pytest
 import yaml
 
+from benchmarks.sregym.adapter.deployment_source import kustomize_source
 from benchmarks.sregym.fastloop.accepted_source import (
     AcceptedSource,
-    kustomize_deployment_source,
     manifest_paths_for,
     manifest_paths_for_environment,
 )
@@ -214,7 +214,7 @@ def test_file_generated_configmap_restore_uses_production_source_renderer(
         "generatorOptions: {disableNameSuffixHash: true}\n"
     )
     (deployment / "init.sh").write_text("echo accepted\n")
-    source = replace(commit_accepted_source(workspace), renderer_source=kustomize_deployment_source("kubernetes"))
+    source = replace(commit_accepted_source(workspace), renderer_source=kustomize_source("kubernetes"))
     # The missing Secret input is intentional: it must never be read to render
     # public generated configuration, even when accepted source declares it.
     monkeypatch.setenv("SDO_OPERATOR_BIN", str(operator_binary))

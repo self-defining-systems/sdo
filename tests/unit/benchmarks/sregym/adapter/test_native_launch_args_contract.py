@@ -15,6 +15,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from benchmarks.sregym.adapter.deployment_source import raw_source
 from benchmarks.sregym.adapter.native_operator import (
     NativeHostConfig,
     NativeInstallConfig,
@@ -77,7 +78,7 @@ def _install() -> NativeInstallConfig:
         healthy_baseline=True,
         registration_configmap="registrations",
         responder_env=("SDO_SUBMISSION_MODE=relay",),
-        deployed_manifest_paths=("kubernetes",),
+        deployment_source=raw_source(("kubernetes",)),
     )
 
 

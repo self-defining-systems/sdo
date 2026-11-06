@@ -15,6 +15,13 @@ if TYPE_CHECKING:
     from benchmarks.sregym.adapter.budgets import Deadline, DeadlineExhaustedError, SdoBounds, WaitKind, wait_for
     from benchmarks.sregym.adapter.cluster_resources import kubectl
     from benchmarks.sregym.adapter.context_preflight import run_context_preflight as run_context_preflight
+    from benchmarks.sregym.adapter.deployment_source import (
+        helm_source,
+        kustomize_source,
+        raw_source,
+        source_flag_value,
+        source_from_config,
+    )
     from benchmarks.sregym.adapter.driver import (
         DeployedLifecycle,
         DeployedLifecycleContext,
@@ -203,11 +210,21 @@ _EXPORTS: dict[str, str] = {
     "run_persistent_stage": "persistent",
     "teardown": "persistent",
     "RuntimeConfig": "runtime",
+    "helm_source": "deployment_source",
+    "kustomize_source": "deployment_source",
+    "raw_source": "deployment_source",
+    "source_flag_value": "deployment_source",
+    "source_from_config": "deployment_source",
     "HealthyBaselineCaptureOps": "healthy_baseline",
     "kubectl_capture_ops": "healthy_baseline",
 }
 
 __all__ = [
+    "helm_source",
+    "kustomize_source",
+    "raw_source",
+    "source_flag_value",
+    "source_from_config",
     "allocated_paths",
     "declared_manifest",
     "replace_allocated",

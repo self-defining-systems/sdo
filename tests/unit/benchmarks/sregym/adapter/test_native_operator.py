@@ -12,6 +12,7 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
+from benchmarks.sregym.adapter.deployment_source import raw_source
 from benchmarks.sregym.adapter.native_operator import (
     NativeHostConfig,
     NativeInstallConfig,
@@ -70,7 +71,7 @@ def test_install_existing_invokes_go_cli_and_parses_receipt(
             permissive_responder=True,
             responder_namespaces=("policy-system",),
             max_response_loops=3,
-            deployed_manifest_paths=("kubernetes",),
+            deployment_source=raw_source(("kubernetes",)),
         )
     )
 
@@ -89,7 +90,8 @@ def test_install_existing_invokes_go_cli_and_parses_receipt(
     assert calls[0][calls[0].index("--responder-namespace") + 1] == "policy-system"
     assert "--healthy-baseline" in calls[0]
     assert calls[0][calls[0].index("--max-response-loops") + 1] == "3"
-    assert calls[0][calls[0].index("--deployed-manifest-path") + 1] == "kubernetes"
+    assert json.loads(calls[0][calls[0].index("--deployment-source") + 1]) == raw_source(("kubernetes",))
+    assert "--deployed-manifest-path" not in calls[0]
     assert "--drift-tokens-per-hour" not in calls[0]
     assert "pull" in calls[0]
     assert calls[0][0] != "python3"

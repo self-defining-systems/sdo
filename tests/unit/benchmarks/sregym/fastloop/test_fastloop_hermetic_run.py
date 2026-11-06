@@ -25,6 +25,7 @@ from google.protobuf.any_pb2 import Any as ProtoAny
 
 from benchmarks.sregym import adapter
 from benchmarks.sregym.adapter import driver
+from benchmarks.sregym.adapter.deployment_source import kustomize_source
 from benchmarks.sregym.adapter.driver import DeployedLifecycle, DeployedLifecycleContext
 from benchmarks.sregym.adapter.persistent import PersistentState
 from benchmarks.sregym.fastloop import cli, composite, fault_tracker
@@ -743,6 +744,11 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
                     "yinfangchen/hotelreservation@sha256:" + "a" * 64
                 )
         path.write_text(yaml.safe_dump_all(documents, sort_keys=False))
+    # The hotel application's ``kubernetes/`` is a kustomize root: list the synthetic manifests.
+    manifests = sorted(
+        str(path.relative_to(workspace / "kubernetes")) for path in (workspace / "kubernetes").rglob("*.yaml")
+    )
+    (workspace / "kubernetes/kustomization.yaml").write_text(yaml.safe_dump({"resources": manifests}))
     diagnostics = workspace / ".sdo/diagnostics"
     diagnostics.mkdir(parents=True)
     (diagnostics / "manifest.yaml").write_text("detectors: []\n")
@@ -938,7 +944,7 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
 
     def install(config: object) -> object:
         assert config.kubeconfig == control_api.kubeconfig
-        assert config.deployed_manifest_paths == ("kubernetes",)
+        assert config.deployment_source == kustomize_source("kubernetes")
         return SimpleNamespace(reused=False, accepted_commit="a" * 40)
 
     monkeypatch.setattr(driver, "install_existing", install)

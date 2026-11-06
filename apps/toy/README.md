@@ -63,7 +63,7 @@ only. `raw` (the default) keeps the prebuilt-binary `Dockerfile` and the
 hand-authored seed. The other variants need `--fresh-memory`, ship
 `variants/Dockerfile` (a multi-stage build of `main.go`, so a code commit can
 flow through an image build from Git), skip the host image build and the
-direct `kubectl apply`, and declare no `deployed_manifest_paths` (SDO's
+direct `kubectl apply`, and declare no deployment source (SDO's
 deployment source renders them). For `compose` the agent-authored Kubernetes
 config is judged by the same deployed-state checks instead of a file
 comparison.

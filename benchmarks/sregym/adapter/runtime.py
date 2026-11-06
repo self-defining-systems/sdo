@@ -76,7 +76,8 @@ class RuntimeConfig:
     kind_cluster_name: str | None = None
     max_deployment_attempts: int = 3
     agent_registrations: Path | None = None
-    deployed_manifest_paths: tuple[str, ...] = ()
+    # ProtoJSON DeploymentSource (see ``deployment_source.py``); ``None`` declares no source.
+    deployment_source: dict[str, Any] | None = None
     shared_accepted_id: str = ""
 
     def __post_init__(self) -> None:
@@ -182,7 +183,7 @@ def native_install_config(config: RuntimeConfig) -> NativeInstallConfig:
         response_timeout_seconds=config.timeout_seconds,
         verification_timeout_seconds=config.verification_timeout_seconds,
         responder_env=responder_env,
-        deployed_manifest_paths=config.deployed_manifest_paths,
+        deployment_source=config.deployment_source,
         shared_accepted_id=config.shared_accepted_id,
     )
 

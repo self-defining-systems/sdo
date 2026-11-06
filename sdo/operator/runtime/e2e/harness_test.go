@@ -291,7 +291,7 @@ func (w *World) InstallController(extra ...string) {
 		TimeoutSeconds: 300, VerificationTimeoutSeconds: 120,
 		NativeCommand: []string{"/usr/local/bin/sdo-operator"}, ReuseExisting: true,
 		RegistrationConfigMap: "sdo-agent-registrations", RegistrationDirectory: "/sdo/registrations",
-		DisableObservability: true, ExtraControllerArgs: append([]string{"--deployed-manifest-path=kubernetes"}, extra...),
+		DisableObservability: true, ExtraControllerArgs: append([]string{`--deployment-source={"renderer_id":"raw","config":{"@type":"type.googleapis.com/sdodev.contracts.v1alpha1.RawRenderConfig","paths":["kubernetes"]}}`}, extra...),
 	}
 	seed := func(ctx context.Context, c install.Config) error {
 		destination := filepath.Join(w.Kubelet.Run.PVCDir(c.ControlNamespace, c.RepositoryPVC), "application")

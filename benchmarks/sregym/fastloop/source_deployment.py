@@ -11,7 +11,7 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 from benchmarks.sregym.adapter import WaitKind, wait_for
-from benchmarks.sregym.fastloop.accepted_source import AcceptedSource, manifest_paths_for
+from benchmarks.sregym.fastloop.accepted_source import AcceptedSource, deployment_source_for, manifest_paths_for
 from benchmarks.sregym.repository_git import host_git_command
 
 
@@ -23,7 +23,12 @@ def configure_source_deployment(app: Any) -> None:
     application = app.name.lower().replace(" ", "-")
 
     def deploy() -> None:
-        source = AcceptedSource(Path(workspace), app.namespace, manifest_paths_for(application))
+        source = AcceptedSource(
+            Path(workspace),
+            app.namespace,
+            manifest_paths_for(application),
+            deployment_source_for(application),
+        )
         # Resolve the revision before any build or Kubernetes write. Never let
         # a modified worktree or an old capture supply desired application bytes.
         manifests = source.manifests

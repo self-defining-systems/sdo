@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 from google.protobuf import json_format
 
 from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
+from benchmarks.sregym.adapter.deployment_source import source_flag_value
 from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
@@ -101,7 +102,7 @@ class NativeInstallConfig:
     responder_namespaces: tuple[str, ...] = ()
     registration_configmap: str | None = None
     responder_env: tuple[str, ...] = ()
-    deployed_manifest_paths: tuple[str, ...] = ()
+    deployment_source: dict[str, Any] | None = None
     shared_accepted_id: str = ""
 
     def __post_init__(self) -> None:
@@ -709,8 +710,8 @@ def install_existing(config: NativeInstallConfig) -> NativeInstallReceipt:
         args.append("--frozen-memory")
     if config.force_reflection:
         args.append("--force-reflection")
-    for path in config.deployed_manifest_paths:
-        args.extend(("--deployed-manifest-path", path))
+    if config.deployment_source is not None:
+        args.extend(("--deployment-source", source_flag_value(config.deployment_source)))
 
     args.extend(("--max-response-loops", str(config.max_response_loops)))
     args.extend(("--response-timeout", f"{config.response_timeout_seconds}s"))

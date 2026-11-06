@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from benchmarks.sregym.adapter import driver, native_operator
+from benchmarks.sregym.adapter.deployment_source import raw_source
 from benchmarks.sregym.adapter.runtime import RuntimeConfig
 
 if TYPE_CHECKING:
@@ -328,7 +329,7 @@ def test_runtime_install_preserves_shared_settings_on_every_lifecycle_path(
         kind_cluster_name="fastloop-w0",
         persistent=True,
         agent_registrations=registrations if seeded else None,
-        deployed_manifest_paths=("kubernetes",),
+        deployment_source=raw_source(("kubernetes",)),
     )
     monkeypatch.setenv("SREGYM_BASE_KUBECONFIG", str(tmp_path / "config"))
     monkeypatch.setattr(driver, "prepare_benchmark_resources", lambda *_args, **_kwargs: None)
@@ -359,9 +360,11 @@ def test_runtime_install_preserves_shared_settings_on_every_lifecycle_path(
     assert actual.control_namespace == config.controller_namespace
     assert actual.response_timeout_seconds == config.timeout_seconds
     assert actual.verification_timeout_seconds == config.verification_timeout_seconds
-    assert actual.deployed_manifest_paths == ("kubernetes",)
+    assert actual.deployment_source == raw_source(("kubernetes",))
     if seeded:
-        assert controller_args[controller_args.index("--deployed-manifest-path") + 1] == "kubernetes"
+        assert json.loads(controller_args[controller_args.index("--deployment-source") + 1]) == raw_source(
+            ("kubernetes",)
+        )
 
 
 @pytest.mark.parametrize("entrypoint", ["lifecycle", "evidence"])
@@ -373,7 +376,7 @@ def test_environment_settings_reach_nonpersistent_native_install(
         "SREGYM_EXPERIMENT_AGENT_CONFIG",
         json.dumps(
             {
-                "deployed_manifest_paths": ["kubernetes"],
+                "deployment_source": {"renderer": "raw", "paths": ["kubernetes"]},
             }
         ),
     )
@@ -408,7 +411,7 @@ def test_environment_settings_reach_nonpersistent_native_install(
         native_operator.install_existing(driver._native_install_for_run(args, tmp_path, "demo", "demo", ""))
     assert len(commands) == 1
     command = commands[0]
-    assert command[command.index("--deployed-manifest-path") + 1] == "kubernetes"
+    assert json.loads(command[command.index("--deployment-source") + 1]) == raw_source(("kubernetes",))
 
 
 def test_driver_cli_overrides_environment_source_and_program_settings(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -416,38 +419,62 @@ def test_driver_cli_overrides_environment_source_and_program_settings(monkeypatc
         "SREGYM_EXPERIMENT_AGENT_CONFIG",
         json.dumps(
             {
-                "deployed_manifest_paths": ["old"],
+                "deployment_source": {"renderer": "kustomize", "path": "old"},
             }
         ),
     )
     args = driver._parse_args(
         [
-            "--deployed-manifest-path",
+            "--deployment-source-paths",
             "kubernetes",
-            "--deployed-manifest-path",
+            "--deployment-source-paths",
             "extra.yaml",
         ]
     )
-    assert args.deployed_manifest_paths == ("kubernetes", "extra.yaml")
+    assert args.deployment_source == raw_source(("kubernetes", "extra.yaml"))
 
 
-@pytest.mark.parametrize("value", ["kubernetes", None, {}, [""], ["  "], [1]])
-def test_driver_rejects_invalid_manifest_selection(monkeypatch: pytest.MonkeyPatch, value: object) -> None:
-    monkeypatch.setenv("SREGYM_EXPERIMENT_AGENT_CONFIG", json.dumps({"deployed_manifest_paths": value}))
-    with pytest.raises(ValueError, match="deployed_manifest_paths"):
+@pytest.mark.parametrize(
+    "value",
+    [
+        "kubernetes",
+        None,
+        {},
+        {"renderer": "helm"},
+        {"renderer": "raw"},
+        {"renderer": "raw", "paths": [""]},
+        {"renderer": "raw", "paths": ["../out"]},
+        {"renderer": "raw", "path": "kubernetes"},
+        {"renderer": "kustomize", "paths": ["kubernetes"]},
+        {"renderer": "kustomize", "path": "/abs"},
+    ],
+)
+def test_driver_rejects_invalid_deployment_source(monkeypatch: pytest.MonkeyPatch, value: object) -> None:
+    monkeypatch.setenv("SREGYM_EXPERIMENT_AGENT_CONFIG", json.dumps({"deployment_source": value}))
+    with pytest.raises(ValueError, match="deployment_source|deployment source"):
         driver._parse_args([])
+
+
+def test_driver_rejects_the_retired_manifest_path_list_with_a_reinstall_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SREGYM_EXPERIMENT_AGENT_CONFIG", json.dumps({"deployed_manifest_paths": ["kubernetes"]}))
+    with pytest.raises(ValueError, match="reinstall"):
+        driver._parse_args([])
+    with pytest.raises(SystemExit):
+        driver._parse_args(["--deployed-manifest-path", "kubernetes"])
 
 
 def test_driver_default_settings_enable_automatic_repair(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SREGYM_EXPERIMENT_AGENT_CONFIG", raising=False)
     args = driver._parse_args([])
-    assert args.deployed_manifest_paths == ()
+    assert args.deployment_source is None
 
 
 @pytest.mark.parametrize(
     ("argv", "field"),
     [
-        (["--deployed-manifest-path", ""], "deployed_manifest_paths"),
+        (["--deployment-source-paths", ""], "deployment_source_paths"),
     ],
 )
 def test_driver_rejects_invalid_cli_settings(argv: list[str], field: str) -> None:

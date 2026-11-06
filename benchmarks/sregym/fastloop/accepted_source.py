@@ -16,9 +16,9 @@ import subprocess
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any
 
-from benchmarks.sregym.adapter import WaitKind, execute_operator, wait_for
+from benchmarks.sregym.adapter import WaitKind, execute_operator, kustomize_source, raw_source, wait_for
 from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
@@ -28,34 +28,28 @@ DEFAULT_MANIFEST_PATHS = ("kubernetes",)
 # Applications whose ``kubernetes/`` holds more than the deployed manifest set.
 APPLICATION_MANIFEST_PATHS = {"opentelemetry-demo-astronomy-shop": ("kubernetes/astronomy-shop.yaml",)}
 _REVISION = re.compile(r"^[0-9a-f]{40,64}$")
-_CONFIG_TYPE: Final = "type.googleapis.com/sdodev.contracts.v1alpha1."
+
+# SREGym applications whose ``kubernetes/`` is a kustomize root (S3-10d stopgap: raw rejects kustomize roots).
+KUSTOMIZE_APPLICATIONS = {"hotel-reservation": "kubernetes"}
 
 
-def raw_deployment_source(paths: tuple[str, ...]) -> dict[str, Any]:
-    """ProtoJSON ``DeploymentSource`` for the raw renderer over manifest paths."""
-    return {"renderer_id": "raw", "config": {"@type": _CONFIG_TYPE + "RawRenderConfig", "paths": list(paths)}}
-
-
-def kustomize_deployment_source(path: str) -> dict[str, Any]:
-    """ProtoJSON ``DeploymentSource`` for the kustomize renderer over one kustomization directory."""
-    return {"renderer_id": "kustomize", "config": {"@type": _CONFIG_TYPE + "KustomizeRenderConfig", "path": path}}
-
-
-def helm_deployment_source(chart_path: str, value_files: tuple[str, ...] = ()) -> dict[str, Any]:
-    """ProtoJSON ``DeploymentSource`` for the helm renderer over one chart directory of the source tree."""
-    return {
-        "renderer_id": "helm",
-        "config": {
-            "@type": _CONFIG_TYPE + "HelmRenderConfig",
-            "chart_path": chart_path,
-            "value_files": list(value_files),
-        },
-    }
+def deployment_source_for(application: str) -> dict[str, Any]:
+    """DeploymentSource for a problem application name: kustomize for hotel, raw over its manifest paths otherwise."""
+    name = application.lower().replace("_", "-").replace(" ", "-")
+    if name in KUSTOMIZE_APPLICATIONS:
+        return kustomize_source(KUSTOMIZE_APPLICATIONS[name])
+    return raw_source(manifest_paths_for(application))
 
 
 def manifest_paths_for(application: str) -> tuple[str, ...]:
     """Manifest selection for a problem application name (never a lane-qualified one)."""
     return APPLICATION_MANIFEST_PATHS.get(application, DEFAULT_MANIFEST_PATHS)
+
+
+def deployment_source_for_environment(environment: Any) -> dict[str, Any]:
+    """Source keyed like ``manifest_paths_for_environment`` (the problem application, never a lane-qualified name)."""
+    manifest_paths_for_environment(environment)  # raises without a problem application
+    return deployment_source_for(environment.problem_application)
 
 
 def manifest_paths_for_environment(environment: Any) -> tuple[str, ...]:
@@ -99,11 +93,16 @@ class AcceptedSource:
         """The DeploymentSource the production renderer reads this source with."""
         if self.renderer_source is not None:
             return self.renderer_source
-        return raw_deployment_source(self.manifest_paths)
+        return raw_source(self.manifest_paths)
 
     @classmethod
     def of(cls, environment: Any) -> AcceptedSource:
-        return cls(environment.workspace, environment.namespace, manifest_paths_for_environment(environment))
+        return cls(
+            environment.workspace,
+            environment.namespace,
+            manifest_paths_for_environment(environment),
+            deployment_source_for_environment(environment),
+        )
 
     def _git(self, *args: str) -> str:
         result = subprocess.run(

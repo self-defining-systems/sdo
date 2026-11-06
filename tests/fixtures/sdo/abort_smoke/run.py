@@ -14,6 +14,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from benchmarks.sregym.adapter.deployment_source import raw_source
 from benchmarks.sregym.adapter.native_operator import NativeInstallConfig, install_existing
 from benchmarks.sregym.adapter.persistent import CleanupTarget, ControllerRecord, KubectlClusterOps, PersistentState
 from benchmarks.sregym.adapter.processes import read_registry
@@ -57,7 +58,7 @@ def worker(args, state_path, app, control):
             registration_configmap="sdo-agent-registrations",
             repair_policy="recorded-actions",
             reflection_session="fresh",
-            deployed_manifest_paths=("kubernetes",),
+            deployment_source=raw_source(("kubernetes",)),
         )
     )
     ops = KubectlClusterOps()

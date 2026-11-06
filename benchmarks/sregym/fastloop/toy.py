@@ -16,7 +16,7 @@ from typing import Any, Protocol
 
 from apps.toy.faults import IMAGE, command, fault_spec
 from apps.toy.variants.assemble import VARIANTS, assemble
-from benchmarks.sregym.adapter import WaitKind, wait_for
+from benchmarks.sregym.adapter import WaitKind, raw_source, wait_for
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment, Images
 from benchmarks.sregym.fastloop.host_limits import HostLimits, NodeLimits, apply_node_limits
 from benchmarks.sregym.repository_git import host_git_command
@@ -389,7 +389,7 @@ def install_controller(
 
     With ``objective`` the memory is fresh: the production Go host lifecycle (source deployment, health judge,
     goal publication) onboards the workspace, with the production worker registrations unless given.
-    Only the raw variant declares ``kubernetes`` as its deployed manifest paths; the others are rendered by a
+    Only the raw variant declares a raw deployment source over ``kubernetes``; the others are rendered by a
     deployment source, so they declare none.
     """
     from dataclasses import replace
@@ -421,7 +421,7 @@ def install_controller(
             frozen_memory=frozen_memory,
             persistent=True,
             kind_cluster_name=environment.cluster,
-            deployed_manifest_paths=("kubernetes",) if variant == "raw" else (),
+            deployment_source=raw_source(("kubernetes",)) if variant == "raw" else None,
             agent_registrations=registrations.resolve() if registrations else None,
         )
     if frozen_memory and not config.frozen_memory:

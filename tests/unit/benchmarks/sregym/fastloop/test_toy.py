@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from apps.toy.faults import SERVICES, fault_spec
+from benchmarks.sregym.adapter.deployment_source import raw_source
 from benchmarks.sregym.fastloop.cli import build_parser
 from benchmarks.sregym.fastloop.stream import load_stream_config
 from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import fixed_source_provider
@@ -539,7 +540,7 @@ def test_non_raw_variant_cannot_be_seeded(tmp_path):
         toy.prepare_workspace(tmp_path, "toy:test", fresh=False, variant="helm")
 
 
-def test_non_raw_install_declares_no_manifest_paths_and_raw_declares_kubernetes(tmp_path, monkeypatch):
+def test_non_raw_install_declares_no_deployment_source_and_raw_declares_kubernetes(tmp_path, monkeypatch):
     from subprocess import CompletedProcess
     from types import SimpleNamespace
 
@@ -563,8 +564,8 @@ def test_non_raw_install_declares_no_manifest_paths_and_raw_declares_kubernetes(
     monkeypatch.setattr(toy, "wait_for_baseline", lambda *args: None)
     helm = toy.install_controller(environment, objective="keep it up", variant="helm")
     raw = toy.install_controller(environment, objective="keep it up")
-    assert helm.deployed_manifest_paths == ()
-    assert raw.deployed_manifest_paths == ("kubernetes",)
+    assert helm.deployment_source is None
+    assert raw.deployment_source == raw_source(("kubernetes",))
 
 
 def test_helm_onboarding_assertions_accept_the_expected_evidence_and_name_each_violation():

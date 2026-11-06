@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from benchmarks.sregym.adapter import kustomize_source
 from benchmarks.sregym.fastloop.accepted_source import AcceptedSource
 
 if TYPE_CHECKING:
@@ -22,6 +23,7 @@ def commit_accepted_source(
     *,
     namespace: str | None = None,
     path: str = "kubernetes/manifests.yaml",
+    kustomize_root: bool = False,
 ) -> AcceptedSource:
     """Commit ``manifests`` into ``workspace`` (a git repo is created) and return how restore reads them."""
     workspace.mkdir(parents=True, exist_ok=True)
@@ -43,10 +45,16 @@ def commit_accepted_source(
         # file. Production rendering must never treat missing paths as empty.
         (workspace / "kubernetes").mkdir()
         (workspace / "kubernetes/manifests.yaml").write_text("# Synthetic empty inventory.\n")
+    if kustomize_root:
+        # SREGym hotelReservation: ``kubernetes/`` is a kustomize root listing its manifest files.
+        files = sorted(p.name for p in (workspace / "kubernetes").glob("*.yaml") if p.name != "kustomization.yaml")
+        (workspace / "kubernetes/kustomization.yaml").write_text(yaml.safe_dump({"resources": files}))
     git("add", "-A")
     git("commit", "-q", "--allow-empty", "-m", "accepted source")
     if namespace is None:
         namespace = next((m["metadata"]["namespace"] for m in manifests if m["metadata"].get("namespace")), "app")
+    if kustomize_root:
+        return AcceptedSource(workspace, namespace, renderer_source=kustomize_source("kubernetes"))
     return AcceptedSource(workspace, namespace)
 
 
