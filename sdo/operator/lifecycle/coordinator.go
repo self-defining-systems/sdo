@@ -673,8 +673,7 @@ func (c Coordinator) judge(ctx context.Context, id string, cfg Config, attempt i
 			return broker.Receipt{}, false, "", err
 		}
 		if log.GetTerminal() {
-			last := log.GetRejections()[len(log.GetRejections())-1]
-			return broker.Receipt{}, false, fmt.Sprintf("broker rejected health diagnostics %d times; last rejection: %s", len(log.GetRejections()), describeDiagnostics(last.GetDiagnostics())), nil
+			return broker.Receipt{}, false, fmt.Sprintf("broker rejected health diagnostics %d times; every distinct rejection, newest first: %s", len(log.GetRejections()), describeDiagnostics(rejectionHistory(log.GetRejections()))), nil
 		}
 		receipt, ready, nextFeedback, rejected, err := c.judgeOnce(ctx, id, cfg, attempt, sourceCommit, architectureCommit, feedback, deployment, log)
 		if err != nil || ready || rejected == nil {
@@ -692,9 +691,41 @@ func (c Coordinator) judge(ctx context.Context, id string, cfg Config, attempt i
 func describeDiagnostics(diagnostics []*contracts.MemoryDiagnostic) string {
 	parts := make([]string, 0, len(diagnostics))
 	for _, d := range diagnostics {
-		parts = append(parts, fmt.Sprintf("[%s] %s: %s", d.GetRule(), d.GetPath(), d.GetMessage()))
+		part := fmt.Sprintf("[%s] %s: %s", d.GetRule(), d.GetPath(), d.GetMessage())
+		if d.GetHint() != "" {
+			part += " (hint: " + d.GetHint() + ")"
+		}
+		parts = append(parts, part)
 	}
 	return strings.Join(parts, "; ")
+}
+
+// maxRejectionHistory bounds the diagnostics carried into a retry request.
+const maxRejectionHistory = 40
+
+// rejectionHistory is every distinct diagnostic the broker rejected, newest
+// rejection first, each once. A retry is a fresh session on a rolled-back
+// checkout, so the latest rejection alone hides what earlier sessions tried
+// and what the broker already told them; the last rejection is often the least
+// informative one.
+func rejectionHistory(rejections []*contracts.ProposalRejection) []*contracts.MemoryDiagnostic {
+	type key struct {
+		rule, path, message string
+		line                int32
+	}
+	seen := map[key]bool{}
+	var history []*contracts.MemoryDiagnostic
+	for i := len(rejections) - 1; i >= 0; i-- {
+		for _, d := range rejections[i].GetDiagnostics() {
+			k := key{d.GetRule(), d.GetPath(), d.GetMessage(), d.GetLine()}
+			if seen[k] || len(history) >= maxRejectionHistory {
+				continue
+			}
+			seen[k] = true
+			history = append(history, d)
+		}
+	}
+	return history
 }
 
 // judgeOnce runs one judge dispatch. A non-nil rejected slice means the broker
@@ -703,7 +734,7 @@ func (c Coordinator) judgeOnce(ctx context.Context, id string, cfg Config, attem
 	validationAttempt := uint32(len(log.GetRejections()) + 1)
 	var previous []*contracts.MemoryDiagnostic
 	if n := len(log.GetRejections()); n > 0 {
-		previous = log.GetRejections()[n-1].GetDiagnostics()
+		previous = rejectionHistory(log.GetRejections())
 		// A crash may have left the rejected checkout behind.
 		if err := c.Broker.ReleaseProposal(id, broker.InitialPhase); err != nil {
 			return broker.Receipt{}, false, "", nil, err

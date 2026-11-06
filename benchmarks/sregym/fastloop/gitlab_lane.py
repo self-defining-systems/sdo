@@ -203,6 +203,31 @@ def onboard(environment: Any, config: Any, objective: str) -> dict[str, Any]:
     return launch_native_lifecycle(config, objective, "")
 
 
+ONBOARDING_EVIDENCE_DIRNAME = "onboarding_evidence"
+
+
+def onboard_retaining_evidence(environment: Any, config: Any, objective: str, ops: Any = None) -> dict[str, Any]:
+    """``onboard``, then export the lifecycle's runtime evidence into the run output, also when it fails.
+
+    The judge and deployer sessions (Codex rollout JSONL, model IO, request/result pairs) live in the
+    controller's runtime store, which an incident export captures only later; a failed or slow onboarding
+    would otherwise leave nothing to audit. It uses the same exporter as the per-incident evidence.
+    """
+    from dataclasses import replace
+
+    if ops is None:
+        from benchmarks.sregym.adapter import KubectlClusterOps
+
+        ops = KubectlClusterOps()
+    directory = environment.run_dir / ONBOARDING_EVIDENCE_DIRNAME
+    try:
+        return onboard(environment, config, objective)
+    finally:
+        directory.mkdir(parents=True, exist_ok=True)
+        exported = ops.export_runtime_artifacts(replace(config, artifacts_dir=directory), directory)
+        (directory / "export.json").write_text(json.dumps(exported, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def up(args: Any) -> int:
     """``fastloop up --app gitlab``: cluster, prerequisites, source workspace, SDO install with the provided source."""
     from benchmarks.sregym.fastloop import toy
@@ -283,7 +308,7 @@ def up(args: Any) -> int:
     runtime = lane_runtime_config(
         env, provided_plan(workspace, NAMESPACE), registrations=getattr(args, "agent_registrations", None)
     )
-    onboard(env, runtime, objective)
+    onboard_retaining_evidence(env, runtime, objective)
     toy.record_controller(env, runtime)
     print(json.dumps({"up_total": time.monotonic() - started, "workspace": str(workspace), "commit": seed}))
     return 0
