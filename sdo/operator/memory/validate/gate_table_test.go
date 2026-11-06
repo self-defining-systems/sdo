@@ -415,6 +415,9 @@ var gateRows = []gateRow{
 	{name: "responder cannot edit followed sources", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleOwnershipDenied}, path: layout.SourcesFile,
 		edit: gateWrite(layout.SourcesFile, "sources:\n- path: .\n  kind: git\n  config: {repository: \"git://synthetic.invalid/app.git\", ref: main}\n")},
 	{name: "deployer edits source in initial", kind: gateOwnership, actor: Deployer, phase: InitialPhase, edit: gateWrite("app.txt", "deployed\n")},
+	{name: "upstream advances source", kind: gateOwnership, actor: Upstream, phase: AdvancePhase, edit: gateWrite("app.txt", "upstream\n")},
+	{name: "upstream advance cannot change memory", kind: gateOwnership, actor: Upstream, phase: AdvancePhase, rules: []string{RuleOwnershipDenied}, path: layout.GoalFile,
+		edit: gateWrite(layout.GoalFile, "---\nschema_version: 1\nowner: human\n---\nNew goal\n")},
 	{name: "upkeep stamps the schema alone", kind: gateOwnership, actor: Upkeep, phase: InitialPhase, edit: func(t *testing.T, r string) {
 		write(t, r, layout.SchemaVersionFile, "3\n")
 		write(t, r, layout.DiagnosticsGoModFile, "module m\n")
@@ -463,6 +466,15 @@ var gateRows = []gateRow{
 	{name: "initial source needs a verified source tree", kind: gateCheck, actor: Deployer, phase: InitialPhase, rules: []string{RuleVerifiedSource},
 		prepare: func(t *testing.T, r string) { remove(t, r, ".sdo/diagnostics"); remove(t, r, ".sdo/playbooks") },
 		edit:    gateWrite("app.txt", "deployed\n")},
+	{name: "upstream advance needs a verified source tree", kind: gateCheck, actor: Upstream, phase: AdvancePhase, rules: []string{RuleVerifiedSource}, edit: gateWrite("app.txt", "upstream\n")},
+	{name: "verified upstream advance passes", kind: gateCheck, actor: Upstream, phase: AdvancePhase, edit: gateWrite("app.txt", "upstream\n"),
+		request: func(r *Request) {
+			r.Publication = &PublicationContext{BaseCommit: "HEAD", IncidentID: "advance-0123456789ab", VerifiedSourceTree: strings.Repeat("a", 40)}
+		}},
+	{name: "verified upstream advance may be empty", kind: gateCheck, actor: Upstream, phase: AdvancePhase,
+		request: func(r *Request) {
+			r.Publication = &PublicationContext{BaseCommit: "HEAD", IncidentID: "advance-0123456789ab", VerifiedSourceTree: strings.Repeat("a", 40)}
+		}},
 	{name: "health judge replaced generated policy", kind: gateCheck, actor: HealthJudge, phase: InitialPhase, rules: []string{RuleGenericHealth}, edit: func(t *testing.T, r string) {
 		write(t, r, ".sdo/diagnostics/detectors/health/service-endpoints/manifest.yaml", strings.ReplaceAll(gateRead(t, r, gateHealthManifest), "id: health", "id: service-endpoints"))
 		write(t, r, ".sdo/diagnostics/detectors/health/service-endpoints/detector.go", "package endpoints\n\n// authored policy override\n")

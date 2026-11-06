@@ -37,7 +37,8 @@ func healthObjectiveOnly(kind layout.Kind, id string) bool {
 // grants is the whole ownership policy, kind by actor by phase.
 //
 // Phases: the human goal, Upkeep schema and architecture, trusted source deployment,
-// and health-judge bootstrap stages are InitialPhase. Responders change
+// and health-judge bootstrap stages are InitialPhase. An upstream advance
+// (AdvancePhase) changes source only. Responders change
 // operational memory only in ReflectionPhase, after an independently verified
 // outcome, and source only in ProposalPhase. No actor edits memory in
 // ProposalPhase, and nobody but the controller writes outcomes or lifecycle
@@ -63,6 +64,9 @@ var grants = []grant{
 	}},
 	{actor: Responder, phase: ProposalPhase, kinds: []layout.Kind{kindSource}},
 	{actor: Deployer, phase: InitialPhase, kinds: []layout.Kind{kindSource}},
+	// An upstream advance changes only source: an upstream revision that
+	// touches .sdo/ is held before any proposal exists.
+	{actor: Upstream, phase: AdvancePhase, kinds: []layout.Kind{kindSource}},
 
 	{actor: Human, phase: InitialPhase, kinds: []layout.Kind{layout.KindGoal, layout.KindSources}},
 	{actor: Upkeep, phase: InitialPhase, kinds: []layout.Kind{
@@ -84,7 +88,7 @@ var grants = []grant{
 
 func knownActor(a Actor) bool {
 	switch a {
-	case Human, Deployer, HealthJudge, Responder, Upkeep:
+	case Human, Deployer, HealthJudge, Responder, Upkeep, Upstream:
 		return true
 	}
 	return false
@@ -92,7 +96,7 @@ func knownActor(a Actor) bool {
 
 func knownPhase(p Phase) bool {
 	switch p {
-	case ProposalPhase, ReflectionPhase, InitialPhase, OutcomePhase, ImportPhase:
+	case ProposalPhase, ReflectionPhase, InitialPhase, OutcomePhase, ImportPhase, AdvancePhase:
 		return true
 	}
 	return false
@@ -135,7 +139,7 @@ func (s *run) ownership(ctx context.Context) error {
 	}
 	actor, phase := s.req.Actor, s.req.Phase
 	if !knownActor(actor) {
-		s.add(Ownership, Diagnostic{Rule: RuleUnknownActor, Message: fmt.Sprintf("unknown actor %q", actor), Hint: "actors are human, deployer, health_judge, responder, and upkeep"})
+		s.add(Ownership, Diagnostic{Rule: RuleUnknownActor, Message: fmt.Sprintf("unknown actor %q", actor), Hint: "actors are human, deployer, health_judge, responder, upkeep, and upstream"})
 		return nil
 	}
 	if diagnostics := PhaseDiagnostics(phase); len(diagnostics) > 0 {

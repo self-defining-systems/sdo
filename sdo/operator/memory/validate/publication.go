@@ -121,7 +121,9 @@ func lifecycleChecks(ctx context.Context, r Request, paths []string, structurall
 			return nil, errors.New("publication context differs from validation base")
 		}
 	}
-	if len(paths) == 0 && !healthRevalidation(r, paths) && !(r.Phase == ReflectionPhase && r.Decision != nil && (r.Decision.GetLearningDecision() == "no_change" || r.Decision.GetLearningDecision() == "sdk_gap")) {
+	// An advance whose upstream change the accepted source already holds still
+	// records the upstream revision, so its empty diff is accepted.
+	if len(paths) == 0 && r.Phase != AdvancePhase && !healthRevalidation(r, paths) && !(r.Phase == ReflectionPhase && r.Decision != nil && (r.Decision.GetLearningDecision() == "no_change" || r.Decision.GetLearningDecision() == "sdk_gap")) {
 		add(RuleEmptyDiff, "proposal has no changed files", "return no_change instead of publishing")
 	}
 	// Upkeep initializes schema metadata; the independent health judge may
@@ -218,6 +220,9 @@ func lifecycleChecks(ctx context.Context, r Request, paths []string, structurall
 		if tree != "" && (!source || architecture) {
 			add(RuleVerifiedSource, "verified source publish requires source files without architecture", "")
 		}
+	}
+	if r.Phase == AdvancePhase && (r.Publication == nil || r.Publication.VerifiedSourceTree == "") {
+		add(RuleVerifiedSource, "an upstream advance must use PublishAdvance", "the broker binds the advance to the deployed and verified candidate tree")
 	}
 	return ds, nil
 }
@@ -384,7 +389,7 @@ func publicationChecks(ctx context.Context, r Request, structurallyValid bool) (
 // PhaseDiagnostics is shared with publication before it selects a proposal.
 func PhaseDiagnostics(phase Phase) []Diagnostic {
 	if !knownPhase(phase) {
-		return []Diagnostic{{Rule: RuleUnknownPhase, Message: fmt.Sprintf("unknown phase %q", phase), Hint: "phases are proposal, reflection, initial, import, and outcome"}}
+		return []Diagnostic{{Rule: RuleUnknownPhase, Message: fmt.Sprintf("unknown phase %q", phase), Hint: "phases are proposal, reflection, initial, import, outcome, and advance"}}
 	}
 	return nil
 }

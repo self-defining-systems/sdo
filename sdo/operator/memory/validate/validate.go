@@ -32,6 +32,9 @@ const (
 	HealthJudge Actor = "health_judge"
 	Responder   Actor = "responder"
 	Upkeep      Actor = "upkeep"
+	// Upstream is the broker's own advance of accepted source to a followed
+	// upstream revision; no agent authors it.
+	Upstream Actor = "upstream"
 )
 
 // Phase is the lifecycle stage in which a candidate change is proposed.
@@ -43,6 +46,9 @@ const (
 	InitialPhase    Phase = "initial"
 	OutcomePhase    Phase = "outcome"
 	ImportPhase     Phase = "import"
+	// AdvancePhase merges a followed upstream revision into accepted source
+	// after it was deployed and verified (broker PublishAdvance).
+	AdvancePhase Phase = "advance"
 )
 
 // Layer selects a group of rules.

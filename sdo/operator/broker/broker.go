@@ -700,6 +700,12 @@ func checkIncidentID(incidentID string) error {
 }
 
 func (b *Broker) accept(ctx context.Context, stage, incidentID string, actor Actor, phase Phase, paths []string, gaps ...validate.Diagnostic) (Receipt, error) {
+	return b.acceptWithTrailers(ctx, stage, incidentID, actor, phase, paths, nil, gaps...)
+}
+
+// acceptWithTrailers commits the staged tree with the broker trailers plus
+// the given "Key: value" trailer lines and fast-forwards the accepted branch.
+func (b *Broker) acceptWithTrailers(ctx context.Context, stage, incidentID string, actor Actor, phase Phase, paths []string, trailers []string, gaps ...validate.Diagnostic) (Receipt, error) {
 	if err := checkIncidentID(incidentID); err != nil {
 		return Receipt{}, err
 	}
@@ -725,6 +731,12 @@ func (b *Broker) accept(ctx context.Context, stage, incidentID string, actor Act
 			return Receipt{}, fmt.Errorf("resolve initial upstream revision: %w", err)
 		}
 		message += "\nSDO-Upstream: " + base
+	}
+	for _, trailer := range trailers {
+		if strings.ContainsAny(trailer, "\r\n") {
+			return Receipt{}, fmt.Errorf("broker trailer %q spans lines", trailer)
+		}
+		message += "\n" + trailer
 	}
 	for _, gap := range gaps {
 		message += "\nSDO-Coverage-Gap: " + strings.Join(strings.Fields(gap.Rule+": "+gap.Message), " ")
@@ -793,8 +805,12 @@ func (b *Broker) findAcceptedAt(ctx context.Context, incidentID string, phase Ph
 	return Receipt{}, false, nil
 }
 
+// brokerCommitterEmail identifies broker-authored commits; trailer readers
+// trust only those.
+const brokerCommitterEmail = "sdo-commit-broker@localhost"
+
 func brokerGitEnv() []string {
-	return []string{"GIT_AUTHOR_NAME=SDO Commit Broker", "GIT_AUTHOR_EMAIL=sdo-commit-broker@localhost", "GIT_COMMITTER_NAME=SDO Commit Broker", "GIT_COMMITTER_EMAIL=sdo-commit-broker@localhost"}
+	return []string{"GIT_AUTHOR_NAME=SDO Commit Broker", "GIT_AUTHOR_EMAIL=" + brokerCommitterEmail, "GIT_COMMITTER_NAME=SDO Commit Broker", "GIT_COMMITTER_EMAIL=" + brokerCommitterEmail}
 }
 
 func runGit(ctx context.Context, cwd string, args ...string) ([]byte, error) {
