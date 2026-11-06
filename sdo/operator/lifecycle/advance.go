@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	"google.golang.org/protobuf/types/known/anypb"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	"sdo.dev/operator/imagesrc"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/operability"
 	"sdo.dev/operator/patchset"
@@ -142,7 +142,39 @@ const (
 	HoldBuild    HoldReason = "build"   // E3, images resolve before any apply
 	HoldRollout  HoldReason = "rollout" // E7, cluster left as is
 	HoldHealth   HoldReason = "health"  // E8, cluster left as is
+	// HoldScope: the offline operability checks found the candidate outside
+	// the install's scope or registry allowlist, before any cluster effect.
+	HoldScope HoldReason = "scope"
+	// HoldOperability: an operability check failed for a cause none of the
+	// reasons above names (an SDO defect or an unknown cause), so a person
+	// must look.
+	HoldOperability HoldReason = "operability"
 )
+
+// holdRouting is the operability cause and items of the holds that are not
+// derived from a failing check: the revision itself is refused before there
+// is a report to read them from. The owner is always operability.RouteIn
+// (ModeAdvance, cause).
+var holdRouting = map[HoldReason]struct {
+	cause operability.Cause
+	items []operability.ItemID
+}{
+	HoldRefRewritten:    {operability.CauseEnvironment, nil},
+	HoldMemoryTouched:   {operability.CauseScope, []operability.ItemID{operability.O6}},
+	HoldUnavailable:     {operability.CauseEnvironment, nil},
+	HoldMergeConflict:   {operability.CausePatch, []operability.ItemID{operability.O1}},
+	HoldRender:          {operability.CauseRender, []operability.ItemID{operability.O1}},
+	HoldPatchConflict:   {operability.CausePatch, []operability.ItemID{operability.O1}},
+	HoldPatchUpstreamed: {operability.CausePatch, []operability.ItemID{operability.O1}},
+	HoldPatchInvalid:    {operability.CausePatch, []operability.ItemID{operability.O1}},
+	HoldShapeChange:     {operability.CauseCoverage, []operability.ItemID{operability.O3}},
+	HoldDesigner:        {operability.CauseCoverage, []operability.ItemID{operability.O3}},
+	HoldBuild:           {operability.CauseBuild, []operability.ItemID{operability.O2}},
+	HoldRollout:         {operability.CauseRollout, []operability.ItemID{operability.O1}},
+	HoldHealth:          {operability.CauseSourceFault, []operability.ItemID{operability.O4}},
+	HoldScope:           {operability.CauseScope, []operability.ItemID{operability.O6}},
+	HoldOperability:     {operability.CauseInternal, nil},
+}
 
 // AdvanceResult is the typed result of one advance.
 type AdvanceResult struct {
@@ -150,6 +182,13 @@ type AdvanceResult struct {
 	// Upstream is the materialized upstream commit (empty before step 1).
 	Upstream string
 	Hold     HoldReason
+	// Cause, Owner and Items say why the revision is held in the operability
+	// vocabulary (the persisted reason starts with them): the cause, who must
+	// act on it in an advance (operability.RouteIn ModeAdvance) and the items
+	// of the report that failed. Empty unless the outcome is a hold.
+	Cause operability.Cause
+	Owner operability.Owner
+	Items []operability.ItemID
 	// Detail words the hold or deferral for the holds record and logs.
 	Detail string
 	// Paths are the conflicting or .sdo/ paths of a hold, when it has any.
@@ -170,8 +209,19 @@ func (r AdvanceResult) FollowerOutcome() upstream.Outcome {
 	}
 }
 
+// reason is the persisted hold reason: a parseable prefix
+// `cause=<c> owner=<o> items=<O1,O3|->`, then the hold, detail and paths as
+// free text. The follower treats the whole string as opaque.
 func (r AdvanceResult) reason() string {
-	text := string(r.Hold)
+	items := "-"
+	if len(r.Items) > 0 {
+		names := make([]string, len(r.Items))
+		for i, item := range r.Items {
+			names[i] = string(item)
+		}
+		items = strings.Join(names, ",")
+	}
+	text := fmt.Sprintf("cause=%s owner=%s items=%s %s", r.Cause, r.Owner, items, r.Hold)
 	if r.Detail != "" {
 		text += ": " + r.Detail
 	}
@@ -308,7 +358,14 @@ func (a Advancer) Advance(ctx context.Context, cfg AdvanceConfig, request upstre
 	if shapeChanged && a.Designer == nil {
 		return held(result, HoldShapeChange, "desired-state shape changed and no detection designer is configured to refresh the detectors"), nil
 	}
-	result, err = a.deployAndAccept(ctx, cfg, result, proposal, candidate, plan, request.Prev, &published)
+	offlineChecks, decision, err := a.offlineChecks(ctx, cfg, proposal, plan)
+	if err != nil {
+		return result, err
+	}
+	if decision.Kind != operability.Accepted {
+		return heldBy(result, holdForCause(decision.Checks[0].Cause), decision), nil
+	}
+	result, err = a.deployAndAccept(ctx, cfg, result, proposal, candidate, plan, request.Prev, offlineChecks, &published)
 	if err != nil || result.Outcome != AdvanceAccepted || !shapeChanged {
 		return result, err
 	}
@@ -393,7 +450,70 @@ func patchHold(err error) (HoldReason, string, []string, bool) {
 	return reason, detail, append([]string(nil), patchErr.Paths...), true
 }
 
-func (a Advancer) deployAndAccept(ctx context.Context, cfg AdvanceConfig, result AdvanceResult, proposal broker.Proposal, candidate string, plan *contracts.DeploymentPlan, prev string, published *bool) (_ AdvanceResult, err error) {
+// offlineChecks is the offline subset of the advance report (O1 patches,
+// render, determinism and workloads, O2 image declarations, O6 scope and
+// allowlist) for the merged candidate, computed with the Deployer's own
+// effective tree, render environment and shared functions, so a failure here
+// is the one apply would have hit, before the maintenance pause and any
+// cluster effect. A Readiness verifier that cannot check offline contributes
+// no checks. An infrastructure cause is retried within the bounded window and
+// ends as an error (the follower retries the revision).
+func (a Advancer) offlineChecks(ctx context.Context, cfg AdvanceConfig, proposal broker.Proposal, plan *contracts.DeploymentPlan) ([]operability.Check, operability.Decision, error) {
+	checker, ok := a.Readiness.(OfflineChecker)
+	if !ok {
+		return nil, operability.Decision{Kind: operability.Accepted}, nil
+	}
+	steps := Coordinator{Wait: a.Wait}
+	var checks []operability.Check
+	var decision operability.Decision
+	err := steps.retryInfrastructure(ctx, advanceBounds(cfg), "offline operability checks", func() error {
+		offline, err := checker.CheckOffline(ctx, proposal.Path, plan)
+		if err != nil {
+			return err
+		}
+		subject := operability.Subject{
+			AcceptedCommit: proposal.BaseCommit, BaseTree: offline.BaseTree, EffectiveTree: offline.EffectiveTree,
+			PatchesDigest: offline.PatchesDigest, RenderDigest: offline.RenderDigest, EnvDigest: offline.EnvDigest,
+		}
+		checks = offline.Checks
+		// Offline, an advance is judged on its deployment items only; the
+		// live subset adds O4 and the rest of O1, O2 and O6.
+		report, err := operability.New(operability.StageAdvance, subject.WithUnavailable()).With(checks...)
+		if err != nil {
+			return err
+		}
+		decision = report.DecideIn(operability.ModeAdvance, operability.O1, operability.O2, operability.O6)
+		if decision.Kind == operability.Retry {
+			return &retryOffline{decision}
+		}
+		return nil
+	})
+	return checks, decision, err
+}
+
+func advanceBounds(cfg AdvanceConfig) Config {
+	return Config{Namespace: cfg.Namespace, HealthObjective: cfg.HealthObjective, PendingEvaluations: cfg.PendingEvaluations, PendingInterval: cfg.PendingInterval, InfrastructureTries: cfg.InfrastructureTries, InfrastructureBackoff: cfg.InfrastructureBackoff}
+}
+
+// decideAdvance puts the checks in one stage-advance report and decides it for
+// an advance.
+func decideAdvance(subject operability.Subject, checks ...[]operability.Check) (operability.Report, operability.Decision, error) {
+	var all []operability.Check
+	for _, group := range checks {
+		all = append(all, group...)
+	}
+	report, err := operability.New(operability.StageAdvance, subject).With(all...)
+	if err != nil {
+		return operability.Report{}, operability.Decision{}, fmt.Errorf("advance operability report: %w", err)
+	}
+	return report, report.DecideIn(operability.ModeAdvance, operability.StageItems(operability.StageAdvance)...), nil
+}
+
+func skippedDetectors(reason string) []operability.Check {
+	return []operability.Check{{ID: "O4.detectors", Phase: operability.PhaseLive, Status: operability.StatusSkipped, Detail: reason}}
+}
+
+func (a Advancer) deployAndAccept(ctx context.Context, cfg AdvanceConfig, result AdvanceResult, proposal broker.Proposal, candidate string, plan *contracts.DeploymentPlan, prev string, offline []operability.Check, published *bool) (_ AdvanceResult, err error) {
 	if err := a.Maintenance.Pause(ctx, "upstream advance "+result.Upstream); err != nil {
 		return result, fmt.Errorf("pause controller maintenance: %w", err)
 	}
@@ -412,7 +532,7 @@ func (a Advancer) deployAndAccept(ctx context.Context, cfg AdvanceConfig, result
 		return result, nil
 	}
 	steps := Coordinator{Wait: a.Wait}
-	bounds := Config{Namespace: cfg.Namespace, HealthObjective: cfg.HealthObjective, PendingEvaluations: cfg.PendingEvaluations, PendingInterval: cfg.PendingInterval, InfrastructureTries: cfg.InfrastructureTries, InfrastructureBackoff: cfg.InfrastructureBackoff}
+	bounds := advanceBounds(cfg)
 	var receipt DeploymentReceipt
 	err = steps.retryInfrastructure(ctx, bounds, "upstream advance deployment", func() (err error) {
 		receipt, err = a.Readiness.ApplyAndVerify(ctx, proposal.Path, plan)
@@ -423,11 +543,22 @@ func (a Advancer) deployAndAccept(ctx context.Context, cfg AdvanceConfig, result
 		if errors.As(err, &infrastructure) || ctx.Err() != nil {
 			return result, err
 		}
-		var image *imagesrc.Error
-		if errors.As(err, &image) {
-			return held(result, HoldBuild, err.Error()), nil
+		// The cluster was touched (or an image failed to build before it was):
+		// the live checks classify the failure by type, and the cause routes it
+		// for an advance, never to a deployer correction: the candidate is
+		// already applied.
+		classified, cerr := a.Readiness.(LiveChecker).CheckLive(ctx, proposal.Path, plan, DeploymentReceipt{}, err)
+		if cerr != nil {
+			return result, fmt.Errorf("classify deployment failure (%v): %w", err, cerr)
 		}
-		return held(result, HoldRollout, err.Error()), nil
+		_, decision, rerr := decideAdvance(operability.Subject{AcceptedCommit: proposal.BaseCommit}.WithUnavailable(), offline, classified, skippedDetectors("not run: the deployment failed"))
+		if rerr != nil {
+			return result, rerr
+		}
+		if decision.Kind == operability.Retry {
+			return result, err
+		}
+		return heldBy(result, holdForCause(decision.Checks[0].Cause), decision), nil
 	}
 	if !completeDeploymentReceipt(receipt) || !rendered.SameDeploymentSource(receipt.Source, plan.GetSource()) {
 		return held(result, HoldRollout, "deployment returned incomplete evidence or another source"), nil
@@ -436,10 +567,12 @@ func (a Advancer) deployAndAccept(ctx context.Context, cfg AdvanceConfig, result
 	if err != nil {
 		return result, fmt.Errorf("live deployment checks: %w", err)
 	}
-	checks := live
-	if failing(live) {
-		checks = append(checks, operability.Check{ID: "O4.detectors", Phase: operability.PhaseLive, Status: operability.StatusSkipped, Detail: "not run: a deployment check failed"})
-	} else {
+	subject := operability.Subject{
+		AcceptedCommit: proposal.BaseCommit, BaseTree: receipt.BaseTree, EffectiveTree: receipt.EffectiveTree,
+		PatchesDigest: receipt.PatchesDigest, RenderDigest: receipt.RenderDigest, EnvDigest: receipt.EnvDigest,
+	}
+	detectors := skippedDetectors("not run: a deployment check failed")
+	if !failing(live) {
 		verdict, err := steps.awaitVerdict(ctx, bounds, func() (HealthVerdict, error) {
 			return a.Verifier.VerifyCandidate(ctx, proposal.Path, candidate, cfg.Namespace, cfg.HealthObjective, receipt)
 		})
@@ -447,25 +580,31 @@ func (a Advancer) deployAndAccept(ctx context.Context, cfg AdvanceConfig, result
 		if err != nil {
 			var pending *PendingVerificationError
 			if errors.As(err, &pending) {
-				return held(result, HoldHealth, pending.Error()), nil
+				// The detectors could not answer in time: nothing says the
+				// application is unhealthy, and the designer owns the probes.
+				pendingHold := held(result, HoldHealth, pending.Error())
+				pendingHold.Cause = operability.CauseProbeUnavailable
+				pendingHold.Owner = operability.RouteIn(operability.ModeAdvance, pendingHold.Cause)
+				return pendingHold, nil
 			}
 			return result, err
 		}
-		if verdict.Outcome != VerificationClear {
-			return held(result, HoldHealth, verdict.Feedback()), nil
-		}
-		checks = append(checks, verdictChecks(verdict)...)
+		detectors = verdictChecks(verdict)
 	}
-	subject := operability.Subject{
-		AcceptedCommit: proposal.BaseCommit, BaseTree: receipt.BaseTree, EffectiveTree: receipt.EffectiveTree,
-		PatchesDigest: receipt.PatchesDigest, RenderDigest: receipt.RenderDigest, EnvDigest: receipt.EnvDigest,
-	}
-	report, err := operability.New(operability.StageAdvance, subject).With(checks...)
+	report, decision, err := decideAdvance(subject, offline, live, detectors)
 	if err != nil {
-		return result, fmt.Errorf("advance operability report: %w", err)
+		return result, err
 	}
-	if decision := report.DecideIn(operability.ModeAdvance, operability.StageItems(operability.StageAdvance)...); decision.Kind != operability.Accepted {
-		return held(result, HoldRollout, decision.Feedback()), nil
+	switch decision.Kind {
+	case operability.Accepted:
+	case operability.Retry:
+		return result, &retryChecks{decision}
+	default:
+		// E7 and E8, after the cluster changed: the cause routes by Go's
+		// provenance rule (a firing floor detector is the application's,
+		// responder; only the designer's own detectors firing is the
+		// designer's); the cluster is left as is for ordinary detection.
+		return heldBy(result, holdForCause(decision.Checks[0].Cause), decision), nil
 	}
 	receiptOfAdvance, err := a.Broker.PublishAdvance(ctx, AdvanceID(result.Upstream), result.Upstream, prev, deploymentToBroker(receipt), report)
 	if err != nil {
@@ -481,7 +620,52 @@ func held(result AdvanceResult, reason HoldReason, detail string) AdvanceResult 
 		return result
 	}
 	result.Outcome, result.Hold, result.Detail = AdvanceHeld, reason, detail
+	routing := holdRouting[reason]
+	result.Cause, result.Items = routing.cause, routing.items
+	result.Owner = operability.RouteIn(operability.ModeAdvance, routing.cause)
 	return result
+}
+
+// heldBy holds the revision for a decision the report reached: the cause and
+// items are those of the failing checks the owner must act on, and the detail
+// words them on one line.
+func heldBy(result AdvanceResult, reason HoldReason, decision operability.Decision) AdvanceResult {
+	detail := strings.Join(strings.Fields(decision.Feedback()), " ")
+	if len(detail) > maxHoldDetail {
+		detail = detail[:maxHoldDetail] + "..."
+	}
+	result = held(result, reason, detail)
+	if len(decision.Checks) == 0 {
+		return result
+	}
+	result.Cause, result.Owner, result.Items = decision.Checks[0].Cause, decision.Owner, nil
+	for _, check := range decision.Checks {
+		item, _, _ := strings.Cut(check.ID, ".")
+		if id := operability.ItemID(item); !slices.Contains(result.Items, id) {
+			result.Items = append(result.Items, id)
+		}
+	}
+	return result
+}
+
+// holdForCause names the hold of a failing check by its cause. Causes that
+// no advance step has a name for end as an operability hold.
+func holdForCause(cause operability.Cause) HoldReason {
+	switch cause {
+	case operability.CausePatch:
+		return HoldPatchConflict
+	case operability.CauseRender, operability.CauseRenderNondeterministic:
+		return HoldRender
+	case operability.CauseBuild:
+		return HoldBuild
+	case operability.CauseRollout:
+		return HoldRollout
+	case operability.CauseScope, operability.CauseAllowlist, operability.CauseBudget:
+		return HoldScope
+	case operability.CauseDetectorFault, operability.CauseSourceFault, operability.CauseProbeUnavailable:
+		return HoldHealth
+	}
+	return HoldOperability
 }
 
 // memoryPaths returns the paths under operational memory (.sdo/).
