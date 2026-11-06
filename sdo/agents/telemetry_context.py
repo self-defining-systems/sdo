@@ -63,14 +63,45 @@ def _authority(mode: str, reader: Reader, context: TelemetryContext) -> str:
         return "Bindings are read-only." + reads
     if mode == "pinned":
         return "Sources are pinned: query them, never write bindings." + reads
+    return _designer_open(context, reads)
+
+
+def _designer_open(context: TelemetryContext, reads: str) -> str:
     schema = "schema: sdo-operationalize references/telemetry.md"
     if any(source.origin == "operator" for source in context.sources):
-        return (
+        bind = (
             "Operator-provided sources are already bound: name them by id in detector queries; "
             "do not redefine them or write .sdo/diagnostics/telemetry/ for them. Bind another source in "
-            f".sdo/diagnostics/telemetry/sources.yaml only when no listed source can answer ({schema})." + reads
+            f".sdo/diagnostics/telemetry/sources.yaml only when no listed source can answer ({schema})."
         )
-    return (
-        "Bind a source in .sdo/diagnostics/telemetry/sources.yaml only when no listed source can answer "
-        f"({schema})." + reads
-    )
+    else:
+        bind = (
+            "Bind a source in .sdo/diagnostics/telemetry/sources.yaml only when no listed source can answer "
+            f"({schema})."
+        )
+    return bind + reads + _enforced(context)
+
+
+def _enforced(context: TelemetryContext) -> str:
+    """What the broker's check enforces on the designer's binding and backends files."""
+
+    if context.recipes:
+        offered = ", ".join(
+            recipe.name + (f" (declares {'+'.join(recipe.declares)})" if recipe.declares else "")
+            for recipe in context.recipes
+        )
+        parts = [f" Backend recipes offered for .sdo/diagnostics/telemetry/backends.yaml: {offered}; no parameters."]
+    else:
+        parts = [" No backend recipe is offered: do not write .sdo/diagnostics/telemetry/backends.yaml."]
+    grants = []
+    if context.granted_namespaces:
+        grants.append("namespaces " + ", ".join(context.granted_namespaces))
+    if context.granted_hosts:
+        grants.append("external hosts " + ", ".join(context.granted_hosts))
+    if context.granted_credentials:
+        grants.append("credentials " + ", ".join(context.granted_credentials))
+    if grants:
+        parts.append(" Binding endpoints may name only: " + "; ".join(grants) + ".")
+    else:
+        parts.append(" The environment grants no endpoint for a designer binding.")
+    return "".join(parts)

@@ -228,6 +228,22 @@ message TelemetryContext {
   repeated TelemetrySource sources = 2;
   // Installer-granted cluster reads (pod-discovery, node-proxy, pod-logs).
   repeated string capabilities = 3;
+  // What the broker's policy lets a designer's binding and backends files name,
+  // so the designer is told what the check will enforce. Recipes are the
+  // backend recipes offered to backends.yaml (none when the environment
+  // applies no recipe); namespaces, hosts and credentials are the grants an
+  // endpoint may name.
+  repeated TelemetryRecipe recipes = 4;
+  repeated string granted_namespaces = 5;
+  repeated string granted_hosts = 6;
+  repeated string granted_credentials = 7;
+}
+
+// A backend recipe the environment offers a designer's backends.yaml.
+message TelemetryRecipe {
+  string name = 1;
+  // Cluster reads the recipe declares (pod-discovery, node-proxy, pod-logs).
+  repeated string declares = 2;
 }
 
 // One bound telemetry source as detectors and agents see it.

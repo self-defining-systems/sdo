@@ -75,3 +75,31 @@ def test_designer_is_told_to_query_operator_provided_sources_not_rebind_them():
     designer_only = TelemetryContext(mode="open", sources=[_prom(origin="app-shipped")])
     assert "already bound" not in telemetry_context(designer_only)
     assert "references/telemetry.md" in telemetry_context(TelemetryContext(mode="open"))
+
+
+def test_designer_is_told_which_recipes_and_endpoint_grants_the_check_enforces():
+    from sdo.contracts import TelemetryRecipe
+
+    offered = telemetry_context(
+        TelemetryContext(
+            mode="open",
+            sources=[_prom()],
+            recipes=[TelemetryRecipe(name="prometheus", declares=["pod-discovery"])],
+            granted_namespaces=["shop", "sdo-system"],
+            granted_hosts=["metrics.example.com"],
+            granted_credentials=["prom-token"],
+        )
+    )
+    for expected in (
+        "prometheus (declares pod-discovery)",
+        "backends.yaml",
+        "shop, sdo-system",
+        "metrics.example.com",
+        "prom-token",
+    ):
+        assert expected in offered
+    none = telemetry_context(TelemetryContext(mode="open", sources=[_prom()]))
+    assert "No backend recipe is offered: do not write" in none
+    assert "grants no endpoint" in none
+    responder = telemetry_context(TelemetryContext(mode="open", sources=[_prom()]), "responder")
+    assert "backends.yaml" not in responder

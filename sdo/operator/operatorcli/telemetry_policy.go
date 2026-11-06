@@ -16,7 +16,7 @@ import (
 
 // memoryTelemetryPolicyEnv carries the broker's telemetry policy (JSON) to the
 // agents' `memory check`, so a self-check and the broker apply the same rules.
-const memoryTelemetryPolicyEnv = "SDO_TELEMETRY_POLICY"
+const memoryTelemetryPolicyEnv = broker.TelemetryPolicyEnvironment
 
 // telemetryRegistry is the adapter registry bindings are checked against: the
 // same catalog wiring the controller opens clients from.

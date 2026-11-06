@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -27,6 +28,36 @@ func (t Telemetry) validate() error {
 		return fmt.Errorf("broker telemetry policy: %w", err)
 	}
 	return nil
+}
+
+// TelemetryPolicyEnvironment names the environment variable that carries a
+// broker's telemetry policy (JSON) to an agent worker's `memory check`, so the
+// agent's self-check and the broker apply the same rules.
+const TelemetryPolicyEnvironment = "SDO_TELEMETRY_POLICY"
+
+// PolicyEnvironment is the agent-worker environment entry carrying this
+// broker's policy; every launch of an agent that edits memory merges it.
+func (b *Broker) PolicyEnvironment() (map[string]string, error) {
+	return policyEnvironment(b.telemetry.Policy)
+}
+
+// ControllerPolicyEnvironment is PolicyEnvironment for a launch whose broker is
+// not at hand: the same derivation (ControllerTelemetry) the controller's
+// brokers use.
+func ControllerPolicyEnvironment(config *contracts.ControllerConfig, registry *telemetry.Registry) (map[string]string, error) {
+	derived, err := ControllerTelemetry(config, registry)
+	if err != nil {
+		return nil, err
+	}
+	return policyEnvironment(derived.Policy)
+}
+
+func policyEnvironment(policy telemetry.Policy) (map[string]string, error) {
+	encoded, err := json.Marshal(policy)
+	if err != nil {
+		return nil, fmt.Errorf("encode telemetry policy: %w", err)
+	}
+	return map[string]string{TelemetryPolicyEnvironment: string(encoded)}, nil
 }
 
 // TelemetryPolicy is the policy every check of this broker runs under; agent

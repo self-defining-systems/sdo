@@ -2,7 +2,6 @@ package operatorcli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -119,11 +118,13 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		Environment:       agentEnvironment,
 	}
 	workers.Environment = codePathWorkerEnvironment(config.Install.CodePath, workers.Environment)
-	policy, err := json.Marshal(repository.TelemetryPolicy())
+	policy, err := repository.PolicyEnvironment()
 	if err != nil {
-		return lifecycle.Result{}, fmt.Errorf("encode telemetry policy: %w", err)
+		return lifecycle.Result{}, err
 	}
-	workers.Environment[memoryTelemetryPolicyEnv] = string(policy)
+	for name, value := range policy {
+		workers.Environment[name] = value
+	}
 	installer := lifecycle.NativeInstallAdapter{
 		Strategy: lifecycle.KubernetesInstallStrategy{Installer: install.Installer{Client: client}, Renderers: renderers.Catalog()},
 		Config:   config.Install, AcceptedRepository: config.ApplicationRoot, Prepared: true, Now: processio.Now,

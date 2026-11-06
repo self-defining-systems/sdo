@@ -600,7 +600,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err != nil {
 		return err
 	}
-	if jobEnvironment, err = withAgentEnvironment(jobEnvironment, launchConfig); err != nil {
+	if jobEnvironment, err = withAgentEnvironment(jobEnvironment, launchConfig, options.Telemetry); err != nil {
 		return err
 	}
 	jobEnvironment[settings.ReplayEnvironment] = replayMode
@@ -621,7 +621,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		if options.NativeBroker != nil {
 			options.NativeBroker.Programs = options.Programs
 		}
-		if err := attachNativeReflector(options.NativeBroker, launchConfig, bootstrapProvider.Client, registeredWorkers, *responseTimeout); err != nil {
+		if err := attachNativeReflector(options.NativeBroker, launchConfig, bootstrapProvider.Client, registeredWorkers, options.Telemetry, *responseTimeout); err != nil {
 			return err
 		}
 	}
