@@ -4,6 +4,7 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,7 +15,6 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/operability"
-	"sdo.dev/operator/rendered"
 )
 
 // gateWorld is a real accepted repository and broker with the memory a health
@@ -100,17 +100,16 @@ func (w *gateWorld) judgeProposal(t *testing.T, id string) {
 	copyTree(t, filepath.Join(w.good, ".sdo", "diagnostics", "detectors", "health"), filepath.Join(p.Path, ".sdo", "diagnostics", "detectors", "health"), func(string) bool { return true })
 }
 
-// receipt is the deployment the judge's candidate is verified against: its
-// effective identity is what the broker recomputes at Accept.
+// receipt is the deployment the judge's candidate is verified against (the
+// onboarded one): its effective identity and digests are what the broker binds
+// the report to at Accept.
 func (w *gateWorld) receipt(t *testing.T) DeploymentReceipt {
 	t.Helper()
-	tree := w.git(t, w.accepted, "rev-parse", "HEAD^{tree}")
-	effective, err := rendered.Effective(context.Background(), rendered.ObjectStore{Dir: w.accepted}, rendered.BaseTree(tree))
-	if err != nil {
-		t.Fatal(err)
+	accepted, found, err := w.broker.AcceptedSourceEvidence(context.Background())
+	if err != nil || !found {
+		t.Fatalf("accepted deployment evidence: found=%v err=%v", found, err)
 	}
-	defer effective.Close()
-	return DeploymentReceipt{BaseTree: tree, EffectiveTree: effective.ID, PatchesDigest: effective.PatchesDigest, ObservedRevision: effective.ID, RenderDigest: "render", EnvDigest: "env", Source: &contracts.DeploymentSource{RendererId: "raw"}, Ready: true}
+	return deploymentFromBroker(accepted.Evidence)
 }
 
 type scriptedReadiness struct{ SourceReadinessVerifier }
@@ -157,6 +156,7 @@ func gateConfig() Config {
 func TestRealBrokerAcceptsOnlyAVerifiedCandidate(t *testing.T) {
 	ctx := context.Background()
 	w := newGateWorld(t)
+	w.onboard(t)
 	before := w.head(t)
 	v := &scriptedVerifier{verdicts: []HealthVerdict{
 		{Outcome: VerificationSourceFault, Summary: "firing", Detectors: []DetectorState{{DetectorID: "health", Status: "firing", Reason: "synthetic probe"}}},
@@ -202,6 +202,66 @@ func TestRealBrokerAcceptsOnlyAVerifiedCandidate(t *testing.T) {
 	if len(v.roots) != 2 || v.roots[0] == "" {
 		t.Fatalf("verified roots = %v", v.roots)
 	}
+	// The accepted commit's complete-stage report is recorded and read back
+	// verified: bound to the commit and the diagnostics tree there.
+	report, found, err := w.broker.OperabilityReport(ctx, "judge-1", operability.StageComplete)
+	if err != nil || !found {
+		t.Fatalf("OperabilityReport = found %v, %v", found, err)
+	}
+	if report.Subject.AcceptedCommit != out.receipt.Commit || report.Decide(operability.StageItems(operability.StageComplete)...).Kind != operability.Accepted {
+		t.Fatalf("recorded report %+v does not describe the accepted commit %s", report.Subject, out.receipt.Commit)
+	}
+}
+
+// The broker refuses to fast-forward a staged judge candidate without a report,
+// or with a report of another stage or diagnostics tree, whatever the
+// coordinator believes; the head stays and the stage survives for a retry.
+func TestRealBrokerRefusesAJudgeCandidateWithoutABoundReport(t *testing.T) {
+	ctx := context.Background()
+	w := newGateWorld(t)
+	w.onboard(t)
+	deployment := w.receipt(t)
+	w.judgeProposal(t, "judge-1")
+	candidate, err := w.broker.StageCandidate(ctx, "judge-1", broker.HealthJudge, broker.InitialPhase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := w.head(t)
+	evidence := func(mutate func(*operability.Report)) broker.CandidateEvidence {
+		checks := []operability.Check{}
+		for _, id := range []string{"O1.deploy", "O2.stamps", "O3.ready", "O4.detectors", "O5.memory", "O6.budget"} {
+			checks = append(checks, operability.Check{ID: id, Phase: operability.PhaseLive, Status: operability.StatusPass})
+		}
+		subject := operability.Subject{
+			AcceptedCommit: candidate.Commit, BaseTree: deployment.BaseTree, EffectiveTree: deployment.EffectiveTree, PatchesDigest: deployment.PatchesDigest,
+			RenderDigest: deployment.RenderDigest, EnvDigest: deployment.EnvDigest, DiagnosticsTree: candidate.DiagnosticsTree,
+		}
+		report, err := operability.New(operability.StageComplete, subject).With(checks...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mutate(&report)
+		return broker.CandidateEvidence{Commit: candidate.Commit, Tree: candidate.Tree, EffectiveTree: deployment.EffectiveTree, PatchesDigest: deployment.PatchesDigest, Operability: &report}
+	}
+	for name, mutate := range map[string]func(*operability.Report){
+		"another diagnostics tree": func(r *operability.Report) { r.Subject.DiagnosticsTree = strings.Repeat("5", 40) },
+		"the deployment stage":     func(r *operability.Report) { r.Stage = operability.StageDeployment },
+	} {
+		if _, err := w.broker.Accept(ctx, candidate, evidence(mutate)); !errors.Is(err, broker.ErrOperabilityUnbound) {
+			t.Fatalf("%s: Accept = %v, want ErrOperabilityUnbound", name, err)
+		}
+	}
+	missing := evidence(func(*operability.Report) {})
+	missing.Operability = nil
+	if _, err := w.broker.Accept(ctx, candidate, missing); !errors.Is(err, broker.ErrOperabilityUnbound) {
+		t.Fatalf("Accept without a report = %v, want ErrOperabilityUnbound", err)
+	}
+	if w.head(t) != before {
+		t.Fatal("a refused report moved the accepted head")
+	}
+	if _, err := w.broker.Accept(ctx, candidate, evidence(func(*operability.Report) {})); err != nil {
+		t.Fatalf("Accept with a bound report: %v", err)
+	}
 }
 
 // A peer commit lands while the candidate is being verified: Accept reports the
@@ -210,6 +270,7 @@ func TestRealBrokerAcceptsOnlyAVerifiedCandidate(t *testing.T) {
 func TestRealBrokerStaleCandidateIsRestagedOnTheNewHead(t *testing.T) {
 	ctx := context.Background()
 	w := newGateWorld(t)
+	w.onboard(t)
 	before := w.head(t)
 	v := &scriptedVerifier{verdicts: []HealthVerdict{{Outcome: VerificationClear, Summary: "clear"}}}
 	var peer string

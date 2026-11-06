@@ -46,6 +46,9 @@ func validateSourceEvidence(value SourceEvidence) error {
 	if value.DeploymentSource == nil || value.DeploymentSource.GetRendererId() == "" || value.DeploymentSource.GetConfig() == nil {
 		return errors.New("trusted source evidence names no deployment source")
 	}
+	if value.OperabilityDigest != "" && !validSHA256(value.OperabilityDigest) {
+		return errors.New("source evidence operability digest is not a SHA-256")
+	}
 	if !validSHA256(value.RenderDigest) || !validSHA256(value.EnvDigest) {
 		return errors.New("trusted source evidence lacks its render and environment digests")
 	}
@@ -127,6 +130,7 @@ type sourceEvidenceRecord struct {
 	ResourceIDs       []string                 `json:"resource_ids"`
 	Ready             bool                     `json:"ready"`
 	AcceptedCommit    string                   `json:"accepted_commit,omitempty"`
+	OperabilityDigest string                   `json:"operability_digest,omitempty"`
 }
 
 // MarshalJSON encodes the ledger record.
@@ -134,7 +138,7 @@ func (e SourceEvidence) MarshalJSON() ([]byte, error) {
 	record := sourceEvidenceRecord{
 		ContainerImages: e.ContainerImages, BaseTree: e.BaseTree, EffectiveTree: e.EffectiveTree, PatchesDigest: e.PatchesDigest, ObservedRevision: e.ObservedRevision,
 		RenderDigest: e.RenderDigest, EnvDigest: e.EnvDigest, Images: e.Images, ResourceIDs: e.ResourceIDs,
-		Ready: e.Ready, AcceptedCommit: e.AcceptedCommit,
+		Ready: e.Ready, AcceptedCommit: e.AcceptedCommit, OperabilityDigest: e.OperabilityDigest,
 	}
 	var err error
 	if e.DeploymentSource != nil {
@@ -178,7 +182,7 @@ func (e *SourceEvidence) UnmarshalJSON(data []byte) error {
 		ContainerImages: record.ContainerImages, DeploymentSource: &contracts.DeploymentSource{}, BaseTree: record.BaseTree,
 		EffectiveTree: record.EffectiveTree, PatchesDigest: record.PatchesDigest,
 		ObservedRevision: record.ObservedRevision, RenderDigest: record.RenderDigest, EnvDigest: record.EnvDigest,
-		Images: record.Images, ResourceIDs: record.ResourceIDs, Ready: record.Ready, AcceptedCommit: record.AcceptedCommit,
+		Images: record.Images, ResourceIDs: record.ResourceIDs, Ready: record.Ready, AcceptedCommit: record.AcceptedCommit, OperabilityDigest: record.OperabilityDigest,
 	}
 	if err := protojson.Unmarshal(record.DeploymentSource, value.DeploymentSource); err != nil {
 		return fmt.Errorf("decode deployment source: %w", err)
@@ -287,13 +291,18 @@ func (b *Broker) sourceEvidencePath(incidentID string) string {
 // writeSourceEvidence atomically replaces one broker-owned ledger record. Call
 // while holding the broker lock; fsync makes the pre-commit record durable.
 func (b *Broker) writeSourceEvidence(incidentID string, value SourceEvidence) error {
-	path := b.sourceEvidencePath(incidentID)
-	directory := filepath.Dir(path)
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		return err
-	}
 	data, err := json.Marshal(value)
 	if err != nil {
+		return err
+	}
+	return writeDurable(b.sourceEvidencePath(incidentID), data)
+}
+
+// writeDurable atomically replaces path with data (0600) and syncs the file and
+// its directory.
+func writeDurable(path string, data []byte) error {
+	directory := filepath.Dir(path)
+	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return err
 	}
 	file, err := os.CreateTemp(directory, ".source-evidence-")

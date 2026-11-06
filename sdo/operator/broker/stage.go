@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/operability"
 	"sdo.dev/operator/rendered"
 )
 
@@ -44,6 +45,9 @@ type Candidate struct {
 	// Commit is empty when the proposal had nothing to publish.
 	Commit string
 	Tree   string
+	// DiagnosticsTree is DiagnosticsTree of Commit: the subject field a
+	// complete-stage operability report binds its detector evaluation to.
+	DiagnosticsTree string
 	// Accepted reports the incident and phase already accepted as Commit (a
 	// redelivery); there is no stage.
 	Accepted     bool
@@ -60,6 +64,12 @@ type CandidateEvidence struct {
 	Tree          string
 	EffectiveTree string
 	PatchesDigest string
+	// Operability is the complete-stage report of the verification. It is
+	// required for the health judge's initial candidate and refused for any
+	// other (their evidence is not an operability subject). Accept recomputes
+	// the subject and the decision from the stage and the accepted deployment's
+	// evidence.
+	Operability *operability.Report
 }
 
 // StageCandidate runs every publish check (ownership, the shared validator,
@@ -73,7 +83,7 @@ func (b *Broker) StageCandidate(ctx context.Context, incidentID string, actor Ac
 		return Candidate{}, err
 	}
 	var staged Candidate
-	receipt, err := b.publishOrStage(ctx, incidentID, actor, phase, "", nil, nil, &staged)
+	receipt, err := b.publishOrStage(ctx, incidentID, actor, phase, "", nil, nil, nil, &staged)
 	if err != nil {
 		return Candidate{}, err
 	}
@@ -92,9 +102,22 @@ func (b *Broker) StageCandidate(ctx context.Context, incidentID string, actor Ac
 // already accepted candidate returns its receipt. A candidate with nothing to
 // publish accepts nothing.
 func (b *Broker) Accept(ctx context.Context, candidate Candidate, evidence CandidateEvidence) (Receipt, error) {
-	return b.acceptStaged(ctx, candidate, evidence.Commit, func(stored Candidate) error {
-		return requireBoundEvidence(ctx, stored, evidence)
-	}, nil)
+	var reported *operability.Report
+	return b.acceptStaged(ctx, candidate, evidence.Commit, func(stored Candidate) (err error) {
+		if err := requireBoundEvidence(ctx, stored, evidence); err != nil {
+			return err
+		}
+		reported, err = b.requireCandidateOperability(ctx, stored, evidence)
+		return err
+	}, nil, func() error {
+		if reported == nil {
+			return nil
+		}
+		// Recorded before the head moves, like the deployment evidence: a
+		// crash between the two leaves a report for a commit not accepted,
+		// which OperabilityReport never returns.
+		return b.writeOperabilityReport(candidate.IncidentID, operability.StageComplete, *reported)
+	})
 }
 
 // AcceptDeployed is Accept for a candidate whose effective tree the trusted
@@ -121,14 +144,15 @@ func (b *Broker) AcceptDeployed(ctx context.Context, candidate Candidate, eviden
 			return fmt.Errorf("%w: %w", ErrCandidateUnbound, err)
 		}
 		return nil
-	}, &evidence)
+	}, &evidence, nil)
 }
 
 // acceptStaged fast-forwards the head to the staged candidate once bind (the
 // caller's evidence check against the stored stage) passes. With deployed
 // non-nil its evidence is staged in the ledger before the head moves and
-// finalized with the accepted commit after.
-func (b *Broker) acceptStaged(ctx context.Context, candidate Candidate, evidenceCommit string, bind func(Candidate) error, deployed *SourceEvidence) (Receipt, error) {
+// finalized with the accepted commit after. beforeAdvance, when set, runs
+// after the head check and before the head moves.
+func (b *Broker) acceptStaged(ctx context.Context, candidate Candidate, evidenceCommit string, bind func(Candidate) error, deployed *SourceEvidence, beforeAdvance func() error) (Receipt, error) {
 	if err := checkIncidentID(candidate.IncidentID); err != nil {
 		return Receipt{}, err
 	}
@@ -182,6 +206,11 @@ func (b *Broker) acceptStaged(ctx context.Context, candidate Candidate, evidence
 		}
 		if head != stored.Parent {
 			return fmt.Errorf("%w: validated on %s, accepted head is %s", ErrCandidateStale, stored.Parent, head)
+		}
+		if beforeAdvance != nil {
+			if err := beforeAdvance(); err != nil {
+				return err
+			}
 		}
 		if deployed != nil {
 			if err := b.writeSourceEvidence(stored.IncidentID, *deployed); err != nil {
@@ -254,7 +283,11 @@ func (b *Broker) holdCandidate(ctx context.Context, stage string, actor Actor, p
 	if err != nil {
 		return Candidate{}, err
 	}
-	candidate := Candidate{IncidentID: receipt.IncidentID, Actor: actor, Phase: receipt.Phase, Path: stage, Parent: parent, Commit: receipt.Commit, Tree: tree, ChangedPaths: receipt.ChangedPaths, CoverageGaps: receipt.CoverageGaps}
+	diagnostics, err := DiagnosticsTree(ctx, stage, receipt.Commit)
+	if err != nil {
+		return Candidate{}, err
+	}
+	candidate := Candidate{IncidentID: receipt.IncidentID, Actor: actor, Phase: receipt.Phase, Path: stage, Parent: parent, Commit: receipt.Commit, Tree: tree, DiagnosticsTree: diagnostics, ChangedPaths: receipt.ChangedPaths, CoverageGaps: receipt.CoverageGaps}
 	data, err := json.Marshal(candidate)
 	if err != nil {
 		return Candidate{}, err
@@ -327,4 +360,47 @@ func requireBoundEvidence(ctx context.Context, c Candidate, evidence CandidateEv
 		return fmt.Errorf("%w: candidate effective tree %s (patches %s), evidence observed %s (patches %s)", ErrCandidateUnbound, effective.ID, effective.PatchesDigest, evidence.EffectiveTree, evidence.PatchesDigest)
 	}
 	return nil
+}
+
+// carriesCompleteReport is whether a candidate's acceptance needs a
+// complete-stage operability report: the health judge's diagnostics commit.
+func carriesCompleteReport(c Candidate) bool {
+	return c.Actor == HealthJudge && c.Phase == InitialPhase
+}
+
+// requireCandidateOperability binds the evidence's report to the stage. The
+// subject is recomputed here: the commit and effective identity from the
+// stage, the diagnostics tree of the staged commit, and the source tree and
+// render digests from the accepted deployment's evidence. It returns the report
+// to record, or nil when the candidate carries none.
+func (b *Broker) requireCandidateOperability(ctx context.Context, c Candidate, evidence CandidateEvidence) (*operability.Report, error) {
+	if !carriesCompleteReport(c) {
+		if evidence.Operability != nil {
+			return nil, fmt.Errorf("%w: %s %s candidates carry no operability report", ErrCandidateUnbound, c.Actor, c.Phase)
+		}
+		return nil, nil
+	}
+	if evidence.Operability == nil {
+		return nil, fmt.Errorf("%w: the %s candidate needs a complete-stage operability report", ErrOperabilityUnbound, c.Actor)
+	}
+	deployed, found, err := b.acceptedEvidenceLocked(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("%w: no accepted deployment evidence to bind to", ErrOperabilityUnbound)
+	}
+	tree, err := DiagnosticsTree(ctx, c.Path, c.Commit)
+	if err != nil {
+		return nil, err
+	}
+	want := operability.Subject{
+		AcceptedCommit: c.Commit, BaseTree: deployed.BaseTree, EffectiveTree: evidence.EffectiveTree,
+		PatchesDigest: evidence.PatchesDigest, RenderDigest: deployed.RenderDigest, EnvDigest: deployed.EnvDigest,
+		DiagnosticsTree: tree,
+	}
+	if _, err := checkOperability(*evidence.Operability, operability.StageComplete, want); err != nil {
+		return nil, err
+	}
+	return evidence.Operability, nil
 }

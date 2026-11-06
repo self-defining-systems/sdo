@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sdo.dev/operator/operability"
 	"strings"
 	"testing"
 
@@ -127,7 +128,7 @@ func TestPublishVerifiedSourceRequiresSourceAndDigests(t *testing.T) {
 			evidence := syntheticEvidence(t)
 			c.mutate(&evidence)
 			// Validation precedes any repository access.
-			if _, err := (&broker.Broker{}).PublishVerifiedSource(context.Background(), "source", evidence); err == nil || !strings.Contains(err.Error(), c.reason) {
+			if _, err := (&broker.Broker{}).PublishVerifiedSource(context.Background(), "source", evidence, operability.Report{}); err == nil || !strings.Contains(err.Error(), c.reason) {
 				t.Fatalf("err = %v, want %q", err, c.reason)
 			}
 		})

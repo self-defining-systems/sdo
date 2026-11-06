@@ -70,8 +70,9 @@ func (c Coordinator) candidateReport(ctx context.Context, cfg Config, candidate 
 	subject := operability.Subject{
 		AcceptedCommit: candidate.Commit, BaseTree: deployment.BaseTree, EffectiveTree: deployment.EffectiveTree,
 		PatchesDigest: deployment.PatchesDigest, RenderDigest: deployment.RenderDigest, EnvDigest: deployment.EnvDigest,
+		DiagnosticsTree: candidate.DiagnosticsTree,
 	}
-	return operability.New(operability.StageComplete, subject.WithUnavailable()).With(checks...)
+	return operability.New(operability.StageComplete, subject).With(checks...)
 }
 
 func failing(checks []operability.Check) bool {
@@ -258,7 +259,7 @@ func (c Coordinator) gateCandidate(ctx context.Context, id string, cfg Config, d
 		}
 		switch decision.Kind {
 		case operability.Accepted:
-			receipt, err := c.Broker.Accept(ctx, candidate, broker.CandidateEvidence{Commit: candidate.Commit, Tree: candidate.Tree, EffectiveTree: deployment.EffectiveTree, PatchesDigest: deployment.PatchesDigest})
+			receipt, err := c.Broker.Accept(ctx, candidate, broker.CandidateEvidence{Commit: candidate.Commit, Tree: candidate.Tree, EffectiveTree: deployment.EffectiveTree, PatchesDigest: deployment.PatchesDigest, Operability: &report})
 			if errors.Is(err, broker.ErrCandidateStale) && restage < maxCandidateRestages {
 				continue
 			}

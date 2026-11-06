@@ -33,7 +33,11 @@ var ErrAgentRegistration = errors.New("lifecycle agent registration")
 type ProposalBroker interface {
 	CreateProposalForPhase(context.Context, string, broker.Phase) (broker.Proposal, error)
 	Publish(context.Context, string, broker.Actor, broker.Phase) (broker.Receipt, error)
-	PublishVerifiedSource(context.Context, string, broker.SourceEvidence) (broker.Receipt, error)
+	// PublishVerifiedSource accepts the deployed source with its stage-deployment
+	// operability report; the broker recomputes the report's binding and decision.
+	PublishVerifiedSource(context.Context, string, broker.SourceEvidence, operability.Report) (broker.Receipt, error)
+	// OperabilityReport reads back the verified report of an accepted commit.
+	OperabilityReport(context.Context, string, operability.Stage) (operability.Report, bool, error)
 	SourceEvidence(context.Context, string) (broker.SourceEvidence, bool, error)
 	AcceptedCommit(context.Context, string, broker.Phase) (broker.Receipt, bool, error)
 	ChangedPaths(context.Context, string, broker.Phase) ([]string, error)
@@ -406,6 +410,9 @@ func (c Coordinator) deploy(ctx context.Context, id string, cfg Config, attempt 
 		if evidence.AcceptedCommit != prior.Commit {
 			return broker.Receipt{}, DeploymentReceipt{}, false, "", errors.New("source evidence belongs to another accepted commit")
 		}
+		if _, _, err := c.Broker.OperabilityReport(ctx, id, operability.StageDeployment); err != nil {
+			return broker.Receipt{}, DeploymentReceipt{}, false, "", fmt.Errorf("accepted source's operability report: %w", err)
+		}
 		recorded := deploymentFromBroker(evidence)
 		readiness, err := c.Readiness.VerifyAccepted(ctx, prior.Commit, cfg.Namespace, recorded)
 		if err != nil {
@@ -449,6 +456,7 @@ func (c Coordinator) deploy(ctx context.Context, id string, cfg Config, attempt 
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return broker.Receipt{}, DeploymentReceipt{}, false, "", fmt.Errorf("write deployment plan: %w", err)
 	}
+	var offlineReport operability.Report
 	if report, decision, checked, err := c.offlineGate(ctx, cfg, proposal, plan); err != nil {
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return broker.Receipt{}, DeploymentReceipt{}, false, "", err
@@ -456,6 +464,8 @@ func (c Coordinator) deploy(ctx context.Context, id string, cfg Config, attempt 
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		reason, err := offlineOutcome(report, decision)
 		return broker.Receipt{}, DeploymentReceipt{}, false, reason, err
+	} else if checked {
+		offlineReport = report
 	}
 	var readiness DeploymentReceipt
 	err = c.retryInfrastructure(ctx, cfg, "independent source deployment", func() (err error) {
@@ -478,7 +488,17 @@ func (c Coordinator) deploy(ctx context.Context, id string, cfg Config, attempt 
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return broker.Receipt{}, DeploymentReceipt{}, false, "independent deployment source differs from proposal", nil
 	}
-	receipt, err := c.Broker.PublishVerifiedSource(ctx, id, deploymentToBroker(readiness))
+	report, decision, err := c.deploymentReport(ctx, cfg, proposal, plan, offlineReport, readiness)
+	if err != nil {
+		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
+		return broker.Receipt{}, DeploymentReceipt{}, false, "", err
+	}
+	if decision.Kind != operability.Accepted {
+		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
+		reason, err := deployedOutcome(report, decision)
+		return broker.Receipt{}, DeploymentReceipt{}, false, reason, err
+	}
+	receipt, err := c.Broker.PublishVerifiedSource(ctx, id, deploymentToBroker(readiness), report)
 	if err != nil {
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return broker.Receipt{}, DeploymentReceipt{}, false, "broker rejected deployment: " + err.Error(), nil

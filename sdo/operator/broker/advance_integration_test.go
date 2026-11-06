@@ -95,7 +95,7 @@ func newOnboardedWorld(t *testing.T, editedByDeployer bool) *advanceWorld {
 		t.Fatal(err)
 	}
 	writeSyntheticPlan(t, p.Path, "k8s")
-	if _, err := b.PublishVerifiedSource(context.Background(), "onboard", advanceEvidence(t, p.Path, "onboard")); err != nil {
+	if _, err := b.PublishVerifiedSource(context.Background(), "onboard", advanceEvidence(t, p.Path, "onboard"), deploymentReportFor(t, advanceEvidence(t, p.Path, "onboard"), p.BaseCommit)); err != nil {
 		t.Fatal(err)
 	}
 	return w
@@ -438,11 +438,11 @@ func TestPublishVerifiedSourceRecomputesTheEffectiveTree(t *testing.T) {
 	} {
 		evidence := advanceEvidence(t, p.Path, "second")
 		mutate(&evidence)
-		if _, err := w.broker.PublishVerifiedSource(ctx, "second", evidence); err == nil || !strings.Contains(err.Error(), "differs from the verified deployment") {
+		if _, err := w.broker.PublishVerifiedSource(ctx, "second", evidence, deploymentReportFor(t, evidence, p.BaseCommit)); err == nil || !strings.Contains(err.Error(), "differs from the verified deployment") {
 			t.Fatalf("PublishVerifiedSource with another %s = %v", name, err)
 		}
 	}
-	if _, err := w.broker.PublishVerifiedSource(ctx, "second", advanceEvidence(t, p.Path, "second")); err != nil {
+	if _, err := w.broker.PublishVerifiedSource(ctx, "second", advanceEvidence(t, p.Path, "second"), deploymentReportFor(t, advanceEvidence(t, p.Path, "second"), p.BaseCommit)); err != nil {
 		t.Fatalf("matching evidence must publish: %v", err)
 	}
 }
@@ -470,7 +470,7 @@ func TestPublishVerifiedSourceRequiresThePlanToNameTheDeployedSource(t *testing.
 		}
 		writeFiles(t, p.Path, map[string]string{".sdo/deployment/values/" + id + ".yaml": "replicas: 2\n"})
 		c.prepare(p.Path)
-		if _, err := w.broker.PublishVerifiedSource(ctx, id, advanceEvidence(t, p.Path, id)); err == nil || !strings.Contains(err.Error(), c.want) {
+		if _, err := w.broker.PublishVerifiedSource(ctx, id, advanceEvidence(t, p.Path, id), deploymentReportFor(t, advanceEvidence(t, p.Path, id), p.BaseCommit)); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Fatalf("%s: PublishVerifiedSource = %v, want %q", name, err, c.want)
 		}
 	}
