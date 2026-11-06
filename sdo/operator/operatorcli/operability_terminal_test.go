@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/operability"
 )
@@ -87,5 +88,37 @@ func TestTerminalOperabilityIgnoresOtherErrors(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) || stderr.Len() != 0 {
 		t.Fatalf("termination file err=%v stderr=%q, want nothing written", err, stderr.String())
+	}
+}
+
+// The typed agent stops are operability stops: the lane exit carries the cause,
+// the owner (the agent's role, or the operator for a bad base) and the rules.
+func TestTerminalOperabilityReportsAgentStops(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err   error
+		cause string
+		owner string
+	}{
+		"not converging": {lifecycle.NewAgentNotConvergingError(operability.OwnerDesigner, "c", []string{"detector.test@.sdo/x"}, false), "agent_not_converging", "designer"},
+		"base invalid":   {lifecycle.NewBaseInvalidError("c", []*contracts.MemoryDiagnostic{{Rule: "detector.test", Path: ".sdo/x", Message: "m"}}), "base_invalid", "operator"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var stderr bytes.Buffer
+			path := filepath.Join(t.TempDir(), "termination-log")
+			if !reportTerminalOperability(fmt.Errorf("wrapped: %w", tc.err), &stderr, path, time.Unix(0, 0)) {
+				t.Fatal("agent stop was not reported")
+			}
+			message, _ := os.ReadFile(path)
+			var stop terminalStop
+			if err := json.Unmarshal(message, &stop); err != nil {
+				t.Fatal(err)
+			}
+			if stop.Owner != tc.owner || stop.Decision != string(operability.Hold) || stop.Summary.Items[4].FirstFailedCheck != "O5."+tc.cause {
+				t.Fatalf("stop = %+v", stop)
+			}
+			if !strings.Contains(stderr.String(), tc.cause) {
+				t.Fatalf("stderr lacks %s: %s", tc.cause, stderr.String())
+			}
+		})
 	}
 }

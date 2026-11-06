@@ -54,6 +54,10 @@ type ProposalBroker interface {
 	StageCandidate(context.Context, string, broker.Actor, broker.Phase) (broker.Candidate, error)
 	Accept(context.Context, broker.Candidate, broker.CandidateEvidence) (broker.Receipt, error)
 	DiscardCandidate(string, broker.Phase) error
+	// CheckBase validates the untouched accepted base of a proposal with the
+	// shared validator and returns the diagnostics an agent edit could not be
+	// blamed for (the empty-diff diagnostic is excluded).
+	CheckBase(context.Context, string, broker.Actor, broker.Phase) ([]*contracts.MemoryDiagnostic, error)
 	// Rejections and RecordRejection are the durable retry state for a
 	// proposal rejected by validator diagnostics.
 	Rejections(string) (*contracts.ProposalRejectionLog, error)
@@ -76,6 +80,9 @@ type WorkerExecutor interface {
 // VanishedDiscarder lets the owner of a worker's durable evidence forget a
 // dispatch whose Job disappeared without a result.
 const vanishedWorkerRule = "worker.job_vanished"
+
+// jobFailedRule is the rejection recorded for an agent Job that failed.
+const jobFailedRule = "worker.job_failed"
 
 type VanishedDiscarder interface {
 	DiscardVanished(context.Context, *contracts.AgentTask) error
@@ -237,6 +244,8 @@ func (c Coordinator) Run(ctx context.Context, cfg Config) (Result, error) {
 	}
 	result.SchemaCommit = schema.Commit
 	feedback := ""
+	var tracker feedbackTracker
+	lastRole := operability.OwnerDeployer
 	for attempt := 1; attempt <= cfg.MaxAttempts; attempt++ {
 		result.Attempts = attempt
 		deployerID := fmt.Sprintf("%s-source-%d", cfg.OperationID, attempt)
@@ -256,7 +265,10 @@ func (c Coordinator) Run(ctx context.Context, cfg Config) (Result, error) {
 			if cfg.ProvidedPlan != nil {
 				return result, &ProvidedPlanError{Stage: "deploy", Reason: nextFeedback}
 			}
-			feedback = nextFeedback
+			feedback, lastRole = nextFeedback, operability.OwnerDeployer
+			if err := tracker.repeated(lastRole, result.SchemaCommit, feedback); err != nil {
+				return result, err
+			}
 			continue
 		}
 		result.SourceCommit = sourceReceipt.Commit
@@ -289,7 +301,10 @@ func (c Coordinator) Run(ctx context.Context, cfg Config) (Result, error) {
 			return result, fmt.Errorf("health judge attempt %d: %w", attempt, err)
 		}
 		if !judgeReady {
-			feedback = nextFeedback
+			feedback, lastRole = nextFeedback, operability.OwnerDesigner
+			if err := tracker.repeated(lastRole, result.ArchitectureCommit, feedback); err != nil {
+				return result, err
+			}
 			continue
 		}
 		result.JudgeCommit = judgeReceipt.Commit
@@ -312,7 +327,7 @@ func (c Coordinator) Run(ctx context.Context, cfg Config) (Result, error) {
 		}
 		return result, nil
 	}
-	return result, fmt.Errorf("deployment exhausted %d attempts; last rejection: %s", cfg.MaxAttempts, feedback)
+	return result, NewAgentNotConvergingError(lastRole, result.SchemaCommit, []string{fmt.Sprintf("exhausted %d attempts; last rejection: %s", cfg.MaxAttempts, operability.Clip(feedback))}, true)
 }
 
 func isTerminalOperability(err error) bool {
@@ -692,8 +707,10 @@ func (c Coordinator) judge(ctx context.Context, id string, cfg Config, attempt i
 		if err != nil {
 			return broker.Receipt{}, false, "", err
 		}
-		if log.GetTerminal() {
-			return broker.Receipt{}, false, fmt.Sprintf("broker rejected health diagnostics %d times; every distinct rejection, newest first: %s", len(log.GetRejections()), describeDiagnostics(rejectionHistory(log.GetRejections()))), nil
+		// Another round over the same source would repeat a spent budget or a
+		// repeated rejection: end the run with the typed cause instead.
+		if stop := judgeStop(log, architectureCommit); stop != nil {
+			return broker.Receipt{}, false, "", stop
 		}
 		receipt, ready, nextFeedback, rejected, err := c.judgeOnce(ctx, id, cfg, attempt, sourceCommit, architectureCommit, feedback, deployment, log)
 		if err != nil || ready || rejected == nil {
@@ -706,18 +723,6 @@ func (c Coordinator) judge(ctx context.Context, id string, cfg Config, attempt i
 			return broker.Receipt{}, false, "", err
 		}
 	}
-}
-
-func describeDiagnostics(diagnostics []*contracts.MemoryDiagnostic) string {
-	parts := make([]string, 0, len(diagnostics))
-	for _, d := range diagnostics {
-		part := fmt.Sprintf("[%s] %s: %s", d.GetRule(), d.GetPath(), d.GetMessage())
-		if d.GetHint() != "" {
-			part += " (hint: " + d.GetHint() + ")"
-		}
-		parts = append(parts, part)
-	}
-	return strings.Join(parts, "; ")
 }
 
 // maxRejectionHistory bounds the diagnostics carried into a retry request.
@@ -770,6 +775,18 @@ func (c Coordinator) judgeOnce(ctx context.Context, id string, cfg Config, attem
 	if proposal.BaseCommit != architectureCommit {
 		return broker.Receipt{}, false, "", nil, fmt.Errorf("judge proposal base %q differs from accepted architecture %q", proposal.BaseCommit, architectureCommit)
 	}
+	if validationAttempt == 1 {
+		// The base is the same for every retry of this proposal: check it once,
+		// before the agent can be blamed for what it did not write.
+		base, err := c.Broker.CheckBase(ctx, id, broker.HealthJudge, broker.InitialPhase)
+		if err != nil {
+			return broker.Receipt{}, false, "", nil, fmt.Errorf("check the accepted base before the health judge: %w", err)
+		}
+		if len(base) > 0 {
+			_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
+			return broker.Receipt{}, false, "", nil, NewBaseInvalidError(architectureCommit, base)
+		}
+	}
 	architectureSummary, err := c.Bootstrap.ReadArchitecture(proposal.Path)
 	if err != nil {
 		return broker.Receipt{}, false, "", nil, err
@@ -802,7 +819,7 @@ func (c Coordinator) judgeOnce(ctx context.Context, id string, cfg Config, attem
 		var failedJob *worker_registry.JobFailedError
 		if errors.As(err, &failedJob) {
 			// Preserve the failed attempt and proposal for the bounded retry.
-			return broker.Receipt{}, false, err.Error(), []*contracts.MemoryDiagnostic{{Rule: "worker.job_failed", Message: err.Error()}}, nil
+			return broker.Receipt{}, false, err.Error(), []*contracts.MemoryDiagnostic{{Rule: jobFailedRule, Message: err.Error()}}, nil
 		}
 		var vanished *worker_registry.JobVanishedError
 		if errors.As(err, &vanished) {

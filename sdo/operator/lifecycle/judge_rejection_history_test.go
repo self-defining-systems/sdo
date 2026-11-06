@@ -33,19 +33,3 @@ func TestJudgeRetryCarriesEveryDistinctRejection(t *testing.T) {
 		t.Fatalf("previous diagnostics rules = %q, want each distinct rule once, newest first", got)
 	}
 }
-
-// The spent retry bound becomes the next judge round's correction feedback; it
-// names every rejected rule with its hint, not the last rejection only.
-func TestTerminalJudgeFeedbackListsEveryRejection(t *testing.T) {
-	h, fake := gateHarness(t, clear)
-	fake.stageErrors = distinctFailures("rule.one", "rule.two", "rule.three", "rule.four", "rule.five", "rule.six")
-	if _, err := h.coordinator.Run(context.Background(), config()); err != nil {
-		t.Fatal(err)
-	}
-	feedback := h.workers.judgeRequests[len(h.workers.judgeRequests)-1].GetCorrectionFeedback()
-	for _, want := range []string{"6 times", "rule.one", "rule.three", "rule.six", "hint of rule.one"} {
-		if !strings.Contains(feedback, want) {
-			t.Errorf("correction feedback lacks %q: %s", want, feedback)
-		}
-	}
-}

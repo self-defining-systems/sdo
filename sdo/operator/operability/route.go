@@ -23,6 +23,13 @@ const (
 	CauseInfrastructure         Cause = "infrastructure"
 	CauseEnvironment            Cause = "environment"
 	CauseInternal               Cause = "internal"
+	// CauseAgentNotConverging: an agent's proposals keep being rejected with
+	// the same rules and paths, or spent their retry budget. Terminal: more
+	// turns of the same agent repeat the failure.
+	CauseAgentNotConverging Cause = "agent_not_converging"
+	// CauseBaseInvalid: the accepted base fails validation before any agent
+	// edit. SDO's defect; no agent turn is spent.
+	CauseBaseInvalid Cause = "base_invalid"
 )
 
 // Causes lists every Cause constant. A test keeps it equal to the constants
@@ -33,6 +40,7 @@ func Causes() []Cause {
 		CauseAttribution, CauseScope, CauseAllowlist, CauseBudget, CauseBinding,
 		CauseCoverage, CauseMemoryInvalid, CauseDetectorFault, CauseSourceFault,
 		CauseProbeUnavailable, CauseInfrastructure, CauseEnvironment, CauseInternal,
+		CauseAgentNotConverging, CauseBaseInvalid,
 	}
 }
 
@@ -97,13 +105,13 @@ func route(c Cause) (routing, bool) {
 		return routing{OwnerDeployer, OwnerHuman, OwnerHuman, rankDeployer}, true
 	case CauseSourceFault:
 		return routing{OwnerDeployer, OwnerHuman, OwnerResponder, rankDeployer}, true
-	case CauseAttribution:
+	case CauseAttribution, CauseBaseInvalid:
 		return routing{OwnerOperator, OwnerOperator, OwnerOperator, rankInternal}, true
 	case CauseBinding, CauseCoverage, CauseMemoryInvalid, CauseProbeUnavailable, CauseDetectorFault:
 		return routing{OwnerDesigner, OwnerDesigner, OwnerDesigner, rankDesigner}, true
 	case CauseInfrastructure:
 		return routing{OwnerRetry, OwnerRetry, OwnerRetry, rankInfrastructure}, true
-	case CauseEnvironment, CauseInternal:
+	case CauseEnvironment, CauseInternal, CauseAgentNotConverging:
 		return routing{OwnerHuman, OwnerHuman, OwnerHuman, rankInternal}, true
 	}
 	return routing{}, false
