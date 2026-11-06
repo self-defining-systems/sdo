@@ -120,7 +120,7 @@ func TestPatchFailuresAreTheDeployersAndStopTheSequence(t *testing.T) {
 			d.PatchesErr = tc.err
 			res := offline.CheckDeployment(context.Background(), d)
 			got := byID(t, res.Checks)
-			if len(got) != 7 {
+			if len(got) != 8 {
 				t.Fatalf("checks after a patch failure: %+v", res.Checks)
 			}
 			for id, c := range got {
@@ -142,7 +142,7 @@ func TestRenderFailureClassification(t *testing.T) {
 	want(t, got, "O1.render", operability.StatusFail, operability.CauseRender)
 	want(t, got, "O1.deterministic", operability.StatusSkipped, "")
 	want(t, got, "O6.allowlist", operability.StatusSkipped, "")
-	if len(got) != 7 {
+	if len(got) != 8 {
 		t.Fatalf("render failure must skip later checks: %v", got)
 	}
 	d.Render = func(context.Context) (rendered.DesiredSet, error) {
@@ -372,4 +372,16 @@ func TestUnservedAPIFailsO1APIs(t *testing.T) {
 	d.ServedAPIs = []string{"v1", "apps/v1"}
 	got = byID(t, offline.CheckDeployment(context.Background(), d).Checks)
 	want(t, got, "O1.apis", operability.StatusFail, operability.CauseRender)
+}
+
+// With no recorded discovery O1.apis is skipped, not absent, so the report
+// always names the check; a render failure lists it among the checks not run.
+func TestO1APIsIsAlwaysReported(t *testing.T) {
+	d := deployment(t, rendertest.MapFS{"k8s/web.yaml": web})
+	d.ServedAPIs = nil
+	got := byID(t, offline.CheckDeployment(context.Background(), d).Checks)
+	want(t, got, "O1.apis", operability.StatusSkipped, "")
+	d.Render = func(context.Context) (rendered.DesiredSet, error) { return rendered.DesiredSet{}, errors.New("boom") }
+	got = byID(t, offline.CheckDeployment(context.Background(), d).Checks)
+	want(t, got, "O1.apis", operability.StatusSkipped, "")
 }

@@ -26,13 +26,16 @@ var _ lifecycle.LiveChecker = Deployer{}
 type LiveInput struct {
 	Receipt lifecycle.DeploymentReceipt
 	Desired rendered.DesiredSet
+	// ServedAPIs is the recorded discovery the deployer checked the desired set
+	// against; empty means no discovery was recorded.
+	ServedAPIs []string
 	// Err is the ApplyAndVerify or VerifyAccepted error; nil means the receipt is trusted.
 	Err error
 }
 
 // LiveCheckIDs lists the live checks in the order LiveChecks reports them.
 func LiveCheckIDs() []string {
-	return []string{"O1.deploy", "O1.ready", "O2.stamps", "O2.pins", "O2.inputs", "O2.resources", "O6.budget"}
+	return []string{"O1.deploy", "O1.ready", "O1.apis", "O2.stamps", "O2.pins", "O2.inputs", "O2.resources", "O6.budget"}
 }
 
 // ClassifyDeploymentError maps an error of ApplyAndVerify or VerifyAccepted to a
@@ -54,7 +57,10 @@ func ClassifyDeploymentError(err error) operability.Cause {
 	var source *rendered.SourceError
 	var policy *PolicyError
 	var immutable *ImmutableChangeError
+	var unserved *rendered.UnservedAPIError
 	switch {
+	case errors.As(err, &unserved):
+		return operability.CauseRender
 	case errors.As(err, &policy):
 		return policy.Checks[0].Cause
 	case errors.As(err, &immutable):
@@ -102,6 +108,10 @@ func LiveChecks(in LiveInput) []operability.Check {
 				checks = append(checks, budget)
 				continue
 			}
+			if id == "O1.apis" {
+				checks = append(checks, apisCheck(in))
+				continue
+			}
 			checks = append(checks, live(id, operability.StatusSkipped, "", "not run: O1.deploy failed"))
 		}
 		return checks
@@ -114,6 +124,8 @@ func LiveChecks(in LiveInput) []operability.Check {
 		checks = append(checks, pass("O1.ready", fmt.Sprintf("%d workloads ready", len(r.ResourceIDs))))
 	}
 
+	checks = append(checks, apisCheck(in))
+
 	if r.EffectiveTree == "" || r.ObservedRevision != r.EffectiveTree {
 		checks = append(checks, fail("O2.stamps", operability.CauseAttribution, fmt.Sprintf("observed source stamp %q is not the effective tree %q", r.ObservedRevision, r.EffectiveTree)))
 	} else {
@@ -122,6 +134,29 @@ func LiveChecks(in LiveInput) []operability.Check {
 
 	checks = append(checks, pinsCheck(r), inputsCheck(r), resourcesCheck(r, in.Desired), budget)
 	return checks
+}
+
+// apisCheck reports O1.apis: the deployer refuses a desired set whose kinds the
+// recorded discovery does not serve, before applying anything. With no
+// recorded discovery the check is not evaluated, and says so.
+func apisCheck(in LiveInput) operability.Check {
+	c := operability.Check{ID: "O1.apis", Phase: operability.PhaseLive}
+	var unserved *rendered.UnservedAPIError
+	switch {
+	case errors.As(in.Err, &unserved):
+		c.Status, c.Cause, c.Detail = operability.StatusFail, operability.CauseRender, operability.Clip(unserved.Error())
+	case in.Err != nil:
+		c.Status, c.Detail = operability.StatusSkipped, "not run: O1.deploy failed"
+	case len(in.ServedAPIs) == 0:
+		c.Status, c.Detail = operability.StatusSkipped, "not run: no cluster discovery was recorded"
+	default:
+		if err := rendered.CheckServedAPIs(in.Desired, in.ServedAPIs); err != nil {
+			c.Status, c.Cause, c.Detail = operability.StatusFail, operability.CauseRender, operability.Clip(err.Error())
+		} else {
+			c.Status, c.Detail = operability.StatusPass, "rendered objects use API versions the cluster serves"
+		}
+	}
+	return c
 }
 
 func pinsCheck(r lifecycle.DeploymentReceipt) operability.Check {
@@ -285,7 +320,7 @@ func (d Deployer) CheckLive(ctx context.Context, checkout string, plan *contract
 	if err != nil {
 		return LiveChecks(LiveInput{Receipt: receipt, Err: err}), nil
 	}
-	return LiveChecks(LiveInput{Receipt: receipt, Desired: set}), nil
+	return LiveChecks(LiveInput{Receipt: receipt, Desired: set, ServedAPIs: d.Environment.GetApiVersions()}), nil
 }
 
 // recreatedDetail names the objects the deployer recreated for an immutable
