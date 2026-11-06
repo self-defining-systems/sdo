@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"sdo.dev/operator/imagesrc"
 	"sdo.dev/operator/lifecycle"
 )
 
@@ -67,10 +68,10 @@ func TestInfrastructureOutcomeCoversExistingClassifiers(t *testing.T) {
 		"build timeout":       {&BuildTimeoutError{}, true},
 		"progressing rollout": {&RolloutTimeoutError{}, true},
 		"stalled rollout":     {&RolloutTimeoutError{Stalled: true}, false},
-		"registry transient":  {resolveError(ResolveTransient, "rate limited"), true},
-		"registry missing":    {resolveError(ResolveMissing, "no tag"), false},
-		"pin rejection":       {tagImageRejection("m.yaml", "img:1", resolveError(ResolveTransient, "429")), true},
-		"pin missing":         {tagImageRejection("m.yaml", "img:1", resolveError(ResolveMissing, "404")), false},
+		"registry transient":  {&imagesrc.ResolveError{Kind: imagesrc.ResolveTransient, Err: errors.New("rate limited")}, true},
+		"registry missing":    {&imagesrc.ResolveError{Kind: imagesrc.ResolveMissing, Err: errors.New("no tag")}, false},
+		"pin rejection":       {tagImageRejection("m.yaml", "img:1", &imagesrc.ResolveError{Kind: imagesrc.ResolveTransient, Err: errors.New("429")}), true},
+		"pin missing":         {tagImageRejection("m.yaml", "img:1", &imagesrc.ResolveError{Kind: imagesrc.ResolveMissing, Err: errors.New("404")}), false},
 	}
 	for name, tc := range cases {
 		var found marker

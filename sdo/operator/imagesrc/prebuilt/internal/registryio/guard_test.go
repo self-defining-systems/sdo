@@ -1,4 +1,4 @@
-package deploymentio
+package registryio
 
 import (
 	"bufio"

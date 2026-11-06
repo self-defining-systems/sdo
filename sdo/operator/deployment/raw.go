@@ -17,6 +17,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"gopkg.in/yaml.v3"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/imagesrc"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
@@ -70,16 +71,16 @@ func (strategy RawStrategy) buildContext(ctx context.Context) (context.Context, 
 // manifest, so the advice is to retry; a missing or private image needs a
 // different reference.
 func tagImageRejection(path, image string, cause error) error {
-	var resolve *ResolveError
+	var resolve *imagesrc.ResolveError
 	switch {
 	case cause == nil:
 		return fmt.Errorf("manifest %s: image %q is not immutable and the operator has no image resolver configured. "+
 			"Write the reference as <repository>@sha256:<64 hex digest>, or build it from source by listing it in image_builds under the trusted registry", path, image)
-	case errors.As(cause, &resolve) && resolve.Kind == ResolveTransient:
+	case errors.As(cause, &resolve) && resolve.Kind == imagesrc.ResolveTransient:
 		return fmt.Errorf("manifest %s: image %q could not be pinned to a digest right now (%w). This is a transient registry or network problem, "+
 			"not a defect of the manifest: keep the reference and retry the deploy in a minute. If it keeps failing, write the reference as "+
 			"<repository>@sha256:<64 hex digest> or build it from source by listing it in image_builds", path, image, cause)
-	case errors.As(cause, &resolve) && resolve.Kind == ResolveRefused:
+	case errors.As(cause, &resolve) && resolve.Kind == imagesrc.ResolveRefused:
 		return fmt.Errorf("manifest %s: image %q cannot be pinned: %s. Use an image on a public registry name, write the reference as "+
 			"<repository>@sha256:<64 hex digest>, or build it from source by listing it in image_builds under the trusted registry", path, image, cause.Error())
 	}

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/imagesrc"
 	"sdo.dev/operator/rendered"
 )
 
@@ -128,10 +129,10 @@ func TestRawTagRejectionAdviceFollowsTheFailure(t *testing.T) {
 		err         error
 		want, avoid string
 	}{
-		"rate limited": {&ResolveError{Kind: ResolveTransient, Err: errors.New("registry answered 429")}, "retry the deploy", "Name an existing tag"},
-		"missing":      {&ResolveError{Kind: ResolveMissing, Err: errors.New("registry has no such tag")}, "Name an existing tag", "retry the deploy"},
-		"private":      {&ResolveError{Kind: ResolveUnauthorized, Err: errors.New("denied")}, "Name an existing tag", "retry the deploy"},
-		"refused":      {&ResolveError{Kind: ResolveRefused, Err: errors.New("not a public registry name")}, "public registry name", "retry the deploy"},
+		"rate limited": {&imagesrc.ResolveError{Kind: imagesrc.ResolveTransient, Err: errors.New("registry answered 429")}, "retry the deploy", "Name an existing tag"},
+		"missing":      {&imagesrc.ResolveError{Kind: imagesrc.ResolveMissing, Err: errors.New("registry has no such tag")}, "Name an existing tag", "retry the deploy"},
+		"private":      {&imagesrc.ResolveError{Kind: imagesrc.ResolveUnauthorized, Err: errors.New("denied")}, "Name an existing tag", "retry the deploy"},
+		"refused":      {&imagesrc.ResolveError{Kind: imagesrc.ResolveRefused, Err: errors.New("not a public registry name")}, "public registry name", "retry the deploy"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			strategy := RawStrategy{Namespace: "demo", Backend: &fakeRawBackend{}, Resolver: failingResolver{tc.err}}

@@ -1,4 +1,7 @@
-package deployment
+// Package prebuilt is the imagesrc source for images that already exist in a
+// registry: it pins a tag to the digest the cluster or the registry reports.
+// It never builds and never sends a credential.
+package prebuilt
 
 import (
 	"context"
@@ -18,7 +21,10 @@ import (
 	"time"
 
 	"github.com/distribution/reference"
-	"sdo.dev/operator/deployment/internal/deploymentio"
+	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+
+	"sdo.dev/operator/imagesrc"
+	"sdo.dev/operator/imagesrc/prebuilt/internal/registryio"
 )
 
 const maxManifestBytes = 4 << 20
@@ -33,49 +39,21 @@ const manifestAccept = "application/vnd.oci.image.index.v1+json, application/vnd
 
 var digestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
-// ResolveErrorKind says what to do about a failed resolution.
-type ResolveErrorKind string
-
-const (
-	// ResolveTransient is a rate limit, timeout or network failure: the reference
-	// may be fine, so retrying later is the right advice.
-	ResolveTransient ResolveErrorKind = "transient"
-	// ResolveMissing is a registry that has no such repository or tag.
-	ResolveMissing ResolveErrorKind = "missing"
-	// ResolveUnauthorized is an image that needs credentials (private).
-	ResolveUnauthorized ResolveErrorKind = "unauthorized"
-	// ResolveRefused is a target the operator will not contact, or an invalid reference.
-	ResolveRefused ResolveErrorKind = "refused"
-)
-
-// ResolveError is a classified resolution failure.
-type ResolveError struct {
-	Kind ResolveErrorKind
-	Err  error
-}
-
-func (e *ResolveError) Error() string { return e.Err.Error() }
-func (e *ResolveError) Unwrap() error { return e.Err }
-
-// InfrastructureOutcome marks a rate limit, timeout or network failure: the
-// reference may be fine, so the coordinator retries instead of blaming the plan.
-func (e *ResolveError) InfrastructureOutcome() bool { return e.Kind == ResolveTransient }
-
-func resolveError(kind ResolveErrorKind, format string, args ...any) error {
-	return &ResolveError{Kind: kind, Err: fmt.Errorf(format, args...)}
+func resolveError(kind imagesrc.ResolveErrorKind, format string, args ...any) error {
+	return &imagesrc.ResolveError{Kind: kind, Err: fmt.Errorf(format, args...)}
 }
 
 // statusError classifies a registry HTTP status.
 func statusError(response *http.Response, what string) error {
 	switch status := response.StatusCode; {
 	case status == http.StatusNotFound:
-		return resolveError(ResolveMissing, "registry has no such tag")
+		return resolveError(imagesrc.ResolveMissing, "registry has no such tag")
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:
-		return resolveError(ResolveUnauthorized, "%s denied anonymous access (%s); the image is private or does not exist", what, response.Status)
+		return resolveError(imagesrc.ResolveUnauthorized, "%s denied anonymous access (%s); the image is private or does not exist", what, response.Status)
 	case status == http.StatusTooManyRequests || status == http.StatusRequestTimeout || status >= 500:
-		return resolveError(ResolveTransient, "%s answered %s", what, response.Status)
+		return resolveError(imagesrc.ResolveTransient, "%s answered %s", what, response.Status)
 	}
-	return resolveError(ResolveRefused, "%s answered %s", what, response.Status)
+	return resolveError(imagesrc.ResolveRefused, "%s answered %s", what, response.Status)
 }
 
 // ClusterImages lists the image names each node reports, so a tag the cluster
@@ -84,16 +62,16 @@ type ClusterImages interface {
 	NodeImageNames(ctx context.Context) ([][]string, error)
 }
 
-// RegistryResolver pins tag references. A tag the cluster's nodes already hold
+// Source pins tag references. A tag the cluster's nodes already hold
 // (preloaded with kind load, a mirror, an earlier pull) is pinned to the digest
 // those nodes report, so the Pod runs what is on the node and the kubelet needs
 // no pull. Otherwise it asks the registry the reference names, anonymously,
 // with a HEAD request (Docker Hub does not count it as a pull) and a GET only
 // when the registry omits the digest header. Resolved digests are cached for
 // resolveCacheTTL. It never sends a credential, so private images fail closed.
-type RegistryResolver struct {
+type Source struct {
 	// Client defaults to a guarded client that connects only to public addresses.
-	Client deploymentio.Doer
+	Client registryio.Doer
 	// InsecureHost is the one host[:port] reachable over plain HTTP (the
 	// operator's explicitly configured insecure registry) and exempt from the
 	// public-address guard. Every other host uses HTTPS.
@@ -112,24 +90,45 @@ type cachedDigest struct {
 	at     time.Time
 }
 
-func (r *RegistryResolver) now() time.Time {
+func (r *Source) now() time.Time {
 	if r.Now != nil {
 		return r.Now()
 	}
-	return deploymentio.Now()
+	return registryio.Now()
 }
 
-func (r *RegistryResolver) ResolveImage(ctx context.Context, ref string) (string, error) {
+// Resolve implements imagesrc.Source. The tree and checkout are not used: the
+// registry is the only input. A reference already pinned by digest is returned
+// unchanged.
+func (r *Source) Resolve(ctx context.Context, req imagesrc.Request, _ *contractsv1alpha1.PrebuiltImageConfig) (imagesrc.Resolved, error) {
+	if err := ctx.Err(); err != nil {
+		return imagesrc.Resolved{}, err
+	}
+	pinned, err := r.pin(ctx, req.Image)
+	if err != nil {
+		return imagesrc.Resolved{}, err
+	}
+	return imagesrc.Resolved{Ref: pinned, Inputs: imagesrc.Inputs{SourceImage: req.Image}}, nil
+}
+
+// ResolveImage satisfies deployment.ImageResolver.
+//
+// Transitional shim, removed with the strategy registry in S3-13b.
+func (r *Source) ResolveImage(ctx context.Context, ref string) (string, error) {
+	return r.pin(ctx, ref)
+}
+
+func (r *Source) pin(ctx context.Context, ref string) (string, error) {
 	named, err := reference.ParseNormalizedNamed(ref)
 	if err != nil {
-		return "", resolveError(ResolveRefused, "invalid image reference: %w", err)
+		return "", resolveError(imagesrc.ResolveRefused, "invalid image reference: %w", err)
 	}
 	if _, digested := named.(reference.Digested); digested {
 		return reference.FamiliarString(named), nil
 	}
 	tagged, ok := reference.TagNameOnly(named).(reference.Tagged)
 	if !ok {
-		return "", resolveError(ResolveRefused, "image reference has no tag")
+		return "", resolveError(imagesrc.ResolveRefused, "image reference has no tag")
 	}
 	key := reference.FamiliarString(tagged)
 	r.mu.Lock()
@@ -151,7 +150,7 @@ func (r *RegistryResolver) ResolveImage(ctx context.Context, ref string) (string
 	return pinned, nil
 }
 
-func (r *RegistryResolver) resolve(ctx context.Context, named reference.Named, tagged reference.Tagged) (string, error) {
+func (r *Source) resolve(ctx context.Context, named reference.Named, tagged reference.Tagged) (string, error) {
 	if digest := r.clusterDigest(ctx, named, tagged); digest != "" {
 		return reference.FamiliarName(named) + "@" + digest, nil
 	}
@@ -163,11 +162,11 @@ func (r *RegistryResolver) resolve(ctx context.Context, named reference.Named, t
 	if r.InsecureHost != "" && domain == r.InsecureHost {
 		scheme = "http"
 	} else if refusedHost(host) {
-		return "", resolveError(ResolveRefused, "registry host %q is not a public registry name", host)
+		return "", resolveError(imagesrc.ResolveRefused, "registry host %q is not a public registry name", host)
 	}
 	client := r.Client
 	if client == nil {
-		client = deploymentio.NewGuardedClient(deploymentio.ClientOptions{Timeout: 15 * time.Second, AllowHost: r.InsecureHost})
+		client = registryio.NewGuardedClient(registryio.ClientOptions{Timeout: 15 * time.Second, AllowHost: r.InsecureHost})
 	}
 	manifestURL := fmt.Sprintf("%s://%s/v2/%s/manifests/%s", scheme, host, repository, tagged.Tag())
 	digest, err := r.digest(ctx, client, manifestURL, scheme)
@@ -190,7 +189,7 @@ func refusedHost(host string) bool {
 
 // clusterDigest is the digest every node that holds the tag reports for it,
 // or empty when no node holds it or the nodes disagree.
-func (r *RegistryResolver) clusterDigest(ctx context.Context, named reference.Named, tagged reference.Tagged) string {
+func (r *Source) clusterDigest(ctx context.Context, named reference.Named, tagged reference.Tagged) string {
 	if r.Cluster == nil {
 		return ""
 	}
@@ -235,14 +234,14 @@ func sha256Digest(body []byte) string {
 
 // digest asks for the manifest digest: HEAD first, and a GET (verified against
 // the bytes) when the registry does not answer HEAD with a digest header.
-func (r *RegistryResolver) digest(ctx context.Context, client deploymentio.Doer, target, scheme string) (string, error) {
+func (r *Source) digest(ctx context.Context, client registryio.Doer, target, scheme string) (string, error) {
 	_, header, err := r.fetch(ctx, client, http.MethodHead, target, "", scheme)
-	var head *ResolveError
+	var head *imagesrc.ResolveError
 	if err == nil {
 		if claimed := header.Get("Docker-Content-Digest"); digestPattern.MatchString(claimed) {
 			return claimed, nil
 		}
-	} else if !errors.As(err, &head) || head.Kind != ResolveRefused {
+	} else if !errors.As(err, &head) || head.Kind != imagesrc.ResolveRefused {
 		return "", err
 	}
 	body, header, err := r.fetch(ctx, client, http.MethodGet, target, "", scheme)
@@ -251,15 +250,15 @@ func (r *RegistryResolver) digest(ctx context.Context, client deploymentio.Doer,
 	}
 	digest := sha256Digest(body)
 	if claimed := header.Get("Docker-Content-Digest"); claimed != "" && claimed != digest {
-		return "", resolveError(ResolveRefused, "registry digest header %s does not match manifest bytes %s", claimed, digest)
+		return "", resolveError(imagesrc.ResolveRefused, "registry digest header %s does not match manifest bytes %s", claimed, digest)
 	}
 	return digest, nil
 }
 
-func (r *RegistryResolver) fetch(ctx context.Context, client deploymentio.Doer, method, target, token, scheme string) ([]byte, http.Header, error) {
+func (r *Source) fetch(ctx context.Context, client registryio.Doer, method, target, token, scheme string) ([]byte, http.Header, error) {
 	request, err := http.NewRequestWithContext(ctx, method, target, nil)
 	if err != nil {
-		return nil, nil, resolveError(ResolveRefused, "registry request: %w", err)
+		return nil, nil, resolveError(imagesrc.ResolveRefused, "registry request: %w", err)
 	}
 	request.Header.Set("Accept", manifestAccept)
 	if token != "" {
@@ -288,7 +287,7 @@ func (r *RegistryResolver) fetch(ctx context.Context, client deploymentio.Doer, 
 		return nil, nil, requestError("registry response", err)
 	}
 	if len(body) > maxManifestBytes {
-		return nil, nil, resolveError(ResolveRefused, "registry manifest is too large")
+		return nil, nil, resolveError(imagesrc.ResolveRefused, "registry manifest is too large")
 	}
 	return body, response.Header, nil
 }
@@ -296,17 +295,17 @@ func (r *RegistryResolver) fetch(ctx context.Context, client deploymentio.Doer, 
 // requestError classifies a transport failure: a refused address is the
 // guard's answer; anything else (timeout, DNS, reset) may pass on retry.
 func requestError(what string, err error) error {
-	if errors.Is(err, deploymentio.ErrRefusedTarget) {
-		return &ResolveError{Kind: ResolveRefused, Err: fmt.Errorf("%s: %w", what, err)}
+	if errors.Is(err, registryio.ErrRefusedTarget) {
+		return &imagesrc.ResolveError{Kind: imagesrc.ResolveRefused, Err: fmt.Errorf("%s: %w", what, err)}
 	}
-	return &ResolveError{Kind: ResolveTransient, Err: fmt.Errorf("%s: %w", what, err)}
+	return &imagesrc.ResolveError{Kind: imagesrc.ResolveTransient, Err: fmt.Errorf("%s: %w", what, err)}
 }
 
 // token performs the anonymous Bearer exchange a registry challenge asks for.
-func (r *RegistryResolver) token(ctx context.Context, client deploymentio.Doer, challenge, scheme string) (string, error) {
+func (r *Source) token(ctx context.Context, client registryio.Doer, challenge, scheme string) (string, error) {
 	rest, found := strings.CutPrefix(challenge, "Bearer ")
 	if !found {
-		return "", resolveError(ResolveUnauthorized, "registry requires authentication; only anonymous pulls are supported")
+		return "", resolveError(imagesrc.ResolveUnauthorized, "registry requires authentication; only anonymous pulls are supported")
 	}
 	params := map[string]string{}
 	for _, part := range strings.Split(rest, ",") {
@@ -317,10 +316,10 @@ func (r *RegistryResolver) token(ctx context.Context, client deploymentio.Doer, 
 	}
 	realm, err := url.Parse(params["realm"])
 	if err != nil || realm.Host == "" || (realm.Scheme != "https" && !(scheme == "http" && realm.Scheme == "http")) {
-		return "", resolveError(ResolveRefused, "registry token realm is not acceptable")
+		return "", resolveError(imagesrc.ResolveRefused, "registry token realm is not acceptable")
 	}
 	if scheme != "http" && refusedHost(realm.Host) {
-		return "", resolveError(ResolveRefused, "registry token realm host %q is not a public name", realm.Host)
+		return "", resolveError(imagesrc.ResolveRefused, "registry token realm host %q is not a public name", realm.Host)
 	}
 	query := realm.Query()
 	for _, key := range []string{"service", "scope"} {
@@ -331,7 +330,7 @@ func (r *RegistryResolver) token(ctx context.Context, client deploymentio.Doer, 
 	realm.RawQuery = query.Encode()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, realm.String(), nil)
 	if err != nil {
-		return "", resolveError(ResolveRefused, "registry token request: %w", err)
+		return "", resolveError(imagesrc.ResolveRefused, "registry token request: %w", err)
 	}
 	response, err := client.Do(request)
 	if err != nil {
@@ -343,13 +342,13 @@ func (r *RegistryResolver) token(ctx context.Context, client deploymentio.Doer, 
 	}
 	var document struct{ Token, AccessToken string }
 	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&document); err != nil {
-		return "", resolveError(ResolveRefused, "registry token response: %w", err)
+		return "", resolveError(imagesrc.ResolveRefused, "registry token response: %w", err)
 	}
 	if document.Token == "" {
 		document.Token = document.AccessToken
 	}
 	if document.Token == "" {
-		return "", resolveError(ResolveRefused, "registry returned no pull token")
+		return "", resolveError(imagesrc.ResolveRefused, "registry returned no pull token")
 	}
 	return document.Token, nil
 }

@@ -1,4 +1,4 @@
-package deployment
+package prebuilt
 
 import (
 	"context"
@@ -9,7 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"sdo.dev/operator/deployment/internal/deploymentio"
+	"sdo.dev/operator/imagesrc"
+	"sdo.dev/operator/imagesrc/prebuilt/internal/registryio"
 )
 
 type doerFunc func(*http.Request) (*http.Response, error)
@@ -23,10 +24,10 @@ func reply(status int, body string, header http.Header) (*http.Response, error) 
 	return &http.Response{StatusCode: status, Status: http.StatusText(status), Header: header, Body: io.NopCloser(strings.NewReader(body))}, nil
 }
 
-func TestRegistryResolverPinsTagWithAnonymousToken(t *testing.T) {
+func TestSourcePinsTagWithAnonymousToken(t *testing.T) {
 	manifest := `{"schemaVersion":2,"synthetic":true}`
 	const host = "registry.example:5000"
-	resolver := &RegistryResolver{InsecureHost: host, Client: doerFunc(func(r *http.Request) (*http.Response, error) {
+	resolver := &Source{InsecureHost: host, Client: doerFunc(func(r *http.Request) (*http.Response, error) {
 		switch r.URL.Path {
 		case "/token":
 			return reply(200, `{"token":"t"}`, nil)
@@ -59,17 +60,17 @@ func neverCalled(t *testing.T) doerFunc {
 	}
 }
 
-func TestRegistryResolverRefusesInternalHostsBeforeAnyRequest(t *testing.T) {
+func TestSourceRefusesInternalHostsBeforeAnyRequest(t *testing.T) {
 	for _, ref := range []string{"127.0.0.1:5000/a:1", "localhost/a:1", "10.0.0.1/a:1", "[::1]:5000/a:1", "[fd00::1]/a:1", "[::ffff:10.0.0.1]:5000/a:1", "app.localhost/a:1"} {
-		_, err := (&RegistryResolver{Client: neverCalled(t)}).ResolveImage(context.Background(), ref)
-		var resolve *ResolveError
-		if !errors.As(err, &resolve) || resolve.Kind != ResolveRefused {
+		_, err := (&Source{Client: neverCalled(t)}).ResolveImage(context.Background(), ref)
+		var resolve *imagesrc.ResolveError
+		if !errors.As(err, &resolve) || resolve.Kind != imagesrc.ResolveRefused {
 			t.Fatalf("%s must be refused as a target, got %v", ref, err)
 		}
 	}
 }
 
-func TestRegistryResolverRefusesInternalTokenRealm(t *testing.T) {
+func TestSourceRefusesInternalTokenRealm(t *testing.T) {
 	const host = "registry.example"
 	client := doerFunc(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Host != host {
@@ -77,31 +78,31 @@ func TestRegistryResolverRefusesInternalTokenRealm(t *testing.T) {
 		}
 		return reply(401, "", http.Header{"Www-Authenticate": {`Bearer realm="https://10.0.0.7/token",service="s"`}})
 	})
-	_, err := (&RegistryResolver{Client: client}).ResolveImage(context.Background(), host+"/a:1")
-	var resolve *ResolveError
-	if !errors.As(err, &resolve) || resolve.Kind != ResolveRefused {
+	_, err := (&Source{Client: client}).ResolveImage(context.Background(), host+"/a:1")
+	var resolve *imagesrc.ResolveError
+	if !errors.As(err, &resolve) || resolve.Kind != imagesrc.ResolveRefused {
 		t.Fatalf("an internal token realm must be refused, got %v", err)
 	}
 }
 
-func TestRegistryResolverVerifiesBytesWhenItMustGet(t *testing.T) {
+func TestSourceVerifiesBytesWhenItMustGet(t *testing.T) {
 	lying := doerFunc(func(r *http.Request) (*http.Response, error) {
 		if r.Method == http.MethodHead {
 			return reply(200, "", nil) // no digest header: the resolver must GET
 		}
 		return reply(200, "{}", http.Header{"Docker-Content-Digest": {synthDigest}})
 	})
-	if _, err := (&RegistryResolver{Client: lying}).ResolveImage(context.Background(), "r.example/a:1"); err == nil {
+	if _, err := (&Source{Client: lying}).ResolveImage(context.Background(), "r.example/a:1"); err == nil {
 		t.Fatal("digest header that disagrees with the bytes must be refused")
 	}
 }
 
 // A HEAD with a digest header is the whole exchange: Docker Hub does not count
 // it as a pull, and no manifest body is fetched.
-func TestRegistryResolverAsksWithHeadAndCachesTheDigest(t *testing.T) {
+func TestSourceAsksWithHeadAndCachesTheDigest(t *testing.T) {
 	var methods []string
 	clock := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
-	resolver := &RegistryResolver{Now: func() time.Time { return clock }, Client: doerFunc(func(r *http.Request) (*http.Response, error) {
+	resolver := &Source{Now: func() time.Time { return clock }, Client: doerFunc(func(r *http.Request) (*http.Response, error) {
 		methods = append(methods, r.Method)
 		return reply(200, "", http.Header{"Docker-Content-Digest": {synthDigest}})
 	})}
@@ -120,36 +121,36 @@ func TestRegistryResolverAsksWithHeadAndCachesTheDigest(t *testing.T) {
 	}
 }
 
-func TestRegistryResolverClassifiesFailures(t *testing.T) {
-	status := func(code int) deploymentio.Doer {
+func TestSourceClassifiesFailures(t *testing.T) {
+	status := func(code int) registryio.Doer {
 		return doerFunc(func(*http.Request) (*http.Response, error) { return reply(code, "", nil) })
 	}
 	for name, tc := range map[string]struct {
-		client deploymentio.Doer
-		want   ResolveErrorKind
+		client registryio.Doer
+		want   imagesrc.ResolveErrorKind
 	}{
-		"rate limited":  {status(429), ResolveTransient},
-		"registry down": {status(503), ResolveTransient},
-		"network":       {doerFunc(func(*http.Request) (*http.Response, error) { return nil, errors.New("connection reset") }), ResolveTransient},
-		"timeout":       {doerFunc(func(*http.Request) (*http.Response, error) { return nil, context.DeadlineExceeded }), ResolveTransient},
-		"missing tag":   {status(404), ResolveMissing},
-		"forbidden":     {status(403), ResolveUnauthorized},
+		"rate limited":  {status(429), imagesrc.ResolveTransient},
+		"registry down": {status(503), imagesrc.ResolveTransient},
+		"network":       {doerFunc(func(*http.Request) (*http.Response, error) { return nil, errors.New("connection reset") }), imagesrc.ResolveTransient},
+		"timeout":       {doerFunc(func(*http.Request) (*http.Response, error) { return nil, context.DeadlineExceeded }), imagesrc.ResolveTransient},
+		"missing tag":   {status(404), imagesrc.ResolveMissing},
+		"forbidden":     {status(403), imagesrc.ResolveUnauthorized},
 		"token refused": {doerFunc(func(r *http.Request) (*http.Response, error) {
 			if r.URL.Path == "/token" {
 				return reply(403, "", nil)
 			}
 			return reply(401, "", http.Header{"Www-Authenticate": {`Bearer realm="https://auth.example/token"`}})
-		}), ResolveUnauthorized},
+		}), imagesrc.ResolveUnauthorized},
 		"token rate limited": {doerFunc(func(r *http.Request) (*http.Response, error) {
 			if r.URL.Path == "/token" {
 				return reply(429, "", nil)
 			}
 			return reply(401, "", http.Header{"Www-Authenticate": {`Bearer realm="https://auth.example/token"`}})
-		}), ResolveTransient},
+		}), imagesrc.ResolveTransient},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := (&RegistryResolver{Client: tc.client}).ResolveImage(context.Background(), "r.example/a:1")
-			var resolve *ResolveError
+			_, err := (&Source{Client: tc.client}).ResolveImage(context.Background(), "r.example/a:1")
+			var resolve *imagesrc.ResolveError
 			if !errors.As(err, &resolve) || resolve.Kind != tc.want {
 				t.Fatalf("kind = %v (%v), want %s", resolve, err, tc.want)
 			}
@@ -164,7 +165,7 @@ func (f fakeClusterImages) NodeImageNames(context.Context) ([][]string, error) {
 // An image the cluster already holds under the tag (kind load, a mirror) is
 // pinned to the digest the node reports: the Pod runs what is on the node and
 // the registry is not asked.
-func TestRegistryResolverPrefersTheDigestTheClusterHolds(t *testing.T) {
+func TestSourcePrefersTheDigestTheClusterHolds(t *testing.T) {
 	const other = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	held := []string{"docker.io/library/redis:6.2.4", "docker.io/library/redis@" + synthDigest}
 	for name, tc := range map[string]struct {
@@ -180,7 +181,7 @@ func TestRegistryResolverPrefersTheDigestTheClusterHolds(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			asked := false
-			resolver := &RegistryResolver{Cluster: tc.cluster, Client: doerFunc(func(*http.Request) (*http.Response, error) {
+			resolver := &Source{Cluster: tc.cluster, Client: doerFunc(func(*http.Request) (*http.Response, error) {
 				asked = true
 				return reply(200, "", http.Header{"Docker-Content-Digest": {"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}})
 			})}
@@ -198,13 +199,13 @@ func TestRegistryResolverPrefersTheDigestTheClusterHolds(t *testing.T) {
 	}
 }
 
-func TestRegistryResolverUsesHTTPSAndDockerHubHost(t *testing.T) {
+func TestSourceUsesHTTPSAndDockerHubHost(t *testing.T) {
 	var seen string
 	client := doerFunc(func(r *http.Request) (*http.Response, error) {
 		seen = r.URL.String()
 		return reply(200, "{}", nil)
 	})
-	got, err := (&RegistryResolver{Client: client}).ResolveImage(context.Background(), "redis:6.2.4")
+	got, err := (&Source{Client: client}).ResolveImage(context.Background(), "redis:6.2.4")
 	if err != nil {
 		t.Fatal(err)
 	}

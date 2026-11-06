@@ -30,6 +30,7 @@ var Edges = map[string]bool{
 	"sdo/operator/devmount":                                  true, // development mount process adapter
 	"sdo/operator/runtime/sim":                               true, // simulation world: virtual time inside synctest bubbles, seed replay, in-memory transport; tests only
 	"sdo/operator/deployment/internal/deploymentio":          true, // Deployment process, socket and wait adapter
+	"sdo/operator/imagesrc/prebuilt/internal/registryio":     true, // Prebuilt image source registry sockets and cache clock
 	"sdo/operator/lifecycle/internal/waitio":                 true, // Lifecycle default pause between bounded re-evaluations
 	"sdo/operator/apihistory/internal/apiio":                 true, // API-history clock, timers and identifier randomness
 	"sdo/operator/kubeproxy/internal/proxyio":                true, // API proxy clock and request-ID randomness
