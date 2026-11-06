@@ -94,9 +94,9 @@ jobs:
       - name: Drop compiler entries this run did not use
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: find ~/.cache/go-build -type f -mmin +120 -delete
-      # Measured on every event so a PR log shows the size main would save.
       - name: Check the cache size before saving
         id: cache-size
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: bash scripts/ci_cache_guard.sh "$(python3 -c 'import json;print(json.load(open(".github/ci_budgets.json"))["cache_limit_mb"])')" ~/.cache/go-build ~/go/pkg/mod
       - name: Save shared Go cache on main
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cache-size.outputs.oversize != 'true'
@@ -202,9 +202,9 @@ jobs:
       - name: Drop compiler entries that are no longer used
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: find ~/.cache/go-build -type f -mmin +120 -delete
-      # Measured on every event so a PR log shows the size main would save.
       - name: Check the cache size before saving
         id: cache-size
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: bash scripts/ci_cache_guard.sh "$(python3 -c 'import json;print(json.load(open(".github/ci_budgets.json"))["cache_limit_mb"])')" ~/.cache/go-build ~/go/pkg/mod
       - name: Save this shard's Go cache on main
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cache-size.outputs.oversize != 'true'
@@ -277,9 +277,9 @@ jobs:
       - name: Drop compiler entries this run did not use
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: find ~/.cache/go-build -type f -mmin +120 -delete
-      # Measured on every event so a PR log shows the size main would save.
       - name: Check the cache size before saving
         id: cache-size
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: bash scripts/ci_cache_guard.sh "$(python3 -c 'import json;print(json.load(open(".github/ci_budgets.json"))["cache_limit_mb"])')" ~/.cache/go-build ~/go/pkg/mod
       - name: Save shared Go cache on main
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cache-size.outputs.oversize != 'true'

@@ -968,7 +968,7 @@ Every number lives in `.github/ci_budgets.json` and is enforced in code
 - Timeouts: `timeout_minutes` per workflow job is a ratchet; a job whose `timeout-minutes` exceeds its entry (or is missing from the table) fails the test.
 - Main push runs are never cancelled (`ci.yml` gives each push its own concurrency group), so each merged commit is fully tested and refreshes the caches. `Required PR CI` stays the single aggregate required check over every shard.
 - Slow tests: a PR-tier test over `slow_test_seconds` (10 s) fails its job (`scripts/check_slow_tests.py` reads `go test -json` and pytest `--durations`). Fix it, move it to the nightly/integration tier (`testing.Short` skip or the nightly ignore list), or as a last resort add it with a reason to `slow_tests`. Go keys are `<package> <TopLevelTest>`; Python keys are node ids without a parameter suffix.
-- Cache size: main saves a Go cache only if `scripts/ci_cache_guard.sh` measures it at or under `cache_limit_mb` (1 GB); otherwise it skips the save and fails the job.
+- Cache size: main saves a Go cache only if `scripts/ci_cache_guard.sh` measures its compressed archive (what Actions uploads) at or under `cache_limit_mb` (1 GB); otherwise it skips the save and fails the job.
 - `CI health` (hourly, `scripts/ci_health.py`) summarizes per-job p50/p95, merge-queue enqueue-to-merge latency and cancelled/rerun/ejected rates over the last `health.runs` runs created after `health.since`, and fails when any PR job p95 exceeds 180 s or queue p95 exceeds 8 min. After a fix, move `health.since` forward so the old runs leave the window.
 
 `Nightly CI` runs daily and through `workflow_dispatch`; its Actions conclusion reports failures. It has one

@@ -134,7 +134,7 @@ def test_slow_test_script_fails_on_an_unlisted_offender(tmp_path: Path) -> None:
 @pytest.mark.parametrize(("limit", "oversize"), [(1, True), (100000, False)])
 def test_cache_guard_flags_an_oversize_cache(tmp_path: Path, limit: int, oversize: bool) -> None:
     (tmp_path / "cache").mkdir()
-    (tmp_path / "cache" / "blob").write_bytes(b"x" * (3 * 1024 * 1024))
+    (tmp_path / "cache" / "blob").write_bytes(os.urandom(3 * 1024 * 1024))
     output = tmp_path / "out"
     result = subprocess.run(
         [
@@ -144,14 +144,14 @@ def test_cache_guard_flags_an_oversize_cache(tmp_path: Path, limit: int, oversiz
             str(tmp_path / "cache"),
             str(tmp_path / "missing"),
         ],
-        env={**os.environ, "GITHUB_OUTPUT": str(output), "GITHUB_REF": "refs/heads/main"},
+        env={**os.environ, "GITHUB_OUTPUT": str(output)},
         capture_output=True,
         text=True,
         check=False,
     )
     assert result.returncode == 0, result.stderr
     values = dict(line.split("=") for line in output.read_text().splitlines())
-    assert 3 <= int(values["size_mb"]) <= 4, "du rounds directories up"
+    assert 3 <= int(values["size_mb"]) <= 4, "compressed archive of incompressible data"
     assert values["oversize"] == str(oversize).lower()
     assert ("::error::" in result.stdout) is oversize
 
