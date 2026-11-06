@@ -43,6 +43,7 @@ import (
 	"sdo.dev/operator/memoryhost/hostio"
 	"sdo.dev/operator/onboarding"
 	"sdo.dev/operator/render"
+	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/telemetry"
@@ -1766,11 +1767,29 @@ func evaluateOnce(
 	memoryCommit := flags.String("memory-commit", "", "accepted memory revision")
 	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL for metric and alert health evaluation")
 	metricsTokenFile := flags.String("metrics-token-file", "", "file holding a bearer token for --metrics-url")
+	classesFlag := flags.String("classes", "", "comma-separated detector classes to evaluate (default: every class)")
+	pinsFile := flags.String("image-pins", "", "JSON rendered.ReceiptPins of the deployment under verification: desired state reads return the images it applied")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if *namespace == "" {
 		return fmt.Errorf("namespace is required")
+	}
+	classes, err := evaluation.ParseClasses(*classesFlag)
+	if err != nil {
+		return err
+	}
+	var pins rendered.PinProvider
+	if *pinsFile != "" {
+		data, err := os.ReadFile(*pinsFile)
+		if err != nil {
+			return fmt.Errorf("read --image-pins: %w", err)
+		}
+		var receipt rendered.ReceiptPins
+		if err := json.Unmarshal(data, &receipt); err != nil {
+			return fmt.Errorf("decode --image-pins: %w", err)
+		}
+		pins = receipt
 	}
 	if *acceptSeed && *sourceDriftReport != "" {
 		return errors.New("seed acceptance cannot use source-drift-report: inventory is not detector health evidence")
@@ -1836,6 +1855,7 @@ func evaluateOnce(
 		provider = kubernetesProvider
 		client = kubernetesProvider.Client
 	}
+	detectors = detectorsOfClasses(detectors, classes)
 	readClient := client
 	var readSource PlanSource
 	readCommit := ""
@@ -1849,7 +1869,7 @@ func evaluateOnce(
 		if err != nil {
 			return err
 		}
-		readSource = (GitPlanSource{Repository: *appRoot, Deployment: deploymentSource, Catalog: renderers}).WithCache()
+		readSource = (GitPlanSource{Repository: *appRoot, Deployment: deploymentSource, Catalog: renderers, Pins: pins}).WithCache()
 	}
 	if *sourceDriftReport != "" {
 		if *appRoot == "" || readClient == nil {
@@ -1942,7 +1962,7 @@ func evaluateOnce(
 	if trafficProvider.Observer != nil || trafficProvider.Reachability != nil {
 		provider = trafficProvider
 	}
-	provider, _, err := detectorObservations{Client: client, Clock: clock.Now, MetricsURL: *metricsURL, MetricsTokenFile: *metricsTokenFile, RequireMetrics: true, Telemetry: registry}.compose(provider, detectors)
+	provider, _, err = detectorObservations{Client: client, Clock: clock.Now, MetricsURL: *metricsURL, MetricsTokenFile: *metricsTokenFile, RequireMetrics: true, Telemetry: registry}.compose(provider, detectors)
 	if err != nil {
 		return err
 	}
@@ -2000,6 +2020,21 @@ func evaluateOnce(
 		return fmt.Errorf("seed acceptance rejected: status %s; %d detector finding(s); unavailable: %v", status, len(findings), unavailable)
 	}
 	return nil
+}
+
+// detectorsOfClasses keeps the detectors of the given classes; no classes keeps
+// every detector.
+func detectorsOfClasses(detectors []sdk.Detector, classes []sdk.DetectorClass) []sdk.Detector {
+	if len(classes) == 0 {
+		return detectors
+	}
+	kept := make([]sdk.Detector, 0, len(detectors))
+	for _, detector := range detectors {
+		if slices.Contains(classes, detector.Spec().Class) {
+			kept = append(kept, detector)
+		}
+	}
+	return kept
 }
 
 func defaultIdentity() string {

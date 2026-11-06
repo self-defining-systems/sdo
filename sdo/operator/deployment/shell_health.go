@@ -18,7 +18,7 @@ type ShellDetectorProbe struct {
 	Limit  time.Duration
 }
 
-func (p ShellDetectorProbe) Evaluate(ctx context.Context, root, _, namespace string) (HealthEvaluation, error) {
+func (p ShellDetectorProbe) Evaluate(ctx context.Context, root, _, namespace string, _ HealthScope) (HealthEvaluation, error) {
 	if namespace != p.Config.Namespace || root != p.Config.AcceptedRoot {
 		return HealthEvaluation{}, fmt.Errorf("shell health probe repository or namespace differs from runner")
 	}

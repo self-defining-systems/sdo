@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"sdo.dev/operator/sdk"
@@ -72,4 +73,38 @@ func Decode(stdout []byte) (Verdict, error) {
 		return Verdict{}, fmt.Errorf("unknown evaluation status %q", verdict.Status)
 	}
 	return verdict, nil
+}
+
+// GatingClasses are the detector classes whose verdict gates an upstream
+// advance: the health objective and the designer's health detectors judge the
+// candidate. Incident detectors (learned by reflection, responder-owned) are
+// not part of the gate: they compare live state against a baseline the advance
+// legitimately changes, and a real fault after the advance reaches them
+// through ordinary detection.
+var GatingClasses = []sdk.DetectorClass{sdk.DetectorClassHealth}
+
+// ParseClasses decodes a comma-separated --classes value. The empty string is
+// "every class" (nil). An unknown class is an error, never an empty selection.
+func ParseClasses(value string) ([]sdk.DetectorClass, error) {
+	if value == "" {
+		return nil, nil
+	}
+	var classes []sdk.DetectorClass
+	for _, name := range strings.Split(value, ",") {
+		class := sdk.DetectorClass(strings.TrimSpace(name))
+		if class != sdk.DetectorClassHealth && class != sdk.DetectorClassIncident {
+			return nil, fmt.Errorf("unknown detector class %q", name)
+		}
+		classes = append(classes, class)
+	}
+	return classes, nil
+}
+
+// FormatClasses is ParseClasses' inverse.
+func FormatClasses(classes []sdk.DetectorClass) string {
+	names := make([]string, len(classes))
+	for i, class := range classes {
+		names[i] = string(class)
+	}
+	return strings.Join(names, ",")
 }
