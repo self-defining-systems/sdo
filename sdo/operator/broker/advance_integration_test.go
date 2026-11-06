@@ -4,10 +4,13 @@ package broker
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"google.golang.org/protobuf/types/known/anypb"
@@ -53,6 +56,13 @@ func gitOut(t *testing.T, root string, args ...string) string {
 	return strings.TrimSpace(testutil.Git(t, root, args...))
 }
 
+// The first test of the package to need an onboarded world pays for building
+// its template, so each variant is built by a test of its own, declared first,
+// and no behavior test carries the setup in its duration.
+func TestOnboardedWorldWithADeployerEditBuilds(t *testing.T) { onboardedTemplate(t, true) }
+
+func TestOnboardedWorldOfAProvidedDeploymentBuilds(t *testing.T) { onboardedTemplate(t, false) }
+
 func newAdvanceWorld(t *testing.T) *advanceWorld { return newOnboardedWorld(t, true) }
 
 // newOnboardedWorld onboards the synthetic source; editedByDeployer false is a
@@ -60,6 +70,74 @@ func newAdvanceWorld(t *testing.T) *advanceWorld { return newOnboardedWorld(t, t
 func newOnboardedWorld(t *testing.T, editedByDeployer bool) *advanceWorld {
 	t.Helper()
 	base := t.TempDir()
+	copyTree(t, onboardedTemplate(t, editedByDeployer), base)
+	w := &advanceWorld{upstream: filepath.Join(base, "upstream"), accepted: filepath.Join(base, "accepted")}
+	w.seed = gitOut(t, w.upstream, "rev-parse", "HEAD")
+	b, err := New(w.accepted, filepath.Join(base, "workspaces"), func(context.Context, string, []string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.broker = b
+	return w
+}
+
+// onboardedTemplates holds one built world per variant. Building a world is
+// about 150 git commands; every test copies the template instead, so a test
+// pays for the behavior it checks and not for the shared setup. All state is
+// repository content under the world's directory (no absolute paths survive
+// onboarding), so a copy is a world of its own.
+var onboardedTemplates [2]struct {
+	once  sync.Once
+	dir   string
+	built bool
+}
+
+// onboardedTemplateRoot is removed by TestMain.
+var onboardedTemplateRoot struct {
+	once sync.Once
+	dir  string
+	err  error
+}
+
+func onboardedTemplate(t *testing.T, editedByDeployer bool) string {
+	t.Helper()
+	slot := &onboardedTemplates[0]
+	if editedByDeployer {
+		slot = &onboardedTemplates[1]
+	}
+	slot.once.Do(func() {
+		onboardedTemplateRoot.once.Do(func() {
+			onboardedTemplateRoot.dir, onboardedTemplateRoot.err = os.MkdirTemp("", "onboarded-templates-")
+		})
+		if onboardedTemplateRoot.err != nil {
+			t.Fatal(onboardedTemplateRoot.err)
+		}
+		slot.dir = filepath.Join(onboardedTemplateRoot.dir, fmt.Sprint(editedByDeployer))
+		buildOnboardedWorld(t, slot.dir, editedByDeployer)
+		slot.built = true
+	})
+	if !slot.built {
+		t.Fatal("the onboarded world template failed to build in an earlier test")
+	}
+	return slot.dir
+}
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if onboardedTemplateRoot.dir != "" {
+		os.RemoveAll(onboardedTemplateRoot.dir)
+	}
+	os.Exit(code)
+}
+
+func copyTree(t *testing.T, from, to string) {
+	t.Helper()
+	if out, err := exec.Command("cp", "-a", from+"/.", to).CombinedOutput(); err != nil {
+		t.Fatalf("copy %s: %v: %s", from, err, out)
+	}
+}
+
+func buildOnboardedWorld(t *testing.T, base string, editedByDeployer bool) *advanceWorld {
 	w := &advanceWorld{upstream: filepath.Join(base, "upstream"), accepted: filepath.Join(base, "accepted")}
 	if err := os.MkdirAll(w.upstream, 0o755); err != nil {
 		t.Fatal(err)
@@ -273,8 +351,24 @@ func TestPublishAdvanceAcceptsTheDeployedThreeWayMerge(t *testing.T) {
 	if _, err := publishAdvance(ctx, b, id, upstream, w.seed, advanceEvidence(t, w.accepted, "other")); err == nil {
 		t.Fatal("repeated publish with other evidence accepted")
 	}
+}
 
-	// The next advance merges from the recorded upstream revision.
+// The next advance merges from the recorded upstream revision. It is a test of
+// its own (starting from an accepted advance) so each stays well under the
+// slow-test budget.
+func TestNextAdvanceMergesFromTheRecordedUpstreamRevision(t *testing.T) {
+	ctx := context.Background()
+	w := newAdvanceWorld(t)
+	b := w.broker
+	upstream := w.push(t, w.seed, map[string]*string{"app.txt": text("ONE\ntwo\nthree\n"), "new.txt": text("new\n"), "Dockerfile": nil})
+	id := "advance-" + upstream[:12]
+	proposal, candidate, _, err := b.ProposeAdvance(ctx, id, w.seed, upstream)
+	if err != nil || candidate == "" {
+		t.Fatal(err)
+	}
+	if _, err := publishAdvance(ctx, b, id, upstream, w.seed, advanceEvidence(t, proposal.Path, "advanced")); err != nil {
+		t.Fatal(err)
+	}
 	next := w.push(t, upstream, map[string]*string{"new.txt": text("newer\n")})
 	nextID := "advance-" + next[:12]
 	proposal, candidate, _, err = b.ProposeAdvance(ctx, nextID, upstream, next)
@@ -296,128 +390,187 @@ func TestPublishAdvanceAcceptsTheDeployedThreeWayMerge(t *testing.T) {
 	}
 }
 
-// Every refusal leaves the accepted branch where it was.
-func TestPublishAdvanceRefusesWhatWasNotDeployedOrMayNotMerge(t *testing.T) {
-	ctx := context.Background()
-	w := newAdvanceWorld(t)
-	b := w.broker
-	upstream := w.push(t, w.seed, map[string]*string{"app.txt": text("ONE\ntwo\nthree\n")})
-	id := "advance-" + upstream[:12]
-	accepted := w.head(t)
+// Every refusal leaves the accepted branch where it was. Each case has a world of
+// its own (a copy of the onboarded template), so no case depends on another and
+// each stays well under the slow-test budget.
+// refusalWorld is an onboarded world with one pushed upstream change.
+func refusalWorld(t *testing.T) (w *advanceWorld, upstream, id, accepted string) {
+	t.Helper()
+	w = newAdvanceWorld(t)
+	upstream = w.push(t, w.seed, map[string]*string{"app.txt": text("ONE\ntwo\nthree\n")})
+	return w, upstream, "advance-" + upstream[:12], w.head(t)
+}
 
-	t.Run("evidence of another tree", func(t *testing.T) {
-		proposal, _, _, err := b.ProposeAdvance(ctx, id, w.seed, upstream)
-		if err != nil {
-			t.Fatal(err)
-		}
-		writeFiles(t, proposal.Path, map[string]string{".sdo/deployment/values/tampered.yaml": "tampered: true\n"})
-		evidence := advanceEvidence(t, proposal.Path, "tampered")
-		if _, err := publishAdvance(ctx, b, id, upstream, w.seed, evidence); err == nil || !strings.Contains(err.Error(), "differs from the deployed tree") {
-			t.Fatalf("PublishAdvance of another tree = %v", err)
-		}
-	})
-	t.Run("evidence of another effective tree or patch series", func(t *testing.T) {
-		proposal, _, _, err := b.ProposeAdvance(ctx, id, w.seed, upstream)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for name, mutate := range map[string]func(*SourceEvidence){
-			"effective tree": func(e *SourceEvidence) {
-				e.EffectiveTree = strings.Repeat("9", 40)
-				e.ObservedRevision = e.EffectiveTree
-			},
-			"patch series": func(e *SourceEvidence) { e.PatchesDigest = strings.Repeat("9", 64) },
-		} {
-			evidence := advanceEvidence(t, proposal.Path, "merged")
-			mutate(&evidence)
-			if _, err := publishAdvance(ctx, b, id, upstream, w.seed, evidence); err == nil || !strings.Contains(err.Error(), "differs from the verified deployment") {
-				t.Fatalf("PublishAdvance with another %s = %v", name, err)
-			}
-		}
-	})
-	t.Run("accepted head moved", func(t *testing.T) {
-		proposal, _, _, err := b.ProposeAdvance(ctx, id, w.seed, upstream)
-		if err != nil {
-			t.Fatal(err)
-		}
-		evidence := advanceEvidence(t, proposal.Path, "moved")
-		publishHumanGoal(t, w.accepted, "goal-edit", map[string]string{layout.GoalFile: advanceGoal + "\nEdited\n"})
-		defer func() { accepted = w.head(t) }()
-		if _, err := publishAdvance(ctx, b, id, upstream, w.seed, evidence); err == nil || !strings.Contains(err.Error(), "accepted HEAD moved") {
-			t.Fatalf("PublishAdvance after the head moved = %v", err)
-		}
-		if w.head(t) == accepted {
-			t.Fatal("goal edit not accepted")
-		}
-	})
-	t.Run("wrong base or upstream", func(t *testing.T) {
-		proposal, _, _, err := b.ProposeAdvance(ctx, id, w.seed, upstream)
-		if err != nil {
-			t.Fatal(err)
-		}
-		evidence := advanceEvidence(t, proposal.Path, "wrong")
-		other := w.push(t, w.seed, map[string]*string{"app.txt": text("other\ntwo\nthree\n")})
-		if _, err := publishAdvance(ctx, b, id, other, w.seed, evidence); err == nil {
-			t.Fatal("PublishAdvance of another upstream than proposed accepted")
-		}
-		if _, err := publishAdvance(ctx, b, id, upstream, upstream, evidence); err == nil {
-			t.Fatal("PublishAdvance with a base that is not the accepted upstream revision accepted")
-		}
-	})
-	t.Run("no proposal", func(t *testing.T) {
-		if err := b.ReleaseAdvance(id); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := publishAdvance(ctx, b, id, upstream, w.seed, advanceEvidence(t, w.accepted, "none")); err == nil {
-			t.Fatal("PublishAdvance without a proposal accepted")
-		}
-	})
-	t.Run("rewritten upstream", func(t *testing.T) {
-		testutil.Git(t, w.upstream, "checkout", "-q", "--orphan", "rewritten")
-		testutil.Git(t, w.upstream, "commit", "-qm", "rewritten")
-		rewritten := gitOut(t, w.upstream, "rev-parse", "HEAD")
-		testutil.Git(t, w.accepted, "fetch", "-q", "--no-tags", w.upstream, rewritten+":refs/sdo/upstream-source/"+rewritten)
-		if ancestor, _, err := b.UpstreamChange(ctx, w.seed, rewritten); err != nil || ancestor {
-			t.Fatalf("UpstreamChange of rewritten history = %v %v", ancestor, err)
-		}
-		if _, _, _, err := b.ProposeAdvance(ctx, "advance-"+rewritten[:12], w.seed, rewritten); err == nil || !strings.Contains(err.Error(), "not an ancestor") {
-			t.Fatalf("ProposeAdvance of rewritten history = %v", err)
-		}
-	})
-	t.Run("upstream touches operational memory", func(t *testing.T) {
-		touched := w.push(t, w.seed, map[string]*string{layout.GoalFile: text("upstream goal\n")})
-		if ancestor, paths, err := b.UpstreamChange(ctx, w.seed, touched); err != nil || !ancestor || !slices.Equal(paths, []string{layout.GoalFile}) {
-			t.Fatalf("UpstreamChange touching memory = %v %v %v", ancestor, paths, err)
-		}
-		if _, _, _, err := b.ProposeAdvance(ctx, "advance-"+touched[:12], w.seed, touched); err == nil || !strings.Contains(err.Error(), "operational memory") {
-			t.Fatalf("ProposeAdvance touching memory = %v", err)
-		}
-	})
-	t.Run("upstream adds a path named exactly the memory directory", func(t *testing.T) {
-		touched := w.push(t, w.seed, map[string]*string{layout.Dir: text("not a directory\n")})
-		if _, _, _, err := b.ProposeAdvance(ctx, "advance-"+touched[:12], w.seed, touched); err == nil || !strings.Contains(err.Error(), "operational memory") {
-			t.Fatalf("ProposeAdvance adding a file named %s = %v", layout.Dir, err)
-		}
-	})
-	t.Run("conflict with an accepted edit", func(t *testing.T) {
-		conflicting := w.push(t, w.seed, map[string]*string{"app.txt": text("one\ntwo\nthree upstream\n")})
-		proposal, candidate, conflicts, err := b.ProposeAdvance(ctx, "advance-"+conflicting[:12], w.seed, conflicting)
-		if err != nil || candidate != "" || !slices.Equal(conflicts, []string{"app.txt"}) {
-			t.Fatalf("ProposeAdvance conflict = %q %v %v", candidate, conflicts, err)
-		}
-		if gitOut(t, proposal.Path, "rev-parse", "HEAD") != proposal.BaseCommit || gitOut(t, proposal.Path, "status", "--porcelain", "--untracked-files=all") != "" {
-			t.Fatal("conflicting checkout was not reset to the accepted HEAD")
-		}
-		if err := b.ReleaseAdvance("advance-" + conflicting[:12]); err != nil {
-			t.Fatal(err)
-		}
-	})
+// requireUntouched fails when a refusal moved the accepted branch or the
+// recorded upstream revision.
+func requireUntouched(t *testing.T, w *advanceWorld, accepted string) {
+	t.Helper()
 	if w.head(t) != accepted {
 		t.Fatalf("a refused advance moved the accepted HEAD from %s to %s", accepted, w.head(t))
 	}
-	if last, _, _ := b.LastUpstream(ctx); last != w.seed {
+	if last, _, _ := w.broker.LastUpstream(context.Background()); last != w.seed {
 		t.Fatalf("LastUpstream after refusals = %s, want %s", last, w.seed)
 	}
+}
+
+// Evidence of another tree.
+func TestPublishAdvanceRefusesEvidenceOfAnotherTree(t *testing.T) {
+	ctx := context.Background()
+	w, upstream, id, accepted := refusalWorld(t)
+	b := w.broker
+	proposal, _, _, err := b.ProposeAdvance(ctx, id, w.seed, upstream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFiles(t, proposal.Path, map[string]string{".sdo/deployment/values/tampered.yaml": "tampered: true\n"})
+	evidence := advanceEvidence(t, proposal.Path, "tampered")
+	if _, err := publishAdvance(ctx, b, id, upstream, w.seed, evidence); err == nil || !strings.Contains(err.Error(), "differs from the deployed tree") {
+		t.Fatalf("PublishAdvance of another tree = %v", err)
+	}
+	requireUntouched(t, w, accepted)
+}
+
+// Evidence of another effective tree or patch series.
+func TestPublishAdvanceRefusesEvidenceOfAnotherEffectiveTreeOrPatchSeries(t *testing.T) {
+	ctx := context.Background()
+	w, upstream, id, accepted := refusalWorld(t)
+	b := w.broker
+	proposal, _, _, err := b.ProposeAdvance(ctx, id, w.seed, upstream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(*SourceEvidence){
+		"effective tree": func(e *SourceEvidence) {
+			e.EffectiveTree = strings.Repeat("9", 40)
+			e.ObservedRevision = e.EffectiveTree
+		},
+		"patch series": func(e *SourceEvidence) { e.PatchesDigest = strings.Repeat("9", 64) },
+	} {
+		evidence := advanceEvidence(t, proposal.Path, "merged")
+		mutate(&evidence)
+		if _, err := publishAdvance(ctx, b, id, upstream, w.seed, evidence); err == nil || !strings.Contains(err.Error(), "differs from the verified deployment") {
+			t.Fatalf("PublishAdvance with another %s = %v", name, err)
+		}
+	}
+	requireUntouched(t, w, accepted)
+}
+
+// Accepted head moved.
+func TestPublishAdvanceRefusesAfterTheAcceptedHeadMoved(t *testing.T) {
+	ctx := context.Background()
+	w, upstream, id, accepted := refusalWorld(t)
+	b := w.broker
+	proposal, _, _, err := b.ProposeAdvance(ctx, id, w.seed, upstream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence := advanceEvidence(t, proposal.Path, "moved")
+	publishHumanGoal(t, w.accepted, "goal-edit", map[string]string{layout.GoalFile: advanceGoal + "\nEdited\n"})
+	defer func() { accepted = w.head(t) }()
+	if _, err := publishAdvance(ctx, b, id, upstream, w.seed, evidence); err == nil || !strings.Contains(err.Error(), "accepted HEAD moved") {
+		t.Fatalf("PublishAdvance after the head moved = %v", err)
+	}
+	if w.head(t) == accepted {
+		t.Fatal("goal edit not accepted")
+	}
+}
+
+// Wrong base or upstream.
+func TestPublishAdvanceRefusesAWrongBaseOrUpstream(t *testing.T) {
+	ctx := context.Background()
+	w, upstream, id, accepted := refusalWorld(t)
+	b := w.broker
+	proposal, _, _, err := b.ProposeAdvance(ctx, id, w.seed, upstream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence := advanceEvidence(t, proposal.Path, "wrong")
+	other := w.push(t, w.seed, map[string]*string{"app.txt": text("other\ntwo\nthree\n")})
+	if _, err := publishAdvance(ctx, b, id, other, w.seed, evidence); err == nil {
+		t.Fatal("PublishAdvance of another upstream than proposed accepted")
+	}
+	if _, err := publishAdvance(ctx, b, id, upstream, upstream, evidence); err == nil {
+		t.Fatal("PublishAdvance with a base that is not the accepted upstream revision accepted")
+	}
+	requireUntouched(t, w, accepted)
+}
+
+// No proposal.
+func TestPublishAdvanceRefusesWithoutAProposal(t *testing.T) {
+	ctx := context.Background()
+	w, upstream, id, accepted := refusalWorld(t)
+	b := w.broker
+	if err := b.ReleaseAdvance(id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := publishAdvance(ctx, b, id, upstream, w.seed, advanceEvidence(t, w.accepted, "none")); err == nil {
+		t.Fatal("PublishAdvance without a proposal accepted")
+	}
+	requireUntouched(t, w, accepted)
+}
+
+// Rewritten upstream.
+func TestProposeAdvanceRefusesRewrittenUpstreamHistory(t *testing.T) {
+	ctx := context.Background()
+	w, _, _, accepted := refusalWorld(t)
+	b := w.broker
+	testutil.Git(t, w.upstream, "checkout", "-q", "--orphan", "rewritten")
+	testutil.Git(t, w.upstream, "commit", "-qm", "rewritten")
+	rewritten := gitOut(t, w.upstream, "rev-parse", "HEAD")
+	testutil.Git(t, w.accepted, "fetch", "-q", "--no-tags", w.upstream, rewritten+":refs/sdo/upstream-source/"+rewritten)
+	if ancestor, _, err := b.UpstreamChange(ctx, w.seed, rewritten); err != nil || ancestor {
+		t.Fatalf("UpstreamChange of rewritten history = %v %v", ancestor, err)
+	}
+	if _, _, _, err := b.ProposeAdvance(ctx, "advance-"+rewritten[:12], w.seed, rewritten); err == nil || !strings.Contains(err.Error(), "not an ancestor") {
+		t.Fatalf("ProposeAdvance of rewritten history = %v", err)
+	}
+	requireUntouched(t, w, accepted)
+}
+
+// Upstream touches operational memory.
+func TestProposeAdvanceRefusesUpstreamThatTouchesOperationalMemory(t *testing.T) {
+	ctx := context.Background()
+	w, _, _, accepted := refusalWorld(t)
+	b := w.broker
+	touched := w.push(t, w.seed, map[string]*string{layout.GoalFile: text("upstream goal\n")})
+	if ancestor, paths, err := b.UpstreamChange(ctx, w.seed, touched); err != nil || !ancestor || !slices.Equal(paths, []string{layout.GoalFile}) {
+		t.Fatalf("UpstreamChange touching memory = %v %v %v", ancestor, paths, err)
+	}
+	if _, _, _, err := b.ProposeAdvance(ctx, "advance-"+touched[:12], w.seed, touched); err == nil || !strings.Contains(err.Error(), "operational memory") {
+		t.Fatalf("ProposeAdvance touching memory = %v", err)
+	}
+	requireUntouched(t, w, accepted)
+}
+
+// Upstream adds a path named exactly the memory directory.
+func TestProposeAdvanceRefusesAPathNamedExactlyTheMemoryDirectory(t *testing.T) {
+	ctx := context.Background()
+	w, _, _, accepted := refusalWorld(t)
+	b := w.broker
+	touched := w.push(t, w.seed, map[string]*string{layout.Dir: text("not a directory\n")})
+	if _, _, _, err := b.ProposeAdvance(ctx, "advance-"+touched[:12], w.seed, touched); err == nil || !strings.Contains(err.Error(), "operational memory") {
+		t.Fatalf("ProposeAdvance adding a file named %s = %v", layout.Dir, err)
+	}
+	requireUntouched(t, w, accepted)
+}
+
+// Conflict with an accepted edit.
+func TestProposeAdvanceReportsAConflictWithAnAcceptedEdit(t *testing.T) {
+	ctx := context.Background()
+	w, _, _, accepted := refusalWorld(t)
+	b := w.broker
+	conflicting := w.push(t, w.seed, map[string]*string{"app.txt": text("one\ntwo\nthree upstream\n")})
+	proposal, candidate, conflicts, err := b.ProposeAdvance(ctx, "advance-"+conflicting[:12], w.seed, conflicting)
+	if err != nil || candidate != "" || !slices.Equal(conflicts, []string{"app.txt"}) {
+		t.Fatalf("ProposeAdvance conflict = %q %v %v", candidate, conflicts, err)
+	}
+	if gitOut(t, proposal.Path, "rev-parse", "HEAD") != proposal.BaseCommit || gitOut(t, proposal.Path, "status", "--porcelain", "--untracked-files=all") != "" {
+		t.Fatal("conflicting checkout was not reset to the accepted HEAD")
+	}
+	if err := b.ReleaseAdvance("advance-" + conflicting[:12]); err != nil {
+		t.Fatal(err)
+	}
+	requireUntouched(t, w, accepted)
 }
 
 // The broker recomputes the effective tree of what it stages and refuses
