@@ -1,0 +1,71 @@
+{
+  "full_suite": [
+    "go.work",
+    "**/go.mod",
+    "**/go.sum",
+    "uv.lock",
+    "pyproject.toml",
+    ".python-version",
+    ".github/**",
+    "scripts/**",
+    "**/*.proto",
+    "buf*.yaml",
+    "buf.lock",
+    "**/gen/**",
+    "**/*.pb.go",
+    "**/*_pb2.py",
+    "**/*_pb2.pyi",
+    "**/*_pb2_grpc.py",
+    "tests/conftest.py",
+    "tests/*.py",
+    "tests/**/conftest.py",
+    "tests/fixtures/**",
+    ".golangci.yml",
+    ".golangci.yaml",
+    "tach.toml",
+    "pyrightconfig.json",
+    ".gitmodules",
+    "third_party/**"
+  ],
+  "python_always": [
+    "tests/unit/test_architecture.py",
+    "tests/unit/test_benchmark_neutrality.py",
+    "tests/unit/test_polling_policy.py",
+    "tests/unit/test_sdo_repository_scope.py",
+    "tests/unit/test_agent_skill_commands.py"
+  ],
+  "go_workspace_modules": [
+    "sdo/operator/sdk",
+    "sdo/operator/core",
+    "sdo/operator/contracts",
+    "sdo/operator/telemetry",
+    "sdo/operator/runtime",
+    "sdo/operator",
+    "benchmarks/sregym/protocol/native_receipt_go",
+    "benchmarks/sregym/protocol/submission_go",
+    "benchmarks/sregym/fastloop/replay_go"
+  ],
+  "go_binaries": [
+    "sdo/operator/cmd/sdo-operator",
+    "benchmarks/sregym/protocol/native_receipt_go/cmd/sdo-native-receipt",
+    "benchmarks/sregym/protocol/submission_go/cmd/sdo-submission-guard"
+  ],
+  "go_consumer_modules": [
+    "sdo/operator/sdk",
+    "sdo/operator/contracts"
+  ],
+  "python_go_consumers": [
+    "tests/unit/benchmarks/sregym/**",
+    "tests/unit/sdo/operator/**",
+    "tests/unit/test_*.py"
+  ],
+  "python_shards": {
+    "fastloop": [
+      "tests/unit/benchmarks/sregym/fastloop/**"
+    ]
+  },
+  "documentation": [
+    "README.md",
+    "LICENSE"
+  ]
+}

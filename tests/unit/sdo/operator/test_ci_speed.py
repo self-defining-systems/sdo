@@ -14,6 +14,12 @@ import yaml
 ROOT = Path(__file__).resolve().parents[4]
 
 
+@pytest.fixture(autouse=True)
+def _no_selection_plan(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The CI runner exports SDO_CI_PLAN for the job; the runner scripts under test must not read it."""
+    monkeypatch.delenv("SDO_CI_PLAN", raising=False)
+
+
 def workflow() -> dict:
     return yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
 
@@ -253,7 +259,9 @@ def test_envtest_binaries_are_cached_by_pinned_version_in_pr_and_nightly_go_jobs
         assert len(steps) == 1, job
         assert steps[0]["uses"].startswith("actions/cache@"), "must save after a miss"
         assert version[1] in steps[0]["with"]["key"]
-    assert "if" not in [s for s in workflow()["jobs"]["tests"]["steps"] if "sdo-envtest" in str(s.get("with"))][0]
+    # Only the skip of a shard with no selected packages may condition it, never the event or branch.
+    cache = [s for s in workflow()["jobs"]["tests"]["steps"] if "sdo-envtest" in str(s.get("with"))][0]
+    assert cache.get("if", "env.SDO_CI_SKIP != 'true'") == "env.SDO_CI_SKIP != 'true'"
 
 
 def test_envtest_binaries_are_installed_by_the_pinned_script_not_by_a_test() -> None:

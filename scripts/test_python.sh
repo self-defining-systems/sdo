@@ -14,6 +14,18 @@ cd "$PROJECT_ROOT"
 # reason; fail here, once, with the remedy printed.
 python3 scripts/init_test_prereqs.py --check
 
+# A pull request run names the test files its changes can affect (scripts/ci_select.py);
+# without a plan, or when the plan is the full suite, the whole shard runs.
+selected=()
+if [[ -n "${SDO_CI_PLAN:-}" && "$(python3 scripts/ci_select.py mode --plan "$SDO_CI_PLAN")" == selected ]]; then
+    mapfile -t selected < <(python3 scripts/ci_select.py python-paths --plan "$SDO_CI_PLAN" --shard "${SDO_PYTEST_SHARD:-core}")
+    if [[ ${#selected[@]} -eq 0 || -z "${selected[0]}" ]]; then
+        echo "no Python tests selected for the ${SDO_PYTEST_SHARD:-core} shard"
+        exit 0
+    fi
+    echo "==> selected ${#selected[@]} Python test files"
+fi
+
 # Build the benchmark protocol tools once for this invocation, from this checkout.
 # xdist workers otherwise independently compile/link the same executables on their
 # first receipt/submission test. Only compiler entries persist; never trust a
@@ -68,6 +80,10 @@ case "${SDO_PYTEST_SHARD:-}" in
         ;;
     *) echo "unknown Python test shard: $SDO_PYTEST_SHARD" >&2; exit 2 ;;
 esac
+if [[ ${#selected[@]} -gt 0 ]]; then
+    paths=("${selected[@]}")
+    coverage=(--no-cov) # a partial run says nothing about the floor, which full runs enforce
+fi
 # Tach's plugin only selects impacted tests when asked (--tach); otherwise it
 # adds about ten seconds of git analysis to every xdist worker's collection.
 # Module boundaries are enforced by `tach check` in check_errors.sh.
