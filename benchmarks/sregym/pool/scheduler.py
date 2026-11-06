@@ -1,6 +1,6 @@
 """The single run owner: places each problem stream's first+repeat pairs on registry lanes across hosts.
 
-One process owns the pair journal (an exclusive flock for its lifetime). Lane
+A single process owns the pair journal (an exclusive flock for its lifetime). Lane
 state lives only in the registry. Each tick finishes ended deploys and pairs,
 then places waiting pairs. A pair runs as one fastloop parallel plan on its
 lane's host; its native rows decide the next step with fastloop's own classes:
