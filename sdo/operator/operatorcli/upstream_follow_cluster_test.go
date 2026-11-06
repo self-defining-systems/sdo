@@ -249,7 +249,7 @@ func TestObligationsAreSurfacedInTheOperabilityConfigMap(t *testing.T) {
 	ctx := context.Background()
 	client := fake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: install.OperabilityConfigMap, Namespace: testControl}, Data: map[string]string{"summary.json": "{}"}})
 	store := configMapObligations{Client: client, Namespace: testControl}
-	owed := []upstream.Obligation{{Path: ".", Kind: upstream.ObligationDesignerRefresh, Accepted: "c1", Cause: "coverage", Owner: "designer", Reason: "synthetic", Attempts: 3, Since: time.Unix(1_700_000_000, 0).UTC()}}
+	owed := []upstream.Obligation{{Path: ".", Kind: upstream.ObligationDesignerRefresh, Accepted: "c1", Cause: "coverage", Owner: "designer", Reason: "synthetic", Attempts: 3, Since: time.Unix(1_700_000_000, 0).UTC(), Held: "agent_not_converging", HeldOwner: "designer"}}
 	if err := store.Save(ctx, owed); err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +257,7 @@ func TestObligationsAreSurfacedInTheOperabilityConfigMap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"cause":"coverage"`, `"owner":"designer"`, `"attempts":3`, `"kind":"designer_refresh"`} {
+	for _, want := range []string{`"cause":"coverage"`, `"owner":"designer"`, `"attempts":3`, `"kind":"designer_refresh"`, `"held":"agent_not_converging"`, `"held_owner":"designer"`} {
 		if !strings.Contains(configMap.Data[install.OperabilityObligationsKey], want) {
 			t.Fatalf("obligations summary %q lacks %s", configMap.Data[install.OperabilityObligationsKey], want)
 		}
