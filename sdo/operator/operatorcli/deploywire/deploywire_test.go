@@ -1,8 +1,11 @@
 package deploywire
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,6 +14,8 @@ import (
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/deployment"
+	"sdo.dev/operator/lifecycle"
+	"sdo.dev/operator/telemetry"
 )
 
 func fullIdentity() Identity {
@@ -55,10 +60,28 @@ func TestIdentityRejectsWhatTheLaunchFlagsReject(t *testing.T) {
 	}
 }
 
+// telemetryEnvironmentFile writes, once, the open environment document the
+// launch names; the controller reads it at start, so the deploy wiring does too.
+var telemetryEnvironmentFile = sync.OnceValue(func() string {
+	dir, err := os.MkdirTemp("", "deploywire-env")
+	if err != nil {
+		panic(err)
+	}
+	data, err := telemetry.Environment{Version: telemetry.EnvironmentVersion, ApplicationNamespace: "shop", ControlNamespace: "sdo-system"}.Marshal()
+	if err != nil {
+		panic(err)
+	}
+	path := filepath.Join(dir, "environment.json")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		panic(err)
+	}
+	return path
+})
+
 func launch() *contracts.ControllerConfig {
 	return &contracts.ControllerConfig{
 		Namespace: "shop", ControlNamespace: "sdo-system", AppRoot: "/synthetic/app", BrokerWorktreeRoot: "/synthetic/repo/proposals",
-		RepositoryMountPath: "/synthetic/repo", RepositoryPvc: "repo", Replay: "off", TelemetryEnvironmentFile: "/synthetic/telemetry/environment.json",
+		RepositoryMountPath: "/synthetic/repo", RepositoryPvc: "repo", Replay: "off", TelemetryEnvironmentFile: telemetryEnvironmentFile(),
 	}
 }
 
@@ -86,13 +109,17 @@ func TestRepairDeployerIsTheTrustedDeployer(t *testing.T) {
 	if deployer.Namespace != "shop" || deployer.AcceptedRoot != "/synthetic/app" {
 		t.Fatalf("deployer target = %+v", deployer)
 	}
-	verifier, ok := repair.Verifier.(deployment.IndependentHealthVerifier)
+	applied, ok := repair.Verifier.(lifecycle.TelemetryAppliedVerifier)
+	if !ok || applied.Apply == nil {
+		t.Fatalf("repair verifier = %T, want one that applies telemetry backends first", repair.Verifier)
+	}
+	verifier, ok := applied.Next.(deployment.IndependentHealthVerifier)
 	if !ok || verifier.Readiness == nil || verifier.Readiness.Renderers != deployer.Renderers || verifier.OperatorRoot != "/opt/sdo/sdo/operator" || verifier.AcceptedRoot != "/synthetic/app" {
 		t.Fatalf("verifier = %+v", repair.Verifier)
 	}
 	// The independent verification reads the same telemetry environment the
 	// controller does, never a separate metrics URL.
-	if probe, ok := verifier.Probe.(deployment.AcceptedDetectorProbe); !ok || probe.TelemetryEnvironment != "/synthetic/telemetry/environment.json" {
+	if probe, ok := verifier.Probe.(deployment.AcceptedDetectorProbe); !ok || probe.TelemetryEnvironment != telemetryEnvironmentFile() {
 		t.Fatalf("probe = %+v", verifier.Probe)
 	}
 }

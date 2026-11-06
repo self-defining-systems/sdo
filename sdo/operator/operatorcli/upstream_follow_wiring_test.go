@@ -10,6 +10,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/deployment"
+	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/operatorcli/catalog/upstreams"
 	"sdo.dev/operator/upstream"
 )
@@ -43,7 +44,11 @@ func TestControllerAdvancerWiresTheOnboardingDeployer(t *testing.T) {
 	if deployer.Environment != nil || deployer.Namespace != "shop" || deployer.AcceptedRoot != "/synthetic/app" {
 		t.Fatalf("deployer target = %+v", deployer)
 	}
-	verifier, ok := advancer.Verifier.(deployment.IndependentHealthVerifier)
+	applied, ok := advancer.Verifier.(lifecycle.TelemetryAppliedVerifier)
+	if !ok || applied.Apply == nil {
+		t.Fatalf("advance verifier = %T, want one that applies telemetry backends first", advancer.Verifier)
+	}
+	verifier, ok := applied.Next.(deployment.IndependentHealthVerifier)
 	if !ok || verifier.Readiness == nil || verifier.Readiness.Renderers != deployer.Renderers || verifier.OperatorRoot != "/opt/sdo/sdo/operator" {
 		t.Fatalf("verifier = %+v", advancer.Verifier)
 	}

@@ -158,6 +158,10 @@ func controllerAdvancer(launch *contracts.ControllerConfig, operatorRoot string,
 	if err != nil {
 		return lifecycle.Advancer{}, lifecycle.AdvanceConfig{}, advanceMaintenance{}, err
 	}
+	verifier, err := deploywire.AppliedVerifier(launch, operatorRoot, &deployer, client)
+	if err != nil {
+		return lifecycle.Advancer{}, lifecycle.AdvanceConfig{}, advanceMaintenance{}, err
+	}
 	namespace := launch.GetNamespace()
 	shapes := renderers.Catalog()
 	maintenance := advanceMaintenance{Client: client, Namespace: controlNamespace(launch), Now: processio.Now}
@@ -165,7 +169,7 @@ func controllerAdvancer(launch *contracts.ControllerConfig, operatorRoot string,
 		Upstreams: catalog,
 		Broker:    repository,
 		Readiness: deployer,
-		Verifier:  deploywire.Verifier(launch, operatorRoot, &deployer),
+		Verifier:  verifier,
 		Shape: func(ctx context.Context, root, revision string, source *contracts.DeploymentSource) (string, error) {
 			return rendered.Source{Deployment: source, Catalog: shapes, Repository: root, Environment: launch.GetRenderEnvironment()}.ShapeDigest(ctx, revision, namespace)
 		},
