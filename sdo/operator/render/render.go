@@ -2,10 +2,17 @@ package render
 
 import (
 	"context"
+	"errors"
 
 	"google.golang.org/protobuf/proto"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
+
+// ErrTransient marks a renderer failure that says nothing about the source: the
+// renderer could not run (for example its isolated child could not be started
+// under host resource pressure). Callers retry instead of treating the source
+// as invalid.
+var ErrTransient = errors.New("render unavailable")
 
 // SecretMode states whether Secret values may leave the renderer.
 type SecretMode int

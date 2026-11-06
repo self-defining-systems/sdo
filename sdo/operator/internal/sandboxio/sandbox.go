@@ -106,6 +106,15 @@ func (e *Error) Error() string {
 // Is makes the error match ErrChild.
 func (e *Error) Is(target error) bool { return target == ErrChild }
 
+// ErrSpawn matches a failure to start the child at all: no executable, a pipe
+// that could not be made, or fork/exec refused (EAGAIN, ENOMEM). It says
+// nothing about the request, so it is never an *Error and never ErrChild; a
+// caller treats it as a transient host condition.
+var ErrSpawn = errors.New("sandboxio: child could not be started")
+
+// executableFn finds the child's executable; tests replace it.
+var executableFn = executable
+
 // Register names h for Run. When this process was started as the child for
 // name, Register serves one request from stdin and exits; call it from an init
 // function so the child never runs anything else of the binary.
@@ -145,7 +154,8 @@ func serve(h Handler) int {
 }
 
 // Run sends request to the child serving name and returns its response. A
-// child that exceeds a limit or crashes is an *Error; when ctx ends first the
+// child that exceeds a limit or crashes is an *Error, one that cannot be
+// started wraps ErrSpawn; when ctx ends first the
 // child is killed and the error wraps context.Cause(ctx).
 func Run(ctx context.Context, name string, request []byte, limits Limits) ([]byte, error) {
 	mu.Lock()
@@ -161,9 +171,9 @@ func Run(ctx context.Context, name string, request []byte, limits Limits) ([]byt
 	case <-ctx.Done():
 		return nil, fmt.Errorf("sandboxed %s not started: %w", name, context.Cause(ctx))
 	}
-	exe, err := executable()
+	exe, err := executableFn()
 	if err != nil {
-		return nil, fmt.Errorf("sandboxed %s: find own executable: %w", name, err)
+		return nil, fmt.Errorf("sandboxed %s: find own executable: %w: %w", name, ErrSpawn, err)
 	}
 	cmd := exec.CommandContext(ctx, exe, childArg, name)
 	cmd.Env = []string{
@@ -178,10 +188,10 @@ func Run(ctx context.Context, name string, request []byte, limits Limits) ([]byt
 	cmd.SysProcAttr = childAttributes()
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, fmt.Errorf("sandboxed %s: %w", name, err)
+		return nil, fmt.Errorf("sandboxed %s: %w: %w", name, ErrSpawn, err)
 	}
 	if err := start(cmd); err != nil {
-		return nil, fmt.Errorf("sandboxed %s: start child: %w", name, err)
+		return nil, fmt.Errorf("sandboxed %s: start child: %w: %w", name, ErrSpawn, err)
 	}
 	response, readErr := io.ReadAll(io.LimitReader(stdout, limits.Output+1))
 	overflow := int64(len(response)) > limits.Output

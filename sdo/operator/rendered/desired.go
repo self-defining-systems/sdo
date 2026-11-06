@@ -117,13 +117,13 @@ func Desired(ctx context.Context, fsys render.FS, env render.Env, cat *render.Ca
 }
 
 // desiredError keeps an unavailable cause transient (a renderer reading a
-// GitTreeFS that fails mid-read) and makes everything else invalid.
+// GitTreeFS that fails mid-read, or one that could not run: render.ErrTransient) and makes everything else invalid.
 func desiredError(err error) error {
 	var existing *SourceError
 	if errors.As(err, &existing) && existing.Kind == SourceUnavailable {
 		return &SourceError{Kind: SourceUnavailable, Err: err}
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, render.ErrTransient) {
 		return &SourceError{Kind: SourceUnavailable, Err: err}
 	}
 	return &SourceError{Kind: SourceInvalid, Err: err}

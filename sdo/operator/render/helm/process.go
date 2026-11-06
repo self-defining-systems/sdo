@@ -26,7 +26,8 @@ import (
 // crash or hang the caller. A Runner stops when ctx ends. An error that wraps
 // ErrRenderProcess means the render itself broke a process limit or crashed;
 // helm reports it as a render-budget violation (a verdict on the chart). Any
-// other error (the process could not be started) is returned as is.
+// other error is returned as is; a process that could not be started should wrap
+// render.ErrTransient so that it is not mistaken for a verdict on the chart.
 type Runner func(ctx context.Context, request []byte) ([]byte, error)
 
 // ErrRenderProcess marks a Runner failure caused by the render: the process
