@@ -544,7 +544,7 @@ func (a Advancer) deployAndAccept(ctx context.Context, cfg AdvanceConfig, result
 		// the live checks classify the failure by type, and the cause routes it
 		// for an advance, never to a deployer correction: the candidate is
 		// already applied.
-		classified, cerr := a.Readiness.(LiveChecker).CheckLive(ctx, proposal.Path, plan, DeploymentReceipt{}, err)
+		classified, cerr := a.Readiness.CheckLive(ctx, proposal.Path, plan, DeploymentReceipt{}, err)
 		if cerr != nil {
 			return result, fmt.Errorf("classify deployment failure (%v): %w", err, cerr)
 		}
