@@ -12,7 +12,7 @@ import (
 // Each operability check ID has one producer per report stage. The offline
 // gate and the live phase both evaluate O1.apis against a recorded discovery;
 // a stage report built from the REAL producers of a deployment with discovery
-// (the case that onboarded GitLab) must carry every ID once and validate, for
+// (the case that broke live onboarding) must carry every ID once and validate, for
 // every combination of stage assemblers: deployment (offline + live), advance
 // (offline + live + detectors) and complete candidate (live + memory + detectors).
 func TestStageReportsCarryEachCheckIDOnce(t *testing.T) {
