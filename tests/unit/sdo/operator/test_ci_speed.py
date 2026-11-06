@@ -29,7 +29,7 @@ def test_pr_ci_shards_are_fixed_small_and_never_skipped_by_path() -> None:
     config = workflow()
     assert set(config["jobs"]) == {"checks", "python", "tests", "required-pr-ci"}
     assert "merge_group" in config.get("on", config.get(True, {}))
-    assert config["jobs"]["python"]["strategy"]["matrix"]["shard"] == ["core", "fastloop"]
+    assert config["jobs"]["python"]["strategy"]["matrix"]["shard"] == ["core", "adapter", "fastloop"]
     assert config["jobs"]["tests"]["strategy"]["matrix"]["shard"] == ["validate", "rest"]
     for name, job in config["jobs"].items():
         assert job.get("strategy", {}).get("fail-fast", False) is False
@@ -63,10 +63,13 @@ def test_required_ci_aggregate_step_runs_on_every_event() -> None:
 
 
 def test_python_shards_cover_every_test_path_and_gate_combined_coverage() -> None:
-    """Core is everything outside fastloop; the combined floor is enforced after the shards finish."""
+    """Core is everything outside fastloop and adapter; the combined floor is enforced after the shards finish."""
     script = (ROOT / "scripts/test_python.sh").read_text()
-    assert "--ignore=tests/unit/benchmarks/sregym/fastloop tests" in script
+    assert (
+        "--ignore=tests/unit/benchmarks/sregym/fastloop --ignore=tests/unit/benchmarks/sregym/adapter tests" in script
+    )
     assert "paths=(tests/unit/benchmarks/sregym/fastloop)" in script
+    assert "paths=(tests/unit/benchmarks/sregym/adapter)" in script
     steps = workflow()["jobs"]["required-pr-ci"]["steps"]
     commands = "\n".join(step.get("run", "") for step in steps)
     assert "coverage combine" in commands
