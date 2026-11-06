@@ -587,6 +587,7 @@ def _runtime_config(args: argparse.Namespace, environment: FastloopEnvironment, 
         reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
         code_path=getattr(args, "code_path", "go"),
+        code_path_overrides=getattr(args, "code_path_overrides", "") or "",
         late_findings=args.late_findings,
         healthy_baseline=args.healthy_baseline,
         controller_namespace=control_namespace_for(environment.namespace),
@@ -659,6 +660,7 @@ def _sdo_agent(
             synchronize=lambda: sync_existing(install_config),
             progress=getattr(args, "admission_progress", None),
             before_proof=getattr(args, "admission_before_proof", None),
+            pre_onboarding_hook=getattr(args, "pre_onboarding_hook", None),
         )
         ops = EvalAdmissionOps(ops, admission, fresh=fresh_memory_start)  # type: ignore[assignment]
 
@@ -1844,6 +1846,19 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--frozen-memory", action="store_true", help="keep closure evidence private and disable learning")
     run.add_argument("--reflection-session", choices=("resume", "fresh"), default="resume")
     run.add_argument("--code-path", choices=("go", "shell"), default="go")
+    run.add_argument(
+        "--code-path-overrides",
+        default="",
+        metavar="JSON",
+        help='named code-path seam overrides passed to the controller, for example \'{"response_stages": ["agent"]}\' '
+        "to score detection without automatic responses",
+    )
+    run.add_argument(
+        "--pre-onboarding-hook",
+        type=Path,
+        help="executable run once per admission before SDO onboards the fresh app: argv is the app namespace, "
+        "KUBECONFIG is the lane's; use it to create probe fixtures such as seeded users",
+    )
     run.add_argument("--reflection-guidance", choices=("baseline", "generalize", "generalize-spec"), default="baseline")
     run.add_argument("--late-findings", choices=("off", "pull"), default="off")
     run.add_argument(
