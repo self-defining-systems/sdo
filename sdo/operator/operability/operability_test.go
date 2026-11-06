@@ -109,6 +109,20 @@ func TestDecideOwnsOnlyItsChecksAndFeedback(t *testing.T) {
 	}
 }
 
+// The decision's cause is the worst failing cause (by rank, then report order),
+// and its owner is that cause's route.
+func TestDecideCauseIsTheWorstFailingCause(t *testing.T) {
+	r := allPass(t)
+	r, _ = r.With(chk("O1.a", StatusFail, CauseScope), chk("O2.b", StatusFail, CauseEnvironment))
+	d := r.DecideIn(ModeAdvance, AllItems()...)
+	if d.Cause != CauseEnvironment || d.Owner != OwnerHuman || len(d.Checks) != 2 {
+		t.Fatalf("decision = %+v, want environment/human over both checks", d)
+	}
+	if got := allPass(t).Decide(AllItems()...); got.Cause != "" {
+		t.Fatalf("accepted decision has cause %q", got.Cause)
+	}
+}
+
 // Adding a failing or pending check to a report never makes it more accepted.
 func TestDecideMonotone(t *testing.T) {
 	rng := rand.New(rand.NewSource(1))

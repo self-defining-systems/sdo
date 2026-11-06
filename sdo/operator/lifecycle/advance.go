@@ -156,6 +156,12 @@ const (
 // derived from a failing check: the revision itself is refused before there
 // is a report to read them from. The owner is always operability.RouteIn
 // (ModeAdvance, cause).
+//
+// Holds derived from a report take their cause from operability.Decision:
+// among all failing checks the worst cause wins (rank: infrastructure, SDO
+// defects, deployer causes, designer causes; ties by report order), the owner
+// is that cause's route, and the items are every failing check the owner must
+// act on. The hold name follows the cause (holdForCause), never the first check.
 var holdRouting = map[HoldReason]struct {
 	cause operability.Cause
 	items []operability.ItemID
@@ -366,7 +372,7 @@ func (a Advancer) Advance(ctx context.Context, cfg AdvanceConfig, request upstre
 		return result, err
 	}
 	if decision.Kind != operability.Accepted {
-		return heldBy(result, holdForCause(decision.Checks[0].Cause), decision), nil
+		return heldBy(result, holdForCause(decision.Cause), decision), nil
 	}
 	result, err = a.deployAndAccept(ctx, cfg, result, proposal, candidate, plan, request.Prev, offlineChecks, &published)
 	if err != nil || result.Outcome != AdvanceAccepted || !shapeChanged {
@@ -566,7 +572,7 @@ func (a Advancer) deployAndAccept(ctx context.Context, cfg AdvanceConfig, result
 		if decision.Kind == operability.Retry {
 			return result, err
 		}
-		return heldBy(result, holdForCause(decision.Checks[0].Cause), decision), nil
+		return heldBy(result, holdForCause(decision.Cause), decision), nil
 	}
 	if !completeDeploymentReceipt(receipt) || !rendered.SameDeploymentSource(receipt.Source, plan.GetSource()) {
 		return held(result, HoldRollout, "deployment returned incomplete evidence or another source"), nil
@@ -590,10 +596,7 @@ func (a Advancer) deployAndAccept(ctx context.Context, cfg AdvanceConfig, result
 			if errors.As(err, &pending) {
 				// The detectors could not answer in time: nothing says the
 				// application is unhealthy, and the designer owns the probes.
-				pendingHold := held(result, HoldHealth, pending.Error())
-				pendingHold.Cause = operability.CauseProbeUnavailable
-				pendingHold.Owner = operability.RouteIn(operability.ModeAdvance, pendingHold.Cause)
-				return pendingHold, nil
+				return pendingHold(result, pending.Error()), nil
 			}
 			return result, err
 		}
@@ -612,7 +615,7 @@ func (a Advancer) deployAndAccept(ctx context.Context, cfg AdvanceConfig, result
 		// provenance rule (a firing floor detector is the application's,
 		// responder; only the designer's own detectors firing is the
 		// designer's); the cluster is left as is for ordinary detection.
-		return heldBy(result, holdForCause(decision.Checks[0].Cause), decision), nil
+		return heldBy(result, holdForCause(decision.Cause), decision), nil
 	}
 	receiptOfAdvance, err := a.Broker.PublishAdvance(ctx, AdvanceID(result.Upstream), result.Upstream, prev, deploymentToBroker(receipt), report)
 	if err != nil {
@@ -634,10 +637,15 @@ func held(result AdvanceResult, reason HoldReason, detail string) AdvanceResult 
 	return result
 }
 
-// heldBy holds the revision for a decision the report reached: the cause and
-// items are those of the failing checks the owner must act on, and the detail
-// words them on one line.
+// heldBy holds the revision for a decision the report reached: the cause is
+// the decision's worst failing cause (operability.Decision.Cause), the items
+// are those of the failing checks the owner must act on, and the detail words
+// them on one line. A Wait decision (pending checks, no failure) is the
+// pending-verification hold.
 func heldBy(result AdvanceResult, reason HoldReason, decision operability.Decision) AdvanceResult {
+	if decision.Kind == operability.Wait {
+		return pendingHold(result, strings.Join(strings.Fields(decision.Feedback()), " "))
+	}
 	detail := strings.Join(strings.Fields(decision.Feedback()), " ")
 	if len(detail) > maxHoldDetail {
 		detail = detail[:maxHoldDetail] + "..."
@@ -646,13 +654,22 @@ func heldBy(result AdvanceResult, reason HoldReason, decision operability.Decisi
 	if len(decision.Checks) == 0 {
 		return result
 	}
-	result.Cause, result.Owner, result.Items = decision.Checks[0].Cause, decision.Owner, nil
+	result.Cause, result.Owner, result.Items = decision.Cause, decision.Owner, nil
 	for _, check := range decision.Checks {
 		item, _, _ := strings.Cut(check.ID, ".")
 		if id := operability.ItemID(item); !slices.Contains(result.Items, id) {
 			result.Items = append(result.Items, id)
 		}
 	}
+	return result
+}
+
+// pendingHold is the hold of detectors that could not answer in time: nothing
+// says the application is unhealthy, and the designer owns the probes.
+func pendingHold(result AdvanceResult, detail string) AdvanceResult {
+	result = held(result, HoldHealth, detail)
+	result.Cause = operability.CauseProbeUnavailable
+	result.Owner = operability.RouteIn(operability.ModeAdvance, result.Cause)
 	return result
 }
 
