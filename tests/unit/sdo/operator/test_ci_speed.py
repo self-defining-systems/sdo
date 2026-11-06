@@ -14,6 +14,12 @@ import yaml
 ROOT = Path(__file__).resolve().parents[4]
 
 
+@pytest.fixture(autouse=True)
+def _no_selection_plan(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The CI runner exports SDO_CI_PLAN for the job; the runner scripts under test must not read it."""
+    monkeypatch.delenv("SDO_CI_PLAN", raising=False)
+
+
 def workflow() -> dict:
     return yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
 
