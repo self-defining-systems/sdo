@@ -979,6 +979,11 @@ func (c *Controller) nextWake() (time.Time, string) {
 		if c.earlyStopRetryAt.After(verificationDeadline) {
 			verificationDeadline = c.earlyStopRetryAt
 		}
+		// A running stability window outlives the deadline; its own wake
+		// below covers it, and an expired deadline would spin the loop.
+		if !verificationDeadline.After(c.clock()) && c.recoveryWindowRunningLocked(c.clock()) {
+			verificationDeadline = time.Time{}
+		}
 	}
 	earlyDeadline := time.Time{}
 	earlyReason := "closure stability window"
@@ -1529,7 +1534,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 			verification.Summary = recoveryStabilitySummary
 		}
 		c.cacheVerificationLocked(verification)
-		if !verified && (early || now.Before(c.verificationDeadlineLocked())) {
+		if !verified && (early || now.Before(c.verificationDeadlineLocked()) || c.recoveryWindowRunningLocked(now)) {
 			c.mu.Unlock()
 			return
 		}

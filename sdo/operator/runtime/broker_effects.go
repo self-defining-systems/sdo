@@ -217,13 +217,14 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		if len(effect.Closure.FinalDetectorStates) > 0 && effect.Closure.ClosureStabilityWindow > 0 && (recheck.Verdict == closureRecheckConfirmed || recheck.SourceOnly) {
 			c.mu.Lock()
 			clear := c.recoveryTrackersClear(effect.Closure.Request)
-			stable := clear && c.recoveryProofForEpochLocked(c.clock(), recheck.States, true, effect.Closure.VerifiedAt.Add(-effect.Closure.ClosureStabilityWindow), c.closureVerificationDeadline(effect.Closure))
+			stable := clear && c.recoveryProofForEpochLocked(c.clock(), recheck.States, true, effect.Closure.VerifiedAt.Add(-effect.Closure.ClosureStabilityWindow))
 			if !clear {
 				c.closureStableSince = time.Time{}
 			}
+			windowRunning := clear && c.recoveryWindowRunningLocked(c.clock())
 			c.mu.Unlock()
 			if !stable {
-				if !c.clock().Before(c.closureVerificationDeadline(effect.Closure)) {
+				if !windowRunning && !c.clock().Before(c.closureVerificationDeadline(effect.Closure)) {
 					if effect.Freeze {
 						cancel()
 						return c.resumeClosureVerification(ctx, effect)

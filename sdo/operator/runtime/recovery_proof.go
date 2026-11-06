@@ -23,17 +23,19 @@ func (c *Controller) recoveryObservationEpochLocked() time.Time {
 // Call only after fresh health and every write/rollout prerequisite holds.
 // A restart never reuses an observer's in-memory proof.
 func (c *Controller) recoveryProofLocked(now time.Time, states []DetectorEvaluation, safe bool) bool {
-	deadline := time.Time{}
-	if c.currentIncidentRequest != nil {
-		deadline = c.currentIncidentRequest.ResponseDeadline
-		if c.responderDone {
-			deadline = c.verificationDeadlineLocked()
-		}
-	}
-	return c.recoveryProofForEpochLocked(now, states, safe, c.recoveryObservationEpochLocked(), deadline)
+	return c.recoveryProofForEpochLocked(now, states, safe, c.recoveryObservationEpochLocked())
 }
 
-func (c *Controller) recoveryProofForEpochLocked(now time.Time, states []DetectorEvaluation, safe bool, since, deadline time.Time) bool {
+// recoveryWindowRunningLocked reports a stability window that is still running
+// over clear health: the proof is only waiting for time to pass. The
+// verification timeout bounds findings and unconfirmed observation, never this.
+// A window that restarts at every pass (safety lost again, a responder still
+// writing) is not running; it never completes, so the timeout still applies.
+func (c *Controller) recoveryWindowRunningLocked(now time.Time) bool {
+	return !c.closureStableSince.IsZero() && c.closureStableSince.Before(now) && len(c.activeHealthDetectors()) == 0
+}
+
+func (c *Controller) recoveryProofForEpochLocked(now time.Time, states []DetectorEvaluation, safe bool, since time.Time) bool {
 	if !safe {
 		c.closureStableSince = time.Time{}
 		c.recoverySafetyLost = true
@@ -65,7 +67,7 @@ func (c *Controller) recoveryProofForEpochLocked(now time.Time, states []Detecto
 		c.closureStableSince = since
 	}
 	stableAt := c.closureStableSince.Add(c.config.ClosureStabilityWindow)
-	return !now.Before(stableAt) && (deadline.IsZero() || !stableAt.After(deadline))
+	return !now.Before(stableAt)
 }
 
 // Completed receipt timestamps bound the applied write, independently of how
