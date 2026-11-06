@@ -1,0 +1,115 @@
+# Kind lane values of the GitLab umbrella chart (SDO value_files entry). Keys under `gitlab:` are the upstream gitlab
+# chart's values (it has its own `gitlab:` section, hence `gitlab.gitlab.*`); `global:` reaches every subchart.
+# Credentials are synthetic and valid only for this throwaway lane.
+postgresql:
+  enabled: true
+  password: lane-postgres-password
+redis:
+  enabled: true
+  password: lane-redis-password
+objectstore:
+  enabled: true
+  accessKey: laneaccesskey
+  secretKey: lanesecretkey1234567890
+  buckets:
+    - gitlab-artifacts
+    - gitlab-uploads
+    - gitlab-lfs
+    - gitlab-packages
+    - gitlab-mr-diffs
+    - gitlab-terraform-state
+    - gitlab-ci-secure-files
+    - gitlab-dependency-proxy
+    - gitlab-pages
+    - gitlab-backups
+    - registry
+
+global:
+  hosts:
+    domain: 127.0.0.1.nip.io
+    https: false
+  gatewayApi:
+    enabled: false
+    installEnvoy: false
+    configureCertmanager: false
+  ingress:
+    enabled: true
+    configureCertmanager: false
+    provider: nginx
+    class: nginx
+    tls:
+      enabled: false
+  psql:
+    host: gitlab-postgresql
+    port: 5432
+    database: gitlabhq_production
+    username: gitlab
+    password:
+      secret: gitlab-postgres-password
+      key: password
+  redis:
+    host: gitlab-redis
+    auth:
+      enabled: true
+      secret: gitlab-redis-password
+      key: password
+  minio:
+    enabled: false
+  appConfig:
+    object_store:
+      enabled: true
+      proxy_download: true
+      connection:
+        secret: gitlab-object-storage
+        key: connection
+  kas:
+    enabled: false
+
+gitlab:
+  installCertmanager: false
+  nginx-ingress:
+    enabled: false
+  prometheus:
+    install: false
+  gitlab-runner:
+    install: false
+  traefik:
+    install: false
+  haproxy:
+    install: false
+  gitlab-zoekt:
+    install: false
+  openbao:
+    install: false
+  ai-gateway:
+    install: false
+  certmanager-issuer:
+    email: root@example.com
+  gitlab:
+    webservice:
+      helmTests:
+        enabled: false
+      minReplicas: 1
+      maxReplicas: 1
+      resources:
+        requests: {cpu: 100m, memory: 1Gi}
+    sidekiq:
+      minReplicas: 1
+      maxReplicas: 1
+      resources:
+        requests: {cpu: 50m, memory: 625Mi}
+    gitlab-shell:
+      minReplicas: 1
+      maxReplicas: 1
+    toolbox:
+      enabled: true
+    gitaly:
+      persistence:
+        size: 2Gi
+  registry:
+    storage:
+      secret: gitlab-registry-storage
+      key: config
+    hpa:
+      minReplicas: 1
+      maxReplicas: 1

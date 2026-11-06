@@ -1,0 +1,14 @@
+enabled: true
+name: gitlab-objectstore
+# SeaweedFS (S3 API on 8333); MinIO's community images are no longer published anonymously.
+image: chrislusf/seaweedfs@sha256:c2658820e763294a9e9de7b36c81e59b879e3459148351aee4e31a126ca64860
+region: us-east-1
+accessKey: ""
+secretKey: ""
+buckets: []
+storage: 4Gi
+connectionSecretName: gitlab-object-storage
+registrySecretName: gitlab-registry-storage
+resources:
+  requests: {cpu: 100m, memory: 256Mi}
+  limits: {memory: 1Gi}

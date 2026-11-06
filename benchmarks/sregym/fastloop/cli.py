@@ -253,7 +253,7 @@ def up_preflight(args: argparse.Namespace) -> None:
             raise ValueError("attach-only up requires the existing lane KUBECONFIG")
     if args.kind_worker_nodes < 0:
         raise SystemExit("--kind-worker-nodes must not be negative")
-    if getattr(args, "parallel_root", None) is not None and (args.dev_mount is None or args.app == "toy"):
+    if getattr(args, "parallel_root", None) is not None and (args.dev_mount is None or args.app in {"toy", "gitlab"}):
         raise ValueError("--parallel-root requires an SREGym --dev-mount lane")
     for executable in ("docker", "kind", "kubectl", "go"):
         if shutil.which(executable) is None:
@@ -264,7 +264,7 @@ def up_preflight(args: argparse.Namespace) -> None:
         warnings.warn("--no-dev-mount: code changes require image rebuilds", stacklevel=2)
     elif not (args.dev_mount.resolve() / "sdo/operator/go.mod").is_file():
         raise ValueError(f"fastloop preflight: not an SDO worktree: {args.dev_mount}")
-    if getattr(args, "app", None) != "toy":
+    if getattr(args, "app", None) not in {"toy", "gitlab"}:
         from benchmarks.sregym.fastloop.source_preflight import assert_harness_sources
 
         assert_harness_sources(getattr(args, "sregym_dir", DEFAULT_SREGYM_DIR))
@@ -288,6 +288,10 @@ def _up(args: argparse.Namespace) -> int:
         from benchmarks.sregym.fastloop.toy import up
 
         return up(args)
+    if args.app == "gitlab":
+        from benchmarks.sregym.fastloop.gitlab_lane import up as gitlab_up
+
+        return gitlab_up(args)
     if args.kind_worker_nodes < 0:
         raise SystemExit("--kind-worker-nodes must not be negative")
     if args.dev_mount is not None:
@@ -1672,14 +1676,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     up = commands.add_parser("up", help="create or reuse the cluster and deploy the application once")
     up.add_argument("--run-dir", type=Path, required=True)
-    up.add_argument("--app", choices=("sregym", "toy"), default="sregym")
+    up.add_argument("--app", choices=("sregym", "toy", "gitlab"), default="sregym")
     up.add_argument("--frozen-memory", action="store_true", help="toy: install the supplied seed without judge refresh")
     up.add_argument(
         "--fresh-memory",
         action="store_true",
         help="toy: start with source only and onboard it with SDO's lifecycle agents (needs live agents)",
     )
-    up.add_argument("--goal", help="toy --fresh-memory: the human goal to publish instead of the default")
+    up.add_argument("--goal", help="toy --fresh-memory, gitlab: the human goal to publish instead of the default")
     up.add_argument(
         "--variant",
         choices=("raw", "kustomize", "helm", "compose"),

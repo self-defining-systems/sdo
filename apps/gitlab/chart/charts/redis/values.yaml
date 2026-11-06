@@ -1,0 +1,9 @@
+enabled: true
+name: gitlab-redis
+secretName: gitlab-redis-password
+image: redis:7.4@sha256:2e3eb11462c4e3759e6972678dd051d150ff54b1e60714b3c33b701260172a90
+password: ""
+storage: 1Gi
+resources:
+  requests: {cpu: 50m, memory: 64Mi}
+  limits: {memory: 256Mi}
