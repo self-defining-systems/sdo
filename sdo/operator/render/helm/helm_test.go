@@ -655,3 +655,78 @@ func TestDeterministicDynamicTemplatesRender(t *testing.T) {
 		})
 	}
 }
+
+// containerEnv is the first container's env of the named workload as a map.
+func containerEnv(t *testing.T, res render.Result, name string) map[string]string {
+	t.Helper()
+	for _, o := range res.Objects() {
+		if o.GetName() != name {
+			continue
+		}
+		pod := o.Object["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
+		container := pod["containers"].([]any)[0].(map[string]any)
+		out := map[string]string{"image": container["image"].(string)}
+		for _, e := range container["env"].([]any) {
+			pair := e.(map[string]any)
+			out[pair["name"].(string)] = pair["value"].(string)
+		}
+		return out
+	}
+	t.Fatalf("no workload %s in %v", name, objectNames(res))
+	return nil
+}
+
+// CI-visible stand-in for the opt-in real-chart parity tests : a synthetic
+// umbrella chart with the helper patterns the real one depends on (tpl over
+// values, computed include, a checksum over another template, required,
+// fail-guarded helper, duration) renders through the policy with the values
+// those helpers compute.
+func TestUmbrellaHelperPatternsRenderThroughPolicy(t *testing.T) {
+	res, err := renderChart(t, fixture(t, "umbrella", "c"), render.Env{Namespace: "n", Release: "r"}, cfg("c"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	web := containerEnv(t, res, "r-web")
+	worker := containerEnv(t, res, "r-umbrella-worker")
+	for _, want := range []struct{ got, want, what string }{
+		{web["PUBLIC_URL"], "https://web.example.invalid", "tpl over a value inside a subchart helper"},
+		{web["REQUEST_TIMEOUT"], "1m30s", "duration of an integer"},
+		{web["GREETING"], "hello from web", "tpl over a map of values with the subchart context"},
+		{web["image"], "registry.example.invalid/app/web:1.2.3", "global values in a subchart"},
+		{worker["REDIS_HOST"], "r-redis.n.svc", "tpl over a global resolved by key name"},
+		{worker["IDLE_TIMEOUT"], "1h0m0s", "duration"},
+		{worker["image"], "registry.example.invalid/app/worker:1.2.3", "required"},
+	} {
+		if want.got != want.want {
+			t.Errorf("%s: got %q, want %q", want.what, want.got, want.want)
+		}
+	}
+	kinds := map[string]string{}
+	for _, o := range res.Objects() {
+		kinds[o.GetName()] = o.GetKind()
+	}
+	if kinds["r-web"] != "Deployment" || kinds["r-umbrella-worker"] != "StatefulSet" {
+		t.Fatalf("computed kinds %v", kinds)
+	}
+}
+
+// required and fail are plain chart errors; the policy does not mask them.
+func TestUmbrellaRequiredAndFailSurfaceTheChartMessage(t *testing.T) {
+	cases := map[string]struct {
+		values map[string]any
+		want   string
+	}{
+		"required": {map[string]any{"global": map[string]any{"registry": ""}}, "global.registry is required"},
+		"fail":     {map[string]any{"global": map[string]any{"workloadKind": "CronJob"}}, `unsupported workloadKind "CronJob"`},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			c := cfg("c")
+			c.Values = mustStruct(t, tc.values)
+			_, err := renderChart(t, fixture(t, "umbrella", "c"), render.Env{Namespace: "n", Release: "r"}, c)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error %v, want it to contain %q", err, tc.want)
+			}
+		})
+	}
+}

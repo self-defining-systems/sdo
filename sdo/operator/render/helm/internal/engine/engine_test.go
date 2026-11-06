@@ -14,7 +14,12 @@ import (
 
 func render(t *testing.T) (map[string]string, chartutil.Values, func(e engine.Engine) map[string]string) {
 	t.Helper()
-	ch, err := loader.LoadDir("../../testdata/app")
+	return renderChart(t, "app")
+}
+
+func renderChart(t *testing.T, name string) (map[string]string, chartutil.Values, func(e engine.Engine) map[string]string) {
+	t.Helper()
+	ch, err := loader.LoadDir("../../testdata/" + name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,16 +43,24 @@ func render(t *testing.T) (map[string]string, chartutil.Values, func(e engine.En
 
 // The trimmed copy must render what the Helm engine it was copied from
 // renders. NOTES.txt is the one intended difference (never executed here).
+//
+// umbrella is a synthetic umbrella chart with the helper patterns large
+// charts rely on (tpl over values, computed include, required, fail-guarded
+// helpers, duration, a checksum over another template); no files from any real chart.
 func TestEngineMatchesHelm(t *testing.T) {
-	want, _, run := render(t)
-	got := run(engine.Engine{})
-	for name, w := range want {
-		if g, ok := got[name]; ok && g != w || !ok && !isNotes(name) {
-			t.Errorf("%s differs between the copy and Helm", name)
-		}
-	}
-	if len(got) == 0 {
-		t.Fatal("nothing rendered")
+	for _, chart := range []string{"app", "umbrella"} {
+		t.Run(chart, func(t *testing.T) {
+			want, _, run := renderChart(t, chart)
+			got := run(engine.Engine{})
+			for name, w := range want {
+				if g, ok := got[name]; ok && g != w || !ok && !isNotes(name) {
+					t.Errorf("%s differs between the copy and Helm", name)
+				}
+			}
+			if len(got) == 0 {
+				t.Fatal("nothing rendered")
+			}
+		})
 	}
 }
 

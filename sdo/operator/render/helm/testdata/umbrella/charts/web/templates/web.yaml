@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: {{ include "web.workload" . }}
+metadata:
+  name: {{ .Release.Name }}-web
+spec:
+  replicas: {{ .Values.replicas }}
+  selector: {matchLabels: {app: web}}
+  template:
+    metadata:
+      labels: {app: web}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/config.yaml") . | sha256sum }}
+    spec:
+      containers:
+      - name: web
+        image: {{ .Values.global.registry }}/web:{{ .Values.global.imageTag }}
+        env:
+        - {name: PUBLIC_URL, value: '{{ include "web.scheme" . }}://{{ tpl .Values.hostnameTemplate . }}'}
+        - {name: REQUEST_TIMEOUT, value: {{ duration (int64 .Values.timeout) | quote }}}
+        {{- include "web.env" . | nindent 8 }}
