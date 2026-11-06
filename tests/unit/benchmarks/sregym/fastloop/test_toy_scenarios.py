@@ -262,12 +262,21 @@ def test_pod_parsers():
 
 def test_helm_onboarding_provides_the_plan_of_the_assembled_source(tmp_path: Path):
     prepare_workspace(tmp_path, "unused:v1", fresh=True, variant="helm")
-    plan = provided_deployment_plan("helm", "toy-ns")
+    plan = provided_deployment_plan("helm", "sdo-toy")
     assert plan is not None
     source = plan["source"]
     assert (tmp_path / source["config"]["chart_path"] / "Chart.yaml").is_file()
     assert (tmp_path / plan["images"][0]["config"]["dockerfile_path"]).is_file()
-    assert plan["expected_workload_ids"] == [f"Deployment/toy-ns/{name}" for name in ("frontend", "backend", "catalog")]
+    assert plan["expected_workload_ids"] == [
+        f"Deployment/sdo-toy/{name}" for name in ("frontend", "backend", "catalog")
+    ]
+    values = (tmp_path / "chart" / "values.yaml").read_text()
+    image = plan["images"][0]["image"]
+    repository, _, tag = image.rpartition(":")
+    assert f"repository: {repository}\n" in values
+    assert f"tag: {tag}\n" in values
+    assert "pullPolicy: IfNotPresent" in values
+    assert image.startswith("sdo-benchmark-registry.sdo-toy-sdo.svc.cluster.local:5000/")
     flags = sc.helm_onboarding_arguments(plan)
     assert flags[0] == "--deployment-plan"
     decoded = json.loads(flags[1])

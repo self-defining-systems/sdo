@@ -422,7 +422,7 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 		if err := validate.Err(preflight); err != nil {
 			return err
 		}
-		if len(paths) == 0 && !(actor == HealthJudge && phase == InitialPhase && strings.HasPrefix(incidentID, "health-refresh-")) {
+		if len(paths) == 0 && expectedSourceTree == "" && !(actor == HealthJudge && phase == InitialPhase && strings.HasPrefix(incidentID, "health-refresh-")) {
 			receipt = Receipt{IncidentID: incidentID, Phase: phase}
 			return nil
 		}

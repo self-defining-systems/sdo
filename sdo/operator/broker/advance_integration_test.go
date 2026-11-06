@@ -48,6 +48,13 @@ func gitOut(t *testing.T, root string, args ...string) string {
 
 func newAdvanceWorld(t *testing.T) *advanceWorld {
 	t.Helper()
+	return newOnboardedWorld(t, true)
+}
+
+// newOnboardedWorld onboards the synthetic source; editedByDeployer false is a
+// provided deployment: the accepted source is deployed exactly as it stands.
+func newOnboardedWorld(t *testing.T, editedByDeployer bool) *advanceWorld {
+	t.Helper()
 	base := t.TempDir()
 	w := &advanceWorld{upstream: filepath.Join(base, "upstream"), accepted: filepath.Join(base, "accepted")}
 	if err := os.MkdirAll(w.upstream, 0o755); err != nil {
@@ -75,7 +82,9 @@ func newAdvanceWorld(t *testing.T) *advanceWorld {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeFiles(t, p.Path, map[string]string{"app.txt": "one\ntwo\nthree deployed\n"})
+	if editedByDeployer {
+		writeFiles(t, p.Path, map[string]string{"app.txt": "one\ntwo\nthree deployed\n"})
+	}
 	if _, err := b.PublishVerifiedSource(context.Background(), "onboard", advanceEvidence(t, p.Path, "onboard")); err != nil {
 		t.Fatal(err)
 	}
