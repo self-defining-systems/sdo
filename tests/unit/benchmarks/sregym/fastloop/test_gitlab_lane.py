@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import io
 import os
@@ -197,3 +198,29 @@ def test_ingress_controller_gets_its_node_label_first_and_is_awaited_by_rollout(
     assert verbs[:2] == ["label", "apply"]
     assert "ingress-ready=true" in commands[0]
     assert commands[-1][-3:-1] == ["status", "deployment/ingress-nginx-controller"]
+
+
+@dataclasses.dataclass(frozen=True)
+class _Config:
+    artifacts_dir: Path | None = None
+
+
+def test_failed_onboarding_still_exports_runtime_evidence(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    exported: list[Path] = []
+
+    class Ops:
+        def export_runtime_artifacts(self, config: _Config, artifacts_dir: Path) -> dict[str, str | None]:
+            exported.append(config.artifacts_dir)
+            return {"directory": str(artifacts_dir / "sdo_runtime"), "error": None}
+
+    def failing_onboard(environment: object, config: object, objective: str) -> dict[str, str]:
+        raise RuntimeError("judge rejected")
+
+    monkeypatch.setattr(gitlab_lane, "onboard", failing_onboard)
+    environment = SimpleNamespace(run_dir=tmp_path)
+    config = _Config()
+    with pytest.raises(RuntimeError, match="judge rejected"):
+        gitlab_lane.onboard_retaining_evidence(environment, config, "goal", ops=Ops())
+    directory = tmp_path / gitlab_lane.ONBOARDING_EVIDENCE_DIRNAME
+    assert exported == [directory]
+    assert (directory / "export.json").is_file()
