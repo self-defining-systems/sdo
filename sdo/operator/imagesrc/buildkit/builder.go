@@ -30,6 +30,9 @@ var digestReference = regexp.MustCompile(`^[^@\s]+@sha256:[a-f0-9]{64}$`)
 var buildDigestPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 var buildImageNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$`)
 
+// ID is the source ID this package registers under in an imagesrc.Catalog.
+const ID = "buildkit"
+
 // Builder builds candidate source in a bounded rootless BuildKit Job. The Job
 // sees only the proposal checkout, mounted read-only, and its own registry-push
 // Secret. The accepted checkout and broker credentials are absent. It is the

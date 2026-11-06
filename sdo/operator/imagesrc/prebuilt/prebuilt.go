@@ -27,6 +27,9 @@ import (
 	"sdo.dev/operator/imagesrc/prebuilt/internal/registryio"
 )
 
+// ID is the source ID this package registers under in an imagesrc.Catalog.
+const ID = "prebuilt"
+
 const maxManifestBytes = 4 << 20
 
 // resolveCacheTTL bounds how long one tag keeps its pinned digest. Retried

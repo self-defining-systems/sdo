@@ -19,7 +19,7 @@ func TestBuildKitResolvesThroughTheCatalog(t *testing.T) {
 	root, checkout := proposalCheckout(t)
 	b, _ := completedBuild(root)
 	c := imagesrc.NewCatalog()
-	if err := imagesrc.Register[*contracts.BuildKitImageConfig](c, "buildkit", b, imagesrc.Options{SameRepository: true}); err != nil {
+	if err := imagesrc.Register[*contracts.BuildKitImageConfig](c, ID, b, imagesrc.Options{SameRepository: true}); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.SetTrustedPushHost("reg.example"); err != nil {
@@ -30,7 +30,7 @@ func TestBuildKitResolvesThroughTheCatalog(t *testing.T) {
 		t.Fatal(err)
 	}
 	image := "reg.example/app/api:1"
-	declared := []imagesrc.Declared{{Image: image, SourceID: "buildkit", Config: config}}
+	declared := []imagesrc.Declared{{Image: image, SourceID: ID, Config: config}}
 	base := imagesrc.Request{Tree: "tree", FS: fstest.MapFS{}, Checkout: checkout}
 	got, err := c.ResolveAll(context.Background(), []string{image}, declared, base)
 	if err != nil {
@@ -46,5 +46,5 @@ func TestBuildKitResolvesThroughTheCatalog(t *testing.T) {
 	if _, err := c.ResolveAll(context.Background(), []string{image}, declared, base); err == nil {
 		t.Fatal("a context outside the checkout must be rejected")
 	}
-	imagesrctest.TestCatalogContract(t, c, "buildkit")
+	imagesrctest.TestCatalogContract(t, c, ID)
 }

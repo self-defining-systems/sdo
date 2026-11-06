@@ -20,10 +20,10 @@ func conformanceCatalog(t *testing.T) *imagesrc.Catalog {
 		return reply(404, "", nil)
 	})}
 	c := imagesrc.NewCatalog()
-	if err := imagesrc.Register[*contractsv1alpha1.PrebuiltImageConfig](c, "prebuilt", source, imagesrc.Options{}); err != nil {
+	if err := imagesrc.Register[*contractsv1alpha1.PrebuiltImageConfig](c, ID, source, imagesrc.Options{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.SetDefault("prebuilt"); err != nil {
+	if err := c.SetDefault(ID); err != nil {
 		t.Fatal(err)
 	}
 	return c
@@ -32,13 +32,13 @@ func conformanceCatalog(t *testing.T) *imagesrc.Catalog {
 func TestPrebuiltConformsToImageSource(t *testing.T) {
 	c := conformanceCatalog(t)
 	pinned := "r.example/acme/app@" + synthDigest
-	imagesrctest.TestSource(t, c, "prebuilt", []imagesrctest.Case{
+	imagesrctest.TestSource(t, c, ID, []imagesrctest.Case{
 		{Name: "tag", Image: "r.example/acme/app:1", WantRef: pinned, WantInputs: &imagesrc.Inputs{SourceImage: "r.example/acme/app:1"}},
 		{Name: "digest passes through", Image: pinned, WantRef: pinned},
 		{Name: "missing tag", Image: "r.example/acme/app:2", WantErr: "no such tag"},
 		{Name: "internal host", Image: "10.0.0.1/acme/app:1", WantErr: "not a public registry name"},
 	})
-	imagesrctest.TestCatalogContract(t, c, "prebuilt")
+	imagesrctest.TestCatalogContract(t, c, ID)
 }
 
 var _ imagesrc.Source[*contractsv1alpha1.PrebuiltImageConfig] = (*Source)(nil)
