@@ -56,12 +56,11 @@ const (
 	// and writes. Version 1 kept every detector in LegacyDetectorManifestFile;
 	// version 2 keeps one manifest per detector; version 3 refers to playbooks by
 	// logical ID only; version 4 adds the deployment class (.sdo/deployment) and
-	// retires the unused rendered class. Version 4 needs no conversion: no
-	// repository holds deployment files before it.
-	// The optional telemetry binding files under .sdo/diagnostics/telemetry are
-	// additive and not bumped: the version moves when the controller starts to
-	// read them.
-	CurrentSchemaVersion = 4
+	// retires the unused rendered class; version 5 adds the optional telemetry
+	// binding files under .sdo/diagnostics/telemetry, which the controller reads
+	// from the accepted revision. Versions 4 and 5 need no conversion: no earlier
+	// repository holds those files.
+	CurrentSchemaVersion = 5
 )
 
 // Kind names a class of file in operational memory.

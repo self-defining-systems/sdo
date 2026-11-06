@@ -50,7 +50,8 @@ type migrationStep struct {
 // RewritePlaybookReferences) and stamps the schema version. Every step is planned,
 // including all rewritten contents, before the checkout is touched, so an
 // ambiguous repository is left unchanged. Version 4 adds the deployment class
-// and changes no existing file; it is a stamp.
+// and changes no existing file; it is a stamp, as is version 5, which adds the
+// optional telemetry binding files.
 func Migrate(root string) (bool, error) {
 	version, err := readSchemaVersion(root)
 	if err != nil {
@@ -139,6 +140,9 @@ var schemaMigrations = map[int]func(*schemaPlan) error{
 	// Version 4 adds .sdo/deployment, which no earlier repository holds, and
 	// retires the never-written .sdo/rendered class: the step only stamps.
 	4: func(*schemaPlan) error { return nil },
+	// Version 5 adds .sdo/diagnostics/telemetry, which no earlier repository
+	// holds: the step only stamps.
+	5: func(*schemaPlan) error { return nil },
 }
 
 type fileRewrite struct {
