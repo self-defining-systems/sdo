@@ -128,7 +128,7 @@ class DeploymentPolicyConfig:
     """The install-time deployment policy a launcher hands the Go installer (``host`` and ``install-existing`` flags).
 
     The default is no policy: no registry allowlist and foreign or cluster-scoped objects are notes, today's behavior.
-    Production owns the semantics (``deploymentpolicy``); this only names the lane's choices as arguments.
+    Production owns the semantics and the validation (``deploymentpolicy``); this only names the lane's choices.
     """
 
     allowed_registries: tuple[str, ...] = ()
@@ -137,17 +137,10 @@ class DeploymentPolicyConfig:
     granted_cluster_kinds: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        for host in self.allowed_registries:
-            if not host or host != host.lower() or any(char in host for char in " /@,"):
-                raise ValueError(f"registry {host!r} must be a lowercase host[:port]")
-        for name, values in (("namespace", self.granted_namespaces), ("cluster kind", self.granted_cluster_kinds)):
-            for value in values:
-                if not value or any(char in value for char in " /,"):
-                    raise ValueError(f"invalid granted {name} {value!r}")
+        # Content rules (host charset, grants needing scope_blocking) belong to
+        # Go's deploymentpolicy.Validate, which the installer runs on these flags.
         if type(self.scope_blocking) is not bool:
             raise TypeError("scope_blocking must be a boolean")
-        if (self.granted_namespaces or self.granted_cluster_kinds) and not self.scope_blocking:
-            raise ValueError("grants need scope_blocking, otherwise nothing is blocked")
 
     def args(self) -> list[str]:
         """The flags, in the order the Go parser documents; empty when there is no policy."""

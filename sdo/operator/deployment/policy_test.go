@@ -98,3 +98,29 @@ func TestDeployerEnforcesInstallScopeGrants(t *testing.T) {
 		})
 	}
 }
+
+// A restart re-checks the accepted deployment against the policy now in force:
+// tightening the policy cannot leave a violating deployment accepted.
+func TestVerifyAcceptedEnforcesTheCurrentPolicy(t *testing.T) {
+	root, source := depRawFixture(t)
+	deployer, _ := depDeployer(t, root, &clusterFake{})
+	receipt, err := deployer.ApplyAndVerify(context.Background(), root, depPlan(t, source, depRawWeb))
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit := depHead(t, root)
+	deployer.Policy = &contracts.DeploymentPolicy{AllowedRegistries: []string{"docker.io"}}
+	if _, err := deployer.VerifyAccepted(context.Background(), commit, depNamespace, receipt); err != nil {
+		t.Fatalf("a deployment inside the policy was refused: %v", err)
+	}
+	deployer.Policy = &contracts.DeploymentPolicy{AllowedRegistries: []string{"ghcr.io"}}
+	_, err = deployer.VerifyAccepted(context.Background(), commit, depNamespace, receipt)
+	var policy *PolicyError
+	if !errors.As(err, &policy) || policy.Checks[0].ID != "O6.allowlist" {
+		t.Fatalf("err = %v, want a PolicyError on O6.allowlist", err)
+	}
+	deployer.Policy = &contracts.DeploymentPolicy{GrantedNamespaces: []string{"x"}}
+	if _, err := deployer.VerifyAccepted(context.Background(), commit, depNamespace, receipt); err == nil {
+		t.Fatal("an invalid policy was accepted at start")
+	}
+}

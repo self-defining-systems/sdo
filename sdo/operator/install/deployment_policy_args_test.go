@@ -1,6 +1,7 @@
 package install
 
 import (
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -59,5 +60,29 @@ func TestInvalidDeploymentPolicyFailsTheInstall(t *testing.T) {
 	cfg.DeploymentPolicy = `{"grantedNamespaces":["x"]}`
 	if err := cfg.validate(); err == nil {
 		t.Fatal("grants without scope blocking were installed")
+	}
+}
+
+// Extra controller arguments are operator-supplied and go last on the command
+// line, where the Go flag package lets a repeat replace an earlier value. The
+// security-relevant flags have one owner, the installer's typed fields.
+func TestExtraControllerArgsCannotOverrideInstallerOwnedFlags(t *testing.T) {
+	for _, arg := range []string{
+		"--deployment-policy={}", "-deployment-policy", "--deployment-policy", "--registry-insecure", "--registry-host=evil.example",
+		"--registry-push-secret=x", "--buildkit-image=x", "--broker-mode=python", "--worker-mount-mode=rw", "--broker-arg=x",
+	} {
+		cfg := policyConfig()
+		cfg.DeploymentPolicy = testPolicy
+		cfg.ExtraControllerArgs = []string{arg}
+		err := cfg.validate()
+		var protected *ProtectedFlagError
+		if !errors.As(err, &protected) {
+			t.Errorf("%s: err = %v, want *ProtectedFlagError", arg, err)
+		}
+	}
+	cfg := policyConfig()
+	cfg.ExtraControllerArgs = []string{"--duration=1s", "--exit-after-closure", "--render-env={}"}
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("legitimate extension refused: %v", err)
 	}
 }
