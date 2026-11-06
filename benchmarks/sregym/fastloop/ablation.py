@@ -46,7 +46,7 @@ def configure_arm(
         if app not in ("hotel-reservation", "social-network", "astronomy-shop"):
             raise ValueError("this app requires an explicit --ablation-repository")
         repository = f"git@github.com:vibesys-playground/{app}-sdo.git"
-    branch = f"ablate/20261103-{arm}"
+    branch = getattr(args, "ablation_branch", None) or f"ablate/20261103-{arm}"
     if git is None:
 
         def run_git(*arguments: str) -> str:

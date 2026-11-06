@@ -1833,7 +1833,7 @@ def test_external_stage_delivers_only_after_injection_and_skips_health_baseline(
         def inject_after_resume(self, *_args, **_kwargs):
             pytest.fail("external incidents must not run a detector baseline")
 
-        def open_external_incident(self, control_namespace, namespace, incident_id):
+        def open_external_incident(self, control_namespace, namespace, incident_id, application):
             assert self.events[-1] == ("fault", "external")
             self.events.append(("external", incident_id, namespace))
             self.states[control_namespace]["pending_closure"] = {
@@ -1866,14 +1866,11 @@ def test_external_ingress_payload_has_no_problem_or_oracle_context(monkeypatch):
 
     calls = []
     monkeypatch.setattr(persistent, "kubectl", lambda *args, **kwargs: calls.append((args, kwargs)))
-    persistent.KubectlClusterOps().open_external_incident("app-sdo", "app", "external-opaque")
+    persistent.KubectlClusterOps().open_external_incident("app-sdo", "app", "external-opaque", "social-network")
     document = json.loads(calls[0][1]["input_text"])
     alert = json.loads(document["data"]["incident.json"])
     assert alert == {
         "id": "external-opaque",
         "namespace": "app",
-        "message": (
-            "You are an SRE agent. Something is wrong in the application running in this cluster. "
-            "Find and fix the problem."
-        ),
+        "message": "operator page: users of social-network report errors",
     }
