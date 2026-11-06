@@ -43,6 +43,7 @@ from sdodev.contracts.v1alpha1 import (
     controller_config_pb2,
     controller_observation_pb2,
     controller_state_pb2,
+    deployment_source_pb2,
     late_findings_pb2,
     lifecycle_pb2,
     memory_pb2,
@@ -219,6 +220,12 @@ SdkGap = outcome_pb2.SdkGap
 SourceDeploymentRequest = lifecycle_pb2.SourceDeploymentRequest
 SourceDeploymentResult = lifecycle_pb2.SourceDeploymentResult
 DeploymentPlan = lifecycle_pb2.DeploymentPlan
+DeploymentSource = deployment_source_pb2.DeploymentSource
+ImageSource = deployment_source_pb2.ImageSource
+RawRenderConfig = deployment_source_pb2.RawRenderConfig
+KustomizeRenderConfig = deployment_source_pb2.KustomizeRenderConfig
+BuildKitImageConfig = deployment_source_pb2.BuildKitImageConfig
+PrebuiltImageConfig = deployment_source_pb2.PrebuiltImageConfig
 RawManifestStrategy = lifecycle_pb2.RawManifestStrategy
 ImageBuild = lifecycle_pb2.ImageBuild
 HealthJudgeRequest = lifecycle_pb2.HealthJudgeRequest
@@ -353,6 +360,12 @@ __all__ = [
     "SourceDeploymentResult",
     "DeploymentPlan",
     "RawManifestStrategy",
+    "DeploymentSource",
+    "ImageSource",
+    "RawRenderConfig",
+    "KustomizeRenderConfig",
+    "BuildKitImageConfig",
+    "PrebuiltImageConfig",
     "ImageBuild",
     "HealthJudgeRequest",
     "HealthJudgeResult",

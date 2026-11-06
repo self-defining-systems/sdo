@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package sdodev.contracts.v1alpha1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/any.proto";
+
+option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
+
+// DeploymentSource names how trusted Go renders desired Kubernetes objects from
+// an effective source tree. config is opaque outside its registered renderer and
+// the deployment worker that authors it.
+message DeploymentSource {
+  string renderer_id = 1 [(buf.validate.field).string.pattern = "^[a-z][a-z0-9-]*$"];
+  google.protobuf.Any config = 2 [(buf.validate.field).required = true];
+}
+
+// ImageSource declares how one rendered image reference is produced. Images
+// that no ImageSource names use the operator's default source (prebuilt).
+message ImageSource {
+  string image = 1 [(buf.validate.field).string.min_len = 1];
+  string source_id = 2 [(buf.validate.field).string.pattern = "^[a-z][a-z0-9-]*$"];
+  google.protobuf.Any config = 3;
+}
+
+// Plugin configs. Owner packages: render/raw, render/kustomize,
+// imagesrc/buildkit, imagesrc/prebuilt.
+
+// Files or directories, recursive, *.yaml|*.yml|*.json.
+message RawRenderConfig {
+  repeated string paths = 1;
+}
+
+// Directory holding the kustomization.
+message KustomizeRenderConfig {
+  string path = 1;
+}
+
+message BuildKitImageConfig {
+  string context_path = 1;
+  string dockerfile_path = 2;
+}
+
+message PrebuiltImageConfig {}

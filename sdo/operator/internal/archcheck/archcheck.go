@@ -55,10 +55,10 @@ type ConfigType struct {
 }
 
 // ConfigTypeSource lets the checker prove ConfigTypes is complete: every
-// exported type in Dir whose name ends in Suffix must be in the table.
+// exported type in Dir whose name ends in any of Suffixes must be in the table.
 type ConfigTypeSource struct {
-	Dir    string
-	Suffix string
+	Dir      string
+	Suffixes []string
 }
 
 // Allow is a known violation. File is slash-separated, relative to the root.
@@ -448,11 +448,20 @@ func (c Config) checkConfigTypeCompleteness(root string) []Violation {
 			}
 			for _, spec := range gen.Specs {
 				name := spec.(*ast.TypeSpec).Name.Name
-				if ast.IsExported(name) && strings.HasSuffix(name, src.Suffix) && !listed[name] {
+				if ast.IsExported(name) && hasAnySuffix(name, src.Suffixes) && !listed[name] {
 					out = append(out, Violation{Rule: R4, File: src.Dir + "/" + e.Name(), Message: "config type " + name + " is not in the rule table's ConfigTypes"})
 				}
 			}
 		}
 	}
 	return out
+}
+
+func hasAnySuffix(name string, suffixes []string) bool {
+	for _, s := range suffixes {
+		if strings.HasSuffix(name, s) {
+			return true
+		}
+	}
+	return false
 }

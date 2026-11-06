@@ -182,8 +182,12 @@ type DeploymentPlan struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	StrategyId     string                 `protobuf:"bytes,1,opt,name=strategy_id,json=strategyId,proto3" json:"strategy_id,omitempty"`
 	StrategyConfig *anypb.Any             `protobuf:"bytes,2,opt,name=strategy_config,json=strategyConfig,proto3" json:"strategy_config,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Transitional: fields 1-2 are removed when consumers switch to source.
+	Source              *DeploymentSource `protobuf:"bytes,3,opt,name=source,proto3" json:"source,omitempty"`
+	Images              []*ImageSource    `protobuf:"bytes,4,rep,name=images,proto3" json:"images,omitempty"`
+	ExpectedWorkloadIds []string          `protobuf:"bytes,5,rep,name=expected_workload_ids,json=expectedWorkloadIds,proto3" json:"expected_workload_ids,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *DeploymentPlan) Reset() {
@@ -226,6 +230,27 @@ func (x *DeploymentPlan) GetStrategyId() string {
 func (x *DeploymentPlan) GetStrategyConfig() *anypb.Any {
 	if x != nil {
 		return x.StrategyConfig
+	}
+	return nil
+}
+
+func (x *DeploymentPlan) GetSource() *DeploymentSource {
+	if x != nil {
+		return x.Source
+	}
+	return nil
+}
+
+func (x *DeploymentPlan) GetImages() []*ImageSource {
+	if x != nil {
+		return x.Images
+	}
+	return nil
+}
+
+func (x *DeploymentPlan) GetExpectedWorkloadIds() []string {
+	if x != nil {
+		return x.ExpectedWorkloadIds
 	}
 	return nil
 }
@@ -641,7 +666,7 @@ var File_sdodev_contracts_v1alpha1_lifecycle_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDesc = "" +
 	"\n" +
-	")sdodev/contracts/v1alpha1/lifecycle.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x19google/protobuf/any.proto\x1a1sdodev/contracts/v1alpha1/memory_diagnostic.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\"\xf4\x01\n" +
+	")sdodev/contracts/v1alpha1/lifecycle.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x19google/protobuf/any.proto\x1a1sdodev/contracts/v1alpha1/deployment_source.proto\x1a1sdodev/contracts/v1alpha1/memory_diagnostic.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\"\xf4\x01\n" +
 	"\x17SourceDeploymentRequest\x12 \n" +
 	"\vapplication\x18\x01 \x01(\tR\vapplication\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12)\n" +
@@ -653,11 +678,14 @@ const file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDesc = "" +
 	"\bproposed\x18\x01 \x01(\bR\bproposed\x12\x18\n" +
 	"\asummary\x18\x02 \x01(\tR\asummary\x12(\n" +
 	"\x10agent_session_id\x18\x03 \x01(\tR\x0eagentSessionId\x12=\n" +
-	"\x04plan\x18\x04 \x01(\v2).sdodev.contracts.v1alpha1.DeploymentPlanR\x04plan\"p\n" +
+	"\x04plan\x18\x04 \x01(\v2).sdodev.contracts.v1alpha1.DeploymentPlanR\x04plan\"\xa9\x02\n" +
 	"\x0eDeploymentPlan\x12\x1f\n" +
 	"\vstrategy_id\x18\x01 \x01(\tR\n" +
 	"strategyId\x12=\n" +
-	"\x0fstrategy_config\x18\x02 \x01(\v2\x14.google.protobuf.AnyR\x0estrategyConfig\"\xba\x01\n" +
+	"\x0fstrategy_config\x18\x02 \x01(\v2\x14.google.protobuf.AnyR\x0estrategyConfig\x12C\n" +
+	"\x06source\x18\x03 \x01(\v2+.sdodev.contracts.v1alpha1.DeploymentSourceR\x06source\x12>\n" +
+	"\x06images\x18\x04 \x03(\v2&.sdodev.contracts.v1alpha1.ImageSourceR\x06images\x122\n" +
+	"\x15expected_workload_ids\x18\x05 \x03(\tR\x13expectedWorkloadIds\"\xba\x01\n" +
 	"\x13RawManifestStrategy\x12H\n" +
 	"\fimage_builds\x18\x01 \x03(\v2%.sdodev.contracts.v1alpha1.ImageBuildR\vimageBuilds\x12%\n" +
 	"\x0emanifest_paths\x18\x02 \x03(\tR\rmanifestPaths\x122\n" +
@@ -719,23 +747,27 @@ var file_sdodev_contracts_v1alpha1_lifecycle_proto_goTypes = []any{
 	(*SourceResource)(nil),              // 6: sdodev.contracts.v1alpha1.SourceResource
 	(*HealthJudgeResult)(nil),           // 7: sdodev.contracts.v1alpha1.HealthJudgeResult
 	(*anypb.Any)(nil),                   // 8: google.protobuf.Any
-	(*MetricsSource)(nil),               // 9: sdodev.contracts.v1alpha1.MetricsSource
-	(*MemoryDiagnostic)(nil),            // 10: sdodev.contracts.v1alpha1.MemoryDiagnostic
-	(*OperationalArtifactProposal)(nil), // 11: sdodev.contracts.v1alpha1.OperationalArtifactProposal
+	(*DeploymentSource)(nil),            // 9: sdodev.contracts.v1alpha1.DeploymentSource
+	(*ImageSource)(nil),                 // 10: sdodev.contracts.v1alpha1.ImageSource
+	(*MetricsSource)(nil),               // 11: sdodev.contracts.v1alpha1.MetricsSource
+	(*MemoryDiagnostic)(nil),            // 12: sdodev.contracts.v1alpha1.MemoryDiagnostic
+	(*OperationalArtifactProposal)(nil), // 13: sdodev.contracts.v1alpha1.OperationalArtifactProposal
 }
 var file_sdodev_contracts_v1alpha1_lifecycle_proto_depIdxs = []int32{
 	2,  // 0: sdodev.contracts.v1alpha1.SourceDeploymentResult.plan:type_name -> sdodev.contracts.v1alpha1.DeploymentPlan
 	8,  // 1: sdodev.contracts.v1alpha1.DeploymentPlan.strategy_config:type_name -> google.protobuf.Any
-	4,  // 2: sdodev.contracts.v1alpha1.RawManifestStrategy.image_builds:type_name -> sdodev.contracts.v1alpha1.ImageBuild
-	9,  // 3: sdodev.contracts.v1alpha1.HealthJudgeRequest.metrics_source:type_name -> sdodev.contracts.v1alpha1.MetricsSource
-	6,  // 4: sdodev.contracts.v1alpha1.HealthJudgeRequest.source_resources:type_name -> sdodev.contracts.v1alpha1.SourceResource
-	10, // 5: sdodev.contracts.v1alpha1.HealthJudgeRequest.previous_diagnostics:type_name -> sdodev.contracts.v1alpha1.MemoryDiagnostic
-	11, // 6: sdodev.contracts.v1alpha1.HealthJudgeResult.artifact_proposal:type_name -> sdodev.contracts.v1alpha1.OperationalArtifactProposal
-	7,  // [7:7] is the sub-list for method output_type
-	7,  // [7:7] is the sub-list for method input_type
-	7,  // [7:7] is the sub-list for extension type_name
-	7,  // [7:7] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	9,  // 2: sdodev.contracts.v1alpha1.DeploymentPlan.source:type_name -> sdodev.contracts.v1alpha1.DeploymentSource
+	10, // 3: sdodev.contracts.v1alpha1.DeploymentPlan.images:type_name -> sdodev.contracts.v1alpha1.ImageSource
+	4,  // 4: sdodev.contracts.v1alpha1.RawManifestStrategy.image_builds:type_name -> sdodev.contracts.v1alpha1.ImageBuild
+	11, // 5: sdodev.contracts.v1alpha1.HealthJudgeRequest.metrics_source:type_name -> sdodev.contracts.v1alpha1.MetricsSource
+	6,  // 6: sdodev.contracts.v1alpha1.HealthJudgeRequest.source_resources:type_name -> sdodev.contracts.v1alpha1.SourceResource
+	12, // 7: sdodev.contracts.v1alpha1.HealthJudgeRequest.previous_diagnostics:type_name -> sdodev.contracts.v1alpha1.MemoryDiagnostic
+	13, // 8: sdodev.contracts.v1alpha1.HealthJudgeResult.artifact_proposal:type_name -> sdodev.contracts.v1alpha1.OperationalArtifactProposal
+	9,  // [9:9] is the sub-list for method output_type
+	9,  // [9:9] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_lifecycle_proto_init() }
@@ -743,6 +775,7 @@ func file_sdodev_contracts_v1alpha1_lifecycle_proto_init() {
 	if File_sdodev_contracts_v1alpha1_lifecycle_proto != nil {
 		return
 	}
+	file_sdodev_contracts_v1alpha1_deployment_source_proto_init()
 	file_sdodev_contracts_v1alpha1_memory_diagnostic_proto_init()
 	file_sdodev_contracts_v1alpha1_messages_proto_init()
 	type x struct{}

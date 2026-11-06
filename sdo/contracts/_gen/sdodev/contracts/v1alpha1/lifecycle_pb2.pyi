@@ -1,5 +1,6 @@
 from buf.validate import validate_pb2 as _validate_pb2
 from google.protobuf import any_pb2 as _any_pb2
+from sdodev.contracts.v1alpha1 import deployment_source_pb2 as _deployment_source_pb2
 from sdodev.contracts.v1alpha1 import memory_diagnostic_pb2 as _memory_diagnostic_pb2
 from sdodev.contracts.v1alpha1 import messages_pb2 as _messages_pb2
 from google.protobuf.internal import containers as _containers
@@ -39,12 +40,18 @@ class SourceDeploymentResult(_message.Message):
     def __init__(self, proposed: _Optional[bool] = ..., summary: _Optional[str] = ..., agent_session_id: _Optional[str] = ..., plan: _Optional[_Union[DeploymentPlan, _Mapping]] = ...) -> None: ...
 
 class DeploymentPlan(_message.Message):
-    __slots__ = ("strategy_id", "strategy_config")
+    __slots__ = ("strategy_id", "strategy_config", "source", "images", "expected_workload_ids")
     STRATEGY_ID_FIELD_NUMBER: _ClassVar[int]
     STRATEGY_CONFIG_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_FIELD_NUMBER: _ClassVar[int]
+    IMAGES_FIELD_NUMBER: _ClassVar[int]
+    EXPECTED_WORKLOAD_IDS_FIELD_NUMBER: _ClassVar[int]
     strategy_id: str
     strategy_config: _any_pb2.Any
-    def __init__(self, strategy_id: _Optional[str] = ..., strategy_config: _Optional[_Union[_any_pb2.Any, _Mapping]] = ...) -> None: ...
+    source: _deployment_source_pb2.DeploymentSource
+    images: _containers.RepeatedCompositeFieldContainer[_deployment_source_pb2.ImageSource]
+    expected_workload_ids: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, strategy_id: _Optional[str] = ..., strategy_config: _Optional[_Union[_any_pb2.Any, _Mapping]] = ..., source: _Optional[_Union[_deployment_source_pb2.DeploymentSource, _Mapping]] = ..., images: _Optional[_Iterable[_Union[_deployment_source_pb2.ImageSource, _Mapping]]] = ..., expected_workload_ids: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class RawManifestStrategy(_message.Message):
     __slots__ = ("image_builds", "manifest_paths", "expected_workload_ids")
