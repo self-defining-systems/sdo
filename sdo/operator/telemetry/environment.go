@@ -37,6 +37,26 @@ type Environment struct {
 	MetricsPublishURL string `json:"metricsPublishUrl,omitempty"`
 	// Capabilities are the installer-granted cluster reads agents may rely on.
 	Capabilities []ClusterCapability `json:"capabilities,omitempty"`
+	// The fields below are the environment's grants for designer bindings: the
+	// namespaces and hosts an endpoint may name and the credentials it may use.
+	// The controller applies them again when it opens a binding, with the same
+	// rules the broker applied at publication (Policy.CheckBinding). An
+	// environment that grants nothing admits no designer endpoint.
+	ControlNamespace     string   `json:"controlNamespace,omitempty"`
+	ApplicationNamespace string   `json:"applicationNamespace,omitempty"`
+	ExtraNamespaces      []string `json:"extraNamespaces,omitempty"`
+	ExternalHosts        []string `json:"externalHosts,omitempty"`
+	ClusterDomain        string   `json:"clusterDomain,omitempty"`
+	Credentials          []string `json:"credentials,omitempty"`
+}
+
+// Policy is the binding policy the environment's grants define.
+func (e Environment) Policy() Policy {
+	return Policy{
+		Mode: e.Mode, ControlNamespace: e.ControlNamespace, ApplicationNamespace: e.ApplicationNamespace,
+		ExtraNamespaces: e.ExtraNamespaces, ExternalHosts: e.ExternalHosts, ClusterDomain: e.ClusterDomain,
+		Credentials: e.Credentials, Capabilities: e.Capabilities,
+	}
 }
 
 // ParseEnvironment decodes and validates an environment document strictly.

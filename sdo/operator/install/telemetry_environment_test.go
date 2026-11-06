@@ -84,6 +84,9 @@ func TestTelemetryEnvironmentFollowsTheProfile(t *testing.T) {
 	if env := external.TelemetryEnvironment(); env.Provided[0].Endpoint.URL != "http://prom.ops.svc:9090" || env.MetricsPublishURL != "" {
 		t.Fatalf("an external profile provides its source and offers no publishing: %+v", env)
 	}
+	if env := external.TelemetryEnvironment(); env.ApplicationNamespace == "" || env.ControlNamespace == "" {
+		t.Fatalf("the controller applies binding policy at open, so the environment names its namespaces: %+v", env)
+	}
 	none := environmentConfig()
 	none.TelemetryProfile = telemetry.Profile{Name: "none"}
 	if env := none.TelemetryEnvironment(); len(env.Provided) != 0 || env.MetricsPublishURL != "" {

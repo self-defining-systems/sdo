@@ -161,6 +161,30 @@ func (p Policy) Validate() error {
 	return nil
 }
 
+// BindingCheck is the outcome of Policy.CheckBinding, split by what failed so a
+// caller can name its own rule.
+type BindingCheck struct{ Endpoint, Credential error }
+
+// Err is the first failure, or nil.
+func (c BindingCheck) Err() error {
+	if c.Endpoint != nil {
+		return fmt.Errorf("endpoint: %w", c.Endpoint)
+	}
+	if c.Credential != nil {
+		return fmt.Errorf("credential: %w", c.Credential)
+	}
+	return nil
+}
+
+// CheckBinding is the one policy check on a binding's endpoint and credential.
+// The broker runs it when a sources file is published and the controller runs
+// it when it opens the accepted bindings, so a policy narrowed after
+// publication, or memory that reached the branch by another path, is never
+// honored.
+func (p Policy) CheckBinding(b Binding) BindingCheck {
+	return BindingCheck{Endpoint: p.CheckEndpoint(b.Endpoint.URL), Credential: p.CheckCredential(b.Endpoint.Credential)}
+}
+
 // CheckCredential accepts an empty name or one the environment granted.
 func (p Policy) CheckCredential(name string) error {
 	if name == "" || slices.Contains(p.Credentials, name) {

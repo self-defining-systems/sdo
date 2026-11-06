@@ -49,6 +49,14 @@ func (t TelemetrySources) open(designerSources []byte) (MetricsAPI, error) {
 		if err != nil {
 			return nil, fmt.Errorf("accepted telemetry sources: %w", err)
 		}
+		// The broker checked these at publication; the controller checks them
+		// again against the environment's own grants before it opens them.
+		policy := t.Environment.Policy()
+		for _, binding := range designer {
+			if err := policy.CheckBinding(binding).Err(); err != nil {
+				return nil, fmt.Errorf("telemetry source %q: %w", binding.ID, err)
+			}
+		}
 		bindings = append(bindings, designer...)
 	}
 	if len(bindings) == 0 {
