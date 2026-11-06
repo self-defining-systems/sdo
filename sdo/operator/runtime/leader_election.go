@@ -16,6 +16,12 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
+// ErrLeadershipLost is the typed stop signal for a Lease another holder took.
+// The process stops acting and exits so its replacement reacquires the Lease
+// and reloads persisted state; a renewal that merely failed (slow API server,
+// client-side throttling) is never reported this way, it is retried.
+var ErrLeadershipLost = errors.New("controller leadership lost: Lease is held by another controller")
+
 var ErrLeadershipInactive = errors.New("controller leadership is not active")
 
 type LeaseElector struct {
