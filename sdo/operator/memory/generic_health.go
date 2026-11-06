@@ -130,22 +130,11 @@ func prepareTrafficDetectors(root string) error {
 		if err != nil {
 			return err
 		}
-		var fields map[string]any
-		if err := yaml.Unmarshal(data, &fields); err != nil {
-			return err
-		}
-		data, err = json.Marshal(fields)
+		workload, err := parseTrafficWorkload(entry.Name(), data)
 		if err != nil {
 			return err
 		}
-		workload := &contracts.TrafficWorkload{}
-		if err := protojson.Unmarshal(data, workload); err != nil {
-			return fmt.Errorf("traffic workload %s: %w", entry.Name(), err)
-		}
-		if workload.GetName() != strings.TrimSuffix(entry.Name(), ".yaml") || !layout.ValidDetectorID(workload.GetName()) {
-			return fmt.Errorf("traffic workload %s must use its logical filename ID", entry.Name())
-		}
-		if workload.GetPurpose() != "health-probe" && workload.GetPurpose() != "link-probe" {
+		if !isProbePurpose(workload.GetPurpose()) {
 			continue
 		}
 		id := trafficDetectorPrefix + workload.GetName()
@@ -156,6 +145,40 @@ func prepareTrafficDetectors(root string) error {
 		wanted[id] = true
 	}
 	return pruneStaleTrafficDetectors(root, wanted)
+}
+
+func isProbePurpose(purpose string) bool { return purpose == "health-probe" || purpose == "link-probe" }
+
+func parseTrafficWorkload(file string, data []byte) (*contracts.TrafficWorkload, error) {
+	var fields map[string]any
+	if err := yaml.Unmarshal(data, &fields); err != nil {
+		return nil, err
+	}
+	data, err := json.Marshal(fields)
+	if err != nil {
+		return nil, err
+	}
+	workload := &contracts.TrafficWorkload{}
+	if err := protojson.Unmarshal(data, workload); err != nil {
+		return nil, fmt.Errorf("traffic workload %s: %w", file, err)
+	}
+	if workload.GetName()+".yaml" != file || !layout.ValidDetectorID(workload.GetName()) {
+		return nil, fmt.Errorf("traffic workload %s must use its logical filename ID", file)
+	}
+	return workload, nil
+}
+
+// PreparedTrafficDetector reports the traffic-<workload> detector ID Go
+// installs for the workload file name (for example "probe-call.yaml") with
+// the given content, and whether Go installs one: only health-probe and
+// link-probe workloads get a detector. Validation counts these detectors, so
+// a proposal is judged on the tree Go will publish, before Go has written them.
+func PreparedTrafficDetector(file string, content []byte) (string, bool) {
+	workload, err := parseTrafficWorkload(file, content)
+	if err != nil || !isProbePurpose(workload.GetPurpose()) {
+		return "", false
+	}
+	return trafficDetectorPrefix + workload.GetName(), true
 }
 
 // removeBootstrapDetector removes the health detector package id when Go

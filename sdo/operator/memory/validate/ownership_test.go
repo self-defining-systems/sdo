@@ -33,21 +33,27 @@ func judgeInitialOwnership(t *testing.T, root string) []string {
 // and traffic files, and a probe the map declares needs its traffic detector.
 func TestInitialNeedsDetectorsEvaluatesTheResultingTree(t *testing.T) {
 	probeDetectors := []string{"traffic-probe-call", "traffic-probe-write", "traffic-probe-read-later"}
-	judgeDiff := func(t *testing.T, root string) {
+	judgeDiff := func(t *testing.T, root, purpose, skip string) {
 		write(t, root, layout.ArchitectureFile, mapInventory+"\n"+mapRegion(mapYAML))
 		dir := ".sdo/diagnostics/traffic/workloads/"
-		write(t, root, dir+"probe-call.yaml", mapWorkload("probe-call", "call-all"))
-		write(t, root, dir+"probe-write.yaml", mapWorkload("probe-write", "write-item"))
-		write(t, root, dir+"probe-read-later.yaml", mapWorkload("probe-read-later", "items-later"))
+		for _, w := range [][2]string{{"probe-call", "call-all"}, {"probe-write", "write-item"}, {"probe-read-later", "items-later"}} {
+			if w[0] != skip {
+				write(t, root, dir+w[0]+".yaml", strings.Replace(mapWorkload(w[0], w[1]), "purpose: health-probe", "purpose: "+purpose, 1))
+			}
+		}
 	}
 	cases := []struct {
 		name      string
 		base      []string
 		removeAll bool
+		purpose   string
 		want      []string
 	}{
 		{name: "generic detectors in the base satisfy the rule", base: probeDetectors},
-		{name: "a declared probe without its traffic detector", base: probeDetectors[:1], want: []string{RuleInitialNeedsDetectors}},
+		// Go installs traffic-<workload> when it prepares the tree, after the
+		// judge's check and before publication; the rule counts those.
+		{name: "traffic detectors Go has not installed yet", base: []string{"health"}},
+		{name: "a declared probe workload Go installs no detector for", base: []string{"health"}, purpose: "incident-probe", want: []string{RuleInitialNeedsDetectors}},
 		{name: "no detectors in the resulting tree", removeAll: true, want: []string{RuleInitialNeedsDetectors}},
 	}
 	for _, tc := range cases {
@@ -61,10 +67,31 @@ func TestInitialNeedsDetectorsEvaluatesTheResultingTree(t *testing.T) {
 			}
 			write(t, root, layout.ArchitectureFile, mapInventory)
 			commit(t, root, "base")
-			judgeDiff(t, root)
+			purpose := tc.purpose
+			if purpose == "" {
+				purpose = "health-probe"
+			}
+			judgeDiff(t, root, purpose, "")
 			if got := judgeInitialOwnership(t, root); !same(got, tc.want) {
 				t.Fatalf("rules = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// A declared probe whose workload file is missing still fails validation: the
+// application map rule reports it, and Go cannot prepare a detector for it.
+func TestInitialProposalWithoutADeclaredProbeWorkloadFails(t *testing.T) {
+	root := goodTree(t)
+	writeGenericDetector(t, root, "health")
+	write(t, root, layout.ArchitectureFile, mapInventory)
+	commit(t, root, "base")
+	write(t, root, layout.ArchitectureFile, mapInventory+"\n"+mapRegion(mapYAML))
+	dir := ".sdo/diagnostics/traffic/workloads/"
+	write(t, root, dir+"probe-call.yaml", mapWorkload("probe-call", "call-all"))
+	write(t, root, dir+"probe-write.yaml", mapWorkload("probe-write", "write-item"))
+	request := Request{Root: root, Base: "HEAD", Actor: HealthJudge, Phase: InitialPhase, Layers: Static}
+	if got := ruleSet(diagnose(t, request)); len(got) == 0 {
+		t.Fatal("a map probe without its workload file passed validation")
 	}
 }
