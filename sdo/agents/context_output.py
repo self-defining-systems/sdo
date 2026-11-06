@@ -81,17 +81,18 @@ def save_context(text: str) -> tuple[Path, str]:
     scratch = os.environ.get(scratch_variable)
     directory = Path(scratch) / "context" if scratch else Path("/tmp/sdo-context")
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-    digest = hashlib.sha256(text.encode()).hexdigest()[:24]
+    payload = text.encode()
+    digest = hashlib.sha256(payload).hexdigest()[:24]
     path = directory / f"{digest}.txt"
-    with NamedTemporaryFile(mode="w", encoding="utf-8", dir=directory, delete=False) as stream:
+    with NamedTemporaryFile(mode="wb", dir=directory, delete=False) as stream:
         temporary = Path(stream.name)
         try:
-            stream.write(text)
+            stream.write(payload)
             stream.close()
             try:
                 os.link(temporary, path)
             except FileExistsError:
-                if path.read_text() != text:
+                if path.read_bytes() != payload:
                     raise ValueError("context digest collision") from None
         finally:
             temporary.unlink(missing_ok=True)
