@@ -16,6 +16,7 @@ import (
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/rendered"
+	"sdo.dev/operator/sdk"
 )
 
 // vendorText is a vendored file long enough for patches with real context.
@@ -472,5 +473,44 @@ func TestPublishVerifiedSourceRequiresThePlanToNameTheDeployedSource(t *testing.
 		if _, err := w.broker.PublishVerifiedSource(ctx, id, advanceEvidence(t, p.Path, id)); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Fatalf("%s: PublishVerifiedSource = %v, want %q", name, err, c.want)
 		}
+	}
+}
+
+// The controller's desired state includes the images the newest accepted
+// deployment applied, bound to its effective tree: onboarding's pins, then the
+// advance's (new tree, new pins); a memory-only commit changes neither.
+func TestAcceptedImagePinsFollowTheNewestAcceptedDeployment(t *testing.T) {
+	ctx := context.Background()
+	w := newAdvanceWorld(t)
+	b := w.broker
+	onboarded, found, err := b.AcceptedSourceEvidence(ctx)
+	if err != nil || !found {
+		t.Fatalf("AcceptedSourceEvidence = %v %v", found, err)
+	}
+	pins, err := b.AcceptedImagePins(ctx)
+	if err != nil || pins.EffectiveTree != onboarded.Evidence.EffectiveTree {
+		t.Fatalf("pins after onboarding = %+v %v, want the onboarded effective tree", pins, err)
+	}
+
+	upstream := w.push(t, w.seed, map[string]*string{"app.txt": text("ONE\ntwo\nthree\n")})
+	id := "advance-" + upstream[:12]
+	proposal, _, _, err := b.ProposeAdvance(ctx, id, w.seed, upstream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence := advanceEvidence(t, proposal.Path, "advanced")
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "ns", Name: "app"}
+	digest := "advanced@sha256:" + strings.Repeat("e", 64)
+	evidence.ContainerImages = []rendered.DeployedImage{{Ref: ref, Name: "app", Applied: digest, Digest: digest}}
+	if _, err := b.PublishAdvance(ctx, id, upstream, w.seed, evidence); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []string{"advance", "after a memory commit"} {
+		pins, err = b.AcceptedImagePins(ctx)
+		if err != nil || pins.EffectiveTree != evidence.EffectiveTree || pins.EffectiveTree == onboarded.Evidence.EffectiveTree ||
+			len(pins.Images) != 1 || pins.Images[0].Applied != digest {
+			t.Fatalf("pins %s = %+v %v, want the advance's tree %s and image", step, pins, err, evidence.EffectiveTree)
+		}
+		publishHumanGoal(t, w.accepted, "goal", map[string]string{layout.GoalFile: advanceGoal + "\nmore " + step + "\n"})
 	}
 }

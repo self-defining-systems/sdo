@@ -122,6 +122,7 @@ type capturingStrategy struct {
 	config      install.Config
 	verified    *contracts.DeploymentSource
 	environment *contracts.RenderEnvironment
+	pins        rendered.ReceiptPins
 }
 
 func (s *capturingStrategy) Install(_ context.Context, config install.Config, _ install.RepositorySeeder) (install.Result, error) {
@@ -129,8 +130,8 @@ func (s *capturingStrategy) Install(_ context.Context, config install.Config, _ 
 	return install.Result{}, nil
 }
 
-func (s *capturingStrategy) WithVerifiedDeployment(_, _, _ string, source *contracts.DeploymentSource, environment *contracts.RenderEnvironment) lifecycle.InstallStrategy {
-	s.verified, s.environment = source, environment
+func (s *capturingStrategy) WithVerifiedDeployment(_, _, _ string, source *contracts.DeploymentSource, environment *contracts.RenderEnvironment, pins rendered.ReceiptPins) lifecycle.InstallStrategy {
+	s.verified, s.environment, s.pins = source, environment, pins
 	return s
 }
 
@@ -187,5 +188,23 @@ func TestInstallDeploymentForwardsTheRenderEnvironment(t *testing.T) {
 		if strings.HasPrefix(arg, "--render-env") {
 			t.Fatalf("unknown environment forwarded as %q", arg)
 		}
+	}
+}
+
+// Onboarding stages the objects the deployment applied: the receipt's
+// effective tree and container pins reach it, so the staged baseline carries
+// the applied digests rather than the source tags.
+func TestInstallDeploymentForwardsTheReceiptPins(t *testing.T) {
+	strategy := &capturingStrategy{}
+	adapter := lifecycle.NativeInstallAdapter{Strategy: strategy, AcceptedRepository: t.TempDir()}
+	receipt := lifecycle.DeploymentReceipt{
+		Source: rawSourcePlan(t, "k8s").GetSource(), EffectiveTree: "tree",
+		ContainerImages: []rendered.DeployedImage{{Name: "web", Applied: "web@sha256:" + strings.Repeat("a", 64)}},
+	}
+	if err := adapter.InstallDeployment(context.Background(), strings.Repeat("a", 40), "ns", receipt); err != nil {
+		t.Fatal(err)
+	}
+	if strategy.pins.EffectiveTree != "tree" || len(strategy.pins.Images) != 1 || strategy.pins.Images[0].Name != "web" {
+		t.Fatalf("pins = %+v, want the receipt's", strategy.pins)
 	}
 }

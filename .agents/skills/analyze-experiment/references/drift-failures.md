@@ -70,10 +70,13 @@ predicate and informational repair-to-NoMatch replay through the shared compiler
 
 ## Accepted source rendering
 
-No rendered lock and no image evidence exist. `AcceptedManifest(s)`, adoption, drift and `sdo source` render accepted source
-directly, like `kubectl diff` and `kubectl apply`. The image string is compared
-and applied exactly as source writes it (tag or digest). No deployer receipt or
-image ledger is required. A restart before the accepted-source
+No rendered lock exists. `AcceptedManifest(s)`, adoption, drift and closure render accepted source
+directly, like `kubectl diff` and `kubectl apply`, with the accepted deployment's image pins applied:
+the controller reads them from the broker evidence ledger (`Broker.AcceptedImagePins`, keyed by the
+effective tree), so a BuildKit or prebuilt deploy's digest is desired state, not drift. Without pins
+(no deployment evidence, or source moved off the deployed tree) the image string is the source's
+(tag or digest). A `drift.unexplained` on an image right after install means the pins did not apply
+(ledger record for another effective tree, or none). A restart before the accepted-source
 inventory loads makes a verified closure wait (bounded), never retire.
 Publication errors retain the last accepted revision or explicitly recover the
 broker's advanced HEAD; an empty publication result must never clear it.

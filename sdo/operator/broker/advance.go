@@ -11,6 +11,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/upstream"
 )
 
@@ -144,11 +145,8 @@ func (b *Broker) AcceptedSourceEvidence(ctx context.Context) (AcceptedSource, bo
 	var found bool
 	var plan *contracts.DeploymentPlan
 	err := b.locked(func() error {
-		commit, incidentID, ok, err := b.newestDeployment(ctx)
-		if err != nil || !ok {
-			return err
-		}
-		value, found, err = b.sourceEvidenceLocked(ctx, incidentID, Receipt{IncidentID: incidentID, Commit: commit})
+		var err error
+		value, found, err = b.acceptedEvidenceLocked(ctx)
 		if err != nil || !found {
 			return err
 		}
@@ -156,6 +154,35 @@ func (b *Broker) AcceptedSourceEvidence(ctx context.Context) (AcceptedSource, bo
 		return err
 	})
 	return AcceptedSource{Evidence: value, Plan: plan}, found, err
+}
+
+// acceptedEvidenceLocked is the evidence of the newest source deployment.
+func (b *Broker) acceptedEvidenceLocked(ctx context.Context) (SourceEvidence, bool, error) {
+	commit, incidentID, ok, err := b.newestDeployment(ctx)
+	if err != nil || !ok {
+		return SourceEvidence{}, false, err
+	}
+	return b.sourceEvidenceLocked(ctx, incidentID, Receipt{IncidentID: incidentID, Commit: commit})
+}
+
+// AcceptedImagePins are the images the newest accepted deployment applied,
+// bound to the effective tree it deployed. They are the image part of desired
+// state (rendered.PinProvider): the controller reads them from the same
+// ledger record that backs the accepted commit, so a source change that moves
+// images gets new pins only through a new accepted deployment (onboarding or
+// an advance), and a memory-only commit leaves them as they were. With no
+// recorded deployment (a seeded install) there are no pins.
+func (b *Broker) AcceptedImagePins(ctx context.Context) (rendered.ReceiptPins, error) {
+	var pins rendered.ReceiptPins
+	err := b.locked(func() error {
+		evidence, found, err := b.acceptedEvidenceLocked(ctx)
+		if err != nil || !found {
+			return err
+		}
+		pins = rendered.ReceiptPins{EffectiveTree: evidence.EffectiveTree, Images: evidence.ContainerImages}
+		return nil
+	})
+	return pins, err
 }
 
 func (b *Broker) newestDeployment(ctx context.Context) (commit, incidentID string, found bool, err error) {
