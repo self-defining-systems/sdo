@@ -58,7 +58,7 @@ func TestIdentityRejectsWhatTheLaunchFlagsReject(t *testing.T) {
 func launch() *contracts.ControllerConfig {
 	return &contracts.ControllerConfig{
 		Namespace: "shop", ControlNamespace: "sdo-system", AppRoot: "/synthetic/app", BrokerWorktreeRoot: "/synthetic/repo/proposals",
-		RepositoryMountPath: "/synthetic/repo", RepositoryPvc: "repo", Replay: "off", MetricsUrl: "http://metrics.invalid",
+		RepositoryMountPath: "/synthetic/repo", RepositoryPvc: "repo", Replay: "off", TelemetryEnvironmentFile: "/synthetic/telemetry/environment.json",
 	}
 }
 
@@ -89,6 +89,11 @@ func TestRepairDeployerIsTheTrustedDeployer(t *testing.T) {
 	verifier, ok := repair.Verifier.(deployment.IndependentHealthVerifier)
 	if !ok || verifier.Readiness == nil || verifier.Readiness.Renderers != deployer.Renderers || verifier.OperatorRoot != "/opt/sdo/sdo/operator" || verifier.AcceptedRoot != "/synthetic/app" {
 		t.Fatalf("verifier = %+v", repair.Verifier)
+	}
+	// The independent verification reads the same telemetry environment the
+	// controller does, never a separate metrics URL.
+	if probe, ok := verifier.Probe.(deployment.AcceptedDetectorProbe); !ok || probe.TelemetryEnvironment != "/synthetic/telemetry/environment.json" {
+		t.Fatalf("probe = %+v", verifier.Probe)
 	}
 }
 
