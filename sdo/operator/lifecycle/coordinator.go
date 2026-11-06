@@ -179,6 +179,14 @@ type Config struct {
 	// gets for its own detectors before a detector set that still fires
 	// unchanged is attributed to the application; zero selects 2.
 	DesignerAttempts int
+	// RefreshScope names who runs a health refresh. A refresh's publication
+	// (proposal checkout, judge Job, rejection log) is identified by its
+	// inputs and by this scope, so the controller child's start-up refresh and
+	// the refresh an upstream advance runs never share one publication: a child
+	// restarting while an advance's refresh is in flight cannot attach to, or
+	// recreate the checkout of, the other's task. Empty is the controller's own
+	// start-up refresh.
+	RefreshScope string
 	// MaxAttempts bounds deployer correction attempts only. The fields below
 	// bound the waits that never consume one; zero selects the default.
 	PendingEvaluations    int

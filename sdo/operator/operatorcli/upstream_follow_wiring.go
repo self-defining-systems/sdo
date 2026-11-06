@@ -186,5 +186,5 @@ type designerRefresh struct {
 }
 
 func (d designerRefresh) RefreshDetection(ctx context.Context, _ lifecycle.ShapeChange) error {
-	return refreshControllerHealth(ctx, d.launch, d.repository)
+	return refreshControllerHealth(ctx, lifecycle.RefreshScopeAdvance, d.launch, d.repository)
 }
