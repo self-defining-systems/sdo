@@ -48,6 +48,10 @@ type Environment struct {
 	ExternalHosts        []string `json:"externalHosts,omitempty"`
 	ClusterDomain        string   `json:"clusterDomain,omitempty"`
 	Credentials          []string `json:"credentials,omitempty"`
+	// Recipes are the backend recipes the environment offers a designer's
+	// backends.yaml, with the cluster reads each declares; every broker checks
+	// backends against them.
+	Recipes []Recipe `json:"recipes,omitempty"`
 }
 
 // Policy is the binding policy the environment's grants define.
@@ -55,7 +59,7 @@ func (e Environment) Policy() Policy {
 	return Policy{
 		Mode: e.Mode, ControlNamespace: e.ControlNamespace, ApplicationNamespace: e.ApplicationNamespace,
 		ExtraNamespaces: e.ExtraNamespaces, ExternalHosts: e.ExternalHosts, ClusterDomain: e.ClusterDomain,
-		Credentials: e.Credentials, Capabilities: e.Capabilities,
+		Credentials: e.Credentials, Capabilities: e.Capabilities, Recipes: e.Recipes,
 	}
 }
 

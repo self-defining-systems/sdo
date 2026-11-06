@@ -35,19 +35,20 @@ func (b *Broker) TelemetryPolicy() telemetry.Policy { return b.telemetry.Policy 
 
 // TelemetryFromEnvironment is the one derivation of a broker's telemetry from
 // the operator's telemetry environment document, which the install writes from
-// its profile and the controller reads at start: the mode, the granted cluster
-// reads, the operator-provided sources as the registry describes them, the
-// control and application namespaces, and the backend recipes the environment
-// offers. The onboarding broker and every controller broker call it, so a
-// tree is checked under the same policy wherever it is published.
-func TelemetryFromEnvironment(env telemetry.Environment, registry *telemetry.Registry, application, control string, recipes []telemetry.Recipe) (Telemetry, error) {
+// its profile and the controller reads at start: the environment's binding
+// policy (mode, granted namespaces, hosts, credentials, cluster reads, offered
+// recipes) plus its provided sources as the registry describes them. The
+// onboarding broker and every controller broker call it, so a tree is checked
+// under the same policy wherever it is published.
+func TelemetryFromEnvironment(env telemetry.Environment, registry *telemetry.Registry) (Telemetry, error) {
 	if registry == nil {
 		return Telemetry{}, errors.New("broker telemetry requires the adapter registry")
 	}
 	if err := env.Validate(); err != nil {
 		return Telemetry{}, err
 	}
-	policy := telemetry.Policy{Mode: env.EffectiveMode(), ControlNamespace: control, ApplicationNamespace: application, Capabilities: env.Capabilities, Recipes: recipes}
+	policy := env.Policy()
+	policy.Mode = env.EffectiveMode()
 	for _, binding := range env.ProvidedBindings() {
 		source, err := registry.Source(binding)
 		if err != nil {
@@ -63,9 +64,8 @@ func TelemetryFromEnvironment(env telemetry.Environment, registry *telemetry.Reg
 }
 
 // ControllerTelemetry is a controller broker's telemetry: its launch's
-// environment document (none read means an open environment that provides
-// nothing) and namespaces. The environment does not carry the recipes the
-// install applied, so a controller broker offers none.
+// environment document. A launch without one is an open environment that
+// provides nothing and grants only the launch's namespaces.
 func ControllerTelemetry(config *contracts.ControllerConfig, registry *telemetry.Registry) (Telemetry, error) {
 	env := telemetry.Environment{Version: telemetry.EnvironmentVersion}
 	if path := config.GetTelemetryEnvironmentFile(); path != "" {
@@ -73,10 +73,11 @@ func ControllerTelemetry(config *contracts.ControllerConfig, registry *telemetry
 		if env, err = telemetry.LoadEnvironment(path); err != nil {
 			return Telemetry{}, err
 		}
+	} else {
+		env.ApplicationNamespace, env.ControlNamespace = config.GetNamespace(), config.GetControlNamespace()
+		if env.ControlNamespace == "" {
+			env.ControlNamespace = env.ApplicationNamespace
+		}
 	}
-	control := config.GetControlNamespace()
-	if control == "" {
-		control = config.GetNamespace()
-	}
-	return TelemetryFromEnvironment(env, registry, config.GetNamespace(), control, nil)
+	return TelemetryFromEnvironment(env, registry)
 }

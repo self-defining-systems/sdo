@@ -132,6 +132,13 @@ func TelemetryEnvironmentFile() string {
 func (c Config) TelemetryEnvironment() telemetry.Environment {
 	env := c.TelemetryProfile.Environment()
 	env.ControlNamespace, env.ApplicationNamespace = c.controlNamespace(), c.Namespace
+	for _, name := range c.TelemetryProfile.Recipes {
+		for _, recipe := range c.BackendRecipes {
+			if recipe.Name() == name {
+				env.Recipes = append(env.Recipes, telemetry.Recipe{Name: name, Declares: recipe.Capabilities()})
+			}
+		}
+	}
 	return env
 }
 

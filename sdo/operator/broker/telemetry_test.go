@@ -79,8 +79,9 @@ func TestValidationChildRunsUnderTheParentChecksTelemetryPolicy(t *testing.T) {
 func TestTelemetryFromEnvironmentDescribesProvidedSources(t *testing.T) {
 	registry := prometheusRegistry(t)
 	env := telemetry.Environment{Version: telemetry.EnvironmentVersion, Capabilities: []telemetry.ClusterCapability{telemetry.CapPodDiscovery},
+		ApplicationNamespace: "shop", ControlNamespace: "sdo-ctl", Recipes: []telemetry.Recipe{{Name: "prometheus"}},
 		Provided: []telemetry.Binding{{ID: "prom", Adapter: "prometheus", Kinds: []telemetry.Kind{telemetry.KindMetrics}, Default: true, Endpoint: telemetry.Endpoint{URL: "http://sdo-prometheus.sdo-ctl.svc:9090"}}}}
-	got, err := TelemetryFromEnvironment(env, registry, "shop", "sdo-ctl", []telemetry.Recipe{{Name: "prometheus"}})
+	got, err := TelemetryFromEnvironment(env, registry)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,15 +97,15 @@ func TestTelemetryFromEnvironmentDescribesProvidedSources(t *testing.T) {
 	}
 	floor := env
 	floor.Mode = telemetry.ModeFloor
-	if got, err := TelemetryFromEnvironment(floor, registry, "shop", "sdo-ctl", nil); err != nil || len(got.Policy.Provided) != 0 {
+	if got, err := TelemetryFromEnvironment(floor, registry); err != nil || len(got.Policy.Provided) != 0 {
 		t.Fatalf("floor = %+v, %v; want no provided source", got.Policy.Provided, err)
 	}
 	unknown := env
 	unknown.Provided = []telemetry.Binding{{ID: "x", Adapter: "nope", Kinds: []telemetry.Kind{telemetry.KindMetrics}, Endpoint: telemetry.Endpoint{URL: "http://x.sdo-ctl.svc"}}}
-	if _, err := TelemetryFromEnvironment(unknown, registry, "shop", "sdo-ctl", nil); err == nil {
+	if _, err := TelemetryFromEnvironment(unknown, registry); err == nil {
 		t.Fatal("a provided source the registry cannot describe must fail the broker's construction")
 	}
-	if _, err := TelemetryFromEnvironment(env, nil, "shop", "sdo-ctl", nil); err == nil {
+	if _, err := TelemetryFromEnvironment(env, nil); err == nil {
 		t.Fatal("no registry must fail")
 	}
 }
@@ -114,7 +115,7 @@ func TestTelemetryFromEnvironmentDescribesProvidedSources(t *testing.T) {
 // an open environment that provides nothing.
 func TestControllerTelemetryReadsTheLaunchEnvironment(t *testing.T) {
 	registry := prometheusRegistry(t)
-	env := telemetry.Environment{Version: telemetry.EnvironmentVersion,
+	env := telemetry.Environment{Version: telemetry.EnvironmentVersion, ApplicationNamespace: "shop", ControlNamespace: "sdo-ctl", Recipes: []telemetry.Recipe{{Name: "prometheus"}},
 		Provided: []telemetry.Binding{{ID: "prom", Adapter: "prometheus", Kinds: []telemetry.Kind{telemetry.KindMetrics}, Default: true, Endpoint: telemetry.Endpoint{URL: "http://sdo-prometheus.sdo-ctl.svc:9090"}}}}
 	document, err := env.Marshal()
 	if err != nil {
@@ -128,7 +129,7 @@ func TestControllerTelemetryReadsTheLaunchEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := TelemetryFromEnvironment(env, registry, "shop", "sdo-ctl", nil)
+	want, err := TelemetryFromEnvironment(env, registry)
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("controller telemetry = %+v, %v; want %+v", got, err, want)
 	}

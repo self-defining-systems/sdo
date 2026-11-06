@@ -144,7 +144,7 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		Workers: workers, Readiness: readiness,
 		// The designer's telemetry backends are applied under the same
 		// policy the broker validated them against.
-		TelemetryApply: telemetryapply.NewApplier(client, repository.Telemetry, config.Install.BackendRecipes),
+		TelemetryApply: telemetryapply.NewApplier(client, repository.TelemetryPolicy(), config.Install.BackendRecipes),
 		Verifier: deployment.IndependentHealthVerifier{
 			AcceptedRoot: config.ApplicationRoot, OperatorRoot: config.OperatorRoot, Readiness: &readiness, Probe: healthProbe,
 		}, Installer: installer,

@@ -44,9 +44,27 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-var onboardingSeed = filepath.Join("..", "..", "..", "benchmarks", "sregym", "experiments", "assurance", "seeds", "hotel_reservation_30e023d", "operational_memory")
+var assuranceSeeds = filepath.Join("..", "..", "..", "benchmarks", "sregym", "experiments", "assurance", "seeds")
 
-// The onboarding invariant behind the second live GitLab run: for every
+// firstAssuranceSeed is a checked-in judge-accepted memory: the first seed
+// directory holding an operational_memory tree.
+func firstAssuranceSeed(t *testing.T) string {
+	t.Helper()
+	entries, err := os.ReadDir(assuranceSeeds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		root := filepath.Join(assuranceSeeds, entry.Name(), "operational_memory")
+		if _, err := os.Stat(root); err == nil {
+			return root
+		}
+	}
+	t.Fatal("no assurance seed holds an operational_memory tree")
+	return ""
+}
+
+// The onboarding invariant behind the live onboarding failures: for every
 // built-in telemetry profile, and a profile that provides a source without
 // alerts, the health judge's proposal (its detectors and probes, plus Go's
 // generic bootstrap) is accepted by the exact broker the lifecycle judge path
@@ -58,11 +76,9 @@ var onboardingSeed = filepath.Join("..", "..", "..", "benchmarks", "sregym", "ex
 // test runs in the nightly tier.
 func TestOnboardingBrokerAcceptsTheJudgesProposalUnderEveryProfile(t *testing.T) {
 	if testing.Short() {
-		t.Skip("compiles the diagnostics module once per profile (about 20 s each); nightly tier")
+		t.Skip("compiles the diagnostics module once per profile (about 15 s each); nightly CI runs it without -short")
 	}
-	if _, err := os.Stat(onboardingSeed); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	onboardingSeed := firstAssuranceSeed(t)
 	plain := telemetry.Profile{Name: "plain", Mode: telemetry.ModeOpen, Sources: []telemetry.ProfileSource{{
 		ID: "plain", Adapter: "plain-metrics", Kinds: []telemetry.Kind{telemetry.KindMetrics}, Endpoint: "http://metrics.sdo-ctl.svc:9090", Default: true,
 	}}}

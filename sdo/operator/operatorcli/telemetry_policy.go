@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/install"
@@ -30,25 +31,17 @@ func installTelemetryPolicy(config install.Config, application, control string) 
 
 // installTelemetry derives a broker's telemetry from the install's profile
 // through the same environment document the controller reads
-// (broker.TelemetryFromEnvironment), plus the recipes the profile applies with
-// the reads each declares. So the onboarding broker, the judge's check and the
-// controller's brokers agree on which sources exist.
+// (broker.TelemetryFromEnvironment), so the onboarding broker, the judge's
+// check and the controller's brokers agree on sources, grants and recipes.
 func installTelemetry(config install.Config, registry *telemetry.Registry, application, control string) (broker.Telemetry, error) {
 	profile := config.TelemetryProfile
-	var recipes []telemetry.Recipe
 	for _, name := range profile.Recipes {
-		found := false
-		for _, recipe := range config.BackendRecipes {
-			if recipe.Name() == name {
-				recipes = append(recipes, telemetry.Recipe{Name: name, Declares: recipe.Capabilities()})
-				found = true
-			}
-		}
-		if !found {
+		if !slices.ContainsFunc(config.BackendRecipes, func(r telemetry.BackendRecipe) bool { return r.Name() == name }) {
 			return broker.Telemetry{}, fmt.Errorf("telemetry profile %q applies recipe %q, which this operator does not provide", profile.Name, name)
 		}
 	}
-	derived, err := broker.TelemetryFromEnvironment(config.TelemetryEnvironment(), registry, application, control, recipes)
+	config.Namespace, config.ControlNamespace = application, control
+	derived, err := broker.TelemetryFromEnvironment(config.TelemetryEnvironment(), registry)
 	if err != nil {
 		return broker.Telemetry{}, fmt.Errorf("telemetry profile %q: %w", profile.Name, err)
 	}
