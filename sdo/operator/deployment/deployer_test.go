@@ -379,7 +379,7 @@ func TestDeployPathObjectsEqualReadObjects(t *testing.T) {
 	// nil is an environment never discovered (renderer defaults); the other is
 	// a discovered one. Deploy and reads must agree under both.
 	for name, environment := range map[string]*contracts.RenderEnvironment{
-		"discovered": {KubeVersion: "v1.29.4", ApiVersions: []string{"apps/v1", "apps/v1/Deployment", "v1", "v1/Service"}},
+		"discovered": {KubeVersion: "v1.29.4", ApiVersions: []string{"apps/v1", "apps/v1/Deployment", "batch/v1", "batch/v1/Job", "v1", "v1/ConfigMap", "v1/Namespace", "v1/Secret", "v1/Service", "v1/ServiceAccount"}},
 		"unknown":    nil,
 	} {
 		for _, fixture := range depFixtures(t) {

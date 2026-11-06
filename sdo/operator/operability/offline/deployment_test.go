@@ -363,3 +363,13 @@ func TestAllowlistCoversCronJobAndPod(t *testing.T) {
 		})
 	}
 }
+
+func TestUnservedAPIFailsO1APIs(t *testing.T) {
+	d := deployment(t, rendertest.MapFS{"k8s/web.yaml": web})
+	d.ServedAPIs = []string{"v1", "apps/v1", "apps/v1/Deployment"}
+	got := byID(t, offline.CheckDeployment(context.Background(), d).Checks)
+	want(t, got, "O1.apis", operability.StatusPass, "")
+	d.ServedAPIs = []string{"v1", "apps/v1"}
+	got = byID(t, offline.CheckDeployment(context.Background(), d).Checks)
+	want(t, got, "O1.apis", operability.StatusFail, operability.CauseRender)
+}

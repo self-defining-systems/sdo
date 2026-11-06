@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"text/template"
@@ -35,6 +36,8 @@ import (
 	"helm.sh/helm/v3/pkg/release"
 	"helm.sh/helm/v3/pkg/releaseutil"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	kubescheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/yaml"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -285,9 +288,52 @@ func capabilities(env render.Env) (*chartutil.Capabilities, error) {
 		// Unknown: Helm's default set lists every API its client library has
 		// ever known, including ones the cluster no longer serves.
 		minor, _ := strconv.Atoi(strings.TrimRight(kv.Minor, "+"))
-		caps.APIVersions = servedAPIVersions(caps.APIVersions, kv.Major, minor)
+		caps.APIVersions = servedAPIVersions(withKinds(caps.APIVersions), kv.Major, minor)
 	}
 	return caps, nil
+}
+
+// withKinds adds the kind-qualified entries ("policy/v1/PodDisruptionBudget")
+// a real cluster's discovery reports and charts probe with
+// .Capabilities.APIVersions.Has. Helm's default set holds group versions only.
+// Kinds come from the client-go scheme; a group version the scheme no longer
+// knows (removed upstream, still served by an older cluster) is given the kinds
+// that the other versions of its group have.
+func withKinds(known chartutil.VersionSet) chartutil.VersionSet {
+	kindsOf := map[string][]string{}
+	groupKinds := map[string]map[string]bool{}
+	for gvk := range kubescheme.Scheme.AllKnownTypes() {
+		if gvk.Version == runtime.APIVersionInternal || strings.HasSuffix(gvk.Kind, "List") || strings.HasSuffix(gvk.Kind, "Options") {
+			continue
+		}
+		gv := gvk.GroupVersion().String()
+		kindsOf[gv] = append(kindsOf[gv], gvk.Kind)
+		if groupKinds[gvk.Group] == nil {
+			groupKinds[gvk.Group] = map[string]bool{}
+		}
+		groupKinds[gvk.Group][gvk.Kind] = true
+	}
+	out := slices.Clone(known)
+	for _, gv := range known {
+		if strings.Count(gv, "/") > 1 {
+			continue
+		}
+		kinds := kindsOf[gv]
+		if len(kinds) == 0 {
+			group := ""
+			if before, _, ok := strings.Cut(gv, "/"); ok {
+				group = before
+			}
+			for kind := range groupKinds[group] {
+				kinds = append(kinds, kind)
+			}
+		}
+		for _, kind := range kinds {
+			out = append(out, gv+"/"+kind)
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // removedAPIs lists, by the Kubernetes minor version (1.x) that stopped
