@@ -23,17 +23,7 @@ func (s *SourceInventory) indexDependencies() {
 	}
 	for _, o := range s.declared {
 		namespace := o.GetNamespace()
-		var path []string
-		switch o.GetAPIVersion() + "/" + o.GetKind() {
-		case "v1/Pod":
-			path = []string{"spec"}
-		case "apps/v1/Deployment", "apps/v1/StatefulSet", "apps/v1/DaemonSet", "apps/v1/ReplicaSet", "batch/v1/Job":
-			path = []string{"spec", "template", "spec"}
-		case "batch/v1/CronJob":
-			path = []string{"spec", "jobTemplate", "spec", "template", "spec"}
-		}
-		if len(path) > 0 {
-			spec, _, _ := unstructured.NestedMap(o.Object, path...)
+		if spec, err := rendered.PodSpec(o.Object); err == nil {
 			name, _ := spec["serviceAccountName"].(string)
 			add("v1", "ServiceAccount", namespace, name)
 			for _, raw := range inventoryList(spec["imagePullSecrets"]) {
@@ -65,7 +55,7 @@ func (s *SourceInventory) indexDependencies() {
 					}
 				}
 			}
-			for _, field := range []string{"containers", "initContainers", "ephemeralContainers"} {
+			for _, field := range []string{rendered.Containers, rendered.InitContainers, "ephemeralContainers"} {
 				for _, raw := range inventoryList(spec[field]) {
 					container, _ := raw.(map[string]any)
 					for _, raw := range inventoryList(container["envFrom"]) {

@@ -46,12 +46,12 @@ func shapeDigest(objects []DesiredObject) (string, error) {
 }
 
 func workloadShape(doc map[string]any) map[string][]map[string]any {
-	podSpec, err := workloadPodSpec(doc)
+	podSpec, err := PodSpec(doc)
 	if err != nil {
 		return nil // Normalize already validated; unreachable for a Workload.
 	}
 	out := map[string][]map[string]any{}
-	for _, field := range []string{"initContainers", "containers"} {
+	for _, field := range ContainerFields {
 		list, _ := podSpec[field].([]any)
 		for _, raw := range list {
 			container, _ := raw.(map[string]any)

@@ -43,11 +43,11 @@ func ImageSites(set DesiredSet) []string {
 			if !object.Workload {
 				continue
 			}
-			podSpec, err := workloadPodSpec(object.Object.Object)
+			podSpec, err := PodSpec(object.Object.Object)
 			if err != nil {
 				continue // Normalize rejected this shape before it entered the set.
 			}
-			for _, field := range []string{"initContainers", "containers"} {
+			for _, field := range ContainerFields {
 				containers, _ := podSpec[field].([]any)
 				for _, raw := range containers {
 					container, _ := raw.(map[string]any)
