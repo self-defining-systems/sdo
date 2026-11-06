@@ -53,7 +53,11 @@ func BuildWorkingProgram(ctx context.Context, config Config, id string) (_ *Work
 	}
 	source := []byte("module " + module + "\n\ngo 1.26.0\n")
 	workspace.ModulePath = module
-	if err = os.WriteFile(filepath.Join(directory, "go.mod"), []byte(workspaceModule(string(source), module, operator)), 0644); err != nil {
+	goMod, err := workspaceModule(string(source), module, operator)
+	if err != nil {
+		return nil, "", err
+	}
+	if err = os.WriteFile(filepath.Join(directory, "go.mod"), []byte(goMod), 0644); err != nil {
 		return nil, "", err
 	}
 	specs, err := programvalidation.InspectForAdoption(directory, module)

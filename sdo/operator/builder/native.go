@@ -288,7 +288,11 @@ func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error
 	if match := modulePattern.FindSubmatch(goMod); len(match) == 2 {
 		module = string(match[1])
 	}
-	if err := os.WriteFile(goModPath, []byte(workspaceModule(string(goMod), module, operatorRoot)), 0o644); err != nil {
+	workspaceGoMod, err := workspaceModule(string(goMod), module, operatorRoot)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(goModPath, []byte(workspaceGoMod), 0o644); err != nil {
 		return nil, err
 	}
 	if err := os.MkdirAll(filepath.Join(directory, "generated"), 0o755); err != nil {
@@ -394,7 +398,11 @@ func copyTree(ctx context.Context, source, destination string) error {
 	})
 }
 
-func workspaceModule(source, module, operatorRoot string) string {
+func workspaceModule(source, module, operatorRoot string) (string, error) {
+	dependencies, err := buildio.OperatorModules(operatorRoot)
+	if err != nil {
+		return "", err
+	}
 	lines := []string{}
 	for _, line := range strings.Split(source, "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -407,7 +415,7 @@ func workspaceModule(source, module, operatorRoot string) string {
 	if !strings.Contains(content, "module ") {
 		content = "module " + module + "\n\n" + content
 	}
-	for _, dependency := range []string{"sdk", "core", "runtime", "contracts"} {
+	for _, dependency := range dependencies {
 		path := "sdo.dev/operator/" + dependency
 		if !moduleRequired(content, path) {
 			content += "\nrequire " + path + " v0.0.0"
@@ -416,11 +424,11 @@ func workspaceModule(source, module, operatorRoot string) string {
 	if !moduleRequired(content, "sdo.dev/operator") {
 		content += "\nrequire sdo.dev/operator v0.0.0"
 	}
-	for _, dependency := range []string{"sdk", "core", "runtime", "contracts"} {
+	for _, dependency := range dependencies {
 		content += "\nreplace sdo.dev/operator/" + dependency + " => " + filepath.Join(operatorRoot, dependency)
 	}
 	content += "\nreplace sdo.dev/operator => " + operatorRoot + "\n"
-	return content
+	return content, nil
 }
 
 func moduleRequired(content, path string) bool {

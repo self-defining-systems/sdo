@@ -648,6 +648,11 @@ def test_broker_replay_pins_the_requested_operator_modules(tmp_path: Path, monke
 
     operator = tmp_path / 'frozen operator "revision" 💾'
     source = tmp_path / "accepted source"
+    # "newmodule" stands for a module added later: replay must pin every nested module it finds.
+    modules = ("core", "sdk", "runtime", "contracts", "telemetry", "newmodule")
+    for module in modules:
+        (operator / module).mkdir(parents=True)
+        (operator / module / "go.mod").write_text(f"module sdo.dev/operator/{module}\n")
     observed: list[Path] = []
     real_run = subprocess.run
 
@@ -660,7 +665,7 @@ def test_broker_replay_pins_the_requested_operator_modules(tmp_path: Path, monke
         contents = workspace.read_text()
         # The replay driver and all production modules must come from the
         # explicit operator-root, even when replay runs outside that checkout.
-        for module in ("", "core", "sdk", "runtime", "contracts"):
+        for module in ("", *modules):
             assert json.dumps(str(operator / module), ensure_ascii=False) in contents
         # Parse with Go itself: JSON surrogate escapes are not valid Go
         # string literals for paths containing characters outside the BMP.
@@ -673,7 +678,8 @@ def test_broker_replay_pins_the_requested_operator_modules(tmp_path: Path, monke
         )
         replacements = {item["Old"]["Path"]: Path(item["New"]["Path"]) for item in json.loads(parsed.stdout)["Replace"]}
         assert replacements["sdo.dev/operator"] == operator
-        assert replacements["sdo.dev/operator/runtime"] == operator / "runtime"
+        for module in modules:
+            assert replacements[f"sdo.dev/operator/{module}"] == operator / module
         assert Path(str(kwargs["cwd"])).name == "replay_go"
         assert command[:3] == ["go", "run", "."]
         assert command[command.index("--operator-root") + 1] == str(operator)

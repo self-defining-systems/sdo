@@ -12,6 +12,11 @@ echo "Running all tests..."
 # Run Python tests
 "$SCRIPT_DIR/test_python.sh" "$@"
 
-for module in sdo/operator sdo/operator/contracts sdo/operator/sdk sdo/operator/core sdo/operator/runtime benchmarks/sregym/fastloop/replay_go; do
+# Every nested operator module is discovered from the tree, so a new one is never skipped.
+operator_modules=()
+for gomod in "$PROJECT_ROOT"/sdo/operator/*/go.mod; do
+  operator_modules+=("sdo/operator/$(basename "$(dirname "$gomod")")")
+done
+for module in sdo/operator "${operator_modules[@]}" benchmarks/sregym/fastloop/replay_go; do
   (cd "$PROJECT_ROOT/$module" && go test -tags=integration ./...)
 done
