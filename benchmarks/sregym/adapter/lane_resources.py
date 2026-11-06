@@ -136,10 +136,15 @@ class LaneMeasurementUnavailable(ValueError):
 _MEASUREMENT_ATTEMPTS = 4
 
 
+# The SREGym harness runs its transient client pods (seeded-data reads, oracle polling) here, outside the app namespace.
+HELPER_NAMESPACE = "sregym-injector"
+
+
 def allowed_namespaces(app_namespaces: Set[str], policy: LaneResourcePolicy | None = None) -> frozenset[str]:
-    """The only namespaces a lane may hold at admission: infrastructure, the app and its SDO control namespace."""
+    """Namespaces a lane may hold at admission: infrastructure, the app, its SDO control and the harness helper."""
     policy = policy or LaneResourcePolicy()
-    return policy.infrastructure_namespaces | set(app_namespaces) | {f"{name}-sdo" for name in app_namespaces}
+    helpers = {HELPER_NAMESPACE}
+    return policy.infrastructure_namespaces | set(app_namespaces) | {f"{name}-sdo" for name in app_namespaces} | helpers
 
 
 def evaluate_lane_resources(

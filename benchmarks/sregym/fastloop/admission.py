@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import time
 from dataclasses import asdict, dataclass
@@ -135,6 +136,7 @@ class LaneAdmission:
         synchronize: Callable[[], None] | None = None,
         progress: Callable[..., None] | None = None,
         before_proof: Callable[[str, dict[str, Any]], None] | None = None,
+        pre_onboarding_hook: Path | None = None,
     ) -> None:
         if code_path not in {"go", "shell"}:
             raise ValueError(f"eval: unsupported admission code path {code_path!r}")
@@ -147,6 +149,7 @@ class LaneAdmission:
         self.install_config = install_config
         self.synchronize, self.progress = synchronize, progress
         self.before_proof = before_proof
+        self.pre_onboarding_hook = pre_onboarding_hook
         self.required_detectors = {"workload-health", "service-endpoints", "service-reachability", "traffic-health"}
         self.required_scenarios: set[str] = set()
         self._identity: dict[str, Any] | None = None
@@ -166,6 +169,23 @@ class LaneAdmission:
                 self.required_scenarios.update(row["id"] for row in document.get("scenarios", []))
         if not self.required_scenarios:
             raise ValueError("eval: accepted health policy declares no synthetic traffic scenarios")
+
+    def _run_pre_onboarding_hook(self) -> None:
+        if self.pre_onboarding_hook is None:
+            return
+        env = self.environment
+        completed = subprocess.run(
+            [str(self.pre_onboarding_hook), env.namespace],
+            env={**os.environ, "KUBECONFIG": str(env.kubeconfig)},
+            capture_output=True,
+            text=True,
+            timeout=wait_for(WaitKind.ROLLOUT),
+        )
+        if completed.returncode != 0:
+            raise ValueError(
+                f"eval: pre-onboarding hook {self.pre_onboarding_hook} exited {completed.returncode}: "
+                f"{(completed.stderr or completed.stdout).strip()[-500:]}"
+            )
 
     def _windows(self, control: str) -> dict[str, Any]:
         job = self._controller_job(control)
@@ -428,6 +448,7 @@ class LaneAdmission:
         self._policy()
         # Onboarding has its own budget: the stabilization clock below must never
         # contain install-existing or the first health refresh of a fresh seed.
+        self._run_pre_onboarding_hook()
         onboarding = self.await_onboarding(control) if self.code_path == "go" else {}
         # A previous row's closure and reflection have their own budget too: a
         # repeat starts only on the memory that reflection accepted.

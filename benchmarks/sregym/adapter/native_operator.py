@@ -54,6 +54,18 @@ class SharedRepositoryIdentityMismatch(NativeOperatorError):
     """A successful identity read disagrees with the configured shared repository."""
 
 
+def validate_code_path_overrides(value: str) -> None:
+    """Accept an empty value or a JSON object; the Go CLI validates the override names."""
+    if not value:
+        return
+    try:
+        document = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"code_path_overrides must be JSON: {exc}") from exc
+    if not isinstance(document, dict):
+        raise ValueError("code_path_overrides must be a JSON object")
+
+
 @dataclass(frozen=True)
 class NativeInstallConfig:
     repository: Path
@@ -77,6 +89,7 @@ class NativeInstallConfig:
     frozen_memory: bool = False
     external_incidents: bool = False
     code_path: str = "go"
+    code_path_overrides: str = ""
 
     max_response_loops: int = 10
     response_timeout_seconds: int = int(wait_for(WaitKind.RESPONSE))
@@ -139,6 +152,7 @@ class NativeInstallConfig:
             raise ValueError("code_path must be go or shell")
         if self.reflection_guidance not in ("baseline", "generalize", "generalize-spec"):
             raise ValueError("reflection_guidance must be baseline, generalize, or generalize-spec")
+        validate_code_path_overrides(self.code_path_overrides)
         if self.max_response_loops <= 0:
             raise ValueError("max_response_loops must be positive")
         if self.response_timeout_seconds <= 0 or self.verification_timeout_seconds <= 0:
@@ -189,6 +203,8 @@ class NativeInstallConfig:
             args.extend(("--responder-namespace", namespace))
         for value in self.responder_env:
             args.extend(("--responder-env", value))
+        if self.code_path_overrides:
+            args.extend(("--code-path-overrides", self.code_path_overrides))
         return args
 
 
