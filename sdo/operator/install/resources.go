@@ -434,6 +434,7 @@ func controllerJob(c Config) *batchv1.Job {
 			args = append(args, "--memory-upstream-ssh-dir", MemoryUpstreamSSHDir)
 		}
 	}
+	args = append(args, controllerDeployArgs(c)...)
 	ttl, backoff := int32(600), int32(6)
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{Name: ControllerJobName, Namespace: control},
@@ -512,6 +513,24 @@ func controllerJob(c Config) *batchv1.Job {
 		devmount.Apply(pod)
 	}
 	return job
+}
+
+// controllerDeployArgs give the controller parent the operate Job's trusted
+// build and apply identity, so it can deploy upstream advances of a followed
+// source. An install without a BuildKit image and push Secret (seeded or
+// install-existing) passes none, and the controller does not follow.
+func controllerDeployArgs(c Config) []string {
+	if c.BuildKitImage == "" || c.RegistryPushSecret == "" {
+		return nil
+	}
+	args := append([]string{"--buildkit-image", c.BuildKitImage, "--registry-push-secret", c.RegistryPushSecret}, operateBuildArgs(c)...)
+	if c.RegistryHost != "" {
+		args = append(args, "--registry-host", c.RegistryHost)
+	}
+	if c.RegistryInsecure {
+		args = append(args, "--registry-insecure")
+	}
+	return args
 }
 
 // MemoryUpstreamSSHDir is where the controller reads the memory remote's ssh

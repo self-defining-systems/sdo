@@ -19,7 +19,10 @@ import (
 const ID = "git"
 
 // holdRefPrefix keeps fetched revisions reachable so they are not collected.
-const holdRefPrefix = "refs/sdo/upstream/"
+// Nothing deletes these refs: the next advance merges with the previous
+// upstream commit as its base. The name must not collide with the broker's
+// memory-remote ref refs/sdo/upstream (a ref cannot also be a directory).
+const holdRefPrefix = "refs/sdo/upstream-source/"
 
 var (
 	commitID = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)

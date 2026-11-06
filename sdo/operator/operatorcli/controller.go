@@ -17,6 +17,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/toolchain"
@@ -31,8 +32,36 @@ func (r *repeatable) Set(value string) error { *r = append(*r, value); return ni
 // Kubernetes effect. It is pure so installer Job arguments can be contract
 // tested against the same parser shipped in the controller image.
 func ParseControllerLaunch(args []string) (builder.RunConfig, error) {
+	run, _, err := parseControllerLaunch(args)
+	return run, err
+}
+
+// RunController is the controller pod's parent process: the supervised
+// controller child (builder.Run, which rebuilds in-process on adoption) and,
+// beside it, the upstream follower, which advances the accepted source to new
+// upstream revisions of an accepted .sdo/goal/sources.yaml. The follower
+// never ends the controller; it stops when the child loop ends.
+func RunController(ctx context.Context, args []string) error {
+	run, identity, err := parseControllerLaunch(args)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	following := make(chan struct{})
+	go func() {
+		defer close(following)
+		followUpstream(ctx, run.Controller, run.Build.OperatorRoot, identity)
+	}()
+	err = builder.Run(ctx, run, builder.RestartPolicy{})
+	cancel()
+	<-following
+	return err
+}
+
+func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, error) {
 	if len(args) == 0 || args[0] != "controller" {
-		return builder.RunConfig{}, errors.New("expected controller subcommand")
+		return builder.RunConfig{}, deployIdentity{}, errors.New("expected controller subcommand")
 	}
 	flags := flag.NewFlagSet("sdo-operator controller", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -87,39 +116,51 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, error) {
 	var deployedManifestPaths repeatable
 	flags.Var(&deployedManifestPaths, "deployed-manifest-path", "manifest path selected by the accepted deployment plan")
 	deploymentSourceFlag := flags.String("deployment-source", "", "accepted DeploymentSource as ProtoJSON; exclusive with --deployed-manifest-path")
+	// The parent's deploy identity (upstream advances); the child never sees it.
+	var identity deployIdentity
+	flags.StringVar(&identity.BuildKitImage, "buildkit-image", "", "digest-pinned image builder for upstream advances")
+	flags.StringVar(&identity.RegistryPushSecret, "registry-push-secret", "", "image registry push Secret for upstream advances")
+	flags.StringVar(&identity.RegistryHost, "registry-host", "", "trusted source image registry host[:port]")
+	flags.BoolVar(&identity.RegistryInsecure, "registry-insecure", false, "allow the explicitly configured HTTP image registry")
+	flags.DurationVar(&identity.BuildTimeout, "build-timeout", settings.DefaultBuildTimeout, "deadline of one source image build")
+	flags.DurationVar(&identity.BuildBudget, "build-budget", settings.DefaultBuildBudget, "deadline of all source image builds of one advance")
+	flags.DurationVar(&identity.RolloutTimeout, "rollout-timeout", settings.DefaultRolloutTimeout, "how long to wait for each applied workload to finish rolling out")
 	if err := flags.Parse(args[1:]); err != nil {
-		return builder.RunConfig{}, err
+		return builder.RunConfig{}, deployIdentity{}, err
+	}
+	if err := identity.validate(); err != nil {
+		return builder.RunConfig{}, deployIdentity{}, err
 	}
 
 	if flags.NArg() != 0 {
-		return builder.RunConfig{}, fmt.Errorf("unexpected controller arguments: %v", flags.Args())
+		return builder.RunConfig{}, deployIdentity{}, fmt.Errorf("unexpected controller arguments: %v", flags.Args())
 	}
 	deploymentSource, err := rendered.DeploymentSourceFromFlags(*deploymentSourceFlag, deployedManifestPaths)
 	if err != nil {
-		return builder.RunConfig{}, err
+		return builder.RunConfig{}, deployIdentity{}, err
 	}
 	if err := toolchain.ValidateImage(*toolchainImage); err != nil {
-		return builder.RunConfig{}, err
+		return builder.RunConfig{}, deployIdentity{}, err
 	}
 	if *brokerMode != "native" || *workerMountMode != "proposal-only" {
-		return builder.RunConfig{}, errors.New("native broker requires proposal-only worker mounts")
+		return builder.RunConfig{}, deployIdentity{}, errors.New("native broker requires proposal-only worker mounts")
 	}
 	if *duration < 0 {
-		return builder.RunConfig{}, errors.New("duration must be nonnegative")
+		return builder.RunConfig{}, deployIdentity{}, errors.New("duration must be nonnegative")
 	}
 	if *app == "" || !filepath.IsAbs(*app) || *operatorRoot == "" || *namespace == "" || *responderImage == "" || *repositoryPVC == "" || *repositoryMount == "" ||
 		*credentialsSecret == "" || *worktreeRoot == "" || *model == "" || *backend == "" || *responseTimeout <= 0 || *verificationTimeout <= 0 {
-		return builder.RunConfig{}, errors.New("native launch requires application, namespace, images, repository, credentials, and responder identity")
+		return builder.RunConfig{}, deployIdentity{}, errors.New("native launch requires application, namespace, images, repository, credentials, and responder identity")
 	}
 	if !filepath.IsAbs(*repositoryMount) || !filepath.IsAbs(*worktreeRoot) {
-		return builder.RunConfig{}, errors.New("repository mount and proposal root must be absolute")
+		return builder.RunConfig{}, deployIdentity{}, errors.New("repository mount and proposal root must be absolute")
 	}
 	if *application == "" {
 		*application = filepath.Base(*app)
 	}
 	selectedCodePath, err := parseCodePathSelection(*codePath, *codePathOverrides)
 	if err != nil {
-		return builder.RunConfig{}, err
+		return builder.RunConfig{}, deployIdentity{}, err
 	}
 	addResponseStageOverride(&selectedCodePath, responseStageOverrides)
 	launch := &contracts.ControllerConfig{
@@ -146,7 +187,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, error) {
 		launch.MemoryUpstream = &contracts.MemoryUpstream{Url: *upstreamURL, Branch: *upstreamBranch, SshDir: *upstreamSSH}
 	}
 	if err := wire.Validate(launch); err != nil {
-		return builder.RunConfig{}, err
+		return builder.RunConfig{}, deployIdentity{}, err
 	}
 	return builder.RunConfig{
 		Build: builder.Config{Replay: *replay, ApplicationRoot: *app, OperatorRoot: *operatorRoot}, Controller: launch,
@@ -175,5 +216,5 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, error) {
 			}
 			return builder.DiagnosticsProjection{Directory: projected.Directory, Fingerprint: projected.Fingerprint, AcceptedRevision: projected.AcceptedRevision}, nil
 		},
-	}, nil
+	}, identity, nil
 }

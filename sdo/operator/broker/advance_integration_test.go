@@ -117,7 +117,7 @@ func (w *advanceWorld) push(t *testing.T, parent string, files map[string]*strin
 	}
 	testutil.Git(t, w.upstream, "commit", "-qm", "upstream change")
 	commit := gitOut(t, w.upstream, "rev-parse", "HEAD")
-	testutil.Git(t, w.accepted, "fetch", "-q", "--no-tags", w.upstream, commit+":refs/sdo/upstream/"+commit)
+	testutil.Git(t, w.accepted, "fetch", "-q", "--no-tags", w.upstream, commit+":refs/sdo/upstream-source/"+commit)
 	return commit
 }
 
@@ -284,7 +284,7 @@ func TestPublishAdvanceRefusesWhatWasNotDeployedOrMayNotMerge(t *testing.T) {
 		testutil.Git(t, w.upstream, "checkout", "-q", "--orphan", "rewritten")
 		testutil.Git(t, w.upstream, "commit", "-qm", "rewritten")
 		rewritten := gitOut(t, w.upstream, "rev-parse", "HEAD")
-		testutil.Git(t, w.accepted, "fetch", "-q", "--no-tags", w.upstream, rewritten+":refs/sdo/upstream/"+rewritten)
+		testutil.Git(t, w.accepted, "fetch", "-q", "--no-tags", w.upstream, rewritten+":refs/sdo/upstream-source/"+rewritten)
 		if ancestor, _, err := b.UpstreamChange(ctx, w.seed, rewritten); err != nil || ancestor {
 			t.Fatalf("UpstreamChange of rewritten history = %v %v", ancestor, err)
 		}

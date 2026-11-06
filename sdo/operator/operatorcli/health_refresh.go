@@ -152,6 +152,16 @@ func shellHealthRefreshNeeded(ctx context.Context, config *contracts.ControllerC
 // config, with the same bounded validation subprocess the native incident
 // broker uses.
 func openControllerBroker(config *contracts.ControllerConfig) (lifecycle.ProposalBroker, error) {
+	repository, err := newControllerBroker(config)
+	if err != nil {
+		return nil, err
+	}
+	return repository, nil
+}
+
+// newControllerBroker is openControllerBroker's concrete broker, for callers
+// that need more than proposals (the upstream advance).
+func newControllerBroker(config *contracts.ControllerConfig) (*broker.Broker, error) {
 	if err := toolchain.ValidateImage(config.GetToolchainImage()); err != nil {
 		return nil, err
 	}

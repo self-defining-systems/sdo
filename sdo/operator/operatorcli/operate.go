@@ -195,6 +195,8 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			ControllerImage: *controllerImage, ResponderImage: *responderImage,
 			ScriptImage: *scriptImage, DisableObservability: *disableObservability, RepositoryPVC: *repositoryPVC,
 			CredentialsSecret: *credentialsSecret, Model: *model, AgentProvider: *provider, AgentEffort: *effort, Replay: *replay,
+			// The controller parent deploys upstream advances with the same identity.
+			BuildKitImage: *buildkitImage, RegistryPushSecret: *registryPushSecret,
 			RegistryInsecure: *registryInsecure, RegistryHost: *registryHost, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline, MetricsURL: *metricsURL, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
 			ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,
 			LateFindings: *lateFindings, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, FrozenMemory: *frozenMemory, ExternalIncidents: *externalIncidents,

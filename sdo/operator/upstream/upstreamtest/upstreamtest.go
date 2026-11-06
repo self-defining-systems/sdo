@@ -54,6 +54,11 @@ func (r *Remote) Push(t testing.TB) string {
 	return strings.TrimSpace(run(t, r.work, "rev-parse", "HEAD"))
 }
 
+// memoryRemoteRef is the broker's memory-remote ref (broker/upstream.go). A
+// ref name cannot also be a directory, so watchers must keep their refs
+// elsewhere.
+const memoryRemoteRef = "refs/sdo/upstream"
+
 // NewObjectStore creates an empty bare repository to materialize into.
 func NewObjectStore(t testing.TB) string {
 	t.Helper()
@@ -76,6 +81,8 @@ func run(t testing.TB, dir string, args ...string) string {
 //	stable        Latest of an unchanged remote is the same revision
 //	advances      a pushed commit becomes the latest revision
 //	materialize   returns rev.ID, and the commit exists in gitDir
+//	memory ref    materializing works beside the broker's memory-remote ref
+//	              refs/sdo/upstream, which the accepted repository may hold
 //	unreachable   an unreachable remote is upstream.ErrUnavailable from both calls
 //	cancelled     a cancelled context fails both calls without ErrUnavailable
 //	unknown       an unregistered ID and a foreign config type are rejected
@@ -131,6 +138,27 @@ func TestWatcher(t *testing.T, c *upstream.Catalog, id string, config ConfigFunc
 		if out, err := gitio.Run(ctx, store, "cat-file", "-e", commit+"^{commit}"); err != nil {
 			t.Fatalf("commit %s is not in the object store: %v\n%s", commit, err, out)
 		}
+	})
+
+	t.Run("memory ref", func(t *testing.T) {
+		r := NewRemote(t)
+		cfg := config(r.URL, branch)
+		store := NewObjectStore(t)
+		memoryRef := func() {
+			run(t, store, "fetch", "--quiet", "--no-tags", r.URL, "+refs/heads/"+branch+":"+memoryRemoteRef)
+		}
+		memoryRef()
+		for range 2 {
+			rev, err := c.Latest(ctx, id, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.Materialize(ctx, id, cfg, rev, store); err != nil {
+				t.Fatalf("Materialize beside %s: %v", memoryRemoteRef, err)
+			}
+			r.Push(t)
+		}
+		memoryRef()
 	})
 
 	t.Run("unreachable", func(t *testing.T) {
