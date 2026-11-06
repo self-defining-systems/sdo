@@ -106,3 +106,22 @@ Dispatch/Job failures, external completion without detector authority, and
 incomplete recovery never receive this projection. Program credit still requires
 complete API history and settled application evidence; successful incident
 closure does not certify those separate facts.
+
+Controller-completed deterministic-only closures do not launch a responder API
+proxy. Their sessions can contain a generation marker from session/corpus or
+mutation-gate preparation without a recorder manifest or events. This is not
+missing repair evidence: inspect the controller's deterministic stage reports
+and settled program applications. Outcome derivation skips responder API receipt
+collection only for the controller's explicit `stageOnlyClosure` path. A missing
+session ID alone does not establish that path; responder and ambiguous paths
+still require actual recorder evidence. API receipt readers do not create session
+or generation files while probing missing history.
+
+`repair_changes` contains narrative summaries, sometimes of automatic writes.
+With a responder history source, settlement detects supersession from complete
+API mutation history, scoped application effects and action receipts, rather
+than these prose summaries. Without that source or a responder session,
+narrated repairs remain unscoped and veto attribution.
+Raw named DELETE effects retain the preimage UID and the actual conditional
+UID/resourceVersion request before subsequent health verification; health and
+post-apply diagnosis must still independently settle.

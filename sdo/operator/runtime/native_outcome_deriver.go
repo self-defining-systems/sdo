@@ -24,7 +24,10 @@ func (d ProtoOutcomeDeriver) Derive(ctx context.Context, closure IncidentClosure
 	// Add transport-owned write facts to the private contract copy, preserving
 	// the frozen closure and any worker-supplied receipts. These receipts still
 	// need fresh independent finding clearance under the shared cause validator.
-	if d.SessionRoot != "" && message.GetResult() != nil {
+	// A controller-completed deterministic stage launches no responder proxy.
+	// Its repair evidence is the recorded program application, not API history.
+	// Missing worker history for every other path still remains unavailable.
+	if d.SessionRoot != "" && message.GetResult() != nil && !stageOnlyClosure(closure) {
 		var resources []*contracts.ObjectRef
 		for _, finding := range message.GetRequest().GetFindings() {
 			resources = append(resources, finding.GetPrimaryResource())

@@ -31,7 +31,7 @@ func IncidentAPIRepairReceipts(root, incident string, resources []*contracts.Obj
 }
 
 func incidentAPIRepairHistory(root, incident string, since, until time.Time) (apihistory.History, error) {
-	sub, err := PrepareIncidentSession(root, "", incident)
+	sub, err := IncidentSessionSubPath("", incident)
 	if err != nil {
 		return apihistory.History{}, err
 	}
@@ -153,7 +153,7 @@ func apiRepairReceipts(history apihistory.History, incident string, resources []
 // observations are paired and conclusive. Positive repair receipts alone never
 // prove absence of an intervening write. Open read streams need not finish.
 func IncidentAPIRecoveryReceipts(root, incident string, resources []*contracts.ObjectRef, since, until time.Time) ([]*contracts.RepairActionReceipt, error) {
-	sub, err := PrepareIncidentSession(root, "", incident)
+	sub, err := IncidentSessionSubPath("", incident)
 	if err != nil {
 		return nil, err
 	}
