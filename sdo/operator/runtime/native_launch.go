@@ -92,8 +92,12 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 	if err != nil {
 		return nil, nil, err
 	}
+	repairs, err := repairsFromLaunch(config, client, repository)
+	if err != nil {
+		return nil, nil, err
+	}
 	return &NativeIncidentBroker{
-		Replay: config.GetReplay(), Repository: repository, LedgerRoot: ledgerRoot,
+		Replay: config.GetReplay(), Repository: repository, LedgerRoot: ledgerRoot, Repairs: repairs,
 		CodePath: codePathConfigFromContract(config.GetCodePath()),
 		Deriver:  ProtoOutcomeDeriver{SessionRoot: config.GetRepositoryMountPath()}, ResponderBackend: config.GetResponderBackend(), ResponderModel: config.GetResponderModel(),
 		ForceReflection: config.GetForceReflection(), FrozenMemory: config.GetFrozenMemory(), PhaseLog: os.Stdout,

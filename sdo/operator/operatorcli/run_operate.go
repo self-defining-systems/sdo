@@ -10,7 +10,6 @@ import (
 	"sdo.dev/operator/renderenv"
 	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"sdo.dev/operator/artifacts"
@@ -142,24 +141,6 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		}, Installer: installer,
 	}
 	return coordinator.Run(ctx, config.Lifecycle)
-}
-
-// nodeImages reports the image names the cluster's nodes hold, so the image
-// resolver pins a tag the cluster already has to the digest the cluster has.
-type nodeImages struct{ client kubernetes.Interface }
-
-func (n nodeImages) NodeImageNames(ctx context.Context) ([][]string, error) {
-	nodes, err := n.client.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, err
-	}
-	var images [][]string
-	for _, node := range nodes.Items {
-		for _, image := range node.Status.Images {
-			images = append(images, image.Names)
-		}
-	}
-	return images, nil
 }
 
 // operateIdentity is the operate Job's trusted build and apply identity; the
