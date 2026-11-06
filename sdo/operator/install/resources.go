@@ -260,10 +260,8 @@ func (c Config) validate() error {
 	if _, err := deploymentpolicy.Parse(c.DeploymentPolicy); err != nil {
 		return err
 	}
-	for _, arg := range c.ExtraControllerArgs {
-		if strings.Contains(arg, "broker-mode") || strings.Contains(arg, "worker-mount-mode") || strings.HasPrefix(arg, "--broker-arg") {
-			return errors.New("controller extension cannot change broker or worker mount mode")
-		}
+	if err := checkExtraControllerArgs(c.ExtraControllerArgs); err != nil {
+		return err
 	}
 	for _, value := range c.ResponderEnv {
 		name, content, found := strings.Cut(value, "=")
@@ -607,4 +605,38 @@ func hasArg(args []string, want string) bool {
 func quantity(s string) *resource.Quantity { q := resource.MustParse(s); return &q }
 func limits(requestCPU, requestMemory, limitCPU, limitMemory string) corev1.ResourceRequirements {
 	return corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse(requestCPU), corev1.ResourceMemory: resource.MustParse(requestMemory)}, Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse(limitCPU), corev1.ResourceMemory: resource.MustParse(limitMemory)}}
+}
+
+// protectedControllerFlags are the controller flags whose value the installer
+// owns: the deployment policy and the identity the deployer builds, pushes and
+// pulls with, and the broker and worker mount modes. ExtraControllerArgs are
+// appended last and Go flags are last-wins, so an extra argument naming one
+// would replace the installer's value.
+var protectedControllerFlags = []string{
+	"deployment-policy", "broker-mode", "worker-mount-mode", "broker-arg",
+	"registry-host", "registry-insecure", "registry-push-secret", "buildkit-image",
+}
+
+// ProtectedFlagError is an extra controller argument that names an
+// installer-owned flag.
+type ProtectedFlagError struct{ Arg string }
+
+func (e *ProtectedFlagError) Error() string {
+	return fmt.Sprintf("controller extension argument %q names an installer-owned flag; set it through the install configuration", e.Arg)
+}
+
+func checkExtraControllerArgs(args []string) error {
+	for _, arg := range args {
+		name := strings.TrimLeft(arg, "-")
+		if name == arg {
+			continue
+		}
+		name, _, _ = strings.Cut(name, "=")
+		for _, protected := range protectedControllerFlags {
+			if name == protected || (protected == "broker-arg" && strings.HasPrefix(name, protected)) {
+				return &ProtectedFlagError{Arg: arg}
+			}
+		}
+	}
+	return nil
 }

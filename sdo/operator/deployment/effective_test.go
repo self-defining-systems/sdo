@@ -74,7 +74,7 @@ func TestVerifyRenderedSeesAPatchTheReceiptDidNotHave(t *testing.T) {
 	}
 	patchWeb(t, root)
 	tree := testutil.Git(t, root, "rev-parse", "HEAD^{tree}")
-	err = verifyRendered(ctx, rendered.ObjectStore{Dir: root}, tree, renderenv.For(nil, depNamespace, render.SecretsOmit), deployer.Renderers, receipt)
+	err = verifyRendered(ctx, rendered.ObjectStore{Dir: root}, tree, renderenv.For(nil, depNamespace, render.SecretsOmit), deployer.Renderers, receipt, nil)
 	var changed *PatchSetChangedError
 	if !errors.As(err, &changed) || changed.What != "patch series digest" || changed.Want != receipt.PatchesDigest {
 		t.Fatalf("err = %v, want a patch series PatchSetChangedError", err)
@@ -124,7 +124,7 @@ func TestVerifyAcceptedRequiresTheRecordedEffectiveTree(t *testing.T) {
 		}
 		testutil.Git(t, root, "commit", "-qam", "upstream moves")
 		tree := testutil.Git(t, root, "rev-parse", "HEAD^{tree}")
-		err := verifyRendered(ctx, rendered.ObjectStore{Dir: root}, tree, renderenv.For(nil, depNamespace, render.SecretsOmit), deployer.Renderers, receipt)
+		err := verifyRendered(ctx, rendered.ObjectStore{Dir: root}, tree, renderenv.For(nil, depNamespace, render.SecretsOmit), deployer.Renderers, receipt, nil)
 		var patchErr *PatchSetChangedError
 		if !errors.As(err, &patchErr) || patchErr.What != "patch application" {
 			t.Fatalf("err = %v, want a patch application PatchSetChangedError", err)

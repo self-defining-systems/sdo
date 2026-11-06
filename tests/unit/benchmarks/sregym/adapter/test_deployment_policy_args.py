@@ -56,21 +56,12 @@ def test_policy_flags_follow_the_configuration() -> None:
     assert DeploymentPolicyConfig(allowed_registries=("docker.io",)).args() == ["--allow-registry", "docker.io"]
 
 
-@pytest.mark.parametrize(
-    ("kwargs", "message"),
-    [
-        ({"allowed_registries": ("Docker.io",)}, "lowercase host"),
-        ({"allowed_registries": ("registry/path",)}, "lowercase host"),
-        ({"allowed_registries": ("a,b",)}, "lowercase host"),
-        ({"granted_namespaces": ("x",)}, "grants need scope_blocking"),
-        ({"granted_cluster_kinds": ("ClusterRole",)}, "grants need scope_blocking"),
-        ({"scope_blocking": True, "granted_namespaces": ("a b",)}, "invalid granted namespace"),
-        ({"scope_blocking": True, "granted_cluster_kinds": ("",)}, "invalid granted cluster kind"),
-    ],
-)
-def test_invalid_policy_is_refused_at_construction(kwargs: dict[str, object], message: str) -> None:
-    with pytest.raises(ValueError, match=message):
-        DeploymentPolicyConfig(**kwargs)
+def test_content_rules_have_one_owner() -> None:
+    # Go's deploymentpolicy.Validate refuses these when the installer parses the flags
+    # (sdo/operator/deploymentpolicy TestInvalidPoliciesAreRefused); Python adds no second copy.
+    assert DeploymentPolicyConfig(allowed_registries=("Docker.io",)).args() == ["--allow-registry", "Docker.io"]
+    with pytest.raises(TypeError):
+        DeploymentPolicyConfig(scope_blocking="yes")  # type: ignore[arg-type]
 
 
 def test_runtime_config_policy_reaches_the_native_install_config(monkeypatch: pytest.MonkeyPatch) -> None:

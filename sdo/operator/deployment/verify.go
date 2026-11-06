@@ -8,6 +8,7 @@ import (
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/deployment/internal/deploymentio"
+	"sdo.dev/operator/deploymentpolicy"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/patchset"
 	"sdo.dev/operator/render"
@@ -88,7 +89,14 @@ func (d Deployer) VerifyAccepted(ctx context.Context, commit, namespace string, 
 	if err != nil {
 		return lifecycle.DeploymentReceipt{}, err
 	}
-	if err := verifyRendered(ctx, rendered.ObjectStore{Dir: d.AcceptedRoot, Git: d.Git}, tree, renderenv.For(prior.Environment, d.Namespace, render.SecretsOmit), d.Renderers, prior); err != nil {
+	// The policy in force now binds the accepted deployment too: a restart
+	// under a tightened policy refuses a deployment that violates it.
+	for _, policy := range []*contracts.DeploymentPolicy{d.Policy, prior.Policy} {
+		if err := deploymentpolicy.Validate(policy); err != nil {
+			return lifecycle.DeploymentReceipt{}, err
+		}
+	}
+	if err := verifyRendered(ctx, rendered.ObjectStore{Dir: d.AcceptedRoot, Git: d.Git}, tree, renderenv.For(prior.Environment, d.Namespace, render.SecretsOmit), d.Renderers, prior, d.enforcePolicy); err != nil {
 		return lifecycle.DeploymentReceipt{}, err
 	}
 	var images []string
@@ -184,7 +192,7 @@ func renderedDigests(ctx context.Context, effective rendered.EffectiveTree, env 
 // recorded patch series and tree, *PatchSetChangedError otherwise), re-renders
 // the receipt's source from it and requires the recorded digests; a mismatch
 // is *RendererChangedError, not drift.
-func verifyRendered(ctx context.Context, store rendered.ObjectStore, base string, env render.Env, catalog *render.Catalog, prior lifecycle.DeploymentReceipt) error {
+func verifyRendered(ctx context.Context, store rendered.ObjectStore, base string, env render.Env, catalog *render.Catalog, prior lifecycle.DeploymentReceipt, enforce func(rendered.DesiredSet) error) error {
 	if prior.Source == nil || prior.RenderDigest == "" || prior.EnvDigest == "" || prior.EffectiveTree == "" || prior.PatchesDigest == "" {
 		return errors.New("deployment evidence names no source, effective tree or digests")
 	}
@@ -203,5 +211,8 @@ func verifyRendered(ctx context.Context, store rendered.ObjectStore, base string
 	if set.EnvDigest != prior.EnvDigest {
 		return &RendererChangedError{What: "env", Want: prior.EnvDigest, Got: set.EnvDigest}
 	}
-	return nil
+	if enforce == nil {
+		return nil
+	}
+	return enforce(set)
 }
