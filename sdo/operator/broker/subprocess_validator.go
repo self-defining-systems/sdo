@@ -2,6 +2,8 @@ package broker
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -13,6 +15,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/telemetry"
 )
 
 type ValidationInfrastructureError = processio.ValidationInfrastructureError
@@ -63,7 +66,11 @@ func (v SubprocessValidator) Validator() Validator {
 			}
 		}
 		replay, _ := ctx.Value(replayKey{}).(string)
-		args = append(args, baseline, replay)
+		policy, err := childTelemetryArgument(ctx)
+		if err != nil {
+			return err
+		}
+		args = append(args, baseline, replay, policy)
 		scratch, err := os.MkdirTemp("", "sdo-validation-")
 		if err != nil {
 			return err
@@ -91,19 +98,59 @@ func (v SubprocessValidator) Validator() Validator {
 	}
 }
 
+// childTelemetryArgument is the check's telemetry policy as the validation
+// child reads it. A compile request without one is a wiring error: the child
+// would resolve detector queries against no operator-provided source.
+func childTelemetryArgument(ctx context.Context) (string, error) {
+	policy, ok := ValidationTelemetryPolicy(ctx)
+	if !ok {
+		return "", errors.New("validation subprocess requires the check's telemetry policy")
+	}
+	data, err := json.Marshal(policy)
+	if err != nil {
+		return "", fmt.Errorf("encode telemetry policy: %w", err)
+	}
+	return string(data), nil
+}
+
+// validationChildRequest is the compile request the child runs for the
+// arguments SubprocessValidator passes: the candidate, operator sources,
+// baseline, replay mode and the parent check's telemetry policy, checked
+// against the child's adapter registry.
+func validationChildRequest(args []string, registry *telemetry.Registry) (validate.Request, error) {
+	if len(args) != 7 || args[1] != "validation-child" {
+		return validate.Request{}, errors.New("invalid validation child arguments")
+	}
+	if registry == nil {
+		return validate.Request{}, errors.New("validation child requires the telemetry adapter registry")
+	}
+	var policy telemetry.Policy
+	if err := json.Unmarshal([]byte(args[6]), &policy); err != nil {
+		return validate.Request{}, fmt.Errorf("validation child telemetry policy: %w", err)
+	}
+	if err := policy.Validate(); err != nil {
+		return validate.Request{}, fmt.Errorf("validation child telemetry policy: %w", err)
+	}
+	return validate.Request{Replay: args[5], Root: args[2], OperatorRoot: args[3], HealthyBaseline: args[4], Layers: validate.Compile, Telemetry: policy, TelemetryRegistry: registry}, nil
+}
+
 // RunValidationChild is called before normal launch by both the operator CLI
 // and synthesized controllers, so the child always runs the parent's binary.
-func RunValidationChild() {
+// registry is the composition root's telemetry adapter registry, the one the
+// parent broker was built with.
+func RunValidationChild(registry *telemetry.Registry) {
 	if len(os.Args) < 2 || os.Args[1] != "validation-child" {
 		return
 	}
-	if len(os.Args) != 6 {
-		fmt.Fprintln(os.Stderr, "invalid validation child arguments")
+	request, err := validationChildRequest(os.Args, registry)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
 	var notes []sdktest.MitigationReplayResult
 	var gaps []validate.Diagnostic
-	ds, err := validate.CompileCandidate(context.Background(), validate.Request{MitigationReplayNotes: &notes, CoverageGaps: &gaps, Replay: os.Args[5], Root: os.Args[2], OperatorRoot: os.Args[3], HealthyBaseline: os.Args[4], Layers: validate.Compile})
+	request.MitigationReplayNotes, request.CoverageGaps = &notes, &gaps
+	ds, err := validate.CompileCandidate(context.Background(), request)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)

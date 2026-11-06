@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"sdo.dev/operator/broker"
+	"sdo.dev/operator/telemetry"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/operability"
@@ -42,7 +43,7 @@ func newGateWorld(t *testing.T) *gateWorld {
 	}
 	testutil.Git(t, w.accepted, "add", ".")
 	testutil.Git(t, w.accepted, "commit", "-qm", "seed")
-	b, err := broker.New(w.accepted, filepath.Join(base, "workspaces"), func(context.Context, string, []string) error { return nil })
+	b, err := broker.New(w.accepted, filepath.Join(base, "workspaces"), func(context.Context, string, []string) error { return nil }, broker.ObservationPolicy{Telemetry: broker.Telemetry{Registry: telemetry.NewRegistry()}})
 	if err != nil {
 		t.Fatal(err)
 	}

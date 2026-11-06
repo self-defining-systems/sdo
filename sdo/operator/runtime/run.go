@@ -127,7 +127,7 @@ func (values *repeatedFlag) Set(value string) error {
 // telemetry adapter registry; nil wires none. repairs is the source repair
 // deployment factory the composition root supplies.
 func Run(renderers *render.Catalog, registry *telemetry.Registry, repairs RepairDeployerFactory) {
-	broker.RunValidationChild()
+	broker.RunValidationChild(registry)
 	if err := RunWithOptions(context.Background(), nil, RuntimeOptions{Renderers: renderers, Telemetry: registry, RepairDeployer: repairs}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		if errors.Is(err, memory.ErrHealthRefreshRequired) {
@@ -174,7 +174,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		if options.NativeBroker != nil {
 			return errors.New("native broker was supplied twice")
 		}
-		native, client, err := nativeBrokerFromLaunch(ctx, config, options.Client, options.RepairDeployer)
+		native, client, err := nativeBrokerFromLaunch(ctx, config, options.Client, options.RepairDeployer, options.Telemetry)
 		if err != nil {
 			return err
 		}

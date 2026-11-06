@@ -6,6 +6,7 @@ import (
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/telemetry"
 )
 
 // checkCandidate applies the same complete pipeline as memory check. Only the
@@ -16,6 +17,7 @@ func (b *Broker) checkCandidate(ctx context.Context, root, base string, actor Ac
 		compile = func(ctx context.Context, request validate.Request) ([]validate.Diagnostic, error) {
 			ctx = context.WithValue(ctx, compileBaselineKey{}, request.HealthyBaseline)
 			ctx = context.WithValue(ctx, replayKey{}, request.Replay)
+			ctx = context.WithValue(ctx, telemetryPolicyKey{}, request.Telemetry)
 			var jobGaps []validate.Diagnostic
 			ctx = context.WithValue(ctx, coverageGapsKey{}, &jobGaps)
 			// request.Root is the candidate, or the accepted base tree Check
@@ -50,10 +52,23 @@ type compileBaselineKey struct{}
 
 type replayKey struct{}
 
+// telemetryPolicyKey carries the check's telemetry policy to the compile
+// transport, so the validation subprocess resolves detector queries against
+// the same effective sources the broker's static layer and the agent's
+// self-check use.
+type telemetryPolicyKey struct{}
+
+// ValidationTelemetryPolicy is the telemetry policy of the check a Validator
+// is running for.
+func ValidationTelemetryPolicy(ctx context.Context) (telemetry.Policy, bool) {
+	policy, ok := ctx.Value(telemetryPolicyKey{}).(telemetry.Policy)
+	return policy, ok
+}
+
 // validationRequest is the single source of all acceptance inputs. Attestations
 // serialize this same request so future policy fields cannot be omitted.
 func (b *Broker) validationRequest(root, base string, actor Actor, phase Phase, publication *validate.PublicationContext, decision *contracts.ReflectionDecision, gaps *[]validate.Diagnostic) validate.Request {
-	return validate.Request{Replay: b.replay, CodePath: b.codePath, ObservationCeiling: b.observationCeiling, ApplicationNamespace: b.applicationNamespace, Root: root, Base: base, Actor: actor, Phase: phase, Publication: publication, Decision: decision, CoverageGaps: gaps, RepairVerified: b.RepairVerified, PlanCatalogs: b.PlanCatalogs, Telemetry: b.Telemetry, TelemetryRegistry: b.TelemetryRegistry}
+	return validate.Request{Replay: b.replay, CodePath: b.codePath, ObservationCeiling: b.observationCeiling, ApplicationNamespace: b.applicationNamespace, Root: root, Base: base, Actor: actor, Phase: phase, Publication: publication, Decision: decision, CoverageGaps: gaps, RepairVerified: b.RepairVerified, PlanCatalogs: b.PlanCatalogs, Telemetry: b.telemetry.Policy, TelemetryRegistry: b.telemetry.Registry}
 }
 
 // coverageGapsKey carries the broker's collector for the validator's gaps.

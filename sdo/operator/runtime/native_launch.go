@@ -20,6 +20,7 @@ import (
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
+	"sdo.dev/operator/telemetry"
 	"sdo.dev/operator/toolchain"
 	"sdo.dev/operator/worker_registry"
 )
@@ -27,7 +28,7 @@ import (
 // nativeBrokerFromLaunch makes the compiled controller child select the Go
 // broker from its typed launch contract. Native mode and proposal-only worker
 // mounts are one validation decision, before leader election or dispatch.
-func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfig, client kubernetes.Interface, repairDeployer RepairDeployerFactory) (*NativeIncidentBroker, kubernetes.Interface, error) {
+func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfig, client kubernetes.Interface, repairDeployer RepairDeployerFactory, registry *telemetry.Registry) (*NativeIncidentBroker, kubernetes.Interface, error) {
 	if config != nil && config.GetExternalIncidents() && !config.GetFrozenMemory() {
 		return nil, nil, errors.New("external incidents require frozen memory")
 	}
@@ -81,7 +82,11 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 	if selectedCodePath.Selection.MemoryValidation != "go" {
 		memoryCodePath = "shell"
 	}
-	repository, err := broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), selectedCodePath.Memory.Validate, broker.ObservationPolicy{Replay: config.GetReplay(), CodePath: memoryCodePath, Ceiling: ceiling, ApplicationNamespace: config.GetNamespace()})
+	brokerTelemetry, err := broker.ControllerTelemetry(config, registry)
+	if err != nil {
+		return nil, nil, fmt.Errorf("native repository broker: %w", err)
+	}
+	repository, err := broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), selectedCodePath.Memory.Validate, broker.ObservationPolicy{Telemetry: brokerTelemetry, Replay: config.GetReplay(), CodePath: memoryCodePath, Ceiling: ceiling, ApplicationNamespace: config.GetNamespace()})
 	if err != nil {
 		return nil, nil, fmt.Errorf("native repository broker: %w", err)
 	}

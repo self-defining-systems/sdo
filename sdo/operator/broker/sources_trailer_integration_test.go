@@ -17,7 +17,7 @@ const syntheticSources = "sources:\n- path: .\n  kind: git\n  config: {repositor
 
 func publishHumanGoal(t *testing.T, root, id string, files map[string]string) string {
 	t.Helper()
-	b, err := New(root, t.TempDir(), func(context.Context, string, []string) error { return nil })
+	b, err := New(root, t.TempDir(), func(context.Context, string, []string) error { return nil }, testObservation())
 	if err != nil {
 		t.Fatal(err)
 	}

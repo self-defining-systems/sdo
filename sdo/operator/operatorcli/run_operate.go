@@ -78,22 +78,13 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		return lifecycle.Result{}, policyErr
 	}
 
-	repository, err := broker.New(config.ApplicationRoot, config.WorktreeRoot, selectMemoryValidator(config.Install.CodePath, validation.Validator()), broker.ObservationPolicy{Replay: config.Install.Replay, CodePath: memoryCodePath(config.Install.CodePath), Ceiling: ceiling, ApplicationNamespace: config.Lifecycle.Namespace})
+	repository, err := onboardingBroker(config, control, selectMemoryValidator(config.Install.CodePath, validation.Validator()), ceiling, telemetryRegistry())
 	if err != nil {
-		return lifecycle.Result{}, fmt.Errorf("open accepted repository broker: %w", err)
+		return lifecycle.Result{}, err
 	}
-	// The generic alerts detector and every detector query resolve against the
-	// effective telemetry sources, computed from this one policy by the broker
-	// and by the judge's own check.
 	if config.Lifecycle.Telemetry, err = telemetrycontext.Build(telemetryRegistry(), config.Install.TelemetryEnvironment(), nil); err != nil {
 		return lifecycle.Result{}, err
 	}
-	repository.PlanCatalogs = planCatalogs()
-	repository.Telemetry, err = installTelemetryPolicy(config.Install, config.Lifecycle.Namespace, control)
-	if err != nil {
-		return lifecycle.Result{}, err
-	}
-	repository.TelemetryRegistry = telemetryRegistry()
 	environment, err := renderenv.Discover(client.Discovery())
 	if err != nil {
 		return lifecycle.Result{}, fmt.Errorf("discover render environment: %w", err)
@@ -128,7 +119,7 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		Environment:       agentEnvironment,
 	}
 	workers.Environment = codePathWorkerEnvironment(config.Install.CodePath, workers.Environment)
-	policy, err := json.Marshal(repository.Telemetry)
+	policy, err := json.Marshal(repository.TelemetryPolicy())
 	if err != nil {
 		return lifecycle.Result{}, fmt.Errorf("encode telemetry policy: %w", err)
 	}

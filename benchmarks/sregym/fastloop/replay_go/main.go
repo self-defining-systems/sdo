@@ -19,11 +19,12 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/operatorcli/catalog/telemetrysources"
 	"sdo.dev/operator/worker_registry"
 )
 
 func main() {
-	broker.RunValidationChild()
+	broker.RunValidationChild(telemetrysources.Registry())
 	if err := run(context.Background()); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -128,7 +129,9 @@ func run(ctx context.Context) error {
 	}
 	validator := (broker.SubprocessValidator{OperatorRoot: *operatorRoot}).Validator()
 
-	repository, err := broker.New(accepted, filepath.Join(root, "proposals"), validator)
+	// The recorded task carries no telemetry policy; replay checks bindings
+	// under the open default with the operator's adapter registry.
+	repository, err := broker.New(accepted, filepath.Join(root, "proposals"), validator, broker.ObservationPolicy{Telemetry: broker.Telemetry{Registry: telemetrysources.Registry()}})
 	if err != nil {
 		return err
 	}

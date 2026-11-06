@@ -6,8 +6,10 @@ import (
 	"os"
 	"path/filepath"
 
+	"sdo.dev/operator/broker"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/operatorcli/catalog/telemetrysources"
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/telemetry"
 )
 
@@ -20,36 +22,58 @@ const memoryTelemetryPolicyEnv = "SDO_TELEMETRY_POLICY"
 func telemetryRegistry() *telemetry.Registry { return telemetrysources.Registry() }
 
 // installTelemetryPolicy derives the broker's policy from the install's
-// telemetry profile: its mode, the cluster reads it grants, the recipes it
-// applies with the reads each declares, and its provided sources. The
-// controller's environment document comes from the same profile, so the
-// broker, the judge's check and the controller agree on which sources exist.
+// telemetry profile with the operator's adapter registry; see installTelemetry.
 func installTelemetryPolicy(config install.Config, application, control string) (telemetry.Policy, error) {
+	derived, err := installTelemetry(config, telemetryRegistry(), application, control)
+	return derived.Policy, err
+}
+
+// installTelemetry derives a broker's telemetry from the install's profile
+// through the same environment document the controller reads
+// (broker.TelemetryFromEnvironment), plus the recipes the profile applies with
+// the reads each declares. So the onboarding broker, the judge's check and the
+// controller's brokers agree on which sources exist.
+func installTelemetry(config install.Config, registry *telemetry.Registry, application, control string) (broker.Telemetry, error) {
 	profile := config.TelemetryProfile
-	policy := telemetry.Policy{Mode: profile.Mode, ControlNamespace: control, ApplicationNamespace: application, Capabilities: profile.Capabilities}
-	if policy.Mode == "" {
-		policy.Mode = telemetry.ModeOpen
-	}
+	var recipes []telemetry.Recipe
 	for _, name := range profile.Recipes {
 		found := false
 		for _, recipe := range config.BackendRecipes {
 			if recipe.Name() == name {
-				policy.Recipes = append(policy.Recipes, telemetry.Recipe{Name: name, Declares: recipe.Capabilities()})
+				recipes = append(recipes, telemetry.Recipe{Name: name, Declares: recipe.Capabilities()})
 				found = true
 			}
 		}
 		if !found {
-			return telemetry.Policy{}, fmt.Errorf("telemetry profile %q applies recipe %q, which this operator does not provide", profile.Name, name)
+			return broker.Telemetry{}, fmt.Errorf("telemetry profile %q applies recipe %q, which this operator does not provide", profile.Name, name)
 		}
 	}
-	for _, source := range profile.Sources {
-		provided, err := telemetryRegistry().Source(source.Binding())
-		if err != nil {
-			return telemetry.Policy{}, fmt.Errorf("telemetry profile %q source %q: %w", profile.Name, source.ID, err)
-		}
-		policy.Provided = append(policy.Provided, provided)
+	derived, err := broker.TelemetryFromEnvironment(config.TelemetryEnvironment(), registry, application, control, recipes)
+	if err != nil {
+		return broker.Telemetry{}, fmt.Errorf("telemetry profile %q: %w", profile.Name, err)
 	}
-	return policy, nil
+	return derived, nil
+}
+
+// onboardingBroker is the broker of `operate`'s lifecycle (deployer, health
+// judge, verification): the accepted repository with its validator, the
+// observation ceiling and the install's telemetry policy over registry. The
+// judge's own check receives the same policy (SDO_TELEMETRY_POLICY) and the
+// validation subprocess the same policy and the composition root's registry.
+func onboardingBroker(config OperateConfig, control string, validator broker.Validator, ceiling sdk.ObservationScope, registry *telemetry.Registry) (*broker.Broker, error) {
+	derived, err := installTelemetry(config.Install, registry, config.Lifecycle.Namespace, control)
+	if err != nil {
+		return nil, err
+	}
+	repository, err := broker.New(config.ApplicationRoot, config.WorktreeRoot, validator, broker.ObservationPolicy{
+		Telemetry: derived,
+		Replay:    config.Install.Replay, CodePath: memoryCodePath(config.Install.CodePath), Ceiling: ceiling, ApplicationNamespace: config.Lifecycle.Namespace,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("open accepted repository broker: %w", err)
+	}
+	repository.PlanCatalogs = planCatalogs()
+	return repository, nil
 }
 
 // memoryTelemetryPolicy reads the policy an agent check runs under. With no

@@ -45,7 +45,7 @@ func TestConcurrentProposalsOnOnePlaybookConflictWithoutChangingAcceptedState(t 
 	accept := func(context.Context, string, []string) error { return nil }
 	lanes := map[string]*Broker{}
 	for _, id := range []string{"lane-a", "lane-b"} {
-		b, err := New(root, t.TempDir(), accept)
+		b, err := New(root, t.TempDir(), accept, testObservation())
 		if err != nil {
 			t.Fatal(err)
 		}

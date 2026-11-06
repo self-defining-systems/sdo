@@ -153,9 +153,9 @@ def test_image_build_smokes_offline_go_tools_as_nonroot() -> None:
     assert "go list ./program" in script
     assert "tests/fixtures/sdo/playbook_program_app:/fixture:ro" in script
     assert "sdo-operator validation-child /fixture /opt/sdo/sdo/operator" in script
-    # Arity of RunValidationChild: candidate root, operator root, healthy baseline, replay mode.
+    # Arity of RunValidationChild: candidate root, operator root, healthy baseline, replay mode, telemetry policy.
     (line,) = [line for line in script.splitlines() if "sdo-operator validation-child" in line]
-    assert len(shlex.split(line.split("sdo-operator validation-child", 1)[1])) == 4
+    assert len(shlex.split(line.split("sdo-operator validation-child", 1)[1])) == 5
 
 
 def test_image_npm_installs_are_pinned_to_exact_versions() -> None:
