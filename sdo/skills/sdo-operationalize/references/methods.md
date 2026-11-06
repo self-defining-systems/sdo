@@ -28,19 +28,9 @@ How each detector decides, kept deterministic and cheap. Validator limits (firin
 ## Metrics query patterns
 
 The threshold detector compares one reduced value per series with a constant, so put the comparison logic in the
-PromQL expression. Use the label names the exporter really sets in `Labels`.
-
-- Ratio: `rate(errors[5m]) / rate(requests[5m])`.
-- Two-window burn: alert only when both a short window (1m) and a longer one (5m) exceed the budget. This keeps a
-  fast reaction while ignoring single spikes.
-- Forecast: `predict_linear(series[30m], 3600)` compared with the limit.
-- Absence: `absent(series{...})` returns 1 when a series the healthy application always reports is gone.
-- Peer comparison: a series divided by the average over its siblings, for example
-  `x / on(app) group_left avg by (app) (x)`, above about 3.
-- History bands (`avg_over_time`, `stddev_over_time` with `offset`) need history the cluster may not have yet. Use
-  them only for long-running applications.
-- A query that returns no series yields no finding, so a missing series is silent unless the expression turns
-  absence into a value. A source error is a detector error, never a clear.
+query text, written in the dialect of the source it names (the task's `telemetry.sources[].dialect`). Patterns per
+dialect: [PromQL](dialects/promql.md), [LogQL](dialects/logql.md). A query that returns no series yields no finding,
+and a source error is a detector error, never a clear.
 
 ## Snapshot detector patterns
 
@@ -63,8 +53,8 @@ When a health objective or incident cannot be localized with existing inputs, ad
 application's own source as a source repair: a responder or deployer captures it as a reasoned patch
 (`sdo-operator patch create`, sdo-patching skill); app files are never committed. Export request and error counters, latency
 histograms and queue depth; keep labels bounded. Reflection records the need for a source repair rather than
-editing source itself. Use the task's typed `metrics_source`: annotate pod templates with
-`prometheus.io/scrape: "true"`, `prometheus.io/port` and `prometheus.io/path` when annotated scraping is enabled,
-or publish OTLP HTTP metrics to its full `otlp_metrics_url`. Do not infer publishing support from a query URL.
-Write source-grounded PromQL rules with `sdo.dev/operator/sdk/metrics`, declare `metrics.Watch`, and use
+editing source itself. Use the task's typed `telemetry` block: the source's `publish` block says whether pod
+templates are annotated for scraping or OTLP HTTP metrics go to its full URL, and `references/telemetry.md` covers
+bindings and capabilities. Do not infer publishing support from a query endpoint.
+Write source-grounded rules with `sdo.dev/operator/sdk/metrics` in the source's dialect, declare `metrics.Watch`, and use
 `metrics.NewThresholdDetector`; the controller queries and freezes results, and detectors never perform I/O.

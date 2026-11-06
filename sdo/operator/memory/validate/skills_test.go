@@ -33,20 +33,6 @@ var internalRules = map[string]string{
 	RulePatchUpstreamBase:       "Go fills Upstream-Base; agents never choose it",
 	RuleDeploymentInvalid:       "Go writes the canonical plan.yaml during deployment admission; no skill flow edits it",
 
-	// Telemetry bindings: the designer learns them from each diagnostic's hint until
-	// the telemetry authoring reference (row T7) teaches them with the prompts.
-	RuleTelemetrySchema:     "hint-taught until the telemetry authoring reference lands (row T7)",
-	RuleTelemetryAdapter:    "hint-taught until the telemetry authoring reference lands (row T7)",
-	RuleTelemetryEndpoint:   "hint-taught until the telemetry authoring reference lands (row T7)",
-	RuleTelemetryCredential: "hint-taught until the telemetry authoring reference lands (row T7)",
-	RuleTelemetryOptions:    "hint-taught until the telemetry authoring reference lands (row T7)",
-	RuleTelemetryDefault:    "hint-taught until the telemetry authoring reference lands (row T7)",
-	RuleTelemetryBackend:    "hint-taught until the telemetry authoring reference lands (row T7)",
-	RuleTelemetryMode:       "hint-taught until the telemetry authoring reference lands (row T7)",
-	RuleTelemetryUnbound:    "hint-taught until the telemetry authoring reference lands (row T7)",
-	RuleTelemetryKind:       "hint-taught until the telemetry authoring reference lands (row T7)",
-	RuleTelemetryOrigin:     "hint-taught until the telemetry authoring reference lands (row T7)",
-
 	RuleReflectionDetectorRequired: "a coverage-gap name, recorded and never refused; the skills teach linking detectors",
 	RuleTrafficUndrivenEdge:        "a coverage-gap name, recorded and never refused; the detector-authoring skill teaches driving every edge",
 	RuleTrafficDefaultLatency:      "a coverage-gap name, recorded and never refused; the detector-authoring skill teaches latency bounds",
