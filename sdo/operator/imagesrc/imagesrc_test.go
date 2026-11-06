@@ -216,7 +216,6 @@ func TestBudgetCarriesAcrossImagesOfOneSource(t *testing.T) {
 			t.Error("no deadline")
 		}
 		deadlines = append(deadlines, d)
-		time.Sleep(5 * time.Millisecond)
 		return imagesrc.Resolved{Ref: "r/a@" + imagesrctest.Digest("x"), Inputs: imagesrc.Inputs{SourceImage: req.Image}}, nil
 	})
 	c := catalogWith(t, "s", src, imagesrc.Options{Budget: time.Minute})
