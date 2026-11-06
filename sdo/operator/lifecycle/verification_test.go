@@ -50,6 +50,16 @@ type fakeBroker struct {
 	evidence2                 []broker.CandidateEvidence
 	// source is the deployment of the accepted head AcceptedSourceEvidence returns.
 	source *broker.AcceptedSource
+	// baseDiagnostics is what CheckBase reports for the untouched base; baseChecks counts calls.
+	baseDiagnostics []*contracts.MemoryDiagnostic
+	baseChecks      int
+}
+
+func (b *fakeBroker) CheckBase(context.Context, string, broker.Actor, broker.Phase) ([]*contracts.MemoryDiagnostic, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.baseChecks++
+	return b.baseDiagnostics, nil
 }
 
 func (b *fakeBroker) AcceptedSourceEvidence(context.Context) (broker.AcceptedSource, bool, error) {
