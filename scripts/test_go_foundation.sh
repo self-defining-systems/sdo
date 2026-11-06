@@ -2,6 +2,7 @@
 # Keep the small module contracts on shared runners without raising Go floors.
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$root/scripts/isolate_git_config.sh"
 case "${1:?select stable or contracts}" in
   stable)
     modules=(sdo/operator/sdk sdo/operator/core)

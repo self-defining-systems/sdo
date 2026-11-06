@@ -33,6 +33,7 @@ def load_script(name: str) -> ModuleType:
 
 slow = load_script("check_slow_tests")
 health = load_script("ci_health")
+cache_budget = load_script("ci_cache_budget")
 
 
 def workflow(name: str) -> dict:
@@ -408,3 +409,147 @@ def test_the_health_report_covers_queue_enqueue_time_and_main() -> None:
     report = health.render(measured)
     assert "| merge_group | 1 | 6.0 | 6.0 |" in report
     assert "| push runs | 100% | 1 | 1 | 13 |" in report
+
+
+CACHE = BUDGETS["cache"]
+HASH64 = "a" * 64
+SHA40 = "b" * 40
+
+
+def cache_row(key: str, cache_id: int, created: str, used: str, mb: int = 100) -> dict:
+    return {
+        "id": cache_id,
+        "key": key,
+        "size_in_bytes": mb * 1024 * 1024,
+        "created_at": created,
+        "last_accessed_at": used,
+    }
+
+
+def test_cache_family_drops_the_lockfile_hash_commit_and_tool_versions() -> None:
+    key = f"ci-py-v3-Linux-X64-1.26.8-core-{HASH64}-{SHA40}"
+    assert cache_budget.family_of(key) == "ci-py-v3-Linux-X64-core"
+    assert cache_budget.family_of(f"ci-shared-v1-Linux-X64-1.26.8-{HASH64}-{SHA40}") == "ci-shared-v1-Linux-X64"
+
+
+def test_prune_keeps_the_newest_key_and_spares_a_key_used_moments_ago() -> None:
+    now = cache_budget.parse_time("2026-01-01T12:00:00Z")
+    family = f"ci-tests-v2-Linux-X64-1.26.8-rest-{HASH64}"
+    rows = [
+        cache_row(f"{family}-{'1' * 40}", 1, "2026-01-01T09:00:00Z", "2026-01-01T09:30:00Z"),
+        cache_row(f"{family}-{'2' * 40}", 2, "2026-01-01T10:00:00Z", "2026-01-01T11:59:00Z"),
+        cache_row(f"{family}-{'3' * 40}", 3, "2026-01-01T11:00:00Z", "2026-01-01T11:00:00Z"),
+        cache_row(f"{family}-{'4' * 40}", 4, "2026-01-01T07:00:00Z", "2026-01-01T07:00:00Z"),
+    ]
+    deleted: list[int] = []
+    removed = cache_budget.prune(CACHE, rows, deleted.append, now)
+    assert sorted(deleted) == [1, 4]  # 3 is the newest; 2 was restored a minute ago
+    assert sorted(row["id"] for row in removed) == [1, 4]
+
+
+def test_prune_honours_a_family_prefix() -> None:
+    now = cache_budget.parse_time("2026-01-01T12:00:00Z")
+    rows = [
+        cache_row(
+            f"ci-shared-v1-Linux-X64-1.26.8-{HASH64}-{'1' * 40}", 1, "2026-01-01T09:00:00Z", "2026-01-01T09:00:00Z"
+        ),
+        cache_row(
+            f"ci-shared-v1-Linux-X64-1.26.8-{HASH64}-{'2' * 40}", 2, "2026-01-01T10:00:00Z", "2026-01-01T10:00:00Z"
+        ),
+        cache_row(
+            f"ci-py-v3-Linux-X64-1.26.8-core-{HASH64}-{'1' * 40}", 3, "2026-01-01T09:00:00Z", "2026-01-01T09:00:00Z"
+        ),
+        cache_row(
+            f"ci-py-v3-Linux-X64-1.26.8-core-{HASH64}-{'2' * 40}", 4, "2026-01-01T10:00:00Z", "2026-01-01T10:00:00Z"
+        ),
+    ]
+    deleted: list[int] = []
+    cache_budget.prune(CACHE, rows, deleted.append, now, "ci-py-v3-Linux-X64-core")
+    assert deleted == [3]
+
+
+def test_cache_alarm_fires_at_eighty_percent_over_budget_families_and_unknown_keys() -> None:
+    limit = CACHE["repo_limit_mb"] * 1024 * 1024
+    quiet = [cache_row("envtest-assets-1.34.0-Linux-X64", 1, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z", 40)]
+    assert cache_budget.usage_failures(CACHE, int(limit * 0.79), quiet) == []
+    assert any("80%" in f for f in cache_budget.usage_failures(CACHE, int(limit * 0.8), quiet))
+    bulky = [
+        cache_row(
+            f"ci-shared-v1-Linux-X64-1.26.8-{HASH64}-{SHA40}", 2, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z", 5000
+        )
+    ]
+    assert any("ci-shared-v1" in f for f in cache_budget.usage_failures(CACHE, 0, bulky))
+    stray = [cache_row("mystery-cache-v1", 3, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z")]
+    assert any("mystery-cache-v1" in f and "no family" in f for f in cache_budget.usage_failures(CACHE, 0, stray))
+
+
+def test_cache_family_budgets_sum_to_at_most_seventy_percent_of_the_repository_limit() -> None:
+    families = CACHE["families"].values()
+    steady = sum(f["max_mb"] * f["keep"] for f in families)
+    assert steady <= 0.7 * CACHE["repo_limit_mb"]
+
+
+def workflow_cache_keys(name: str) -> list[tuple[str, str]]:
+    """(job, key) for every cache save in a workflow (explicit saves; a plain cache action saves after the job)."""
+    return [
+        (job_name, step["with"]["key"])
+        for job_name, job in workflow(name)["jobs"].items()
+        for step in job.get("steps", [])
+        if str(step.get("uses", "")).startswith("actions/cache/save@")
+    ]
+
+
+@pytest.mark.parametrize("name", ["ci.yml", "nightly.yml"])
+def test_every_cache_save_has_a_family_budget_and_a_prune_step(name: str) -> None:
+    keys = workflow_cache_keys(name)
+    assert keys
+    for job_name, key in keys:
+        steps = workflow(name)["jobs"][job_name]["steps"]
+        job = workflow(name)["jobs"][job_name]
+        shards = job.get("strategy", {}).get("matrix", {}).get("shard", ["-"])
+        for shard in shards:
+            rendered = re.sub(r"\$\{\{ hashFiles\([^}]*\) \}\}|\$\{\{ github\.sha \}\}", HASH64, key)
+            rendered = rendered.replace("${{ runner.os }}", "Linux").replace("${{ runner.arch }}", "X64")
+            rendered = rendered.replace("${{ matrix.shard }}", shard)
+            assert cache_budget.budget_for(cache_budget.family_of(rendered), CACHE["families"]) is not None, rendered
+        assert any("ci_cache_budget.py prune" in str(step.get("run", "")) for step in steps), job_name
+        assert workflow(name)["jobs"][job_name]["permissions"]["actions"] == "write"
+
+
+def test_health_workflow_checks_the_cache_budget_read_only() -> None:
+    steps = workflow("ci-health.yml")["jobs"]["health"]["steps"]
+    assert any("ci_cache_budget.py check" in str(step.get("run", "")) for step in steps)
+
+
+TEST_SCRIPTS = [
+    "check_errors.sh",
+    "test_controller_e2e.sh",
+    "test_go_ci.sh",
+    "test_go_foundation.sh",
+    "test_python.sh",
+    "test_rendered_lock_kind.sh",
+]
+
+
+@pytest.mark.parametrize("name", TEST_SCRIPTS)
+def test_test_scripts_run_with_an_isolated_git_config(name: str) -> None:
+    assert "isolate_git_config.sh" in (ROOT / "scripts" / name).read_text()
+
+
+def test_isolated_git_config_makes_an_identity_dependent_commit_fail_like_a_hosted_runner(tmp_path: Path) -> None:
+    ambient = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "dev",
+        "GIT_AUTHOR_EMAIL": "dev@example.com",
+        "GIT_COMMITTER_NAME": "dev",
+        "GIT_COMMITTER_EMAIL": "dev@example.com",
+    }
+    script = (
+        f'source "{ROOT}/scripts/isolate_git_config.sh"; cd "{tmp_path}"; git init -q . && '
+        'git commit -q --allow-empty -m x; echo "rc=$?"; '
+        'git -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m y; echo "rc=$?"'
+    )
+    result = subprocess.run(["bash", "-c", script], env=ambient, capture_output=True, text=True, check=False)
+    assert "rc=128" in result.stdout, result
+    assert result.stdout.rstrip().endswith("rc=0"), result
+    assert "Author identity unknown" in result.stderr or "empty ident" in result.stderr

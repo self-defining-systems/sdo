@@ -11,6 +11,7 @@
 # binaries (KUBEBUILDER_ASSETS, else scripts/install_envtest.sh installs them).
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$root/scripts/isolate_git_config.sh"
 scenario="${1:-all}"
 case "$scenario" in
     scenario1) selection='^TestFirstIncidentLearnsThenRepeatIsDeterministic$' ;;

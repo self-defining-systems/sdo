@@ -294,7 +294,7 @@ def _not_yet_fired_request(worktree: Path, *, prior_incident: str = "incident-se
 def test_matched_memory_uses_the_workflow_without_repeating_playbook_bodies(tmp_path: Path) -> None:
     prompt = _responder_prompt(_warm_request(tmp_path))
     document = _facts(prompt)
-    assert document["available_playbook_ids"] == [INCIDENT_PLAYBOOK]
+    assert "available_playbook_ids" not in document
     assert "Restore `<MISSING_CONFIG_MAP>` from source" not in prompt
     assert "verify.sh" not in prompt
     assert "learned mitigations first, repair the rest" in prompt
@@ -332,7 +332,7 @@ def test_cold_prompt_offers_logical_ids_without_inlining_playbook_content() -> N
     request.memory_snapshot.playbooks.add(id="missing-configmap", markdown="Large reusable repair content")
     prompt = _responder_prompt(request)
     document = _facts(prompt)
-    assert document["available_playbook_ids"] == ["missing-configmap"]
+    assert "available_playbook_ids" not in document
     assert "Large reusable repair content" not in prompt
     assert ".sdo/" not in prompt
 
@@ -407,7 +407,7 @@ def test_prompt_never_inlines_large_playbook_bodies(tmp_path: Path) -> None:
     prompt = _responder_prompt(request)
     assert "TAIL-MARKER" not in prompt
     assert len(prompt) < 6000
-    assert INCIDENT_PLAYBOOK in prompt
+    assert INCIDENT_PLAYBOOK not in prompt
 
 
 def test_prompt_compacts_detector_history_to_latest_evidence(tmp_path: Path) -> None:

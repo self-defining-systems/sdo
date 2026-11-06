@@ -63,7 +63,7 @@ def test_responder_uses_logical_snapshot_without_loading_memory_files() -> None:
         facts = incident_facts_path(prompt).read_text(encoding="utf-8")
     assert "checkout-independent health objective" in facts
     assert "checkout-independent architecture" in facts
-    assert "missing-configmap" in prompt
+    assert "missing-configmap" not in prompt
     assert "Restore the ConfigMap safely" not in prompt
     assert ".sdo/" not in prompt
 
