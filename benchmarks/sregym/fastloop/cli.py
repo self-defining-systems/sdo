@@ -1757,7 +1757,7 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument(
         "--memory-limit",
         default=None,
-        help=f"Docker memory cap per kind node (default {DEFAULT_MEMORY_LIMIT}, Astronomy headroom included; gitlab: 20g)",
+        help=f"Docker memory cap per kind node (default {DEFAULT_MEMORY_LIMIT}; gitlab: 20g)",
     )
     up.add_argument("--pids-limit", type=int, default=DEFAULT_PIDS_LIMIT, help="Docker PID cap per kind node")
     up.add_argument(

@@ -18,8 +18,8 @@ from benchmarks.sregym.fastloop.cli import (
     main,
     resolve_node_limits,
 )
-from benchmarks.sregym.fastloop.host_limits import DEFAULT_MEMORY_LIMIT
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+from benchmarks.sregym.fastloop.host_limits import DEFAULT_MEMORY_LIMIT
 from benchmarks.sregym.fastloop.records import IncidentRecord, OracleVerdict, append_record
 from benchmarks.sregym.fastloop.stream import load_stream, load_stream_config
 from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import commit_accepted_source
