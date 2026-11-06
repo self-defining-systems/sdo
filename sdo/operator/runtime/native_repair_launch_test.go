@@ -1,14 +1,15 @@
 package runtime
 
 import (
+	"errors"
 	"strings"
 	"testing"
-	"time"
 
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	"sdo.dev/operator/operatorcli/deploywire"
+	"sdo.dev/operator/lifecycle"
 )
 
 func repairLaunch() *contracts.ControllerConfig {
@@ -18,38 +19,48 @@ func repairLaunch() *contracts.ControllerConfig {
 	}
 }
 
-// The typed launch gives the controller child the trusted repair deployer,
-// built from the identity the parent put in the config.
+// The typed launch wraps what the composition root's factory builds, with the
+// child's own broker.
 func TestLaunchWiresTheSourceRepairDeployer(t *testing.T) {
-	identity := deploywire.Identity{BuildKitImage: "buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "push", RegistryHost: "registry.synthetic.invalid:5000", RolloutTimeout: time.Minute}
+	var gotConfig *contracts.ControllerConfig
+	var gotRepository lifecycle.RepairBroker
+	factory := func(config *contracts.ControllerConfig, _ kubernetes.Interface, repository lifecycle.RepairBroker) (lifecycle.RepairDeployer, error) {
+		gotConfig, gotRepository = config, repository
+		return lifecycle.RepairDeployer{Broker: repository}, nil
+	}
 	config := repairLaunch()
-	config.DeployIdentity = identity.Proto()
-	repairs, err := repairsFromLaunch(config, fake.NewSimpleClientset(), &broker.Broker{})
+	child := &broker.Broker{}
+	repairs, err := repairsFromLaunch(config, fake.NewSimpleClientset(), child, factory)
 	if err != nil {
 		t.Fatal(err)
 	}
 	repairer, ok := repairs.(DeploymentRepairer)
-	if !ok || repairer.Namespace != "shop" || repairer.AppRoot != "/synthetic/app" || repairer.Deployer.Broker == nil || repairer.Deployer.Readiness == nil || repairer.Deployer.Verifier == nil {
+	if !ok || repairer.Namespace != "shop" || repairer.AppRoot != "/synthetic/app" || gotConfig != config || gotRepository != lifecycle.RepairBroker(child) {
 		t.Fatalf("repairs = %+v", repairs)
 	}
 }
 
 // Frozen memory publishes nothing, and shell detectors cannot judge a
-// candidate checkout: neither gets a repairer. A broken identity fails the
-// launch instead of deploying with another one.
+// candidate checkout: neither gets a repairer, even without a factory. Any
+// other launch without a factory fails instead of publishing repairs
+// undeployed, and a factory failure fails the launch.
 func TestLaunchSourceRepairDeployerGuards(t *testing.T) {
 	frozen := repairLaunch()
 	frozen.FrozenMemory = true
 	shell := repairLaunch()
 	shell.CodePath = &contracts.CodePathConfig{Name: "shell"}
 	for name, config := range map[string]*contracts.ControllerConfig{"frozen": frozen, "shell": shell} {
-		if repairs, err := repairsFromLaunch(config, fake.NewSimpleClientset(), &broker.Broker{}); err != nil || repairs != nil {
+		if repairs, err := repairsFromLaunch(config, fake.NewSimpleClientset(), &broker.Broker{}, nil); err != nil || repairs != nil {
 			t.Fatalf("%s: repairs = %v, %v, want none", name, repairs, err)
 		}
 	}
-	invalid := repairLaunch()
-	invalid.DeployIdentity = &contracts.DeployIdentity{BuildkitImage: "x"}
-	if _, err := repairsFromLaunch(invalid, fake.NewSimpleClientset(), &broker.Broker{}); err == nil {
-		t.Fatal("an invalid identity was accepted")
+	if _, err := repairsFromLaunch(repairLaunch(), fake.NewSimpleClientset(), &broker.Broker{}, nil); err == nil || !strings.Contains(err.Error(), "not wired") {
+		t.Fatalf("a launch without a factory = %v, want a not-wired error", err)
+	}
+	failing := func(*contracts.ControllerConfig, kubernetes.Interface, lifecycle.RepairBroker) (lifecycle.RepairDeployer, error) {
+		return lifecycle.RepairDeployer{}, errors.New("invalid identity")
+	}
+	if _, err := repairsFromLaunch(repairLaunch(), fake.NewSimpleClientset(), &broker.Broker{}, failing); err == nil || !strings.Contains(err.Error(), "invalid identity") {
+		t.Fatalf("a factory failure = %v", err)
 	}
 }

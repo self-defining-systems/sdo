@@ -13,6 +13,10 @@
 //	   switches everywhere; composite literals, UnmarshalTo/anypb targets, var
 //	   and parameter types and any other reference outside tests and wiring.
 //	R5 ratchet: ManifestPaths/manifest_paths counts per file may only fall.
+//	R6 wiring packages are the top layer: no non-test package outside them
+//	   imports one (the production runtime stays below operatorcli and is
+//	   handed what it needs by injection). A package main is a composition
+//	   root and may import wiring.
 //
 // Known violations live in the violating file as //archcheck: directives (see
 // directive.go); only generated files keep entries in the rule table.
@@ -40,6 +44,7 @@ const (
 	R3 Rule = "R3"
 	R4 Rule = "R4"
 	R5 Rule = "R5"
+	R6 Rule = "R6"
 )
 
 // Family is a plugin family: an interface package in Dir with implementation
@@ -264,6 +269,9 @@ func (c Config) checkFile(fset *token.FileSet, file *ast.File, relFile string, a
 		report := func(r Rule, msg string) { add(Violation{Rule: r, File: relFile, Line: line, Message: msg}) }
 		tool := c.isTool(imported)
 		target, _ := c.classifyImport(imported)
+		if target == kindWiring && role != kindWiring && !isTest && file.Name.Name != "main" {
+			report(R6, "imports wiring package "+imported+"; wiring is the top layer, inject the dependency instead")
+		}
 		switch role {
 		case kindCore:
 			if tool {

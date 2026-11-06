@@ -3,6 +3,7 @@ package deploywire
 import (
 	"k8s.io/client-go/kubernetes"
 	"sdo.dev/operator/broker"
+	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/lifecycle"
@@ -31,3 +32,14 @@ func RepairDeployer(identity Identity, launch *contracts.ControllerConfig, opera
 
 // The controller's broker is the repair's broker.
 var _ lifecycle.RepairBroker = (*broker.Broker)(nil)
+
+// RepairFromLaunch is the runtime.RepairDeployerFactory of the generated
+// controller: the identity the parent put in the typed launch config, then
+// RepairDeployer against the operator root the controller image carries.
+func RepairFromLaunch(launch *contracts.ControllerConfig, client kubernetes.Interface, repository lifecycle.RepairBroker) (lifecycle.RepairDeployer, error) {
+	identity, err := IdentityOf(launch)
+	if err != nil {
+		return lifecycle.RepairDeployer{}, err
+	}
+	return RepairDeployer(identity, launch, builder.DefaultOperatorRoot(), client, repository)
+}

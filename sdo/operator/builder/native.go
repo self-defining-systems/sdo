@@ -344,7 +344,7 @@ func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error
 			healthyBaseline = true
 		}
 	}
-	main := "package main\nimport (\n\t\"sdo.dev/operator/operatorcli/catalog/renderers\"\n\t\"sdo.dev/operator/operatorcli/catalog/telemetrysources\"\n\t\"sdo.dev/operator/runtime\"\n)\nfunc main(){runtime.Run(renderers.Catalog(), telemetrysources.Registry())}\n"
+	main := "package main\nimport (\n\t\"sdo.dev/operator/operatorcli/catalog/renderers\"\n\t\"sdo.dev/operator/operatorcli/catalog/telemetrysources\"\n\t\"sdo.dev/operator/operatorcli/deploywire\"\n\t\"sdo.dev/operator/runtime\"\n)\nfunc main(){runtime.Run(renderers.Catalog(), telemetrysources.Registry(), deploywire.RepairFromLaunch)}\n"
 	if err := os.WriteFile(filepath.Join(directory, "cmd", "controller", "main.go"), []byte(main), 0o644); err != nil {
 		return nil, err
 	}
