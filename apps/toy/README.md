@@ -57,8 +57,13 @@ to equal the raw manifests. It ignores only object-level `metadata.labels` and
 when the tool is missing and fails when `CI` is set, since GitHub runners ship
 both tools. Edit a variant and the raw manifests together.
 
-Harness selection (a later change): the toy lane takes a variant name, calls
-`assemble(variant, workspace)` to produce the source root, and treats the
-deployed objects as the same expected result for `raw`, `kustomize` and `helm`.
-For `compose` the agent-authored Kubernetes config is judged by the same
-deployed-state checks instead of a file comparison.
+Harness selection: `fastloop up --app toy --fresh-memory --variant <name>`
+assembles that variant's source root (`prepare_workspace`) and commits source
+only. `raw` (the default) keeps the prebuilt-binary `Dockerfile` and the
+hand-authored seed. The other variants need `--fresh-memory`, ship
+`variants/Dockerfile` (a multi-stage build of `main.go`, so a code commit can
+flow through an image build from Git), skip the host image build and the
+direct `kubectl apply`, and declare no `deployed_manifest_paths` (SDO's
+deployment source renders them). For `compose` the agent-authored Kubernetes
+config is judged by the same deployed-state checks instead of a file
+comparison.

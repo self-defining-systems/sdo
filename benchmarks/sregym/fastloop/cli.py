@@ -1671,6 +1671,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="toy: start with source only and onboard it with SDO's lifecycle agents (needs live agents)",
     )
     up.add_argument("--goal", help="toy --fresh-memory: the human goal to publish instead of the default")
+    up.add_argument(
+        "--variant",
+        choices=("raw", "kustomize", "helm", "compose"),
+        default="raw",
+        help="toy: deployment variant of the source (non-raw variants need --fresh-memory and build from source)",
+    )
     up.add_argument("--toy-node-image", default="kindest/node:v1.34.0")
     up.add_argument("--seed", type=Path, help="git repository cloned as the application workspace (first time only)")
     up.add_argument("--problem", default=DEFAULT_PROBLEM, help="problem whose application is deployed")

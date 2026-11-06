@@ -3,7 +3,8 @@
 A variant directory holds only deployment files. The toy code (``main.go`` and
 ``Dockerfile``) is shared, so a source root is that code plus the variant's
 files, laid out as the variant directory lays them out. The ``raw`` variant is
-the original ``kubernetes/`` manifests.
+the original ``kubernetes/`` manifests and the prebuilt-binary ``Dockerfile``;
+the others carry ``variants/Dockerfile``, which builds ``main.go`` itself.
 
     python apps/toy/variants/assemble.py <raw|kustomize|helm|compose> <dest>
 """
@@ -17,6 +18,9 @@ from pathlib import Path
 TOY = Path(__file__).resolve().parents[1]
 VARIANTS_DIR = TOY / "variants"
 SHARED_CODE = ("main.go", "Dockerfile")
+#: Non-raw variants build their image from source, so they ship a multi-stage Dockerfile instead of the
+#: raw lane's ``FROM scratch`` one that expects a prebuilt ``toy`` binary beside it.
+BUILDABLE_DOCKERFILE = VARIANTS_DIR / "Dockerfile"
 VARIANTS = ("raw", "kustomize", "helm", "compose")
 
 
@@ -32,6 +36,7 @@ def assemble(variant: str, dest: Path) -> Path:
     if variant == "raw":
         shutil.copytree(TOY / "kubernetes", dest / "kubernetes")
     else:
+        shutil.copy2(BUILDABLE_DOCKERFILE, dest / "Dockerfile")
         shutil.copytree(VARIANTS_DIR / variant, dest, dirs_exist_ok=True)
     return dest
 

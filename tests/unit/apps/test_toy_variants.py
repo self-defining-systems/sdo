@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -105,3 +106,59 @@ def test_assemble_rejects_unknown_variant_and_nonempty_dest(tmp_path):
     (tmp_path / "b" / "x").write_text("")
     with pytest.raises(ValueError, match="not empty"):
         assemble("raw", tmp_path / "b")
+
+
+def _stages(dockerfile: str) -> list[list[str]]:
+    """Dockerfile instructions grouped per ``FROM`` stage (joins ``\\`` continuations)."""
+    stages: list[list[str]] = []
+    for line in dockerfile.replace("\\\n", " ").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.upper().startswith("FROM "):
+            stages.append([])
+        stages[-1].append(line)
+    return stages
+
+
+def test_raw_dockerfile_stays_prebuilt_and_variants_build_from_source(tmp_path):
+    assert (assemble("raw", tmp_path / "raw") / "Dockerfile").read_text() == (TOY / "Dockerfile").read_text()
+    for variant in ("kustomize", "helm", "compose"):
+        root = assemble(variant, tmp_path / variant)
+        stages = _stages((root / "Dockerfile").read_text())
+        assert len(stages) == 2, "a buildable image is a build stage plus a runtime stage"
+        build, runtime = stages
+        assert build[0].upper().endswith(" AS BUILD")
+        assert "@sha256:" in build[0], "the Go base image must be digest-pinned"
+        # Every file the build stage copies from the context is in the assembled source root.
+        for line in build:
+            if line.startswith("COPY "):
+                sources = [p for p in line.split()[1:-1] if not p.startswith("--")]
+                assert all((root / s).exists() for s in sources), line
+        assert any("go build" in line for line in build)
+        # The runtime stage takes the toy binary from the build stage, never from the context.
+        copies = [line for line in runtime if line.startswith("COPY ")]
+        assert copies
+        assert all("--from=build" in line for line in copies)
+
+
+@pytest.mark.go_integration
+def test_variant_dockerfile_builds_the_toy_binary(tmp_path):
+    """Run the Dockerfile's own build command on the assembled root (no Docker; Go only)."""
+    import re
+    import shutil as sh
+
+    if sh.which("go") is None:
+        pytest.skip("go is not installed")
+    root = assemble("helm", tmp_path / "root")
+    (build, _) = _stages((root / "Dockerfile").read_text())
+    (run,) = [line for line in build if line.startswith("RUN ")]
+    command = run.removeprefix("RUN ")
+    output = re.search(r"-o (\S+)", command).group(1)  # type: ignore[union-attr]
+    words = shlex.split(command.replace(output, str(tmp_path / "toy")))
+    assignments = [w for w in words if re.fullmatch(r"[A-Z_]+=\S*", w)]
+    argv = words[len(assignments) :]
+    env = {**os.environ, "GOFLAGS": "-p=2", **dict(w.split("=", 1) for w in assignments)}
+    built = subprocess.run(argv, cwd=root, env=env, capture_output=True, text=True)
+    assert built.returncode == 0, built.stderr
+    assert (tmp_path / "toy").is_file()
