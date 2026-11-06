@@ -44,6 +44,8 @@ def _source_line(source: TelemetrySource) -> str:
         traits.append("+".join(source.capabilities))
     if source.endpoint:
         traits.append(source.endpoint)
+    if source.origin == "operator":
+        traits.append("operator-provided")
     line = f"Source {source.id}: {', '.join(traits)}."
     if source.publish.scrape_annotations:
         line += (
@@ -61,4 +63,14 @@ def _authority(mode: str, reader: Reader, context: TelemetryContext) -> str:
         return "Bindings are read-only." + reads
     if mode == "pinned":
         return "Sources are pinned: query them, never write bindings." + reads
-    return "You may bind more sources in .sdo/diagnostics/telemetry/sources.yaml." + reads
+    schema = "schema: sdo-operationalize references/telemetry.md"
+    if any(source.origin == "operator" for source in context.sources):
+        return (
+            "Operator-provided sources are already bound: name them by id in detector queries; "
+            "do not redefine them or write .sdo/diagnostics/telemetry/ for them. Bind another source in "
+            f".sdo/diagnostics/telemetry/sources.yaml only when no listed source can answer ({schema})." + reads
+        )
+    return (
+        "Bind a source in .sdo/diagnostics/telemetry/sources.yaml only when no listed source can answer "
+        f"({schema})." + reads
+    )
