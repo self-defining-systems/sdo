@@ -24,6 +24,7 @@ limitations under the License.
 package engine
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"path"
@@ -36,6 +37,8 @@ import (
 	"github.com/pkg/errors"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chartutil"
+
+	"sdo.dev/operator/render/helm/internal/policy"
 )
 
 // Engine is an implementation of the Helm rendering implementation for templates.
@@ -50,7 +53,27 @@ type Engine struct {
 	// before any template is parsed. A replacement is seen by every template,
 	// including those reached through include and tpl.
 	Funcs func(template.FuncMap)
+
+	// Context bounds the render's CPU time: it is checked on every template
+	// function call, so a deadline stops a template that expands without end.
+	// The error is context.Cause(Context). Nil means no deadline.
+	Context context.Context
+	// MaxTplDepth and MaxIncludeDepth cap how deeply tpl calls, and include
+	// calls, may nest. Past the cap the render fails with policy.RuleRenderDepth
+	// instead of overflowing the Go stack. Zero takes the defaults.
+	MaxTplDepth, MaxIncludeDepth int
+	// MaxOutputBytes caps each output buffer (a file, an include, a tpl
+	// result). Zero takes DefaultMaxOutputBytes.
+	MaxOutputBytes int64
 }
+
+// Defaults for the Engine bounds. Real charts nest tpl a handful of levels and
+// include a few dozen.
+const (
+	DefaultMaxTplDepth     = 100
+	DefaultMaxIncludeDepth = 1000
+	DefaultMaxOutputBytes  = 16 << 20
+)
 
 // Render takes a chart, optional values, and value overrides, and attempts to render the Go templates.
 //
@@ -98,18 +121,22 @@ func warnWrap(warn string) string {
 
 // 'include' needs to be defined in the scope of a 'tpl' template as
 // well as regular file-loaded templates.
-func includeFun(t *template.Template, includedNames map[string]int) func(string, interface{}) (string, error) {
+func includeFun(t *template.Template, includedNames map[string]int, g *guard) func(string, interface{}) (string, error) {
 	return func(name string, data interface{}) (string, error) {
-		var buf strings.Builder
+		if err := g.enterInclude(); err != nil {
+			return "", err
+		}
+		defer g.leaveInclude()
+		buf := g.buffer()
 		if v, ok := includedNames[name]; ok {
 			if v > recursionMaxNums {
-				return "", errors.Wrapf(fmt.Errorf("unable to execute template"), "rendering template has a nested reference name: %s", name)
+				return "", &policy.Error{Rule: policy.RuleRenderDepth, Detail: fmt.Sprintf("template %q includes itself more than %d levels deep", name, recursionMaxNums)}
 			}
 			includedNames[name]++
 		} else {
 			includedNames[name] = 1
 		}
-		err := t.ExecuteTemplate(&buf, name, data)
+		err := t.ExecuteTemplate(buf, name, data)
 		includedNames[name]--
 		return buf.String(), err
 	}
@@ -117,8 +144,12 @@ func includeFun(t *template.Template, includedNames map[string]int) func(string,
 
 // As does 'tpl', so that nested calls to 'tpl' see the templates
 // defined by their enclosing contexts.
-func tplFun(parent *template.Template, includedNames map[string]int, strict bool) func(string, interface{}) (string, error) {
+func tplFun(parent *template.Template, includedNames map[string]int, strict bool, g *guard) func(string, interface{}) (string, error) {
 	return func(tpl string, vals interface{}) (string, error) {
+		if err := g.enterTpl(); err != nil {
+			return "", err
+		}
+		defer g.leaveTpl()
 		t, err := parent.Clone()
 		if err != nil {
 			return "", errors.Wrapf(err, "cannot clone template")
@@ -136,8 +167,8 @@ func tplFun(parent *template.Template, includedNames map[string]int, strict bool
 		// Re-inject 'include' so that it can close over our clone of t;
 		// this lets any 'define's inside tpl be 'include'd.
 		t.Funcs(template.FuncMap{
-			"include": includeFun(t, includedNames),
-			"tpl":     tplFun(t, includedNames, strict),
+			"include": includeFun(t, includedNames, g),
+			"tpl":     tplFun(t, includedNames, strict, g),
 		})
 
 		// We need a .New template, as template text which is just blanks
@@ -151,8 +182,8 @@ func tplFun(parent *template.Template, includedNames map[string]int, strict bool
 			return "", errors.Wrapf(err, "cannot parse template %q", tpl)
 		}
 
-		var buf strings.Builder
-		if err := t.Execute(&buf, vals); err != nil {
+		buf := g.buffer()
+		if err := t.Execute(buf, vals); err != nil {
 			return "", errors.Wrapf(err, "error during tpl function execution for %q", tpl)
 		}
 
@@ -162,13 +193,13 @@ func tplFun(parent *template.Template, includedNames map[string]int, strict bool
 }
 
 // initFunMap creates the Engine's FuncMap and adds context-specific functions.
-func (e Engine) initFunMap(t *template.Template) {
+func (e Engine) initFunMap(t *template.Template, g *guard) {
 	funcMap := funcMap()
 	includedNames := make(map[string]int)
 
 	// Add the template-rendering functions here so we can close over t.
-	funcMap["include"] = includeFun(t, includedNames)
-	funcMap["tpl"] = tplFun(t, includedNames, e.Strict)
+	funcMap["include"] = includeFun(t, includedNames, g)
+	funcMap["tpl"] = tplFun(t, includedNames, e.Strict, g)
 
 	// Add the `required` function here so we can use lintMode
 	funcMap["required"] = func(warn string, val interface{}) (interface{}, error) {
@@ -205,6 +236,8 @@ func (e Engine) initFunMap(t *template.Template) {
 	if e.Funcs != nil {
 		e.Funcs(funcMap)
 	}
+	// Last, so replaced and stubbed functions are bounded too.
+	g.wrapAll(funcMap)
 
 	t.Funcs(funcMap)
 }
@@ -232,7 +265,8 @@ func (e Engine) render(tpls map[string]renderable) (rendered map[string]string, 
 		t.Option("missingkey=zero")
 	}
 
-	e.initFunMap(t)
+	g := newGuard(e)
+	e.initFunMap(t, g)
 
 	// We want to parse the templates in a predictable order. The order favors
 	// higher-level (in file system) templates over deeply nested templates.
@@ -260,8 +294,8 @@ func (e Engine) render(tpls map[string]renderable) (rendered map[string]string, 
 		// At render time, add information about the template that is being rendered.
 		vals := tpls[filename].vals
 		vals["Template"] = chartutil.Values{"Name": filename, "BasePath": tpls[filename].basePath}
-		var buf strings.Builder
-		if err := t.ExecuteTemplate(&buf, filename, vals); err != nil {
+		buf := g.buffer()
+		if err := t.ExecuteTemplate(buf, filename, vals); err != nil {
 			return map[string]string{}, cleanupExecError(filename, err)
 		}
 

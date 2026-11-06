@@ -159,11 +159,16 @@ func TestConformance(t *testing.T) {
 
 func renderChart(t *testing.T, fsys rendertest.MapFS, env render.Env, c *contracts.HelmRenderConfig) (render.Result, error) {
 	t.Helper()
+	return renderChartContext(context.Background(), t, fsys, env, c)
+}
+
+func renderChartContext(ctx context.Context, t *testing.T, fsys rendertest.MapFS, env render.Env, c *contracts.HelmRenderConfig) (render.Result, error) {
+	t.Helper()
 	packed, err := anypb.New(c)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return catalog(t).Render(context.Background(), fsys, env, helm.ID, packed)
+	return catalog(t).Render(ctx, fsys, env, helm.ID, packed)
 }
 
 func TestValueFilesAndInlineValuesAreApplied(t *testing.T) {
