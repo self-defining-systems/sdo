@@ -438,6 +438,31 @@ It is included in the existing static-analysis and architecture gates. It instal
 and caches golangci-lint 2.11.4, runs only depguard/forbidigo on declared core
 packages, and checks structural purity plus application-owned transitive imports.
 
+### Plugin boundary checks (archcheck)
+
+`sdo/operator/internal/archcheck` enforces the core/plugin-family boundary from one rule
+table, `rules.go`. It runs in `scripts/check_go_core.sh` (about 1 s) or alone with
+`cd sdo/operator && go test ./internal/archcheck`. It parses imports and syntax without
+type-checking, so negative-control fixtures under `testdata/` need no real dependencies.
+
+- R1 core packages import no tool library (helm, kustomize, go-containerregistry, buildkit)
+  and no plugin implementation subpackage (`render/<x>`, `imagesrc/<x>`, `upstream/<x>`,
+  `telemetry/<x>`).
+- R2 an implementation imports only its family interface and support package, `contracts`,
+  `sdk`, stdlib and tool libraries: no core package, no sibling.
+- R3 only `operatorcli` and tests import implementation subpackages.
+- R4 no type assertion or type switch to a plugin config type (the `*Strategy` messages
+  listed in `ConfigTypes`) outside its owning package. A new `*Strategy` type must be
+  added to the table or the check fails.
+- R5 ratchet: `ManifestPaths`/`manifest_paths` per-file counts may only fall.
+
+Today's violations are in the `Allow` and `Ratchet` tables, each with a reason and the plan
+slice that removes it. Entries may only be deleted or lowered: when a fix drops a count or
+removes a violation the check fails until you lower or delete the entry. Never add an entry
+to make a new violation pass; fix the import instead. Each rule has a failing fixture in
+`testdata/` and `TestNegativeControls` fails if a rule stops firing. See also
+[`docs/architecture.md`](architecture.md).
+
 `bash scripts/check_go_mains.sh` (run by `check_errors.sh`) vets every Go program under
 `benchmarks/` against the current operator API, so a runtime change that breaks one
 fails static analysis in seconds instead of surfacing in the Python unit job.

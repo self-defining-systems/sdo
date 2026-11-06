@@ -84,6 +84,8 @@ and oracle answers never enter the production alert or worker request.
 
 ## Component boundaries
 
+Core versus deployment plugin-family imports (render, imagesrc, upstream, telemetry) are enforced by `sdo/operator/internal/archcheck`; see [testing guide](testing-guide.md#plugin-boundary-checks-archcheck).
+
 Controller observations compose through `sdk/inputs.Carrier`, a copy-on-write carrier of the optional SDK input sources above the Kubernetes snapshot. Runtime observers add frozen sources to that carrier; they do not wrap and selectively forward detection contexts. Program `ReadView` includes the complete `inputs.Sources` contract, so checked diagnosis, recording, and replay preserve those inputs and the observation clock. An SDK interface inventory test requires every new optional source to join this contract.
 
 The shared runtime mitigation plan builder owns RunScript byte provenance for automatic stages, matched CLI application and follow-ups. It checks actual returned actions against original successful timed receipts in the incident accepted commit; save-time source inspection and offline replay cannot grant execution authority.
