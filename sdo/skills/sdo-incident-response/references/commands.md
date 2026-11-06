@@ -32,22 +32,22 @@ Output: session schema. prior_stages: receipts; checked_stage_receipts: applicat
 Examples (incident resources):
   sdo source Deployment/app/api
   sdo diagnose targetport --bind service=Service/app/api
-  sdo plan targetport --bind service=Service/app/api
+  sdo mitigate targetport --bind service=Service/app/api
 ```
 
-## Shared help: diagnose, plan, menu, mitigate, source, act
+## Shared help: diagnose, menu
+
+```text
+Example: sdo diagnose targetport --bind service=Service/app/api
+```
+
+## Shared help: diagnose, menu, mitigate, source, act
 
 ```text
 Object references accept Kind/name, Kind/namespace/name, or JSON with kind, name and optional namespace and api_version; kubectl aliases are accepted.
 ```
 
-## Shared help: plan, menu
-
-```text
-Example: sdo plan targetport --bind service=Service/app/api
-```
-
-## Shared help: apply, mitigate, act, rollback
+## Shared help: mitigate, act, rollback
 
 ```text
 Action output separates target progress from incident verification and lists fixed, new (possible regression), and unchanged findings from authoritative controller progress. Mutation stdout is at most 2048 UTF-8 bytes, including JSON framing and newline. Every invocation saves the complete findings/evidence, program_runs, execution reports and receipts under $SDO_SESSION_SCRATCH/sdo-reports/<incident>/<sequence>-<command>.json. The response includes a readable path (a compact copy if needed) and a generated schema for querying its arrays. incident_verified is an extra informational warning; reads/reports keep their normal results, and new mutations are rejected.
@@ -59,9 +59,7 @@ Action output separates target progress from incident verification and lists fix
 - [detect](commands/detect.md)
 - [check](commands/check.md)
 - [diagnose](commands/diagnose.md)
-- [plan](commands/plan.md)
 - [menu](commands/menu.md)
-- [apply](commands/apply.md)
 - [mitigate](commands/mitigate.md)
 - [report](commands/report.md)
 - [source](commands/source.md)

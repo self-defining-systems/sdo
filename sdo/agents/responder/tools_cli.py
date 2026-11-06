@@ -19,34 +19,10 @@ from sdo.agents.responder import recorded_actions
 from sdo.agents.responder.mutation_output import compact_mutation_envelope
 from sdo.agents.responder.tool_output import render_summary, write_response
 
-PLAN_ACTIONS = (
-    "SetField updates a schema-checked field by index or unique name, optionally from accepted source; "
-    "ConfigMap JSON/YAML entries preserve unrelated keys.\n"
-    "Object edits write atomically per object; use strategic patches for keyed lists.\n"
-    "CreateFromSource restores a named missing object, including declared file-generated ConfigMaps, "
-    "from accepted source. Source/config restores may recycle blocked dependent Pods once; "
-    "Pod deletion receipts are irreversible.\n"
-    "ReconcileFromSource converges source-owned configuration, removes additions since acceptance, "
-    "and reports residual source differences and remaining old-revision ReplicaSets/Pods. "
-    "The Deployment controller and responder handle the rollout.\n"
-    "DeleteObject irreversibly removes an allowed named source-absent object and never auto-recreates it.\n"
-    "Webhook repairs requeue affected admission-blocked ReplicaSets automatically; "
-    "after raw repairs use RetryAdmission in the incident namespace and verify recovery. "
-    "RetireOldRevision scales an old-revision ReplicaSet to zero; stalled rollouts name it as their release."
-)
-
-WORKING_PROGRAM_HELP = (
-    "Program commands use the current checkout, including shared libraries and new playbook IDs. "
-    "Edits compile on demand; fix compile errors in place and retry. "
-    "Live authoring has ordinary shell access; broker ownership and memory validation govern publication. "
-    "Revision receipts use working-tree:<source digest> for unpublished code. "
-    "Reusable API reads use program.Kubernetes(view) with upstream client-go options; reads are recorded for replay."
-)
-
 CLI_EXAMPLES = (
     "sdo source Deployment/app/api",
     "sdo diagnose targetport --bind service=Service/app/api",
-    "sdo plan targetport --bind service=Service/app/api",
+    "sdo mitigate targetport --bind service=Service/app/api",
 )
 ACT_EXAMPLE = "sdo act --resource Deployment/app/api -- kubectl -n app set image deployment/api api=img:1.2"
 ACT_USAGE = "sdo act --resource Kind/namespace/name [--summary TEXT] [--irreversible] [--json] -- COMMAND ARGS"
@@ -61,7 +37,7 @@ OBJECT_REFERENCE_HELP = (
     "namespace and api_version; kubectl aliases are accepted."
 )
 
-MUTATION_COMMANDS = frozenset({"act", "apply", "mitigate", "rollback"})
+MUTATION_COMMANDS = frozenset({"act", "mitigate", "rollback"})
 
 # Key response paths are part of the CLI help contract, shared with the generated
 # responder reference. Fields are conditional, not a promise of success/presence.
@@ -69,16 +45,15 @@ RESPONSE_FIELDS = {
     "status": "healthy, findings[], detector_states[], drift[], drift_events[], program_runs[]",
     "detect": "healthy, findings[], detector_states[]",
     "check": "healthy, findings[], detector_states[], detection (fresh detect response)",
-    "diagnose": "program_runs[].{program_id, program_revision, verdict, can_mitigate}, program_revisions",
-    "plan": "plan_id, patches[], program_runs[], program_revisions",
-    "menu": "menu.options[].{option_id, program_id, program_revision, disabled_reason, parameters}, "
-    "selection_schema, selection_set_schema, unexplained_removal_blockers[]",
+    "diagnose": "program_runs[].{program_id, program_revision, verdict, can_mitigate, mitigate_command}, "
+    "program_revisions",
+    "menu": "menu.options[].{command, program_id, program_revision, disabled_reason, parameters}, "
+    "unexplained_removal_blockers[]",
     "source": "source (accepted Kubernetes object)",
     "verify": "healthy, verification_status, findings[], detector_states[], "
     "verification_blockers[{detector_id,reason}], drift[], drift_events[], data_at_risk[]",
     "report": "report.{status, attempt_id, rounds}, session",
     "act": "actions[].{success, exit_code, receipt, output, failure_reason, hint}",
-    "apply": "actions[].{application_id, targeted_healthy, mitigation_health, program_runs, program_revisions, report}",
     "mitigate": (
         "actions[].{application_id, targeted_healthy, mitigation_health, rollout_pending, program_revisions}, "
         "option_reports[]"
@@ -108,39 +83,9 @@ def _resource(value: str) -> dict[str, str]:
 def _binding(value: str) -> tuple[str, str]:
     name, separator, target = value.partition("=")
     if not separator or not name or not target:
-        raise argparse.ArgumentTypeError("binding must be name=Kind/namespace/name")
+        raise argparse.ArgumentTypeError("binding must be NAME=VALUE (an object is NAME=Kind/NAMESPACE/NAME)")
     # Go owns object-reference parsing and API-version resolution.
     return name, target
-
-
-class _OptionArgument(argparse.Action):
-    def __call__(self, parser, namespace, values, option_string=None):
-        groups = list(getattr(namespace, "option_groups", None) or [])
-        groups.append({"option_id": values, "parameters": {}})
-        namespace.option_groups = groups
-
-
-class _OptionParameter(argparse.Action):
-    def __call__(self, parser, namespace, values, option_string=None):
-        groups = getattr(namespace, "option_groups", None)
-        if groups:
-            if not isinstance(values, tuple):
-                raise argparse.ArgumentError(self, "parameter must be NAME=VALUE")
-            name, value = values
-            if name in groups[-1]["parameters"]:
-                parser.error("duplicate parameter name for option")
-            groups[-1]["parameters"][name] = value
-        else:
-            namespace.param = [*getattr(namespace, "param", []), values]
-
-
-class _OptionFinding(argparse.Action):
-    def __call__(self, parser, namespace, values, option_string=None):
-        groups = getattr(namespace, "option_groups", None)
-        if groups:
-            groups[-1].setdefault("finding_fingerprints", []).append(values)
-        else:
-            namespace.finding = [*getattr(namespace, "finding", []), values]
 
 
 class _CappedParser(argparse.ArgumentParser):
@@ -206,119 +151,59 @@ def _parser() -> argparse.ArgumentParser:
             metavar="ID",
             help="detector IDs to run; repeat for more IDs (default: all)",
         )
-    for name in ("diagnose", "plan", "menu"):
+    for name in ("diagnose", "menu"):
         command = commands.add_parser(
             name,
             help={
-                "diagnose": "evaluate a bound program",
-                "plan": "plan a bound program repair",
-                "menu": "list controller mitigation options",
+                "diagnose": "evaluate a playbook; a match names its fix",
+                "menu": "list fixes as commands",
             }[name],
-            description=(PLAN_ACTIONS + "\n" + WORKING_PROGRAM_HELP) if name == "plan" else WORKING_PROGRAM_HELP,
-            epilog="Example: " + CLI_EXAMPLES[1 if name == "diagnose" else 2],
+            description={
+                "diagnose": "Evaluate a playbook against live state. A match with a fix prints the command to run. "
+                "A wrong or missing role is an error that says what the playbook takes.",
+                "menu": "List the fixes you can apply as commands; NAME narrows to one playbook.",
+            }[name],
+            epilog="Example: " + CLI_EXAMPLES[1],
         )
-        command.add_argument("program_id", nargs=None if name == "plan" else "?")
-        if name == "plan":
-            command.add_argument(
-                "--finding",
-                action="append",
-                default=[],
-                metavar="FINGERPRINT",
-                help="target finding fingerprint; repeat for each intended finding",
-            )
+        command.add_argument("program_id", nargs="?", metavar="NAME")
         command.add_argument(
             "--bind",
             action="append",
             type=_binding,
             default=[],
-            metavar="NAME=Kind/namespace/name",
-            help="named program parameter; repeat for each binding",
+            metavar="NAME=VALUE",
+            help="a playbook parameter: an object is NAME=Kind/NAMESPACE/NAME; repeat for each",
         )
-    commands.add_parser(
-        "apply",
-        help="apply a previously planned repair",
-        description="Apply plans returned by sdo plan. An attempt recorded as applied in prior_stages already wrote: "
-        "re-check live state before applying it again.",
-    ).add_argument("plan_ids", nargs="+")
     mitigate = commands.add_parser(
         "mitigate",
-        help="apply independent options; --finding FINGERPRINT scopes verification; overlapping writes refused",
+        help="apply a fix by name, with the same --bind as diagnose",
         description=(
-            "Apply independent options; overlapping writes are refused. "
-            "Repeat --option ID with --param NAME=VALUE, or use --selection-set FILE "
-            "with version 1 and options [{option_id, bindings, parameters, finding_fingerprints}]. "
-            "--match ID selects a playbook_coverage match with its supplied bindings; --bind narrows it. "
-            "Learned CA plans resolve missing references only from one observed serving relation. "
-            "Each option has a receipt; writes before your next verify share one of five loops. "
-            "--NAME VALUE also sets parameters. "
-            "Pending rollout retains its application ID and allows reads; "
-            "rollout_stalled releases writes once stuck or at its bound; "
-            "a program whose diagnosis still matches after its writes fails as diagnosis_persists "
-            "and releases them to your repair. "
-            "Source reconciliation waits for old objects to drain; configuration differences return source_residual, "
-            "old rollout objects and unavailable readback stay pending and unverified. "
-            "Script fixes are learnable; unlinked bytes are refused as script_unprovenanced."
-            + " "
-            + WORKING_PROGRAM_HELP
+            "Apply a playbook's fix, or a built-in action such as DeletePod, by name. "
+            "Take the name and --bind values from sdo diagnose, or omit --bind when sdo diagnose "
+            "or coverage already matched the playbook once. "
+            "To apply independent fixes together, separate the commands with --: "
+            "sdo mitigate A --bind x=Kind/ns/a -- B --bind y=Kind/ns/b. "
+            "Overlapping writes are refused." + " Programs use the current checkout; edits compile on demand."
         ),
-        epilog=(
-            "Advertised option IDs remain valid for this session across filtered menu calls. "
-            "Learned program preconditions are rechecked against live state before any batch writes.\n\n"
-            "Parameters accept ordinary JSON objects, arrays, numbers and booleans, as well as strings. "
-            "sdo menu exports recursive parameters[].schema for every option, plus selection_schema and "
-            "selection_set_schema; nested properties, required fields and oneOf choices describe accepted shapes. "
-            "parameters[].example supplies typed synthetic inputs; replace names/values using incident evidence. "
-            "CLI --param NAME=VALUE accepts JSON text for structured values. "
-            "SyncWebhookCA privately copies a named Secret key into one webhook caBundle; "
-            "only its reference and digest are returned. "
-            "EnsureDatabaseUser repairs a MongoDB user in one call. Its password and target.auth "
-            "username/password take exactly one credential reference: {env: NAME} or "
-            "{config_map: {name: CONFIGMAP, key: KEY, assignment: optional_NAME}} in the target Pod namespace. "
-            "Assignment selects one literal NAME=value line. The executor resolves values privately; "
-            "never put credential values in arguments, evidence or memory. Direct Secret keys are unavailable. "
-            "The result reads the catalog back: action_results[].database_user states the verified user and "
-            "outcome (created, updated or already_correct). Failures use execution_failed, authorization_denied "
-            "or outcome_unknown; details retain the safe database diagnostic. "
-            "A verified user does not mean the application recovered."
-        ),
+        epilog="Example: " + CLI_EXAMPLES[2] + "\nMore: sdo-incident-response/references/fixes.md",
     )
-    mitigate.add_argument("option", nargs="?", help="advertised option ID or unambiguous program ID")
-    mitigate.add_argument(
-        "--finding",
-        action=_OptionFinding,
-        default=[],
-        metavar="FINGERPRINT",
-        help="target finding fingerprint; repeat for each intended finding",
-    )
-    mitigate.add_argument("--rounds", type=int, help="maximum rounds within the remaining incident allowance")
-    mitigate.add_argument("--selection", type=Path, metavar="FILE")
-    mitigate.add_argument(
-        "--selection-set",
-        type=Path,
-        metavar="FILE",
-        help="version 1 selection set with per-option bindings and parameters",
-    )
-    mitigate.add_argument(
-        "--option",
-        action=_OptionArgument,
-        dest="option_groups",
-        metavar="ID",
-        help="independent option ID; repeat, with per-option --param arguments",
-    )
-    mitigate.add_argument("--param", action=_OptionParameter, type=_binding, default=[], metavar="NAME=VALUE")
-    mitigate.add_argument(
-        "--match",
-        metavar="ID",
-        help="playbook ID of a ready playbook_coverage match",
-    )
+    mitigate.add_argument("target", metavar="NAME", help="playbook or built-in action")
     mitigate.add_argument(
         "--bind",
         action="append",
         type=_binding,
         default=[],
-        metavar="NAME=REF",
-        help="with --match: only the match binding NAME to REF (Kind/namespace/name); repeat",
+        metavar="NAME=VALUE",
+        help="a parameter: an object is NAME=Kind/NAMESPACE/NAME; structured values are JSON text",
     )
+    mitigate.add_argument(
+        "--finding",
+        action="append",
+        default=[],
+        metavar="FINGERPRINT",
+        help="verify against this finding only (default: the findings the playbook explains)",
+    )
+    mitigate.add_argument("--rounds", type=int, help="maximum rounds within the remaining incident allowance")
     report = commands.add_parser("report", help="retrieve a settled mitigation report")
     report.add_argument("attempt_id")
     report.add_argument("--incident-id", required=True)
@@ -388,7 +273,7 @@ def _parser() -> argparse.ArgumentParser:
         help="wait for stable verification, a new/reactivated finding, or this timeout (0: cached and instant)",
     )
     commands.add_parser("rollback", help="roll back a plan application").add_argument("application_id")
-    for name in ("mitigate", "act", "apply", "rollback"):
+    for name in ("mitigate", "act", "rollback"):
         specific_help = commands.choices[name].epilog
         commands.choices[name].epilog = (specific_help + "\n\n" if specific_help else "") + (
             "Action output separates target progress from incident verification and lists fixed, new "
@@ -401,7 +286,7 @@ def _parser() -> argparse.ArgumentParser:
             "informational warning; reads/reports keep their normal results, and new mutations are rejected."
         )
     for name, command in commands.choices.items():
-        if name in {"source", "act", "diagnose", "plan", "menu", "mitigate"}:
+        if name in {"source", "act", "diagnose", "menu", "mitigate"}:
             command.epilog = (command.epilog or "") + "\n\n" + OBJECT_REFERENCE_HELP
         command.epilog = (command.epilog or "") + "\n\n" + response_fields_help(name)
         command.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
@@ -455,10 +340,25 @@ def command_surface() -> CommandSurface:
     }
 
 
+def _named_parameters(binds: list[tuple[str, str]]) -> dict[str, str]:
+    parameters = dict(binds)
+    if len(parameters) != len(binds):
+        raise ValueError("duplicate binding name")
+    return parameters
+
+
+def _target(args: argparse.Namespace) -> dict[str, object]:
+    """One playbook or action by name; Go resolves it to the exact selection."""
+    target: dict[str, object] = {"name": args.target}
+    if args.bind:
+        target["parameters"] = _named_parameters(args.bind)
+    if args.finding:
+        target["finding_fingerprints"] = args.finding
+    return target
+
+
 def _request(args: argparse.Namespace) -> dict[str, object]:
     request: dict[str, object] = {"command": args.command}
-    if getattr(args, "finding", None):
-        request["finding_fingerprints"] = args.finding
     if args.command == "verify" and args.wait:
         if not 0 <= args.wait <= 86400:
             raise ValueError("wait seconds must be between 0 and 86400")
@@ -466,54 +366,24 @@ def _request(args: argparse.Namespace) -> dict[str, object]:
     if args.command == "detect":
         if args.detector:
             request["detector_ids"] = args.detector
-    elif args.command in ("diagnose", "plan", "menu"):
+    elif args.command in ("diagnose", "menu"):
         if args.program_id:
             request["program_id"] = args.program_id
         if args.bind:
-            bindings = dict(args.bind)
-            if len(bindings) != len(args.bind):
-                raise ValueError("duplicate binding name")
-            request["bindings"] = bindings
+            # diagnose binds the way mitigate does, so a wrong role is an error that names what the playbook takes.
+            request["parameters" if args.command == "diagnose" else "bindings"] = _named_parameters(args.bind)
     elif args.command == "verify":
         if args.workload:
             request["workload"] = args.workload
         if args.scenario:
             request["scenarios"] = args.scenario
     elif args.command == "mitigate":
-        groups = getattr(args, "option_groups", None)
-        selection_set = getattr(args, "selection_set", None)
-        if args.match:
-            request["selection_set"] = _match_selection_set(args, groups)
-            return request
-        if args.bind:
-            raise ValueError("--bind belongs to --match")
-        if groups or selection_set:
-            if (
-                args.selection
-                or args.option
-                or (groups and selection_set)
-                or args.param
-                or getattr(args, "named_parameters", None)
-                or args.finding
-                or args.rounds not in (None, 1)
-            ):
-                raise ValueError("choose repeated options or a selection set; batch inputs belong to each option")
-            request["selection_set"] = (
-                _selection_set(selection_set) if selection_set else {"version": 1, "options": groups}
-            )
-            return request
-        if bool(args.selection) == bool(args.option):
-            raise ValueError("choose an option or a selection file")
-        parameters = dict(args.param)
-        if len(parameters) != len(args.param):
-            raise ValueError("duplicate parameter name")
-        for name, value in getattr(args, "named_parameters", []):
-            if name in parameters:
-                raise ValueError("duplicate parameter name")
-            parameters[name] = value
-        request["selection"] = _selection(args.selection) if args.selection else _option_selection(args, parameters)
-        if parameters:
-            request["parameters"] = parameters
+        targets = [_target(args), *(_target(more) for more in getattr(args, "more_targets", []))]
+        request["targets"] = targets
+        if args.rounds is not None:
+            if args.rounds < 1:
+                raise ValueError("--rounds must be at least 1")
+            request["rounds"] = args.rounds
     elif args.command == "report":
         if not args.attempt_id or not args.incident_id or not args.session_id or not 0 < args.epoch < 2**64:
             raise ValueError("report requires nonempty IDs and a positive uint64 epoch")
@@ -524,135 +394,11 @@ def _request(args: argparse.Namespace) -> dict[str, object]:
             "dispatch_epoch": str(args.epoch),
             "attempt_id": args.attempt_id,
         }
-    elif args.command == "apply":
-        request["plan_ids"] = args.plan_ids
     elif args.command == "rollback":
         request["application_id"] = args.application_id
     elif args.command == "source":
         request["ref"] = args.ref
     return request
-
-
-def _match_selection_set(args: argparse.Namespace, groups: object) -> dict[str, object]:
-    """Resolve a coverage match to the menu's ready options so no selection JSON is hand-built."""
-    if (
-        args.option
-        or groups
-        or args.selection
-        or args.selection_set
-        or args.param
-        or getattr(args, "named_parameters", None)
-        or args.finding
-        or args.rounds not in (None, 1)
-    ):
-        raise ValueError("--match takes only PLAYBOOK_ID and optional --bind; it builds the selection itself")
-    request: dict[str, object] = {"command": "menu", "program_id": args.match, "match": True}
-    bindings = dict(args.bind)
-    if len(bindings) != len(args.bind):
-        raise ValueError("duplicate binding name")
-    if bindings:
-        request["bindings"] = bindings
-    response = _exchange(request, Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools")))
-    menu = response.get("menu")
-    if response.get("error") or not isinstance(menu, dict):
-        raise ValueError(str(response.get("error") or "current mitigation menu unavailable"))
-    options = [option for option in menu.get("options", []) if option.get("program_id") == args.match]
-    ready = [option for option in options if not option.get("disabled_reason")]
-    if not ready:
-        reason = next((str(option["disabled_reason"]) for option in options), "")
-        raise ValueError(reason or f"no ready option for playbook {args.match}; see sdo menu")
-    return {"version": 1, "options": [{"option_id": option["option_id"]} for option in ready]}
-
-
-def _option_selection(args: argparse.Namespace, parameters: dict[str, str]) -> dict[str, object]:
-    response = _exchange({"command": "menu"}, Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools")))
-    menu = response.get("menu")
-    if response.get("error") or not isinstance(menu, dict):
-        raise ValueError(str(response.get("error") or "current mitigation menu unavailable"))
-    exact = [option for option in menu.get("options", []) if args.option == option.get("option_id")]
-    options = exact or [option for option in menu.get("options", []) if args.option == option.get("program_id")]
-    if not exact and len(options) > 1 and parameters:
-        # Several finding-derived rows may name one program. Let Go parse and
-        # validate explicit object/scalar parameters into one concrete option.
-        response = _exchange(
-            {"command": "menu", "program_id": args.option, "parameters": parameters},
-            Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools")),
-        )
-        menu = response.get("menu")
-        if response.get("error") or not isinstance(menu, dict):
-            raise ValueError(str(response.get("error") or "bound mitigation menu unavailable"))
-        options = [option for option in menu.get("options", []) if args.option == option.get("program_id")]
-    if len(options) == 1 and options[0].get("disabled_reason"):
-        raise ValueError(str(options[0]["disabled_reason"]))
-    if not options:
-        # Listings are views. Only the controller's session catalog can resolve
-        # an earlier explicit binding, or authoritatively refuse an unknown ID.
-        options = [{"option_id": args.option}]
-    if len(options) != 1:
-        raise ValueError("mitigation option unavailable or ambiguous")
-    option = options[0]
-    limit = int(menu.get("remaining_batches", menu.get("round_limit", 0)))
-    rounds = args.rounds if args.rounds is not None else 1
-    if not 1 <= rounds <= limit:
-        raise ValueError("rounds exceed remaining incident allowance")
-    selection = {
-        "version": 1,
-        "option_id": option["option_id"],
-        "request_id": "request-" + uuid.uuid4().hex,
-        "round_limit": rounds,
-    }
-    return selection
-
-
-def _selection_set(path: Path) -> dict[str, object]:
-    from google.protobuf.json_format import ParseError
-
-    from sdo.agents.responder.selection_inputs import normalize_selection_set, validate_message_shape
-    from sdo.contracts import MitigationSelectionSet, parse_json, to_canonical_json, validate
-
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, ValueError) as exc:
-        raise ValueError("selection_set: expected readable JSON object") from exc
-    value = normalize_selection_set(value)
-    validate_message_shape(value, MitigationSelectionSet(), "selection_set")
-    try:
-        selection = parse_json(json.dumps(value), MitigationSelectionSet())
-    except (ValueError, ParseError) as exc:
-        raise ValueError("selection_set: expected declared field shapes; see sdo menu schemas") from exc
-    try:
-        validate(selection)
-    except ValueError as exc:
-        raise ValueError(f"selection_set: {exc}") from exc
-    return json.loads(to_canonical_json(selection))
-
-
-def _selection(path: Path) -> dict[str, object]:
-    # Keep help and all existing tools independent of protobuf startup costs.
-    from google.protobuf.json_format import ParseError
-
-    from sdo.agents.responder.selection_inputs import validate_message_shape
-    from sdo.contracts import MitigationSelection, parse_json, to_canonical_json, validate
-
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, ValueError) as exc:
-        raise ValueError("selection: expected readable JSON object") from exc
-    try:
-        validate_message_shape(value, MitigationSelection(), "selection")
-    except ValueError as exc:
-        raise ValueError(f"invalid mitigation selection: {exc}") from exc
-    try:
-        selection = parse_json(json.dumps(value), MitigationSelection())
-    except (ValueError, ParseError) as exc:
-        raise ValueError(
-            "invalid mitigation selection: expected declared field shapes; see sdo menu selection_schema"
-        ) from exc
-    try:
-        validate(selection)
-    except ValueError as exc:
-        raise ValueError(f"invalid mitigation selection: {exc}") from exc
-    return json.loads(to_canonical_json(selection))
 
 
 def _exchange(request: dict[str, object], directory: Path) -> dict[str, object]:
@@ -837,16 +583,28 @@ def _check(args: argparse.Namespace, directory: Path) -> dict[str, object]:
     return response
 
 
+def _split_fixes(arguments: list[str]) -> tuple[list[str], list[list[str]]]:
+    """Fixes applied together are separated by --; only mitigate reads it as a separator."""
+    if "mitigate" not in arguments:
+        return arguments, []
+    start = arguments.index("mitigate") + 1
+    chunks: list[list[str]] = [[]]
+    for token in arguments[start:]:
+        if token == "--":
+            chunks.append([])
+        else:
+            chunks[-1].append(token)
+    return [*arguments[:start], *chunks[0]], chunks[1:]
+
+
 def _main(argv: list[str] | None = None) -> int:
     parser = _parser()
-    args, extra = parser.parse_known_args(argv)
-    if extra:
-        if args.command != "mitigate" or len(extra) % 2:
-            parser.error("parameters must use --NAME VALUE")
-        pairs = list(zip(extra[::2], extra[1::2], strict=True))
-        if any(not name.startswith("--") or len(name) == 2 or value.startswith("--") for name, value in pairs):
-            parser.error("parameters must use --NAME VALUE")
-        args.named_parameters = [(name[2:], value) for name, value in pairs]
+    first, more = _split_fixes(list(sys.argv[1:] if argv is None else argv))
+    args = parser.parse_args(first)
+    if more:
+        args.more_targets = [parser.parse_args(["mitigate", *chunk]) for chunk in more]
+        if any(item.rounds is not None for item in args.more_targets):
+            parser.error("--rounds belongs to a single fix")
     if args.command == "act":
         return _act(args)
     try:

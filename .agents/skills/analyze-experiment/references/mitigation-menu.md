@@ -3,16 +3,17 @@
 The menu is a convenience over direct commands. The controller enables it with
 `SDO_RESPONDER_MENU=1`; unset or `0` leaves it off. `menu` lists accepted Mitigators
 with declared object/value parameters and registered raw actions as one-action plans.
-`mitigate OPTION [--NAME VALUE ...] [--rounds N]` and multi-option calls use the ordinary PlanExecutor,
+`mitigate NAME [--bind NAME=VALUE ...] [--rounds N]` and multi-fix calls use the ordinary PlanExecutor,
 existing controller RBAC and always-on executor checks. There are no menu-specific
 selection-ledger, fencing, quiescence, provenance, health-reader or credential-delta gates.
 
 ## Multiple options and pending rollouts
 
-Several independent options can be applied in one call with repeated `--option ID`
-followed by each option's `--param NAME=VALUE`, or `--selection-set FILE`.
-The version 1 `MitigationSelectionSet` contains `options`, each with `option_id`,
-`bindings`, `parameters` and `finding_fingerprints`. The controller prepares all
+Several independent fixes can be applied in one call, separated by `--`:
+`sdo mitigate A --bind ... -- B --bind ...`. The CLI sends `targets` (name, raw
+`--bind` parameters, finding fingerprints); Go resolves each to a catalog selection
+(`program-<digest of program ID and bindings>` for playbooks, the action name for
+built-ins) and builds the `MitigationSelectionSet`. The controller prepares all
 options before writes. Same-object write sets are refused together with typed
 `write_set_conflict` naming both options and the object; no option is half-applied
 because of a detected conflict. A selection set writes within the current response loop.
@@ -82,7 +83,7 @@ result; retry then lost process-local evidence and closed as `cleared_without_ac
 Read classification and ACK separately. The menu now supplies required receipt details,
 and a focused incident-contract test guards that failure before the end-to-end check.
 
-For a logical program ID with several finding-derived menu rows, explicit CLI `--param NAME=VALUE` / `--NAME VALUE` inputs now request a controller-bound menu for that program before selecting one concrete option. Go parses object and scalar bindings and rejects unknown or incomplete required parameters. Without explicit parameters, multiple rows remain ambiguous; a concrete option ID still selects that exact row. A binding/listing failure consumes no mitigation batch.
+`--bind NAME=VALUE` on `diagnose` and `mitigate` is typed by Go against the playbook's declared parameters; a wrong or missing role is an error that names what the playbook takes (never an Unknown verdict). Without `--bind`, `mitigate NAME` uses the single recorded coverage or finding-derived binding; several candidates are an error listing each as a command. A binding failure consumes no mitigation batch. A fix that applied, whose diagnosis no longer matches while independent verification still waits, reports reason `applied_awaiting_recovery` (the verdict is unchanged).
 
 The reviewed mixed10 source policy includes the deployed chart identity `opentelemetry-demo` mapped exactly to `astronomy-shop`, alongside `astronomy_shop`. A scope refusal with adopted memory can be an application-identity mismatch rather than missing corpus evidence: compare the incident's `application` and `namespace` with the committed policy map. The control namespace is not an application repair scope. Accepted-source contents and metadata UID checks still govern each action.
 

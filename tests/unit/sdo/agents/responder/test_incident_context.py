@@ -129,7 +129,7 @@ def test_first_message_preserves_executable_match_bindings_and_selection() -> No
     """A repeat must not need menu discovery to recover named or scalar bindings."""
     request = _request()
     match = request.playbook_coverage.matches.add(
-        playbook_id="repair", can_mitigate=True, mitigation_selection="program-ready-option"
+        playbook_id="repair", can_mitigate=True, mitigate_command="sdo mitigate repair"
     )
     match.explained_finding_fingerprints.append("finding-0")
     binding = match.bindings.add(name="service")
@@ -137,7 +137,7 @@ def test_first_message_preserves_executable_match_bindings_and_selection() -> No
     match.bindings.add(name="port").value.number_value = 8080
     with prepared_incident_data(request) as rendered:
         selected = incident_document(rendered)["playbook_coverage"]["matches"][0]
-        assert selected["mitigation_selection"] == match.mitigation_selection
+        assert selected["mitigate_command"] == match.mitigate_command
         assert selected["bindings"] == [
             {"name": "service", "object": {"kind": "Service", "name": "service-0"}},
             {"name": "port", "value": 8080.0},
@@ -147,7 +147,7 @@ def test_first_message_preserves_executable_match_bindings_and_selection() -> No
 def test_bulky_intent_does_not_hide_actionable_findings_and_coverage() -> None:
     request = _request()
     request.memory_snapshot.architecture_markdown = "Supplemental architecture. " * 1000
-    match = request.playbook_coverage.matches.add(playbook_id="repair", mitigation_selection="repair-option")
+    match = request.playbook_coverage.matches.add(playbook_id="repair", mitigate_command="sdo mitigate repair")
     match.explained_finding_fingerprints.append("finding-0")
 
     with prepared_incident_data(request) as rendered:
@@ -194,7 +194,7 @@ def test_incident_data_has_no_playbook_catalog_and_writes_no_scratch_copy(
 def test_incident_carries_the_current_cli_surface_without_tool_discovery() -> None:
     with prepared_incident_data(_request()) as rendered:
         tools = incident_document(rendered)["incident_tools"]
-        assert "independent options" in tools["commands"]["mitigate"]
+        assert "same --bind" in tools["commands"]["mitigate"]
         assert set(tools["commands"]) == set(command_surface()["commands"])
         assert "--help" in tools["help"]
         assert "Full JSON:" in tools["output"]
@@ -497,7 +497,7 @@ def test_stalled_stage_handoff_states_the_blocker_and_its_standard_release() -> 
         brief = _brief(rendered)
     assert brief["rollout_releases"] == [
         "Deployment/toy/geo cannot roll out beside its old revision: "
-        "sdo mitigate RetireOldRevision --ref ReplicaSet/toy/geo-old"
+        "sdo mitigate RetireOldRevision --bind ref=ReplicaSet/toy/geo-old"
     ]
 
 

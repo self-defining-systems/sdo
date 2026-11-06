@@ -266,7 +266,7 @@ def _coverage_brief(request: IncidentRequest) -> dict[str, Any]:
         {
             "playbook_id": match.playbook_id,
             "can_mitigate": match.can_mitigate,
-            "mitigation_selection": match.mitigation_selection,
+            "mitigate_command": match.mitigate_command,
             "bindings": [
                 json_format.MessageToDict(binding, preserving_proto_field_name=True) for binding in match.bindings
             ],

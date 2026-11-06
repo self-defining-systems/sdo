@@ -25,6 +25,9 @@ type ProgramRun struct {
 	Verdict            program.Verdict  `json:"verdict"`
 	Duration           time.Duration    `json:"duration"`
 	ProgramRevision    string           `json:"program_revision,omitempty"`
+	// MitigateCommand is the command that applies this playbook with these
+	// bindings; set on a matching diagnosis that has a fix.
+	MitigateCommand string `json:"mitigate_command,omitempty"`
 }
 
 // SelectProgramCandidates diagnoses finding-bound programs under one deadline.

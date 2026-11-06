@@ -589,8 +589,8 @@ def test_prompt_marks_known_program_capabilities(can_mitigate: bool | None) -> N
     assert "Counts inform; never permission gates" in _workflow()
     assert "Use only help-confirmed options" in _workflow()
     assert "--bind" not in prompt.split("Incident request:", 1)[0]
-    assert "sdo plan --help" in _facts(prompt)["incident_tools"]["commands"]["plan"]
-    assert "plan" in incident_document(prompt)["incident_tools"]["commands"]
+    assert "sdo mitigate --help" in _facts(prompt)["incident_tools"]["commands"]["mitigate"]
+    assert "plan" not in incident_document(prompt)["incident_tools"]["commands"]
 
 
 def _scripted_reply(result: IncidentResult, session: str) -> FakeRun:

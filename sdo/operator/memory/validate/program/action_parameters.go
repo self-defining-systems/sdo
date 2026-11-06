@@ -9,8 +9,8 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
 
-var authoredAction = regexp.MustCompile(`\bsdo\s+(?:--json\s+)?(?:mitigate|plan)\s+([A-Z][A-Za-z0-9]*)\b`)
-var authoredParameter = regexp.MustCompile(`--param(?:=|\s+)["']?([A-Za-z_][A-Za-z0-9_]*)=`)
+var authoredAction = regexp.MustCompile(`\bsdo\s+(?:--json\s+)?mitigate\s+([A-Z][A-Za-z0-9]*)\b`)
+var authoredParameter = regexp.MustCompile(`--bind(?:=|\s+)["']?([A-Za-z_][A-Za-z0-9_]*)=`)
 
 // checkAuthoredActionParameters checks documented built-in selections against
 // the same protobuf descriptor the executor uses for menuRawPlan. Go action

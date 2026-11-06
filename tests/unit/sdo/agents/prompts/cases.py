@@ -411,7 +411,7 @@ def rendered_cases(*, scale: int = 1) -> dict[str, str]:
             playbook_id="repair-0",
             program_revision="d" * 40,
             can_mitigate=True,
-            mitigation_selection="restore-port",
+            mitigate_command="sdo mitigate restore-port --bind service=Service/app/api",
             verified_successes=2,
             verified_failures=1,
             explained_finding_fingerprints=[matched.findings[0].fingerprint],

@@ -7,8 +7,8 @@ at the rollout's revision; report unavailable steps instead of assuming them.
 
 1. Read the coverage view: matched learned playbooks, explained findings and
    findings that remain unexplained.
-2. After a quick live check, apply matched mitigations first, one `sdo mitigate`
-   call per selected mitigation; read each result before continuing.
+2. After a quick live check, apply matched mitigations first, one `sdo mitigate NAME --bind ...`
+   call per selected mitigation (or one call with fixes separated by `--`); read each result before continuing.
 3. Repair the remaining findings using recorded actions and commit source changes.
 4. Self-check with `sdo detect` on affected findings, then `sdo verify`.
 5. Undo only when evidence warrants `sdo rollback`; the controller does not

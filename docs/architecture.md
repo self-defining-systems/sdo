@@ -257,9 +257,9 @@ use a cached build, so observation polling does not repeatedly use `go run`.
 
 ## Mitigation menu
 
-The menu is a convenience over direct commands. `sdo menu` lists accepted Mitigator programs with their
-declared object and value parameters and registered raw plan actions as generic one-action plans.
-`sdo mitigate OPTION [--NAME VALUE ...] [--rounds N]` runs the selected option through the ordinary
+The menu is a convenience over direct commands. `sdo menu` lists accepted Mitigator programs as commands, with their
+declared object and value parameters, and registered raw plan actions as generic one-action plans.
+`sdo mitigate NAME [--bind NAME=VALUE ...] [--rounds N]` takes the same name and `--bind` as `sdo diagnose`; Go resolves the playbook (or built-in action) and bindings to the exact selection, hiding option hashes, and runs it through the ordinary
 `PlanExecutor` under the controller's existing RBAC and always-on executor checks. The option catalog
 comes from program and action registries, so adding an action requires no menu-specific execution case.
 The menu adds no selection ledger, fences, quiescence, provenance, health-reader or credential-delta
