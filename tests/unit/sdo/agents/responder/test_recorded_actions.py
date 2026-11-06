@@ -739,7 +739,13 @@ _ARGV_TEXT = st.text(max_size=40) | st.text(
 )
 
 
-@settings(max_examples=300, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+# The pull-request tier samples 50 examples (about 0.5 s; 300 took 1-3 s locally and 11 s on a loaded hosted
+# runner, over the 10 s slow-test budget); the nightly runs the full 300 (SDO_PROPERTY_EXAMPLES).
+@settings(
+    max_examples=int(os.environ.get("SDO_PROPERTY_EXAMPLES", "50")),
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
 @given(
     command=st.lists(_ARGV_TEXT, min_size=1, max_size=8),
     output=st.text(max_size=2000),
