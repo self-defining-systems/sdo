@@ -67,3 +67,10 @@ direct `kubectl apply`, and declare no `deployed_manifest_paths` (SDO's
 deployment source renders them). For `compose` the agent-authored Kubernetes
 config is judged by the same deployed-state checks instead of a file
 comparison.
+
+## Scripted upstream commits
+
+`commits/<name>.patch` are source-only patches (against `main.go`) that the e2e replayer applies to the followed Git
+ref: `benign` changes the `/` response text; `broken` makes the `backend` service's `/ready` return 503 so its rollout
+stalls. `fastloop toy push --commit benign|broken` applies one and pushes it; `fastloop toy serve` deploys the
+in-cluster Git server and seeds it with the workspace commit (see `benchmarks/sregym/fastloop/toy_upstream.py`).

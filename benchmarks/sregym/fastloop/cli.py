@@ -47,6 +47,7 @@ from benchmarks.sregym.fastloop.host_limits import DEFAULT_MEMORY_LIMIT, DEFAULT
 from benchmarks.sregym.fastloop.loop import LoopConfig, run_incidents, write_loop_manifest
 from benchmarks.sregym.fastloop.records import AgentSummary, IncidentRecord, load_records, summarize
 from benchmarks.sregym.fastloop.stream import load_stream_config
+from benchmarks.sregym.fastloop.toy_upstream import add_toy_parser
 from benchmarks.sregym.fastloop.wipe import (
     AttemptMarker,
     KubectlLaneCluster,
@@ -1944,6 +1945,8 @@ def build_parser() -> argparse.ArgumentParser:
     summary.add_argument("paths", type=Path, nargs="+")
     summary.add_argument("--json", action="store_true")
     summary.set_defaults(handler=_summary)
+
+    add_toy_parser(commands)
 
     down = commands.add_parser("down", help="drain and remove the persistent SDO controller")
     down.add_argument("--run-dir", type=Path, required=True)
