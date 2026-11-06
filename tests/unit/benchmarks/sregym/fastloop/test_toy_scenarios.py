@@ -9,10 +9,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from benchmarks.sregym.adapter.deployment_source import helm_source
 from benchmarks.sregym.fastloop import toy_scenarios as sc
 from benchmarks.sregym.fastloop import toy_upstream as up
-from benchmarks.sregym.fastloop.toy import prepare_workspace
+from benchmarks.sregym.fastloop.toy import prepare_workspace, provided_deployment_plan
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -261,15 +260,29 @@ def test_pod_parsers():
     assert sc.pod_failure_count(pods) == 3
 
 
-def test_helm_onboarding_provides_the_chart_of_the_assembled_source(tmp_path: Path):
+def test_helm_onboarding_provides_the_plan_of_the_assembled_source(tmp_path: Path):
     prepare_workspace(tmp_path, "unused:v1", fresh=True, variant="helm")
-    source = helm_source("chart")
+    plan = provided_deployment_plan("helm", "toy-ns")
+    assert plan is not None
+    source = plan["source"]
     assert (tmp_path / source["config"]["chart_path"] / "Chart.yaml").is_file()
-    flags = sc.helm_onboarding_arguments(source)
-    assert flags[0] == "--deployment-source"
+    assert (tmp_path / plan["images"][0]["config"]["dockerfile_path"]).is_file()
+    assert plan["expected_workload_ids"] == [f"Deployment/toy-ns/{name}" for name in ("frontend", "backend", "catalog")]
+    flags = sc.helm_onboarding_arguments(plan)
+    assert flags[0] == "--deployment-plan"
     decoded = json.loads(flags[1])
-    assert decoded["renderer_id"] == "helm"
-    assert decoded["config"]["@type"].endswith(".HelmRenderConfig")
+    assert decoded["source"]["renderer_id"] == "helm"
+    assert decoded["source"]["config"]["@type"].endswith(".HelmRenderConfig")
+    assert decoded["images"][0]["source_id"] == "buildkit"
+
+
+def test_only_the_helm_variant_provides_a_plan():
+    assert [provided_deployment_plan(v, "ns") is not None for v in ("raw", "kustomize", "helm", "compose")] == [
+        False,
+        False,
+        True,
+        False,
+    ]
 
 
 def test_down_deletes_the_upstream_namespace(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):

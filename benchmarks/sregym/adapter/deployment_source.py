@@ -76,6 +76,38 @@ def source_from_config(value: Any) -> dict[str, Any]:
     return kustomize_source(path)
 
 
+def buildkit_image(image: str, context_path: str, dockerfile_path: str, source_id: str = "buildkit") -> dict[str, Any]:
+    """ProtoJSON ``ImageSource``: ``image`` as the reference the deployment uses, built by SDO from the source tree."""
+    if not image:
+        raise ValueError("an image source needs the image reference")
+    return {
+        "image": image,
+        "source_id": source_id,
+        "config": {
+            "@type": _CONFIG_TYPE + "BuildKitImageConfig",
+            "context_path": _checked_path(context_path),
+            "dockerfile_path": _checked_path(dockerfile_path),
+        },
+    }
+
+
+def deployment_plan(
+    source: dict[str, Any],
+    *,
+    images: tuple[dict[str, Any], ...] | list[dict[str, Any]] = (),
+    expected_workload_ids: tuple[str, ...] | list[str],
+) -> dict[str, Any]:
+    """ProtoJSON ``DeploymentPlan`` the human or harness provides: SDO deploys it as given, no deployer agent."""
+    if not expected_workload_ids:
+        raise ValueError("a deployment plan needs the workload IDs that must roll out")
+    return {"source": source, "images": list(images), "expected_workload_ids": list(expected_workload_ids)}
+
+
+def plan_flag_value(plan: dict[str, Any]) -> str:
+    """The compact JSON the host's ``--deployment-plan`` flag takes."""
+    return json.dumps(plan, separators=(",", ":"), sort_keys=True)
+
+
 def source_flag_value(source: dict[str, Any]) -> str:
     """The compact JSON the controller's ``--deployment-source`` flag takes."""
     return json.dumps(source, separators=(",", ":"), sort_keys=True)

@@ -176,3 +176,16 @@ func (c Coordinator) awaitVerdict(ctx context.Context, cfg Config, evaluate func
 		}
 	}
 }
+
+// ProvidedPlanError ends a lifecycle whose human-provided deployment plan
+// failed admission, deployment or verification. No agent is dispatched to
+// repair a plan the human supplied, so the failure is for the human.
+type ProvidedPlanError struct {
+	// Stage is "deploy" (admission, deployment, evidence) or "verify".
+	Stage  string
+	Reason string
+}
+
+func (e *ProvidedPlanError) Error() string {
+	return fmt.Sprintf("the provided deployment plan failed at %s (no agent was asked to correct it): %s", e.Stage, e.Reason)
+}

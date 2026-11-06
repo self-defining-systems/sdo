@@ -91,6 +91,10 @@ type Config struct {
 	// deployment follows; the operate Job publishes them as
 	// .sdo/goal/sources.yaml with the human goal. Both or neither.
 	SourceKind, SourceConfig string
+	// DeploymentPlan is a provided deployment (compact ProtoJSON
+	// DeploymentPlan): the operate Job deploys it instead of asking the
+	// deployer agent for a plan.
+	DeploymentPlan string
 }
 
 type Plan struct {

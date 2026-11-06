@@ -792,6 +792,7 @@ def _launch_native_lifecycle(
         registry_insecure=cluster.registry_target.insecure,
         max_attempts=args.max_deployment_attempts,
         agent_registrations=Path(args.agent_registrations).resolve() if args.agent_registrations else None,
+        deployment_plan=getattr(args, "deployment_plan", None),
     )
     return launch_host(host)
 
@@ -805,6 +806,7 @@ def launch_native_lifecycle(config: RuntimeConfig, health_objective: str, api_ba
         buildkit_image=config.buildkit_image,
         max_deployment_attempts=config.max_deployment_attempts,
         agent_registrations=config.agent_registrations,
+        deployment_plan=config.deployment_plan,
     )
     return _launch_native_lifecycle(
         args,

@@ -282,6 +282,6 @@ def run_broken(
     return result
 
 
-def helm_onboarding_arguments(deployment_source: Mapping[str, Any]) -> list[str]:
-    """Controller/install flags that hand the harness-provided ``DeploymentSource`` to SDO (no agent authors it)."""
-    return ["--deployment-source", json.dumps(deployment_source, sort_keys=True, separators=(",", ":"))]
+def helm_onboarding_arguments(deployment_plan: Mapping[str, Any]) -> list[str]:
+    """Host flags that hand the harness-provided ``DeploymentPlan`` to SDO (no agent authors the deployment)."""
+    return ["--deployment-plan", json.dumps(deployment_plan, sort_keys=True, separators=(",", ":"))]

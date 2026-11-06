@@ -16,8 +16,11 @@ if TYPE_CHECKING:
     from benchmarks.sregym.adapter.cluster_resources import kubectl
     from benchmarks.sregym.adapter.context_preflight import run_context_preflight as run_context_preflight
     from benchmarks.sregym.adapter.deployment_source import (
+        buildkit_image,
+        deployment_plan,
         helm_source,
         kustomize_source,
+        plan_flag_value,
         raw_source,
         source_flag_value,
         source_from_config,
@@ -210,6 +213,9 @@ _EXPORTS: dict[str, str] = {
     "run_persistent_stage": "persistent",
     "teardown": "persistent",
     "RuntimeConfig": "runtime",
+    "buildkit_image": "deployment_source",
+    "deployment_plan": "deployment_source",
+    "plan_flag_value": "deployment_source",
     "helm_source": "deployment_source",
     "kustomize_source": "deployment_source",
     "raw_source": "deployment_source",
@@ -220,6 +226,9 @@ _EXPORTS: dict[str, str] = {
 }
 
 __all__ = [
+    "buildkit_image",
+    "deployment_plan",
+    "plan_flag_value",
     "helm_source",
     "kustomize_source",
     "raw_source",

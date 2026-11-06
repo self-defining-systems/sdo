@@ -131,7 +131,13 @@ type Config struct {
 	// goal. They require a health objective, because the goal commit carries them.
 	Sources                       []layout.Source
 	DeployerAgentID, JudgeAgentID string
-	MaxAttempts                   int
+	// ProvidedPlan is a deployment the human or harness supplies (an
+	// application that ships its own deployment). The deployer agent is not
+	// dispatched: the plan goes through the same admission, trusted Deployer,
+	// evidence and verification as an agent's plan, and any failure of it is
+	// terminal (*ProvidedPlanError), never fed back to an agent.
+	ProvidedPlan *contracts.DeploymentPlan
+	MaxAttempts  int
 	// MaxAttempts bounds deployer correction attempts only. The fields below
 	// bound the waits that never consume one; zero selects the default.
 	PendingEvaluations    int
@@ -168,11 +174,19 @@ func (c Coordinator) Run(ctx context.Context, cfg Config) (Result, error) {
 	for attempt := 1; attempt <= cfg.MaxAttempts; attempt++ {
 		result.Attempts = attempt
 		deployerID := fmt.Sprintf("%s-source-%d", cfg.OperationID, attempt)
+		if cfg.ProvidedPlan != nil {
+			// One deployment for the whole operation: later rounds (a failed
+			// judge, say) resume the accepted source instead of redeploying.
+			deployerID = fmt.Sprintf("%s-source-1", cfg.OperationID)
+		}
 		sourceReceipt, deployment, sourceReady, nextFeedback, err := c.deploy(ctx, deployerID, cfg, attempt, feedback)
 		if err != nil {
 			return result, fmt.Errorf("deployment attempt %d: %w", attempt, err)
 		}
 		if !sourceReady {
+			if cfg.ProvidedPlan != nil {
+				return result, &ProvidedPlanError{Stage: "deploy", Reason: nextFeedback}
+			}
 			feedback = nextFeedback
 			continue
 		}
@@ -202,6 +216,9 @@ func (c Coordinator) Run(ctx context.Context, cfg Config) (Result, error) {
 			return result, fmt.Errorf("independent verification: %w", err)
 		}
 		if verdict.Outcome != VerificationClear {
+			if cfg.ProvidedPlan != nil {
+				return result, &ProvidedPlanError{Stage: "verify", Reason: verdict.Feedback()}
+			}
 			feedback = verdict.Feedback()
 			continue
 		}
@@ -244,13 +261,15 @@ func (c Coordinator) validate(cfg Config) error {
 	if len(cfg.Sources) > 0 && strings.TrimSpace(cfg.HealthObjective) == "" {
 		return errors.New("followed sources are published with the human goal and require a health objective")
 	}
-	for _, choice := range []struct {
+	type agentChoice struct {
 		id      string
 		request proto.Message
-	}{
-		{cfg.DeployerAgentID, &contracts.SourceDeploymentRequest{}},
-		{cfg.JudgeAgentID, &contracts.HealthJudgeRequest{}},
-	} {
+	}
+	choices := []agentChoice{{cfg.JudgeAgentID, &contracts.HealthJudgeRequest{}}}
+	if cfg.ProvidedPlan == nil {
+		choices = append(choices, agentChoice{cfg.DeployerAgentID, &contracts.SourceDeploymentRequest{}})
+	}
+	for _, choice := range choices {
 		if _, _, err := c.target(choice.id, choice.request); err != nil {
 			return err
 		}
@@ -328,27 +347,17 @@ func (c Coordinator) deploy(ctx context.Context, id string, cfg Config, attempt 
 	if err != nil {
 		return broker.Receipt{}, DeploymentReceipt{}, false, "", err
 	}
-	request := &contracts.SourceDeploymentRequest{Application: cfg.Application, Namespace: cfg.Namespace, HealthObjective: cfg.HealthObjective, CorrectionFeedback: feedback, Attempt: uint32(attempt), RegistryHost: cfg.RegistryHost, Renderers: pluginDescriptors(c.Renderers.Describe()), ImageSources: pluginDescriptors(c.ImageSources.Describe())}
-	task, err := c.newTask(id, cfg.DeployerAgentID, proposal, request)
-	if err != nil {
-		return broker.Receipt{}, DeploymentReceipt{}, false, "", err
-	}
-	response := &contracts.SourceDeploymentResult{}
-	if err := c.execute(ctx, task, response); err != nil {
-		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
-		if ctx.Err() != nil {
-			return broker.Receipt{}, DeploymentReceipt{}, false, "", ctx.Err()
+	plan := cfg.ProvidedPlan
+	if plan == nil {
+		agentPlan, nextFeedback, err := c.agentPlan(ctx, id, cfg, attempt, feedback, proposal)
+		if err != nil || agentPlan == nil {
+			return broker.Receipt{}, DeploymentReceipt{}, false, nextFeedback, err
 		}
-		return broker.Receipt{}, DeploymentReceipt{}, false, err.Error(), nil
+		plan = agentPlan
 	}
-	if !response.GetProposed() || strings.TrimSpace(response.GetAgentSessionId()) == "" || response.GetPlan() == nil {
-		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
-		return broker.Receipt{}, DeploymentReceipt{}, false, "deployment worker did not propose a complete source plan: " + response.GetSummary(), nil
-	}
-	plan := response.GetPlan()
 	if err := admissiblePlan(plan); err != nil {
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
-		return broker.Receipt{}, DeploymentReceipt{}, false, "deployment worker did not propose a deployable source plan: " + err.Error(), nil
+		return broker.Receipt{}, DeploymentReceipt{}, false, "the deployment plan is not deployable: " + err.Error(), nil
 	}
 	var readiness DeploymentReceipt
 	err = c.retryInfrastructure(ctx, cfg, "independent source deployment", func() (err error) {
@@ -377,6 +386,29 @@ func (c Coordinator) deploy(ctx context.Context, id string, cfg Config, attempt 
 		return broker.Receipt{}, DeploymentReceipt{}, false, "broker rejected deployment: " + err.Error(), nil
 	}
 	return receipt, readiness, true, "", nil
+}
+
+// agentPlan dispatches the deployer agent for a plan. A nil plan with a nil
+// error carries correction feedback; the proposal is already released then.
+func (c Coordinator) agentPlan(ctx context.Context, id string, cfg Config, attempt int, feedback string, proposal broker.Proposal) (*contracts.DeploymentPlan, string, error) {
+	request := &contracts.SourceDeploymentRequest{Application: cfg.Application, Namespace: cfg.Namespace, HealthObjective: cfg.HealthObjective, CorrectionFeedback: feedback, Attempt: uint32(attempt), RegistryHost: cfg.RegistryHost, Renderers: pluginDescriptors(c.Renderers.Describe()), ImageSources: pluginDescriptors(c.ImageSources.Describe())}
+	task, err := c.newTask(id, cfg.DeployerAgentID, proposal, request)
+	if err != nil {
+		return nil, "", err
+	}
+	response := &contracts.SourceDeploymentResult{}
+	if err := c.execute(ctx, task, response); err != nil {
+		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
+		if ctx.Err() != nil {
+			return nil, "", ctx.Err()
+		}
+		return nil, err.Error(), nil
+	}
+	if !response.GetProposed() || strings.TrimSpace(response.GetAgentSessionId()) == "" || response.GetPlan() == nil {
+		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
+		return nil, "deployment worker did not propose a complete source plan: " + response.GetSummary(), nil
+	}
+	return response.GetPlan(), "", nil
 }
 
 // admissiblePlan requires the deployment source: which renderer renders the

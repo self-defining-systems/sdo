@@ -78,6 +78,8 @@ class RuntimeConfig:
     agent_registrations: Path | None = None
     # ProtoJSON DeploymentSource (see ``deployment_source.py``); ``None`` declares no source.
     deployment_source: dict[str, Any] | None = None
+    # ProtoJSON DeploymentPlan the human provides (see ``deployment_source.py``); ``None``: agent-authored.
+    deployment_plan: dict[str, Any] | None = None
     shared_accepted_id: str = ""
 
     def __post_init__(self) -> None:

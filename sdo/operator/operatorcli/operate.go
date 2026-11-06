@@ -15,6 +15,7 @@ import (
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/operatorcli/internal/processio"
+	"sdo.dev/operator/rendered"
 )
 
 // OperateConfig is the typed, in-cluster bootstrap launch contract. The
@@ -47,6 +48,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	objective := flags.String("health-objective", "", "human health objective")
 	sourceKind := flags.String("source-kind", "", "upstream watcher kind to follow (published as .sdo/goal/sources.yaml)")
 	sourceConfig := flags.String("source-config", "", "JSON config of the followed upstream")
+	deploymentPlan := flags.String("deployment-plan", "", "provided DeploymentPlan as ProtoJSON; the deployer agent is skipped and the plan is deployed as given")
 	operationID := flags.String("operation-id", "", "durable operation identity")
 	maxAttempts := flags.Int("max-attempts", 3, "maximum deployment attempts")
 	controllerImage := flags.String("controller-image", "", "controller image")
@@ -179,9 +181,14 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	if len(sources) > 0 && strings.TrimSpace(*objective) == "" {
 		return OperateConfig{}, errors.New("a followed source is published with the human goal and requires --health-objective")
 	}
+	providedPlan, err := rendered.ParseDeploymentPlan(*deploymentPlan)
+	if err != nil {
+		return OperateConfig{}, err
+	}
 	config := OperateConfig{
 		Lifecycle: lifecycle.Config{
-			OperationID: *operationID, Application: *application, Namespace: *namespace,
+			ProvidedPlan: providedPlan,
+			OperationID:  *operationID, Application: *application, Namespace: *namespace,
 			HealthObjective: *objective, Sources: sources, DeployerAgentID: *deployerID, JudgeAgentID: *judgeID,
 			RegistryHost: *registryHost,
 			MaxAttempts:  *maxAttempts,
@@ -191,7 +198,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			ResponderMenu:      menuEnabled,
 			ObservationCeiling: ceiling,
 			Namespace:          *namespace, ControlNamespace: control, Application: *application,
-			SourceKind: *sourceKind, SourceConfig: *sourceConfig,
+			SourceKind: *sourceKind, SourceConfig: *sourceConfig, DeploymentPlan: *deploymentPlan,
 			ControllerImage: *controllerImage, ResponderImage: *responderImage,
 			ScriptImage: *scriptImage, DisableObservability: *disableObservability, RepositoryPVC: *repositoryPVC,
 			CredentialsSecret: *credentialsSecret, Model: *model, AgentProvider: *provider, AgentEffort: *effort, Replay: *replay,

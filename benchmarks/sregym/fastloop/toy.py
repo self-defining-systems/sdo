@@ -14,9 +14,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
 
-from apps.toy.faults import IMAGE, command, fault_spec
+from apps.toy.faults import IMAGE, SERVICES, command, fault_spec
 from apps.toy.variants.assemble import VARIANTS, assemble
-from benchmarks.sregym.adapter import WaitKind, raw_source, wait_for
+from benchmarks.sregym.adapter import WaitKind, buildkit_image, deployment_plan, helm_source, raw_source, wait_for
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment, Images
 from benchmarks.sregym.fastloop.host_limits import HostLimits, NodeLimits, apply_node_limits
 from benchmarks.sregym.repository_git import host_git_command
@@ -122,6 +122,20 @@ def toy_variant(args: Any) -> str:
     if variant != "raw" and not getattr(args, "fresh_memory", False):
         raise ValueError(f"--variant {variant} needs --fresh-memory: only the raw variant has a hand-authored seed")
     return variant
+
+
+def provided_deployment_plan(variant: str, namespace: str) -> dict[str, Any] | None:
+    """The deployment the harness provides for a variant that ships one (helm); SDO deploys it, no agent authors it.
+
+    The raw lane is seeded and the remaining variants are still authored by the deployer agent.
+    """
+    if variant != "helm":
+        return None
+    return deployment_plan(
+        helm_source("chart"),
+        images=(buildkit_image(IMAGE, ".", "Dockerfile"),),
+        expected_workload_ids=[f"Deployment/{namespace}/{service}" for service in SERVICES],
+    )
 
 
 def prepare_workspace(workspace: Path, image: str, *, fresh: bool, variant: str = "raw") -> str:
@@ -422,6 +436,7 @@ def install_controller(
             persistent=True,
             kind_cluster_name=environment.cluster,
             deployment_source=raw_source(("kubernetes",)) if variant == "raw" else None,
+            deployment_plan=provided_deployment_plan(variant, environment.namespace),
             agent_registrations=registrations.resolve() if registrations else None,
         )
     if frozen_memory and not config.frozen_memory:
