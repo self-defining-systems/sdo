@@ -12,9 +12,11 @@ import (
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 	"sort"
+	"strings"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"sdo.dev/operator/rendered"
@@ -405,7 +407,7 @@ func applyAdoption(ctx context.Context, resource acceptedResource, ref sdk.Objec
 	// every adopted workload would roll once for a change to nothing but
 	// SDO's bookkeeping.
 	if live, err := resource.get(ctx, ref); err == nil {
-		source = carrySourceTreeStamp(source, live)
+		source = carryOwnedOmissions(carrySourceTreeStamp(source, live), live)
 	}
 	for attempt := 1; ; attempt++ {
 		applied, err := resource.apply(ctx, ref, source, false)
@@ -417,7 +419,7 @@ func applyAdoption(ctx context.Context, resource acceptedResource, ref sdk.Objec
 			live.GetUID() == "" || live.GetUID() != source.GetUID() {
 			return nil, err
 		}
-		source = carrySourceTreeStamp(source, live)
+		source = carryOwnedOmissions(carrySourceTreeStamp(source, live), live)
 		source.SetResourceVersion(live.GetResourceVersion())
 	}
 }
@@ -441,6 +443,69 @@ func carrySourceTreeStamp(source, live *unstructured.Unstructured) *unstructured
 		_ = unstructured.SetNestedField(out.Object, stamp, append(append([]string(nil), fields...), sourceTreeAnnotation)...)
 	}
 	return out
+}
+
+// carryOwnedOmissions returns a copy of source that also holds every plain
+// (map-path, no list item) field the deployer owns on live and source omits,
+// with live's value. A server-side apply under the same manager that omits an
+// owned field deletes it, so a non-default value the deployer applied (and the
+// accepted render does not carry) would change the spec: adoption would bump
+// metadata.generation for an accepted state that did not change. Fields inside
+// list items are left to the apply (their position is not stable between the
+// two renders).
+func carryOwnedOmissions(source, live *unstructured.Unstructured) *unstructured.Unstructured {
+	out := source.DeepCopy()
+	for _, entry := range live.GetManagedFields() {
+		if entry.Manager != "sdo-deployer" || entry.Operation != metav1.ManagedFieldsOperationApply || entry.FieldsV1 == nil {
+			continue
+		}
+		var fields map[string]any
+		if json.Unmarshal(entry.FieldsV1.Raw, &fields) != nil {
+			continue
+		}
+		carryOwnedFields(fields, nil, out.Object, live.Object)
+	}
+	return out
+}
+
+func carryOwnedFields(fields map[string]any, path []string, into, from map[string]any) {
+	for key, raw := range fields {
+		name, plain := strings.CutPrefix(key, "f:")
+		if !plain {
+			continue
+		}
+		child, _ := raw.(map[string]any)
+		next := append(append([]string(nil), path...), name)
+		if len(path) == 0 && name != "spec" && name != "metadata" {
+			continue
+		}
+		if len(path) == 1 && path[0] == "metadata" && name != "annotations" && name != "labels" {
+			continue
+		}
+		if hasItemKeys(child) {
+			continue
+		}
+		if len(child) > 0 {
+			carryOwnedFields(child, next, into, from)
+			continue
+		}
+		if _, found, _ := unstructured.NestedFieldNoCopy(into, next...); found {
+			continue
+		}
+		if value, found, _ := unstructured.NestedFieldCopy(from, next...); found {
+			_ = unstructured.SetNestedField(into, value, next...)
+		}
+	}
+}
+
+// hasItemKeys reports whether a managed-fields node selects list items.
+func hasItemKeys(node map[string]any) bool {
+	for key := range node {
+		if strings.HasPrefix(key, "k:") || strings.HasPrefix(key, "v:") || strings.HasPrefix(key, "i:") {
+			return true
+		}
+	}
+	return false
 }
 
 func adoptedAndRecorded(live, source *unstructured.Unstructured) bool {
