@@ -1,0 +1,10 @@
+{
+  "comment": "Application names production SDO must not mention. apps/ directory names are added from the tree; these are the extra names (SREGym applications and hosted tools).",
+  "extra_names": [
+    "hotel reservation", "social network", "astronomy shop", "train ticket", "flight ticket",
+    "fleet cast", "online boutique", "tidb", "gitlab"
+  ],
+  "exempt_apps": {
+    "toy": "synthetic fixture application and an ordinary word; it cannot leak a real application"
+  }
+}

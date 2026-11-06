@@ -1,0 +1,6 @@
+{
+  "sdo/operator/contracts/settings/build.go": {"count": 3, "reason": "comments cite real images as build-budget examples"},
+  "sdo/operator/memory/validate/assurance_seeds_test.go": {"count": 3, "reason": "test names the captured seed cases it asserts exist"},
+  "sdo/operator/runtime/contract_proto_test.go": {"count": 2, "reason": "test fixture namespace taken from a captured cluster"},
+  "sdo/operator/runtime/state_baseline_support_test.go": {"count": 3, "reason": "test fixture objects modelled on a captured cluster"}
+}
