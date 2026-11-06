@@ -199,6 +199,12 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 		}
 		normalized, err := resource.apply(actionCtx, ref, source, true)
 		if err != nil {
+			if jobTemplateImmutable(ref, err) {
+				// The deployer recreates a Job whose template changed; adoption
+				// follows once the new Job exists, so this is not a failure.
+				unadopted = append(unadopted, acceptedObjectKey(ref)+": Job template changed; the deployer recreates it")
+				continue
+			}
 			objectFailed(ref, fmt.Errorf("dry run adoption of %s/%s: %w", ref.Kind, ref.Name, err))
 			continue
 		}
@@ -685,3 +691,9 @@ type ObjectAdoptionError struct {
 func (e *ObjectAdoptionError) Error() string { return e.Err.Error() }
 
 func (e *ObjectAdoptionError) Unwrap() error { return e.Err }
+
+// jobTemplateImmutable reports the API server refusing a Job's changed
+// spec.template (immutable): the deployer's recreate policy owns that change.
+func jobTemplateImmutable(ref sdk.ObjectRef, err error) bool {
+	return ref.Kind == "Job" && apierrors.IsInvalid(err) && strings.Contains(err.Error(), "immutable")
+}
