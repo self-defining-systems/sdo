@@ -13,6 +13,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/imagesrc"
 	"sdo.dev/operator/lifecycle"
+	"sdo.dev/operator/operability/offline"
 	"sdo.dev/operator/render"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/renderenv"
@@ -52,6 +53,11 @@ type Deployer struct {
 	Materializer *rendered.Materializer
 	// Git replaces the git process edge (simulation); nil runs git.
 	Git rendered.GitFunc
+	// Policy is the install-time scope and registry limits the offline
+	// operability checks compare the desired set with. The zero value grants
+	// nothing and configures no allowlist (foreign and cluster-scoped objects
+	// are notes).
+	Policy offline.Policy
 }
 
 func (d Deployer) validate() error {

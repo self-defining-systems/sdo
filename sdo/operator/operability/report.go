@@ -115,6 +115,21 @@ func (s Subject) BindsTo(want Subject) error {
 	return s.validate(false)
 }
 
+// Unavailable is the placeholder for a subject field a caller could not
+// produce, so a failed offline report still validates and encodes. It never
+// equals a recomputed value, so such a report binds to nothing.
+const Unavailable = "unavailable"
+
+// WithUnavailable returns the subject with every empty field set to Unavailable.
+func (s Subject) WithUnavailable() Subject {
+	for _, f := range []*string{&s.AcceptedCommit, &s.BaseTree, &s.EffectiveTree, &s.PatchesDigest, &s.RenderDigest, &s.EnvDigest, &s.DiagnosticsTree} {
+		if *f == "" {
+			*f = Unavailable
+		}
+	}
+	return s
+}
+
 func (s Subject) validate(requireDiagnostics bool) error {
 	for _, f := range []struct{ name, v string }{
 		{"accepted_commit", s.AcceptedCommit},

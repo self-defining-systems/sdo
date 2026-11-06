@@ -61,7 +61,7 @@ func TestOperabilityCheckOfflineCleanCheckout(t *testing.T) {
 	if code != 0 || o.Decision.Kind != operability.Accepted {
 		t.Fatalf("json = %d %+v", code, o.Decision)
 	}
-	if s := o.Report.Subject; s.EffectiveTree == unavailable || s.RenderDigest == unavailable || s.BaseTree == unavailable || s.AcceptedCommit == unavailable {
+	if s := o.Report.Subject; s.EffectiveTree == operability.Unavailable || s.RenderDigest == operability.Unavailable || s.BaseTree == operability.Unavailable || s.AcceptedCommit == operability.Unavailable {
 		t.Fatalf("a clean checkout produced an incomplete subject: %+v", s)
 	}
 }
@@ -78,7 +78,7 @@ func TestOperabilityCheckOfflineReportsTypedFailures(t *testing.T) {
 		t.Fatalf("text = %d\n%s", code, out)
 	}
 
-	// A series that does not apply stops at O1.patches; the subject is unavailable, not invented.
+	// A series that does not apply stops at O1.patches; the subject is operability.Unavailable, not invented.
 	bad := "SDO-Patch: 1\nOwner: deployer\nReason: |\n  " + patchCLIReason + "\n\n" +
 		"diff --git a/README b/README\nindex " + strings.Repeat("1", 40) + ".." + strings.Repeat("2", 40) + " 100644\n--- a/README\n+++ b/README\n@@ -1 +1 @@\n-nope\n+x\n"
 	dir := filepath.Join(work, ".sdo", "deployment", "patches")
@@ -93,7 +93,7 @@ func TestOperabilityCheckOfflineReportsTypedFailures(t *testing.T) {
 	if code != 1 || o.Decision.Kind != operability.Correct || o.Decision.Checks[0] != "O1.patches" {
 		t.Fatalf("broken series = %d %+v", code, o.Decision)
 	}
-	if o.Report.Subject.EffectiveTree != unavailable {
+	if o.Report.Subject.EffectiveTree != operability.Unavailable {
 		t.Fatalf("subject invented an effective tree: %+v", o.Report.Subject)
 	}
 	if got := o.Report.Items[0].Checks[0].Paths; len(got) == 0 || got[0] != ".sdo/deployment/patches/0001-bad.patch" {

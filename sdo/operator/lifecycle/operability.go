@@ -1,0 +1,100 @@
+package lifecycle
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"sdo.dev/operator/broker"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/operability"
+)
+
+// OfflineChecker computes the operability checks that need no cluster for a
+// candidate checkout and plan. The trusted Deployer implements it with the same
+// effective tree, render environment and shared functions it applies with, so
+// an error found here is the error apply would have hit, before any cluster
+// effect. A Readiness verifier that does not implement it skips the gate.
+type OfflineChecker interface {
+	CheckOffline(ctx context.Context, checkout string, plan *contracts.DeploymentPlan) (OfflineChecks, error)
+}
+
+// OfflineChecks are the checks plus the tree and digest identities they were
+// computed from (empty when a failure kept them from being computed).
+type OfflineChecks struct {
+	Checks                                                          []operability.Check
+	BaseTree, EffectiveTree, PatchesDigest, RenderDigest, EnvDigest string
+}
+
+// OperabilityError is a terminal offline-gate outcome: no agent can correct it
+// (the cause belongs to a person, to SDO itself, or the plan was supplied by a
+// person). It carries the report and the decision recomputed from it.
+type OperabilityError struct {
+	Report   operability.Report
+	Decision operability.Decision
+}
+
+func (e *OperabilityError) Error() string {
+	return fmt.Sprintf("offline operability checks failed (owner %s):\n%s", e.Decision.Owner, e.Decision.Feedback())
+}
+
+// retryOffline marks an infrastructure cause found by the offline checks so the
+// coordinator's bounded retry applies and no deployer attempt is spent.
+type retryOffline struct{ decision operability.Decision }
+
+func (e *retryOffline) Error() string {
+	return "offline operability checks hit an infrastructure failure:\n" + e.decision.Feedback()
+}
+
+func (e *retryOffline) InfrastructureOutcome() bool { return true }
+
+// offlineGate runs the offline report for the candidate before any cluster
+// effect. ok is false when the Readiness verifier cannot check offline. The
+// returned decision is Accepted, or says who must act; infrastructure causes are
+// retried within the bounded window and end as an *InfrastructureError.
+func (c Coordinator) offlineGate(ctx context.Context, cfg Config, proposal broker.Proposal, plan *contracts.DeploymentPlan) (report operability.Report, decision operability.Decision, ok bool, err error) {
+	checker, ok := c.Readiness.(OfflineChecker)
+	if !ok {
+		return operability.Report{}, operability.Decision{}, false, nil
+	}
+	mode := operability.ModeFresh
+	if cfg.ProvidedPlan != nil {
+		mode = operability.ModeProvided
+	}
+	err = c.retryInfrastructure(ctx, cfg, "offline operability checks", func() error {
+		checks, err := checker.CheckOffline(ctx, proposal.Path, plan)
+		if err != nil {
+			return err
+		}
+		subject := operability.Subject{
+			AcceptedCommit: proposal.BaseCommit, BaseTree: checks.BaseTree, EffectiveTree: checks.EffectiveTree,
+			PatchesDigest: checks.PatchesDigest, RenderDigest: checks.RenderDigest, EnvDigest: checks.EnvDigest,
+		}
+		report, err = operability.New(operability.StageDeployment, subject.WithUnavailable()).With(checks.Checks...)
+		if err != nil {
+			return err
+		}
+		decision = report.DecideIn(mode, operability.StageItems(operability.StageDeployment)...)
+		if decision.Kind == operability.Retry {
+			return &retryOffline{decision}
+		}
+		return nil
+	})
+	return report, decision, true, err
+}
+
+// offlineOutcome turns a non-accepted decision into what deploy returns: a
+// correction for the deployer when that is the owner, otherwise a terminal
+// *OperabilityError.
+func offlineOutcome(report operability.Report, decision operability.Decision) (feedback string, err error) {
+	if decision.Kind == operability.Correct && decision.Owner == operability.OwnerDeployer {
+		return "the deployment failed the offline operability checks (no cluster was touched):\n" + decision.Feedback(), nil
+	}
+	return "", &OperabilityError{Report: report, Decision: decision}
+}
+
+// asOperabilityError reports whether err is a terminal offline-gate outcome.
+func asOperabilityError(err error) (*OperabilityError, bool) {
+	var opErr *OperabilityError
+	return opErr, errors.As(err, &opErr)
+}
