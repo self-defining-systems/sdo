@@ -67,3 +67,27 @@ func TestUnregisteredHandlerIsRefused(t *testing.T) {
 		t.Fatal("ran an unregistered handler")
 	}
 }
+
+// A child that cannot be started (fork/exec failure, EAGAIN, ENOMEM at spawn)
+// says nothing about what the handler would have done: it is ErrSpawn, never
+// an *Error (ErrChild), so callers can tell a host resource blip from a
+// verdict on the request.
+func TestSpawnFailureIsNotAChildFailure(t *testing.T) {
+	restore := sandboxio.SetExecutable(func() (string, error) { return "/nonexistent/sdo-child", nil })
+	defer restore()
+	_, err := sandboxio.Run(t.Context(), "test-echo", []byte("x"), sandboxio.Limits{})
+	if !errors.Is(err, sandboxio.ErrSpawn) {
+		t.Fatalf("spawn failure = %v, want ErrSpawn", err)
+	}
+	if errors.Is(err, sandboxio.ErrChild) {
+		t.Fatalf("spawn failure matches ErrChild: %v", err)
+	}
+}
+
+// Failures after the child runs stay child failures, never spawn failures.
+func TestRunningChildFailureIsNotASpawnFailure(t *testing.T) {
+	_, err := sandboxio.Run(t.Context(), "test-panic", nil, sandboxio.Limits{})
+	if !errors.Is(err, sandboxio.ErrChild) || errors.Is(err, sandboxio.ErrSpawn) {
+		t.Fatalf("crash = %v, want ErrChild and not ErrSpawn", err)
+	}
+}

@@ -25,11 +25,28 @@ func init() { sandboxio.Register(helmChild, helm.Serve) }
 // edit, in a child process bounded in memory, time and output: a template that
 // exhausts memory or loops without end fails the render, never the caller.
 func isolatedHelm(ctx context.Context, request []byte) ([]byte, error) {
-	out, err := sandboxio.Run(ctx, helmChild, request, sandboxio.DefaultLimits)
-	if errors.Is(err, sandboxio.ErrChild) {
-		return nil, fmt.Errorf("%w: %w", helm.ErrRenderProcess, err)
+	return isolatedHelmWith(sandboxio.Run)(ctx, request)
+}
+
+// childRunner is sandboxio.Run's shape.
+type childRunner func(ctx context.Context, name string, request []byte, limits sandboxio.Limits) ([]byte, error)
+
+// isolatedHelmWith classifies what run reports. A child that ran and broke a
+// limit or crashed is a verdict on the chart (a render-budget violation). A
+// child that could not be started (fork or exec refused under host resource
+// pressure) says nothing about the chart: it is render.ErrTransient, which a
+// deployment source classifies as unavailable, never invalid.
+func isolatedHelmWith(run childRunner) helm.Runner {
+	return func(ctx context.Context, request []byte) ([]byte, error) {
+		out, err := run(ctx, helmChild, request, sandboxio.DefaultLimits)
+		switch {
+		case errors.Is(err, sandboxio.ErrChild):
+			return nil, fmt.Errorf("%w: %w", helm.ErrRenderProcess, err)
+		case errors.Is(err, sandboxio.ErrSpawn):
+			return nil, fmt.Errorf("%w: %w", render.ErrTransient, err)
+		}
+		return out, err
 	}
-	return out, err
 }
 
 // Catalog returns a catalog holding every built-in renderer: raw,
