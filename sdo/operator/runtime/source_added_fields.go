@@ -562,8 +562,17 @@ func defaultNormalizedAdditions(paths []string, observed, source, defaults *unst
 	out := []string{}
 	for _, path := range paths {
 		fallback, ok := rendered[path]
-		if !changed[path] && !declaredPath(declared, path) && valueTracked(path) && ok && fallback != nil && sameScalar(actual[path], fallback) {
-			continue
+		if !changed[path] && !declaredPath(declared, path) && valueTracked(path) {
+			if ok && fallback != nil && sameScalar(actual[path], fallback) {
+				continue
+			}
+			// The API omits false and zero scalars from what it renders, so a live
+			// zero value of a field neither source nor the render sets is the
+			// server's default. Where the render sets a different value (replicas
+			// 0 against a default of 1) the difference stays drift.
+			if !ok && zeroScalar(actual[path]) {
+				continue
+			}
 		}
 		out = append(out, path)
 	}
@@ -588,4 +597,23 @@ func sourceDriftAdditions(view program.ReadView, ref sdk.ObjectRef, observed, so
 		return nil, nil
 	}
 	return paths, err
+}
+
+// zeroScalar reports the JSON zero value of a leaf: false, 0 or "".
+func zeroScalar(value any) bool {
+	switch typed := value.(type) {
+	case bool:
+		return !typed
+	case string:
+		return typed == ""
+	case int:
+		return typed == 0
+	case int32:
+		return typed == 0
+	case int64:
+		return typed == 0
+	case float64:
+		return typed == 0
+	}
+	return false
 }
