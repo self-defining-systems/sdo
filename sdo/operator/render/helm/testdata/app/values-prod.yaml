@@ -1,0 +1,4 @@
+image: {tag: v2}
+env:
+  MODE: prod
+replicas: 2

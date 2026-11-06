@@ -1,0 +1,7 @@
+apiVersion: v2
+name: app
+version: 0.1.0
+dependencies:
+  - name: db
+    version: 0.1.0
+    repository: https://charts.invalid/synthetic
