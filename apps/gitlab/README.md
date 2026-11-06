@@ -43,6 +43,14 @@ The vendored chart is never edited. SDO's renderer handles it as shipped (disabl
 test and upgrade-only hooks are not deployed). Hooks (the upstream shared-secrets Job, the bucket Job) are ephemeral
 install phases, not part of the accepted inventory (42 non-Secret objects, 5 hooks).
 
+## Status of the live path
+
+`fastloop up --app gitlab` builds the cluster, installs the prerequisites, commits the workspace and records the lane.
+The last step, onboarding with the provided source, is blocked on a Go row: `host` has no `--deployment-plan` (a source
+alone is not a plan: image declarations and expected workloads are needed too), and `gitlab_lane.onboard` refuses rather
+than let the deployer agent author GitLab's deployment. `sdo-operator install-existing --deployment-source` works only
+for a lane whose accepted memory already exists.
+
 ## Cluster prerequisites (the environment's job)
 
 Installed by `fastloop up --app gitlab` (`gitlab_lane.install_prerequisites`), not part of the deployment source:

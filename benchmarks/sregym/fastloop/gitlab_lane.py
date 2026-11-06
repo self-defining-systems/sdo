@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from apps.gitlab import assemble
-from benchmarks.sregym.adapter import WaitKind, wait_for
+from benchmarks.sregym.adapter import WaitKind, helm_source, wait_for
 from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
@@ -54,9 +54,9 @@ RESOURCE_CLAIM = ResourceClaim(
 )
 
 
-def deployment_source_json() -> str:
-    """The provided DeploymentSource as the ProtoJSON string the Go CLI flag takes."""
-    return json.dumps(assemble.deployment_source(), sort_keys=True, separators=(",", ":"))
+def deployment_source() -> dict[str, Any]:
+    """The provided DeploymentSource: the helm renderer over the umbrella chart with the kind values."""
+    return helm_source("chart", assemble.VALUE_FILES)
 
 
 def prepare_workspace(workspace: Path, *, archive: Path | None = None, pins: dict[str, Any] | None = None) -> str:
@@ -141,21 +141,29 @@ def lane_runtime_config(environment: Any, *, registrations: Path | None = None) 
         repair_policy="recorded-actions",
         persistent=True,
         kind_cluster_name=environment.cluster,
-        deployment_source=deployment_source_json(),
+        deployment_source=deployment_source(),
         agent_registrations=registrations.resolve() if registrations else None,
     )
 
 
+class ProvidedPlanUnavailable(RuntimeError):
+    """The Go host cannot yet admit a harness-provided deployment instead of dispatching the deployer agent."""
+
+
 def onboard(environment: Any, config: Any, objective: str) -> dict[str, Any]:
-    """Run SDO's host lifecycle with the provided deployment source (no from-scratch onboarding agent).
+    """Run SDO's host lifecycle with the provided deployment (no from-scratch onboarding agent).
 
-    HOOK: the Go ``host`` command must accept ``--deployment-source`` (the adapter already emits it). Until it
-    does the launch fails with the CLI's own flag error; ``sdo-operator install-existing --deployment-source`` is
-    the adoption path for a lane whose accepted memory already exists.
+    HOOK, blocked: the host's coordinator must admit a provided plan (source plus image declarations and expected
+    workloads; a source alone is not a plan) and skip the deployer task. That row (``host --deployment-plan``) is not
+    on dev. Running the host today would ignore the provided source and author a deployment with the agent, which
+    this lane must not do, so this refuses. Once the row lands, call ``launch_native_lifecycle`` here with the plan.
+    ``sdo-operator install-existing --deployment-source`` is the adoption path for a lane whose accepted memory
+    already exists.
     """
-    from benchmarks.sregym.adapter import launch_native_lifecycle
-
-    return launch_native_lifecycle(config, objective, "")
+    raise ProvidedPlanUnavailable(
+        "the Go host has no --deployment-plan yet (U6c follow-up row); refusing to let the deployer agent author "
+        f"GitLab's deployment for objective {objective!r} in {environment.namespace}"
+    )
 
 
 def up(args: Any) -> int:

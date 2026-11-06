@@ -20,7 +20,8 @@ import pytest
 import yaml
 
 from apps.gitlab import assemble as lane
-from benchmarks.sregym.fastloop.accepted_source import AcceptedSource, helm_deployment_source
+from benchmarks.sregym.adapter import helm_source
+from benchmarks.sregym.fastloop.accepted_source import AcceptedSource
 
 pytestmark = pytest.mark.go_integration
 
@@ -153,7 +154,7 @@ def non_secret(identities: set[Identity]) -> set[Identity]:
 
 
 def test_deployment_source_is_one_helm_source_over_the_umbrella_chart(tmp_path: Path) -> None:
-    assert lane.deployment_source() == helm_deployment_source("chart", ("chart/values-kind.yaml",))
+    assert lane.deployment_source() == helm_source("chart", ("chart/values-kind.yaml",))
     archive, pins = stand_in_archive(tmp_path)
     workspace = lane.assemble(tmp_path / "ws", archive=archive, pins=pins)
     assert (workspace / "chart/Chart.yaml").is_file()

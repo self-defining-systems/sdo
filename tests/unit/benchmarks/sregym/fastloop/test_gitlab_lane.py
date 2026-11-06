@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import io
-import json
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[5]
 def test_deployment_source_json_is_a_valid_helm_deployment_source() -> None:
     from sdo.contracts.proto import DeploymentSource, deployment_source_pb2
 
-    message = json_format.Parse(gitlab_lane.deployment_source_json(), DeploymentSource())
+    message = json_format.ParseDict(gitlab_lane.deployment_source(), DeploymentSource())
     assert message.renderer_id == "helm"
     assert message.config.TypeName() == "sdodev.contracts.v1alpha1.HelmRenderConfig"
     config = deployment_source_pb2.HelmRenderConfig()
@@ -64,8 +63,8 @@ def test_runtime_config_installs_the_provided_source_without_manifest_paths(tmp_
         cluster="fastloop-w0",
     )
     config = gitlab_lane.lane_runtime_config(environment)
-    assert json.loads(config.deployment_source)["renderer_id"] == "helm"
-    assert config.deployed_manifest_paths == ()
+    assert config.deployment_source == gitlab_lane.deployment_source()
+    assert config.deployment_source == assemble.deployment_source()
     assert config.control_namespace == "gitlab-sdo"
     assert config.persistent
 
@@ -97,3 +96,9 @@ def test_pins_agree_with_the_chart_values_and_the_umbrella_dependency() -> None:
     upstream = next(dep for dep in umbrella["dependencies"] if dep["name"] == pins["gitlab_chart"]["name"])
     assert upstream["version"] == pins["gitlab_chart"]["version"]
     assert pins["namespace"] == gitlab_lane.NAMESPACE
+
+
+def test_onboarding_refuses_until_the_host_admits_a_provided_plan(tmp_path: Path) -> None:
+    environment = SimpleNamespace(namespace="gitlab", workspace=tmp_path)
+    with pytest.raises(gitlab_lane.ProvidedPlanUnavailable, match="deployment-plan"):
+        gitlab_lane.onboard(environment, object(), "goal")
