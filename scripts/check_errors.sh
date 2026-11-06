@@ -61,6 +61,7 @@ uv run --extra test python -m pytest -q -p no:tach \
     tests/unit/benchmarks/sregym/fastloop/test_shared_git_ownership.py::test_unscoped_host_git_negative_controls \
     tests/unit/benchmarks/sregym/fastloop/test_shared_git_ownership.py::test_all_benchmark_host_checkout_commands_use_the_scoped_policy \
     tests/unit/scripts/test_check_prompt_budgets.py \
+    tests/unit/scripts/test_check_app_names.py \
     tests/unit/benchmarks/sregym/adapter/test_budgets.py::test_the_scanner_sees_each_wait_shape \
     tests/unit/benchmarks/sregym/adapter/test_budgets.py::test_seconds_literals_in_waits_only_decrease \
     tests/unit/sdo/agents/test_prompt_generalization.py \
@@ -75,6 +76,7 @@ fi
 
 echo "==> shipped skill size budgets"
 uv run python scripts/check_skill_sizes.py
+uv run python scripts/check_app_names.py
 
 echo "==> responder command reference"
 uv run python -m sdo.agents.responder.command_reference --check
