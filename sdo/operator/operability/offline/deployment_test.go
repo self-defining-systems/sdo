@@ -315,3 +315,29 @@ func TestEarlyFailureDecidesTheReportNotSilence(t *testing.T) {
 		t.Fatalf("decision = %+v", dec)
 	}
 }
+
+// A CronJob or bare Pod runs images like any workload: an off-allowlist image
+// there fails O6.allowlist and the plan must name the object (O1.workloads).
+func TestAllowlistCoversCronJobAndPod(t *testing.T) {
+	cron := "apiVersion: batch/v1\nkind: CronJob\nmetadata: {name: nightly}\nspec: {schedule: '0 * * * *', jobTemplate: {spec: {template: {spec: {containers: [{name: c, image: 'evil.example/job:1'}]}}}}}\n"
+	pod := "apiVersion: v1\nkind: Pod\nmetadata: {name: shell}\nspec: {containers: [{name: c, image: 'evil.example/shell:1'}]}\n"
+	for name, tc := range map[string]struct{ manifest, id string }{"CronJob": {cron, "CronJob/app/nightly"}, "Pod": {pod, "Pod/app/shell"}} {
+		t.Run(name, func(t *testing.T) {
+			d := offline.Deployment{
+				Render:            renderer(t, rendertest.MapFS{"k8s/web.yaml": web, "k8s/extra.yaml": tc.manifest}),
+				ExpectedWorkloads: []string{webID, tc.id},
+				Policy:            offline.Policy{AllowedRegistries: []string{"registry.example"}},
+			}
+			c := byID(t, offline.CheckDeployment(context.Background(), d).Checks)
+			want(t, c, "O1.workloads", operability.StatusPass, "")
+			got := want(t, c, "O6.allowlist", operability.StatusFail, operability.CauseAllowlist)
+			if !strings.Contains(got.Detail, "evil.example/") {
+				t.Fatalf("detail = %q", got.Detail)
+			}
+			d.ExpectedWorkloads = []string{webID}
+			if c := byID(t, offline.CheckDeployment(context.Background(), d).Checks); c["O1.workloads"].Status != operability.StatusFail {
+				t.Fatalf("plan without %s accepted: %+v", tc.id, c["O1.workloads"])
+			}
+		})
+	}
+}

@@ -33,23 +33,19 @@ func Stamp(obj map[string]any, tree string, imageFor func(ImageSite) string) ([]
 	if !rendered.WorkloadKind(kind) {
 		return nil, nil
 	}
-	spec, ok := obj["spec"].(map[string]any)
-	if !ok {
-		return nil, errors.New("workload needs spec")
-	}
-	template, ok := spec["template"].(map[string]any)
-	if !ok {
-		return nil, errors.New("workload needs pod template")
-	}
 	if tree != "" {
-		nestedMap(nestedMap(template, "metadata"), "annotations")["sdo.dev/source-tree"] = tree
+		metadata, err := rendered.PodTemplateMetadata(obj, true)
+		if err != nil {
+			return nil, err
+		}
+		nestedMap(metadata, "annotations")["sdo.dev/source-tree"] = tree
 	}
-	podSpec, ok := template["spec"].(map[string]any)
-	if !ok {
-		return nil, errors.New("workload needs pod spec")
+	podSpec, err := rendered.PodSpec(obj)
+	if err != nil {
+		return nil, err
 	}
 	images := []string{}
-	for _, field := range []string{"initContainers", "containers"} {
+	for _, field := range rendered.ContainerFields {
 		containers, _ := podSpec[field].([]any)
 		for _, raw := range containers {
 			container, ok := raw.(map[string]any)
@@ -59,7 +55,7 @@ func Stamp(obj map[string]any, tree string, imageFor func(ImageSite) string) ([]
 			image, _ := container["image"].(string)
 			if imageFor != nil {
 				containerName, _ := container["name"].(string)
-				image = imageFor(ImageSite{Kind: kind, Name: name, Container: containerName, Init: field == "initContainers", Image: image})
+				image = imageFor(ImageSite{Kind: kind, Name: name, Container: containerName, Init: field == rendered.InitContainers, Image: image})
 				container["image"] = image
 			}
 			images = append(images, image)

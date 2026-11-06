@@ -117,15 +117,22 @@ func parseObservedWorkload(resourceID string, data []byte) (WorkloadObservation,
 		return WorkloadObservation{}, errors.New("observed workload identity differs from deployment plan")
 	}
 	spec := objectMap(object, "spec")
-	template := objectMap(spec, "template")
+	templateMetadata, err := rendered.PodTemplateMetadata(object, false)
+	if err != nil {
+		return WorkloadObservation{}, fmt.Errorf("raw strategy cannot attest workload kind %q", parts[0])
+	}
+	podSpec, err := rendered.PodSpec(object)
+	if err != nil {
+		return WorkloadObservation{}, fmt.Errorf("observed workload has no pod spec: %w", err)
+	}
 	tree := objectString(objectMap(metadata, "annotations"), "sdo.dev/source-tree")
-	if tree == "" || tree != objectString(objectMap(objectMap(template, "metadata"), "annotations"), "sdo.dev/source-tree") {
+	if tree == "" || tree != objectString(objectMap(templateMetadata, "annotations"), "sdo.dev/source-tree") {
 		return WorkloadObservation{}, errors.New("observed workload lacks matching source revision")
 	}
 	images := []string{}
 	namedImages := []rendered.DeployedImage{}
-	for _, field := range []string{"initContainers", "containers"} {
-		for _, raw := range objectSlice(objectMap(template, "spec"), field) {
+	for _, field := range rendered.ContainerFields {
+		for _, raw := range objectSlice(podSpec, field) {
 			container, ok := raw.(map[string]any)
 			if !ok {
 				return WorkloadObservation{}, errors.New("observed workload has malformed container")
@@ -138,7 +145,7 @@ func parseObservedWorkload(resourceID string, data []byte) (WorkloadObservation,
 			if name == "" {
 				return WorkloadObservation{}, errors.New("observed container name is empty")
 			}
-			namedImages = append(namedImages, rendered.DeployedImage{Ref: sdk.ObjectRef{APIVersion: objectString(object, "apiVersion"), Kind: parts[0], Namespace: parts[1], Name: parts[2]}, Name: name, Init: field == "initContainers", Applied: image, Digest: image})
+			namedImages = append(namedImages, rendered.DeployedImage{Ref: sdk.ObjectRef{APIVersion: objectString(object, "apiVersion"), Kind: parts[0], Namespace: parts[1], Name: parts[2]}, Name: name, Init: field == rendered.InitContainers, Applied: image, Digest: image})
 			images = append(images, image)
 		}
 	}
@@ -149,6 +156,18 @@ func parseObservedWorkload(resourceID string, data []byte) (WorkloadObservation,
 	generation := objectInt(metadata, "generation")
 	ready := generation > 0 && objectInt(status, "observedGeneration") >= generation
 	switch parts[0] {
+	case "ReplicaSet", "ReplicationController":
+		desired := objectInt(spec, "replicas")
+		if _, set := spec["replicas"]; !set {
+			desired = 1
+		}
+		ready = ready && objectInt(status, "readyReplicas") >= desired && objectInt(status, "availableReplicas") >= desired
+	case "CronJob":
+		// A CronJob has no rollout: it is in place once the API server holds it
+		// at the stamped revision (checked above) and it has a generation.
+		ready = generation > 0
+	case "Pod":
+		ready = barePodReady(status)
 	case "Deployment", "StatefulSet":
 		desired := objectInt(spec, "replicas")
 		if _, set := spec["replicas"]; !set {
@@ -175,6 +194,23 @@ func parseObservedWorkload(resourceID string, data []byte) (WorkloadObservation,
 		return WorkloadObservation{}, fmt.Errorf("raw strategy cannot attest workload kind %q", parts[0])
 	}
 	return WorkloadObservation{ContainerImages: namedImages, ResourceID: resourceID, Revision: tree, Images: images, Ready: ready}, nil
+}
+
+// barePodReady reports whether a bare Pod is running with every container ready, or
+// finished successfully.
+func barePodReady(status map[string]any) bool {
+	switch objectString(status, "phase") {
+	case "Succeeded":
+		return true
+	case "Running":
+		for _, raw := range objectSlice(status, "conditions") {
+			condition, _ := raw.(map[string]any)
+			if objectString(condition, "type") == "Ready" && objectString(condition, "status") == "True" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func objectMap(parent map[string]any, key string) map[string]any {

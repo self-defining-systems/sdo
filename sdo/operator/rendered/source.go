@@ -419,12 +419,12 @@ func (s Source) AcceptedApplicationManifest(ctx context.Context, revision, names
 
 // apply replaces the image of each container of the workload that a pin names.
 func (p ReceiptPins) apply(document map[string]any, ref sdk.ObjectRef) {
-	for _, field := range []string{"initContainers", "containers"} {
-		containers, found, _ := unstructured.NestedSlice(document, "spec", "template", "spec", field)
-		if !found {
-			continue
-		}
-		changed := false
+	podSpec, err := PodSpec(document)
+	if err != nil {
+		return
+	}
+	for _, field := range ContainerFields {
+		containers, _ := podSpec[field].([]any)
 		for _, raw := range containers {
 			container, ok := raw.(map[string]any)
 			if !ok {
@@ -433,15 +433,11 @@ func (p ReceiptPins) apply(document map[string]any, ref sdk.ObjectRef) {
 			name, _ := container["name"].(string)
 			for _, pin := range p.Images {
 				if pin.Ref.Kind == ref.Kind && pin.Ref.Namespace == ref.Namespace && pin.Ref.Name == ref.Name &&
-					pin.Name == name && pin.Init == (field == "initContainers") && pin.Applied != "" &&
+					pin.Name == name && pin.Init == (field == InitContainers) && pin.Applied != "" &&
 					(!p.inherited || container["image"] == pin.Inputs.SourceImage) {
 					container["image"] = pin.Applied
-					changed = true
 				}
 			}
-		}
-		if changed {
-			_ = unstructured.SetNestedSlice(document, containers, "spec", "template", "spec", field)
 		}
 	}
 }

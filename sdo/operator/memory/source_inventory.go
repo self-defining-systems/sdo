@@ -8,6 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/rendered"
 )
 
 // SourceFacts are a bounded, logical projection of the accepted source's
@@ -59,19 +60,13 @@ func sourceDependencies(doc map[string]any) []string {
 			set["selector:"+key+"="+v] = struct{}{}
 		}
 	}
-	template := mapValue(spec["template"])
-	for key, value := range mapValue(mapValue(template["metadata"])["labels"]) {
+	templateMetadata, _ := rendered.PodTemplateMetadata(doc, false)
+	for key, value := range mapValue(templateMetadata["labels"]) {
 		if v, ok := value.(string); ok {
 			set["pod-label:"+key+"="+v] = struct{}{}
 		}
 	}
-	pod := mapValue(template["spec"])
-	if doc["kind"] == "Pod" {
-		pod = spec
-	}
-	if doc["kind"] == "CronJob" {
-		pod = mapValue(mapValue(mapValue(mapValue(spec["jobTemplate"])["spec"])["template"])["spec"])
-	}
+	pod, _ := rendered.PodSpec(doc)
 	if account, ok := pod["serviceAccountName"].(string); ok && account != "" {
 		set["ServiceAccount/"+account] = struct{}{}
 	}
@@ -82,7 +77,7 @@ func sourceDependencies(doc map[string]any) []string {
 			}
 		}
 	}
-	for _, group := range []string{"initContainers", "containers"} {
+	for _, group := range rendered.ContainerFields {
 		if containers, ok := pod[group].([]any); ok {
 			for _, value := range containers {
 				container := mapValue(value)

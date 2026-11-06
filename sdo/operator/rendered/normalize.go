@@ -6,12 +6,6 @@ import (
 	"sdo.dev/operator/sdk"
 )
 
-// WorkloadKind reports whether kind is a pod-bearing workload whose container
-// images the deployment path substitutes and locks.
-func WorkloadKind(kind string) bool {
-	return kind == "Deployment" || kind == "StatefulSet" || kind == "DaemonSet" || kind == "Job"
-}
-
 // Normalize applies the namespace default and cluster-scope clearing to
 // obj in place and validates the workload shape. It returns the object's
 // reference and whether it is a workload. It neither stamps the source tree
@@ -39,12 +33,12 @@ func Normalize(obj map[string]any, namespace string) (ref sdk.ObjectRef, workloa
 	if !WorkloadKind(kind) {
 		return ref, false, nil
 	}
-	podSpec, err := workloadPodSpec(obj)
+	podSpec, err := PodSpec(obj)
 	if err != nil {
 		return sdk.ObjectRef{}, false, err
 	}
 	count := 0
-	for _, field := range []string{"initContainers", "containers"} {
+	for _, field := range ContainerFields {
 		containers, _ := podSpec[field].([]any)
 		for _, raw := range containers {
 			if _, ok := raw.(map[string]any); !ok {
@@ -57,20 +51,4 @@ func Normalize(obj map[string]any, namespace string) (ref sdk.ObjectRef, workloa
 		return sdk.ObjectRef{}, false, errors.New("workload has no immutable container images")
 	}
 	return ref, true, nil
-}
-
-func workloadPodSpec(obj map[string]any) (map[string]any, error) {
-	spec, ok := obj["spec"].(map[string]any)
-	if !ok {
-		return nil, errors.New("workload needs spec")
-	}
-	template, ok := spec["template"].(map[string]any)
-	if !ok {
-		return nil, errors.New("workload needs pod template")
-	}
-	podSpec, ok := template["spec"].(map[string]any)
-	if !ok {
-		return nil, errors.New("workload needs pod spec")
-	}
-	return podSpec, nil
 }
