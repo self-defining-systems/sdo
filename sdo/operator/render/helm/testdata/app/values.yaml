@@ -1,0 +1,5 @@
+replicas: 1
+image: {repository: web, tag: v1}
+env: {}
+token: ""
+db: {port: 5432}

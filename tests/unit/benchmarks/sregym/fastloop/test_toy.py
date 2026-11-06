@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from apps.toy.faults import SERVICES, fault_spec
+from benchmarks.sregym.adapter.deployment_source import raw_source
 from benchmarks.sregym.fastloop.cli import build_parser
 from benchmarks.sregym.fastloop.stream import load_stream_config
 from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import fixed_source_provider
@@ -493,3 +494,157 @@ def test_fresh_toy_install_runs_the_host_lifecycle_not_the_seed_install(tmp_path
     assert not config.frozen_memory
     assert config.agent_registrations is None
     assert waited == [(environment, "j" * 40)]
+
+
+def _parse_up(*extra):
+    return build_parser().parse_args(["up", "--app", "toy", "--run-dir", "/tmp/toy", *extra])
+
+
+def test_toy_variant_defaults_to_raw_and_non_raw_needs_fresh_memory():
+    from benchmarks.sregym.fastloop import toy
+
+    assert toy.toy_variant(_parse_up()) == "raw"
+    assert toy.toy_variant(_parse_up("--fresh-memory", "--variant", "helm")) == "helm"
+    with pytest.raises(ValueError, match="--fresh-memory"):
+        toy.toy_variant(_parse_up("--variant", "helm"))
+    with pytest.raises(SystemExit):
+        _parse_up("--variant", "jsonnet")
+
+
+def test_helm_toy_workspace_is_source_only_with_a_buildable_dockerfile(tmp_path):
+    import subprocess
+
+    from benchmarks.sregym.fastloop import toy
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    commit = toy.prepare_workspace(workspace, "toy:test", fresh=True, variant="helm")
+    assert (workspace / "chart/Chart.yaml").is_file()
+    assert not (workspace / "kubernetes").exists()
+    assert not (workspace / ".sdo").exists()
+    assert "AS build" in (workspace / "Dockerfile").read_text()
+    log = subprocess.run(
+        ["git", "-C", str(workspace), "log", "--format=%H"], check=True, capture_output=True, text=True
+    ).stdout.split()
+    assert log == [commit]
+    tracked = subprocess.run(
+        ["git", "-C", str(workspace), "ls-files"], check=True, capture_output=True, text=True
+    ).stdout.split()
+    assert {"chart/values.yaml", "Dockerfile"} <= set(tracked)
+
+
+def test_non_raw_variant_cannot_be_seeded(tmp_path):
+    from benchmarks.sregym.fastloop import toy
+
+    with pytest.raises(ValueError, match="fresh"):
+        toy.prepare_workspace(tmp_path, "toy:test", fresh=False, variant="helm")
+
+
+def test_non_raw_install_declares_no_deployment_source_and_raw_declares_kubernetes(tmp_path, monkeypatch):
+    from subprocess import CompletedProcess
+    from types import SimpleNamespace
+
+    from benchmarks.sregym import adapter
+    from benchmarks.sregym.fastloop import toy
+
+    environment = SimpleNamespace(
+        dev_mount=tmp_path,
+        workspace=tmp_path,
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="toy",
+        application="toy",
+        cluster="toy-private",
+        images=SimpleNamespace(controller="controller:test", responder="responder:test"),
+        apply_operator_env=lambda _: None,
+    )
+    monkeypatch.setenv("KUBECONFIG", str(environment.kubeconfig))
+    monkeypatch.delenv("SREGYM_BASE_KUBECONFIG", raising=False)
+    monkeypatch.setattr(toy.subprocess, "run", lambda *args, **kwargs: CompletedProcess(args, 0))
+    monkeypatch.setattr(adapter, "launch_native_lifecycle", lambda *args: {"judge_commit": "j" * 40})
+    monkeypatch.setattr(toy, "wait_for_baseline", lambda *args: None)
+    helm = toy.install_controller(environment, objective="keep it up", variant="helm")
+    raw = toy.install_controller(environment, objective="keep it up")
+    assert helm.deployment_source is None
+    assert raw.deployment_source == raw_source(("kubernetes",))
+
+
+def test_helm_onboarding_assertions_accept_the_expected_evidence_and_name_each_violation():
+    from benchmarks.sregym.fastloop import toy
+
+    good = toy.OnboardingEvidence(
+        renderer_id="helm",
+        image_builders=("buildkit", "buildkit", "buildkit"),
+        controller_args=("--app", "/workspace/application", "--deployment-source", "{}"),
+    )
+    assert toy.onboarding_violations(good, "helm") == []
+    assert toy.onboarding_violations(
+        toy.OnboardingEvidence("raw", good.image_builders, good.controller_args), "helm"
+    ) == ["accepted evidence plan renderer_id is 'raw', expected 'helm'"]
+    prebuilt = toy.OnboardingEvidence("helm", ("buildkit", "prebuilt"), good.controller_args)
+    assert toy.onboarding_violations(prebuilt, "helm") == ["images not built by buildkit: prebuilt"]
+    assert toy.onboarding_violations(toy.OnboardingEvidence("helm", (), good.controller_args), "helm") == [
+        "accepted evidence plan declares no images"
+    ]
+    bare = toy.OnboardingEvidence("helm", good.image_builders, ("--app", "/workspace/application"))
+    assert toy.onboarding_violations(bare, "helm") == ["controller args carry no --deployment-source"]
+    assert toy.onboarding_violations(good, "raw") == ["accepted evidence plan renderer_id is 'helm', expected 'raw'"]
+
+
+class _RestartOps:
+    """Scripted cluster edge for the restart check; the clock advances only through ``sleep``."""
+
+    def __init__(self, *, new_pod_after=2, verify=True, incident_at=None, drift_at=None):
+        self.now = 0.0
+        self.deleted = []
+        self.pod = "ctl-a"
+        self.new_pod_after, self.verify_ok = new_pod_after, verify
+        self.incident_at, self.drift_at = incident_at, drift_at
+        self.polls = 0
+
+    def clock(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+    def controller_pod(self):
+        self.polls += 1
+        return self.pod if not self.deleted or self.polls < self.new_pod_after else "ctl-b"
+
+    def delete_pod(self, name):
+        self.deleted.append(name)
+
+    def verify_accepted(self):
+        return self.verify_ok
+
+    def incident_open(self):
+        return self.incident_at is not None and self.now >= self.incident_at
+
+    def drift_observed(self):
+        return self.drift_at is not None and self.now >= self.drift_at
+
+
+def test_restart_check_passes_for_a_new_pod_with_reads_and_a_quiet_steady_window():
+    from benchmarks.sregym.fastloop import toy
+
+    ops = _RestartOps()
+    result = toy.check_controller_restart(ops, steady_seconds=30, restart_timeout=60, poll=5)
+    assert ops.deleted == ["ctl-a"]
+    assert (result.old_pod, result.new_pod) == ("ctl-a", "ctl-b")
+    assert result.violations == []
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [
+        ({"verify": False}, "accepted state did not verify after the restart"),
+        ({"incident_at": 10}, "an incident opened during the steady window"),
+        ({"drift_at": 10}, "drift was observed during the steady window"),
+        ({"new_pod_after": 10**6}, "controller pod was not replaced within 60s"),
+    ],
+)
+def test_restart_check_reports_each_failure_instead_of_passing(kwargs, expected):
+    from benchmarks.sregym.fastloop import toy
+
+    result = toy.check_controller_restart(_RestartOps(**kwargs), steady_seconds=30, restart_timeout=60, poll=5)
+    assert expected in result.violations

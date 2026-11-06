@@ -5,9 +5,11 @@ import pytest
 from sdo.agents.source_deployment.worker import _workload_id, propose_source, run_deployment_task
 from sdo.contracts.proto import (
     AgentTask,
+    BuildKitImageConfig,
     DeploymentPlan,
+    DeploymentSource,
     ProposalWorkspace,
-    RawManifestStrategy,
+    RawRenderConfig,
     SourceDeploymentRequest,
     SourceDeploymentResult,
     parse_json,
@@ -48,10 +50,10 @@ def test_deployment_worker_preserves_typed_workspace_and_result(tmp_path: Path) 
     def execute(received: SourceDeploymentRequest, checkout: Path) -> SourceDeploymentResult:
         assert received == request
         assert checkout == tmp_path
-        plan = DeploymentPlan(strategy_id="raw-manifests-v1")
-        plan.strategy_config.Pack(
-            RawManifestStrategy(manifest_paths=["deploy/app.yaml"], expected_workload_ids=["Deployment/demo/demo"])
+        plan = DeploymentPlan(
+            source=DeploymentSource(renderer_id="raw"), expected_workload_ids=["Deployment/demo/demo"]
         )
+        plan.source.config.Pack(RawRenderConfig(paths=["deploy/app.yaml"]))
         return SourceDeploymentResult(
             proposed=True,
             summary="source prepared",
@@ -66,9 +68,9 @@ def test_deployment_worker_preserves_typed_workspace_and_result(tmp_path: Path) 
     wire = parse_json(publisher.payload, type(result)())
     typed = SourceDeploymentResult()
     assert wire.response.Unpack(typed)
-    raw = RawManifestStrategy()
-    assert typed.plan.strategy_config.Unpack(raw)
-    assert raw.manifest_paths == ["deploy/app.yaml"]
+    raw = RawRenderConfig()
+    assert typed.plan.source.config.Unpack(raw)
+    assert raw.paths == ["deploy/app.yaml"]
 
 
 def test_deployment_worker_rejects_unscoped_workload_identity() -> None:
@@ -103,6 +105,40 @@ def test_deployer_receives_trusted_registry_and_rejects_other_image_host(
     with pytest.raises(ValueError, match="trusted registry"):
         propose_source(request, tmp_path)
     assert request.registry_host in prompts[0]
+
+
+def test_propose_source_emits_new_form_plan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    registry = "registry.synthetic:5000"
+
+    def turn(_provider: str, _prompt: str, **_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(
+            output_json=(
+                '{"proposed":true,"summary":"ready","image_builds":[{"image":"registry.synthetic:5000/app:v1",'
+                '"context_path":"app","dockerfile_path":"app/Dockerfile"}],"manifest_paths":["deploy/app.yaml"],'
+                '"expected_workload_ids":["Deployment/demo/api"]}'
+            ),
+            session_id="session-1",
+        )
+
+    monkeypatch.setattr("sdo.agents.source_deployment.worker.run_structured_turn", turn)
+    request = SourceDeploymentRequest(
+        application="demo", namespace="demo", health_objective="healthy", attempt=1, registry_host=registry
+    )
+    plan = propose_source(request, tmp_path).plan
+    assert not plan.strategy_id
+    assert not plan.HasField("strategy_config")
+    assert plan.source.renderer_id == "raw"
+    raw = RawRenderConfig()
+    assert plan.source.config.Unpack(raw)
+    assert list(raw.paths) == ["deploy/app.yaml"]
+    assert list(plan.expected_workload_ids) == ["Deployment/demo/api"]
+    [image] = plan.images
+    assert (image.image, image.source_id) == ("registry.synthetic:5000/app:v1", "buildkit")
+    build = BuildKitImageConfig()
+    assert image.config.Unpack(build)
+    assert (build.context_path, build.dockerfile_path) == ("app", "app/Dockerfile")
 
 
 def test_deployment_worker_rejects_wrong_payload_type(tmp_path: Path) -> None:

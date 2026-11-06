@@ -314,8 +314,13 @@ def controller_settings(payload: dict[str, Any]) -> dict[str, Any]:
 
 def runtime_config_from_payload(payload: dict[str, Any]) -> RuntimeConfig:
     values = dict(payload)
-    for name in ("deployed_manifest_paths", "responder_namespaces"):
-        values[name] = tuple(values.get(name, ()))
+    if "deployed_manifest_paths" in values:
+        raise ValueError(
+            "persistent state was recorded by a controller installed with --deployed-manifest-path, which the "
+            "deployment-source contract no longer accepts; reinstall the persistent controller (old broker "
+            "evidence and controller config are not migrated)"
+        )
+    values["responder_namespaces"] = tuple(values.get("responder_namespaces", ()))
     hints = get_type_hints(RuntimeConfig)
     for field in fields(RuntimeConfig):
         value = values.get(field.name)

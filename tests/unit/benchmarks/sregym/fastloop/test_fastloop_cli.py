@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 import pytest
 
+from benchmarks.sregym.adapter.deployment_source import raw_source
 from benchmarks.sregym.fastloop.baseline_recovery import load_application_baseline
 from benchmarks.sregym.fastloop.cli import build_parser, format_incidents, format_summary, main
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
@@ -403,7 +404,7 @@ def test_mf_stream_launches_with_both_component_probes(tmp_path: Path, monkeypat
     }
     environment.baseline_path.write_text("{}")
     save_application_baseline(environment.baseline_path, (ApplicationBaseline(environment.namespace, [workload]),))
-    commit_accepted_source(environment.workspace, [account], namespace=environment.namespace)
+    commit_accepted_source(environment.workspace, [account], namespace=environment.namespace, kustomize_root=True)
     rehearsed: list[str] = []
 
     class Worker:
@@ -652,8 +653,8 @@ def test_sdo_agent_selects_the_applications_deployed_manifests(tmp_path: Path) -
     )
     args = build_parser().parse_args(["run", "--run-dir", str(tmp_path), "--agent", "sdo"])
     agent = cli._sdo_agent(args, environment, tmp_path / "results")
-    assert agent.stage_inputs("stage", tmp_path, "fp").runtime_config.deployed_manifest_paths == (
-        "kubernetes/astronomy-shop.yaml",
+    assert agent.stage_inputs("stage", tmp_path, "fp").runtime_config.deployment_source == raw_source(
+        ("kubernetes/astronomy-shop.yaml",)
     )
 
 

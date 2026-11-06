@@ -50,9 +50,9 @@ func (e *RolloutTimeoutError) Error() string {
 		"Resubmit exactly the same plan and leave the manifests, images and init containers unchanged; the operator waits for the rollout again. Rewriting a plan after this error makes it worse", e.Resource, e.Limit, detail)
 }
 
-// InfrastructureTimeout marks a still-progressing rollout for the coordinator's
-// "not a plan rejection" feedback. A rollout that is not progressing is a plan outcome.
-func (e *RolloutTimeoutError) InfrastructureTimeout() bool { return !e.Stalled }
+// InfrastructureOutcome marks a still-progressing rollout for the coordinator's
+// bounded retry of the trusted step. A rollout that is not progressing is a plan outcome.
+func (e *RolloutTimeoutError) InfrastructureOutcome() bool { return !e.Stalled }
 
 const (
 	maxRolloutPods   = 6
@@ -470,4 +470,11 @@ func eventLines(events []rolloutEvent) string {
 		}
 	}
 	return strings.Join(lines, " | ")
+}
+
+func clip(s string, max int) string {
+	if runes := []rune(s); len(runes) > max {
+		return string(runes[:max]) + "..."
+	}
+	return s
 }

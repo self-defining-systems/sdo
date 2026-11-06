@@ -317,6 +317,10 @@ func (s *run) visit(rel, abs string) error {
 				s.arch = doc
 			}
 		}
+	case layout.KindSources:
+		if _, err := layout.ParseSources(data); err != nil {
+			s.add(Structural, Diagnostic{Rule: RuleSourcesInvalid, Path: rel, Line: errorLine(err, 0), Message: err.Error(), Hint: "list one source: `- path: .`, a registered `kind`, and its `config`"})
+		}
 	case layout.KindPlaybookIndex:
 		s.index = &file
 	case layout.KindPlaybook:

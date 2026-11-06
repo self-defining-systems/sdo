@@ -14,7 +14,7 @@ COPY sdo/operator/core/go.mod sdo/operator/core/go.sum ./sdo/operator/core/
 COPY sdo/operator/runtime/go.mod sdo/operator/runtime/go.sum ./sdo/operator/runtime/
 COPY sdo/operator/sdk/go.mod sdo/operator/sdk/go.sum ./sdo/operator/sdk/
 COPY sdo/operator/telemetry/go.mod sdo/operator/telemetry/go.sum ./sdo/operator/telemetry/
-RUN for dir in sdo/operator/sdk sdo/operator/core sdo/operator/runtime sdo/operator; do \
+RUN for dir in sdo/operator/sdk sdo/operator/core sdo/operator/telemetry sdo/operator/runtime sdo/operator; do \
       (cd "$dir" && go mod download all); \
     done
 
@@ -23,7 +23,7 @@ RUN for dir in sdo/operator/sdk sdo/operator/core sdo/operator/runtime sdo/opera
 FROM go-modules AS go-dep-list
 COPY sdo/operator ./sdo/operator
 RUN mkdir /deps \
-    && for dir in sdo/operator/sdk sdo/operator/core sdo/operator/runtime sdo/operator; do \
+    && for dir in sdo/operator/sdk sdo/operator/core sdo/operator/telemetry sdo/operator/runtime sdo/operator; do \
       (cd "$dir" && go list -deps -test ./...) > /tmp/module-deps.txt || exit 1; \
       grep -vE '^sdo\.dev|[ ]|\.test$' /tmp/module-deps.txt | sort -u > "/deps/$(echo "$dir" | tr / _).txt"; \
     done
@@ -34,7 +34,7 @@ FROM go-modules AS go-deps
 # recompilation of the entire runtime and Kubernetes dependency graph per Job.
 ENV GOMAXPROCS=4 GOFLAGS="-p=4 -trimpath"
 COPY --from=go-dep-list /deps /deps
-RUN for dir in sdo/operator/sdk sdo/operator/core sdo/operator/runtime sdo/operator; do \
+RUN for dir in sdo/operator/sdk sdo/operator/core sdo/operator/telemetry sdo/operator/runtime sdo/operator; do \
       (cd "$dir" && go build $(cat "/deps/$(echo "$dir" | tr / _).txt")); \
     done \
     && (cd /go/build-cache && find . -type f | LC_ALL=C sort) > /go/build-cache.files
@@ -150,11 +150,12 @@ FROM go-binaries AS go-runtime
 # Test suites own test-binary linking; the image needs production archives and vet facts.
 RUN cd sdo/operator/sdk && go build ./... && go vet ./...
 RUN cd sdo/operator/core && go build ./... && go vet ./...
+RUN cd sdo/operator/telemetry && go build ./... && go vet ./...
 RUN cd sdo/operator/runtime && go build ./...
 # Vet the production dependency graph through a neutral consumer. Worker and
 # runtime test-only packages are not dependencies of generated validators.
 RUN mkdir sdo/operator/runtime/cachewarm \
-    && printf 'package cachewarm\nimport (_ "sdo.dev/operator/runtime"; _ "sdo.dev/operator/runtime/prometheus"; _ "sdo.dev/operator/runtime/prober"; _ "sdo.dev/operator/runtime/replay")\n' > sdo/operator/runtime/cachewarm/cachewarm.go \
+    && printf 'package cachewarm\nimport (_ "sdo.dev/operator/runtime"; _ "sdo.dev/operator/runtime/prober"; _ "sdo.dev/operator/runtime/replay"; _ "sdo.dev/operator/telemetry/prometheus")\n' > sdo/operator/runtime/cachewarm/cachewarm.go \
     && (cd sdo/operator/runtime && go vet ./cachewarm) \
     && rm -rf sdo/operator/runtime/cachewarm
 RUN cd sdo/operator/runtime && go build -buildvcs=false -ldflags="-s -w" -o /usr/local/bin/sdo-shell-controller ./cmd/sdo-shell-controller

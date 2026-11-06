@@ -543,8 +543,10 @@ def replay_broker_result(checkpoint: StageCheckpoint, *, source: Path, operator_
         # A private workspace pins replay to the requested frozen operator,
         # regardless of the caller's GOWORK or the driver's checkout location.
         modules = {"sdo.dev/operator": operator_root.resolve()}
-        for name in ("core", "sdk", "runtime", "contracts"):
-            modules[f"sdo.dev/operator/{name}"] = (operator_root / name).resolve()
+        # Every nested module of the operator tree, so a new module cannot be left unresolvable.
+        for module_file in sorted(operator_root.glob("*/go.mod")):
+            name = module_file.parent.name
+            modules[f"sdo.dev/operator/{name}"] = module_file.parent.resolve()
         workspace = directory / "go.work"
         workspace.write_text(
             "go 1.26.8\nuse "

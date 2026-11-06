@@ -68,12 +68,13 @@ def authoring_reference(topic: ReferenceTopic = "programs", section: str = "") -
     path = _reference_file(topic, text)
     blocks = _sections(text)
     header = f"Reference topic {topic}: {len(text.encode('utf-8'))} bytes.\nFull text: {path}\n"
+    budget = MAX_TOOL_REPLY_BYTES - len(header.encode("utf-8")) - 200
     if not section.strip():
-        return header + "Sections:\n" + _index(blocks)
+        return header + "Sections:\n" + _index(blocks, budget)
     wanted = section.strip().lower()
     matches = [block for block in blocks if wanted in block[0].lower()]
     if not matches:
-        return header + f"No section matches {section!r}; search the full text or pick from:\n" + _index(blocks)
+        return header + f"No section matches {section!r}; search the full text or pick from:\n" + _index(blocks, budget)
     reply = header
     for shown, block in enumerate(matches):
         part = "\n".join(block) + "\n\n"
@@ -143,22 +144,41 @@ def _sections(text: str) -> list[list[str]]:
     return blocks
 
 
-def _index(blocks: list[list[str]]) -> str:
-    """Headings in full, Go declarations by name, grouped under their file (the heading names the package)."""
-    lines: list[str] = []
-    names: list[str] = []
+def _index(blocks: list[list[str]], budget: int | None = None) -> str:
+    """Headings in full, Go declarations by name, grouped under their file (the heading names the package).
+
+    With a byte budget, declaration lists shrink (``+N more``; the rest are in the full text)
+    until the index fits, so the reply size does not depend on how much the reference grew
+    or how long the full-text path is.
+    """
+    groups: list[tuple[str, list[str]]] = []
     for block in blocks:
         title = block[0]
         if title.startswith("#"):
-            if names:
-                lines.append("  " + ", ".join(names))
-                names = []
-            lines.append(title)
+            groups.append((title, []))
         elif declared := re.match(r"(?:type|func) \w+", title):
-            names.append(declared.group())
-    if names:
-        lines.append("  " + ", ".join(names))
-    return "\n".join(lines)
+            if not groups:
+                groups.append(("", []))
+            groups[-1][1].append(declared.group())
+
+    def render(keep: int | None) -> str:
+        lines: list[str] = []
+        for title, names in groups:
+            if title:
+                lines.append(title)
+            shown = names if keep is None else names[:keep]
+            if shown:
+                more = f", +{len(names) - len(shown)} more" if len(shown) < len(names) else ""
+                lines.append("  " + ", ".join(shown) + more)
+        return "\n".join(lines)
+
+    text = render(None)
+    if budget is None or len(text.encode("utf-8")) <= budget:
+        return text
+    keep = max((len(names) for _, names in groups), default=0)
+    while keep > 0 and len(render(keep).encode("utf-8")) > budget:
+        keep -= 1
+    return render(keep)
 
 
 def prepare_corpus(

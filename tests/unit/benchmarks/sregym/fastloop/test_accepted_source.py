@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import ast
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
 
+from benchmarks.sregym.adapter.deployment_source import kustomize_source
 from benchmarks.sregym.fastloop.accepted_source import (
     AcceptedSource,
     manifest_paths_for,
@@ -96,7 +98,12 @@ def test_declared_identities_come_from_source_not_from_a_stale_lock(tmp_path: Pa
 
 
 def test_render_defaults_namespace_drops_secrets_and_rejects_duplicates(tmp_path: Path) -> None:
-    deployment = {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "api"}}
+    deployment = {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {"name": "api"},
+        "spec": {"template": {"spec": {"containers": [{"name": "api", "image": "example.invalid/api:1"}]}}},
+    }
     secret = {"apiVersion": "v1", "kind": "Secret", "metadata": {"name": "token"}, "stringData": {"k": "synthetic"}}
     role = {
         "apiVersion": "rbac.authorization.k8s.io/v1",
@@ -104,10 +111,18 @@ def test_render_defaults_namespace_drops_secrets_and_rejects_duplicates(tmp_path
         "metadata": {"name": "r", "namespace": "x"},
     }
     source = commit_accepted_source(tmp_path / "ok", [deployment, secret, role], namespace="app")
-    # The owning production renderer excludes explicitly foreign namespace input.
+    # Reads and deploy share one desired-state function: a cluster-scoped kind
+    # drops its authored namespace (it is not foreign) and the Secret is omitted.
     assert [(v["kind"], v["metadata"].get("namespace")) for v in source.manifests] == [
         ("Deployment", "app"),
+        ("ClusterRole", None),
     ]
+    foreign = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "peer", "namespace": "x"}}
+    # The owning production renderer excludes explicitly foreign namespace input.
+    assert [
+        v["kind"]
+        for v in commit_accepted_source(tmp_path / "foreign", [deployment, foreign], namespace="app").manifests
+    ] == ["Deployment"]
     with pytest.raises(ValueError, match="duplicate accepted manifest"):
         _ = commit_accepted_source(tmp_path / "dup", [deployment, deployment], namespace="app").manifests
 
@@ -199,7 +214,7 @@ def test_file_generated_configmap_restore_uses_production_source_renderer(
         "generatorOptions: {disableNameSuffixHash: true}\n"
     )
     (deployment / "init.sh").write_text("echo accepted\n")
-    source = commit_accepted_source(workspace)
+    source = replace(commit_accepted_source(workspace), renderer_source=kustomize_source("kubernetes"))
     # The missing Secret input is intentional: it must never be read to render
     # public generated configuration, even when accepted source declares it.
     monkeypatch.setenv("SDO_OPERATOR_BIN", str(operator_binary))
@@ -281,7 +296,13 @@ def test_plain_manifests_also_use_the_production_renderer(tmp_path, monkeypatch)
                 "repository": str(source.workspace.resolve()),
                 "revision": source.revision,
                 "namespace": "app",
-                "manifest_paths": ["kubernetes"],
+                "deployment_source": {
+                    "renderer_id": "raw",
+                    "config": {
+                        "@type": "type.googleapis.com/sdodev.contracts.v1alpha1.RawRenderConfig",
+                        "paths": ["kubernetes"],
+                    },
+                },
             },
         )
     ]

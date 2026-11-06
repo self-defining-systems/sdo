@@ -1,0 +1,31 @@
+{
+  "gitlab_chart": {
+    "name": "gitlab",
+    "version": "10.5.4",
+    "app_version": "v19.5.3",
+    "url": "https://gitlab-charts.s3.amazonaws.com/gitlab-10.5.4.tgz",
+    "sha256": "aabc14c99bfc5829a54ecefdc99b2c2f16257e892fddf6425929dfd69375c62c",
+    "repository": "https://charts.gitlab.io",
+    "source": "https://gitlab.com/gitlab-org/charts/gitlab"
+  },
+  "helm_version": "v3.20.2",
+  "kube_version": "1.30.0",
+  "datastore_images": {
+    "postgresql": "postgres:17@sha256:748a18a54d3842d43bc156f0840d78029b8d349e0feca98c12b9c4ce3404a6b3",
+    "redis": "redis:7.4@sha256:2e3eb11462c4e3759e6972678dd051d150ff54b1e60714b3c33b701260172a90",
+    "objectstore": "chrislusf/seaweedfs@sha256:c2658820e763294a9e9de7b36c81e59b879e3459148351aee4e31a126ca64860"
+  },
+  "prerequisites": {
+    "ingress_nginx": {
+      "version": "controller-v1.12.1",
+      "url": "https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.12.1/deploy/static/provider/kind/deploy.yaml",
+      "sha256": "cb84b0ea747c9149cce08aef4e95b1e55f183f07299f40e7009043e960a0133f",
+      "images": [
+        "registry.k8s.io/ingress-nginx/controller:v1.12.1@sha256:d2fbc4ec70d8aa2050dd91a91506e998765e86c96f32cffb56c503c9c34eed5b",
+        "registry.k8s.io/ingress-nginx/kube-webhook-certgen:v1.5.2@sha256:e8825994b7a2c7497375a9b945f386506ca6a3eda80b89b74ef2db743f66a5ea"
+      ]
+    }
+  },
+  "namespace": "gitlab",
+  "release": "gitlab"
+}

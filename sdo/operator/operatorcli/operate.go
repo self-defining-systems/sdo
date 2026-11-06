@@ -10,11 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"sdo.dev/operator/deployment"
+	"sdo.dev/operator/imagesrc/buildkit"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/operatorcli/internal/processio"
+	"sdo.dev/operator/rendered"
 )
 
 // OperateConfig is the typed, in-cluster bootstrap launch contract. The
@@ -45,6 +46,9 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	controlNamespace := flags.String("control-namespace", "", "controller namespace")
 	application := flags.String("application", "", "application identity")
 	objective := flags.String("health-objective", "", "human health objective")
+	sourceKind := flags.String("source-kind", "", "upstream watcher kind to follow (published as .sdo/goal/sources.yaml)")
+	sourceConfig := flags.String("source-config", "", "JSON config of the followed upstream")
+	deploymentPlan := flags.String("deployment-plan", "", "provided DeploymentPlan as ProtoJSON; the deployer agent is skipped and the plan is deployed as given")
 	operationID := flags.String("operation-id", "", "durable operation identity")
 	maxAttempts := flags.Int("max-attempts", 3, "maximum deployment attempts")
 	controllerImage := flags.String("controller-image", "", "controller image")
@@ -135,7 +139,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 		return OperateConfig{}, errors.New("operate requires a digest-pinned BuildKit image and separate registry push Secret")
 	}
 	if *registryHost != "" {
-		if err := deployment.ValidateRegistryHost(*registryHost); err != nil {
+		if err := buildkit.ValidateRegistryHost(*registryHost); err != nil {
 			return OperateConfig{}, fmt.Errorf("invalid trusted registry host: %w", err)
 		}
 	}
@@ -170,10 +174,22 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	if err != nil {
 		return OperateConfig{}, err
 	}
+	sources, err := parseSourceFlags(*sourceKind, *sourceConfig)
+	if err != nil {
+		return OperateConfig{}, err
+	}
+	if len(sources) > 0 && strings.TrimSpace(*objective) == "" {
+		return OperateConfig{}, errors.New("a followed source is published with the human goal and requires --health-objective")
+	}
+	providedPlan, err := rendered.ParseDeploymentPlan(*deploymentPlan)
+	if err != nil {
+		return OperateConfig{}, err
+	}
 	config := OperateConfig{
 		Lifecycle: lifecycle.Config{
-			OperationID: *operationID, Application: *application, Namespace: *namespace,
-			HealthObjective: *objective, DeployerAgentID: *deployerID, JudgeAgentID: *judgeID,
+			ProvidedPlan: providedPlan,
+			OperationID:  *operationID, Application: *application, Namespace: *namespace,
+			HealthObjective: *objective, Sources: sources, DeployerAgentID: *deployerID, JudgeAgentID: *judgeID,
 			RegistryHost: *registryHost,
 			MaxAttempts:  *maxAttempts,
 		},
@@ -182,9 +198,12 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			ResponderMenu:      menuEnabled,
 			ObservationCeiling: ceiling,
 			Namespace:          *namespace, ControlNamespace: control, Application: *application,
+			SourceKind: *sourceKind, SourceConfig: *sourceConfig, DeploymentPlan: *deploymentPlan,
 			ControllerImage: *controllerImage, ResponderImage: *responderImage,
 			ScriptImage: *scriptImage, DisableObservability: *disableObservability, RepositoryPVC: *repositoryPVC,
 			CredentialsSecret: *credentialsSecret, Model: *model, AgentProvider: *provider, AgentEffort: *effort, Replay: *replay,
+			// The controller parent deploys upstream advances with the same identity.
+			BuildKitImage: *buildkitImage, RegistryPushSecret: *registryPushSecret,
 			RegistryInsecure: *registryInsecure, RegistryHost: *registryHost, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline, MetricsURL: *metricsURL, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
 			ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,
 			LateFindings: *lateFindings, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, FrozenMemory: *frozenMemory, ExternalIncidents: *externalIncidents,

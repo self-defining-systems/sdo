@@ -20,6 +20,9 @@ message SourceDeploymentRequest {
   uint32 attempt = 5;
   // Trusted registry target chosen by the operator, never by the worker.
   string registry_host = 6;
+  // What the deployer can deploy; the agent chooses only from these.
+  repeated PluginDescriptor renderers = 7;
+  repeated PluginDescriptor image_sources = 8;
 }
 
 message SourceDeploymentResult {

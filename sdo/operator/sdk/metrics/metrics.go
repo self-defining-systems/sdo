@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -41,11 +42,20 @@ const (
 	MaxAlerts = 5000
 )
 
-// Query is one PromQL query a detector consumes. Without Range it is an
+// SourceIDPattern is the grammar of a telemetry source name.
+var SourceIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,30}$`)
+
+// Query is one metrics query a detector consumes. Without Range it is an
 // instant query evaluated at the cycle's timestamp; with Range it is a range
 // query over the Range ending at that timestamp.
 type Query struct {
-	ID   string `json:"id"`
+	ID string `json:"id"`
+	// Source names the telemetry source that answers the query. Empty selects
+	// the default metrics source, so detectors written before sources existed
+	// keep working.
+	Source string `json:"source,omitempty"`
+	// Expr is the query text in the bound source's dialect (PromQL for a
+	// Prometheus source). The runtime passes it through unparsed.
 	Expr string `json:"expr"`
 	// Range, when positive, makes the query a range query.
 	Range time.Duration `json:"range,omitempty"`
@@ -72,6 +82,9 @@ func (q Query) Validate() error {
 	}
 	if q.ID != strings.TrimSpace(q.ID) {
 		return fmt.Errorf("metric query id %q must not contain surrounding whitespace", q.ID)
+	}
+	if q.Source != "" && !SourceIDPattern.MatchString(q.Source) {
+		return fmt.Errorf("metric query %q source %q must match %s", q.ID, q.Source, SourceIDPattern)
 	}
 	if strings.TrimSpace(q.Expr) == "" {
 		return fmt.Errorf("metric query %q has an empty expression", q.ID)
@@ -216,8 +229,11 @@ type Result struct {
 	Error      string    `json:"error,omitempty"`
 }
 
-// Alert is one alert as the Prometheus alerts API reports it.
+// Alert is one alert in the normalized model, as an alert-capable telemetry
+// source reports it (the Prometheus alerts API shape).
 type Alert struct {
+	// Source is the telemetry source that reported the alert; the runtime sets it.
+	Source      string            `json:"source,omitempty"`
 	Labels      map[string]string `json:"labels"`
 	Annotations map[string]string `json:"annotations,omitempty"`
 	// State is "firing" or "pending".
@@ -250,7 +266,7 @@ type ResultSet interface {
 	MetricResults() map[string]Result
 }
 
-// QuerySource evaluates a typed PromQL query through the runtime.
+// QuerySource evaluates a typed metrics query through the runtime.
 // Results (including failures) are frozen for the evaluation cycle.
 type QuerySource interface {
 	QueryMetrics(Query) Result

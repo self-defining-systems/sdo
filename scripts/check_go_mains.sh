@@ -26,3 +26,22 @@ while IFS= read -r program; do
     [[ "$dir" != "$root" ]] && continue
     (cd "$root/sdo/operator/runtime" && go vet "$program")
 done < <(grep -rl --include='*.go' '^package main' "$root/benchmarks" | sort)
+
+# Broker replay builds replay_go in a private workspace that *replaces* the
+# operator modules instead of `use`-ing them (benchmarks/sregym/fastloop/replay.py).
+# Replaced modules contribute their own requirements, so a stale transitive
+# requirement (the monolithic google.golang.org/genproto) can make an import
+# ambiguous there while every other build of the module is fine. Build it the
+# way replay does.
+replay_workspace="$(mktemp -d)"
+trap 'rm -rf "$replay_workspace"' EXIT
+{
+    echo "go 1.26.8"
+    echo "use $root/benchmarks/sregym/fastloop/replay_go"
+    echo "replace ("
+    for name in "" /core /sdk /runtime /contracts; do
+        echo " sdo.dev/operator$name => $root/sdo/operator$name"
+    done
+    echo ")"
+} > "$replay_workspace/go.work"
+(cd "$root/benchmarks/sregym/fastloop/replay_go" && GOWORK="$replay_workspace/go.work" go list -export ./... > /dev/null)

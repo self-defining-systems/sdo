@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: main-cm}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate
+  annotations: {"helm.sh/hook": "pre-install", "helm.sh/hook-weight": "5"}
+spec: {template: {spec: {restartPolicy: Never, containers: [{name: m, image: m:1}]}}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: seed
+  annotations: {"helm.sh/hook": "pre-install", "helm.sh/hook-weight": "-1"}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: smoke
+  annotations: {"helm.sh/hook": "post-install"}
+spec: {template: {spec: {restartPolicy: Never, containers: [{name: s, image: s:1}]}}}

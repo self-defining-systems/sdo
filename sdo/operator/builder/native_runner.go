@@ -37,50 +37,60 @@ type DiagnosticsProjection struct {
 // RunOnce builds the currently accepted diagnostics and runs one controller
 // process. The workspace remains intact until that process exits. Accepted
 // memory changes reach the running controller through its memory host, so the
-// controller is never rebuilt or relaunched for them.
+// controller is never rebuilt or relaunched for them. A controller that exits
+// with memory.HealthRefreshExitCode makes RunOnce return an error for which
+// NeedsRebuild is true; Run turns that into the next pass.
 func RunOnce(ctx context.Context, config RunConfig) error {
+	_, err := runPass(ctx, config)
+	return err
+}
+
+// runPass is RunOnce that also reports the accepted revision it launched at
+// ("" for the image-bound shell controller).
+func runPass(ctx context.Context, config RunConfig) (string, error) {
 	if config.Controller == nil {
-		return errors.New("controller config is required")
+		return "", errors.New("controller config is required")
 	}
 	source := config.Controller.GetCodePath().GetOverrides().GetDetectorSource()
 	if source == "shell" || (source == "" && config.Controller.GetCodePath().GetName() == "shell") {
 		if config.PrepareShell != nil {
 			if err := config.PrepareShell(ctx); err != nil {
-				return err
+				return "", err
 			}
 		}
-		return runShellController(ctx, config)
+		return "", runShellController(ctx, config)
 	}
 	if config.ResolveDiagnostics == nil {
-		return errors.New("accepted diagnostics resolver is required")
+		return "", errors.New("accepted diagnostics resolver is required")
 	}
 	projected, err := config.ResolveDiagnostics(ctx, config.Build.ApplicationRoot)
 	if err != nil {
-		return err
+		return "", err
 	}
+	projectedRevision := projected.AcceptedRevision
 	buildConfig := config.Build
 	buildConfig.DiagnosticsRoot = projected.Directory
 	buildConfig.CompileOnly, err = memory.AdoptedBuild(ctx, config.Build.ApplicationRoot, projected.AcceptedRevision)
 	if err != nil {
-		return err
+		return projectedRevision, err
 	}
 	workspace, err := BuildWorkspace(ctx, buildConfig)
 	if err != nil {
-		return err
+		return projectedRevision, err
 	}
 	defer workspace.Close()
 	binary, err := workspace.BuildForLaunch(ctx)
 	if err != nil {
-		return err
+		return projectedRevision, err
 	}
 
 	provenance, err := buildProvenance(projected, binary)
 	if err != nil {
-		return err
+		return projectedRevision, err
 	}
 	artifact, err := workspace.BuildMemoryHost(ctx)
 	if err != nil {
-		return err
+		return projectedRevision, err
 	}
 	config.Controller = proto.Clone(config.Controller).(*contractsv1alpha1.ControllerConfig)
 	config.Controller.MemoryHostBinary = artifact.Path
@@ -88,13 +98,13 @@ func RunOnce(ctx context.Context, config RunConfig) error {
 
 	data, err := controllerConfigJSON(config, provenance)
 	if err != nil {
-		return fmt.Errorf("serialize controller config: %w", err)
+		return projectedRevision, fmt.Errorf("serialize controller config: %w", err)
 	}
 	configPath := filepath.Join(workspace.Directory, "controller-config.json")
 	if err := os.WriteFile(configPath, data, 0o600); err != nil {
-		return err
+		return projectedRevision, err
 	}
-	return buildio.RunController(ctx, binary, configPath, workspace.Directory)
+	return projectedRevision, buildio.RunController(ctx, binary, configPath, workspace.Directory)
 }
 
 type provenance struct {

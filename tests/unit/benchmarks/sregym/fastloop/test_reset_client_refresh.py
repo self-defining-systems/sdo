@@ -19,7 +19,10 @@ class Lane:
                 "apiVersion": "apps/v1",
                 "kind": "Deployment",
                 "metadata": {"name": "frontend", "namespace": "hotel-reservation"},
-                "spec": {"replicas": 1},
+                "spec": {
+                    "replicas": 1,
+                    "template": {"spec": {"containers": [{"name": "app", "image": "example.invalid/app:1"}]}},
+                },
             }
         ]
         self.client_registered = False
@@ -72,7 +75,7 @@ def environment(tmp_path: Path) -> FastloopEnvironment:
         private_tmp=None,
         seed_commit="a" * 40,
     )
-    commit_accepted_source(env.workspace, Lane().objects, namespace="hotel-reservation")
+    commit_accepted_source(env.workspace, Lane().objects, namespace="hotel-reservation", kustomize_root=True)
     baseline = ApplicationBaseline("hotel-reservation", Lane().objects)
     env.baseline_path.write_text(json.dumps({"fastloop_application": {"namespaces": [baseline.__dict__]}}))
     return env

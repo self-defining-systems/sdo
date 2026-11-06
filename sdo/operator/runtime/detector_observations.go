@@ -13,6 +13,7 @@ import (
 	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/logs"
 	"sdo.dev/operator/sdk/usage"
+	"sdo.dev/operator/telemetry"
 )
 
 // detectorObservations is the one place that derives the Kubernetes-, log-
@@ -24,6 +25,8 @@ type detectorObservations struct {
 	Clock            func() time.Time
 	MetricsURL       string
 	MetricsTokenFile string
+	// Telemetry opens the metrics source; nil allows no configured URL.
+	Telemetry *telemetry.Registry
 	// RequireMetrics refuses metric-consuming bundles without a metrics source.
 	RequireMetrics bool
 }
@@ -55,7 +58,7 @@ func (o detectorObservations) compose(base SnapshotProvider, detectors []sdk.Det
 	if logsObserver != nil {
 		provider = LogsSnapshotProvider{Base: provider, Observer: logsObserver}
 	}
-	return withMetrics(provider, detectors, o.MetricsURL, o.MetricsTokenFile, o.RequireMetrics, clock)
+	return withMetrics(provider, detectors, o.Telemetry, o.MetricsURL, o.MetricsTokenFile, o.RequireMetrics, clock)
 }
 
 // kubernetesObservations names the first client-backed input detector declares.

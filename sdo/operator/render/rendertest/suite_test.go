@@ -144,6 +144,19 @@ func TestNegativeControlSecretLeakingRenderer(t *testing.T) {
 	}
 }
 
+// Renderers disagreed on whether an Omit Secret keeps its type; only the
+// render.SecretIdentity projection is accepted.
+func TestNegativeControlOmitSecretKeepsMoreThanIdentity(t *testing.T) {
+	got := failing(t, render.RendererFunc[*wrapperspb.StringValue](func(_ context.Context, _ render.FS, env render.Env, _ *wrapperspb.StringValue) (render.Result, error) {
+		secret := toyObject("Secret", "creds", "demo")
+		secret.Object["type"] = "Opaque"
+		return render.SinglePhase(secret), nil
+	}))
+	if !properties(got)["secret-omit"] {
+		t.Fatalf("suite accepted an Omit Secret that keeps its type: %v", got)
+	}
+}
+
 func TestNegativeControlOmitReadsSecretSource(t *testing.T) {
 	got := failing(t, render.RendererFunc[*wrapperspb.StringValue](func(_ context.Context, fsys render.FS, env render.Env, _ *wrapperspb.StringValue) (render.Result, error) {
 		if _, err := fsys.ReadFile("secrets/token"); err != nil { // read, then drop the value

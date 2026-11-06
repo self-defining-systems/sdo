@@ -15,6 +15,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from benchmarks.sregym.adapter.deployment_source import buildkit_image, deployment_plan, helm_source, raw_source
 from benchmarks.sregym.adapter.native_operator import (
     NativeHostConfig,
     NativeInstallConfig,
@@ -77,7 +78,7 @@ def _install() -> NativeInstallConfig:
         healthy_baseline=True,
         registration_configmap="registrations",
         responder_env=("SDO_SUBMISSION_MODE=relay",),
-        deployed_manifest_paths=("kubernetes",),
+        deployment_source=raw_source(("kubernetes",)),
     )
 
 
@@ -126,6 +127,11 @@ def _emitted(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[str]]:
             registry_insecure=True,
             max_attempts=2,
             agent_registrations=Path("/fixture/registrations.json"),
+            deployment_plan=deployment_plan(
+                helm_source("chart"),
+                images=(buildkit_image("app:v1", ".", "Dockerfile"),),
+                expected_workload_ids=["Deployment/hotel/web"],
+            ),
         )
     )
     return argv

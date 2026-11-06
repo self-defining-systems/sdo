@@ -18,13 +18,13 @@ type ShellDetectorProbe struct {
 	Limit  time.Duration
 }
 
-func (p ShellDetectorProbe) Evaluate(ctx context.Context, root, _, namespace string) (string, error) {
+func (p ShellDetectorProbe) Evaluate(ctx context.Context, root, _, namespace string) (HealthEvaluation, error) {
 	if namespace != p.Config.Namespace || root != p.Config.AcceptedRoot {
-		return "", fmt.Errorf("shell health probe repository or namespace differs from runner")
+		return HealthEvaluation{}, fmt.Errorf("shell health probe repository or namespace differs from runner")
 	}
 	output, err := deploymentio.Output(ctx, "git", []string{"-C", root, "rev-parse", "HEAD"})
 	if err != nil {
-		return "", err
+		return HealthEvaluation{}, err
 	}
 	commit := strings.TrimSpace(string(output))
 	reader := p.Reader
@@ -43,16 +43,16 @@ func (p ShellDetectorProbe) Evaluate(ctx context.Context, root, _, namespace str
 			status := "clear"
 			for _, result := range report.Results {
 				if result.Error != "" || result.TimedOut || result.ExitCode < 0 {
-					return "error", nil
+					return HealthEvaluation{Status: "error"}, nil
 				}
 				if result.ExitCode != 0 {
 					status = "active"
 				}
 			}
-			return status, nil
+			return HealthEvaluation{Status: status}, nil
 		}
 		if err := deploymentio.Wait(bounded, 250*time.Millisecond); err != nil {
-			return "", fmt.Errorf("wait for accepted shell health report: %w", err)
+			return HealthEvaluation{}, fmt.Errorf("wait for accepted shell health report: %w", err)
 		}
 	}
 }

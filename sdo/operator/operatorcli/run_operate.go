@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sdo.dev/operator/contracts/settings"
+	"sdo.dev/operator/renderenv"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -17,6 +18,7 @@ import (
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory/observation"
+	"sdo.dev/operator/operatorcli/catalog/renderers"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -81,21 +83,18 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	config.Install.MetricsURL = config.Install.EffectiveMetricsURL()
 	config.Lifecycle.MetricsSource = config.Install.MetricsSource()
 	repository.MetricsDetectors = config.Install.MetricsURL != ""
-	buildBackend := deployment.KubernetesBuildBackend{
-		CommandBackend: deployment.CommandBackend{ObserveLimit: time.Duration(config.Install.RolloutTimeoutSeconds) * time.Second},
-		Client:         client, Namespace: control, RepositoryPVC: config.Install.RepositoryPVC,
-		ProposalRoot: config.WorktreeRoot, RepositoryPVCSubPath: proposalSubPath,
-		BuildKitImage: config.BuildKitImage, RegistrySecret: config.RegistryPushSecret,
-		AllowedRegistryHost: config.Install.RegistryHost,
-		RegistryInsecure:    config.Install.RegistryInsecure,
-		ServiceAccount:      "sdo-image-builder",
-		Timeout:             time.Duration(config.Install.BuildTimeoutSeconds) * time.Second,
+	environment, err := renderenv.Discover(client.Discovery())
+	if err != nil {
+		return lifecycle.Result{}, fmt.Errorf("discover render environment: %w", err)
 	}
-	readiness, err := deployment.NewRegistry(deployment.RawRegistration("raw-manifests-v1", config.Lifecycle.Namespace, buildBackend, &deployment.RegistryResolver{InsecureHost: insecureRegistryHost(config), Cluster: nodeImages{client: client}}, deployment.WithBuildBudget(time.Duration(config.Install.BuildBudgetSeconds)*time.Second)))
+	readiness, err := operateIdentity(config).deployer(client, deployTarget{
+		Namespace: config.Lifecycle.Namespace, ControlNamespace: control,
+		AcceptedRoot: config.ApplicationRoot, ProposalRoot: config.WorktreeRoot,
+		RepositoryMount: config.RepositoryMount, RepositoryPVC: config.Install.RepositoryPVC,
+	}, environment)
 	if err != nil {
 		return lifecycle.Result{}, err
 	}
-	readiness.AcceptedRoot = config.ApplicationRoot
 	agentEnvironment, err := worker_registry.AgentEnvironment(config.Install.AgentProvider, config.Install.Model, config.Install.AgentEffort)
 	if err != nil {
 		return lifecycle.Result{}, err
@@ -118,7 +117,7 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		workers.Environment[memoryMetricsEnv] = "1"
 	}
 	installer := lifecycle.NativeInstallAdapter{
-		Strategy: lifecycle.KubernetesInstallStrategy{Installer: install.Installer{Client: client}},
+		Strategy: lifecycle.KubernetesInstallStrategy{Installer: install.Installer{Client: client}, Renderers: renderers.Catalog()},
 		Config:   config.Install, AcceptedRepository: config.ApplicationRoot, Prepared: true,
 	}
 	var healthProbe deployment.HealthProbe = deployment.AcceptedDetectorProbe{Replay: config.Install.Replay, MetricsURL: config.Install.MetricsURL}
@@ -126,21 +125,15 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		healthProbe = deployment.ShellDetectorProbe{Config: runner}
 	}
 	coordinator := lifecycle.Coordinator{
+		// The agent is offered exactly what the deployer can deploy.
+		Renderers: readiness.Renderers, ImageSources: readiness.Images,
 		Broker: repository, Bootstrap: artifacts.BootstrapStore{}, Registry: registry,
 		Workers: workers, Readiness: readiness,
 		Verifier: deployment.IndependentHealthVerifier{
-			AcceptedRoot: config.ApplicationRoot, OperatorRoot: config.OperatorRoot, Readiness: readiness, Probe: healthProbe,
+			AcceptedRoot: config.ApplicationRoot, OperatorRoot: config.OperatorRoot, Readiness: &readiness, Probe: healthProbe,
 		}, Installer: installer,
 	}
 	return coordinator.Run(ctx, config.Lifecycle)
-}
-
-// insecureRegistryHost is the only registry the controller may read over HTTP.
-func insecureRegistryHost(config OperateConfig) string {
-	if config.Install.RegistryInsecure {
-		return config.Install.RegistryHost
-	}
-	return ""
 }
 
 // nodeImages reports the image names the cluster's nodes hold, so the image
@@ -159,4 +152,16 @@ func (n nodeImages) NodeImageNames(ctx context.Context) ([][]string, error) {
 		}
 	}
 	return images, nil
+}
+
+// operateIdentity is the operate Job's trusted build and apply identity; the
+// installer passes the same one to the controller parent for advances.
+func operateIdentity(config OperateConfig) deployIdentity {
+	return deployIdentity{
+		BuildKitImage: config.BuildKitImage, RegistryPushSecret: config.RegistryPushSecret,
+		RegistryHost: config.Install.RegistryHost, RegistryInsecure: config.Install.RegistryInsecure,
+		BuildTimeout:   time.Duration(config.Install.BuildTimeoutSeconds) * time.Second,
+		BuildBudget:    time.Duration(config.Install.BuildBudgetSeconds) * time.Second,
+		RolloutTimeout: time.Duration(config.Install.RolloutTimeoutSeconds) * time.Second,
+	}
 }

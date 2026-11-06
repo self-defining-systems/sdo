@@ -26,6 +26,8 @@ func Rules() Config {
 		// What an implementation subpackage may import from this module besides
 		// its own family interface package and support package.
 		ImplMayImport: []string{module + "/contracts", module + "/sdk"},
+		// The explicit registry of plugin config types. Add a type here when a
+		// plugin family gains a config message; no name pattern is inferred.
 		ConfigTypes: []ConfigType{
 			{
 				Name:     "RawManifestStrategy",
@@ -43,6 +45,16 @@ func Rules() Config {
 				OwnerPkg: module + "/render/kustomize",
 			},
 			{
+				Name:     "HelmRenderConfig",
+				Import:   module + "/contracts/gen/sdodev/contracts/v1alpha1",
+				OwnerPkg: module + "/render/helm",
+			},
+			{
+				Name:     "GitPollConfig",
+				Import:   module + "/contracts/gen/sdodev/contracts/v1alpha1",
+				OwnerPkg: module + "/upstream/gitpoll",
+			},
+			{
 				Name:     "BuildKitImageConfig",
 				Import:   module + "/contracts/gen/sdodev/contracts/v1alpha1",
 				OwnerPkg: module + "/imagesrc/buildkit",
@@ -52,11 +64,6 @@ func Rules() Config {
 				Import:   module + "/contracts/gen/sdodev/contracts/v1alpha1",
 				OwnerPkg: module + "/imagesrc/prebuilt",
 			},
-		},
-		ConfigTypeSource: ConfigTypeSource{
-			Dir:    "contracts/gen/sdodev/contracts/v1alpha1",
-			// "Strategy" goes with RawManifestStrategy in S3-15.
-			Suffixes: []string{"Strategy", "RenderConfig", "ImageConfig"},
 		},
 		RatchetTokens: []string{"ManifestPaths", "manifest_paths"},
 		// Generated files cannot carry directives; only the serial proto PRs

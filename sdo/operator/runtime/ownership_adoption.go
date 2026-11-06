@@ -17,7 +17,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"sdo.dev/operator/deployment"
+	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -52,12 +52,20 @@ func (c *Controller) recordAdoptionError(now time.Time, err error) {
 	if status.SourceCommit != c.config.SourceCommit {
 		status = OwnershipAdoptionStatus{SourceCommit: c.config.SourceCommit, AcceptedObjects: status.AcceptedObjects}
 	}
-	if errors.Is(err, deployment.ErrManifestSelectionUnavailable) {
+	switch {
+	case errors.Is(err, rendered.ErrSourceUnconfigured):
 		status.SkippedReason = err.Error()
 		status.LastError = ""
 		status.RetryAt = time.Time{}
 		c.adoptionNeeded = false
-	} else {
+	case errors.Is(err, rendered.ErrSourceInvalid) && !errors.Is(err, rendered.ErrSourceUnavailable):
+		// Permanent for this source commit, but visible: no retry until the
+		// commit changes.
+		status.SkippedReason = ""
+		status.LastError = err.Error()
+		status.RetryAt = time.Time{}
+		c.adoptionNeeded = false
+	default:
 		status.LastError = err.Error()
 		status.Failures++
 		delay := 2 * time.Second

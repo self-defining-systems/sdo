@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"sdo.dev/operator/sdk/metrics"
 )
 
 // Resolution errors. Callers match with errors.Is; the concrete error is a
@@ -184,4 +186,40 @@ func (r *Resolver) Query(ctx context.Context, q Query, at time.Time) (Result, er
 		return Result{}, fmt.Errorf("telemetry source %q returned an invalid result: %w", s.ID, err)
 	}
 	return res, nil
+}
+
+// AlertSources returns the ids of the bound sources that advertise CapAlerts
+// and serve metrics, sorted.
+func (r *Resolver) AlertSources() []string {
+	var ids []string
+	for _, s := range r.sources {
+		if s.Serves(KindMetrics) && s.Has(CapAlerts) {
+			ids = append(ids, s.ID)
+		}
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// Alerts reads the firing and pending alerts of one bound source and tags each
+// with the source's id. The source must advertise CapAlerts and its client
+// must implement AlertReader.
+func (r *Resolver) Alerts(ctx context.Context, sourceID string) ([]metrics.Alert, error) {
+	i, err := r.index(sourceID, KindMetrics)
+	if err != nil {
+		return nil, err
+	}
+	s := r.sources[i]
+	reader, ok := r.clients[i].(AlertReader)
+	if !s.Has(CapAlerts) || !ok {
+		return nil, fmt.Errorf("telemetry source %q does not serve alerts", s.ID)
+	}
+	alerts, err := reader.Alerts(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("telemetry source %q unavailable: %w", s.ID, err)
+	}
+	for j := range alerts {
+		alerts[j].Source = s.ID
+	}
+	return alerts, nil
 }

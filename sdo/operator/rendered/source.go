@@ -1,21 +1,18 @@
-//archcheck:ratchet R5 count=5 until=S3-10d
 package rendered
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"path"
 	"regexp"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"google.golang.org/protobuf/proto"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"sdo.dev/operator/rendered/internal/renderio"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/render"
+	"sdo.dev/operator/renderenv"
 	"sdo.dev/operator/sdk"
 )
 
@@ -24,15 +21,24 @@ var ErrAcceptedManifestAbsent = errors.New("object is absent from accepted manif
 
 var gitRevision = regexp.MustCompile(`^[a-fA-F0-9]{40,64}$`)
 
-// Source reads accepted manifests from Git and renders them as source writes
-// them: images keep the exact string the manifest declares, tag or digest.
+// Source reads accepted desired state from Git: the accepted commit's tree,
+// rendered by the configured DeploymentSource through the renderer catalog
+// with Secret values omitted. Images keep the exact string the renderer
+// emits, tag or digest. Deploy and reads share the one Desired function.
 type Source struct {
-	Repository    string
-	ManifestPaths []string
+	Repository string
+	// Deployment names the renderer and its config. Nil reads fail with
+	// SourceUnconfigured.
+	Deployment *contracts.DeploymentSource
+	// Catalog holds the renderers Deployment may name.
+	Catalog *render.Catalog
+	// Environment is the recorded install-time render environment (nil is
+	// unknown). Each read sets its namespace and forces SecretsOmit.
+	Environment *contracts.RenderEnvironment
 	// Git, when set, replaces the git process edge (`git -C root args...`
 	// standard output). A simulation supplies the accepted tree without
 	// spawning a process.
-	Git   func(ctx context.Context, root string, args ...string) ([]byte, error)
+	Git   GitFunc
 	cache *manifestCache
 }
 
@@ -40,37 +46,21 @@ type Source struct {
 // belongs to this source instance; it never caches live API reads or failures.
 // Configure the source and its Git reader before creating the cached instance.
 func (s Source) WithCache() Source {
-	s.ManifestPaths = append([]string(nil), s.ManifestPaths...)
+	if s.Deployment != nil {
+		s.Deployment = proto.Clone(s.Deployment).(*contracts.DeploymentSource)
+	}
 	s.cache = &manifestCache{}
 	return s
 }
 
 // AcceptedManifests returns rendered, namespace-scoped source objects that
-// the drift change feed can own. Render failures return the available objects
-// together with an explicit error; callers must not treat a partial set as complete.
+// the drift change feed can own.
 func (s Source) AcceptedManifests(ctx context.Context, revision, namespace string) ([]*unstructured.Unstructured, error) {
 	raw, err := s.rawManifests(ctx, revision, namespace, false)
 	if err != nil {
 		return nil, err
 	}
-	objects := make([]*unstructured.Unstructured, 0, len(raw))
-	var failures []error
-	for _, object := range raw {
-		rendered, err := s.render(object)
-		if err != nil {
-			failures = append(failures, err)
-			continue
-		}
-		objects = append(objects, rendered)
-	}
-	return objects, errors.Join(failures...)
-}
-
-func (s Source) git(ctx context.Context, args ...string) ([]byte, error) {
-	if s.Git != nil {
-		return s.Git(ctx, s.Repository, args...)
-	}
-	return renderio.Git(ctx, s.Repository, args...)
+	return copyManifests(raw), nil
 }
 
 func (s Source) RawManifests(ctx context.Context, revision, namespace string) ([]*unstructured.Unstructured, error) {
@@ -81,133 +71,102 @@ func (s Source) RawManifests(ctx context.Context, revision, namespace string) ([
 // rawManifests is immutable inside this package. Public reads copy the objects
 // they return so no caller can change another reader's accepted source.
 func (s Source) rawManifests(ctx context.Context, revision, namespace string, qualified bool) ([]*unstructured.Unstructured, error) {
+	var objects []DesiredObject
+	var err error
 	if s.cache != nil {
-		return s.cache.read(ctx, s, revision, namespace, qualified)
+		objects, err = s.cache.read(ctx, s, revision, namespace)
+	} else {
+		objects, err = s.loadManifests(ctx, revision, namespace)
 	}
-	return s.loadManifests(ctx, revision, namespace, qualified)
+	if err != nil {
+		return nil, classifySource(err)
+	}
+	return readView(objects, qualified), nil
 }
 
-func (s Source) loadManifests(ctx context.Context, revision, namespace string, qualified bool) ([]*unstructured.Unstructured, error) {
-	if s.Repository == "" || !gitRevision.MatchString(revision) || namespace == "" {
-		return nil, fmt.Errorf("accepted repository, full commit revision, and namespace are required")
-	}
-	files, err := s.git(ctx, "ls-tree", "-r", "-z", revision)
-	if err != nil {
-		return nil, fmt.Errorf("list manifests at %s: %w", revision, err)
-	}
-	available := []string{}
-	regular := map[string]bool{}
-	for _, entry := range strings.Split(string(files), "\x00") {
-		header, name, ok := strings.Cut(entry, "\t")
-		if !ok {
+// readView projects the desired set for reads: unqualified reads see only
+// the application namespace and cluster-scoped objects; qualified reads see
+// every object (D5).
+func readView(objects []DesiredObject, qualified bool) []*unstructured.Unstructured {
+	out := make([]*unstructured.Unstructured, 0, len(objects))
+	for _, object := range objects {
+		if object.Foreign && !qualified {
 			continue
 		}
-		available = append(available, name)
-		regular[name] = strings.HasPrefix(header, "100644 ") || strings.HasPrefix(header, "100755 ")
+		out = append(out, object.Object)
 	}
-	paths, err := SelectManifestPaths(available, s.ManifestPaths)
+	return out
+}
+
+func (s Source) env(namespace string) render.Env {
+	return renderenv.For(s.Environment, namespace, render.SecretsOmit)
+}
+
+// loadManifests renders revision^{tree} and keeps the non-ephemeral objects,
+// with Secrets reduced to identity (defense in depth beyond SecretsOmit).
+func (s Source) loadManifests(ctx context.Context, revision, namespace string) ([]DesiredObject, error) {
+	set, err := s.desired(ctx, revision, namespace)
 	if err != nil {
 		return nil, err
 	}
-	objects := make([]*unstructured.Unstructured, 0)
-	seen := map[sdk.ObjectRef]bool{}
-	totalBytes := 0
-	read := func(ctx context.Context, name string) ([]byte, error) {
-		if !regular[name] {
-			return nil, fmt.Errorf("accepted input %s is not a tracked regular file", name)
-		}
-		data, err := s.git(ctx, "show", revision+":"+name)
-		if err != nil || len(data) > 2<<20 {
-			return nil, fmt.Errorf("accepted input %s unavailable or exceeds 2 MiB", name)
-		}
-		totalBytes += len(data)
-		if totalBytes > 16<<20 {
-			return nil, fmt.Errorf("accepted render inputs exceed 16 MiB")
-		}
-		return data, nil
-	}
-	// A selected directory containing a kustomization is one deployment unit,
-	// rather than every YAML file underneath it (which includes generator inputs).
-	roots := map[string]string{}
-	for _, file := range paths {
-		if path.Base(file) == "kustomization.yaml" || path.Base(file) == "kustomization.yml" || path.Base(file) == "Kustomization" {
-			if roots[path.Dir(file)] != "" {
-				return nil, fmt.Errorf("multiple accepted kustomizations in %s", path.Dir(file))
-			}
-			roots[path.Dir(file)] = file
-		}
-	}
-	for _, file := range paths {
-		covered := false
-		for dir, root := range roots {
-			if file != root && (dir == "." || strings.HasPrefix(file, dir+"/")) {
-				covered = true
-				break
-			}
-		}
-		if covered {
-			continue
-		}
-		path := file
-		data, err := read(ctx, path)
-		if isKustomization(path) {
-			data, err = renderKustomization(ctx, path, read)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("read accepted manifest %s: %w", path, err)
-		}
-		if len(data) > 2<<20 {
-			return nil, fmt.Errorf("accepted manifest %s exceeds 2 MiB", path)
-		}
-		decoder := yaml.NewDecoder(bytes.NewReader(data))
-		for {
-			var document map[string]any
-			if err := decoder.Decode(&document); err == io.EOF {
-				break
-			} else if err != nil {
-				return nil, fmt.Errorf("decode accepted manifest %s failed", path)
-			}
-			// Unstructured values must use JSON numeric types before DeepCopy or
-			// Kubernetes conversion; YAML's native int values are not supported.
-			encoded, err := json.Marshal(document)
-			if err != nil {
-				return nil, err
-			}
-			object := &unstructured.Unstructured{}
-			if err := json.Unmarshal(encoded, &object.Object); err != nil {
-				return nil, err
-			}
-			if object.GetAPIVersion() == "" || object.GetKind() == "" || object.GetName() == "" {
-				continue
-			}
-			objectNamespace := namespace
-			if qualified {
-				objectNamespace = object.GetNamespace()
-				if (sdk.ObservationTarget{Kind: object.GetKind()}).Cluster() {
-					objectNamespace = ""
-				} else if objectNamespace == "" {
-					objectNamespace = namespace
-				}
-			} else if object.GetNamespace() != "" && object.GetNamespace() != namespace {
-				continue
-			}
-			if ClusterScopedKind(object.GetKind()) {
-				objectNamespace = ""
-			}
-			ref := sdk.ObjectRef{APIVersion: object.GetAPIVersion(), Kind: object.GetKind(), Namespace: objectNamespace, Name: object.GetName()}
-
-			if seen[ref] {
-				return nil, fmt.Errorf("%w: duplicate accepted manifest for %s/%s", ErrManifestSelectionUnavailable, ref.Kind, ref.Name)
-			}
-			seen[ref] = true
-			if strings.EqualFold(object.GetKind(), "Secret") {
-				object.Object = secretReference(object.Object)
-			}
-			object.SetNamespace(objectNamespace)
-			objects = append(objects, object)
+	objects := set.Objects()
+	for i, object := range objects {
+		if strings.EqualFold(object.Ref.Kind, "Secret") {
+			objects[i].Object = &unstructured.Unstructured{Object: render.SecretIdentity(object.Object.Object)}
 		}
 	}
 	return objects, nil
+}
+
+// ShapeDigest returns the desired-state shape digest of revision (see
+// DesiredSet.ShapeDigest). Health refresh compares it between the last
+// judged revision and the accepted one. It reads Git, never the cache.
+func (s Source) ShapeDigest(ctx context.Context, revision, namespace string) (string, error) {
+	set, err := s.desired(ctx, revision, namespace)
+	if err != nil {
+		return "", classifySource(err)
+	}
+	return set.ShapeDigest, nil
+}
+
+// ShapeOf adapts the source to the injected function memory.AcceptedHealthRevision
+// takes: the shape of repository at revision, in namespace. A nil source
+// returns nil so callers fall back to source bytes (transitional, S3-11c).
+func (s Source) ShapeOf(namespace string) func(ctx context.Context, repository, revision string) (string, error) {
+	if s.Deployment == nil {
+		return nil
+	}
+	return func(ctx context.Context, repository, revision string) (string, error) {
+		s.Repository, s.cache = repository, nil
+		return s.ShapeDigest(ctx, revision, namespace)
+	}
+}
+
+func (s Source) desired(ctx context.Context, revision, namespace string) (DesiredSet, error) {
+	if s.Deployment == nil {
+		return DesiredSet{}, &SourceError{Kind: SourceUnconfigured, Err: errors.New("no deployment source is configured")}
+	}
+	if s.Repository == "" || !gitRevision.MatchString(revision) || namespace == "" {
+		return DesiredSet{}, sourceErrorf(SourceInvalid, "accepted repository, full commit revision, and namespace are required")
+	}
+	store := ObjectStore{Dir: s.Repository, Git: s.Git}
+	tree, err := store.git(ctx, "rev-parse", "--verify", "--quiet", revision+"^{tree}")
+	if err != nil {
+		return DesiredSet{}, sourceErrorf(SourceUnavailable, "resolve the tree of %s: %w", revision, err)
+	}
+	effective, err := Effective(ctx, store, BaseTree(strings.TrimSpace(string(tree))))
+	if err != nil {
+		return DesiredSet{}, err
+	}
+	fsys, err := GitTreeFS(ctx, store, effective)
+	if err != nil {
+		return DesiredSet{}, err
+	}
+	deployment, err := legacyReadSource(fsys, s.Deployment)
+	if err != nil {
+		return DesiredSet{}, err
+	}
+	return Desired(ctx, fsys, s.env(namespace), s.Catalog, deployment)
 }
 
 func (s Source) AcceptedManifest(ctx context.Context, revision string, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
@@ -221,7 +180,7 @@ func (s Source) acceptedObject(ctx context.Context, revision, namespace string, 
 	}
 	for _, object := range raw {
 		if objectRef(object) == ref {
-			return s.render(object)
+			return object.DeepCopy(), nil
 		}
 	}
 	return nil, fmt.Errorf("%w: %s/%s", ErrAcceptedManifestAbsent, ref.Kind, ref.Name)
@@ -238,16 +197,6 @@ func (s Source) Revision(ctx context.Context, ref sdk.ObjectRef, revision string
 		}
 	}
 	return nil, fmt.Errorf("%w: %s/%s/%s at %s", ErrAcceptedManifestAbsent, ref.Kind, ref.Namespace, ref.Name, revision)
-}
-
-// render applies the namespace default and returns a copy; images are kept
-// exactly as source declares them.
-func (s Source) render(object *unstructured.Unstructured) (*unstructured.Unstructured, error) {
-	document := object.DeepCopy().Object
-	if _, _, err := RenderManifest(document, object.GetNamespace(), "", nil); err != nil {
-		return nil, fmt.Errorf("render accepted manifest %s/%s: %w", object.GetKind(), object.GetName(), err)
-	}
-	return &unstructured.Unstructured{Object: document}, nil
 }
 
 func objectRef(o *unstructured.Unstructured) sdk.ObjectRef {
@@ -281,9 +230,4 @@ func (s Source) AcceptedScopedManifest(ctx context.Context, revision, applicatio
 // observations still use the separately restricted AcceptedScopedManifest.
 func (s Source) AcceptedApplicationManifest(ctx context.Context, revision, namespace string, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
 	return s.acceptedObject(ctx, revision, namespace, ref)
-}
-
-func isKustomization(name string) bool {
-	base := path.Base(name)
-	return base == "kustomization.yaml" || base == "kustomization.yml" || base == "Kustomization"
 }

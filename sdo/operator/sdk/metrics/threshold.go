@@ -282,7 +282,7 @@ func (d thresholdDetector) finding(namespace string, rule ThresholdRule, result 
 	}
 	evidence := fmt.Sprintf("query %s: %s evaluated at %s returned series %s with value %s%s, which violates the threshold (%s).",
 		rule.Query.ID, rule.Query.Expr, observed, LabelString(series.Labels), FormatValue(value), reduced, comparison)
-	return sdk.Finding{
+	finding := sdk.Finding{
 		DetectorID:       d.spec.ID,
 		RuleID:           ruleID,
 		Status:           sdk.FindingActive,
@@ -305,6 +305,10 @@ func (d thresholdDetector) finding(namespace string, rule ThresholdRule, result 
 			"labels":      copyLabels(series.Labels),
 		},
 	}
+	if rule.Query.Source != "" {
+		finding.Metadata["source"] = rule.Query.Source
+	}
+	return finding
 }
 
 func copyLabels(labels map[string]string) map[string]string {

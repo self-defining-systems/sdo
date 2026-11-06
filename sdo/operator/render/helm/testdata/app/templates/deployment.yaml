@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "app.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    kube: {{ .Capabilities.KubeVersion.Version | quote }}
+spec:
+  replicas: {{ .Values.replicas }}
+  selector: {matchLabels: {app: web}}
+  template:
+    metadata: {labels: {app: web}}
+    spec:
+      containers:
+      - name: web
+        image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+        env:
+        {{- range $k, $v := .Values.env }}
+        - {name: {{ $k }}, value: {{ $v | quote }}}
+        {{- end }}

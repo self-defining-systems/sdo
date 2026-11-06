@@ -29,6 +29,7 @@ from benchmarks.sregym.adapter.cluster_resources import (
     prepare_benchmark_resources,
     wait_submission_bridge,
 )
+from benchmarks.sregym.adapter.deployment_source import raw_source, source_from_config
 from benchmarks.sregym.adapter.fault_gate import (
     AWAITING_FAULT_INJECTION,
     FaultGateError,
@@ -310,11 +311,14 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--kind-cluster-name", default=config.get("kind_cluster_name"))
     parser.add_argument("--max-deployment-attempts", type=int, default=int(config.get("max_deployment_attempts", 3)))
     parser.add_argument(
-        "--deployed-manifest-path",
-        dest="deployed_manifest_paths",
+        "--deployment-source-paths",
+        dest="deployment_source_paths",
         action="append",
         default=None,
-        help="explicit deployed manifest file/directory; repeat to select multiple paths (replaces configured list)",
+        help=(
+            "raw deployment source manifest file/directory; repeat to select multiple paths "
+            "(replaces the configured deployment_source)"
+        ),
     )
 
     parser.add_argument(
@@ -371,12 +375,19 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--enable-summary", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-inject-summary", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
-    paths = args.deployed_manifest_paths
-    if paths is None:
-        paths = config.get("deployed_manifest_paths", [])
-    if not isinstance(paths, list) or any(not isinstance(path, str) or not path.strip() for path in paths):
-        raise ValueError("deployed_manifest_paths must be a list of non-empty strings")
-    args.deployed_manifest_paths = tuple(paths)
+    if "deployed_manifest_paths" in config:
+        raise ValueError(
+            "deployed_manifest_paths is no longer accepted; configure [agent.sdo_codex.deployment_source] "
+            '(renderer = "raw" with paths, or "kustomize" with path) and reinstall persistent controllers'
+        )
+    if args.deployment_source_paths is not None:
+        if any(not path.strip() for path in args.deployment_source_paths):
+            raise ValueError("deployment_source_paths must be non-empty strings")
+        args.deployment_source = raw_source(args.deployment_source_paths)
+    elif "deployment_source" in config:
+        args.deployment_source = source_from_config(config["deployment_source"])
+    else:
+        args.deployment_source = None
 
     if type(args.permissive_responder) is not bool:
         raise ValueError("permissive_responder must be a boolean")
@@ -724,7 +735,7 @@ def _launch_native_lifecycle(
         late_findings=args.late_findings,
         reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
-        deployed_manifest_paths=args.deployed_manifest_paths,
+        deployment_source=args.deployment_source,
         permissive_responder=args.permissive_responder,
         responder_namespaces=args.responder_namespaces,
         healthy_baseline=args.healthy_baseline,
@@ -781,6 +792,7 @@ def _launch_native_lifecycle(
         registry_insecure=cluster.registry_target.insecure,
         max_attempts=args.max_deployment_attempts,
         agent_registrations=Path(args.agent_registrations).resolve() if args.agent_registrations else None,
+        deployment_plan=getattr(args, "deployment_plan", None),
     )
     return launch_host(host)
 
@@ -794,6 +806,7 @@ def launch_native_lifecycle(config: RuntimeConfig, health_objective: str, api_ba
         buildkit_image=config.buildkit_image,
         max_deployment_attempts=config.max_deployment_attempts,
         agent_registrations=config.agent_registrations,
+        deployment_plan=config.deployment_plan,
     )
     return _launch_native_lifecycle(
         args,
@@ -829,7 +842,7 @@ def _native_install_for_run(
         late_findings=args.late_findings,
         reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
-        deployed_manifest_paths=args.deployed_manifest_paths,
+        deployment_source=args.deployment_source,
         permissive_responder=args.permissive_responder,
         responder_namespaces=args.responder_namespaces,
         max_response_loops=args.max_response_loops,
@@ -1028,7 +1041,7 @@ def _run_persistent(args: argparse.Namespace, api_base: str, started: float) -> 
         agent_provider=args.provider,
         reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
-        deployed_manifest_paths=args.deployed_manifest_paths,
+        deployment_source=args.deployment_source,
         permissive_responder=args.permissive_responder,
         responder_namespaces=args.responder_namespaces,
         late_findings=args.late_findings,

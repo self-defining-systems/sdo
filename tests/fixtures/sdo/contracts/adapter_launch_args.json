@@ -41,8 +41,8 @@
     "--reflection-guidance",
     "generalize-spec",
     "--force-reflection",
-    "--deployed-manifest-path",
-    "kubernetes",
+    "--deployment-source",
+    "{\"config\":{\"@type\":\"type.googleapis.com/sdodev.contracts.v1alpha1.RawRenderConfig\",\"paths\":[\"kubernetes\"]},\"renderer_id\":\"raw\"}",
     "--max-response-loops",
     "3",
     "--response-timeout",
@@ -201,6 +201,8 @@
     "registry:5000",
     "--registry-insecure",
     "--agent-registrations",
-    "/fixture/registrations.json"
+    "/fixture/registrations.json",
+    "--deployment-plan",
+    "{\"expected_workload_ids\":[\"Deployment/hotel/web\"],\"images\":[{\"config\":{\"@type\":\"type.googleapis.com/sdodev.contracts.v1alpha1.BuildKitImageConfig\",\"context_path\":\".\",\"dockerfile_path\":\"Dockerfile\"},\"image\":\"app:v1\",\"source_id\":\"buildkit\"}],\"source\":{\"config\":{\"@type\":\"type.googleapis.com/sdodev.contracts.v1alpha1.HelmRenderConfig\",\"chart_path\":\"chart\",\"value_files\":[]},\"renderer_id\":\"helm\"}}"
   ]
 }

@@ -15,6 +15,16 @@ if TYPE_CHECKING:
     from benchmarks.sregym.adapter.budgets import Deadline, DeadlineExhaustedError, SdoBounds, WaitKind, wait_for
     from benchmarks.sregym.adapter.cluster_resources import kubectl
     from benchmarks.sregym.adapter.context_preflight import run_context_preflight as run_context_preflight
+    from benchmarks.sregym.adapter.deployment_source import (
+        buildkit_image,
+        deployment_plan,
+        helm_source,
+        kustomize_source,
+        plan_flag_value,
+        raw_source,
+        source_flag_value,
+        source_from_config,
+    )
     from benchmarks.sregym.adapter.driver import (
         DeployedLifecycle,
         DeployedLifecycleContext,
@@ -43,6 +53,7 @@ if TYPE_CHECKING:
     from benchmarks.sregym.adapter.image_entrypoints import (
         BENCHMARK_IMAGE_ENTRY_POINTS,
         assert_image_entrypoints,
+        assert_image_executables,
         image_entrypoint_script,
     )
     from benchmarks.sregym.adapter.image_retention import ImageRetentionError, retain_lane_images
@@ -117,6 +128,7 @@ _EXPORTS: dict[str, str] = {
     "run_context_preflight": "context_preflight",
     "BENCHMARK_IMAGE_ENTRY_POINTS": "image_entrypoints",
     "assert_image_entrypoints": "image_entrypoints",
+    "assert_image_executables": "image_entrypoints",
     "image_entrypoint_script": "image_entrypoints",
     "NativeInstallConfig": "native_operator",
     "RuntimeEvidenceTarget": "native_operator",
@@ -203,11 +215,27 @@ _EXPORTS: dict[str, str] = {
     "run_persistent_stage": "persistent",
     "teardown": "persistent",
     "RuntimeConfig": "runtime",
+    "buildkit_image": "deployment_source",
+    "deployment_plan": "deployment_source",
+    "plan_flag_value": "deployment_source",
+    "helm_source": "deployment_source",
+    "kustomize_source": "deployment_source",
+    "raw_source": "deployment_source",
+    "source_flag_value": "deployment_source",
+    "source_from_config": "deployment_source",
     "HealthyBaselineCaptureOps": "healthy_baseline",
     "kubectl_capture_ops": "healthy_baseline",
 }
 
 __all__ = [
+    "buildkit_image",
+    "deployment_plan",
+    "plan_flag_value",
+    "helm_source",
+    "kustomize_source",
+    "raw_source",
+    "source_flag_value",
+    "source_from_config",
     "allocated_paths",
     "declared_manifest",
     "replace_allocated",
@@ -221,6 +249,7 @@ __all__ = [
     "run_context_preflight",
     "BENCHMARK_IMAGE_ENTRY_POINTS",
     "assert_image_entrypoints",
+    "assert_image_executables",
     "image_entrypoint_script",
     "NativeInstallConfig",
     "ImageRetentionError",

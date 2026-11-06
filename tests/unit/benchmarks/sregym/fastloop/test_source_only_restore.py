@@ -75,6 +75,7 @@ def test_native_deploy_consumes_the_same_accepted_render(
         ],
         namespace=namespace,
         path="kubernetes/astronomy-shop.yaml" if module == "astronomy_shop" else "kubernetes/app.yaml",
+        kustomize_root=module == "hotel_reservation",
     )
     # Dirty working bytes must not affect either deployment or restoration.
     next((tmp_path / "repo/kubernetes").glob("*.yaml")).write_text("not accepted")

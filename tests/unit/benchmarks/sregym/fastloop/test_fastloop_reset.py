@@ -122,7 +122,10 @@ def test_reset_restores_application_and_clears_controller_on_existing_environmen
                 "apiVersion": "apps/v1",
                 "kind": "Deployment",
                 "metadata": {"name": "app", "namespace": "hotel"},
-                "spec": {"replicas": 1},
+                "spec": {
+                    "replicas": 1,
+                    "template": {"spec": {"containers": [{"name": "app", "image": "example.invalid/app:1"}]}},
+                },
             }
         ],
     )
@@ -240,7 +243,10 @@ def test_failed_learning_keeps_program_for_third_incident(tmp_path: Path, monkey
                 "apiVersion": "apps/v1",
                 "kind": "Deployment",
                 "metadata": {"name": "app", "namespace": "hotel"},
-                "spec": {"replicas": 1},
+                "spec": {
+                    "replicas": 1,
+                    "template": {"spec": {"containers": [{"name": "app", "image": "example.invalid/app:1"}]}},
+                },
             }
         ],
     )
@@ -582,7 +588,12 @@ def test_restore_rejects_ambiguous_accepted_source_before_any_application_mutati
     )
     environment.baseline_path.write_text("{}")
     save_application_baseline(environment.baseline_path, (ApplicationBaseline("hotel", FakeCluster().objects),))
-    app = {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "app", "namespace": "hotel"}}
+    app = {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {"name": "app", "namespace": "hotel"},
+        "spec": {"template": {"spec": {"containers": [{"name": "app", "image": "example.invalid/app:1"}]}}},
+    }
     commit_accepted_source(environment.workspace, [app, app])
     worker = FakeWorker()
     with pytest.raises(ValueError, match="duplicate accepted manifest"):
@@ -616,7 +627,10 @@ def test_recovery_never_mutates_while_native_reflection_is_pending(tmp_path: Pat
                 "apiVersion": "apps/v1",
                 "kind": "Deployment",
                 "metadata": {"name": "app", "namespace": "hotel"},
-                "spec": {"replicas": 1},
+                "spec": {
+                    "replicas": 1,
+                    "template": {"spec": {"containers": [{"name": "app", "image": "example.invalid/app:1"}]}},
+                },
             }
         ],
     )
@@ -683,7 +697,10 @@ def test_restore_receipt_names_only_accepted_objects_and_never_recreates_capture
         "apiVersion": "apps/v1",
         "kind": "Deployment",
         "metadata": {"name": "app", "namespace": "hotel"},
-        "spec": {"replicas": 1},
+        "spec": {
+            "replicas": 1,
+            "template": {"spec": {"containers": [{"name": "app", "image": "example.invalid/app:1"}]}},
+        },
     }
     environment.baseline_path.write_text("{}")
     save_application_baseline(environment.baseline_path, (ApplicationBaseline("hotel", [app, alias, extra]),))

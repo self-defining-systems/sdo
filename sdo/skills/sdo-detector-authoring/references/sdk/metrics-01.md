@@ -54,6 +54,9 @@ const ThresholdRulePrefix = "metric-threshold."
 
 VARIABLES
 
+var SourceIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,30}$`)
+    SourceIDPattern is the grammar of a telemetry source name.
+
 var Watch = sdk.WatchKind{APIVersion: APIVersion, Kind: "Metrics"}
     Watch is the pseudo-kind metrics detectors declare. The controller runtime
     never emits it: metric results are fetched when a detector is due, so a
@@ -109,6 +112,8 @@ func ValidateQueries(queries []Query) error
 TYPES
 
 type Alert struct {
+	// Source is the telemetry source that reported the alert; the runtime sets it.
+	Source      string            `json:"source,omitempty"`
 	Labels      map[string]string `json:"labels"`
 	Annotations map[string]string `json:"annotations,omitempty"`
 	// State is "firing" or "pending".
@@ -116,7 +121,8 @@ type Alert struct {
 	ActiveAt time.Time `json:"activeAt,omitempty"`
 	Value    string    `json:"value,omitempty"`
 }
-    Alert is one alert as the Prometheus alerts API reports it.
+    Alert is one alert in the normalized model, as an alert-capable telemetry
+    source reports it (the Prometheus alerts API shape).
 
 func (a Alert) Name() string
     Name is the alert's rule name.
@@ -173,14 +179,20 @@ type LabelMapping struct {
     An empty field takes its default.
 
 type Query struct {
-	ID   string `json:"id"`
+	ID string `json:"id"`
+	// Source names the telemetry source that answers the query. Empty selects
+	// the default metrics source, so detectors written before sources existed
+	// keep working.
+	Source string `json:"source,omitempty"`
+	// Expr is the query text in the bound source's dialect (PromQL for a
+	// Prometheus source). The runtime passes it through unparsed.
 	Expr string `json:"expr"`
 	// Range, when positive, makes the query a range query.
 	Range time.Duration `json:"range,omitempty"`
 	// Step is the range query resolution; zero derives it from Range.
 	Step time.Duration `json:"step,omitempty"`
 }
-    Query is one PromQL query a detector consumes. Without Range it is an
+    Query is one metrics query a detector consumes. Without Range it is an
     instant query evaluated at the cycle's timestamp; with Range it is a range
     query over the Range ending at that timestamp.
 
@@ -198,7 +210,7 @@ func (q Query) Validate() error
 type QuerySource interface {
 	QueryMetrics(Query) Result
 }
-    QuerySource evaluates a typed PromQL query through the runtime. Results
+    QuerySource evaluates a typed metrics query through the runtime. Results
     (including failures) are frozen for the evaluation cycle.
 
 type Reduction string
@@ -285,12 +297,4 @@ type UsageUnavailableError struct {
 	Reason string `json:"reason"`
 }
     UsageUnavailableError means metrics could not be observed, never zero usage.
-
-func (e *UsageUnavailableError) Error() string
-
-type Validator interface {
-	Validate() error
-}
-    Validator is implemented by metrics detectors that can check their own
-    configuration, so a mistake surfaces in tests rather than at runtime.
 ```

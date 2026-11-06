@@ -18,8 +18,9 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
-	"sdo.dev/operator/deployment"
+	"sdo.dev/operator/imagesrc/buildkit"
 	"sdo.dev/operator/install"
+	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/worker_registry"
 )
@@ -50,6 +51,9 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	objective := flags.String("health-objective", "", "human health objective")
 	flags.StringVar(objective, "goal", "", "human health objective")
 	goalFile := flags.String("goal-file", "", "file containing human health objective")
+	sourceKind := flags.String("source-kind", "", "upstream watcher kind to follow (published as .sdo/goal/sources.yaml)")
+	sourceConfig := flags.String("source-config", "", "JSON config of the followed upstream")
+	deploymentPlan := flags.String("deployment-plan", "", "provided DeploymentPlan as ProtoJSON (source, image sources, expected workload IDs): the deployer agent is skipped and the plan is deployed as given")
 	operationID := flags.String("operation-id", "", "durable operation identity")
 	maxAttempts := flags.Int("max-attempts", 3, "maximum deployment attempts")
 	controllerImage := flags.String("controller-image", "", "compiled operator image")
@@ -151,7 +155,7 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 		return HostConfig{}, errors.New("host launch requires digest-pinned BuildKit image and separate registry push Secret")
 	}
 	if *registryHost != "" {
-		if err := deployment.ValidateRegistryHost(*registryHost); err != nil {
+		if err := buildkit.ValidateRegistryHost(*registryHost); err != nil {
 			return HostConfig{}, fmt.Errorf("invalid trusted registry host: %w", err)
 		}
 	}
@@ -176,7 +180,23 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	if err != nil {
 		return HostConfig{}, err
 	}
+	sources, err := parseSourceFlags(*sourceKind, *sourceConfig)
+	if err != nil {
+		return HostConfig{}, err
+	}
+	if len(sources) > 0 && strings.TrimSpace(*objective) == "" {
+		return HostConfig{}, errors.New("a followed source is published with the human goal and requires a health objective")
+	}
+	providedPlan, err := rendered.ParseDeploymentPlan(*deploymentPlan)
+	if err != nil {
+		return HostConfig{}, err
+	}
+	compactPlan, err := rendered.FormatDeploymentPlan(providedPlan)
+	if err != nil {
+		return HostConfig{}, err
+	}
 	config := install.Config{
+		SourceKind: *sourceKind, SourceConfig: *sourceConfig, DeploymentPlan: compactPlan,
 		CodePath:           selectedCodePath,
 		ResponderMenu:      menuEnabled,
 		ObservationCeiling: ceiling,

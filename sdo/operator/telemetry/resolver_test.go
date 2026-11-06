@@ -173,3 +173,24 @@ func nanValue() float64 {
 	zero := 0.0
 	return zero / zero
 }
+
+func TestResolverAlertsTagsTheSourceAndRequiresTheCapability(t *testing.T) {
+	m := telemetry.KindMetrics
+	withAlerts := bound("prom", true, []telemetry.Capability{telemetry.CapAlerts}, m)
+	withAlerts.Client.(*telemetrytest.Fake).SetAlerts([]metrics.Alert{{Labels: map[string]string{"alertname": "A"}, State: "firing"}})
+	plain := bound("plain", false, nil, m)
+	r, err := telemetry.NewResolver([]telemetry.Bound{withAlerts, plain})
+	if err != nil {
+		t.Fatal(err)
+	}
+	alerts, err := r.Alerts(context.Background(), "prom")
+	if err != nil || len(alerts) != 1 || alerts[0].Source != "prom" {
+		t.Fatalf("alerts = %+v, %v; want one alert tagged with its source", alerts, err)
+	}
+	if _, err := r.Alerts(context.Background(), "plain"); err == nil || !strings.Contains(err.Error(), `"plain"`) {
+		t.Fatalf("source without the alerts capability: %v", err)
+	}
+	if _, err := r.Alerts(context.Background(), "nope"); !errors.Is(err, telemetry.ErrUnbound) {
+		t.Fatalf("unbound source: %v", err)
+	}
+}

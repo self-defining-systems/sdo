@@ -9,7 +9,9 @@
 //	R2 an implementation subpackage imports only its family interface package,
 //	   its support package, stdlib, contracts, sdk and tool libraries.
 //	R3 only wiring packages (and tests) import implementation subpackages.
-//	R4 no type assertion or type switch to a plugin config type outside its owner.
+//	R4 no use of a plugin config type outside its owner: type assertions and
+//	   switches everywhere; composite literals, UnmarshalTo/anypb targets, var
+//	   and parameter types and any other reference outside tests and wiring.
 //	R5 ratchet: ManifestPaths/manifest_paths counts per file may only fall.
 //
 // Known violations live in the violating file as //archcheck: directives (see
@@ -22,7 +24,6 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
-	"os"
 	"path"
 	"path/filepath"
 	"sort"
@@ -49,19 +50,14 @@ type Family struct {
 	SupportDirs []string
 }
 
-// ConfigType is a plugin config type that only its owning package may
-// assert or switch to.
+// ConfigType is a plugin config type that only its owning package may name
+// (assert, switch to, construct, decode into or declare). ConfigTypes is the
+// explicit registry of such types: nothing infers membership from a name, so
+// registering a new plugin config type is a deliberate edit to the rule table.
 type ConfigType struct {
 	Name     string
 	Import   string
 	OwnerPkg string
-}
-
-// ConfigTypeSource lets the checker prove ConfigTypes is complete: every
-// exported type in Dir whose name ends in any of Suffixes must be in the table.
-type ConfigTypeSource struct {
-	Dir      string
-	Suffixes []string
 }
 
 // Allow is a known violation. File is slash-separated, relative to the root.
@@ -82,15 +78,14 @@ type RatchetEntry struct {
 
 // Config is the whole rule table.
 type Config struct {
-	Module           string
-	Families         []Family
-	WiringDirs       []string
-	ExemptDirs       []string
-	ToolPrefixes     []string
-	ImplMayImport    []string
-	ConfigTypes      []ConfigType
-	ConfigTypeSource ConfigTypeSource
-	RatchetTokens    []string
+	Module        string
+	Families      []Family
+	WiringDirs    []string
+	ExemptDirs    []string
+	ToolPrefixes  []string
+	ImplMayImport []string
+	ConfigTypes   []ConfigType
+	RatchetTokens []string
 	// Allow and Ratchet hold entries for files that cannot carry directives
 	// (generated code) and for fixtures; hand-written files use directives.
 	Allow   []Allow
@@ -239,7 +234,6 @@ func Check(root string, cfg Config) ([]Violation, error) {
 		}
 	}
 	out = append(out, cfg.checkRatchet(counts, ratchets)...)
-	out = append(out, cfg.checkConfigTypeCompleteness(root)...)
 	sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
 	return out, nil
 }
@@ -290,7 +284,7 @@ func (c Config) checkFile(fset *token.FileSet, file *ast.File, relFile string, a
 			}
 		}
 	}
-	c.checkAssertions(fset, file, relFile, pkgPath, aliases, add)
+	c.checkAssertions(fset, file, relFile, pkgPath, aliases, role, add)
 	counts[relFile] = c.countRatchet(file)
 	if counts[relFile] == 0 {
 		delete(counts, relFile)
@@ -335,50 +329,81 @@ func (c Config) implMayImport(imported string, f *Family) bool {
 	return false
 }
 
-func (c Config) checkAssertions(fset *token.FileSet, file *ast.File, relFile, pkgPath string, aliases map[string]string, add func(Violation)) {
+// checkAssertions enforces R4. The check is syntactic: it sees a registered
+// type only where the file names it as pkg.Type, which covers every way code
+// can construct or decode one (composite literals, UnmarshalTo and anypb
+// targets, var and parameter types, generic arguments) without type
+// information. Reading fields of a value obtained without naming the type is
+// not visible here; the type assertion or decode that produced it is.
+//
+// Type assertions and switches are checked everywhere. The other uses are
+// exempt in tests (fixtures build configs) and in wiring packages (which
+// register plugins by naming their config type).
+func (c Config) checkAssertions(fset *token.FileSet, file *ast.File, relFile, pkgPath string, aliases map[string]string, role kind, add func(Violation)) {
 	match := func(expr ast.Expr) *ConfigType {
 		if star, ok := expr.(*ast.StarExpr); ok {
 			expr = star.X
 		}
-		var importPath, name string
-		switch t := expr.(type) {
-		case *ast.SelectorExpr:
-			id, ok := t.X.(*ast.Ident)
-			if !ok {
-				return nil
-			}
-			importPath, name = aliases[id.Name], t.Sel.Name
-		case *ast.Ident:
-			importPath, name = pkgPath, t.Name
-		default:
+		sel, ok := expr.(*ast.SelectorExpr)
+		if !ok {
+			return nil
+		}
+		id, ok := sel.X.(*ast.Ident)
+		if !ok {
 			return nil
 		}
 		for i := range c.ConfigTypes {
-			if c.ConfigTypes[i].Import == importPath && c.ConfigTypes[i].Name == name {
+			if c.ConfigTypes[i].Import == aliases[id.Name] && c.ConfigTypes[i].Name == sel.Sel.Name {
 				return &c.ConfigTypes[i]
 			}
 		}
 		return nil
 	}
-	check := func(expr ast.Expr, what string) {
+	lenient := strings.HasSuffix(relFile, "_test.go") || role == kindWiring
+	// context records, parent first, how a type expression is used.
+	context := map[ast.Expr]string{}
+	mark := func(expr ast.Expr, what string) {
+		if star, ok := expr.(*ast.StarExpr); ok {
+			expr = star.X
+		}
+		context[expr] = what
+	}
+	report := func(expr ast.Expr, what string, strict bool) {
 		ct := match(expr)
 		if ct == nil || pkgPath == ct.OwnerPkg || strings.HasPrefix(pkgPath, ct.OwnerPkg+"/") {
 			return
 		}
-		add(Violation{Rule: R4, File: relFile, Line: fset.Position(expr.Pos()).Line, Message: what + " to plugin config type " + ct.Name + " outside owner " + ct.OwnerPkg})
+		if !strict && lenient {
+			return
+		}
+		add(Violation{Rule: R4, File: relFile, Line: fset.Position(expr.Pos()).Line, Message: what + " plugin config type " + ct.Name + " outside owner " + ct.OwnerPkg})
 	}
 	ast.Inspect(file, func(n ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.TypeAssertExpr:
 			if n.Type != nil {
-				check(n.Type, "type assertion")
+				mark(n.Type, "type assertion to")
+				report(n.Type, "type assertion to", true)
 			}
 		case *ast.TypeSwitchStmt:
 			for _, clause := range n.Body.List {
 				for _, e := range clause.(*ast.CaseClause).List {
-					check(e, "type switch case")
+					mark(e, "type switch case on")
+					report(e, "type switch case on", true)
 				}
 			}
+		case *ast.CompositeLit:
+			if n.Type != nil {
+				mark(n.Type, "composite literal of")
+			}
+		case *ast.SelectorExpr:
+			if _, handled := context[n]; handled {
+				if context[n] == "composite literal of" {
+					report(n, context[n], false)
+				}
+				return true
+			}
+			report(n, "use of", false)
 		}
 		return true
 	})
@@ -478,56 +503,4 @@ func (c Config) checkRatchet(counts map[string]int, directives map[string]direct
 		}
 	}
 	return out
-}
-
-// checkConfigTypeCompleteness fails when the contracts package declares a
-// config type matching the table's suffix that the table does not list, so a
-// new plugin config type cannot silently escape R4.
-func (c Config) checkConfigTypeCompleteness(root string) []Violation {
-	src := c.ConfigTypeSource
-	if src.Dir == "" {
-		return nil
-	}
-	dir := filepath.Join(root, filepath.FromSlash(src.Dir))
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return []Violation{{Rule: R4, File: src.Dir, Message: "config type source directory unreadable: " + err.Error()}}
-	}
-	listed := map[string]bool{}
-	for _, ct := range c.ConfigTypes {
-		listed[ct.Name] = true
-	}
-	var out []Violation
-	for _, e := range entries {
-		if !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
-			continue
-		}
-		fset := token.NewFileSet()
-		file, err := parser.ParseFile(fset, filepath.Join(dir, e.Name()), nil, parser.SkipObjectResolution)
-		if err != nil {
-			continue
-		}
-		for _, decl := range file.Decls {
-			gen, ok := decl.(*ast.GenDecl)
-			if !ok || gen.Tok != token.TYPE {
-				continue
-			}
-			for _, spec := range gen.Specs {
-				name := spec.(*ast.TypeSpec).Name.Name
-				if ast.IsExported(name) && hasAnySuffix(name, src.Suffixes) && !listed[name] {
-					out = append(out, Violation{Rule: R4, File: src.Dir + "/" + e.Name(), Message: "config type " + name + " is not in the rule table's ConfigTypes"})
-				}
-			}
-		}
-	}
-	return out
-}
-
-func hasAnySuffix(name string, suffixes []string) bool {
-	for _, s := range suffixes {
-		if strings.HasSuffix(name, s) {
-			return true
-		}
-	}
-	return false
 }

@@ -1,7 +1,5 @@
 // Package lifecycle owns the accepted operation sequence. Agent workers only
 // propose role-scoped changes; the broker decides which edits become durable.
-//
-//archcheck:ratchet R5 count=7 until=S3-13b
 package lifecycle
 
 import (
@@ -11,13 +9,19 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/imagesrc"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/plugindesc"
+	"sdo.dev/operator/render"
 	"sdo.dev/operator/rendered"
+	"sdo.dev/operator/renderenv"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -41,7 +45,7 @@ type ProposalBroker interface {
 // ArtifactWriter is the storage edge for role-owned bootstrap artifacts.
 // The coordinator does not know their physical paths or serialization.
 type ArtifactWriter interface {
-	WriteGoal(checkout, application, objective string) error
+	WriteGoal(checkout, application, objective string, sources []layout.Source) error
 	WriteSchema(checkout string) error
 	WriteArchitecture(checkout, application, acceptedSourceCommit, summary string) error
 	ReadArchitecture(checkout string) (string, error)
@@ -60,16 +64,26 @@ type VanishedDiscarder interface {
 }
 
 // DeploymentReceipt binds an independently observed rollout to the exact
-// candidate source tree. Empty or incomplete evidence cannot be accepted.
+// candidate source tree, the DeploymentSource that rendered it, and the digests
+// of what that source rendered to (canonical desired objects and install
+// environment). Empty or incomplete evidence cannot be accepted.
 type DeploymentReceipt struct {
-	ContainerImages    []rendered.DeployedImage
-	ProposalTreeDigest string
-	ObservedRevision   string
-	StrategyID         string
-	Images             []string
-	ResourceIDs        []string
-	ManifestPaths      []string
-	Ready              bool
+	ContainerImages []rendered.DeployedImage
+	// Source is the DeploymentSource the deployment rendered; opaque here.
+	Source *contracts.DeploymentSource
+	// BaseTree is the deployed source tree (broker.ProposalTreeDigest).
+	BaseTree         string
+	ObservedRevision string
+	// RenderDigest and EnvDigest are rendered.DesiredSet's digests at BaseTree.
+	RenderDigest string
+	EnvDigest    string
+	// Environment is the install-time render environment the digests were
+	// computed with (renderenv.Discover); nil is unknown (renderer defaults),
+	// as in evidence recorded before discovery existed.
+	Environment *contracts.RenderEnvironment
+	Images      []string
+	ResourceIDs []string
+	Ready       bool
 }
 
 // SourceReadinessVerifier is a trusted Go build/apply/observe adapter. The
@@ -82,7 +96,7 @@ type SourceReadinessVerifier interface {
 // HealthVerifier judges the accepted detector against the live application.
 // Its verdict is independent of the agent's HealthJudgeResult assertion.
 type HealthVerifier interface {
-	Verify(ctx context.Context, acceptedCommit, namespace, objective string, source DeploymentReceipt) (healthy bool, feedback string, err error)
+	Verify(ctx context.Context, acceptedCommit, namespace, objective string, source DeploymentReceipt) (HealthVerdict, error)
 }
 
 type RuntimeInstaller interface {
@@ -104,14 +118,37 @@ type Coordinator struct {
 	// SourceFacts reads a trusted projection from the accepted source commit.
 	// The default implementation is the operational-memory storage edge.
 	SourceFacts func(context.Context, string, string) (memory.SourceFacts, error)
+	// Renderers and ImageSources are the deployer's own catalogs. The deployer
+	// request describes exactly these, so the agent is offered what the
+	// deployer can deploy and nothing else. Nil offers none.
+	Renderers    *render.Catalog
+	ImageSources *imagesrc.Catalog
+	// Wait pauses between bounded re-evaluations and infrastructure retries;
+	// nil waits on a timer.
+	Wait func(context.Context, time.Duration) error
 }
 
 type Config struct {
 	MetricsSource                                        *contracts.MetricsSource
 	OperationID, Application, Namespace, HealthObjective string
 	RegistryHost                                         string
-	DeployerAgentID, JudgeAgentID                        string
-	MaxAttempts                                          int
+	// Sources are the upstream sources to follow, published with the human
+	// goal. They require a health objective, because the goal commit carries them.
+	Sources                       []layout.Source
+	DeployerAgentID, JudgeAgentID string
+	// ProvidedPlan is a deployment the human or harness supplies (an
+	// application that ships its own deployment). The deployer agent is not
+	// dispatched: the plan goes through the same admission, trusted Deployer,
+	// evidence and verification as an agent's plan, and any failure of it is
+	// terminal (*ProvidedPlanError), never fed back to an agent.
+	ProvidedPlan *contracts.DeploymentPlan
+	MaxAttempts  int
+	// MaxAttempts bounds deployer correction attempts only. The fields below
+	// bound the waits that never consume one; zero selects the default.
+	PendingEvaluations    int
+	PendingInterval       time.Duration
+	InfrastructureTries   int
+	InfrastructureBackoff time.Duration
 }
 
 type Result struct {
@@ -126,7 +163,7 @@ func (c Coordinator) Run(ctx context.Context, cfg Config) (Result, error) {
 	var result Result
 	if strings.TrimSpace(cfg.HealthObjective) != "" {
 		goal, err := c.bootstrap(ctx, cfg.OperationID+"-goal", broker.Human, func(checkout string) error {
-			return c.Bootstrap.WriteGoal(checkout, cfg.Application, cfg.HealthObjective)
+			return c.Bootstrap.WriteGoal(checkout, cfg.Application, cfg.HealthObjective, cfg.Sources)
 		})
 		if err != nil {
 			return result, fmt.Errorf("publish human goal: %w", err)
@@ -142,11 +179,19 @@ func (c Coordinator) Run(ctx context.Context, cfg Config) (Result, error) {
 	for attempt := 1; attempt <= cfg.MaxAttempts; attempt++ {
 		result.Attempts = attempt
 		deployerID := fmt.Sprintf("%s-source-%d", cfg.OperationID, attempt)
+		if cfg.ProvidedPlan != nil {
+			// One deployment for the whole operation: later rounds (a failed
+			// judge, say) resume the accepted source instead of redeploying.
+			deployerID = fmt.Sprintf("%s-source-1", cfg.OperationID)
+		}
 		sourceReceipt, deployment, sourceReady, nextFeedback, err := c.deploy(ctx, deployerID, cfg, attempt, feedback)
 		if err != nil {
 			return result, fmt.Errorf("deployment attempt %d: %w", attempt, err)
 		}
 		if !sourceReady {
+			if cfg.ProvidedPlan != nil {
+				return result, &ProvidedPlanError{Stage: "deploy", Reason: nextFeedback}
+			}
 			feedback = nextFeedback
 			continue
 		}
@@ -171,12 +216,15 @@ func (c Coordinator) Run(ctx context.Context, cfg Config) (Result, error) {
 			continue
 		}
 		result.JudgeCommit = judgeReceipt.Commit
-		healthy, finding, err := c.Verifier.Verify(ctx, judgeReceipt.Commit, cfg.Namespace, cfg.HealthObjective, deployment)
+		verdict, err := c.verifyHealth(ctx, cfg, judgeReceipt.Commit, deployment)
 		if err != nil {
 			return result, fmt.Errorf("independent verification: %w", err)
 		}
-		if !healthy {
-			feedback = finding
+		if verdict.Outcome != VerificationClear {
+			if cfg.ProvidedPlan != nil {
+				return result, &ProvidedPlanError{Stage: "verify", Reason: verdict.Feedback()}
+			}
+			feedback = verdict.Feedback()
 			continue
 		}
 		install := func() error {
@@ -215,13 +263,18 @@ func (c Coordinator) validate(cfg Config) error {
 	if cfg.OperationID == "" || cfg.Application == "" || cfg.Namespace == "" || cfg.MaxAttempts < 1 {
 		return errors.New("operation ID, application, namespace and positive max attempts are required")
 	}
-	for _, choice := range []struct {
+	if len(cfg.Sources) > 0 && strings.TrimSpace(cfg.HealthObjective) == "" {
+		return errors.New("followed sources are published with the human goal and require a health objective")
+	}
+	type agentChoice struct {
 		id      string
 		request proto.Message
-	}{
-		{cfg.DeployerAgentID, &contracts.SourceDeploymentRequest{}},
-		{cfg.JudgeAgentID, &contracts.HealthJudgeRequest{}},
-	} {
+	}
+	choices := []agentChoice{{cfg.JudgeAgentID, &contracts.HealthJudgeRequest{}}}
+	if cfg.ProvidedPlan == nil {
+		choices = append(choices, agentChoice{cfg.DeployerAgentID, &contracts.SourceDeploymentRequest{}})
+	}
+	for _, choice := range choices {
 		if _, _, err := c.target(choice.id, choice.request); err != nil {
 			return err
 		}
@@ -299,38 +352,40 @@ func (c Coordinator) deploy(ctx context.Context, id string, cfg Config, attempt 
 	if err != nil {
 		return broker.Receipt{}, DeploymentReceipt{}, false, "", err
 	}
-	request := &contracts.SourceDeploymentRequest{Application: cfg.Application, Namespace: cfg.Namespace, HealthObjective: cfg.HealthObjective, CorrectionFeedback: feedback, Attempt: uint32(attempt), RegistryHost: cfg.RegistryHost}
-	task, err := c.newTask(id, cfg.DeployerAgentID, proposal, request)
-	if err != nil {
-		return broker.Receipt{}, DeploymentReceipt{}, false, "", err
-	}
-	response := &contracts.SourceDeploymentResult{}
-	if err := c.execute(ctx, task, response); err != nil {
-		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
-		if ctx.Err() != nil {
-			return broker.Receipt{}, DeploymentReceipt{}, false, "", ctx.Err()
+	plan := cfg.ProvidedPlan
+	if plan == nil {
+		agentPlan, nextFeedback, err := c.agentPlan(ctx, id, cfg, attempt, feedback, proposal)
+		if err != nil || agentPlan == nil {
+			return broker.Receipt{}, DeploymentReceipt{}, false, nextFeedback, err
 		}
-		return broker.Receipt{}, DeploymentReceipt{}, false, err.Error(), nil
+		plan = agentPlan
 	}
-	if !response.GetProposed() || strings.TrimSpace(response.GetAgentSessionId()) == "" ||
-		response.GetPlan() == nil || response.GetPlan().GetStrategyId() == "" || response.GetPlan().GetStrategyConfig() == nil {
+	if err := admissiblePlan(plan); err != nil {
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
-		return broker.Receipt{}, DeploymentReceipt{}, false, "deployment worker did not propose a complete source plan: " + response.GetSummary(), nil
+		return broker.Receipt{}, DeploymentReceipt{}, false, "the deployment plan is not deployable: " + err.Error(), nil
 	}
-	readiness, err := c.Readiness.ApplyAndVerify(ctx, proposal.Path, response.GetPlan())
+	var readiness DeploymentReceipt
+	err = c.retryInfrastructure(ctx, cfg, "independent source deployment", func() (err error) {
+		readiness, err = c.Readiness.ApplyAndVerify(ctx, proposal.Path, plan)
+		return err
+	})
 	if err != nil {
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
-		return broker.Receipt{}, DeploymentReceipt{}, false, deploymentFailureFeedback(err), nil
+		var infrastructure *InfrastructureError
+		if errors.As(err, &infrastructure) || ctx.Err() != nil {
+			return broker.Receipt{}, DeploymentReceipt{}, false, "", err
+		}
+		return broker.Receipt{}, DeploymentReceipt{}, false, "independent source deployment failed: " + err.Error(), nil
 	}
 	if !completeDeploymentReceipt(readiness) {
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return broker.Receipt{}, DeploymentReceipt{}, false, "independent source deployment returned incomplete evidence", nil
 	}
-	if readiness.StrategyID != response.GetPlan().GetStrategyId() {
+	if !rendered.SameDeploymentSource(readiness.Source, plan.GetSource()) {
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
-		return broker.Receipt{}, DeploymentReceipt{}, false, "independent deployment strategy differs from proposal", nil
+		return broker.Receipt{}, DeploymentReceipt{}, false, "independent deployment source differs from proposal", nil
 	}
-	receipt, err := c.Broker.PublishVerifiedSource(ctx, id, deploymentToBroker(readiness))
+	receipt, err := c.Broker.PublishVerifiedSource(ctx, id, deploymentToBroker(readiness, plan))
 	if err != nil {
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return broker.Receipt{}, DeploymentReceipt{}, false, "broker rejected deployment: " + err.Error(), nil
@@ -338,43 +393,92 @@ func (c Coordinator) deploy(ctx context.Context, id string, cfg Config, attempt 
 	return receipt, readiness, true, "", nil
 }
 
-// deploymentFailureFeedback is the correction feedback for a failed
-// independent deployment. A timeout is an infrastructure outcome, so it is
-// worded as one: otherwise the deployer rewrites a correct plan.
-func deploymentFailureFeedback(err error) string {
-	var timeout interface{ InfrastructureTimeout() bool }
-	if errors.As(err, &timeout) && timeout.InfrastructureTimeout() {
-		return "independent source deployment ran out of time (not a plan rejection): " + err.Error()
+// agentPlan dispatches the deployer agent for a plan. A nil plan with a nil
+// error carries correction feedback; the proposal is already released then.
+func (c Coordinator) agentPlan(ctx context.Context, id string, cfg Config, attempt int, feedback string, proposal broker.Proposal) (*contracts.DeploymentPlan, string, error) {
+	request := &contracts.SourceDeploymentRequest{Application: cfg.Application, Namespace: cfg.Namespace, HealthObjective: cfg.HealthObjective, CorrectionFeedback: feedback, Attempt: uint32(attempt), RegistryHost: cfg.RegistryHost, Renderers: pluginDescriptors(c.Renderers.Describe()), ImageSources: pluginDescriptors(c.ImageSources.Describe())}
+	task, err := c.newTask(id, cfg.DeployerAgentID, proposal, request)
+	if err != nil {
+		return nil, "", err
 	}
-	return "independent source deployment failed: " + err.Error()
+	response := &contracts.SourceDeploymentResult{}
+	if err := c.execute(ctx, task, response); err != nil {
+		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
+		if ctx.Err() != nil {
+			return nil, "", ctx.Err()
+		}
+		return nil, err.Error(), nil
+	}
+	if !response.GetProposed() || strings.TrimSpace(response.GetAgentSessionId()) == "" || response.GetPlan() == nil {
+		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
+		return nil, "deployment worker did not propose a complete source plan: " + response.GetSummary(), nil
+	}
+	return response.GetPlan(), "", nil
+}
+
+// admissiblePlan requires the deployment source: which renderer renders the
+// tree and how. The deployer, not the coordinator, decodes and checks it.
+func admissiblePlan(plan *contracts.DeploymentPlan) error {
+	if plan.GetSource() == nil {
+		return errors.New("the plan names no deployment source; set source to a renderer ID from the request's renderers and its config")
+	}
+	if plan.GetStrategyId() != "" || plan.GetStrategyConfig() != nil {
+		return errors.New("the plan sets the retired strategy fields; describe the deployment only with source, images and expected workload IDs")
+	}
+	return nil
 }
 
 func completeDeploymentReceipt(receipt DeploymentReceipt) bool {
-	return receipt.Ready && receipt.ProposalTreeDigest != "" && receipt.ObservedRevision != "" && receipt.StrategyID != "" && len(receipt.Images) > 0 && len(receipt.ResourceIDs) > 0
+	return receipt.Ready && receipt.Source != nil && receipt.BaseTree != "" && receipt.ObservedRevision != "" && receipt.RenderDigest != "" && receipt.EnvDigest != "" && len(receipt.Images) > 0 && len(receipt.ResourceIDs) > 0
 }
 
 func sameDeploymentIdentity(left, right DeploymentReceipt) bool {
-	if left.ProposalTreeDigest != right.ProposalTreeDigest || left.ObservedRevision != right.ObservedRevision || left.StrategyID != right.StrategyID {
+	if left.BaseTree != right.BaseTree || left.ObservedRevision != right.ObservedRevision || left.RenderDigest != right.RenderDigest || left.EnvDigest != right.EnvDigest || !renderenv.Same(left.Environment, right.Environment) || !rendered.SameDeploymentSource(left.Source, right.Source) {
 		return false
 	}
 	leftImages, rightImages := slices.Clone(left.Images), slices.Clone(right.Images)
 	leftResources, rightResources := slices.Clone(left.ResourceIDs), slices.Clone(right.ResourceIDs)
-	leftPaths, rightPaths := slices.Clone(left.ManifestPaths), slices.Clone(right.ManifestPaths)
 	slices.Sort(leftImages)
 	slices.Sort(rightImages)
 	slices.Sort(leftResources)
 	slices.Sort(rightResources)
-	slices.Sort(leftPaths)
-	slices.Sort(rightPaths)
-	return reflect.DeepEqual(left.ContainerImages, right.ContainerImages) && slices.Equal(leftImages, rightImages) && slices.Equal(leftResources, rightResources) && slices.Equal(leftPaths, rightPaths)
+	return reflect.DeepEqual(left.ContainerImages, right.ContainerImages) && slices.Equal(leftImages, rightImages) && slices.Equal(leftResources, rightResources)
 }
 
-func deploymentToBroker(receipt DeploymentReceipt) broker.SourceEvidence {
-	return broker.SourceEvidence{ContainerImages: append([]rendered.DeployedImage(nil), receipt.ContainerImages...), ProposalTreeDigest: receipt.ProposalTreeDigest, ObservedRevision: receipt.ObservedRevision, StrategyID: receipt.StrategyID, Images: append([]string(nil), receipt.Images...), ResourceIDs: append([]string(nil), receipt.ResourceIDs...), ManifestPaths: append([]string(nil), receipt.ManifestPaths...), Ready: receipt.Ready}
+// deploymentToBroker records the receipt and the
+// admitted plan itself: the accepted image declarations and expected workloads
+// have no other durable home until slice 5 moves the plan into .sdo/.
+func deploymentToBroker(receipt DeploymentReceipt, plan *contracts.DeploymentPlan) broker.SourceEvidence {
+	evidence := broker.SourceEvidence{
+		ContainerImages: append([]rendered.DeployedImage(nil), receipt.ContainerImages...), BaseTree: receipt.BaseTree, ObservedRevision: receipt.ObservedRevision,
+		RenderDigest: receipt.RenderDigest, EnvDigest: receipt.EnvDigest,
+		Images: append([]string(nil), receipt.Images...), ResourceIDs: append([]string(nil), receipt.ResourceIDs...), Ready: receipt.Ready,
+	}
+	if receipt.Environment != nil {
+		evidence.RenderEnvironment = proto.Clone(receipt.Environment).(*contracts.RenderEnvironment)
+	}
+	if receipt.Source != nil {
+		evidence.DeploymentSource = proto.Clone(receipt.Source).(*contracts.DeploymentSource)
+	}
+	if plan != nil {
+		evidence.Plan = proto.Clone(plan).(*contracts.DeploymentPlan)
+	}
+	return evidence
 }
 
 func deploymentFromBroker(evidence broker.SourceEvidence) DeploymentReceipt {
-	return DeploymentReceipt{ContainerImages: append([]rendered.DeployedImage(nil), evidence.ContainerImages...), ProposalTreeDigest: evidence.ProposalTreeDigest, ObservedRevision: evidence.ObservedRevision, StrategyID: evidence.StrategyID, Images: append([]string(nil), evidence.Images...), ResourceIDs: append([]string(nil), evidence.ResourceIDs...), ManifestPaths: append([]string(nil), evidence.ManifestPaths...), Ready: evidence.Ready}
+	receipt := DeploymentReceipt{
+		ContainerImages: append([]rendered.DeployedImage(nil), evidence.ContainerImages...), BaseTree: evidence.BaseTree, ObservedRevision: evidence.ObservedRevision,
+		RenderDigest: evidence.RenderDigest, EnvDigest: evidence.EnvDigest,
+		Images: append([]string(nil), evidence.Images...), ResourceIDs: append([]string(nil), evidence.ResourceIDs...), Ready: evidence.Ready,
+	}
+	if evidence.DeploymentSource != nil {
+		receipt.Source = proto.Clone(evidence.DeploymentSource).(*contracts.DeploymentSource)
+	}
+	if evidence.RenderEnvironment != nil {
+		receipt.Environment = proto.Clone(evidence.RenderEnvironment).(*contracts.RenderEnvironment)
+	}
+	return receipt
 }
 
 func (c Coordinator) architecture(ctx context.Context, id string, cfg Config, sourceCommit string) (broker.Receipt, bool, string, error) {
@@ -577,4 +681,12 @@ func (c Coordinator) execute(ctx context.Context, task *contracts.AgentTask, res
 		return fmt.Errorf("worker %s: %s", result.GetStatus(), result.GetErrorSummary())
 	}
 	return result.GetResponse().UnmarshalTo(response)
+}
+
+func pluginDescriptors(descs []plugindesc.Descriptor) []*contracts.PluginDescriptor {
+	out := make([]*contracts.PluginDescriptor, 0, len(descs))
+	for _, d := range descs {
+		out = append(out, &contracts.PluginDescriptor{Id: d.ID, ConfigType: d.ConfigType, ConfigSchemaJson: d.ConfigSchemaJSON, Doc: d.Doc})
+	}
+	return out
 }

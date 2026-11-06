@@ -12,6 +12,8 @@ import (
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
+
+	"sdo.dev/operator/plugindesc"
 )
 
 var sourceID = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
@@ -36,6 +38,7 @@ type Catalog struct {
 }
 
 type entry struct {
+	desc           plugindesc.Descriptor
 	typeURL        string
 	newConfig      func() proto.Message
 	resolve        func(context.Context, Request, proto.Message) (Resolved, error)
@@ -46,10 +49,19 @@ type entry struct {
 // NewCatalog returns an empty catalog.
 func NewCatalog() *Catalog { return &Catalog{entries: map[string]entry{}} }
 
+// RegisterOption adjusts one Register call.
+type RegisterOption func(*registration)
+
+type registration struct{ doc string }
+
+// WithDoc sets the usage doc an agent reads in Describe: what the source does
+// and when to choose it. The implementation package exports it as Doc.
+func WithDoc(doc string) RegisterOption { return func(r *registration) { r.doc = doc } }
+
 // Register binds id to s with config type C. C is the only config the id
 // accepts; Any payloads of another type are rejected. The single type
 // assertion to C lives here so no other package asserts a config type.
-func Register[C proto.Message](c *Catalog, id string, s Source[C], o Options) error {
+func Register[C proto.Message](c *Catalog, id string, s Source[C], o Options, opts ...RegisterOption) error {
 	if c == nil || c.entries == nil {
 		return errors.New("imagesrc: register into a catalog made by NewCatalog")
 	}
@@ -66,7 +78,15 @@ func Register[C proto.Message](c *Catalog, id string, s Source[C], o Options) er
 	if any(zero) == nil {
 		return fmt.Errorf("imagesrc: source %q needs a concrete message type, not an interface", id)
 	}
+	var reg registration
+	for _, opt := range opts {
+		opt(&reg)
+	}
 	mt := zero.ProtoReflect().Type()
+	desc, err := plugindesc.Describe(id, mt.Descriptor(), reg.doc)
+	if err != nil {
+		return fmt.Errorf("imagesrc: source %q: %w", id, err)
+	}
 	typeURL := "type.googleapis.com/" + string(mt.Descriptor().FullName())
 	if _, dup := c.entries[id]; dup {
 		return fmt.Errorf("imagesrc: source %q is already registered", id)
@@ -77,6 +97,7 @@ func Register[C proto.Message](c *Catalog, id string, s Source[C], o Options) er
 		}
 	}
 	c.entries[id] = entry{
+		desc:      desc,
 		typeURL:   typeURL,
 		newConfig: func() proto.Message { return mt.New().Interface() },
 		resolve: func(ctx context.Context, req Request, m proto.Message) (Resolved, error) {
@@ -129,6 +150,19 @@ func (c *Catalog) Decode(id string, config *anypb.Any) (proto.Message, error) {
 		return nil, fmt.Errorf("imagesrc: source %q config: %w", id, err)
 	}
 	return m, nil
+}
+
+// Describe lists what an agent may choose from, sorted by ID: each source's
+// ID, config message, JSON Schema and doc. A nil catalog describes nothing.
+func (c *Catalog) Describe() []plugindesc.Descriptor {
+	if c == nil {
+		return nil
+	}
+	out := make([]plugindesc.Descriptor, 0, len(c.entries))
+	for _, id := range c.IDs() {
+		out = append(out, c.entries[id].desc)
+	}
+	return out
 }
 
 // IDs lists registered source IDs in sorted order.

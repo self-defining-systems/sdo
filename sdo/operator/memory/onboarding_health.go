@@ -12,7 +12,7 @@ func HealthRefreshPreservesInstall(ctx context.Context, repository, installed, c
 	if repository == "" || installed == "" || current == "" {
 		return false, nil
 	}
-	accepted, err := AcceptedHealthRevision(ctx, repository)
+	accepted, err := AcceptedHealthRevision(ctx, repository, nil)
 	if err != nil {
 		return false, err
 	}

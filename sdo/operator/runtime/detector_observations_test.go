@@ -3,7 +3,6 @@ package runtime
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +16,7 @@ import (
 	k8stesting "k8s.io/client-go/testing"
 
 	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/evaluation"
 	"sdo.dev/operator/memoryhost"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/logs"
@@ -43,7 +43,7 @@ func syntheticShopSnapshot() sdktest.Snapshot {
 	}}}
 }
 
-func evaluateOnceStatus(t *testing.T, client *fake.Clientset) evaluationResult {
+func evaluateOnceStatus(t *testing.T, client *fake.Clientset) evaluation.Verdict {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
 	err := RunWithOptions(context.Background(), []sdk.Detector{syntheticAdmissionDetector()}, RuntimeOptions{
@@ -55,8 +55,8 @@ func evaluateOnceStatus(t *testing.T, client *fake.Clientset) evaluationResult {
 	if err != nil {
 		t.Fatalf("evaluate-once: %v (stderr=%s)", err, stderr.String())
 	}
-	var result evaluationResult
-	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+	result, err := evaluation.Decode(stdout.Bytes())
+	if err != nil {
 		t.Fatalf("decode %q: %v", stdout.String(), err)
 	}
 	return result

@@ -9,12 +9,14 @@ import os
 import shutil
 import subprocess
 import time
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
-from apps.toy.faults import IMAGE, command, fault_spec
-from benchmarks.sregym.adapter import WaitKind, wait_for
+from apps.toy.faults import IMAGE, SERVICES, command, fault_spec
+from apps.toy.variants.assemble import VARIANTS, assemble
+from benchmarks.sregym.adapter import WaitKind, buildkit_image, deployment_plan, helm_source, raw_source, wait_for
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment, Images
 from benchmarks.sregym.fastloop.host_limits import HostLimits, NodeLimits, apply_node_limits
 from benchmarks.sregym.repository_git import host_git_command
@@ -112,17 +114,50 @@ def cluster_name(args: Any) -> str:
     return f"{args.cluster_prefix}{args.worker_id}"
 
 
-def prepare_workspace(workspace: Path, image: str, *, fresh: bool) -> str:
+def toy_variant(args: Any) -> str:
+    """The deployment variant of this install; non-raw variants are onboarded fresh (SDO authors the deployment)."""
+    variant = getattr(args, "variant", None) or "raw"
+    if variant not in VARIANTS:
+        raise ValueError(f"unknown toy variant {variant!r}; expected one of {VARIANTS}")
+    if variant != "raw" and not getattr(args, "fresh_memory", False):
+        raise ValueError(f"--variant {variant} needs --fresh-memory: only the raw variant has a hand-authored seed")
+    return variant
+
+
+def provided_deployment_plan(variant: str, namespace: str) -> dict[str, Any] | None:
+    """The deployment the harness provides for a variant that ships one (helm); SDO deploys it, no agent authors it.
+
+    The raw lane is seeded and the remaining variants are still authored by the deployer agent.
+    """
+    if variant != "helm":
+        return None
+    return deployment_plan(
+        helm_source("chart"),
+        images=(buildkit_image(IMAGE, ".", "Dockerfile"),),
+        expected_workload_ids=[f"Deployment/{namespace}/{service}" for service in SERVICES],
+    )
+
+
+def prepare_workspace(workspace: Path, image: str, *, fresh: bool, variant: str = "raw") -> str:
     """Commit the toy source into ``workspace``; return the commit SDO starts from.
 
     Seeded (default): the hand-authored ``.sdo`` seed is committed on top of the source. Fresh: the workspace
     carries source only, so SDO's own lifecycle (source deployment, health judge) onboards it.
+
+    A non-raw ``variant`` is assembled by ``apps/toy/variants/assemble.py`` (its own deployment files and a
+    Dockerfile that builds ``main.go`` from source). Its image is built by the deployment source, so ``image``
+    (the raw lane's prebuilt, kind-loaded tag) is not substituted into it.
     """
-    shutil.copytree(APP / "kubernetes", workspace / "kubernetes")
-    for manifest in (workspace / "kubernetes").glob("*.yaml"):
-        manifest.write_text(manifest.read_text().replace(IMAGE, image))
-    for name in ("main.go", "Dockerfile"):
-        shutil.copy(APP / name, workspace / name)
+    if variant != "raw":
+        if not fresh:
+            raise ValueError(f"toy variant {variant} has no seed memory; prepare it fresh")
+        assemble(variant, workspace)
+    else:
+        shutil.copytree(APP / "kubernetes", workspace / "kubernetes")
+        for manifest in (workspace / "kubernetes").glob("*.yaml"):
+            manifest.write_text(manifest.read_text().replace(IMAGE, image))
+        for name in ("main.go", "Dockerfile"):
+            shutil.copy(APP / name, workspace / name)
 
     def head() -> str:
         return subprocess.run(
@@ -179,6 +214,10 @@ def fresh_objective(args: Any) -> str | None:
     return lifecycle_objective(DEFAULT_GOAL, goal)
 
 
+#: Executables the scripted agent runner invokes inside the responder image.
+SCRIPTED_WORKER_EXECUTABLES = ("bwrap",)
+
+
 def up(args: Any) -> int:
     from benchmarks.sregym.fastloop.baseline_recovery import (
         KubectlApplicationCluster,
@@ -191,6 +230,13 @@ def up(args: Any) -> int:
     if args.dev_mount is None:
         raise ValueError("toy lanes require a development mount; omit --no-dev-mount")
     objective = fresh_objective(args)
+    variant = toy_variant(args)
+    if objective is None and not getattr(args, "frozen_memory", False):
+        # A seed carries no judge provenance, so the install runs the scripted health refresh in the responder image.
+        from benchmarks.sregym.adapter import assert_image_executables
+
+        assert_image_executables(args.responder_image, SCRIPTED_WORKER_EXECUTABLES, run=subprocess.run)
+    prebuilt = variant == "raw"  # other variants are built from source by SDO's deployment source
     host_limits = HostLimits(args.host_lock_dir.resolve(), args.host_redeploys)
     cluster = cluster_name(args)
     image = f"{IMAGE}-{cluster}"
@@ -228,6 +274,7 @@ def up(args: Any) -> int:
             env,
             registrations=getattr(args, "agent_registrations", None),
             frozen_memory=getattr(args, "frozen_memory", False),
+            variant=variant,
         )
         record_controller(env, config)
         print(f"toy environment ready: {env.path}")
@@ -238,17 +285,18 @@ def up(args: Any) -> int:
     if cluster in clusters:
         raise ValueError(f"{cluster} already exists without this run directory; refusing to adopt it")
     config = prepare_dev_mount(worktree, None, run_dir)
-    build = run_dir / "image"
-    build.mkdir(exist_ok=True)
-    subprocess.run(
-        ["go", "build", "-buildvcs=false", "-trimpath", "-o", str(build / "toy"), str(APP / "main.go")],
-        check=True,
-        env={**os.environ, "CGO_ENABLED": "0", "GOMAXPROCS": "2", "GOFLAGS": "-p=2"},
-    )
-    shutil.copy(APP / "Dockerfile", build / "Dockerfile")
-    subprocess.run(
-        ["docker", "build", "--load", "--network=none", "--provenance=false", "-t", image, str(build)], check=True
-    )
+    if prebuilt:
+        build = run_dir / "image"
+        build.mkdir(exist_ok=True)
+        subprocess.run(
+            ["go", "build", "-buildvcs=false", "-trimpath", "-o", str(build / "toy"), str(APP / "main.go")],
+            check=True,
+            env={**os.environ, "CGO_ENABLED": "0", "GOMAXPROCS": "2", "GOFLAGS": "-p=2"},
+        )
+        shutil.copy(APP / "Dockerfile", build / "Dockerfile")
+        subprocess.run(
+            ["docker", "build", "--load", "--network=none", "--provenance=false", "-t", image, str(build)], check=True
+        )
     kubeconfig = run_dir / "kubeconfig"
     create_start = time.monotonic()
     subprocess.run(
@@ -276,7 +324,7 @@ def up(args: Any) -> int:
 
     load_images(
         cluster,
-        [image, images.controller, images.responder, *CALICO_IMAGES],
+        [*([image] if prebuilt else []), images.controller, images.responder, *CALICO_IMAGES],
         record_path=run_dir / "image_delivery.jsonl",
         host_limits=host_limits,
     )
@@ -285,11 +333,12 @@ def up(args: Any) -> int:
     loaded = time.monotonic()
     workspace = run_dir / "application_workspace"
     workspace.mkdir()
-    seed = prepare_workspace(workspace, image, fresh=objective is not None)
+    seed = prepare_workspace(workspace, image, fresh=objective is not None, variant=variant)
     command(str(kubeconfig), "default", "create", "namespace", NAMESPACE)
-    with host_limits.admit("redeploy"):
-        apply_accepted_source(workspace, NAMESPACE, kubeconfig)
-        command(str(kubeconfig), NAMESPACE, "rollout", "status", "deployment", "--timeout=60s")
+    if prebuilt:
+        with host_limits.admit("redeploy"):
+            apply_accepted_source(workspace, NAMESPACE, kubeconfig)
+            command(str(kubeconfig), NAMESPACE, "rollout", "status", "deployment", "--timeout=60s")
     env = FastloopEnvironment(
         run_dir=run_dir,
         app="toy",
@@ -333,6 +382,7 @@ def up(args: Any) -> int:
         registrations=getattr(args, "agent_registrations", None),
         frozen_memory=getattr(args, "frozen_memory", False),
         objective=objective,
+        variant=variant,
     )
     record_controller(env, config)
     timing = {
@@ -356,11 +406,14 @@ def install_controller(
     registrations: Path | None = None,
     frozen_memory: bool = False,
     objective: str | None = None,
+    variant: str = "raw",
 ) -> Any:
     """Install the production controller and its registrations (scripted unless given), without benchmark resources.
 
     With ``objective`` the memory is fresh: the production Go host lifecycle (source deployment, health judge,
     goal publication) onboards the workspace, with the production worker registrations unless given.
+    Only the raw variant declares a raw deployment source over ``kubernetes``; the others are rendered by a
+    deployment source, so they declare none.
     """
     from dataclasses import replace
 
@@ -391,7 +444,8 @@ def install_controller(
             frozen_memory=frozen_memory,
             persistent=True,
             kind_cluster_name=environment.cluster,
-            deployed_manifest_paths=("kubernetes",),
+            deployment_source=raw_source(("kubernetes",)) if variant == "raw" else None,
+            deployment_plan=provided_deployment_plan(variant, environment.namespace),
             agent_registrations=registrations.resolve() if registrations else None,
         )
     if frozen_memory and not config.frozen_memory:
@@ -588,3 +642,87 @@ def baseline_ready(state: dict[str, Any], accepted_head: str, observed_after: st
         and all(item.get("status") == "clear" for item in latest.values())
         and state.get("ownership_adoption", {}).get("source_commit") == accepted_head
     )
+
+
+@dataclass(frozen=True)
+class OnboardingEvidence:
+    """What a fresh variant onboarding must show, read from the accepted evidence plan and controller Job."""
+
+    renderer_id: str
+    image_builders: tuple[str, ...]
+    controller_args: tuple[str, ...]
+
+
+def onboarding_violations(evidence: OnboardingEvidence, variant: str) -> list[str]:
+    """Why ``evidence`` does not show a ``variant`` onboarding built from source; empty when it does.
+
+    The renderer id of each non-raw variant is the variant name. The raw variant renders ``raw``.
+    """
+    violations: list[str] = []
+    if evidence.renderer_id != variant:
+        violations.append(f"accepted evidence plan renderer_id is {evidence.renderer_id!r}, expected {variant!r}")
+    if not evidence.image_builders:
+        violations.append("accepted evidence plan declares no images")
+    elif other := sorted({builder for builder in evidence.image_builders if builder != "buildkit"}):
+        violations.append(f"images not built by buildkit: {', '.join(other)}")
+    if "--deployment-source" not in evidence.controller_args:
+        violations.append("controller args carry no --deployment-source")
+    return violations
+
+
+class RestartOps(Protocol):
+    """The cluster and clock edge of the controller restart check (injected so the check is deterministic)."""
+
+    def clock(self) -> float: ...
+    def sleep(self, seconds: float) -> None: ...
+    def controller_pod(self) -> str | None: ...
+    def delete_pod(self, name: str) -> None: ...
+    def verify_accepted(self) -> bool: ...
+    def incident_open(self) -> bool: ...
+    def drift_observed(self) -> bool: ...
+
+
+@dataclass
+class RestartResult:
+    old_pod: str
+    new_pod: str | None
+    violations: list[str] = field(default_factory=list)
+
+
+def check_controller_restart(
+    ops: RestartOps, *, steady_seconds: float, restart_timeout: float, poll: float
+) -> RestartResult:
+    """Delete the controller pod; require a replacement, accepted-state verification, and a quiet steady window.
+
+    A failure is reported in ``violations``; nothing here retries or softens a check.
+    """
+    old = ops.controller_pod()
+    if old is None:
+        raise RuntimeError("no controller pod to restart")
+    ops.delete_pod(old)
+    result = RestartResult(old_pod=old, new_pod=None)
+    deadline = ops.clock() + restart_timeout
+    while True:
+        pod = ops.controller_pod()
+        if pod is not None and pod != old:
+            result.new_pod = pod
+            break
+        if ops.clock() >= deadline:
+            result.violations.append(f"controller pod was not replaced within {restart_timeout:g}s")
+            return result
+        ops.sleep(poll)
+    if not ops.verify_accepted():
+        result.violations.append("accepted state did not verify after the restart")
+    steady_end = ops.clock() + steady_seconds
+    incident = drift = False
+    while ops.clock() < steady_end:
+        incident = incident or ops.incident_open()
+        drift = drift or ops.drift_observed()
+        ops.sleep(poll)
+    incident = incident or ops.incident_open()
+    drift = drift or ops.drift_observed()
+    if incident:
+        result.violations.append("an incident opened during the steady window")
+    if drift:
+        result.violations.append("drift was observed during the steady window")
+    return result

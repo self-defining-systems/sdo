@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter import WaitKind, assert_host_disk_headroom, assert_host_headroom, kubectl, wait_for
-from benchmarks.sregym.fastloop.accepted_source import AcceptedSource, manifest_paths_for_environment
+from benchmarks.sregym.fastloop.accepted_source import AcceptedSource, deployment_source_for_environment
 from benchmarks.sregym.fastloop.baseline_recovery import (
     KubectlApplicationCluster,
     accepted_restore_baselines,
@@ -47,6 +47,7 @@ from benchmarks.sregym.fastloop.host_limits import DEFAULT_MEMORY_LIMIT, DEFAULT
 from benchmarks.sregym.fastloop.loop import LoopConfig, run_incidents, write_loop_manifest
 from benchmarks.sregym.fastloop.records import AgentSummary, IncidentRecord, load_records, summarize
 from benchmarks.sregym.fastloop.stream import load_stream_config
+from benchmarks.sregym.fastloop.toy_upstream import add_toy_parser
 from benchmarks.sregym.fastloop.wipe import (
     AttemptMarker,
     KubectlLaneCluster,
@@ -252,7 +253,7 @@ def up_preflight(args: argparse.Namespace) -> None:
             raise ValueError("attach-only up requires the existing lane KUBECONFIG")
     if args.kind_worker_nodes < 0:
         raise SystemExit("--kind-worker-nodes must not be negative")
-    if getattr(args, "parallel_root", None) is not None and (args.dev_mount is None or args.app == "toy"):
+    if getattr(args, "parallel_root", None) is not None and (args.dev_mount is None or args.app in {"toy", "gitlab"}):
         raise ValueError("--parallel-root requires an SREGym --dev-mount lane")
     for executable in ("docker", "kind", "kubectl", "go"):
         if shutil.which(executable) is None:
@@ -263,7 +264,7 @@ def up_preflight(args: argparse.Namespace) -> None:
         warnings.warn("--no-dev-mount: code changes require image rebuilds", stacklevel=2)
     elif not (args.dev_mount.resolve() / "sdo/operator/go.mod").is_file():
         raise ValueError(f"fastloop preflight: not an SDO worktree: {args.dev_mount}")
-    if getattr(args, "app", None) != "toy":
+    if getattr(args, "app", None) not in {"toy", "gitlab"}:
         from benchmarks.sregym.fastloop.source_preflight import assert_harness_sources
 
         assert_harness_sources(getattr(args, "sregym_dir", DEFAULT_SREGYM_DIR))
@@ -287,6 +288,10 @@ def _up(args: argparse.Namespace) -> int:
         from benchmarks.sregym.fastloop.toy import up
 
         return up(args)
+    if args.app == "gitlab":
+        from benchmarks.sregym.fastloop.gitlab_lane import up as gitlab_up
+
+        return gitlab_up(args)
     if args.kind_worker_nodes < 0:
         raise SystemExit("--kind-worker-nodes must not be negative")
     if args.dev_mount is not None:
@@ -573,7 +578,7 @@ def _runtime_config(args: argparse.Namespace, environment: FastloopEnvironment, 
         application=environment.application,
         controller_image=environment.images.controller,
         responder_image=environment.images.responder,
-        deployed_manifest_paths=manifest_paths_for_environment(environment),
+        deployment_source=deployment_source_for_environment(environment),
         repository_pvc="sdo-application-repository",
         credentials_secret=getattr(args, "credentials_secret", "sdo-agent-credentials"),
         model=args.model,
@@ -1441,6 +1446,12 @@ def _down(args: argparse.Namespace) -> int:
     os.environ["KUBECONFIG"] = str(environment.kubeconfig)
     failed_exports = settle_lane_exports(environment)
     errors = teardown(environment.state_path, ops=KubectlClusterOps()) if environment.state_path.exists() else []
+    if environment.app == "toy":
+        from benchmarks.sregym.fastloop.toy_upstream import UpstreamLayout, delete_upstream
+
+        # The harness-owned git server lives outside the control namespace, so teardown() does not reach it.
+        if (error := delete_upstream(environment.kubeconfig, UpstreamLayout(environment.namespace))) is not None:
+            errors.append(error)
     errors.extend(f"evidence export for {job.incident_id} failed: {job.error}" for job in failed_exports)
     for error in errors:
         logger.error("persistent controller teardown: %s", error)
@@ -1665,14 +1676,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     up = commands.add_parser("up", help="create or reuse the cluster and deploy the application once")
     up.add_argument("--run-dir", type=Path, required=True)
-    up.add_argument("--app", choices=("sregym", "toy"), default="sregym")
+    up.add_argument("--app", choices=("sregym", "toy", "gitlab"), default="sregym")
     up.add_argument("--frozen-memory", action="store_true", help="toy: install the supplied seed without judge refresh")
     up.add_argument(
         "--fresh-memory",
         action="store_true",
         help="toy: start with source only and onboard it with SDO's lifecycle agents (needs live agents)",
     )
-    up.add_argument("--goal", help="toy --fresh-memory: the human goal to publish instead of the default")
+    up.add_argument("--goal", help="toy --fresh-memory, gitlab: the human goal to publish instead of the default")
+    up.add_argument(
+        "--variant",
+        choices=("raw", "kustomize", "helm", "compose"),
+        default="raw",
+        help="toy: deployment variant of the source (non-raw variants need --fresh-memory and build from source)",
+    )
     up.add_argument("--toy-node-image", default="kindest/node:v1.34.0")
     up.add_argument("--seed", type=Path, help="git repository cloned as the application workspace (first time only)")
     up.add_argument("--problem", default=DEFAULT_PROBLEM, help="problem whose application is deployed")
@@ -1956,6 +1973,8 @@ def build_parser() -> argparse.ArgumentParser:
     summary.add_argument("paths", type=Path, nargs="+")
     summary.add_argument("--json", action="store_true")
     summary.set_defaults(handler=_summary)
+
+    add_toy_parser(commands)
 
     down = commands.add_parser("down", help="drain and remove the persistent SDO controller")
     down.add_argument("--run-dir", type=Path, required=True)

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from benchmarks.sregym.adapter.deployment_source import kustomize_source, raw_source
 from benchmarks.sregym.adapter.persistent import (
     REJECTED_RECEIPT_FILENAME,
     RESOLUTION_FILENAME,
@@ -469,7 +470,7 @@ def test_runtime_config_json_preserves_reviewed_responder_grants(
         _config(tmp_path),
         permissive_responder=True,
         responder_namespaces=responder_namespaces,
-        deployed_manifest_paths=("deploy/app.yaml",),
+        deployment_source=raw_source(("deploy/app.yaml",)),
     )
     payload = json.loads(json.dumps(runtime_config_payload(config)))
 
@@ -841,7 +842,12 @@ def test_fail_soft_reset_restarts_controller_without_losing_drift_verdicts(tmp_p
         private_tmp=None,
         seed_commit="a" * 40,
     )
-    commit_accepted_source(environment.workspace, namespace="hotel")
+    commit_accepted_source(
+        environment.workspace,
+        [{"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "settings"}}],
+        namespace="hotel",
+        kustomize_root=True,
+    )
     baseline = ApplicationBaseline("hotel", [{"kind": "Deployment", "metadata": {"name": "app"}}])
     environment.baseline_path.write_text(json.dumps({"fastloop_application": {"namespaces": [baseline.__dict__]}}))
 
@@ -1432,7 +1438,7 @@ def test_driver_environment_settings_are_recorded_and_preserved_on_persistent_re
         "SREGYM_EXPERIMENT_AGENT_CONFIG",
         json.dumps(
             {
-                "deployed_manifest_paths": ["kubernetes"],
+                "deployment_source": {"renderer": "kustomize", "path": "kubernetes"},
             }
         ),
     )
@@ -1473,13 +1479,13 @@ def test_driver_environment_settings_are_recorded_and_preserved_on_persistent_re
         resolution = driver._run_persistent(args, "", driver.time.monotonic())
         record = PersistentState.load(state_path).controllers["hotel"]
         config = runtime_config_from_payload(record.runtime_config)
-        assert config.deployed_manifest_paths == ("kubernetes",)
+        assert config.deployment_source == kustomize_source("kubernetes")
         ops.reflectable.add(resolution["incident_id"])
     assert resolution["lifecycle_reused"] is True
     assert ops.installs == 1
     assert len(commands) == 1
     command = commands[0]
-    assert command[command.index("--deployed-manifest-path") + 1] == "kubernetes"
+    assert json.loads(command[command.index("--deployment-source") + 1]) == kustomize_source("kubernetes")
 
 
 def test_unrepresentable_rejected_receipt_stays_one_incidents_typed_failure(tmp_path: Path) -> None:

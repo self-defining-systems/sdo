@@ -29,11 +29,23 @@ func ReadArchitecture(checkout string) (string, error) {
 	return strings.TrimSpace(parts[2]) + "\n", nil
 }
 
-func WriteGoal(checkout, application, objective string) error {
+// WriteGoal writes the human goal, and the followed sources beside it when
+// there are any. The broker records the initial upstream revision on the
+// commit that publishes a sources file.
+func WriteGoal(checkout, application, objective string, sources []layout.Source) error {
 	if checkout == "" || strings.TrimSpace(application) == "" {
 		return fmt.Errorf("checkout and application are required")
 	}
 	body := fmt.Sprintf("---\nschema_version: 1\nowner: human\napplication: %s\n---\n# Health objective\n\n%s\n", strconv.Quote(application), strings.TrimSpace(objective))
+	if len(sources) > 0 {
+		encoded, err := layout.MarshalSources(layout.Sources{Sources: sources})
+		if err != nil {
+			return fmt.Errorf("write %s: %w", layout.SourcesFile, err)
+		}
+		if err := writeBootstrapFile(checkout, layout.SourcesFile, string(encoded)); err != nil {
+			return err
+		}
+	}
 	return writeBootstrapFile(checkout, layout.GoalFile, body)
 }
 

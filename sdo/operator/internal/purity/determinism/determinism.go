@@ -24,15 +24,19 @@ var Edges = map[string]bool{
 	"sdo/operator/install/internal/installio":                true, // Repository processes, configuration environment and timer adapter
 	"sdo/operator/runtime/internal/lifecycleio":              true, // Kubernetes driver
 	"sdo/operator/runtime/prober":                            true, // protocol dial adapter
-	"sdo/operator/runtime/prometheus":                        true, // Prometheus HTTP adapter
+	"sdo/operator/telemetry/prometheus":                      true, // Prometheus HTTP adapter
 	"sdo/operator/memoryhost/hostio":                         true, // Memory-host process launcher, Unix socket and read-only network adapter
 	"sdo/operator/toolchain":                                 true, // Go compiler process adapter
 	"sdo/operator/devmount":                                  true, // development mount process adapter
 	"sdo/operator/runtime/sim":                               true, // simulation world: virtual time inside synctest bubbles, seed replay, in-memory transport; tests only
 	"sdo/operator/deployment/internal/deploymentio":          true, // Deployment process, socket and wait adapter
+	"sdo/operator/imagesrc/buildkit/internal/jobio":          true, // BuildKit Job name suffix randomness and poll timer
+	"sdo/operator/imagesrc/prebuilt/internal/registryio":     true, // Prebuilt image source registry sockets and cache clock
+	"sdo/operator/lifecycle/internal/waitio":                 true, // Lifecycle default pause between bounded re-evaluations
 	"sdo/operator/apihistory/internal/apiio":                 true, // API-history clock, timers and identifier randomness
 	"sdo/operator/kubeproxy/internal/proxyio":                true, // API proxy clock and request-ID randomness
 	"sdo/operator/rendered/internal/renderio":                true, // Rendered-source Git reads
+	"sdo/operator/upstream/gitpoll/internal/gitio":           true, // Git ls-remote and fetch processes
 	"sdo/operator/shellpath/internal/shellio":                true, // Shell detector processes, runner server, timers and environment
 	"sdo/operator/worker_registry/internal/workerio":         true, // Worker clocks, warm-standby processes, sockets and environment
 	"sdo/operator/cmd/sdo-go-cache/internal/cacheio":         true, // Go cache helper environment and clock

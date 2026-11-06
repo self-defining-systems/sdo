@@ -68,13 +68,18 @@ The exact declared edge-package list is:
 - `sdo/operator/runtime/envtestio`: integration-test-only start/stop of an envtest kube-apiserver and etcd (the pinned Kubernetes version), their one-time download and cache, and a kubeconfig file; nothing outside tests imports it.
 - `sdo/operator/runtime/internal/h2testio`: test-only HTTP/2 conformance peer configuration with per-server channel pools; no listeners.
 - `sdo/operator/install/internal/installio`: accepted-checkout Git/archive/kubectl processes, installer clock and wait timers, and time-scale environment reads.
-- `sdo/operator/runtime/prometheus`: Prometheus HTTP adapter.
+- `sdo/operator/telemetry/prometheus`: Prometheus HTTP adapter (an application-telemetry adapter; each future adapter is listed individually).
 - `sdo/operator/memoryhost/hostio`: memory-host process launcher, Unix socket server/client and read-only network adapter.
 - `sdo/operator/memory/internal/memoryio`: Git reads, isolated-index whitespace checks, shell syntax and toolchain lookup. No process handles escape.
-- `sdo/operator/deployment/internal/deploymentio`: trusted deployment processes, bounded health process execution, wait timers and Job-name suffixes.
+- `sdo/operator/deployment/internal/deploymentio`: trusted deployment processes, bounded health process execution, and wait timers.
+- `sdo/operator/imagesrc/prebuilt/internal/registryio`: guarded public-registry HTTP client (sockets) and the digest-cache clock.
+- `sdo/operator/imagesrc/buildkit/internal/jobio`: BuildKit Job-name suffixes and the Job poll timer.
+- `sdo/operator/lifecycle/internal/waitio`: the lifecycle's default pause between bounded re-evaluations.
 - `sdo/operator/apihistory/internal/apiio`: API-history clock, timers and identifier randomness.
 - `sdo/operator/kubeproxy/internal/proxyio`: API proxy clock and request-ID randomness.
 - `sdo/operator/rendered/internal/renderio`: rendered-source Git reads.
+
+The render-seam core packages (`render/`, `imagesrc/`, `rendered/` apart from its `renderio` edge) are not edges: they take a `render.FS`, `fs.FS` or checkout path and call no clock, randomness, socket or process. The only filesystem read in them is `imagesrc.SafeCheckoutPath` (symlink resolution), which the determinism gate permits. The plugin implementations (`render/{raw,kustomize,helm}`, `imagesrc/{buildkit,prebuilt}`, `upstream/gitpoll`) are pure functions or reach I/O only through the `internal` edges above (`jobio`, `registryio`) or injected interfaces.
 - `sdo/operator/shellpath/internal/shellio`: shell detector processes, runner server, timers and environment.
 - `sdo/operator/worker_registry/internal/workerio`: worker clocks, warm-standby processes, sockets and environment.
 - `sdo/operator/cmd/sdo-go-cache/internal/cacheio`: Go cache helper environment and clock.

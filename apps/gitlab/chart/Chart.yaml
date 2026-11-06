@@ -1,0 +1,24 @@
+apiVersion: v2
+name: gitlab-lane
+description: >-
+  Umbrella chart of the GitLab lane: the unmodified upstream gitlab chart (vendored at lane setup by
+  ../assemble.py, never committed) plus three app-owned datastore charts (PostgreSQL, Redis, S3-compatible
+  object storage). One chart is one SDO DeploymentSource.
+type: application
+version: 0.1.0
+dependencies:
+  - name: gitlab
+    version: 10.5.4
+    repository: ""
+  - name: postgresql
+    version: 0.1.0
+    repository: ""
+    condition: postgresql.enabled
+  - name: redis
+    version: 0.1.0
+    repository: ""
+    condition: redis.enabled
+  - name: objectstore
+    version: 0.1.0
+    repository: ""
+    condition: objectstore.enabled

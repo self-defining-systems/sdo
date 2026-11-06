@@ -1,0 +1,5 @@
+apiVersion: v2
+name: objectstore
+description: App-owned objectstore for the GitLab lane (synthetic credentials, one replica, throwaway data).
+type: application
+version: 0.1.0

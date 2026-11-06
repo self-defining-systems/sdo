@@ -1,4 +1,4 @@
-//archcheck:ratchet R5 count=10 until=S3-11c
+//archcheck:ratchet R5 count=7 until=S3-11c
 package runtime
 
 import (
@@ -36,14 +36,18 @@ import (
 	"sdo.dev/operator/apihistory"
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/core"
+	"sdo.dev/operator/evaluation"
 	"sdo.dev/operator/latefindings"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/memoryhost"
 	"sdo.dev/operator/memoryhost/hostio"
 	"sdo.dev/operator/onboarding"
+	"sdo.dev/operator/render"
+	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/telemetry"
 	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
@@ -97,6 +101,12 @@ type RuntimeOptions struct {
 	// simulation on virtual time sets a positive interval so reflector timers
 	// stay inside its bubble.
 	InformerResync time.Duration
+	// Renderers is the deployment-renderer catalog the controller reads
+	// desired state through. Nil means no renderers are wired.
+	Renderers *render.Catalog
+	// Telemetry is the application-telemetry adapter registry metric sources
+	// open through. Nil means no adapters are wired, so --metrics-url is refused.
+	Telemetry *telemetry.Registry
 }
 
 const defaultStateBaselineStartTimeout = 30 * time.Second
@@ -110,9 +120,11 @@ func (values *repeatedFlag) Set(value string) error {
 }
 
 // Run launches the stable controller; accepted code executes in the memory host.
-func Run() {
+// renderers is the deployment-renderer catalog and registry the application-
+// telemetry adapter registry; nil wires none.
+func Run(renderers *render.Catalog, registry *telemetry.Registry) {
 	broker.RunValidationChild()
-	if err := RunWithOptions(context.Background(), nil, RuntimeOptions{}); err != nil {
+	if err := RunWithOptions(context.Background(), nil, RuntimeOptions{Renderers: renderers, Telemetry: registry}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		if errors.Is(err, memory.ErrHealthRefreshRequired) {
 			os.Exit(memory.HealthRefreshExitCode)
@@ -163,10 +175,14 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			return err
 		}
 		options.NativeBroker, options.Client = native, client
-		args = append(controllerConfigToArgs(config), args[2:]...)
+		configArgs, err := controllerConfigToArgs(config)
+		if err != nil {
+			return err
+		}
+		args = append(configArgs, args[2:]...)
 	}
 	if len(args) > 0 && args[0] == "--evaluate-once" {
-		return evaluateOnce(ctx, detectors, args[1:], stdout, stderr, options.Provider, options.Client, options.Traffic, clock)
+		return evaluateOnce(ctx, detectors, args[1:], stdout, stderr, options.Provider, options.Client, options.Traffic, clock, options.Renderers, options.Telemetry)
 	}
 
 	flags := flag.NewFlagSet("sdo-controller", flag.ContinueOnError)
@@ -191,6 +207,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	deployedCommit := flags.String("deployed-commit", "", "deployed commit; defaults to source commit")
 	var deployedManifestPaths repeatedFlag
 	flags.Var(&deployedManifestPaths, "deployed-manifest-path", "manifest path selected by the accepted deployment plan")
+	deploymentSourceFlag := flags.String("deployment-source", "", "accepted DeploymentSource as ProtoJSON; exclusive with --deployed-manifest-path")
 	flags.String("dispatcher", "", "deprecated; use agent registrations")
 	dispatcherMode := flags.String("dispatcher-mode", "job", "dispatcher mode: job (production) or local (development)")
 	responderImage := flags.String("responder-image", "", "responder container image for job mode")
@@ -563,7 +580,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if trafficObserver != nil {
 		defer trafficObserver.Stop()
 	}
-	observations := detectorObservations{Client: bootstrapProvider.Client, Clock: clock.Now, MetricsURL: *metricsURL, MetricsTokenFile: *metricsTokenFile}
+	observations := detectorObservations{Client: bootstrapProvider.Client, Clock: clock.Now, MetricsURL: *metricsURL, MetricsTokenFile: *metricsTokenFile, Telemetry: options.Telemetry}
 	snapshotProvider, metricsObserver, err := observations.compose(snapshotProvider, detectors)
 	if err != nil {
 		return err
@@ -614,7 +631,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		kubernetesCache.scopedTracker = stateTracker
 		defer stateTracker.Stop()
 	}
-	planSource := (GitPlanSource{Repository: resolvedRoot, ManifestPaths: deployedManifestPaths, Git: options.PlanGit}).WithCache()
+	deploymentSource, err := rendered.DeploymentSourceFromFlags(*deploymentSourceFlag, deployedManifestPaths)
+	if err != nil {
+		return err
+	}
+	planSource := (GitPlanSource{Repository: resolvedRoot, Deployment: deploymentSource, Catalog: options.Renderers, Git: options.PlanGit}).WithCache()
 	primitiveProber, _ := proberAPI.(PrimitiveProber)
 	var memoryCatalogMu sync.RWMutex
 	removalClient, err := newUnexplainedRemovalClient(planExecConfig, genericCapture, *controlNamespace)
@@ -953,7 +974,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		}
 	}
 	if launchConfig != nil && selectedCodePath.Selection.DetectorSource != "shell" {
-		controller.CheckHealth = acceptedHealthGuard(resolvedRoot, launchConfig.GetControllerRevision(), launchConfig.GetFrozenMemory())
+		controller.CheckHealth = acceptedHealthGuard(resolvedRoot, launchConfig.GetControllerRevision(), planSource.ShapeOf(*namespace), launchConfig.GetFrozenMemory())
 	}
 	controller.CanAct = elector.IsLeader
 	controller.GuardAction = elector.GuardContext
@@ -1095,7 +1116,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		started := clock.Now()
 		resetErr := trafficObserver.Reset(runCtx)
 		trafficObserver.Start(runCtx)
-		warm := trafficObserver.WaitWarm(runCtx, *syntheticWarmup)
+		warm := trafficObserver.AwaitWarm(runCtx, *syntheticWarmup)
 		record := map[string]any{
 			"synthetic_traffic": trafficObserver.Summary(), "synthetic_traffic_warm": warm,
 			"synthetic_traffic_startup_ms": clock.Since(started).Milliseconds(),
@@ -1720,24 +1741,9 @@ func (evaluationDispatcher) Dispatch(context.Context, IncidentRequest) (Incident
 	return IncidentResult{}, fmt.Errorf("evaluate-once does not dispatch incidents")
 }
 
-// evaluationStatus is the bounded command verdict, not a persisted detector
-// observation. Unavailable means this invocation lacks a required capability;
-// pending means a detector can run but its observation window is incomplete.
-type evaluationStatus string
-
-const evaluationUnavailable evaluationStatus = "unavailable"
-
-type unavailableEvaluation struct {
-	DetectorID string `json:"detector_id"`
-	Reason     string `json:"reason"`
-}
-
-type evaluationResult struct {
-	Findings       []sdk.Finding           `json:"findings"`
-	Status         evaluationStatus        `json:"status"`
-	Unavailable    []unavailableEvaluation `json:"unavailable,omitempty"`
-	DetectorStates []DetectorEvaluation    `json:"detector_states,omitempty"`
-}
+// evaluateOnceWarmupBudget is the least time a one-shot evaluation waits for the
+// prober to warm; accepted workloads that need longer extend it.
+const evaluateOnceWarmupBudget = 30 * time.Second
 
 func evaluateOnce(
 	ctx context.Context,
@@ -1749,6 +1755,8 @@ func evaluateOnce(
 	client kubernetes.Interface,
 	trafficAPI ProberAPI,
 	clock kclock.WithTicker,
+	renderers *render.Catalog,
+	registry *telemetry.Registry,
 ) error {
 	clock = timerClock(clock)
 	flags := flag.NewFlagSet("sdo-controller-evaluate-once", flag.ContinueOnError)
@@ -1757,6 +1765,7 @@ func evaluateOnce(
 	application := flags.String("application", "", "application identity")
 	var deployedManifestPaths repeatedFlag
 	flags.Var(&deployedManifestPaths, "deployed-manifest-path", "accepted deployed manifest path; repeat for each selection")
+	deploymentSourceFlag := flags.String("deployment-source", "", "accepted DeploymentSource as ProtoJSON; exclusive with --deployed-manifest-path")
 	appRoot := flags.String("app-root", "", "accepted application repository root")
 	sourceDriftAcknowledgement := flags.String("source-drift-acknowledgement", "", "installer onboarding acknowledgement ProtoJSON file for the read-only source inventory check")
 	sourceDriftReport := flags.String("source-drift-report", "", "read-only accepted-source inventory check; write full JSON to this path and print a summary")
@@ -1845,13 +1854,21 @@ func evaluateOnce(
 			return err
 		}
 		readCommit = revision
-		readSource = (GitPlanSource{Repository: *appRoot, ManifestPaths: deployedManifestPaths}).WithCache()
+		deploymentSource, err := rendered.DeploymentSourceFromFlags(*deploymentSourceFlag, deployedManifestPaths)
+		if err != nil {
+			return err
+		}
+		readSource = (GitPlanSource{Repository: *appRoot, Deployment: deploymentSource, Catalog: renderers}).WithCache()
 	}
 	if *sourceDriftReport != "" {
 		if *appRoot == "" || readClient == nil {
 			return errors.New("source-drift-report requires app-root and a Kubernetes read client")
 		}
-		source := (GitPlanSource{Repository: *appRoot, ManifestPaths: deployedManifestPaths}).WithCache()
+		deploymentSource, err := rendered.DeploymentSourceFromFlags(*deploymentSourceFlag, deployedManifestPaths)
+		if err != nil {
+			return err
+		}
+		source := (GitPlanSource{Repository: *appRoot, Deployment: deploymentSource, Catalog: renderers}).WithCache()
 		inventory, err := source.AcceptedInventory(ctx, readCommit, *namespace)
 		if err != nil {
 			return err
@@ -1885,18 +1902,35 @@ func evaluateOnce(
 	// Deployment-time evaluation runs before any controller measured this
 	// cluster, so it judges reachability without a recorded baseline.
 	trafficProvider := TrafficSnapshotProvider{Base: provider}
+	var unavailable []evaluation.UnavailableDetector
 	if workloads := TrafficWorkloadNames(detectors); len(workloads) > 0 {
 		if trafficAPI == nil {
 			return errors.New("traffic health evaluation requires the active memory host")
 		}
 		observer := NewTrafficObserver(trafficAPI, workloads, nil, 0)
 		observer.Clock = clock
-		if !observer.WaitWarm(ctx, 30*time.Second) {
-			return errors.New("traffic prober did not produce a complete bounded health window")
+		// The wait is bounded by what the accepted workloads declare they need
+		// (minimum samples at their rate), never below the base budget. When
+		// the bound expires the detectors judge what was observed and report
+		// a typed pending reason naming the scenarios that lacked samples. A
+		// prober that cannot be read is unavailable, named per detector.
+		observer.AwaitWarm(ctx, evaluateOnceWarmupBudget)
+		if failure := observer.Failure(); failure != "" {
+			// Those detectors are not run: judging them without a window is an
+			// error, and the verdict is that they could not be observed.
+			var runnable []sdk.Detector
+			for _, detector := range detectors {
+				if consumer, ok := detector.(traffic.Consumer); ok && len(consumer.TrafficWorkloads()) > 0 {
+					unavailable = append(unavailable, evaluation.UnavailableDetector{DetectorID: detector.Spec().ID, Reason: "traffic prober unavailable: " + failure})
+					continue
+				}
+				runnable = append(runnable, detector)
+			}
+			detectors = runnable
+		} else {
+			trafficProvider.Observer = observer
 		}
-		trafficProvider.Observer = observer
 	}
-	var unavailable []unavailableEvaluation
 	if ConsumesServiceReachability(detectors) {
 		dialer, ok := trafficAPI.(ReachabilityDialer)
 		if !ok {
@@ -1917,7 +1951,7 @@ func evaluateOnce(
 	if trafficProvider.Observer != nil || trafficProvider.Reachability != nil {
 		provider = trafficProvider
 	}
-	provider, _, err := detectorObservations{Client: client, Clock: clock.Now, MetricsURL: *metricsURL, MetricsTokenFile: *metricsTokenFile, RequireMetrics: true}.compose(provider, detectors)
+	provider, _, err := detectorObservations{Client: client, Clock: clock.Now, MetricsURL: *metricsURL, MetricsTokenFile: *metricsTokenFile, RequireMetrics: true, Telemetry: registry}.compose(provider, detectors)
 	if err != nil {
 		return err
 	}
@@ -1949,29 +1983,29 @@ func evaluateOnce(
 	if len(detectorErrors) > 0 {
 		return fmt.Errorf("health detector evaluation failed: %w", detectorErrors[0])
 	}
-	status := evaluationStatus(DetectorEvaluationClear)
-	var unconfirmed []DetectorEvaluation
-	for _, evaluation := range controller.history {
-		if evaluation.Status == DetectorEvaluationPending {
-			status = evaluationStatus(DetectorEvaluationPending)
+	status := evaluation.Clear
+	var unconfirmed []evaluation.DetectorState
+	for _, observed := range controller.history {
+		if observed.Status == DetectorEvaluationPending {
+			status = evaluation.Pending
 		}
-		if evaluation.Status == DetectorEvaluationPending || evaluation.Reason != "" {
-			unconfirmed = append(unconfirmed, evaluation)
+		if observed.Status == DetectorEvaluationPending || observed.Reason != "" {
+			unconfirmed = append(unconfirmed, evaluation.DetectorState{DetectorID: observed.DetectorID, EvaluatedAt: observed.EvaluatedAt, Status: string(observed.Status), Fingerprints: observed.Fingerprints, Error: observed.Error, Reason: observed.Reason})
 		}
 	}
 	if len(unavailable) > 0 {
-		status = evaluationUnavailable
+		status = evaluation.Unavailable
 	}
 	for _, finding := range findings {
 		if finding.Status == sdk.FindingActive {
-			status = evaluationStatus(DetectorEvaluationFiring)
+			status = evaluation.Firing
 			break
 		}
 	}
-	if err := json.NewEncoder(stdout).Encode(evaluationResult{Status: status, Findings: findings, Unavailable: unavailable, DetectorStates: unconfirmed}); err != nil {
+	if err := json.NewEncoder(stdout).Encode(evaluation.Verdict{Status: status, Findings: findings, Unavailable: unavailable, DetectorStates: unconfirmed}); err != nil {
 		return err
 	}
-	if *acceptSeed && status != evaluationStatus(DetectorEvaluationClear) {
+	if *acceptSeed && status != evaluation.Clear {
 		return fmt.Errorf("seed acceptance rejected: status %s; %d detector finding(s); unavailable: %v", status, len(findings), unavailable)
 	}
 	return nil

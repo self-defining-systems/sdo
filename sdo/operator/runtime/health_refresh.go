@@ -11,9 +11,10 @@ import (
 // acceptedHealthGuard binds every evaluation/effect to the policy compiled into
 // this process. Memory-only commits are safe; a policy or source advance asks
 // the parent builder to refresh and adopt a newly compiled detector bundle and
-// restart. It never retires an incident or closure: the restarted controller
+// restart. Adoption keys on source bytes; whether the judge must run again
+// is decided by shapeOf (nil: bytes). It never retires an incident or closure: the restarted controller
 // resumes them, and health verification alone decides closure.
-func acceptedHealthGuard(root, compiledRevision string, frozen ...bool) func(context.Context) error {
+func acceptedHealthGuard(root, compiledRevision string, shapeOf memory.ShapeOf, frozen ...bool) func(context.Context) error {
 	var mu sync.Mutex
 	var built *memory.HealthRevision
 	return func(ctx context.Context) error {
@@ -26,7 +27,7 @@ func acceptedHealthGuard(root, compiledRevision string, frozen ...bool) func(con
 			}
 			built = &revision
 		}
-		accepted, err := memory.AcceptedHealthRevision(ctx, root)
+		accepted, err := memory.AcceptedHealthRevision(ctx, root, shapeOf)
 		if err != nil {
 			return err
 		}

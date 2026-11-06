@@ -20,6 +20,8 @@ const (
 	SchemaVersionFile = Dir + "/schema-version"
 	GoalFile          = Dir + "/goal.md"
 	ArchitectureFile  = Dir + "/arch.md"
+	// SourcesFile is the human-owned goal-class list of followed upstream sources.
+	SourcesFile = Dir + "/goal/sources.yaml"
 	// LifecycleProvenanceFile is Upkeep/controller validation metadata.
 	LifecycleProvenanceFile = Dir + "/lifecycle-provenance.yaml"
 
@@ -62,6 +64,7 @@ const (
 	KindSchemaVersion            Kind = "schema-version"
 	KindGoal                     Kind = "goal"
 	KindArchitecture             Kind = "architecture"
+	KindSources                  Kind = "sources"
 	KindLifecycleProvenance      Kind = "lifecycle-provenance"
 	KindDiagnosticsModule        Kind = "diagnostics-module"
 	KindLegacyDetectorManifest   Kind = "legacy-detector-manifest"
@@ -190,6 +193,10 @@ func Classify(p string) (Kind, string, bool) {
 		return only(parts, KindGoal)
 	case "arch.md":
 		return only(parts, KindArchitecture)
+	case "goal":
+		if len(parts) == 2 && parts[1] == "sources.yaml" {
+			return KindSources, "", true
+		}
 	case "lifecycle-provenance.yaml":
 		return only(parts, KindLifecycleProvenance)
 	case "rendered":
@@ -285,9 +292,11 @@ func IncidentTraffic(kind Kind, id string) bool {
 	return false
 }
 
-// IsMemoryPath reports whether a repository-relative path is inside
-// operational memory, classified or not.
-func IsMemoryPath(p string) bool { return strings.HasPrefix(p, Dir+"/") }
+// IsMemoryPath reports whether a repository-relative path is operational
+// memory, classified or not: the memory directory entry itself (a file or
+// symlink named exactly Dir replaces the directory) or anything below it.
+// Every caller that decides what may touch memory uses this predicate.
+func IsMemoryPath(p string) bool { return p == Dir || strings.HasPrefix(p, Dir+"/") }
 
 // DetectorDir is the repository-relative directory of a detector package.
 func DetectorDir(class Class, id string) string {
@@ -473,7 +482,7 @@ func RequiresValidatorJob(changedPaths []string) bool {
 			return true
 		}
 		switch kind {
-		case KindGoal, KindArchitecture, KindLifecycleProvenance, KindPlaybookIndex, KindPlaybook, KindPlaybookScript, KindOutcome:
+		case KindGoal, KindSources, KindArchitecture, KindLifecycleProvenance, KindPlaybookIndex, KindPlaybook, KindPlaybookScript, KindOutcome:
 		default:
 			return true
 		}

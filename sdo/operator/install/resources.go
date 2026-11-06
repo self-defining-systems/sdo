@@ -87,6 +87,14 @@ type Config struct {
 	// branch. MemoryUpstreamSSHSecret names an existing Secret holding the
 	// ssh "identity" and "known_hosts", mounted read-only.
 	MemoryUpstreamURL, MemoryUpstreamBranch, MemoryUpstreamSSHSecret string
+	// SourceKind and SourceConfig (one JSON object) name the upstream the
+	// deployment follows; the operate Job publishes them as
+	// .sdo/goal/sources.yaml with the human goal. Both or neither.
+	SourceKind, SourceConfig string
+	// DeploymentPlan is a provided deployment (compact ProtoJSON
+	// DeploymentPlan): the operate Job deploys it instead of asking the
+	// deployer agent for a plan.
+	DeploymentPlan string
 }
 
 type Plan struct {
@@ -150,6 +158,9 @@ func (c Config) validate() error {
 	}
 	if c.ControllerImage == "" || c.ResponderImage == "" {
 		return errors.New("controller and responder images are required")
+	}
+	if (c.SourceKind == "") != (c.SourceConfig == "") {
+		return errors.New("followed source requires both a kind and a config")
 	}
 	if (c.MemoryUpstreamURL == "") != (c.MemoryUpstreamBranch == "") || (c.MemoryUpstreamSSHSecret != "" && c.MemoryUpstreamURL == "") {
 		return errors.New("memory upstream requires both a URL and a branch")
@@ -427,6 +438,7 @@ func controllerJob(c Config) *batchv1.Job {
 			args = append(args, "--memory-upstream-ssh-dir", MemoryUpstreamSSHDir)
 		}
 	}
+	args = append(args, controllerDeployArgs(c)...)
 	ttl, backoff := int32(600), int32(6)
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{Name: ControllerJobName, Namespace: control},
@@ -505,6 +517,24 @@ func controllerJob(c Config) *batchv1.Job {
 		devmount.Apply(pod)
 	}
 	return job
+}
+
+// controllerDeployArgs give the controller parent the operate Job's trusted
+// build and apply identity, so it can deploy upstream advances of a followed
+// source. An install without a BuildKit image and push Secret (seeded or
+// install-existing) passes none, and the controller does not follow.
+func controllerDeployArgs(c Config) []string {
+	if c.BuildKitImage == "" || c.RegistryPushSecret == "" {
+		return nil
+	}
+	args := append([]string{"--buildkit-image", c.BuildKitImage, "--registry-push-secret", c.RegistryPushSecret}, operateBuildArgs(c)...)
+	if c.RegistryHost != "" {
+		args = append(args, "--registry-host", c.RegistryHost)
+	}
+	if c.RegistryInsecure {
+		args = append(args, "--registry-insecure")
+	}
+	return args
 }
 
 // MemoryUpstreamSSHDir is where the controller reads the memory remote's ssh

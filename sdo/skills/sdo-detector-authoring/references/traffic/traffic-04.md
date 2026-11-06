@@ -66,8 +66,20 @@ func WindowFrom(ctx sdk.DetectionContext, workload string) (Window, bool)
     WindowFrom returns the observations of workload, when the context carries
     them.
 
+func (w Window) Ready() bool
+    Ready reports whether the window holds what its own detectors need to judge
+    it: every observed scenario has the usable samples its SLO requires (failed
+    samples count, so an outage is judged rather than waited out), and every
+    link has a sample. The traffic detector's ConfirmationReason is built on the
+    same predicate, so a ready window can differ from a confirmed one only by
+    scenarios that have not yet succeeded.
+
 func (w Window) SLO() SLO
     SLO returns the workload's effective SLO, defaults included.
+
+func (w Window) WarmupHorizon() time.Duration
+    WarmupHorizon is how long a freshly started prober needs, at the workload's
+    rate, to give every scenario its SLO's minimum samples.
 
 type WindowSet interface {
 	TrafficWindows() map[string]Window
@@ -103,6 +115,10 @@ type Workload struct {
 func ParseWorkloadJSON(data []byte) (Workload, error)
     ParseWorkloadJSON strictly decodes a workload, applies defaults, and
     validates it on its own; ValidateAgainst checks it against a catalog.
+
+func (w Workload) ScenarioArrival(id string) time.Duration
+    ScenarioArrival is the expected time between samples of one scenario: its
+    share of the workload rate. Zero when the rate or the scenario is unknown.
 
 func (w Workload) ScenarioSLO(id string) SLO
     ScenarioSLO is the effective SLO of one scenario of the workload.

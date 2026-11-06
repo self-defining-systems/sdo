@@ -1,0 +1,13 @@
+diff --git a/main.go b/main.go
+index 4261149..ab36624 100644
+--- a/main.go
++++ b/main.go
+@@ -16,7 +16,7 @@ func main() {
+ 			http.NotFound(w, r)
+ 			return
+ 		}
+-		fmt.Fprintln(w, os.Getenv("SERVICE_NAME"))
++		fmt.Fprintf(w, "%s v2\n", os.Getenv("SERVICE_NAME"))
+ 	})
+ 	http.HandleFunc("/journey", func(w http.ResponseWriter, r *http.Request) {
+ 		if dependency := os.Getenv("DEPENDENCY"); dependency != "" {

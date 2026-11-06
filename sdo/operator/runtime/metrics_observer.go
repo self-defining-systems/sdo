@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,7 +22,7 @@ import (
 const DefaultMetricsQueryTimeout = 5 * time.Second
 
 // MetricsAPI is the controller's view of a metrics source. The transport,
-// for example runtime/prometheus, lives behind it.
+// for example the telemetry registry's Prometheus adapter, lives behind it.
 type MetricsAPI interface {
 	// Query evaluates query at time at; a query with a Range is a range query ending at at.
 	Query(ctx context.Context, query metrics.Query, at time.Time) ([]metrics.Series, error)
@@ -184,6 +185,16 @@ func call[T any](ctx context.Context, timeout time.Duration, request func(contex
 
 var errMetricsNotConfigured = errors.New("metrics source not configured (set --metrics-url)")
 
+// sourceUnavailable words a source failure for a detector error. Errors from
+// the telemetry resolver already name their source (`telemetry source "prom"
+// ...`) and pass through; anything else, such as a timeout, is prefixed.
+func sourceUnavailable(err error) string {
+	if strings.HasPrefix(err.Error(), "telemetry source") {
+		return err.Error()
+	}
+	return "metrics source unavailable: " + err.Error()
+}
+
 func (o *MetricsObserver) fetchQuery(ctx context.Context, query metrics.Query, at time.Time) metrics.Result {
 	result := metrics.Result{Query: query, ObservedAt: at}
 	if o.api == nil {
@@ -192,7 +203,7 @@ func (o *MetricsObserver) fetchQuery(ctx context.Context, query metrics.Query, a
 	}
 	series, err := call(ctx, o.timeout, func(ctx context.Context) ([]metrics.Series, error) { return o.api.Query(ctx, query, at) })
 	if err != nil {
-		result.Error = "metrics source unavailable: " + err.Error()
+		result.Error = sourceUnavailable(err)
 		return result
 	}
 	if len(series) > metrics.MaxSeries {
@@ -222,7 +233,7 @@ func (o *MetricsObserver) fetchAlerts(ctx context.Context, at time.Time) metrics
 	}
 	alerts, err := call(ctx, o.timeout, o.api.Alerts)
 	if err != nil {
-		result.Error = "metrics source unavailable: " + err.Error()
+		result.Error = sourceUnavailable(err)
 		return result
 	}
 	if len(alerts) > metrics.MaxAlerts {

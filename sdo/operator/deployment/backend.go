@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sdo.dev/operator/deployment/internal/deploymentio"
 	"strconv"
 	"strings"
@@ -15,7 +13,6 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
@@ -25,7 +22,6 @@ import (
 // Docker registry and Kubernetes credentials. It never accepts readiness from
 // an agent: it reads the live workload after applying stamped manifests.
 type CommandBackend struct {
-	DockerBinary  string
 	KubectlBinary string
 	KubeContext   string
 	ObserveLimit  time.Duration
@@ -35,47 +31,11 @@ type CommandBackend struct {
 	Now func() time.Time
 }
 
-func (b CommandBackend) docker() string {
-	if b.DockerBinary != "" {
-		return b.DockerBinary
-	}
-	return "docker"
-}
 func (b CommandBackend) kubectl() string {
 	if b.KubectlBinary != "" {
 		return b.KubectlBinary
 	}
 	return "kubectl"
-}
-
-func (b CommandBackend) BuildImage(ctx context.Context, _ string, build *contracts.ImageBuild) (string, error) {
-	if build == nil || build.GetImage() == "" {
-		return "", errors.New("image build is required")
-	}
-	metadataDir, err := os.MkdirTemp("", "sdo-image-build-")
-	if err != nil {
-		return "", err
-	}
-	defer os.RemoveAll(metadataDir)
-	metadata := filepath.Join(metadataDir, "metadata.json")
-	output, err := b.run(ctx, b.docker(), []string{"buildx", "build", "--push", "--metadata-file", metadata, "--file", build.DockerfilePath, "--tag", build.Image, build.ContextPath}, nil)
-	if err != nil {
-		return "", fmt.Errorf("push image %s: %w: %s", build.Image, err, strings.TrimSpace(string(output)))
-	}
-	data, err := os.ReadFile(metadata)
-	if err != nil {
-		return "", fmt.Errorf("read image build metadata: %w", err)
-	}
-	var details struct {
-		Digest string `json:"containerimage.digest"`
-	}
-	if err := json.Unmarshal(data, &details); err != nil {
-		return "", fmt.Errorf("image build metadata: %w", err)
-	}
-	if !strings.HasPrefix(details.Digest, "sha256:") || len(details.Digest) != 71 {
-		return "", errors.New("image build did not return a sha256 digest")
-	}
-	return imageRepository(build.Image) + "@" + details.Digest, nil
 }
 
 func (b CommandBackend) Apply(ctx context.Context, documents []byte) error {

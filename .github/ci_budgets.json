@@ -39,6 +39,7 @@
     "python": {
       "tests/unit/test_astronomy_shop_app.py::test_astronomy_renderer_preserves_baseline_policy": "renders the full astronomy-shop application",
       "tests/unit/benchmarks/sregym/fastloop/test_fastloop_cli.py::test_up_persists_a_dns_application_name_and_loads_legacy_display_names": "waits on the shared operator CLI build when it is the first test a worker runs (2.7 s locally, 13 s cold on a hosted runner)",
+      "tests/unit/benchmarks/sregym/fastloop/test_request_envelope.py::test_large_reflection_record_ingest_load_and_replay": "go_integration: ingests and replays a 256 KiB reflection record through the real Go operator (17 s on a hosted runner)",
       "tests/unit/benchmarks/sregym/fastloop/test_fastloop_hermetic_run.py::test_scripted_fastloop_reuses_reflected_target_port_program": "hermetic end-to-end fastloop run"
     }
   }

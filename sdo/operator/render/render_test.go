@@ -285,3 +285,25 @@ func TestSecretOmitRejectedByCatalog(t *testing.T) {
 		t.Fatalf("Secret data under SecretsInclude rejected: %v", err)
 	}
 }
+
+func TestCatalogRenderRejectsOutputOverLimit(t *testing.T) {
+	cat := render.NewCatalog()
+	big := strings.Repeat("x", 100)
+	err := render.Register(cat, "fat", render.RendererFunc[*structpb.Struct](func(context.Context, render.FS, render.Env, *structpb.Struct) (render.Result, error) {
+		obj := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "ConfigMap",
+			"metadata": map[string]any{"name": "c"}, "data": map[string]any{"k": big}}}
+		return render.SinglePhase(obj), nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := anypb.New(&structpb.Struct{})
+	if _, err := cat.WithLimits(render.Limits{OutputBytes: 1000}).Render(context.Background(), rendertest.MapFS{}, render.Env{}, "fat", cfg); err != nil {
+		t.Fatalf("under the limit: %v", err)
+	}
+	_, err = cat.WithLimits(render.Limits{OutputBytes: 50}).Render(context.Background(), rendertest.MapFS{}, render.Env{}, "fat", cfg)
+	var typed *render.OutputLimitError
+	if !errors.As(err, &typed) || !errors.Is(err, render.ErrLimit) || typed.Limit != 50 {
+		t.Fatalf("err = %v, want *OutputLimitError(limit 50) matching ErrLimit", err)
+	}
+}

@@ -451,9 +451,12 @@ type-checking, so negative-control fixtures under `testdata/` need no real depen
 - R2 an implementation imports only its family interface and support package, `contracts`,
   `sdk`, stdlib and tool libraries: no core package, no sibling.
 - R3 only `operatorcli` and tests import implementation subpackages.
-- R4 no type assertion or type switch to a plugin config type (the `*Strategy` messages
-  listed in `ConfigTypes`) outside its owning package. A new `*Strategy` type must be
-  added to the table or the check fails.
+- R4 no use of a plugin config type (the messages listed in `ConfigTypes`, an explicit
+  registry; nothing is inferred from a name) outside its owning package: type assertions and
+  switches everywhere, and any other reference (composite literals, `UnmarshalTo` and `anypb`
+  targets, var, parameter and generic argument types) outside tests and `operatorcli` wiring.
+  The check is syntactic, so it sees a type where the file names it. Add a new plugin config
+  message to `ConfigTypes` when its family gains one.
 - R5 ratchet: `ManifestPaths`/`manifest_paths` per-file counts may only fall.
 
 Today's violations are `//archcheck:` directives in the violating file, so parallel PRs

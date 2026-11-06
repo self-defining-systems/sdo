@@ -8,7 +8,6 @@ import (
 	"os"
 
 	"sdo.dev/operator/broker"
-	"sdo.dev/operator/builder"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/operatorcli"
 	"sdo.dev/operator/shellpath"
@@ -275,11 +274,7 @@ func main() {
 		}
 		return
 	}
-	config, err := operatorcli.ParseControllerLaunch(os.Args[1:])
-	if err == nil {
-		err = builder.RunOnce(context.Background(), config)
-	}
-	if err != nil && !errors.Is(err, context.Canceled) {
+	if err := operatorcli.RunController(context.Background(), os.Args[1:]); err != nil && !errors.Is(err, context.Canceled) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

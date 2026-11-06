@@ -2,6 +2,7 @@ package rendertest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -75,6 +76,8 @@ func TestRenderer(t *testing.T, c *render.Catalog, id string, cases []Case) {
 //	secret-omit       SecretsOmit output carries no Secret data and does not
 //	                  read any SecretOnly file
 //	errors            an error case fails with WantErr (and ErrLimit when set)
+//	output-limit      a render whose encoded objects exceed Limits.OutputBytes
+//	                  fails with *render.OutputLimitError (matching ErrLimit)
 //	phases            phase names are unique and Desired excludes Ephemeral
 //	want              the desired objects equal Want
 func Check(c *render.Catalog, id string, cases []Case) []Failure {
@@ -139,6 +142,7 @@ func checkCase(c *render.Catalog, id string, tc Case, fail func(string, error)) 
 			break
 		}
 	}
+	checkOutputLimit(c, id, tc, omit, config, first, fail)
 	checkInputs(tc.FS, first, fail)
 	checkPhases(first, fail)
 	for _, file := range tc.SecretOnly {
@@ -248,4 +252,35 @@ func refs(objs []*unstructured.Unstructured) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// checkOutputLimit re-renders under a catalog whose output cap is one byte
+// below the first render's encoded size and requires the typed error. It is
+// skipped for renders with no objects.
+func checkOutputLimit(c *render.Catalog, id string, tc Case, env render.Env, config *anypb.Any, first render.Result, fail func(string, error)) {
+	var size int64
+	for _, obj := range first.Objects() {
+		b, err := json.Marshal(obj.Object)
+		if err != nil {
+			fail("output-limit", err)
+			return
+		}
+		size += int64(len(b))
+	}
+	if size < 2 {
+		return
+	}
+	lim := render.DefaultLimits
+	if tc.Limits != nil {
+		lim = *tc.Limits
+	}
+	lim.OutputBytes = size - 1
+	_, err := c.WithLimits(lim).Render(context.Background(), tc.FS, env, id, config)
+	var typed *render.OutputLimitError
+	switch {
+	case err == nil:
+		fail("output-limit", fmt.Errorf("render of %d encoded bytes succeeded under an output limit of %d", size, size-1))
+	case !errors.As(err, &typed) || !errors.Is(err, render.ErrLimit):
+		fail("output-limit", fmt.Errorf("error %q is not *render.OutputLimitError matching ErrLimit", err))
+	}
 }

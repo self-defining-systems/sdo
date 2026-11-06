@@ -25,8 +25,12 @@ const (
 type Env struct {
 	Namespace   string   // application namespace (default namespace, Helm .Release.Namespace)
 	Release     string   // stable release name (Helm .Release.Name)
-	KubeVersion string   // empty until slice 8
-	APIVersions []string // nil until slice 8
+	// KubeVersion and APIVersions describe the target cluster. Both are part
+	// of EnvDigest. Empty/nil means unknown: a renderer that needs them
+	// applies its own default (helm: v1.30.0 and the APIs that version
+	// serves). Nothing populates them from cluster discovery yet.
+	KubeVersion string
+	APIVersions []string
 	Secrets     SecretMode
 }
 

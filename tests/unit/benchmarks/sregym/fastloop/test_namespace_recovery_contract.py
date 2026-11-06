@@ -278,6 +278,10 @@ def test_legacy_capture_cannot_delete_unrecorded_namespace_prerequisites(kind: s
     assert cluster.touched == []
 
 
+# A workload in accepted source must have a valid pod template (reads share deploy's normalization).
+POD_TEMPLATE = {"template": {"spec": {"containers": [{"name": "app", "image": "example.invalid/app:1"}]}}}
+
+
 @pytest.mark.parametrize("unrelated_kind", ["Deployment", "ConfigMap"])
 def test_recovery_reads_only_the_reference_closure_from_the_accepted_source(
     tmp_path: Path, unrelated_kind: str
@@ -286,7 +290,8 @@ def test_recovery_reads_only_the_reference_closure_from_the_accepted_source(
     from benchmarks.sregym.fastloop.recovery_closure import complete_recovery_baselines
 
     source = commit_accepted_source(
-        tmp_path, [obj("ServiceAccount", "reader"), {**obj(unrelated_kind, "other-lane"), "apiVersion": "v1"}]
+        tmp_path,
+        [obj("ServiceAccount", "reader"), {**obj(unrelated_kind, "other-lane", spec=POD_TEMPLATE), "apiVersion": "v1"}],
     )
     baseline = (ApplicationBaseline("hotel", [obj("Pod", "app", spec={"serviceAccountName": "reader"})]),)
     completed = complete_recovery_baselines(source, baseline)

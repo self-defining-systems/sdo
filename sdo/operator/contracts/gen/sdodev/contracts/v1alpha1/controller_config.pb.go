@@ -146,6 +146,9 @@ type ControllerConfig struct {
 	FrozenMemory bool `protobuf:"varint,110,opt,name=frozen_memory,json=frozenMemory,proto3" json:"frozen_memory,omitempty"`
 	// Transitional: replaces deployed_manifest_paths (63) when the controller switches.
 	DeploymentSource *DeploymentSource `protobuf:"bytes,112,opt,name=deployment_source,json=deploymentSource,proto3" json:"deployment_source,omitempty"`
+	// render_environment is the install-time render environment of the accepted
+	// deployment; absent means unknown (renderer defaults).
+	RenderEnvironment *RenderEnvironment `protobuf:"bytes,113,opt,name=render_environment,json=renderEnvironment,proto3" json:"render_environment,omitempty"`
 	// Disable detector admission/verification; accept external alerts only.
 	ExternalIncidents bool `protobuf:"varint,111,opt,name=external_incidents,json=externalIncidents,proto3" json:"external_incidents,omitempty"`
 	unknownFields     protoimpl.UnknownFields
@@ -639,6 +642,13 @@ func (x *ControllerConfig) GetDeploymentSource() *DeploymentSource {
 	return nil
 }
 
+func (x *ControllerConfig) GetRenderEnvironment() *RenderEnvironment {
+	if x != nil {
+		return x.RenderEnvironment
+	}
+	return nil
+}
+
 func (x *ControllerConfig) GetExternalIncidents() bool {
 	if x != nil {
 		return x.ExternalIncidents
@@ -850,7 +860,7 @@ var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDesc
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\x1a1sdodev/contracts/v1alpha1/deployment_source.proto\"\xfd \n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\x1a1sdodev/contracts/v1alpha1/deployment_source.proto\"\xda!\n" +
 	"\x10ControllerConfig\x12,\n" +
 	"\x12memory_host_binary\x18R \x01(\tR\x10memoryHostBinary\x12,\n" +
 	"\x12memory_host_digest\x18S \x01(\tR\x10memoryHostDigest\x12%\n" +
@@ -924,7 +934,8 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\x0fmemory_upstream\x18P \x01(\v2).sdodev.contracts.v1alpha1.MemoryUpstreamR\x0ememoryUpstream\x12F\n" +
 	"\tcode_path\x18d \x01(\v2).sdodev.contracts.v1alpha1.CodePathConfigR\bcodePath\x12#\n" +
 	"\rfrozen_memory\x18n \x01(\bR\ffrozenMemory\x12X\n" +
-	"\x11deployment_source\x18p \x01(\v2+.sdodev.contracts.v1alpha1.DeploymentSourceR\x10deploymentSource\x12-\n" +
+	"\x11deployment_source\x18p \x01(\v2+.sdodev.contracts.v1alpha1.DeploymentSourceR\x10deploymentSource\x12[\n" +
+	"\x12render_environment\x18q \x01(\v2,.sdodev.contracts.v1alpha1.RenderEnvironmentR\x11renderEnvironment\x12-\n" +
 	"\x12external_incidents\x18o \x01(\bR\x11externalIncidentsB\x14\n" +
 	"\x12_synthetic_trafficB\x1a\n" +
 	"\x18_clean_responder_helpersB\x11\n" +
@@ -969,6 +980,7 @@ var file_sdodev_contracts_v1alpha1_controller_config_proto_goTypes = []any{
 	(*CodePathOverrides)(nil),   // 3: sdodev.contracts.v1alpha1.CodePathOverrides
 	(*durationpb.Duration)(nil), // 4: google.protobuf.Duration
 	(*DeploymentSource)(nil),    // 5: sdodev.contracts.v1alpha1.DeploymentSource
+	(*RenderEnvironment)(nil),   // 6: sdodev.contracts.v1alpha1.RenderEnvironment
 }
 var file_sdodev_contracts_v1alpha1_controller_config_proto_depIdxs = []int32{
 	4,  // 0: sdodev.contracts.v1alpha1.ControllerConfig.duration:type_name -> google.protobuf.Duration
@@ -985,12 +997,13 @@ var file_sdodev_contracts_v1alpha1_controller_config_proto_depIdxs = []int32{
 	1,  // 11: sdodev.contracts.v1alpha1.ControllerConfig.memory_upstream:type_name -> sdodev.contracts.v1alpha1.MemoryUpstream
 	2,  // 12: sdodev.contracts.v1alpha1.ControllerConfig.code_path:type_name -> sdodev.contracts.v1alpha1.CodePathConfig
 	5,  // 13: sdodev.contracts.v1alpha1.ControllerConfig.deployment_source:type_name -> sdodev.contracts.v1alpha1.DeploymentSource
-	3,  // 14: sdodev.contracts.v1alpha1.CodePathConfig.overrides:type_name -> sdodev.contracts.v1alpha1.CodePathOverrides
-	15, // [15:15] is the sub-list for method output_type
-	15, // [15:15] is the sub-list for method input_type
-	15, // [15:15] is the sub-list for extension type_name
-	15, // [15:15] is the sub-list for extension extendee
-	0,  // [0:15] is the sub-list for field type_name
+	6,  // 14: sdodev.contracts.v1alpha1.ControllerConfig.render_environment:type_name -> sdodev.contracts.v1alpha1.RenderEnvironment
+	3,  // 15: sdodev.contracts.v1alpha1.CodePathConfig.overrides:type_name -> sdodev.contracts.v1alpha1.CodePathOverrides
+	16, // [16:16] is the sub-list for method output_type
+	16, // [16:16] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_controller_config_proto_init() }

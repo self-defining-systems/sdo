@@ -64,17 +64,10 @@ func (d sloDetector) EvaluationWindow(ctx sdk.DetectionContext) time.Duration {
 	if !ok {
 		return 0
 	}
-	total := 0
-	for _, scenario := range window.Workload.Scenarios {
-		total += scenario.Weight
-	}
 	var longest time.Duration
 	for _, scenario := range window.Workload.Scenarios {
 		slo := window.Workload.ScenarioSLO(scenario.ID)
-		var arrival time.Duration
-		if window.Workload.RatePerSecond > 0 && scenario.Weight > 0 {
-			arrival = time.Duration(float64(time.Second) * float64(total) / (float64(scenario.Weight) * window.Workload.RatePerSecond))
-		}
+		arrival := window.Workload.ScenarioArrival(scenario.ID)
 		horizon := max(slo.MaxAge.Duration(), time.Duration(slo.MinSamples)*arrival) + arrival
 		longest = max(longest, horizon)
 	}
@@ -113,7 +106,7 @@ func (d sloDetector) ConfirmationReason(ctx sdk.DetectionContext) string {
 			continue
 		}
 		qualified++
-		if !Evaluate(id, window.Workload.ScenarioSLO(id), observed.Samples, window.ObservedAt).Evaluated {
+		if !scenarioHasEnoughSamples(window, observed) {
 			incomplete = append(incomplete, id)
 		}
 	}

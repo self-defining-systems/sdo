@@ -56,6 +56,11 @@ type Declared struct {
 	Config   *anypb.Any
 }
 
+// Every error type of this package that can be an infrastructure outcome
+// (ResolveError, TimeoutError) implements InfrastructureOutcome() bool, the one
+// marker the lifecycle coordinator checks. Implementations that add a classified
+// failure (for example the BuildKit build failure) implement the same method.
+
 // Error attributes a failure to the image and the source that produced it. It
 // unwraps to the source's own typed cause (ResolveError, BuildFailureError, and
 // so on), so callers keep using errors.As.
@@ -96,6 +101,10 @@ type ResolveError struct {
 func (e *ResolveError) Error() string { return e.Err.Error() }
 func (e *ResolveError) Unwrap() error { return e.Err }
 
+// InfrastructureOutcome marks a rate limit, timeout or network failure: the
+// reference may be fine, so the coordinator retries instead of blaming the plan.
+func (e *ResolveError) InfrastructureOutcome() bool { return e.Kind == ResolveTransient }
+
 // TimeoutError reports that resolving an image ran out of time. It is an
 // infrastructure outcome, not a verdict on the plan. ResolveAll returns it
 // when a source's shared budget expires while the caller's context is live;
@@ -119,8 +128,9 @@ func (e *TimeoutError) Error() string {
 // Unwrap lets errors.Is(err, context.DeadlineExceeded) hold.
 func (e *TimeoutError) Unwrap() error { return context.DeadlineExceeded }
 
-// InfrastructureTimeout marks the error as a time limit, not a plan error.
-func (e *TimeoutError) InfrastructureTimeout() bool { return true }
+// InfrastructureOutcome marks the error as a time limit, not a plan error. It
+// is the one marker the lifecycle coordinator checks.
+func (e *TimeoutError) InfrastructureOutcome() bool { return true }
 
 var digestReference = regexp.MustCompile(`^[^@\s]+@sha256:[a-f0-9]{64}$`)
 
@@ -219,8 +229,8 @@ func verify(image, ref string, sameRepository bool) error {
 	if !digestReference.MatchString(ref) {
 		return fmt.Errorf("source returned a mutable or malformed reference %q", ref)
 	}
-	if sameRepository && repository(ref) != repository(image) {
-		return fmt.Errorf("source returned %q, which is outside the requested repository %q", ref, repository(image))
+	if sameRepository && Repository(ref) != Repository(image) {
+		return fmt.Errorf("source returned %q, which is outside the requested repository %q", ref, Repository(image))
 	}
 	return nil
 }
@@ -233,26 +243,4 @@ func registryHost(image string) string {
 		}
 	}
 	return ""
-}
-
-// repository strips a digest or tag from a reference.
-func repository(image string) string {
-	for i := 0; i < len(image); i++ {
-		if image[i] == '@' {
-			return image[:i]
-		}
-	}
-	lastSlash, colon := -1, -1
-	for i := 0; i < len(image); i++ {
-		switch image[i] {
-		case '/':
-			lastSlash = i
-		case ':':
-			colon = i
-		}
-	}
-	if colon > lastSlash {
-		return image[:colon]
-	}
-	return image
 }

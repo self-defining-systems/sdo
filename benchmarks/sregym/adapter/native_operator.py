@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 from google.protobuf import json_format
 
 from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
+from benchmarks.sregym.adapter.deployment_source import plan_flag_value, source_flag_value
 from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
@@ -101,7 +102,7 @@ class NativeInstallConfig:
     responder_namespaces: tuple[str, ...] = ()
     registration_configmap: str | None = None
     responder_env: tuple[str, ...] = ()
-    deployed_manifest_paths: tuple[str, ...] = ()
+    deployment_source: dict[str, Any] | None = None
     shared_accepted_id: str = ""
 
     def __post_init__(self) -> None:
@@ -219,6 +220,8 @@ class NativeHostConfig:
     registry_insecure: bool = False
     max_attempts: int = 3
     agent_registrations: Path | None = None
+    # ProtoJSON DeploymentPlan for an app that ships its own deployment; ``None``: the deployer agent authors one.
+    deployment_plan: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if not self.operation_id.strip():
@@ -709,8 +712,8 @@ def install_existing(config: NativeInstallConfig) -> NativeInstallReceipt:
         args.append("--frozen-memory")
     if config.force_reflection:
         args.append("--force-reflection")
-    for path in config.deployed_manifest_paths:
-        args.extend(("--deployed-manifest-path", path))
+    if config.deployment_source is not None:
+        args.extend(("--deployment-source", source_flag_value(config.deployment_source)))
 
     args.extend(("--max-response-loops", str(config.max_response_loops)))
     args.extend(("--response-timeout", f"{config.response_timeout_seconds}s"))
@@ -790,6 +793,8 @@ def launch_host(config: NativeHostConfig) -> dict[str, Any]:
         args.append("--registry-insecure")
     if config.agent_registrations is not None:
         args.extend(("--agent-registrations", str(config.agent_registrations)))
+    if config.deployment_plan is not None:
+        args.extend(("--deployment-plan", plan_flag_value(config.deployment_plan)))
     value = _run("host", args, timeout=config.max_attempts * config.install.response_timeout_seconds + 900)
     if value.get("installed") is not True or value.get("operation_id") != config.operation_id:
         raise NativeOperatorError("Go host returned an invalid operation receipt")

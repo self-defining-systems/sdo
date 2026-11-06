@@ -199,3 +199,62 @@ func percentile(values []time.Duration, rank int) time.Duration {
 func percent(value float64) string {
 	return strconv.FormatFloat(value*100, 'f', -1, 64) + "%"
 }
+
+// scenarioHasEnoughSamples reports whether the scenario has the usable samples
+// its SLO requires to be judged at all, which is what Evaluate demands before
+// it returns a verdict.
+func scenarioHasEnoughSamples(window Window, observed ScenarioObservations) bool {
+	id := observed.Scenario.ID
+	return Evaluate(id, window.Workload.ScenarioSLO(id), observed.Samples, window.ObservedAt).Evaluated
+}
+
+// ScenarioArrival is the expected time between samples of one scenario: its
+// share of the workload rate. Zero when the rate or the scenario is unknown.
+func (w Workload) ScenarioArrival(id string) time.Duration {
+	total := 0
+	weight := 0
+	for _, scenario := range w.Scenarios {
+		total += scenario.Weight
+		if scenario.ID == id {
+			weight = scenario.Weight
+		}
+	}
+	if w.RatePerSecond <= 0 || weight <= 0 {
+		return 0
+	}
+	return time.Duration(float64(time.Second) * float64(total) / (float64(weight) * w.RatePerSecond))
+}
+
+// Ready reports whether the window holds what its own detectors need to judge
+// it: every observed scenario has the usable samples its SLO requires (failed
+// samples count, so an outage is judged rather than waited out), and every
+// link has a sample. The traffic detector's ConfirmationReason is built on the
+// same predicate, so a ready window can differ from a confirmed one only by
+// scenarios that have not yet succeeded.
+func (w Window) Ready() bool {
+	if len(w.Scenarios)+len(w.Links) == 0 {
+		return false
+	}
+	for _, observed := range w.Links {
+		if len(observed.Samples) == 0 {
+			return false
+		}
+	}
+	for _, observed := range w.Scenarios {
+		if !scenarioHasEnoughSamples(w, observed) {
+			return false
+		}
+	}
+	return true
+}
+
+// WarmupHorizon is how long a freshly started prober needs, at the workload's
+// rate, to give every scenario its SLO's minimum samples.
+func (w Window) WarmupHorizon() time.Duration {
+	var longest time.Duration
+	for _, observed := range w.Scenarios {
+		id := observed.Scenario.ID
+		longest = max(longest, time.Duration(w.Workload.ScenarioSLO(id).MinSamples)*w.Workload.ScenarioArrival(id))
+	}
+	return longest
+}

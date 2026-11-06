@@ -15,7 +15,6 @@ func fixtureConfig() Config {
 	cfg.Module = module
 	cfg.ImplMayImport = []string{module + "/contracts", module + "/sdk"}
 	cfg.ConfigTypes = []ConfigType{{Name: "RawManifestStrategy", Import: module + "/contracts/gen", OwnerPkg: module + "/render/raw"}}
-	cfg.ConfigTypeSource = ConfigTypeSource{}
 	cfg.Allow = nil
 	cfg.Ratchet = nil
 	return cfg
@@ -46,7 +45,9 @@ func TestNegativeControls(t *testing.T) {
 		{dir: "r2_family", want: []string{"R2 render/helm/helm.go"}},
 		{dir: "r3_support", want: []string{"R3 render/rendertest/x.go"}},
 		{dir: "r4_assert", want: []string{"R4 deployment/registry.go", "R4 deployment/registry.go"}},
-		{dir: "r4_incomplete", want: []string{"R4 contracts/gen/gen.go"}},
+		{dir: "r4_use", want: []string{"R4 lifecycle/compat.go", "R4 lifecycle/compat.go", "R4 lifecycle/compat.go", "R4 lifecycle/compat.go"}},
+		{dir: "r4_exempt", want: nil},
+		{dir: "r4_test_assert", want: []string{"R4 lifecycle/compat_test.go"}},
 		{dir: "r5_ratchet", mod: func(c *Config) {
 			c.Ratchet = []RatchetEntry{
 				{File: "rose.go", Count: 1, Reason: "r", Slice: "s"},
@@ -59,9 +60,6 @@ func TestNegativeControls(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.dir, func(t *testing.T) {
 			cfg := fixtureConfig()
-			if strings.HasPrefix(tc.dir, "r4") || tc.dir == "clean" {
-				cfg.ConfigTypeSource = ConfigTypeSource{Dir: "contracts/gen", Suffixes: []string{"Strategy"}}
-			}
 			if tc.mod != nil {
 				tc.mod(&cfg)
 			}

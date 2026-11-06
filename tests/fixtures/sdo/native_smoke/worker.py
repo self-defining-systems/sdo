@@ -12,9 +12,10 @@ from sdo.contracts import (
     AgentResult,
     AgentTask,
     DeploymentPlan,
+    DeploymentSource,
     HealthJudgeRequest,
     HealthJudgeResult,
-    RawManifestStrategy,
+    RawRenderConfig,
     SourceDeploymentRequest,
     SourceDeploymentResult,
     parse_json,
@@ -107,11 +108,11 @@ spec:
       - name: pause
         image: {IMAGE}
 """)
-        raw = RawManifestStrategy(
-            manifest_paths=["deploy/demo.yaml"], expected_workload_ids=[f"Deployment/{request.namespace}/demo"]
+        plan = DeploymentPlan(
+            source=DeploymentSource(renderer_id="raw"),
+            expected_workload_ids=[f"Deployment/{request.namespace}/demo"],
         )
-        plan = DeploymentPlan(strategy_id="raw-manifests-v1")
-        plan.strategy_config.Pack(raw)
+        plan.source.config.Pack(RawRenderConfig(paths=["deploy/demo.yaml"]))
         typed = SourceDeploymentResult(
             proposed=True, summary="deterministic source fixture", agent_session_id="fixture-source", plan=plan
         )

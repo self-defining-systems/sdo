@@ -84,9 +84,14 @@ func checks() []check {
 	}
 }
 
-// TestClient runs the conformance suite as subtests.
-func TestClient(t *testing.T, h Harness) {
+// TestClient runs the conformance suite as subtests. id is the adapter's ID
+// constant; the catalog completeness check requires every implementation
+// package to call the suite with it.
+func TestClient(t *testing.T, h Harness, id string) {
 	t.Helper()
+	if id == "" {
+		t.Fatal("telemetrytest: TestClient needs the adapter ID")
+	}
 	if h.New == nil {
 		t.Fatal("telemetrytest: Harness.New is required")
 	}
