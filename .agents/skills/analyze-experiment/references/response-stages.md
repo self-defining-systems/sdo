@@ -25,6 +25,7 @@ Results distinguish `applied_cleared`, `applied_still_matching` (with `kept_reas
 `reverted_ineffective` (writes restored before handoff), `rollout_failed`,
 `rollout_pending_at_handoff`, `apply_error`, and `skipped` with `skip_reason`
 (historical `stage_budget` meant observation exhaustion; current observation exhaustion never suppresses an admitted write).
+`holds_data` means the plan would have restarted, deleted, scaled down or rewritten a workload the accepted application map marks `holds_data`, or one of its Pods; `error` names the action, nothing was written, and the finding goes to the responder.
 `already_attempted` now means every write of the match (same action, object and resolved values; `Reason` ignored)
 repeats a write an earlier attempt of the same stage applied whose effect is unsettled (`rollout_pending_at_handoff`
 or `applied_still_matching` with post-apply NO_MATCH) and that is still in progress when the match is decided (read live: a

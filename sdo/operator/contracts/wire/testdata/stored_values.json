@@ -355,6 +355,7 @@
     "already_attempted",
     "diagnose_no_longer_matches",
     "diagnose_unavailable",
+    "holds_data",
     "ineffective",
     "multiple_entry_points",
     "no_mitigation",

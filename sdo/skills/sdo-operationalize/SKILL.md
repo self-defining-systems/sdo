@@ -21,7 +21,8 @@ the map markers in the architecture file. Only the text between the markers is y
   port, method and path. `writes: true` when it changes stored state.
 - **Components**: one per application workload, with the Services that select it. `holds_data: true` when it is
   the only place some user-visible data lives: losing its contents loses data. A cache that refills from
-  another component on a miss does not hold data.
+  another component on a miss does not hold data. SDO never lets a learned program restart, delete or scale down
+  a `holds_data` workload automatically; a responder decides.
 - **Edges**: caller to callee. `config` evidence cites the source file that names the callee (a client address,
   an env value, a config entry). `observed` evidence says how you saw the call on the live application.
 - **Paths**: for each operation, follow its handler through the code and the edges, and list every component
