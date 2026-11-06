@@ -36,7 +36,7 @@ journeys ([localize SDK](../../sdo-detector-authoring/references/traffic.md)), t
 repair's own evidence on it (an exec, status, log):
 
 ```go
-result, err := localize.FromContext(v, "health") // ErrNoTraffic: return it (Unknown)
+result, err := localize.FromContext(v, probeWorkload) // ErrNoTraffic: return it (Unknown); probeWorkload is a probe workload name under diagnostics/traffic/workloads
 if err != nil {
 	return program.Verdict{}, err
 }
@@ -60,13 +60,18 @@ for _, d := range v.Deployments() {
 		container = d.Spec.Template.Spec.Containers[0].Name
 	}
 }
-// Detector: embeds localize.Inputs, result is localize.FromContext(snapshot, "health"), Spec and manifest list the playbook
-for _, f := range findings { // traffic.NewDetector(d.Spec(), "health").Detect(ctx, snapshot)
-	if strings.HasPrefix(f.RuleID, traffic.RuleIDPrefix) && strings.Contains(f.Evidence, "NOPERM") {
-		f.Playbooks = []string{"redis-acl-restore"}
-		bound = append(bound, localize.BindSuspects(f, result, "redisDeployment")...)
+// Detector: embeds localize.Inputs{Workload: probeWorkload}; result is localize.FromContext(snapshot, probeWorkload).
+// Spec and manifest list the playbook. Key on the cause's own failure text (never a component name), not on any failure.
+window, _ := traffic.WindowFrom(snapshot, probeWorkload)
+matches, err := traffic.MatchFailures(window, logs.Pattern{ID: "readonly-replica", RE2: `READONLY .*read only replica`})
+findings, err := traffic.NewDetector(d.Spec(), probeWorkload).Detect(ctx, snapshot)
+for _, f := range findings {
+	if strings.HasPrefix(f.RuleID, traffic.RuleIDPrefix) && failedWithCause(matches, f) { // matches' ScenarioID vs f
+		f.Playbooks = []string{"cache-readonly-restore"}
+		bound = append(bound, localize.BindSuspects(f, result, "cacheDeployment")...)
 	}
 }
+// then keep only bound findings whose workload is of the kind the playbook acts on (e.g. an image or port check)
 ```
 
 Suspects include the journey's handler and front end, so Diagnose still needs its own evidence on the bound
@@ -146,3 +151,12 @@ receipt provenance are required.
 <!-- replay:on -->
 Replay outcomes, missing captures and detector coverage are information.
 <!-- /replay:on -->
+
+## More program rules
+
+- Mitigate returns to accepted or observed state; intended-state changes are source repairs. Prefer a
+  narrow `SetField`; `ReconcileFromSource` restores a whole object. After a workload write, append
+  `program.StalledRolloutRelease(v, ref)`.
+- A recorded `kubectl exec <pod>` becomes `EnsureExec` on a Pod of the bound workload, never a Pod name.
+- Credentials stay references (env or ConfigMap key); never read Secret data. Learn into incident playbooks. The detection designer owns `health-objective` and health detectors: never edit
+  them; when its generic program applied and hand repairs followed, encode those in an incident playbook.

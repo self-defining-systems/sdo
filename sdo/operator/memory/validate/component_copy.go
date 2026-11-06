@@ -250,7 +250,7 @@ func detectorCopyDiagnostics(ctx context.Context, r Request, paths []string) []D
 			named := componentLiterals(filepath.Join(r.Root, filepath.FromSlash(dir(id))), names.components)
 			diagnostics = append(diagnostics, Diagnostic{Rule: RuleDetectorComponentCopy, Path: dir(id),
 				Message: fmt.Sprintf("new incident detector %q copies %q apart from IDs, prose and the components it names (%s)", id, other, strings.Join(named, ", ")),
-				Hint:    fmt.Sprintf("widen %q instead of copying it: accept every scenario's failure rather than one, bind the component from the failure (localize.BindSuspects, or the failing finding's resource), list every playbook it binds, and remove the new detector's files", other)})
+				Hint:    fmt.Sprintf("widen %q instead of copying it: keep it keyed on the cause's own failure text or log pattern, bind the component from the failure (localize.BindSuspects, or the failing finding's resource), list every playbook it binds, and remove the new detector's files", other)})
 			break
 		}
 	}

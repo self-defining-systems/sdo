@@ -60,6 +60,8 @@ type Duration time.Duration
 type Endpoint interface{ ... }
 type Engine struct{ ... }
     func NewEngine(workload Workload, catalog Catalog, client Doer, baseURL func(Target) string, ...) (*Engine, error)
+type FailureMatch struct{ ... }
+    func MatchFailures(window Window, patterns ...logs.Pattern) ([]FailureMatch, error)
 type FaultClass string
     const FaultUnreachable FaultClass = "unreachable" ...
 type HTTPEndpoint struct{ ... }

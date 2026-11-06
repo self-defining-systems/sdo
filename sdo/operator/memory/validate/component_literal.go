@@ -98,11 +98,11 @@ func componentLiteralDiagnostics(ctx context.Context, r Request, paths []string)
 		if u.detector {
 			diagnostics = append(diagnostics, Diagnostic{Rule: RuleDetectorComponentLiteral, Path: dir,
 				Message: fmt.Sprintf("incident detector names the component %s it should take from the failure; it covers only that component", strings.Join(added, ", ")),
-				Hint:    "accept every scenario's failure (strings.HasPrefix(f.RuleID, traffic.RuleIDPrefix)) with the evidence it needs, and bind the role per suspect with localize.BindSuspects(f, result, role) (result from localize.FromContext), or from the failing finding's resource; the playbook's Diagnose checks its own evidence on the bound component"})
+				Hint:    "take the component from the failure: accept scenario failures (strings.HasPrefix(f.RuleID, traffic.RuleIDPrefix)) that carry the cause's own failure text (traffic.MatchFailures) or log pattern, and bind the role per suspect with localize.BindSuspects(f, result, role) (result from localize.FromContext on the application's probe workload), keeping only workloads the playbook can act on; the playbook's Diagnose checks its own evidence on the bound component"})
 		} else {
 			diagnostics = append(diagnostics, Diagnostic{Rule: RulePlaybookComponentLiteral, Path: dir,
 				Message: fmt.Sprintf("playbook program names the component %s that its role %s should supply; it repairs only that component", strings.Join(added, ", "), strings.Join(programRoles(local), ", ")),
-				Hint:    "derive per-component values from the bound object through ReadView: a container from the bound workload's Pod template, its Pods by owner, the failing journeys through it with localize.FromContext(v, \"health\") and Implicates(ref) instead of a scenario ID; the same program then repairs every component its detector binds"})
+				Hint:    "derive per-component values from the bound object through ReadView: a container from the bound workload's Pod template, its Pods by owner, the failing journeys through it with localize.FromContext(v, <the application's probe workload>) and Implicates(ref) instead of a scenario ID; the same program then repairs every component its detector binds"})
 		}
 	}
 	return diagnostics

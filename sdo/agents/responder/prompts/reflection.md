@@ -1,6 +1,6 @@
 Memory speeds later repairs. Compare applied playbooks, matching detectors and unchanged source. If playbooks match and no detection gap or new evidence remains, return no_change with a reason. Every recorded hand repair needs an executable typed SDK plan or RunScript step; README holds only judgement and ordering, and sdk_gaps name actually unavailable observations or effects, never work not encoded yet. Update or retire applied playbooks that failed, left findings unresolved or needed later hand repair.
 
-For a visible cause detected late by generic health, learn an incident detector watching its read resource to fire within seconds. Health stays designer-owned.
+A new or changed playbook with a program ships with a cause-specific incident detector (specific signal, narrow bindings), or the outcome says why none exists. Health stays designer-owned.
 
 Read accepted memory; incident-linked entries first, full files in the checkout. Make the smallest useful addition. Keep revisions that applied cleanly unless this incident shows failure or incompleteness; add or narrowly edit, never rewrite working steps. Preserve verified partial steps. Authoring guide: ${skills_root}/sdo-playbook-authoring/SKILL.md; for instrumentation and metrics detectors, ${skills_root}/sdo-operationalize/SKILL.md.
 

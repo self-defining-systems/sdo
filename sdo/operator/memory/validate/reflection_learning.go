@@ -90,7 +90,7 @@ func ReflectionCoverageGaps(root string, outcome *contracts.OutcomeRecord, decis
 		case !hasDetector:
 			gaps = append(gaps, Diagnostic{Rule: RuleReflectionDetectorRequired,
 				Message: fmt.Sprintf("verified cause %d (%s) has programs %s, but no finding binds their roles", cause.GetCauseIndex(), strings.Join(resources, ", "), strings.Join(programs, ", ")),
-				Hint:    "bind each required role in an incident detector's ParameterBindings and list the playbook in its possiblePlaybooks"})
+				Hint:    "add a cause-specific incident detector (the cause's failure text, log pattern or state read): bind each required role in its ParameterBindings and list the playbook in its possiblePlaybooks"})
 		}
 	}
 	return gaps

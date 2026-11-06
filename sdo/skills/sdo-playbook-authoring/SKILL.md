@@ -7,7 +7,9 @@ description: Start here for reflection. Turn recorded hand repairs into validate
 
 Work in the proposal checkout, in this order. Open other files only when a step or a diagnostic names them.
 
-1. **Consider detection coverage.** If generic detection lagged a visible cause, use [detector authoring](../sdo-detector-authoring/SKILL.md) to add or refine a cause-specific incident detector on the resource it reads. Health detectors remain designer-owned. **Ask the check what is left.** Use supplied diagnostics without repeating a rejected probe. Otherwise call `check_memory` with `learning_decision: no_change` and a one-line `no_change_reason`.
+1. **Add detection.** A new or materially changed playbook with a program ships with a cause-specific incident detector
+   in this reflection ([how](../sdo-detector-authoring/references/cause-specific.md)); skip it only when just the generic symptom exists, and say so in the outcome reason. Health detectors stay designer-owned.
+   **Ask the check what is left.** Use supplied diagnostics without repeating a rejected probe. Otherwise call `check_memory` with `learning_decision: no_change` and a one-line `no_change_reason`.
    If it passes and no detection gap remains, return that decision immediately. Its diagnostics identify required work: uncovered hand
    repairs (`reflection.program-required`), applied playbooks that failed, left findings unresolved or needed a later hand repair
    (`reflection.stale-playbook`: update, narrow its Diagnose off a cause it does not fix, or retire), no verified repair at all (`reflection.repair-required`: return `no_change`), and the decision to return when Go
@@ -47,11 +49,9 @@ Keep revisions that applied cleanly unless this incident shows failure or incomp
   relation (selector, owner, mount), never by app name; put unavoidable app facts in the README.
 - Write values only as `FromSource`, `FromObserved` or `FromParam` (a declared scalar with a default).
 - Diagnose returns Match on positive evidence about the bound component, NoMatch when absent, an error
-  (Unknown) when a read is unavailable. A healthy, source-matching object is no evidence.
-- Mitigate returns to accepted or observed state; intended-state changes are source repairs. Prefer a
-  narrow `SetField`; `ReconcileFromSource` restores a whole object. After a workload write, append
-  `program.StalledRolloutRelease(v, ref)`.
-- A recorded `kubectl exec <pod>` becomes `EnsureExec` on a Pod of the bound workload, never a Pod name.
+  (Unknown) when a read is unavailable. A healthy, source-matching object is no evidence. Confirm the fault class on the
+  bound target (image, ports, a read or exec); NoMatch on a workload of the wrong kind, with a near-miss test.
+- Mitigate returns to accepted or observed state: [more program rules](references/programs.md#more-program-rules).
 - `RunScript`: inline bash byte-identical to the recorded command, application inputs only through
   relation-derived Env, and a successful accepted receipt for those bytes; preserve
   [each script revision's original receipt](references/script-receipts.md).
@@ -59,9 +59,7 @@ Keep revisions that applied cleanly unless this incident shows failure or incomp
   Link the script digest to its receipt ID in the case's `script_origins`.
 <!-- /replay:on -->
 
-- Credentials stay references (env or ConfigMap key); never read Secret data. Learn into incident playbooks. The detection designer owns `health-objective` and health detectors: never edit
-  them; when its generic program applied and hand repairs followed, encode those in an incident playbook.
-- `reflection.detector-required`: list the playbook in the detector it names, or copy
+- `reflection.detector-required`: no finding binds the program's roles. List the playbook in the detector it names, or copy
   `assets/examples/detectors/crashloop-script-repair/` to `.sdo/diagnostics/detectors/incidents/<id>/`,
   keep its manifest and `Spec` in step, and bind the role in `ParameterBindings`.
 

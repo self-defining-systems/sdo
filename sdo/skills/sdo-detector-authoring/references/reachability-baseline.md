@@ -1,0 +1,5 @@
+# Generic reachability baseline
+
+Service reachability requires five consecutive failures at 1s intervals; success resets the streak. Do not add redundant firing delays.
+
+Keep measured reachability baselines in cluster state, never `.sdo/`; memory defines what to measure and thresholds, not Service UIDs, allocated IPs or probe/capture times (`memory.cluster-local`). Do not infer exclusions from missing successful dials or author them from an incident. Generic reachability invalidates an exclusion when source, objective or target configuration changes; new wrong targetPort failures remain detectable. Service UID/resourceVersion, allocated ClusterIP/IP-family values, NodePort and health-check NodePort do not identify the application configuration; namespace/Service/port identity, headless routing, selector, targetPort/protocol, selected container configuration, referenced ConfigMaps and selecting network policies do. Inspect `baseline_status` in finding port metadata when an earlier exclusion no longer applies.
