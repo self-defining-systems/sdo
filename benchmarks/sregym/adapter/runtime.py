@@ -11,6 +11,7 @@ from typing import Any
 
 from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
 from benchmarks.sregym.adapter.cluster_resources import kubectl
+from benchmarks.sregym.adapter.deployment_source import DeploymentPolicyConfig
 from benchmarks.sregym.adapter.native_operator import (
     AGENT_EFFORTS,
     DEFAULT_AGENT_EFFORT,
@@ -81,6 +82,8 @@ class RuntimeConfig:
     deployment_source: dict[str, Any] | None = None
     # ProtoJSON DeploymentPlan the human provides (see ``deployment_source.py``); ``None``: agent-authored.
     deployment_plan: dict[str, Any] | None = None
+    # Install-time deployment policy the lane chooses (registry allowlist, scope grants); default: none.
+    deployment_policy: DeploymentPolicyConfig = DeploymentPolicyConfig()
     # Upstream the controller follows (``--source-kind`` and its JSON ``--source-config``); both or neither.
     source_kind: str = ""
     source_config: str = ""
@@ -192,6 +195,7 @@ def native_install_config(config: RuntimeConfig) -> NativeInstallConfig:
         verification_timeout_seconds=config.verification_timeout_seconds,
         responder_env=responder_env,
         deployment_source=config.deployment_source,
+        deployment_policy=config.deployment_policy,
         shared_accepted_id=config.shared_accepted_id,
     )
 
