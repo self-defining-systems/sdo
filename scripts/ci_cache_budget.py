@@ -4,9 +4,9 @@
 Every cache key belongs to a family (the key without its lockfile hash, commit sha and tool versions) and each
 family has an explicit budget in .github/ci_budgets.json (`cache`): how many keys it may hold and how many MB.
 `prune` runs on main after a cache save and deletes the keys a newer key of the same family supersedes (idle
-for at least `min_idle_minutes`, so a key a job is restoring right now survives). `check` runs in the hourly
-health job: it fails when the repository is at or over `alarm_fraction` of the GitHub limit, when a family is
-over its budget, or when a key matches no family.
+for at least `min_idle_minutes`: a job that restored a key already has it; only a restore in flight needs it).
+`check` runs in the hourly health job: it fails when the repository is at or over `alarm_fraction` of the GitHub
+limit, when a family is over its budget, or when a key matches no family.
 
 usage: ci_cache_budget.py check | prune [family-prefix]
 """
