@@ -33,6 +33,8 @@ if [[ -z "${KUBEBUILDER_ASSETS:-}" ]]; then
 fi
 export SDO_E2E_CACHE="${SDO_E2E_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/sdo-e2e}"
 cd "$root"
+# The sandbox resolves Go modules offline from the host's module cache; make it complete first.
+bash "$root/scripts/prefetch_go_modules.sh"
 uv sync --extra test -q
 cd sdo/operator/runtime
 # The cluster, controller and agents are real processes: run in real time with a generous bound.

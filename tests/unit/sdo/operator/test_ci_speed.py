@@ -470,3 +470,24 @@ def test_a_selected_file_the_caller_ignores_is_not_run(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     assert "no Python tests selected" in result.stdout
     assert not calls.exists(), "nothing selected after the exclusions: pytest must not start"
+
+
+def test_the_controller_e2e_fetches_every_workspace_module_before_it_goes_offline(tmp_path: Path) -> None:
+    """The sandbox builds detector modules with GOPROXY=off, so the host module cache must already hold their graph.
+
+    A hosted runner's cache lacked it and every nightly e2e failed with "module lookup disabled by GOPROXY=off".
+    """
+    calls = tmp_path / "calls"
+    command = tmp_path / "go"
+    command.write_text('#!/bin/sh\nprintf "%s|%s\\n" "$PWD" "$*" >> "$SDO_TEST_CALLS"\n')
+    command.chmod(0o755)
+    subprocess.run(
+        ["bash", str(ROOT / "scripts/prefetch_go_modules.sh")],
+        env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "SDO_TEST_CALLS": str(calls)},
+        check=True,
+    )
+    modules = json.loads((ROOT / ".github/ci_selection.json").read_text())["go_workspace_modules"]
+    downloaded = {Path(line.split("|")[0]).relative_to(ROOT).as_posix() for line in calls.read_text().splitlines()}
+    assert downloaded == {m for m in modules if m.startswith("sdo/operator")}
+    assert all(line.endswith("|mod download all") for line in calls.read_text().splitlines()), "tidy needs test deps"
+    assert "scripts/prefetch_go_modules.sh" in (ROOT / "scripts/test_controller_e2e.sh").read_text()
