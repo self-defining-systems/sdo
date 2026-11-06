@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import shutil
 from contextlib import ExitStack, contextmanager
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from google.protobuf import json_format
@@ -23,6 +22,7 @@ PLAYBOOK_DIRECTORY = "playbooks"
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Mapping
+    from pathlib import Path
 
     from sdo.contracts import Finding, IncidentRequest, ObjectRef, ProgramRun, StageReport
 
