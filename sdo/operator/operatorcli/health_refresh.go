@@ -24,9 +24,9 @@ import (
 
 // Refresh runs before the builder projects diagnostics. Failure prevents launch
 // of a controller compiled from stale requirements, including seeded startup.
-func refreshControllerHealth(ctx context.Context, config *contracts.ControllerConfig, repository lifecycle.ProposalBroker) error {
+func refreshControllerHealth(ctx context.Context, scope string, config *contracts.ControllerConfig, repository lifecycle.ProposalBroker) error {
 	return withHealthRefreshDeadline(ctx, config.GetDuration().AsDuration(), func(ctx context.Context) error {
-		return refreshControllerHealthOnce(ctx, config, repository)
+		return refreshControllerHealthOnce(ctx, scope, config, repository)
 	})
 }
 
@@ -50,7 +50,7 @@ func withHealthRefreshDeadline(ctx context.Context, budget time.Duration, refres
 	return nil
 }
 
-func refreshControllerHealthOnce(ctx context.Context, config *contracts.ControllerConfig, repository lifecycle.ProposalBroker) error {
+func refreshControllerHealthOnce(ctx context.Context, scope string, config *contracts.ControllerConfig, repository lifecycle.ProposalBroker) error {
 	if config.GetFrozenMemory() {
 		return nil
 	}
@@ -110,7 +110,7 @@ func refreshControllerHealthOnce(ctx context.Context, config *contracts.Controll
 		ToolchainImage: config.GetToolchainImage(),
 		Client:         client, Namespace: namespace, Registry: registry, ServiceAccount: "sdo-responder", RepositoryPVC: config.GetRepositoryPvc(), RepositoryMountPath: config.GetRepositoryMountPath(), RepositoryPVCSubPath: config.GetRepositoryPvcSubpath(), CredentialsSecret: config.GetResponderCredentialsSecret(), HealthyBaseline: config.GetHealthyBaseline(), Environment: environment,
 	}}
-	if _, err := coordinator.RefreshHealth(ctx, lifecycle.Config{Application: config.GetApplication(), Namespace: config.GetNamespace(), DeploymentSource: source, RenderEnvironment: config.GetRenderEnvironment()}, revision); err != nil {
+	if _, err := coordinator.RefreshHealth(ctx, lifecycle.Config{Application: config.GetApplication(), Namespace: config.GetNamespace(), DeploymentSource: source, RenderEnvironment: config.GetRenderEnvironment(), RefreshScope: scope}, revision); err != nil {
 		return err
 	}
 	accepted, err := memory.AcceptedHealthRevision(ctx, config.GetAppRoot(), shapeOf)

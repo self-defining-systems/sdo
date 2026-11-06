@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/lifecycle"
+	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/operability"
 )
@@ -285,3 +287,33 @@ func TestCoordinatorRequiresLiveOperabilityChecks(t *testing.T) {
 
 var _ = fmt.Sprint
 var _ = contracts.MemoryDiagnostic{}
+
+// An advance's designer refresh and the controller child's own start-up refresh
+// are the same inputs on the same accepted commit. They must not share a
+// publication: the proposal checkout, judge Job and rejection log of one would
+// otherwise be attached to, or recreated under, the other when a child restarts
+// during an advance.
+func TestRefreshPublicationIsScopedToWhoRunsIt(t *testing.T) {
+	revision := memory.HealthRevision{Commit: "commit-0", SourceInputs: "inputs", Objective: "stay up", DetectorRevision: "detectors", NeedsRefresh: true}
+	run := func(scope string) string {
+		h, fake := gateHarness(t, clear)
+		cfg := lifecycle.Config{Application: "app", Namespace: "ns", RefreshScope: scope, DesignerAttempts: 2, PendingEvaluations: 4, PendingInterval: time.Second, InfrastructureTries: 3, InfrastructureBackoff: time.Second}
+		if _, err := h.coordinator.RefreshHealth(context.Background(), cfg, revision); err != nil {
+			t.Fatalf("refresh %q: %v", scope, err)
+		}
+		if len(fake.candidates) != 1 {
+			t.Fatalf("refresh %q staged %d candidates", scope, len(fake.candidates))
+		}
+		return fake.candidates[0].IncidentID
+	}
+	startup, advance, again := run(""), run(lifecycle.RefreshScopeAdvance), run(lifecycle.RefreshScopeAdvance)
+	if startup == advance {
+		t.Fatalf("start-up and advance refreshes share publication %q", startup)
+	}
+	if advance != again {
+		t.Fatalf("an advance's refresh is not stable across restarts: %q then %q", advance, again)
+	}
+	if !strings.HasPrefix(advance, strings.SplitN(startup, "-base-", 2)[0]) {
+		t.Fatalf("scoped id %q does not keep the input-bound prefix of %q", advance, startup)
+	}
+}

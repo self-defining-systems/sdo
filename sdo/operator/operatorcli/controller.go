@@ -203,7 +203,7 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, er
 			if err != nil {
 				return err
 			}
-			return refreshControllerHealth(ctx, launch, repository)
+			return refreshControllerHealth(ctx, "", launch, repository)
 		},
 		ResolveDiagnostics: func(ctx context.Context, root string) (builder.DiagnosticsProjection, error) {
 			repository, err := openMigrationBroker(launch)
@@ -218,7 +218,7 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, er
 			if err != nil {
 				return builder.DiagnosticsProjection{}, err
 			}
-			if err := refreshControllerHealth(ctx, launch, repository); err != nil {
+			if err := refreshControllerHealth(ctx, "", launch, repository); err != nil {
 				return builder.DiagnosticsProjection{}, err
 			}
 			return builder.DiagnosticsProjection{Directory: projected.Directory, Fingerprint: projected.Fingerprint, AcceptedRevision: projected.AcceptedRevision}, nil

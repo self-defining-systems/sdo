@@ -24,7 +24,7 @@ func (c Coordinator) RefreshHealth(ctx context.Context, cfg Config, revision mem
 	// The logical input ID ignores operational-memory commits. The concrete
 	// proposal/task must also bind its immutable accepted base: a retained Job
 	// must never receive a different request or write into a recreated checkout.
-	publicationID, err := c.refreshGeneration(revision.RefreshID() + "-base-" + revision.Commit)
+	publicationID, err := c.refreshGeneration(refreshPublicationID(revision, cfg.RefreshScope))
 	if err != nil {
 		return broker.Receipt{}, fmt.Errorf("refresh health requirements: %w", err)
 	}
@@ -66,4 +66,18 @@ func onlyLostWorkers(log *contracts.ProposalRejectionLog) bool {
 		}
 	}
 	return true
+}
+
+// RefreshScopeAdvance is the scope of the refresh an upstream advance runs
+// after it accepted a shape change.
+const RefreshScopeAdvance = "advance"
+
+// refreshPublicationID is the base publication ID of a refresh: its inputs
+// bound to the accepted commit, plus the scope of whoever runs it.
+func refreshPublicationID(revision memory.HealthRevision, scope string) string {
+	id := revision.RefreshID() + "-base-" + revision.Commit
+	if scope != "" {
+		id += "-" + scope
+	}
+	return id
 }
