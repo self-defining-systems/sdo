@@ -134,17 +134,17 @@ func TestDetectorObservationsRequireTheirTransport(t *testing.T) {
 		}
 		for path, detector := range map[string]sdk.Detector{"compiled": local, "memory host": remote.Detectors[0]} {
 			t.Run(observation+"/"+path, func(t *testing.T) {
-				_, _, err := (detectorObservations{}).compose(staticProvider{}, []sdk.Detector{detector})
+				_, _, err := (detectorObservations{}).compose(staticProvider{}, []sdk.Detector{detector}, nil)
 				if err == nil || !strings.Contains(err.Error(), `"pod-admission" declares the `+observation) || !strings.Contains(err.Error(), "Kubernetes client") {
 					t.Fatalf("compose without client = %v, want refusal naming the detector, the %s observation and the missing client", err, observation)
 				}
 			})
 		}
 	}
-	if _, _, err := (detectorObservations{}).compose(staticProvider{}, []sdk.Detector{plain}); err != nil {
+	if _, _, err := (detectorObservations{}).compose(staticProvider{}, []sdk.Detector{plain}, nil); err != nil {
 		t.Fatalf("a bundle without client-backed declarations needs no client: %v", err)
 	}
-	provider, _, err := (detectorObservations{Client: fake.NewSimpleClientset()}).compose(staticProvider{snapshot: syntheticShopSnapshot()}, []sdk.Detector{base})
+	provider, _, err := (detectorObservations{Client: fake.NewSimpleClientset()}).compose(staticProvider{snapshot: syntheticShopSnapshot()}, []sdk.Detector{base}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

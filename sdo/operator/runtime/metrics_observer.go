@@ -183,7 +183,7 @@ func call[T any](ctx context.Context, timeout time.Duration, request func(contex
 	}
 }
 
-var errMetricsNotConfigured = errors.New("metrics source not configured (set --metrics-url)")
+var errMetricsNotConfigured = errors.New("metrics source not configured (no telemetry source is bound)")
 
 // sourceUnavailable words a source failure for a detector error. Errors from
 // the telemetry resolver already name their source (`telemetry source "prom"

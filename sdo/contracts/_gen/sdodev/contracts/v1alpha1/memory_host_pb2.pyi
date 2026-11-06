@@ -19,7 +19,7 @@ class ReadyRequest(_message.Message):
     def __init__(self) -> None: ...
 
 class ReadyResponse(_message.Message):
-    __slots__ = ("memory_commit", "binary_digest", "mirror_sequence", "mirror_complete", "detectors", "programs", "mitigator_ids")
+    __slots__ = ("memory_commit", "binary_digest", "mirror_sequence", "mirror_complete", "detectors", "programs", "mitigator_ids", "telemetry_sources")
     MEMORY_COMMIT_FIELD_NUMBER: _ClassVar[int]
     BINARY_DIGEST_FIELD_NUMBER: _ClassVar[int]
     MIRROR_SEQUENCE_FIELD_NUMBER: _ClassVar[int]
@@ -27,6 +27,7 @@ class ReadyResponse(_message.Message):
     DETECTORS_FIELD_NUMBER: _ClassVar[int]
     PROGRAMS_FIELD_NUMBER: _ClassVar[int]
     MITIGATOR_IDS_FIELD_NUMBER: _ClassVar[int]
+    TELEMETRY_SOURCES_FIELD_NUMBER: _ClassVar[int]
     memory_commit: str
     binary_digest: str
     mirror_sequence: int
@@ -34,7 +35,8 @@ class ReadyResponse(_message.Message):
     detectors: _containers.RepeatedCompositeFieldContainer[MemoryDetectorRegistration]
     programs: _containers.RepeatedCompositeFieldContainer[_program_pb2.ProgramSpec]
     mitigator_ids: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, memory_commit: _Optional[str] = ..., binary_digest: _Optional[str] = ..., mirror_sequence: _Optional[int] = ..., mirror_complete: _Optional[bool] = ..., detectors: _Optional[_Iterable[_Union[MemoryDetectorRegistration, _Mapping]]] = ..., programs: _Optional[_Iterable[_Union[_program_pb2.ProgramSpec, _Mapping]]] = ..., mitigator_ids: _Optional[_Iterable[str]] = ...) -> None: ...
+    telemetry_sources: bytes
+    def __init__(self, memory_commit: _Optional[str] = ..., binary_digest: _Optional[str] = ..., mirror_sequence: _Optional[int] = ..., mirror_complete: _Optional[bool] = ..., detectors: _Optional[_Iterable[_Union[MemoryDetectorRegistration, _Mapping]]] = ..., programs: _Optional[_Iterable[_Union[_program_pb2.ProgramSpec, _Mapping]]] = ..., mitigator_ids: _Optional[_Iterable[str]] = ..., telemetry_sources: _Optional[bytes] = ...) -> None: ...
 
 class MemoryDetectorRegistration(_message.Message):
     __slots__ = ("id", "specification")

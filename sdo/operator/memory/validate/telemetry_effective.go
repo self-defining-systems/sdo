@@ -1,7 +1,6 @@
 package validate
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -14,20 +13,8 @@ import (
 )
 
 // telemetryBinding converts a stored designer source to the registry's binding.
-// Options that are not JSON-compatible are the caller's diagnostic.
 func telemetryBinding(src layout.TelemetrySource, kinds []telemetry.Kind) (telemetry.Binding, error) {
-	options, err := json.Marshal(src.Options)
-	if err != nil {
-		return telemetry.Binding{}, fmt.Errorf("source %q options are not JSON-compatible: %w", src.ID, err)
-	}
-	if len(src.Options) == 0 {
-		options = nil
-	}
-	origin := telemetry.OriginAppShipped
-	if src.Backend != "" {
-		origin = telemetry.OriginDesignerBackend
-	}
-	return telemetry.Binding{ID: src.ID, Adapter: src.Adapter, Kinds: kinds, Endpoint: telemetry.Endpoint{URL: src.Endpoint, Credential: src.Credential}, Default: src.Default, Origin: origin, Options: options}, nil
+	return src.Binding(kinds)
 }
 
 // EffectiveTelemetrySources is the source set detectors resolve against for

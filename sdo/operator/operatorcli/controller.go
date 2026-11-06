@@ -107,8 +107,7 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, er
 	externalIncidents := flags.Bool("external-incidents", false, "accept external alerts only; close on responder completion (requires frozen memory)")
 	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
 	healthyBaseline := flags.Bool("healthy-baseline", false, "validate incident detectors against recorded healthy snapshots")
-	metricsPublishURL := flags.String("metrics-publish-url", "", "SDO Prometheus publishing base URL")
-	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL that metric and alert detectors query once per evaluation cycle")
+	telemetryEnvironment := flags.String("telemetry-environment", "", "telemetry environment document: the sources the operator provides, their credential directory and the pinning mode")
 	maxResponseLoops := flags.Int("max-response-loops", 10, "maximum mitigation rounds the responder agent may use per incident (the automatic stage's one apply does not count)")
 	diagnosisDeadline := flags.Duration("diagnosis-deadline", 10*time.Second, "shared candidate diagnosis deadline")
 	duration := flags.Duration("duration", 0, "bounded controller duration")
@@ -188,7 +187,7 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, er
 		ExitAfterClosure: *exitAfterClosure,
 		ScriptImage:      *scriptImage, ToolchainImage: *toolchainImage, AgentRegistrationDirectory: *registrations, ResponderAgentId: *responderID,
 		BrokerMode: *brokerMode, WorkerMountMode: *workerMountMode,
-		ResponderBackend: *backend, ResponderModel: *model, AgentEffort: *effort, Replay: *replay, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, FrozenMemory: *frozenMemory, ExternalIncidents: *externalIncidents, HealthyBaseline: *healthyBaseline, MetricsUrl: *metricsURL, MetricsPublishUrl: *metricsPublishURL,
+		ResponderBackend: *backend, ResponderModel: *model, AgentEffort: *effort, Replay: *replay, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, FrozenMemory: *frozenMemory, ExternalIncidents: *externalIncidents, HealthyBaseline: *healthyBaseline, TelemetryEnvironmentFile: *telemetryEnvironment,
 	}
 	// The child deploys a responder's source repair with the identity the
 	// parent deploys upstream advances with.

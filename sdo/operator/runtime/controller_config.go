@@ -120,9 +120,7 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 	dur("--synthetic-traffic-warmup", config.GetSyntheticTrafficWarmup())
 	str("--toolchain-image", config.GetToolchainImage())
 	str("--script-image", config.GetScriptImage())
-	str("--metrics-url", config.GetMetricsUrl())
-	str("--metrics-publish-url", config.GetMetricsPublishUrl())
-	str("--metrics-token-file", config.GetMetricsTokenFile())
+	str("--telemetry-environment", config.GetTelemetryEnvironmentFile())
 	optBool("--clean-responder-helpers", config.CleanResponderHelpers)
 	optBool("--state-baseline", config.StateBaseline)
 

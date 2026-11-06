@@ -114,6 +114,9 @@ type Plan struct {
 	ClusterBindings   []*rbacv1.ClusterRoleBinding
 	SyncPod           *corev1.Pod
 	Job               *batchv1.Job
+
+	// TelemetryEnvironment is the controller's telemetry environment document.
+	TelemetryEnvironment *corev1.ConfigMap
 }
 
 var namespaceName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
@@ -302,13 +305,22 @@ func Resources(c Config) (Plan, error) {
 	if !c.DisableObservability {
 		addObservability(&plan, c)
 	}
+	environment, err := telemetryEnvironmentConfigMap(c)
+	if err != nil {
+		return Plan{}, err
+	}
+	plan.TelemetryEnvironment = environment
 	plan.SyncPod = syncPod(c)
 	plan.Job = controllerJob(c)
 	if err := worker_registry.ApplyProviderCapacity(&plan.Job.Spec.Template.Spec, worker_registry.ProviderCapacityEnvironment()); err != nil {
 		return Plan{}, err
 	}
+	// The document is mounted, not an argument: its digest on the template
+	// makes a changed environment a changed install.
+	digest := sha256.Sum256([]byte(environment.Data[telemetryEnvironmentFile]))
+	plan.Job.Spec.Template.Annotations = map[string]string{"sdo.dev/telemetry-environment-hash": hex.EncodeToString(digest[:8])}
 	if c.AcceptedCommit != "" {
-		plan.Job.Spec.Template.Annotations = map[string]string{"sdo.dev/accepted-commit": c.AcceptedCommit}
+		plan.Job.Spec.Template.Annotations["sdo.dev/accepted-commit"] = c.AcceptedCommit
 	}
 	if c.PermissiveResponder {
 		settings, err := json.Marshal(c.ResponderNamespaces)
@@ -435,12 +447,7 @@ func controllerJob(c Config) *batchv1.Job {
 	if c.HealthyBaseline {
 		args = append(args, "--healthy-baseline")
 	}
-	if !c.DisableObservability {
-		args = append(args, "--metrics-publish-url", fmt.Sprintf("http://%s.%s.svc:9090", PrometheusName, c.controlNamespace()))
-	}
-	if c.EffectiveMetricsURL() != "" {
-		args = append(args, "--metrics-url", c.EffectiveMetricsURL())
-	}
+	args = append(args, "--telemetry-environment", TelemetryEnvironmentFile())
 	if c.RegistrationConfigMap != "" {
 		args = append(args, "--agent-registration-directory", c.registrationDirectory())
 	}
@@ -473,6 +480,7 @@ func controllerJob(c Config) *batchv1.Job {
 		{Name: "scratch", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: quantity("4Gi")}}},
 		{Name: "credentials", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: c.CredentialsSecret}}},
 	}
+	pod.Volumes = append(pod.Volumes, corev1.Volume{Name: "telemetry-environment", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: TelemetryEnvironmentName}}}})
 	if c.RegistrationConfigMap != "" {
 		pod.Volumes = append(pod.Volumes, corev1.Volume{Name: "registrations", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: c.RegistrationConfigMap}}}})
 	}
@@ -515,6 +523,7 @@ func controllerJob(c Config) *batchv1.Job {
 			{Name: "credentials", MountPath: "/sdo/credentials", ReadOnly: true},
 		},
 	}}
+	pod.Containers[0].VolumeMounts = append(pod.Containers[0].VolumeMounts, corev1.VolumeMount{Name: "telemetry-environment", MountPath: TelemetryEnvironmentDir, ReadOnly: true})
 	if c.RegistrationConfigMap != "" {
 		pod.Containers[0].VolumeMounts = append(pod.Containers[0].VolumeMounts, corev1.VolumeMount{Name: "registrations", MountPath: c.registrationDirectory(), ReadOnly: true})
 	}

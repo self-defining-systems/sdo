@@ -56,6 +56,7 @@ func main(){
  server,err:=memoryhost.NewServer(*commit,digest,generated.All());if err!=nil{log.Fatal(err)}
  programs,err:=generated.Programs();if err!=nil{log.Fatal(err)}
  server.WithPrograms(programs)
+ server.WithTelemetrySources([]byte(generated.TelemetrySources))
  catalog,documents:=generated.TrafficCatalog(),generated.TrafficWorkloads
  if !*synthetic {catalog,documents=nil,nil}
  workloads,err:=prober.ParseWorkloads(documents);if err!=nil{log.Fatal(err)}

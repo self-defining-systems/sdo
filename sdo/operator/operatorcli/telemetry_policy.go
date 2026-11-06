@@ -3,6 +3,8 @@ package operatorcli
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/operatorcli/catalog/telemetrysources"
@@ -18,7 +20,9 @@ const memoryTelemetryPolicyEnv = "SDO_TELEMETRY_POLICY"
 func telemetryRegistry() *telemetry.Registry { return telemetrysources.Registry() }
 
 // legacyMetricsSourceID names the operator-provided source that stands for
-// the controller's --metrics-url until the telemetry profile replaces the flag.
+// the install's metrics URL until the telemetry profile replaces it. The
+// controller's environment document (install.Config.TelemetryEnvironment)
+// provides the same binding.
 const legacyMetricsSourceID = "default"
 
 // installTelemetryPolicy derives the policy from what the installer grants.
@@ -26,7 +30,7 @@ const legacyMetricsSourceID = "default"
 // Prometheus recipe and its pod-discovery and node-proxy reads exist exactly
 // when the stack is installed. The configured metrics URL (config.MetricsURL,
 // already the effective one) is the single operator-provided source `default`,
-// the same binding the controller synthesizes from --metrics-url, so the
+// the same binding the controller's environment document provides, so the
 // broker, the judge's check and the controller agree on which sources exist.
 func installTelemetryPolicy(config install.Config, application, control string) (telemetry.Policy, error) {
 	policy := telemetry.Policy{Mode: telemetry.ModeOpen, ControlNamespace: control, ApplicationNamespace: application}
@@ -63,4 +67,24 @@ func memoryTelemetryPolicy(getenv func(string) string, application string) (tele
 		return telemetry.Policy{}, fmt.Errorf("%s: %w", memoryTelemetryPolicyEnv, err)
 	}
 	return policy, nil
+}
+
+// writeTelemetryEnvironment writes the install's telemetry environment
+// document to a private temporary file for evaluation subprocesses that read
+// `--telemetry-environment`, and returns its path with a cleanup.
+func writeTelemetryEnvironment(config install.Config) (string, func(), error) {
+	document, err := config.TelemetryEnvironment().Marshal()
+	if err != nil {
+		return "", nil, fmt.Errorf("telemetry environment: %w", err)
+	}
+	directory, err := os.MkdirTemp("", "sdo-telemetry-")
+	if err != nil {
+		return "", nil, err
+	}
+	path := filepath.Join(directory, "environment.json")
+	if err := os.WriteFile(path, document, 0o600); err != nil {
+		_ = os.RemoveAll(directory)
+		return "", nil, err
+	}
+	return path, func() { _ = os.RemoveAll(directory) }, nil
 }

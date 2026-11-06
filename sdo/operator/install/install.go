@@ -417,6 +417,9 @@ func (i Installer) ensureBase(ctx context.Context, cfg Config, p Plan) error {
 	if err := i.ensureObservability(ctx, p); err != nil {
 		return err
 	}
+	if err := i.ensureTelemetryEnvironment(ctx, p); err != nil {
+		return err
+	}
 	if err := i.ensurePermissiveNamespaces(ctx, cfg); err != nil {
 		return err
 	}

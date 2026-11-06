@@ -46,11 +46,11 @@ import (
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
-	"sdo.dev/operator/telemetry"
 	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 	"sdo.dev/operator/shellpath"
+	"sdo.dev/operator/telemetry"
 	"sdo.dev/operator/toolchain"
 	"sdo.dev/operator/worker_registry"
 )
@@ -104,7 +104,7 @@ type RuntimeOptions struct {
 	// desired state through. Nil means no renderers are wired.
 	Renderers *render.Catalog
 	// Telemetry is the application-telemetry adapter registry metric sources
-	// open through. Nil means no adapters are wired, so --metrics-url is refused.
+	// open through. Nil means no adapters are wired, so any bound source is refused.
 	Telemetry *telemetry.Registry
 	// RepairDeployer builds the trusted deployment of a responder's accepted
 	// source repair for a typed launch. Nil is refused for launches that need
@@ -267,11 +267,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	)
 	toolchainImage := flags.String("toolchain-image", "", "trusted controller image supplying Go to workers (required in job mode)")
 	scriptImage := flags.String("script-image", "", "fixed script-tools image; defaults to the trusted toolchain image")
-	metricsPublishURL := flags.String("metrics-publish-url", "", "SDO Prometheus publishing base URL")
-	metricsURL := flags.String(
-		"metrics-url", "", "Prometheus-compatible API URL that metric and alert detectors query once per evaluation cycle",
+	telemetryEnvironment := flags.String(
+		"telemetry-environment", "",
+		"telemetry environment document: the sources the operator provides, their credential directory and the pinning mode",
 	)
-	metricsTokenFile := flags.String("metrics-token-file", "", "file holding a bearer token for --metrics-url, read on every request")
 	cleanResponderHelpers := flags.Bool(
 		"clean-responder-helpers", true,
 		"delete pods and Jobs labelled "+ResponderHelperLabel+"=true once the responder completes",
@@ -313,6 +312,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		*stateBaseline = false
 	}
 	var hostManager *memoryhost.Manager
+	// initialTelemetrySources are the launch revision's accepted telemetry
+	// bindings as its memory host reported them.
+	var initialTelemetrySources []byte
 	if launchConfig != nil {
 		hostManager = memoryhost.NewManager(30 * time.Second)
 		defer hostManager.Close()
@@ -344,7 +346,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			return err
 		}
 		hostio.SetRecovery(hostManager, hostio.LaunchConfig{Namespace: *namespace, ProtectedNamespace: hostProtectedNamespace(*controlNamespace, *namespace), DisableSyntheticTraffic: !*syntheticTraffic, Binary: *memoryHostBinary, Digest: *memoryHostDigest, Commit: launchConfig.GetControllerRevision(), MemoryBytes: 512 << 20, Output: stderr})
-		detectors, options.Programs = remote.Detectors, remote.Programs
+		detectors, options.Programs, initialTelemetrySources = remote.Detectors, remote.Programs, remote.TelemetrySources
 		if *externalIncidents {
 			detectors = nil
 		}
@@ -577,8 +579,12 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if trafficObserver != nil {
 		defer trafficObserver.Stop()
 	}
-	observations := detectorObservations{Client: bootstrapProvider.Client, Clock: clock.Now, MetricsURL: *metricsURL, MetricsTokenFile: *metricsTokenFile, Telemetry: options.Telemetry}
-	snapshotProvider, metricsObserver, err := observations.compose(snapshotProvider, detectors)
+	telemetrySources, err := loadTelemetrySources(options.Telemetry, *telemetryEnvironment)
+	if err != nil {
+		return err
+	}
+	observations := detectorObservations{Client: bootstrapProvider.Client, Clock: clock.Now, Telemetry: telemetrySources}
+	snapshotProvider, metricsObserver, err := observations.compose(snapshotProvider, detectors, initialTelemetrySources)
 	if err != nil {
 		return err
 	}
@@ -816,7 +822,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if options.NativeBroker != nil {
 		corpusSessionRoot = options.NativeBroker.SessionRoot
 	}
-	controller, err = NewController(ControllerConfig{ExternalIncidentsOnly: *externalIncidents, MetricsSource: configuredMetricsSource(*metricsURL, *metricsPublishURL),
+	controller, err = NewController(ControllerConfig{ExternalIncidentsOnly: *externalIncidents, MetricsSource: telemetrySources.metricsSource(),
 		CodePath: selectedPathConfig, CodePathRegistry: codePathRegistry,
 		Application: *application, Namespace: *namespace,
 		SourceCommit: resolvedSourceCommit, DeployedCommit: resolvedDeployedCommit,
@@ -913,7 +919,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return err
 			}
 			var next SnapshotProvider = TrafficSnapshotProvider{Base: kubernetesCache, Observer: trafficObserver, Reachability: reachabilityObserver}
-			next, nextMetrics, err := observations.compose(next, remote.Detectors)
+			next, nextMetrics, err := observations.compose(next, remote.Detectors, remote.TelemetrySources)
 			if err != nil {
 				return err
 			}
@@ -1770,8 +1776,7 @@ func evaluateOnce(
 	hostBinary := flags.String("memory-host-binary", "", "validated memory host binary")
 	hostDigest := flags.String("memory-host-digest", "", "validated memory host digest")
 	memoryCommit := flags.String("memory-commit", "", "accepted memory revision")
-	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL for metric and alert health evaluation")
-	metricsTokenFile := flags.String("metrics-token-file", "", "file holding a bearer token for --metrics-url")
+	telemetryEnvironment := flags.String("telemetry-environment", "", "telemetry environment document for metric and alert health evaluation")
 	classesFlag := flags.String("classes", "", "comma-separated detector classes to evaluate (default: every class)")
 	pinsFile := flags.String("image-pins", "", "JSON rendered.ReceiptPins of the deployment under verification: desired state reads return the images it applied")
 	if err := flags.Parse(args); err != nil {
@@ -1796,6 +1801,9 @@ func evaluateOnce(
 		}
 		pins = receipt
 	}
+	// designerSources are the accepted revision's telemetry bindings, reported
+	// by the memory host built from --app-root (none for injected detectors).
+	var designerSources []byte
 	if *acceptSeed && *sourceDriftReport != "" {
 		return errors.New("seed acceptance cannot use source-drift-report: inventory is not detector health evidence")
 	}
@@ -1829,7 +1837,7 @@ func evaluateOnce(
 		if err != nil {
 			return err
 		}
-		detectors = remote.Detectors
+		detectors, designerSources = remote.Detectors, remote.TelemetrySources
 		trafficAPI = MemoryTraffic{RPC: manager}
 		if err := (MemoryTraffic{RPC: manager}).Start(ctx); err != nil {
 			return err
@@ -1967,7 +1975,11 @@ func evaluateOnce(
 	if trafficProvider.Observer != nil || trafficProvider.Reachability != nil {
 		provider = trafficProvider
 	}
-	provider, _, err = detectorObservations{Client: client, Clock: clock.Now, MetricsURL: *metricsURL, MetricsTokenFile: *metricsTokenFile, RequireMetrics: true, Telemetry: registry}.compose(provider, detectors)
+	telemetrySources, err := loadTelemetrySources(registry, *telemetryEnvironment)
+	if err != nil {
+		return err
+	}
+	provider, _, err = detectorObservations{Client: client, Clock: clock.Now, RequireMetrics: true, Telemetry: telemetrySources}.compose(provider, detectors, designerSources)
 	if err != nil {
 		return err
 	}
@@ -2125,15 +2137,6 @@ func executePendingEffects(ctx context.Context, controller *Controller) (err err
 		return nil
 	}
 	return nil
-}
-
-func configuredMetricsSource(queryURL, publishURL string) *contractsv1alpha1.MetricsSource {
-	source := &contractsv1alpha1.MetricsSource{QueryUrl: queryURL}
-	if publishURL != "" {
-		source.AnnotatedPodScraping = true
-		source.OtlpMetricsUrl = strings.TrimRight(publishURL, "/") + "/api/v1/otlp/v1/metrics"
-	}
-	return source
 }
 
 // Existing responder-env configuration also provides a cold-only rollout switch.

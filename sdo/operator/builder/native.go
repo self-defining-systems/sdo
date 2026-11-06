@@ -329,6 +329,9 @@ func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error
 	if err := generateMetricsTest(directory); err != nil {
 		return nil, err
 	}
+	if err := generateTelemetrySources(diagnostics, directory); err != nil {
+		return nil, err
+	}
 	if err := generateTelemetryBindingTest(directory, config.Telemetry); err != nil {
 		return nil, err
 	}

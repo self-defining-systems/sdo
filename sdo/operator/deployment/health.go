@@ -57,8 +57,11 @@ type AcceptedDetectorProbe struct {
 	Replay          string
 	RequireComplete bool
 	Kubeconfig      string
-	MetricsURL      string
-	Limit           time.Duration
+	// TelemetryEnvironment is the telemetry environment document the probe's
+	// evaluation reads; the accepted tree's own bindings come from the memory
+	// host built from it. Empty provides no operator source.
+	TelemetryEnvironment string
+	Limit                time.Duration
 }
 
 func (probe AcceptedDetectorProbe) Evaluate(ctx context.Context, acceptedRoot, operatorRoot, namespace string, scope HealthScope) (HealthEvaluation, error) {
@@ -296,8 +299,8 @@ func (probe AcceptedDetectorProbe) evaluationArgs(acceptedRoot, namespace string
 	if probe.RequireComplete {
 		args = append(args, "--accept-seed")
 	}
-	if probe.MetricsURL != "" {
-		args = append(args, "--metrics-url", probe.MetricsURL)
+	if probe.TelemetryEnvironment != "" {
+		args = append(args, "--telemetry-environment", probe.TelemetryEnvironment)
 	}
 	return args
 }
