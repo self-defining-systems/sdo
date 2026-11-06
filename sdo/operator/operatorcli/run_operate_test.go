@@ -7,7 +7,6 @@ import (
 
 	"k8s.io/client-go/kubernetes/fake"
 	"sdo.dev/operator/deployment"
-	"sdo.dev/operator/render"
 )
 
 func operateTestConfig(registryHost string) OperateConfig {
@@ -26,7 +25,7 @@ func operateTestDeployer(t *testing.T, config OperateConfig) deployment.Deployer
 	deployer, err := operateIdentity(config).deployer(fake.NewSimpleClientset(), deployTarget{
 		Namespace: config.Lifecycle.Namespace, ControlNamespace: "sdo-system", AcceptedRoot: config.ApplicationRoot,
 		ProposalRoot: config.WorktreeRoot, RepositoryMount: config.RepositoryMount, RepositoryPVC: "repo",
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,8 +53,8 @@ func TestOperateDeployerDeploysEveryBuiltInRenderer(t *testing.T) {
 // package pins that digest (TestDeployerWithTheProductionEnvAcceptsLegacyRegistryEvidence).
 func TestOperateDeployerKeepsTheLegacyRenderEnvironment(t *testing.T) {
 	deployer := operateTestDeployer(t, operateTestConfig(""))
-	if !reflect.DeepEqual(deployer.Env, render.Env{}) {
-		t.Fatalf("deployer env = %+v, want only the namespace (set from Deployer.Namespace)", deployer.Env)
+	if deployer.Environment != nil {
+		t.Fatalf("deployer environment = %+v, want unknown (renderer defaults) when none is discovered", deployer.Environment)
 	}
 	if got := deployer.Images.IDs(); !reflect.DeepEqual(got, []string{"prebuilt"}) {
 		t.Fatalf("without a push registry the deployer has only prebuilt images, got %v", got)
@@ -64,7 +63,7 @@ func TestOperateDeployerKeepsTheLegacyRenderEnvironment(t *testing.T) {
 
 func TestDeployerProposalsMustBeOnTheRepositoryMount(t *testing.T) {
 	config := operateTestConfig("registry.local:5000")
-	_, err := operateIdentity(config).deployer(fake.NewSimpleClientset(), deployTarget{Namespace: "demo", ControlNamespace: "sdo-system", AcceptedRoot: config.ApplicationRoot, ProposalRoot: "/elsewhere", RepositoryMount: "/repo", RepositoryPVC: "repo"})
+	_, err := operateIdentity(config).deployer(fake.NewSimpleClientset(), deployTarget{Namespace: "demo", ControlNamespace: "sdo-system", AcceptedRoot: config.ApplicationRoot, ProposalRoot: "/elsewhere", RepositoryMount: "/repo", RepositoryPVC: "repo"}, nil)
 	if err == nil {
 		t.Fatal("proposal root outside the repository mount accepted")
 	}

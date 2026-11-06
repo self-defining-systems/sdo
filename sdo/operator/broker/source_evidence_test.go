@@ -26,7 +26,8 @@ func syntheticEvidence(t *testing.T) broker.SourceEvidence {
 		Plan:             &contracts.DeploymentPlan{Source: proto.Clone(source).(*contracts.DeploymentSource), ExpectedWorkloadIds: []string{"Deployment/ns/app"}},
 		BaseTree:         tree, ObservedRevision: tree,
 		RenderDigest: strings.Repeat("b", 64), EnvDigest: strings.Repeat("c", 64),
-		Images: []string{"app@sha256:" + strings.Repeat("d", 64)}, ResourceIDs: []string{"Deployment/ns/app"}, Ready: true,
+		RenderEnvironment: &contracts.RenderEnvironment{KubeVersion: "v1.31.2", ApiVersions: []string{"apps/v1", "v1"}},
+		Images:            []string{"app@sha256:" + strings.Repeat("d", 64)}, ResourceIDs: []string{"Deployment/ns/app"}, Ready: true,
 	}
 }
 
@@ -36,7 +37,7 @@ func TestSourceEvidenceRecordRoundTripsTheSourceAndPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{`"deployment_source"`, `"plan"`, `"base_tree"`, `"render_digest"`, `"env_digest"`} {
+	for _, field := range []string{`"deployment_source"`, `"plan"`, `"base_tree"`, `"render_digest"`, `"env_digest"`, `"render_environment"`} {
 		if !strings.Contains(string(encoded), field) {
 			t.Fatalf("record %s lacks %s", encoded, field)
 		}
@@ -45,7 +46,7 @@ func TestSourceEvidenceRecordRoundTripsTheSourceAndPlan(t *testing.T) {
 	if err := json.Unmarshal(encoded, &got); err != nil {
 		t.Fatal(err)
 	}
-	if !proto.Equal(got.DeploymentSource, want.DeploymentSource) || !proto.Equal(got.Plan, want.Plan) || got.BaseTree != want.BaseTree || got.RenderDigest != want.RenderDigest || got.EnvDigest != want.EnvDigest {
+	if !proto.Equal(got.DeploymentSource, want.DeploymentSource) || !proto.Equal(got.Plan, want.Plan) || got.BaseTree != want.BaseTree || got.RenderDigest != want.RenderDigest || got.EnvDigest != want.EnvDigest || !proto.Equal(got.RenderEnvironment, want.RenderEnvironment) {
 		t.Fatalf("round trip = %+v, want %+v", got, want)
 	}
 }
@@ -55,8 +56,8 @@ func TestSourceEvidenceRecordRoundTripsTheSourceAndPlan(t *testing.T) {
 func TestSourceEvidenceFromAnOlderOperatorIsRejected(t *testing.T) {
 	tree := strings.Repeat("a", 40)
 	for name, record := range map[string]string{
-		"strategy": `{"proposal_tree_digest":"` + tree + `","observed_revision":"` + tree + `","strategy_id":"raw-manifests-v1","images":["i"],"resource_ids":["r"],"ready":true}`,
-		"no source":          `{"base_tree":"` + tree + `","observed_revision":"` + tree + `","render_digest":"x","env_digest":"y","images":["i"],"resource_ids":["r"],"ready":true}`,
+		"strategy":  `{"proposal_tree_digest":"` + tree + `","observed_revision":"` + tree + `","strategy_id":"raw-manifests-v1","images":["i"],"resource_ids":["r"],"ready":true}`,
+		"no source": `{"base_tree":"` + tree + `","observed_revision":"` + tree + `","render_digest":"x","env_digest":"y","images":["i"],"resource_ids":["r"],"ready":true}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			var got broker.SourceEvidence
@@ -92,5 +93,23 @@ func TestPublishVerifiedSourceRequiresSourceAndDigests(t *testing.T) {
 				t.Fatalf("err = %v, want %q", err, c.reason)
 			}
 		})
+	}
+}
+
+// Evidence recorded before environment discovery has no render_environment and
+// decodes as an unknown environment, not as an error.
+func TestSourceEvidenceWithoutARenderEnvironmentIsUnknown(t *testing.T) {
+	want := syntheticEvidence(t)
+	want.RenderEnvironment = nil
+	encoded, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "render_environment") {
+		t.Fatalf("unknown environment encoded: %s", encoded)
+	}
+	var got broker.SourceEvidence
+	if err := json.Unmarshal(encoded, &got); err != nil || got.RenderEnvironment != nil {
+		t.Fatalf("decode = %+v, %v; want a nil environment", got.RenderEnvironment, err)
 	}
 }

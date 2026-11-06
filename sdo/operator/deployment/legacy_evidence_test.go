@@ -6,7 +6,6 @@ import (
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/lifecycle"
-	"sdo.dev/operator/render"
 	"sdo.dev/operator/render/raw"
 )
 
@@ -32,7 +31,6 @@ func TestDeployerWithTheProductionEnvAcceptsLegacyRegistryEvidence(t *testing.T)
 	root, source := depRawFixture(t)
 	cluster := &clusterFake{}
 	deployer, _ := depDeployer(t, root, cluster)
-	deployer.Env = render.Env{} // what operatorcli wires
 	ctx := context.Background()
 	receipt, err := deployer.ApplyAndVerify(ctx, root, depPlan(t, source, depRawWeb))
 	if err != nil {

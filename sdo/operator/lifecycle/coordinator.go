@@ -21,6 +21,7 @@ import (
 	"sdo.dev/operator/plugindesc"
 	"sdo.dev/operator/render"
 	"sdo.dev/operator/rendered"
+	"sdo.dev/operator/renderenv"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -76,9 +77,13 @@ type DeploymentReceipt struct {
 	// RenderDigest and EnvDigest are rendered.DesiredSet's digests at BaseTree.
 	RenderDigest string
 	EnvDigest    string
-	Images       []string
-	ResourceIDs  []string
-	Ready        bool
+	// Environment is the install-time render environment the digests were
+	// computed with (renderenv.Discover); nil is unknown (renderer defaults),
+	// as in evidence recorded before discovery existed.
+	Environment *contracts.RenderEnvironment
+	Images      []string
+	ResourceIDs []string
+	Ready       bool
 }
 
 // SourceReadinessVerifier is a trusted Go build/apply/observe adapter. The
@@ -428,7 +433,7 @@ func completeDeploymentReceipt(receipt DeploymentReceipt) bool {
 }
 
 func sameDeploymentIdentity(left, right DeploymentReceipt) bool {
-	if left.BaseTree != right.BaseTree || left.ObservedRevision != right.ObservedRevision || left.RenderDigest != right.RenderDigest || left.EnvDigest != right.EnvDigest || !rendered.SameDeploymentSource(left.Source, right.Source) {
+	if left.BaseTree != right.BaseTree || left.ObservedRevision != right.ObservedRevision || left.RenderDigest != right.RenderDigest || left.EnvDigest != right.EnvDigest || !renderenv.Same(left.Environment, right.Environment) || !rendered.SameDeploymentSource(left.Source, right.Source) {
 		return false
 	}
 	leftImages, rightImages := slices.Clone(left.Images), slices.Clone(right.Images)
@@ -449,6 +454,9 @@ func deploymentToBroker(receipt DeploymentReceipt, plan *contracts.DeploymentPla
 		RenderDigest: receipt.RenderDigest, EnvDigest: receipt.EnvDigest,
 		Images: append([]string(nil), receipt.Images...), ResourceIDs: append([]string(nil), receipt.ResourceIDs...), Ready: receipt.Ready,
 	}
+	if receipt.Environment != nil {
+		evidence.RenderEnvironment = proto.Clone(receipt.Environment).(*contracts.RenderEnvironment)
+	}
 	if receipt.Source != nil {
 		evidence.DeploymentSource = proto.Clone(receipt.Source).(*contracts.DeploymentSource)
 	}
@@ -466,6 +474,9 @@ func deploymentFromBroker(evidence broker.SourceEvidence) DeploymentReceipt {
 	}
 	if evidence.DeploymentSource != nil {
 		receipt.Source = proto.Clone(evidence.DeploymentSource).(*contracts.DeploymentSource)
+	}
+	if evidence.RenderEnvironment != nil {
+		receipt.Environment = proto.Clone(evidence.RenderEnvironment).(*contracts.RenderEnvironment)
 	}
 	return receipt
 }

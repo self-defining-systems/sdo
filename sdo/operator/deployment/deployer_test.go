@@ -264,7 +264,7 @@ func depDeployer(t *testing.T, root string, cluster *clusterFake) (Deployer, *im
 	images, fake := depImageCatalog(t)
 	return Deployer{
 		Namespace: depNamespace, Renderers: depRenderers(t), Images: images, Applier: cluster,
-		TreeDigest: broker.ProposalTreeDigest, Env: render.Env{Release: "rel"}, AcceptedRoot: root,
+		TreeDigest: broker.ProposalTreeDigest, AcceptedRoot: root,
 	}, fake
 }
 
@@ -272,8 +272,8 @@ func depHead(t *testing.T, root string) string {
 	return testutil.Git(t, root, "rev-parse", "HEAD")
 }
 
-func depSourceReader(root string, src *contracts.DeploymentSource, release string, c *render.Catalog) rendered.Source {
-	return rendered.Source{Repository: root, Deployment: src, Catalog: c, Env: render.Env{Release: release}}
+func depSourceReader(root string, src *contracts.DeploymentSource, environment *contracts.RenderEnvironment, c *render.Catalog) rendered.Source {
+	return rendered.Source{Repository: root, Deployment: src, Catalog: c, Environment: environment}
 }
 
 func depKey(o map[string]any) string {
@@ -351,16 +351,19 @@ func depUnstamp(o map[string]any, original map[string]string) {
 // objects rendered.Source reads, plus ephemeral and foreign-namespace objects
 // that reads project out.
 func TestDeployPathObjectsEqualReadObjects(t *testing.T) {
-	// "" is the production environment: no install configuration names a
-	// release, and deploy and reads must still agree.
-	for _, release := range []string{"rel", ""} {
+	// nil is an environment never discovered (renderer defaults); the other is
+	// a discovered one. Deploy and reads must agree under both.
+	for name, environment := range map[string]*contracts.RenderEnvironment{
+		"discovered": {KubeVersion: "v1.29.4", ApiVersions: []string{"apps/v1", "apps/v1/Deployment", "v1", "v1/Service"}},
+		"unknown":    nil,
+	} {
 		for _, fixture := range depFixtures(t) {
-			t.Run(fixture.name+"/release="+release, func(t *testing.T) {
+			t.Run(fixture.name+"/env="+name, func(t *testing.T) {
 				ctx := context.Background()
 				root := depCommit(t, fixture.files)
 				source := fixture.source(t)
 				catalog := depRenderers(t)
-				reads, err := depSourceReader(root, source, release, catalog).RawManifests(ctx, depHead(t, root), depNamespace)
+				reads, err := depSourceReader(root, source, environment, catalog).RawManifests(ctx, depHead(t, root), depNamespace)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -379,7 +382,7 @@ func TestDeployPathObjectsEqualReadObjects(t *testing.T) {
 				}
 				cluster := &clusterFake{}
 				deployer, _ := depDeployer(t, root, cluster)
-				deployer.Env.Release = release
+				deployer.Environment = environment
 				receipt, err := deployer.ApplyAndVerify(ctx, root, &contracts.DeploymentPlan{Source: source, ExpectedWorkloadIds: expected})
 				if err != nil {
 					t.Fatal(err)
@@ -632,9 +635,9 @@ func TestVerifyAcceptedChecksDigestsAndLiveWorkloads(t *testing.T) {
 	}
 
 	t.Run("renderer environment changed", func(t *testing.T) {
-		other := deployer
-		other.Env.Release = "other"
-		_, err := other.VerifyAccepted(ctx, commit, depNamespace, receipt)
+		changed := receipt
+		changed.Environment = &contracts.RenderEnvironment{KubeVersion: "v1.20.0"}
+		_, err := deployer.VerifyAccepted(ctx, commit, depNamespace, changed)
 		var renderer *RendererChangedError
 		if !errors.As(err, &renderer) || renderer.What != "env" {
 			t.Fatalf("err = %v, want RendererChangedError on env", err)

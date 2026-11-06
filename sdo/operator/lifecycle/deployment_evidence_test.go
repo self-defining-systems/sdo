@@ -13,6 +13,7 @@ import (
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/rendered"
+	"sdo.dev/operator/renderenv"
 )
 
 func rawSourcePlan(t *testing.T, paths ...string) *contracts.DeploymentPlan {
@@ -112,8 +113,9 @@ func TestRestartRequiresTheRecordedSourceAndDigests(t *testing.T) {
 }
 
 type capturingStrategy struct {
-	config   install.Config
-	verified *contracts.DeploymentSource
+	config      install.Config
+	verified    *contracts.DeploymentSource
+	environment *contracts.RenderEnvironment
 }
 
 func (s *capturingStrategy) Install(_ context.Context, config install.Config, _ install.RepositorySeeder) (install.Result, error) {
@@ -121,8 +123,8 @@ func (s *capturingStrategy) Install(_ context.Context, config install.Config, _ 
 	return install.Result{}, nil
 }
 
-func (s *capturingStrategy) WithVerifiedDeployment(_, _, _ string, source *contracts.DeploymentSource) lifecycle.InstallStrategy {
-	s.verified = source
+func (s *capturingStrategy) WithVerifiedDeployment(_, _, _ string, source *contracts.DeploymentSource, environment *contracts.RenderEnvironment) lifecycle.InstallStrategy {
+	s.verified, s.environment = source, environment
 	return s
 }
 
@@ -148,5 +150,39 @@ func TestInstallDeploymentForwardsTheDeploymentSource(t *testing.T) {
 	}
 	if err := adapter.InstallDeployment(context.Background(), commit, "ns", lifecycle.DeploymentReceipt{}); err == nil {
 		t.Fatal("install without a deployment source succeeded")
+	}
+}
+
+// The environment the deployment was rendered with reaches the installed
+// controller (--render-env) and onboarding, so reads render what deploy did.
+// Evidence without one (recorded before discovery) adds no flag.
+func TestInstallDeploymentForwardsTheRenderEnvironment(t *testing.T) {
+	strategy := &capturingStrategy{}
+	adapter := lifecycle.NativeInstallAdapter{Strategy: strategy, AcceptedRepository: t.TempDir()}
+	source := rawSourcePlan(t, "k8s").GetSource()
+	commit := strings.Repeat("a", 40)
+	environment := &contracts.RenderEnvironment{KubeVersion: "v1.31.2", ApiVersions: []string{"apps/v1", "v1"}}
+	if err := adapter.InstallDeployment(context.Background(), commit, "ns", lifecycle.DeploymentReceipt{Source: source, Environment: environment}); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := renderenv.Format(environment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strategy.config.ExtraControllerArgs; len(got) != 2 || got[1] != "--render-env="+encoded {
+		t.Fatalf("controller args = %v, want --render-env=%s", got, encoded)
+	}
+	if !renderenv.Same(strategy.environment, environment) {
+		t.Fatalf("onboarding renders with %v, want the receipt's environment", strategy.environment)
+	}
+	strategy = &capturingStrategy{}
+	adapter.Strategy = strategy
+	if err := adapter.InstallDeployment(context.Background(), commit, "ns", lifecycle.DeploymentReceipt{Source: source}); err != nil {
+		t.Fatal(err)
+	}
+	for _, arg := range strategy.config.ExtraControllerArgs {
+		if strings.HasPrefix(arg, "--render-env") {
+			t.Fatalf("unknown environment forwarded as %q", arg)
+		}
 	}
 }

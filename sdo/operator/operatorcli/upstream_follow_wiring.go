@@ -25,7 +25,6 @@ import (
 	"sdo.dev/operator/operatorcli/catalog/renderers"
 	"sdo.dev/operator/operatorcli/catalog/upstreams"
 	"sdo.dev/operator/operatorcli/internal/processio"
-	"sdo.dev/operator/render"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/upstream"
 )
@@ -66,9 +65,10 @@ type deployTarget struct {
 
 // deployer is the trusted Deployer with every built-in renderer and the
 // deployer's image catalog. Its render environment carries only the
-// application namespace (render.Env{}), as onboarding's does, so evidence the
-// operate Job recorded keeps its environment digest.
-func (d deployIdentity) deployer(client kubernetes.Interface, target deployTarget) (deployment.Deployer, error) {
+// environment is the install-time one (renderenv): the operate Job's
+// discovery, or the controller's --render-env, which the operate Job recorded
+// with the deployment evidence.
+func (d deployIdentity) deployer(client kubernetes.Interface, target deployTarget, environment *contracts.RenderEnvironment) (deployment.Deployer, error) {
 	subPath, err := filepath.Rel(target.RepositoryMount, target.ProposalRoot)
 	if err != nil || subPath == "." || subPath == ".." || filepath.IsAbs(subPath) || strings.HasPrefix(subPath, "../") {
 		return deployment.Deployer{}, errors.New("broker proposals must be inside the shared repository mount")
@@ -97,7 +97,7 @@ func (d deployIdentity) deployer(client kubernetes.Interface, target deployTarge
 	return deployment.Deployer{
 		Namespace: target.Namespace, Renderers: renderers.Catalog(), Images: sources,
 		Applier:    deployment.CommandBackend{ObserveLimit: d.RolloutTimeout},
-		TreeDigest: broker.ProposalTreeDigest, Env: render.Env{}, AcceptedRoot: target.AcceptedRoot,
+		TreeDigest: broker.ProposalTreeDigest, Environment: environment, AcceptedRoot: target.AcceptedRoot,
 	}, nil
 }
 
@@ -211,7 +211,7 @@ func controllerAdvancer(launch *contracts.ControllerConfig, operatorRoot string,
 		Namespace: launch.GetNamespace(), ControlNamespace: controlNamespace(launch),
 		AcceptedRoot: launch.GetAppRoot(), ProposalRoot: launch.GetBrokerWorktreeRoot(),
 		RepositoryMount: launch.GetRepositoryMountPath(), RepositoryPVC: launch.GetRepositoryPvc(),
-	})
+	}, launch.GetRenderEnvironment())
 	if err != nil {
 		return lifecycle.Advancer{}, lifecycle.AdvanceConfig{}, err
 	}
@@ -226,7 +226,7 @@ func controllerAdvancer(launch *contracts.ControllerConfig, operatorRoot string,
 			Probe: deployment.AcceptedDetectorProbe{Replay: launch.GetReplay(), MetricsURL: launch.GetMetricsUrl()},
 		},
 		Shape: func(ctx context.Context, root, revision string, source *contracts.DeploymentSource) (string, error) {
-			return rendered.Source{Deployment: source, Catalog: shapes, Repository: root}.ShapeDigest(ctx, revision, namespace)
+			return rendered.Source{Deployment: source, Catalog: shapes, Repository: root, Environment: launch.GetRenderEnvironment()}.ShapeDigest(ctx, revision, namespace)
 		},
 		Maintenance: advanceMaintenance{Client: client, Namespace: controlNamespace(launch), Now: processio.Now},
 		Activity:    controllerActivity{Client: client, Namespace: controlNamespace(launch), Application: namespace},

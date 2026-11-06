@@ -20,6 +20,14 @@ class DeploymentSource(_message.Message):
     config: _any_pb2.Any
     def __init__(self, renderer_id: _Optional[str] = ..., config: _Optional[_Union[_any_pb2.Any, _Mapping]] = ...) -> None: ...
 
+class RenderEnvironment(_message.Message):
+    __slots__ = ("kube_version", "api_versions")
+    KUBE_VERSION_FIELD_NUMBER: _ClassVar[int]
+    API_VERSIONS_FIELD_NUMBER: _ClassVar[int]
+    kube_version: str
+    api_versions: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, kube_version: _Optional[str] = ..., api_versions: _Optional[_Iterable[str]] = ...) -> None: ...
+
 class ImageSource(_message.Message):
     __slots__ = ("image", "source_id", "config")
     IMAGE_FIELD_NUMBER: _ClassVar[int]

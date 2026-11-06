@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/operatorcli/internal/processio"
 	"sdo.dev/operator/rendered"
+	"sdo.dev/operator/renderenv"
 )
 
 // InstallExistingConfig installs an already accepted source tree without
@@ -29,8 +31,11 @@ type InstallExistingConfig struct {
 	Kubeconfig          string
 	// DeploymentSource scopes adoption evidence to the accepted deployment.
 	DeploymentSource *contracts.DeploymentSource
-	Duration         time.Duration
-	Install          install.Config
+	// RenderEnvironment is discovered from the cluster at install and passed
+	// to the controller (--render-env); RunInstallExisting sets it.
+	RenderEnvironment *contracts.RenderEnvironment
+	Duration          time.Duration
+	Install           install.Config
 }
 
 type InstallExistingResult struct {
@@ -194,7 +199,17 @@ func RunInstallExisting(ctx context.Context, launch InstallExistingConfig) (Inst
 	if err != nil {
 		return InstallExistingResult{}, err
 	}
+	environment, err := renderenv.Discover(client.Discovery())
+	if err != nil {
+		return InstallExistingResult{}, err
+	}
+	encodedEnvironment, err := renderenv.Format(environment)
+	if err != nil {
+		return InstallExistingResult{}, err
+	}
+	launch.RenderEnvironment = environment
 	config := launch.Install
+	config.ExtraControllerArgs = append(slices.Clone(config.ExtraControllerArgs), "--render-env="+encodedEnvironment)
 	config.AcceptedCommit = commit
 	installer := install.Installer{
 		Client:         client,

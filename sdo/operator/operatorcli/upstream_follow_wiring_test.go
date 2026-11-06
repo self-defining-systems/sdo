@@ -12,7 +12,6 @@ import (
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/operatorcli/catalog/upstreams"
-	"sdo.dev/operator/render"
 	"sdo.dev/operator/upstream"
 )
 
@@ -42,7 +41,7 @@ func TestControllerAdvancerWiresTheOnboardingDeployer(t *testing.T) {
 	if got := deployer.Images.IDs(); !reflect.DeepEqual(got, []string{"buildkit", "prebuilt"}) {
 		t.Fatalf("image sources = %v", got)
 	}
-	if !reflect.DeepEqual(deployer.Env, render.Env{}) || deployer.Namespace != "shop" || deployer.AcceptedRoot != "/synthetic/app" {
+	if deployer.Environment != nil || deployer.Namespace != "shop" || deployer.AcceptedRoot != "/synthetic/app" {
 		t.Fatalf("deployer target = %+v", deployer)
 	}
 	verifier, ok := advancer.Verifier.(deployment.IndependentHealthVerifier)

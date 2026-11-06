@@ -20,6 +20,7 @@ import (
 	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/rendered"
+	"sdo.dev/operator/renderenv"
 	"sdo.dev/operator/toolchain"
 )
 
@@ -116,6 +117,7 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, er
 	var deployedManifestPaths repeatable
 	flags.Var(&deployedManifestPaths, "deployed-manifest-path", "manifest path selected by the accepted deployment plan")
 	deploymentSourceFlag := flags.String("deployment-source", "", "accepted DeploymentSource as ProtoJSON; exclusive with --deployed-manifest-path")
+	renderEnvFlag := flags.String("render-env", "", "install-time render environment (RenderEnvironment as ProtoJSON); empty is unknown")
 	// The parent's deploy identity (upstream advances); the child never sees it.
 	var identity deployIdentity
 	flags.StringVar(&identity.BuildKitImage, "buildkit-image", "", "digest-pinned image builder for upstream advances")
@@ -136,6 +138,10 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, er
 		return builder.RunConfig{}, deployIdentity{}, fmt.Errorf("unexpected controller arguments: %v", flags.Args())
 	}
 	deploymentSource, err := rendered.DeploymentSourceFromFlags(*deploymentSourceFlag, deployedManifestPaths)
+	if err != nil {
+		return builder.RunConfig{}, deployIdentity{}, err
+	}
+	renderEnvironment, err := renderenv.Parse(*renderEnvFlag)
 	if err != nil {
 		return builder.RunConfig{}, deployIdentity{}, err
 	}
@@ -168,8 +174,8 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, er
 		ResponderStandby: standby,
 		Namespace:        *namespace, ControlNamespace: *controlNamespace, AppRoot: *app, Application: *application,
 		SourceCommit: *sourceCommit, DeployedCommit: *deployedCommit,
-		DeploymentSource: deploymentSource,
-		Dispatcher:       "python3", DispatcherMode: "job", DispatcherArgs: []string{"-m", "sdo.agents.responder.worker"},
+		DeploymentSource: deploymentSource, RenderEnvironment: renderEnvironment,
+		Dispatcher: "python3", DispatcherMode: "job", DispatcherArgs: []string{"-m", "sdo.agents.responder.worker"},
 		ResponderImage: *responderImage, ResponderEnv: responderEnv,
 		RepositoryPvc: *repositoryPVC, RepositoryMountPath: *repositoryMount, RepositoryPvcSubpath: *repositorySubPath,
 		ResponderCredentialsSecret: *credentialsSecret, BrokerWorktreeRoot: *worktreeRoot,

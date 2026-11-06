@@ -25,7 +25,7 @@ func stageExistingNamespace(ctx context.Context, client kubernetes.Interface, la
 	if err != nil || record != nil {
 		return err
 	}
-	source := rendered.Source{Repository: launch.Repository, Deployment: launch.DeploymentSource, Catalog: renderers.Catalog()}
+	source := rendered.Source{Repository: launch.Repository, Deployment: launch.DeploymentSource, Catalog: renderers.Catalog(), Environment: launch.RenderEnvironment}
 	objects, err := source.RawManifests(ctx, commit, launch.Install.Namespace)
 	if err != nil {
 		return fmt.Errorf("accepted onboarding manifests: %w", err)

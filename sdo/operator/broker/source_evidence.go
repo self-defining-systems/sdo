@@ -56,17 +56,18 @@ func validSHA256(value string) bool {
 // sourceEvidenceRecord is the durable JSON form. Protobuf fields are stored as
 // ProtoJSON so their Any configs stay readable and survive Go struct changes.
 type sourceEvidenceRecord struct {
-	ContainerImages  []rendered.DeployedImage `json:"container_images,omitempty"`
-	DeploymentSource json.RawMessage          `json:"deployment_source"`
-	Plan             json.RawMessage          `json:"plan,omitempty"`
-	BaseTree         string                   `json:"base_tree"`
-	ObservedRevision string                   `json:"observed_revision"`
-	RenderDigest     string                   `json:"render_digest"`
-	EnvDigest        string                   `json:"env_digest"`
-	Images           []string                 `json:"images"`
-	ResourceIDs      []string                 `json:"resource_ids"`
-	Ready            bool                     `json:"ready"`
-	AcceptedCommit   string                   `json:"accepted_commit,omitempty"`
+	ContainerImages   []rendered.DeployedImage `json:"container_images,omitempty"`
+	DeploymentSource  json.RawMessage          `json:"deployment_source"`
+	Plan              json.RawMessage          `json:"plan,omitempty"`
+	BaseTree          string                   `json:"base_tree"`
+	ObservedRevision  string                   `json:"observed_revision"`
+	RenderDigest      string                   `json:"render_digest"`
+	EnvDigest         string                   `json:"env_digest"`
+	RenderEnvironment json.RawMessage          `json:"render_environment,omitempty"`
+	Images            []string                 `json:"images"`
+	ResourceIDs       []string                 `json:"resource_ids"`
+	Ready             bool                     `json:"ready"`
+	AcceptedCommit    string                   `json:"accepted_commit,omitempty"`
 }
 
 // MarshalJSON encodes the ledger record.
@@ -80,6 +81,11 @@ func (e SourceEvidence) MarshalJSON() ([]byte, error) {
 	if e.DeploymentSource != nil {
 		if record.DeploymentSource, err = canonicalProtoJSON(e.DeploymentSource); err != nil {
 			return nil, fmt.Errorf("encode deployment source: %w", err)
+		}
+	}
+	if e.RenderEnvironment != nil {
+		if record.RenderEnvironment, err = canonicalProtoJSON(e.RenderEnvironment); err != nil {
+			return nil, fmt.Errorf("encode render environment: %w", err)
 		}
 	}
 	if e.Plan != nil {
@@ -114,6 +120,12 @@ func (e *SourceEvidence) UnmarshalJSON(data []byte) error {
 	}
 	if err := protojson.Unmarshal(record.DeploymentSource, value.DeploymentSource); err != nil {
 		return fmt.Errorf("decode deployment source: %w", err)
+	}
+	if len(record.RenderEnvironment) > 0 {
+		value.RenderEnvironment = &contracts.RenderEnvironment{}
+		if err := protojson.Unmarshal(record.RenderEnvironment, value.RenderEnvironment); err != nil {
+			return fmt.Errorf("decode render environment: %w", err)
+		}
 	}
 	if len(record.Plan) > 0 {
 		value.Plan = &contracts.DeploymentPlan{}

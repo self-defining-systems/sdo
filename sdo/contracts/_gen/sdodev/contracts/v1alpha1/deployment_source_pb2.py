@@ -28,7 +28,7 @@ from google.protobuf import duration_pb2 as google_dot_protobuf_dot_duration__pb
 from google.protobuf import struct_pb2 as google_dot_protobuf_dot_struct__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n1sdodev/contracts/v1alpha1/deployment_source.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1b\x62uf/validate/validate.proto\x1a\x19google/protobuf/any.proto\x1a\x1egoogle/protobuf/duration.proto\x1a\x1cgoogle/protobuf/struct.proto\"\x83\x01\n\x10\x44\x65ploymentSource\x12\x39\n\x0brenderer_id\x18\x01 \x01(\tB\x18\xbaH\x15r\x13\x32\x11^[a-z][a-z0-9-]*$R\nrendererId\x12\x34\n\x06\x63onfig\x18\x02 \x01(\x0b\x32\x14.google.protobuf.AnyB\x06\xbaH\x03\xc8\x01\x01R\x06\x63onfig\"\x91\x01\n\x0bImageSource\x12\x1d\n\x05image\x18\x01 \x01(\tB\x07\xbaH\x04r\x02\x10\x01R\x05image\x12\x35\n\tsource_id\x18\x02 \x01(\tB\x18\xbaH\x15r\x13\x32\x11^[a-z][a-z0-9-]*$R\x08sourceId\x12,\n\x06\x63onfig\x18\x03 \x01(\x0b\x32\x14.google.protobuf.AnyR\x06\x63onfig\"\'\n\x0fRawRenderConfig\x12\x14\n\x05paths\x18\x01 \x03(\tR\x05paths\"+\n\x15KustomizeRenderConfig\x12\x12\n\x04path\x18\x01 \x01(\tR\x04path\"a\n\x13\x42uildKitImageConfig\x12!\n\x0c\x63ontext_path\x18\x01 \x01(\tR\x0b\x63ontextPath\x12\'\n\x0f\x64ockerfile_path\x18\x02 \x01(\tR\x0e\x64ockerfilePath\"\x15\n\x13PrebuiltImageConfig\"\x83\x01\n\x10HelmRenderConfig\x12\x1d\n\nchart_path\x18\x01 \x01(\tR\tchartPath\x12\x1f\n\x0bvalue_files\x18\x02 \x03(\tR\nvalueFiles\x12/\n\x06values\x18\x03 \x01(\x0b\x32\x17.google.protobuf.StructR\x06values\"\x93\x01\n\rGitPollConfig\x12\'\n\nrepository\x18\x01 \x01(\tB\x07\xbaH\x04r\x02\x10\x01R\nrepository\x12\x19\n\x03ref\x18\x02 \x01(\tB\x07\xbaH\x04r\x02\x10\x01R\x03ref\x12>\n\rpoll_interval\x18\x03 \x01(\x0b\x32\x19.google.protobuf.DurationR\x0cpollInterval\"\x9d\x01\n\x10PluginDescriptor\x12(\n\x02id\x18\x01 \x01(\tB\x18\xbaH\x15r\x13\x32\x11^[a-z][a-z0-9-]*$R\x02id\x12\x1f\n\x0b\x63onfig_type\x18\x02 \x01(\tR\nconfigType\x12,\n\x12\x63onfig_schema_json\x18\x03 \x01(\tR\x10\x63onfigSchemaJson\x12\x10\n\x03\x64oc\x18\x04 \x01(\tR\x03\x64oc\"R\n\x0bSourcesFile\x12\x43\n\x07sources\x18\x01 \x03(\x0b\x32).sdodev.contracts.v1alpha1.UpstreamSourceR\x07sources\"\x94\x01\n\x0eUpstreamSource\x12\x1b\n\x04path\x18\x01 \x01(\tB\x07\xbaH\x04r\x02\x10\x01R\x04path\x12,\n\x04kind\x18\x02 \x01(\tB\x18\xbaH\x15r\x13\x32\x11^[a-z][a-z0-9-]*$R\x04kind\x12\x37\n\x06\x63onfig\x18\x03 \x01(\x0b\x32\x17.google.protobuf.StructB\x06\xbaH\x03\xc8\x01\x01R\x06\x63onfigB\x88\x02\n\x1d\x63om.sdodev.contracts.v1alpha1B\x15\x44\x65ploymentSourceProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n1sdodev/contracts/v1alpha1/deployment_source.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1b\x62uf/validate/validate.proto\x1a\x19google/protobuf/any.proto\x1a\x1egoogle/protobuf/duration.proto\x1a\x1cgoogle/protobuf/struct.proto\"\x83\x01\n\x10\x44\x65ploymentSource\x12\x39\n\x0brenderer_id\x18\x01 \x01(\tB\x18\xbaH\x15r\x13\x32\x11^[a-z][a-z0-9-]*$R\nrendererId\x12\x34\n\x06\x63onfig\x18\x02 \x01(\x0b\x32\x14.google.protobuf.AnyB\x06\xbaH\x03\xc8\x01\x01R\x06\x63onfig\"Y\n\x11RenderEnvironment\x12!\n\x0ckube_version\x18\x01 \x01(\tR\x0bkubeVersion\x12!\n\x0c\x61pi_versions\x18\x02 \x03(\tR\x0b\x61piVersions\"\x91\x01\n\x0bImageSource\x12\x1d\n\x05image\x18\x01 \x01(\tB\x07\xbaH\x04r\x02\x10\x01R\x05image\x12\x35\n\tsource_id\x18\x02 \x01(\tB\x18\xbaH\x15r\x13\x32\x11^[a-z][a-z0-9-]*$R\x08sourceId\x12,\n\x06\x63onfig\x18\x03 \x01(\x0b\x32\x14.google.protobuf.AnyR\x06\x63onfig\"\'\n\x0fRawRenderConfig\x12\x14\n\x05paths\x18\x01 \x03(\tR\x05paths\"+\n\x15KustomizeRenderConfig\x12\x12\n\x04path\x18\x01 \x01(\tR\x04path\"a\n\x13\x42uildKitImageConfig\x12!\n\x0c\x63ontext_path\x18\x01 \x01(\tR\x0b\x63ontextPath\x12\'\n\x0f\x64ockerfile_path\x18\x02 \x01(\tR\x0e\x64ockerfilePath\"\x15\n\x13PrebuiltImageConfig\"\x83\x01\n\x10HelmRenderConfig\x12\x1d\n\nchart_path\x18\x01 \x01(\tR\tchartPath\x12\x1f\n\x0bvalue_files\x18\x02 \x03(\tR\nvalueFiles\x12/\n\x06values\x18\x03 \x01(\x0b\x32\x17.google.protobuf.StructR\x06values\"\x93\x01\n\rGitPollConfig\x12\'\n\nrepository\x18\x01 \x01(\tB\x07\xbaH\x04r\x02\x10\x01R\nrepository\x12\x19\n\x03ref\x18\x02 \x01(\tB\x07\xbaH\x04r\x02\x10\x01R\x03ref\x12>\n\rpoll_interval\x18\x03 \x01(\x0b\x32\x19.google.protobuf.DurationR\x0cpollInterval\"\x9d\x01\n\x10PluginDescriptor\x12(\n\x02id\x18\x01 \x01(\tB\x18\xbaH\x15r\x13\x32\x11^[a-z][a-z0-9-]*$R\x02id\x12\x1f\n\x0b\x63onfig_type\x18\x02 \x01(\tR\nconfigType\x12,\n\x12\x63onfig_schema_json\x18\x03 \x01(\tR\x10\x63onfigSchemaJson\x12\x10\n\x03\x64oc\x18\x04 \x01(\tR\x03\x64oc\"R\n\x0bSourcesFile\x12\x43\n\x07sources\x18\x01 \x03(\x0b\x32).sdodev.contracts.v1alpha1.UpstreamSourceR\x07sources\"\x94\x01\n\x0eUpstreamSource\x12\x1b\n\x04path\x18\x01 \x01(\tB\x07\xbaH\x04r\x02\x10\x01R\x04path\x12,\n\x04kind\x18\x02 \x01(\tB\x18\xbaH\x15r\x13\x32\x11^[a-z][a-z0-9-]*$R\x04kind\x12\x37\n\x06\x63onfig\x18\x03 \x01(\x0b\x32\x17.google.protobuf.StructB\x06\xbaH\x03\xc8\x01\x01R\x06\x63onfigB\x88\x02\n\x1d\x63om.sdodev.contracts.v1alpha1B\x15\x44\x65ploymentSourceProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -58,24 +58,26 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_UPSTREAMSOURCE'].fields_by_name['config']._serialized_options = b'\272H\003\310\001\001'
   _globals['_DEPLOYMENTSOURCE']._serialized_start=199
   _globals['_DEPLOYMENTSOURCE']._serialized_end=330
-  _globals['_IMAGESOURCE']._serialized_start=333
-  _globals['_IMAGESOURCE']._serialized_end=478
-  _globals['_RAWRENDERCONFIG']._serialized_start=480
-  _globals['_RAWRENDERCONFIG']._serialized_end=519
-  _globals['_KUSTOMIZERENDERCONFIG']._serialized_start=521
-  _globals['_KUSTOMIZERENDERCONFIG']._serialized_end=564
-  _globals['_BUILDKITIMAGECONFIG']._serialized_start=566
-  _globals['_BUILDKITIMAGECONFIG']._serialized_end=663
-  _globals['_PREBUILTIMAGECONFIG']._serialized_start=665
-  _globals['_PREBUILTIMAGECONFIG']._serialized_end=686
-  _globals['_HELMRENDERCONFIG']._serialized_start=689
-  _globals['_HELMRENDERCONFIG']._serialized_end=820
-  _globals['_GITPOLLCONFIG']._serialized_start=823
-  _globals['_GITPOLLCONFIG']._serialized_end=970
-  _globals['_PLUGINDESCRIPTOR']._serialized_start=973
-  _globals['_PLUGINDESCRIPTOR']._serialized_end=1130
-  _globals['_SOURCESFILE']._serialized_start=1132
-  _globals['_SOURCESFILE']._serialized_end=1214
-  _globals['_UPSTREAMSOURCE']._serialized_start=1217
-  _globals['_UPSTREAMSOURCE']._serialized_end=1365
+  _globals['_RENDERENVIRONMENT']._serialized_start=332
+  _globals['_RENDERENVIRONMENT']._serialized_end=421
+  _globals['_IMAGESOURCE']._serialized_start=424
+  _globals['_IMAGESOURCE']._serialized_end=569
+  _globals['_RAWRENDERCONFIG']._serialized_start=571
+  _globals['_RAWRENDERCONFIG']._serialized_end=610
+  _globals['_KUSTOMIZERENDERCONFIG']._serialized_start=612
+  _globals['_KUSTOMIZERENDERCONFIG']._serialized_end=655
+  _globals['_BUILDKITIMAGECONFIG']._serialized_start=657
+  _globals['_BUILDKITIMAGECONFIG']._serialized_end=754
+  _globals['_PREBUILTIMAGECONFIG']._serialized_start=756
+  _globals['_PREBUILTIMAGECONFIG']._serialized_end=777
+  _globals['_HELMRENDERCONFIG']._serialized_start=780
+  _globals['_HELMRENDERCONFIG']._serialized_end=911
+  _globals['_GITPOLLCONFIG']._serialized_start=914
+  _globals['_GITPOLLCONFIG']._serialized_end=1061
+  _globals['_PLUGINDESCRIPTOR']._serialized_start=1064
+  _globals['_PLUGINDESCRIPTOR']._serialized_end=1221
+  _globals['_SOURCESFILE']._serialized_start=1223
+  _globals['_SOURCESFILE']._serialized_end=1305
+  _globals['_UPSTREAMSOURCE']._serialized_start=1308
+  _globals['_UPSTREAMSOURCE']._serialized_end=1456
 # @@protoc_insertion_point(module_scope)

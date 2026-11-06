@@ -83,10 +83,13 @@ type SourceEvidence struct {
 	ObservedRevision string
 	RenderDigest     string
 	EnvDigest        string
-	Images           []string
-	ResourceIDs      []string
-	Ready            bool
-	AcceptedCommit   string
+	// RenderEnvironment is the install-time render environment of the
+	// digests; nil is unknown (renderer defaults), as in older records.
+	RenderEnvironment *contracts.RenderEnvironment
+	Images            []string
+	ResourceIDs       []string
+	Ready             bool
+	AcceptedCommit    string
 }
 
 type Broker struct {

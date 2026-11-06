@@ -11,6 +11,7 @@ import (
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/render"
 	"sdo.dev/operator/rendered"
+	"sdo.dev/operator/renderenv"
 )
 
 // RendererChangedError reports that re-rendering the accepted source no longer
@@ -62,7 +63,7 @@ func (d Deployer) VerifyAccepted(ctx context.Context, commit, namespace string, 
 	if err != nil {
 		return lifecycle.DeploymentReceipt{}, err
 	}
-	if err := verifyRendered(ctx, rendered.ObjectStore{Dir: d.AcceptedRoot, Git: d.Git}, tree, d.env(render.SecretsOmit), d.Renderers, prior); err != nil {
+	if err := verifyRendered(ctx, rendered.ObjectStore{Dir: d.AcceptedRoot, Git: d.Git}, tree, renderenv.For(prior.Environment, d.Namespace, render.SecretsOmit), d.Renderers, prior); err != nil {
 		return lifecycle.DeploymentReceipt{}, err
 	}
 	var images []string

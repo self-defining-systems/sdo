@@ -124,7 +124,7 @@ func refreshControllerHealthOnce(ctx context.Context, config *contracts.Controll
 // launch's DeploymentSource. No source returns nil: the bytes fallback
 // (transitional, removed with S3-11c).
 func healthShapeOf(config *contracts.ControllerConfig) memory.ShapeOf {
-	return rendered.Source{Deployment: config.GetDeploymentSource(), Catalog: renderers.Catalog()}.ShapeOf(config.GetNamespace())
+	return rendered.Source{Deployment: config.GetDeploymentSource(), Catalog: renderers.Catalog(), Environment: config.GetRenderEnvironment()}.ShapeOf(config.GetNamespace())
 }
 
 // A Go seed cannot satisfy shell onboarding merely by retaining Go provenance.

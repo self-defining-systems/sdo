@@ -17,6 +17,19 @@ message DeploymentSource {
   google.protobuf.Any config = 2 [(buf.validate.field).required = true];
 }
 
+// RenderEnvironment is the target cluster's facts that influence a render,
+// discovered once at install and recorded with the deployment evidence. An
+// absent message means unknown: renderers apply their own defaults. Only the
+// renderenv package turns it into a render.Env.
+message RenderEnvironment {
+  // kube_version is the server's git version, for example "v1.31.2".
+  string kube_version = 1;
+  // api_versions lists the served group/versions ("v1", "apps/v1") and
+  // group/version/Kind ("apps/v1/Deployment") entries, as Helm's capabilities
+  // do. Sorted and unique.
+  repeated string api_versions = 2;
+}
+
 // ImageSource declares how one rendered image reference is produced. Images
 // that no ImageSource names use the operator's default source (prebuilt).
 message ImageSource {

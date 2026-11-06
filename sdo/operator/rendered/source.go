@@ -12,6 +12,7 @@ import (
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/render"
+	"sdo.dev/operator/renderenv"
 	"sdo.dev/operator/sdk"
 )
 
@@ -31,9 +32,9 @@ type Source struct {
 	Deployment *contracts.DeploymentSource
 	// Catalog holds the renderers Deployment may name.
 	Catalog *render.Catalog
-	// Env is the recorded render environment. Each read sets its namespace and
-	// forces SecretsOmit.
-	Env render.Env
+	// Environment is the recorded install-time render environment (nil is
+	// unknown). Each read sets its namespace and forces SecretsOmit.
+	Environment *contracts.RenderEnvironment
 	// Git, when set, replaces the git process edge (`git -C root args...`
 	// standard output). A simulation supplies the accepted tree without
 	// spawning a process.
@@ -98,10 +99,7 @@ func readView(objects []DesiredObject, qualified bool) []*unstructured.Unstructu
 }
 
 func (s Source) env(namespace string) render.Env {
-	env := s.Env
-	env.Namespace = namespace
-	env.Secrets = render.SecretsOmit
-	return env
+	return renderenv.For(s.Environment, namespace, render.SecretsOmit)
 }
 
 // loadManifests renders revision^{tree} and keeps the non-ephemeral objects,
@@ -233,4 +231,3 @@ func (s Source) AcceptedScopedManifest(ctx context.Context, revision, applicatio
 func (s Source) AcceptedApplicationManifest(ctx context.Context, revision, namespace string, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
 	return s.acceptedObject(ctx, revision, namespace, ref)
 }
-

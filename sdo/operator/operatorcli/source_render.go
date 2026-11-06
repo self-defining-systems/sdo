@@ -13,6 +13,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/operatorcli/catalog/renderers"
 	"sdo.dev/operator/rendered"
+	"sdo.dev/operator/renderenv"
 )
 
 // RunSourceRender is an offline read-only transport for the production source
@@ -29,6 +30,9 @@ func RunSourceRender(ctx context.Context, input io.Reader, output io.Writer) err
 		Namespace        string          `json:"namespace"`
 		DeploymentSource json.RawMessage `json:"deployment_source"`
 		ManifestPaths    []string        `json:"manifest_paths"`
+		// RenderEnvironment is the lane's recorded install-time environment
+		// (ProtoJSON); absent is unknown, the renderer defaults.
+		RenderEnvironment json.RawMessage `json:"render_environment"`
 	}
 	decoder := json.NewDecoder(io.LimitReader(input, 1<<20))
 	decoder.DisallowUnknownFields()
@@ -43,7 +47,13 @@ func RunSourceRender(ctx context.Context, input io.Reader, output io.Writer) err
 	if err != nil {
 		return err
 	}
-	source := rendered.Source{Repository: request.Repository, Deployment: deployment, Catalog: renderers.Catalog()}
+	var environment *contracts.RenderEnvironment
+	if len(request.RenderEnvironment) > 0 && string(request.RenderEnvironment) != "null" {
+		if environment, err = renderenv.Parse(string(request.RenderEnvironment)); err != nil {
+			return err
+		}
+	}
+	source := rendered.Source{Repository: request.Repository, Deployment: deployment, Catalog: renderers.Catalog(), Environment: environment}
 	inventory, err := source.AcceptedInventory(ctx, request.Revision, request.Namespace)
 	if err != nil {
 		return err

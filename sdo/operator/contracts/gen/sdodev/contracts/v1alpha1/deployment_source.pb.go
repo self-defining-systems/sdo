@@ -80,6 +80,66 @@ func (x *DeploymentSource) GetConfig() *anypb.Any {
 	return nil
 }
 
+// RenderEnvironment is the target cluster's facts that influence a render,
+// discovered once at install and recorded with the deployment evidence. An
+// absent message means unknown: renderers apply their own defaults. Only the
+// renderenv package turns it into a render.Env.
+type RenderEnvironment struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// kube_version is the server's git version, for example "v1.31.2".
+	KubeVersion string `protobuf:"bytes,1,opt,name=kube_version,json=kubeVersion,proto3" json:"kube_version,omitempty"`
+	// api_versions lists the served group/versions ("v1", "apps/v1") and
+	// group/version/Kind ("apps/v1/Deployment") entries, as Helm's capabilities
+	// do. Sorted and unique.
+	ApiVersions   []string `protobuf:"bytes,2,rep,name=api_versions,json=apiVersions,proto3" json:"api_versions,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RenderEnvironment) Reset() {
+	*x = RenderEnvironment{}
+	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RenderEnvironment) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RenderEnvironment) ProtoMessage() {}
+
+func (x *RenderEnvironment) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RenderEnvironment.ProtoReflect.Descriptor instead.
+func (*RenderEnvironment) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_deployment_source_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *RenderEnvironment) GetKubeVersion() string {
+	if x != nil {
+		return x.KubeVersion
+	}
+	return ""
+}
+
+func (x *RenderEnvironment) GetApiVersions() []string {
+	if x != nil {
+		return x.ApiVersions
+	}
+	return nil
+}
+
 // ImageSource declares how one rendered image reference is produced. Images
 // that no ImageSource names use the operator's default source (prebuilt).
 type ImageSource struct {
@@ -93,7 +153,7 @@ type ImageSource struct {
 
 func (x *ImageSource) Reset() {
 	*x = ImageSource{}
-	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[1]
+	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -105,7 +165,7 @@ func (x *ImageSource) String() string {
 func (*ImageSource) ProtoMessage() {}
 
 func (x *ImageSource) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[1]
+	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -118,7 +178,7 @@ func (x *ImageSource) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ImageSource.ProtoReflect.Descriptor instead.
 func (*ImageSource) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_deployment_source_proto_rawDescGZIP(), []int{1}
+	return file_sdodev_contracts_v1alpha1_deployment_source_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *ImageSource) GetImage() string {
@@ -152,7 +212,7 @@ type RawRenderConfig struct {
 
 func (x *RawRenderConfig) Reset() {
 	*x = RawRenderConfig{}
-	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[2]
+	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -164,7 +224,7 @@ func (x *RawRenderConfig) String() string {
 func (*RawRenderConfig) ProtoMessage() {}
 
 func (x *RawRenderConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[2]
+	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -177,7 +237,7 @@ func (x *RawRenderConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RawRenderConfig.ProtoReflect.Descriptor instead.
 func (*RawRenderConfig) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_deployment_source_proto_rawDescGZIP(), []int{2}
+	return file_sdodev_contracts_v1alpha1_deployment_source_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *RawRenderConfig) GetPaths() []string {
@@ -197,7 +257,7 @@ type KustomizeRenderConfig struct {
 
 func (x *KustomizeRenderConfig) Reset() {
 	*x = KustomizeRenderConfig{}
-	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[3]
+	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -209,7 +269,7 @@ func (x *KustomizeRenderConfig) String() string {
 func (*KustomizeRenderConfig) ProtoMessage() {}
 
 func (x *KustomizeRenderConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[3]
+	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -222,7 +282,7 @@ func (x *KustomizeRenderConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KustomizeRenderConfig.ProtoReflect.Descriptor instead.
 func (*KustomizeRenderConfig) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_deployment_source_proto_rawDescGZIP(), []int{3}
+	return file_sdodev_contracts_v1alpha1_deployment_source_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *KustomizeRenderConfig) GetPath() string {
@@ -242,7 +302,7 @@ type BuildKitImageConfig struct {
 
 func (x *BuildKitImageConfig) Reset() {
 	*x = BuildKitImageConfig{}
-	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[4]
+	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -254,7 +314,7 @@ func (x *BuildKitImageConfig) String() string {
 func (*BuildKitImageConfig) ProtoMessage() {}
 
 func (x *BuildKitImageConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[4]
+	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -267,7 +327,7 @@ func (x *BuildKitImageConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BuildKitImageConfig.ProtoReflect.Descriptor instead.
 func (*BuildKitImageConfig) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_deployment_source_proto_rawDescGZIP(), []int{4}
+	return file_sdodev_contracts_v1alpha1_deployment_source_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *BuildKitImageConfig) GetContextPath() string {
@@ -292,7 +352,7 @@ type PrebuiltImageConfig struct {
 
 func (x *PrebuiltImageConfig) Reset() {
 	*x = PrebuiltImageConfig{}
-	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[5]
+	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -304,7 +364,7 @@ func (x *PrebuiltImageConfig) String() string {
 func (*PrebuiltImageConfig) ProtoMessage() {}
 
 func (x *PrebuiltImageConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[5]
+	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -317,7 +377,7 @@ func (x *PrebuiltImageConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PrebuiltImageConfig.ProtoReflect.Descriptor instead.
 func (*PrebuiltImageConfig) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_deployment_source_proto_rawDescGZIP(), []int{5}
+	return file_sdodev_contracts_v1alpha1_deployment_source_proto_rawDescGZIP(), []int{6}
 }
 
 // Directory holding Chart.yaml in the effective tree.
@@ -334,7 +394,7 @@ type HelmRenderConfig struct {
 
 func (x *HelmRenderConfig) Reset() {
 	*x = HelmRenderConfig{}
-	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[6]
+	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -346,7 +406,7 @@ func (x *HelmRenderConfig) String() string {
 func (*HelmRenderConfig) ProtoMessage() {}
 
 func (x *HelmRenderConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[6]
+	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -359,7 +419,7 @@ func (x *HelmRenderConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HelmRenderConfig.ProtoReflect.Descriptor instead.
 func (*HelmRenderConfig) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_deployment_source_proto_rawDescGZIP(), []int{6}
+	return file_sdodev_contracts_v1alpha1_deployment_source_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *HelmRenderConfig) GetChartPath() string {
@@ -395,7 +455,7 @@ type GitPollConfig struct {
 
 func (x *GitPollConfig) Reset() {
 	*x = GitPollConfig{}
-	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[7]
+	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -407,7 +467,7 @@ func (x *GitPollConfig) String() string {
 func (*GitPollConfig) ProtoMessage() {}
 
 func (x *GitPollConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[7]
+	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -420,7 +480,7 @@ func (x *GitPollConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GitPollConfig.ProtoReflect.Descriptor instead.
 func (*GitPollConfig) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_deployment_source_proto_rawDescGZIP(), []int{7}
+	return file_sdodev_contracts_v1alpha1_deployment_source_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *GitPollConfig) GetRepository() string {
@@ -460,7 +520,7 @@ type PluginDescriptor struct {
 
 func (x *PluginDescriptor) Reset() {
 	*x = PluginDescriptor{}
-	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[8]
+	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -472,7 +532,7 @@ func (x *PluginDescriptor) String() string {
 func (*PluginDescriptor) ProtoMessage() {}
 
 func (x *PluginDescriptor) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[8]
+	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -485,7 +545,7 @@ func (x *PluginDescriptor) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PluginDescriptor.ProtoReflect.Descriptor instead.
 func (*PluginDescriptor) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_deployment_source_proto_rawDescGZIP(), []int{8}
+	return file_sdodev_contracts_v1alpha1_deployment_source_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *PluginDescriptor) GetId() string {
@@ -528,7 +588,7 @@ type SourcesFile struct {
 
 func (x *SourcesFile) Reset() {
 	*x = SourcesFile{}
-	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[9]
+	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -540,7 +600,7 @@ func (x *SourcesFile) String() string {
 func (*SourcesFile) ProtoMessage() {}
 
 func (x *SourcesFile) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[9]
+	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -553,7 +613,7 @@ func (x *SourcesFile) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SourcesFile.ProtoReflect.Descriptor instead.
 func (*SourcesFile) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_deployment_source_proto_rawDescGZIP(), []int{9}
+	return file_sdodev_contracts_v1alpha1_deployment_source_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *SourcesFile) GetSources() []*UpstreamSource {
@@ -576,7 +636,7 @@ type UpstreamSource struct {
 
 func (x *UpstreamSource) Reset() {
 	*x = UpstreamSource{}
-	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[10]
+	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -588,7 +648,7 @@ func (x *UpstreamSource) String() string {
 func (*UpstreamSource) ProtoMessage() {}
 
 func (x *UpstreamSource) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[10]
+	mi := &file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -601,7 +661,7 @@ func (x *UpstreamSource) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpstreamSource.ProtoReflect.Descriptor instead.
 func (*UpstreamSource) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_deployment_source_proto_rawDescGZIP(), []int{10}
+	return file_sdodev_contracts_v1alpha1_deployment_source_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *UpstreamSource) GetPath() string {
@@ -633,7 +693,10 @@ const file_sdodev_contracts_v1alpha1_deployment_source_proto_rawDesc = "" +
 	"\x10DeploymentSource\x129\n" +
 	"\vrenderer_id\x18\x01 \x01(\tB\x18\xbaH\x15r\x132\x11^[a-z][a-z0-9-]*$R\n" +
 	"rendererId\x124\n" +
-	"\x06config\x18\x02 \x01(\v2\x14.google.protobuf.AnyB\x06\xbaH\x03\xc8\x01\x01R\x06config\"\x91\x01\n" +
+	"\x06config\x18\x02 \x01(\v2\x14.google.protobuf.AnyB\x06\xbaH\x03\xc8\x01\x01R\x06config\"Y\n" +
+	"\x11RenderEnvironment\x12!\n" +
+	"\fkube_version\x18\x01 \x01(\tR\vkubeVersion\x12!\n" +
+	"\fapi_versions\x18\x02 \x03(\tR\vapiVersions\"\x91\x01\n" +
 	"\vImageSource\x12\x1d\n" +
 	"\x05image\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x05image\x125\n" +
 	"\tsource_id\x18\x02 \x01(\tB\x18\xbaH\x15r\x132\x11^[a-z][a-z0-9-]*$R\bsourceId\x12,\n" +
@@ -684,30 +747,31 @@ func file_sdodev_contracts_v1alpha1_deployment_source_proto_rawDescGZIP() []byte
 	return file_sdodev_contracts_v1alpha1_deployment_source_proto_rawDescData
 }
 
-var file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_sdodev_contracts_v1alpha1_deployment_source_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_sdodev_contracts_v1alpha1_deployment_source_proto_goTypes = []any{
 	(*DeploymentSource)(nil),      // 0: sdodev.contracts.v1alpha1.DeploymentSource
-	(*ImageSource)(nil),           // 1: sdodev.contracts.v1alpha1.ImageSource
-	(*RawRenderConfig)(nil),       // 2: sdodev.contracts.v1alpha1.RawRenderConfig
-	(*KustomizeRenderConfig)(nil), // 3: sdodev.contracts.v1alpha1.KustomizeRenderConfig
-	(*BuildKitImageConfig)(nil),   // 4: sdodev.contracts.v1alpha1.BuildKitImageConfig
-	(*PrebuiltImageConfig)(nil),   // 5: sdodev.contracts.v1alpha1.PrebuiltImageConfig
-	(*HelmRenderConfig)(nil),      // 6: sdodev.contracts.v1alpha1.HelmRenderConfig
-	(*GitPollConfig)(nil),         // 7: sdodev.contracts.v1alpha1.GitPollConfig
-	(*PluginDescriptor)(nil),      // 8: sdodev.contracts.v1alpha1.PluginDescriptor
-	(*SourcesFile)(nil),           // 9: sdodev.contracts.v1alpha1.SourcesFile
-	(*UpstreamSource)(nil),        // 10: sdodev.contracts.v1alpha1.UpstreamSource
-	(*anypb.Any)(nil),             // 11: google.protobuf.Any
-	(*structpb.Struct)(nil),       // 12: google.protobuf.Struct
-	(*durationpb.Duration)(nil),   // 13: google.protobuf.Duration
+	(*RenderEnvironment)(nil),     // 1: sdodev.contracts.v1alpha1.RenderEnvironment
+	(*ImageSource)(nil),           // 2: sdodev.contracts.v1alpha1.ImageSource
+	(*RawRenderConfig)(nil),       // 3: sdodev.contracts.v1alpha1.RawRenderConfig
+	(*KustomizeRenderConfig)(nil), // 4: sdodev.contracts.v1alpha1.KustomizeRenderConfig
+	(*BuildKitImageConfig)(nil),   // 5: sdodev.contracts.v1alpha1.BuildKitImageConfig
+	(*PrebuiltImageConfig)(nil),   // 6: sdodev.contracts.v1alpha1.PrebuiltImageConfig
+	(*HelmRenderConfig)(nil),      // 7: sdodev.contracts.v1alpha1.HelmRenderConfig
+	(*GitPollConfig)(nil),         // 8: sdodev.contracts.v1alpha1.GitPollConfig
+	(*PluginDescriptor)(nil),      // 9: sdodev.contracts.v1alpha1.PluginDescriptor
+	(*SourcesFile)(nil),           // 10: sdodev.contracts.v1alpha1.SourcesFile
+	(*UpstreamSource)(nil),        // 11: sdodev.contracts.v1alpha1.UpstreamSource
+	(*anypb.Any)(nil),             // 12: google.protobuf.Any
+	(*structpb.Struct)(nil),       // 13: google.protobuf.Struct
+	(*durationpb.Duration)(nil),   // 14: google.protobuf.Duration
 }
 var file_sdodev_contracts_v1alpha1_deployment_source_proto_depIdxs = []int32{
-	11, // 0: sdodev.contracts.v1alpha1.DeploymentSource.config:type_name -> google.protobuf.Any
-	11, // 1: sdodev.contracts.v1alpha1.ImageSource.config:type_name -> google.protobuf.Any
-	12, // 2: sdodev.contracts.v1alpha1.HelmRenderConfig.values:type_name -> google.protobuf.Struct
-	13, // 3: sdodev.contracts.v1alpha1.GitPollConfig.poll_interval:type_name -> google.protobuf.Duration
-	10, // 4: sdodev.contracts.v1alpha1.SourcesFile.sources:type_name -> sdodev.contracts.v1alpha1.UpstreamSource
-	12, // 5: sdodev.contracts.v1alpha1.UpstreamSource.config:type_name -> google.protobuf.Struct
+	12, // 0: sdodev.contracts.v1alpha1.DeploymentSource.config:type_name -> google.protobuf.Any
+	12, // 1: sdodev.contracts.v1alpha1.ImageSource.config:type_name -> google.protobuf.Any
+	13, // 2: sdodev.contracts.v1alpha1.HelmRenderConfig.values:type_name -> google.protobuf.Struct
+	14, // 3: sdodev.contracts.v1alpha1.GitPollConfig.poll_interval:type_name -> google.protobuf.Duration
+	11, // 4: sdodev.contracts.v1alpha1.SourcesFile.sources:type_name -> sdodev.contracts.v1alpha1.UpstreamSource
+	13, // 5: sdodev.contracts.v1alpha1.UpstreamSource.config:type_name -> google.protobuf.Struct
 	6,  // [6:6] is the sub-list for method output_type
 	6,  // [6:6] is the sub-list for method input_type
 	6,  // [6:6] is the sub-list for extension type_name
@@ -726,7 +790,7 @@ func file_sdodev_contracts_v1alpha1_deployment_source_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sdodev_contracts_v1alpha1_deployment_source_proto_rawDesc), len(file_sdodev_contracts_v1alpha1_deployment_source_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   11,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

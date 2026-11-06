@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sdo.dev/operator/contracts/settings"
+	"sdo.dev/operator/renderenv"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -82,11 +83,15 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	config.Install.MetricsURL = config.Install.EffectiveMetricsURL()
 	config.Lifecycle.MetricsSource = config.Install.MetricsSource()
 	repository.MetricsDetectors = config.Install.MetricsURL != ""
+	environment, err := renderenv.Discover(client.Discovery())
+	if err != nil {
+		return lifecycle.Result{}, fmt.Errorf("discover render environment: %w", err)
+	}
 	readiness, err := operateIdentity(config).deployer(client, deployTarget{
 		Namespace: config.Lifecycle.Namespace, ControlNamespace: control,
 		AcceptedRoot: config.ApplicationRoot, ProposalRoot: config.WorktreeRoot,
 		RepositoryMount: config.RepositoryMount, RepositoryPVC: config.Install.RepositoryPVC,
-	})
+	}, environment)
 	if err != nil {
 		return lifecycle.Result{}, err
 	}

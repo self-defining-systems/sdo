@@ -15,6 +15,7 @@ import (
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/render"
 	"sdo.dev/operator/rendered"
+	"sdo.dev/operator/renderenv"
 	"sdo.dev/operator/sdk"
 )
 
@@ -38,20 +39,15 @@ type Deployer struct {
 	// TreeDigest returns the proposal-tree ID of a checkout
 	// (broker.ProposalTreeDigest).
 	TreeDigest func(ctx context.Context, checkout string) (string, error)
-	// Env supplies install configuration (Release, versions); Namespace
-	// overrides Env.Namespace and Secrets is chosen per operation.
-	Env render.Env
+	// Environment is the install-time render environment (renderenv.Discover)
+	// every ApplyAndVerify renders with and records in its receipt; nil is
+	// unknown (renderer defaults). VerifyAccepted renders with the
+	// environment the prior receipt recorded, never this one.
+	Environment *contracts.RenderEnvironment
 	// AcceptedRoot is the accepted repository VerifyAccepted reads.
 	AcceptedRoot string
 	// Git replaces the git process edge (simulation); nil runs git.
 	Git rendered.GitFunc
-}
-
-func (d Deployer) env(mode render.SecretMode) render.Env {
-	env := d.Env
-	env.Namespace = d.Namespace
-	env.Secrets = mode
-	return env
 }
 
 func (d Deployer) validate() error {
@@ -86,7 +82,7 @@ func (d Deployer) ApplyAndVerify(ctx context.Context, checkout string, plan *con
 	if err != nil {
 		return lifecycle.DeploymentReceipt{}, err
 	}
-	set, err := rendered.Desired(ctx, fsys, d.env(render.SecretsInclude), d.Renderers, plan.GetSource())
+	set, err := rendered.Desired(ctx, fsys, renderenv.For(d.Environment, d.Namespace, render.SecretsInclude), d.Renderers, plan.GetSource())
 	if err != nil {
 		return lifecycle.DeploymentReceipt{}, fmt.Errorf("render deployment source: %w", err)
 	}
@@ -114,6 +110,9 @@ func (d Deployer) ApplyAndVerify(ctx context.Context, checkout string, plan *con
 	}
 	receipt.Source = proto.Clone(plan.GetSource()).(*contracts.DeploymentSource)
 	receipt.RenderDigest, receipt.EnvDigest = set.RenderDigest, set.EnvDigest
+	if d.Environment != nil {
+		receipt.Environment = proto.Clone(d.Environment).(*contracts.RenderEnvironment)
+	}
 	return receipt, nil
 }
 
