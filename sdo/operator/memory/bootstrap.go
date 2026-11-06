@@ -9,6 +9,7 @@ import (
 
 	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/safefs"
 )
 
 func ReadArchitecture(checkout string) (string, error) {
@@ -57,11 +58,7 @@ func WriteSchema(checkout string) error {
 	if _, err := layout.Migrate(checkout); err != nil {
 		return fmt.Errorf("migrate operational memory: %w", err)
 	}
-	module := filepath.Join(checkout, layout.DiagnosticsGoModFile)
-	if err := os.MkdirAll(filepath.Dir(module), 0o755); err != nil {
-		return fmt.Errorf("create diagnostics module: %w", err)
-	}
-	if err := os.WriteFile(module, []byte("module app-diagnostics\n\ngo 1.24\n\nrequire sdo.dev/operator/sdk v0.0.0\n"), 0o644); err != nil {
+	if err := safefs.WriteFile(checkout, layout.DiagnosticsGoModFile, []byte("module app-diagnostics\n\ngo 1.24\n\nrequire sdo.dev/operator/sdk v0.0.0\n"), 0o644); err != nil {
 		return fmt.Errorf("write diagnostics module: %w", err)
 	}
 	return nil
@@ -87,11 +84,7 @@ func WriteArchitecture(checkout, application, acceptedSourceCommit, summary stri
 }
 
 func writeBootstrapFile(checkout, relative, content string) error {
-	target := filepath.Join(checkout, filepath.FromSlash(relative))
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return fmt.Errorf("create operational memory: %w", err)
-	}
-	if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
+	if err := safefs.WriteFile(checkout, relative, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", relative, err)
 	}
 	return nil

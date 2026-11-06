@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"sdo.dev/operator/patchset/internal/gitio"
+	"sdo.dev/operator/safefs"
 )
 
 // ViewFile is the file under a checkout's git directory that records its
@@ -117,11 +118,7 @@ func (c *checkout) saveView(v View) error {
 	if err != nil {
 		return err
 	}
-	tmp := c.viewPath() + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, c.viewPath())
+	return safefs.WriteFile(c.gitDir, ViewFile, data, 0o600)
 }
 
 // LoadView reads the checkout's effective view; ok is false when there is none.
@@ -345,23 +342,17 @@ func writeWorking(root string, changes []change) error {
 			return err
 		}
 		if ch.status == 'D' {
-			if err := os.Remove(target); err != nil && !errors.Is(err, os.ErrNotExist) {
+			if err := safefs.Remove(root, ch.path); err != nil {
 				return err
 			}
 			pruneEmpty(root, filepath.Dir(target))
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return err
-		}
 		mode := os.FileMode(0o644)
 		if ch.mode == "100755" {
 			mode = 0o755
 		}
-		if err := os.WriteFile(target, ch.content, mode); err != nil {
-			return err
-		}
-		if err := os.Chmod(target, mode); err != nil {
+		if err := safefs.WriteFile(root, ch.path, ch.content, mode); err != nil {
 			return err
 		}
 	}

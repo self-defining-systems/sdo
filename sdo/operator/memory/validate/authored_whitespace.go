@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/safefs"
 )
 
 // NormalizeAuthoredWhitespace strips trailing line whitespace and trailing
@@ -43,7 +44,7 @@ func NormalizeAuthoredWhitespace(root string, paths []string) ([]string, error) 
 		if bytes.Equal(normalized, data) {
 			continue
 		}
-		if err := os.WriteFile(file, normalized, info.Mode().Perm()); err != nil {
+		if err := safefs.WriteFile(root, path, normalized, info.Mode().Perm()); err != nil {
 			return nil, err
 		}
 		changed = append(changed, path)

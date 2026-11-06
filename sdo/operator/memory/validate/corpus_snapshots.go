@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/safefs"
 )
 
 // NormalizeCapturedCorpus stores each distinct snapshot of a changed corpus
@@ -53,7 +54,7 @@ func NormalizeCapturedCorpus(root string, paths []string) ([]string, error) {
 			if !bytes.Equal(data, fixed) {
 				continue
 			}
-			if err := os.Remove(file); err != nil {
+			if err := safefs.Remove(root, layout.CorpusDir+"/"+id+"/"+name); err != nil {
 				return nil, err
 			}
 			removed = append(removed, layout.CorpusDir+"/"+id+"/"+name)

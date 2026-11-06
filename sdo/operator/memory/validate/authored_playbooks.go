@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/safefs"
 )
 
 var faultClassLine = regexp.MustCompile(`(?m)^fault_class:.*$`)
@@ -45,7 +46,7 @@ func NormalizeAuthoredPlaybooks(root string, paths []string) ([]string, error) {
 			} else {
 				front += line + "\n"
 			}
-			if err := os.WriteFile(file, []byte("---\n"+front+"---\n"+rest), 0o644); err != nil {
+			if err := safefs.WriteFile(root, path, []byte("---\n"+front+"---\n"+rest), 0o644); err != nil {
 				return nil, err
 			}
 			changed = append(changed, path)

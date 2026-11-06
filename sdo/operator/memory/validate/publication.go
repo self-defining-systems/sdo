@@ -17,6 +17,7 @@ import (
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
 	programvalidation "sdo.dev/operator/memory/validate/program"
+	"sdo.dev/operator/safefs"
 	"sdo.dev/operator/sdk"
 )
 
@@ -50,7 +51,7 @@ func WritePublicationContext(ctx context.Context, root string, publication Publi
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0600)
+	return safefs.WriteFile(filepath.Dir(path), filepath.Base(path), data, 0600)
 }
 
 // LoadPublicationContext reads a proposal's provisioned context for self-checks.

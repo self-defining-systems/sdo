@@ -22,6 +22,7 @@ import (
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/safefs"
 )
 
 // ConfigDecoder checks that an ID is registered and that its config unpacks to
@@ -125,14 +126,11 @@ func Read(checkout string, catalogs Catalogs) (*contracts.DeploymentPlan, error)
 }
 
 // Write stores plan at its canonical path in checkout, creating directories.
+// The checkout is agent-controlled, so it never writes through a symlink.
 func Write(checkout string, plan *contracts.DeploymentPlan) error {
 	data, err := Format(plan)
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(checkout, filepath.FromSlash(layout.DeploymentPlanFile))
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0o644)
+	return safefs.WriteFile(checkout, layout.DeploymentPlanFile, data, 0o644)
 }

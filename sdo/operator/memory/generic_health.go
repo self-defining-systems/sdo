@@ -15,6 +15,7 @@ import (
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/safefs"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/generichealth"
 	"sdo.dev/operator/sdk/servicehealth"
@@ -176,7 +177,7 @@ func writeGenericDetector(root string, manifest layout.DetectorManifest, source 
 	for _, entry := range entries {
 		if filepath.Join(base, entry.Name()) == filepath.Join(root, LegacyReachabilityBaselinePath) && !entry.IsDir() {
 			// A pre-move cluster capture: strip it, never require or decode it.
-			if err := os.Remove(filepath.Join(base, entry.Name())); err != nil {
+			if err := safefs.Remove(root, filepath.ToSlash(filepath.Join(layout.DetectorDir(layout.ClassHealth, manifest.ID), entry.Name()))); err != nil {
 				return err
 			}
 			continue

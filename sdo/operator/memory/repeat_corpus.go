@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/safefs"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -99,29 +101,33 @@ func RecordRepeatCorpus(root, captures, incidentID string, instances map[string]
 			cases[name] = map[string][]byte{"open.json": opened, "fixed.json": fixed, "recordings.json": recordings, "labels.json": encoded}
 		}
 	}
-	created := []string{}
+	// Files and directories this call created, removed again on failure. The
+	// root holds agent-written content, so every write and removal goes
+	// through safefs.
+	var wroteFiles, createdDirs []string
 	defer func() {
 		if err != nil {
-			for _, directory := range created {
-				_ = os.RemoveAll(directory)
+			for _, file := range wroteFiles {
+				_ = safefs.Remove(root, file)
+			}
+			for _, directory := range createdDirs {
+				_ = safefs.Remove(root, directory)
 			}
 		}
 	}()
 	for _, name := range slices.Sorted(maps.Keys(cases)) {
-		relative := filepath.Join(layout.CorpusDir, name)
-		directory := filepath.Join(root, relative)
-		if err = os.Mkdir(directory, 0755); err != nil && !errors.Is(err, os.ErrExist) {
-			return nil, err
-		}
-		exists := errors.Is(err, os.ErrExist)
-		if !exists {
-			created = append(created, directory)
+		relative := path.Join(layout.CorpusDir, name)
+		if _, statErr := os.Lstat(filepath.Join(root, filepath.FromSlash(relative))); errors.Is(statErr, os.ErrNotExist) {
+			createdDirs = append(createdDirs, relative)
 		}
 		for _, file := range slices.Sorted(maps.Keys(cases[name])) {
-			if err = os.WriteFile(filepath.Join(directory, file), cases[name][file], 0644); err != nil {
+			if err = safefs.WriteFile(root, path.Join(relative, file), cases[name][file], 0644); err != nil {
 				return nil, err
 			}
-			paths = append(paths, filepath.ToSlash(filepath.Join(relative, file)))
+			if slices.Contains(createdDirs, relative) {
+				wroteFiles = append(wroteFiles, path.Join(relative, file))
+			}
+			paths = append(paths, path.Join(relative, file))
 		}
 	}
 	return paths, nil
