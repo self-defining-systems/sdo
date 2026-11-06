@@ -24,7 +24,7 @@ can still require manual reconciliation.
 
 ## Worker provider resolution
 
-Each SDO worker Job logs `sdo-agent-resolved role=<role> provider=<p> model=<m>` to its stderr and, where an incident session is mounted, appends the same record to `sdo_runtime/sessions/<digest>/agent-resolved.jsonl`. `run_validity` fails a run (`agent-provider`, `invalid_infra`) when a record differs from the manifest's configured provider/model for that role; runs without records report `not_recorded`.
+Each SDO worker Job logs `sdo-agent-resolved role=<role> provider=<p> model=<m>` to its stderr and, where a session is mounted, appends the same record to `sdo_runtime/sessions/<digest>/agent-resolved.jsonl` (incidents) or `sdo_runtime/tasks/<task-key>/agent-resolved.jsonl` (lifecycle judge and deployer tasks). `run_validity` fails a run (`agent-provider`, `invalid_infra`) when a record differs from the manifest's configured provider/model for that role; runs without records report `not_recorded`.
 
 ## Detector firing telemetry stream
 

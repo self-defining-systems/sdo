@@ -170,7 +170,7 @@ func frozenReflectionDeadline(task *contracts.AgentTask) (time.Time, bool) {
 	return task.GetDeadline().AsTime(), true
 }
 
-func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
+func (e KubernetesExecutor) execute(ctx context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
 	if e.Client == nil || e.Registry == nil || e.Namespace == "" || e.RepositoryPVC == "" {
 		return nil, fmt.Errorf("Kubernetes client, registry, namespace, and repository PVC are required")
 	}
@@ -222,17 +222,6 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 		if clean != e.SessionPVCSubPath || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || path.IsAbs(clean) || strings.Contains(clean, "\\") || clean == proposalSubPath || strings.HasPrefix(clean, proposalSubPath+"/") || strings.HasPrefix(proposalSubPath, clean+"/") {
 			return nil, errors.New("agent session PVC subPath must be a separate narrow directory")
 		}
-	}
-	if task.GetRequest().MessageIs(&contracts.HealthJudgeRequest{}) {
-		// Setup accounting survives publication failure and stays outside the
-		// incident session tree. Each immutable request has its own directory.
-		relative := path.Join(".sdo-runtime", "setup", taskRequestDigest(task))
-		if err := os.MkdirAll(filepath.Join(e.RepositoryMountPath, relative), 0700); err != nil {
-			return nil, fmt.Errorf("prepare health judge setup accounting: %w", err)
-		}
-		e.SessionPVCSubPath = path.Join(e.RepositoryPVCSubPath, relative)
-		e.Environment = cloneEnvironment(e.Environment)
-		e.Environment["SDO_TURN_USAGE_LOG"] = "/sdo/session/setup-usage.jsonl"
 	}
 	if e.PollInterval <= 0 {
 		e.PollInterval = time.Second

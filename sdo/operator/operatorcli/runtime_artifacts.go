@@ -23,7 +23,7 @@ import (
 	"sdo.dev/operator/worker_registry"
 )
 
-const runtimeArtifactsArchiveScript = `cd "$1" 2>/dev/null || exit 0; find usage telemetry sessions setup codex/sessions claude/projects -type f 2>/dev/null | while IFS= read -r path; do lower_path=$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]'); case "$lower_path" in *cache*|*plugin*|*catalog*) continue;; esac; base=${lower_path##*/}; case "$base" in *auth*|*credential*|*token*) [ "$base" = token_usage.json ] || continue;; esac; case "$path" in setup/*/*.jsonl|usage/*.jsonl|telemetry/*.jsonl|telemetry/*.jsonl.1|sessions/*/*.jsonl|sessions/*/token_usage.json|sessions/*/scratch/sdo-reports/*/[0-9][0-9][0-9][0-9]-act.json|sessions/*/scratch/sdo-reports/*/[0-9][0-9][0-9][0-9]-apply.json|sessions/*/scratch/sdo-reports/*/[0-9][0-9][0-9][0-9]-mitigate.json|sessions/*/startup-controller.json|sessions/*/startup-workers/*/startup-worker.json|sessions/*/startup/attempts/*/startup-controller.json|sessions/*/startup/attempts/*/startup-dispatch.json|sessions/*/startup-worker.json|sessions/*/startup-daemon.json|sessions/*/startup-session.json|sessions/*/startup-dispatch.json|sessions/*/corpus/*.json|sessions/*/model_io/*/*.json|sessions/*/checkpoints/*/request.json|sessions/*/checkpoints/*/result.json|sessions/*/checkpoints/*/file_edits.json|sessions/*/codex/sessions/*/rollout-*.jsonl|sessions/*/claude/projects/*.jsonl|codex/sessions/*/rollout-*.jsonl|claude/projects/*.jsonl) printf '%s\n' "$path";; esac; done | tar -cf - -T -`
+const runtimeArtifactsArchiveScript = `cd "$1" 2>/dev/null || exit 0; find usage telemetry sessions setup tasks codex/sessions claude/projects -type f 2>/dev/null | while IFS= read -r path; do lower_path=$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]'); case "$lower_path" in *cache*|*plugin*|*catalog*) continue;; esac; base=${lower_path##*/}; case "$base" in *auth*|*credential*|*token*) [ "$base" = token_usage.json ] || continue;; esac; case "$path" in setup/*/*.jsonl|tasks/*/task.json|tasks/*/request.json|tasks/*/result.json|tasks/*/error.json|tasks/*/*.jsonl|tasks/*/codex/sessions/*/rollout-*.jsonl|tasks/*/claude/projects/*.jsonl|usage/*.jsonl|telemetry/*.jsonl|telemetry/*.jsonl.1|sessions/*/*.jsonl|sessions/*/token_usage.json|sessions/*/scratch/sdo-reports/*/[0-9][0-9][0-9][0-9]-act.json|sessions/*/scratch/sdo-reports/*/[0-9][0-9][0-9][0-9]-apply.json|sessions/*/scratch/sdo-reports/*/[0-9][0-9][0-9][0-9]-mitigate.json|sessions/*/startup-controller.json|sessions/*/startup-workers/*/startup-worker.json|sessions/*/startup/attempts/*/startup-controller.json|sessions/*/startup/attempts/*/startup-dispatch.json|sessions/*/startup-worker.json|sessions/*/startup-daemon.json|sessions/*/startup-session.json|sessions/*/startup-dispatch.json|sessions/*/corpus/*.json|sessions/*/model_io/*/*.json|sessions/*/checkpoints/*/request.json|sessions/*/checkpoints/*/result.json|sessions/*/checkpoints/*/file_edits.json|sessions/*/codex/sessions/*/rollout-*.jsonl|sessions/*/claude/projects/*.jsonl|codex/sessions/*/rollout-*.jsonl|claude/projects/*.jsonl) printf '%s\n' "$path";; esac; done | { tar -cf - -T -; code=$?; if [ "$code" -eq 1 ] && [ "${2:-}" = live ]; then exit 0; fi; exit "$code"; }`
 
 // runtimeSnapshotScript seals the whitelisted runtime evidence into one
 // immutable archive: $1 runtime root, $2 snapshot directory, $3 snapshot ID,
@@ -166,8 +166,24 @@ func RunRuntimeArtifacts(ctx context.Context, cfg RuntimeArtifactsConfig) (Runti
 	if err := os.MkdirAll(destination, 0700); err != nil {
 		return RuntimeArtifactsResult{}, err
 	}
+	// The archive script only reads. While the operate Job or the controller runs, it holds the PVC's operate
+	// lock, so the sync Pod cannot start; reading through the running Pod exports the evidence the lifecycle
+	// has persisted so far instead of refusing until the run ends.
+	if pod, container, err := sealingController(ctx, client, cfg.Sync); err == nil && pod != "" {
+		liveErr := copyRuntimeArtifacts(ctx, inContainer(run, container), cfg.Sync.ControlNamespace, pod, destination, true)
+		if liveErr == nil {
+			return RuntimeArtifactsResult{Directory: destination}, nil
+		}
+		err = installer.WithSyncPod(ctx, cfg.Sync, func(ctx context.Context, _ install.Config) error {
+			return copyRuntimeArtifacts(ctx, execute, cfg.Sync.ControlNamespace, install.RepositorySyncPodName, destination, false)
+		})
+		if err != nil {
+			return RuntimeArtifactsResult{}, errors.Join(fmt.Errorf("read evidence from running pod %s: %w", pod, liveErr), err)
+		}
+		return RuntimeArtifactsResult{Directory: destination}, nil
+	}
 	err = installer.WithSyncPod(ctx, cfg.Sync, func(ctx context.Context, _ install.Config) error {
-		return copyRuntimeArtifacts(ctx, execute, cfg.Sync.ControlNamespace, destination)
+		return copyRuntimeArtifacts(ctx, execute, cfg.Sync.ControlNamespace, install.RepositorySyncPodName, destination, false)
 	})
 	if err != nil {
 		return RuntimeArtifactsResult{}, err
@@ -177,7 +193,10 @@ func RunRuntimeArtifacts(ctx context.Context, cfg RuntimeArtifactsConfig) (Runti
 
 // copyRuntimeArtifacts streams the sync Pod's evidence archive into destination.
 // Archive only evidence files; extraction applies the same allowlist.
-func copyRuntimeArtifacts(ctx context.Context, execute podExecutor, namespace, destination string) error {
+//
+// A live reader (live true) accepts tar's "file changed as we read it": a running session keeps appending to its
+// rollout, and the archive then holds a prefix of it. A sealed snapshot stays strict.
+func copyRuntimeArtifacts(ctx context.Context, execute podExecutor, namespace, pod, destination string, live bool) error {
 	streamCtx, stop := context.WithCancel(ctx)
 	defer stop()
 	reader, writer := io.Pipe()
@@ -185,7 +204,7 @@ func copyRuntimeArtifacts(ctx context.Context, execute podExecutor, namespace, d
 	var stderr bytes.Buffer
 	done := make(chan error, 1)
 	go func() {
-		err := execute(streamCtx, namespace, install.RepositorySyncPodName, []string{"sh", "-c", runtimeArtifactsArchiveScript, "sh", "/workspace/.sdo-runtime"}, writer, &stderr)
+		err := execute(streamCtx, namespace, pod, archiveCommand(live), writer, &stderr)
 		_ = writer.CloseWithError(err)
 		done <- err
 	}()
@@ -208,31 +227,43 @@ func copyRuntimeArtifacts(ctx context.Context, execute podExecutor, namespace, d
 	return copyErr
 }
 
-// sealingController returns the one running controller Pod and container that
-// mount the lane repository PVC at /workspace, or "" when there is none.
-func sealingController(ctx context.Context, client kubernetes.Interface, sync install.SyncConfig) (string, string, error) {
-	pods, err := client.CoreV1().Pods(sync.ControlNamespace).List(ctx, metav1.ListOptions{LabelSelector: "job-name=" + install.ControllerJobName})
-	if err != nil {
-		return "", "", err
+func archiveCommand(live bool) []string {
+	command := []string{"sh", "-c", runtimeArtifactsArchiveScript, "sh", "/workspace/.sdo-runtime"}
+	if live {
+		command = append(command, "live")
 	}
+	return command
+}
+
+// sealingController returns the one running controller or operate Pod and container that mount the lane
+// repository PVC at /workspace, or "" when there is none.
+func sealingController(ctx context.Context, client kubernetes.Interface, sync install.SyncConfig) (string, string, error) {
 	var pod, container string
-	for _, candidate := range pods.Items {
-		if candidate.Status.Phase != corev1.PodRunning || candidate.DeletionTimestamp != nil {
-			continue
+	seen := map[string]bool{}
+	for _, selector := range []string{"job-name=" + install.ControllerJobName, "app.kubernetes.io/name=sdo-operate"} {
+		pods, err := client.CoreV1().Pods(sync.ControlNamespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+		if err != nil {
+			return "", "", err
 		}
-		volumes := map[string]bool{}
-		for _, volume := range candidate.Spec.Volumes {
-			if volume.PersistentVolumeClaim != nil && volume.PersistentVolumeClaim.ClaimName == sync.RepositoryPVC && !volume.PersistentVolumeClaim.ReadOnly {
-				volumes[volume.Name] = true
+		for _, candidate := range pods.Items {
+			if seen[candidate.Name] || candidate.Status.Phase != corev1.PodRunning || candidate.DeletionTimestamp != nil {
+				continue
 			}
-		}
-		for _, c := range candidate.Spec.Containers {
-			for _, mount := range c.VolumeMounts {
-				if mount.MountPath == "/workspace" && volumes[mount.Name] && !mount.ReadOnly && mount.SubPath == "" {
-					if pod != "" {
-						return "", "", nil
+			seen[candidate.Name] = true
+			volumes := map[string]bool{}
+			for _, volume := range candidate.Spec.Volumes {
+				if volume.PersistentVolumeClaim != nil && volume.PersistentVolumeClaim.ClaimName == sync.RepositoryPVC && !volume.PersistentVolumeClaim.ReadOnly {
+					volumes[volume.Name] = true
+				}
+			}
+			for _, c := range candidate.Spec.Containers {
+				for _, mount := range c.VolumeMounts {
+					if mount.MountPath == "/workspace" && volumes[mount.Name] && !mount.ReadOnly && mount.SubPath == "" {
+						if pod != "" {
+							return "", "", nil
+						}
+						pod, container = candidate.Name, c.Name
 					}
-					pod, container = candidate.Name, c.Name
 				}
 			}
 		}
@@ -353,6 +384,9 @@ func allowedRuntimeArtifact(name string) bool {
 	if len(parts) == 3 && parts[0] == "setup" {
 		return strings.HasSuffix(base, ".jsonl")
 	}
+	if len(parts) >= 3 && parts[0] == "tasks" {
+		return allowedTaskArtifact(parts, base)
+	}
 	if len(parts) < 3 || parts[0] != "sessions" {
 		return false
 	}
@@ -384,6 +418,20 @@ func allowedRuntimeArtifact(name string) bool {
 		return strings.HasPrefix(base, "rollout-") && strings.HasSuffix(base, ".jsonl")
 	}
 	return len(parts) >= 5 && parts[2] == "claude" && parts[3] == "projects" && strings.HasSuffix(base, ".jsonl")
+}
+
+// allowedTaskArtifact admits one lifecycle task's evidence directory (tasks/<key>/): the recorded task, its
+// request and outcome, the worker's JSONL logs, and the agent CLI's session rollouts.
+func allowedTaskArtifact(parts []string, base string) bool {
+	switch {
+	case len(parts) == 3:
+		return base == "task.json" || base == "request.json" || base == "result.json" || base == "error.json" || strings.HasSuffix(base, ".jsonl")
+	case parts[2] == "codex" && len(parts) >= 5 && parts[3] == "sessions":
+		return strings.HasPrefix(base, "rollout-") && strings.HasSuffix(base, ".jsonl")
+	case parts[2] == "claude" && len(parts) >= 5 && parts[3] == "projects":
+		return strings.HasSuffix(base, ".jsonl")
+	}
+	return false
 }
 
 func isStartupTimingArtifact(base string) bool {

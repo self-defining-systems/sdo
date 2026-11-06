@@ -232,9 +232,10 @@ ONBOARDING_EVIDENCE_DIRNAME = "onboarding_evidence"
 def onboard_retaining_evidence(environment: Any, config: Any, objective: str, ops: Any = None) -> dict[str, Any]:
     """``onboard``, then export the lifecycle's runtime evidence into the run output, also when it fails.
 
-    The judge and deployer sessions (Codex rollout JSONL, model IO, request/result pairs) live in the
-    controller's runtime store, which an incident export captures only later; a failed or slow onboarding
-    would otherwise leave nothing to audit. It uses the same exporter as the per-incident evidence.
+    Every judge and deployer task persists its Codex rollout JSONL and request/result under
+    ``sdo_runtime/tasks/<task-key>/`` on the repository volume, keyed by task ID, so failed and retried
+    attempts survive their pods. A failed or slow onboarding would otherwise leave nothing to audit. The
+    export reads through the running operate Pod, so it also works while the lifecycle is still running.
     """
     from dataclasses import replace
 
