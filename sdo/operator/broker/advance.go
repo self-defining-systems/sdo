@@ -364,7 +364,7 @@ func (b *Broker) PublishAdvance(ctx context.Context, id, upstream, base string, 
 		if len(conflicts) > 0 {
 			return fmt.Errorf("upstream %s conflicts with accepted source: %s", upstream, strings.Join(conflicts, ", "))
 		}
-		tree, err := ProposalTreeDigest(ctx, stage)
+		tree, err := advanceTreeDigest(ctx, stage)
 		if err != nil {
 			return err
 		}
@@ -376,7 +376,7 @@ func (b *Broker) PublishAdvance(ctx context.Context, id, upstream, base string, 
 		if err := checkEffective(ctx, stage, tree); err != nil {
 			return effectiveError(ctx, stage, "", tree, base, upstream, err)
 		}
-		if err := requireEffectiveEvidence(ctx, stage, evidence); err != nil {
+		if err := requireEffectiveEvidence(ctx, stage, tree, evidence); err != nil {
 			return err
 		}
 		if err := requirePlanEvidence(ctx, stage, evidence, b.PlanCatalogs); err != nil {

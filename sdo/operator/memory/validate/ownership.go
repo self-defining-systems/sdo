@@ -48,10 +48,11 @@ var deployerKinds = []layout.Kind{layout.KindDeploymentPlan, layout.KindDeployme
 // and health-judge bootstrap stages are InitialPhase. An upstream advance
 // (AdvancePhase) changes source only. Responders change
 // operational memory only in ReflectionPhase, after an independently verified
-// outcome, and source only in ProposalPhase. No actor edits memory in
-// ProposalPhase except responders adding deployment patches (add-only,
-// responderPatchAddOnly), and nobody but the controller writes outcomes or
-// lifecycle provenance.
+// outcome. No agent edits app files in any phase: only the upstream actor
+// owns source, and an agent's change to upstream source is a deployment
+// patch. No actor edits memory in ProposalPhase except responders adding
+// deployment patches (add-only, patchOwnership), and nobody but the
+// controller writes outcomes or lifecycle provenance.
 //
 // Deployment class (.sdo/deployment): the human seeds all of it, the deployer
 // owns the plan, files and patches (in the initial and advance phases, and may
@@ -77,8 +78,6 @@ var grants = []grant{
 		}
 		return true
 	}},
-	{actor: Responder, phase: ProposalPhase, kinds: []layout.Kind{kindSource}},
-	{actor: Deployer, phase: InitialPhase, kinds: []layout.Kind{kindSource}},
 	{actor: Human, phase: InitialPhase, kinds: deploymentKinds},
 	{actor: Deployer, phase: InitialPhase, kinds: deployerKinds},
 	// The deployment agent's advance route (plan, files, refreshed patches);
@@ -155,6 +154,15 @@ func owners(kind layout.Kind, id string) string {
 	return "changeable by " + strings.Join(found, " or ")
 }
 
+// sourceHint explains a denied app-file change. App files are never edited by
+// SDO: a change to upstream source is a patch under .sdo/deployment/patches/.
+func sourceHint(actor Actor, phase Phase) string {
+	if actor == Upstream {
+		return owners(kindSource, "")
+	}
+	return "app files are never edited or published; make the change a patch (`sdo-operator patch create --reason \"<why>\"`), or revert the file. Only the upstream advance changes app files"
+}
+
 func (s *run) ownership(ctx context.Context) error {
 	if s.layers()&Ownership == 0 {
 		return nil
@@ -182,7 +190,11 @@ func (s *run) ownership(ctx context.Context) error {
 			}
 		}
 		if !allowed(actor, phase, kind, id) {
-			s.add(Ownership, Diagnostic{Rule: RuleOwnershipDenied, Path: p, Message: fmt.Sprintf("actor %s may not change %s files in the %s phase", actor, kind, phase), Hint: owners(kind, id)})
+			hint := owners(kind, id)
+			if kind == kindSource {
+				hint = sourceHint(actor, phase)
+			}
+			s.add(Ownership, Diagnostic{Rule: RuleOwnershipDenied, Path: p, Message: fmt.Sprintf("actor %s may not change %s files in the %s phase", actor, kind, phase), Hint: hint})
 		}
 	}
 	return s.ownershipPolicy(ctx)

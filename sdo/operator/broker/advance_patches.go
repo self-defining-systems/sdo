@@ -143,7 +143,7 @@ func mirrorState(ctx context.Context, stage, head, base, upstream string) (strin
 	if err != nil {
 		return "", err
 	}
-	got, err := proposalSourceTreeDigest(ctx, stage)
+	got, err := advanceSourceTreeDigest(ctx, stage)
 	if err != nil {
 		return "", err
 	}

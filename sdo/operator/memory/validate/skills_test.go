@@ -32,6 +32,7 @@ var internalRules = map[string]string{
 	RuleUnsafePath:              "a path-traversal guard against malformed diffs, not an authoring decision",
 	RulePatchInvalid:            "deployment patches are written by `sdo-operator patch create` (row S5-6), which emits the strict header; the patch-authoring skill (row S5-8) will teach it",
 	RulePatchOwner:              "the patch tool stamps Owner from the calling actor; the patch-authoring skill (row S5-8) will teach it",
+	RulePatchUncaptured:         "the broker raises it at publish and as worker-finalization correction text that names `patch create`; the patch-authoring skill (row S5-8) will teach it",
 	RulePatchUpstreamBase:       "Go fills Upstream-Base; agents never choose it",
 	RuleDeploymentInvalid:       "Go writes the canonical plan.yaml during deployment admission; no skill flow edits it",
 

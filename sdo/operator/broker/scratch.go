@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -70,7 +71,7 @@ func UncapturedScratch(ctx context.Context, checkout string) ([]string, error) {
 }
 
 // UncapturedRule names the rule in diagnostics and correction feedback.
-const UncapturedRule = "patch.uncaptured"
+const UncapturedRule = validate.RulePatchUncaptured
 
 // ScratchFeedback is the worker-finalization hook: the correction text for a
 // turn that ends with app-file edits no patch reproduces, or "" when the
@@ -100,4 +101,45 @@ func uncapturedMessage(paths []string) string {
 	return fmt.Sprintf("%s: %d app file(s) differ from what your patches produce: %s%s. "+
 		"App files are never published; capture each intended change with `sdo-operator patch create --reason \"<why>\" [paths...]`, "+
 		"or revert the file. Then run `sdo-operator patch check`.", UncapturedRule, len(paths), strings.Join(listed, ", "), more)
+}
+
+// scratchChecked reports whether an actor's publication is bound by the
+// scratch-consistency rule: the agents that read and edit app files in a
+// materialized checkout.
+func scratchChecked(actor Actor, phase Phase) bool {
+	return (actor == Deployer && phase == InitialPhase) || (actor == Responder && phase == ProposalPhase)
+}
+
+// requireCapturedScratch enforces `patch.uncaptured` at publish and returns
+// the change set restricted to .sdo/ paths (the only publishable ones). App
+// files that the series reproduces are consistent scratch and are dropped from
+// the set; any other app-file difference rejects the publication. A series
+// that does not apply is left to the shared check, which reports patch.invalid.
+func requireCapturedScratch(ctx context.Context, checkout string, paths []string) ([]string, error) {
+	uncaptured, err := UncapturedScratch(ctx, checkout)
+	var invalid *patchset.PatchError
+	if err != nil && !errors.As(err, &invalid) {
+		return nil, err
+	}
+	if len(uncaptured) > 0 {
+		return nil, validate.Err([]validate.Diagnostic{{
+			Rule: UncapturedRule, Path: uncaptured[0], Message: uncapturedMessage(uncaptured),
+			Hint: "run `sdo-operator patch create --reason \"<why>\"` for each intended change, or revert the file",
+		}})
+	}
+	return partitionPaths(paths).SDO, nil
+}
+
+// ScratchFeedback is the correction text for a prepared proposal whose
+// checkout holds uncaptured app edits, or "" when it is consistent (and for
+// phases whose checkout is not materialized).
+func (b *Broker) ScratchFeedback(ctx context.Context, incidentID string, phase Phase) (string, error) {
+	if !materializesPatches(phase) {
+		return "", nil
+	}
+	proposal, err := b.proposal(incidentID, phase)
+	if err != nil {
+		return "", err
+	}
+	return ScratchFeedback(ctx, proposal.Path)
 }

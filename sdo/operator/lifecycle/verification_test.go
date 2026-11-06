@@ -31,6 +31,8 @@ type fakeBroker struct {
 	head     int
 	// root holds the proposal checkouts: the lifecycle writes plan.yaml there.
 	root string
+	// scratch holds the patch.uncaptured feedback returned once per entry.
+	scratch []string
 }
 
 func newFakeBroker(t *testing.T) *fakeBroker {
@@ -94,6 +96,16 @@ func (b *fakeBroker) AcceptedCommit(_ context.Context, id string, _ broker.Phase
 
 func (b *fakeBroker) ChangedPaths(context.Context, string, broker.Phase) ([]string, error) {
 	return []string{"changed"}, nil
+}
+func (b *fakeBroker) ScratchFeedback(context.Context, string, broker.Phase) (string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.scratch) == 0 {
+		return "", nil
+	}
+	feedback := b.scratch[0]
+	b.scratch = b.scratch[1:]
+	return feedback, nil
 }
 func (b *fakeBroker) ReleaseProposal(string, broker.Phase) error { return nil }
 func (b *fakeBroker) Rejections(string) (*contracts.ProposalRejectionLog, error) {
@@ -283,6 +295,22 @@ func TestFiringVerdictReachesTheDeployerWithDetectorDetail(t *testing.T) {
 	feedback := h.workers.deployer[1].GetCorrectionFeedback()
 	if !strings.Contains(feedback, "frontend-available") || !strings.Contains(feedback, "frontend has 0 ready replicas") {
 		t.Fatalf("correction feedback lacks detector detail: %q", feedback)
+	}
+}
+
+// App-file edits no patch reproduces never reach a deployment: the agent gets
+// the patch.uncaptured text as a correction before anything is applied.
+func TestUncapturedScratchCorrectsTheDeployerBeforeDeploying(t *testing.T) {
+	h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{clear}})
+	h.coordinator.Broker.(*fakeBroker).scratch = []string{"patch.uncaptured: 1 app file(s) differ: app.go"}
+	if _, err := h.coordinator.Run(context.Background(), config()); err != nil {
+		t.Fatal(err)
+	}
+	if h.workers.deployerAttempts() != 2 || !strings.Contains(h.workers.deployer[1].GetCorrectionFeedback(), "patch.uncaptured") {
+		t.Fatalf("deployer requests = %v", h.workers.deployer)
+	}
+	if h.readiness.calls != 1 {
+		t.Fatalf("apply calls = %d, want the deployment to happen only after the correction", h.readiness.calls)
 	}
 }
 

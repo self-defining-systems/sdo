@@ -59,15 +59,11 @@ func validateSourceEvidence(value SourceEvidence) error {
 	return nil
 }
 
-// requireEffectiveEvidence recomputes the effective tree of root's candidate
-// tree and requires it, and its patch series digest, to be what the deployer
+// requireEffectiveEvidence recomputes the effective tree of tree (a candidate
+// tree whose objects are in root) and requires it, and its patch series digest, to be what the deployer
 // verified. The broker never trusts the evidence's claim: a patch applied
 // differently (or a different series) than at deployment is not published.
-func requireEffectiveEvidence(ctx context.Context, root string, evidence SourceEvidence) error {
-	tree, err := ProposalTreeDigest(ctx, root)
-	if err != nil {
-		return err
-	}
+func requireEffectiveEvidence(ctx context.Context, root, tree string, evidence SourceEvidence) error {
 	effective, err := rendered.Effective(ctx, rendered.ObjectStore{Dir: root}, rendered.BaseTree(tree))
 	if err != nil {
 		return fmt.Errorf("compute effective tree of the staged source: %w", err)

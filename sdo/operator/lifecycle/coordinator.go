@@ -36,6 +36,9 @@ type ProposalBroker interface {
 	SourceEvidence(context.Context, string) (broker.SourceEvidence, bool, error)
 	AcceptedCommit(context.Context, string, broker.Phase) (broker.Receipt, bool, error)
 	ChangedPaths(context.Context, string, broker.Phase) ([]string, error)
+	// ScratchFeedback is the patch.uncaptured correction text for a checkout
+	// whose app-file edits no patch reproduces, or "" when consistent.
+	ScratchFeedback(context.Context, string, broker.Phase) (string, error)
 	ReleaseProposal(string, broker.Phase) error
 	// Rejections and RecordRejection are the durable retry state for a
 	// proposal rejected by validator diagnostics.
@@ -367,6 +370,17 @@ func (c Coordinator) deploy(ctx context.Context, id string, cfg Config, attempt 
 			return broker.Receipt{}, DeploymentReceipt{}, false, nextFeedback, err
 		}
 		plan = agentPlan
+		// App files are never published: edits no patch reproduces go back to
+		// the agent as a correction before anything is deployed.
+		scratch, err := c.Broker.ScratchFeedback(ctx, id, broker.InitialPhase)
+		if err != nil {
+			_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
+			return broker.Receipt{}, DeploymentReceipt{}, false, "", err
+		}
+		if scratch != "" {
+			_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
+			return broker.Receipt{}, DeploymentReceipt{}, false, scratch, nil
+		}
 	}
 	if err := admissiblePlan(plan); err != nil {
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)

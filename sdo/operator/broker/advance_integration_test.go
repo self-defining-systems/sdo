@@ -25,7 +25,8 @@ const advanceGoal = "---\nschema_version: 1\nowner: human\napplication: \"test\"
 
 // advanceWorld is a synthetic followed source: an upstream repository whose
 // first commit seeds the accepted repository, a Human goal commit that starts
-// following it, and an onboarding deployment that edited the source.
+// following it, and an onboarding deployment of the source as it stands (a
+// legacy world has a source edit committed before it).
 type advanceWorld struct {
 	upstream, accepted string
 	seed               string
@@ -79,13 +80,18 @@ func newOnboardedWorld(t *testing.T, editedByDeployer bool) *advanceWorld {
 		t.Fatalf("LastUpstream before following = found %v, %v; a user trailer is not trusted", found, err)
 	}
 	publishHumanGoal(t, w.accepted, "goal", map[string]string{layout.GoalFile: advanceGoal, layout.SourcesFile: syntheticSources})
-	// Onboarding deployed an edited source (third line) with a plan.
+	if editedByDeployer {
+		// A repository from before agents wrote only .sdo/: a source edit is
+		// already in the accepted history (a plain commit; no agent can
+		// publish one any more), so the mirror invariant does not hold.
+		writeFiles(t, w.accepted, map[string]string{"app.txt": "one\ntwo\nthree deployed\n"})
+		testutil.Git(t, w.accepted, "add", ".")
+		testutil.Git(t, w.accepted, "commit", "-qm", "legacy source edit")
+	}
+	// Onboarding deployed the accepted source with a plan.
 	p, err := b.CreateProposalForPhase(context.Background(), "onboard", InitialPhase)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if editedByDeployer {
-		writeFiles(t, p.Path, map[string]string{"app.txt": "one\ntwo\nthree deployed\n"})
 	}
 	writeSyntheticPlan(t, p.Path, "k8s")
 	if _, err := b.PublishVerifiedSource(context.Background(), "onboard", advanceEvidence(t, p.Path, "onboard")); err != nil {
@@ -123,7 +129,8 @@ func advanceEvidence(t *testing.T, checkout, image string) SourceEvidence {
 // tests that attest a tree the broker must refuse).
 func advanceEvidenceFor(t *testing.T, checkout, image string, applied bool) SourceEvidence {
 	t.Helper()
-	tree, err := ProposalTreeDigest(context.Background(), checkout)
+	// The complete working tree: an advance stage holds its merge uncommitted.
+	tree, err := advanceTreeDigest(context.Background(), checkout)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,7 +308,7 @@ func TestPublishAdvanceRefusesWhatWasNotDeployedOrMayNotMerge(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		writeFiles(t, proposal.Path, map[string]string{"app.txt": "tampered\n"})
+		writeFiles(t, proposal.Path, map[string]string{".sdo/deployment/values/tampered.yaml": "tampered: true\n"})
 		evidence := advanceEvidence(t, proposal.Path, "tampered")
 		if _, err := b.PublishAdvance(ctx, id, upstream, w.seed, evidence); err == nil || !strings.Contains(err.Error(), "differs from the deployed tree") {
 			t.Fatalf("PublishAdvance of another tree = %v", err)
@@ -420,7 +427,7 @@ func TestPublishVerifiedSourceRecomputesTheEffectiveTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeFiles(t, p.Path, map[string]string{"app.txt": "one\ntwo\nthree again\n"})
+	writeFiles(t, p.Path, map[string]string{".sdo/deployment/values/second.yaml": "replicas: 2\n"})
 	for name, mutate := range map[string]func(*SourceEvidence){
 		"effective tree": func(e *SourceEvidence) {
 			e.EffectiveTree = strings.Repeat("9", 40)

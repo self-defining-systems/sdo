@@ -3,6 +3,7 @@ package validate
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"go/format"
 	"os"
 	"path/filepath"
@@ -408,7 +409,11 @@ var gateRows = []gateRow{
 		write(t, r, ".sdo/diagnostics/detectors/incidents/dns/manifest.yaml", gateIncidentManifest("dns", "1", "inc-2"))
 		write(t, r, ".sdo/diagnostics/detectors/incidents/dns/detector.go", "package dns\n")
 	}},
-	{name: "responder edits source in a proposal", kind: gateOwnership, actor: Responder, phase: ProposalPhase, edit: gateWrite("app.txt", "repair\n")},
+	gateAppFileDenied(Responder, ProposalPhase), gateAppFileDenied(Responder, ReflectionPhase), gateAppFileDenied(Responder, InitialPhase),
+	gateAppFileDenied(Deployer, InitialPhase), gateAppFileDenied(Deployer, AdvancePhase), gateAppFileDenied(Deployer, ProposalPhase),
+	gateAppFileDenied(Upkeep, InitialPhase), gateAppFileDenied(Human, InitialPhase),
+	gateAppFileDenied(Human, ImportPhase), gateAppFileDenied(HealthJudge, ProposalPhase),
+	{name: "responder edits source in a proposal", kind: gateOwnership, actor: Responder, phase: ProposalPhase, rules: []string{RuleOwnershipDenied}, edit: gateWrite("app.txt", "repair\n")},
 	{name: "health judge edits health detectors in initial", kind: gateOwnership, actor: HealthJudge, phase: InitialPhase, edit: func(t *testing.T, r string) {
 		write(t, r, gateHealth, "package objective\n\n// edit\n")
 		edit(t, r, gateHealthManifest, "interval: 30s", "interval: 20s")
@@ -417,7 +422,7 @@ var gateRows = []gateRow{
 	{name: "human publishes followed sources in initial", kind: gateOwnership, actor: Human, phase: InitialPhase, edit: gateWrite(layout.SourcesFile, "sources:\n- path: .\n  kind: git\n  config: {repository: \"git://synthetic.invalid/app.git\", ref: main}\n")},
 	{name: "responder cannot edit followed sources", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleOwnershipDenied}, path: layout.SourcesFile,
 		edit: gateWrite(layout.SourcesFile, "sources:\n- path: .\n  kind: git\n  config: {repository: \"git://synthetic.invalid/app.git\", ref: main}\n")},
-	{name: "deployer edits source in initial", kind: gateOwnership, actor: Deployer, phase: InitialPhase, edit: gateWrite("app.txt", "deployed\n")},
+	{name: "deployer edits source in initial", kind: gateOwnership, actor: Deployer, phase: InitialPhase, rules: []string{RuleOwnershipDenied}, edit: gateWrite("app.txt", "deployed\n")},
 	{name: "deployer writes the deployment plan, files and patches in initial", kind: gateOwnership, actor: Deployer, phase: InitialPhase, edit: func(t *testing.T, r string) {
 		write(t, r, layout.DeploymentPlanFile, "renderer: raw\n")
 		write(t, r, ".sdo/deployment/values/prod.yaml", "replicas: 2\n")
@@ -499,14 +504,17 @@ var gateRows = []gateRow{
 	// Publication content and lifecycle: the full pipeline.
 	{name: "empty proposal", kind: gateCheck, actor: Responder, phase: ProposalPhase, rules: []string{RuleEmptyDiff}},
 	gateReflection("whitespace in authored memory", gateClean(), gateUpdated("base"), gateWrite(gateReadme, gateReadmeText("Recovery guidance. \n")), RuleWhitespace),
-	{name: "whitespace in application bytes is not judged", kind: gateCheck, actor: Responder, phase: ProposalPhase,
+	{name: "whitespace in application bytes is not judged", kind: gateCheck, actor: Upstream, phase: AdvancePhase,
+		request: func(r *Request) {
+			r.Publication = &PublicationContext{BaseCommit: "HEAD", IncidentID: "advance-0123456789ab", VerifiedSourceTree: strings.Repeat("a", 40)}
+		},
 		edit: gateWrite("kubernetes/geo/script.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: s\ndata:\n  init.sh: |\n    echo   \n    \n")},
 	{name: "reflection without an accepted outcome", kind: gateCheck, actor: Responder, phase: ReflectionPhase, rules: []string{RuleAcceptedOutcome}, edit: gatePlaybookEdit,
 		request: func(r *Request) { r.Decision = gateUpdated("base") }},
 	{name: "initial phase closed after detectors are accepted", kind: gateCheck, actor: Responder, phase: InitialPhase, rules: []string{RuleBootstrapClosed, RuleOwnershipDenied}, edit: gatePlaybookEdit},
-	{name: "initial source needs a verified source tree", kind: gateCheck, actor: Deployer, phase: InitialPhase, rules: []string{RuleVerifiedSource},
+	{name: "initial deployment inputs need a verified source tree", kind: gateCheck, actor: Deployer, phase: InitialPhase, rules: []string{RuleVerifiedSource},
 		prepare: func(t *testing.T, r string) { remove(t, r, ".sdo/diagnostics"); remove(t, r, ".sdo/playbooks") },
-		edit:    gateWrite("app.txt", "deployed\n")},
+		edit:    gateWrite(".sdo/deployment/manifests/app.yaml", "kind: Deployment\n")},
 	{name: "the deployer's plan alone needs a verified source tree", kind: gateCheck, actor: Deployer, phase: InitialPhase, rules: []string{RuleVerifiedSource},
 		prepare: func(t *testing.T, r string) { remove(t, r, ".sdo/diagnostics"); remove(t, r, ".sdo/playbooks") },
 		edit:    gateWrite(layout.DeploymentPlanFile, gateDeploymentPlan)},
@@ -515,6 +523,18 @@ var gateRows = []gateRow{
 		edit:    gateWrite(layout.DeploymentPlanFile, gateDeploymentPlan),
 		request: func(r *Request) {
 			r.Publication = &PublicationContext{BaseCommit: "HEAD", IncidentID: "source", VerifiedSourceTree: strings.Repeat("a", 40)}
+		}},
+	{name: "verified deployment publish passes", kind: gateCheck, actor: Deployer, phase: InitialPhase,
+		prepare: func(t *testing.T, r string) { remove(t, r, ".sdo/diagnostics"); remove(t, r, ".sdo/playbooks") },
+		edit:    gateWrite(".sdo/deployment/manifests/app.yaml", "kind: Deployment\n"),
+		request: func(r *Request) {
+			r.Publication = &PublicationContext{BaseCommit: "HEAD", VerifiedSourceTree: strings.Repeat("a", 40)}
+		}},
+	{name: "verified deployment publish rejects an app file", kind: gateCheck, actor: Deployer, phase: InitialPhase, rules: []string{RuleOwnershipDenied, RuleVerifiedSource},
+		prepare: func(t *testing.T, r string) { remove(t, r, ".sdo/diagnostics"); remove(t, r, ".sdo/playbooks") },
+		edit:    gateWrite("app.txt", "deployed\n"),
+		request: func(r *Request) {
+			r.Publication = &PublicationContext{BaseCommit: "HEAD", VerifiedSourceTree: strings.Repeat("a", 40)}
 		}},
 	{name: "upstream advance needs a verified source tree", kind: gateCheck, actor: Upstream, phase: AdvancePhase, rules: []string{RuleVerifiedSource}, edit: gateWrite("app.txt", "upstream\n")},
 	{name: "verified upstream advance passes", kind: gateCheck, actor: Upstream, phase: AdvancePhase, edit: gateWrite("app.txt", "upstream\n"),
@@ -846,6 +866,7 @@ func TestGateNotes(t *testing.T) {
 
 // gateRuleCoverage names the rules with no bad row, each with the reason.
 var gateRuleCoverage = map[string]string{
+	RulePatchUncaptured:       "covered by the broker publish tests (broker/enforcement_integration_test.go): it needs the agent checkout's working tree, which the shared check never sees",
 	RuleSnapshotProjection:    "no row yet: a defensive check behind the static layers; no authored change reaches it",
 	RuleTrafficUndrivenEdge:   "no row yet: informational, needs generated traffic replay results from the real toolchain on a tree with declared edges",
 	RuleTrafficDefaultLatency: "no row yet: informational, same as traffic.undriven-edge",
@@ -938,4 +959,11 @@ func gateRead(t *testing.T, root, name string) string {
 		t.Fatal(err)
 	}
 	return string(data)
+}
+
+// gateAppFileDenied is the negative control for the .sdo/-only rule: no agent
+// actor may change an app file in any phase (only the upstream advance may).
+func gateAppFileDenied(actor Actor, phase Phase) gateRow {
+	return gateRow{name: fmt.Sprintf("%s may not change an app file in %s", actor, phase), kind: gateOwnership, actor: actor, phase: phase,
+		rules: []string{RuleOwnershipDenied}, edit: gateWrite("app.txt", "edit\n")}
 }
