@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -138,7 +139,7 @@ func Serve(ctx context.Context, socket string, capBytes uint64, server pb.Memory
 	if err = os.Chmod(socket, 0600); err != nil {
 		return err
 	}
-	grpcServer := grpc.NewServer(grpc.MaxRecvMsgSize(16<<20), grpc.MaxSendMsgSize(16<<20))
+	grpcServer := grpc.NewServer(grpc.MaxRecvMsgSize(16<<20), grpc.MaxSendMsgSize(16<<20), grpc.UnaryInterceptor(boundHeavyCalls(maxHeavyCalls)))
 	pb.RegisterMemoryHostServiceServer(grpcServer, server)
 	finished := make(chan struct{})
 	defer close(finished)
@@ -162,12 +163,38 @@ func (p *Process) WaitExited(ctx context.Context) error {
 	}
 }
 
+// maxHeavyCalls bounds concurrent memory-code calls; each decodes every read receipt of its request.
+const maxHeavyCalls = 4
+
+// boundHeavyCalls queues Diagnose and Mitigate beyond limit instead of letting their decoded
+// receipts pile up in one process; other calls (readiness, evaluation, traffic) are never queued.
+func boundHeavyCalls(limit int) grpc.UnaryServerInterceptor {
+	slots := make(chan struct{}, limit)
+	return func(ctx context.Context, request any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		if !strings.HasSuffix(info.FullMethod, "/Diagnose") && !strings.HasSuffix(info.FullMethod, "/Mitigate") {
+			return handler(ctx, request)
+		}
+		select {
+		case slots <- struct{}{}:
+			defer func() { <-slots }()
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		return handler(ctx, request)
+	}
+}
+
+// dataLimit is the hard RLIMIT_DATA for a soft memory cap. RLIMIT_DATA counts all mapped
+// writable address space, including heap the runtime has released but not unmapped and its
+// own metadata, so it must sit well above the soft limit the garbage collector aims for.
+func dataLimit(capBytes uint64) uint64 { return capBytes * 2 }
+
 // SetMemoryLimit must precede memory constructors as well as RPC serving.
 func SetMemoryLimit(capBytes uint64) error {
 	if capBytes < 64<<20 || capBytes > 1<<60 {
 		return errors.New("memory cap must be between 64MiB and 1EiB")
 	}
-	if err := syscall.Setrlimit(syscall.RLIMIT_DATA, &syscall.Rlimit{Cur: capBytes, Max: capBytes}); err != nil {
+	if err := syscall.Setrlimit(syscall.RLIMIT_DATA, &syscall.Rlimit{Cur: dataLimit(capBytes), Max: dataLimit(capBytes)}); err != nil {
 		return fmt.Errorf("host memory cap: %w", err)
 	}
 	debug.SetMemoryLimit(int64(capBytes * 3 / 4))
