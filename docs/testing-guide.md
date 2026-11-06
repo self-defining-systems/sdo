@@ -458,6 +458,7 @@ type-checking, so negative-control fixtures under `testdata/` need no real depen
   The check is syntactic, so it sees a type where the file names it. Add a new plugin config
   message to `ConfigTypes` when its family gains one.
 - R5 ratchet: `ManifestPaths`/`manifest_paths` per-file counts may only fall.
+- R6 layering: wiring packages (`operatorcli`) are the top layer. No non-test package outside them, other than a `package main` composition root, imports one; `runtime` receives the source-repair deployer as `RuntimeOptions.RepairDeployer` instead.
 
 Today's violations are `//archcheck:` directives in the violating file, so parallel PRs
 never edit one shared table:

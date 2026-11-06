@@ -27,7 +27,7 @@ import (
 // nativeBrokerFromLaunch makes the compiled controller child select the Go
 // broker from its typed launch contract. Native mode and proposal-only worker
 // mounts are one validation decision, before leader election or dispatch.
-func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfig, client kubernetes.Interface) (*NativeIncidentBroker, kubernetes.Interface, error) {
+func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfig, client kubernetes.Interface, repairDeployer RepairDeployerFactory) (*NativeIncidentBroker, kubernetes.Interface, error) {
 	if config != nil && config.GetExternalIncidents() && !config.GetFrozenMemory() {
 		return nil, nil, errors.New("external incidents require frozen memory")
 	}
@@ -92,7 +92,7 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 	if err != nil {
 		return nil, nil, err
 	}
-	repairs, err := repairsFromLaunch(config, client, repository)
+	repairs, err := repairsFromLaunch(config, client, repository, repairDeployer)
 	if err != nil {
 		return nil, nil, err
 	}

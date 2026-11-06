@@ -106,6 +106,10 @@ type RuntimeOptions struct {
 	// Telemetry is the application-telemetry adapter registry metric sources
 	// open through. Nil means no adapters are wired, so --metrics-url is refused.
 	Telemetry *telemetry.Registry
+	// RepairDeployer builds the trusted deployment of a responder's accepted
+	// source repair for a typed launch. Nil is refused for launches that need
+	// one (not frozen memory, not shell detectors).
+	RepairDeployer RepairDeployerFactory
 }
 
 const defaultStateBaselineStartTimeout = 30 * time.Second
@@ -120,10 +124,11 @@ func (values *repeatedFlag) Set(value string) error {
 
 // Run launches the stable controller; accepted code executes in the memory host.
 // renderers is the deployment-renderer catalog and registry the application-
-// telemetry adapter registry; nil wires none.
-func Run(renderers *render.Catalog, registry *telemetry.Registry) {
+// telemetry adapter registry; nil wires none. repairs is the source repair
+// deployment factory the composition root supplies.
+func Run(renderers *render.Catalog, registry *telemetry.Registry, repairs RepairDeployerFactory) {
 	broker.RunValidationChild()
-	if err := RunWithOptions(context.Background(), nil, RuntimeOptions{Renderers: renderers, Telemetry: registry}); err != nil {
+	if err := RunWithOptions(context.Background(), nil, RuntimeOptions{Renderers: renderers, Telemetry: registry, RepairDeployer: repairs}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		if errors.Is(err, memory.ErrHealthRefreshRequired) {
 			os.Exit(memory.HealthRefreshExitCode)
@@ -169,7 +174,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		if options.NativeBroker != nil {
 			return errors.New("native broker was supplied twice")
 		}
-		native, client, err := nativeBrokerFromLaunch(ctx, config, options.Client)
+		native, client, err := nativeBrokerFromLaunch(ctx, config, options.Client, options.RepairDeployer)
 		if err != nil {
 			return err
 		}

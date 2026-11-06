@@ -114,3 +114,21 @@ func TestDeployerNeedsProposalsInsideTheRepositoryMount(t *testing.T) {
 		t.Fatalf("control namespace = %q", got)
 	}
 }
+
+// The generated controller's factory builds the trusted repair deployer from
+// the identity the parent put in the launch config, and refuses a broken one
+// instead of deploying with another.
+func TestRepairFromLaunch(t *testing.T) {
+	launch := &contracts.ControllerConfig{Namespace: "shop", AppRoot: "/synthetic/app", BrokerWorktreeRoot: "/synthetic/repo/proposals", RepositoryMountPath: "/synthetic/repo", RepositoryPvc: "repo", DeployIdentity: fullIdentity().Proto()}
+	deployer, err := RepairFromLaunch(launch, fake.NewSimpleClientset(), &broker.Broker{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deployer.Broker == nil || deployer.Readiness == nil || deployer.Verifier == nil {
+		t.Fatalf("deployer = %+v", deployer)
+	}
+	invalid := &contracts.ControllerConfig{DeployIdentity: &contracts.DeployIdentity{BuildkitImage: "x"}}
+	if _, err := RepairFromLaunch(invalid, fake.NewSimpleClientset(), &broker.Broker{}); err == nil {
+		t.Fatal("an invalid identity was accepted")
+	}
+}

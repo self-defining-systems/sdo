@@ -1,14 +1,21 @@
 package runtime
 
 import (
+	"errors"
 	"fmt"
 
 	"k8s.io/client-go/kubernetes"
 	"sdo.dev/operator/broker"
-	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	"sdo.dev/operator/operatorcli/deploywire"
+	"sdo.dev/operator/lifecycle"
 )
+
+// RepairDeployerFactory builds the trusted deployment of a responder's
+// accepted source repair from the typed launch config (it carries the deploy
+// identity). The composition root supplies it: runtime sits below the CLI
+// wiring that knows the renderer and image catalogs, so it never constructs a
+// Deployer itself.
+type RepairDeployerFactory func(config *contracts.ControllerConfig, client kubernetes.Interface, repository lifecycle.RepairBroker) (lifecycle.RepairDeployer, error)
 
 // repairsFromLaunch is the controller child's SourceRepairer: the trusted
 // Deployer of the identity in the typed launch config (absent means nothing
@@ -17,16 +24,17 @@ import (
 //
 // Candidate verification needs the Go detector runner: with shell detectors
 // it evaluates only the accepted checkout, so no repairer is configured and a
-// repair is published without a deployment, as before.
-func repairsFromLaunch(config *contracts.ControllerConfig, client kubernetes.Interface, repository *broker.Broker) (SourceRepairer, error) {
+// repair is published without a deployment, as before. Every other launch
+// requires the factory: a missing one fails the launch instead of silently
+// publishing repairs undeployed.
+func repairsFromLaunch(config *contracts.ControllerConfig, client kubernetes.Interface, repository *broker.Broker, factory RepairDeployerFactory) (SourceRepairer, error) {
 	if source := config.GetCodePath().GetOverrides().GetDetectorSource(); config.GetFrozenMemory() || source == "shell" || source == "" && config.GetCodePath().GetName() == "shell" {
 		return nil, nil
 	}
-	identity, err := deploywire.IdentityOf(config)
-	if err != nil {
-		return nil, err
+	if factory == nil {
+		return nil, errors.New("source repair deployer is not wired into this controller")
 	}
-	deployer, err := deploywire.RepairDeployer(identity, config, builder.DefaultOperatorRoot(), client, repository)
+	deployer, err := factory(config, client, repository)
 	if err != nil {
 		return nil, fmt.Errorf("source repair deployer: %w", err)
 	}
