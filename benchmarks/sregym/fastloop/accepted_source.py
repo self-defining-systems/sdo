@@ -41,6 +41,18 @@ def kustomize_deployment_source(path: str) -> dict[str, Any]:
     return {"renderer_id": "kustomize", "config": {"@type": _CONFIG_TYPE + "KustomizeRenderConfig", "path": path}}
 
 
+def helm_deployment_source(chart_path: str, value_files: tuple[str, ...] = ()) -> dict[str, Any]:
+    """ProtoJSON ``DeploymentSource`` for the helm renderer over one chart directory of the source tree."""
+    return {
+        "renderer_id": "helm",
+        "config": {
+            "@type": _CONFIG_TYPE + "HelmRenderConfig",
+            "chart_path": chart_path,
+            "value_files": list(value_files),
+        },
+    }
+
+
 def manifest_paths_for(application: str) -> tuple[str, ...]:
     """Manifest selection for a problem application name (never a lane-qualified one)."""
     return APPLICATION_MANIFEST_PATHS.get(application, DEFAULT_MANIFEST_PATHS)
