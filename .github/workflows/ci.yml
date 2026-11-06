@@ -393,12 +393,12 @@ jobs:
   required-pr-ci:
     name: Required PR CI
     needs: [checks, python, tests]
-    # Not always(): a run that concurrency cancelled (a stack restack force-pushes
-    # head and base in one second, so two runs start for one SHA) must skip this
-    # job rather than fail it, or the dead run leaves a failing required check next
-    # to the live run's passing one. A job that merely timed out is not a cancelled
-    # run, so it still fails the gate.
-    if: ${{ !cancelled() }}
+    # always(): the gate must report on every run. A run that concurrency cancelled
+    # because a newer run exists for the same commit is the exception, decided below.
+    if: always()
+    permissions:
+      contents: read
+      actions: read
     runs-on: ubuntu-latest
     timeout-minutes: 1
     steps:
@@ -414,12 +414,34 @@ jobs:
           BUDGET_BASE: ${{ github.event.pull_request.base.sha }}
           BUDGET_HEAD: ${{ github.event.pull_request.head.sha }}
         run: python3 scripts/check_prompt_budgets.py --base "$BUDGET_BASE" --head "$BUDGET_HEAD"
+      # A stack restack force-pushes head and base in one second: two runs start for
+      # one commit and concurrency cancels the older, whose cancelled jobs would
+      # leave a failing required check beside the newer run's verdict.
+      - name: Detect a run superseded by a newer run for this commit
+        id: superseded
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUNS_URL: repos/${{ github.repository }}/actions/workflows/ci.yml/runs?event=pull_request&head_sha=${{ github.event.pull_request.head.sha }}&per_page=100
+          RUN_ID: ${{ github.run_id }}
+          PULL_REQUEST: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RESULTS: ${{ needs.checks.result }} ${{ needs.python.result }} ${{ needs.tests.result }}
+        run: |
+          # shellcheck disable=SC2086 # RESULTS is deliberately split into words
+          gh api "$RUNS_URL" | python3 scripts/ci_superseded.py "$RUN_ID" "$PULL_REQUEST" "$HEAD_SHA" $RESULTS | sed 's/^/value=/' >> "$GITHUB_OUTPUT"
       - name: Require every job to succeed
         env:
           CHECKS: ${{ needs.checks.result }}
           PYTHON: ${{ needs.python.result }}
           TESTS: ${{ needs.tests.result }}
-        run: test "$CHECKS" = success && test "$PYTHON" = success && test "$TESTS" = success
+          SUPERSEDED: ${{ steps.superseded.outputs.value }}
+        run: |
+          if [ "$SUPERSEDED" = true ]; then
+              echo "::notice::Superseded by a newer run for this commit; that run reports the verdict."
+              exit 0
+          fi
+          test "$CHECKS" = success && test "$PYTHON" = success && test "$TESTS" = success
       # Each Python shard measures its own files; the gate is over their union.
       - name: Download the Python shards' coverage data
         if: needs.python.result == 'success'

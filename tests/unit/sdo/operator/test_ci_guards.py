@@ -66,10 +66,35 @@ def test_one_aggregate_check_covers_every_shard() -> None:
     assert set(aggregates[0]["needs"]) == set(jobs) - {"required-pr-ci"}
 
 
-def test_a_run_cancelled_by_concurrency_never_reports_a_failing_required_check() -> None:
+superseded = load_script("ci_superseded")
+
+
+def pr_run(run_id: int, sha: str = "h1", pr: int = 7, event: str = "pull_request") -> dict:
+    return {"id": run_id, "head_sha": sha, "event": event, "pull_requests": [{"number": pr}]}
+
+
+def test_a_cancelled_run_is_superseded_only_by_a_newer_run_of_the_same_pull_request_and_commit() -> None:
+    cancelled = ["cancelled", "success", "success"]
+    assert superseded.superseded([pr_run(1), pr_run(2)], 1, 7, "h1", cancelled)
+    assert not superseded.superseded([pr_run(1)], 1, 7, "h1", cancelled), "manual cancel: nothing newer"
+    assert not superseded.superseded([pr_run(1), pr_run(0)], 1, 7, "h1", cancelled), "older run"
+    assert not superseded.superseded([pr_run(1), pr_run(2, sha="h2")], 1, 7, "h1", cancelled)
+    assert not superseded.superseded([pr_run(1), pr_run(2, pr=8)], 1, 7, "h1", cancelled)
+    assert not superseded.superseded([pr_run(1), pr_run(2, event="push")], 1, 7, "h1", cancelled)
+
+
+def test_a_failed_or_timed_out_job_is_never_excused_by_a_newer_run() -> None:
+    runs = [pr_run(1), pr_run(2)]
+    assert not superseded.superseded(runs, 1, 7, "h1", ["failure", "success", "success"])
+    assert not superseded.superseded(runs, 1, 7, "h1", ["success", "success", "success"])
+
+
+def test_the_gate_asks_for_supersession_and_stays_an_always_job() -> None:
     aggregate = workflow("ci.yml")["jobs"]["required-pr-ci"]
-    # always() runs the gate in a cancelled run, where its cancelled needs fail it.
-    assert aggregate["if"] == "${{ !cancelled() }}"
+    assert aggregate["if"] == "always()"
+    assert aggregate["permissions"]["actions"] == "read"
+    detect = next(step for step in aggregate["steps"] if step.get("id") == "superseded")
+    assert "scripts/ci_superseded.py" in detect["run"]
 
 
 def test_main_cache_saves_are_guarded_by_the_size_check() -> None:
