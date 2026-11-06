@@ -139,6 +139,7 @@ func main() {
 		}
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
+			operatorcli.ReportTerminalOperability(err, os.Stderr, operatorcli.TerminationMessagePath)
 			os.Exit(1)
 		}
 		return

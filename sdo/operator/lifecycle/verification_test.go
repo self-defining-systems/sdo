@@ -31,7 +31,9 @@ type fakeBroker struct {
 	evidence map[string]broker.SourceEvidence
 	// reports are the operability reports PublishVerifiedSource received.
 	reports map[string]operability.Report
-	head    int
+	// hideReports makes OperabilityReport find nothing.
+	hideReports bool
+	head        int
 	// root holds the proposal checkouts: the lifecycle writes plan.yaml there.
 	root string
 	// scratch holds the patch.uncaptured feedback returned once per entry.
@@ -102,7 +104,7 @@ func (b *fakeBroker) OperabilityReport(_ context.Context, id string, _ operabili
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	report, ok := b.reports[id]
-	return report, ok, nil
+	return report, ok && !b.hideReports, nil
 }
 
 func (b *fakeBroker) SourceEvidence(_ context.Context, id string) (broker.SourceEvidence, bool, error) {
@@ -178,6 +180,12 @@ func (b *fakeBroker) Accept(_ context.Context, candidate broker.Candidate, evide
 	if b.staleAccepts > 0 {
 		b.staleAccepts--
 		return broker.Receipt{}, fmt.Errorf("%w: head moved", broker.ErrCandidateStale)
+	}
+	if evidence.Operability != nil {
+		if b.reports == nil {
+			b.reports = map[string]operability.Report{}
+		}
+		b.reports[candidate.IncidentID] = *evidence.Operability
 	}
 	return b.accept(candidate.IncidentID), nil
 }

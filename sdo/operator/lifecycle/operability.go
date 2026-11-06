@@ -139,3 +139,31 @@ func deployedOutcome(report operability.Report, decision operability.Decision) (
 	}
 	return "", &OperabilityError{Report: report, Decision: decision}
 }
+
+// operabilityPublisher is an installer that exposes the verified report of the
+// accepted health commit (the sdo-operability ConfigMap).
+type operabilityPublisher interface {
+	PublishOperability(ctx context.Context, namespace string, report operability.Report) error
+}
+
+// exposeOperability reads the accepted health commit's report back from the
+// broker, which verifies it again, and hands it to an installer that can expose
+// it. It runs before the controller is installed, so the summary exists when
+// the lane reports installed. A missing report is an error, never a silent skip.
+func (c Coordinator) exposeOperability(ctx context.Context, judgeID string, cfg Config) error {
+	publisher, ok := c.Installer.(operabilityPublisher)
+	if !ok {
+		return nil
+	}
+	report, found, err := c.Broker.OperabilityReport(ctx, judgeID, operability.StageComplete)
+	if err != nil {
+		return fmt.Errorf("accepted health commit's operability report: %w", err)
+	}
+	if !found {
+		return fmt.Errorf("accepted health commit %s has no operability report", judgeID)
+	}
+	if err := publisher.PublishOperability(ctx, cfg.Namespace, report); err != nil {
+		return fmt.Errorf("expose operability summary: %w", err)
+	}
+	return nil
+}

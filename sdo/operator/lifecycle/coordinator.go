@@ -273,6 +273,9 @@ func (c Coordinator) Run(ctx context.Context, cfg Config) (Result, error) {
 				return result, err
 			}
 		}
+		if err := c.exposeOperability(ctx, judgeID, cfg); err != nil {
+			return result, err
+		}
 		install := func() error {
 			if typed, ok := c.Installer.(deploymentPlanInstaller); ok {
 				return typed.InstallDeployment(ctx, judgeReceipt.Commit, cfg.Namespace, deployment)
