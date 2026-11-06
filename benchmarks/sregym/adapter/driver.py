@@ -615,7 +615,7 @@ def _has_accepted_lifecycle(repository: Path) -> bool:
     native = False
     try:
         native = (
-            (sdo / "schema-version").read_text(encoding="utf-8").strip() == "3"
+            (sdo / "schema-version").read_text(encoding="utf-8").strip() == "4"
             and (sdo / "goal.md").is_file()
             and (sdo / "arch.md").is_file()
         )
@@ -793,6 +793,8 @@ def _launch_native_lifecycle(
         max_attempts=args.max_deployment_attempts,
         agent_registrations=Path(args.agent_registrations).resolve() if args.agent_registrations else None,
         deployment_plan=getattr(args, "deployment_plan", None),
+        source_kind=getattr(args, "source_kind", ""),
+        source_config=getattr(args, "source_config", ""),
     )
     return launch_host(host)
 
@@ -807,6 +809,8 @@ def launch_native_lifecycle(config: RuntimeConfig, health_objective: str, api_ba
         max_deployment_attempts=config.max_deployment_attempts,
         agent_registrations=config.agent_registrations,
         deployment_plan=config.deployment_plan,
+        source_kind=config.source_kind,
+        source_config=config.source_config,
     )
     return _launch_native_lifecycle(
         args,

@@ -15,7 +15,11 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/rendered"
 )
+
+// vendorText is a vendored file long enough for patches with real context.
+const vendorText = "v01\nv02\nv03\nv04\nv05\nv06\nv07\nv08\nv09\nv10\nv11\nv12\nv13\nv14\nv15\nv16\n"
 
 const advanceGoal = "---\nschema_version: 1\nowner: human\napplication: \"test\"\n---\n# Health objective\n\nGoal\n"
 
@@ -46,7 +50,11 @@ func gitOut(t *testing.T, root string, args ...string) string {
 	return strings.TrimSpace(testutil.Git(t, root, args...))
 }
 
-func newAdvanceWorld(t *testing.T) *advanceWorld {
+func newAdvanceWorld(t *testing.T) *advanceWorld { return newOnboardedWorld(t, true) }
+
+// newOnboardedWorld onboards the synthetic source; editedByDeployer false is a
+// provided deployment: the accepted source is deployed exactly as it stands.
+func newOnboardedWorld(t *testing.T, editedByDeployer bool) *advanceWorld {
 	t.Helper()
 	base := t.TempDir()
 	w := &advanceWorld{upstream: filepath.Join(base, "upstream"), accepted: filepath.Join(base, "accepted")}
@@ -54,12 +62,13 @@ func newAdvanceWorld(t *testing.T) *advanceWorld {
 		t.Fatal(err)
 	}
 	testutil.InitGit(t, w.upstream)
-	writeFiles(t, w.upstream, map[string]string{"app.txt": "one\ntwo\nthree\n", "Dockerfile": "FROM scratch\n"})
+	writeFiles(t, w.upstream, map[string]string{"app.txt": "one\ntwo\nthree\n", "Dockerfile": "FROM scratch\n", "lib/vendor.txt": vendorText})
 	testutil.Git(t, w.upstream, "add", ".")
 	// A user commit cannot start following by spelling the broker's trailer.
 	testutil.Git(t, w.upstream, "commit", "-qm", "seed\n\nSDO-Upstream: "+strings.Repeat("f", 40))
 	w.seed = gitOut(t, w.upstream, "rev-parse", "HEAD")
 	testutil.Git(t, base, "clone", "-q", w.upstream, w.accepted)
+	testutil.ConfigureGit(t, w.accepted)
 	testutil.Git(t, w.accepted, "remote", "remove", "origin")
 	b, err := New(w.accepted, filepath.Join(base, "workspaces"), func(context.Context, string, []string) error { return nil })
 	if err != nil {
@@ -75,7 +84,9 @@ func newAdvanceWorld(t *testing.T) *advanceWorld {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeFiles(t, p.Path, map[string]string{"app.txt": "one\ntwo\nthree deployed\n"})
+	if editedByDeployer {
+		writeFiles(t, p.Path, map[string]string{"app.txt": "one\ntwo\nthree deployed\n"})
+	}
 	if _, err := b.PublishVerifiedSource(context.Background(), "onboard", advanceEvidence(t, p.Path, "onboard")); err != nil {
 		t.Fatal(err)
 	}
@@ -83,6 +94,14 @@ func newAdvanceWorld(t *testing.T) *advanceWorld {
 }
 
 func advanceEvidence(t *testing.T, checkout, image string) SourceEvidence {
+	t.Helper()
+	return advanceEvidenceFor(t, checkout, image, true)
+}
+
+// advanceEvidenceFor builds evidence for checkout's tree. With applied false
+// the tree's patches need not apply: the effective fields are placeholders (for
+// tests that attest a tree the broker must refuse).
+func advanceEvidenceFor(t *testing.T, checkout, image string, applied bool) SourceEvidence {
 	t.Helper()
 	tree, err := ProposalTreeDigest(context.Background(), checkout)
 	if err != nil {
@@ -93,10 +112,18 @@ func advanceEvidence(t *testing.T, checkout, image string) SourceEvidence {
 		t.Fatal(err)
 	}
 	source := &contracts.DeploymentSource{RendererId: "raw", Config: config}
+	effective := rendered.EffectiveTree{ID: strings.Repeat("0", 40), PatchesDigest: strings.Repeat("0", 64)}
+	if applied {
+		var err error
+		if effective, err = rendered.Effective(context.Background(), rendered.ObjectStore{Dir: checkout}, rendered.BaseTree(tree)); err != nil {
+			t.Fatal(err)
+		}
+		defer effective.Close()
+	}
 	return SourceEvidence{
 		DeploymentSource: source,
 		Plan:             &contracts.DeploymentPlan{Source: proto.Clone(source).(*contracts.DeploymentSource), ExpectedWorkloadIds: []string{"Deployment/ns/app"}},
-		BaseTree:         tree, ObservedRevision: tree,
+		BaseTree:         tree, EffectiveTree: effective.ID, PatchesDigest: effective.PatchesDigest, ObservedRevision: effective.ID,
 		RenderDigest: strings.Repeat("b", 64), EnvDigest: strings.Repeat("c", 64),
 		Images: []string{image + "@sha256:" + strings.Repeat("d", 64)}, ResourceIDs: []string{"Deployment/ns/app"}, Ready: true,
 	}
@@ -261,6 +288,25 @@ func TestPublishAdvanceRefusesWhatWasNotDeployedOrMayNotMerge(t *testing.T) {
 			t.Fatalf("PublishAdvance of another tree = %v", err)
 		}
 	})
+	t.Run("evidence of another effective tree or patch series", func(t *testing.T) {
+		proposal, _, _, err := b.ProposeAdvance(ctx, id, w.seed, upstream)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, mutate := range map[string]func(*SourceEvidence){
+			"effective tree": func(e *SourceEvidence) {
+				e.EffectiveTree = strings.Repeat("9", 40)
+				e.ObservedRevision = e.EffectiveTree
+			},
+			"patch series": func(e *SourceEvidence) { e.PatchesDigest = strings.Repeat("9", 64) },
+		} {
+			evidence := advanceEvidence(t, proposal.Path, "merged")
+			mutate(&evidence)
+			if _, err := b.PublishAdvance(ctx, id, upstream, w.seed, evidence); err == nil || !strings.Contains(err.Error(), "differs from the verified deployment") {
+				t.Fatalf("PublishAdvance with another %s = %v", name, err)
+			}
+		}
+	})
 	t.Run("accepted head moved", func(t *testing.T) {
 		proposal, _, _, err := b.ProposeAdvance(ctx, id, w.seed, upstream)
 		if err != nil {
@@ -343,5 +389,33 @@ func TestPublishAdvanceRefusesWhatWasNotDeployedOrMayNotMerge(t *testing.T) {
 	}
 	if last, _, _ := b.LastUpstream(ctx); last != w.seed {
 		t.Fatalf("LastUpstream after refusals = %s, want %s", last, w.seed)
+	}
+}
+
+// The broker recomputes the effective tree of what it stages and refuses
+// verified-source evidence that names another effective tree or patch series.
+func TestPublishVerifiedSourceRecomputesTheEffectiveTree(t *testing.T) {
+	ctx := context.Background()
+	w := newAdvanceWorld(t)
+	p, err := w.broker.CreateProposalForPhase(ctx, "second", InitialPhase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFiles(t, p.Path, map[string]string{"app.txt": "one\ntwo\nthree again\n"})
+	for name, mutate := range map[string]func(*SourceEvidence){
+		"effective tree": func(e *SourceEvidence) {
+			e.EffectiveTree = strings.Repeat("9", 40)
+			e.ObservedRevision = e.EffectiveTree
+		},
+		"patch series": func(e *SourceEvidence) { e.PatchesDigest = strings.Repeat("9", 64) },
+	} {
+		evidence := advanceEvidence(t, p.Path, "second")
+		mutate(&evidence)
+		if _, err := w.broker.PublishVerifiedSource(ctx, "second", evidence); err == nil || !strings.Contains(err.Error(), "differs from the verified deployment") {
+			t.Fatalf("PublishVerifiedSource with another %s = %v", name, err)
+		}
+	}
+	if _, err := w.broker.PublishVerifiedSource(ctx, "second", advanceEvidence(t, p.Path, "second")); err != nil {
+		t.Fatalf("matching evidence must publish: %v", err)
 	}
 }

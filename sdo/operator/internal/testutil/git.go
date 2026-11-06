@@ -55,3 +55,11 @@ var gitIdentityConfig = [][2]string{
 	{"user.name", "SDO Fixture"},
 	{"user.email", "fixture@example.invalid"},
 }
+
+// ConfigureGit gives an existing repository (typically a clone, which does not
+// inherit fixture configuration) the fixture identity and lifetime settings, so
+// commits never depend on the host's global Git configuration.
+func ConfigureGit(t testing.TB, root string) {
+	t.Helper()
+	configureGit(t, root)
+}

@@ -19,6 +19,7 @@ from apps.toy.variants.assemble import VARIANTS, assemble
 from benchmarks.sregym.adapter import WaitKind, buildkit_image, deployment_plan, helm_source, raw_source, wait_for
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment, Images
 from benchmarks.sregym.fastloop.host_limits import HostLimits, NodeLimits, apply_node_limits
+from benchmarks.sregym.fastloop.toy_upstream import UpstreamLayout, serve_upstream, source_config
 from benchmarks.sregym.repository_git import host_git_command
 
 logger = logging.getLogger(__name__)
@@ -124,6 +125,20 @@ def toy_variant(args: Any) -> str:
     return variant
 
 
+def registry_image(namespace: str) -> str:
+    """The toy image reference inside the lane's trusted benchmark registry (BuildKit may only push there)."""
+    return f"sdo-benchmark-registry.{namespace}-sdo.svc.cluster.local:5000/{IMAGE}"
+
+
+def point_chart_at_registry(workspace: Path, namespace: str) -> None:
+    """Make the helm chart deploy the registry-qualified image SDO builds, pulled from the registry."""
+    values = workspace / "chart" / "values.yaml"
+    repository = registry_image(namespace).rpartition(":")[0]
+    text = values.read_text(encoding="utf-8")
+    text = text.replace("repository: sdo-toy-app", f"repository: {repository}")
+    values.write_text(text.replace("pullPolicy: Never", "pullPolicy: IfNotPresent"), encoding="utf-8")
+
+
 def provided_deployment_plan(variant: str, namespace: str) -> dict[str, Any] | None:
     """The deployment the harness provides for a variant that ships one (helm); SDO deploys it, no agent authors it.
 
@@ -133,7 +148,7 @@ def provided_deployment_plan(variant: str, namespace: str) -> dict[str, Any] | N
         return None
     return deployment_plan(
         helm_source("chart"),
-        images=(buildkit_image(IMAGE, ".", "Dockerfile"),),
+        images=(buildkit_image(registry_image(namespace), ".", "Dockerfile"),),
         expected_workload_ids=[f"Deployment/{namespace}/{service}" for service in SERVICES],
     )
 
@@ -152,6 +167,8 @@ def prepare_workspace(workspace: Path, image: str, *, fresh: bool, variant: str 
         if not fresh:
             raise ValueError(f"toy variant {variant} has no seed memory; prepare it fresh")
         assemble(variant, workspace)
+        if variant == "helm":
+            point_chart_at_registry(workspace, NAMESPACE)
     else:
         shutil.copytree(APP / "kubernetes", workspace / "kubernetes")
         for manifest in (workspace / "kubernetes").glob("*.yaml"):
@@ -376,6 +393,9 @@ def up(args: Any) -> int:
 
         credentials_hook(hook.resolve(), kubeconfig)(NAMESPACE + "-sdo")
     env.save()
+    if variant == "helm":
+        # The provided helm deployment follows an upstream the harness serves (seeded with the accepted source SHA).
+        serve_upstream(kubeconfig, workspace, UpstreamLayout(NAMESPACE), images.controller)
     deployed = time.monotonic()
     config = install_controller(
         env,
@@ -446,6 +466,8 @@ def install_controller(
             kind_cluster_name=environment.cluster,
             deployment_source=raw_source(("kubernetes",)) if variant == "raw" else None,
             deployment_plan=provided_deployment_plan(variant, environment.namespace),
+            source_kind="git" if variant == "helm" else "",
+            source_config=json.dumps(source_config(UpstreamLayout(environment.namespace))) if variant == "helm" else "",
             agent_registrations=registrations.resolve() if registrations else None,
         )
     if frozen_memory and not config.frozen_memory:

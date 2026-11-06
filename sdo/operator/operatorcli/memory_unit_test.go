@@ -7,7 +7,10 @@ import (
 	"path/filepath"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
+	"strings"
 	"testing"
+
+	"sdo.dev/operator/planfile"
 )
 
 func memoryCheckEnv(t *testing.T) map[string]string {
@@ -43,7 +46,7 @@ func TestMemoryCheckNoFlagsFailsClosedWithoutAcceptanceInputs(t *testing.T) {
 func TestMemoryListCountsProgramPackages(t *testing.T) {
 	root := t.TempDir()
 	for name, body := range map[string]string{
-		".sdo/schema-version":            "3\n",
+		".sdo/schema-version":            "4\n",
 		".sdo/playbooks/fix/README.md":   "---\nschema_version: 1\nowner: responder\nfault_class: fix\noriginating_incident: synthetic\n---\n# Fix\n",
 		".sdo/playbooks/fix/diagnose.go": "package fix\n",
 		".sdo/playbooks/fix/mitigate.go": "package fix\n",
@@ -63,5 +66,17 @@ func TestMemoryListCountsProgramPackages(t *testing.T) {
 	}
 	if code != 0 || len(listing.Artifacts) != 1 || listing.Artifacts[0].Kind != "program" {
 		t.Fatalf("program listing: %d %s %s", code, stdout, stderr)
+	}
+}
+
+func TestPlanCatalogsDecodeTheRealRegistries(t *testing.T) {
+	plan := func(renderer string) []byte {
+		return []byte(`{"source":{"rendererId":"` + renderer + `","config":{"@type":"type.googleapis.com/sdodev.contracts.v1alpha1.RawRenderConfig","paths":["m"]}},"images":[{"image":"r.invalid/a:1","sourceId":"buildkit","config":{"@type":"type.googleapis.com/sdodev.contracts.v1alpha1.BuildKitImageConfig","contextPath":"."}}]}`)
+	}
+	if _, err := planfile.Parse(plan("raw"), planCatalogs()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := planfile.Parse(plan("jsonnet"), planCatalogs()); err == nil || !strings.Contains(err.Error(), "unknown renderer") {
+		t.Fatalf("err = %v", err)
 	}
 }

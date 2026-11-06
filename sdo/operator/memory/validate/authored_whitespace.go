@@ -55,7 +55,7 @@ func authoredMemoryText(path string) bool {
 	if !layout.IsMemoryPath(path) {
 		return false
 	}
-	for _, dir := range []string{layout.CorpusDir, layout.RenderedDir, layout.OutcomesDir} {
+	for _, dir := range []string{layout.CorpusDir, layout.DeploymentDir, layout.OutcomesDir} {
 		if strings.HasPrefix(path, dir+"/") {
 			return false
 		}

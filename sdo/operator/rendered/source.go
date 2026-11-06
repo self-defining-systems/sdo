@@ -130,35 +130,52 @@ func (s Source) ShapeDigest(ctx context.Context, revision, namespace string) (st
 }
 
 // ShapeOf adapts the source to the injected function memory.AcceptedHealthRevision
-// takes: the shape of repository at revision, in namespace. A nil source
-// returns nil so callers fall back to source bytes (transitional, S3-11c).
+// takes: the shape of repository at revision, in namespace. A source with no
+// DeploymentSource has no renderer to read a shape from, so its "shape" is the
+// effective tree ID: it changes exactly when a source file, a deployment view
+// or the patch series changes, never for memory-only commits.
 func (s Source) ShapeOf(namespace string) func(ctx context.Context, repository, revision string) (string, error) {
-	if s.Deployment == nil {
-		return nil
-	}
 	return func(ctx context.Context, repository, revision string) (string, error) {
 		s.Repository, s.cache = repository, nil
+		if s.Deployment == nil {
+			effective, err := s.effectiveAt(ctx, revision)
+			if err != nil {
+				return "", classifySource(err)
+			}
+			defer effective.Close()
+			return effective.ID, nil
+		}
 		return s.ShapeDigest(ctx, revision, namespace)
 	}
+}
+
+// effectiveAt resolves revision's tree and its effective tree. The caller
+// closes the result.
+func (s Source) effectiveAt(ctx context.Context, revision string) (EffectiveTree, error) {
+	if s.Repository == "" || !gitRevision.MatchString(revision) {
+		return EffectiveTree{}, sourceErrorf(SourceInvalid, "accepted repository and full commit revision are required")
+	}
+	store := ObjectStore{Dir: s.Repository, Git: s.Git}
+	tree, err := store.git(ctx, "rev-parse", "--verify", "--quiet", revision+"^{tree}")
+	if err != nil {
+		return EffectiveTree{}, sourceErrorf(SourceUnavailable, "resolve the tree of %s: %w", revision, err)
+	}
+	return Effective(ctx, store, BaseTree(strings.TrimSpace(string(tree))))
 }
 
 func (s Source) desired(ctx context.Context, revision, namespace string) (DesiredSet, error) {
 	if s.Deployment == nil {
 		return DesiredSet{}, &SourceError{Kind: SourceUnconfigured, Err: errors.New("no deployment source is configured")}
 	}
-	if s.Repository == "" || !gitRevision.MatchString(revision) || namespace == "" {
+	if namespace == "" {
 		return DesiredSet{}, sourceErrorf(SourceInvalid, "accepted repository, full commit revision, and namespace are required")
 	}
-	store := ObjectStore{Dir: s.Repository, Git: s.Git}
-	tree, err := store.git(ctx, "rev-parse", "--verify", "--quiet", revision+"^{tree}")
-	if err != nil {
-		return DesiredSet{}, sourceErrorf(SourceUnavailable, "resolve the tree of %s: %w", revision, err)
-	}
-	effective, err := Effective(ctx, store, BaseTree(strings.TrimSpace(string(tree))))
+	effective, err := s.effectiveAt(ctx, revision)
 	if err != nil {
 		return DesiredSet{}, err
 	}
-	fsys, err := GitTreeFS(ctx, store, effective)
+	defer effective.Close()
+	fsys, err := GitTreeFS(ctx, effective)
 	if err != nil {
 		return DesiredSet{}, err
 	}

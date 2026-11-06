@@ -123,7 +123,9 @@ func lifecycleChecks(ctx context.Context, r Request, paths []string, structurall
 	}
 	// An advance whose upstream change the accepted source already holds still
 	// records the upstream revision, so its empty diff is accepted.
-	if len(paths) == 0 && r.Phase != AdvancePhase && !healthRevalidation(r, paths) && !(r.Phase == ReflectionPhase && r.Decision != nil && (r.Decision.GetLearningDecision() == "no_change" || r.Decision.GetLearningDecision() == "sdk_gap")) {
+	// A provided deployment publishes the human's source as it already stands:
+	// the verified-source publish carries the evidence and no source diff.
+	if len(paths) == 0 && r.Phase != AdvancePhase && !healthRevalidation(r, paths) && !providedSource(r) && !(r.Phase == ReflectionPhase && r.Decision != nil && (r.Decision.GetLearningDecision() == "no_change" || r.Decision.GetLearningDecision() == "sdk_gap")) {
 		add(RuleEmptyDiff, "proposal has no changed files", "return no_change instead of publishing")
 	}
 	// Upkeep initializes schema metadata; the independent health judge may
@@ -217,7 +219,7 @@ func lifecycleChecks(ctx context.Context, r Request, paths []string, structurall
 		if source && tree == "" {
 			add(RuleVerifiedSource, "initial source must use PublishVerifiedSource", "trusted deployment verification must provision the candidate tree")
 		}
-		if tree != "" && (!source || architecture) {
+		if tree != "" && ((!source && len(paths) > 0) || architecture) {
 			add(RuleVerifiedSource, "verified source publish requires source files without architecture", "")
 		}
 	}
@@ -411,4 +413,10 @@ func healthRevalidation(r Request, paths []string) bool {
 		}
 	}
 	return false
+}
+
+// providedSource reports a verified-source publish: its evidence binds the
+// deployed tree, so the proposal may leave the accepted source untouched.
+func providedSource(r Request) bool {
+	return r.Phase == InitialPhase && r.Actor == Deployer && r.Publication != nil && r.Publication.VerifiedSourceTree != ""
 }

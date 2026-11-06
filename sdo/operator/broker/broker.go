@@ -22,6 +22,8 @@ import (
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/patchset"
+	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
 )
@@ -78,8 +80,14 @@ type SourceEvidence struct {
 	// Plan is the admitted new-form DeploymentPlan (source, image
 	// declarations, expected workloads), nil for a legacy-form plan.
 	// Transitional home: slice 5 moves the plan into .sdo/deployment/.
-	Plan             *contracts.DeploymentPlan
+	Plan *contracts.DeploymentPlan
+	// BaseTree is the accepted commit's tree; EffectiveTree is
+	// rendered.Effective(BaseTree).ID (base plus deployment patches, memory
+	// projected away) and PatchesDigest the digest of that patch series. The
+	// deployed pod-template stamp, and so ObservedRevision, is EffectiveTree.
 	BaseTree         string
+	EffectiveTree    string
+	PatchesDigest    string
 	ObservedRevision string
 	RenderDigest     string
 	EnvDigest        string
@@ -110,6 +118,10 @@ type Broker struct {
 	// whether a committed outcome holds an independently verified repaired
 	// cause. The same value reaches the agent's check and the publication gate.
 	RepairVerified func(*contracts.OutcomeRecord) bool
+
+	// PlanCatalogs are the registries a deployment plan in .sdo/deployment is
+	// decoded against by the shared check. Unset, only the structural decode runs.
+	PlanCatalogs planfile.Catalogs
 
 	observationCeiling   sdk.ObservationScope
 	applicationNamespace string
@@ -281,6 +293,11 @@ func (b *Broker) createProposal(ctx context.Context, incidentID string, phase Ph
 				return err
 			}
 		}
+		if materializesPatches(phase) {
+			if _, err := patchset.Materialize(ctx, checkout); err != nil {
+				return fmt.Errorf("materialize the effective view of %s: %w", base, err)
+			}
+		}
 		proposal = Proposal{IncidentID: incidentID, Path: checkout, BaseCommit: base}
 		if err := validate.WritePublicationContext(ctx, checkout, validate.PublicationContext{BaseCommit: base, IncidentID: incidentID, ObservationCeiling: b.observationCeiling, ApplicationNamespace: b.applicationNamespace}); err != nil {
 			return err
@@ -417,7 +434,7 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 		if err := validate.Err(preflight); err != nil {
 			return err
 		}
-		if len(paths) == 0 && !(actor == HealthJudge && phase == InitialPhase && strings.HasPrefix(incidentID, "health-refresh-")) {
+		if len(paths) == 0 && expectedSourceTree == "" && !(actor == HealthJudge && phase == InitialPhase && strings.HasPrefix(incidentID, "health-refresh-")) {
 			receipt = Receipt{IncidentID: incidentID, Phase: phase}
 			return nil
 		}
@@ -485,6 +502,9 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 			}
 			if stagedTree != verifiedTree {
 				return errors.New("staged source tree differs from verified deployment")
+			}
+			if err := requireEffectiveEvidence(ctx, stage, *evidence); err != nil {
+				return err
 			}
 		}
 		// The shared check may install generic health registrations. Publish
@@ -891,7 +911,7 @@ func proposalTreeDigest(ctx context.Context, checkout string, sourceOnly bool) (
 }
 
 func addIgnoredOperationalMemory(ctx context.Context, root string, env []string) error {
-	for _, part := range []string{layout.LibrariesDir, layout.CorpusDir, layout.RenderedDir} {
+	for _, part := range []string{layout.LibrariesDir, layout.CorpusDir} {
 		path := filepath.Join(root, part)
 		info, err := os.Lstat(path)
 		if os.IsNotExist(err) {

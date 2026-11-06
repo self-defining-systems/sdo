@@ -16,11 +16,12 @@ import (
 // cases included, that hold a Kubernetes Secret's data. References to a Secret
 // (kind and name) remain allowed. Captures never read Secrets; this keeps
 // memory, which is pushed to a shared remote, free of them whatever the author.
-// Rendered source output and synthetic testdata are out of scope.
+// Synthetic testdata is out of scope; deployment manifests and values are
+// checked like any other memory file.
 func secretDataDiagnostics(root string, paths []string) []Diagnostic {
 	var diagnostics []Diagnostic
 	for _, p := range paths {
-		if !layout.IsMemoryPath(p) || strings.HasPrefix(p, layout.RenderedDir+"/") || slices.Contains(strings.Split(p, "/"), "testdata") {
+		if !layout.IsMemoryPath(p) || slices.Contains(strings.Split(p, "/"), "testdata") {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(p)))

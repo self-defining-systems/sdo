@@ -15,7 +15,7 @@ func TestGitTreeFSClassifiesGitFailureAsUnavailable(t *testing.T) {
 	if _, err := Effective(context.Background(), objects, BaseTree(id)); !errors.Is(err, ErrSourceUnavailable) || !errors.Is(err, boom) {
 		t.Fatalf("Effective = %v", err)
 	}
-	if _, err := GitTreeFS(context.Background(), objects, EffectiveTree(id)); !errors.Is(err, ErrSourceUnavailable) {
+	if _, err := GitTreeFS(context.Background(), EffectiveTree{ID: id, Store: objects}); !errors.Is(err, ErrSourceUnavailable) {
 		t.Fatalf("GitTreeFS = %v", err)
 	}
 }
@@ -32,7 +32,9 @@ func TestGitTreeFSReadsTheLsTreeListing(t *testing.T) {
 		"120000 blob "+blob+"       5\tlink",
 		"160000 commit "+blob+"       -\tvendor/mod",
 		"100644 blob "+blob+"       4\t.sdo/goal.md",
-		"100644 blob "+blob+"       6\t.sdo/deployment/p.yaml",
+		"100644 blob "+blob+"       6\t.sdo/deployment/values/p.yaml",
+		"100644 blob "+blob+"       6\t.sdo/deployment/plan.yaml",
+		"100644 blob "+blob+"       6\t.sdo/deployment/patches/0001-x.patch",
 	)
 	objects := ObjectStore{Dir: "x", Git: func(_ context.Context, _ string, args ...string) ([]byte, error) {
 		if args[0] == "cat-file" && args[1] == "-t" {
@@ -40,7 +42,7 @@ func TestGitTreeFSReadsTheLsTreeListing(t *testing.T) {
 		}
 		return []byte(out), nil
 	}}
-	fsys, err := GitTreeFS(context.Background(), objects, EffectiveTree(id))
+	fsys, err := GitTreeFS(context.Background(), EffectiveTree{ID: id, Store: objects})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,13 +53,13 @@ func TestGitTreeFSReadsTheLsTreeListing(t *testing.T) {
 	if got, _ := fsys.Blob("run.sh"); got != blob {
 		t.Fatalf("Blob = %q", got)
 	}
-	for _, name := range []string{"link", "vendor", "vendor/mod", ".sdo/goal.md"} {
+	for _, name := range []string{"link", "vendor", "vendor/mod", ".sdo/goal.md", ".sdo/deployment/plan.yaml", ".sdo/deployment/patches/0001-x.patch"} {
 		if _, err := fsys.Stat(name); !errors.Is(err, fs.ErrNotExist) {
 			t.Errorf("Stat(%s) = %v, want not exist", name, err)
 		}
 	}
-	if _, err := fsys.Stat(".sdo/deployment/p.yaml"); err != nil {
-		t.Fatalf(".sdo/deployment must stay visible: %v", err)
+	if _, err := fsys.Stat(".sdo/deployment/values/p.yaml"); err != nil {
+		t.Fatalf("deployment views must stay visible: %v", err)
 	}
 }
 
@@ -68,7 +70,7 @@ func TestGitTreeFSRejectsMalformedListing(t *testing.T) {
 		}
 		return []byte("garbage\x00"), nil
 	}}
-	if _, err := GitTreeFS(context.Background(), objects, EffectiveTree(strings.Repeat("c", 40))); !errors.Is(err, ErrSourceUnavailable) {
+	if _, err := GitTreeFS(context.Background(), EffectiveTree{ID: strings.Repeat("c", 40), Store: objects}); !errors.Is(err, ErrSourceUnavailable) {
 		t.Fatalf("err = %v", err)
 	}
 }

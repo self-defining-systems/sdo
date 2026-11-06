@@ -26,6 +26,9 @@ func TestSourceErrorKinds(t *testing.T) {
 		case "cat-file":
 			return []byte("tree\n"), nil
 		}
+		if len(args) > 1 && args[0] == "ls-tree" && args[1] == "-z" && len(args) == 5 {
+			return nil, nil // no .sdo/ directories
+		}
 		return []byte("100644 blob " + commit + " 4\tother.yaml\x00"), nil
 	}
 	_, err = Source{Repository: "r", Deployment: rawSource(t, "k8s"), Catalog: testCatalog(t), Git: listing}.AcceptedManifests(ctx, commit, "app")

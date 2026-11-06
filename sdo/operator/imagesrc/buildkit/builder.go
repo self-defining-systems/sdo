@@ -35,20 +35,18 @@ const ID = "buildkit"
 
 // Doc tells an agent what the buildkit source does and when to choose it.
 const Doc = `Builds the image from a Dockerfile in the source tree and pushes it to the operator's registry. Choose it for each image whose code lives in this repository, and declare it for the exact image name the manifests use; an undeclared image under the operator's registry host is rejected.
-Config: context_path, the tree-relative build context directory; dockerfile_path, the tree-relative Dockerfile. Paths are checked before any build starts, so a wrong path costs no build time. Builds run in a bounded rootless job that sees only the proposal checkout.`
+Config: context_path, the tree-relative build context directory; dockerfile_path, the tree-relative Dockerfile. Paths are checked before any build starts, so a wrong path costs no build time. Builds run in a bounded rootless job that sees only the effective source tree: the repository's tracked files with the deployment patches applied, not your working directory.`
 
 // Builder builds candidate source in a bounded rootless BuildKit Job. The Job
-// sees only the proposal checkout, mounted read-only, and its own registry-push
+// sees only a materialized effective tree (rendered.Materializer, below
+// CheckoutRoot), mounted read-only, and its own registry-push
 // Secret. The accepted checkout and broker credentials are absent. It is the
 // imagesrc source "buildkit" (see Resolve).
 type Builder struct {
-	// TreeDigest fingerprints a checkout's tracked tree (broker.ProposalTreeDigest).
-	// A build fails when the tree changes while the Job runs.
-	TreeDigest           func(ctx context.Context, checkout string) (string, error)
 	Client               kubernetes.Interface
 	Namespace            string
 	RepositoryPVC        string
-	ProposalRoot         string
+	CheckoutRoot         string
 	RepositoryPVCSubPath string
 	BuildKitImage        string
 	RegistrySecret       string
@@ -64,8 +62,8 @@ type Builder struct {
 }
 
 func (b Builder) buildImage(ctx context.Context, checkout string, build *contracts.ImageBuild) (string, error) {
-	if b.Client == nil || b.TreeDigest == nil || b.Namespace == "" || b.RepositoryPVC == "" || b.ProposalRoot == "" || b.BuildKitImage == "" || b.RegistrySecret == "" || b.ServiceAccount == "" || build == nil || build.GetImage() == "" {
-		return "", errors.New("Kubernetes image builder requires tree digest, client, namespace, proposal PVC, pinned BuildKit image, registry Secret, service account, and image build")
+	if b.Client == nil || b.Namespace == "" || b.RepositoryPVC == "" || b.CheckoutRoot == "" || b.BuildKitImage == "" || b.RegistrySecret == "" || b.ServiceAccount == "" || build == nil || build.GetImage() == "" {
+		return "", errors.New("Kubernetes image builder requires client, namespace, proposal PVC, pinned BuildKit image, registry Secret, service account, and image build")
 	}
 	if !digestReference.MatchString(b.BuildKitImage) {
 		return "", errors.New("BuildKit Job image must be pinned by digest")
@@ -83,10 +81,6 @@ func (b Builder) buildImage(ctx context.Context, checkout string, build *contrac
 	subPath, contextRel, dockerfileRel, err := b.proposalPaths(checkout, build)
 	if err != nil {
 		return "", err
-	}
-	initialTree, err := b.TreeDigest(ctx, checkout)
-	if err != nil {
-		return "", fmt.Errorf("snapshot candidate tree before image build: %w", err)
 	}
 	limit := b.Timeout
 	if limit <= 0 {
@@ -136,13 +130,6 @@ func (b Builder) buildImage(ctx context.Context, checkout string, build *contrac
 			}
 			if condition.Type == batchv1.JobComplete {
 				finished = true
-				finalTree, err := b.TreeDigest(bounded, checkout)
-				if err != nil {
-					return "", fmt.Errorf("re-check candidate tree after image build: %w", err)
-				}
-				if finalTree != initialTree {
-					return "", errors.New("candidate tree changed during image build")
-				}
 				logs, err := b.logs(bounded, name)
 				if err != nil {
 					return "", fmt.Errorf("read BuildKit receipt: %w", err)
@@ -183,7 +170,7 @@ func ValidateRegistryHost(host string) error {
 }
 
 func (b Builder) proposalPaths(checkout string, build *contracts.ImageBuild) (string, string, string, error) {
-	root, err := filepath.Abs(b.ProposalRoot)
+	root, err := filepath.Abs(b.CheckoutRoot)
 	if err != nil {
 		return "", "", "", err
 	}
@@ -193,19 +180,19 @@ func (b Builder) proposalPaths(checkout string, build *contracts.ImageBuild) (st
 	}
 	relative, err := filepath.Rel(root, candidate)
 	if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return "", "", "", errors.New("image build checkout must be a proposal below the configured proposal root")
+		return "", "", "", errors.New("image build checkout must be below the configured checkout root")
 	}
 	realRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
-		return "", "", "", fmt.Errorf("resolve proposal root: %w", err)
+		return "", "", "", fmt.Errorf("resolve checkout root: %w", err)
 	}
 	realCandidate, err := filepath.EvalSymlinks(candidate)
 	if err != nil {
-		return "", "", "", fmt.Errorf("resolve proposal checkout: %w", err)
+		return "", "", "", fmt.Errorf("resolve build checkout: %w", err)
 	}
 	realRelative, err := filepath.Rel(realRoot, realCandidate)
 	if err != nil || realRelative != relative {
-		return "", "", "", errors.New("proposal checkout resolves outside configured proposal root")
+		return "", "", "", errors.New("build checkout resolves outside the configured checkout root")
 	}
 	prefix := filepath.ToSlash(filepath.Clean(b.RepositoryPVCSubPath))
 	if prefix == "." {
@@ -224,7 +211,7 @@ func (b Builder) proposalPaths(checkout string, build *contracts.ImageBuild) (st
 		}
 		rel, err := filepath.Rel(realCandidate, resolved)
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return "", errors.New("image build path leaves proposal checkout")
+			return "", errors.New("image build path leaves the build checkout")
 		}
 		return filepath.ToSlash(rel), nil
 	}

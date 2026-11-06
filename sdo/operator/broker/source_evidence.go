@@ -23,11 +23,17 @@ import (
 // ID). It has no reader: the lane must be reinstalled.
 var ErrSourceEvidencePredatesDeploymentSource = errors.New("deployment evidence predates deployment_source (written by an older operator); persistent lanes must reinstall the operator (`sdo-operator install --fresh` / lane reset)")
 
+// ErrSourceEvidencePredatesEffectiveTree marks a ledger record written before
+// receipts bound the effective tree and the deployment patch series. It has no
+// reader: the deployed workloads carry a different source stamp, so the lane
+// must be reinstalled.
+var ErrSourceEvidencePredatesEffectiveTree = errors.New("deployment evidence predates effective_tree and patches_digest (written by an older operator); persistent lanes must reinstall the operator (`sdo-operator install --fresh` / lane reset)")
+
 func validateSourceEvidence(value SourceEvidence) error {
 	if value.AcceptedCommit != "" {
 		return errors.New("deployment evidence cannot claim an accepted commit")
 	}
-	if !validGitID(value.BaseTree) || value.ObservedRevision != value.BaseTree || !value.Ready || len(value.Images) == 0 || len(value.ResourceIDs) == 0 {
+	if !validGitID(value.BaseTree) || !validGitID(value.EffectiveTree) || !validSHA256(value.PatchesDigest) || value.ObservedRevision != value.EffectiveTree || !value.Ready || len(value.Images) == 0 || len(value.ResourceIDs) == 0 {
 		return errors.New("trusted source evidence is incomplete or does not match the deployed tree")
 	}
 	if value.DeploymentSource == nil || value.DeploymentSource.GetRendererId() == "" || value.DeploymentSource.GetConfig() == nil {
@@ -49,6 +55,26 @@ func validateSourceEvidence(value SourceEvidence) error {
 	return nil
 }
 
+// requireEffectiveEvidence recomputes the effective tree of root's candidate
+// tree and requires it, and its patch series digest, to be what the deployer
+// verified. The broker never trusts the evidence's claim: a patch applied
+// differently (or a different series) than at deployment is not published.
+func requireEffectiveEvidence(ctx context.Context, root string, evidence SourceEvidence) error {
+	tree, err := ProposalTreeDigest(ctx, root)
+	if err != nil {
+		return err
+	}
+	effective, err := rendered.Effective(ctx, rendered.ObjectStore{Dir: root}, rendered.BaseTree(tree))
+	if err != nil {
+		return fmt.Errorf("compute effective tree of the staged source: %w", err)
+	}
+	defer effective.Close()
+	if effective.ID != evidence.EffectiveTree || effective.PatchesDigest != evidence.PatchesDigest {
+		return fmt.Errorf("staged effective tree %s (patches %s) differs from the verified deployment's %s (patches %s)", effective.ID, effective.PatchesDigest, evidence.EffectiveTree, evidence.PatchesDigest)
+	}
+	return nil
+}
+
 func validSHA256(value string) bool {
 	return len(value) == 64 && validGitID(value)
 }
@@ -60,6 +86,8 @@ type sourceEvidenceRecord struct {
 	DeploymentSource  json.RawMessage          `json:"deployment_source"`
 	Plan              json.RawMessage          `json:"plan,omitempty"`
 	BaseTree          string                   `json:"base_tree"`
+	EffectiveTree     string                   `json:"effective_tree"`
+	PatchesDigest     string                   `json:"patches_digest"`
 	ObservedRevision  string                   `json:"observed_revision"`
 	RenderDigest      string                   `json:"render_digest"`
 	EnvDigest         string                   `json:"env_digest"`
@@ -73,7 +101,7 @@ type sourceEvidenceRecord struct {
 // MarshalJSON encodes the ledger record.
 func (e SourceEvidence) MarshalJSON() ([]byte, error) {
 	record := sourceEvidenceRecord{
-		ContainerImages: e.ContainerImages, BaseTree: e.BaseTree, ObservedRevision: e.ObservedRevision,
+		ContainerImages: e.ContainerImages, BaseTree: e.BaseTree, EffectiveTree: e.EffectiveTree, PatchesDigest: e.PatchesDigest, ObservedRevision: e.ObservedRevision,
 		RenderDigest: e.RenderDigest, EnvDigest: e.EnvDigest, Images: e.Images, ResourceIDs: e.ResourceIDs,
 		Ready: e.Ready, AcceptedCommit: e.AcceptedCommit,
 	}
@@ -98,7 +126,8 @@ func (e SourceEvidence) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON decodes a ledger record. A record from before deployment
 // sources (it has no deployment_source) fails with
-// ErrSourceEvidencePredatesDeploymentSource.
+// ErrSourceEvidencePredatesDeploymentSource, one from before effective trees
+// (no effective_tree) with ErrSourceEvidencePredatesEffectiveTree.
 func (e *SourceEvidence) UnmarshalJSON(data []byte) error {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(data, &fields); err != nil {
@@ -106,6 +135,9 @@ func (e *SourceEvidence) UnmarshalJSON(data []byte) error {
 	}
 	if source, found := fields["deployment_source"]; !found || string(source) == "null" {
 		return ErrSourceEvidencePredatesDeploymentSource
+	}
+	if tree, found := fields["effective_tree"]; !found || string(tree) == "null" || string(tree) == `""` {
+		return ErrSourceEvidencePredatesEffectiveTree
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -115,6 +147,7 @@ func (e *SourceEvidence) UnmarshalJSON(data []byte) error {
 	}
 	value := SourceEvidence{
 		ContainerImages: record.ContainerImages, DeploymentSource: &contracts.DeploymentSource{}, BaseTree: record.BaseTree,
+		EffectiveTree: record.EffectiveTree, PatchesDigest: record.PatchesDigest,
 		ObservedRevision: record.ObservedRevision, RenderDigest: record.RenderDigest, EnvDigest: record.EnvDigest,
 		Images: record.Images, ResourceIDs: record.ResourceIDs, Ready: record.Ready, AcceptedCommit: record.AcceptedCommit,
 	}

@@ -306,6 +306,13 @@ def add_toy_parser(commands: Any) -> None:
     push.add_argument("--commit", required=True, choices=available_commits())
     push.set_defaults(handler=_push)
 
+    scenario = actions.add_parser("scenario", help="push a scripted commit to a live lane and assert SDO's handling")
+    shared(scenario, remote=False)
+    scenario.add_argument("--commit", required=True, choices=available_commits())
+    scenario.add_argument("--verdict-seconds", type=float, help="how long SDO has to accept or hold the commit")
+    scenario.add_argument("--steady-seconds", type=float, help="quiet window after the verdict")
+    scenario.set_defaults(handler=_scenario)
+
     args = actions.add_parser("source-args", help="print the controller flags that follow this upstream")
     shared(args, remote=False)
     args.set_defaults(handler=_source_args)
@@ -324,13 +331,18 @@ def _lane(args: Any) -> tuple[UpstreamLayout, Any]:
     return UpstreamLayout(namespace, ref=args.ref, poll_interval=args.poll_interval), environment
 
 
+def serve_upstream(kubeconfig: Path, workspace: Path, layout: UpstreamLayout, image: str) -> str:
+    """Deploy the in-cluster Git server and seed it with the workspace commit; returns the seeded SHA."""
+    apply_manifests(kubeconfig, upstream_manifests(layout, image))
+    with forwarded_remote(kubeconfig, layout) as remote:
+        return seed_upstream(workspace, remote, layout)
+
+
 def _serve(args: Any) -> int:
     layout, environment = _lane(args)
     if environment is None:
         raise SystemExit("serve needs --run-dir (kubeconfig and workspace)")
-    apply_manifests(environment.kubeconfig, upstream_manifests(layout, args.image))
-    with forwarded_remote(environment.kubeconfig, layout) as remote:
-        head = seed_upstream(environment.workspace, remote, layout)
+    head = serve_upstream(environment.kubeconfig, environment.workspace, layout, args.image)
     print(json.dumps({"seeded": head, "repository": layout.cluster_url, "ref": layout.ref}, sort_keys=True))
     return 0
 
@@ -352,3 +364,14 @@ def _source_args(args: Any) -> int:
     layout, _ = _lane(args)
     print(json.dumps(source_args(layout)))
     return 0
+
+
+def _scenario(args: Any) -> int:
+    from benchmarks.sregym.fastloop.toy_live import run_scenario
+
+    layout, environment = _lane(args)
+    if environment is None:
+        raise SystemExit("scenario needs --run-dir")
+    return run_scenario(
+        environment, layout, args.commit, verdict_seconds=args.verdict_seconds, steady_seconds=args.steady_seconds
+    )

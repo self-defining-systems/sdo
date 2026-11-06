@@ -46,6 +46,10 @@ type Deployer struct {
 	Environment *contracts.RenderEnvironment
 	// AcceptedRoot is the accepted repository VerifyAccepted reads.
 	AcceptedRoot string
+	// Materializer writes the effective tree to the directory image builds
+	// read (builds never read the agent's checkout). Nil means no build
+	// source gets a directory: only sources that need none can resolve.
+	Materializer *rendered.Materializer
 	// Git replaces the git process edge (simulation); nil runs git.
 	Git rendered.GitFunc
 }
@@ -78,7 +82,8 @@ func (d Deployer) ApplyAndVerify(ctx context.Context, checkout string, plan *con
 	if err != nil {
 		return lifecycle.DeploymentReceipt{}, err
 	}
-	fsys, err := rendered.GitTreeFS(ctx, store, effective)
+	defer effective.Close()
+	fsys, err := rendered.GitTreeFS(ctx, effective)
 	if err != nil {
 		return lifecycle.DeploymentReceipt{}, err
 	}
@@ -90,17 +95,23 @@ func (d Deployer) ApplyAndVerify(ctx context.Context, checkout string, plan *con
 	for _, image := range plan.GetImages() {
 		declared = append(declared, imagesrc.Declared{Image: image.GetImage(), SourceID: image.GetSourceId(), Config: image.GetConfig()})
 	}
-	resolved, err := d.Images.ResolveAll(ctx, imageSites(set), declared, imagesrc.Request{Tree: string(effective), FS: fsys, Checkout: checkout})
+	request := imagesrc.Request{Tree: effective.ID, FS: fsys}
+	if d.Materializer != nil {
+		dir, release, err := d.Materializer.Materialize(ctx, effective)
+		if err != nil {
+			return lifecycle.DeploymentReceipt{}, err
+		}
+		defer release()
+		request.Checkout = dir
+	}
+	resolved, err := d.Images.ResolveAll(ctx, imageSites(set), declared, request)
 	if err != nil {
 		return lifecycle.DeploymentReceipt{}, fmt.Errorf("resolve images: %w", err)
-	}
-	if again, err := d.TreeDigest(ctx, checkout); err != nil || again != base {
-		return lifecycle.DeploymentReceipt{}, fmt.Errorf("candidate tree changed during image resolution (was %s, now %q, err %v)", base, again, err)
 	}
 	if err := checkExpectedWorkloads(set, plan.GetExpectedWorkloadIds()); err != nil {
 		return lifecycle.DeploymentReceipt{}, err
 	}
-	run := &applyRun{deployer: d, base: base, resolved: resolved, workloads: map[string]*workloadRecord{}}
+	run := &applyRun{deployer: d, base: base, effective: effective, resolved: resolved, workloads: map[string]*workloadRecord{}}
 	if err := run.apply(ctx, set); err != nil {
 		return lifecycle.DeploymentReceipt{}, err
 	}
@@ -171,6 +182,7 @@ type workloadRecord struct {
 type applyRun struct {
 	deployer  Deployer
 	base      string
+	effective rendered.EffectiveTree
 	resolved  map[string]imagesrc.Resolved
 	workloads map[string]*workloadRecord
 	order     []string
@@ -186,7 +198,7 @@ func (r *applyRun) apply(ctx context.Context, set rendered.DesiredSet) error {
 		for _, object := range phase.Objects {
 			document := object.Object.DeepCopy().Object
 			record := &workloadRecord{id: object.Ref.Kind + "/" + object.Ref.Namespace + "/" + object.Ref.Name, ephemeral: phase.Ephemeral}
-			images, err := Stamp(document, rendered.BaseTree(r.base), func(site ImageSite) string {
+			images, err := Stamp(document, r.effective.ID, func(site ImageSite) string {
 				pinned := r.resolved[site.Image]
 				record.named = append(record.named, rendered.DeployedImage{
 					Ref:  sdk.ObjectRef{APIVersion: object.Ref.APIVersion, Kind: site.Kind, Namespace: object.Ref.Namespace, Name: site.Name},
@@ -237,7 +249,7 @@ func (r *applyRun) observe(ctx context.Context, record *workloadRecord) error {
 		return fmt.Errorf("workload %s is not ready", record.id)
 	}
 	if !record.ephemeral {
-		if observed.Revision != r.base || !sameImageSet(record.images, observed.Images) {
+		if observed.Revision != r.effective.ID || !sameImageSet(record.images, observed.Images) {
 			return fmt.Errorf("workload %s is not ready at the candidate revision and images", record.id)
 		}
 		// A backend that supplies only a flat image list cannot authorize
@@ -264,7 +276,10 @@ func (r *applyRun) receipt(ctx context.Context) (lifecycle.DeploymentReceipt, er
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
-	receipt := lifecycle.DeploymentReceipt{BaseTree: r.base, ObservedRevision: r.base, ResourceIDs: ids, Ready: true}
+	receipt := lifecycle.DeploymentReceipt{
+		BaseTree: r.base, EffectiveTree: r.effective.ID, PatchesDigest: r.effective.PatchesDigest,
+		ObservedRevision: r.effective.ID, ResourceIDs: ids, Ready: true,
+	}
 	for _, id := range ids {
 		record := r.workloads[id]
 		receipt.Images = append(receipt.Images, record.observed.Images...)

@@ -9,8 +9,14 @@ from typing import TYPE_CHECKING
 
 from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.image_provenance import (
+    DEFAULT_WORKER_TARGET,
+    IMAGE_TARGET_LABEL,
+    IMAGE_TARGETS,
+    MANIFEST_TREE_LABEL,
     REVISION_LABEL,
+    SCRIPTED_WORKER_TARGET,
     SOURCE_TREE_LABEL,
+    WORKER_TARGET_LABEL,
     ImageSource,
     changed_build_paths,
     image_source,
@@ -50,6 +56,8 @@ def assert_harness_sources(directory: Path) -> None:
 
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from benchmarks.sregym.fastloop.environment import Images
 
 
@@ -141,3 +149,84 @@ def assert_runtime_images(images: Images, worktree: Path, *, dev_mount: bool = T
         raise ValueError(
             f"eval: controller {images.controller} Go toolchain cannot run; rebuild with scripts/build_sdo_images.sh"
         ) from exc
+
+
+ALLOW_STALE_FLAG = "--allow-stale-images"
+
+
+def rebuild_command(target: str, image: str, worker_target: str | None = None) -> str:
+    """The build line that replaces ``image`` with one built from the current tree."""
+    name = image.rpartition("/")[2]
+    tag = name.partition(":")[2] or "latest"
+    scripted = "SDO_SCRIPTED_WORKER=1 " if worker_target == SCRIPTED_WORKER_TARGET else ""
+    return f"{scripted}SDO_IMAGES={target} SDO_IMAGE_TAG={tag} bash scripts/build_sdo_images.sh"
+
+
+def assert_images_fresh(images: Mapping[str, str], worktree: Path, *, dev_mount: bool = True) -> None:
+    """Fail within seconds when a lane image was built from other inputs than the tree it will run.
+
+    Only labels are read, no container runs. Each SDO-built image names the Bake target and the source
+    identity it was built from. With a development mount the Go and Python code come from the mount, so
+    only the inputs the mount cannot replace must match: Dockerfiles, Bake blocks and Go module manifests
+    (they decide the baked tools and the offline module cache). Without a mount every build input must match.
+    ``images`` maps a role (controller, responder) to its image reference.
+    """
+    for role, image in images.items():
+        labels = _image_labels(image)
+        target = labels.get(IMAGE_TARGET_LABEL)
+        if target not in IMAGE_TARGETS:
+            rebuild = rebuild_command("controller" if role == "controller" else "benchmark", image)
+            raise ValueError(
+                f"fastloop up: {role} image {image} records no source inputs (built before image provenance); "
+                f"rebuild: {rebuild} (or pass {ALLOW_STALE_FLAG} for a deliberate frozen image)"
+            )
+        worker_target = labels.get(WORKER_TARGET_LABEL, DEFAULT_WORKER_TARGET) if target == "benchmark" else None
+        current = image_source(worktree, "HEAD", target, worker_target)
+        _assert_inputs_match(image, role, labels, current, worktree, dev_mount=dev_mount, worker_target=worker_target)
+
+
+def _assert_inputs_match(
+    image: str,
+    role: str,
+    labels: Mapping[str, str],
+    current: ImageSource,
+    worktree: Path,
+    *,
+    dev_mount: bool,
+    worker_target: str | None,
+) -> None:
+    def identity(source: ImageSource) -> str:
+        return source.manifest_identity if dev_mount else source.identity
+
+    rebuild = (
+        f"rebuild: {rebuild_command(current.target, image, worker_target)} "
+        f"(or pass {ALLOW_STALE_FLAG} for a deliberate frozen image)"
+    )
+    dirty = uncommitted_build_files(worktree, [current])
+    if dev_mount:
+        dirty = [path for path in dirty if current.is_manifest_path(path)]
+    if dirty:
+        raise ValueError(
+            f"fastloop up: {role} image inputs have uncommitted changes ({', '.join(dirty[:5])}); "
+            f"commit, then {rebuild}"
+        )
+    if labels.get(MANIFEST_TREE_LABEL if dev_mount else SOURCE_TREE_LABEL) == identity(current):
+        return
+    revision = labels.get(REVISION_LABEL)
+    try:
+        built = image_source(worktree, revision, current.target, worker_target) if revision else None
+    except ValueError:
+        built = None
+    if built is None:
+        raise ValueError(
+            f"fastloop up: {role} image {image} was built from a source this tree cannot compare; {rebuild}"
+        )
+    if identity(built) == identity(current):
+        return
+    changed = changed_build_paths(built, current)
+    if dev_mount:
+        changed = [path for path in changed if current.is_manifest_path(path)] or changed
+    raise ValueError(
+        f"fastloop up: {role} image {image} was built from different inputs than {worktree} "
+        f"(differs in {', '.join(changed[:5])}); {rebuild}"
+    )

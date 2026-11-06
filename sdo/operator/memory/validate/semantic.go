@@ -35,6 +35,9 @@ func (s *run) semantic(ctx context.Context) error {
 			return err
 		}
 		s.physicalPaths()
+		if err := s.deploymentRules(ctx); err != nil {
+			return err
+		}
 		if err := s.programRules(ctx); err != nil {
 			return err
 		}

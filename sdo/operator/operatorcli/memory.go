@@ -325,7 +325,7 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 		appNamespace = publication.ApplicationNamespace
 	}
 	diagnostics, err := validate.Check(ctx, validate.Request{
-		Replay: replay, CodePath: memoryValidationCodePath(getenv),
+		Replay: replay, CodePath: memoryValidationCodePath(getenv), PlanCatalogs: planCatalogs(),
 		ObservationCeiling: ceiling, ApplicationNamespace: appNamespace,
 		MitigationReplayNotes: &replayNotes, CoverageGaps: &coverageGaps,
 		Root: absolute, Base: base, CaptureDirectory: getenv("SDO_CAPTURED_CORPUS_DIR"), IncidentID: getenv(memoryIncidentEnv), Actor: validate.Actor(actor), Phase: validate.Phase(phase), Publication: publication, Decision: decision,

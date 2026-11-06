@@ -36,7 +36,7 @@ func TestUpstreamDeployerCarriesTheLaunchEnvironment(t *testing.T) {
 	environment := &contracts.RenderEnvironment{KubeVersion: "v1.31.2"}
 	deployer, err := operateIdentity(config).deployer(nil, deployTarget{
 		Namespace: "demo", ControlNamespace: "sdo-system", AcceptedRoot: config.ApplicationRoot,
-		ProposalRoot: config.WorktreeRoot, RepositoryMount: config.RepositoryMount, RepositoryPVC: "repo",
+		WorkspaceRoot: config.WorktreeRoot, RepositoryMount: config.RepositoryMount, RepositoryPVC: "repo",
 	}, environment)
 	if err != nil {
 		t.Fatal(err)

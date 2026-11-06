@@ -55,18 +55,20 @@ func TestAcceptedEvidenceRecordsTheSourceDigestsAndPlan(t *testing.T) {
 	if !rendered.SameDeploymentSource(evidence.DeploymentSource, plan.GetSource()) || !proto.Equal(evidence.Plan, plan) {
 		t.Fatalf("evidence source %v plan %v, want %v", evidence.DeploymentSource, evidence.Plan, plan)
 	}
-	if evidence.BaseTree != "tree" || evidence.RenderDigest != "render" || evidence.EnvDigest != "env" {
+	if evidence.BaseTree != "tree" || evidence.EffectiveTree != "effective" || evidence.PatchesDigest != "patches" || evidence.RenderDigest != "render" || evidence.EnvDigest != "env" {
 		t.Fatalf("evidence = %+v", evidence)
 	}
 }
 
 func TestReceiptThatDoesNotBindTheProposedSourceIsNotAccepted(t *testing.T) {
 	for name, adjust := range map[string]func(*lifecycle.DeploymentReceipt){
-		"another source":   func(r *lifecycle.DeploymentReceipt) { r.Source = rawSourcePlan(t, "other").GetSource() },
-		"no source":        func(r *lifecycle.DeploymentReceipt) { r.Source = nil },
-		"no render digest": func(r *lifecycle.DeploymentReceipt) { r.RenderDigest = "" },
-		"no env digest":    func(r *lifecycle.DeploymentReceipt) { r.EnvDigest = "" },
-		"no base tree":     func(r *lifecycle.DeploymentReceipt) { r.BaseTree = "" },
+		"another source":    func(r *lifecycle.DeploymentReceipt) { r.Source = rawSourcePlan(t, "other").GetSource() },
+		"no source":         func(r *lifecycle.DeploymentReceipt) { r.Source = nil },
+		"no render digest":  func(r *lifecycle.DeploymentReceipt) { r.RenderDigest = "" },
+		"no env digest":     func(r *lifecycle.DeploymentReceipt) { r.EnvDigest = "" },
+		"no base tree":      func(r *lifecycle.DeploymentReceipt) { r.BaseTree = "" },
+		"no effective tree": func(r *lifecycle.DeploymentReceipt) { r.EffectiveTree = "" },
+		"no patches digest": func(r *lifecycle.DeploymentReceipt) { r.PatchesDigest = "" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{clear}})

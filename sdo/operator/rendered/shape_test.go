@@ -124,7 +124,7 @@ func TestSourceShapeOfTracksShapeAcrossRevisions(t *testing.T) {
 	if shape(shapeBase) == shape(strings.Replace(shapeBase, "containerPort: 80", "containerPort: 81", 1)) {
 		t.Fatal("a port change did not move the shape")
 	}
-	if (rendered.Source{}).ShapeOf("app") != nil {
-		t.Fatal("a source-less install must fall back to bytes (nil ShapeOf)")
+	if (rendered.Source{}).ShapeOf("app") == nil {
+		t.Fatal("a source-less install falls back to the effective tree ID, never to nil")
 	}
 }

@@ -132,6 +132,8 @@ def _emitted(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[str]]:
                 images=(buildkit_image("app:v1", ".", "Dockerfile"),),
                 expected_workload_ids=["Deployment/hotel/web"],
             ),
+            source_kind="git",
+            source_config='{"poll_interval":"5s","ref":"main","repository":"git://upstream/app.git"}',
         )
     )
     return argv

@@ -71,8 +71,15 @@ type DeploymentReceipt struct {
 	ContainerImages []rendered.DeployedImage
 	// Source is the DeploymentSource the deployment rendered; opaque here.
 	Source *contracts.DeploymentSource
-	// BaseTree is the deployed source tree (broker.ProposalTreeDigest).
-	BaseTree         string
+	// BaseTree is the accepted commit's tree (broker.ProposalTreeDigest).
+	BaseTree string
+	// EffectiveTree is the ID of the tree that was rendered and built:
+	// BaseTree with the deployment patch series applied and the .sdo/
+	// memory projected away (rendered.Effective). PatchesDigest is the digest
+	// of that series. The pod-template source stamp is EffectiveTree, so
+	// ObservedRevision (read back from the cluster) equals it.
+	EffectiveTree    string
+	PatchesDigest    string
 	ObservedRevision string
 	// RenderDigest and EnvDigest are rendered.DesiredSet's digests at BaseTree.
 	RenderDigest string
@@ -429,11 +436,11 @@ func admissiblePlan(plan *contracts.DeploymentPlan) error {
 }
 
 func completeDeploymentReceipt(receipt DeploymentReceipt) bool {
-	return receipt.Ready && receipt.Source != nil && receipt.BaseTree != "" && receipt.ObservedRevision != "" && receipt.RenderDigest != "" && receipt.EnvDigest != "" && len(receipt.Images) > 0 && len(receipt.ResourceIDs) > 0
+	return receipt.Ready && receipt.Source != nil && receipt.BaseTree != "" && receipt.EffectiveTree != "" && receipt.PatchesDigest != "" && receipt.ObservedRevision != "" && receipt.RenderDigest != "" && receipt.EnvDigest != "" && len(receipt.Images) > 0 && len(receipt.ResourceIDs) > 0
 }
 
 func sameDeploymentIdentity(left, right DeploymentReceipt) bool {
-	if left.BaseTree != right.BaseTree || left.ObservedRevision != right.ObservedRevision || left.RenderDigest != right.RenderDigest || left.EnvDigest != right.EnvDigest || !renderenv.Same(left.Environment, right.Environment) || !rendered.SameDeploymentSource(left.Source, right.Source) {
+	if left.BaseTree != right.BaseTree || left.EffectiveTree != right.EffectiveTree || left.PatchesDigest != right.PatchesDigest || left.ObservedRevision != right.ObservedRevision || left.RenderDigest != right.RenderDigest || left.EnvDigest != right.EnvDigest || !renderenv.Same(left.Environment, right.Environment) || !rendered.SameDeploymentSource(left.Source, right.Source) {
 		return false
 	}
 	leftImages, rightImages := slices.Clone(left.Images), slices.Clone(right.Images)
@@ -450,7 +457,7 @@ func sameDeploymentIdentity(left, right DeploymentReceipt) bool {
 // have no other durable home until slice 5 moves the plan into .sdo/.
 func deploymentToBroker(receipt DeploymentReceipt, plan *contracts.DeploymentPlan) broker.SourceEvidence {
 	evidence := broker.SourceEvidence{
-		ContainerImages: append([]rendered.DeployedImage(nil), receipt.ContainerImages...), BaseTree: receipt.BaseTree, ObservedRevision: receipt.ObservedRevision,
+		ContainerImages: append([]rendered.DeployedImage(nil), receipt.ContainerImages...), BaseTree: receipt.BaseTree, EffectiveTree: receipt.EffectiveTree, PatchesDigest: receipt.PatchesDigest, ObservedRevision: receipt.ObservedRevision,
 		RenderDigest: receipt.RenderDigest, EnvDigest: receipt.EnvDigest,
 		Images: append([]string(nil), receipt.Images...), ResourceIDs: append([]string(nil), receipt.ResourceIDs...), Ready: receipt.Ready,
 	}
@@ -468,7 +475,7 @@ func deploymentToBroker(receipt DeploymentReceipt, plan *contracts.DeploymentPla
 
 func deploymentFromBroker(evidence broker.SourceEvidence) DeploymentReceipt {
 	receipt := DeploymentReceipt{
-		ContainerImages: append([]rendered.DeployedImage(nil), evidence.ContainerImages...), BaseTree: evidence.BaseTree, ObservedRevision: evidence.ObservedRevision,
+		ContainerImages: append([]rendered.DeployedImage(nil), evidence.ContainerImages...), BaseTree: evidence.BaseTree, EffectiveTree: evidence.EffectiveTree, PatchesDigest: evidence.PatchesDigest, ObservedRevision: evidence.ObservedRevision,
 		RenderDigest: evidence.RenderDigest, EnvDigest: evidence.EnvDigest,
 		Images: append([]string(nil), evidence.Images...), ResourceIDs: append([]string(nil), evidence.ResourceIDs...), Ready: evidence.Ready,
 	}

@@ -415,11 +415,49 @@ var gateRows = []gateRow{
 	{name: "responder cannot edit followed sources", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleOwnershipDenied}, path: layout.SourcesFile,
 		edit: gateWrite(layout.SourcesFile, "sources:\n- path: .\n  kind: git\n  config: {repository: \"git://synthetic.invalid/app.git\", ref: main}\n")},
 	{name: "deployer edits source in initial", kind: gateOwnership, actor: Deployer, phase: InitialPhase, edit: gateWrite("app.txt", "deployed\n")},
+	{name: "deployer writes the deployment plan, files and patches in initial", kind: gateOwnership, actor: Deployer, phase: InitialPhase, edit: func(t *testing.T, r string) {
+		write(t, r, layout.DeploymentPlanFile, "renderer: raw\n")
+		write(t, r, ".sdo/deployment/values/prod.yaml", "replicas: 2\n")
+		write(t, r, ".sdo/deployment/manifests/app/deploy.yaml", "kind: Deployment\n")
+		write(t, r, ".sdo/deployment/build/Dockerfile", "FROM scratch\n")
+		write(t, r, ".sdo/deployment/patches/0001-fix.patch", "SDO-Patch: 1\nSDO-Owner: deployer\n")
+	}},
+	{name: "human seeds every deployment kind in initial", kind: gateOwnership, actor: Human, phase: InitialPhase, edit: func(t *testing.T, r string) {
+		write(t, r, layout.DeploymentPlanFile, "renderer: raw\n")
+		write(t, r, ".sdo/deployment/overlays/telemetry/o.yaml", "a: b\n")
+		write(t, r, ".sdo/deployment/patches/0001-fix.patch", "x\n")
+	}},
+	{name: "health judge writes the telemetry overlay slot", kind: gateOwnership, actor: HealthJudge, phase: InitialPhase, edit: func(t *testing.T, r string) {
+		write(t, r, gateHealth, "package objective\n\n// edit\n")
+		edit(t, r, gateHealthManifest, "interval: 30s", "interval: 20s")
+		write(t, r, ".sdo/deployment/overlays/telemetry/o.yaml", "a: b\n")
+	}},
+	{name: "deployer cannot write the telemetry overlay", kind: gateOwnership, actor: Deployer, phase: InitialPhase, rules: []string{RuleOwnershipDenied}, path: ".sdo/deployment/overlays/telemetry/o.yaml",
+		edit: gateWrite(".sdo/deployment/overlays/telemetry/o.yaml", "a: b\n")},
+	{name: "health judge cannot write the deployment plan", kind: gateOwnership, actor: HealthJudge, phase: InitialPhase, rules: []string{RuleInitialNeedsDetectors, RuleOwnershipDenied}, path: layout.DeploymentPlanFile,
+		edit: gateWrite(layout.DeploymentPlanFile, "renderer: raw\n")},
+	{name: "responder adds a deployment patch in a proposal", kind: gateOwnership, actor: Responder, phase: ProposalPhase,
+		prepare: gateWrite(".sdo/deployment/patches/0001-old.patch", "SDO-Owner: deployer\n"),
+		edit:    gateWrite(".sdo/deployment/patches/0002-repair.patch", "SDO-Owner: responder\n")},
+	{name: "responder cannot modify an accepted deployment patch", kind: gateOwnership, actor: Responder, phase: ProposalPhase, rules: []string{RuleOwnershipDenied}, path: ".sdo/deployment/patches/0001-old.patch",
+		prepare: gateWrite(".sdo/deployment/patches/0001-old.patch", "SDO-Owner: responder\n"),
+		edit:    gateWrite(".sdo/deployment/patches/0001-old.patch", "SDO-Owner: responder\nchanged\n")},
+	{name: "responder cannot delete an accepted deployment patch", kind: gateOwnership, actor: Responder, phase: ProposalPhase, rules: []string{RuleOwnershipDenied}, path: ".sdo/deployment/patches/0001-old.patch",
+		prepare: gateWrite(".sdo/deployment/patches/0001-old.patch", "SDO-Owner: responder\n"),
+		edit:    func(t *testing.T, r string) { remove(t, r, ".sdo/deployment/patches/0001-old.patch") }},
+	{name: "responder cannot write deployment values", kind: gateOwnership, actor: Responder, phase: ProposalPhase, rules: []string{RuleOwnershipDenied}, path: ".sdo/deployment/values/prod.yaml",
+		edit: gateWrite(".sdo/deployment/values/prod.yaml", "replicas: 9\n")},
+	{name: "responder cannot write deployment patches in reflection", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleOwnershipDenied}, path: ".sdo/deployment/patches/0001-x.patch",
+		edit: gateWrite(".sdo/deployment/patches/0001-x.patch", "x\n")},
+	{name: "deployment path outside the layout is denied to every actor", kind: gateOwnership, actor: Deployer, phase: InitialPhase, rules: []string{RuleOwnershipDenied}, path: ".sdo/deployment/notes.md",
+		edit: gateWrite(".sdo/deployment/notes.md", "x\n")},
+	{name: "upstream advance cannot change deployment files", kind: gateOwnership, actor: Upstream, phase: AdvancePhase, rules: []string{RuleOwnershipDenied}, path: ".sdo/deployment/values/prod.yaml",
+		edit: gateWrite(".sdo/deployment/values/prod.yaml", "x\n")},
 	{name: "upstream advances source", kind: gateOwnership, actor: Upstream, phase: AdvancePhase, edit: gateWrite("app.txt", "upstream\n")},
 	{name: "upstream advance cannot change memory", kind: gateOwnership, actor: Upstream, phase: AdvancePhase, rules: []string{RuleOwnershipDenied}, path: layout.GoalFile,
 		edit: gateWrite(layout.GoalFile, "---\nschema_version: 1\nowner: human\n---\nNew goal\n")},
 	{name: "upkeep stamps the schema alone", kind: gateOwnership, actor: Upkeep, phase: InitialPhase, edit: func(t *testing.T, r string) {
-		write(t, r, layout.SchemaVersionFile, "3\n")
+		write(t, r, layout.SchemaVersionFile, "4\n")
 		write(t, r, layout.DiagnosticsGoModFile, "module m\n")
 	}},
 	{name: "responder cannot edit the goal", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleOwnershipDenied}, path: layout.GoalFile,

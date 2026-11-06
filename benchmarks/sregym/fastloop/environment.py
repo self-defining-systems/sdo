@@ -48,6 +48,8 @@ class FastloopEnvironment(BaseModel):
     dev_mount: Path | None = None
     dev_mount_snapshot: bool = False
     images: Images = Field(default_factory=Images)
+    #: ``up --allow-stale-images``: the lane deliberately runs frozen images, so source-bound image checks are skipped.
+    allow_stale_images: bool = False
     #: The controller runs from an immutable digest with no dev mount. Node mounts (shared memory) stay.
     pinned_tools: bool = False
     #: Environment for the SREGym worker process (deploy-from-source, kind, builder settings).

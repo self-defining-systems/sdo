@@ -3,8 +3,6 @@ package deployment
 import (
 	"reflect"
 	"testing"
-
-	"sdo.dev/operator/rendered"
 )
 
 func stampDoc(kind string) map[string]any {
@@ -21,7 +19,7 @@ func stampDoc(kind string) map[string]any {
 func TestStampAnnotatesTreeAndSubstitutesImages(t *testing.T) {
 	doc := stampDoc("Deployment")
 	var sites []ImageSite
-	images, err := Stamp(doc, rendered.BaseTree("tree1"), func(s ImageSite) string {
+	images, err := Stamp(doc, "tree1", func(s ImageSite) string {
 		sites = append(sites, s)
 		return s.Image + "@sha"
 	})
@@ -43,7 +41,7 @@ func TestStampAnnotatesTreeAndSubstitutesImages(t *testing.T) {
 
 func TestStampNonWorkloadOnlyAnnotates(t *testing.T) {
 	doc := stampDoc("ConfigMap")
-	images, err := Stamp(doc, rendered.BaseTree("tree1"), nil)
+	images, err := Stamp(doc, "tree1", nil)
 	if err != nil || images != nil {
 		t.Fatalf("images=%v err=%v", images, err)
 	}

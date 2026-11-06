@@ -15,6 +15,7 @@ import (
 
 	"sdo.dev/operator/memory/internal/memoryio"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/patchset"
 )
 
 func git(ctx context.Context, root string, args ...string) ([]byte, error) {
@@ -34,6 +35,11 @@ func gitText(ctx context.Context, root string, args ...string) (string, error) {
 // including local commits, staged changes, deletions, and untracked files. It
 // never trusts claims made by the author of the change. Paths are
 // slash-separated, repository-relative, and sorted.
+//
+// A checkout the broker materialized (patchset.Materialize) holds the patch
+// series applied to its app files. There, .sdo/ paths are measured against
+// base as above and every other path against the recorded effective view, so
+// the patched files are not reported and only scratch edits are.
 func ChangedPaths(ctx context.Context, root, base string) ([]string, error) {
 	modified, err := git(ctx, root, "-c", "diff.external=", "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", base, "--")
 	if err != nil {
@@ -43,7 +49,7 @@ func ChangedPaths(ctx context.Context, root, base string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	ignored, err := git(ctx, root, "ls-files", "--others", "-z", "--", layout.LibrariesDir, layout.CorpusDir, layout.RenderedDir)
+	ignored, err := git(ctx, root, "ls-files", "--others", "-z", "--", layout.LibrariesDir, layout.CorpusDir)
 	if err != nil {
 		return nil, err
 	}
@@ -53,6 +59,22 @@ func ChangedPaths(ctx context.Context, root, base string) ([]string, error) {
 			if part != "" {
 				set[part] = struct{}{}
 			}
+		}
+	}
+	if _, viewed, err := patchset.LoadView(ctx, root); err != nil {
+		return nil, err
+	} else if viewed {
+		scratch, err := patchset.Scratch(ctx, root)
+		if err != nil {
+			return nil, err
+		}
+		for p := range set {
+			if !layout.IsMemoryPath(p) {
+				delete(set, p)
+			}
+		}
+		for _, p := range scratch {
+			set[p] = struct{}{}
 		}
 	}
 	paths := make([]string, 0, len(set))

@@ -75,3 +75,15 @@ func PrebuiltOnly(pre *prebuilt.Source) (*imagesrc.Catalog, error) {
 	}
 	return c, nil
 }
+
+// StaticCatalog returns a catalog that knows every built-in source ID and
+// config type but resolves and builds nothing. It serves static validation
+// (a stored deployment plan decodes against it); the placeholder push host is
+// never contacted.
+func StaticCatalog() *imagesrc.Catalog {
+	c, err := Catalog(Config{Builder: buildkit.Builder{AllowedRegistryHost: "static.invalid"}})
+	if err != nil {
+		panic(err)
+	}
+	return c
+}

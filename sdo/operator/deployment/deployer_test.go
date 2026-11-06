@@ -452,8 +452,10 @@ func TestReceiptRecordsResolvedImagesAndEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	tree := depHead(t, root)
-	if tree = testutil.Git(t, root, "rev-parse", "HEAD^{tree}"); receipt.BaseTree != tree || receipt.ObservedRevision != tree {
-		t.Fatalf("receipt tree %q / %q, want %q", receipt.BaseTree, receipt.ObservedRevision, tree)
+	// No memory and no patches: the effective tree is the base tree, and the
+	// workloads carry its ID as their source stamp.
+	if tree = testutil.Git(t, root, "rev-parse", "HEAD^{tree}"); receipt.BaseTree != tree || receipt.EffectiveTree != tree || receipt.ObservedRevision != tree || receipt.PatchesDigest == "" {
+		t.Fatalf("receipt tree %q / effective %q / %q, want %q", receipt.BaseTree, receipt.EffectiveTree, receipt.ObservedRevision, tree)
 	}
 	if !receipt.Ready || len(receipt.ResourceIDs) != 1 || receipt.ResourceIDs[0] != depRawWeb {
 		t.Fatalf("receipt = %+v", receipt)
@@ -496,28 +498,6 @@ func TestDeployerRejectsPlansBeforeApplying(t *testing.T) {
 				t.Fatalf("cluster touched before the plan was validated: %v", cluster.events)
 			}
 		})
-	}
-}
-
-func TestDeployerRechecksTreeAfterResolvingImages(t *testing.T) {
-	root, source := depRawFixture(t)
-	cluster := &clusterFake{}
-	deployer, _ := depDeployer(t, root, cluster)
-	calls := 0
-	deployer.TreeDigest = func(ctx context.Context, checkout string) (string, error) {
-		calls++
-		digest, err := broker.ProposalTreeDigest(ctx, checkout)
-		if calls > 1 {
-			return strings.Repeat("0", len(digest)), err
-		}
-		return digest, err
-	}
-	_, err := deployer.ApplyAndVerify(context.Background(), root, depPlan(t, source, depRawWeb))
-	if err == nil || !strings.Contains(err.Error(), "tree changed") {
-		t.Fatalf("err = %v, want tree changed", err)
-	}
-	if len(cluster.events) != 0 {
-		t.Fatalf("applied despite a changed tree: %v", cluster.events)
 	}
 }
 

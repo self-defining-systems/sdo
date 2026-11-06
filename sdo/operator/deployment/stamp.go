@@ -15,12 +15,12 @@ type ImageSite struct {
 	Image     string
 }
 
-// Stamp records the source tree on an already-normalized object (and on the
+// Stamp records the effective source tree ID on an already-normalized object (and on the
 // pod template of a workload), substitutes container images through imageFor
 // when it is non-nil, and returns the resulting images in init-then-regular
 // order. Non-workloads return no images. Stamping is a deploy-only step:
 // reads render the object unstamped.
-func Stamp(obj map[string]any, tree rendered.BaseTree, imageFor func(ImageSite) string) ([]string, error) {
+func Stamp(obj map[string]any, tree string, imageFor func(ImageSite) string) ([]string, error) {
 	kind, _ := obj["kind"].(string)
 	metadata, ok := obj["metadata"].(map[string]any)
 	if !ok {
@@ -28,7 +28,7 @@ func Stamp(obj map[string]any, tree rendered.BaseTree, imageFor func(ImageSite) 
 	}
 	name, _ := metadata["name"].(string)
 	if tree != "" {
-		nestedMap(metadata, "annotations")["sdo.dev/source-tree"] = string(tree)
+		nestedMap(metadata, "annotations")["sdo.dev/source-tree"] = tree
 	}
 	if !rendered.WorkloadKind(kind) {
 		return nil, nil
@@ -42,7 +42,7 @@ func Stamp(obj map[string]any, tree rendered.BaseTree, imageFor func(ImageSite) 
 		return nil, errors.New("workload needs pod template")
 	}
 	if tree != "" {
-		nestedMap(nestedMap(template, "metadata"), "annotations")["sdo.dev/source-tree"] = string(tree)
+		nestedMap(nestedMap(template, "metadata"), "annotations")["sdo.dev/source-tree"] = tree
 	}
 	podSpec, ok := template["spec"].(map[string]any)
 	if !ok {

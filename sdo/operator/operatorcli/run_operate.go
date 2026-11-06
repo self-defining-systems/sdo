@@ -83,13 +83,14 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	config.Install.MetricsURL = config.Install.EffectiveMetricsURL()
 	config.Lifecycle.MetricsSource = config.Install.MetricsSource()
 	repository.MetricsDetectors = config.Install.MetricsURL != ""
+	repository.PlanCatalogs = planCatalogs()
 	environment, err := renderenv.Discover(client.Discovery())
 	if err != nil {
 		return lifecycle.Result{}, fmt.Errorf("discover render environment: %w", err)
 	}
 	readiness, err := operateIdentity(config).deployer(client, deployTarget{
 		Namespace: config.Lifecycle.Namespace, ControlNamespace: control,
-		AcceptedRoot: config.ApplicationRoot, ProposalRoot: config.WorktreeRoot,
+		AcceptedRoot: config.ApplicationRoot, WorkspaceRoot: config.WorktreeRoot,
 		RepositoryMount: config.RepositoryMount, RepositoryPVC: config.Install.RepositoryPVC,
 	}, environment)
 	if err != nil {

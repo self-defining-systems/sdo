@@ -155,7 +155,7 @@ func (r *fakeReadiness) ApplyAndVerify(_ context.Context, _ string, plan *contra
 			return lifecycle.DeploymentReceipt{}, err
 		}
 	}
-	receipt := lifecycle.DeploymentReceipt{Source: proto.Clone(plan.GetSource()).(*contracts.DeploymentSource), BaseTree: "tree", ObservedRevision: "tree", RenderDigest: "render", EnvDigest: "env", Images: []string{"img"}, ResourceIDs: []string{"deployment/app"}, Ready: true}
+	receipt := lifecycle.DeploymentReceipt{Source: proto.Clone(plan.GetSource()).(*contracts.DeploymentSource), BaseTree: "tree", EffectiveTree: "effective", PatchesDigest: "patches", ObservedRevision: "effective", RenderDigest: "render", EnvDigest: "env", Images: []string{"img"}, ResourceIDs: []string{"deployment/app"}, Ready: true}
 	if r.receipt != nil {
 		r.receipt(&receipt)
 	}

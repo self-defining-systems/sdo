@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/planfile"
 	"sort"
 	"strings"
 
@@ -94,6 +95,11 @@ type Request struct {
 	CoverageGaps *[]Diagnostic
 	// StageTimings optionally receives the Go toolchain stage durations of the compile layer.
 	StageTimings *[]builder.StageTiming
+	// PlanCatalogs are the registries the deployment plan decodes against
+	// (renderer and image sources). Caller-owned wiring, never candidate input.
+	// A nil registry leaves that lookup unchecked; the structural decode of
+	// plan.yaml always runs.
+	PlanCatalogs planfile.Catalogs `json:"-"`
 	// Root is the checkout to validate.
 	Root string
 	// Publication is broker-derived context. CLI callers load its provisioned
