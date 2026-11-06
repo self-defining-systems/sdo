@@ -169,7 +169,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			return err
 		}
 		options.NativeBroker, options.Client = native, client
-		args = append(controllerConfigToArgs(config), args[2:]...)
+		configArgs, err := controllerConfigToArgs(config)
+		if err != nil {
+			return err
+		}
+		args = append(configArgs, args[2:]...)
 	}
 	if len(args) > 0 && args[0] == "--evaluate-once" {
 		return evaluateOnce(ctx, detectors, args[1:], stdout, stderr, options.Provider, options.Client, options.Traffic, clock, options.Renderers)
@@ -197,6 +201,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	deployedCommit := flags.String("deployed-commit", "", "deployed commit; defaults to source commit")
 	var deployedManifestPaths repeatedFlag
 	flags.Var(&deployedManifestPaths, "deployed-manifest-path", "manifest path selected by the accepted deployment plan")
+	deploymentSourceFlag := flags.String("deployment-source", "", "accepted DeploymentSource as ProtoJSON; exclusive with --deployed-manifest-path")
 	flags.String("dispatcher", "", "deprecated; use agent registrations")
 	dispatcherMode := flags.String("dispatcher-mode", "job", "dispatcher mode: job (production) or local (development)")
 	responderImage := flags.String("responder-image", "", "responder container image for job mode")
@@ -620,7 +625,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		kubernetesCache.scopedTracker = stateTracker
 		defer stateTracker.Stop()
 	}
-	deploymentSource, err := rendered.LegacyRawSource(deployedManifestPaths)
+	deploymentSource, err := rendered.DeploymentSourceFromFlags(*deploymentSourceFlag, deployedManifestPaths)
 	if err != nil {
 		return err
 	}
@@ -1772,6 +1777,7 @@ func evaluateOnce(
 	application := flags.String("application", "", "application identity")
 	var deployedManifestPaths repeatedFlag
 	flags.Var(&deployedManifestPaths, "deployed-manifest-path", "accepted deployed manifest path; repeat for each selection")
+	deploymentSourceFlag := flags.String("deployment-source", "", "accepted DeploymentSource as ProtoJSON; exclusive with --deployed-manifest-path")
 	appRoot := flags.String("app-root", "", "accepted application repository root")
 	sourceDriftAcknowledgement := flags.String("source-drift-acknowledgement", "", "installer onboarding acknowledgement ProtoJSON file for the read-only source inventory check")
 	sourceDriftReport := flags.String("source-drift-report", "", "read-only accepted-source inventory check; write full JSON to this path and print a summary")
@@ -1860,7 +1866,7 @@ func evaluateOnce(
 			return err
 		}
 		readCommit = revision
-		deploymentSource, err := rendered.LegacyRawSource(deployedManifestPaths)
+		deploymentSource, err := rendered.DeploymentSourceFromFlags(*deploymentSourceFlag, deployedManifestPaths)
 		if err != nil {
 			return err
 		}
@@ -1870,7 +1876,7 @@ func evaluateOnce(
 		if *appRoot == "" || readClient == nil {
 			return errors.New("source-drift-report requires app-root and a Kubernetes read client")
 		}
-		deploymentSource, err := rendered.LegacyRawSource(deployedManifestPaths)
+		deploymentSource, err := rendered.DeploymentSourceFromFlags(*deploymentSourceFlag, deployedManifestPaths)
 		if err != nil {
 			return err
 		}

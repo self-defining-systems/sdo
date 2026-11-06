@@ -1,7 +1,7 @@
 // Package operatorcli translates installation arguments into the controller's
 // typed launch contract. The compiled child receives only ControllerConfig.
 //
-//archcheck:ratchet R5 count=4 until=S3-11c
+//archcheck:ratchet R5 count=3 until=S3-11c
 package operatorcli
 
 import (
@@ -18,6 +18,7 @@ import (
 	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/toolchain"
 )
 
@@ -85,12 +86,17 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, error) {
 	flags.Var(&responderEnv, "responder-env", "responder environment NAME=VALUE")
 	var deployedManifestPaths repeatable
 	flags.Var(&deployedManifestPaths, "deployed-manifest-path", "manifest path selected by the accepted deployment plan")
+	deploymentSourceFlag := flags.String("deployment-source", "", "accepted DeploymentSource as ProtoJSON; exclusive with --deployed-manifest-path")
 	if err := flags.Parse(args[1:]); err != nil {
 		return builder.RunConfig{}, err
 	}
 
 	if flags.NArg() != 0 {
 		return builder.RunConfig{}, fmt.Errorf("unexpected controller arguments: %v", flags.Args())
+	}
+	deploymentSource, err := rendered.DeploymentSourceFromFlags(*deploymentSourceFlag, deployedManifestPaths)
+	if err != nil {
+		return builder.RunConfig{}, err
 	}
 	if err := toolchain.ValidateImage(*toolchainImage); err != nil {
 		return builder.RunConfig{}, err
@@ -121,8 +127,8 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, error) {
 		ResponderStandby: standby,
 		Namespace:        *namespace, ControlNamespace: *controlNamespace, AppRoot: *app, Application: *application,
 		SourceCommit: *sourceCommit, DeployedCommit: *deployedCommit,
-		DeployedManifestPaths: deployedManifestPaths,
-		Dispatcher:            "python3", DispatcherMode: "job", DispatcherArgs: []string{"-m", "sdo.agents.responder.worker"},
+		DeploymentSource: deploymentSource,
+		Dispatcher:       "python3", DispatcherMode: "job", DispatcherArgs: []string{"-m", "sdo.agents.responder.worker"},
 		ResponderImage: *responderImage, ResponderEnv: responderEnv,
 		RepositoryPvc: *repositoryPVC, RepositoryMountPath: *repositoryMount, RepositoryPvcSubpath: *repositorySubPath,
 		ResponderCredentialsSecret: *credentialsSecret, BrokerWorktreeRoot: *worktreeRoot,

@@ -1,4 +1,4 @@
-//archcheck:ratchet R5 count=6 until=S3-11c
+//archcheck:ratchet R5 count=4 until=S3-11c
 package operatorcli
 
 import (
@@ -12,10 +12,12 @@ import (
 	"time"
 
 	"sdo.dev/operator/builder"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/operatorcli/internal/processio"
+	"sdo.dev/operator/rendered"
 )
 
 // InstallExistingConfig installs an already accepted source tree without
@@ -25,10 +27,10 @@ type InstallExistingConfig struct {
 	AdoptExistingMemory bool
 	OperatorRoot        string
 	Kubeconfig          string
-	// DeployedManifestPaths scopes adoption evidence to the accepted deployment.
-	DeployedManifestPaths []string
-	Duration              time.Duration
-	Install               install.Config
+	// DeploymentSource scopes adoption evidence to the accepted deployment.
+	DeploymentSource *contracts.DeploymentSource
+	Duration         time.Duration
+	Install          install.Config
 }
 
 type InstallExistingResult struct {
@@ -87,6 +89,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	flags.Var(&responderEnv, "responder-env", "responder environment NAME=VALUE")
 	var deployedManifestPaths repeatable
 	flags.Var(&deployedManifestPaths, "deployed-manifest-path", "manifest path selected by the accepted deployment")
+	deploymentSourceFlag := flags.String("deployment-source", "", "accepted DeploymentSource as ProtoJSON; exclusive with --deployed-manifest-path")
 	if err := flags.Parse(args[1:]); err != nil {
 		return InstallExistingConfig{}, err
 	}
@@ -151,6 +154,10 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	if *registrationConfigMap != "" {
 		config.RegistrationDirectory = "/sdo/registrations"
 	}
+	deploymentSource, err := rendered.DeploymentSourceFromFlags(*deploymentSourceFlag, deployedManifestPaths)
+	if err != nil {
+		return InstallExistingConfig{}, err
+	}
 	flags.Visit(func(f *flag.Flag) {
 		if f.Name == "responder-standby" {
 			config.ResponderStandby = standby
@@ -163,6 +170,9 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 		}
 		config.ExtraControllerArgs = append(config.ExtraControllerArgs, "--responder-env="+value)
 	}
+	if *deploymentSourceFlag != "" {
+		config.ExtraControllerArgs = append(config.ExtraControllerArgs, "--deployment-source="+*deploymentSourceFlag)
+	}
 	for _, path := range deployedManifestPaths {
 		config.ExtraControllerArgs = append(config.ExtraControllerArgs, "--deployed-manifest-path="+path)
 	}
@@ -172,7 +182,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	if *exitAfterClosure {
 		config.ExtraControllerArgs = append(config.ExtraControllerArgs, "--exit-after-closure")
 	}
-	return InstallExistingConfig{AdoptExistingMemory: *adopt, OperatorRoot: *operatorRoot, Repository: *repository, Kubeconfig: *kubeconfig, DeployedManifestPaths: deployedManifestPaths, Duration: *duration, Install: config}, nil
+	return InstallExistingConfig{AdoptExistingMemory: *adopt, OperatorRoot: *operatorRoot, Repository: *repository, Kubeconfig: *kubeconfig, DeploymentSource: deploymentSource, Duration: *duration, Install: config}, nil
 }
 
 func RunInstallExisting(ctx context.Context, launch InstallExistingConfig) (InstallExistingResult, error) {

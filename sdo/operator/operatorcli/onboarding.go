@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 
 	"k8s.io/client-go/kubernetes"
 	"sdo.dev/operator/install"
@@ -26,11 +25,7 @@ func stageExistingNamespace(ctx context.Context, client kubernetes.Interface, la
 	if err != nil || record != nil {
 		return err
 	}
-	deployment, err := rendered.LegacyRawSource(existingSourcePaths(launch))
-	if err != nil {
-		return err
-	}
-	source := rendered.Source{Repository: launch.Repository, Deployment: deployment, Catalog: renderers.Catalog()}
+	source := rendered.Source{Repository: launch.Repository, Deployment: launch.DeploymentSource, Catalog: renderers.Catalog()}
 	objects, err := source.RawManifests(ctx, commit, launch.Install.Namespace)
 	if err != nil {
 		return fmt.Errorf("accepted onboarding manifests: %w", err)
@@ -43,19 +38,6 @@ func stageExistingNamespace(ctx context.Context, client kubernetes.Interface, la
 		return fmt.Errorf("accepted commit changed during onboarding staging")
 	}
 	return onboarding.Stage(ctx, client, control, launch.Install.Namespace, commit, objects, processio.Now())
-}
-
-func existingSourcePaths(launch InstallExistingConfig) []string {
-	var paths []string
-	for i, arg := range launch.Install.ExtraControllerArgs {
-		if strings.HasPrefix(arg, "--deployed-manifest-path=") {
-			paths = append(paths, strings.TrimPrefix(arg, "--deployed-manifest-path="))
-		}
-		if arg == "--deployed-manifest-path" && i+1 < len(launch.Install.ExtraControllerArgs) {
-			paths = append(paths, launch.Install.ExtraControllerArgs[i+1])
-		}
-	}
-	return paths
 }
 
 func existingNamespaceOnboardingHook(client kubernetes.Interface, launch InstallExistingConfig, commit string) func(context.Context, install.Config) error {
