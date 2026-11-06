@@ -148,6 +148,8 @@ reverts a fault only when SDO did not recover it, and says so in the row (`recov
 are `incidents.jsonl`/CSV `IncidentRecord`s; totals (resolution rate, MTTR, human edits) are `fault-stream.json`.
 `--dry-run --inventory LISTING.json` prints the selected faults and their `kubectl` actions with no lane.
 
+Stream labels: `resolved_by_sdo` (closure `success`, or `cleared_without_action` with a learned program applied, since a source residual in the receipt does not undo the repair), `self_healed` (a fault declared `self_heals` whose incident closed `unconfirmed` or `cleared_without_action` with no repair and the baseline back), `cleared_without_sdo_action`, `unresolved`. Credit and `self_healed` both require the healthy baseline to return.
+
 ```bash
 uv run python -m benchmarks.sregym.fastloop gitlab faults --run-dir LANE --count 10 --seed 1 --dry-run
 ```
