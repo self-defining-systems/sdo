@@ -349,6 +349,26 @@ func TestRenderDigestIgnoresSecretModeAndTracksObjects(t *testing.T) {
 	}
 }
 
+// TestRenderDigestAgreesAcrossModesForGeneratedSecrets: kustomize drops a
+// generated Secret's type in SecretsOmit but keeps it in SecretsInclude; the
+// digest covers Secret identity only, so deploy and reads still agree.
+func TestRenderDigestAgreesAcrossModesForGeneratedSecrets(t *testing.T) {
+	files := rendertest.MapFS{
+		"app/kustomization.yaml": "secretGenerator:\n- {name: gen, literals: [x=y]}\ngeneratorOptions: {disableNameSuffixHash: true}\n",
+	}
+	set := func(mode render.SecretMode) rendered.DesiredSet {
+		t.Helper()
+		out, err := rendered.Desired(context.Background(), files, render.Env{Namespace: "app", Secrets: mode}, catalog(t), kustomizeSource(t, "app"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	if omit, include := set(render.SecretsOmit), set(render.SecretsInclude); omit.RenderDigest != include.RenderDigest {
+		t.Fatalf("generated Secret digests differ between modes: %s vs %s", omit.RenderDigest, include.RenderDigest)
+	}
+}
+
 // TestRendererReadFailureStaysUnavailable: a renderer whose Git-backed read
 // fails mid-render is transient, not an invalid source.
 func TestRendererReadFailureStaysUnavailable(t *testing.T) {

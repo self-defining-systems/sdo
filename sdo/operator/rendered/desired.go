@@ -41,8 +41,9 @@ type DesiredSet struct {
 	Phases []DesiredPhase
 	Inputs []render.Input
 	// RenderDigest is sha256 over the canonical JSON of the non-ephemeral
-	// objects sorted by ref, with Secret data and stringData removed, so
-	// SecretsOmit and SecretsInclude renders of one source agree.
+	// objects sorted by ref, with each Secret reduced to its identity (the
+	// SecretsOmit form), so SecretsOmit and SecretsInclude renders of one
+	// source agree.
 	RenderDigest string
 	// EnvDigest is sha256 over the canonical Env with its SecretMode cleared.
 	EnvDigest string
@@ -129,8 +130,9 @@ func renderDigest(objects []DesiredObject) (string, error) {
 	for _, object := range sorted {
 		document := object.Object.DeepCopy().Object
 		if strings.EqualFold(object.Ref.Kind, "Secret") {
-			delete(document, "data")
-			delete(document, "stringData")
+			// Identity only: renderers drop other Secret fields (type,
+			// labels) in SecretsOmit, so only the identity agrees across modes.
+			document = secretReference(document)
 		}
 		canonical = append(canonical, document)
 	}
