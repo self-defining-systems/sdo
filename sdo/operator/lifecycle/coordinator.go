@@ -1,5 +1,7 @@
 // Package lifecycle owns the accepted operation sequence. Agent workers only
 // propose role-scoped changes; the broker decides which edits become durable.
+//
+//archcheck:ratchet R5 count=7 until=S3-13b
 package lifecycle
 
 import (

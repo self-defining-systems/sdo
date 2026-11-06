@@ -1,5 +1,7 @@
 // Package broker owns the only path from agent proposals to accepted Git state.
 // Agent clones have independent Git metadata and no publishing remote.
+//
+//archcheck:ratchet R5 count=2 until=S3-12
 package broker
 
 import (

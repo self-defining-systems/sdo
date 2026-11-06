@@ -1,3 +1,5 @@
+//archcheck:allow R4 until=S3-13b reason="raw strategy decoded in core deployment package"
+//archcheck:ratchet R5 count=3 until=S3-13b
 package deployment
 
 import (

@@ -11,6 +11,9 @@
 //	R3 only wiring packages (and tests) import implementation subpackages.
 //	R4 no type assertion or type switch to a plugin config type outside its owner.
 //	R5 ratchet: ManifestPaths/manifest_paths counts per file may only fall.
+//
+// Known violations live in the violating file as //archcheck: directives (see
+// directive.go); only generated files keep entries in the rule table.
 package archcheck
 
 import (
@@ -88,8 +91,13 @@ type Config struct {
 	ConfigTypes      []ConfigType
 	ConfigTypeSource ConfigTypeSource
 	RatchetTokens    []string
-	Allow            []Allow
-	Ratchet          []RatchetEntry
+	// Allow and Ratchet hold entries for files that cannot carry directives
+	// (generated code) and for fixtures; hand-written files use directives.
+	Allow   []Allow
+	Ratchet []RatchetEntry
+	// TransitionalPRs is the closed list of PR ids a directive's until= may
+	// name. Only the PRs that add or retire transitional forms edit it.
+	TransitionalPRs []string
 }
 
 // Validate rejects incomplete tables; an allowlist entry without a reason or
@@ -179,6 +187,8 @@ func Check(root string, cfg Config) ([]Violation, error) {
 	for _, a := range cfg.Allow {
 		allowed[string(a.Rule)+" "+a.File] = a
 	}
+	fromDirective := map[string]bool{}
+	ratchets := map[string]directive{}
 	add := func(v Violation) {
 		if a, ok := allowed[string(v.Rule)+" "+v.File]; ok {
 			used[a] = true
@@ -200,24 +210,35 @@ func Check(root string, cfg Config) ([]Violation, error) {
 		if !strings.HasSuffix(p, ".go") {
 			return nil
 		}
-		file, err := parser.ParseFile(fset, p, nil, parser.SkipObjectResolution)
+		file, err := parser.ParseFile(fset, p, nil, parser.SkipObjectResolution|parser.ParseComments)
 		if err != nil {
 			return fmt.Errorf("archcheck: %w", err)
 		}
 		relFile, _ := filepath.Rel(root, p)
 		relFile = filepath.ToSlash(relFile)
+		if role, _ := cfg.classify(path.Dir(relFile)); role != kindExempt {
+			ds, vs := cfg.parseDirectives(fset, file, relFile)
+			out = append(out, vs...)
+			for _, d := range ds {
+				out = append(out, cfg.registerDirective(d, relFile, allowed, fromDirective, ratchets)...)
+			}
+		}
 		cfg.checkFile(fset, file, relFile, add, counts)
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	for a := range allowed {
-		if !used[allowed[a]] {
-			out = append(out, Violation{Rule: allowed[a].Rule, File: allowed[a].File, Message: "stale allowlist entry matches nothing; delete it (" + allowed[a].Reason + ")"})
+	for k, a := range allowed {
+		if !used[a] {
+			what := "allowlist entry in rules.go"
+			if fromDirective[k] {
+				what = "archcheck:allow directive"
+			}
+			out = append(out, Violation{Rule: a.Rule, File: a.File, Message: "stale " + what + " matches nothing; delete it (" + a.Reason + ")"})
 		}
 	}
-	out = append(out, cfg.checkRatchet(counts)...)
+	out = append(out, cfg.checkRatchet(counts, ratchets)...)
 	out = append(out, cfg.checkConfigTypeCompleteness(root)...)
 	sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
 	return out, nil
@@ -389,26 +410,71 @@ func (c Config) countRatchet(file *ast.File) int {
 	return n
 }
 
-func (c Config) checkRatchet(counts map[string]int) []Violation {
+// registerDirective records one parsed directive and reports a conflict when
+// the rule table already holds an entry for the same file.
+func (c Config) registerDirective(d directive, relFile string, allowed map[string]Allow, fromDirective map[string]bool, ratchets map[string]directive) []Violation {
+	conflict := func(msg string) []Violation {
+		return []Violation{{Rule: RDirective, File: relFile, Line: d.line, Message: msg}}
+	}
+	if d.verb == "ratchet" {
+		for _, r := range c.Ratchet {
+			if r.File == relFile {
+				return conflict("file has an archcheck:ratchet directive and an entry in rules.go; keep only the directive")
+			}
+		}
+		if _, dup := ratchets[relFile]; dup {
+			return conflict("file has more than one archcheck:ratchet directive")
+		}
+		ratchets[relFile] = d
+		return nil
+	}
+	key := string(d.rule) + " " + relFile
+	if _, dup := allowed[key]; dup {
+		return conflict("duplicate allow " + string(d.rule) + " for this file (directive or rules.go entry)")
+	}
+	allowed[key] = Allow{Rule: d.rule, File: relFile, Reason: d.reason, Slice: d.until}
+	fromDirective[key] = true
+	return nil
+}
+
+func (c Config) checkRatchet(counts map[string]int, directives map[string]directive) []Violation {
 	var out []Violation
-	allowed := map[string]int{}
+	type limit struct {
+		count int
+		dir   bool
+		line  int
+	}
+	allowed := map[string]limit{}
 	for _, r := range c.Ratchet {
-		allowed[r.File] = r.Count
+		allowed[r.File] = limit{count: r.Count}
+	}
+	for f, d := range directives {
+		allowed[f] = limit{count: d.count, dir: true, line: d.line}
+	}
+	lower := func(l limit) string {
+		if l.dir {
+			return "lower count= in this file's archcheck:ratchet directive"
+		}
+		return "lower the Count in the rule table"
 	}
 	for file, got := range counts {
 		want, ok := allowed[file]
 		switch {
 		case !ok:
-			out = append(out, Violation{Rule: R5, File: file, Message: fmt.Sprintf("%d use(s) of %s in a file not on the ratchet; use the plugin config instead", got, strings.Join(c.RatchetTokens, "/"))})
-		case got > want:
-			out = append(out, Violation{Rule: R5, File: file, Message: fmt.Sprintf("count rose to %d from allowed %d; the ratchet may only fall", got, want)})
-		case got < want:
-			out = append(out, Violation{Rule: R5, File: file, Message: fmt.Sprintf("count fell to %d from %d; lower the Count in the rule table (delete the entry at 0)", got, want)})
+			out = append(out, Violation{Rule: R5, File: file, Message: fmt.Sprintf("%d use(s) of %s in a file without an archcheck:ratchet directive; use the plugin config instead", got, strings.Join(c.RatchetTokens, "/"))})
+		case got > want.count:
+			out = append(out, Violation{Rule: R5, File: file, Line: want.line, Message: fmt.Sprintf("count rose to %d from allowed %d; the ratchet may only fall", got, want.count)})
+		case got < want.count:
+			out = append(out, Violation{Rule: R5, File: file, Line: want.line, Message: fmt.Sprintf("count fell to %d from %d; %s", got, want.count, lower(want))})
 		}
 	}
-	for file := range allowed {
+	for file, want := range allowed {
 		if _, ok := counts[file]; !ok {
-			out = append(out, Violation{Rule: R5, File: file, Message: fmt.Sprintf("count fell to 0 from %d; delete the ratchet entry", allowed[file])})
+			what := "delete the ratchet entry"
+			if want.dir {
+				what = "delete this file's archcheck:ratchet directive"
+			}
+			out = append(out, Violation{Rule: R5, File: file, Line: want.line, Message: fmt.Sprintf("stale ratchet: count fell to 0 from %d; %s", want.count, what)})
 		}
 	}
 	return out

@@ -123,3 +123,64 @@ func TestTableEntriesNeedReasonAndSlice(t *testing.T) {
 		t.Fatal("allow entry without reason accepted")
 	}
 }
+
+func TestDirectives(t *testing.T) {
+	cases := []struct {
+		dir      string
+		mod      func(*Config)
+		want     []string
+		contains string
+	}{
+		{dir: "dir_ok", want: nil},
+		{dir: "dir_rose", want: []string{"R5 rat.go"}, contains: "count rose"},
+		{dir: "dir_fell", want: []string{"R5 rat.go"}, contains: "lower count= in this file"},
+		{dir: "dir_stale_allow", want: []string{"R1 core/core.go"}, contains: "stale archcheck:allow directive"},
+		{dir: "dir_stale_ratchet", want: []string{"R5 rat.go"}, contains: "delete this file's archcheck:ratchet directive"},
+		{dir: "dir_unknown_until", want: []string{"DIR core/core.go", "R1 core/core.go"}, contains: "not in TransitionalPRs"},
+		{dir: "dir_malformed", want: []string{"DIR a.go", "DIR b.go", "DIR c.go", "DIR d.go", "DIR e.go"}},
+		{dir: "dir_generated", want: []string{"DIR gen.go", "R5 gen.go"}, contains: "generated files cannot carry"},
+		{dir: "dir_conflict", mod: func(c *Config) {
+			c.Ratchet = []RatchetEntry{{File: "rat.go", Count: 1, Reason: "r", Slice: "s"}}
+		}, want: []string{"DIR rat.go"}, contains: "keep only the directive"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.dir, func(t *testing.T) {
+			cfg := fixtureConfig()
+			if tc.mod != nil {
+				tc.mod(&cfg)
+			}
+			got, err := Check(filepath.Join("testdata", tc.dir), cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sort.Strings(tc.want)
+			if strings.Join(keys(got), "\n") != strings.Join(tc.want, "\n") {
+				t.Fatalf("violations\n got: %v\nwant: %v\n%v", keys(got), tc.want, got)
+			}
+			if tc.contains != "" {
+				for _, v := range got {
+					if strings.Contains(v.Message, tc.contains) {
+						return
+					}
+				}
+				t.Fatalf("no message containing %q: %v", tc.contains, got)
+			}
+		})
+	}
+}
+
+// TestRuleTableSlicesAreKnownPRs keeps table entries (generated files) on the
+// same closed PR list as directives.
+func TestRuleTableSlicesAreKnownPRs(t *testing.T) {
+	cfg := Rules()
+	for _, r := range cfg.Ratchet {
+		if !cfg.knownPR(r.Slice) {
+			t.Errorf("ratchet entry %s names unknown PR %q", r.File, r.Slice)
+		}
+	}
+	for _, a := range cfg.Allow {
+		if !cfg.knownPR(a.Slice) {
+			t.Errorf("allow entry %s names unknown PR %q", a.File, a.Slice)
+		}
+	}
+}

@@ -4,9 +4,11 @@ package archcheck
 // boundary the deployment plugin plan relies on is data here; the engine in
 // archcheck.go only interprets it.
 //
-// Allowlist entries are today's known violations. They may only shrink: an
-// entry that no longer matches anything fails the check, and the ratchet
-// (R5) counts must be lowered when a count drops.
+// Known violations are //archcheck: directives in the violating file (see
+// directive.go) so parallel PRs never edit this table. They may only shrink: a
+// directive that no longer matches anything fails the check, and ratchet
+// (R5) counts must be lowered when a count drops. The Ratchet rows here are
+// generated files, which cannot carry directives.
 func Rules() Config {
 	const module = "sdo.dev/operator"
 	return Config{
@@ -36,31 +38,21 @@ func Rules() Config {
 			Suffix: "Strategy",
 		},
 		RatchetTokens: []string{"ManifestPaths", "manifest_paths"},
-		Allow: []Allow{
-			{Rule: R1, File: "rendered/generators.go", Reason: "kustomize build lives in core rendered generators", Slice: "O-seam-render (render/kustomize)"},
-			{Rule: R4, File: "deployment/registry.go", Reason: "generic registry switches on the raw strategy", Slice: "O-seam-render (render catalog)"},
-			{Rule: R4, File: "deployment/raw.go", Reason: "raw strategy decoded in core deployment package", Slice: "O-seam-render (render/raw)"},
-		},
+		// Generated files cannot carry directives; only the serial proto PRs
+		// (S3-01, S3-11c, S3-15) edit these entries.
 		Ratchet: []RatchetEntry{
-			{File: "broker/broker.go", Count: 2, Reason: "broker reads manifest paths from the lifecycle config", Slice: "O-contract"},
-			{File: "contracts/gen/sdodev/contracts/v1alpha1/controller_config.pb.go", Count: 5, Reason: "generated wire field", Slice: "O-contract"},
-			{File: "contracts/gen/sdodev/contracts/v1alpha1/lifecycle.pb.go", Count: 5, Reason: "generated wire field", Slice: "O-contract"},
-			{File: "deployment/manifest_set.go", Count: 4, Reason: "manifest-set core helper", Slice: "O-seam-render"},
-			{File: "deployment/raw.go", Count: 3, Reason: "raw renderer inside deployment", Slice: "O-seam-render (render/raw)"},
-			{File: "deployment/raw_test.go", Count: 1, Reason: "raw renderer test", Slice: "O-seam-render (render/raw)"},
-			{File: "deployment/registry.go", Count: 2, Reason: "registry reads raw strategy paths", Slice: "O-seam-render"},
-			{File: "lifecycle/coordinator.go", Count: 7, Reason: "lifecycle plumbs manifest paths", Slice: "O-contract"},
-			{File: "lifecycle/install_adapter.go", Count: 3, Reason: "install adapter plumbs manifest paths", Slice: "O-contract"},
-			{File: "operatorcli/controller.go", Count: 4, Reason: "CLI wiring", Slice: "O-seam-render"},
-			{File: "operatorcli/install_existing.go", Count: 6, Reason: "CLI wiring", Slice: "O-seam-render"},
-			{File: "operatorcli/onboarding.go", Count: 1, Reason: "CLI wiring", Slice: "O-seam-render"},
-			{File: "operatorcli/source_render.go", Count: 4, Reason: "CLI wiring", Slice: "O-seam-render"},
-			{File: "rendered/selection.go", Count: 1, Reason: "core rendered selection", Slice: "O-seam-render"},
-			{File: "rendered/source.go", Count: 5, Reason: "core rendered source", Slice: "O-seam-render"},
-			{File: "rendered/source_cache.go", Count: 1, Reason: "core rendered source cache", Slice: "O-seam-render"},
-			{File: "rendered/source_cache_test.go", Count: 4, Reason: "rendered cache test", Slice: "O-seam-render"},
-			{File: "runtime/controller_config.go", Count: 1, Reason: "runtime controller config", Slice: "O-contract"},
-			{File: "runtime/run.go", Count: 10, Reason: "runtime plumbs manifest paths", Slice: "O-contract"},
+			{File: "contracts/gen/sdodev/contracts/v1alpha1/controller_config.pb.go", Count: 5, Reason: "generated wire field", Slice: "S3-11c"},
+			{File: "contracts/gen/sdodev/contracts/v1alpha1/lifecycle.pb.go", Count: 5, Reason: "generated wire field", Slice: "S3-15"},
 		},
+		TransitionalPRs: TransitionalPRs,
 	}
+}
+
+// TransitionalPRs is the closed list of render-seam PR ids a directive's
+// until= may name (the PR that removes the transitional form). Only S3-00a and
+// S3-15 edit it; S3-15 deletes it with R5.
+var TransitionalPRs = []string{
+	"S3-01", "S3-01b", "S3-03", "S3-04", "S3-05", "S3-07", "S3-08", "S3-09i", "S3-09r",
+	"S3-10a", "S3-10b", "S3-10c", "S3-10d", "S3-11a", "S3-11b", "S3-11c",
+	"S3-12", "S3-13a", "S3-13b", "S3-13c", "S3-14", "S3-15",
 }

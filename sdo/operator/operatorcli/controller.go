@@ -1,5 +1,7 @@
 // Package operatorcli translates installation arguments into the controller's
 // typed launch contract. The compiled child receives only ControllerConfig.
+//
+//archcheck:ratchet R5 count=4 until=S3-11c
 package operatorcli
 
 import (

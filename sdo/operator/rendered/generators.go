@@ -1,3 +1,4 @@
+//archcheck:allow R1 until=S3-10d reason="kustomize build lives in core rendered generators"
 package rendered
 
 import (
