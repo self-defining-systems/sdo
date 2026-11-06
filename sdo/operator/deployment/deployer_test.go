@@ -114,7 +114,7 @@ func depCommit(t *testing.T, files rendertest.MapFS) string {
 func depRenderers(t *testing.T) *render.Catalog {
 	t.Helper()
 	c := render.NewCatalog()
-	for _, register := range []func(*render.Catalog) error{raw.Register, kustomize.Register, helm.Register, registerPhased} {
+	for _, register := range []func(*render.Catalog) error{raw.Register, kustomize.Register, registerHelm, registerPhased} {
 		if err := register(c); err != nil {
 			t.Fatal(err)
 		}
@@ -648,3 +648,5 @@ func TestVerifyAcceptedChecksDigestsAndLiveWorkloads(t *testing.T) {
 		}
 	})
 }
+
+func registerHelm(c *render.Catalog) error { return helm.Register(c, helm.InProcess) }

@@ -1,0 +1,238 @@
+// Package sandboxio runs a registered byte-in, byte-out function in a child
+// process of the running binary, so that whatever the function does with its
+// input (exhaust memory, which is a Go fatal no recover() catches, or loop
+// without end) kills or stalls the child, never the caller.
+//
+// The child is the same executable started with a hidden argument. Any binary
+// that links the package registering a handler (with Register, from an init
+// function) therefore also serves it: the controller, the operator CLI and test
+// binaries alike. The parent bounds the child's memory (RLIMIT_DATA plus a soft
+// Go heap limit), its wall-clock time (the caller's context; the child is
+// killed by its own PID), its stdout and its environment (empty but for the
+// limits). The child cannot outlive the parent on Linux (parent-death signal)
+// and is the first choice of the kernel's OOM killer.
+package sandboxio
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"runtime/debug"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+// childArg is the hidden first argument that turns a process into a child.
+const childArg = "__sdo-sandbox-child"
+
+// envMemory carries Limits.Memory to the child.
+const envMemory = "SDO_SANDBOX_MEMORY"
+
+// Handler computes a response from a request. It runs in the child process.
+type Handler func(request []byte) []byte
+
+// Limits bound one child. Zero fields take the defaults.
+type Limits struct {
+	// Memory is the child's Go heap limit in bytes; RLIMIT_DATA is twice it,
+	// because the data limit also counts heap the runtime has not yet returned.
+	Memory int64
+	// Output caps the response (the child's stdout) in bytes.
+	Output int64
+	// Procs is the child's GOMAXPROCS.
+	Procs int
+}
+
+// DefaultLimits suit one Helm chart render: the largest real charts render in
+// well under 200 MiB of heap.
+var DefaultLimits = Limits{Memory: 512 << 20, Output: 64 << 20, Procs: 2}
+
+func (l Limits) withDefaults() Limits {
+	if l.Memory <= 0 {
+		l.Memory = DefaultLimits.Memory
+	}
+	if l.Output <= 0 {
+		l.Output = DefaultLimits.Output
+	}
+	if l.Procs <= 0 {
+		l.Procs = DefaultLimits.Procs
+	}
+	return l
+}
+
+// maxChildren bounds concurrent children per process, so a burst of renders
+// cannot multiply the memory limit beyond the controller Pod's.
+const maxChildren = 2
+
+var (
+	slots    = make(chan struct{}, maxChildren)
+	mu       sync.Mutex
+	handlers = map[string]Handler{}
+)
+
+// Kind classifies a failed child.
+type Kind string
+
+const (
+	// KindMemory: the child ran out of its memory limit.
+	KindMemory Kind = "memory"
+	// KindOutput: the response passed Limits.Output.
+	KindOutput Kind = "output"
+	// KindCrash: the child exited abnormally for another reason.
+	KindCrash Kind = "crash"
+)
+
+// ErrChild matches every *Error: the child failed because of what the handler
+// did with its request. A child that could not be started, or one stopped by
+// the caller's context, is not an *Error.
+var ErrChild = errors.New("sandboxed child failed")
+
+// Error reports a child that exceeded a limit or crashed.
+type Error struct {
+	Name   string
+	Kind   Kind
+	Detail string
+}
+
+func (e *Error) Error() string {
+	return fmt.Sprintf("sandboxed %s: %s: %s", e.Name, e.Kind, e.Detail)
+}
+
+// Is makes the error match ErrChild.
+func (e *Error) Is(target error) bool { return target == ErrChild }
+
+// Register names h for Run. When this process was started as the child for
+// name, Register serves one request from stdin and exits; call it from an init
+// function so the child never runs anything else of the binary.
+func Register(name string, h Handler) {
+	mu.Lock()
+	if _, dup := handlers[name]; dup {
+		mu.Unlock()
+		panic("sandboxio: handler " + name + " registered twice")
+	}
+	handlers[name] = h
+	mu.Unlock()
+	if len(os.Args) == 3 && os.Args[1] == childArg && os.Args[2] == name {
+		os.Exit(serve(h))
+	}
+}
+
+func serve(h Handler) int {
+	memory, err := strconv.ParseInt(os.Getenv(envMemory), 10, 64)
+	if err != nil || memory <= 0 {
+		fmt.Fprintf(os.Stderr, "sandbox child: invalid %s\n", envMemory)
+		return 3
+	}
+	if err := limitSelf(memory); err != nil {
+		fmt.Fprintf(os.Stderr, "sandbox child: %v\n", err)
+		return 3
+	}
+	debug.SetMemoryLimit(memory)
+	request, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sandbox child: read request: %v\n", err)
+		return 3
+	}
+	if _, err := os.Stdout.Write(h(request)); err != nil {
+		return 3
+	}
+	return 0
+}
+
+// Run sends request to the child serving name and returns its response. A
+// child that exceeds a limit or crashes is an *Error; when ctx ends first the
+// child is killed and the error wraps context.Cause(ctx).
+func Run(ctx context.Context, name string, request []byte, limits Limits) ([]byte, error) {
+	mu.Lock()
+	_, ok := handlers[name]
+	mu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("sandboxio: no handler registered as %q", name)
+	}
+	limits = limits.withDefaults()
+	select {
+	case slots <- struct{}{}:
+		defer func() { <-slots }()
+	case <-ctx.Done():
+		return nil, fmt.Errorf("sandboxed %s not started: %w", name, context.Cause(ctx))
+	}
+	exe, err := executable()
+	if err != nil {
+		return nil, fmt.Errorf("sandboxed %s: find own executable: %w", name, err)
+	}
+	cmd := exec.CommandContext(ctx, exe, childArg, name)
+	cmd.Env = []string{
+		envMemory + "=" + strconv.FormatInt(limits.Memory, 10),
+		"GOMAXPROCS=" + strconv.Itoa(limits.Procs),
+		"GOTRACEBACK=single",
+	}
+	cmd.Stdin = bytes.NewReader(request)
+	stderr := &headBuffer{max: 4 << 10}
+	cmd.Stderr = stderr
+	cmd.WaitDelay = time.Second
+	cmd.SysProcAttr = childAttributes()
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("sandboxed %s: %w", name, err)
+	}
+	if err := start(cmd); err != nil {
+		return nil, fmt.Errorf("sandboxed %s: start child: %w", name, err)
+	}
+	response, readErr := io.ReadAll(io.LimitReader(stdout, limits.Output+1))
+	overflow := int64(len(response)) > limits.Output
+	if overflow {
+		_ = cmd.Process.Kill()
+	}
+	waitErr := cmd.Wait()
+	switch {
+	case ctx.Err() != nil:
+		return nil, fmt.Errorf("sandboxed %s stopped: %w", name, context.Cause(ctx))
+	case overflow:
+		return nil, &Error{Name: name, Kind: KindOutput, Detail: fmt.Sprintf("response passed %d bytes", limits.Output)}
+	case waitErr != nil:
+		return nil, classify(name, waitErr, stderr.String(), limits)
+	case readErr != nil:
+		return nil, fmt.Errorf("sandboxed %s: read response: %w", name, readErr)
+	}
+	return response, nil
+}
+
+func classify(name string, waitErr error, stderr string, limits Limits) error {
+	detail := strings.TrimSpace(stderr)
+	if i := strings.IndexByte(detail, '\n'); i >= 0 {
+		// The first line of a Go fatal names it; the rest is a stack trace.
+		detail = detail[:i]
+	}
+	if strings.Contains(stderr, "out of memory") {
+		return &Error{Name: name, Kind: KindMemory, Detail: fmt.Sprintf("exceeded the %d MiB memory limit (%s)", limits.Memory>>20, detail)}
+	}
+	if detail == "" {
+		detail = waitErr.Error()
+	} else {
+		detail = waitErr.Error() + ": " + detail
+	}
+	return &Error{Name: name, Kind: KindCrash, Detail: detail}
+}
+
+// headBuffer keeps the first max bytes written and discards the rest, so a
+// child cannot grow the parent through stderr.
+type headBuffer struct {
+	bytes.Buffer
+	max int
+}
+
+func (b *headBuffer) Write(p []byte) (int, error) {
+	if room := b.max - b.Len(); room > 0 {
+		if len(p) > room {
+			b.Buffer.Write(p[:room])
+		} else {
+			b.Buffer.Write(p)
+		}
+	}
+	return len(p), nil
+}
