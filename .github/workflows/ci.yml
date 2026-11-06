@@ -54,6 +54,9 @@ jobs:
             ci-shared-v1-${{ runner.os }}-${{ runner.arch }}-1.26.8-
             ci-tests-v2-${{ runner.os }}-${{ runner.arch }}-1.26.8-
             ci-go-${{ runner.os }}-${{ runner.arch }}-operator-1.26.8-
+      - name: Age the restored compiler entries so the save keeps only those this run uses
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: bash scripts/ci_go_cache.sh mark
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc
         with:
           version: "0.9.24"
@@ -91,12 +94,12 @@ jobs:
           bash ./scripts/format_code.sh --check
           bash ./scripts/check_errors.sh --python-suite
 
-      # Go refreshes the mtime of every compiler entry it reads that is over an hour
-      # old, so an entry untouched for two hours is stale. Saving only live entries
-      # keeps the cache small; restoring it is the largest fixed cost of every job.
-      - name: Drop compiler entries this run did not use
+      # `mark` (after the restore) ages every compiler entry, the run refreshes the ones it
+      # reads, and `trim` drops the rest, so a saved cache holds one run's live entries and
+      # not the generations of every package that earlier merges changed.
+      - name: Drop compiler entries this run did not use, and module zip archives
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: find ~/.cache/go-build -type f -mmin +120 -delete
+        run: bash scripts/ci_go_cache.sh trim
       - name: Check the cache size before saving
         id: cache-size
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -161,6 +164,16 @@ jobs:
             ci-shared-v1-${{ runner.os }}-${{ runner.arch }}-1.26.8-
             ci-tests-v2-${{ runner.os }}-${{ runner.arch }}-1.26.8-
             ci-go-${{ runner.os }}-${{ runner.arch }}-operator-1.26.8-
+      - name: Age the restored compiler entries so the save keeps only those this run uses
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: bash scripts/ci_go_cache.sh mark
+      # The tests that run the Go operator share one binary built from this checkout. Build it
+      # here, beside the dependency installs, so no test pays (or is charged for) the link; the
+      # step before pytest waits for it.
+      - name: Start building the operator test binary
+        if: env.SDO_CI_SKIP != 'true'
+        run: |
+          setsid nohup bash -c 'python3 scripts/operator_test_binary.py > "$RUNNER_TEMP/operator-bin.path" 2> "$RUNNER_TEMP/operator-bin.log"; echo $? > "$RUNNER_TEMP/operator-bin.status"' > /dev/null 2>&1 &
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc
         if: env.SDO_CI_SKIP != 'true'
         with:
@@ -184,6 +197,16 @@ jobs:
           sudo apt-get install -y --no-install-recommends bubblewrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           bwrap --ro-bind / / --dev /dev --proc /proc true
+      - name: Wait for the operator test binary
+        if: env.SDO_CI_SKIP != 'true'
+        run: |
+          until [[ -f "$RUNNER_TEMP/operator-bin.status" ]]; do sleep 1; done
+          if [[ "$(cat "$RUNNER_TEMP/operator-bin.status")" != 0 ]]; then
+              cat "$RUNNER_TEMP/operator-bin.log"
+              exit 1
+          fi
+          echo "SDO_OPERATOR_BIN=$(cat "$RUNNER_TEMP/operator-bin.path")" >> "$GITHUB_ENV"
+          echo "SDO_SKIP_OPERATOR_PREBUILD=1" >> "$GITHUB_ENV"
       - name: Python unit tests (${{ matrix.shard }} shard)
         if: env.SDO_CI_SKIP != 'true'
         env:
@@ -234,9 +257,9 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - name: Drop compiler entries that are no longer used
+      - name: Drop compiler entries this run did not use, and module zip archives
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: find ~/.cache/go-build -type f -mmin +120 -delete
+        run: bash scripts/ci_go_cache.sh trim
       - name: Check the cache size before saving
         id: cache-size
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -302,6 +325,9 @@ jobs:
             ci-shared-v1-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-
             ci-shared-v1-${{ runner.os }}-${{ runner.arch }}-1.26.8-
             ci-go-${{ runner.os }}-${{ runner.arch }}-operator-1.26.8-
+      - name: Age the restored compiler entries so the save keeps only those this run uses
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: bash scripts/ci_go_cache.sh mark
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc
         if: env.SDO_CI_SKIP != 'true'
         with:
@@ -336,12 +362,12 @@ jobs:
         if: failure() && github.event_name != 'pull_request'
         run: python3 scripts/ci_select.py misses --go-log "$RUNNER_TEMP/go-test.json" | tee -a "$GITHUB_STEP_SUMMARY"
 
-      # Go refreshes the mtime of every compiler entry it reads that is over an hour
-      # old, so an entry untouched for two hours is stale. Saving only live entries
-      # keeps the cache small; restoring it is the largest fixed cost of every job.
-      - name: Drop compiler entries this run did not use
+      # `mark` (after the restore) ages every compiler entry, the run refreshes the ones it
+      # reads, and `trim` drops the rest, so a saved cache holds one run's live entries and
+      # not the generations of every package that earlier merges changed.
+      - name: Drop compiler entries this run did not use, and module zip archives
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: find ~/.cache/go-build -type f -mmin +120 -delete
+        run: bash scripts/ci_go_cache.sh trim
       - name: Check the cache size before saving
         id: cache-size
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

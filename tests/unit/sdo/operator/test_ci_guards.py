@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -78,6 +79,66 @@ def test_main_cache_saves_are_guarded_by_the_size_check() -> None:
         assert any(
             s.get("run") == "exit 1" and f"steps.{guards[0]['id']}.outputs.oversize == 'true'" in s["if"] for s in steps
         ), f"{name}: an oversize cache must fail the job loudly"
+
+
+def test_saved_go_caches_hold_only_the_entries_the_run_used() -> None:
+    """Each saving job ages the restored entries, then drops what the run never refreshed, before the size check."""
+    for name, job in workflow("ci.yml")["jobs"].items():
+        steps = job["steps"]
+        if not any(s.get("uses", "").startswith("actions/cache/save@") for s in steps):
+            continue
+
+        def position(command: str, steps: list[dict] = steps) -> int:
+            return next(i for i, s in enumerate(steps) if command in s.get("run", ""))
+
+        restore = next(i for i, s in enumerate(steps) if s.get("uses", "").startswith("actions/cache/restore@"))
+        assert restore < position("ci_go_cache.sh mark") < position("ci_go_cache.sh trim"), name
+        assert position("ci_go_cache.sh trim") < position("ci_cache_guard.sh"), name
+
+
+def test_python_shards_build_the_operator_binary_before_pytest_and_hand_it_to_the_tests() -> None:
+    steps = workflow("ci.yml")["jobs"]["python"]["steps"]
+    text = [s.get("run", "") for s in steps]
+    build = next(i for i, t in enumerate(text) if "operator_test_binary.py" in t)
+    wait = next(i for i, t in enumerate(text) if "SDO_OPERATOR_BIN=" in t)
+    pytest_step = next(i for i, t in enumerate(text) if "test_python.sh" in t)
+    assert build < wait < pytest_step, "no test may wait on, or be charged for, the operator link"
+    assert "SDO_SKIP_OPERATOR_PREBUILD=1" in text[wait]
+
+
+def _aged(path: Path, hours: float) -> None:
+    stamp = time.time() - hours * 3600
+    os.utime(path, (stamp, stamp))
+
+
+def test_go_cache_trim_keeps_only_entries_the_run_refreshed(tmp_path: Path) -> None:
+    build = tmp_path / "go-build"
+    modules = tmp_path / "mod"
+    (build / "ab").mkdir(parents=True)
+    (modules / "cache/download/m/@v").mkdir(parents=True)
+    used, unused = build / "ab/used-d", build / "ab/unused-d"
+    for entry in (used, unused):
+        entry.write_text("archive")
+        _aged(entry, 0.5)  # both were used within the last hour of an earlier run
+    zipped = modules / "cache/download/m/@v/v1.zip"
+    kept = modules / "cache/download/m/@v/v1.mod"
+    zipped.write_text("zip")
+    kept.write_text("module m")
+    env = {**os.environ, "GOCACHE": str(build), "GOMODCACHE": str(modules)}
+
+    def run(mode: str) -> None:
+        subprocess.run(["bash", str(ROOT / "scripts/ci_go_cache.sh"), mode], env=env, check=True)
+
+    run("trim")
+    assert used.exists(), "an hour-old age cutoff cannot tell the two apart; this is why entries are aged first"
+    assert unused.exists()
+    run("mark")
+    _aged(used, 0)  # Go refreshes an entry it reads that is more than an hour old
+    run("trim")
+    assert used.exists()
+    assert not unused.exists()
+    assert kept.exists()
+    assert not zipped.exists(), "extracted modules are read without their zip archives"
 
 
 def test_slow_test_checks_run_in_every_pr_test_job_and_budgets_are_consistent() -> None:
