@@ -16,7 +16,7 @@ while read -r module package; do
 done < "$root/scripts/go_pure_packages.txt"
 (
     cd "$root/sdo/operator"
-    go test ./internal/purity -count=1 -timeout=45s
+    go test ./internal/purity ./internal/archcheck -count=1 -timeout=45s
 )
 
 # Prove the committed linter configuration is active, including import aliases.
