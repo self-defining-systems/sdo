@@ -60,7 +60,7 @@ func TestNegativeControls(t *testing.T) {
 		t.Run(tc.dir, func(t *testing.T) {
 			cfg := fixtureConfig()
 			if strings.HasPrefix(tc.dir, "r4") || tc.dir == "clean" {
-				cfg.ConfigTypeSource = ConfigTypeSource{Dir: "contracts/gen", Suffix: "Strategy"}
+				cfg.ConfigTypeSource = ConfigTypeSource{Dir: "contracts/gen", Suffixes: []string{"Strategy"}}
 			}
 			if tc.mod != nil {
 				tc.mod(&cfg)

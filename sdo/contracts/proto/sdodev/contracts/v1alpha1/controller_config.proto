@@ -15,6 +15,7 @@ package sdodev.contracts.v1alpha1;
 
 import "buf/validate/validate.proto";
 import "google/protobuf/duration.proto";
+import "sdodev/contracts/v1alpha1/deployment_source.proto";
 
 option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
 
@@ -166,6 +167,8 @@ message ControllerConfig {
   CodePathConfig code_path = 100;
   // Keep repeat evidence private and disable learning.
   bool frozen_memory = 110;
+  // Transitional: replaces deployed_manifest_paths (63) when the controller switches.
+  DeploymentSource deployment_source = 112;
   // Disable detector admission/verification; accept external alerts only.
   bool external_incidents = 111;
 }

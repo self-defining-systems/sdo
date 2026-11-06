@@ -30,10 +30,31 @@ func Rules() Config {
 				Import:   module + "/contracts/gen/sdodev/contracts/v1alpha1",
 				OwnerPkg: module + "/render/raw",
 			},
+			{
+				Name:     "RawRenderConfig",
+				Import:   module + "/contracts/gen/sdodev/contracts/v1alpha1",
+				OwnerPkg: module + "/render/raw",
+			},
+			{
+				Name:     "KustomizeRenderConfig",
+				Import:   module + "/contracts/gen/sdodev/contracts/v1alpha1",
+				OwnerPkg: module + "/render/kustomize",
+			},
+			{
+				Name:     "BuildKitImageConfig",
+				Import:   module + "/contracts/gen/sdodev/contracts/v1alpha1",
+				OwnerPkg: module + "/imagesrc/buildkit",
+			},
+			{
+				Name:     "PrebuiltImageConfig",
+				Import:   module + "/contracts/gen/sdodev/contracts/v1alpha1",
+				OwnerPkg: module + "/imagesrc/prebuilt",
+			},
 		},
 		ConfigTypeSource: ConfigTypeSource{
 			Dir:    "contracts/gen/sdodev/contracts/v1alpha1",
-			Suffix: "Strategy",
+			// "Strategy" goes with RawManifestStrategy in S3-15.
+			Suffixes: []string{"Strategy", "RenderConfig", "ImageConfig"},
 		},
 		RatchetTokens: []string{"ManifestPaths", "manifest_paths"},
 		Allow: []Allow{

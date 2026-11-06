@@ -4,6 +4,7 @@ package sdodev.contracts.v1alpha1;
 
 import "buf/validate/validate.proto";
 import "google/protobuf/any.proto";
+import "sdodev/contracts/v1alpha1/deployment_source.proto";
 import "sdodev/contracts/v1alpha1/memory_diagnostic.proto";
 import "sdodev/contracts/v1alpha1/messages.proto";
 
@@ -31,6 +32,10 @@ message SourceDeploymentResult {
 message DeploymentPlan {
   string strategy_id = 1;
   google.protobuf.Any strategy_config = 2;
+  // Transitional: fields 1-2 are removed when consumers switch to source.
+  DeploymentSource source = 3;
+  repeated ImageSource images = 4;
+  repeated string expected_workload_ids = 5;
 }
 
 // The first built-in strategy. Later strategies can use their own typed
