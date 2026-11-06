@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"reflect"
 	"sdo.dev/operator/sdk/inputs"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -380,6 +381,14 @@ func (c *Controller) checkOnboardingHealth(ctx context.Context, snapshot sdk.Det
 	}
 	var contradiction *baselineContradictionError
 	if errors.As(err, &contradiction) {
+		// Unavailable replicas during a rollout are the rollout, not a
+		// contradiction of the install: wait for it to settle (the window's
+		// own expiry bounds the wait) rather than rejecting the namespace on
+		// the first iteration of the rollout it caused.
+		if rolling := rollingWorkloads(snapshot); len(rolling) > 0 {
+			c.waitForOnboarding(ctx, "rollout in progress: "+strings.Join(rolling, ", "))
+			return false
+		}
 		c.onboardingReachability.invalid = true
 		c.onboardingReachability.invalidReason = err.Error()
 	} else {
@@ -399,4 +408,35 @@ func (c *Controller) onboardingRejectionReason(expired bool) string {
 		return "install observation window expired; incomplete observations: " + c.onboardingReachability.waitReason
 	}
 	return ""
+}
+
+// rollingWorkloads names the workloads whose controller has not finished
+// replacing pods for the current template.
+func rollingWorkloads(snapshot sdk.DetectionContext) []string {
+	var rolling []string
+	for _, d := range snapshot.Deployments() {
+		desired := int32(1)
+		if d.Spec.Replicas != nil {
+			desired = *d.Spec.Replicas
+		}
+		if d.Generation > d.Status.ObservedGeneration || !d.Spec.Paused && (d.Status.UpdatedReplicas < desired || d.Status.Replicas > d.Status.UpdatedReplicas) {
+			rolling = append(rolling, "Deployment/"+d.Name)
+		}
+	}
+	for _, s := range snapshot.StatefulSets() {
+		desired := int32(1)
+		if s.Spec.Replicas != nil {
+			desired = *s.Spec.Replicas
+		}
+		if s.Generation > s.Status.ObservedGeneration || s.Status.UpdatedReplicas < desired {
+			rolling = append(rolling, "StatefulSet/"+s.Name)
+		}
+	}
+	for _, d := range snapshot.DaemonSets() {
+		if d.Generation > d.Status.ObservedGeneration || d.Status.UpdatedNumberScheduled < d.Status.DesiredNumberScheduled {
+			rolling = append(rolling, "DaemonSet/"+d.Name)
+		}
+	}
+	sort.Strings(rolling)
+	return rolling
 }
