@@ -71,6 +71,28 @@ func treeGit(files rendertest.MapFS) rendered.GitFunc {
 			return []byte(syntheticTree + "\n"), nil
 		case len(args) == 3 && args[0] == "cat-file" && args[1] == "-t" && args[2] == syntheticTree:
 			return []byte("tree\n"), nil
+		case len(args) == 5 && args[0] == "ls-tree" && args[3] == syntheticTree:
+			// Effective lists the direct children of .sdo/ directories.
+			dir := args[4]
+			seen := map[string]bool{}
+			var out strings.Builder
+			for name := range files {
+				rest, ok := strings.CutPrefix(name, dir)
+				if !ok {
+					continue
+				}
+				child, _, nested := strings.Cut(rest, "/")
+				if seen[child] {
+					continue
+				}
+				seen[child] = true
+				kind, mode := "blob", "100644"
+				if nested {
+					kind, mode = "tree", "040000"
+				}
+				fmt.Fprintf(&out, "%s %s %s\t%s%s\x00", mode, kind, strings.Repeat("e", 40), dir, child)
+			}
+			return []byte(out.String()), nil
 		case len(args) >= 1 && args[0] == "ls-tree" && args[len(args)-1] == syntheticTree:
 			names := make([]string, 0, len(files))
 			for name := range files {

@@ -78,7 +78,8 @@ func (d Deployer) ApplyAndVerify(ctx context.Context, checkout string, plan *con
 	if err != nil {
 		return lifecycle.DeploymentReceipt{}, err
 	}
-	fsys, err := rendered.GitTreeFS(ctx, store, effective)
+	defer effective.Close()
+	fsys, err := rendered.GitTreeFS(ctx, effective)
 	if err != nil {
 		return lifecycle.DeploymentReceipt{}, err
 	}
@@ -90,7 +91,7 @@ func (d Deployer) ApplyAndVerify(ctx context.Context, checkout string, plan *con
 	for _, image := range plan.GetImages() {
 		declared = append(declared, imagesrc.Declared{Image: image.GetImage(), SourceID: image.GetSourceId(), Config: image.GetConfig()})
 	}
-	resolved, err := d.Images.ResolveAll(ctx, imageSites(set), declared, imagesrc.Request{Tree: string(effective), FS: fsys, Checkout: checkout})
+	resolved, err := d.Images.ResolveAll(ctx, imageSites(set), declared, imagesrc.Request{Tree: effective.ID, FS: fsys, Checkout: checkout})
 	if err != nil {
 		return lifecycle.DeploymentReceipt{}, fmt.Errorf("resolve images: %w", err)
 	}

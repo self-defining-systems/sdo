@@ -128,7 +128,8 @@ func renderedDigests(ctx context.Context, store rendered.ObjectStore, tree strin
 	if err != nil {
 		return rendered.DesiredSet{}, err
 	}
-	fsys, err := rendered.GitTreeFS(ctx, store, effective)
+	defer effective.Close()
+	fsys, err := rendered.GitTreeFS(ctx, effective)
 	if err != nil {
 		return rendered.DesiredSet{}, err
 	}

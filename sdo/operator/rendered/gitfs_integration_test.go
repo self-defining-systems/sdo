@@ -48,7 +48,7 @@ func fixtureRepo(t *testing.T) (dir string, tree BaseTree) {
 	write(t, dir, "app/sub/svc.yaml", "kind: Service\n")
 	write(t, dir, "top.txt", "top")
 	write(t, dir, ".sdo/goal.md", "memory")
-	write(t, dir, ".sdo/deployment/patch.yaml", "patch")
+	write(t, dir, ".sdo/deployment/values/patch.yaml", "patch")
 	if err := os.Symlink("top.txt", filepath.Join(dir, "link")); err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,8 @@ func openTree(t *testing.T, objects ObjectStore, base BaseTree) (render.FS, Effe
 	if err != nil {
 		t.Fatal(err)
 	}
-	fsys, err := GitTreeFS(context.Background(), objects, eff)
+	t.Cleanup(eff.Close)
+	fsys, err := GitTreeFS(context.Background(), eff)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,8 +78,8 @@ func openTree(t *testing.T, objects ObjectStore, base BaseTree) (render.FS, Effe
 func TestGitTreeFSExposesOnlyTrackedRegularFilesAndDeploymentMemory(t *testing.T) {
 	dir, base := fixtureRepo(t)
 	fsys, eff := openTree(t, ObjectStore{Dir: dir}, base)
-	if string(eff) != string(base) {
-		t.Fatalf("Effective is the identity in slice 3: %s != %s", eff, base)
+	if eff.ID == string(base) {
+		t.Fatalf("the effective tree projects .sdo memory away, so it is not the base tree %s", base)
 	}
 	var names []string
 	err := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
@@ -90,7 +91,7 @@ func TestGitTreeFSExposesOnlyTrackedRegularFilesAndDeploymentMemory(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := ".sdo/deployment/patch.yaml app/deploy.yaml app/sub/svc.yaml top.txt"
+	want := ".sdo/deployment/values/patch.yaml app/deploy.yaml app/sub/svc.yaml top.txt"
 	if got := strings.Join(names, " "); got != want {
 		t.Fatalf("files = %q, want %q (symlink, gitlink and .sdo memory must be absent)", got, want)
 	}
@@ -110,7 +111,7 @@ func TestGitTreeFSExposesOnlyTrackedRegularFilesAndDeploymentMemory(t *testing.T
 	if got := strings.Join(top, " "); got != ".sdo app top.txt" {
 		t.Fatalf("root entries = %q", got)
 	}
-	if err := fstest.TestFS(fsys, "app/deploy.yaml", "app/sub/svc.yaml", "top.txt", ".sdo/deployment/patch.yaml"); err != nil {
+	if err := fstest.TestFS(fsys, "app/deploy.yaml", "app/sub/svc.yaml", "top.txt", ".sdo/deployment/values/patch.yaml"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -122,7 +123,9 @@ func TestGitTreeFSBlobAndSizeComeFromTheListingWithoutReadingBytes(t *testing.T)
 		if args[0] == "cat-file" && args[1] == "blob" {
 			catFiles.Add(1)
 		}
-		return exec.CommandContext(ctx, "git", append([]string{"-C", d}, args...)...).Output()
+		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", d}, args...)...)
+		cmd.Env = append(os.Environ(), GitEnvFrom(ctx)...)
+		return cmd.Output()
 	}}
 	fsys, _ := openTree(t, objects, base)
 	blob, err := fsys.Blob("app/deploy.yaml")
@@ -206,11 +209,11 @@ func TestEffectiveAndGitTreeFSRejectNonTrees(t *testing.T) {
 		if _, err := Effective(ctx, ObjectStore{Dir: dir}, BaseTree(id)); err == nil {
 			t.Errorf("Effective(%q) must fail", id)
 		}
-		if _, err := GitTreeFS(ctx, ObjectStore{Dir: dir}, EffectiveTree(id)); err == nil {
+		if _, err := GitTreeFS(ctx, EffectiveTree{ID: id, Store: ObjectStore{Dir: dir}}); err == nil {
 			t.Errorf("GitTreeFS(%q) must fail", id)
 		}
 	}
-	if _, err := GitTreeFS(ctx, ObjectStore{Dir: dir}, EffectiveTree(commit)); err == nil {
+	if _, err := GitTreeFS(ctx, EffectiveTree{ID: commit, Store: ObjectStore{Dir: dir}}); err == nil {
 		t.Fatal("GitTreeFS must not list a commit")
 	}
 }
@@ -222,7 +225,9 @@ func TestGitTreeFSReadFailureMidRenderIsUnavailable(t *testing.T) {
 		if fail && args[0] == "cat-file" {
 			return nil, errors.New("disk gone")
 		}
-		return exec.CommandContext(ctx, "git", append([]string{"-C", d}, args...)...).Output()
+		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", d}, args...)...)
+		cmd.Env = append(os.Environ(), GitEnvFrom(ctx)...)
+		return cmd.Output()
 	}}
 	fsys, _ := openTree(t, objects, base)
 	fail = true
