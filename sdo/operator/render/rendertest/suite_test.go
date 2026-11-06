@@ -122,7 +122,7 @@ func toyObject(kind, name, ns string) *unstructured.Unstructured {
 func TestNegativeControlNondeterministicRenderer(t *testing.T) {
 	var calls atomic.Int64
 	got := failing(t, render.RendererFunc[*wrapperspb.StringValue](func(_ context.Context, _ render.FS, env render.Env, _ *wrapperspb.StringValue) (render.Result, error) {
-		return render.Result{Objects: []*unstructured.Unstructured{toyObject("ConfigMap", fmt.Sprintf("cm-%d", calls.Add(1)), "demo")}}, nil
+		return render.SinglePhase(toyObject("ConfigMap", fmt.Sprintf("cm-%d", calls.Add(1)), "demo")), nil
 	}))
 	if !properties(got)["determinism"] {
 		t.Fatalf("suite accepted a nondeterministic renderer: %v", got)
@@ -137,7 +137,7 @@ func TestNegativeControlSecretLeakingRenderer(t *testing.T) {
 		}
 		secret := toyObject("Secret", "creds", "demo")
 		secret.Object["stringData"] = map[string]any{"token": string(value)} // ignores env.Secrets
-		return render.Result{Objects: []*unstructured.Unstructured{secret}}, nil
+		return render.SinglePhase(secret), nil
 	}))
 	if !properties(got)["secret-omit"] {
 		t.Fatalf("suite accepted a Secret-leaking renderer: %v", got)
@@ -149,7 +149,7 @@ func TestNegativeControlOmitReadsSecretSource(t *testing.T) {
 		if _, err := fsys.ReadFile("secrets/token"); err != nil { // read, then drop the value
 			return render.Result{}, err
 		}
-		return render.Result{Objects: []*unstructured.Unstructured{toyObject("Secret", "creds", "demo")}}, nil
+		return render.SinglePhase(toyObject("Secret", "creds", "demo")), nil
 	}))
 	if !properties(got)["secret-omit"] {
 		t.Fatalf("suite accepted a renderer that reads Secret sources under SecretsOmit: %v", got)
@@ -162,21 +162,33 @@ func TestNegativeControlSecretIdentityDependsOnMode(t *testing.T) {
 		if env.Secrets == render.SecretsInclude {
 			name = "creds-hash1234" // a content-hash suffix only computable with values
 		}
-		return render.Result{Objects: []*unstructured.Unstructured{toyObject("Secret", name, "demo")}}, nil
+		return render.SinglePhase(toyObject("Secret", name, "demo")), nil
 	}))
 	if !properties(got)["secret-identity"] {
 		t.Fatalf("suite accepted mode-dependent Secret identity: %v", got)
 	}
 }
 
-func TestNegativeControlBadPhasesRejected(t *testing.T) {
+func TestNegativeControlOmitDoesNotDeclareSecretSource(t *testing.T) {
+	got := failing(t, render.RendererFunc[*wrapperspb.StringValue](func(_ context.Context, fsys render.FS, env render.Env, _ *wrapperspb.StringValue) (render.Result, error) {
+		if env.Secrets == render.SecretsInclude {
+			if _, err := fsys.ReadFile("secrets/token"); err != nil {
+				return render.Result{}, err
+			}
+		}
+		return render.SinglePhase(toyObject("Secret", "creds", "demo")), nil
+	}))
+	if !properties(got)["inputs-modes"] {
+		t.Fatalf("suite accepted a renderer whose Omit inputs omit the Secret source: %v", got)
+	}
+}
+
+func TestNegativeControlRepeatedPhaseNamesRejected(t *testing.T) {
 	got := failing(t, render.RendererFunc[*wrapperspb.StringValue](func(_ context.Context, _ render.FS, env render.Env, _ *wrapperspb.StringValue) (render.Result, error) {
-		return render.Result{
-			Objects: []*unstructured.Unstructured{toyObject("ConfigMap", "a", "demo"), toyObject("ConfigMap", "b", "demo")},
-			Phases:  []render.Phase{{Name: "only", End: 1}}, // leaves b out
-		}, nil
+		a := render.Phase{Name: "p", Objects: []*unstructured.Unstructured{toyObject("ConfigMap", "a", "demo")}}
+		return render.Result{Phases: []render.Phase{a, a}}, nil
 	}))
 	if len(got) == 0 {
-		t.Fatal("suite accepted phases that do not partition the objects")
+		t.Fatal("suite accepted repeated phase names")
 	}
 }

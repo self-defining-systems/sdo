@@ -3,11 +3,10 @@
 package rendertest
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"io/fs"
-	"sort"
 	"testing/fstest"
+
+	"sdo.dev/operator/render"
 )
 
 // MapFS is an in-memory render.FS for fixtures: path -> content.
@@ -33,19 +32,11 @@ func (m MapFS) ReadDir(name string) ([]fs.DirEntry, error) { return m.fsys().Rea
 // Stat implements fs.StatFS.
 func (m MapFS) Stat(name string) (fs.FileInfo, error) { return m.fsys().Stat(name) }
 
-// Tree is a deterministic digest of the sorted paths and contents.
-func (m MapFS) Tree() string {
-	names := make([]string, 0, len(m))
-	for name := range m {
-		names = append(names, name)
+// Blob returns the Git blob ID of the file's content.
+func (m MapFS) Blob(name string) (string, error) {
+	content, ok := m[name]
+	if !ok {
+		return "", &fs.PathError{Op: "blob", Path: name, Err: fs.ErrNotExist}
 	}
-	sort.Strings(names)
-	h := sha256.New()
-	for _, name := range names {
-		h.Write([]byte(name))
-		h.Write([]byte{0})
-		h.Write([]byte(m[name]))
-		h.Write([]byte{0})
-	}
-	return hex.EncodeToString(h.Sum(nil))
+	return render.GitBlobID([]byte(content)), nil
 }

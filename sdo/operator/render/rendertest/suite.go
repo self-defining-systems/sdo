@@ -33,7 +33,8 @@ type Case struct {
 	// Limits, when set, replaces the catalog's read limits for this case.
 	Limits *render.Limits
 	// SecretOnly lists files that only a Secret consumes. A SecretsOmit render
-	// must not read them.
+	// must declare them (Stat, so they stay attributable inputs) but not read
+	// them.
 	SecretOnly []string
 }
 
@@ -65,12 +66,16 @@ func TestRenderer(t *testing.T, c *render.Catalog, id string, cases []Case) {
 // Check runs the contract and returns the violations. The properties:
 //
 //	determinism       repeated renders over equal FS/Env/config are deep-equal
-//	inputs            Inputs name only files (or directories) that exist in FS
+//	inputs            Inputs are truthful: files exist with the recorded Git
+//	                  blob ID, listed paths are directories, absent paths do not
+//	                  exist
+//	inputs-modes      the Input paths are equal under SecretsOmit and
+//	                  SecretsInclude, so Secret-only changes stay attributable
 //	secret-identity   object refs are equal under SecretsOmit and SecretsInclude
-//	secret-omit       SecretsOmit output carries no Secret data and reads no
-//	                  SecretOnly file
+//	secret-omit       SecretsOmit output carries no Secret data and does not
+//	                  read any SecretOnly file
 //	errors            an error case fails with WantErr (and ErrLimit when set)
-//	phases            Phases partition Objects and Desired excludes Ephemeral
+//	phases            phase names are unique and Desired excludes Ephemeral
 //	want              the desired objects equal Want
 func Check(c *render.Catalog, id string, cases []Case) []Failure {
 	var failures []Failure
@@ -137,10 +142,8 @@ func checkCase(c *render.Catalog, id string, tc Case, fail func(string, error)) 
 	checkInputs(tc.FS, first, fail)
 	checkPhases(first, fail)
 	for _, file := range tc.SecretOnly {
-		for _, in := range first.Inputs {
-			if in == file {
-				fail("secret-omit", fmt.Errorf("SecretsOmit read %s, which only a Secret consumes", file))
-			}
+		if in, ok := findInput(first.Inputs, file); ok && in.Kind == render.InputRead {
+			fail("secret-omit", fmt.Errorf("SecretsOmit read %s, which only a Secret consumes", file))
 		}
 	}
 	withSecrets, err := c.Render(ctx, tc.FS, include, id, config)
@@ -148,7 +151,10 @@ func checkCase(c *render.Catalog, id string, tc Case, fail func(string, error)) 
 		fail("secret-identity", fmt.Errorf("SecretsInclude render failed: %w", err))
 		return nil
 	}
-	if a, b := refs(first.Objects), refs(withSecrets.Objects); !reflect.DeepEqual(a, b) {
+	if a, b := inputPaths(first.Inputs), inputPaths(withSecrets.Inputs); !reflect.DeepEqual(a, b) {
+		fail("inputs-modes", fmt.Errorf("input paths differ between modes: omit %v, include %v", a, b))
+	}
+	if a, b := refs(first.Objects()), refs(withSecrets.Objects()); !reflect.DeepEqual(a, b) {
 		fail("secret-identity", fmt.Errorf("object refs differ between modes: omit %v, include %v", a, b))
 	}
 	if tc.Want != nil {
@@ -168,37 +174,67 @@ func configAny(m proto.Message) (*anypb.Any, error) {
 	return anypb.New(m)
 }
 
+func findInput(inputs []render.Input, path string) (render.Input, bool) {
+	for _, in := range inputs {
+		if in.Path == path {
+			return in, true
+		}
+	}
+	return render.Input{}, false
+}
+
+func inputPaths(inputs []render.Input) []string {
+	out := make([]string, 0, len(inputs))
+	for _, in := range inputs {
+		out = append(out, in.Path)
+	}
+	return out
+}
+
 func checkInputs(fsys MapFS, res render.Result, fail func(string, error)) {
 	for _, in := range res.Inputs {
-		if dir, ok := strings.CutSuffix(in, "/"); ok {
-			if _, err := fsys.Stat(strings.TrimPrefix(dir, "./")); dir != "." && err != nil {
-				fail("inputs", fmt.Errorf("input directory %s is not in the FS", in))
+		switch in.Kind {
+		case render.InputRead, render.InputStat:
+			content, ok := fsys[in.Path]
+			switch {
+			case ok:
+				if want := render.GitBlobID([]byte(content)); in.Blob != want {
+					fail("inputs", fmt.Errorf("%s input %s has blob %q, want %q", in.Kind, in.Path, in.Blob, want))
+				}
+			case in.Kind == render.InputStat && isDir(fsys, in.Path):
+			default:
+				fail("inputs", fmt.Errorf("%s input %s is not in the FS", in.Kind, in.Path))
 			}
-			continue
-		}
-		if _, ok := fsys[in]; !ok {
-			fail("inputs", fmt.Errorf("input %s is not a file in the FS", in))
+		case render.InputListed:
+			if !isDir(fsys, in.Path) {
+				fail("inputs", fmt.Errorf("listed input %s is not a directory in the FS", in.Path))
+			}
+		case render.InputAbsent:
+			if _, ok := fsys[in.Path]; ok || isDir(fsys, in.Path) {
+				fail("inputs", fmt.Errorf("absent input %s exists in the FS", in.Path))
+			}
+		default:
+			fail("inputs", fmt.Errorf("input %s has unknown kind %d", in.Path, in.Kind))
 		}
 	}
 }
 
+func isDir(fsys MapFS, path string) bool {
+	info, err := fsys.Stat(path)
+	return err == nil && info.IsDir()
+}
+
 func checkPhases(res render.Result, fail func(string, error)) {
-	phases := res.EffectivePhases()
-	prev := 0
+	names := map[string]bool{}
 	desired := 0
-	for _, p := range phases {
-		if p.End < prev || p.End > len(res.Objects) {
-			fail("phases", fmt.Errorf("phase %q end %d outside [%d, %d]", p.Name, p.End, prev, len(res.Objects)))
-			return
+	for _, p := range res.Phases {
+		if p.Name == "" || names[p.Name] {
+			fail("phases", fmt.Errorf("phase name %q is empty or repeated", p.Name))
 		}
+		names[p.Name] = true
 		if !p.Ephemeral {
-			desired += p.End - prev
+			desired += len(p.Objects)
 		}
-		prev = p.End
-	}
-	if prev != len(res.Objects) {
-		fail("phases", fmt.Errorf("phases cover %d of %d objects", prev, len(res.Objects)))
-		return
 	}
 	if got := len(res.Desired()); got != desired {
 		fail("phases", fmt.Errorf("Desired has %d objects, non-ephemeral phases hold %d", got, desired))

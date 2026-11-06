@@ -17,8 +17,9 @@ import (
 const ToyID = "toy"
 
 // SecretFileKey names the field of a toy Secret that points at the file
-// holding its value. The file is read only under SecretsInclude, like a
-// kustomize secretGenerator source.
+// holding its value. The file is read only under SecretsInclude; under
+// SecretsOmit it is only declared with Stat, like a kustomize
+// secretGenerator source.
 const SecretFileKey = "x-secret-file"
 
 // RegisterToy registers the toy renderer. Its config is the directory (a
@@ -60,12 +61,12 @@ func renderToy(_ context.Context, fsys render.FS, env render.Env, dir *wrappersp
 			main = append(main, obj)
 		}
 	}
-	res := render.Result{Objects: append(append([]*unstructured.Unstructured{}, main...), hooks...)}
+	var res render.Result
+	if len(main) > 0 {
+		res.Phases = append(res.Phases, render.Phase{Name: "main", Objects: main, Gate: render.GateReady})
+	}
 	if len(hooks) > 0 {
-		res.Phases = []render.Phase{
-			{Name: "main", End: len(main), Gate: render.GateReady},
-			{Name: "hooks", End: len(res.Objects), Gate: render.GateNone, Ephemeral: true},
-		}
+		res.Phases = append(res.Phases, render.Phase{Name: "hooks", Objects: hooks, Gate: render.GateNone, Ephemeral: true})
 	}
 	return res, nil
 }
@@ -77,6 +78,11 @@ func resolveSecret(fsys render.FS, env render.Env, obj *unstructured.Unstructure
 	}
 	delete(obj.Object, SecretFileKey)
 	if env.Secrets == render.SecretsOmit {
+		// Declare the source without reading it, so it stays an attributable
+		// input (its blob ID is recorded) but its bytes never reach the render.
+		if _, err := fsys.Stat(source); err != nil {
+			return fmt.Errorf("%s: secret source: %w", file, err)
+		}
 		return nil
 	}
 	value, err := fsys.ReadFile(source)

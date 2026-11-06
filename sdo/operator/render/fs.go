@@ -6,6 +6,8 @@
 package render
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -23,8 +25,21 @@ type FS interface {
 	fs.ReadFileFS
 	fs.ReadDirFS
 	fs.StatFS
-	// Tree is the Git tree ID this view reads.
-	Tree() string
+	// Blob returns the Git blob ID of the tracked file name. It does not read
+	// the file's bytes into the renderer. A missing path is fs.ErrNotExist.
+	//
+	// There is deliberately no tree ID here: the tree ID covers .sdo/ memory,
+	// so a renderer that saw it would let a memory-only commit change desired
+	// state. Core keeps the tree beside the FS.
+	Blob(name string) (string, error)
+}
+
+// GitBlobID is the Git blob object ID of data (sha1 of "blob <n>\0" + data).
+func GitBlobID(data []byte) string {
+	h := sha1.New()
+	fmt.Fprintf(h, "blob %d\x00", len(data))
+	h.Write(data)
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // Limits bounds what one render may read.
@@ -50,44 +65,95 @@ func (l Limits) withDefaults() Limits {
 // ErrLimit marks an input that exceeds Limits.
 var ErrLimit = errors.New("render input exceeds limit")
 
-// Recorder wraps an FS, enforces Limits and records every path read and
-// listed. The catalog, never the renderer, turns the record into
-// Result.Inputs.
+// InputKind says how a render touched an input.
+type InputKind int
+
+const (
+	// InputRead: the file's bytes were read.
+	InputRead InputKind = iota + 1
+	// InputStat: the file was declared by a Stat without reading its bytes.
+	// This is how SecretsOmit renders keep Secret-only inputs attributable.
+	InputStat
+	// InputListed: the directory's entries were listed.
+	InputListed
+	// InputAbsent: the path was probed and does not exist. Adding it later
+	// changes the render.
+	InputAbsent
+)
+
+func (k InputKind) String() string {
+	switch k {
+	case InputRead:
+		return "read"
+	case InputStat:
+		return "stat"
+	case InputListed:
+		return "listed"
+	case InputAbsent:
+		return "absent"
+	}
+	return fmt.Sprintf("InputKind(%d)", int(k))
+}
+
+// Input is one recorded dependency of a render.
+type Input struct {
+	Path string // slash-separated, relative; "." is the root
+	// Blob is the Git blob ID for Read and Stat of a file. It is empty for
+	// directories and absent paths.
+	Blob string
+	Kind InputKind
+}
+
+// Recorder wraps an FS, enforces Limits and records every path read,
+// declared, listed or probed. The catalog, never the renderer, turns the
+// record into Result.Inputs.
 type Recorder struct {
 	fsys   FS
 	limits Limits
 
-	mu    sync.Mutex
-	files map[string]int64 // path -> size, each distinct file counted once
-	dirs  map[string]bool
-	total int64
+	mu     sync.Mutex
+	inputs map[string]Input
+	sizes  map[string]int64 // files read: each distinct file counted once
+	total  int64
 }
 
 var _ FS = (*Recorder)(nil)
 
 // Record wraps fsys. Zero Limits fields take DefaultLimits.
 func Record(fsys FS, limits Limits) *Recorder {
-	return &Recorder{fsys: fsys, limits: limits.withDefaults(), files: map[string]int64{}, dirs: map[string]bool{}}
+	return &Recorder{fsys: fsys, limits: limits.withDefaults(), inputs: map[string]Input{}, sizes: map[string]int64{}}
 }
 
-// Tree returns the wrapped tree ID.
-func (r *Recorder) Tree() string { return r.fsys.Tree() }
+// Blob returns the wrapped blob ID without recording an input.
+func (r *Recorder) Blob(name string) (string, error) { return r.fsys.Blob(name) }
 
-// Inputs lists the files read and the directories listed, sorted and
-// deduplicated. A directory is spelled with a trailing slash ("./" is the
-// root).
-func (r *Recorder) Inputs() []string {
+// Inputs lists everything recorded, sorted by path. A path read after being
+// declared is one Read input.
+func (r *Recorder) Inputs() []Input {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	out := make([]string, 0, len(r.files)+len(r.dirs))
-	for p := range r.files {
-		out = append(out, p)
+	out := make([]Input, 0, len(r.inputs))
+	for _, in := range r.inputs {
+		out = append(out, in)
 	}
-	for d := range r.dirs {
-		out = append(out, strings.TrimSuffix(d, "/")+"/")
-	}
-	sort.Strings(out)
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
+}
+
+// note records in, keeping the strongest kind for a file (Read over Stat).
+func (r *Recorder) note(in Input) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if prev, ok := r.inputs[in.Path]; ok && prev.Kind == InputRead && in.Kind == InputStat {
+		return
+	}
+	r.inputs[in.Path] = in
+}
+
+func (r *Recorder) noteAbsent(name string, err error) {
+	if errors.Is(err, fs.ErrNotExist) {
+		r.note(Input{Path: name, Kind: InputAbsent})
+	}
 }
 
 // ReadFile reads and records name, enforcing Limits.
@@ -102,23 +168,29 @@ func (r *Recorder) ReadFile(name string) ([]byte, error) {
 	}
 	data, err := r.fsys.ReadFile(name)
 	if err != nil {
+		r.noteAbsent(name, err)
 		return nil, err
 	}
 	if err := r.admit(name, int64(len(data))); err != nil {
 		return nil, err
 	}
+	blob, err := r.fsys.Blob(name)
+	if err != nil {
+		return nil, err
+	}
+	r.note(Input{Path: name, Blob: blob, Kind: InputRead})
 	return data, nil
 }
 
-// admit charges size against the limits and records the file. A path already
-// recorded with the same size is free.
+// admit charges size against the limits. A file already charged with the
+// same size is free.
 func (r *Recorder) admit(name string, size int64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if size > r.limits.FileBytes {
 		return fmt.Errorf("%w: %s is %d bytes, file limit %d", ErrLimit, name, size, r.limits.FileBytes)
 	}
-	prev, seen := r.files[name]
+	prev, seen := r.sizes[name]
 	if seen && prev == size {
 		return nil
 	}
@@ -126,7 +198,7 @@ func (r *Recorder) admit(name string, size int64) error {
 		return fmt.Errorf("%w: reading %s exceeds total limit %d", ErrLimit, name, r.limits.TotalBytes)
 	}
 	r.total += size - prev
-	r.files[name] = size
+	r.sizes[name] = size
 	return nil
 }
 
@@ -137,17 +209,34 @@ func (r *Recorder) ReadDir(name string) ([]fs.DirEntry, error) {
 	}
 	entries, err := r.fsys.ReadDir(name)
 	if err != nil {
+		r.noteAbsent(name, err)
 		return nil, err
 	}
-	r.mu.Lock()
-	r.dirs[name] = true
-	r.mu.Unlock()
+	r.note(Input{Path: name, Kind: InputListed})
 	return entries, nil
 }
 
-// Stat reports file metadata. It is not recorded as an input: it reveals
-// existence and size only.
-func (r *Recorder) Stat(name string) (fs.FileInfo, error) { return r.fsys.Stat(name) }
+// Stat reports file metadata and records the path: as InputStat with its blob
+// ID when it exists (its bytes are not read and not charged to the limits),
+// as InputAbsent when it does not.
+func (r *Recorder) Stat(name string) (fs.FileInfo, error) {
+	if !fs.ValidPath(name) {
+		return nil, &fs.PathError{Op: "stat", Path: name, Err: fs.ErrInvalid}
+	}
+	info, err := r.fsys.Stat(name)
+	if err != nil {
+		r.noteAbsent(name, err)
+		return nil, err
+	}
+	in := Input{Path: name, Kind: InputStat}
+	if !info.IsDir() {
+		if in.Blob, err = r.fsys.Blob(name); err != nil {
+			return nil, err
+		}
+	}
+	r.note(in)
+	return info, nil
+}
 
 // Open opens name. Files are read whole through ReadFile (so they are
 // recorded and limited); directories are listed through ReadDir.
@@ -158,7 +247,7 @@ func (r *Recorder) Open(name string) (fs.File, error) {
 // Overlay returns fsys with extra virtual files (chain hand-off, kustomize
 // virtual Secret references). A virtual file shadows a real one. Reads of
 // virtual files do not reach the wrapped FS, so a Recorder wrapped around
-// fsys does not record them as inputs. Tree is the wrapped tree ID.
+// fsys does not record them as inputs.
 func Overlay(fsys FS, files map[string][]byte) FS {
 	o := &overlay{FS: fsys, files: map[string][]byte{}}
 	for name, data := range files {
@@ -177,6 +266,13 @@ func (o *overlay) ReadFile(name string) ([]byte, error) {
 		return append([]byte(nil), data...), nil
 	}
 	return o.FS.ReadFile(name)
+}
+
+func (o *overlay) Blob(name string) (string, error) {
+	if data, ok := o.files[name]; ok {
+		return GitBlobID(data), nil
+	}
+	return o.FS.Blob(name)
 }
 
 func (o *overlay) Stat(name string) (fs.FileInfo, error) {

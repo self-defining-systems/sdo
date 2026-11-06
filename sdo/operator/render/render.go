@@ -40,47 +40,50 @@ const (
 	GateNone
 )
 
-// Phase is a contiguous range of Result.Objects applied together.
+// Phase is a named group of objects applied together.
 type Phase struct {
-	Name string
-	// End is an exclusive index into Result.Objects. Phases partition Objects
-	// in order.
-	End  int
-	Gate Gate
+	// Name identifies the phase; it is non-empty and unique within a Result.
+	Name    string
+	Objects []*unstructured.Unstructured // apply order within the phase
+	Gate    Gate
 	// Ephemeral objects are applied but are not desired state: they are
 	// excluded from inventory, drift, onboarding identities and restore.
 	Ephemeral bool
 }
 
-// Result is what a renderer returns.
+// Result is what a renderer returns. Each object belongs to exactly one phase
+// by construction.
 type Result struct {
-	Objects []*unstructured.Unstructured // apply order
-	Phases  []Phase                      // nil = one GateReady phase over all Objects
-	Inputs  []string                     // set by Catalog.Render from the Recorder; renderers leave it nil
+	Phases []Phase // apply order
+	Inputs []Input // set by Catalog.Render from the Recorder; renderers leave it nil
 }
 
-// EffectivePhases returns Phases, or the single GateReady phase over every
-// object when Phases is nil.
-func (r Result) EffectivePhases() []Phase {
-	if r.Phases != nil {
-		return r.Phases
+// SinglePhase is the common case: one GateReady phase named "default" over
+// objs (no phase when objs is empty).
+func SinglePhase(objs ...*unstructured.Unstructured) Result {
+	if len(objs) == 0 {
+		return Result{}
 	}
-	if len(r.Objects) == 0 {
-		return nil
+	return Result{Phases: []Phase{{Name: "default", Objects: objs, Gate: GateReady}}}
+}
+
+// Objects returns every object in apply order.
+func (r Result) Objects() []*unstructured.Unstructured {
+	var out []*unstructured.Unstructured
+	for _, p := range r.Phases {
+		out = append(out, p.Objects...)
 	}
-	return []Phase{{Name: "default", End: len(r.Objects), Gate: GateReady}}
+	return out
 }
 
 // Desired returns the objects outside Ephemeral phases: the desired state
 // readers see.
 func (r Result) Desired() []*unstructured.Unstructured {
 	var out []*unstructured.Unstructured
-	start := 0
-	for _, p := range r.EffectivePhases() {
+	for _, p := range r.Phases {
 		if !p.Ephemeral {
-			out = append(out, r.Objects[start:p.End]...)
+			out = append(out, p.Objects...)
 		}
-		start = p.End
 	}
 	return out
 }

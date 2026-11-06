@@ -130,26 +130,23 @@ func (c *Catalog) Render(ctx context.Context, fsys FS, env Env, id string, confi
 }
 
 func validateResult(res Result, env Env) error {
-	for i, obj := range res.Objects {
-		if obj == nil {
-			return fmt.Errorf("object %d is nil", i)
-		}
-		if err := validateObject(obj, env); err != nil {
-			return fmt.Errorf("object %d: %w", i, err)
-		}
-	}
 	if res.Inputs != nil {
 		return errors.New("renderer set Inputs; the catalog owns them")
 	}
-	prev := 0
+	names := map[string]bool{}
 	for i, p := range res.Phases {
-		if p.End < prev || p.End > len(res.Objects) {
-			return fmt.Errorf("phase %d (%q) end %d is outside [%d, %d]", i, p.Name, p.End, prev, len(res.Objects))
+		if p.Name == "" || names[p.Name] {
+			return fmt.Errorf("phase %d name %q is empty or repeated", i, p.Name)
 		}
-		prev = p.End
-	}
-	if res.Phases != nil && prev != len(res.Objects) {
-		return fmt.Errorf("phases cover %d of %d objects", prev, len(res.Objects))
+		names[p.Name] = true
+		for j, obj := range p.Objects {
+			if obj == nil {
+				return fmt.Errorf("phase %q object %d is nil", p.Name, j)
+			}
+			if err := validateObject(obj, env); err != nil {
+				return fmt.Errorf("phase %q object %d: %w", p.Name, j, err)
+			}
+		}
 	}
 	return nil
 }

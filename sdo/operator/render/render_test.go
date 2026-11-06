@@ -17,8 +17,10 @@ import (
 	"sdo.dev/operator/render/rendertest"
 )
 
-func TestRecorderRecordsReadsAndListings(t *testing.T) {
-	base := rendertest.MapFS{"a/x.json": "1", "a/y.json": "22", "b.txt": "333"}
+func blob(s string) string { return render.GitBlobID([]byte(s)) }
+
+func TestRecorderRecordsReadsListingsAbsentAndStats(t *testing.T) {
+	base := rendertest.MapFS{"a/x.json": "1", "a/y.json": "22", "b.txt": "333", "c.txt": "4"}
 	rec := render.Record(base, render.Limits{})
 	if _, err := rec.ReadDir("a"); err != nil {
 		t.Fatal(err)
@@ -31,9 +33,49 @@ func TestRecorderRecordsReadsAndListings(t *testing.T) {
 	if _, err := rec.Stat("b.txt"); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"a/", "a/x.json", "a/y.json"}
+	// Declared first, read later: one Read input.
+	if _, err := rec.Stat("c.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rec.ReadFile("c.txt"); err != nil {
+		t.Fatal(err)
+	}
+	// Probes for absent paths are inputs too.
+	if _, err := rec.Stat("kustomization.yaml"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal(err)
+	}
+	if _, err := rec.ReadFile("values.json"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal(err)
+	}
+	if _, err := rec.ReadDir("nodir"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal(err)
+	}
+	want := []render.Input{
+		{Path: "a", Kind: render.InputListed},
+		{Path: "a/x.json", Blob: blob("1"), Kind: render.InputRead},
+		{Path: "a/y.json", Blob: blob("22"), Kind: render.InputRead},
+		{Path: "b.txt", Blob: blob("333"), Kind: render.InputStat},
+		{Path: "c.txt", Blob: blob("4"), Kind: render.InputRead},
+		{Path: "kustomization.yaml", Kind: render.InputAbsent},
+		{Path: "nodir", Kind: render.InputAbsent},
+		{Path: "values.json", Kind: render.InputAbsent},
+	}
 	if got := rec.Inputs(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("Inputs = %v, want %v (Stat must not record)", got, want)
+		t.Fatalf("Inputs = %v\nwant %v", got, want)
+	}
+}
+
+func TestStatDoesNotChargeLimits(t *testing.T) {
+	rec := render.Record(rendertest.MapFS{"big": "123456789"}, render.Limits{FileBytes: 4})
+	if _, err := rec.Stat("big"); err != nil {
+		t.Fatalf("declaring an input must not read it: %v", err)
+	}
+}
+
+func TestGitBlobIDMatchesGit(t *testing.T) {
+	// `printf 'hello\n' | git hash-object --stdin`
+	if got := render.GitBlobID([]byte("hello\n")); got != "ce013625030ba8dba906f756967f9e9ca394464a" {
+		t.Fatalf("GitBlobID = %s", got)
 	}
 }
 
@@ -46,7 +88,7 @@ func TestRecorderOpenIsRecordedAndLimited(t *testing.T) {
 	if _, err := fs.ReadFile(rec, "f"); err != nil {
 		t.Fatal(err)
 	}
-	if got := rec.Inputs(); !reflect.DeepEqual(got, []string{"f"}) {
+	if got := rec.Inputs(); len(got) != 1 || got[0].Path != "f" || got[0].Kind != render.InputRead {
 		t.Fatalf("Inputs = %v", got)
 	}
 }
@@ -81,7 +123,7 @@ func TestOverlayShadowsAndIsNotRecorded(t *testing.T) {
 			t.Fatalf("ReadFile(%q) = %q, %v; want %q", name, got, err, want)
 		}
 	}
-	if got := rec.Inputs(); !reflect.DeepEqual(got, []string{"real"}) {
+	if got := rec.Inputs(); len(got) != 1 || got[0].Path != "real" {
 		t.Fatalf("virtual files leaked into Inputs: %v", got)
 	}
 	entries, err := ov.ReadDir(".")
@@ -98,8 +140,8 @@ func TestOverlayShadowsAndIsNotRecorded(t *testing.T) {
 	if info, err := ov.Stat("virtual"); err != nil || !info.IsDir() {
 		t.Fatalf("Stat(virtual) = %v, %v", info, err)
 	}
-	if ov.Tree() != rec.Tree() {
-		t.Fatal("overlay changed Tree")
+	if got, err := ov.Blob("virtual/v"); err != nil || got != blob("v") {
+		t.Fatalf("Blob(virtual/v) = %q, %v", got, err)
 	}
 }
 
@@ -170,12 +212,11 @@ func TestCatalogRenderSetsInputsAndRejectsInvalidResults(t *testing.T) {
 		return &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": name}}}
 	}
 	cases := map[string]render.Result{
-		"missing name": {Objects: []*unstructured.Unstructured{obj("")}},
-		"nil object":   {Objects: []*unstructured.Unstructured{nil}},
-		"short phases": {Objects: []*unstructured.Unstructured{obj("a"), obj("b")}, Phases: []render.Phase{{End: 1}}},
-		"long phases":  {Objects: []*unstructured.Unstructured{obj("a")}, Phases: []render.Phase{{End: 2}}},
-		"decreasing":   {Objects: []*unstructured.Unstructured{obj("a"), obj("b")}, Phases: []render.Phase{{End: 2}, {End: 1}}},
-		"set inputs":   {Objects: []*unstructured.Unstructured{obj("a")}, Inputs: []string{"lie"}},
+		"missing name":   render.SinglePhase(obj("")),
+		"nil object":     {Phases: []render.Phase{{Name: "p", Objects: []*unstructured.Unstructured{nil}}}},
+		"unnamed phase":  {Phases: []render.Phase{{Objects: []*unstructured.Unstructured{obj("a")}}}},
+		"repeated phase": {Phases: []render.Phase{{Name: "p"}, {Name: "p"}}},
+		"set inputs":     {Phases: render.SinglePhase(obj("a")).Phases, Inputs: []render.Input{{Path: "lie", Kind: render.InputRead}}},
 	}
 	cfg, _ := anypb.New(wrapperspb.String(""))
 	for name, res := range cases {
@@ -193,14 +234,16 @@ func TestCatalogRenderSetsInputsAndRejectsInvalidResults(t *testing.T) {
 		if _, err := f.ReadFile("in"); err != nil {
 			return render.Result{}, err
 		}
-		return render.Result{Objects: []*unstructured.Unstructured{obj("a")}}, nil
+		_, _ = f.Stat("optional")
+		return render.SinglePhase(obj("a")), nil
 	}))
 	res, err := c.Render(context.Background(), rendertest.MapFS{"in": "x"}, render.Env{}, "r", cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(res.Inputs, []string{"in"}) {
-		t.Fatalf("Inputs = %v: the catalog, not the renderer, must set them", res.Inputs)
+	want := []render.Input{{Path: "in", Blob: blob("x"), Kind: render.InputRead}, {Path: "optional", Kind: render.InputAbsent}}
+	if !reflect.DeepEqual(res.Inputs, want) {
+		t.Fatalf("Inputs = %v, want %v: the catalog, not the renderer, must set them", res.Inputs, want)
 	}
 }
 
@@ -208,10 +251,11 @@ func TestResultDesiredExcludesEphemeralPhases(t *testing.T) {
 	mk := func(n string) *unstructured.Unstructured {
 		return &unstructured.Unstructured{Object: map[string]any{"metadata": map[string]any{"name": n}}}
 	}
-	res := render.Result{
-		Objects: []*unstructured.Unstructured{mk("a"), mk("hook"), mk("b")},
-		Phases:  []render.Phase{{Name: "p1", End: 1}, {Name: "h", End: 2, Ephemeral: true}, {Name: "p2", End: 3}},
-	}
+	res := render.Result{Phases: []render.Phase{
+		{Name: "p1", Objects: []*unstructured.Unstructured{mk("a")}},
+		{Name: "h", Objects: []*unstructured.Unstructured{mk("hook")}, Ephemeral: true},
+		{Name: "p2", Objects: []*unstructured.Unstructured{mk("b")}},
+	}}
 	var names []string
 	for _, o := range res.Desired() {
 		names = append(names, o.GetName())
@@ -219,8 +263,11 @@ func TestResultDesiredExcludesEphemeralPhases(t *testing.T) {
 	if !reflect.DeepEqual(names, []string{"a", "b"}) {
 		t.Fatalf("Desired = %v", names)
 	}
-	if got := (render.Result{Objects: res.Objects}).Desired(); len(got) != 3 {
-		t.Fatalf("nil Phases must be one desired phase, got %d", len(got))
+	if got := len(res.Objects()); got != 3 {
+		t.Fatalf("Objects = %d, want 3", got)
+	}
+	if got := render.SinglePhase(mk("x")).Desired(); len(got) != 1 {
+		t.Fatalf("SinglePhase must be desired, got %d", len(got))
 	}
 }
 
@@ -228,7 +275,7 @@ func TestSecretOmitRejectedByCatalog(t *testing.T) {
 	c := render.NewCatalog()
 	_ = render.Register[*wrapperspb.StringValue](c, "r", render.RendererFunc[*wrapperspb.StringValue](func(context.Context, render.FS, render.Env, *wrapperspb.StringValue) (render.Result, error) {
 		s := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": "s"}, "data": map[string]any{"k": "dg=="}}}
-		return render.Result{Objects: []*unstructured.Unstructured{s}}, nil
+		return render.SinglePhase(s), nil
 	}))
 	cfg, _ := anypb.New(wrapperspb.String(""))
 	if _, err := c.Render(context.Background(), rendertest.MapFS{}, render.Env{Secrets: render.SecretsOmit}, "r", cfg); err == nil {
