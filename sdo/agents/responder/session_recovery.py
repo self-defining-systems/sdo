@@ -203,7 +203,7 @@ class SessionRecovery:
             "responder",
             "session_recovery",
             part="recovery.instructions",
-            reports=named_prompt("recovery.reports", reports),
+            reports=named_prompt("recovery.reports", reports, required=False),
         )
 
     def acknowledge_reports(self) -> None:

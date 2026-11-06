@@ -234,7 +234,7 @@ def test_many_finding_summary_keeps_unexplained_counts_and_complete_facts() -> N
         assert len(json.loads(details.read_text())["findings"]) == 100
 
 
-def test_many_stage_attempts_cannot_displace_bounded_first_prompt() -> None:
+def test_many_stage_attempts_degrade_the_bounded_first_prompt() -> None:
     from tests.unit.sdo.agents.prompts.cases import incident
 
     request = incident(100, oversized=True)
@@ -246,11 +246,12 @@ def test_many_stage_attempts_cannot_displace_bounded_first_prompt() -> None:
             result="apply_error",
             error="e" * 5000,
         )
-    from sdo.agents.prompt_templates import PromptBudgetError
-
-    with pytest.raises(PromptBudgetError, match="responder.incident_data.*required"):
-        with prepared_incident_data(request):
-            pass
+    with prepared_incident_data(request) as rendered:
+        assert len(rendered) <= MAX_INCIDENT_SUMMARY_CHARS
+        summary = incident_document(rendered)
+        assert summary["incident_id"] == request.incident_id
+        assert summary["findings"] or summary["findings_omitted"]
+        assert incident_facts_path(rendered).exists()
 
 
 def test_failed_episode_progress_stays_inline_with_full_results_in_facts() -> None:

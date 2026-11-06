@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from google.protobuf import json_format
 
 from sdo.agents.context_output import budget_for
-from sdo.agents.prompt_templates import PromptBudgetError, count_chars, render_prompt
+from sdo.agents.prompt_templates import count_chars, render_prompt
 from sdo.agents.responder.rollout_release import release_lines
 from sdo.agents.responder.tool_output import write_json
 from sdo.agents.responder.tools_cli import command_purposes, command_surface
@@ -337,8 +337,23 @@ def responder_brief(
     return _fit(brief)
 
 
+#: Brief entries shed once the findings and releases are trimmed, least actionable first. The identity, the
+#: findings, the tool surface and the pointer to the complete facts are never shed.
+_SHEDDABLE = (
+    "stage_playbooks",
+    "checked_stage_receipts",
+    "prior_response_progress",
+    "program_runs",
+)
+
+
 def _fit(brief: dict[str, Any]) -> dict[str, Any]:
-    """Trim optional lists by priority; performed stage actions are never droppable."""
+    """Degrade the brief deterministically to its budget; the complete facts stay in the details file.
+
+    Lists lose their tail first (counted in ``<name>_omitted``); if that is not enough, whole sections are
+    replaced by a count, least actionable first. This never raises: an incident on a large application must
+    always reach the responder.
+    """
 
     def lists() -> dict[str, list[Any]]:
         return {
@@ -346,22 +361,38 @@ def _fit(brief: dict[str, Any]) -> dict[str, Any]:
             "playbook_coverage.matches": brief["playbook_coverage"]["matches"],
             "findings": brief["findings"],
             "rollout_releases": brief.get("rollout_releases", []),
+            "stage_actions": brief.get("stage_actions", []),
         }
 
     # Measure before the renderer's generic cap, which must never see this message.
     framing = count_chars(_render_data({})) - count_chars(_encode({}))
-    while framing + count_chars(_encode(brief)) > MAX_INCIDENT_SUMMARY_CHARS:
-        candidates = [(name, items) for name, items in lists().items() if items]
+
+    def over() -> bool:
+        return framing + count_chars(_encode(brief)) > MAX_INCIDENT_SUMMARY_CHARS
+
+    while over():
+        candidates = [(name, items) for name, items in lists().items() if items and name != "stage_actions"]
         if not candidates:
-            size = framing + count_chars(_encode(brief))
-            raise PromptBudgetError(
-                f"responder.incident_data: required content is {size} characters, "
-                f"budget is {MAX_INCIDENT_SUMMARY_CHARS}; performed repair actions cannot be omitted"
-            )
+            break
         name, items = candidates[0]
         items.pop()
         owner, key = (brief["playbook_coverage"], "matches") if "." in name else (brief, name)
         owner[f"{key}_omitted"] = owner.get(f"{key}_omitted", 0) + 1
+    for key in _SHEDDABLE:
+        if not over():
+            break
+        value = brief.pop(key, None)
+        if value is not None:
+            brief[f"{key}_omitted"] = len(value) if isinstance(value, (list, dict)) else count_chars(str(value))
+    actions = brief.get("stage_actions", [])
+    while over() and actions:
+        actions.pop()
+        brief["stage_actions_omitted"] = brief.get("stage_actions_omitted", 0) + 1
+    if over() and "external_message" in brief:
+        brief["external_message_omitted"] = count_chars(brief.pop("external_message"))
+    while over() and brief["findings"]:
+        brief["findings"].pop()
+        brief["findings_omitted"] = brief.get("findings_omitted", 0) + 1
     return brief
 
 

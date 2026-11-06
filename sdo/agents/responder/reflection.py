@@ -380,7 +380,10 @@ def _logical_learning_request(
         history_section=named_prompt("reflection.history", _history_section(outcome, history)),
     )
     prompt = (
-        named_prompt("reflection.telemetry", telemetry_context(closure.request.telemetry, "responder") + "\n") + prompt
+        named_prompt(
+            "reflection.telemetry", telemetry_context(closure.request.telemetry, "responder") + "\n", required=False
+        )
+        + prompt
     )
     if closure.request.HasField("namespace_onboarding"):
         prompt += render_prompt(

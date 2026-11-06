@@ -83,6 +83,10 @@ class ContinuationFeedback(BaseModel):
 MAX_CONTINUATION_CHARS = budget_for("continuation.instructions") + budget_for("continuation.incident_data")
 
 
+#: Row text widths tried widest first before any row is dropped.
+_WIDTHS = (64, 40, 24, 12)
+
+
 def _brief(value: str, limit: int) -> str:
     text = " ".join(value.split())
     return text if len(text) <= limit else text[: limit - 1] + "…"
@@ -156,9 +160,7 @@ def continuation_prompt(payload: str) -> RenderedPrompt:
         last = max(enumerate(attempts), key=lambda item: (_completed_at(item[1]), item[0]))[1] if attempts else None
         rows.append((finding, last))
 
-    def render(
-        width: int, broken_count: int, done_count: int, unmatched_count: int, blocker_count: int
-    ) -> RenderedPrompt:
+    def body(width: int, broken_count: int, done_count: int, unmatched_count: int, blocker_count: int) -> str:
         broken_lines = [
             f"- {finding.fingerprint} {_brief(finding.summary, width)}; "
             + ("last=" + _action(last, width) if last else "last=none")
@@ -180,38 +182,47 @@ def continuation_prompt(payload: str) -> RenderedPrompt:
             - unmatched_count
             - blocker_count
         )
-        return render_prompt(
-            "responder",
-            "continuation",
-            part="continuation.instructions",
-            feedback=named_prompt(
-                "continuation.incident_data",
-                "\n".join(
-                    [
-                        f"attempt={feedback.attempt} healthy={str(feedback.healthy).lower()} "
-                        f"{_brief(feedback.summary, 64)}",
-                        *(["verification_error: " + _brief(feedback.error, 100)] if feedback.error else []),
-                        f"still_broken: ({len(rows)})",
-                        *broken_lines,
-                        *other_lines,
-                        *(
-                            [f"verification_blockers: ({len(feedback.verification_blockers)})", *blocker_lines]
-                            if feedback.verification_blockers
-                            else []
-                        ),
-                        *(
-                            [f"source_differences (information, not blocking): ({len(feedback.source_differences)})"]
-                            if feedback.source_differences
-                            else []
-                        ),
-                        f"already_done: ({len(done)})",
-                        *done_lines,
-                        *([f"Omitted {omitted} rows; full evidence below."] if omitted else []),
-                        "Full JSON: " + str(path),
-                    ]
+        return "\n".join(
+            [
+                f"attempt={feedback.attempt} healthy={str(feedback.healthy).lower()} {_brief(feedback.summary, 64)}",
+                *(["verification_error: " + _brief(feedback.error, 100)] if feedback.error else []),
+                f"still_broken: ({len(rows)})",
+                *broken_lines,
+                *other_lines,
+                *(
+                    [f"verification_blockers: ({len(feedback.verification_blockers)})", *blocker_lines]
+                    if feedback.verification_blockers
+                    else []
                 ),
-            ),
+                *(
+                    [f"source_differences (information, not blocking): ({len(feedback.source_differences)})"]
+                    if feedback.source_differences
+                    else []
+                ),
+                f"already_done: ({len(done)})",
+                *done_lines,
+                *([f"Omitted {omitted} rows; read the full evidence file for them."] if omitted else []),
+                "Full JSON: " + str(path),
+            ]
         )
 
+    limit = budget_for("continuation.incident_data")
     counts = [len(rows), len(done), len(unmatched), len(feedback.verification_blockers)]
-    return render(64, *counts)
+    # Degrade deterministically: shorten row text, then drop rows least relevant first (completed work,
+    # other attempts, blockers, and last the still-broken findings). Counts and the evidence path stay.
+    text = ""
+    for width in _WIDTHS:
+        text = body(width, *counts)
+        if len(text) <= limit:
+            break
+    else:
+        for slot in (1, 2, 3, 0):
+            while counts[slot] and len(text) > limit:
+                counts[slot] -= 1
+                text = body(_WIDTHS[-1], *counts)
+    return render_prompt(
+        "responder",
+        "continuation",
+        part="continuation.instructions",
+        feedback=named_prompt("continuation.incident_data", text),
+    )
