@@ -25,9 +25,10 @@ from sdo.contracts import (
     SCHEMA_VERSION,
     AgentResult,
     AgentTask,
+    BuildKitImageConfig,
     DeploymentPlan,
-    ImageBuild,
-    RawManifestStrategy,
+    DeploymentSource,
+    RawRenderConfig,
     SourceDeploymentRequest,
     SourceDeploymentResult,
     parse_json,
@@ -118,22 +119,23 @@ def propose_source(request: SourceDeploymentRequest, checkout: Path) -> SourceDe
         timeout_seconds=1800,
     )
     draft = SourceProposalDraft.model_validate_json(turn.output_json)
-    raw_strategy = RawManifestStrategy(
-        image_builds=[
-            ImageBuild(
-                image=_trusted_image(build.image, request.registry_host),
+    manifest_paths = [_source_path(path) for path in draft.manifest_paths]
+    expected_workload_ids = [_workload_id(value) for value in draft.expected_workload_ids]
+    if draft.proposed and (not manifest_paths or not expected_workload_ids):
+        raise ValueError("deployment proposal requires manifests and expected workloads")
+    plan = DeploymentPlan(
+        source=DeploymentSource(renderer_id="raw"),
+        expected_workload_ids=expected_workload_ids,
+    )
+    plan.source.config.Pack(RawRenderConfig(paths=manifest_paths))
+    for build in draft.image_builds:
+        image = plan.images.add(image=_trusted_image(build.image, request.registry_host), source_id="buildkit")
+        image.config.Pack(
+            BuildKitImageConfig(
                 context_path=_source_path(build.context_path),
                 dockerfile_path=_source_path(build.dockerfile_path),
             )
-            for build in draft.image_builds
-        ],
-        manifest_paths=[_source_path(path) for path in draft.manifest_paths],
-        expected_workload_ids=[_workload_id(value) for value in draft.expected_workload_ids],
-    )
-    if draft.proposed and (not raw_strategy.manifest_paths or not raw_strategy.expected_workload_ids):
-        raise ValueError("deployment proposal requires manifests and expected workloads")
-    plan = DeploymentPlan(strategy_id="raw-manifests-v1")
-    plan.strategy_config.Pack(raw_strategy)
+        )
     return SourceDeploymentResult(
         proposed=draft.proposed,
         summary=draft.summary,
