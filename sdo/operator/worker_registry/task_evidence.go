@@ -5,14 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path"
-	"path/filepath"
 	"regexp"
 	"strings"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/safefs"
 )
 
 // TaskEvidenceRoot is the repository-relative directory holding one subdirectory per agent task that has no
@@ -41,8 +40,8 @@ func TaskEvidenceKey(taskID string) string {
 }
 
 type taskEvidence struct {
-	relative  string // repository-relative directory
-	directory string // directory on the controller's repository mount
+	root     string // the controller's repository mount
+	relative string // repository-relative directory
 }
 
 // Execute runs one agent task. A task without an incident session (a lifecycle task) is given a private,
@@ -73,8 +72,7 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 
 func (e KubernetesExecutor) prepareTaskEvidence(task *contracts.AgentTask) (taskEvidence, error) {
 	relative := path.Join(TaskEvidenceRoot, TaskEvidenceKey(task.GetTaskId()))
-	directory := filepath.Join(e.RepositoryMountPath, filepath.FromSlash(relative))
-	if err := os.MkdirAll(directory, 0700); err != nil {
+	if err := safefs.MkdirAll(e.RepositoryMountPath, relative, 0700); err != nil {
 		return taskEvidence{}, fmt.Errorf("prepare task evidence for %q: %w", task.GetTaskId(), err)
 	}
 	payload, err := wire.Canonical(task)
@@ -86,23 +84,26 @@ func (e KubernetesExecutor) prepareTaskEvidence(task *contracts.AgentTask) (task
 		return taskEvidence{}, err
 	}
 	for name, data := range map[string][]byte{"task.json": meta, "request.json": payload} {
-		if err := os.WriteFile(filepath.Join(directory, name), append(data, '\n'), 0600); err != nil {
+		if err := safefs.WriteFile(e.RepositoryMountPath, path.Join(relative, name), append(data, '\n'), 0600); err != nil {
 			return taskEvidence{}, fmt.Errorf("record task evidence for %q: %w", task.GetTaskId(), err)
 		}
 	}
-	return taskEvidence{relative: relative, directory: directory}, nil
+	return taskEvidence{root: e.RepositoryMountPath, relative: relative}, nil
 }
 
+// The worker pod mounts the task directory read-write, so an agent can replace anything inside it with a link:
+// every controller write and removal goes through safefs rooted at the repository mount.
+//
 // finish records the outcome and drops the provider login the worker copied into its session home. Recording is
 // best effort: a full or unwritable volume must not turn a finished task into a failed one.
 func (t taskEvidence) finish(result *contracts.AgentResult, err error) {
 	for _, home := range []string{"codex/auth.json", "claude/.credentials.json"} {
-		_ = os.Remove(filepath.Join(t.directory, filepath.FromSlash(home)))
+		_ = safefs.Remove(t.root, path.Join(t.relative, home))
 	}
 	switch {
 	case result != nil:
 		if payload, encodeErr := wire.Canonical(result); encodeErr == nil {
-			_ = os.WriteFile(filepath.Join(t.directory, "result.json"), append(payload, '\n'), 0600)
+			_ = safefs.WriteFile(t.root, path.Join(t.relative, "result.json"), append(payload, '\n'), 0600)
 		}
 	case err != nil:
 		text := err.Error()
@@ -110,7 +111,7 @@ func (t taskEvidence) finish(result *contracts.AgentResult, err error) {
 			text = strings.ToValidUTF8(text[:taskEvidenceMaxText], "?")
 		}
 		if payload, encodeErr := json.Marshal(map[string]string{"schema": taskEvidenceSchema, "error": text}); encodeErr == nil {
-			_ = os.WriteFile(filepath.Join(t.directory, "error.json"), append(payload, '\n'), 0600)
+			_ = safefs.WriteFile(t.root, path.Join(t.relative, "error.json"), append(payload, '\n'), 0600)
 		}
 	}
 }
