@@ -14,6 +14,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/operability"
 	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
@@ -233,7 +234,7 @@ func TestPublishAdvanceAcceptsTheDeployedThreeWayMerge(t *testing.T) {
 	}
 	evidence := advanceEvidence(t, proposal.Path, "advanced")
 	candidateTree := gitOut(t, proposal.Path, "rev-parse", candidate+"^{tree}")
-	receipt, err := b.PublishAdvance(ctx, id, upstream, w.seed, evidence)
+	receipt, err := publishAdvance(ctx, b, id, upstream, w.seed, evidence)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,11 +266,11 @@ func TestPublishAdvanceAcceptsTheDeployedThreeWayMerge(t *testing.T) {
 	if _, err := os.Stat(b.proposalRoot(id, AdvancePhase)); !os.IsNotExist(err) {
 		t.Fatalf("accepted advance checkout not removed: %v", err)
 	}
-	again, err := b.PublishAdvance(ctx, id, upstream, w.seed, evidence)
+	again, err := publishAdvance(ctx, b, id, upstream, w.seed, evidence)
 	if err != nil || again.Commit != receipt.Commit {
 		t.Fatalf("repeated publish = %+v %v, want the accepted %s", again, err, receipt.Commit)
 	}
-	if _, err := b.PublishAdvance(ctx, id, upstream, w.seed, advanceEvidence(t, w.accepted, "other")); err == nil {
+	if _, err := publishAdvance(ctx, b, id, upstream, w.seed, advanceEvidence(t, w.accepted, "other")); err == nil {
 		t.Fatal("repeated publish with other evidence accepted")
 	}
 
@@ -287,7 +288,7 @@ func TestPublishAdvanceAcceptsTheDeployedThreeWayMerge(t *testing.T) {
 	if err != nil || candidate == "" {
 		t.Fatal(err)
 	}
-	if _, err := b.PublishAdvance(ctx, nextID, next, upstream, advanceEvidence(t, proposal.Path, "next")); err != nil {
+	if _, err := publishAdvance(ctx, b, nextID, next, upstream, advanceEvidence(t, proposal.Path, "next")); err != nil {
 		t.Fatal(err)
 	}
 	if holds := w.holds(t); !slices.Equal(holds, []string{min(upstream, next), max(upstream, next)}) {
@@ -311,7 +312,7 @@ func TestPublishAdvanceRefusesWhatWasNotDeployedOrMayNotMerge(t *testing.T) {
 		}
 		writeFiles(t, proposal.Path, map[string]string{".sdo/deployment/values/tampered.yaml": "tampered: true\n"})
 		evidence := advanceEvidence(t, proposal.Path, "tampered")
-		if _, err := b.PublishAdvance(ctx, id, upstream, w.seed, evidence); err == nil || !strings.Contains(err.Error(), "differs from the deployed tree") {
+		if _, err := publishAdvance(ctx, b, id, upstream, w.seed, evidence); err == nil || !strings.Contains(err.Error(), "differs from the deployed tree") {
 			t.Fatalf("PublishAdvance of another tree = %v", err)
 		}
 	})
@@ -329,7 +330,7 @@ func TestPublishAdvanceRefusesWhatWasNotDeployedOrMayNotMerge(t *testing.T) {
 		} {
 			evidence := advanceEvidence(t, proposal.Path, "merged")
 			mutate(&evidence)
-			if _, err := b.PublishAdvance(ctx, id, upstream, w.seed, evidence); err == nil || !strings.Contains(err.Error(), "differs from the verified deployment") {
+			if _, err := publishAdvance(ctx, b, id, upstream, w.seed, evidence); err == nil || !strings.Contains(err.Error(), "differs from the verified deployment") {
 				t.Fatalf("PublishAdvance with another %s = %v", name, err)
 			}
 		}
@@ -342,7 +343,7 @@ func TestPublishAdvanceRefusesWhatWasNotDeployedOrMayNotMerge(t *testing.T) {
 		evidence := advanceEvidence(t, proposal.Path, "moved")
 		publishHumanGoal(t, w.accepted, "goal-edit", map[string]string{layout.GoalFile: advanceGoal + "\nEdited\n"})
 		defer func() { accepted = w.head(t) }()
-		if _, err := b.PublishAdvance(ctx, id, upstream, w.seed, evidence); err == nil || !strings.Contains(err.Error(), "accepted HEAD moved") {
+		if _, err := publishAdvance(ctx, b, id, upstream, w.seed, evidence); err == nil || !strings.Contains(err.Error(), "accepted HEAD moved") {
 			t.Fatalf("PublishAdvance after the head moved = %v", err)
 		}
 		if w.head(t) == accepted {
@@ -356,10 +357,10 @@ func TestPublishAdvanceRefusesWhatWasNotDeployedOrMayNotMerge(t *testing.T) {
 		}
 		evidence := advanceEvidence(t, proposal.Path, "wrong")
 		other := w.push(t, w.seed, map[string]*string{"app.txt": text("other\ntwo\nthree\n")})
-		if _, err := b.PublishAdvance(ctx, id, other, w.seed, evidence); err == nil {
+		if _, err := publishAdvance(ctx, b, id, other, w.seed, evidence); err == nil {
 			t.Fatal("PublishAdvance of another upstream than proposed accepted")
 		}
-		if _, err := b.PublishAdvance(ctx, id, upstream, upstream, evidence); err == nil {
+		if _, err := publishAdvance(ctx, b, id, upstream, upstream, evidence); err == nil {
 			t.Fatal("PublishAdvance with a base that is not the accepted upstream revision accepted")
 		}
 	})
@@ -367,7 +368,7 @@ func TestPublishAdvanceRefusesWhatWasNotDeployedOrMayNotMerge(t *testing.T) {
 		if err := b.ReleaseAdvance(id); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := b.PublishAdvance(ctx, id, upstream, w.seed, advanceEvidence(t, w.accepted, "none")); err == nil {
+		if _, err := publishAdvance(ctx, b, id, upstream, w.seed, advanceEvidence(t, w.accepted, "none")); err == nil {
 			t.Fatal("PublishAdvance without a proposal accepted")
 		}
 	})
@@ -502,7 +503,7 @@ func TestAcceptedImagePinsFollowTheNewestAcceptedDeployment(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "ns", Name: "app"}
 	digest := "advanced@sha256:" + strings.Repeat("e", 64)
 	evidence.ContainerImages = []rendered.DeployedImage{{Ref: ref, Name: "app", Applied: digest, Digest: digest}}
-	if _, err := b.PublishAdvance(ctx, id, upstream, w.seed, evidence); err != nil {
+	if _, err := publishAdvance(ctx, b, id, upstream, w.seed, evidence); err != nil {
 		t.Fatal(err)
 	}
 	for _, step := range []string{"advance", "after a memory commit"} {
@@ -513,4 +514,22 @@ func TestAcceptedImagePinsFollowTheNewestAcceptedDeployment(t *testing.T) {
 		}
 		publishHumanGoal(t, w.accepted, "goal", map[string]string{layout.GoalFile: advanceGoal + "\nmore " + step + "\n"})
 	}
+}
+
+// publishAdvance publishes with the passing report of evidence on the current
+// accepted head, for tests of everything but the report.
+func publishAdvance(ctx context.Context, b *Broker, id, upstream, base string, evidence SourceEvidence) (Receipt, error) {
+	head, err := gitText(ctx, b.target, "rev-parse", "HEAD")
+	if err != nil {
+		return Receipt{}, err
+	}
+	subject := operability.Subject{
+		AcceptedCommit: head, BaseTree: evidence.BaseTree, EffectiveTree: evidence.EffectiveTree,
+		PatchesDigest: evidence.PatchesDigest, RenderDigest: evidence.RenderDigest, EnvDigest: evidence.EnvDigest,
+	}
+	report, err := operability.New(operability.StageAdvance, subject).With(passingChecks("O1.deploy", "O2.stamps", "O4.detectors", "O6.budget")...)
+	if err != nil {
+		return Receipt{}, err
+	}
+	return b.PublishAdvance(ctx, id, upstream, base, evidence, report)
 }

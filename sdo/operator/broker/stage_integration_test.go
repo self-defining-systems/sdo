@@ -363,7 +363,7 @@ func TestStagingAnAdvanceIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.broker.PublishAdvance(ctx, "advance-1", upstream, w.seed, advanceEvidence(t, proposal.Path, "advance-1")); err != nil {
+	if _, err := publishAdvance(ctx, w.broker, "advance-1", upstream, w.seed, advanceEvidence(t, proposal.Path, "advance-1")); err != nil {
 		t.Fatalf("advance after a refused stage: %v", err)
 	}
 }

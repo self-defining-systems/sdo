@@ -12,6 +12,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/imagesrc"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/operability"
 	"sdo.dev/operator/patchset"
 	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/rendered"
@@ -43,7 +44,10 @@ type AdvanceBroker interface {
 	ProposeAdvance(ctx context.Context, id, base, upstream string) (proposal broker.Proposal, candidate string, conflicts []string, err error)
 	// PublishAdvance accepts the candidate of proposal id with evidence of its
 	// live deployment and the upstream/base trailers.
-	PublishAdvance(ctx context.Context, id, upstream, base string, evidence broker.SourceEvidence) (broker.Receipt, error)
+	// The stage-advance operability report must bind to the evidence and the
+	// accepted head and be accepted by operability.Decide; the broker
+	// recomputes both and records the report with the commit.
+	PublishAdvance(ctx context.Context, id, upstream, base string, evidence broker.SourceEvidence, report operability.Report) (broker.Receipt, error)
 	// ReleaseAdvance discards the advance checkout id.
 	ReleaseAdvance(id string) error
 }
@@ -214,6 +218,9 @@ type Advancer struct {
 func (a Advancer) validate(cfg AdvanceConfig, request upstream.Request) error {
 	if a.Upstreams == nil || a.Broker == nil || a.Readiness == nil || a.Verifier == nil || a.Shape == nil || a.Maintenance == nil || a.Activity == nil {
 		return errors.New("advance needs upstreams, broker, readiness, verifier, shape, maintenance and activity")
+	}
+	if _, ok := a.Readiness.(LiveChecker); !ok {
+		return errors.New("advance needs a readiness verifier that checks the live deployment (lifecycle.LiveChecker)")
 	}
 	if cfg.Namespace == "" || strings.TrimSpace(cfg.HealthObjective) == "" || cfg.GitDir == "" {
 		return errors.New("advance needs a namespace, health objective and accepted Git directory")
@@ -425,21 +432,42 @@ func (a Advancer) deployAndAccept(ctx context.Context, cfg AdvanceConfig, result
 	if !completeDeploymentReceipt(receipt) || !rendered.SameDeploymentSource(receipt.Source, plan.GetSource()) {
 		return held(result, HoldRollout, "deployment returned incomplete evidence or another source"), nil
 	}
-	verdict, err := steps.awaitVerdict(ctx, bounds, func() (HealthVerdict, error) {
-		return a.Verifier.VerifyCandidate(ctx, proposal.Path, candidate, cfg.Namespace, cfg.HealthObjective, receipt)
-	})
-	result.Verdict = verdict
+	live, err := a.Readiness.(LiveChecker).CheckLive(ctx, proposal.Path, plan, receipt, nil)
 	if err != nil {
-		var pending *PendingVerificationError
-		if errors.As(err, &pending) {
-			return held(result, HoldHealth, pending.Error()), nil
+		return result, fmt.Errorf("live deployment checks: %w", err)
+	}
+	checks := live
+	if failing(live) {
+		checks = append(checks, operability.Check{ID: "O4.detectors", Phase: operability.PhaseLive, Status: operability.StatusSkipped, Detail: "not run: a deployment check failed"})
+	} else {
+		verdict, err := steps.awaitVerdict(ctx, bounds, func() (HealthVerdict, error) {
+			return a.Verifier.VerifyCandidate(ctx, proposal.Path, candidate, cfg.Namespace, cfg.HealthObjective, receipt)
+		})
+		result.Verdict = verdict
+		if err != nil {
+			var pending *PendingVerificationError
+			if errors.As(err, &pending) {
+				return held(result, HoldHealth, pending.Error()), nil
+			}
+			return result, err
 		}
-		return result, err
+		if verdict.Outcome != VerificationClear {
+			return held(result, HoldHealth, verdict.Feedback()), nil
+		}
+		checks = append(checks, verdictChecks(verdict)...)
 	}
-	if verdict.Outcome != VerificationClear {
-		return held(result, HoldHealth, verdict.Feedback()), nil
+	subject := operability.Subject{
+		AcceptedCommit: proposal.BaseCommit, BaseTree: receipt.BaseTree, EffectiveTree: receipt.EffectiveTree,
+		PatchesDigest: receipt.PatchesDigest, RenderDigest: receipt.RenderDigest, EnvDigest: receipt.EnvDigest,
 	}
-	receiptOfAdvance, err := a.Broker.PublishAdvance(ctx, AdvanceID(result.Upstream), result.Upstream, prev, deploymentToBroker(receipt))
+	report, err := operability.New(operability.StageAdvance, subject).With(checks...)
+	if err != nil {
+		return result, fmt.Errorf("advance operability report: %w", err)
+	}
+	if decision := report.DecideIn(operability.ModeAdvance, operability.StageItems(operability.StageAdvance)...); decision.Kind != operability.Accepted {
+		return held(result, HoldRollout, decision.Feedback()), nil
+	}
+	receiptOfAdvance, err := a.Broker.PublishAdvance(ctx, AdvanceID(result.Upstream), result.Upstream, prev, deploymentToBroker(receipt), report)
 	if err != nil {
 		return result, fmt.Errorf("publish advance: %w", err)
 	}

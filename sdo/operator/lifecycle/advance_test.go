@@ -16,6 +16,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/imagesrc"
 	"sdo.dev/operator/lifecycle"
+	"sdo.dev/operator/operability"
 	"sdo.dev/operator/patchset"
 	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/upstream"
@@ -57,10 +58,15 @@ type advWorld struct {
 	publishErr     error
 	designer       bool
 	designerErr    error
+	// live replaces the live deployment checks CheckLive returns (nil: all
+	// pass); liveCalls counts them.
+	live      []operability.Check
+	liveCalls int
 
 	applied   lifecycle.DeploymentReceipt
 	proposed  map[string]bool
 	published []broker.SourceEvidence
+	reports   []operability.Report
 }
 
 func (w *advWorld) log(format string, args ...any) {
@@ -125,9 +131,14 @@ func (w *advWorld) ProposeAdvance(_ context.Context, id, base, upstreamCommit st
 	return proposal, advCandidate, nil, nil
 }
 
-func (w *advWorld) PublishAdvance(_ context.Context, id, upstreamCommit, base string, evidence broker.SourceEvidence) (broker.Receipt, error) {
+func (w *advWorld) PublishAdvance(_ context.Context, id, upstreamCommit, base string, evidence broker.SourceEvidence, report operability.Report) (broker.Receipt, error) {
 	w.log("publish %s", id)
+	want := operability.Subject{AcceptedCommit: advHead, BaseTree: evidence.BaseTree, EffectiveTree: evidence.EffectiveTree, PatchesDigest: evidence.PatchesDigest, RenderDigest: evidence.RenderDigest, EnvDigest: evidence.EnvDigest}
 	switch {
+	case report.Stage != operability.StageAdvance || report.Subject.BindsTo(want) != nil:
+		return broker.Receipt{}, errors.New("report is not a stage-advance report of the candidate")
+	case report.Validate() != nil || report.Decide(operability.StageItems(operability.StageAdvance)...).Kind != operability.Accepted:
+		return broker.Receipt{}, errors.New("report is not accepted by Decide")
 	case !w.proposed[id]:
 		return broker.Receipt{}, errors.New("no open advance proposal")
 	case upstreamCommit != advRevision || base != advPrev:
@@ -143,6 +154,7 @@ func (w *advWorld) PublishAdvance(_ context.Context, id, upstreamCommit, base st
 	}
 	delete(w.proposed, id)
 	w.published = append(w.published, evidence)
+	w.reports = append(w.reports, report)
 	return broker.Receipt{IncidentID: id, Commit: strings.Repeat("7", 40)}, nil
 }
 
@@ -195,6 +207,22 @@ func (w *advWorld) ApplyAndVerify(_ context.Context, checkout string, plan *cont
 	}
 	w.applied = receipt
 	return receipt, nil
+}
+
+func (w *advWorld) CheckLive(_ context.Context, checkout string, plan *contracts.DeploymentPlan, receipt lifecycle.DeploymentReceipt, outcome error) ([]operability.Check, error) {
+	w.log("live")
+	w.liveCalls++
+	if checkout != advCheckout || !proto.Equal(plan, w.plan) || outcome != nil {
+		return nil, errors.New("live checks of another checkout or plan")
+	}
+	if w.live != nil {
+		return slices.Clone(w.live), nil
+	}
+	var checks []operability.Check
+	for _, id := range []string{"O1.deploy", "O1.ready", "O2.stamps", "O6.budget"} {
+		checks = append(checks, operability.Check{ID: id, Phase: operability.PhaseLive, Status: operability.StatusPass})
+	}
+	return checks, nil
 }
 
 func (w *advWorld) VerifyAccepted(context.Context, string, string, lifecycle.DeploymentReceipt) (lifecycle.DeploymentReceipt, error) {
@@ -267,7 +295,7 @@ func TestAdvanceAcceptsADeployedAndVerifiedRevision(t *testing.T) {
 		t.Fatalf("result = %+v, err = %v", result, err)
 	}
 	id := lifecycle.AdvanceID(advRevision)
-	want := []string{"materialize git " + advRevision, "change 1111..2222", "propose " + id, "shape 3333", "shape 4444", "pause", "apply", "verify 4444", "publish " + id, "resume"}
+	want := []string{"materialize git " + advRevision, "change 1111..2222", "propose " + id, "shape 3333", "shape 4444", "pause", "apply", "live", "verify 4444", "publish " + id, "resume"}
 	if !slices.Equal(w.events, want) {
 		t.Fatalf("events\n got %q\nwant %q", w.events, want)
 	}
@@ -545,7 +573,7 @@ func TestAdvanceRoutesAShapeChangeToTheDetectionDesigner(t *testing.T) {
 		t.Fatalf("result = %+v, err = %v", result, err)
 	}
 	id := lifecycle.AdvanceID(advRevision)
-	want := []string{"materialize git " + advRevision, "change 1111..2222", "propose " + id, "shape 3333", "shape 4444", "pause", "apply", "verify 4444", "publish " + id, "resume", "designer 2222"}
+	want := []string{"materialize git " + advRevision, "change 1111..2222", "propose " + id, "shape 3333", "shape 4444", "pause", "apply", "live", "verify 4444", "publish " + id, "resume", "designer 2222"}
 	if !slices.Equal(w.events, want) {
 		t.Fatalf("events\n got %q\nwant %q", w.events, want)
 	}
@@ -596,5 +624,53 @@ func TestAdvanceDoesNotCallTheDesignerWithoutAnAcceptedShapeChange(t *testing.T)
 				t.Fatalf("designer ran: %q", w.events)
 			}
 		})
+	}
+}
+
+// The broker receives the stage-advance report of what was deployed: the
+// accepted head the merge was made on, the receipt's trees and digests, the
+// deployment checks and the independent detector verdict.
+func TestAdvancePublishesTheStageAdvanceReport(t *testing.T) {
+	w := newAdvWorld(t)
+	if result, err := w.run(t); err != nil || result.Outcome != lifecycle.AdvanceAccepted {
+		t.Fatalf("result = %+v, err = %v", result, err)
+	}
+	report := w.reports[0]
+	if report.Stage != operability.StageAdvance || report.Subject.AcceptedCommit != advHead || report.Subject.BaseTree != advTree || report.Subject.EffectiveTree != advEffective {
+		t.Fatalf("report subject/stage = %s %+v", report.Stage, report.Subject)
+	}
+	var ids []string
+	for _, item := range report.Items {
+		for _, c := range item.Checks {
+			ids = append(ids, c.ID)
+		}
+	}
+	if want := []string{"O1.deploy", "O1.ready", "O2.stamps", "O4.detectors", "O6.budget"}; !slices.Equal(ids, want) {
+		t.Fatalf("report checks = %v, want %v", ids, want)
+	}
+}
+
+// A failing live deployment check is a hold: the detectors are not evaluated
+// (the check says so, never a pass) and nothing is published.
+func TestAdvanceHoldsAFailingLiveCheckWithoutEvaluatingDetectors(t *testing.T) {
+	w := newAdvWorld(t)
+	w.live = failLive("O1.deploy", operability.CauseRollout)
+	result, err := w.run(t)
+	if err != nil || result.Outcome != lifecycle.AdvanceHeld || !strings.Contains(result.Detail, "O1.deploy [rollout]") {
+		t.Fatalf("result = %+v, err = %v", result, err)
+	}
+	if count(w.events, "verify") != 0 || len(w.published) != 0 || count(w.events, "apply") != 1 {
+		t.Fatalf("events = %q", w.events)
+	}
+}
+
+type readinessWithoutLiveChecks struct{ lifecycle.SourceReadinessVerifier }
+
+func TestAdvanceRequiresLiveChecks(t *testing.T) {
+	w := newAdvWorld(t)
+	advancer := w.advancer()
+	advancer.Readiness = readinessWithoutLiveChecks{w}
+	if _, err := advancer.Advance(context.Background(), advConfig, advRequest(t)); err == nil || len(w.events) != 0 {
+		t.Fatalf("err = %v, events = %q", err, w.events)
 	}
 }
