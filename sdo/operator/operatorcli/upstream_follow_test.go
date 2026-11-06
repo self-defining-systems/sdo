@@ -3,6 +3,7 @@ package operatorcli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"google.golang.org/protobuf/types/known/wrapperspb"
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/lifecycle"
+	"sdo.dev/operator/operability"
 	"sdo.dev/operator/upstream"
 )
 
@@ -28,6 +30,8 @@ type followWorld struct {
 	advances []upstream.Request
 	stored   []upstream.Hold
 	owed     []upstream.Obligation
+	// quarantined are the records the store could not decode.
+	quarantined []upstream.Quarantined
 	// refresh answers each retry of an open obligation; nil fails the test.
 	refresh   func(upstream.Obligation) error
 	refreshes []time.Time
@@ -88,7 +92,9 @@ func (w *followWorld) following() upstreamFollowing {
 
 type worldObligations followWorld
 
-func (o *worldObligations) Load(context.Context) ([]upstream.Obligation, error) { return o.owed, nil }
+func (o *worldObligations) Load(context.Context) ([]upstream.Obligation, []upstream.Quarantined, error) {
+	return o.owed, o.quarantined, nil
+}
 
 func (o *worldObligations) Save(_ context.Context, owed []upstream.Obligation) error {
 	o.owed = owed
@@ -270,6 +276,68 @@ func TestFailedDesignerRefreshStaysOwedUntilItSucceeds(t *testing.T) {
 	}
 	if len(w.owed) != 0 || len(w.stored) != 0 {
 		t.Fatalf("after success obligations = %+v, holds = %+v; want none", w.owed, w.stored)
+	}
+}
+
+// Each obligation retry is a full judge run: a persistent failure is retried
+// only after its growing backoff, only MaxObligationAttempts times, and then
+// the obligation is a typed hold (owner designer) that no later poll retries.
+func TestObligationRetriesAreBoundedThenHeld(t *testing.T) {
+	w := newWorld(t)
+	w.sources = []upstream.Source{followedSource(t)}
+	w.latest = []string{revB}
+	w.accepted = revB
+	w.owed = []upstream.Obligation{{Path: ".", Kind: upstream.ObligationDesignerRefresh, Accepted: "accepted1", Cause: "coverage", Owner: "designer", Reason: "judge unavailable", Attempts: 1, Since: w.now.Add(-time.Hour)}}
+	w.refresh = func(upstream.Obligation) error { return errors.New("judge unavailable") }
+	_ = w.run(60)
+	// The obligation starts at attempt 1 (the advance's own refresh), so the
+	// budget leaves MaxObligationAttempts-1 judge runs, never one per poll.
+	if len(w.refreshes) != upstream.MaxObligationAttempts-1 {
+		t.Fatalf("judge runs = %d, want %d", len(w.refreshes), upstream.MaxObligationAttempts-1)
+	}
+	for i := 1; i < len(w.refreshes); i++ {
+		if gap := w.refreshes[i].Sub(w.refreshes[i-1]); gap < upstream.ObligationBackoffBase {
+			t.Fatalf("judge runs %d and %d only %s apart: a full judge ran back to back", i-1, i, gap)
+		}
+	}
+	if len(w.owed) != 1 || w.owed[0].Held != upstream.ObligationAttemptsExhausted || w.owed[0].HeldOwner != "designer" {
+		t.Fatalf("obligation = %+v, want held as attempts_exhausted owned by the designer", w.owed)
+	}
+}
+
+// A refresh that ended on agent_not_converging is held on its first retry: the
+// same agent repeats the same rejection, so no further judge run is spent.
+func TestAgentNotConvergingRefreshHoldsTheObligation(t *testing.T) {
+	w := newWorld(t)
+	w.sources = []upstream.Source{followedSource(t)}
+	w.latest = []string{revB}
+	w.accepted = revB
+	w.owed = []upstream.Obligation{{Path: ".", Kind: upstream.ObligationDesignerRefresh, Accepted: "accepted1", Cause: "coverage", Owner: "designer", Reason: "judge unavailable", Attempts: 1, Since: w.now.Add(-time.Hour)}}
+	w.refresh = func(upstream.Obligation) error {
+		return fmt.Errorf("health unverified: %w", lifecycle.NewAgentNotConvergingError(operability.OwnerDesigner, "accepted1", []string{"memory.invalid@.sdo/x"}, false))
+	}
+	_ = w.run(40)
+	if len(w.refreshes) != 1 {
+		t.Fatalf("judge runs = %d, want exactly the one that ended not converging", len(w.refreshes))
+	}
+	if len(w.owed) != 1 || w.owed[0].Held != string(operability.CauseAgentNotConverging) || w.owed[0].HeldOwner != "designer" {
+		t.Fatalf("obligation = %+v, want held by agent_not_converging, owner designer", w.owed)
+	}
+}
+
+// One undecodable obligation record is held by itself: following starts, polls
+// and advances as if it were absent.
+func TestMalformedObligationRecordDoesNotStopFollowing(t *testing.T) {
+	w := newWorld(t)
+	w.sources = []upstream.Source{followedSource(t)}
+	w.latest = []string{revB}
+	w.quarantined = []upstream.Quarantined{{Key: "obligation-0123456789abcdef", Reason: "key does not belong to its record"}}
+	w.advance = func(upstream.Request) (lifecycle.AdvanceResult, error) {
+		return lifecycle.AdvanceResult{Outcome: lifecycle.AdvanceAccepted, Receipt: broker.Receipt{Commit: "accepted1"}}, nil
+	}
+	_ = w.run(3)
+	if len(w.advances) != 1 {
+		t.Fatalf("advances = %d, want following to proceed past the quarantined record", len(w.advances))
 	}
 }
 

@@ -43,11 +43,41 @@ func TestHoldsConfigMapRoundTrip(t *testing.T) {
 	}
 }
 
+// A record that cannot be decoded is reported apart, never an error that stops
+// loading, and Save keeps it for a person while rewriting the valid ones.
+func TestObligationsConfigMapQuarantinesAMalformedRecordAndKeepsIt(t *testing.T) {
+	ctx := context.Background()
+	store := configMapObligations{Client: fake.NewSimpleClientset(), Namespace: testControl}
+	valid := upstream.Obligation{Path: ".", Kind: upstream.ObligationDesignerRefresh, Accepted: "c1", Cause: "coverage", Owner: "designer", Reason: "synthetic", Attempts: 1, Since: time.Unix(1_700_000_000, 0).UTC()}
+	if err := store.Save(ctx, []upstream.Obligation{valid}); err != nil {
+		t.Fatal(err)
+	}
+	configMap, err := store.Client.CoreV1().ConfigMaps(testControl).Get(ctx, upstream.ObligationsConfigMapName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	configMap.Data["obligation-0123456789abcdef"] = "{not json"
+	if _, err := store.Client.CoreV1().ConfigMaps(testControl).Update(ctx, configMap, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	got, bad, err := store.Load(ctx)
+	if err != nil || len(got) != 1 || len(bad) != 1 || bad[0].Key != "obligation-0123456789abcdef" {
+		t.Fatalf("Load = %+v, %+v, %v; want the valid obligation and the one quarantined record", got, bad, err)
+	}
+	// The valid obligation settles; the quarantined record is not dropped.
+	if err := store.Save(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, bad, err = store.Load(ctx); err != nil || len(got) != 0 || len(bad) != 1 {
+		t.Fatalf("after Save = %+v, %+v, %v; want the quarantined record kept", got, bad, err)
+	}
+}
+
 func TestObligationsConfigMapRoundTripAndReset(t *testing.T) {
 	ctx := context.Background()
 	store := configMapObligations{Client: fake.NewSimpleClientset(), Namespace: testControl}
-	if owed, err := store.Load(ctx); err != nil || owed != nil {
-		t.Fatalf("absent ConfigMap = %v, %v", owed, err)
+	if owed, bad, err := store.Load(ctx); err != nil || owed != nil || bad != nil {
+		t.Fatalf("absent ConfigMap = %v, %v, %v", owed, bad, err)
 	}
 	want := []upstream.Obligation{{Path: ".", Kind: upstream.ObligationDesignerRefresh, Accepted: "c1", Cause: "coverage", Owner: "designer", Reason: "synthetic", Attempts: 1, Since: time.Unix(1_700_000_000, 0).UTC()}}
 	for range 2 {
@@ -55,8 +85,8 @@ func TestObligationsConfigMapRoundTripAndReset(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got, err := store.Load(ctx); err != nil || len(got) != 1 || got[0] != want[0] {
-		t.Fatalf("obligations = %+v, %v", got, err)
+	if got, bad, err := store.Load(ctx); err != nil || len(bad) != 0 || len(got) != 1 || got[0] != want[0] {
+		t.Fatalf("obligations = %+v, %+v, %v", got, bad, err)
 	}
 	deleted, err := onboarding.ResetControlState(ctx, store.Client, testControl)
 	if err != nil || len(deleted) != 1 || deleted[0] != upstream.ObligationsConfigMapName {

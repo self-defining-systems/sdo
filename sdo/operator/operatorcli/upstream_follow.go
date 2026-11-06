@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"sdo.dev/operator/lifecycle"
+	"sdo.dev/operator/operability"
 	"sdo.dev/operator/upstream"
 )
 
@@ -51,7 +52,10 @@ type holdsStore interface {
 // obligationsStore persists the follower's open obligations (the
 // sdo-upstream-obligations ConfigMap).
 type obligationsStore interface {
-	Load(context.Context) ([]upstream.Obligation, error)
+	// Load returns the valid obligations and, apart, the records it could not
+	// decode: those are held individually and never stop following. Save
+	// leaves quarantined records as they are.
+	Load(context.Context) ([]upstream.Obligation, []upstream.Quarantined, error)
 	Save(context.Context, []upstream.Obligation) error
 }
 
@@ -109,9 +113,12 @@ func (f upstreamFollowing) step(ctx context.Context, holdsLoaded *bool, log *slo
 			return time.Time{}, fmt.Errorf("load upstream holds: %w", err)
 		}
 		f.Follower.LoadHolds(holds)
-		owed, err := f.Obligations.Load(ctx)
+		owed, quarantined, err := f.Obligations.Load(ctx)
 		if err != nil {
 			return time.Time{}, fmt.Errorf("load upstream obligations: %w", err)
+		}
+		for _, q := range quarantined {
+			log.Error("upstream_obligation_quarantined", "key", q.Key, "cause", upstream.QuarantinedCause, "owner", "operator", "reason", q.Reason)
 		}
 		f.Follower.LoadObligations(f.Now(), owed)
 		*holdsLoaded = true
@@ -148,8 +155,12 @@ func (f upstreamFollowing) retryObligations(ctx context.Context, log *slog.Logge
 		}
 		attrs := []any{"path", o.Path, "obligation", string(o.Kind), "accepted", o.Accepted, "attempts", o.Attempts + 1, "cause", o.Cause, "owner", o.Owner}
 		if err != nil {
-			f.Follower.Retried(f.Now(), o, err.Error())
+			hold := obligationHold(err)
+			f.Follower.Retried(f.Now(), o, err.Error(), hold)
 			log.Warn("upstream_obligation_retry_failed", append(attrs, "error", err.Error())...)
+			if held, ok := f.heldObligation(o); ok {
+				log.Error("upstream_obligation_held", "path", o.Path, "obligation", string(o.Kind), "accepted", o.Accepted, "attempts", held.Attempts, "cause", held.Held, "owner", held.HeldOwner, "reason", held.Reason)
+			}
 		} else {
 			f.Follower.Settle(o)
 			log.Info("upstream_obligation_settled", attrs...)
@@ -159,6 +170,34 @@ func (f upstreamFollowing) retryObligations(ctx context.Context, log *slog.Logge
 		}
 	}
 	return nil
+}
+
+func (f upstreamFollowing) heldObligation(o upstream.Obligation) (upstream.Obligation, bool) {
+	for _, current := range f.Follower.Obligations() {
+		if current.Path == o.Path && current.Kind == o.Kind {
+			return current, current.Held != ""
+		}
+	}
+	return upstream.Obligation{}, false
+}
+
+// obligationHold reads a refresh failure no retry can fix: a terminal
+// operability stop (agent_not_converging, base_invalid, policy, ...) carries
+// its cause and owner. Anything else is a transient failure, retried within
+// the attempt budget.
+func obligationHold(err error) *upstream.ObligationHold {
+	var stop *lifecycle.OperabilityError
+	if !errors.As(err, &stop) || stop.Decision.Kind != operability.Hold {
+		return nil
+	}
+	hold := &upstream.ObligationHold{Owner: string(stop.Decision.Owner)}
+	if len(stop.Decision.Checks) > 0 {
+		hold.Cause = string(stop.Decision.Checks[0].Cause)
+	}
+	if hold.Cause == "" {
+		hold.Cause = string(operability.CauseInternal)
+	}
+	return hold
 }
 
 func (f upstreamFollowing) saveObligations(ctx context.Context) error {
