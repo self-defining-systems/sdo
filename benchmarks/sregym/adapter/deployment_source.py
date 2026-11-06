@@ -9,6 +9,7 @@ renderer; SREGym ``hotelReservation`` is a kustomize root (``kubernetes/kustomiz
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -120,3 +121,43 @@ def plan_flag_value(plan: dict[str, Any]) -> str:
 def source_flag_value(source: dict[str, Any]) -> str:
     """The compact JSON ``install-existing --deployment-source`` takes (written to ``plan.yaml``)."""
     return json.dumps(source, separators=(",", ":"), sort_keys=True)
+
+
+@dataclass(frozen=True)
+class DeploymentPolicyConfig:
+    """The install-time deployment policy a launcher hands the Go installer (``host`` and ``install-existing`` flags).
+
+    The default is no policy: no registry allowlist and foreign or cluster-scoped objects are notes, today's behavior.
+    Production owns the semantics (``deploymentpolicy``); this only names the lane's choices as arguments.
+    """
+
+    allowed_registries: tuple[str, ...] = ()
+    scope_blocking: bool = False
+    granted_namespaces: tuple[str, ...] = ()
+    granted_cluster_kinds: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        for host in self.allowed_registries:
+            if not host or host != host.lower() or any(char in host for char in " /@,"):
+                raise ValueError(f"registry {host!r} must be a lowercase host[:port]")
+        for name, values in (("namespace", self.granted_namespaces), ("cluster kind", self.granted_cluster_kinds)):
+            for value in values:
+                if not value or any(char in value for char in " /,"):
+                    raise ValueError(f"invalid granted {name} {value!r}")
+        if type(self.scope_blocking) is not bool:
+            raise TypeError("scope_blocking must be a boolean")
+        if (self.granted_namespaces or self.granted_cluster_kinds) and not self.scope_blocking:
+            raise ValueError("grants need scope_blocking, otherwise nothing is blocked")
+
+    def args(self) -> list[str]:
+        """The flags, in the order the Go parser documents; empty when there is no policy."""
+        args: list[str] = []
+        if self.allowed_registries:
+            args.extend(("--allow-registry", ",".join(self.allowed_registries)))
+        if self.scope_blocking:
+            args.append("--scope-blocking")
+        if self.granted_namespaces:
+            args.extend(("--grant-namespace", ",".join(self.granted_namespaces)))
+        if self.granted_cluster_kinds:
+            args.extend(("--grant-cluster-kind", ",".join(self.granted_cluster_kinds)))
+        return args

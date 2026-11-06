@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 from google.protobuf import json_format
 
 from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
-from benchmarks.sregym.adapter.deployment_source import plan_flag_value, source_flag_value
+from benchmarks.sregym.adapter.deployment_source import DeploymentPolicyConfig, plan_flag_value, source_flag_value
 from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
@@ -103,6 +103,8 @@ class NativeInstallConfig:
     registration_configmap: str | None = None
     responder_env: tuple[str, ...] = ()
     deployment_source: dict[str, Any] | None = None
+    # Install-time deployment policy (registry allowlist, scope grants); the default is no policy.
+    deployment_policy: DeploymentPolicyConfig = DeploymentPolicyConfig()
     shared_accepted_id: str = ""
 
     def __post_init__(self) -> None:
@@ -206,6 +208,7 @@ class NativeInstallConfig:
             args.extend(("--responder-env", value))
         if self.code_path_overrides:
             args.extend(("--code-path-overrides", self.code_path_overrides))
+        args.extend(self.deployment_policy.args())
         return args
 
 

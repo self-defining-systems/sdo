@@ -312,3 +312,8 @@ def test_real_chart_plan_is_printed(tmp_path: Path, operator_binary: Path, monke
     assert {family(i) for i in plan["expected_workload_ids"]} == {family(i) for i in helm_workload_ids(expected)}
     assert helm_images(expected) == {image["image"] for image in plan["images"]}
     assert len(plan["images"]) >= 8
+    # The lane's install-time policy admits every image of the real chart (Go's RegistryHost rule).
+    for image in plan["images"]:
+        first = image["image"].split("/", 1)[0]
+        host = first if "/" in image["image"] and ("." in first or ":" in first) else "docker.io"
+        assert host in gitlab_lane.IMAGE_REGISTRIES, image["image"]

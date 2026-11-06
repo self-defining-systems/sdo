@@ -74,6 +74,33 @@ def test_runtime_config_installs_the_provided_source_without_manifest_paths(tmp_
     assert config.persistent
 
 
+def test_lane_policy_allows_the_chart_the_datastores_and_the_lane_registry() -> None:
+    policy = gitlab_lane.deployment_policy()
+    assert policy.allowed_registries == (
+        "registry.gitlab.com",
+        "docker.io",
+        "sdo-benchmark-registry.gitlab-sdo.svc.cluster.local:5000",
+    )
+    assert not policy.scope_blocking
+    # Every pinned datastore image (no registry host: Docker Hub) is inside the allowlist.
+    for image in assemble.load_pins()["datastore_images"].values():
+        first = image.split("/", 1)[0]
+        host = first if "/" in image and ("." in first or ":" in first) else "docker.io"
+        assert host in policy.allowed_registries
+
+
+def test_runtime_config_carries_the_lane_policy(tmp_path: Path) -> None:
+    environment = SimpleNamespace(
+        workspace=tmp_path,
+        namespace=gitlab_lane.NAMESPACE,
+        application=gitlab_lane.APPLICATION,
+        images=SimpleNamespace(controller="controller:x", responder="responder:x"),
+        cluster="fastloop-w0",
+    )
+    config = gitlab_lane.lane_runtime_config(environment, gitlab_lane.plan_from_workloads(_workloads()))
+    assert config.deployment_policy == gitlab_lane.deployment_policy()
+
+
 def test_up_accepts_the_gitlab_app() -> None:
     parser = build_parser()
     args = parser.parse_args(["up", "--run-dir", "/tmp/x", "--app", "gitlab", "--goal", "g"])
