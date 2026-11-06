@@ -18,7 +18,9 @@ func objectiveDigest(objective string) string {
 }
 
 // healthyBaselineGoal is independent of the generic reachability policy. No
-// finding, error, missing objective, or incident detector can authorize a baseline.
+// finding, error, missing health detector, or incident detector can authorize a
+// baseline. No detector ID is reserved for the human goal: the generic health
+// detectors the shared check installs evaluate it independently.
 type baselineContradictionError struct{ detector string }
 
 func (e *baselineContradictionError) Error() string {
@@ -26,7 +28,7 @@ func (e *baselineContradictionError) Error() string {
 }
 
 func healthyBaselineGoal(ctx context.Context, detectors []sdk.Detector, snapshot sdk.DetectionContext) (bool, error) {
-	objective := false
+	evaluatedHealth := false
 	var health []sdk.Detector
 	for _, detector := range detectors {
 		spec := detector.Spec()
@@ -41,9 +43,7 @@ func healthyBaselineGoal(ctx context.Context, detectors []sdk.Detector, snapshot
 	evaluated := evaluateDetectors(ctx, health, snapshot)
 	for _, detector := range health {
 		spec := detector.Spec()
-		if spec.ID == "health-objective" {
-			objective = true
-		}
+		evaluatedHealth = true
 		findings, err := evaluated[spec.ID].findings, evaluated[spec.ID].err
 		if err != nil {
 			return false, fmt.Errorf("healthy baseline %s: %w", spec.ID, err)
@@ -54,8 +54,8 @@ func healthyBaselineGoal(ctx context.Context, detectors []sdk.Detector, snapshot
 			}
 		}
 	}
-	if !objective {
-		return false, fmt.Errorf("healthy baseline requires an independently evaluated health-objective")
+	if !evaluatedHealth {
+		return false, fmt.Errorf("healthy baseline requires an independently evaluated health detector")
 	}
 	return true, nil
 }
