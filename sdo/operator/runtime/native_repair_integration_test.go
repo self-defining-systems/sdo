@@ -2,6 +2,8 @@
 
 package runtime
 
+//ci:scoped copies the validator testdata good tree as a fixture
+
 import (
 	"context"
 	"errors"

@@ -80,6 +80,9 @@ echo "==> shipped skill size budgets"
 uv run python scripts/check_skill_sizes.py
 uv run python scripts/check_app_names.py
 
+echo "==> whole-tree guard marks"
+python3 scripts/ci_select.py check-marks
+
 echo "==> flaky-test quarantine deadlines"
 uv run python scripts/ci_quarantine.py check
 

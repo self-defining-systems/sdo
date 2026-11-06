@@ -8,6 +8,8 @@ from benchmarks.sregym.fastloop.cli import build_parser
 from benchmarks.sregym.fastloop.records import IncidentRecord
 from sdo.contracts import OutcomeRecord
 
+CI_WHOLE_TREE = True
+
 ROOT = Path(__file__).resolve().parents[2]
 SKILLS = ("test-sdo", "run-experiment")
 CODE = re.compile(r"(?<!`)`([^`\n]+)`(?!`)")

@@ -133,6 +133,7 @@ func productionFiles(t *testing.T) []string {
 	return files
 }
 
+//ci:whole-tree
 func TestCheckoutWritersGoThroughSafefs(t *testing.T) {
 	files := productionFiles(t)
 	if len(files) < 100 {

@@ -24,6 +24,8 @@ func TestIsMemoryPathCoversTheDirectoryEntryAndEverythingBelow(t *testing.T) {
 // TestNoCallerReimplementsTheMemoryPathPredicate keeps one owner of "is this a
 // memory path": the broker and lifecycle (and every other package) must ask
 // layout.IsMemoryPath instead of comparing against layout.Dir themselves.
+//
+//ci:whole-tree
 func TestNoCallerReimplementsTheMemoryPathPredicate(t *testing.T) {
 	root := filepath.Join("..", "..")
 	err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {

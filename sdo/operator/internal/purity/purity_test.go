@@ -46,6 +46,7 @@ func step(event Event) time.Time { var next = event.At; return next.Add(time.Sec
 	}
 }
 
+//ci:whole-tree
 func TestDeclaredCorePackages(t *testing.T) {
 	root := filepath.Join("..", "..", "..", "..")
 	manifest, err := os.ReadFile(filepath.Join(root, "scripts", "go_pure_packages.txt"))

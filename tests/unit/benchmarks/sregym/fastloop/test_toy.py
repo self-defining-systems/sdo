@@ -10,6 +10,8 @@ from benchmarks.sregym.fastloop.cli import build_parser
 from benchmarks.sregym.fastloop.stream import load_stream_config
 from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import fixed_source_provider
 
+CI_SCOPED = "lists a throwaway workspace repository"
+
 ROOT = Path(__file__).resolve().parents[5]
 
 

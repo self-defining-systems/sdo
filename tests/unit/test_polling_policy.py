@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+CI_WHOLE_TREE = True
+
 
 def _number(node: ast.AST) -> float | None:
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):

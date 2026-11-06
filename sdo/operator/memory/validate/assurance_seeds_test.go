@@ -2,6 +2,8 @@
 
 package validate
 
+//ci:scoped reads the assurance seed fixtures, selected by their path
+
 import (
 	"bytes"
 	"context"

@@ -7,6 +7,8 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+CI_WHOLE_TREE = True
+
 if TYPE_CHECKING:
     import pytest
 

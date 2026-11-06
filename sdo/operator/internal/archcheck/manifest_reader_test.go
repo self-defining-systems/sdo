@@ -37,6 +37,8 @@ var (
 // render/ and rendered/ starts decoding manifest YAML itself. The earlier
 // readers (the memory inventory, the builder's Service-name scan, a benchmark
 // helper) each missed Helm sources; the render catalog is the one reader.
+//
+//ci:whole-tree
 func TestOnlyTheRenderPackagesParseManifests(t *testing.T) {
 	root := "../.."
 	found := map[string]bool{}

@@ -11,6 +11,8 @@ from hypothesis import strategies as st
 from benchmarks.sregym.adapter import SdoBounds, WaitKind, wait_for
 from benchmarks.sregym.adapter.budgets import DEFAULT_BOUNDS, bound
 
+CI_WHOLE_TREE = True
+
 ROOT = Path(__file__).resolve().parents[5]
 SCANNED = ("benchmarks/sregym/fastloop", "benchmarks/sregym/adapter")
 BUDGET_MODULE = "benchmarks/sregym/adapter/budgets.py"

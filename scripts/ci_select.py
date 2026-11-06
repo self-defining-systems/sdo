@@ -29,6 +29,20 @@ DOTTED_TOKEN = re.compile(r"\b[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+\b")
 FILE_TOKEN = re.compile(r"[A-Za-z0-9_\-]+(?:\.[A-Za-z0-9_\-]+)*\.[A-Za-z0-9]{1,6}\b")
 GO_RELATIVE = re.compile(r'"((?:\.\./)+[^"\s]*)"')
 
+# Whole-tree guards scan sources outside their own package, so no changed-file mapping can say when they matter.
+# A test opts in structurally: `//ci:whole-tree` directly above `func TestX` (Go) or `CI_WHOLE_TREE = True` in a
+# test file (Python). Pull request runs always execute the marked tests; `check-marks` fails a test file
+# that looks like a tree scanner but carries neither the mark nor a reasoned `scoped` exemption.
+GO_GUARD = re.compile(r"^//ci:whole-tree[^\n]*\n(?://[^\n]*\n)*func (Test\w+)\(", re.MULTILINE)
+GO_SCOPED = re.compile(r"^//ci:scoped \S", re.MULTILINE)
+GO_WALK = re.compile(
+    r'WalkDir\(|filepath\.Walk\(|ParseDir\(|packages\.Load|"go", "list"|UncheckedAssertions\(|\bCheck\("\.\./'
+)
+GO_TREE_ROOT = re.compile(r'"(?:\.\./)*\.\./?"')
+PY_GUARD = re.compile(r"^CI_WHOLE_TREE = True\s*$", re.MULTILINE)
+PY_SCOPED = re.compile(r"^CI_SCOPED = ['\"]\S", re.MULTILINE)
+PY_WALK = re.compile(r"os\.walk\(|ls-files|tracked_files|\b(?:[A-Z_]*ROOT|repo_root|repository_root)\b[^\n]*\.rglob\(")
+
 
 class SelectionError(RuntimeError):
     """The selector could not build a plan; callers fall back to the full suite."""
@@ -61,7 +75,6 @@ def matches(path: str, patterns: list[str]) -> bool:
 class Config:
     full_suite: list[str]
     documentation: list[str]
-    python_always: list[str]
     go_workspace_modules: list[str]
     go_binaries: list[str]
     go_consumer_modules: list[str]
@@ -85,6 +98,7 @@ class Plan:
     reasons: list[str] = field(default_factory=list)
     go_packages: list[str] = field(default_factory=list)  # directories relative to the repo root
     python_tests: list[str] = field(default_factory=list)
+    go_guards: dict[str, list[str]] = field(default_factory=dict)  # package directory -> whole-tree test names
     changed: list[str] = field(default_factory=list)
 
     def to_json(self) -> dict[str, object]:
@@ -93,6 +107,7 @@ class Plan:
             "reasons": self.reasons,
             "go_packages": self.go_packages,
             "python_tests": self.python_tests,
+            "go_guards": self.go_guards,
             "changed": self.changed,
         }
 
@@ -412,10 +427,53 @@ def plan_for(root: Path, config: Config, changed: list[str], deleted: list[str])
         for p in affected
         if p.startswith("tests/") and PurePosixPath(p).name.startswith("test_") and p.endswith(".py")
     }
-    if any(not p.endswith("_test.go") for p in changed):
-        tests |= {p for p in files if p.endswith(".py") and matches(p, config.python_always)}
-    plan.python_tests = sorted(tests)
+    plan.python_tests = sorted(tests | python_whole_tree_tests(root, files))
+    plan.go_guards = go_whole_tree_tests(root, files)
     return plan
+
+
+def _test_files(files: list[str], suffix: str) -> list[str]:
+    return [f for f in files if f.endswith(suffix) and not f.startswith("tests/fixtures/")]
+
+
+def go_whole_tree_tests(root: Path, files: list[str]) -> dict[str, list[str]]:
+    """Package directory -> names of its tests marked ``//ci:whole-tree``."""
+    guards: dict[str, list[str]] = {}
+    for path in _test_files(files, "_test.go"):
+        names = GO_GUARD.findall((root / path).read_text(errors="replace"))
+        if names:
+            guards.setdefault(str(PurePosixPath(path).parent), []).extend(names)
+    return {d: sorted(set(n)) for d, n in sorted(guards.items())}
+
+
+def python_whole_tree_tests(root: Path, files: list[str]) -> set[str]:
+    return {
+        f
+        for f in _test_files(files, ".py")
+        if PurePosixPath(f).name.startswith("test_") and PY_GUARD.search((root / f).read_text(errors="replace"))
+    }
+
+
+def unmarked_tree_walkers(root: Path, files: list[str]) -> list[str]:
+    """Test files that scan a source tree but neither carry the whole-tree mark nor a reasoned exemption."""
+    bad: list[str] = []
+    for path in _test_files(files, "_test.go"):
+        text = (root / path).read_text(errors="replace")
+        if GO_WALK.search(text) and GO_TREE_ROOT.search(text) and not (GO_GUARD.search(text) or GO_SCOPED.search(text)):
+            bad.append(
+                f"{path}: scans a source tree; mark the guard `//ci:whole-tree` above its Test func, "
+                "or `//ci:scoped <reason>` when it only reads fixtures or named files"
+            )
+    for path in _test_files(files, ".py"):
+        if not PurePosixPath(path).name.startswith("test_"):
+            continue
+        text = (root / path).read_text(errors="replace")
+        if PY_WALK.search(text) and not (PY_GUARD.search(text) or PY_SCOPED.search(text)):
+            bad.append(
+                f"{path}: walks files; add `CI_WHOLE_TREE = True` (a repository-wide guard) "
+                'or `CI_SCOPED = "<reason>"` at module level'
+            )
+    return bad
 
 
 def shard_of(test: str, config: Config) -> str:
@@ -435,6 +493,7 @@ def load_plan(path: Path) -> Plan:
         reasons=data["reasons"],
         go_packages=data["go_packages"],
         python_tests=data["python_tests"],
+        go_guards=data.get("go_guards", {}),
         changed=data["changed"],
     )
 
@@ -444,6 +503,14 @@ def shard_go_packages(plan: Plan, shard: str) -> list[str]:
     if shard == "validate":
         return [f"./{VALIDATE_DIR}"] if VALIDATE_DIR in plan.go_packages else []
     return [f"./{d}" for d in plan.go_packages if d != VALIDATE_DIR]
+
+
+def shard_go_guards(plan: Plan, shard: str) -> tuple[str, list[str]]:
+    """The ``-run`` regex and package patterns for whole-tree guards in packages the plan does not run in full."""
+    chosen = {d: n for d, n in plan.go_guards.items() if d not in plan.go_packages}
+    chosen = {d: n for d, n in chosen.items() if (d == VALIDATE_DIR) == (shard == "validate")}
+    names = sorted({n for ns in chosen.values() for n in ns})
+    return ("^(" + "|".join(names) + ")$" if names else ""), [f"./{d}" for d in chosen]
 
 
 def shard_python_tests(plan: Plan, config: Config, shard: str) -> list[str]:
@@ -480,13 +547,14 @@ def main(argv: list[str] | None = None) -> int:
     plan_cmd.add_argument("--base", default="HEAD^1")
     plan_cmd.add_argument("--head", default="HEAD")
     plan_cmd.add_argument("--out", type=Path)
-    for name in ("mode", "go-patterns", "python-paths", "skip"):
+    for name in ("mode", "go-patterns", "go-guards", "python-paths", "skip"):
         cmd = sub.add_parser(name)
         cmd.add_argument("--plan", type=Path, required=True)
         if name != "mode":
             cmd.add_argument("--shard", required=True)
         if name == "skip":
             cmd.add_argument("--kind", choices=["go", "python"], required=True)
+    sub.add_parser("check-marks")
     miss_cmd = sub.add_parser("misses")
     miss_cmd.add_argument("--base", default="HEAD^1")
     miss_cmd.add_argument("--head", default="HEAD")
@@ -495,17 +563,25 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     config = Config.load()
 
-    if args.command in {"mode", "go-patterns", "python-paths", "skip"}:
+    if args.command == "check-marks":
+        bad = unmarked_tree_walkers(ROOT, tracked_files(ROOT))
+        print("\n".join(bad))
+        return 1 if bad else 0
+
+    if args.command in {"mode", "go-patterns", "go-guards", "python-paths", "skip"}:
         plan = load_plan(args.plan)
         if args.command == "mode":
             print("full" if plan.full else "selected")
         elif args.command == "go-patterns":
             print("\n".join(shard_go_packages(plan, args.shard)))
+        elif args.command == "go-guards":
+            regex, patterns = shard_go_guards(plan, args.shard)
+            print("\n".join([regex, *patterns]) if regex else "")
         elif args.command == "python-paths":
             print("\n".join(shard_python_tests(plan, config, args.shard)))
         else:  # environment lines for $GITHUB_ENV
             chosen = (
-                shard_go_packages(plan, args.shard)
+                [*shard_go_packages(plan, args.shard), *shard_go_guards(plan, args.shard)[1]]
                 if args.kind == "go"
                 else shard_python_tests(plan, config, args.shard)
             )
