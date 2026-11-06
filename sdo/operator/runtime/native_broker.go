@@ -106,6 +106,11 @@ type NativeIncidentBroker struct {
 	LateFindingsVerifier interface {
 		VerifyPull(context.Context, string, uint32, string, []string, []string) error
 	}
+
+	// Repairs accepts the responder's source repair: a change to deployment
+	// inputs is deployed and verified by the trusted Deployer first. Nil
+	// accepts it with a plain broker publication, which deploys nothing.
+	Repairs SourceRepairer
 }
 
 type ControllerRolloutExpectation struct {
@@ -382,11 +387,31 @@ func (n NativeIncidentBroker) processClosure(ctx context.Context, closure Incide
 					}
 				}
 				if len(broker.SourceRepairPaths(partition.SDO)) > 0 && verified {
-					accepted, err := n.Repository.Publish(ctx, id, broker.Responder, broker.ProposalPhase)
-					if err != nil {
-						return err
+					// A hold is final for this closure: a retry never deploys again.
+					repair := SourceRepair{Held: "held by an earlier attempt of this closure"}
+					if _, held := ledger.GetClosurePhaseTimestamps()["source_repair_held"]; !held {
+						if repair, err = n.acceptSourceRepair(ctx, id); err != nil {
+							return err
+						}
 					}
-					ledger.ProposalCommit = accepted.Commit
+					switch {
+					case repair.Held != "":
+						// Nothing was accepted and the cluster is as the
+						// deployment left it: the closure records no repair.
+						if err := n.recordPhase(ledger, "source_repair_held"); err != nil {
+							return err
+						}
+						if closure.Request.RepairPolicy == "commit" {
+							return fmt.Errorf("commit repair policy: the source repair was not deployed: %s", repair.Held)
+						}
+					case repair.Deployed:
+						if err := n.recordPhase(ledger, "source_repair_deployed"); err != nil {
+							return err
+						}
+						ledger.ProposalCommit = repair.Commit
+					default:
+						ledger.ProposalCommit = repair.Commit
+					}
 				} else if verified && closure.Request.RepairPolicy == "commit" {
 					return errors.New("commit repair policy requires a nonempty validated proposal")
 				}
@@ -487,6 +512,16 @@ func (n NativeIncidentBroker) processClosure(ctx context.Context, closure Incide
 		return n.saveLedger(ledger)
 	})
 	return receipt, err
+}
+
+// acceptSourceRepair accepts the responder's source repair through Repairs
+// when configured, else by a plain publication.
+func (n NativeIncidentBroker) acceptSourceRepair(ctx context.Context, id string) (SourceRepair, error) {
+	if n.Repairs != nil {
+		return n.Repairs.Repair(ctx, id)
+	}
+	accepted, err := n.Repository.Publish(ctx, id, broker.Responder, broker.ProposalPhase)
+	return SourceRepair{Commit: accepted.Commit}, err
 }
 
 // reflectLocked runs reflection and records its typed SDK gaps and rejections
