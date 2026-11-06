@@ -467,7 +467,7 @@ func TestPublishVerifiedSourceRequiresThePlanToNameTheDeployedSource(t *testing.
 		if err != nil {
 			t.Fatal(err)
 		}
-		writeFiles(t, p.Path, map[string]string{"app.txt": "one\ntwo\nthree " + name + "\n"})
+		writeFiles(t, p.Path, map[string]string{".sdo/deployment/values/" + id + ".yaml": "replicas: 2\n"})
 		c.prepare(p.Path)
 		if _, err := w.broker.PublishVerifiedSource(ctx, id, advanceEvidence(t, p.Path, id)); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Fatalf("%s: PublishVerifiedSource = %v, want %q", name, err, c.want)

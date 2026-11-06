@@ -57,6 +57,7 @@ func TestProposalTreeDigestCoversOnlyTheMemoryDirectory(t *testing.T) {
 	}
 	// A local commit of app files does not move the base either.
 	testutil.Git(t, p.Path, "add", "app.txt")
+	testutil.ConfigureGit(t, p.Path)
 	testutil.Git(t, p.Path, "commit", "-qm", "local")
 	if got, err := ProposalTreeDigest(ctx, p.Path); err != nil || got != clean {
 		t.Fatalf("a local app commit moved the candidate tree: %s vs %s, %v", got, clean, err)
