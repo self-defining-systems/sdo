@@ -32,6 +32,7 @@ func newPatchWorld(t *testing.T, editedByDeployer bool) *patchWorld {
 	w := &patchWorld{advanceWorld: newOnboardedWorld(t, editedByDeployer)}
 	w.scratch = filepath.Join(t.TempDir(), "author")
 	testutil.Git(t, filepath.Dir(w.scratch), "clone", "-q", w.accepted, w.scratch)
+	testutil.ConfigureGit(t, w.scratch)
 	return w
 }
 

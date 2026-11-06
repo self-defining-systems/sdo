@@ -68,6 +68,7 @@ func newOnboardedWorld(t *testing.T, editedByDeployer bool) *advanceWorld {
 	testutil.Git(t, w.upstream, "commit", "-qm", "seed\n\nSDO-Upstream: "+strings.Repeat("f", 40))
 	w.seed = gitOut(t, w.upstream, "rev-parse", "HEAD")
 	testutil.Git(t, base, "clone", "-q", w.upstream, w.accepted)
+	testutil.ConfigureGit(t, w.accepted)
 	testutil.Git(t, w.accepted, "remote", "remove", "origin")
 	b, err := New(w.accepted, filepath.Join(base, "workspaces"), func(context.Context, string, []string) error { return nil })
 	if err != nil {
