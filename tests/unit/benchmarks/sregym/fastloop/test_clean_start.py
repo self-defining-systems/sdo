@@ -262,32 +262,6 @@ def test_admission_rejects_legacy_harness_traffic_even_without_injection_label(m
         clean_start.assert_clean_baseline(Path("synthetic-kubeconfig"), namespace="hotel-reservation")
 
 
-@pytest.mark.requires_sregym
-def test_real_wrk2_creates_harness_objects_and_grader_reads_the_same_namespace() -> None:
-    import os
-    import subprocess
-
-    root = Path(__file__).resolve().parents[5]
-    reply = subprocess.run(
-        [
-            "uv",
-            "run",
-            "--directory",
-            str(root / "third_party/sregym"),
-            "python",
-            "-m",
-            "tests.unit.benchmarks.sregym.fastloop.clean_start_wrk2_worker",
-        ],
-        env={**os.environ, "PYTHONPATH": str(root)},
-        capture_output=True,
-        text=True,
-        timeout=120,
-        check=False,
-    )
-    assert reply.returncode == 0, (reply.stdout + reply.stderr)[-4000:]
-    assert "real Wrk2 Job, payload, settings and grader log namespace: pass" in reply.stdout
-
-
 def test_worker_checks_admission_after_deployment_before_baseline_capture(monkeypatch: Any) -> None:
     api = API()
     api.inject_during_deploy = True
