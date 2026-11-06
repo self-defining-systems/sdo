@@ -362,6 +362,7 @@ def test_python_runner_builds_protocol_tools_once_before_workers(tmp_path: Path)
         "uv": '''test -f "$SDO_TEST_CALLS"
  test -n "$SDO_NATIVE_RECEIPT_BIN"
  test -n "$SDO_SUBMISSION_GUARD_BIN"
+ test -n "$SDO_RBAC_HELPER_BIN"
  printf 'uv %s\\n' "$*" >> "$SDO_TEST_CALLS"''',
     }.items():
         command = tmp_path / name
@@ -381,7 +382,7 @@ def test_python_runner_builds_protocol_tools_once_before_workers(tmp_path: Path)
     )
     assert result.returncode == 0, result.stderr
     lines = calls.read_text().splitlines()
-    assert len([line for line in lines if line.startswith("go build ")]) == 2
+    assert len([line for line in lines if line.startswith("go build ")]) == 3  # receipt, submission guard, RBAC helper
     assert lines[-1].startswith("uv run --extra test pytest ")
     assert "--durations=30" in lines[-1]
 

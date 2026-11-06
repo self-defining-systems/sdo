@@ -239,6 +239,9 @@ jobs:
             --ignore=tests/unit/sdo/agents/lifecycle/test_supplied_reads.py \
             --ignore=tests/unit/benchmarks/sregym/fastloop/test_sequence_scripted.py \
             --ignore=tests/unit/benchmarks/sregym/fastloop/test_clean_start_real_wrk2.py \
+            --ignore=tests/unit/benchmarks/sregym/fastloop/test_fastloop_hermetic_program_reuse.py \
+            --ignore=tests/unit/benchmarks/sregym/fastloop/test_request_envelope_real_go.py \
+            --ignore=tests/unit/benchmarks/sregym/fastloop/test_idempotent_helm_real_sregym.py \
             --ignore=tests/unit/benchmarks/sregym/fastloop/test_host_limits.py
       - name: PR-tier tests stay under the slow-test budget
         if: env.SDO_CI_SKIP != 'true'

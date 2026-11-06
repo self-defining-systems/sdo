@@ -97,33 +97,3 @@ def test_a_failing_helm_still_raises_with_its_error(helm_state, monkeypatch):
 def test_incomplete_arguments_are_rejected():
     with pytest.raises(ValueError, match="release_name, chart_path and namespace"):
         install_or_upgrade(release_name="x")
-
-
-@pytest.mark.requires_sregym
-def test_the_real_sregym_helm_class_is_idempotent_after_the_bridge_patches_it(helm_state):
-    """SREGym's own callers (`Helm.install(**configs)`) reach the replacement; unpatched, they fail."""
-    root = Path(__file__).resolve().parents[5]
-    script = textwrap.dedent(
-        """\
-        import sys
-        from sregym.service.helm import Helm
-        from benchmarks.sregym.fastloop.idempotent_helm import make_deploy_idempotent
-        cfg = dict(release_name="r", chart_path="/c", namespace="n", remote_chart=True)
-        Helm.install(**cfg)
-        try:
-            Helm.install(**cfg)
-        except RuntimeError as exc:
-            assert "cannot re-use a name" in str(exc), exc
-        else:
-            sys.exit("stock Helm.install unexpectedly succeeded twice")
-        make_deploy_idempotent(Helm)
-        Helm.install(**cfg)
-        """
-    )
-    done = subprocess.run(
-        ["uv", "run", "--directory", str(root / "third_party/sregym"), "python", "-c", script],
-        env={**os.environ, "PYTHONPATH": str(root)},
-        capture_output=True,
-        text=True,
-    )
-    assert done.returncode == 0, done.stderr[-2000:]
