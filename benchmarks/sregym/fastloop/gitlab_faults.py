@@ -91,6 +91,8 @@ class OutcomeRead:
     usage: dict[str, Any]
     repair_actions: int
     first_repair_at: datetime | None = None
+    program_applications: int = 0
+    """Learned playbook programs SDO applied itself (``applied_playbooks`` / ``plan_applications``)."""
 
 
 def _time(value: Any) -> datetime | None:
@@ -125,6 +127,9 @@ def parse_outcome(document: dict[str, Any]) -> OutcomeRead:
         usage=dict(usage) if isinstance(usage, dict) else {},
         repair_actions=len(repairs),
         first_repair_at=min((t for t in started if t), default=None),
+        program_applications=max(
+            len(_field(document, "applied_playbooks") or []), len(_field(document, "plan_applications") or [])
+        ),
     )
 
 
@@ -313,16 +318,30 @@ def run_fault(ops: FaultOps, spec: FaultSpec, config: StreamConfig, index: int) 
     result.detected_at = outcome.detected_at or result.observed_detect_at
     result.resolved_at = outcome.verified_at or ops.now()
     result.human_edits = ops.human_edits() - edits_before
-    if outcome.classification == "success":
-        label = Outcome.RESOLVED
-    elif outcome.classification == "cleared_without_action":
-        label = Outcome.CLEARED
-    else:
+    label = _label(outcome, spec)
+    if label is Outcome.UNRESOLVED:
         result.error = f"incident closed as {outcome.classification or 'unclassified'}"
-        label = Outcome.UNRESOLVED
         if ops.unhealthy():
             revert()
     return _verify(ops, config, result, finish, label)
+
+
+def _label(outcome: OutcomeRead, spec: FaultSpec) -> Outcome:
+    """The stream label of a closed incident; the health baseline is checked afterwards in ``_verify``.
+
+    A closure's ``cleared_without_action`` can still hide SDO's own deterministic repair (a learned program whose
+    receipt carried a source residual), which is a resolution. A fault declared self-healing whose incident closed
+    without any repair, cleared or unconfirmed, is the platform's recovery, not a failure.
+    """
+    if outcome.classification == "success":
+        return Outcome.RESOLVED
+    if outcome.classification == "cleared_without_action":
+        if outcome.program_applications > 0:
+            return Outcome.RESOLVED
+        return Outcome.SELF_HEALED if spec.self_heals and outcome.repair_actions == 0 else Outcome.CLEARED
+    if outcome.classification == "unconfirmed" and spec.self_heals and outcome.repair_actions == 0:
+        return Outcome.SELF_HEALED
+    return Outcome.UNRESOLVED
 
 
 def _verify(
@@ -332,6 +351,12 @@ def _verify(
     result.baseline_restored = _wait_baseline(ops, config)
     if not result.baseline_restored:
         result.error = f"{result.error or ''} baseline_not_restored".strip()
+        credited_without_verification = (
+            label is Outcome.RESOLVED and result.incident is not None and result.incident.classification != "success"
+        )
+        if label is Outcome.SELF_HEALED or credited_without_verification:
+            # Only a restored baseline turns an unverified closure into a credit.
+            label = Outcome.UNRESOLVED
     result.human_edits = max(result.human_edits, 0)
     return finish(label)
 

@@ -141,6 +141,33 @@ def test_selection_reports_when_fewer_faults_exist_than_requested() -> None:
 # --- the state machine ----------------------------------------------------------------------------------------
 
 
+CLOSING = (
+    "resolve",
+    "unclassified",
+    "unconfirmed_self_heal",
+    "program_residual",
+    "cleared_self_heal",
+    "repaired_self_heal",
+)
+SELF_HEALING = ("unconfirmed_self_heal", "cleared_self_heal", "repaired_self_heal")
+CLASSIFICATION = {
+    "resolve": "success",
+    "unclassified": "failed",
+    "unconfirmed_self_heal": "unconfirmed",
+    "program_residual": "cleared_without_action",
+    "cleared_self_heal": "cleared_without_action",
+    "repaired_self_heal": "unconfirmed",
+}
+
+
+def repairs_for(behaviour: str, started: str) -> list[dict[str, Any]]:
+    if behaviour in ("unconfirmed_self_heal", "cleared_self_heal"):
+        return []
+    if behaviour == "program_residual":
+        return [{"success": False, "failure_reason": "source_residual", "started_at": started}]
+    return [{"success": True, "started_at": started}]
+
+
 class FakeLane:
     """A cluster with a virtual clock and a scripted SDO. ``behaviour`` picks how SDO reacts to an injection."""
 
@@ -158,6 +185,7 @@ class FakeLane:
         self.revert_fails = False
         self.inject_fails = False
         self.stuck_unhealthy = False
+        self.stuck_after_injection = False
         self.spec_reverts: set[Action] = set()
         self._healed_by_platform = False
 
@@ -177,9 +205,11 @@ class FakeLane:
         age = self.t - self.injected_at
         if self.behaviour == "self_heal" and age >= 15:
             self.broken = None
-        if self.behaviour in ("resolve", "unclassified") and age >= self.detect_after and self.broken:
+        if self.behaviour in CLOSING and age >= self.detect_after and (self.broken or self.behaviour in SELF_HEALING):
             self.open = True
-        if self.behaviour in ("resolve", "unclassified") and age >= self.fix_after and self.broken:
+        if self.behaviour == "unconfirmed_self_heal" and age >= 15:
+            self.broken = None  # the platform restarts the pod; SDO's closure stays open and ends unconfirmed
+        if self.behaviour in CLOSING and age >= self.fix_after and (self.broken or self.behaviour in SELF_HEALING):
             self.broken = None
             self.open = False
             stamps = lambda s: (EPOCH + timedelta(seconds=self.injected_at + s)).isoformat().replace("+00:00", "Z")  # noqa: E731
@@ -187,7 +217,7 @@ class FakeLane:
                 gf.parse_outcome(
                     {
                         "incident_id": f"inc-{len(self.docs)}",
-                        "classification": "success" if self.behaviour == "resolve" else "failed",
+                        "classification": CLASSIFICATION[self.behaviour],
                         "timestamps": {
                             "detected_at": stamps(self.detect_after),
                             "dispatched_at": stamps(self.detect_after + 2),
@@ -195,7 +225,12 @@ class FakeLane:
                             "verified_at": stamps(self.fix_after),
                         },
                         "usage": {"llm_calls": 3, "input_tokens": 100, "output_tokens": 10},
-                        "repair_actions": [{"success": True, "started_at": stamps(self.fix_after - 20)}],
+                        "repair_actions": repairs_for(self.behaviour, stamps(self.fix_after - 20)),
+                        **(
+                            {"applied_playbooks": ["deployment-source-drift"]}
+                            if self.behaviour == "program_residual"
+                            else {}
+                        ),
                     }
                 )
             )
@@ -218,7 +253,11 @@ class FakeLane:
         self.broken = actions[0].args[0]
 
     def unhealthy(self) -> list[str]:
-        return [f"Deployment/{NS}/web"] if self.broken or self.stuck_unhealthy else []
+        return (
+            [f"Deployment/{NS}/web"]
+            if self.broken or self.stuck_unhealthy or (self.stuck_after_injection and self.injected_at is not None)
+            else []
+        )
 
     def incident_open(self) -> bool:
         return self.open
@@ -281,6 +320,39 @@ def test_self_healing_fault_is_not_a_resolution() -> None:
     assert result.outcome is gf.Outcome.SELF_HEALED
     assert result.baseline_restored
     assert gf.stream_row(result)["responder_turns"] is None
+
+
+@pytest.mark.parametrize("behaviour", ["unconfirmed_self_heal", "cleared_self_heal"])
+def test_self_healed_incident_without_repair_is_a_correct_outcome(behaviour: str) -> None:
+    result = run(FakeLane(behaviour), spec(FaultKind.POD_KILL))
+    assert result.outcome is gf.Outcome.SELF_HEALED
+    assert result.baseline_restored
+    assert not result.harness_reverted
+    assert result.error is None
+    record = gf.record_for(result, config())
+    assert record.sdo_resolution is None  # not credited to SDO
+    assert record.oracle is not None
+    assert record.oracle.success
+
+
+def test_unconfirmed_closure_stays_unresolved_unless_the_fault_self_heals_without_repair() -> None:
+    assert run(FakeLane("unconfirmed_self_heal"), spec(FaultKind.BAD_IMAGE)).outcome is gf.Outcome.UNRESOLVED
+    assert run(FakeLane("repaired_self_heal"), spec(FaultKind.POD_KILL)).outcome is gf.Outcome.UNRESOLVED
+
+
+def test_learned_program_repair_with_a_source_residual_is_credited_to_sdo() -> None:
+    result = run(FakeLane("program_residual"), spec(FaultKind.SCALE_ZERO))
+    assert result.outcome is gf.Outcome.RESOLVED
+    assert gf.record_for(result, config()).sdo_resolution == "sdo_mitigated"
+    assert gf.stream_row(result)["time_to_resolve_seconds"] == 60
+
+
+def test_credit_needs_the_baseline_back() -> None:
+    lane = FakeLane("program_residual")
+    lane.stuck_after_injection = True
+    result = run(lane, spec(FaultKind.SCALE_ZERO), baseline=20)
+    assert result.outcome is gf.Outcome.UNRESOLVED
+    assert not result.baseline_restored
 
 
 def test_undetected_fault_is_reverted_by_the_harness_and_labelled() -> None:
