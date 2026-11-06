@@ -30,9 +30,6 @@ var internalRules = map[string]string{
 	RuleUnknownActor:            "the controller supplies the actor; an agent cannot choose it",
 	RuleUnknownPhase:            "the controller supplies the phase; an agent cannot choose it",
 	RuleUnsafePath:              "a path-traversal guard against malformed diffs, not an authoring decision",
-	RulePatchInvalid:            "deployment patches are written by `sdo-operator patch create` (row S5-6), which emits the strict header; the patch-authoring skill (row S5-8) will teach it",
-	RulePatchOwner:              "the patch tool stamps Owner from the calling actor; the patch-authoring skill (row S5-8) will teach it",
-	RulePatchUncaptured:         "the broker raises it at publish and as worker-finalization correction text that names `patch create`; the patch-authoring skill (row S5-8) will teach it",
 	RulePatchUpstreamBase:       "Go fills Upstream-Base; agents never choose it",
 	RuleDeploymentInvalid:       "Go writes the canonical plan.yaml during deployment admission; no skill flow edits it",
 
@@ -80,8 +77,8 @@ var (
 func citedRules(t *testing.T) map[string][]string {
 	t.Helper()
 	files, err := filepath.Glob(filepath.Join(skillsRoot, "*", "references", "rules.md"))
-	if err != nil || len(files) != 4 {
-		t.Fatalf("want the four skills' rules.md, got %v (%v)", files, err)
+	if err != nil || len(files) != 5 {
+		t.Fatalf("want the five skills' rules.md, got %v (%v)", files, err)
 	}
 	cited := map[string][]string{}
 	for _, file := range files {
@@ -172,6 +169,8 @@ func TestSkillsShipTheirDocumentedFiles(t *testing.T) {
 		"sdo-operationalize/SKILL.md", "sdo-operationalize/references/catalog.md",
 		"sdo-operationalize/references/methods.md", "sdo-operationalize/references/map.md",
 		"sdo-operationalize/references/rules.md", "sdo-operationalize/references/probes.md",
+		"sdo-patching/SKILL.md", "sdo-patching/references/rules.md",
+		"sdo-deploy/SKILL.md", "sdo-deploy/references/catalog.md", "sdo-source-advance/SKILL.md",
 	} {
 		if _, err := os.Stat(filepath.Join(skillsRoot, filepath.FromSlash(rel))); err != nil {
 			missing = append(missing, rel)

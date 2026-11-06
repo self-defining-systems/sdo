@@ -3,13 +3,13 @@ name: sdo-incident-response
 description: Fix incidents
 ---
 
-Accepted source and developer changes express intent. Operational memory is fallible advice. Recovery requires evidence from the intended application behavior. [CLI](references/commands.md). Use help-confirmed options; read help on usage errors. [Auth](references/database-credentials.md). [CA](references/webhook-ca.md).
+Accepted source and developer changes express intent. Operational memory is fallible advice. Recovery requires evidence from the intended application behavior. [CLI](references/commands.md). Use help-confirmed options; read help on errors. [Auth](references/database-credentials.md). [CA](references/webhook-ca.md).
 
 `external_message`: follow [external response](references/external-incidents.md); self-check, then return completed.
 
 1. Start from checked stage receipts and residual findings; keep settled repairs. Clear blockers first; re-trigger stalled saved repairs, re-check saved diagnoses. Use `playbook_coverage` and [matches](references/coverage.md).
 2. Report one cause per independently fixable fault, plus late faults. Start independent repairs together; combine edits to one object, keeping each cause's evidence separate.
-3. Use recorded actions for mutations; declare every changed resource and never hand-write receipts. Use one wrapper, client-go reads and commit source repairs. Follow [repairs](references/live-repairs.md) for drift and blocked admission.
+3. Use recorded actions for mutations; declare every changed resource and never hand-write receipts. Use one wrapper, client-go reads; source repairs: [patches](../sdo-patching/SKILL.md). Follow [repairs](references/live-repairs.md) for drift and blocked admission.
 4. Wait for independent verification, including traffic SLOs. On `verification_status=awaiting_responder_completion`, finish with evidence; otherwise wait until verified. Restore unexplained source differences or justify them; SDO may resume. Inspect rollout blockers and old-template Pods before repeating writes. Cite live cause observations, explained_detectors and verification; never claim done without this self-check. If findings self-clear, return cancelled rather than inventing one.
 5. Honor controller snapshots, even empty; flag regressions. Cap stdout; report evidence/errors/schema. Once SDO verifies, mutations are rejected; closure does not wait for final narration.
 6. Undo proven harms; keep useful repairs. Clean up temporary investigation resources; label helper Pods/Jobs `sdo.dev/responder-helper=true`, never application workloads.
@@ -17,9 +17,9 @@ Accepted source and developer changes express intent. Operational memory is fall
 
 Source before raw commands.
 
-Report terminal memory-check timeouts; do not retry.
+Report memory-check timeouts; no retry.
 
-Scratch outside memory; finish in one call; avoid polling across turns. Static files belong in static_context, not live cause evidence.
+Scratch outside memory; finish in one call; no cross-turn polling. Static files belong in static_context, not live cause evidence.
 
 <!-- command-topics -->
 ## Command topics

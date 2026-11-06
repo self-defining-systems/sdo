@@ -91,7 +91,7 @@ def save_context(text: str) -> tuple[Path, str]:
             try:
                 os.link(temporary, path)
             except FileExistsError:
-                if path.read_text() != text:
+                if path.read_bytes() != text.encode():
                     raise ValueError("context digest collision") from None
         finally:
             temporary.unlink(missing_ok=True)

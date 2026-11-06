@@ -68,11 +68,27 @@ def _provider(agent: ResolvedAgent) -> Literal["codex", "claude"]:
     return "claude" if agent.provider == "claude" else "codex"
 
 
+# Deployment-class directories the effective tree exposes to renderers and builds (layout kinds
+# deployment-file and deployment-overlay). plan.yaml, patches and memory are never plan paths.
+_EFFECTIVE_DEPLOYMENT_DIRS = frozenset({"values", "manifests", "build", "overlays"})
+
+
 def _source_path(value: str) -> str:
+    """A plan path addresses the effective tree: application files or `.sdo/deployment/<dir>/...` files."""
+
     path = Path(value)
-    if not value or path.is_absolute() or ".." in path.parts or (path.parts and path.parts[0] == ".sdo"):
-        raise ValueError(f"deployment plan path must stay in application source: {value!r}")
+    if not value or path.is_absolute() or ".." in path.parts or value != value.strip():
+        raise ValueError(f"deployment plan path must stay in the effective tree: {value!r}")
+    if path.parts[0] == ".sdo" and not _authored_deployment_path(path):
+        raise ValueError(
+            "deployment plan path under .sdo/ must be .sdo/deployment/{values,manifests,build,overlays}/...: "
+            f"{value!r}"
+        )
     return path.as_posix()
+
+
+def _authored_deployment_path(path: Path) -> bool:
+    return len(path.parts) >= 4 and path.parts[1] == "deployment" and path.parts[2] in _EFFECTIVE_DEPLOYMENT_DIRS
 
 
 def _trusted_image(image: str, registry_host: str) -> str:
