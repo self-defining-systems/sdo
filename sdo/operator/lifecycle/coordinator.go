@@ -127,7 +127,10 @@ type Coordinator struct {
 	Verifier  HealthVerifier
 	Installer RuntimeInstaller
 	// SourceFacts reads a trusted projection from the accepted source commit.
-	// The default implementation is the operational-memory storage edge.
+	// The default renders the accepted source through Renderers (the same
+	// desired-state computation deploy and drift use), so a Helm chart or a
+	// Kustomize overlay has the workloads a raw manifest would. Tests inject
+	// a fixed projection.
 	SourceFacts func(context.Context, string, string) (memory.SourceFacts, error)
 	// Renderers and ImageSources are the deployer's own catalogs. The deployer
 	// request describes exactly these, so the agent is offered what the
@@ -153,7 +156,12 @@ type Config struct {
 	// evidence and verification as an agent's plan, and any failure of it is
 	// terminal (*ProvidedPlanError), never fed back to an agent.
 	ProvidedPlan *contracts.DeploymentPlan
-	MaxAttempts  int
+	// DeploymentSource and RenderEnvironment tell RefreshHealth what to
+	// render: the accepted checkout's plan source and the recorded install
+	// environment. Run takes both from the deployment receipt instead.
+	DeploymentSource  *contracts.DeploymentSource
+	RenderEnvironment *contracts.RenderEnvironment
+	MaxAttempts       int
 	// MaxAttempts bounds deployer correction attempts only. The fields below
 	// bound the waits that never consume one; zero selects the default.
 	PendingEvaluations    int
@@ -207,8 +215,12 @@ func (c Coordinator) Run(ctx context.Context, cfg Config) (Result, error) {
 			continue
 		}
 		result.SourceCommit = sourceReceipt.Commit
-		architectureID := fmt.Sprintf("%s-architecture-%d", cfg.OperationID, attempt)
-		architectureReceipt, architectureReady, nextFeedback, err := c.architecture(ctx, architectureID, cfg, sourceReceipt.Commit)
+		// The architecture belongs to the accepted source, not to the attempt:
+		// a later attempt over the same source (a failed judge, a provided
+		// plan) resumes the accepted architecture instead of proposing
+		// another one against a head that has already moved past the source.
+		architectureID := fmt.Sprintf("%s-architecture-%s", cfg.OperationID, shortCommit(sourceReceipt.Commit))
+		architectureReceipt, architectureReady, nextFeedback, err := c.architecture(ctx, architectureID, cfg, sourceReceipt.Commit, deployment)
 		if err != nil {
 			return result, fmt.Errorf("architecture attempt %d: %w", attempt, err)
 		}
@@ -218,7 +230,7 @@ func (c Coordinator) Run(ctx context.Context, cfg Config) (Result, error) {
 		}
 		result.ArchitectureCommit = architectureReceipt.Commit
 		judgeID := fmt.Sprintf("%s-judge-%d", cfg.OperationID, attempt)
-		judgeReceipt, judgeReady, nextFeedback, err := c.judge(ctx, judgeID, cfg, attempt, sourceReceipt.Commit, architectureReceipt.Commit, feedback)
+		judgeReceipt, judgeReady, nextFeedback, err := c.judge(ctx, judgeID, cfg, attempt, sourceReceipt.Commit, architectureReceipt.Commit, feedback, deployment)
 		if err != nil {
 			return result, fmt.Errorf("health judge attempt %d: %w", attempt, err)
 		}
@@ -505,7 +517,7 @@ func deploymentFromBroker(evidence broker.SourceEvidence) DeploymentReceipt {
 	return receipt
 }
 
-func (c Coordinator) architecture(ctx context.Context, id string, cfg Config, sourceCommit string) (broker.Receipt, bool, string, error) {
+func (c Coordinator) architecture(ctx context.Context, id string, cfg Config, sourceCommit string, deployment DeploymentReceipt) (broker.Receipt, bool, string, error) {
 	if prior, ok, err := c.Broker.AcceptedCommit(ctx, id, broker.InitialPhase); err != nil {
 		return broker.Receipt{}, false, "", err
 	} else if ok {
@@ -518,11 +530,7 @@ func (c Coordinator) architecture(ctx context.Context, id string, cfg Config, so
 	if proposal.BaseCommit != sourceCommit {
 		return broker.Receipt{}, false, "", fmt.Errorf("architecture proposal base %q differs from accepted source %q", proposal.BaseCommit, sourceCommit)
 	}
-	readSourceFacts := c.SourceFacts
-	if readSourceFacts == nil {
-		readSourceFacts = memory.SourceInventory
-	}
-	facts, err := readSourceFacts(ctx, proposal.Path, sourceCommit)
+	facts, err := c.sourceFacts(ctx, proposal.Path, sourceCommit, cfg.Namespace, deployment)
 	if err != nil {
 		return broker.Receipt{}, false, "", fmt.Errorf("read accepted source inventory for architecture: %w", err)
 	}
@@ -537,11 +545,39 @@ func (c Coordinator) architecture(ctx context.Context, id string, cfg Config, so
 	return receipt, true, "", nil
 }
 
+func shortCommit(commit string) string {
+	if len(commit) > 12 {
+		return commit[:12]
+	}
+	return commit
+}
+
+// sourceFacts is the accepted source's logical inventory: the injected
+// projection, else the rendered desired state at commit read from checkout.
+func (c Coordinator) sourceFacts(ctx context.Context, checkout, commit, namespace string, deployment DeploymentReceipt) (memory.SourceFacts, error) {
+	if c.SourceFacts != nil {
+		return c.SourceFacts(ctx, checkout, commit)
+	}
+	return RenderedSourceFacts(ctx, c.Renderers, checkout, commit, namespace, deployment.Source, deployment.Environment)
+}
+
+// RenderedSourceFacts renders the deployment source at commit through the
+// renderer catalog and projects the desired objects into SourceFacts. It is
+// the only way the lifecycle learns what a source declares.
+func RenderedSourceFacts(ctx context.Context, catalog *render.Catalog, checkout, commit, namespace string, source *contracts.DeploymentSource, environment *contracts.RenderEnvironment) (memory.SourceFacts, error) {
+	reader := rendered.Source{Repository: checkout, Deployment: source, Catalog: catalog, Environment: environment}
+	inventory, err := reader.AcceptedInventory(ctx, commit, namespace)
+	if err != nil {
+		return memory.SourceFacts{}, fmt.Errorf("render accepted source %s: %w", commit, err)
+	}
+	return memory.SourceFactsOf(inventory.Objects, source.GetRendererId()), nil
+}
+
 // judge dispatches the health judge until the broker accepts its diagnostics
 // or the validation retry bound is spent. Every broker rejection is recorded
 // durably, with its typed diagnostics, before the checkout is released, so the
 // attempt number derived from that log survives a restart.
-func (c Coordinator) judge(ctx context.Context, id string, cfg Config, attempt int, sourceCommit, architectureCommit, feedback string) (broker.Receipt, bool, string, error) {
+func (c Coordinator) judge(ctx context.Context, id string, cfg Config, attempt int, sourceCommit, architectureCommit, feedback string, deployment DeploymentReceipt) (broker.Receipt, bool, string, error) {
 	for {
 		if prior, ok, err := c.Broker.AcceptedCommit(ctx, id, broker.InitialPhase); err != nil {
 			return broker.Receipt{}, false, "", err
@@ -556,7 +592,7 @@ func (c Coordinator) judge(ctx context.Context, id string, cfg Config, attempt i
 			last := log.GetRejections()[len(log.GetRejections())-1]
 			return broker.Receipt{}, false, fmt.Sprintf("broker rejected health diagnostics %d times; last rejection: %s", len(log.GetRejections()), describeDiagnostics(last.GetDiagnostics())), nil
 		}
-		receipt, ready, nextFeedback, rejected, err := c.judgeOnce(ctx, id, cfg, attempt, sourceCommit, architectureCommit, feedback, log)
+		receipt, ready, nextFeedback, rejected, err := c.judgeOnce(ctx, id, cfg, attempt, sourceCommit, architectureCommit, feedback, deployment, log)
 		if err != nil || ready || rejected == nil {
 			return receipt, ready, nextFeedback, err
 		}
@@ -579,7 +615,7 @@ func describeDiagnostics(diagnostics []*contracts.MemoryDiagnostic) string {
 
 // judgeOnce runs one judge dispatch. A non-nil rejected slice means the broker
 // rejected the proposal with typed diagnostics and the caller owns the retry.
-func (c Coordinator) judgeOnce(ctx context.Context, id string, cfg Config, attempt int, sourceCommit, architectureCommit, feedback string, log *contracts.ProposalRejectionLog) (broker.Receipt, bool, string, []*contracts.MemoryDiagnostic, error) {
+func (c Coordinator) judgeOnce(ctx context.Context, id string, cfg Config, attempt int, sourceCommit, architectureCommit, feedback string, deployment DeploymentReceipt, log *contracts.ProposalRejectionLog) (broker.Receipt, bool, string, []*contracts.MemoryDiagnostic, error) {
 	validationAttempt := uint32(len(log.GetRejections()) + 1)
 	var previous []*contracts.MemoryDiagnostic
 	if n := len(log.GetRejections()); n > 0 {
@@ -603,11 +639,7 @@ func (c Coordinator) judgeOnce(ctx context.Context, id string, cfg Config, attem
 	if err != nil {
 		return broker.Receipt{}, false, "", nil, err
 	}
-	readSourceFacts := c.SourceFacts
-	if readSourceFacts == nil {
-		readSourceFacts = memory.SourceInventory
-	}
-	facts, err := readSourceFacts(ctx, proposal.Path, sourceCommit)
+	facts, err := c.sourceFacts(ctx, proposal.Path, sourceCommit, cfg.Namespace, deployment)
 	if err != nil {
 		return broker.Receipt{}, false, "", nil, fmt.Errorf("read accepted source inventory: %w", err)
 	}

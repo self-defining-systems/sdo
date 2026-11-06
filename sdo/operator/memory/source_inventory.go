@@ -1,100 +1,45 @@
 package memory
 
 import (
-	"bytes"
-	"context"
 	"fmt"
-	"io"
-	"regexp"
 	"slices"
 	"strings"
 
-	"sdo.dev/operator/memory/layout"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"gopkg.in/yaml.v3"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	"sdo.dev/operator/memory/internal/memoryio"
 )
 
-// SourceFacts are a bounded, logical projection of an accepted source commit.
-// Only this storage edge knows which tracked paths contain operational memory.
+// SourceFacts are a bounded, logical projection of the accepted source's
+// rendered desired state.
 type SourceFacts struct {
 	Resources []*contracts.SourceResource
 }
 
-var fullCommitID = regexp.MustCompile(`^[0-9a-f]{40}$`)
-
-func SourceInventory(ctx context.Context, checkout, acceptedCommit string) (SourceFacts, error) {
-	if !fullCommitID.MatchString(acceptedCommit) {
-		return SourceFacts{}, fmt.Errorf("invalid accepted source commit")
-	}
-	listing, err := memoryio.Git(ctx, checkout, false, nil, "ls-tree", "-r", "-z", "--full-tree", acceptedCommit)
-	if err != nil {
-		return SourceFacts{}, fmt.Errorf("read accepted source tree %s: %w", acceptedCommit, err)
-	}
-	if len(listing) > 4<<20 {
-		return SourceFacts{}, fmt.Errorf("accepted source tree listing exceeds limit")
-	}
-	resources := []*contracts.SourceResource{}
-	var total int64
-	for _, entry := range bytes.Split(listing, []byte{0}) {
-		if len(entry) == 0 {
+// SourceFactsOf projects rendered desired-state objects (the renderer
+// catalog's output for the accepted source, Secrets excluded by the caller)
+// into logical facts. renderer names where the objects come from: a rendered
+// object has no authored file, so the inventory's source column carries the
+// renderer ID. Memory never parses manifest YAML itself; whatever the source
+// is (raw files, a Kustomize overlay, a Helm chart), only the render package
+// turns it into objects.
+func SourceFactsOf(objects []*unstructured.Unstructured, renderer string) SourceFacts {
+	resources := make([]*contracts.SourceResource, 0, len(objects))
+	for _, object := range objects {
+		kind, name := object.GetKind(), object.GetName()
+		if kind == "" || name == "" {
 			continue
 		}
-		meta, pathBytes, found := bytes.Cut(entry, []byte{'\t'})
-		if !found {
-			return SourceFacts{}, fmt.Errorf("invalid accepted source tree entry")
+		namespace := object.GetNamespace()
+		if namespace == "" {
+			namespace = "default"
 		}
-		parts := strings.Fields(string(meta))
-		if len(parts) != 3 {
-			return SourceFacts{}, fmt.Errorf("invalid accepted source tree metadata")
-		}
-		path := string(pathBytes)
-		if layout.IsMemoryPath(path) {
-			continue
-		}
-		if parts[1] != "blob" || parts[0] == "120000" {
-			continue
-		}
-		if !strings.HasSuffix(strings.ToLower(path), ".yaml") && !strings.HasSuffix(strings.ToLower(path), ".yml") {
-			// Assets and code are source, not topology: they need no parsing.
-			continue
-		}
-		content, err := memoryio.Git(ctx, checkout, false, nil, "cat-file", "blob", parts[2])
-		if err != nil {
-			return SourceFacts{}, fmt.Errorf("read accepted source blob %s: %w", path, err)
-		}
-		total += int64(len(content))
-		if total > 64<<20 {
-			return SourceFacts{}, fmt.Errorf("accepted source YAML inventory exceeds 64 MiB")
-		}
-		decoder := yaml.NewDecoder(bytes.NewReader(content))
-		for {
-			var doc map[string]any
-			err := decoder.Decode(&doc)
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				break
-			} // Non-Kubernetes YAML is source, not topology.
-			kind, _ := doc["kind"].(string)
-			metadata := mapValue(doc["metadata"])
-			name, _ := metadata["name"].(string)
-			if kind == "" || name == "" {
-				continue
-			}
-			namespace, _ := metadata["namespace"].(string)
-			if namespace == "" {
-				namespace = "default"
-			}
-			resources = append(resources, &contracts.SourceResource{Kind: kind, Name: name, Namespace: namespace, Source: path, Dependencies: sourceDependencies(doc)})
-		}
+		resources = append(resources, &contracts.SourceResource{Kind: kind, Name: name, Namespace: namespace, Source: renderer, Dependencies: sourceDependencies(object.Object)})
 	}
 	slices.SortFunc(resources, func(a, b *contracts.SourceResource) int {
 		return strings.Compare(a.Namespace+"\x00"+a.Kind+"\x00"+a.Name+"\x00"+a.Source, b.Namespace+"\x00"+b.Kind+"\x00"+b.Name+"\x00"+b.Source)
 	})
-	return SourceFacts{Resources: resources}, nil
+	return SourceFacts{Resources: resources}
 }
 
 func mapValue(value any) map[string]any {

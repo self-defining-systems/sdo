@@ -15,7 +15,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/memory/layout"
 )
 
@@ -48,12 +48,14 @@ func loadMemoryNames(ctx context.Context, r Request) memoryNames {
 			}
 		}
 	}
-	if base, err := gitText(ctx, r.Root, "rev-parse", "--verify", r.Base+"^{commit}"); err == nil {
-		if facts, err := memory.SourceInventory(ctx, r.Root, base); err == nil {
-			for _, resource := range facts.Resources {
-				names.components = append(names.components, resource.GetName())
-			}
+	// Component names are the accepted architecture's inventory lines (Go
+	// wrote them from the rendered source), so every source kind contributes.
+	if data, err := os.ReadFile(filepath.Join(r.Root, filepath.FromSlash(layout.ArchitectureFile))); err == nil {
+		for key := range appmap.ParseInventory(string(data)).Workloads {
+			_, name, _ := strings.Cut(key, "/")
+			names.components = append(names.components, name)
 		}
+		sort.Strings(names.components)
 	}
 	names.components = append(names.components, scenarioIDs(r.Root)...)
 	return names

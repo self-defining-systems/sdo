@@ -117,6 +117,17 @@ func (b *fakeBroker) RecordRejection(string, []*contracts.MemoryDiagnostic) (*co
 
 type fakeArtifacts struct{}
 
+// countingArtifacts counts the architectures Go writes.
+type countingArtifacts struct {
+	fakeArtifacts
+	architectures int
+}
+
+func (a *countingArtifacts) WriteArchitecture(string, string, string, string) error {
+	a.architectures++
+	return nil
+}
+
 func (fakeArtifacts) WriteGoal(string, string, string, []layout.Source) error { return nil }
 func (fakeArtifacts) WriteSchema(string) error                                { return nil }
 func (fakeArtifacts) WriteArchitecture(string, string, string, string) error  { return nil }
@@ -129,6 +140,9 @@ type fakeWorkers struct {
 	deployer  []*contracts.SourceDeploymentRequest
 	judgeRuns int
 	plan      *contracts.DeploymentPlan // proposed instead of the default raw plan when set
+	// judgeFailures is how many judge dispatches report no authored detectors
+	// before one succeeds.
+	judgeFailures int
 }
 
 func (w *fakeWorkers) Execute(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
@@ -147,6 +161,9 @@ func (w *fakeWorkers) Execute(_ context.Context, task *contracts.AgentTask) (*co
 	} else {
 		w.judgeRuns++
 		response = &contracts.HealthJudgeResult{Authored: true, DetectorIds: []string{"detector"}, AgentSessionId: "session"}
+		if w.judgeRuns <= w.judgeFailures {
+			response = &contracts.HealthJudgeResult{Summary: "no detectors this time"}
+		}
 	}
 	packed, err := anypb.New(response)
 	if err != nil {

@@ -148,7 +148,7 @@ func gateComponentLiteral(name string, withPlaybook bool, decision []string, edi
 	return gateRow{name: name, kind: gateCheck, actor: Responder, phase: ReflectionPhase, rules: rules,
 		baseMessage: gateOutcomeMessage,
 		prepare: func(t *testing.T, r string) {
-			write(t, r, "kubernetes/shop.yaml", componentApp)
+			write(t, r, ".sdo/arch.md", componentArchitecture)
 			write(t, r, ".sdo/diagnostics/traffic/workloads/health.yaml", componentWorkload)
 			if withPlaybook {
 				write(t, r, ".sdo/playbooks/orders-cache-acl/diagnose.go", componentDiagnose)

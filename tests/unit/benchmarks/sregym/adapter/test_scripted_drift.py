@@ -7,13 +7,22 @@ from sdo.contracts import DriftEvent, IncidentRequest, ObjectRef
 from tests.unit.benchmarks.sregym.fastloop import script_harness as scripts
 
 
+def _serve_accepted_service(monkeypatch) -> None:
+    """The accepted Service as `sdo source` reports it: the controller renders it, the script never parses source."""
+    original = scripts._tool
+
+    def tool(*args: str):
+        if args[0] == "source" and args[1] == "Service/app/api":
+            return {"source": {"spec": {"ports": [{"port": 80, "targetPort": 8080}]}}}
+        return original(*args)
+
+    monkeypatch.setattr(scripts, "_tool", tool)
+
+
 def test_scripted_drift_requires_source_mismatch_and_observed_listening_ports(monkeypatch, tmp_path: Path) -> None:
     from contextlib import nullcontext
 
-    manifest = tmp_path / "service.yaml"
-    manifest.write_text(
-        "kind: Service\nmetadata:\n  name: api\nspec:\n  ports:\n    - port: 80\n      targetPort: 8080\n"
-    )
+    _serve_accepted_service(monkeypatch)
     request = IncidentRequest(
         incident_id="batch",
         namespace="app",
@@ -54,9 +63,7 @@ def test_scripted_drift_requires_source_mismatch_and_observed_listening_ports(mo
 
 
 def test_scripted_drift_is_unsure_without_selected_pods(monkeypatch, tmp_path: Path) -> None:
-    (tmp_path / "service.yaml").write_text(
-        "kind: Service\nmetadata:\n  name: api\nspec:\n  ports:\n    - port: 80\n      targetPort: 8080\n"
-    )
+    _serve_accepted_service(monkeypatch)
     request = IncidentRequest(
         incident_id="batch",
         namespace="app",
@@ -119,9 +126,7 @@ def test_scripted_drift_assesses_scratch_pods_without_exec_utilities(
     import json
     from contextlib import nullcontext
 
-    (tmp_path / "service.yaml").write_text(
-        "kind: Service\nmetadata:\n  name: api\nspec:\n  ports:\n    - port: 80\n      targetPort: 8080\n"
-    )
+    _serve_accepted_service(monkeypatch)
     request = IncidentRequest(
         incident_id="scratch-pod",
         namespace="app",

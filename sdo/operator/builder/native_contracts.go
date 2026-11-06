@@ -2,7 +2,6 @@ package builder
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -10,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"gopkg.in/yaml.v3"
+	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/memory/layout"
 )
 
@@ -73,47 +72,16 @@ func generateRegistrationTest(root string, detectors []layout.Detector) error {
 
 func generateExternalNameTest(appRoot, root string) error {
 	names := map[string]bool{"sdo-externalname-probe": true}
-	_ = filepath.WalkDir(appRoot, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return nil
-		}
-		if entry.IsDir() {
-			if path != appRoot && (strings.HasPrefix(entry.Name(), ".") || entry.Name() == "vendor" || entry.Name() == "node_modules") {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if entry.Type()&os.ModeSymlink != 0 || !strings.HasSuffix(path, ".yaml") && !strings.HasSuffix(path, ".yml") {
-			return nil
-		}
-		info, err := entry.Info()
-		if err != nil || info.Size() > 1024*1024 {
-			return nil
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil
-		}
-		decoder := yaml.NewDecoder(strings.NewReader(string(data)))
-		for {
-			var document struct {
-				Kind     string `yaml:"kind"`
-				Metadata struct {
-					Name string `yaml:"name"`
-				} `yaml:"metadata"`
-			}
-			if err := decoder.Decode(&document); err != nil {
-				if err != io.EOF {
-					return nil
-				}
-				break
-			}
-			if document.Kind == "Service" && serviceNamePattern.MatchString(document.Metadata.Name) {
-				names[document.Metadata.Name] = true
+	// Service names come from the accepted architecture's inventory lines,
+	// which Go wrote from the rendered desired state; the builder never parses
+	// manifest YAML, so Helm and Kustomize sources contribute like raw ones.
+	if data, err := os.ReadFile(filepath.Join(appRoot, filepath.FromSlash(layout.ArchitectureFile))); err == nil {
+		for name := range appmap.ParseInventory(string(data)).Services {
+			if serviceNamePattern.MatchString(name) {
+				names[name] = true
 			}
 		}
-		return nil
-	})
+	}
 	sorted := make([]string, 0, len(names))
 	for name := range names {
 		sorted = append(sorted, name)

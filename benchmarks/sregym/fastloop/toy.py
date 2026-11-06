@@ -622,7 +622,12 @@ def wait_for_baseline(environment: FastloopEnvironment, accepted_commit: str) ->
                     for item in pod.get("status", {}).get("conditions", [])
                 )
             ]
-            head = len(ready) == 1 and accepted_head(environment, ready[0]["metadata"]["name"], accepted_commit)
+            adopted = state.get("ownership_adoption", {}).get("source_commit")
+            head = (
+                len(ready) == 1
+                and bool(adopted)
+                and adopted_source(environment, ready[0]["metadata"]["name"], accepted_commit, adopted)
+            )
             if head and baseline_ready(state, head, ready[0]["metadata"]["creationTimestamp"]):
                 break
         time.sleep(0.2)
@@ -648,11 +653,14 @@ def retire_control_state(environment: FastloopEnvironment, control: str) -> None
     logger.info("Toy control state reset: %s", json.dumps({**receipt, "health_refresh": stale}, sort_keys=True))
 
 
-def accepted_head(environment: FastloopEnvironment, pod_name: str, install_commit: str) -> str | None:
-    """The controller's accepted HEAD if it contains the installed commit, else None.
+def adopted_source(
+    environment: FastloopEnvironment, pod_name: str, install_commit: str, adopted_commit: str
+) -> str | None:
+    """The controller's adopted source commit if it descends from the install and HEAD still contains it.
 
-    Install runs the judge refresh, which commits health detectors on top of the installed commit; the
-    controller then serves and adopts that head, so adoption is judged against it, not the install commit.
+    Install runs the judge refresh, which commits health detectors on top of the installed commit, and every
+    outcome or memory commit moves HEAD further. Adoption records the source commit the controller adopted, so it
+    is judged by lineage (install <= adopted <= HEAD), never by equality with HEAD.
     """
     try:
         return (
@@ -666,10 +674,12 @@ def accepted_head(environment: FastloopEnvironment, pod_name: str, install_commi
                 "--",
                 "sh",
                 "-c",
-                'git -C "$1" merge-base --is-ancestor "$2" HEAD && git -C "$1" rev-parse HEAD',
+                'git -C "$1" merge-base --is-ancestor "$2" "$3" && git -C "$1" merge-base --is-ancestor "$3" HEAD'
+                ' && git -C "$1" rev-parse "$3"',
                 "sh",
                 CONTROLLER_REPOSITORY,
                 install_commit,
+                adopted_commit,
             ).strip()
             or None
         )
@@ -677,7 +687,7 @@ def accepted_head(environment: FastloopEnvironment, pod_name: str, install_commi
         return None
 
 
-def baseline_ready(state: dict[str, Any], accepted_head: str, observed_after: str | None = None) -> bool:
+def baseline_ready(state: dict[str, Any], adopted: str, observed_after: str | None = None) -> bool:
     """Closed historical firings do not invalidate a currently clear controller."""
     latest = {item["detector_id"]: item for item in state.get("history", [])}
     return bool(
@@ -694,7 +704,7 @@ def baseline_ready(state: dict[str, Any], accepted_head: str, observed_after: st
             )
         )
         and all(item.get("status") == "clear" for item in latest.values())
-        and state.get("ownership_adoption", {}).get("source_commit") == accepted_head
+        and state.get("ownership_adoption", {}).get("source_commit") == adopted
     )
 
 
