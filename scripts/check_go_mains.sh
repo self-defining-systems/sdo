@@ -19,13 +19,15 @@ while IFS= read -r mod; do
 done < <(find "$root/benchmarks" -name go.mod -not -path '*/seeds/*' -not -path '*/operational_memory/*' | sort)
 
 # Programs with no module of their own run via `go run` inside the operator
-# runtime module, so vet them in that context.
+# runtime module, so vet them in that context. This includes Go programs that
+# Python tests compile (tests/unit/**/testdata, fixtures): those suites run
+# nightly, so a drifted operator signature would otherwise stay silent.
 while IFS= read -r program; do
     dir="$(dirname "$program")"
     while [[ "$dir" != "$root" && ! -f "$dir/go.mod" ]]; do dir="$(dirname "$dir")"; done
     [[ "$dir" != "$root" ]] && continue
     (cd "$root/sdo/operator/runtime" && go vet "$program")
-done < <(grep -rl --include='*.go' '^package main' "$root/benchmarks" | sort)
+done < <(grep -rl --include='*.go' '^package main' "$root/benchmarks" "$root/tests/unit" | sort)
 
 # Broker replay builds replay_go in a private workspace that *replaces* the
 # operator modules instead of `use`-ing them (benchmarks/sregym/fastloop/replay.py).

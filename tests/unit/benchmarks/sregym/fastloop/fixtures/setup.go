@@ -10,6 +10,7 @@ import (
 
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/operatorcli/catalog/telemetrysources"
 )
 
 func must(err error) {
@@ -28,7 +29,7 @@ func main() {
 			return err
 		}
 		return validate.Err(diagnostics)
-	})
+	}, broker.ObservationPolicy{Telemetry: broker.Telemetry{Registry: telemetrysources.Registry()}})
 	must(err)
 	proposal, err := authority.CreateProposalForPhase(ctx, "health-setup", broker.InitialPhase)
 	must(err)
