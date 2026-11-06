@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -26,6 +27,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/devmount"
+	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/toolchain"
 	"sdo.dev/operator/worker_registry/internal/workerio"
 )
@@ -582,8 +584,15 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 	}
 	if reflection {
 		env = append(env, corev1.EnvVar{Name: "SDO_HEALTHY_BASELINE", Value: baseline}, corev1.EnvVar{Name: "SDO_CAPTURED_CORPUS_DIR", Value: captureDirectory})
+		// The worker's memory check applies the same closure fact as the broker's
+		// publication gate, computed from the learning view it was handed.
+		frozen := &contracts.ReflectionRequest{}
+		if err := task.GetRequest().UnmarshalTo(frozen); err != nil {
+			return fmt.Errorf("reflection request: %w", err)
+		}
+		env = append(env, corev1.EnvVar{Name: "SDO_REPAIR_VERIFIED", Value: strconv.FormatBool(validate.ReflectionRepairVerified(frozen.GetOutcome()))})
 	}
-	reserved := map[string]bool{"SDO_REQUEST_SHA256": true, "SDO_CODEX_HOME_ROOT": true, "SDO_REQUEST_CONFIGMAP": true, "SDO_RESULT_CONFIGMAP": true, "SDO_NAMESPACE": true, "SDO_SESSION_DIR": e.SessionPVCSubPath != "", "SDO_ACTOR": memoryAuthor || patchActor, "SDO_PHASE": memoryAuthor, "SDO_BASE_COMMIT": memoryAuthor, "SDO_HEALTHY_BASELINE": reflection, "SDO_CAPTURED_CORPUS_DIR": reflection, "SDO_API_PROXY_URL": true, "SDO_API_HISTORY_DIR": true, "SDO_STARTUP_TIMING_PATH": true}
+	reserved := map[string]bool{"SDO_REQUEST_SHA256": true, "SDO_CODEX_HOME_ROOT": true, "SDO_REQUEST_CONFIGMAP": true, "SDO_RESULT_CONFIGMAP": true, "SDO_NAMESPACE": true, "SDO_SESSION_DIR": e.SessionPVCSubPath != "", "SDO_ACTOR": memoryAuthor || patchActor, "SDO_PHASE": memoryAuthor, "SDO_BASE_COMMIT": memoryAuthor, "SDO_HEALTHY_BASELINE": reflection, "SDO_CAPTURED_CORPUS_DIR": reflection, "SDO_REPAIR_VERIFIED": reflection, "SDO_API_PROXY_URL": true, "SDO_API_HISTORY_DIR": true, "SDO_STARTUP_TIMING_PATH": true}
 	for _, identity := range workerIdentityEnvironment() {
 		reserved[identity.Name] = true
 	}

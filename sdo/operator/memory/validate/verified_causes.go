@@ -240,3 +240,29 @@ func repairRecorded(outcome *contracts.OutcomeRecord, resources []*contracts.Obj
 		return action.GetSuccess() && len(OwnedCauseWrites(action, resources)) > 0
 	})
 }
+
+// DataAtRiskDetector is the pending evaluation the controller records when a
+// closure may have lost data.
+const DataAtRiskDetector = "controller.data-at-risk"
+
+// DataLossOutcome reports an outcome that may have lost data. It holds no
+// verified repair, whatever its receipts say.
+func DataLossOutcome(outcome *contracts.OutcomeRecord) bool {
+	for _, evaluation := range outcome.GetDetectorHistory() {
+		if evaluation.GetDetectorId() == DataAtRiskDetector {
+			return true
+		}
+	}
+	return false
+}
+
+// ReflectionRepairVerified is the closure fact behind reflection.repair-required:
+// whether a reflection's learning view of the outcome (the view the worker
+// receives, not the complete failed record) holds an independently verified
+// repaired cause. The broker and the worker's own check share it.
+func ReflectionRepairVerified(learningView *contracts.OutcomeRecord) bool {
+	if DataLossOutcome(learningView) {
+		return false
+	}
+	return learningView.GetClassification() == "success" || len(VerifiedReflectionCauses(learningView)) > 0
+}

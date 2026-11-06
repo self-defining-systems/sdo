@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/operatorcli/internal/processio"
+	"strconv"
 	"strings"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -87,10 +88,11 @@ commands:
         Print the stored outcome records of every incident.`
 
 const (
-	memoryActorEnv    = "SDO_ACTOR"
-	memoryPhaseEnv    = "SDO_PHASE"
-	memoryIncidentEnv = "SDO_INCIDENT_ID"
-	memoryOperatorEnv = "SDO_OPERATOR_ROOT"
+	memoryActorEnv          = "SDO_ACTOR"
+	memoryPhaseEnv          = "SDO_PHASE"
+	memoryRepairVerifiedEnv = "SDO_REPAIR_VERIFIED"
+	memoryIncidentEnv       = "SDO_INCIDENT_ID"
+	memoryOperatorEnv       = "SDO_OPERATOR_ROOT"
 
 	exitClean       = 0
 	exitDiagnostics = 1
@@ -335,6 +337,7 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 		MitigationReplayNotes: &replayNotes, CoverageGaps: &coverageGaps,
 		Root: absolute, Base: base, CaptureDirectory: getenv("SDO_CAPTURED_CORPUS_DIR"), IncidentID: getenv(memoryIncidentEnv), Actor: validate.Actor(actor), Phase: validate.Phase(phase), Publication: publication, Decision: decision,
 		OperatorRoot: operatorRootDefault(getenv), HealthyBaseline: getenv("SDO_HEALTHY_BASELINE"),
+		RepairVerified: reflectionRepairVerifier(getenv),
 	}, validate.CompileCandidate)
 	if err != nil {
 		return exitInfra, err
@@ -359,6 +362,17 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 		return exitDiagnostics, nil
 	}
 	return exitClean, nil
+}
+
+// reflectionRepairVerifier is the controller's closure fact for this
+// reflection launch (SDO_REPAIR_VERIFIED), so the worker's check agrees with the
+// broker's publication gate. Unset keeps the check's default.
+func reflectionRepairVerifier(getenv func(string) string) func(*contracts.OutcomeRecord) bool {
+	verified, err := strconv.ParseBool(getenv(memoryRepairVerifiedEnv))
+	if err != nil {
+		return nil
+	}
+	return func(*contracts.OutcomeRecord) bool { return verified }
 }
 
 func operatorRootDefault(getenv func(string) string) string {

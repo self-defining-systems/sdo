@@ -9,6 +9,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk"
 )
@@ -16,7 +17,7 @@ import (
 // dataAtRiskEvaluation is the pending evaluation that carries this reason into
 // the outcome's detector history, the way any unconfirmed closure says why. It
 // is not a detector; the name is the contract reflection's view reads.
-const dataAtRiskEvaluation = "controller.data-at-risk"
+const dataAtRiskEvaluation = validate.DataAtRiskDetector
 
 // dataAtRisk names the holds_data workloads whose Pods were replaced or whose
 // containers restarted since the incident opened, with nothing persistent to
@@ -122,11 +123,4 @@ func (l *ResponderLoop) incidentDataAtRisk(ctx context.Context) []string {
 
 // dataLossOutcome reports an outcome that may have lost data. It holds no
 // verified repair, whatever its receipts say.
-func dataLossOutcome(outcome *contracts.OutcomeRecord) bool {
-	for _, evaluation := range outcome.GetDetectorHistory() {
-		if evaluation.GetDetectorId() == dataAtRiskEvaluation {
-			return true
-		}
-	}
-	return false
-}
+func dataLossOutcome(outcome *contracts.OutcomeRecord) bool { return validate.DataLossOutcome(outcome) }
