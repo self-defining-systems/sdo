@@ -191,13 +191,19 @@ def test_all_template_placeholders_on_live_scale_values(monkeypatch, tmp_path):
     for key, placeholders in manifest.items():
         role, name = key.split("/")
         if placeholders:
-            # A required value cannot be replaced by a summary or file pointer.
+            # Runtime data placeholders summarize into a details file; they never crash the worker.
             # Enumerate each placeholder so a later one cannot hide behind the first error.
             for placeholder, budget in placeholders.items():
                 values = dict.fromkeys(placeholders, "synthetic")
                 values[placeholder] = original
-                with pytest.raises(PromptBudgetError, match=budget + ".*required"):
-                    render_prompt(role, name, part="health_judge.instructions", **values)
+                if not budget.startswith("template_data."):
+                    # A named section budget is required text: it cannot become a summary.
+                    with pytest.raises(PromptBudgetError, match=budget + ".*required"):
+                        render_prompt(role, name, part="health_judge.instructions", **values)
+                    continue
+                prompt = render_prompt(role, name, part="health_judge.instructions", **values)
+                assert all(len(part.text) <= budget_for(part.name) for part in prompt.parts), (key, placeholder)
+                assert prompt.context_files, (key, placeholder, budget)
         else:
             prompt = render_prompt(role, name, part="health_judge.instructions")
             assert len(prompt) <= budget_for("health_judge.instructions"), key
