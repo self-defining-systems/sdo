@@ -101,6 +101,19 @@ rejection keeps its usual diagnostics.
 Use `Workspace.Check` rather than `ValidateAndBuild` unless the controller binary is the
 subject: `Check` runs the same acceptance and advisory stages without the controller link.
 
+## Onboarding end-to-end without a cluster
+
+`operatorcli/onboarding_lifecycle_integration_test.go` runs the production onboarding lifecycle
+(`lifecycle.Coordinator.Run`) on the operate Job's real broker (`onboardingBroker`, validation subprocess
+included), Go's bootstrap commits and the operate Job's agent transport (`lifecycleWorkers` on a fake
+API server), under each built-in telemetry profile, for a single-service and a multi-workload synthetic app.
+A scripted health judge edits the checkout and runs the real `memory check` with its Job's environment;
+deployer evidence, the health verdict and the controller install are scripted, and the compiler is FakeGo.
+It asserts the first known-good proposal is accepted with a clean base, that a wrong proposal gets the same
+typed diagnostics from the judge's check and the broker, and that a changed rejection is not a repeat.
+Each top-level test is one onboarding (about 6 s, mostly broker git processes); run it before a live
+onboarding: `go test -tags=integration -short -run TestOnboarding ./operatorcli/` in `sdo/operator`.
+
 ## Waiting in Go tests
 
 `Execute` polls until its context ends, so running it under a fixed short
