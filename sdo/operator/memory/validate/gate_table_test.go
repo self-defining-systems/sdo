@@ -443,7 +443,7 @@ var gateRows = []gateRow{
 	}},
 	{name: "deployer cannot write the telemetry overlay", kind: gateOwnership, actor: Deployer, phase: InitialPhase, rules: []string{RuleOwnershipDenied}, path: ".sdo/deployment/overlays/telemetry/o.yaml",
 		edit: gateWrite(".sdo/deployment/overlays/telemetry/o.yaml", "a: b\n")},
-	{name: "health judge cannot write the deployment plan", kind: gateOwnership, actor: HealthJudge, phase: InitialPhase, rules: []string{RuleInitialNeedsDetectors, RuleOwnershipDenied}, path: layout.DeploymentPlanFile,
+	{name: "health judge cannot write the deployment plan", kind: gateOwnership, actor: HealthJudge, phase: InitialPhase, rules: []string{RuleOwnershipDenied}, path: layout.DeploymentPlanFile,
 		edit: gateWrite(layout.DeploymentPlanFile, "renderer: raw\n")},
 	{name: "responder adds a deployment patch in a proposal", kind: gateOwnership, actor: Responder, phase: ProposalPhase,
 		prepare: gateWrite(".sdo/deployment/patches/0001-old.patch", "SDO-Owner: deployer\n"),
@@ -491,7 +491,8 @@ var gateRows = []gateRow{
 		write(t, r, ".sdo/diagnostics/detectors/incidents/dns/detector.go", "package dns\n")
 	}},
 	{name: "health judge initial memory must install detectors", kind: gateOwnership, actor: HealthJudge, phase: InitialPhase, rules: []string{RuleInitialNeedsDetectors},
-		edit: gateWrite(".sdo/playbooks/health-objective/README.md", "x\n")},
+		prepare: func(t *testing.T, r string) { remove(t, r, ".sdo/diagnostics/detectors") },
+		edit:    gateWrite(".sdo/playbooks/health-objective/README.md", "x\n")},
 	{name: "health judge may add only health detectors to empty memory", kind: gateOwnership, actor: HealthJudge, phase: InitialPhase, rules: []string{RuleOwnershipDenied, RuleInitialHealthOnly},
 		prepare: func(t *testing.T, r string) { remove(t, r, ".sdo/diagnostics") },
 		edit: func(t *testing.T, r string) {
