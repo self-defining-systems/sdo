@@ -68,7 +68,7 @@ The exact declared edge-package list is:
 - `sdo/operator/runtime/envtestio`: integration-test-only start/stop of an envtest kube-apiserver and etcd (the pinned Kubernetes version), their one-time download and cache, and a kubeconfig file; nothing outside tests imports it.
 - `sdo/operator/runtime/internal/h2testio`: test-only HTTP/2 conformance peer configuration with per-server channel pools; no listeners.
 - `sdo/operator/install/internal/installio`: accepted-checkout Git/archive/kubectl processes, installer clock and wait timers, and time-scale environment reads.
-- `sdo/operator/runtime/prometheus`: Prometheus HTTP adapter.
+- `sdo/operator/telemetry/prometheus`: Prometheus HTTP adapter (an application-telemetry adapter; each future adapter is listed individually).
 - `sdo/operator/memoryhost/hostio`: memory-host process launcher, Unix socket server/client and read-only network adapter.
 - `sdo/operator/memory/internal/memoryio`: Git reads, isolated-index whitespace checks, shell syntax and toolchain lookup. No process handles escape.
 - `sdo/operator/deployment/internal/deploymentio`: trusted deployment processes, bounded health process execution, and wait timers.

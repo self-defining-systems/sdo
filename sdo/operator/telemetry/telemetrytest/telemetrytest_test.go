@@ -45,10 +45,10 @@ func fakeFactory(kind telemetry.Kind, want telemetry.Result) func(*testing.T, te
 
 func TestFakePassesConformance(t *testing.T) {
 	t.Run("metrics", func(t *testing.T) {
-		telemetrytest.TestClient(t, harness(telemetry.KindMetrics, metricsWant(), fakeFactory(telemetry.KindMetrics, metricsWant())))
+		telemetrytest.TestClient(t, harness(telemetry.KindMetrics, metricsWant(), fakeFactory(telemetry.KindMetrics, metricsWant())), "fake")
 	})
 	t.Run("logs", func(t *testing.T) {
-		telemetrytest.TestClient(t, harness(telemetry.KindLogs, logsWant(), fakeFactory(telemetry.KindLogs, logsWant())))
+		telemetrytest.TestClient(t, harness(telemetry.KindLogs, logsWant(), fakeFactory(telemetry.KindLogs, logsWant())), "fake")
 	})
 }
 

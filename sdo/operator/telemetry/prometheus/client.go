@@ -1,7 +1,7 @@
-// Package prometheus is the controller's Prometheus HTTP API adapter. It
-// answers metric queries and reads alerts for the runtime's metrics observer
-// and keeps every Prometheus wire detail out of the transport-neutral
-// runtime.
+// Package prometheus is the application-telemetry adapter for the Prometheus
+// HTTP API. It implements telemetry.Client and telemetry.AlertReader, answers
+// metric queries and reads alerts, and keeps every Prometheus wire detail out
+// of the transport-neutral runtime.
 package prometheus
 
 import (
@@ -10,14 +10,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"sdo.dev/operator/sdk/metrics"
+	"sdo.dev/operator/telemetry"
 )
 
 const (
@@ -31,33 +32,35 @@ const (
 	maxErrorBytes    = 512
 )
 
-// Doer is the HTTP request boundary accepted by the Prometheus adapter.
-type Doer interface {
-	Do(*http.Request) (*http.Response, error)
-}
-
 // Client calls a Prometheus-compatible HTTP API. It sets no timeout of its
 // own: callers bound each call with the context.
 type Client struct {
 	// BaseURL addresses the server, optionally with a path prefix.
 	BaseURL string
-	// TokenFile, when set, names a file holding a bearer token. It is read on
-	// every request so a rotated token is picked up.
-	TokenFile string
+	// Token, when set, returns the current bearer token. It is called on every
+	// request so a rotated token is picked up.
+	Token func() (string, error)
 	// HTTPClient defaults to a client that follows no redirects.
-	HTTPClient Doer
+	HTTPClient telemetry.HTTPDoer
 }
 
-// Query evaluates query at time at: an instant query, or when it has a Range
-// a range query ending at at.
-func (c Client) Query(ctx context.Context, query metrics.Query, at time.Time) ([]metrics.Series, error) {
-	values := url.Values{"query": {query.Expr}}
+// Query evaluates q.Text at time at: an instant query, or when q has a Range a
+// range query ending at at. A response over the metrics bounds is an error,
+// never a truncated answer: a cut series set would read as healthy. Samples
+// that are NaN or infinite carry no value a detector can compare and are
+// dropped, together with a series left without samples.
+func (c Client) Query(ctx context.Context, q telemetry.Query, at time.Time) (telemetry.Result, error) {
+	if q.Kind != telemetry.KindMetrics {
+		return telemetry.Result{}, fmt.Errorf("prometheus serves %s queries, not %q", telemetry.KindMetrics, q.Kind)
+	}
+	values := url.Values{"query": {q.Text}}
 	path := pathQuery
-	if query.Range > 0 {
+	if q.Range > 0 {
+		step := metrics.Query{Range: q.Range, Step: q.Step}.EffectiveStep()
 		path = pathQueryRange
-		values.Set("start", unixSeconds(at.Add(-query.Range)))
+		values.Set("start", unixSeconds(at.Add(-q.Range)))
 		values.Set("end", unixSeconds(at))
-		values.Set("step", strconv.FormatFloat(query.EffectiveStep().Seconds(), 'f', -1, 64))
+		values.Set("step", strconv.FormatFloat(step.Seconds(), 'f', -1, 64))
 	} else {
 		values.Set("time", unixSeconds(at))
 	}
@@ -66,9 +69,41 @@ func (c Client) Query(ctx context.Context, query metrics.Query, at time.Time) ([
 		Result     json.RawMessage `json:"result"`
 	}
 	if err := c.get(ctx, path, values, &data); err != nil {
-		return nil, err
+		return telemetry.Result{}, err
 	}
-	return parseResult(data.ResultType, data.Result)
+	series, err := parseResult(data.ResultType, data.Result)
+	if err != nil {
+		return telemetry.Result{}, err
+	}
+	series = finiteSeries(series)
+	if len(series) > telemetry.MaxSeries {
+		return telemetry.Result{}, fmt.Errorf("query returned %d series, more than the limit of %d; narrow the expression", len(series), telemetry.MaxSeries)
+	}
+	samples := 0
+	for _, item := range series {
+		samples += len(item.Samples)
+	}
+	if samples > telemetry.MaxSamples {
+		return telemetry.Result{}, fmt.Errorf("query returned %d samples, more than the limit of %d; narrow the expression or range", samples, telemetry.MaxSamples)
+	}
+	return telemetry.Result{Series: series}, nil
+}
+
+func finiteSeries(series []metrics.Series) []metrics.Series {
+	kept := series[:0]
+	for _, item := range series {
+		samples := item.Samples[:0]
+		for _, sample := range item.Samples {
+			if !math.IsNaN(sample.Value) && !math.IsInf(sample.Value, 0) {
+				samples = append(samples, sample)
+			}
+		}
+		if len(samples) > 0 || len(item.Samples) == 0 {
+			item.Samples = samples
+			kept = append(kept, item)
+		}
+	}
+	return kept
 }
 
 // Alerts reads every alert of the server, pending and firing.
@@ -118,12 +153,12 @@ func (c Client) get(ctx context.Context, path string, values url.Values, into an
 		return fmt.Errorf("prometheus %s: %w", path, err)
 	}
 	request.Header.Set("Accept", "application/json")
-	if c.TokenFile != "" {
-		token, err := os.ReadFile(c.TokenFile)
+	if c.Token != nil {
+		token, err := c.Token()
 		if err != nil {
 			return fmt.Errorf("prometheus %s: read bearer token: %w", path, err)
 		}
-		request.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(token)))
+		request.Header.Set("Authorization", "Bearer "+strings.TrimSpace(token))
 	}
 	client := c.HTTPClient
 	if client == nil {

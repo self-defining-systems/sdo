@@ -47,6 +47,7 @@ import (
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/telemetry"
 	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
@@ -103,6 +104,9 @@ type RuntimeOptions struct {
 	// Renderers is the deployment-renderer catalog the controller reads
 	// desired state through. Nil means no renderers are wired.
 	Renderers *render.Catalog
+	// Telemetry is the application-telemetry adapter registry metric sources
+	// open through. Nil means no adapters are wired, so --metrics-url is refused.
+	Telemetry *telemetry.Registry
 }
 
 const defaultStateBaselineStartTimeout = 30 * time.Second
@@ -116,10 +120,11 @@ func (values *repeatedFlag) Set(value string) error {
 }
 
 // Run launches the stable controller; accepted code executes in the memory host.
-// renderers is the deployment-renderer catalog; nil wires none.
-func Run(renderers *render.Catalog) {
+// renderers is the deployment-renderer catalog and registry the application-
+// telemetry adapter registry; nil wires none.
+func Run(renderers *render.Catalog, registry *telemetry.Registry) {
 	broker.RunValidationChild()
-	if err := RunWithOptions(context.Background(), nil, RuntimeOptions{Renderers: renderers}); err != nil {
+	if err := RunWithOptions(context.Background(), nil, RuntimeOptions{Renderers: renderers, Telemetry: registry}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		if errors.Is(err, memory.ErrHealthRefreshRequired) {
 			os.Exit(memory.HealthRefreshExitCode)
@@ -177,7 +182,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		args = append(configArgs, args[2:]...)
 	}
 	if len(args) > 0 && args[0] == "--evaluate-once" {
-		return evaluateOnce(ctx, detectors, args[1:], stdout, stderr, options.Provider, options.Client, options.Traffic, clock, options.Renderers)
+		return evaluateOnce(ctx, detectors, args[1:], stdout, stderr, options.Provider, options.Client, options.Traffic, clock, options.Renderers, options.Telemetry)
 	}
 
 	flags := flag.NewFlagSet("sdo-controller", flag.ContinueOnError)
@@ -575,7 +580,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if trafficObserver != nil {
 		defer trafficObserver.Stop()
 	}
-	observations := detectorObservations{Client: bootstrapProvider.Client, Clock: clock.Now, MetricsURL: *metricsURL, MetricsTokenFile: *metricsTokenFile}
+	observations := detectorObservations{Client: bootstrapProvider.Client, Clock: clock.Now, MetricsURL: *metricsURL, MetricsTokenFile: *metricsTokenFile, Telemetry: options.Telemetry}
 	snapshotProvider, metricsObserver, err := observations.compose(snapshotProvider, detectors)
 	if err != nil {
 		return err
@@ -1751,6 +1756,7 @@ func evaluateOnce(
 	trafficAPI ProberAPI,
 	clock kclock.WithTicker,
 	renderers *render.Catalog,
+	registry *telemetry.Registry,
 ) error {
 	clock = timerClock(clock)
 	flags := flag.NewFlagSet("sdo-controller-evaluate-once", flag.ContinueOnError)
@@ -1945,7 +1951,7 @@ func evaluateOnce(
 	if trafficProvider.Observer != nil || trafficProvider.Reachability != nil {
 		provider = trafficProvider
 	}
-	provider, _, err := detectorObservations{Client: client, Clock: clock.Now, MetricsURL: *metricsURL, MetricsTokenFile: *metricsTokenFile, RequireMetrics: true}.compose(provider, detectors)
+	provider, _, err := detectorObservations{Client: client, Clock: clock.Now, MetricsURL: *metricsURL, MetricsTokenFile: *metricsTokenFile, RequireMetrics: true, Telemetry: registry}.compose(provider, detectors)
 	if err != nil {
 		return err
 	}

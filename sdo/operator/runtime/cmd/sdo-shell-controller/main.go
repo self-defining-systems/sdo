@@ -7,11 +7,12 @@ import (
 	"fmt"
 	"os"
 	"sdo.dev/operator/operatorcli/catalog/renderers"
+	"sdo.dev/operator/operatorcli/catalog/telemetrysources"
 	runtime "sdo.dev/operator/runtime"
 )
 
 func main() {
-	if err := runtime.RunWithOptions(context.Background(), nil, runtime.RuntimeOptions{Renderers: renderers.Catalog()}); err != nil {
+	if err := runtime.RunWithOptions(context.Background(), nil, runtime.RuntimeOptions{Renderers: renderers.Catalog(), Telemetry: telemetrysources.Registry()}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

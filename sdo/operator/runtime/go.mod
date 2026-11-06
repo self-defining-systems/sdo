@@ -103,6 +103,7 @@ require (
 	k8s.io/kube-openapi v0.0.0-20240228011516-70dd3763d340
 	k8s.io/utils v0.0.0-20230726121419-3b25d923346b
 	sdo.dev/operator v0.0.0
+	sdo.dev/operator/telemetry v0.0.0
 	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect
 	sigs.k8s.io/structured-merge-diff/v4 v4.4.1 // indirect
 )
@@ -114,3 +115,5 @@ replace sdo.dev/operator/sdk => ../sdk
 replace sdo.dev/operator/contracts => ../contracts
 
 replace sdo.dev/operator => ..
+
+replace sdo.dev/operator/telemetry => ../telemetry

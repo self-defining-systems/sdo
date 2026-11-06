@@ -21,7 +21,7 @@ import (
 const DefaultMetricsQueryTimeout = 5 * time.Second
 
 // MetricsAPI is the controller's view of a metrics source. The transport,
-// for example runtime/prometheus, lives behind it.
+// for example the telemetry registry's Prometheus adapter, lives behind it.
 type MetricsAPI interface {
 	// Query evaluates query at time at; a query with a Range is a range query ending at at.
 	Query(ctx context.Context, query metrics.Query, at time.Time) ([]metrics.Series, error)
