@@ -2,7 +2,6 @@ package deployment
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -13,6 +12,7 @@ import (
 	"sdo.dev/operator/deployment/internal/deploymentio"
 
 	"sdo.dev/operator/builder"
+	"sdo.dev/operator/evaluation"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
@@ -80,48 +80,26 @@ func (probe AcceptedDetectorProbe) Evaluate(ctx context.Context, acceptedRoot, o
 // pending and unavailable detectors with their reasons, and each active
 // finding with its summary, so the verdict can say which detector and why.
 func decodeHealthVerdict(stdout, stderr []byte) (HealthEvaluation, error) {
-	var verdict struct {
-		Status   string `json:"status"`
-		Findings []struct {
-			DetectorID string `json:"detector_id"`
-			RuleID     string `json:"rule_id"`
-			Status     string `json:"status"`
-			Summary    string `json:"summary"`
-			Evidence   string `json:"evidence"`
-		} `json:"findings"`
-		Unavailable []struct {
-			DetectorID string `json:"detector_id"`
-			Reason     string `json:"reason"`
-		} `json:"unavailable"`
-		States []struct {
-			DetectorID string `json:"DetectorID"`
-			Status     string `json:"Status"`
-			Reason     string `json:"Reason"`
-			Error      string `json:"Error"`
-		} `json:"detector_states"`
-	}
-	if err := json.Unmarshal(stdout, &verdict); err != nil {
+	verdict, err := evaluation.Decode(stdout)
+	if err != nil {
 		return HealthEvaluation{}, fmt.Errorf("decode health detector verdict: %w (stdout=%q stderr=%q)", err, boundedHealthOutput(stdout), boundedHealthOutput(stderr))
 	}
-	if verdict.Status != "clear" && verdict.Status != "firing" && verdict.Status != "pending" && verdict.Status != "unavailable" {
-		return HealthEvaluation{}, fmt.Errorf("unknown health detector verdict %q (stdout=%q stderr=%q)", verdict.Status, boundedHealthOutput(stdout), boundedHealthOutput(stderr))
-	}
-	evaluation := HealthEvaluation{Status: verdict.Status}
-	for _, state := range verdict.States {
+	result := HealthEvaluation{Status: string(verdict.Status)}
+	for _, state := range verdict.DetectorStates {
 		if state.Status != "pending" {
 			continue
 		}
-		evaluation.Detectors = append(evaluation.Detectors, lifecycle.DetectorState{DetectorID: state.DetectorID, Status: state.Status, Reason: firstNonEmpty(state.Reason, state.Error)})
+		result.Detectors = append(result.Detectors, lifecycle.DetectorState{DetectorID: state.DetectorID, Status: state.Status, Reason: firstNonEmpty(state.Reason, state.Error)})
 	}
 	for _, item := range verdict.Unavailable {
-		evaluation.Detectors = append(evaluation.Detectors, lifecycle.DetectorState{DetectorID: item.DetectorID, Status: "unavailable", Reason: item.Reason})
+		result.Detectors = append(result.Detectors, lifecycle.DetectorState{DetectorID: item.DetectorID, Status: "unavailable", Reason: item.Reason})
 	}
 	for _, finding := range verdict.Findings {
 		if finding.Status == "active" {
-			evaluation.Detectors = append(evaluation.Detectors, lifecycle.DetectorState{DetectorID: finding.DetectorID, Status: "firing", Reason: firstNonEmpty(finding.Summary, finding.RuleID) + evidenceSuffix(finding.Evidence)})
+			result.Detectors = append(result.Detectors, lifecycle.DetectorState{DetectorID: finding.DetectorID, Status: "firing", Reason: firstNonEmpty(finding.Summary, finding.RuleID) + evidenceSuffix(finding.Evidence)})
 		}
 	}
-	return evaluation, nil
+	return result, nil
 }
 
 func firstNonEmpty(values ...string) string {

@@ -36,6 +36,7 @@ import (
 	"sdo.dev/operator/apihistory"
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/core"
+	"sdo.dev/operator/evaluation"
 	"sdo.dev/operator/latefindings"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/observation"
@@ -1735,25 +1736,6 @@ func (evaluationDispatcher) Dispatch(context.Context, IncidentRequest) (Incident
 	return IncidentResult{}, fmt.Errorf("evaluate-once does not dispatch incidents")
 }
 
-// evaluationStatus is the bounded command verdict, not a persisted detector
-// observation. Unavailable means this invocation lacks a required capability;
-// pending means a detector can run but its observation window is incomplete.
-type evaluationStatus string
-
-const evaluationUnavailable evaluationStatus = "unavailable"
-
-type unavailableEvaluation struct {
-	DetectorID string `json:"detector_id"`
-	Reason     string `json:"reason"`
-}
-
-type evaluationResult struct {
-	Findings       []sdk.Finding           `json:"findings"`
-	Status         evaluationStatus        `json:"status"`
-	Unavailable    []unavailableEvaluation `json:"unavailable,omitempty"`
-	DetectorStates []DetectorEvaluation    `json:"detector_states,omitempty"`
-}
-
 // evaluateOnceWarmupBudget is the least time a one-shot evaluation waits for the
 // prober to warm; accepted workloads that need longer extend it.
 const evaluateOnceWarmupBudget = 30 * time.Second
@@ -1914,7 +1896,7 @@ func evaluateOnce(
 	// Deployment-time evaluation runs before any controller measured this
 	// cluster, so it judges reachability without a recorded baseline.
 	trafficProvider := TrafficSnapshotProvider{Base: provider}
-	var unavailable []unavailableEvaluation
+	var unavailable []evaluation.UnavailableDetector
 	if workloads := TrafficWorkloadNames(detectors); len(workloads) > 0 {
 		if trafficAPI == nil {
 			return errors.New("traffic health evaluation requires the active memory host")
@@ -1933,7 +1915,7 @@ func evaluateOnce(
 			var runnable []sdk.Detector
 			for _, detector := range detectors {
 				if consumer, ok := detector.(traffic.Consumer); ok && len(consumer.TrafficWorkloads()) > 0 {
-					unavailable = append(unavailable, unavailableEvaluation{DetectorID: detector.Spec().ID, Reason: "traffic prober unavailable: " + failure})
+					unavailable = append(unavailable, evaluation.UnavailableDetector{DetectorID: detector.Spec().ID, Reason: "traffic prober unavailable: " + failure})
 					continue
 				}
 				runnable = append(runnable, detector)
@@ -1995,29 +1977,29 @@ func evaluateOnce(
 	if len(detectorErrors) > 0 {
 		return fmt.Errorf("health detector evaluation failed: %w", detectorErrors[0])
 	}
-	status := evaluationStatus(DetectorEvaluationClear)
-	var unconfirmed []DetectorEvaluation
-	for _, evaluation := range controller.history {
-		if evaluation.Status == DetectorEvaluationPending {
-			status = evaluationStatus(DetectorEvaluationPending)
+	status := evaluation.Clear
+	var unconfirmed []evaluation.DetectorState
+	for _, observed := range controller.history {
+		if observed.Status == DetectorEvaluationPending {
+			status = evaluation.Pending
 		}
-		if evaluation.Status == DetectorEvaluationPending || evaluation.Reason != "" {
-			unconfirmed = append(unconfirmed, evaluation)
+		if observed.Status == DetectorEvaluationPending || observed.Reason != "" {
+			unconfirmed = append(unconfirmed, evaluation.DetectorState{DetectorID: observed.DetectorID, EvaluatedAt: observed.EvaluatedAt, Status: string(observed.Status), Fingerprints: observed.Fingerprints, Error: observed.Error, Reason: observed.Reason})
 		}
 	}
 	if len(unavailable) > 0 {
-		status = evaluationUnavailable
+		status = evaluation.Unavailable
 	}
 	for _, finding := range findings {
 		if finding.Status == sdk.FindingActive {
-			status = evaluationStatus(DetectorEvaluationFiring)
+			status = evaluation.Firing
 			break
 		}
 	}
-	if err := json.NewEncoder(stdout).Encode(evaluationResult{Status: status, Findings: findings, Unavailable: unavailable, DetectorStates: unconfirmed}); err != nil {
+	if err := json.NewEncoder(stdout).Encode(evaluation.Verdict{Status: status, Findings: findings, Unavailable: unavailable, DetectorStates: unconfirmed}); err != nil {
 		return err
 	}
-	if *acceptSeed && status != evaluationStatus(DetectorEvaluationClear) {
+	if *acceptSeed && status != evaluation.Clear {
 		return fmt.Errorf("seed acceptance rejected: status %s; %d detector finding(s); unavailable: %v", status, len(findings), unavailable)
 	}
 	return nil

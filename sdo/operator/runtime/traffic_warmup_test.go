@@ -3,7 +3,6 @@ package runtime
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	clocktesting "k8s.io/utils/clock/testing"
 
+	"sdo.dev/operator/evaluation"
 	"sdo.dev/operator/runtime/prober"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
@@ -101,8 +101,8 @@ func TestEvaluateOnceWaitsForTheWorkloadsOwnMinimumSamples(t *testing.T) {
 	if err != nil {
 		t.Fatalf("evaluate-once: %v (stderr=%s)", err, stderr.String())
 	}
-	var result evaluationResult
-	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+	result, err := evaluation.Decode(stdout.Bytes())
+	if err != nil {
 		t.Fatalf("decode %q: %v", stdout.String(), err)
 	}
 	if result.Status != "clear" {
@@ -129,7 +129,7 @@ func (p *stalledProber) Windows(ctx context.Context) (map[string]traffic.Window,
 	return map[string]traffic.Window{p.workload.Name: window}, nil
 }
 
-func evaluateOnceWith(t *testing.T, api ProberAPI, clock *clocktesting.FakeClock, workload traffic.Workload) (evaluationResult, error) {
+func evaluateOnceWith(t *testing.T, api ProberAPI, clock *clocktesting.FakeClock, workload traffic.Workload) (evaluation.Verdict, error) {
 	t.Helper()
 	detector := traffic.NewDetector(sdk.DetectorSpec{ID: "traffic-probe-call", Class: sdk.DetectorClassHealth, Owner: sdk.DetectorOwnerHealthJudge, Batching: sdk.BatchingPolicy{Severity: sdk.SeverityCritical, Debounce: 500 * time.Millisecond}, Interval: 15 * time.Second, Persistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Playbooks: []string{"health-objective"}, OriginatingCommit: "synthetic"}, workload.Name)
 	var stdout, stderr bytes.Buffer
@@ -141,9 +141,10 @@ func evaluateOnceWith(t *testing.T, api ProberAPI, clock *clocktesting.FakeClock
 		Clock:    clock,
 		Stdout:   &stdout, Stderr: &stderr,
 	})
-	var result evaluationResult
+	var result evaluation.Verdict
 	if err == nil {
-		if jerr := json.Unmarshal(stdout.Bytes(), &result); jerr != nil {
+		var jerr error
+		if result, jerr = evaluation.Decode(stdout.Bytes()); jerr != nil {
 			t.Fatalf("decode %q: %v", stdout.String(), jerr)
 		}
 	}
@@ -181,7 +182,7 @@ func TestEvaluateOnceUnreadableProberIsUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("evaluate-once: %v", err)
 	}
-	if result.Status != evaluationUnavailable {
+	if result.Status != evaluation.Unavailable {
 		t.Fatalf("status = %q, want unavailable", result.Status)
 	}
 	if len(result.Unavailable) != 1 || result.Unavailable[0].DetectorID != "traffic-probe-call" || !strings.Contains(result.Unavailable[0].Reason, "connection refused") {
