@@ -38,6 +38,94 @@ def image_ref(image: str) -> str:
     return image
 
 
+class ImageDeliveryError(RuntimeError):
+    """A node cannot resolve an image by the exact reference the manifests use."""
+
+
+def node_reference(image: str) -> str:
+    """The name containerd's CRI resolves for ``image``.
+
+    A reference carrying a digest resolves by ``repo@digest``: the tag is dropped
+    (``repo:tag@digest`` and ``repo@digest`` are the same CRI image), so a node
+    image named with the tag and digest together is never found by a pod.
+    """
+    ref = image_ref(image)
+    if "@" not in ref:
+        return ref
+    name, digest = ref.split("@", 1)
+    leaf = name.rsplit("/", 1)[-1]
+    if ":" in leaf:
+        name = name[: len(name) - len(leaf)] + leaf.split(":", 1)[0]
+    return f"{name}@{digest}"
+
+
+def _node_image(node: str, image: str) -> dict[str, Any] | None:
+    inspected = subprocess.run(
+        ["docker", "exec", node, "crictl", "inspecti", image], capture_output=True, text=True, check=False
+    )
+    if inspected.returncode != 0:
+        return None
+    try:
+        document = json.loads(inspected.stdout)
+        status = document["status"]
+        return {"id": status["id"], "repoDigests": status.get("repoDigests") or []}
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def _is_expected(found: dict[str, Any], expected: str) -> bool:
+    return found["id"] == expected or any(str(row).endswith("@" + expected) for row in found["repoDigests"])
+
+
+def ensure_node_reference(node: str, image: str, expected: str) -> None:
+    """Make ``image`` resolvable on ``node`` under the manifest's own reference, or fail fast.
+
+    Verification is ``crictl inspecti <reference>`` (what the kubelet resolves)
+    returning the frozen image. An archive import of a digest-pinned or untagged
+    image lands under an unrelated name (for example ``import-<date>``); the
+    imported image is found by identity and given the reference.
+    """
+    found = _node_image(node, image)
+    if found is None or not _is_expected(found, expected):
+        listed = subprocess.run(
+            ["docker", "exec", node, "crictl", "images", "-o", "json"], capture_output=True, text=True, check=False
+        )
+        source = ""
+        try:
+            for row in json.loads(listed.stdout)["images"]:
+                if row["id"] == expected or any(str(d).endswith("@" + expected) for d in row.get("repoDigests") or []):
+                    source = next(iter(row.get("repoTags") or row.get("repoDigests") or []), "")
+                    if source:
+                        break
+        except (ValueError, KeyError, TypeError):
+            source = ""
+        if source:
+            subprocess.run(
+                [
+                    "docker",
+                    "exec",
+                    node,
+                    "ctr",
+                    "-n",
+                    "k8s.io",
+                    "images",
+                    "tag",
+                    "--force",
+                    source,
+                    node_reference(image),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            found = _node_image(node, image)
+    if found is None or not _is_expected(found, expected):
+        raise ImageDeliveryError(
+            f"{node} cannot resolve image {image!r} (CRI name {node_reference(image)}) to the frozen identity "
+            f"{expected}: crictl inspecti returned {'nothing' if found is None else found['id']}"
+        )
+
+
 def _wait_registry(host: str) -> None:
     for _ in range(50):
         try:
@@ -210,7 +298,19 @@ def registry_delivery(
             if immutable not in rows:
                 raise ValueError(f"{node} pulled unexpected manifest digest for {image}")
             _run(
-                ["docker", "exec", node, "ctr", "-n", "k8s.io", "images", "tag", "--force", immutable, image_ref(image)]
+                [
+                    "docker",
+                    "exec",
+                    node,
+                    "ctr",
+                    "-n",
+                    "k8s.io",
+                    "images",
+                    "tag",
+                    "--force",
+                    immutable,
+                    node_reference(image),
+                ]
             )
             installed = json.loads(_run(["docker", "exec", node, "crictl", "inspecti", image]).stdout)
             if installed["status"]["id"] != manifest.config:

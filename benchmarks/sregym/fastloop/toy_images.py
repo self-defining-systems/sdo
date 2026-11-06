@@ -18,7 +18,13 @@ from benchmarks.sregym.adapter import (
     wait_for,
 )
 from benchmarks.sregym.fastloop.host_limits import HostLimits
-from benchmarks.sregym.fastloop.image_delivery import registry_delivery, save_delivery, warn_fallback
+from benchmarks.sregym.fastloop.image_delivery import (
+    ensure_node_reference,
+    node_reference,
+    registry_delivery,
+    save_delivery,
+    warn_fallback,
+)
 
 
 def load_images(
@@ -117,6 +123,7 @@ def _load_archive_images(cluster: str, images: list[str]) -> None:
     if not nodes:
         raise ValueError(f"no kind nodes found for {cluster}")
     missing: set[str] = set()
+    expected_ids: dict[str, str] = {}
     for node in nodes:
         rows = subprocess.run(
             ["docker", "exec", node, "ctr", "--namespace", "k8s.io", "images", "check"],
@@ -136,13 +143,8 @@ def _load_archive_images(cluster: str, images: list[str]) -> None:
                 capture_output=True,
                 text=True,
             ).stdout.strip()
-            first = image.split("/", 1)[0]
-            if "/" not in image:
-                ref = "docker.io/library/" + image
-            elif "." not in first and ":" not in first and first != "localhost":
-                ref = "docker.io/" + image
-            else:
-                ref = image
+            ref = node_reference(image)
+            expected_ids[image] = expected
             cached = complete.get(ref)
             if cached is None or cached[0] != expected:
                 missing.add(image)
@@ -193,3 +195,7 @@ def _load_archive_images(cluster: str, images: list[str]) -> None:
                 check=True,
                 timeout=wait_for(WaitKind.ROLLOUT),
             )
+    # Delivery is only done once every node resolves every image by the reference the manifests use.
+    for node in nodes:
+        for image, expected in expected_ids.items():
+            ensure_node_reference(node, image, expected)
