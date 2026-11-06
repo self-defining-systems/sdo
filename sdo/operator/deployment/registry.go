@@ -1,6 +1,9 @@
 // Package deployment runs trusted, registered source deployment strategies.
 // Agent plans select a strategy, but only its Go implementation can attest a
 // candidate tree and the observed running revision.
+//
+//archcheck:allow R4 until=S3-13b reason="generic registry switches on the raw strategy"
+//archcheck:ratchet R5 count=2 until=S3-13b
 package deployment
 
 import (

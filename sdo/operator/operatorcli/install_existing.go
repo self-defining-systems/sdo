@@ -1,3 +1,4 @@
+//archcheck:ratchet R5 count=6 until=S3-11c
 package operatorcli
 
 import (

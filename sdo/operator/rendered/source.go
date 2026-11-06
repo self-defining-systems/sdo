@@ -1,3 +1,4 @@
+//archcheck:ratchet R5 count=5 until=S3-10d
 package rendered
 
 import (

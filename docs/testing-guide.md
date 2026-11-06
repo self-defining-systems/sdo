@@ -456,11 +456,24 @@ type-checking, so negative-control fixtures under `testdata/` need no real depen
   added to the table or the check fails.
 - R5 ratchet: `ManifestPaths`/`manifest_paths` per-file counts may only fall.
 
-Today's violations are in the `Allow` and `Ratchet` tables, each with a reason and the plan
-slice that removes it. Entries may only be deleted or lowered: when a fix drops a count or
-removes a violation the check fails until you lower or delete the entry. Never add an entry
-to make a new violation pass; fix the import instead. Each rule has a failing fixture in
-`testdata/` and `TestNegativeControls` fails if a rule stops firing. See also
+Today's violations are `//archcheck:` directives in the violating file, so parallel PRs
+never edit one shared table:
+
+```go
+//archcheck:allow R4 until=S3-13b reason="generic registry switches on the raw strategy"
+//archcheck:ratchet R5 count=3 until=S3-11c
+```
+
+`until=` names the PR that removes the transitional form and must be in `TransitionalPRs`
+in `rules.go` (a closed list; only the PRs that add or retire transitional forms edit it).
+A violation without a directive fails; a rose count fails; a fell count fails with "lower
+count= in this file"; a directive with nothing to match is stale and fails; an unknown
+`until`, malformed directive, or duplicate (including one also in `rules.go`) fails. A PR
+that edits a counted file adjusts the directive in the same file. Never add a directive to
+make a new violation pass; fix the import instead. Generated `*.pb.go` files cannot carry
+directives (generators overwrite comments), so their ratchet rows stay in `rules.go` and are
+edited only by the serial proto PRs. Each rule and each directive failure has a fixture in
+`testdata/` and `TestNegativeControls`/`TestDirectives` fail if one stops firing. See also
 [`docs/architecture.md`](architecture.md).
 
 `bash scripts/check_go_mains.sh` (run by `check_errors.sh`) vets every Go program under
