@@ -125,58 +125,63 @@ func TestPublishVerifiedSourceRecordsTheReport(t *testing.T) {
 }
 
 // Every read verifies: a stored report that was edited, removed, or whose
-// evidence names none fails, the last two with the reinstall message.
-func TestOperabilityReportIsVerifiedAtEveryRead(t *testing.T) {
-	ctx := context.Background()
-	publish := func(t *testing.T, id string) *advanceWorld {
-		w := newAdvanceWorld(t)
-		_, evidence, report := onboardProposal(t, w, id)
-		if _, err := w.broker.PublishVerifiedSource(ctx, id, evidence, report); err != nil {
-			t.Fatal(err)
-		}
-		return w
+// evidence names none fails, the last two with the reinstall message. Each case
+// is a test of its own so each stays well under the slow-test budget.
+func publishedOperabilityWorld(t *testing.T, id string) *advanceWorld {
+	t.Helper()
+	w := newAdvanceWorld(t)
+	_, evidence, report := onboardProposal(t, w, id)
+	if _, err := w.broker.PublishVerifiedSource(context.Background(), id, evidence, report); err != nil {
+		t.Fatal(err)
 	}
-	t.Run("edited", func(t *testing.T) {
-		w := publish(t, "edited")
-		path := w.broker.operabilityPath("edited", operability.StageDeployment)
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		edited := strings.Replace(string(data), `"status":"pass"`, `"status":"note"`, 1)
-		if edited == string(data) {
-			t.Fatal("the stored report has no pass to edit")
-		}
-		if err := os.WriteFile(path, []byte(edited), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if _, _, err := w.broker.OperabilityReport(ctx, "edited", operability.StageDeployment); !errors.Is(err, ErrOperabilityUnbound) {
-			t.Fatalf("OperabilityReport of an edited report = %v", err)
-		}
-	})
-	t.Run("removed", func(t *testing.T) {
-		w := publish(t, "removed")
-		if err := os.Remove(w.broker.operabilityPath("removed", operability.StageDeployment)); err != nil {
-			t.Fatal(err)
-		}
-		if _, _, err := w.broker.OperabilityReport(ctx, "removed", operability.StageDeployment); !errors.Is(err, ErrSourceEvidencePredatesOperability) || !strings.Contains(err.Error(), "reinstall") {
-			t.Fatalf("OperabilityReport without a file = %v", err)
-		}
-	})
-	t.Run("evidence names none", func(t *testing.T) {
-		w := publish(t, "unnamed")
-		stored, found, err := w.broker.SourceEvidence(ctx, "unnamed")
-		if err != nil || !found {
-			t.Fatal(err)
-		}
-		stored.OperabilityDigest = ""
-		if err := w.broker.writeSourceEvidence("unnamed", stored); err != nil {
-			t.Fatal(err)
-		}
-		if _, _, err := w.broker.OperabilityReport(ctx, "unnamed", operability.StageDeployment); !errors.Is(err, ErrSourceEvidencePredatesOperability) {
-			t.Fatalf("OperabilityReport with unnamed evidence = %v", err)
-		}
-	})
+	return w
+}
+
+func TestOperabilityReportOfAnEditedReportIsRefused(t *testing.T) {
+	ctx := context.Background()
+	w := publishedOperabilityWorld(t, "edited")
+	path := w.broker.operabilityPath("edited", operability.StageDeployment)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited := strings.Replace(string(data), `"status":"pass"`, `"status":"note"`, 1)
+	if edited == string(data) {
+		t.Fatal("the stored report has no pass to edit")
+	}
+	if err := os.WriteFile(path, []byte(edited), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := w.broker.OperabilityReport(ctx, "edited", operability.StageDeployment); !errors.Is(err, ErrOperabilityUnbound) {
+		t.Fatalf("OperabilityReport of an edited report = %v", err)
+	}
+}
+
+func TestOperabilityReportWithoutAFileNamesTheReinstall(t *testing.T) {
+	ctx := context.Background()
+	w := publishedOperabilityWorld(t, "removed")
+	if err := os.Remove(w.broker.operabilityPath("removed", operability.StageDeployment)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := w.broker.OperabilityReport(ctx, "removed", operability.StageDeployment); !errors.Is(err, ErrSourceEvidencePredatesOperability) || !strings.Contains(err.Error(), "reinstall") {
+		t.Fatalf("OperabilityReport without a file = %v", err)
+	}
+}
+
+func TestOperabilityReportWithUnnamedEvidenceNamesTheReinstall(t *testing.T) {
+	ctx := context.Background()
+	w := publishedOperabilityWorld(t, "unnamed")
+	stored, found, err := w.broker.SourceEvidence(ctx, "unnamed")
+	if err != nil || !found {
+		t.Fatal(err)
+	}
+	stored.OperabilityDigest = ""
+	if err := w.broker.writeSourceEvidence("unnamed", stored); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := w.broker.OperabilityReport(ctx, "unnamed", operability.StageDeployment); !errors.Is(err, ErrSourceEvidencePredatesOperability) {
+		t.Fatalf("OperabilityReport with unnamed evidence = %v", err)
+	}
 }
 
 // A candidate's complete-stage report binds to the stage and to the accepted
