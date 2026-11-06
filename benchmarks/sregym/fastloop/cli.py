@@ -1442,6 +1442,12 @@ def _down(args: argparse.Namespace) -> int:
     os.environ["KUBECONFIG"] = str(environment.kubeconfig)
     failed_exports = settle_lane_exports(environment)
     errors = teardown(environment.state_path, ops=KubectlClusterOps()) if environment.state_path.exists() else []
+    if environment.app == "toy":
+        from benchmarks.sregym.fastloop.toy_upstream import UpstreamLayout, delete_upstream
+
+        # The harness-owned git server lives outside the control namespace, so teardown() does not reach it.
+        if (error := delete_upstream(environment.kubeconfig, UpstreamLayout(environment.namespace))) is not None:
+            errors.append(error)
     errors.extend(f"evidence export for {job.incident_id} failed: {job.error}" for job in failed_exports)
     for error in errors:
         logger.error("persistent controller teardown: %s", error)

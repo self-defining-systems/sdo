@@ -252,6 +252,37 @@ def apply_manifests(kubeconfig: Path, manifests: Sequence[dict[str, Any]]) -> No
     subprocess.run([*base, "-n", namespace, "rollout", "status", f"deployment/{SERVICE}", "--timeout=120s"], check=True)
 
 
+def delete_command(kubeconfig: Path, layout: UpstreamLayout) -> list[str]:
+    return [
+        "kubectl",
+        "--kubeconfig",
+        str(kubeconfig),
+        "delete",
+        "namespace",
+        layout.namespace,
+        "--ignore-not-found=true",
+        "--wait=true",
+        "--timeout=180s",
+    ]
+
+
+def delete_upstream(kubeconfig: Path, layout: UpstreamLayout) -> str | None:
+    """Delete the lane's upstream namespace (absent is fine). Returns an error message, or None when it is gone."""
+    try:
+        subprocess.run(
+            delete_command(kubeconfig, layout),
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=wait_for(WaitKind.SLOW_COMMAND, 2),
+        )
+    except subprocess.CalledProcessError as exc:
+        return f"delete namespace {layout.namespace} failed: {(exc.stderr or '').strip()}"
+    except subprocess.TimeoutExpired:
+        return f"delete namespace {layout.namespace} timed out"
+    return None
+
+
 def add_toy_parser(commands: Any) -> None:
     """Register ``fastloop toy {serve,push,source-args}`` on the CLI's subparsers."""
     toy = commands.add_parser("toy", help="toy upstream: in-cluster Git remote and scripted commit replayer")
