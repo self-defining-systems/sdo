@@ -75,15 +75,20 @@ else
         WORKERS=4
     fi
 fi
-# The two hosted Python runners share the suite without adding another job.
-# Every path outside fastloop belongs to core, including new test directories.
+# The hosted Python runners share the suite. The adapter tests are about 60% of the non-fastloop
+# test time, so they have a runner of their own; every other path belongs to core, including new
+# test directories.
 # Shards publish raw data; Required PR CI combines it before enforcing coverage.
 paths=(tests)
 coverage=(--cov --cov-report=term-missing)
 case "${SDO_PYTEST_SHARD:-}" in
     "") ;;
     core)
-        paths=(--ignore=tests/unit/benchmarks/sregym/fastloop tests)
+        paths=(--ignore=tests/unit/benchmarks/sregym/fastloop --ignore=tests/unit/benchmarks/sregym/adapter tests)
+        coverage=(--cov --cov-report= --cov-fail-under=0)
+        ;;
+    adapter)
+        paths=(tests/unit/benchmarks/sregym/adapter)
         coverage=(--cov --cov-report= --cov-fail-under=0)
         ;;
     fastloop)
