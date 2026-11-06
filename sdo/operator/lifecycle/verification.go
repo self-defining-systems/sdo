@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"sdo.dev/operator/lifecycle/internal/waitio"
 )
 
 // VerificationOutcome is what independent verification concluded. Only a
@@ -113,14 +115,7 @@ func (c Coordinator) wait(ctx context.Context, d time.Duration) error {
 	if c.Wait != nil {
 		return c.Wait(ctx, d)
 	}
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
+	return waitio.Wait(ctx, d)
 }
 
 // retryInfrastructure runs a trusted step, repeating it while it fails for an
