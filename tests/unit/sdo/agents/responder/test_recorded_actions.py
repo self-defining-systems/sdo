@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import select
 import shlex
 import signal
 import subprocess
@@ -527,11 +528,19 @@ def _wait_for(predicate: object, timeout: float = 20.0) -> None:
     raise AssertionError("timed out waiting for the condition")
 
 
-def _is_dead(pid: int) -> bool:
+def _wait_for_exit(pid: int, hang_guard: float = 20.0) -> None:
+    """Block until *pid* has exited, woken by the kernel (pidfd); the guard only bounds a hang, never paces the wait."""
     try:
-        return Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").rsplit(")", 1)[1].split()[0] == "Z"
-    except (FileNotFoundError, ProcessLookupError):
-        return True
+        descriptor = os.pidfd_open(pid)
+    except ProcessLookupError:
+        return
+    try:
+        poller = select.poll()
+        poller.register(descriptor, select.POLLIN)
+        if not poller.poll(hang_guard * 1000):
+            raise AssertionError(f"process {pid} is still running {hang_guard:.0f} s after its group was signalled")
+    finally:
+        os.close(descriptor)
 
 
 def test_a_sigterm_mid_command_leaves_a_finished_receipt_and_no_orphans(
@@ -556,7 +565,7 @@ def test_a_sigterm_mid_command_leaves_a_finished_receipt_and_no_orphans(
         process.send_signal(signal.SIGTERM)
         process.wait(timeout=20)
 
-        _wait_for(lambda: _is_dead(grandchild), timeout=30.0)  # the command's own children died too
+        _wait_for_exit(grandchild)  # the command's own children died too
         records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
         assert records[-1]["state"] == "finished"
         result = evolve(_bare_result())
@@ -570,6 +579,30 @@ def test_a_sigterm_mid_command_leaves_a_finished_receipt_and_no_orphans(
             os.kill(grandchild, signal.SIGKILL)
         with contextlib.suppress(ProcessLookupError):
             os.killpg(process.pid, signal.SIGKILL)
+
+
+def test_a_sigterm_right_after_the_command_spawns_still_kills_it(
+    scratch: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The signal can land between the command starting and the recorder registering it (a loaded host)."""
+    spawned: list[subprocess.Popen[str]] = []
+
+    class SignalledAfterSpawn(subprocess.Popen):  # type: ignore[type-arg]
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            spawned.append(self)
+            os.kill(os.getpid(), signal.SIGTERM)
+
+    monkeypatch.setattr(recorded_actions.subprocess, "Popen", SignalledAfterSpawn)
+    kubectl = _stub(tmp_path / "bin", "exec sleep 60")
+    try:
+        with pytest.raises(SystemExit):
+            tools_cli.main(["act", "--resource", "Deployment/app/api", "--", str(kubectl), "-n", "app", "get", "pods"])
+        _wait_for_exit(spawned[0].pid)
+    finally:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(spawned[0].pid, signal.SIGKILL)
+        spawned[0].wait(timeout=5)
 
 
 def test_a_started_only_entry_is_a_recorded_unfinished_mutation(scratch: Path) -> None:
