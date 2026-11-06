@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"sdo.dev/operator/imagesrc"
 )
 
 // selectManifestPaths resolves the paths named by the accepted deployment
@@ -55,7 +57,7 @@ func selectManifestPaths(available, selected []string) ([]string, error) {
 func candidateManifestPaths(root string, selected []string) ([]string, error) {
 	available := make([]string, 0)
 	for _, selection := range selected {
-		resolved, err := safeCandidatePath(root, selection)
+		resolved, err := imagesrc.SafeCheckoutPath(root, selection)
 		if err != nil {
 			return nil, err
 		}

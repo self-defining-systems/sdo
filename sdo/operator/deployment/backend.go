@@ -17,6 +17,7 @@ import (
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/settings"
+	"sdo.dev/operator/imagesrc"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
 )
@@ -75,7 +76,7 @@ func (b CommandBackend) BuildImage(ctx context.Context, _ string, build *contrac
 	if !strings.HasPrefix(details.Digest, "sha256:") || len(details.Digest) != 71 {
 		return "", errors.New("image build did not return a sha256 digest")
 	}
-	return imageRepository(build.Image) + "@" + details.Digest, nil
+	return imagesrc.Repository(build.Image) + "@" + details.Digest, nil
 }
 
 func (b CommandBackend) Apply(ctx context.Context, documents []byte) error {

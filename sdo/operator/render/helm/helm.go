@@ -271,8 +271,7 @@ func decode(file, content string, env render.Env) (*unstructured.Unstructured, e
 		return nil, fmt.Errorf("helm %s: %w", file, err)
 	}
 	if env.Secrets == render.SecretsOmit && obj.GetKind() == "Secret" && obj.GetAPIVersion() == "v1" {
-		delete(obj.Object, "data")
-		delete(obj.Object, "stringData")
+		obj.Object = render.SecretIdentity(obj.Object)
 	}
 	return obj, nil
 }

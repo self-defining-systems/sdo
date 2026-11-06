@@ -114,7 +114,7 @@ func (s Source) loadManifests(ctx context.Context, revision, namespace string) (
 	objects := set.Objects()
 	for i, object := range objects {
 		if strings.EqualFold(object.Ref.Kind, "Secret") {
-			objects[i].Object = &unstructured.Unstructured{Object: secretReference(object.Object.Object)}
+			objects[i].Object = &unstructured.Unstructured{Object: render.SecretIdentity(object.Object.Object)}
 		}
 	}
 	return objects, nil
@@ -234,13 +234,3 @@ func (s Source) AcceptedApplicationManifest(ctx context.Context, revision, names
 	return s.acceptedObject(ctx, revision, namespace, ref)
 }
 
-// secretReference keeps a Secret's identity only: last-applied annotations and
-// arbitrary extension fields can contain credential bytes too.
-func secretReference(object map[string]any) map[string]any {
-	metadata, _ := object["metadata"].(map[string]any)
-	reference := map[string]any{"name": metadata["name"]}
-	if namespace, ok := metadata["namespace"]; ok {
-		reference["namespace"] = namespace
-	}
-	return map[string]any{"apiVersion": object["apiVersion"], "kind": "Secret", "metadata": reference}
-}

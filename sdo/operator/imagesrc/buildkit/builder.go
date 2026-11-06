@@ -149,7 +149,7 @@ func (b Builder) BuildImage(ctx context.Context, checkout string, build *contrac
 				if err != nil {
 					return "", err
 				}
-				return repository(build.GetImage()) + "@" + digest, nil
+				return imagesrc.Repository(build.GetImage()) + "@" + digest, nil
 			}
 		}
 		if err := b.pause(bounded, interval); err != nil {
@@ -255,7 +255,7 @@ func (b Builder) job(name, subPath, contextRel, dockerfileRel, image string, lim
 	// tag per image that each build overwrites, so it is namespaced to the app
 	// and bounded by the registry's own retention. Import of a missing cache is
 	// a warning, and a failed export never fails a build that succeeded.
-	cacheRef := repository(image) + ":sdo-buildcache"
+	cacheRef := imagesrc.Repository(image) + ":sdo-buildcache"
 	flags := "--oci-worker-no-process-sandbox"
 	script := `buildctl-daemonless.sh build --frontend dockerfile.v0 --local "context=$SDO_CONTEXT" --local dockerfile=/workspace --opt "filename=$SDO_DOCKERFILE" --import-cache "type=registry,ref=$SDO_CACHE_REF" --export-cache "type=registry,ref=$SDO_CACHE_REF,mode=max,ignore-error=true" --output "$SDO_OUTPUT" --metadata-file /tmp/sdo-metadata.json
 printf 'SDO_BUILD_METADATA='; cat /tmp/sdo-metadata.json; printf '\n'`
@@ -345,18 +345,6 @@ func parseBuildMetadata(logs []byte) (string, error) {
 func ptr32(value int32) *int32 { return &value }
 func ptr64(value int64) *int64 { return &value }
 func ptrBool(value bool) *bool { return &value }
-
-// repository strips a digest or tag from an image reference.
-func repository(image string) string {
-	if at := strings.IndexByte(image, '@'); at >= 0 {
-		return image[:at]
-	}
-	lastSlash := strings.LastIndexByte(image, '/')
-	if colon := strings.LastIndexByte(image, ':'); colon > lastSlash {
-		return image[:colon]
-	}
-	return image
-}
 
 // Resolve implements imagesrc.Source: it builds the context and Dockerfile the
 // config names, relative to the request's checkout, and returns the pushed

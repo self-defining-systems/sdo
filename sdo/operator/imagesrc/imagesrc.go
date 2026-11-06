@@ -229,8 +229,8 @@ func verify(image, ref string, sameRepository bool) error {
 	if !digestReference.MatchString(ref) {
 		return fmt.Errorf("source returned a mutable or malformed reference %q", ref)
 	}
-	if sameRepository && repository(ref) != repository(image) {
-		return fmt.Errorf("source returned %q, which is outside the requested repository %q", ref, repository(image))
+	if sameRepository && Repository(ref) != Repository(image) {
+		return fmt.Errorf("source returned %q, which is outside the requested repository %q", ref, Repository(image))
 	}
 	return nil
 }
@@ -243,26 +243,4 @@ func registryHost(image string) string {
 		}
 	}
 	return ""
-}
-
-// repository strips a digest or tag from a reference.
-func repository(image string) string {
-	for i := 0; i < len(image); i++ {
-		if image[i] == '@' {
-			return image[:i]
-		}
-	}
-	lastSlash, colon := -1, -1
-	for i := 0; i < len(image); i++ {
-		switch image[i] {
-		case '/':
-			lastSlash = i
-		case ':':
-			colon = i
-		}
-	}
-	if colon > lastSlash {
-		return image[:colon]
-	}
-	return image
 }

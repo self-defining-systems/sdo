@@ -138,7 +138,7 @@ func renderDigest(objects []DesiredObject) (string, error) {
 		if strings.EqualFold(object.Ref.Kind, "Secret") {
 			// Identity only: renderers drop other Secret fields (type,
 			// labels) in SecretsOmit, so only the identity agrees across modes.
-			document = secretReference(document)
+			document = render.SecretIdentity(document)
 		}
 		canonical = append(canonical, document)
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"regexp"
 	"sort"
 
@@ -194,10 +195,8 @@ func validateObject(obj *unstructured.Unstructured, env Env) error {
 		return fmt.Errorf("needs apiVersion, kind and metadata.name (got %q %q %q)", obj.GetAPIVersion(), obj.GetKind(), obj.GetName())
 	}
 	if env.Secrets == SecretsOmit && obj.GetKind() == "Secret" && obj.GetAPIVersion() == "v1" {
-		for _, field := range []string{"data", "stringData"} {
-			if _, present := obj.Object[field]; present {
-				return fmt.Errorf("Secret %s carries %s under SecretsOmit", obj.GetName(), field)
-			}
+		if !reflect.DeepEqual(obj.Object, SecretIdentity(obj.Object)) {
+			return fmt.Errorf("Secret %s carries more than its identity under SecretsOmit (a renderer must project it with render.SecretIdentity)", obj.GetName())
 		}
 	}
 	return nil

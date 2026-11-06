@@ -60,7 +60,7 @@ func renderRaw(_ context.Context, fsys render.FS, env render.Env, config *v1alph
 		}
 		for _, object := range decoded {
 			if env.Secrets == render.SecretsOmit && strings.EqualFold(object.GetKind(), "Secret") {
-				object.Object = secretReference(object)
+				object.Object = render.SecretIdentity(object.Object)
 			}
 			objects = append(objects, object)
 		}
@@ -166,13 +166,4 @@ func decode(file string, data []byte) ([]*unstructured.Unstructured, error) {
 func isKustomization(name string) bool {
 	base := path.Base(name)
 	return base == "kustomization.yaml" || base == "kustomization.yml" || base == "Kustomization"
-}
-
-// secretReference keeps a Secret's identity and drops everything else.
-func secretReference(object *unstructured.Unstructured) map[string]any {
-	metadata := map[string]any{"name": object.GetName()}
-	if namespace := object.GetNamespace(); namespace != "" {
-		metadata["namespace"] = namespace
-	}
-	return map[string]any{"apiVersion": object.GetAPIVersion(), "kind": "Secret", "metadata": metadata}
 }

@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -191,7 +190,7 @@ func (strategy RawStrategy) ApplyAndVerify(ctx context.Context, checkout, tree s
 			}
 			return Observation{}, fmt.Errorf("build image %s: %w", build.Image, err)
 		}
-		if !digestReference.MatchString(immutable) || imageRepository(immutable) != imageRepository(build.Image) {
+		if !digestReference.MatchString(immutable) || imagesrc.Repository(immutable) != imagesrc.Repository(build.Image) {
 			return Observation{}, fmt.Errorf("builder returned wrong or mutable image for %s: %q", build.Image, immutable)
 		}
 		imageRefs[build.Image] = immutable
@@ -208,7 +207,7 @@ func (strategy RawStrategy) ApplyAndVerify(ctx context.Context, checkout, tree s
 		return Observation{}, err
 	}
 	for _, path := range manifestPaths {
-		resolved, err := safeCandidatePath(checkout, path)
+		resolved, err := imagesrc.SafeCheckoutPath(checkout, path)
 		if err != nil {
 			return Observation{}, err
 		}
@@ -363,35 +362,6 @@ func (strategy RawStrategy) pin(ctx context.Context, image string, cache map[str
 	}
 	cache[image] = pinned
 	return pinned, nil
-}
-
-func safeCandidatePath(root, raw string) (string, error) {
-	if raw == "" || filepath.IsAbs(raw) || raw == ".." || strings.HasPrefix(filepath.Clean(raw), ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("candidate path escapes proposal: %q", raw)
-	}
-	base, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return "", err
-	}
-	path, err := filepath.EvalSymlinks(filepath.Join(base, raw))
-	if err != nil {
-		return "", err
-	}
-	if rel, err := filepath.Rel(base, path); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("candidate path escapes proposal: %q", raw)
-	}
-	return path, nil
-}
-
-func imageRepository(image string) string {
-	if at := strings.IndexByte(image, '@'); at >= 0 {
-		return image[:at]
-	}
-	lastSlash := strings.LastIndexByte(image, '/')
-	if colon := strings.LastIndexByte(image, ':'); colon > lastSlash {
-		return image[:colon]
-	}
-	return image
 }
 
 func sameNamedImages(expected, actual []rendered.DeployedImage) bool {

@@ -11,6 +11,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/imagesrc"
 )
 
 const (
@@ -104,7 +105,7 @@ func resolveBuildPath(checkout, raw, label string, wantDirectory bool) (string, 
 			candidate = trimmed
 		}
 	}
-	resolved, err := safeCandidatePath(checkout, candidate)
+	resolved, err := imagesrc.SafeCheckoutPath(checkout, candidate)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return "", missingPathProblem(checkout, raw, label, wantDirectory)
@@ -267,34 +268,15 @@ func listLimited(values []string) string {
 // Absolute returns the build with context and Dockerfile resolved to real
 // paths inside the checkout, the form BuildImage takes.
 func (p Planned) Absolute(checkout string) (*contracts.ImageBuild, error) {
-	contextPath, err := safeCandidatePath(checkout, p.ContextRel)
+	contextPath, err := imagesrc.SafeCheckoutPath(checkout, p.ContextRel)
 	if err != nil {
 		return nil, err
 	}
-	dockerfilePath, err := safeCandidatePath(checkout, p.DockerfileRel)
+	dockerfilePath, err := imagesrc.SafeCheckoutPath(checkout, p.DockerfileRel)
 	if err != nil {
 		return nil, err
 	}
 	resolved := proto.Clone(p.Build).(*contracts.ImageBuild)
 	resolved.ContextPath, resolved.DockerfilePath = contextPath, dockerfilePath
 	return resolved, nil
-}
-
-// safeCandidatePath resolves raw inside root, rejecting paths that leave it.
-func safeCandidatePath(root, raw string) (string, error) {
-	if raw == "" || filepath.IsAbs(raw) || raw == ".." || strings.HasPrefix(filepath.Clean(raw), ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("candidate path escapes proposal: %q", raw)
-	}
-	base, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return "", err
-	}
-	path, err := filepath.EvalSymlinks(filepath.Join(base, raw))
-	if err != nil {
-		return "", err
-	}
-	if rel, err := filepath.Rel(base, path); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("candidate path escapes proposal: %q", raw)
-	}
-	return path, nil
 }

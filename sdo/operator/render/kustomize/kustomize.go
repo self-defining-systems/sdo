@@ -206,7 +206,7 @@ func (l *loader) loadManifestFile(name string) error {
 			return fmt.Errorf("decode resource %s: %w", name, err)
 		}
 		if item["kind"] == "Secret" {
-			item = secretReference(item)
+			item = render.SecretIdentity(item)
 		}
 		if err := encoder.Encode(item); err != nil {
 			return err
@@ -273,7 +273,7 @@ func (l *loader) loadKustomization(name string) error {
 				kept = append(kept, secretGeneratorReference(generator, behavior))
 				continue
 			}
-			encoded, err := yaml.Marshal(secretReference(map[string]any{"apiVersion": "v1", "metadata": generator}))
+			encoded, err := yaml.Marshal(render.SecretIdentity(map[string]any{"apiVersion": "v1", "metadata": generator}))
 			if err != nil {
 				return err
 			}
@@ -408,13 +408,6 @@ func (l *loader) loadSecretGenerators(doc map[string]any, base, name string) ([]
 		out = append(out, generator)
 	}
 	return out, nil
-}
-
-// secretReference reduces a Secret to identity: last-applied annotations and
-// extension fields can contain credential bytes too.
-func secretReference(object map[string]any) map[string]any {
-	metadata, _ := object["metadata"].(map[string]any)
-	return map[string]any{"apiVersion": object["apiVersion"], "kind": "Secret", "metadata": map[string]any{"name": metadata["name"], "namespace": metadata["namespace"]}}
 }
 
 // secretGeneratorReference is a Secret generator reduced to identity and
