@@ -1470,7 +1470,7 @@ def _down(args: argparse.Namespace) -> int:
     os.environ["KUBECONFIG"] = str(environment.kubeconfig)
     failed_exports = settle_lane_exports(environment)
     errors = teardown(environment.state_path, ops=KubectlClusterOps()) if environment.state_path.exists() else []
-    if environment.app == "toy":
+    if environment.app in {"toy", "gitlab"}:
         from benchmarks.sregym.fastloop.toy_upstream import UpstreamLayout, delete_upstream
 
         # The harness-owned git server lives outside the control namespace, so teardown() does not reach it.
@@ -1714,6 +1714,10 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("raw", "kustomize", "helm", "compose"),
         default="raw",
         help="toy: deployment variant of the source (non-raw variants need --fresh-memory and build from source)",
+    )
+    up.add_argument(
+        "--chart-release",
+        help="gitlab: start the lane at this upstream chart release of apps/gitlab/releases.json (default: pins.json)",
     )
     up.add_argument("--toy-node-image", default="kindest/node:v1.34.0")
     up.add_argument("--seed", type=Path, help="git repository cloned as the application workspace (first time only)")

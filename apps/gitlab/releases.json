@@ -1,0 +1,85 @@
+{
+  "chart": "gitlab",
+  "line": "10.5",
+  "repository": "https://charts.gitlab.io",
+  "derivation": "Each release was rendered with helm template (helm v3.20.2, kube 1.30.0) through the umbrella chart with chart/values-kind.yaml and compared with the release before it: image references, workload kinds and names, object count, keys of the chart's values.yaml. No release in this window ships a values.schema.json. The chart repository index lists no 10.5.2.",
+  "releases": [
+    {
+      "version": "10.4.2",
+      "app_version": "v19.4.2",
+      "created": "2026-10-12T05:24:39Z",
+      "url": "https://gitlab-charts.s3.amazonaws.com/gitlab-10.4.2.tgz",
+      "sha256": "f00a26c9c752f1fa3837f9d37b1b1619a74eb22bcc19c1befa346fcf83e4a68d",
+      "baseline": true,
+      "note": "Replay baseline: the release before the 10.5 line; a lane started here has 55 rendered objects."
+    },
+    {
+      "version": "10.5.0",
+      "app_version": "v19.5.0",
+      "created": "2026-10-15T13:54:08Z",
+      "url": "https://gitlab-charts.s3.amazonaws.com/gitlab-10.5.0.tgz",
+      "sha256": "9b0461fdb5b10b6a1ba108eaf54abc45391d5884473cd0d58f8579412f0d447d",
+      "changes": {
+        "images_changed": 10,
+        "values_keys_added": 28,
+        "values_keys_removed": 0,
+        "values_schema": false,
+        "workloads_added": [],
+        "workloads_removed": [],
+        "objects": 55
+      },
+      "note": "Minor release: CNG images 19.4.2 -> 19.5.0 (registry 4.40.2 -> 4.42.0, shell 14.57.3 -> 14.58.0); new optional values (kas gRPC ingress, gateway tls, email, prometheus scrape configs) all disabled in the lane; same workloads."
+    },
+    {
+      "version": "10.5.1",
+      "app_version": "v19.5.1",
+      "created": "2026-10-21T15:23:00Z",
+      "url": "https://gitlab-charts.s3.amazonaws.com/gitlab-10.5.1.tgz",
+      "sha256": "258713af39594da9f187f687c3c2780983e3bf3fdf4a1cfd073ba5ef2a5ba95a",
+      "changes": {
+        "images_changed": 8,
+        "values_keys_added": 0,
+        "values_keys_removed": 0,
+        "values_schema": false,
+        "workloads_added": [],
+        "workloads_removed": [],
+        "objects": 55
+      },
+      "note": "Patch release: CNG images 19.5.0 -> 19.5.1; nothing else in the rendered output."
+    },
+    {
+      "version": "10.5.3",
+      "app_version": "v19.5.3",
+      "created": "2026-10-29T11:48:37Z",
+      "url": "https://gitlab-charts.s3.amazonaws.com/gitlab-10.5.3.tgz",
+      "sha256": "d0bfbff1128767d6b50f8fbe5163073c5a3f7d819a7a166e4b154d69e044f858",
+      "changes": {
+        "images_changed": 8,
+        "values_keys_added": 0,
+        "values_keys_removed": 0,
+        "values_schema": false,
+        "workloads_added": [],
+        "workloads_removed": [],
+        "objects": 55
+      },
+      "note": "Patch release: CNG images 19.5.1 -> 19.5.3; nothing else in the rendered output."
+    },
+    {
+      "version": "10.5.4",
+      "app_version": "v19.5.3",
+      "created": "2026-10-29T13:35:27Z",
+      "url": "https://gitlab-charts.s3.amazonaws.com/gitlab-10.5.4.tgz",
+      "sha256": "aabc14c99bfc5829a54ecefdc99b2c2f16257e892fddf6425929dfd69375c62c",
+      "changes": {
+        "images_changed": 0,
+        "values_keys_added": 0,
+        "values_keys_removed": 0,
+        "values_schema": false,
+        "workloads_added": [],
+        "workloads_removed": [],
+        "objects": 55
+      },
+      "note": "Chart-only release: same images as 10.5.3; the rendered diff is the chart version in the chart label of the upstream chart's objects (a no-image advance)."
+    }
+  ]
+}

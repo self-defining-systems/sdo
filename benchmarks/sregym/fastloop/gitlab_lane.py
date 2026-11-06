@@ -28,6 +28,8 @@ from benchmarks.sregym.adapter import (
     prebuilt_image,
     wait_for,
 )
+from benchmarks.sregym.fastloop.gitlab_releases import load_releases
+from benchmarks.sregym.fastloop.toy_upstream import UpstreamLayout, serve_upstream, source_config
 from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
@@ -190,8 +192,19 @@ def install_prerequisites(kubeconfig: Path, *, pins: dict[str, Any] | None = Non
     )
 
 
+def lane_upstream(environment: Any) -> UpstreamLayout:
+    """The Git remote the lane's SDO follows: served in ``<namespace>-upstream`` and seeded with the workspace commit.
+
+    The release replay pushes successive chart releases to its ref; nothing else writes it.
+    """
+    return UpstreamLayout(environment.namespace)
+
+
 def lane_runtime_config(environment: Any, plan: dict[str, Any], *, registrations: Path | None = None) -> Any:
-    """The controller install for the lane: the provided plan, no manifest paths, persistent, recorded actions."""
+    """The controller install for the lane: the provided plan, no manifest paths, persistent, recorded actions.
+
+    SDO follows the lane's upstream (``--source-kind git``) so a pushed release advances the accepted source.
+    """
     from benchmarks.sregym.adapter import RuntimeConfig
 
     return RuntimeConfig(
@@ -211,6 +224,8 @@ def lane_runtime_config(environment: Any, plan: dict[str, Any], *, registrations
         deployment_source=deployment_source(),
         deployment_plan=plan,
         deployment_policy=deployment_policy(),
+        source_kind="git",
+        source_config=json.dumps(source_config(lane_upstream(environment))),
         agent_registrations=registrations.resolve() if registrations else None,
     )
 
@@ -326,7 +341,9 @@ def up(args: Any) -> int:
     install_prerequisites(kubeconfig)
     workspace = run_dir / "application_workspace"
     workspace.mkdir()
-    seed = prepare_workspace(workspace)
+    release = getattr(args, "chart_release", None)
+    pins = None if release is None else load_releases().get(release).pins(assemble.load_pins())
+    seed = prepare_workspace(workspace, pins=pins)
     toy.command(str(kubeconfig), "default", "create", "namespace", NAMESPACE)
     toy.command(str(kubeconfig), "default", "create", "namespace", CONTROL_NAMESPACE)
     hook = getattr(args, "credentials_hook", None)
@@ -354,6 +371,7 @@ def up(args: Any) -> int:
     )
     env.baseline_path.write_text("{}\n", encoding="utf-8")
     env.save()
+    serve_upstream(kubeconfig, workspace, lane_upstream(env), images.controller)
     runtime = lane_runtime_config(
         env, provided_plan(workspace, NAMESPACE), registrations=getattr(args, "agent_registrations", None)
     )
