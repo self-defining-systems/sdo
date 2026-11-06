@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -135,9 +136,11 @@ type AcceptedSource struct {
 
 // AcceptedSourceEvidence returns the trusted deployment evidence that is
 // current for the accepted HEAD: the record of the newest source deployment
-// on the first-parent history (onboarding's deployer commit or an upstream
-// advance). Later memory commits do not change it; a later responder source
-// repair is not a deployment and leaves it as it was. found is false when no
+// on the first-parent history (onboarding's deployer commit, an upstream
+// advance, or a responder source repair accepted with AcceptDeployed). Later
+// memory commits do not change it; a responder repair accepted without a
+// deployment (Publish, or a plain Accept) is not a deployment and leaves it as
+// it was. found is false when no
 // such deployment is recorded (a seeded install). The plan is read from the
 // accepted HEAD's tree, not from the evidence.
 func (b *Broker) AcceptedSourceEvidence(ctx context.Context) (AcceptedSource, bool, error) {
@@ -169,8 +172,8 @@ func (b *Broker) acceptedEvidenceLocked(ctx context.Context) (SourceEvidence, bo
 // bound to the effective tree it deployed. They are the image part of desired
 // state (rendered.PinProvider): the controller reads them from the same
 // ledger record that backs the accepted commit, so a source change that moves
-// images gets new pins only through a new accepted deployment (onboarding or
-// an advance), and a memory-only commit leaves them as they were. With no
+// images gets new pins only through a new accepted deployment (onboarding, an
+// advance or an AcceptDeployed responder repair), and a memory-only commit leaves them as they were. With no
 // recorded deployment (a seeded install) there are no pins.
 func (b *Broker) AcceptedImagePins(ctx context.Context) (rendered.ReceiptPins, error) {
 	var pins rendered.ReceiptPins
@@ -199,8 +202,40 @@ func (b *Broker) newestDeployment(ctx context.Context) (commit, incidentID strin
 		if (actor == Deployer && phase == InitialPhase) || (actor == UpstreamActor && phase == AdvancePhase) {
 			return fields[0], strings.TrimSpace(fields[2]), true, nil
 		}
+		if actor == Responder && phase == ProposalPhase {
+			// A responder repair is a deployment only when AcceptDeployed
+			// recorded the deployment of exactly this commit.
+			incident := strings.TrimSpace(fields[2])
+			deployed, err := b.deployedBy(incident, fields[0])
+			if err != nil {
+				return "", "", false, err
+			}
+			if deployed {
+				return fields[0], incident, true, nil
+			}
+		}
 	}
 	return "", "", false, nil
+}
+
+// deployedBy reports whether the deployment evidence of incidentID is bound
+// to commit. A pending record (staged, head not moved) or another commit's
+// record is not a deployment of commit.
+func (b *Broker) deployedBy(incidentID, commit string) (bool, error) {
+	data, err := os.ReadFile(b.sourceEvidencePath(incidentID))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	var record struct {
+		AcceptedCommit string `json:"accepted_commit"`
+	}
+	if err := json.Unmarshal(data, &record); err != nil {
+		return false, fmt.Errorf("decode source evidence of %s: %w", incidentID, err)
+	}
+	return record.AcceptedCommit == commit, nil
 }
 
 // ProposeAdvance creates the isolated advance checkout at accepted HEAD and

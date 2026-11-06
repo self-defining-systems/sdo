@@ -92,6 +92,43 @@ func (b *Broker) StageCandidate(ctx context.Context, incidentID string, actor Ac
 // already accepted candidate returns its receipt. A candidate with nothing to
 // publish accepts nothing.
 func (b *Broker) Accept(ctx context.Context, candidate Candidate, evidence CandidateEvidence) (Receipt, error) {
+	return b.acceptStaged(ctx, candidate, evidence.Commit, func(stored Candidate) error {
+		return requireBoundEvidence(ctx, stored, evidence)
+	}, nil)
+}
+
+// AcceptDeployed is Accept for a candidate whose effective tree the trusted
+// deployer applied to the cluster and verified: the evidence is the full
+// deployment record, not only a judged identity. It refuses evidence that
+// does not bind to the stage (another tree, effective tree or patch series,
+// or a deployment source other than the one the tree's plan declares), and on
+// acceptance records the evidence for the accepted commit before the head
+// moves, so the commit is the newest deployment: image pins follow it and the
+// next upstream advance builds on it. A redelivery with the same evidence is
+// idempotent.
+func (b *Broker) AcceptDeployed(ctx context.Context, candidate Candidate, evidence SourceEvidence) (Receipt, error) {
+	if err := validateSourceEvidence(evidence); err != nil {
+		return Receipt{}, err
+	}
+	return b.acceptStaged(ctx, candidate, candidate.Commit, func(stored Candidate) error {
+		if evidence.BaseTree != stored.Tree {
+			return fmt.Errorf("%w: deployment evidence is of tree %s, the candidate is tree %s", ErrCandidateUnbound, evidence.BaseTree, stored.Tree)
+		}
+		if err := requireBoundEvidence(ctx, stored, CandidateEvidence{Commit: stored.Commit, Tree: stored.Tree, EffectiveTree: evidence.EffectiveTree, PatchesDigest: evidence.PatchesDigest}); err != nil {
+			return err
+		}
+		if err := requirePlanEvidence(ctx, stored.Path, evidence, b.PlanCatalogs); err != nil {
+			return fmt.Errorf("%w: %w", ErrCandidateUnbound, err)
+		}
+		return nil
+	}, &evidence)
+}
+
+// acceptStaged fast-forwards the head to the staged candidate once bind (the
+// caller's evidence check against the stored stage) passes. With deployed
+// non-nil its evidence is staged in the ledger before the head moves and
+// finalized with the accepted commit after.
+func (b *Broker) acceptStaged(ctx context.Context, candidate Candidate, evidenceCommit string, bind func(Candidate) error, deployed *SourceEvidence) (Receipt, error) {
 	if err := checkIncidentID(candidate.IncidentID); err != nil {
 		return Receipt{}, err
 	}
@@ -103,8 +140,19 @@ func (b *Broker) Accept(ctx context.Context, candidate Candidate, evidence Candi
 		if prior, ok, err := b.findAccepted(ctx, candidate.IncidentID, candidate.Phase); err != nil {
 			return err
 		} else if ok {
-			if prior.Commit != candidate.Commit || evidence.Commit != prior.Commit {
+			if prior.Commit != candidate.Commit || evidenceCommit != prior.Commit {
 				return fmt.Errorf("%w: %s %s was accepted as %s", ErrCandidateUnbound, candidate.Phase, candidate.IncidentID, prior.Commit)
+			}
+			if deployed != nil {
+				stored, found, err := b.sourceEvidenceLocked(ctx, candidate.IncidentID, prior)
+				if err != nil {
+					return err
+				}
+				claimed := *deployed
+				claimed.AcceptedCommit = prior.Commit
+				if !found || !sameSourceEvidence(stored, claimed) {
+					return fmt.Errorf("%w: accepted %s %s has other deployment evidence", ErrCandidateUnbound, candidate.Phase, candidate.IncidentID)
+				}
 			}
 			receipt = prior
 			return os.RemoveAll(b.candidateRoot(candidate.IncidentID, candidate.Phase))
@@ -119,7 +167,7 @@ func (b *Broker) Accept(ctx context.Context, candidate Candidate, evidence Candi
 		if err := requireCandidateCommit(ctx, stored); err != nil {
 			return err
 		}
-		if err := requireBoundEvidence(ctx, stored, evidence); err != nil {
+		if err := bind(stored); err != nil {
 			return err
 		}
 		if err := b.syncUpstream(ctx); err != nil {
@@ -135,12 +183,24 @@ func (b *Broker) Accept(ctx context.Context, candidate Candidate, evidence Candi
 		if head != stored.Parent {
 			return fmt.Errorf("%w: validated on %s, accepted head is %s", ErrCandidateStale, stored.Parent, head)
 		}
+		if deployed != nil {
+			if err := b.writeSourceEvidence(stored.IncidentID, *deployed); err != nil {
+				return err
+			}
+		}
 		if err := b.advanceHead(ctx, stored.Path, stored.Commit); errors.Is(err, errUpstreamMoved) {
 			return fmt.Errorf("%w: %w", ErrCandidateStale, err)
 		} else if err != nil {
 			return err
 		}
 		receipt = Receipt{IncidentID: stored.IncidentID, Phase: stored.Phase, Commit: stored.Commit, ChangedPaths: stored.ChangedPaths, CoverageGaps: stored.CoverageGaps}
+		if deployed != nil {
+			accepted := *deployed
+			accepted.AcceptedCommit = stored.Commit
+			if err := b.writeSourceEvidence(stored.IncidentID, accepted); err != nil {
+				return fmt.Errorf("source accepted but evidence finalization needs reconciliation: %w", err)
+			}
+		}
 		return os.RemoveAll(b.candidateRoot(stored.IncidentID, stored.Phase))
 	})
 	return receipt, err
