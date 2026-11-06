@@ -251,3 +251,36 @@ def test_failed_onboarding_still_exports_runtime_evidence(monkeypatch: pytest.Mo
     directory = tmp_path / gitlab_lane.ONBOARDING_EVIDENCE_DIRNAME
     assert exported == [directory]
     assert (directory / "export.json").is_file()
+
+
+def _patch_reonboard(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, app: str) -> list[tuple[str, object]]:
+    from benchmarks.sregym.fastloop import toy
+    from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+
+    calls: list[tuple[str, object]] = []
+    environment = SimpleNamespace(run_dir=tmp_path, app=app, workspace=tmp_path / "ws", cluster="c1")
+    monkeypatch.setattr(FastloopEnvironment, "load", classmethod(lambda cls, run_dir: environment))
+    monkeypatch.setattr(gitlab_lane, "provided_plan", lambda workspace, namespace: {"ns": namespace})
+    monkeypatch.setattr(gitlab_lane, "lane_runtime_config", lambda env, plan, registrations=None: ("runtime", plan))
+    monkeypatch.setattr(
+        gitlab_lane, "onboard_retaining_evidence", lambda env, config, objective: calls.append(("onboard", objective))
+    )
+    monkeypatch.setattr(toy, "record_controller", lambda env, config: calls.append(("record", config)))
+    return calls
+
+
+def test_reonboard_reruns_onboarding_on_a_saved_gitlab_lane(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    calls = _patch_reonboard(monkeypatch, tmp_path, "gitlab")
+    args = build_parser().parse_args(["gitlab", "reonboard", "--run-dir", str(tmp_path), "--goal", "keep it up"])
+    assert args.handler(args) == 0
+    assert [name for name, _ in calls] == ["onboard", "record"]
+    assert "keep it up" in str(calls[0][1])
+    assert calls[1][1] == ("runtime", {"ns": gitlab_lane.NAMESPACE})
+
+
+def test_reonboard_rejects_other_lanes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    calls = _patch_reonboard(monkeypatch, tmp_path, "toy")
+    args = build_parser().parse_args(["gitlab", "reonboard", "--run-dir", str(tmp_path)])
+    with pytest.raises(ValueError, match="gitlab lanes only"):
+        args.handler(args)
+    assert calls == []
