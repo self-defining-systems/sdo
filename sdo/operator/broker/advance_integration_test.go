@@ -73,7 +73,7 @@ func newOnboardedWorld(t *testing.T, editedByDeployer bool) *advanceWorld {
 	copyTree(t, onboardedTemplate(t, editedByDeployer), base)
 	w := &advanceWorld{upstream: filepath.Join(base, "upstream"), accepted: filepath.Join(base, "accepted")}
 	w.seed = gitOut(t, w.upstream, "rev-parse", "HEAD")
-	b, err := New(w.accepted, filepath.Join(base, "workspaces"), func(context.Context, string, []string) error { return nil })
+	b, err := New(w.accepted, filepath.Join(base, "workspaces"), func(context.Context, string, []string) error { return nil }, testObservation())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func buildOnboardedWorld(t *testing.T, base string, editedByDeployer bool) *adva
 	testutil.Git(t, base, "clone", "-q", w.upstream, w.accepted)
 	testutil.ConfigureGit(t, w.accepted)
 	testutil.Git(t, w.accepted, "remote", "remove", "origin")
-	b, err := New(w.accepted, filepath.Join(base, "workspaces"), func(context.Context, string, []string) error { return nil })
+	b, err := New(w.accepted, filepath.Join(base, "workspaces"), func(context.Context, string, []string) error { return nil }, testObservation())
 	if err != nil {
 		t.Fatal(err)
 	}

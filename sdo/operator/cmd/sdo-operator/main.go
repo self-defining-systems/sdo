@@ -10,6 +10,7 @@ import (
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/operatorcli"
+	"sdo.dev/operator/operatorcli/catalog/telemetrysources"
 	"sdo.dev/operator/shellpath"
 )
 
@@ -17,7 +18,7 @@ import (
 var sourceHash string
 
 func main() {
-	broker.RunValidationChild()
+	broker.RunValidationChild(telemetrysources.Registry())
 	if len(os.Args) == 2 && os.Args[1] == "shell-detector-runner" {
 		if err := shellpath.RunInCluster(context.Background()); err != nil {
 			fmt.Fprintln(os.Stderr, err)

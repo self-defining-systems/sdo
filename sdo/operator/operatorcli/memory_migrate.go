@@ -39,16 +39,16 @@ func memoryMigrate(ctx context.Context, args []string, getenv func(string) strin
 	if err != nil {
 		return err
 	}
-	repository, err := broker.New(root, *worktrees, (broker.SubprocessValidator{OperatorRoot: *operator}).Validator(), broker.ObservationPolicy{Replay: mode})
+	auditPolicy, err := memoryTelemetryPolicy(getenv, "")
+	if err != nil {
+		return err
+	}
+	repository, err := broker.New(root, *worktrees, (broker.SubprocessValidator{OperatorRoot: *operator}).Validator(), broker.ObservationPolicy{Telemetry: broker.Telemetry{Policy: auditPolicy, Registry: telemetryRegistry()}, Replay: mode})
 	if err != nil {
 		return err
 	}
 	coordinator := lifecycle.Coordinator{Broker: repository, Bootstrap: artifacts.BootstrapStore{}}
 	receipt, err := coordinator.MigrateMemory(ctx, memoryMigrationOperationID())
-	if err != nil {
-		return err
-	}
-	auditPolicy, err := memoryTelemetryPolicy(getenv, "")
 	if err != nil {
 		return err
 	}

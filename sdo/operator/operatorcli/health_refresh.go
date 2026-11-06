@@ -189,7 +189,11 @@ func newControllerBroker(config *contracts.ControllerConfig) (*broker.Broker, er
 	if err != nil {
 		return nil, err
 	}
-	return broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), selectMemoryValidator(config.GetCodePath(), validation.Validator()), broker.ObservationPolicy{Replay: config.GetReplay(), CodePath: memoryCodePath(config.GetCodePath()), Ceiling: ceiling, ApplicationNamespace: config.GetNamespace()})
+	telemetry, err := broker.ControllerTelemetry(config, telemetryRegistry())
+	if err != nil {
+		return nil, err
+	}
+	return broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), selectMemoryValidator(config.GetCodePath(), validation.Validator()), broker.ObservationPolicy{Telemetry: telemetry, Replay: config.GetReplay(), CodePath: memoryCodePath(config.GetCodePath()), Ceiling: ceiling, ApplicationNamespace: config.GetNamespace()})
 }
 
 // healthRefreshCoordinator is the Coordinator of a health refresh: the judge's

@@ -13,6 +13,7 @@ import (
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/telemetry"
 )
 
 func queuedReflectionGit(t *testing.T, dir string, args ...string) string {
@@ -41,7 +42,7 @@ func queuedReflectionLedger(t *testing.T, root string, worker ReflectionWorkerFu
 	}
 	queuedReflectionGit(t, accepted, "add", ".")
 	queuedReflectionGit(t, accepted, "commit", "-qm", "synthetic base")
-	repository, err := broker.New(accepted, filepath.Join(root, "proposals"), nil)
+	repository, err := broker.New(accepted, filepath.Join(root, "proposals"), nil, broker.ObservationPolicy{Telemetry: broker.Telemetry{Registry: telemetry.NewRegistry()}})
 	if err != nil {
 		t.Fatal(err)
 	}

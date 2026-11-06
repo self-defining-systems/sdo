@@ -27,7 +27,6 @@ import (
 	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
-	"sdo.dev/operator/telemetry"
 )
 
 // Actor and Phase are defined by the validator, which owns the ownership
@@ -115,11 +114,9 @@ type Broker struct {
 	codePath string
 	replay   string
 
-	// Telemetry is the environment's policy for the designer's telemetry
-	// bindings and TelemetryRegistry the adapter registry they are checked
-	// against; both are trusted installer wiring like PlanCatalogs.
-	Telemetry         telemetry.Policy
-	TelemetryRegistry *telemetry.Registry
+	// telemetry is the environment's application telemetry every check of
+	// this broker runs under, set once by New; see Telemetry.
+	telemetry Telemetry
 
 	// RepairVerified is the controller's closure fact for reflection checks:
 	// whether a committed outcome holds an independently verified repaired
@@ -141,9 +138,12 @@ type Broker struct {
 
 // New requires the workspace root to be outside the accepted repository.
 // The worker must receive only Proposal.Path, never target or workspaceRoot.
-func New(target, workspaceRoot string, validator Validator, policy ...ObservationPolicy) (*Broker, error) {
+func New(target, workspaceRoot string, validator Validator, policy ObservationPolicy) (*Broker, error) {
 	if target == "" || workspaceRoot == "" {
 		return nil, errors.New("target and workspace root are required")
+	}
+	if err := policy.Telemetry.validate(); err != nil {
+		return nil, err
 	}
 	absoluteTarget, err := filepath.Abs(target)
 	if err != nil {
@@ -182,25 +182,21 @@ func New(target, workspaceRoot string, validator Validator, policy ...Observatio
 		return nil, err
 	}
 	b := &Broker{target: absoluteTarget, workspaceRoot: absoluteWorkspaces, validator: validator, lockPath: filepath.Join(gitCommon, "sdo-broker.lock")}
-	if len(policy) > 1 {
-		return nil, errors.New("one observation policy is required")
+	if err := policy.Ceiling.Validate(); err != nil {
+		return nil, err
 	}
-	if len(policy) == 1 {
-		if err := policy[0].Ceiling.Validate(); err != nil {
-			return nil, err
-		}
-		if policy[0].CodePath != "" && policy[0].CodePath != "go" && policy[0].CodePath != "shell" {
-			return nil, fmt.Errorf("unsupported broker code path %q", policy[0].CodePath)
-		}
-		if _, err := settings.Replay(policy[0].Replay); err != nil {
-			return nil, err
-		}
-		b.replay = policy[0].Replay
-		b.codePath = policy[0].CodePath
-		b.observationCeiling = policy[0].Ceiling
-		b.observationCeiling.Targets = append([]sdk.ObservationTarget(nil), policy[0].Ceiling.Targets...)
-		b.applicationNamespace = policy[0].ApplicationNamespace
+	if policy.CodePath != "" && policy.CodePath != "go" && policy.CodePath != "shell" {
+		return nil, fmt.Errorf("unsupported broker code path %q", policy.CodePath)
 	}
+	if _, err := settings.Replay(policy.Replay); err != nil {
+		return nil, err
+	}
+	b.telemetry = policy.Telemetry
+	b.replay = policy.Replay
+	b.codePath = policy.CodePath
+	b.observationCeiling = policy.Ceiling
+	b.observationCeiling.Targets = append([]sdk.ObservationTarget(nil), policy.Ceiling.Targets...)
+	b.applicationNamespace = policy.ApplicationNamespace
 	return b, nil
 }
 
@@ -1128,6 +1124,9 @@ func within(root, path string) bool {
 
 // ObservationPolicy is supplied only by the trusted installer host.
 type ObservationPolicy struct {
+	// Telemetry is required: see Telemetry.
+	Telemetry Telemetry
+
 	Replay string
 
 	// CodePath is trusted launch policy; shell selects hygiene instead of Go compilation.

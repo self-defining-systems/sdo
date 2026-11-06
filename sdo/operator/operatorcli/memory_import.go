@@ -72,7 +72,11 @@ func memoryImport(ctx context.Context, args []string, getenv func(string) string
 	if c.Action == "publish" {
 		runner = (broker.SubprocessValidator{OperatorRoot: c.OperatorRoot, HealthyBaseline: c.HealthyBaseline}).Validator()
 	}
-	repository, err := broker.New(c.Root, c.Workspaces, runner, broker.ObservationPolicy{Replay: c.Replay, Ceiling: ceiling, ApplicationNamespace: c.ApplicationNamespace})
+	policy, err := memoryTelemetryPolicy(getenv, c.ApplicationNamespace)
+	if err != nil {
+		return err
+	}
+	repository, err := broker.New(c.Root, c.Workspaces, runner, broker.ObservationPolicy{Telemetry: broker.Telemetry{Policy: policy, Registry: telemetryRegistry()}, Replay: c.Replay, Ceiling: ceiling, ApplicationNamespace: c.ApplicationNamespace})
 	if err != nil {
 		return err
 	}

@@ -15,6 +15,7 @@ import (
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/patchset"
+	"sdo.dev/operator/telemetry"
 )
 
 type recordedRepairer struct {
@@ -101,7 +102,7 @@ func newRepairClosureWorld(t *testing.T, policy string, repairs SourceRepairer) 
 	repairGit(t, w.accepted, "add", ".")
 	repairGit(t, w.accepted, "commit", "-qm", "synthetic base")
 	var err error
-	if w.repo, err = broker.New(w.accepted, filepath.Join(root, "proposals"), func(context.Context, string, []string) error { return nil }); err != nil {
+	if w.repo, err = broker.New(w.accepted, filepath.Join(root, "proposals"), func(context.Context, string, []string) error { return nil }, broker.ObservationPolicy{Telemetry: broker.Telemetry{Registry: telemetry.NewRegistry()}}); err != nil {
 		t.Fatal(err)
 	}
 	w.native = NativeIncidentBroker{
