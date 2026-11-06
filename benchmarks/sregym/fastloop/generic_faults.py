@@ -15,7 +15,7 @@ from __future__ import annotations
 import copy
 import json
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
@@ -144,6 +144,9 @@ class FaultSpec:
     #: The platform restores the app on its own (a killed pod is recreated); no detection is then not a failure.
     self_heals: bool = False
     detail: str = ""
+    #: The ``kubectl`` reference of the object the fault changes (``None`` for deleted or created objects); the
+    #: harness reads who last changed it after the injection.
+    target: str | None = None
 
     @property
     def problem_id(self) -> str:
@@ -185,6 +188,13 @@ def _eligible_labels(workload: Workload) -> bool:
 
 def build(kind: FaultKind, workload: Workload) -> FaultSpec | None:
     """The fault of ``kind`` on ``workload``, or ``None`` when the workload does not support it."""
+    fault = _build(kind, workload)
+    if fault is None or fault.target is not None or kind in (FaultKind.POD_KILL, FaultKind.NETWORK_DENY):
+        return fault
+    return replace(fault, target=workload.ref)
+
+
+def _build(kind: FaultKind, workload: Workload) -> FaultSpec | None:
     first = _first_container(workload)
     cname = first["name"]
     if kind is FaultKind.POD_KILL:
@@ -273,6 +283,7 @@ def build(kind: FaultKind, workload: Workload) -> FaultSpec | None:
             (Action((*inject, json.dumps({"spec": {"selector": {FAULT_SELECTOR_KEY: "broken"}}}))),),
             (Action((*inject, json.dumps({"spec": {"selector": {FAULT_SELECTOR_KEY: None}}}))),),
             detail=service,
+            target=f"service/{service}",
         )
     if kind is FaultKind.PVC_MISMATCH:
         if workload.kind != "Deployment" or not workload.pvc_volumes:

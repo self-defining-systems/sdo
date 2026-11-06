@@ -54,6 +54,10 @@ INCIDENTS_FILENAME = "incidents.jsonl"
 MODEL = "gpt-6-luna"
 #: ``SDO-Actor`` trailers of commits a person or the harness authored; a commit with no trailer counts too.
 HUMAN_ACTORS = frozenset({"", "human", "upstream"})
+#: Field managers that are SDO's own writers: the deployer's accepted-source apply restores drifted objects without
+#: any incident action, so a fault whose object it last changed after the injection was restored by SDO.
+SDO_FIELD_MANAGERS = frozenset({"sdo-deployer"})
+PREEXISTING_INCIDENT = "incident_open_before_injection"
 CONTROLLER_REPOSITORY = "/workspace/application"
 STATE_CONFIGMAP = "sdo-controller-state"
 CONTROLLER_SELECTOR = "job-name=sdo-controller-run"
@@ -145,6 +149,9 @@ class FaultOps(Protocol):
     def incident_open(self) -> bool: ...
     def outcomes(self) -> list[OutcomeRead]: ...
     def human_edits(self) -> int: ...
+    def restored_by(self, spec: FaultSpec, since: datetime) -> str | None:
+        """The SDO field manager that changed the fault's object after ``since``, else ``None``."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -195,6 +202,10 @@ class FaultResult:
     incident: OutcomeRead | None = None
     ever_unhealthy: bool = False
     harness_reverted: bool = False
+    #: SDO field manager that restored the fault's object after the injection (outside any incident action).
+    restored_by: str | None = None
+    #: Incidents that opened before this injection and were therefore not attributed to the fault.
+    preexisting_incidents: list[str] = field(default_factory=list)
     baseline_restored: bool = False
     human_edits: int = 0
     error: str | None = None
@@ -224,8 +235,17 @@ def _wait_baseline(ops: FaultOps, config: StreamConfig) -> bool:
         ops.sleep(config.poll)
 
 
-def _new_outcome(ops: FaultOps, known: set[str]) -> OutcomeRead | None:
+def _new_outcome(
+    ops: FaultOps, known: set[str], since: datetime | None = None, preexisting: list[str] | None = None
+) -> OutcomeRead | None:
+    """The earliest closed incident not in ``known``; with ``since``, one that opened before it is set aside."""
     fresh = [o for o in ops.outcomes() if o.incident_id not in known]
+    if since is not None:
+        for old in [o for o in fresh if o.detected_at is not None and o.detected_at < since]:
+            known.add(old.incident_id)
+            if preexisting is not None:
+                preexisting.append(old.incident_id)
+        fresh = [o for o in fresh if o.incident_id not in known]
     return (
         min(fresh, key=lambda o: o.verified_at or o.detected_at or datetime.max.replace(tzinfo=timezone.utc))
         if fresh
@@ -258,11 +278,19 @@ def run_fault(ops: FaultOps, spec: FaultSpec, config: StreamConfig, index: int) 
 
     enter(Phase.PRECHECK)
     edits_before = ops.human_edits()
-    known = {o.incident_id for o in ops.outcomes()}
     if not _wait_baseline(ops, config):
         result.infra_stage = "pre_injection"
-        result.error = "baseline_not_healthy: the app was not healthy and incident-free before injection"
+        if ops.incident_open() and not ops.unhealthy():
+            result.error = (
+                f"{PREEXISTING_INCIDENT}: an incident was still open after the {config.baseline:g}s settle bound; "
+                "the fault was not injected"
+            )
+        else:
+            result.error = "baseline_not_healthy: the app was not healthy and incident-free before injection"
         return finish(Outcome.INFRA_ERROR)
+    # Snapshot after the settle wait: an incident that closed while waiting belongs to an earlier fault or to
+    # the lane, never to this injection.
+    known = {o.incident_id for o in ops.outcomes()}
 
     enter(Phase.INJECT)
     t0 = ops.now()
@@ -281,7 +309,7 @@ def run_fault(ops: FaultOps, spec: FaultSpec, config: StreamConfig, index: int) 
     outcome: OutcomeRead | None = None
     detected = False
     while True:
-        outcome = _new_outcome(ops, known)
+        outcome = _new_outcome(ops, known, t0, result.preexisting_incidents)
         if outcome is not None or ops.incident_open():
             detected = True
             result.observed_detect_at = ops.now()
@@ -293,7 +321,8 @@ def run_fault(ops: FaultOps, spec: FaultSpec, config: StreamConfig, index: int) 
             healed_since = healed_since if healed_since is not None else ops.clock()
             if ops.clock() - healed_since >= config.settle:
                 result.baseline_restored = True
-                return finish(Outcome.SELF_HEALED)
+                result.restored_by = ops.restored_by(spec, t0) if spec.target else None
+                return finish(Outcome.RESOLVED if result.restored_by in SDO_FIELD_MANAGERS else Outcome.SELF_HEALED)
         if ops.clock() >= deadline:
             break
         ops.sleep(config.poll)
@@ -305,7 +334,7 @@ def run_fault(ops: FaultOps, spec: FaultSpec, config: StreamConfig, index: int) 
     enter(Phase.RECOVER)
     deadline = ops.clock() + config.recover
     while True:
-        outcome = outcome or _new_outcome(ops, known)
+        outcome = outcome or _new_outcome(ops, known, t0, result.preexisting_incidents)
         if outcome is not None and not ops.incident_open() and not ops.unhealthy():
             break
         if ops.clock() >= deadline:
@@ -319,6 +348,11 @@ def run_fault(ops: FaultOps, spec: FaultSpec, config: StreamConfig, index: int) 
     result.resolved_at = outcome.verified_at or ops.now()
     result.human_edits = ops.human_edits() - edits_before
     label = _label(outcome, spec)
+    if label is Outcome.CLEARED and spec.target:
+        # The closure shows no incident action, but the deployer's accepted-source apply may have restored the object.
+        result.restored_by = ops.restored_by(spec, t0)
+        if result.restored_by in SDO_FIELD_MANAGERS:
+            label = Outcome.RESOLVED
     if label is Outcome.UNRESOLVED:
         result.error = f"incident closed as {outcome.classification or 'unclassified'}"
         if ops.unhealthy():
@@ -387,6 +421,8 @@ def record_for(result: FaultResult, config: StreamConfig) -> IncidentRecord:
             "ever_unhealthy": result.ever_unhealthy,
             "harness_reverted": result.harness_reverted,
             "human_edits": result.human_edits,
+            "restored_by": result.restored_by,
+            "preexisting_incidents": result.preexisting_incidents,
         },
         "incident_wall_seconds": round(result.wall_seconds, 3),
         "error": result.error,
@@ -394,6 +430,7 @@ def record_for(result: FaultResult, config: StreamConfig) -> IncidentRecord:
     if result.injected is None:
         base["injection"] = NotInjected(stage=result.infra_stage or "pre_injection")  # type: ignore[arg-type]
         base["infra_error"] = (result.error or "infra_error").split(":", 1)[0]
+        base["injection_evidence"]["preexisting_incidents"] = result.preexisting_incidents
         return IncidentRecord(**base)
     base["injection"] = Injected(started_at=result.injected[0], finished_at=result.injected[1])
     base["detected_at"] = result.detected_at or result.observed_detect_at
@@ -406,9 +443,10 @@ def record_for(result: FaultResult, config: StreamConfig) -> IncidentRecord:
             first_repair_action_at=incident.first_repair_at,
             resolved_at=result.resolved_at,
             sdo_outcome_classification=incident.classification or None,
-            sdo_resolution="sdo_mitigated" if result.outcome is Outcome.RESOLVED else None,
             responder_tokens=TokenCounts.from_usage(incident.usage),
         )
+    if result.outcome is Outcome.RESOLVED:
+        base["sdo_resolution"] = "sdo_mitigated"
     if result.harness_reverted:
         base["recovery_error"] = "the harness reverted the fault; SDO did not recover the app"
     healthy = result.outcome in (Outcome.RESOLVED, Outcome.CLEARED, Outcome.SELF_HEALED) and result.baseline_restored
@@ -581,6 +619,22 @@ class KubectlFaultOps:
     def outcomes(self) -> list[OutcomeRead]:
         tree = self._git("ls-tree", "--name-only", "HEAD", ".sdo/outcomes/")
         return [parse_outcome(json.loads(self._git("show", f"HEAD:{path}"))) for path in tree.split()]
+
+    def restored_by(self, spec: FaultSpec, since: datetime) -> str | None:
+        """An SDO manager (``SDO_FIELD_MANAGERS``) with a managed-fields entry on the target dated after ``since``."""
+        if not spec.target:
+            return None
+        try:
+            raw = self._kubectl(self.namespace, "get", spec.target, "-o", "json", "--show-managed-fields").stdout
+            entries = json.loads(raw)["metadata"].get("managedFields") or []
+        except (OSError, subprocess.SubprocessError, ValueError, KeyError):
+            return None  # an unreadable object earns no credit
+        since = since.replace(microsecond=0)  # managedFields times have one-second resolution
+        for entry in entries:
+            stamp = _time(entry.get("time"))
+            if entry.get("manager") in SDO_FIELD_MANAGERS and stamp is not None and stamp >= since:
+                return str(entry["manager"])
+        return None
 
     def human_edits(self) -> int:
         from benchmarks.sregym.fastloop.toy_scenarios import ACCEPTED_LOG_ARGS, parse_accepted_log
