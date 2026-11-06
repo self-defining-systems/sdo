@@ -424,3 +424,15 @@ def test_dry_run_prints_the_plan_without_a_lane(tmp_path: Path, capsys: pytest.C
     assert all(f["inject"] and "workload" in f for f in report["faults"])
     with pytest.raises(ValueError, match="known kinds"):
         gf.parse_kinds(["nope"])
+
+
+def test_fastloop_cli_registers_gitlab_faults(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from benchmarks.sregym.fastloop.cli import build_parser
+
+    path = tmp_path / "inventory.json"
+    path.write_text(json.dumps(inventory()))
+    args = build_parser().parse_args(
+        ["gitlab", "faults", "--run-dir", str(tmp_path), "--count", "2", "--dry-run", "--inventory", str(path)]
+    )
+    assert args.handler(args) == 0
+    assert len(json.loads(capsys.readouterr().out)["faults"]) == 2
