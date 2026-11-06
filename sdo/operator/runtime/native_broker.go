@@ -110,8 +110,9 @@ type NativeIncidentBroker struct {
 	}
 
 	// Repairs accepts the responder's source repair: a change to deployment
-	// inputs is deployed and verified by the trusted Deployer first. Nil
-	// accepts it with a plain broker publication, which deploys nothing.
+	// inputs is deployed and verified by the trusted Deployer first. A
+	// configuration that cannot deploy declares PlainPublication; nil refuses
+	// a deployment-input repair (ErrRepairerRequired).
 	Repairs SourceRepairer
 }
 
@@ -526,15 +527,18 @@ func (n NativeIncidentBroker) processClosure(ctx context.Context, closure Incide
 }
 
 // acceptSourceRepair accepts the responder's source repair through Repairs
-// when configured (shell detectors and frozen memory configure none), else by
-// a plain publication. A plain publication of a change to deployment inputs
-// deploys nothing, so it is reported as Undeployed.
+// (shell detectors and frozen memory declare a PlainPublication). Without
+// any repairer only a repair that changes no deployment input is published;
+// one that does is ErrRepairerRequired, never an undeployed publication.
 func (n NativeIncidentBroker) acceptSourceRepair(ctx context.Context, id string, paths []string) (SourceRepair, error) {
 	if n.Repairs != nil {
 		return n.Repairs.Repair(ctx, id)
 	}
+	if slices.ContainsFunc(paths, layout.IsEffectiveDeploymentInput) {
+		return SourceRepair{}, fmt.Errorf("incident %s: %w", id, ErrRepairerRequired)
+	}
 	accepted, err := n.Repository.Publish(ctx, id, broker.Responder, broker.ProposalPhase)
-	return SourceRepair{Commit: accepted.Commit, Undeployed: slices.ContainsFunc(paths, layout.IsEffectiveDeploymentInput)}, err
+	return SourceRepair{Commit: accepted.Commit}, err
 }
 
 // reflectLocked runs reflection and records its typed SDK gaps and rejections

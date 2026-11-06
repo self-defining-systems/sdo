@@ -50,8 +50,10 @@ func TestLaunchSourceRepairDeployerGuards(t *testing.T) {
 	shell := repairLaunch()
 	shell.CodePath = &contracts.CodePathConfig{Name: "shell"}
 	for name, config := range map[string]*contracts.ControllerConfig{"frozen": frozen, "shell": shell} {
-		if repairs, err := repairsFromLaunch(config, fake.NewSimpleClientset(), &broker.Broker{}, nil); err != nil || repairs != nil {
-			t.Fatalf("%s: repairs = %v, %v, want none", name, repairs, err)
+		repairs, err := repairsFromLaunch(config, fake.NewSimpleClientset(), &broker.Broker{}, nil)
+		plain, ok := repairs.(PlainPublication)
+		if err != nil || !ok || plain.Reason == "" {
+			t.Fatalf("%s: repairs = %v, %v, want a declared plain publication", name, repairs, err)
 		}
 	}
 	if _, err := repairsFromLaunch(repairLaunch(), fake.NewSimpleClientset(), &broker.Broker{}, nil); err == nil || !strings.Contains(err.Error(), "not wired") {

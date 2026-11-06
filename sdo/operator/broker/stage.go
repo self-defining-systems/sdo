@@ -243,6 +243,7 @@ func (b *Broker) acceptStaged(ctx context.Context, candidate Candidate, evidence
 // deploying again. It finalizes the pending record when it is the deployment
 // of the accepted commit's tree and reports whether the accepted commit is a
 // recorded deployment; it never writes evidence the deployer did not record.
+// The stage checkout is removed only once the deployment is recorded.
 func (b *Broker) FinalizeAcceptedDeployment(ctx context.Context, incidentID string) (bool, error) {
 	if err := checkIncidentID(incidentID); err != nil {
 		return false, err
@@ -255,6 +256,11 @@ func (b *Broker) FinalizeAcceptedDeployment(ctx context.Context, incidentID stri
 		}
 		if _, deployed, err = b.sourceEvidenceLocked(ctx, incidentID, prior); err != nil {
 			return err
+		}
+		if !deployed {
+			// No deployment evidence: the stage is what a later deployment
+			// or finalization of this accepted repair would need.
+			return nil
 		}
 		return os.RemoveAll(b.candidateRoot(incidentID, ProposalPhase))
 	})

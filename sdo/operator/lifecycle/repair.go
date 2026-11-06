@@ -164,10 +164,17 @@ func (r RepairDeployer) deploy(ctx context.Context, cfg RepairConfig, incidentID
 	if candidate.Accepted {
 		// Accepted is not deployed evidence: finish what a crash between the
 		// head move and the evidence finalization left pending.
-		if _, err := r.Broker.FinalizeAcceptedDeployment(ctx, incidentID); err != nil {
+		deployed, err := r.Broker.FinalizeAcceptedDeployment(ctx, incidentID)
+		if err != nil {
 			return RepairResult{}, fmt.Errorf("finalize accepted source repair evidence: %w", err)
 		}
-		return RepairResult{Outcome: RepairDeployed, Receipt: broker.Receipt{IncidentID: incidentID, Phase: broker.ProposalPhase, Commit: candidate.Commit}}, nil
+		receipt := broker.Receipt{IncidentID: incidentID, Phase: broker.ProposalPhase, Commit: candidate.Commit}
+		if !deployed {
+			// Accepted by a plain publication: no deployment evidence exists
+			// for this commit, so it is reported as the first delivery did.
+			return RepairResult{Outcome: RepairUndeployed, Receipt: receipt, Detail: "accepted repair has no recorded deployment"}, nil
+		}
+		return RepairResult{Outcome: RepairDeployed, Receipt: receipt}, nil
 	}
 	accepted := false
 	defer func() {
