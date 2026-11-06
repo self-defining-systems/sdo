@@ -43,11 +43,11 @@ from benchmarks.sregym.fastloop.baseline_recovery import (
 )
 from benchmarks.sregym.fastloop.environment import DEFAULT_PROBLEM, FastloopEnvironment, Images
 from benchmarks.sregym.fastloop.fault_driver import SregymFaultDriver
+from benchmarks.sregym.fastloop.gitlab_faults import add_faults_parser
 from benchmarks.sregym.fastloop.host_limits import DEFAULT_MEMORY_LIMIT, DEFAULT_PIDS_LIMIT, HostLimits, NodeLimits
 from benchmarks.sregym.fastloop.loop import LoopConfig, run_incidents, write_loop_manifest
 from benchmarks.sregym.fastloop.records import AgentSummary, IncidentRecord, load_records, summarize
 from benchmarks.sregym.fastloop.stream import load_stream_config
-from benchmarks.sregym.fastloop.gitlab_faults import add_faults_parser
 from benchmarks.sregym.fastloop.toy_upstream import add_toy_parser
 from benchmarks.sregym.fastloop.wipe import (
     AttemptMarker,
