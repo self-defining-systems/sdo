@@ -26,9 +26,11 @@ covers breaks.
    or the clock, and draw randomness only from the rng the engine passes.
 2. Workloads: files `.sdo/diagnostics/traffic/workloads/<name>.yaml` with apiVersion sdo.dev/v1alpha1, kind
    TrafficWorkload, name equal to the file name, purpose, ratePerSecond and scenarios [{id, weight}]. Write the
-   three health-probe workloads `probe-call`, `probe-write` and `probe-read-later` (one per probe kind, each
-   scenario in exactly one), and `verify` (purpose verify-burst, ratePerSecond about 12, duration 3s, the call and
-   read-later scenarios). Optional: timeout (2s) and slo {window, minSamples, maxAge, maxErrorRate,
+   health-probe workloads `probe-call`, `probe-write` and `probe-read-later` (one per probe kind, each
+   scenario in exactly one) only for a kind that has at least one scenario: a workload file with no scenario is
+   invalid, so omit that kind's file (and its probe-kind rows in the map) when the application has none, for
+   example no `probe-read-later` without a data-holding component on a write path. Also write `verify` (purpose verify-burst, ratePerSecond about 12, duration 3s, the call and
+   read-later scenarios that exist). Optional: timeout (2s) and slo {window, minSamples, maxAge, maxErrorRate,
    maxTimeoutRate, latencyPercentile, maxLatency}; set maxLatency per scenario to three times its slowest healthy
    iteration under load, at least 1s (memory check notes each one left on the default as
    `traffic.default-latency`). Journey workloads run only on demand and never feed detection.

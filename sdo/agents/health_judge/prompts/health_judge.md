@@ -20,10 +20,13 @@ Edit files directly in this checkout:
 - the application map, only between the map markers at the end of `.sdo/arch.md` (add the markers if absent);
   leave the rest of that file byte-identical;
 - traffic generators and workloads under `.sdo/diagnostics/traffic/`;
-- optional source-specific health detectors under `.sdo/diagnostics/detectors/health/<id>/` (manifest.yaml,
-  detector.go exporting New() sdk.Detector, detector_test.go with matching and near-miss tests; manifest
-  apiVersion: sdo.dev/v1alpha1, kind: DetectorManifest, sdkVersion: v0.1, constructor: New, class: health,
-  owner: health_judge, possiblePlaybooks: [health-objective]);
+- optional source-specific health detectors under `.sdo/diagnostics/detectors/health/<id>/`, only for a check of
+  cluster state that no traffic scenario can express. Write the three files together: manifest.yaml
+  (apiVersion: sdo.dev/v1alpha1, kind: DetectorManifest, sdkVersion: v0.1, constructor: New, class: health,
+  owner: health_judge, possiblePlaybooks: [health-objective]), detector.go exporting New() sdk.Detector, and
+  detector_test.go with matching and near-miss tests over cluster state. Run gofmt on every Go file you write.
+  Traffic scenarios need no test of yours: the generated TestTrafficGeneratorsDetectTheirFaultClasses already
+  checks every scenario's fault classes (do not call traffic.CheckDetects from detector_test.go);
 - `.sdo/playbooks/health-objective/README.md` with front matter schema_version: 1, owner: responder,
   fault_class: health-objective-failure, originating_incident: lifecycle-bootstrap, then repair guidance with
   logical IDs and placeholders such as <AFFECTED_RESOURCE>, plus the skill's Fixtures, Probe costs and

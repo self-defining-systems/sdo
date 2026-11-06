@@ -127,7 +127,11 @@ func lifecycleChecks(ctx context.Context, r Request, paths []string, structurall
 	// A provided deployment publishes the human's source as it already stands:
 	// the verified-source publish carries the evidence and no source diff.
 	if len(paths) == 0 && r.Phase != AdvancePhase && !healthRevalidation(r, paths) && !providedSource(r) && !(r.Phase == ReflectionPhase && r.Decision != nil && (r.Decision.GetLearningDecision() == "no_change" || r.Decision.GetLearningDecision() == "sdk_gap")) {
-		add(RuleEmptyDiff, "proposal has no changed files", "return no_change instead of publishing")
+		hint := "return no_change instead of publishing"
+		if r.Phase == InitialPhase && r.Actor == HealthJudge {
+			hint = "the initial health-judge proposal cannot be empty: write the application map, traffic generators and workloads, then run `sdo-operator memory check`, which installs Go's generic detectors into the diff"
+		}
+		add(RuleEmptyDiff, "proposal has no changed files", hint)
 	}
 	// Upkeep initializes schema metadata; the independent health judge may
 	// refine health diagnostics after their first accepted registration.

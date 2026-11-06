@@ -223,8 +223,10 @@ func (s *run) ownershipPolicy(ctx context.Context) error {
 		return err
 	}
 	manifests := changesManifests(s.changed)
-	if phase == InitialPhase && actor == HealthJudge && !changesDetectors(s.changed) && !healthRevalidation(s.req, s.changed) {
-		s.add(Ownership, Diagnostic{Rule: RuleInitialNeedsDetectors, Path: layout.DetectorsDir, Message: "the initial health-judge proposal must install detector manifests"})
+	if phase == InitialPhase && actor == HealthJudge && len(s.changed) > 0 && !changesDetectors(s.changed) && !healthRevalidation(s.req, s.changed) {
+		// An empty diff is reported once, by diff.empty; this rule covers a
+		// diff that changes files but installs no detector.
+		s.add(Ownership, Diagnostic{Rule: RuleInitialNeedsDetectors, Path: layout.DetectorsDir, Message: "the initial health-judge proposal must install detector manifests", Hint: "run `sdo-operator memory check` in the checkout: it installs Go's generic detectors (services, workloads, traffic-<workload>), which must stay in the diff; do not delete them"})
 	}
 	needsBase := (actor == Upkeep && changesDetectors(s.changed)) || (actor == Responder || actor == HealthJudge || actor == Human && phase == ImportPhase) && manifests
 	if !needsBase {
