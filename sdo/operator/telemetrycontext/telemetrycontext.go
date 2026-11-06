@@ -5,6 +5,7 @@ package telemetrycontext
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -27,6 +28,16 @@ func Build(registry *telemetry.Registry, environment telemetry.Environment, desi
 	for _, c := range t.Environment.Capabilities {
 		out.Capabilities = append(out.Capabilities, string(c))
 	}
+	for _, r := range t.Environment.Recipes {
+		recipe := &contracts.TelemetryRecipe{Name: r.Name}
+		for _, c := range r.Declares {
+			recipe.Declares = append(recipe.Declares, string(c))
+		}
+		out.Recipes = append(out.Recipes, recipe)
+	}
+	out.GrantedNamespaces = grantedNamespaces(t.Environment)
+	out.GrantedHosts = slices.Clone(t.Environment.ExternalHosts)
+	out.GrantedCredentials = slices.Clone(t.Environment.Credentials)
 	bindings := t.Environment.ProvidedBindings()
 	publish := map[string]*contracts.TelemetryPublish{}
 	if base := t.Environment.MetricsPublishURL; base != "" {
@@ -99,6 +110,18 @@ func publishBlock(p *layout.TelemetryPublish) *contracts.TelemetryPublish {
 	}
 	if !out.ScrapeAnnotations && out.OtlpMetricsUrl == "" {
 		return nil
+	}
+	return out
+}
+
+// grantedNamespaces is the control and application namespaces plus the extras,
+// in that order and without repeats: the namespaces a designer endpoint may name.
+func grantedNamespaces(e telemetry.Environment) []string {
+	var out []string
+	for _, ns := range append([]string{e.ApplicationNamespace, e.ControlNamespace}, e.ExtraNamespaces...) {
+		if ns != "" && !slices.Contains(out, ns) {
+			out = append(out, ns)
+		}
 	}
 	return out
 }

@@ -149,6 +149,7 @@ DisabledSetupDetector = messages_pb2.DisabledSetupDetector
 NamespaceOnboarding = messages_pb2.NamespaceOnboarding
 TelemetryContext = messages_pb2.TelemetryContext
 TelemetryPublish = messages_pb2.TelemetryPublish
+TelemetryRecipe = messages_pb2.TelemetryRecipe
 TelemetrySource = messages_pb2.TelemetrySource
 IncidentRequest = messages_pb2.IncidentRequest
 RootCauseEvidence = messages_pb2.RootCauseEvidence
@@ -304,6 +305,7 @@ __all__ = [
     "IncidentClosure",
     "TelemetryContext",
     "TelemetryPublish",
+    "TelemetryRecipe",
     "TelemetrySource",
     "IncidentRequest",
     "NamespaceOnboarding",

@@ -58,7 +58,7 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 			return nil, nil, fmt.Errorf("native broker Kubernetes client: %w", err)
 		}
 	}
-	if _, err := AgentWorkerEnvironment(config); err != nil {
+	if _, err := AgentWorkerEnvironment(config, registry); err != nil {
 		return nil, nil, err
 	}
 	controlNamespace := config.GetControlNamespace()
@@ -111,7 +111,7 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 	}, client, nil
 }
 
-func attachNativeReflector(native *NativeIncidentBroker, config *contracts.ControllerConfig, client kubernetes.Interface, registry *worker_registry.Registry, timeout time.Duration) error {
+func attachNativeReflector(native *NativeIncidentBroker, config *contracts.ControllerConfig, client kubernetes.Interface, registry *worker_registry.Registry, telemetryRegistry *telemetry.Registry, timeout time.Duration) error {
 	if native == nil {
 		return nil
 	}
@@ -133,7 +133,7 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 	if namespace == "" {
 		namespace = config.GetNamespace()
 	}
-	agentEnvironment, err := AgentWorkerEnvironment(config)
+	agentEnvironment, err := AgentWorkerEnvironment(config, telemetryRegistry)
 	if err != nil {
 		return err
 	}
@@ -206,10 +206,12 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 }
 
 // AgentWorkerEnvironment is the provider and model the controller was configured
-// with, as the environment every agent worker Job reads. Workers default to Codex
+// with, plus the broker's telemetry policy (the controller's environment under
+// the same derivation as its brokers), as the environment every agent worker
+// Job reads. Workers default to Codex
 // when SDO_AGENT_PROVIDER is absent, so a configured provider must always travel
 // with the Job. An unconfigured provider adds nothing; an unknown one is an error.
-func AgentWorkerEnvironment(config *contracts.ControllerConfig) (map[string]string, error) {
+func AgentWorkerEnvironment(config *contracts.ControllerConfig, telemetryRegistry *telemetry.Registry) (map[string]string, error) {
 	environment, err := worker_registry.AgentEnvironment(config.GetResponderBackend(), config.GetResponderModel(), config.GetAgentEffort())
 	if err != nil {
 		return nil, err
@@ -219,6 +221,13 @@ func AgentWorkerEnvironment(config *contracts.ControllerConfig) (map[string]stri
 		return nil, err
 	}
 	environment[settings.ReplayEnvironment] = replay
+	policy, err := broker.ControllerPolicyEnvironment(config, telemetryRegistry)
+	if err != nil {
+		return nil, fmt.Errorf("agent worker telemetry policy: %w", err)
+	}
+	for name, value := range policy {
+		environment[name] = value
+	}
 	selected, err := codePathFromContract(config.GetCodePath())
 	if err != nil {
 		return nil, err
@@ -236,11 +245,11 @@ func AgentWorkerEnvironment(config *contracts.ControllerConfig) (map[string]stri
 
 // withAgentEnvironment makes the launch config authoritative for provider and
 // model over any hand-written responder environment entries.
-func withAgentEnvironment(environment map[string]string, config *contracts.ControllerConfig) (map[string]string, error) {
+func withAgentEnvironment(environment map[string]string, config *contracts.ControllerConfig, telemetryRegistry *telemetry.Registry) (map[string]string, error) {
 	if config == nil {
 		return environment, nil
 	}
-	agent, err := AgentWorkerEnvironment(config)
+	agent, err := AgentWorkerEnvironment(config, telemetryRegistry)
 	if err != nil {
 		return nil, err
 	}

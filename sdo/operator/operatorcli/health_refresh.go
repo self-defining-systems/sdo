@@ -98,6 +98,14 @@ func refreshControllerHealthOnce(ctx context.Context, scope string, config *cont
 	}
 	environment[settings.ReplayEnvironment] = replay
 	environment = codePathWorkerEnvironment(config.GetCodePath(), environment)
+	// The judge's self-check runs under the policy the broker validates with.
+	policy, err := broker.ControllerPolicyEnvironment(config, telemetryRegistry())
+	if err != nil {
+		return err
+	}
+	for name, value := range policy {
+		environment[name] = value
+	}
 	environment["CODEX_HOME"], environment["CLAUDE_CONFIG_DIR"] = "/tmp/codex", "/tmp/claude"
 	namespace := config.GetControlNamespace()
 	if namespace == "" {

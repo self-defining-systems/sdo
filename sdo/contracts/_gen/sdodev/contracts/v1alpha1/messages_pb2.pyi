@@ -355,14 +355,30 @@ class OperationalArtifactProposal(_message.Message):
     def __init__(self, detectors: _Optional[_Iterable[_Union[ProposedDetector, _Mapping]]] = ..., playbooks: _Optional[_Iterable[_Union[ProposedPlaybook, _Mapping]]] = ..., traffic_generators: _Optional[_Iterable[_Union[ProposedTrafficGenerator, _Mapping]]] = ..., traffic_workloads: _Optional[_Iterable[_Union[_traffic_pb2.TrafficWorkload, _Mapping]]] = ..., delete_detector_ids: _Optional[_Iterable[str]] = ..., delete_playbook_ids: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class TelemetryContext(_message.Message):
-    __slots__ = ("mode", "sources", "capabilities")
+    __slots__ = ("mode", "sources", "capabilities", "recipes", "granted_namespaces", "granted_hosts", "granted_credentials")
     MODE_FIELD_NUMBER: _ClassVar[int]
     SOURCES_FIELD_NUMBER: _ClassVar[int]
     CAPABILITIES_FIELD_NUMBER: _ClassVar[int]
+    RECIPES_FIELD_NUMBER: _ClassVar[int]
+    GRANTED_NAMESPACES_FIELD_NUMBER: _ClassVar[int]
+    GRANTED_HOSTS_FIELD_NUMBER: _ClassVar[int]
+    GRANTED_CREDENTIALS_FIELD_NUMBER: _ClassVar[int]
     mode: str
     sources: _containers.RepeatedCompositeFieldContainer[TelemetrySource]
     capabilities: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, mode: _Optional[str] = ..., sources: _Optional[_Iterable[_Union[TelemetrySource, _Mapping]]] = ..., capabilities: _Optional[_Iterable[str]] = ...) -> None: ...
+    recipes: _containers.RepeatedCompositeFieldContainer[TelemetryRecipe]
+    granted_namespaces: _containers.RepeatedScalarFieldContainer[str]
+    granted_hosts: _containers.RepeatedScalarFieldContainer[str]
+    granted_credentials: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, mode: _Optional[str] = ..., sources: _Optional[_Iterable[_Union[TelemetrySource, _Mapping]]] = ..., capabilities: _Optional[_Iterable[str]] = ..., recipes: _Optional[_Iterable[_Union[TelemetryRecipe, _Mapping]]] = ..., granted_namespaces: _Optional[_Iterable[str]] = ..., granted_hosts: _Optional[_Iterable[str]] = ..., granted_credentials: _Optional[_Iterable[str]] = ...) -> None: ...
+
+class TelemetryRecipe(_message.Message):
+    __slots__ = ("name", "declares")
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    DECLARES_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    declares: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, name: _Optional[str] = ..., declares: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class TelemetrySource(_message.Message):
     __slots__ = ("id", "kinds", "adapter", "dialect", "default", "capabilities", "origin", "endpoint", "publish")
