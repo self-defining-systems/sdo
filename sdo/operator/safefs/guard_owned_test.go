@@ -48,6 +48,7 @@ var operatorOwned = map[string]string{
 	"install/internal/installio/seed.go":             reasonScratch,
 	"internal/purity/determinism/cmd/main.go":        reasonTool,
 	"internal/purity/testsplit/cmd/main.go":          reasonTool,
+	"internal/sandboxio/sandbox_linux.go":            "writes the child process's own /proc/self/oom_score_adj, not a file tree",
 	"internal/testutil/fakego.go":                    reasonTool,
 	"memory/api_history.go":                          "operator-owned recovery state, not a checkout",
 	"memory/commit_catalog.go":                       "scratch directory created with MkdirTemp",
