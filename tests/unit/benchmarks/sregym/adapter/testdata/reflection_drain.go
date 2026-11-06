@@ -14,6 +14,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/runtime"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/telemetry"
 )
 
 func must(err error) {
@@ -45,7 +46,7 @@ func main() {
 			panic(fmt.Sprintf("%s: %v", output, err))
 		}
 	}
-	repository, err := broker.New(accepted, filepath.Join(root, "proposals"), nil)
+	repository, err := broker.New(accepted, filepath.Join(root, "proposals"), nil, broker.ObservationPolicy{Telemetry: broker.Telemetry{Registry: telemetry.NewRegistry()}})
 	must(err)
 	ledgerRoot := filepath.Join(root, "ledger")
 	native := runtime.NativeIncidentBroker{

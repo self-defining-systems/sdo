@@ -491,3 +491,22 @@ def test_the_controller_e2e_fetches_every_workspace_module_before_it_goes_offlin
     assert downloaded == {m for m in modules if m.startswith("sdo/operator")}
     assert all(line.endswith("|mod download all") for line in calls.read_text().splitlines()), "tidy needs test deps"
     assert "scripts/prefetch_go_modules.sh" in (ROOT / "scripts/test_controller_e2e.sh").read_text()
+
+
+def test_files_pull_requests_ignore_still_collect() -> None:
+    """Nightly is the only run of an ignored file, so rot must at least surface as a collection error here.
+
+    A nightly red is noticed hours after the change that caused it; a file that cannot import fails the PR.
+    """
+    commands = "\n".join(step.get("run", "") for step in workflow()["jobs"]["python"]["steps"])
+    ignored = re.findall(r"--ignore=(tests/\S+\.py)", commands)
+    assert ignored, "the PR-ignored test list moved"
+    result = subprocess.run(
+        ["uv", "run", "--extra", "test", "pytest", "--collect-only", "-q", "-p", "no:tach", "--no-cov", *ignored],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stdout[-3000:] + result.stderr[-2000:]

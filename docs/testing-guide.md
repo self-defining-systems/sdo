@@ -1039,6 +1039,12 @@ main runs always run the full suite, so `main` stays protected. `scripts/ci_sele
 Go job (every package under `-race`, without `-short`, with full simulation seeds, then the bounded fuzz campaigns),
 the controller end-to-end scenarios, the slow Python suites that PR CI ignores, and the image builds.
 
+Nightly is the only run of a PR-ignored file, so rot there is found hours late. Two PR-tier guards keep it cheap to
+fix: every PR-ignored Python file must still collect (`test_files_pull_requests_ignore_still_collect`), and
+`scripts/check_go_mains.sh` vets every `package main` helper under `benchmarks/` and `tests/unit/` (the `go run`
+fixtures Python tests drive) against the current operator API. Go source embedded in a Python string is not vetted;
+keep such helpers as `.go` files.
+
 ## Writing a deterministic Go simulation test
 
 Import `sdo.dev/operator/runtime/sim` from the runtime module or its subpackages.

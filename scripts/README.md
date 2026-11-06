@@ -16,7 +16,7 @@
 Extend the owning gate when adding a check. Keep policy fixtures alongside its
 implementation; wire mandatory static checks through `check_errors.sh`.
 
-- `check_go_mains.sh`: test-free production package builds plus benchmark Go vet; catches declarations accidentally supplied only by tests before integration builds.
+- `check_go_mains.sh`: test-free production package builds plus Go vet of `package main` helpers under `benchmarks/` and `tests/unit/`; catches declarations accidentally supplied only by tests before integration builds.
 
 - `split_go_integration.sh`: report subprocess-dependent Go test declarations,
   then split explicitly reviewed declarations into an integration-tagged file.
