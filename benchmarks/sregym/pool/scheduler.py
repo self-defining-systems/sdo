@@ -556,3 +556,4 @@ def release_hold(registry: LaneRegistry, lane_id: str, note: str) -> Lane:
     if not note:
         raise RegistryError("pool: releasing a hold requires a note naming the fix")
     return registry.transition(lane_id, expect={"held"}, state="ready", work="", reason="")
+# ci-c4 measurement 1
