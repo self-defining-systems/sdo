@@ -149,5 +149,5 @@ are `incidents.jsonl`/CSV `IncidentRecord`s; totals (resolution rate, MTTR, huma
 `--dry-run --inventory LISTING.json` prints the selected faults and their `kubectl` actions with no lane.
 
 ```bash
-uv run python -m benchmarks.sregym.fastloop.gitlab_faults faults --run-dir LANE --count 10 --seed 1 --dry-run
+uv run python -m benchmarks.sregym.fastloop gitlab faults --run-dir LANE --count 10 --seed 1 --dry-run
 ```
