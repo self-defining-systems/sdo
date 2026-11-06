@@ -118,3 +118,30 @@ func TestPolicyValidate(t *testing.T) {
 		t.Fatalf("zero policy mode = %q, want open", zero.EffectiveMode())
 	}
 }
+
+func TestCheckBindingNamesWhichGrantFailed(t *testing.T) {
+	policy := testPolicy()
+	ok := telemetry.Binding{Endpoint: telemetry.Endpoint{URL: "http://prom.shop.svc:9090", Credential: "loki-token"}}
+	if err := policy.CheckBinding(ok).Err(); err != nil {
+		t.Fatal(err)
+	}
+	badEndpoint := policy.CheckBinding(telemetry.Binding{Endpoint: telemetry.Endpoint{URL: "http://prom.other.svc"}})
+	if badEndpoint.Endpoint == nil || badEndpoint.Credential != nil || !strings.HasPrefix(badEndpoint.Err().Error(), "endpoint:") {
+		t.Fatalf("endpoint check = %+v", badEndpoint)
+	}
+	badCredential := policy.CheckBinding(telemetry.Binding{Endpoint: telemetry.Endpoint{URL: "http://prom.shop.svc", Credential: "nope"}})
+	if badCredential.Credential == nil || badCredential.Endpoint != nil || !strings.HasPrefix(badCredential.Err().Error(), "credential:") {
+		t.Fatalf("credential check = %+v", badCredential)
+	}
+}
+
+func TestEnvironmentPolicyCarriesItsGrants(t *testing.T) {
+	env := telemetry.Environment{Version: telemetry.EnvironmentVersion, ControlNamespace: "sdo-ctl", ApplicationNamespace: "shop", ExternalHosts: []string{"logs.example.com"}, Credentials: []string{"loki-token"}}
+	policy := env.Policy()
+	if err := policy.CheckBinding(telemetry.Binding{Endpoint: telemetry.Endpoint{URL: "https://logs.example.com", Credential: "loki-token"}}).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := (telemetry.Environment{Version: telemetry.EnvironmentVersion}).Policy().CheckBinding(telemetry.Binding{Endpoint: telemetry.Endpoint{URL: "http://prom.shop.svc"}}).Err(); err == nil {
+		t.Fatal("an environment that grants nothing must admit no endpoint")
+	}
+}

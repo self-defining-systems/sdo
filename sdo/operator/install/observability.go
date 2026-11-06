@@ -101,7 +101,9 @@ func TelemetryEnvironmentFile() string {
 // TelemetryEnvironment is the environment document the controller reads,
 // derived from the telemetry profile. An unset profile provides nothing.
 func (c Config) TelemetryEnvironment() telemetry.Environment {
-	return c.TelemetryProfile.Environment()
+	env := c.TelemetryProfile.Environment()
+	env.ControlNamespace, env.ApplicationNamespace = c.controlNamespace(), c.Namespace
+	return env
 }
 
 func telemetryEnvironmentConfigMap(c Config) (*corev1.ConfigMap, error) {

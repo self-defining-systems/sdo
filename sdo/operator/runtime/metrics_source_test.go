@@ -38,7 +38,7 @@ func fakeRegistry(t *testing.T, fake *telemetrytest.Fake, opened *telemetry.Endp
 // with a granted credential under credentialDir.
 func providedDefault(credentialDir string) telemetry.Environment {
 	return telemetry.Environment{
-		Version: telemetry.EnvironmentVersion, CredentialDir: credentialDir,
+		Version: telemetry.EnvironmentVersion, CredentialDir: credentialDir, ControlNamespace: "sdo-ctl",
 		Provided: []telemetry.Binding{{
 			ID: "default", Adapter: "prometheus", Kinds: []telemetry.Kind{telemetry.KindMetrics},
 			Endpoint: telemetry.Endpoint{URL: "http://prom.test:9090", Credential: "metrics-token"}, Default: true,
@@ -143,7 +143,7 @@ func TestTelemetrySourcesRejectWhatCannotBeBound(t *testing.T) {
 	var endpoint telemetry.Endpoint
 	var env telemetry.Env
 	registry := fakeRegistry(t, telemetrytest.NewFake(telemetry.KindMetrics, telemetry.Result{}), &endpoint, &env)
-	open := telemetry.Environment{Version: telemetry.EnvironmentVersion}
+	open := telemetry.Environment{Version: telemetry.EnvironmentVersion, ControlNamespace: "sdo-ctl"}
 	if api, err := (TelemetrySources{Registry: registry, Environment: open}).open(nil); api != nil || err != nil {
 		t.Fatalf("nothing bound = %v, %v; want no source and no error", api, err)
 	}
@@ -208,7 +208,7 @@ func TestEachRevisionsTelemetrySourcesRebuildTheObserver(t *testing.T) {
 	var endpoint telemetry.Endpoint
 	var env telemetry.Env
 	registry := fakeRegistry(t, telemetrytest.NewFake(telemetry.KindMetrics, seriesFor("x")), &endpoint, &env)
-	observations := detectorObservations{Telemetry: TelemetrySources{Registry: registry, Environment: telemetry.Environment{Version: telemetry.EnvironmentVersion}}}
+	observations := detectorObservations{Telemetry: TelemetrySources{Registry: registry, Environment: telemetry.Environment{Version: telemetry.EnvironmentVersion, ControlNamespace: "sdo-ctl"}}}
 	detector := sourcesDetector{queries: []metrics.Query{{ID: "q", Source: "prom-extra", Expr: "up"}}}
 	_, before, err := observations.compose(staticProvider{}, []sdk.Detector{detector}, nil)
 	if err != nil || before == nil || before.api != nil {
@@ -224,5 +224,46 @@ func TestEachRevisionsTelemetrySourcesRebuildTheObserver(t *testing.T) {
 	results := fetchAll(t, after.api, detector)
 	if results["q"].Error != "" {
 		t.Fatalf("the accepted revision's binding must serve its detector: %+v", results["q"])
+	}
+}
+
+// A binding that reached the accepted branch without the broker's publication
+// check (an import path, or a policy narrowed since) must not be honored: the
+// controller applies the environment's policy again when it opens bindings.
+func TestOpenRefusesDesignerBindingsTheEnvironmentPolicyDenies(t *testing.T) {
+	var endpoint telemetry.Endpoint
+	var env telemetry.Env
+	registry := fakeRegistry(t, telemetrytest.NewFake(telemetry.KindMetrics, seriesFor("x")), &endpoint, &env)
+	granted := func() telemetry.Environment {
+		environment := providedDefault(t.TempDir())
+		environment.ControlNamespace = "sdo-ctl"
+		environment.ApplicationNamespace = "shop"
+		return environment
+	}
+	if _, err := (TelemetrySources{Registry: registry, Environment: granted()}).open([]byte(designerSourcesYAML)); err != nil {
+		t.Fatalf("a binding inside the granted namespaces must open: %v", err)
+	}
+	for name, test := range map[string]struct {
+		environment telemetry.Environment
+		yaml        string
+		want        string
+	}{
+		"namespace not granted":      {granted(), strings.Replace(designerSourcesYAML, "sdo-ctl", "kube-system", 1), "namespace"},
+		"external host":              {granted(), strings.Replace(designerSourcesYAML, "prom-extra.sdo-ctl.svc", "attacker.example.com", 1), "endpoint"},
+		"metadata address":           {granted(), strings.Replace(designerSourcesYAML, "prom-extra.sdo-ctl.svc", "169.254.169.254", 1), "IP literal"},
+		"credential not granted":     {granted(), designerSourcesYAML + "    credential: metrics-token\n", "credential"},
+		"environment grants nothing": {func() telemetry.Environment { e := providedDefault(t.TempDir()); e.ControlNamespace = ""; return e }(), designerSourcesYAML, "namespace"},
+	} {
+		_, err := TelemetrySources{Registry: registry, Environment: test.environment}.open([]byte(test.yaml))
+		if err == nil || !strings.Contains(err.Error(), "prom-extra") || !strings.Contains(err.Error(), test.want) {
+			t.Errorf("%s: err = %v, want it to name the source and contain %q", name, err, test.want)
+		}
+	}
+	allowed := granted()
+	allowed.ExternalHosts = []string{"attacker.example.com"}
+	allowed.Credentials = []string{"metrics-token"}
+	yaml := strings.Replace(designerSourcesYAML, "prom-extra.sdo-ctl.svc", "attacker.example.com", 1) + "    credential: metrics-token\n"
+	if _, err := (TelemetrySources{Registry: registry, Environment: allowed}).open([]byte(yaml)); err != nil {
+		t.Fatalf("an environment-granted host and credential must open: %v", err)
 	}
 }

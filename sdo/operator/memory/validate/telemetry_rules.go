@@ -144,7 +144,8 @@ func (s *run) checkSources(path string, sources []layout.TelemetrySource, backen
 				s.telemetryDiag(RuleTelemetrySchema, path, fmt.Sprintf("source %q ready min_results %d is outside 0 to %d", src.ID, src.Ready.MinResults, telemetry.MaxSeries), "use 1 for a source that must answer at least one series")
 			}
 		}
-		if err := policy.CheckEndpoint(src.Endpoint); err != nil {
+		access := policy.CheckBinding(telemetry.Binding{Endpoint: telemetry.Endpoint{URL: src.Endpoint, Credential: src.Credential}})
+		if err := access.Endpoint; err != nil {
 			s.telemetryDiag(RuleTelemetryEndpoint, path, fmt.Sprintf("source %q: %v", src.ID, err), "bind a service in the control or application namespace, or a host the environment allowlisted")
 		}
 		if src.Publish != nil && src.Publish.OTLP != nil && src.Publish.OTLP.Metrics != "" {
@@ -152,7 +153,7 @@ func (s *run) checkSources(path string, sources []layout.TelemetrySource, backen
 				s.telemetryDiag(RuleTelemetryEndpoint, path, fmt.Sprintf("source %q publish otlp metrics URL: %v", src.ID, err), "applications push only to services the environment granted")
 			}
 		}
-		if err := policy.CheckCredential(src.Credential); err != nil {
+		if err := access.Credential; err != nil {
 			s.telemetryDiag(RuleTelemetryCredential, path, fmt.Sprintf("source %q: %v", src.ID, err), "name a granted credential or leave `credential` empty; values are never written to memory")
 		}
 		if src.Backend != "" && !backendIDs[src.Backend] {
