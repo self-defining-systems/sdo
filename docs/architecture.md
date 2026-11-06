@@ -277,6 +277,11 @@ activates after dispatch (`attachLearnedActivation`, at most eight passes, each 
 The finding joins the open incident, a pass redoes attempts that were only skipped and never repeats one
 that wrote, and the one `deterministic` report in `prior_stages` is updated in place. The responder reads
 the new attempts once, as `prior_stages` in its next tool reply.
+The stage reads the accepted application map. A plan that restarts, deletes, rolls back, scales down,
+reconciles, patches, applies or sends a write request to a workload marked `holds_data`, or its Pods or
+ReplicaSets, is skipped with reason `holds_data` and the finding goes to the responder. At closure, a
+`holds_data` workload with a Pod created since the incident opened (or a restarted container) and only
+volumes that die with the Pod makes the outcome `unconfirmed` (`DATA_MAY_BE_LOST`).
 Evidence for source-reconcile learning: every resource a write names, at each write boundary and at
 detect, gets one `DiffAgainstSource` recording in the incident capture (`recordSourceComparisons`); an
 object with no acceptance record keeps its declared-field result and the typed reason
