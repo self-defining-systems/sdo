@@ -471,19 +471,55 @@ def test_prune_honours_a_family_prefix() -> None:
     assert deleted == [3]
 
 
-def test_cache_alarm_fires_at_eighty_percent_over_budget_families_and_unknown_keys() -> None:
+NOW = cache_budget.parse_time("2026-01-01T12:00:00Z")
+
+
+def shared_key(sha_digit: str) -> str:
+    return f"ci-shared-v1-Linux-X64-1.26.8-{HASH64}-{sha_digit * 40}"
+
+
+def test_cache_alarm_fires_at_eighty_percent_and_on_unknown_keys() -> None:
     limit = CACHE["repo_limit_mb"] * 1024 * 1024
     quiet = [cache_row("envtest-assets-1.34.0-Linux-X64", 1, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z", 40)]
-    assert cache_budget.usage_failures(CACHE, int(limit * 0.79), quiet) == []
-    assert any("80%" in f for f in cache_budget.usage_failures(CACHE, int(limit * 0.8), quiet))
-    bulky = [
-        cache_row(
-            f"ci-shared-v1-Linux-X64-1.26.8-{HASH64}-{SHA40}", 2, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z", 5000
-        )
-    ]
-    assert any("ci-shared-v1" in f for f in cache_budget.usage_failures(CACHE, 0, bulky))
+    assert cache_budget.usage_failures(CACHE, int(limit * 0.79), quiet, NOW) == []
+    at_limit = cache_budget.usage_failures(CACHE, int(limit * 0.8), quiet, NOW)
+    assert any("80%" in f and "envtest-assets-1.34.0-Linux-X64" in f and "Action:" in f for f in at_limit)
     stray = [cache_row("mystery-cache-v1", 3, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z")]
-    assert any("mystery-cache-v1" in f and "no family" in f for f in cache_budget.usage_failures(CACHE, 0, stray))
+    assert any("mystery-cache-v1" in f and "no family" in f for f in cache_budget.usage_failures(CACHE, 0, stray, NOW))
+
+
+def test_overlapping_runs_leaving_two_keys_for_a_few_minutes_do_not_alarm() -> None:
+    # The state seen at 08:39, 09:18 and 09:31 UTC: every family held two generations because pushes and PR
+    # runs landed minutes apart. The prune converges from it, so it must not fail the hourly health job.
+    rows = [
+        cache_row(shared_key("1"), 1, "2026-01-01T11:50:00Z", "2026-01-01T11:57:00Z", 650),
+        cache_row(shared_key("2"), 2, "2026-01-01T11:56:00Z", "2026-01-01T11:56:00Z", 650),
+    ]
+    total = sum(row["size_in_bytes"] for row in rows)
+    assert cache_budget.usage_failures(CACHE, total, rows, NOW) == []
+
+
+def test_a_superseded_key_that_survives_past_the_stale_window_alarms_with_key_id_and_action() -> None:
+    old = cache_row(shared_key("1"), 4242, "2026-01-01T07:00:00Z", "2026-01-01T07:30:00Z", 650)
+    new = cache_row(shared_key("2"), 4243, "2026-01-01T11:56:00Z", "2026-01-01T11:56:00Z", 650)
+    failures = cache_budget.usage_failures(CACHE, old["size_in_bytes"] * 2, [old, new], NOW)
+    assert len(failures) == 1
+    assert old["key"] in failures[0]
+    assert "id 4242" in failures[0]
+    assert new["key"] not in failures[0]
+    assert "prune ci-shared-v1-Linux-X64" in failures[0]
+    assert "Action:" in failures[0]
+    # The same key one minute inside the window is still the transient.
+    recent = {**old, "last_accessed_at": "2026-01-01T09:01:00Z"}
+    assert cache_budget.usage_failures(CACHE, old["size_in_bytes"] * 2, [recent, new], NOW) == []
+
+
+def test_a_newest_key_over_the_family_budget_alarms_and_names_it() -> None:
+    bulky = cache_row(shared_key("1"), 2, "2026-01-01T11:00:00Z", "2026-01-01T11:00:00Z", 5000)
+    failures = cache_budget.usage_failures(CACHE, 0, [bulky], NOW)
+    assert len(failures) == 1
+    assert bulky["key"] in failures[0]
+    assert "max_mb" in failures[0]
 
 
 def test_cache_family_budgets_sum_to_at_most_seventy_percent_of_the_repository_limit() -> None:

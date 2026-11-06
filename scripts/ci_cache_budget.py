@@ -6,7 +6,9 @@ family has an explicit budget in .github/ci_budgets.json (`cache`): how many key
 `prune` runs on main after a cache save and deletes the keys a newer key of the same family supersedes (idle
 for at least `min_idle_minutes`: a job that restored a key already has it; only a restore in flight needs it).
 `check` runs in the hourly health job: it fails when the repository is at or over `alarm_fraction` of the GitHub
-limit, when a family is over its budget, or when a key matches no family.
+limit, when a superseded key stays unpruned for `stale_after_minutes`, when a family's newest keys exceed
+its `max_mb`, or when a key matches no family. A second key beside the newest one for a few minutes is the
+normal state while overlapping runs converge and is not an alarm.
 
 usage: ci_cache_budget.py check | prune [family-prefix]
 """
@@ -60,23 +62,51 @@ def grouped(caches: Iterable[Json], families: Mapping[str, Json]) -> tuple[dict[
     return by_budget, unknown
 
 
-def usage_failures(budget: Json, total_bytes: int, caches: list[Json]) -> list[str]:
-    """Alarms: repository usage at the alarm fraction, a family over budget, a key in no family."""
+def usage_failures(budget: Json, total_bytes: int, caches: list[Json], now: datetime) -> list[str]:
+    """Alarms for conditions that persist or threaten the limit; never for the state a prune converges from.
+
+    Overlapping pushes and PR runs leave a superseded key beside the newest one for a few minutes, so a family
+    holding more than `keep` keys is not an alarm by itself. It alarms when a superseded key has sat unused for
+    `stale_after_minutes` (the prune that should have removed it did not), when the newest `keep` keys exceed the
+    family's `max_mb` (the budget no longer fits what the cache holds), when total usage is at the alarm fraction
+    of the limit (counting the transient keys), or when a key is in no family. Every message names the keys and
+    the action.
+    """
     failures: list[str] = []
     limit = budget["repo_limit_mb"] * MB
     if total_bytes >= budget["alarm_fraction"] * limit:
+        biggest_first = sorted(caches, key=lambda row: row["size_in_bytes"], reverse=True)
+        biggest = ", ".join(f"{row['key']} ({row['size_in_bytes'] / MB:.0f} MB)" for row in biggest_first[:5])
         failures.append(
             f"Actions cache usage {total_bytes / MB:.0f} MB is at or over {budget['alarm_fraction']:.0%} "
-            f"of the {budget['repo_limit_mb']} MB repository limit; GitHub evicts the least recently used at 100%"
+            f"of the {budget['repo_limit_mb']} MB repository limit; GitHub evicts the least recently used at 100%. "
+            f"Largest keys: {biggest}. Action: run `python3 scripts/ci_cache_budget.py prune` (needs actions: write) "
+            f"or delete superseded keys; if only the newest keys remain, lower a family's max_mb in "
+            f".github/ci_budgets.json or drop a cache"
         )
+    stale = timedelta(minutes=budget["stale_after_minutes"])
     by_budget, unknown = grouped(caches, budget["families"])
     for name, rows in by_budget.items():
         allowed = budget["families"][name]
-        size = sum(row["size_in_bytes"] for row in rows) / MB
-        if len(rows) > allowed["keep"] + budget["slack_keys"] or size > allowed["max_mb"]:
+        newest = sorted(rows, key=lambda row: row["created_at"], reverse=True)[: allowed["keep"]]
+        kept_mb = sum(row["size_in_bytes"] for row in newest) / MB
+        if kept_mb > allowed["max_mb"]:
+            keys = ", ".join(row["key"] for row in newest)
             failures.append(
-                f"cache family {name}: {len(rows)} keys, {size:.0f} MB; "
-                f"budget is {allowed['keep']} keys, {allowed['max_mb']} MB"
+                f"cache family {name}: the newest {allowed['keep']} key(s) hold {kept_mb:.0f} MB, over the "
+                f"{allowed['max_mb']} MB budget ({keys}). Action: shrink what the cache stores, or raise max_mb in "
+                f".github/ci_budgets.json with review"
+            )
+        lingering = superseded(rows, allowed["keep"], now, stale)
+        if lingering:
+            listed = ", ".join(
+                f"{row['key']} (id {row['id']}, last used {row['last_accessed_at']})" for row in lingering
+            )
+            failures.append(
+                f"cache family {name}: superseded key(s) unused for over {budget['stale_after_minutes']} min were "
+                f"not pruned: {listed}. Action: `python3 scripts/ci_cache_budget.py prune {name}` with actions: "
+                f"write, or `gh api -X DELETE repos/<repo>/actions/caches/<id>`; check that the main cache save "
+                f"for this family is followed by its prune step"
             )
     failures.extend(f"cache key {row['key']} is in no family; add a budget under cache.families" for row in unknown)
     return failures
@@ -169,7 +199,7 @@ def main() -> int:
     reported = gh_api("actions/cache/usage")["active_caches_size_in_bytes"]
     print(f"GitHub's usage counter reports {reported / MB:.0f} MB (it lags deletions)")
     report = render(budget, total, caches)
-    failures = usage_failures(budget, total, caches)
+    failures = usage_failures(budget, total, caches, datetime.now(UTC))
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with Path(summary).open("a") as handle:
