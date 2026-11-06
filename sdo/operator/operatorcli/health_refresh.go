@@ -15,6 +15,8 @@ import (
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/observation"
+	"sdo.dev/operator/operatorcli/catalog/renderers"
+	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/shellpath"
 	"sdo.dev/operator/toolchain"
 	"sdo.dev/operator/worker_registry"
@@ -52,7 +54,8 @@ func refreshControllerHealthOnce(ctx context.Context, config *contracts.Controll
 	if config.GetFrozenMemory() {
 		return nil
 	}
-	revision, err := memory.AcceptedHealthRevision(ctx, config.GetAppRoot())
+	shapeOf := healthShapeOf(config)
+	revision, err := memory.AcceptedHealthRevision(ctx, config.GetAppRoot(), shapeOf)
 	if err != nil {
 		return err
 	}
@@ -103,7 +106,7 @@ func refreshControllerHealthOnce(ctx context.Context, config *contracts.Controll
 	if _, err := coordinator.RefreshHealth(ctx, lifecycle.Config{Application: config.GetApplication(), Namespace: config.GetNamespace()}, revision); err != nil {
 		return err
 	}
-	accepted, err := memory.AcceptedHealthRevision(ctx, config.GetAppRoot())
+	accepted, err := memory.AcceptedHealthRevision(ctx, config.GetAppRoot(), shapeOf)
 	if err != nil {
 		return err
 	}
@@ -115,6 +118,13 @@ func refreshControllerHealthOnce(ctx context.Context, config *contracts.Controll
 		return fmt.Errorf("health unverified: source, objective or detectors advanced during refresh")
 	}
 	return nil
+}
+
+// healthShapeOf binds the judge refresh to the desired-state shape of the
+// launch's DeploymentSource. No source returns nil: the bytes fallback
+// (transitional, removed with S3-11c).
+func healthShapeOf(config *contracts.ControllerConfig) memory.ShapeOf {
+	return rendered.Source{Deployment: config.GetDeploymentSource(), Catalog: renderers.Catalog()}.ShapeOf(config.GetNamespace())
 }
 
 // A Go seed cannot satisfy shell onboarding merely by retaining Go provenance.

@@ -79,7 +79,20 @@ func HealthInputs(ctx context.Context, repository, revision string) (HealthRevis
 	return HealthRevision{Commit: revision, SourceInputs: fmt.Sprintf("%x", source.Sum(nil)), Objective: objective, DetectorRevision: fmt.Sprintf("%x", detectors.Sum(nil))}, nil
 }
 
-func AcceptedHealthRevision(ctx context.Context, repository string) (HealthRevision, error) {
+// ShapeOf returns the desired-state shape digest of repository at revision
+// (rendered.Source.ShapeOf). It is injected so memory does not import the
+// renderer stack.
+type ShapeOf func(ctx context.Context, repository, revision string) (string, error)
+
+// AcceptedHealthRevision reads the accepted HEAD's health inputs. NeedsRefresh
+// (a judge rerun) is set when the human objective changed since the last
+// health_judge commit or, with shapeOf, when the desired-state shape changed;
+// a source byte change that leaves the shape alone does not. SourceInputs
+// still reports the bytes: they bind detector adoption (the runtime guard),
+// not the judge. A nil shapeOf is the transitional bytes fallback for installs
+// without a DeploymentSource (removed with S3-11c). A shapeOf error is
+// returned: without a shape the need for a refresh is unknown.
+func AcceptedHealthRevision(ctx context.Context, repository string, shapeOf ShapeOf) (HealthRevision, error) {
 	current, err := HealthInputs(ctx, repository, "HEAD")
 	if err != nil {
 		return HealthRevision{}, err
@@ -97,9 +110,28 @@ func AcceptedHealthRevision(ctx context.Context, repository string) (HealthRevis
 		}
 		// Detector identity binds refresh work and binary adoption; memory-only
 		// detector/library publication does not itself schedule another judge.
-		current.NeedsRefresh = current.SourceInputs != judge.SourceInputs || current.Objective != judge.Objective
+		sourceChanged := current.SourceInputs != judge.SourceInputs
+		if shapeOf != nil && sourceChanged {
+			sourceChanged, err = shapeChanged(ctx, shapeOf, repository, current.Commit, judge.Commit)
+			if err != nil {
+				return HealthRevision{}, err
+			}
+		}
+		current.NeedsRefresh = sourceChanged || current.Objective != judge.Objective
 	}
 	return current, nil
+}
+
+func shapeChanged(ctx context.Context, shapeOf ShapeOf, repository, accepted, judged string) (bool, error) {
+	was, err := shapeOf(ctx, repository, judged)
+	if err != nil {
+		return false, fmt.Errorf("desired-state shape of judged revision %s: %w", judged, err)
+	}
+	now, err := shapeOf(ctx, repository, accepted)
+	if err != nil {
+		return false, fmt.Errorf("desired-state shape of accepted revision %s: %w", accepted, err)
+	}
+	return was != now, nil
 }
 
 // HealthRefreshExitCode is the builder/runtime handoff for a required rebuild.

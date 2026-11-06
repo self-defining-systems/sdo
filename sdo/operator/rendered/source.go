@@ -107,30 +107,7 @@ func (s Source) env(namespace string) render.Env {
 // loadManifests renders revision^{tree} and keeps the non-ephemeral objects,
 // with Secrets reduced to identity (defense in depth beyond SecretsOmit).
 func (s Source) loadManifests(ctx context.Context, revision, namespace string) ([]DesiredObject, error) {
-	if s.Deployment == nil {
-		return nil, &SourceError{Kind: SourceUnconfigured, Err: errors.New("no deployment source is configured")}
-	}
-	if s.Repository == "" || !gitRevision.MatchString(revision) || namespace == "" {
-		return nil, sourceErrorf(SourceInvalid, "accepted repository, full commit revision, and namespace are required")
-	}
-	store := ObjectStore{Dir: s.Repository, Git: s.Git}
-	tree, err := store.git(ctx, "rev-parse", "--verify", "--quiet", revision+"^{tree}")
-	if err != nil {
-		return nil, sourceErrorf(SourceUnavailable, "resolve the tree of %s: %w", revision, err)
-	}
-	effective, err := Effective(ctx, store, BaseTree(strings.TrimSpace(string(tree))))
-	if err != nil {
-		return nil, err
-	}
-	fsys, err := GitTreeFS(ctx, store, effective)
-	if err != nil {
-		return nil, err
-	}
-	deployment, err := legacyReadSource(fsys, s.Deployment)
-	if err != nil {
-		return nil, err
-	}
-	set, err := Desired(ctx, fsys, s.env(namespace), s.Catalog, deployment)
+	set, err := s.desired(ctx, revision, namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -141,6 +118,57 @@ func (s Source) loadManifests(ctx context.Context, revision, namespace string) (
 		}
 	}
 	return objects, nil
+}
+
+// ShapeDigest returns the desired-state shape digest of revision (see
+// DesiredSet.ShapeDigest). Health refresh compares it between the last
+// judged revision and the accepted one. It reads Git, never the cache.
+func (s Source) ShapeDigest(ctx context.Context, revision, namespace string) (string, error) {
+	set, err := s.desired(ctx, revision, namespace)
+	if err != nil {
+		return "", classifySource(err)
+	}
+	return set.ShapeDigest, nil
+}
+
+// ShapeOf adapts the source to the injected function memory.AcceptedHealthRevision
+// takes: the shape of repository at revision, in namespace. A nil source
+// returns nil so callers fall back to source bytes (transitional, S3-11c).
+func (s Source) ShapeOf(namespace string) func(ctx context.Context, repository, revision string) (string, error) {
+	if s.Deployment == nil {
+		return nil
+	}
+	return func(ctx context.Context, repository, revision string) (string, error) {
+		s.Repository, s.cache = repository, nil
+		return s.ShapeDigest(ctx, revision, namespace)
+	}
+}
+
+func (s Source) desired(ctx context.Context, revision, namespace string) (DesiredSet, error) {
+	if s.Deployment == nil {
+		return DesiredSet{}, &SourceError{Kind: SourceUnconfigured, Err: errors.New("no deployment source is configured")}
+	}
+	if s.Repository == "" || !gitRevision.MatchString(revision) || namespace == "" {
+		return DesiredSet{}, sourceErrorf(SourceInvalid, "accepted repository, full commit revision, and namespace are required")
+	}
+	store := ObjectStore{Dir: s.Repository, Git: s.Git}
+	tree, err := store.git(ctx, "rev-parse", "--verify", "--quiet", revision+"^{tree}")
+	if err != nil {
+		return DesiredSet{}, sourceErrorf(SourceUnavailable, "resolve the tree of %s: %w", revision, err)
+	}
+	effective, err := Effective(ctx, store, BaseTree(strings.TrimSpace(string(tree))))
+	if err != nil {
+		return DesiredSet{}, err
+	}
+	fsys, err := GitTreeFS(ctx, store, effective)
+	if err != nil {
+		return DesiredSet{}, err
+	}
+	deployment, err := legacyReadSource(fsys, s.Deployment)
+	if err != nil {
+		return DesiredSet{}, err
+	}
+	return Desired(ctx, fsys, s.env(namespace), s.Catalog, deployment)
 }
 
 func (s Source) AcceptedManifest(ctx context.Context, revision string, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
