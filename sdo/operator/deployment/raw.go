@@ -76,9 +76,9 @@ func tagImageRejection(path, image string, cause error) error {
 		return fmt.Errorf("manifest %s: image %q is not immutable and the operator has no image resolver configured. "+
 			"Write the reference as <repository>@sha256:<64 hex digest>, or build it from source by listing it in image_builds under the trusted registry", path, image)
 	case errors.As(cause, &resolve) && resolve.Kind == ResolveTransient:
-		return fmt.Errorf("manifest %s: image %q could not be pinned to a digest right now (%s). This is a transient registry or network problem, "+
+		return fmt.Errorf("manifest %s: image %q could not be pinned to a digest right now (%w). This is a transient registry or network problem, "+
 			"not a defect of the manifest: keep the reference and retry the deploy in a minute. If it keeps failing, write the reference as "+
-			"<repository>@sha256:<64 hex digest> or build it from source by listing it in image_builds", path, image, cause.Error())
+			"<repository>@sha256:<64 hex digest> or build it from source by listing it in image_builds", path, image, cause)
 	case errors.As(cause, &resolve) && resolve.Kind == ResolveRefused:
 		return fmt.Errorf("manifest %s: image %q cannot be pinned: %s. Use an image on a public registry name, write the reference as "+
 			"<repository>@sha256:<64 hex digest>, or build it from source by listing it in image_builds under the trusted registry", path, image, cause.Error())

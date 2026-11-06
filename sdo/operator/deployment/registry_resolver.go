@@ -57,6 +57,10 @@ type ResolveError struct {
 func (e *ResolveError) Error() string { return e.Err.Error() }
 func (e *ResolveError) Unwrap() error { return e.Err }
 
+// InfrastructureOutcome marks a rate limit, timeout or network failure: the
+// reference may be fine, so the coordinator retries instead of blaming the plan.
+func (e *ResolveError) InfrastructureOutcome() bool { return e.Kind == ResolveTransient }
+
 func resolveError(kind ResolveErrorKind, format string, args ...any) error {
 	return &ResolveError{Kind: kind, Err: fmt.Errorf(format, args...)}
 }
