@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -40,8 +41,9 @@ const (
 	PlaybookIndexFile      = PlaybooksDir + "/README.md"
 	PlaybookFileName       = "README.md"
 	PlaybookScriptsDir     = "scripts"
-	RenderedDir            = Dir + "/rendered"
-	RenderedLockFile       = RenderedDir + "/lock.json"
+	DeploymentDir          = Dir + "/deployment"
+	DeploymentPlanFile     = DeploymentDir + "/plan.yaml"
+	DeploymentPatchesDir   = DeploymentDir + "/patches"
 	OutcomesDir            = Dir + "/outcomes"
 	ApplicationGenerator   = "application"
 	IncidentGenerator      = "incident"
@@ -53,8 +55,10 @@ const (
 	// CurrentSchemaVersion is the operational-memory schema this package reads
 	// and writes. Version 1 kept every detector in LegacyDetectorManifestFile;
 	// version 2 keeps one manifest per detector; version 3 refers to playbooks by
-	// logical ID only.
-	CurrentSchemaVersion = 3
+	// logical ID only; version 4 adds the deployment class (.sdo/deployment) and
+	// retires the unused rendered class. Version 4 needs no conversion: no
+	// repository holds deployment files before it.
+	CurrentSchemaVersion = 4
 )
 
 // Kind names a class of file in operational memory.
@@ -80,8 +84,10 @@ const (
 	KindPlaybookIndex            Kind = "playbook-index"
 	KindPlaybook                 Kind = "playbook"
 	KindPlaybookScript           Kind = "playbook-script"
-	KindRenderedLock             Kind = "rendered-lock"
-	KindRenderedObject           Kind = "rendered-object"
+	KindDeploymentPlan           Kind = "deployment-plan"
+	KindDeploymentFile           Kind = "deployment-file"
+	KindDeploymentOverlay        Kind = "deployment-overlay"
+	KindDeploymentPatch          Kind = "deployment-patch"
 	KindOutcome                  Kind = "outcome"
 )
 
@@ -166,7 +172,7 @@ const (
 var (
 	playbookIDPattern = regexp.MustCompile(PlaybookIDPattern)
 	detectorIDPattern = regexp.MustCompile(DetectorIDPattern)
-	renderedFile      = regexp.MustCompile(`^([0-9a-f]{64})\.yaml$`)
+	deploymentPatch   = regexp.MustCompile(`^([0-9]{4}-[a-z0-9][a-z0-9-]{0,48})\.patch$`)
 	outcomeFile       = regexp.MustCompile(`^([0-9a-f]{64})\.json$`)
 )
 
@@ -199,15 +205,8 @@ func Classify(p string) (Kind, string, bool) {
 		}
 	case "lifecycle-provenance.yaml":
 		return only(parts, KindLifecycleProvenance)
-	case "rendered":
-		if len(parts) == 2 {
-			if parts[1] == "lock.json" {
-				return KindRenderedLock, "", true
-			}
-			if match := renderedFile.FindStringSubmatch(parts[1]); match != nil {
-				return KindRenderedObject, match[1], true
-			}
-		}
+	case "deployment":
+		return classifyDeployment(parts[1:])
 	case "outcomes":
 		if len(parts) == 2 {
 			if match := outcomeFile.FindStringSubmatch(parts[1]); match != nil {
@@ -229,6 +228,33 @@ func Classify(p string) (Kind, string, bool) {
 		return classifyPlaybook(parts[1:])
 	case "diagnostics":
 		return classifyDiagnostics(parts[1:])
+	}
+	return "", "", false
+}
+
+// DeploymentFileDirs are the directories of authored deployment files; the
+// directory name is the logical ID of every file below it. DeploymentOverlaySlots
+// are the overlay slots, each owned by one actor.
+var (
+	DeploymentFileDirs     = []string{"values", "manifests", "build"}
+	DeploymentOverlaySlots = []string{"telemetry"}
+)
+
+// classifyDeployment is strict: any path below .sdo/deployment that is not the
+// plan, a file under a known directory, a known overlay slot or a well-named
+// patch is unclassified, and therefore denied to every actor.
+func classifyDeployment(parts []string) (Kind, string, bool) {
+	switch {
+	case len(parts) == 1 && parts[0] == "plan.yaml":
+		return KindDeploymentPlan, "", true
+	case len(parts) >= 2 && slices.Contains(DeploymentFileDirs, parts[0]):
+		return KindDeploymentFile, parts[0], true
+	case len(parts) >= 3 && parts[0] == "overlays" && slices.Contains(DeploymentOverlaySlots, parts[1]):
+		return KindDeploymentOverlay, parts[1], true
+	case len(parts) == 2 && parts[0] == "patches":
+		if match := deploymentPatch.FindStringSubmatch(parts[1]); match != nil {
+			return KindDeploymentPatch, match[1], true
+		}
 	}
 	return "", "", false
 }

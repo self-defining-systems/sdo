@@ -89,9 +89,9 @@ func (s *JSONStore) snapshotAt(ctx context.Context, commit string, candidate fun
 		if len(metadata) != 3 || !filepath.IsLocal(filepath.FromSlash(path)) || !layout.IsMemoryPath(path) {
 			return nil, errors.New("unsafe accepted memory tree entry")
 		}
-		// Corpus, outcomes and rendered deployment evidence are not catalog
+		// Corpus, outcomes and deployment source are not catalog
 		// content and can grow without bound over the application's lifetime.
-		if strings.HasPrefix(path, layout.CorpusDir+"/") || strings.HasPrefix(path, layout.OutcomesDir+"/") || strings.HasPrefix(path, layout.RenderedDir+"/") {
+		if strings.HasPrefix(path, layout.CorpusDir+"/") || strings.HasPrefix(path, layout.OutcomesDir+"/") || strings.HasPrefix(path, layout.DeploymentDir+"/") {
 			continue
 		}
 		if metadata[1] != "blob" || (metadata[0] != "100644" && metadata[0] != "100755") {

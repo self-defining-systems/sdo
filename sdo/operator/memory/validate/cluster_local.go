@@ -27,13 +27,13 @@ var clusterLocalKeys = []string{
 
 // clusterLocalDiagnostics rejects changed memory data files that carry a
 // cluster-local value. Captured corpus cases and outcomes are incident-bound
-// learning records, rendered objects are source output, and testdata holds
+// learning records, deployment files are source, and testdata holds
 // synthetic fixtures; none is a live reference another cluster would misread.
 // Deleting a file (stripping a legacy capture) is always allowed.
 func clusterLocalDiagnostics(root string, paths []string) []Diagnostic {
 	var diagnostics []Diagnostic
 	for _, p := range paths {
-		if !layout.IsMemoryPath(p) || strings.HasPrefix(p, layout.CorpusDir+"/") || strings.HasPrefix(p, layout.OutcomesDir+"/") || strings.HasPrefix(p, layout.RenderedDir+"/") || slices.Contains(strings.Split(p, "/"), "testdata") {
+		if !layout.IsMemoryPath(p) || strings.HasPrefix(p, layout.CorpusDir+"/") || strings.HasPrefix(p, layout.OutcomesDir+"/") || strings.HasPrefix(p, layout.DeploymentDir+"/") || slices.Contains(strings.Split(p, "/"), "testdata") {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(p)))

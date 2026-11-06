@@ -1,6 +1,7 @@
 package validate
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -34,6 +35,8 @@ func healthObjectiveOnly(kind layout.Kind, id string) bool {
 	return kind != layout.KindPlaybook || id == layout.HealthObjectivePlaybook
 }
 
+var deploymentKinds = []layout.Kind{layout.KindDeploymentPlan, layout.KindDeploymentFile, layout.KindDeploymentOverlay, layout.KindDeploymentPatch}
+
 // grants is the whole ownership policy, kind by actor by phase.
 //
 // Phases: the human goal, Upkeep schema and architecture, trusted source deployment,
@@ -41,8 +44,14 @@ func healthObjectiveOnly(kind layout.Kind, id string) bool {
 // (AdvancePhase) changes source only. Responders change
 // operational memory only in ReflectionPhase, after an independently verified
 // outcome, and source only in ProposalPhase. No actor edits memory in
-// ProposalPhase, and nobody but the controller writes outcomes or lifecycle
-// provenance.
+// ProposalPhase except responders adding deployment patches (add-only,
+// responderPatchAddOnly), and nobody but the controller writes outcomes or
+// lifecycle provenance.
+//
+// Deployment class (.sdo/deployment): the human seeds all of it, the deployer
+// owns the plan, files and patches, the health judge owns the telemetry overlay
+// slot, and responders only add patches. Kinds not granted here (an overlay for
+// the deployer or a responder) are denied.
 //
 // Incident traffic: responders own the incident generator and incident-*
 // workloads, and the health judge owns all other traffic. This is the broker's
@@ -64,6 +73,10 @@ var grants = []grant{
 	}},
 	{actor: Responder, phase: ProposalPhase, kinds: []layout.Kind{kindSource}},
 	{actor: Deployer, phase: InitialPhase, kinds: []layout.Kind{kindSource}},
+	{actor: Human, phase: InitialPhase, kinds: deploymentKinds},
+	{actor: Deployer, phase: InitialPhase, kinds: []layout.Kind{layout.KindDeploymentPlan, layout.KindDeploymentFile, layout.KindDeploymentPatch}},
+	{actor: HealthJudge, phase: InitialPhase, kinds: []layout.Kind{layout.KindDeploymentOverlay}},
+	{actor: Responder, phase: ProposalPhase, kinds: []layout.Kind{layout.KindDeploymentPatch}},
 	// An upstream advance changes only source: an upstream revision that
 	// touches .sdo/ is held before any proposal exists.
 	{actor: Upstream, phase: AdvancePhase, kinds: []layout.Kind{kindSource}},
@@ -173,6 +186,11 @@ func (s *run) ownershipPolicy(ctx context.Context) error {
 			return err
 		}
 	}
+	if actor == Responder && phase == ProposalPhase {
+		if err := s.responderPatchAddOnly(ctx); err != nil {
+			return err
+		}
+	}
 	manifests := changesManifests(s.changed)
 	if phase == InitialPhase && actor == HealthJudge && !changesDetectors(s.changed) && !healthRevalidation(s.req, s.changed) {
 		s.add(Ownership, Diagnostic{Rule: RuleInitialNeedsDetectors, Path: layout.DetectorsDir, Message: "the initial health-judge proposal must install detector manifests"})
@@ -190,6 +208,26 @@ func (s *run) ownershipPolicy(ctx context.Context) error {
 		return s.upkeepMigration(base)
 	}
 	return s.detectorOwnership(base)
+}
+
+// responderPatchAddOnly denies a proposal that modifies or deletes a deployment
+// patch the base already holds. Responder patches are repair history bound to an
+// incident: a later pass may supersede one with a later-numbered patch but not
+// rewrite it.
+func (s *run) responderPatchAddOnly(ctx context.Context) error {
+	for _, p := range s.changed {
+		if kind, _, ok := layout.Classify(p); !ok || kind != layout.KindDeploymentPatch {
+			continue
+		}
+		listing, err := git(ctx, s.req.Root, "ls-tree", "--name-only", "-z", s.req.Base, "--", p)
+		if err != nil {
+			return err
+		}
+		if len(bytes.TrimSpace(listing)) > 0 {
+			s.add(Ownership, Diagnostic{Rule: RuleOwnershipDenied, Path: p, Message: "responders may add deployment patches but not modify or delete an accepted one", Hint: "add a new, later-numbered patch that supersedes it"})
+		}
+	}
+	return nil
 }
 
 func changesManifests(paths []string) bool {

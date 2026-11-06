@@ -49,7 +49,8 @@ type migrationStep struct {
 // playbook paths in detector Go source and manifests to IDs (see
 // RewritePlaybookReferences) and stamps the schema version. Every step is planned,
 // including all rewritten contents, before the checkout is touched, so an
-// ambiguous repository is left unchanged.
+// ambiguous repository is left unchanged. Version 4 adds the deployment class
+// and changes no existing file; it is a stamp.
 func Migrate(root string) (bool, error) {
 	version, err := readSchemaVersion(root)
 	if err != nil {
@@ -135,6 +136,9 @@ var schemaMigrations = map[int]func(*schemaPlan) error{
 		p.rewrites, err = planPlaybookRewrites(p.root, p.detectors)
 		return err
 	},
+	// Version 4 adds .sdo/deployment, which no earlier repository holds, and
+	// retires the never-written .sdo/rendered class: the step only stamps.
+	4: func(*schemaPlan) error { return nil },
 }
 
 type fileRewrite struct {

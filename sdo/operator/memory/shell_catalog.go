@@ -54,7 +54,7 @@ func CandidateShellSnapshot(root, commit string) (*contracts.OperationalMemorySn
 			return err
 		}
 		rel = filepath.ToSlash(rel)
-		if strings.HasPrefix(rel, layout.OutcomesDir+"/") || strings.HasPrefix(rel, layout.CorpusDir+"/") || strings.HasPrefix(rel, layout.RenderedDir+"/") {
+		if strings.HasPrefix(rel, layout.OutcomesDir+"/") || strings.HasPrefix(rel, layout.CorpusDir+"/") || strings.HasPrefix(rel, layout.DeploymentDir+"/") {
 			return nil
 		}
 		relevant := rel == layout.GoalFile || rel == layout.ArchitectureFile ||

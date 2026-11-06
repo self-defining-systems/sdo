@@ -891,7 +891,7 @@ func proposalTreeDigest(ctx context.Context, checkout string, sourceOnly bool) (
 }
 
 func addIgnoredOperationalMemory(ctx context.Context, root string, env []string) error {
-	for _, part := range []string{layout.LibrariesDir, layout.CorpusDir, layout.RenderedDir} {
+	for _, part := range []string{layout.LibrariesDir, layout.CorpusDir} {
 		path := filepath.Join(root, part)
 		info, err := os.Lstat(path)
 		if os.IsNotExist(err) {
