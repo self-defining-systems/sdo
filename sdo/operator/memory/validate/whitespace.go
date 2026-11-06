@@ -17,7 +17,9 @@ var whitespaceLocation = regexp.MustCompile(`^(.+):(\d+): (.+)$`)
 
 // checkWhitespace judges only SDO-authored memory text. Application source
 // and manifests are data the agent did not author (for example an embedded
-// script in an accepted ConfigMap), so their bytes stay exactly as given.
+// script in an accepted ConfigMap), so their bytes stay exactly as given. A captured
+// patch is a diff of such bytes (context lines carry the source's own indent), so
+// the patches directory is not judged either.
 func checkWhitespace(ctx context.Context, r Request) ([]Diagnostic, error) {
 	dir, err := os.MkdirTemp("", "sdo-diff-index-")
 	if err != nil {
@@ -32,7 +34,7 @@ func checkWhitespace(ctx context.Context, r Request) ([]Diagnostic, error) {
 			return nil, fmt.Errorf("prepare diff check: %w: %s", err, out)
 		}
 	}
-	out, err := run("-c", "core.whitespace=blank-at-eol,blank-at-eof,space-before-tab", "diff", "--cached", "--check", r.Base, "--", layout.Dir)
+	out, err := run("-c", "core.whitespace=blank-at-eol,blank-at-eof,space-before-tab", "diff", "--cached", "--check", r.Base, "--", layout.Dir, ":(exclude)"+layout.DeploymentPatchesDir)
 	if err == nil {
 		return nil, nil
 	}
