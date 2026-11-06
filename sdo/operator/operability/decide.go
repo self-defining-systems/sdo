@@ -23,9 +23,15 @@ const (
 
 // Decision is the pure result of Decide. Checks are the failing (or, for Wait,
 // pending) checks the Owner must act on.
+//
+// Cause is the worst failing cause: the lowest rank (infrastructure, then SDO
+// defects, then deployer causes, then designer causes), the first in report
+// order among equals. Owner is the route of that cause, so Cause is always one
+// of the Owner's checks' causes. It is empty for Wait and Accepted.
 type Decision struct {
 	Kind   DecisionKind
 	Owner  Owner
+	Cause  Cause
 	Checks []Check
 }
 
@@ -70,7 +76,7 @@ func (r Report) DecideIn(mode Mode, required ...ItemID) Decision {
 				mine = append(mine, c)
 			}
 		}
-		return Decision{Kind: kindFor(owner), Owner: owner, Checks: mine}
+		return Decision{Kind: kindFor(owner), Owner: owner, Cause: worst, Checks: mine}
 	}
 	if len(pending) > 0 {
 		return Decision{Kind: Wait, Checks: pending}

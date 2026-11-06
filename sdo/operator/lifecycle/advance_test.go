@@ -765,6 +765,28 @@ func TestAdvanceHoldsAnOfflineFailureBeforeAnyClusterEffect(t *testing.T) {
 	}
 }
 
+// Several failing checks of one owner are held by the worst cause, not the
+// first check listed: infrastructure, then SDO defects, then deployer causes,
+// then designer causes (ties keep report order). The hold, cause and owner
+// agree with what Decide routed.
+func TestAdvanceHoldsByTheWorstFailingCause(t *testing.T) {
+	fail := func(id string, cause operability.Cause) operability.Check {
+		return operability.Check{ID: id, Phase: operability.PhaseOffline, Status: operability.StatusFail, Cause: cause, Detail: "synthetic " + string(cause)}
+	}
+	w := newAdvWorld(t)
+	w.offline = []operability.Check{fail("O1.render", operability.CauseScope), fail("O2.images", operability.CauseEnvironment), fail("O6.scope", operability.CauseRender)}
+	result, err := w.run(t)
+	if err != nil || result.Outcome != lifecycle.AdvanceHeld {
+		t.Fatalf("result = %+v, err = %v", result, err)
+	}
+	if result.Cause != operability.CauseEnvironment || result.Owner != operability.OwnerHuman || result.Hold != lifecycle.HoldOperability {
+		t.Fatalf("hold = %s cause = %s owner = %s, want operability/environment/human", result.Hold, result.Cause, result.Owner)
+	}
+	if want := []operability.ItemID{operability.O1, operability.O2}; !slices.Equal(result.Items, want) {
+		t.Fatalf("items = %v, want %v (the owner's checks)", result.Items, want)
+	}
+}
+
 // An infrastructure failure of the offline checks is retried and never a hold;
 // one that persists ends the attempt as an error for the follower to retry.
 func TestAdvanceRetriesOfflineInfrastructureWithoutAHold(t *testing.T) {
