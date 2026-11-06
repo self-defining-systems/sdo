@@ -65,7 +65,7 @@ func TestRefreshNeedsJudgeOnShapeNotSourceBytes(t *testing.T) {
 
 	shapeWrite(t, dir, "main.go", "package main // v2\n")
 	shapeGit(t, dir, "commit", "-qam", "benign")
-	if err := refreshControllerHealthOnce(context.Background(), "", config, nil); err != nil {
+	if err := refreshControllerHealthOnce(context.Background(), "", config, "", nil); err != nil {
 		t.Fatalf("benign source change required a refresh: %v", err)
 	}
 	for name, manifest := range map[string]string{
@@ -74,7 +74,7 @@ func TestRefreshNeedsJudgeOnShapeNotSourceBytes(t *testing.T) {
 	} {
 		shapeWrite(t, dir, "k8s/web.yaml", manifest)
 		shapeGit(t, dir, "commit", "-qam", name)
-		err := refreshControllerHealthOnce(context.Background(), "", config, nil)
+		err := refreshControllerHealthOnce(context.Background(), "", config, "", nil)
 		if err == nil || !strings.Contains(err.Error(), "agent registrations") {
 			t.Fatalf("%s change: err = %v, want the refresh to start (registry load step)", name, err)
 		}

@@ -20,7 +20,7 @@ type mirrorState struct {
 	namespace string
 	objects   map[string]*pb.MemoryObject
 	hosts     map[Host]uint64
-	order     []Host
+	order     []mirrorHost
 }
 
 // Publish fans a frozen informer projection out as contiguous complete deltas.
@@ -82,7 +82,7 @@ func (m *Manager) publish(ctx context.Context, view sdk.DetectionContext) error 
 		order = append(order, host)
 		delta := proto.Clone(frame).(*pb.MirrorRequest)
 		delta.Sequence = sequence + 1
-		if err := host.(mirrorHost).MirrorFrame(ctx, delta); err != nil {
+		if err := host.MirrorFrame(ctx, delta); err != nil {
 			delete(m.mirror.hosts, host)
 			if host == active {
 				go m.failed(host)
@@ -150,7 +150,7 @@ func (m *Manager) Prepare(ctx context.Context, h Host) (err error) {
 			order = append(order, host)
 		}
 	}
-	m.mirror.order = append(order, h)
+	m.mirror.order = append(order, host)
 	return nil
 }
 func (m *Manager) Activate(ctx context.Context, h Host, commit, digest string) error {

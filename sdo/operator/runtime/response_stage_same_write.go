@@ -148,6 +148,7 @@ func writeIdentity(value reflect.Value, action bool) any {
 		if !value.CanInterface() {
 			return nil
 		}
+		//assertcheck:ok reflect value of a program.Value field
 		return valueIdentity(value.Interface().(program.Value))
 	}
 	switch value.Kind() {

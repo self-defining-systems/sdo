@@ -65,6 +65,7 @@ func snapshotObjects(s sdktest.Snapshot) (map[sdk.ObjectRef]*unstructured.Unstru
 		for j := 0; j < field.Len(); j++ {
 			ptr := reflect.New(elem)
 			ptr.Elem().Set(field.Index(j))
+			//assertcheck:ok reflect pointer to a typed Kubernetes list item
 			obj := ptr.Interface().(kruntime.Object)
 			fields, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(obj)
 			if err != nil {
@@ -108,6 +109,7 @@ func newCluster(s sdktest.Snapshot) (*cluster, error) {
 		}
 	}
 	fake.PrependReactor("create", "*", func(action ktesting.Action) (bool, kruntime.Object, error) {
+		//assertcheck:ok the reactor verb fixes the action type
 		object := action.(ktesting.CreateAction).GetObject()
 		access, err := meta.Accessor(object)
 		if err != nil {
@@ -118,6 +120,7 @@ func newCluster(s sdktest.Snapshot) (*cluster, error) {
 		return false, nil, nil
 	})
 	fake.PrependReactor("delete", "*", func(action ktesting.Action) (bool, kruntime.Object, error) {
+		//assertcheck:ok the reactor verb fixes the action type
 		deletion := action.(ktesting.DeleteAction)
 		object, err := fake.Tracker().Get(action.GetResource(), action.GetNamespace(), deletion.GetName())
 		if err != nil {

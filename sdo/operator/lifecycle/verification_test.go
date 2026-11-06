@@ -48,6 +48,17 @@ type fakeBroker struct {
 	stageErrors               []error
 	candidates                []broker.Candidate
 	evidence2                 []broker.CandidateEvidence
+	// source is the deployment of the accepted head AcceptedSourceEvidence returns.
+	source *broker.AcceptedSource
+}
+
+func (b *fakeBroker) AcceptedSourceEvidence(context.Context) (broker.AcceptedSource, bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.source == nil {
+		return broker.AcceptedSource{}, false, nil
+	}
+	return *b.source, true, nil
 }
 
 func newFakeBroker(t *testing.T) *fakeBroker {

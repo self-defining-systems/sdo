@@ -91,6 +91,11 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 		command []string
 		users   []program.DatabaseUser
 		outcome program.DatabaseUserOutcome
+		// The client capability the action needs, resolved in the preflight so
+		// the effect phase holds a typed value instead of asserting again.
+		catalog DatabaseCatalogClient
+		deleter planPodDeleter
+		exec    PlanExecClient
 	}
 	items := make([]prepared, len(plan.Actions))
 	projectedCatalogs := map[string][]program.DatabaseUser{}
@@ -123,6 +128,7 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 				if !ok {
 					return result, fmt.Errorf("database catalog transport unavailable")
 				}
+				items[i].catalog = catalog
 				users, readErr := catalog.DatabaseUsers(ctx, a.Target)
 				if readErr != nil {
 					return result, databaseSafeError(readErr, "database catalog observation unavailable")
@@ -156,13 +162,17 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 					return result, readErr
 				}
 			case program.DeletePod:
-				if _, ok := e.Client.(planPodDeleter); !ok {
+				deleter, ok := e.Client.(planPodDeleter)
+				if !ok {
 					return result, fmt.Errorf("pod delete client unavailable")
 				}
+				items[i].deleter = deleter
 			case program.Exec:
-				if _, ok := e.Client.(PlanExecClient); !ok {
+				execClient, ok := e.Client.(PlanExecClient)
+				if !ok {
 					return result, fmt.Errorf("exec refused: controller exec transport unavailable")
 				}
+				items[i].exec = execClient
 				for _, v := range a.Command {
 					value, provenance, resolveErr := program.ResolveValue(v, e.valueInputs(ctx, incident))
 					if resolveErr != nil {
@@ -195,7 +205,7 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 		ref, _ := planActionRef(a)
 		switch a := a.(type) {
 		case program.DeletePod:
-			deleteErr := e.Client.(planPodDeleter).Delete(ctx, ref, items[i].uid, items[i].rv)
+			deleteErr := items[i].deleter.Delete(ctx, ref, items[i].uid, items[i].rv)
 			if apierrors.IsForbidden(deleteErr) || apierrors.IsUnauthorized(deleteErr) {
 				return result, fmt.Errorf("pod deletion refused: controller RBAC denied delete on pods: %w", deleteErr)
 			}
@@ -220,7 +230,7 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 			if getErr != nil || current == nil || current.GetUID() != items[i].uid || current.GetResourceVersion() != items[i].rv {
 				return result, fmt.Errorf("database operation refused: Pod identity/version changed")
 			}
-			catalog := e.Client.(DatabaseCatalogClient)
+			catalog := items[i].catalog
 			// Dispatch may have changed the catalog even if transport fails. Retain
 			// irreversible uncertainty unless the failure provably precedes the
 			// write; only successful direct read-back confirms the effect.
@@ -281,7 +291,7 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 			if getErr != nil || current == nil || current.GetUID() != items[i].uid || current.GetResourceVersion() != items[i].rv {
 				return result, fmt.Errorf("exec refused: Pod identity/version changed")
 			}
-			code, execErr := e.Client.(PlanExecClient).Exec(ctx, ref, a.Container, items[i].command)
+			code, execErr := items[i].exec.Exec(ctx, ref, a.Container, items[i].command)
 			if execErr != nil {
 				if errors.Is(execErr, errPlanExecRefused) || apierrors.IsForbidden(execErr) || apierrors.IsUnauthorized(execErr) {
 					return result, fmt.Errorf("exec refused: controller transport unavailable or RBAC denied")

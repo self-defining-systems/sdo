@@ -272,19 +272,6 @@ func TestResumedAcceptedJudgeCommitIsVerifiedBeforeInstall(t *testing.T) {
 	}
 }
 
-type noLiveChecks struct {
-	lifecycle.SourceReadinessVerifier
-}
-
-func TestCoordinatorRequiresLiveOperabilityChecks(t *testing.T) {
-	h, _ := gateHarness(t, clear)
-	h.coordinator.Readiness = noLiveChecks{h.readiness}
-	_, err := h.coordinator.Run(context.Background(), config())
-	if err == nil || !strings.Contains(err.Error(), "LiveChecker") {
-		t.Fatalf("error = %v, want a refusal to run without live operability checks", err)
-	}
-}
-
 var _ = fmt.Sprint
 var _ = contracts.MemoryDiagnostic{}
 

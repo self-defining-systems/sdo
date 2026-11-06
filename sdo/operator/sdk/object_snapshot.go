@@ -65,6 +65,7 @@ func TypedObjects(view any) []unstructured.Unstructured {
 		for j := 0; j < values.Len(); j++ {
 			ptr := reflect.New(elem)
 			ptr.Elem().Set(values.Index(j))
+			//assertcheck:ok reflect pointer to a Kubernetes object type
 			obj := ptr.Interface().(runtime.Object)
 			fields, err := runtime.DefaultUnstructuredConverter.ToUnstructured(obj)
 			if err != nil {
@@ -128,6 +129,7 @@ func typedObjectKind(field reflect.Value) (schema.GroupVersionKind, bool) {
 	if elem == reflect.TypeOf(unstructured.Unstructured{}) || elem.Kind() != reflect.Struct || !reflect.PointerTo(elem).Implements(reflect.TypeOf((*runtime.Object)(nil)).Elem()) {
 		return schema.GroupVersionKind{}, false
 	}
+	//assertcheck:ok reflect pointer to a Kubernetes object type
 	probe := reflect.New(elem).Interface().(runtime.Object)
 	gvks, _, err := objectScheme.ObjectKinds(probe)
 	if err != nil || len(gvks) == 0 {

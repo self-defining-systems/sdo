@@ -269,7 +269,11 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 				if l.MenuConfig.RemoveUnexplained == nil {
 					return fmt.Errorf("unexplained removal executor is unavailable")
 				}
-				return l.MenuConfig.RemoveUnexplained(ctx, *entry.removal, executor.Client.(PlanLifecycleClient), ref, uid, rv)
+				lifecycleClient, ok := executor.Client.(PlanLifecycleClient)
+				if !ok {
+					return fmt.Errorf("unexplained removal lifecycle transport is unavailable")
+				}
+				return l.MenuConfig.RemoveUnexplained(ctx, *entry.removal, lifecycleClient, ref, uid, rv)
 			}
 		}
 		started := lifecycleio.Now().UTC()

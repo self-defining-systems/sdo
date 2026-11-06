@@ -80,6 +80,7 @@ func dataWorkloadWrite(view sdk.DetectionContext, plan program.Plan, workloads m
 func podReplacingWrite(view sdk.DetectionContext, action program.Action) (sdk.ObjectRef, string) {
 	value := reflect.ValueOf(action)
 	if value.Kind() == reflect.Pointer && !value.IsNil() {
+		//assertcheck:ok reflect Elem of a pointer to a program.Action
 		action = value.Elem().Interface().(program.Action)
 	}
 	switch a := action.(type) {

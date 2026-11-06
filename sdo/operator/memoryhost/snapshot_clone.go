@@ -24,6 +24,7 @@ func cloneMirrorSnapshot(base sdktest.Snapshot) sdktest.Snapshot {
 		}
 		items := reflect.MakeSlice(field.Type(), field.Len(), field.Len())
 		for i := 0; i < field.Len(); i++ {
+			//assertcheck:ok reflect pointer to a typed Kubernetes list item
 			object := field.Index(i).Addr().Interface().(kruntime.Object)
 			items.Index(i).Set(reflect.ValueOf(object.DeepCopyObject()).Elem())
 		}

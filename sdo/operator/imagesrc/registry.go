@@ -101,6 +101,7 @@ func Register[C proto.Message](c *Catalog, id string, s Source[C], o Options, op
 		typeURL:   typeURL,
 		newConfig: func() proto.Message { return mt.New().Interface() },
 		resolve: func(ctx context.Context, req Request, m proto.Message) (Resolved, error) {
+			//assertcheck:ok C is the resolver's own generic message type
 			return s.Resolve(ctx, req, m.(C))
 		},
 		budget:         o.Budget,

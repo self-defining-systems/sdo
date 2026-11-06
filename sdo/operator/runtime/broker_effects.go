@@ -405,7 +405,11 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		if recovered != nil {
 			receipt = *recovered
 		} else if expiredHealth != nil {
-			receipt, processErr = broker.(unverifiedClosureBroker).processUnverifiedClosure(actionCtx, closure, *expiredHealth)
+			if finalizer, ok := broker.(unverifiedClosureBroker); ok {
+				receipt, processErr = finalizer.processUnverifiedClosure(actionCtx, closure, *expiredHealth)
+			} else {
+				processErr = errors.New("broker cannot finalize an expired frozen recovery observation")
+			}
 		} else {
 			receipt, processErr = broker.ProcessClosure(actionCtx, closure)
 		}

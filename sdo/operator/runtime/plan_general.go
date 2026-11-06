@@ -312,7 +312,12 @@ func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest,
 	switch patch.Operation {
 	case "create":
 		var created *unstructured.Unstructured
-		created, err = e.Client.(PlanLifecycleClient).Create(ctx, ref, patch.After.DeepCopy())
+		client, ok := e.Client.(PlanLifecycleClient)
+		if !ok {
+			err = fmt.Errorf("object lifecycle transport unavailable")
+			break
+		}
+		created, err = client.Create(ctx, ref, patch.After.DeepCopy())
 		if err == nil && (created == nil || created.GetUID() == "") {
 			err = fmt.Errorf("create UID receipt unavailable")
 		}
@@ -322,8 +327,10 @@ func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest,
 	case "delete":
 		if e.DeleteObject != nil {
 			err = e.DeleteObject(ctx, ref, before.GetUID(), before.GetResourceVersion())
+		} else if client, ok := e.Client.(PlanLifecycleClient); ok {
+			err = client.Delete(ctx, ref, before.GetUID(), before.GetResourceVersion())
 		} else {
-			err = e.Client.(PlanLifecycleClient).Delete(ctx, ref, before.GetUID(), before.GetResourceVersion())
+			err = fmt.Errorf("object lifecycle transport unavailable")
 		}
 	default:
 		err = e.Client.Patch(ctx, ref, types.MergePatchType, patch.Patch)
