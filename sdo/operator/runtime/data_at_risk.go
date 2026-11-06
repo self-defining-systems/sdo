@@ -81,7 +81,7 @@ func containerRestartedSince(pod corev1.Pod, since time.Time) bool {
 // closureDataRisk decides whether a health-clear closure may stand as verified.
 // It runs once, as the closure freezes: a frozen closure keeps its identity.
 func (c *Controller) closureDataRisk(ctx context.Context, snapshot sdk.DetectionContext, closure IncidentClosure) string {
-	if snapshot == nil || len(closure.FinalDetectorStates) == 0 || closure.Request.NamespaceOnboarding != nil {
+	if snapshot == nil || len(closure.FinalDetectorStates) == 0 {
 		return ""
 	}
 	read := c.gitRead
@@ -103,7 +103,7 @@ func (c *Controller) closureDataRisk(ctx context.Context, snapshot sdk.Detection
 
 // incidentDataAtRisk is the same fact for the responder, on each verify.
 func (l *ResponderLoop) incidentDataAtRisk(ctx context.Context) []string {
-	if l.Request.DetectedAt.IsZero() || l.Request.NamespaceOnboarding != nil {
+	if l.Request.DetectedAt.IsZero() {
 		return nil
 	}
 	if !l.dataWorkloadsRead {

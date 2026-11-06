@@ -3,11 +3,13 @@ package runtime
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -80,10 +82,12 @@ func TestClosureAfterDataPodReplacementIsNotVerifiedSuccess(t *testing.T) {
 	ctx := context.Background()
 	for name, test := range map[string]struct {
 		document string
+		early    bool
 		want     contracts.ClosureUnconfirmedReason
 	}{
-		"marked store replaced": {holdsDataArchitecture, contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_DATA_MAY_BE_LOST},
-		"no map":                {"", contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED},
+		"marked store replaced":               {holdsDataArchitecture, false, contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_DATA_MAY_BE_LOST},
+		"verified while the responder worked": {holdsDataArchitecture, true, contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_DATA_MAY_BE_LOST},
+		"no map":                              {"", false, contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED},
 	} {
 		t.Run(name, func(t *testing.T) {
 			after := dataRiskOpened.Add(time.Minute)
@@ -103,7 +107,7 @@ func TestClosureAfterDataPodReplacementIsNotVerifiedSuccess(t *testing.T) {
 			result := completedResult("synthetic-incident")
 			result.Timing = TimingMetrics{StartedAt: dataRiskOpened, CompletedAt: after}
 			request := IncidentRequest{SchemaVersion: ProtocolSchemaVersion, Application: "demo", Namespace: "app", IncidentID: "synthetic-incident", SourceCommit: "synthetic-accepted", RepositoryWorktree: "synthetic-worktree"}
-			controller.pendingClosure = &IncidentClosure{Request: request, Result: &result, DetectedAt: dataRiskOpened, DispatchedAt: dataRiskOpened, ResponderCompletedAt: after, VerifiedAt: after,
+			controller.pendingClosure = &IncidentClosure{Request: request, Result: &result, DetectedAt: dataRiskOpened, DispatchedAt: dataRiskOpened, ResponderCompletedAt: after, VerifiedAt: after, VerifiedWhileResponderRunning: test.early,
 				FinalDetectorStates: []DetectorEvaluation{{DetectorID: "traffic", EvaluatedAt: after, Status: DetectorEvaluationClear}}}
 			controller.closureState = contracts.ClosureState_CLOSURE_STATE_PENDING
 			effect, ok := controller.PendingClosureEffect()
@@ -138,18 +142,166 @@ func TestClosureAfterDataPodReplacementIsNotVerifiedSuccess(t *testing.T) {
 }
 
 // riskBroker stands in for the native broker; the test only reads the closure.
-type riskBroker struct{ processed []IncidentClosure }
+type riskBroker struct {
+	mu        sync.Mutex
+	processed []IncidentClosure
+}
+
+func (b *riskBroker) closures() []IncidentClosure {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]IncidentClosure(nil), b.processed...)
+}
 
 func (b *riskBroker) PrepareIncident(_ context.Context, id string) (IncidentWorkspace, error) {
-	return IncidentWorkspace{IncidentID: id}, nil
+	return IncidentWorkspace{IncidentID: id, Worktree: "synthetic-worktree", BaseCommit: "synthetic-accepted"}, nil
 }
 
 func (b *riskBroker) ProcessClosure(_ context.Context, closure IncidentClosure) (ClosureReceipt, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.processed = append(b.processed, closure)
 	return ClosureReceipt{IncidentID: closure.Request.IncidentID}, nil
 }
 
 func (b *riskBroker) AcknowledgeClosure(context.Context, ClosureReceipt) error { return nil }
+
+// restartedStore is a Deployment-run store with only a config volume. Restart
+// replaces its Pod, the way a responder's hand repair does.
+type restartedStore struct {
+	mu   sync.Mutex
+	now  time.Time
+	view sdktest.Snapshot
+}
+
+func newRestartedStore(now time.Time) *restartedStore {
+	yes, replicas := true, int32(1)
+	store := &restartedStore{now: now, view: sdktest.Snapshot{NamespaceName: "app",
+		DeploymentList: []appsv1.Deployment{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app", Generation: 1}, Spec: appsv1.DeploymentSpec{Replicas: &replicas},
+			Status: appsv1.DeploymentStatus{ObservedGeneration: 1, Replicas: 1, UpdatedReplicas: 1, ReadyReplicas: 1, AvailableReplicas: 1}}},
+		ReplicaSetList: []appsv1.ReplicaSet{{ObjectMeta: metav1.ObjectMeta{Name: "api-1", Namespace: "app", OwnerReferences: []metav1.OwnerReference{{Kind: "Deployment", Name: "api", Controller: &yes}}}}},
+	}}
+	store.replacePod("api-1-old", now.Add(-time.Hour))
+	return store
+}
+
+func (s *restartedStore) replacePod(name string, created time.Time) {
+	yes := true
+	config := corev1.Volume{Name: "config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{}}}
+	pod := dataPod(name, created, []corev1.Volume{config}, created)
+	pod.OwnerReferences = []metav1.OwnerReference{{Kind: "ReplicaSet", Name: "api-1", Controller: &yes}}
+	s.view.PodList = []corev1.Pod{pod}
+}
+
+func (s *restartedStore) Snapshot(context.Context) (sdk.DetectionContext, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.view, nil
+}
+
+// handRestartDispatcher is a responder that restarts the store and reports
+// success. The request it keeps is the one production built for this incident.
+type handRestartDispatcher struct {
+	store   *restartedStore
+	world   *sameWriteWorld
+	mu      sync.Mutex
+	request IncidentRequest
+}
+
+func (d *handRestartDispatcher) Dispatch(_ context.Context, request IncidentRequest) (IncidentResult, error) {
+	d.store.mu.Lock()
+	d.store.replacePod("api-1-new", d.store.now)
+	d.store.mu.Unlock()
+	d.world.healthy.Store(true)
+	d.mu.Lock()
+	d.request = request
+	d.mu.Unlock()
+	return completedResult(request.IncidentID), nil
+}
+
+// A namespace SDO onboarded carries its onboarding record on every incident
+// request. A responder restarts the marked store by hand, health clears, and
+// the closure must still commit unconfirmed, with verify saying why.
+func TestResponderRestartOfDataStoreInOnboardedNamespaceIsNotVerified(t *testing.T) {
+	ctx := context.Background()
+	opened := dataRiskOpened
+	store := newRestartedStore(opened)
+	world := &sameWriteWorld{}
+	dispatcher := &handRestartDispatcher{store: store, world: world}
+	cfg := testControllerConfig()
+	cfg.Namespace, cfg.SourceCommit, cfg.RepositoryWorktree = "app", "synthetic-accepted", "synthetic-worktree"
+	cfg.FiringThreshold, cfg.ClearThreshold = 1, 1
+	cfg.ClosureStabilityWindow = time.Second
+	controller, err := NewController(cfg, []sdk.Detector{sameWriteDetector{world: world}}, store, dispatcher, opened)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.SetNamespaceOnboarding(&contracts.NamespaceOnboarding{Namespace: "app", AcceptedCommit: strings.Repeat("a", 40), EstablishedAt: timestamppb.New(opened.Add(-time.Hour))}); err != nil {
+		t.Fatal(err)
+	}
+	now := opened
+	controller.now = func() time.Time {
+		store.mu.Lock()
+		defer store.mu.Unlock()
+		return store.now
+	}
+	controller.gitRead = fakeArchitecture(holdsDataArchitecture)
+	broker := &riskBroker{}
+	controller.broker = broker
+	for step := 0; step < 200 && len(broker.closures()) == 0; step++ {
+		if err := controller.Step(ctx, now, nil); err != nil {
+			t.Fatal(err)
+		}
+		if effect, ok := controller.PendingWorkspaceEffect(); ok {
+			if err := controller.ExecuteWorkspaceEffect(ctx, effect); err != nil {
+				t.Fatal(err)
+			}
+			completion := <-controller.workspaceResults
+			controller.workspaceResults <- completion
+		} else if effect, ok := controller.PendingDispatchEffect(); ok {
+			if err := controller.ExecuteDispatchEffect(ctx, effect); err != nil {
+				t.Fatal(err)
+			}
+			awaitDispatchCompletionQueued(t, controller)
+		} else if effect, ok := controller.PendingClosureEffect(); ok {
+			if err := controller.ExecuteClosureEffect(ctx, effect); err != nil {
+				t.Fatal(err)
+			}
+		}
+		now = now.Add(time.Second)
+		store.mu.Lock()
+		store.now = now
+		store.mu.Unlock()
+	}
+	closures := broker.closures()
+	if len(closures) == 0 {
+		t.Fatalf("the incident never reached the broker (dispatch state %s)", controller.dispatchState)
+	}
+	dispatcher.mu.Lock()
+	request := dispatcher.request
+	dispatcher.mu.Unlock()
+	if request.NamespaceOnboarding == nil || request.DetectedAt.IsZero() {
+		t.Fatalf("the responder's request must look like production's: %+v", request)
+	}
+	closure := closures[0]
+	if closure.UnconfirmedReason != contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_DATA_MAY_BE_LOST || !strings.Contains(closure.UnconfirmedDetail, "Deployment/api") {
+		t.Fatalf("reason = %s, detail %q", closure.UnconfirmedReason, closure.UnconfirmedDetail)
+	}
+	derived, err := ProtoOutcomeDeriver{}.Derive(ctx, closure, "", "synthetic", "synthetic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if derived.Record.GetClassification() != "unconfirmed" || !dataLossOutcome(derived.Record) {
+		t.Fatalf("outcome = %+v", derived.Record)
+	}
+
+	_, loop, _ := sameWriteLoop(t)
+	loop.Request, loop.Provider, loop.GitRead = request, store, fakeArchitecture(holdsDataArchitecture)
+	response := loop.Handle(ctx, ToolRequest{Command: "verify"})
+	if len(response.DataAtRisk) != 1 || !strings.Contains(response.DataAtRisk[0], "Deployment/api") {
+		t.Fatalf("verify data_at_risk = %v (error %q)", response.DataAtRisk, response.Error)
+	}
+}
 
 func TestDataLossOutcomeGivesReflectionNoVerifiedRepair(t *testing.T) {
 	at := timestamppb.New(dataRiskOpened)

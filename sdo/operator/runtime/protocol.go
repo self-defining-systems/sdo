@@ -57,7 +57,9 @@ type IncidentRequest struct {
 	ExternalMessage        string
 	MetricsSource          *contracts.MetricsSource
 	DisabledSetupDetectors []*contracts.DisabledSetupDetector
-	NamespaceOnboarding    *contracts.NamespaceOnboarding
+	// NamespaceOnboarding is the namespace's installer record. Every incident of
+	// an onboarded namespace carries it; it does not mean onboarding is under way.
+	NamespaceOnboarding *contracts.NamespaceOnboarding
 	// ObservationGeneration binds the incident to accepted scope and installer policy.
 	ObservationGeneration string
 	// DetectedAt is when the controller opened this incident.
