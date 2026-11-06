@@ -42,7 +42,10 @@ const OperabilityUsage = `usage: sdo-operator operability check --offline [--roo
         its subject is not bound to a published commit.
         --allow-registry takes comma-separated registry hosts; none configured
         skips the allowlist. Foreign-namespace and cluster-scoped objects are
-        notes unless --scope-blocking.
+        notes unless --scope-blocking. These flags only preview a policy: the
+        policy the deployer enforces is the install-time one (host and
+        install-existing take --allow-registry, --scope-blocking,
+        --grant-namespace and --grant-cluster-kind from the operator).
         Exit 0 when every offline item of the stage is accepted, 1 when a check
         fails or is missing, 2 for usage or infrastructure errors.`
 

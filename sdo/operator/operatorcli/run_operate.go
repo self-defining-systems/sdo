@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sdo.dev/operator/contracts/settings"
+	"sdo.dev/operator/deploymentpolicy"
 	"sdo.dev/operator/renderenv"
 	"time"
 
@@ -94,11 +95,15 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	if err != nil {
 		return lifecycle.Result{}, fmt.Errorf("discover render environment: %w", err)
 	}
+	deployPolicy, err := deploymentpolicy.Parse(config.Install.DeploymentPolicy)
+	if err != nil {
+		return lifecycle.Result{}, err
+	}
 	readiness, err := operateIdentity(config).deployer(client, deployTarget{
 		Namespace: config.Lifecycle.Namespace, ControlNamespace: control,
 		AcceptedRoot: config.ApplicationRoot, WorkspaceRoot: config.WorktreeRoot,
 		RepositoryMount: config.RepositoryMount, RepositoryPVC: config.Install.RepositoryPVC,
-	}, environment)
+	}, environment, deployPolicy)
 	if err != nil {
 		return lifecycle.Result{}, err
 	}

@@ -15,6 +15,7 @@ import (
 
 	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/deploymentpolicy"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/validate"
@@ -95,6 +96,11 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	standby := flags.Bool("responder-standby", true, "pre-start a responder; false forces cold Jobs")
 	var responderEnv repeatable
 	flags.Var(&responderEnv, "responder-env", "responder environment NAME=VALUE")
+	var policyFlags deploymentpolicy.Flags
+	flags.StringVar(&policyFlags.AllowedRegistries, "allow-registry", "", "comma-separated registry hosts deployments may pull from (enforced; empty: no allowlist)")
+	flags.BoolVar(&policyFlags.ScopeBlocking, "scope-blocking", false, "refuse foreign-namespace and cluster-scoped objects unless granted")
+	flags.StringVar(&policyFlags.GrantedNamespaces, "grant-namespace", "", "comma-separated foreign namespaces deployments may write to (needs --scope-blocking)")
+	flags.StringVar(&policyFlags.GrantedClusterKinds, "grant-cluster-kind", "", "comma-separated cluster-scoped Kinds deployments may contain (needs --scope-blocking)")
 	deploymentSourceFlag := flags.String("deployment-source", "", "DeploymentSource as ProtoJSON, recorded as the repository's .sdo/deployment/plan.yaml in a human commit; optional when the repository already carries a plan")
 	if err := flags.Parse(args[1:]); err != nil {
 		return InstallExistingConfig{}, err
@@ -160,6 +166,11 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	if *registrationConfigMap != "" {
 		config.RegistrationDirectory = "/sdo/registrations"
 	}
+	deploymentPolicy, err := encodedPolicy(policyFlags)
+	if err != nil {
+		return InstallExistingConfig{}, err
+	}
+	config.DeploymentPolicy = deploymentPolicy
 	deploymentSource, err := parseDeploymentSourceFlag(*deploymentSourceFlag)
 	if err != nil {
 		return InstallExistingConfig{}, err

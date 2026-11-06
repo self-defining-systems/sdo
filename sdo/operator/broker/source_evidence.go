@@ -126,6 +126,7 @@ type sourceEvidenceRecord struct {
 	RenderDigest      string                   `json:"render_digest"`
 	EnvDigest         string                   `json:"env_digest"`
 	RenderEnvironment json.RawMessage          `json:"render_environment,omitempty"`
+	DeploymentPolicy  json.RawMessage          `json:"deployment_policy,omitempty"`
 	Images            []string                 `json:"images"`
 	ResourceIDs       []string                 `json:"resource_ids"`
 	Ready             bool                     `json:"ready"`
@@ -149,6 +150,11 @@ func (e SourceEvidence) MarshalJSON() ([]byte, error) {
 	if e.RenderEnvironment != nil {
 		if record.RenderEnvironment, err = canonicalProtoJSON(e.RenderEnvironment); err != nil {
 			return nil, fmt.Errorf("encode render environment: %w", err)
+		}
+	}
+	if e.DeploymentPolicy != nil {
+		if record.DeploymentPolicy, err = canonicalProtoJSON(e.DeploymentPolicy); err != nil {
+			return nil, fmt.Errorf("encode deployment policy: %w", err)
 		}
 	}
 	return json.Marshal(record)
@@ -191,6 +197,12 @@ func (e *SourceEvidence) UnmarshalJSON(data []byte) error {
 		value.RenderEnvironment = &contracts.RenderEnvironment{}
 		if err := protojson.Unmarshal(record.RenderEnvironment, value.RenderEnvironment); err != nil {
 			return fmt.Errorf("decode render environment: %w", err)
+		}
+	}
+	if len(record.DeploymentPolicy) > 0 {
+		value.DeploymentPolicy = &contracts.DeploymentPolicy{}
+		if err := protojson.Unmarshal(record.DeploymentPolicy, value.DeploymentPolicy); err != nil {
+			return fmt.Errorf("decode deployment policy: %w", err)
 		}
 	}
 	*e = value

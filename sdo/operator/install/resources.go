@@ -24,6 +24,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/deploymentpolicy"
 	"sdo.dev/operator/devmount"
 	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/sdk"
@@ -77,12 +78,17 @@ type Config struct {
 	RegistrationData                             map[string]string
 	BuildKitImage, RegistryPushSecret            string
 	RegistryHost                                 string
-	RegistryInsecure                             bool
-	RegistryPushDockerConfig                     []byte
-	ReuseExisting, WaitForCompletion             bool
-	PermissiveResponder                          bool
-	ResponderNamespaces                          []string
-	MetricsURL                                   string
+	// DeploymentPolicy is the install-time deployment policy as compact
+	// ProtoJSON (deploymentpolicy.Format); empty is no policy (today's
+	// behavior). The controller and the operate Job receive it as
+	// --deployment-policy.
+	DeploymentPolicy                 string
+	RegistryInsecure                 bool
+	RegistryPushDockerConfig         []byte
+	ReuseExisting, WaitForCompletion bool
+	PermissiveResponder              bool
+	ResponderNamespaces              []string
+	MetricsURL                       string
 	// MemoryUpstream replicates accepted memory through a shared remote
 	// branch. MemoryUpstreamSSHSecret names an existing Secret holding the
 	// ssh "identity" and "known_hosts", mounted read-only.
@@ -244,6 +250,9 @@ func (c Config) validate() error {
 		return errors.New("max response loops cannot be negative")
 	}
 
+	if _, err := deploymentpolicy.Parse(c.DeploymentPolicy); err != nil {
+		return err
+	}
 	for _, arg := range c.ExtraControllerArgs {
 		if strings.Contains(arg, "broker-mode") || strings.Contains(arg, "worker-mount-mode") || strings.HasPrefix(arg, "--broker-arg") {
 			return errors.New("controller extension cannot change broker or worker mount mode")
@@ -413,6 +422,9 @@ func controllerJob(c Config) *batchv1.Job {
 		args = append(args, fmt.Sprintf("--responder-standby=%t", *c.ResponderStandby))
 	}
 	args = append(args, c.NativeArgs...)
+	if c.DeploymentPolicy != "" {
+		args = append(args, "--deployment-policy", c.DeploymentPolicy)
+	}
 	args = append(args, c.ExtraControllerArgs...)
 	if c.ControllerDurationSeconds > 0 {
 		args = append(args, "--duration", fmt.Sprintf("%ds", c.ControllerDurationSeconds))

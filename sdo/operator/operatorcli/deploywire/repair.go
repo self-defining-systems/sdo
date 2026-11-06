@@ -23,7 +23,7 @@ func Verifier(launch *contracts.ControllerConfig, operatorRoot string, readiness
 // source repair: the trusted Deployer of identity and the independent
 // verifier, around the controller's own broker.
 func RepairDeployer(identity Identity, launch *contracts.ControllerConfig, operatorRoot string, client kubernetes.Interface, repository lifecycle.RepairBroker) (lifecycle.RepairDeployer, error) {
-	deployer, err := identity.Deployer(client, TargetOf(launch), launch.GetRenderEnvironment())
+	deployer, err := identity.Deployer(client, TargetOf(launch), launch.GetRenderEnvironment(), launch.GetDeploymentPolicy())
 	if err != nil {
 		return lifecycle.RepairDeployer{}, err
 	}

@@ -11,8 +11,10 @@ import (
 	"google.golang.org/protobuf/proto"
 	"gopkg.in/yaml.v3"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/deploymentpolicy"
 	"sdo.dev/operator/imagesrc"
 	"sdo.dev/operator/lifecycle"
+	"sdo.dev/operator/operability"
 	"sdo.dev/operator/operability/offline"
 	"sdo.dev/operator/render"
 	"sdo.dev/operator/rendered"
@@ -53,11 +55,13 @@ type Deployer struct {
 	Materializer *rendered.Materializer
 	// Git replaces the git process edge (simulation); nil runs git.
 	Git rendered.GitFunc
-	// Policy is the install-time scope and registry limits the offline
-	// operability checks compare the desired set with. The zero value grants
-	// nothing and configures no allowlist (foreign and cluster-scoped objects
-	// are notes).
-	Policy offline.Policy
+	// Policy is the install-time deployment policy (registry allowlist,
+	// namespace and cluster-scope grants; deploymentpolicy). ApplyAndVerify
+	// refuses a desired set that violates it before any image build or apply,
+	// the offline operability report evaluates the same checks, and the
+	// receipt records it. Nil is today's behavior: no allowlist, and
+	// foreign-namespace and cluster-scoped objects are notes.
+	Policy *contracts.DeploymentPolicy
 }
 
 func (d Deployer) validate() error {
@@ -97,6 +101,9 @@ func (d Deployer) ApplyAndVerify(ctx context.Context, checkout string, plan *con
 	if err != nil {
 		return lifecycle.DeploymentReceipt{}, fmt.Errorf("render deployment source: %w", err)
 	}
+	if err := d.enforcePolicy(set); err != nil {
+		return lifecycle.DeploymentReceipt{}, err
+	}
 	declared := make([]imagesrc.Declared, 0, len(plan.GetImages()))
 	for _, image := range plan.GetImages() {
 		declared = append(declared, imagesrc.Declared{Image: image.GetImage(), SourceID: image.GetSourceId(), Config: image.GetConfig()})
@@ -130,7 +137,37 @@ func (d Deployer) ApplyAndVerify(ctx context.Context, checkout string, plan *con
 	if d.Environment != nil {
 		receipt.Environment = proto.Clone(d.Environment).(*contracts.RenderEnvironment)
 	}
+	if d.Policy != nil {
+		receipt.Policy = proto.Clone(d.Policy).(*contracts.DeploymentPolicy)
+	}
 	return receipt, nil
+}
+
+// PolicyError is a desired set that violates the install-time deployment
+// policy. Nothing was built or applied.
+type PolicyError struct {
+	Checks []operability.Check
+}
+
+func (e *PolicyError) Error() string {
+	details := make([]string, 0, len(e.Checks))
+	for _, c := range e.Checks {
+		details = append(details, c.ID+": "+c.Detail)
+	}
+	return "deployment violates the install-time policy (" + strings.Join(details, "; ") + ")"
+}
+
+func (d Deployer) enforcePolicy(set rendered.DesiredSet) error {
+	var failed []operability.Check
+	for _, c := range offline.CheckPolicy(set, deploymentpolicy.Offline(d.Policy)) {
+		if c.Status == operability.StatusFail {
+			failed = append(failed, c)
+		}
+	}
+	if len(failed) > 0 {
+		return &PolicyError{Checks: failed}
+	}
+	return nil
 }
 
 // workloadRecord is what one applied workload must look like when observed.

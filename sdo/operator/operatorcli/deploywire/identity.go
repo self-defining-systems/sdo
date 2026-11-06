@@ -81,7 +81,9 @@ func ControlNamespace(launch *contracts.ControllerConfig) string {
 // Deployer is the trusted Deployer with every built-in renderer and the
 // deployer's image catalog. environment is the install-time render
 // environment: the operate Job's discovery, or the controller's recorded one.
-func (d Identity) Deployer(client kubernetes.Interface, target Target, environment *contracts.RenderEnvironment) (deployment.Deployer, error) {
+// policy is the install-time deployment policy (nil: none); the Deployer
+// enforces it on every apply.
+func (d Identity) Deployer(client kubernetes.Interface, target Target, environment *contracts.RenderEnvironment, policy *contracts.DeploymentPolicy) (deployment.Deployer, error) {
 	subPath, err := filepath.Rel(target.RepositoryMount, target.WorkspaceRoot)
 	if err != nil || subPath == "." || subPath == ".." || filepath.IsAbs(subPath) || strings.HasPrefix(subPath, "../") {
 		return deployment.Deployer{}, errors.New("broker proposals must be inside the shared repository mount")
@@ -113,7 +115,7 @@ func (d Identity) Deployer(client kubernetes.Interface, target Target, environme
 	return deployment.Deployer{
 		Namespace: target.Namespace, Renderers: renderers.Catalog(), Images: sources,
 		Applier:    deployment.CommandBackend{ObserveLimit: d.RolloutTimeout},
-		TreeDigest: broker.ProposalTreeDigest, Environment: environment, AcceptedRoot: target.AcceptedRoot, Materializer: materializer,
+		TreeDigest: broker.ProposalTreeDigest, Environment: environment, Policy: policy, AcceptedRoot: target.AcceptedRoot, Materializer: materializer,
 	}, nil
 }
 

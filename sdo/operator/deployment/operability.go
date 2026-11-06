@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/deploymentpolicy"
 	"sdo.dev/operator/imagesrc"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/operability/offline"
@@ -56,7 +57,7 @@ func (d Deployer) CheckOffline(ctx context.Context, checkout string, plan *contr
 		},
 		ExpectedWorkloads: plan.GetExpectedWorkloadIds(),
 		Declared:          declared,
-		Policy:            d.Policy,
+		Policy:            deploymentpolicy.Offline(d.Policy),
 	})
 	out.Checks = result.Checks
 	out.RenderDigest, out.EnvDigest = result.Set.RenderDigest, result.Set.EnvDigest

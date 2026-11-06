@@ -92,10 +92,13 @@ type SourceEvidence struct {
 	// RenderEnvironment is the install-time render environment of the
 	// digests; nil is unknown (renderer defaults), as in older records.
 	RenderEnvironment *contracts.RenderEnvironment
-	Images            []string
-	ResourceIDs       []string
-	Ready             bool
-	AcceptedCommit    string
+	// DeploymentPolicy is the install-time policy the deployment was checked
+	// against; nil when none was configured (or the record predates it).
+	DeploymentPolicy *contracts.DeploymentPolicy
+	Images           []string
+	ResourceIDs      []string
+	Ready            bool
+	AcceptedCommit   string
 	// OperabilityDigest is the digest of the stage-deployment operability
 	// report PublishVerifiedSource accepted; the report itself is in the
 	// evidence store (Broker.OperabilityReport). Empty for deployments that

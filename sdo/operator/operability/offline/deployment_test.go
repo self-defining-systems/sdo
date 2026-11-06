@@ -248,6 +248,28 @@ func TestScopeIsANoteUntilBlockingThenFailsUnlessGranted(t *testing.T) {
 	}
 }
 
+func TestNamedGrantsPermitOnlyWhatTheyName(t *testing.T) {
+	files := rendertest.MapFS{"k8s/web.yaml": web, "k8s/f.yaml": foreignSvc, "k8s/c.yaml": clusterRole}
+	run := func(p offline.Policy) operability.Check {
+		p.ScopeBlocking = true
+		d := deployment(t, files)
+		d.Policy = p
+		return byID(t, offline.CheckDeployment(context.Background(), d).Checks)["O6.scope"]
+	}
+	if c := run(offline.Policy{GrantedNamespaces: []string{"elsewhere"}}); c.Status != operability.StatusFail || strings.Contains(c.Detail, "foreign") || !strings.Contains(c.Detail, "ClusterRole/reader") {
+		t.Fatalf("namespace granted, cluster kind not: %+v", c)
+	}
+	if c := run(offline.Policy{GrantedClusterKinds: []string{"ClusterRole"}}); c.Status != operability.StatusFail || !strings.Contains(c.Detail, "elsewhere/Service/other") || strings.Contains(c.Detail, "ClusterRole") {
+		t.Fatalf("cluster kind granted, namespace not: %+v", c)
+	}
+	if c := run(offline.Policy{GrantedNamespaces: []string{"other"}, GrantedClusterKinds: []string{"ClusterRoleBinding"}}); c.Status != operability.StatusFail {
+		t.Fatalf("grants of other names must not apply: %+v", c)
+	}
+	if c := run(offline.Policy{GrantedNamespaces: []string{"elsewhere"}, GrantedClusterKinds: []string{"ClusterRole"}}); c.Status != operability.StatusPass {
+		t.Fatalf("everything granted by name = %+v", c)
+	}
+}
+
 func TestAllowlist(t *testing.T) {
 	files := rendertest.MapFS{"k8s/web.yaml": web}
 	d := deployment(t, files)
