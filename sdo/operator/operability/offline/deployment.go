@@ -65,21 +65,29 @@ type Result struct {
 func CheckDeployment(ctx context.Context, d Deployment) Result {
 	var res Result
 	add := func(c operability.Check) { res.Checks = append(res.Checks, c) }
+	// stop records the checks a failure kept from running as skipped, so every
+	// required item still has checks and the failure alone decides the report.
+	stop := func(after string, ids ...string) Result {
+		for _, id := range ids {
+			add(operability.Check{ID: id, Phase: operability.PhaseOffline, Status: operability.StatusSkipped, Detail: "not run: " + after + " failed"})
+		}
+		return res
+	}
 
 	if d.PatchesErr != nil {
 		add(failure("O1.patches", classifyPatches(d.PatchesErr), d.PatchesErr, patchPaths(d.PatchesErr)))
-		return res
+		return stop("O1.patches", afterPatches()...)
 	}
 	add(pass("O1.patches", "patch series applies"))
 
 	if d.Render == nil {
 		add(operability.Check{ID: "O1.render", Phase: operability.PhaseOffline, Status: operability.StatusFail, Cause: operability.CauseInternal, Detail: "no render function was supplied"})
-		return res
+		return stop("O1.render", afterRender()...)
 	}
 	first, err := d.Render(ctx)
 	if err != nil {
 		add(failure("O1.render", classifyRender(err, operability.CauseRender), err, nil))
-		return res
+		return stop("O1.render", afterRender()...)
 	}
 	res.Set = first
 	add(pass("O1.render", fmt.Sprintf("renders %d objects", len(first.Objects()))))
@@ -97,6 +105,13 @@ func CheckDeployment(ctx context.Context, d Deployment) Result {
 	add(allowlist(first, d.Policy))
 	return res
 }
+
+// Checks that depend on an earlier one, in the order CheckDeployment runs them.
+func afterRender() []string {
+	return []string{"O1.deterministic", "O1.workloads", "O2.images", "O6.scope", "O6.allowlist"}
+}
+
+func afterPatches() []string { return append([]string{"O1.render"}, afterRender()...) }
 
 func pass(id, detail string) operability.Check {
 	return operability.Check{ID: id, Phase: operability.PhaseOffline, Status: operability.StatusPass, Detail: operability.Clip(detail)}
