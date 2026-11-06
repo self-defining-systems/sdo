@@ -349,7 +349,7 @@ func held(result AdvanceResult, reason HoldReason, detail string) AdvanceResult 
 func memoryPaths(paths []string) []string {
 	var out []string
 	for _, path := range paths {
-		if path == layout.Dir || strings.HasPrefix(path, layout.Dir+"/") {
+		if layout.IsMemoryPath(path) {
 			out = append(out, path)
 		}
 	}

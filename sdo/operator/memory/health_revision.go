@@ -55,7 +55,7 @@ func HealthInputs(ctx context.Context, repository, revision string) (HealthRevis
 			return HealthRevision{}, errors.New("invalid health provenance tree")
 		}
 		name := string(path)
-		if name != layout.Dir && !layout.IsMemoryPath(name) {
+		if !layout.IsMemoryPath(name) {
 			source.Write(entry)
 			source.Write([]byte{0})
 		}

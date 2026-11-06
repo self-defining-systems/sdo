@@ -18,12 +18,6 @@ import (
 // ID is the catalog ID of this watcher (the `kind` in sources.yaml).
 const ID = "git"
 
-// holdRefPrefix keeps fetched revisions reachable so they are not collected.
-// Nothing deletes these refs: the next advance merges with the previous
-// upstream commit as its base. The name must not collide with the broker's
-// memory-remote ref refs/sdo/upstream (a ref cannot also be a directory).
-const holdRefPrefix = "refs/sdo/upstream-source/"
-
 var (
 	commitID = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
 )
@@ -84,7 +78,7 @@ func (Watcher) Materialize(ctx context.Context, cfg *v1alpha1.GitPollConfig, rev
 	if gitDir == "" {
 		return "", errors.New("gitpoll: gitDir is required")
 	}
-	if _, err := git(ctx, gitDir, true, "fetch", "--no-tags", "--quiet", "--", cfg.GetRepository(), rev.ID+":"+holdRefPrefix+rev.ID); err != nil {
+	if _, err := git(ctx, gitDir, true, "fetch", "--no-tags", "--quiet", "--", cfg.GetRepository(), rev.ID+":"+upstream.HoldRefPrefix+rev.ID); err != nil {
 		return "", err
 	}
 	out, err := git(ctx, gitDir, false, "rev-parse", "--verify", "--quiet", rev.ID+"^{commit}")

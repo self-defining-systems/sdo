@@ -21,6 +21,14 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
+// HoldRefPrefix is where a watcher keeps each materialized revision in the
+// accepted repository so the object is not collected. The next advance merges
+// with the previous upstream commit as its base, so the broker prunes these
+// refs only down to the accepted upstream and its base (see
+// broker.PublishAdvance). The name must not collide with the broker's
+// memory-remote ref refs/sdo/upstream (a ref cannot also be a directory).
+const HoldRefPrefix = "refs/sdo/upstream-source/"
+
 // ErrUnavailable marks a transient failure to reach the upstream. The core
 // retries it; every other error holds the source with a typed reason.
 var ErrUnavailable = errors.New("upstream unavailable")

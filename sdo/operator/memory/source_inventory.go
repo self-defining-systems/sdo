@@ -50,7 +50,7 @@ func SourceInventory(ctx context.Context, checkout, acceptedCommit string) (Sour
 			return SourceFacts{}, fmt.Errorf("invalid accepted source tree metadata")
 		}
 		path := string(pathBytes)
-		if path == layout.Dir || layout.IsMemoryPath(path) {
+		if layout.IsMemoryPath(path) {
 			continue
 		}
 		if parts[1] != "blob" || parts[0] == "120000" {

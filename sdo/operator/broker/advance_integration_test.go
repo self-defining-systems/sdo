@@ -121,6 +121,17 @@ func (w *advanceWorld) push(t *testing.T, parent string, files map[string]*strin
 	return commit
 }
 
+// holds lists the revisions the accepted repository holds for the watcher.
+func (w *advanceWorld) holds(t *testing.T) []string {
+	t.Helper()
+	var out []string
+	for _, ref := range strings.Fields(gitOut(t, w.accepted, "for-each-ref", "--format=%(refname)", "refs/sdo/upstream-source/")) {
+		out = append(out, strings.TrimPrefix(ref, "refs/sdo/upstream-source/"))
+	}
+	slices.Sort(out)
+	return out
+}
+
 func text(value string) *string { return &value }
 
 func (w *advanceWorld) head(t *testing.T) string { return gitOut(t, w.accepted, "rev-parse", "HEAD") }
@@ -146,6 +157,7 @@ func TestPublishAdvanceAcceptsTheDeployedThreeWayMerge(t *testing.T) {
 	if err != nil || !ancestor || !slices.Equal(paths, []string{"Dockerfile", "app.txt", "new.txt"}) {
 		t.Fatalf("UpstreamChange = %v %v %v", ancestor, paths, err)
 	}
+	stray := w.push(t, w.seed, map[string]*string{"stray.txt": text("held back, then superseded\n")})
 	accepted := w.head(t)
 	id := "advance-" + upstream[:12]
 	proposal, candidate, conflicts, err := b.ProposeAdvance(ctx, id, w.seed, upstream)
@@ -186,6 +198,9 @@ func TestPublishAdvanceAcceptsTheDeployedThreeWayMerge(t *testing.T) {
 	if tree := gitOut(t, w.accepted, "rev-parse", receipt.Commit+"^{tree}"); tree != evidence.BaseTree || tree != candidateTree {
 		t.Fatalf("accepted tree %s, deployed %s", tree, evidence.BaseTree)
 	}
+	if holds := w.holds(t); slices.Contains(holds, stray) || !slices.Contains(holds, upstream) {
+		t.Fatalf("hold refs after the advance = %v, want the accepted upstream %s kept and %s pruned", holds, upstream, stray)
+	}
 	if last, found, err := b.LastUpstream(ctx); err != nil || !found || last != upstream {
 		t.Fatalf("LastUpstream after advance = %q %v %v", last, found, err)
 	}
@@ -220,6 +235,9 @@ func TestPublishAdvanceAcceptsTheDeployedThreeWayMerge(t *testing.T) {
 	}
 	if _, err := b.PublishAdvance(ctx, nextID, next, upstream, advanceEvidence(t, proposal.Path, "next")); err != nil {
 		t.Fatal(err)
+	}
+	if holds := w.holds(t); !slices.Equal(holds, []string{min(upstream, next), max(upstream, next)}) {
+		t.Fatalf("hold refs after the second advance = %v, want only the accepted upstream %s and its base %s", holds, next, upstream)
 	}
 }
 
@@ -299,6 +317,12 @@ func TestPublishAdvanceRefusesWhatWasNotDeployedOrMayNotMerge(t *testing.T) {
 		}
 		if _, _, _, err := b.ProposeAdvance(ctx, "advance-"+touched[:12], w.seed, touched); err == nil || !strings.Contains(err.Error(), "operational memory") {
 			t.Fatalf("ProposeAdvance touching memory = %v", err)
+		}
+	})
+	t.Run("upstream adds a path named exactly the memory directory", func(t *testing.T) {
+		touched := w.push(t, w.seed, map[string]*string{layout.Dir: text("not a directory\n")})
+		if _, _, _, err := b.ProposeAdvance(ctx, "advance-"+touched[:12], w.seed, touched); err == nil || !strings.Contains(err.Error(), "operational memory") {
+			t.Fatalf("ProposeAdvance adding a file named %s = %v", layout.Dir, err)
 		}
 	})
 	t.Run("conflict with an accepted edit", func(t *testing.T) {

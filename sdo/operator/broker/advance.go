@@ -10,6 +10,7 @@ import (
 
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/upstream"
 )
 
 const (
@@ -377,11 +378,36 @@ func (b *Broker) PublishAdvance(ctx context.Context, id, upstream, base string, 
 		if err := b.writeSourceEvidence(id, accepted); err != nil {
 			return fmt.Errorf("advance accepted but evidence finalization needs reconciliation: %w", err)
 		}
+		if err := b.pruneUpstreamHolds(ctx, upstream, base); err != nil {
+			return fmt.Errorf("advance accepted but pruning upstream hold refs failed: %w", err)
+		}
 		return b.lockedAt(b.proposalRoot(id, AdvancePhase)+".lock", func() error {
 			return os.RemoveAll(b.proposalRoot(id, AdvancePhase))
 		})
 	}))
 	return receipt, err
+}
+
+// pruneUpstreamHolds deletes the watcher's hold refs except the accepted
+// upstream and its base: the next advance needs the accepted upstream as its
+// base, and the base stays so the last advance can still be re-derived.
+// Revisions that were held back or superseded are not retried, so their refs
+// are no longer needed.
+func (b *Broker) pruneUpstreamHolds(ctx context.Context, upstreamCommit, base string) error {
+	out, err := runGit(ctx, b.target, "for-each-ref", "--format=%(refname)", upstream.HoldRefPrefix)
+	if err != nil {
+		return err
+	}
+	for _, ref := range strings.Fields(string(out)) {
+		sha := strings.TrimPrefix(ref, upstream.HoldRefPrefix)
+		if sha == upstreamCommit || sha == base {
+			continue
+		}
+		if _, err := runGit(ctx, b.target, "update-ref", "-d", ref); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // samePublishedAdvance makes a repeated publish idempotent: the accepted

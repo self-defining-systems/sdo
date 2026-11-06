@@ -292,9 +292,11 @@ func IncidentTraffic(kind Kind, id string) bool {
 	return false
 }
 
-// IsMemoryPath reports whether a repository-relative path is inside
-// operational memory, classified or not.
-func IsMemoryPath(p string) bool { return strings.HasPrefix(p, Dir+"/") }
+// IsMemoryPath reports whether a repository-relative path is operational
+// memory, classified or not: the memory directory entry itself (a file or
+// symlink named exactly Dir replaces the directory) or anything below it.
+// Every caller that decides what may touch memory uses this predicate.
+func IsMemoryPath(p string) bool { return p == Dir || strings.HasPrefix(p, Dir+"/") }
 
 // DetectorDir is the repository-relative directory of a detector package.
 func DetectorDir(class Class, id string) string {
