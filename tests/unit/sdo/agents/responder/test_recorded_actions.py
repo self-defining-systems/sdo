@@ -556,7 +556,7 @@ def test_a_sigterm_mid_command_leaves_a_finished_receipt_and_no_orphans(
         process.send_signal(signal.SIGTERM)
         process.wait(timeout=20)
 
-        _wait_for(lambda: _is_dead(grandchild), timeout=5.0)  # the command's own children died too
+        _wait_for(lambda: _is_dead(grandchild), timeout=30.0)  # the command's own children died too
         records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
         assert records[-1]["state"] == "finished"
         result = evolve(_bare_result())

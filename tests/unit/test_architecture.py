@@ -269,7 +269,12 @@ def test_unit_tests_synchronize_without_wall_clock_sleeps() -> None:
     violations = []
     for path in sorted((_REPO_ROOT / "tests/unit").rglob("test_*.py")):
         relative = path.relative_to(_REPO_ROOT).as_posix()
-        for function, line in _wall_clock_sleeps(path.read_text()):
+        source = path.read_text()
+        # Every sleep spelling, alias included, contains the word; parsing the other
+        # ~700 files took 10 s on a loaded runner and tripped the slow-test guard.
+        if "sleep" not in source:
+            continue
+        for function, line in _wall_clock_sleeps(source):
             if (relative, function) not in allowed:
                 violations.append(f"{relative}:{line}: {function}: replace sleep with readiness or an injected clock")
     assert not violations, "\n".join(violations)

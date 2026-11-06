@@ -17,6 +17,11 @@ else
     # -short skips the few tests that compile generated programs for 10 s or more
     # (they call testing.Short); nightly runs them. Every fuzz seed still runs here.
     args+=(-short)
+    # Quarantined flaky tests (.github/ci_quarantine.json) run in the nightly tier only.
+    quarantined="$(python3 "$root/scripts/ci_quarantine.py" go-skip)"
+    if [[ -n "$quarantined" ]]; then
+        args+=(-skip "$quarantined")
+    fi
 fi
 # A temporary workspace lets one go test invocation schedule packages across
 # module boundaries, rather than waiting for each module's slowest test.

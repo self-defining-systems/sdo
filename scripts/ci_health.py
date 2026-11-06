@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Hourly CI health: per-job duration percentiles, merge-queue latency and run outcomes.
+"""Hourly CI health: per-job duration percentiles, merge-queue latency, run outcomes and flakes.
 
 Read-only GitHub API use through the `gh` CLI (GH_TOKEN, default workflow token).
 Writes a Markdown summary to $GITHUB_STEP_SUMMARY (or stdout) and exits non-zero when a
-budget in .github/ci_budgets.json ("health") is exceeded. Runs created before
+budget in .github/ci_budgets.json ("health") is exceeded. A flake is a job that failed and
+later passed on the same commit (a rerun or a second run); the report ranks the failing
+tests behind those jobs from their logs. Flakes are reported, never a budget failure: the
+policy (fix or quarantine within a day) lives in docs/testing-guide.md. Runs created before
 health.since are ignored so a fixed regression stops failing once it leaves the window.
 """
 
@@ -23,9 +26,15 @@ from typing import Any
 
 BUDGETS = Path(__file__).resolve().parents[1] / ".github" / "ci_budgets.json"
 PR_EVENTS = ("pull_request", "merge_group")
+AGGREGATE_JOB = "Required PR CI"
+ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+LOG_PREFIX = re.compile(r"^\ufeff?\d{4}-\d\d-\d\dT[\d:.]+Z ")
+PYTEST_FAILED = re.compile(r"^(?:FAILED|ERROR) (\S+?::\S+?)(?: - .*)?$")
+SLOW_TEST = re.compile(r"^##\[error\](\S+) took [\d.]+s \(")
 
 Json = Mapping[str, Any]
 Api = Callable[[str], Any]
+Text = Callable[[str], str]
 
 
 def parse_time(value: str) -> datetime:
@@ -122,10 +131,136 @@ def gather(api: Api, budget: Json) -> tuple[dict[str, list[float]], list[float],
     return durations, queue_latencies(pr_runs, merged_at), outcome_rates(pr_runs), outcome_rates(push_runs)
 
 
+def failed_tests(log: str) -> list[str]:
+    """Test ids that failed in one job log: pytest summary lines, Go -json fail events, slow-test guard errors."""
+    found: dict[str, None] = {}
+    for raw in log.splitlines():
+        line = LOG_PREFIX.sub("", ANSI.sub("", raw)).strip()
+        if line.startswith("{") and '"Action":"fail"' in line:
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if event.get("Test") and "/" not in event["Test"]:
+                found[f"{event['Package']} {event['Test']}"] = None
+            continue
+        match = PYTEST_FAILED.match(line) or SLOW_TEST.match(line)
+        if match:
+            found[match[1]] = None
+    return list(found)
+
+
+def job_attempts(api: Api, runs: Iterable[Json]) -> list[dict[str, Any]]:
+    """Every job of every attempt of the given runs, with its commit and run."""
+    rows = []
+    for run in runs:
+        for attempt in range(1, run.get("run_attempt", 1) + 1):
+            jobs = api(f"actions/runs/{run['id']}/attempts/{attempt}/jobs?per_page=100")["jobs"]
+            rows += [
+                {
+                    "sha": run["head_sha"],
+                    "job": job["name"],
+                    "conclusion": job["conclusion"],
+                    "job_id": job["id"],
+                    "step": next((st["name"] for st in job.get("steps", []) if st.get("conclusion") == "failure"), ""),
+                    "run_id": run["id"],
+                    "at": job.get("completed_at") or run["created_at"],
+                }
+                for job in jobs
+                if job["name"] != AGGREGATE_JOB
+            ]
+    return rows
+
+
+def flaky_jobs(rows: Iterable[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    """Failed job executions followed by a success of the same job on the same commit."""
+    by_key: dict[tuple[str, str], list[Mapping[str, Any]]] = defaultdict(list)
+    for row in sorted(rows, key=lambda r: parse_time(r["at"])):
+        by_key[(row["sha"], row["job"])].append(row)
+    flaky = []
+    for history in by_key.values():
+        for index, row in enumerate(history):
+            if row["conclusion"] == "failure" and any(
+                later["conclusion"] == "success" for later in history[index + 1 :]
+            ):
+                flaky.append(row)
+    return flaky
+
+
+def rank_flakes(flaky: Iterable[Mapping[str, Any]], log_of: Callable[[Mapping[str, Any]], str]) -> list[dict[str, Any]]:
+    """Failures per (job, test), most frequent first; a job with no parsable test is listed under its own name."""
+    table: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in flaky:
+        for test in failed_tests(log_of(row)) or [f"(no test id; failed step: {row.get('step') or 'unknown'})"]:
+            entry = table.setdefault((row["job"], test), {"job": row["job"], "test": test, "count": 0, "runs": []})
+            entry["count"] += 1
+            entry["runs"].append(row["run_id"])
+    return sorted(table.values(), key=lambda e: (-e["count"], e["job"], e["test"]))
+
+
+def non_green_runs(runs: Iterable[Json]) -> list[Json]:
+    """Cancelled, rerun or ejected (failed merge-group) runs, newest first as listed."""
+    return [
+        r
+        for r in runs
+        if r["conclusion"] == "cancelled"
+        or r.get("run_attempt", 1) > 1
+        or (r["event"] == "merge_group" and r["conclusion"] != "success")
+    ]
+
+
+def render_flakes(ranked: list[dict[str, Any]], odd_runs: list[Json], repo: str, total: int) -> str:
+    lines = ["", f"## Flakes (failed, then passed on the same commit; last {total} runs)", ""]
+    if ranked:
+        lines += ["| flakes | job | test | runs |", "|---|---|---|---|"]
+        for entry in ranked:
+            links = ", ".join(f"[{run}](https://github.com/{repo}/actions/runs/{run})" for run in entry["runs"][:5])
+            lines.append(f"| {entry['count']} | {entry['job']} | `{entry['test']}` | {links} |")
+    else:
+        lines.append("None.")
+    lines += ["", "### Cancelled, rerun or ejected runs", ""]
+    if odd_runs:
+        lines += ["| run | event | outcome | attempt | branch |", "|---|---|---|---|---|"]
+        for r in odd_runs:
+            link = f"[{r['id']}](https://github.com/{repo}/actions/runs/{r['id']})"
+            attempt, branch = r.get("run_attempt", 1), r.get("head_branch", "")
+            lines.append(f"| {link} | {r['event']} | {r['conclusion']} | {attempt} | {branch} |")
+    else:
+        lines.append("None.")
+    return "\n".join(lines) + "\n"
+
+
+def flake_report(api: Api, text: Text, repo: str, since: datetime, limit: int = 100) -> str:
+    runs = api(f"actions/workflows/ci.yml/runs?per_page={limit}&status=completed")["workflow_runs"][:limit]
+    candidates = [r for r in runs if r.get("run_attempt", 1) > 1 or r["conclusion"] == "failure"]
+    # Only commits that ran more than once can hold a flake.
+    shas = defaultdict(int)
+    for run in runs:
+        shas[run["head_sha"]] += 1
+    candidates = [r for r in candidates if r.get("run_attempt", 1) > 1 or shas[r["head_sha"]] > 1]
+    flaky = flaky_jobs(job_attempts(api, candidates))
+
+    def log_of(row: Mapping[str, Any]) -> str:
+        try:
+            return text(f"actions/jobs/{row['job_id']}/logs")
+        except subprocess.CalledProcessError:  # logs expire after the retention period
+            return ""
+
+    ranked = rank_flakes(flaky, log_of)
+    recent = [r for r in runs if parse_time(r["created_at"]) >= since]
+    return render_flakes(ranked, non_green_runs(recent)[:25], repo, len(runs))
+
+
 def gh_api(path: str) -> Any:
     repo = os.environ["GITHUB_REPOSITORY"]
     out = subprocess.run(["gh", "api", f"repos/{repo}/{path}"], check=True, capture_output=True, text=True).stdout
     return json.loads(out)
+
+
+def gh_text(path: str) -> str:
+    repo = os.environ["GITHUB_REPOSITORY"]
+    command = ["gh", "api", "--allow-escape-sequences", f"repos/{repo}/{path}"]
+    return subprocess.run(command, check=True, capture_output=True, text=True).stdout
 
 
 def main() -> int:
@@ -135,6 +270,7 @@ def main() -> int:
     failures = evaluate(budget, durations, latencies)
     if failures:
         report += "\n### Budget exceeded\n\n" + "\n".join(f"- {f}" for f in failures) + "\n"
+    report += flake_report(gh_api, gh_text, os.environ["GITHUB_REPOSITORY"], parse_time(budget["since"]))
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with Path(summary).open("a") as handle:

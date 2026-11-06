@@ -24,9 +24,9 @@ import (
 )
 
 // network is the smallest model of cluster networking the controller's probes
-// need. Every application Pod gets a loopback twin (127.1.x.y) and a real
+// need. Every application Pod gets a loopback twin (127.<slot>.x.y) and a real
 // listener on each declared container port; every Service gets a loopback
-// address (127.2.x.y) whose listeners forward to a ready Pod's target port, or
+// address (127.<slot+1>.x.y) whose listeners forward to a ready Pod's target port, or
 // refuse the connection when the selected upstream cannot accept TCP.
 // Names resolve through a hosts file the sandboxes bind over /etc/hosts.
 type network struct {
@@ -48,7 +48,7 @@ func newNetwork(hostsPath string) *network {
 }
 
 // endpointAddr is the address a Pod carries in Endpoints and EndpointSlices. Pods listen on loopback addresses
-// (127.1.x.y, which is also their status.podIP, so direct dials from agents work), but the API server rejects
+// (127.<slot>.x.y, which is also their status.podIP, so direct dials from agents work), but the API server rejects
 // loopback addresses in Endpoints, so those objects carry the Pod's 10.244.x.y twin; targetRef names the Pod.
 func endpointAddr(podIP string) string {
 	parts := strings.Split(podIP, ".")
@@ -57,11 +57,61 @@ func endpointAddr(podIP string) string {
 
 func loopback(n int) string { return fmt.Sprintf("%d.%d", n>>8&255, n&255) }
 
+// Every world on a host binds real listeners on these loopback addresses, so two
+// worlds (parallel test processes, or agents sharing a host) must not share them:
+// the second world's listeners failed silently and its probes reached the other
+// world's applications or were refused. A process claims one slot, a pair of
+// 127.x/16 ranges (Pods, Services), by holding a TCP port that only that slot's
+// owner can bind; the kernel releases it when the process exits.
+const (
+	loopbackSlots    = 64
+	loopbackSlotPort = 43100
+)
+
+var (
+	loopbackOnce sync.Once
+	loopbackPods int // second octet of Pod addresses
+	loopbackSvcs int // second octet of Service addresses
+	loopbackHold net.Listener
+)
+
+// claimSlot takes the first free slot at or after port base and returns the
+// listener that holds it with the Pod and Service octets it owns.
+func claimSlot(base int) (hold net.Listener, pods, services int, err error) {
+	for slot := range loopbackSlots {
+		l, listenErr := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", base+slot))
+		if listenErr == nil {
+			return l, 16 + 2*slot, 17 + 2*slot, nil
+		}
+	}
+	return nil, 0, 0, fmt.Errorf("all %d loopback slots (127.0.0.1:%d..) are held by other controller end-to-end runs", loopbackSlots, base)
+}
+
+func claimLoopbackSlot() {
+	loopbackOnce.Do(func() {
+		var err error
+		if loopbackHold, loopbackPods, loopbackSvcs, err = claimSlot(loopbackSlotPort); err != nil {
+			panic(err)
+		}
+	})
+}
+
+// podLoopback is the n-th Pod address of this process's slot.
+func podLoopback(n int) string {
+	claimLoopbackSlot()
+	return fmt.Sprintf("127.%d.%s", loopbackPods, loopback(n))
+}
+
+func serviceLoopback(n int) string {
+	claimLoopbackSlot()
+	return fmt.Sprintf("127.%d.%s", loopbackSvcs, loopback(n))
+}
+
 func (n *network) serviceIP(key string) string {
 	if ip, ok := n.svcIPs[key]; ok {
 		return ip
 	}
-	ip := "127.2." + loopback(len(n.svcIPs)+1)
+	ip := serviceLoopback(len(n.svcIPs) + 1)
 	n.svcIPs[key] = ip
 	return ip
 }
@@ -90,12 +140,22 @@ func (k *Kubelet) reconcileNetwork(ctx context.Context) error {
 			continue
 		}
 		var socks []net.Listener
+		bound := map[int32]bool{}
 		for _, c := range pod.Spec.Containers {
 			for _, port := range c.Ports {
-				if l, err := net.Listen("tcp", net.JoinHostPort(pod.Status.PodIP, fmt.Sprint(port.ContainerPort))); err == nil {
-					go func() { _ = http.Serve(l, appHandler(c.Name)) }()
-					socks = append(socks, l)
+				if bound[port.ContainerPort] {
+					continue // a second container declaring the same port shares the first listener
 				}
+				l, err := net.Listen("tcp", net.JoinHostPort(pod.Status.PodIP, fmt.Sprint(port.ContainerPort)))
+				if err != nil {
+					for _, open := range socks {
+						_ = open.Close()
+					}
+					return fmt.Errorf("listen for Pod %s/%s: %w", pod.Namespace, pod.Name, err)
+				}
+				bound[port.ContainerPort] = true
+				go func() { _ = http.Serve(l, appHandler(c.Name)) }()
+				socks = append(socks, l)
 			}
 		}
 		n.podSocks[pod.UID] = socks
@@ -159,7 +219,7 @@ func (k *Kubelet) reconcileNetwork(ctx context.Context) error {
 			if !ok {
 				l, err := net.Listen("tcp", net.JoinHostPort(ip, fmt.Sprint(port.Port)))
 				if err != nil {
-					continue
+					return fmt.Errorf("listen for Service %s port %d: %w", serviceKey, port.Port, err)
 				}
 				f = &forwarder{listener: l}
 				n.svcSocks[key] = f

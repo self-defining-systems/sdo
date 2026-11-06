@@ -1,0 +1,4 @@
+{
+  "_comment": "Tests quarantined out of the PR and queue tiers; the nightly run still runs them. Each entry needs id, kind (go: '<package import path> <TopLevelTest>', pytest: node id), owner, reason and an ISO deadline. scripts/ci_quarantine.py check fails when a deadline has passed or the test no longer exists. Policy: docs/testing-guide.md#flaky-tests.",
+  "tests": []
+}
