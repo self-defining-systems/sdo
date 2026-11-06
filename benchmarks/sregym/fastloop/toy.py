@@ -16,7 +16,15 @@ from typing import Any, Protocol
 
 from apps.toy.faults import IMAGE, SERVICES, command, fault_spec
 from apps.toy.variants.assemble import VARIANTS, assemble
-from benchmarks.sregym.adapter import WaitKind, buildkit_image, deployment_plan, helm_source, raw_source, wait_for
+from benchmarks.sregym.adapter import (
+    WaitKind,
+    buildkit_image,
+    deployment_plan,
+    helm_source,
+    kustomize_source,
+    raw_source,
+    wait_for,
+)
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment, Images
 from benchmarks.sregym.fastloop.host_limits import HostLimits, NodeLimits, apply_node_limits
 from benchmarks.sregym.fastloop.toy_upstream import UpstreamLayout, serve_upstream, source_config
@@ -139,15 +147,35 @@ def point_chart_at_registry(workspace: Path, namespace: str) -> None:
     values.write_text(text.replace("pullPolicy: Never", "pullPolicy: IfNotPresent"), encoding="utf-8")
 
 
+def point_kustomization_at_registry(workspace: Path, namespace: str) -> None:
+    """Make the kustomize overlay deploy the registry-qualified image SDO builds, pulled from the registry."""
+    overlay = workspace / "deploy" / "overlays" / "default" / "kustomization.yaml"
+    repository = registry_image(namespace).rpartition(":")[0]
+    overlay.write_text(
+        overlay.read_text(encoding="utf-8").replace(
+            "- name: sdo-toy-app\n", f"- name: sdo-toy-app\n  newName: {repository}\n"
+        ),
+        encoding="utf-8",
+    )
+    for manifest in (workspace / "deploy" / "base").glob("*.yaml"):
+        manifest.write_text(
+            manifest.read_text(encoding="utf-8").replace("imagePullPolicy: Never", "imagePullPolicy: IfNotPresent")
+        )
+
+
+#: Variants whose deployment the harness provides (SDO deploys it as given, no deployer agent).
+PROVIDED_VARIANTS = ("helm", "kustomize")
+
+
 def provided_deployment_plan(variant: str, namespace: str) -> dict[str, Any] | None:
     """The deployment the harness provides for a variant that ships one (helm); SDO deploys it, no agent authors it.
 
     The raw lane is seeded and the remaining variants are still authored by the deployer agent.
     """
-    if variant != "helm":
+    if variant not in PROVIDED_VARIANTS:
         return None
     return deployment_plan(
-        helm_source("chart"),
+        helm_source("chart") if variant == "helm" else kustomize_source("deploy/overlays/default"),
         images=(buildkit_image(registry_image(namespace), ".", "Dockerfile"),),
         expected_workload_ids=[f"Deployment/{namespace}/{service}" for service in SERVICES],
     )
@@ -169,6 +197,8 @@ def prepare_workspace(workspace: Path, image: str, *, fresh: bool, variant: str 
         assemble(variant, workspace)
         if variant == "helm":
             point_chart_at_registry(workspace, NAMESPACE)
+        if variant == "kustomize":
+            point_kustomization_at_registry(workspace, NAMESPACE)
     else:
         shutil.copytree(APP / "kubernetes", workspace / "kubernetes")
         for manifest in (workspace / "kubernetes").glob("*.yaml"):
@@ -393,8 +423,8 @@ def up(args: Any) -> int:
 
         credentials_hook(hook.resolve(), kubeconfig)(NAMESPACE + "-sdo")
     env.save()
-    if variant == "helm":
-        # The provided helm deployment follows an upstream the harness serves (seeded with the accepted source SHA).
+    if variant in PROVIDED_VARIANTS:
+        # The provided deployment follows an upstream the harness serves (seeded with the accepted source SHA).
         serve_upstream(kubeconfig, workspace, UpstreamLayout(NAMESPACE), images.controller)
     deployed = time.monotonic()
     config = install_controller(
@@ -466,8 +496,10 @@ def install_controller(
             kind_cluster_name=environment.cluster,
             deployment_source=raw_source(("kubernetes",)) if variant == "raw" else None,
             deployment_plan=provided_deployment_plan(variant, environment.namespace),
-            source_kind="git" if variant == "helm" else "",
-            source_config=json.dumps(source_config(UpstreamLayout(environment.namespace))) if variant == "helm" else "",
+            source_kind="git" if variant in PROVIDED_VARIANTS else "",
+            source_config=json.dumps(source_config(UpstreamLayout(environment.namespace)))
+            if variant in PROVIDED_VARIANTS
+            else "",
             agent_registrations=registrations.resolve() if registrations else None,
         )
     if frozen_memory and not config.frozen_memory:

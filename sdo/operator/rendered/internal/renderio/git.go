@@ -58,13 +58,14 @@ func Project(ctx context.Context, root string, env []string, tree string, drop [
 	if _, err := run(nil, "read-tree", tree); err != nil {
 		return "", err
 	}
+	// -f: the scratch index is the only thing touched; git's staged-vs-HEAD safety check is about a real index.
 	if len(drop) > 0 {
 		var list bytes.Buffer
 		for _, p := range drop {
 			list.WriteString(p)
 			list.WriteByte(0)
 		}
-		if _, err := run(list.Bytes(), "rm", "-r", "-q", "--cached", "--ignore-unmatch", "--pathspec-from-file=-", "--pathspec-file-nul"); err != nil {
+		if _, err := run(list.Bytes(), "rm", "-r", "-q", "-f", "--cached", "--ignore-unmatch", "--pathspec-from-file=-", "--pathspec-file-nul"); err != nil {
 			return "", err
 		}
 	}
