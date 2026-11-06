@@ -100,30 +100,9 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	if err != nil {
 		return lifecycle.Result{}, err
 	}
-	agentEnvironment, err := worker_registry.AgentEnvironment(config.Install.AgentProvider, config.Install.Model, config.Install.AgentEffort)
+	workers, err := lifecycleWorkers(config, client, control, registry, repository)
 	if err != nil {
 		return lifecycle.Result{}, err
-	}
-	replay, err := settings.Replay(config.Install.Replay)
-	if err != nil {
-		return lifecycle.Result{}, err
-	}
-	agentEnvironment[settings.ReplayEnvironment] = replay
-	agentEnvironment["CODEX_HOME"], agentEnvironment["CLAUDE_CONFIG_DIR"] = "/tmp/codex", "/tmp/claude"
-	workers := worker_registry.KubernetesExecutor{
-		ToolchainImage: config.Install.ControllerImage,
-		Client:         client, Namespace: control, Registry: registry, ServiceAccount: "sdo-responder",
-		RepositoryPVC: config.Install.RepositoryPVC, RepositoryMountPath: config.RepositoryMount,
-		CredentialsSecret: config.Install.CredentialsSecret,
-		Environment:       agentEnvironment,
-	}
-	workers.Environment = codePathWorkerEnvironment(config.Install.CodePath, workers.Environment)
-	policy, err := repository.PolicyEnvironment()
-	if err != nil {
-		return lifecycle.Result{}, err
-	}
-	for name, value := range policy {
-		workers.Environment[name] = value
 	}
 	installer := lifecycle.NativeInstallAdapter{
 		Strategy: lifecycle.KubernetesInstallStrategy{Installer: install.Installer{Client: client}, Renderers: renderers.Catalog()},
@@ -163,4 +142,37 @@ func operateIdentity(config OperateConfig) deployIdentity {
 		BuildBudget:    time.Duration(config.Install.BuildBudgetSeconds) * time.Second,
 		RolloutTimeout: time.Duration(config.Install.RolloutTimeoutSeconds) * time.Second,
 	}
+}
+
+// lifecycleWorkers is the operate Job's agent transport: every lifecycle agent
+// runs as a Job in the control namespace with the install's model settings,
+// and the broker's policy environment, so the health judge's own `memory
+// check` and the broker judge one proposal by the same rules.
+func lifecycleWorkers(config OperateConfig, client kubernetes.Interface, control string, registry *worker_registry.Registry, repository *broker.Broker) (worker_registry.KubernetesExecutor, error) {
+	agentEnvironment, err := worker_registry.AgentEnvironment(config.Install.AgentProvider, config.Install.Model, config.Install.AgentEffort)
+	if err != nil {
+		return worker_registry.KubernetesExecutor{}, err
+	}
+	replay, err := settings.Replay(config.Install.Replay)
+	if err != nil {
+		return worker_registry.KubernetesExecutor{}, err
+	}
+	agentEnvironment[settings.ReplayEnvironment] = replay
+	agentEnvironment["CODEX_HOME"], agentEnvironment["CLAUDE_CONFIG_DIR"] = "/tmp/codex", "/tmp/claude"
+	workers := worker_registry.KubernetesExecutor{
+		ToolchainImage: config.Install.ControllerImage,
+		Client:         client, Namespace: control, Registry: registry, ServiceAccount: "sdo-responder",
+		RepositoryPVC: config.Install.RepositoryPVC, RepositoryMountPath: config.RepositoryMount,
+		CredentialsSecret: config.Install.CredentialsSecret,
+		Environment:       agentEnvironment,
+	}
+	workers.Environment = codePathWorkerEnvironment(config.Install.CodePath, workers.Environment)
+	policy, err := repository.PolicyEnvironment()
+	if err != nil {
+		return worker_registry.KubernetesExecutor{}, err
+	}
+	for name, value := range policy {
+		workers.Environment[name] = value
+	}
+	return workers, nil
 }
