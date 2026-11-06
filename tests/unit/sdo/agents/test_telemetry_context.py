@@ -3,6 +3,7 @@ from sdo.contracts import TelemetryContext, TelemetryPublish, TelemetrySource
 
 
 def _prom(**kwargs) -> TelemetrySource:
+    kwargs.setdefault("origin", "operator")
     return TelemetrySource(
         id="prom",
         kinds=["metrics"],
@@ -10,7 +11,6 @@ def _prom(**kwargs) -> TelemetrySource:
         dialect="PromQL (Prometheus HTTP API v1)",
         default=True,
         capabilities=["alerts", "range"],
-        origin="operator",
         endpoint="http://prom:9090",
         **kwargs,
     )
@@ -56,7 +56,7 @@ def test_sources_carry_dialect_capabilities_and_publishing_blocks():
 
 def test_reader_authority_follows_mode_and_role():
     open_context = TelemetryContext(mode="open", sources=[_prom()])
-    assert "You may bind more sources" in telemetry_context(open_context)
+    assert "only when no listed source can answer" in telemetry_context(open_context)
     pinned = telemetry_context(TelemetryContext(mode="pinned", sources=[_prom()]))
     assert "never write bindings" in pinned
     assert "may bind" not in pinned
@@ -64,3 +64,14 @@ def test_reader_authority_follows_mode_and_role():
         responder = telemetry_context(TelemetryContext(mode=mode, sources=[_prom()]), "responder")
         assert "Bindings are read-only" in responder
         assert "sources.yaml" not in responder
+
+
+def test_designer_is_told_to_query_operator_provided_sources_not_rebind_them():
+    text = telemetry_context(TelemetryContext(mode="open", sources=[_prom()]))
+    assert "operator-provided" in text
+    assert "already bound" in text
+    assert "do not redefine" in text
+    assert "references/telemetry.md" in text
+    designer_only = TelemetryContext(mode="open", sources=[_prom(origin="app-shipped")])
+    assert "already bound" not in telemetry_context(designer_only)
+    assert "references/telemetry.md" in telemetry_context(TelemetryContext(mode="open"))

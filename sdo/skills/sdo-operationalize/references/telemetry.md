@@ -15,6 +15,14 @@ authority; this page says how to use it. The validator rules are listed in [rule
   listed one; you can never create or widen one.
 - Responders get the same block read-only. A needed binding is recorded for the next designer pass, not edited.
 
+## Operator-provided sources
+
+A listed source with origin `operator` (the task line says `operator-provided`) is already bound by the environment.
+Name it by id in detector queries (or omit `Source` when it is the default of its kind); never copy it into
+`sources.yaml` (redefining it is `telemetry.origin`, a second default is `telemetry.default`). When the listed sources
+answer what you need, write nothing under `.sdo/diagnostics/telemetry/`. Go installs the generic `metrics-alerts`
+detector only when an effective source has the `alerts` capability; keep it as Go wrote it.
+
 ## Detector queries
 
 A query names its source (`Source`, omitted only for the default source of its kind) and carries text in that
@@ -44,12 +52,23 @@ sources:
   allowlisted; never an IP literal, `localhost` or a URL with userinfo, query or fragment.
 - `origin` is assigned by Go; do not write it.
 - `options` are decoded strictly by the adapter; keys it does not define are an error.
+- There is no `apiVersion`, `kind`, `name`, `url` or `config` key, and `alerts` is a capability, not a kind.
 - Run `sdo-operator memory check`: it applies the broker's policy and the same registry.
 
 ## Backends and recipes
 
 `.sdo/diagnostics/telemetry/backends.yaml` selects an environment-offered recipe for a backend SDO deploys in the
-control namespace: `backends: [{id, recipe, uses: [capability], params}]`. A source names it with `backend: <id>`.
+control namespace. A source names it with `backend: <id>`.
+
+```yaml
+version: 1
+backends:
+  - id: prom-stack            # same grammar as a source id
+    recipe: prometheus        # an offered recipe; the error lists them
+    uses: [pod-discovery]     # cluster capabilities: pod-discovery, node-proxy, pod-logs
+    params: {retention: 6h}
+```
+
 `uses` lists only capabilities the environment granted and the recipe declares. Go applies the recipe objects; free-form
 manifests, RBAC and cluster-scoped objects are not accepted.
 
