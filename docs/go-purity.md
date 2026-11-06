@@ -78,6 +78,7 @@ The exact declared edge-package list is:
 - `sdo/operator/apihistory/internal/apiio`: API-history clock, timers and identifier randomness.
 - `sdo/operator/kubeproxy/internal/proxyio`: API proxy clock and request-ID randomness.
 - `sdo/operator/rendered/internal/renderio`: rendered-source Git reads.
+- `sdo/operator/patchset/internal/gitio`: Git processes (`apply --cached` into a temporary index, `read-tree`, `write-tree`) and the private scratch directory that holds the patch result's object database; the accepted repository is only read.
 
 The render-seam core packages (`render/`, `imagesrc/`, `rendered/` apart from its `renderio` edge) are not edges: they take a `render.FS`, `fs.FS` or checkout path and call no clock, randomness, socket or process. The only filesystem read in them is `imagesrc.SafeCheckoutPath` (symlink resolution), which the determinism gate permits. The plugin implementations (`render/{raw,kustomize,helm}`, `imagesrc/{buildkit,prebuilt}`, `upstream/gitpoll`) are pure functions or reach I/O only through the `internal` edges above (`jobio`, `registryio`) or injected interfaces.
 - `sdo/operator/shellpath/internal/shellio`: shell detector processes, runner server, timers and environment.

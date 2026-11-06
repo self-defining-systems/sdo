@@ -24,7 +24,7 @@ The Go `operator/memory` interface reads outcomes by incident ID and does not ex
 
 Programs use `operator/sdk/program` to diagnose through namespace-scoped read views and propose typed plans. The controller owns execution, rollback preimages, event-time confirmation and verified repair trust. The shared memory validator checks labels, imports, ownership, compilation and receipt provenance before the broker accepts authored bytes; deterministic replay outcomes are informational. Reflection returns optional typed SDK gaps alongside decisions and logical playbook IDs.
 
-Production real time, process, socket and environment use lives in declared edge packages (`*/internal/*io`, listed in `docs/go-purity.md`): apiio, proxyio, renderio, shellio, workerio, cacheio, replayio, clientio and the test-only gitio join the earlier memoryio, processio, deploymentio, installio, lifecycleio, hostio, buildio, kubeio and clockio.
+Production real time, process, socket and environment use lives in declared edge packages (`*/internal/*io`, listed in `docs/go-purity.md`): apiio, proxyio, renderio, patchset's gitio, shellio, workerio, cacheio, replayio, clientio and the test-only gitio join the earlier memoryio, processio, deploymentio, installio, lifecycleio, hostio, buildio, kubeio and clockio.
 
 ## Development rules
 
