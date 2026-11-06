@@ -66,6 +66,13 @@ if [[ -z "${SDO_SKIP_OPERATOR_PREBUILD:-}" ]]; then
     python3 scripts/operator_test_binary.py > /dev/null 2>&1 &
 fi
 
+# Tests that run SREGym's own classes call `uv run --directory third_party/sregym`; the first call
+# creates or syncs that environment (26.8 s on a cold runner, charged to whichever test ran first).
+# Do it now so it overlaps collection. Failure just leaves the sync to those tests.
+if [[ -d third_party/sregym && -z "${SDO_SKIP_SREGYM_ENV_PREWARM:-}" ]]; then
+    uv run --directory third_party/sregym python -c pass > /dev/null 2>&1 &
+fi
+
 # Bound shared-host parallelism; pytest-cov combines the per-worker
 # coverage so the fail_under gate still sees the whole suite. Override with
 # SDO_PYTEST_WORKERS (e.g. 0 to run in-process for a targeted local run).
