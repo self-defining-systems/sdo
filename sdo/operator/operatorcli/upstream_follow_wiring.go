@@ -106,11 +106,10 @@ func newUpstreamFollowing(ctx context.Context, launch *contracts.ControllerConfi
 	if err != nil {
 		return upstreamFollowing{}, fmt.Errorf("open accepted repository broker: %w", err)
 	}
-	advancer, cfg, err := controllerAdvancer(launch, operatorRoot, identity, client, repository, catalog)
+	advancer, cfg, maintenance, err := controllerAdvancer(launch, operatorRoot, identity, client, repository, catalog)
 	if err != nil {
 		return upstreamFollowing{}, err
 	}
-	maintenance := advancer.Maintenance.(advanceMaintenance)
 	if recovered, err := maintenance.RecoverStalePause(ctx); err != nil {
 		return upstreamFollowing{}, fmt.Errorf("recover a stale advance pause: %w", err)
 	} else if recovered {
@@ -148,13 +147,14 @@ func newUpstreamFollowing(ctx context.Context, launch *contracts.ControllerConfi
 // trusted Deployer, the independent verifier at the candidate checkout, the
 // shape of the accepted deployment source, the maintenance ConfigMap and the
 // child's persisted state.
-func controllerAdvancer(launch *contracts.ControllerConfig, operatorRoot string, identity deployIdentity, client kubernetes.Interface, repository *broker.Broker, catalog *upstream.Catalog) (lifecycle.Advancer, lifecycle.AdvanceConfig, error) {
+func controllerAdvancer(launch *contracts.ControllerConfig, operatorRoot string, identity deployIdentity, client kubernetes.Interface, repository *broker.Broker, catalog *upstream.Catalog) (lifecycle.Advancer, lifecycle.AdvanceConfig, advanceMaintenance, error) {
 	deployer, err := identity.deployer(client, deployTarget(deploywire.TargetOf(launch)), launch.GetRenderEnvironment(), launch.GetDeploymentPolicy())
 	if err != nil {
-		return lifecycle.Advancer{}, lifecycle.AdvanceConfig{}, err
+		return lifecycle.Advancer{}, lifecycle.AdvanceConfig{}, advanceMaintenance{}, err
 	}
 	namespace := launch.GetNamespace()
 	shapes := renderers.Catalog()
+	maintenance := advanceMaintenance{Client: client, Namespace: controlNamespace(launch), Now: processio.Now}
 	advancer := lifecycle.Advancer{
 		Upstreams: catalog,
 		Broker:    repository,
@@ -163,11 +163,11 @@ func controllerAdvancer(launch *contracts.ControllerConfig, operatorRoot string,
 		Shape: func(ctx context.Context, root, revision string, source *contracts.DeploymentSource) (string, error) {
 			return rendered.Source{Deployment: source, Catalog: shapes, Repository: root, Environment: launch.GetRenderEnvironment()}.ShapeDigest(ctx, revision, namespace)
 		},
-		Designer:    designerRefresh{launch: launch, repository: repository},
-		Maintenance: advanceMaintenance{Client: client, Namespace: controlNamespace(launch), Now: processio.Now},
+		Designer:    designerRefresh{launch: launch, operatorRoot: operatorRoot, repository: repository},
+		Maintenance: maintenance,
 		Activity:    controllerActivity{Client: client, Namespace: controlNamespace(launch), Application: namespace},
 	}
-	return advancer, lifecycle.AdvanceConfig{Namespace: namespace, GitDir: filepath.Join(launch.GetAppRoot(), ".git")}, nil
+	return advancer, lifecycle.AdvanceConfig{Namespace: namespace, GitDir: filepath.Join(launch.GetAppRoot(), ".git")}, maintenance, nil
 }
 
 func controlNamespace(launch *contracts.ControllerConfig) string {
@@ -181,10 +181,11 @@ func controlNamespace(launch *contracts.ControllerConfig) string {
 // through the operability gate (lifecycle.Coordinator.RefreshHealth). It does
 // nothing when the accepted detection is current.
 type designerRefresh struct {
-	launch     *contracts.ControllerConfig
-	repository lifecycle.ProposalBroker
+	launch       *contracts.ControllerConfig
+	operatorRoot string
+	repository   lifecycle.ProposalBroker
 }
 
 func (d designerRefresh) RefreshDetection(ctx context.Context, _ lifecycle.ShapeChange) error {
-	return refreshControllerHealth(ctx, lifecycle.RefreshScopeAdvance, d.launch, d.repository)
+	return refreshControllerHealth(ctx, lifecycle.RefreshScopeAdvance, d.launch, d.operatorRoot, d.repository)
 }

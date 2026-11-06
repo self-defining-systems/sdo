@@ -107,7 +107,7 @@ func asOperabilityError(err error) (*OperabilityError, bool) {
 func (c Coordinator) deploymentReport(ctx context.Context, cfg Config, proposal broker.Proposal, plan *contracts.DeploymentPlan, offline operability.Report, receipt DeploymentReceipt) (report operability.Report, decision operability.Decision, err error) {
 	mode := c.mode(cfg)
 	err = c.retryInfrastructure(ctx, cfg, "live operability checks", func() error {
-		live, err := c.Readiness.(LiveChecker).CheckLive(ctx, proposal.Path, plan, receipt, nil)
+		live, err := c.Readiness.CheckLive(ctx, proposal.Path, plan, receipt, nil)
 		if err != nil {
 			return err
 		}

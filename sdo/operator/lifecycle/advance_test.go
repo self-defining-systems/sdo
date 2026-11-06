@@ -703,17 +703,6 @@ func TestAdvanceHoldsAFailingLiveCheckWithoutEvaluatingDetectors(t *testing.T) {
 	}
 }
 
-type readinessWithoutLiveChecks struct{ lifecycle.SourceReadinessVerifier }
-
-func TestAdvanceRequiresLiveChecks(t *testing.T) {
-	w := newAdvWorld(t)
-	advancer := w.advancer()
-	advancer.Readiness = readinessWithoutLiveChecks{w}
-	if _, err := advancer.Advance(context.Background(), advConfig, advRequest(t)); err == nil || len(w.events) != 0 {
-		t.Fatalf("err = %v, events = %q", err, w.events)
-	}
-}
-
 func offlineFailure(id string, cause operability.Cause) []operability.Check {
 	return []operability.Check{
 		{ID: "O1.patches", Phase: operability.PhaseOffline, Status: operability.StatusPass},

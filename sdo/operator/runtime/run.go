@@ -785,8 +785,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			},
 		}
 	}
-	if !clientInjected && jobDispatch && *responderStandby && standbyEnabled(jobEnvironment) {
-		d := dispatcher.(KubernetesJobDispatcher)
+	// A standby pool wraps the Kubernetes Job dispatcher; an injected dispatcher has none.
+	jobDispatcher, isJobDispatcher := dispatcher.(KubernetesJobDispatcher)
+	if !clientInjected && jobDispatch && isJobDispatcher && *responderStandby && standbyEnabled(jobEnvironment) {
+		d := jobDispatcher
 		standbyEnvironment := make(map[string]string, len(jobEnvironment)+5)
 		for name, value := range jobEnvironment {
 			standbyEnvironment[name] = value

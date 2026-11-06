@@ -26,7 +26,7 @@ func TestControllerAdvancerWiresTheOnboardingDeployer(t *testing.T) {
 		BuildKitImage: "buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "push",
 		RegistryHost: "registry.synthetic.invalid:5000", RolloutTimeout: time.Minute,
 	}
-	advancer, cfg, err := controllerAdvancer(run.Controller, "/opt/sdo/sdo/operator", identity, fake.NewSimpleClientset(), &broker.Broker{}, upstreams.Catalog())
+	advancer, cfg, _, err := controllerAdvancer(run.Controller, "/opt/sdo/sdo/operator", identity, fake.NewSimpleClientset(), &broker.Broker{}, upstreams.Catalog())
 	if err != nil {
 		t.Fatal(err)
 	}

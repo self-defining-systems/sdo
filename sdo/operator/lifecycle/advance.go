@@ -252,7 +252,7 @@ type AdvanceConfig struct {
 type Advancer struct {
 	Upstreams UpstreamMaterializer
 	Broker    AdvanceBroker
-	Readiness SourceReadinessVerifier
+	Readiness SourceReadiness
 	Verifier  CandidateVerifier
 	Shape     ShapeDigest
 	// Designer refreshes detection after an advance changed the shape. Nil
@@ -268,9 +268,6 @@ type Advancer struct {
 func (a Advancer) validate(cfg AdvanceConfig, request upstream.Request) error {
 	if a.Upstreams == nil || a.Broker == nil || a.Readiness == nil || a.Verifier == nil || a.Shape == nil || a.Maintenance == nil || a.Activity == nil {
 		return errors.New("advance needs upstreams, broker, readiness, verifier, shape, maintenance and activity")
-	}
-	if _, ok := a.Readiness.(LiveChecker); !ok {
-		return errors.New("advance needs a readiness verifier that checks the live deployment (lifecycle.LiveChecker)")
 	}
 	if cfg.Namespace == "" || strings.TrimSpace(cfg.HealthObjective) == "" || cfg.GitDir == "" {
 		return errors.New("advance needs a namespace, health objective and accepted Git directory")
@@ -547,7 +544,7 @@ func (a Advancer) deployAndAccept(ctx context.Context, cfg AdvanceConfig, result
 		// the live checks classify the failure by type, and the cause routes it
 		// for an advance, never to a deployer correction: the candidate is
 		// already applied.
-		classified, cerr := a.Readiness.(LiveChecker).CheckLive(ctx, proposal.Path, plan, DeploymentReceipt{}, err)
+		classified, cerr := a.Readiness.CheckLive(ctx, proposal.Path, plan, DeploymentReceipt{}, err)
 		if cerr != nil {
 			return result, fmt.Errorf("classify deployment failure (%v): %w", err, cerr)
 		}
@@ -563,7 +560,7 @@ func (a Advancer) deployAndAccept(ctx context.Context, cfg AdvanceConfig, result
 	if !completeDeploymentReceipt(receipt) || !rendered.SameDeploymentSource(receipt.Source, plan.GetSource()) {
 		return held(result, HoldRollout, "deployment returned incomplete evidence or another source"), nil
 	}
-	live, err := a.Readiness.(LiveChecker).CheckLive(ctx, proposal.Path, plan, receipt, nil)
+	live, err := a.Readiness.CheckLive(ctx, proposal.Path, plan, receipt, nil)
 	if err != nil {
 		return result, fmt.Errorf("live deployment checks: %w", err)
 	}

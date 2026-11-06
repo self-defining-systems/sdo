@@ -119,7 +119,12 @@ func (c *Controller) handleReflectionCompletion(completion reflectionCompletion)
 		c.mu.Unlock()
 		// An accepted detector change keeps the incident queued until a
 		// restarted controller records its rollout.
-		pending, err := c.broker.(ReflectionQueue).QueuedReflectionRolloutPending(completion.incidentID)
+		var pending bool
+		queue, queued := c.broker.(ReflectionQueue)
+		err := errors.New("broker cannot report queued reflection rollouts")
+		if queued {
+			pending, err = queue.QueuedReflectionRolloutPending(completion.incidentID)
+		}
 		c.mu.Lock()
 		switch {
 		case err != nil:

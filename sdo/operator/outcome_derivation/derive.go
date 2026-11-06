@@ -143,6 +143,7 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 func cloneMessages[T proto.Message](items []T) []T {
 	result := make([]T, 0, len(items))
 	for _, item := range items {
+		//assertcheck:ok proto.Clone of a T returns a T
 		result = append(result, proto.Clone(item).(T))
 	}
 	return result
@@ -201,5 +202,6 @@ func cloneMessage[T proto.Message](value T) T {
 	if !value.ProtoReflect().IsValid() {
 		return value
 	}
+	//assertcheck:ok proto.Clone of a T returns a T
 	return proto.Clone(value).(T)
 }

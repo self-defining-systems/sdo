@@ -418,7 +418,10 @@ func (e PlanExecutor) recordCreatedAcceptance(ctx context.Context, patch PlanPat
 	if err := RecordAcceptance(baseline, patch.After); err != nil {
 		return err
 	}
-	writer := e.Client.(PlanAcceptanceClient)
+	writer, ok := e.Client.(PlanAcceptanceClient)
+	if !ok {
+		return &AcceptanceRecordError{Ref: patch.Ref, Err: errors.New("acceptance transport unavailable")}
+	}
 	if err := writer.RecordAcceptance(ctx, patch.Ref, baseline.GetAnnotations()[acceptedPathsAnnotation], created); err != nil {
 		return &AcceptanceRecordError{Ref: patch.Ref, Err: err}
 	}

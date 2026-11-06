@@ -272,19 +272,6 @@ func TestResumedAcceptedJudgeCommitIsVerifiedBeforeInstall(t *testing.T) {
 	}
 }
 
-type noLiveChecks struct {
-	lifecycle.SourceReadinessVerifier
-}
-
-func TestCoordinatorRequiresLiveOperabilityChecks(t *testing.T) {
-	h, _ := gateHarness(t, clear)
-	h.coordinator.Readiness = noLiveChecks{h.readiness}
-	_, err := h.coordinator.Run(context.Background(), config())
-	if err == nil || !strings.Contains(err.Error(), "LiveChecker") {
-		t.Fatalf("error = %v, want a refusal to run without live operability checks", err)
-	}
-}
-
 var _ = fmt.Sprint
 var _ = contracts.MemoryDiagnostic{}
 
@@ -297,6 +284,7 @@ func TestRefreshPublicationIsScopedToWhoRunsIt(t *testing.T) {
 	revision := memory.HealthRevision{Commit: "commit-0", SourceInputs: "inputs", Objective: "stay up", DetectorRevision: "detectors", NeedsRefresh: true}
 	run := func(scope string) string {
 		h, fake := gateHarness(t, clear)
+		fake.source = deployedSource()
 		cfg := lifecycle.Config{Application: "app", Namespace: "ns", RefreshScope: scope, DesignerAttempts: 2, PendingEvaluations: 4, PendingInterval: time.Second, InfrastructureTries: 3, InfrastructureBackoff: time.Second}
 		if _, err := h.coordinator.RefreshHealth(context.Background(), cfg, revision); err != nil {
 			t.Fatalf("refresh %q: %v", scope, err)

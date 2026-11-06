@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 
@@ -46,7 +47,7 @@ func (c Coordinator) mode(cfg Config) operability.Mode {
 // staging, and the independent detector evaluation of the staged checkout. The
 // detector evaluation is skipped, never passed, when a deployment check failed.
 func (c Coordinator) candidateReport(ctx context.Context, cfg Config, candidate broker.Candidate, deployment DeploymentReceipt) (operability.Report, error) {
-	live, err := c.Readiness.(LiveChecker).CheckLive(ctx, candidate.Path, &contracts.DeploymentPlan{Source: deployment.Source}, deployment, nil)
+	live, err := c.Readiness.CheckLive(ctx, candidate.Path, &contracts.DeploymentPlan{Source: deployment.Source}, deployment, nil)
 	if err != nil {
 		return operability.Report{}, fmt.Errorf("live deployment checks: %w", err)
 	}
@@ -217,6 +218,24 @@ type gateOutcome struct {
 	rejected []*contracts.MemoryDiagnostic
 }
 
+// publishUnverified is the health refresh of an install SDO never deployed (a
+// seeded application): there is no recorded deployment to verify the judge's
+// candidate against, so the broker's own validation is the only gate. It is
+// logged, never silent, and only RefreshHealth can reach it: a Run always has a
+// deployment receipt.
+func (c Coordinator) publishUnverified(ctx context.Context, id string) (gateOutcome, error) {
+	slog.Warn("health_refresh_published_unverified", "proposal", id, "reason", "accepted source has no recorded deployment")
+	receipt, err := c.Broker.Publish(ctx, id, broker.HealthJudge, broker.InitialPhase)
+	if err != nil {
+		if diagnostics, typed := broker.RejectionDiagnostics(err); typed {
+			return gateOutcome{rejected: diagnostics}, nil
+		}
+		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
+		return gateOutcome{feedback: "broker rejected health diagnostics: " + err.Error()}, nil
+	}
+	return gateOutcome{receipt: receipt, ready: true}, nil
+}
+
 // gateCandidate stages the health judge's proposal, verifies the staged
 // candidate (live deployment checks, memory checks, independent detector
 // evaluation), decides with operability.Decide and acts on the owner: accept
@@ -224,6 +243,9 @@ type gateOutcome struct {
 // the deployer, or end the run. A candidate whose base moved is staged and
 // verified again.
 func (c Coordinator) gateCandidate(ctx context.Context, id string, cfg Config, deployment DeploymentReceipt, log *contracts.ProposalRejectionLog) (gateOutcome, error) {
+	if !deployment.Ready {
+		return c.publishUnverified(ctx, id)
+	}
 	mode := c.mode(cfg)
 	attempts := orDefault(cfg.DesignerAttempts, defaultDesignerAttempts)
 	for restage := 0; ; restage++ {

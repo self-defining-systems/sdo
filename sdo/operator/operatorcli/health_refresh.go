@@ -16,6 +16,7 @@ import (
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/operatorcli/catalog/renderers"
+	"sdo.dev/operator/operatorcli/deploywire"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/shellpath"
 	"sdo.dev/operator/toolchain"
@@ -24,9 +25,9 @@ import (
 
 // Refresh runs before the builder projects diagnostics. Failure prevents launch
 // of a controller compiled from stale requirements, including seeded startup.
-func refreshControllerHealth(ctx context.Context, scope string, config *contracts.ControllerConfig, repository lifecycle.ProposalBroker) error {
+func refreshControllerHealth(ctx context.Context, scope string, config *contracts.ControllerConfig, operatorRoot string, repository lifecycle.ProposalBroker) error {
 	return withHealthRefreshDeadline(ctx, config.GetDuration().AsDuration(), func(ctx context.Context) error {
-		return refreshControllerHealthOnce(ctx, scope, config, repository)
+		return refreshControllerHealthOnce(ctx, scope, config, operatorRoot, repository)
 	})
 }
 
@@ -50,7 +51,7 @@ func withHealthRefreshDeadline(ctx context.Context, budget time.Duration, refres
 	return nil
 }
 
-func refreshControllerHealthOnce(ctx context.Context, scope string, config *contracts.ControllerConfig, repository lifecycle.ProposalBroker) error {
+func refreshControllerHealthOnce(ctx context.Context, scope string, config *contracts.ControllerConfig, operatorRoot string, repository lifecycle.ProposalBroker) error {
 	if config.GetFrozenMemory() {
 		return nil
 	}
@@ -106,10 +107,14 @@ func refreshControllerHealthOnce(ctx context.Context, scope string, config *cont
 	if err != nil {
 		return err
 	}
-	coordinator := lifecycle.Coordinator{Broker: repository, Bootstrap: artifacts.BootstrapStore{}, Registry: registry, Renderers: renderers.Catalog(), Workers: worker_registry.KubernetesExecutor{
+	workers := worker_registry.KubernetesExecutor{
 		ToolchainImage: config.GetToolchainImage(),
 		Client:         client, Namespace: namespace, Registry: registry, ServiceAccount: "sdo-responder", RepositoryPVC: config.GetRepositoryPvc(), RepositoryMountPath: config.GetRepositoryMountPath(), RepositoryPVCSubPath: config.GetRepositoryPvcSubpath(), CredentialsSecret: config.GetResponderCredentialsSecret(), HealthyBaseline: config.GetHealthyBaseline(), Environment: environment,
-	}}
+	}
+	coordinator, err := healthRefreshCoordinator(config, operatorRoot, client, repository, registry, workers)
+	if err != nil {
+		return err
+	}
 	if _, err := coordinator.RefreshHealth(ctx, lifecycle.Config{Application: config.GetApplication(), Namespace: config.GetNamespace(), DeploymentSource: source, RenderEnvironment: config.GetRenderEnvironment(), RefreshScope: scope}, revision); err != nil {
 		return err
 	}
@@ -185,4 +190,23 @@ func newControllerBroker(config *contracts.ControllerConfig) (*broker.Broker, er
 		return nil, err
 	}
 	return broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), selectMemoryValidator(config.GetCodePath(), validation.Validator()), broker.ObservationPolicy{Replay: config.GetReplay(), CodePath: memoryCodePath(config.GetCodePath()), Ceiling: ceiling, ApplicationNamespace: config.GetNamespace()})
+}
+
+// healthRefreshCoordinator is the Coordinator of a health refresh: the judge's
+// candidate is verified against the accepted deployment, so it carries the
+// launch's trusted deployer and independent verifier, the same ones a source
+// repair deploys with.
+func healthRefreshCoordinator(config *contracts.ControllerConfig, operatorRoot string, client kubernetes.Interface, repository lifecycle.ProposalBroker, registry *worker_registry.Registry, workers lifecycle.WorkerExecutor) (lifecycle.Coordinator, error) {
+	identity, err := deploywire.IdentityOf(config)
+	if err != nil {
+		return lifecycle.Coordinator{}, err
+	}
+	deployer, err := identity.Deployer(client, deploywire.TargetOf(config), config.GetRenderEnvironment(), config.GetDeploymentPolicy())
+	if err != nil {
+		return lifecycle.Coordinator{}, fmt.Errorf("health refresh deployer: %w", err)
+	}
+	return lifecycle.Coordinator{
+		Broker: repository, Bootstrap: artifacts.BootstrapStore{}, Registry: registry, Renderers: renderers.Catalog(), Workers: workers,
+		Readiness: deployer, Verifier: deploywire.Verifier(config, operatorRoot, &deployer),
+	}, nil
 }

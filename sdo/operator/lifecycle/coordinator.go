@@ -40,6 +40,8 @@ type ProposalBroker interface {
 	OperabilityReport(context.Context, string, operability.Stage) (operability.Report, bool, error)
 	SourceEvidence(context.Context, string) (broker.SourceEvidence, bool, error)
 	AcceptedCommit(context.Context, string, broker.Phase) (broker.Receipt, bool, error)
+	// AcceptedSourceEvidence is the deployment of the accepted HEAD.
+	AcceptedSourceEvidence(context.Context) (broker.AcceptedSource, bool, error)
 	ChangedPaths(context.Context, string, broker.Phase) ([]string, error)
 	// ScratchFeedback is the patch.uncaptured correction text for a checkout
 	// whose app-file edits no patch reproduces, or "" when consistent.
@@ -119,6 +121,14 @@ type SourceReadinessVerifier interface {
 	VerifyAccepted(context.Context, string, string, DeploymentReceipt) (DeploymentReceipt, error)
 }
 
+// SourceReadiness is what the Coordinator needs of its deployer: apply and
+// verify a deployment, and compute the live operability checks of its receipt.
+// A single interface lets the compiler refuse a verifier that cannot check live.
+type SourceReadiness interface {
+	SourceReadinessVerifier
+	LiveChecker
+}
+
 // HealthVerifier judges the accepted detector against the live application.
 // Its verdict is independent of the agent's HealthJudgeResult assertion.
 type HealthVerifier interface {
@@ -139,7 +149,7 @@ type Coordinator struct {
 	Bootstrap ArtifactWriter
 	Registry  *worker_registry.Registry
 	Workers   WorkerExecutor
-	Readiness SourceReadinessVerifier
+	Readiness SourceReadiness
 	Verifier  HealthVerifier
 	Installer RuntimeInstaller
 	// SourceFacts reads a trusted projection from the accepted source commit.
@@ -345,9 +355,6 @@ func (c Coordinator) validate(cfg Config) error {
 	}
 	if cfg.OperationID == "" || cfg.Application == "" || cfg.Namespace == "" || cfg.MaxAttempts < 1 {
 		return errors.New("operation ID, application, namespace and positive max attempts are required")
-	}
-	if _, ok := c.Readiness.(LiveChecker); !ok {
-		return errors.New("source readiness must implement the live operability checks (LiveChecker)")
 	}
 	if len(cfg.Sources) > 0 && strings.TrimSpace(cfg.HealthObjective) == "" {
 		return errors.New("followed sources are published with the human goal and require a health objective")
