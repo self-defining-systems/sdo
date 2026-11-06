@@ -24,6 +24,8 @@ type repairWorld struct {
 	stageErr     error
 	staleAccepts int
 	accepts      []broker.SourceEvidence
+	// alreadyAccepted makes StageCandidate report a redelivery of an accepted repair.
+	alreadyAccepted bool
 }
 
 func newRepairWorld(t *testing.T, paths ...string) *repairWorld {
@@ -46,7 +48,7 @@ func (w *repairWorld) StageCandidate(_ context.Context, id string, actor broker.
 	if w.stageErr != nil {
 		return broker.Candidate{}, w.stageErr
 	}
-	return broker.Candidate{IncidentID: id, Actor: actor, Phase: phase, Path: repairCheckout, Parent: advHead, Commit: advCandidate, Tree: advTree}, nil
+	return broker.Candidate{IncidentID: id, Actor: actor, Phase: phase, Path: repairCheckout, Parent: advHead, Commit: advCandidate, Tree: advTree, Accepted: w.alreadyAccepted}, nil
 }
 
 func (w *repairWorld) AcceptDeployed(_ context.Context, candidate broker.Candidate, evidence broker.SourceEvidence) (broker.Receipt, error) {
@@ -60,6 +62,11 @@ func (w *repairWorld) AcceptDeployed(_ context.Context, candidate broker.Candida
 	}
 	w.accepts = append(w.accepts, evidence)
 	return broker.Receipt{IncidentID: candidate.IncidentID, Phase: candidate.Phase, Commit: candidate.Commit}, nil
+}
+
+func (w *repairWorld) FinalizeAcceptedDeployment(_ context.Context, id string) (bool, error) {
+	w.log("finalize %s", id)
+	return true, nil
 }
 
 func (w *repairWorld) DiscardCandidate(id string, phase broker.Phase) error {
@@ -163,6 +170,22 @@ func TestRepairHoldsACandidateTheDeploymentOrDetectorsRefuse(t *testing.T) {
 
 // A transient infrastructure failure is retried inside the bound; one beyond
 // it is an error for the caller to retry, never a hold.
+// A redelivery finds the repair accepted (a crash after the head moved): it is
+// reported deployed only after the broker finalized the deployment evidence,
+// and nothing is deployed again.
+func TestRepairRedeliveredAfterAcceptanceFinalizesTheEvidence(t *testing.T) {
+	w := newRepairWorld(t, repairPatch)
+	w.alreadyAccepted = true
+	result, err := w.run()
+	if err != nil || result.Outcome != lifecycle.RepairDeployed {
+		t.Fatalf("result = %+v, err = %v", result, err)
+	}
+	want := []string{"changed inc-1 proposal", "stage inc-1", "finalize inc-1"}
+	if !slices.Equal(w.events, want) {
+		t.Fatalf("events\n got %q\nwant %q", w.events, want)
+	}
+}
+
 func TestRepairRetriesInfrastructureFailures(t *testing.T) {
 	w := newRepairWorld(t, repairPatch)
 	w.applyErrs = []error{&infrastructureFailure{}, nil}

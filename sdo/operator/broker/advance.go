@@ -207,7 +207,7 @@ func (b *Broker) newestDeployment(ctx context.Context) (commit, incidentID strin
 			// A responder repair is a deployment only when AcceptDeployed
 			// recorded the deployment of exactly this commit.
 			incident := strings.TrimSpace(fields[2])
-			deployed, err := b.deployedBy(incident, fields[0])
+			deployed, err := b.deployedBy(ctx, incident, fields[0])
 			if err != nil {
 				return "", "", false, err
 			}
@@ -220,9 +220,13 @@ func (b *Broker) newestDeployment(ctx context.Context) (commit, incidentID strin
 }
 
 // deployedBy reports whether the deployment evidence of incidentID is bound
-// to commit. A pending record (staged, head not moved) or another commit's
-// record is not a deployment of commit.
-func (b *Broker) deployedBy(incidentID, commit string) (bool, error) {
+// to commit. Another commit's record, or a pending record (staged, written
+// before the head moved) of another tree, is not a deployment of commit. A
+// pending record of commit's own tree is: the commit is in accepted history,
+// so the head moved after the record was written and only the finalizing
+// write was lost (a crash or a failed write between the two);
+// sourceEvidenceLocked finalizes it on read.
+func (b *Broker) deployedBy(ctx context.Context, incidentID, commit string) (bool, error) {
 	data, err := os.ReadFile(b.sourceEvidencePath(incidentID))
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
@@ -232,11 +236,22 @@ func (b *Broker) deployedBy(incidentID, commit string) (bool, error) {
 	}
 	var record struct {
 		AcceptedCommit string `json:"accepted_commit"`
+		BaseTree       string `json:"base_tree"`
 	}
 	if err := json.Unmarshal(data, &record); err != nil {
 		return false, fmt.Errorf("decode source evidence of %s: %w", incidentID, err)
 	}
-	return record.AcceptedCommit == commit, nil
+	if record.AcceptedCommit != "" {
+		return record.AcceptedCommit == commit, nil
+	}
+	if record.BaseTree == "" {
+		return false, nil
+	}
+	tree, err := gitText(ctx, b.target, "rev-parse", commit+"^{tree}")
+	if err != nil {
+		return false, err
+	}
+	return record.BaseTree == tree, nil
 }
 
 // ProposeAdvance creates the isolated advance checkout at accepted HEAD and

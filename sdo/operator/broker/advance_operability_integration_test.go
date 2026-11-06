@@ -127,3 +127,47 @@ func TestPublishAdvanceRecordsTheReport(t *testing.T) {
 		t.Fatalf("OperabilityReport of an edited report = %v", err)
 	}
 }
+
+// A crash after the head moved leaves the advance's evidence pending
+// (recorded before the head moves, finalized after). The redelivery and the
+// accepted-evidence reads finalize it: the advance stays the newest deployment
+// with its report digest.
+func TestPublishAdvanceRedeliveredWithPendingEvidenceFinalizesIt(t *testing.T) {
+	ctx := context.Background()
+	w := newAdvanceWorld(t)
+	b := w.broker
+	upstream := w.push(t, w.seed, map[string]*string{"app.txt": text("ONE\ntwo\nthree\n")})
+	id := "advance-" + upstream[:12]
+	proposal, _, _, err := b.ProposeAdvance(ctx, id, w.seed, upstream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence := advanceEvidence(t, proposal.Path, "merged")
+	receipt, err := b.PublishAdvance(ctx, id, upstream, w.seed, evidence, advanceReportFor(t, evidence, w.head(t)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	finalized, found, err := b.AcceptedSourceEvidence(ctx)
+	if err != nil || !found {
+		t.Fatalf("accepted evidence: %v %v", found, err)
+	}
+	pending := finalized.Evidence
+	pending.AcceptedCommit = ""
+	if err := b.locked(func() error { return b.writeSourceEvidence(id, pending) }); err != nil {
+		t.Fatal(err)
+	}
+	pins, err := b.AcceptedImagePins(ctx)
+	if err != nil || pins.EffectiveTree != evidence.EffectiveTree {
+		t.Fatalf("pins with pending advance evidence = %+v, %v", pins, err)
+	}
+	if err := b.locked(func() error { return b.writeSourceEvidence(id, pending) }); err != nil {
+		t.Fatal(err)
+	}
+	if again, err := b.PublishAdvance(ctx, id, upstream, w.seed, evidence, advanceReportFor(t, evidence, w.head(t))); err != nil || again.Commit != receipt.Commit {
+		t.Fatalf("redelivery = %+v %v", again, err)
+	}
+	after, found, err := b.AcceptedSourceEvidence(ctx)
+	if err != nil || !found || after.Evidence.AcceptedCommit != receipt.Commit || after.Evidence.OperabilityDigest != finalized.Evidence.OperabilityDigest {
+		t.Fatalf("evidence after redelivery = %+v found=%v err=%v", after.Evidence, found, err)
+	}
+}

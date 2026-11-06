@@ -26,6 +26,11 @@ type RepairBroker interface {
 	StageCandidate(ctx context.Context, incidentID string, actor broker.Actor, phase broker.Phase) (broker.Candidate, error)
 	AcceptDeployed(ctx context.Context, candidate broker.Candidate, evidence broker.SourceEvidence) (broker.Receipt, error)
 	DiscardCandidate(incidentID string, phase broker.Phase) error
+	// FinalizeAcceptedDeployment completes the deployment evidence of a
+	// repair a redelivery finds already accepted (AcceptDeployed moved the
+	// head but did not finish recording), so pins and the next advance follow
+	// it. It reports whether the accepted commit is a recorded deployment.
+	FinalizeAcceptedDeployment(ctx context.Context, incidentID string) (bool, error)
 }
 
 // RepairOutcome is what Repair did with a responder's proposal.
@@ -157,6 +162,11 @@ func (r RepairDeployer) deploy(ctx context.Context, cfg RepairConfig, incidentID
 		return RepairResult{Outcome: RepairNone}, nil
 	}
 	if candidate.Accepted {
+		// Accepted is not deployed evidence: finish what a crash between the
+		// head move and the evidence finalization left pending.
+		if _, err := r.Broker.FinalizeAcceptedDeployment(ctx, incidentID); err != nil {
+			return RepairResult{}, fmt.Errorf("finalize accepted source repair evidence: %w", err)
+		}
 		return RepairResult{Outcome: RepairDeployed, Receipt: broker.Receipt{IncidentID: incidentID, Phase: broker.ProposalPhase, Commit: candidate.Commit}}, nil
 	}
 	accepted := false

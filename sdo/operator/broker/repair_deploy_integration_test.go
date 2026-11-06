@@ -185,3 +185,72 @@ func TestAcceptDeployedRefusesAStaleCandidate(t *testing.T) {
 		t.Fatalf("AcceptDeployed on a moved head = %v, want ErrCandidateStale", err)
 	}
 }
+
+// AcceptDeployed records the evidence, moves the head, then finalizes the
+// evidence. A crash between the last two leaves the repair accepted with
+// pending evidence; the redelivered repair must still become the newest
+// deployment, whether the redelivery finalizes it or a read does.
+func TestAcceptedRepairWithPendingEvidenceIsFinalizedOnRedelivery(t *testing.T) {
+	for _, finalize := range []bool{true, false} {
+		name := "read self-heals"
+		if finalize {
+			name = "redelivery finalizes"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			w := newPatchWorld(t, false)
+			candidate := stageResponderPatch(t, w, "inc-crash")
+			evidence := advanceEvidenceFor(t, candidate.Path, "repaired", true)
+			// The crash: the pending record is durable and the head moved, the
+			// finalizing write never happened.
+			if err := w.broker.locked(func() error {
+				if err := w.broker.writeSourceEvidence(candidate.IncidentID, evidence); err != nil {
+					return err
+				}
+				return w.broker.advanceHead(ctx, candidate.Path, candidate.Commit)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			redelivered, err := w.broker.StageCandidate(ctx, candidate.IncidentID, Responder, ProposalPhase)
+			if err != nil || !redelivered.Accepted || redelivered.Commit != candidate.Commit {
+				t.Fatalf("redelivery = %+v, %v; want the accepted commit", redelivered, err)
+			}
+			if finalize {
+				deployed, err := w.broker.FinalizeAcceptedDeployment(ctx, candidate.IncidentID)
+				if err != nil || !deployed {
+					t.Fatalf("FinalizeAcceptedDeployment = %v, %v", deployed, err)
+				}
+			}
+			accepted, found, err := w.broker.AcceptedSourceEvidence(ctx)
+			if err != nil || !found {
+				t.Fatalf("accepted evidence: %v %v", found, err)
+			}
+			if accepted.Evidence.EffectiveTree != evidence.EffectiveTree || accepted.Evidence.AcceptedCommit != candidate.Commit {
+				t.Fatalf("accepted evidence = %+v, want the repair's deployment at %s", accepted.Evidence, candidate.Commit)
+			}
+			pins, err := w.broker.AcceptedImagePins(ctx)
+			if err != nil || pins.EffectiveTree != evidence.EffectiveTree {
+				t.Fatalf("pins = %+v, %v; want the repair's effective tree", pins, err)
+			}
+		})
+	}
+}
+
+// Pending evidence of another tree (a later staged deployment of the same
+// incident whose head never moved) never makes an accepted commit a deployment.
+func TestFinalizeAcceptedDeploymentIgnoresEvidenceOfAnotherTree(t *testing.T) {
+	ctx := context.Background()
+	w := newPatchWorld(t, false)
+	candidate := stageResponderPatch(t, w, "inc-other-tree")
+	other := advanceEvidenceFor(t, candidate.Path, "repaired", true)
+	if _, err := w.broker.Accept(ctx, candidate, boundEvidence(t, candidate)); err != nil {
+		t.Fatal(err)
+	}
+	other.BaseTree = strings.Repeat("a", 40)
+	if err := w.broker.locked(func() error { return w.broker.writeSourceEvidence(candidate.IncidentID, other) }); err != nil {
+		t.Fatal(err)
+	}
+	if deployed, err := w.broker.FinalizeAcceptedDeployment(ctx, candidate.IncidentID); err == nil && deployed {
+		t.Fatal("evidence of another tree made the accepted commit a deployment")
+	}
+}
