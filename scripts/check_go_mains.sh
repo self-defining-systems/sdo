@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Compile every Go program under benchmarks/ against the current operator API.
+# Compile every Go program under benchmarks/ and tests/unit/ against the current operator API.
 # Those programs sit outside the operator tests, so a runtime API change can
 # break them without failing `go test`; this catches it in seconds.
 set -euo pipefail
@@ -19,13 +19,15 @@ while IFS= read -r mod; do
 done < <(find "$root/benchmarks" -name go.mod -not -path '*/seeds/*' -not -path '*/operational_memory/*' | sort)
 
 # Programs with no module of their own run via `go run` inside the operator
-# runtime module, so vet them in that context.
+# runtime module, so vet them in that context. tests/unit/ holds the Python-driven
+# `go run` helpers that the PR Python job ignores or only runs on selection; a
+# broker.New signature change broke two of them unnoticed.
 while IFS= read -r program; do
     dir="$(dirname "$program")"
     while [[ "$dir" != "$root" && ! -f "$dir/go.mod" ]]; do dir="$(dirname "$dir")"; done
     [[ "$dir" != "$root" ]] && continue
     (cd "$root/sdo/operator/runtime" && go vet "$program")
-done < <(grep -rl --include='*.go' '^package main' "$root/benchmarks" | sort)
+done < <(grep -rl --include='*.go' '^package main' "$root/benchmarks" "$root/tests/unit" | sort)
 
 # Broker replay builds replay_go in a private workspace that *replaces* the
 # operator modules instead of `use`-ing them (benchmarks/sregym/fastloop/replay.py).

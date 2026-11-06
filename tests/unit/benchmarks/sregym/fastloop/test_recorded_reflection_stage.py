@@ -128,13 +128,15 @@ import (
     "path/filepath"
     "google.golang.org/protobuf/encoding/protojson"
     "sdo.dev/operator/broker"
+    "sdo.dev/operator/telemetry"
     contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
 func main() {
     data, err := os.ReadFile(os.Args[2]); if err != nil { panic(err) }
     outcome := new(contracts.OutcomeRecord)
     if err := protojson.Unmarshal(data, outcome); err != nil { panic(err) }
-    repository, err := broker.New(os.Args[1], filepath.Join(os.Args[1], "..", "proposals"), nil)
+    policy := broker.ObservationPolicy{Telemetry: broker.Telemetry{Registry: telemetry.NewRegistry()}}
+    repository, err := broker.New(os.Args[1], filepath.Join(os.Args[1], "..", "proposals"), nil, policy)
     if err != nil { panic(err) }
     receipt, err := repository.RecordOutcome(context.Background(), outcome.GetIncidentId(), outcome)
     if err != nil { panic(err) }
