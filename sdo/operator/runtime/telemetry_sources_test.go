@@ -158,11 +158,11 @@ func TestAlertsWithoutAnyAlertCapableSourceAreUnavailable(t *testing.T) {
 	}
 }
 
-func TestFlagBindingServesDetectorsWrittenWithoutASource(t *testing.T) {
-	fake := telemetrytest.NewFake(telemetry.KindMetrics, seriesFor("flag"))
+func TestProvidedDefaultServesDetectorsWrittenWithoutASource(t *testing.T) {
+	fake := telemetrytest.NewFake(telemetry.KindMetrics, seriesFor("provided"))
 	var endpoint telemetry.Endpoint
 	var env telemetry.Env
-	api, err := newMetricsSource(fakeRegistry(t, fake, &endpoint, &env), "http://prom.test:9090", "")
+	api, err := TelemetrySources{Registry: fakeRegistry(t, fake, &endpoint, &env), Environment: providedDefault(t.TempDir())}.open(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestFlagBindingServesDetectorsWrittenWithoutASource(t *testing.T) {
 		{ID: "legacy", Expr: "up"}, {ID: "explicit", Source: "default", Expr: "up2"}, {ID: "other", Source: "prom", Expr: "up3"},
 	}})
 	if results["legacy"].Error != "" || results["explicit"].Error != "" {
-		t.Fatalf("the synthesized default binding must serve empty and \"default\" sources: %+v", results)
+		t.Fatalf("the provided default must serve empty and \"default\" sources: %+v", results)
 	}
 	if !strings.Contains(results["other"].Error, `telemetry source "prom" is not bound; bound: default`) {
 		t.Fatalf("other = %q", results["other"].Error)

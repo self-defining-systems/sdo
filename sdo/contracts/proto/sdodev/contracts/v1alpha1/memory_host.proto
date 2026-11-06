@@ -30,6 +30,11 @@ message ReadyResponse {
   repeated MemoryDetectorRegistration detectors = 5;
   repeated ProgramSpec programs = 6;
   repeated string mitigator_ids = 7;
+  // The accepted revision's .sdo/diagnostics/telemetry/sources.yaml, byte for
+  // byte as compiled into this host (empty when the revision has none). Bound
+  // to memory_commit by binary_digest, so a swap rebuilds the controller's
+  // sources from exactly the accepted bindings.
+  bytes telemetry_sources = 8;
 }
 
 message MemoryDetectorRegistration {

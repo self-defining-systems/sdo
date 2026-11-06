@@ -3,70 +3,95 @@ package runtime
 import (
 	"errors"
 	"fmt"
-	"net/url"
-	"os"
-	"sdo.dev/operator/runtime/internal/lifecycleio"
+	"slices"
+	"strings"
 	"time"
 
+	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/telemetry"
 )
 
-const (
-	// flagSourceID names the one source the --metrics-url flag binds.
-	flagSourceID = "default"
-	// flagCredential names the credential --metrics-token-file grants.
-	flagCredential = "metrics-token"
-	// flagAdapter is the adapter the --metrics-url flag selects.
-	flagAdapter = "prometheus"
-)
+// TelemetrySources builds the observer's metrics source for one accepted
+// memory revision: the operator-provided bindings of the environment plus,
+// while the environment is open, the designer's bindings the memory host
+// reports. The registry is wired by the entry point
+// (operatorcli/catalog/telemetrysources); this package names no adapter
+// implementation.
+type TelemetrySources struct {
+	Registry    *telemetry.Registry
+	Environment telemetry.Environment
+}
 
-// newMetricsSource opens the Prometheus-compatible source at address through
-// the telemetry registry, or returns nil when none is configured. The flag
-// synthesizes the single binding {id: default} (temporary; the controller will
-// read bindings from the accepted memory revision instead), so a detector's
-// Query.Source is empty or "default". The
-// registry is wired by the entry point (operatorcli/catalog/telemetrysources);
-// this package names no adapter implementation.
-func newMetricsSource(registry *telemetry.Registry, address string, tokenFile string) (MetricsAPI, error) {
-	if address == "" {
-		if tokenFile != "" {
-			return nil, errors.New("--metrics-token-file requires --metrics-url")
+// loadTelemetrySources reads the environment document at path; an empty path
+// is an environment that provides nothing.
+func loadTelemetrySources(registry *telemetry.Registry, path string) (TelemetrySources, error) {
+	if path == "" {
+		return TelemetrySources{Registry: registry, Environment: telemetry.Environment{Version: telemetry.EnvironmentVersion}}, nil
+	}
+	env, err := telemetry.LoadEnvironment(path)
+	if err != nil {
+		return TelemetrySources{}, err
+	}
+	return TelemetrySources{Registry: registry, Environment: env}, nil
+}
+
+// open returns the metrics source for the revision whose host reported
+// designerSources (the accepted sources.yaml), or nil when no source is bound
+// at all, so a detector that needs one reports it unavailable instead of
+// healthy. A binding the registry rejects, a duplicate id or two defaults for
+// a kind fail the whole revision.
+func (t TelemetrySources) open(designerSources []byte) (MetricsAPI, error) {
+	bindings := t.Environment.ProvidedBindings()
+	if t.Environment.EffectiveMode() == telemetry.ModeOpen {
+		designer, err := layout.TelemetryBindings(designerSources)
+		if err != nil {
+			return nil, fmt.Errorf("accepted telemetry sources: %w", err)
 		}
+		bindings = append(bindings, designer...)
+	}
+	if len(bindings) == 0 {
 		return nil, nil
 	}
-	parsed, err := url.Parse(address)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
-		return nil, fmt.Errorf("--metrics-url %q must be an http or https URL", address)
+	if t.Registry == nil {
+		return nil, errors.New("telemetry sources are bound but this controller was built without telemetry adapters")
 	}
-	if registry == nil {
-		return nil, errors.New("--metrics-url needs a telemetry registry: this controller was built without telemetry adapters")
-	}
-	binding := telemetry.Binding{
-		ID: flagSourceID, Adapter: flagAdapter, Kinds: []telemetry.Kind{telemetry.KindMetrics},
-		Endpoint: telemetry.Endpoint{URL: address}, Default: true, Origin: telemetry.OriginOperator,
-	}
-	var env telemetry.Env
-	if tokenFile != "" {
-		binding.Endpoint.Credential = flagCredential
-		env.ReadCredential = func(string) (string, error) {
-			token, err := os.ReadFile(tokenFile)
-			return string(token), err
+	env := telemetry.Env{ReadCredential: t.Environment.ReadCredential}
+	bound := make([]telemetry.Bound, 0, len(bindings))
+	for _, binding := range bindings {
+		client, err := t.Registry.Open(binding, env)
+		if err != nil {
+			return nil, fmt.Errorf("telemetry source %q: %w", binding.ID, err)
 		}
+		source, err := t.Registry.Source(binding)
+		if err != nil {
+			return nil, fmt.Errorf("telemetry source %q: %w", binding.ID, err)
+		}
+		bound = append(bound, telemetry.Bound{Source: source, Client: client})
 	}
-	client, err := registry.Open(binding, env)
-	if err != nil {
-		return nil, err
-	}
-	source, err := registry.Source(binding)
-	if err != nil {
-		return nil, err
-	}
-	resolver, err := telemetry.NewResolver([]telemetry.Bound{{Source: source, Client: client}})
+	resolver, err := telemetry.NewResolver(bound)
 	if err != nil {
 		return nil, err
 	}
 	return newResolverMetrics(resolver), nil
+}
+
+// metricsSource is the incident-facing view of the environment's default
+// metrics source: the query URL and the publishing base the environment offers.
+func (t TelemetrySources) metricsSource() *contractsv1alpha1.MetricsSource {
+	source := &contractsv1alpha1.MetricsSource{}
+	for _, binding := range t.Environment.ProvidedBindings() {
+		if binding.Default && slices.Contains(binding.Kinds, telemetry.KindMetrics) {
+			source.QueryUrl = binding.Endpoint.URL
+		}
+	}
+	if publish := t.Environment.MetricsPublishURL; publish != "" {
+		source.AnnotatedPodScraping = true
+		source.OtlpMetricsUrl = strings.TrimRight(publish, "/") + "/api/v1/otlp/v1/metrics"
+	}
+	return source
 }
 
 // withMetrics adds frozen metric results to provider's snapshots when a
@@ -74,9 +99,9 @@ func newMetricsSource(registry *telemetry.Registry, address string, tokenFile st
 // without an address are an error; otherwise they run unconfigured and report
 // their source as unavailable on every evaluation.
 func withMetrics(
-	provider SnapshotProvider, detectors []sdk.Detector, registry *telemetry.Registry, address string, tokenFile string, requireSource bool, clock func() time.Time,
+	provider SnapshotProvider, detectors []sdk.Detector, sources TelemetrySources, designerSources []byte, requireSource bool, clock func() time.Time,
 ) (SnapshotProvider, *MetricsObserver, error) {
-	api, err := newMetricsSource(registry, address, tokenFile)
+	api, err := sources.open(designerSources)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -99,7 +124,7 @@ func withMetricsAPI(
 		observer = &MetricsObserver{api: api, timeout: DefaultMetricsQueryTimeout, clock: lifecycleio.Now}
 	}
 	if api == nil && requireSource {
-		return nil, nil, errors.New("metrics health evaluation requires --metrics-url")
+		return nil, nil, errors.New("metrics health evaluation requires a bound telemetry source (the environment provides none and the accepted revision binds none)")
 	}
 	return MetricsSnapshotProvider{Base: provider, Observer: observer}, observer, nil
 }

@@ -134,7 +134,12 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		Strategy: lifecycle.KubernetesInstallStrategy{Installer: install.Installer{Client: client}, Renderers: renderers.Catalog()},
 		Config:   config.Install, AcceptedRepository: config.ApplicationRoot, Prepared: true, Now: processio.Now,
 	}
-	var healthProbe deployment.HealthProbe = deployment.AcceptedDetectorProbe{Replay: config.Install.Replay, MetricsURL: config.Install.MetricsURL}
+	telemetryEnvironment, removeTelemetryEnvironment, err := writeTelemetryEnvironment(config.Install)
+	if err != nil {
+		return lifecycle.Result{}, err
+	}
+	defer removeTelemetryEnvironment()
+	var healthProbe deployment.HealthProbe = deployment.AcceptedDetectorProbe{Replay: config.Install.Replay, TelemetryEnvironment: telemetryEnvironment}
 	if runner, enabled := install.ShellRunnerConfig(config.Install); enabled {
 		healthProbe = deployment.ShellDetectorProbe{Config: runner}
 	}

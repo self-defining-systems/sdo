@@ -36,18 +36,21 @@ type MirroredMemoryRPC interface {
 	Capture(context.Context, sdk.DetectionContext) (memoryhost.Host, uint64, func(), error)
 }
 type RemoteMemory struct {
-	Detectors     []sdk.Detector
-	Programs      program.ProgramRegistry
-	rpc           MirroredMemoryRPC
-	memoryCommit  string
-	registrations []memoryhost.Registration
+	Detectors []sdk.Detector
+	Programs  program.ProgramRegistry
+	// TelemetrySources is the accepted revision's telemetry sources file as
+	// the host compiled it in; empty when the revision binds none.
+	TelemetrySources []byte
+	rpc              MirroredMemoryRPC
+	memoryCommit     string
+	registrations    []memoryhost.Registration
 }
 
 func NewRemoteMemory(ready *pb.ReadyResponse, rpc MirroredMemoryRPC) (*RemoteMemory, error) {
 	if ready == nil || rpc == nil {
 		return nil, errors.New("remote memory requires identity and mirrored transport")
 	}
-	r := &RemoteMemory{rpc: rpc, memoryCommit: ready.GetMemoryCommit()}
+	r := &RemoteMemory{rpc: rpc, memoryCommit: ready.GetMemoryCommit(), TelemetrySources: ready.GetTelemetrySources()}
 	seen := map[string]bool{}
 	for _, wire := range ready.Detectors {
 		spec, err := memoryhost.DecodeRegistration(wire)

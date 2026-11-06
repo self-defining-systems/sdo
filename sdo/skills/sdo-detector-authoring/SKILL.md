@@ -63,7 +63,7 @@ ID. A detector that reads kubelet usage implements `usage.Consumer`: `UsageRequi
 
 ## Metrics detectors (optional input)
 
-When the controller runs with a metrics source (`--metrics-url`, a Prometheus-compatible API), a health detector can
+When the controller runs with a metrics source (a bound telemetry source), a health detector can
 judge application metrics through `sdo.dev/operator/sdk/metrics`. Declare `Watches: []sdk.WatchKind{metrics.Watch}`
 and an `Interval`; build the detector with `metrics.NewThresholdDetector(spec, rules)`. A rule is a query
 (`metrics.Query{ID, Expr}`, plus `Range`/`Step` for a range query), a comparison, a threshold, and the label names that

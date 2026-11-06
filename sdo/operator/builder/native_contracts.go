@@ -2,7 +2,9 @@ package builder
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -290,4 +292,16 @@ func generateTelemetryBindingTest(root string, bindings *TelemetryBindings) erro
 		return err
 	}
 	return os.WriteFile(filepath.Join(root, "generated", "telemetry_binding_test.go"), []byte(telemetryBindingTest), 0o644)
+}
+
+// generateTelemetrySources compiles the accepted telemetry sources file into
+// the generated package, so the memory host reports exactly the bindings of
+// the revision it was built from (empty when the revision has none).
+func generateTelemetrySources(diagnostics, root string) error {
+	data, err := os.ReadFile(filepath.Join(diagnostics, "telemetry", "sources.yaml"))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("read telemetry sources: %w", err)
+	}
+	source := "package generated\n\n// TelemetrySources is the accepted .sdo/diagnostics/telemetry/sources.yaml.\nconst TelemetrySources = " + strconv.Quote(string(data)) + "\n"
+	return os.WriteFile(filepath.Join(root, "generated", "telemetry_sources.go"), []byte(source), 0o644)
 }

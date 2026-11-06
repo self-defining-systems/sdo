@@ -38,6 +38,14 @@ func (s *Server) WithPrograms(registry program.ProgramRegistry) *Server {
 	}
 	return s
 }
+
+// WithTelemetrySources records the accepted revision's telemetry sources file
+// (empty when there is none) so Ready carries it to the controller.
+func (s *Server) WithTelemetrySources(sources []byte) *Server {
+	s.identity.TelemetrySources = append([]byte(nil), sources...)
+	return s
+}
+
 func (s *Server) programView(ctx context.Context, input *pb.MemoryProgramInput) (*programRecording, program.Bindings, error) {
 	if input == nil {
 		return nil, program.Bindings{}, errors.New("program input required")

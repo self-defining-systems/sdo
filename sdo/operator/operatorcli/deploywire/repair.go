@@ -15,7 +15,7 @@ import (
 func Verifier(launch *contracts.ControllerConfig, operatorRoot string, readiness *deployment.Deployer) deployment.IndependentHealthVerifier {
 	return deployment.IndependentHealthVerifier{
 		AcceptedRoot: launch.GetAppRoot(), OperatorRoot: operatorRoot, Readiness: readiness,
-		Probe: deployment.AcceptedDetectorProbe{Replay: launch.GetReplay(), MetricsURL: launch.GetMetricsUrl()},
+		Probe: deployment.AcceptedDetectorProbe{Replay: launch.GetReplay(), TelemetryEnvironment: launch.GetTelemetryEnvironmentFile()},
 	}
 }
 

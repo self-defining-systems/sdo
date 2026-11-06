@@ -22,6 +22,9 @@ func labelInstallPlan(c Config, p *Plan) {
 		labelInstallObjects(c.Namespace, p.Namespace)
 	}
 	labelInstallObjects[metav1.Object](c.Namespace, p.PVC, p.SyncPod, p.Job, &p.Job.Spec.Template.ObjectMeta)
+	if p.TelemetryEnvironment != nil {
+		labelInstallObjects(c.Namespace, p.TelemetryEnvironment)
+	}
 	labelInstallObjects(c.Namespace, p.ServiceAccounts...)
 	labelInstallObjects(c.Namespace, p.ClusterRoles...)
 	labelInstallObjects(c.Namespace, p.ClusterBindings...)

@@ -118,14 +118,6 @@ type ControllerConfig struct {
 	DiagnosisDeadline *durationpb.Duration `protobuf:"bytes,56,opt,name=diagnosis_deadline,json=diagnosisDeadline,proto3" json:"diagnosis_deadline,omitempty"`
 	DriftBatchWindow  *durationpb.Duration `protobuf:"bytes,66,opt,name=drift_batch_window,json=driftBatchWindow,proto3" json:"drift_batch_window,omitempty"`
 	ForceReflection   bool                 `protobuf:"varint,62,opt,name=force_reflection,json=forceReflection,proto3" json:"force_reflection,omitempty"`
-	// Prometheus-compatible API that metric and alert detectors query once per
-	// evaluation cycle. Unset runs no metrics source: detectors that need one
-	// report an error instead of health. The token file holds an optional bearer
-	// token and requires metrics_url.
-	MetricsUrl string `protobuf:"bytes,70,opt,name=metrics_url,json=metricsUrl,proto3" json:"metrics_url,omitempty"`
-	// SDO-owned publishing base, independent of an overridden query URL.
-	MetricsPublishUrl string `protobuf:"bytes,81,opt,name=metrics_publish_url,json=metricsPublishUrl,proto3" json:"metrics_publish_url,omitempty"`
-	MetricsTokenFile  string `protobuf:"bytes,71,opt,name=metrics_token_file,json=metricsTokenFile,proto3" json:"metrics_token_file,omitempty"`
 	// Trusted controller image supplying Go to compiler-free workers and validators.
 	// Required at startup, independently of the optional traffic prober image.
 	ToolchainImage         string               `protobuf:"bytes,75,opt,name=toolchain_image,json=toolchainImage,proto3" json:"toolchain_image,omitempty"`
@@ -156,8 +148,12 @@ type ControllerConfig struct {
 	// with: the parent's upstream advances and the child's accepted responder
 	// source repairs. Absent means nothing can build an image.
 	DeployIdentity *DeployIdentity `protobuf:"bytes,114,opt,name=deploy_identity,json=deployIdentity,proto3" json:"deploy_identity,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Path of the telemetry environment document (sources the operator provides,
+	// credential directory, pinning mode). Unset provides no operator source:
+	// detectors that query one report an error instead of health.
+	TelemetryEnvironmentFile string `protobuf:"bytes,116,opt,name=telemetry_environment_file,json=telemetryEnvironmentFile,proto3" json:"telemetry_environment_file,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
 }
 
 func (x *ControllerConfig) Reset() {
@@ -556,27 +552,6 @@ func (x *ControllerConfig) GetForceReflection() bool {
 	return false
 }
 
-func (x *ControllerConfig) GetMetricsUrl() string {
-	if x != nil {
-		return x.MetricsUrl
-	}
-	return ""
-}
-
-func (x *ControllerConfig) GetMetricsPublishUrl() string {
-	if x != nil {
-		return x.MetricsPublishUrl
-	}
-	return ""
-}
-
-func (x *ControllerConfig) GetMetricsTokenFile() string {
-	if x != nil {
-		return x.MetricsTokenFile
-	}
-	return ""
-}
-
 func (x *ControllerConfig) GetToolchainImage() string {
 	if x != nil {
 		return x.ToolchainImage
@@ -659,6 +634,13 @@ func (x *ControllerConfig) GetDeployIdentity() *DeployIdentity {
 		return x.DeployIdentity
 	}
 	return nil
+}
+
+func (x *ControllerConfig) GetTelemetryEnvironmentFile() string {
+	if x != nil {
+		return x.TelemetryEnvironmentFile
+	}
+	return ""
 }
 
 // DeployIdentity is the BuildKit Job image, the registry push Secret and the
@@ -960,7 +942,7 @@ var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDesc
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\x1a1sdodev/contracts/v1alpha1/deployment_source.proto\"\xae\"\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\x1a1sdodev/contracts/v1alpha1/deployment_source.proto\"\xb5\"\n" +
 	"\x10ControllerConfig\x12,\n" +
 	"\x12memory_host_binary\x18R \x01(\tR\x10memoryHostBinary\x12,\n" +
 	"\x12memory_host_digest\x18S \x01(\tR\x10memoryHostDigest\x12%\n" +
@@ -1020,11 +1002,7 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\x12max_response_loops\x187 \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\x10maxResponseLoops\x12H\n" +
 	"\x12diagnosis_deadline\x188 \x01(\v2\x19.google.protobuf.DurationR\x11diagnosisDeadline\x12G\n" +
 	"\x12drift_batch_window\x18B \x01(\v2\x19.google.protobuf.DurationR\x10driftBatchWindow\x12)\n" +
-	"\x10force_reflection\x18> \x01(\bR\x0fforceReflection\x12\x1f\n" +
-	"\vmetrics_url\x18F \x01(\tR\n" +
-	"metricsUrl\x12.\n" +
-	"\x13metrics_publish_url\x18Q \x01(\tR\x11metricsPublishUrl\x12,\n" +
-	"\x12metrics_token_file\x18G \x01(\tR\x10metricsTokenFile\x12'\n" +
+	"\x10force_reflection\x18> \x01(\bR\x0fforceReflection\x12'\n" +
 	"\x0ftoolchain_image\x18K \x01(\tR\x0etoolchainImage\x12S\n" +
 	"\x18closure_stability_window\x18L \x01(\v2\x19.google.protobuf.DurationR\x16closureStabilityWindow\x12O\n" +
 	"\x16responder_report_grace\x18M \x01(\v2\x19.google.protobuf.DurationR\x14responderReportGrace\x120\n" +
@@ -1036,12 +1014,13 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\x12render_environment\x18q \x01(\v2,.sdodev.contracts.v1alpha1.RenderEnvironmentR\x11renderEnvironment\x12X\n" +
 	"\x11deployment_policy\x18s \x01(\v2+.sdodev.contracts.v1alpha1.DeploymentPolicyR\x10deploymentPolicy\x12-\n" +
 	"\x12external_incidents\x18o \x01(\bR\x11externalIncidents\x12R\n" +
-	"\x0fdeploy_identity\x18r \x01(\v2).sdodev.contracts.v1alpha1.DeployIdentityR\x0edeployIdentityB\x14\n" +
+	"\x0fdeploy_identity\x18r \x01(\v2).sdodev.contracts.v1alpha1.DeployIdentityR\x0edeployIdentity\x12<\n" +
+	"\x1atelemetry_environment_file\x18t \x01(\tR\x18telemetryEnvironmentFileB\x14\n" +
 	"\x12_synthetic_trafficB\x1a\n" +
 	"\x18_clean_responder_helpersB\x11\n" +
 	"\x0f_state_baselineB\x14\n" +
-	"\x12_responder_standbyJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x17\x10\x18J\x04\b\x18\x10\x19J\x04\b\x1e\x10\x1fJ\x04\b$\x10%J\x04\b%\x10&J\x04\b&\x10'J\x04\b/\x100J\x04\b0\x101J\x04\b9\x10:J\x04\b:\x10;J\x04\b;\x10<J\x04\b<\x10=J\x04\b=\x10>J\x04\bC\x10DJ\x04\bD\x10EJ\x04\b?\x10@J\x04\b@\x10AJ\x04\bA\x10BJ\x04\bE\x10FJ\x04\bH\x10IJ\x04\bI\x10JJ\x04\bJ\x10KJ\x04\bp\x10qR\vmemory_hostR\x06brokerR\vbroker_argsR\x0emax_follow_upsR\x12follow_up_cooldownR\x15restart_after_closureR\rprober_binaryR\fprober_imageR\n" +
-	"prober_urlR\x0fvalidator_imageR\x0fschema_identityR\x14drift_sweep_intervalR\x1adrift_investigation_windowR'drift_investigation_dispatches_per_hourR#drift_investigation_tokens_per_hourR\x19drift_dispatches_per_hourR\x15drift_tokens_per_hourR\x17deployed_manifest_pathsR\x14program_min_durationR\x17plan_safety_policy_jsonR\x19plan_safety_policy_sha256R\x17plan_source_policy_jsonR\x11deployment_source\"\xfd\x02\n" +
+	"\x12_responder_standbyJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x17\x10\x18J\x04\b\x18\x10\x19J\x04\b\x1e\x10\x1fJ\x04\b$\x10%J\x04\b%\x10&J\x04\b&\x10'J\x04\b/\x100J\x04\b0\x101J\x04\b9\x10:J\x04\b:\x10;J\x04\b;\x10<J\x04\b<\x10=J\x04\b=\x10>J\x04\bC\x10DJ\x04\bD\x10EJ\x04\b?\x10@J\x04\b@\x10AJ\x04\bA\x10BJ\x04\bE\x10FJ\x04\bF\x10GJ\x04\bG\x10HJ\x04\bQ\x10RJ\x04\bH\x10IJ\x04\bI\x10JJ\x04\bJ\x10KJ\x04\bp\x10qR\vmemory_hostR\x06brokerR\vbroker_argsR\x0emax_follow_upsR\x12follow_up_cooldownR\x15restart_after_closureR\rprober_binaryR\fprober_imageR\n" +
+	"prober_urlR\x0fvalidator_imageR\x0fschema_identityR\x14drift_sweep_intervalR\x1adrift_investigation_windowR'drift_investigation_dispatches_per_hourR#drift_investigation_tokens_per_hourR\x19drift_dispatches_per_hourR\x15drift_tokens_per_hourR\x17deployed_manifest_pathsR\x14program_min_durationR\vmetrics_urlR\x12metrics_token_fileR\x13metrics_publish_urlR\x17plan_safety_policy_jsonR\x19plan_safety_policy_sha256R\x17plan_source_policy_jsonR\x11deployment_source\"\xfd\x02\n" +
 	"\x0eDeployIdentity\x12%\n" +
 	"\x0ebuildkit_image\x18\x01 \x01(\tR\rbuildkitImage\x120\n" +
 	"\x14registry_push_secret\x18\x02 \x01(\tR\x12registryPushSecret\x12#\n" +

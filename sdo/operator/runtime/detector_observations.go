@@ -13,20 +13,17 @@ import (
 	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/logs"
 	"sdo.dev/operator/sdk/usage"
-	"sdo.dev/operator/telemetry"
 )
 
 // detectorObservations is the one place that derives the Kubernetes-, log-
 // and metrics-backed observations from a detector bundle's declarations. The
 // controller loop, each memory-host swap and --evaluate-once compose through
-// it, so no evaluation path can drop an input a detector declared.
+// it (each with the revision's telemetry sources), so no evaluation path can drop an input a detector declared.
 type detectorObservations struct {
-	Client           kubernetes.Interface
-	Clock            func() time.Time
-	MetricsURL       string
-	MetricsTokenFile string
-	// Telemetry opens the metrics source; nil allows no configured URL.
-	Telemetry *telemetry.Registry
+	Client kubernetes.Interface
+	Clock  func() time.Time
+	// Telemetry opens the metrics source of each accepted revision.
+	Telemetry TelemetrySources
 	// RequireMetrics refuses metric-consuming bundles without a metrics source.
 	RequireMetrics bool
 }
@@ -34,7 +31,7 @@ type detectorObservations struct {
 // compose wraps base with every observation the detectors declare. A
 // Kubernetes-backed declaration without a client is refused here, naming the
 // detector, instead of surfacing later as an unavailable observation.
-func (o detectorObservations) compose(base SnapshotProvider, detectors []sdk.Detector) (SnapshotProvider, *MetricsObserver, error) {
+func (o detectorObservations) compose(base SnapshotProvider, detectors []sdk.Detector, designerSources []byte) (SnapshotProvider, *MetricsObserver, error) {
 	if o.Client == nil {
 		for _, detector := range detectors {
 			if needs := kubernetesObservations(detector); needs != "" {
@@ -58,7 +55,7 @@ func (o detectorObservations) compose(base SnapshotProvider, detectors []sdk.Det
 	if logsObserver != nil {
 		provider = LogsSnapshotProvider{Base: provider, Observer: logsObserver}
 	}
-	return withMetrics(provider, detectors, o.Telemetry, o.MetricsURL, o.MetricsTokenFile, o.RequireMetrics, clock)
+	return withMetrics(provider, detectors, o.Telemetry, designerSources, o.RequireMetrics, clock)
 }
 
 // kubernetesObservations names the first client-backed input detector declares.
