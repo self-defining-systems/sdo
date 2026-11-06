@@ -36,6 +36,8 @@ spec:
       containers:
         - name: postgresql
           image: {{ .Values.image }}
+          # GitLab's schema load takes one transaction over thousands of relations (the default of 64 runs out of shared memory).
+          args: [-c, max_locks_per_transaction=256]
           ports:
             - {name: postgresql, containerPort: 5432}
           env:

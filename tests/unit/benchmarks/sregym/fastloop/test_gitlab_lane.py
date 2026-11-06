@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -137,10 +138,12 @@ def test_plan_with_no_workloads_is_rejected() -> None:
 def test_onboarding_hands_the_plan_to_the_native_lifecycle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from benchmarks.sregym.adapter import driver
 
-    monkeypatch.setenv("KUBECONFIG", str(tmp_path / "kubeconfig"))
+    monkeypatch.delenv("KUBECONFIG", raising=False)
+    monkeypatch.delenv("SREGYM_BASE_KUBECONFIG", raising=False)
     seen: dict[str, object] = {}
 
     def launch(args: SimpleNamespace, **kwargs: object) -> dict[str, str]:
+        seen["kubeconfig"] = os.environ.get("KUBECONFIG")
         seen["plan"] = args.deployment_plan
         seen["objective"] = kwargs["health_objective"]
         return {"judge_commit": "c"}
@@ -152,14 +155,45 @@ def test_onboarding_hands_the_plan_to_the_native_lifecycle(monkeypatch: pytest.M
         application=gitlab_lane.APPLICATION,
         images=SimpleNamespace(controller="controller:x", responder="responder:x"),
         cluster="fastloop-w0",
+        kubeconfig=tmp_path / "kubeconfig",
+        apply_operator_env=lambda environ: None,
     )
     plan = gitlab_lane.plan_from_workloads(_workloads())
     config = gitlab_lane.lane_runtime_config(environment, plan)
     assert gitlab_lane.onboard(environment, config, "goal") == {"judge_commit": "c"}
-    assert seen == {"plan": plan, "objective": "goal"}
+    assert seen == {"kubeconfig": str(tmp_path / "kubeconfig"), "plan": plan, "objective": "goal"}
 
 
 def test_onboarding_without_a_plan_is_refused(tmp_path: Path) -> None:
     environment = SimpleNamespace(namespace="gitlab", workspace=tmp_path)
     with pytest.raises(ValueError, match="provided deployment plan"):
         gitlab_lane.onboard(environment, SimpleNamespace(deployment_plan=None), "goal")
+
+
+def test_pull_missing_images_pulls_only_what_the_host_lacks() -> None:
+    calls: list[list[str]] = []
+
+    def run(command: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 1 if command[-1] == "absent" and command[1] == "image" else 0)
+
+    assert gitlab_lane.pull_missing_images(["present", "absent"], run) == ["absent"]
+    assert ["docker", "pull", "absent"] in calls
+    assert ["docker", "pull", "present"] not in calls
+
+
+def test_ingress_controller_gets_its_node_label_first_and_is_awaited_by_rollout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    commands: list[list[str]] = []
+    monkeypatch.setattr(gitlab_lane, "ingress_manifest", lambda pins=None: b"manifest")
+    monkeypatch.setattr(
+        gitlab_lane.subprocess,
+        "run",
+        lambda command, **_: commands.append(command) or subprocess.CompletedProcess(command, 0),
+    )
+    gitlab_lane.install_prerequisites(tmp_path / "kubeconfig")
+    verbs = [next(word for word in command[3:] if not word.startswith("-")) for command in commands]
+    assert verbs[:2] == ["label", "apply"]
+    assert "ingress-ready=true" in commands[0]
+    assert commands[-1][-3:-1] == ["status", "deployment/ingress-nginx-controller"]
