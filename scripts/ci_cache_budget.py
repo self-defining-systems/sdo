@@ -163,7 +163,11 @@ def main() -> int:
         for row in prune(budget, caches, delete_cache, datetime.now(UTC), args.prefix):
             print(f"deleted {row['key']} ({row['size_in_bytes'] / MB:.0f} MB, last used {row['last_accessed_at']})")
         return 0
-    total = gh_api("actions/cache/usage")["active_caches_size_in_bytes"]
+    # GitHub's usage counter lags deletions by up to an hour; the listing is current, so alarm on the listing
+    # and show the counter for reference.
+    total = sum(row["size_in_bytes"] for row in caches)
+    reported = gh_api("actions/cache/usage")["active_caches_size_in_bytes"]
+    print(f"GitHub's usage counter reports {reported / MB:.0f} MB (it lags deletions)")
     report = render(budget, total, caches)
     failures = usage_failures(budget, total, caches)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
