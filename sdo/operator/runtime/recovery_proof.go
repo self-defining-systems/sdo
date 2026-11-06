@@ -29,8 +29,10 @@ func (c *Controller) recoveryProofLocked(now time.Time, states []DetectorEvaluat
 // recoveryWindowRunningLocked reports a stability window that is still running
 // over clear health: the proof is only waiting for time to pass. The
 // verification timeout bounds findings and unconfirmed observation, never this.
-func (c *Controller) recoveryWindowRunningLocked() bool {
-	return !c.closureStableSince.IsZero() && len(c.activeHealthDetectors()) == 0
+// A window that restarts at every pass (safety lost again, a responder still
+// writing) is not running; it never completes, so the timeout still applies.
+func (c *Controller) recoveryWindowRunningLocked(now time.Time) bool {
+	return !c.closureStableSince.IsZero() && c.closureStableSince.Before(now) && len(c.activeHealthDetectors()) == 0
 }
 
 func (c *Controller) recoveryProofForEpochLocked(now time.Time, states []DetectorEvaluation, safe bool, since time.Time) bool {

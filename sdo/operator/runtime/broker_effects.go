@@ -221,7 +221,7 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 			if !clear {
 				c.closureStableSince = time.Time{}
 			}
-			windowRunning := clear && c.recoveryWindowRunningLocked()
+			windowRunning := clear && c.recoveryWindowRunningLocked(c.clock())
 			c.mu.Unlock()
 			if !stable {
 				if !windowRunning && !c.clock().Before(c.closureVerificationDeadline(effect.Closure)) {
