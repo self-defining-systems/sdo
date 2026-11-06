@@ -1677,7 +1677,10 @@ func maintainLeadership(
 			case <-ctx.Done():
 				return
 			case <-ticker.C():
-				attemptTimeout := interval / 2
+				// One attempt may take a third of the Lease, so an API server
+				// or process that is merely slow still renews before expiry
+				// (client-go's renew deadline is two thirds of the Lease).
+				attemptTimeout := max(interval/2, elector.leaseDuration/3)
 				if attemptTimeout <= 0 {
 					attemptTimeout = time.Second
 				}
@@ -1697,7 +1700,7 @@ func maintainLeadership(
 					return
 				}
 				if !leader {
-					errors <- fmt.Errorf("controller leadership lost")
+					errors <- ErrLeadershipLost
 					return
 				}
 			}

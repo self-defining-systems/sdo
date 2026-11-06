@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/url"
+	"strings"
 	"syscall"
 	"time"
 
@@ -27,6 +28,12 @@ func transientAPIError(err error) bool {
 	}
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
 		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.EPIPE) {
+		return true
+	}
+	// client-go's token bucket refuses a wait that cannot finish before the
+	// caller's deadline with a plain error that wraps no context error. It
+	// reports local throttling or a stalled process, never a server verdict.
+	if strings.Contains(err.Error(), "would exceed context deadline") {
 		return true
 	}
 	var network net.Error
