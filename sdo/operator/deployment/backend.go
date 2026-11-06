@@ -29,6 +29,9 @@ type CommandBackend struct {
 	Wait          func(context.Context, time.Duration) error
 	// Now is the clock used to age pods while observing a rollout.
 	Now func() time.Time
+	// Progress, when set, receives one line about what the observer waits on
+	// (workload, status, attempts so far) at most every progressEvery.
+	Progress func(string)
 }
 
 func (b CommandBackend) kubectl() string {
@@ -65,6 +68,7 @@ func (b CommandBackend) Observe(ctx context.Context, resourceID string) (Workloa
 	var lastObject []byte
 	started := b.now()
 	lastCheck := started
+	var lastProgress time.Time
 	for {
 		args := b.kubectlArgs("get", parts[0], parts[2], "--namespace", parts[1], "--output=json")
 		output, err := b.run(bounded, b.kubectl(), args, nil)
@@ -80,6 +84,13 @@ func (b CommandBackend) Observe(ctx context.Context, resourceID string) (Workloa
 			}
 			lastObject = output
 			lastErr = fmt.Errorf("workload %s has not completed its rollout", resourceID)
+			if failed := b.jobFailure(resourceID, output, limit, b.now().Sub(started), false); failed != nil {
+				return WorkloadObservation{}, failed
+			}
+			if b.Progress != nil && (lastProgress.IsZero() || b.now().Sub(lastProgress) >= progressEvery) {
+				lastProgress = b.now()
+				b.Progress(waitingLine(resourceID, output, b.now().Sub(started), limit))
+			}
 		}
 		if waited := b.now().Sub(started); lastObject != nil && waited >= rolloutCheckAfter && b.now().Sub(lastCheck) >= rolloutCheckEvery {
 			lastCheck = b.now()
@@ -87,7 +98,12 @@ func (b CommandBackend) Observe(ctx context.Context, resourceID string) (Workloa
 				return WorkloadObservation{}, stuck
 			}
 		}
-		if err := b.wait(bounded, 2*time.Second); err != nil {
+		err = b.wait(bounded, 2*time.Second)
+		if err == nil && lastObject != nil && b.now().Sub(started) >= limit && ctx.Err() == nil {
+			// The injected clock, not only the context timer, bounds the wait.
+			return WorkloadObservation{}, b.rolloutTimeout(ctx, resourceID, limit, lastObject)
+		}
+		if err != nil {
 			if errors.Is(bounded.Err(), context.DeadlineExceeded) && ctx.Err() == nil && lastObject != nil {
 				return WorkloadObservation{}, b.rolloutTimeout(ctx, resourceID, limit, lastObject)
 			}

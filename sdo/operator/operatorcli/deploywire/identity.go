@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"path/filepath"
 	"strings"
 	"time"
@@ -114,7 +115,7 @@ func (d Identity) Deployer(client kubernetes.Interface, target Target, environme
 	}
 	return deployment.Deployer{
 		Namespace: target.Namespace, Renderers: renderers.Catalog(), Images: sources,
-		Applier:    deployment.CommandBackend{ObserveLimit: d.RolloutTimeout},
+		Applier:    deployment.CommandBackend{ObserveLimit: d.RolloutTimeout, Progress: func(line string) { log.Print(line) }},
 		TreeDigest: broker.ProposalTreeDigest, Environment: environment, Policy: policy, AcceptedRoot: target.AcceptedRoot, Materializer: materializer,
 	}, nil
 }

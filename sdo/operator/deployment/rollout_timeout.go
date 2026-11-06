@@ -50,6 +50,12 @@ const (
 	// RolloutReasonContainerRetryDeadline: the same for a main container that
 	// kept restarting or crash-looping.
 	RolloutReasonContainerRetryDeadline RolloutReason = "container-retry-deadline-exceeded"
+	// RolloutReasonJobFailed: the Job reported Failed (its backoffLimit or
+	// activeDeadlineSeconds was reached); it will not run again.
+	RolloutReasonJobFailed RolloutReason = "job-failed"
+	// RolloutReasonJobRetryDeadline: the rollout deadline passed while the
+	// Job's attempts kept failing.
+	RolloutReasonJobRetryDeadline RolloutReason = "job-retry-deadline-exceeded"
 )
 
 func (e *RolloutTimeoutError) Error() string {
@@ -133,12 +139,15 @@ func (b CommandBackend) readRollout(resourceID string, workload []byte) (pods, e
 // rolloutTimeout builds the typed error at the deadline from the last
 // observed workload object.
 func (b CommandBackend) rolloutTimeout(ctx context.Context, resourceID string, limit time.Duration, workload []byte) error {
+	if failed := b.jobFailure(resourceID, workload, limit, limit, true); failed != nil {
+		return failed
+	}
 	failure := &RolloutTimeoutError{Resource: resourceID, Limit: limit, Waited: limit, Reason: RolloutReasonNotProgressing}
 	pods, events, ok := b.readRollout(resourceID, workload)
 	if !ok {
 		return failure
 	}
-	assessment := assessRollout(resourceID, pods, events, b.now(), b.rolloutInputs(ctx, workload, limit, limit))
+	assessment := assessRollout(resourceID, pods, events, b.now(), b.rolloutInputsFor(ctx, resourceID, workload, limit, limit))
 	failure.Detail, failure.Stalled, failure.Advice = assessment.Detail, !assessment.Progressing, assessment.Advice
 	failure.Reason = assessment.reason()
 	return failure
@@ -151,7 +160,7 @@ func (b CommandBackend) stuckRollout(ctx context.Context, resourceID string, lim
 	if !ok {
 		return nil
 	}
-	assessment := assessRollout(resourceID, pods, events, b.now(), b.rolloutInputs(ctx, workload, limit, waited))
+	assessment := assessRollout(resourceID, pods, events, b.now(), b.rolloutInputsFor(ctx, resourceID, workload, limit, waited))
 	if !assessment.Stuck {
 		return nil
 	}
@@ -178,9 +187,10 @@ type containerStatus struct {
 }
 
 type terminatedState struct {
-	ExitCode int    `json:"exitCode"`
-	Reason   string `json:"reason"`
-	Message  string `json:"message"`
+	ExitCode   int       `json:"exitCode"`
+	Reason     string    `json:"reason"`
+	Message    string    `json:"message"`
+	FinishedAt time.Time `json:"finishedAt"`
 }
 
 type podCondition struct {
@@ -252,6 +262,9 @@ type rolloutInputs struct {
 	Waited      time.Duration
 	Deadline    time.Duration
 	RunningJobs []string
+	// Job is true when the workload is itself a Job: its failed attempts are
+	// retried by the Job controller, so an exit is not yet a failure.
+	Job bool
 }
 
 type jobsInFlightKey struct{}
@@ -261,6 +274,12 @@ type jobsInFlightKey struct{}
 // for them.
 func withJobsInFlight(ctx context.Context, ids []string) context.Context {
 	return context.WithValue(ctx, jobsInFlightKey{}, ids)
+}
+
+func (b CommandBackend) rolloutInputsFor(ctx context.Context, resourceID string, workload []byte, limit, waited time.Duration) rolloutInputs {
+	in := b.rolloutInputs(ctx, workload, limit, waited)
+	in.Job = strings.HasPrefix(resourceID, "Job/")
+	return in
 }
 
 // rolloutInputs reads the live state the init-container rule depends on: the
@@ -383,7 +402,7 @@ func assessPod(pod podObject, events []rolloutEvent, now time.Time, in rolloutIn
 		if s.Ready {
 			continue
 		}
-		if pod.Status.Phase != "Failed" && containerRetrying(s) {
+		if (pod.Status.Phase != "Failed" || in.Job) && containerRetrying(s) {
 			v.retryContainer(retryContainer, s, in)
 			continue
 		}
