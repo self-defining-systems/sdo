@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 from contextlib import ExitStack, contextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -11,18 +10,15 @@ from google.protobuf import json_format
 
 from sdo.agents.context_output import budget_for
 from sdo.agents.prompt_templates import PromptBudgetError, count_chars, render_prompt
-from sdo.agents.responder.recorded_actions import scratch_directory
 from sdo.agents.responder.rollout_release import release_lines
 from sdo.agents.responder.tool_output import write_json
 from sdo.agents.responder.tools_cli import command_purposes, command_surface
 from sdo.contracts import Verdict
 
 MAX_INCIDENT_SUMMARY_CHARS = budget_for("responder.incident_data")
-PLAYBOOK_DIRECTORY = "playbooks"
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Mapping
-    from pathlib import Path
 
     from sdo.contracts import Finding, IncidentRequest, ObjectRef, ProgramRun, StageReport
 
@@ -369,41 +365,21 @@ def _fit(brief: dict[str, Any]) -> dict[str, Any]:
     return brief
 
 
-def playbook_directory() -> Path:
-    """Stable per-session location of the learned playbooks: `<id>/README.md` plus its programs."""
-    return scratch_directory() / PLAYBOOK_DIRECTORY
-
-
-def write_playbooks(request: IncidentRequest) -> dict[str, str]:
-    """Write each accepted playbook under the session's playbook directory; return README paths by ID."""
-    root = playbook_directory()
-    shutil.rmtree(root, ignore_errors=True)
-    paths: dict[str, str] = {}
-    for playbook in sorted(request.memory_snapshot.playbooks, key=lambda item: item.id):
-        directory = root / playbook.id
-        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-        readme = directory / "README.md"
-        readme.write_text(playbook.markdown, encoding="utf-8")
-        for script in playbook.scripts:
-            target = directory / script.name
-            if not target.resolve().is_relative_to(directory.resolve()):
-                raise ValueError(f"playbook {playbook.id!r} script escapes its directory: {script.name!r}")
-            target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-            target.write_text(script.content, encoding="utf-8")
-        paths[playbook.id] = str(readme)
-    return paths
+def playbook_readmes(request: IncidentRequest) -> dict[str, str]:
+    """README paths in the responder's checkout (the accepted commit) by playbook ID."""
+    return {playbook.id: f".sdo/playbooks/{playbook.id}/README.md" for playbook in request.memory_snapshot.playbooks}
 
 
 @contextmanager
 def prepared_incident_data(request: IncidentRequest) -> Iterator[str]:
     """Inline only what the responder must act on; complete facts stay private for the whole turn.
 
-    The accepted playbooks are not listed in the incident data; the skill names their directory.
+    The accepted playbooks are not listed in the incident data; the skill names their directory in the checkout.
     """
     document = incident_data_view(request)
     document["incident_tools"] = command_surface()
     with ExitStack() as stack:
-        paths = write_playbooks(request)
+        paths = playbook_readmes(request)
         if paths:
             document["memory_accepted_commit"] = request.memory_snapshot.accepted_commit
         facts = write_json(document, command="incident", incident_id=request.incident_id)

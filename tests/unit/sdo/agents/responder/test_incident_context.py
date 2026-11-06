@@ -168,7 +168,7 @@ def test_bulky_intent_does_not_hide_actionable_findings_and_coverage() -> None:
     assert not details.exists()
 
 
-def test_incident_data_has_no_playbook_catalog_and_files_sit_at_the_stable_location(
+def test_incident_data_has_no_playbook_catalog_and_writes_no_scratch_copy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
@@ -186,31 +186,9 @@ def test_incident_data_has_no_playbook_catalog_and_files_sit_at_the_stable_locat
         assert "Accepted repair" not in rendered
         assert "Check live preconditions" not in rendered
         assert full["memory_accepted_commit"] == "accepted"
-        assert (
-            tmp_path / "playbooks" / "repair" / "README.md"
-        ).read_text() == "# Accepted repair\nCheck live preconditions."
-        assert (tmp_path / "playbooks" / "other" / "diagnose.go").read_text() == "package main"
+        # The snapshot text can be trimmed in transport; the checkout is the only complete copy.
+        assert not (tmp_path / "playbooks").exists()
         assert request.SerializeToString() == before
-
-
-def test_playbook_directory_holds_only_the_current_snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
-    request = _request()
-    request.memory_snapshot.playbooks.add(id="old", markdown="# Old")
-    with prepared_incident_data(request):
-        pass
-    del request.memory_snapshot.playbooks[:]
-    request.memory_snapshot.playbooks.add(id="new", markdown="# New")
-    with prepared_incident_data(request):
-        assert sorted(path.name for path in (tmp_path / "playbooks").iterdir()) == ["new"]
-
-
-def test_playbook_script_cannot_escape_its_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
-    request = _request()
-    request.memory_snapshot.playbooks.add(id="bad", markdown="# Bad").scripts.add(name="../escape.go", content="x")
-    with pytest.raises(ValueError, match="escapes"), prepared_incident_data(request):
-        pass
 
 
 def test_incident_carries_the_current_cli_surface_without_tool_discovery() -> None:
@@ -589,7 +567,6 @@ def test_involved_playbook_readmes_survive_optional_context_trimming(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
-    scratch = tmp_path
     request = _staged_request(1)
     for index in range(100):
         request.memory_snapshot.playbooks.add(id=f"unrelated-{index}", markdown="# Unrelated")
@@ -599,8 +576,7 @@ def test_involved_playbook_readmes_survive_optional_context_trimming(
         brief = _brief(rendered)
         assert set(brief["stage_playbooks"]) == {a.playbook_id for a in request.prior_stages[0].mitigations}
         for program, path in brief["stage_playbooks"].items():
-            assert path == str(scratch / "playbooks" / program / "README.md")
-            assert Path(path).read_text().startswith("# Saved repair")
+            assert path == f".sdo/playbooks/{program}/README.md"
         assert len(rendered) <= MAX_INCIDENT_SUMMARY_CHARS
 
 
@@ -636,7 +612,7 @@ def test_residual_finding_playbooks_remain_available_without_a_program_match(
     request.memory_snapshot.playbooks.add(id="unmatched-fault", markdown="# Unmatched fault\nInvestigate live cause.")
     with prepared_incident_data(request) as rendered:
         books = _brief(rendered)["stage_playbooks"]
-        assert Path(books["unmatched-fault"]).read_text().startswith("# Unmatched fault")
+        assert books["unmatched-fault"] == ".sdo/playbooks/unmatched-fault/README.md"
         assert books["missing-readme"] is None
 
 
