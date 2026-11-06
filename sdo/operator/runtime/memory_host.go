@@ -16,6 +16,7 @@ import (
 	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/logs"
 	"sdo.dev/operator/sdk/metrics"
+	"sdo.dev/operator/sdk/podread"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/sdk/servicehealth"
@@ -119,6 +120,7 @@ type remoteDetector struct {
 func (d *remoteDetector) Spec() sdk.DetectorSpec                { return d.DetectorSpec }
 func (d *remoteDetector) MetricQueries() []metrics.Query        { return d.Metrics }
 func (d *remoteDetector) LogQueries() []logs.Query              { return d.Logs }
+func (d *remoteDetector) PodReads() []podread.Query             { return d.Registration.PodReads }
 func (d *remoteDetector) ConsumesUsage() bool                   { return d.UsesUsage }
 func (d *remoteDetector) UsageRequirements() usage.Requirements { return d.Usage }
 func (d *remoteDetector) ConsumesServiceReachability() bool     { return d.Reachability }
@@ -255,7 +257,7 @@ func (r *RemoteMemory) buildObservation(view sdk.DetectionContext) (*pb.MemoryOb
 		sourceView = wrapper.UnderlyingReadView()
 	}
 	source := inputs.New(sourceView)
-	out := &pb.MemoryObservation{Traffic: map[string]*structpb.Struct{}, Metrics: map[string]*structpb.Struct{}, Logs: map[string]*structpb.Struct{}}
+	out := &pb.MemoryObservation{Traffic: map[string]*structpb.Struct{}, Metrics: map[string]*structpb.Struct{}, Logs: map[string]*structpb.Struct{}, PodReads: map[string]*structpb.Struct{}}
 	if at := source.ObservedAt(); !at.IsZero() {
 		out.ObservedAt = timestamppb.New(at)
 		if err := out.ObservedAt.CheckValid(); err != nil {
@@ -315,6 +317,14 @@ func (r *RemoteMemory) buildObservation(view sdk.DetectionContext) (*pb.MemoryOb
 		for _, q := range spec.Logs {
 			if v, ok := source.LogResult(q.ID); ok {
 				out.Logs[q.ID], err = wireStruct(v)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+		for _, q := range spec.PodReads {
+			if v, ok := source.PodReadResult(q.ID); ok {
+				out.PodReads[q.ID], err = wireStruct(v)
 				if err != nil {
 					return nil, err
 				}

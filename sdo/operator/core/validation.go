@@ -8,6 +8,7 @@ import (
 
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/logs"
+	"sdo.dev/operator/sdk/podread"
 )
 
 // logicalPlaybookID is the grammar of a playbook reference in a detector spec
@@ -34,9 +35,15 @@ func ValidateDetectors(detectors []sdk.Detector) error {
 		if err := logs.ValidateDetector(detector); err != nil {
 			return fmt.Errorf("detector %q: %w", id, err)
 		}
+		if err := podread.ValidateDetector(detector); err != nil {
+			return fmt.Errorf("detector %q: %w", id, err)
+		}
 		seen[id] = struct{}{}
 	}
-	_, err := logs.Queries(detectors)
+	if _, err := logs.Queries(detectors); err != nil {
+		return err
+	}
+	_, err := podread.Queries(detectors)
 	return err
 }
 

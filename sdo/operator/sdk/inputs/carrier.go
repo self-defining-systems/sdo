@@ -13,6 +13,7 @@ import (
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/logs"
 	"sdo.dev/operator/sdk/metrics"
+	"sdo.dev/operator/sdk/podread"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 	"sdo.dev/operator/sdk/usage"
@@ -32,6 +33,8 @@ type Sources interface {
 	metrics.AlertSource
 	usage.Source
 	logs.Source
+	podread.Source
+	podread.ResultSet
 	metrics.QuerySource
 	metrics.UsageSource
 	sdk.ObjectCaptureSource
@@ -51,6 +54,7 @@ type Carrier struct {
 	alerts       metrics.AlertSource
 	usage        usage.Source
 	logs         logs.Source
+	podReads     podread.Source
 	query        metrics.QuerySource
 	podUsage     metrics.UsageSource
 	capture      sdk.ObjectCaptureSource
@@ -74,6 +78,7 @@ func New(base sdk.DetectionContext) Carrier {
 	c.alerts, _ = base.(metrics.AlertSource)
 	c.usage, _ = base.(usage.Source)
 	c.logs, _ = base.(logs.Source)
+	c.podReads, _ = base.(podread.Source)
 	c.query, _ = base.(metrics.QuerySource)
 	c.podUsage, _ = base.(metrics.UsageSource)
 	c.capture, _ = base.(sdk.ObjectCaptureSource)
@@ -160,6 +165,21 @@ func (c Carrier) LogResult(id string) (logs.Result, bool) {
 		return logs.Result{}, false
 	}
 	return c.logs.LogResult(id)
+}
+func (c Carrier) WithPodReads(source podread.Source) Carrier { c.podReads = source; return c }
+func (c Carrier) PodReadResult(id string) (podread.Result, bool) {
+	if c.podReads == nil {
+		return podread.Result{}, false
+	}
+	return c.podReads.PodReadResult(id)
+}
+
+// PodReadResults lists the carried results when the pod read source can.
+func (c Carrier) PodReadResults() map[string]podread.Result {
+	if set, ok := c.podReads.(podread.ResultSet); ok {
+		return set.PodReadResults()
+	}
+	return nil
 }
 
 func (c Carrier) WithQuery(source metrics.QuerySource) Carrier { c.query = source; return c }

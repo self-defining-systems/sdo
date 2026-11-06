@@ -77,6 +77,8 @@ message MemoryObservation {
   google.protobuf.Struct scoped = 9;
   // Frozen server-side dry-run Pod admission result (sdk.PodAdmissionResult).
   google.protobuf.Struct pod_admission = 10;
+  // Frozen in-container command output by query ID (podread.Result).
+  map<string, google.protobuf.Struct> pod_reads = 11;
 }
 message EvaluateRequest {
   repeated string detector_ids = 1;

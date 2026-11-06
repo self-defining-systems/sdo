@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/podread"
 	"sdo.dev/operator/sdk/traffic"
 )
 
@@ -14,14 +15,18 @@ import (
 // judges current state. A traffic consumer that declares no window of its own,
 // as every learned detector served by the memory host, judges its workloads'
 // samples, so it lags a repair by the SDK SLO window of those workloads.
+//
+// A pod read refreshes on its own interval, so a detector over one lags a repair
+// by that interval even when it judges only current state.
 func detectorWindow(detector sdk.Detector, view sdk.DetectionContext) time.Duration {
+	window := podread.LongestInterval(detector)
 	if windowed, ok := detector.(sdk.WindowedDetector); ok {
-		return windowed.EvaluationWindow(view)
+		return max(window, windowed.EvaluationWindow(view))
 	}
 	if consumer, ok := detector.(traffic.Consumer); ok {
-		return trafficConsumerWindow(consumer.TrafficWorkloads(), view)
+		return max(window, trafficConsumerWindow(consumer.TrafficWorkloads(), view))
 	}
-	return 0
+	return window
 }
 
 // trafficConsumerWindow is the longest SLO window among the workloads a traffic

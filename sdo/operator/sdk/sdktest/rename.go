@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 
 	metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/podread"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -246,6 +248,7 @@ func renameSnapshot(source Snapshot, m *renameMapping) (Snapshot, error) {
 	result.SourceName, result.Traffic = source.SourceName, source.Traffic
 	result.Metrics, result.Alerts = source.Metrics, source.Alerts
 	result.Logs = source.Logs
+	result.PodReads = renamePodReads(source.PodReads, m)
 	result.Usage, result.Reachability = source.Usage, source.Reachability
 	namespace := source.NamespaceName
 	for index := range result.ConfigMapList {
@@ -812,4 +815,22 @@ func renameGenericTree(value any, m *renameMapping) {
 			renameGenericTree(item, m)
 		}
 	}
+}
+
+// renamePodReads renames the read Pod and container, as a finding on a reading
+// names the Pod. Command output stays as recorded.
+func renamePodReads(source map[string]podread.Result, m *renameMapping) map[string]podread.Result {
+	if source == nil {
+		return nil
+	}
+	result := make(map[string]podread.Result, len(source))
+	for id, read := range source {
+		read.Readings = slices.Clone(read.Readings)
+		for index := range read.Readings {
+			read.Readings[index].Pod = m.value(read.Readings[index].Pod)
+			read.Readings[index].Container = m.value(read.Readings[index].Container)
+		}
+		result[id] = read
+	}
+	return result
 }
