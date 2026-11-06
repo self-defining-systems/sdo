@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 	"gopkg.in/yaml.v3"
@@ -62,6 +63,12 @@ type Deployer struct {
 	// receipt records it. Nil is today's behavior: no allowlist, and
 	// foreign-namespace and cluster-scoped objects are notes.
 	Policy *contracts.DeploymentPolicy
+	// JobWaitLimit bounds the wait for a running Job whose template changed
+	// before it is recreated (DefaultJobWaitLimit when zero); past it the
+	// deploy stops with an ImmutableChangeError and the Job keeps running.
+	JobWaitLimit time.Duration
+	// Sleep waits between reads of a running Job; nil is a real timer.
+	Sleep func(context.Context, time.Duration) error
 }
 
 func (d Deployer) validate() error {
@@ -192,6 +199,7 @@ type applyRun struct {
 	resolved  map[string]imagesrc.Resolved
 	workloads map[string]*workloadRecord
 	order     []string
+	recreated []*recreation
 }
 
 func (r *applyRun) apply(ctx context.Context, set rendered.DesiredSet) error {
@@ -229,8 +237,14 @@ func (r *applyRun) apply(ctx context.Context, set rendered.DesiredSet) error {
 				gated = append(gated, record)
 			}
 		}
+		if err := r.resolveConflicts(ctx, phase, documents.Bytes()); err != nil {
+			return err
+		}
 		if err := r.deployer.Applier.Apply(ctx, documents.Bytes()); err != nil {
 			return fmt.Errorf("apply phase %q: %w", phase.Name, err)
+		}
+		if err := r.afterApply(ctx); err != nil {
+			return err
 		}
 		if phase.Gate == render.GateReady {
 			for _, record := range gated {
@@ -293,10 +307,15 @@ func (r *applyRun) receipt(ctx context.Context) (lifecycle.DeploymentReceipt, er
 		}
 		ids = append(ids, id)
 	}
+	// Every workload, recreated ones included, is ready: orphans no recreated
+	// workload adopted are replaced now.
+	if err := r.replaceRemainingOrphans(ctx); err != nil {
+		return lifecycle.DeploymentReceipt{}, err
+	}
 	sort.Strings(ids)
 	receipt := lifecycle.DeploymentReceipt{
 		BaseTree: r.base, EffectiveTree: r.effective.ID, PatchesDigest: r.effective.PatchesDigest,
-		ObservedRevision: r.effective.ID, ResourceIDs: ids, Ready: true,
+		ObservedRevision: r.effective.ID, ResourceIDs: ids, Ready: true, Recreated: r.recreations(),
 	}
 	for _, id := range ids {
 		record := r.workloads[id]

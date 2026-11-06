@@ -119,6 +119,9 @@ type DeploymentReceipt struct {
 	Images      []string
 	ResourceIDs []string
 	Ready       bool
+	// Recreated lists the objects the deployer deleted and created again
+	// because an immutable field changed (audit; not deployment identity).
+	Recreated []rendered.Recreation
 }
 
 // SourceReadinessVerifier is a trusted Go build/apply/observe adapter. The
@@ -642,6 +645,7 @@ func deploymentToBroker(receipt DeploymentReceipt) broker.SourceEvidence {
 		ContainerImages: append([]rendered.DeployedImage(nil), receipt.ContainerImages...), BaseTree: receipt.BaseTree, EffectiveTree: receipt.EffectiveTree, PatchesDigest: receipt.PatchesDigest, ObservedRevision: receipt.ObservedRevision,
 		RenderDigest: receipt.RenderDigest, EnvDigest: receipt.EnvDigest,
 		Images: append([]string(nil), receipt.Images...), ResourceIDs: append([]string(nil), receipt.ResourceIDs...), Ready: receipt.Ready,
+		Recreated: append([]rendered.Recreation(nil), receipt.Recreated...),
 	}
 	if receipt.Environment != nil {
 		evidence.RenderEnvironment = proto.Clone(receipt.Environment).(*contracts.RenderEnvironment)
@@ -660,6 +664,7 @@ func deploymentFromBroker(evidence broker.SourceEvidence) DeploymentReceipt {
 		ContainerImages: append([]rendered.DeployedImage(nil), evidence.ContainerImages...), BaseTree: evidence.BaseTree, EffectiveTree: evidence.EffectiveTree, PatchesDigest: evidence.PatchesDigest, ObservedRevision: evidence.ObservedRevision,
 		RenderDigest: evidence.RenderDigest, EnvDigest: evidence.EnvDigest,
 		Images: append([]string(nil), evidence.Images...), ResourceIDs: append([]string(nil), evidence.ResourceIDs...), Ready: evidence.Ready,
+		Recreated: append([]rendered.Recreation(nil), evidence.Recreated...),
 	}
 	if evidence.DeploymentSource != nil {
 		receipt.Source = proto.Clone(evidence.DeploymentSource).(*contracts.DeploymentSource)

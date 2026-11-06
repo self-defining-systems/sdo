@@ -32,7 +32,7 @@ and install), `advance` (O1, O2, O4, O6; gates `PublishAdvance`). Check statuses
 
 ## Causes and owners
 
-`patch`, `render`, `render_nondeterministic`, `build` are the deployer's; `rollout` is the deployer's in onboarding
+`patch`, `render`, `render_nondeterministic`, `build`, `immutable_change` are the deployer's (`immutable_change`: a refused in-place update the recreate policy did not resolve; `data_bearing_change`, a PersistentVolumeClaim change, is a human's; recreated objects are in the evidence's `recreated` list and the O1.deploy detail); `rollout` is the deployer's in onboarding
 and the responder's in an advance; `scope`, `allowlist`, `budget`, `environment` and `internal` end with a human
 (`scope`/`allowlist`/`budget` are the deployer's only in fresh onboarding); `coverage`, `binding`, `memory_invalid`,
 `detector_fault`, `probe_unavailable` are the designer's; `source_fault` is the deployer's in onboarding and the

@@ -35,6 +35,16 @@ const (
 	// Retrying cannot change it and no agent may: the operator relaxes the
 	// policy or advances the deployment.
 	CausePolicy Cause = "policy"
+	// CauseImmutableChange: the API server refuses an in-place update of an
+	// immutable field and the deployer's recreate policy cannot replace the
+	// object on its own (a Job still running past the wait bound, a Service
+	// or another kind whose replacement changes its identity). The deployer
+	// decides: change the manifest so it updates in place, or retry.
+	CauseImmutableChange Cause = "immutable_change"
+	// CauseDataBearingChange: the immutable change is to an object that holds
+	// data (a PersistentVolumeClaim beyond an allowed expansion). SDO never
+	// deletes data; a person decides.
+	CauseDataBearingChange Cause = "data_bearing_change"
 )
 
 // Causes lists every Cause constant. A test keeps it equal to the constants
@@ -45,7 +55,8 @@ func Causes() []Cause {
 		CauseAttribution, CauseScope, CauseAllowlist, CauseBudget, CauseBinding,
 		CauseCoverage, CauseMemoryInvalid, CauseDetectorFault, CauseSourceFault,
 		CauseProbeUnavailable, CauseInfrastructure, CauseEnvironment, CauseInternal,
-		CauseAgentNotConverging, CauseBaseInvalid, CausePolicy,
+		CauseAgentNotConverging, CauseBaseInvalid, CausePolicy, CauseImmutableChange,
+		CauseDataBearingChange,
 	}
 }
 
@@ -102,7 +113,7 @@ const (
 // route is the one cause-to-owner table.
 func route(c Cause) (routing, bool) {
 	switch c {
-	case CausePatch, CauseRender, CauseRenderNondeterministic, CauseBuild:
+	case CausePatch, CauseRender, CauseRenderNondeterministic, CauseBuild, CauseImmutableChange:
 		return routing{OwnerDeployer, OwnerHuman, OwnerDeployer, rankDeployer}, true
 	case CauseRollout:
 		return routing{OwnerDeployer, OwnerHuman, OwnerResponder, rankDeployer}, true
@@ -116,7 +127,7 @@ func route(c Cause) (routing, bool) {
 		return routing{OwnerDesigner, OwnerDesigner, OwnerDesigner, rankDesigner}, true
 	case CauseInfrastructure:
 		return routing{OwnerRetry, OwnerRetry, OwnerRetry, rankInfrastructure}, true
-	case CauseEnvironment, CauseInternal, CauseAgentNotConverging:
+	case CauseEnvironment, CauseInternal, CauseAgentNotConverging, CauseDataBearingChange:
 		return routing{OwnerHuman, OwnerHuman, OwnerHuman, rankInternal}, true
 	}
 	return routing{}, false

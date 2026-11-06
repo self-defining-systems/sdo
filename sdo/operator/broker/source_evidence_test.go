@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"sdo.dev/operator/operability"
 	"strings"
 	"testing"
@@ -12,6 +13,8 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/rendered"
+	"sdo.dev/operator/sdk"
 )
 
 func syntheticEvidence(t *testing.T) broker.SourceEvidence {
@@ -33,6 +36,7 @@ func syntheticEvidence(t *testing.T) broker.SourceEvidence {
 
 func TestSourceEvidenceRecordRoundTripsTheSourceAndDigests(t *testing.T) {
 	want := syntheticEvidence(t)
+	want.Recreated = []rendered.Recreation{{Ref: sdk.ObjectRef{Kind: "Deployment", Namespace: "ns", Name: "app"}, Fields: []string{"spec.selector"}, Propagation: "Orphan", Reason: "workload-orphan-recreate", Replaced: []string{"ReplicaSet/ns/app-1"}}}
 	encoded, err := json.Marshal(want)
 	if err != nil {
 		t.Fatal(err)
@@ -46,7 +50,7 @@ func TestSourceEvidenceRecordRoundTripsTheSourceAndDigests(t *testing.T) {
 	if err := json.Unmarshal(encoded, &got); err != nil {
 		t.Fatal(err)
 	}
-	if !proto.Equal(got.DeploymentSource, want.DeploymentSource) || got.BaseTree != want.BaseTree || got.EffectiveTree != want.EffectiveTree || got.PatchesDigest != want.PatchesDigest || got.RenderDigest != want.RenderDigest || got.EnvDigest != want.EnvDigest || !proto.Equal(got.RenderEnvironment, want.RenderEnvironment) {
+	if !proto.Equal(got.DeploymentSource, want.DeploymentSource) || got.BaseTree != want.BaseTree || got.EffectiveTree != want.EffectiveTree || got.PatchesDigest != want.PatchesDigest || got.RenderDigest != want.RenderDigest || got.EnvDigest != want.EnvDigest || !proto.Equal(got.RenderEnvironment, want.RenderEnvironment) || !reflect.DeepEqual(got.Recreated, want.Recreated) {
 		t.Fatalf("round trip = %+v, want %+v", got, want)
 	}
 }

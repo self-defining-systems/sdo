@@ -97,7 +97,10 @@ type SourceEvidence struct {
 	Images           []string
 	ResourceIDs      []string
 	Ready            bool
-	AcceptedCommit   string
+	// Recreated lists the objects the deployer deleted and created again
+	// because an immutable field changed; audit only.
+	Recreated      []rendered.Recreation
+	AcceptedCommit string
 	// OperabilityDigest is the digest of the stage-deployment operability
 	// report PublishVerifiedSource accepted; the report itself is in the
 	// evidence store (Broker.OperabilityReport). Empty for deployments that
