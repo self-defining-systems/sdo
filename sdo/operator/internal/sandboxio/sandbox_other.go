@@ -23,5 +23,10 @@ func start(cmd *exec.Cmd) error { return cmd.Start() }
 
 func executable() (string, error) { return os.Executable() }
 
-// peakBytes is unknown here: thread-creation failures stay crashes.
-func peakBytes(*os.ProcessState) int64 { return 0 }
+// peakWatch is a no-op here: the peak is unknown, thread-creation failures
+// stay crashes and an external SIGKILL is transient.
+type peakWatch struct{}
+
+func watchPeak(int) *peakWatch { return &peakWatch{} }
+
+func (*peakWatch) finish(*os.ProcessState) int64 { return 0 }

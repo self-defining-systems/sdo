@@ -32,17 +32,22 @@ func isolatedHelm(ctx context.Context, request []byte) ([]byte, error) {
 type childRunner func(ctx context.Context, name string, request []byte, limits sandboxio.Limits) ([]byte, error)
 
 // isolatedHelmWith classifies what run reports. A child that ran and broke a
-// limit or crashed is a verdict on the chart (a render-budget violation). A
+// limit, crashed or passed its wall clock (counted from its slot) is a verdict
+// on the chart (a render-budget violation). A
 // child that could not be started (fork or exec refused under host resource
-// pressure) says nothing about the chart: it is render.ErrTransient, which a
+// pressure) or was killed from outside (the host's OOM killer) says nothing about the chart: it is render.ErrTransient, which a
 // deployment source classifies as unavailable, never invalid.
 func isolatedHelmWith(run childRunner) helm.Runner {
 	return func(ctx context.Context, request []byte) ([]byte, error) {
-		out, err := run(ctx, helmChild, request, sandboxio.DefaultLimits)
+		limits := sandboxio.DefaultLimits
+		limits.Wall = helm.RenderTimeLimit // from the child slot, not from the queue
+		out, err := run(ctx, helmChild, request, limits)
 		switch {
+		case errors.Is(err, sandboxio.ErrWallClock):
+			return nil, fmt.Errorf("%w: %w", helm.ErrTimeLimit, err)
 		case errors.Is(err, sandboxio.ErrChild):
 			return nil, fmt.Errorf("%w: %w", helm.ErrRenderProcess, err)
-		case errors.Is(err, sandboxio.ErrSpawn):
+		case errors.Is(err, sandboxio.ErrSpawn), errors.Is(err, sandboxio.ErrInterrupted):
 			return nil, fmt.Errorf("%w: %w", render.ErrTransient, err)
 		}
 		return out, err

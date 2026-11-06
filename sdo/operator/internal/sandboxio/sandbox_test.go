@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"runtime"
+	"syscall"
 	"testing"
 	"time"
 
@@ -40,6 +41,11 @@ func init() {
 		}
 	})
 	sandboxio.Register("test-flood", func([]byte) []byte { return bytes.Repeat([]byte("y"), 2<<20) })
+	// Killed by something other than the parent, as the OOM killer does.
+	sandboxio.Register("test-selfkill", func([]byte) []byte {
+		_ = syscall.Kill(syscall.Getpid(), syscall.SIGKILL)
+		select {}
+	})
 	sandboxio.Register("test-panic", func([]byte) []byte { panic("handler bug") })
 }
 
@@ -132,5 +138,77 @@ func TestThreadCreationFailureIsMemoryOnlyNearTheLimit(t *testing.T) {
 		if err := sandboxio.Classify(msg, tc.peak, limits); !errors.As(err, &serr) || serr.Kind != tc.want {
 			t.Errorf("%s: got %v, want %s", name, err, tc.want)
 		}
+	}
+}
+
+// Only a failure the request caused is a verdict on it. A SIGKILL we did not
+// send (the cgroup or host OOM killer: the child is its first choice) at a
+// small peak says nothing about the request.
+func TestKillFromOutsideIsNotAChildFailure(t *testing.T) {
+	_, err := sandboxio.Run(t.Context(), "test-selfkill", nil, small)
+	if !errors.Is(err, sandboxio.ErrInterrupted) || errors.Is(err, sandboxio.ErrChild) {
+		t.Fatalf("external SIGKILL at a small peak = %v, want ErrInterrupted and not ErrChild", err)
+	}
+}
+
+// A SIGKILL we did not send, after the child grew past half its limit, is the
+// memory limit (the kernel's OOM killer got there first); below it, the host.
+func TestKillFromOutsideIsMemoryOnlyNearTheLimit(t *testing.T) {
+	limits := sandboxio.Limits{Memory: 128 << 20}
+	var serr *sandboxio.Error
+	if err := sandboxio.ClassifyKill(80<<20, limits); !errors.As(err, &serr) || serr.Kind != sandboxio.KindMemory {
+		t.Errorf("kill near the limit = %v, want a memory child error", err)
+	}
+	if err := sandboxio.ClassifyKill(20<<20, limits); !errors.Is(err, sandboxio.ErrInterrupted) || errors.Is(err, sandboxio.ErrChild) {
+		t.Errorf("kill at a small peak = %v, want ErrInterrupted", err)
+	}
+}
+
+// Our own deadline kill is the request's verdict, and it is told apart from
+// the caller's context.
+func TestWallClockLimitIsOurDeadline(t *testing.T) {
+	limits := small
+	limits.Wall = 200 * time.Millisecond
+	_, err := sandboxio.Run(t.Context(), "test-spin", nil, limits)
+	if !errors.Is(err, sandboxio.ErrWallClock) || errors.Is(err, sandboxio.ErrChild) || errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("want ErrWallClock only, got %v", err)
+	}
+}
+
+// Waiting for a child slot is not the request's time: the wall clock starts
+// once the slot is held, and the wait is bounded by the caller's context.
+func TestWallClockStartsAfterTheSlot(t *testing.T) {
+	limits := small
+	limits.Wall = 600 * time.Millisecond
+	release := sandboxio.HoldSlots(sandboxio.MaxChildren)
+	clock, stop := context.WithTimeout(t.Context(), 800*time.Millisecond) // longer than Wall
+	defer stop()
+	go func() { <-clock.Done(); release() }()
+	out, err := sandboxio.Run(t.Context(), "test-echo", []byte("late"), limits)
+	if err != nil || string(out) != "echo:late" {
+		t.Fatalf("a render queued past Wall then ran: got %q, %v", out, err)
+	}
+}
+
+func TestQueueWaitEndsWithTheCallersContext(t *testing.T) {
+	defer sandboxio.HoldSlots(sandboxio.MaxChildren)()
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	limits := small
+	limits.Wall = 10 * time.Second
+	_, err := sandboxio.Run(ctx, "test-echo", nil, limits)
+	if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, sandboxio.ErrWallClock) || errors.Is(err, sandboxio.ErrChild) {
+		t.Fatalf("queue expiry = %v, want the caller's deadline", err)
+	}
+}
+
+// A child's rusage peak starts at its parent's own high-water mark, so a big
+// parent (the controller) must not make an external kill look like memory use.
+func TestKillFromOutsideIsJudgedByTheChildsOwnPeak(t *testing.T) {
+	parent := bytes.Repeat([]byte("x"), 160<<20) // over half of small.Memory
+	_, err := sandboxio.Run(t.Context(), "test-selfkill", nil, small)
+	runtime.KeepAlive(parent)
+	if !errors.Is(err, sandboxio.ErrInterrupted) {
+		t.Fatalf("external SIGKILL under a large parent = %v, want ErrInterrupted", err)
 	}
 }

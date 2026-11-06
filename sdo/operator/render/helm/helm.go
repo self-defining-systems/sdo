@@ -70,9 +70,12 @@ func Register(c *render.Catalog, run Runner) error {
 	return render.Register[*contracts.HelmRenderConfig](c, ID, render.RendererFunc[*contracts.HelmRenderConfig](renderer), render.WithDoc(Doc))
 }
 
-// renderTimeLimit bounds one chart render's wall-clock time. The largest real
-// charts render in well under a second.
-const renderTimeLimit = 30 * time.Second
+// RenderTimeLimit bounds one chart render's wall-clock time, counted from when
+// its execution starts: a Runner that queues work (production bounds the number
+// of concurrent children) starts this clock only once the render runs, so
+// waiting for a slot is never a verdict on the chart. The largest real charts
+// render in well under a second.
+const RenderTimeLimit = 30 * time.Second
 
 // renderChart reads everything the render may use through fsys (so the
 // catalog records the inputs here, in the caller), then executes the chart
@@ -95,13 +98,14 @@ func renderChart(ctx context.Context, fsys render.FS, env render.Env, cfg *contr
 	if err := ctx.Err(); err != nil {
 		return render.Result{}, err
 	}
-	renderCtx, stop := context.WithTimeoutCause(ctx, renderTimeLimit, timeLimitError(root))
-	defer stop()
-	out, err := run(renderCtx, payload)
-	if renderCtx.Err() != nil {
-		return render.Result{}, stopped(renderCtx)
+	out, err := run(ctx, payload)
+	if ctx.Err() != nil {
+		return render.Result{}, fmt.Errorf("render stopped: %w", context.Cause(ctx))
 	}
 	if err != nil {
+		if errors.Is(err, ErrTimeLimit) {
+			return render.Result{}, timeLimitError(root)
+		}
 		if errors.Is(err, ErrRenderProcess) {
 			return render.Result{}, &policy.Error{Rule: policy.RuleRenderBudget, Chart: path.Base(root), Detail: err.Error()}
 		}
@@ -111,18 +115,7 @@ func renderChart(ctx context.Context, fsys render.FS, env render.Env, cfg *contr
 }
 
 func timeLimitError(root string) error {
-	return &policy.Error{Rule: policy.RuleRenderBudget, Chart: path.Base(root), Detail: fmt.Sprintf("rendering took longer than %s", renderTimeLimit)}
-}
-
-// stopped is the error of a render whose context ended: the typed cause of the
-// render's own time limit, or the caller's context error (transient).
-func stopped(ctx context.Context) error {
-	cause := context.Cause(ctx)
-	var perr *policy.Error
-	if errors.As(cause, &perr) {
-		return cause
-	}
-	return fmt.Errorf("render stopped: %w", cause)
+	return &policy.Error{Rule: policy.RuleRenderBudget, Chart: path.Base(root), Detail: fmt.Sprintf("rendering took longer than %s", RenderTimeLimit)}
 }
 
 // compute renders a gathered request. It touches no FS: it is what run
@@ -159,7 +152,7 @@ func compute(ctx context.Context, req request) (render.Result, error) {
 	// The engine checks this deadline on every template function call, so a
 	// template that expands through functions fails with a typed budget error
 	// even in process; the Runner bounds what calls no function.
-	renderCtx, stop := context.WithTimeoutCause(ctx, renderTimeLimit, timeLimitError(root))
+	renderCtx, stop := context.WithTimeoutCause(ctx, RenderTimeLimit, timeLimitError(root))
 	defer stop()
 	files, err := engine.Engine{Funcs: policy.Restrict, Context: renderCtx}.Render(chrt, values)
 	if err != nil {
