@@ -277,7 +277,7 @@ func main() {
 	}
 	config, err := operatorcli.ParseControllerLaunch(os.Args[1:])
 	if err == nil {
-		err = builder.RunOnce(context.Background(), config)
+		err = builder.Run(context.Background(), config, builder.RestartPolicy{})
 	}
 	if err != nil && !errors.Is(err, context.Canceled) {
 		fmt.Fprintln(os.Stderr, err)
