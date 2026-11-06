@@ -77,6 +77,34 @@ func cases() []rendertest.Case {
 			SecretOnly: []string{"k/private/password", "k/private/env"},
 		},
 		{
+			Name: "secretGenerator behavior merge keeps the base Secret identity",
+			FS: rendertest.MapFS{
+				"app/kustomization.yaml": "resources: [../base]\nsecretGenerator:\n- {name: creds, behavior: merge, literals: [c=d], files: [private/pw]}\n" +
+					"generatorOptions: {disableNameSuffixHash: true}\n",
+				"app/private/pw":          "pw",
+				"base/kustomization.yaml": "resources: [secret.yaml]\n",
+				"base/secret.yaml":        "apiVersion: v1\nkind: Secret\nmetadata: {name: creds}\nstringData: {a: b}\n",
+			},
+			Env:        env,
+			Config:     cfg("app"),
+			Want:       []string{"Secret /creds"},
+			SecretOnly: []string{"app/private/pw"},
+		},
+		{
+			Name: "secretGenerator behavior replace keeps the base Secret identity",
+			FS: rendertest.MapFS{
+				"app/kustomization.yaml": "resources: [../base]\nsecretGenerator:\n- {name: creds, behavior: replace, literals: [c=d], files: [private/pw]}\n" +
+					"generatorOptions: {disableNameSuffixHash: true}\n",
+				"app/private/pw":          "pw",
+				"base/kustomization.yaml": "resources: [secret.yaml]\n",
+				"base/secret.yaml":        "apiVersion: v1\nkind: Secret\nmetadata: {name: creds}\nstringData: {a: b}\n",
+			},
+			Env:        env,
+			Config:     cfg("app"),
+			Want:       []string{"Secret /creds"},
+			SecretOnly: []string{"app/private/pw"},
+		},
+		{
 			Name:   "root directory",
 			FS:     rendertest.MapFS{"kustomization.yaml": "resources: [d.yaml]\nnamespace: other\n", "d.yaml": deployment},
 			Env:    env,

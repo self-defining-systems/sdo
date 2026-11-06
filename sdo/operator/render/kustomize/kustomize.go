@@ -94,6 +94,16 @@ func renderRoot(ctx context.Context, fsys render.FS, env render.Env, cfg *contra
 		if err := obj.UnmarshalJSON(data); err != nil {
 			return render.Result{}, fmt.Errorf("kustomize build of %s: decode resource: %w", root, err)
 		}
+		if l.omit && obj.GetKind() == "Secret" && obj.GetAPIVersion() == "v1" {
+			// A merge or replace generator with no inputs leaves the default
+			// type and an empty data map; the value-free form is identity only.
+			delete(obj.Object, "type")
+			for _, field := range []string{"data", "stringData"} {
+				if m, ok := obj.Object[field].(map[string]any); ok && len(m) == 0 {
+					delete(obj.Object, field)
+				}
+			}
+		}
 		objs = append(objs, obj)
 	}
 	return render.SinglePhase(objs...), nil
@@ -248,9 +258,17 @@ func (l *loader) loadKustomization(name string) error {
 		return err
 	}
 	if l.omit {
-		// Secret generators become value-free virtual resources that exist only in
-		// the private filesystem, never in Git or the source tree.
+		// A create generator becomes a value-free virtual resource that exists
+		// only in the private filesystem, never in Git or the source tree. A
+		// merge or replace generator acts on a Secret an earlier layer already
+		// registered (reduced to identity), so it stays a generator without
+		// inputs and keeps its behavior; a virtual resource would collide.
+		var kept []any
 		for index, generator := range secrets {
+			if behavior, _ := generator["behavior"].(string); behavior != "" && behavior != "create" {
+				kept = append(kept, secretGeneratorReference(generator, behavior))
+				continue
+			}
 			encoded, err := yaml.Marshal(secretReference(map[string]any{"apiVersion": "v1", "metadata": generator}))
 			if err != nil {
 				return err
@@ -261,7 +279,11 @@ func (l *loader) loadKustomization(name string) error {
 			}
 			declared = append(declared, virtual)
 		}
-		delete(doc, "secretGenerator")
+		if len(kept) > 0 {
+			doc["secretGenerator"] = kept
+		} else {
+			delete(doc, "secretGenerator")
+		}
 	}
 	doc["resources"] = declared
 	sanitized, err := yaml.Marshal(doc)
@@ -389,4 +411,14 @@ func (l *loader) loadSecretGenerators(doc map[string]any, base, name string) ([]
 func secretReference(object map[string]any) map[string]any {
 	metadata, _ := object["metadata"].(map[string]any)
 	return map[string]any{"apiVersion": object["apiVersion"], "kind": "Secret", "metadata": map[string]any{"name": metadata["name"], "namespace": metadata["namespace"]}}
+}
+
+// secretGeneratorReference is a Secret generator reduced to identity and
+// behavior. The name suffix hash is already required off, and no input stays.
+func secretGeneratorReference(generator map[string]any, behavior string) map[string]any {
+	ref := map[string]any{"name": generator["name"], "behavior": behavior, "options": map[string]any{"disableNameSuffixHash": true}}
+	if ns, ok := generator["namespace"]; ok {
+		ref["namespace"] = ns
+	}
+	return ref
 }

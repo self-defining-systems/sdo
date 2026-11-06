@@ -4,6 +4,7 @@ package rendered
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"path"
@@ -84,6 +85,7 @@ func renderKustomization(ctx context.Context, root string, read func(context.Con
 		resources, _ := doc["resources"].([]any)
 		secrets, _ := doc["secretGenerator"].([]any)
 		globalOptions, _ := doc["generatorOptions"].(map[string]any)
+		var keptSecrets []any
 		for index, raw := range secrets {
 			generator, ok := raw.(map[string]any)
 			if !ok {
@@ -92,6 +94,17 @@ func renderKustomization(ctx context.Context, root string, read func(context.Con
 			options, _ := generator["options"].(map[string]any)
 			if globalOptions["disableNameSuffixHash"] != true && options["disableNameSuffixHash"] != true {
 				return fmt.Errorf("accepted Secret generator requires stable names for value-free source references")
+			}
+			if behavior, _ := generator["behavior"].(string); behavior != "" && behavior != "create" {
+				// merge and replace act on a Secret an earlier layer registered; a
+				// virtual resource would collide with it. Keep the generator,
+				// without inputs.
+				ref := map[string]any{"name": generator["name"], "behavior": behavior, "options": map[string]any{"disableNameSuffixHash": true}}
+				if ns, ok := generator["namespace"]; ok {
+					ref["namespace"] = ns
+				}
+				keptSecrets = append(keptSecrets, ref)
+				continue
 			}
 			reference := secretReference(map[string]any{"apiVersion": "v1", "metadata": generator})
 			encoded, err := yaml.Marshal(reference)
@@ -106,7 +119,11 @@ func renderKustomization(ctx context.Context, root string, read func(context.Con
 			}
 			resources = append(resources, virtual)
 		}
-		delete(doc, "secretGenerator")
+		if len(keptSecrets) > 0 {
+			doc["secretGenerator"] = keptSecrets
+		} else {
+			delete(doc, "secretGenerator")
+		}
 		declaredResources, _ := doc["resources"].([]any)
 		doc["resources"] = resources
 		for _, raw := range declaredResources {
@@ -121,14 +138,17 @@ func renderKustomization(ctx context.Context, root string, read func(context.Con
 			if err := load(target); err != nil {
 				// Directories must declare their own kustomization; never scan arbitrary files.
 				found := false
+				cause := err
 				for _, file := range []string{"kustomization.yaml", "kustomization.yml", "Kustomization"} {
 					if err := load(path.Join(target, file)); err == nil {
 						found = true
 						break
+					} else if errors.Is(err, ErrSourceUnavailable) && !errors.Is(cause, ErrSourceUnavailable) {
+						cause = err
 					}
 				}
 				if !found {
-					return fmt.Errorf("accepted resource %s is unavailable", target)
+					return fmt.Errorf("accepted resource %s is unavailable: %w", target, cause)
 				}
 			}
 		}
@@ -162,7 +182,7 @@ func renderKustomization(ctx context.Context, root string, read func(context.Con
 					}
 					content, err := read(ctx, target)
 					if err != nil {
-						return fmt.Errorf("tracked ConfigMap input %s unavailable", target)
+						return fmt.Errorf("tracked ConfigMap input %s unavailable: %w", target, err)
 					}
 					if err := write(target, content); err != nil {
 						return err

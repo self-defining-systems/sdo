@@ -1100,7 +1100,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		started := clock.Now()
 		resetErr := trafficObserver.Reset(runCtx)
 		trafficObserver.Start(runCtx)
-		warm := trafficObserver.WaitWarm(runCtx, *syntheticWarmup)
+		warm := trafficObserver.AwaitWarm(runCtx, *syntheticWarmup)
 		record := map[string]any{
 			"synthetic_traffic": trafficObserver.Summary(), "synthetic_traffic_warm": warm,
 			"synthetic_traffic_startup_ms": clock.Since(started).Milliseconds(),
@@ -1894,6 +1894,7 @@ func evaluateOnce(
 	// Deployment-time evaluation runs before any controller measured this
 	// cluster, so it judges reachability without a recorded baseline.
 	trafficProvider := TrafficSnapshotProvider{Base: provider}
+	var unavailable []unavailableEvaluation
 	if workloads := TrafficWorkloadNames(detectors); len(workloads) > 0 {
 		if trafficAPI == nil {
 			return errors.New("traffic health evaluation requires the active memory host")
@@ -1903,12 +1904,25 @@ func evaluateOnce(
 		// The wait is bounded by what the accepted workloads declare they need
 		// (minimum samples at their rate), never below the base budget. When
 		// the bound expires the detectors judge what was observed and report
-		// a typed pending reason naming the scenarios that lacked samples.
-		observer.Poll(ctx)
-		observer.WaitWarm(ctx, max(evaluateOnceWarmupBudget, observer.WarmupBudget()))
-		trafficProvider.Observer = observer
+		// a typed pending reason naming the scenarios that lacked samples. A
+		// prober that cannot be read is unavailable, named per detector.
+		observer.AwaitWarm(ctx, evaluateOnceWarmupBudget)
+		if failure := observer.Failure(); failure != "" {
+			// Those detectors are not run: judging them without a window is an
+			// error, and the verdict is that they could not be observed.
+			var runnable []sdk.Detector
+			for _, detector := range detectors {
+				if consumer, ok := detector.(traffic.Consumer); ok && len(consumer.TrafficWorkloads()) > 0 {
+					unavailable = append(unavailable, unavailableEvaluation{DetectorID: detector.Spec().ID, Reason: "traffic prober unavailable: " + failure})
+					continue
+				}
+				runnable = append(runnable, detector)
+			}
+			detectors = runnable
+		} else {
+			trafficProvider.Observer = observer
+		}
 	}
-	var unavailable []unavailableEvaluation
 	if ConsumesServiceReachability(detectors) {
 		dialer, ok := trafficAPI.(ReachabilityDialer)
 		if !ok {

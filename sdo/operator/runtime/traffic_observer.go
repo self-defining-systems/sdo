@@ -215,6 +215,23 @@ func (o *TrafficObserver) WaitWarm(ctx context.Context, timeout time.Duration) b
 	}
 }
 
+// AwaitWarm is the one wait for warm: it reads the prober, then waits up to
+// max(floor, WarmupBudget()), so the bound follows what the accepted workloads
+// declare they need. The floor is the caller's least patience (a flag at
+// startup, a constant for a one-shot evaluation). It reports whether the
+// observer is warm.
+func (o *TrafficObserver) AwaitWarm(ctx context.Context, floor time.Duration) bool {
+	o.Poll(ctx)
+	return o.WaitWarm(ctx, max(floor, o.WarmupBudget()))
+}
+
+// Failure is the last prober read error, empty when the last read succeeded.
+func (o *TrafficObserver) Failure() string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.failure
+}
+
 // WarmupBudget is how long a cold prober needs to satisfy warm, from the last
 // poll: the declared minimum samples at the workload's own rate, plus slack
 // for scheduling. Zero before any window was read.

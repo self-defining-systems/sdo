@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 )
 
 // SourceErrorKind classifies a failure to read or render the accepted source
@@ -75,7 +76,8 @@ func sourceErrorf(kind SourceErrorKind, format string, args ...any) error {
 }
 
 // classifySource makes err a *SourceError. An error that already carries a
-// kind keeps it; context errors are Unavailable; anything else is Invalid.
+// kind keeps it; context errors and failed file reads are Unavailable (not
+// found and invalid paths are verdicts on the source); anything else is Invalid.
 func classifySource(err error) error {
 	if err == nil {
 		return nil
@@ -85,6 +87,11 @@ func classifySource(err error) error {
 		return err
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return &SourceError{Kind: SourceUnavailable, Err: err}
+	}
+	var pathErr *fs.PathError
+	if errors.As(err, &pathErr) && !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fs.ErrInvalid) {
+		// A failed read of an input is I/O, not a verdict on the source.
 		return &SourceError{Kind: SourceUnavailable, Err: err}
 	}
 	return &SourceError{Kind: SourceInvalid, Err: err}

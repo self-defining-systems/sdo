@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -105,5 +107,84 @@ func TestEvaluateOnceWaitsForTheWorkloadsOwnMinimumSamples(t *testing.T) {
 	}
 	if result.Status != "clear" {
 		t.Fatalf("status = %q, want clear after the prober gathered %d samples per scenario: %s", result.Status, 3, stdout.String())
+	}
+}
+
+// stalledProber never produces a sample (windows without observations) or, with
+// err set, cannot be read at all. Every read takes one poll period of fake time.
+type stalledProber struct {
+	pacedProber
+	err error
+}
+
+func (p *stalledProber) Windows(ctx context.Context) (map[string]traffic.Window, error) {
+	p.clock.Step(100 * time.Millisecond)
+	if p.err != nil {
+		return nil, p.err
+	}
+	window := traffic.Window{Workload: p.workload, ObservedAt: p.clock.Now()}
+	for _, scenario := range p.workload.Scenarios {
+		window.Scenarios = append(window.Scenarios, traffic.ScenarioObservations{Scenario: traffic.Descriptor{ID: scenario.ID}})
+	}
+	return map[string]traffic.Window{p.workload.Name: window}, nil
+}
+
+func evaluateOnceWith(t *testing.T, api ProberAPI, clock *clocktesting.FakeClock, workload traffic.Workload) (evaluationResult, error) {
+	t.Helper()
+	detector := traffic.NewDetector(sdk.DetectorSpec{ID: "traffic-probe-call", Class: sdk.DetectorClassHealth, Owner: sdk.DetectorOwnerHealthJudge, Batching: sdk.BatchingPolicy{Severity: sdk.SeverityCritical, Debounce: 500 * time.Millisecond}, Interval: 15 * time.Second, Persistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Playbooks: []string{"health-objective"}, OriginatingCommit: "synthetic"}, workload.Name)
+	var stdout, stderr bytes.Buffer
+	err := RunWithOptions(context.Background(), []sdk.Detector{detector}, RuntimeOptions{
+		Args:     []string{"--evaluate-once", "--namespace", "shop"},
+		Provider: staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "shop", PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "web-0", Namespace: "shop"}}}}},
+		Client:   fake.NewSimpleClientset(),
+		Traffic:  api,
+		Clock:    clock,
+		Stdout:   &stdout, Stderr: &stderr,
+	})
+	var result evaluationResult
+	if err == nil {
+		if jerr := json.Unmarshal(stdout.Bytes(), &result); jerr != nil {
+			t.Fatalf("decode %q: %v", stdout.String(), jerr)
+		}
+	}
+	return result, err
+}
+
+// A prober that never warms is a typed verdict at the bound: pending with the
+// scenarios that lacked samples, never clear.
+func TestEvaluateOnceNeverWarmProberIsPending(t *testing.T) {
+	clock := clocktesting.NewFakeClock(time.Unix(1000, 0).UTC())
+	workload := pacedWorkload(3, 5)
+	api := &stalledProber{pacedProber: pacedProber{clock: clock, started: clock.Now(), workload: workload, interval: time.Second}}
+	started := clock.Now()
+	result, err := evaluateOnceWith(t, api, clock, workload)
+	if err != nil {
+		t.Fatalf("evaluate-once: %v", err)
+	}
+	if result.Status != "pending" {
+		t.Fatalf("status = %q, want pending", result.Status)
+	}
+	if len(result.DetectorStates) != 1 || !strings.Contains(result.DetectorStates[0].Reason, "no synthetic scenario has succeeded") {
+		t.Fatalf("detector states = %+v, want the pending reason naming the scenarios", result.DetectorStates)
+	}
+	if waited := clock.Since(started); waited < evaluateOnceWarmupBudget {
+		t.Fatalf("gave up after %s, before the %s bound", waited, evaluateOnceWarmupBudget)
+	}
+}
+
+// A prober that cannot be read is unavailable, naming the detector that needed it.
+func TestEvaluateOnceUnreadableProberIsUnavailable(t *testing.T) {
+	clock := clocktesting.NewFakeClock(time.Unix(1000, 0).UTC())
+	workload := pacedWorkload(3, 5)
+	api := &stalledProber{pacedProber: pacedProber{clock: clock, started: clock.Now(), workload: workload, interval: time.Second}, err: errors.New("connection refused")}
+	result, err := evaluateOnceWith(t, api, clock, workload)
+	if err != nil {
+		t.Fatalf("evaluate-once: %v", err)
+	}
+	if result.Status != evaluationUnavailable {
+		t.Fatalf("status = %q, want unavailable", result.Status)
+	}
+	if len(result.Unavailable) != 1 || result.Unavailable[0].DetectorID != "traffic-probe-call" || !strings.Contains(result.Unavailable[0].Reason, "connection refused") {
+		t.Fatalf("unavailable = %+v, want traffic-probe-call with the prober error", result.Unavailable)
 	}
 }

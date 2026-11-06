@@ -37,6 +37,12 @@ func TestKustomizeRendererMatchesSourceReads(t *testing.T) {
 			"base/kustomization.yaml": "resources: [deploy.yaml]\ncommonLabels: {tier: web}\n",
 			"base/deploy.yaml":        deployment,
 		},
+		"secretGenerator merge and replace on a base Secret": {
+			"app/kustomization.yaml": "resources: [../base]\nsecretGenerator:\n- {name: m, behavior: merge, literals: [c=d]}\n- {name: r, behavior: replace, literals: [e=f]}\n" +
+				"generatorOptions: {disableNameSuffixHash: true}\n",
+			"base/kustomization.yaml": "resources: [secret.yaml]\n",
+			"base/secret.yaml":        "apiVersion: v1\nkind: Secret\nmetadata: {name: m}\nstringData: {a: b}\n---\napiVersion: v1\nkind: Secret\nmetadata: {name: r}\nstringData: {a: b}\n",
+		},
 		"namespace and images transformers": {
 			"k/kustomization.yaml": "namespace: demo\nresources: [d.yaml]\nimages: [{name: web, newTag: \"2\"}]\nreplicas: [{name: web, count: 3}]\n",
 			"k/d.yaml":             deployment,
