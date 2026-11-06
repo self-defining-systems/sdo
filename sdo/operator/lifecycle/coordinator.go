@@ -17,6 +17,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/imagesrc"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/plugindesc"
 	"sdo.dev/operator/render"
 	"sdo.dev/operator/rendered"
@@ -43,7 +44,7 @@ type ProposalBroker interface {
 // ArtifactWriter is the storage edge for role-owned bootstrap artifacts.
 // The coordinator does not know their physical paths or serialization.
 type ArtifactWriter interface {
-	WriteGoal(checkout, application, objective string) error
+	WriteGoal(checkout, application, objective string, sources []layout.Source) error
 	WriteSchema(checkout string) error
 	WriteArchitecture(checkout, application, acceptedSourceCommit, summary string) error
 	ReadArchitecture(checkout string) (string, error)
@@ -126,8 +127,11 @@ type Config struct {
 	MetricsSource                                        *contracts.MetricsSource
 	OperationID, Application, Namespace, HealthObjective string
 	RegistryHost                                         string
-	DeployerAgentID, JudgeAgentID                        string
-	MaxAttempts                                          int
+	// Sources are the upstream sources to follow, published with the human
+	// goal. They require a health objective, because the goal commit carries them.
+	Sources                       []layout.Source
+	DeployerAgentID, JudgeAgentID string
+	MaxAttempts                   int
 	// MaxAttempts bounds deployer correction attempts only. The fields below
 	// bound the waits that never consume one; zero selects the default.
 	PendingEvaluations    int
@@ -148,7 +152,7 @@ func (c Coordinator) Run(ctx context.Context, cfg Config) (Result, error) {
 	var result Result
 	if strings.TrimSpace(cfg.HealthObjective) != "" {
 		goal, err := c.bootstrap(ctx, cfg.OperationID+"-goal", broker.Human, func(checkout string) error {
-			return c.Bootstrap.WriteGoal(checkout, cfg.Application, cfg.HealthObjective)
+			return c.Bootstrap.WriteGoal(checkout, cfg.Application, cfg.HealthObjective, cfg.Sources)
 		})
 		if err != nil {
 			return result, fmt.Errorf("publish human goal: %w", err)
@@ -236,6 +240,9 @@ func (c Coordinator) validate(cfg Config) error {
 	}
 	if cfg.OperationID == "" || cfg.Application == "" || cfg.Namespace == "" || cfg.MaxAttempts < 1 {
 		return errors.New("operation ID, application, namespace and positive max attempts are required")
+	}
+	if len(cfg.Sources) > 0 && strings.TrimSpace(cfg.HealthObjective) == "" {
+		return errors.New("followed sources are published with the human goal and require a health objective")
 	}
 	for _, choice := range []struct {
 		id      string

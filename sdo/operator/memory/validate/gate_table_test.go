@@ -328,6 +328,7 @@ var gateRows = []gateRow{
 	{name: "manifest names a playbook by path", kind: gateStatic, rules: []string{RuleManifestInvalid}, path: gateCacheManifest, edit: gateOverlay("manifest-playbook-path")},
 	{name: "manifest location", kind: gateStatic, rules: []string{RuleManifestLocation}, path: gateHealthManifest, edit: gateOverlay("manifest-location")},
 	{name: "architecture missing", kind: gateStatic, rules: []string{RuleArchitectureMissing}, path: ".sdo/arch.md", edit: gateOverlay("architecture-missing")},
+	{name: "sources invalid", kind: gateStatic, rules: []string{RuleSourcesInvalid}, path: layout.SourcesFile, edit: gateOverlay("sources-invalid")},
 	{name: "goal owner", kind: gateStatic, rules: []string{RuleGoalOwner}, path: ".sdo/goal.md", edit: gateOverlay("goal-owner")},
 	{name: "manifest missing", kind: gateStatic, rules: []string{RuleManifestMissing}, path: ".sdo/diagnostics/detectors/incidents/orphan", edit: gateOverlay("manifest-missing")},
 	{name: "detector without Go source", kind: gateStatic, rules: []string{RuleDetectorNoSource}, path: ".sdo/diagnostics/detectors/incidents/cache", edit: gateOverlay("detector-no-source")},
@@ -410,6 +411,9 @@ var gateRows = []gateRow{
 		edit(t, r, gateHealthManifest, "interval: 30s", "interval: 20s")
 	}},
 	{name: "human edits the goal in initial", kind: gateOwnership, actor: Human, phase: InitialPhase, edit: gateWrite(layout.GoalFile, "---\nschema_version: 1\nowner: human\n---\nNew goal\n")},
+	{name: "human publishes followed sources in initial", kind: gateOwnership, actor: Human, phase: InitialPhase, edit: gateWrite(layout.SourcesFile, "sources:\n- path: .\n  kind: git\n  config: {repository: \"git://synthetic.invalid/app.git\", ref: main}\n")},
+	{name: "responder cannot edit followed sources", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleOwnershipDenied}, path: layout.SourcesFile,
+		edit: gateWrite(layout.SourcesFile, "sources:\n- path: .\n  kind: git\n  config: {repository: \"git://synthetic.invalid/app.git\", ref: main}\n")},
 	{name: "deployer edits source in initial", kind: gateOwnership, actor: Deployer, phase: InitialPhase, edit: gateWrite("app.txt", "deployed\n")},
 	{name: "upkeep stamps the schema alone", kind: gateOwnership, actor: Upkeep, phase: InitialPhase, edit: func(t *testing.T, r string) {
 		write(t, r, layout.SchemaVersionFile, "3\n")

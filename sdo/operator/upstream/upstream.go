@@ -14,7 +14,9 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"time"
 
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 )
@@ -137,6 +139,53 @@ func (c *Catalog) Decode(id string, config *anypb.Any) (proto.Message, error) {
 		return nil, fmt.Errorf("upstream watcher %q: decode config: %w", id, err)
 	}
 	return msg, nil
+}
+
+// ParseConfig decodes the JSON form of a watcher's config (the YAML of
+// sources.yaml after YAML-to-JSON conversion) into id's registered config
+// message and packs it. Unknown fields are errors.
+func (c *Catalog) ParseConfig(id string, configJSON []byte) (*anypb.Any, error) {
+	e, ok := c.entries[id]
+	if !ok {
+		return nil, fmt.Errorf("%w %q (registered: %v)", ErrUnknownWatcher, id, c.IDs())
+	}
+	msg := e.newConfig()
+	if err := (protojson.UnmarshalOptions{DiscardUnknown: false}).Unmarshal(configJSON, msg); err != nil {
+		return nil, fmt.Errorf("upstream watcher %q config: %w", id, err)
+	}
+	packed, err := anypb.New(msg)
+	if err != nil {
+		return nil, fmt.Errorf("upstream watcher %q config: %w", id, err)
+	}
+	return packed, nil
+}
+
+// PollInterval returns the poll interval of a decoded config: its
+// google.protobuf.Duration field named poll_interval. Zero means the config
+// does not set one (the follower then applies DefaultPollInterval). Reading it
+// by field name keeps config types out of core.
+func (c *Catalog) PollInterval(id string, config *anypb.Any) (time.Duration, error) {
+	msg, err := c.Decode(id, config)
+	if err != nil {
+		return 0, err
+	}
+	fd := msg.ProtoReflect().Descriptor().Fields().ByName("poll_interval")
+	if fd == nil {
+		return 0, nil
+	}
+	if fd.Message() == nil || fd.Message().FullName() != "google.protobuf.Duration" || fd.IsList() {
+		return 0, fmt.Errorf("upstream watcher %q: poll_interval must be a google.protobuf.Duration", id)
+	}
+	m := msg.ProtoReflect()
+	if !m.Has(fd) {
+		return 0, nil
+	}
+	seconds := m.Get(fd).Message().Interface()
+	d, ok := seconds.(interface{ AsDuration() time.Duration })
+	if !ok {
+		return 0, fmt.Errorf("upstream watcher %q: poll_interval is %T", id, seconds)
+	}
+	return d.AsDuration(), nil
 }
 
 // Latest returns the current revision of the upstream id follows.

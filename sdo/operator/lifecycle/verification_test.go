@@ -16,6 +16,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/worker_registry"
 	"sdo.dev/operator/worker_registry/registrytest"
@@ -91,10 +92,10 @@ func (b *fakeBroker) RecordRejection(string, []*contracts.MemoryDiagnostic) (*co
 
 type fakeArtifacts struct{}
 
-func (fakeArtifacts) WriteGoal(string, string, string) error                 { return nil }
-func (fakeArtifacts) WriteSchema(string) error                               { return nil }
-func (fakeArtifacts) WriteArchitecture(string, string, string, string) error { return nil }
-func (fakeArtifacts) ReadArchitecture(string) (string, error)                { return "architecture", nil }
+func (fakeArtifacts) WriteGoal(string, string, string, []layout.Source) error { return nil }
+func (fakeArtifacts) WriteSchema(string) error                                { return nil }
+func (fakeArtifacts) WriteArchitecture(string, string, string, string) error  { return nil }
+func (fakeArtifacts) ReadArchitecture(string) (string, error)                 { return "architecture", nil }
 
 // fakeWorkers answers the deployer and the judge. It records each deployer
 // request, which is how a test observes attempts and correction feedback.

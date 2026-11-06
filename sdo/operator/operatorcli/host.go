@@ -50,6 +50,8 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	objective := flags.String("health-objective", "", "human health objective")
 	flags.StringVar(objective, "goal", "", "human health objective")
 	goalFile := flags.String("goal-file", "", "file containing human health objective")
+	sourceKind := flags.String("source-kind", "", "upstream watcher kind to follow (published as .sdo/goal/sources.yaml)")
+	sourceConfig := flags.String("source-config", "", "JSON config of the followed upstream")
 	operationID := flags.String("operation-id", "", "durable operation identity")
 	maxAttempts := flags.Int("max-attempts", 3, "maximum deployment attempts")
 	controllerImage := flags.String("controller-image", "", "compiled operator image")
@@ -176,7 +178,15 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	if err != nil {
 		return HostConfig{}, err
 	}
+	sources, err := parseSourceFlags(*sourceKind, *sourceConfig)
+	if err != nil {
+		return HostConfig{}, err
+	}
+	if len(sources) > 0 && strings.TrimSpace(*objective) == "" {
+		return HostConfig{}, errors.New("a followed source is published with the human goal and requires a health objective")
+	}
 	config := install.Config{
+		SourceKind: *sourceKind, SourceConfig: *sourceConfig,
 		CodePath:           selectedCodePath,
 		ResponderMenu:      menuEnabled,
 		ObservationCeiling: ceiling,

@@ -45,6 +45,8 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	controlNamespace := flags.String("control-namespace", "", "controller namespace")
 	application := flags.String("application", "", "application identity")
 	objective := flags.String("health-objective", "", "human health objective")
+	sourceKind := flags.String("source-kind", "", "upstream watcher kind to follow (published as .sdo/goal/sources.yaml)")
+	sourceConfig := flags.String("source-config", "", "JSON config of the followed upstream")
 	operationID := flags.String("operation-id", "", "durable operation identity")
 	maxAttempts := flags.Int("max-attempts", 3, "maximum deployment attempts")
 	controllerImage := flags.String("controller-image", "", "controller image")
@@ -170,10 +172,17 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	if err != nil {
 		return OperateConfig{}, err
 	}
+	sources, err := parseSourceFlags(*sourceKind, *sourceConfig)
+	if err != nil {
+		return OperateConfig{}, err
+	}
+	if len(sources) > 0 && strings.TrimSpace(*objective) == "" {
+		return OperateConfig{}, errors.New("a followed source is published with the human goal and requires --health-objective")
+	}
 	config := OperateConfig{
 		Lifecycle: lifecycle.Config{
 			OperationID: *operationID, Application: *application, Namespace: *namespace,
-			HealthObjective: *objective, DeployerAgentID: *deployerID, JudgeAgentID: *judgeID,
+			HealthObjective: *objective, Sources: sources, DeployerAgentID: *deployerID, JudgeAgentID: *judgeID,
 			RegistryHost: *registryHost,
 			MaxAttempts:  *maxAttempts,
 		},
@@ -182,6 +191,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			ResponderMenu:      menuEnabled,
 			ObservationCeiling: ceiling,
 			Namespace:          *namespace, ControlNamespace: control, Application: *application,
+			SourceKind: *sourceKind, SourceConfig: *sourceConfig,
 			ControllerImage: *controllerImage, ResponderImage: *responderImage,
 			ScriptImage: *scriptImage, DisableObservability: *disableObservability, RepositoryPVC: *repositoryPVC,
 			CredentialsSecret: *credentialsSecret, Model: *model, AgentProvider: *provider, AgentEffort: *effort, Replay: *replay,

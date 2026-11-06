@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sdo.dev/operator/broker/internal/processio"
 	"sdo.dev/operator/contracts/settings"
+	"slices"
 	"strings"
 	"syscall"
 	"unicode"
@@ -714,6 +715,16 @@ func (b *Broker) accept(ctx context.Context, stage, incidentID string, actor Act
 	}
 	if phase == ImportPhase {
 		message += "\nSDO-Origin: operator"
+	}
+	if actor == Human && phase == InitialPhase && slices.Contains(paths, layout.SourcesFile) {
+		// The commit that starts source following records the revision the
+		// accepted source already is: the seeded upstream commit, which the
+		// follower later reads as the newest SDO-Upstream trailer.
+		base, err := gitText(ctx, stage, "rev-parse", "HEAD")
+		if err != nil {
+			return Receipt{}, fmt.Errorf("resolve initial upstream revision: %w", err)
+		}
+		message += "\nSDO-Upstream: " + base
 	}
 	for _, gap := range gaps {
 		message += "\nSDO-Coverage-Gap: " + strings.Join(strings.Fields(gap.Rule+": "+gap.Message), " ")

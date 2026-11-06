@@ -28,6 +28,10 @@ complete authoring reflection. The closure's `request.state_changes` (absent in 
 
 
 
+### Followed upstream source (`.sdo/goal/sources.yaml`)
+
+An optional human goal-class file written only with the Human goal commit when the operator was launched with `--source-kind` and `--source-config` (the host and `operate` flags; `install.Config.SourceKind/SourceConfig`). Layout: `sources: [{path: ".", kind: git, config: {repository, ref, poll_interval}}]`; one source at `.` only. `config` is the watcher's proto in JSON/YAML form; an unknown kind or field fails at launch and at `memory.ReadSources`, and the shared check reports `sources.invalid` for a structurally bad file. No file means nothing is followed (every pre-existing app). The Human goal commit (`SDO-Actor: human`, `SDO-Phase: initial`) that adds the file also carries `SDO-Upstream: <sha>`, the accepted source commit it was based on, i.e. the initial upstream revision; the follower treats the newest `SDO-Upstream` trailer on the accepted first-parent history as the previous revision. A goal commit without the sources file never has the trailer. To see what a run followed: `git show <ref>:.sdo/goal/sources.yaml` and `git log --format='%H %(trailers:key=SDO-Upstream,valueonly)'` on the accepted branch.
+
 ### Historical Python broker fields
 
 These fields describe retired Python ledgers, not current ProtoJSON:

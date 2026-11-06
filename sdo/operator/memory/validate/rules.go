@@ -45,6 +45,7 @@ const (
 	RuleManifestParse    = "manifest.parse"
 	RuleManifestInvalid  = "manifest.invalid"
 	RuleManifestLocation = "manifest.location"
+	RuleSourcesInvalid   = "sources.invalid"
 
 	// Semantic.
 	RuleArchitectureMissing = "memory.architecture-missing"

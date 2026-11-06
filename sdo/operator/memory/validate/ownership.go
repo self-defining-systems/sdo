@@ -64,7 +64,7 @@ var grants = []grant{
 	{actor: Responder, phase: ProposalPhase, kinds: []layout.Kind{kindSource}},
 	{actor: Deployer, phase: InitialPhase, kinds: []layout.Kind{kindSource}},
 
-	{actor: Human, phase: InitialPhase, kinds: []layout.Kind{layout.KindGoal}},
+	{actor: Human, phase: InitialPhase, kinds: []layout.Kind{layout.KindGoal, layout.KindSources}},
 	{actor: Upkeep, phase: InitialPhase, kinds: []layout.Kind{
 		layout.KindArchitecture, layout.KindSchemaVersion, layout.KindDiagnosticsModule, layout.KindLegacyDetectorManifest,
 		layout.KindHealthDetectorManifest, layout.KindIncidentDetectorManifest, layout.KindHealthDetectorSource, layout.KindIncidentDetectorSource,

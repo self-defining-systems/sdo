@@ -31,6 +31,7 @@ func renderLayoutReference(t *testing.T) string {
 		layout.TrafficGeneratorsDir + "/application/generator.go",
 		layout.TrafficGeneratorsDir + "/incident/generator.go",
 		layout.TrafficWorkloadsDir + "/application.yaml", layout.TrafficWorkloadsDir + "/incident-example.yaml",
+		layout.SourcesFile,
 		layout.PlaybookIndexFile, layout.PlaybookDir("playbook-id") + "/README.md",
 		layout.PlaybookDir(layout.HealthObjectivePlaybook) + "/README.md",
 		layout.PlaybookDir("playbook-id") + "/diagnose.go", layout.PlaybookDir("playbook-id") + "/mitigate.go",

@@ -29,6 +29,7 @@ Schema version: 3. Paths are repository-relative and used only while editing a p
 | `.sdo/diagnostics/traffic/generators/incident/generator.go` | `traffic-generator` | `incident` | changeable by responder in the reflection phase |
 | `.sdo/diagnostics/traffic/workloads/application.yaml` | `traffic-workload` | `application` | changeable by health_judge in the initial phase |
 | `.sdo/diagnostics/traffic/workloads/incident-example.yaml` | `traffic-workload` | `incident-example` | changeable by responder in the reflection phase |
+| `.sdo/goal/sources.yaml` | `sources` | `—` | changeable by human in the initial phase |
 | `.sdo/playbooks/README.md` | `playbook-index` | `—` | changeable by health_judge in the initial phase or human in the import phase or responder in the reflection phase |
 | `.sdo/playbooks/<playbook-id>/README.md` | `playbook` | `playbook-id` | changeable by human in the import phase or responder in the reflection phase |
 | `.sdo/playbooks/health-objective/README.md` | `playbook` | `health-objective` | changeable by health_judge in the initial phase or responder in the reflection phase |

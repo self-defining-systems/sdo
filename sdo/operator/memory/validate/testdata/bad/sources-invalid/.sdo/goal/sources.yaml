@@ -1,0 +1,4 @@
+sources:
+- path: sub
+  kind: git
+  config: {repository: "git://synthetic.invalid/app.git", ref: main}

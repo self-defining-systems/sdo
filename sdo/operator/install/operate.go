@@ -131,6 +131,9 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 	}
 	args = append(args, codePathArgs(cfg)...)
 	args = append(args, operateBuildArgs(cfg)...)
+	if cfg.SourceKind != "" {
+		args = append(args, "--source-kind", cfg.SourceKind, "--source-config", cfg.SourceConfig)
+	}
 	if cfg.ExternalIncidents {
 		args = append(args, "--external-incidents")
 	}
