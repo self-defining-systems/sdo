@@ -365,6 +365,30 @@ func TestUnknownAPIVersionsFollowTheKubeVersion(t *testing.T) {
 	}
 }
 
+func TestUnknownAPIVersionsIncludeKindQualifiedEntries(t *testing.T) {
+	// Charts probe a kind ("policy/v1/PodDisruptionBudget"), not only a group
+	// version; an unknown environment must answer those like a real cluster.
+	tpl := `{{ range $k := list "policy/v1/PodDisruptionBudget" "policy/v1beta1/PodDisruptionBudget" "networking.k8s.io/v1/Ingress" "batch/v1/CronJob" "batch/v1beta1/CronJob" "apps/v1/Deployment" "v1/Pod" }}{{ if $.Capabilities.APIVersions.Has $k }}{{ $k }} {{ end }}{{ end }}`
+	fsys := minimal(map[string]string{"c/templates/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: cm}\ndata:\n  apis: \"" + tpl + "\"\n"})
+	apis := func(env render.Env) string {
+		t.Helper()
+		res, err := renderChart(t, fsys, env, cfg("c"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		v, _, _ := unstructuredNestedString(res.Objects()[0].Object, "data", "apis")
+		return strings.TrimSpace(v)
+	}
+	base := render.Env{Namespace: "n", Release: "r"}
+	if got := apis(base); got != "policy/v1/PodDisruptionBudget networking.k8s.io/v1/Ingress batch/v1/CronJob apps/v1/Deployment v1/Pod" {
+		t.Fatalf("default (v1.30) serves %q", got)
+	}
+	base.KubeVersion = "v1.24.0"
+	if got := apis(base); got != "policy/v1/PodDisruptionBudget policy/v1beta1/PodDisruptionBudget networking.k8s.io/v1/Ingress batch/v1/CronJob batch/v1beta1/CronJob apps/v1/Deployment v1/Pod" {
+		t.Fatalf("v1.24 serves %q", got)
+	}
+}
+
 func TestSecretsOmitDropsDataIncludeKeepsIt(t *testing.T) {
 	c := &contracts.HelmRenderConfig{ChartPath: "chart", Values: mustStruct(t, map[string]any{"token": "hunter2"})}
 	for mode, wantData := range map[render.SecretMode]bool{render.SecretsOmit: false, render.SecretsInclude: true} {

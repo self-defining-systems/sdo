@@ -2,9 +2,12 @@ package deployment
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/renderenv"
 )
 
@@ -15,7 +18,7 @@ import (
 func TestReceiptRecordsTheEnvironmentAndVerificationUsesIt(t *testing.T) {
 	root, source := depRawFixture(t)
 	deployer, _ := depDeployer(t, root, &clusterFake{})
-	deployer.Environment = &contracts.RenderEnvironment{KubeVersion: "v1.29.4", ApiVersions: []string{"apps/v1", "v1"}}
+	deployer.Environment = &contracts.RenderEnvironment{KubeVersion: "v1.29.4", ApiVersions: []string{"apps/v1", "apps/v1/Deployment", "v1", "v1/ConfigMap"}}
 	ctx := context.Background()
 	receipt, err := deployer.ApplyAndVerify(ctx, root, depPlan(t, source, depRawWeb))
 	if err != nil {
@@ -48,8 +51,24 @@ func TestEvidenceWithoutAnEnvironmentVerifiesWithTheDefaults(t *testing.T) {
 		t.Fatalf("unknown environment must keep the default digest: %v %s", receipt.Environment, receipt.EnvDigest)
 	}
 	discovered := deployer
-	discovered.Environment = &contracts.RenderEnvironment{KubeVersion: "v1.31.2", ApiVersions: []string{"apps/v1", "v1"}}
+	discovered.Environment = &contracts.RenderEnvironment{KubeVersion: "v1.31.2", ApiVersions: []string{"apps/v1", "apps/v1/Deployment", "v1", "v1/ConfigMap"}}
 	if _, err := discovered.VerifyAccepted(ctx, depHead(t, root), depNamespace, receipt); err != nil {
 		t.Fatalf("old evidence must not report a renderer change: %v", err)
+	}
+}
+
+// A render that uses an API the recorded discovery does not serve (a chart that
+// fell back to a removed apiVersion) stops before anything is applied, with a
+// typed error naming the objects.
+func TestDeployRefusesObjectsTheRecordedDiscoveryDoesNotServe(t *testing.T) {
+	root, source := depRawFixture(t)
+	cluster := &clusterFake{}
+	deployer, _ := depDeployer(t, root, cluster)
+	// Discovery without v1/ConfigMap: the fixture's ConfigMap is unserved.
+	deployer.Environment = &contracts.RenderEnvironment{KubeVersion: "v1.30.0", ApiVersions: []string{"apps/v1", "apps/v1/Deployment", "v1"}}
+	_, err := deployer.ApplyAndVerify(context.Background(), root, depPlan(t, source, depRawWeb))
+	var unserved *rendered.UnservedAPIError
+	if !errors.As(err, &unserved) || len(unserved.Objects) != 1 || !strings.Contains(unserved.Objects[0], "v1 ConfigMap") {
+		t.Fatalf("want UnservedAPIError for the ConfigMap, got %v", err)
 	}
 }

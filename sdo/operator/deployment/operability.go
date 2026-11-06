@@ -56,6 +56,7 @@ func (d Deployer) CheckOffline(ctx context.Context, checkout string, plan *contr
 			return rendered.Desired(ctx, fsys, env, d.Renderers, plan.GetSource())
 		},
 		ExpectedWorkloads: plan.GetExpectedWorkloadIds(),
+		ServedAPIs:        d.Environment.GetApiVersions(),
 		Declared:          declared,
 		Policy:            deploymentpolicy.Offline(d.Policy),
 	})

@@ -52,6 +52,9 @@ type Deployment struct {
 	Render func(context.Context) (rendered.DesiredSet, error)
 	// ExpectedWorkloads are the plan's expected workload IDs.
 	ExpectedWorkloads []string
+	// ServedAPIs are the recorded discovery's group/version and
+	// group/version/Kind entries; empty is unknown and skips O1.apis.
+	ServedAPIs []string
 	// Declared are the plan's image declarations.
 	Declared []imagesrc.Declared
 	Policy   Policy
@@ -103,6 +106,14 @@ func CheckDeployment(ctx context.Context, d Deployment) Result {
 		add(failure("O1.workloads", operability.CauseRender, err, nil))
 	} else {
 		add(pass("O1.workloads", "expected workloads match the rendered workloads"))
+	}
+
+	if len(d.ServedAPIs) > 0 {
+		if err := rendered.CheckServedAPIs(first, d.ServedAPIs); err != nil {
+			add(failure("O1.apis", operability.CauseRender, err, nil))
+		} else {
+			add(pass("O1.apis", "rendered objects use API versions the cluster serves"))
+		}
 	}
 
 	add(images(first, d.Declared))

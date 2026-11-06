@@ -104,6 +104,9 @@ func (d Deployer) ApplyAndVerify(ctx context.Context, checkout string, plan *con
 	if err := d.enforcePolicy(set); err != nil {
 		return lifecycle.DeploymentReceipt{}, err
 	}
+	if err := rendered.CheckServedAPIs(set, d.Environment.GetApiVersions()); err != nil {
+		return lifecycle.DeploymentReceipt{}, err
+	}
 	declared := make([]imagesrc.Declared, 0, len(plan.GetImages()))
 	for _, image := range plan.GetImages() {
 		declared = append(declared, imagesrc.Declared{Image: image.GetImage(), SourceID: image.GetSourceId(), Config: image.GetConfig()})
