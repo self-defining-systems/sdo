@@ -39,6 +39,14 @@ func TestDriftTreatsTheDeployedImagePinAsDesiredState(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "k8s", "web.yaml"), []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	for name, body := range map[string]string{"app/Dockerfile": "FROM scratch\n", "app/main.go": "package main\n", "docs/notes.md": "one\n"} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, args := range [][]string{{"init", "-q"}, {"add", "-A"}, {"-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", "seed"}} {
 		if out, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
@@ -50,6 +58,13 @@ func TestDriftTreatsTheDeployedImagePinAsDesiredState(t *testing.T) {
 	}
 	ids := strings.Fields(string(out))
 	commit, tree := ids[0], ids[1]
+	git := func(args ...string) string {
+		out, err := exec.Command("git", append([]string{"-C", root, "-c", "user.name=t", "-c", "user.email=t@example.invalid"}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
 	catalog := render.NewCatalog()
 	if err := raw.Register(catalog); err != nil {
 		t.Fatal(err)
@@ -59,8 +74,10 @@ func TestDriftTreatsTheDeployedImagePinAsDesiredState(t *testing.T) {
 		t.Fatal(err)
 	}
 	web := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "web"}
-	pins := rendered.ReceiptPins{EffectiveTree: tree, Images: []rendered.DeployedImage{{Ref: web, Name: "web", Applied: pinnedDigest, Digest: pinnedDigest}}}
+	pins := rendered.ReceiptPins{EffectiveTree: tree, BaseTree: tree, Images: []rendered.DeployedImage{{Ref: web, Name: "web", Applied: pinnedDigest, Digest: pinnedDigest,
+		Inputs: rendered.ImageInputs{SourceImage: "example/web:1", ContextPath: "app", DockerfilePath: "app/Dockerfile"}}}}
 
+	at := commit
 	changed := func(provider rendered.PinProvider, liveImage string) (bool, error) {
 		live := appsv1.Deployment{
 			TypeMeta:   metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
@@ -71,7 +88,7 @@ func TestDriftTreatsTheDeployedImagePinAsDesiredState(t *testing.T) {
 			},
 		}
 		source := rendered.Source{Repository: root, Deployment: deployment, Catalog: catalog, Pins: provider}.WithCache()
-		view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app", DeploymentList: []appsv1.Deployment{live}}), Context: context.Background(), Source: source, SourceCommit: commit}
+		view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app", DeploymentList: []appsv1.Deployment{live}}), Context: context.Background(), Source: source, SourceCommit: at}
 		diff, err := declaredSourceDiff(view, web)
 		return diff.Changed, err
 	}
@@ -91,6 +108,43 @@ func TestDriftTreatsTheDeployedImagePinAsDesiredState(t *testing.T) {
 		if err != nil || got != tc.drifted {
 			t.Errorf("%s: changed = %v (%v), want %v", name, got, err, tc.drifted)
 		}
+	}
+	// The accepted tree moves without a deployment (a responder patch, a values
+	// or manifest edit): the deployed digest stays desired while the image's
+	// build inputs are unchanged, and a manual tag edit still drifts.
+	if err := os.WriteFile(filepath.Join(root, "docs", "notes.md"), []byte("two\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "-A")
+	git("commit", "-q", "-m", "docs only")
+	at = git("rev-parse", "HEAD")
+	for name, tc := range map[string]struct {
+		live    string
+		drifted bool
+	}{
+		"after a change no image reads, the deployed digest": {pinnedDigest, false},
+		"after a change no image reads, a manual tag edit":   {"example/web:2", true},
+		"after a change no image reads, the source tag":      {"example/web:1", true},
+		"after a change no image reads, another digest":      {"example/web@sha256:" + strings.Repeat("f", 64), true},
+	} {
+		got, err := changed(pins, tc.live)
+		if err != nil || got != tc.drifted {
+			t.Errorf("%s: changed = %v (%v), want %v", name, got, err, tc.drifted)
+		}
+	}
+	// A change to the build context needs a deployment that records new pins:
+	// until then the pin is not desired, so the old digest reads as drift.
+	if err := os.WriteFile(filepath.Join(root, "app", "main.go"), []byte("package main // patched\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "-A")
+	git("commit", "-q", "-m", "patch the app")
+	at = git("rev-parse", "HEAD")
+	if got, err := changed(pins, pinnedDigest); err != nil || !got {
+		t.Errorf("after a build-input change the stale digest must not be desired: changed = %v (%v)", got, err)
+	}
+	if got, err := changed(pins, "example/web:1"); err != nil || got {
+		t.Errorf("after a build-input change desired is the source image: changed = %v (%v)", got, err)
 	}
 	if _, err := changed(failingPinProvider{}, pinnedDigest); err == nil {
 		t.Error("an unreadable pin ledger must fail the comparison, not fall back to the tag")

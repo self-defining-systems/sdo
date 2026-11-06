@@ -179,7 +179,7 @@ func (b *Broker) AcceptedImagePins(ctx context.Context) (rendered.ReceiptPins, e
 		if err != nil || !found {
 			return err
 		}
-		pins = rendered.ReceiptPins{EffectiveTree: evidence.EffectiveTree, Images: evidence.ContainerImages}
+		pins = rendered.ReceiptPins{EffectiveTree: evidence.EffectiveTree, BaseTree: evidence.BaseTree, Images: evidence.ContainerImages}
 		return nil
 	})
 	return pins, err
