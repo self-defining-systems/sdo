@@ -163,6 +163,7 @@ func controllerAdvancer(launch *contracts.ControllerConfig, operatorRoot string,
 		Shape: func(ctx context.Context, root, revision string, source *contracts.DeploymentSource) (string, error) {
 			return rendered.Source{Deployment: source, Catalog: shapes, Repository: root, Environment: launch.GetRenderEnvironment()}.ShapeDigest(ctx, revision, namespace)
 		},
+		Designer:    designerRefresh{launch: launch, repository: repository},
 		Maintenance: advanceMaintenance{Client: client, Namespace: controlNamespace(launch), Now: processio.Now},
 		Activity:    controllerActivity{Client: client, Namespace: controlNamespace(launch), Application: namespace},
 	}
@@ -171,4 +172,19 @@ func controllerAdvancer(launch *contracts.ControllerConfig, operatorRoot string,
 
 func controlNamespace(launch *contracts.ControllerConfig) string {
 	return deploywire.ControlNamespace(launch)
+}
+
+// designerRefresh is the detection designer route of an advance: the
+// controller's own health refresh. It computes whether the accepted health
+// requirements still match the application's desired-state shape and, when they
+// do not, dispatches the health judge, whose candidate is staged and accepted
+// through the operability gate (lifecycle.Coordinator.RefreshHealth). It does
+// nothing when the accepted detection is current.
+type designerRefresh struct {
+	launch     *contracts.ControllerConfig
+	repository lifecycle.ProposalBroker
+}
+
+func (d designerRefresh) RefreshDetection(ctx context.Context, _ lifecycle.ShapeChange) error {
+	return refreshControllerHealth(ctx, d.launch, d.repository)
 }

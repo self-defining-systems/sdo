@@ -60,6 +60,25 @@ type CandidateVerifier interface {
 // repository at root, rendered by source (rendered.DesiredSet.ShapeDigest).
 type ShapeDigest func(ctx context.Context, root, revision string, source *contracts.DeploymentSource) (string, error)
 
+// ShapeChange describes an advance that changed the desired-state shape of
+// the application (a component added or removed, a Service port edited): the
+// detection designer's job is to bring its detectors and traffic probes up to
+// date (operational-contract plan §5, E4, E5, E8).
+type ShapeChange struct {
+	// Upstream is the advanced upstream commit; Accepted is the accepted
+	// commit the advance published.
+	Upstream, Accepted string
+}
+
+// DesignerRefresher re-runs the detection designer (the health judge) for the
+// shape of the newly accepted source. The designer's candidate is staged and
+// accepted through the operability gate like any other; an error means the
+// designer could not produce accepted detection for the new shape. It returns
+// nil when the accepted detection is already current.
+type DesignerRefresher interface {
+	RefreshDetection(ctx context.Context, change ShapeChange) error
+}
+
 // MaintenanceWindow pauses and resumes the controller's evaluation (the
 // controller maintenance ConfigMap) around an advance's cluster changes.
 type MaintenanceWindow interface {
@@ -107,11 +126,18 @@ const (
 	HoldPatchConflict   HoldReason = "patch_conflict"   // context no longer matches, or the file is gone
 	HoldPatchUpstreamed HoldReason = "patch_upstreamed" // the change is already upstream; retire the patch
 	HoldPatchInvalid    HoldReason = "patch_invalid"    // malformed or forbidden; cannot happen to accepted patches
-	// HoldShapeChange is the MVP stand-in for the designer route (E4-E6).
+	// HoldShapeChange: the shape changed and no detection designer is wired to
+	// refresh the detectors for it, so nothing is deployed (E4-E6).
 	HoldShapeChange HoldReason = "shape_change"
-	HoldBuild       HoldReason = "build"   // E3, images resolve before any apply
-	HoldRollout     HoldReason = "rollout" // E7, cluster left as is
-	HoldHealth      HoldReason = "health"  // E8, cluster left as is
+	// HoldDesigner: the advance was deployed, verified and ACCEPTED, but the
+	// detection designer's refresh for the changed shape failed. The accepted
+	// detectors are those of the previous shape until a refresh succeeds (the
+	// controller's start-up health refresh retries it); AdvanceResult.Receipt
+	// names the accepted commit.
+	HoldDesigner HoldReason = "designer_refresh"
+	HoldBuild    HoldReason = "build"   // E3, images resolve before any apply
+	HoldRollout  HoldReason = "rollout" // E7, cluster left as is
+	HoldHealth   HoldReason = "health"  // E8, cluster left as is
 )
 
 // AdvanceResult is the typed result of one advance.
@@ -170,11 +196,14 @@ type AdvanceConfig struct {
 // deployed and verified; a failure after the cluster changed is left for
 // ordinary detection (no rollback).
 type Advancer struct {
-	Upstreams   UpstreamMaterializer
-	Broker      AdvanceBroker
-	Readiness   SourceReadinessVerifier
-	Verifier    CandidateVerifier
-	Shape       ShapeDigest
+	Upstreams UpstreamMaterializer
+	Broker    AdvanceBroker
+	Readiness SourceReadinessVerifier
+	Verifier  CandidateVerifier
+	Shape     ShapeDigest
+	// Designer refreshes detection after an advance changed the shape. Nil
+	// holds a shape change before anything is deployed.
+	Designer    DesignerRefresher
 	Maintenance MaintenanceWindow
 	Activity    ControllerActivity
 	// Wait pauses between bounded re-evaluations and infrastructure retries;
@@ -264,37 +293,50 @@ func (a Advancer) Advance(ctx context.Context, cfg AdvanceConfig, request upstre
 	if candidate == "" {
 		return result, errors.New("advance proposal has neither a candidate nor conflicts")
 	}
-	if hold, detail, paths, err := a.impact(ctx, proposal, candidate, plan.GetSource()); err != nil || hold != "" {
+	hold, detail, paths, shapeChanged, err := a.impact(ctx, proposal, candidate, plan.GetSource())
+	if err != nil || hold != "" {
 		result.Paths = paths
 		return held(result, hold, detail), err
 	}
-	return a.deployAndAccept(ctx, cfg, result, proposal, candidate, plan, request.Prev, &published)
+	if shapeChanged && a.Designer == nil {
+		return held(result, HoldShapeChange, "desired-state shape changed and no detection designer is configured to refresh the detectors"), nil
+	}
+	result, err = a.deployAndAccept(ctx, cfg, result, proposal, candidate, plan, request.Prev, &published)
+	if err != nil || result.Outcome != AdvanceAccepted || !shapeChanged {
+		return result, err
+	}
+	// Maintenance is resumed: the designer runs while the controller detects.
+	if err := a.Designer.RefreshDetection(ctx, ShapeChange{Upstream: result.Upstream, Accepted: result.Receipt.Commit}); err != nil {
+		if ctx.Err() != nil {
+			return result, ctx.Err()
+		}
+		return held(result, HoldDesigner, "accepted "+result.Receipt.Commit+", but the detection designer's refresh failed: "+err.Error()), nil
+	}
+	return result, nil
 }
 
 // impact renders the accepted HEAD and the candidate with the same source.
-// A candidate that does not render, or whose shape differs, is held before
-// anything touches the cluster.
-func (a Advancer) impact(ctx context.Context, proposal broker.Proposal, candidate string, source *contracts.DeploymentSource) (HoldReason, string, []string, error) {
+// A candidate that does not render is held before anything touches the
+// cluster. A candidate whose shape differs is reported, not held: the advance
+// proceeds and the detection designer refreshes for the new shape.
+func (a Advancer) impact(ctx context.Context, proposal broker.Proposal, candidate string, source *contracts.DeploymentSource) (hold HoldReason, detail string, paths []string, shapeChanged bool, err error) {
 	base, err := a.Shape(ctx, proposal.Path, proposal.BaseCommit, source)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("render accepted source %s: %w", proposal.BaseCommit, err)
+		return "", "", nil, false, fmt.Errorf("render accepted source %s: %w", proposal.BaseCommit, err)
 	}
 	next, err := a.Shape(ctx, proposal.Path, candidate, source)
 	if err != nil {
 		if ctx.Err() != nil {
-			return "", "", nil, ctx.Err()
+			return "", "", nil, false, ctx.Err()
 		}
 		// Shape reads the effective tree, so a patch that fails there is the
 		// same typed hold the broker raises when it composes the candidate.
 		if hold, detail, paths, ok := patchHold(err); ok {
-			return hold, detail, paths, nil
+			return hold, detail, paths, false, nil
 		}
-		return HoldRender, err.Error(), nil, nil
+		return HoldRender, err.Error(), nil, false, nil
 	}
-	if next != base {
-		return HoldShapeChange, "desired-state shape changed; the designer route is not available yet", nil, nil
-	}
-	return "", "", nil, nil
+	return "", "", nil, next != base, nil
 }
 
 const maxHoldDetail = 600
