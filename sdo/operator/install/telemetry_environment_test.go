@@ -6,11 +6,13 @@ import (
 	"testing"
 
 	"sdo.dev/operator/telemetry"
+	"sdo.dev/operator/telemetry/prometheus/recipe"
 )
 
 func environmentConfig() Config {
 	return Config{
-		Namespace: "app", Application: "app", RepositoryPVC: "repo", CredentialsSecret: "creds",
+		BackendRecipes: []telemetry.BackendRecipe{recipe.New()},
+		Namespace:      "app", Application: "app", RepositoryPVC: "repo", CredentialsSecret: "creds",
 		ControllerImage: "controller:test", ResponderImage: "responder:test", Model: "m", Replay: "on",
 		NativeCommand: []string{"/usr/local/bin/sdo-operator"}, AcceptedCommit: strings.Repeat("c", 40), TimeoutSeconds: 60, VerificationTimeoutSeconds: 60,
 	}

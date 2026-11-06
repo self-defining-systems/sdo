@@ -1,0 +1,218 @@
+{
+  "clusterBindings": [
+    {
+      "metadata": {
+        "name": "sdo-prometheus-sdo-ctl",
+        "creationTimestamp": null
+      },
+      "subjects": [
+        {
+          "kind": "ServiceAccount",
+          "name": "sdo-prometheus",
+          "namespace": "sdo-ctl"
+        }
+      ],
+      "roleRef": {
+        "apiGroup": "rbac.authorization.k8s.io",
+        "kind": "ClusterRole",
+        "name": "sdo-prometheus-sdo-ctl"
+      }
+    }
+  ],
+  "clusterRoles": [
+    {
+      "metadata": {
+        "name": "sdo-prometheus-sdo-ctl",
+        "creationTimestamp": null
+      },
+      "rules": [
+        {
+          "verbs": [
+            "get",
+            "list",
+            "watch"
+          ],
+          "apiGroups": [
+            ""
+          ],
+          "resources": [
+            "pods",
+            "nodes",
+            "nodes/proxy",
+            "nodes/metrics"
+          ]
+        }
+      ]
+    }
+  ],
+  "config": {
+    "metadata": {
+      "name": "sdo-prometheus",
+      "namespace": "sdo-ctl",
+      "creationTimestamp": null,
+      "labels": {
+        "app.kubernetes.io/managed-by": "sdo",
+        "app.kubernetes.io/name": "sdo-prometheus"
+      }
+    },
+    "data": {
+      "prometheus.yml": "global:\n  scrape_interval: 15s\nscrape_configs:\n- job_name: application-pods\n  kubernetes_sd_configs:\n  - role: pod\n    namespaces: {names: [app]}\n  relabel_configs:\n  - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]\n    regex: \"true\"\n    action: keep\n  - source_labels: [__meta_kubernetes_pod_phase]\n    regex: Running\n    action: keep\n  - source_labels: [__meta_kubernetes_pod_ip, __meta_kubernetes_pod_annotation_prometheus_io_port]\n    regex: '(.+);([0-9]+)'\n    replacement: '$1:$2'\n    target_label: __address__\n  - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_port]\n    regex: '[0-9]+'\n    action: keep\n  - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]\n    regex: '(/.*)'\n    target_label: __metrics_path__\n  - source_labels: [__meta_kubernetes_namespace]\n    target_label: namespace\n  - source_labels: [__meta_kubernetes_pod_name]\n    target_label: pod\n- job_name: application-kubelet\n  scheme: https\n  authorization:\n    credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token\n  tls_config:\n    ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt\n  kubernetes_sd_configs:\n  - role: pod\n    namespaces: {names: [app]}\n  relabel_configs:\n  - source_labels: [__meta_kubernetes_pod_phase]\n    regex: Running\n    action: keep\n  - source_labels: [__meta_kubernetes_pod_node_name]\n    regex: '.+'\n    action: keep\n  - target_label: __address__\n    replacement: kubernetes.default.svc:443\n  - source_labels: [__meta_kubernetes_pod_node_name]\n    target_label: instance\n  - source_labels: [__meta_kubernetes_pod_node_name]\n    target_label: __metrics_path__\n    replacement: /api/v1/nodes/$1/proxy/metrics\n- job_name: application-cadvisor\n  scheme: https\n  authorization:\n    credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token\n  tls_config:\n    ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt\n  kubernetes_sd_configs:\n  - role: pod\n    namespaces: {names: [app]}\n  relabel_configs:\n  - source_labels: [__meta_kubernetes_pod_phase]\n    regex: Running\n    action: keep\n  - source_labels: [__meta_kubernetes_pod_node_name]\n    regex: '.+'\n    action: keep\n  - target_label: __address__\n    replacement: kubernetes.default.svc:443\n  - source_labels: [__meta_kubernetes_pod_node_name]\n    target_label: instance\n  - source_labels: [__meta_kubernetes_pod_node_name]\n    target_label: __metrics_path__\n    replacement: /api/v1/nodes/$1/proxy/metrics/cadvisor\n  metric_relabel_configs:\n  - source_labels: [namespace]\n    regex: app\n    action: keep\n"
+    }
+  },
+  "deployment": {
+    "metadata": {
+      "name": "sdo-prometheus",
+      "namespace": "sdo-ctl",
+      "creationTimestamp": null,
+      "labels": {
+        "app.kubernetes.io/managed-by": "sdo",
+        "app.kubernetes.io/name": "sdo-prometheus"
+      }
+    },
+    "spec": {
+      "replicas": 1,
+      "selector": {
+        "matchLabels": {
+          "app.kubernetes.io/managed-by": "sdo",
+          "app.kubernetes.io/name": "sdo-prometheus"
+        }
+      },
+      "template": {
+        "metadata": {
+          "creationTimestamp": null,
+          "labels": {
+            "app.kubernetes.io/managed-by": "sdo",
+            "app.kubernetes.io/name": "sdo-prometheus"
+          },
+          "annotations": {
+            "sdo.dev/config-hash": "ea456ec8a361597f16ebe95297824494d0dd689081e93365cd8ef3152bd5a4c5"
+          }
+        },
+        "spec": {
+          "volumes": [
+            {
+              "name": "config",
+              "configMap": {
+                "name": "sdo-prometheus"
+              }
+            },
+            {
+              "name": "data",
+              "emptyDir": {
+                "sizeLimit": "2Gi"
+              }
+            }
+          ],
+          "containers": [
+            {
+              "name": "prometheus",
+              "image": "quay.io/prometheus/prometheus:v3.5.0@sha256:63805ebb8d2b3920190daf1cb14a60871b16fd38bed42b857a3182bc621f4996",
+              "args": [
+                "--config.file=/etc/prometheus/prometheus.yml",
+                "--storage.tsdb.path=/prometheus",
+                "--storage.tsdb.retention.time=6h",
+                "--storage.tsdb.retention.size=1GB",
+                "--web.enable-otlp-receiver"
+              ],
+              "ports": [
+                {
+                  "name": "http",
+                  "containerPort": 9090
+                }
+              ],
+              "resources": {
+                "limits": {
+                  "cpu": "1",
+                  "memory": "1Gi"
+                },
+                "requests": {
+                  "cpu": "100m",
+                  "memory": "128Mi"
+                }
+              },
+              "volumeMounts": [
+                {
+                  "name": "config",
+                  "readOnly": true,
+                  "mountPath": "/etc/prometheus"
+                },
+                {
+                  "name": "data",
+                  "mountPath": "/prometheus"
+                }
+              ],
+              "readinessProbe": {
+                "httpGet": {
+                  "path": "/-/ready",
+                  "port": 9090
+                }
+              },
+              "securityContext": {
+                "capabilities": {
+                  "drop": [
+                    "ALL"
+                  ]
+                },
+                "readOnlyRootFilesystem": true,
+                "allowPrivilegeEscalation": false
+              }
+            }
+          ],
+          "serviceAccountName": "sdo-prometheus",
+          "securityContext": {
+            "runAsUser": 65532,
+            "runAsNonRoot": true,
+            "fsGroup": 65532,
+            "seccompProfile": {
+              "type": "RuntimeDefault"
+            }
+          }
+        }
+      },
+      "strategy": {
+        "type": "Recreate"
+      }
+    },
+    "status": {}
+  },
+  "service": {
+    "metadata": {
+      "name": "sdo-prometheus",
+      "namespace": "sdo-ctl",
+      "creationTimestamp": null,
+      "labels": {
+        "app.kubernetes.io/managed-by": "sdo",
+        "app.kubernetes.io/name": "sdo-prometheus"
+      }
+    },
+    "spec": {
+      "ports": [
+        {
+          "name": "http",
+          "port": 9090,
+          "targetPort": 9090
+        }
+      ],
+      "selector": {
+        "app.kubernetes.io/managed-by": "sdo",
+        "app.kubernetes.io/name": "sdo-prometheus"
+      }
+    },
+    "status": {
+      "loadBalancer": {}
+    }
+  },
+  "serviceAccounts": [
+    {
+      "metadata": {
+        "name": "sdo-prometheus",
+        "namespace": "sdo-ctl",
+        "creationTimestamp": null,
+        "labels": {
+          "app.kubernetes.io/managed-by": "sdo",
+          "app.kubernetes.io/name": "sdo-prometheus"
+        }
+      }
+    }
+  ]
+}

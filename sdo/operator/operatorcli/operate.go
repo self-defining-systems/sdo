@@ -7,6 +7,7 @@ import (
 	"io"
 	"path/filepath"
 	"sdo.dev/operator/contracts/settings"
+	"sdo.dev/operator/operatorcli/catalog/telemetrysources"
 	"strings"
 	"time"
 
@@ -199,6 +200,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			MaxAttempts:  *maxAttempts,
 		},
 		Install: install.Config{
+			BackendRecipes:     telemetrysources.Recipes(),
 			CodePath:           selectedCodePath,
 			ResponderMenu:      menuEnabled,
 			ObservationCeiling: ceiling,

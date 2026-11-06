@@ -16,7 +16,6 @@ import (
 	"strings"
 	"time"
 
-	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -28,6 +27,7 @@ import (
 	"sdo.dev/operator/devmount"
 	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/telemetry"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -89,6 +89,9 @@ type Config struct {
 	PermissiveResponder              bool
 	ResponderNamespaces              []string
 	MetricsURL                       string
+	// BackendRecipes are the SDO-owned telemetry backends the installer may
+	// apply, injected by the operator CLI wiring.
+	BackendRecipes []telemetry.BackendRecipe
 	// MemoryUpstream replicates accepted memory through a shared remote
 	// branch. MemoryUpstreamSSHSecret names an existing Secret holding the
 	// ssh "identity" and "known_hosts", mounted read-only.
@@ -104,16 +107,15 @@ type Config struct {
 }
 
 type Plan struct {
-	Prometheus        *appsv1.Deployment
-	PrometheusConfig  *corev1.ConfigMap
-	PrometheusService *corev1.Service
-	Namespace         *corev1.Namespace
-	PVC               *corev1.PersistentVolumeClaim
-	ServiceAccounts   []*corev1.ServiceAccount
-	ClusterRoles      []*rbacv1.ClusterRole
-	ClusterBindings   []*rbacv1.ClusterRoleBinding
-	SyncPod           *corev1.Pod
-	Job               *batchv1.Job
+	// Backend holds the objects of the applied telemetry backend recipe.
+	Backend         telemetry.BackendObjects
+	Namespace       *corev1.Namespace
+	PVC             *corev1.PersistentVolumeClaim
+	ServiceAccounts []*corev1.ServiceAccount
+	ClusterRoles    []*rbacv1.ClusterRole
+	ClusterBindings []*rbacv1.ClusterRoleBinding
+	SyncPod         *corev1.Pod
+	Job             *batchv1.Job
 
 	// TelemetryEnvironment is the controller's telemetry environment document.
 	TelemetryEnvironment *corev1.ConfigMap
@@ -303,7 +305,9 @@ func Resources(c Config) (Plan, error) {
 	plan.ServiceAccounts = append(plan.ServiceAccounts, &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "sdo-script", Namespace: c.Namespace}})
 	addAdminGrant(c, &plan)
 	if !c.DisableObservability {
-		addObservability(&plan, c)
+		if err := addObservability(&plan, c); err != nil {
+			return Plan{}, err
+		}
 	}
 	environment, err := telemetryEnvironmentConfigMap(c)
 	if err != nil {

@@ -2,7 +2,11 @@ module sdo.dev/operator/telemetry
 
 go 1.26.0
 
-require sdo.dev/operator/sdk v0.0.0
+require (
+	k8s.io/api v0.30.3
+	k8s.io/apimachinery v0.30.3
+	sdo.dev/operator/sdk v0.0.0
+)
 
 require (
 	github.com/go-logr/logr v1.4.1 // indirect
@@ -15,8 +19,6 @@ require (
 	golang.org/x/text v0.14.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
-	k8s.io/api v0.30.3 // indirect
-	k8s.io/apimachinery v0.30.3 // indirect
 	k8s.io/klog/v2 v2.120.1 // indirect
 	k8s.io/metrics v0.30.3 // indirect
 	k8s.io/utils v0.0.0-20230726121419-3b25d923346b // indirect
