@@ -104,8 +104,8 @@ lists actor and changed paths, all under `.sdo/`), `held` (a typed hold: `hold` 
 `accepted_commit`, `operability_digest` (the `SDO-Operability` trailer of the advance commit), `agent_tasks` (new agent
 request ConfigMaps, the replay's agent-turn count), `wall_seconds` (push to resolution), `human_edits` (new accepted
 commits with `SDO-Actor: human`; must be 0), `changed_workloads` (workloads whose running image ID changed),
-`pod_failures`, `controller_relaunches`, `expected` (what `releases.json` says the release changes), `operability` (the
-ConfigMap summary read after the verdict; it is not refreshed by advances) and `violations`. A hold whose owner is not
+`pod_failures` (never negative: replaced pods take their restarts with them), `controller_relaunches`, `expected` (what `releases.json` says the release changes), `operability` (the
+ConfigMap summary read after the verdict; it is not refreshed by advances, so a report for an earlier accepted commit is recorded as `{"stale": true, ...}` without items or digest) and `violations`. A hold whose owner is not
 deployer, designer or responder, a hold with no routing prefix, an agent owner that never acts (`owner_action` window), an
 unfinished owner (`resolution` window), a verdict timeout and an incident in the quiet window set `stop_reason` and end the
 replay; the replayer never edits anything for SDO.

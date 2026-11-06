@@ -76,9 +76,11 @@ class ReplayTimings:
     resolution: float
     settle: float
     poll: float
+    #: How long a freshly installed controller has to write its state ConfigMap before the preflight gives up.
+    controller_state: float = 300.0
 
     def __post_init__(self) -> None:
-        for name in ("verdict", "owner_action", "resolution", "settle", "poll"):
+        for name in ("verdict", "owner_action", "resolution", "settle", "poll", "controller_state"):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
 
@@ -101,6 +103,7 @@ class ReplayOps(ScenarioOps, Protocol):
     """``ScenarioOps`` (``push`` takes a chart version here) plus the reads the replay adds."""
 
     def agent_task_count(self) -> int: ...
+    def controller_state_present(self) -> bool: ...
     def changed_paths(self, sha: str) -> list[str]: ...
     def accepted_chart_version(self) -> str: ...
 
@@ -175,9 +178,18 @@ def hold_detail(hold: HoldRecord) -> HoldDetail:
     return HoldDetail(routing.kind, routing.cause, routing.owner, routing.items, hold.reason)
 
 
-def operability_summary(read: OperabilityRead | None) -> dict[str, Any] | None:
+def operability_summary(read: OperabilityRead | None, adopted_commit: str = "") -> dict[str, Any] | None:
+    """The report block of a record. The ConfigMap is not refreshed by advances, so it counts only when it is for the
+    accepted commit that adopted the release; otherwise it is the previous commit's report and is marked stale."""
     if read is None:
         return None
+    if read.accepted_commit != adopted_commit:
+        reason = (
+            "the release was adopted but the report is for an earlier accepted commit"
+            if adopted_commit
+            else ("the release was not adopted")
+        )
+        return {"stale": True, "accepted_commit": read.accepted_commit, "reason": reason}
     return {
         "stage": read.stage,
         "accepted_commit": read.accepted_commit,
@@ -203,6 +215,16 @@ def lane_violations(ops: ReplayOps) -> list[str]:
     if ops.incident_open():
         out.append("an incident is open before the replay starts")
     return out
+
+
+def await_controller_state(ops: ReplayOps, timings: ReplayTimings) -> list[str]:
+    """Wait for the controller's state ConfigMap (a lane just brought up has not written it yet)."""
+    deadline = ops.clock() + timings.controller_state
+    while not ops.controller_state_present():
+        if ops.clock() >= deadline:
+            return [f"the controller wrote no sdo-controller-state ConfigMap within {timings.controller_state:g}s"]
+        ops.sleep(timings.poll)
+    return []
 
 
 def plan_replay(releases: ReleaseList, current: str, limit: int | None = None) -> tuple[Release, ...]:
@@ -287,7 +309,8 @@ def replay_release(ops: ReplayOps, release: Release, timings: ReplayTimings) -> 
     adopted_commit = accepted or upstream_commit(ops.accepted_commits(), record.pushed)
     after = ops.snapshot()
     record.agent_tasks = after.agent_tasks - before.agent_tasks
-    record.pod_failures = after.pod_failures - before.pod_failures
+    # Pods the advance replaced take their restart counts with them, so the delta can only undercount.
+    record.pod_failures = max(0, after.pod_failures - before.pod_failures)
     record.controller_relaunches = after.controller_relaunches - before.controller_relaunches
     commits = _new_commits(ops, known)
     others = [c for c in commits if c.trailers.get(ACTOR_TRAILER) != UPSTREAM_ACTOR]
@@ -309,7 +332,7 @@ def replay_release(ops: ReplayOps, release: Release, timings: ReplayTimings) -> 
     record.changed_workloads = sorted(w for w, d in after.digests.items() if before.digests.get(w) not in (None, d))
     if record.hold is None:  # an accepted advance may still owe a follow-up (a designer refresh hold)
         record.hold = next((hold_detail(h) for h in ops.holds() if h.revision == record.pushed), None)
-    record.operability = operability_summary(ops.operability())
+    record.operability = operability_summary(ops.operability(), record.accepted_commit)
     record.violations = release_violations(record, adopted_commit, release)
     return record
 
@@ -385,7 +408,7 @@ def run_replay(
     summary = ReplaySummary(
         lane, datetime.now(UTC).isoformat(timespec="seconds"), current, [r.version for r in planned]
     )
-    summary.preflight = lane_violations(ops)
+    summary.preflight = await_controller_state(ops, timings) or lane_violations(ops)
     write(summary, None)
     if summary.preflight:
         summary.stopped = "the lane is not steady: " + "; ".join(summary.preflight)

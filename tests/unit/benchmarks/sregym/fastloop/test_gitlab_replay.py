@@ -54,6 +54,11 @@ class Lane:
     pushes: list[str] = field(default_factory=list)
     pending: list[tuple[float, Callable[[Lane, str], None], str]] = field(default_factory=list)
     count: int = 0
+    #: When the controller state ConfigMap appears (fake clock); reading it before that fails like kubectl does.
+    state_at: float = 0.0
+
+    def controller_state_present(self) -> bool:
+        return self.now >= self.state_at
 
     def _fire(self) -> None:
         due = [e for e in self.pending if e[0] <= self.now]
@@ -86,6 +91,7 @@ class Lane:
         return list(self.hold_records)
 
     def incident_open(self) -> bool:
+        assert self.controller_state_present(), "sdo-controller-state is not written yet"
         return self.incident
 
     def operability(self) -> OperabilityRead | None:
@@ -502,3 +508,52 @@ def test_the_command_is_registered_under_gitlab() -> None:
         ["gitlab", "replay", "--run-dir", "/tmp/x", "--limit", "2", "--settle-seconds", "5"]
     )
     assert (args.limit, args.settle_seconds, args.handler) == (2, 5.0, gr.replay)
+
+
+def test_the_replay_waits_for_the_controller_state_instead_of_crashing() -> None:
+    lane = Lane(state_at=40.0, script={"10.5.0": {10.0: advance("10.5.0")}})
+    summary = gr.run_replay(lane, RELEASES, TIMINGS, lane="lane", limit=1)
+    assert summary.preflight == []
+    assert summary.results[0].outcome == "advanced"
+    assert lane.pushes == ["10.5.0"]
+
+
+def test_a_controller_state_that_never_appears_is_a_preflight_violation_and_nothing_is_pushed() -> None:
+    lane = Lane(state_at=10**9)
+    timings = replace(TIMINGS, controller_state=30.0)
+    summary = gr.run_replay(lane, RELEASES, timings, lane="lane", limit=1)
+    assert any("sdo-controller-state" in v and "30s" in v for v in summary.preflight)
+    assert lane.pushes == []
+
+
+def test_pod_failures_are_never_negative_when_pods_are_replaced_during_the_advance() -> None:
+    def replace_pods(lane: Lane, name: str) -> None:
+        advance(name)(lane, name)
+        lane.snap = replace(lane.snap, pod_failures=0)  # the restarted pods were deleted by the rollout
+
+    lane = Lane(snap=replace(BASE, pod_failures=2), script={"10.5.0": {10.0: replace_pods}})
+    assert replay(lane, 1).results[0].pod_failures == 0
+
+
+def test_the_operability_block_never_passes_off_the_pre_advance_report_as_the_outcome() -> None:
+    lane = Lane()  # no verdict: the report on the ConfigMap is still the one for the previous accepted commit
+    record = replay(lane, 1).results[0]
+    assert record.outcome == "timeout"
+    assert record.operability == {"stale": True, "accepted_commit": "h0", "reason": "the release was not adopted"}
+
+
+def test_an_advanced_release_records_the_report_only_when_it_is_for_the_adopted_commit() -> None:
+    def advance_and_refresh(lane: Lane, name: str) -> None:
+        advance(name)(lane, name)
+        lane.report = green_read(commit="c10.5.0")
+
+    lane = Lane(script={"10.5.0": {10.0: advance_and_refresh}})
+    block = replay(lane, 1).results[0].operability
+    assert block is not None
+    assert "stale" not in block
+    assert block["accepted_commit"] == "c10.5.0"
+    lane = Lane(script={"10.5.0": {10.0: advance("10.5.0")}})  # ConfigMap still for h0
+    block = replay(lane, 1).results[0].operability
+    assert block is not None
+    assert block["stale"] is True
+    assert "items" not in block
