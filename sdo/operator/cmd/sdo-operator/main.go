@@ -121,6 +121,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "deployment" {
 		os.Exit(operatorcli.RunDeployment(context.Background(), os.Args[2:], nil, os.Stdout, os.Stderr))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "operability" {
+		os.Exit(operatorcli.RunOperability(context.Background(), os.Args[2:], nil, os.Stdout, os.Stderr))
+	}
 	if len(os.Args) > 1 && os.Args[1] == "memory" {
 		os.Exit(operatorcli.RunMemory(context.Background(), os.Args[2:], nil, os.Stdout, os.Stderr))
 	}

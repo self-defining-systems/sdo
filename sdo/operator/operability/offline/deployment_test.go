@@ -119,10 +119,16 @@ func TestPatchFailuresAreTheDeployersAndStopTheSequence(t *testing.T) {
 			d := deployment(t, rendertest.MapFS{"k8s/web.yaml": web})
 			d.PatchesErr = tc.err
 			res := offline.CheckDeployment(context.Background(), d)
-			if len(res.Checks) != 1 {
+			got := byID(t, res.Checks)
+			if len(got) != 7 {
 				t.Fatalf("checks after a patch failure: %+v", res.Checks)
 			}
-			c := want(t, byID(t, res.Checks), "O1.patches", operability.StatusFail, tc.cause)
+			for id, c := range got {
+				if id != "O1.patches" && c.Status != operability.StatusSkipped {
+					t.Fatalf("%s ran after a patch failure: %+v", id, c)
+				}
+			}
+			c := want(t, got, "O1.patches", operability.StatusFail, tc.cause)
 			if tc.path != "" && (len(c.Paths) == 0 || c.Paths[0] != tc.path) {
 				t.Fatalf("paths = %v", c.Paths)
 			}
@@ -134,8 +140,10 @@ func TestRenderFailureClassification(t *testing.T) {
 	d := deployment(t, rendertest.MapFS{"k8s/bad.yaml": "kind: [unterminated\n"})
 	got := byID(t, offline.CheckDeployment(context.Background(), d).Checks)
 	want(t, got, "O1.render", operability.StatusFail, operability.CauseRender)
-	if len(got) != 2 {
-		t.Fatalf("render failure must stop later checks: %v", got)
+	want(t, got, "O1.deterministic", operability.StatusSkipped, "")
+	want(t, got, "O6.allowlist", operability.StatusSkipped, "")
+	if len(got) != 7 {
+		t.Fatalf("render failure must skip later checks: %v", got)
 	}
 	d.Render = func(context.Context) (rendered.DesiredSet, error) {
 		return rendered.DesiredSet{}, &rendered.SourceError{Kind: rendered.SourceUnavailable, Err: errors.New("io")}
@@ -287,5 +295,23 @@ func TestDetailsStayWithinTheReportLimit(t *testing.T) {
 	c := byID(t, offline.CheckDeployment(context.Background(), d).Checks)["O6.scope"]
 	if !strings.Contains(c.Detail, "and 7 more") {
 		t.Fatalf("detail = %q", c.Detail)
+	}
+}
+
+// A failure that stops the sequence must still leave every deployment item with
+// checks, so the failure decides the report instead of the silence rule.
+func TestEarlyFailureDecidesTheReportNotSilence(t *testing.T) {
+	d := deployment(t, rendertest.MapFS{"k8s/web.yaml": web})
+	d.PatchesErr = &rendered.SourceError{Kind: rendered.SourceInvalid, Err: &patchset.PatchError{Kind: patchset.KindConflict, Patch: "0001-x.patch", Detail: "x"}}
+	res := offline.CheckDeployment(context.Background(), d)
+	r, err := operability.New(operability.StageDeployment, operability.Subject{
+		AcceptedCommit: "c", BaseTree: "b", EffectiveTree: "e", PatchesDigest: "p", RenderDigest: "r", EnvDigest: "v",
+	}).With(res.Checks...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dec := r.Decide(operability.StageItems(operability.StageDeployment)...)
+	if dec.Kind != operability.Correct || dec.Owner != operability.OwnerDeployer || len(dec.Checks) != 1 || dec.Checks[0].ID != "O1.patches" {
+		t.Fatalf("decision = %+v", dec)
 	}
 }
