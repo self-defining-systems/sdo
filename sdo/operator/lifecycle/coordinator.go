@@ -152,6 +152,9 @@ type Coordinator struct {
 	Readiness SourceReadiness
 	Verifier  HealthVerifier
 	Installer RuntimeInstaller
+	// TelemetryApply deploys the designer's telemetry backends between the
+	// judge and the independent verification; nil skips the phase.
+	TelemetryApply TelemetryApplier
 	// SourceFacts reads a trusted projection from the accepted source commit.
 	// The default renders the accepted source through Renderers (the same
 	// desired-state computation deploy and drift use), so a Helm chart or a

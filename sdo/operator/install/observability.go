@@ -7,6 +7,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 	"sdo.dev/operator/telemetry"
 )
 
@@ -37,6 +38,34 @@ func addObservability(p *Plan, c Config) error {
 }
 
 func (i Installer) ensureObservability(ctx context.Context, p Plan) error {
+	return applyBackendWorkloads(ctx, i.Client, p.Backend)
+}
+
+// ContainerSecurityContext is the restricted container context the installer
+// gives its own Pods, offered to recipes through telemetry.BackendParams.
+func ContainerSecurityContext() *corev1.SecurityContext { return containerSecurity() }
+
+// ApplyBackend applies a recipe's complete object set with the installer's own
+// create-or-update semantics: ServiceAccounts, cluster grants, then the
+// namespaced workloads. It is the trusted applier's write path for backends
+// chosen after install; the objects come from a reviewed recipe, never from
+// designer files.
+func ApplyBackend(ctx context.Context, client kubernetes.Interface, objects telemetry.BackendObjects) error {
+	for _, sa := range objects.ServiceAccounts {
+		accounts := client.CoreV1().ServiceAccounts(sa.Namespace)
+		if _, err := accounts.Create(ctx, sa, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+			return fmt.Errorf("ensure backend ServiceAccount %s: %w", sa.Name, err)
+		}
+	}
+	if err := (Installer{Client: client}).ensureClusterGrants(ctx, Plan{ClusterRoles: objects.ClusterRoles, ClusterBindings: objects.ClusterBindings}); err != nil {
+		return err
+	}
+	return applyBackendWorkloads(ctx, client, objects)
+}
+
+func applyBackendWorkloads(ctx context.Context, client kubernetes.Interface, backend telemetry.BackendObjects) error {
+	i := Installer{Client: client}
+	p := Plan{Backend: backend}
 	for _, cm := range p.Backend.ConfigMaps {
 		cms := i.Client.CoreV1().ConfigMaps(cm.Namespace)
 		prior, err := cms.Get(ctx, cm.Name, metav1.GetOptions{})

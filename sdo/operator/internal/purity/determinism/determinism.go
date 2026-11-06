@@ -33,6 +33,7 @@ var Edges = map[string]bool{
 	"sdo/operator/imagesrc/buildkit/internal/jobio":          true, // BuildKit Job name suffix randomness and poll timer
 	"sdo/operator/imagesrc/prebuilt/internal/registryio":     true, // Prebuilt image source registry sockets and cache clock
 	"sdo/operator/lifecycle/internal/waitio":                 true, // Lifecycle default pause between bounded re-evaluations
+	"sdo/operator/telemetryapply/internal/waitio":            true, // Telemetry applier default pause between readiness polls
 	"sdo/operator/apihistory/internal/apiio":                 true, // API-history clock, timers and identifier randomness
 	"sdo/operator/kubeproxy/internal/proxyio":                true, // API proxy clock and request-ID randomness
 	"sdo/operator/rendered/internal/renderio":                true, // Rendered-source Git reads
