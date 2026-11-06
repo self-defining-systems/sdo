@@ -203,6 +203,10 @@
     "--agent-registrations",
     "/fixture/registrations.json",
     "--deployment-plan",
-    "{\"expected_workload_ids\":[\"Deployment/hotel/web\"],\"images\":[{\"config\":{\"@type\":\"type.googleapis.com/sdodev.contracts.v1alpha1.BuildKitImageConfig\",\"context_path\":\".\",\"dockerfile_path\":\"Dockerfile\"},\"image\":\"app:v1\",\"source_id\":\"buildkit\"}],\"source\":{\"config\":{\"@type\":\"type.googleapis.com/sdodev.contracts.v1alpha1.HelmRenderConfig\",\"chart_path\":\"chart\",\"value_files\":[]},\"renderer_id\":\"helm\"}}"
+    "{\"expected_workload_ids\":[\"Deployment/hotel/web\"],\"images\":[{\"config\":{\"@type\":\"type.googleapis.com/sdodev.contracts.v1alpha1.BuildKitImageConfig\",\"context_path\":\".\",\"dockerfile_path\":\"Dockerfile\"},\"image\":\"app:v1\",\"source_id\":\"buildkit\"}],\"source\":{\"config\":{\"@type\":\"type.googleapis.com/sdodev.contracts.v1alpha1.HelmRenderConfig\",\"chart_path\":\"chart\",\"value_files\":[]},\"renderer_id\":\"helm\"}}",
+    "--source-kind",
+    "git",
+    "--source-config",
+    "{\"poll_interval\":\"5s\",\"ref\":\"main\",\"repository\":\"git://upstream/app.git\"}"
   ]
 }

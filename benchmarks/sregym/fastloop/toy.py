@@ -19,6 +19,7 @@ from apps.toy.variants.assemble import VARIANTS, assemble
 from benchmarks.sregym.adapter import WaitKind, buildkit_image, deployment_plan, helm_source, raw_source, wait_for
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment, Images
 from benchmarks.sregym.fastloop.host_limits import HostLimits, NodeLimits, apply_node_limits
+from benchmarks.sregym.fastloop.toy_upstream import UpstreamLayout, serve_upstream, source_config
 from benchmarks.sregym.repository_git import host_git_command
 
 logger = logging.getLogger(__name__)
@@ -376,6 +377,9 @@ def up(args: Any) -> int:
 
         credentials_hook(hook.resolve(), kubeconfig)(NAMESPACE + "-sdo")
     env.save()
+    if variant == "helm":
+        # The provided helm deployment follows an upstream the harness serves (seeded with the accepted source SHA).
+        serve_upstream(kubeconfig, workspace, UpstreamLayout(NAMESPACE), images.controller)
     deployed = time.monotonic()
     config = install_controller(
         env,
@@ -446,6 +450,8 @@ def install_controller(
             kind_cluster_name=environment.cluster,
             deployment_source=raw_source(("kubernetes",)) if variant == "raw" else None,
             deployment_plan=provided_deployment_plan(variant, environment.namespace),
+            source_kind="git" if variant == "helm" else "",
+            source_config=json.dumps(source_config(UpstreamLayout(environment.namespace))) if variant == "helm" else "",
             agent_registrations=registrations.resolve() if registrations else None,
         )
     if frozen_memory and not config.frozen_memory:

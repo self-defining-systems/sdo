@@ -80,9 +80,14 @@ class RuntimeConfig:
     deployment_source: dict[str, Any] | None = None
     # ProtoJSON DeploymentPlan the human provides (see ``deployment_source.py``); ``None``: agent-authored.
     deployment_plan: dict[str, Any] | None = None
+    # Upstream the controller follows (``--source-kind`` and its JSON ``--source-config``); both or neither.
+    source_kind: str = ""
+    source_config: str = ""
     shared_accepted_id: str = ""
 
     def __post_init__(self) -> None:
+        if bool(self.source_kind) != bool(self.source_config):
+            raise ValueError("source_kind and source_config must be given together")
         if type(self.external_incidents) is not bool:
             raise TypeError("external_incidents must be a boolean")
         if self.external_incidents and not self.frozen_memory:

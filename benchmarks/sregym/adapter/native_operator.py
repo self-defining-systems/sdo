@@ -222,8 +222,13 @@ class NativeHostConfig:
     agent_registrations: Path | None = None
     # ProtoJSON DeploymentPlan for an app that ships its own deployment; ``None``: the deployer agent authors one.
     deployment_plan: dict[str, Any] | None = None
+    # Upstream the controller follows (``--source-kind`` / ``--source-config`` JSON); both or neither.
+    source_kind: str = ""
+    source_config: str = ""
 
     def __post_init__(self) -> None:
+        if bool(self.source_kind) != bool(self.source_config):
+            raise ValueError("source_kind and source_config must be given together")
         if not self.operation_id.strip():
             raise ValueError("host launch requires operation ID")
         if self.max_attempts < 1:
@@ -795,6 +800,8 @@ def launch_host(config: NativeHostConfig) -> dict[str, Any]:
         args.extend(("--agent-registrations", str(config.agent_registrations)))
     if config.deployment_plan is not None:
         args.extend(("--deployment-plan", plan_flag_value(config.deployment_plan)))
+    if config.source_kind:
+        args.extend(("--source-kind", config.source_kind, "--source-config", config.source_config))
     value = _run("host", args, timeout=config.max_attempts * config.install.response_timeout_seconds + 900)
     if value.get("installed") is not True or value.get("operation_id") != config.operation_id:
         raise NativeOperatorError("Go host returned an invalid operation receipt")
