@@ -39,8 +39,19 @@ patterns=()
 } > "$GOWORK"
 cd "$root"
 validate_pattern="./sdo/operator/memory/validate"
+# A pull request run names the packages its changes can affect (scripts/ci_select.py);
+# without a plan, or when the plan is the full suite, every package runs.
+if [[ -n "${SDO_CI_PLAN:-}" && "$(python3 scripts/ci_select.py mode --plan "$SDO_CI_PLAN")" == selected ]]; then
+    mapfile -t patterns < <(python3 scripts/ci_select.py go-patterns --plan "$SDO_CI_PLAN" --shard "${2:?a selected run needs a shard}")
+    if [[ ${#patterns[@]} -eq 0 || -z "${patterns[0]}" ]]; then
+        echo "no Go packages selected for the ${2} shard"
+        exit 0
+    fi
+    echo "==> selected Go packages: ${patterns[*]}"
+    set -- "${1:-pr}" selected
+fi
 case "${2:-}" in
-    "") ;;
+    "" | selected) ;;
     validate) patterns=("$validate_pattern") ;;
     rest)
         # The package list is fixed here; go test then schedules it as one run.
