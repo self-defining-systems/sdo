@@ -57,6 +57,52 @@ func TestJudgeRepeatingTheSameRejectionEndsAsNotConverging(t *testing.T) {
 	}
 }
 
+func failureWith(message string) error {
+	return &validate.Failure{Diagnostics: []validate.Diagnostic{
+		{Rule: "ownership.initial-needs-detectors", Path: ".sdo/diagnostics/detectors", Message: message},
+	}}
+}
+
+// The repeat test compares the whole normalized diagnostic. Two different
+// failures of one rule at one path (here: no detectors, then one missing
+// detector) are progress, so the judge gets another attempt.
+func TestJudgeFailuresOfOneRuleAtOnePathWithDifferentMessagesAreNotRepeats(t *testing.T) {
+	h, fake := gateHarness(t, clear)
+	fake.stageErrors = []error{
+		failureWith("the initial health-judge proposal must install detector manifests"),
+		failureWith("the resulting tree lacks the traffic detectors: traffic-probe-call"),
+		failureWith("the resulting tree lacks the traffic detectors: traffic-probe-call"),
+		failureWith("the resulting tree lacks the traffic detectors: traffic-probe-call"),
+	}
+	_, err := h.coordinator.Run(context.Background(), config())
+	var stop *lifecycle.AgentNotConvergingError
+	if !errors.As(err, &stop) {
+		t.Fatalf("error = %v, want AgentNotConvergingError", err)
+	}
+	if h.workers.judgeRuns != 3 {
+		t.Errorf("judge runs = %d, want 3 (attempt 2 changed the failure; attempt 3 repeated it)", h.workers.judgeRuns)
+	}
+}
+
+// Volatile parts of a message (digests, timestamps) do not make a repeated
+// failure look new.
+func TestJudgeRepeatIgnoresDigestsAndTimestamps(t *testing.T) {
+	h, fake := gateHarness(t, clear)
+	fake.stageErrors = []error{
+		failureWith("base 0123456789abcdef0123456789abcdef01234567 changed at 2026-11-06T15:55:01Z"),
+		failureWith("base fedcba9876543210fedcba9876543210fedcba98 changed at 2026-11-06T16:02:44Z"),
+		failureWith("unreached"), failureWith("unreached"),
+	}
+	_, err := h.coordinator.Run(context.Background(), config())
+	var stop *lifecycle.AgentNotConvergingError
+	if !errors.As(err, &stop) {
+		t.Fatalf("error = %v, want AgentNotConvergingError", err)
+	}
+	if h.workers.judgeRuns != 2 {
+		t.Errorf("judge runs = %d, want 2", h.workers.judgeRuns)
+	}
+}
+
 // Distinct rejections that spend the retry bound also end the run: another
 // judge round over the same source would only repeat the budget.
 func TestJudgeRetryBudgetExhaustedEndsAsNotConverging(t *testing.T) {
