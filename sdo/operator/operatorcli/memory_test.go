@@ -328,3 +328,35 @@ func TestMemoryNewDetectorScaffoldsBuildVetAndPassTheirTests(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// The agent self-check applies the broker's telemetry policy (carried in the
+// environment) and the real adapter registry: the same binding is rejected or
+// accepted by the same endpoint and adapter rules as at publication.
+func TestMemoryCheckAppliesTheBrokersTelemetryPolicy(t *testing.T) {
+	policy := `{"controlNamespace":"sdo-ctl","applicationNamespace":"shop"}`
+	source := func(endpoint, adapter string) string {
+		return "version: 1\nsources:\n  - id: prom\n    kinds: [metrics]\n    adapter: " + adapter + "\n    endpoint: " + endpoint + "\n"
+	}
+	for name, tc := range map[string]struct{ endpoint, adapter, want string }{
+		"endpoint outside the granted namespaces": {"http://prom.kube-system.svc:9090", "prometheus", "telemetry.endpoint"},
+		"ip literal":           {"http://10.0.0.5:9090", "prometheus", "telemetry.endpoint"},
+		"unregistered adapter": {"http://prom.sdo-ctl.svc:9090", "graphite", "telemetry.adapter"},
+		"granted service":      {"http://prom.sdo-ctl.svc:9090", "prometheus", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := copyFixture(t, goodFixture)
+			if err := os.MkdirAll(filepath.Join(root, ".sdo/diagnostics/telemetry"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, layout.TelemetrySourcesFile), []byte(source(tc.endpoint, tc.adapter)), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			env := memoryCheckEnv(t)
+			env["SDO_ACTOR"], env["SDO_PHASE"], env[memoryTelemetryPolicyEnv] = "health_judge", "initial", policy
+			_, stdout, _ := runMemory(t, env, "check", "--root", root)
+			if got := strings.Contains(stdout, "telemetry."); (tc.want != "") != got || (tc.want != "" && !strings.Contains(stdout, tc.want)) {
+				t.Fatalf("want %q, stdout = %q", tc.want, stdout)
+			}
+		})
+	}
+}

@@ -39,7 +39,7 @@ trap 'rm -rf "$replay_workspace"' EXIT
     echo "go 1.26.8"
     echo "use $root/benchmarks/sregym/fastloop/replay_go"
     echo "replace ("
-    for name in "" /core /sdk /runtime /contracts; do
+    for name in "" /core /sdk /runtime /contracts /telemetry; do
         echo " sdo.dev/operator$name => $root/sdo/operator$name"
     done
     echo ")"

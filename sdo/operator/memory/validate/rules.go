@@ -54,8 +54,21 @@ const (
 	RulePatchUpstreamBase = "patch.upstream-base"
 	// RulePatchUncaptured is the broker publish rule: app files of the agent's
 	// checkout that the patch series does not reproduce are never published.
-	RulePatchUncaptured = "patch.uncaptured"
+	RulePatchUncaptured   = "patch.uncaptured"
 	RuleDeploymentInvalid = "deployment.invalid"
+
+	// Telemetry bindings (.sdo/diagnostics/telemetry), the detection designer's
+	// data: sources and backends are checked against the environment's policy
+	// and the adapter registry without executing anything.
+	RuleTelemetrySchema     = "telemetry.schema"
+	RuleTelemetryAdapter    = "telemetry.adapter"
+	RuleTelemetryEndpoint   = "telemetry.endpoint"
+	RuleTelemetryCredential = "telemetry.credential"
+	RuleTelemetryOptions    = "telemetry.options"
+	RuleTelemetryDefault    = "telemetry.default"
+	RuleTelemetryBackend    = "telemetry.backend"
+	RuleTelemetryMode       = "telemetry.mode"
+	RuleTelemetryOrigin     = "telemetry.origin"
 
 	// Semantic.
 	RuleArchitectureMissing = "memory.architecture-missing"

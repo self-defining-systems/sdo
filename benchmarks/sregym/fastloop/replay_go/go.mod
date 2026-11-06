@@ -66,6 +66,7 @@ require (
 	k8s.io/metrics v0.30.3 // indirect
 	k8s.io/utils v0.0.0-20230726121419-3b25d923346b // indirect
 	sdo.dev/operator/sdk v0.0.0 // indirect
+	sdo.dev/operator/telemetry v0.0.0 // indirect
 	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect
 	sigs.k8s.io/kustomize/api v0.17.2 // indirect
 	sigs.k8s.io/kustomize/kyaml v0.17.1 // indirect
@@ -78,3 +79,5 @@ replace sdo.dev/operator => ../../../../sdo/operator
 replace sdo.dev/operator/contracts => ../../../../sdo/operator/contracts
 
 replace sdo.dev/operator/sdk => ../../../../sdo/operator/sdk
+
+replace sdo.dev/operator/telemetry => ../../../../sdo/operator/telemetry

@@ -8,11 +8,13 @@ import (
 	"path"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/patchset"
+	"sdo.dev/operator/telemetry"
 )
 
 // kindSource stands for every repository file outside operational memory.
@@ -41,6 +43,9 @@ var deploymentKinds = []layout.Kind{layout.KindDeploymentPlan, layout.KindDeploy
 // deployerKinds are the deployment kinds the deployer owns: everything but the
 // detection designer's overlay slot.
 var deployerKinds = []layout.Kind{layout.KindDeploymentPlan, layout.KindDeploymentFile, layout.KindDeploymentPatch}
+
+// telemetryKinds are the binding files under .sdo/diagnostics/telemetry.
+var telemetryKinds = []layout.Kind{layout.KindTelemetrySources, layout.KindTelemetryBackends}
 
 // grants is the whole ownership policy, kind by actor by phase.
 //
@@ -95,6 +100,9 @@ var grants = []grant{
 		layout.KindHealthDetectorManifest, layout.KindIncidentDetectorManifest, layout.KindHealthDetectorSource, layout.KindIncidentDetectorSource,
 	}},
 	{actor: HealthJudge, phase: InitialPhase, kinds: []layout.Kind{layout.KindHealthDetectorManifest, layout.KindHealthDetectorSource}},
+	// Telemetry bindings are the detection designer's alone; responders name
+	// bound sources in detectors but a binding change needs a designer run.
+	{actor: HealthJudge, phase: InitialPhase, kinds: telemetryKinds},
 	// The designer edits arch.md only between the application-map markers;
 	// architectureRegionOwnership enforces that, since a grant is per file.
 	{actor: HealthJudge, phase: InitialPhase, kinds: []layout.Kind{layout.KindArchitecture}},
@@ -188,6 +196,10 @@ func (s *run) ownership(ctx context.Context) error {
 				s.add(Ownership, Diagnostic{Rule: RuleOwnershipDenied, Path: p, Message: fmt.Sprintf("actor %s cannot change an unclassified path", actor), Hint: "only paths in the operational-memory layout can be changed"})
 				continue
 			}
+		}
+		if slices.Contains(telemetryKinds, kind) && s.req.Telemetry.EffectiveMode() != telemetry.ModeOpen && allowed(actor, phase, kind, id) {
+			s.add(Ownership, Diagnostic{Rule: RuleOwnershipDenied, Path: p, Message: fmt.Sprintf("the environment's telemetry mode is %s: nobody changes telemetry bindings", s.req.Telemetry.EffectiveMode()), Hint: "the environment fixed the sources; query the sources it provides"})
+			continue
 		}
 		if !allowed(actor, phase, kind, id) {
 			hint := owners(kind, id)

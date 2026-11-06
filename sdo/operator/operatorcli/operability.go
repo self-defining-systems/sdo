@@ -203,7 +203,11 @@ func offlineDeploymentChecks(ctx context.Context, root, namespace string, policy
 // checkout: structure and semantics always, ownership when the broker's base,
 // actor and phase are known from the environment.
 func offlineMemory(ctx context.Context, root string, getenv func(string) string) (offline.Memory, error) {
-	request := validate.Request{Root: root, Layers: validate.Structural | validate.Semantic, PlanCatalogs: planCatalogs(), Replay: "off"}
+	policy, err := memoryTelemetryPolicy(getenv, "")
+	if err != nil {
+		return offline.Memory{}, err
+	}
+	request := validate.Request{Telemetry: policy, TelemetryRegistry: telemetryRegistry(), Root: root, Layers: validate.Structural | validate.Semantic, PlanCatalogs: planCatalogs(), Replay: "off"}
 	base, actor, phase := getenv("SDO_BASE_COMMIT"), getenv(memoryActorEnv), getenv(memoryPhaseEnv)
 	checkedOwnership := base != "" && actor != "" && phase != ""
 	if checkedOwnership {

@@ -38,6 +38,7 @@ func (s *run) semantic(ctx context.Context) error {
 		if err := s.deploymentRules(ctx); err != nil {
 			return err
 		}
+		s.telemetryRules()
 		if err := s.programRules(ctx); err != nil {
 			return err
 		}

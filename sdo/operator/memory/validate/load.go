@@ -37,8 +37,10 @@ type run struct {
 	goal, arch *parsedDocument
 	index      *textFile
 	workloads  map[string]textFile // traffic workloads by name
-	playbooks  map[string]*playbook
-	detectors  map[string]*detector
+	// telemetry holds the binding files by kind, parsed by telemetryRules.
+	telemetry map[layout.Kind]textFile
+	playbooks map[string]*playbook
+	detectors map[string]*detector
 }
 
 type parsedDocument struct {
@@ -116,6 +118,7 @@ func (s *run) load(ctx context.Context) error {
 	s.parseFailed = map[string]bool{}
 	s.detectors = map[string]*detector{}
 	s.workloads = map[string]textFile{}
+	s.telemetry = map[layout.Kind]textFile{}
 	s.memory = true
 	if s.req.Base != "" {
 		changed, err := ChangedPaths(ctx, s.req.Root, s.req.Base)
@@ -360,6 +363,8 @@ func (s *run) visit(rel, abs string) error {
 			s.workloads[id] = file
 		}
 		s.checkYAML(file)
+	case layout.KindTelemetrySources, layout.KindTelemetryBackends:
+		s.telemetry[kind] = file
 	case layout.KindLegacyDetectorManifest:
 		s.legacyPath = rel
 		s.checkYAML(file)
