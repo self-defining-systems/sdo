@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shlex
@@ -417,3 +418,52 @@ def test_checks_job_delegates_duplicated_work_to_the_suites_that_run_it() -> Non
     assert "go list -export ./..." in (ROOT / "scripts/check_go_mains.sh").read_text(), (
         "go build ./... links every command"
     )
+
+
+def test_a_selected_file_the_caller_ignores_is_not_run(tmp_path: Path) -> None:
+    """pytest runs an explicitly named file despite --ignore; the nightly-tier suites must not leak into PR runs."""
+    plan = tmp_path / "plan.json"
+    plan.write_text(
+        json.dumps(
+            {
+                "changed": [],
+                "go_packages": [],
+                "mode": "selected",
+                "python_tests": ["tests/unit/a_test.py", "tests/unit/slow_test.py"],
+                "reasons": [],
+            }
+        )
+    )
+    calls = tmp_path / "calls"
+    for name, body in {
+        "go": ":",
+        "uv": 'printf "%s\\n" "$*" >> "$SDO_TEST_CALLS"',
+    }.items():
+        command = tmp_path / name
+        command.write_text(f"#!/bin/sh\nset -eu\n{body}\n")
+        command.chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{tmp_path}:{os.environ['PATH']}",
+        "SDO_TEST_CALLS": str(calls),
+        "SDO_SKIP_OPERATOR_PREBUILD": "1",
+        "SDO_CI_PLAN": str(plan),
+        "SDO_PYTEST_SHARD": "core",
+    }
+
+    def run(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bash", str(ROOT / "scripts/test_python.sh"), *args], env=env, capture_output=True, text=True, check=False
+        )
+
+    result = run("--ignore=tests/unit/slow_test.py")
+    assert result.returncode == 0, result.stderr
+    pytest_line = calls.read_text().splitlines()[-1]
+    assert "tests/unit/a_test.py" in pytest_line.split()
+    assert "tests/unit/slow_test.py" not in pytest_line.replace("--ignore=tests/unit/slow_test.py", "")
+
+    calls.unlink()
+    result = run("--ignore=tests/unit/slow_test.py", "--ignore=tests/unit/a_test.py")
+    assert result.returncode == 0, result.stderr
+    assert "no Python tests selected" in result.stdout
+    assert not calls.exists(), "nothing selected after the exclusions: pytest must not start"
