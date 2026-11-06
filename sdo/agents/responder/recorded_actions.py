@@ -13,6 +13,7 @@ it, so a call killed mid-command still leaves a receipt of an unfinished mutatio
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import fcntl
 import json
 import logging
@@ -26,7 +27,7 @@ import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
@@ -310,15 +311,41 @@ def _unmentioned_kubectl_objects(command: Sequence[str], resources: Sequence[dic
     return missing
 
 
-@contextlib.contextmanager
-def _sigterm_kills_group(children: list[subprocess.Popen[str]]) -> Iterator[None]:
-    """Turn SIGTERM into ``SystemExit`` after killing the running command's process group, grandchildren included."""
+@dataclasses.dataclass
+class _RunningGroup:
+    """The command a SIGTERM must stop, and whether one arrived while it was still being started."""
 
-    def stop(signum: int, _frame: object) -> None:
-        for child in children:
+    children: list[subprocess.Popen[str]] = dataclasses.field(default_factory=list)
+    starting: bool = False
+    pending_signal: int | None = None
+
+    def kill_and_exit(self, signum: int) -> NoReturn:
+        for child in self.children:
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(child.pid, signal.SIGKILL)
         raise SystemExit(128 + signum)
+
+    def started(self, child: subprocess.Popen[str]) -> None:
+        """Register *child*; a SIGTERM that landed before it was registered stops it now."""
+        self.children.append(child)
+        self.starting = False
+        if self.pending_signal is not None:
+            self.kill_and_exit(self.pending_signal)
+
+
+@contextlib.contextmanager
+def _sigterm_kills_group(group: _RunningGroup) -> Iterator[None]:
+    """Turn SIGTERM into ``SystemExit`` after killing the running command's process group, grandchildren included.
+
+    A signal that arrives while the command is starting (before it can be registered) is held and applied by
+    ``_RunningGroup.started``: killing nothing and exiting would orphan a command already running.
+    """
+
+    def stop(signum: int, _frame: object) -> None:
+        if group.starting:
+            group.pending_signal = signum
+            return
+        group.kill_and_exit(signum)
 
     try:
         previous = signal.signal(signal.SIGTERM, stop)
@@ -334,8 +361,9 @@ def _sigterm_kills_group(children: list[subprocess.Popen[str]]) -> Iterator[None
 def _run_in_own_group(command: Sequence[str]) -> tuple[int, str]:
     """Run *command* in its own session so SIGTERM can stop it and everything it spawned."""
 
-    children: list[subprocess.Popen[str]] = []
-    with _sigterm_kills_group(children):
+    group = _RunningGroup()
+    with _sigterm_kills_group(group):
+        group.starting = True
         try:
             child = subprocess.Popen(
                 list(command),
@@ -346,8 +374,9 @@ def _run_in_own_group(command: Sequence[str]) -> tuple[int, str]:
                 start_new_session=True,
             )
         except OSError as exc:
+            group.starting = False
             return 127, f"{exc}\n"
-        children.append(child)
+        group.started(child)
         output, _ = child.communicate()
         return child.returncode, output
 
