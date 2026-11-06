@@ -21,9 +21,8 @@ build, drift read, upgrade and responder uses that tree. Your checkout already h
 ## Capture loop
 
 1. Edit the app files in your checkout (scratch view): read, run and test freely.
-2. Capture: `sdo-operator patch create --owner <deployer|responder> --reason "<why>" [paths...]`.
-   Deployers use `--owner deployer`; incident responders use `--owner responder` (the incident comes from
-   `SDO_INCIDENT_ID`; pass `--incident ID` if it is unset). `SDO_ACTOR` supplies the owner when set.
+2. Capture: `sdo-operator patch create --reason "<why>" [paths...]`. The launch sets `SDO_ACTOR` (deployer or
+   responder) and, for a responder, `SDO_INCIDENT_ID`, so no flag is needed; `--owner` and `--incident ID` override.
 3. The reason (40 to 2000 characters) states what fails without the patch: the symptom, the file, and why a values or
    authored file cannot fix it. A path list is not a reason. The tool numbers the patch `NNNN-<slug>.patch` and refuses
    to write one that does not reproduce your files exactly.

@@ -586,10 +586,15 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 		}
 		env = append(env, corev1.EnvVar{Name: "SDO_ACTOR", Value: actor}, corev1.EnvVar{Name: "SDO_PHASE", Value: phase}, corev1.EnvVar{Name: "SDO_BASE_COMMIT", Value: task.GetWorkspace().GetBaseCommit()})
 	}
+	// Roles that capture patches (`sdo-operator patch create`) learn their owner from the launch, never from a flag.
+	patchActor := !memoryAuthor && launchActor(task) != ""
+	if patchActor {
+		env = append(env, corev1.EnvVar{Name: "SDO_ACTOR", Value: launchActor(task)})
+	}
 	if reflection {
 		env = append(env, corev1.EnvVar{Name: "SDO_HEALTHY_BASELINE", Value: baseline}, corev1.EnvVar{Name: "SDO_CAPTURED_CORPUS_DIR", Value: captureDirectory})
 	}
-	reserved := map[string]bool{"SDO_REQUEST_SHA256": true, "SDO_CODEX_HOME_ROOT": true, "SDO_REQUEST_CONFIGMAP": true, "SDO_RESULT_CONFIGMAP": true, "SDO_NAMESPACE": true, "SDO_SESSION_DIR": e.SessionPVCSubPath != "", "SDO_ACTOR": memoryAuthor, "SDO_PHASE": memoryAuthor, "SDO_BASE_COMMIT": memoryAuthor, "SDO_HEALTHY_BASELINE": reflection, "SDO_CAPTURED_CORPUS_DIR": reflection, "SDO_API_PROXY_URL": true, "SDO_API_HISTORY_DIR": true, "SDO_STARTUP_TIMING_PATH": true}
+	reserved := map[string]bool{"SDO_REQUEST_SHA256": true, "SDO_CODEX_HOME_ROOT": true, "SDO_REQUEST_CONFIGMAP": true, "SDO_RESULT_CONFIGMAP": true, "SDO_NAMESPACE": true, "SDO_SESSION_DIR": e.SessionPVCSubPath != "", "SDO_ACTOR": memoryAuthor || patchActor, "SDO_PHASE": memoryAuthor, "SDO_BASE_COMMIT": memoryAuthor, "SDO_HEALTHY_BASELINE": reflection, "SDO_CAPTURED_CORPUS_DIR": reflection, "SDO_API_PROXY_URL": true, "SDO_API_HISTORY_DIR": true, "SDO_STARTUP_TIMING_PATH": true}
 	for _, identity := range workerIdentityEnvironment() {
 		reserved[identity.Name] = true
 	}
@@ -647,6 +652,18 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 		return fmt.Errorf("create agent Job: %w", err)
 	}
 	return nil
+}
+
+// launchActor is the patch owner of an agent role whose pod does not author memory: the incident responder and the
+// source deployer. Empty for every other task.
+func launchActor(task *contracts.AgentTask) string {
+	switch {
+	case task.GetRequest().MessageIs(&contracts.IncidentRequest{}):
+		return "responder"
+	case task.GetRequest().MessageIs(&contracts.SourceDeploymentRequest{}):
+		return "deployer"
+	}
+	return ""
 }
 
 func jobFailed(job *batchv1.Job) bool {
