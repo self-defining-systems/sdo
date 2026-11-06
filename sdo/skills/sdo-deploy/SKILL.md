@@ -53,6 +53,10 @@ Rejections name the rule: `ownership.denied` (a path outside the deployer's gran
 Go checks what you deployed against the operability items O1-O6 and words each failing check you own as one line,
 `<check id> [<cause>]: <detail> (<paths>)`. Causes you correct: `patch` (a patch does not apply), `render`,
 `render_nondeterministic` (two renders differ: remove clocks, random values, map-order output), `build` (image
-declaration or build failure) and `rollout` (a workload never became ready). `scope` and `allowlist` failures (an
-object outside the application namespace, a cluster-scoped kind, an unlisted registry) are fixed in the files too.
+declaration or build failure), `rollout` (a workload never became ready) and `immutable_change` (the API server
+refuses an in-place update the deployer does not recreate on its own: a Service field such as `clusterIP`, or a Job
+still running past the wait bound; keep the field stable or retry once the Job finished). Go already recreates
+finished Jobs and workloads whose selector changed; `data_bearing_change` (a PersistentVolumeClaim) goes to a human.
+`scope` and `allowlist` failures (an object outside the application namespace, a cluster-scoped kind, an unlisted
+registry) are fixed in the files too.
 Fix the named paths and return the plan again; never edit `plan.yaml`.

@@ -180,6 +180,8 @@ func TestRouteTable(t *testing.T) {
 		CauseAgentNotConverging:     {OwnerHuman, OwnerHuman, OwnerHuman},
 		CauseBaseInvalid:            {OwnerOperator, OwnerOperator, OwnerOperator},
 		CausePolicy:                 {OwnerOperator, OwnerOperator, OwnerOperator},
+		CauseImmutableChange:        {OwnerDeployer, OwnerHuman, OwnerDeployer},
+		CauseDataBearingChange:      {OwnerHuman, OwnerHuman, OwnerHuman},
 	}
 	for _, c := range Causes() {
 		w, ok := want[c]

@@ -53,9 +53,12 @@ func ClassifyDeploymentError(err error) operability.Cause {
 	var imageErr *imagesrc.Error
 	var source *rendered.SourceError
 	var policy *PolicyError
+	var immutable *ImmutableChangeError
 	switch {
 	case errors.As(err, &policy):
 		return policy.Checks[0].Cause
+	case errors.As(err, &immutable):
+		return immutable.Cause()
 	case errors.As(err, &rendererChanged):
 		return operability.CauseEnvironment
 	case errors.As(err, &patchChanged):
@@ -103,7 +106,7 @@ func LiveChecks(in LiveInput) []operability.Check {
 		}
 		return checks
 	}
-	checks = append(checks, pass("O1.deploy", "applied and verified"))
+	checks = append(checks, pass("O1.deploy", "applied and verified"+recreatedDetail(r.Recreated)))
 
 	if !r.Ready || len(r.ResourceIDs) == 0 {
 		checks = append(checks, fail("O1.ready", operability.CauseRollout, "the receipt records no ready workloads"))
@@ -283,4 +286,21 @@ func (d Deployer) CheckLive(ctx context.Context, checkout string, plan *contract
 		return LiveChecks(LiveInput{Receipt: receipt, Err: err}), nil
 	}
 	return LiveChecks(LiveInput{Receipt: receipt, Desired: set}), nil
+}
+
+// recreatedDetail names the objects the deployer recreated for an immutable
+// change, so the operability report shows every recreate.
+func recreatedDetail(recreated []rendered.Recreation) string {
+	if len(recreated) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(recreated))
+	for _, rec := range recreated {
+		part := fmt.Sprintf("%s/%s/%s (%s: %s, %s)", rec.Ref.Kind, rec.Ref.Namespace, rec.Ref.Name, rec.Reason, strings.Join(rec.Fields, ","), rec.Propagation)
+		if len(rec.Replaced) > 0 {
+			part += " replaced " + strings.Join(rec.Replaced, ",")
+		}
+		parts = append(parts, part)
+	}
+	return "; recreated " + strings.Join(parts, "; ")
 }

@@ -22,3 +22,22 @@ type ImageInputs struct {
 	ContextPath    string `json:"context_path,omitempty"`
 	DockerfilePath string `json:"dockerfile_path,omitempty"`
 }
+
+// Recreation records an object the trusted deployer deleted and created again
+// because the API server refused to update an immutable field in place (a
+// changed Job template, a changed workload selector). It is information about
+// a deployment, like DeployedImage; no identity comparison depends on it.
+type Recreation struct {
+	Ref sdk.ObjectRef `json:"ref"`
+	// Fields are the immutable fields the API server named.
+	Fields []string `json:"fields"`
+	// Propagation is the delete propagation: Background for a finished Job,
+	// Orphan for a workload whose pods the recreated workload replaces.
+	Propagation string `json:"propagation"`
+	// Reason is the recreate policy's typed reason (deployment.RecreateReason).
+	Reason string `json:"reason"`
+	// Replaced lists the orphaned dependents (Kind/namespace/name) the
+	// deployer removed once the recreated workload was ready; dependents the
+	// recreated workload adopted are not listed.
+	Replaced []string `json:"replaced,omitempty"`
+}

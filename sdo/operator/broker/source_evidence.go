@@ -130,6 +130,7 @@ type sourceEvidenceRecord struct {
 	Images            []string                 `json:"images"`
 	ResourceIDs       []string                 `json:"resource_ids"`
 	Ready             bool                     `json:"ready"`
+	Recreated         []rendered.Recreation    `json:"recreated,omitempty"`
 	AcceptedCommit    string                   `json:"accepted_commit,omitempty"`
 	OperabilityDigest string                   `json:"operability_digest,omitempty"`
 }
@@ -139,7 +140,7 @@ func (e SourceEvidence) MarshalJSON() ([]byte, error) {
 	record := sourceEvidenceRecord{
 		ContainerImages: e.ContainerImages, BaseTree: e.BaseTree, EffectiveTree: e.EffectiveTree, PatchesDigest: e.PatchesDigest, ObservedRevision: e.ObservedRevision,
 		RenderDigest: e.RenderDigest, EnvDigest: e.EnvDigest, Images: e.Images, ResourceIDs: e.ResourceIDs,
-		Ready: e.Ready, AcceptedCommit: e.AcceptedCommit, OperabilityDigest: e.OperabilityDigest,
+		Ready: e.Ready, Recreated: e.Recreated, AcceptedCommit: e.AcceptedCommit, OperabilityDigest: e.OperabilityDigest,
 	}
 	var err error
 	if e.DeploymentSource != nil {
@@ -188,7 +189,7 @@ func (e *SourceEvidence) UnmarshalJSON(data []byte) error {
 		ContainerImages: record.ContainerImages, DeploymentSource: &contracts.DeploymentSource{}, BaseTree: record.BaseTree,
 		EffectiveTree: record.EffectiveTree, PatchesDigest: record.PatchesDigest,
 		ObservedRevision: record.ObservedRevision, RenderDigest: record.RenderDigest, EnvDigest: record.EnvDigest,
-		Images: record.Images, ResourceIDs: record.ResourceIDs, Ready: record.Ready, AcceptedCommit: record.AcceptedCommit, OperabilityDigest: record.OperabilityDigest,
+		Images: record.Images, ResourceIDs: record.ResourceIDs, Ready: record.Ready, Recreated: record.Recreated, AcceptedCommit: record.AcceptedCommit, OperabilityDigest: record.OperabilityDigest,
 	}
 	if err := protojson.Unmarshal(record.DeploymentSource, value.DeploymentSource); err != nil {
 		return fmt.Errorf("decode deployment source: %w", err)
