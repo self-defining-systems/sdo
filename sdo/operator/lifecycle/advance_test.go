@@ -55,6 +55,8 @@ type advWorld struct {
 	receipt        func(lifecycle.DeploymentReceipt) lifecycle.DeploymentReceipt
 	verdicts       []lifecycle.HealthVerdict
 	publishErr     error
+	designer       bool
+	designerErr    error
 
 	applied   lifecycle.DeploymentReceipt
 	proposed  map[string]bool
@@ -227,7 +229,19 @@ func newAdvWorld(t *testing.T) *advWorld {
 }
 
 func (w *advWorld) advancer() lifecycle.Advancer {
-	return lifecycle.Advancer{Upstreams: w, Broker: w, Readiness: w, Verifier: w, Shape: w.shape, Maintenance: w, Activity: w, Wait: func(context.Context, time.Duration) error { return nil }}
+	a := lifecycle.Advancer{Upstreams: w, Broker: w, Readiness: w, Verifier: w, Shape: w.shape, Maintenance: w, Activity: w, Wait: func(context.Context, time.Duration) error { return nil }}
+	if w.designer {
+		a.Designer = w
+	}
+	return a
+}
+
+func (w *advWorld) RefreshDetection(_ context.Context, change lifecycle.ShapeChange) error {
+	w.log("designer %s", change.Upstream[:4])
+	if change.Accepted == "" {
+		return errors.New("designer refresh before the advance was accepted")
+	}
+	return w.designerErr
 }
 
 func advRequest(t *testing.T) upstream.Request {
@@ -516,5 +530,71 @@ func TestAdvanceDoesNotMistakeAProposeFailureForAPatchHold(t *testing.T) {
 	result, err := w.run(t)
 	if err == nil || result.Outcome == lifecycle.AdvanceHeld {
 		t.Fatalf("result = %+v, err = %v", result, err)
+	}
+}
+
+// A shape change no longer holds the advance: it is deployed, verified and
+// accepted, then the detection designer refreshes for the new shape, after
+// maintenance resumed (the controller detects while the designer works).
+func TestAdvanceRoutesAShapeChangeToTheDetectionDesigner(t *testing.T) {
+	w := newAdvWorld(t)
+	w.designer = true
+	w.shapes[advCandidate] = "shape-b"
+	result, err := w.run(t)
+	if err != nil || result.Outcome != lifecycle.AdvanceAccepted {
+		t.Fatalf("result = %+v, err = %v", result, err)
+	}
+	id := lifecycle.AdvanceID(advRevision)
+	want := []string{"materialize git " + advRevision, "change 1111..2222", "propose " + id, "shape 3333", "shape 4444", "pause", "apply", "verify 4444", "publish " + id, "resume", "designer 2222"}
+	if !slices.Equal(w.events, want) {
+		t.Fatalf("events\n got %q\nwant %q", w.events, want)
+	}
+}
+
+func TestAdvanceHoldsOnlyWhenTheDesignerRefreshFails(t *testing.T) {
+	w := newAdvWorld(t)
+	w.designer = true
+	w.shapes[advCandidate] = "shape-b"
+	w.designerErr = errors.New("operability gate rejected the designer's detectors")
+	result, err := w.run(t)
+	if err != nil || result.Outcome != lifecycle.AdvanceHeld || result.Hold != lifecycle.HoldDesigner {
+		t.Fatalf("result = %+v, err = %v; want hold %s", result, err, lifecycle.HoldDesigner)
+	}
+	if result.Receipt.Commit == "" || len(w.published) != 1 || !strings.Contains(result.Detail, result.Receipt.Commit) || !strings.Contains(result.Detail, "operability gate") {
+		t.Fatalf("the hold must name the accepted commit and the refresh failure: %+v", result)
+	}
+	if out := result.FollowerOutcome(); out.Kind != upstream.Refused || !strings.HasPrefix(out.Reason, string(lifecycle.HoldDesigner)) {
+		t.Fatalf("follower outcome = %+v", out)
+	}
+	if count(w.events, "apply") != 1 || count(w.events, "pause") != count(w.events, "resume") {
+		t.Fatalf("events: %q", w.events)
+	}
+}
+
+// The designer runs for an accepted shape change only: an unchanged shape, a
+// held advance and a deferred advance never reach it.
+func TestAdvanceDoesNotCallTheDesignerWithoutAnAcceptedShapeChange(t *testing.T) {
+	for name, mutate := range map[string]func(*advWorld){
+		"shape unchanged": func(*advWorld) {},
+		"health regression": func(w *advWorld) {
+			w.shapes[advCandidate] = "shape-b"
+			w.verdicts = []lifecycle.HealthVerdict{{Outcome: lifecycle.VerificationSourceFault, Summary: "firing"}}
+		},
+		"controller busy": func(w *advWorld) { w.shapes[advCandidate] = "shape-b"; w.busy = "incident open" },
+		"candidate does not render": func(w *advWorld) {
+			w.shapeErr = map[string]error{advCandidate: errors.New("template: bad")}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newAdvWorld(t)
+			w.designer = true
+			mutate(w)
+			if _, err := w.run(t); err != nil {
+				t.Fatal(err)
+			}
+			if count(w.events, "designer") != 0 {
+				t.Fatalf("designer ran: %q", w.events)
+			}
+		})
 	}
 }

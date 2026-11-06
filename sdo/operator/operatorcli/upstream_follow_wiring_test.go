@@ -58,4 +58,8 @@ func TestControllerAdvancerWiresTheOnboardingDeployer(t *testing.T) {
 	if _, ok := advancer.Activity.(controllerActivity); !ok {
 		t.Fatalf("activity = %T", advancer.Activity)
 	}
+	// A shape change routes to the detection designer, not to a hold.
+	if designer, ok := advancer.Designer.(designerRefresh); !ok || designer.launch != run.Controller {
+		t.Fatalf("designer = %#v", advancer.Designer)
+	}
 }
