@@ -105,3 +105,12 @@ def test_identity_input_diagnostics_preserve_the_digest(module: Path) -> None:
     assert source_identity(module, changed) != identity
     assert changed[label] != before
     assert changed["build environment"] == inputs["build environment"]
+
+
+def test_identity_ignores_unusable_vcs_status_and_reports_go_stderr(module: Path) -> None:
+    # A merge_group checkout can have a .git that `git status` rejects (exit 128); go list must not stamp VCS.
+    (module / ".git").mkdir()
+    assert source_identity(module)
+    (module / "go.mod").write_text("module fixture.test/operator\n\nrequire bad\n")
+    with pytest.raises(RuntimeError, match=r"go list failed.*go\.mod"):
+        source_identity(module)
