@@ -55,6 +55,17 @@ def offenders(slow: dict[str, float], allowed: dict[str, str]) -> dict[str, floa
     return {key: seconds for key, seconds in slow.items() if key not in allowed}
 
 
+def near_budget(args: argparse.Namespace, allowed: dict[str, dict[str, str]], limit: float) -> dict[str, float]:
+    """Tests over half the budget: a duration that varies run to run (a loaded runner doubles it) fails a merge soon."""
+    half = limit / 2
+    found: dict[str, float] = {}
+    for path in args.go:
+        found.update(offenders(go_slow(path.read_text(errors="replace").splitlines(), half), allowed["go"]))
+    for path in args.pytest:
+        found.update(offenders(pytest_slow(path.read_text(errors="replace").splitlines(), half), allowed["python"]))
+    return found
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--go", type=Path, action="append", default=[])
@@ -70,6 +81,11 @@ def main() -> int:
         found.update(offenders(pytest_slow(path.read_text(errors="replace").splitlines(), limit), allowed["python"]))
     for key, seconds in sorted(found.items(), key=lambda item: -item[1]):
         print(f"::error::{key} took {seconds:.1f}s (PR budget {limit:.0f}s)")
+    for key, seconds in sorted(near_budget(args, allowed, limit).items(), key=lambda item: -item[1]):
+        if key not in found:
+            print(
+                f"::warning::{key} took {seconds:.1f}s, over half the {limit:.0f}s budget: its time varies run to run"
+            )
     if found:
         print(
             "Move the test to the nightly/integration tier (testing.Short skip or the nightly ignore list), make it "
