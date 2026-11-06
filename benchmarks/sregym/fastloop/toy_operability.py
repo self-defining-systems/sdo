@@ -118,9 +118,10 @@ def parse_hold_routing(reason: str) -> HoldRouting | None:
     match = _ROUTING.match(reason)
     if match is None:
         return None
-    kind, sep, _ = reason[match.end() :].partition(":")
+    rest = reason[match.end() :]
+    kind = rest.partition(":")[0].split(" ")[0].strip()
     items = () if match["items"] == "-" else tuple(match["items"].split(","))
-    return HoldRouting(match["cause"], match["owner"], items, kind.strip() if sep else "")
+    return HoldRouting(match["cause"], match["owner"], items, kind)
 
 
 @dataclass(frozen=True)
@@ -136,6 +137,46 @@ class Expectation:
 
 #: A broken commit's failed rollout or firing floor detector is the responder's, in advance mode.
 BROKEN_EXPECTATION = Expectation("broken", frozenset({"rollout", "source_fault"}), "responder", (), max_agent_tasks=0)
+
+
+#: The harness's own expectation per hold kind: the (cause, owner, items) SDO may route it to in an advance.
+HOLD_ROUTES: dict[str, frozenset[tuple[str, str, tuple[str, ...]]]] = {
+    "ref_rewritten": frozenset({("environment", "human", ())}),
+    "materialize": frozenset({("environment", "human", ())}),
+    "memory_touched": frozenset({("scope", "human", ("O6",))}),
+    "scope": frozenset({("scope", "human", ("O6",)), ("allowlist", "human", ("O6",))}),
+    "merge_conflict": frozenset({("patch", "deployer", ("O1",))}),
+    "patch_conflict": frozenset({("patch", "deployer", ("O1",))}),
+    "render": frozenset({("render", "deployer", ("O1",)), ("render_nondeterministic", "deployer", ("O1",))}),
+    "build": frozenset({("build", "deployer", ("O1",)), ("build", "deployer", ("O2",))}),
+    "shape_change": frozenset({("coverage", "designer", ("O3",))}),
+    "rollout": frozenset({("rollout", "responder", ("O1",))}),
+    "health": frozenset(
+        {
+            ("source_fault", "responder", ("O4",)),
+            ("probe_unavailable", "designer", ("O4",)),
+            ("detector_fault", "designer", ("O4",)),
+        }
+    ),
+}
+
+
+def hold_kind(reason: str) -> str:
+    """The typed hold kind of a reason (after the routing prefix); empty when the reason carries no prefix."""
+    routing = parse_hold_routing(reason)
+    return routing.kind if routing else ""
+
+
+def table_violations(reason: str) -> list[str]:
+    """A held reason's routing must be one the harness's table allows for its kind."""
+    routing = parse_hold_routing(reason)
+    if routing is None:
+        return [f"hold reason {reason!r} carries no cause/owner/items routing"]
+    allowed = HOLD_ROUTES.get(routing.kind)
+    got = (routing.cause, routing.owner, routing.items)
+    if allowed is not None and got not in allowed:
+        return [f"hold {routing.kind!r} routed to {got}, expected one of {sorted(allowed)}"]
+    return []
 
 
 def routing_violations(reason: str, expectation: Expectation) -> list[str]:
