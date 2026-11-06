@@ -69,3 +69,14 @@ func (i Installer) ensureClusterGrants(ctx context.Context, p Plan) error {
 	}
 	return nil
 }
+
+// EnsureGrants applies only the cluster grants of cfg's install plan, the step
+// Install, install-existing and inspect-existing share, so a test can check
+// what an installed identity may do against a real API server.
+func (i Installer) EnsureGrants(ctx context.Context, cfg Config) error {
+	plan, err := Resources(cfg)
+	if err != nil {
+		return err
+	}
+	return i.ensureClusterGrants(ctx, plan)
+}

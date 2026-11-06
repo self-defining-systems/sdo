@@ -24,7 +24,9 @@ and install), `advance` (O1, O2, O4, O6; gates `PublishAdvance`). Check statuses
   report names it in `subject.accepted_commit`.
 - ConfigMap `sdo-operability` in the control namespace, current state only: `summary.json`
   `{accepted_commit, stage, digest, observed_at, items:[{id, status, first_failed_check, cause, owner}]}` and
-  `report.json`. Read `kubectl -n <control> get cm sdo-operability -o json`.
+  `report.json`, plus `obligations.json`: the open upstream obligations as a JSON list (`kind`, `accepted`, `cause`,
+  `owner`, `attempts`, `reason`, `since`; `[]` when none; absent until the follower first saves). A new report keeps it.
+  Read `kubectl -n <control> get cm sdo-operability -o json`.
 - Operate Job termination message `{summary, decision, owner}` when onboarding stops on a report.
 
 ## Causes and owners

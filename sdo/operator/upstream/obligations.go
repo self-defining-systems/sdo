@@ -224,3 +224,20 @@ func DecodeObligations(data map[string]string) ([]Obligation, error) {
 	}
 	return list, nil
 }
+
+// ObligationsSummary is the JSON list the sdo-operability ConfigMap shows: one
+// record per open obligation with its cause, owner, attempts and age, in a
+// stable order. No obligation is "[]".
+func ObligationsSummary(obligations []Obligation) (string, error) {
+	sorted := append([]Obligation(nil), obligations...)
+	sortObligations(sorted)
+	records := make([]obligationRecord, 0, len(sorted))
+	for _, o := range sorted {
+		records = append(records, obligationRecord{
+			Path: o.Path, Kind: string(o.Kind), Accepted: o.Accepted, Upstream: o.Upstream,
+			Cause: o.Cause, Owner: o.Owner, Reason: o.Reason, Attempts: o.Attempts, Since: o.Since.UTC().Format(time.RFC3339Nano),
+		})
+	}
+	b, err := json.Marshal(records)
+	return string(b), err
+}

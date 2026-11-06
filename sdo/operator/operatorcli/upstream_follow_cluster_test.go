@@ -212,3 +212,34 @@ func TestControllerActivityRefusesUnreadableState(t *testing.T) {
 		t.Fatal("an unreadable controller state counted as idle")
 	}
 }
+
+// Open obligations are surfaced in the operability ConfigMap with cause, owner
+// and attempts, and cleared (an empty list) when the last one settles.
+func TestObligationsAreSurfacedInTheOperabilityConfigMap(t *testing.T) {
+	ctx := context.Background()
+	client := fake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: install.OperabilityConfigMap, Namespace: testControl}, Data: map[string]string{"summary.json": "{}"}})
+	store := configMapObligations{Client: client, Namespace: testControl}
+	owed := []upstream.Obligation{{Path: ".", Kind: upstream.ObligationDesignerRefresh, Accepted: "c1", Cause: "coverage", Owner: "designer", Reason: "synthetic", Attempts: 3, Since: time.Unix(1_700_000_000, 0).UTC()}}
+	if err := store.Save(ctx, owed); err != nil {
+		t.Fatal(err)
+	}
+	configMap, err := client.CoreV1().ConfigMaps(testControl).Get(ctx, install.OperabilityConfigMap, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"cause":"coverage"`, `"owner":"designer"`, `"attempts":3`, `"kind":"designer_refresh"`} {
+		if !strings.Contains(configMap.Data[install.OperabilityObligationsKey], want) {
+			t.Fatalf("obligations summary %q lacks %s", configMap.Data[install.OperabilityObligationsKey], want)
+		}
+	}
+	if configMap.Data["summary.json"] != "{}" {
+		t.Fatalf("the report summary was changed: %v", configMap.Data)
+	}
+	if err := store.Save(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	configMap, _ = client.CoreV1().ConfigMaps(testControl).Get(ctx, install.OperabilityConfigMap, metav1.GetOptions{})
+	if got := configMap.Data[install.OperabilityObligationsKey]; got != "[]" {
+		t.Fatalf("settled obligations summary = %q, want []", got)
+	}
+}

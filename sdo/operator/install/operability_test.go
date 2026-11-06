@@ -62,3 +62,36 @@ func TestPublishOperabilityRefusesAnInvalidReport(t *testing.T) {
 		t.Fatal("published without a client")
 	}
 }
+
+// Open upstream obligations sit beside the report under their own key. A new
+// report replaces the summary but never drops them, and nothing is created
+// before a report exists (the ConfigMap would have no summary to read).
+func TestOperabilityObligationsSurviveANewReport(t *testing.T) {
+	ctx := context.Background()
+	client := fake.NewSimpleClientset()
+	if err := PublishOperabilityObligations(ctx, client, "sdo-control", `[{"kind":"designer_refresh"}]`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CoreV1().ConfigMaps("sdo-control").Get(ctx, OperabilityConfigMap, metav1.GetOptions{}); err == nil {
+		t.Fatal("obligations created a report ConfigMap with no report")
+	}
+	if err := PublishOperability(ctx, client, "sdo-control", operabilityReport(t, "c1"), time.Unix(0, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if err := PublishOperabilityObligations(ctx, client, "sdo-control", `[{"kind":"designer_refresh"}]`); err != nil {
+		t.Fatal(err)
+	}
+	if err := PublishOperability(ctx, client, "sdo-control", operabilityReport(t, "c2"), time.Unix(0, 0)); err != nil {
+		t.Fatal(err)
+	}
+	configMap, err := client.CoreV1().ConfigMaps("sdo-control").Get(ctx, OperabilityConfigMap, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := configMap.Data[OperabilityObligationsKey]; got != `[{"kind":"designer_refresh"}]` {
+		t.Fatalf("obligations = %q after a new report", got)
+	}
+	if configMap.Data["summary.json"] == "" || configMap.Data["report.json"] == "" {
+		t.Fatalf("report keys lost: %v", configMap.Data)
+	}
+}

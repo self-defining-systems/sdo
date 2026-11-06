@@ -87,7 +87,17 @@ func (s configMapObligations) Save(ctx context.Context, owed []upstream.Obligati
 		want.ResourceVersion = prior.ResourceVersion
 		_, err = configMaps.Update(ctx, want, metav1.UpdateOptions{})
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	summary, err := upstream.ObligationsSummary(owed)
+	if err != nil {
+		return err
+	}
+	if err := install.PublishOperabilityObligations(ctx, s.Client, s.Namespace, summary); err != nil {
+		return fmt.Errorf("obligations are saved; show them in %s: %w", install.OperabilityConfigMap, err)
+	}
+	return nil
 }
 
 // advanceMaintenancePrefix marks maintenance generations the follower wrote,
