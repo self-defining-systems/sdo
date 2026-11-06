@@ -23,7 +23,10 @@ import (
 // response: InProcess calls Serve directly; production runs Serve in a child
 // process bounded in memory, time and output, so that a chart that exhausts
 // memory (a Go fatal) or loops without calling a template function cannot
-// crash or hang the caller. A Runner stops when ctx ends. An error that wraps
+// crash or hang the caller. A Runner stops when ctx ends (including while it
+// waits for capacity to start). It also stops a render that runs longer than
+// RenderTimeLimit, counted from when the render starts, and reports that as an
+// error wrapping ErrTimeLimit. An error that wraps
 // ErrRenderProcess means the render itself broke a process limit or crashed;
 // helm reports it as a render-budget violation (a verdict on the chart). Any
 // other error is returned as is; a process that could not be started should wrap
@@ -33,6 +36,10 @@ type Runner func(ctx context.Context, request []byte) ([]byte, error)
 // ErrRenderProcess marks a Runner failure caused by the render: the process
 // ran out of memory, passed its output cap or crashed.
 var ErrRenderProcess = errors.New("helm render process failed")
+
+// ErrTimeLimit marks a Runner failure because the render itself passed
+// RenderTimeLimit once it was running: a verdict on the chart.
+var ErrTimeLimit = errors.New("helm render passed its time limit")
 
 // InProcess runs the render in the calling goroutine, bounded only by the
 // engine's in-template hooks. For tests and tools that render trusted charts.

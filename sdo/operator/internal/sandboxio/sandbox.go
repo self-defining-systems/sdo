@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -46,6 +47,10 @@ type Limits struct {
 	Output int64
 	// Procs is the child's GOMAXPROCS.
 	Procs int
+	// Wall bounds the child's wall-clock time, counted from when it holds a
+	// slot (time queued behind other children is not the request's). Zero
+	// means only the caller's context bounds it. Expiry is ErrWallClock.
+	Wall time.Duration
 }
 
 // DefaultLimits suit one Helm chart render: the largest real charts render in
@@ -112,6 +117,17 @@ func (e *Error) Is(target error) bool { return target == ErrChild }
 // caller treats it as a transient host condition.
 var ErrSpawn = errors.New("sandboxio: child could not be started")
 
+// ErrWallClock matches a child stopped because it passed Limits.Wall: our own
+// deadline kill, a verdict on the request.
+var ErrWallClock = errors.New("sandboxio: child passed its wall-clock limit")
+
+// ErrInterrupted matches a child killed by SIGKILL that neither we sent (our
+// deadline, output cap and caller cancellation are accounted for) nor its
+// memory use explains: the host's OOM killer or an operator. It says nothing
+// about the request, so it is never an *Error and never ErrChild; a caller
+// treats it as a transient host condition.
+var ErrInterrupted = errors.New("sandboxio: child was killed from outside")
+
 // executableFn finds the child's executable; tests replace it.
 var executableFn = executable
 
@@ -156,7 +172,8 @@ func serve(h Handler) int {
 // Run sends request to the child serving name and returns its response. A
 // child that exceeds a limit or crashes is an *Error, one that cannot be
 // started wraps ErrSpawn; when ctx ends first the
-// child is killed and the error wraps context.Cause(ctx).
+// child is killed and the error wraps context.Cause(ctx). Waiting for a slot
+// is bounded by ctx alone; Limits.Wall starts after the slot is held.
 func Run(ctx context.Context, name string, request []byte, limits Limits) ([]byte, error) {
 	mu.Lock()
 	_, ok := handlers[name]
@@ -170,6 +187,12 @@ func Run(ctx context.Context, name string, request []byte, limits Limits) ([]byt
 		defer func() { <-slots }()
 	case <-ctx.Done():
 		return nil, fmt.Errorf("sandboxed %s not started: %w", name, context.Cause(ctx))
+	}
+	parent := ctx
+	if limits.Wall > 0 {
+		var stop context.CancelFunc
+		ctx, stop = context.WithTimeoutCause(ctx, limits.Wall, ErrWallClock)
+		defer stop()
 	}
 	exe, err := executableFn()
 	if err != nil {
@@ -193,19 +216,23 @@ func Run(ctx context.Context, name string, request []byte, limits Limits) ([]byt
 	if err := start(cmd); err != nil {
 		return nil, fmt.Errorf("sandboxed %s: start child: %w: %w", name, ErrSpawn, err)
 	}
+	watch := watchPeak(cmd.Process.Pid)
 	response, readErr := io.ReadAll(io.LimitReader(stdout, limits.Output+1))
 	overflow := int64(len(response)) > limits.Output
 	if overflow {
 		_ = cmd.Process.Kill()
 	}
 	waitErr := cmd.Wait()
+	peak := watch.finish(cmd.ProcessState)
 	switch {
+	case parent.Err() != nil:
+		return nil, fmt.Errorf("sandboxed %s stopped: %w", name, context.Cause(parent))
 	case ctx.Err() != nil:
-		return nil, fmt.Errorf("sandboxed %s stopped: %w", name, context.Cause(ctx))
+		return nil, fmt.Errorf("sandboxed %s stopped after %s: %w", name, limits.Wall, context.Cause(ctx))
 	case overflow:
 		return nil, &Error{Name: name, Kind: KindOutput, Detail: fmt.Sprintf("response passed %d bytes", limits.Output)}
 	case waitErr != nil:
-		return nil, classify(name, waitErr, stderr.String(), peakBytes(cmd.ProcessState), limits)
+		return nil, classify(name, waitErr, stderr.String(), peak, killedBySIGKILL(cmd.ProcessState), limits)
 	case readErr != nil:
 		return nil, fmt.Errorf("sandboxed %s: read response: %w", name, readErr)
 	}
@@ -226,7 +253,13 @@ var threadFailures = []string{
 // fits (pthread_create/clone failed). Both are the memory limit when the child
 // had grown to a large share of it; the same thread failure at a small peak is
 // a host condition (process or pid limits), so it stays a crash.
-func classify(name string, waitErr error, stderr string, peak int64, limits Limits) error {
+//
+// A SIGKILL reaching here is not ours (Run accounts for its own kills before
+// classifying). At a peak near the limit it is the memory limit (the kernel's
+// OOM killer reaching the child first); otherwise it is the host (the child is
+// the OOM killer's first choice, oom_score_adj 1000, whatever the chart does)
+// and is ErrInterrupted, never a verdict on the request.
+func classify(name string, waitErr error, stderr string, peak int64, sigkill bool, limits Limits) error {
 	detail := strings.TrimSpace(stderr)
 	if i := strings.IndexByte(detail, '\n'); i >= 0 {
 		// The first line of a Go fatal names it; the rest is a stack trace.
@@ -241,6 +274,12 @@ func classify(name string, waitErr error, stderr string, peak int64, limits Limi
 			}
 		}
 	}
+	if sigkill && !memoryExit {
+		if peak < limits.Memory/2 {
+			return fmt.Errorf("sandboxed %s: %w: %w (peak %d MiB of a %d MiB limit)", name, ErrInterrupted, waitErr, peak>>20, limits.Memory>>20)
+		}
+		memoryExit = true
+	}
 	if memoryExit {
 		return &Error{Name: name, Kind: KindMemory, Detail: fmt.Sprintf("exceeded the %d MiB memory limit (%s)", limits.Memory>>20, detail)}
 	}
@@ -250,6 +289,12 @@ func classify(name string, waitErr error, stderr string, peak int64, limits Limi
 		detail = waitErr.Error() + ": " + detail
 	}
 	return &Error{Name: name, Kind: KindCrash, Detail: detail}
+}
+
+// killedBySIGKILL reports whether the child died of SIGKILL.
+func killedBySIGKILL(ps *os.ProcessState) bool {
+	ws, ok := ps.Sys().(syscall.WaitStatus)
+	return ok && ws.Signaled() && ws.Signal() == syscall.SIGKILL
 }
 
 // headBuffer keeps the first max bytes written and discards the rest, so a
