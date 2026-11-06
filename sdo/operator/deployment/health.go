@@ -151,14 +151,26 @@ type IndependentHealthVerifier struct {
 	Probe        HealthProbe
 }
 
+// Verify judges the accepted HEAD: VerifyCandidate at the accepted repository.
 func (v IndependentHealthVerifier) Verify(ctx context.Context, acceptedCommit, namespace, objective string, source lifecycle.DeploymentReceipt) (lifecycle.HealthVerdict, error) {
-	if v.AcceptedRoot == "" || v.OperatorRoot == "" || v.Readiness == nil || namespace == "" || strings.TrimSpace(objective) == "" || acceptedCommit == "" || !source.Ready {
-		return lifecycle.HealthVerdict{}, errors.New("accepted repository, operator, observer, namespace, objective, commit, and source evidence are required")
+	return v.VerifyCandidate(ctx, v.AcceptedRoot, acceptedCommit, namespace, objective, source)
+}
+
+// VerifyCandidate judges commit, which must be the clean HEAD of root, with
+// the detectors of that commit against the live deployment source: the
+// accepted repository after onboarding, or a broker proposal checkout whose
+// candidate is not accepted yet (an upstream advance). The deployed tree must
+// be commit's tree or an ancestor's, the live workloads must still match it
+// (re-verified in root, where commit lives), and neither root nor its
+// detector tree may change during the evaluation.
+func (v IndependentHealthVerifier) VerifyCandidate(ctx context.Context, root, commit, namespace, objective string, source lifecycle.DeploymentReceipt) (lifecycle.HealthVerdict, error) {
+	if root == "" || v.OperatorRoot == "" || v.Readiness == nil || namespace == "" || strings.TrimSpace(objective) == "" || commit == "" || !source.Ready {
+		return lifecycle.HealthVerdict{}, errors.New("repository, operator, observer, namespace, objective, commit, and source evidence are required")
 	}
 	git := func(args ...string) (string, error) {
-		output, err := deploymentio.Run(ctx, "git", append([]string{"-C", v.AcceptedRoot}, args...), nil)
+		output, err := deploymentio.Run(ctx, "git", append([]string{"-C", root}, args...), nil)
 		if err != nil {
-			return "", fmt.Errorf("accepted git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+			return "", fmt.Errorf("verified repository git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
 		}
 		return strings.TrimSpace(string(output)), nil
 	}
@@ -166,15 +178,15 @@ func (v IndependentHealthVerifier) Verify(ctx context.Context, acceptedCommit, n
 	if err != nil {
 		return lifecycle.HealthVerdict{}, err
 	}
-	if head != acceptedCommit {
-		return lifecycle.HealthVerdict{}, errors.New("health judge commit is not the accepted repository HEAD")
+	if head != commit {
+		return lifecycle.HealthVerdict{}, fmt.Errorf("verified commit %s is not the HEAD of %s", commit, root)
 	}
 	if status, err := git("status", "--porcelain"); err != nil {
 		return lifecycle.HealthVerdict{}, err
 	} else if status != "" {
-		return lifecycle.HealthVerdict{}, errors.New("accepted repository changed before health verification")
+		return lifecycle.HealthVerdict{}, errors.New("verified repository changed before health verification")
 	}
-	ancestorTrees, err := git("log", "--format=%H %T", acceptedCommit)
+	ancestorTrees, err := git("log", "--format=%H %T", commit)
 	if err != nil {
 		return lifecycle.HealthVerdict{}, err
 	}
@@ -187,23 +199,27 @@ func (v IndependentHealthVerifier) Verify(ctx context.Context, acceptedCommit, n
 		}
 	}
 	if sourceCommit == "" {
-		return lifecycle.HealthVerdict{}, errors.New("deployed source tree is not an accepted ancestor of health diagnostics")
+		return lifecycle.HealthVerdict{}, errors.New("deployed source tree is not an ancestor of the verified health diagnostics")
 	}
-	detectorTree, err := git("rev-parse", acceptedCommit+":"+layout.DiagnosticsDir)
+	detectorTree, err := git("rev-parse", commit+":"+layout.DiagnosticsDir)
 	if err != nil {
-		return lifecycle.HealthVerdict{}, fmt.Errorf("accepted health diagnostics: %w", err)
+		return lifecycle.HealthVerdict{}, fmt.Errorf("verified health diagnostics: %w", err)
 	}
 	if detectorTree == "" {
-		return lifecycle.HealthVerdict{}, errors.New("accepted detector tree is empty")
+		return lifecycle.HealthVerdict{}, errors.New("verified detector tree is empty")
 	}
-	if _, err := v.Readiness.VerifyAccepted(ctx, sourceCommit, namespace, source); err != nil {
+	// The commit lives in root, which is not the accepted repository for a
+	// candidate: re-verify the deployment against root.
+	readiness := *v.Readiness
+	readiness.AcceptedRoot = root
+	if _, err := readiness.VerifyAccepted(ctx, sourceCommit, namespace, source); err != nil {
 		return lifecycle.HealthVerdict{}, fmt.Errorf("deployed source changed before health verification: %w", err)
 	}
 	probe := v.Probe
 	if probe == nil {
 		probe = AcceptedDetectorProbe{}
 	}
-	evaluation, err := probe.Evaluate(ctx, v.AcceptedRoot, v.OperatorRoot, namespace)
+	evaluation, err := probe.Evaluate(ctx, root, v.OperatorRoot, namespace)
 	if err != nil {
 		return lifecycle.HealthVerdict{}, err
 	}
@@ -211,10 +227,10 @@ func (v IndependentHealthVerifier) Verify(ctx context.Context, acceptedCommit, n
 		return verdict, nil
 	}
 	if got, err := git("rev-parse", "HEAD:"+layout.DiagnosticsDir); err != nil || got != detectorTree {
-		return lifecycle.HealthVerdict{}, errors.New("accepted health detectors changed during verification")
+		return lifecycle.HealthVerdict{}, errors.New("verified health detectors changed during verification")
 	}
 	if status, err := git("status", "--porcelain"); err != nil || status != "" {
-		return lifecycle.HealthVerdict{}, errors.New("accepted repository changed during health verification")
+		return lifecycle.HealthVerdict{}, errors.New("verified repository changed during health verification")
 	}
 	return verdictOf(evaluation), nil
 }

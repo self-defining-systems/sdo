@@ -146,12 +146,20 @@ func (c Coordinator) retryInfrastructure(ctx context.Context, cfg Config, step s
 // window. A pending verdict at the bound is a terminal error naming each
 // pending detector.
 func (c Coordinator) verifyHealth(ctx context.Context, cfg Config, acceptedCommit string, deployment DeploymentReceipt) (HealthVerdict, error) {
+	return c.awaitVerdict(ctx, cfg, func() (HealthVerdict, error) {
+		return c.Verifier.Verify(ctx, acceptedCommit, cfg.Namespace, cfg.HealthObjective, deployment)
+	})
+}
+
+// awaitVerdict repeats one independent evaluation while it is pending, within
+// cfg's pending bounds, retrying infrastructure failures of each evaluation.
+func (c Coordinator) awaitVerdict(ctx context.Context, cfg Config, evaluate func() (HealthVerdict, error)) (HealthVerdict, error) {
 	evaluations := orDefault(cfg.PendingEvaluations, defaultPendingEvaluations)
 	interval := orDefault(cfg.PendingInterval, defaultPendingInterval)
 	for evaluation := 1; ; evaluation++ {
 		var verdict HealthVerdict
 		err := c.retryInfrastructure(ctx, cfg, "independent health verification", func() (err error) {
-			verdict, err = c.Verifier.Verify(ctx, acceptedCommit, cfg.Namespace, cfg.HealthObjective, deployment)
+			verdict, err = evaluate()
 			return err
 		})
 		if err != nil {
