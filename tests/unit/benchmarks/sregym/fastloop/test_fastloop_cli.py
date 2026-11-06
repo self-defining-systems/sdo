@@ -87,7 +87,8 @@ def test_environment_round_trips_all_paths_through_saved_file(tmp_path: Path) ->
 def test_up_persists_a_dns_application_name_and_loads_legacy_display_names(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, attach_only: bool
 ) -> None:
-    from benchmarks.sregym.fastloop import cli
+    from benchmarks.sregym.fastloop import cli, lane_installability
+    from benchmarks.sregym.fastloop.lane_installability import LaneTopology
 
     monkeypatch.setattr(cli, "up_preflight", lambda _args: None)
     (tmp_path / "application_workspace").mkdir()
@@ -129,6 +130,8 @@ def test_up_persists_a_dns_application_name_and_loads_legacy_display_names(
             return [{"kind": "Deployment", "metadata": {"name": "mongo", "namespace": namespace}, "spec": {}}]
 
     monkeypatch.setattr(cli, "KubectlApplicationCluster", Cluster)
+    # Topology capture has its own contract tests; here it must not spawn kubectl against a synthetic kubeconfig.
+    monkeypatch.setattr(lane_installability, "capture_topology", lambda *_args, **_kwargs: LaneTopology())
     extra = ["--reuse-cluster-only"] if attach_only else []
     assert main(["up", "--no-dev-mount", "--run-dir", str(tmp_path), "--builder", "", "--no-sandbox", *extra]) == 0
     assert FastloopEnvironment.load(tmp_path).application == "hotel-reservation"
@@ -687,7 +690,7 @@ def test_native_install_runs_without_a_selective_reset_because_the_row_start_wip
 ) -> None:
     from benchmarks.sregym import adapter
     from benchmarks.sregym.adapter import native_operator
-    from benchmarks.sregym.fastloop import cli
+    from benchmarks.sregym.fastloop import cli, sdo_agent
     from tests.unit.benchmarks.sregym.fastloop.test_fastloop_sdo_agent import FakeOps, _clock, _inject
 
     environment = FastloopEnvironment(
@@ -703,6 +706,8 @@ def test_native_install_runs_without_a_selective_reset_because_the_row_start_wip
     ops = FakeOps()
     calls: list[str] = []
     monkeypatch.setattr(cli, "_cluster_ops", lambda *_args: ops)
+    # Setup-usage capture has its own tests; here it must not spawn kubectl against a synthetic kubeconfig.
+    monkeypatch.setattr(sdo_agent.SdoPersistentAgent, "_worker_configmaps", lambda _self: [])
 
     real_execute = native_operator.execute_operator
 
