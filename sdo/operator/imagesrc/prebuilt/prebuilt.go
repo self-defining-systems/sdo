@@ -118,13 +118,6 @@ func (r *Source) Resolve(ctx context.Context, req imagesrc.Request, _ *contracts
 	return imagesrc.Resolved{Ref: pinned, Inputs: imagesrc.Inputs{SourceImage: req.Image}}, nil
 }
 
-// ResolveImage satisfies deployment.ImageResolver.
-//
-// Transitional shim, removed with the strategy registry in S3-13b.
-func (r *Source) ResolveImage(ctx context.Context, ref string) (string, error) {
-	return r.pin(ctx, ref)
-}
-
 func (r *Source) pin(ctx context.Context, ref string) (string, error) {
 	named, err := reference.ParseNormalizedNamed(ref)
 	if err != nil {

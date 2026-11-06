@@ -59,23 +59,9 @@ func TestAcceptedEvidenceRecordsTheSourceDigestsAndPlan(t *testing.T) {
 	}
 }
 
-// A legacy-form plan has no new-form plan to keep; the evidence still names
-// the source the deployer derived from it.
-func TestLegacyPlanEvidenceNamesTheDerivedSource(t *testing.T) {
-	h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{clear}})
-	if _, err := h.coordinator.Run(context.Background(), config()); err != nil {
-		t.Fatal(err)
-	}
-	evidence := acceptedEvidence(t, h)
-	want, _ := rendered.LegacyRawSource([]string{"k8s"})
-	if evidence.Plan != nil || !rendered.SameDeploymentSource(evidence.DeploymentSource, want) {
-		t.Fatalf("evidence source %v plan %v", evidence.DeploymentSource, evidence.Plan)
-	}
-}
-
 func TestReceiptThatDoesNotBindTheProposedSourceIsNotAccepted(t *testing.T) {
 	for name, adjust := range map[string]func(*lifecycle.DeploymentReceipt){
-		"another source":   func(r *lifecycle.DeploymentReceipt) { r.Source, _ = rendered.LegacyRawSource([]string{"other"}) },
+		"another source":   func(r *lifecycle.DeploymentReceipt) { r.Source = rawSourcePlan(t, "other").GetSource() },
 		"no source":        func(r *lifecycle.DeploymentReceipt) { r.Source = nil },
 		"no render digest": func(r *lifecycle.DeploymentReceipt) { r.RenderDigest = "" },
 		"no env digest":    func(r *lifecycle.DeploymentReceipt) { r.EnvDigest = "" },
@@ -104,7 +90,7 @@ func TestRestartRequiresTheRecordedSourceAndDigests(t *testing.T) {
 	for name, adjust := range map[string]func(*lifecycle.DeploymentReceipt){
 		"render digest": func(r *lifecycle.DeploymentReceipt) { r.RenderDigest = "changed" },
 		"env digest":    func(r *lifecycle.DeploymentReceipt) { r.EnvDigest = "changed" },
-		"source":        func(r *lifecycle.DeploymentReceipt) { r.Source, _ = rendered.LegacyRawSource([]string{"other"}) },
+		"source":        func(r *lifecycle.DeploymentReceipt) { r.Source = rawSourcePlan(t, "other").GetSource() },
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{firing, clear}})

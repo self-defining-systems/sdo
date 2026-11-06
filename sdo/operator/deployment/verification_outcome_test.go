@@ -58,7 +58,6 @@ func TestEveryInfrastructureKindIsRecognisedByLifecycle(t *testing.T) {
 		err  error
 		want bool
 	}{
-		"build timeout":            {&BuildTimeoutError{}, true},
 		"image timeout per image":  {&imagesrc.TimeoutError{Image: "r/a:1"}, true},
 		"image timeout budget":     {&imagesrc.TimeoutError{Image: "r/a:1", Budget: true}, true},
 		"progressing rollout":      {&RolloutTimeoutError{}, true},
@@ -70,8 +69,6 @@ func TestEveryInfrastructureKindIsRecognisedByLifecycle(t *testing.T) {
 		"build daemon unavailable": {&buildkit.BuildFailureError{Cause: buildkit.BuildFailureInfrastructure}, true},
 		"build compile error":      {&buildkit.BuildFailureError{Cause: buildkit.BuildFailureCompile}, false},
 		"build network error":      {&buildkit.BuildFailureError{Cause: buildkit.BuildFailureNetwork}, false},
-		"pin transient":            {tagImageRejection("m.yaml", "img:1", resolve(imagesrc.ResolveTransient)), true},
-		"pin missing":              {tagImageRejection("m.yaml", "img:1", resolve(imagesrc.ResolveMissing)), false},
 		"plain error":              {errors.New("boom"), false},
 	}
 	for name, tc := range cases {

@@ -147,7 +147,7 @@ func boundedHealthOutput(data []byte) string {
 type IndependentHealthVerifier struct {
 	AcceptedRoot string
 	OperatorRoot string
-	Readiness    *Registry
+	Readiness    *Deployer
 	Probe        HealthProbe
 }
 

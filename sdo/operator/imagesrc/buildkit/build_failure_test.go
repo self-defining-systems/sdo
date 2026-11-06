@@ -83,7 +83,7 @@ func TestFailedBuildJobReturnsTypedFailureWithLog(t *testing.T) {
 	})
 	backend := testBackend(root, client, time.Minute)
 	backend.ReadJobLogs = func(context.Context, string, string) ([]byte, error) { return []byte(missingSourceLog), nil }
-	_, err := backend.BuildImage(context.Background(), checkout, testBuild(checkout))
+	_, err := backend.buildImage(context.Background(), checkout, testBuild(checkout))
 	var failure *BuildFailureError
 	if !errors.As(err, &failure) || failure.Cause != BuildFailureMissingSource {
 		t.Fatalf("want typed missing-source failure, got %v", err)

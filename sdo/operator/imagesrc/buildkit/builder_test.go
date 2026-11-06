@@ -51,7 +51,7 @@ func testBuild(checkout string) *contracts.ImageBuild {
 
 func TestBuildDeadlineIsATimeoutNotAPlanError(t *testing.T) {
 	root, checkout := proposalCheckout(t)
-	_, err := testBackend(root, fake.NewSimpleClientset(), 30*time.Millisecond).BuildImage(context.Background(), checkout, testBuild(checkout))
+	_, err := testBackend(root, fake.NewSimpleClientset(), 30*time.Millisecond).buildImage(context.Background(), checkout, testBuild(checkout))
 	var timeout *imagesrc.TimeoutError
 	if !errors.As(err, &timeout) || timeout.Budget {
 		t.Fatalf("a build that outlives its deadline must report imagesrc.TimeoutError, got %v", err)
@@ -64,7 +64,7 @@ func TestBuildJobDeadlineFailureIsATimeout(t *testing.T) {
 	client.PrependReactor("get", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
 		return true, &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "sdo-image-build-t"}, Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: "DeadlineExceeded", Message: "Job was active longer than specified deadline"}}}}, nil
 	})
-	_, err := testBackend(root, client, time.Minute).BuildImage(context.Background(), checkout, testBuild(checkout))
+	_, err := testBackend(root, client, time.Minute).buildImage(context.Background(), checkout, testBuild(checkout))
 	var timeout *imagesrc.TimeoutError
 	if !errors.As(err, &timeout) {
 		t.Fatalf("Kubernetes DeadlineExceeded must report imagesrc.TimeoutError, got %v", err)
@@ -76,7 +76,7 @@ func TestBuildJobDeadlineFailureIsATimeout(t *testing.T) {
 func TestTimedOutBuildJobIsDeleted(t *testing.T) {
 	root, checkout := proposalCheckout(t)
 	client := fake.NewSimpleClientset()
-	if _, err := testBackend(root, client, 30*time.Millisecond).BuildImage(context.Background(), checkout, testBuild(checkout)); err == nil {
+	if _, err := testBackend(root, client, 30*time.Millisecond).buildImage(context.Background(), checkout, testBuild(checkout)); err == nil {
 		t.Fatal("expected a timeout")
 	}
 	jobs, err := client.BatchV1().Jobs("sdo-control").List(context.Background(), metav1.ListOptions{})
@@ -145,12 +145,12 @@ func TestBuildFailsWhenTheTreeChangesDuringTheBuild(t *testing.T) {
 	b, _ := completedBuild(root)
 	calls := 0
 	b.TreeDigest = func(context.Context, string) (string, error) { calls++; return fmt.Sprint("tree-", calls), nil }
-	if _, err := b.BuildImage(context.Background(), checkout, testBuild(checkout)); err == nil || !strings.Contains(err.Error(), "tree changed") {
+	if _, err := b.buildImage(context.Background(), checkout, testBuild(checkout)); err == nil || !strings.Contains(err.Error(), "tree changed") {
 		t.Fatalf("a tree that changed mid-build must fail the build, got %v", err)
 	}
 	b.TreeDigest = func(context.Context, string) (string, error) { return "same", nil }
 	b.JobSuffix = func() string { return "second" }
-	ref, err := b.BuildImage(context.Background(), checkout, testBuild(checkout))
+	ref, err := b.buildImage(context.Background(), checkout, testBuild(checkout))
 	if err != nil || ref != "reg.example/app/api@"+synthDigest {
 		t.Fatalf("stable tree: ref %q err %v", ref, err)
 	}
@@ -160,7 +160,7 @@ func TestBuilderRequiresATreeDigest(t *testing.T) {
 	root, checkout := proposalCheckout(t)
 	b, _ := completedBuild(root)
 	b.TreeDigest = nil
-	if _, err := b.BuildImage(context.Background(), checkout, testBuild(checkout)); err == nil {
+	if _, err := b.buildImage(context.Background(), checkout, testBuild(checkout)); err == nil {
 		t.Fatal("a builder without a tree digest must refuse to build")
 	}
 }

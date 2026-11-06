@@ -29,7 +29,7 @@ type Applier interface {
 // Deployer deploys a candidate checkout from a DeploymentPlan: one desired
 // state (rendered.Desired, shared with every read), image resolution through
 // the imagesrc catalog, source-tree stamping, phased apply with readiness
-// gates, and independent observation. It is not wired yet (S3-13b).
+// gates, and independent observation.
 type Deployer struct {
 	Namespace string
 	Renderers *render.Catalog

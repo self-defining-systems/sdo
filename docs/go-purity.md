@@ -79,7 +79,7 @@ The exact declared edge-package list is:
 - `sdo/operator/kubeproxy/internal/proxyio`: API proxy clock and request-ID randomness.
 - `sdo/operator/rendered/internal/renderio`: rendered-source Git reads.
 
-The render-seam core packages (`render/`, `imagesrc/`, `rendered/` apart from its `renderio` edge, `lifecycle/plan_compat.go`) are not edges: they take a `render.FS`, `fs.FS` or checkout path and call no clock, randomness, socket or process. The only filesystem read in them is `imagesrc.SafeCheckoutPath` (symlink resolution), which the determinism gate permits. The plugin implementations (`render/{raw,kustomize,helm}`, `imagesrc/{buildkit,prebuilt}`, `upstream/gitpoll`) are pure functions or reach I/O only through the `internal` edges above (`jobio`, `registryio`) or injected interfaces.
+The render-seam core packages (`render/`, `imagesrc/`, `rendered/` apart from its `renderio` edge) are not edges: they take a `render.FS`, `fs.FS` or checkout path and call no clock, randomness, socket or process. The only filesystem read in them is `imagesrc.SafeCheckoutPath` (symlink resolution), which the determinism gate permits. The plugin implementations (`render/{raw,kustomize,helm}`, `imagesrc/{buildkit,prebuilt}`, `upstream/gitpoll`) are pure functions or reach I/O only through the `internal` edges above (`jobio`, `registryio`) or injected interfaces.
 - `sdo/operator/shellpath/internal/shellio`: shell detector processes, runner server, timers and environment.
 - `sdo/operator/worker_registry/internal/workerio`: worker clocks, warm-standby processes, sockets and environment.
 - `sdo/operator/cmd/sdo-go-cache/internal/cacheio`: Go cache helper environment and clock.

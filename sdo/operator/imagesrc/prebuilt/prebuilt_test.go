@@ -39,14 +39,14 @@ func TestSourcePinsTagWithAnonymousToken(t *testing.T) {
 		}
 		return reply(404, "", nil)
 	})}
-	got, err := resolver.ResolveImage(context.Background(), host+"/acme/cache:1.2")
+	got, err := resolveRef(context.Background(), resolver, host+"/acme/cache:1.2")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := host + "/acme/cache@" + sha256Digest([]byte(manifest)); got != want {
 		t.Fatalf("got %s, want %s", got, want)
 	}
-	if _, err := resolver.ResolveImage(context.Background(), host+"/acme/cache:9"); err == nil || !strings.Contains(err.Error(), "no such tag") {
+	if _, err := resolveRef(context.Background(), resolver, host+"/acme/cache:9"); err == nil || !strings.Contains(err.Error(), "no such tag") {
 		t.Fatalf("missing tag error = %v", err)
 	}
 }
@@ -62,7 +62,7 @@ func neverCalled(t *testing.T) doerFunc {
 
 func TestSourceRefusesInternalHostsBeforeAnyRequest(t *testing.T) {
 	for _, ref := range []string{"127.0.0.1:5000/a:1", "localhost/a:1", "10.0.0.1/a:1", "[::1]:5000/a:1", "[fd00::1]/a:1", "[::ffff:10.0.0.1]:5000/a:1", "app.localhost/a:1"} {
-		_, err := (&Source{Client: neverCalled(t)}).ResolveImage(context.Background(), ref)
+		_, err := resolveRef(context.Background(), &Source{Client: neverCalled(t)}, ref)
 		var resolve *imagesrc.ResolveError
 		if !errors.As(err, &resolve) || resolve.Kind != imagesrc.ResolveRefused {
 			t.Fatalf("%s must be refused as a target, got %v", ref, err)
@@ -78,7 +78,7 @@ func TestSourceRefusesInternalTokenRealm(t *testing.T) {
 		}
 		return reply(401, "", http.Header{"Www-Authenticate": {`Bearer realm="https://10.0.0.7/token",service="s"`}})
 	})
-	_, err := (&Source{Client: client}).ResolveImage(context.Background(), host+"/a:1")
+	_, err := resolveRef(context.Background(), &Source{Client: client}, host+"/a:1")
 	var resolve *imagesrc.ResolveError
 	if !errors.As(err, &resolve) || resolve.Kind != imagesrc.ResolveRefused {
 		t.Fatalf("an internal token realm must be refused, got %v", err)
@@ -92,7 +92,7 @@ func TestSourceVerifiesBytesWhenItMustGet(t *testing.T) {
 		}
 		return reply(200, "{}", http.Header{"Docker-Content-Digest": {synthDigest}})
 	})
-	if _, err := (&Source{Client: lying}).ResolveImage(context.Background(), "r.example/a:1"); err == nil {
+	if _, err := resolveRef(context.Background(), &Source{Client: lying}, "r.example/a:1"); err == nil {
 		t.Fatal("digest header that disagrees with the bytes must be refused")
 	}
 }
@@ -107,7 +107,7 @@ func TestSourceAsksWithHeadAndCachesTheDigest(t *testing.T) {
 		return reply(200, "", http.Header{"Docker-Content-Digest": {synthDigest}})
 	})}
 	for range 3 {
-		got, err := resolver.ResolveImage(context.Background(), "redis:6.2.4")
+		got, err := resolveRef(context.Background(), resolver, "redis:6.2.4")
 		if err != nil || got != "redis@"+synthDigest {
 			t.Fatalf("got %q, %v", got, err)
 		}
@@ -116,7 +116,7 @@ func TestSourceAsksWithHeadAndCachesTheDigest(t *testing.T) {
 		t.Fatalf("requests = %v, want one HEAD for three resolutions", methods)
 	}
 	clock = clock.Add(resolveCacheTTL + time.Second)
-	if _, err := resolver.ResolveImage(context.Background(), "redis:6.2.4"); err != nil || len(methods) != 2 {
+	if _, err := resolveRef(context.Background(), resolver, "redis:6.2.4"); err != nil || len(methods) != 2 {
 		t.Fatalf("an expired entry must be resolved again: %v %v", methods, err)
 	}
 }
@@ -149,7 +149,7 @@ func TestSourceClassifiesFailures(t *testing.T) {
 		}), imagesrc.ResolveTransient},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := (&Source{Client: tc.client}).ResolveImage(context.Background(), "r.example/a:1")
+			_, err := resolveRef(context.Background(), &Source{Client: tc.client}, "r.example/a:1")
 			var resolve *imagesrc.ResolveError
 			if !errors.As(err, &resolve) || resolve.Kind != tc.want {
 				t.Fatalf("kind = %v (%v), want %s", resolve, err, tc.want)
@@ -185,7 +185,7 @@ func TestSourcePrefersTheDigestTheClusterHolds(t *testing.T) {
 				asked = true
 				return reply(200, "", http.Header{"Docker-Content-Digest": {"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}})
 			})}
-			got, err := resolver.ResolveImage(context.Background(), "redis:6.2.4")
+			got, err := resolveRef(context.Background(), resolver, "redis:6.2.4")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -205,11 +205,18 @@ func TestSourceUsesHTTPSAndDockerHubHost(t *testing.T) {
 		seen = r.URL.String()
 		return reply(200, "{}", nil)
 	})
-	got, err := (&Source{Client: client}).ResolveImage(context.Background(), "redis:6.2.4")
+	got, err := resolveRef(context.Background(), &Source{Client: client}, "redis:6.2.4")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if seen != "https://registry-1.docker.io/v2/library/redis/manifests/6.2.4" || !strings.HasPrefix(got, "redis@sha256:") {
 		t.Fatalf("url %s, pinned %s", seen, got)
 	}
+}
+
+// resolveRef resolves ref through the imagesrc.Source contract and returns
+// the pinned reference.
+func resolveRef(ctx context.Context, source *Source, ref string) (string, error) {
+	resolved, err := source.Resolve(ctx, imagesrc.Request{Image: ref}, nil)
+	return resolved.Ref, err
 }

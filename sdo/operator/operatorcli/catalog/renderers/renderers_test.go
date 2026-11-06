@@ -53,16 +53,3 @@ func TestEveryRegisteredRendererIsDescribed(t *testing.T) {
 		})
 	}
 }
-
-func TestSubsetHoldsOnlyTheNamedBuiltIns(t *testing.T) {
-	c, err := renderers.Subset("raw")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := c.IDs(); !reflect.DeepEqual(got, []string{"raw"}) {
-		t.Fatalf("IDs = %v", got)
-	}
-	if _, err := renderers.Subset("nope"); err == nil {
-		t.Fatal("unknown built-in accepted")
-	}
-}

@@ -1,4 +1,3 @@
-//archcheck:ratchet R5 count=2 until=S3-13b
 package lifecycle_test
 
 import (
@@ -17,7 +16,6 @@ import (
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
-	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/worker_registry"
 	"sdo.dev/operator/worker_registry/registrytest"
 )
@@ -103,7 +101,7 @@ type fakeWorkers struct {
 	mu        sync.Mutex
 	deployer  []*contracts.SourceDeploymentRequest
 	judgeRuns int
-	plan      *contracts.DeploymentPlan // proposed instead of the default legacy plan when set
+	plan      *contracts.DeploymentPlan // proposed instead of the default raw plan when set
 }
 
 func (w *fakeWorkers) Execute(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
@@ -113,8 +111,8 @@ func (w *fakeWorkers) Execute(_ context.Context, task *contracts.AgentTask) (*co
 	deployerRequest := &contracts.SourceDeploymentRequest{}
 	if err := task.GetRequest().UnmarshalTo(deployerRequest); err == nil {
 		w.deployer = append(w.deployer, deployerRequest)
-		config, _ := anypb.New(&contracts.RawManifestStrategy{ManifestPaths: []string{"k8s"}})
-		plan := &contracts.DeploymentPlan{StrategyId: "raw-manifests-v1", StrategyConfig: config}
+		config, _ := anypb.New(&contracts.RawRenderConfig{Paths: []string{"k8s"}})
+		plan := &contracts.DeploymentPlan{Source: &contracts.DeploymentSource{RendererId: "raw", Config: config}, ExpectedWorkloadIds: []string{"Deployment/ns/app"}}
 		if w.plan != nil {
 			plan = w.plan
 		}
@@ -146,8 +144,7 @@ type fakeReadiness struct {
 	reverify func(*lifecycle.DeploymentReceipt)
 }
 
-// ApplyAndVerify reports the raw source the admitted legacy strategy names,
-// as the deployment registry does.
+// ApplyAndVerify binds the plan's source to the receipt, as the deployer does.
 func (r *fakeReadiness) ApplyAndVerify(_ context.Context, _ string, plan *contracts.DeploymentPlan) (lifecycle.DeploymentReceipt, error) {
 	r.calls++
 	r.plans = append(r.plans, plan)
@@ -158,15 +155,7 @@ func (r *fakeReadiness) ApplyAndVerify(_ context.Context, _ string, plan *contra
 			return lifecycle.DeploymentReceipt{}, err
 		}
 	}
-	strategy := &contracts.RawManifestStrategy{}
-	if err := plan.GetStrategyConfig().UnmarshalTo(strategy); err != nil {
-		return lifecycle.DeploymentReceipt{}, err
-	}
-	source, err := rendered.LegacyRawSource(strategy.GetManifestPaths())
-	if err != nil {
-		return lifecycle.DeploymentReceipt{}, err
-	}
-	receipt := lifecycle.DeploymentReceipt{Source: source, BaseTree: "tree", ObservedRevision: "tree", RenderDigest: "render", EnvDigest: "env", Images: []string{"img"}, ResourceIDs: []string{"deployment/app"}, Ready: true}
+	receipt := lifecycle.DeploymentReceipt{Source: proto.Clone(plan.GetSource()).(*contracts.DeploymentSource), BaseTree: "tree", ObservedRevision: "tree", RenderDigest: "render", EnvDigest: "env", Images: []string{"img"}, ResourceIDs: []string{"deployment/app"}, Ready: true}
 	if r.receipt != nil {
 		r.receipt(&receipt)
 	}
@@ -329,36 +318,43 @@ func TestTransientVerificationErrorRetriesTheEvaluation(t *testing.T) {
 	}
 }
 
-func TestNewFormPlanIsTranslatedForTheDeploymentRegistry(t *testing.T) {
+func TestPlanReachesTheDeployerAsProposed(t *testing.T) {
 	h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{clear}})
-	rawConfig, _ := anypb.New(&contracts.RawRenderConfig{Paths: []string{"k8s"}})
-	h.workers.plan = &contracts.DeploymentPlan{Source: &contracts.DeploymentSource{RendererId: "raw", Config: rawConfig}}
+	kustomize, _ := anypb.New(&contracts.KustomizeRenderConfig{Path: "k"})
+	h.workers.plan = &contracts.DeploymentPlan{Source: &contracts.DeploymentSource{RendererId: "kustomize", Config: kustomize}, ExpectedWorkloadIds: []string{"Deployment/ns/app"}}
 	if _, err := h.coordinator.Run(context.Background(), config()); err != nil {
 		t.Fatal(err)
 	}
-	if len(h.readiness.plans) != 1 || h.readiness.plans[0].GetSource() != nil || h.readiness.plans[0].GetStrategyId() != "raw-manifests-v1" {
-		t.Fatalf("registry saw %v, want the legacy raw strategy", h.readiness.plans)
+	if len(h.readiness.plans) != 1 || !proto.Equal(h.readiness.plans[0], h.workers.plan) {
+		t.Fatalf("deployer saw %v, want the proposed plan unchanged", h.readiness.plans)
 	}
 }
 
-func TestUndeployableNewFormPlanFeedsBackToTheDeployer(t *testing.T) {
-	h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{clear}})
-	kustomize, _ := anypb.New(&contracts.KustomizeRenderConfig{Path: "k"})
-	h.workers.plan = &contracts.DeploymentPlan{Source: &contracts.DeploymentSource{RendererId: "kustomize", Config: kustomize}}
-	if _, err := h.coordinator.Run(context.Background(), config()); err == nil {
-		t.Fatal("run succeeded with a plan that is not deployable yet")
-	}
-	if h.readiness.calls != 0 {
-		t.Fatalf("registry called %d times for a rejected plan", h.readiness.calls)
-	}
-	if h.workers.deployerAttempts() < 2 {
-		t.Fatalf("deployer attempts=%d, want a correction round", h.workers.deployerAttempts())
-	}
-	feedback := h.workers.deployer[1].GetCorrectionFeedback()
-	if !strings.Contains(feedback, `the renderer must be "raw"`) {
-		t.Fatalf("feedback %q does not say what is supported", feedback)
-	}
-	if strings.Contains(feedback, "S3-") {
-		t.Fatalf("feedback %q names an internal plan row", feedback)
+func TestPlanWithoutSourceFeedsBackToTheDeployer(t *testing.T) {
+	legacyConfig, _ := anypb.New(&contracts.RawRenderConfig{Paths: []string{"k8s"}})
+	for name, plan := range map[string]*contracts.DeploymentPlan{
+		"strategy only": {StrategyId: "raw-manifests-v1", StrategyConfig: legacyConfig, ExpectedWorkloadIds: []string{"Deployment/ns/app"}},
+		"empty":         {ExpectedWorkloadIds: []string{"Deployment/ns/app"}},
+		"source and strategy": {
+			Source:     &contracts.DeploymentSource{RendererId: "raw", Config: legacyConfig},
+			StrategyId: "raw-manifests-v1", ExpectedWorkloadIds: []string{"Deployment/ns/app"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{clear}})
+			h.workers.plan = plan
+			if _, err := h.coordinator.Run(context.Background(), config()); err == nil {
+				t.Fatal("run succeeded with a plan that names no deployment source")
+			}
+			if h.readiness.calls != 0 {
+				t.Fatalf("deployer called %d times for a rejected plan", h.readiness.calls)
+			}
+			if h.workers.deployerAttempts() < 2 {
+				t.Fatalf("deployer attempts=%d, want a correction round", h.workers.deployerAttempts())
+			}
+			if feedback := h.workers.deployer[1].GetCorrectionFeedback(); !strings.Contains(feedback, "source") {
+				t.Fatalf("feedback %q does not ask for a deployment source", feedback)
+			}
+		})
 	}
 }

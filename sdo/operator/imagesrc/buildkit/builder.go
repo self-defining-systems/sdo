@@ -40,8 +40,7 @@ Config: context_path, the tree-relative build context directory; dockerfile_path
 // Builder builds candidate source in a bounded rootless BuildKit Job. The Job
 // sees only the proposal checkout, mounted read-only, and its own registry-push
 // Secret. The accepted checkout and broker credentials are absent. It is the
-// imagesrc source "buildkit" (see Resolve) and, until the deployment strategy
-// switch, also the BuildImage half of the raw deployment backend.
+// imagesrc source "buildkit" (see Resolve).
 type Builder struct {
 	// TreeDigest fingerprints a checkout's tracked tree (broker.ProposalTreeDigest).
 	// A build fails when the tree changes while the Job runs.
@@ -64,7 +63,7 @@ type Builder struct {
 	ReadJobLogs func(context.Context, string, string) ([]byte, error)
 }
 
-func (b Builder) BuildImage(ctx context.Context, checkout string, build *contracts.ImageBuild) (string, error) {
+func (b Builder) buildImage(ctx context.Context, checkout string, build *contracts.ImageBuild) (string, error) {
 	if b.Client == nil || b.TreeDigest == nil || b.Namespace == "" || b.RepositoryPVC == "" || b.ProposalRoot == "" || b.BuildKitImage == "" || b.RegistrySecret == "" || b.ServiceAccount == "" || build == nil || build.GetImage() == "" {
 		return "", errors.New("Kubernetes image builder requires tree digest, client, namespace, proposal PVC, pinned BuildKit image, registry Secret, service account, and image build")
 	}
@@ -365,7 +364,7 @@ func (b Builder) Resolve(ctx context.Context, req imagesrc.Request, config *cont
 	if err != nil {
 		return imagesrc.Resolved{}, err
 	}
-	ref, err := b.BuildImage(ctx, req.Checkout, build)
+	ref, err := b.buildImage(ctx, req.Checkout, build)
 	if err != nil {
 		return imagesrc.Resolved{}, err
 	}

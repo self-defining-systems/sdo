@@ -140,7 +140,10 @@ func TestConformance(t *testing.T) {
 		{Name: "missing chart", FS: rendertest.MapFS{}, Env: env, Config: cfg("nope"), WantErr: "helm chart directory nope"},
 		{Name: "chart_path escapes", FS: app, Env: env, Config: cfg("../x"), WantErr: "relative path inside the source tree"},
 		{Name: "chart_path empty", FS: app, Env: env, Config: cfg(""), WantErr: "relative path inside the source tree"},
-		{Name: "no release", FS: app, Env: render.Env{Namespace: "demo"}, Config: cfg("chart"), WantErr: "Env.Release"},
+		{
+			Name: "no release names the release after the namespace", FS: app, Env: render.Env{Namespace: "demo"}, Config: cfg("chart"),
+			Want: []string{"Deployment demo/demo-app", "Secret /demo-app-creds", "Service /demo-db"},
+		},
 		{Name: "missing value file", FS: app, Env: env, Config: cfg("chart", "chart/none.yaml"), WantErr: "none.yaml"},
 		{
 			Name: "values violate the schema", FS: app, Env: env,

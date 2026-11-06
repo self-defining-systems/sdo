@@ -11,7 +11,7 @@ import (
 // Directives let a hand-written file carry its own allowlist or ratchet entry
 // so parallel PRs never edit one shared table:
 //
-//	//archcheck:allow R4 until=S3-13b reason="generic registry switches on the raw strategy"
+//	//archcheck:allow R4 until=S3-15 reason="core decodes a retired plugin config"
 //	//archcheck:ratchet R5 count=3 until=S3-11c
 //
 // A directive is a line comment that starts exactly with "//archcheck:" and may

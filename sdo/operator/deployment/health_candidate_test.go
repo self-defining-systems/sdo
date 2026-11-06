@@ -10,7 +10,6 @@ import (
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory/layout"
-	"sdo.dev/operator/render"
 )
 
 var _ lifecycle.CandidateVerifier = IndependentHealthVerifier{}
@@ -27,10 +26,10 @@ func (p recordingProbe) Evaluate(_ context.Context, root, _, _ string) (HealthEv
 
 // candidateFixture is an accepted repository with synthetic detectors and a
 // proposal-style clone whose HEAD is a candidate commit the accepted
-// repository does not have, deployed by the registry from the clone.
-func candidateFixture(t *testing.T) (accepted, candidate, commit string, registry *Registry, receipt lifecycle.DeploymentReceipt) {
+// repository does not have, deployed by the Deployer from the clone.
+func candidateFixture(t *testing.T) (accepted, candidate, commit string, deployer *Deployer, receipt lifecycle.DeploymentReceipt) {
 	t.Helper()
-	accepted, _ = depRawFixture(t)
+	accepted, source := depRawFixture(t)
 	writeFile(t, accepted, filepath.Join(layout.DiagnosticsDir, "synthetic", "detector.go"), "package synthetic\n")
 	testutil.Git(t, accepted, "add", ".")
 	testutil.Git(t, accepted, "commit", "-qm", "synthetic detectors")
@@ -40,12 +39,12 @@ func candidateFixture(t *testing.T) (accepted, candidate, commit string, registr
 	// A clone does not inherit the fixture identity: set it for this commit rather than rely on the host.
 	testutil.Git(t, candidate, "-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qam", "synthetic upstream change")
 	commit = testutil.Git(t, candidate, "rev-parse", "HEAD")
-	registry = regFixture(t, accepted, render.Env{Namespace: depNamespace})
-	receipt, err := registry.ApplyAndVerify(context.Background(), candidate, legacyRawPlan(t, "k8s"))
+	d, _ := depDeployer(t, accepted, &clusterFake{})
+	receipt, err := d.ApplyAndVerify(context.Background(), candidate, depPlan(t, source, depRawWeb))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return accepted, candidate, commit, registry, receipt
+	return accepted, candidate, commit, &d, receipt
 }
 
 func writeFile(t *testing.T, root, path, body string) {
@@ -60,9 +59,9 @@ func writeFile(t *testing.T, root, path, body string) {
 }
 
 func TestVerifyCandidateJudgesAProposalCheckoutTheAcceptedRepositoryLacks(t *testing.T) {
-	accepted, candidate, commit, registry, receipt := candidateFixture(t)
+	accepted, candidate, commit, deployer, receipt := candidateFixture(t)
 	var roots []string
-	verifier := IndependentHealthVerifier{AcceptedRoot: accepted, OperatorRoot: t.TempDir(), Readiness: registry, Probe: recordingProbe{status: "clear", roots: &roots}}
+	verifier := IndependentHealthVerifier{AcceptedRoot: accepted, OperatorRoot: t.TempDir(), Readiness: deployer, Probe: recordingProbe{status: "clear", roots: &roots}}
 	ctx := context.Background()
 
 	verdict, err := verifier.VerifyCandidate(ctx, candidate, commit, depNamespace, "serve", receipt)
@@ -72,8 +71,8 @@ func TestVerifyCandidateJudgesAProposalCheckoutTheAcceptedRepositoryLacks(t *tes
 	if len(roots) != 1 || roots[0] != candidate {
 		t.Fatalf("probe evaluated %v, want the candidate checkout's detectors", roots)
 	}
-	if registry.AcceptedRoot != accepted {
-		t.Fatalf("verifier rebound the shared registry to %q", registry.AcceptedRoot)
+	if deployer.AcceptedRoot != accepted {
+		t.Fatalf("verifier rebound the shared deployer to %q", deployer.AcceptedRoot)
 	}
 
 	// Negative control: the accepted-root Verify cannot judge the candidate.
@@ -99,14 +98,14 @@ func TestVerifyCandidateRefusesWhatItCannotBind(t *testing.T) {
 			receipt.ObservedRevision = receipt.BaseTree
 		},
 		"live workloads differ": func(_ *testing.T, _ string, _ *string, receipt *lifecycle.DeploymentReceipt) {
-			receipt.Images = []string{"other@" + synthDigest}
+			receipt.Images = []string{"other@sha256:" + strings.Repeat("a", 64)}
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			accepted, candidate, commit, registry, receipt := candidateFixture(t)
+			accepted, candidate, commit, deployer, receipt := candidateFixture(t)
 			mutate(t, candidate, &commit, &receipt)
 			var roots []string
-			verifier := IndependentHealthVerifier{AcceptedRoot: accepted, OperatorRoot: t.TempDir(), Readiness: registry, Probe: recordingProbe{status: "clear", roots: &roots}}
+			verifier := IndependentHealthVerifier{AcceptedRoot: accepted, OperatorRoot: t.TempDir(), Readiness: deployer, Probe: recordingProbe{status: "clear", roots: &roots}}
 			if verdict, err := verifier.VerifyCandidate(ctx, candidate, commit, depNamespace, "serve", receipt); err == nil {
 				t.Fatalf("verdict = %+v, want an error", verdict)
 			}
@@ -118,9 +117,9 @@ func TestVerifyCandidateRefusesWhatItCannotBind(t *testing.T) {
 }
 
 func TestVerifyCandidateReportsAFiringCandidateAsASourceFault(t *testing.T) {
-	accepted, candidate, commit, registry, receipt := candidateFixture(t)
+	accepted, candidate, commit, deployer, receipt := candidateFixture(t)
 	var roots []string
-	verifier := IndependentHealthVerifier{AcceptedRoot: accepted, OperatorRoot: t.TempDir(), Readiness: registry, Probe: recordingProbe{status: "firing", roots: &roots}}
+	verifier := IndependentHealthVerifier{AcceptedRoot: accepted, OperatorRoot: t.TempDir(), Readiness: deployer, Probe: recordingProbe{status: "firing", roots: &roots}}
 	verdict, err := verifier.VerifyCandidate(context.Background(), candidate, commit, depNamespace, "serve", receipt)
 	if err != nil || verdict.Outcome != lifecycle.VerificationSourceFault {
 		t.Fatalf("verdict = %+v, err = %v", verdict, err)

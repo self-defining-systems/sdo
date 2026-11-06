@@ -345,8 +345,8 @@ func (c Coordinator) deploy(ctx context.Context, id string, cfg Config, attempt 
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return broker.Receipt{}, DeploymentReceipt{}, false, "deployment worker did not propose a complete source plan: " + response.GetSummary(), nil
 	}
-	plan, err := admitPlan(response.GetPlan())
-	if err != nil {
+	plan := response.GetPlan()
+	if err := admissiblePlan(plan); err != nil {
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return broker.Receipt{}, DeploymentReceipt{}, false, "deployment worker did not propose a deployable source plan: " + err.Error(), nil
 	}
@@ -367,21 +367,28 @@ func (c Coordinator) deploy(ctx context.Context, id string, cfg Config, attempt 
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return broker.Receipt{}, DeploymentReceipt{}, false, "independent source deployment returned incomplete evidence", nil
 	}
-	proposed := response.GetPlan()
-	if proposed.GetSource() == nil {
-		// Transitional legacy-form plan (S3-13b requires source): the
-		// accepted evidence carries the source the deployer derived, no plan.
-		proposed = nil
-	} else if !rendered.SameDeploymentSource(readiness.Source, proposed.GetSource()) {
+	if !rendered.SameDeploymentSource(readiness.Source, plan.GetSource()) {
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return broker.Receipt{}, DeploymentReceipt{}, false, "independent deployment source differs from proposal", nil
 	}
-	receipt, err := c.Broker.PublishVerifiedSource(ctx, id, deploymentToBroker(readiness, proposed))
+	receipt, err := c.Broker.PublishVerifiedSource(ctx, id, deploymentToBroker(readiness, plan))
 	if err != nil {
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return broker.Receipt{}, DeploymentReceipt{}, false, "broker rejected deployment: " + err.Error(), nil
 	}
 	return receipt, readiness, true, "", nil
+}
+
+// admissiblePlan requires the deployment source: which renderer renders the
+// tree and how. The deployer, not the coordinator, decodes and checks it.
+func admissiblePlan(plan *contracts.DeploymentPlan) error {
+	if plan.GetSource() == nil {
+		return errors.New("the plan names no deployment source; set source to a renderer ID from the request's renderers and its config")
+	}
+	if plan.GetStrategyId() != "" || plan.GetStrategyConfig() != nil {
+		return errors.New("the plan sets the retired strategy fields; describe the deployment only with source, images and expected workload IDs")
+	}
+	return nil
 }
 
 func completeDeploymentReceipt(receipt DeploymentReceipt) bool {
@@ -401,7 +408,7 @@ func sameDeploymentIdentity(left, right DeploymentReceipt) bool {
 	return reflect.DeepEqual(left.ContainerImages, right.ContainerImages) && slices.Equal(leftImages, rightImages) && slices.Equal(leftResources, rightResources)
 }
 
-// deploymentToBroker records the receipt and, for a new-form plan, the
+// deploymentToBroker records the receipt and the
 // admitted plan itself: the accepted image declarations and expected workloads
 // have no other durable home until slice 5 moves the plan into .sdo/.
 func deploymentToBroker(receipt DeploymentReceipt, plan *contracts.DeploymentPlan) broker.SourceEvidence {

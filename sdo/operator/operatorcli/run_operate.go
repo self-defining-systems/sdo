@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/settings"
 	"time"
 
@@ -88,25 +87,21 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	config.Install.MetricsURL = config.Install.EffectiveMetricsURL()
 	config.Lifecycle.MetricsSource = config.Install.MetricsSource()
 	repository.MetricsDetectors = config.Install.MetricsURL != ""
-	buildBackend := rawBackend{
-		CommandBackend: deployment.CommandBackend{ObserveLimit: time.Duration(config.Install.RolloutTimeoutSeconds) * time.Second},
-		Builder: buildkit.Builder{
-			TreeDigest: broker.ProposalTreeDigest,
-			Client:     client, Namespace: control, RepositoryPVC: config.Install.RepositoryPVC,
-			ProposalRoot: config.WorktreeRoot, RepositoryPVCSubPath: proposalSubPath,
-			BuildKitImage: config.BuildKitImage, RegistrySecret: config.RegistryPushSecret,
-			AllowedRegistryHost: config.Install.RegistryHost,
-			RegistryInsecure:    config.Install.RegistryInsecure,
-			ServiceAccount:      "sdo-image-builder",
-			Timeout:             time.Duration(config.Install.BuildTimeoutSeconds) * time.Second,
-		},
+	builder := buildkit.Builder{
+		TreeDigest: broker.ProposalTreeDigest,
+		Client:     client, Namespace: control, RepositoryPVC: config.Install.RepositoryPVC,
+		ProposalRoot: config.WorktreeRoot, RepositoryPVCSubPath: proposalSubPath,
+		BuildKitImage: config.BuildKitImage, RegistrySecret: config.RegistryPushSecret,
+		AllowedRegistryHost: config.Install.RegistryHost,
+		RegistryInsecure:    config.Install.RegistryInsecure,
+		ServiceAccount:      "sdo-image-builder",
+		Timeout:             time.Duration(config.Install.BuildTimeoutSeconds) * time.Second,
 	}
-	readiness, err := deployment.NewRegistry(deployment.RawRegistration("raw-manifests-v1", config.Lifecycle.Namespace, buildBackend, &prebuilt.Source{InsecureHost: insecureRegistryHost(config), Cluster: nodeImages{client: client}}, deployment.WithBuildBudget(time.Duration(config.Install.BuildBudgetSeconds)*time.Second)))
+	imageSources, err := operateImageSources(config, builder, &prebuilt.Source{InsecureHost: insecureRegistryHost(config), Cluster: nodeImages{client: client}})
 	if err != nil {
 		return lifecycle.Result{}, err
 	}
-	readiness.AcceptedRoot = config.ApplicationRoot
-	readiness.Renderers, readiness.Env = renderers.Catalog(), render.Env{Namespace: config.Lifecycle.Namespace}
+	readiness := operateDeployer(config, imageSources, deployment.CommandBackend{ObserveLimit: time.Duration(config.Install.RolloutTimeoutSeconds) * time.Second})
 	agentEnvironment, err := worker_registry.AgentEnvironment(config.Install.AgentProvider, config.Install.Model, config.Install.AgentEffort)
 	if err != nil {
 		return lifecycle.Result{}, err
@@ -136,30 +131,13 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	if runner, enabled := install.ShellRunnerConfig(config.Install); enabled {
 		healthProbe = deployment.ShellDetectorProbe{Config: runner}
 	}
-	// The agent is offered what the legacy deployer above can deploy: the raw
-	// renderer and the prebuilt and buildkit image sources.
-	// Transitional: replaced by the full catalogs when the render-seam
-	// deployer replaces the legacy registry.
-	offeredRenderers, err := renderers.Subset("raw")
-	if err != nil {
-		return lifecycle.Result{}, err
-	}
-	offeredPrebuilt := &prebuilt.Source{InsecureHost: insecureRegistryHost(config), Cluster: nodeImages{client: client}}
-	var offeredSources *imagesrc.Catalog
-	if config.Install.RegistryHost == "" { // nowhere to push a build
-		offeredSources, err = images.PrebuiltOnly(offeredPrebuilt)
-	} else {
-		offeredSources, err = images.Catalog(images.Config{Prebuilt: offeredPrebuilt, Builder: buildBackend.Builder, BuildBudget: time.Duration(config.Install.BuildBudgetSeconds) * time.Second})
-	}
-	if err != nil {
-		return lifecycle.Result{}, err
-	}
 	coordinator := lifecycle.Coordinator{
-		Renderers: offeredRenderers, ImageSources: offeredSources,
+		// The agent is offered exactly what the deployer can deploy.
+		Renderers: readiness.Renderers, ImageSources: readiness.Images,
 		Broker: repository, Bootstrap: artifacts.BootstrapStore{}, Registry: registry,
 		Workers: workers, Readiness: readiness,
 		Verifier: deployment.IndependentHealthVerifier{
-			AcceptedRoot: config.ApplicationRoot, OperatorRoot: config.OperatorRoot, Readiness: readiness, Probe: healthProbe,
+			AcceptedRoot: config.ApplicationRoot, OperatorRoot: config.OperatorRoot, Readiness: &readiness, Probe: healthProbe,
 		}, Installer: installer,
 	}
 	return coordinator.Run(ctx, config.Lifecycle)
@@ -191,14 +169,22 @@ func (n nodeImages) NodeImageNames(ctx context.Context) ([][]string, error) {
 	return images, nil
 }
 
-// rawBackend composes the trusted command backend (Apply, Observe) with the
-// BuildKit builder (BuildImage) for the raw deployment strategy. Transitional:
-// removed (S3-13b) when the deployer takes images from the imagesrc catalog.
-type rawBackend struct {
-	deployment.CommandBackend
-	Builder buildkit.Builder
+// operateImageSources is the deployer's image catalog: prebuilt and buildkit,
+// or prebuilt alone when there is no registry to push builds to.
+func operateImageSources(config OperateConfig, builder buildkit.Builder, pre *prebuilt.Source) (*imagesrc.Catalog, error) {
+	if config.Install.RegistryHost == "" {
+		return images.PrebuiltOnly(pre)
+	}
+	return images.Catalog(images.Config{Prebuilt: pre, Builder: builder, BuildBudget: time.Duration(config.Install.BuildBudgetSeconds) * time.Second})
 }
 
-func (b rawBackend) BuildImage(ctx context.Context, checkout string, build *contracts.ImageBuild) (string, error) {
-	return b.Builder.BuildImage(ctx, checkout, build)
+// operateDeployer deploys source plans with every built-in renderer. Its
+// render environment carries only the application namespace, as the legacy
+// strategy registry's did, so accepted evidence recorded before the switch
+// keeps its environment digest and re-verifies after a restart.
+func operateDeployer(config OperateConfig, sources *imagesrc.Catalog, applier deployment.Applier) deployment.Deployer {
+	return deployment.Deployer{
+		Namespace: config.Lifecycle.Namespace, Renderers: renderers.Catalog(), Images: sources, Applier: applier,
+		TreeDigest: broker.ProposalTreeDigest, Env: render.Env{}, AcceptedRoot: config.ApplicationRoot,
+	}
 }

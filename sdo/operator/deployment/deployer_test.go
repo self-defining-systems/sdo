@@ -351,67 +351,72 @@ func depUnstamp(o map[string]any, original map[string]string) {
 // objects rendered.Source reads, plus ephemeral and foreign-namespace objects
 // that reads project out.
 func TestDeployPathObjectsEqualReadObjects(t *testing.T) {
-	for _, fixture := range depFixtures(t) {
-		t.Run(fixture.name, func(t *testing.T) {
-			ctx := context.Background()
-			root := depCommit(t, fixture.files)
-			source := fixture.source(t)
-			catalog := depRenderers(t)
-			reads, err := depSourceReader(root, source, "rel", catalog).RawManifests(ctx, depHead(t, root), depNamespace)
-			if err != nil {
-				t.Fatal(err)
-			}
-			want := map[string]string{}
-			original := map[string]string{}
-			var expected []string
-			for _, o := range reads {
-				want[depKey(o.Object)] = depCanonical(t, o.Object)
-				if rendered.WorkloadKind(o.GetKind()) {
-					expected = append(expected, o.GetKind()+"/"+o.GetNamespace()+"/"+o.GetName())
-					_, _ = Stamp(o.DeepCopy().Object, "", func(site ImageSite) string {
-						original[imagesrctest.Repository(site.Image)+"@"+imagesrctest.Digest(site.Image)] = site.Image
-						return site.Image
-					})
+	// "" is the production environment: no install configuration names a
+	// release, and deploy and reads must still agree.
+	for _, release := range []string{"rel", ""} {
+		for _, fixture := range depFixtures(t) {
+			t.Run(fixture.name+"/release="+release, func(t *testing.T) {
+				ctx := context.Background()
+				root := depCommit(t, fixture.files)
+				source := fixture.source(t)
+				catalog := depRenderers(t)
+				reads, err := depSourceReader(root, source, release, catalog).RawManifests(ctx, depHead(t, root), depNamespace)
+				if err != nil {
+					t.Fatal(err)
 				}
-			}
-			cluster := &clusterFake{}
-			deployer, _ := depDeployer(t, root, cluster)
-			receipt, err := deployer.ApplyAndVerify(ctx, root, &contracts.DeploymentPlan{Source: source, ExpectedWorkloadIds: expected})
-			if err != nil {
-				t.Fatal(err)
-			}
-			// The Include render's digest is the Omit render's digest, so a
-			// restart can verify what deploy recorded.
-			if _, err := deployer.VerifyAccepted(ctx, depHead(t, root), depNamespace, receipt); err != nil {
-				t.Fatalf("verify after deploy: %v", err)
-			}
-			got := map[string]string{}
-			var extra []string
-			for _, document := range cluster.applied {
-				depUnstamp(document, original)
-				key := depKey(document)
-				if _, read := want[key]; read {
-					got[key] = depCanonical(t, document)
-					continue
+				want := map[string]string{}
+				original := map[string]string{}
+				var expected []string
+				for _, o := range reads {
+					want[depKey(o.Object)] = depCanonical(t, o.Object)
+					if rendered.WorkloadKind(o.GetKind()) {
+						expected = append(expected, o.GetKind()+"/"+o.GetNamespace()+"/"+o.GetName())
+						_, _ = Stamp(o.DeepCopy().Object, "", func(site ImageSite) string {
+							original[imagesrctest.Repository(site.Image)+"@"+imagesrctest.Digest(site.Image)] = site.Image
+							return site.Image
+						})
+					}
 				}
-				meta := document["metadata"].(map[string]any)
-				extra = append(extra, fmt.Sprint(document["kind"], "/", meta["name"]))
-			}
-			if len(got) != len(want) {
-				t.Fatalf("deployed %d read objects, reads have %d\ngot %v\nwant %v", len(got), len(want), sortedKeys(got), sortedKeys(want))
-			}
-			for key, object := range want {
-				if got[key] != object {
-					t.Errorf("%s differs\ndeploy: %s\nread:   %s", key, got[key], object)
+				cluster := &clusterFake{}
+				deployer, _ := depDeployer(t, root, cluster)
+				deployer.Env.Release = release
+				receipt, err := deployer.ApplyAndVerify(ctx, root, &contracts.DeploymentPlan{Source: source, ExpectedWorkloadIds: expected})
+				if err != nil {
+					t.Fatal(err)
 				}
-			}
-			sort.Strings(extra)
-			wantExtra := append([]string(nil), fixture.beyondReads...)
-			sort.Strings(wantExtra)
-			if strings.Join(extra, ",") != strings.Join(wantExtra, ",") {
-				t.Errorf("objects applied beyond the reads = %v, want the ephemeral and foreign-namespace set %v", extra, wantExtra)
-			}
-		})
+				// The Include render's digest is the Omit render's digest, so a
+				// restart can verify what deploy recorded.
+				if _, err := deployer.VerifyAccepted(ctx, depHead(t, root), depNamespace, receipt); err != nil {
+					t.Fatalf("verify after deploy: %v", err)
+				}
+				got := map[string]string{}
+				var extra []string
+				for _, document := range cluster.applied {
+					depUnstamp(document, original)
+					key := depKey(document)
+					if _, read := want[key]; read {
+						got[key] = depCanonical(t, document)
+						continue
+					}
+					meta := document["metadata"].(map[string]any)
+					extra = append(extra, fmt.Sprint(document["kind"], "/", meta["name"]))
+				}
+				if len(got) != len(want) {
+					t.Fatalf("deployed %d read objects, reads have %d\ngot %v\nwant %v", len(got), len(want), sortedKeys(got), sortedKeys(want))
+				}
+				for key, object := range want {
+					if got[key] != object {
+						t.Errorf("%s differs\ndeploy: %s\nread:   %s", key, got[key], object)
+					}
+				}
+				sort.Strings(extra)
+				wantExtra := append([]string(nil), fixture.beyondReads...)
+				sort.Strings(wantExtra)
+				if strings.Join(extra, ",") != strings.Join(wantExtra, ",") {
+					t.Errorf("objects applied beyond the reads = %v, want the ephemeral and foreign-namespace set %v", extra, wantExtra)
+				}
+			})
+		}
 	}
 }
 

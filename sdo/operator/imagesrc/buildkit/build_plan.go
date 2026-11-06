@@ -266,7 +266,7 @@ func listLimited(values []string) string {
 }
 
 // Absolute returns the build with context and Dockerfile resolved to real
-// paths inside the checkout, the form BuildImage takes.
+// paths inside the checkout, the form buildImage takes.
 func (p Planned) Absolute(checkout string) (*contracts.ImageBuild, error) {
 	contextPath, err := imagesrc.SafeCheckoutPath(checkout, p.ContextRel)
 	if err != nil {

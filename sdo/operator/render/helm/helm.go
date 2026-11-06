@@ -60,8 +60,11 @@ func renderChart(ctx context.Context, fsys render.FS, env render.Env, cfg *contr
 	if cfg.GetChartPath() == "" || !fs.ValidPath(root) {
 		return render.Result{}, fmt.Errorf("helm chart_path %q must be a relative path inside the source tree", cfg.GetChartPath())
 	}
-	if env.Release == "" {
-		return render.Result{}, errors.New("helm needs Env.Release (the release name)")
+	releaseName := env.Release
+	if releaseName == "" {
+		// No install configuration names a release: the release is the
+		// application namespace, the same for deploy and every read.
+		releaseName = env.Namespace
 	}
 	chrt, err := loadChart(ctx, fsys, root)
 	if err != nil {
@@ -85,7 +88,7 @@ func renderChart(ctx context.Context, fsys render.FS, env render.Env, cfg *contr
 		return render.Result{}, err
 	}
 	values, err := chartutil.ToRenderValues(chrt, overrides, chartutil.ReleaseOptions{
-		Name: env.Release, Namespace: env.Namespace, Revision: 1, IsInstall: true,
+		Name: releaseName, Namespace: env.Namespace, Revision: 1, IsInstall: true,
 	}, caps)
 	if err != nil {
 		return render.Result{}, fmt.Errorf("helm values for %s: %w", root, err)
