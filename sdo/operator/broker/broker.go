@@ -22,6 +22,7 @@ import (
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
 )
@@ -110,6 +111,10 @@ type Broker struct {
 	// whether a committed outcome holds an independently verified repaired
 	// cause. The same value reaches the agent's check and the publication gate.
 	RepairVerified func(*contracts.OutcomeRecord) bool
+
+	// PlanCatalogs are the registries a deployment plan in .sdo/deployment is
+	// decoded against by the shared check. Unset, only the structural decode runs.
+	PlanCatalogs planfile.Catalogs
 
 	observationCeiling   sdk.ObservationScope
 	applicationNamespace string

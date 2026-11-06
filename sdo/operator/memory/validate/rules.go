@@ -47,6 +47,13 @@ const (
 	RuleManifestLocation = "manifest.location"
 	RuleSourcesInvalid   = "sources.invalid"
 
+	// Deployment class (.sdo/deployment): the strict patch format, the owner
+	// header, the stated upstream base, and the plan's catalog decode.
+	RulePatchInvalid      = "patch.invalid"
+	RulePatchOwner        = "patch.owner"
+	RulePatchUpstreamBase = "patch.upstream-base"
+	RuleDeploymentInvalid = "deployment.invalid"
+
 	// Semantic.
 	RuleArchitectureMissing = "memory.architecture-missing"
 	RuleGoalOwner           = "goal.owner"

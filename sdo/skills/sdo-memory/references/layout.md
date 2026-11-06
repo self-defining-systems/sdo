@@ -46,15 +46,15 @@ Schema version: 4. Paths are repository-relative and used only while editing a p
 | `.sdo/corpus/<case-id>/labels.json` | `corpus` | `case-id` | changeable by human in the import phase or responder in the reflection phase |
 | `.sdo/corpus/<case-id>/operator.json` | `corpus` | `case-id` | changeable by human in the import phase or responder in the reflection phase |
 | `.sdo/corpus/<case-id>/accepted.json` | `corpus` | `case-id` | changeable by human in the import phase or responder in the reflection phase |
-| `.sdo/deployment/plan.yaml` | `deployment-plan` | `—` | changeable by deployer in the initial phase or human in the initial phase |
-| `.sdo/deployment/values/<file>.yaml` | `deployment-file` | `values` | changeable by deployer in the initial phase or human in the initial phase |
-| `.sdo/deployment/manifests/<file>.yaml` | `deployment-file` | `manifests` | changeable by deployer in the initial phase or human in the initial phase |
-| `.sdo/deployment/build/Dockerfile` | `deployment-file` | `build` | changeable by deployer in the initial phase or human in the initial phase |
+| `.sdo/deployment/plan.yaml` | `deployment-plan` | `—` | changeable by deployer in the advance phase or deployer in the initial phase or human in the initial phase |
+| `.sdo/deployment/values/<file>.yaml` | `deployment-file` | `values` | changeable by deployer in the advance phase or deployer in the initial phase or human in the initial phase |
+| `.sdo/deployment/manifests/<file>.yaml` | `deployment-file` | `manifests` | changeable by deployer in the advance phase or deployer in the initial phase or human in the initial phase |
+| `.sdo/deployment/build/Dockerfile` | `deployment-file` | `build` | changeable by deployer in the advance phase or deployer in the initial phase or human in the initial phase |
 | `.sdo/deployment/overlays/telemetry/<file>.yaml` | `deployment-overlay` | `telemetry` | changeable by health_judge in the initial phase or human in the initial phase |
-| `.sdo/deployment/patches/<NNNN-slug>.patch` | `deployment-patch` | `<NNNN-slug>` | changeable by deployer in the initial phase or human in the initial phase or responder in the proposal phase |
+| `.sdo/deployment/patches/<NNNN-slug>.patch` | `deployment-patch` | `<NNNN-slug>` | changeable by deployer in the advance phase or deployer in the initial phase or human in the initial phase or responder in the proposal phase |
 | `.sdo/outcomes/<sha256(incident-id)>.json` | `outcome` | `<sha256(incident-id)>` | no agent may change this file; the controller owns it |
 
-The controller also writes bootstrap schema/module metadata and immutable corpus captures through trusted storage edges; these are not agent grants. The import phase admits human-supplied learned memory; upkeep migrates existing formats. No agent writes outcomes or lifecycle provenance. Deployment files (`.sdo/deployment/`) are the deployment source: the deployer authors the plan, files and patches, the detection designer owns only `overlays/telemetry/`, and a responder may add (never modify or delete) patches in a proposal. Files outside `.sdo/` still belong to the deployer in the initial phase and the responder in the proposal phase until enforcement flips to patches only.
+The controller also writes bootstrap schema/module metadata and immutable corpus captures through trusted storage edges; these are not agent grants. The import phase admits human-supplied learned memory; upkeep migrates existing formats. No agent writes outcomes or lifecycle provenance. Deployment files (`.sdo/deployment/`) are the deployment source: the deployer authors the plan, files and patches (in the initial and advance phases, changing or deleting only patches whose header names it), the detection designer owns only `overlays/telemetry/`, and a responder may add (never modify or delete) patches in a proposal. Files outside `.sdo/` still belong to the deployer in the initial phase and the responder in the proposal phase until enforcement flips to patches only.
 
 In `arch.md` the health judge (the detection designer) may change only the application-map region between the `sdo:application-map` marker lines; everything else in it is Go upkeep's, which carries the region verbatim.
 

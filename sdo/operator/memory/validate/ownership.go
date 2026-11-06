@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/patchset"
 )
 
 // kindSource stands for every repository file outside operational memory.
@@ -37,6 +38,10 @@ func healthObjectiveOnly(kind layout.Kind, id string) bool {
 
 var deploymentKinds = []layout.Kind{layout.KindDeploymentPlan, layout.KindDeploymentFile, layout.KindDeploymentOverlay, layout.KindDeploymentPatch}
 
+// deployerKinds are the deployment kinds the deployer owns: everything but the
+// detection designer's overlay slot.
+var deployerKinds = []layout.Kind{layout.KindDeploymentPlan, layout.KindDeploymentFile, layout.KindDeploymentPatch}
+
 // grants is the whole ownership policy, kind by actor by phase.
 //
 // Phases: the human goal, Upkeep schema and architecture, trusted source deployment,
@@ -49,8 +54,9 @@ var deploymentKinds = []layout.Kind{layout.KindDeploymentPlan, layout.KindDeploy
 // lifecycle provenance.
 //
 // Deployment class (.sdo/deployment): the human seeds all of it, the deployer
-// owns the plan, files and patches, the health judge owns the telemetry overlay
-// slot, and responders only add patches. Kinds not granted here (an overlay for
+// owns the plan, files and patches (in the initial and advance phases, and may
+// change or delete only patches whose header names it), the health judge owns
+// the telemetry overlay slot, and responders only add patches. Kinds not granted here (an overlay for
 // the deployer or a responder) are denied.
 //
 // Incident traffic: responders own the incident generator and incident-*
@@ -74,7 +80,10 @@ var grants = []grant{
 	{actor: Responder, phase: ProposalPhase, kinds: []layout.Kind{kindSource}},
 	{actor: Deployer, phase: InitialPhase, kinds: []layout.Kind{kindSource}},
 	{actor: Human, phase: InitialPhase, kinds: deploymentKinds},
-	{actor: Deployer, phase: InitialPhase, kinds: []layout.Kind{layout.KindDeploymentPlan, layout.KindDeploymentFile, layout.KindDeploymentPatch}},
+	{actor: Deployer, phase: InitialPhase, kinds: deployerKinds},
+	// The deployment agent's advance route (plan, files, refreshed patches);
+	// patchOwnership still limits it to patches it owns.
+	{actor: Deployer, phase: AdvancePhase, kinds: deployerKinds},
 	{actor: HealthJudge, phase: InitialPhase, kinds: []layout.Kind{layout.KindDeploymentOverlay}},
 	{actor: Responder, phase: ProposalPhase, kinds: []layout.Kind{layout.KindDeploymentPatch}},
 	// An upstream advance changes only source: an upstream revision that
@@ -186,10 +195,8 @@ func (s *run) ownershipPolicy(ctx context.Context) error {
 			return err
 		}
 	}
-	if actor == Responder && phase == ProposalPhase {
-		if err := s.responderPatchAddOnly(ctx); err != nil {
-			return err
-		}
+	if err := s.patchOwnership(ctx); err != nil {
+		return err
 	}
 	manifests := changesManifests(s.changed)
 	if phase == InitialPhase && actor == HealthJudge && !changesDetectors(s.changed) && !healthRevalidation(s.req, s.changed) {
@@ -210,11 +217,19 @@ func (s *run) ownershipPolicy(ctx context.Context) error {
 	return s.detectorOwnership(base)
 }
 
-// responderPatchAddOnly denies a proposal that modifies or deletes a deployment
-// patch the base already holds. Responder patches are repair history bound to an
-// incident: a later pass may supersede one with a later-numbered patch but not
-// rewrite it.
-func (s *run) responderPatchAddOnly(ctx context.Context) error {
+// patchOwnership applies the owner rule to patches the base already holds.
+// Responders are add-only: a patch is repair history bound to an incident, so a
+// later pass may supersede one with a later-numbered patch but not rewrite or
+// delete it. The deployer may change or delete only patches whose header in the
+// base names it; a base patch whose owner cannot be read is not provably its
+// own. The human seed is unrestricted.
+func (s *run) patchOwnership(ctx context.Context) error {
+	actor, phase := s.req.Actor, s.req.Phase
+	responder := actor == Responder && phase == ProposalPhase
+	deployer := actor == Deployer && (phase == InitialPhase || phase == AdvancePhase)
+	if !responder && !deployer {
+		return nil
+	}
 	for _, p := range s.changed {
 		if kind, _, ok := layout.Classify(p); !ok || kind != layout.KindDeploymentPatch {
 			continue
@@ -223,8 +238,23 @@ func (s *run) responderPatchAddOnly(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if len(bytes.TrimSpace(listing)) > 0 {
+		if len(bytes.TrimSpace(listing)) == 0 {
+			continue
+		}
+		if responder {
 			s.add(Ownership, Diagnostic{Rule: RuleOwnershipDenied, Path: p, Message: "responders may add deployment patches but not modify or delete an accepted one", Hint: "add a new, later-numbered patch that supersedes it"})
+			continue
+		}
+		data, err := git(ctx, s.req.Root, "show", s.req.Base+":"+p)
+		if err != nil {
+			return err
+		}
+		parsed, perr := patchset.Parse(path.Base(p), data)
+		switch {
+		case perr != nil:
+			s.add(Ownership, Diagnostic{Rule: RuleOwnershipDenied, Path: p, Message: "the accepted patch has no readable owner header, so the deployer cannot show it owns it: " + perr.Error(), Hint: "add a new, later-numbered patch instead of changing this one"})
+		case parsed.Header.Owner != patchset.OwnerDeployer:
+			s.add(Ownership, Diagnostic{Rule: RuleOwnershipDenied, Path: p, Message: fmt.Sprintf("the deployer may change or delete only its own patches; this one is owned by %s", parsed.Header.Owner), Hint: "add a new, later-numbered patch that supersedes it"})
 		}
 	}
 	return nil

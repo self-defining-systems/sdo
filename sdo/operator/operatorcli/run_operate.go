@@ -83,6 +83,7 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	config.Install.MetricsURL = config.Install.EffectiveMetricsURL()
 	config.Lifecycle.MetricsSource = config.Install.MetricsSource()
 	repository.MetricsDetectors = config.Install.MetricsURL != ""
+	repository.PlanCatalogs = planCatalogs()
 	environment, err := renderenv.Discover(client.Discovery())
 	if err != nil {
 		return lifecycle.Result{}, fmt.Errorf("discover render environment: %w", err)
