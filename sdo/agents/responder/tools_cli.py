@@ -75,7 +75,7 @@ RESPONSE_FIELDS = {
     "selection_schema, selection_set_schema, unexplained_removal_blockers[]",
     "source": "source (accepted Kubernetes object)",
     "verify": "healthy, verification_status, findings[], detector_states[], "
-    "verification_blockers[{detector_id,reason}], drift[], drift_events[]",
+    "verification_blockers[{detector_id,reason}], drift[], drift_events[], data_at_risk[]",
     "report": "report.{status, attempt_id, rounds}, session",
     "act": "actions[].{success, exit_code, receipt, output, failure_reason, hint}",
     "apply": "actions[].{application_id, targeted_healthy, mitigation_health, program_runs, program_revisions, report}",

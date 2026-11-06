@@ -147,6 +147,9 @@ func verifiedPartialAction(action *contracts.RepairActionReceipt, proof map[sdk.
 }
 
 func partialRepairCauses(outcome *contracts.OutcomeRecord) []uint32 {
+	if dataLossOutcome(outcome) {
+		return nil
+	}
 	proof, applications := partialRepairProof(outcome)
 	repaired := map[sdk.ObjectRef]bool{}
 	written := map[sdk.ObjectRef]bool{}
@@ -257,6 +260,9 @@ func partialReflectionEligibility(eligibility *contracts.ReflectionEligibility, 
 // unverified repair claims into executable memory. The check applies it to the
 // same learning view the worker receives.
 func reflectionRepairVerified(outcome *contracts.OutcomeRecord) bool {
+	if dataLossOutcome(outcome) {
+		return false
+	}
 	if outcome.GetClassification() == outcomeclass.Success {
 		return true
 	}

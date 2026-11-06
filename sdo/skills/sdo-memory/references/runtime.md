@@ -167,7 +167,8 @@ options:
                        finding, or this timeout (0: cached and instant)
 
 Key JSON fields: healthy, verification_status, findings[], detector_states[],
-verification_blockers[{detector_id,reason}], drift[], drift_events[]
+verification_blockers[{detector_id,reason}], drift[], drift_events[],
+data_at_risk[]
 
 
 <!-- replay:on -->

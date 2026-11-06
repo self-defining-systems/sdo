@@ -314,6 +314,12 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		cancel()
 		return err
 	}
+	if effect.Freeze && needsRecheck && unconfirmed == "" && denied == "" && verificationErr == nil && expiredHealth == nil {
+		if risk := c.closureDataRisk(actionCtx, snapshot, effect.Closure); risk != "" {
+			unconfirmed, unconfirmedReason = risk, contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_DATA_MAY_BE_LOST
+			unconfirmedStates = []DetectorEvaluation{{DetectorID: dataAtRiskEvaluation, EvaluatedAt: c.clock(), Status: DetectorEvaluationPending, Reason: risk}}
+		}
+	}
 	effectKind := lifecyclecore.ProcessClosure
 	if effect.Freeze {
 		effectKind = lifecyclecore.FreezeClosure
