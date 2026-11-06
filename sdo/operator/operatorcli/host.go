@@ -96,8 +96,7 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	var responderNamespaces repeatable
 	flags.Var(&responderNamespaces, "responder-namespace", "additional lane namespace for permissive responder")
 	healthyBaseline := flags.Bool("healthy-baseline", false, "validate incident detectors against recorded healthy snapshots")
-	disableObservability := flags.Bool("no-observability-stack", false, "Do not install the SDO Prometheus stack")
-	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL; installs the metrics alerts detector and lets metric detectors query it")
+	telemetryFlags := registerTelemetryFlags(flags)
 	var responderEnv repeatable
 	flags.Var(&responderEnv, "responder-env", "responder environment NAME=VALUE")
 	kubeconfig := flags.String("kubeconfig", "", "Kubernetes client and kubectl config")
@@ -206,9 +205,17 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	if err != nil {
 		return HostConfig{}, err
 	}
+	controlForTelemetry := *control
+	if controlForTelemetry == "" {
+		controlForTelemetry = *namespace
+	}
+	telemetryProfile, err := telemetryFlags.resolve(controlForTelemetry)
+	if err != nil {
+		return HostConfig{}, err
+	}
 	config := install.Config{
-		BackendRecipes: telemetrysources.Recipes(),
-		SourceKind:     *sourceKind, SourceConfig: *sourceConfig, DeploymentPlan: compactPlan, DeploymentPolicy: deploymentPolicy,
+		BackendRecipes: telemetrysources.Recipes(), TelemetryProfile: telemetryProfile,
+		SourceKind: *sourceKind, SourceConfig: *sourceConfig, DeploymentPlan: compactPlan, DeploymentPolicy: deploymentPolicy,
 		CodePath:           selectedCodePath,
 		ResponderMenu:      menuEnabled,
 		ObservationCeiling: ceiling,
@@ -217,7 +224,7 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 		BuildKitImage: *buildkitImage,
 		RepositoryPVC: *repositoryPVC, CredentialsSecret: *credentialsSecret,
 		RegistryPushSecret: *registrySecret, RegistryHost: *registryHost, Model: *model, AgentProvider: *provider, AgentEffort: *effort, Replay: *replay,
-		RegistryInsecure: *registryInsecure, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline, DisableObservability: *disableObservability, MetricsURL: *metricsURL, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
+		RegistryInsecure: *registryInsecure, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
 		ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,
 		LateFindings: *lateFindings, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, FrozenMemory: *frozenMemory, ExternalIncidents: *externalIncidents,
 		MaxResponseLoops: *maxResponseLoops,

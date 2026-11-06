@@ -92,8 +92,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	var responderNamespaces repeatable
 	flags.Var(&responderNamespaces, "responder-namespace", "additional lane namespace for permissive responder")
 	healthyBaseline := flags.Bool("healthy-baseline", false, "validate incident detectors against recorded healthy snapshots")
-	disableObservability := flags.Bool("no-observability-stack", false, "Do not install the SDO Prometheus stack")
-	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL; installs the metrics alerts detector and lets metric detectors query it")
+	telemetryFlags := registerTelemetryFlags(flags)
 	var responderEnv repeatable
 	flags.Var(&responderEnv, "responder-env", "responder environment NAME=VALUE")
 	if err := flags.Parse(args[1:]); err != nil {
@@ -173,6 +172,10 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	if err != nil {
 		return OperateConfig{}, err
 	}
+	telemetryProfile, err := telemetryFlags.resolve(control)
+	if err != nil {
+		return OperateConfig{}, err
+	}
 	selectedCodePath, err := parseCodePathSelection(*codePathName, *codePathOverrides)
 	if err != nil {
 		return OperateConfig{}, err
@@ -200,18 +203,18 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			MaxAttempts:  *maxAttempts,
 		},
 		Install: install.Config{
-			BackendRecipes:     telemetrysources.Recipes(),
+			BackendRecipes: telemetrysources.Recipes(), TelemetryProfile: telemetryProfile,
 			CodePath:           selectedCodePath,
 			ResponderMenu:      menuEnabled,
 			ObservationCeiling: ceiling,
 			Namespace:          *namespace, ControlNamespace: control, Application: *application,
 			SourceKind: *sourceKind, SourceConfig: *sourceConfig, DeploymentPlan: *deploymentPlan, DeploymentPolicy: *deploymentPolicyFlag,
 			ControllerImage: *controllerImage, ResponderImage: *responderImage,
-			ScriptImage: *scriptImage, DisableObservability: *disableObservability, RepositoryPVC: *repositoryPVC,
+			ScriptImage: *scriptImage, RepositoryPVC: *repositoryPVC,
 			CredentialsSecret: *credentialsSecret, Model: *model, AgentProvider: *provider, AgentEffort: *effort, Replay: *replay,
 			// The controller parent deploys upstream advances with the same identity.
 			BuildKitImage: *buildkitImage, RegistryPushSecret: *registryPushSecret,
-			RegistryInsecure: *registryInsecure, RegistryHost: *registryHost, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline, MetricsURL: *metricsURL, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
+			RegistryInsecure: *registryInsecure, RegistryHost: *registryHost, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
 			ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,
 			LateFindings: *lateFindings, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, FrozenMemory: *frozenMemory, ExternalIncidents: *externalIncidents,
 			MaxResponseLoops: *maxResponseLoops,

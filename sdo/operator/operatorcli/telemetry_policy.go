@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/operatorcli/catalog/telemetrysources"
 	"sdo.dev/operator/telemetry"
@@ -19,36 +22,53 @@ const memoryTelemetryPolicyEnv = "SDO_TELEMETRY_POLICY"
 // same catalog wiring the controller opens clients from.
 func telemetryRegistry() *telemetry.Registry { return telemetrysources.Registry() }
 
-// legacyMetricsSourceID names the operator-provided source that stands for
-// the install's metrics URL until the telemetry profile replaces it. The
-// controller's environment document (install.Config.TelemetryEnvironment)
-// provides the same binding.
-const legacyMetricsSourceID = "default"
-
-// installTelemetryPolicy derives the policy from what the installer grants.
-// Until the telemetry profile lands, the observability stack decides it: the
-// Prometheus recipe and its pod-discovery and node-proxy reads exist exactly
-// when the stack is installed. The configured metrics URL (config.MetricsURL,
-// already the effective one) is the single operator-provided source `default`,
-// the same binding the controller's environment document provides, so the
+// installTelemetryPolicy derives the broker's policy from the install's
+// telemetry profile: its mode, the cluster reads it grants, the recipes it
+// applies with the reads each declares, and its provided sources. The
+// controller's environment document comes from the same profile, so the
 // broker, the judge's check and the controller agree on which sources exist.
 func installTelemetryPolicy(config install.Config, application, control string) (telemetry.Policy, error) {
-	policy := telemetry.Policy{Mode: telemetry.ModeOpen, ControlNamespace: control, ApplicationNamespace: application}
-	if !config.DisableObservability {
-		policy.Capabilities = []telemetry.ClusterCapability{telemetry.CapPodDiscovery, telemetry.CapNodeProxy}
-		policy.Recipes = []telemetry.Recipe{{Name: "prometheus", Declares: policy.Capabilities}}
+	profile := config.TelemetryProfile
+	policy := telemetry.Policy{Mode: profile.Mode, ControlNamespace: control, ApplicationNamespace: application, Capabilities: profile.Capabilities}
+	if policy.Mode == "" {
+		policy.Mode = telemetry.ModeOpen
 	}
-	if config.MetricsURL != "" {
-		source, err := telemetryRegistry().Source(telemetry.Binding{
-			ID: legacyMetricsSourceID, Adapter: "prometheus", Kinds: []telemetry.Kind{telemetry.KindMetrics},
-			Endpoint: telemetry.Endpoint{URL: config.MetricsURL}, Default: true, Origin: telemetry.OriginOperator,
-		})
-		if err != nil {
-			return telemetry.Policy{}, fmt.Errorf("metrics URL as a telemetry source: %w", err)
+	for _, name := range profile.Recipes {
+		found := false
+		for _, recipe := range config.BackendRecipes {
+			if recipe.Name() == name {
+				policy.Recipes = append(policy.Recipes, telemetry.Recipe{Name: name, Declares: recipe.Capabilities()})
+				found = true
+			}
 		}
-		policy.Provided = []telemetry.Source{source}
+		if !found {
+			return telemetry.Policy{}, fmt.Errorf("telemetry profile %q applies recipe %q, which this operator does not provide", profile.Name, name)
+		}
+	}
+	for _, source := range profile.Sources {
+		provided, err := telemetryRegistry().Source(source.Binding())
+		if err != nil {
+			return telemetry.Policy{}, fmt.Errorf("telemetry profile %q source %q: %w", profile.Name, source.ID, err)
+		}
+		policy.Provided = append(policy.Provided, provided)
 	}
 	return policy, nil
+}
+
+// metricsSource is the incident-facing view of the environment's default
+// metrics source: its query URL and the publishing base the profile offers.
+func metricsSource(env telemetry.Environment) *contracts.MetricsSource {
+	source := &contracts.MetricsSource{}
+	for _, binding := range env.Provided {
+		if binding.Default && slices.Contains(binding.Kinds, telemetry.KindMetrics) {
+			source.QueryUrl = binding.Endpoint.URL
+		}
+	}
+	if publish := env.MetricsPublishURL; publish != "" {
+		source.AnnotatedPodScraping = true
+		source.OtlpMetricsUrl = strings.TrimRight(publish, "/") + "/api/v1/otlp/v1/metrics"
+	}
+	return source
 }
 
 // memoryTelemetryPolicy reads the policy an agent check runs under. With no

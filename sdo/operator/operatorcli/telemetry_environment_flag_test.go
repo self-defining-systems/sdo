@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"sdo.dev/operator/install"
+	"sdo.dev/operator/operatorcli/catalog/telemetrysources"
 	"sdo.dev/operator/telemetry"
 )
 
@@ -35,11 +36,10 @@ func TestControllerLaunchRefusesTheRetiredMetricsFlags(t *testing.T) {
 // same source set, or a detector the broker accepted cannot resolve live.
 func TestBrokerPolicyAndControllerEnvironmentProvideTheSameSources(t *testing.T) {
 	for name, config := range map[string]install.Config{
-		"installed stack":  {Namespace: "shop"},
-		"explicit URL":     {Namespace: "shop", MetricsURL: "http://prom.ops.svc:9090"},
-		"no stack, no URL": {Namespace: "shop", DisableObservability: true},
+		"prometheus-default": {Namespace: "shop", BackendRecipes: telemetrysources.Recipes(), TelemetryProfile: mustBuiltin(t, "prometheus-default", "shop")},
+		"none":               {Namespace: "shop", BackendRecipes: telemetrysources.Recipes(), TelemetryProfile: mustBuiltin(t, "none", "shop")},
+		"external source":    {Namespace: "shop", BackendRecipes: telemetrysources.Recipes(), TelemetryProfile: withSource(t, mustBuiltin(t, "none", "shop"), "ops=http://prom.ops.svc:9090")},
 	} {
-		config.MetricsURL = config.EffectiveMetricsURL()
 		policy, err := installTelemetryPolicy(config, "shop", "shop")
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)

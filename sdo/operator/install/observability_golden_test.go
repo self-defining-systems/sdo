@@ -22,6 +22,7 @@ func TestObservabilityObjectsAreByteStable(t *testing.T) {
 	} {
 		var plan Plan
 		cfg.BackendRecipes = []telemetry.BackendRecipe{recipe.New()}
+		cfg.TelemetryProfile = telemetry.Profile{Name: "prometheus-default", Recipes: []string{"prometheus"}}
 		if err := addObservability(&plan, cfg); err != nil {
 			t.Fatal(err)
 		}

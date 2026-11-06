@@ -90,8 +90,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	var responderNamespaces repeatable
 	flags.Var(&responderNamespaces, "responder-namespace", "additional lane namespace for permissive responder")
 	healthyBaseline := flags.Bool("healthy-baseline", false, "validate incident detectors against recorded healthy snapshots")
-	disableObservability := flags.Bool("no-observability-stack", false, "Do not install the SDO Prometheus stack")
-	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL; installs the metrics alerts detector and lets metric detectors query it")
+	telemetryFlags := registerTelemetryFlags(flags)
 	registrationConfigMap := flags.String("agent-registration-configmap", "", "registration ConfigMap")
 	kubeconfig := flags.String("kubeconfig", "", "Kubernetes client and kubectl config")
 	standby := flags.Bool("responder-standby", true, "pre-start a responder; false forces cold Jobs")
@@ -148,10 +147,18 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	if err != nil {
 		return InstallExistingConfig{}, err
 	}
+	controlForTelemetry := *controlNamespace
+	if controlForTelemetry == "" {
+		controlForTelemetry = *namespace
+	}
+	telemetryProfile, err := telemetryFlags.resolve(controlForTelemetry)
+	if err != nil {
+		return InstallExistingConfig{}, err
+	}
 	config := install.Config{
-		BackendRecipes: telemetrysources.Recipes(),
-		CodePath:       selectedCodePath,
-		Namespace:      *namespace, ControlNamespace: *controlNamespace, Application: *application,
+		BackendRecipes: telemetrysources.Recipes(), TelemetryProfile: telemetryProfile,
+		CodePath:  selectedCodePath,
+		Namespace: *namespace, ControlNamespace: *controlNamespace, Application: *application,
 		ScriptImage: *scriptImage, ControllerImage: *controllerImage, ResponderImage: *responderImage,
 		RepositoryPVC: *repositoryPVC, CredentialsSecret: *credentialsSecret, Model: *model,
 		RepairPolicy: *repairPolicy, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, FrozenMemory: *frozenMemory, ExternalIncidents: *externalIncidents, AgentProvider: *provider, AgentEffort: *effort, Replay: *replay,
@@ -160,7 +167,6 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 		LateFindings:     *lateFindings,
 		HealthyBaseline:  *healthyBaseline, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
 		TimeoutSeconds: int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()),
-		MetricsURL: *metricsURL, DisableObservability: *disableObservability,
 		NativeCommand: []string{"/usr/local/bin/sdo-operator"},
 		ReuseExisting: *duration == 0 && !*exitAfterClosure, WaitForCompletion: *duration > 0 || *exitAfterClosure,
 		RegistrationConfigMap: *registrationConfigMap,

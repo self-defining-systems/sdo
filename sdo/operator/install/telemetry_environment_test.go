@@ -9,10 +9,25 @@ import (
 	"sdo.dev/operator/telemetry/prometheus/recipe"
 )
 
+// prometheusProfile is the profile the operator CLI's built-in prometheus-default
+// resolves to for control namespace app.
+func prometheusProfile() telemetry.Profile {
+	return telemetry.Profile{
+		Name: "prometheus-default", Mode: telemetry.ModeOpen, Recipes: []string{"prometheus"},
+		Capabilities: []telemetry.ClusterCapability{telemetry.CapPodDiscovery, telemetry.CapNodeProxy},
+		Sources: []telemetry.ProfileSource{{
+			ID: "prom", Adapter: "prometheus", Kinds: []telemetry.Kind{telemetry.KindMetrics},
+			Endpoint: "http://sdo-prometheus.app.svc:9090", Default: true,
+		}},
+		MetricsPublishURL: "http://sdo-prometheus.app.svc:9090",
+	}
+}
+
 func environmentConfig() Config {
 	return Config{
-		BackendRecipes: []telemetry.BackendRecipe{recipe.New()},
-		Namespace:      "app", Application: "app", RepositoryPVC: "repo", CredentialsSecret: "creds",
+		TelemetryProfile: prometheusProfile(),
+		BackendRecipes:   []telemetry.BackendRecipe{recipe.New()},
+		Namespace:        "app", Application: "app", RepositoryPVC: "repo", CredentialsSecret: "creds",
 		ControllerImage: "controller:test", ResponderImage: "responder:test", Model: "m", Replay: "on",
 		NativeCommand: []string{"/usr/local/bin/sdo-operator"}, AcceptedCommit: strings.Repeat("c", 40), TimeoutSeconds: 60, VerificationTimeoutSeconds: 60,
 	}
@@ -53,7 +68,7 @@ func TestControllerReadsTheTelemetryEnvironmentFromAMountedConfigMap(t *testing.
 		t.Fatalf("environment ConfigMap is not labelled as installer-owned: %v", plan.TelemetryEnvironment.Labels)
 	}
 	provided := env.ProvidedBindings()
-	if len(provided) != 1 || provided[0].ID != "default" || provided[0].Endpoint.URL != "http://sdo-prometheus.app.svc:9090" || !provided[0].Default {
+	if len(provided) != 1 || provided[0].ID != "prom" || provided[0].Endpoint.URL != "http://sdo-prometheus.app.svc:9090" || !provided[0].Default {
 		t.Fatalf("provided = %+v; the installed stack is the one default source", provided)
 	}
 	if env.MetricsPublishURL != "http://sdo-prometheus.app.svc:9090" {
@@ -61,16 +76,21 @@ func TestControllerReadsTheTelemetryEnvironmentFromAMountedConfigMap(t *testing.
 	}
 }
 
-func TestTelemetryEnvironmentFollowsTheLegacyMetricsFields(t *testing.T) {
+func TestTelemetryEnvironmentFollowsTheProfile(t *testing.T) {
 	external := environmentConfig()
-	external.MetricsURL = "http://prom.ops.svc:9090"
-	if env := external.TelemetryEnvironment(); env.Provided[0].Endpoint.URL != "http://prom.ops.svc:9090" || env.MetricsPublishURL == "" {
-		t.Fatalf("an explicit URL wins for queries while the stack still offers publishing: %+v", env)
+	external.TelemetryProfile = telemetry.Profile{Name: "external", Sources: []telemetry.ProfileSource{{
+		ID: "ops", Adapter: "prometheus", Kinds: []telemetry.Kind{telemetry.KindMetrics}, Endpoint: "http://prom.ops.svc:9090", Default: true,
+	}}}
+	if env := external.TelemetryEnvironment(); env.Provided[0].Endpoint.URL != "http://prom.ops.svc:9090" || env.MetricsPublishURL != "" {
+		t.Fatalf("an external profile provides its source and offers no publishing: %+v", env)
 	}
 	none := environmentConfig()
-	none.DisableObservability = true
+	none.TelemetryProfile = telemetry.Profile{Name: "none"}
 	if env := none.TelemetryEnvironment(); len(env.Provided) != 0 || env.MetricsPublishURL != "" {
-		t.Fatalf("no stack and no URL provides nothing: %+v", env)
+		t.Fatalf("an empty profile provides nothing: %+v", env)
+	}
+	if plan, err := Resources(none); err != nil || len(plan.Backend.Deployments) != 0 {
+		t.Fatalf("an empty profile applies no recipe: %v %v", plan.Backend, err)
 	}
 	first, err := Resources(external)
 	if err != nil {

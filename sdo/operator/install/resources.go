@@ -71,7 +71,6 @@ type Config struct {
 	NativeCommand, NativeArgs                    []string
 	ExtraControllerArgs                          []string
 	ResponderEnv                                 []string
-	DisableObservability                         bool
 	ResponderStandby                             *bool
 	Credentials                                  map[string][]byte
 	RegistrationConfigMap, RegistrationDirectory string
@@ -88,7 +87,10 @@ type Config struct {
 	ReuseExisting, WaitForCompletion bool
 	PermissiveResponder              bool
 	ResponderNamespaces              []string
-	MetricsURL                       string
+	// TelemetryProfile is the environment's statement of application
+	// telemetry; the installer applies its recipes and hands its environment
+	// to the controller. The zero profile applies and provides nothing.
+	TelemetryProfile telemetry.Profile
 	// BackendRecipes are the SDO-owned telemetry backends the installer may
 	// apply, injected by the operator CLI wiring.
 	BackendRecipes []telemetry.BackendRecipe
@@ -304,10 +306,8 @@ func Resources(c Config) (Plan, error) {
 	}
 	plan.ServiceAccounts = append(plan.ServiceAccounts, &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "sdo-script", Namespace: c.Namespace}})
 	addAdminGrant(c, &plan)
-	if !c.DisableObservability {
-		if err := addObservability(&plan, c); err != nil {
-			return Plan{}, err
-		}
+	if err := addObservability(&plan, c); err != nil {
+		return Plan{}, err
 	}
 	environment, err := telemetryEnvironmentConfigMap(c)
 	if err != nil {
