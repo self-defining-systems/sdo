@@ -47,6 +47,9 @@ const (
 	// RolloutReasonInitRetryDeadline: the workload's progress deadline passed
 	// while an init container was still retrying.
 	RolloutReasonInitRetryDeadline RolloutReason = "init-retry-deadline-exceeded"
+	// RolloutReasonContainerRetryDeadline: the same for a main container that
+	// kept restarting or crash-looping.
+	RolloutReasonContainerRetryDeadline RolloutReason = "container-retry-deadline-exceeded"
 )
 
 func (e *RolloutTimeoutError) Error() string {
@@ -218,21 +221,29 @@ type rolloutAssessment struct {
 	Advice      string
 	Progressing bool
 	Stuck       bool
-	// InitDeadline is set when the verdict is Stuck only because an init
-	// container was still retrying past the progress deadline.
-	InitDeadline bool
+	// RetryKind is "init" or "container" when the verdict is Stuck only
+	// because containers of that kind were still retrying past the progress
+	// deadline; empty otherwise.
+	RetryKind string
 }
 
 func (a rolloutAssessment) reason() RolloutReason {
 	switch {
 	case a.Progressing:
 		return RolloutReasonProgressing
-	case a.InitDeadline:
+	case a.RetryKind == retryInit:
 		return RolloutReasonInitRetryDeadline
+	case a.RetryKind == retryContainer:
+		return RolloutReasonContainerRetryDeadline
 	default:
 		return RolloutReasonNotProgressing
 	}
 }
+
+const (
+	retryInit      = "init"
+	retryContainer = "container"
+)
 
 // rolloutInputs is what the pods alone cannot say: how long the rollout has
 // been observed, the deadline init-container retries are allowed to run to,
@@ -295,7 +306,7 @@ func (b CommandBackend) rolloutInputs(ctx context.Context, workload []byte, limi
 type podVerdict struct {
 	progress string // positive evidence of progress, empty if none
 	stuck    bool
-	initWait bool // stuck is only an init container retrying past its deadline
+	retry    string // stuck is only containers of this kind retrying past the deadline
 	advice   []string
 	notes    []string
 }
@@ -364,29 +375,16 @@ func assessPod(pod podObject, events []rolloutEvent, now time.Time, in rolloutIn
 		switch {
 		case s.State.Running != nil && s.RestartCount == 0:
 			v.progress = "init " + s.Name + " running"
-		case initRetrying(s):
-			// Kubernetes retries init containers with backoff, and a dependency
-			// wait fails until what it waits for exists. That is not yet progressed,
-			// not stuck, until the progress deadline, or while a Job that may be
-			// that dependency still runs. Pull, spec and scheduling failures
-			// are not init exits and keep their fast paths.
-			switch {
-			case len(in.RunningJobs) > 0:
-				if v.progress == "" {
-					v.progress = "init " + s.Name + " retrying (" + lastExit(s) + ") while Job " + in.RunningJobs[0] + " is still running"
-				}
-			case in.Waited < in.Deadline:
-				if v.progress == "" {
-					v.progress = "init " + s.Name + " retrying (" + lastExit(s) + ") within the " + in.Deadline.Round(time.Second).String() + " progress deadline"
-				}
-			default:
-				v.stuck, v.initWait = true, true
-				v.advice = append(v.advice, "deadline exceeded while init container "+s.Name+" was retrying ("+lastExit(s)+"): fix its command or the dependency it waits for")
-			}
+		case containerRetrying(s):
+			v.retryContainer(retryInit, s, in)
 		}
 	}
 	for _, s := range pod.Status.ContainerStatuses {
 		if s.Ready {
+			continue
+		}
+		if pod.Status.Phase != "Failed" && containerRetrying(s) {
+			v.retryContainer(retryContainer, s, in)
 			continue
 		}
 		switch {
@@ -409,9 +407,6 @@ func assessPod(pod podObject, events []rolloutEvent, now time.Time, in rolloutIn
 			case "CreateContainerConfigError", "CreateContainerError", "RunContainerError":
 				v.advice = append(v.advice, adviceConfig)
 				v.stuck = v.stuck || age >= 30*time.Second
-			case "CrashLoopBackOff":
-				v.advice = append(v.advice, adviceCrash)
-				v.stuck = true
 			default:
 				v.advice = append(v.advice, adviceCrash)
 			}
@@ -440,9 +435,37 @@ func assessPod(pod podObject, events []rolloutEvent, now time.Time, in rolloutIn
 	return v
 }
 
-// initRetrying reports an init container that exited non-zero and is being
+// retryContainer records one restarting container. Kubernetes retries it with
+// backoff, and it fails until what it depends on exists, so it is not yet
+// progressed, never stuck, while a Job of the same or an earlier phase runs and
+// until the progress deadline after that. Pull, spec and scheduling failures
+// are not exits and keep their fast paths.
+func (v *podVerdict) retryContainer(kind string, s containerStatus, in rolloutInputs) {
+	label := s.Name
+	if kind == retryInit {
+		label = "init " + s.Name
+	}
+	switch {
+	case len(in.RunningJobs) > 0:
+		if v.progress == "" {
+			v.progress = label + " retrying (" + lastExit(s) + ") while Job " + in.RunningJobs[0] + " is still running"
+		}
+	case in.Waited < in.Deadline:
+		if v.progress == "" {
+			v.progress = label + " retrying (" + lastExit(s) + ") within the " + in.Deadline.Round(time.Second).String() + " progress deadline"
+		}
+	default:
+		v.stuck = true
+		if v.retry == "" || kind == retryInit {
+			v.retry = kind
+		}
+		v.advice = append(v.advice, "deadline exceeded while "+strings.TrimPrefix(kind+" ", retryContainer+" ")+"container "+s.Name+" was retrying ("+lastExit(s)+"): fix its command, environment or the dependency it waits for")
+	}
+}
+
+// containerRetrying reports a container that exited non-zero and is being
 // retried by the kubelet, whether sampled terminated, in backoff or running again.
-func initRetrying(s containerStatus) bool {
+func containerRetrying(s containerStatus) bool {
 	if s.State.Terminated != nil {
 		return s.State.Terminated.ExitCode != 0
 	}
@@ -533,7 +556,7 @@ func assessRollout(resourceID string, podsJSON, eventsJSON []byte, now time.Time
 		return a
 	}
 	result := rolloutAssessment{Progressing: true}
-	initOnly := true
+	retryOnly, retryKind := true, ""
 	advice := map[string]bool{}
 	lines := []string{}
 	var shownEvents []rolloutEvent
@@ -564,7 +587,11 @@ func assessRollout(resourceID string, podsJSON, eventsJSON []byte, now time.Time
 			}
 			if verdict.stuck {
 				result.Stuck = true
-				initOnly = initOnly && verdict.initWait
+				if verdict.retry == "" {
+					retryOnly = false
+				} else if retryKind != retryInit {
+					retryKind = verdict.retry
+				}
 			}
 			if len(verdict.advice) == 0 && verdict.progress == "" {
 				// No failure evidence and no progress either: an unready pod with nothing to wait for.
@@ -591,7 +618,9 @@ func assessRollout(resourceID string, podsJSON, eventsJSON []byte, now time.Time
 		detail = string(runes[:maxRolloutDetail]) + "..."
 	}
 	result.Detail = detail
-	result.InitDeadline = result.Stuck && initOnly
+	if result.Stuck && retryOnly {
+		result.RetryKind = retryKind
+	}
 	return result
 }
 
