@@ -49,6 +49,7 @@ FIXTURE_SEED = ROOT / "tests/fixtures/sdo/scripted_seed"
 STREAM = ROOT / "tests/fixtures/sregym/fastloop/pbprog_explicit.json"
 REGISTRATIONS = ROOT / "benchmarks/sregym/fastloop/agent_registrations"
 NAMESPACE = "hotel-reservation"
+HEALTH_DETECTORS = ("workload-health", "service-endpoints", "service-reachability", "traffic-health")
 COMPONENTS = ("reservation", "rate", "geo", "search")
 SWEEP_MAIN = """
 package main
@@ -792,6 +793,9 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
     traffic = workspace / ".sdo/diagnostics/traffic/workloads"
     traffic.mkdir(parents=True)
     (traffic / "health.yaml").write_text("purpose: health-probe\nscenarios:\n- id: frontend\n")
+    for detector in HEALTH_DETECTORS:
+        (workspace / ".sdo/diagnostics/detectors/health" / detector).mkdir(parents=True)
+        (workspace / ".sdo/diagnostics/detectors/health" / detector / "manifest.yaml").write_text("id: fixture\n")
     plan = rbac.installer_rbac(NAMESPACE)
     grants = []
     for key in ("ClusterRoles", "ClusterBindings"):
@@ -866,7 +870,7 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
                 "status": "clear" if app.healthy() else "firing",
                 "evaluated_at": datetime.now(timezone.utc).isoformat(),
             }
-            for key in ("workload-health", "service-endpoints", "service-reachability", "traffic-health")
+            for key in HEALTH_DETECTORS
         ]
         return state
 
