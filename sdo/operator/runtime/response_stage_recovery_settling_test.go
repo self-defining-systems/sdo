@@ -461,3 +461,22 @@ func TestTrafficRecoveryEvidenceNeedsFreshSamples(t *testing.T) {
 		t.Fatalf("a detector that reads no traffic needs no traffic evidence: %q", reason)
 	}
 }
+
+type reachabilityLearned struct{ settlingDetector }
+
+func (reachabilityLearned) ConsumesServiceReachability() bool { return true }
+
+// A detector served by the memory host reads the controller's rolling dial
+// history but declares no window on the wire (as with traffic), and the
+// recovery stage's view carries no dials. It still lags a repair by the dial
+// window; a zero window handed a still-reported Service port repair to the
+// responder, because findings that "depend on" nothing time-bound do not settle.
+func TestReachabilityConsumerLagsARepairByItsDialWindowWhateverTheView(t *testing.T) {
+	learned := reachabilityLearned{settlingDetector{id: "learned-reachability", class: sdk.DetectorClassHealth}}
+	if got := detectorWindow(learned, sdktest.Snapshot{NamespaceName: "app"}); got <= 0 {
+		t.Fatalf("window of a reachability consumer = %s, want its dial window", got)
+	}
+	if got := detectorWindow(settlingDetector{id: "current", class: sdk.DetectorClassHealth}, sdktest.Snapshot{NamespaceName: "app"}); got != 0 {
+		t.Fatalf("a detector that reads no dial history judges current state, got window %s", got)
+	}
+}

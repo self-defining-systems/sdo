@@ -46,3 +46,18 @@ func TestDefaultCadenceRejectsShortStallsAndDetectsSustainedFailure(t *testing.T
 		t.Fatalf("sustained failure not detected within five seconds: findings=%v err=%v", findings, err)
 	}
 }
+
+// A context that carries no dial observations (a program's read view, a
+// recovery snapshot) still judges a detector that reads a rolling dial
+// history: the repair of a Service port is seen one dial later, whatever view
+// asks. A zero window would read as "judges current state".
+func TestReachabilityWindowDoesNotDependOnTheViewCarryingDials(t *testing.T) {
+	windowed, ok := servicehealth.NewReachabilityDetector(sdk.DetectorSpec{ID: "reachability"}).(sdk.WindowedDetector)
+	if !ok {
+		t.Fatal("the reachability detector must declare its evaluation window")
+	}
+	want := servicehealth.DefaultReachabilityInterval + servicehealth.DefaultReachabilityTimeout
+	if got := windowed.EvaluationWindow(sdktest.Snapshot{NamespaceName: "app"}); got != want {
+		t.Fatalf("window without dial observations = %s, want the default cadence's %s", got, want)
+	}
+}

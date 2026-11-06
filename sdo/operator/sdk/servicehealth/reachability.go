@@ -221,12 +221,12 @@ func (d reachabilityDetector) Spec() sdk.DetectorSpec { return d.spec }
 func (d reachabilityDetector) ConsumesServiceReachability() bool { return true }
 
 // EvaluationWindow is one more dial and its timeout: a single successful dial
-// ends a run of consecutive failures.
+// ends a run of consecutive failures. A context without dial observations
+// (a program's read view, a recovery snapshot) gets the default cadence's
+// window: the detector judges the same rolling history wherever it is asked
+// about the repair, and zero would mean it judges current state.
 func (d reachabilityDetector) EvaluationWindow(ctx sdk.DetectionContext) time.Duration {
-	w, ok := ReachabilityFrom(ctx)
-	if !ok {
-		return 0
-	}
+	w, _ := ReachabilityFrom(ctx)
 	interval := w.Interval
 	if interval <= 0 {
 		interval = DefaultReachabilityInterval

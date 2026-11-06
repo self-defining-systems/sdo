@@ -7,18 +7,25 @@ import (
 	"time"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 )
 
 // detectorWindow is the rolling window a detector judges, or zero when it
 // judges current state. A traffic consumer that declares no window of its own,
 // as every learned detector served by the memory host, judges its workloads'
-// samples, so it lags a repair by the SDK SLO window of those workloads.
+// samples, so it lags a repair by the SDK SLO window of those workloads; a
+// reachability consumer lags it by the dial window.
 func detectorWindow(detector sdk.Detector, view sdk.DetectionContext) time.Duration {
 	if windowed, ok := detector.(sdk.WindowedDetector); ok {
 		return windowed.EvaluationWindow(view)
 	}
 	var window time.Duration
+	if consumer, ok := detector.(servicehealth.ReachabilityConsumer); ok && consumer.ConsumesServiceReachability() {
+		// The same holds for the controller's rolling Service dial history: the SDK's
+		// reachability detector owns its window, whichever process serves the detector.
+		window = servicehealth.NewReachabilityDetector(sdk.DetectorSpec{}).(sdk.WindowedDetector).EvaluationWindow(view)
+	}
 	if consumer, ok := detector.(traffic.Consumer); ok {
 		// The SDK's SLO detector owns the window bound of a traffic workload.
 		for _, workload := range consumer.TrafficWorkloads() {
