@@ -17,6 +17,7 @@ import (
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/logs"
 	"sdo.dev/operator/sdk/metrics"
+	"sdo.dev/operator/sdk/podread"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/sdk/servicehealth"
@@ -431,6 +432,16 @@ func observe(snapshot *sdktest.Snapshot, o *pb.MemoryObservation) error {
 		}
 		if got != nil {
 			snapshot.Logs[k] = *got
+		}
+	}
+	snapshot.PodReads = map[string]podread.Result{}
+	for k, v := range o.PodReads {
+		got, e := decode[podread.Result](v)
+		if e != nil {
+			return e
+		}
+		if got != nil {
+			snapshot.PodReads[k] = *got
 		}
 	}
 	return nil

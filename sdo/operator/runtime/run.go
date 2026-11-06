@@ -583,7 +583,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err != nil {
 		return err
 	}
-	observations := detectorObservations{Client: bootstrapProvider.Client, Clock: clock.Now, Telemetry: telemetrySources}
+	protectedNamespace := ""
+	if *controlNamespace != *namespace {
+		protectedNamespace = *controlNamespace
+	}
+	observations := detectorObservations{Client: bootstrapProvider.Client, Clock: clock.Now, Telemetry: telemetrySources, ExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace}
 	snapshotProvider, metricsObserver, err := observations.compose(snapshotProvider, detectors, initialTelemetrySources)
 	if err != nil {
 		return err
@@ -651,10 +655,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	removalClient, err := newUnexplainedRemovalClient(planExecConfig, genericCapture, *controlNamespace)
 	if err != nil {
 		return err
-	}
-	protectedNamespace := ""
-	if *controlNamespace != *namespace {
-		protectedNamespace = *controlNamespace
 	}
 	scriptJobImage := *scriptImage
 	if scriptJobImage == "" {
@@ -1988,7 +1988,9 @@ func evaluateOnce(
 	if err != nil {
 		return err
 	}
-	provider, _, err = detectorObservations{Client: client, Clock: clock.Now, RequireMetrics: true, Telemetry: telemetrySources}.compose(provider, detectors, designerSources)
+	// Without a credential source a declared pod read reports unavailable.
+	execConfig, _ := responderPlanExecConfig()
+	provider, _, err = detectorObservations{Client: client, Clock: clock.Now, RequireMetrics: true, Telemetry: telemetrySources, ExecConfig: execConfig}.compose(provider, detectors, designerSources)
 	if err != nil {
 		return err
 	}

@@ -131,6 +131,8 @@ type Snapshot struct {
 	Traffic map[string]traffic.Window `json:"traffic,omitempty"`
 	// Metrics holds frozen metric query results by query ID.
 	Metrics map[string]metrics.Result `json:"metrics,omitempty"`
+	// PodReads holds frozen in-container command output by query ID.
+	PodReads map[string]podread.Result `json:"pod_reads,omitempty"`
 	// Alerts holds the frozen alerts of the evaluation cycle.
 	Alerts *metrics.AlertsResult `json:"alerts,omitempty"`
 	// Readings are the runtime observations made on this exact snapshot.
@@ -223,13 +225,9 @@ func (s Snapshot) PodAdmission() (sdk.PodAdmissionResult, bool)
 
 func (s Snapshot) PodDisruptionBudgets() []policyv1.PodDisruptionBudget
 
-func (s Snapshot) PodUsage(ref sdk.ObjectRef) (*metricsv1beta1.PodMetrics, error)
+func (s Snapshot) PodReadResult(id string) (podread.Result, bool)
+    PodReadResult implements podread.Source.
 
-func (s Snapshot) Pods() []corev1.Pod
-
-func (s Snapshot) PodsForService(namespace string, service string) []corev1.Pod
-
-func (s Snapshot) QueryMetrics(q metrics.Query) metrics.Result
-
-func (s Snapshot) ReadyEndpointCountForService(namespace string, service string) int
+func (s Snapshot) PodReadResults() map[string]podread.Result
+    PodReadResults implements podread.ResultSet: the recorded results.
 ```

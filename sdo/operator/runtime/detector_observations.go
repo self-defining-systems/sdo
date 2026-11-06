@@ -6,17 +6,20 @@ import (
 	"time"
 
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 
 	controllercore "sdo.dev/operator/core"
+	"sdo.dev/operator/kubereads"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/logs"
+	"sdo.dev/operator/sdk/podread"
 	"sdo.dev/operator/sdk/usage"
 )
 
-// detectorObservations is the one place that derives the Kubernetes-, log-
-// and metrics-backed observations from a detector bundle's declarations. The
+// detectorObservations is the one place that derives the Kubernetes-, log-,
+// pod-read and metrics-backed observations from a detector bundle's declarations. The
 // controller loop, each memory-host swap and --evaluate-once compose through
 // it (each with the revision's telemetry sources), so no evaluation path can drop an input a detector declared.
 type detectorObservations struct {
@@ -26,6 +29,13 @@ type detectorObservations struct {
 	Telemetry TelemetrySources
 	// RequireMetrics refuses metric-consuming bundles without a metrics source.
 	RequireMetrics bool
+	// ExecConfig is the credential pod reads exec with, as for Diagnose reads.
+	// A nil config leaves declared reads explicitly unavailable.
+	ExecConfig *rest.Config
+	// ProtectedNamespace is the control namespace, which pod reads never enter.
+	ProtectedNamespace string
+	// Exec replaces the API server exec transport in tests.
+	Exec kubereads.PodExec
 }
 
 // compose wraps base with every observation the detectors declare. A
@@ -55,7 +65,21 @@ func (o detectorObservations) compose(base SnapshotProvider, detectors []sdk.Det
 	if logsObserver != nil {
 		provider = LogsSnapshotProvider{Base: provider, Observer: logsObserver}
 	}
+	podReads, err := NewPodReadObserver(o.Client, o.exec(), o.ProtectedNamespace, detectors, clock)
+	if err != nil {
+		return nil, nil, err
+	}
+	if podReads != nil {
+		provider = PodReadsSnapshotProvider{Base: provider, Observer: podReads}
+	}
 	return withMetrics(provider, detectors, o.Telemetry, designerSources, o.RequireMetrics, clock)
+}
+
+func (o detectorObservations) exec() kubereads.PodExec {
+	if o.Exec != nil {
+		return o.Exec
+	}
+	return kubereads.SPDYExec{Client: o.Client, Config: o.ExecConfig}
 }
 
 // kubernetesObservations names the first client-backed input detector declares.
@@ -70,6 +94,9 @@ func kubernetesObservations(detector sdk.Detector) string {
 	}
 	if consumer, ok := detector.(logs.Consumer); ok && len(consumer.LogQueries()) > 0 {
 		return "logs"
+	}
+	if consumer, ok := detector.(podread.Consumer); ok && len(consumer.PodReads()) > 0 {
+		return "pod read"
 	}
 	return ""
 }

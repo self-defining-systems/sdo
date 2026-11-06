@@ -770,6 +770,16 @@ var gateCompileRows = []gateCompileRow{
 		real: func(t *testing.T, root string) {
 			edit(t, root, gateFixtureDetector, "30 * time.Second", "-time.Second")
 		}},
+	{name: "a pod read without a Pod watch", rule: RuleDetectorControllerStart, path: layout.DiagnosticsDir,
+		fake: testutil.GoRule{Verb: "test", Output: "detector.controller-start: the controller would refuse to start: detector \"missing-configmap\": pod reads require a v1 Pod watch"},
+		real: func(t *testing.T, root string) { gatePodRead(t, root) }},
+}
+
+// gatePodRead makes the fixture detector declare a pod read.
+func gatePodRead(t *testing.T, root string) {
+	t.Helper()
+	edit(t, root, gateFixtureDetector, "\"sdo.dev/operator/sdk\"\n)", "\"sdo.dev/operator/sdk\"\n\t\"sdo.dev/operator/sdk/podread\"\n)")
+	edit(t, root, gateFixtureDetector, "func (Detector) Spec()", "func (Detector) PodReads() []podread.Query {\n\treturn []podread.Query{{ID: \"store-policy\", Target: podread.Target{Image: \"synthetic-store\"}, Args: []string{\"store-cli\", \"get\", \"policy\"}, Interval: time.Minute}}\n}\n\nfunc (Detector) Spec()")
 }
 
 // gateQueriesSource makes the fixture detector declare one metrics query per

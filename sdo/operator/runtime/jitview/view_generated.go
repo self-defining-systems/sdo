@@ -16,10 +16,11 @@ import (
 	p0 "sdo.dev/operator/sdk"
 	p11 "sdo.dev/operator/sdk/logs"
 	p2 "sdo.dev/operator/sdk/metrics"
+	p16 "sdo.dev/operator/sdk/podread"
 	p1 "sdo.dev/operator/sdk/program"
-	p16 "sdo.dev/operator/sdk/servicehealth"
-	p17 "sdo.dev/operator/sdk/traffic"
-	p18 "sdo.dev/operator/sdk/usage"
+	p17 "sdo.dev/operator/sdk/servicehealth"
+	p18 "sdo.dev/operator/sdk/traffic"
+	p19 "sdo.dev/operator/sdk/usage"
 	p12 "time"
 )
 
@@ -249,6 +250,20 @@ func (v *View) PodDisruptionBudgets() (r0 []p15.PodDisruptionBudget) {
 	}
 	return
 }
+func (v *View) PodReadResult(a0 string) (r0 p16.Result, r1 bool) {
+	err := v.call("PodReadResult", []any{a0}, []any{&r0, &r1})
+	if err != nil {
+		panic(err)
+	}
+	return
+}
+func (v *View) PodReadResults() (r0 map[string]p16.Result) {
+	err := v.call("PodReadResults", []any{}, []any{&r0})
+	if err != nil {
+		panic(err)
+	}
+	return
+}
 func (v *View) PodUsage(a0 p0.ObjectRef) (r0 *p14.PodMetrics, r1 error) {
 	err := v.call("PodUsage", []any{a0}, []any{&r0})
 	r1 = err
@@ -335,7 +350,7 @@ func (v *View) ServiceAccounts() (r0 []p4.ServiceAccount) {
 	}
 	return
 }
-func (v *View) ServiceReachability() (r0 p16.ReachabilityWindow, r1 bool) {
+func (v *View) ServiceReachability() (r0 p17.ReachabilityWindow, r1 bool) {
 	err := v.call("ServiceReachability", []any{}, []any{&r0, &r1})
 	if err != nil {
 		panic(err)
@@ -356,21 +371,21 @@ func (v *View) StatefulSets() (r0 []p6.StatefulSet) {
 	}
 	return
 }
-func (v *View) TrafficWindow(a0 string) (r0 p17.Window, r1 bool) {
+func (v *View) TrafficWindow(a0 string) (r0 p18.Window, r1 bool) {
 	err := v.call("TrafficWindow", []any{a0}, []any{&r0, &r1})
 	if err != nil {
 		panic(err)
 	}
 	return
 }
-func (v *View) TrafficWindows() (r0 map[string]p17.Window) {
+func (v *View) TrafficWindows() (r0 map[string]p18.Window) {
 	err := v.call("TrafficWindows", []any{}, []any{&r0})
 	if err != nil {
 		panic(err)
 	}
 	return
 }
-func (v *View) UsageResult() (r0 p18.Result, r1 bool) {
+func (v *View) UsageResult() (r0 p19.Result, r1 bool) {
 	err := v.call("UsageResult", []any{}, []any{&r0, &r1})
 	if err != nil {
 		panic(err)

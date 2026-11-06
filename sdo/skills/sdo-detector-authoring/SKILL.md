@@ -42,6 +42,8 @@ The shared view adds previous-instance logs, usage, probes, baseline diffs, metr
 The runtime caches reads per snapshot and records results and failures for replay.
 Logs cap at 64 KiB/5 s, probes at 5 s. Read failures are errors/Unknown, never clearance;
 a successful probe with `Success:false` is an observed failure. Keep always-on reads cheap and use Diagnose for depth.
+To judge state only a running process knows (a store's config, role or access list), even before users are affected,
+declare [pod reads](references/pod-reads.md).
 Test using `sdktest.Snapshot.Readings` plus phase recordings; never fill absent evidence with healthy answers.
 
 ## Synthetic traffic confirmation
@@ -53,29 +55,26 @@ included, bound each scenario's latency and cover every seeded record; see [traf
 
 ## Logs and usage detectors
 
-A detector that reads container logs implements `logs.Consumer`: `LogQueries()` returns its queries (an ID, RE2
+A log detector implements `logs.Consumer`: `LogQueries()` returns its queries (an ID, RE2
 patterns with their own IDs, and `Previous` for a crashed container's tail). Declare `logs.Watch`, read with
 `logs.Require(ctx, queryID)`, and decide with `logs.Appeared`, `logs.Rate` or `logs.Silent`, which take a pattern
-ID. A detector that reads kubelet usage implements `usage.Consumer`: `UsageRequirements()` returns
+ID. A kubelet usage detector implements `usage.Consumer`: `UsageRequirements()` returns
 `usage.Requirements{Throttling: true}` only when it needs CPU throttling. Declare `usage.Watch` and read with
 `usage.From(ctx)`. A missing input or a source error is a detector error, never a clear. Test with
 `sdktest.Snapshot.Logs` and `sdktest.Snapshot.Usage`.
 
 ## Metrics detectors (optional input)
 
-When the controller runs with a metrics source (a bound telemetry source), a health detector can
-judge application metrics through `sdo.dev/operator/sdk/metrics`. Declare `Watches: []sdk.WatchKind{metrics.Watch}`
+When the controller runs with a bound telemetry source, a health detector can
+judge application metrics through `sdo.dev/operator/sdk/metrics`. Declare `metrics.Watch`
 and an `Interval`; build the detector with `metrics.NewThresholdDetector(spec, rules)`. A rule is a query
 (`metrics.Query{ID, Expr}`, plus `Range`/`Step` for a range query), a comparison, a threshold, and the label names that
 map a series to a Deployment, Pod or Service. Ground each expression in metrics the application exports; never assume
 a source exists.
 
-- The runtime evaluates each declared query once per evaluation cycle at one timestamp and freezes the results into the
-  snapshot. The detector does no I/O; read results with `metrics.ResultFrom` and test with `sdktest.Snapshot.Metrics`.
+- The runtime freezes each declared query's result into the snapshot once per cycle. The detector does no I/O; read results with `metrics.ResultFrom` and test with `sdktest.Snapshot.Metrics`.
 - An unreachable source, a failed query or a missing result is a detector error, never a clear and never a finding.
-  Do not turn it into one.
 - Findings carry the query, value, threshold and labels as evidence, so each series is a distinct finding.
-- Query IDs are unique and non-empty, expressions non-empty, at most `metrics.MaxQueries` per bundle.
 - `Query.Source` (optional): [metrics sources](references/metrics-sources.md).
 - `memory.PrepareHealth` installs the generic `metrics-alerts` detector (`metrics.NewAlertsDetector`: firing alerts of
   the application namespace, one finding each) only when a bound source serves alerts; do not author it.

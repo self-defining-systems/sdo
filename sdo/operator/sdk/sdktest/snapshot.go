@@ -18,6 +18,7 @@ import (
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/logs"
 	"sdo.dev/operator/sdk/metrics"
+	"sdo.dev/operator/sdk/podread"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
@@ -63,6 +64,8 @@ type Snapshot struct {
 	Traffic map[string]traffic.Window `json:"traffic,omitempty"`
 	// Metrics holds frozen metric query results by query ID.
 	Metrics map[string]metrics.Result `json:"metrics,omitempty"`
+	// PodReads holds frozen in-container command output by query ID.
+	PodReads map[string]podread.Result `json:"pod_reads,omitempty"`
 	// Alerts holds the frozen alerts of the evaluation cycle.
 	Alerts *metrics.AlertsResult `json:"alerts,omitempty"`
 	// Readings are the runtime observations made on this exact snapshot.
@@ -393,6 +396,15 @@ func (s Snapshot) Secrets() []sdk.SecretMetadata {
 
 // LogResult implements logs.Source.
 func (s Snapshot) LogResult(id string) (logs.Result, bool) { r, ok := s.Logs[id]; return r, ok }
+
+// PodReadResult implements podread.Source.
+func (s Snapshot) PodReadResult(id string) (podread.Result, bool) {
+	r, ok := s.PodReads[id]
+	return r, ok
+}
+
+// PodReadResults implements podread.ResultSet: the recorded results.
+func (s Snapshot) PodReadResults() map[string]podread.Result { return maps.Clone(s.PodReads) }
 
 func (s Snapshot) QueryMetrics(q metrics.Query) metrics.Result {
 	if err := q.Validate(); err != nil {

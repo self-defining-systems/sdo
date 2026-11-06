@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 
@@ -54,6 +55,10 @@ func HTTPCommand(h program.HTTPRequest) program.Command {
 // Nonzero exits are results, not errors; transport and authorization failures
 // are errors. The control namespace is refused.
 func RunCommand(ctx context.Context, exec PodExec, protectedNamespace string, command program.Command) (int32, error) {
+	return runCommand(ctx, exec, protectedNamespace, command, nil)
+}
+
+func runCommand(ctx context.Context, exec PodExec, protectedNamespace string, command program.Command, stdout io.Writer) (int32, error) {
 	if protectedNamespace != "" && command.Pod.Namespace == protectedNamespace {
 		return 0, apierrors.NewForbidden(schema.GroupResource{Resource: "namespaces"}, command.Pod.Namespace, fmt.Errorf("generic plans cannot access the SDO control namespace"))
 	}
@@ -63,7 +68,7 @@ func RunCommand(ctx context.Context, exec PodExec, protectedNamespace string, co
 	if exec == nil {
 		return 0, ErrExecUnavailable
 	}
-	err := exec.Stream(ctx, command.Pod, command.Container, command.Args, command.Stdin, nil)
+	err := exec.Stream(ctx, command.Pod, command.Container, command.Args, command.Stdin, stdout)
 	if err == nil {
 		return 0, nil
 	}
@@ -98,19 +103,40 @@ func Observe(ctx context.Context, get func(context.Context, sdk.ObjectRef) (*uns
 	if err := o.Validate(); err != nil {
 		return 0, err
 	}
-	if captured == nil || captured.GetUID() == "" {
+	if captured == nil {
 		return 0, fmt.Errorf("command Pod absent from snapshot")
 	}
-	before, err := get(ctx, o.Pod())
-	if err != nil || before == nil || before.GetUID() != captured.GetUID() {
+	return withPodIdentity(ctx, get, o.Pod(), string(captured.GetUID()), func() (int32, error) {
+		return RunOperation(ctx, exec, protectedNamespace, o)
+	})
+}
+
+// ReadOutput runs one command like Observe and streams its stdout, for callers
+// that judge output rather than the exit status. The Pod is named by the UID the
+// caller observed, under the same identity rule.
+func ReadOutput(ctx context.Context, get func(context.Context, sdk.ObjectRef) (*unstructured.Unstructured, error), exec PodExec, protectedNamespace, uid string, command program.Command, stdout io.Writer) (int32, error) {
+	if err := command.Validate(); err != nil {
+		return 0, err
+	}
+	return withPodIdentity(ctx, get, command.Pod, uid, func() (int32, error) {
+		return runCommand(ctx, exec, protectedNamespace, command, stdout)
+	})
+}
+
+func withPodIdentity(ctx context.Context, get func(context.Context, sdk.ObjectRef) (*unstructured.Unstructured, error), pod sdk.ObjectRef, uid string, run func() (int32, error)) (int32, error) {
+	if uid == "" {
+		return 0, fmt.Errorf("command Pod absent from snapshot")
+	}
+	before, err := get(ctx, pod)
+	if err != nil || before == nil || string(before.GetUID()) != uid {
 		return 0, fmt.Errorf("command Pod identity changed")
 	}
-	code, err := RunOperation(ctx, exec, protectedNamespace, o)
+	code, err := run()
 	if err != nil {
 		return 0, err
 	}
-	after, err := get(ctx, o.Pod())
-	if err != nil || after == nil || after.GetUID() != captured.GetUID() {
+	after, err := get(ctx, pod)
+	if err != nil || after == nil || string(after.GetUID()) != uid {
 		return 0, fmt.Errorf("command Pod identity changed")
 	}
 	return code, nil

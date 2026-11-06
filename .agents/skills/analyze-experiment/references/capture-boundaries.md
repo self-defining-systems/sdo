@@ -27,7 +27,7 @@ request/response round trip for `sdo act`. Existing `responder_tool_timing`
 Captures do not invent primitive recordings. New pre-apply recording files begin
 empty; snapshot `readings` may already hold actual detector reads made on that exact snapshot.
 Only actual primitive reads may supply replay answers. Shared runtime reads add optional
-`metrics`, `alerts`, `traffic`, `reachability` and `readings` snapshot fields. These fields
+`metrics`, `alerts`, `traffic`, `reachability`, `pod_reads` and `readings` snapshot fields. These fields
 survive JSON capture/load, including unavailable results. Before the fix that put `traffic.WindowSet` and
 `metrics.ResultSet` in `inputs.Sources`, controller captures (taken through the cycle read view)
 had no `traffic` or `metrics` fields: their absence in such a run is that bug, not an idle generator. `readings` uses the existing

@@ -43,6 +43,9 @@ diagnostic; look it up here.
 - The interval-driven `sdo.dev/v1alpha1 Logs` watch exposes bounded container-log counts and excerpts through
   `logs.Consumer` and `logs.Require`; declarations validate RE2 patterns and query limits at registration.
   Source errors must propagate as detector errors. Enforced by: `manifest.invalid`, `detector.compile`, `detector.test`.
+- `podread.Consumer` exposes bounded in-container command output through `podread.Require`. Declarations need a `v1 Pod`
+  watch and pass `podread.Query.Validate` at registration: a role target, a bounded command, at least the minimum
+  interval. Source errors must propagate as detector errors. Enforced by: `detector.controller-start`, `detector.test`.
 Advice, not validator-checked: watch every kind whose snapshot accessor the detector calls; the controller
 evaluates a detector when a watched kind changes.
 

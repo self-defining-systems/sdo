@@ -20,6 +20,7 @@ import (
 	"sdo.dev/operator/memoryhost"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/logs"
+	"sdo.dev/operator/sdk/podread"
 	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/sdk/usage"
 	"sdo.dev/operator/sdk/workloadhealth"
@@ -107,6 +108,12 @@ func (logsOnlyDetector) LogQueries() []logs.Query {
 	return []logs.Query{{ID: "synthetic", Patterns: []logs.Pattern{{ID: "boom", RE2: "boom"}}}}
 }
 
+type podReadOnlyDetector struct{ specOnly }
+
+func (podReadOnlyDetector) PodReads() []podread.Query {
+	return []podread.Query{{ID: "synthetic", Target: podread.Target{Image: "synthetic"}, Args: []string{"read"}, Interval: time.Minute}}
+}
+
 // Every Kubernetes-backed observation a detector declares needs a client; a
 // path that cannot supply one must refuse the bundle when it is composed, not
 // report the observation unavailable on each evaluation.
@@ -117,6 +124,7 @@ func TestDetectorObservationsRequireTheirTransport(t *testing.T) {
 		"pod admission": base,
 		"usage":         usageOnlyDetector{plain},
 		"logs":          logsOnlyDetector{plain},
+		"pod read":      podReadOnlyDetector{plain},
 	} {
 		// The same declaration must reach the controller from accepted memory
 		// served by the memory host as from a compiled-in detector.
