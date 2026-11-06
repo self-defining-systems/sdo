@@ -23,6 +23,11 @@ _REGISTRY_NAME = "sdo-benchmark-registry"
 _BRIDGE_NAME = "sdo-sregym-bridge"
 
 
+def benchmark_registry_host(control_namespace: str) -> str:
+    """Host of the lane's trusted in-cluster registry (BuildKit pushes there, deployments may pull from it)."""
+    return f"{_REGISTRY_NAME}.{control_namespace}.svc.cluster.local:5000"
+
+
 @dataclass(frozen=True)
 class BenchmarkRegistryTarget:
     host: str
@@ -63,7 +68,7 @@ class BenchmarkClusterResourcesConfig:
 
     @property
     def registry_host(self) -> str:
-        return f"{_REGISTRY_NAME}.{self.control_namespace}.svc.cluster.local:5000"
+        return benchmark_registry_host(self.control_namespace)
 
     @property
     def registry_target(self) -> BenchmarkRegistryTarget:

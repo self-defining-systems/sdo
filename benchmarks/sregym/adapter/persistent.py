@@ -28,7 +28,7 @@ import subprocess
 import sys
 import time
 import uuid
-from dataclasses import dataclass, fields, replace
+from dataclasses import asdict, dataclass, fields, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, get_args, get_type_hints
@@ -38,6 +38,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from benchmarks.sregym.adapter.budgets import Deadline, WaitKind, wait_for
 from benchmarks.sregym.adapter.cluster_resources import kubectl
+from benchmarks.sregym.adapter.deployment_source import DeploymentPolicyConfig
 from benchmarks.sregym.adapter.eval_guards import (
     INCIDENT_EXECUTION_LABEL,
     STANDBY_LABEL,
@@ -299,6 +300,7 @@ class VerifiedIncident:
 
 def runtime_config_payload(config: RuntimeConfig) -> dict[str, Any]:
     payload = {field.name: getattr(config, field.name) for field in fields(RuntimeConfig)}
+    payload["deployment_policy"] = asdict(config.deployment_policy)
     return {key: str(value) if isinstance(value, Path) else value for key, value in payload.items()}
 
 
@@ -309,7 +311,12 @@ _NON_CONTROLLER_SETTINGS = frozenset({"repository", "artifacts_dir", "wait_for_c
 def controller_settings(payload: dict[str, Any]) -> dict[str, Any]:
     """The recorded settings a running controller was installed with, normalized as saved state."""
 
-    return {key: value for key, value in json.loads(json.dumps(payload)).items() if key not in _NON_CONTROLLER_SETTINGS}
+    settings = {
+        key: value for key, value in json.loads(json.dumps(payload)).items() if key not in _NON_CONTROLLER_SETTINGS
+    }
+    # A controller recorded before the policy existed was installed without one.
+    settings.setdefault("deployment_policy", json.loads(json.dumps(asdict(DeploymentPolicyConfig()))))
+    return settings
 
 
 def runtime_config_from_payload(payload: dict[str, Any]) -> RuntimeConfig:
@@ -321,6 +328,14 @@ def runtime_config_from_payload(payload: dict[str, Any]) -> RuntimeConfig:
             "evidence and controller config are not migrated)"
         )
     values["responder_namespaces"] = tuple(values.get("responder_namespaces", ()))
+    # Records written before the policy existed carry none: no policy, as installed then.
+    policy = values.get("deployment_policy") or {}
+    values["deployment_policy"] = DeploymentPolicyConfig(
+        allowed_registries=tuple(policy.get("allowed_registries", ())),
+        scope_blocking=bool(policy.get("scope_blocking", False)),
+        granted_namespaces=tuple(policy.get("granted_namespaces", ())),
+        granted_cluster_kinds=tuple(policy.get("granted_cluster_kinds", ())),
+    )
     hints = get_type_hints(RuntimeConfig)
     for field in fields(RuntimeConfig):
         value = values.get(field.name)

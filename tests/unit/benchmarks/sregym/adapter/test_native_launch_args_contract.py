@@ -15,7 +15,13 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from benchmarks.sregym.adapter.deployment_source import buildkit_image, deployment_plan, helm_source, raw_source
+from benchmarks.sregym.adapter.deployment_source import (
+    DeploymentPolicyConfig,
+    buildkit_image,
+    deployment_plan,
+    helm_source,
+    raw_source,
+)
 from benchmarks.sregym.adapter.native_operator import (
     NativeHostConfig,
     NativeInstallConfig,
@@ -79,6 +85,12 @@ def _install() -> NativeInstallConfig:
         registration_configmap="registrations",
         responder_env=("SDO_SUBMISSION_MODE=relay",),
         deployment_source=raw_source(("kubernetes",)),
+        deployment_policy=DeploymentPolicyConfig(
+            allowed_registries=("registry:5000", "docker.io"),
+            scope_blocking=True,
+            granted_namespaces=("monitoring",),
+            granted_cluster_kinds=("ClusterRole",),
+        ),
     )
 
 

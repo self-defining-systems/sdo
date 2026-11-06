@@ -11,7 +11,12 @@ import pytest
 
 from benchmarks.sregym.fastloop import toy_scenarios as sc
 from benchmarks.sregym.fastloop import toy_upstream as up
-from benchmarks.sregym.fastloop.toy import prepare_workspace, provided_deployment_plan
+from benchmarks.sregym.fastloop.toy import (
+    deployment_policy,
+    prepare_workspace,
+    provided_deployment_plan,
+    registry_host,
+)
 from tests.unit.benchmarks.sregym.fastloop.operability_fixtures import green_read
 
 if TYPE_CHECKING:
@@ -299,6 +304,27 @@ def test_helm_onboarding_provides_the_plan_of_the_assembled_source(
     assert decoded["source"]["renderer_id"] == "helm"
     assert decoded["source"]["config"]["@type"].endswith(".HelmRenderConfig")
     assert decoded["images"][0]["source_id"] == "buildkit"
+
+
+def test_provided_toy_plans_may_pull_only_from_the_lane_registry():
+    for variant in ("helm", "kustomize"):
+        assert deployment_policy(variant, "sdo-toy").args() == [
+            "--allow-registry",
+            "sdo-benchmark-registry.sdo-toy-sdo.svc.cluster.local:5000",
+        ]
+    # The raw lane runs a kind-loaded image: no policy, as before.
+    assert [deployment_policy(v, "sdo-toy").args() for v in ("raw", "compose")] == [[], []]
+
+
+@pytest.mark.go_integration
+def test_provided_toy_plan_images_are_within_the_policys_registry(
+    tmp_path: Path, operator_binary: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("SDO_OPERATOR_BIN", str(operator_binary))
+    prepare_workspace(tmp_path, "unused:v1", fresh=True, variant="helm")
+    plan = provided_deployment_plan("helm", "sdo-toy", tmp_path)
+    assert plan is not None
+    assert {image["image"].partition("/")[0] for image in plan["images"]} == {registry_host("sdo-toy")}
 
 
 def test_raw_and_compose_provide_no_plan(tmp_path: Path):

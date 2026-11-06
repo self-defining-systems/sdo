@@ -17,7 +17,9 @@ from typing import Any, Protocol
 from apps.toy.faults import IMAGE, command, fault_spec
 from apps.toy.variants.assemble import VARIANTS, assemble
 from benchmarks.sregym.adapter import (
+    DeploymentPolicyConfig,
     WaitKind,
+    benchmark_registry_host,
     buildkit_image,
     deployment_plan,
     helm_source,
@@ -133,9 +135,24 @@ def toy_variant(args: Any) -> str:
     return variant
 
 
+def registry_host(namespace: str) -> str:
+    """The lane's trusted in-cluster registry (BuildKit pushes there); the control namespace is ``<namespace>-sdo``."""
+    return benchmark_registry_host(f"{namespace}-sdo")
+
+
 def registry_image(namespace: str) -> str:
     """The toy image reference inside the lane's trusted benchmark registry (BuildKit may only push there)."""
-    return f"sdo-benchmark-registry.{namespace}-sdo.svc.cluster.local:5000/{IMAGE}"
+    return f"{registry_host(namespace)}/{IMAGE}"
+
+
+def deployment_policy(variant: str, namespace: str) -> DeploymentPolicyConfig:
+    """Install-time policy of a lane that deploys a provided plan: images may come only from the lane's registry.
+
+    The raw lane runs a kind-loaded image and keeps the default (no policy), as before.
+    """
+    if variant not in PROVIDED_VARIANTS:
+        return DeploymentPolicyConfig()
+    return DeploymentPolicyConfig(allowed_registries=(registry_host(namespace),))
 
 
 def point_chart_at_registry(workspace: Path, namespace: str) -> None:
@@ -501,6 +518,7 @@ def install_controller(
             kind_cluster_name=environment.cluster,
             deployment_source=raw_source(("kubernetes",)) if variant == "raw" else None,
             deployment_plan=provided_deployment_plan(variant, environment.namespace, environment.workspace),
+            deployment_policy=deployment_policy(variant, environment.namespace),
             source_kind="git" if variant in PROVIDED_VARIANTS else "",
             source_config=json.dumps(source_config(UpstreamLayout(environment.namespace)))
             if variant in PROVIDED_VARIANTS

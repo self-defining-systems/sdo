@@ -19,7 +19,15 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from apps.gitlab import assemble
-from benchmarks.sregym.adapter import WaitKind, deployment_plan, helm_source, prebuilt_image, wait_for
+from benchmarks.sregym.adapter import (
+    DeploymentPolicyConfig,
+    WaitKind,
+    benchmark_registry_host,
+    deployment_plan,
+    helm_source,
+    prebuilt_image,
+    wait_for,
+)
 from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
@@ -61,6 +69,20 @@ RESOURCE_CLAIM = ResourceClaim(
 def deployment_source() -> dict[str, Any]:
     """The provided DeploymentSource: the helm renderer over the umbrella chart with the kind values."""
     return helm_source("chart", assemble.VALUE_FILES)
+
+
+#: Registries the lane's deployment may pull from: the upstream chart's images (registry.gitlab.com), the app-owned
+#: datastore images the lane pins by digest (Docker Hub), and the lane's own in-cluster registry.
+IMAGE_REGISTRIES = ("registry.gitlab.com", "docker.io", benchmark_registry_host(CONTROL_NAMESPACE))
+
+
+def deployment_policy() -> DeploymentPolicyConfig:
+    """The install-time policy of the lane: images only from ``IMAGE_REGISTRIES``; scope is not blocked.
+
+    The umbrella chart deploys into its own namespace only, but ingress and prerequisites are cluster-level and
+    installed by the lane, not by SDO, so scope blocking stays at the default (notes) until a grant list is measured.
+    """
+    return DeploymentPolicyConfig(allowed_registries=IMAGE_REGISTRIES)
 
 
 def plan_from_workloads(workloads: RenderedWorkloads) -> dict[str, Any]:
@@ -188,6 +210,7 @@ def lane_runtime_config(environment: Any, plan: dict[str, Any], *, registrations
         kind_cluster_name=environment.cluster,
         deployment_source=deployment_source(),
         deployment_plan=plan,
+        deployment_policy=deployment_policy(),
         agent_registrations=registrations.resolve() if registrations else None,
     )
 
