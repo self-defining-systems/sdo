@@ -369,7 +369,7 @@ kube-apiserver and etcd (envtest) with a fake kubelet and the no-model agent scr
 - ConfigMap and Secret volumes are copied once when the Pod starts; a later update is not propagated. Probes are not run: a sidecar
   counts as started when its process starts.
 - Application Pods are not executed. Their phase and readiness follow a small model of the toy application. Pods carry loopback
-  `status.podIP` (127.1.x.y) with real listeners, because agents dial Pod IPs directly; the API server rejects loopback addresses
+  `status.podIP` (127.<slot>.x.y, a range each end-to-end process claims so concurrent runs on one host never share an address) with real listeners, because agents dial Pod IPs directly; the API server rejects loopback addresses
   in Endpoints, so Endpoints and EndpointSlices carry the 10.244.x.y twin and `targetRef` names the Pod. Anything that joins Endpoints to
   Pods by IP instead of `targetRef` would see a mismatch.
 - There is no real network. Cluster DNS is a hosts file; each Service exposes a loopback forwarder only while its selected upstream accepts TCP, so a missing
