@@ -270,9 +270,7 @@ def _result_line(name: str, /, **values: object) -> RenderedPrompt:
     at the section owner so new result fields inherit the same lossless caps.
     Nested rendered requirements remain enforced by the common renderer.
     """
-    return render_prompt(
-        "responder", name, part="reflection_brief.instructions", optional_values=tuple(values), **values
-    )
+    return render_prompt("responder", name, part="reflection_brief.instructions", **values)
 
 
 def _result_section(result: IncidentResult | None, dispatch_error: str) -> str:

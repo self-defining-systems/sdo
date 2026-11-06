@@ -819,3 +819,20 @@ def test_worker_schema_violation_gets_one_same_session_correction(
     assert len(agent.requests) == 2
     assert "contract validation (IncidentResultValidationError)" in agent.prompts[1]
     assert "worker-session" in agent.argvs[1]
+
+
+def test_long_result_validation_error_spills_instead_of_crashing_the_worker(monkeypatch, tmp_path) -> None:
+    from sdo.agents.prompt_templates import render_prompt
+
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
+    diagnostic = "1 validation error for IncidentResult " + "x" * 670
+    prompt = render_prompt(
+        "responder",
+        "result_correction",
+        part="session.instructions",
+        result_type="ValidationError",
+        diagnostic=diagnostic,
+    )
+    assert "ValidationError" in prompt
+    assert prompt.context_files
+    assert diagnostic in prompt.context_files[0].read_text()
