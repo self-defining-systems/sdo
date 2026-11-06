@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/patchset"
@@ -481,7 +482,11 @@ func (s *run) missingInitialDetectors() []string {
 	}
 	var missing []string
 	for _, workload := range s.declaredProbeWorkloads() {
-		if id := "traffic-" + workload; !have[id] {
+		// Go installs traffic-<workload> for every probe workload file when it
+		// prepares the tree (memory check and publication), so the detector
+		// counts as present when it is already there or Go will write it.
+		id := "traffic-" + workload
+		if prepared, ok := memory.PreparedTrafficDetector(workload+".yaml", s.workloads[workload].content); !have[id] && !(ok && prepared == id) {
 			missing = append(missing, id)
 		}
 	}

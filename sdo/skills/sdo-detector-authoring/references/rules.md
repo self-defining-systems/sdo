@@ -11,7 +11,7 @@ diagnostic; look it up here.
   `detector.no-go-source`.
 - The ID matches `^[a-z0-9][a-z0-9_.-]*$` and is unique across both classes. Enforced by: `id.pattern`,
   `id.duplicate`.
-- Memory registers at least one detector; the initial health-judge proposal's resulting tree (base plus diff) holds a health detector and a `traffic-<probe>` detector for each probe workload the application map declares; Go's generic detectors in the base count. Enforced
+- Memory registers at least one detector; the initial health-judge proposal's resulting tree (base plus diff) holds a health detector and a `traffic-<probe>` detector for each probe workload the application map declares; Go's generic detectors in the base count, and so does a `traffic-<probe>` detector Go will install for a health-probe or link-probe workload file. Enforced
   by: `detector.none`, `ownership.initial-needs-detectors`.
 - `manifest.yaml` is strict YAML: no unknown fields, no duplicate keys. It carries `apiVersion: sdo.dev/v1alpha1`,
   `kind: DetectorManifest`, `sdkVersion: v0.1`, `id`, `constructor` (default `New`), `class`, `owner`, `watches`,
