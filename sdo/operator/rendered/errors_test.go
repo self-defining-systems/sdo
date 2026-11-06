@@ -1,4 +1,3 @@
-//archcheck:ratchet R5 count=2 until=S3-10d
 package rendered
 
 import (
@@ -11,49 +10,33 @@ import (
 
 func TestSourceErrorKinds(t *testing.T) {
 	commit := "0123456789abcdef0123456789abcdef01234567"
+	tree := "89abcdef0123456789abcdef0123456789abcdef"
+	ctx := context.Background()
 	failing := func(context.Context, string, ...string) ([]byte, error) { return nil, errors.New("git down") }
-	_, err := Source{Repository: "r", ManifestPaths: []string{"k8s"}, Git: failing}.AcceptedManifests(context.Background(), commit, "app")
+	_, err := Source{Repository: "r", Deployment: rawSource(t, "k8s"), Catalog: testCatalog(t), Git: failing}.AcceptedManifests(ctx, commit, "app")
 	if !errors.Is(err, ErrSourceUnavailable) {
 		t.Fatalf("git failure = %v, want unavailable", err)
 	}
-	listing := func(context.Context, string, ...string) ([]byte, error) {
-		return []byte("100644 blob x\tother.yaml\x00"), nil
+	listing := func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		switch args[0] {
+		case "rev-parse":
+			return []byte(tree + "\n"), nil
+		case "cat-file":
+			return []byte("tree\n"), nil
+		}
+		return []byte("100644 blob " + commit + " 4\tother.yaml\x00"), nil
 	}
-	_, err = Source{Repository: "r", ManifestPaths: []string{"k8s"}, Git: listing}.AcceptedManifests(context.Background(), commit, "app")
+	_, err = Source{Repository: "r", Deployment: rawSource(t, "k8s"), Catalog: testCatalog(t), Git: listing}.AcceptedManifests(ctx, commit, "app")
 	if !errors.Is(err, ErrSourceInvalid) {
 		t.Fatalf("no manifests = %v, want invalid", err)
 	}
-	_, err = Source{Repository: "r", Git: listing}.AcceptedManifests(context.Background(), commit, "app")
+	_, err = Source{Repository: "r", Catalog: testCatalog(t), Git: listing}.AcceptedManifests(ctx, commit, "app")
 	if !errors.Is(err, ErrSourceUnconfigured) {
-		t.Fatalf("nil selection = %v, want unconfigured", err)
+		t.Fatalf("nil deployment source = %v, want unconfigured", err)
 	}
-}
-
-// A read failure inside a kustomize render keeps its cause: a transient Git
-// failure on a referenced resource stays Unavailable (retried), not Invalid.
-func TestKustomizeReadFailureKeepsItsKind(t *testing.T) {
-	files := map[string]string{
-		"app/kustomization.yaml": "resources: [svc.yaml]\nconfigMapGenerator:\n- {name: c, files: [conf/init.sh]}\n",
-		"app/svc.yaml":           "apiVersion: v1\nkind: Service\nmetadata: {name: web}\n",
-		"app/conf/init.sh":       "echo hi\n",
-	}
-	for _, failing := range []string{"app/svc.yaml", "app/conf/init.sh"} {
-		t.Run(failing, func(t *testing.T) {
-			read := func(_ context.Context, name string) ([]byte, error) {
-				if name == failing {
-					return nil, sourceErrorf(SourceUnavailable, "accepted input %s unavailable: %w", name, errors.New("git down"))
-				}
-				body, ok := files[name]
-				if !ok {
-					return nil, fmt.Errorf("accepted input %s is not a tracked regular file", name)
-				}
-				return []byte(body), nil
-			}
-			_, err := renderKustomization(context.Background(), "app/kustomization.yaml", read)
-			if !errors.Is(classifySource(err), ErrSourceUnavailable) {
-				t.Fatalf("transient read failure = %v, want unavailable", err)
-			}
-		})
+	_, err = Source{Repository: "r", Deployment: rawSource(t, "k8s"), Git: listing}.AcceptedManifests(ctx, commit, "app")
+	if !errors.Is(err, ErrSourceInvalid) {
+		t.Fatalf("no catalog = %v, want invalid", err)
 	}
 }
 

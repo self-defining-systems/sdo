@@ -1,4 +1,4 @@
-//archcheck:ratchet R5 count=3 until=S3-12
+//archcheck:ratchet R5 count=2 until=S3-12
 package lifecycle
 
 import (
@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sdo.dev/operator/onboarding"
+	"sdo.dev/operator/render"
 	"sdo.dev/operator/rendered"
 
 	"sdo.dev/operator/install"
@@ -25,6 +26,8 @@ type preparedInstallStrategy interface {
 // KubernetesInstallStrategy runs the concrete Kubernetes installer.
 type KubernetesInstallStrategy struct {
 	Installer install.Installer
+	// Renderers renders the accepted deployment source for onboarding.
+	Renderers *render.Catalog
 }
 
 func (s KubernetesInstallStrategy) Install(ctx context.Context, config install.Config, seeder install.RepositorySeeder) (install.Result, error) {
@@ -45,7 +48,11 @@ func (s KubernetesInstallStrategy) WithVerifiedDeployment(root, commit, namespac
 		if control == "" {
 			control = namespace
 		}
-		source := rendered.Source{Repository: root, ManifestPaths: paths}
+		deployment, err := rendered.LegacyRawSource(paths)
+		if err != nil {
+			return err
+		}
+		source := rendered.Source{Repository: root, Deployment: deployment, Catalog: s.Renderers}
 		objects, err := source.RawManifests(ctx, commit, namespace)
 		if err != nil {
 			return fmt.Errorf("onboarding accepted source: %w", err)

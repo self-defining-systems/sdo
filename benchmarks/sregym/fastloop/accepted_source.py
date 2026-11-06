@@ -1,8 +1,9 @@
 """The accepted source as the one input to every eval restore decision.
 
 SDO renders accepted source straight from Git (``rendered.Source``): the
-selected manifest files at the accepted commit, each object defaulted to the
-application namespace. Restore reads the same bytes the same way. It never
+accepted commit's tree rendered by the deployment source's renderer, each
+object defaulted to the application namespace. Restore reads the same bytes
+the same way, through the production ``render-source`` command. It never
 reads the rendered-object snapshot an old seed may carry under ``.sdo``: that
 snapshot stops matching the source as soon as the source changes.
 """
@@ -15,7 +16,7 @@ import subprocess
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 from benchmarks.sregym.adapter import WaitKind, execute_operator, wait_for
 from benchmarks.sregym.repository_git import host_git_command
@@ -27,6 +28,17 @@ DEFAULT_MANIFEST_PATHS = ("kubernetes",)
 # Applications whose ``kubernetes/`` holds more than the deployed manifest set.
 APPLICATION_MANIFEST_PATHS = {"opentelemetry-demo-astronomy-shop": ("kubernetes/astronomy-shop.yaml",)}
 _REVISION = re.compile(r"^[0-9a-f]{40,64}$")
+_CONFIG_TYPE: Final = "type.googleapis.com/sdodev.contracts.v1alpha1."
+
+
+def raw_deployment_source(paths: tuple[str, ...]) -> dict[str, Any]:
+    """ProtoJSON ``DeploymentSource`` for the raw renderer over manifest paths."""
+    return {"renderer_id": "raw", "config": {"@type": _CONFIG_TYPE + "RawRenderConfig", "paths": list(paths)}}
+
+
+def kustomize_deployment_source(path: str) -> dict[str, Any]:
+    """ProtoJSON ``DeploymentSource`` for the kustomize renderer over one kustomization directory."""
+    return {"renderer_id": "kustomize", "config": {"@type": _CONFIG_TYPE + "KustomizeRenderConfig", "path": path}}
 
 
 def manifest_paths_for(application: str) -> tuple[str, ...]:
@@ -57,6 +69,8 @@ class AcceptedSource:
     workspace: Path
     namespace: str
     manifest_paths: tuple[str, ...] = DEFAULT_MANIFEST_PATHS
+    # ProtoJSON DeploymentSource; ``None`` means the raw renderer over ``manifest_paths``.
+    renderer_source: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if not self.namespace:
@@ -67,6 +81,13 @@ class AcceptedSource:
             clean = PurePosixPath(path)
             if not path or str(clean) != path or clean.is_absolute() or ".." in clean.parts or path == ".":
                 raise ValueError(f"invalid accepted manifest path {path!r}")
+
+    @property
+    def deployment_source(self) -> dict[str, Any]:
+        """The DeploymentSource the production renderer reads this source with."""
+        if self.renderer_source is not None:
+            return self.renderer_source
+        return raw_deployment_source(self.manifest_paths)
 
     @classmethod
     def of(cls, environment: Any) -> AcceptedSource:
@@ -103,7 +124,7 @@ class AcceptedSource:
                             "repository": str(self.workspace.resolve()),
                             "revision": self.revision,
                             "namespace": self.namespace,
-                            "manifest_paths": self.manifest_paths,
+                            "deployment_source": self.deployment_source,
                         }
                     ),
                 )

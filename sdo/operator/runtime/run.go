@@ -1,4 +1,4 @@
-//archcheck:ratchet R5 count=10 until=S3-11c
+//archcheck:ratchet R5 count=7 until=S3-11c
 package runtime
 
 import (
@@ -43,6 +43,7 @@ import (
 	"sdo.dev/operator/memoryhost/hostio"
 	"sdo.dev/operator/onboarding"
 	"sdo.dev/operator/render"
+	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -171,7 +172,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		args = append(controllerConfigToArgs(config), args[2:]...)
 	}
 	if len(args) > 0 && args[0] == "--evaluate-once" {
-		return evaluateOnce(ctx, detectors, args[1:], stdout, stderr, options.Provider, options.Client, options.Traffic, clock)
+		return evaluateOnce(ctx, detectors, args[1:], stdout, stderr, options.Provider, options.Client, options.Traffic, clock, options.Renderers)
 	}
 
 	flags := flag.NewFlagSet("sdo-controller", flag.ContinueOnError)
@@ -619,7 +620,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		kubernetesCache.scopedTracker = stateTracker
 		defer stateTracker.Stop()
 	}
-	planSource := (GitPlanSource{Repository: resolvedRoot, ManifestPaths: deployedManifestPaths, Git: options.PlanGit}).WithCache()
+	deploymentSource, err := rendered.LegacyRawSource(deployedManifestPaths)
+	if err != nil {
+		return err
+	}
+	planSource := (GitPlanSource{Repository: resolvedRoot, Deployment: deploymentSource, Catalog: options.Renderers, Git: options.PlanGit}).WithCache()
 	primitiveProber, _ := proberAPI.(PrimitiveProber)
 	var memoryCatalogMu sync.RWMutex
 	removalClient, err := newUnexplainedRemovalClient(planExecConfig, genericCapture, *controlNamespace)
@@ -1758,6 +1763,7 @@ func evaluateOnce(
 	client kubernetes.Interface,
 	trafficAPI ProberAPI,
 	clock kclock.WithTicker,
+	renderers *render.Catalog,
 ) error {
 	clock = timerClock(clock)
 	flags := flag.NewFlagSet("sdo-controller-evaluate-once", flag.ContinueOnError)
@@ -1854,13 +1860,21 @@ func evaluateOnce(
 			return err
 		}
 		readCommit = revision
-		readSource = (GitPlanSource{Repository: *appRoot, ManifestPaths: deployedManifestPaths}).WithCache()
+		deploymentSource, err := rendered.LegacyRawSource(deployedManifestPaths)
+		if err != nil {
+			return err
+		}
+		readSource = (GitPlanSource{Repository: *appRoot, Deployment: deploymentSource, Catalog: renderers}).WithCache()
 	}
 	if *sourceDriftReport != "" {
 		if *appRoot == "" || readClient == nil {
 			return errors.New("source-drift-report requires app-root and a Kubernetes read client")
 		}
-		source := (GitPlanSource{Repository: *appRoot, ManifestPaths: deployedManifestPaths}).WithCache()
+		deploymentSource, err := rendered.LegacyRawSource(deployedManifestPaths)
+		if err != nil {
+			return err
+		}
+		source := (GitPlanSource{Repository: *appRoot, Deployment: deploymentSource, Catalog: renderers}).WithCache()
 		inventory, err := source.AcceptedInventory(ctx, readCommit, *namespace)
 		if err != nil {
 			return err

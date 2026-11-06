@@ -1,4 +1,3 @@
-//archcheck:ratchet R5 count=4 until=S3-10d
 package rendered
 
 import (
@@ -11,9 +10,34 @@ import (
 	"sync"
 	"testing"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/internal/testutil"
+	"sdo.dev/operator/render"
+	"sdo.dev/operator/render/kustomize"
+	"sdo.dev/operator/render/raw"
 	"sdo.dev/operator/sdk"
 )
+
+func testCatalog(t *testing.T) *render.Catalog {
+	t.Helper()
+	catalog := render.NewCatalog()
+	if err := raw.Register(catalog); err != nil {
+		t.Fatal(err)
+	}
+	if err := kustomize.Register(catalog); err != nil {
+		t.Fatal(err)
+	}
+	return catalog
+}
+
+func rawSource(t *testing.T, paths ...string) *contracts.DeploymentSource {
+	t.Helper()
+	source, err := LegacyRawSource(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return source
+}
 
 func TestCachedSourceReadsOneImmutableRevisionWithoutRereadingGit(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "repo")
@@ -22,7 +46,7 @@ func TestCachedSourceReadsOneImmutableRevisionWithoutRereadingGit(t *testing.T) 
 	}
 	testutil.InitGit(t, root)
 	first := cacheTestCommitManifests(t, root, "example/web:1")
-	source := (Source{Repository: root, ManifestPaths: []string{"k8s"}}).WithCache()
+	source := (Source{Repository: root, Deployment: rawSource(t, "k8s"), Catalog: testCatalog(t)}).WithCache()
 	ctx := context.Background()
 	objects, err := source.RawManifests(ctx, first, "app")
 	if err != nil || len(objects) != 2 {
@@ -67,7 +91,7 @@ func TestCachedSourceFollowsRevisionAndRetriesUnavailableSource(t *testing.T) {
 	}
 	testutil.InitGit(t, root)
 	first := cacheTestCommitManifests(t, root, "example/web:1")
-	source := (Source{Repository: root, ManifestPaths: []string{"k8s"}}).WithCache()
+	source := (Source{Repository: root, Deployment: rawSource(t, "k8s"), Catalog: testCatalog(t)}).WithCache()
 	ctx := context.Background()
 	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "web"}
 	if _, err := source.AcceptedManifest(ctx, first, ref); err != nil {
@@ -104,7 +128,7 @@ func TestCachedSourceSeparatesSelectionsAndQualifiedScopes(t *testing.T) {
 		t.Fatal(err)
 	}
 	revision := cacheTestCommitManifests(t, root, "example/web:1")
-	source := (Source{Repository: root, ManifestPaths: []string{"k8s"}}).WithCache()
+	source := (Source{Repository: root, Deployment: rawSource(t, "k8s"), Catalog: testCatalog(t)}).WithCache()
 	ctx := context.Background()
 	objects, err := source.RawManifests(ctx, revision, "app")
 	if err != nil || len(objects) != 2 {
@@ -116,7 +140,7 @@ func TestCachedSourceSeparatesSelectionsAndQualifiedScopes(t *testing.T) {
 		t.Fatalf("qualified projection used application-only cache: %v %v", peer, err)
 	}
 	changed := source
-	changed.ManifestPaths = []string{"not-selected"}
+	changed.Deployment = rawSource(t, "not-selected")
 	if _, err := changed.RawManifests(ctx, revision, "app"); err == nil {
 		t.Fatal("changed manifest selection reused previous source")
 	}

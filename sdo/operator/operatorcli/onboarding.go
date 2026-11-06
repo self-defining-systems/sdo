@@ -1,4 +1,3 @@
-//archcheck:ratchet R5 count=1 until=S3-11c
 package operatorcli
 
 import (
@@ -10,6 +9,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/onboarding"
+	"sdo.dev/operator/operatorcli/catalog/renderers"
 	"sdo.dev/operator/operatorcli/internal/processio"
 	"sdo.dev/operator/rendered"
 )
@@ -26,9 +26,11 @@ func stageExistingNamespace(ctx context.Context, client kubernetes.Interface, la
 	if err != nil || record != nil {
 		return err
 	}
-	paths := existingSourcePaths(launch)
-
-	source := rendered.Source{Repository: launch.Repository, ManifestPaths: paths}
+	deployment, err := rendered.LegacyRawSource(existingSourcePaths(launch))
+	if err != nil {
+		return err
+	}
+	source := rendered.Source{Repository: launch.Repository, Deployment: deployment, Catalog: renderers.Catalog()}
 	objects, err := source.RawManifests(ctx, commit, launch.Install.Namespace)
 	if err != nil {
 		return fmt.Errorf("accepted onboarding manifests: %w", err)

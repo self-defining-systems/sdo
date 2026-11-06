@@ -20,6 +20,7 @@ import (
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory/observation"
+	"sdo.dev/operator/operatorcli/catalog/renderers"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -124,7 +125,7 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		workers.Environment[memoryMetricsEnv] = "1"
 	}
 	installer := lifecycle.NativeInstallAdapter{
-		Strategy: lifecycle.KubernetesInstallStrategy{Installer: install.Installer{Client: client}},
+		Strategy: lifecycle.KubernetesInstallStrategy{Installer: install.Installer{Client: client}, Renderers: renderers.Catalog()},
 		Config:   config.Install, AcceptedRepository: config.ApplicationRoot, Prepared: true,
 	}
 	var healthProbe deployment.HealthProbe = deployment.AcceptedDetectorProbe{Replay: config.Install.Replay, MetricsURL: config.Install.MetricsURL}
