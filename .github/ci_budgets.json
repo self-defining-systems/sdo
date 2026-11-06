@@ -1,0 +1,44 @@
+{
+  "_comment": "Ratchets for CI speed and reliability. Values may only go down: tests/unit/sdo/operator/test_ci_speed.py fails a timeout above this table, and the table is the one place to lower it. Raising a number needs the owner's explicit approval in review; prefer fixing the slow job. See docs/testing-guide.md#ci-budgets-and-ratchets.",
+  "timeout_minutes": {
+    "ci.yml": {
+      "checks": 5,
+      "python": 5,
+      "tests": 5,
+      "required-pr-ci": 1
+    },
+    "nightly.yml": {
+      "go": 60,
+      "controller-e2e": 40,
+      "python": 45,
+      "images": 30
+    },
+    "ci-health.yml": {
+      "health": 5
+    }
+  },
+  "slow_test_seconds": 10,
+  "cache_limit_mb": 1024,
+  "health": {
+    "since": "2026-11-06T01:42:00Z",
+    "runs": 50,
+    "job_p95_seconds": 180,
+    "queue_p95_minutes": 8
+  },
+  "slow_tests": {
+    "_comment": "PR-tier tests allowed to exceed slow_test_seconds, with the reason. Go keys are '<package> <TopLevelTest>' (a subtest is covered by its parent); Python keys are pytest node ids without a parameter suffix. Keep this short: move the test to the integration/nightly tier (testing.Short skip or the nightly ignore list) instead of adding an entry.",
+    "go": {
+      "sdo.dev/operator/memory/validate TestApplicationMapAgainstCompiledScenarios": "compiles generated detector programs with real Go",
+      "sdo.dev/operator/memory/validate TestGateCompileRowsOnRealGo": "compiles generated detector programs with real Go",
+      "sdo.dev/operator/memory/validate TestPreexistingHealthyBaselineFaultsOnRealGo": "compiles generated detector programs with real Go",
+      "sdo.dev/operator/builder TestEmptyCatalogControllerBuild": "builds the controller binary in an isolated module",
+      "sdo.dev/operator/runtime/sim TestKubeConformance": "starts a real kube-apiserver and etcd",
+      "sdo.dev/operator/runtime TestHarness": "seeded simulation campaign prefix",
+      "sdo.dev/operator/runtime TestRemotePreparationDoesNotSpendDetectorExecutionBudget": "compiles a remote preparation with real Go"
+    },
+    "python": {
+      "tests/unit/test_astronomy_shop_app.py::test_astronomy_renderer_preserves_baseline_policy": "renders the full astronomy-shop application",
+      "tests/unit/benchmarks/sregym/fastloop/test_fastloop_hermetic_run.py::test_scripted_fastloop_reuses_reflected_target_port_program": "hermetic end-to-end fastloop run"
+    }
+  }
+}

@@ -51,4 +51,9 @@ case "${2:-}" in
     *) echo "unknown Go test shard: $2" >&2; exit 2 ;;
 esac
 # Nested builder tests must select their own isolated modules.
-go test -exec 'env GOWORK=off' "${args[@]}" "${patterns[@]}"
+# SDO_GO_TEST_LOG keeps the JSON stream for scripts/check_slow_tests.py.
+if [[ -n "${SDO_GO_TEST_LOG:-}" ]]; then
+    go test -exec 'env GOWORK=off' "${args[@]}" "${patterns[@]}" | tee "$SDO_GO_TEST_LOG"
+else
+    go test -exec 'env GOWORK=off' "${args[@]}" "${patterns[@]}"
+fi

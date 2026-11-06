@@ -1,0 +1,23 @@
+name: CI health
+
+on:
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+jobs:
+  health:
+    name: CI duration and queue budgets
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Compute p50/p95 job durations, queue latency and run outcomes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci_health.py
