@@ -260,13 +260,10 @@ func partialReflectionEligibility(eligibility *contracts.ReflectionEligibility, 
 // unverified repair claims into executable memory. The check applies it to the
 // same learning view the worker receives.
 func reflectionRepairVerified(outcome *contracts.OutcomeRecord) bool {
-	if dataLossOutcome(outcome) {
-		return false
-	}
 	if outcome.GetClassification() == outcomeclass.Success {
-		return true
+		return !dataLossOutcome(outcome)
 	}
-	return len(validate.VerifiedReflectionCauses(partialReflectionOutcome(outcome))) > 0
+	return validate.ReflectionRepairVerified(partialReflectionOutcome(outcome))
 }
 
 // partialReflectionOutcome is a learning view. The broker retains the complete

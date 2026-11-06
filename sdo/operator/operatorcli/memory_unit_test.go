@@ -80,3 +80,18 @@ func TestPlanCatalogsDecodeTheRealRegistries(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestReflectionRepairVerifiedEnvironment(t *testing.T) {
+	for value, want := range map[string]bool{"true": true, "false": false} {
+		verify := reflectionRepairVerifier(func(string) string { return value })
+		if verify == nil {
+			t.Fatalf("SDO_REPAIR_VERIFIED=%s: no verifier", value)
+		}
+		if got := verify(nil); got != want {
+			t.Errorf("SDO_REPAIR_VERIFIED=%s: verified = %v, want %v", value, got, want)
+		}
+	}
+	if reflectionRepairVerifier(func(string) string { return "" }) != nil {
+		t.Error("an unset fact must leave the check's default")
+	}
+}

@@ -68,3 +68,28 @@ func TestConfiguredEnvironmentCannotOverrideActor(t *testing.T) {
 		t.Fatalf("SDO_ACTOR = %q, want deployer", environment["SDO_ACTOR"])
 	}
 }
+
+// The worker's own memory check must apply the closure fact the broker's
+// publication gate applies, or it demands learning the broker will refuse.
+func TestReflectionLaunchCarriesTheClosureRepairFact(t *testing.T) {
+	cause := &contracts.ConfirmedRootCause{Resources: []*contracts.ObjectRef{{ApiVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}}}
+	cases := []struct {
+		name    string
+		outcome *contracts.OutcomeRecord
+		want    string
+	}{
+		{"healthy closure", &contracts.OutcomeRecord{Classification: "success"}, "true"},
+		{"no verified repaired cause", &contracts.OutcomeRecord{Classification: "cleared_without_action", ConfirmedRootCauses: []*contracts.ConfirmedRootCause{cause}}, "false"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := launchedEnvironment(t, &contracts.ReflectionRequest{Outcome: tc.outcome}, map[string]string{"SDO_REPAIR_VERIFIED": "true"})
+			if got := env["SDO_REPAIR_VERIFIED"]; got != tc.want {
+				t.Fatalf("SDO_REPAIR_VERIFIED = %q, want %q", got, tc.want)
+			}
+		})
+	}
+	if _, set := launchedEnvironment(t, &contracts.IncidentRequest{}, nil)["SDO_REPAIR_VERIFIED"]; set {
+		t.Fatal("only reflection launches carry the closure repair fact")
+	}
+}
