@@ -27,11 +27,15 @@ type followWorld struct {
 	advance  func(upstream.Request) (lifecycle.AdvanceResult, error)
 	advances []upstream.Request
 	stored   []upstream.Hold
-	saves    int
-	sleeps   int
-	maxSleep int
-	cancel   context.CancelFunc
-	touched  []string
+	owed     []upstream.Obligation
+	// refresh answers each retry of an open obligation; nil fails the test.
+	refresh   func(upstream.Obligation) error
+	refreshes []time.Time
+	saves     int
+	sleeps    int
+	maxSleep  int
+	cancel    context.CancelFunc
+	touched   []string
 }
 
 func (w *followWorld) following() upstreamFollowing {
@@ -60,9 +64,14 @@ func (w *followWorld) following() upstreamFollowing {
 			}
 			return result, err
 		},
-		Holds: (*worldHolds)(w),
-		Log:   slog.New(slog.DiscardHandler),
-		Now:   func() time.Time { return w.now },
+		Holds:       (*worldHolds)(w),
+		Obligations: (*worldObligations)(w),
+		Refresh: func(_ context.Context, o upstream.Obligation) error {
+			w.refreshes = append(w.refreshes, w.now)
+			return w.refresh(o)
+		},
+		Log: slog.New(slog.DiscardHandler),
+		Now: func() time.Time { return w.now },
 		SleepUntil: func(ctx context.Context, until time.Time) error {
 			w.sleeps++
 			if w.sleeps > w.maxSleep {
@@ -75,6 +84,15 @@ func (w *followWorld) following() upstreamFollowing {
 			return nil
 		},
 	}
+}
+
+type worldObligations followWorld
+
+func (o *worldObligations) Load(context.Context) ([]upstream.Obligation, error) { return o.owed, nil }
+
+func (o *worldObligations) Save(_ context.Context, owed []upstream.Obligation) error {
+	o.owed = owed
+	return nil
 }
 
 type worldHolds followWorld
@@ -206,6 +224,69 @@ func TestFailedOrDeferredAdvanceRetriesWithoutHold(t *testing.T) {
 				t.Fatalf("retried after %s, want at least one poll interval", w.now.Sub(start))
 			}
 		})
+	}
+}
+
+// A shape-change advance is accepted but the designer's refresh fails: the
+// follower's next poll sees upstream equal to the accepted revision (idle,
+// the hold clears), yet the obligation stays open, is persisted with its cause
+// and owner, is retried only after the backoff, and settles on success.
+func TestFailedDesignerRefreshStaysOwedUntilItSucceeds(t *testing.T) {
+	w := newWorld(t)
+	w.sources = []upstream.Source{followedSource(t)}
+	w.latest = []string{revB}
+	w.advance = func(upstream.Request) (lifecycle.AdvanceResult, error) {
+		w.accepted = revB
+		return lifecycle.AdvanceResult{
+			Outcome: lifecycle.AdvanceHeld, Hold: lifecycle.HoldDesigner, Detail: "refresh failed", Upstream: revB,
+			Cause: "coverage", Owner: "designer", Receipt: broker.Receipt{Commit: "accepted1"},
+			Owed: &lifecycle.ShapeChange{Upstream: revB, Accepted: "accepted1"},
+		}, nil
+	}
+	start := w.now
+	calls := 0
+	w.refresh = func(o upstream.Obligation) error {
+		calls++
+		if o.Accepted != "accepted1" || o.Kind != upstream.ObligationDesignerRefresh || o.Owner != "designer" || o.Cause != "coverage" {
+			t.Errorf("obligation = %+v", o)
+		}
+		if calls == 1 {
+			return errors.New("judge unavailable")
+		}
+		return nil
+	}
+	_ = w.run(12)
+	if len(w.advances) != 1 {
+		t.Fatalf("advances = %d, want one", len(w.advances))
+	}
+	if calls != 2 {
+		t.Fatalf("refresh attempts = %d, want a failure then a success", calls)
+	}
+	if first := w.refreshes[0].Sub(start); first < upstream.ObligationBackoffBase {
+		t.Fatalf("first retry after %s, want at least the backoff %s", first, upstream.ObligationBackoffBase)
+	}
+	if gap := w.refreshes[1].Sub(w.refreshes[0]); gap < 2*upstream.ObligationBackoffBase {
+		t.Fatalf("second retry after %s, want a doubled backoff", gap)
+	}
+	if len(w.owed) != 0 || len(w.stored) != 0 {
+		t.Fatalf("after success obligations = %+v, holds = %+v; want none", w.owed, w.stored)
+	}
+}
+
+func TestOwedRefreshIsVisibleWhileOpenAndSurvivesRestart(t *testing.T) {
+	w := newWorld(t)
+	w.sources = []upstream.Source{followedSource(t)}
+	w.latest = []string{revB}
+	w.accepted = revB // the advance was accepted before the restart
+	w.owed = []upstream.Obligation{{Path: ".", Kind: upstream.ObligationDesignerRefresh, Accepted: "accepted1", Cause: "coverage", Owner: "designer", Reason: "judge unavailable", Attempts: 3, Since: w.now.Add(-time.Hour)}}
+	w.refresh = func(o upstream.Obligation) error { return errors.New("still down") }
+	start := w.now
+	_ = w.run(2)
+	if len(w.refreshes) == 0 || !w.refreshes[0].Equal(start) {
+		t.Fatalf("restart did not retry at once: %v", w.refreshes)
+	}
+	if len(w.owed) != 1 || w.owed[0].Attempts < 4 || w.owed[0].Reason != "still down" || w.owed[0].Owner != "designer" {
+		t.Fatalf("open obligation = %+v", w.owed)
 	}
 }
 

@@ -29,7 +29,11 @@ type upstreamFollowing struct {
 	Latest   func(context.Context, upstream.Source) (upstream.Revision, error)
 	Advance  func(context.Context, upstream.Request) (lifecycle.AdvanceResult, error)
 	Holds    holdsStore
-	Now      func() time.Time
+	// Obligations persists work an accepted advance still owes (a failed
+	// detection refresh) and Refresh retries it; both are required.
+	Obligations obligationsStore
+	Refresh     func(context.Context, upstream.Obligation) error
+	Now         func() time.Time
 	// SleepUntil waits for the time or ctx.
 	SleepUntil func(context.Context, time.Time) error
 	// Idle is how long to wait before re-reading sources when nothing is
@@ -44,12 +48,19 @@ type holdsStore interface {
 	Save(context.Context, []upstream.Hold) error
 }
 
+// obligationsStore persists the follower's open obligations (the
+// sdo-upstream-obligations ConfigMap).
+type obligationsStore interface {
+	Load(context.Context) ([]upstream.Obligation, error)
+	Save(context.Context, []upstream.Obligation) error
+}
+
 // Run follows until ctx ends or following is disabled for this installation
 // (lifecycle.ErrNoAcceptedPlan). Failures of one poll are logged and retried;
 // they never end the controller.
 func (f upstreamFollowing) Run(ctx context.Context) error {
-	if f.Follower == nil || f.Sources == nil || f.Accepted == nil || f.Latest == nil || f.Advance == nil || f.Holds == nil || f.Now == nil || f.SleepUntil == nil {
-		return errors.New("upstream following needs a follower, sources, accepted history, watcher, advance, holds store, clock and timer")
+	if f.Follower == nil || f.Sources == nil || f.Accepted == nil || f.Latest == nil || f.Advance == nil || f.Holds == nil || f.Obligations == nil || f.Refresh == nil || f.Now == nil || f.SleepUntil == nil {
+		return errors.New("upstream following needs a follower, sources, accepted history, watcher, advance, holds and obligations stores, refresh, clock and timer")
 	}
 	idle := f.Idle
 	if idle <= 0 {
@@ -98,6 +109,11 @@ func (f upstreamFollowing) step(ctx context.Context, holdsLoaded *bool, log *slo
 			return time.Time{}, fmt.Errorf("load upstream holds: %w", err)
 		}
 		f.Follower.LoadHolds(holds)
+		owed, err := f.Obligations.Load(ctx)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("load upstream obligations: %w", err)
+		}
+		f.Follower.LoadObligations(f.Now(), owed)
 		*holdsLoaded = true
 	}
 	changed, err := f.Follower.Sync(f.Now(), sources)
@@ -112,8 +128,44 @@ func (f upstreamFollowing) step(ctx context.Context, holdsLoaded *bool, log *slo
 			return time.Time{}, err
 		}
 	}
-	next, _ := f.Follower.NextPoll()
+	if err := f.retryObligations(ctx, log); err != nil {
+		return time.Time{}, err
+	}
+	next, found := f.Follower.NextPoll()
+	if due, owed := f.Follower.NextObligation(); owed && (!found || due.Before(next)) {
+		next = due
+	}
 	return next, nil
+}
+
+// retryObligations runs every open obligation whose backoff has elapsed. A
+// failure keeps it open with a longer backoff; only success settles it.
+func (f upstreamFollowing) retryObligations(ctx context.Context, log *slog.Logger) error {
+	for _, o := range f.Follower.DueObligations(f.Now()) {
+		err := f.Refresh(ctx, o)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		attrs := []any{"path", o.Path, "obligation", string(o.Kind), "accepted", o.Accepted, "attempts", o.Attempts + 1, "cause", o.Cause, "owner", o.Owner}
+		if err != nil {
+			f.Follower.Retried(f.Now(), o, err.Error())
+			log.Warn("upstream_obligation_retry_failed", append(attrs, "error", err.Error())...)
+		} else {
+			f.Follower.Settle(o)
+			log.Info("upstream_obligation_settled", attrs...)
+		}
+		if err := f.saveObligations(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (f upstreamFollowing) saveObligations(ctx context.Context) error {
+	if err := f.Obligations.Save(ctx, f.Follower.Obligations()); err != nil {
+		return fmt.Errorf("save upstream obligations: %w", err)
+	}
+	return nil
 }
 
 func (f upstreamFollowing) poll(ctx context.Context, source upstream.Source, log *slog.Logger) error {
@@ -139,6 +191,21 @@ func (f upstreamFollowing) poll(ctx context.Context, source upstream.Source, log
 		return err
 	}
 	outcome := result.FollowerOutcome()
+	// An accepted advance that still owes work keeps that work open whatever
+	// else happened (even an interrupted refresh), bound to the accepted
+	// commit: the next poll sees the revision as accepted and clears the hold,
+	// not the obligation.
+	if result.Owed != nil {
+		if _, oerr := f.Follower.Owe(f.Now(), upstream.Obligation{
+			Path: source.Path, Kind: upstream.ObligationDesignerRefresh, Accepted: result.Owed.Accepted, Upstream: result.Owed.Upstream,
+			Cause: string(result.Cause), Owner: string(result.Owner), Reason: result.Detail,
+		}); oerr != nil {
+			return fmt.Errorf("record owed designer refresh: %w", oerr)
+		}
+		if serr := f.saveObligations(ctx); serr != nil {
+			return serr
+		}
+	}
 	// An error is transient for the follower: retry the same revision next
 	// poll without a hold. After a deploy (publication refused because HEAD
 	// moved, broker failure) the cluster runs the verified candidate while

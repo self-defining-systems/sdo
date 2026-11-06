@@ -352,3 +352,49 @@ func TestHoldsCodecRejectsMalformed(t *testing.T) {
 		t.Error("duplicate path accepted")
 	}
 }
+
+func TestObligationOutlivesObservationOfTheAcceptedRevision(t *testing.T) {
+	f := newFollower(t, src(t, ".", "r", time.Minute))
+	now := time.Unix(1_700_000_000, 0)
+	if _, err := f.Owe(now, upstream.Obligation{Path: ".", Kind: upstream.ObligationDesignerRefresh, Accepted: "c1", Cause: "coverage", Owner: "designer", Reason: "judge down"}); err != nil {
+		t.Fatal(err)
+	}
+	// Upstream equals the accepted revision: a hold would clear here.
+	f.Observe(now, ".", "r1", upstream.Revision{ID: "r1"}, nil)
+	if got := f.Obligations(); len(got) != 1 || got[0].Accepted != "c1" {
+		t.Fatalf("obligations after observing the accepted revision = %+v", got)
+	}
+	if due := f.DueObligations(now); len(due) != 0 {
+		t.Fatalf("due before the backoff: %+v", due)
+	}
+	if due := f.DueObligations(now.Add(upstream.ObligationBackoffBase)); len(due) != 1 {
+		t.Fatalf("not due after the backoff")
+	}
+	o := f.Obligations()[0]
+	f.Retried(now, o, "again")
+	for range 20 {
+		o = f.Obligations()[0]
+		f.Retried(now, o, "again")
+	}
+	if wait := f.Obligations()[0].Next.Sub(now); wait != upstream.ObligationBackoffMax {
+		t.Fatalf("backoff = %s, want the cap %s", wait, upstream.ObligationBackoffMax)
+	}
+	if !f.Settle(f.Obligations()[0]) || len(f.Obligations()) != 0 {
+		t.Fatal("settle did not close the obligation")
+	}
+}
+
+func TestObligationsCodecRoundTrip(t *testing.T) {
+	in := []upstream.Obligation{{Path: ".", Kind: upstream.ObligationDesignerRefresh, Accepted: "c1", Upstream: "r1", Cause: "coverage", Owner: "designer", Reason: "x", Attempts: 2, Since: time.Unix(1_700_000_000, 0).UTC()}}
+	data, err := upstream.EncodeObligations(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := upstream.DecodeObligations(data)
+	if err != nil || len(out) != 1 || out[0].Accepted != "c1" || out[0].Attempts != 2 || !out[0].Since.Equal(in[0].Since) {
+		t.Fatalf("round trip = %+v, %v", out, err)
+	}
+	if _, err := upstream.DecodeObligations(map[string]string{"junk": "{}"}); err == nil {
+		t.Fatal("foreign key accepted")
+	}
+}

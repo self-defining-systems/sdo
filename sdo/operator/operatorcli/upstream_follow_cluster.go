@@ -54,6 +54,42 @@ func (s configMapHolds) Save(ctx context.Context, holds []upstream.Hold) error {
 	return err
 }
 
+// configMapObligations persists the follower's open obligations in the control
+// namespace's sdo-upstream-obligations ConfigMap, readable with the holds.
+type configMapObligations struct {
+	Client    kubernetes.Interface
+	Namespace string
+}
+
+func (s configMapObligations) Load(ctx context.Context) ([]upstream.Obligation, error) {
+	configMap, err := s.Client.CoreV1().ConfigMaps(s.Namespace).Get(ctx, upstream.ObligationsConfigMapName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return upstream.DecodeObligations(configMap.Data)
+}
+
+func (s configMapObligations) Save(ctx context.Context, owed []upstream.Obligation) error {
+	data, err := upstream.EncodeObligations(owed)
+	if err != nil {
+		return err
+	}
+	configMaps := s.Client.CoreV1().ConfigMaps(s.Namespace)
+	want := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: upstream.ObligationsConfigMapName, Namespace: s.Namespace, Labels: map[string]string{"app.kubernetes.io/managed-by": "sdo"}}, Data: data}
+	prior, err := configMaps.Get(ctx, upstream.ObligationsConfigMapName, metav1.GetOptions{})
+	switch {
+	case apierrors.IsNotFound(err):
+		_, err = configMaps.Create(ctx, want, metav1.CreateOptions{})
+	case err == nil:
+		want.ResourceVersion = prior.ResourceVersion
+		_, err = configMaps.Update(ctx, want, metav1.UpdateOptions{})
+	}
+	return err
+}
+
 // advanceMaintenancePrefix marks maintenance generations the follower wrote,
 // so a pause it left behind (the parent died mid-advance) is recognized and
 // a pause someone else declared is never lifted by an advance.

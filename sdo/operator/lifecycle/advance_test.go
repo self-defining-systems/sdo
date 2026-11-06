@@ -633,8 +633,21 @@ func TestAdvanceHoldsOnlyWhenTheDesignerRefreshFails(t *testing.T) {
 	if out := result.FollowerOutcome(); out.Kind != upstream.Refused || !strings.Contains(out.Reason, " "+string(lifecycle.HoldDesigner)+": ") {
 		t.Fatalf("follower outcome = %+v", out)
 	}
+	if result.Owed == nil || result.Owed.Accepted != result.Receipt.Commit || result.Owed.Upstream != result.Upstream || result.Cause != "coverage" || result.Owner != "designer" {
+		t.Fatalf("a failed refresh must leave an obligation bound to the accepted commit with cause and owner: %+v", result)
+	}
 	if count(w.events, "apply") != 1 || count(w.events, "pause") != count(w.events, "resume") {
 		t.Fatalf("events: %q", w.events)
+	}
+}
+
+func TestSuccessfulDesignerRefreshOwesNothing(t *testing.T) {
+	w := newAdvWorld(t)
+	w.designer = true
+	w.shapes[advCandidate] = "shape-b"
+	result, err := w.run(t)
+	if err != nil || result.Outcome != lifecycle.AdvanceAccepted || result.Owed != nil {
+		t.Fatalf("result = %+v, err = %v", result, err)
 	}
 }
 
