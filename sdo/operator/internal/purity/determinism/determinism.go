@@ -36,6 +36,7 @@ var Edges = map[string]bool{
 	"sdo/operator/apihistory/internal/apiio":                 true, // API-history clock, timers and identifier randomness
 	"sdo/operator/kubeproxy/internal/proxyio":                true, // API proxy clock and request-ID randomness
 	"sdo/operator/rendered/internal/renderio":                true, // Rendered-source Git reads
+	"sdo/operator/internal/sandboxio":                        true, // Bounded child process of the same binary (Helm render isolation)
 	"sdo/operator/patchset/internal/gitio":                   true, // Patch application git processes and private scratch directory
 	"sdo/operator/upstream/gitpoll/internal/gitio":           true, // Git ls-remote and fetch processes
 	"sdo/operator/shellpath/internal/shellio":                true, // Shell detector processes, runner server, timers and environment

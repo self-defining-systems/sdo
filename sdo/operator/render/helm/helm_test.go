@@ -26,7 +26,7 @@ import (
 func catalog(t *testing.T) *render.Catalog {
 	t.Helper()
 	c := render.NewCatalog()
-	if err := helm.Register(c); err != nil {
+	if err := helm.Register(c, helm.InProcess); err != nil {
 		t.Fatal(err)
 	}
 	return c

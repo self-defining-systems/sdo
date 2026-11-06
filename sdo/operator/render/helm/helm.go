@@ -1,6 +1,8 @@
 // Package helm is the render plugin for Helm charts. It renders a chart the
 // way `helm template` does, over the in-memory files read through render.FS:
-// no repository, cluster, registry or process is touched. Only Helm's pure
+// no repository, cluster or registry is touched. The files are read in the
+// caller; the templates execute through an injected Runner, which production
+// wires to a bounded child process (see Runner). Only Helm's pure
 // packages (chart loading, values coalescing, the manifest sorter) and a
 // trimmed copy of its template engine are linked; pkg/action, pkg/kube and the registry client
 // stay out. Like helm install, the renderer first processes the chart's
@@ -17,6 +19,7 @@ package helm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -26,8 +29,6 @@ import (
 	"text/template"
 	"time"
 
-	"google.golang.org/protobuf/types/known/structpb"
-	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/chartutil"
 	"helm.sh/helm/v3/pkg/ignore"
@@ -55,31 +56,84 @@ const Doc = `Renders a Helm chart from the source tree the way helm template doe
 Config: chart_path, the tree-relative chart directory; value_files, tree-relative values files merged in order after the chart's values.yaml; values, an inline object merged last (like --set-json), for settings such as image tags or replica counts.
 Charts must be self-contained: enabled subcharts are vendored in charts/ (disabled ones, by condition or tag, are ignored), and crds/ directories of enabled charts are rejected. tpl, include and the pure template functions work; the render fails when a template executes lookup, env, a clock or date function, or a random or key-generating function (for example a random suffix in a test hook), so such parts must be disabled by values. Hooks with a pre-install or post-install event become phases; hooks of other events (upgrade, delete, rollback, test) are not part of a deploy.`
 
-// Register adds the helm renderer to c under ID.
-func Register(c *render.Catalog) error {
-	return render.Register[*contracts.HelmRenderConfig](c, ID, render.RendererFunc[*contracts.HelmRenderConfig](renderChart), render.WithDoc(Doc))
+// Register adds the helm renderer to c under ID. Every render reads the chart
+// through the catalog's FS in the calling process and executes it through run,
+// which production wires to a memory- and time-bounded child process (see
+// Runner). Tests that need no isolation pass InProcess.
+func Register(c *render.Catalog, run Runner) error {
+	if run == nil {
+		return errors.New("helm: Register needs a Runner (InProcess, or an isolated one)")
+	}
+	renderer := func(ctx context.Context, fsys render.FS, env render.Env, cfg *contracts.HelmRenderConfig) (render.Result, error) {
+		return renderChart(ctx, fsys, env, cfg, run)
+	}
+	return render.Register[*contracts.HelmRenderConfig](c, ID, render.RendererFunc[*contracts.HelmRenderConfig](renderer), render.WithDoc(Doc))
 }
 
 // renderTimeLimit bounds one chart render's wall-clock time. The largest real
 // charts render in well under a second.
 const renderTimeLimit = 30 * time.Second
 
-func renderChart(ctx context.Context, fsys render.FS, env render.Env, cfg *contracts.HelmRenderConfig) (render.Result, error) {
+// renderChart reads everything the render may use through fsys (so the
+// catalog records the inputs here, in the caller), then executes the chart
+// through run. A chart is Git content an agent can edit: what its templates do
+// is bounded by the engine's hooks first, and by run's process limits for what
+// no hook sees (memory held in variables, loops that call no function).
+func renderChart(ctx context.Context, fsys render.FS, env render.Env, cfg *contracts.HelmRenderConfig, run Runner) (render.Result, error) {
 	root := path.Clean(cfg.GetChartPath())
 	if cfg.GetChartPath() == "" || !fs.ValidPath(root) {
 		return render.Result{}, fmt.Errorf("helm chart_path %q must be a relative path inside the source tree", cfg.GetChartPath())
 	}
-	releaseName := env.Release
-	if releaseName == "" {
-		// No install configuration names a release: the release is the
-		// application namespace, the same for deploy and every read.
-		releaseName = env.Namespace
-	}
-	chrt, err := loadChart(ctx, fsys, root)
+	req, err := gather(ctx, fsys, env, cfg, root)
 	if err != nil {
 		return render.Result{}, err
 	}
-	overrides, err := userValues(fsys, cfg)
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return render.Result{}, fmt.Errorf("helm render of %s: encode request: %w", root, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return render.Result{}, err
+	}
+	renderCtx, stop := context.WithTimeoutCause(ctx, renderTimeLimit, timeLimitError(root))
+	defer stop()
+	out, err := run(renderCtx, payload)
+	if renderCtx.Err() != nil {
+		return render.Result{}, stopped(renderCtx)
+	}
+	if err != nil {
+		if errors.Is(err, ErrRenderProcess) {
+			return render.Result{}, &policy.Error{Rule: policy.RuleRenderBudget, Chart: path.Base(root), Detail: err.Error()}
+		}
+		return render.Result{}, fmt.Errorf("helm render of %s: %w", root, err)
+	}
+	return decodeResponse(root, out)
+}
+
+func timeLimitError(root string) error {
+	return &policy.Error{Rule: policy.RuleRenderBudget, Chart: path.Base(root), Detail: fmt.Sprintf("rendering took longer than %s", renderTimeLimit)}
+}
+
+// stopped is the error of a render whose context ended: the typed cause of the
+// render's own time limit, or the caller's context error (transient).
+func stopped(ctx context.Context) error {
+	cause := context.Cause(ctx)
+	var perr *policy.Error
+	if errors.As(cause, &perr) {
+		return cause
+	}
+	return fmt.Errorf("render stopped: %w", cause)
+}
+
+// compute renders a gathered request. It touches no FS: it is what run
+// executes, in a child process in production.
+func compute(ctx context.Context, req request) (render.Result, error) {
+	root := req.Root
+	chrt, err := loader.LoadFiles(req.files())
+	if err != nil {
+		return render.Result{}, fmt.Errorf("helm chart %s: %w", root, err)
+	}
+	overrides, err := req.userValues()
 	if err != nil {
 		return render.Result{}, err
 	}
@@ -91,24 +145,21 @@ func renderChart(ctx context.Context, fsys render.FS, env render.Env, cfg *contr
 	if err := policy.Check(chrt); err != nil {
 		return render.Result{}, err
 	}
+	env := req.Env.env()
 	caps, err := capabilities(env)
 	if err != nil {
 		return render.Result{}, err
 	}
 	values, err := chartutil.ToRenderValues(chrt, overrides, chartutil.ReleaseOptions{
-		Name: releaseName, Namespace: env.Namespace, Revision: 1, IsInstall: true,
+		Name: req.Env.Release, Namespace: env.Namespace, Revision: 1, IsInstall: true,
 	}, caps)
 	if err != nil {
 		return render.Result{}, fmt.Errorf("helm values for %s: %w", root, err)
 	}
-	if err := ctx.Err(); err != nil {
-		return render.Result{}, err
-	}
-	// The engine checks this deadline on every template function call; a
-	// template that expands without end fails with a typed budget error instead
-	// of holding the controller.
-	renderCtx, stop := context.WithTimeoutCause(ctx, renderTimeLimit,
-		&policy.Error{Rule: policy.RuleRenderBudget, Chart: path.Base(root), Detail: fmt.Sprintf("rendering took longer than %s", renderTimeLimit)})
+	// The engine checks this deadline on every template function call, so a
+	// template that expands through functions fails with a typed budget error
+	// even in process; the Runner bounds what calls no function.
+	renderCtx, stop := context.WithTimeoutCause(ctx, renderTimeLimit, timeLimitError(root))
 	defer stop()
 	files, err := engine.Engine{Funcs: policy.Restrict, Context: renderCtx}.Render(chrt, values)
 	if err != nil {
@@ -154,10 +205,10 @@ func renderError(root string, err error) error {
 	return &out
 }
 
-// loadChart reads every file under root through fsys (honoring .helmignore)
-// and loads the chart from memory. The schema probe records an absent
-// values.schema.json as an input.
-func loadChart(ctx context.Context, fsys render.FS, root string) (*chart.Chart, error) {
+// readChart reads every file under root through fsys (honoring .helmignore).
+// The schema probe records an absent values.schema.json as an input. Parsing
+// the files is left to compute.
+func readChart(ctx context.Context, fsys render.FS, root string) ([]*loader.BufferedFile, error) {
 	info, err := fsys.Stat(root)
 	if err != nil {
 		return nil, fmt.Errorf("helm chart directory %s: %w", root, err)
@@ -221,37 +272,7 @@ func loadChart(ctx context.Context, fsys render.FS, root string) (*chart.Chart, 
 	if _, err := fsys.Stat(path.Join(root, "values.schema.json")); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
 	}
-	chrt, err := loader.LoadFiles(buffered)
-	if err != nil {
-		return nil, fmt.Errorf("helm chart %s: %w", root, err)
-	}
-	return chrt, nil
-}
-
-// userValues merges value_files in order, then the inline values (last wins,
-// maps merge recursively, null deletes a key).
-func userValues(fsys render.FS, cfg *contracts.HelmRenderConfig) (map[string]any, error) {
-	merged := map[string]any{}
-	layer := func(next map[string]any) { merged = chartutil.CoalesceTables(next, merged) }
-	for _, name := range cfg.GetValueFiles() {
-		clean := path.Clean(name)
-		if !fs.ValidPath(clean) {
-			return nil, fmt.Errorf("helm value file %q must be a relative path inside the source tree", name)
-		}
-		data, err := fsys.ReadFile(clean)
-		if err != nil {
-			return nil, fmt.Errorf("helm value file %s: %w", clean, err)
-		}
-		vals := map[string]any{}
-		if err := yaml.Unmarshal(data, &vals); err != nil {
-			return nil, fmt.Errorf("helm value file %s: %w", clean, err)
-		}
-		layer(vals)
-	}
-	if inline := cfg.GetValues(); inline != nil {
-		layer(structpb.NewStructValue(inline).GetStructValue().AsMap())
-	}
-	return merged, nil
+	return buffered, nil
 }
 
 func capabilities(env render.Env) (*chartutil.Capabilities, error) {

@@ -50,7 +50,7 @@ func toyTree(t *testing.T) rendertest.MapFS {
 func normalizedSet(t *testing.T, tree rendertest.MapFS, id string, cfg *anypb.Any) map[string]string {
 	t.Helper()
 	c := render.NewCatalog()
-	for _, register := range []func(*render.Catalog) error{raw.Register, helm.Register} {
+	for _, register := range []func(*render.Catalog) error{raw.Register, func(c *render.Catalog) error { return helm.Register(c, helm.InProcess) }} {
 		if err := register(c); err != nil {
 			t.Fatal(err)
 		}
