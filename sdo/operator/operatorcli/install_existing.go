@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"sdo.dev/operator/operatorcli/catalog/telemetrysources"
 	"slices"
 	"strings"
 	"time"
@@ -148,8 +149,9 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 		return InstallExistingConfig{}, err
 	}
 	config := install.Config{
-		CodePath:  selectedCodePath,
-		Namespace: *namespace, ControlNamespace: *controlNamespace, Application: *application,
+		BackendRecipes: telemetrysources.Recipes(),
+		CodePath:       selectedCodePath,
+		Namespace:      *namespace, ControlNamespace: *controlNamespace, Application: *application,
 		ScriptImage: *scriptImage, ControllerImage: *controllerImage, ResponderImage: *responderImage,
 		RepositoryPVC: *repositoryPVC, CredentialsSecret: *credentialsSecret, Model: *model,
 		RepairPolicy: *repairPolicy, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, FrozenMemory: *frozenMemory, ExternalIncidents: *externalIncidents, AgentProvider: *provider, AgentEffort: *effort, Replay: *replay,

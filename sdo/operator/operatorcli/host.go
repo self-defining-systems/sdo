@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sdo.dev/operator/contracts/settings"
+	"sdo.dev/operator/operatorcli/catalog/telemetrysources"
 	"sdo.dev/operator/operatorcli/internal/processio"
 	"strings"
 	"time"
@@ -206,7 +207,8 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 		return HostConfig{}, err
 	}
 	config := install.Config{
-		SourceKind: *sourceKind, SourceConfig: *sourceConfig, DeploymentPlan: compactPlan, DeploymentPolicy: deploymentPolicy,
+		BackendRecipes: telemetrysources.Recipes(),
+		SourceKind:     *sourceKind, SourceConfig: *sourceConfig, DeploymentPlan: compactPlan, DeploymentPolicy: deploymentPolicy,
 		CodePath:           selectedCodePath,
 		ResponderMenu:      menuEnabled,
 		ObservationCeiling: ceiling,

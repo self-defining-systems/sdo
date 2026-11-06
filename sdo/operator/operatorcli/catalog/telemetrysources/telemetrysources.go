@@ -8,6 +8,7 @@ import (
 
 	"sdo.dev/operator/telemetry"
 	"sdo.dev/operator/telemetry/prometheus"
+	"sdo.dev/operator/telemetry/prometheus/recipe"
 )
 
 // Registry returns a registry holding every built-in adapter: prometheus.
@@ -21,4 +22,10 @@ func Registry() *telemetry.Registry {
 		}
 	}
 	return r
+}
+
+// Recipes returns the SDO-owned backend recipes the installer may apply:
+// prometheus.
+func Recipes() []telemetry.BackendRecipe {
+	return []telemetry.BackendRecipe{recipe.New()}
 }
