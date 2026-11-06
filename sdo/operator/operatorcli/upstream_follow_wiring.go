@@ -174,6 +174,7 @@ func controllerAdvancer(launch *contracts.ControllerConfig, operatorRoot string,
 			return rendered.Source{Deployment: source, Catalog: shapes, Repository: root, Environment: launch.GetRenderEnvironment()}.ShapeDigest(ctx, revision, namespace)
 		},
 		Designer:    designerRefresh{launch: launch, operatorRoot: operatorRoot, repository: repository},
+		Deployer:    deployerCorrection{launch: launch, operatorRoot: operatorRoot, repository: repository},
 		Maintenance: maintenance,
 		Activity:    controllerActivity{Client: client, Namespace: controlNamespace(launch), Application: namespace},
 	}
@@ -198,4 +199,42 @@ type designerRefresh struct {
 
 func (d designerRefresh) RefreshDetection(ctx context.Context, _ lifecycle.ShapeChange) error {
 	return refreshControllerHealth(ctx, lifecycle.RefreshScopeAdvance, d.launch, d.operatorRoot, d.repository)
+}
+
+// deployerCorrection is the deployment agent's route of an advance: a hold the
+// deployer owns (render, patch, build) starts a deployer task over the advance
+// checkout with the hold as its request (lifecycle.Advancer.Deployer). It uses
+// the controller's agent transport and the trusted deployer's catalogs; the
+// agent only proposes, the broker validates the correction and the advance
+// deploys and verifies it like any other.
+type deployerCorrection struct {
+	launch       *contracts.ControllerConfig
+	operatorRoot string
+	repository   lifecycle.ProposalBroker
+}
+
+func (d deployerCorrection) CorrectDeployment(ctx context.Context, correction lifecycle.DeploymentCorrection) (*contracts.DeploymentPlan, error) {
+	registry, client, workers, err := controllerAgentWorkers(d.launch)
+	if err != nil {
+		return nil, err
+	}
+	coordinator, err := healthRefreshCoordinator(d.launch, d.operatorRoot, client, d.repository, registry, workers)
+	if err != nil {
+		return nil, err
+	}
+	// The agent is offered what the trusted deployer can deploy, and nothing else.
+	if deployer, ok := coordinator.Readiness.(deployment.Deployer); ok {
+		coordinator.ImageSources = deployer.Images
+	}
+	identity, err := deploywire.IdentityOf(d.launch)
+	if err != nil {
+		return nil, err
+	}
+	objective, err := memory.AcceptedHealthObjective(d.launch.GetAppRoot())
+	if err != nil {
+		return nil, err
+	}
+	return coordinator.CorrectDeployment(ctx, lifecycle.Config{
+		Application: d.launch.GetApplication(), Namespace: d.launch.GetNamespace(), HealthObjective: objective, RegistryHost: identity.RegistryHost,
+	}, correction)
 }

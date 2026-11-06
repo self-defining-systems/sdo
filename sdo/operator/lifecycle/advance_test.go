@@ -28,6 +28,7 @@ var (
 	advRevision  = strings.Repeat("2", 40)
 	advHead      = strings.Repeat("3", 40)
 	advCandidate = strings.Repeat("4", 40)
+	advCorrected = strings.Repeat("8", 40)
 	advTree      = strings.Repeat("5", 40)
 	advEffective = strings.Repeat("7", 40)
 	advDigest    = strings.Repeat("6", 64)
@@ -66,6 +67,15 @@ type advWorld struct {
 	// pass); offlineErrs is consumed one per call (infrastructure failures).
 	offline     []operability.Check
 	offlineErrs []error
+	// offlineSeq, when set, gives each CheckOffline call the next element (the
+	// last repeats); correct, when set, answers each CorrectAdvance call.
+	offlineSeq [][]operability.Check
+	correct    func(call int, plan *contracts.DeploymentPlan) (rejection string, err error)
+	corrected  []*contracts.DeploymentPlan
+	// keepOnPatchHold keeps the advance checkout when the proposal reports a
+	// patch hold, as the broker does for a deployment agent to correct it.
+	keepOnPatchHold bool
+	candidateNow    string
 
 	applied   lifecycle.DeploymentReceipt
 	proposed  map[string]bool
@@ -114,7 +124,7 @@ func (w *advWorld) AcceptedSourceEvidence(context.Context) (broker.AcceptedSourc
 
 func (w *advWorld) ProposeAdvance(_ context.Context, id, base, upstreamCommit string) (broker.Proposal, string, []string, error) {
 	w.log("propose %s", id)
-	if w.proposeErr != nil {
+	if w.proposeErr != nil && !w.keepOnPatchHold {
 		// The real broker removes the checkout before it reports a patch hold.
 		return broker.Proposal{}, "", nil, w.proposeErr
 	}
@@ -125,7 +135,11 @@ func (w *advWorld) ProposeAdvance(_ context.Context, id, base, upstreamCommit st
 		return broker.Proposal{}, "", nil, errors.New("proposal already open")
 	}
 	w.proposed[id] = true
+	w.candidateNow = advCandidate
 	proposal := broker.Proposal{IncidentID: id, Path: advCheckout, BaseCommit: advHead}
+	if w.proposeErr != nil {
+		return proposal, advCandidate, nil, w.proposeErr
+	}
 	if len(w.conflicts) > 0 {
 		return proposal, "", slices.Clone(w.conflicts), nil
 	}
@@ -133,6 +147,21 @@ func (w *advWorld) ProposeAdvance(_ context.Context, id, base, upstreamCommit st
 		return broker.Proposal{}, "", nil, errors.New("unexpected merge inputs")
 	}
 	return proposal, advCandidate, nil, nil
+}
+
+func (w *advWorld) CorrectAdvance(_ context.Context, id string, plan *contracts.DeploymentPlan) (string, string, error) {
+	w.log("correct %s", id)
+	if !w.proposed[id] {
+		return "", "", errors.New("no open advance proposal to correct")
+	}
+	w.corrected = append(w.corrected, plan)
+	if w.correct != nil {
+		if rejection, err := w.correct(len(w.corrected), plan); rejection != "" || err != nil {
+			return "", rejection, err
+		}
+	}
+	w.plan, w.candidateNow = plan, advCorrected
+	return advCorrected, "", nil
 }
 
 func (w *advWorld) PublishAdvance(_ context.Context, id, upstreamCommit, base string, evidence broker.SourceEvidence, report operability.Report) (broker.Receipt, error) {
@@ -175,6 +204,10 @@ func (w *advWorld) shape(_ context.Context, root, revision string, source *contr
 	}
 	if err := w.shapeErr[revision]; err != nil {
 		return "", err
+	}
+	if revision == advCorrected {
+		// The corrected candidate has the shape of the candidate it corrects.
+		revision = advCandidate
 	}
 	return w.shapes[revision], nil
 }
@@ -253,8 +286,15 @@ func (w *advWorld) CheckOffline(_ context.Context, checkout string, plan *contra
 		w.offlineErrs = w.offlineErrs[1:]
 		return lifecycle.OfflineChecks{}, err
 	}
-	checks := slices.Clone(w.offline)
-	if w.offline == nil {
+	override := w.offline
+	if len(w.offlineSeq) > 0 {
+		override = w.offlineSeq[0]
+		if len(w.offlineSeq) > 1 {
+			w.offlineSeq = w.offlineSeq[1:]
+		}
+	}
+	checks := slices.Clone(override)
+	if override == nil {
 		for _, id := range []string{"O1.patches", "O1.render", "O2.images", "O6.scope"} {
 			checks = append(checks, operability.Check{ID: id, Phase: operability.PhaseOffline, Status: operability.StatusPass})
 		}
@@ -268,7 +308,11 @@ func (w *advWorld) VerifyAccepted(context.Context, string, string, lifecycle.Dep
 
 func (w *advWorld) VerifyCandidate(_ context.Context, root, commit, namespace, objective string, source lifecycle.DeploymentReceipt) (lifecycle.HealthVerdict, error) {
 	w.log("verify %s", commit[:4])
-	if root != advCheckout || commit != advCandidate || namespace != "toy" || objective == "" || source.BaseTree != w.applied.BaseTree {
+	want := w.candidateNow
+	if want == "" {
+		want = advCandidate
+	}
+	if root != advCheckout || commit != want || namespace != "toy" || objective == "" || source.BaseTree != w.applied.BaseTree {
 		return lifecycle.HealthVerdict{}, errors.New("verified something other than the deployed candidate")
 	}
 	if len(w.verdicts) == 0 {

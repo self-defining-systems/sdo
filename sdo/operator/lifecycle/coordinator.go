@@ -549,6 +549,16 @@ func (c Coordinator) deploy(ctx context.Context, id string, cfg Config, attempt 
 // agentPlan dispatches the deployer agent for a plan. A nil plan with a nil
 // error carries correction feedback; the proposal is already released then.
 func (c Coordinator) agentPlan(ctx context.Context, id string, cfg Config, attempt int, feedback string, proposal broker.Proposal) (*contracts.DeploymentPlan, string, error) {
+	plan, nextFeedback, err := c.proposePlan(ctx, id, cfg, attempt, feedback, proposal)
+	if plan == nil {
+		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
+	}
+	return plan, nextFeedback, err
+}
+
+// proposePlan is one deployer task over a proposal checkout; it releases
+// nothing. A nil plan with a nil error carries feedback for the next round.
+func (c Coordinator) proposePlan(ctx context.Context, id string, cfg Config, attempt int, feedback string, proposal broker.Proposal) (*contracts.DeploymentPlan, string, error) {
 	request := &contracts.SourceDeploymentRequest{Application: cfg.Application, Namespace: cfg.Namespace, HealthObjective: cfg.HealthObjective, CorrectionFeedback: feedback, Attempt: uint32(attempt), RegistryHost: cfg.RegistryHost, Renderers: pluginDescriptors(c.Renderers.Describe()), ImageSources: pluginDescriptors(c.ImageSources.Describe())}
 	task, err := c.newTask(id, cfg.DeployerAgentID, proposal, request)
 	if err != nil {
@@ -556,17 +566,44 @@ func (c Coordinator) agentPlan(ctx context.Context, id string, cfg Config, attem
 	}
 	response := &contracts.SourceDeploymentResult{}
 	if err := c.execute(ctx, task, response); err != nil {
-		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		if ctx.Err() != nil {
 			return nil, "", ctx.Err()
 		}
 		return nil, err.Error(), nil
 	}
 	if !response.GetProposed() || strings.TrimSpace(response.GetAgentSessionId()) == "" || response.GetPlan() == nil {
-		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return nil, "deployment worker did not propose a complete source plan: " + response.GetSummary(), nil
 	}
 	return response.GetPlan(), "", nil
+}
+
+// advanceFeedbackPreamble tells the deployer what an advance correction is: its
+// checkout is not an onboarding proposal but the accepted tree with an upstream
+// revision merged in, which an operability check refused before anything was
+// deployed.
+const advanceFeedbackPreamble = "An upstream advance is held before deployment. Your checkout is the accepted source with the new upstream revision merged in; " +
+	"the current plan is .sdo/deployment/plan.yaml. Correct only deployment files and patches under .sdo/deployment (app files are never edited) " +
+	"and return the full corrected plan. The hold: "
+
+// CorrectDeployment is the deployment agent's route in an upstream advance
+// (operational contract plan section 5, E1-E3): one deployer task over the
+// advance checkout with the hold as its request. cfg names the application, its
+// namespace, health objective and registry; the task ID is the advance's and
+// the attempt, so a restarted controller re-attaches to the same task. A task
+// that fails or proposes no plan is an error (the advance feeds its text back).
+func (c Coordinator) CorrectDeployment(ctx context.Context, cfg Config, correction DeploymentCorrection) (*contracts.DeploymentPlan, error) {
+	if c.Registry == nil || c.Workers == nil {
+		return nil, errors.New("deployment correction needs the agent registry and workers")
+	}
+	id := fmt.Sprintf("%s-deployer-%d", correction.AdvanceID, correction.Attempt)
+	plan, feedback, err := c.proposePlan(ctx, id, cfg, correction.Attempt, advanceFeedbackPreamble+correction.Feedback, correction.Proposal)
+	if err != nil {
+		return nil, err
+	}
+	if plan == nil {
+		return nil, errors.New(feedback)
+	}
+	return plan, nil
 }
 
 // admissiblePlan requires the deployment source: which renderer renders the
