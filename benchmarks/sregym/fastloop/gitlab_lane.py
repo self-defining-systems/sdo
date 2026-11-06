@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import time
 import urllib.request
@@ -22,6 +23,7 @@ from benchmarks.sregym.adapter import WaitKind, deployment_plan, helm_source, pr
 from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from benchmarks.sregym.fastloop.accepted_source import RenderedWorkloads
@@ -121,9 +123,28 @@ def prerequisite_images(pins: dict[str, Any] | None = None) -> list[str]:
     return list((pins or assemble.load_pins())["prerequisites"]["ingress_nginx"]["images"])
 
 
+def pull_missing_images(images: Sequence[str], run: Any = subprocess.run) -> list[str]:
+    """Pull the images the host does not hold yet (delivery to the nodes only loads local images); return the pulled."""
+    pulled = []
+    for image in images:
+        if run(["docker", "image", "inspect", image], capture_output=True).returncode != 0:
+            run(["docker", "pull", image], check=True)
+            pulled.append(image)
+    return pulled
+
+
 def install_prerequisites(kubeconfig: Path, *, pins: dict[str, Any] | None = None) -> None:
-    """Install the ingress controller (cluster-scoped, outside the app) and wait until it admits Ingresses."""
+    """Install the ingress controller (cluster-scoped, outside the app) and wait until its Pod is Ready.
+
+    Available alone is not enough: it is true with zero Pods because the manifest's maxUnavailable is 1.
+    """
     manifest = ingress_manifest(pins)
+    # The kind provider manifest schedules the controller only on nodes labelled ingress-ready=true.
+    subprocess.run(
+        ["kubectl", "--kubeconfig", str(kubeconfig), "label", "nodes", "--all", "ingress-ready=true", "--overwrite"],
+        check=True,
+        capture_output=True,
+    )
     subprocess.run(
         ["kubectl", "--kubeconfig", str(kubeconfig), "apply", "-f", "-"],
         input=manifest,
@@ -137,8 +158,8 @@ def install_prerequisites(kubeconfig: Path, *, pins: dict[str, Any] | None = Non
             str(kubeconfig),
             "-n",
             "ingress-nginx",
-            "wait",
-            "--for=condition=Available",
+            "rollout",
+            "status",
             "deployment/ingress-nginx-controller",
             f"--timeout={int(wait_for(WaitKind.OPERATION))}s",
         ],
@@ -177,6 +198,8 @@ def onboard(environment: Any, config: Any, objective: str) -> dict[str, Any]:
 
     if config.deployment_plan is None:
         raise ValueError(f"the GitLab lane needs a provided deployment plan for {environment.namespace}")
+    os.environ["KUBECONFIG"] = str(environment.kubeconfig)
+    environment.apply_operator_env(os.environ)
     return launch_native_lifecycle(config, objective, "")
 
 
@@ -186,6 +209,7 @@ def up(args: Any) -> int:
     from benchmarks.sregym.fastloop.dev import prepare_dev_mount
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment, Images
     from benchmarks.sregym.fastloop.host_limits import HostLimits, NodeLimits, apply_node_limits
+    from benchmarks.sregym.fastloop.toy_cni import CALICO_IMAGES, install_calico
     from benchmarks.sregym.fastloop.toy_images import load_images
 
     if args.dev_mount is None:
@@ -217,12 +241,14 @@ def up(args: Any) -> int:
     )  # fmt: skip
     apply_node_limits(cluster, NodeLimits(args.cpu_limit, args.memory_limit, args.pids_limit))
     images = Images(controller=args.controller_image, responder=args.responder_image)
+    pull_missing_images([*prerequisite_images(), *CALICO_IMAGES])
     load_images(
         cluster,
-        [images.controller, images.responder, *prerequisite_images()],
+        [images.controller, images.responder, *prerequisite_images(), *CALICO_IMAGES],
         record_path=run_dir / "image_delivery.jsonl",
         host_limits=host_limits,
     )
+    install_calico(kubeconfig, run_dir / "calico.yaml")
     install_prerequisites(kubeconfig)
     workspace = run_dir / "application_workspace"
     workspace.mkdir()

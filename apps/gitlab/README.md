@@ -20,7 +20,7 @@ SDO has one `DeploymentSource` per app and no chain of sources, so the whole app
 | `charts/gitlab` | upstream, **fetched at lane setup, never committed** (11 MB unpacked, includes its disabled subcharts) | the unmodified chart |
 | `charts/postgresql` | app-owned | PostgreSQL 17 StatefulSet, Service `gitlab-postgresql`, Secret `gitlab-postgres-password` |
 | `charts/redis` | app-owned | Redis 7.4 (password) StatefulSet, Service `gitlab-redis`, Secret `gitlab-redis-password` |
-| `charts/objectstore` | app-owned | SeaweedFS S3 StatefulSet and Service `gitlab-objectstore`, the buckets (post-install hook Job), Secrets `gitlab-object-storage` and `gitlab-registry-storage` |
+| `charts/objectstore` | app-owned | SeaweedFS S3 StatefulSet and Service `gitlab-objectstore`, the buckets (a regular Job: the registry needs its bucket to become ready), Secrets `gitlab-object-storage` and `gitlab-registry-storage` |
 
 The upstream chart 10.x no longer bundles PostgreSQL, Redis or MinIO, hence the app-owned datastores. Their object names
 are fixed (not release-derived) because `global.psql.host` and friends name them. Credentials are synthetic and valid only
@@ -40,8 +40,8 @@ The result has `chart/` (umbrella plus `charts/gitlab`), and `assemble.deploymen
 helm `DeploymentSource` (`chart_path: chart`, `value_files: [chart/values-kind.yaml]`).
 
 The vendored chart is never edited. SDO's renderer handles it as shipped (disabled subcharts leave the release set, the
-test and upgrade-only hooks are not deployed). Hooks (the upstream shared-secrets Job, the bucket Job) are ephemeral
-install phases, not part of the accepted inventory (42 non-Secret objects, 5 hooks).
+test and upgrade-only hooks are not deployed). Hooks (the upstream shared-secrets Job) are ephemeral
+install phases, not part of the accepted inventory (the bucket Job is a regular workload).
 
 ## The provided deployment plan
 
