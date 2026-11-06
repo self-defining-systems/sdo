@@ -93,6 +93,7 @@ testpaths = ["tests"]
 norecursedirs = ["apps", ".venv", "venv", "build", "dist", ".hypothesis"]
 markers = [
     "go_integration: real Go compilation and external-process contracts; run in the warm hermetic shard",
+    "real_kubectl: opt out of the unit tier's fail-fast kubectl shim; the test needs a real kubectl",
     "live_agents: opt-in test that invokes live Codex and Claude Code CLI sessions",
 ]
 python_files = ["test_*.py"]

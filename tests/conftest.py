@@ -31,6 +31,37 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             item.add_marker(pytest.mark.go_integration)
 
 
+_KUBECTL_SHIM = """#!/bin/sh
+echo "kubectl: unit tests must fake the kube seam (or opt out with @pytest.mark.real_kubectl): $*" >&2
+exit 97
+"""
+
+
+@pytest.fixture(scope="session")
+def _failfast_kubectl_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    directory = tmp_path_factory.mktemp("failfast-kubectl")
+    shim = directory / "kubectl"
+    shim.write_text(_KUBECTL_SHIM)
+    shim.chmod(0o755)
+    return directory
+
+
+@pytest.fixture(autouse=True)
+def _no_real_kubectl(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, _failfast_kubectl_dir: Path
+) -> None:
+    """PR-tier tests never reach a real kubectl or cluster API.
+
+    A real kubectl against a synthetic kubeconfig is instant on a laptop and waits out its request timeout on
+    a runner (a 10 s test in merge_group 42255755338). The shim exits non-zero at once; fake the kube seam
+    the test depends on instead. A test that really needs kubectl opts out with ``real_kubectl``.
+    """
+    if request.node.get_closest_marker("real_kubectl"):
+        return
+    monkeypatch.setenv("PATH", f"{_failfast_kubectl_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.delenv("KUBECONFIG", raising=False)
+
+
 _GO_TOOL_CONSUMERS = ("tests/unit/benchmarks/sregym/", "tests/unit/sdo/operator/", "tests/unit/test_")
 
 
