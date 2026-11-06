@@ -1,0 +1,18 @@
+# Synthetic. It mimics how a large umbrella chart threads configuration, nothing more.
+global:
+  hosts:
+    domain: example.invalid
+    https: true
+  registry: registry.example.invalid/app
+  imageTag: "1.2.3"
+  redisHost: '{{ .Release.Name }}-redis.{{ .Release.Namespace }}.svc'
+  workloadKind: Deployment
+web:
+  replicas: 2
+  timeout: 90
+  extraEnv:
+    GREETING: 'hello from {{ .Chart.Name }}'
+  hostnameTemplate: 'web.{{ .Values.global.hosts.domain }}'
+worker:
+  kind: sidekiq
+  name: worker
