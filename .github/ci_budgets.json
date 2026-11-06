@@ -73,7 +73,7 @@
     }
   },
   "health": {
-    "since": "2026-11-06T01:42:00Z",
+    "since": "2026-11-06T05:45:00Z",
     "runs": 50,
     "job_p95_seconds": 180,
     "queue_p95_minutes": 8
