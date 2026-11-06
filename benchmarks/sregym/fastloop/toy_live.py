@@ -109,6 +109,12 @@ class KubectlScenarioOps:
             raise RuntimeError(f"reading {OPERABILITY_CONFIGMAP} failed: {result.stderr.strip()}")
         return parse_operability(json.loads(result.stdout))
 
+    def controller_state_present(self) -> bool:
+        result = self._kubectl(self.control, "get", "configmap", STATE_CONFIGMAP, "-o", "name", check=False)
+        if result.returncode != 0 and "NotFound" not in result.stderr:
+            raise RuntimeError(f"reading {STATE_CONFIGMAP} failed: {result.stderr.strip()}")
+        return result.returncode == 0
+
     def incident_open(self) -> bool:
         state = self._json(self.control, "get", "configmap", STATE_CONFIGMAP)["data"]["runtime-state.json"]
         return bool(json.loads(state).get("incident_open"))
