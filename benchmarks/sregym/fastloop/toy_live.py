@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.toy import CONTROLLER_REPOSITORY
+from benchmarks.sregym.fastloop.toy_operability import OPERABILITY_CONFIGMAP, OperabilityRead, parse_operability
 from benchmarks.sregym.fastloop.toy_scenarios import (
     ACCEPTED_LOG_ARGS,
     AcceptedCommit,
@@ -100,6 +101,14 @@ class KubectlScenarioOps:
             raise RuntimeError(f"reading {HOLDS_CONFIGMAP} failed: {result.stderr.strip()}")
         return parse_holds(json.loads(result.stdout))
 
+    def operability(self) -> OperabilityRead | None:
+        result = self._kubectl(self.control, "get", "configmap", OPERABILITY_CONFIGMAP, "-o", "json", check=False)
+        if result.returncode != 0:
+            if "NotFound" in result.stderr:
+                return None
+            raise RuntimeError(f"reading {OPERABILITY_CONFIGMAP} failed: {result.stderr.strip()}")
+        return parse_operability(json.loads(result.stdout))
+
     def incident_open(self) -> bool:
         state = self._json(self.control, "get", "configmap", STATE_CONFIGMAP)["data"]["runtime-state.json"]
         return bool(json.loads(state).get("incident_open"))
@@ -162,6 +171,7 @@ def run_scenario(
         "after": after.__dict__,
         "holds": [hold.__dict__ for hold in ops.holds()],
         "incident_open": ops.incident_open(),
+        "operability": (read.__dict__ if (read := ops.operability()) else None),
     }
     (environment.run_dir / f"scenario-{commit}.json").write_text(json.dumps(report, indent=2, default=str) + "\n")
     print(json.dumps(report, indent=2, default=str))

@@ -9,7 +9,7 @@ The detection designer (task actor `health_judge`) decides what SDO watches. It 
 application, write probes and detectors from the map, and calibrate them on the live application. Keep the
 result small and general: the map and the three probe kinds should catch whatever breaks an operation, a hop
 or stored data. Write probes with the `sdo-detector-authoring` traffic reference; use the `sdo-memory` commands.
-The memory check enforces the map [rules](references/rules.md).
+The memory check enforces the map [rules](references/rules.md). `operability.*` findings: [feedback](references/feedback.md).
 
 ## 1. Map the application
 

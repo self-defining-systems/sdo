@@ -12,10 +12,13 @@ import pytest
 from benchmarks.sregym.fastloop import toy_scenarios as sc
 from benchmarks.sregym.fastloop import toy_upstream as up
 from benchmarks.sregym.fastloop.toy import prepare_workspace, provided_deployment_plan
+from tests.unit.benchmarks.sregym.fastloop.operability_fixtures import green_read
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
+
+    from benchmarks.sregym.fastloop.toy_operability import OperabilityRead
 
 PUSHED = "a" * 40
 BASE = sc.Snapshot(
@@ -34,9 +37,10 @@ class World:
     """A scripted cluster: ``events`` maps a time offset after the push to a mutation of the world."""
 
     snap: sc.Snapshot = BASE
-    commits: list[sc.AcceptedCommit] = field(default_factory=list)
+    commits: list[sc.AcceptedCommit] = field(default_factory=lambda: [sc.AcceptedCommit("h0", {})])
     hold_records: list[sc.HoldRecord] = field(default_factory=list)
     incident: bool = False
+    report: OperabilityRead | None = field(default_factory=lambda: green_read())
     now: float = 0.0
     pushed_at: float | None = None
     events: dict[float, Callable[[World], None]] = field(default_factory=dict)
@@ -67,6 +71,9 @@ class World:
 
     def incident_open(self) -> bool:
         return self.incident
+
+    def operability(self) -> OperabilityRead | None:
+        return self.report
 
 
 def accept(world: World) -> None:
@@ -357,3 +364,14 @@ def test_fastloop_down_deletes_the_upstream_of_a_toy_lane(monkeypatch: pytest.Mo
     )
     assert cli.main(["down", "--run-dir", str(tmp_path)]) == 0
     assert [c[-6:-2] for c in calls] == [["delete", "namespace", "sdo-toy-upstream", "--ignore-not-found=true"]]
+
+
+def test_benign_requires_a_green_operability_report():
+    for report in (None, green_read(items={"O4": "fail"})):
+        result = sc.run_benign(World(events={6: accept}, report=report), TIMINGS)
+        assert any("operability" in v for v in result.violations)
+
+
+def test_broken_requires_a_green_operability_report():
+    result = sc.run_broken(World(events={6: hold("rollout: backend did not become ready")}, report=None), TIMINGS)
+    assert any("operability" in v for v in result.violations)

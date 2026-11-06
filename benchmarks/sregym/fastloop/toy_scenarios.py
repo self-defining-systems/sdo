@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
 from benchmarks.sregym.adapter import WaitKind, wait_for
+from benchmarks.sregym.fastloop.toy_operability import OperabilityRead, report_violations
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -77,6 +78,7 @@ class ScenarioOps(Protocol):
     def accepted_commits(self) -> list[AcceptedCommit]: ...
     def holds(self) -> list[HoldRecord]: ...
     def incident_open(self) -> bool: ...
+    def operability(self) -> OperabilityRead | None: ...
 
 
 @dataclass(frozen=True)
@@ -195,11 +197,17 @@ def _watch(ops: ScenarioOps, timings: ScenarioTimings) -> bool:
     return seen or ops.incident_open()
 
 
+def _report_green(ops: ScenarioOps, result: ScenarioResult) -> None:
+    """Before the push the exposed operability report must be green and bound to an accepted commit."""
+    result.violations.extend(report_violations(ops.operability(), {c.sha for c in ops.accepted_commits()}))
+
+
 def run_benign(ops: ScenarioOps, timings: ScenarioTimings, commit: str = "benign") -> ScenarioResult:
     """Push a benign commit: accepted by Go alone, the new image runs, no agent work, nothing disturbed."""
     before = ops.snapshot()
     pushed = ops.push(commit)
     result = ScenarioResult(commit, pushed)
+    _report_green(ops, result)
     verdict, accepted, hold = _wait_verdict(ops, timings, pushed)
     result.verdict = verdict
     if verdict == "":
@@ -248,6 +256,7 @@ def run_broken(
     before = ops.snapshot()
     pushed = ops.push(commit)
     result = ScenarioResult(commit, pushed)
+    _report_green(ops, result)
     verdict, accepted, hold = _wait_verdict(ops, timings, pushed)
     result.verdict = verdict
     at_verdict = ops.snapshot()
