@@ -27,13 +27,6 @@
     ".gitmodules",
     "third_party/**"
   ],
-  "python_always": [
-    "tests/unit/test_architecture.py",
-    "tests/unit/test_benchmark_neutrality.py",
-    "tests/unit/test_polling_policy.py",
-    "tests/unit/test_sdo_repository_scope.py",
-    "tests/unit/test_agent_skill_commands.py"
-  ],
   "go_workspace_modules": [
     "sdo/operator/sdk",
     "sdo/operator/core",

@@ -49,11 +49,19 @@ validate_pattern="./sdo/operator/memory/validate"
 # without a plan, or when the plan is the full suite, every package runs.
 if [[ -n "${SDO_CI_PLAN:-}" && "$(python3 scripts/ci_select.py mode --plan "$SDO_CI_PLAN")" == selected ]]; then
     mapfile -t patterns < <(python3 scripts/ci_select.py go-patterns --plan "$SDO_CI_PLAN" --shard "${2:?a selected run needs a shard}")
+    # Whole-tree guards (//ci:whole-tree) scan sources no changed-file mapping can attribute, so every
+    # pull request runs them even in packages the selection skipped.
+    mapfile -t guard_lines < <(python3 scripts/ci_select.py go-guards --plan "$SDO_CI_PLAN" --shard "${2:?}")
+    guard_run="${guard_lines[0]:-}"
+    guard_patterns=("${guard_lines[@]:1}")
     if [[ ${#patterns[@]} -eq 0 || -z "${patterns[0]}" ]]; then
+        patterns=()
+    fi
+    if [[ ${#patterns[@]} -eq 0 && -z "$guard_run" ]]; then
         echo "no Go packages selected for the ${2} shard"
         exit 0
     fi
-    echo "==> selected Go packages: ${patterns[*]}"
+    echo "==> selected Go packages: ${patterns[*]:-none}; whole-tree guards: ${guard_patterns[*]:-none}"
     set -- "${1:-pr}" selected
 fi
 case "${2:-}" in
@@ -69,8 +77,19 @@ case "${2:-}" in
 esac
 # Nested builder tests must select their own isolated modules.
 # SDO_GO_TEST_LOG keeps the JSON stream for scripts/check_slow_tests.py.
-if [[ -n "${SDO_GO_TEST_LOG:-}" ]]; then
-    go test -exec 'env GOWORK=off' "${args[@]}" "${patterns[@]}" | tee "$SDO_GO_TEST_LOG"
-else
-    go test -exec 'env GOWORK=off' "${args[@]}" "${patterns[@]}"
+run_go_test() {
+    if [[ -n "${SDO_GO_TEST_LOG:-}" ]]; then
+        go test -exec 'env GOWORK=off' "$@" | tee -a "$SDO_GO_TEST_LOG"
+    else
+        go test -exec 'env GOWORK=off' "$@"
+    fi
+}
+: > "${SDO_GO_TEST_LOG:-/dev/null}"
+status=0
+if [[ ${#patterns[@]} -gt 0 ]]; then
+    run_go_test "${args[@]}" "${patterns[@]}" || status=$?
 fi
+if [[ -n "${guard_run:-}" ]]; then
+    run_go_test "${args[@]}" -run "$guard_run" "${guard_patterns[@]}" || status=$?
+fi
+exit "$status"

@@ -19,6 +19,8 @@ func TestUncheckedAssertionFixture(t *testing.T) {
 // capability they need. A Coordinator.Readiness asserted to LiveChecker at the
 // point of use panicked the controller end-to-end run; the field is now the
 // interface and the compiler enforces it.
+//
+//ci:whole-tree
 func TestNoUncheckedCapabilityAssertions(t *testing.T) {
 	findings, err := UncheckedAssertions("../..")
 	if err != nil {

@@ -16,6 +16,8 @@ from sdo.agents.responder.reflection_validation import validation_server
 from sdo.agents.responder.skill_contracts import CONTRACT_PATH, render_contract
 from sdo.contracts import ReflectionResult, model_output_schema
 
+CI_WHOLE_TREE = True
+
 
 @pytest.mark.asyncio
 async def test_skill_contract_matches_live_decision_enums_and_tools(tmp_path: Path) -> None:

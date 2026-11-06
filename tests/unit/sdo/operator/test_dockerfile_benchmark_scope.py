@@ -21,6 +21,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+CI_WHOLE_TREE = True
+
 REPO_ROOT = Path(__file__).resolve().parents[4]
 RUNTIME_DOCKERFILE = REPO_ROOT / "sdo" / "operator" / "Dockerfile.runtime"
 BENCHMARK_DOCKERFILE = REPO_ROOT / "benchmarks" / "sregym" / "Dockerfile.worker"

@@ -16,6 +16,8 @@ import (
 // render.Env from renderenv.For over the recorded environment; no other
 // production package builds one with install facts. Renderers (render/...) only
 // read an Env, and test files may build whatever they exercise.
+//
+//ci:whole-tree
 func TestOnlyTheOwnerConstructsARenderEnv(t *testing.T) {
 	root := ".."
 	fset := token.NewFileSet()

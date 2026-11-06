@@ -6,6 +6,8 @@ import (
 )
 
 // TestRepositoryObeysRules runs the real rule table over the operator module.
+//
+//ci:whole-tree
 func TestRepositoryObeysRules(t *testing.T) {
 	violations, err := Check("../..", Rules())
 	if err != nil {
