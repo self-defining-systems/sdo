@@ -224,3 +224,12 @@ async def test_capture_corpus_links_only_requested_repairs(tmp_path: Path, monke
     assert observation == reading
     assert receipt["result"]["id"] == "hand-1"
     assert receipt["result"]["script_digest"] == "abc"
+
+
+def test_reference_reply_size_does_not_depend_on_the_full_text_path(tmp_path: Path, monkeypatch) -> None:
+    deep = tmp_path.joinpath(*["a-long-session-scratch-directory"] * 6)
+    deep.mkdir(parents=True)
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(deep))
+    for topic in ("programs", "sdk", "rules"):
+        assert len(authoring_reference(topic).encode()) <= MAX_TOOL_REPLY_BYTES
+        assert len(authoring_reference(topic, section="no such section anywhere").encode()) <= MAX_TOOL_REPLY_BYTES
