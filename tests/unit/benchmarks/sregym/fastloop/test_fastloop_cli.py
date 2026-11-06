@@ -11,8 +11,15 @@ import pytest
 
 from benchmarks.sregym.adapter.deployment_source import raw_source
 from benchmarks.sregym.fastloop.baseline_recovery import load_application_baseline
-from benchmarks.sregym.fastloop.cli import build_parser, format_incidents, format_summary, main
+from benchmarks.sregym.fastloop.cli import (
+    build_parser,
+    format_incidents,
+    format_summary,
+    main,
+    resolve_node_limits,
+)
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+from benchmarks.sregym.fastloop.host_limits import DEFAULT_MEMORY_LIMIT
 from benchmarks.sregym.fastloop.records import IncidentRecord, OracleVerdict, append_record
 from benchmarks.sregym.fastloop.stream import load_stream, load_stream_config
 from tests.unit.benchmarks.sregym.fastloop.accepted_source_fixture import commit_accepted_source
@@ -153,7 +160,8 @@ def test_parser_defaults_match_the_benchmark_configuration() -> None:
     assert args.replay == "on"
     assert build_parser().parse_args(["run", "--run-dir", "x", "--agent", "sdo", "--replay", "off"]).replay == "off"
     up = build_parser().parse_args(["up", "--run-dir", "x"])
-    assert up.cpu_limit == "3"
+    resolve_node_limits(up)
+    assert (up.cpu_limit, up.memory_limit) == ("3", DEFAULT_MEMORY_LIMIT)
     assert up.cluster_prefix == "fastloop-w"
     assert up.no_sandbox is False
     assert up.kind_worker_nodes == 1
@@ -759,3 +767,12 @@ def test_native_install_runs_without_a_selective_reset_because_the_row_start_wip
         warm._clock = _clock()
         warm.learn(warm.resolve(1, "p", _inject))
         assert calls == ["install"] * (fresh + 1)
+
+
+def test_gitlab_lane_defaults_to_a_node_sized_for_gitlab() -> None:
+    gitlab = build_parser().parse_args(["up", "--run-dir", "x", "--app", "gitlab"])
+    resolve_node_limits(gitlab)
+    assert (gitlab.cpu_limit, gitlab.memory_limit) == ("8", "20g")
+    explicit = build_parser().parse_args(["up", "--run-dir", "x", "--app", "gitlab", "--cpu-limit", "5"])
+    resolve_node_limits(explicit)
+    assert (explicit.cpu_limit, explicit.memory_limit) == ("5", "20g")
