@@ -179,6 +179,7 @@ def node_images_match(cluster: str, images: Images) -> bool:
 def up_worker_environment(args: argparse.Namespace, *, workspace: Path) -> dict[str, str]:
     """The SREGym worker environment for ``up``: one reused kind lane deploying ``workspace`` from source."""
 
+    resolve_node_limits(args)
     images = Images(controller=args.controller_image, responder=args.responder_image)
     worker_env = {
         "SREGYM_KIND_CLUSTER_PREFIX": args.cluster_prefix,
@@ -303,7 +304,25 @@ def up_preflight(args: argparse.Namespace) -> None:
         assert_image_entrypoints(image, modules, source_root=args.dev_mount if modules else None, run=subprocess.run)
 
 
+# The GitLab chart's webservice, sidekiq and PostgreSQL need a node sized for
+# them: on the 3 cpu default a rollout of the stamped workloads saturated the
+# node and the lane failed in its steady window.
+GITLAB_CPU_LIMIT = "8"
+GITLAB_MEMORY_LIMIT = "20g"
+
+
+def resolve_node_limits(args: argparse.Namespace) -> None:
+    """Fill the node limits ``up`` left unset with the selected app's defaults."""
+
+    gitlab = getattr(args, "app", None) == "gitlab"
+    if args.cpu_limit is None:
+        args.cpu_limit = GITLAB_CPU_LIMIT if gitlab else "3"
+    if args.memory_limit is None:
+        args.memory_limit = GITLAB_MEMORY_LIMIT if gitlab else DEFAULT_MEMORY_LIMIT
+
+
 def _up(args: argparse.Namespace) -> int:
+    resolve_node_limits(args)
     NodeLimits(args.cpu_limit, args.memory_limit, args.pids_limit)
     HostLimits(args.host_lock_dir.resolve(), args.host_redeploys)
     up_preflight(args)
@@ -1730,11 +1749,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="attach with KUBECONFIG or refuse; never create or recreate a kind cluster",
     )
-    up.add_argument("--cpu-limit", default="3", help="docker --cpus per kind node, as the benchmark workers use")
+    up.add_argument(
+        "--cpu-limit",
+        default=None,
+        help="docker --cpus per kind node (default 3, as the benchmark workers use; gitlab: 8)",
+    )
     up.add_argument(
         "--memory-limit",
-        default=DEFAULT_MEMORY_LIMIT,
-        help="Docker memory cap per kind node (Astronomy headroom included)",
+        default=None,
+        help=f"Docker memory cap per kind node (default {DEFAULT_MEMORY_LIMIT}, Astronomy headroom included; gitlab: 20g)",
     )
     up.add_argument("--pids-limit", type=int, default=DEFAULT_PIDS_LIMIT, help="Docker PID cap per kind node")
     up.add_argument(
