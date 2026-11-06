@@ -10,7 +10,7 @@ clock, network access or benchmark data. Measure ages with `sdk.ObservationTime(
 
 1. Compare the confirmed mechanism with accepted detectors using the memory principles. The installed `service-endpoints` and
    `workload-health` detectors cover generic symptoms; their grace periods do not replace prompt cause-specific coverage.
-   A playbook with a program ships with a detector on its cause ([below](#cause-specific-detectors)); refine a matching one first. Health detectors stay designer-owned.
+   A playbook with a program ships with a detector on its cause ([how](references/cause-specific.md)); refine a matching one first. Health detectors stay designer-owned.
    `pod-admission` checks a frozen server-side dry-run Pod create via `ctx.PodAdmission()`; API rejections fire,
    while missing observations and transport failures are errors. Test with `sdktest.Snapshot.Admission`.
 2. Before implementing, read the [generated SDK](references/sdk.md). Keep the detector's manifest and Spec
