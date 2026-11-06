@@ -10,7 +10,7 @@ clock, network access or benchmark data. Measure ages with `sdk.ObservationTime(
 
 1. Compare the confirmed mechanism with accepted detectors using the memory principles. The installed `service-endpoints` and
    `workload-health` detectors cover generic symptoms; their grace periods do not replace prompt cause-specific coverage.
-   When generic detection lagged a visible cause, watch the resource read by the predicate and fire within seconds; refine a matching incident detector first. Health detectors stay designer-owned.
+   A playbook with a program ships with a detector on its cause ([below](#cause-specific-detectors)); refine a matching one first. Health detectors stay designer-owned.
    `pod-admission` checks a frozen server-side dry-run Pod create via `ctx.PodAdmission()`; API rejections fire,
    while missing observations and transport failures are errors. Test with `sdktest.Snapshot.Admission`.
 2. Before implementing, read the [generated SDK](references/sdk.md). Keep the detector's manifest and Spec
@@ -28,6 +28,11 @@ clock, network access or benchmark data. Measure ages with `sdk.ObservationTime(
 For synthetic traffic scenarios, workloads and links, read the [traffic reference](references/traffic.md).
 
 Read [validator rules](references/rules.md) before changing a manifest or when a diagnostic names a detector rule.
+
+## Cause-specific detectors
+
+A new or changed playbook with a program ships with an incident detector keyed on its cause, unless only the generic
+symptom exists (say so in the outcome reason): [cause-specific detectors](references/cause-specific.md).
 
 ## Runtime reads
 
@@ -82,8 +87,6 @@ a source exists.
 
 ## Generic reachability baseline
 
-Service reachability requires five consecutive failures at 1s intervals; success resets the streak. Do not add redundant firing delays.
-
-Keep measured reachability baselines in cluster state, never `.sdo/`; memory defines what to measure and thresholds, not Service UIDs, allocated IPs or probe/capture times (`memory.cluster-local`). Do not infer exclusions from missing successful dials or author them from an incident. Generic reachability invalidates an exclusion when source, objective or target configuration changes; new wrong targetPort failures remain detectable. Service UID/resourceVersion, allocated ClusterIP/IP-family values, NodePort and health-check NodePort do not identify the application configuration; namespace/Service/port identity, headless routing, selector, targetPort/protocol, selected container configuration, referenced ConfigMaps and selecting network policies do. Inspect `baseline_status` in finding port metadata when an earlier exclusion no longer applies.
+Service reachability needs five consecutive 1s failures, and exclusions are measured in cluster state, never `.sdo/`: [reachability baseline](references/reachability-baseline.md).
 
 For kinds outside the typed getters, use the [generic object interface](references/generic-objects.md).

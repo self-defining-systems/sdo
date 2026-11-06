@@ -56,6 +56,22 @@ func (e *Engine) ShareSetup(source *Engine)
 func (e *Engine) Workload() Workload
     Workload returns the engine's workload with defaults applied.
 
+type FailureMatch struct {
+	ScenarioID string
+	PatternID  string
+	Sample     Sample
+}
+    FailureMatch is one recent failing sample whose Error matched a pattern.
+
+func MatchFailures(window Window, patterns ...logs.Pattern) ([]FailureMatch, error)
+    MatchFailures returns the recent failing samples of window's qualified
+    scenarios whose Error matches a pattern, scenario by scenario, oldest first,
+    one match per sample and pattern. It sees the same recent samples Judge does
+    (usable, within the SLO's age and window), so a cause-specific detector
+    keys on the exact failure text instead of searching a finding's Evidence.
+    Patterns are RE2 and use the same ID and size rules as log patterns;
+    a malformed pattern is an error, never a non-match.
+
 type FaultClass string
     FaultClass is a failure a scenario must detect. Every scenario must detect
     FaultUnreachable and FaultErrorStatus; the others are declared when the
@@ -212,25 +228,4 @@ type LinkGRPCOptions struct {
 }
     LinkGRPCOptions enables TLS with system roots and target hostname
     verification.
-
-type LinkHTTPOptions struct {
-	Path      string `json:"path,omitempty"`
-	StatusMin int    `json:"statusMin,omitempty"`
-	StatusMax int    `json:"statusMax,omitempty"`
-}
-    LinkHTTPOptions configures a GET; status bounds are inclusive (default
-    100..499).
-
-type LinkObservations struct {
-	Link    Link         `json:"link"`
-	Samples []LinkSample `json:"samples"`
-	// Qualified reports whether a dial of this link has ever succeeded. A
-	// link that never did may simply not admit the prober, so it is not a
-	// health signal; only a link that worked and stopped is.
-	Qualified bool `json:"qualified"`
-}
-    LinkObservations are one link's recent samples, oldest first.
-
-type LinkProtocol string
-    LinkProtocol is how an edge is probed.
 ```

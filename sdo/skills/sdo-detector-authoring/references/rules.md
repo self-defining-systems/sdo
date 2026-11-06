@@ -77,9 +77,9 @@ Advice, not validator-checked: tests and recorded-state replay run as informatio
   is listed by every detector whose binding it needs. Enforced by: `detector.unscoped-binding`.
 - One incident detector covers every component that fails the same way: a new incident detector that copies an
   existing one apart from IDs, prose and the scenario or workload it names is rejected; widen the existing one to
-  bind the component from the failure (`localize.BindSuspects`). Enforced by: `detector.component-copy`.
+  bind the component from the failure (`localize.BindSuspects`) while it stays keyed on the cause's own signal. Enforced by: `detector.component-copy`.
 - An incident detector that binds roles never adds a component name (an accepted-source object or traffic scenario
-  ID) outside its Spec and prose: accept every scenario's failure (`traffic.RuleIDPrefix`) and bind with
+  ID) outside its Spec and prose: accept scenario failures (`traffic.RuleIDPrefix`) that match the cause's failure text (`traffic.MatchFailures`) and bind with
   `localize.BindSuspects` ([example](../../sdo-playbook-authoring/references/programs.md#localized-components)).
   Names the accepted version already had are left alone. Enforced by:
   `detector.component-literal`.
