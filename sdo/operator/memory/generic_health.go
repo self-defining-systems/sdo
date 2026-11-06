@@ -100,6 +100,10 @@ func PrepareHealthWith(root string, options HealthOptions) error {
 		if err := writeGenericDetector(root, alerts, metricsAlertsSource()); err != nil {
 			return err
 		}
+	} else if err := removeBootstrapDetector(root, MetricsAlertsDetectorID); err != nil {
+		// A tree from an environment that served alerts keeps no package
+		// that could now only read an unbound source.
+		return err
 	}
 	return prepareTrafficDetectors(root)
 }
@@ -154,6 +158,21 @@ func prepareTrafficDetectors(root string) error {
 	return pruneStaleTrafficDetectors(root, wanted)
 }
 
+// removeBootstrapDetector removes the health detector package id when Go
+// installed it (manifest originating commit "lifecycle-bootstrap"); anything
+// else under that id is left for the shared check to judge.
+func removeBootstrapDetector(root, id string) error {
+	data, err := os.ReadFile(filepath.Join(root, layout.DetectorManifestPath(layout.ClassHealth, id)))
+	if err != nil {
+		return nil
+	}
+	manifest, err := layout.ParseDetectorManifest(data)
+	if err != nil || manifest.OriginatingCommit != "lifecycle-bootstrap" {
+		return nil
+	}
+	return safefs.RemoveAll(root, layout.DetectorDir(layout.ClassHealth, id))
+}
+
 // pruneStaleTrafficDetectors removes Go-installed traffic detector packages
 // (manifest originating commit "lifecycle-bootstrap") that no probe workload
 // file backs. Judge-authored traffic-* packages are never touched.
@@ -171,15 +190,7 @@ func pruneStaleTrafficDetectors(root string, wanted map[string]bool) error {
 		if !entry.IsDir() || !strings.HasPrefix(id, trafficDetectorPrefix) || wanted[id] {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(root, layout.DetectorManifestPath(layout.ClassHealth, id)))
-		if err != nil {
-			continue
-		}
-		manifest, err := layout.ParseDetectorManifest(data)
-		if err != nil || manifest.OriginatingCommit != "lifecycle-bootstrap" {
-			continue
-		}
-		if err := safefs.RemoveAll(root, layout.DetectorDir(layout.ClassHealth, id)); err != nil {
+		if err := removeBootstrapDetector(root, id); err != nil {
 			return err
 		}
 	}
