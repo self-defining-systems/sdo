@@ -43,13 +43,23 @@ The vendored chart is never edited. SDO's renderer handles it as shipped (disabl
 test and upgrade-only hooks are not deployed). Hooks (the upstream shared-secrets Job, the bucket Job) are ephemeral
 install phases, not part of the accepted inventory (42 non-Secret objects, 5 hooks).
 
-## Status of the live path
+## The provided deployment plan
 
-`fastloop up --app gitlab` builds the cluster, installs the prerequisites, commits the workspace and records the lane.
-The last step, onboarding with the provided source, is blocked on a Go row: `host` has no `--deployment-plan` (a source
-alone is not a plan: image declarations and expected workloads are needed too), and `gitlab_lane.onboard` refuses rather
-than let the deployer agent author GitLab's deployment. `sdo-operator install-existing --deployment-source` works only
-for a lane whose accepted memory already exists.
+`fastloop up --app gitlab` builds the cluster, installs the prerequisites, commits the workspace, builds the plan and
+onboards through `host --deployment-plan` (no deployer agent; architecture and the health judge still run).
+`gitlab_lane.provided_plan(workspace)` renders the committed chart through SDO's production `render-source` and derives
+the plan from that render, nothing is maintained by hand:
+
+- `source`: the helm source above (`chart`, `chart/values-kind.yaml`).
+- `images`: one `prebuilt` image source for every container and init container image of the rendered objects
+  (upstream CNG images by tag, datastores by digest); SDO pins the tags to digests at deploy. Hook-only images (the
+  upstream shared-secrets and bucket Jobs) are not in the accepted inventory and fall to the default prebuilt source.
+- `expected_workload_ids`: the Deployments, StatefulSets, DaemonSets and Jobs of the render (hooks are not objects of
+  the main phase), as `Kind/gitlab/name`. The migrations Job name carries a hash of the Helm version.
+
+Known blocker: the helm policy on main (`render/helm/internal/policy`) rejects the real upstream chart (`tpl`,
+`duration` and a computed `include` in its helpers), so the real-chart tests below fail until that policy or a lane
+workaround changes. The synthetic stand-in passes.
 
 ## Cluster prerequisites (the environment's job)
 
@@ -75,5 +85,6 @@ board claim for one lane: **6 cores, 12 GiB memory, 40 GiB disk** (`gitlab_lane.
 `tests/unit/apps/test_gitlab_workspace.py` (go_integration): a synthetic stand-in chart with the pinned name and version
 (disabled subchart with a CRD and a random function, an install hook, an upgrade-only hook, a test hook) renders through
 SDO's production `render-source` to the same non-hook objects as `helm template`. The real chart runs only when
-`SDO_GITLAB_CHART_ARCHIVE=<path to the pinned .tgz>` or `SDO_GITLAB_FETCH=1` is set (about 10 s). Both skip with a reason
+`SDO_GITLAB_CHART_ARCHIVE=<path to the pinned .tgz>` or `SDO_GITLAB_FETCH=1` is set (about 10 s); with it, the real
+chart's plan is also built and printed (`-s`). Both skip with a reason
 when `helm` is missing and fail in CI.

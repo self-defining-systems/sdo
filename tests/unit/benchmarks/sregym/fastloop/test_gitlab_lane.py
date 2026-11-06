@@ -62,7 +62,9 @@ def test_runtime_config_installs_the_provided_source_without_manifest_paths(tmp_
         images=SimpleNamespace(controller="controller:x", responder="responder:x"),
         cluster="fastloop-w0",
     )
-    config = gitlab_lane.lane_runtime_config(environment)
+    plan = gitlab_lane.plan_from_render(_objects(), environment.namespace)
+    config = gitlab_lane.lane_runtime_config(environment, plan)
+    assert config.deployment_plan == plan
     assert config.deployment_source == gitlab_lane.deployment_source()
     assert config.deployment_source == assemble.deployment_source()
     assert config.control_namespace == "gitlab-sdo"
@@ -98,7 +100,76 @@ def test_pins_agree_with_the_chart_values_and_the_umbrella_dependency() -> None:
     assert pins["namespace"] == gitlab_lane.NAMESPACE
 
 
-def test_onboarding_refuses_until_the_host_admits_a_provided_plan(tmp_path: Path) -> None:
+def _objects() -> list[dict]:
+    pod = {"containers": [{"name": "a", "image": "registry.invalid/web:1"}], "initContainers": [{"image": "busybox:1"}]}
+    return [
+        {"kind": "Deployment", "metadata": {"name": "web"}, "spec": {"template": {"spec": pod}}},
+        {
+            "kind": "StatefulSet",
+            "metadata": {"name": "db", "namespace": "other"},
+            "spec": {"template": {"spec": {"containers": [{"image": "postgres:17@sha256:" + "a" * 64}]}}},
+        },
+        {
+            "kind": "CronJob",
+            "metadata": {"name": "tick"},
+            "spec": {"jobTemplate": {"spec": {"template": {"spec": {"containers": [{"image": "busybox:1"}]}}}}},
+        },
+        {"kind": "Job", "metadata": {"name": "migrate"}, "spec": {"template": {"spec": {"containers": []}}}},
+        {"kind": "Service", "metadata": {"name": "web"}, "spec": {}},
+    ]
+
+
+def test_plan_from_render_declares_every_rendered_image_prebuilt_and_every_workload() -> None:
+    from sdo.contracts.proto import DeploymentPlan
+
+    plan = gitlab_lane.plan_from_render(_objects(), "gitlab")
+    message = json_format.ParseDict(plan, DeploymentPlan())
+    assert plan["source"] == gitlab_lane.deployment_source()
+    assert [image.image for image in message.images] == [
+        "busybox:1",
+        "postgres:17@sha256:" + "a" * 64,
+        "registry.invalid/web:1",
+    ]
+    assert {image.source_id for image in message.images} == {"prebuilt"}
+    assert all(image.config.TypeName().endswith(".PrebuiltImageConfig") for image in message.images)
+    assert list(message.expected_workload_ids) == [
+        "Deployment/gitlab/web",
+        "StatefulSet/other/db",
+        "Job/gitlab/migrate",
+    ]
+
+
+def test_plan_with_no_workloads_is_rejected() -> None:
+    with pytest.raises(ValueError, match="workload"):
+        gitlab_lane.plan_from_render([{"kind": "Service", "metadata": {"name": "x"}}], "gitlab")
+
+
+def test_onboarding_hands_the_plan_to_the_native_lifecycle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from benchmarks.sregym.adapter import driver
+
+    monkeypatch.setenv("KUBECONFIG", str(tmp_path / "kubeconfig"))
+    seen: dict[str, object] = {}
+
+    def launch(args: SimpleNamespace, **kwargs: object) -> dict[str, str]:
+        seen["plan"] = args.deployment_plan
+        seen["objective"] = kwargs["health_objective"]
+        return {"judge_commit": "c"}
+
+    monkeypatch.setattr(driver, "_launch_native_lifecycle", launch)
+    environment = SimpleNamespace(
+        workspace=tmp_path,
+        namespace=gitlab_lane.NAMESPACE,
+        application=gitlab_lane.APPLICATION,
+        images=SimpleNamespace(controller="controller:x", responder="responder:x"),
+        cluster="fastloop-w0",
+    )
+    plan = gitlab_lane.plan_from_render(_objects(), "gitlab")
+    config = gitlab_lane.lane_runtime_config(environment, plan)
+    assert gitlab_lane.onboard(environment, config, "goal") == {"judge_commit": "c"}
+    assert seen == {"plan": plan, "objective": "goal"}
+
+
+def test_onboarding_without_a_plan_is_refused(tmp_path: Path) -> None:
     environment = SimpleNamespace(namespace="gitlab", workspace=tmp_path)
-    with pytest.raises(gitlab_lane.ProvidedPlanUnavailable, match="deployment-plan"):
-        gitlab_lane.onboard(environment, object(), "goal")
+    with pytest.raises(ValueError, match="provided deployment plan"):
+        gitlab_lane.onboard(environment, SimpleNamespace(deployment_plan=None), "goal")
