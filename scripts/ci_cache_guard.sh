@@ -15,7 +15,9 @@ done
 oversize=false
 if ((size_mb > limit_mb)); then
     oversize=true
-    echo "::error::Go cache is ${size_mb} MB, over the ${limit_mb} MB limit; not saving it (prune the cache or raise cache_limit_mb in .github/ci_budgets.json)"
+    level=warning
+    [[ "${GITHUB_REF:-}" == refs/heads/main ]] && level=error
+    echo "::${level}::Go cache is ${size_mb} MB, over the ${limit_mb} MB limit; not saving it (prune the cache or raise cache_limit_mb in .github/ci_budgets.json)"
 fi
 echo "cache size: ${size_mb} MB (limit ${limit_mb} MB)"
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then

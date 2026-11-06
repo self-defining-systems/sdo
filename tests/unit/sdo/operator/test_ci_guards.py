@@ -144,7 +144,7 @@ def test_cache_guard_flags_an_oversize_cache(tmp_path: Path, limit: int, oversiz
             str(tmp_path / "cache"),
             str(tmp_path / "missing"),
         ],
-        env={**os.environ, "GITHUB_OUTPUT": str(output)},
+        env={**os.environ, "GITHUB_OUTPUT": str(output), "GITHUB_REF": "refs/heads/main"},
         capture_output=True,
         text=True,
         check=False,
