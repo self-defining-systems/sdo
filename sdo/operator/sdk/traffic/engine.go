@@ -188,6 +188,11 @@ func (e *Engine) Plan(ctx context.Context, iteration uint64) ([]Request, error) 
 // request was sent, even when a step failed; their failures are reported in
 // CleanupError and do not change the outcome.
 func (e *Engine) Iterate(ctx context.Context, iteration uint64) (string, Sample) {
+	if ctx == nil {
+		// Agent-authored tests sometimes pass nil; treat it as "no deadline"
+		// instead of panicking inside the clock.
+		ctx = context.Background()
+	}
 	scenario := e.ScenarioAt(iteration)
 	rng := e.Rand(iteration)
 	state := State{}
