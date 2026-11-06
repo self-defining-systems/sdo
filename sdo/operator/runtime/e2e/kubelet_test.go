@@ -146,7 +146,7 @@ func (k *Kubelet) podIP(uid types.UID) string {
 	if ip, ok := k.ips[uid]; ok {
 		return ip
 	}
-	ip := "127.1." + loopback(len(k.ips)+1)
+	ip := podLoopback(len(k.ips) + 1)
 	k.ips[uid] = ip
 	return ip
 }

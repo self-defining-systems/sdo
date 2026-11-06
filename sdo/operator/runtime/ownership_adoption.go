@@ -304,7 +304,7 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 			writeRecord(item)
 			continue
 		}
-		if _, err := item.resource.apply(actionCtx, item.ref, item.source, false); err != nil {
+		if _, err := applyAdoption(actionCtx, item.resource, item.ref, item.source, item.normalized); err != nil {
 			if apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
 				live, readErr := item.resource.get(actionCtx, item.ref)
 				if readErr != nil && !apierrors.IsNotFound(readErr) {
@@ -385,6 +385,35 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 // adoptedAndRecorded reports whether live already has every declared field
 // owned by the deployer and a current acceptance record bound to its UID:
 // adoption has nothing left to do for it.
+// adoptionConflictRetries bounds how often one conditional adoption write is
+// remade on a fresh resourceVersion within a pass.
+const adoptionConflictRetries = 5
+
+// applyAdoption applies the conditional source. A conflict usually means only
+// that another controller wrote the object (status, observed generation) since
+// the scan read it, so the write is remade on the fresh resourceVersion for as
+// long as the declared fields still match the accepted projection. Leaving it
+// to the adoption backoff left the object without an acceptance record, and a
+// repeat incident in that window met "acceptance record is missing". A
+// conflict over a declared field is a real change: it is returned, to be
+// classified as drift and never overwritten.
+func applyAdoption(ctx context.Context, resource acceptedResource, ref sdk.ObjectRef, source, normalized *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	declared := flattenDriftPaths(source)
+	for attempt := 1; ; attempt++ {
+		applied, err := resource.apply(ctx, ref, source, false)
+		if err == nil || !apierrors.IsConflict(err) || attempt >= adoptionConflictRetries {
+			return applied, err
+		}
+		live, readErr := resource.get(ctx, ref)
+		if readErr != nil || live == nil || declaredFieldDifference(normalized, live, declared) ||
+			live.GetUID() == "" || live.GetUID() != source.GetUID() {
+			return nil, err
+		}
+		source = source.DeepCopy()
+		source.SetResourceVersion(live.GetResourceVersion())
+	}
+}
+
 func adoptedAndRecorded(live, source *unstructured.Unstructured) bool {
 	if !acceptanceRecordBound(live, source) {
 		return false

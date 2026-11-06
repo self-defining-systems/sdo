@@ -355,7 +355,7 @@ Live Codex or Kubernetes tests may require explicit markers, credentials, images
 What runs as processes:
 
 - `kube-apiserver` and `etcd` from envtest, started through the shared `runtime/envtestio` helper (`StartWith`: a static admin token, which the Pods mount as their service account token, and the service range and kubelet address type the fake kubelet needs): a real API server with no nodes and no controllers. The proxy and the kubelet present their own certificate, so `ca.crt` holds the API server's CA and that certificate.
-- A fake kubelet (`e2e/kubelet_test.go`, `pods_test.go`, `runtime_test.go`, `network_test.go`). It is the one Node, the Deployment, ReplicaSet, Endpoints/EndpointSlice and Job controllers, the default ServiceAccount, and a container runtime that runs each Job or Pod container as a bubblewrap sandbox from the Pod spec (volumes, env, service-account token, termination message, init containers and sidecars). It serves pod logs and the usage endpoints the API server proxies to a kubelet. Application Pods are not executed: their phase follows the toy application (bad image: `ImagePullBackOff`; readiness path the app does not serve: not ready), and each gets a loopback address with a real listener, with Service forwarders and a hosts file standing in for kube-proxy and cluster DNS.
+- A fake kubelet (`e2e/kubelet_test.go`, `pods_test.go`, `runtime_test.go`, `network_test.go`). It is the one Node, the Deployment, ReplicaSet, Endpoints/EndpointSlice and Job controllers, the default ServiceAccount, and a container runtime that runs each Job or Pod container as a bubblewrap sandbox from the Pod spec (volumes, env, service-account token, termination message, init containers and sidecars). It serves pod logs and the usage endpoints the API server proxies to a kubelet. Application Pods are not executed: their phase follows the toy application (bad image: `ImagePullBackOff`; readiness path the app does not serve: not ready), and each gets a loopback address with a real listener, with Service forwarders and a hosts file standing in for kube-proxy and cluster DNS. Loopback ranges are per process (a held port claims one of 64 slots), so end-to-end runs may overlap on a shared host; a listener that cannot bind fails the reconcile instead of being skipped.
 - The controller exactly as the toy lane installs it: the production `install.Installer` creates the controller Job, so `sdo-operator controller` builds the accepted detectors, starts its memory-host subprocess and runs against the API server (through a fault-injecting proxy). A killed controller is restarted by the fake Job controller.
 - Agents: the registered no-model workers (`benchmarks/sregym/fastloop/agent_registrations`), launched as Jobs and standbys through the real worker, tool transport and broker. A wrapper command reads `/e2e/agent-mode` so a run can make the next agent crash or hang.
 - The toy application and its faults: `apps/toy` manifests, injected and checked with the toy lane's own `apps/toy/faults.py`.
@@ -973,6 +973,20 @@ Every number lives in `.github/ci_budgets.json` and is enforced in code
 - Slow tests: a PR-tier test over `slow_test_seconds` (10 s) fails its job (`scripts/check_slow_tests.py` reads `go test -json` and pytest `--durations`). Fix it, move it to the nightly/integration tier (`testing.Short` skip or the nightly ignore list), or as a last resort add it with a reason to `slow_tests`. Go keys are `<package> <TopLevelTest>`; Python keys are node ids without a parameter suffix.
 - Cache size: main saves a Go cache only if `scripts/ci_cache_guard.sh` measures its compressed archive (what Actions uploads) at or under `cache_limit_mb` (1 GB); otherwise it skips the save and fails the job.
 - `CI health` (hourly, `scripts/ci_health.py`) summarizes per-job p50/p95, merge-queue enqueue-to-merge latency and cancelled/rerun/ejected rates over the last `health.runs` runs created after `health.since`, and fails when any PR job p95 exceeds 180 s or queue p95 exceeds 8 min. After a fix, move `health.since` forward so the old runs leave the window.
+
+  The same job ranks flakes: a job that failed and later passed on the same commit (a rerun, or a second run), by the failing
+  test parsed from the failed job's log, plus the cancelled, rerun and ejected runs, in the job summary.
+
+#### Flaky tests
+
+A test that flakes twice (two entries in the CI health flake table, or two reruns that pass) is fixed or quarantined within
+a day. Fix the class: reproduce with repetition under load (`go test -count=N`, a bounded shell loop for pytest, at most 5
+minutes), find the race, wall-clock dependency or shared resource, and remove it; do not add retries or raise a timeout
+unless the condition really is a wall-clock bound. When a fix does not fit the day, add the test to
+`.github/ci_quarantine.json` with an owner, a reason and a deadline (a Go id is `<package import path> <TopLevelTest>`, a
+pytest id is the node id). Pull request, merge-queue and main runs skip quarantined tests (`go test -skip`, `pytest --deselect`);
+the nightly run still runs them. `scripts/ci_quarantine.py check`, part of `check_errors.sh`, fails once a deadline passes
+or the test no longer exists, so each entry ends in a fix or a deletion.
 
 #### Affected-test selection on PRs
 

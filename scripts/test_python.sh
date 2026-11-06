@@ -84,6 +84,11 @@ if [[ ${#selected[@]} -gt 0 ]]; then
     paths=("${selected[@]}")
     coverage=(--no-cov) # a partial run says nothing about the floor, which full runs enforce
 fi
+# Quarantined flaky tests (.github/ci_quarantine.json) run in the nightly tier only.
+mapfile -t quarantined < <(python3 scripts/ci_quarantine.py pytest-deselect)
+if [[ ${#quarantined[@]} -gt 0 && -n "${quarantined[0]}" ]]; then
+    set -- "$@" "${quarantined[@]}"
+fi
 # Tach's plugin only selects impacted tests when asked (--tach); otherwise it
 # adds about ten seconds of git analysis to every xdist worker's collection.
 # Module boundaries are enforced by `tach check` in check_errors.sh.

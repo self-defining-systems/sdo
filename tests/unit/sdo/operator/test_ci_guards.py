@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -215,3 +216,88 @@ def test_health_workflow_is_hourly_read_only() -> None:
     triggers = config.get("on", config.get(True, {}))
     assert triggers["schedule"] == [{"cron": "23 * * * *"}]
     assert set(config["permissions"].values()) == {"read"}
+
+
+GO_FAIL = '{"Time":"t","Action":"fail","Package":"sdo.dev/x","Test":"TestA","Elapsed":1}'
+
+
+def test_failed_tests_come_from_pytest_go_json_and_the_slow_guard() -> None:
+    log = "\n".join(
+        [
+            "2026-01-01T00:00:00.0000000Z " + GO_FAIL,
+            "2026-01-01T00:00:00.0000000Z " + GO_FAIL.replace("TestA", "TestA/sub"),
+            "2026-01-01T00:00:01Z \x1b[31mFAILED tests/unit/t.py::test_b[x] - AssertionError: nope\x1b[0m",
+            "2026-01-01T00:00:02Z ##[error]tests/unit/t.py::test_slow took 10.0s (PR budget 10s)",
+            "2026-01-01T00:00:03Z PASSED tests/unit/t.py::test_ok",
+        ]
+    )
+    assert health.failed_tests(log) == ["sdo.dev/x TestA", "tests/unit/t.py::test_b[x]", "tests/unit/t.py::test_slow"]
+
+
+def attempt(job_name: str, conclusion: str, at: str, sha: str = "s1", run: int = 1) -> dict:
+    return {"sha": sha, "job": job_name, "conclusion": conclusion, "at": at, "run_id": run, "job_id": run, "step": "t"}
+
+
+def test_a_flake_is_a_failure_followed_by_a_pass_on_the_same_commit() -> None:
+    rows = [
+        attempt("py", "failure", "2026-01-01T00:00:00Z"),
+        attempt("py", "success", "2026-01-01T00:05:00Z"),
+        attempt("go", "failure", "2026-01-01T00:00:00Z"),  # never passed: a real failure
+        attempt("py", "failure", "2026-01-02T00:00:00Z", sha="s2"),
+        attempt("py", "success", "2026-01-02T00:05:00Z", sha="s3"),  # another commit: not a rerun
+        attempt("go", "success", "2026-01-01T00:05:00Z", sha="s9"),
+    ]
+    assert [(r["job"], r["sha"]) for r in health.flaky_jobs(rows)] == [("py", "s1")]
+
+
+def test_flakes_are_ranked_by_count_and_untestable_jobs_name_their_step() -> None:
+    rows = [attempt("py", "failure", "t", run=run) for run in (1, 2)] + [attempt("go", "failure", "t", run=3)]
+    logs = {1: "FAILED a.py::t - x", 2: "FAILED a.py::t - x", 3: ""}
+    ranked = health.rank_flakes(rows, lambda row: logs[row["run_id"]])
+    assert [(e["test"], e["count"]) for e in ranked] == [("a.py::t", 2), ("(no test id; failed step: t)", 1)]
+    assert "a.py::t" in health.render_flakes(ranked, [], "o/r", 100)
+
+
+def test_flake_report_reads_attempts_through_the_api() -> None:
+    runs = [
+        {
+            "id": 1,
+            "head_sha": "s",
+            "run_attempt": 2,
+            "conclusion": "success",
+            "event": "pull_request",
+            "created_at": "2026-01-01T00:00:00Z",
+        },
+        {
+            "id": 2,
+            "head_sha": "t",
+            "run_attempt": 1,
+            "conclusion": "cancelled",
+            "event": "push",
+            "created_at": "2026-01-01T00:00:00Z",
+        },
+    ]
+    jobs = {
+        1: [
+            {
+                "id": 11,
+                "name": "py",
+                "conclusion": "failure",
+                "completed_at": "2026-01-01T00:01:00Z",
+                "steps": [{"name": "pytest", "conclusion": "failure"}],
+            }
+        ],
+        2: [{"id": 12, "name": "py", "conclusion": "success", "completed_at": "2026-01-01T00:09:00Z", "steps": []}],
+    }
+
+    def api(path: str) -> dict:
+        if path.startswith("actions/workflows"):
+            return {"workflow_runs": runs}
+        attempt_number = int(re.search(r"attempts/(\d)", path)[1])  # type: ignore[index]
+        return {"jobs": jobs[attempt_number]}
+
+    report = health.flake_report(
+        api, lambda path: "FAILED t.py::test_x - boom", "o/r", health.parse_time("2025-01-01T00:00:00Z")
+    )
+    assert "| 1 | py | `t.py::test_x` |" in report
+    assert "| [2](https://github.com/o/r/actions/runs/2) | push | cancelled |" in report
