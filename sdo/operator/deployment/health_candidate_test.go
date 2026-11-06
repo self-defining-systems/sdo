@@ -37,7 +37,8 @@ func candidateFixture(t *testing.T) (accepted, candidate, commit string, registr
 	candidate = filepath.Join(t.TempDir(), "proposal")
 	testutil.Git(t, accepted, "clone", "-q", accepted, candidate)
 	writeFile(t, candidate, "k8s/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: cm}\ndata: {greeting: upstream}\n")
-	testutil.Git(t, candidate, "commit", "-qam", "synthetic upstream change")
+	// A clone does not inherit the fixture identity: set it for this commit rather than rely on the host.
+	testutil.Git(t, candidate, "-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qam", "synthetic upstream change")
 	commit = testutil.Git(t, candidate, "rev-parse", "HEAD")
 	registry = regFixture(t, accepted, render.Env{Namespace: depNamespace})
 	receipt, err := registry.ApplyAndVerify(context.Background(), candidate, legacyRawPlan(t, "k8s"))

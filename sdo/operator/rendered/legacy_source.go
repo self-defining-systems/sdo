@@ -29,8 +29,8 @@ func LegacyRawSource(paths []string) (*contracts.DeploymentSource, error) {
 // legacyReadSource keeps reads of a path-list source that names exactly one
 // kustomize root (a kustomization file, or a directory holding one) working
 // until every path list is replaced by a DeploymentSource: the old reader
-// built such a root with kustomize, and SREGym's hotelReservation selects
-// kubernetes/, which holds a kustomization. Every other source is returned
+// built such a root with kustomize, and benchmark launchers select a
+// directory that holds a kustomization. Every other source is returned
 // unchanged, so a raw selection mixing a root with other manifests still fails
 // with "use renderer kustomize" (D3). Reads only: deploy never translates.
 func legacyReadSource(fsys render.FS, src *contracts.DeploymentSource) (*contracts.DeploymentSource, error) {
