@@ -21,6 +21,10 @@ jobs:
   health:
     name: CI duration and queue budgets
     runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -28,6 +32,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/ci_health.py
+      # Caches saved by an action's post step (setup-uv) cannot be pruned from inside the job that
+      # saves them, so every family is pruned here, after the CI run that saved them has finished.
+      - name: Prune superseded Actions caches of every family
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci_cache_budget.py prune
       - name: Actions cache budget (alarm at 80% of the repository limit, per-family budgets)
         if: always()
         env:

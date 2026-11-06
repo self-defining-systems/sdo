@@ -647,9 +647,41 @@ def test_every_cache_save_has_a_family_budget_and_a_prune_step(name: str) -> Non
         assert workflow(name)["jobs"][job_name]["permissions"]["actions"] == "write"
 
 
-def test_health_workflow_checks_the_cache_budget_read_only() -> None:
-    steps = workflow("ci-health.yml")["jobs"]["health"]["steps"]
-    assert any("ci_cache_budget.py check" in str(step.get("run", "")) for step in steps)
+def test_health_workflow_prunes_every_family_then_checks_the_cache_budget() -> None:
+    job = workflow("ci-health.yml")["jobs"]["health"]
+    assert job["permissions"]["actions"] == "write"
+    runs = [str(step.get("run", "")) for step in job["steps"]]
+    prune = [i for i, run in enumerate(runs) if run.strip() == "python3 scripts/ci_cache_budget.py prune"]
+    check = [i for i, run in enumerate(runs) if "ci_cache_budget.py check" in run]
+    assert prune, "an unscoped prune covers every family, including caches an action saves in its post step"
+    assert check
+    assert prune[0] < check[0]
+
+
+def cache_families_saved_by_workflows() -> set[str]:
+    """Family of every cache a workflow saves: explicit cache steps and setup-uv's own cache."""
+    families: set[str] = set()
+    for name in ("ci.yml", "nightly.yml"):
+        for job in workflow(name)["jobs"].values():
+            shards = job.get("strategy", {}).get("matrix", {}).get("shard", ["-"])
+            for step in job.get("steps", []):
+                uses = str(step.get("uses", ""))
+                if uses.startswith("astral-sh/setup-uv@") and step.get("with", {}).get("enable-cache"):
+                    families.add("setup-uv-1-")
+                if uses.startswith(("actions/cache@", "actions/cache/save@")):
+                    for shard in shards:
+                        key = re.sub(r"\$\{\{ hashFiles\([^}]*\) \}\}", HASH64, step["with"]["key"])
+                        key = key.replace("${{ github.sha }}", SHA40).replace("${{ matrix.shard }}", shard)
+                        key = key.replace("${{ runner.os }}", "Linux").replace("${{ runner.arch }}", "X64")
+                        families.add(cache_budget.family_of(key))
+    return families
+
+
+def test_every_cache_family_a_workflow_saves_has_a_budget_the_health_prune_covers() -> None:
+    families = cache_families_saved_by_workflows()
+    assert "setup-uv-1-" in families
+    for family in sorted(families):
+        assert cache_budget.budget_for(family, CACHE["families"]) is not None, family
 
 
 TEST_SCRIPTS = [
