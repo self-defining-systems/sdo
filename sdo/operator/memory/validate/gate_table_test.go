@@ -490,9 +490,15 @@ var gateRows = []gateRow{
 		write(t, r, ".sdo/diagnostics/detectors/incidents/dns/manifest.yaml", gateIncidentManifest("dns", "1", "inc-2"))
 		write(t, r, ".sdo/diagnostics/detectors/incidents/dns/detector.go", "package dns\n")
 	}},
-	{name: "health judge initial memory must install detectors", kind: gateOwnership, actor: HealthJudge, phase: InitialPhase, rules: []string{RuleInitialNeedsDetectors},
-		prepare: func(t *testing.T, r string) { remove(t, r, ".sdo/diagnostics/detectors") },
-		edit:    gateWrite(".sdo/playbooks/health-objective/README.md", "x\n")},
+	{name: "health judge initial map probe without a Go-installable traffic detector", kind: gateOwnership, actor: HealthJudge, phase: InitialPhase, rules: []string{RuleInitialNeedsDetectors},
+		prepare: func(t *testing.T, r string) { write(t, r, layout.ArchitectureFile, mapInventory) },
+		edit: func(t *testing.T, r string) {
+			write(t, r, layout.ArchitectureFile, mapInventory+"\n"+mapRegion(mapYAML))
+			dir := ".sdo/diagnostics/traffic/workloads/"
+			for _, w := range [][2]string{{"probe-call", "call-all"}, {"probe-write", "write-item"}, {"probe-read-later", "items-later"}} {
+				write(t, r, dir+w[0]+".yaml", strings.Replace(mapWorkload(w[0], w[1]), "purpose: health-probe", "purpose: incident-probe", 1))
+			}
+		}},
 	{name: "health judge may add only health detectors to empty memory", kind: gateOwnership, actor: HealthJudge, phase: InitialPhase, rules: []string{RuleOwnershipDenied, RuleInitialHealthOnly},
 		prepare: func(t *testing.T, r string) { remove(t, r, ".sdo/diagnostics") },
 		edit: func(t *testing.T, r string) {

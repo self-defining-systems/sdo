@@ -29,13 +29,34 @@ const MetricsAlertsDetectorID = "metrics-alerts"
 // accepted health diagnostics tree (PrepareHealthWith with every option), in no
 // particular order. A detector with one of these IDs is Go's floor, not the
 // health judge's authorship; traffic-probe detectors are not listed because
-// they come from the judge's traffic workload files.
+// they come from the judge's traffic workload files. Derived from the plan
+// PrepareHealthWith executes, so the two cannot diverge.
 func GenericHealthDetectorIDs() []string {
-	return []string{
-		"service-endpoints", "pod-admission", workloadHealthID, "service-reachability",
-		"cluster-wiring", "workload-controllers", "warning-events", "node-health",
-		"resource-saturation", "runtime-crashes", MetricsAlertsDetectorID,
+	var ids []string
+	for _, d := range plannedGenericDetectors(HealthOptions{AlertSources: true}) {
+		ids = append(ids, d.manifest.ID)
 	}
+	return ids
+}
+
+// PreparedHealthDetectorIDs lists every health detector ID PrepareHealthWith
+// installs for a tree whose traffic workload files (file name to content, for
+// example "probe-call.yaml") are given: Go's generic detectors plus
+// traffic-<workload> for each probe workload. Validation counts these as
+// present before Go has written them, so a proposal is judged on the tree Go
+// will publish. The result is sorted.
+func PreparedHealthDetectorIDs(options HealthOptions, workloadFiles map[string][]byte) []string {
+	var ids []string
+	for _, d := range plannedGenericDetectors(options) {
+		ids = append(ids, d.manifest.ID)
+	}
+	for file, content := range workloadFiles {
+		if id, ok := PreparedTrafficDetector(file, content); ok {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	return slices.Compact(ids)
 }
 
 // IsGenericHealthDetector reports whether id is one of GenericHealthDetectorIDs.
@@ -63,18 +84,36 @@ func PrepareHealth(root string) error {
 // and broker acceptance. It installs policy detectors from final workload
 // files; it never translates or repairs the judge's authored artifacts.
 func PrepareHealthWith(root string, options HealthOptions) error {
-	endpoint := genericManifest("service-endpoints", "15s", []layout.Watch{{APIVersion: "v1", Kind: "Service"}, {APIVersion: "v1", Kind: "Endpoints"}, {APIVersion: "v1", Kind: "Pod"}, {APIVersion: "apps/v1", Kind: "Deployment"}})
-	if err := writeGenericDetector(root, endpoint, endpointSource()); err != nil {
-		return err
+	for _, d := range plannedGenericDetectors(options) {
+		if err := writeGenericDetector(root, d.manifest, d.source); err != nil {
+			return err
+		}
 	}
-	if err := writeGenericDetector(root, genericManifest("pod-admission", "15s", []layout.Watch{{APIVersion: "v1", Kind: "Pod"}}), podAdmissionSource()); err != nil {
-		return err
+	if !options.AlertSources {
+		// A tree from an environment that served alerts keeps no package
+		// that could now only read an unbound source.
+		if err := removeBootstrapDetector(root, MetricsAlertsDetectorID); err != nil {
+			return err
+		}
 	}
-	if err := writeGenericDetector(root, workloadManifest(), workloadSource()); err != nil {
-		return err
-	}
-	if err := writeGenericDetector(root, genericManifest("service-reachability", "10s", reachabilityWatches()), reachabilitySource()); err != nil {
-		return err
+	return prepareTrafficDetectors(root)
+}
+
+// plannedDetector is one generic detector package Go installs.
+type plannedDetector struct {
+	manifest layout.DetectorManifest
+	source   string
+}
+
+// plannedGenericDetectors is the single list of the generic (workload
+// independent) detectors Go installs for options. PrepareHealthWith writes
+// it and the ID lists derive from it.
+func plannedGenericDetectors(options HealthOptions) []plannedDetector {
+	planned := []plannedDetector{
+		{genericManifest("service-endpoints", "15s", []layout.Watch{{APIVersion: "v1", Kind: "Service"}, {APIVersion: "v1", Kind: "Endpoints"}, {APIVersion: "v1", Kind: "Pod"}, {APIVersion: "apps/v1", Kind: "Deployment"}}), endpointSource()},
+		{genericManifest("pod-admission", "15s", []layout.Watch{{APIVersion: "v1", Kind: "Pod"}}), podAdmissionSource()},
+		{workloadManifest(), workloadSource()},
+		{genericManifest("service-reachability", "10s", reachabilityWatches()), reachabilitySource()},
 	}
 	for _, policy := range []struct{ id, kind, constructor string }{
 		{"cluster-wiring", "wiring", "NewWiring"}, {"workload-controllers", "workloads", "NewWorkloads"},
@@ -90,22 +129,14 @@ func PrepareHealthWith(root string, options HealthOptions) error {
 		if policy.kind == "crashes" {
 			manifest.Persistence.Firing = 1
 		}
-		if err := writeGenericDetector(root, manifest, extendedSource(policy.id, policy.kind, policy.constructor)); err != nil {
-			return err
-		}
+		planned = append(planned, plannedDetector{manifest, extendedSource(policy.id, policy.kind, policy.constructor)})
 	}
 	if options.AlertSources {
 		alerts := genericManifest(MetricsAlertsDetectorID, "30s", []layout.Watch{{APIVersion: "sdo.dev/v1alpha1", Kind: "Metrics"}})
 		alerts.Batching.Severity = string(sdk.SeverityWarning)
-		if err := writeGenericDetector(root, alerts, metricsAlertsSource()); err != nil {
-			return err
-		}
-	} else if err := removeBootstrapDetector(root, MetricsAlertsDetectorID); err != nil {
-		// A tree from an environment that served alerts keeps no package
-		// that could now only read an unbound source.
-		return err
+		planned = append(planned, plannedDetector{alerts, metricsAlertsSource()})
 	}
-	return prepareTrafficDetectors(root)
+	return planned
 }
 
 // trafficDetectorPrefix starts the ID of every Go-installed traffic-probe

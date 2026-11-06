@@ -54,7 +54,11 @@ func TestInitialNeedsDetectorsEvaluatesTheResultingTree(t *testing.T) {
 		// judge's check and before publication; the rule counts those.
 		{name: "traffic detectors Go has not installed yet", base: []string{"health"}},
 		{name: "a declared probe workload Go installs no detector for", base: []string{"health"}, purpose: "incident-probe", want: []string{RuleInitialNeedsDetectors}},
-		{name: "no detectors in the resulting tree", removeAll: true, want: []string{RuleInitialNeedsDetectors}},
+		// A fresh onboarding base holds no health detector at all: Go installs
+		// the generic ones when it prepares the tree, so the rule must not
+		// demand the judge write them.
+		{name: "fresh onboarding base with no detectors", removeAll: true},
+		{name: "fresh base and a declared probe Go installs no detector for", removeAll: true, purpose: "incident-probe", want: []string{RuleInitialNeedsDetectors}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
