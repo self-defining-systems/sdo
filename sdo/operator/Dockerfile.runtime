@@ -13,6 +13,7 @@ COPY sdo/operator/contracts/go.mod sdo/operator/contracts/go.sum ./sdo/operator/
 COPY sdo/operator/core/go.mod sdo/operator/core/go.sum ./sdo/operator/core/
 COPY sdo/operator/runtime/go.mod sdo/operator/runtime/go.sum ./sdo/operator/runtime/
 COPY sdo/operator/sdk/go.mod sdo/operator/sdk/go.sum ./sdo/operator/sdk/
+COPY sdo/operator/telemetry/go.mod sdo/operator/telemetry/go.sum ./sdo/operator/telemetry/
 RUN for dir in sdo/operator/sdk sdo/operator/core sdo/operator/runtime sdo/operator; do \
       (cd "$dir" && go mod download all); \
     done
