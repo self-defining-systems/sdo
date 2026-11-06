@@ -45,6 +45,9 @@ type DesiredSet struct {
 	// SecretsOmit form), so SecretsOmit and SecretsInclude renders of one
 	// source agree.
 	RenderDigest string
+	// ShapeDigest is sha256 over the desired topology only (see shapeDigest
+	// for exactly what is and is not in it). Health refresh keys on it.
+	ShapeDigest string
 	// EnvDigest is sha256 over the canonical Env with its SecretMode cleared.
 	EnvDigest string
 }
@@ -102,6 +105,9 @@ func Desired(ctx context.Context, fsys render.FS, env render.Env, cat *render.Ca
 		set.Phases = append(set.Phases, desired)
 	}
 	if set.RenderDigest, err = renderDigest(set.Objects()); err != nil {
+		return DesiredSet{}, &SourceError{Kind: SourceInvalid, Err: err}
+	}
+	if set.ShapeDigest, err = shapeDigest(set.Objects()); err != nil {
 		return DesiredSet{}, &SourceError{Kind: SourceInvalid, Err: err}
 	}
 	if set.EnvDigest, err = envDigest(env); err != nil {

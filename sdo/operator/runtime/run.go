@@ -968,7 +968,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		}
 	}
 	if launchConfig != nil && selectedCodePath.Selection.DetectorSource != "shell" {
-		controller.CheckHealth = acceptedHealthGuard(resolvedRoot, launchConfig.GetControllerRevision(), launchConfig.GetFrozenMemory())
+		controller.CheckHealth = acceptedHealthGuard(resolvedRoot, launchConfig.GetControllerRevision(), planSource.ShapeOf(*namespace), launchConfig.GetFrozenMemory())
 	}
 	controller.CanAct = elector.IsLeader
 	controller.GuardAction = elector.GuardContext
