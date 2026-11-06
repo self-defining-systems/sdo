@@ -35,6 +35,9 @@ func TestOperateIdentityReachesTheControllerParent(t *testing.T) {
 	if identity != want || !identity.Enabled() {
 		t.Fatalf("controller identity = %+v, want %+v", identity, want)
 	}
+	if operate := operateIdentity(launch); operate != identity {
+		t.Fatalf("operate Job deploys with %+v, the controller parent with %+v", operate, identity)
+	}
 }
 
 // Seeded and install-existing controllers have no build identity: they

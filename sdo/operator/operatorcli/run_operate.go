@@ -14,15 +14,10 @@ import (
 	"sdo.dev/operator/artifacts"
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/deployment"
-	"sdo.dev/operator/imagesrc"
-	"sdo.dev/operator/imagesrc/buildkit"
-	"sdo.dev/operator/imagesrc/prebuilt"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory/observation"
-	"sdo.dev/operator/operatorcli/catalog/images"
 	"sdo.dev/operator/operatorcli/catalog/renderers"
-	"sdo.dev/operator/render"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -87,21 +82,14 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	config.Install.MetricsURL = config.Install.EffectiveMetricsURL()
 	config.Lifecycle.MetricsSource = config.Install.MetricsSource()
 	repository.MetricsDetectors = config.Install.MetricsURL != ""
-	builder := buildkit.Builder{
-		TreeDigest: broker.ProposalTreeDigest,
-		Client:     client, Namespace: control, RepositoryPVC: config.Install.RepositoryPVC,
-		ProposalRoot: config.WorktreeRoot, RepositoryPVCSubPath: proposalSubPath,
-		BuildKitImage: config.BuildKitImage, RegistrySecret: config.RegistryPushSecret,
-		AllowedRegistryHost: config.Install.RegistryHost,
-		RegistryInsecure:    config.Install.RegistryInsecure,
-		ServiceAccount:      "sdo-image-builder",
-		Timeout:             time.Duration(config.Install.BuildTimeoutSeconds) * time.Second,
-	}
-	imageSources, err := operateImageSources(config, builder, &prebuilt.Source{InsecureHost: insecureRegistryHost(config), Cluster: nodeImages{client: client}})
+	readiness, err := operateIdentity(config).deployer(client, deployTarget{
+		Namespace: config.Lifecycle.Namespace, ControlNamespace: control,
+		AcceptedRoot: config.ApplicationRoot, ProposalRoot: config.WorktreeRoot,
+		RepositoryMount: config.RepositoryMount, RepositoryPVC: config.Install.RepositoryPVC,
+	})
 	if err != nil {
 		return lifecycle.Result{}, err
 	}
-	readiness := operateDeployer(config, imageSources, deployment.CommandBackend{ObserveLimit: time.Duration(config.Install.RolloutTimeoutSeconds) * time.Second})
 	agentEnvironment, err := worker_registry.AgentEnvironment(config.Install.AgentProvider, config.Install.Model, config.Install.AgentEffort)
 	if err != nil {
 		return lifecycle.Result{}, err
@@ -143,14 +131,6 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	return coordinator.Run(ctx, config.Lifecycle)
 }
 
-// insecureRegistryHost is the only registry the controller may read over HTTP.
-func insecureRegistryHost(config OperateConfig) string {
-	if config.Install.RegistryInsecure {
-		return config.Install.RegistryHost
-	}
-	return ""
-}
-
 // nodeImages reports the image names the cluster's nodes hold, so the image
 // resolver pins a tag the cluster already has to the digest the cluster has.
 type nodeImages struct{ client kubernetes.Interface }
@@ -169,22 +149,14 @@ func (n nodeImages) NodeImageNames(ctx context.Context) ([][]string, error) {
 	return images, nil
 }
 
-// operateImageSources is the deployer's image catalog: prebuilt and buildkit,
-// or prebuilt alone when there is no registry to push builds to.
-func operateImageSources(config OperateConfig, builder buildkit.Builder, pre *prebuilt.Source) (*imagesrc.Catalog, error) {
-	if config.Install.RegistryHost == "" {
-		return images.PrebuiltOnly(pre)
-	}
-	return images.Catalog(images.Config{Prebuilt: pre, Builder: builder, BuildBudget: time.Duration(config.Install.BuildBudgetSeconds) * time.Second})
-}
-
-// operateDeployer deploys source plans with every built-in renderer. Its
-// render environment carries only the application namespace, as the legacy
-// strategy registry's did, so accepted evidence recorded before the switch
-// keeps its environment digest and re-verifies after a restart.
-func operateDeployer(config OperateConfig, sources *imagesrc.Catalog, applier deployment.Applier) deployment.Deployer {
-	return deployment.Deployer{
-		Namespace: config.Lifecycle.Namespace, Renderers: renderers.Catalog(), Images: sources, Applier: applier,
-		TreeDigest: broker.ProposalTreeDigest, Env: render.Env{}, AcceptedRoot: config.ApplicationRoot,
+// operateIdentity is the operate Job's trusted build and apply identity; the
+// installer passes the same one to the controller parent for advances.
+func operateIdentity(config OperateConfig) deployIdentity {
+	return deployIdentity{
+		BuildKitImage: config.BuildKitImage, RegistryPushSecret: config.RegistryPushSecret,
+		RegistryHost: config.Install.RegistryHost, RegistryInsecure: config.Install.RegistryInsecure,
+		BuildTimeout:   time.Duration(config.Install.BuildTimeoutSeconds) * time.Second,
+		BuildBudget:    time.Duration(config.Install.BuildBudgetSeconds) * time.Second,
+		RolloutTimeout: time.Duration(config.Install.RolloutTimeoutSeconds) * time.Second,
 	}
 }

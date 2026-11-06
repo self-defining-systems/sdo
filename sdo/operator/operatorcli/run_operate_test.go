@@ -2,11 +2,11 @@ package operatorcli
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
+	"k8s.io/client-go/kubernetes/fake"
 	"sdo.dev/operator/deployment"
-	"sdo.dev/operator/imagesrc/buildkit"
-	"sdo.dev/operator/imagesrc/prebuilt"
 	"sdo.dev/operator/render"
 )
 
@@ -14,20 +14,30 @@ func operateTestConfig(registryHost string) OperateConfig {
 	var config OperateConfig
 	config.Lifecycle.Namespace = "demo"
 	config.ApplicationRoot = "/repo/application"
+	config.RepositoryMount, config.WorktreeRoot = "/repo", "/repo/worktrees"
+	config.BuildKitImage, config.RegistryPushSecret = "buildkit@sha256:"+strings.Repeat("a", 64), "push"
 	config.Install.RegistryHost = registryHost
 	config.Install.BuildBudgetSeconds = 60
 	return config
+}
+
+func operateTestDeployer(t *testing.T, config OperateConfig) deployment.Deployer {
+	t.Helper()
+	deployer, err := operateIdentity(config).deployer(fake.NewSimpleClientset(), deployTarget{
+		Namespace: config.Lifecycle.Namespace, ControlNamespace: "sdo-system", AcceptedRoot: config.ApplicationRoot,
+		ProposalRoot: config.WorktreeRoot, RepositoryMount: config.RepositoryMount, RepositoryPVC: "repo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return deployer
 }
 
 // The deployer and the agent's offer come from the same full catalogs, so
 // every built-in renderer (helm included) is both offered and deployable.
 func TestOperateDeployerDeploysEveryBuiltInRenderer(t *testing.T) {
 	config := operateTestConfig("registry.local:5000")
-	sources, err := operateImageSources(config, buildkit.Builder{AllowedRegistryHost: config.Install.RegistryHost}, &prebuilt.Source{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	deployer := operateDeployer(config, sources, deployment.CommandBackend{})
+	deployer := operateTestDeployer(t, config)
 	if got := deployer.Renderers.IDs(); !reflect.DeepEqual(got, []string{"helm", "kustomize", "raw"}) {
 		t.Fatalf("renderers = %v", got)
 	}
@@ -43,16 +53,19 @@ func TestOperateDeployerDeploysEveryBuiltInRenderer(t *testing.T) {
 // evidence accepted before the switch keeps its env digest; the deployment
 // package pins that digest (TestDeployerWithTheProductionEnvAcceptsLegacyRegistryEvidence).
 func TestOperateDeployerKeepsTheLegacyRenderEnvironment(t *testing.T) {
-	config := operateTestConfig("")
-	sources, err := operateImageSources(config, buildkit.Builder{}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	deployer := operateDeployer(config, sources, deployment.CommandBackend{})
+	deployer := operateTestDeployer(t, operateTestConfig(""))
 	if !reflect.DeepEqual(deployer.Env, render.Env{}) {
 		t.Fatalf("deployer env = %+v, want only the namespace (set from Deployer.Namespace)", deployer.Env)
 	}
 	if got := deployer.Images.IDs(); !reflect.DeepEqual(got, []string{"prebuilt"}) {
 		t.Fatalf("without a push registry the deployer has only prebuilt images, got %v", got)
+	}
+}
+
+func TestDeployerProposalsMustBeOnTheRepositoryMount(t *testing.T) {
+	config := operateTestConfig("registry.local:5000")
+	_, err := operateIdentity(config).deployer(fake.NewSimpleClientset(), deployTarget{Namespace: "demo", ControlNamespace: "sdo-system", AcceptedRoot: config.ApplicationRoot, ProposalRoot: "/elsewhere", RepositoryMount: "/repo", RepositoryPVC: "repo"})
+	if err == nil {
+		t.Fatal("proposal root outside the repository mount accepted")
 	}
 }
