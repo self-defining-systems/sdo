@@ -77,6 +77,8 @@ type advWorld struct {
 	// patch hold, as the broker does for a deployment agent to correct it.
 	keepOnPatchHold bool
 	candidateNow    string
+	// checkRejection is what CheckAdvance reports (the publication validation).
+	checkRejection string
 
 	applied   lifecycle.DeploymentReceipt
 	proposed  map[string]bool
@@ -163,6 +165,14 @@ func (w *advWorld) CorrectAdvance(_ context.Context, id string, plan *contracts.
 	}
 	w.plan, w.candidateNow = plan, advCorrected
 	return advCorrected, "", nil
+}
+
+func (w *advWorld) CheckAdvance(_ context.Context, id, upstreamCommit, base string) (string, error) {
+	w.log("check %s", id)
+	if !w.proposed[id] || upstreamCommit != advRevision || base != advPrev {
+		return "", errors.New("check of an advance that is not the open proposal")
+	}
+	return w.checkRejection, nil
 }
 
 func (w *advWorld) PublishAdvance(_ context.Context, id, upstreamCommit, base string, evidence broker.SourceEvidence, report operability.Report) (broker.Receipt, error) {
@@ -377,7 +387,7 @@ func TestAdvanceAcceptsADeployedAndVerifiedRevision(t *testing.T) {
 		t.Fatalf("result = %+v, err = %v", result, err)
 	}
 	id := lifecycle.AdvanceID(advRevision)
-	want := []string{"materialize git " + advRevision, "change 1111..2222", "propose " + id, "shape 3333", "shape 4444", "offline", "pause", "apply", "live", "verify 4444", "publish " + id, "resume"}
+	want := []string{"materialize git " + advRevision, "change 1111..2222", "propose " + id, "shape 3333", "shape 4444", "offline", "check " + id, "pause", "apply", "live", "verify 4444", "publish " + id, "resume"}
 	if !slices.Equal(w.events, want) {
 		t.Fatalf("events\n got %q\nwant %q", w.events, want)
 	}
@@ -657,7 +667,7 @@ func TestAdvanceRoutesAShapeChangeToTheDetectionDesigner(t *testing.T) {
 		t.Fatalf("result = %+v, err = %v", result, err)
 	}
 	id := lifecycle.AdvanceID(advRevision)
-	want := []string{"materialize git " + advRevision, "change 1111..2222", "propose " + id, "shape 3333", "shape 4444", "offline", "pause", "apply", "live", "verify 4444", "publish " + id, "resume", "designer 2222"}
+	want := []string{"materialize git " + advRevision, "change 1111..2222", "propose " + id, "shape 3333", "shape 4444", "offline", "check " + id, "pause", "apply", "live", "verify 4444", "publish " + id, "resume", "designer 2222"}
 	if !slices.Equal(w.events, want) {
 		t.Fatalf("events\n got %q\nwant %q", w.events, want)
 	}
@@ -807,6 +817,30 @@ func TestAdvanceHoldsAnOfflineFailureBeforeAnyClusterEffect(t *testing.T) {
 				t.Fatalf("proposal leaked: %q", w.events)
 			}
 		})
+	}
+}
+
+// The broker refuses to publish a candidate its validation rejects. The advance
+// asks the same question before the maintenance pause, so the rejection is a
+// hold with no cluster effect instead of a cluster rolled out ahead of accepted
+// state.
+func TestAdvanceHoldsAPublishValidationFailureBeforeAnyClusterEffect(t *testing.T) {
+	w := newAdvWorld(t)
+	w.checkRejection = "advance validation: 1 validation diagnostic(s)\n  chart/x: [synthetic.rule] rejected"
+	result, err := w.run(t)
+	if err != nil || result.Outcome != lifecycle.AdvanceHeld || result.Hold != lifecycle.HoldValidation {
+		t.Fatalf("result = %+v, err = %v; want hold %s", result, err, lifecycle.HoldValidation)
+	}
+	if out := result.FollowerOutcome(); !strings.Contains(out.Reason, "[synthetic.rule] rejected") {
+		t.Fatalf("reason = %q does not carry the rejection", out.Reason)
+	}
+	for _, effect := range []string{"pause", "apply", "live", "verify", "publish"} {
+		if count(w.events, effect) != 0 {
+			t.Fatalf("%s ran after a validation failure: %q", effect, w.events)
+		}
+	}
+	if count(w.events, "propose") != count(w.events, "release") {
+		t.Fatalf("proposal leaked: %q", w.events)
 	}
 }
 

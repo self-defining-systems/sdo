@@ -48,6 +48,10 @@ type AdvanceBroker interface {
 	// .sdo/deployment/plan.yaml. It returns the new candidate commit, or the
 	// validator's rejection text (empty on success) with the checkout reset.
 	CorrectAdvance(ctx context.Context, id string, plan *contracts.DeploymentPlan) (candidate, rejection string, err error)
+	// CheckAdvance runs, without publishing, the validation PublishAdvance
+	// applies to the candidate of proposal id. A non-empty rejection means the
+	// publish would be refused.
+	CheckAdvance(ctx context.Context, id, upstream, base string) (rejection string, err error)
 	// PublishAdvance accepts the candidate of proposal id with evidence of its
 	// live deployment and the upstream/base trailers.
 	// The stage-advance operability report must bind to the evidence and the
@@ -180,6 +184,10 @@ const (
 	// HoldScope: the offline operability checks found the candidate outside
 	// the install's scope or registry allowlist, before any cluster effect.
 	HoldScope HoldReason = "scope"
+	// HoldValidation: the broker's publication validation (the one PublishAdvance
+	// applies) rejects the candidate. Found before any cluster effect: an advance
+	// never rolls out a candidate the broker would refuse to accept.
+	HoldValidation HoldReason = "validation"
 	// HoldOperability: an operability check failed for a cause none of the
 	// reasons above names (an SDO defect or an unknown cause), so a person
 	// must look.
@@ -215,6 +223,7 @@ var holdRouting = map[HoldReason]struct {
 	HoldHealth:          {operability.CauseSourceFault, []operability.ItemID{operability.O4}},
 	HoldDeployer:        {operability.CauseAgentNotConverging, []operability.ItemID{operability.O1}},
 	HoldScope:           {operability.CauseScope, []operability.ItemID{operability.O6}},
+	HoldValidation:      {operability.CauseInternal, nil},
 	HoldOperability:     {operability.CauseInternal, nil},
 }
 
@@ -426,7 +435,7 @@ func (a Advancer) Advance(ctx context.Context, cfg AdvanceConfig, request upstre
 	if candidate == "" {
 		return result, errors.New("advance proposal has neither a candidate nor conflicts")
 	}
-	screen, candidate, plan, err := a.screenWithCorrections(ctx, cfg, id, proposal, candidate, plan, result, patchHeld)
+	screen, candidate, plan, err := a.screenWithCorrections(ctx, cfg, id, request.Prev, proposal, candidate, plan, result, patchHeld)
 	if err != nil || screen.result.Outcome == AdvanceHeld {
 		return screen.result, err
 	}
@@ -462,7 +471,7 @@ type screening struct {
 // screen runs everything an advance decides before the cluster is touched:
 // render impact, the designer's availability for a shape change, and the
 // offline operability checks.
-func (a Advancer) screen(ctx context.Context, cfg AdvanceConfig, proposal broker.Proposal, candidate string, plan *contracts.DeploymentPlan, result AdvanceResult) (screening, error) {
+func (a Advancer) screen(ctx context.Context, cfg AdvanceConfig, id, prev string, proposal broker.Proposal, candidate string, plan *contracts.DeploymentPlan, result AdvanceResult) (screening, error) {
 	hold, detail, paths, shapeChanged, err := a.impact(ctx, proposal, candidate, plan.GetSource())
 	if err != nil || hold != "" {
 		result.Paths = paths
@@ -478,6 +487,15 @@ func (a Advancer) screen(ctx context.Context, cfg AdvanceConfig, proposal broker
 	if decision.Kind != operability.Accepted {
 		return screening{result: heldBy(result, holdForCause(decision.Cause), decision)}, nil
 	}
+	// The broker's publication validation, before anything is applied: a
+	// rejection here is a hold with no cluster effect.
+	rejection, err := a.Broker.CheckAdvance(ctx, id, result.Upstream, prev)
+	if err != nil {
+		return screening{result: result}, fmt.Errorf("check advance: %w", err)
+	}
+	if rejection != "" {
+		return screening{result: held(result, HoldValidation, strings.Join(strings.Fields(rejection), " "))}, nil
+	}
 	return screening{result: result, shapeChanged: shapeChanged, checks: checks}, nil
 }
 
@@ -488,7 +506,7 @@ func (a Advancer) screen(ctx context.Context, cfg AdvanceConfig, proposal broker
 // rounds: the same hold twice in a row, or MaxCorrections dispatches, ends in a
 // typed agent_not_converging hold. Holds owned by anyone else are returned as
 // they are: nobody here dispatches them (see holdRouting).
-func (a Advancer) screenWithCorrections(ctx context.Context, cfg AdvanceConfig, id string, proposal broker.Proposal, candidate string, plan *contracts.DeploymentPlan, result AdvanceResult, first *AdvanceResult) (screening, string, *contracts.DeploymentPlan, error) {
+func (a Advancer) screenWithCorrections(ctx context.Context, cfg AdvanceConfig, id, prev string, proposal broker.Proposal, candidate string, plan *contracts.DeploymentPlan, result AdvanceResult, first *AdvanceResult) (screening, string, *contracts.DeploymentPlan, error) {
 	budget := a.MaxCorrections
 	if budget <= 0 {
 		budget = DefaultMaxCorrections
@@ -500,7 +518,7 @@ func (a Advancer) screenWithCorrections(ctx context.Context, cfg AdvanceConfig, 
 			screen, first = screening{result: *first}, nil
 		} else {
 			var err error
-			if screen, err = a.screen(ctx, cfg, proposal, candidate, plan, result); err != nil {
+			if screen, err = a.screen(ctx, cfg, id, prev, proposal, candidate, plan, result); err != nil {
 				return screen, candidate, plan, err
 			}
 		}
