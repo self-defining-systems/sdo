@@ -269,8 +269,11 @@ func (w *advWorld) CheckLive(_ context.Context, checkout string, plan *contracts
 		// What deployment.ClassifyDeploymentError does by type.
 		cause := operability.CauseRollout
 		var image *imagesrc.Error
+		var typed interface{ Cause() operability.Cause }
 		if errors.As(outcome, &image) {
 			cause = operability.CauseBuild
+		} else if errors.As(outcome, &typed) {
+			cause = typed.Cause()
 		}
 		fail := operability.Check{ID: "O1.deploy", Phase: operability.PhaseLive, Status: operability.StatusFail, Cause: cause, Detail: outcome.Error()}
 		rest := []operability.Check{fail}
@@ -1022,3 +1025,9 @@ func TestAdvanceFiringPastTheSettleWindowIsTheCandidatesRegression(t *testing.T)
 		t.Fatalf("a regression was published: %q", w.events)
 	}
 }
+
+// causeFailure is an apply failure the live checks classify as its cause.
+type causeFailure operability.Cause
+
+func (c causeFailure) Error() string             { return "synthetic apply failure: " + string(c) }
+func (c causeFailure) Cause() operability.Cause { return operability.Cause(c) }

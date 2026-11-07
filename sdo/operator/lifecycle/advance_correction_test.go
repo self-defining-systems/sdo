@@ -10,6 +10,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/operability"
 	"sdo.dev/operator/patchset"
@@ -168,6 +169,61 @@ func TestDeployerCorrectionIsBounded(t *testing.T) {
 	})
 }
 
+// A deployer-owned hold the apply discovers (the API server refuses an
+// immutable change; nothing of the phase was applied) goes through the same
+// dispatcher as an offline one: one deployer task with the hold as its
+// request, then the corrected candidate is screened and deployed again, with
+// the same bounds.
+func TestApplyPhaseDeployerHoldStartsADeployerTask(t *testing.T) {
+	immutable := func() error {
+		return &deployment.ImmutableChangeError{Phase: "main", Refused: []deployment.RefusedObject{{Reason: deployment.RefuseNoPolicy}}}
+	}
+	t.Run("corrected", func(t *testing.T) {
+		w := newAdvWorld(t)
+		w.applyErrs = []error{immutable(), nil}
+		agent := &deployerAgent{}
+		result, err := w.runWith(t, agent)
+		if err != nil || result.Outcome != lifecycle.AdvanceAccepted {
+			t.Fatalf("result = %+v, err = %v; want accepted after one correction", result, err)
+		}
+		if len(agent.requests) != 1 || !strings.Contains(agent.requests[0].Feedback, "cause=immutable_change owner=deployer") {
+			t.Fatalf("deployer requests = %+v", agent.requests)
+		}
+		if count(w.events, "apply") != 2 || count(w.events, "pause") != count(w.events, "resume") {
+			t.Fatalf("events %q", w.events)
+		}
+	})
+	t.Run("same hold twice stops", func(t *testing.T) {
+		w := newAdvWorld(t)
+		w.applyErrs = []error{immutable(), immutable(), immutable(), immutable()}
+		agent := &deployerAgent{}
+		result, err := w.runWith(t, agent)
+		if err != nil || result.Hold != lifecycle.HoldDeployer || result.Cause != operability.CauseAgentNotConverging {
+			t.Fatalf("result = %+v, err = %v", result, err)
+		}
+		if len(agent.requests) > lifecycle.DefaultMaxCorrections {
+			t.Fatalf("deployer tasks = %d, over the budget", len(agent.requests))
+		}
+	})
+	t.Run("without an agent the hold is named for its cause", func(t *testing.T) {
+		w := newAdvWorld(t)
+		w.applyErrs = []error{immutable()}
+		result, err := w.run(t)
+		if err != nil || result.Hold != lifecycle.HoldImmutable || result.Owner != operability.OwnerDeployer {
+			t.Fatalf("result = %+v, err = %v", result, err)
+		}
+	})
+	t.Run("a data-bearing refusal is the human's", func(t *testing.T) {
+		w := newAdvWorld(t)
+		w.applyErrs = []error{&deployment.ImmutableChangeError{Phase: "main", Refused: []deployment.RefusedObject{{Reason: deployment.RefuseDataBearing}}}}
+		agent := &deployerAgent{}
+		result, err := w.runWith(t, agent)
+		if err != nil || result.Hold != lifecycle.HoldImmutable || result.Owner != operability.OwnerHuman || len(agent.requests) != 0 {
+			t.Fatalf("result = %+v, err = %v, tasks %d", result, err, len(agent.requests))
+		}
+	})
+}
+
 // Only the deployer's holds start the deployment agent. A hold owned by
 // anyone else, and a deployer-owned one with no agent configured, is the hold
 // it always was.
@@ -227,5 +283,34 @@ func TestEveryAdvanceHoldOwnerHasADisposition(t *testing.T) {
 			t.Errorf("cause %s routes to owner %q in an advance, which has no disposition", cause, owner)
 		}
 	}
-	var _ = lifecycle.HoldRender
+}
+
+// The disposition holds wherever the hold arises: for every cause an apply
+// can fail with, a deployer-owned one dispatches the deployment agent and
+// nobody else's does, and a deployer-owned one is never an unnamed operability hold.
+func TestEveryApplyPhaseCauseHasTheDispositionOfItsOwner(t *testing.T) {
+	for _, cause := range operability.Causes() {
+		owner := operability.RouteIn(operability.ModeAdvance, cause)
+		t.Run(string(cause), func(t *testing.T) {
+			w := newAdvWorld(t)
+			for range 10 {
+				w.applyErrs = append(w.applyErrs, causeFailure(cause))
+			}
+			agent := &deployerAgent{}
+			result, err := w.runWith(t, agent)
+			if cause == operability.CauseInfrastructure {
+				return // retried, not held; covered by the infrastructure tests
+			}
+			if err != nil || result.Outcome != lifecycle.AdvanceHeld {
+				t.Fatalf("result = %+v, err = %v", result, err)
+			}
+			dispatched := len(agent.requests) > 0
+			if dispatched != (owner == operability.OwnerDeployer) {
+				t.Fatalf("owner %s: dispatched = %v", owner, dispatched)
+			}
+			if result.Hold == lifecycle.HoldOperability && owner == operability.OwnerDeployer {
+				t.Fatalf("cause %s (owner %s) is held as an unnamed operability hold", cause, owner)
+			}
+		})
+	}
 }

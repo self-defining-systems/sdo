@@ -189,6 +189,11 @@ const (
 	// applies) rejects the candidate. Found before any cluster effect: an advance
 	// never rolls out a candidate the broker would refuse to accept.
 	HoldValidation HoldReason = "validation"
+	// HoldImmutable: the API server refuses an immutable change the deployer's
+	// recreate policy does not replace (immutable_change, deployer: a deployment
+	// correction; data_bearing_change, human). Found by the apply; nothing of
+	// the refused phase was changed.
+	HoldImmutable HoldReason = "immutable"
 	// HoldOperability: an operability check failed for a cause none of the
 	// reasons above names (an SDO defect or an unknown cause), so a person
 	// must look.
@@ -224,6 +229,7 @@ var holdRouting = map[HoldReason]struct {
 	HoldHealth:          {operability.CauseSourceFault, []operability.ItemID{operability.O4}},
 	HoldDeployer:        {operability.CauseAgentNotConverging, []operability.ItemID{operability.O1}},
 	HoldScope:           {operability.CauseScope, []operability.ItemID{operability.O6}},
+	HoldImmutable:       {operability.CauseImmutableChange, []operability.ItemID{operability.O1}},
 	HoldValidation:      {operability.CauseInternal, nil},
 	HoldOperability:     {operability.CauseInternal, nil},
 }
@@ -436,12 +442,7 @@ func (a Advancer) Advance(ctx context.Context, cfg AdvanceConfig, request upstre
 	if candidate == "" {
 		return result, errors.New("advance proposal has neither a candidate nor conflicts")
 	}
-	screen, candidate, plan, err := a.screenWithCorrections(ctx, cfg, id, request.Prev, proposal, candidate, plan, result, patchHeld)
-	if err != nil || screen.result.Outcome == AdvanceHeld {
-		return screen.result, err
-	}
-	result, shapeChanged, offlineChecks := screen.result, screen.shapeChanged, screen.checks
-	result, err = a.deployAndAccept(ctx, cfg, result, proposal, candidate, plan, request.Prev, offlineChecks, &published)
+	result, shapeChanged, err := a.advanceWithCorrections(ctx, cfg, id, request.Prev, proposal, candidate, plan, result, patchHeld, &published)
 	if err != nil || result.Outcome != AdvanceAccepted || !shapeChanged {
 		return result, err
 	}
@@ -500,32 +501,42 @@ func (a Advancer) screen(ctx context.Context, cfg AdvanceConfig, id, prev string
 	return screening{result: result, shapeChanged: shapeChanged, checks: checks}, nil
 }
 
-// screenWithCorrections is screen with the deployment agent behind it. A hold
-// the deployer owns before any cluster effect starts a deployer task whose
-// request is the hold (a correction of the advance checkout), then screens the
-// corrected candidate again. It is bounded like the lifecycle's other agent
-// rounds: the same hold twice in a row, or MaxCorrections dispatches, ends in a
-// typed agent_not_converging hold. Holds owned by anyone else are returned as
-// they are: nobody here dispatches them (see holdRouting).
-func (a Advancer) screenWithCorrections(ctx context.Context, cfg AdvanceConfig, id, prev string, proposal broker.Proposal, candidate string, plan *contracts.DeploymentPlan, result AdvanceResult, first *AdvanceResult) (screening, string, *contracts.DeploymentPlan, error) {
+// advanceWithCorrections is screen and deployAndAccept with the deployment
+// agent behind both. A hold the deployer owns, wherever it arises (offline, or
+// found by the apply, such as an immutable change the recreate policy refuses),
+// starts a deployer task whose request is the hold (a correction of the
+// advance checkout), then screens and deploys the corrected candidate again.
+// It is bounded like the lifecycle's other agent rounds: the same hold twice
+// in a row, or MaxCorrections dispatches, ends in a typed agent_not_converging
+// hold. Holds owned by anyone else are returned as they are: nobody here
+// dispatches them (see holdRouting). It reports whether the candidate's shape
+// changed, for the designer's refresh after acceptance.
+func (a Advancer) advanceWithCorrections(ctx context.Context, cfg AdvanceConfig, id, prev string, proposal broker.Proposal, candidate string, plan *contracts.DeploymentPlan, result AdvanceResult, first *AdvanceResult, published *bool) (AdvanceResult, bool, error) {
 	budget := a.MaxCorrections
 	if budget <= 0 {
 		budget = DefaultMaxCorrections
 	}
 	var tracker feedbackTracker
 	for attempt := 0; ; attempt++ {
-		var screen screening
+		var current AdvanceResult
+		var shapeChanged bool
 		if first != nil {
-			screen, first = screening{result: *first}, nil
+			current, first = *first, nil
 		} else {
-			var err error
-			if screen, err = a.screen(ctx, cfg, id, prev, proposal, candidate, plan, result); err != nil {
-				return screen, candidate, plan, err
+			screen, err := a.screen(ctx, cfg, id, prev, proposal, candidate, plan, result)
+			if err != nil {
+				return screen.result, false, err
+			}
+			current, shapeChanged = screen.result, screen.shapeChanged
+			if current.Outcome != AdvanceHeld {
+				current, err = a.deployAndAccept(ctx, cfg, screen.result, proposal, candidate, plan, prev, screen.checks, published)
+				if err != nil || current.Outcome != AdvanceHeld {
+					return current, shapeChanged, err
+				}
 			}
 		}
-		current := screen.result
-		if current.Outcome != AdvanceHeld || current.Owner != operability.OwnerDeployer || a.Deployer == nil {
-			return screen, candidate, plan, nil
+		if current.Owner != operability.OwnerDeployer || a.Deployer == nil {
+			return current, shapeChanged, nil
 		}
 		feedback := current.reason()
 		var stop error
@@ -535,12 +546,12 @@ func (a Advancer) screenWithCorrections(ctx context.Context, cfg AdvanceConfig, 
 			stop = tracker.repeated(operability.OwnerDeployer, proposal.BaseCommit, feedback)
 		}
 		if stop != nil {
-			return screening{result: held(result, HoldDeployer, stop.Error()+"; last hold: "+operability.Clip(feedback))}, candidate, plan, nil
+			return held(result, HoldDeployer, stop.Error()+"; last hold: "+operability.Clip(feedback)), shapeChanged, nil
 		}
 		proposed, err := a.Deployer.CorrectDeployment(ctx, DeploymentCorrection{AdvanceID: id, Proposal: proposal, Plan: plan, Feedback: feedback, Attempt: attempt + 1})
 		if err != nil {
 			if ctx.Err() != nil {
-				return screen, candidate, plan, ctx.Err()
+				return current, shapeChanged, ctx.Err()
 			}
 			// The agent task failed (not a verdict on the revision): the failure
 			// is the next round's hold text, so a repeating failure ends it.
@@ -551,7 +562,7 @@ func (a Advancer) screenWithCorrections(ctx context.Context, cfg AdvanceConfig, 
 		}
 		next, rejection, err := a.Broker.CorrectAdvance(ctx, id, proposed)
 		if err != nil {
-			return screen, candidate, plan, fmt.Errorf("correct advance: %w", err)
+			return current, shapeChanged, fmt.Errorf("correct advance: %w", err)
 		}
 		if rejection != "" {
 			again := current
@@ -727,10 +738,11 @@ func (a Advancer) deployAndAccept(ctx context.Context, cfg AdvanceConfig, result
 		if errors.As(err, &infrastructure) || ctx.Err() != nil {
 			return result, err
 		}
-		// The cluster was touched (or an image failed to build before it was):
-		// the live checks classify the failure by type, and the cause routes it
-		// for an advance, never to a deployer correction: the candidate is
-		// already applied.
+		// The cluster was touched (or an image failed to build or an immutable
+		// change was refused before it was): the live checks classify the
+		// failure by type and the cause routes it for an advance. A deployer
+		// cause goes back to the deployment agent (advanceWithCorrections); a
+		// rollout or health fault is the responder's, the cluster left as is.
 		classified, cerr := a.Readiness.CheckLive(ctx, proposal.Path, plan, DeploymentReceipt{}, err)
 		if cerr != nil {
 			return result, fmt.Errorf("classify deployment failure (%v): %w", err, cerr)
@@ -900,6 +912,8 @@ func holdForCause(cause operability.Cause) HoldReason {
 		return HoldBuild
 	case operability.CauseRollout:
 		return HoldRollout
+	case operability.CauseImmutableChange, operability.CauseDataBearingChange:
+		return HoldImmutable
 	case operability.CauseScope, operability.CauseAllowlist, operability.CauseBudget:
 		return HoldScope
 	case operability.CauseDetectorFault, operability.CauseSourceFault, operability.CauseProbeUnavailable:
