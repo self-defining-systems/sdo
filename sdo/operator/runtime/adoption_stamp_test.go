@@ -28,7 +28,7 @@ func (s *stampedDeploymentServer) ServeHTTP(w http.ResponseWriter, r *http.Reque
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
-	if r.Method == http.MethodPatch {
+	if r.Method == http.MethodPatch && r.URL.Query().Get("dryRun") == "" {
 		body, _ := io.ReadAll(r.Body)
 		var sent map[string]any
 		_ = json.Unmarshal(body, &sent)
@@ -152,11 +152,83 @@ func (s *liveObjectServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
-	if r.Method == http.MethodPatch {
+	if r.Method == http.MethodPatch && r.URL.Query().Get("dryRun") == "" {
 		body, _ := io.ReadAll(r.Body)
 		var sent map[string]any
 		_ = json.Unmarshal(body, &sent)
 		s.applied = append(s.applied, sent)
 	}
 	_ = json.NewEncoder(w).Encode(s.live)
+}
+
+// generationServer serves one live Deployment. A dry-run apply answers with the
+// generation the server would assign after the write; a real apply is recorded.
+type generationServer struct {
+	mu         sync.Mutex
+	live       map[string]any
+	dryRunGen  int64
+	realWrites int
+}
+
+func (s *generationServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	answer := s.live
+	if r.Method == http.MethodPatch {
+		if r.URL.Query().Get("dryRun") == "All" {
+			answer = map[string]any{}
+			for key, value := range s.live {
+				answer[key] = value
+			}
+			metadata := map[string]any{}
+			for key, value := range s.live["metadata"].(map[string]any) {
+				metadata[key] = value
+			}
+			metadata["generation"] = s.dryRunGen
+			answer["metadata"] = metadata
+		} else {
+			s.realWrites++
+		}
+	}
+	_ = json.NewEncoder(w).Encode(answer)
+}
+
+// Adoption must never change what a workload runs: when the apply would move
+// metadata.generation (the server's own answer to a dry run), nothing is
+// written. Live 8 showed every stateless Deployment's generation moving after
+// adoption with no rollout.
+func TestAdoptionWritesNothingThatWouldBumpTheGeneration(t *testing.T) {
+	for name, tc := range map[string]struct {
+		dryRunGen  int64
+		wantWrites int
+	}{"the apply would bump the generation": {dryRunGen: 4, wantWrites: 0}, "the apply leaves the generation": {dryRunGen: 3, wantWrites: 1}} {
+		t.Run(name, func(t *testing.T) {
+			server := &generationServer{dryRunGen: tc.dryRunGen, live: map[string]any{
+				"apiVersion": "apps/v1", "kind": "Deployment",
+				"metadata": map[string]any{"name": "web", "namespace": "app", "uid": "u1", "resourceVersion": "7", "generation": int64(3)},
+				"spec":     map[string]any{"replicas": int64(1)},
+			}}
+			client, err := rest.UnversionedRESTClientFor(&rest.Config{
+				Host: "http://api.invalid", Transport: handlerTransport{server},
+				ContentConfig: rest.ContentConfig{NegotiatedSerializer: scheme.Codecs.WithoutConversion()},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resource := acceptedResource{client: client, path: "/apis/apps/v1/namespaces/app/deployments/web", namespaced: true}
+			ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "web"}
+			source := &unstructured.Unstructured{Object: map[string]any{
+				"apiVersion": "apps/v1", "kind": "Deployment",
+				"metadata": map[string]any{"name": "web", "namespace": "app"},
+				"spec":     map[string]any{"replicas": int64(1)},
+			}}
+			if _, err := applyAdoption(context.Background(), resource, ref, source, source); err != nil {
+				t.Fatal(err)
+			}
+			if server.realWrites != tc.wantWrites {
+				t.Fatalf("real writes = %d, want %d", server.realWrites, tc.wantWrites)
+			}
+		})
+	}
 }
