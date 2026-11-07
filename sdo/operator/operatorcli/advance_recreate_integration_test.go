@@ -186,8 +186,7 @@ func (c *immutableCluster) Apply(_ context.Context, documents []byte) error {
 			return err
 		}
 		meta, _ := document["metadata"].(map[string]any)
-		annotations, _ := meta["annotations"].(map[string]any)
-		revision, _ := annotations["sdo.dev/source-tree"].(string)
+		revision := rendered.StampedTree(meta)
 		live.observation = deployment.WorkloadObservation{ResourceID: kind + "/" + advChartNamespace + "/" + name, Revision: revision, Images: images, Ready: true}
 		if kind == "Deployment" {
 			c.reconcileDeployment(live)

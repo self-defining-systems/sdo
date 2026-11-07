@@ -229,8 +229,7 @@ func (c *advCluster) Apply(_ context.Context, documents []byte) error {
 		if err != nil {
 			return err
 		}
-		annotations, _ := meta["annotations"].(map[string]any)
-		revision, _ := annotations["sdo.dev/source-tree"].(string)
+		revision := rendered.StampedTree(meta)
 		if c.live == nil {
 			c.live = map[string]deployment.WorkloadObservation{}
 		}
