@@ -5,10 +5,12 @@ package operatorcli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +20,7 @@ import (
 	"gopkg.in/yaml.v3"
 	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -33,6 +36,7 @@ import (
 	"sdo.dev/operator/operatorcli/catalog/telemetrysources"
 	"sdo.dev/operator/operatorcli/catalog/upstreams"
 	"sdo.dev/operator/rendered"
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/upstream"
 )
 
@@ -112,9 +116,62 @@ func advWrite(t *testing.T, root string, files map[string]string) {
 }
 
 // advCluster is the Applier of a cluster that observes every workload it was
-// given: ready, at the stamped revision and the applied images.
+// given: ready, at the stamped revision and the applied images. It also keeps
+// every object it was given (applied) with the metadata.generation a real API
+// server would assign (it moves when an apply changes a spec), and the Jobs the
+// deployer applied, which it lists and deletes for the deployer's prune.
 type advCluster struct {
-	live map[string]deployment.WorkloadObservation
+	live    map[string]deployment.WorkloadObservation
+	applied map[string]*advObject
+	jobs    map[string]bool
+}
+
+type advObject struct {
+	document   map[string]any
+	generation int
+}
+
+func (c *advCluster) AppliedJobs(context.Context, string) ([]deployment.LiveObject, error) {
+	var out []deployment.LiveObject
+	for key := range c.jobs {
+		out = append(out, deployment.LiveObject{Ref: sdk.ObjectRef{APIVersion: "batch/v1", Kind: "Job", Namespace: advChartNamespace, Name: strings.TrimPrefix(key, "Job/"+advChartNamespace+"/")}, Finished: true})
+	}
+	return out, nil
+}
+
+func (c *advCluster) Delete(_ context.Context, ref sdk.ObjectRef, _ deployment.Propagation) error {
+	delete(c.jobs, ref.Kind+"/"+ref.Namespace+"/"+ref.Name)
+	return nil
+}
+
+// record keeps one applied document and bumps its generation when its spec
+// differs from the previous apply of the same object.
+func (c *advCluster) record(document map[string]any) {
+	if c.applied == nil {
+		c.applied = map[string]*advObject{}
+	}
+	meta, _ := document["metadata"].(map[string]any)
+	kind, _ := document["kind"].(string)
+	namespace, _ := meta["namespace"].(string)
+	name, _ := meta["name"].(string)
+	key := kind + "/" + namespace + "/" + name
+	previous := c.applied[key]
+	generation := 1
+	if previous != nil {
+		generation = previous.generation
+		before, _ := json.Marshal(previous.document["spec"])
+		after, _ := json.Marshal(document["spec"])
+		if string(before) != string(after) {
+			generation++
+		}
+	}
+	c.applied[key] = &advObject{document: document, generation: generation}
+	if kind == "Job" {
+		if c.jobs == nil {
+			c.jobs = map[string]bool{}
+		}
+		c.jobs[key] = true
+	}
 }
 
 func (c *advCluster) Apply(_ context.Context, documents []byte) error {
@@ -127,6 +184,11 @@ func (c *advCluster) Apply(_ context.Context, documents []byte) error {
 			return err
 		}
 		kind, _ := document["kind"].(string)
+		if copied, err := json.Marshal(document); err == nil {
+			var snapshot map[string]any
+			_ = json.Unmarshal(copied, &snapshot)
+			c.record(snapshot)
+		}
 		if !rendered.WorkloadKind(kind) {
 			continue
 		}
@@ -220,6 +282,13 @@ func agentJobs(t *testing.T, o onbOutcome) []batchv1.Job {
 }
 
 func TestAdvanceOfAnImageOnlyReleaseIsAcceptedWithoutAgentTurns(t *testing.T) {
+	advanceImageOnly(t, advChartFiles("1", "1"), advChartFiles("2", "2"), nil)
+}
+
+// advanceImageOnly onboards the chart of first and advances it to second with
+// the production Advancer, asserting the zero-agent-turn contract; check
+// receives the cluster and the accepted commit for further assertions.
+func advanceImageOnly(t *testing.T, first, second map[string]string, check func(t *testing.T, cluster *advCluster, source *contracts.DeploymentSource, root, accepted string)) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	upstreamDir := filepath.Join(t.TempDir(), "upstream")
@@ -228,7 +297,7 @@ func TestAdvanceOfAnImageOnlyReleaseIsAcceptedWithoutAgentTurns(t *testing.T) {
 	}
 	testutil.InitGit(t, upstreamDir)
 	testutil.Git(t, upstreamDir, "checkout", "-q", "-B", "main")
-	advWrite(t, upstreamDir, advChartFiles("1", "1"))
+	advWrite(t, upstreamDir, first)
 	testutil.Git(t, upstreamDir, "add", ".")
 	testutil.Git(t, upstreamDir, "commit", "-qm", "release 1")
 	release1 := strings.TrimSpace(testutil.Git(t, upstreamDir, "rev-parse", "HEAD"))
@@ -239,7 +308,7 @@ func TestAdvanceOfAnImageOnlyReleaseIsAcceptedWithoutAgentTurns(t *testing.T) {
 	}
 	source := &contracts.DeploymentSource{RendererId: "helm", Config: config}
 	plan := advPlan(t, upstreamDir, source)
-	if !strings.HasPrefix(strings.Join(plan.GetExpectedWorkloadIds(), ","), "Deployment/"+advChartNamespace+"/web,Job/"+advChartNamespace+"/migrate-*") {
+	if !slices.Contains(plan.GetExpectedWorkloadIds(), "Job/"+advChartNamespace+"/migrate-*") {
 		t.Fatalf("the proposed plan pins release-specific workload names: %v", plan.GetExpectedWorkloadIds())
 	}
 	for _, image := range plan.GetImages() {
@@ -275,7 +344,7 @@ func TestAdvanceOfAnImageOnlyReleaseIsAcceptedWithoutAgentTurns(t *testing.T) {
 	onboardingJobs := len(agentJobs(t, o))
 
 	// Upstream releases a revision that bumps both image tags only.
-	advWrite(t, upstreamDir, advChartFiles("2", "2"))
+	advWrite(t, upstreamDir, second)
 	testutil.Git(t, upstreamDir, "commit", "-qam", "release 2: images only")
 	release2 := strings.TrimSpace(testutil.Git(t, upstreamDir, "rev-parse", "HEAD"))
 
@@ -337,6 +406,9 @@ func TestAdvanceOfAnImageOnlyReleaseIsAcceptedWithoutAgentTurns(t *testing.T) {
 	if last, _, err := o.repository.LastUpstream(ctx); err != nil || last != release2 {
 		t.Errorf("accepted upstream after the advance = %q, %v; want %s", last, err, release2)
 	}
+	if check != nil {
+		check(t, cluster, source, o.accepted, head)
+	}
 }
 
 // lazyReadiness defers to the Deployer built once the repository exists.
@@ -356,4 +428,103 @@ func (l lazyReadiness) CheckLive(ctx context.Context, checkout string, plan *con
 
 func (l lazyReadiness) CheckOffline(ctx context.Context, checkout string, plan *contracts.DeploymentPlan) (lifecycle.OfflineChecks, error) {
 	return (*l.target).(lifecycle.OfflineChecker).CheckOffline(ctx, checkout, plan)
+}
+
+// advHookChartFiles is the synthetic chart of advChartFiles plus what charts
+// with install hooks bring: a pre-install hook Job named after a hash of its
+// image with the ServiceAccount and ConfigMap it needs, and a workload no
+// release touches.
+func advHookChartFiles(webTag, migrateTag string) map[string]string {
+	files := advChartFiles(webTag, migrateTag)
+	files["chart/templates/hooks.yaml"] = `apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: setup
+  annotations: {"helm.sh/hook": pre-install, "helm.sh/hook-delete-policy": before-hook-creation}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: setup
+  annotations: {"helm.sh/hook": pre-install, "helm.sh/hook-delete-policy": before-hook-creation}
+data: {mode: once}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ printf "setup-%s" (.Values.migrateTag | sha256sum | trunc 7) }}
+  annotations: {"helm.sh/hook": pre-install, "helm.sh/hook-delete-policy": "before-hook-creation,hook-succeeded"}
+spec:
+  template:
+    spec:
+      serviceAccountName: setup
+      restartPolicy: Never
+      containers:
+        - name: setup
+          image: registry.synthetic.invalid/setup:{{ .Values.migrateTag }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: store}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: store}}
+  template:
+    metadata: {labels: {app: store}}
+    spec:
+      containers:
+        - name: store
+          image: registry.synthetic.invalid/store:stable
+`
+	return files
+}
+
+// A release that renames both its hash-named Jobs (the main-phase Job and the
+// pre-install hook Job) is accepted with no agent turn, and afterwards:
+//   - the accepted inventory holds every object the deployer applied, hook
+//     phases included, so drift has no stranger to report;
+//   - the previous revision's hash-named Jobs are pruned, with nothing else;
+//   - a workload the release does not touch keeps its generation.
+func TestAdvanceAcceptsHookAndGeneratedObjectsAndPrunesSupersededJobs(t *testing.T) {
+	advanceImageOnly(t, advHookChartFiles("1", "1"), advHookChartFiles("2", "2"), func(t *testing.T, cluster *advCluster, source *contracts.DeploymentSource, root, accepted string) {
+		inventory, err := rendered.Source{Repository: root, Deployment: source, Catalog: renderers.Catalog()}.AcceptedInventory(context.Background(), accepted, advChartNamespace)
+		if err != nil {
+			t.Fatal(err)
+		}
+		known := map[string]bool{}
+		for _, object := range append(append([]*unstructured.Unstructured{}, inventory.Objects...), inventory.Hooks...) {
+			known[object.GetKind()+"/"+advChartNamespace+"/"+object.GetName()] = true
+		}
+		for key := range cluster.applied {
+			if strings.HasPrefix(key, "Job/") && !cluster.jobs[key] {
+				continue // pruned: no longer in the cluster
+			}
+			if !known[key] {
+				t.Errorf("the deployer applied %s but the accepted inventory does not hold it: drift would report it absent from accepted source", key)
+			}
+		}
+		for _, hook := range []string{"ServiceAccount/%s/setup", "ConfigMap/%s/setup"} {
+			if key := fmt.Sprintf(hook, advChartNamespace); !known[key] {
+				t.Errorf("hook object %s is not in the accepted inventory", key)
+			}
+		}
+		var jobs []string
+		for key := range cluster.jobs {
+			jobs = append(jobs, key)
+		}
+		slices.Sort(jobs)
+		if len(jobs) != 2 {
+			t.Fatalf("Jobs after the advance = %v, want only release 2's migrate and setup Jobs", jobs)
+		}
+		for _, key := range jobs {
+			if !known[key] {
+				t.Errorf("live Job %s is not accepted (an old name was not pruned)", key)
+			}
+		}
+		for _, id := range []string{"Deployment/" + advChartNamespace + "/store"} {
+			if got := cluster.applied[id]; got == nil || got.generation != 1 {
+				t.Errorf("%s generation = %+v, want 1: an advance must not change a workload it does not touch", id, got)
+			}
+		}
+	})
 }

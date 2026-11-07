@@ -12,6 +12,7 @@ import (
 )
 
 var _ Recreator = CommandBackend{}
+var _ Pruner = CommandBackend{}
 
 // ImmutableConflicts server-side dry-run applies documents with Apply's field
 // manager and returns the objects the API server refuses for an immutable
@@ -44,6 +45,40 @@ func (b CommandBackend) Get(ctx context.Context, ref sdk.ObjectRef) (LiveObject,
 		return LiveObject{}, false, fmt.Errorf("decode %s/%s: %w", ref.Kind, ref.Name, err)
 	}
 	return liveObject(object), true, nil
+}
+
+// AppliedJobs implements Pruner: the Jobs whose managed fields name the
+// deployer's field manager as an applier and that carry its source-tree stamp.
+func (b CommandBackend) AppliedJobs(ctx context.Context, namespace string) ([]LiveObject, error) {
+	args := b.kubectlArgs("get", "jobs", "--namespace", namespace, "--show-managed-fields", "--output=json")
+	output, err := b.run(ctx, b.kubectl(), args, nil)
+	if err != nil {
+		return nil, fmt.Errorf("list jobs in %s: %w: %s", namespace, err, strings.TrimSpace(string(output)))
+	}
+	var list map[string]any
+	if err := json.Unmarshal(output, &list); err != nil {
+		return nil, fmt.Errorf("decode jobs in %s: %w", namespace, err)
+	}
+	var out []LiveObject
+	for _, raw := range objectSlice(list, "items") {
+		item, _ := raw.(map[string]any)
+		metadata := objectMap(item, "metadata")
+		if objectString(objectMap(metadata, "annotations"), "sdo.dev/source-tree") == "" || !appliedByDeployer(metadata) {
+			continue
+		}
+		out = append(out, liveObject(item))
+	}
+	return out, nil
+}
+
+func appliedByDeployer(metadata map[string]any) bool {
+	for _, raw := range objectSlice(metadata, "managedFields") {
+		entry, _ := raw.(map[string]any)
+		if objectString(entry, "manager") == "sdo-deployer" && objectString(entry, "operation") == "Apply" {
+			return true
+		}
+	}
+	return false
 }
 
 // Dependents implements Recreator.
