@@ -8,6 +8,7 @@ import (
 	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"log/slog"
 	"reflect"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
@@ -414,6 +415,15 @@ func applyAdoption(ctx context.Context, resource acceptedResource, ref sdk.Objec
 	// SDO's bookkeeping.
 	if live, err := resource.get(ctx, ref); err == nil {
 		source = carryOwnedOmissions(carrySourceTreeStamp(source, live), live)
+		// Adoption claims ownership; it never changes what the object is. The
+		// server's dry run says whether this apply would move
+		// metadata.generation (a spec field removed or changed: fields inside
+		// list items are not carried above). Such a write is skipped and the
+		// object left as the deployer applied it.
+		if preview, err := resource.apply(ctx, ref, source, true); err == nil && live.GetGeneration() > 0 && preview.GetGeneration() > live.GetGeneration() {
+			slog.Warn("adoption_skipped_spec_change", "kind", ref.Kind, "name", ref.Name, "live_generation", live.GetGeneration(), "would_be_generation", preview.GetGeneration())
+			return live, nil
+		}
 	}
 	for attempt := 1; ; attempt++ {
 		applied, err := resource.apply(ctx, ref, source, false)
