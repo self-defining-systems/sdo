@@ -176,6 +176,7 @@ func controllerAdvancer(launch *contracts.ControllerConfig, operatorRoot string,
 		Designer:    designerRefresh{launch: launch, operatorRoot: operatorRoot, repository: repository},
 		Deployer:    deployerCorrection{launch: launch, operatorRoot: operatorRoot, repository: repository},
 		Maintenance: maintenance,
+		Now:         processio.Now,
 		Activity:    controllerActivity{Client: client, Namespace: controlNamespace(launch), Application: namespace},
 	}
 	return advancer, lifecycle.AdvanceConfig{Namespace: namespace, GitDir: filepath.Join(launch.GetAppRoot(), ".git")}, maintenance, nil
