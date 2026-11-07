@@ -68,6 +68,7 @@ class Config:
     python_go_consumers: list[str]
     python_shards: dict[str, list[str]]
     go_cli_shard: list[str]
+    go_validate_gate_tests: list[str]
 
     def __post_init__(self) -> None:
         for name in ("full_suite", "go_workspace_modules", "go_binaries", "python_go_consumers"):
@@ -450,10 +451,24 @@ def go_shard_of(directory: str, config: Config) -> str:
     return "rest"
 
 
+# The ``gate`` shard runs the memory validator package too, restricted to go_validate_gate_tests;
+# the ``validate`` shard runs the rest of that package. A package cannot be split any other way.
+SHARD_PACKAGE_OWNER = {"gate": "validate"}
+
+
 def shard_go_packages(plan: Plan, config: Config, shard: str) -> list[str]:
-    """The ``go test`` patterns one Go shard runs; ``validate`` is the memory validator alone and
-    ``cli`` the directories (and subdirectories) listed in ``go_cli_shard``."""
-    return [f"./{d}" for d in plan.go_packages if go_shard_of(d, config) == shard]
+    """The ``go test`` patterns one Go shard runs; ``validate`` and ``gate`` share the memory validator
+    package and ``cli`` is the directories (and subdirectories) listed in ``go_cli_shard``."""
+    owner = SHARD_PACKAGE_OWNER.get(shard, shard)
+    return [f"./{d}" for d in plan.go_packages if go_shard_of(d, config) == owner]
+
+
+def go_test_filter(config: Config, shard: str) -> tuple[str, str] | None:
+    """The ``go test`` flag (``-run`` or ``-skip``) and regexp that split the validator package."""
+    if shard not in ("validate", "gate") or not config.go_validate_gate_tests:
+        return None
+    names = "|".join(re.escape(name) for name in config.go_validate_gate_tests)
+    return ("-run", f"^({names})$") if shard == "gate" else ("-skip", f"^({names})$")
 
 
 def partition_go_packages(listing: str, root: Path, config: Config, shard: str) -> list[str]:
@@ -509,6 +524,8 @@ def main(argv: list[str] | None = None) -> int:
             cmd.add_argument("--shard", required=True)
         if name == "skip":
             cmd.add_argument("--kind", choices=["go", "python"], required=True)
+    filter_cmd = sub.add_parser("go-test-filter")
+    filter_cmd.add_argument("--shard", required=True)
     partition_cmd = sub.add_parser("partition-go")
     partition_cmd.add_argument("--shard", required=True)
     partition_cmd.add_argument("--root", type=Path, default=ROOT)
@@ -519,6 +536,12 @@ def main(argv: list[str] | None = None) -> int:
     miss_cmd.add_argument("--pytest-log", type=Path)
     args = parser.parse_args(argv)
     config = Config.load()
+
+    if args.command == "go-test-filter":
+        chosen_filter = go_test_filter(config, args.shard)
+        if chosen_filter:
+            print(*chosen_filter, sep="\n")
+        return 0
 
     if args.command == "partition-go":
         print("\n".join(partition_go_packages(sys.stdin.read(), args.root, config, args.shard)))

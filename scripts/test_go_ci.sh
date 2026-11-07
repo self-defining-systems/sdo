@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # All modules use Go's content-addressed compiler/module caches. No per-module
 # cache or serial preparation job; package parallelism uses the runner's CPUs.
-# Usage: test_go_ci.sh [pr|nightly] [validate|cli|rest]
-# The optional shard splits the PR run across three hosted jobs. "validate" is the
-# memory validator, whose compiler-backed tests dominate wall time; "cli" is the
+# Usage: test_go_ci.sh [pr|nightly] [validate|gate|cli|rest]
+# The optional shard splits the PR run across four hosted jobs. "validate" and "gate" are
+# the memory validator package, whose compiler-backed tests dominate wall time: "gate" runs
+# only go_validate_gate_tests and "validate" the rest (a package splits no other way); "cli" is the
 # directories named in go_cli_shard of .github/ci_selection.json (the operator CLI
 # and the envtest-backed packages, chosen by measured duration); "rest" is every
 # other package. Without a shard, one invocation schedules every package.
@@ -20,11 +21,6 @@ else
     # -short skips the few tests that compile generated programs for 10 s or more
     # (they call testing.Short); nightly runs them. Every fuzz seed still runs here.
     args+=(-short)
-    # Quarantined flaky tests (.github/ci_quarantine.json) run in the nightly tier only.
-    quarantined="$(python3 "$root/scripts/ci_quarantine.py" go-skip)"
-    if [[ -n "$quarantined" ]]; then
-        args+=(-skip "$quarantined")
-    fi
 fi
 # A temporary workspace lets one go test invocation schedule packages across
 # module boundaries, rather than waiting for each module's slowest test.
@@ -46,6 +42,7 @@ patterns=()
     echo ')'
 } > "$GOWORK"
 cd "$root"
+shard="${2:-}"
 validate_pattern="./sdo/operator/memory/validate"
 # A pull request run names the packages its changes can affect (scripts/ci_select.py);
 # without a plan, or when the plan is the full suite, every package runs.
@@ -60,7 +57,7 @@ if [[ -n "${SDO_CI_PLAN:-}" && "$(python3 scripts/ci_select.py mode --plan "$SDO
 fi
 case "${2:-}" in
     "" | selected) ;;
-    validate) patterns=("$validate_pattern") ;;
+    validate | gate) patterns=("$validate_pattern") ;;
     rest | cli)
         # The package list is fixed here; go test then schedules it as one run.
         mapfile -t patterns < <(go list -tags=integration -f '{{.ImportPath}} {{.Dir}}' "${patterns[@]}" |
@@ -69,6 +66,20 @@ case "${2:-}" in
         ;;
     *) echo "unknown Go test shard: $2" >&2; exit 2 ;;
 esac
+if [[ "${1:-pr}" != nightly ]]; then
+    # Quarantined flaky tests (.github/ci_quarantine.json) run in the nightly tier only.
+    skip="$(python3 "$root/scripts/ci_quarantine.py" go-skip)"
+    # The validator package is split by test between the validate and gate shards.
+    mapfile -t split < <(python3 scripts/ci_select.py go-test-filter --shard "$shard")
+    if [[ ${#split[@]} -eq 2 && ${split[0]} == -run ]]; then
+        args+=(-run "${split[1]}")
+    elif [[ ${#split[@]} -eq 2 ]]; then
+        skip="${skip:+$skip|}${split[1]}"
+    fi
+    if [[ -n "$skip" ]]; then
+        args+=(-skip "$skip")
+    fi
+fi
 # Nested builder tests must select their own isolated modules.
 # SDO_GO_TEST_LOG keeps the JSON stream for scripts/check_slow_tests.py.
 if [[ -n "${SDO_GO_TEST_LOG:-}" ]]; then

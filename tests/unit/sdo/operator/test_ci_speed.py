@@ -30,7 +30,7 @@ def test_pr_ci_shards_are_fixed_small_and_never_skipped_by_path() -> None:
     assert set(config["jobs"]) == {"checks", "python", "tests", "required-pr-ci"}
     assert "merge_group" in config.get("on", config.get(True, {}))
     assert config["jobs"]["python"]["strategy"]["matrix"]["shard"] == ["core", "adapter", "fastloop"]
-    assert config["jobs"]["tests"]["strategy"]["matrix"]["shard"] == ["validate", "cli", "rest"]
+    assert config["jobs"]["tests"]["strategy"]["matrix"]["shard"] == ["validate", "gate", "cli", "rest"]
     for name, job in config["jobs"].items():
         assert job.get("strategy", {}).get("fail-fast", False) is False
         if name != "required-pr-ci":
@@ -82,7 +82,7 @@ def test_python_shards_cover_every_test_path_and_gate_combined_coverage() -> Non
     assert uploads[0]["with"]["name"] == "coverage-${{ matrix.shard }}"
 
 
-@pytest.mark.parametrize("shard", ["validate", "cli", "rest"])
+@pytest.mark.parametrize("shard", ["validate", "gate", "cli", "rest"])
 def test_go_shards_partition_the_pr_packages(tmp_path: Path, shard: str) -> None:
     calls = tmp_path / "calls"
     command = tmp_path / "go"
@@ -106,8 +106,11 @@ def test_go_shards_partition_the_pr_packages(tmp_path: Path, shard: str) -> None
     test = [shlex.split(line) for line in calls.read_text().splitlines() if line.startswith("test ")]
     assert len(test) == 1
     packages = [a for a in test[0] if a.startswith(("./", "sdo.dev/"))]
-    if shard == "validate":
+    if shard in ("validate", "gate"):
         assert packages == ["./sdo/operator/memory/validate"]
+        gate = json.loads((ROOT / ".github/ci_selection.json").read_text())["go_validate_gate_tests"]
+        flag = "-run" if shard == "gate" else "-skip"
+        assert test[0][test[0].index(flag) + 1] == f"^({'|'.join(gate)})$"
     elif shard == "cli":
         assert packages == ["sdo.dev/operator/operatorcli"]
     else:

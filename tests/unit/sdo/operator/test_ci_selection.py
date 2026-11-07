@@ -53,6 +53,7 @@ CONFIG = {
     "python_go_consumers": ["tests/unit/test_tool.py"],
     "python_shards": {"slow": ["tests/unit/slow/**"]},
     "go_cli_shard": ["goa/cli"],
+    "go_validate_gate_tests": ["TestHeavy", "TestOther"],
 }
 
 FILES = {
@@ -205,6 +206,25 @@ def test_go_shards_partition_every_package_exactly_once(config: select.Config) -
     listing = "".join(f"m/{d} {root / d}\n" for d in dirs)
     chosen = [select.partition_go_packages(listing, root, config, s) for s in ("validate", "cli", "rest")]
     assert sorted(sum(chosen, [])) == sorted(f"m/{d}" for d in dirs)
+
+
+def test_validator_package_is_split_by_test_between_validate_and_gate(config: select.Config) -> None:
+    validator = select.Plan(go_packages=[select.VALIDATE_DIR])
+    for shard in ("validate", "gate"):
+        assert select.shard_go_packages(validator, config, shard) == [f"./{select.VALIDATE_DIR}"]
+        assert select.shard_go_packages(validator, config, "rest") == []
+    assert select.go_test_filter(config, "gate") == ("-run", "^(TestHeavy|TestOther)$")
+    assert select.go_test_filter(config, "validate") == ("-skip", "^(TestHeavy|TestOther)$")
+    assert select.go_test_filter(config, "rest") is None
+    assert select.go_test_filter(config, "cli") is None
+
+
+def test_the_real_gate_tests_exist_in_the_validator_package() -> None:
+    names = select.Config.load(ROOT).go_validate_gate_tests
+    assert names
+    source = "\n".join(p.read_text() for p in (ROOT / select.VALIDATE_DIR).glob("*_test.go"))
+    for name in names:
+        assert re.search(rf"^func {name}\(t \*testing\.T\)", source, re.MULTILINE), name
 
 
 def test_the_real_cli_shard_names_existing_directories() -> None:

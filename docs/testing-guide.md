@@ -1007,8 +1007,8 @@ The stop simulation continues using virtual time for production wait adapters.
 ### PR CI budget
 
 PRs and merge groups run `static checks`, two `Python tests` shards (`core`, and
-`fastloop`, split by `SDO_PYTEST_SHARD` in `test_python.sh`), three `Go tests` shards
-(`validate`, the compiler-backed memory validator, `cli`, the operator CLI and envtest packages named in `go_cli_shard`, and `rest`; `test_go_ci.sh pr <shard>`),
+`fastloop`, split by `SDO_PYTEST_SHARD` in `test_python.sh`), four `Go tests` shards
+(`validate` and `gate`, the compiler-backed memory validator package split by test (`go_validate_gate_tests` in `ci_selection.json` runs in `gate`, the rest in `validate`; a package cannot be split any other way), `cli`, the operator CLI and envtest packages named in `go_cli_shard`, and `rest`; `test_go_ci.sh pr <shard>`),
 and `Required PR CI`. Shards are independent jobs that each build from the Go
 caches (no compiler artifact transfer); every job has a five-minute cap and
 targets about three minutes. Every cache restore (cache actions and setup-uv) is bounded by
