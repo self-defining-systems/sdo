@@ -3,6 +3,7 @@
 package integration
 
 import (
+	kclock "k8s.io/utils/clock"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -382,7 +383,7 @@ func rehearse(t *testing.T, in rehearsalInput) rehearsal.Report {
 	// starts after onboarding. It reads the maintenance ConfigMap and
 	// acknowledges a pause through the controller's own types.
 	acker := sdoruntime.MaintenanceAcker{Client: client, Namespace: onbControl}
-	watcher := sdoruntime.MaintenanceWatcher{Client: client, Namespace: onbControl, Name: sdoruntime.MaintenanceConfigMapName}
+	watcher := sdoruntime.MaintenanceWatcher{Clock: rehearsalWatchClock{now: clock.Now}, Client: client, Namespace: onbControl, Name: sdoruntime.MaintenanceConfigMapName}
 	drain := in.DrainTicks
 	if drain == 0 {
 		drain = 3
@@ -763,3 +764,13 @@ func TestReplayRehearsalFromInput(t *testing.T) {
 		}
 	}
 }
+
+// rehearsalWatchClock gives the controller's maintenance watcher the
+// rehearsal's time, so a pause's deadline is judged on the same clock that
+// stamped it. Polling is not used (the model reads once per wait).
+type rehearsalWatchClock struct {
+	kclock.WithTicker
+	now func() time.Time
+}
+
+func (c rehearsalWatchClock) Now() time.Time { return c.now() }
