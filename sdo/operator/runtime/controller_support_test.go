@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	goruntime "runtime"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
 	"sync"
@@ -102,6 +103,21 @@ func awaitDispatchCompletionQueued(t *testing.T, controller *Controller) {
 	// own consumption, and the channel receive synchronizes with the worker.
 	result := <-controller.results
 	controller.results <- result
+}
+
+// awaitEffectGoroutines joins the goroutines an executed effect started. The
+// closure handoff calls the broker on one, so a stepping loop that does not
+// wait can finish all its steps before the broker is ever called. Results stay
+// queued in their channels for the next step to consume.
+func awaitEffectGoroutines(controller *Controller) { controller.Wait() }
+
+// runOnOneProcessor makes a stepping loop's scheduling worst-case: a goroutine
+// the loop does not wait for runs only when the loop blocks. A loop that races
+// a controller goroutine fails here every time instead of once under CI load.
+func runOnOneProcessor(t *testing.T) {
+	t.Helper()
+	previous := goruntime.GOMAXPROCS(1)
+	t.Cleanup(func() { goruntime.GOMAXPROCS(previous) })
 }
 
 func executePendingEffect(t *testing.T, controller *Controller) {

@@ -223,6 +223,7 @@ func (d *handRestartDispatcher) Dispatch(_ context.Context, request IncidentRequ
 // request. A responder restarts the marked store by hand, health clears, and
 // the closure must still commit unconfirmed, with verify saying why.
 func TestResponderRestartOfDataStoreInOnboardedNamespaceIsNotVerified(t *testing.T) {
+	runOnOneProcessor(t)
 	ctx := context.Background()
 	opened := dataRiskOpened
 	store := newRestartedStore(opened)
@@ -267,6 +268,7 @@ func TestResponderRestartOfDataStoreInOnboardedNamespaceIsNotVerified(t *testing
 			if err := controller.ExecuteClosureEffect(ctx, effect); err != nil {
 				t.Fatal(err)
 			}
+			awaitEffectGoroutines(controller)
 		}
 		now = now.Add(time.Second)
 		store.mu.Lock()
