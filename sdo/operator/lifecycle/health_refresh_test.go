@@ -18,7 +18,7 @@ func refreshRevision() memory.HealthRevision {
 func deployedSource() *broker.AcceptedSource {
 	return &broker.AcceptedSource{Evidence: broker.SourceEvidence{
 		DeploymentSource: &contracts.DeploymentSource{}, BaseTree: "tree", EffectiveTree: "effective", PatchesDigest: "patches", ObservedRevision: "effective",
-		RenderDigest: "render", EnvDigest: "env", Images: []string{"img"}, ResourceIDs: []string{"deployment/app"}, Ready: true,
+		RenderDigest: "render", EnvDigest: "env", Images: []string{"img"}, ResourceIDs: []string{"deployment/app"}, Ready: true, AcceptedCommit: "deployed-commit",
 	}}
 }
 

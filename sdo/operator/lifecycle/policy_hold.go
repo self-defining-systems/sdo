@@ -75,16 +75,22 @@ type PolicyChecker interface {
 // AcceptedPolicyHold is the check every controller start runs, refresh or not:
 // it returns the typed hold when the accepted deployment violates the policy in
 // force, nil when it does not or nothing was deployed, and an error only for a
-// failure of the check itself.
+// failure of the check itself. The check binds to the commit the deployment
+// evidence is recorded at, not to the accepted HEAD: memory commits (the
+// judge's, a reflection's) follow the deployment and change the tree.
 func AcceptedPolicyHold(ctx context.Context, accepted interface {
 	AcceptedSourceEvidence(context.Context) (broker.AcceptedSource, bool, error)
-}, checker PolicyChecker, commit, namespace string) (*PolicyRefusedError, error) {
+}, checker PolicyChecker, namespace string) (*PolicyRefusedError, error) {
 	source, found, err := accepted.AcceptedSourceEvidence(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("accepted deployment evidence: %w", err)
 	}
 	if !found {
 		return nil, nil
+	}
+	commit := source.Evidence.AcceptedCommit
+	if commit == "" {
+		return nil, errors.New("accepted deployment evidence names no accepted commit")
 	}
 	err = checker.CheckAcceptedPolicy(ctx, commit, namespace, deploymentFromBroker(source.Evidence))
 	var refused *PolicyRefusedError

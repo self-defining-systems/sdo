@@ -62,9 +62,15 @@ func TestHealthRefreshUnderATightenedPolicyIsATypedHold(t *testing.T) {
 	}
 }
 
-type policyChecker struct{ err error }
+type policyChecker struct {
+	err    error
+	commit *string
+}
 
-func (p policyChecker) CheckAcceptedPolicy(context.Context, string, string, lifecycle.DeploymentReceipt) error {
+func (p policyChecker) CheckAcceptedPolicy(_ context.Context, commit, _ string, _ lifecycle.DeploymentReceipt) error {
+	if p.commit != nil {
+		*p.commit = commit
+	}
 	return p.err
 }
 
@@ -81,21 +87,35 @@ func (a acceptedSource) AcceptedSourceEvidence(context.Context) (broker.Accepted
 // evidence and the policy.
 func TestAcceptedPolicyHold(t *testing.T) {
 	ctx := context.Background()
-	hold, err := lifecycle.AcceptedPolicyHold(ctx, acceptedSource{}, policyChecker{err: policyViolation()}, "commit", "ns")
+	hold, err := lifecycle.AcceptedPolicyHold(ctx, acceptedSource{}, policyChecker{err: policyViolation()}, "ns")
 	if hold != nil || err != nil {
 		t.Fatalf("hold=%v err=%v, want nothing to check on a seeded install", hold, err)
 	}
-	hold, err = lifecycle.AcceptedPolicyHold(ctx, acceptedSource{deployedSource()}, policyChecker{}, "commit", "ns")
+	hold, err = lifecycle.AcceptedPolicyHold(ctx, acceptedSource{deployedSource()}, policyChecker{}, "ns")
 	if hold != nil || err != nil {
 		t.Fatalf("hold=%v err=%v, want a deployment within the policy to pass", hold, err)
 	}
-	hold, err = lifecycle.AcceptedPolicyHold(ctx, acceptedSource{deployedSource()}, policyChecker{err: policyViolation()}, "commit", "ns")
+	hold, err = lifecycle.AcceptedPolicyHold(ctx, acceptedSource{deployedSource()}, policyChecker{err: policyViolation()}, "ns")
 	if err != nil || hold == nil {
 		t.Fatalf("hold=%v err=%v, want a typed hold", hold, err)
 	}
 	requirePolicyHold(t, hold)
 	boom := errors.New("git unavailable")
-	if hold, err = lifecycle.AcceptedPolicyHold(ctx, acceptedSource{deployedSource()}, policyChecker{err: boom}, "commit", "ns"); hold != nil || !errors.Is(err, boom) {
+	if hold, err = lifecycle.AcceptedPolicyHold(ctx, acceptedSource{deployedSource()}, policyChecker{err: boom}, "ns"); hold != nil || !errors.Is(err, boom) {
 		t.Fatalf("hold=%v err=%v, want the check's own failure returned", hold, err)
+	}
+}
+
+// Memory commits follow the deployment (the judge's, a reflection's), so the
+// accepted HEAD's tree differs from the deployed one: the check binds to the
+// commit the evidence is recorded at, or a freshly onboarded lane would never
+// get its start-time policy check.
+func TestAcceptedPolicyHoldChecksTheDeployedCommit(t *testing.T) {
+	var checked string
+	if hold, err := lifecycle.AcceptedPolicyHold(context.Background(), acceptedSource{deployedSource()}, policyChecker{commit: &checked}, "ns"); hold != nil || err != nil {
+		t.Fatalf("hold=%v err=%v", hold, err)
+	}
+	if checked != "deployed-commit" {
+		t.Fatalf("checked commit %q, want the evidence's accepted commit", checked)
 	}
 }
