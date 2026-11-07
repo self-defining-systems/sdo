@@ -9,7 +9,7 @@ Every rule names the validator rule IDs that enforce it. The detector and playbo
   files, outcomes, and metadata. A stray file is rejected; move or delete it. Enforced by: `layout.unknown-path`.
 - Memory holds regular files only: no symlinks, sockets, or directories posing as files. Enforced by:
   `layout.symlink`, `layout.not-regular`.
-- File names must not look like secrets, and a file stays under 256 KiB. Never write credentials into memory.
+- File names under `.sdo/` must not look like secrets (upstream application source is not judged by name), and a file stays under 256 KiB. Never write credentials into memory.
   Enforced by: `layout.secret-path`, `layout.too-large`.
 - YAML, front matter, and Go files parse. Enforced by: `yaml.parse`, `document.parse`, `go.syntax`.
 - Logical IDs follow their patterns (playbooks `^[a-z][a-z0-9_-]*$`, detectors `^[a-z0-9][a-z0-9_.-]*$`) and are

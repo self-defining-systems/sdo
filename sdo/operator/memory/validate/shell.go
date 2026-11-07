@@ -61,15 +61,12 @@ func ShellHygiene(ctx context.Context, root string) ([]Diagnostic, error) {
 			return e
 		}
 		rel = filepath.ToSlash(rel)
-		for _, part := range strings.Split(rel, "/") {
-			lower := strings.ToLower(part)
-			if lower == ".git" || lower == ".env" || strings.Contains(lower, "secret") {
-				add(RuleSecretPath, rel, "credential-bearing paths are forbidden")
-				if entry.IsDir() {
-					return filepath.SkipDir
-				}
-				return nil
+		if _, bad := secretPathPart(rel); bad {
+			add(RuleSecretPath, rel, "credential-bearing paths are forbidden")
+			if entry.IsDir() {
+				return filepath.SkipDir
 			}
+			return nil
 		}
 		if entry.Type()&fs.ModeSymlink != 0 {
 			add(RuleSymlink, rel, "symlinks are forbidden in operational memory")
