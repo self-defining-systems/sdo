@@ -75,15 +75,20 @@ type advWorld struct {
 	offlineSeq [][]operability.Check
 	// unused is reported as the first offline check's unused image
 	// declarations.
-	unused []string
-	correct    func(call int, plan *contracts.DeploymentPlan) (rejection string, err error)
-	corrected  []*contracts.DeploymentPlan
+	unused    []string
+	correct   func(call int, plan *contracts.DeploymentPlan) (rejection string, err error)
+	corrected []*contracts.DeploymentPlan
 	// keepOnPatchHold keeps the advance checkout when the proposal reports a
 	// patch hold, as the broker does for a deployment agent to correct it.
 	keepOnPatchHold bool
 	candidateNow    string
 	// checkRejection is what CheckAdvance reports (the publication validation).
 	checkRejection string
+	// ackAfter is how many Acknowledged polls answer "not yet" after the
+	// pause; neverAck keeps answering so.
+	ackAfter, ackPolls int
+	neverAck           bool
+	ackErr             error
 
 	applied   lifecycle.DeploymentReceipt
 	proposed  map[string]bool
@@ -231,6 +236,21 @@ func (w *advWorld) shape(_ context.Context, root, revision string, source *contr
 func (w *advWorld) Pause(_ context.Context, reason string) error {
 	w.log("pause")
 	return nil
+}
+
+func (w *advWorld) Acknowledged(context.Context) (bool, error) {
+	if w.ackErr != nil {
+		return false, w.ackErr
+	}
+	if w.neverAck || w.ackPolls < w.ackAfter {
+		w.ackPolls++
+		w.log("unacknowledged")
+		return false, nil
+	}
+	if w.ackAfter > 0 {
+		w.log("acknowledged")
+	}
+	return true, nil
 }
 
 func (w *advWorld) Resume(context.Context) error {
@@ -1034,5 +1054,93 @@ func TestAdvanceFiringPastTheSettleWindowIsTheCandidatesRegression(t *testing.T)
 // causeFailure is an apply failure the live checks classify as its cause.
 type causeFailure operability.Cause
 
-func (c causeFailure) Error() string             { return "synthetic apply failure: " + string(c) }
+func (c causeFailure) Error() string            { return "synthetic apply failure: " + string(c) }
 func (c causeFailure) Cause() operability.Cause { return operability.Cause(c) }
+
+// The pause is a barrier: the controller acknowledges it only after its
+// in-flight evaluation drained, so nothing is applied, and the controller's
+// activity is not read, before that.
+func TestAdvanceAppliesOnlyAfterTheControllerAcknowledgesThePause(t *testing.T) {
+	w := newAdvWorld(t)
+	w.ackAfter = 3
+	result, err := w.run(t)
+	if err != nil || result.Outcome != lifecycle.AdvanceAccepted {
+		t.Fatalf("result = %+v, err = %v", result, err)
+	}
+	pause := slices.Index(w.events, "pause")
+	ack := slices.Index(w.events, "acknowledged")
+	apply := slices.Index(w.events, "apply")
+	if pause < 0 || ack != pause+4 || apply != ack+1 || count(w.events, "unacknowledged") != 3 {
+		t.Fatalf("events = %q", w.events)
+	}
+}
+
+// A controller that never acknowledges (down, or detecting inside a long pass)
+// is not raced: the advance defers, applies nothing, and detection resumes.
+func TestAdvanceDefersWhenThePauseIsNeverAcknowledged(t *testing.T) {
+	w := newAdvWorld(t)
+	w.neverAck = true
+	started := w.clock
+	result, err := w.run(t)
+	if err != nil || result.Outcome != lifecycle.AdvanceDeferred || result.FollowerOutcome().Kind != upstream.Retry {
+		t.Fatalf("result = %+v, err = %v", result, err)
+	}
+	if !strings.Contains(result.Detail, "acknowledge") {
+		t.Fatalf("detail = %q", result.Detail)
+	}
+	if count(w.events, "apply") != 0 || count(w.events, "resume") != 1 || count(w.events, "release") != 1 || len(w.published) != 0 {
+		t.Fatalf("events = %q", w.events)
+	}
+	if waited := w.clock.Sub(started); waited != lifecycle.DefaultPauseAckTimeout {
+		t.Fatalf("waited %v on the injected clock, want the %v bound", waited, lifecycle.DefaultPauseAckTimeout)
+	}
+}
+
+func TestAdvanceDoesNotApplyWhenTheAcknowledgementCannotBeRead(t *testing.T) {
+	w := newAdvWorld(t)
+	w.ackErr = errors.New("API unavailable")
+	if _, err := w.run(t); err == nil || !strings.Contains(err.Error(), "API unavailable") {
+		t.Fatalf("err = %v", err)
+	}
+	if count(w.events, "apply") != 0 || count(w.events, "resume") != 1 {
+		t.Fatalf("events = %q", w.events)
+	}
+}
+
+// The maintenance window always ends: accepted, held at any stage after the
+// pause, deferred, or failed, resume runs once and last.
+func TestAdvanceMaintenanceAlwaysResumes(t *testing.T) {
+	for name, mutate := range map[string]func(*advWorld){
+		"accepted":      func(*advWorld) {},
+		"rollout hold":  func(w *advWorld) { w.applyErrs = []error{errors.New("workload toy not ready")} },
+		"health hold":   func(w *advWorld) { w.verdicts = []lifecycle.HealthVerdict{judgeFiring} },
+		"busy":          func(w *advWorld) { w.busy = "incident open" },
+		"unacked":       func(w *advWorld) { w.neverAck = true },
+		"publish fails": func(w *advWorld) { w.publishErr = errors.New("broker down") },
+		"live check":    func(w *advWorld) { w.live = failLive("O1.ready", operability.CauseRollout) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newAdvWorld(t)
+			mutate(w)
+			config := advConfig
+			config.SettleWindow = time.Second
+			_, _ = w.advancer().Advance(context.Background(), config, advRequest(t))
+			if count(w.events, "pause") != 1 || count(w.events, "resume") != 1 || slices.Index(w.events, "resume") < slices.Index(w.events, "pause") {
+				t.Fatalf("events = %q", w.events)
+			}
+			if w.events[len(w.events)-1] != "resume" && !strings.HasPrefix(w.events[len(w.events)-1], "release") {
+				t.Fatalf("nothing but a release may follow the resume: %q", w.events)
+			}
+		})
+	}
+	// An interrupted run still resumes.
+	w := newAdvWorld(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	w.neverAck = true
+	a := w.advancer()
+	a.Wait = func(context.Context, time.Duration) error { cancel(); return ctx.Err() }
+	_, _ = a.Advance(ctx, advConfig, advRequest(t))
+	if count(w.events, "resume") != 1 {
+		t.Fatalf("an interrupted advance left detection suspended: %q", w.events)
+	}
+}

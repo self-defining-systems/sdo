@@ -117,7 +117,8 @@ const advanceMaintenancePrefix = "upstream-advance-"
 // advanceMaintenance pauses and resumes controller evaluation around an
 // advance through the existing maintenance ConfigMap (install.SetMaintenance).
 // The pause stops observing the application namespace, so the rollout is
-// never an incident and the controller relists the new state on resume.
+// never an incident and the controller relists the new state on resume. It is
+// in force only once the controller acknowledged it (Acknowledged).
 type advanceMaintenance struct {
 	Client    kubernetes.Interface
 	Namespace string
@@ -153,6 +154,33 @@ func (m advanceMaintenance) Pause(ctx context.Context, _ string) error {
 		return errors.New("controller maintenance is paused by another owner")
 	}
 	return install.SetMaintenance(ctx, m.Client, m.Namespace, true, m.generation("paused"))
+}
+
+// Acknowledged reports whether the controller recorded the generation of the
+// pause this follower declared: it observes nothing and drained its in-flight
+// evaluation. A pause that is not ours, or no longer in force, is never
+// acknowledged.
+func (m advanceMaintenance) Acknowledged(ctx context.Context) (bool, error) {
+	configMaps := m.Client.CoreV1().ConfigMaps(m.Namespace)
+	maintenance, err := configMaps.Get(ctx, install.MaintenanceConfigMap, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read controller maintenance: %w", err)
+	}
+	generation := strings.TrimSpace(maintenance.Data["generation"])
+	if strings.TrimSpace(maintenance.Data["state"]) != "paused" || !strings.HasPrefix(generation, advanceMaintenancePrefix) {
+		return false, nil
+	}
+	ack, err := configMaps.Get(ctx, install.MaintenanceAckConfigMap, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read controller maintenance acknowledgement: %w", err)
+	}
+	return strings.TrimSpace(ack.Data["generation"]) == generation, nil
 }
 
 func (m advanceMaintenance) Resume(ctx context.Context) error {

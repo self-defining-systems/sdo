@@ -371,6 +371,14 @@ func (c *Controller) beatLocked() {
 	c.mu.Unlock()
 }
 
+// DrainObservation returns once every pass that was observing has finished. A
+// maintenance pause is acknowledged only after it: an evaluation that began
+// before the pause still completes (and may open its incident) first, and none
+// starts after, because the run loop observes nothing while paused.
+func (c *Controller) DrainObservation() {
+	c.lockObservation("pause_barrier")()
+}
+
 // stepPaused advances only work belonging to an already accepted closure. A
 // maintenance pause suspends observation/admission, not the report deadline or
 // outcome and reflection bookkeeping. Persist before exposing broker effects.

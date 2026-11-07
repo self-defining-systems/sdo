@@ -138,6 +138,13 @@ recreates, objects left over from earlier releases, drift findings, generation c
 that moved), operability report validity and duplicate check IDs, as `rehearsal.json` and `rehearsal.txt`
 (`SDO_REHEARSAL_OUT=<dir>`).
 
+The controller's detector and incident loop is modeled by `internal/rehearsal.ControllerModel` (one pass per injected wait,
+two generic detectors: a Service with no ready pod, a workload below its ready replicas). It reads the real maintenance
+ConfigMap and acknowledges a pause through the controller's own `runtime.MaintenanceAcker`, keeping the in-flight
+evaluation race (`DrainTicks`). A release the advance accepted that opened an incident is a blocker ("incident opened
+by an accepted advance"); an unacknowledged pause in the advance makes the PR tier fail. It does not run the real
+detectors, so what a detector reports during a rollout still needs a live run.
+
 - PR tier: `go test -tags=integration -run TestReplayRehearsalOfASyntheticChart ./operatorcli/` in `sdo/operator`
   (about 30 s): a synthetic chart with a hash-named Job, a fixed-name bucket Job, a StatefulSet and a
   `templates/shared-secrets/` hook over four releases (one recreated Job that fails every attempt).

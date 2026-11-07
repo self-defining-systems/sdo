@@ -1298,6 +1298,28 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		return err
 	}
 	maintenanceChanges := maintenance.Watch(runCtx, desired, *maintenancePollInterval, controller.OnError)
+	// A pause is a barrier the declaring side waits on: once the loop observes
+	// nothing and every in-flight pass drained, the generation it stopped under
+	// is acknowledged. A failed acknowledgement is retried while paused.
+	pauseAcker := MaintenanceAcker{Client: bootstrapProvider.Client, Namespace: *controlNamespace}
+	acknowledgedPause := ""
+	acknowledgePause := func() {
+		if !applied.Paused || applied.Generation == "" || applied.Generation == acknowledgedPause {
+			return
+		}
+		controller.DrainObservation()
+		if err := pauseAcker.Acknowledge(runCtx, applied.Generation); err != nil {
+			if runCtx.Err() == nil {
+				controller.reportBrokerError("acknowledge maintenance pause", err)
+			}
+			return
+		}
+		acknowledgedPause = applied.Generation
+	}
+	pausePending := func() bool {
+		return applied.Paused && applied.Generation != "" && applied.Generation != acknowledgedPause
+	}
+	acknowledgePause()
 	// resume re-establishes observation of the application namespace with a
 	// fresh informer generation and evaluates every detector once. The mode
 	// record precedes that evaluation so observers can correlate it.
@@ -1392,6 +1414,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if wake := controller.PausedWake(); !wake.IsZero() {
 				delay = wake.Sub(clock.Now())
 			}
+			if pausePending() && delay > time.Second {
+				delay = time.Second
+			}
 		default:
 			wake, wakeReason = controller.nextWake()
 			delay = wake.Sub(clock.Now())
@@ -1435,6 +1460,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				if err := encoder.Encode(applied.Record()); err != nil {
 					fmt.Fprintln(stderr, err)
 				}
+				acknowledgePause()
 				continue
 			}
 			if err := survive(resume()); err != nil {
@@ -1577,6 +1603,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				continue
 			}
 			if applied.Paused {
+				acknowledgePause()
 				if err := survive(executePausedEffects(runCtx, controller)); err != nil {
 					if runCtx.Err() != nil {
 						return nil

@@ -120,9 +120,15 @@ type DeploymentCorrector interface {
 const DefaultMaxCorrections = 2
 
 // MaintenanceWindow pauses and resumes the controller's evaluation (the
-// controller maintenance ConfigMap) around an advance's cluster changes.
+// controller maintenance ConfigMap) around an advance's cluster changes. A
+// pause is only declared by Pause; it is in force once Acknowledged reports
+// that the controller drained its in-flight evaluation and stopped opening
+// incidents. Nothing is applied before that.
 type MaintenanceWindow interface {
 	Pause(ctx context.Context, reason string) error
+	// Acknowledged reports whether the controller confirmed the pause the
+	// latest Pause declared.
+	Acknowledged(ctx context.Context) (bool, error)
 	Resume(ctx context.Context) error
 }
 
@@ -315,7 +321,20 @@ type AdvanceConfig struct {
 	// DefaultSettleWindow and SettleInterval zero selects the pending interval.
 	SettleWindow   time.Duration
 	SettleInterval time.Duration
+	// PauseAckTimeout bounds the wait for the controller to acknowledge the
+	// maintenance pause, polled every PauseAckInterval; zero selects the
+	// defaults. A controller that does not acknowledge in time defers the
+	// advance.
+	PauseAckTimeout  time.Duration
+	PauseAckInterval time.Duration
 }
+
+// Defaults of the pause acknowledgement wait. The bound exceeds the longest
+// evaluation pass the controller can be draining.
+const (
+	DefaultPauseAckTimeout  = 5 * time.Minute
+	DefaultPauseAckInterval = time.Second
+)
 
 // DefaultSettleWindow is the settle window of an advance whose AdvanceConfig
 // does not set one. A firing that persists past it is a regression of the
@@ -772,6 +791,18 @@ func (a Advancer) deployAndAccept(ctx context.Context, cfg AdvanceConfig, result
 			err = errors.Join(err, fmt.Errorf("resume controller maintenance: %w", resumeErr))
 		}
 	}()
+	// The pause is a barrier, not a stamp: the controller may be inside an
+	// evaluation that began before it, which would see this advance's own
+	// rollout as an incident and its live state as drift. Wait until the
+	// controller confirms it stopped, and only then read what it is doing.
+	acknowledged, err := a.awaitPauseAcknowledged(ctx, cfg)
+	if err != nil {
+		return result, err
+	}
+	if !acknowledged {
+		result.Outcome, result.Detail = AdvanceDeferred, "the controller did not acknowledge the maintenance pause in time"
+		return result, nil
+	}
 	reason, busy, err := a.Activity.Busy(ctx)
 	if err != nil {
 		return result, fmt.Errorf("controller activity: %w", err)
@@ -860,6 +891,29 @@ func (a Advancer) deployAndAccept(ctx context.Context, cfg AdvanceConfig, result
 	*published = true
 	result.Outcome, result.Receipt = AdvanceAccepted, receiptOfAdvance
 	return result, nil
+}
+
+// awaitPauseAcknowledged polls the controller's acknowledgement of the pause
+// within the bound, on the injected wait. False means the bound passed.
+func (a Advancer) awaitPauseAcknowledged(ctx context.Context, cfg AdvanceConfig) (bool, error) {
+	interval := orDefault(cfg.PauseAckInterval, DefaultPauseAckInterval)
+	polls := int(orDefault(cfg.PauseAckTimeout, DefaultPauseAckTimeout) / interval)
+	steps := Coordinator{Wait: a.Wait}
+	for poll := 0; ; poll++ {
+		acknowledged, err := a.Maintenance.Acknowledged(ctx)
+		if err != nil {
+			return false, fmt.Errorf("controller maintenance acknowledgement: %w", err)
+		}
+		if acknowledged {
+			return true, nil
+		}
+		if poll >= polls {
+			return false, nil
+		}
+		if err := steps.wait(ctx, interval); err != nil {
+			return false, err
+		}
+	}
 }
 
 // awaitSettled judges the rolled-out candidate once it has settled. The rollout

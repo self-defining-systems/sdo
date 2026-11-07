@@ -63,6 +63,11 @@ type SyncConfig struct {
 
 const MaintenanceConfigMap = "sdo-controller-maintenance"
 
+// MaintenanceAckConfigMap is where the controller records the pause generation
+// it stopped under (runtime.MaintenanceAckConfigMapName, the controller module's
+// copy of this name).
+const MaintenanceAckConfigMap = "sdo-controller-maintenance-ack"
+
 // SetMaintenance pauses observation during a planned application redeploy.
 // A paused-to-active transition relists application state; generation-only
 // active updates retain running observations.
