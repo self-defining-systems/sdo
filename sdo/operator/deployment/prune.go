@@ -37,10 +37,15 @@ func (r *applyRun) pruneSuperseded(ctx context.Context, set rendered.DesiredSet)
 	stable := map[string]bool{}
 	for _, phase := range set.Phases {
 		for _, object := range phase.Objects {
-			if object.Ref.Kind != "Job" || object.Ref.Namespace != r.deployer.Namespace {
+			if object.Ref.Kind != "Job" {
 				continue
 			}
+			// Declared in any phase and any namespace: a Job this render
+			// declares is never superseded, whatever its name looks like.
 			names[object.Ref.Name] = true
+			if object.Ref.Namespace != r.deployer.Namespace {
+				continue
+			}
 			if rendered.StableWorkloadName("Job", object.Ref.Name) != object.Ref.Name {
 				stable[rendered.StableWorkloadName("Job", object.Ref.Name)] = true
 			}

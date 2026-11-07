@@ -2,6 +2,7 @@ package deployment
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -13,7 +14,8 @@ import (
 // applied.
 type pruneFake struct {
 	clusterFake
-	jobs []LiveObject
+	jobs      []LiveObject
+	deleteErr error
 }
 
 func (c *pruneFake) AppliedJobs(context.Context, string) ([]LiveObject, error) {
@@ -22,7 +24,7 @@ func (c *pruneFake) AppliedJobs(context.Context, string) ([]LiveObject, error) {
 
 func (c *pruneFake) Delete(_ context.Context, ref sdk.ObjectRef, propagation Propagation) error {
 	c.events = append(c.events, "delete "+ref.Kind+"/"+ref.Name+" "+string(propagation))
-	return nil
+	return c.deleteErr
 }
 
 func pruneJob(name string) string {
@@ -96,5 +98,45 @@ func TestCommandBackendListsOnlyJobsTheDeployerApplied(t *testing.T) {
 	jobs, err := backend.AppliedJobs(context.Background(), "demo")
 	if err != nil || len(jobs) != 1 || jobs[0].Ref.Name != "migrate-a1b2c3d" || !jobs[0].Finished {
 		t.Fatalf("jobs = %+v, %v", jobs, err)
+	}
+}
+
+// Pruning is cleanup: when it fails the revision is still deployed and
+// healthy, so the deploy succeeds and the next one retries.
+func TestPruneFailureDoesNotFailAReadyDeploy(t *testing.T) {
+	root, source := recFixture(t, rendertest.MapFS{"k8s/job.yaml": pruneJob("migrate-b2c3d4e"), "k8s/web.yaml": recWeb})
+	cluster := &pruneFake{jobs: []LiveObject{appliedJob("migrate-a1b2c3d", true)}, deleteErr: errors.New("API server unavailable")}
+	deployer, _ := depDeployer(t, root, &cluster.clusterFake)
+	deployer.Applier = cluster
+	receipt, err := deployer.ApplyAndVerify(context.Background(), root, depPlan(t, source, "Deployment/demo/web", "Job/demo/migrate-*"))
+	if err != nil || !receipt.Ready {
+		t.Fatalf("receipt %+v, err %v: a cleanup failure failed a ready deploy", receipt, err)
+	}
+	cluster.deleteErr = nil
+	cluster.events = nil
+	if _, err := deployer.ApplyAndVerify(context.Background(), root, depPlan(t, source, "Deployment/demo/web", "Job/demo/migrate-*")); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(deletes(cluster.events), "|"); got != "delete Job/migrate-a1b2c3d Background" {
+		t.Fatalf("the next deploy deleted %q, want it to retry the prune", got)
+	}
+}
+
+// Every Job the render declares is kept, even when several share one stable
+// identity because their names look hash-suffixed.
+func TestPruneKeepsEveryDeclaredJobThatSharesAStableName(t *testing.T) {
+	root, source := recFixture(t, rendertest.MapFS{
+		"k8s/a.yaml": pruneJob("report-batch1"), "k8s/b.yaml": pruneJob("report-batch2"), "k8s/web.yaml": recWeb,
+	})
+	cluster := &pruneFake{jobs: []LiveObject{appliedJob("report-batch1", true), appliedJob("report-batch2", true), appliedJob("report-batch3", true)}}
+	deployer, _ := depDeployer(t, root, &cluster.clusterFake)
+	deployer.Applier = cluster
+	if _, err := deployer.ApplyAndVerify(context.Background(), root, depPlan(t, source, "Deployment/demo/web", "Job/demo/report-*")); err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range cluster.events {
+		if strings.HasPrefix(event, "delete ") && !strings.Contains(event, "report-batch3") {
+			t.Fatalf("%s deleted a Job this render declares", event)
+		}
 	}
 }
