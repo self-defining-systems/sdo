@@ -477,7 +477,7 @@ func rehearse(t *testing.T, in rehearsalInput) rehearsal.Report {
 			declared[object.GetKind()+"/"+ns+"/"+object.GetName()] = true
 		}
 		for _, object := range live {
-			if len(object.GetOwnerReferences()) == 0 && object.GetAnnotations()["sdo.dev/source-tree"] != "" && !declared[objectID(object)] {
+			if len(object.GetOwnerReferences()) == 0 && (object.GetAnnotations()[rendered.SourceTreeKey] != "" || object.GetLabels()[rendered.SourceTreeKey] != "") && !declared[objectID(object)] {
 				r.Leftover = append(r.Leftover, objectID(object))
 			}
 		}

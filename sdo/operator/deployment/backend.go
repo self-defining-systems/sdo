@@ -141,7 +141,7 @@ func parseObservedWorkload(resourceID string, data []byte) (WorkloadObservation,
 	if err != nil {
 		return WorkloadObservation{}, fmt.Errorf("observed workload has no pod spec: %w", err)
 	}
-	tree := objectString(objectMap(metadata, "annotations"), "sdo.dev/source-tree")
+	tree := rendered.StampedTree(metadata)
 	if tree == "" {
 		return WorkloadObservation{}, errors.New("observed workload lacks source revision")
 	}

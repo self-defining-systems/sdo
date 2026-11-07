@@ -232,3 +232,25 @@ func TestAdoptionWritesNothingThatWouldBumpTheGeneration(t *testing.T) {
 		})
 	}
 }
+
+// A Deployment carries the stamp in labels, because the API server bumps a
+// Deployment's generation for any annotation change. Adoption keeps it too.
+func TestAdoptionKeepsTheLabelStampOfADeployment(t *testing.T) {
+	live := &unstructured.Unstructured{Object: map[string]any{"metadata": map[string]any{"labels": map[string]any{
+		"sdo.dev/source-tree": strings.Repeat("a", 40), "sdo.dev/source-tree-rest": strings.Repeat("b", 24)}}}}
+	source := &unstructured.Unstructured{Object: map[string]any{"metadata": map[string]any{"name": "web"}}}
+	out := carrySourceTreeStamp(source, live)
+	labels, _, _ := unstructured.NestedStringMap(out.Object, "metadata", "labels")
+	if labels["sdo.dev/source-tree"] != strings.Repeat("a", 40) || labels["sdo.dev/source-tree-rest"] != strings.Repeat("b", 24) {
+		t.Errorf("labels after carry = %v", labels)
+	}
+	for _, path := range []string{"metadata.labels.sdo.dev/source-tree", "metadata.labels.sdo.dev/source-tree-rest"} {
+		if !bookkeepingPath(path, "x") {
+			t.Errorf("%s is not bookkeeping: the stamp would read as drift", path)
+		}
+	}
+	comparable := comparableFields(live.DeepCopy().Object)
+	if _, ok := comparable["labels"]; ok {
+		t.Errorf("comparison keeps the stamp labels: %v", comparable)
+	}
+}

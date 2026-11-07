@@ -20,7 +20,10 @@ import (
 // validation subprocess); it is the cheap tier that must show a replay
 // blocker before a live lane spends an hour on it.
 //
-// The chart: a Deployment and a StatefulSet with Services; a Job named after
+// The chart: a Deployment that changes every release, a Deployment that
+// never changes (Kubernetes bumps a Deployment's generation for any
+// annotation change, so SDO's bookkeeping must stay off its annotations),
+// and a StatefulSet with Services; a Job named after
 // a hash of its images (renamed by every image bump); a fixed-name bucket Job
 // (its pod template is immutable); and a pre-install/pre-upgrade hook under
 // templates/shared-secrets/ (a secrets-named upstream path) with its
@@ -46,6 +49,19 @@ spec:
         - name: web
           image: registry.synthetic.invalid/web:{{ .Values.web }}
           ports: [{containerPort: 8080}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: static}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: static}}
+  template:
+    metadata: {labels: {app: static}}
+    spec:
+      containers:
+        - name: static
+          image: registry.synthetic.invalid/static:1
 ---
 apiVersion: v1
 kind: Service
@@ -200,7 +216,7 @@ func TestReplayRehearsalOfASyntheticChartReportsEveryRelease(t *testing.T) {
 	}
 	// r1: the hash-named Job is renamed (stable identity), the finished
 	// bucket Job is recreated, the shared-secrets path validates, the
-	// untouched StatefulSet keeps its generation, and the cold pods settle.
+	// untouched StatefulSet and Deployment keep their generation, and the cold pods settle.
 	r1 := byName["r1"]
 	if !r1.Adopted {
 		t.Errorf("r1 not adopted: %v", r1.Blockers())

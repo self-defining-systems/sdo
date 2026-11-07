@@ -50,8 +50,7 @@ func TestStampCoversEveryPodKind(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			objectAnnotations, _ := doc["metadata"].(map[string]any)["annotations"].(map[string]any)
-			if objectAnnotations["sdo.dev/source-tree"] != "tree1" {
+			if rendered.StampedTree(doc["metadata"].(map[string]any)) != "tree1" {
 				t.Errorf("object not stamped: %v", doc["metadata"])
 			}
 			podAnnotations, _ := podMetadata["annotations"].(map[string]any)

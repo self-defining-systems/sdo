@@ -32,7 +32,7 @@ func TestStampAnnotatesTreeAndSubstitutesImages(t *testing.T) {
 	if want := []ImageSite{{"Deployment", "web", "i", true, "init:1"}, {"Deployment", "web", "c", false, "app:1"}}; !reflect.DeepEqual(sites, want) {
 		t.Fatalf("sites = %v", sites)
 	}
-	meta := doc["metadata"].(map[string]any)["annotations"].(map[string]any)
+	meta := doc["metadata"].(map[string]any)["labels"].(map[string]any)
 	tmplMeta, _ := doc["spec"].(map[string]any)["template"].(map[string]any)["metadata"].(map[string]any)
 	tmpl, _ := tmplMeta["annotations"].(map[string]any)
 	if meta["sdo.dev/source-tree"] != "tree1" {
@@ -101,5 +101,21 @@ func TestStampAdvanceRollsOnlyTheWorkloadWhoseImageChanged(t *testing.T) {
 	}
 	if !reflect.DeepEqual(dbA["spec"], dbB["spec"]) {
 		t.Fatalf("untouched workload's template changed: %v vs %v", dbA["spec"], dbB["spec"])
+	}
+}
+
+// Kubernetes bumps a Deployment's metadata.generation for any change to its
+// annotations, so an advance that changes nothing in a Deployment's rendered
+// spec must leave its annotations identical: the stamp lives in labels.
+func TestStampLeavesDeploymentAnnotationsIndependentOfTree(t *testing.T) {
+	a, b := stampDoc("Deployment"), stampDoc("Deployment")
+	if _, err := Stamp(a, "tree1", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Stamp(b, "tree2", nil); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(a["metadata"].(map[string]any)["annotations"], b["metadata"].(map[string]any)["annotations"]) {
+		t.Fatalf("annotations depend on the tree: %v vs %v", a["metadata"], b["metadata"])
 	}
 }
