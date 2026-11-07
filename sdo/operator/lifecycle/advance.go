@@ -603,7 +603,7 @@ func (a Advancer) advanceWithCorrections(ctx context.Context, cfg AdvanceConfig,
 			// The agent task failed (not a verdict on the revision): the failure
 			// is the next round's hold text, so a repeating failure ends it.
 			again := current
-			again.Detail += "; the deployment agent failed: " + err.Error()
+			again.Detail += "; the deployment agent failed: " + operability.Clip(err.Error())
 			first = &again
 			continue
 		}
