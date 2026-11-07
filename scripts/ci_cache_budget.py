@@ -26,6 +26,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from ci_github_api import GithubApiUnavailable, gh_json
+
 BUDGETS = Path(__file__).resolve().parents[1] / ".github" / "ci_budgets.json"
 HASHES = re.compile(r"-[0-9a-f]{64}(-[0-9a-f]{40})?$")
 VERSION = re.compile(r"-\d+\.\d+\.\d+(?=-|$)")
@@ -149,16 +151,9 @@ def list_caches(api: Api) -> list[Json]:
         page += 1
 
 
-def gh_api(path: str, method: str = "GET") -> Any:
-    repo = os.environ["GITHUB_REPOSITORY"]
-    command = ["gh", "api", "-X", method, f"repos/{repo}/{path}"]
-    out = subprocess.run(command, check=True, capture_output=True, text=True).stdout
-    return json.loads(out) if out.strip() else None
-
-
 def delete_cache(cache_id: int) -> None:
     try:
-        gh_api(f"actions/caches/{cache_id}", "DELETE")
+        gh_json(f"actions/caches/{cache_id}", "DELETE")
     except subprocess.CalledProcessError as error:
         if "404" not in (error.stderr or ""):  # a concurrent prune already removed it
             raise
@@ -188,7 +183,16 @@ def main() -> int:
     parser.add_argument("prefix", nargs="?", default="", help="prune only families whose budget name starts with this")
     args = parser.parse_args()
     budget = json.loads(BUDGETS.read_text())["cache"]
-    caches = list_caches(gh_api)
+    try:
+        return run(args, budget)
+    except GithubApiUnavailable as error:
+        # Neither command has anything to act on without the listing; the next health run repeats it.
+        print(f"::warning::GitHub API unavailable: {error}. Cache {args.command} skipped.")
+        return 0
+
+
+def run(args: argparse.Namespace, budget: Json) -> int:
+    caches = list_caches(gh_json)
     if args.command == "prune":
         for row in prune(budget, caches, delete_cache, datetime.now(UTC), args.prefix):
             print(f"deleted {row['key']} ({row['size_in_bytes'] / MB:.0f} MB, last used {row['last_accessed_at']})")
@@ -196,7 +200,7 @@ def main() -> int:
     # GitHub's usage counter lags deletions by up to an hour; the listing is current, so alarm on the listing
     # and show the counter for reference.
     total = sum(row["size_in_bytes"] for row in caches)
-    reported = gh_api("actions/cache/usage")["active_caches_size_in_bytes"]
+    reported = gh_json("actions/cache/usage")["active_caches_size_in_bytes"]
     print(f"GitHub's usage counter reports {reported / MB:.0f} MB (it lags deletions)")
     report = render(budget, total, caches)
     failures = usage_failures(budget, total, caches, datetime.now(UTC))

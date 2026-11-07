@@ -22,6 +22,9 @@ ROOT = Path(__file__).resolve().parents[4]
 BUDGETS = json.loads((ROOT / ".github/ci_budgets.json").read_text())
 
 
+sys.path.insert(0, str(ROOT / "scripts"))  # scripts import their siblings by module name
+
+
 def load_script(name: str) -> ModuleType:
     spec = importlib.util.spec_from_file_location(name, ROOT / "scripts" / f"{name}.py")
     assert spec is not None
@@ -32,6 +35,7 @@ def load_script(name: str) -> ModuleType:
     return module
 
 
+github_api = load_script("ci_github_api")
 slow = load_script("check_slow_tests")
 health = load_script("ci_health")
 cache_budget = load_script("ci_cache_budget")
@@ -716,3 +720,90 @@ def test_isolated_git_config_makes_an_identity_dependent_commit_fail_like_a_host
     assert "rc=128" in result.stdout, result
     assert result.stdout.rstrip().endswith("rc=0"), result
     assert "Author identity unknown" in result.stderr or "empty ident" in result.stderr
+
+
+def cache_steps(name: str) -> list[tuple[str, dict]]:
+    """(job, step) for every step that restores a cache: the cache actions and setup-uv's cache."""
+    return [
+        (job_name, step)
+        for job_name, job in workflow(name)["jobs"].items()
+        for step in job.get("steps", [])
+        if str(step.get("uses", "")).startswith(("actions/cache@", "actions/cache/restore@", "astral-sh/setup-uv@"))
+    ]
+
+
+@pytest.mark.parametrize("name", ["ci.yml", "nightly.yml"])
+def test_every_cache_restore_is_bounded_so_a_slow_download_runs_the_job_cold(name: str) -> None:
+    steps = cache_steps(name)
+    assert steps
+    for job_name, step in steps:
+        where = f"{name}:{job_name}:{step['uses'].split('@')[0]}"
+        segment = int(step.get("env", {}).get("SEGMENT_DOWNLOAD_TIMEOUT_MINS", 0))
+        assert 0 < segment <= 2, f"{where} must bound each download segment (SEGMENT_DOWNLOAD_TIMEOUT_MINS)"
+        if step["uses"].startswith("astral-sh/setup-uv@"):
+            continue  # its restore is inside the action: the segment bound stops the download, then it installs cold
+        assert 0 < step.get("timeout-minutes", 0) <= 2, f"{where} needs a step timeout-minutes"
+        assert step.get("continue-on-error") is True, f"{where} must continue cold when the restore fails"
+
+
+def test_the_cache_restore_bounds_leave_most_of_each_job_cap_for_work() -> None:
+    jobs = workflow("ci.yml")["jobs"]
+    for job_name, job in jobs.items():
+        bounded = sum(step.get("timeout-minutes", 0) for step in job.get("steps", []))
+        assert bounded * 2 <= job["timeout-minutes"], f"{job_name}: bounded steps use over half the job cap"
+
+
+def failing(stderr: str, calls: list[int]):
+    def call() -> str:
+        calls.append(1)
+        raise subprocess.CalledProcessError(1, ["gh"], stderr=stderr)
+
+    return call
+
+
+def test_a_transient_api_error_is_retried_with_backoff_then_succeeds() -> None:
+    outcomes = [subprocess.CalledProcessError(1, ["gh"], stderr="gh: HTTP 502"), "ok"]
+    delays: list[float] = []
+
+    def call() -> str:
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    assert github_api.with_retries("p", call, sleep=delays.append) == "ok"
+    assert delays == [2.0]
+
+
+def test_an_api_that_keeps_failing_is_a_typed_unavailable_result_after_bounded_retries() -> None:
+    calls: list[int] = []
+    delays: list[float] = []
+    with pytest.raises(github_api.GithubApiUnavailable) as raised:
+        github_api.with_retries("actions/runs/1/jobs", failing("gh: HTTP 503", calls), sleep=delays.append)
+    assert len(calls) == github_api.ATTEMPTS
+    assert delays == [2.0, 4.0, 8.0]
+    assert raised.value.path == "actions/runs/1/jobs"
+    assert "HTTP 503" in raised.value.last_error
+
+
+def test_a_permanent_api_rejection_is_not_retried() -> None:
+    calls: list[int] = []
+    with pytest.raises(subprocess.CalledProcessError):
+        github_api.with_retries("p", failing("gh: Not Found (HTTP 404)", calls), sleep=lambda _s: None)
+    assert len(calls) == 1
+
+
+def test_the_health_check_reports_an_unavailable_api_instead_of_failing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+
+    def down(_budget: dict) -> int:
+        raise github_api.GithubApiUnavailable("actions/runs/9/jobs", 4, "gh: HTTP 502")
+
+    monkeypatch.setattr(health, "report_health", down)
+    monkeypatch.setattr(sys, "argv", ["ci_health.py"])
+    assert health.main() == 0
+    assert "GitHub API unavailable" in summary.read_text()
+    assert "::warning::" in capsys.readouterr().out

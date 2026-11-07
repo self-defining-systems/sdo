@@ -25,6 +25,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, NamedTuple
 
+from ci_github_api import GithubApiUnavailable, gh_json, gh_text
+
 BUDGETS = Path(__file__).resolve().parents[1] / ".github" / "ci_budgets.json"
 PR_EVENTS = ("pull_request", "merge_group")
 AGGREGATE_JOB = "Required PR CI"
@@ -321,24 +323,12 @@ def flake_report(api: Api, text: Text, repo: str, since: datetime, limit: int = 
     def log_of(row: Mapping[str, Any]) -> str:
         try:
             return text(f"actions/jobs/{row['job_id']}/logs")
-        except subprocess.CalledProcessError:  # logs expire after the retention period
+        except (subprocess.CalledProcessError, GithubApiUnavailable):  # logs expire; one log is not worth the report
             return ""
 
     ranked = rank_flakes(flaky, log_of)
     recent = [r for r in runs if parse_time(r["created_at"]) >= since]
     return render_flakes(ranked, non_green_runs(recent)[:25], repo, len(runs))
-
-
-def gh_api(path: str) -> Any:
-    repo = os.environ["GITHUB_REPOSITORY"]
-    out = subprocess.run(["gh", "api", f"repos/{repo}/{path}"], check=True, capture_output=True, text=True).stdout
-    return json.loads(out)
-
-
-def gh_text(path: str) -> str:
-    repo = os.environ["GITHUB_REPOSITORY"]
-    command = ["gh", "api", "--allow-escape-sequences", f"repos/{repo}/{path}"]
-    return subprocess.run(command, check=True, capture_output=True, text=True).stdout
 
 
 def main() -> int:
@@ -348,12 +338,30 @@ def main() -> int:
     args = parser.parse_args()
     budget = json.loads(BUDGETS.read_text())["health"]
     budget = {**budget, **{k: v for k, v in (("since", args.since), ("runs", args.runs)) if v}}
-    measured = gather(gh_api, budget)
+    try:
+        return report_health(budget)
+    except GithubApiUnavailable as error:
+        return report_unavailable(error)
+
+
+def report_unavailable(error: GithubApiUnavailable) -> int:
+    """GitHub's API stayed down through every retry: say so; the next run measures again."""
+    message = f"GitHub API unavailable: {error}. No budget was evaluated; the next CI health run measures again."
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with Path(summary).open("a") as handle:
+            handle.write(f"## CI health\n\n{message}\n")
+    print(f"::warning::{message}")
+    return 0
+
+
+def report_health(budget: Json) -> int:
+    measured = gather(gh_json, budget)
     report = render(measured)
     failures = evaluate(budget, measured.durations, measured.latencies)
     if failures:
         report += "\n### Budget exceeded\n\n" + "\n".join(f"- {f}" for f in failures) + "\n"
-    report += flake_report(gh_api, gh_text, os.environ["GITHUB_REPOSITORY"], parse_time(budget["since"]))
+    report += flake_report(gh_json, gh_text, os.environ["GITHUB_REPOSITORY"], parse_time(budget["since"]))
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with Path(summary).open("a") as handle:
