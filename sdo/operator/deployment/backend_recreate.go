@@ -32,7 +32,7 @@ func (b CommandBackend) ImmutableConflicts(ctx context.Context, documents []byte
 
 // Get implements Recreator.
 func (b CommandBackend) Get(ctx context.Context, ref sdk.ObjectRef) (LiveObject, bool, error) {
-	args := b.kubectlArgs("get", ref.Kind, ref.Name, "--namespace", ref.Namespace, "--ignore-not-found", "--output=json")
+	args := b.kubectlArgs("get", ref.Kind, ref.Name, "--namespace", ref.Namespace, "--ignore-not-found", "--show-managed-fields", "--output=json")
 	output, err := b.run(ctx, b.kubectl(), args, nil)
 	if err != nil {
 		return LiveObject{}, false, fmt.Errorf("get %s/%s: %w: %s", ref.Kind, ref.Name, err, strings.TrimSpace(string(output)))
@@ -105,6 +105,44 @@ func (b CommandBackend) Dependents(ctx context.Context, ref sdk.ObjectRef, uid s
 	return out, nil
 }
 
+// MarkOrphan implements Recreator: a merge patch of one label and two
+// annotations.
+func (b CommandBackend) MarkOrphan(ctx context.Context, ref sdk.ObjectRef, stamp OrphanStamp) error {
+	patch, err := json.Marshal(map[string]any{"metadata": map[string]any{
+		"labels":      map[string]string{LabelOrphanedFrom: stamp.From},
+		"annotations": map[string]string{AnnotationOrphanedOwner: stamp.Owner, AnnotationOrphanedSelector: stamp.Selector},
+	}})
+	if err != nil {
+		return err
+	}
+	args := b.kubectlArgs("patch", ref.Kind, ref.Name, "--namespace", ref.Namespace, "--type=merge", "--patch="+string(patch))
+	if output, err := b.run(ctx, b.kubectl(), args, nil); err != nil {
+		return fmt.Errorf("mark %s/%s orphaned: %w: %s", ref.Kind, ref.Name, err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+// Orphaned implements Recreator.
+func (b CommandBackend) Orphaned(ctx context.Context, namespace string) ([]LiveObject, error) {
+	args := b.kubectlArgs("get", "replicasets,pods,controllerrevisions", "--namespace", namespace, "--selector="+LabelOrphanedFrom, "--output=json")
+	output, err := b.run(ctx, b.kubectl(), args, nil)
+	if err != nil {
+		return nil, fmt.Errorf("list orphaned dependents in %s: %w: %s", namespace, err, strings.TrimSpace(string(output)))
+	}
+	var list map[string]any
+	if err := json.Unmarshal(output, &list); err != nil {
+		return nil, fmt.Errorf("decode orphaned dependents in %s: %w", namespace, err)
+	}
+	var out []LiveObject
+	for _, raw := range objectSlice(list, "items") {
+		item, _ := raw.(map[string]any)
+		if live := liveObject(item); live.Orphan != nil {
+			out = append(out, live)
+		}
+	}
+	return out, nil
+}
+
 // Delete implements Recreator: it waits until the object is gone.
 func (b CommandBackend) Delete(ctx context.Context, ref sdk.ObjectRef, propagation Propagation) error {
 	limit := b.ObserveLimit
@@ -135,6 +173,11 @@ func liveObject(object map[string]any) LiveObject {
 		if controller, _ := owner["controller"].(bool); controller {
 			live.Controlled = true
 		}
+	}
+	live.AppliedByDeployer = appliedByDeployer(metadata)
+	if from := live.Labels[LabelOrphanedFrom]; from != "" {
+		annotations := objectMap(metadata, "annotations")
+		live.Orphan = &OrphanStamp{From: from, Owner: objectString(annotations, AnnotationOrphanedOwner), Selector: objectString(annotations, AnnotationOrphanedSelector)}
 	}
 	for _, raw := range objectSlice(objectMap(object, "status"), "conditions") {
 		condition, _ := raw.(map[string]any)

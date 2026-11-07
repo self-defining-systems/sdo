@@ -27,6 +27,56 @@ type recreateFake struct {
 	finishAfter map[string]int
 	reads       map[string]int
 	dependents  map[string][]LiveObject // by owner UID
+	// foreign lists Kind/name objects the deployer did not apply.
+	foreign map[string]bool
+	// failApplyOnce makes the first Apply fail (an admission webhook).
+	failApplyOnce bool
+	// listedOrphans, when set, is what Orphaned returns (a stale listing).
+	listedOrphans []LiveObject
+}
+
+func (c *recreateFake) Apply(ctx context.Context, documents []byte) error {
+	if c.failApplyOnce {
+		c.failApplyOnce = false
+		c.events = append(c.events, "apply-failed")
+		return errors.New("admission webhook denied the request")
+	}
+	before := len(c.applied)
+	if err := c.clusterFake.Apply(ctx, documents); err != nil {
+		return err
+	}
+	for _, document := range c.applied[before:] { // a created object has a new UID
+		kind, _ := document["kind"].(string)
+		meta, _ := document["metadata"].(map[string]any)
+		name, _ := meta["name"].(string)
+		if _, exists := c.live[kind+"/"+name]; !exists && c.live != nil {
+			c.live[kind+"/"+name] = LiveObject{Ref: ref(kind, name), UID: "new-" + name}
+		}
+	}
+	return nil
+}
+
+func (c *recreateFake) MarkOrphan(_ context.Context, ref sdk.ObjectRef, stamp OrphanStamp) error {
+	key := ref.Kind + "/" + ref.Name
+	live := c.live[key]
+	live.Orphan = &stamp
+	c.live[key] = live
+	c.events = append(c.events, "mark "+key)
+	return nil
+}
+
+func (c *recreateFake) Orphaned(context.Context, string) ([]LiveObject, error) {
+	if c.listedOrphans != nil {
+		return c.listedOrphans, nil
+	}
+	var out []LiveObject
+	for _, live := range c.live {
+		if live.Orphan != nil {
+			out = append(out, live)
+		}
+	}
+	slices.SortFunc(out, func(a, b LiveObject) int { return strings.Compare(a.Ref.Kind+a.Ref.Name, b.Ref.Kind+b.Ref.Name) })
+	return out, nil
 }
 
 func (c *recreateFake) ImmutableConflicts(_ context.Context, documents []byte) ([]ImmutableConflict, error) {
@@ -51,6 +101,7 @@ func (c *recreateFake) Get(_ context.Context, ref sdk.ObjectRef) (LiveObject, bo
 	if after, set := c.finishAfter[key]; set && c.reads[key] > after {
 		live.Finished = true
 	}
+	live.AppliedByDeployer = !c.foreign[key]
 	return live, ok, nil
 }
 
@@ -125,7 +176,7 @@ func TestFinishedJobAndChangedSelectorAreRecreatedAndOrphansReplacedAfterReady(t
 	}
 	want := []string{
 		"dry-run",
-		"delete Deployment/web Orphan", "delete Job/migrate Background",
+		"mark ReplicaSet/web-old", "mark ReplicaSet/web-same", "delete Deployment/web Orphan", "delete Job/migrate Background",
 		"apply Job/migrate,Deployment/web",
 		"observe Job/demo/migrate", "observe Deployment/demo/web",
 		// Only once the recreated Deployment is ready: the orphan it does not adopt.
@@ -263,7 +314,7 @@ spec:
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "dry-run|delete StatefulSet/db Orphan|apply StatefulSet/db|delete Pod/db-0 Background|observe StatefulSet/demo/db"
+	want := "dry-run|mark Pod/db-0|delete StatefulSet/db Orphan|apply StatefulSet/db|delete Pod/db-0 Background|observe StatefulSet/demo/db"
 	if got := strings.Join(cluster.events, "|"); got != want {
 		t.Fatalf("events = %s\nwant %s", got, want)
 	}
@@ -332,6 +383,163 @@ func TestCommandBackendRecreatesThroughTheAPIServer(t *testing.T) {
 	} {
 		if !slices.Contains(calls, want) {
 			t.Errorf("no call %q in %v", want, calls)
+		}
+	}
+}
+
+func deletes(events []string) []string {
+	var out []string
+	for _, event := range events {
+		if strings.HasPrefix(event, "delete ") {
+			out = append(out, event)
+		}
+	}
+	return out
+}
+
+// A failed apply after the orphan delete must not lose the orphans: the
+// retry is a new deployer with no memory and finds the workload absent, and
+// the stamps the first run left still get the old ReplicaSet replaced.
+func TestOrphansSurviveAFailedApplyAndAreSweptByTheRetry(t *testing.T) {
+	root, source := recFixture(t, rendertest.MapFS{"k8s/web.yaml": recWeb})
+	cluster := &recreateFake{
+		conflicts: map[string]ImmutableConflict{"Deployment/web": conflict("Deployment", "web", "spec.selector")},
+		live: map[string]LiveObject{
+			"Deployment/web":     {Ref: ref("Deployment", "web"), UID: "web-1"},
+			"ReplicaSet/web-old": {Ref: ref("ReplicaSet", "web-old"), UID: "rs-old", Labels: map[string]string{"app": "web"}},
+		},
+		dependents:    map[string][]LiveObject{"web-1": {{Ref: ref("ReplicaSet", "web-old"), UID: "rs-old", Labels: map[string]string{"app": "web"}}}},
+		failApplyOnce: true,
+	}
+	plan := func() (Deployer, *contracts.DeploymentPlan) {
+		deployer, _ := depDeployer(t, root, &cluster.clusterFake)
+		deployer.Applier = cluster
+		return deployer, depPlan(t, source, "Deployment/demo/web")
+	}
+	first, firstPlan := plan()
+	if _, err := first.ApplyAndVerify(context.Background(), root, firstPlan); err == nil {
+		t.Fatal("the failed apply was reported as a deploy")
+	}
+	stamped := cluster.live["ReplicaSet/web-old"].Orphan
+	if stamped == nil || stamped.From != "web-1" || stamped.Owner != "Deployment/web" {
+		t.Fatalf("orphan stamp after the failed run = %+v, want one bound to the deleted workload", stamped)
+	}
+	if got := deletes(cluster.events); len(got) != 1 || got[0] != "delete Deployment/web Orphan" {
+		t.Fatalf("a run that never became ready deleted %v", got)
+	}
+	second, secondPlan := plan()
+	if _, err := second.ApplyAndVerify(context.Background(), root, secondPlan); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(deletes(cluster.events), "|"); got != "delete Deployment/web Orphan|delete ReplicaSet/web-old Background" {
+		t.Fatalf("deletes = %s: the retry must replace the orphan the first run stamped", got)
+	}
+}
+
+// The sweep keeps an orphan whose workload has no replacement yet, one a
+// controller took over, and one recreated under the same name since it was
+// listed: only an object that is still the stamped, uncontrolled orphan goes.
+func TestOrphanSweepKeepsWhatItCannotProveIsAnUnclaimedOrphan(t *testing.T) {
+	stamp := func(from, owner string) *OrphanStamp { return &OrphanStamp{From: from, Owner: owner} }
+	orphan := func(name, uid string, s *OrphanStamp) LiveObject {
+		return LiveObject{Ref: ref("ReplicaSet", name), UID: uid, Orphan: s}
+	}
+	cases := []struct {
+		name       string
+		listed     LiveObject
+		live       LiveObject
+		wantDelete bool
+	}{
+		{"unclaimed orphan", orphan("rs", "u1", stamp("web-1", "Deployment/web")), orphan("rs", "u1", stamp("web-1", "Deployment/web")), true},
+		{"adopted by a controller", orphan("rs", "u1", stamp("web-1", "Deployment/web")), LiveObject{Ref: ref("ReplicaSet", "rs"), UID: "u1", Controlled: true, Orphan: stamp("web-1", "Deployment/web")}, false},
+		{"recreated under the same name", orphan("rs", "u1", stamp("web-1", "Deployment/web")), orphan("rs", "u2", stamp("web-1", "Deployment/web")), false},
+		{"no replacement of the workload", orphan("rs", "u1", stamp("web-1", "Deployment/api")), orphan("rs", "u1", stamp("web-1", "Deployment/api")), false},
+		{"workload not yet replaced", orphan("rs", "u1", stamp("new-web", "Deployment/web")), orphan("rs", "u1", stamp("new-web", "Deployment/web")), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root, source := recFixture(t, rendertest.MapFS{"k8s/web.yaml": recWeb})
+			cluster := &recreateFake{
+				live:          map[string]LiveObject{"Deployment/web": {Ref: ref("Deployment", "web"), UID: "new-web"}, "ReplicaSet/rs": tc.live},
+				listedOrphans: []LiveObject{tc.listed},
+			}
+			deployer, _ := depDeployer(t, root, &cluster.clusterFake)
+			deployer.Applier = cluster
+			if _, err := deployer.ApplyAndVerify(context.Background(), root, depPlan(t, source, "Deployment/demo/web")); err != nil {
+				t.Fatal(err)
+			}
+			got := deletes(cluster.events)
+			if tc.wantDelete != (len(got) == 1 && got[0] == "delete ReplicaSet/rs Background") || (!tc.wantDelete && len(got) != 0) {
+				t.Fatalf("deletes = %v, want delete=%v", got, tc.wantDelete)
+			}
+		})
+	}
+}
+
+// SDO recreates only what its deployer applied. A same-named object someone
+// else created is a typed hold, and nothing is stamped or deleted.
+func TestRecreateRefusesObjectsTheDeployerDidNotCreate(t *testing.T) {
+	root, source := recFixture(t, rendertest.MapFS{"k8s/job.yaml": recJob, "k8s/web.yaml": recWeb})
+	cluster := &recreateFake{
+		conflicts: map[string]ImmutableConflict{
+			"Job/migrate":    conflict("Job", "migrate", "spec.template"),
+			"Deployment/web": conflict("Deployment", "web", "spec.selector"),
+		},
+		live: map[string]LiveObject{
+			"Job/migrate":    {Ref: ref("Job", "migrate"), UID: "job-1", Finished: true},
+			"Deployment/web": {Ref: ref("Deployment", "web"), UID: "web-1"},
+		},
+		foreign:    map[string]bool{"Job/migrate": true, "Deployment/web": true},
+		dependents: map[string][]LiveObject{"web-1": {{Ref: ref("ReplicaSet", "web-old"), UID: "rs-old"}}},
+	}
+	deployer, _ := depDeployer(t, root, &cluster.clusterFake)
+	deployer.Applier = cluster
+	_, err := deployer.ApplyAndVerify(context.Background(), root, depPlan(t, source, "Deployment/demo/web", "Job/demo/migrate"))
+	var immutable *ImmutableChangeError
+	if !errors.As(err, &immutable) || len(immutable.Refused) != 2 {
+		t.Fatalf("err = %v, want both foreign objects refused", err)
+	}
+	for _, refused := range immutable.Refused {
+		if refused.Reason != RefuseNotOurs {
+			t.Errorf("%s refused as %s, want %s", refused.Conflict.Ref.Name, refused.Reason, RefuseNotOurs)
+		}
+	}
+	if got := strings.Join(cluster.events, "|"); got != "dry-run" {
+		t.Fatalf("a refused phase touched the cluster: %s", got)
+	}
+	if cause := ClassifyDeploymentError(err); cause != operability.CauseImmutableChange || operability.RouteIn(operability.ModeAdvance, cause) != operability.OwnerDeployer {
+		t.Fatalf("cause %s, want immutable_change for the deployer", cause)
+	}
+}
+
+func TestCommandBackendReadsOwnershipAndOrphanStamps(t *testing.T) {
+	var calls []string
+	backend := CommandBackend{Run: func(_ context.Context, _ string, args []string, _ []byte) ([]byte, error) {
+		calls = append(calls, strings.Join(args, " "))
+		switch args[0] {
+		case "get":
+			if args[1] == "Deployment" {
+				return []byte(`{"kind":"Deployment","metadata":{"name":"web","uid":"d","managedFields":[{"manager":"sdo-deployer","operation":"Apply"}]}}`), nil
+			}
+			return []byte(`{"items":[{"kind":"ReplicaSet","metadata":{"name":"web-old","namespace":"demo","uid":"r","labels":{"sdo.dev/orphaned-from":"d"},"annotations":{"sdo.dev/orphaned-owner":"Deployment/web","sdo.dev/orphaned-selector":"app=web"}}}]}`), nil
+		}
+		return nil, nil
+	}}
+	live, found, err := backend.Get(context.Background(), ref("Deployment", "web"))
+	if err != nil || !found || !live.AppliedByDeployer {
+		t.Fatalf("live = %+v %v %v", live, found, err)
+	}
+	if err := backend.MarkOrphan(context.Background(), ref("ReplicaSet", "web-old"), OrphanStamp{From: "d", Owner: "Deployment/web", Selector: "app=web"}); err != nil {
+		t.Fatal(err)
+	}
+	orphans, err := backend.Orphaned(context.Background(), "demo")
+	if err != nil || len(orphans) != 1 || orphans[0].Orphan == nil || *orphans[0].Orphan != (OrphanStamp{From: "d", Owner: "Deployment/web", Selector: "app=web"}) {
+		t.Fatalf("orphans = %+v, %v", orphans, err)
+	}
+	joined := strings.Join(calls, "\n")
+	for _, want := range []string{"--show-managed-fields", "patch ReplicaSet web-old --namespace demo --type=merge", "--selector=sdo.dev/orphaned-from"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("no kubectl call containing %q in\n%s", want, joined)
 		}
 	}
 }
