@@ -1,9 +1,11 @@
 package lifecycle_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
@@ -969,6 +971,32 @@ func TestAdvanceSettlesAfterTheRolloutBeforeJudgingHealth(t *testing.T) {
 	}
 	if count(w.events, "verify") != 3 || count(w.events, "apply") != 1 {
 		t.Fatalf("events = %q", w.events)
+	}
+}
+
+// The settle window leaves a trace: a live run that waited (or did not need to)
+// is told apart from one that never ran it.
+func TestAdvanceLogsWhenItSettlesAndWhenItDoesNotNeedTo(t *testing.T) {
+	var out bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&out, nil)))
+	defer slog.SetDefault(previous)
+	w := newAdvWorld(t)
+	w.verdicts = []lifecycle.HealthVerdict{judgeFiring, {Outcome: lifecycle.VerificationClear}}
+	if result, err := w.run(t); err != nil || result.Outcome != lifecycle.AdvanceAccepted {
+		t.Fatalf("result = %+v, err = %v", result, err)
+	}
+	log := out.String()
+	if strings.Count(log, "advance_settle_waiting") != 1 || strings.Count(log, "advance_settle_finished") != 1 || !strings.Contains(log, "waits=1") || !strings.Contains(log, "outcome=clear") {
+		t.Fatalf("settle log = %q", log)
+	}
+	out.Reset()
+	w = newAdvWorld(t)
+	if result, err := w.run(t); err != nil || result.Outcome != lifecycle.AdvanceAccepted {
+		t.Fatalf("result = %+v, err = %v", result, err)
+	}
+	if log := out.String(); strings.Contains(log, "advance_settle_waiting") || !strings.Contains(log, "advance_settle_finished") || !strings.Contains(log, "waits=0") {
+		t.Fatalf("a clear first verdict must log one finished line with no waits: %q", log)
 	}
 }
 
