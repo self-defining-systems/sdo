@@ -172,6 +172,12 @@ def operability_digest(commit: AcceptedCommit) -> str:
     return match.group(0) if match else ""
 
 
+def canonical_digest(digest: str) -> str:
+    """A report digest as bare hex. The ConfigMap summary carries bare hex (``operability.Report.Digest``) while the
+    ``SDO-Operability`` trailer carries ``sha256:<hex>`` (broker ``advance`` trailer), so compare in this one form."""
+    return digest.removeprefix("sha256:")
+
+
 def hold_detail(hold: HoldRecord) -> HoldDetail:
     routing = parse_hold_routing(hold.reason)
     if routing is None:
@@ -187,7 +193,9 @@ def operability_summary(
     the one on the adopted commit's ``SDO-Operability`` trailer. Any other report is the previous commit's, stale."""
     if read is None:
         return None
-    current = read.accepted_commit == adopted_commit or (adopted_digest != "" and read.digest == adopted_digest)
+    current = read.accepted_commit == adopted_commit or (
+        adopted_digest != "" and canonical_digest(read.digest) == canonical_digest(adopted_digest)
+    )
     if not current:
         reason = (
             "the release was adopted but the report is for an earlier accepted commit"

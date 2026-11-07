@@ -565,22 +565,20 @@ def test_an_advance_report_is_current_when_its_digest_is_the_adopted_commits_tra
 
     def advance_and_expose(lane: Lane, name: str) -> None:
         advance(name)(lane, name)
-        lane.report = replace(green_read(commit="h0", stage="advance"), digest=DIGEST)
+        lane.report = replace(green_read(commit="h0", stage="advance"), digest=DIGEST.removeprefix("sha256:"))
 
     lane = Lane(script={"10.5.0": {10.0: advance_and_expose}})
     block = replay(lane, 1).results[0].operability
     assert block is not None
     assert "stale" not in block
     assert block["stage"] == "advance"
-    assert block["digest"] == DIGEST
+    assert block["digest"] == DIGEST.removeprefix("sha256:")  # the ConfigMap form: bare hex; the trailer has sha256:
     other = Lane(
         script={
             "10.5.0": {
                 10.0: lambda lane, name: (
                     advance(name)(lane, name),
-                    setattr(
-                        lane, "report", replace(green_read(commit="h0", stage="advance"), digest="sha256:" + "f" * 64)
-                    ),
+                    setattr(lane, "report", replace(green_read(commit="h0", stage="advance"), digest="f" * 64)),
                 )
             }
         }
