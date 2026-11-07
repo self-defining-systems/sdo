@@ -10,6 +10,7 @@
 #   parity — fast Go/Python/proto contract parity (scripts/check_contracts_fast.sh)
 #   pin    — the SREGym gitlink never moves behind the base branch
 #   refs   — generated skill references and the read-only Kubernetes client facade
+#   budgets — per-commit prompt-budget policy against the merge base (CI: required-pr-ci)
 #   determinism — no production real time, process or socket use outside declared edge packages
 
 set -e
@@ -74,6 +75,12 @@ uv run --extra test python -m pytest -q -p no:tach \
     tests/unit/sdo/agents/responder/test_codex_responder.py::test_workflow_prefers_finishing_blocking_operations_to_model_polling \
     tests/unit/sdo/agents/responder/test_incident_response_workflow.py::test_incident_workflow_installs_from_the_shipped_skill_root \
     tests/unit/sdo/agents/responder/test_incident_context.py::test_many_stage_attempts_degrade_the_bounded_first_prompt
+fi
+
+# Pull-request CI checks this per commit in its final job; run it here against the merge base.
+if [[ "$mode" != --python-suite ]] && base="$(git merge-base origin/main HEAD 2>/dev/null)"; then
+    echo "==> prompt budget commit policy"
+    uv run python scripts/check_prompt_budgets.py --base "$base" --head HEAD
 fi
 
 echo "==> shipped skill size budgets"
