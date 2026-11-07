@@ -28,11 +28,13 @@ import (
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/operability"
+	"sdo.dev/operator/operability/offline"
 	"sdo.dev/operator/operatorcli/catalog/renderers"
 	"sdo.dev/operator/operatorcli/catalog/telemetrysources"
 	"sdo.dev/operator/rendered"
@@ -381,6 +383,22 @@ type onbReadiness struct {
 	app onbApp
 }
 
+// CheckOffline reports every check the real offline gate produces, so the
+// report the coordinator assembles carries the same IDs as production: the
+// offline and live phases overlap (O1.apis), and a stand-in that omitted one
+// phase hid a duplicate-ID rejection from this test.
+func (r onbReadiness) CheckOffline(ctx context.Context, checkout string, plan *contracts.DeploymentPlan) (lifecycle.OfflineChecks, error) {
+	receipt, err := r.ApplyAndVerify(ctx, checkout, plan)
+	if err != nil {
+		return lifecycle.OfflineChecks{}, err
+	}
+	out := lifecycle.OfflineChecks{BaseTree: receipt.BaseTree, EffectiveTree: receipt.EffectiveTree, PatchesDigest: receipt.PatchesDigest, RenderDigest: receipt.RenderDigest, EnvDigest: receipt.EnvDigest}
+	for _, id := range offline.DeploymentCheckIDs() {
+		out.Checks = append(out.Checks, operability.Check{ID: id, Phase: operability.PhaseOffline, Status: operability.StatusPass})
+	}
+	return out, nil
+}
+
 func (r onbReadiness) ApplyAndVerify(ctx context.Context, checkout string, plan *contracts.DeploymentPlan) (lifecycle.DeploymentReceipt, error) {
 	tree, err := broker.ProposalTreeDigest(ctx, checkout)
 	if err != nil {
@@ -409,7 +427,7 @@ func (r onbReadiness) ApplyAndVerify(ctx context.Context, checkout string, plan 
 
 func (onbReadiness) CheckLive(context.Context, string, *contracts.DeploymentPlan, lifecycle.DeploymentReceipt, error) ([]operability.Check, error) {
 	var checks []operability.Check
-	for _, id := range []string{"O1.deploy", "O2.stamps", "O6.budget"} {
+	for _, id := range deployment.LiveCheckIDs() {
 		checks = append(checks, operability.Check{ID: id, Phase: operability.PhaseLive, Status: operability.StatusPass})
 	}
 	return checks, nil

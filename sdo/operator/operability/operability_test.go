@@ -519,3 +519,20 @@ func TestAdvanceStageRequiresDeploymentItemsAndTheDetectorVerdict(t *testing.T) 
 		t.Fatalf("complete advance report: %+v", d)
 	}
 }
+
+// Combine reports each check ID once: live supersedes offline in place, and a
+// live skip never hides an offline result that evaluated.
+func TestCombineKeepsOneCheckPerID(t *testing.T) {
+	c := func(id string, phase Phase, s Status) Check {
+		return Check{ID: id, Phase: phase, Status: s}
+	}
+	off := []Check{c("O1.render", PhaseOffline, StatusPass), c("O1.apis", PhaseOffline, StatusPass)}
+	got := Combine(off, []Check{c("O1.apis", PhaseLive, StatusFail), c("O1.ready", PhaseLive, StatusPass)})
+	if len(got) != 3 || got[1].Phase != PhaseLive || got[1].Status != StatusFail || got[2].ID != "O1.ready" {
+		t.Fatalf("live result must supersede in place: %+v", got)
+	}
+	got = Combine(off, []Check{c("O1.apis", PhaseLive, StatusSkipped)})
+	if len(got) != 2 || got[1].Phase != PhaseOffline || got[1].Status != StatusPass {
+		t.Fatalf("a live skip must not replace an evaluated offline check: %+v", got)
+	}
+}

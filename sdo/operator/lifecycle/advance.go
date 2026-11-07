@@ -651,7 +651,7 @@ func advanceBounds(cfg AdvanceConfig) Config {
 func decideAdvance(subject operability.Subject, checks ...[]operability.Check) (operability.Report, operability.Decision, error) {
 	var all []operability.Check
 	for _, group := range checks {
-		all = append(all, group...)
+		all = operability.Combine(all, group)
 	}
 	report, err := operability.New(operability.StageAdvance, subject).With(all...)
 	if err != nil {

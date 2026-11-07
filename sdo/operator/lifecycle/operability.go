@@ -119,7 +119,7 @@ func (c Coordinator) deploymentReport(ctx context.Context, cfg Config, proposal 
 			AcceptedCommit: proposal.BaseCommit, BaseTree: receipt.BaseTree, EffectiveTree: receipt.EffectiveTree,
 			PatchesDigest: receipt.PatchesDigest, RenderDigest: receipt.RenderDigest, EnvDigest: receipt.EnvDigest,
 		}
-		if report, err = operability.New(operability.StageDeployment, subject).With(append(checks, live...)...); err != nil {
+		if report, err = operability.New(operability.StageDeployment, subject).With(operability.Combine(checks, live)...); err != nil {
 			return err
 		}
 		decision = report.DecideIn(mode, operability.StageItems(operability.StageDeployment)...)

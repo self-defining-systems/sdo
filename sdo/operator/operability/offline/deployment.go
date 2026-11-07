@@ -133,6 +133,13 @@ func CheckPolicy(set rendered.DesiredSet, p Policy) []operability.Check {
 	return []operability.Check{scope(set, p), allowlist(set, p)}
 }
 
+// DeploymentCheckIDs lists every check CheckDeployment reports when nothing
+// fails, in order. Adapters that stand in for the offline gate use it so they
+// cannot drift from the real producer.
+func DeploymentCheckIDs() []string {
+	return append([]string{"O1.patches", "O1.render"}, afterRender()...)
+}
+
 // Checks that depend on an earlier one, in the order CheckDeployment runs them.
 func afterRender() []string {
 	return []string{"O1.deterministic", "O1.workloads", "O1.apis", "O2.images", "O6.scope", "O6.allowlist"}
