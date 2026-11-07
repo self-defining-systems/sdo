@@ -7,7 +7,8 @@ release in one run. It needs no cluster, no model and no lease.
 
 This module only prepares the input, the way the lane vendors each release (``assemble.assemble`` at that release's
 pins is the tree ``gitlab_replay.push_release`` commits), and runs the generic Go harness
-(``TestReplayRehearsalFromInput`` in the test-only module ``sdo/operator/integration``) on it. SDO production code never reads it.
+(``TestReplayRehearsalFromInput`` in the test-only module ``sdo/operator/integration``) on it. SDO production code
+never reads it.
 """
 
 from __future__ import annotations
