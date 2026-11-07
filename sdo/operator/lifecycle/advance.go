@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -807,11 +808,16 @@ func (a Advancer) awaitSettled(ctx context.Context, cfg AdvanceConfig, steps Coo
 		return steps.awaitVerdict(ctx, bounds, evaluate)
 	}
 	rolledOut := a.Now()
-	for {
+	for waits := 0; ; waits++ {
 		verdict, err := steps.awaitVerdict(ctx, bounds, evaluate)
-		if err != nil || verdict.Outcome != VerificationSourceFault || a.Now().Sub(rolledOut) >= window {
+		elapsed := a.Now().Sub(rolledOut)
+		if err != nil || verdict.Outcome != VerificationSourceFault || elapsed >= window {
+			// One line per advance: whether the window ran, and how it ended.
+			slog.Info("advance_settle_finished", "namespace", cfg.Namespace, "waits", waits, "since_rollout", elapsed.Round(time.Second).String(),
+				"window", window.String(), "outcome", string(verdict.Outcome), "error", err)
 			return verdict, err
 		}
+		slog.Info("advance_settle_waiting", "namespace", cfg.Namespace, "since_rollout", elapsed.Round(time.Second).String(), "window", window.String(), "retry_in", interval.String())
 		if err := steps.wait(ctx, interval); err != nil {
 			return HealthVerdict{}, err
 		}
