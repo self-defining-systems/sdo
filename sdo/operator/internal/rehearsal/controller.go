@@ -4,12 +4,15 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
+
+	"sdo.dev/operator/sdk/generichealth"
 )
 
 // ControllerModel stands in for the controller's detector and incident loop
@@ -41,6 +44,7 @@ type ControllerModel struct {
 	Errors    []string
 
 	seen     string
+	short    map[string]time.Time
 	draining int
 	acked    string
 	active   map[string]bool
@@ -156,8 +160,34 @@ func (c *ControllerModel) findings(ctx context.Context) ([]string, error) {
 			out = append(out, fmt.Sprintf("workload-health StatefulSet/%s/%s %d/%d ready", c.Namespace, s.Name, s.Status.ReadyReplicas, want))
 		}
 	}
+	return c.persisted(out), nil
+}
+
+// persisted drops a workload-health shortfall that has not lasted the
+// detector's progress window: the real detector tolerates a workload that is
+// still starting pods (a rollout, an autoscaler scaling up) and fires only
+// past generichealth.ProgressWindow.
+func (c *ControllerModel) persisted(findings []string) []string {
+	now, current := c.Now(), map[string]time.Time{}
+	var out []string
+	for _, f := range findings {
+		if !strings.HasPrefix(f, "workload-health ") {
+			out = append(out, f)
+			continue
+		}
+		key := strings.Join(strings.Fields(f)[:2], " ")
+		first, ok := c.short[key]
+		if !ok {
+			first = now
+		}
+		current[key] = first
+		if now.Sub(first) >= generichealth.ProgressWindow {
+			out = append(out, f)
+		}
+	}
+	c.short = current
 	sort.Strings(out)
-	return out, nil
+	return out
 }
 
 func replicasOf(n *int32) int32 {
