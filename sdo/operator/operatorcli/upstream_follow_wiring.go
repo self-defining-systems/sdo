@@ -13,9 +13,11 @@ import (
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/deployment"
+	"sdo.dev/operator/install"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/operability"
 	"sdo.dev/operator/operatorcli/catalog/renderers"
 	"sdo.dev/operator/operatorcli/catalog/upstreams"
 	"sdo.dev/operator/operatorcli/deploywire"
@@ -176,10 +178,22 @@ func controllerAdvancer(launch *contracts.ControllerConfig, operatorRoot string,
 		Designer:    designerRefresh{launch: launch, operatorRoot: operatorRoot, repository: repository},
 		Deployer:    deployerCorrection{launch: launch, operatorRoot: operatorRoot, repository: repository},
 		Maintenance: maintenance,
+		Exposer:     operabilityExposer{Client: client, Namespace: controlNamespace(launch)},
 		Now:         processio.Now,
 		Activity:    controllerActivity{Client: client, Namespace: controlNamespace(launch), Application: namespace},
 	}
 	return advancer, lifecycle.AdvanceConfig{Namespace: namespace, GitDir: filepath.Join(launch.GetAppRoot(), ".git")}, maintenance, nil
+}
+
+// operabilityExposer publishes an accepted advance's report to the
+// sdo-operability ConfigMap (lifecycle.OperabilityExposer).
+type operabilityExposer struct {
+	Client    kubernetes.Interface
+	Namespace string
+}
+
+func (e operabilityExposer) PublishOperability(ctx context.Context, report operability.Report) error {
+	return install.PublishOperability(ctx, e.Client, e.Namespace, report, processio.Now())
 }
 
 func controlNamespace(launch *contracts.ControllerConfig) string {

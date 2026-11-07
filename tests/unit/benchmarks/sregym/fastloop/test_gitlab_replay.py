@@ -557,3 +557,48 @@ def test_an_advanced_release_records_the_report_only_when_it_is_for_the_adopted_
     assert block is not None
     assert block["stale"] is True
     assert "items" not in block
+
+
+def test_an_advance_report_is_current_when_its_digest_is_the_adopted_commits_trailer() -> None:
+    """An advance report's subject is the accepted head the merge was made on (the adopted commit's parent), so the
+    adopted commit is identified by the digest on its SDO-Operability trailer."""
+
+    def advance_and_expose(lane: Lane, name: str) -> None:
+        advance(name)(lane, name)
+        lane.report = replace(green_read(commit="h0", stage="advance"), digest=DIGEST)
+
+    lane = Lane(script={"10.5.0": {10.0: advance_and_expose}})
+    block = replay(lane, 1).results[0].operability
+    assert block is not None
+    assert "stale" not in block
+    assert block["stage"] == "advance"
+    assert block["digest"] == DIGEST
+    other = Lane(
+        script={
+            "10.5.0": {
+                10.0: lambda lane, name: (
+                    advance(name)(lane, name),
+                    setattr(
+                        lane, "report", replace(green_read(commit="h0", stage="advance"), digest="sha256:" + "f" * 64)
+                    ),
+                )
+            }
+        }
+    )
+    stale = replay(other, 1).results[0].operability
+    assert stale is not None
+    assert stale["stale"] is True
+
+
+def test_a_chart_only_release_that_rolls_pods_with_identical_images_lists_them_as_changed() -> None:
+    """A chart version label sits in the pod template: the pods are replaced (a new template revision) while every
+    image stays, and the report must say those workloads changed."""
+
+    def label_only(lane: Lane, name: str) -> None:
+        advance(name, new_image=False)(lane, name)
+        lane.snap = replace(lane.snap, templates={"web": "rev-b", "gitaly": "rev-a"})
+
+    lane = Lane(
+        snap=replace(BASE, templates={"web": "rev-a", "gitaly": "rev-a"}), script={"10.5.0": {10.0: label_only}}
+    )
+    assert replay(lane, 1).results[0].changed_workloads == ["web"]

@@ -290,6 +290,24 @@ def test_workload_digest_changes_when_only_an_init_container_image_changes():
     assert after == {"exporter": "sha256:init-new,sha256:main"}
 
 
+def test_workload_templates_follow_the_pod_template_revision_label() -> None:
+    def member(app: str, revision: str, *, phase: str = "Running", terminating: bool = False) -> dict:
+        labels = {"app": app, "pod-template-hash": revision}
+        item = {"metadata": {"labels": labels}, "status": {"phase": phase}}
+        if terminating:
+            item["metadata"]["deletionTimestamp"] = "2026-11-07T02:39:00Z"
+        return item
+
+    pods = {"items": [member("web", "b"), member("web", "a", terminating=True), member("web", "c", phase="Pending")]}
+    assert sc.workload_templates(pods) == {"web": "b"}
+    stateful = {
+        "items": [
+            {"metadata": {"labels": {"app": "db", "controller-revision-hash": "db-7"}}, "status": {"phase": "Running"}}
+        ]
+    }
+    assert sc.workload_templates(stateful) == {"db": "db-7"}
+
+
 @pytest.mark.go_integration
 def test_helm_onboarding_provides_the_plan_of_the_assembled_source(
     tmp_path: Path, operator_binary: Path, monkeypatch: pytest.MonkeyPatch
