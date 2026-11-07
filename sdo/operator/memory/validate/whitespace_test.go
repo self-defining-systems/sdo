@@ -35,6 +35,9 @@ func TestSecretPathScopeIsMemoryOnly(t *testing.T) {
 		".sdo/playbooks/base/.env":                    true,
 		".sdo/deployment/chart/templates/secrets/a.y": false,
 		".sdo/deployment/.git/config":                 true,
+		".sdo/deployment/values/secrets.yaml":         true,
+		".sdo/deployment/patches/0001-secret.patch":   true,
+		".sdo/deployment/overlays/telemetry/secret.y": true,
 	} {
 		if _, got := secretPathPart(path); got != want {
 			t.Errorf("secretPathPart(%q) = %v, want %v", path, got, want)
