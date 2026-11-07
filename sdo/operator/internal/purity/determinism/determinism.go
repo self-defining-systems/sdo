@@ -18,6 +18,7 @@ import (
 // Existing mixed orchestration packages remain on the ratchet, not exempted.
 var Edges = map[string]bool{
 	"sdo/operator/runtime/envtestio":                         true, // envtest kube-apiserver and etcd processes, binary download and cache; integration tests only
+	"sdo/operator/internal/rehearsal/rehearsalio":            true, // replay rehearsal kubectl process, garbage-collector poll and harness wall clock; integration tests only
 	"sdo/operator/runtime/internal/h2testio":                 true, // In-memory HTTP/2 conformance peer configuration; tests only
 	"benchmarks/sregym/fastloop/replay_go/internal/replayio": true, // Benchmark-only replay Git subprocess adapter
 	"sdo/operator/memory/internal/memoryio":                  true, // Git and shell syntax subprocesses

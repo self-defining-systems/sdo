@@ -44,6 +44,7 @@ from benchmarks.sregym.fastloop.baseline_recovery import (
 from benchmarks.sregym.fastloop.environment import DEFAULT_PROBLEM, FastloopEnvironment, Images
 from benchmarks.sregym.fastloop.fault_driver import SregymFaultDriver
 from benchmarks.sregym.fastloop.gitlab_faults import add_faults_parser
+from benchmarks.sregym.fastloop.gitlab_rehearsal import add_gitlab_rehearse_parser
 from benchmarks.sregym.fastloop.gitlab_replay import add_gitlab_replay_parser
 from benchmarks.sregym.fastloop.host_limits import DEFAULT_MEMORY_LIMIT, DEFAULT_PIDS_LIMIT, HostLimits, NodeLimits
 from benchmarks.sregym.fastloop.loop import LoopConfig, run_incidents, write_loop_manifest
@@ -2041,6 +2042,7 @@ def build_parser() -> argparse.ArgumentParser:
     reonboard.set_defaults(handler=_gitlab_reonboard)
     add_faults_parser(gitlab_commands)
     add_gitlab_replay_parser(gitlab_commands)
+    add_gitlab_rehearse_parser(gitlab_commands)
 
     down = commands.add_parser("down", help="drain and remove the persistent SDO controller")
     down.add_argument("--run-dir", type=Path, required=True)
