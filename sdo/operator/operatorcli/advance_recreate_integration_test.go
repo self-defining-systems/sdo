@@ -99,6 +99,7 @@ type immutableObject struct {
 	doc             map[string]any
 	labels          map[string]string
 	controller      string
+	orphan          *deployment.OrphanStamp
 	observation     deployment.WorkloadObservation
 }
 
@@ -271,6 +272,7 @@ func (c *immutableCluster) live(object *immutableObject) deployment.LiveObject {
 	return deployment.LiveObject{
 		Ref: sdk.ObjectRef{Kind: object.kind, Namespace: advChartNamespace, Name: object.name}, UID: object.uid,
 		Labels: object.labels, Controlled: object.controller != "", Finished: object.kind == "Job",
+		AppliedByDeployer: true, Orphan: object.orphan,
 	}
 }
 
@@ -286,6 +288,28 @@ func (c *immutableCluster) Dependents(_ context.Context, _ sdk.ObjectRef, uid st
 	var out []deployment.LiveObject
 	for _, object := range c.objects {
 		if object.controller == uid {
+			out = append(out, c.live(object))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Ref.Name < out[j].Ref.Name })
+	return out, nil
+}
+
+var _ deployment.Recreator = (*immutableCluster)(nil)
+
+func (c *immutableCluster) MarkOrphan(_ context.Context, ref sdk.ObjectRef, stamp deployment.OrphanStamp) error {
+	object := c.objects[ref.Kind+"/"+ref.Name]
+	if object == nil {
+		return fmt.Errorf("mark %s/%s: not found", ref.Kind, ref.Name)
+	}
+	object.orphan = &stamp
+	return nil
+}
+
+func (c *immutableCluster) Orphaned(context.Context, string) ([]deployment.LiveObject, error) {
+	var out []deployment.LiveObject
+	for _, object := range c.objects {
+		if object.orphan != nil {
 			out = append(out, c.live(object))
 		}
 	}

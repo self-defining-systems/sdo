@@ -38,7 +38,37 @@ type LiveObject struct {
 	Controlled bool
 	// Finished is a Job's Complete or Failed condition.
 	Finished bool
+	// AppliedByDeployer reports that the deployer's field manager applied the
+	// object (server-side apply). Only such an object is SDO's to delete;
+	// Recreator.Get fills it.
+	AppliedByDeployer bool
+	// Orphan is the stamp MarkOrphan left; nil when the object has none.
+	Orphan *OrphanStamp
 }
+
+// OrphanStamp marks a dependent of a workload the deployer is about to delete
+// with orphan propagation. It is written before the delete so a failed apply
+// or a crash afterwards cannot lose track of what must be cleaned up.
+type OrphanStamp struct {
+	// From is the UID of the workload that was deleted.
+	From string
+	// Owner is the deleted workload's Kind/name: its replacement is the live
+	// object of the same Kind and name with another UID.
+	Owner string
+	// Selector is the replacement's label selector; an orphan it matches is
+	// adopted and rolled, not deleted. Empty adopts nothing.
+	Selector string
+}
+
+const (
+	// LabelOrphanedFrom is the label (value: the deleted workload's UID) that
+	// MarkOrphan sets on a dependent and Orphaned selects by.
+	LabelOrphanedFrom = "sdo.dev/orphaned-from"
+	// AnnotationOrphanedOwner and AnnotationOrphanedSelector carry the rest of
+	// an OrphanStamp.
+	AnnotationOrphanedOwner    = "sdo.dev/orphaned-owner"
+	AnnotationOrphanedSelector = "sdo.dev/orphaned-selector"
+)
 
 // Propagation is a delete's propagation policy.
 type Propagation string
@@ -68,6 +98,11 @@ type Recreator interface {
 	// namespace whose controller is the object with uid. It never lists data
 	// (PersistentVolumeClaims).
 	Dependents(ctx context.Context, ref sdk.ObjectRef, uid string) ([]LiveObject, error)
+	// MarkOrphan stamps a live dependent before its owner is deleted.
+	MarkOrphan(ctx context.Context, ref sdk.ObjectRef, stamp OrphanStamp) error
+	// Orphaned lists the objects in namespace that carry an OrphanStamp,
+	// whatever run stamped them.
+	Orphaned(ctx context.Context, namespace string) ([]LiveObject, error)
 	// Delete deletes ref with the propagation and returns once it is gone.
 	Delete(ctx context.Context, ref sdk.ObjectRef, propagation Propagation) error
 }
@@ -97,6 +132,10 @@ const (
 	// replacement changes its address; a bare Pod; any other kind). The
 	// deployer decides.
 	RefuseNoPolicy RecreateReason = "no-recreate-policy"
+	// RefuseNotOurs: the live object was not applied by the deployer (it was
+	// created by someone else or by hand). SDO deletes only what it can prove
+	// it created; the deployer decides (rename, or hand it over).
+	RefuseNotOurs RecreateReason = "not-created-by-sdo"
 )
 
 // RefusedObject is one conflict the recreate policy did not resolve.
@@ -141,9 +180,8 @@ const jobWaitPoll = 5 * time.Second
 
 // recreation is one object being recreated in this apply.
 type recreation struct {
-	record   rendered.Recreation
-	selector labels.Selector // the recreated workload's selector; nil for Jobs
-	orphans  []LiveObject
+	record rendered.Recreation
+	uid    string // the deleted workload's UID, the orphan stamp's value
 }
 
 // pendingDelete is a decided recreate not yet carried out.
@@ -201,10 +239,9 @@ func (r *applyRun) resolveConflicts(ctx context.Context, phase rendered.DesiredP
 		return &ImmutableChangeError{Phase: phase.Name, Refused: refused}
 	}
 	for _, p := range pending {
-		var orphans []LiveObject
 		if p.propagation == PropagationOrphan {
-			if orphans, err = recreator.Dependents(ctx, p.ref, p.uid); err != nil {
-				return fmt.Errorf("list dependents of %s/%s: %w", p.ref.Kind, p.ref.Name, err)
+			if err := r.stampDependents(ctx, recreator, p); err != nil {
+				return err
 			}
 		}
 		if err := recreator.Delete(ctx, p.ref, p.propagation); err != nil {
@@ -214,8 +251,28 @@ func (r *applyRun) resolveConflicts(ctx context.Context, phase rendered.DesiredP
 			record: rendered.Recreation{
 				Ref: p.ref, Fields: slices.Clone(p.conflict.Fields), Propagation: string(p.propagation), Reason: string(p.reason),
 			},
-			selector: p.selector, orphans: orphans,
+			uid: p.uid,
 		})
+	}
+	return nil
+}
+
+// stampDependents marks every dependent the delete will orphan, so the sweep
+// finds them in any later run. It completes before the delete: a failure here
+// leaves the workload in place.
+func (r *applyRun) stampDependents(ctx context.Context, recreator Recreator, p pendingDelete) error {
+	dependents, err := recreator.Dependents(ctx, p.ref, p.uid)
+	if err != nil {
+		return fmt.Errorf("list dependents of %s/%s: %w", p.ref.Kind, p.ref.Name, err)
+	}
+	stamp := OrphanStamp{From: p.uid, Owner: p.ref.Kind + "/" + p.ref.Name}
+	if p.selector != nil {
+		stamp.Selector = p.selector.String()
+	}
+	for _, dependent := range dependents {
+		if err := recreator.MarkOrphan(ctx, dependent.Ref, stamp); err != nil {
+			return fmt.Errorf("mark %s/%s orphaned before deleting %s/%s: %w", dependent.Ref.Kind, dependent.Ref.Name, p.ref.Kind, p.ref.Name, err)
+		}
 	}
 	return nil
 }
@@ -241,6 +298,9 @@ func (r *applyRun) decide(ctx context.Context, recreator Recreator, object rende
 			if !found {
 				return nil, "", nil
 			}
+			if !live.AppliedByDeployer {
+				return nil, RefuseNotOurs, nil
+			}
 			if live.Finished {
 				return &pendingDelete{ref: ref, conflict: conflict, reason: reason, propagation: PropagationBackground, uid: live.UID}, "", nil
 			}
@@ -264,35 +324,68 @@ func (r *applyRun) decide(ctx context.Context, recreator Recreator, object rende
 		if !found {
 			return nil, "", nil
 		}
+		if !live.AppliedByDeployer {
+			return nil, RefuseNotOurs, nil
+		}
 		return &pendingDelete{ref: ref, conflict: conflict, reason: RecreateWorkloadOrphan, propagation: PropagationOrphan, selector: selector, uid: live.UID}, "", nil
 	}
 	return nil, RefuseNoPolicy, nil
 }
 
-// afterApply removes, right after a recreated StatefulSet is applied, the
-// orphaned pods its selector does not adopt: they hold the ordinal names the
-// recreated StatefulSet must create. Their volumes are kept.
+// afterApply removes, right after a StatefulSet recreated by this or an
+// earlier run is applied, the orphaned pods its selector does not adopt: they
+// hold the ordinal names the recreated StatefulSet must create. Their volumes
+// are kept.
 func (r *applyRun) afterApply(ctx context.Context) error {
-	for _, rec := range r.recreated {
-		if rec.record.Ref.Kind == "StatefulSet" {
-			if err := r.replaceOrphans(ctx, rec); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return r.sweepOrphans(ctx, func(stamp OrphanStamp) bool { return strings.HasPrefix(stamp.Owner, "StatefulSet/") })
 }
 
-// replaceOrphans deletes the orphaned dependents of a recreated workload that
-// its selector does not adopt and that no controller has taken over.
-func (r *applyRun) replaceOrphans(ctx context.Context, rec *recreation) error {
+// replaceRemainingOrphans runs once every workload is observed ready: the
+// orphans of Deployments, DaemonSets and ReplicaSets are removed only after
+// their replacements serve.
+func (r *applyRun) replaceRemainingOrphans(ctx context.Context) error {
+	return r.sweepOrphans(ctx, func(OrphanStamp) bool { return true })
+}
+
+// sweepOrphans deletes the stamped dependents of deleted workloads that
+// want selects, driven by the cluster's stamps and not by this run's memory.
+// An orphan is kept while its workload has no replacement, while the
+// replacement's selector adopts it and when a controller took it over or it
+// was recreated under the same name. The sweep never touches data: stamps are
+// only ever set on ReplicaSets, Pods and ControllerRevisions.
+func (r *applyRun) sweepOrphans(ctx context.Context, want func(OrphanStamp) bool) error {
 	recreator, ok := r.deployer.Applier.(Recreator)
 	if !ok {
 		return nil // nothing was recreated without one
 	}
-	for _, orphan := range rec.orphans {
-		if rec.selector != nil && rec.selector.Matches(labels.Set(orphan.Labels)) {
-			continue // the recreated workload adopts it and rolls it
+	orphans, err := recreator.Orphaned(ctx, r.deployer.Namespace)
+	if err != nil {
+		return fmt.Errorf("list orphaned dependents: %w", err)
+	}
+	replaced := map[string]bool{} // owner -> its replacement exists
+	for _, orphan := range orphans {
+		if orphan.Orphan == nil || !want(*orphan.Orphan) {
+			continue
+		}
+		stamp := *orphan.Orphan
+		if _, seen := replaced[stamp.Owner+"/"+stamp.From]; !seen {
+			ok, err := replacementExists(ctx, recreator, orphan.Ref.Namespace, stamp)
+			if err != nil {
+				return err
+			}
+			replaced[stamp.Owner+"/"+stamp.From] = ok
+		}
+		if !replaced[stamp.Owner+"/"+stamp.From] {
+			continue
+		}
+		if stamp.Selector != "" {
+			selector, err := labels.Parse(stamp.Selector)
+			if err != nil {
+				return fmt.Errorf("orphan %s/%s has an unreadable selector %q: %w", orphan.Ref.Kind, orphan.Ref.Name, stamp.Selector, err)
+			}
+			if selector.Matches(labels.Set(orphan.Labels)) {
+				continue // the replacement adopts it and rolls it
+			}
 		}
 		live, found, err := recreator.Get(ctx, orphan.Ref)
 		if err != nil {
@@ -304,24 +397,27 @@ func (r *applyRun) replaceOrphans(ctx context.Context, rec *recreation) error {
 		if err := recreator.Delete(ctx, orphan.Ref, PropagationBackground); err != nil {
 			return fmt.Errorf("delete orphan %s/%s: %w", orphan.Ref.Kind, orphan.Ref.Name, err)
 		}
-		rec.record.Replaced = append(rec.record.Replaced, orphan.Ref.Kind+"/"+orphan.Ref.Namespace+"/"+orphan.Ref.Name)
-	}
-	rec.orphans = nil
-	return nil
-}
-
-// replaceRemainingOrphans runs once every recreated workload is observed
-// ready: orphans of Deployments, DaemonSets and ReplicaSets are removed only
-// after their replacements serve.
-func (r *applyRun) replaceRemainingOrphans(ctx context.Context) error {
-	for _, rec := range r.recreated {
-		if rec.record.Ref.Kind != "StatefulSet" && len(rec.orphans) > 0 {
-			if err := r.replaceOrphans(ctx, rec); err != nil {
-				return err
+		for _, rec := range r.recreated {
+			if rec.uid == stamp.From {
+				rec.record.Replaced = append(rec.record.Replaced, orphan.Ref.Kind+"/"+orphan.Ref.Namespace+"/"+orphan.Ref.Name)
 			}
 		}
 	}
 	return nil
+}
+
+// replacementExists reports that the workload an orphan was stamped for has a
+// live replacement: the same Kind and name with another UID.
+func replacementExists(ctx context.Context, recreator Recreator, namespace string, stamp OrphanStamp) (bool, error) {
+	kind, name, ok := strings.Cut(stamp.Owner, "/")
+	if !ok {
+		return false, nil
+	}
+	live, found, err := recreator.Get(ctx, sdk.ObjectRef{Kind: kind, Namespace: namespace, Name: name})
+	if err != nil {
+		return false, fmt.Errorf("read replacement %s: %w", stamp.Owner, err)
+	}
+	return found && live.UID != stamp.From, nil
 }
 
 func (r *applyRun) recreations() []rendered.Recreation {
