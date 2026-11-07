@@ -706,7 +706,6 @@ func podTemplateState(template corev1.PodTemplateSpec) objectState {
 		volumes = append(volumes, volume.Name+"="+source)
 	}
 	state := objectState{
-		"template.sourceTree":         template.Annotations["sdo.dev/source-tree"],
 		"template.labels":             renderLabels(podLabels),
 		"template.annotations":        bounded(renderLabels(template.Annotations)),
 		"template.serviceAccountName": spec.ServiceAccountName,

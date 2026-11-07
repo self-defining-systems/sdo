@@ -15,8 +15,11 @@ type ImageSite struct {
 	Image     string
 }
 
-// Stamp records the effective source tree ID on an already-normalized object (and on the
-// pod template of a workload), substitutes container images through imageFor
+// Stamp records the effective source tree ID on an already-normalized object's
+// metadata (never in a pod template: the tree changes with every upstream
+// commit, and a template stamp would roll every workload, datastores included,
+// on every advance; a workload's pods change only with its own spec and image
+// pins, and attribute to the stamped owner), substitutes container images through imageFor
 // when it is non-nil, and returns the resulting images in init-then-regular
 // order. Non-workloads return no images. Stamping is a deploy-only step:
 // reads render the object unstamped.
@@ -32,13 +35,6 @@ func Stamp(obj map[string]any, tree string, imageFor func(ImageSite) string) ([]
 	}
 	if !rendered.WorkloadKind(kind) {
 		return nil, nil
-	}
-	if tree != "" {
-		metadata, err := rendered.PodTemplateMetadata(obj, true)
-		if err != nil {
-			return nil, err
-		}
-		nestedMap(metadata, "annotations")["sdo.dev/source-tree"] = tree
 	}
 	podSpec, err := rendered.PodSpec(obj)
 	if err != nil {

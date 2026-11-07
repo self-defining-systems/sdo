@@ -148,9 +148,13 @@ func TestStampIsTheEffectiveTreeID(t *testing.T) {
 			continue
 		}
 		meta := document["metadata"].(map[string]any)["annotations"].(map[string]any)
-		template := document["spec"].(map[string]any)["template"].(map[string]any)["metadata"].(map[string]any)["annotations"].(map[string]any)
-		if meta["sdo.dev/source-tree"] != receipt.EffectiveTree || template["sdo.dev/source-tree"] != receipt.EffectiveTree || receipt.EffectiveTree == receipt.BaseTree {
-			t.Fatalf("stamps %v / %v, effective %s, base %s", meta, template, receipt.EffectiveTree, receipt.BaseTree)
+		templateMeta, _ := document["spec"].(map[string]any)["template"].(map[string]any)["metadata"].(map[string]any)
+		template, _ := templateMeta["annotations"].(map[string]any)
+		if _, stamped := template["sdo.dev/source-tree"]; stamped {
+			t.Fatalf("pod template carries the tree stamp, so every advance would roll it: %v", template)
+		}
+		if meta["sdo.dev/source-tree"] != receipt.EffectiveTree || receipt.EffectiveTree == receipt.BaseTree {
+			t.Fatalf("stamp %v, effective %s, base %s", meta, receipt.EffectiveTree, receipt.BaseTree)
 		}
 	}
 	if err := os.MkdirAll(filepath.Join(root, ".sdo", "playbooks"), 0o755); err != nil {

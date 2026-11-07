@@ -33,7 +33,8 @@ func podKindObject(t *testing.T, kind string) map[string]any {
 }
 
 // Stamping reaches every pod-bearing kind: the tree lands on the object and on
-// the pod it creates, and every container image is substituted.
+// (a bare Pod is its own object), never on a controller's pod template, and
+// every container image is substituted.
 func TestStampCoversEveryPodKind(t *testing.T) {
 	for _, kind := range rendered.PodKinds() {
 		t.Run(kind, func(t *testing.T) {
@@ -49,11 +50,14 @@ func TestStampCoversEveryPodKind(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for name, metadata := range map[string]map[string]any{"object": doc["metadata"].(map[string]any), "pod": podMetadata} {
-				annotations, _ := metadata["annotations"].(map[string]any)
-				if annotations["sdo.dev/source-tree"] != "tree1" {
-					t.Errorf("%s metadata not stamped: %v", name, metadata)
-				}
+			objectAnnotations, _ := doc["metadata"].(map[string]any)["annotations"].(map[string]any)
+			if objectAnnotations["sdo.dev/source-tree"] != "tree1" {
+				t.Errorf("object not stamped: %v", doc["metadata"])
+			}
+			podAnnotations, _ := podMetadata["annotations"].(map[string]any)
+			_, templateStamped := podAnnotations["sdo.dev/source-tree"]
+			if want := kind == "Pod"; templateStamped != want {
+				t.Errorf("pod metadata stamped = %v, want %v: %v", templateStamped, want, podMetadata)
 			}
 		})
 	}
