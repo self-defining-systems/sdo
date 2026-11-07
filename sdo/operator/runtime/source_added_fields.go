@@ -12,6 +12,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -368,7 +369,8 @@ func bookkeepingPath(path string, value any) bool {
 	}
 	for _, prefix := range []string{"metadata.labels.", "spec.template.metadata.labels."} {
 		if strings.HasPrefix(path, prefix) {
-			return reservedDomainName(strings.TrimPrefix(path, prefix))
+			name := strings.TrimPrefix(path, prefix)
+			return reservedDomainName(name) || rendered.IsSourceTreeLabel(name)
 		}
 	}
 	return false

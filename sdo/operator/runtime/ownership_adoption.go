@@ -458,6 +458,17 @@ func carrySourceTreeStamp(source, live *unstructured.Unstructured) *unstructured
 		}
 		_ = unstructured.SetNestedField(out.Object, stamp, append(append([]string(nil), fields...), sourceTreeAnnotation)...)
 	}
+	// A Deployment carries the stamp in labels (see rendered.SourceTreeKey).
+	for _, key := range []string{rendered.SourceTreeKey, rendered.SourceTreeRestKey} {
+		stamp, found, _ := unstructured.NestedString(live.Object, "metadata", "labels", key)
+		if !found || stamp == "" {
+			continue
+		}
+		if _, declared, _ := unstructured.NestedString(out.Object, "metadata", "labels", key); declared {
+			continue
+		}
+		_ = unstructured.SetNestedField(out.Object, stamp, "metadata", "labels", key)
+	}
 	return out
 }
 

@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -268,6 +269,20 @@ func preserveSourceControllerFields(next, observed *unstructured.Unstructured) {
 		}
 		if annotations != nil {
 			_ = unstructured.SetNestedMap(next.Object, annotations, location...)
+		}
+	}
+	for _, key := range []string{rendered.SourceTreeKey, rendered.SourceTreeRestKey} {
+		labels, _, _ := unstructured.NestedMap(next.Object, "metadata", "labels")
+		if value, ok, _ := unstructured.NestedString(observed.Object, "metadata", "labels", key); ok {
+			if labels == nil {
+				labels = map[string]any{}
+			}
+			labels[key] = value
+		} else {
+			delete(labels, key)
+		}
+		if labels != nil {
+			_ = unstructured.SetNestedMap(next.Object, labels, "metadata", "labels")
 		}
 	}
 }

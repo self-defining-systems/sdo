@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"sdo.dev/operator/planwire"
+	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -262,6 +263,9 @@ func planComparableFields(object, declared, owner *unstructured.Unstructured, ch
 	}
 	for path := range paths {
 		if strings.HasPrefix(path, "metadata.annotations.") && sourceBookkeepingAnnotation(strings.TrimPrefix(path, "metadata.annotations.")) {
+			continue
+		}
+		if strings.HasPrefix(path, "metadata.labels.") && rendered.IsSourceTreeLabel(strings.TrimPrefix(path, "metadata.labels.")) {
 			continue
 		}
 		if len(owner.GetManagedFields()) > 0 && !ownsDriftPath(owned, path) && !changed[path] {

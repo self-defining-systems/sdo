@@ -24,6 +24,7 @@ import (
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	policyv1 "k8s.io/api/policy/v1"
 	"sdo.dev/operator/memoryhost"
+	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/metrics"
@@ -346,17 +347,23 @@ func comparableFields(object map[string]any) map[string]any {
 }
 
 func removeRevisionStamp(metadata map[string]any) {
-	annotations, ok := metadata["annotations"].(map[string]any)
-	if !ok {
-		return
-	}
+	annotations, _ := metadata["annotations"].(map[string]any)
 	for key := range annotations {
 		if sourceBookkeepingAnnotation(key) {
 			delete(annotations, key)
 		}
 	}
-	if len(annotations) == 0 {
+	if annotations != nil && len(annotations) == 0 {
 		delete(metadata, "annotations")
+	}
+	labels, _ := metadata["labels"].(map[string]any)
+	for key := range labels {
+		if rendered.IsSourceTreeLabel(key) {
+			delete(labels, key)
+		}
+	}
+	if labels != nil && len(labels) == 0 {
+		delete(metadata, "labels")
 	}
 }
 

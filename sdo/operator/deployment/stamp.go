@@ -16,7 +16,8 @@ type ImageSite struct {
 }
 
 // Stamp records the effective source tree ID on an already-normalized object's
-// metadata (never in a pod template: the tree changes with every upstream
+// metadata (annotations, except a Deployment's labels: the API server bumps
+// a Deployment's generation for any annotation change; never in a pod template: the tree changes with every upstream
 // commit, and a template stamp would roll every workload, datastores included,
 // on every advance; a workload's pods change only with its own spec and image
 // pins, and attribute to the stamped owner), substitutes container images through imageFor
@@ -31,7 +32,14 @@ func Stamp(obj map[string]any, tree string, imageFor func(ImageSite) string) ([]
 	}
 	name, _ := metadata["name"].(string)
 	if tree != "" {
-		nestedMap(metadata, "annotations")["sdo.dev/source-tree"] = tree
+		if rendered.StampInLabels(kind) {
+			labels := nestedMap(metadata, "labels")
+			for key, value := range rendered.SourceTreeLabels(tree) {
+				labels[key] = value
+			}
+		} else {
+			nestedMap(metadata, "annotations")[rendered.SourceTreeKey] = tree
+		}
 	}
 	if !rendered.WorkloadKind(kind) {
 		return nil, nil

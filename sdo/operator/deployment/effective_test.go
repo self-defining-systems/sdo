@@ -147,7 +147,7 @@ func TestStampIsTheEffectiveTreeID(t *testing.T) {
 		if document["kind"] != "Deployment" {
 			continue
 		}
-		meta := document["metadata"].(map[string]any)["annotations"].(map[string]any)
+		meta := document["metadata"].(map[string]any)["labels"].(map[string]any)
 		templateMeta, _ := document["spec"].(map[string]any)["template"].(map[string]any)["metadata"].(map[string]any)
 		template, _ := templateMeta["annotations"].(map[string]any)
 		if _, stamped := template["sdo.dev/source-tree"]; stamped {

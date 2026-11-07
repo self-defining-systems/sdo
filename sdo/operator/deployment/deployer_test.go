@@ -71,8 +71,7 @@ func (c *clusterFake) Apply(_ context.Context, documents []byte) error {
 			namespace, _ := meta["namespace"].(string)
 			id := kind + "/" + namespace + "/" + name
 			images, _ := Stamp(document, "", func(site ImageSite) string { return site.Image })
-			annotations, _ := meta["annotations"].(map[string]any)
-			revision, _ := annotations["sdo.dev/source-tree"].(string)
+			revision := rendered.StampedTree(meta)
 			if c.live == nil {
 				c.live = map[string]WorkloadObservation{}
 			}
@@ -342,6 +341,12 @@ func depUnstamp(o map[string]any, original map[string]string) {
 		delete(annotations, "sdo.dev/source-tree")
 		if len(annotations) == 0 {
 			delete(meta, "annotations")
+		}
+		labels, _ := meta["labels"].(map[string]any)
+		delete(labels, rendered.SourceTreeKey)
+		delete(labels, rendered.SourceTreeRestKey)
+		if len(labels) == 0 {
+			delete(meta, "labels")
 		}
 	}
 	if meta, ok := o["metadata"].(map[string]any); ok {
