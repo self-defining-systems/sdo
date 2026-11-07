@@ -23,7 +23,10 @@ import (
 // The chart: a Deployment that changes every release, a Deployment that
 // never changes (Kubernetes bumps a Deployment's generation for any
 // annotation change, so SDO's bookkeeping must stay off its annotations),
-// and a StatefulSet with Services; a Job named after
+// and a StatefulSet with Services; an autoscaler targeting the first
+// Deployment (the fake kubelet runs the HorizontalPodAutoscaler controller and
+// the Deployment controller's revision annotation, so live fields no render
+// holds change under every release); a Job named after
 // a hash of its images (renamed by every image bump); a fixed-name bucket Job
 // (its pod template is immutable); and a pre-install/pre-upgrade hook under
 // templates/shared-secrets/ (a secrets-named upstream path) with its
@@ -38,7 +41,7 @@ func (r syntheticRelease) files() map[string]string {
 		"chart/values.yaml": fmt.Sprintf("web: %q\nmigrate: %q\nbuckets: %q\nstore: %q\nsecrets: %q\n", r.web, r.migrate, r.buckets, r.store, r.secrets),
 		"chart/templates/app.yaml": `apiVersion: apps/v1
 kind: Deployment
-metadata: {name: web}
+metadata: {name: web, annotations: {synthetic.invalid/owner: web-team}}
 spec:
   replicas: 1
   selector: {matchLabels: {app: web}}
@@ -52,7 +55,7 @@ spec:
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: {name: static}
+metadata: {name: static, annotations: {synthetic.invalid/owner: static-team}}
 spec:
   replicas: 1
   selector: {matchLabels: {app: static}}
@@ -62,6 +65,14 @@ spec:
       containers:
         - name: static
           image: registry.synthetic.invalid/static:1
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: {name: web}
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: web}
+  minReplicas: 2
+  maxReplicas: 4
 ---
 apiVersion: v1
 kind: Service

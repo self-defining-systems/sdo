@@ -89,6 +89,21 @@ func (c *Controller) recordAdoptionError(now time.Time, err error) {
 	c.ownershipAdoption = status
 }
 
+// autoscaledTargets is every workload an autoscaler targets: the accepted
+// manifests' own autoscalers and the live HorizontalPodAutoscalers the read
+// view holds (an autoscaler the chart does not render still owns the count).
+func (c *Controller) autoscaledTargets(snapshot sdk.DetectionContext, objects []*unstructured.Unstructured) rendered.Autoscaled {
+	var autoscaled rendered.Autoscaled
+	autoscaled.AddObjects(c.config.Namespace, objects...)
+	if snapshot != nil && c.drift != nil && c.drift.View != nil {
+		for _, hpa := range c.drift.View(snapshot).HorizontalPodAutoscalers() {
+			target := hpa.Spec.ScaleTargetRef
+			autoscaled.Add(target.APIVersion, target.Kind, hpa.Namespace, target.Name)
+		}
+	}
+	return autoscaled
+}
+
 // acceptanceSettleRetry spaces adoption passes that wait for an object to
 // settle before its acceptance record is taken. The spacing doubles while
 // the wait continues, up to acceptanceSettleRetryMax: an object may never
@@ -164,8 +179,17 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 	objectFailed := func(ref sdk.ObjectRef, err error) {
 		objectFailures = append(objectFailures, &ObjectAdoptionError{Ref: ref, Err: err})
 	}
+	autoscaled := c.autoscaledTargets(snapshot, objects)
 	for _, source := range objects {
 		ref := sdk.ObjectRef{APIVersion: source.GetAPIVersion(), Kind: source.GetKind(), Namespace: source.GetNamespace(), Name: source.GetName()}
+		// An autoscaler owns the replica count of the workload it targets:
+		// adopting the accepted count would reset the autoscaler's decision
+		// (generation churn, and adoption that never converges). Adoption
+		// claims the fields it can own and leaves this one.
+		if autoscaled.Targets(ref) {
+			source = source.DeepCopy()
+			autoscaled.OmitReplicas(source)
+		}
 		// Identity-only declarations have no configuration fields to adopt.
 		// Presence remains an inventory/source obligation without requiring an
 		// otherwise unnecessary API write (for example a bare ServiceAccount).
