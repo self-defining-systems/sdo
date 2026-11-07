@@ -41,6 +41,7 @@
     "sdo/operator/telemetry",
     "sdo/operator/runtime",
     "sdo/operator",
+    "sdo/operator/integration",
     "benchmarks/sregym/protocol/native_receipt_go",
     "benchmarks/sregym/protocol/submission_go",
     "benchmarks/sregym/fastloop/replay_go"
@@ -69,6 +70,7 @@
   },
   "go_cli_shard": [
     "sdo/operator/operatorcli",
+    "sdo/operator/integration",
     "sdo/operator/runtime/sim",
     "sdo/operator/runtime/envtestio",
     "sdo/operator/runtime/e2e"

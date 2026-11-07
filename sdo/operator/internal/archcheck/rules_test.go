@@ -15,6 +15,7 @@ func fixtureConfig() Config {
 	cfg.Module = module
 	cfg.ImplMayImport = []string{module + "/contracts", module + "/sdk"}
 	cfg.ConfigTypes = []ConfigType{{Name: "RawManifestStrategy", Import: module + "/contracts/gen", OwnerPkg: module + "/render/raw"}}
+	cfg.RootForbiddenImports = []string{module + "/runtime"}
 	cfg.Allow = nil
 	cfg.Ratchet = nil
 	return cfg
@@ -44,7 +45,8 @@ func TestNegativeControls(t *testing.T) {
 		{dir: "r2_sibling", want: []string{"R2 render/helm/helm.go"}},
 		{dir: "r2_family", want: []string{"R2 render/helm/helm.go"}},
 		{dir: "r3_support", want: []string{"R3 render/rendertest/x.go"}},
-		{dir: "r6_wiring", want: []string{"R6 runtime/launch.go"}},
+		{dir: "r6_wiring", mod: func(c *Config) { c.RootForbiddenImports = nil }, want: []string{"R6 runtime/launch.go"}},
+		{dir: "r7_runtime", want: []string{"R7 lifecycle/x.go"}},
 		{dir: "r4_assert", want: []string{"R4 deployment/registry.go", "R4 deployment/registry.go"}},
 		{dir: "r4_use", want: []string{"R4 lifecycle/compat.go", "R4 lifecycle/compat.go", "R4 lifecycle/compat.go", "R4 lifecycle/compat.go"}},
 		{dir: "r4_exempt", want: nil},
@@ -77,7 +79,7 @@ func TestNegativeControls(t *testing.T) {
 			}
 		})
 	}
-	for _, r := range []Rule{R1, R2, R3, R4, R5, R6} {
+	for _, r := range []Rule{R1, R2, R3, R4, R5, R6, R7} {
 		if !fired[r] {
 			t.Errorf("no negative control fires %s", r)
 		}

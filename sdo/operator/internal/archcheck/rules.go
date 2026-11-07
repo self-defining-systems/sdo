@@ -66,6 +66,9 @@ func Rules() Config {
 			},
 		},
 		RatchetTokens: []string{"ManifestPaths", "manifest_paths"},
+		// runtime requires this module, so this module may not require runtime.
+		// Tests that need both live in the test-only integration module.
+		RootForbiddenImports: []string{module + "/runtime"},
 		// Generated files cannot carry directives; only the serial proto PRs
 		// (S3-01, S3-11c, S3-15) edit these entries.
 		Ratchet: []RatchetEntry{

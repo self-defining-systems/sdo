@@ -103,7 +103,17 @@ subject: `Check` runs the same acceptance and advisory stages without the contro
 
 ## Onboarding end-to-end without a cluster
 
-`operatorcli/onboarding_lifecycle_integration_test.go` runs the production onboarding lifecycle
+The onboarding, advance and rehearsal tests below live in the test-only Go module `sdo/operator/integration`
+(`sdo.dev/operator/integration`), not in `operatorcli`. The rehearsal needs `sdo.dev/operator/runtime` (envtest,
+the controller's adoption and maintenance types), and runtime requires the root module, so the root `go.mod` must
+not require runtime: that would be a require cycle hidden by the `replace` directives, and it would put the whole
+controller runtime and envtest stack into the production module graph. No module requires `integration`; it
+`replace`s the local modules and reaches `operatorcli`'s unexported wiring through the exported seams in
+`operatorcli/integration_seams.go`. Run it from `sdo/operator/integration`. `archcheck` enforces both halves:
+R7 (a non-test file of the root module may not import `sdo.dev/operator/runtime`) and a `go.mod` require-cycle
+check over every module under `sdo/operator`. A new test that needs two cyclic modules belongs in `integration`.
+
+`integration/onboarding_lifecycle_integration_test.go` runs the production onboarding lifecycle
 (`lifecycle.Coordinator.Run`) on the operate Job's real broker (`onboardingBroker`, validation subprocess
 included), Go's bootstrap commits and the operate Job's agent transport (`lifecycleWorkers` on a fake
 API server), under each built-in telemetry profile, for a single-service and a multi-workload synthetic app.
@@ -112,9 +122,9 @@ deployer evidence, the health verdict and the controller install are scripted, a
 It asserts the first known-good proposal is accepted with a clean base, that a wrong proposal gets the same
 typed diagnostics from the judge's check and the broker, and that a changed rejection is not a repeat.
 Each top-level test is one onboarding (about 6 s, mostly broker git processes); run it before a live
-onboarding: `go test -tags=integration -short -run TestOnboarding ./operatorcli/` in `sdo/operator`.
+onboarding: `go test -tags=integration -short -run TestOnboarding ./...` in `sdo/operator/integration`.
 
-`operatorcli/advance_lifecycle_integration_test.go` extends the harness to an upstream advance: a synthetic Helm
+`integration/advance_lifecycle_integration_test.go` extends the harness to an upstream advance: a synthetic Helm
 chart with a hash-named Job is onboarded from a provided plan in the stable form Go proposes
 (`rendered.SummarizeWorkloads`: workload identities and image repositories), upstream then releases a revision that
 only bumps image tags, and the production `lifecycle.Advancer` (real broker, helm render and Deployer over a fake
@@ -122,7 +132,7 @@ cluster) must accept it with no agent Job. It takes about 15 s: an onboarding sp
 
 ## Replay rehearsal: chart releases without a cluster
 
-`operatorcli/rehearsal_integration_test.go` replays a sequence of chart releases through SDO's real upstream-follow
+`integration/rehearsal_integration_test.go` replays a sequence of chart releases through SDO's real upstream-follow
 path and reports every blocker of every release in one run (it continues past a held release, as the follower polls
 the next revision). Real: a kube-apiserver and etcd (`runtime/envtestio`: immutable fields, defaulting, server-side
 apply, generation, RBAC), the helm render with the discovered (or recorded) render environment, the Coordinator's
@@ -145,7 +155,7 @@ evaluation race (`DrainTicks`). A release the advance accepted that opened an in
 by an accepted advance"); an unacknowledged pause in the advance makes the PR tier fail. It does not run the real
 detectors, so what a detector reports during a rollout still needs a live run.
 
-- PR tier: `go test -tags=integration -run TestReplayRehearsalOfASyntheticChart ./operatorcli/` in `sdo/operator`
+- PR tier: `go test -tags=integration -run TestReplayRehearsalOfASyntheticChart ./...` in `sdo/operator/integration`
   (about 30 s): a synthetic chart with a hash-named Job, a fixed-name bucket Job, a StatefulSet and a
   `templates/shared-secrets/` hook over four releases (one recreated Job that fails every attempt). The fake kubelet
   also runs the live-only writers: the Deployment controller's `deployment.kubernetes.io/revision` annotation and a

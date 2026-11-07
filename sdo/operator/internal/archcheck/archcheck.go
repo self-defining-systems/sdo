@@ -17,6 +17,9 @@
 //	   imports one (the production runtime stays below operatorcli and is
 //	   handed what it needs by injection). A package main is a composition
 //	   root and may import wiring.
+//	R7 the root module's non-test files do not import the runtime module: runtime
+//	   requires the root, so the import would make the module graph cyclic.
+//	   Tests that need both live in the test-only integration module.
 //
 // Known violations live in the violating file as //archcheck: directives (see
 // directive.go); only generated files keep entries in the rule table.
@@ -28,6 +31,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os"
 	"path"
 	"path/filepath"
 	"sort"
@@ -45,6 +49,7 @@ const (
 	R4 Rule = "R4"
 	R5 Rule = "R5"
 	R6 Rule = "R6"
+	R7 Rule = "R7"
 )
 
 // Family is a plugin family: an interface package in Dir with implementation
@@ -91,6 +96,10 @@ type Config struct {
 	ImplMayImport []string
 	ConfigTypes   []ConfigType
 	RatchetTokens []string
+	// RootForbiddenImports are import path prefixes the root module's non-test
+	// files may not import (R7): the nested module that requires the root
+	// would make the root require it back.
+	RootForbiddenImports []string
 	// Allow and Ratchet hold entries for files that cannot carry directives
 	// (generated code) and for fixtures; hand-written files use directives.
 	Allow   []Allow
@@ -224,6 +233,7 @@ func Check(root string, cfg Config) ([]Violation, error) {
 			}
 		}
 		cfg.checkFile(fset, file, relFile, add, counts)
+		cfg.checkRootImports(root, file, fset, relFile, add)
 		return nil
 	})
 	if err != nil {
@@ -239,6 +249,11 @@ func Check(root string, cfg Config) ([]Violation, error) {
 		}
 	}
 	out = append(out, cfg.checkRatchet(counts, ratchets)...)
+	cycles, err := cfg.moduleCycleViolations(root)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, cycles...)
 	sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
 	return out, nil
 }
@@ -511,4 +526,34 @@ func (c Config) checkRatchet(counts map[string]int, directives map[string]direct
 		}
 	}
 	return out
+}
+
+// checkRootImports reports R7: a non-test file of the root module (no nested
+// go.mod between it and root) importing a forbidden prefix.
+func (c Config) checkRootImports(root string, file *ast.File, fset *token.FileSet, relFile string, add func(Violation)) {
+	if len(c.RootForbiddenImports) == 0 || strings.HasSuffix(relFile, "_test.go") || nestedModule(root, relFile) {
+		return
+	}
+	if role, _ := c.classify(path.Dir(relFile)); role == kindExempt {
+		return
+	}
+	for _, spec := range file.Imports {
+		imported, _ := strconv.Unquote(spec.Path.Value)
+		for _, forbidden := range c.RootForbiddenImports {
+			if imported == forbidden || strings.HasPrefix(imported, forbidden+"/") {
+				add(Violation{Rule: R7, File: relFile, Line: fset.Position(spec.Pos()).Line, Message: "root module imports " + imported + ", which requires the root module; put the code that needs it in the integration test module or a package the root already owns"})
+			}
+		}
+	}
+}
+
+// nestedModule reports whether relFile sits under a directory below root that
+// has its own go.mod.
+func nestedModule(root, relFile string) bool {
+	for dir := path.Dir(relFile); dir != "." && dir != "/"; dir = path.Dir(dir) {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(dir), "go.mod")); err == nil {
+			return true
+		}
+	}
+	return false
 }

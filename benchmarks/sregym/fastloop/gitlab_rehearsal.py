@@ -7,7 +7,7 @@ release in one run. It needs no cluster, no model and no lease.
 
 This module only prepares the input, the way the lane vendors each release (``assemble.assemble`` at that release's
 pins is the tree ``gitlab_replay.push_release`` commits), and runs the generic Go harness
-(``TestReplayRehearsalFromInput`` in ``sdo/operator/operatorcli``) on it. SDO production code never reads it.
+(``TestReplayRehearsalFromInput`` in the test-only module ``sdo/operator/integration``) on it. SDO production code never reads it.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from benchmarks.sregym.fastloop.gitlab_releases import Release, ReleaseList
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-OPERATOR_ROOT = REPO_ROOT / "sdo" / "operator"
+INTEGRATION_MODULE = REPO_ROOT / "sdo" / "operator" / "integration"
 INPUT_FILE = "rehearsal-input.json"
 GO_TEST = "^TestReplayRehearsalFromInput$"
 
@@ -130,8 +130,8 @@ def run_harness(input_path: Path, out: Path) -> int:
     """
     env = {**os.environ, "SDO_REHEARSAL_INPUT": str(input_path.resolve()), "SDO_REHEARSAL_OUT": str(out.resolve())}
     command = ["go", "test", "-tags", "integration", "-count=1", "-timeout=0", "-run", GO_TEST]
-    command += ["./operatorcli/"]
-    return subprocess.run(command, cwd=OPERATOR_ROOT, env=env, check=False).returncode
+    command += ["./"]
+    return subprocess.run(command, cwd=INTEGRATION_MODULE, env=env, check=False).returncode
 
 
 def parse_behaviors(text: str) -> tuple[Behavior, ...]:

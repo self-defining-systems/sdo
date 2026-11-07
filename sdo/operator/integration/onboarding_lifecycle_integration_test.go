@@ -1,6 +1,6 @@
 //go:build integration
 
-package operatorcli
+package integration
 
 import (
 	"bytes"
@@ -35,6 +35,7 @@ import (
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/operability"
 	"sdo.dev/operator/operability/offline"
+	. "sdo.dev/operator/operatorcli"
 	"sdo.dev/operator/operatorcli/catalog/renderers"
 	"sdo.dev/operator/operatorcli/catalog/telemetrysources"
 	"sdo.dev/operator/rendered"
@@ -46,9 +47,9 @@ import (
 
 // This file is the cluster-free onboarding end-to-end check: the production
 // lifecycle (lifecycle.Coordinator.Run) over the operate Job's real broker
-// (onboardingBroker, with its validation subprocess: this test binary, see
+// (OnboardingBroker, with its validation subprocess: this test binary, see
 // TestMain), Go's bootstrap commits, the operate Job's real agent transport
-// (lifecycleWorkers' KubernetesExecutor on a fake API server) and the
+// (LifecycleWorkers' KubernetesExecutor on a fake API server) and the
 // install's telemetry for each built-in profile. Only what needs a cluster or
 // a model is scripted: the health judge (onbJudge edits the checkout and runs
 // the real `sdo-operator memory check` with the Job's environment), the
@@ -282,14 +283,14 @@ func (j *onbJudge) run(ctx context.Context, task *contracts.AgentTask, environme
 	// The Job's environment, plus the operator sources the worker image
 	// carries at the default operator root.
 	getenv := func(name string) string {
-		if name == memoryOperatorEnv {
+		if name == MemoryOperatorEnv {
 			return j.operatorRoot
 		}
 		return environment[name]
 	}
 	var stdout, stderr bytes.Buffer
 	code := RunMemory(ctx, []string{"check", "--root", checkout, "--json"}, getenv, &stdout, &stderr)
-	if code != exitClean && code != exitDiagnostics {
+	if code != ExitClean && code != ExitDiagnostics {
 		return nil, fmt.Errorf("judge memory check exit %d: %s", code, stderr.String())
 	}
 	report := &contracts.MemoryCheckReport{}
@@ -519,21 +520,21 @@ func onboardWith(t *testing.T, app onbApp, profile telemetry.Profile, options on
 			Sources: options.sources,
 		},
 	}
-	registry, err := lifecycleRegistry(config, filepath.Join(operatorRoot, "..", "agents", "registrations"))
+	registry, err := LifecycleRegistry(config, filepath.Join(operatorRoot, "..", "agents", "registrations"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	// The operator's registry, as RunOperate passes it; the validation child
 	// (TestMain) registers one more adapter, which no proposal here binds.
-	repository, err := onboardingBroker(config, onbControl, (broker.SubprocessValidator{OperatorRoot: operatorRoot}).Validator(), sdk.ObservationScope{}, telemetryRegistry())
+	repository, err := OnboardingBroker(config, onbControl, (broker.SubprocessValidator{OperatorRoot: operatorRoot}).Validator(), sdk.ObservationScope{}, TelemetryRegistry())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.Lifecycle.Telemetry, err = telemetrycontext.Build(telemetryRegistry(), config.Install.TelemetryEnvironment(), nil); err != nil {
+	if config.Lifecycle.Telemetry, err = telemetrycontext.Build(TelemetryRegistry(), config.Install.TelemetryEnvironment(), nil); err != nil {
 		t.Fatal(err)
 	}
 	client := fake.NewSimpleClientset()
-	workers, err := lifecycleWorkers(config, client, onbControl, registry, repository)
+	workers, err := LifecycleWorkers(config, client, onbControl, registry, repository)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -646,7 +647,7 @@ func (o onbOutcome) requireAccepted(t *testing.T, app onbApp, alerts bool) {
 	if installed := strings.Contains(tree, layout.DetectorManifestPath(layout.ClassHealth, "metrics-alerts")); installed != alerts {
 		t.Errorf("alerts detector installed = %v, want %v", installed, alerts)
 	}
-	if policy := o.judge.environments[0][memoryTelemetryPolicyEnv]; policy == "" || !json.Valid([]byte(policy)) {
+	if policy := o.judge.environments[0][MemoryTelemetryPolicyEnv]; policy == "" || !json.Valid([]byte(policy)) {
 		t.Errorf("the judge's Job carries no telemetry policy: %q", policy)
 	}
 }

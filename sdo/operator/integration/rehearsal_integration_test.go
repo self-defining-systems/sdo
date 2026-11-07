@@ -1,6 +1,6 @@
 //go:build integration
 
-package operatorcli
+package integration
 
 import (
 	"context"
@@ -34,14 +34,15 @@ import (
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/onboarding"
 	"sdo.dev/operator/operability"
+	. "sdo.dev/operator/operatorcli"
 	"sdo.dev/operator/operatorcli/catalog/renderers"
 	"sdo.dev/operator/operatorcli/catalog/telemetrysources"
 	"sdo.dev/operator/operatorcli/catalog/upstreams"
 	"sdo.dev/operator/rendered"
-	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/renderenv"
 	sdoruntime "sdo.dev/operator/runtime"
 	"sdo.dev/operator/runtime/envtestio"
+	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/upstream"
 )
 
@@ -513,38 +514,38 @@ func rehearse(t *testing.T, in rehearsalInput) rehearsal.Report {
 		// A held release leaves the live namespace ahead of the accepted
 		// commit on purpose; there is nothing to adopt for it.
 		if r.Adopted {
-		pass := sdoruntime.AdoptionPass{
-			Namespace: in.Namespace, SourceCommit: head, Client: client, Snapshot: sdktest.Snapshot{NamespaceName: in.Namespace},
-			Source: rendered.Source{Repository: o.accepted, Deployment: in.Source, Catalog: renderers.Catalog(), Environment: environment, Pins: o.repository},
-		}
-		beforeAdopt := generations(live)
-		for round := 1; round <= 2; round++ {
-			status, err := pass.Run(ctx, clock.Now())
-			if err != nil {
-				t.Errorf("release %s: adoption pass %d: %v", r.Name, round, err)
+			pass := sdoruntime.AdoptionPass{
+				Namespace: in.Namespace, SourceCommit: head, Client: client, Snapshot: sdktest.Snapshot{NamespaceName: in.Namespace},
+				Source: rendered.Source{Repository: o.accepted, Deployment: in.Source, Catalog: renderers.Catalog(), Environment: environment, Pins: o.repository},
 			}
-			if len(status.SpecChangeSkipped) > 0 {
-				t.Errorf("release %s: adoption pass %d skipped objects whose adoption would change their spec: %v", r.Name, round, status.SpecChangeSkipped)
-			}
-			afterLive, err := liveObjects(ctx, dyn, in.Namespace)
-			if err != nil {
-				t.Fatal(err)
-			}
-			moved := []string{}
-			for id, gen := range generations(afterLive) {
-				if old, ok := beforeAdopt[id]; ok && old != gen {
-					moved = append(moved, fmt.Sprintf("%s %d->%d", id, old, gen))
+			beforeAdopt := generations(live)
+			for round := 1; round <= 2; round++ {
+				status, err := pass.Run(ctx, clock.Now())
+				if err != nil {
+					t.Errorf("release %s: adoption pass %d: %v", r.Name, round, err)
 				}
+				if len(status.SpecChangeSkipped) > 0 {
+					t.Errorf("release %s: adoption pass %d skipped objects whose adoption would change their spec: %v", r.Name, round, status.SpecChangeSkipped)
+				}
+				afterLive, err := liveObjects(ctx, dyn, in.Namespace)
+				if err != nil {
+					t.Fatal(err)
+				}
+				moved := []string{}
+				for id, gen := range generations(afterLive) {
+					if old, ok := beforeAdopt[id]; ok && old != gen {
+						moved = append(moved, fmt.Sprintf("%s %d->%d", id, old, gen))
+					}
+				}
+				sort.Strings(moved)
+				if round == 1 && len(moved) > 0 {
+					t.Logf("release %s: adoption pass 1 (acceptance records) moved generations: %v", r.Name, moved)
+				}
+				if round == 2 && len(moved) > 0 {
+					t.Errorf("release %s: a second adoption pass moved generations: %v", r.Name, moved)
+				}
+				beforeAdopt = generations(afterLive)
 			}
-			sort.Strings(moved)
-			if round == 1 && len(moved) > 0 {
-				t.Logf("release %s: adoption pass 1 (acceptance records) moved generations: %v", r.Name, moved)
-			}
-			if round == 2 && len(moved) > 0 {
-				t.Errorf("release %s: a second adoption pass moved generations: %v", r.Name, moved)
-			}
-			beforeAdopt = generations(afterLive)
-		}
 		}
 		index := sdoruntime.NewSourceInventoryFrom(in.Namespace, head, inventory)
 		if err := index.SetNamespaceOnboarding(acknowledgement); err != nil {
@@ -607,7 +608,7 @@ func rehearse(t *testing.T, in rehearsalInput) rehearsal.Report {
 				return rendered.Source{Deployment: source, Catalog: renderers.Catalog(), Repository: root, Environment: environment}.ShapeDigest(ctx, revision, in.Namespace)
 			},
 			Designer: recordingDesigner{&r.Dispatches}, Deployer: recordingCorrector{&r.Dispatches},
-			Maintenance: advanceMaintenance{Client: client, Namespace: onbControl, Now: clock.Now}, Activity: advMaintenance{},
+			Maintenance: AdvanceMaintenance{Client: client, Namespace: onbControl, Now: clock.Now}, Activity: advMaintenance{},
 			Wait: world.Wait, Now: clock.Now,
 		}
 		result, err := advancer.Advance(ctx, lifecycle.AdvanceConfig{
