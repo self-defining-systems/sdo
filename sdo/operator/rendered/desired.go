@@ -37,7 +37,10 @@ type DesiredPhase struct {
 	Name      string
 	Gate      render.Gate
 	Ephemeral bool
-	Objects   []DesiredObject
+	// Runs is the operation the deployer applies the phase for; empty is every
+	// operation (render.Phase.Runs).
+	Runs    render.Operation
+	Objects []DesiredObject
 }
 
 // DesiredSet is the one desired-state computation deploy and reads share.
@@ -67,12 +70,32 @@ func (d DesiredSet) Objects() []DesiredObject {
 	return out
 }
 
-// Hooks returns the objects of ephemeral (hook) phases in apply order.
+// Hooks returns the objects of ephemeral (hook) phases in apply order, every
+// operation's, each object once.
 func (d DesiredSet) Hooks() []DesiredObject {
 	var out []DesiredObject
+	seen := map[sdk.ObjectRef]bool{}
 	for _, phase := range d.Phases {
-		if phase.Ephemeral {
-			out = append(out, phase.Objects...)
+		if !phase.Ephemeral {
+			continue
+		}
+		for _, object := range phase.Objects {
+			if !seen[object.Ref] {
+				seen[object.Ref] = true
+				out = append(out, object)
+			}
+		}
+	}
+	return out
+}
+
+// For returns the phases a deploy performing op applies, in order: those that
+// run for every operation and those that run for op.
+func (d DesiredSet) For(op render.Operation) []DesiredPhase {
+	var out []DesiredPhase
+	for _, phase := range d.Phases {
+		if phase.Runs == "" || phase.Runs == op {
+			out = append(out, phase)
 		}
 	}
 	return out
@@ -99,19 +122,21 @@ func Desired(ctx context.Context, fsys render.FS, env render.Env, cat *render.Ca
 		return DesiredSet{}, desiredError(err)
 	}
 	set := DesiredSet{Inputs: result.Inputs}
-	seen := map[sdk.ObjectRef]bool{}
+	seen := map[sdk.ObjectRef][]render.Operation{}
 	for _, phase := range result.Phases {
-		desired := DesiredPhase{Name: phase.Name, Gate: phase.Gate, Ephemeral: phase.Ephemeral}
+		desired := DesiredPhase{Name: phase.Name, Gate: phase.Gate, Ephemeral: phase.Ephemeral, Runs: phase.Runs}
 		for _, object := range phase.Objects {
 			document := object.DeepCopy().Object
 			ref, workload, err := Normalize(document, env.Namespace)
 			if err != nil {
 				return DesiredSet{}, &SourceError{Kind: SourceInvalid, Err: fmt.Errorf("render accepted manifest %s/%s: %w", object.GetKind(), object.GetName(), err)}
 			}
-			if seen[ref] {
+			// One object may appear in phases of different operations (a hook for
+			// install and upgrade); never twice in what one operation applies.
+			if overlaps(seen[ref], phase.Runs) {
 				return DesiredSet{}, &SourceError{Kind: SourceInvalid, Err: fmt.Errorf("duplicate accepted manifest for %s/%s", ref.Kind, ref.Name)}
 			}
-			seen[ref] = true
+			seen[ref] = append(seen[ref], phase.Runs)
 			desired.Objects = append(desired.Objects, DesiredObject{
 				Ref: ref, Object: &unstructured.Unstructured{Object: document}, Workload: workload,
 				Foreign: ref.Namespace != "" && ref.Namespace != env.Namespace,
@@ -130,6 +155,15 @@ func Desired(ctx context.Context, fsys render.FS, env render.Env, cat *render.Ca
 		return DesiredSet{}, &SourceError{Kind: SourceInvalid, Err: err}
 	}
 	return set, nil
+}
+
+func overlaps(prior []render.Operation, runs render.Operation) bool {
+	for _, p := range prior {
+		if p == "" || runs == "" || p == runs {
+			return true
+		}
+	}
+	return false
 }
 
 // desiredError keeps an unavailable cause transient (a renderer reading a

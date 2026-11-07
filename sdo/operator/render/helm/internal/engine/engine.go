@@ -75,6 +75,15 @@ const (
 	DefaultMaxOutputBytes  = 16 << 20
 )
 
+// NotesError is a failure while executing a NOTES.txt template. Render returns
+// it together with every other file's complete output, so a caller that
+// discards NOTES output can still tell a chart's own guard (fail) from a
+// function its policy forbids.
+type NotesError struct{ Err error }
+
+func (e *NotesError) Error() string { return e.Err.Error() }
+func (e *NotesError) Unwrap() error { return e.Err }
+
 // Render takes a chart, optional values, and value overrides, and attempts to render the Go templates.
 //
 // Render can be called repeatedly on the same engine.
@@ -280,15 +289,14 @@ func (e Engine) render(tpls map[string]renderable) (rendered map[string]string, 
 	}
 
 	rendered = make(map[string]string, len(keys))
+	// NOTES.txt is where charts run their configuration guards, so it executes
+	// (as in helm install). A failure there is reported beside the complete
+	// manifests (NotesError) instead of discarding them.
+	var notesErr error
 	for _, filename := range keys {
 		// Don't render partials. We don't care out the direct output of partials.
 		// They are only included from other templates.
 		if strings.HasPrefix(path.Base(filename), "_") {
-			continue
-		}
-		// SDO discards NOTES.txt (user documentation, not a manifest), so its
-		// execution could only fail the render over text nobody reads.
-		if path.Base(filename) == "NOTES.txt" {
 			continue
 		}
 		// At render time, add information about the template that is being rendered.
@@ -296,6 +304,12 @@ func (e Engine) render(tpls map[string]renderable) (rendered map[string]string, 
 		vals["Template"] = chartutil.Values{"Name": filename, "BasePath": tpls[filename].basePath}
 		buf := g.buffer()
 		if err := t.ExecuteTemplate(buf, filename, vals); err != nil {
+			if path.Base(filename) == "NOTES.txt" {
+				if notesErr == nil {
+					notesErr = cleanupExecError(filename, err)
+				}
+				continue
+			}
 			return map[string]string{}, cleanupExecError(filename, err)
 		}
 
@@ -305,6 +319,9 @@ func (e Engine) render(tpls map[string]renderable) (rendered map[string]string, 
 		rendered[filename] = strings.ReplaceAll(buf.String(), "<no value>", "")
 	}
 
+	if notesErr != nil {
+		return rendered, &NotesError{Err: notesErr}
+	}
 	return rendered, nil
 }
 

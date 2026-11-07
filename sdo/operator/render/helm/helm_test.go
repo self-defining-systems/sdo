@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -580,8 +581,19 @@ func TestHooksAreSelectedByTheInstallEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("hooks of other operations must not reject the chart: %v", err)
 	}
-	if got := strings.Join(objectNames(res), " "); got != "pre-install/both main/cm" {
-		t.Fatalf("objects %q, want the install hook and the main object only", got)
+	// Deploy events become phases of their operation; delete, rollback and
+	// test hooks are not part of a deploy. A hook annotated for both
+	// operations is in both phases.
+	if got := strings.Join(objectNames(res), " "); got != "pre-install/both pre-upgrade/both pre-upgrade/upgrade-only main/cm post-upgrade/post-upgrade" {
+		t.Fatalf("objects %q", got)
+	}
+	runs := map[string]render.Operation{}
+	for _, p := range res.Phases {
+		runs[p.Name] = p.Runs
+	}
+	want := map[string]render.Operation{"pre-install": render.OperationInstall, "pre-upgrade": render.OperationUpgrade, "main": "", "post-upgrade": render.OperationUpgrade}
+	if !maps.Equal(runs, want) {
+		t.Fatalf("phases run for %v, want %v", runs, want)
 	}
 	// Negative control: an install event on the same template keeps it.
 	res, err = renderWith(t, with(fsys, hookTemplate("upgrade-only", "pre-install", "upgrade-only")), nil)
@@ -619,9 +631,10 @@ func TestForbiddenFunctionsAreJudgedByWhatExecutes(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	t.Run("NOTES.txt is discarded, so it is not executed", func(t *testing.T) {
-		if _, err := renderWith(t, minimal(map[string]string{"c/templates/NOTES.txt": "{{ randAlphaNum 5 }}"}), nil); err != nil {
-			t.Fatal(err)
+	t.Run("a forbidden function in NOTES.txt does not fail the render: its output is discarded", func(t *testing.T) {
+		res, err := renderWith(t, minimal(map[string]string{"c/templates/NOTES.txt": "{{ randAlphaNum 5 }}"}), nil)
+		if err != nil || len(res.Desired()) != 1 {
+			t.Fatalf("%v %v", objectNames(res), err)
 		}
 	})
 	t.Run("the error names the template that called the function and the file that reached it", func(t *testing.T) {
@@ -752,5 +765,43 @@ func TestUmbrellaRequiredAndFailSurfaceTheChartMessage(t *testing.T) {
 				t.Fatalf("error %v, want it to contain %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// NOTES.txt is where charts run their configuration guards: helm install and
+// helm template execute it and fail on a template fail, so the render does too,
+// with the chart's message. Its output is never a manifest.
+func TestNotesGuardsFailTheRender(t *testing.T) {
+	guarded := minimal(map[string]string{
+		"c/values.yaml":         "major: 16\n",
+		"c/templates/NOTES.txt": `{{ if lt (int .Values.major) 16 }}{{ fail "PostgreSQL 15 and earlier are not supported" }}{{ end }}see the docs`,
+	})
+	res, err := renderWith(t, guarded, nil)
+	if err != nil {
+		t.Fatalf("a satisfied guard must render: %v", err)
+	}
+	if got := strings.Join(objectNames(res), " "); got != "main/cm" {
+		t.Fatalf("NOTES.txt output must not become an object: %q", got)
+	}
+	_, err = renderWith(t, guarded, map[string]any{"major": 14})
+	var perr *policy.Error
+	if !errors.As(err, &perr) || perr.Rule != policy.RuleChartGuard || perr.File != "NOTES.txt" || !strings.Contains(perr.Detail, "PostgreSQL 15 and earlier are not supported") {
+		t.Fatalf("a failing guard must be a typed chart-guard error with the chart's message, got %v", err)
+	}
+	if !policy.Violates(err, policy.RuleChartGuard) {
+		t.Fatalf("errors.Is must match the rule: %v", err)
+	}
+}
+
+func TestNotesGuardThroughAHelperFailsTheRender(t *testing.T) {
+	files := minimal(map[string]string{
+		"c/templates/_guard.tpl": `{{ define "c.check" }}{{ if .Values.bad }}{{ fail "bad configuration" }}{{ end }}{{ end }}`,
+		"c/templates/NOTES.txt":  `{{ include "c.check" . }}`,
+	})
+	if _, err := renderWith(t, files, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := renderWith(t, files, map[string]any{"bad": true}); !policy.Violates(err, policy.RuleChartGuard) {
+		t.Fatalf("got %v", err)
 	}
 }

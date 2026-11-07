@@ -181,6 +181,7 @@ type phase struct {
 	Name      string            `json:"name"`
 	Gate      render.Gate       `json:"gate"`
 	Ephemeral bool              `json:"ephemeral"`
+	Runs      render.Operation  `json:"runs,omitempty"`
 	Objects   []json.RawMessage `json:"objects"`
 }
 
@@ -195,7 +196,7 @@ type wireError struct {
 func encodePhases(res render.Result) ([]phase, error) {
 	out := make([]phase, len(res.Phases))
 	for i, p := range res.Phases {
-		out[i] = phase{Name: p.Name, Gate: p.Gate, Ephemeral: p.Ephemeral, Objects: make([]json.RawMessage, len(p.Objects))}
+		out[i] = phase{Name: p.Name, Gate: p.Gate, Ephemeral: p.Ephemeral, Runs: p.Runs, Objects: make([]json.RawMessage, len(p.Objects))}
 		for j, obj := range p.Objects {
 			data, err := obj.MarshalJSON()
 			if err != nil {
@@ -265,7 +266,7 @@ func decodeResponse(root string, payload []byte) (render.Result, error) {
 			}
 			objects[i] = obj
 		}
-		res.Phases = append(res.Phases, render.Phase{Name: p.Name, Objects: objects, Gate: p.Gate, Ephemeral: p.Ephemeral})
+		res.Phases = append(res.Phases, render.Phase{Name: p.Name, Objects: objects, Gate: p.Gate, Ephemeral: p.Ephemeral, Runs: p.Runs})
 	}
 	return res, nil
 }

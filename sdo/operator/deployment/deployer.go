@@ -134,8 +134,12 @@ func (d Deployer) ApplyAndVerify(ctx context.Context, checkout string, plan *con
 	if err := rendered.CheckExpectedWorkloads(set, plan.GetExpectedWorkloadIds()); err != nil {
 		return lifecycle.DeploymentReceipt{}, err
 	}
+	operation, err := d.operation(ctx, set)
+	if err != nil {
+		return lifecycle.DeploymentReceipt{}, err
+	}
 	run := &applyRun{deployer: d, base: base, effective: effective, resolved: resolved, workloads: map[string]*workloadRecord{}}
-	if err := run.apply(ctx, set); err != nil {
+	if err := run.apply(ctx, set, operation); err != nil {
 		return lifecycle.DeploymentReceipt{}, err
 	}
 	receipt, err := run.receipt(ctx)
@@ -206,8 +210,33 @@ type applyRun struct {
 	recreated []*recreation
 }
 
-func (r *applyRun) apply(ctx context.Context, set rendered.DesiredSet) error {
-	for _, phase := range set.Phases {
+// operation is what this deploy does, as Helm decides it: an upgrade when the
+// application's long-running workloads already run in the cluster, an install otherwise (and
+// whenever the applier cannot read live objects). It selects the hook phases
+// the deploy applies; the desired objects do not depend on it.
+func (d Deployer) operation(ctx context.Context, set rendered.DesiredSet) (render.Operation, error) {
+	recreator, ok := d.Applier.(Recreator)
+	if !ok {
+		return render.OperationInstall, nil
+	}
+	for _, object := range set.Objects() {
+		// A Job is no evidence of a running release: it finishes and may be gone.
+		if !object.Workload || object.Foreign || object.Ref.Kind == "Job" {
+			continue
+		}
+		_, found, err := recreator.Get(ctx, object.Ref)
+		if err != nil {
+			return "", fmt.Errorf("decide install or upgrade: %w", err)
+		}
+		if found {
+			return render.OperationUpgrade, nil
+		}
+	}
+	return render.OperationInstall, nil
+}
+
+func (r *applyRun) apply(ctx context.Context, set rendered.DesiredSet, operation render.Operation) error {
+	for _, phase := range set.For(operation) {
 		if len(phase.Objects) == 0 {
 			continue
 		}
