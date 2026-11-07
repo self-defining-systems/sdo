@@ -34,7 +34,7 @@ import (
 
 const driftChainNS = "drift-chain"
 
-// driftChainChart is a chart shaped like GitLab's: a workload, a Job named after
+// driftChainChart is a chart shaped like a Helm release with install and upgrade hooks: a workload, a Job named after
 // a hash of its images, and a pre-install,pre-upgrade hook phase (ConfigMap,
 // ServiceAccount, Role, RoleBinding, hash-named Job) that every release
 // re-applies in place with a new chart label and new data.
@@ -112,7 +112,7 @@ spec:
 // release renames are pruned instead of left to accumulate. Real API server
 // (envtest), real helm render, real Deployer over kubectl; the stand-in for
 // kube-controller-manager completes Jobs and reports workloads ready. HUNT1
-// predicted six, eight, ten and twelve findings over four advances of GitLab.
+// predicted six, eight, ten and twelve findings over four advances of one real chart.
 //
 // Faults it catches that no cheaper test does (each makes it fail): indexing
 // the accepted inventory without its hook objects (NewSourceInventory instead
