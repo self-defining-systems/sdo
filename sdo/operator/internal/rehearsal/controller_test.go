@@ -10,6 +10,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
+
+	"sdo.dev/operator/sdk/generichealth"
 )
 
 type maintenance struct {
@@ -115,5 +117,28 @@ func TestBlockersNameAnIncidentAnAcceptedAdvanceOpened(t *testing.T) {
 	held := Release{Name: "r2", Outcome: "held", Hold: "health", Cause: "source_fault", Owner: "responder", ControllerIncidents: []string{"x"}}
 	if got := strings.Join(held.Blockers(), "\n"); strings.Contains(got, "accepted advance") {
 		t.Fatalf("a held advance's incident is the expected one: %s", got)
+	}
+}
+
+// A workload still starting pods (an autoscaler scaling up) is not an
+// incident until the shortfall lasts the real detector's progress window.
+func TestControllerModelToleratesAWorkloadShortfallUntilTheProgressWindow(t *testing.T) {
+	m := &maintenance{}
+	c, client := m.model(t, 0)
+	two := int32(2)
+	set := &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: "store"}, Spec: appsv1.StatefulSetSpec{Replicas: &two}, Status: appsv1.StatefulSetStatus{ReadyReplicas: 1}}
+	if _, err := client.AppsV1().StatefulSets("ns").Create(context.Background(), set, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(100, 0)
+	c.Now = func() time.Time { return now }
+	c.Tick(context.Background())
+	if len(c.Incidents) != 0 {
+		t.Fatalf("a fresh shortfall opened %+v", c.Incidents)
+	}
+	now = now.Add(generichealth.ProgressWindow)
+	c.Tick(context.Background())
+	if len(c.Incidents) != 1 || !strings.Contains(c.Incidents[0].Findings[0], "workload-health StatefulSet/ns/store 1/2 ready") {
+		t.Fatalf("a shortfall past the window: %+v", c.Incidents)
 	}
 }

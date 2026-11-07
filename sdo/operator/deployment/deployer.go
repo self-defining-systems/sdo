@@ -235,7 +235,36 @@ func (d Deployer) operation(ctx context.Context, set rendered.DesiredSet) (rende
 	return render.OperationInstall, nil
 }
 
+// omitAutoscaledReplicas drops spec.replicas from a document whose workload an
+// autoscaler in the desired set targets and that already exists: the
+// autoscaler owns the count, and applying the rendered one resets it on every
+// deploy. An applier that cannot read live objects keeps the field, as for an
+// initial creation.
+func (r *applyRun) omitAutoscaledReplicas(ctx context.Context, autoscaled rendered.Autoscaled, object rendered.DesiredObject, document map[string]any) error {
+	recreator, ok := r.deployer.Applier.(Recreator)
+	if !ok || !autoscaled.Targets(object.Ref) {
+		return nil
+	}
+	spec, _ := document["spec"].(map[string]any)
+	if _, found := spec["replicas"]; !found {
+		return nil
+	}
+	if _, found, err := recreator.Get(ctx, object.Ref); err != nil {
+		return fmt.Errorf("read %s/%s before applying: %w", object.Ref.Kind, object.Ref.Name, err)
+	} else if !found {
+		return nil
+	}
+	delete(spec, "replicas")
+	return nil
+}
+
 func (r *applyRun) apply(ctx context.Context, set rendered.DesiredSet, operation render.Operation) error {
+	var autoscaled rendered.Autoscaled
+	for _, phase := range set.Phases {
+		for _, object := range phase.Objects {
+			autoscaled.AddObjects(object.Ref.Namespace, object.Object)
+		}
+	}
 	for _, phase := range set.For(operation) {
 		if len(phase.Objects) == 0 {
 			continue
@@ -244,6 +273,9 @@ func (r *applyRun) apply(ctx context.Context, set rendered.DesiredSet, operation
 		var gated []*workloadRecord
 		for _, object := range phase.Objects {
 			document := object.Object.DeepCopy().Object
+			if err := r.omitAutoscaledReplicas(ctx, autoscaled, object, document); err != nil {
+				return err
+			}
 			record := &workloadRecord{id: object.Ref.Kind + "/" + object.Ref.Namespace + "/" + object.Ref.Name, ephemeral: phase.Ephemeral}
 			images, err := Stamp(document, r.effective.ID, func(site ImageSite) string {
 				pinned := r.resolved[site.Image]

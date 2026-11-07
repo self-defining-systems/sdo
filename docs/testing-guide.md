@@ -147,7 +147,11 @@ detectors, so what a detector reports during a rollout still needs a live run.
 
 - PR tier: `go test -tags=integration -run TestReplayRehearsalOfASyntheticChart ./operatorcli/` in `sdo/operator`
   (about 30 s): a synthetic chart with a hash-named Job, a fixed-name bucket Job, a StatefulSet and a
-  `templates/shared-secrets/` hook over four releases (one recreated Job that fails every attempt).
+  `templates/shared-secrets/` hook over four releases (one recreated Job that fails every attempt). The fake kubelet
+  also runs the live-only writers: the Deployment controller's `deployment.kubernetes.io/revision` annotation and a
+  HorizontalPodAutoscaler controller that scales its target through the scale subresource, one replica higher each
+  release. A deploy or adoption that applies `spec.replicas` over the autoscaler's count is a kubelet error, and the
+  adoption passes must stay no-ops.
 - Nightly or manual, the real GitLab releases (`apps/gitlab/releases.json`, vendored as the lane does):
   `uv run python -m benchmarks.sregym.fastloop gitlab rehearse --out <dir> [--limit N] [--behaviors JSON]
   [--warm-up 2m]` (about 7 min for 10.4.2 and four releases). Any driver can write the input file that

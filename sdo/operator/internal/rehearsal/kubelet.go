@@ -104,6 +104,8 @@ type Kubelet struct {
 	attempt  map[types.UID]time.Time
 	restarts map[types.UID]int32
 	lastExit map[types.UID]*corev1.ContainerStateTerminated
+	// scaled is the autoscaler targets already settled in a release.
+	scaled map[string]bool
 	// Errors are reconcile failures other than conflicts (each one once).
 	Errors []string
 	seen   map[string]bool
@@ -149,6 +151,7 @@ func (k *Kubelet) Step(ctx context.Context) {
 		k.lastExit = map[types.UID]*corev1.ContainerStateTerminated{}
 	}
 	k.collect(ctx)
+	k.autoscale(ctx)
 	deployments, err := k.Client.AppsV1().Deployments(k.Namespace).List(ctx, metav1.ListOptions{})
 	k.fail(err)
 	if err == nil {
@@ -343,6 +346,7 @@ func (k *Kubelet) deployment(ctx context.Context, d *appsv1.Deployment) {
 		return
 	}
 	var current *appsv1.ReplicaSet
+	created := false
 	for i := range sets.Items {
 		rs := &sets.Items[i]
 		if !controlledBy(rs.ObjectMeta, d.UID) {
@@ -370,7 +374,9 @@ func (k *Kubelet) deployment(ctx context.Context, d *appsv1.Deployment) {
 		if err != nil {
 			return
 		}
+		created = true
 	}
+	k.recordRevision(ctx, d, created)
 	var names []string
 	for i := int32(0); i < desired; i++ {
 		names = append(names, fmt.Sprintf("%s-%05d", current.Name, i))
