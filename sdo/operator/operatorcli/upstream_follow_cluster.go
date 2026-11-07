@@ -14,6 +14,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/install"
+	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/onboarding"
 	"sdo.dev/operator/upstream"
 )
@@ -125,6 +126,14 @@ type advanceMaintenance struct {
 	Now       func() time.Time
 }
 
+// validate refuses a maintenance built without its client, namespace or clock
+// (the clock stamps generations).
+func (m advanceMaintenance) validate() error {
+	return lifecycle.RequireCollaborators("advance maintenance", map[string]bool{
+		"client": m.Client != nil, "namespace": m.Namespace != "", "clock": m.Now != nil,
+	}, "client", "namespace", "clock")
+}
+
 func (m advanceMaintenance) generation(state string) string {
 	return fmt.Sprintf("%s%s-%d", advanceMaintenancePrefix, state, m.Now().UnixNano())
 }
@@ -145,7 +154,7 @@ func (m advanceMaintenance) state(ctx context.Context) (paused, ours bool, err e
 
 // Pause refuses (an error: the follower retries next poll) while someone
 // else holds the controller in maintenance.
-func (m advanceMaintenance) Pause(ctx context.Context, _ string) error {
+func (m advanceMaintenance) Pause(ctx context.Context, _ string, expiresAt time.Time) error {
 	paused, ours, err := m.state(ctx)
 	if err != nil {
 		return err
@@ -153,7 +162,7 @@ func (m advanceMaintenance) Pause(ctx context.Context, _ string) error {
 	if paused && !ours {
 		return errors.New("controller maintenance is paused by another owner")
 	}
-	return install.SetMaintenance(ctx, m.Client, m.Namespace, true, m.generation("paused"))
+	return install.SetMaintenanceWithOptions(ctx, m.Client, m.Namespace, true, m.generation("paused"), install.MaintenanceOptions{ExpiresAt: expiresAt})
 }
 
 // Acknowledged reports whether the controller recorded the generation of the

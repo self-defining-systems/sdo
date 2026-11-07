@@ -59,12 +59,22 @@ type obligationsStore interface {
 	Save(context.Context, []upstream.Obligation) error
 }
 
+// validate refuses a following built without a collaborator: each one's
+// absence would silently disable a part of following.
+func (f upstreamFollowing) validate() error {
+	return lifecycle.RequireCollaborators("upstream following", map[string]bool{
+		"follower": f.Follower != nil, "sources": f.Sources != nil, "accepted history": f.Accepted != nil, "watcher": f.Latest != nil,
+		"advance": f.Advance != nil, "holds store": f.Holds != nil, "obligations store": f.Obligations != nil, "refresh": f.Refresh != nil,
+		"clock": f.Now != nil, "timer": f.SleepUntil != nil,
+	}, "follower", "sources", "accepted history", "watcher", "advance", "holds store", "obligations store", "refresh", "clock", "timer")
+}
+
 // Run follows until ctx ends or following is disabled for this installation
 // (lifecycle.ErrNoAcceptedPlan). Failures of one poll are logged and retried;
 // they never end the controller.
 func (f upstreamFollowing) Run(ctx context.Context) error {
-	if f.Follower == nil || f.Sources == nil || f.Accepted == nil || f.Latest == nil || f.Advance == nil || f.Holds == nil || f.Obligations == nil || f.Refresh == nil || f.Now == nil || f.SleepUntil == nil {
-		return errors.New("upstream following needs a follower, sources, accepted history, watcher, advance, holds and obligations stores, refresh, clock and timer")
+	if err := f.validate(); err != nil {
+		return err
 	}
 	idle := f.Idle
 	if idle <= 0 {

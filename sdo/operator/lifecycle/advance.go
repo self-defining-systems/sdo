@@ -130,8 +130,12 @@ type OperabilityExposer interface {
 // pause is only declared by Pause; it is in force once Acknowledged reports
 // that the controller drained its in-flight evaluation and stopped opening
 // incidents. Nothing is applied before that.
+//
+// A pause is self-expiring: Pause carries the deadline after which the
+// controller treats it as resumed, so a Resume that fails or never runs
+// cannot suspend detection indefinitely.
 type MaintenanceWindow interface {
-	Pause(ctx context.Context, reason string) error
+	Pause(ctx context.Context, reason string, expiresAt time.Time) error
 	// Acknowledged reports whether the controller confirmed the pause the
 	// latest Pause declared.
 	Acknowledged(ctx context.Context) (bool, error)
@@ -333,6 +337,13 @@ type AdvanceConfig struct {
 	// advance.
 	PauseAckTimeout  time.Duration
 	PauseAckInterval time.Duration
+	// ResumeTries bounds the attempts to lift the maintenance pause, ResumeBackoff
+	// apart; zero selects the defaults. When every attempt fails the pause
+	// expires on its own deadline (PauseApplyBound plus the acknowledgement
+	// wait and the settle window after the pause was declared).
+	ResumeTries     int
+	ResumeBackoff   time.Duration
+	PauseApplyBound time.Duration
 }
 
 // Defaults of the pause acknowledgement wait. The bound exceeds the longest
@@ -340,6 +351,11 @@ type AdvanceConfig struct {
 const (
 	DefaultPauseAckTimeout  = 5 * time.Minute
 	DefaultPauseAckInterval = time.Second
+	// DefaultPauseApplyBound covers the deployment, its correction rounds and
+	// the verification between the acknowledgement and the settle window.
+	DefaultPauseApplyBound = 30 * time.Minute
+	DefaultResumeTries     = 5
+	DefaultResumeBackoff   = 2 * time.Second
 )
 
 // DefaultSettleWindow is the settle window of an advance whose AdvanceConfig
@@ -379,14 +395,43 @@ type Advancer struct {
 	// Wait pauses between bounded re-evaluations and infrastructure retries;
 	// nil waits on a timer.
 	Wait func(context.Context, time.Duration) error
-	// Now is the clock of the settle window; nil disables the window (a firing
-	// detector is judged at once).
+	// Now is the clock of the settle window and of the pause deadline; it is
+	// required (a missing clock would silently disable both).
 	Now func() time.Time
 }
 
+// MissingCollaboratorError reports required collaborators a component was
+// built without. Nil is never a mode: it would disable the behavior silently.
+type MissingCollaboratorError struct {
+	Component string
+	Missing   []string
+}
+
+func (e *MissingCollaboratorError) Error() string {
+	return e.Component + " needs " + strings.Join(e.Missing, ", ")
+}
+
+// RequireCollaborators returns a *MissingCollaboratorError naming the entries
+// whose value is nil or false, or nil when every one is present.
+func RequireCollaborators(component string, present map[string]bool, order ...string) error {
+	var missing []string
+	for _, name := range order {
+		if !present[name] {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return &MissingCollaboratorError{Component: component, Missing: missing}
+}
+
 func (a Advancer) validate(cfg AdvanceConfig, request upstream.Request) error {
-	if a.Upstreams == nil || a.Broker == nil || a.Readiness == nil || a.Verifier == nil || a.Shape == nil || a.Maintenance == nil || a.Activity == nil {
-		return errors.New("advance needs upstreams, broker, readiness, verifier, shape, maintenance and activity")
+	if err := RequireCollaborators("advance", map[string]bool{
+		"upstreams": a.Upstreams != nil, "broker": a.Broker != nil, "readiness": a.Readiness != nil, "verifier": a.Verifier != nil,
+		"shape": a.Shape != nil, "maintenance": a.Maintenance != nil, "activity": a.Activity != nil, "clock": a.Now != nil,
+	}, "upstreams", "broker", "readiness", "verifier", "shape", "maintenance", "activity", "clock"); err != nil {
+		return err
 	}
 	if cfg.Namespace == "" || strings.TrimSpace(cfg.HealthObjective) == "" || cfg.GitDir == "" {
 		return errors.New("advance needs a namespace, health objective and accepted Git directory")
@@ -793,12 +838,13 @@ func skippedDetectors(reason string) []operability.Check {
 }
 
 func (a Advancer) deployAndAccept(ctx context.Context, cfg AdvanceConfig, result AdvanceResult, proposal broker.Proposal, candidate string, plan *contracts.DeploymentPlan, prev string, offline []operability.Check, published *bool) (_ AdvanceResult, err error) {
-	if err := a.Maintenance.Pause(ctx, "upstream advance "+result.Upstream); err != nil {
+	expiresAt := a.Now().Add(orDefault(cfg.PauseAckTimeout, DefaultPauseAckTimeout) + orDefault(cfg.PauseApplyBound, DefaultPauseApplyBound) + orDefault(cfg.SettleWindow, DefaultSettleWindow))
+	if err := a.Maintenance.Pause(ctx, "upstream advance "+result.Upstream, expiresAt); err != nil {
 		return result, fmt.Errorf("pause controller maintenance: %w", err)
 	}
 	defer func() {
 		// Resume even when ctx is done: a paused controller stops detection.
-		if resumeErr := a.Maintenance.Resume(context.WithoutCancel(ctx)); resumeErr != nil {
+		if resumeErr := a.resume(context.WithoutCancel(ctx), cfg); resumeErr != nil {
 			err = errors.Join(err, fmt.Errorf("resume controller maintenance: %w", resumeErr))
 		}
 	}()
@@ -909,6 +955,26 @@ func (a Advancer) deployAndAccept(ctx context.Context, cfg AdvanceConfig, result
 	return result, nil
 }
 
+// resume lifts the pause, retrying a bounded number of times. When every
+// attempt fails the pause still ends at its deadline (the controller reads an
+// expired pause as resumed), so detection is suspended for a bounded time.
+func (a Advancer) resume(ctx context.Context, cfg AdvanceConfig) error {
+	tries := orDefault(cfg.ResumeTries, DefaultResumeTries)
+	backoff := orDefault(cfg.ResumeBackoff, DefaultResumeBackoff)
+	var err error
+	for try := 0; try < tries; try++ {
+		if try > 0 {
+			if waitErr := (Coordinator{Wait: a.Wait}).wait(ctx, backoff); waitErr != nil {
+				return errors.Join(err, waitErr)
+			}
+		}
+		if err = a.Maintenance.Resume(ctx); err == nil {
+			return nil
+		}
+	}
+	return err
+}
+
 // awaitPauseAcknowledged polls the controller's acknowledgement of the pause
 // within the bound, on the injected wait. False means the bound passed.
 func (a Advancer) awaitPauseAcknowledged(ctx context.Context, cfg AdvanceConfig) (bool, error) {
@@ -940,9 +1006,6 @@ func (a Advancer) awaitPauseAcknowledged(ctx context.Context, cfg AdvanceConfig)
 func (a Advancer) awaitSettled(ctx context.Context, cfg AdvanceConfig, steps Coordinator, bounds Config, evaluate func() (HealthVerdict, error)) (HealthVerdict, error) {
 	window := orDefault(cfg.SettleWindow, DefaultSettleWindow)
 	interval := orDefault(cfg.SettleInterval, orDefault(cfg.PendingInterval, defaultPendingInterval))
-	if a.Now == nil {
-		return steps.awaitVerdict(ctx, bounds, evaluate)
-	}
 	rolledOut := a.Now()
 	for waits := 0; ; waits++ {
 		verdict, err := steps.awaitVerdict(ctx, bounds, evaluate)

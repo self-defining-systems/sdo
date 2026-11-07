@@ -255,7 +255,7 @@ func (advReadiness) CheckLive(context.Context, string, *contracts.DeploymentPlan
 
 type advMaintenance struct{}
 
-func (advMaintenance) Pause(context.Context, string) error        { return nil }
+func (advMaintenance) Pause(context.Context, string, time.Time) error { return nil }
 func (advMaintenance) Acknowledged(context.Context) (bool, error) { return true, nil }
 func (advMaintenance) Resume(context.Context) error               { return nil }
 func (advMaintenance) Busy(context.Context) (string, bool, error) { return "", false, nil }

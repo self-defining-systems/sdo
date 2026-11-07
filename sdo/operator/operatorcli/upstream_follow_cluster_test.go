@@ -122,7 +122,7 @@ func maintenanceState(t *testing.T, m advanceMaintenance) map[string]string {
 func TestAdvanceMaintenancePausesAndResumes(t *testing.T) {
 	ctx := context.Background()
 	m := advanceMaintenance{Client: fake.NewSimpleClientset(), Namespace: testControl, Now: func() time.Time { return time.Unix(1, 0) }}
-	if err := m.Pause(ctx, "upstream advance"); err != nil {
+	if err := m.Pause(ctx, "upstream advance", time.Unix(1000, 0)); err != nil {
 		t.Fatal(err)
 	}
 	if data := maintenanceState(t, m); data["state"] != "paused" || !strings.HasPrefix(data["generation"], advanceMaintenancePrefix) || data["preserve_baseline"] != "" {
@@ -142,7 +142,7 @@ func TestAdvanceNeverLiftsAnotherOwnersPause(t *testing.T) {
 	if err := install.SetMaintenance(ctx, m.Client, testControl, true, "operator-redeploy"); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Pause(ctx, "upstream advance"); err == nil {
+	if err := m.Pause(ctx, "upstream advance", time.Unix(1000, 0)); err == nil {
 		t.Fatal("advance paused over a human pause")
 	}
 	if recovered, err := m.RecoverStalePause(ctx); err != nil || recovered {
@@ -159,7 +159,7 @@ func TestStaleAdvancePauseIsRecovered(t *testing.T) {
 	if recovered, err := m.RecoverStalePause(ctx); err != nil || recovered {
 		t.Fatalf("nothing to recover: %v, %v", recovered, err)
 	}
-	if err := m.Pause(ctx, "upstream advance"); err != nil {
+	if err := m.Pause(ctx, "upstream advance", time.Unix(1000, 0)); err != nil {
 		t.Fatal(err)
 	}
 	if recovered, err := m.RecoverStalePause(ctx); err != nil || !recovered {
@@ -298,7 +298,7 @@ func TestAdvanceMaintenanceIsAcknowledgedOnlyForItsOwnGeneration(t *testing.T) {
 	if acknowledged() {
 		t.Fatal("acknowledged with no maintenance at all")
 	}
-	if err := m.Pause(ctx, "upstream advance"); err != nil {
+	if err := m.Pause(ctx, "upstream advance", time.Unix(1000, 0)); err != nil {
 		t.Fatal(err)
 	}
 	if acknowledged() {
@@ -315,7 +315,7 @@ func TestAdvanceMaintenanceIsAcknowledgedOnlyForItsOwnGeneration(t *testing.T) {
 	if acknowledged() {
 		t.Fatal("a resumed window reads as acknowledged")
 	}
-	if err := m.Pause(ctx, "upstream advance"); err != nil {
+	if err := m.Pause(ctx, "upstream advance", time.Unix(1000, 0)); err != nil {
 		t.Fatal(err)
 	}
 	if acknowledged() {
@@ -346,4 +346,26 @@ func (r runtimepause) ack(ctx context.Context, generation string) error {
 	}
 	_, err := configMaps.Create(ctx, cm, metav1.CreateOptions{})
 	return err
+}
+
+// The pause is written with its deadline, which the controller reads as
+// install.MaintenanceExpiresKey.
+func TestAdvanceMaintenancePauseWritesItsDeadline(t *testing.T) {
+	ctx := context.Background()
+	m := advanceMaintenance{Client: fake.NewSimpleClientset(), Namespace: testControl, Now: func() time.Time { return time.Unix(1, 0) }}
+	deadline := time.Date(2026, 11, 7, 1, 2, 3, 0, time.UTC)
+	if err := m.Pause(ctx, "upstream advance", deadline); err != nil {
+		t.Fatal(err)
+	}
+	data := maintenanceState(t, m)
+	got, err := time.Parse(time.RFC3339Nano, data[install.MaintenanceExpiresKey])
+	if err != nil || !got.Equal(deadline) {
+		t.Fatalf("expires_at = %q, want %v (%v)", data[install.MaintenanceExpiresKey], deadline, err)
+	}
+	if err := m.Resume(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if data := maintenanceState(t, m); data[install.MaintenanceExpiresKey] != "" {
+		t.Fatalf("a resumed window kept its deadline: %v", data)
+	}
 }

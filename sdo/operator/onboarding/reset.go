@@ -64,7 +64,7 @@ func ResetControlState(ctx context.Context, client kubernetes.Interface, control
 }
 
 func legacyMaintenanceRecord(cm *corev1.ConfigMap) bool {
-	if len(cm.BinaryData) != 0 || len(cm.Data) < 2 || len(cm.Data) > 3 {
+	if len(cm.BinaryData) != 0 || len(cm.Data) < 2 || len(cm.Data) > 4 {
 		return false
 	}
 	if cm.Data["state"] != "active" && cm.Data["state"] != "paused" {
@@ -75,7 +75,7 @@ func legacyMaintenanceRecord(cm *corev1.ConfigMap) bool {
 	}
 	for key, value := range cm.Data {
 		switch key {
-		case "state", "generation":
+		case "state", "generation", "expires_at":
 		case "preserve_baseline":
 			if value != "true" && value != "false" {
 				return false
