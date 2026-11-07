@@ -223,8 +223,12 @@ func TestAdoptionWritesNothingThatWouldBumpTheGeneration(t *testing.T) {
 				"metadata": map[string]any{"name": "web", "namespace": "app"},
 				"spec":     map[string]any{"replicas": int64(1)},
 			}}
-			if _, err := applyAdoption(context.Background(), resource, ref, source, source); err != nil {
+			_, skipped, err := applyAdoptionChecked(context.Background(), resource, ref, source, source)
+			if err != nil {
 				t.Fatal(err)
+			}
+			if (skipped != nil) != (tc.wantWrites == 0) {
+				t.Fatalf("skipped = %#v: a skipped adoption must be reported (and only then)", skipped)
 			}
 			if server.realWrites != tc.wantWrites {
 				t.Fatalf("real writes = %d, want %d", server.realWrites, tc.wantWrites)

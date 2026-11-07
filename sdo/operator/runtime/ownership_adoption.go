@@ -42,6 +42,12 @@ type OwnershipAdoptionStatus struct {
 	// UnadoptedObjects lists declared objects adoption left alone because it
 	// cannot handle their kind, each with the reason (see inventoryKind).
 	UnadoptedObjects []string `json:"unadopted_objects,omitempty"`
+	// SpecChangeSkipped lists objects whose adoption write was skipped because
+	// the server's dry run would have changed their spec, each with the field
+	// paths the dry run changes. Adoption of an object SDO applied changes
+	// nothing, so a non-empty list names a field the deployer's apply and the
+	// accepted source disagree on.
+	SpecChangeSkipped []string `json:"spec_change_skipped,omitempty"`
 }
 
 func acceptedObjectKey(ref sdk.ObjectRef) string {
@@ -154,6 +160,7 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 	// the failure is retried with the adoption backoff.
 	objectFailures := []error{}
 	unadopted := []string{}
+	specChangeSkipped := []string{}
 	objectFailed := func(ref sdk.ObjectRef, err error) {
 		objectFailures = append(objectFailures, &ObjectAdoptionError{Ref: ref, Err: err})
 	}
@@ -313,7 +320,11 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 			writeRecord(item)
 			continue
 		}
-		if _, err := applyAdoption(actionCtx, item.resource, item.ref, item.source, item.normalized); err != nil {
+		_, skippedFields, err := applyAdoptionChecked(actionCtx, item.resource, item.ref, item.source, item.normalized)
+		if skippedFields != nil {
+			specChangeSkipped = append(specChangeSkipped, acceptedObjectKey(item.ref)+": "+strings.Join(skippedFields, ", "))
+		}
+		if err != nil {
 			if apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
 				live, readErr := item.resource.get(actionCtx, item.ref)
 				if readErr != nil && !apierrors.IsNotFound(readErr) {
@@ -366,6 +377,8 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 	status.RetryAt = time.Time{}
 	sort.Strings(unadopted)
 	status.UnadoptedObjects = unadopted
+	sort.Strings(specChangeSkipped)
+	status.SpecChangeSkipped = specChangeSkipped
 	c.mu.Lock()
 	c.ownershipAdoption = status
 	c.mu.Unlock()
@@ -407,6 +420,14 @@ const adoptionConflictRetries = 5
 // conflict over a declared field is a real change: it is returned, to be
 // classified as drift and never overwritten.
 func applyAdoption(ctx context.Context, resource acceptedResource, ref sdk.ObjectRef, source, normalized *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	applied, _, err := applyAdoptionChecked(ctx, resource, ref, source, normalized)
+	return applied, err
+}
+
+// applyAdoptionChecked is applyAdoption that also reports, when it skipped the
+// write because the dry run would move the object's generation, the field
+// paths the dry run changes (non-nil, possibly empty when only metadata moved).
+func applyAdoptionChecked(ctx context.Context, resource acceptedResource, ref sdk.ObjectRef, source, normalized *unstructured.Unstructured) (*unstructured.Unstructured, []string, error) {
 	declared := flattenDriftPaths(source)
 	// The deployer's own apply stamped the live object and its pod template.
 	// The accepted source is unstamped, and a server-side apply under the same
@@ -421,19 +442,20 @@ func applyAdoption(ctx context.Context, resource acceptedResource, ref sdk.Objec
 		// list items are not carried above). Such a write is skipped and the
 		// object left as the deployer applied it.
 		if preview, err := resource.apply(ctx, ref, source, true); err == nil && live.GetGeneration() > 0 && preview.GetGeneration() > live.GetGeneration() {
-			slog.Warn("adoption_skipped_spec_change", "kind", ref.Kind, "name", ref.Name, "live_generation", live.GetGeneration(), "would_be_generation", preview.GetGeneration())
-			return live, nil
+			fields := changedFieldPaths(live, preview)
+			slog.Warn("adoption_skipped_spec_change", "kind", ref.Kind, "name", ref.Name, "live_generation", live.GetGeneration(), "would_be_generation", preview.GetGeneration(), "changed_fields", fields)
+			return live, fields, nil
 		}
 	}
 	for attempt := 1; ; attempt++ {
 		applied, err := resource.apply(ctx, ref, source, false)
 		if err == nil || !apierrors.IsConflict(err) || attempt >= adoptionConflictRetries {
-			return applied, err
+			return applied, nil, err
 		}
 		live, readErr := resource.get(ctx, ref)
 		if readErr != nil || live == nil || declaredFieldDifference(normalized, live, declared) ||
 			live.GetUID() == "" || live.GetUID() != source.GetUID() {
-			return nil, err
+			return nil, nil, err
 		}
 		source = carryOwnedOmissions(carrySourceTreeStamp(source, live), live)
 		source.SetResourceVersion(live.GetResourceVersion())

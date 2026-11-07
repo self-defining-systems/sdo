@@ -128,7 +128,7 @@ the next revision). Real: a kube-apiserver and etcd (`runtime/envtestio`: immuta
 apply, generation, RBAC), the helm render with the discovered (or recorded) render environment, the Coordinator's
 onboarding and the broker with its validation subprocess, `lifecycle.Advancer`, the Deployer with its kubectl
 backend, the operability reports, and the controller's accepted-source inventory check
-(`runtime.NewSourceInventory(...).Findings`) over the live namespace with the namespace onboarding record. Stand-ins:
+(`runtime.NewSourceInventory(...).Findings`) over the live namespace with the namespace onboarding record. After every accepted release it also runs `runtime.AdoptionPass` (the controller's ownership adoption) twice: the first pass writes acceptance records (a Deployment's annotation write moves its generation, logged), the second must be a no-op (no error, no `SpecChangeSkipped`, no generation moved). Stand-ins:
 `internal/rehearsal`'s fake kubelet and workload/Job/garbage-collection controllers on an injected clock (every SDO
 wait advances the clock and runs one reconcile step), per-object `Behavior`s (a Job failing N times or forever, long
 attempts restarted in place, slow readiness), image resolution (any tag pins to a digest), the scripted health judge,
