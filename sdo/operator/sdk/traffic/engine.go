@@ -468,6 +468,7 @@ func isDialError(err error) bool {
 }
 
 func bounded(text string) string {
+	text = redactSecrets(text)
 	text = strings.Join(strings.Fields(text), " ")
 	if len(text) <= MaxErrorExcerpt {
 		return text
