@@ -160,16 +160,21 @@ def parse_holds(configmap: Mapping[str, Any]) -> list[HoldRecord]:
 
 
 def workload_digests(pods: Mapping[str, Any]) -> dict[str, str]:
-    """Running image ID per app (label ``app``) from ``kubectl get pods -o json``; running containers only."""
-    digests: dict[str, str] = {}
+    """Image IDs per app (label ``app``) from ``kubectl get pods -o json``.
+
+    Running, non-terminating pods only; every container and init container counts, so a rollout that changed only an
+    init container image still changes the digest. Distinct IDs are sorted and comma-joined.
+    """
+    found: dict[str, set[str]] = {}
     for pod in pods.get("items", []):
         app = (pod["metadata"].get("labels") or {}).get("app")
-        if app is None or pod.get("status", {}).get("phase") != "Running":
+        status = pod.get("status", {})
+        if app is None or status.get("phase") != "Running" or pod["metadata"].get("deletionTimestamp"):
             continue
-        for container in pod["status"].get("containerStatuses", []):
+        for container in [*status.get("initContainerStatuses", []), *status.get("containerStatuses", [])]:
             if container.get("imageID"):
-                digests[app] = container["imageID"]
-    return digests
+                found.setdefault(app, set()).add(container["imageID"])
+    return {app: ",".join(sorted(ids)) for app, ids in found.items()}
 
 
 def pod_failure_count(pods: Mapping[str, Any]) -> int:

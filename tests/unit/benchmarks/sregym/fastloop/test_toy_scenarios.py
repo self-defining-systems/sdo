@@ -276,6 +276,20 @@ def test_pod_parsers():
     assert sc.pod_failure_count(pods) == 3
 
 
+def test_workload_digest_changes_when_only_an_init_container_image_changes():
+    def exporter(init_image: str, terminating: bool = False) -> dict:
+        item = pod("exporter", "Running", "sha256:main")
+        item["status"]["initContainerStatuses"] = [{"imageID": init_image}]
+        if terminating:
+            item["metadata"]["deletionTimestamp"] = "2026-11-07T02:39:00Z"
+        return item
+
+    before = sc.workload_digests({"items": [exporter("sha256:init-old")]})
+    after = sc.workload_digests({"items": [exporter("sha256:init-new"), exporter("sha256:init-old", terminating=True)]})
+    assert before != after
+    assert after == {"exporter": "sha256:init-new,sha256:main"}
+
+
 @pytest.mark.go_integration
 def test_helm_onboarding_provides_the_plan_of_the_assembled_source(
     tmp_path: Path, operator_binary: Path, monkeypatch: pytest.MonkeyPatch
