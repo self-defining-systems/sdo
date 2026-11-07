@@ -55,16 +55,16 @@ the durable rejection log.
 Every held upstream revision persists its reason as `cause=<c> owner=<o> items=<O1,O3|-> <hold>: <detail> (<paths>)`
 (`items=-` when no item failed). Parse the prefix with `^cause=(\w+) owner=(\w+) items=([A-Za-z0-9,]+|-) `; the text
 after it is the hold kind (`rollout`, `health`, `render`, `build`, `merge_conflict`, `patch_conflict`, `shape_change`,
-`memory_touched`, `scope`, `ref_rewritten`, `materialize`, `designer_refresh`, `deployer_not_converging`, `operability`).
+`memory_touched`, `scope`, `ref_rewritten`, `materialize`, `designer_refresh`, `deployer_not_converging`, `immutable`, `operability`).
 Advance-mode owners: a failed rollout or firing Go floor detector (`cause=source_fault`) is the responder's (the cluster
 is left for ordinary detection), a firing designer-only detector or pending probe is the designer's (`detector_fault`,
-`probe_unavailable`; held, nothing dispatches it), patch/render/build are the deployer's and are found before any
-cluster effect: the deployment agent is dispatched with the hold as its request on the advance checkout (task
+`probe_unavailable`; held, nothing dispatches it), patch/render/build and `immutable_change` (`immutable`; the apply refused an immutable field and changed nothing of
+that phase) are the deployer's, whether found offline or by the apply: the deployment agent is dispatched with the hold as its request on the advance checkout (task
 `<advance-id>-deployer-<n>`, at most `MaxCorrections` = 2 per revision, the same hold twice in a row stops it), its
 correction is committed by the broker (`SDO-Advance-Correction: deployer` trailer on the accepted advance) and the same
-offline checks run again. Only if it does not converge is the revision held as `deployer_not_converging`
+offline checks and the deployment run again. Only if it does not converge is the revision held as `deployer_not_converging`
 (`cause=agent_not_converging owner=human`); with no agent configured the deployer-owned hold stays a hold.
-scope/allowlist/environment/unknown are the human's. An offline hold has zero cluster effect; an infrastructure cause is
+scope/allowlist/environment/unknown are the human's. `data_bearing_change` is the human's. An offline hold has zero cluster effect; an infrastructure cause is
 retried, never held.
 
 An accepted shape-change advance whose designer refresh failed also leaves an open obligation in the `sdo-upstream-obligations`
