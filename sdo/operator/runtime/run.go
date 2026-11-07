@@ -1918,8 +1918,7 @@ func evaluateOnce(
 		if err := cache.WaitForSync(ctx); err != nil {
 			return err
 		}
-		index := NewSourceInventory(*namespace, readCommit, inventory.Objects)
-		index.EvidenceGaps = append(index.EvidenceGaps, inventory.EvidenceGaps...)
+		index := NewSourceInventoryFrom(*namespace, readCommit, inventory)
 		if *sourceDriftAcknowledgement != "" {
 			data, err := os.ReadFile(*sourceDriftAcknowledgement)
 			if err != nil {

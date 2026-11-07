@@ -26,6 +26,10 @@ type DesiredObject struct {
 	// Foreign marks a namespaced object outside env.Namespace. Deploy applies
 	// it; unqualified reads project it out (a view, not a second computation).
 	Foreign bool
+	// Hook marks an object of an ephemeral (hook) phase: the deployer applies it
+	// but it is not desired state. Only Source.AcceptedInventory reads it, so
+	// drift can tell an object the deployer applied from a stranger.
+	Hook bool
 }
 
 // DesiredPhase is a renderer phase with normalized objects.
@@ -57,6 +61,17 @@ func (d DesiredSet) Objects() []DesiredObject {
 	var out []DesiredObject
 	for _, phase := range d.Phases {
 		if !phase.Ephemeral {
+			out = append(out, phase.Objects...)
+		}
+	}
+	return out
+}
+
+// Hooks returns the objects of ephemeral (hook) phases in apply order.
+func (d DesiredSet) Hooks() []DesiredObject {
+	var out []DesiredObject
+	for _, phase := range d.Phases {
+		if phase.Ephemeral {
 			out = append(out, phase.Objects...)
 		}
 	}
@@ -100,6 +115,7 @@ func Desired(ctx context.Context, fsys render.FS, env render.Env, cat *render.Ca
 			desired.Objects = append(desired.Objects, DesiredObject{
 				Ref: ref, Object: &unstructured.Unstructured{Object: document}, Workload: workload,
 				Foreign: ref.Namespace != "" && ref.Namespace != env.Namespace,
+				Hook:    phase.Ephemeral,
 			})
 		}
 		set.Phases = append(set.Phases, desired)
