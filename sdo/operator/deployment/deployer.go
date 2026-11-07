@@ -142,6 +142,10 @@ func (d Deployer) ApplyAndVerify(ctx context.Context, checkout string, plan *con
 	if err != nil {
 		return lifecycle.DeploymentReceipt{}, err
 	}
+	// Every workload of this revision is ready: the Jobs it renamed are dead.
+	if _, err := run.pruneSuperseded(ctx, set); err != nil {
+		return lifecycle.DeploymentReceipt{}, err
+	}
 	receipt.Source = proto.Clone(plan.GetSource()).(*contracts.DeploymentSource)
 	receipt.RenderDigest, receipt.EnvDigest = set.RenderDigest, set.EnvDigest
 	if d.Environment != nil {
