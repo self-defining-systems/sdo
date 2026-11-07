@@ -10,7 +10,6 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/lifecycle"
-	"sdo.dev/operator/memory"
 	"sdo.dev/operator/operatorcli/deploywire"
 	"sdo.dev/operator/operatorcli/internal/processio"
 )
@@ -45,10 +44,6 @@ func checkControllerPolicy(ctx context.Context, launch *contracts.ControllerConf
 	if err != nil {
 		return nil, nil, err
 	}
-	revision, err := memory.AcceptedHealthRevision(ctx, launch.GetAppRoot(), nil)
-	if err != nil {
-		return nil, nil, err
-	}
 	// The check never touches the cluster; the client only reports the hold.
 	var client kubernetes.Interface
 	if restConfig, err := rest.InClusterConfig(); err == nil {
@@ -60,7 +55,7 @@ func checkControllerPolicy(ctx context.Context, launch *contracts.ControllerConf
 	if err != nil {
 		return nil, nil, err
 	}
-	hold, err := lifecycle.AcceptedPolicyHold(ctx, repository, deployer, revision.Commit, launch.GetNamespace())
+	hold, err := lifecycle.AcceptedPolicyHold(ctx, repository, deployer, launch.GetNamespace())
 	return hold, client, err
 }
 

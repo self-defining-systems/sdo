@@ -26,7 +26,7 @@ func (c Coordinator) RefreshHealth(ctx context.Context, cfg Config, revision mem
 	// The judge's candidate is verified against the live deployment of the
 	// accepted source. A seeded install that SDO never deployed has none: its
 	// candidate is published unverified, and said so (see publishUnverified).
-	deployment, err := c.acceptedDeployment(ctx, cfg, revision.Commit)
+	deployment, err := c.acceptedDeployment(ctx, cfg)
 	if err != nil {
 		return broker.Receipt{}, fmt.Errorf("refresh health requirements: %w", err)
 	}
@@ -118,7 +118,7 @@ func missingNames(absent map[string]bool) []string {
 // against the live cluster and returns the receipt a refreshed detector is
 // judged against. With no recorded deployment it returns the zero receipt (not
 // Ready), the signal for the unverified publication of a seeded install.
-func (c Coordinator) acceptedDeployment(ctx context.Context, cfg Config, commit string) (DeploymentReceipt, error) {
+func (c Coordinator) acceptedDeployment(ctx context.Context, cfg Config) (DeploymentReceipt, error) {
 	accepted, found, err := c.Broker.AcceptedSourceEvidence(ctx)
 	if errors.Is(err, planfile.ErrAbsent) {
 		found, err = false, nil
@@ -131,6 +131,12 @@ func (c Coordinator) acceptedDeployment(ctx context.Context, cfg Config, commit 
 	}
 	if c.Readiness == nil || c.Verifier == nil {
 		return DeploymentReceipt{}, &MissingDependencyError{Operation: "health refresh of a deployed application", Missing: missingNames(map[string]bool{"Readiness": c.Readiness == nil, "Verifier": c.Verifier == nil})}
+	}
+	// Verified at the commit the evidence is recorded at: the accepted head
+	// also carries the memory commits that followed the deployment.
+	commit := accepted.Evidence.AcceptedCommit
+	if commit == "" {
+		return DeploymentReceipt{}, errors.New("accepted deployment evidence names no accepted commit")
 	}
 	recorded := deploymentFromBroker(accepted.Evidence)
 	live, err := c.Readiness.VerifyAccepted(ctx, commit, cfg.Namespace, recorded)
