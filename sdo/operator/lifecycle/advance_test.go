@@ -92,6 +92,10 @@ type advWorld struct {
 	ackAfter, ackPolls int
 	neverAck           bool
 	ackErr             error
+	// resumeFailures is how many Resume calls fail before one succeeds;
+	// pauseExpiresAt is the deadline the pause was declared with.
+	resumeFailures int
+	pauseExpiresAt time.Time
 
 	applied   lifecycle.DeploymentReceipt
 	proposed  map[string]bool
@@ -236,8 +240,9 @@ func (w *advWorld) shape(_ context.Context, root, revision string, source *contr
 	return w.shapes[revision], nil
 }
 
-func (w *advWorld) Pause(_ context.Context, reason string) error {
+func (w *advWorld) Pause(_ context.Context, reason string, expiresAt time.Time) error {
 	w.log("pause")
+	w.pauseExpiresAt = expiresAt
 	return nil
 }
 
@@ -258,6 +263,10 @@ func (w *advWorld) Acknowledged(context.Context) (bool, error) {
 
 func (w *advWorld) Resume(context.Context) error {
 	w.log("resume")
+	if w.resumeFailures > 0 {
+		w.resumeFailures--
+		return errors.New("API server unavailable")
+	}
 	return nil
 }
 
@@ -1187,5 +1196,63 @@ func TestAdvanceMaintenanceAlwaysResumes(t *testing.T) {
 	_, _ = a.Advance(ctx, advConfig, advRequest(t))
 	if count(w.events, "resume") != 1 {
 		t.Fatalf("an interrupted advance left detection suspended: %q", w.events)
+	}
+}
+
+// A pause is self-expiring: the deadline written with it outlasts the longest
+// legitimate window (acknowledgement wait, apply bound and settle window).
+func TestAdvancePauseCarriesADeadline(t *testing.T) {
+	w := newAdvWorld(t)
+	config := advConfig
+	config.PauseAckTimeout, config.PauseApplyBound, config.SettleWindow = time.Minute, 20*time.Minute, 5*time.Minute
+	start := w.clock
+	if _, err := w.advancer().Advance(context.Background(), config, advRequest(t)); err != nil {
+		t.Fatal(err)
+	}
+	if want := start.Add(26 * time.Minute); !w.pauseExpiresAt.Equal(want) {
+		t.Fatalf("pause expires at %v, want %v", w.pauseExpiresAt, want)
+	}
+}
+
+// A resume that fails is retried a bounded number of times after an accepted
+// advance; the advance stays accepted.
+func TestAdvanceRetriesAFailedResume(t *testing.T) {
+	w := newAdvWorld(t)
+	w.resumeFailures = 1
+	result, err := w.advancer().Advance(context.Background(), advConfig, advRequest(t))
+	if err != nil || result.Outcome != lifecycle.AdvanceAccepted {
+		t.Fatalf("result = %+v, err = %v", result, err)
+	}
+	if count(w.events, "resume") != 2 {
+		t.Fatalf("resume attempts = %d, events = %q", count(w.events, "resume"), w.events)
+	}
+}
+
+// When every resume attempt fails the error is reported, the attempts are
+// bounded, and the pause still ends at the deadline it was declared with.
+func TestAdvanceBoundsResumeRetries(t *testing.T) {
+	w := newAdvWorld(t)
+	w.resumeFailures = 1000
+	config := advConfig
+	config.ResumeTries = 3
+	result, err := w.advancer().Advance(context.Background(), config, advRequest(t))
+	if err == nil || !strings.Contains(err.Error(), "resume controller maintenance") || result.Outcome != lifecycle.AdvanceAccepted {
+		t.Fatalf("result = %+v, err = %v", result, err)
+	}
+	if count(w.events, "resume") != 3 || w.pauseExpiresAt.IsZero() {
+		t.Fatalf("resume attempts = %d, deadline = %v", count(w.events, "resume"), w.pauseExpiresAt)
+	}
+}
+
+// Nil is never a mode: an advancer without its clock is refused with a typed
+// error, not run with the settle window silently off.
+func TestAdvanceRequiresAClock(t *testing.T) {
+	w := newAdvWorld(t)
+	a := w.advancer()
+	a.Now = nil
+	_, err := a.Advance(context.Background(), advConfig, advRequest(t))
+	var missing *lifecycle.MissingCollaboratorError
+	if !errors.As(err, &missing) || !slices.Contains(missing.Missing, "clock") {
+		t.Fatalf("err = %v, want a MissingCollaboratorError naming the clock", err)
 	}
 }

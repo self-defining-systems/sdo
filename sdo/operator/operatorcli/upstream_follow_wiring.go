@@ -108,6 +108,13 @@ func newUpstreamFollowing(ctx context.Context, launch *contracts.ControllerConfi
 	if err != nil {
 		return upstreamFollowing{}, fmt.Errorf("open accepted repository broker: %w", err)
 	}
+	return assembleUpstreamFollowing(ctx, launch, operatorRoot, identity, catalog, sources, log, client, repository)
+}
+
+// assembleUpstreamFollowing wires the production follower from its cluster
+// client and accepted-repository broker, and refuses one with a missing
+// collaborator (upstreamFollowing.validate).
+func assembleUpstreamFollowing(ctx context.Context, launch *contracts.ControllerConfig, operatorRoot string, identity deployIdentity, catalog *upstream.Catalog, sources func(context.Context) ([]upstream.Source, error), log *slog.Logger, client kubernetes.Interface, repository *broker.Broker) (upstreamFollowing, error) {
 	advancer, cfg, maintenance, err := controllerAdvancer(launch, operatorRoot, identity, client, repository, catalog)
 	if err != nil {
 		return upstreamFollowing{}, err
@@ -121,7 +128,7 @@ func newUpstreamFollowing(ctx context.Context, launch *contracts.ControllerConfi
 	if err != nil {
 		return upstreamFollowing{}, err
 	}
-	return upstreamFollowing{
+	following := upstreamFollowing{
 		Follower: follower,
 		Sources:  sources,
 		Accepted: repository.LastUpstream,
@@ -147,7 +154,8 @@ func newUpstreamFollowing(ctx context.Context, launch *contracts.ControllerConfi
 		Now:        processio.Now,
 		SleepUntil: processio.SleepUntil,
 		Log:        log,
-	}, nil
+	}
+	return following, following.validate()
 }
 
 // controllerAdvancer wires lifecycle.Advancer in the controller parent: the
@@ -167,6 +175,9 @@ func controllerAdvancer(launch *contracts.ControllerConfig, operatorRoot string,
 	namespace := launch.GetNamespace()
 	shapes := renderers.Catalog()
 	maintenance := advanceMaintenance{Client: client, Namespace: controlNamespace(launch), Now: processio.Now}
+	if err := maintenance.validate(); err != nil {
+		return lifecycle.Advancer{}, lifecycle.AdvanceConfig{}, advanceMaintenance{}, err
+	}
 	advancer := lifecycle.Advancer{
 		Upstreams: catalog,
 		Broker:    repository,

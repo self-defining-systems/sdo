@@ -78,7 +78,17 @@ func SetMaintenance(ctx context.Context, client kubernetes.Interface, namespace 
 // MaintenanceOptions distinguishes a redeploy from a temporary observation barrier.
 type MaintenanceOptions struct {
 	PreserveBaseline bool
+	// ExpiresAt, when set on a pause, is the deadline after which the
+	// controller treats the pause as resumed even if nobody lifted it, so a
+	// declarer that died or failed to resume cannot suspend detection
+	// indefinitely.
+	ExpiresAt time.Time
 }
+
+// MaintenanceExpiresKey is the maintenance ConfigMap key holding a pause's
+// deadline (RFC 3339); the controller reads it as runtime's
+// maintenanceExpiresKey.
+const MaintenanceExpiresKey = "expires_at"
 
 // SetMaintenanceWithOptions can retain the last healthy baseline across a pause.
 func SetMaintenanceWithOptions(ctx context.Context, client kubernetes.Interface, namespace string, paused bool, generation string, options MaintenanceOptions) error {
@@ -99,6 +109,9 @@ func SetMaintenanceWithOptions(ctx context.Context, client kubernetes.Interface,
 	want := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: MaintenanceConfigMap, Namespace: namespace, Labels: map[string]string{"app.kubernetes.io/managed-by": "sdo"}}, Data: map[string]string{"state": state, "generation": generation}}
 	if paused && options.PreserveBaseline {
 		want.Data["preserve_baseline"] = "true"
+	}
+	if paused && !options.ExpiresAt.IsZero() {
+		want.Data[MaintenanceExpiresKey] = options.ExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
 	prior, err := configMaps.Get(ctx, MaintenanceConfigMap, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {

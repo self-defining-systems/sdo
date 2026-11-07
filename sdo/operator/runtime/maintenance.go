@@ -22,6 +22,10 @@ const (
 	maintenanceGenerationKey = "generation"
 	maintenanceStatePaused   = "paused"
 	maintenanceStateActive   = "active"
+	// maintenanceExpiresKey holds a pause's deadline (RFC 3339), written by the
+	// declaring side (install.MaintenanceExpiresKey). A pause past it is read
+	// as resumed.
+	maintenanceExpiresKey = "expires_at"
 )
 
 // MaintenanceState is the operator's declared observation mode. While paused
@@ -37,6 +41,9 @@ type MaintenanceState struct {
 	Generation string
 	// PreserveBaseline suspends observation without adopting changes made while paused.
 	PreserveBaseline bool
+	// Expired reports that the declared pause outlived its deadline: the
+	// state is active, as if the declaring side had resumed.
+	Expired bool
 }
 
 // Record is the controller log line that announces the mode it operates under.
@@ -45,7 +52,11 @@ func (state MaintenanceState) Record() map[string]any {
 	if state.Paused {
 		mode = maintenanceStatePaused
 	}
-	return map[string]any{"controller_maintenance": mode, "maintenance_generation": state.Generation}
+	record := map[string]any{"controller_maintenance": mode, "maintenance_generation": state.Generation}
+	if state.Expired {
+		record["maintenance_pause_expired"] = true
+	}
+	return record
 }
 
 type MaintenanceWatcher struct {
@@ -77,6 +88,9 @@ func (w MaintenanceWatcher) Read(ctx context.Context) (MaintenanceState, error) 
 		if preserve != "" && preserve != "false" && preserve != "true" {
 			return MaintenanceState{}, fmt.Errorf("invalid preserve_baseline %q", preserve)
 		}
+		if expired(configMap.Data[maintenanceExpiresKey], timerClock(w.Clock).Now()) {
+			return MaintenanceState{Generation: generation, Expired: true}, nil
+		}
 		return MaintenanceState{Paused: true, Generation: generation, PreserveBaseline: preserve == "true"}, nil
 	default:
 		return MaintenanceState{}, fmt.Errorf(
@@ -84,6 +98,18 @@ func (w MaintenanceWatcher) Read(ctx context.Context) (MaintenanceState, error) 
 			w.Namespace, w.Name, configMap.Data[maintenanceStateKey],
 		)
 	}
+}
+
+// expired reports whether a pause's deadline has passed. An absent deadline
+// never expires (a human pause); an unreadable one counts as expired, because
+// the alternative is a pause nothing can end.
+func expired(deadline string, now time.Time) bool {
+	deadline = strings.TrimSpace(deadline)
+	if deadline == "" {
+		return false
+	}
+	at, err := time.Parse(time.RFC3339Nano, deadline)
+	return err != nil || !now.Before(at)
 }
 
 // Watch polls the ConfigMap and emits every declared mode that differs from the

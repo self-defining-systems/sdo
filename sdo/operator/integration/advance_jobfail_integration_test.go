@@ -165,6 +165,7 @@ func advanceARecreatedJobThatCannotSucceed(t *testing.T, reportFailed bool) {
 	if err != nil || latest.ID != release2 {
 		t.Fatalf("latest = %+v, %v", latest, err)
 	}
+	advClock := &advTestClock{at: time.Unix(1_800_000_000, 0)}
 	advancer := lifecycle.Advancer{
 		Upstreams: catalog, Broker: o.repository, Readiness: failureClassifyingReadiness{advReadiness{deployer}},
 		Verifier: onbVerifier{},
@@ -172,7 +173,7 @@ func advanceARecreatedJobThatCannotSucceed(t *testing.T, reportFailed bool) {
 			return rendered.Source{Deployment: source, Catalog: renderers.Catalog(), Repository: root}.ShapeDigest(ctx, revision, advChartNamespace)
 		},
 		Maintenance: advMaintenance{}, Activity: advMaintenance{},
-		Wait: func(context.Context, time.Duration) error { return nil },
+		Wait: advClock.wait, Now: advClock.now,
 	}
 	result, err := advancer.Advance(ctx, lifecycle.AdvanceConfig{
 		Namespace: advChartNamespace, HealthObjective: "every synthetic workload stays available", GitDir: filepath.Join(o.accepted, ".git"),

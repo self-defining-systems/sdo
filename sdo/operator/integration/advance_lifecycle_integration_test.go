@@ -255,7 +255,7 @@ func (advReadiness) CheckLive(context.Context, string, *contracts.DeploymentPlan
 
 type advMaintenance struct{}
 
-func (advMaintenance) Pause(context.Context, string) error        { return nil }
+func (advMaintenance) Pause(context.Context, string, time.Time) error { return nil }
 func (advMaintenance) Acknowledged(context.Context) (bool, error) { return true, nil }
 func (advMaintenance) Resume(context.Context) error               { return nil }
 func (advMaintenance) Busy(context.Context) (string, bool, error) { return "", false, nil }
@@ -390,6 +390,7 @@ func advanceImageOnly(t *testing.T, first, second map[string]string, check func(
 	if err != nil || latest.ID != release2 {
 		t.Fatalf("latest = %+v, %v; want %s", latest, err, release2)
 	}
+	advClock := &advTestClock{at: time.Unix(1_800_000_000, 0)}
 	advancer := lifecycle.Advancer{
 		Upstreams: catalog, Broker: o.repository, Readiness: advReadiness{deployer},
 		Verifier: onbVerifier{},
@@ -397,7 +398,7 @@ func advanceImageOnly(t *testing.T, first, second map[string]string, check func(
 			return rendered.Source{Deployment: source, Catalog: renderers.Catalog(), Repository: root}.ShapeDigest(ctx, revision, advChartNamespace)
 		},
 		Maintenance: advMaintenance{}, Activity: advMaintenance{},
-		Wait: func(context.Context, time.Duration) error { return nil },
+		Wait: advClock.wait, Now: advClock.now,
 	}
 	result, err := advancer.Advance(ctx, lifecycle.AdvanceConfig{
 		Namespace: advChartNamespace, HealthObjective: "every synthetic workload stays available", GitDir: filepath.Join(o.accepted, ".git"),
@@ -556,4 +557,15 @@ func TestAdvanceAcceptsHookAndGeneratedObjectsAndPrunesSupersededJobs(t *testing
 			}
 		}
 	})
+}
+
+// advTestClock is the advancer's injected clock: waiting moves it, so the
+// settle window elapses without real time.
+type advTestClock struct{ at time.Time }
+
+func (c *advTestClock) now() time.Time { return c.at }
+
+func (c *advTestClock) wait(_ context.Context, d time.Duration) error {
+	c.at = c.at.Add(d)
+	return nil
 }
