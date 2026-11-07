@@ -67,6 +67,12 @@
       "tests/unit/benchmarks/sregym/fastloop/**"
     ]
   },
+  "go_cli_shard": [
+    "sdo/operator/operatorcli",
+    "sdo/operator/runtime/sim",
+    "sdo/operator/runtime/envtestio",
+    "sdo/operator/runtime/e2e"
+  ],
   "documentation": [
     "README.md",
     "LICENSE"

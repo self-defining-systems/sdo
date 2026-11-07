@@ -52,6 +52,7 @@ CONFIG = {
     "go_consumer_modules": [],
     "python_go_consumers": ["tests/unit/test_tool.py"],
     "python_shards": {"slow": ["tests/unit/slow/**"]},
+    "go_cli_shard": ["goa/cli"],
 }
 
 FILES = {
@@ -185,8 +186,30 @@ def test_shards_partition_the_selected_tests(repo: Path, config: select.Config) 
     assert select.shard_python_tests(result, config, "slow") == ["tests/unit/slow/test_slow.py"]
     assert "tests/unit/slow/test_slow.py" not in select.shard_python_tests(result, config, "core")
     leaf = plan(repo, config, "goa/leaf/leaf.go")
-    assert select.shard_go_packages(leaf, "rest") == ["./goa/leaf"]
-    assert select.shard_go_packages(leaf, "validate") == []
+    assert select.shard_go_packages(leaf, config, "rest") == ["./goa/leaf"]
+    assert select.shard_go_packages(leaf, config, "validate") == []
+    assert select.shard_go_packages(leaf, config, "cli") == []
+
+
+def test_go_shards_partition_every_package_exactly_once(config: select.Config) -> None:
+    dirs = ["goa/cli", "goa/cli/sub", "goa/clix", "goa/leaf", select.VALIDATE_DIR]
+    owners = {d: select.go_shard_of(d, config) for d in dirs}
+    assert owners == {
+        "goa/cli": "cli",
+        "goa/cli/sub": "cli",
+        "goa/clix": "rest",
+        "goa/leaf": "rest",
+        select.VALIDATE_DIR: "validate",
+    }
+    root = Path("/repo")
+    listing = "".join(f"m/{d} {root / d}\n" for d in dirs)
+    chosen = [select.partition_go_packages(listing, root, config, s) for s in ("validate", "cli", "rest")]
+    assert sorted(sum(chosen, [])) == sorted(f"m/{d}" for d in dirs)
+
+
+def test_the_real_cli_shard_names_existing_directories() -> None:
+    for directory in select.Config.load(ROOT).go_cli_shard:
+        assert (ROOT / directory).is_dir(), directory
 
 
 def test_misses_report_failures_the_pull_request_run_skipped(tmp_path: Path) -> None:

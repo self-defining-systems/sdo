@@ -42,9 +42,13 @@
         "keep": 1,
         "max_mb": 720
       },
+      "ci-tests-v2-Linux-X64-cli": {
+        "keep": 1,
+        "max_mb": 500
+      },
       "ci-tests-v2-Linux-X64-rest": {
         "keep": 1,
-        "max_mb": 800
+        "max_mb": 600
       },
       "ci-tests-v2-Linux-X64-validate": {
         "keep": 1,

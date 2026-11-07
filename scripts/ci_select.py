@@ -67,6 +67,7 @@ class Config:
     go_consumer_modules: list[str]
     python_go_consumers: list[str]
     python_shards: dict[str, list[str]]
+    go_cli_shard: list[str]
 
     def __post_init__(self) -> None:
         for name in ("full_suite", "go_workspace_modules", "go_binaries", "python_go_consumers"):
@@ -439,11 +440,32 @@ def load_plan(path: Path) -> Plan:
     )
 
 
-def shard_go_packages(plan: Plan, shard: str) -> list[str]:
-    """The ``go test`` patterns one Go shard runs; the validate shard is the memory validator alone."""
-    if shard == "validate":
-        return [f"./{VALIDATE_DIR}"] if VALIDATE_DIR in plan.go_packages else []
-    return [f"./{d}" for d in plan.go_packages if d != VALIDATE_DIR]
+def go_shard_of(directory: str, config: Config) -> str:
+    """The Go shard that owns a package directory (relative to the repo root)."""
+    if directory == VALIDATE_DIR:
+        return "validate"
+    for owned in config.go_cli_shard:
+        if directory == owned or directory.startswith(owned + "/"):
+            return "cli"
+    return "rest"
+
+
+def shard_go_packages(plan: Plan, config: Config, shard: str) -> list[str]:
+    """The ``go test`` patterns one Go shard runs; ``validate`` is the memory validator alone and
+    ``cli`` the directories (and subdirectories) listed in ``go_cli_shard``."""
+    return [f"./{d}" for d in plan.go_packages if go_shard_of(d, config) == shard]
+
+
+def partition_go_packages(listing: str, root: Path, config: Config, shard: str) -> list[str]:
+    """Import paths of one shard from ``go list -f '{{.ImportPath}} {{.Dir}}'`` output."""
+    chosen = []
+    for line in listing.splitlines():
+        if not line.strip():
+            continue
+        import_path, directory = line.split(" ", 1)
+        if go_shard_of(Path(directory).relative_to(root).as_posix(), config) == shard:
+            chosen.append(import_path)
+    return chosen
 
 
 def shard_python_tests(plan: Plan, config: Config, shard: str) -> list[str]:
@@ -487,6 +509,9 @@ def main(argv: list[str] | None = None) -> int:
             cmd.add_argument("--shard", required=True)
         if name == "skip":
             cmd.add_argument("--kind", choices=["go", "python"], required=True)
+    partition_cmd = sub.add_parser("partition-go")
+    partition_cmd.add_argument("--shard", required=True)
+    partition_cmd.add_argument("--root", type=Path, default=ROOT)
     miss_cmd = sub.add_parser("misses")
     miss_cmd.add_argument("--base", default="HEAD^1")
     miss_cmd.add_argument("--head", default="HEAD")
@@ -495,17 +520,21 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     config = Config.load()
 
+    if args.command == "partition-go":
+        print("\n".join(partition_go_packages(sys.stdin.read(), args.root, config, args.shard)))
+        return 0
+
     if args.command in {"mode", "go-patterns", "python-paths", "skip"}:
         plan = load_plan(args.plan)
         if args.command == "mode":
             print("full" if plan.full else "selected")
         elif args.command == "go-patterns":
-            print("\n".join(shard_go_packages(plan, args.shard)))
+            print("\n".join(shard_go_packages(plan, config, args.shard)))
         elif args.command == "python-paths":
             print("\n".join(shard_python_tests(plan, config, args.shard)))
         else:  # environment lines for $GITHUB_ENV
             chosen = (
-                shard_go_packages(plan, args.shard)
+                shard_go_packages(plan, config, args.shard)
                 if args.kind == "go"
                 else shard_python_tests(plan, config, args.shard)
             )

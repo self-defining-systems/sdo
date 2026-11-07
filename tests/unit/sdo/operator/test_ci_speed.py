@@ -30,7 +30,7 @@ def test_pr_ci_shards_are_fixed_small_and_never_skipped_by_path() -> None:
     assert set(config["jobs"]) == {"checks", "python", "tests", "required-pr-ci"}
     assert "merge_group" in config.get("on", config.get(True, {}))
     assert config["jobs"]["python"]["strategy"]["matrix"]["shard"] == ["core", "adapter", "fastloop"]
-    assert config["jobs"]["tests"]["strategy"]["matrix"]["shard"] == ["validate", "rest"]
+    assert config["jobs"]["tests"]["strategy"]["matrix"]["shard"] == ["validate", "cli", "rest"]
     for name, job in config["jobs"].items():
         assert job.get("strategy", {}).get("fail-fast", False) is False
         if name != "required-pr-ci":
@@ -82,18 +82,25 @@ def test_python_shards_cover_every_test_path_and_gate_combined_coverage() -> Non
     assert uploads[0]["with"]["name"] == "coverage-${{ matrix.shard }}"
 
 
-@pytest.mark.parametrize("shard", ["validate", "rest"])
+@pytest.mark.parametrize("shard", ["validate", "cli", "rest"])
 def test_go_shards_partition_the_pr_packages(tmp_path: Path, shard: str) -> None:
     calls = tmp_path / "calls"
     command = tmp_path / "go"
     command.write_text(
         '#!/bin/sh\nprintf "%s\\n" "$*" >> "$SDO_TEST_CALLS"\n'
-        '[ "$1" = list ] && printf "sdo.dev/operator/memory/validate\\nsdo.dev/operator/runtime\\n"\nexit 0\n'
+        '[ "$1" = list ] && printf "sdo.dev/operator/memory/validate %s\\nsdo.dev/operator/runtime %s\\n'
+        'sdo.dev/operator/operatorcli %s\\n" "$SDO_ROOT/sdo/operator/memory/validate" "$SDO_ROOT/sdo/operator/runtime" '
+        '"$SDO_ROOT/sdo/operator/operatorcli"\nexit 0\n'
     )
     command.chmod(0o755)
     subprocess.run(
         ["bash", str(ROOT / "scripts/test_go_ci.sh"), "pr", shard],
-        env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "SDO_TEST_CALLS": str(calls)},
+        env={
+            **os.environ,
+            "PATH": f"{tmp_path}:{os.environ['PATH']}",
+            "SDO_TEST_CALLS": str(calls),
+            "SDO_ROOT": str(ROOT),
+        },
         check=True,
     )
     test = [shlex.split(line) for line in calls.read_text().splitlines() if line.startswith("test ")]
@@ -101,6 +108,8 @@ def test_go_shards_partition_the_pr_packages(tmp_path: Path, shard: str) -> None
     packages = [a for a in test[0] if a.startswith(("./", "sdo.dev/"))]
     if shard == "validate":
         assert packages == ["./sdo/operator/memory/validate"]
+    elif shard == "cli":
+        assert packages == ["sdo.dev/operator/operatorcli"]
     else:
         assert packages == ["sdo.dev/operator/runtime"]
     assert "-short" in test[0]
@@ -300,7 +309,12 @@ def test_go_runner_keeps_integration_coverage_in_one_package_scheduler(tmp_path:
     command.chmod(0o755)
     subprocess.run(
         ["bash", str(ROOT / "scripts/test_go_ci.sh"), mode],
-        env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "SDO_TEST_CALLS": str(calls)},
+        env={
+            **os.environ,
+            "PATH": f"{tmp_path}:{os.environ['PATH']}",
+            "SDO_TEST_CALLS": str(calls),
+            "SDO_ROOT": str(ROOT),
+        },
         check=True,
     )
     invocations = [shlex.split(line) for line in calls.read_text().splitlines()]
@@ -334,7 +348,12 @@ def test_full_and_hermetic_runners_retain_integration_tests(tmp_path: Path, scri
         command.chmod(0o755)
     subprocess.run(
         ["bash", str(ROOT / "scripts" / script)],
-        env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "SDO_TEST_CALLS": str(calls)},
+        env={
+            **os.environ,
+            "PATH": f"{tmp_path}:{os.environ['PATH']}",
+            "SDO_TEST_CALLS": str(calls),
+            "SDO_ROOT": str(ROOT),
+        },
         check=True,
     )
     invocations = [line.split("|", 1) for line in calls.read_text().splitlines()]
@@ -484,7 +503,12 @@ def test_the_controller_e2e_fetches_every_workspace_module_before_it_goes_offlin
     command.chmod(0o755)
     subprocess.run(
         ["bash", str(ROOT / "scripts/prefetch_go_modules.sh")],
-        env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "SDO_TEST_CALLS": str(calls)},
+        env={
+            **os.environ,
+            "PATH": f"{tmp_path}:{os.environ['PATH']}",
+            "SDO_TEST_CALLS": str(calls),
+            "SDO_ROOT": str(ROOT),
+        },
         check=True,
     )
     modules = json.loads((ROOT / ".github/ci_selection.json").read_text())["go_workspace_modules"]
