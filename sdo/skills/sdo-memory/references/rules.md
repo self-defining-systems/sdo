@@ -18,6 +18,8 @@ Every rule names the validator rule IDs that enforce it. The detector and playbo
   measurements (Service UIDs, allocated IPs, probe or capture times). Enforced by: `memory.cluster-local`.
 - Memory, captured corpus cases included, never holds Kubernetes Secret data; reference a Secret by kind and name.
   Enforced by: `memory.secret-data`.
+- Authored memory files, deployment values, overlays and patches included, never hold credential material: PEM private keys, access-token shapes, or (in deployment inputs) a password/token/key-named field with a literal value. Template the value or reference a Secret. Only imported upstream chart inputs are exempt from the secret name rule.
+  Enforced by: `memory.secret-material`, `layout.secret-path`.
 
 ## Ownership
 

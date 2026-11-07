@@ -573,6 +573,7 @@ var gateRows = []gateRow{
 	}, RuleSnapshotBudget),
 	gateReflection("cluster-local value in memory", gateClean(), gateUpdated(), gateTrafficEdit("incident-x", "name: incident-x\nclusterIP: 10.96.0.12\n"), RuleClusterLocal),
 	gateReflection("Secret data in memory", gateClean(), gateUpdated(), gateTrafficEdit("incident-x", "apiVersion: v1\nkind: Secret\nmetadata:\n  name: db\ndata:\n  password: c2VjcmV0\n"), RuleSecretData),
+	gateReflection("credential material in memory", gateClean(), gateUpdated(), gateTrafficEdit("incident-x", "name: incident-x\nnote: key AKIA"+"ABCDEFGHIJKLMNOP\n"), RuleSecretMaterial),
 	gateReflection("reflection without a decision", gateClean(), nil, gatePlaybookEdit, RuleReflectionDecision),
 	gateReflection("reflection updates a playbook", gateClean(), gateUpdated("base"), gatePlaybookEdit),
 	gateWithRepairVerifier("README-only learning without a verified repaired cause", false, gateReflection("unverified closure updates a playbook", gateClean(), gateUpdated("base"), gatePlaybookEdit, RuleReflectionRepairRequired)),

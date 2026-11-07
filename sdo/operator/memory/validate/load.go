@@ -194,14 +194,20 @@ func (s *run) checkChangedSource(rel string) error {
 // secretPathPart names the component that makes a path credential-bearing.
 // The rule polices what agents write into operational memory, so it covers
 // memory paths only: upstream application source (a chart's templates dir may
-// be called shared-secrets) is not authored by agents here. Deployment files
-// are memory too but hold imported application inputs; Secret values in them
-// are caught by content (memory.secret-data), not by name.
+// be called shared-secrets) is not authored by agents here. Imported upstream
+// inputs under .sdo/deployment (paths the layout does not classify as the plan,
+// values, manifests, build files, overlays or patches) are exempt from the name
+// rule; every agent-authored deployment file keeps it, and content is scanned
+// too (memory.secret-data, memory.secret-material).
 func secretPathPart(rel string) (string, bool) {
 	if !layout.IsMemoryPath(rel) {
 		return "", false
 	}
-	nameIsPolicy := !strings.HasPrefix(rel, layout.DeploymentDir+"/")
+	nameIsPolicy := true
+	if strings.HasPrefix(rel, layout.DeploymentDir+"/") {
+		_, _, authored := layout.Classify(rel)
+		nameIsPolicy = authored
+	}
 	for _, part := range strings.Split(rel, "/") {
 		lower := strings.ToLower(part)
 		if lower == ".git" || lower == ".env" || (nameIsPolicy && strings.Contains(lower, "secret")) {
