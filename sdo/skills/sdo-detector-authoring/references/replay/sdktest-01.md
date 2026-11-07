@@ -12,6 +12,13 @@ const CapturedFixedNoMatchPhase = "fixed"
     CapturedFixedNoMatchPhase identifies observed negative evidence only.
 
 const MaxCapturedSnapshotBytes = 4 << 20
+    MaxCapturedSnapshotBytes is the encoded size a captured snapshot may reach.
+    It is the smallest limit on a snapshot's path: fastloop checkpoints record
+    corpus files up to 4 MiB, the memory validator accepts corpus files up to 8
+    MiB, and the healthy-baseline writer's 8 MiB bounds a whole set. A capture
+    that fits here is recordable and publishable. Larger namespaces are trimmed
+    to it (trimToBudget), not rejected.
+
 const ObjectsOnlySnapshotVersion = 2
     ObjectsOnlySnapshotVersion stores every captured object once, in Objects.
     Loading rebuilds the typed lists from the namespace-local objects.
@@ -225,12 +232,4 @@ func (v *RecordingReadView) ObservedView() (sdk.DetectionContext, func() error)
 func (v *RecordingReadView) PodUsage(ref sdk.ObjectRef) (*metricsv1beta1.PodMetrics, error)
 
 func (v *RecordingReadView) ProbeHTTP(ref sdk.ObjectRef, req program.HTTPProbe) (program.ProbeResult, error)
-
-func (v *RecordingReadView) ProbeTCP(ref sdk.ObjectRef, port int32) (program.ProbeResult, error)
-
-func (v *RecordingReadView) QueryMetrics(q metrics.Query) metrics.Result
-
-func (v *RecordingReadView) RecordExternalCalls(calls []PrimitiveCall)
-    RecordExternalCalls feeds subprocess receipts through the same evidence sink
-    used for local primitive reads. It performs no live reads.
 ```

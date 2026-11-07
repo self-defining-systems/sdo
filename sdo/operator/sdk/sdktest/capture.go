@@ -3,7 +3,6 @@ package sdktest
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"regexp"
 
@@ -15,6 +14,12 @@ import (
 	"sdo.dev/operator/sdk/traffic"
 )
 
+// MaxCapturedSnapshotBytes is the encoded size a captured snapshot may reach.
+// It is the smallest limit on a snapshot's path: fastloop checkpoints record
+// corpus files up to 4 MiB, the memory validator accepts corpus files up to
+// 8 MiB, and the healthy-baseline writer's 8 MiB bounds a whole set. A capture
+// that fits here is recordable and publishable. Larger namespaces are trimmed
+// to it (trimToBudget), not rejected.
 const MaxCapturedSnapshotBytes = 4 << 20
 
 var sensitiveEnvironmentName = regexp.MustCompile(`(?i)SECRET|TOKEN|PASSWORD|KEY`)
@@ -120,12 +125,8 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string, refs ...sdk.Ob
 			s.SecretList = append(s.SecretList, *object.DeepCopy())
 		}
 	}
-	data, err := json.Marshal(s)
-	if err != nil {
-		return Snapshot{}, fmt.Errorf("encode captured snapshot: %w", err)
-	}
-	if len(data) > MaxCapturedSnapshotBytes {
-		return Snapshot{}, fmt.Errorf("captured snapshot exceeds %d bytes", MaxCapturedSnapshotBytes)
+	if err := s.trimToBudget(MaxCapturedSnapshotBytes); err != nil {
+		return Snapshot{}, err
 	}
 	return s, nil
 }
