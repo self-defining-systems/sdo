@@ -6,9 +6,12 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
+	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
@@ -41,6 +44,17 @@ func TestControllerServiceAccountMayKeepItsConfigMaps(t *testing.T) {
 	controller, err := kubernetes.NewForConfig(impersonated)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// The API server's RBAC authorizer learns a new Role through its own
+	// informer, so the grants are visible a moment after EnsureGrants returns
+	// (a CI run saw "forbidden" on the first create). Wait for the authorizer
+	// to allow the identity before asserting what it may do.
+	review := &authorizationv1.SelfSubjectAccessReview{Spec: authorizationv1.SelfSubjectAccessReviewSpec{ResourceAttributes: &authorizationv1.ResourceAttributes{Namespace: control, Verb: "create", Resource: "configmaps"}}}
+	if err := wait.PollUntilContextTimeout(ctx, 100*time.Millisecond, 30*time.Second, true, func(ctx context.Context) (bool, error) {
+		got, err := controller.AuthorizationV1().SelfSubjectAccessReviews().Create(ctx, review, metav1.CreateOptions{})
+		return err == nil && got.Status.Allowed, err
+	}); err != nil {
+		t.Fatalf("the grants never reached the authorizer: %v", err)
 	}
 	for _, name := range []string{install.OperabilityConfigMap, "sdo-upstream-obligations", "sdo-upstream-holds"} {
 		configMaps := controller.CoreV1().ConfigMaps(control)
