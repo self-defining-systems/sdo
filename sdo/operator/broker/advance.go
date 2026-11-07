@@ -439,136 +439,185 @@ func (b *Broker) PublishAdvance(ctx context.Context, id, upstream, base string, 
 		if err := b.requireClean(ctx); err != nil {
 			return err
 		}
-		proposal, err := b.proposal(id, AdvancePhase)
-		if err != nil {
-			return fmt.Errorf("advance proposal %s: %w", id, err)
-		}
-		current, err := gitText(ctx, b.target, "rev-parse", "HEAD")
-		if err != nil {
-			return err
-		}
-		if current != proposal.BaseCommit {
-			return fmt.Errorf("accepted HEAD moved from %s to %s since the advance was proposed", proposal.BaseCommit, current)
-		}
-		if err := requireDeploymentSubject(report, current); err != nil {
-			return err
-		}
-		if err := b.requireUpstreamBase(ctx, current, base); err != nil {
-			return err
-		}
-		if err := checkUpstreamChange(ctx, b.target, base, upstream); err != nil {
-			return err
-		}
-		if b.validator == nil && b.codePath != "shell" {
-			return errors.New("proposal validation is not configured")
-		}
-		stage, cleanup, err := b.privateClone(ctx)
-		if err != nil {
-			return err
-		}
-		defer cleanup()
-		conflicts, err := b.mergeUpstream(ctx, stage, base, upstream)
-		if err != nil {
-			return err
-		}
-		if len(conflicts) > 0 {
-			return fmt.Errorf("upstream %s conflicts with accepted source: %s", upstream, strings.Join(conflicts, ", "))
-		}
-		var gaps []validate.Diagnostic
-		var diagnostics []validate.Diagnostic
-		// checkAs judges the stage's changes since base as actor, whose grants
-		// decide them. The merge is the upstream actor's; a correction replayed
-		// onto it is the deployer's, judged against the merge it corrects.
-		checkAs := func(actor Actor, base, tree string) error {
-			changed, err := validate.ChangedPaths(ctx, stage, base)
+		if err := b.stageAdvance(ctx, id, upstream, base, &evidence, &report, func(st stagedAdvance) error {
+			if err := b.writeOperabilityReport(id, operability.StageAdvance, report); err != nil {
+				return err
+			}
+			if err := b.writeSourceEvidence(id, evidence); err != nil {
+				return err
+			}
+			trailers := []string{upstreamTrailer + ": " + upstream, upstreamBaseTrailer + ": " + base, mirrorTrailer + ": " + st.mirror, operabilityTrailer(operability.StageAdvance, digest)}
+			if st.correction != nil {
+				trailers = append(trailers, advanceCorrectionTrailer+": "+string(Deployer))
+			}
+			receipt, err = b.acceptWithTrailers(ctx, st.stage, id, UpstreamActor, AdvancePhase, st.paths, trailers, st.gaps...)
 			if err != nil {
 				return err
 			}
-			publication := &validate.PublicationContext{BaseCommit: base, IncidentID: id, VerifiedSourceTree: tree}
-			more, err := b.checkAttestedCandidate(ctx, stage, base, actor, AdvancePhase, changed, publication, nil, &gaps)
-			diagnostics = append(diagnostics, more...)
-			return err
-		}
-		correction, err := b.advanceCorrection(ctx, proposal)
-		if err != nil {
-			return err
-		}
-		if correction != nil {
-			merged, err := advanceTreeDigest(ctx, stage)
-			if err != nil {
-				return err
+			accepted := evidence
+			accepted.AcceptedCommit = receipt.Commit
+			if err := b.writeSourceEvidence(id, accepted); err != nil {
+				return fmt.Errorf("advance accepted but evidence finalization needs reconciliation: %w", err)
 			}
-			if err := checkAs(UpstreamActor, current, merged); err != nil {
-				return fmt.Errorf("advance validation: %w", err)
+			if err := b.pruneUpstreamHolds(ctx, upstream, base); err != nil {
+				return fmt.Errorf("advance accepted but pruning upstream hold refs failed: %w", err)
 			}
-			if err := b.replayCorrection(ctx, stage, proposal, correction); err != nil {
-				return err
-			}
-		}
-		tree, err := advanceTreeDigest(ctx, stage)
-		if err != nil {
+			return nil
+		}); err != nil {
 			return err
-		}
-		if tree != evidence.BaseTree {
-			return fmt.Errorf("merged advance tree %s differs from the deployed tree %s", tree, evidence.BaseTree)
-		}
-		// The deployed tree is the effective one: the patch series must apply
-		// to the tree being accepted, however the proposal got there.
-		if err := checkEffective(ctx, stage, tree); err != nil {
-			return effectiveError(ctx, stage, "", tree, base, upstream, err)
-		}
-		if err := requireEffectiveEvidence(ctx, stage, tree, evidence); err != nil {
-			return err
-		}
-		if err := requirePlanEvidence(ctx, stage, evidence, b.PlanCatalogs); err != nil {
-			return err
-		}
-		mirror, err := mirrorState(ctx, stage, current, base, upstream)
-		if err != nil {
-			return err
-		}
-		paths, err := validate.ChangedPaths(ctx, stage, current)
-		if err != nil {
-			return err
-		}
-		if correction != nil {
-			err = checkAs(Deployer, correction.merge, tree)
-		} else {
-			err = checkAs(UpstreamActor, current, tree)
-		}
-		if err != nil {
-			return fmt.Errorf("advance validation: %w", err)
-		}
-		if err := validate.Err(diagnostics); err != nil {
-			return fmt.Errorf("advance validation: %w", err)
-		}
-		if err := b.writeOperabilityReport(id, operability.StageAdvance, report); err != nil {
-			return err
-		}
-		if err := b.writeSourceEvidence(id, evidence); err != nil {
-			return err
-		}
-		trailers := []string{upstreamTrailer + ": " + upstream, upstreamBaseTrailer + ": " + base, mirrorTrailer + ": " + mirror, operabilityTrailer(operability.StageAdvance, digest)}
-		if correction != nil {
-			trailers = append(trailers, advanceCorrectionTrailer+": "+string(Deployer))
-		}
-		receipt, err = b.acceptWithTrailers(ctx, stage, id, UpstreamActor, AdvancePhase, paths, trailers, gaps...)
-		if err != nil {
-			return err
-		}
-		accepted := evidence
-		accepted.AcceptedCommit = receipt.Commit
-		if err := b.writeSourceEvidence(id, accepted); err != nil {
-			return fmt.Errorf("advance accepted but evidence finalization needs reconciliation: %w", err)
-		}
-		if err := b.pruneUpstreamHolds(ctx, upstream, base); err != nil {
-			return fmt.Errorf("advance accepted but pruning upstream hold refs failed: %w", err)
 		}
 		return b.lockedAt(b.proposalRoot(id, AdvancePhase)+".lock", func() error {
 			return os.RemoveAll(b.proposalRoot(id, AdvancePhase))
 		})
 	}))
 	return receipt, err
+}
+
+// stagedAdvance is a merged and validated advance candidate in a private
+// clone, handed to the publication step while the clone exists.
+type stagedAdvance struct {
+	stage      string
+	mirror     string
+	paths      []string
+	gaps       []validate.Diagnostic
+	correction *advanceCorrectionCommits
+}
+
+// stageAdvance recomputes the advance candidate in a private clone and runs
+// the validation PublishAdvance applies, then calls accept with the clone.
+// Without evidence and report (CheckAdvance) the checks that bind the candidate
+// to a finished deployment are skipped: everything the validator would reject
+// is still rejected. The caller holds the publication lock.
+func (b *Broker) stageAdvance(ctx context.Context, id, upstream, base string, evidence *SourceEvidence, report *operability.Report, accept func(stagedAdvance) error) error {
+	proposal, err := b.proposal(id, AdvancePhase)
+	if err != nil {
+		return fmt.Errorf("advance proposal %s: %w", id, err)
+	}
+	current, err := gitText(ctx, b.target, "rev-parse", "HEAD")
+	if err != nil {
+		return err
+	}
+	if current != proposal.BaseCommit {
+		return fmt.Errorf("accepted HEAD moved from %s to %s since the advance was proposed", proposal.BaseCommit, current)
+	}
+	if report != nil {
+		if err := requireDeploymentSubject(*report, current); err != nil {
+			return err
+		}
+	}
+	if err := b.requireUpstreamBase(ctx, current, base); err != nil {
+		return err
+	}
+	if err := checkUpstreamChange(ctx, b.target, base, upstream); err != nil {
+		return err
+	}
+	if b.validator == nil && b.codePath != "shell" {
+		return errors.New("proposal validation is not configured")
+	}
+	stage, cleanup, err := b.privateClone(ctx)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	conflicts, err := b.mergeUpstream(ctx, stage, base, upstream)
+	if err != nil {
+		return err
+	}
+	if len(conflicts) > 0 {
+		return fmt.Errorf("upstream %s conflicts with accepted source: %s", upstream, strings.Join(conflicts, ", "))
+	}
+	var gaps []validate.Diagnostic
+	var diagnostics []validate.Diagnostic
+	// checkAs judges the stage's changes since base as actor, whose grants
+	// decide them. The merge is the upstream actor's; a correction replayed
+	// onto it is the deployer's, judged against the merge it corrects.
+	checkAs := func(actor Actor, base, tree string) error {
+		changed, err := validate.ChangedPaths(ctx, stage, base)
+		if err != nil {
+			return err
+		}
+		publication := &validate.PublicationContext{BaseCommit: base, IncidentID: id, VerifiedSourceTree: tree}
+		more, err := b.checkAttestedCandidate(ctx, stage, base, actor, AdvancePhase, changed, publication, nil, &gaps)
+		diagnostics = append(diagnostics, more...)
+		return err
+	}
+	correction, err := b.advanceCorrection(ctx, proposal)
+	if err != nil {
+		return err
+	}
+	if correction != nil {
+		merged, err := advanceTreeDigest(ctx, stage)
+		if err != nil {
+			return err
+		}
+		if err := checkAs(UpstreamActor, current, merged); err != nil {
+			return fmt.Errorf("advance validation: %w", err)
+		}
+		if err := b.replayCorrection(ctx, stage, proposal, correction); err != nil {
+			return err
+		}
+	}
+	tree, err := advanceTreeDigest(ctx, stage)
+	if err != nil {
+		return err
+	}
+	if evidence != nil && tree != evidence.BaseTree {
+		return fmt.Errorf("merged advance tree %s differs from the deployed tree %s", tree, evidence.BaseTree)
+	}
+	// The deployed tree is the effective one: the patch series must apply
+	// to the tree being accepted, however the proposal got there.
+	if err := checkEffective(ctx, stage, tree); err != nil {
+		return effectiveError(ctx, stage, "", tree, base, upstream, err)
+	}
+	if evidence != nil {
+		if err := requireEffectiveEvidence(ctx, stage, tree, *evidence); err != nil {
+			return err
+		}
+		if err := requirePlanEvidence(ctx, stage, *evidence, b.PlanCatalogs); err != nil {
+			return err
+		}
+	}
+	mirror, err := mirrorState(ctx, stage, current, base, upstream)
+	if err != nil {
+		return err
+	}
+	paths, err := validate.ChangedPaths(ctx, stage, current)
+	if err != nil {
+		return err
+	}
+	if correction != nil {
+		err = checkAs(Deployer, correction.merge, tree)
+	} else {
+		err = checkAs(UpstreamActor, current, tree)
+	}
+	if err != nil {
+		return fmt.Errorf("advance validation: %w", err)
+	}
+	if err := validate.Err(diagnostics); err != nil {
+		return fmt.Errorf("advance validation: %w", err)
+	}
+	return accept(stagedAdvance{stage: stage, mirror: mirror, paths: paths, gaps: gaps, correction: correction})
+}
+
+// CheckAdvance runs, without publishing, the validation PublishAdvance runs on
+// the candidate of advance id: the same merge, patch application and
+// validate.Check as the upstream actor (or the deployer after a correction).
+// A rejection is returned as text (empty when the candidate would validate), so
+// a caller can hold before any cluster effect instead of deploying a candidate
+// the broker would refuse to accept. Evidence-bound checks wait for the
+// deployment: they need its result.
+func (b *Broker) CheckAdvance(ctx context.Context, id, upstream, base string) (rejection string, err error) {
+	if err := checkIncidentID(id); err != nil {
+		return "", err
+	}
+	err = b.locked(b.withUpstream(ctx, func() error {
+		return b.stageAdvance(ctx, id, upstream, base, nil, nil, func(stagedAdvance) error { return nil })
+	}))
+	var failure *validate.Failure
+	if errors.As(err, &failure) {
+		return err.Error(), nil
+	}
+	return "", err
 }
 
 // pruneUpstreamHolds deletes the watcher's hold refs except the accepted

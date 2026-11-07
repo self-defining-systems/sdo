@@ -686,3 +686,49 @@ func publishAdvance(ctx context.Context, b *Broker, id, upstream, base string, e
 	}
 	return b.PublishAdvance(ctx, id, upstream, base, evidence, report)
 }
+
+// An upstream chart may name a templates directory after what it generates
+// (shared-secrets): the secret-path rule polices operational memory, not
+// upstream application source, so the advance validates and is accepted.
+func TestPublishAdvanceAcceptsUpstreamTemplatesUnderASecretsNamedDirectory(t *testing.T) {
+	ctx := context.Background()
+	w := newAdvanceWorld(t)
+	b := w.broker
+	upstream := w.push(t, w.seed, map[string]*string{
+		"chart/templates/shared-secrets/job.yaml":         text("kind: Job\nmetadata:\n  name: {{ .Release.Name }}-secrets\n"),
+		"chart/templates/_checkConfig_shared_secrets.tpl": text("{{- define \"check\" -}}{{- end -}}\n"),
+	})
+	id := "advance-" + upstream[:12]
+	proposal, _, conflicts, err := b.ProposeAdvance(ctx, id, w.seed, upstream)
+	if err != nil || len(conflicts) > 0 {
+		t.Fatalf("ProposeAdvance = %v %v", conflicts, err)
+	}
+	if rejection, err := b.CheckAdvance(ctx, id, upstream, w.seed); err != nil || rejection != "" {
+		t.Fatalf("CheckAdvance = %q %v, want it to validate", rejection, err)
+	}
+	if _, err := publishAdvance(ctx, b, id, upstream, w.seed, advanceEvidence(t, proposal.Path, "advanced")); err != nil {
+		t.Fatalf("PublishAdvance = %v", err)
+	}
+}
+
+// CheckAdvance is the pre-deploy form of the publish validation: a candidate
+// the publish rejects is rejected by the check, with nothing recorded.
+func TestCheckAdvanceRejectsWhatPublishAdvanceWouldReject(t *testing.T) {
+	ctx := context.Background()
+	w := newAdvanceWorld(t)
+	b := w.broker
+	upstream := w.push(t, w.seed, map[string]*string{"k8s/bad.yaml": text("a: 1\na: 2\n")})
+	id, accepted := "advance-"+upstream[:12], w.head(t)
+	proposal, _, _, err := b.ProposeAdvance(ctx, id, w.seed, upstream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejection, err := b.CheckAdvance(ctx, id, upstream, w.seed)
+	if err != nil || !strings.Contains(rejection, "k8s/bad.yaml") {
+		t.Fatalf("CheckAdvance = %q %v, want a rejection naming k8s/bad.yaml", rejection, err)
+	}
+	if _, err := publishAdvance(ctx, b, id, upstream, w.seed, advanceEvidence(t, proposal.Path, "advanced")); err == nil || !strings.Contains(err.Error(), "k8s/bad.yaml") {
+		t.Fatalf("PublishAdvance = %v, want the same rejection", err)
+	}
+	requireUntouched(t, w, accepted)
+}
