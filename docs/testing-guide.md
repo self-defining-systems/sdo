@@ -970,7 +970,11 @@ PRs and merge groups run `static checks`, two `Python tests` shards (`core`, and
 (`validate`, the compiler-backed memory validator, and `rest`; `test_go_ci.sh pr <shard>`),
 and `Required PR CI`. Shards are independent jobs that each build from the Go
 caches (no compiler artifact transfer); every job has a five-minute cap and
-targets about three minutes. The aggregate requires every job to succeed (skips and
+targets about three minutes. Every cache restore (cache actions and setup-uv) is bounded by
+`SEGMENT_DOWNLOAD_TIMEOUT_MINS` and, for the cache actions, a step `timeout-minutes` with
+`continue-on-error`, so a hung download runs the job cold instead of consuming its cap. The CI-health
+scripts retry transient GitHub API errors (`scripts/ci_github_api.py`, four attempts with backoff) and
+report `GitHub API unavailable` as a warning instead of failing. The aggregate requires every job to succeed (skips and
 cancellation fail closed), combines the Python shards' coverage data and enforces the
 `pyproject.toml` floor over their union. `check_errors.sh --python-suite` already
 includes types, architecture and proto; the architecture tests run in the Python

@@ -44,6 +44,10 @@ jobs:
           go-version: "1.26.8"
           cache: false
       - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
+        timeout-minutes: 1
+        continue-on-error: true
+        env:
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: "1"
         with:
           path: |
             ~/.cache/go-build
@@ -58,6 +62,8 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: bash scripts/ci_go_cache.sh mark
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc
+        env:
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: "1"
         with:
           version: "0.9.24"
           python-version: "3.12"
@@ -71,6 +77,10 @@ jobs:
       - name: Cache pinned proto tools
         id: proto-tools
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
+        timeout-minutes: 1
+        continue-on-error: true
+        env:
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: "1"
         with:
           path: |
             ~/go/bin
@@ -152,6 +162,10 @@ jobs:
           echo "SDO_CI_PLAN=$RUNNER_TEMP/plan.json" >> "$GITHUB_ENV"
           python3 scripts/ci_select.py skip --plan "$RUNNER_TEMP/plan.json" --kind python --shard ${{ matrix.shard }} >> "$GITHUB_ENV"
       - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
+        timeout-minutes: 1
+        continue-on-error: true
+        env:
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: "1"
         if: env.SDO_CI_SKIP != 'true'
         with:
           path: |
@@ -175,6 +189,8 @@ jobs:
         run: |
           setsid nohup bash -c 'python3 scripts/operator_test_binary.py > "$RUNNER_TEMP/operator-bin.path" 2> "$RUNNER_TEMP/operator-bin.log"; echo $? > "$RUNNER_TEMP/operator-bin.status"' > /dev/null 2>&1 &
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc
+        env:
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: "1"
         if: env.SDO_CI_SKIP != 'true'
         with:
           version: "0.9.24"
@@ -316,6 +332,10 @@ jobs:
           echo "SDO_CI_PLAN=$RUNNER_TEMP/plan.json" >> "$GITHUB_ENV"
           python3 scripts/ci_select.py skip --plan "$RUNNER_TEMP/plan.json" --kind go --shard ${{ matrix.shard }} >> "$GITHUB_ENV"
       - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
+        timeout-minutes: 1
+        continue-on-error: true
+        env:
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: "1"
         if: env.SDO_CI_SKIP != 'true'
         with:
           path: |
@@ -333,6 +353,8 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: bash scripts/ci_go_cache.sh mark
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc
+        env:
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: "1"
         if: env.SDO_CI_SKIP != 'true'
         with:
           version: "0.9.24"
@@ -347,6 +369,10 @@ jobs:
       - name: Cache the envtest kube-apiserver and etcd
         if: env.SDO_CI_SKIP != 'true'
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
+        timeout-minutes: 1
+        continue-on-error: true
+        env:
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: "1"
         with:
           path: ~/.cache/sdo-envtest
           key: envtest-assets-1.34.0-${{ runner.os }}-${{ runner.arch }}
