@@ -7,12 +7,16 @@ import (
 	"regexp"
 	"strings"
 
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
 	"sdo.dev/operator/contracts/settings"
+	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
 )
 
 var _ Recreator = CommandBackend{}
 var _ Pruner = CommandBackend{}
+var _ ReplicasHandoff = CommandBackend{}
 
 // ImmutableConflicts server-side dry-run applies documents with Apply's field
 // manager and returns the objects the API server refuses for an immutable
@@ -255,4 +259,38 @@ func clipText(text string, limit int) string {
 		return text
 	}
 	return text[:limit] + "..."
+}
+
+// HandOffReplicas implements ReplicasHandoff: when the deployer solely owns
+// spec.replicas, the live count is applied under a neutral field manager.
+func (b CommandBackend) HandOffReplicas(ctx context.Context, ref sdk.ObjectRef) error {
+	args := b.kubectlArgs("get", ref.Kind, ref.Name, "--namespace", ref.Namespace, "--ignore-not-found", "--show-managed-fields", "--output=json")
+	output, err := b.run(ctx, b.kubectl(), args, nil)
+	if err != nil {
+		return fmt.Errorf("get %s/%s: %w: %s", ref.Kind, ref.Name, err, strings.TrimSpace(string(output)))
+	}
+	if strings.TrimSpace(string(output)) == "" {
+		return nil
+	}
+	var object map[string]any
+	if err := json.Unmarshal(output, &object); err != nil {
+		return fmt.Errorf("decode %s/%s: %w", ref.Kind, ref.Name, err)
+	}
+	live := &unstructured.Unstructured{Object: object}
+	if !rendered.SolelyOwnsReplicas(live, "sdo-deployer") {
+		return nil
+	}
+	document, ok := rendered.ReplicasHandoff(live)
+	if !ok {
+		return nil
+	}
+	encoded, err := json.Marshal(document.Object)
+	if err != nil {
+		return err
+	}
+	args = b.kubectlArgs("apply", "--server-side", "--force-conflicts", "--field-manager="+rendered.ReplicasHandoffManager, "--filename=-")
+	if output, err := b.run(ctx, b.kubectl(), args, encoded); err != nil {
+		return fmt.Errorf("hand off spec.replicas of %s/%s: %w: %s", ref.Kind, ref.Name, err, strings.TrimSpace(string(output)))
+	}
+	return nil
 }

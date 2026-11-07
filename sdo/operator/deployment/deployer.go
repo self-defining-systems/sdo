@@ -257,6 +257,13 @@ func (r *applyRun) omitAutoscaledReplicas(ctx context.Context, autoscaled render
 	} else if !found {
 		return nil
 	}
+	// The deployer may be the only owner (the autoscaler has not scaled yet):
+	// share the count before omitting it, so the omission cannot reset it.
+	if handoff, ok := r.deployer.Applier.(ReplicasHandoff); ok {
+		if err := handoff.HandOffReplicas(ctx, object.Ref); err != nil {
+			return fmt.Errorf("keep replicas of %s/%s while the autoscaler takes over: %w", object.Ref.Kind, object.Ref.Name, err)
+		}
+	}
 	delete(spec, "replicas")
 	return nil
 }

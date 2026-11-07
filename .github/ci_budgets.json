@@ -89,6 +89,7 @@
       "sdo.dev/operator/memory/validate TestGateCompileRowsOnRealGo": "compiles generated detector programs with real Go",
       "sdo.dev/operator/memory/validate TestPreexistingHealthyBaselineFaultsOnRealGo": "compiles generated detector programs with real Go",
       "sdo.dev/operator/builder TestEmptyCatalogControllerBuild": "builds the controller binary in an isolated module",
+      "sdo.dev/operator/deployment TestStoppingToApplyReplicasKeepsTheCountOnARealAPIServer": "starts a real kube-apiserver and etcd: server-side-apply field ownership is the API server's behavior, not modelable",
       "sdo.dev/operator/runtime/sim TestKubeConformance": "starts a real kube-apiserver and etcd",
       "sdo.dev/operator/integration TestReplayRehearsalOfASyntheticChartReportsEveryRelease": "replay rehearsal (~30-50 s): real kube-apiserver and etcd, one onboarding and three advances through the real broker and deployer, with the modeled controller loop; the cheap tier that catches release-replay blockers before a 1-2 h live lane",
       "sdo.dev/operator/runtime TestHarness": "seeded simulation campaign prefix",

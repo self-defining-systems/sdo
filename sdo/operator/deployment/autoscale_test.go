@@ -1,7 +1,10 @@
 package deployment
 
 import (
+	"strings"
+
 	"context"
+	"sdo.dev/operator/sdk"
 	"testing"
 
 	"sdo.dev/operator/render/rendertest"
@@ -85,5 +88,51 @@ func TestDeployerKeepsReplicasOfAWorkloadNoAutoscalerTargets(t *testing.T) {
 	}
 	if replicas, present := appliedReplicas(t, cluster); !present {
 		t.Fatalf("spec.replicas dropped without an autoscaler (%v)", replicas)
+	}
+}
+
+// handoffCluster records the order of the replica hand-off and the apply.
+type handoffCluster struct {
+	*recreateFake
+	events []string
+}
+
+func (h *handoffCluster) HandOffReplicas(_ context.Context, ref sdk.ObjectRef) error {
+	h.events = append(h.events, "handoff "+ref.Kind+"/"+ref.Name)
+	return nil
+}
+
+func (h *handoffCluster) Apply(ctx context.Context, documents []byte) error {
+	h.events = append(h.events, "apply")
+	return h.recreateFake.Apply(ctx, documents)
+}
+
+// The deployer shares ownership of the count before it stops applying it, and
+// only for a workload that exists; a creation applies the count itself.
+func TestDeployerHandsOffReplicasBeforeOmittingThem(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		live bool
+		want []string
+	}{
+		{"existing workload", true, []string{"handoff Deployment/web", "apply"}},
+		{"initial creation", false, []string{"apply"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, source := recFixture(t, rendertest.MapFS{"k8s/web.yaml": autoscaledWeb, "k8s/hpa.yaml": webAutoscaler})
+			fake := &recreateFake{live: map[string]LiveObject{}}
+			if tc.live {
+				fake.live["Deployment/web"] = LiveObject{Ref: ref("Deployment", "web"), UID: "web-1"}
+			}
+			cluster := &handoffCluster{recreateFake: fake}
+			deployer, _ := depDeployer(t, root, &fake.clusterFake)
+			deployer.Applier = cluster
+			if _, err := deployer.ApplyAndVerify(context.Background(), root, depPlan(t, source, "Deployment/demo/web")); err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(cluster.events, ","); got != strings.Join(tc.want, ",") {
+				t.Fatalf("events = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
