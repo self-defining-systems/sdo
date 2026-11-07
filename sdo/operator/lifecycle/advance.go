@@ -289,7 +289,18 @@ type AdvanceConfig struct {
 	PendingInterval       time.Duration
 	InfrastructureTries   int
 	InfrastructureBackoff time.Duration
+	// SettleWindow is how long after the rollout finished a firing detector is
+	// treated as warm-up (cold pods, caches, connection pools) and evaluated
+	// again every SettleInterval instead of judged; zero selects
+	// DefaultSettleWindow and SettleInterval zero selects the pending interval.
+	SettleWindow   time.Duration
+	SettleInterval time.Duration
 }
+
+// DefaultSettleWindow is the settle window of an advance whose AdvanceConfig
+// does not set one. A firing that persists past it is a regression of the
+// candidate.
+const DefaultSettleWindow = 5 * time.Minute
 
 // Advancer moves the accepted source to a newer upstream revision without an
 // agent: merge, impact check, maintenance-paused deploy, live verification of
@@ -318,6 +329,9 @@ type Advancer struct {
 	// Wait pauses between bounded re-evaluations and infrastructure retries;
 	// nil waits on a timer.
 	Wait func(context.Context, time.Duration) error
+	// Now is the clock of the settle window; nil disables the window (a firing
+	// detector is judged at once).
+	Now func() time.Time
 }
 
 func (a Advancer) validate(cfg AdvanceConfig, request upstream.Request) error {
@@ -724,7 +738,7 @@ func (a Advancer) deployAndAccept(ctx context.Context, cfg AdvanceConfig, result
 	}
 	detectors := skippedDetectors("not run: a deployment check failed")
 	if !failing(live) {
-		verdict, err := steps.awaitVerdict(ctx, bounds, func() (HealthVerdict, error) {
+		verdict, err := a.awaitSettled(ctx, cfg, steps, bounds, func() (HealthVerdict, error) {
 			return a.Verifier.VerifyCandidate(ctx, proposal.Path, candidate, cfg.Namespace, cfg.HealthObjective, receipt)
 		})
 		result.Verdict = verdict
@@ -737,7 +751,7 @@ func (a Advancer) deployAndAccept(ctx context.Context, cfg AdvanceConfig, result
 			}
 			return result, err
 		}
-		detectors = verdictChecks(verdict)
+		detectors = advanceVerdictChecks(verdict)
 	}
 	report, decision, err := decideAdvance(subject, offline, live, detectors)
 	if err != nil {
@@ -761,6 +775,46 @@ func (a Advancer) deployAndAccept(ctx context.Context, cfg AdvanceConfig, result
 	*published = true
 	result.Outcome, result.Receipt = AdvanceAccepted, receiptOfAdvance
 	return result, nil
+}
+
+// awaitSettled judges the rolled-out candidate once it has settled. The rollout
+// is complete when this runs, but its pods are cold: a detector firing inside
+// the settle window is warm-up, not a verdict, and is evaluated again (each
+// evaluation also waits out its own pending samples). Clear ends it at once. A
+// firing that outlasts the window is returned for attribution.
+func (a Advancer) awaitSettled(ctx context.Context, cfg AdvanceConfig, steps Coordinator, bounds Config, evaluate func() (HealthVerdict, error)) (HealthVerdict, error) {
+	window := orDefault(cfg.SettleWindow, DefaultSettleWindow)
+	interval := orDefault(cfg.SettleInterval, orDefault(cfg.PendingInterval, defaultPendingInterval))
+	if a.Now == nil {
+		return steps.awaitVerdict(ctx, bounds, evaluate)
+	}
+	rolledOut := a.Now()
+	for {
+		verdict, err := steps.awaitVerdict(ctx, bounds, evaluate)
+		if err != nil || verdict.Outcome != VerificationSourceFault || a.Now().Sub(rolledOut) >= window {
+			return verdict, err
+		}
+		if err := steps.wait(ctx, interval); err != nil {
+			return HealthVerdict{}, err
+		}
+	}
+}
+
+// advanceVerdictChecks attributes a firing that survived the settle window. The
+// accepted detectors were clear on the accepted deployment, so for an advance
+// they are presumed right and the regression is the candidate's (E8):
+// source_fault, never the designer's detector_fault.
+func advanceVerdictChecks(verdict HealthVerdict) []operability.Check {
+	checks := verdictChecks(verdict)
+	for i, check := range checks {
+		if check.Status == operability.StatusFail && check.Cause == operability.CauseDetectorFault {
+			check.Cause = operability.CauseSourceFault
+			check.Paths = nil
+			check.Detail = operability.Clip("still firing after the settle window; the accepted detectors were clear before this advance: " + verdict.Feedback())
+			checks[i] = check
+		}
+	}
+	return checks
 }
 
 func held(result AdvanceResult, reason HoldReason, detail string) AdvanceResult {

@@ -39,6 +39,7 @@ const advCheckout = "/synthetic/proposals/advance/checkout"
 // advWorld records every effect of an advance in one ordered log, so tests
 // assert what happened and, as important, what never happened.
 type advWorld struct {
+	clock  time.Time
 	events []string
 
 	materializeErr error
@@ -338,7 +339,7 @@ func newAdvWorld(t *testing.T) *advWorld {
 }
 
 func (w *advWorld) advancer() lifecycle.Advancer {
-	a := lifecycle.Advancer{Upstreams: w, Broker: w, Readiness: w, Verifier: w, Shape: w.shape, Maintenance: w, Activity: w, Wait: func(context.Context, time.Duration) error { return nil }}
+	a := lifecycle.Advancer{Upstreams: w, Broker: w, Readiness: w, Verifier: w, Shape: w.shape, Maintenance: w, Activity: w, Wait: func(_ context.Context, d time.Duration) error { w.clock = w.clock.Add(d); return nil }, Now: func() time.Time { return w.clock }}
 	if w.designer {
 		a.Designer = w
 	}
@@ -888,7 +889,7 @@ func TestAdvanceRoutesAHealthRegressionByDetectorProvenance(t *testing.T) {
 		routing string
 	}{
 		{"floor detector fires", firing, "cause=source_fault owner=responder items=O4"},
-		{"only the designer's detector fires", judgeFiring, "cause=detector_fault owner=designer items=O4"},
+		{"only the designer's detector fires", judgeFiring, "cause=source_fault owner=responder items=O4"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newAdvWorld(t)
@@ -920,5 +921,42 @@ func TestAdvanceRoutesARolloutFailureToTheResponder(t *testing.T) {
 	w.live = failLive("O1.ready", operability.CauseRollout)
 	if result, err := w.run(t); err != nil || result.Hold != lifecycle.HoldRollout || result.Owner != operability.OwnerResponder {
 		t.Fatalf("a receipt whose workloads are not ready: result = %+v, err = %v", result, err)
+	}
+}
+
+// A rollout that just finished is cold: a probe that times out inside the settle
+// window is warm-up, and the advance is accepted once it clears.
+func TestAdvanceSettlesAfterTheRolloutBeforeJudgingHealth(t *testing.T) {
+	w := newAdvWorld(t)
+	w.verdicts = []lifecycle.HealthVerdict{judgeFiring, judgeFiring, {Outcome: lifecycle.VerificationClear}}
+	result, err := w.run(t)
+	if err != nil || result.Outcome != lifecycle.AdvanceAccepted {
+		t.Fatalf("result = %+v, err = %v", result, err)
+	}
+	if count(w.events, "verify") != 3 || count(w.events, "apply") != 1 {
+		t.Fatalf("events = %q", w.events)
+	}
+}
+
+// After the settle window a persisting firing is the candidate's regression
+// (E8), even when only a designer detector fires; the evaluations stop at the
+// window.
+func TestAdvanceFiringPastTheSettleWindowIsTheCandidatesRegression(t *testing.T) {
+	w := newAdvWorld(t)
+	w.verdicts = []lifecycle.HealthVerdict{judgeFiring}
+	config := advConfig
+	config.SettleWindow, config.SettleInterval = time.Minute, 15*time.Second
+	result, err := w.advancer().Advance(context.Background(), config, advRequest(t))
+	if err != nil || result.Outcome != lifecycle.AdvanceHeld || result.Hold != lifecycle.HoldHealth {
+		t.Fatalf("result = %+v, err = %v", result, err)
+	}
+	if out := result.FollowerOutcome(); !strings.HasPrefix(out.Reason, "cause=source_fault owner=responder items=O4 health: ") {
+		t.Fatalf("reason = %q", out.Reason)
+	}
+	if got := count(w.events, "verify"); got != 5 {
+		t.Fatalf("verify ran %d times over a 1m window at 15s, want 5: %q", got, w.events)
+	}
+	if len(w.published) != 0 {
+		t.Fatalf("a regression was published: %q", w.events)
 	}
 }
