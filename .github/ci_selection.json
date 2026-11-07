@@ -75,6 +75,9 @@
     "sdo/operator/runtime/envtestio",
     "sdo/operator/runtime/e2e"
   ],
+  "go_validate_gate_tests": [
+    "TestGateCompileRowsOnRealGo"
+  ],
   "documentation": [
     "README.md",
     "LICENSE"
