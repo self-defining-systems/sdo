@@ -43,6 +43,9 @@ func (c *Clock) Advance(d time.Duration) {
 type World struct {
 	Clock   *Clock
 	Kubelet *Kubelet
+	// Controller, when set, takes one pass of the modeled detector and incident
+	// loop after every kubelet step.
+	Controller *ControllerModel
 	// Kubeconfig is the envtest API server's kubeconfig for kubectl.
 	Kubeconfig string
 
@@ -81,6 +84,9 @@ func (w *World) Wait(ctx context.Context, d time.Duration) error {
 	elapsed := rehearsalio.Stopwatch()
 	w.Kubelet.Step(ctx)
 	w.count(false, elapsed())
+	if w.Controller != nil {
+		w.Controller.Tick(ctx)
+	}
 	return ctx.Err()
 }
 

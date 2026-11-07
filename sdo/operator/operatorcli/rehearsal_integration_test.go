@@ -77,6 +77,10 @@ type rehearsalInput struct {
 	// ready for less than WarmUp (cold caches); zero is always clear once
 	// every workload is ready.
 	WarmUp time.Duration
+	// DrainTicks is how many kubelet steps the modeled controller loop keeps
+	// evaluating after a maintenance pause is declared, before it acknowledges
+	// (an evaluation already in flight); zero selects 3.
+	DrainTicks int
 	// Environment is the recorded render environment; nil discovers it from
 	// the envtest API server (the lanes' Kubernetes version).
 	Environment *contracts.RenderEnvironment
@@ -372,6 +376,24 @@ func rehearse(t *testing.T, in rehearsalInput) rehearsal.Report {
 	clock := rehearsal.NewClock(time.Date(2026, 11, 7, 0, 0, 0, 0, time.UTC))
 	kubelet := &rehearsal.Kubelet{Client: client, Namespace: in.Namespace, Behaviors: in.Behaviors, Now: clock.Now}
 	world := &rehearsal.World{Clock: clock, Kubelet: kubelet, Kubeconfig: env.Kubeconfig}
+	// The controller's detector and incident loop, driven by every wait; it
+	// starts after onboarding. It reads the maintenance ConfigMap and
+	// acknowledges a pause through the controller's own types.
+	acker := sdoruntime.MaintenanceAcker{Client: client, Namespace: onbControl}
+	watcher := sdoruntime.MaintenanceWatcher{Client: client, Namespace: onbControl, Name: sdoruntime.MaintenanceConfigMapName}
+	drain := in.DrainTicks
+	if drain == 0 {
+		drain = 3
+	}
+	controller := &rehearsal.ControllerModel{
+		Client: client, Namespace: in.Namespace, Now: clock.Now, DrainTicks: drain,
+		Maintenance: func(ctx context.Context) (bool, string, error) {
+			state, err := watcher.Read(ctx)
+			return state.Paused, state.Generation, err
+		},
+		Acknowledge: acker.Acknowledge,
+	}
+	world.Controller = controller
 	gcCtx, stopGC := context.WithCancel(ctx)
 	defer stopGC()
 	go kubelet.RunFinalizers(gcCtx, 50*time.Millisecond)
@@ -506,6 +528,7 @@ func rehearse(t *testing.T, in rehearsalInput) rehearsal.Report {
 		return report
 	}
 
+	controller.Enabled = true
 	catalog := upstreams.Catalog()
 	sources, err := memory.ReadSources(o.accepted, catalog)
 	if err != nil || len(sources) != 1 {
@@ -516,6 +539,7 @@ func rehearse(t *testing.T, in rehearsalInput) rehearsal.Report {
 		releaseStart, injectedStart = time.Now(), clock.Now()
 		kubelet.SetRelease(i)
 		r := rehearsal.Release{Index: i, Name: release.Name}
+		incidentsBefore := len(controller.Incidents)
 		live, err := liveObjects(ctx, dyn, in.Namespace)
 		if err != nil {
 			t.Fatal(err)
@@ -541,7 +565,7 @@ func rehearse(t *testing.T, in rehearsalInput) rehearsal.Report {
 				return rendered.Source{Deployment: source, Catalog: renderers.Catalog(), Repository: root, Environment: environment}.ShapeDigest(ctx, revision, in.Namespace)
 			},
 			Designer: recordingDesigner{&r.Dispatches}, Deployer: recordingCorrector{&r.Dispatches},
-			Maintenance: advMaintenance{}, Activity: advMaintenance{},
+			Maintenance: advanceMaintenance{Client: client, Namespace: onbControl, Now: clock.Now}, Activity: advMaintenance{},
 			Wait: world.Wait, Now: clock.Now,
 		}
 		result, err := advancer.Advance(ctx, lifecycle.AdvanceConfig{
@@ -598,6 +622,9 @@ func rehearse(t *testing.T, in rehearsalInput) rehearsal.Report {
 			onboardingJobs = got
 		}
 		observe(&r, before, beforeSpecs, afterSpecs)
+		r.ControllerIncidents = controller.Opened(incidentsBefore)
+		r.KubeletErrors = append(r.KubeletErrors, controller.Errors...)
+		controller.Errors = nil
 		seen = kubeletErrors(&r, seen)
 		r.InjectedSeconds, r.Seconds = clock.Now().Sub(injectedStart).Seconds(), time.Since(releaseStart).Seconds()
 		t.Logf("release %s: %.1fs wall, harness cost so far %+v", r.Name, r.Seconds, world.Stats)

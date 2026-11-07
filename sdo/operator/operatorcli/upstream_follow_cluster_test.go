@@ -273,3 +273,77 @@ func TestObligationsAreSurfacedInTheOperabilityConfigMap(t *testing.T) {
 		t.Fatalf("settled obligations summary = %q, want []", got)
 	}
 }
+
+// A pause is in force only when the controller recorded this pause's own
+// generation: no ack, an ack of an earlier pause, and a pause that is not the
+// follower's are all "not yet".
+func TestAdvanceMaintenanceIsAcknowledgedOnlyForItsOwnGeneration(t *testing.T) {
+	ctx := context.Background()
+	tick := int64(0)
+	m := advanceMaintenance{Client: fake.NewSimpleClientset(), Namespace: testControl, Now: func() time.Time { tick++; return time.Unix(tick, 0) }}
+	acknowledged := func() bool {
+		t.Helper()
+		ok, err := m.Acknowledged(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ok
+	}
+	ack := func(generation string) {
+		t.Helper()
+		if err := (runtimepause{m}).ack(ctx, generation); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if acknowledged() {
+		t.Fatal("acknowledged with no maintenance at all")
+	}
+	if err := m.Pause(ctx, "upstream advance"); err != nil {
+		t.Fatal(err)
+	}
+	if acknowledged() {
+		t.Fatal("acknowledged before the controller said so")
+	}
+	first := maintenanceState(t, m)["generation"]
+	ack(first)
+	if !acknowledged() {
+		t.Fatal("not acknowledged after the controller recorded the generation")
+	}
+	if err := m.Resume(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if acknowledged() {
+		t.Fatal("a resumed window reads as acknowledged")
+	}
+	if err := m.Pause(ctx, "upstream advance"); err != nil {
+		t.Fatal(err)
+	}
+	if acknowledged() {
+		t.Fatal("the previous pause's acknowledgement counted for the next pause")
+	}
+	other := advanceMaintenance{Client: fake.NewSimpleClientset(), Namespace: testControl, Now: m.Now}
+	if err := install.SetMaintenance(ctx, other.Client, testControl, true, "operator-redeploy"); err != nil {
+		t.Fatal(err)
+	}
+	if err := (runtimepause{other}).ack(ctx, "operator-redeploy"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := other.Acknowledged(ctx); err != nil || ok {
+		t.Fatalf("another owner's pause was acknowledged for the follower: %v, %v", ok, err)
+	}
+}
+
+// runtimepause writes the acknowledgement the way the controller does (the
+// controller module's MaintenanceAcker), by its documented ConfigMap.
+type runtimepause struct{ advanceMaintenance }
+
+func (r runtimepause) ack(ctx context.Context, generation string) error {
+	configMaps := r.Client.CoreV1().ConfigMaps(r.Namespace)
+	cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: install.MaintenanceAckConfigMap, Namespace: r.Namespace}, Data: map[string]string{"generation": generation}}
+	if _, err := configMaps.Get(ctx, cm.Name, metav1.GetOptions{}); err == nil {
+		_, err = configMaps.Update(ctx, cm, metav1.UpdateOptions{})
+		return err
+	}
+	_, err := configMaps.Create(ctx, cm, metav1.CreateOptions{})
+	return err
+}

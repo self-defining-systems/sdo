@@ -189,6 +189,10 @@ func syntheticRehearsal(t *testing.T) rehearsalInput {
 		Source: &contracts.DeploymentSource{RendererId: "helm", Config: config},
 		Behaviors: []rehearsal.Behavior{
 			{Kind: "Job", Name: "buckets", JobFailures: -1, FromRelease: 2, UntilRelease: 2},
+			// A rolled pod is unready for 20 s: its Service has no endpoints
+			// while the advance rolls it.
+			{Kind: "Deployment", Name: "web", ReadyAfter: rehearsal.Duration(20 * time.Second)},
+			{Kind: "StatefulSet", Name: "store", ReadyAfter: rehearsal.Duration(20 * time.Second)},
 		},
 		WarmUp: 30 * time.Second,
 	}
@@ -248,6 +252,12 @@ func TestReplayRehearsalOfASyntheticChartReportsEveryRelease(t *testing.T) {
 		// Jobs are pruned (live 8 opened an incident on both).
 		if r.Adopted && len(r.Drift) > 0 {
 			t.Errorf("%s adopted with drift findings: %+v", r.Name, r.Drift)
+		}
+		// The advance's rollout is a maintenance window: disruption it
+		// causes (the StatefulSet's Service without endpoints while it
+		// rolls) opens no incident (live 9 opened one on 3 of 4 releases).
+		if r.Adopted && r.Index > 0 && len(r.ControllerIncidents) > 0 {
+			t.Errorf("%s: an accepted advance opened incidents: %v", r.Name, r.ControllerIncidents)
 		}
 		for _, d := range r.Dispatches {
 			if d.Role == "deployer" || d.Role == "designer" {

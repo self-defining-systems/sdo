@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -130,4 +131,53 @@ func (w MaintenanceWatcher) Watch(
 		}
 	}()
 	return changes
+}
+
+// MaintenanceAckConfigMapName is the controller-owned ConfigMap, in the control
+// namespace, where the controller records the pause generation it stopped
+// under. It is the other half of the pause barrier: the maintenance ConfigMap
+// declares, this one confirms. The operator side names it install.MaintenanceAckConfigMap.
+const MaintenanceAckConfigMapName = "sdo-controller-maintenance-ack"
+
+const maintenanceAckGenerationKey = "generation"
+
+// MaintenanceAcker records and reads the controller's pause acknowledgement.
+type MaintenanceAcker struct {
+	Client    kubernetes.Interface
+	Namespace string
+}
+
+// Acknowledge records that the controller stopped observing under generation.
+func (a MaintenanceAcker) Acknowledge(ctx context.Context, generation string) error {
+	if generation == "" {
+		return fmt.Errorf("maintenance acknowledgement requires a generation")
+	}
+	configMaps := a.Client.CoreV1().ConfigMaps(a.Namespace)
+	want := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: MaintenanceAckConfigMapName, Namespace: a.Namespace, Labels: map[string]string{"app.kubernetes.io/managed-by": "sdo"}},
+		Data:       map[string]string{maintenanceAckGenerationKey: generation},
+	}
+	prior, err := configMaps.Get(ctx, MaintenanceAckConfigMapName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		_, err = configMaps.Create(ctx, want, metav1.CreateOptions{})
+	} else if err == nil {
+		want.ResourceVersion = prior.ResourceVersion
+		_, err = configMaps.Update(ctx, want, metav1.UpdateOptions{})
+	}
+	if err != nil {
+		return fmt.Errorf("acknowledge maintenance generation %q: %w", generation, err)
+	}
+	return nil
+}
+
+// Acknowledged returns the last acknowledged generation, empty when none.
+func (a MaintenanceAcker) Acknowledged(ctx context.Context) (string, error) {
+	configMap, err := a.Client.CoreV1().ConfigMaps(a.Namespace).Get(ctx, MaintenanceAckConfigMapName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read maintenance acknowledgement: %w", err)
+	}
+	return strings.TrimSpace(configMap.Data[maintenanceAckGenerationKey]), nil
 }

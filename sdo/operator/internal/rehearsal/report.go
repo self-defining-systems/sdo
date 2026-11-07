@@ -39,6 +39,10 @@ type Release struct {
 	// Incidents are what would open an incident after the release: a hold the
 	// responder owns, and every drift.unexplained finding.
 	Incidents []string `json:"incidents,omitempty"`
+	// ControllerIncidents are the findings the modeled controller loop opened an
+	// incident for between the release's start and the end of its settle: an
+	// accepted advance must open none.
+	ControllerIncidents []string `json:"controller_incidents,omitempty"`
 	// Recreated are the objects the deployer deleted and recreated.
 	Recreated []string `json:"recreated,omitempty"`
 	// Leftover are live objects of earlier releases that the accepted source
@@ -152,6 +156,9 @@ func (r Release) Blockers() []string {
 		}
 		out = append(out, "not adopted: "+reason+": "+clip(r.Detail, 400))
 	}
+	if r.Adopted && len(r.ControllerIncidents) > 0 {
+		out = append(out, "incident opened by an accepted advance: "+clip(strings.Join(r.ControllerIncidents, "; "), 400))
+	}
 	for _, f := range r.Drift {
 		out = append(out, fmt.Sprintf("drift %s %s: %s", f.Detector, f.Resource, clip(f.Summary, 200)))
 	}
@@ -244,6 +251,9 @@ func (r Report) Summary() string {
 		}
 		for _, i := range release.Incidents {
 			fmt.Fprintf(&b, "    incident: %s\n", clip(i, 300))
+		}
+		for _, i := range release.ControllerIncidents {
+			fmt.Fprintf(&b, "    controller incident: %s\n", clip(i, 300))
 		}
 		blockers := release.Blockers()
 		if len(blockers) == 0 {
