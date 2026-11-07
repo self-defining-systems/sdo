@@ -3,6 +3,9 @@
 
 Reads `go test -json` output (--go) and/or pytest `--durations` output (--pytest).
 Budget and allowlist live in .github/ci_budgets.json; see docs/testing-guide.md.
+With --base <git ref>, a test that is new relative to that ref and takes over half
+the budget also fails unless it is allowlisted with a reason: a new test is cheap to
+fix now and a flake source once its time varies run to run.
 """
 
 from __future__ import annotations
@@ -10,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -66,10 +70,45 @@ def near_budget(args: argparse.Namespace, allowed: dict[str, dict[str, str]], li
     return found
 
 
+def test_name(key: str) -> str:
+    """The function name of a Go key ('<package> <TopLevelTest>') or pytest node id."""
+    return key.split("::")[-1] if "::" in key else key.rsplit(" ", 1)[-1]
+
+
+def defined_at(base: str, key: str, root: Path) -> bool:
+    """True when the base revision already defines the test (by name, in any test file)."""
+    name = test_name(key)
+    if "::" in key:
+        spec, pattern = [f"{key.split('::')[0]}"], rf"def {name}\("
+    else:
+        spec, pattern = ["*_test.go"], rf"func {name}\("
+    found = subprocess.run(
+        ["git", "-C", str(root), "grep", "-qE", pattern, base, "--", *spec],
+        check=False,
+        capture_output=True,
+    )
+    if found.returncode > 1:
+        raise RuntimeError(f"git grep failed against {base}: {found.stderr.decode().strip()}")
+    return found.returncode == 0
+
+
+def new_near_budget(
+    near: dict[str, float], allowed: dict[str, dict[str, str]], base: str, root: Path = BUDGETS.parents[1]
+) -> dict[str, float]:
+    """Tests over half the budget that the base lacks and that carry no allowlist reason."""
+    reasons = {**allowed["go"], **allowed["python"]}
+    return {
+        key: seconds
+        for key, seconds in near.items()
+        if not reasons.get(key, "").strip() and not defined_at(base, key, root)
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--go", type=Path, action="append", default=[])
     parser.add_argument("--pytest", type=Path, action="append", default=[])
+    parser.add_argument("--base", help="git ref of the PR base; makes new tests over half the budget fail")
     args = parser.parse_args()
     budgets = json.loads(BUDGETS.read_text())
     limit = float(budgets["slow_test_seconds"])
@@ -81,15 +120,21 @@ def main() -> int:
         found.update(offenders(pytest_slow(path.read_text(errors="replace").splitlines(), limit), allowed["python"]))
     for key, seconds in sorted(found.items(), key=lambda item: -item[1]):
         print(f"::error::{key} took {seconds:.1f}s (PR budget {limit:.0f}s)")
-    for key, seconds in sorted(near_budget(args, allowed, limit).items(), key=lambda item: -item[1]):
-        if key not in found:
+    near = {key: s for key, s in near_budget(args, allowed, limit).items() if key not in found}
+    fresh = new_near_budget(near, allowed, args.base) if args.base else {}
+    for key, seconds in sorted(fresh.items(), key=lambda item: -item[1]):
+        print(f"::error::{key} is new and took {seconds:.1f}s, over half the {limit:.0f}s budget")
+    found.update(fresh)
+    for key, seconds in sorted(near.items(), key=lambda item: -item[1]):
+        if key not in fresh:
             print(
                 f"::warning::{key} took {seconds:.1f}s, over half the {limit:.0f}s budget: its time varies run to run"
             )
     if found:
         print(
             "Move the test to the nightly/integration tier (testing.Short skip or the nightly ignore list), make it "
-            "faster, or add it with a reason to slow_tests in .github/ci_budgets.json.",
+            "faster, or add it with a reason to slow_tests in .github/ci_budgets.json "
+            "(required for a new test over half the budget).",
             file=sys.stderr,
         )
         return 1

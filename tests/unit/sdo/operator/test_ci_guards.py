@@ -242,6 +242,40 @@ def test_slow_test_script_warns_about_a_test_over_half_the_budget(tmp_path: Path
     assert "::warning::sdo.dev/new TestVaries took 6.0s" in result.stdout
 
 
+def _git(root: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t", *args], check=True)
+
+
+def _base_repo(tmp_path: Path) -> Path:
+    _git(tmp_path, "init", "-q")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/test_a.py").write_text("def test_old():\n    pass\n")
+    (tmp_path / "x_test.go").write_text("func TestOld(t *testing.T) {}\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "base")
+    return tmp_path
+
+
+def test_a_new_test_over_half_the_budget_fails_unless_allowlisted_with_a_reason(tmp_path: Path) -> None:
+    root = _base_repo(tmp_path)
+    empty: dict[str, dict[str, str]] = {"go": {}, "python": {}}
+    near = {"tests/test_a.py::test_old": 6.0, "tests/test_a.py::test_new": 6.0, "p TestOld": 7.0, "p TestNew": 7.0}
+    assert slow.new_near_budget(near, empty, "HEAD", root) == {"tests/test_a.py::test_new": 6.0, "p TestNew": 7.0}
+    allowed = {"go": {"p TestNew": "why"}, "python": {"tests/test_a.py::test_new": " "}}
+    assert slow.new_near_budget(near, allowed, "HEAD", root) == {"tests/test_a.py::test_new": 6.0}
+
+
+def test_slow_test_script_fails_a_new_half_budget_test_only_when_given_a_base(tmp_path: Path) -> None:
+    log = tmp_path / "go.json"
+    log.write_text(go_event("pass", "sdo.dev/new", "TestVaries", 6) + "\n")
+    script = [sys.executable, str(ROOT / "scripts/check_slow_tests.py"), "--go", str(log)]
+    run = lambda *extra: subprocess.run([*script, *extra], capture_output=True, text=True, check=False, cwd=ROOT)  # noqa: E731
+    assert run().returncode == 0
+    failed = run("--base", "HEAD")
+    assert failed.returncode == 1
+    assert "sdo.dev/new TestVaries is new" in failed.stdout
+
+
 @pytest.mark.parametrize(("limit", "oversize"), [(1, True), (100000, False)])
 def test_cache_guard_flags_an_oversize_cache(tmp_path: Path, limit: int, oversize: bool) -> None:
     (tmp_path / "cache").mkdir()

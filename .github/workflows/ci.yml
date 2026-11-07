@@ -261,7 +261,9 @@ jobs:
             --ignore=tests/unit/benchmarks/sregym/fastloop/test_host_limits.py
       - name: PR-tier tests stay under the slow-test budget
         if: env.SDO_CI_SKIP != 'true'
-        run: python3 scripts/check_slow_tests.py --pytest "$RUNNER_TEMP/pytest.log"
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: python3 scripts/check_slow_tests.py --pytest "$RUNNER_TEMP/pytest.log" --base "$PR_BASE"
       - name: Report tests this change's pull request run skipped
         if: failure() && github.event_name != 'pull_request'
         run: python3 scripts/ci_select.py misses --pytest-log "$RUNNER_TEMP/pytest.log" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -386,7 +388,9 @@ jobs:
         run: bash ./scripts/test_go_ci.sh pr ${{ matrix.shard }}
       - name: PR-tier tests stay under the slow-test budget
         if: env.SDO_CI_SKIP != 'true'
-        run: python3 scripts/check_slow_tests.py --go "$RUNNER_TEMP/go-test.json"
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: python3 scripts/check_slow_tests.py --go "$RUNNER_TEMP/go-test.json" --base "$PR_BASE"
 
       - name: Report tests this change's pull request run skipped
         if: failure() && github.event_name != 'pull_request'
