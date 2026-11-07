@@ -62,6 +62,9 @@ type advWorld struct {
 	publishErr     error
 	designer       bool
 	designerErr    error
+	expose         bool
+	exposeErr      error
+	exposed        []operability.Report
 	// live replaces the live deployment checks CheckLive returns (nil: all
 	// pass); liveCalls counts them.
 	live      []operability.Check
@@ -75,9 +78,9 @@ type advWorld struct {
 	offlineSeq [][]operability.Check
 	// unused is reported as the first offline check's unused image
 	// declarations.
-	unused []string
-	correct    func(call int, plan *contracts.DeploymentPlan) (rejection string, err error)
-	corrected  []*contracts.DeploymentPlan
+	unused    []string
+	correct   func(call int, plan *contracts.DeploymentPlan) (rejection string, err error)
+	corrected []*contracts.DeploymentPlan
 	// keepOnPatchHold keeps the advance checkout when the proposal reports a
 	// patch hold, as the broker does for a deployment agent to correct it.
 	keepOnPatchHold bool
@@ -363,7 +366,17 @@ func (w *advWorld) advancer() lifecycle.Advancer {
 	if w.designer {
 		a.Designer = w
 	}
+	if w.expose {
+		a.Exposer = w
+	}
 	return a
+}
+
+// PublishOperability records the report an accepted advance exposes as current.
+func (w *advWorld) PublishOperability(_ context.Context, report operability.Report) error {
+	w.log("expose %s", report.Stage)
+	w.exposed = append(w.exposed, report)
+	return w.exposeErr
 }
 
 func (w *advWorld) RefreshDetection(_ context.Context, change lifecycle.ShapeChange) error {
@@ -767,6 +780,38 @@ func TestAdvancePublishesTheStageAdvanceReport(t *testing.T) {
 	}
 }
 
+// An accepted advance exposes its own bound report as the current one, so the
+// sdo-operability ConfigMap never keeps describing the onboarding commit. A
+// failure to expose cannot undo the acceptance and leaves it accepted.
+func TestAcceptedAdvanceExposesItsReport(t *testing.T) {
+	w := newAdvWorld(t)
+	w.expose = true
+	if result, err := w.run(t); err != nil || result.Outcome != lifecycle.AdvanceAccepted {
+		t.Fatalf("result = %+v, err = %v", result, err)
+	}
+	if len(w.exposed) != 1 || w.exposed[0].Stage != operability.StageAdvance || w.exposed[0].Subject.AcceptedCommit != advHead {
+		t.Fatalf("exposed = %+v", w.exposed)
+	}
+	if i, j := slices.Index(w.events, "publish "+lifecycle.AdvanceID(advRevision)), slices.Index(w.events, "expose advance"); i < 0 || j != i+1 {
+		t.Fatalf("expose must follow publish: %q", w.events)
+	}
+	failing := newAdvWorld(t)
+	failing.expose, failing.exposeErr = true, errors.New("api down")
+	if result, err := failing.run(t); err != nil || result.Outcome != lifecycle.AdvanceAccepted {
+		t.Fatalf("an exposure failure undid the acceptance: %+v, err = %v", result, err)
+	}
+}
+
+// A held advance exposes nothing: only an accepted advance has a bound report.
+func TestHeldAdvanceExposesNothing(t *testing.T) {
+	w := newAdvWorld(t)
+	w.expose = true
+	w.live = failLive("O1.deploy", operability.CauseRollout)
+	if result, _ := w.run(t); result.Outcome == lifecycle.AdvanceAccepted || len(w.exposed) != 0 {
+		t.Fatalf("result = %+v exposed = %d", result, len(w.exposed))
+	}
+}
+
 // A failing live deployment check is a hold: the detectors are not evaluated
 // (the check says so, never a pass) and nothing is published.
 func TestAdvanceHoldsAFailingLiveCheckWithoutEvaluatingDetectors(t *testing.T) {
@@ -1034,5 +1079,5 @@ func TestAdvanceFiringPastTheSettleWindowIsTheCandidatesRegression(t *testing.T)
 // causeFailure is an apply failure the live checks classify as its cause.
 type causeFailure operability.Cause
 
-func (c causeFailure) Error() string             { return "synthetic apply failure: " + string(c) }
+func (c causeFailure) Error() string            { return "synthetic apply failure: " + string(c) }
 func (c causeFailure) Cause() operability.Cause { return operability.Cause(c) }

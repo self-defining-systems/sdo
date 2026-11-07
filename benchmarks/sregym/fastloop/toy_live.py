@@ -28,6 +28,7 @@ from benchmarks.sregym.fastloop.toy_scenarios import (
     run_benign,
     run_broken,
     workload_digests,
+    workload_templates,
 )
 from benchmarks.sregym.fastloop.toy_upstream import UpstreamLayout, forwarded_remote, replay_commit
 
@@ -140,6 +141,7 @@ class KubectlScenarioOps:
             head=self._accepted("rev-parse", "HEAD").strip(),
             images=images,
             digests=workload_digests(pods),
+            templates=workload_templates(pods),
             agent_tasks=self.agent_task_count(),
             pod_failures=pod_failure_count(pods),
             controller_relaunches=relaunches,

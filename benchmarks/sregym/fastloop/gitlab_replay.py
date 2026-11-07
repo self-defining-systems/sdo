@@ -40,6 +40,7 @@ from benchmarks.sregym.fastloop.toy_scenarios import (
     HoldRecord,
     ScenarioOps,
     ScenarioTimings,
+    Snapshot,
     upstream_commit,
     wait_verdict,
     watch_for_incident,
@@ -178,12 +179,16 @@ def hold_detail(hold: HoldRecord) -> HoldDetail:
     return HoldDetail(routing.kind, routing.cause, routing.owner, routing.items, hold.reason)
 
 
-def operability_summary(read: OperabilityRead | None, adopted_commit: str = "") -> dict[str, Any] | None:
-    """The report block of a record. The ConfigMap is not refreshed by advances, so it counts only when it is for the
-    accepted commit that adopted the release; otherwise it is the previous commit's report and is marked stale."""
+def operability_summary(
+    read: OperabilityRead | None, adopted_commit: str = "", adopted_digest: str = ""
+) -> dict[str, Any] | None:
+    """The report block of a record. An accepted advance exposes its own report, whose subject is the accepted head the
+    merge was made on (the adopted commit's parent): it is current when it is for the adopted commit or its digest is
+    the one on the adopted commit's ``SDO-Operability`` trailer. Any other report is the previous commit's, stale."""
     if read is None:
         return None
-    if read.accepted_commit != adopted_commit:
+    current = read.accepted_commit == adopted_commit or (adopted_digest != "" and read.digest == adopted_digest)
+    if not current:
         reason = (
             "the release was adopted but the report is for an earlier accepted commit"
             if adopted_commit
@@ -329,12 +334,20 @@ def replay_release(ops: ReplayOps, release: Release, timings: ReplayTimings) -> 
     if record.stop_reason == "" and record.adopted and watch_for_incident(ops, timings.scenario()):
         record.incident_opened = True
         record.stop_reason = "an incident opened during the quiet window"
-    record.changed_workloads = sorted(w for w, d in after.digests.items() if before.digests.get(w) not in (None, d))
+    record.changed_workloads = changed_workloads(before, after)
     if record.hold is None:  # an accepted advance may still owe a follow-up (a designer refresh hold)
         record.hold = next((hold_detail(h) for h in ops.holds() if h.revision == record.pushed), None)
-    record.operability = operability_summary(ops.operability(), record.accepted_commit)
+    record.operability = operability_summary(ops.operability(), record.accepted_commit, record.operability_digest)
     record.violations = release_violations(record, adopted_commit, release)
     return record
+
+
+def changed_workloads(before: Snapshot, after: Snapshot) -> list[str]:
+    """Workloads whose running pods differ after the release: another image, or another pod template (a template label
+    or annotation such as the chart version rolls pods with identical images, and that is a real change)."""
+    images = {w for w, d in after.digests.items() if before.digests.get(w) not in (None, d)}
+    templates = {w for w, t in after.templates.items() if before.templates.get(w) not in (None, t)}
+    return sorted(images | templates)
 
 
 def release_violations(record: ReleaseRecord, adopted: AcceptedCommit | None, release: Release) -> list[str]:

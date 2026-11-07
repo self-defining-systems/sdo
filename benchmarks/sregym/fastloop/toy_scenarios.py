@@ -82,6 +82,8 @@ class Snapshot:
     agent_tasks: int
     pod_failures: int
     controller_relaunches: int
+    #: workload -> the pod template its running pods were created from (``workload_templates``).
+    templates: Mapping[str, str] = field(default_factory=dict)
 
 
 class ScenarioOps(Protocol):
@@ -175,6 +177,26 @@ def workload_digests(pods: Mapping[str, Any]) -> dict[str, str]:
             if container.get("imageID"):
                 found.setdefault(app, set()).add(container["imageID"])
     return {app: ",".join(sorted(ids)) for app, ids in found.items()}
+
+
+#: The labels a workload controller puts on each pod to say which pod template (revision) created it. Any change to
+#: the template, labels and annotations included (a chart version label, say), changes the value.
+TEMPLATE_REVISION_LABELS = ("pod-template-hash", "controller-revision-hash")
+
+
+def workload_templates(pods: Mapping[str, Any]) -> dict[str, str]:
+    """Pod-template revisions per app (label ``app``): what a release changed even when no image did.
+
+    Running, non-terminating pods only. Distinct revisions are sorted and comma-joined.
+    """
+    found: dict[str, set[str]] = {}
+    for pod in pods.get("items", []):
+        labels = pod["metadata"].get("labels") or {}
+        app = labels.get("app")
+        if app is None or pod.get("status", {}).get("phase") != "Running" or pod["metadata"].get("deletionTimestamp"):
+            continue
+        found.setdefault(app, set()).update(labels[k] for k in TEMPLATE_REVISION_LABELS if labels.get(k))
+    return {app: ",".join(sorted(revisions)) for app, revisions in found.items() if revisions}
 
 
 def pod_failure_count(pods: Mapping[str, Any]) -> int:

@@ -119,6 +119,12 @@ type DeploymentCorrector interface {
 // advance revision (a Go-side budget, like the onboarding attempts).
 const DefaultMaxCorrections = 2
 
+// OperabilityExposer makes a report the application's current operability
+// report (the control namespace's sdo-operability ConfigMap).
+type OperabilityExposer interface {
+	PublishOperability(ctx context.Context, report operability.Report) error
+}
+
 // MaintenanceWindow pauses and resumes the controller's evaluation (the
 // controller maintenance ConfigMap) around an advance's cluster changes.
 type MaintenanceWindow interface {
@@ -344,8 +350,13 @@ type Advancer struct {
 	// MaxCorrections bounds Deployer's dispatches per revision; zero selects
 	// DefaultMaxCorrections.
 	MaxCorrections int
-	Maintenance    MaintenanceWindow
-	Activity       ControllerActivity
+	// Exposer, when set, publishes the report of every accepted advance as the
+	// current one, so the exposed report follows the accepted commit instead of
+	// staying the onboarding one. A failure is logged: the advance is already
+	// accepted and the next accepted advance publishes again.
+	Exposer     OperabilityExposer
+	Maintenance MaintenanceWindow
+	Activity    ControllerActivity
 	// Wait pauses between bounded re-evaluations and infrastructure retries;
 	// nil waits on a timer.
 	Wait func(context.Context, time.Duration) error
@@ -859,6 +870,11 @@ func (a Advancer) deployAndAccept(ctx context.Context, cfg AdvanceConfig, result
 	}
 	*published = true
 	result.Outcome, result.Receipt = AdvanceAccepted, receiptOfAdvance
+	if a.Exposer != nil {
+		if err := a.Exposer.PublishOperability(ctx, report); err != nil {
+			slog.Warn("advance_operability_not_exposed", "namespace", cfg.Namespace, "upstream", result.Upstream, "accepted", receiptOfAdvance.Commit, "error", err)
+		}
+	}
 	return result, nil
 }
 
