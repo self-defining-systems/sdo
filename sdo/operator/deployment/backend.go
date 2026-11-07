@@ -133,7 +133,7 @@ func parseObservedWorkload(resourceID string, data []byte) (WorkloadObservation,
 		return WorkloadObservation{}, errors.New("observed workload identity differs from deployment plan")
 	}
 	spec := objectMap(object, "spec")
-	templateMetadata, err := rendered.PodTemplateMetadata(object, false)
+	_, err := rendered.PodTemplateMetadata(object, false)
 	if err != nil {
 		return WorkloadObservation{}, fmt.Errorf("raw strategy cannot attest workload kind %q", parts[0])
 	}
@@ -142,8 +142,8 @@ func parseObservedWorkload(resourceID string, data []byte) (WorkloadObservation,
 		return WorkloadObservation{}, fmt.Errorf("observed workload has no pod spec: %w", err)
 	}
 	tree := objectString(objectMap(metadata, "annotations"), "sdo.dev/source-tree")
-	if tree == "" || tree != objectString(objectMap(templateMetadata, "annotations"), "sdo.dev/source-tree") {
-		return WorkloadObservation{}, errors.New("observed workload lacks matching source revision")
+	if tree == "" {
+		return WorkloadObservation{}, errors.New("observed workload lacks source revision")
 	}
 	images := []string{}
 	namedImages := []rendered.DeployedImage{}
