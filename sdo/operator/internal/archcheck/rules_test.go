@@ -1,6 +1,7 @@
 package archcheck
 
 import (
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -46,7 +47,6 @@ func TestNegativeControls(t *testing.T) {
 		{dir: "r2_family", want: []string{"R2 render/helm/helm.go"}},
 		{dir: "r3_support", want: []string{"R3 render/rendertest/x.go"}},
 		{dir: "r6_wiring", mod: func(c *Config) { c.RootForbiddenImports = nil }, want: []string{"R6 runtime/launch.go"}},
-		{dir: "r7_runtime", want: []string{"R7 lifecycle/x.go"}},
 		{dir: "r4_assert", want: []string{"R4 deployment/registry.go", "R4 deployment/registry.go"}},
 		{dir: "r4_use", want: []string{"R4 lifecycle/compat.go", "R4 lifecycle/compat.go", "R4 lifecycle/compat.go", "R4 lifecycle/compat.go"}},
 		{dir: "r4_exempt", want: nil},
@@ -79,7 +79,7 @@ func TestNegativeControls(t *testing.T) {
 			}
 		})
 	}
-	for _, r := range []Rule{R1, R2, R3, R4, R5, R6, R7} {
+	for _, r := range []Rule{R1, R2, R3, R4, R5, R6} {
 		if !fired[r] {
 			t.Errorf("no negative control fires %s", r)
 		}
@@ -183,5 +183,37 @@ func TestRuleTableSlicesAreKnownPRs(t *testing.T) {
 		if !cfg.knownPR(a.Slice) {
 			t.Errorf("allow entry %s names unknown PR %q", a.File, a.Slice)
 		}
+	}
+}
+
+// TestRootModuleMayNotImportRuntime builds the fixture at test time (nested
+// go.mod files under testdata would be picked up as real modules by tools that
+// walk the repository): a non-test root file importing runtime is R7; a test
+// file, and files of the nested runtime and integration modules, are not.
+func TestRootModuleMayNotImportRuntime(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"lifecycle/x.go":      "package lifecycle\n\nimport _ \"fx.test/op/runtime\"\n",
+		"lifecycle/x_test.go": "package lifecycle\n\nimport _ \"fx.test/op/runtime\"\n",
+		"runtime/go.mod":      "module fx.test/op/runtime\n",
+		"runtime/r.go":        "package runtime\n",
+		"integration/go.mod":  "module fx.test/op/integration\n",
+		"integration/a.go":    "package integration\n\nimport _ \"fx.test/op/runtime\"\n",
+	}
+	for name, src := range files {
+		p := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := Check(root, fixtureConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"R7 lifecycle/x.go"}; strings.Join(keys(got), "\n") != strings.Join(want, "\n") {
+		t.Fatalf("violations %v, want %v", keys(got), want)
 	}
 }

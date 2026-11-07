@@ -42,7 +42,8 @@ def test_modules_are_downloaded_from_manifests_alone(name: str) -> None:
 
 
 def test_every_operator_module_is_downloaded_from_its_manifest() -> None:
-    modules = {path.parent.relative_to(OPERATOR).as_posix() for path in OPERATOR.rglob("go.mod")}
+    # `integration` is the test-only module (nothing requires it); the images never build or test it.
+    modules = {path.parent.relative_to(OPERATOR).as_posix() for path in OPERATOR.rglob("go.mod")} - {"integration"}
     for name in DOCKERFILES:
         text = "\n".join(_lines(name))
         copied = set(re.findall(r"COPY sdo/operator/(?:(\w+)/)?go\.mod", text))
