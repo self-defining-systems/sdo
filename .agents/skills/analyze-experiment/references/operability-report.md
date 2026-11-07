@@ -64,6 +64,7 @@ that phase) are the deployer's, whether found offline or by the apply: the deplo
 correction is committed by the broker (`SDO-Advance-Correction: deployer` trailer on the accepted advance) and the same
 offline checks and the deployment run again. Only if it does not converge is the revision held as `deployer_not_converging`
 (`cause=agent_not_converging owner=human`); with no agent configured the deployer-owned hold stays a hold.
+An advance whose release no longer uses an image repository the plan declared in repository form (no tag, no digest) drops that declaration itself (`AdvanceResult.PrunedImages`, correction commit trailer `SDO-Advance-Correction`), with no agent task and no hold; exact-tag declarations still hold as `build`/deployer.
 scope/allowlist/environment/unknown are the human's. `data_bearing_change` is the human's. An offline hold has zero cluster effect; an infrastructure cause is
 retried, never held.
 

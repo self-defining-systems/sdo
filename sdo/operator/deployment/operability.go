@@ -62,5 +62,6 @@ func (d Deployer) CheckOffline(ctx context.Context, checkout string, plan *contr
 	})
 	out.Checks = result.Checks
 	out.RenderDigest, out.EnvDigest = result.Set.RenderDigest, result.Set.EnvDigest
+	out.UnusedImages = result.UnusedImages
 	return out, nil
 }

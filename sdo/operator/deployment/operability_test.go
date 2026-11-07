@@ -68,6 +68,24 @@ func TestCheckOfflineAgreesWithApplyAndVerify(t *testing.T) {
 	}
 }
 
+// A repository-form declaration no rendered container uses is reported to the
+// advance, which drops it; an exact-tag one is not (it stays a hold).
+func TestCheckOfflineReportsUnusedRepositoryDeclarations(t *testing.T) {
+	root, source := depRawFixture(t)
+	deployer, _ := depDeployer(t, root, &clusterFake{})
+	plan := func(image string) *contracts.DeploymentPlan {
+		return &contracts.DeploymentPlan{Source: source, ExpectedWorkloadIds: []string{depRawWeb}, Images: []*contracts.ImageSource{{Image: image, SourceId: depImages, Config: depAny(t, &emptypb.Empty{})}}}
+	}
+	got, err := deployer.CheckOffline(context.Background(), root, plan("registry.example/never"))
+	if err != nil || len(got.UnusedImages) != 1 || got.UnusedImages[0] != "registry.example/never" {
+		t.Fatalf("unused = %v, err = %v", got.UnusedImages, err)
+	}
+	got, err = deployer.CheckOffline(context.Background(), root, plan("registry.example/never:1"))
+	if err != nil || len(got.UnusedImages) != 0 {
+		t.Fatalf("an exact-tag declaration was reported unused: %v, err = %v", got.UnusedImages, err)
+	}
+}
+
 // Every plan ApplyAndVerify rejects before touching the cluster has a failing
 // offline check, so the gate catches it first; an image-resolution fault is
 // not knowable offline and is not claimed to be.

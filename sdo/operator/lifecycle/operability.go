@@ -24,6 +24,10 @@ type OfflineChecker interface {
 type OfflineChecks struct {
 	Checks                                                          []operability.Check
 	BaseTree, EffectiveTree, PatchesDigest, RenderDigest, EnvDigest string
+	// UnusedImages are the plan's repository-form image declarations (the form
+	// Go proposes from a render) that no rendered container uses. An advance
+	// drops them from the plan itself.
+	UnusedImages []string
 }
 
 // OperabilityError is a terminal outcome of the offline gate or the candidate gate: no agent can correct it
