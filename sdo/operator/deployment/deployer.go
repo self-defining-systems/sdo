@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -147,8 +148,10 @@ func (d Deployer) ApplyAndVerify(ctx context.Context, checkout string, plan *con
 		return lifecycle.DeploymentReceipt{}, err
 	}
 	// Every workload of this revision is ready: the Jobs it renamed are dead.
+	// A cleanup failure never fails a deployed, healthy revision: it is
+	// logged and the next deploy retries it.
 	if _, err := run.pruneSuperseded(ctx, set); err != nil {
-		return lifecycle.DeploymentReceipt{}, err
+		slog.Warn("deploy_prune_superseded_failed", "namespace", d.Namespace, "error", err)
 	}
 	receipt.Source = proto.Clone(plan.GetSource()).(*contracts.DeploymentSource)
 	receipt.RenderDigest, receipt.EnvDigest = set.RenderDigest, set.EnvDigest
