@@ -169,6 +169,26 @@ func TestDeployerCorrectionIsBounded(t *testing.T) {
 	})
 }
 
+// A failing agent task's error text is carried into the next request's
+// feedback, clipped: an agent that dies with a huge log cannot inflate it.
+func TestAgentFailureDetailIsClipped(t *testing.T) {
+	w := newAdvWorld(t)
+	w.offline = offlineFailure("O1.render", operability.CauseRender)
+	agent := &deployerAgent{err: errors.New(strings.Repeat("worker log line\n", 20000))}
+	if _, err := w.runWith(t, agent); err != nil {
+		t.Fatal(err)
+	}
+	if len(agent.requests) < 2 {
+		t.Fatalf("deployer tasks = %d, want a request carrying the failure", len(agent.requests))
+	}
+	limit := len(agent.requests[0].Feedback) + operability.MaxDetailBytes + 64
+	for i, request := range agent.requests {
+		if len(request.Feedback) > limit {
+			t.Errorf("request %d feedback = %d bytes, want at most %d", i, len(request.Feedback), limit)
+		}
+	}
+}
+
 // A release that stops using an image repository leaves a repository-form
 // declaration that names nothing: Go drops it from the plan itself (one
 // correction commit, recorded in the result) and the advance is accepted with
