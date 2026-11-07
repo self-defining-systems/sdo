@@ -46,10 +46,14 @@ func (c Coordinator) mode(cfg Config) operability.Mode {
 // deployment checks, the memory checks of what the shared validator accepted at
 // staging, and the independent detector evaluation of the staged checkout. The
 // detector evaluation is skipped, never passed, when a deployment check failed.
-func (c Coordinator) candidateReport(ctx context.Context, cfg Config, candidate broker.Candidate, deployment DeploymentReceipt) (operability.Report, error) {
+//
+// A verdict still pending at the bound is not an error here: it is the O4 check
+// pending, so the gate can return it to the designer whose probe never passed.
+// The second result is the bounded-window error for the case nobody can correct.
+func (c Coordinator) candidateReport(ctx context.Context, cfg Config, candidate broker.Candidate, deployment DeploymentReceipt) (operability.Report, *PendingVerificationError, error) {
 	live, err := c.Readiness.CheckLive(ctx, candidate.Path, &contracts.DeploymentPlan{Source: deployment.Source}, deployment, nil)
 	if err != nil {
-		return operability.Report{}, fmt.Errorf("live deployment checks: %w", err)
+		return operability.Report{}, nil, fmt.Errorf("live deployment checks: %w", err)
 	}
 	gaps := make([]offline.Finding, 0, len(candidate.CoverageGaps))
 	for _, gap := range candidate.CoverageGaps {
@@ -58,9 +62,10 @@ func (c Coordinator) candidateReport(ctx context.Context, cfg Config, candidate 
 	// Staging ran the shared validator and rejected nothing: no blocking finding.
 	checks := append(live, offline.CheckMemory(offline.Memory{Notes: gaps, OwnershipChecked: true})...)
 	var applyChecks []operability.Check
+	var pending *PendingVerificationError
 	if !failing(live) {
 		if applyChecks, err = c.applyTelemetry(ctx, candidate.Path); err != nil {
-			return operability.Report{}, err
+			return operability.Report{}, nil, err
 		}
 		checks = append(checks, applyChecks...)
 	}
@@ -73,8 +78,8 @@ func (c Coordinator) candidateReport(ctx context.Context, cfg Config, candidate 
 		verdict, err := c.awaitVerdict(ctx, cfg, func() (HealthVerdict, error) {
 			return c.Verifier.VerifyCandidate(ctx, candidate.Path, candidate.Commit, cfg.Namespace, cfg.HealthObjective, deployment)
 		})
-		if err != nil {
-			return operability.Report{}, err
+		if err != nil && !errors.As(err, &pending) {
+			return operability.Report{}, nil, err
 		}
 		checks = append(checks, verdictChecks(verdict)...)
 	}
@@ -83,7 +88,8 @@ func (c Coordinator) candidateReport(ctx context.Context, cfg Config, candidate 
 		PatchesDigest: deployment.PatchesDigest, RenderDigest: deployment.RenderDigest, EnvDigest: deployment.EnvDigest,
 		DiagnosticsTree: candidate.DiagnosticsTree,
 	}
-	return operability.New(operability.StageComplete, subject).With(checks...)
+	report, err := operability.New(operability.StageComplete, subject).With(checks...)
+	return report, pending, err
 }
 
 func failing(checks []operability.Check) bool {
@@ -105,7 +111,15 @@ func verdictChecks(verdict HealthVerdict) []operability.Check {
 	case VerificationClear:
 		return []operability.Check{live(operability.StatusPass, "", verdict.Summary, nil)}
 	case VerificationPending:
-		return []operability.Check{live(operability.StatusPending, operability.CauseProbeUnavailable, verdict.Feedback(), nil)}
+		// The designer's probes that stayed pending are the paths to correct.
+		var paths []string
+		for _, state := range verdict.Detectors {
+			if state.Status == "pending" && !memory.IsGenericHealthDetector(state.DetectorID) {
+				paths = append(paths, detectorPath(state.DetectorID))
+			}
+		}
+		slices.Sort(paths)
+		return []operability.Check{live(operability.StatusPending, operability.CauseProbeUnavailable, verdict.Feedback(), paths)}
 	}
 	var floor, designer []DetectorState
 	for _, state := range verdict.Detectors {
@@ -135,6 +149,11 @@ func detectorPath(id string) string {
 		return layout.TrafficWorkloadsDir + "/" + name + ".yaml"
 	}
 	return layout.DetectorManifestPath(layout.ClassHealth, id)
+}
+
+// decisionHasPaths reports whether some check names a file the designer owns.
+func decisionHasPaths(d operability.Decision) bool {
+	return slices.ContainsFunc(d.Checks, func(c operability.Check) bool { return len(c.Paths) > 0 })
 }
 
 // operabilityDiagnostics records a designer correction as typed diagnostics, so
@@ -273,9 +292,10 @@ func (c Coordinator) gateCandidate(ctx context.Context, id string, cfg Config, d
 		}
 		var report operability.Report
 		var decision operability.Decision
+		var pending *PendingVerificationError
 		err = c.retryInfrastructure(ctx, cfg, "operability verification", func() error {
 			var err error
-			if report, err = c.candidateReport(ctx, cfg, candidate, deployment); err != nil {
+			if report, pending, err = c.candidateReport(ctx, cfg, candidate, deployment); err != nil {
 				return err
 			}
 			report = reattribute(report, log, attempts)
@@ -309,6 +329,16 @@ func (c Coordinator) gateCandidate(ctx context.Context, id string, cfg Config, d
 			return gateOutcome{feedback: decision.Feedback()}, nil
 		}
 		_ = c.Broker.DiscardCandidate(id, broker.InitialPhase)
+		if decision.Kind == operability.Wait && pending != nil {
+			// The designer's probes never answered within the bounded window:
+			// the correction carries what they observed. After the designer
+			// bound the window itself is the terminal answer.
+			if count, _ := priorDesignerCorrections(log); count < attempts && decisionHasPaths(decision) {
+				return gateOutcome{rejected: operabilityDiagnostics(decision.Checks)}, nil
+			}
+			_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
+			return gateOutcome{}, pending
+		}
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return gateOutcome{}, c.terminal(mode, "verify", report, decision)
 	}

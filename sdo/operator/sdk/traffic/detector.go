@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -123,7 +124,7 @@ func (d sloDetector) ConfirmationReason(ctx sdk.DetectionContext) string {
 		if qualified == 0 {
 			reason = "no synthetic scenario has succeeded since observation began: "
 		}
-		reasons = append(reasons, reason+strings.Join(unqualified, ", "))
+		reasons = append(reasons, reason+strings.Join(describeUnproven(window, unqualified), ", "))
 	}
 	if len(incomplete) > 0 {
 		reasons = append(reasons, "insufficient usable synthetic samples: "+strings.Join(incomplete, ", "))
@@ -225,4 +226,54 @@ func ScenarioFinding(spec sdk.DetectorSpec, namespace string, workload Workload,
 			"violations":         verdict.Violations,
 		},
 	}
+}
+
+// describeUnproven names each scenario that never succeeded with its latest
+// observed failure, so an author sees what the live application answered and
+// not only that the assertion never passed.
+func describeUnproven(window Window, ids []string) []string {
+	observed := make(map[string]ScenarioObservations, len(window.Scenarios))
+	for _, o := range window.Scenarios {
+		observed[o.Scenario.ID] = o
+	}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		detail := ""
+		if o, ok := observed[id]; ok {
+			detail = latestFailure(o)
+		}
+		if detail == "" {
+			out = append(out, id)
+			continue
+		}
+		out = append(out, id+" ("+detail+")")
+	}
+	return out
+}
+
+func latestFailure(o ScenarioObservations) string {
+	for i := len(o.Samples) - 1; i >= 0; i-- {
+		sample := o.Samples[i]
+		if sample.Outcome == OutcomeOK {
+			continue
+		}
+		var parts []string
+		if sample.Step != "" {
+			parts = append(parts, "step "+sample.Step)
+		}
+		if sample.Request != "" {
+			parts = append(parts, sample.Request)
+		}
+		if sample.Status != 0 {
+			parts = append(parts, "status "+strconv.Itoa(sample.Status))
+		}
+		if sample.Error != "" {
+			parts = append(parts, bounded(sample.Error))
+		}
+		return "last failure: " + strings.Join(parts, ", ")
+	}
+	if o.LastInvalid != "" {
+		return "invalid: " + bounded(o.LastInvalid)
+	}
+	return ""
 }

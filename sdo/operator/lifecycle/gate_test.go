@@ -305,3 +305,47 @@ func TestRefreshPublicationIsScopedToWhoRunsIt(t *testing.T) {
 		t.Fatalf("scoped id %q does not keep the input-bound prefix of %q", advance, startup)
 	}
 }
+
+// The judge's probe never passes against the live application: the verdict is
+// pending for the whole bounded window. The judge gets a correction turn that
+// carries what the application actually answered, and no deployer attempt is
+// spent.
+func TestProbeThatNeverPassesCorrectsTheDesignerWithTheObservedResponse(t *testing.T) {
+	const observed = `step open, GET /users/sign_in, status 200, HTTP 200 body lacks "Sign in to Example": observed title "Sign in · Example"`
+	never := lifecycle.HealthVerdict{Outcome: lifecycle.VerificationPending, Summary: "accepted health detectors report pending", Detectors: []lifecycle.DetectorState{{DetectorID: "traffic-probe-call", Status: "pending", Reason: "no synthetic scenario has succeeded since observation began: sign-in (last failure: " + observed + ")"}}}
+	verdicts := []lifecycle.HealthVerdict{never, never, never, never, clear}
+	h, fake := gateHarness(t, verdicts...)
+	if _, err := h.coordinator.Run(context.Background(), config()); err != nil {
+		t.Fatal(err)
+	}
+	if h.workers.deployerAttempts() != 1 || h.workers.judgeRuns != 2 {
+		t.Fatalf("deployer attempts=%d judge runs=%d, want 1 and 2", h.workers.deployerAttempts(), h.workers.judgeRuns)
+	}
+	previous := h.workers.judgeRequests[1].GetPreviousDiagnostics()
+	if len(previous) == 0 || previous[0].GetRule() != "operability.O4.detectors" ||
+		previous[0].GetPath() != ".sdo/diagnostics/traffic/workloads/probe-call.yaml" ||
+		!strings.Contains(previous[0].GetMessage(), "Sign in · Example") || !strings.Contains(previous[0].GetMessage(), "GET /users/sign_in") {
+		t.Fatalf("correction diagnostics do not carry the observed response: %v", previous)
+	}
+	if fake.discards != 1 || fake.accepts != 1 || h.installer.installs != 1 {
+		t.Fatalf("discards=%d accepts=%d installs=%d", fake.discards, fake.accepts, h.installer.installs)
+	}
+}
+
+// A probe that keeps failing is not corrected forever: after the designer
+// bound (DesignerAttempts corrections) the run ends with the pending window,
+// naming what was observed, and no deployer attempt is spent.
+func TestProbeThatNeverPassesEndsAfterTheDesignerBound(t *testing.T) {
+	never := lifecycle.HealthVerdict{Outcome: lifecycle.VerificationPending, Summary: "accepted health detectors report pending", Detectors: []lifecycle.DetectorState{{DetectorID: "traffic-probe-call", Status: "pending", Reason: "no synthetic scenario has succeeded since observation began: sign-in"}}}
+	h, _ := gateHarness(t, never)
+	cfg := config()
+	cfg.DesignerAttempts = 2
+	_, err := h.coordinator.Run(context.Background(), cfg)
+	var pending *lifecycle.PendingVerificationError
+	if !errors.As(err, &pending) {
+		t.Fatalf("error = %v, want PendingVerificationError", err)
+	}
+	if h.workers.deployerAttempts() != 1 || h.workers.judgeRuns != 3 || h.installer.installs != 0 {
+		t.Fatalf("deployer attempts=%d judge runs=%d installs=%d", h.workers.deployerAttempts(), h.workers.judgeRuns, h.installer.installs)
+	}
+}

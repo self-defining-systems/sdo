@@ -426,14 +426,17 @@ func TestPendingThenClearSucceedsWithoutAnotherDeployerAttempt(t *testing.T) {
 	}
 }
 
-func TestPersistentPendingFailsNamingTheDetectorWithoutSpendingAttempts(t *testing.T) {
-	h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{pending}})
+// A pending verdict that only a detector Go wrote can explain is nobody's
+// correction: the run ends naming it, without spending a deployer attempt.
+func TestPersistentFloorPendingFailsNamingTheDetectorWithoutSpendingAttempts(t *testing.T) {
+	floorPending := lifecycle.HealthVerdict{Outcome: lifecycle.VerificationPending, Summary: "accepted health detectors report pending", Detectors: []lifecycle.DetectorState{{DetectorID: "workload-health", Status: "pending", Reason: "observation window incomplete"}}}
+	h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{floorPending}})
 	_, err := h.coordinator.Run(context.Background(), config())
 	var terminal *lifecycle.PendingVerificationError
 	if !errors.As(err, &terminal) {
 		t.Fatalf("error = %v, want PendingVerificationError", err)
 	}
-	if !strings.Contains(err.Error(), "traffic-window") || !strings.Contains(err.Error(), "observation window incomplete") {
+	if !strings.Contains(err.Error(), "workload-health") || !strings.Contains(err.Error(), "observation window incomplete") {
 		t.Fatalf("terminal error does not name the pending detector and reason: %v", err)
 	}
 	if h.workers.deployerAttempts() != 1 || h.verifier.calls != 4 || h.installer.installs != 0 {
