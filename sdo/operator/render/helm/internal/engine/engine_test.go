@@ -1,10 +1,13 @@
 package engine_test
 
 import (
+	"errors"
 	"maps"
+	"strings"
 	"testing"
 	"text/template"
 
+	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/chartutil"
 	helmengine "helm.sh/helm/v3/pkg/engine"
@@ -42,7 +45,7 @@ func renderChart(t *testing.T, name string) (map[string]string, chartutil.Values
 }
 
 // The trimmed copy must render what the Helm engine it was copied from
-// renders. NOTES.txt is the one intended difference (never executed here).
+// renders.
 //
 // umbrella is a synthetic umbrella chart with the helper patterns large
 // charts rely on (tpl over values, computed include, required, fail-guarded
@@ -53,7 +56,7 @@ func TestEngineMatchesHelm(t *testing.T) {
 			want, _, run := renderChart(t, chart)
 			got := run(engine.Engine{})
 			for name, w := range want {
-				if g, ok := got[name]; ok && g != w || !ok && !isNotes(name) {
+				if g, ok := got[name]; ok && g != w || !ok {
 					t.Errorf("%s differs between the copy and Helm", name)
 				}
 			}
@@ -63,8 +66,6 @@ func TestEngineMatchesHelm(t *testing.T) {
 		})
 	}
 }
-
-func isNotes(name string) bool { return len(name) >= 9 && name[len(name)-9:] == "NOTES.txt" }
 
 // The hook sees the engine's finished map and what it replaces is what every
 // template calls.
@@ -80,5 +81,29 @@ func TestFuncsHookReplacesAFunctionForEveryTemplate(t *testing.T) {
 	}
 	if maps.EqualFunc(want, got, func(a, b string) bool { return a == b }) {
 		t.Fatal("replacing quote changed no output: the hook is not applied")
+	}
+}
+
+// A failing NOTES.txt comes back as a NotesError beside every other file's
+// complete output, so the caller can discard NOTES output and still judge it.
+func TestNotesFailureIsReportedBesideTheManifests(t *testing.T) {
+	ch := &chart.Chart{
+		Metadata: &chart.Metadata{Name: "c", Version: "0.1.0", APIVersion: "v2"},
+		Templates: []*chart.File{
+			{Name: "templates/cm.yaml", Data: []byte("kind: ConfigMap")},
+			{Name: "templates/NOTES.txt", Data: []byte(`{{ fail "refused" }}`)},
+		},
+	}
+	vals, err := chartutil.ToRenderValues(ch, nil, chartutil.ReleaseOptions{Name: "r", Namespace: "n", Revision: 1, IsInstall: true}, chartutil.DefaultCapabilities)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := engine.Engine{}.Render(ch, vals)
+	var notes *engine.NotesError
+	if !errors.As(err, &notes) || !strings.Contains(notes.Error(), "refused") {
+		t.Fatalf("want a NotesError naming the chart's message, got %v", err)
+	}
+	if files["c/templates/cm.yaml"] != "kind: ConfigMap" {
+		t.Fatalf("manifests must be complete beside a NOTES failure: %v", files)
 	}
 }

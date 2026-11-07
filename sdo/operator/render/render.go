@@ -51,6 +51,15 @@ const (
 	GateNone
 )
 
+// Operation is what a deploy does to the application: install it, or upgrade
+// what a previous deploy installed.
+type Operation string
+
+const (
+	OperationInstall Operation = "install"
+	OperationUpgrade Operation = "upgrade"
+)
+
 // Phase is a named group of objects applied together.
 type Phase struct {
 	// Name identifies the phase; it is non-empty and unique within a Result.
@@ -60,6 +69,10 @@ type Phase struct {
 	// Ephemeral objects are applied but are not desired state: they are
 	// excluded from inventory, drift, onboarding identities and restore.
 	Ephemeral bool
+	// Runs names the one operation the deployer applies this phase for; empty
+	// means every operation. A phase of another operation is still part of the
+	// rendered set (reads, policy and drift see its objects) but is not applied.
+	Runs Operation
 }
 
 // Result is what a renderer returns. Each object belongs to exactly one phase

@@ -24,6 +24,10 @@ const (
 	// reading the cluster, the environment, the clock, a random source or the
 	// network. It is raised at execution, by the stubs of Restrict.
 	RuleForbiddenFunction Rule = "forbidden-function"
+	// RuleChartGuard fails a render whose NOTES.txt (where charts run their
+	// configuration validation) executes a template fail, as helm install
+	// would. Detail is the chart's own message.
+	RuleChartGuard Rule = "chart-guard"
 	// RuleDependencyNotVendored rejects a Chart.yaml dependency that is not
 	// present under charts/. Nothing is fetched from a repository.
 	RuleDependencyNotVendored Rule = "dependency-not-vendored"

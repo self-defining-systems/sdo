@@ -12,9 +12,13 @@
 // with its function map restricted by the policy (internal/policy.Restrict):
 // every function that reads the clock, the cluster, the environment or a random
 // source fails the render when executed, however it was reached (tpl, include,
-// helpers), while tpl, include and duration run freely over values from Git. Hooks are chosen by the events of the
-// rendered operation (install): pre-install and post-install become phases,
-// hooks of other operations (upgrade, delete, rollback, test) are left out.
+// helpers), while tpl, include and duration run freely over values from Git. NOTES.txt, where charts
+// run their configuration guards, executes as in helm install: its output is
+// discarded and a template fail in it fails the render (policy.RuleChartGuard).
+// Hooks are chosen by their events: pre-install, post-install, pre-upgrade and
+// post-upgrade become phases that carry their operation (render.Phase.Runs), so
+// the deployer applies an install's or an upgrade's; hooks of other events
+// (delete, rollback, test) are left out.
 package helm
 
 import (
@@ -57,7 +61,7 @@ const DefaultKubeVersion = "v1.30.0"
 // Doc tells an agent what the helm renderer does and when to choose it.
 const Doc = `Renders a Helm chart from the source tree the way helm template does, with no cluster or registry access. Choose it when the application ships a chart (a directory with Chart.yaml) in the tree.
 Config: chart_path, the tree-relative chart directory; value_files, tree-relative values files merged in order after the chart's values.yaml; values, an inline object merged last (like --set-json), for settings such as image tags or replica counts.
-Charts must be self-contained: enabled subcharts are vendored in charts/ (disabled ones, by condition or tag, are ignored), and crds/ directories of enabled charts are rejected. tpl, include and the pure template functions work; the render fails when a template executes lookup, env, a clock or date function, or a random or key-generating function (for example a random suffix in a test hook), so such parts must be disabled by values. Hooks with a pre-install or post-install event become phases; hooks of other events (upgrade, delete, rollback, test) are not part of a deploy.`
+Charts must be self-contained: enabled subcharts are vendored in charts/ (disabled ones, by condition or tag, are ignored), and crds/ directories of enabled charts are rejected. tpl, include and the pure template functions work; the render fails when a template executes lookup, env, a clock or date function, or a random or key-generating function (for example a random suffix in a test hook), so such parts must be disabled by values. NOTES.txt is executed and its output discarded: a fail in it (the chart's configuration guard) fails the render with the chart's message, so fix the values it names. Hooks with a pre-install, post-install, pre-upgrade or post-upgrade event become phases (an install applies the install ones, an upgrade of a running deployment the upgrade ones); hooks of other events (delete, rollback, test) are not part of a deploy.`
 
 // Register adds the helm renderer to c under ID. Every render reads the chart
 // through the catalog's FS in the calling process and executes it through run,
@@ -158,6 +162,19 @@ func compute(ctx context.Context, req request) (render.Result, error) {
 	renderCtx, stop := context.WithTimeoutCause(ctx, RenderTimeLimit, timeLimitError(root))
 	defer stop()
 	files, err := engine.Engine{Funcs: policy.Restrict, Context: renderCtx}.Render(chrt, values)
+	var notes *engine.NotesError
+	if errors.As(err, &notes) {
+		// Helm executes NOTES.txt on every install, and charts run their
+		// configuration guards there. Its output is documentation and is
+		// discarded; a chart's own fail is the chart refusing this
+		// configuration. A function the policy forbids is not: the output
+		// would be discarded, so the guard cannot be evaluated
+		// deterministically and the chart's other guards still stand.
+		if !errors.As(notes.Err, new(*policy.Error)) {
+			return render.Result{}, &policy.Error{Rule: policy.RuleChartGuard, Chart: path.Base(root), File: "NOTES.txt", Detail: notes.Err.Error()}
+		}
+		err = nil
+	}
 	if err != nil {
 		return render.Result{}, renderError(root, err)
 	}
@@ -171,7 +188,7 @@ func compute(ctx context.Context, req request) (render.Result, error) {
 	if err != nil {
 		return render.Result{}, fmt.Errorf("helm render of %s: %w", root, err)
 	}
-	return phases(policy.OperationInstall, env, hooks, manifests)
+	return phases(env, hooks, manifests)
 }
 
 // renderError names a policy violation raised by a stubbed function with the
@@ -379,18 +396,24 @@ func servedAPIVersions(known chartutil.VersionSet, major string, minor int) char
 	return out
 }
 
-// phases builds the pre, main and post phases of operation op. Hooks join the
-// phases their events name for op and are ordered by weight then name (the
-// sorter's order); hooks without such an event are left out. Main objects
-// follow Helm's install order.
-func phases(op policy.Operation, env render.Env, hooks []*release.Hook, manifests []releaseutil.Manifest) (render.Result, error) {
-	var pre, post, main []*unstructured.Unstructured
+// phases builds the hook phases of every deploy operation and the main phase.
+// A hook joins the phase of each deploy event it names (pre-install,
+// pre-upgrade, post-install, post-upgrade), ordered by weight then name (the
+// sorter's order), so a hook annotated for both operations is applied by an
+// install and by an upgrade; hooks without a deploy event (delete, rollback,
+// test) are left out. Main objects follow Helm's install order. Which phases a
+// deploy applies is the deployer's decision, from the operation it performs.
+func phases(env render.Env, hooks []*release.Hook, manifests []releaseutil.Manifest) (render.Result, error) {
+	byEvent := map[string][]*unstructured.Unstructured{}
 	for _, h := range hooks {
-		events := make([]string, len(h.Events))
-		for i, e := range h.Events {
-			events[i] = string(e)
+		var joined []string
+		for _, op := range []policy.Operation{policy.OperationInstall, policy.OperationUpgrade} {
+			events := make([]string, len(h.Events))
+			for i, e := range h.Events {
+				events[i] = string(e)
+			}
+			joined = append(joined, policy.HookPhases(op, events)...)
 		}
-		joined := policy.HookPhases(op, events)
 		if len(joined) == 0 {
 			continue
 		}
@@ -399,13 +422,10 @@ func phases(op policy.Operation, env render.Env, hooks []*release.Hook, manifest
 			return render.Result{}, err
 		}
 		for _, phase := range joined {
-			if phase == "pre-"+string(op) {
-				pre = append(pre, obj.DeepCopy())
-			} else {
-				post = append(post, obj.DeepCopy())
-			}
+			byEvent[phase] = append(byEvent[phase], obj.DeepCopy())
 		}
 	}
+	var main []*unstructured.Unstructured
 	for _, m := range manifests {
 		obj, err := decode(m.Name, m.Content, env)
 		if err != nil {
@@ -414,15 +434,18 @@ func phases(op policy.Operation, env render.Env, hooks []*release.Hook, manifest
 		main = append(main, obj)
 	}
 	var res render.Result
-	if len(pre) > 0 {
-		res.Phases = append(res.Phases, render.Phase{Name: "pre-" + string(op), Objects: pre, Gate: render.GateReady, Ephemeral: true})
+	hookPhase := func(event string, op render.Operation) {
+		if objects := byEvent[event]; len(objects) > 0 {
+			res.Phases = append(res.Phases, render.Phase{Name: event, Objects: objects, Gate: render.GateReady, Ephemeral: true, Runs: op})
+		}
 	}
+	hookPhase("pre-install", render.OperationInstall)
+	hookPhase("pre-upgrade", render.OperationUpgrade)
 	if len(main) > 0 {
 		res.Phases = append(res.Phases, render.Phase{Name: "main", Objects: main, Gate: render.GateReady})
 	}
-	if len(post) > 0 {
-		res.Phases = append(res.Phases, render.Phase{Name: "post-" + string(op), Objects: post, Gate: render.GateReady, Ephemeral: true})
-	}
+	hookPhase("post-install", render.OperationInstall)
+	hookPhase("post-upgrade", render.OperationUpgrade)
 	return res, nil
 }
 
