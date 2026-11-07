@@ -120,6 +120,36 @@ chart with a hash-named Job is onboarded from a provided plan in the stable form
 only bumps image tags, and the production `lifecycle.Advancer` (real broker, helm render and Deployer over a fake
 cluster) must accept it with no agent Job. It takes about 15 s: an onboarding spawns about 500 git processes.
 
+## Replay rehearsal: chart releases without a cluster
+
+`operatorcli/rehearsal_integration_test.go` replays a sequence of chart releases through SDO's real upstream-follow
+path and reports every blocker of every release in one run (it continues past a held release, as the follower polls
+the next revision). Real: a kube-apiserver and etcd (`runtime/envtestio`: immutable fields, defaulting, server-side
+apply, generation, RBAC), the helm render with the discovered (or recorded) render environment, the Coordinator's
+onboarding and the broker with its validation subprocess, `lifecycle.Advancer`, the Deployer with its kubectl
+backend, the operability reports, and the controller's accepted-source inventory check
+(`runtime.NewSourceInventory(...).Findings`) over the live namespace with the namespace onboarding record. Stand-ins:
+`internal/rehearsal`'s fake kubelet and workload/Job/garbage-collection controllers on an injected clock (every SDO
+wait advances the clock and runs one reconcile step), per-object `Behavior`s (a Job failing N times or forever, long
+attempts restarted in place, slow readiness), image resolution (any tag pins to a digest), the scripted health judge,
+a scripted health verdict (readiness plus an optional warm-up) and recording stubs for the deployment agent and the
+detection designer. Per release it writes adopted/outcome, hold cause and owner, agent dispatches, incidents,
+recreates, objects left over from earlier releases, drift findings, generation changes (with the live spec paths
+that moved), operability report validity and duplicate check IDs, as `rehearsal.json` and `rehearsal.txt`
+(`SDO_REHEARSAL_OUT=<dir>`).
+
+- PR tier: `go test -tags=integration -run TestReplayRehearsalOfASyntheticChart ./operatorcli/` in `sdo/operator`
+  (about 30 s): a synthetic chart with a hash-named Job, a fixed-name bucket Job, a StatefulSet and a
+  `templates/shared-secrets/` hook over four releases (one recreated Job that fails every attempt).
+- Nightly or manual, the real GitLab releases (`apps/gitlab/releases.json`, vendored as the lane does):
+  `uv run python -m benchmarks.sregym.fastloop gitlab rehearse --out <dir> [--limit N] [--behaviors JSON]
+  [--warm-up 2m]` (about 7 min for 10.4.2 and four releases). Any driver can write the input file that
+  `TestReplayRehearsalFromInput` reads from `SDO_REHEARSAL_INPUT`.
+
+Run it before a live replay. It cannot show what needs real containers: what an application's Job actually does on
+retained state (the non-idempotent bucket Job), image delivery to nodes, real warm-up and probe timing, and resource
+pressure.
+
 ## Waiting in Go tests
 
 `Execute` polls until its context ends, so running it under a fixed short

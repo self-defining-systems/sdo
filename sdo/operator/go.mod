@@ -17,12 +17,16 @@ require (
 	github.com/Masterminds/semver/v3 v3.2.1 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/cyphar/filepath-securejoin v0.2.4 // indirect
+	github.com/evanphx/json-patch/v5 v5.9.0 // indirect
 	github.com/go-errors/errors v1.4.2 // indirect
+	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
 	github.com/huandu/xstrings v1.4.0 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	github.com/monochromegane/go-gitignore v0.0.0-20200626010858-205db1a8cc00 // indirect
+	github.com/prometheus/client_model v0.6.1 // indirect
+	github.com/prometheus/common v0.55.0 // indirect
 	github.com/shopspring/decimal v1.3.1 // indirect
 	github.com/spf13/cast v1.5.0 // indirect
 	github.com/xeipuuv/gojsonpointer v0.0.0-20190905194746-02993c407bfb // indirect
@@ -33,6 +37,7 @@ require (
 	golang.org/x/crypto v0.55.0 // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.12.0 // indirect
 	k8s.io/apiextensions-apiserver v0.30.3 // indirect
+	sigs.k8s.io/controller-runtime v0.18.4 // indirect
 )
 
 require (
@@ -102,6 +107,8 @@ require (
 	k8s.io/api v0.30.3
 	k8s.io/apimachinery v0.30.3
 	k8s.io/client-go v0.30.3
+	sdo.dev/operator/core v0.0.0
+	sdo.dev/operator/runtime v0.0.0
 	sdo.dev/operator/sdk v0.0.0
 	sdo.dev/operator/telemetry v0.0.0
 )
@@ -111,3 +118,7 @@ replace sdo.dev/operator/contracts => ./contracts
 replace sdo.dev/operator/sdk => ./sdk
 
 replace sdo.dev/operator/telemetry => ./telemetry
+
+replace sdo.dev/operator/runtime => ./runtime
+
+replace sdo.dev/operator/core => ./core
