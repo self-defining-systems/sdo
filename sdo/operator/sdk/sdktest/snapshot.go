@@ -43,6 +43,9 @@ type Snapshot struct {
 	ObjectSnapshotVersion int                         `json:"object_snapshot_version,omitempty"`
 	Admission             *sdk.PodAdmissionResult     `json:"pod_admission,omitempty"`
 	Objects               []unstructured.Unstructured `json:"objects,omitempty"`
+	// TrimmedObjects counts, by kind, the objects a capture dropped to fit the
+	// snapshot budget; detectors that need them see an evidence gap.
+	TrimmedObjects map[string]int `json:"trimmed_objects,omitempty"`
 	// SourceName names the file a loaded snapshot came from, for messages.
 	SourceName         string `json:"-"`
 	sdk.ScopedSnapshot `json:"scoped_observation,omitempty"`
