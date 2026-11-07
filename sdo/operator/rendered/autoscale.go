@@ -1,6 +1,9 @@
 package rendered
 
 import (
+	"encoding/json"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
@@ -80,4 +83,64 @@ func (a Autoscaled) OmitReplicas(object *unstructured.Unstructured) bool {
 	}
 	unstructured.RemoveNestedField(object.Object, "spec", "replicas")
 	return true
+}
+
+// ReplicasHandoffManager is the neutral field manager that holds spec.replicas
+// of an autoscaled workload while SDO stops applying it.
+const ReplicasHandoffManager = "sdo-replicas-handoff"
+
+// ReplicasHandoff is the apply document that transfers ownership of
+// spec.replicas from the deployer. Under server-side apply, a manager that
+// stops applying a field it alone owns deletes it, and the API server defaults
+// a deleted replica count to 1 until the autoscaler acts. Applying the live
+// count under another manager first makes the owners shared, so the deployer's
+// omission leaves the count in place; the autoscaler's next scale update takes
+// the field over from the neutral manager.
+func ReplicasHandoff(live *unstructured.Unstructured) (*unstructured.Unstructured, bool) {
+	raw, found, _ := unstructured.NestedFieldNoCopy(live.Object, "spec", "replicas")
+	var replicas int64
+	switch n := raw.(type) {
+	case int64:
+		replicas = n
+	case int32:
+		replicas = int64(n)
+	case float64:
+		replicas = int64(n)
+	default:
+		return nil, false
+	}
+	if !found {
+		return nil, false
+	}
+	metadata := map[string]any{"name": live.GetName()}
+	if namespace := live.GetNamespace(); namespace != "" {
+		metadata["namespace"] = namespace
+	}
+	return &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": live.GetAPIVersion(), "kind": live.GetKind(), "metadata": metadata,
+		"spec": map[string]any{"replicas": replicas},
+	}}, true
+}
+
+// SolelyOwnsReplicas reports whether manager, applying, is the only manager
+// that owns spec.replicas of live. Only then does omitting the field delete it.
+func SolelyOwnsReplicas(live *unstructured.Unstructured, manager string) bool {
+	owns := false
+	for _, entry := range live.GetManagedFields() {
+		if entry.FieldsV1 == nil {
+			continue
+		}
+		var fields map[string]map[string]any
+		if json.Unmarshal(entry.FieldsV1.Raw, &fields) != nil {
+			continue
+		}
+		if _, ok := fields["f:spec"]["f:replicas"]; !ok {
+			continue
+		}
+		if entry.Manager != manager || entry.Operation != metav1.ManagedFieldsOperationApply {
+			return false
+		}
+		owns = true
+	}
+	return owns
 }

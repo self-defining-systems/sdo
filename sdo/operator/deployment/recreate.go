@@ -72,6 +72,17 @@ type Recreator interface {
 	Delete(ctx context.Context, ref sdk.ObjectRef, propagation Propagation) error
 }
 
+// ReplicasHandoff is the part of an Applier that keeps a workload's replica
+// count when SDO stops applying it to an autoscaled workload.
+type ReplicasHandoff interface {
+	// HandOffReplicas makes the deployer stop being the sole owner of ref's
+	// spec.replicas without changing the value, so omitting the field from the
+	// next apply does not delete it (and reset the count to the API default).
+	// It does nothing when the object has no replica count or another manager
+	// already owns it.
+	HandOffReplicas(ctx context.Context, ref sdk.ObjectRef) error
+}
+
 // RecreateReason is the recreate policy's typed decision for one conflict.
 type RecreateReason string
 
