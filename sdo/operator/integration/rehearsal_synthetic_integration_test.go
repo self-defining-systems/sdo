@@ -1,6 +1,6 @@
 //go:build integration
 
-package operatorcli
+package integration
 
 import (
 	"fmt"
