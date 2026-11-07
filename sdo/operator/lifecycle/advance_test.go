@@ -73,6 +73,9 @@ type advWorld struct {
 	// offlineSeq, when set, gives each CheckOffline call the next element (the
 	// last repeats); correct, when set, answers each CorrectAdvance call.
 	offlineSeq [][]operability.Check
+	// unused is reported as the first offline check's unused image
+	// declarations.
+	unused []string
 	correct    func(call int, plan *contracts.DeploymentPlan) (rejection string, err error)
 	corrected  []*contracts.DeploymentPlan
 	// keepOnPatchHold keeps the advance checkout when the proposal reports a
@@ -315,7 +318,9 @@ func (w *advWorld) CheckOffline(_ context.Context, checkout string, plan *contra
 			checks = append(checks, operability.Check{ID: id, Phase: operability.PhaseOffline, Status: operability.StatusPass})
 		}
 	}
-	return lifecycle.OfflineChecks{Checks: checks, BaseTree: advTree, EffectiveTree: advEffective, PatchesDigest: advDigest, RenderDigest: advDigest, EnvDigest: advDigest}, nil
+	unused := w.unused
+	w.unused = nil
+	return lifecycle.OfflineChecks{Checks: checks, UnusedImages: unused, BaseTree: advTree, EffectiveTree: advEffective, PatchesDigest: advDigest, RenderDigest: advDigest, EnvDigest: advDigest}, nil
 }
 
 func (w *advWorld) VerifyAccepted(context.Context, string, string, lifecycle.DeploymentReceipt) (lifecycle.DeploymentReceipt, error) {

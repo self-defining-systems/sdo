@@ -169,6 +169,41 @@ func TestDeployerCorrectionIsBounded(t *testing.T) {
 	})
 }
 
+// A release that stops using an image repository leaves a repository-form
+// declaration that names nothing: Go drops it from the plan itself (one
+// correction commit, recorded in the result) and the advance is accepted with
+// no agent task. Only repository-form declarations are reported unused, so an
+// author's exact declaration still holds with the deployment agent.
+func TestAdvanceDropsUnusedImageDeclarationsWithoutAnAgent(t *testing.T) {
+	w := newAdvWorld(t)
+	w.plan.Images = []*contracts.ImageSource{{Image: "reg.example/kept", SourceId: "prebuilt"}, {Image: "reg.example/gone", SourceId: "prebuilt"}}
+	w.offlineSeq = [][]operability.Check{offlineFailure("O2.images", operability.CauseBuild), nil}
+	w.unused = []string{"reg.example/gone"}
+	agent := &deployerAgent{}
+	result, err := w.runWith(t, agent)
+	if err != nil || result.Outcome != lifecycle.AdvanceAccepted {
+		t.Fatalf("result = %+v, err = %v; want accepted", result, err)
+	}
+	if len(agent.requests) != 0 {
+		t.Fatalf("deployer tasks = %d, want none", len(agent.requests))
+	}
+	if !slices.Equal(result.PrunedImages, []string{"reg.example/gone"}) {
+		t.Errorf("pruned = %v", result.PrunedImages)
+	}
+	if len(w.corrected) != 1 || len(w.corrected[0].GetImages()) != 1 || w.corrected[0].GetImages()[0].GetImage() != "reg.example/kept" {
+		t.Fatalf("corrected plans = %v", w.corrected)
+	}
+	t.Run("exact declaration is not dropped", func(t *testing.T) {
+		w := newAdvWorld(t)
+		w.offline = offlineFailure("O2.images", operability.CauseBuild)
+		agent := &deployerAgent{}
+		result, err := w.runWith(t, agent)
+		if err != nil || result.Hold != lifecycle.HoldDeployer || len(agent.requests) == 0 || len(result.PrunedImages) != 0 {
+			t.Fatalf("result = %+v, err = %v", result, err)
+		}
+	})
+}
+
 // A deployer-owned hold the apply discovers (the API server refuses an
 // immutable change; nothing of the phase was applied) goes through the same
 // dispatcher as an offline one: one deployer task with the hold as its

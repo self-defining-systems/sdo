@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -240,6 +241,9 @@ type AdvanceResult struct {
 	// Upstream is the materialized upstream commit (empty before step 1).
 	Upstream string
 	Hold     HoldReason
+	// PrunedImages are the repository-form image declarations the advance
+	// dropped from the plan because the release no longer uses them.
+	PrunedImages []string
 	// Cause, Owner and Items say why the revision is held in the operability
 	// vocabulary (the persisted reason starts with them): the cause, who must
 	// act on it in an advance (operability.RouteIn ModeAdvance) and the items
@@ -468,6 +472,9 @@ type screening struct {
 	result       AdvanceResult
 	shapeChanged bool
 	checks       []operability.Check
+	// unused are the plan's repository-form image declarations no rendered
+	// container uses (offline checks only).
+	unused []string
 }
 
 // screen runs everything an advance decides before the cluster is touched:
@@ -482,12 +489,13 @@ func (a Advancer) screen(ctx context.Context, cfg AdvanceConfig, id, prev string
 	if shapeChanged && a.Designer == nil {
 		return screening{result: held(result, HoldShapeChange, "desired-state shape changed and no detection designer is configured to refresh the detectors")}, nil
 	}
-	checks, decision, err := a.offlineChecks(ctx, cfg, proposal, plan)
+	offline, decision, err := a.offlineChecks(ctx, cfg, proposal, plan)
 	if err != nil {
 		return screening{result: result}, err
 	}
+	checks := offline.Checks
 	if decision.Kind != operability.Accepted {
-		return screening{result: heldBy(result, holdForCause(decision.Cause), decision)}, nil
+		return screening{result: heldBy(result, holdForCause(decision.Cause), decision), unused: offline.UnusedImages}, nil
 	}
 	// The broker's publication validation, before anything is applied: a
 	// rejection here is a hold with no cluster effect.
@@ -528,6 +536,15 @@ func (a Advancer) advanceWithCorrections(ctx context.Context, cfg AdvanceConfig,
 				return screen.result, false, err
 			}
 			current, shapeChanged = screen.result, screen.shapeChanged
+			if pruned, ok, err := a.dropUnusedImages(ctx, id, plan, screen); err != nil {
+				return current, shapeChanged, err
+			} else if ok {
+				// Go's own correction of the plan: the release stopped using
+				// these repositories and the declarations named nothing else.
+				candidate, plan, result.PrunedImages = pruned.candidate, pruned.plan, append(result.PrunedImages, pruned.images...)
+				attempt--
+				continue
+			}
 			if current.Outcome != AdvanceHeld {
 				current, err = a.deployAndAccept(ctx, cfg, screen.result, proposal, candidate, plan, prev, screen.checks, published)
 				if err != nil || current.Outcome != AdvanceHeld {
@@ -572,6 +589,42 @@ func (a Advancer) advanceWithCorrections(ctx context.Context, cfg AdvanceConfig,
 		}
 		candidate, plan = next, proposed
 	}
+}
+
+type prunedPlan struct {
+	candidate string
+	plan      *contracts.DeploymentPlan
+	images    []string
+}
+
+// dropUnusedImages is Go's deterministic answer to an image declaration no
+// rendered container uses after an advance: a release that stops using an
+// image repository leaves behind the repository-form declaration Go proposed
+// from the earlier render. It names nothing and carries no intent, so the
+// advance commits the plan without it (a deployer-actor correction commit, the
+// same record an agent's correction leaves) and screens again; no agent turn.
+// Declarations with a tag or digest are an author's explicit statement and stay
+// a hold. ok is false when nothing is dropped, or the broker refuses the plan
+// (the hold then stands as it was).
+func (a Advancer) dropUnusedImages(ctx context.Context, id string, plan *contracts.DeploymentPlan, screen screening) (prunedPlan, bool, error) {
+	if screen.result.Outcome != AdvanceHeld || len(screen.unused) == 0 {
+		return prunedPlan{}, false, nil
+	}
+	next := proto.Clone(plan).(*contracts.DeploymentPlan)
+	next.Images = slices.DeleteFunc(next.Images, func(image *contracts.ImageSource) bool {
+		return slices.Contains(screen.unused, image.GetImage())
+	})
+	if len(next.Images) == len(plan.GetImages()) {
+		return prunedPlan{}, false, nil
+	}
+	candidate, rejection, err := a.Broker.CorrectAdvance(ctx, id, next)
+	if err != nil {
+		return prunedPlan{}, false, fmt.Errorf("drop unused image declarations: %w", err)
+	}
+	if rejection != "" {
+		return prunedPlan{}, false, nil
+	}
+	return prunedPlan{candidate: candidate, plan: next, images: slices.Clone(screen.unused)}, true, nil
 }
 
 // impact renders the accepted HEAD and the candidate with the same source.
@@ -653,13 +706,14 @@ func patchHold(err error) (HoldReason, string, []string, bool) {
 // cluster effect. A Readiness verifier that cannot check offline contributes
 // no checks. An infrastructure cause is retried within the bounded window and
 // ends as an error (the follower retries the revision).
-func (a Advancer) offlineChecks(ctx context.Context, cfg AdvanceConfig, proposal broker.Proposal, plan *contracts.DeploymentPlan) ([]operability.Check, operability.Decision, error) {
+func (a Advancer) offlineChecks(ctx context.Context, cfg AdvanceConfig, proposal broker.Proposal, plan *contracts.DeploymentPlan) (OfflineChecks, operability.Decision, error) {
 	checker, ok := a.Readiness.(OfflineChecker)
 	if !ok {
-		return nil, operability.Decision{Kind: operability.Accepted}, nil
+		return OfflineChecks{}, operability.Decision{Kind: operability.Accepted}, nil
 	}
 	steps := Coordinator{Wait: a.Wait}
 	var checks []operability.Check
+	var unused []string
 	var decision operability.Decision
 	err := steps.retryInfrastructure(ctx, advanceBounds(cfg), "offline operability checks", func() error {
 		offline, err := checker.CheckOffline(ctx, proposal.Path, plan)
@@ -670,7 +724,7 @@ func (a Advancer) offlineChecks(ctx context.Context, cfg AdvanceConfig, proposal
 			AcceptedCommit: proposal.BaseCommit, BaseTree: offline.BaseTree, EffectiveTree: offline.EffectiveTree,
 			PatchesDigest: offline.PatchesDigest, RenderDigest: offline.RenderDigest, EnvDigest: offline.EnvDigest,
 		}
-		checks = offline.Checks
+		checks, unused = offline.Checks, offline.UnusedImages
 		// Offline, an advance is judged on its deployment items only; the
 		// live subset adds O4 and the rest of O1, O2 and O6.
 		report, err := operability.New(operability.StageAdvance, subject.WithUnavailable()).With(checks...)
@@ -683,7 +737,7 @@ func (a Advancer) offlineChecks(ctx context.Context, cfg AdvanceConfig, proposal
 		}
 		return nil
 	})
-	return checks, decision, err
+	return OfflineChecks{Checks: checks, UnusedImages: unused}, decision, err
 }
 
 func advanceBounds(cfg AdvanceConfig) Config {

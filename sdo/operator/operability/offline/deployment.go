@@ -66,6 +66,9 @@ type Deployment struct {
 type Result struct {
 	Checks []operability.Check
 	Set    rendered.DesiredSet
+	// UnusedImages are the plan's repository-form image declarations that no
+	// rendered container uses (see imagesrc.UnusedRepositories).
+	UnusedImages []string
 }
 
 // CheckDeployment runs the cheap-first offline deployment checks. A patch or
@@ -120,6 +123,7 @@ func CheckDeployment(ctx context.Context, d Deployment) Result {
 	}
 
 	add(images(first, d.Declared))
+	res.UnusedImages = imagesrc.UnusedRepositories(rendered.ImageSites(first), d.Declared)
 	for _, c := range CheckPolicy(first, d.Policy) {
 		add(c)
 	}

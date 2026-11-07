@@ -52,3 +52,17 @@ func TestSafeCheckoutPath(t *testing.T) {
 		t.Errorf("missing path error = %v, want fs.ErrNotExist", err)
 	}
 }
+
+// A release that stops using a repository leaves only repository-form
+// declarations (the form Go proposes) reported as unused; an exact tag or
+// digest is an author's statement and is never reported.
+func TestUnusedRepositoriesReportsOnlyRepositoryForm(t *testing.T) {
+	declared := []Declared{
+		{Image: "reg.example/kept"}, {Image: "reg.example/gone"},
+		{Image: "reg.example/exact:1"}, {Image: "reg.example/pinned@sha256:" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+	}
+	got := UnusedRepositories([]string{"reg.example/kept:2"}, declared)
+	if len(got) != 1 || got[0] != "reg.example/gone" {
+		t.Fatalf("unused = %v, want [reg.example/gone]", got)
+	}
+}

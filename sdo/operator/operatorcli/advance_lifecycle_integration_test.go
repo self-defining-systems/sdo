@@ -102,6 +102,35 @@ spec:
 	}
 }
 
+// advSidecarChartFiles is advChartFiles whose web Deployment also runs a
+// sidecar container from its own image repository.
+func advSidecarChartFiles(webTag, migrateTag, sidecar string) map[string]string {
+	files := advChartFiles(webTag, migrateTag)
+	files["chart/templates/app.yaml"] = strings.Replace(files["chart/templates/app.yaml"],
+		"          ports: [{containerPort: 8080}]\n",
+		"          ports: [{containerPort: 8080}]\n        - name: sidecar\n          image: registry.synthetic.invalid/"+sidecar+":{{ .Values.webTag }}\n", 1)
+	return files
+}
+
+// An upstream release that stops using an image repository (its sidecar moved
+// to another repository) leaves the repository-form declaration Go proposed for it naming
+// nothing. Go drops it from the plan and records it; the advance is accepted
+// with zero agent tasks instead of holding with cause=build owner=deployer.
+func TestAdvanceDropsTheDeclarationOfAnImageRepositoryTheReleaseStoppedUsing(t *testing.T) {
+	advanceImageOnly(t, advSidecarChartFiles("1", "1", "reload"), advSidecarChartFiles("2", "2", "watcher"), func(t *testing.T, _ *advCluster, _ *contracts.DeploymentSource, root, accepted string) {
+		plan, err := os.ReadFile(filepath.Join(root, ".sdo", "deployment", "plan.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(plan), "reload") || !strings.Contains(string(plan), "registry.synthetic.invalid/web") {
+			t.Errorf("accepted plan should declare web and migrate but not the dropped reload repository:\n%s", plan)
+		}
+		if body := testutil.Git(t, root, "log", "-1", "--format=%B", accepted); !strings.Contains(body, "SDO-Advance-Correction") {
+			t.Errorf("the accepted advance does not record the plan correction:\n%s", body)
+		}
+	})
+}
+
 func advWrite(t *testing.T, root string, files map[string]string) {
 	t.Helper()
 	for name, content := range files {

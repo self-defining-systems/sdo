@@ -267,6 +267,23 @@ func checkDeclared(images []string, declared []Declared, known func(sourceID str
 	return choice, nil
 }
 
+// UnusedRepositories returns the repository-form declarations (no tag, no
+// digest: the form Go proposes from a render) that no image in images
+// belongs to. A release that stops using an image repository leaves such a
+// declaration behind; it names nothing and carries no intent of its own.
+func UnusedRepositories(images []string, declared []Declared) []string {
+	var unused []string
+	for _, d := range declared {
+		if Repository(d.Image) != d.Image {
+			continue
+		}
+		if !slices.ContainsFunc(images, func(image string) bool { return d.covers(image) }) {
+			unused = append(unused, d.Image)
+		}
+	}
+	return unused
+}
+
 // covers reports whether the declaration names image: exactly, or, when it
 // names a repository (no tag and no digest), any tag or digest of it.
 func (d Declared) covers(image string) bool {
