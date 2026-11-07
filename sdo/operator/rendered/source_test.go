@@ -505,3 +505,43 @@ func TestReadsReturnTheReceiptPinsForTheSameEffectiveTree(t *testing.T) {
 		t.Fatalf("shape digest moved with pins: %q %q (%v %v)", a, b, errA, errB)
 	}
 }
+
+// Hook-phase objects are applied by the deployer but are not desired state:
+// reads of the accepted manifests never return them, and the accepted
+// inventory lists them separately so drift can accept them as optional.
+func TestAcceptedInventoryListsHookObjectsApartFromDesiredOnes(t *testing.T) {
+	object := func(apiVersion, kind, name string) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]any{"apiVersion": apiVersion, "kind": kind, "metadata": map[string]any{"name": name}}}
+	}
+	job := object("batch/v1", "Job", "setup-a1b2c3d")
+	job.Object["spec"] = map[string]any{"template": map[string]any{"spec": map[string]any{"restartPolicy": "Never", "containers": []any{map[string]any{"name": "c", "image": "i:1"}}}}}
+	c := render.NewCatalog()
+	if err := render.Register(c, "toy", render.RendererFunc[*contracts.RawRenderConfig](func(context.Context, render.FS, render.Env, *contracts.RawRenderConfig) (render.Result, error) {
+		return render.Result{Phases: []render.Phase{
+			{Name: "pre-install", Ephemeral: true, Objects: []*unstructured.Unstructured{job, object("v1", "ConfigMap", "setup"), object("v1", "Secret", "setup-token")}},
+			{Name: "main", Objects: []*unstructured.Unstructured{object("v1", "ConfigMap", "app")}},
+		}}, nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+	config, _ := anypb.New(&contracts.RawRenderConfig{})
+	root := commitFiles(t, rendertest.MapFS{"README": "synthetic\n"})
+	rev := strings.TrimSpace(testutil.Git(t, root, "rev-parse", "HEAD"))
+	source := rendered.Source{Repository: root, Deployment: &contracts.DeploymentSource{RendererId: "toy", Config: config}, Catalog: c}
+	for name, source := range map[string]rendered.Source{"uncached": source, "cached": source.WithCache()} {
+		inventory, err := source.AcceptedInventory(context.Background(), rev, "app")
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got := refs(inventory.Objects); !reflect.DeepEqual(got, []string{"ConfigMap/app/app"}) {
+			t.Errorf("%s: desired objects = %v", name, got)
+		}
+		if got := refs(inventory.Hooks); !reflect.DeepEqual(got, []string{"Job/app/setup-a1b2c3d", "ConfigMap/app/setup"}) {
+			t.Errorf("%s: hook objects = %v (Secrets are never listed)", name, got)
+		}
+		manifests, err := source.AcceptedManifests(context.Background(), rev, "app")
+		if err != nil || len(manifests) != 1 {
+			t.Errorf("%s: accepted manifests = %d, %v: hook objects are not desired state", name, len(manifests), err)
+		}
+	}
+}

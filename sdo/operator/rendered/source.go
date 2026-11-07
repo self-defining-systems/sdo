@@ -101,6 +101,29 @@ func (s Source) AcceptedManifests(ctx context.Context, revision, namespace strin
 	return copyManifests(raw), nil
 }
 
+// hookManifests returns the objects the deployer applies in hook phases
+// (not desired state; they may be deleted by their hook policy or replaced by a
+// later revision's generated names).
+func (s Source) hookManifests(ctx context.Context, revision, namespace string) ([]*unstructured.Unstructured, error) {
+	var objects []DesiredObject
+	var err error
+	if s.cache != nil {
+		objects, err = s.cache.read(ctx, s, revision, namespace)
+	} else {
+		objects, err = s.loadManifests(ctx, revision, namespace)
+	}
+	if err != nil {
+		return nil, classifySource(err)
+	}
+	var out []*unstructured.Unstructured
+	for _, object := range objects {
+		if object.Hook && !object.Foreign {
+			out = append(out, object.Object.DeepCopy())
+		}
+	}
+	return out, nil
+}
+
 func (s Source) RawManifests(ctx context.Context, revision, namespace string) ([]*unstructured.Unstructured, error) {
 	objects, err := s.rawManifests(ctx, revision, namespace, false)
 	return copyManifests(objects), err
@@ -128,7 +151,7 @@ func (s Source) rawManifests(ctx context.Context, revision, namespace string, qu
 func readView(objects []DesiredObject, qualified bool) []*unstructured.Unstructured {
 	out := make([]*unstructured.Unstructured, 0, len(objects))
 	for _, object := range objects {
-		if object.Foreign && !qualified {
+		if object.Hook || object.Foreign && !qualified {
 			continue
 		}
 		out = append(out, object.Object)
@@ -156,6 +179,7 @@ func (s Source) loadManifests(ctx context.Context, revision, namespace string) (
 		return nil, err
 	}
 	objects := set.Objects()
+	hooks := set.Hooks()
 	pins, err := s.pinsFor(ctx, effective)
 	if err != nil {
 		return nil, err
@@ -170,7 +194,9 @@ func (s Source) loadManifests(ctx context.Context, revision, namespace string) (
 			objects[i].Object = &unstructured.Unstructured{Object: render.SecretIdentity(object.Object.Object)}
 		}
 	}
-	return objects, nil
+	// Hook objects follow the desired ones; every read view drops them except
+	// hookManifests.
+	return append(objects, hooks...), nil
 }
 
 // ShapeDigest returns the desired-state shape digest of revision (see

@@ -43,8 +43,7 @@ func (c *Controller) prepareSourceInventory(ctx context.Context) error {
 		}
 		return nil
 	}
-	index := NewSourceInventory(c.config.Namespace, revision, inventory.Objects)
-	index.EvidenceGaps = append(index.EvidenceGaps, inventory.EvidenceGaps...)
+	index := NewSourceInventoryFrom(c.config.Namespace, revision, inventory)
 	c.mu.Lock()
 	acknowledgement := cloneNamespaceOnboarding(c.namespaceOnboarding)
 	environment := cloneNamespaceOnboarding(c.installEnvironment)

@@ -28,6 +28,30 @@ type SourceInventory struct {
 	EvidenceGaps        []rendered.InventoryEvidenceGap
 	declared            map[sdk.ObjectRef]*unstructured.Unstructured
 	dependencies        map[sdk.ObjectRef]bool
+	// hooks are objects the deployer applied in hook phases for this revision.
+	// They are accepted (never "absent from accepted source") but optional: a
+	// hook delete policy or a later revision's generated names may remove them.
+	hooks map[sdk.ObjectRef]bool
+}
+
+// NewSourceInventoryFrom indexes an accepted inventory, hook objects included.
+func NewSourceInventoryFrom(namespace, revision string, inventory rendered.Inventory) *SourceInventory {
+	index := NewSourceInventory(namespace, revision, inventory.Objects)
+	index.EvidenceGaps = append(index.EvidenceGaps, inventory.EvidenceGaps...)
+	index.hooks = map[sdk.ObjectRef]bool{}
+	for _, object := range inventory.Hooks {
+		if object == nil || strings.EqualFold(object.GetKind(), "Secret") {
+			continue
+		}
+		object = object.DeepCopy()
+		if inventoryClusterKind(object.GetKind()) {
+			object.SetNamespace("")
+		} else if object.GetNamespace() == "" {
+			object.SetNamespace(namespace)
+		}
+		index.hooks[inventoryRef(object)] = true
+	}
+	return index
 }
 
 func NewSourceInventory(namespace, revision string, objects []*unstructured.Unstructured) *SourceInventory {
@@ -142,7 +166,7 @@ func (s *SourceInventory) findingsWithOwnership(objects, ownership []*unstructur
 		visited[ref] = true
 		for _, owner := range o.GetOwnerReferences() {
 			parent := sdk.ObjectRef{APIVersion: owner.APIVersion, Kind: owner.Kind, Namespace: o.GetNamespace(), Name: owner.Name}
-			if declared := s.declared[parent]; declared != nil || s.dependencies[parent] {
+			if declared := s.declared[parent]; declared != nil || s.dependencies[parent] || s.hooks[parent] {
 				return true
 			}
 			if ancestor := observed[parent]; ancestor != nil && (inventoryOwned(ancestor) || generated(ancestor, visited) || (ancestor.GetUID() == owner.UID && s.environmentMatches(ancestor))) {
@@ -163,6 +187,9 @@ func (s *SourceInventory) findingsWithOwnership(objects, ownership []*unstructur
 			continue
 		}
 		declared := s.declared[ref]
+		if declared == nil && s.hooks[ref] {
+			continue
+		}
 		// Inherited identity cannot override explicit accepted-source obligations.
 		if declared == nil && !s.dependencies[ref] && generated(o, map[sdk.ObjectRef]bool{}) {
 			continue
