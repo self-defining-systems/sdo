@@ -191,13 +191,29 @@ func (s *run) checkChangedSource(rel string) error {
 	return nil
 }
 
-func (s *run) checkSecret(rel string) {
+// secretPathPart names the component that makes a path credential-bearing.
+// The rule polices what agents write into operational memory, so it covers
+// memory paths only: upstream application source (a chart's templates dir may
+// be called shared-secrets) is not authored by agents here. Deployment files
+// are memory too but hold imported application inputs; Secret values in them
+// are caught by content (memory.secret-data), not by name.
+func secretPathPart(rel string) (string, bool) {
+	if !layout.IsMemoryPath(rel) {
+		return "", false
+	}
+	nameIsPolicy := !strings.HasPrefix(rel, layout.DeploymentDir+"/")
 	for _, part := range strings.Split(rel, "/") {
 		lower := strings.ToLower(part)
-		if lower == ".git" || lower == ".env" || strings.Contains(lower, "secret") {
-			s.add(Structural, Diagnostic{Rule: RuleSecretPath, Path: rel, Message: fmt.Sprintf("secret-bearing path component %q", part), Hint: "never commit credentials or Git metadata"})
-			return
+		if lower == ".git" || lower == ".env" || (nameIsPolicy && strings.Contains(lower, "secret")) {
+			return part, true
 		}
+	}
+	return "", false
+}
+
+func (s *run) checkSecret(rel string) {
+	if part, ok := secretPathPart(rel); ok {
+		s.add(Structural, Diagnostic{Rule: RuleSecretPath, Path: rel, Message: fmt.Sprintf("secret-bearing path component %q", part), Hint: "never commit credentials or Git metadata in operational memory"})
 	}
 }
 

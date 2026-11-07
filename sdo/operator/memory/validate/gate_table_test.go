@@ -549,6 +549,14 @@ var gateRows = []gateRow{
 		request: func(r *Request) {
 			r.Publication = &PublicationContext{BaseCommit: "HEAD", IncidentID: "advance-0123456789ab", VerifiedSourceTree: strings.Repeat("a", 40)}
 		}},
+	{name: "upstream chart templates under a secrets-named directory advance", kind: gateCheck, actor: Upstream, phase: AdvancePhase,
+		request: func(r *Request) {
+			r.Publication = &PublicationContext{BaseCommit: "HEAD", IncidentID: "advance-0123456789ab", VerifiedSourceTree: strings.Repeat("a", 40)}
+		},
+		edit: func(t *testing.T, r string) {
+			write(t, r, "chart/templates/shared-secrets/job.yaml", "kind: Job\nmetadata:\n  name: {{ .Release.Name }}-secrets\n")
+			write(t, r, "chart/templates/_checkConfig_shared_secrets.tpl", "{{- define \"check\" -}}{{- end -}}\n")
+		}},
 	{name: "verified upstream advance may be empty", kind: gateCheck, actor: Upstream, phase: AdvancePhase,
 		request: func(r *Request) {
 			r.Publication = &PublicationContext{BaseCommit: "HEAD", IncidentID: "advance-0123456789ab", VerifiedSourceTree: strings.Repeat("a", 40)}
