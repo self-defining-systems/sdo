@@ -219,10 +219,11 @@ func TestRedisNeverRecordsCredentials(t *testing.T) {
 
 func TestRedisReadCommandIsBoundedAndValueFree(t *testing.T) {
 	argv := redisAdapter(t).ReadCommand(storestate.Endpoint{Port: 6380})
-	if len(argv) != 3 || argv[0] != "sh" || argv[1] != "-c" {
+	// sh -c <credential prelude> $0 <engine script>
+	if len(argv) != 5 || argv[0] != "sh" || argv[1] != "-c" {
 		t.Fatalf("argv = %q", argv)
 	}
-	script := argv[2]
+	script := argv[4]
 	if len(script) > 1024 {
 		t.Fatalf("script is %d bytes", len(script))
 	}

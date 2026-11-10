@@ -15,23 +15,74 @@ import (
 // PodReadBaseline holds the complete pod readings of the controller's last
 // promoted healthy baseline, per query. The snapshot carries them with each
 // current result (podread.Result.Baseline), so a store-state detector diffs
-// against the healthy store without a designer writing its baseline. It is
-// controller state: never written to operational memory, and the healthy
-// replay capture records it with the readings of the promoted moment. One
+// against the healthy store without a designer writing its baseline. One
 // holder serves every memory-host swap; a query whose declaration changed gets
 // no baseline until the next promotion.
+//
+// Promotion settles in every mode: the readings at the start of a healthy
+// stretch become the reference only once the stretch has lasted Settle
+// (DefaultStateSettle, the configuration baseline's settle), so neither the
+// first clear evaluation nor a fault still below its firing threshold is
+// absorbed. A store-state read with a refusal is never promoted
+// (storestate.UsableAsBaseline).
+//
+// The holder is in-memory controller state, never written to operational
+// memory or persisted elsewhere: a restarted controller starts empty, its
+// Go-installed store readers report their stores as coverage gaps instead of
+// judging them, and the reference is captured again once health has settled
+// for Settle after the restart. Persisting it would add a store whose
+// readings could outlive the deployment they describe; re-capturing after a
+// settle needs no new state and has the same guard against absorbing a fault
+// as the first capture.
 type PodReadBaseline struct {
 	mu      sync.RWMutex
 	results map[string]podread.Result
+	// settle is how long health must last before the readings at the start
+	// of the stretch are promoted.
+	settle      time.Duration
+	candidateAt time.Time
+	candidate   map[string]podread.Result
 }
 
-// NewPodReadBaseline returns an empty holder.
-func NewPodReadBaseline() *PodReadBaseline {
-	return &PodReadBaseline{results: map[string]podread.Result{}}
+// NewPodReadBaseline returns an empty holder whose promotions settle for
+// settle (DefaultStateSettle when not positive).
+func NewPodReadBaseline(settle time.Duration) *PodReadBaseline {
+	if settle <= 0 {
+		settle = DefaultStateSettle
+	}
+	return &PodReadBaseline{results: map[string]podread.Result{}, settle: settle}
+}
+
+// Observe records one evaluation. A healthy one starts a candidate with its
+// readings, or promotes the candidate once it has stayed healthy for the
+// settle period and starts the next; an unhealthy one discards the candidate.
+func (b *PodReadBaseline) Observe(now time.Time, healthy bool, results map[string]podread.Result) {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	if !healthy {
+		b.candidate, b.candidateAt = nil, time.Time{}
+		b.mu.Unlock()
+		return
+	}
+	var settled map[string]podread.Result
+	switch {
+	case b.candidate == nil:
+		b.candidate, b.candidateAt = maps.Clone(results), now
+	case now.Sub(b.candidateAt) >= b.settle:
+		settled = b.candidate
+		b.candidate, b.candidateAt = maps.Clone(results), now
+	}
+	b.mu.Unlock()
+	if settled != nil {
+		b.Promote(settled)
+	}
 }
 
 // Promote replaces each query's reference with its complete readings. A query
-// with no complete reading keeps its earlier reference.
+// with no complete reading, or a store-state read that cannot be a healthy
+// reference, keeps its earlier reference.
 func (b *PodReadBaseline) Promote(results map[string]podread.Result) {
 	if b == nil {
 		return
@@ -39,7 +90,7 @@ func (b *PodReadBaseline) Promote(results map[string]podread.Result) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for id, result := range results {
-		if result.Error != "" {
+		if result.Error != "" || storestate.UsableAsBaseline(id, result) != nil {
 			continue
 		}
 		complete := slices.DeleteFunc(slices.Clone(result.Readings), func(r podread.Reading) bool {
@@ -70,42 +121,18 @@ func (b *PodReadBaseline) attach(results map[string]podread.Result) {
 	}
 }
 
-// promotePodReadBaseline follows the configuration baseline's boundaries, as
-// the healthy replay capture does: the pod readings of a clear candidate moment
-// are recorded at the start of its settle and promoted only with that
-// candidate, so a fault that is still below its firing threshold is never
-// absorbed. Without boundaries every clear evaluation is promoted.
+// promotePodReadBaseline feeds each complete evaluation to the pod-read
+// baseline, whose own settle decides promotion whether or not the
+// configuration baseline runs.
 func (c *Controller) promotePodReadBaseline(now time.Time, snapshot sdk.DetectionContext, healthy bool) {
-	if c.PodReadBaseline == nil || !healthy {
+	if c.PodReadBaseline == nil {
 		return
 	}
-	set, ok := snapshot.(podread.ResultSet)
-	if !ok {
-		return
+	var results map[string]podread.Result
+	if set, ok := snapshot.(podread.ResultSet); ok {
+		results = set.PodReadResults()
 	}
-	now = now.UTC()
-	boundaries, bounded := c.Baseline.(healthyBaselineBoundaries)
-	if !bounded {
-		c.PodReadBaseline.Promote(set.PodReadResults())
-		return
-	}
-	baselineAt, candidateAt := boundaries.BaselineAt(), boundaries.BaselineCandidateAt()
-	if baselineAt.IsZero() {
-		return
-	}
-	if c.podReadCandidates == nil {
-		c.podReadCandidates = map[time.Time]map[string]podread.Result{}
-	}
-	if baselineAt.Equal(now) || candidateAt.Equal(now) {
-		c.podReadCandidates[now] = set.PodReadResults()
-	}
-	if results, ok := c.podReadCandidates[baselineAt]; ok && !c.podReadPromotedAt.Equal(baselineAt) {
-		c.PodReadBaseline.Promote(results)
-		c.podReadPromotedAt = baselineAt
-	}
-	maps.DeleteFunc(c.podReadCandidates, func(at time.Time, _ map[string]podread.Result) bool {
-		return !at.Equal(baselineAt) && !at.Equal(candidateAt)
-	})
+	c.PodReadBaseline.Observe(now.UTC(), healthy, results)
 }
 
 // StoreStateChangeKind is the StateChange kind of one store Pod's items that

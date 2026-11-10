@@ -48,7 +48,9 @@ func TestPrepareHealthInstallsStoreStateFromTheMap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"StatefulSet/kv"`, `storestate.Engine("redis")`, `"kv",`, "lifecycle-bootstrap"} {
+	// Go's reader treats a store it never read healthy as a coverage gap, so
+	// an unobservable store never stalls acceptance or recovery.
+	for _, want := range []string{`"StatefulSet/kv"`, `storestate.Engine("redis")`, `"kv",`, "lifecycle-bootstrap", "GapWithoutBaseline: true"} {
 		if !strings.Contains(string(source), want) {
 			t.Errorf("generated source lacks %s:\n%s", want, source)
 		}

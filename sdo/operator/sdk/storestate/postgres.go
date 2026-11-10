@@ -28,13 +28,13 @@ var postgresSectionKinds = map[string][]ItemKind{
 // unread.
 var postgresRowLimits = map[string]int{"dbsettings": 33, "roles": 25, "databases": 17}
 
-// postgresScript runs psql over the container's own socket as the image's
-// configured user, so local trust applies; the image's password, when set,
-// reaches psql through the environment and is never printed. The queries
-// arrive as positional arguments ($5 onwards is the catalog query, split).
-// The catalog is read in each database that accepts connections and cut at
-// the output budget with a "== more" marker.
-const postgresScript = `U=${POSTGRES_USER:-postgres};D=${POSTGRES_DB:-$U};T=$(printf '\t');export PGPASSWORD="${POSTGRES_PASSWORD:-}" PGCONNECT_TIMEOUT=2
+// postgresScript runs psql over the container's own socket as the user the
+// credential prelude found ($U, else postgres), so local trust applies; the
+// password it found ($P) reaches psql through the environment and is never
+// printed. The queries arrive as positional arguments ($5 onwards is the
+// catalog query, split). The catalog is read in each database that accepts
+// connections and cut at the output budget with a "== more" marker.
+const postgresScript = `U=${U:-postgres};D=${POSTGRES_DB:-${POSTGRESQL_DATABASE:-${PGDATABASE:-$U}}};T=$(printf '\t');export PGPASSWORD="$P" PGCONNECT_TIMEOUT=2
 q(){ psql -X -q -At -F "$T" -p %d -U "$U" -d "$1" -c "$2" 2>&1|tr -d '\r'|head -n 100;}
 h=$(echo '== server';q "$D" "$1";echo '== dbsettings';q "$D" "$2";echo '== roles';q "$D" "$3";echo '== databases';q "$D" "$4")
 printf '%%s\n' "$h";c="$5$6$7$8$9";psql -X -q -At -p %d -U "$U" -d "$D" -c "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY 1 LIMIT 8" 2>/dev/null|while IFS= read -r d;do echo "== catalog $d";q "$d" "$c";done|awk -v b=$((3900-${#h})) '{n+=length($0)+1;if(n>b){print "== more";exit}print}'
@@ -68,9 +68,8 @@ func (postgresAdapter) Engine() Engine   { return EnginePostgres }
 func (postgresAdapter) DefaultPort() int { return 5432 }
 
 func (postgresAdapter) ReadCommand(e Endpoint) []string {
-	argv := []string{"sh", "-c", fmt.Sprintf(postgresScript, e.Port, e.Port), "sdo-store-read"}
-	argv = append(argv, postgresQueries...)
-	return append(argv, chunk(postgresCatalog, readChunkBytes)...)
+	args := append(append([]string{}, postgresQueries...), chunk(postgresCatalog, readChunkBytes)...)
+	return readCommand([]string{"POSTGRES", "POSTGRESQL", "PG"}, fmt.Sprintf(postgresScript, e.Port, e.Port), args...)
 }
 
 // postgresRefusal classifies a section whose first line is psql's or the

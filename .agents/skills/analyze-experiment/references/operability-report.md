@@ -8,7 +8,7 @@ by each reader, so a stored claim never accepts anything.
 |---|---|---|
 | O1 | patches apply, render deterministically, deploy, ready, served APIs | `O1.patches`, `O1.render`, `O1.deterministic`, `O1.deploy`, `O1.ready`, `O1.apis` (rendered kinds served by the recorded discovery; skipped when none was recorded or an earlier check failed) |
 | O2 | every live object attributable to accepted source | `O2.images`, `O2.stamps`, `O2.pins`, `O2.inputs`, `O2.resources` |
-| O3, O5 | detection coverage and bound sources; memory consistent | coverage and memory-validation findings |
+| O3, O5 | detection coverage and bound sources; memory consistent | coverage and memory-validation findings; `O3.detector-coverage` (note, never a gate): detectors that evaluated clear but named what they could not observe, such as a Go-installed `store-state-<component>` reader whose store was never read healthy (no CLI, credentials not exposed, read refused) |
 | O4 | health detectors clear, probes pass under synthetic traffic | `O4.detectors` |
 | O6 | scope, allowlist, ownership, budget | `O6.scope`, `O6.allowlist`, `O6.budget` |
 

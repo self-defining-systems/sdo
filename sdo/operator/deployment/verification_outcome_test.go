@@ -23,6 +23,24 @@ func TestDecodeHealthVerdictKeepsPendingDetectorAndReason(t *testing.T) {
 	}
 }
 
+// A detector that evaluated clear but said what it could not observe (a store
+// Go reads but never read healthy) is a coverage note: the verdict stays
+// clear and the note travels beside the detector states that hold it.
+func TestDecodeHealthVerdictKeepsCoverageNotesOfClearDetectors(t *testing.T) {
+	stdout := []byte(`{"findings":[],"status":"clear","detector_states":[{"DetectorID":"store-state-kv","Status":"clear","Reason":"store kv (redis) not observed until it is read healthy once: Pod kv-0 refuses info auth-required"}]}`)
+	evaluation, err := decodeHealthVerdict(stdout, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verdict := verdictOf(evaluation)
+	if verdict.Outcome != lifecycle.VerificationClear || len(verdict.Detectors) != 0 {
+		t.Fatalf("verdict = %+v", verdict)
+	}
+	if len(verdict.CoverageNotes) != 1 || verdict.CoverageNotes[0].DetectorID != "store-state-kv" || !strings.Contains(verdict.CoverageNotes[0].Reason, "auth-required") {
+		t.Fatalf("coverage notes = %+v", verdict.CoverageNotes)
+	}
+}
+
 func TestDecodeHealthVerdictKeepsActiveFindingDetail(t *testing.T) {
 	stdout := []byte(`{"findings":[{"detector_id":"frontend-available","rule_id":"r","status":"active","summary":"frontend has 0 ready replicas","evidence":"ready=0/1"}],"status":"firing"}`)
 	evaluation, err := decodeHealthVerdict(stdout, nil)

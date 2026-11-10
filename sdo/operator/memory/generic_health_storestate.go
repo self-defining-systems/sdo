@@ -73,7 +73,7 @@ func plannedStoreStateDetectors(root string) []plannedDetector {
 		config := storestate.Config{
 			Spec:      sdk.DetectorSpec{ID: id, Interval: storeStateInterval},
 			Component: component.Name, Engine: storestate.Engine(component.Data.Engine),
-			Target: podread.Target{Workload: component.Workload}, ReadInterval: storeStateInterval,
+			Target: podread.Target{Workload: component.Workload}, ReadInterval: storeStateInterval, GapWithoutBaseline: true,
 		}
 		// The generated constructor cannot fail on a config that passes here.
 		if _, err := storestate.NewDetector(config); err != nil {
@@ -109,7 +109,8 @@ import (
 )
 
 // New reads the store's value-free facts and compares them with the
-// controller's promoted healthy readings.
+// controller's promoted healthy readings. A store never read healthy is a
+// coverage gap, not a finding.
 func New() sdk.Detector {
 	d, err := storestate.NewDetector(storestate.Config{
 		Spec: sdk.DetectorSpec{
@@ -121,6 +122,7 @@ func New() sdk.Detector {
 		Engine: storestate.Engine(%q),
 		Target: podread.Target{Workload: %q},
 		ReadInterval: %d * time.Second,
+		GapWithoutBaseline: true,
 	})
 	if err != nil {
 		panic(err)

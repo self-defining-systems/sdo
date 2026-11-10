@@ -23,14 +23,12 @@ var mongoSectionKinds = map[string][]ItemKind{
 }
 
 // mongoScript runs the shell the image carries (the legacy mongo shell, which
-// starts faster, or mongosh) against the store's own port. The root user of
-// the official or the common packaged image is used when its environment
-// names one; the password is passed to the shell and never printed. The
-// JavaScript arrives split across the positional arguments.
+// starts faster, or mongosh) against the store's own port. When the
+// credential prelude found a password ($P), it authenticates against admin as
+// the paired user ($U, else root); the password is passed to the shell and
+// never printed. The JavaScript arrives split across the positional arguments.
 const mongoScript = `set -- --quiet --port %d --eval "$1$2$3$4$5$6$7$8$9"
-u=${MONGO_INITDB_ROOT_USERNAME:-};p=${MONGO_INITDB_ROOT_PASSWORD:-}
-[ -n "${MONGODB_ROOT_PASSWORD:-}" ]&&u=${MONGODB_ROOT_USER:-root}&&p=$MONGODB_ROOT_PASSWORD
-[ -n "$u" ]&&set -- "$@" -u "$u" -p "$p" --authenticationDatabase admin
+[ -n "$P" ]&&set -- "$@" -u "${U:-root}" -p "$P" --authenticationDatabase admin
 m=mongosh;command -v mongo >/dev/null 2>&1&&m=mongo
 $m "$@" 2>&1
 `
@@ -62,7 +60,7 @@ func (mongoAdapter) Engine() Engine   { return EngineMongoDB }
 func (mongoAdapter) DefaultPort() int { return 27017 }
 
 func (mongoAdapter) ReadCommand(e Endpoint) []string {
-	return append([]string{"sh", "-c", fmt.Sprintf(mongoScript, e.Port), "sdo-store-read"}, chunk(mongoRead, readChunkBytes)...)
+	return readCommand([]string{"MONGO", "MONGODB"}, fmt.Sprintf(mongoScript, e.Port), chunk(mongoRead, readChunkBytes)...)
 }
 
 // readChunkBytes keeps each argument of a split read within the pod-read

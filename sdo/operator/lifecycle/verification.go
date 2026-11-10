@@ -47,6 +47,10 @@ type HealthVerdict struct {
 	Outcome   VerificationOutcome
 	Summary   string
 	Detectors []DetectorState
+	// CoverageNotes are detectors that evaluated clear but named what they
+	// could not observe (a store Go reads but never read healthy). They never
+	// hold the verdict; the operability report records them under O3.
+	CoverageNotes []DetectorState
 }
 
 // Feedback words the verdict, with each detector's state, for a reader that

@@ -103,6 +103,25 @@ func failing(checks []operability.Check) bool {
 // authored is detector_fault first. A failing verdict that names no firing
 // detector cannot be attributed to the designer, so it is the application's.
 func verdictChecks(verdict HealthVerdict) []operability.Check {
+	return append(detectorVerdictChecks(verdict), coverageNoteChecks(verdict.CoverageNotes)...)
+}
+
+// coverageNoteChecks records the detectors that cleared without observing part
+// of their scope as one O3 note: a coverage gap the report shows and no reader
+// acts on.
+func coverageNoteChecks(notes []DetectorState) []operability.Check {
+	if len(notes) == 0 {
+		return nil
+	}
+	parts := make([]string, 0, len(notes))
+	for _, note := range notes {
+		parts = append(parts, note.DetectorID+": "+note.Reason)
+	}
+	slices.Sort(parts)
+	return []operability.Check{{ID: "O3.detector-coverage", Phase: operability.PhaseLive, Status: operability.StatusNote, Detail: operability.Clip(strings.Join(parts, "; "))}}
+}
+
+func detectorVerdictChecks(verdict HealthVerdict) []operability.Check {
 	const id = "O4.detectors"
 	live := func(status operability.Status, cause operability.Cause, detail string, paths []string) operability.Check {
 		return operability.Check{ID: id, Phase: operability.PhaseLive, Status: status, Cause: cause, Detail: operability.Clip(detail), Paths: paths}
