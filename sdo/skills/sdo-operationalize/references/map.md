@@ -54,7 +54,7 @@ Rules the memory check enforces:
   from the first through edges inside the path.
 - `data.engine` is one of postgres, mysql, mongodb, redis, memcached, consul, other. `data.role` is
   `authoritative` (no `derived_from`) or `derived`: `derived_from` lists authoritative components, and a derived
-  component has `holds_data: false`. For an engine SDO can read (redis today), Go installs a
+  component has `holds_data: false`. For an engine SDO can read (all but other), Go installs a
   `store-state-<component>` health detector on the component's workload; do not author another.
 - `evidence` is a non-empty subset of `[config, manifest, observed]`: `config` is the application source or its
   config files, `manifest` the rendered manifests (an env value, a ConfigMap entry, an image, a volume), `observed`
@@ -70,3 +70,13 @@ Rules the memory check enforces:
   every data-holding component on a writing operation's path is on a read-later probe's path. An operation broken
   in the application as deployed is covered by a probe whose workload scenario is declared `knownBroken`
   (`knownBroken: {reason: <one line>, failsWith: ["404"]}`); at most half of the operations may be.
+
+## Seeded map
+
+When the architecture has no map, Go seeds one from the rendered manifests, all with evidence `manifest`: one
+component per workload, store roles by well-known image (`holds_data` from the engine or persistent volumes), edges
+from env values and ConfigMap entries that name a Service address, and no operations or probes. The entry
+candidates above the map list exposed or uncalled Services with the workload's health endpoints. Start from the seed:
+drop components that are not part of the app, fix roles and edges, add the operations and probes. With source,
+confirm each entry against it. Without source, use the manifests, what you know of well-known software and the live
+application (routes, connections, logs): keep `manifest` or `observed` evidence and never claim `config`.

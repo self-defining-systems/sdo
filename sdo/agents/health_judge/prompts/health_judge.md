@@ -3,7 +3,7 @@ This is one fresh authoring session in an isolated proposal checkout.
 Accepted source and developer changes express intent. Operational memory is fallible advice.
 Recovery requires evidence from the intended application behavior.
 Optional human-owned goal: ${health_objective}
-Architecture (Go manifest inventory, then the application map if one exists):
+Architecture (Go manifest inventory, then the application map, seeded by Go from the manifests if no one wrote one):
 ${architecture}
 Resources: ${resources}
 Validation feedback: ${feedback}

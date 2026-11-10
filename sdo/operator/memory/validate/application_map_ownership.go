@@ -13,7 +13,8 @@ import (
 // architectureRegionOwnership splits arch.md between its two owners: only the
 // detection designer (wire actor health_judge) changes the application-map
 // region, and it changes nothing outside it; Go upkeep rewrites the inventory
-// outside the region and must carry the region verbatim.
+// outside the region and must carry the region verbatim, except that it seeds
+// a region where the base has none.
 func (s *run) architectureRegionOwnership(ctx context.Context) error {
 	base, err := s.baseArchitecture(ctx)
 	if err != nil {
@@ -35,6 +36,15 @@ func (s *run) architectureRegionOwnership(ctx context.Context) error {
 		}
 		if appmap.Outside(candidate) != appmap.Outside(base) {
 			s.add(Ownership, Diagnostic{Rule: RuleMapOutsideRegion, Path: layout.ArchitectureFile, Message: "the detection designer changed text outside the application-map markers; the manifest inventory and everything else in arch.md is Go-owned", Hint: "restore everything outside " + appmap.BeginMarker + " ... " + appmap.EndMarker + " byte-for-byte and edit only the map between them"})
+		}
+	case Upkeep:
+		// Go seeds a map from the rendered manifests where there is none;
+		// once a region exists it is the designer's and Go carries it.
+		if _, had, _ := appmap.Find(base); !had {
+			return nil
+		}
+		if regionBlock(candidate) != regionBlock(base) {
+			s.add(Ownership, Diagnostic{Rule: RuleMapRegionOwner, Path: layout.ArchitectureFile, Message: "Go upkeep changed the accepted application-map region, which only the detection designer may edit", Hint: "copy the accepted region between the markers verbatim when rewriting the inventory"})
 		}
 	default:
 		if regionBlock(candidate) != regionBlock(base) {

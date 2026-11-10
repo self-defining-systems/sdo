@@ -8,6 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory/mapseed"
 	"sdo.dev/operator/rendered"
 )
 
@@ -15,6 +16,9 @@ import (
 // rendered desired state.
 type SourceFacts struct {
 	Resources []*contracts.SourceResource
+	// Seed is the application map Go proposes from the same objects, for an
+	// architecture that has none yet.
+	Seed mapseed.Seed
 }
 
 // SourceFactsOf projects rendered desired-state objects (the renderer
@@ -40,7 +44,7 @@ func SourceFactsOf(objects []*unstructured.Unstructured, renderer string) Source
 	slices.SortFunc(resources, func(a, b *contracts.SourceResource) int {
 		return strings.Compare(a.Namespace+"\x00"+a.Kind+"\x00"+a.Name+"\x00"+a.Source, b.Namespace+"\x00"+b.Kind+"\x00"+b.Name+"\x00"+b.Source)
 	})
-	return SourceFacts{Resources: resources}
+	return SourceFacts{Resources: resources, Seed: mapseed.FromObjects(objects)}
 }
 
 func mapValue(value any) map[string]any {
@@ -102,16 +106,21 @@ func sourceDependencies(doc map[string]any) []string {
 	return result
 }
 
-// ArchitectureInventory renders only manifest-declared facts, in stable inventory order.
-// Readers needing application semantics inspect the referenced source directly.
+// ArchitectureInventory renders the manifest-declared facts in stable
+// inventory order and, when the objects declare workloads, the seeded
+// application map: its summary and entry candidates, then the map region.
+// WriteArchitecture keeps an accepted region in place of the seed.
 func ArchitectureInventory(facts SourceFacts) string {
 	var text strings.Builder
-	text.WriteString("# Manifest inventory\n\nApplication semantics must be read from source.\n")
+	text.WriteString("# Manifest inventory\n\nManifest facts only; read application semantics from source where it is shipped.\n")
 	for _, resource := range facts.Resources {
 		fmt.Fprintf(&text, "\n- %s/%s/%s (source: %s)\n", resource.Kind, resource.Namespace, resource.Name, resource.Source)
 		for _, dependency := range resource.Dependencies {
 			fmt.Fprintf(&text, "  - %s\n", dependency)
 		}
+	}
+	if len(facts.Seed.Map.Components) > 0 {
+		text.WriteString("\n" + facts.Seed.Summary() + "\n" + facts.Seed.Region())
 	}
 	return text.String()
 }
