@@ -86,9 +86,14 @@ func (r Reading) Ref() sdk.ObjectRef
 type Result struct {
 	Query    Query     `json:"query"`
 	Readings []Reading `json:"readings,omitempty"`
+	Baseline []Reading `json:"baseline,omitempty"`
 	Error    string    `json:"error,omitempty"`
 }
     Result is a query's frozen readings; Error is neither health nor a finding.
+    Baseline holds the complete readings of the same query at the controller's
+    last promoted healthy baseline, one per Pod read then. It is empty until the
+    application has been healthy once, and it is a reference, never a current
+    read.
 
 func Require(ctx sdk.DetectionContext, id string) (Result, error)
     Require returns a result in which every reading is complete, or a detector
@@ -108,13 +113,16 @@ type Source interface {
     Source supplies frozen query results.
 
 type Target struct {
-	Labels map[string]string `json:"labels,omitempty"`
-	Image  string            `json:"image,omitempty"`
+	Labels   map[string]string `json:"labels,omitempty"`
+	Workload string            `json:"workload,omitempty"`
+	Image    string            `json:"image,omitempty"`
 }
     Target selects Pods by role from observed objects in the application
-    namespace, never by name. Every label must match, and Image (an RE2 over
-    the container image) selects the container. Without Image the Pod's first
-    container is read. Pods that are terminating or finished are not targets.
+    namespace, never by Pod name. Every label must match, Workload ("Kind/name"
+    of a Deployment, StatefulSet, DaemonSet or ReplicaSet, as the application
+    map names it) must control the Pod, and Image (an RE2 over the container
+    image) selects the container. Without Image the Pod's first container is
+    read. Pods that are terminating or finished are not targets.
 
 func (t Target) Select(pod corev1.Pod) (string, bool)
     Select returns the container to read in pod, or false when pod does not hold

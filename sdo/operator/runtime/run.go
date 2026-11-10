@@ -587,7 +587,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if *controlNamespace != *namespace {
 		protectedNamespace = *controlNamespace
 	}
-	observations := detectorObservations{Client: bootstrapProvider.Client, Clock: clock.Now, Telemetry: telemetrySources, ExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace}
+	podReadBaseline := NewPodReadBaseline()
+	observations := detectorObservations{Client: bootstrapProvider.Client, Clock: clock.Now, Telemetry: telemetrySources, ExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, PodReadBaseline: podReadBaseline}
 	snapshotProvider, metricsObserver, err := observations.compose(snapshotProvider, detectors, initialTelemetrySources)
 	if err != nil {
 		return err
@@ -983,6 +984,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if *stateBaseline {
 		controller.Baseline = stateTracker
 	}
+	controller.PodReadBaseline = podReadBaseline
 	if *cleanResponderHelpers {
 		controller.Helpers = KubernetesHelperCleaner{
 			Client: bootstrapProvider.Client, Namespaces: []string{*namespace, *controlNamespace},

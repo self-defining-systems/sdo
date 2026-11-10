@@ -36,6 +36,9 @@ type detectorObservations struct {
 	ProtectedNamespace string
 	// Exec replaces the API server exec transport in tests.
 	Exec kubereads.PodExec
+	// PodReadBaseline, when set, carries the controller's promoted healthy
+	// readings with each pod read; it outlives every memory-host swap.
+	PodReadBaseline *PodReadBaseline
 }
 
 // compose wraps base with every observation the detectors declare. A
@@ -70,7 +73,7 @@ func (o detectorObservations) compose(base SnapshotProvider, detectors []sdk.Det
 		return nil, nil, err
 	}
 	if podReads != nil {
-		provider = PodReadsSnapshotProvider{Base: provider, Observer: podReads}
+		provider = PodReadsSnapshotProvider{Base: provider, Observer: podReads, Baseline: o.PodReadBaseline}
 	}
 	return withMetrics(provider, detectors, o.Telemetry, designerSources, o.RequireMetrics, clock)
 }

@@ -33,18 +33,29 @@ const (
 )
 
 // Target selects Pods by role from observed objects in the application
-// namespace, never by name. Every label must match, and Image (an RE2 over the
-// container image) selects the container. Without Image the Pod's first
-// container is read. Pods that are terminating or finished are not targets.
+// namespace, never by Pod name. Every label must match, Workload ("Kind/name"
+// of a Deployment, StatefulSet, DaemonSet or ReplicaSet, as the application map
+// names it) must control the Pod, and Image (an RE2 over the container image)
+// selects the container. Without Image the Pod's first container is read. Pods
+// that are terminating or finished are not targets.
 type Target struct {
-	Labels map[string]string `json:"labels,omitempty"`
-	Image  string            `json:"image,omitempty"`
+	Labels   map[string]string `json:"labels,omitempty"`
+	Workload string            `json:"workload,omitempty"`
+	Image    string            `json:"image,omitempty"`
 }
+
+var workloadKinds = map[string]bool{"Deployment": true, "StatefulSet": true, "DaemonSet": true, "ReplicaSet": true}
 
 // Validate requires a role: a target that selects every Pod is refused.
 func (t Target) Validate() error {
-	if len(t.Labels) == 0 && strings.TrimSpace(t.Image) == "" {
-		return fmt.Errorf("target requires labels or an image pattern")
+	if len(t.Labels) == 0 && strings.TrimSpace(t.Image) == "" && t.Workload == "" {
+		return fmt.Errorf("target requires labels, a workload or an image pattern")
+	}
+	if t.Workload != "" {
+		kind, name, ok := strings.Cut(t.Workload, "/")
+		if !ok || !workloadKinds[kind] || name == "" || strings.Contains(name, "/") {
+			return fmt.Errorf("target workload %q is not Kind/name of a Deployment, StatefulSet, DaemonSet or ReplicaSet", t.Workload)
+		}
 	}
 	if t.Image != "" {
 		if _, err := regexp.Compile(t.Image); err != nil {
@@ -65,6 +76,9 @@ func (t Target) Select(pod corev1.Pod) (string, bool) {
 			return "", false
 		}
 	}
+	if t.Workload != "" && !controlledBy(pod, t.Workload) {
+		return "", false
+	}
 	if t.Image == "" {
 		return pod.Spec.Containers[0].Name, true
 	}
@@ -75,6 +89,24 @@ func (t Target) Select(pod corev1.Pod) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// controlledBy reports whether workload ("Kind/name") controls pod. A
+// Deployment controls the Pods of its ReplicaSets, which are named after it and
+// the Pod's template hash.
+func controlledBy(pod corev1.Pod, workload string) bool {
+	kind, name, _ := strings.Cut(workload, "/")
+	for _, owner := range pod.OwnerReferences {
+		if owner.Controller == nil || !*owner.Controller {
+			continue
+		}
+		if owner.Kind == kind && owner.Name == name {
+			return true
+		}
+		hash := pod.Labels["pod-template-hash"]
+		return kind == "Deployment" && owner.Kind == "ReplicaSet" && hash != "" && owner.Name == name+"-"+hash
+	}
+	return false
 }
 
 // Query declares one read-only command and its role. Args run without a shell;
@@ -206,9 +238,14 @@ func (r Reading) Ref() sdk.ObjectRef {
 }
 
 // Result is a query's frozen readings; Error is neither health nor a finding.
+// Baseline holds the complete readings of the same query at the controller's
+// last promoted healthy baseline, one per Pod read then. It is empty until the
+// application has been healthy once, and it is a reference, never a current
+// read.
 type Result struct {
 	Query    Query     `json:"query"`
 	Readings []Reading `json:"readings,omitempty"`
+	Baseline []Reading `json:"baseline,omitempty"`
 	Error    string    `json:"error,omitempty"`
 }
 

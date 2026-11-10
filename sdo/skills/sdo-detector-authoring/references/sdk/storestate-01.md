@@ -49,6 +49,10 @@ func NewDetector(c Config) (sdk.Detector, error)
     names the component, the Pod and the changed item. A read that gives no
     complete answer is a detector error, never a clear.
 
+func QueryID(engine Engine, component string) string
+    QueryID is the pod read a store-state detector declares for component.
+    It names the engine, so a reader without the detector can parse the output.
+
 
 TYPES
 
@@ -101,8 +105,10 @@ type Config struct {
 	// ReadInterval is the pod-read interval; 0 is podread.MinInterval.
 	ReadInterval time.Duration
 	// Baselines are facts from a healthy moment, one per store Pod name, or a
-	// single baseline every Pod is compared with. Without a baseline only
-	// absolute facts are judged: write blocks, refusals and near-cap use.
+	// single baseline every Pod is compared with. Without them the detector
+	// compares with the controller's promoted healthy readings of its pod
+	// read (podread.Result.Baseline), and without those only absolute facts
+	// are judged: write blocks, refusals and near-cap use.
 	Baselines []Facts
 }
     Config declares one store component to watch.
@@ -125,6 +131,10 @@ const (
 	EngineConsul    Engine = "consul"
 )
     Known engines. Only engines with an Adapter can be read.
+
+func ParseQueryID(id string) (Engine, string, bool)
+    ParseQueryID returns the engine and component of a store-state pod read.
+    Engines carry no '-', so the first segment after the prefix is the engine.
 
 type Facts struct {
 	Engine      Engine        `json:"engine"`
@@ -230,4 +240,25 @@ func (k Key) Less(o Key) bool
     Less orders keys by kind, scope and name.
 
 func (k Key) String() string
+
+type StoreChanges struct {
+	Component  string        `json:"component"`
+	Engine     Engine        `json:"engine"`
+	Pod        sdk.ObjectRef `json:"pod"`
+	ObservedAt time.Time     `json:"observed_at,omitzero"`
+	BaselineAt time.Time     `json:"baseline_at,omitzero"`
+	Baselined  bool          `json:"baselined"`
+	Changes    []Change      `json:"changes,omitempty"`
+	Error      string        `json:"error,omitempty"`
+}
+    StoreChanges is one store Pod's facts against the controller's promoted
+    healthy baseline. Baselined is false when no usable baseline reading exists
+    for the Pod; Changes is then empty. Error is set when the current read gave
+    no answer, and the other fields are then unknown.
+
+func Changes(view sdk.DetectionContext) []StoreChanges
+    Changes is the read-only diff of every store whose store-state pod read the
+    view carries (a detection snapshot, a Diagnose read view or a capture),
+    sorted by component and Pod. It reads only frozen results and never fails:
+    a read without an answer is an entry with Error.
 ```
