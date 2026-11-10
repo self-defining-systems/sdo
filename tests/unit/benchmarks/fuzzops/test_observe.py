@@ -202,4 +202,5 @@ def test_timeline_events_follow_stamps_once_and_carry_the_cause() -> None:
     w.stamps.update({"diagnosed_at": "t2", "escalated_at": "t3"})
     events = timeline_events(w, emitted)
     assert [e["event"] for e in events] == ["diagnosed", "escalated"]
-    assert events[0]["component"] == "sts/x" and events[1]["reach"] == "out-of-reach"
+    assert events[0]["component"] == "sts/x"
+    assert events[1]["reach"] == "out-of-reach"
