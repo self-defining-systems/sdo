@@ -99,6 +99,7 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, er
 	backend := flags.String("responder-backend", "codex", "responder backend")
 	replay := flags.String("replay", "", "replay and corpus capture: on (default) or off")
 	effort := flags.String("agent-effort", "", "reasoning effort of every agent worker (empty: the shared default)")
+	lifecycleTimeout := flags.Duration("lifecycle-timeout", 0, "limit of one lifecycle (detection designer) session (0: the shared default)")
 	brokerMode := flags.String("broker-mode", "", "broker mode")
 	workerMountMode := flags.String("worker-mount-mode", "", "worker mount mode")
 	registrations := flags.String("agent-registration-directory", "", "agent registration directory")
@@ -194,7 +195,7 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, er
 		ExitAfterClosure: *exitAfterClosure,
 		ScriptImage:      *scriptImage, ToolchainImage: *toolchainImage, AgentRegistrationDirectory: *registrations, ResponderAgentId: *responderID,
 		BrokerMode: *brokerMode, WorkerMountMode: *workerMountMode,
-		ResponderBackend: *backend, ResponderModel: *model, AgentEffort: *effort, Replay: *replay, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, FrozenMemory: *frozenMemory, ExternalIncidents: *externalIncidents, HealthyBaseline: *healthyBaseline, TelemetryEnvironmentFile: *telemetryEnvironment,
+		ResponderBackend: *backend, ResponderModel: *model, AgentEffort: *effort, LifecycleTimeout: lifecycleTimeoutProto(*lifecycleTimeout), Replay: *replay, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, FrozenMemory: *frozenMemory, ExternalIncidents: *externalIncidents, HealthyBaseline: *healthyBaseline, TelemetryEnvironmentFile: *telemetryEnvironment,
 	}
 	// The child deploys a responder's source repair with the identity the
 	// parent deploys upstream advances with.
@@ -236,4 +237,12 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, er
 			return builder.DiagnosticsProjection{Directory: projected.Directory, Fingerprint: projected.Fingerprint, AcceptedRevision: projected.AcceptedRevision}, nil
 		},
 	}, identity, nil
+}
+
+// lifecycleTimeoutProto leaves an unconfigured (zero) limit unset, so workers keep the shared default.
+func lifecycleTimeoutProto(limit time.Duration) *durationpb.Duration {
+	if limit == 0 {
+		return nil
+	}
+	return durationpb.New(limit)
 }

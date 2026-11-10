@@ -35,6 +35,7 @@ _AGENT_ENVIRONMENT = json.loads(
 )
 DEFAULT_AGENT_EFFORT: str = _AGENT_ENVIRONMENT["default_effort"]
 AGENT_EFFORTS: tuple[str, ...] = tuple(_AGENT_ENVIRONMENT["efforts"])
+DEFAULT_LIFECYCLE_TIMEOUT_SECONDS: int = int(_AGENT_ENVIRONMENT["default_lifecycle_timeout_seconds"])
 _IMAGE_DIGEST = re.compile(r"@sha256:[0-9a-f]{64}$")
 _REGISTRY_HOST = re.compile(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[1-9][0-9]{0,4})?\Z")
 
@@ -82,6 +83,7 @@ class NativeInstallConfig:
     agent_provider: str = "codex"
     replay: str = "on"
     agent_effort: str = DEFAULT_AGENT_EFFORT
+    lifecycle_timeout_seconds: int = DEFAULT_LIFECYCLE_TIMEOUT_SECONDS
     repair_policy: str = "recorded-actions"
     late_findings: str = "off"
     reflection_session: str = "resume"
@@ -144,6 +146,8 @@ class NativeInstallConfig:
             raise ValueError("replay must be on or off")
         if self.agent_effort not in AGENT_EFFORTS:
             raise ValueError(f"agent_effort must be one of {AGENT_EFFORTS}")
+        if type(self.lifecycle_timeout_seconds) is not int or self.lifecycle_timeout_seconds <= 0:
+            raise ValueError("lifecycle_timeout_seconds must be a positive integer")
         if self.repair_policy not in ("commit", "recorded-actions"):
             raise ValueError("repair_policy must be commit or recorded-actions")
 
@@ -193,6 +197,8 @@ class NativeInstallConfig:
             self.replay,
             "--agent-effort",
             self.agent_effort,
+            "--lifecycle-timeout",
+            f"{self.lifecycle_timeout_seconds}s",
         ]
         if self.kubeconfig is not None:
             args.extend(("--kubeconfig", str(self.kubeconfig)))
@@ -805,7 +811,12 @@ def launch_host(config: NativeHostConfig) -> dict[str, Any]:
         args.extend(("--deployment-plan", plan_flag_value(config.deployment_plan)))
     if config.source_kind:
         args.extend(("--source-kind", config.source_kind, "--source-config", config.source_config))
-    value = _run("host", args, timeout=config.max_attempts * config.install.response_timeout_seconds + 900)
+    value = _run(
+        "host",
+        args,
+        timeout=config.max_attempts
+        * (config.install.response_timeout_seconds + config.install.lifecycle_timeout_seconds),
+    )
     if value.get("installed") is not True or value.get("operation_id") != config.operation_id:
         raise NativeOperatorError("Go host returned an invalid operation receipt")
     fields = ["schema_commit", "source_commit", "architecture_commit", "judge_commit"]

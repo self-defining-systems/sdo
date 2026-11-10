@@ -181,3 +181,26 @@ def test_judge_prompt_points_traffic_coverage_at_the_generated_test() -> None:
     assert "TestTrafficGeneratorsDetectTheirFaultClasses" in text
     assert "do not call traffic.CheckDetects" in text
     assert "Write the three files together" in text
+
+
+def test_designer_session_runs_for_the_configured_lifecycle_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    task = parse_json(judge_task(tmp_path).read_text(), AgentTask())
+    request = HealthJudgeRequest()
+    assert task.request.Unpack(request)
+    seen: dict[str, object] = {}
+
+    class StopAfterConstruction(Exception):
+        pass
+
+    def backend(**kwargs: object) -> CodexLifecycleBackend:
+        seen.update(kwargs)
+        raise StopAfterConstruction
+
+    monkeypatch.setenv("SDO_AGENT_EFFORT", "xhigh")
+    monkeypatch.setenv("SDO_LIFECYCLE_TIMEOUT_SECONDS", "2700")
+    monkeypatch.setattr(judge_worker, "CodexLifecycleBackend", backend)
+    with pytest.raises(StopAfterConstruction):
+        judge_worker.author_health_diagnostics(request, tmp_path)
+    assert (seen["reasoning_effort"], seen["timeout_seconds"]) == ("xhigh", 2700)
