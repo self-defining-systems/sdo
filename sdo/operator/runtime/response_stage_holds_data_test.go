@@ -143,6 +143,7 @@ func TestDataWorkloadWriteClassifiesEveryPodReplacingAction(t *testing.T) {
 	}{
 		"restart":                  {program.RestartRollout{Ref: api}, "Deployment/api"},
 		"restart by pointer":       {&program.RestartRollout{Ref: api}, "Deployment/api"},
+		"restart data workload":    {program.RestartRollout{Ref: store}, "StatefulSet/store"},
 		"rollback":                 {program.Rollback{Ref: api, ToRevision: "1"}, "Deployment/api"},
 		"reconcile":                {program.ReconcileFromSource{Ref: store}, "StatefulSet/store"},
 		"delete workload":          {program.DeleteObject{Ref: store}, "StatefulSet/store"},

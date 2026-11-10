@@ -8,11 +8,11 @@ Full [SDK](program-sdk.md).
 
 ## Program shape
 
-- `type ProgramSpec struct{ID string; Params []ParamSpec}`: names a playbook program (its directory ID) and declares the roles and values a finding or the responder binds; Diagnose and Mitigate must return identical specs.
-- `type ParamSpec struct{Name string; Kind Kind; Required bool; ValueKind ValueKind; Default any}`: declares roles bound by triggering detector findings.
+- `type ProgramSpec struct{ID string; Params []ParamSpec}`: names a playbook program (its directory ID) and its roles.
+- `type ParamSpec struct{Name string; Kind Kind; Required bool; ValueKind ValueKind; Default any}`: declares one role or value a triggering finding binds.
 - `type Bindings struct{Objects ObjectBindings; Values map[string]any}`: contains object identities and separately typed scalar parameters.
 - `func (b Bindings) Parameter(spec ProgramSpec, name string) (any, error)`: resolves one declared value, including a validated default.
-- `type Verdict struct{Result Result; Evidence []Evidence; Question string}`: is what Diagnose returns; NeedsJudgement requires a Question.
+- `type Verdict struct{Result Result; Evidence []Evidence; Question string; CauseClass string; Reach string}`: is what Diagnose returns; NeedsJudgement requires a Question.
 - `type Result string (Match, NoMatch, Unknown, NeedsJudgement)`: is a diagnosis verdict: Match means the fault is present, NoMatch absent, Unknown that evidence is unavailable.
 - `type Evidence struct{Resource sdk.ObjectRef; Fact string; Observed string; Expected string}`: is one observed fact supporting a verdict.
 - `type Plan struct{Actions []Action; Rationale string}`: is what Mitigate returns: actions applied in order as one batch.
@@ -26,7 +26,7 @@ Full [SDK](program-sdk.md).
 
 ## Reads (ReadView)
 
-- `type ReadView interface: inputs.Sources, WebhookCAMatchesSecret, AdmissionWebhooksFor, ObjectReader, DetectionContext, ScopedObservationSource, ObservationClock, StatefulSets, HorizontalPodAutoscalers, PodDisruptionBudgets, metrics.Source, metrics.AlertSource, metrics.QuerySource, traffic.Source, servicehealth.ReachabilitySource, Logs, LogsWithOptions, metrics.UsageSource, ProbeTCP, ProbeHTTP, DiffAgainstSource, DiffAgainstBaseline, DatabaseUsers, Observe, KubernetesRead`: is a program's frozen, recorded read access to the incident namespace; every read is replayed from the corpus at check time.
+- `type ReadView interface: inputs.Sources, WebhookCAMatchesSecret, AdmissionWebhooksFor, ObjectReader, DetectionContext, ScopedObservationSource, ObservationClock, StatefulSets, HorizontalPodAutoscalers, PodDisruptionBudgets, metrics.Source, metrics.AlertSource, metrics.QuerySource, traffic.Source, AppMap, datacheck.Accepted, servicehealth.ReachabilitySource, Logs, LogsWithOptions, metrics.UsageSource, ProbeTCP, ProbeHTTP, DiffAgainstSource, DiffAgainstBaseline, DatabaseUsers, Observe, KubernetesRead`: is a program's frozen, recorded read access to the incident namespace; every read is replayed from the corpus at check time.
 - `type DetectionContext interface: StatefulSets, DaemonSets, Jobs, CronJobs, PersistentVolumeClaims, ServiceAccounts, HorizontalPodAutoscalers, PodDisruptionBudgets, Ingresses, Nodes, Secrets, DiffAgainstSource, PodAdmission, Namespace, ConfigMaps, Services, Pods, Deployments, ReplicaSets, Endpoints, EndpointSlices, NetworkPolicies, Events, ReadyEndpointCountForService, PodsForService, RecentEventsFor`: is the frozen snapshot read by detectors and, through ReadView, by programs.
 - `ObjectReader.Object(ObjectRef) (*unstructured.Unstructured, error)`: reads one exact object by kind, namespace and name.
 - `ReadView.LogsWithOptions(pod sdk.ObjectRef, options corev1.PodLogOptions) (string, error)`: reads bounded container logs; Previous selects the last terminated instance.
@@ -40,7 +40,7 @@ Full [SDK](program-sdk.md).
 - `type ContainerChange struct{Kind ContainerKind; Name string; Added bool; Removed bool; Fields []string}`: is one pod-template container that differs from accepted source, matched by kind and name.
 - `func (d SourceDiff) Field(path string) (FieldValues, error)`: compares one dotted field path, such as "spec.replicas", on both sides.
 - `func (f FieldValues) Differs() bool`: is true only for a field accepted source declares whose live value differs or is gone.
-- `type SetField struct{Ref sdk.ObjectRef; Path string; Value Value; Reason string; DocumentFormat string; DocumentPath []string}`: writes one schema-checked field (or one ConfigMap JSON/YAML entry) from a Value.
+- `type SetField struct{Ref sdk.ObjectRef; Path string; Value Value; Reason string; DocumentFormat string; DocumentPath []string}`: writes one schema-checked field or ConfigMap JSON/YAML entry.
 - `func ValidateSetField(f SetField) error`: checks a dotted vocabulary path or a JSON pointer on a named nonsecret object.
 - `type ReconcileFromSource struct{ Ref sdk.ObjectRef }`: restores a whole source-owned object to accepted source, removing additions SourceDiff reports; prefer SetField for one field.
 - `type CreateFromSource struct{Ref sdk.ObjectRef; Reason string}`: restores a missing named object from accepted source.
@@ -51,7 +51,7 @@ Full [SDK](program-sdk.md).
 ## Admission webhook CA or policy blocks Pod creation
 
 - `DetectionContext.PodAdmission() (PodAdmissionResult, bool)`: returns the frozen dry-run result, false when unobserved.
-- `ReadView.AdmissionWebhooksFor(subject sdk.ObjectRef) ([]AdmissionWebhook, error)`: lists the webhook entries that admit Pod creation for a Namespace or workload; cluster webhook names need no observation grant.
+- `ReadView.AdmissionWebhooksFor(subject sdk.ObjectRef) ([]AdmissionWebhook, error)`: lists the webhooks admitting Pods for a Namespace or workload.
 - `type AdmissionWebhook = sdk.AdmissionWebhook`: is one webhook entry admitting Pods (sdk.AdmissionWebhook).
 - `type WebhookCA = sdk.WebhookCA`: identifies one webhook and a Secret key (sdk.WebhookCA).
 - `ReadView.WebhookCAMatchesSecret(WebhookCA) (bool, error)`: reports whether one webhook's caBundle equals a Secret key without exposing either value.
@@ -62,7 +62,7 @@ Full [SDK](program-sdk.md).
 
 - `func StalledRolloutRelease(view RolloutView, deployment sdk.ObjectRef) []Action`: releases a rollout the old revision blocks.
 - `type RetireOldRevision struct{Ref sdk.ObjectRef}`: scales one old-revision ReplicaSet of a Deployment to zero.
-- `type RestartRollout struct{Ref sdk.ObjectRef; Reason string}`: restarts a Deployment's Pods like kubectl rollout restart; Ref must be an apps/v1 Deployment.
+- `type RestartRollout struct{Ref sdk.ObjectRef; Reason string}`: restarts a workload's Pods like kubectl rollout restart.
 - `type DeletePod struct{ Ref sdk.ObjectRef }`: removes one named pod with UID/version preconditions.
 - `type ScaleWorkload struct{Ref sdk.ObjectRef; Replicas Value}`: restores replicas from accepted source, observations or a parameter.
 - `type WaitFor struct{Ref sdk.ObjectRef; Path string; Equals any; Timeout time.Duration; Interval time.Duration}`: observes a JSON pointer until it equals Equals.
@@ -84,7 +84,7 @@ Full [SDK](program-sdk.md).
 - `type DatabaseRole struct{Database string; Name string}`: is one directly granted role in a named database.
 - `type EnsureDatabaseUser struct{Target DatabaseTarget; User string; Roles []DatabaseRole; Password CredentialRef; Reason string}`: creates a missing user or replaces all of an existing user's direct roles with Roles.
 
-## Stores
+## Stores and escalation
 
 - `type InvalidateDerived struct{Target StoreTarget; Scope DataScope; Reason string}`: drops a derived cache's entries.
 - `type StoreBackup struct{ID string; Target StoreTarget; Scope DataScope; Reason string}`: copies a scope's records.
@@ -92,6 +92,8 @@ Full [SDK](program-sdk.md).
 - `type RestoreBackup struct{Target StoreTarget; Backup string; Reason string}`: puts an incident's StoreBackup back.
 - `type RestoreStoreItem struct{Target StoreTarget; Change storestate.Change; EndSessions bool; Reason string}`: puts a store-state item back to its baseline.
 - `type CheckStoreCredential struct{Target StoreTarget; Client sdk.ObjectRef; Container string; Credential storestate.CredentialInputs; Reason string}`: tests a client's credential against a store.
+- `type Escalate struct{Reason string; Resources []sdk.ObjectRef}`: closes the incident as escalated, without a repair.
+- `type ProposeSourceChange struct{Ref sdk.ObjectRef; Path string; Value Value; Reason string}`: proposes a durable change to accepted source.
 
 ## Any other hand repair: commands, HTTP, Jobs, raw API objects
 

@@ -37,8 +37,19 @@ func validateObjectAction(action Action) error {
 	return nil
 }
 
+// ValidateRestartRollout accepts one named, namespaced apps/v1 Deployment,
+// StatefulSet or DaemonSet: the workloads kubectl rollout restart restarts.
+func ValidateRestartRollout(a RestartRollout) error {
+	if a.Ref.APIVersion != "apps/v1" || (a.Ref.Kind != "Deployment" && a.Ref.Kind != "StatefulSet" && a.Ref.Kind != "DaemonSet") || a.Ref.Name == "" || a.Ref.Namespace == "" {
+		return fmt.Errorf("RestartRollout requires one named apps/v1 Deployment, StatefulSet or DaemonSet")
+	}
+	return nil
+}
+
 func validateRuntimeAction(action Action) error {
 	switch a := action.(type) {
+	case RestartRollout:
+		return ValidateRestartRollout(a)
 	case DeletePod:
 		if a.Ref.APIVersion != "v1" || a.Ref.Kind != "Pod" || a.Ref.Name == "" || a.Ref.Namespace == "" {
 			return fmt.Errorf("DeletePod requires one named v1 Pod")
@@ -67,6 +78,11 @@ func validateRuntimeAction(action Action) error {
 				return err
 			}
 		}
+	case *RestartRollout:
+		if a == nil {
+			return fmt.Errorf("nil RestartRollout")
+		}
+		return validateRuntimeAction(*a)
 	case *DeletePod:
 		if a == nil {
 			return fmt.Errorf("nil DeletePod")

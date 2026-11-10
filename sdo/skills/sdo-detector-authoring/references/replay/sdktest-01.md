@@ -195,7 +195,13 @@ func (v *RecordingReadView) AdmissionWebhooksFor(subject sdk.ObjectRef) ([]progr
 
 func (v *RecordingReadView) AlertsResult() (metrics.AlertsResult, bool)
 
+func (v *RecordingReadView) AppMap() (program.AppMap, error)
+    AppMap records the accepted application map the wrapped view read.
+
 func (v *RecordingReadView) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error)
+
+func (v *RecordingReadView) DataChecks() (map[string]string, error)
+    DataChecks records the accepted data checks the wrapped view read.
 
 func (v *RecordingReadView) DatabaseUsers(t program.DatabaseTarget) ([]program.DatabaseUser, error)
 
@@ -226,10 +232,4 @@ func (v *RecordingReadView) ObservationStatuses() []sdk.ObservationStatus
 func (v *RecordingReadView) Observe(o program.ExternalOperation) (int32, error)
 
 func (v *RecordingReadView) ObservedAt() time.Time
-
-func (v *RecordingReadView) ObservedView() (sdk.DetectionContext, func() error)
-
-func (v *RecordingReadView) PodUsage(ref sdk.ObjectRef) (*metricsv1beta1.PodMetrics, error)
-
-func (v *RecordingReadView) ProbeHTTP(ref sdk.ObjectRef, req program.HTTPProbe) (program.ProbeResult, error)
 ```

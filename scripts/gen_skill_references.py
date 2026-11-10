@@ -136,7 +136,7 @@ CARD_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
         ),
     ),
     (
-        "Stores",
+        "Stores and escalation",
         (
             "program.InvalidateDerived",
             "program.StoreBackup",
@@ -144,6 +144,8 @@ CARD_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "program.RestoreBackup",
             "program.RestoreStoreItem",
             "program.CheckStoreCredential",
+            "program.Escalate",
+            "program.ProposeSourceChange",
         ),
     ),
     (

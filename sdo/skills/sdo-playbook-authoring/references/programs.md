@@ -172,3 +172,13 @@ Replay outcomes, missing captures and detector coverage are information.
   credential; `StoreChanges.Holders` groups a store's connections by peer workload and state.
 - Credentials stay references (env or ConfigMap key); never read Secret data. Learn into incident playbooks. The detection designer owns `health-objective` and health detectors: never edit
   them; when its generic program applied and hand repairs followed, encode those in an incident playbook.
+- Resolve stores by relation, never by name: `v.AppMap()` gives each component's workload, data role and
+  `derived_from`; `m.ComponentOf(v, bound)` and `m.Derived(source)` find the cache or source, and
+  `program.StoreTargetFor(v, component)` picks its Pod and container. `datacheck.Verdicts(v)` re-judges the
+  accepted data checks without copying their YAML.
+- A cause the namespace cannot fix (node, network fabric, external service, cluster policy) is still worth a
+  playbook: return `Verdict{Result: Match, CauseClass: ..., Reach: program.ReachOutOfReach}` and either no
+  Mitigate or a plan whose only action is `program.Escalate`. SDO then closes the incident as `escalated`.
+- A mitigation that departs from accepted source (more replicas, a higher limit) can end with
+  `program.ProposeSourceChange`; after verified recovery Go turns it into a responder patch, so it survives the
+  next deploy. Programs never write `.sdo/` themselves.

@@ -23,7 +23,11 @@ Each mitigation identifies the accepted playbook revision, bindings, plan,
 `apply_receipt`, post-apply Diagnose, and cleared/remaining finding fingerprints.
 Results distinguish `applied_cleared`, `applied_still_matching` (with `kept_reason`),
 `reverted_ineffective` (writes restored before handoff), `rollout_failed`,
-`rollout_pending_at_handoff`, `apply_error`, and `skipped` with `skip_reason`
+`rollout_pending_at_handoff`, `apply_error`, `escalated` (a matched Diagnose whose verdict is
+`reach: out-of-reach`, from a Diagnose-only playbook or a plan whose only action is `Escalate`: nothing
+was written, `escalation` holds the verdict, its targeted findings leave the stage's work and the
+synthesized cause carries `cause_class`/`reach`, so closure derives `escalated` while they still fire),
+and `skipped` with `skip_reason` (a Diagnose-only playbook with any other verdict is still `no_mitigation`)
 (historical `stage_budget` meant observation exhaustion; current observation exhaustion never suppresses an admitted write).
 `holds_data` means the plan would have restarted, deleted, scaled down or rewritten a workload the accepted application map marks `holds_data`, or one of its Pods; `error` names the action, nothing was written, and the finding goes to the responder.
 Data effects never skip an attempt. External actions (`Exec`, `EnsureExec`, `EnsureHTTP`, `RunScript`, `RunJob`, `EnsureDatabaseUser`) and typed store actions (`StoreBackup` `read`, `InvalidateDerived` `derived-invalidate`, or `data-write` on a target the map does not mark derived, `RepairData`/`RestoreBackup` `data-write`, `RestoreStoreItem` `store-setting`, `CheckStoreCredential` `read`) run on the automatic path; their effect on each `holds_data` component is recorded as a `data effect:` line in the closure's `source_check_notes` (see [outcome records](outcome-records.md)). Runs before this change could skip them with `holds_data` (error naming the effect class or the `derived_from` source).

@@ -52,6 +52,16 @@ message Verdict {
   Result result = 1 [(buf.validate.field).enum = {defined_only: true, not_in: [0]}];
   repeated Evidence evidence = 2;
   string question = 3;
+  // The diagnosed cause in ConfirmedRootCause's vocabulary; "" is unset.
+  string cause_class = 4 [(buf.validate.field).string = {
+    in: [
+      "", "network-delay", "network-loss", "network-blocked", "dependency-unavailable",
+      "config-value-wrong", "object-missing", "admission-mutated", "admission-rejected",
+      "permission-denied", "credential-invalid", "capacity-exhausted", "process-runtime",
+      "state-lost", "data-corrupt", "data-missing", "read-only", "code-defect", "other"
+    ]
+  }];
+  string reach = 5 [(buf.validate.field).string = {in: ["", "in-scope", "out-of-reach"]}];
 }
 
 message Evidence {
@@ -97,7 +107,25 @@ message Action {
     RestoreBackup restore_backup = 26;
     RestoreStoreItem restore_store_item = 27;
     CheckStoreCredential check_store_credential = 28;
+    Escalate escalate = 29;
+    ProposeSourceChange propose_source_change = 30;
   }
+}
+
+// Closes the incident as escalated without a write: the diagnosed cause is out
+// of reach of the application namespace. The only action of its plan.
+message Escalate {
+  string reason = 1 [(buf.validate.field).string.min_len = 1];
+  repeated ObjectRef resources = 2;
+}
+
+// A desired-state change to accepted source, recorded only; Go captures it as
+// a responder-owned patch after independently verified recovery.
+message ProposeSourceChange {
+  ObjectRef ref = 1 [(buf.validate.field).required = true];
+  string path = 2 [(buf.validate.field).string.min_len = 1];
+  PlanValue value = 3 [(buf.validate.field).required = true];
+  string reason = 4 [(buf.validate.field).string = {min_len: 40, max_len: 2000}];
 }
 
 message CreateFromSource {
@@ -180,6 +208,8 @@ message ActionReport {
   bytes job_status_json = 8;
   bytes script_result_json = 10;
   SourceReconcileResult source_reconcile = 12;
+  // A ProposeSourceChange with its value resolved: {ref, path, value, reason}.
+  bytes source_change_json = 13;
   string failure_reason = 9 [(buf.validate.field).string = {in: ["", "authorization_denied", "execution_failed", "delete_not_confirmed", "outcome_unknown", "source_residual"]}];
 }
 

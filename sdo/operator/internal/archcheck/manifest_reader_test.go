@@ -26,6 +26,7 @@ var manifestReaders = map[string]string{
 	"memory/layout/migrate.go":         "migrates operational-memory files",
 	"memory/appmap/map.go":             "parses the application map of arch.md",
 	"memory/validate/secret_object.go": "scans changed memory data files for Secret data",
+	"memory/source_proposals.go":       "edits one field of the raw YAML file a responder patch captures; it reads no desired state, and a rendered source is skipped",
 }
 
 var (

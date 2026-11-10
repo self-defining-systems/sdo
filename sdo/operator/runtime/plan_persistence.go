@@ -136,6 +136,10 @@ func encodePersistedActions(actions []program.Action) ([]persistedAction, error)
 			kind = "set_field"
 		case program.RestartRollout, *program.RestartRollout:
 			kind = "restart_rollout"
+		case program.Escalate, *program.Escalate:
+			kind = "escalate"
+		case program.ProposeSourceChange, *program.ProposeSourceChange:
+			kind = "propose_source_change"
 		default:
 			return nil, fmt.Errorf("unsupported plan action %T", action)
 		}
@@ -216,6 +220,10 @@ func decodePersistedActions(encoded []persistedAction) ([]program.Action, error)
 			action = &program.SetField{}
 		case "restart_rollout":
 			action = &program.RestartRollout{}
+		case "escalate":
+			action = &program.Escalate{}
+		case "propose_source_change":
+			action = &program.ProposeSourceChange{}
 		default:
 			return nil, fmt.Errorf("unknown plan action kind %q", entry.Kind)
 		}
@@ -282,6 +290,10 @@ func decodePersistedActions(encoded []persistedAction) ([]program.Action, error)
 		case *program.SetField:
 			decoded = append(decoded, *value)
 		case *program.RestartRollout:
+			decoded = append(decoded, *value)
+		case *program.Escalate:
+			decoded = append(decoded, *value)
+		case *program.ProposeSourceChange:
 			decoded = append(decoded, *value)
 		}
 	}

@@ -4313,9 +4313,14 @@ type StageMitigation struct {
 	// Why an applied attempt that left findings open was not reverted: it
 	// cleared some of them or its diagnosis (partial), an effect cannot be
 	// undone (irreversible), or restoring the preimages failed.
-	KeptReason    string `protobuf:"bytes,15,opt,name=kept_reason,json=keptReason,proto3" json:"kept_reason,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	KeptReason string `protobuf:"bytes,15,opt,name=kept_reason,json=keptReason,proto3" json:"kept_reason,omitempty"`
+	// An escalated attempt's matched out-of-reach diagnosis, and the objects
+	// its Escalate action named.
+	Escalation         *ProgramRun  `protobuf:"bytes,16,opt,name=escalation,proto3" json:"escalation,omitempty"`
+	EscalatedResources []*ObjectRef `protobuf:"bytes,17,rep,name=escalated_resources,json=escalatedResources,proto3" json:"escalated_resources,omitempty"`
+	EscalationReason   string       `protobuf:"bytes,18,opt,name=escalation_reason,json=escalationReason,proto3" json:"escalation_reason,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *StageMitigation) Reset() {
@@ -4449,6 +4454,27 @@ func (x *StageMitigation) GetTouchedObjects() []*ObjectRef {
 func (x *StageMitigation) GetKeptReason() string {
 	if x != nil {
 		return x.KeptReason
+	}
+	return ""
+}
+
+func (x *StageMitigation) GetEscalation() *ProgramRun {
+	if x != nil {
+		return x.Escalation
+	}
+	return nil
+}
+
+func (x *StageMitigation) GetEscalatedResources() []*ObjectRef {
+	if x != nil {
+		return x.EscalatedResources
+	}
+	return nil
+}
+
+func (x *StageMitigation) GetEscalationReason() string {
+	if x != nil {
+		return x.EscalationReason
 	}
 	return ""
 }
@@ -5023,15 +5049,15 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x1ccleared_finding_fingerprints\x18\x05 \x03(\tR\x1aclearedFindingFingerprints\x12L\n" +
 	"\rrecovery_wait\x18\x06 \x01(\v2'.sdodev.contracts.v1alpha1.RecoveryWaitR\frecoveryWait\x129\n" +
 	"\n" +
-	"started_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\"\xc2\t\n" +
+	"started_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\"\x98\v\n" +
 	"\x0fStageMitigation\x12(\n" +
 	"\vplaybook_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
 	"playbookId\x12)\n" +
 	"\x10program_revision\x18\x02 \x01(\tR\x0fprogramRevision\x12>\n" +
 	"\bbindings\x18\x03 \x03(\v2\".sdodev.contracts.v1alpha1.BindingR\bbindings\x12\x17\n" +
 	"\aplan_id\x18\x04 \x01(\tR\x06planId\x12O\n" +
-	"\rapply_receipt\x18\x05 \x01(\v2*.sdodev.contracts.v1alpha1.PlanApplicationR\fapplyReceipt\x12\xb4\x01\n" +
-	"\x06result\x18\x06 \x01(\tB\x9b\x01\xbaH\x97\x01r\x94\x01R\x0fapplied_clearedR\x16applied_still_matchingR\x14reverted_ineffectiveR\x0erollout_failedR\x1arollout_pending_at_handoffR\x11admission_blockedR\vapply_errorR\askippedR\x06result\x12\x8a\x02\n" +
+	"\rapply_receipt\x18\x05 \x01(\v2*.sdodev.contracts.v1alpha1.PlanApplicationR\fapplyReceipt\x12\xbf\x01\n" +
+	"\x06result\x18\x06 \x01(\tB\xa6\x01\xbaH\xa2\x01r\x9f\x01R\x0fapplied_clearedR\x16applied_still_matchingR\x14reverted_ineffectiveR\x0erollout_failedR\x1arollout_pending_at_handoffR\x11admission_blockedR\vapply_errorR\askippedR\tescalatedR\x06result\x12\x8a\x02\n" +
 	"\vskip_reason\x18\a \x01(\tB\xe8\x01\xbaH\xe4\x01r\xe1\x01R\x00R\x15multiple_entry_pointsR\rno_mitigationR\x11unbound_parameterR\x1adiagnose_no_longer_matchesR\x14diagnose_unavailableR\x14unexplained_coverageR\x11already_attemptedR\rrepair_policyR\fstage_budgetR\x13plan_not_executableR\vineffectiveR\n" +
 	"holds_dataR\n" +
 	"skipReason\x12U\n" +
@@ -5044,7 +5070,12 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x11plan_action_count\x18\r \x01(\x05R\x0fplanActionCount\x12M\n" +
 	"\x0ftouched_objects\x18\x0e \x03(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x0etouchedObjects\x12P\n" +
 	"\vkept_reason\x18\x0f \x01(\tB/\xbaH,r*R\x00R\apartialR\firreversibleR\x0frollback_failedR\n" +
-	"keptReason\"\x89\x01\n" +
+	"keptReason\x12E\n" +
+	"\n" +
+	"escalation\x18\x10 \x01(\v2%.sdodev.contracts.v1alpha1.ProgramRunR\n" +
+	"escalation\x12U\n" +
+	"\x13escalated_resources\x18\x11 \x03(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x12escalatedResources\x12+\n" +
+	"\x11escalation_reason\x18\x12 \x01(\tR\x10escalationReason\"\x89\x01\n" +
 	"\rDriftReprompt\x120\n" +
 	"\x0ffindings_before\x18\x01 \x01(\x05B\a\xbaH\x04\x1a\x02 \x00R\x0efindingsBefore\x123\n" +
 	"\x0efindings_after\x18\x02 \x01(\x05B\a\xbaH\x04\x1a\x02(\x00H\x00R\rfindingsAfter\x88\x01\x01B\x11\n" +
@@ -5255,15 +5286,17 @@ var file_sdodev_contracts_v1alpha1_messages_proto_depIdxs = []int32{
 	61,  // 109: sdodev.contracts.v1alpha1.StageMitigation.apply_receipt:type_name -> sdodev.contracts.v1alpha1.PlanApplication
 	57,  // 110: sdodev.contracts.v1alpha1.StageMitigation.post_apply_diagnose:type_name -> sdodev.contracts.v1alpha1.ProgramRun
 	52,  // 111: sdodev.contracts.v1alpha1.StageMitigation.touched_objects:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	52,  // 112: sdodev.contracts.v1alpha1.Finding.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	52,  // 113: sdodev.contracts.v1alpha1.SurfacedPlaybook.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	52,  // 114: sdodev.contracts.v1alpha1.AppliedPlaybook.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	52,  // 115: sdodev.contracts.v1alpha1.DetectorTimelineEntry.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	116, // [116:116] is the sub-list for method output_type
-	116, // [116:116] is the sub-list for method input_type
-	116, // [116:116] is the sub-list for extension type_name
-	116, // [116:116] is the sub-list for extension extendee
-	0,   // [0:116] is the sub-list for field type_name
+	57,  // 112: sdodev.contracts.v1alpha1.StageMitigation.escalation:type_name -> sdodev.contracts.v1alpha1.ProgramRun
+	52,  // 113: sdodev.contracts.v1alpha1.StageMitigation.escalated_resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	52,  // 114: sdodev.contracts.v1alpha1.Finding.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	52,  // 115: sdodev.contracts.v1alpha1.SurfacedPlaybook.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	52,  // 116: sdodev.contracts.v1alpha1.AppliedPlaybook.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	52,  // 117: sdodev.contracts.v1alpha1.DetectorTimelineEntry.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	118, // [118:118] is the sub-list for method output_type
+	118, // [118:118] is the sub-list for method input_type
+	118, // [118:118] is the sub-list for extension type_name
+	118, // [118:118] is the sub-list for extension extendee
+	0,   // [0:118] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_messages_proto_init() }

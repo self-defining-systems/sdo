@@ -39,7 +39,7 @@ func programRunContract(run ProgramRun) *contracts.ProgramRun {
 }
 
 func verdictContract(verdict program.Verdict) *contracts.Verdict {
-	result := &contracts.Verdict{Question: verdict.Question}
+	result := &contracts.Verdict{Question: verdict.Question, CauseClass: verdict.CauseClass, Reach: verdict.Reach}
 	switch verdict.Result {
 	case program.Match:
 		result.Result = contracts.Verdict_RESULT_MATCH
@@ -61,7 +61,7 @@ func verdictContract(verdict program.Verdict) *contracts.Verdict {
 
 func programRunState(run *contracts.ProgramRun) ProgramRun {
 	bindings := programBindingsState(run.GetBindings())
-	verdict := program.Verdict{Question: run.GetVerdict().GetQuestion()}
+	verdict := program.Verdict{Question: run.GetVerdict().GetQuestion(), CauseClass: run.GetVerdict().GetCauseClass(), Reach: run.GetVerdict().GetReach()}
 	switch run.GetVerdict().GetResult() {
 	case contracts.Verdict_RESULT_MATCH:
 		verdict.Result = program.Match

@@ -748,7 +748,21 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 
 		// A session is provenance, not new corrective evidence. The shared
 		// broker check below proves that accepted memory explains every write.
-		if effect.Attempt == 1 && !n.ForceReflection && coveredRepeatCandidate(effect.Outcome) {
+		capturedProposals := false
+		if effect.Attempt == 1 && effect.Outcome.GetClassification() == outcomeclass.Success {
+			// Proposals become patches only after independently verified
+			// recovery, in the reflection checkout, so the broker validates
+			// them as responder patches.
+			created, skipped, err := memory.CaptureSourceProposals(ctx, workspace.Worktree, effect.IncidentID, outcomeSourceProposals(effect.Outcome))
+			if err != nil {
+				return nil, err
+			}
+			for _, reason := range skipped {
+				slog.Warn("source_proposal_not_captured", "incident", effect.IncidentID, "reason", reason)
+			}
+			capturedProposals = len(created) > 0
+		}
+		if effect.Attempt == 1 && !n.ForceReflection && !capturedProposals && coveredRepeatCandidate(effect.Outcome) {
 			decision := &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "accepted_programs_no_new_evidence"}
 			checkCtx := ctx
 			if n.SessionRoot != "" {
@@ -804,7 +818,7 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 			}
 			negativePrepared = true
 		}
-		if effect.Attempt == 1 && !n.ForceReflection && !hasResponderSession(incidentClosureState(effect.Closure)) && !stageOnlyClosure(incidentClosureState(effect.Closure)) && (prepared || negativePrepared) && !causeWorkNeedsModel(work) && !reflectionItemsNeedModel(unassigned) {
+		if effect.Attempt == 1 && !n.ForceReflection && !hasResponderSession(incidentClosureState(effect.Closure)) && !stageOnlyClosure(incidentClosureState(effect.Closure)) && (prepared || negativePrepared || capturedProposals) && !causeWorkNeedsModel(work) && !reflectionItemsNeedModel(unassigned) {
 			return &contracts.ReflectionDecision{LearningDecision: "updated"}, nil
 		}
 		if n.Reflector == nil {

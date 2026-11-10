@@ -679,7 +679,7 @@ message StageMitigation {
   repeated Binding bindings = 3;
   string plan_id = 4;
   PlanApplication apply_receipt = 5;
-  string result = 6 [(buf.validate.field).string = {in: ["applied_cleared", "applied_still_matching", "reverted_ineffective", "rollout_failed", "rollout_pending_at_handoff", "admission_blocked", "apply_error", "skipped"]}];
+  string result = 6 [(buf.validate.field).string = {in: ["applied_cleared", "applied_still_matching", "reverted_ineffective", "rollout_failed", "rollout_pending_at_handoff", "admission_blocked", "apply_error", "skipped", "escalated"]}];
   string skip_reason = 7 [(buf.validate.field).string = {in: ["", "multiple_entry_points", "no_mitigation", "unbound_parameter", "diagnose_no_longer_matches", "diagnose_unavailable", "unexplained_coverage", "already_attempted", "repair_policy", "stage_budget", "plan_not_executable", "ineffective", "holds_data"]}];
   ProgramRun post_apply_diagnose = 8;
   repeated string cleared_finding_fingerprints = 9;
@@ -695,6 +695,11 @@ message StageMitigation {
   // cleared some of them or its diagnosis (partial), an effect cannot be
   // undone (irreversible), or restoring the preimages failed.
   string kept_reason = 15 [(buf.validate.field).string = {in: ["", "partial", "irreversible", "rollback_failed"]}];
+  // An escalated attempt's matched out-of-reach diagnosis, and the objects
+  // its Escalate action named.
+  ProgramRun escalation = 16;
+  repeated ObjectRef escalated_resources = 17;
+  string escalation_reason = 18;
 }
 
 // Controller-owned evidence of the single optional healthy source-drift turn.

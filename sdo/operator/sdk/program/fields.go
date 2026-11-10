@@ -21,6 +21,7 @@ import (
 var listIdentity = `(?:[0-9]+|name=[A-Za-z0-9_-]+)`
 var allowedFieldPaths = []*regexp.Regexp{
 	regexp.MustCompile(`^data\[[A-Za-z0-9_.-]+\]$`),
+	regexp.MustCompile(`^spec\.ports$`),
 	regexp.MustCompile(`^spec\.ports\[` + listIdentity + `\]\.(port|targetPort|protocol|name)$`),
 	regexp.MustCompile(`^spec\.selector(\.[A-Za-z0-9_./-]+)?$`),
 	regexp.MustCompile(`^spec\.(replicas|minReplicas|maxReplicas|minAvailable|maxUnavailable)$`),
