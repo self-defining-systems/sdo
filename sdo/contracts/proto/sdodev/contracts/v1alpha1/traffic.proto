@@ -60,6 +60,22 @@ message TrafficWorkloadScenario {
     expression: "this == 0 || (this >= 1 && this <= 100)"
   }];
   optional TrafficSLO slo = 3;
+  // Set only on a health-probe scenario that already fails on the application
+  // as deployed: it is still probed but never gates health.
+  optional TrafficKnownBroken known_broken = 4;
+}
+
+// TrafficKnownBroken says why a health-probe scenario fails at baseline and
+// how. Mirrors the Go SDK's traffic.KnownBroken.
+message TrafficKnownBroken {
+  // One short line naming what is broken in the application.
+  string reason = 1 [(buf.validate.field).string = {pattern: "\\S", max_len: 200}];
+  // The baseline failures: HTTP status codes, "timeout", "dial" or "transport".
+  repeated string fails_with = 2 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 8
+    items: {string: {pattern: "^([1-5][0-9][0-9]|timeout|dial|transport)$"}}
+  }];
 }
 
 // TrafficLink is one declared service-to-service dependency edge: `from` calls
@@ -166,6 +182,15 @@ message TrafficWorkload {
     id: "workload.unique_scenarios"
     message: "a scenario must not be listed twice"
     expression: "this.scenarios.all(s, this.scenarios.filter(t, t.id == s.id).size() == 1)"
+  };
+  // knownBroken applies only to health-probe scenarios, and a health probe
+  // keeps at least one scenario that gates health.
+  option (buf.validate.message).cel = {
+    id: "workload.known_broken"
+    message: "knownBroken applies only to health-probe scenarios, and not to every scenario"
+    expression:
+      "this.purpose == 'health-probe' ? (size(this.scenarios) == 0 || this.scenarios.exists(s, !has(s.known_broken))) "
+      ": this.scenarios.all(s, !has(s.known_broken))"
   };
   // Link edges (from, to, port) are unique.
   option (buf.validate.message).cel = {

@@ -78,13 +78,28 @@ func (d sloDetector) EvaluationWindow(ctx sdk.DetectionContext) time.Duration {
 // Confirmed implements the observation confirmation contract. Every scenario
 // must have succeeded since observation began and have enough usable samples
 // for its current SLO window. Unproven scenarios never manufacture findings.
+// KnownBroken scenarios are not required.
 func (d sloDetector) Confirmed(ctx sdk.DetectionContext) bool {
-	return d.ConfirmationReason(ctx) == ""
+	return d.pendingReason(ctx) == ""
 }
 
 // ConfirmationReason explains why an empty steady verdict cannot establish
 // health. Qualified violations remain findings even alongside unproven peers.
+// On a confirmed workload it is the non-gating note about KnownBroken
+// scenarios whose state changed, empty when none did; the runtime records it
+// with the clear evaluation as a coverage note.
 func (d sloDetector) ConfirmationReason(ctx sdk.DetectionContext) string {
+	if reason := d.pendingReason(ctx); reason != "" {
+		return reason
+	}
+	window, ok := WindowFrom(ctx, d.workload)
+	if !ok {
+		return ""
+	}
+	return KnownBrokenChanges(window)
+}
+
+func (d sloDetector) pendingReason(ctx sdk.DetectionContext) string {
 	window, ok := WindowFrom(ctx, d.workload)
 	if !ok {
 		return "no synthetic scenario has succeeded since observation began"
@@ -102,6 +117,9 @@ func (d sloDetector) ConfirmationReason(ctx sdk.DetectionContext) string {
 	for _, observed := range window.Scenarios {
 		id := observed.Scenario.ID
 		seen[id] = true
+		if window.Workload.KnownBrokenScenario(id) != nil {
+			continue
+		}
 		if !observed.Qualified {
 			unqualified = append(unqualified, id)
 			continue
@@ -112,7 +130,7 @@ func (d sloDetector) ConfirmationReason(ctx sdk.DetectionContext) string {
 		}
 	}
 	for _, scenario := range window.Workload.Scenarios {
-		if !seen[scenario.ID] {
+		if !seen[scenario.ID] && scenario.KnownBroken == nil {
 			unqualified = append(unqualified, scenario.ID)
 		}
 	}

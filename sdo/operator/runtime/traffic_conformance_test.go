@@ -58,6 +58,11 @@ func TestTrafficProtoSchemaModelsGoWorkloadJSON(t *testing.T) {
 			Purpose: traffic.PurposeHealthProbe, Arrival: traffic.ArrivalUniform,
 			Scenarios: []traffic.WorkloadScenario{{ID: "search", Weight: 2}, {ID: "login"}},
 		},
+		"health-probe-known-broken": {
+			APIVersion: traffic.APIVersion, Kind: traffic.WorkloadKind, Name: "health",
+			Purpose: traffic.PurposeHealthProbe, Arrival: traffic.ArrivalUniform,
+			Scenarios: []traffic.WorkloadScenario{{ID: "search"}, {ID: "review", KnownBroken: &traffic.KnownBroken{Reason: "route answers 404", FailsWith: []string{"404", "timeout"}}}},
+		},
 		"verify-burst": {
 			APIVersion: traffic.APIVersion, Kind: traffic.WorkloadKind, Name: "verify",
 			Purpose: traffic.PurposeVerifyBurst, Duration: traffic.Duration(3 * time.Second),
@@ -141,6 +146,25 @@ func TestTrafficProtoValidateMirrorsGoInvariants(t *testing.T) {
 			w.Scenarios = []*contractsv1alpha1.TrafficWorkloadScenario{{Id: "BAD"}}
 		}},
 		{"weight out of range", func(w *contractsv1alpha1.TrafficWorkload) { w.Scenarios[0].Weight = 500 }},
+		{"known broken without reason", func(w *contractsv1alpha1.TrafficWorkload) {
+			w.Scenarios[1].KnownBroken = &contractsv1alpha1.TrafficKnownBroken{Reason: " ", FailsWith: []string{"404"}}
+		}},
+		{"known broken without failures", func(w *contractsv1alpha1.TrafficWorkload) {
+			w.Scenarios[1].KnownBroken = &contractsv1alpha1.TrafficKnownBroken{Reason: "route answers 404"}
+		}},
+		{"known broken with an unknown failure", func(w *contractsv1alpha1.TrafficWorkload) {
+			w.Scenarios[1].KnownBroken = &contractsv1alpha1.TrafficKnownBroken{Reason: "route answers 404", FailsWith: []string{"teapot"}}
+		}},
+		{"every scenario known broken", func(w *contractsv1alpha1.TrafficWorkload) {
+			for _, s := range w.Scenarios {
+				s.KnownBroken = &contractsv1alpha1.TrafficKnownBroken{Reason: "route answers 404", FailsWith: []string{"404"}}
+			}
+		}},
+		{"known broken outside a health probe", func(w *contractsv1alpha1.TrafficWorkload) {
+			w.Purpose = string(traffic.PurposeVerifyBurst)
+			w.Duration = proto.String("3s")
+			w.Scenarios[1].KnownBroken = &contractsv1alpha1.TrafficKnownBroken{Reason: "route answers 404", FailsWith: []string{"404"}}
+		}},
 		{"slo error rate above one", func(w *contractsv1alpha1.TrafficWorkload) {
 			w.Slo = &contractsv1alpha1.TrafficSLO{MaxErrorRate: proto.Float64(1.5)}
 		}},

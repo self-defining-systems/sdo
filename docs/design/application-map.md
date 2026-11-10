@@ -82,6 +82,11 @@ Field rules (all blocking unless marked note):
 - Every `holds_data` component that lies on the path of a writing operation lies on the path of some
   `read-later` probe.
 - Every edge's endpoints lie together on some operation path (note `map.unexercised-edge` otherwise).
+- An operation broken in the application as deployed is covered by a probe whose health-probe workload scenario
+  is declared `knownBroken` (a short reason and the baseline `failsWith` statuses). The probe still runs; the
+  traffic detector never fires on it nor waits for it to pass, and notes (O3, never a gate) when it starts
+  working or fails differently. Each such probe must exercise an operation no gated probe covers, and these
+  operations are at most half of the map's (`map.known-broken`); a workload keeps at least one gated scenario.
 
 Each gap is one diagnostic naming the operation, component or edge (`map.uncovered-operation`,
 `map.uncovered-write`, `map.uncovered-data`, `map.path-mismatch`, `map.unknown-name`, `map.schema`). They block

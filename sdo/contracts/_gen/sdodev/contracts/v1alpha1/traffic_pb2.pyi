@@ -28,14 +28,24 @@ class TrafficSLO(_message.Message):
     def __init__(self, window: _Optional[int] = ..., min_samples: _Optional[int] = ..., max_age: _Optional[str] = ..., max_error_rate: _Optional[float] = ..., max_timeout_rate: _Optional[float] = ..., latency_percentile: _Optional[int] = ..., max_latency: _Optional[str] = ..., min_timeouts: _Optional[int] = ...) -> None: ...
 
 class TrafficWorkloadScenario(_message.Message):
-    __slots__ = ("id", "weight", "slo")
+    __slots__ = ("id", "weight", "slo", "known_broken")
     ID_FIELD_NUMBER: _ClassVar[int]
     WEIGHT_FIELD_NUMBER: _ClassVar[int]
     SLO_FIELD_NUMBER: _ClassVar[int]
+    KNOWN_BROKEN_FIELD_NUMBER: _ClassVar[int]
     id: str
     weight: int
     slo: TrafficSLO
-    def __init__(self, id: _Optional[str] = ..., weight: _Optional[int] = ..., slo: _Optional[_Union[TrafficSLO, _Mapping]] = ...) -> None: ...
+    known_broken: TrafficKnownBroken
+    def __init__(self, id: _Optional[str] = ..., weight: _Optional[int] = ..., slo: _Optional[_Union[TrafficSLO, _Mapping]] = ..., known_broken: _Optional[_Union[TrafficKnownBroken, _Mapping]] = ...) -> None: ...
+
+class TrafficKnownBroken(_message.Message):
+    __slots__ = ("reason", "fails_with")
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    FAILS_WITH_FIELD_NUMBER: _ClassVar[int]
+    reason: str
+    fails_with: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, reason: _Optional[str] = ..., fails_with: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class TrafficLink(_message.Message):
     __slots__ = ("to", "port", "protocol", "http", "grpc")
