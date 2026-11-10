@@ -17,6 +17,7 @@ GENERIC_TERMS = {
     "catalog": "Generic database catalog and SDK registry concept.",
     "checkout": "Git checkout, unrelated to the shopping workload.",
     "configmap": "Kubernetes resource type used by the SDK.",
+    "consul": "Generic service-registry engine in the application map's closed data.engine set.",
     "default": "Generic default values and the standard Kubernetes namespace.",
     "demo": "Synthetic detector example namespace.",
     "llm": "Generic language-model runtime prohibition.",

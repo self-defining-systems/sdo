@@ -55,6 +55,37 @@ type Component struct {
 	Workload  string   `yaml:"workload"`
 	Services  []string `yaml:"services"`
 	HoldsData bool     `yaml:"holds_data"`
+	Data      *Data    `yaml:"data,omitempty"`
+}
+
+// Engines a component's data role may name. Other is a store SDO has no
+// engine-specific reader for.
+const (
+	EnginePostgres  = "postgres"
+	EngineMySQL     = "mysql"
+	EngineMongoDB   = "mongodb"
+	EngineRedis     = "redis"
+	EngineMemcached = "memcached"
+	EngineConsul    = "consul"
+	EngineOther     = "other"
+)
+
+// Data roles. An authoritative store is the source of truth for its data; a
+// derived one (a cache, an index, a projection) can be rebuilt from the
+// components it is derived from.
+const (
+	RoleAuthoritative = "authoritative"
+	RoleDerived       = "derived"
+)
+
+var knownEngines = map[string]bool{EnginePostgres: true, EngineMySQL: true, EngineMongoDB: true, EngineRedis: true, EngineMemcached: true, EngineConsul: true, EngineOther: true}
+
+// Data declares that a component is a data store: its engine, and whether it is
+// the source of truth or a copy rebuilt from other components.
+type Data struct {
+	Engine      string   `yaml:"engine"`
+	Role        string   `yaml:"role"`
+	DerivedFrom []string `yaml:"derived_from,omitempty"`
 }
 
 // Edge is a directed call from one component to another.
@@ -169,6 +200,7 @@ func opPaths(ops []Operation) map[string]Operation {
 func (m Map) Check(inv Inventory, workloads []Workload) []Finding {
 	c := &checker{m: m, byName: map[string]Component{}, ops: map[string]Operation{}}
 	c.schema()
+	c.dataRoles()
 	c.inventory(inv)
 	c.paths()
 	c.probes(workloads)
@@ -242,6 +274,45 @@ func (c *checker) schema() {
 		}
 		if len(op.Path) == 0 {
 			c.add(RuleSchema, "path lists the components the operation reaches, entry component first", "operation %s has an empty path", op.ID)
+		}
+	}
+}
+
+func (c *checker) dataRoles() {
+	const hint = "data is {engine: postgres|mysql|mongodb|redis|memcached|consul|other, role: authoritative|derived, derived_from: [authoritative components]}"
+	for _, comp := range c.m.Components {
+		d := comp.Data
+		if d == nil || c.byName[comp.Name].Name != comp.Name {
+			continue
+		}
+		if !knownEngines[d.Engine] {
+			c.add(RuleSchema, hint, "component %s: data engine %q is not a known engine", comp.Name, d.Engine)
+		}
+		switch d.Role {
+		case RoleAuthoritative:
+			if len(d.DerivedFrom) > 0 {
+				c.add(RuleSchema, "an authoritative store is the source of truth; remove derived_from, or make the role derived", "component %s: authoritative data lists derived_from %v", comp.Name, d.DerivedFrom)
+			}
+		case RoleDerived:
+			if comp.HoldsData {
+				c.add(RuleSchema, "a derived copy refills from its sources, so it does not hold data; set holds_data: false, or make the role authoritative", "component %s: derived data cannot set holds_data: true", comp.Name)
+			}
+			if len(d.DerivedFrom) == 0 {
+				c.add(RuleSchema, "list the authoritative components the copy is rebuilt from in derived_from", "component %s: derived data has no derived_from", comp.Name)
+			}
+			for _, source := range d.DerivedFrom {
+				target, ok := c.byName[source]
+				switch {
+				case source == comp.Name:
+					c.add(RuleSchema, "derived_from names the components the copy is rebuilt from", "component %s: derived_from names itself", comp.Name)
+				case !ok:
+					c.add(RuleUnknownName, "derived_from names declared components", "component %s: derived_from %q is not a component", comp.Name, source)
+				case target.Data == nil || target.Data.Role != RoleAuthoritative:
+					c.add(RuleSchema, fmt.Sprintf("declare data.role: authoritative on %s, or name its source of truth instead", source), "component %s: derived_from %s is not an authoritative data component", comp.Name, source)
+				}
+			}
+		default:
+			c.add(RuleSchema, hint, "component %s: data role %q is not authoritative or derived", comp.Name, d.Role)
 		}
 	}
 }
