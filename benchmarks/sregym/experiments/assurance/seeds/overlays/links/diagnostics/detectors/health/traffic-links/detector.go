@@ -12,7 +12,7 @@ func New() sdk.Detector {
 		Class:             sdk.DetectorClassHealth,
 		Owner:             sdk.DetectorOwnerHealthJudge,
 		Persistence:       sdk.PersistencePolicy{Firing: 2, Clearing: 2},
-		Batching:          sdk.BatchingPolicy{Severity: sdk.SeverityCritical, Debounce: 500 * time.Millisecond},
+		Batching:          sdk.BatchingPolicy{Severity: sdk.SeverityWarning, Debounce: 500 * time.Millisecond},
 		Playbooks:         []string{"health-objective"},
 		OriginatingCommit: "lifecycle-bootstrap",
 		Watches:           []sdk.WatchKind{traffic.Watch},

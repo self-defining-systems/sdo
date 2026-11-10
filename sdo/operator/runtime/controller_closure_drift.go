@@ -92,7 +92,7 @@ func (c *Controller) verifyClosureSource(ctx context.Context, now time.Time, sna
 		if err := errors[id]; err != nil {
 			c.recordDetectorError(id, now, err)
 		} else {
-			c.recordEvaluation(id, now, unresolved)
+			c.recordEvaluation(id, now, unresolved, nil)
 		}
 	}
 	if result != nil {

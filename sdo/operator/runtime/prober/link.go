@@ -23,6 +23,7 @@ type linkState struct {
 	qualified bool
 	healthy   []time.Duration
 	baseline  time.Duration
+	spread    time.Duration
 }
 
 type linkProbe struct {
@@ -118,8 +119,9 @@ func (p *Prober) dialLink(ctx context.Context, workload traffic.Workload, state 
 }
 
 // record keeps the newest capacity samples. The healthy baseline is the
-// median of the first LinkBaselineSamples successful dials and never moves
-// afterwards, so a later slow period cannot become the norm it is judged by.
+// median of the first LinkBaselineSamples successful dials, and its spread
+// their median absolute deviation from it. Neither moves afterwards, so a
+// later slow period cannot become the norm it is judged by.
 func (state *linkState) record(sample traffic.LinkSample, capacity int) {
 	state.samples = append(state.samples, sample)
 	if len(state.samples) > capacity {
@@ -132,11 +134,21 @@ func (state *linkState) record(sample traffic.LinkSample, capacity int) {
 	if state.baseline == 0 {
 		state.healthy = append(state.healthy, sample.Duration)
 		if len(state.healthy) == traffic.LinkBaselineSamples {
-			slices.Sort(state.healthy)
-			state.baseline = max(state.healthy[(len(state.healthy)-1)/2], time.Nanosecond)
+			state.baseline = max(medianDuration(state.healthy), time.Nanosecond)
+			deviations := make([]time.Duration, 0, len(state.healthy))
+			for _, duration := range state.healthy {
+				deviations = append(deviations, max(duration-state.baseline, state.baseline-duration))
+			}
+			state.spread = medianDuration(deviations)
 			state.healthy = nil
 		}
 	}
+}
+
+func medianDuration(durations []time.Duration) time.Duration {
+	sorted := slices.Clone(durations)
+	slices.Sort(sorted)
+	return sorted[(len(sorted)-1)/2]
 }
 
 // linkWindowLocked snapshots a link-probe workload; p.mu must be held.
@@ -145,7 +157,7 @@ func (p *Prober) linkWindowLocked(probe *linkProbe, now time.Time) traffic.Windo
 	for _, state := range probe.links {
 		links = append(links, traffic.LinkObservations{
 			Link: state.link, Samples: append([]traffic.LinkSample(nil), state.samples...), Qualified: state.qualified,
-			BaselineLatency: state.baseline,
+			BaselineLatency: state.baseline, BaselineSpread: state.spread,
 		})
 	}
 	return traffic.Window{Workload: probe.workload, ObservedAt: now, Links: links}

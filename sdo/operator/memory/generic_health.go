@@ -178,7 +178,12 @@ func prepareTrafficDetectors(root string) error {
 		}
 		id := trafficDetectorPrefix + workload.GetName()
 		manifest := genericManifest(id, "10s", []layout.Watch{{APIVersion: "sdo.dev/v1alpha1", Kind: "SyntheticTraffic"}})
-		if err := writeGenericDetector(root, manifest, trafficSource(id, workload.GetName(), workload.GetPurpose() == "link-probe")); err != nil {
+		link := workload.GetPurpose() == "link-probe"
+		if link {
+			// A slow link is a warning finding; it still opens an incident.
+			manifest.Batching.Severity = string(sdk.SeverityWarning)
+		}
+		if err := writeGenericDetector(root, manifest, trafficSource(id, workload.GetName(), link)); err != nil {
 			return err
 		}
 		wanted[id] = true
@@ -431,9 +436,9 @@ func New() sdk.Detector {
 }
 
 func trafficSource(id, workload string, link bool) string {
-	constructor := "NewDetector"
+	constructor, spec := "NewDetector", genericSpec(id)
 	if link {
-		constructor = "NewLinkDetector"
+		constructor, spec = "NewLinkDetector", genericSpecWithSeverity(id, "Warning")
 	}
 	return fmt.Sprintf(`package synthetic
 
@@ -450,7 +455,7 @@ func New() sdk.Detector {
 		Interval: 10 * time.Second,
 	}, %q)
 }
-`, constructor, genericSpec(id), workload)
+`, constructor, spec, workload)
 }
 
 // metricsAlertsSource batches warning alerts as well as critical ones: an

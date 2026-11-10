@@ -186,7 +186,7 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 			if effect.Closure.ClosureStabilityWindow == 0 && observation.Status == DetectorEvaluationClear {
 				continue
 			}
-			c.recordRecoveryObservation(observation.ID, c.clock(), observation.Findings, observation.Status, observation.Error, observation.Reason)
+			c.recordRecoveryObservation(observation.ID, c.clock(), observation.Findings, observation.Status, observation.Error, observation.Reason, newRecoveryScope(findingKeys(effect.Closure.Request.Findings)))
 		}
 		if len(effect.Closure.FinalDetectorStates) > 0 {
 			c.mu.Lock()
@@ -581,6 +581,7 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 		}
 	}
 	reads := readRecoveryDetectors(ctx, toRead, snapshot)
+	scope := newRecoveryScope(findingKeys(closure.Request.Findings))
 	for _, id := range ordered {
 		detector := c.detectors[id]
 		if detector == nil && !slices.Contains(c.healthDetectorIDs, id) {
@@ -596,8 +597,14 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 		evaluated++
 		read := reads[id]
 		findings, status, err := read.findings, read.status, read.err
+		if status == DetectorEvaluationFiring && len(scope.blocking(findings)) == 0 {
+			status = DetectorEvaluationClear
+			if !detectorConfirmed(detector, snapshot) {
+				status = DetectorEvaluationPending
+			}
+		}
 		observations = append(observations, recoveryObservation{ID: id, Findings: findings, Status: status, Error: err, Reason: detectorConfirmationReason(detector, snapshot)})
-		state := DetectorEvaluation{DetectorID: id, EvaluatedAt: c.clock(), Status: status, Fingerprints: findingFingerprints(findings), Reason: detectorConfirmationReason(detector, snapshot)}
+		state := DetectorEvaluation{DetectorID: id, EvaluatedAt: c.clock(), Status: status, Fingerprints: findingFingerprints(scope.blocking(findings)), Reason: detectorConfirmationReason(detector, snapshot)}
 		if err != nil {
 			state.Error = err.Error()
 		}

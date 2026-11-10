@@ -58,13 +58,19 @@ const (
 	// the link. A single few-second data-plane stall stays below it.
 	LinkLossWindow  = 20
 	LinkLossPercent = 20
-	// LinkLatencyFactor and MinLinkLatencyBound set the slow bound: the
-	// median of the last Failures dials must exceed both LinkLatencyFactor
-	// times the healthy baseline and MinLinkLatencyBound.
+	// LinkLatencyFactor, LinkSpreadFactor and MinLinkLatencyBound set the
+	// slow bound: a window's median dial must exceed LinkLatencyFactor times
+	// the healthy baseline, the baseline plus LinkSpreadFactor times its
+	// spread, and MinLinkLatencyBound. Baseline and spread are first scaled by
+	// the slowdown the link's peers share (see JudgeLinkIn).
 	LinkLatencyFactor   = 5
+	LinkSpreadFactor    = 8
 	MinLinkLatencyBound = 50 * time.Millisecond
+	// LinkSlowWindows is how many consecutive windows of Failures dials must
+	// each be slow before a link is reported slow.
+	LinkSlowWindows = 3
 	// LinkBaselineSamples is how many first successful dials the prober
-	// takes the healthy baseline median from.
+	// takes the healthy baseline median and spread from.
 	LinkBaselineSamples = 10
 )
 const (
@@ -191,7 +197,9 @@ func NewLinkDetector(spec sdk.DetectorSpec, workload string) sdk.Detector
     of a link-probe workload that JudgeLink finds unreachable, intermittent or
     slow. It decides purely from the prober's samples; with no observations it
     reports nothing. The sample counts are the hysteresis, so unlike NewDetector
-    it does not add DefaultHealthMinDuration.
+    it does not add DefaultHealthMinDuration. Unreachable and intermittent links
+    are critical; a slow link still serves, so it is a warning: batch warnings
+    for slow links to open incidents.
 
 func ScenarioFinding(spec sdk.DetectorSpec, namespace string, workload Workload, scenario Descriptor, verdict SLOVerdict) sdk.Finding
     ScenarioFinding explains one unhealthy scenario. The primary resource is
@@ -229,11 +237,4 @@ type Clock interface {
 
 var RealClock Clock = realClock{}
     RealClock is the wall clock.
-
-type Consumer interface {
-	TrafficWorkloads() []string
-}
-    Consumer is implemented by detectors that evaluate synthetic traffic. The
-    controller runtime asks the prober for exactly the workloads its detectors
-    consume.
 ```

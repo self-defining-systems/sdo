@@ -12,6 +12,7 @@ import (
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/runtime/lifecyclecore"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -617,17 +618,17 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		changes := c.tracker.Observe(now, spec.ID, validFindings)
 		c.observeGate(spec.ID, now, validFindings)
 		sampleFindings = append(sampleFindings, validFindings...)
-		c.recordEvaluation(spec.ID, now, validFindings)
+		c.recordEvaluation(spec.ID, now, validFindings, c.recoveryScope())
 		c.history[len(c.history)-1].Reason = detectorConfirmationReason(detector, snapshot)
 		c.batcher.RemoveKeys(changes.Cleared)
 		if c.config.ConfirmationInterval > 0 && c.tracker.HasPendingDetector(spec.ID) {
 			c.scheduler.Expedite(spec.ID, now.Add(c.config.ConfirmationInterval))
 		}
-		if len(changes.Activated) > 0 {
-			c.mu.Lock()
+		c.mu.Lock()
+		if len(c.recoveryScopeLocked().blocking(changes.Activated)) > 0 {
 			c.closureStableSince = time.Time{}
-			c.mu.Unlock()
 		}
+		c.mu.Unlock()
 		for _, finding := range changes.Activated {
 			if c.mergeIntoOpenIncident(finding) || c.attachLearnedActivation(ctx, finding) {
 				continue
@@ -1044,14 +1045,14 @@ func (c *Controller) IncidentOpen() bool {
 	return c.incidentOpen
 }
 
-func (c *Controller) recordEvaluation(detectorID string, now time.Time, findings []sdk.Finding) {
+// recordEvaluation records one detector evaluation. Only active findings the
+// recovery scope holds make it firing; the tracker still follows the others.
+func (c *Controller) recordEvaluation(detectorID string, now time.Time, findings []sdk.Finding, scope recoveryScope) {
 	status := DetectorEvaluationClear
 	fingerprints := make([]string, 0, len(findings))
-	for _, finding := range findings {
-		if finding.Status == sdk.FindingActive {
-			status = DetectorEvaluationFiring
-			fingerprints = append(fingerprints, finding.Fingerprint)
-		}
+	for _, finding := range scope.blocking(findings) {
+		status = DetectorEvaluationFiring
+		fingerprints = append(fingerprints, finding.Fingerprint)
 	}
 	sort.Strings(fingerprints)
 	c.history = append(c.history, DetectorEvaluation{
@@ -1525,8 +1526,9 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		for _, finding := range verification.Findings {
 			seen[FindingFingerprint(finding)] = true
 		}
+		scope := c.recoveryScopeLocked()
 		for _, state := range c.tracker.Snapshot() {
-			if state.Active && !strings.HasPrefix(state.DetectorID, "drift.") && !seen[FindingFingerprint(state.Finding)] {
+			if state.Active && scope.holds(state.Finding) && !strings.HasPrefix(state.DetectorID, "drift.") && !seen[FindingFingerprint(state.Finding)] {
 				verification.Findings = append(verification.Findings, state.Finding)
 			}
 		}
@@ -1828,13 +1830,16 @@ func (c *Controller) verificationDeadlineLocked() time.Time {
 	return deadline
 }
 
+// activeHealthDetectors lists health detectors with an active finding the
+// open incident's recovery scope holds. Caller holds c.mu.
 func (c *Controller) activeHealthDetectors() []string {
 	active := []string{}
-	for _, detectorID := range c.healthDetectorIDs {
-		if c.tracker.HasActiveDetector(detectorID) {
-			active = append(active, detectorID)
+	for _, finding := range c.recoveryScopeLocked().blocking(c.tracker.ActiveFindings(c.healthDetectorIDs, nil)) {
+		if !slices.Contains(active, finding.DetectorID) {
+			active = append(active, finding.DetectorID)
 		}
 	}
+	sort.Strings(active)
 	return active
 }
 
