@@ -200,7 +200,8 @@ func TestClientLinkDetectorSeesClientEgressTheProberMisses(t *testing.T) {
 	}
 	probe := d.(vantage.Consumer).VantageProbes()[0]
 	slow := reading(vantage.TCPConnect, nil)
-	slow.Dials = dials(t0.Add(-4*time.Second), 4, 300*time.Millisecond, true)
+	// Slow must persist over traffic.LinkSlowWindows probes' worth of dials.
+	slow.Dials = dials(t0.Add(-12*time.Second), traffic.LinkSlowWindows*vantage.DialsPerProbe, 300*time.Millisecond, true)
 	healthy := reading(vantage.TCPConnect, nil)
 	healthy.Dials = dials(t0.Add(-time.Hour), 4, 2*time.Millisecond, true)
 	window := traffic.Window{Workload: traffic.Workload{Name: "links", Purpose: traffic.PurposeLinkProbe, Failures: 3}, ObservedAt: t0,

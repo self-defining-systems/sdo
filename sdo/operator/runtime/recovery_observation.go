@@ -48,12 +48,8 @@ func (c *Controller) recoveryTrackersClear(request IncidentRequest) bool {
 		}
 		return !c.tracker.HasActiveKeys(findingKeys(findings))
 	}
-	for _, id := range c.healthDetectorIDs {
-		if c.tracker.HasActiveDetector(id) {
-			return false
-		}
-	}
-	return true
+	scope := newRecoveryScope(findingKeys(request.Findings))
+	return len(scope.blocking(c.tracker.ActiveFindings(c.healthDetectorIDs, nil))) == 0
 }
 
 func validateDetectorObservation(detector sdk.Detector, snapshot sdk.DetectionContext, findings []sdk.Finding, err error) ([]sdk.Finding, DetectorEvaluationStatus, error) {
@@ -104,13 +100,14 @@ func (c *Controller) observeRecoveryHealth(ctx context.Context, now time.Time, s
 		detectors = append(detectors, detector)
 	}
 	reads := readRecoveryDetectors(ctx, detectors, snapshot)
+	scope := c.recoveryScope()
 	for i, id := range pending {
 		read := reads[id]
-		c.recordRecoveryObservation(id, now, read.findings, read.status, read.err, detectorConfirmationReason(detectors[i], snapshot))
+		c.recordRecoveryObservation(id, now, read.findings, read.status, read.err, detectorConfirmationReason(detectors[i], snapshot), scope)
 	}
 }
 
-func (c *Controller) recordRecoveryObservation(id string, now time.Time, findings []sdk.Finding, status DetectorEvaluationStatus, err error, reason string) {
+func (c *Controller) recordRecoveryObservation(id string, now time.Time, findings []sdk.Finding, status DetectorEvaluationStatus, err error, reason string, scope recoveryScope) {
 	states, _ := c.latestEvaluations([]string{id}, time.Time{}, false)
 	if len(states) > 0 && states[0].EvaluatedAt.Equal(now) && states[0].Status == status {
 		return
@@ -125,7 +122,7 @@ func (c *Controller) recordRecoveryObservation(id string, now time.Time, finding
 	} else {
 		changes := c.tracker.Observe(now, id, findings)
 		c.batcher.RemoveKeys(changes.Cleared)
-		c.recordEvaluation(id, now, findings)
+		c.recordEvaluation(id, now, findings, scope)
 		if detector := c.detectors[id]; detector != nil {
 			spec := detector.Spec()
 			c.recordFiring(spec, now, findings, changes)

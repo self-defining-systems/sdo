@@ -13,7 +13,7 @@ persistence:
     firing: 2
     clearing: 2
 batching:
-    severity: critical
+    severity: warn
     debounce: 500ms
 possiblePlaybooks:
     - health-objective

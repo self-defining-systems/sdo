@@ -109,6 +109,8 @@ because collecting cAdvisor counters adds a kubelet request and substantial pars
 Runtime-crash patterns cover Go panic/fatal, Python traceback, Java OOM/thread exceptions and
 segmentation faults; `logs.Appeared` supplies transition persistence (firing 1, clearing 2).
 Cause detectors batch at warn so cause findings open incidents. Workload unavailability is critical.
+Report degradation (slower but still serving) at warn and loss of service at critical: a warn finding
+holds an incident's closure only when that incident opened on it.
 Use source-specific detectors for config parsing, named peers, journeys, domain logs and metrics.
 
 Detection designers author ordinary health detectors; no detector ID, package, watch set or Spec is reserved
