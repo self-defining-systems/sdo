@@ -52,8 +52,8 @@ type ScriptExecutionResult struct {
 	CaptureGaps     []string                   `json:"capture_gaps,omitempty"`
 }
 
-// ScriptOriginReceipt is protected historical evidence: the original
-// successful repair a learned step encodes. Any recorded mutation qualifies;
+// ScriptOriginReceipt is protected evidence of a learned step's original
+// successful repair. Any recorded mutation qualifies;
 // ScriptDigest, when present, names the exact RunScript bytes that ran.
 type ScriptOriginReceipt struct {
 	ScriptDigest string          `json:"script_digest,omitempty"`

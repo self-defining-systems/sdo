@@ -53,6 +53,8 @@ type StoreAccess struct {
 	Read     gitRead
 	Snapshot SnapshotProvider
 	Backups  BackupStore
+	// Payloads holds the restore text captured with each promoted baseline.
+	Payloads StorePayloadSource
 }
 
 // acceptedMapComponents reads the accepted application map's components.
@@ -200,7 +202,7 @@ func (r storeRun) facts(ctx context.Context) (*storestate.Facts, string) {
 	if !ok {
 		return nil, fmt.Sprintf("engine %s has no store-state reader", r.target.Engine)
 	}
-	stdout, _, err := r.command(ctx, storeops.Command{Args: adapter.ReadCommand(storestate.Endpoint{Port: r.port()})})
+	stdout, _, err := r.command(ctx, storeops.Command{Args: adapter.ReadCommand(storestate.Endpoint{Port: r.storeStatePort()})})
 	if err != nil {
 		return nil, err.Error()
 	}
@@ -509,6 +511,19 @@ func (e PlanExecutor) applyStoreAction(ctx context.Context, incident IncidentReq
 		effect, err = run.restore(ctx, a)
 	case program.InvalidateDerived:
 		effect, err = run.invalidate(ctx, a)
+	case program.RestoreStoreItem:
+		restored, wrote, err := run.restoreItem(ctx, a)
+		if wrote || restored.Already {
+			report.StoreRestore = &restored
+		}
+		return wrote, err
+	case program.CheckStoreCredential:
+		check, err := run.checkCredential(ctx, a)
+		if err != nil {
+			return false, err
+		}
+		report.StoreCredential = &check
+		return false, nil
 	default:
 		return false, fmt.Errorf("unsupported store action %T", action)
 	}
@@ -529,6 +544,10 @@ func storePatchOperation(action program.Action) string {
 		return "restore_backup"
 	case program.InvalidateDerived:
 		return "invalidate_derived"
+	case program.RestoreStoreItem:
+		return "restore_store_item"
+	case program.CheckStoreCredential:
+		return "check_store_credential"
 	}
 	return "store_backup"
 }

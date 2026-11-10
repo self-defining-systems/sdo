@@ -348,6 +348,10 @@ func storeActionVerb(action program.Action) string {
 		return "data repair"
 	case program.RestoreBackup:
 		return "backup restore"
+	case program.RestoreStoreItem:
+		return "store-item restore"
+	case program.CheckStoreCredential:
+		return "credential check"
 	}
 	return "derived-store invalidation"
 }

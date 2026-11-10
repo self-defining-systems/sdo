@@ -42,6 +42,9 @@ type PodReadBaseline struct {
 	settle      time.Duration
 	candidateAt time.Time
 	candidate   map[string]podread.Result
+	// Payloads, when set, captures the restore text of each promoted
+	// store-state reading (StorePayloads).
+	Payloads *StorePayloads
 }
 
 // NewPodReadBaseline returns an empty holder whose promotions settle for
@@ -88,7 +91,7 @@ func (b *PodReadBaseline) Promote(results map[string]podread.Result) {
 		return
 	}
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	promoted := map[string]podread.Result{}
 	for id, result := range results {
 		if result.Error != "" || storestate.UsableAsBaseline(id, result) != nil {
 			continue
@@ -100,7 +103,10 @@ func (b *PodReadBaseline) Promote(results map[string]podread.Result) {
 			continue
 		}
 		b.results[id] = podread.Result{Query: result.Query, Readings: complete}
+		promoted[id] = b.results[id]
 	}
+	b.mu.Unlock()
+	b.Payloads.promoted(promoted)
 }
 
 // attach sets each result's Baseline to the promoted readings of the same

@@ -25,7 +25,7 @@ var redisSettings = []string{
 // INFO is filtered to the fields parsed, requirepass is reduced to set or
 // empty, and ACL hashes and passwords are stripped, so the output carries no
 // secret.
-const redisScript = `[ -n "$P" ]&&export REDISCLI_AUTH="$P"
+const redisScript = `A=$1;Z=$2;shift 2;[ -n "$P" ]&&export REDISCLI_AUTH="$P"
 r(){ redis-cli -p %d "$@" 2>&1|tr -d '\r';}
 echo '== info';r INFO|grep -E '^(role|master_link_status|connected_slaves|min_slaves_good_slaves|connected_clients|maxclients|paused_[a-z_]+|used_memory|maxmemory|maxmemory_policy|rdb_last_bgsave_status|aof_last_write_status|loading|db[0-9]+):|^[A-Z(]|^Could'
 echo '== dbsize';r DBSIZE|head -n1
@@ -33,6 +33,7 @@ echo '== role';r ROLE|head -n1
 echo '== config';for k in %s;do r CONFIG GET $k|head -n2;done
 o=$(r CONFIG GET requirepass);case "$o" in requirepass*)[ -n "$(printf %%s "$o"|sed -n 2p)" ]&&v=set||v=empty;printf 'requirepass\n%%s\n' $v;;*)printf '%%s\n' "$o"|head -n1;;esac
 echo '== acl';r ACL LIST|sed -E 's/ [#<>][^ ]*//g'|head -n32
+echo '== holders';eval "$A"
 echo '== keys';(IFS=;r EVAL "$*" 0)|head -n 26
 `
 
@@ -52,7 +53,8 @@ func (redisAdapter) Engine() Engine   { return EngineRedis }
 func (redisAdapter) DefaultPort() int { return 6379 }
 
 func (redisAdapter) ReadCommand(e Endpoint) []string {
-	return readCommand([]string{"REDISCLI", "REDIS"}, fmt.Sprintf(redisScript, e.Port, strings.Join(redisSettings, " ")), chunk(redisKeysLua, readChunkBytes)...)
+	args := append([]string{redisHoldersSnippet, tcpHoldersSnippet(e.Port)}, chunk(redisKeysLua, readChunkBytes)...)
+	return readCommand([]string{"REDISCLI", "REDIS"}, fmt.Sprintf(redisScript, e.Port, strings.Join(redisSettings, " ")), args...)
 }
 
 // redisKeysLua counts the keys of database 0 per key pattern, scanning at
@@ -251,6 +253,10 @@ func (redisAdapter) Parse(stdout string) (Facts, error) {
 	items = append(items, keyItems...)
 
 	f := Facts{Engine: EngineRedis}
+	holders, present := sections["holders"]
+	if f.Holders, err = parseHolders(holders, present); err != nil {
+		return Facts{}, fmt.Errorf("redis read: %w", err)
+	}
 	if answered["info"] {
 		f.Connections = gauge(info["connected_clients"], first(info["maxclients"], config["maxclients"]))
 		f.Memory = gauge(info["used_memory"], first(info["maxmemory"], config["maxmemory"]))

@@ -95,6 +95,8 @@ message Action {
     InvalidateDerived invalidate_derived = 24;
     RepairData repair_data = 25;
     RestoreBackup restore_backup = 26;
+    RestoreStoreItem restore_store_item = 27;
+    CheckStoreCredential check_store_credential = 28;
   }
 }
 
@@ -573,6 +575,45 @@ message RestoreBackup {
   StoreTarget target = 1 [(buf.validate.field).required = true];
   string backup = 2 [(buf.validate.field).string = {pattern: "^[a-z0-9][a-z0-9-]{0,62}$"}];
   string reason = 3;
+}
+
+// One value-free store-state fact.
+message StoreItem {
+  string kind = 1 [(buf.validate.field).string.min_len = 1];
+  string scope = 2;
+  string name = 3 [(buf.validate.field).string.min_len = 1];
+  string value = 4;
+}
+// A store-state item from its baseline (before, absent when added) to now
+// (after, absent when removed).
+message StoreItemChange {
+  StoreItem before = 1;
+  StoreItem after = 2;
+}
+// Puts one store-state item back to the controller's promoted healthy baseline
+// value with the engine's fixed inverse; records the prior value and verifies.
+// Effect: store-setting.
+message RestoreStoreItem {
+  StoreTarget target = 1 [(buf.validate.field).required = true];
+  StoreItemChange change = 2 [(buf.validate.field).required = true];
+  bool end_sessions = 3;
+  string reason = 4;
+}
+// Names, never holds, the client's credential environment variables.
+message StoreCredentialInputs {
+  string user = 1;
+  string password = 2;
+  string database = 3;
+  string uri = 4;
+}
+// One authentication attempt with the client container's credential
+// references against the store; value-free ok/denied/unreachable. Effect: read.
+message CheckStoreCredential {
+  StoreTarget target = 1 [(buf.validate.field).required = true];
+  ObjectRef client = 2 [(buf.validate.field).required = true];
+  string container = 3 [(buf.validate.field).string.min_len = 1];
+  StoreCredentialInputs credential = 4;
+  string reason = 5;
 }
 
 // Opaque bash effects use recorded open/fixed diagnosis, never invented effects.

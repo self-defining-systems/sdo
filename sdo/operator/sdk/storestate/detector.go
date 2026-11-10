@@ -325,6 +325,22 @@ func (d detector) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.Fin
 		if f.Memory != nil && f.Memory.Near(NearLimit) && d.noEviction(f) {
 			findings = append(findings, d.gaugeFinding(f, RuleMemoryNearLimit, "memory", *f.Memory))
 		}
+		// A connection cap reached, or a read refused at it, names who holds
+		// the connections.
+		if len(f.Holders) > 0 {
+			groups := ResolveHolders(ctx, f.Pod, f.Holders)
+			for i := range findings {
+				finding := &findings[i]
+				if finding.PrimaryResource != f.Pod {
+					continue
+				}
+				change, _ := finding.Metadata["change"].(Change)
+				if finding.RuleID == RuleConnectionsNearLimit || finding.RuleID == RuleRefused && change.After != nil && change.After.Value == "max-clients" {
+					finding.Evidence += "; connections held: " + RenderHolders(groups)
+					finding.Metadata["holders"] = groups
+				}
+			}
+		}
 	}
 	sort.SliceStable(findings, func(i, j int) bool { return findings[i].Fingerprint < findings[j].Fingerprint })
 	return findings, nil

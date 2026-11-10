@@ -220,8 +220,8 @@ func TestRedisNeverRecordsCredentials(t *testing.T) {
 
 func TestRedisReadCommandIsBoundedAndValueFree(t *testing.T) {
 	argv := redisAdapter(t).ReadCommand(storestate.Endpoint{Port: 6380})
-	// sh -c <credential prelude> $0 <engine script> <key-pattern Lua, split>
-	if len(argv) < 6 || argv[0] != "sh" || argv[1] != "-c" {
+	// sh -c <credential prelude> $0 <engine script> <holders awk> <TCP fallback> <key-pattern Lua, split>
+	if len(argv) < 8 || argv[0] != "sh" || argv[1] != "-c" {
 		t.Fatalf("argv = %q", argv)
 	}
 	script := argv[4]
@@ -232,6 +232,9 @@ func TestRedisReadCommandIsBoundedAndValueFree(t *testing.T) {
 		if !strings.Contains(script, want) {
 			t.Errorf("script lacks %q", want)
 		}
+	}
+	if !strings.Contains(argv[5], "CLIENT LIST") || !strings.Contains(argv[6], "/proc/net/tcp") {
+		t.Errorf("holders arguments = %q, %q", argv[5], argv[6])
 	}
 	for _, forbidden := range []string{"SET ", "FLUSH", "DEL ", "KEYS", "SCAN", "GET requirepass|"} {
 		if strings.Contains(script, forbidden) {

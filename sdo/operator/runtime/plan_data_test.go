@@ -22,6 +22,7 @@ import (
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
+	"sdo.dev/operator/sdk/storestate"
 )
 
 // storeArchitecture marks db the authoritative redis store and cache a redis
@@ -75,6 +76,9 @@ type fakeRedisStores struct {
 	facts  map[string]string              // pod -> store-state read output
 	broken map[string]bool                // pod -> exec gives no answer
 	ops    []string
+	// restored answers a store-item restore (its command words) and may
+	// change facts; nil accepts without changing anything.
+	restored func(pod string, words []string) string
 }
 
 func newFakeRedisStores() *fakeRedisStores {
@@ -131,6 +135,16 @@ func (f *fakeRedisStores) StoreCommand(_ context.Context, uid string, command pr
 		}
 	}
 	script := strings.Join(command.Args, "\n")
+	if len(command.Args) > 4 && strings.Contains(command.Args[4], storestate.RestoredMarker) {
+		words := command.Args[5:]
+		f.ops = append(f.ops, "restore-item:"+pod+":"+strings.Join(words, " "))
+		answer := "OK\n" + storestate.RestoredMarker + "\n"
+		if f.restored != nil {
+			answer = f.restored(pod, words)
+		}
+		_, _ = io.WriteString(stdout, answer)
+		return 0, nil
+	}
 	if strings.Contains(script, "== info") {
 		f.ops = append(f.ops, "facts:"+pod)
 		out := healthyRedisRead

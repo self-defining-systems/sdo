@@ -224,16 +224,4 @@ func (b Bindings) Parameter(spec ProgramSpec, name string) (any, error)
 func (b *Bindings) UnmarshalJSON(raw []byte) error
     UnmarshalJSON imports object-only corpus bindings from existing recordings.
     New recordings always use explicit objects and values maps.
-
-type Command struct {
-	Pod       sdk.ObjectRef `json:"pod"`
-	Container string        `json:"container"`
-	Args      []string      `json:"args"`
-	Stdin     string        `json:"stdin,omitempty"`
-}
-    Command runs inside a named container. Output is discarded; observations are
-    exit codes. Stdin permits scripts and byte streams (including tar for cp).
-    Credentials must be resolved inside the container through environment refs.
-
-func (c Command) Validate() error
 ```

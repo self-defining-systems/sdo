@@ -3,7 +3,22 @@ package planwire
 import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/storestate"
 )
+
+func storeItemProto(i *storestate.Item) *contracts.StoreItem {
+	if i == nil {
+		return nil
+	}
+	return &contracts.StoreItem{Kind: string(i.Kind), Scope: i.Scope, Name: i.Name, Value: i.Value}
+}
+
+func storeItemState(i *contracts.StoreItem) *storestate.Item {
+	if i == nil {
+		return nil
+	}
+	return &storestate.Item{Kind: storestate.ItemKind(i.GetKind()), Scope: i.GetScope(), Name: i.GetName(), Value: i.GetValue()}
+}
 
 func storeTargetProto(t program.StoreTarget) *contracts.StoreTarget {
 	return &contracts.StoreTarget{Component: t.Component, Engine: t.Engine, Pod: refProto(t.Pod), Container: t.Container, Port: int32(t.Port)}
@@ -61,6 +76,13 @@ func dataActionProto(action program.Action) (*contracts.Action, bool) {
 		return &contracts.Action{Kind: &contracts.Action_RepairData{RepairData: &contracts.RepairData{Target: storeTargetProto(a.Target), Scope: dataScopeProto(a.Scope), Statement: a.Statement, MemberPredicate: memberPredicateProto(a.MemberPredicate), CopyFrom: optionalScopeProto(a.CopyFrom), ExpectMin: int32(a.ExpectMin), ExpectMax: int32(a.ExpectMax), Backup: a.Backup, Reason: a.Reason}}}, true
 	case program.RestoreBackup:
 		return &contracts.Action{Kind: &contracts.Action_RestoreBackup{RestoreBackup: &contracts.RestoreBackup{Target: storeTargetProto(a.Target), Backup: a.Backup, Reason: a.Reason}}}, true
+	case program.RestoreStoreItem:
+		change := &contracts.StoreItemChange{Before: storeItemProto(a.Change.Before), After: storeItemProto(a.Change.After)}
+		return &contracts.Action{Kind: &contracts.Action_RestoreStoreItem{RestoreStoreItem: &contracts.RestoreStoreItem{Target: storeTargetProto(a.Target), Change: change, EndSessions: a.EndSessions, Reason: a.Reason}}}, true
+	case program.CheckStoreCredential:
+		c := a.Credential
+		inputs := &contracts.StoreCredentialInputs{User: c.User, Password: c.Password, Database: c.Database, Uri: c.URI}
+		return &contracts.Action{Kind: &contracts.Action_CheckStoreCredential{CheckStoreCredential: &contracts.CheckStoreCredential{Target: storeTargetProto(a.Target), Client: refProto(a.Client), Container: a.Container, Credential: inputs, Reason: a.Reason}}}, true
 	}
 	return nil, false
 }
@@ -80,6 +102,15 @@ func dataActionState(action *contracts.Action) program.Action {
 	case *contracts.Action_RestoreBackup:
 		a := kind.RestoreBackup
 		return program.RestoreBackup{Target: storeTargetState(a.GetTarget()), Backup: a.GetBackup(), Reason: a.GetReason()}
+	case *contracts.Action_RestoreStoreItem:
+		a := kind.RestoreStoreItem
+		change := storestate.Change{Before: storeItemState(a.GetChange().GetBefore()), After: storeItemState(a.GetChange().GetAfter())}
+		return program.RestoreStoreItem{Target: storeTargetState(a.GetTarget()), Change: change, EndSessions: a.GetEndSessions(), Reason: a.GetReason()}
+	case *contracts.Action_CheckStoreCredential:
+		a := kind.CheckStoreCredential
+		c := a.GetCredential()
+		inputs := storestate.CredentialInputs{User: c.GetUser(), Password: c.GetPassword(), Database: c.GetDatabase(), URI: c.GetUri()}
+		return program.CheckStoreCredential{Target: storeTargetState(a.GetTarget()), Client: objectRefState(a.GetClient()), Container: a.GetContainer(), Credential: inputs, Reason: a.GetReason()}
 	}
 	return nil
 }
