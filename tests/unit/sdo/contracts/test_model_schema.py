@@ -186,3 +186,25 @@ def test_worker_projection_drops_every_annotated_field_recursively() -> None:
 
     sweep(IncidentResult.DESCRIPTOR)
     sweep(ReflectionResult.DESCRIPTOR)
+
+
+def test_incident_schema_asks_for_cause_class_and_reach_from_their_closed_vocabularies() -> None:
+    cause = _incident_result_schema()["properties"]["confirmed_root_causes"]["items"]["properties"]
+
+    assert cause["reach"]["enum"] == ["", "in-scope", "out-of-reach"]
+    classes = cause["cause_class"]["enum"]
+    assert classes[0] == ""
+    assert {"network-delay", "network-loss", "config-value-wrong", "data-corrupt", "code-defect"} <= set(classes)
+
+
+@pytest.mark.parametrize(("field", "value"), [("cause_class", "gremlins"), ("reach", "outside")])
+def test_confirmed_root_cause_rejects_values_outside_the_vocabulary(field: str, value: str) -> None:
+    from sdo.contracts import ConfirmedRootCause, ObjectRef, validate
+
+    resources = [ObjectRef(api_version="v1", kind="Service", namespace="ns", name="db")]
+    validate(ConfirmedRootCause(summary="s", resources=resources))
+    validate(ConfirmedRootCause(summary="s", resources=resources, cause_class="network-delay", reach="out-of-reach"))
+    cause = ConfirmedRootCause(summary="s", resources=resources)
+    setattr(cause, field, value)
+    with pytest.raises(ValueError, match=field):
+        validate(cause)

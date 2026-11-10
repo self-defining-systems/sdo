@@ -3,6 +3,7 @@ package traffic
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -17,8 +18,11 @@ import (
 // dependency can no longer be made, because connectivity rules are evaluated
 // only when a connection is opened. A link probe therefore dials each declared
 // service-to-service edge afresh, at every interval, from a pod of its own,
-// and reports the edge after several consecutive failures. Protocol handshakes
-// prove the listener can serve without application credentials or queries.
+// and reports the edge when it is unreachable (several consecutive failures),
+// intermittent (a failure fraction over a window, not necessarily
+// consecutive) or slow (median dial latency far above the link's own healthy
+// baseline). Protocol handshakes prove the listener can serve without
+// application credentials or queries.
 
 const (
 	// LinkRuleIDPrefix prefixes the rule ID of each link finding
@@ -37,6 +41,34 @@ const (
 	MaxLinks            = 64
 	MinLinkInterval     = 100 * time.Millisecond
 	MaxLinkInterval     = 1 * time.Minute
+
+	// LinkLossWindow is how many recent dials an intermittent judgement
+	// needs; LinkLossPercent of them failing, consecutive or not, reports
+	// the link. A single few-second data-plane stall stays below it.
+	LinkLossWindow  = 20
+	LinkLossPercent = 20
+	// LinkLatencyFactor and MinLinkLatencyBound set the slow bound: the
+	// median of the last Failures dials must exceed both LinkLatencyFactor
+	// times the healthy baseline and MinLinkLatencyBound.
+	LinkLatencyFactor   = 5
+	MinLinkLatencyBound = 50 * time.Millisecond
+	// LinkBaselineSamples is how many first successful dials the prober
+	// takes the healthy baseline median from.
+	LinkBaselineSamples = 10
+)
+
+// LinkCondition names how a reported link is unhealthy.
+type LinkCondition string
+
+const (
+	// LinkUnreachable: the last Failures dials all failed.
+	LinkUnreachable LinkCondition = "unreachable"
+	// LinkIntermittent: at least LinkLossPercent of the last LinkLossWindow
+	// dials failed.
+	LinkIntermittent LinkCondition = "intermittent"
+	// LinkSlow: the median latency of the last Failures dials is above the
+	// bound derived from the healthy baseline.
+	LinkSlow LinkCondition = "slow"
 )
 
 // LinkProtocol is how an edge is probed.
@@ -158,6 +190,10 @@ type LinkObservations struct {
 	// link that never did may simply not admit the prober, so it is not a
 	// health signal; only a link that worked and stopped is.
 	Qualified bool `json:"qualified"`
+	// BaselineLatency is the median latency of the link's first
+	// LinkBaselineSamples successful dials, recorded once by the prober. Zero
+	// means no baseline yet, and latency is then not judged.
+	BaselineLatency time.Duration `json:"baselineLatencyNs,omitempty"`
 }
 
 func (w Workload) validateLinks() error {
@@ -198,10 +234,10 @@ type linkDetector struct {
 }
 
 // NewLinkDetector returns a health detector that reports every qualified link
-// of a link-probe workload whose last Failures dials all failed. It decides
-// purely from the prober's samples; with no observations it reports nothing.
-// The consecutive-failure count is the hysteresis, so unlike NewDetector it
-// does not add DefaultHealthMinDuration.
+// of a link-probe workload that JudgeLink finds unreachable, intermittent or
+// slow. It decides purely from the prober's samples; with no observations it
+// reports nothing. The sample counts are the hysteresis, so unlike NewDetector
+// it does not add DefaultHealthMinDuration.
 func NewLinkDetector(spec sdk.DetectorSpec, workload string) sdk.Detector {
 	return linkDetector{spec: spec, workload: workload}
 }
@@ -252,46 +288,164 @@ func LinkFailing(window Window, observed LinkObservations) ([]LinkSample, bool) 
 	return run, true
 }
 
-// LinkFinding explains one link whose fresh dials keep failing. The primary
-// resource is the target Service; the calling Service is related.
+// LinkJudgement is why JudgeLink reports a link, with the samples judged.
+type LinkJudgement struct {
+	Condition LinkCondition
+	// Samples are the judged dials, oldest first.
+	Samples []LinkSample
+	// Failed counts failed dials among Samples; Consecutive is the trailing
+	// run of failed dials.
+	Failed      int
+	Consecutive int
+	P50, P95    time.Duration
+	// Baseline and Bound are set for latency judgements.
+	Baseline time.Duration
+	Bound    time.Duration
+}
+
+// JudgeLink reports a qualified link whose fresh dials show it unreachable
+// (LinkFailing), intermittent (at least LinkLossPercent of the last
+// LinkLossWindow dials failed, consecutive or not) or slow (the median latency
+// of the last Failures dials exceeds LinkLatencyFactor times the healthy
+// baseline and MinLinkLatencyBound). Only recent samples are judged: the
+// workload's MaxAge bounds the slow window, and the loss window may reach back
+// 2*LinkLossWindow probe periods.
+func JudgeLink(window Window, observed LinkObservations) (LinkJudgement, bool) {
+	if run, failing := LinkFailing(window, observed); failing {
+		return linkJudgement(LinkUnreachable, run), true
+	}
+	if !observed.Qualified {
+		return LinkJudgement{}, false
+	}
+	maxAge := window.SLO().MaxAge.Duration()
+	period := max(window.Workload.Interval.Duration(), window.Workload.Timeout.Duration())
+	if recent := freshLinkSamples(window, observed.Samples, max(maxAge, 2*LinkLossWindow*period), LinkLossWindow); len(recent) == LinkLossWindow {
+		if judged := linkJudgement(LinkIntermittent, recent); judged.Failed*100 >= LinkLossPercent*len(recent) {
+			return judged, true
+		}
+	}
+	if observed.BaselineLatency <= 0 {
+		return LinkJudgement{}, false
+	}
+	needed := window.Workload.Failures
+	if needed < MinLinkFailures {
+		needed = DefaultLinkFailures
+	}
+	recent := freshLinkSamples(window, observed.Samples, maxAge, needed)
+	if len(recent) < needed {
+		return LinkJudgement{}, false
+	}
+	judged := linkJudgement(LinkSlow, recent)
+	judged.Baseline = observed.BaselineLatency
+	judged.Bound = max(LinkLatencyFactor*observed.BaselineLatency, MinLinkLatencyBound)
+	if judged.P50 <= judged.Bound {
+		return LinkJudgement{}, false
+	}
+	return judged, true
+}
+
+// freshLinkSamples returns the newest count samples that are within horizon
+// of the observation.
+func freshLinkSamples(window Window, samples []LinkSample, horizon time.Duration, count int) []LinkSample {
+	recent := samples[max(0, len(samples)-count):]
+	for index, sample := range recent {
+		if window.ObservedAt.Sub(sample.At) <= horizon {
+			return recent[index:]
+		}
+	}
+	return nil
+}
+
+func linkJudgement(condition LinkCondition, samples []LinkSample) LinkJudgement {
+	judged := LinkJudgement{Condition: condition, Samples: samples}
+	durations := make([]time.Duration, 0, len(samples))
+	for _, sample := range samples {
+		durations = append(durations, sample.Duration)
+		if sample.OK {
+			judged.Consecutive = 0
+		} else {
+			judged.Failed++
+			judged.Consecutive++
+		}
+	}
+	slices.Sort(durations)
+	if len(durations) > 0 {
+		judged.P50 = durations[(len(durations)-1)/2]
+		judged.P95 = durations[(len(durations)*95+99)/100-1]
+	}
+	return judged
+}
+
+// LinkFinding explains one link JudgeLink reports, with per-link p50/p95
+// latency and failure classes. The primary resource is the target Service;
+// the calling Service is related.
 func LinkFinding(spec sdk.DetectorSpec, namespace string, window Window, observed LinkObservations) (sdk.Finding, bool) {
-	run, failing := LinkFailing(window, observed)
+	judged, failing := JudgeLink(window, observed)
 	if !failing {
 		return sdk.Finding{}, false
 	}
-	link := observed.Link
+	run, link := judged.Samples, observed.Link
+	classes := map[string]any{}
 	messages := make([]string, 0, 3)
-	for _, sample := range run[max(0, len(run)-3):] {
+	for _, sample := range run {
+		if sample.OK {
+			continue
+		}
+		count, _ := classes[string(sample.Class)].(int)
+		classes[string(sample.Class)] = count + 1
+		if len(messages) == 3 {
+			messages = messages[1:]
+		}
 		messages = append(messages, fmt.Sprintf("[%s] class=%s status=%s %s excerpt=%q (%s)",
 			sample.At.UTC().Format(time.RFC3339), sample.Class, sample.Status, sample.Error, sample.Excerpt, sample.Duration.Round(time.Millisecond)))
 	}
-	evidence := fmt.Sprintf(
-		"link %s: the last %d fresh %s probes of Service %s port %d from the prober pod all failed over %s "+
-			"(workload %s; interval %s, timeout %s), after the link had connected before. Existing long-lived "+
-			"connections from %s to %s may still work, so user-facing probes can stay green. Recent failures: %s.",
-		link, len(run), link.EffectiveProtocol(), link.To, link.Port, run[len(run)-1].At.Sub(run[0].At).Round(time.Millisecond),
-		window.Workload.Name, window.Workload.Interval.Duration(), window.Workload.Timeout.Duration(),
-		link.From, link.To, strings.Join(messages, "; "),
-	)
+	span := run[len(run)-1].At.Sub(run[0].At).Round(time.Millisecond)
+	probes := fmt.Sprintf("fresh %s probes of Service %s port %d from the prober pod", link.EffectiveProtocol(), link.To, link.Port)
+	setting := fmt.Sprintf("(workload %s; interval %s, timeout %s)", window.Workload.Name, window.Workload.Interval.Duration(), window.Workload.Timeout.Duration())
+	latency := fmt.Sprintf("dial latency p50 %s, p95 %s", judged.P50.Round(time.Millisecond), judged.P95.Round(time.Millisecond))
+	var summary, evidence string
+	switch judged.Condition {
+	case LinkSlow:
+		summary = fmt.Sprintf("link %s is slow: median fresh dial %s exceeds %s (healthy %s)",
+			link, judged.P50.Round(time.Millisecond), judged.Bound.Round(time.Millisecond), judged.Baseline.Round(time.Millisecond))
+		evidence = fmt.Sprintf(
+			"link %s: the last %d %s over %s %s had %s, above the bound %s (%dx the healthy baseline %s, floor %s); "+
+				"%d failed. The delay may sit on either end of the edge or between them.",
+			link, len(run), probes, span, setting, latency, judged.Bound, LinkLatencyFactor, judged.Baseline, MinLinkLatencyBound, judged.Failed)
+	case LinkIntermittent:
+		summary = fmt.Sprintf("link %s is intermittent: %d of the last %d fresh dials failed", link, judged.Failed, len(run))
+		evidence = fmt.Sprintf(
+			"link %s: %d of the last %d %s failed over %s %s, not all in a row (threshold %d%%); %s. "+
+				"Failure classes: %v. Recent failures: %s.",
+			link, judged.Failed, len(run), probes, span, setting, LinkLossPercent, latency, classes, strings.Join(messages, "; "))
+	default:
+		summary = fmt.Sprintf("link %s is unreachable: %d consecutive fresh dials failed", link, len(run))
+		evidence = fmt.Sprintf(
+			"link %s: the last %d %s all failed over %s %s, after the link had connected before. Existing long-lived "+
+				"connections from %s to %s may still work, so user-facing probes can stay green. Recent failures: %s.",
+			link, len(run), probes, span, setting, link.From, link.To, strings.Join(messages, "; "))
+	}
+	last := run[len(run)-1]
 	return sdk.Finding{
-		DetectorID: spec.ID,
-		RuleID:     LinkRuleIDPrefix + link.ID(),
-		Status:     sdk.FindingActive,
-		Severity:   sdk.SeverityCritical,
-		Summary: fmt.Sprintf("link %s is unreachable: %d consecutive fresh dials failed",
-			link, len(run)),
+		DetectorID:       spec.ID,
+		RuleID:           LinkRuleIDPrefix + link.ID(),
+		Status:           sdk.FindingActive,
+		Severity:         sdk.SeverityCritical,
+		Summary:          summary,
 		Evidence:         evidence,
 		PrimaryResource:  sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: namespace, Name: link.To},
 		RelatedResources: []sdk.ObjectRef{{APIVersion: "v1", Kind: "Service", Namespace: namespace, Name: link.From}},
 		Playbooks:        append([]string(nil), spec.Playbooks...),
 		Metadata: map[string]any{
 			"workload": window.Workload.Name, "from": link.From, "to": link.To, "port": link.Port,
-			"protocol":             string(link.EffectiveProtocol()),
-			"last_class":           string(run[len(run)-1].Class),
-			"last_status":          run[len(run)-1].Status,
-			"last_excerpt":         run[len(run)-1].Excerpt,
-			"last_latency_ns":      int64(run[len(run)-1].Duration),
-			"consecutive_failures": len(run), "last_error": run[len(run)-1].Error,
+			"protocol":  string(link.EffectiveProtocol()),
+			"condition": string(judged.Condition), "samples": len(run), "failed": judged.Failed, "failure_classes": classes,
+			"p50_ns": int64(judged.P50), "p95_ns": int64(judged.P95), "baseline_ns": int64(judged.Baseline), "bound_ns": int64(judged.Bound),
+			"last_class":           string(last.Class),
+			"last_status":          last.Status,
+			"last_excerpt":         last.Excerpt,
+			"last_latency_ns":      int64(last.Duration),
+			"consecutive_failures": judged.Consecutive, "last_error": last.Error,
 		},
 	}, true
 }

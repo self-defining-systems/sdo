@@ -34,6 +34,31 @@
     "CLOSURE_FAILURE_REASON_RETRY_EXHAUSTED",
     "CLOSURE_FAILURE_REASON_UNSPECIFIED"
   ],
+  "sdodev.contracts.v1alpha1.ConfirmedRootCause.cause_class": [
+    "",
+    "admission-mutated",
+    "admission-rejected",
+    "capacity-exhausted",
+    "code-defect",
+    "config-value-wrong",
+    "credential-invalid",
+    "data-corrupt",
+    "data-missing",
+    "dependency-unavailable",
+    "network-blocked",
+    "network-delay",
+    "network-loss",
+    "object-missing",
+    "permission-denied",
+    "process-runtime",
+    "read-only",
+    "state-lost"
+  ],
+  "sdodev.contracts.v1alpha1.ConfirmedRootCause.reach": [
+    "",
+    "in-scope",
+    "out-of-reach"
+  ],
   "sdodev.contracts.v1alpha1.ControllerState.closure_state": [
     "CLOSURE_STATE_ACKNOWLEDGING",
     "CLOSURE_STATE_COMMITTED",
@@ -167,6 +192,7 @@
   ],
   "sdodev.contracts.v1alpha1.OutcomeRecord.classification": [
     "cleared_without_action",
+    "escalated",
     "failed",
     "success",
     "unconfirmed"

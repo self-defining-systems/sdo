@@ -12,7 +12,7 @@ import (
 func TestClassificationsMatchProto(t *testing.T) {
 	declared := wire.StringIn(&contracts.OutcomeRecord{}, "classification")
 	named := []string{
-		outcome.Success, outcome.ClearedWithoutAction, outcome.Failed, outcome.Unconfirmed,
+		outcome.Success, outcome.ClearedWithoutAction, outcome.Failed, outcome.Unconfirmed, outcome.Escalated,
 	}
 	slices.Sort(declared)
 	slices.Sort(named)

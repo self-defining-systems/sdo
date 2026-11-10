@@ -171,8 +171,10 @@ func difference(left, right []string) []string {
 	return result
 }
 
-// classify reduces the closure to four outcomes: the responder Job failed or
-// health never verified (failed), health cleared with no repair mutation
+// classify reduces the closure to five outcomes: the responder Job failed or
+// health never verified (failed), health never verified but the responder
+// confirmed an out-of-reach cause from pre-repair controller evidence
+// (escalated), health cleared with no repair mutation
 // (cleared_without_action), a verified repair whose closure recheck window never
 // completed (unconfirmed), or anything else that cleared (success).
 func classify(closure *contractsv1alpha1.IncidentClosure, repairCommit string, healthVerified bool) string {
@@ -185,6 +187,9 @@ func classify(closure *contractsv1alpha1.IncidentClosure, repairCommit string, h
 		return outcomeclass.Unconfirmed
 	}
 	if !healthVerified {
+		if result.GetStatus() == "completed" && outcomeclass.Escalation(result.GetConfirmedRootCauses(), closure.GetRequest().GetFindings(), result.GetRepairActions()) {
+			return outcomeclass.Escalated
+		}
 		return outcomeclass.Failed
 	}
 	if repairCommit == "" {

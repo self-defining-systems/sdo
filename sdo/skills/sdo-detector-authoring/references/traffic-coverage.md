@@ -2,7 +2,9 @@
 
 Health traffic sees only what it calls. A link probe proves only that a fresh connection to a dependency opens, so a
 dependency that accepts connections but fails requests stays invisible unless a continuously probed scenario sends a
-request across that edge.
+request across that edge. The link detector reports an edge unreachable (consecutive failed dials), intermittent
+(a failure fraction of recent dials) or slow (median dial latency far above the edge's own healthy baseline), so
+declare every store edge with its protocol to make delay and loss on it visible.
 
 - Give each service-to-service edge in `links.yaml` at least one scenario of a health-probe workload whose
   target or `DependsOn` names both ends and whose request really crosses the edge.

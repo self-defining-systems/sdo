@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -20,6 +21,8 @@ type linkState struct {
 	link      traffic.Link
 	samples   []traffic.LinkSample
 	qualified bool
+	healthy   []time.Duration
+	baseline  time.Duration
 }
 
 type linkProbe struct {
@@ -111,12 +114,28 @@ func (p *Prober) dialLink(ctx context.Context, workload traffic.Workload, state 
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	state.record(sample, p.config.Capacity)
+}
+
+// record keeps the newest capacity samples. The healthy baseline is the
+// median of the first LinkBaselineSamples successful dials and never moves
+// afterwards, so a later slow period cannot become the norm it is judged by.
+func (state *linkState) record(sample traffic.LinkSample, capacity int) {
 	state.samples = append(state.samples, sample)
-	if len(state.samples) > p.config.Capacity {
-		state.samples = append([]traffic.LinkSample(nil), state.samples[len(state.samples)-p.config.Capacity:]...)
+	if len(state.samples) > capacity {
+		state.samples = append([]traffic.LinkSample(nil), state.samples[len(state.samples)-capacity:]...)
 	}
-	if sample.OK {
-		state.qualified = true
+	if !sample.OK {
+		return
+	}
+	state.qualified = true
+	if state.baseline == 0 {
+		state.healthy = append(state.healthy, sample.Duration)
+		if len(state.healthy) == traffic.LinkBaselineSamples {
+			slices.Sort(state.healthy)
+			state.baseline = max(state.healthy[(len(state.healthy)-1)/2], time.Nanosecond)
+			state.healthy = nil
+		}
 	}
 }
 
@@ -126,6 +145,7 @@ func (p *Prober) linkWindowLocked(probe *linkProbe, now time.Time) traffic.Windo
 	for _, state := range probe.links {
 		links = append(links, traffic.LinkObservations{
 			Link: state.link, Samples: append([]traffic.LinkSample(nil), state.samples...), Qualified: state.qualified,
+			BaselineLatency: state.baseline,
 		})
 	}
 	return traffic.Window{Workload: probe.workload, ObservedAt: now, Links: links}

@@ -71,10 +71,14 @@ type HTTPEndpoint struct{ ... }
     func PUT(path string, query Params) *HTTPEndpoint
 type Link struct{ ... }
     func UndrivenLinks(catalog Catalog, workloads []Workload) []Link
+type LinkCondition string
+    const LinkUnreachable LinkCondition = "unreachable" ...
 type LinkFailureClass string
     const LinkFailureRefused LinkFailureClass = "refused" ...
 type LinkGRPCOptions struct{ ... }
 type LinkHTTPOptions struct{ ... }
+type LinkJudgement struct{ ... }
+    func JudgeLink(window Window, observed LinkObservations) (LinkJudgement, bool)
 type LinkObservations struct{ ... }
 type LinkProtocol string
     const LinkProtocolTCP LinkProtocol = "tcp" ...
