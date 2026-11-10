@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"sdo.dev/operator/sdk/podread"
+	"sdo.dev/operator/sdk/storeops"
 )
 
 // Every read prints one line per fact and ends with "E" when it completed:
@@ -45,7 +46,7 @@ func (s Store) command(fields []string, keys []string, first int, keyPath string
 	case EngineRedis:
 		return redisCommand(s, fields, keys, first, keyPath, keyIDs, lookup)
 	case EngineMemcached:
-		return memcachedCommand(s, keys, keyIDs, lookup)
+		return memcachedCommand(s, keys, first, keyIDs, lookup)
 	}
 	return nil
 }
@@ -244,7 +245,7 @@ else for id in string.gmatch(ARGV[1] or "","[^ ]+") do ids[#ids+1]=id if mode=="
 local refs={}
 for _,id in ipairs(ids) do local k=pre..id..suf local t=redis.call("TYPE",k) t=t.ok or t
  if t~="none" then if t~=want then o[#o+1]="W"..T..id..T..t else local rec,vals="",{}
-  if t=="string" then local v=redis.call("GET",k) rec='{"value":'..js(v,%d)..'}' if refpath~="" and decode=="json" then local ok,d=pcall(cjson.decode,v) if ok then vals=walk(d,refpath) end end
+  if t=="string" then local v=redis.call("GET",k) rec='{"value":'..js(v,%d)..'}' if refpath~="" and decode=="json" then local ok,d=pcall(cjson.decode,v) if ok then vals=walk(d,refpath) end elseif refpath~="" and decode=="ndjson" then local ls={} for l in string.gmatch(v,"[^\n]+") do local ok,d=pcall(cjson.decode,l) if ok then ls[#ls+1]=d end end vals=walk({lines=ls},refpath) end
   elseif t=="hash" then local b={} if #fields>0 then local r=redis.call("HMGET",k,unpack(fields)) for i,f in ipairs(fields) do if r[i] then b[#b+1]=js(f,%d)..":"..js(r[i],%d) if f==refpath then vals={r[i]} end end end end rec="{"..table.concat(b,",").."}"
   else local m,size if t=="zset" then m=redis.call("ZREVRANGE",k,0,%d) size=redis.call("ZCARD",k) elseif t=="list" then m=redis.call("LRANGE",k,0,%d) size=redis.call("LLEN",k) else size=redis.call("SCARD",k) m=size<=%d and redis.call("SMEMBERS",k) or {} table.sort(m) end
    local b={} for i,e in ipairs(m) do b[i]=js(e,%d) end rec='{"members":['..table.concat(b,",")..'],"size":'..size..'}' if refpath~="" then vals=m end end
@@ -274,16 +275,28 @@ func redisCommand(s Store, fields, keys []string, first int, keyPath string, key
 	return append([]string{"sh", "-c", fmt.Sprintf(redisShell, s.port()), "sdo-data-check", arg}, chunk(text)...)
 }
 
-// memcachedShell asks the store for the keys over its own port with bash's
-// /dev/tcp (memcached images carry no client) and prints the protocol answer,
-// capped. It sends get only.
-const memcachedShell = `pre=%s;suf=%s;q="";for id in $1;do q="$q $pre$id$suf";[ %d = 1 ]&&printf 'Q\t%%s\n' "$id";[ %d = 1 ]&&printf 'K\t%%s\n' "$id";done
+// memcachedScript asks the store for the keys over its own port with the
+// transport of storeops.MemcachedClient (bash /dev/tcp, else nc; memcached
+// images carry no client) and prints the protocol answer, capped. For first it
+// lists the keys with lru_crawler metadump, keeps those of the pattern and
+// reads the first n ids in id order. It sends get and metadump only. The
+// script arrives split across the arguments after the key list.
+var memcachedScript = `P=%d;pre=%s;suf=%s;ids=$k
+` + strings.ReplaceAll(storeops.MemcachedClient+storeops.MemcachedKeys, "%", "%%") + `if [ %d -gt 0 ];then RE=%s;export RE;L=0
+ ids=$(keys)||{ echo "ERR the store did not list its keys (lru_crawler metadump)";exit 0;}
+ ids=$(printf '%%s\n' "$ids"|awk -v a=${#pre} -v b=${#suf} 'NF{k=$1;print substr(k,a+1,length(k)-a-b)}'|LC_ALL=C sort|head -n %d);fi
+q="";for id in $ids;do q="$q $pre$id$suf";[ %d = 1 ]&&printf 'Q\t%%s\n' "$id";[ %d = 1 ]&&printf 'K\t%%s\n' "$id";done
 [ -n "$q" ]||{ echo E;exit 0;}
-exec 3<>/dev/tcp/127.0.0.1/%d||{ echo "ERR cannot connect";exit 0;}
-printf 'get%%s\r\nquit\r\n' "$q" >&3;head -c 3200 <&3;printf '\nE\n'
+printf 'get%%s\r\nquit\r\n' "$q"|mc|head -c 3200;printf '\nE\n'
 `
 
-func memcachedCommand(s Store, keys []string, keyIDs, lookup bool) []string {
+// ereLiteral escapes s for an awk ERE; a pattern literal holds only
+// letters, digits and _.:@/+=-.
+func ereLiteral(s string) string {
+	return strings.NewReplacer(".", "[.]", "+", "[+]").Replace(s)
+}
+
+func memcachedCommand(s Store, keys []string, first int, keyIDs, lookup bool) []string {
 	pre, suf, _ := strings.Cut(s.Read.Pattern, "{id}")
 	arg := strings.Join(keys, " ")
 	if lookup {
@@ -295,5 +308,7 @@ func memcachedCommand(s Store, keys []string, keyIDs, lookup bool) []string {
 		}
 		return 0
 	}
-	return []string{"bash", "-c", fmt.Sprintf(memcachedShell, "'"+pre+"'", "'"+suf+"'", flag(lookup), flag(keyIDs), s.port()), "sdo-data-check", arg}
+	text := fmt.Sprintf(memcachedScript, s.port(), "'"+pre+"'", "'"+suf+"'", first, "'^"+ereLiteral(pre)+".+"+ereLiteral(suf)+"$'", first, flag(lookup), flag(keyIDs))
+	return append([]string{"sh", "-c", `k=$1;shift;IFS=;s="$*";IFS=' 	
+';eval "$s"`, "sdo-data-check", arg}, chunk(text)...)
 }

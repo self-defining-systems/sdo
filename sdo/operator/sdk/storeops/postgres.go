@@ -185,3 +185,45 @@ END $sdo$`
 func (postgres) Invalidate(int, Scope) (Command, error) {
 	return Command{}, fmt.Errorf("postgres has no derived-store invalidation; rebuild the copy by hand")
 }
+
+// Copy inserts, in one transaction, every row of from that into lacks (ON
+// CONFLICT DO NOTHING keeps the target's row), only when from matches [min,
+// max] rows. Both tables are in one database and have the same columns in
+// the same order.
+func (e postgres) Copy(port int, from, into Scope, min, max int) (Command, error) {
+	from, into = e.Normalize(from), e.Normalize(into)
+	if from.Database != into.Database {
+		return Command{}, fmt.Errorf("postgres copy stays in one database")
+	}
+	if into.Selector != "TRUE" {
+		return Command{}, fmt.Errorf("postgres copy target selects a whole table; leave its selector empty")
+	}
+	source, err := postgresTable(from.Collection)
+	if err != nil {
+		return Command{}, err
+	}
+	target, err := postgresTable(into.Collection)
+	if err != nil {
+		return Command{}, err
+	}
+	script := fmt.Sprintf(`BEGIN;
+SELECT count(*) AS sdo_n, count(*) BETWEEN %d AND %d AS sdo_ok FROM %s WHERE (%s) \gset
+\if :sdo_ok
+WITH sdo_ins AS (INSERT INTO %s OVERRIDING SYSTEM VALUE SELECT * FROM %s WHERE (%s) ON CONFLICT DO NOTHING RETURNING 1) SELECT count(*) AS sdo_c FROM sdo_ins \gset
+COMMIT;
+\echo sdo-affected :sdo_c
+\else
+ROLLBACK;
+\echo sdo-expect-failed :sdo_n
+\endif
+`, min, max, source, from.Selector, target, source, from.Selector)
+	c := e.run(port, from, `q`)
+	c.Stdin = script
+	return c, nil
+}
+
+// RemoveMembers is refused: a postgres repair removes array elements with a
+// SET clause (array_remove).
+func (postgres) RemoveMembers(int, Scope, MemberPredicate, int, int) (Command, error) {
+	return Command{}, fmt.Errorf("postgres removes array members with a SET clause such as array_remove")
+}

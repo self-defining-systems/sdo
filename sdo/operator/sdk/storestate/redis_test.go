@@ -1,6 +1,7 @@
 package storestate_test
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -219,8 +220,8 @@ func TestRedisNeverRecordsCredentials(t *testing.T) {
 
 func TestRedisReadCommandIsBoundedAndValueFree(t *testing.T) {
 	argv := redisAdapter(t).ReadCommand(storestate.Endpoint{Port: 6380})
-	// sh -c <credential prelude> $0 <engine script>
-	if len(argv) != 5 || argv[0] != "sh" || argv[1] != "-c" {
+	// sh -c <credential prelude> $0 <engine script> <key-pattern Lua, split>
+	if len(argv) < 6 || argv[0] != "sh" || argv[1] != "-c" {
 		t.Fatalf("argv = %q", argv)
 	}
 	script := argv[4]
@@ -237,12 +238,31 @@ func TestRedisReadCommandIsBoundedAndValueFree(t *testing.T) {
 			t.Errorf("script contains %q", forbidden)
 		}
 	}
+	// The key-pattern scan only reads: SCAN is its one command.
+	lua := strings.Join(argv[5:], "")
+	for _, arg := range argv[5:] {
+		if len(arg) > 1024 {
+			t.Fatalf("a key-pattern argument is %d bytes", len(arg))
+		}
+	}
+	calls := regexp.MustCompile(`redis\.(p?call)\('([A-Z]+)'`).FindAllStringSubmatch(lua, -1)
+	if len(calls) == 0 {
+		t.Fatal("the key-pattern scan calls nothing")
+	}
+	for _, call := range calls {
+		if call[2] != "SCAN" {
+			t.Errorf("the key-pattern scan calls %s", call[2])
+		}
+	}
 }
 
-func TestEnginesWithoutAReaderHaveNoAdapter(t *testing.T) {
-	for _, engine := range []storestate.Engine{storestate.EngineMySQL, storestate.EngineMemcached, storestate.EngineConsul, "unknown"} {
-		if _, ok := storestate.AdapterFor(engine); ok {
-			t.Errorf("%s has an adapter", engine)
+func TestEveryKnownEngineHasAnAdapter(t *testing.T) {
+	for _, engine := range []storestate.Engine{storestate.EnginePostgres, storestate.EngineMySQL, storestate.EngineMongoDB, storestate.EngineRedis, storestate.EngineMemcached, storestate.EngineConsul} {
+		if a, ok := storestate.AdapterFor(engine); !ok || a.Engine() != engine || a.DefaultPort() == 0 {
+			t.Errorf("%s has no complete adapter", engine)
 		}
+	}
+	if _, ok := storestate.AdapterFor("unknown"); ok {
+		t.Error("an unknown engine has an adapter")
 	}
 }

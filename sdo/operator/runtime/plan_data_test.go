@@ -143,6 +143,32 @@ func (f *fakeRedisStores) StoreCommand(_ context.Context, uid string, command pr
 	lua, args := command.Args[6], command.Args[7:]
 	hexOf := func(s string) string { return hex.EncodeToString([]byte(s)) }
 	switch {
+	case strings.Contains(lua, "selected(m)"):
+		f.ops = append(f.ops, "remove-members:"+pod)
+		removed := 0
+		for _, key := range f.matching(pod, args[0]) {
+			var kept []string
+			for _, member := range f.sets[pod][key] {
+				if _, err := strconv.Atoi(member); err != nil && args[4] == "1" {
+					removed++
+					continue
+				}
+				kept = append(kept, member)
+			}
+			f.sets[pod][key] = kept
+		}
+		_, _ = fmt.Fprintf(stdout, "sdo-affected %d failed 0\n", removed)
+	case strings.Contains(lua, "ZUNIONSTORE"):
+		f.ops = append(f.ops, "copy:"+pod)
+		wrote := 0
+		for _, key := range f.matching(pod, args[0]) {
+			target := args[6] + strings.TrimSuffix(strings.TrimPrefix(key, args[4]), args[5]) + args[7]
+			if _, exists := f.sets[pod][target]; !exists {
+				f.sets[pod][target] = append([]string(nil), f.sets[pod][key]...)
+				wrote++
+			}
+		}
+		_, _ = fmt.Fprintf(stdout, "sdo-affected %d failed 0\n", wrote)
 	case strings.Contains(lua, "'DUMP'"):
 		f.ops = append(f.ops, "backup:"+pod)
 		keys := f.matching(pod, args[0])
@@ -405,6 +431,43 @@ func TestRepairDataCountsWritesAndRechecks(t *testing.T) {
 	}
 	if _, err := w.apply(t, program.RestoreBackup{Target: cacheTarget, Backup: "before"}); err == nil || !strings.Contains(err.Error(), "is of db") {
 		t.Fatalf("a backup restores only into its own component: %v", err)
+	}
+}
+
+// A repair may remove the members a predicate selects from every matched
+// collection, or copy a renamed key pattern back under its name: the count,
+// write, recount and facts read are the same as for a statement, and a copy
+// counts its source.
+func TestRepairDataRemovesMembersAndCopiesNamespaces(t *testing.T) {
+	w := newStoreWorld(t)
+	w.stores.sets["db-0"]["item:1"] = []string{"1", "2", "poison"}
+	result, err := w.apply(t, program.RepairData{Target: dbTarget, Scope: itemScope, MemberPredicate: &program.MemberPredicate{NotDigits: true}, ExpectMin: 1, ExpectMax: 5, Reason: "synthetic"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(w.stores.ops, ","); got != "count:db-0,remove-members:db-0,count:db-0,facts:db-0" {
+		t.Fatalf("order = %s", got)
+	}
+	if effect := result.ActionReports[0].DataRepair; effect == nil || effect.Before != 2 || effect.Affected != 2 {
+		t.Fatalf("effect = %+v", effect)
+	}
+	if members := w.stores.sets["db-0"]["item:1"]; strings.Join(members, ",") != "1,2" {
+		t.Fatalf("item:1 = %v", members)
+	}
+	delete(w.stores.sets["db-0"], "item:2")
+	w.stores.sets["db-0"]["item:2:bak"] = []string{"9"}
+	result, err = w.apply(t, program.RepairData{Target: dbTarget, Scope: program.DataScope{Selector: "item:*"}, CopyFrom: &program.DataScope{Selector: "item:*:bak"}, ExpectMin: 1, ExpectMax: 5, Reason: "synthetic"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(w.stores.ops, ","); got != "count:db-0,copy:db-0,count:db-0,facts:db-0" {
+		t.Fatalf("order = %s", got)
+	}
+	if effect := result.ActionReports[0].DataRepair; effect == nil || effect.Before != 1 || effect.Affected != 1 {
+		t.Fatalf("effect = %+v", effect)
+	}
+	if members := w.stores.sets["db-0"]["item:2"]; strings.Join(members, ",") != "9" {
+		t.Fatalf("item:2 = %v", members)
 	}
 }
 

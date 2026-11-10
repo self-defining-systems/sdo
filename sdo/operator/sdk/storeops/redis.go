@@ -222,3 +222,146 @@ func (e redis) Invalidate(port int, s Scope) (Command, error) {
 	return e.eval(port, s, `o=$(r EVAL "$1" 0 "$2") || exit 1
 case "$o" in "sdo-affected "*) echo "$o";; *) exit 1;; esac`, redisInvalidateLua, s.Selector), nil
 }
+
+// redisRemoveMembersLua removes from every set, sorted set or list matching
+// ARGV[1] (only when their number is within ARGV[2]..ARGV[3], at most
+// ARGV[4]) each member the predicate selects: ARGV[5] "1" for not digits,
+// ARGV[6] "1" with ARGV[7]..ARGV[8] the prefix and suffix of a key that must
+// exist, ARGV[9] the count of In members that follow, then the NotIn members.
+// The script is atomic.
+const redisRemoveMembersLua = `if redis.replicate_commands then redis.replicate_commands() end
+local lim = tonumber(ARGV[4])
+` + redisScan + `local n = #keys
+if n < tonumber(ARGV[2]) or n > tonumber(ARGV[3]) then return 'sdo-expect-failed ' .. n end
+local digits, check, pre, suf, nin = ARGV[5] == '1', ARGV[6] == '1', ARGV[7], ARGV[8], tonumber(ARGV[9])
+local inset, notin, hasnotin = {}, {}, false
+for i = 10, 9 + nin do inset[ARGV[i]] = true end
+for i = 10 + nin, #ARGV do notin[ARGV[i]] = true; hasnotin = true end
+local function selected(m)
+  if digits and not string.match(m, '^%-?%d+$') then return true end
+  if inset[m] then return true end
+  if hasnotin and not notin[m] then return true end
+  if check and redis.call('EXISTS', pre .. m .. suf) == 0 then return true end
+  return false
+end
+local removed, failed = 0, 0
+for _, k in ipairs(keys) do
+  local t = redis.call('TYPE', k)
+  t = t.ok or t
+  local members, verb
+  if t == 'set' then members, verb = redis.call('SMEMBERS', k), 'SREM'
+  elseif t == 'zset' then members, verb = redis.call('ZRANGE', k, 0, -1), 'ZREM'
+  elseif t == 'list' then members, verb = redis.call('LRANGE', k, 0, -1), 'LREM' end
+  if members == nil then failed = failed + 1 else
+    local seen = {}
+    for _, m in ipairs(members) do
+      if not seen[m] then
+        seen[m] = true
+        if selected(m) then
+          if verb == 'LREM' then removed = removed + redis.call('LREM', k, 0, m) else removed = removed + redis.call(verb, k, m) end
+        end
+      end
+    end
+  end
+end
+return 'sdo-affected ' .. removed .. ' failed ' .. failed
+`
+
+// redisCopyLua copies every key matching ARGV[1] (only when their number is
+// within ARGV[2]..ARGV[3], at most ARGV[4]) from prefix/suffix ARGV[5],
+// ARGV[6] to ARGV[7], ARGV[8]: a missing target is restored from the
+// source's DUMP with its TTL; an existing set or sorted set is merged member
+// by member (sorted sets keep the higher score), a hash gains the fields it
+// lacks, and a string or list is kept. A target of another type fails. It
+// counts the targets written.
+const redisCopyLua = `if redis.replicate_commands then redis.replicate_commands() end
+local lim = tonumber(ARGV[4])
+` + redisScan + `local n = #keys
+if n < tonumber(ARGV[2]) or n > tonumber(ARGV[3]) then return 'sdo-expect-failed ' .. n end
+local fp, fs, ip, is = ARGV[5], ARGV[6], ARGV[7], ARGV[8]
+local wrote, failed = 0, 0
+local function typ(k) local t = redis.call('TYPE', k) return t.ok or t end
+for _, k in ipairs(keys) do
+  local t = ip .. string.sub(k, #fp + 1, #k - #fs) .. is
+  if t ~= k then
+    if redis.call('EXISTS', t) == 0 then
+      local d = redis.call('DUMP', k)
+      if d then
+        local ttl = redis.call('PTTL', k)
+        if ttl < 0 then ttl = 0 end
+        redis.call('RESTORE', t, ttl, d)
+        wrote = wrote + 1
+      end
+    else
+      local ts, tt = typ(k), typ(t)
+      if ts ~= tt then failed = failed + 1
+      elseif ts == 'set' then
+        local before = redis.call('SCARD', t)
+        if redis.call('SUNIONSTORE', t, t, k) > before then wrote = wrote + 1 end
+      elseif ts == 'zset' then
+        local before = redis.call('ZCARD', t)
+        local ttl = redis.call('PTTL', t)
+        redis.call('ZUNIONSTORE', t, 2, t, k, 'AGGREGATE', 'MAX')
+        if ttl > 0 then redis.call('PEXPIRE', t, ttl) end
+        if redis.call('ZCARD', t) > before then wrote = wrote + 1 end
+      elseif ts == 'hash' then
+        local h, added = redis.call('HGETALL', k), 0
+        for i = 1, #h, 2 do added = added + redis.call('HSETNX', t, h[i], h[i + 1]) end
+        if added > 0 then wrote = wrote + 1 end
+      end
+    end
+  end
+end
+return 'sdo-affected ' .. wrote .. ' failed ' .. failed
+`
+
+// redisAffixes splits a copy glob "<prefix>*<suffix>" into its literal parts.
+func redisAffixes(glob string) (string, string, error) {
+	pre, suf, ok := strings.Cut(glob, "*")
+	if !ok || strings.ContainsAny(pre+suf, "*?[]\\") {
+		return "", "", fmt.Errorf("redis copy glob %q must be <prefix>*<suffix> with one * and no other wildcard", glob)
+	}
+	return pre, suf, nil
+}
+
+// Copy copies the keys of from's glob to the same names under into's glob,
+// in the same database.
+func (e redis) Copy(port int, from, into Scope, min, max int) (Command, error) {
+	from, into = e.Normalize(from), e.Normalize(into)
+	if from.Database != into.Database {
+		return Command{}, fmt.Errorf("redis copy stays in one database")
+	}
+	fp, fs, err := redisAffixes(from.Selector)
+	if err != nil {
+		return Command{}, err
+	}
+	ip, is, err := redisAffixes(into.Selector)
+	if err != nil {
+		return Command{}, err
+	}
+	return e.eval(port, from, `L="$1";shift
+o=$(r EVAL "$L" 0 "$@") || exit 1
+case "$o" in "sdo-affected "*|"sdo-expect-failed "*) echo "$o";; *) exit 1;; esac`, redisCopyLua,
+		from.Selector, strconv.Itoa(min), strconv.Itoa(max), strconv.Itoa(from.limit()), fp, fs, ip, is), nil
+}
+
+// RemoveMembers removes the selected members from the collection values the
+// scope selects, in one atomic script.
+func (e redis) RemoveMembers(port int, s Scope, p MemberPredicate, min, max int) (Command, error) {
+	if err := p.Validate(); err != nil {
+		return Command{}, err
+	}
+	s = e.Normalize(s)
+	flag := func(b bool) string {
+		if b {
+			return "1"
+		}
+		return "0"
+	}
+	pre, suf, _ := strings.Cut(p.MissingKey, "{member}")
+	args := []string{s.Selector, strconv.Itoa(min), strconv.Itoa(max), strconv.Itoa(s.limit()), flag(p.NotDigits), flag(p.MissingKey != ""), pre, suf, strconv.Itoa(len(p.In))}
+	args = append(append(args, p.In...), p.NotIn...)
+	return e.eval(port, s, `L="$1";shift
+o=$(r EVAL "$L" 0 "$@") || exit 1
+case "$o" in "sdo-affected "*|"sdo-expect-failed "*) echo "$o";; *) exit 1;; esac`, redisRemoveMembersLua, args...), nil
+}

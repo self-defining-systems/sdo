@@ -169,7 +169,7 @@ func TestNewDetectorValidatesConfig(t *testing.T) {
 		"no component": func(c *storestate.Config) { c.Component = "" },
 		"no id":        func(c *storestate.Config) { c.Spec.ID = "" },
 		// Baselines are cleared so only the missing adapter can refuse it.
-		"engine not read":    func(c *storestate.Config) { c.Engine, c.Baselines = storestate.EngineMySQL, nil },
+		"engine not read":    func(c *storestate.Config) { c.Engine, c.Baselines = "unknown", nil },
 		"no target":          func(c *storestate.Config) { c.Target = podread.Target{} },
 		"bad port":           func(c *storestate.Config) { c.Port = 70000 },
 		"short interval":     func(c *storestate.Config) { c.ReadInterval = time.Second },

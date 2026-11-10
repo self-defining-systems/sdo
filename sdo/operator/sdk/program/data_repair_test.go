@@ -10,6 +10,12 @@ import (
 
 var syntheticStore = program.StoreTarget{Component: "store", Engine: "mongodb", Pod: sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "store-0"}, Container: "store"}
 
+var (
+	memcachedStore = program.StoreTarget{Component: "cache", Engine: "memcached", Pod: syntheticStore.Pod, Container: "cache"}
+	mysqlStore     = program.StoreTarget{Component: "db", Engine: "mysql", Pod: syntheticStore.Pod, Container: "db"}
+	redisStore     = program.StoreTarget{Component: "graph", Engine: "redis", Pod: syntheticStore.Pod, Container: "graph"}
+)
+
 func TestStoreActionsValidate(t *testing.T) {
 	scope := program.DataScope{Database: "app", Collection: "items", Selector: `{"a": 1}`}
 	repair := program.RepairData{Target: syntheticStore, Scope: scope, Statement: `{"$unset": {"a": ""}}`, ExpectMin: 1, ExpectMax: 3, Backup: "before"}
@@ -17,10 +23,28 @@ func TestStoreActionsValidate(t *testing.T) {
 		action program.Action
 		ok     bool
 	}{
-		"backup":                     {program.StoreBackup{ID: "before", Target: syntheticStore, Scope: scope}, true},
-		"backup without ID":          {program.StoreBackup{Target: syntheticStore, Scope: scope}, false},
-		"backup ID with a path":      {program.StoreBackup{ID: "../x", Target: syntheticStore, Scope: scope}, false},
-		"engine without operations":  {program.StoreBackup{ID: "b", Target: program.StoreTarget{Component: "c", Engine: "memcached", Pod: syntheticStore.Pod, Container: "c"}}, false},
+		"backup":                    {program.StoreBackup{ID: "before", Target: syntheticStore, Scope: scope}, true},
+		"backup without ID":         {program.StoreBackup{Target: syntheticStore, Scope: scope}, false},
+		"backup ID with a path":     {program.StoreBackup{ID: "../x", Target: syntheticStore, Scope: scope}, false},
+		"engine without operations": {program.StoreBackup{ID: "b", Target: program.StoreTarget{Component: "c", Engine: "consul", Pod: syntheticStore.Pod, Container: "c"}}, false},
+		"memcached flush":           {program.InvalidateDerived{Target: memcachedStore, Reason: "flush"}, true},
+		"memcached key delete":      {program.RepairData{Target: memcachedStore, Scope: program.DataScope{Selector: "*_cap"}, Statement: "delete", ExpectMin: 1, ExpectMax: 80}, true},
+		"memcached update":          {program.RepairData{Target: memcachedStore, Statement: "set 1", ExpectMin: 1, ExpectMax: 1}, false},
+		"mysql repair":              {program.RepairData{Target: mysqlStore, Scope: program.DataScope{Collection: "orders", Selector: "status = 'x'"}, Statement: "SET status = 'open'", ExpectMin: 1, ExpectMax: 9}, true},
+		"mysql comment":             {program.RepairData{Target: mysqlStore, Scope: program.DataScope{Collection: "orders", Selector: "TRUE # x"}, Statement: "delete", ExpectMin: 1, ExpectMax: 9}, false},
+		"member removal":            {program.RepairData{Target: redisStore, Scope: program.DataScope{Selector: "*:followers"}, MemberPredicate: &program.MemberPredicate{NotDigits: true}, ExpectMin: 1, ExpectMax: 9}, true},
+		"empty member predicate":    {program.RepairData{Target: redisStore, MemberPredicate: &program.MemberPredicate{}, ExpectMin: 1, ExpectMax: 9}, false},
+		"member removal on mongodb": {func() program.RepairData {
+			r := repair
+			r.Statement, r.MemberPredicate = "", &program.MemberPredicate{NotDigits: true}
+			return r
+		}(), false},
+		"statement and predicate":    {program.RepairData{Target: redisStore, Statement: "DEL", MemberPredicate: &program.MemberPredicate{NotDigits: true}, ExpectMin: 1, ExpectMax: 9}, false},
+		"no statement":               {program.RepairData{Target: redisStore, ExpectMin: 1, ExpectMax: 9}, false},
+		"collection copy":            {program.RepairData{Target: syntheticStore, Scope: program.DataScope{Database: "app", Collection: "items"}, CopyFrom: &program.DataScope{Database: "app", Collection: "items_old"}, ExpectMin: 1, ExpectMax: 500}, true},
+		"copy into a filtered scope": {program.RepairData{Target: syntheticStore, Scope: scope, CopyFrom: &program.DataScope{Database: "app", Collection: "items_old"}, ExpectMin: 1, ExpectMax: 500}, false},
+		"key pattern copy":           {program.RepairData{Target: redisStore, Scope: program.DataScope{Selector: "*"}, CopyFrom: &program.DataScope{Selector: "*:bak"}, ExpectMin: 1, ExpectMax: 500}, true},
+		"copy from a two-star glob":  {program.RepairData{Target: redisStore, Scope: program.DataScope{Selector: "*"}, CopyFrom: &program.DataScope{Selector: "*:*"}, ExpectMin: 1, ExpectMax: 500}, false},
 		"target without component":   {program.StoreBackup{ID: "b", Target: program.StoreTarget{Engine: "redis", Pod: syntheticStore.Pod, Container: "c"}}, false},
 		"repair":                     {repair, true},
 		"repair without backup":      {func() program.RepairData { r := repair; r.Backup = ""; return r }(), true},

@@ -26,8 +26,19 @@ const (
 	RuleRefused              = "store-state.read-refused"
 	RuleConnectionsNearLimit = "store-state.connections-near-limit"
 	RuleMemoryNearLimit      = "store-state.memory-near-limit"
+	RuleNamespaceChanged     = "store-state.namespace-changed"
+	RuleRegistryChanged      = "store-state.registry-changed"
 )
     Rule IDs of store-state findings.
+
+const (
+	MinJudgedCount  = 10
+	NamespaceGrowth = 10
+)
+    Namespace judgement: a judged namespace (a table, collection, KV prefix or
+    key pattern) is reported when it disappears, when its count drops below half
+    of a baseline of at least MinJudgedCount, or grows past NamespaceGrowth
+    times such a baseline.
 
 const (
 	MaxItems     = 512
@@ -40,6 +51,12 @@ const NearLimit = 0.95
 
 
 FUNCTIONS
+
+func CredentialCommand(tags []string, script string, args ...string) []string
+    CredentialCommand is the argv that runs script in a store's container with
+    the store's credentials found the same way every store-state read finds
+    them: P is the password and U its paired user, both possibly empty; args are
+    the script's $1.. . The record operations of storeops use it too.
 
 func NewDetector(c Config) (sdk.Detector, error)
     NewDetector returns a deterministic detector of the store's facts.
@@ -248,16 +265,4 @@ const (
 	KindRefusal ItemKind = "refusal"
 )
     Item kinds.
-
-type Key struct {
-	Kind  ItemKind `json:"kind"`
-	Scope string   `json:"scope,omitempty"`
-	Name  string   `json:"name"`
-}
-    Key identifies an item across two Facts.
-
-func (k Key) Less(o Key) bool
-    Less orders keys by kind, scope and name.
-
-func (k Key) String() string
 ```
