@@ -15,6 +15,7 @@ import (
 
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/patchset"
+	"sdo.dev/operator/safefs"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -111,7 +112,7 @@ func applyProposal(checkout, file string, proposal program.SourceChangeProposal)
 	if err := encoder.Close(); err != nil {
 		return fmt.Sprintf("%s: %v", file, err)
 	}
-	if err := os.WriteFile(path, out.Bytes(), 0o644); err != nil {
+	if err := safefs.WriteFile(checkout, filepath.ToSlash(filepath.Clean(file)), out.Bytes(), 0o644); err != nil {
 		return fmt.Sprintf("%s: %v", file, err)
 	}
 	return ""
