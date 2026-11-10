@@ -18,12 +18,18 @@ version: 1
 <!-- sdo:application-map:end -->
 ````
 
+- When the base has no region, Go upkeep seeds one on the architecture commit from the rendered manifests
+  (`sdo/operator/memory/mapseed`): components, data roles by well-known store image, `holds_data` from the engine or
+  persistent volumes, edges from env values and ConfigMap addresses, no operations or probes, all with evidence
+  `manifest`. Entry candidates (exposed or uncalled Services, with the workload's HTTP health probes) go in the
+  Go-owned text above the region. An application deployed without source thus still gets data roles and Go's
+  store readers, and the designer starts from the seed. Once a region exists it is the designer's.
 - Go upkeep keeps writing the front matter and the manifest inventory. The detection designer edits only the text
   between the markers (`SDO_ACTOR=health_judge`, `SDO_PHASE=initial`). Everything outside the markers must be
   byte-identical to the base for that actor. If a later Go rewrite of the inventory happens, it copies the
   region verbatim.
 - At most one region. No region means "no map": the coverage check reports `map.missing` as a non-blocking note
-  until the designer has written one, so existing memory keeps validating.
+  until the designer has written one, so existing memory keeps validating. (Go seeds a new architecture whose manifests declare workloads.)
 - The map holds logical names only (Service and workload names, operation and scenario IDs), never `.sdo/` paths.
 
 ## Schema

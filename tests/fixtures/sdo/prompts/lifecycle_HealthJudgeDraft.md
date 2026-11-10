@@ -3,7 +3,7 @@ This is one fresh authoring session in an isolated proposal checkout.
 Accepted source and developer changes express intent. Operational memory is fallible advice.
 Recovery requires evidence from the intended application behavior.
 Optional human-owned goal: Keep toy healthy.
-Architecture (Go manifest inventory, then the application map if one exists):
+Architecture (Go manifest inventory, then the application map, seeded by Go from the manifests if no one wrote one):
 Toy API depends on the store.
 Resources: [{'kind': 'Service', 'name': 'api', 'namespace': 'default', 'source': 'deploy/api.yaml', 'dependencies': []}]
 Validation feedback: No validator feedback is available for the first round.

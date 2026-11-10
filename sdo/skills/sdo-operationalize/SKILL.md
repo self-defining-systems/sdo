@@ -13,9 +13,9 @@ The memory check enforces the map [rules](references/rules.md). `operability.*` 
 
 ## 1. Map the application
 
-Read the source, config and manifests (the Go inventory in the architecture text lists every manifest resource).
-Then look at the live application. Write the map in the format of [map](references/map.md) (a route broken as
-deployed: `knownBroken`), between the map markers in the architecture file. Only the text between the markers is yours.
+Read the source, config, manifests (the Go inventory lists every resource) and the live application. Start from
+Go's [seeded map](references/map.md#seeded-map) when no one wrote one. Write the map in the [map](references/map.md)
+format (a route broken as deployed: `knownBroken`) between the architecture file's map markers; only that text is yours.
 
 - **Operations**: every user-facing route at the entry point (router, mux, proxy config), with its Service,
   port, method and path. `writes: true` when it changes stored state.
