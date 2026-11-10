@@ -118,7 +118,7 @@ type plannedDetector struct {
 // it and the ID lists derive from it.
 func plannedGenericDetectors(options HealthOptions) []plannedDetector {
 	planned := []plannedDetector{
-		{genericManifest("service-endpoints", "15s", []layout.Watch{{APIVersion: "v1", Kind: "Service"}, {APIVersion: "v1", Kind: "Endpoints"}, {APIVersion: "v1", Kind: "Pod"}, {APIVersion: "apps/v1", Kind: "Deployment"}}), endpointSource()},
+		{genericManifest("service-endpoints", "15s", layoutWatches(servicehealth.EndpointWatches())), endpointSource()},
 		{genericManifest("pod-admission", "15s", []layout.Watch{{APIVersion: "v1", Kind: "Pod"}}), podAdmissionSource()},
 		{workloadManifest(), workloadSource()},
 		{genericManifest("service-reachability", "10s", reachabilityWatches()), reachabilitySource()},
@@ -338,9 +338,11 @@ func genericPackage(id string) string {
 
 // reachabilityWatches mirrors servicehealth.ReachabilityWatches, which the
 // generated detector's Spec must equal field for field.
-func reachabilityWatches() []layout.Watch {
+func reachabilityWatches() []layout.Watch { return layoutWatches(servicehealth.ReachabilityWatches()) }
+
+func layoutWatches(kinds []sdk.WatchKind) []layout.Watch {
 	watches := make([]layout.Watch, 0)
-	for _, watch := range servicehealth.ReachabilityWatches() {
+	for _, watch := range kinds {
 		watches = append(watches, layout.Watch{APIVersion: watch.APIVersion, Kind: watch.Kind})
 	}
 	return watches

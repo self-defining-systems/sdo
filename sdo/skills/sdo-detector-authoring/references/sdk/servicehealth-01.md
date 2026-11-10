@@ -53,8 +53,10 @@ func NewReachabilityDetector(spec sdk.DetectorSpec) sdk.Detector
 
 func NewReadyEndpointsDetector(spec sdk.DetectorSpec) sdk.Detector
     NewReadyEndpointsDetector reports every Service with a selector that has
-    no ready endpoint, unless every workload it selects is scaled to zero on
-    purpose. ExternalName Services never have endpoints and are skipped.
+    no ready endpoint. A scaled-to-zero backend is a finding: the live replica
+    count is what a scale-down fault changes, so it never says the workload was
+    meant to be off. Only an autoscaler that may reach zero replicas declares
+    that. ExternalName Services never have endpoints and are skipped.
 
 func ReachabilityEligible(service corev1.Service) bool
     ReachabilityEligible reports whether a Service is dialed: it has a
