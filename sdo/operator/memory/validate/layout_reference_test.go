@@ -47,6 +47,7 @@ func renderLayoutReference(t *testing.T) string {
 		layout.DeploymentDir + "/overlays/telemetry/overlay-file.yaml",
 		layout.DeploymentPatchesDir + "/0001-patch-name.patch",
 		layout.TelemetrySourcesFile, layout.TelemetryBackendsFile,
+		layout.DataCheckPath("check-id"),
 		layout.OutcomePath("incident-id"),
 	}
 	var out strings.Builder
@@ -63,7 +64,7 @@ func renderLayoutReference(t *testing.T) string {
 		seen[string(kind)] = true
 		authority := owners(kind, id)
 		display := p
-		for from, to := range map[string]string{"playbook-id": "<playbook-id>", "detector-id": "<detector-id>", "library-id": "<library-id>", "case-id": "<case-id>", "values-file": "<file>", "manifest-file": "<file>", "overlay-file": "<file>", "0001-patch-name": "<NNNN-slug>"} {
+		for from, to := range map[string]string{"playbook-id": "<playbook-id>", "detector-id": "<detector-id>", "library-id": "<library-id>", "case-id": "<case-id>", "values-file": "<file>", "manifest-file": "<file>", "overlay-file": "<file>", "0001-patch-name": "<NNNN-slug>", "check-id": "<check-id>"} {
 			display = strings.ReplaceAll(display, from, to)
 		}
 		if kind == layout.KindOutcome {
@@ -102,7 +103,7 @@ func renderLayoutReference(t *testing.T) string {
 		}
 		return true
 	})
-	return out.String() + "\nThe controller also writes bootstrap schema/module metadata and immutable corpus captures through trusted storage edges; these are not agent grants. The import phase admits human-supplied learned memory; upkeep migrates existing formats. No agent writes outcomes or lifecycle provenance. Deployment files (`.sdo/deployment/`) are the deployment source: the deployer authors the plan, files and patches (in the initial and advance phases, changing or deleting only patches whose header names it), the detection designer owns only `overlays/telemetry/`, and a responder may add (never modify or delete) patches in a proposal. Telemetry bindings (`.sdo/diagnostics/telemetry/sources.yaml` and `backends.yaml`) are the detection designer's alone, in the initial phase, and only while the environment's telemetry mode is open. Files outside `.sdo/` still belong to the deployer in the initial phase and the responder in the proposal phase until enforcement flips to patches only.\n\nIn `arch.md` the health judge (the detection designer) may change only the application-map region between the `sdo:application-map` marker lines; everything else in it is Go upkeep's, which carries the region verbatim.\n\nDetector packages may contain additional source/test files; traffic generators may contain package files. Program files are `diagnose.go`, optional `mitigate.go` and `*_test.go`. Incident traffic is the `incident` generator and `incident-*` workloads; all other traffic belongs to the detection designer. Legacy manifest and outcome paths exist for migration only. Preserve accepted provenance and corpus cases.\n"
+	return out.String() + "\nThe controller also writes bootstrap schema/module metadata and immutable corpus captures through trusted storage edges; these are not agent grants. The import phase admits human-supplied learned memory; upkeep migrates existing formats. No agent writes outcomes or lifecycle provenance. Deployment files (`.sdo/deployment/`) are the deployment source: the deployer authors the plan, files and patches (in the initial and advance phases, changing or deleting only patches whose header names it), the detection designer owns only `overlays/telemetry/`, and a responder may add (never modify or delete) patches in a proposal. Telemetry bindings (`.sdo/diagnostics/telemetry/sources.yaml` and `backends.yaml`) are the detection designer's alone, in the initial phase, and only while the environment's telemetry mode is open. Data checks (`.sdo/diagnostics/data/<check-id>.yaml`) are the detection designer's alone; Go installs a `data-<check-id>` health detector for each. Files outside `.sdo/` still belong to the deployer in the initial phase and the responder in the proposal phase until enforcement flips to patches only.\n\nIn `arch.md` the health judge (the detection designer) may change only the application-map region between the `sdo:application-map` marker lines; everything else in it is Go upkeep's, which carries the region verbatim.\n\nDetector packages may contain additional source/test files; traffic generators may contain package files. Program files are `diagnose.go`, optional `mitigate.go` and `*_test.go`. Incident traffic is the `incident` generator and `incident-*` workloads; all other traffic belongs to the detection designer. Legacy manifest and outcome paths exist for migration only. Preserve accepted provenance and corpus cases.\n"
 }
 
 func TestMemoryLayoutReference(t *testing.T) {

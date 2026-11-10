@@ -94,47 +94,48 @@ const podReadNotStarted = "not read within the collection budget"
 
 // podReadJob is one command in one selected container.
 type podReadJob struct {
-	query, index int
-	pod          corev1.Pod
-	container    string
+	id        string
+	args      []string
+	index     int
+	pod       corev1.Pod
+	container string
 }
 
+// collect runs the due queries in two waves under one collection budget: the
+// plain queries, then each lookup (podread.Keys) whose source ran, with the
+// keys that source printed. A lookup otherwise keeps its last answer.
 func (o *PodReadObserver) collect(ctx context.Context, base sdk.DetectionContext) map[string]podread.Result {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	now := o.clock().UTC()
 	results := map[string]podread.Result{}
-	var jobs []podReadJob
 	pods := base.Pods()
 	sort.Slice(pods, func(i, j int) bool { return pods[i].Name < pods[j].Name })
+	ctx, cancel := context.WithTimeout(ctx, podread.CollectionBudget)
+	defer cancel()
 	due := map[string]bool{}
-	for index, query := range o.queries {
-		selected := selectPodReadTargets(query, pods, base.Namespace())
-		retained, ran := o.last[query.ID]
-		retained.result.Readings = keepObservedReadings(retained.result.Readings, selected)
-		if ran && now.Sub(retained.at) < query.Interval && len(retained.result.Readings) > 0 {
-			results[query.ID] = retained.result
+	var jobs []podReadJob
+	for _, query := range o.queries {
+		if query.Keys == nil {
+			jobs = append(jobs, o.plan(query, false, pods, base.Namespace(), now, results, due)...)
+		}
+	}
+	o.run(ctx, jobs, results)
+	jobs = nil
+	for _, query := range o.queries {
+		if query.Keys == nil {
 			continue
 		}
-		result := podread.Result{Query: query}
-		switch {
-		case len(selected) == 0:
-			result.Error = "no running Pod holds the target role"
-		case len(selected) > podread.MaxTargets:
-			result.Error = fmt.Sprintf("%d Pods hold the target role, over the limit of %d; narrow the target", len(selected), podread.MaxTargets)
-		default:
-			due[query.ID] = true
-			result.Readings = make([]podread.Reading, len(selected))
-			for i, job := range selected {
-				job.query, job.index = index, i
-				result.Readings[i] = podread.Reading{Namespace: job.pod.Namespace, Pod: job.pod.Name, UID: string(job.pod.UID), Container: job.container, ObservedAt: now, Error: podReadNotStarted}
-				jobs = append(jobs, job)
+		fresh := due[query.Keys.From]
+		if fresh || !o.retained(query, now) {
+			keys, err := podread.KeysOf(results[query.Keys.From], *query.Keys)
+			if err != nil {
+				results[query.ID] = podread.Result{Query: query, Error: fmt.Sprintf("keys from %s: %v", query.Keys.From, err)}
+				continue
 			}
+			query.Args = podread.ExpandKeys(query.Args, keys)
 		}
-		results[query.ID] = result
-	}
-	if len(jobs) == 0 {
-		return results
+		jobs = append(jobs, o.plan(query, fresh, pods, base.Namespace(), now, results, due)...)
 	}
 	o.run(ctx, jobs, results)
 	for id := range due {
@@ -143,6 +144,42 @@ func (o *PodReadObserver) collect(ctx context.Context, base sdk.DetectionContext
 		}
 	}
 	return results
+}
+
+// retained reports whether the query has an answer from within its interval.
+func (o *PodReadObserver) retained(query podread.Query, now time.Time) bool {
+	last, ran := o.last[query.ID]
+	return ran && now.Sub(last.at) < query.Interval && len(last.result.Readings) > 0
+}
+
+// plan records the query's retained answer, or its pending readings and the
+// jobs that fill them when it is due or forced.
+func (o *PodReadObserver) plan(query podread.Query, force bool, pods []corev1.Pod, namespace string, now time.Time, results map[string]podread.Result, due map[string]bool) []podReadJob {
+	selected := selectPodReadTargets(query, pods, namespace)
+	retained, ran := o.last[query.ID]
+	retained.result.Readings = keepObservedReadings(retained.result.Readings, selected)
+	if !force && ran && now.Sub(retained.at) < query.Interval && len(retained.result.Readings) > 0 {
+		results[query.ID] = retained.result
+		return nil
+	}
+	result := podread.Result{Query: query}
+	var jobs []podReadJob
+	switch {
+	case len(selected) == 0:
+		result.Error = "no running Pod holds the target role"
+	case len(selected) > podread.MaxTargets:
+		result.Error = fmt.Sprintf("%d Pods hold the target role, over the limit of %d; narrow the target", len(selected), podread.MaxTargets)
+	default:
+		due[query.ID] = true
+		result.Readings = make([]podread.Reading, len(selected))
+		for i, job := range selected {
+			job.id, job.args, job.index = query.ID, query.Args, i
+			result.Readings[i] = podread.Reading{Namespace: job.pod.Namespace, Pod: job.pod.Name, UID: string(job.pod.UID), Container: job.container, ObservedAt: now, Error: podReadNotStarted}
+			jobs = append(jobs, job)
+		}
+	}
+	results[query.ID] = result
+	return jobs
 }
 
 // selectPodReadTargets lists the application Pods holding the query's role.
@@ -167,11 +204,10 @@ func keepObservedReadings(readings []podread.Reading, selected []podReadJob) []p
 	})
 }
 
-// run executes jobs under the cycle's concurrency and time bounds. Each job
-// writes only its own preallocated reading.
+// run executes jobs under the cycle's concurrency bound until ctx, which
+// carries the collection budget, ends. Each job writes only its own
+// preallocated reading.
 func (o *PodReadObserver) run(ctx context.Context, jobs []podReadJob, results map[string]podread.Result) {
-	ctx, cancel := context.WithTimeout(ctx, podread.CollectionBudget)
-	defer cancel()
 	slots := make(chan struct{}, podread.MaxConcurrent)
 	var running sync.WaitGroup
 	for _, job := range jobs {
@@ -182,10 +218,10 @@ func (o *PodReadObserver) run(ctx context.Context, jobs []podReadJob, results ma
 		if ctx.Err() != nil {
 			break
 		}
-		reading := &results[o.queries[job.query].ID].Readings[job.index]
+		reading := &results[job.id].Readings[job.index]
 		running.Go(func() {
 			defer func() { <-slots }()
-			o.read(ctx, o.queries[job.query], job, reading)
+			o.read(ctx, job, reading)
 		})
 	}
 	running.Wait()
@@ -193,7 +229,7 @@ func (o *PodReadObserver) run(ctx context.Context, jobs []podReadJob, results ma
 
 // read fills one reading. Its Error is set for every way the command gave no
 // answer, so a failure is never read as a result.
-func (o *PodReadObserver) read(ctx context.Context, query podread.Query, job podReadJob, reading *podread.Reading) {
+func (o *PodReadObserver) read(ctx context.Context, job podReadJob, reading *podread.Reading) {
 	reading.Error = ""
 	if !podContainerRunning(job.pod, job.container) {
 		reading.Error = "container not running"
@@ -202,7 +238,7 @@ func (o *PodReadObserver) read(ctx context.Context, query podread.Query, job pod
 	ctx, cancel := context.WithTimeout(ctx, podread.ExecTimeout)
 	defer cancel()
 	stdout := &boundedOutput{limit: podread.LimitBytes}
-	command := program.Command{Pod: reading.Ref(), Container: job.container, Args: query.Args}
+	command := program.Command{Pod: reading.Ref(), Container: job.container, Args: job.args}
 	code, err := kubereads.ReadOutput(ctx, o.get, o.exec, o.protected, reading.UID, command, stdout)
 	switch {
 	case ctx.Err() != nil:

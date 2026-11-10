@@ -167,6 +167,9 @@ func detectorPath(id string) string {
 	if name, ok := strings.CutPrefix(id, trafficDetectorPrefix); ok {
 		return layout.TrafficWorkloadsDir + "/" + name + ".yaml"
 	}
+	if check, ok := memory.DataCheckOfDetector(id); ok {
+		return layout.DataCheckPath(check)
+	}
 	return layout.DetectorManifestPath(layout.ClassHealth, id)
 }
 

@@ -94,6 +94,20 @@ func TestDesignerOwnedFiringCorrectsTheDesignerNotTheDeployer(t *testing.T) {
 	}
 }
 
+// A data check that fires on the candidate is the designer's file to correct:
+// the correction names the check, not the detector Go installed for it.
+func TestFiringDataCheckCorrectsTheDesignersCheckFile(t *testing.T) {
+	firing := lifecycle.HealthVerdict{Outcome: lifecycle.VerificationSourceFault, Summary: judgeFiring.Summary, Detectors: []lifecycle.DetectorState{{DetectorID: "data-orders", Status: "firing", Reason: "2 of 8 sampled records in order-db break the expected shape"}}}
+	h, _ := gateHarness(t, firing, clear)
+	if _, err := h.coordinator.Run(context.Background(), config()); err != nil {
+		t.Fatal(err)
+	}
+	previous := h.workers.judgeRequests[1].GetPreviousDiagnostics()
+	if len(previous) == 0 || previous[0].GetPath() != ".sdo/diagnostics/data/orders.yaml" {
+		t.Fatalf("designer correction diagnostics = %v", previous)
+	}
+}
+
 // After DesignerAttempts corrections the same designer detectors still fire:
 // the probe is probably right, so the firing is re-attributed once and the
 // deployer gets it.

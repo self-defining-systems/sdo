@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"sdo.dev/operator/memory"
 	"sdo.dev/operator/telemetry"
 )
 
@@ -44,6 +45,21 @@ func TestGateCompileRowsOnRealGo(t *testing.T) {
 		edit(t, root, ".sdo/diagnostics/detectors/incidents/missing-configmap/manifest.yaml", "      kind: ConfigMap\n", "      kind: ConfigMap\n    - apiVersion: v1\n      kind: Pod\n")
 		if got := gateCompileDiagnostics(t, gateCompileRow{}, root); len(got) != 0 {
 			t.Fatalf("rejected: %v", got)
+		}
+	})
+	// A data check becomes a Go-installed health detector that compiles,
+	// declares valid pod reads (its read and its lookup) and loads in the
+	// controller.
+	t.Run("a data check with a lookup", func(t *testing.T) {
+		t.Parallel()
+		root := compileTree(t)
+		write(t, root, ".sdo/diagnostics/data/cache-prices.yaml", cacheEquivalence)
+		if err := memory.PrepareHealth(root); err != nil {
+			t.Fatal(err)
+		}
+		got, err := CompileCandidate(context.Background(), compileRequest(root))
+		if err != nil || len(got) != 0 {
+			t.Fatalf("rejected: %v, %v", got, err)
 		}
 	})
 	for _, row := range gateCompileRows {

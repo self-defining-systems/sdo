@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -18,9 +19,10 @@ import (
 
 // Limits bound declarations, target fan-out and retained output, so a read can
 // neither load the application nor stall the controller's evaluation loop.
-// MaxConcurrent and CollectionBudget apply across every query of a cycle.
+// MaxConcurrent and CollectionBudget apply across every query of a cycle,
+// lookups (Keys) included.
 const (
-	MaxQueries       = 8
+	MaxQueries       = 16
 	MaxTargets       = 16
 	MaxArgs          = 32
 	MaxArgBytes      = 1024
@@ -118,6 +120,68 @@ type Query struct {
 	Target   Target        `json:"target"`
 	Args     []string      `json:"args"`
 	Interval time.Duration `json:"interval"`
+	// Keys, when set, makes the query a lookup of keys another query printed.
+	Keys *Keys `json:"keys,omitempty"`
+}
+
+// Keys declares a lookup: in every cycle its source query runs, after that
+// query, the lookup runs with KeysPlaceholder in its arguments replaced by the
+// space-separated keys the source printed. A key is the rest of a source output
+// line that starts with Prefix; only keys matching ValidKey pass, in the order
+// they first appear (Pods in name order), at most Max. A lookup whose source
+// gave no complete answer is unavailable and does not run.
+type Keys struct {
+	From   string `json:"from"`
+	Prefix string `json:"prefix"`
+	Max    int    `json:"max"`
+}
+
+// KeysPlaceholder marks where a lookup's keys go in its arguments.
+const KeysPlaceholder = "{{keys}}"
+
+// MaxKeys bounds one lookup's keys.
+const MaxKeys = 32
+
+// keyPattern is the key alphabet: no quote, space, glob or shell character, so
+// a key is inert inside a shell word, a quoted literal of a query language or a
+// store command argument.
+var keyPattern = regexp.MustCompile(`^[A-Za-z0-9_.:@/+=-]{1,64}$`)
+
+// ValidKey reports whether k may be passed to a lookup.
+func ValidKey(k string) bool { return keyPattern.MatchString(k) }
+
+// ExpandKeys returns args with KeysPlaceholder replaced by the keys.
+func ExpandKeys(args, keys []string) []string {
+	joined := strings.Join(keys, " ")
+	out := make([]string, len(args))
+	for i, arg := range args {
+		out[i] = strings.ReplaceAll(arg, KeysPlaceholder, joined)
+	}
+	return out
+}
+
+// KeysOf returns the keys a lookup passes from its source's result, or an
+// error when the source gave no complete answer.
+func KeysOf(source Result, k Keys) ([]string, error) {
+	if err := complete(source, k.From); err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	keys := []string{}
+	for _, reading := range source.Readings {
+		for _, line := range strings.Split(reading.Stdout, "\n") {
+			key, ok := strings.CutPrefix(strings.TrimSuffix(line, "\r"), k.Prefix)
+			if !ok || !ValidKey(key) || seen[key] {
+				continue
+			}
+			if len(keys) == k.Max {
+				return keys, nil
+			}
+			seen[key] = true
+			keys = append(keys, key)
+		}
+	}
+	return keys, nil
 }
 
 // Consumer declares a detector's pod reads. It must watch v1 Pod.
@@ -142,6 +206,23 @@ func (q Query) Validate() error {
 	if q.Interval < MinInterval {
 		return fmt.Errorf("pod read %q interval %s is below the minimum %s", q.ID, q.Interval, MinInterval)
 	}
+	placeholder := slices.ContainsFunc(q.Args, func(arg string) bool { return strings.Contains(arg, KeysPlaceholder) })
+	if q.Keys == nil {
+		if placeholder {
+			return fmt.Errorf("pod read %q uses %s without declaring keys", q.ID, KeysPlaceholder)
+		}
+		return nil
+	}
+	switch {
+	case q.Keys.From == "" || q.Keys.From == q.ID:
+		return fmt.Errorf("pod read %q keys must come from another query", q.ID)
+	case q.Keys.Prefix == "" || strings.ContainsAny(q.Keys.Prefix, "\r\n"):
+		return fmt.Errorf("pod read %q keys need a one-line prefix", q.ID)
+	case q.Keys.Max < 1 || q.Keys.Max > MaxKeys:
+		return fmt.Errorf("pod read %q keys max must be 1 to %d", q.ID, MaxKeys)
+	case !placeholder:
+		return fmt.Errorf("pod read %q declares keys but no argument holds %s", q.ID, KeysPlaceholder)
+	}
 	return nil
 }
 
@@ -150,15 +231,29 @@ func ValidateQueries(qs []Query) error {
 	if len(qs) > MaxQueries {
 		return fmt.Errorf("pod reads exceed %d", MaxQueries)
 	}
-	seen := map[string]bool{}
+	byID := map[string]Query{}
 	for _, q := range qs {
 		if err := q.Validate(); err != nil {
 			return err
 		}
-		if seen[q.ID] {
+		if _, dup := byID[q.ID]; dup {
 			return fmt.Errorf("duplicate pod read %q", q.ID)
 		}
-		seen[q.ID] = true
+		byID[q.ID] = q
+	}
+	for _, q := range qs {
+		if q.Keys == nil {
+			continue
+		}
+		source, ok := byID[q.Keys.From]
+		switch {
+		case !ok:
+			return fmt.Errorf("pod read %q takes keys from undeclared query %q", q.ID, q.Keys.From)
+		case source.Keys != nil:
+			return fmt.Errorf("pod read %q takes keys from %q, itself a lookup", q.ID, q.Keys.From)
+		case source.Interval != q.Interval:
+			return fmt.Errorf("pod read %q runs with its source %q, so its interval must be %s", q.ID, q.Keys.From, source.Interval)
+		}
 	}
 	return nil
 }
@@ -274,19 +369,24 @@ func Require(ctx sdk.DetectionContext, id string) (Result, error) {
 	if !ok {
 		return r, fmt.Errorf("pod read %q unavailable", id)
 	}
+	return r, complete(r, id)
+}
+
+// complete reports a failed, empty or truncated result as an error.
+func complete(r Result, id string) error {
 	if r.Error != "" {
-		return r, fmt.Errorf("pod read %q: %s", id, r.Error)
+		return fmt.Errorf("pod read %q: %s", id, r.Error)
 	}
 	if len(r.Readings) == 0 {
-		return r, fmt.Errorf("pod read %q has no readings", id)
+		return fmt.Errorf("pod read %q has no readings", id)
 	}
 	for _, reading := range r.Readings {
 		if reading.Error != "" {
-			return r, fmt.Errorf("pod read %q Pod %s: %s", id, reading.Pod, reading.Error)
+			return fmt.Errorf("pod read %q Pod %s: %s", id, reading.Pod, reading.Error)
 		}
 		if reading.Truncated {
-			return r, fmt.Errorf("pod read %q Pod %s: output exceeds %d bytes; narrow the command", id, reading.Pod, LimitBytes)
+			return fmt.Errorf("pod read %q Pod %s: output exceeds %d bytes; narrow the command", id, reading.Pod, LimitBytes)
 		}
 	}
-	return r, nil
+	return nil
 }

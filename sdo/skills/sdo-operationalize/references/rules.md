@@ -57,3 +57,15 @@ detection designer writes them, in the initial phase, and only in open mode.
 - Every detector query resolves to a bound source, and an alerts consumer has an alert-capable source. Enforced by:
   `telemetry.unbound`.
 - The resolved source serves the query's kind. Enforced by: `telemetry.kind`.
+
+## Data checks
+
+Data checks are `.sdo/diagnostics/data/<check-id>.yaml`; see [data checks](data-checks.md). Only the detection
+designer writes them, in the initial phase.
+
+- A check is strict YAML: one store, an engine with a reader, a target, exactly one of `ids`, `range` or `first`
+  (at most 32 records), 1 to 16 assertions of one kind each, read fields of its engine only, a mongodb filter of
+  comparison and logic operators, a postgres `where` without functions, casts or statements, and a lookup exactly
+  when a reference or equivalence needs one. Enforced by: `data-check.invalid`.
+- Every store a check reads is a map component whose `data.engine` is the check's engine; an equivalence compares a
+  `role: derived` component with a component in its `derived_from`. Enforced by: `data-check.component`.
