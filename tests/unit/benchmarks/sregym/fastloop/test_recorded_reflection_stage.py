@@ -56,7 +56,7 @@ def reflection_recording(
     shutil.copytree(ROOT / "tests/fixtures/sdo/missing_configmap_app", source)
     memory = source / ".sdo"
     for name, body in {
-        "schema-version": "5\n",
+        "schema-version": "6\n",
         "goal.md": "---\nschema_version: 1\nowner: human\n---\n\nKeep healthy.\n",
         "arch.md": "---\nschema_version: 1\nowner: health_judge\n---\n\nOne service.\n",
         "playbooks/README.md": "# Playbooks\n\n- [missing-configmap](missing-configmap/README.md)\n",

@@ -26,7 +26,7 @@ func TestConcurrentProposalsOnOnePlaybookConflictWithoutChangingAcceptedState(t 
 	testutil.InitGit(t, root)
 	files := map[string]string{
 		"app.txt":                       "base\n",
-		".sdo/schema-version":           "5\n",
+		".sdo/schema-version":           "6\n",
 		".sdo/goal.md":                  "---\nschema_version: 1\nowner: human\napplication: test\n---\nGoal\n",
 		".sdo/arch.md":                  "---\nschema_version: 1\ngenerated_at_commit: base\ngenerated_at: 2026-01-01T00:00:00Z\napplication: test\ntopology_fingerprint: abc\n---\nArchitecture\n",
 		".sdo/playbooks/README.md":      "# Playbooks\n\n- [base](base/README.md)\n",

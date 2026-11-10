@@ -46,7 +46,7 @@ func TestMemoryCheckNoFlagsFailsClosedWithoutAcceptanceInputs(t *testing.T) {
 func TestMemoryListCountsProgramPackages(t *testing.T) {
 	root := t.TempDir()
 	for name, body := range map[string]string{
-		".sdo/schema-version":            "5\n",
+		".sdo/schema-version":            "6\n",
 		".sdo/playbooks/fix/README.md":   "---\nschema_version: 1\nowner: responder\nfault_class: fix\noriginating_incident: synthetic\n---\n# Fix\n",
 		".sdo/playbooks/fix/diagnose.go": "package fix\n",
 		".sdo/playbooks/fix/mitigate.go": "package fix\n",

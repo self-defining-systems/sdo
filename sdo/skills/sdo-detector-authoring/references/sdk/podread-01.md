@@ -13,7 +13,7 @@ the snapshot. No exec occurs in detectors.
 CONSTANTS
 
 const (
-	MaxQueries       = 8
+	MaxQueries       = 16
 	MaxTargets       = 16
 	MaxArgs          = 32
 	MaxArgBytes      = 1024
@@ -26,14 +26,31 @@ const (
 )
     Limits bound declarations, target fan-out and retained output, so a read
     can neither load the application nor stall the controller's evaluation loop.
-    MaxConcurrent and CollectionBudget apply across every query of a cycle.
+    MaxConcurrent and CollectionBudget apply across every query of a cycle,
+    lookups (Keys) included.
+
+const KeysPlaceholder = "{{keys}}"
+    KeysPlaceholder marks where a lookup's keys go in its arguments.
+
+const MaxKeys = 32
+    MaxKeys bounds one lookup's keys.
 
 
 FUNCTIONS
 
+func ExpandKeys(args, keys []string) []string
+    ExpandKeys returns args with KeysPlaceholder replaced by the keys.
+
+func KeysOf(source Result, k Keys) ([]string, error)
+    KeysOf returns the keys a lookup passes from its source's result, or an
+    error when the source gave no complete answer.
+
 func LongestInterval(d sdk.Detector) time.Duration
     LongestInterval is how stale a declared read can be at evaluation, so how
     long a repaired condition can keep reporting.
+
+func ValidKey(k string) bool
+    ValidKey reports whether k may be passed to a lookup.
 
 func ValidateDetector(d sdk.Detector) error
     ValidateDetector validates a consumer at registration. Targets come from the
@@ -48,11 +65,25 @@ TYPES
 type Consumer interface{ PodReads() []Query }
     Consumer declares a detector's pod reads. It must watch v1 Pod.
 
+type Keys struct {
+	From   string `json:"from"`
+	Prefix string `json:"prefix"`
+	Max    int    `json:"max"`
+}
+    Keys declares a lookup: in every cycle its source query runs, after that
+    query, the lookup runs with KeysPlaceholder in its arguments replaced by
+    the space-separated keys the source printed. A key is the rest of a source
+    output line that starts with Prefix; only keys matching ValidKey pass,
+    in the order they first appear (Pods in name order), at most Max. A lookup
+    whose source gave no complete answer is unavailable and does not run.
+
 type Query struct {
 	ID       string        `json:"id"`
 	Target   Target        `json:"target"`
 	Args     []string      `json:"args"`
 	Interval time.Duration `json:"interval"`
+	// Keys, when set, makes the query a lookup of keys another query printed.
+	Keys *Keys `json:"keys,omitempty"`
 }
     Query declares one read-only command and its role. Args run without a shell;
     use "sh", "-c" for a pipeline. Read only the field you judge: the output

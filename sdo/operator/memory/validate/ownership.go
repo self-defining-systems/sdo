@@ -105,6 +105,8 @@ var grants = []grant{
 	// Telemetry bindings are the detection designer's alone; responders name
 	// bound sources in detectors but a binding change needs a designer run.
 	{actor: HealthJudge, phase: InitialPhase, kinds: telemetryKinds},
+	// Data checks are the detection designer's alone, like health detectors.
+	{actor: HealthJudge, phase: InitialPhase, kinds: []layout.Kind{layout.KindDataCheck}},
 	// The designer edits arch.md only between the application-map markers;
 	// architectureRegionOwnership enforces that, since a grant is per file.
 	{actor: HealthJudge, phase: InitialPhase, kinds: []layout.Kind{layout.KindArchitecture}},

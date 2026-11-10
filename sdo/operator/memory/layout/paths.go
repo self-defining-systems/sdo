@@ -32,6 +32,7 @@ const (
 	DetectorsDir           = DiagnosticsDir + "/detectors"
 	TrafficGeneratorsDir   = DiagnosticsDir + "/traffic/generators"
 	TrafficWorkloadsDir    = DiagnosticsDir + "/traffic/workloads"
+	DataChecksDir          = DiagnosticsDir + "/data"
 	ManifestFileName       = "manifest.yaml"
 	DetectorFileName       = "detector.go"
 	DetectorTestFileName   = "detector_test.go"
@@ -58,9 +59,10 @@ const (
 	// logical ID only; version 4 adds the deployment class (.sdo/deployment) and
 	// retires the unused rendered class; version 5 adds the optional telemetry
 	// binding files under .sdo/diagnostics/telemetry, which the controller reads
-	// from the accepted revision. Versions 4 and 5 need no conversion: no earlier
-	// repository holds those files.
-	CurrentSchemaVersion = 5
+	// from the accepted revision; version 6 adds the detection designer's data
+	// checks under .sdo/diagnostics/data. Versions 4 to 6 need no conversion: no
+	// earlier repository holds those files.
+	CurrentSchemaVersion = 6
 )
 
 // Kind names a class of file in operational memory.
@@ -92,6 +94,7 @@ const (
 	KindDeploymentPatch          Kind = "deployment-patch"
 	KindTelemetrySources         Kind = "telemetry-sources"
 	KindTelemetryBackends        Kind = "telemetry-backends"
+	KindDataCheck                Kind = "data-check"
 	KindOutcome                  Kind = "outcome"
 )
 
@@ -171,11 +174,14 @@ const (
 	// PlaybookIDPattern and DetectorIDPattern are the logical ID grammars.
 	PlaybookIDPattern = `^[a-z][a-z0-9_-]*$`
 	DetectorIDPattern = `^[a-z0-9][a-z0-9_.-]*$`
+	// DataCheckIDPattern is the grammar of a data check's file stem.
+	DataCheckIDPattern = `^[a-z0-9][a-z0-9-]{0,47}$`
 )
 
 var (
 	playbookIDPattern = regexp.MustCompile(PlaybookIDPattern)
 	detectorIDPattern = regexp.MustCompile(DetectorIDPattern)
+	dataCheckFile     = regexp.MustCompile(`^(` + DataCheckIDPattern[1:len(DataCheckIDPattern)-1] + `)\.yaml$`)
 	deploymentPatch   = regexp.MustCompile(`^([0-9]{4}-[a-z0-9][a-z0-9-]{0,48})\.patch$`)
 	outcomeFile       = regexp.MustCompile(`^([0-9a-f]{64})\.json$`)
 )
@@ -310,6 +316,10 @@ func classifyDiagnostics(parts []string) (Kind, string, bool) {
 		return KindTrafficGenerator, parts[2], true
 	case len(parts) == 3 && parts[0] == "traffic" && parts[1] == "workloads" && strings.HasSuffix(parts[2], ".yaml"):
 		return KindTrafficWorkload, strings.TrimSuffix(parts[2], ".yaml"), true
+	case len(parts) == 2 && parts[0] == "data":
+		if match := dataCheckFile.FindStringSubmatch(parts[1]); match != nil {
+			return KindDataCheck, match[1], true
+		}
 	}
 	return "", "", false
 }
@@ -356,6 +366,9 @@ func DetectorManifestPath(class Class, id string) string {
 func DetectorPackage(class Class, id string) string {
 	return path.Join("detectors", class.Dir(), id)
 }
+
+// DataCheckPath is the repository-relative file of one data check.
+func DataCheckPath(id string) string { return path.Join(DataChecksDir, id+".yaml") }
 
 // PlaybookDir is the repository-relative directory of a playbook.
 func PlaybookDir(id string) string { return path.Join(PlaybooksDir, id) }

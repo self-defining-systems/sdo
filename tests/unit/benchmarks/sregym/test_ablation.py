@@ -8,7 +8,7 @@ from benchmarks.sregym.ablation import transform
 @pytest.mark.parametrize("arm", ["full", "detectors-only", "playbooks-only"])
 def test_arm_projection(tmp_path: Path, arm: str) -> None:
     files = {
-        ".sdo/schema-version": "5\n",
+        ".sdo/schema-version": "6\n",
         ".sdo/diagnostics/detectors/health/ready/manifest.yaml": "possiblePlaybooks: [fix]\n",
         ".sdo/diagnostics/detectors/incidents/down/detector.go": (
             'package down\nvar spec = struct { Playbooks []string }{Playbooks: []string{"fix"}}\n'
@@ -73,7 +73,7 @@ def test_failed_audit_never_publishes(tmp_path: Path, monkeypatch: pytest.Monkey
 
     git("init", "-b", "ported")
     (source / ".sdo").mkdir()
-    (source / ".sdo/schema-version").write_text("5\n")
+    (source / ".sdo/schema-version").write_text("6\n")
     git("add", ".")
     git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "synthetic")
 
@@ -100,7 +100,7 @@ def test_generator_names_the_branch_the_caller_chose(tmp_path: Path, monkeypatch
 
     git(source, "init", "-b", "ported")
     (source / ".sdo").mkdir()
-    (source / ".sdo/schema-version").write_text("5\n")
+    (source / ".sdo/schema-version").write_text("6\n")
     git(source, "add", ".")
     git(source, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "synthetic")
 

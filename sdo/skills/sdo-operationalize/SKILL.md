@@ -86,11 +86,11 @@ Reach the live application through its Services (cluster DNS, or `kubectl` when 
 
 ## Other detectors
 
-Go already installs generic checks of workloads, Services and nodes. Add a source-specific cause detector only
-for a mechanism the probes and generic checks cannot localize ([catalog](references/catalog.md),
-[methods](references/methods.md)). Never weaken a probe to silence it; fix the scenario or the threshold. When
-existing inputs cannot localize a failure, instrument the application's source through the source-repair path
-([application instrumentation](references/methods.md#application-instrumentation), [telemetry](references/telemetry.md)).
+Go installs generic checks of workloads, Services and nodes. Probes see only records they wrote: write [data
+checks](references/data-checks.md) for derived stores, keys resolved across stores and records the read path
+decodes. Add a cause detector only for a mechanism nothing else localizes ([catalog](references/catalog.md),
+[methods](references/methods.md)); never weaken a probe to silence it. Else instrument the source through
+source repair ([instrumentation](references/methods.md#application-instrumentation), [telemetry](references/telemetry.md)).
 
 ## After an incident (reflection)
 

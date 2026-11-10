@@ -123,6 +123,12 @@ const (
 	RuleMapOutsideRegion = "ownership.map-outside-region"
 	RuleMapRegionOwner   = "ownership.map-region-owner"
 
+	// Data checks (.sdo/diagnostics/data), the detection designer's declarative
+	// record checks: schema, read-only allowlist and bounds, and the
+	// application-map data roles of the stores they name.
+	RuleDataCheckInvalid   = "data-check.invalid"
+	RuleDataCheckComponent = "data-check.component"
+
 	// Explicit Go health-bootstrap preparation.
 	RuleGenericHealth = "bootstrap.generic-health"
 

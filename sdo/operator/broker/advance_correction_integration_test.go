@@ -19,7 +19,7 @@ func correctedWorld(t *testing.T) (w *advanceWorld, id, upstream string, proposa
 	w = newAdvanceWorld(t)
 	// The synthetic world has no architecture or schema stamp; a correction
 	// changes memory, so the whole tree is validated.
-	writeFiles(t, w.accepted, map[string]string{layout.SchemaVersionFile: "5\n", layout.ArchitectureFile: "---\nschema_version: 1\n---\n# Architecture\n"})
+	writeFiles(t, w.accepted, map[string]string{layout.SchemaVersionFile: "6\n", layout.ArchitectureFile: "---\nschema_version: 1\n---\n# Architecture\n"})
 	testutil.Git(t, w.accepted, "add", ".")
 	testutil.Git(t, w.accepted, "commit", "-qm", "test setup: memory stamps")
 	upstream = w.push(t, w.seed, map[string]*string{"app.txt": text("ONE\ntwo\nthree\n")})
