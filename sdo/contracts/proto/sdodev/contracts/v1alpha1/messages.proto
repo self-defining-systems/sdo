@@ -377,6 +377,20 @@ message ConfirmedRootCause {
   repeated RootCauseEvidence evidence = 3;
   repeated string explained_detectors = 4 [(buf.validate.field).repeated.items.string.pattern = "^[a-z0-9][a-z0-9_.-]*$"];
   repeated string static_context = 5;
+  // Optional mechanism class from SDO's own closed vocabulary; "" is unset.
+  // Benchmark adapters map it to their own taxonomies.
+  string cause_class = 6 [(buf.validate.field).string = {
+    in: [
+      "", "network-delay", "network-loss", "network-blocked", "dependency-unavailable",
+      "config-value-wrong", "object-missing", "admission-mutated", "admission-rejected",
+      "permission-denied", "credential-invalid", "capacity-exhausted", "process-runtime",
+      "state-lost", "data-corrupt", "data-missing", "read-only", "code-defect"
+    ]
+  }];
+  // Whether the cause can be repaired from the application's namespace.
+  // "out-of-reach" localizes a cause the responder cannot fix there (node,
+  // network fabric, external service or cluster policy); "" is unset.
+  string reach = 7 [(buf.validate.field).string = {in: ["", "in-scope", "out-of-reach"]}];
 }
 
 message AppliedPlaybook {

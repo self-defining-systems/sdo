@@ -52,6 +52,20 @@ const (
 	MaxLinks            = 64
 	MinLinkInterval     = 100 * time.Millisecond
 	MaxLinkInterval     = 1 * time.Minute
+
+	// LinkLossWindow is how many recent dials an intermittent judgement
+	// needs; LinkLossPercent of them failing, consecutive or not, reports
+	// the link. A single few-second data-plane stall stays below it.
+	LinkLossWindow  = 20
+	LinkLossPercent = 20
+	// LinkLatencyFactor and MinLinkLatencyBound set the slow bound: the
+	// median of the last Failures dials must exceed both LinkLatencyFactor
+	// times the healthy baseline and MinLinkLatencyBound.
+	LinkLatencyFactor   = 5
+	MinLinkLatencyBound = 50 * time.Millisecond
+	// LinkBaselineSamples is how many first successful dials the prober
+	// takes the healthy baseline median from.
+	LinkBaselineSamples = 10
 )
 const (
 	// SyntheticHeader marks every synthetic request so application logs and
@@ -151,8 +165,9 @@ func FromSeedPair(key string, count int, first func(index int) string, second fu
     under key, so later steps can reuse it with FromPrevious.
 
 func LinkFinding(spec sdk.DetectorSpec, namespace string, window Window, observed LinkObservations) (sdk.Finding, bool)
-    LinkFinding explains one link whose fresh dials keep failing. The primary
-    resource is the target Service; the calling Service is related.
+    LinkFinding explains one link JudgeLink reports, with per-link p50/p95
+    latency and failure classes. The primary resource is the target Service;
+    the calling Service is related.
 
 func NewDetector(spec sdk.DetectorSpec, workload string) sdk.Detector
     NewDetector returns a health detector that reports every qualified scenario
@@ -166,10 +181,10 @@ func NewDetector(spec sdk.DetectorSpec, workload string) sdk.Detector
 
 func NewLinkDetector(spec sdk.DetectorSpec, workload string) sdk.Detector
     NewLinkDetector returns a health detector that reports every qualified link
-    of a link-probe workload whose last Failures dials all failed. It decides
-    purely from the prober's samples; with no observations it reports nothing.
-    The consecutive-failure count is the hysteresis, so unlike NewDetector it
-    does not add DefaultHealthMinDuration.
+    of a link-probe workload that JudgeLink finds unreachable, intermittent or
+    slow. It decides purely from the prober's samples; with no observations it
+    reports nothing. The sample counts are the hysteresis, so unlike NewDetector
+    it does not add DefaultHealthMinDuration.
 
 func ScenarioFinding(spec sdk.DetectorSpec, namespace string, workload Workload, scenario Descriptor, verdict SLOVerdict) sdk.Finding
     ScenarioFinding explains one unhealthy scenario. The primary resource is
@@ -233,22 +248,4 @@ type Doer interface {
 	Do(*http.Request) (*http.Response, error)
 }
     Doer sends HTTP requests; *http.Client satisfies it.
-
-type Duration time.Duration
-    Duration is a time.Duration written as a Go duration string ("2s").
-
-func (d Duration) Duration() time.Duration
-
-func (d Duration) MarshalJSON() ([]byte, error)
-
-func (d *Duration) UnmarshalJSON(data []byte) error
-
-type Endpoint interface {
-	Build(ctx context.Context, rng *rand.Rand, state State) (Request, error)
-	Check(response Response, state State) Verdict
-}
-    Endpoint builds one request and judges its response. Build must derive
-    every varying value from rng and state; the engine seeds rng per iteration,
-    so the same iteration always builds the same requests. Check may save values
-    into state for later steps. Neither may measure time or send requests.
 ```

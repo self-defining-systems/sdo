@@ -171,7 +171,7 @@ func TestReceiptPolicyCoversEveryOutcomeClassification(t *testing.T) {
 			switch classification {
 			case "success", "cleared_without_action":
 				want = c.ReceiptFailure_CODE_UNSPECIFIED
-			case "failed", "unconfirmed":
+			case "failed", "unconfirmed", "escalated":
 				want = c.ReceiptFailure_CODE_UNVERIFIED_OUTCOME
 			}
 			if got.GetFailure().GetCode() != want {

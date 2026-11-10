@@ -69,6 +69,8 @@ def _workflow() -> str:
         + (SKILLS_ROOT / "sdo-incident-response/references/live-repairs.md").read_text()
         + "\n"
         + (SKILLS_ROOT / "sdo-incident-response/references/coverage.md").read_text()
+        + "\n"
+        + (SKILLS_ROOT / "sdo-incident-response/references/causes.md").read_text()
     )
 
 

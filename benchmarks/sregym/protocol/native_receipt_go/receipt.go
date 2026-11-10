@@ -22,7 +22,7 @@ var errUnverifiedOutcome = errors.New("native outcome is not a verified closure 
 // unverifiedByDesign is a classification whose receipt is rejected because the
 // outcome itself says nothing was verified, not because evidence is missing.
 func unverifiedByDesign(classification string) bool {
-	return slices.Contains([]string{"failed", "unconfirmed"}, classification)
+	return slices.Contains([]string{"failed", "unconfirmed", "escalated"}, classification)
 }
 
 var commitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -63,6 +63,8 @@ func resolution(classification string) string {
 		return "sdo_unconfirmed"
 	case "failed":
 		return "sdo_failed"
+	case "escalated":
+		return "sdo_escalated"
 	default:
 		return "external_recovery"
 	}

@@ -551,18 +551,22 @@ class RootCauseEvidence(_message.Message):
     def __init__(self, kind: _Optional[str] = ..., source: _Optional[str] = ..., observation: _Optional[str] = ...) -> None: ...
 
 class ConfirmedRootCause(_message.Message):
-    __slots__ = ("summary", "resources", "evidence", "explained_detectors", "static_context")
+    __slots__ = ("summary", "resources", "evidence", "explained_detectors", "static_context", "cause_class", "reach")
     SUMMARY_FIELD_NUMBER: _ClassVar[int]
     RESOURCES_FIELD_NUMBER: _ClassVar[int]
     EVIDENCE_FIELD_NUMBER: _ClassVar[int]
     EXPLAINED_DETECTORS_FIELD_NUMBER: _ClassVar[int]
     STATIC_CONTEXT_FIELD_NUMBER: _ClassVar[int]
+    CAUSE_CLASS_FIELD_NUMBER: _ClassVar[int]
+    REACH_FIELD_NUMBER: _ClassVar[int]
     summary: str
     resources: _containers.RepeatedCompositeFieldContainer[_common_pb2.ObjectRef]
     evidence: _containers.RepeatedCompositeFieldContainer[RootCauseEvidence]
     explained_detectors: _containers.RepeatedScalarFieldContainer[str]
     static_context: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, summary: _Optional[str] = ..., resources: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., evidence: _Optional[_Iterable[_Union[RootCauseEvidence, _Mapping]]] = ..., explained_detectors: _Optional[_Iterable[str]] = ..., static_context: _Optional[_Iterable[str]] = ...) -> None: ...
+    cause_class: str
+    reach: str
+    def __init__(self, summary: _Optional[str] = ..., resources: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., evidence: _Optional[_Iterable[_Union[RootCauseEvidence, _Mapping]]] = ..., explained_detectors: _Optional[_Iterable[str]] = ..., static_context: _Optional[_Iterable[str]] = ..., cause_class: _Optional[str] = ..., reach: _Optional[str] = ...) -> None: ...
 
 class AppliedPlaybook(_message.Message):
     __slots__ = ("playbook_id", "parameter_bindings", "script_names")
