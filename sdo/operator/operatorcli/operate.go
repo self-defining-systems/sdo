@@ -67,6 +67,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	provider := flags.String("agent-provider", "codex", "agent provider")
 	replay := flags.String("replay", "", "replay and corpus capture: on (default) or off")
 	effort := flags.String("agent-effort", "", "reasoning effort of every agent worker (empty: the shared default)")
+	lifecycleTimeout := flags.Duration("lifecycle-timeout", 0, "limit of one lifecycle (detection designer) session (0: the shared default)")
 	worktreeRoot := flags.String("worktree-root", "", "broker proposal and ledger root")
 	registrations := flags.String("agent-registration-directory", "", "agent registration directory")
 	registrationConfigMap := flags.String("agent-registration-configmap", "", "read-only agent registration ConfigMap")
@@ -211,7 +212,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			SourceKind: *sourceKind, SourceConfig: *sourceConfig, DeploymentPlan: *deploymentPlan, DeploymentPolicy: *deploymentPolicyFlag,
 			ControllerImage: *controllerImage, ResponderImage: *responderImage,
 			ScriptImage: *scriptImage, RepositoryPVC: *repositoryPVC,
-			CredentialsSecret: *credentialsSecret, Model: *model, AgentProvider: *provider, AgentEffort: *effort, Replay: *replay,
+			CredentialsSecret: *credentialsSecret, Model: *model, AgentProvider: *provider, AgentEffort: *effort, LifecycleTimeout: *lifecycleTimeout, Replay: *replay,
 			// The controller parent deploys upstream advances with the same identity.
 			BuildKitImage: *buildkitImage, RegistryPushSecret: *registryPushSecret,
 			RegistryInsecure: *registryInsecure, RegistryHost: *registryHost, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,

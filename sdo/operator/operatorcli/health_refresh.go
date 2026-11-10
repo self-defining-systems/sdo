@@ -125,7 +125,7 @@ func controllerAgentWorkers(config *contracts.ControllerConfig) (*worker_registr
 	if err != nil {
 		return nil, nil, worker_registry.KubernetesExecutor{}, err
 	}
-	environment, err := worker_registry.AgentEnvironment(config.GetResponderBackend(), config.GetResponderModel(), config.GetAgentEffort())
+	environment, err := worker_registry.AgentEnvironment(config.GetResponderBackend(), config.GetResponderModel(), config.GetAgentEffort(), config.GetLifecycleTimeout().AsDuration())
 	if err != nil {
 		return nil, nil, worker_registry.KubernetesExecutor{}, err
 	}

@@ -15,6 +15,7 @@ from benchmarks.sregym.adapter.deployment_source import DeploymentPolicyConfig
 from benchmarks.sregym.adapter.native_operator import (
     AGENT_EFFORTS,
     DEFAULT_AGENT_EFFORT,
+    DEFAULT_LIFECYCLE_TIMEOUT_SECONDS,
     NativeInstallConfig,
     collect_native_receipt,
     install_existing,
@@ -52,6 +53,7 @@ class RuntimeConfig:
     agent_provider: str = "codex"
     replay: str = "on"
     agent_effort: str = DEFAULT_AGENT_EFFORT
+    lifecycle_timeout_seconds: int = DEFAULT_LIFECYCLE_TIMEOUT_SECONDS
     reflection_session: str = "resume"
     reflection_guidance: str = "baseline"
     force_reflection: bool = False
@@ -177,6 +179,7 @@ def native_install_config(config: RuntimeConfig) -> NativeInstallConfig:
         agent_provider=config.agent_provider,
         replay=config.replay,
         agent_effort=config.agent_effort,
+        lifecycle_timeout_seconds=config.lifecycle_timeout_seconds,
         repair_policy=config.repair_policy,
         late_findings=config.late_findings,
         reflection_session=config.reflection_session,

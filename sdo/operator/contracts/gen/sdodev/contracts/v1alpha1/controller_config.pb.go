@@ -104,6 +104,8 @@ type ControllerConfig struct {
 	ResponderModel   string `protobuf:"bytes,50,opt,name=responder_model,json=responderModel,proto3" json:"responder_model,omitempty"`
 	// Reasoning effort every agent worker runs at; empty means the shared default (sdo/contracts/agent_env.json).
 	AgentEffort string `protobuf:"bytes,101,opt,name=agent_effort,json=agentEffort,proto3" json:"agent_effort,omitempty"`
+	// Limit of one lifecycle (detection designer) session; unset means the shared default (sdo/contracts/agent_env.json).
+	LifecycleTimeout *durationpb.Duration `protobuf:"bytes,117,opt,name=lifecycle_timeout,json=lifecycleTimeout,proto3" json:"lifecycle_timeout,omitempty"`
 	// Trusted run policy; empty preserves default-on replay and corpus capture.
 	Replay          string `protobuf:"bytes,102,opt,name=replay,proto3" json:"replay,omitempty"`
 	WorkerMountMode string `protobuf:"bytes,51,opt,name=worker_mount_mode,json=workerMountMode,proto3" json:"worker_mount_mode,omitempty"`
@@ -487,6 +489,13 @@ func (x *ControllerConfig) GetAgentEffort() string {
 		return x.AgentEffort
 	}
 	return ""
+}
+
+func (x *ControllerConfig) GetLifecycleTimeout() *durationpb.Duration {
+	if x != nil {
+		return x.LifecycleTimeout
+	}
+	return nil
 }
 
 func (x *ControllerConfig) GetReplay() string {
@@ -942,7 +951,7 @@ var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDesc
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\x1a1sdodev/contracts/v1alpha1/deployment_source.proto\"\xb5\"\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\x1a1sdodev/contracts/v1alpha1/deployment_source.proto\"\x87#\n" +
 	"\x10ControllerConfig\x12,\n" +
 	"\x12memory_host_binary\x18R \x01(\tR\x10memoryHostBinary\x12,\n" +
 	"\x12memory_host_digest\x18S \x01(\tR\x10memoryHostDigest\x12%\n" +
@@ -992,7 +1001,8 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"brokerMode\x12+\n" +
 	"\x11responder_backend\x181 \x01(\tR\x10responderBackend\x12'\n" +
 	"\x0fresponder_model\x182 \x01(\tR\x0eresponderModel\x12!\n" +
-	"\fagent_effort\x18e \x01(\tR\vagentEffort\x12(\n" +
+	"\fagent_effort\x18e \x01(\tR\vagentEffort\x12P\n" +
+	"\x11lifecycle_timeout\x18u \x01(\v2\x19.google.protobuf.DurationB\b\xbaH\x05\xaa\x01\x022\x00R\x10lifecycleTimeout\x12(\n" +
 	"\x06replay\x18f \x01(\tB\x10\xbaH\rr\vR\x00R\x02onR\x03offR\x06replay\x12*\n" +
 	"\x11worker_mount_mode\x183 \x01(\tR\x0fworkerMountMode\x12E\n" +
 	"\x12reflection_session\x184 \x01(\tB\x16\xbaH\x13r\x11R\x00R\x05freshR\x06resumeR\x11reflectionSession\x12_\n" +
@@ -1078,24 +1088,25 @@ var file_sdodev_contracts_v1alpha1_controller_config_proto_depIdxs = []int32{
 	5,  // 4: sdodev.contracts.v1alpha1.ControllerConfig.maintenance_poll_interval:type_name -> google.protobuf.Duration
 	5,  // 5: sdodev.contracts.v1alpha1.ControllerConfig.resume_sync_timeout:type_name -> google.protobuf.Duration
 	5,  // 6: sdodev.contracts.v1alpha1.ControllerConfig.synthetic_traffic_warmup:type_name -> google.protobuf.Duration
-	5,  // 7: sdodev.contracts.v1alpha1.ControllerConfig.diagnosis_deadline:type_name -> google.protobuf.Duration
-	5,  // 8: sdodev.contracts.v1alpha1.ControllerConfig.drift_batch_window:type_name -> google.protobuf.Duration
-	5,  // 9: sdodev.contracts.v1alpha1.ControllerConfig.closure_stability_window:type_name -> google.protobuf.Duration
-	5,  // 10: sdodev.contracts.v1alpha1.ControllerConfig.responder_report_grace:type_name -> google.protobuf.Duration
-	2,  // 11: sdodev.contracts.v1alpha1.ControllerConfig.memory_upstream:type_name -> sdodev.contracts.v1alpha1.MemoryUpstream
-	3,  // 12: sdodev.contracts.v1alpha1.ControllerConfig.code_path:type_name -> sdodev.contracts.v1alpha1.CodePathConfig
-	6,  // 13: sdodev.contracts.v1alpha1.ControllerConfig.render_environment:type_name -> sdodev.contracts.v1alpha1.RenderEnvironment
-	7,  // 14: sdodev.contracts.v1alpha1.ControllerConfig.deployment_policy:type_name -> sdodev.contracts.v1alpha1.DeploymentPolicy
-	1,  // 15: sdodev.contracts.v1alpha1.ControllerConfig.deploy_identity:type_name -> sdodev.contracts.v1alpha1.DeployIdentity
-	5,  // 16: sdodev.contracts.v1alpha1.DeployIdentity.build_timeout:type_name -> google.protobuf.Duration
-	5,  // 17: sdodev.contracts.v1alpha1.DeployIdentity.build_budget:type_name -> google.protobuf.Duration
-	5,  // 18: sdodev.contracts.v1alpha1.DeployIdentity.rollout_timeout:type_name -> google.protobuf.Duration
-	4,  // 19: sdodev.contracts.v1alpha1.CodePathConfig.overrides:type_name -> sdodev.contracts.v1alpha1.CodePathOverrides
-	20, // [20:20] is the sub-list for method output_type
-	20, // [20:20] is the sub-list for method input_type
-	20, // [20:20] is the sub-list for extension type_name
-	20, // [20:20] is the sub-list for extension extendee
-	0,  // [0:20] is the sub-list for field type_name
+	5,  // 7: sdodev.contracts.v1alpha1.ControllerConfig.lifecycle_timeout:type_name -> google.protobuf.Duration
+	5,  // 8: sdodev.contracts.v1alpha1.ControllerConfig.diagnosis_deadline:type_name -> google.protobuf.Duration
+	5,  // 9: sdodev.contracts.v1alpha1.ControllerConfig.drift_batch_window:type_name -> google.protobuf.Duration
+	5,  // 10: sdodev.contracts.v1alpha1.ControllerConfig.closure_stability_window:type_name -> google.protobuf.Duration
+	5,  // 11: sdodev.contracts.v1alpha1.ControllerConfig.responder_report_grace:type_name -> google.protobuf.Duration
+	2,  // 12: sdodev.contracts.v1alpha1.ControllerConfig.memory_upstream:type_name -> sdodev.contracts.v1alpha1.MemoryUpstream
+	3,  // 13: sdodev.contracts.v1alpha1.ControllerConfig.code_path:type_name -> sdodev.contracts.v1alpha1.CodePathConfig
+	6,  // 14: sdodev.contracts.v1alpha1.ControllerConfig.render_environment:type_name -> sdodev.contracts.v1alpha1.RenderEnvironment
+	7,  // 15: sdodev.contracts.v1alpha1.ControllerConfig.deployment_policy:type_name -> sdodev.contracts.v1alpha1.DeploymentPolicy
+	1,  // 16: sdodev.contracts.v1alpha1.ControllerConfig.deploy_identity:type_name -> sdodev.contracts.v1alpha1.DeployIdentity
+	5,  // 17: sdodev.contracts.v1alpha1.DeployIdentity.build_timeout:type_name -> google.protobuf.Duration
+	5,  // 18: sdodev.contracts.v1alpha1.DeployIdentity.build_budget:type_name -> google.protobuf.Duration
+	5,  // 19: sdodev.contracts.v1alpha1.DeployIdentity.rollout_timeout:type_name -> google.protobuf.Duration
+	4,  // 20: sdodev.contracts.v1alpha1.CodePathConfig.overrides:type_name -> sdodev.contracts.v1alpha1.CodePathOverrides
+	21, // [21:21] is the sub-list for method output_type
+	21, // [21:21] is the sub-list for method input_type
+	21, // [21:21] is the sub-list for extension type_name
+	21, // [21:21] is the sub-list for extension extendee
+	0,  // [0:21] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_controller_config_proto_init() }

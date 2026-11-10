@@ -74,6 +74,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	provider := flags.String("agent-provider", "codex", "agent provider")
 	replay := flags.String("replay", "", "replay and corpus capture: on (default) or off")
 	effort := flags.String("agent-effort", "", "reasoning effort of every agent worker (empty: the shared default)")
+	lifecycleTimeout := flags.Duration("lifecycle-timeout", 0, "limit of one lifecycle (detection designer) session (0: the shared default)")
 	repairPolicy := flags.String("repair-policy", "recorded-actions", "repair evidence policy")
 	reflectionSession := flags.String("reflection-session", "resume", "reflection session mode: fresh or resume")
 	reflectionGuidance := flags.String("reflection-guidance", "baseline", "reflection guidance mode")
@@ -161,7 +162,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 		Namespace: *namespace, ControlNamespace: *controlNamespace, Application: *application,
 		ScriptImage: *scriptImage, ControllerImage: *controllerImage, ResponderImage: *responderImage,
 		RepositoryPVC: *repositoryPVC, CredentialsSecret: *credentialsSecret, Model: *model,
-		RepairPolicy: *repairPolicy, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, FrozenMemory: *frozenMemory, ExternalIncidents: *externalIncidents, AgentProvider: *provider, AgentEffort: *effort, Replay: *replay,
+		RepairPolicy: *repairPolicy, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, FrozenMemory: *frozenMemory, ExternalIncidents: *externalIncidents, AgentProvider: *provider, AgentEffort: *effort, LifecycleTimeout: *lifecycleTimeout, Replay: *replay,
 		MaxResponseLoops: *maxResponseLoops,
 		ResponderMenu:    menu != "0",
 		LateFindings:     *lateFindings,

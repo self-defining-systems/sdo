@@ -44,14 +44,16 @@ const (
 type Config struct {
 	CodePath *contracts.CodePathConfig
 
-	ResponderMenu                              bool
-	ObservationCeiling                         sdk.ObservationScope
-	Namespace, ControlNamespace, Application   string
-	ControllerImage, ResponderImage            string
-	ScriptImage                                string
-	RepositoryPVC, CredentialsSecret, Model    string
-	AcceptedCommit                             string
-	RepairPolicy, AgentProvider, AgentEffort   string
+	ResponderMenu                            bool
+	ObservationCeiling                       sdk.ObservationScope
+	Namespace, ControlNamespace, Application string
+	ControllerImage, ResponderImage          string
+	ScriptImage                              string
+	RepositoryPVC, CredentialsSecret, Model  string
+	AcceptedCommit                           string
+	RepairPolicy, AgentProvider, AgentEffort string
+	// LifecycleTimeout bounds one lifecycle (detection designer) session; zero selects the shared default.
+	LifecycleTimeout                           time.Duration
 	Replay                                     string
 	ReflectionSession, ReflectionGuidance      string
 	ForceReflection                            bool
@@ -244,6 +246,9 @@ func (c Config) validate() error {
 	if c.AgentEffort != "" && !slices.Contains(worker_registry.AgentEfforts, c.AgentEffort) {
 		return fmt.Errorf("invalid agent effort %q", c.AgentEffort)
 	}
+	if c.LifecycleTimeout < 0 {
+		return fmt.Errorf("invalid lifecycle timeout %s", c.LifecycleTimeout)
+	}
 	if c.ReflectionSession != "" && !slices.Contains(wire.StringIn(&contracts.ControllerConfig{}, "reflection_session"), c.ReflectionSession) {
 		return errors.New("invalid reflection session")
 	}
@@ -407,6 +412,9 @@ func controllerJob(c Config) *batchv1.Job {
 	}
 	if c.AgentEffort != "" {
 		args = append(args, "--agent-effort", c.AgentEffort)
+	}
+	if c.LifecycleTimeout > 0 {
+		args = append(args, "--lifecycle-timeout", c.LifecycleTimeout.String())
 	}
 	args = append(args, "--reflection-session", reflectionSession(c))
 	args = append(args, "--reflection-guidance", reflectionGuidance(c))

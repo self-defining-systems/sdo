@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -122,7 +123,7 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 		"--responder-image", cfg.ResponderImage,
 		"--repository-pvc", cfg.RepositoryPVC, "--repository-mount-path", "/workspace",
 		"--credentials-secret", cfg.CredentialsSecret, "--model", cfg.Model,
-		"--replay", cfg.Replay, "--agent-provider", provider(cfg), "--agent-effort", cfg.AgentEffort, "--worktree-root", "/workspace/worktrees",
+		"--replay", cfg.Replay, "--agent-provider", provider(cfg), "--agent-effort", cfg.AgentEffort, "--lifecycle-timeout", cfg.LifecycleTimeout.String(), "--worktree-root", "/workspace/worktrees",
 		"--buildkit-image", cfg.BuildKitImage, "--registry-push-secret", cfg.RegistryPushSecret,
 		"--repair-policy", defaultRepairPolicy(cfg), "--response-timeout", fmt.Sprintf("%ds", cfg.TimeoutSeconds),
 		"--verification-timeout", fmt.Sprintf("%ds", verificationTimeout(cfg)),
@@ -192,7 +193,7 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 	}
 	zero := int32(0)
 	ttl := int32(600)
-	deadline := int64((cfg.TimeoutSeconds+int(buildBudget(cfg).Seconds())+int(rolloutTimeout(cfg).Seconds()))*maxAttempts + 600)
+	deadline := int64((cfg.TimeoutSeconds+int(lifecycleTimeout(cfg).Seconds())+int(buildBudget(cfg).Seconds())+int(rolloutTimeout(cfg).Seconds()))*maxAttempts + 600)
 	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: OperateJobName(operationID), Namespace: cfg.controlNamespace(), Annotations: map[string]string{PreparedCommitAnnotation: cfg.AcceptedCommit}}, Spec: batchv1.JobSpec{BackoffLimit: &zero, TTLSecondsAfterFinished: &ttl, ActiveDeadlineSeconds: &deadline}}
 	job.Spec.Template.Labels = map[string]string{"app.kubernetes.io/name": "sdo-operate", "sdo.dev/operation": OperateJobName(operationID)}
 	pod := &job.Spec.Template.Spec
@@ -382,4 +383,12 @@ func (i Installer) LaunchOperate(ctx context.Context, cfg Config, objective, ope
 		return OperateResult{}, err
 	}
 	return i.WaitOperate(ctx, cfg, operationID)
+}
+
+// lifecycleTimeout is the configured designer session limit, or the workers' shared default.
+func lifecycleTimeout(cfg Config) time.Duration {
+	if cfg.LifecycleTimeout > 0 {
+		return cfg.LifecycleTimeout
+	}
+	return worker_registry.DefaultLifecycleTimeout
 }

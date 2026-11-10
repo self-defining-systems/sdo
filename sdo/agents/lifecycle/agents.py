@@ -14,7 +14,7 @@ from libs.agent_cli.structured import (
 from sdo.agents.code_paths import SKILLS_ROOT, agent_guidance
 from sdo.agents.prompt_templates import named_prompt, render_prompt
 from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
-from sdo.agents.provider import DEFAULT_AGENT_EFFORT
+from sdo.agents.provider import DEFAULT_AGENT_EFFORT, DEFAULT_LIFECYCLE_TIMEOUT_SECONDS
 from sdo.agents.replay import selected_skills_root
 
 if TYPE_CHECKING:
@@ -78,7 +78,7 @@ class CodexLifecycleBackend:
         *,
         model: str | None = None,
         reasoning_effort: str = DEFAULT_AGENT_EFFORT,
-        timeout_seconds: int = 900,
+        timeout_seconds: int = DEFAULT_LIFECYCLE_TIMEOUT_SECONDS,
         executor: CommandExecutor | None = None,
     ) -> None:
         if timeout_seconds <= 0:
