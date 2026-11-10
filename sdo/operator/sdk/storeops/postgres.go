@@ -75,10 +75,47 @@ func (postgres) ValidateStatement(statement string) error {
 	if err := sqlText("postgres repair statement", statement); err != nil {
 		return err
 	}
-	if postgresClause.MatchString(statement) {
-		return fmt.Errorf("postgres repair statement may not carry its own WHERE or RETURNING; the scope selects the rows")
+	if postgresClause.MatchString(topLevelSQL(statement)) {
+		return fmt.Errorf("postgres repair statement may not carry its own top-level WHERE or RETURNING; the scope selects the rows (a subquery in parentheses may use them)")
 	}
 	return nil
+}
+
+// topLevelSQL blanks the text inside parentheses and quotes, so a check sees
+// only the clause's own keywords: a correlated subquery such as
+// "SET total = (SELECT sum(n) FROM lines WHERE lines.id = orders.id)" keeps its
+// WHERE. An unbalanced statement is returned whole and fails at the server.
+func topLevelSQL(statement string) string {
+	var out strings.Builder
+	depth, quote := 0, byte(0)
+	for i := 0; i < len(statement); i++ {
+		c := statement[i]
+		switch {
+		case quote != 0:
+			if c == quote {
+				quote = 0
+			}
+			out.WriteByte(' ')
+			continue
+		case c == '\'' || c == '"':
+			quote = c
+		case c == '(':
+			depth++
+		case c == ')':
+			if depth == 0 {
+				return statement
+			}
+			depth--
+			out.WriteByte(' ')
+			continue
+		}
+		if depth > 0 || quote != 0 {
+			out.WriteByte(' ')
+			continue
+		}
+		out.WriteByte(c)
+	}
+	return out.String()
 }
 
 func (e postgres) run(port int, s Scope, script string, args ...string) Command {

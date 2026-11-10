@@ -159,12 +159,11 @@ Replay outcomes, missing captures and detector coverage are information.
   `program.StalledRolloutRelease(v, ref)`.
 - A recorded `kubectl exec <pod>` becomes `EnsureExec` on a Pod of the bound workload, never a Pod name.
 - An `Exec`, `EnsureExec`, `EnsureHTTP`, `RunScript`, `RunJob` or `EnsureDatabaseUser` that runs in, binds or names
-  a `holds_data` component never runs automatically: SDO skips it (`holds_data`) and hands the finding to a
-  responder. The playbook still helps the responder, but do not count on it running alone.
-- Store records change only through typed actions with a declared effect: `StoreBackup` (read),
-  `InvalidateDerived` (derived-invalidate; runs automatically only while the map marks the target `derived` and
-  every `derived_from` source passes its live store-state checks), `RepairData` and `RestoreBackup`
-  (data-write; never automatic). A learned cache flush is an `InvalidateDerived`, not an `EnsureExec`; a learned
-  record repair stays a responder step that names the backup it needs.
+  a `holds_data` component runs automatically like any other action; SDO records its data effect (`unknown` for
+  opaque commands, `store-setting` for a database user change) as evidence, never as a refusal.
+- Typed store actions declare their effect: `StoreBackup` (read), `InvalidateDerived` (derived-invalidate, recorded
+  with each `derived_from` source's live store state), `RepairData` and `RestoreBackup` (data-write; a repair's
+  backup is optional and recorded). They run automatically too. A learned cache flush is clearer as an
+  `InvalidateDerived` than an `EnsureExec`, because SDO records more about it.
 - Credentials stay references (env or ConfigMap key); never read Secret data. Learn into incident playbooks. The detection designer owns `health-objective` and health detectors: never edit
   them; when its generic program applied and hand repairs followed, encode those in an incident playbook.

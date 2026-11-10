@@ -285,27 +285,29 @@ that wrote, and the one `deterministic` report in `prior_stages` is updated in p
 the new attempts once, as `prior_stages` in its next tool reply.
 The stage reads the accepted application map. A plan that restarts, deletes, rolls back, scales down,
 reconciles, patches, applies or sends a write request to a workload marked `holds_data`, or its Pods or
-ReplicaSets, is skipped with reason `holds_data` and the finding goes to the responder. So is a plan
-whose external action has a data effect the stage does not allow on a `holds_data` component
-(`runtime/data_effects.go`, classes in `sdk/program/effects.go`). Go assigns the effect: `Exec`,
-`EnsureExec`, `EnsureHTTP`, `RunScript` and `RunJob` are `unknown` on the component whose Pod they
-run in and on every one their inputs name (a Service, workload or Pod, as an object or by name in
-their text); `EnsureDatabaseUser` is `store-setting` on its target. Typed store actions
-(`sdk/program/data_repair.go`, engine commands in `sdk/storeops`, execution in `runtime/plan_data.go`)
-declare their class: `StoreBackup` is `read`, `InvalidateDerived` `derived-invalidate`, `RepairData` and
-`RestoreBackup` `data-write`. Only `read` runs automatically on a `holds_data` component; `RepairData` and
-`RestoreBackup` never run automatically; `InvalidateDerived` runs, on the automatic path as on any other,
-only when the accepted map marks its target `data.role: derived` and every `derived_from` source passes a
-live store-state read (no write block, no refused read). An input the stage cannot read before the run counts
-as reaching every `holds_data` component. Every store action is grounded in the accepted map (the
-component declares data with the action's engine and the Pod belongs to its workload).
+ReplicaSets, is skipped with reason `holds_data` and the finding goes to the responder. That is the
+only data rule that refuses: what an action does to stored records is recorded evidence, never a gate
+(`runtime/data_effects.go`, classes in `sdk/program/effects.go`). Go assigns each applied action a data
+effect per `holds_data` component it reaches: `Exec`, `EnsureExec`, `EnsureHTTP`, `RunScript` and `RunJob`
+are `unknown` on the component whose Pod they run in and on every one their inputs name (a Service,
+workload or Pod, as an object or by name in their text); `EnsureDatabaseUser` is `store-setting` on its
+target. Typed store actions (`sdk/program/data_repair.go`, engine commands in `sdk/storeops`, execution in
+`runtime/plan_data.go`) declare their class: `StoreBackup` is `read`, `InvalidateDerived`
+`derived-invalidate` (`data-write` when the map does not mark its target `data.role: derived`),
+`RepairData` and `RestoreBackup` `data-write`. All of them run on the automatic path and for the
+responder alike. Every store action is grounded in the accepted map (the component declares data with
+the action's engine and the Pod belongs to its workload); `RepairData` refuses only a count outside its
+expected bounds or a named backup that is not one of this incident, and `RestoreBackup` needs the ID of
+the backup to put back.
 At closure, a `holds_data` workload with a Pod created since the incident opened (or a restarted
 container) and only volumes that die with the Pod makes the outcome `unconfirmed` (`DATA_MAY_BE_LOST`).
-So does an applied `unknown` or `data-write` effect on a `holds_data` component with no backup taken
-first; the responder may still make that repair, but it does not feed learning. A `RepairData` is backed
-when the `StoreBackup` it names was verified in the same incident and covers its scope (the executor also
-refuses it otherwise, counts first, and refuses a count outside its expected bounds); a `RestoreBackup` is
-backed only by a fresh covering backup taken after the one it restores. An opaque command never is.
+Data effects never change the outcome: each applied effect is recorded as a `data effect:` line in the
+closure's `source_check_notes` (and in verify's `data_effects[]`), with, for `unknown` and `data-write`,
+whether a backup of this incident held the records it could change (a `RepairData` whose named
+`StoreBackup` covers its scope, or a `RestoreBackup` after a fresh covering backup; an opaque command
+never is). Tool-response action reports record a repair's named backup and `backup_covers`, and an
+invalidation's `source_state` (the map's role for the target and each `derived_from` source's live
+store-state read).
 `StoreBackup` dumps live in `.sdo-runtime/backups/<sha256(incident)>/<id>/` on the controller's
 repository volume with a record of item count, bytes, SHA-256 and the store facts at backup time
 (64 MiB per backup, 256 MiB per incident).
@@ -855,7 +857,7 @@ Only the broker publishes derived incident outcomes. Controller-owned `prior_sta
 | Session API history (outside `.sdo/`) | Go proxy; memory edge writes attempt generation and verified recovery marker | Same controller-owned paths | Per-incident bounded append-only envelopes and projected content hashes; workers mount read-only; caps, gaps, unfinished requests, mismatched attempt generations and epochs cannot establish continuity. |
 | Benchmark abort state and process registry (outside `.sdo/`) | Benchmark runner/adapter and launcher | Benchmark runner/adapter and launcher | Cleanup targets precede install; abort records pending incidents as aborted without claiming verified mitigation or writing operational memory. Process identities authorize signals only for the recorded UID, boot and start time. |
 | Control-namespace `sdo-namespace-onboarding` ConfigMap | In-cluster controller after the sole confirmed full install sweep, using installer-frozen pending identities | Immutable; never expanded by incidents, restart or healthy settling | Accepted commit, establishment time and non-secret kind/namespace/name identities plus UID/configuration/ownership digests; generated descendants inherit only from a matching observed parent incarnation. Controller state carries a copy; the ConfigMap also owns immutable measured reachability-reference evidence. Separate immutable window/rejection records prevent interrupted sampling from granting later authority. |
-| Store backups: `.sdo-runtime/backups/<sha256(incident)>/<id>/` on the repository volume (outside `.sdo/`) | Go plan executor (`StoreBackup`) | Same executor; `RepairData` reads the record, `RestoreBackup` reads the dump; immutable per ID | Record dumps of one scope with item count, size, SHA-256 and store facts; per-incident, size-capped, never committed or learned from. |
+| Store backups: `.sdo-runtime/backups/<sha256(incident)>/<id>/` on the repository volume (outside `.sdo/`) | Go plan executor (`StoreBackup`) | Same executor; `RepairData` reads a named record, `RestoreBackup` reads the dump; immutable per ID | Record dumps of one scope with item count, size, SHA-256 and store facts; per-incident, size-capped, never committed or learned from. |
 | Per-cluster reachability baseline: `.sdo-runtime/reachability-baseline.json` on the lane-private repository volume (outside `.sdo/`) | Go controller's opt-in healthy-baseline gate | Same gate, at startup, resume and while no current record exists, on its own cluster only | Measured failed dials bound to accepted source/objective digests and target configuration; never committed or shared between clusters. The validator rejects cluster-local values (`memory.cluster-local`) in `.sdo/`. |
 | Runtime-state ConfigMap (outside `.sdo/`) | Go controller | Go controller | `ControllerState` is publication-validated by its storage edge; `ControllerObservation` is a read-only Go interpretation, never a second writer or persistence schema. |
 

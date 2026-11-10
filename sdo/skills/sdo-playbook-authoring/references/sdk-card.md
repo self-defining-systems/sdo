@@ -88,7 +88,7 @@ Full [SDK](program-sdk.md).
 
 - `type InvalidateDerived struct{Target StoreTarget; Scope DataScope; Reason string}`: drops a derived cache's entries to refill from source.
 - `type StoreBackup struct{ID string; Target StoreTarget; Scope DataScope; Reason string}`: copies a scope's records to backup storage.
-- `type RepairData struct{Target StoreTarget; Scope DataScope; Statement string; ExpectMin int; ExpectMax int; Backup string; Reason string}`: runs one write on a backed-up scope.
+- `type RepairData struct{Target StoreTarget; Scope DataScope; Statement string; ExpectMin int; ExpectMax int; Backup string; Reason string}`: runs one write on a scope.
 - `type RestoreBackup struct{Target StoreTarget; Backup string; Reason string}`: puts a StoreBackup of this incident back.
 
 ## Any other hand repair: commands, HTTP, Jobs, raw API objects

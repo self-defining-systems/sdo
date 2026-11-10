@@ -39,10 +39,8 @@ already applied and that was still settling; SDO did not repeat it, and recovery
 `skipped (holds_data)` means the program would have restarted, deleted, rewritten or scaled down a workload the
 application map marks `holds_data`, so SDO did not run it. The line names the action; the object is unchanged and the
 finding is yours. The restart may still be right, but look at what holds the data and what it holds first.
-The same skip covers a command, script, Job, HTTP call or database-user change that runs in, binds or names a
-`holds_data` component: SDO cannot see what it does to the stored records. A `RepairData` or `RestoreBackup`
-is always skipped this way, and an `InvalidateDerived` is skipped while a `derived_from` source fails its store
-checks; see [store data](store-data.md).
+Commands, scripts, Jobs, HTTP calls, database-user changes and the typed [store data](store-data.md) actions are
+never skipped for what they do to stored records: SDO runs them and records their data effect as evidence.
 Blocker messages are observations at handoff, so confirm whether they still apply. Absence of a blocker
 message is not proof that a rollout can progress. Full unabridged facts stay in `details_file`.
 `stage_playbooks` maps involved program IDs to accepted README files (null if unavailable), including

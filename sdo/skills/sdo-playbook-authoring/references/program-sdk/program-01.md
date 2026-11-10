@@ -80,9 +80,10 @@ func CheckReplicaSetScales(plan Plan, view ReplicaSetOwnerView) error
 
 func DataActionEffect(action Action) (StoreTarget, DataEffect, bool)
     DataActionEffect is the data effect a store action declares on its target
-    component. The executor enforces it: a backup only reads, an invalidation
-    only drops a derived store's entries, and a repair or restore changes
-    records.
+    component: a backup only reads, an invalidation drops a store's entries,
+    and a repair or restore changes records. The controller records it;
+    an invalidation of a component the map does not mark derived is recorded as
+    a data write.
 
 func DocumentWriteRef(action Action) (sdk.ObjectRef, bool)
     DocumentWriteRef identifies actions that project edits onto an existing

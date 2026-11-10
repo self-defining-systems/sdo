@@ -254,20 +254,21 @@ func limitOf(scope program.DataScope) int {
 // errStoreUnchanged marks a refusal after which the store is known unchanged.
 var errStoreUnchanged = errors.New("store unchanged")
 
-// repair runs a RepairData: the named backup must cover the scope, the count
-// must be within the expected bounds, then the write, then a recount and a
-// facts read.
+// repair runs a RepairData: the count must be within the expected bounds,
+// then the write, then a recount and a facts read. A named backup must be one
+// of this incident; whether it covers the scope is recorded, not required.
 func (r storeRun) repair(ctx context.Context, a program.RepairData) (program.DataRepairEffect, error) {
 	effect := program.DataRepairEffect{Component: a.Target.Component, Backup: a.Backup}
-	if r.access.Backups == nil {
-		return effect, fmt.Errorf("%w: RepairData refused: the controller has no backup storage", errStoreUnchanged)
-	}
-	record, _, err := r.access.Backups.Get(r.incident.IncidentID, a.Backup)
-	if err != nil {
-		return effect, fmt.Errorf("%w: RepairData refused: backup %s: %v; take a StoreBackup of the scope in this incident first", errStoreUnchanged, a.Backup, err)
-	}
-	if !record.Covers(a.Target, a.Scope) {
-		return effect, fmt.Errorf("%w: RepairData refused: backup %s (%s %+v) does not cover the repair scope %+v", errStoreUnchanged, a.Backup, record.Component, record.Scope, r.engine.Normalize(a.Scope))
+	if a.Backup != "" {
+		if r.access.Backups == nil {
+			return effect, fmt.Errorf("%w: RepairData refused: backup %s named, but the controller has no backup storage", errStoreUnchanged, a.Backup)
+		}
+		record, _, err := r.access.Backups.Get(r.incident.IncidentID, a.Backup)
+		if err != nil {
+			return effect, fmt.Errorf("%w: RepairData refused: backup %s: %v; name a StoreBackup of this incident, or none", errStoreUnchanged, a.Backup, err)
+		}
+		covers := record.Covers(a.Target, a.Scope)
+		effect.BackupCovers = &covers
 	}
 	before, err := r.count(ctx, a.Scope)
 	if err != nil {
@@ -276,9 +277,6 @@ func (r storeRun) repair(ctx context.Context, a program.RepairData) (program.Dat
 	effect.Before = before
 	if before < a.ExpectMin || before > a.ExpectMax {
 		return effect, fmt.Errorf("%w: RepairData refused: the scope matches %d items, outside the expected [%d, %d]; nothing was written", errStoreUnchanged, before, a.ExpectMin, a.ExpectMax)
-	}
-	if r.engine.Normalize(record.Scope).Selector == r.engine.Normalize(a.Scope).Selector && before > record.Items {
-		return effect, fmt.Errorf("%w: RepairData refused: the scope matches %d items but backup %s holds %d; take a fresh StoreBackup", errStoreUnchanged, before, a.Backup, record.Items)
 	}
 	stdout, code, err := r.command(ctx, r.engine.Write(r.port(), a.Scope, a.Statement, a.ExpectMin, a.ExpectMax))
 	if err != nil {
@@ -294,7 +292,7 @@ func (r storeRun) repair(ctx context.Context, a program.RepairData) (program.Dat
 	effect.Affected = affected
 	if failed := storeops.ParseFailed(stdout); failed > 0 {
 		effect.Facts, effect.FactsError = r.facts(ctx)
-		return effect, fmt.Errorf("RepairData applied in part: %d matched items rejected the statement (for example a key of another type) while %d changed; restore backup %s or repair the rest by hand", failed, affected, a.Backup)
+		return effect, fmt.Errorf("RepairData applied in part: %d matched items rejected the statement (for example a key of another type) while %d changed; repair the rest by hand or restore a backup", failed, affected)
 	}
 	after, err := r.count(ctx, a.Scope)
 	if err != nil {
@@ -338,16 +336,16 @@ func (r storeRun) restore(ctx context.Context, a program.RestoreBackup) (program
 	return effect, nil
 }
 
-// invalidate runs an InvalidateDerived under its guard.
+// invalidate runs an InvalidateDerived and records the derivation state it ran
+// under: whether the map marks the target derived and how each derived_from
+// source read.
 func (r storeRun) invalidate(ctx context.Context, a program.InvalidateDerived) (program.DataRepairEffect, error) {
 	effect := program.DataRepairEffect{Component: a.Target.Component}
-	if problems := r.derivedGuard(ctx); len(problems) > 0 {
-		return effect, fmt.Errorf("%w: InvalidateDerived refused: %s", errStoreUnchanged, strings.Join(problems, "; "))
-	}
 	command, err := r.engine.Invalidate(r.port(), a.Scope)
 	if err != nil {
 		return effect, fmt.Errorf("%w: InvalidateDerived refused: %v", errStoreUnchanged, err)
 	}
+	effect.SourceState = r.derivedSourceState(ctx)
 	stdout, code, err := r.command(ctx, command)
 	if err != nil {
 		return effect, fmt.Errorf("InvalidateDerived outcome unknown: %w", err)
@@ -360,29 +358,33 @@ func (r storeRun) invalidate(ctx context.Context, a program.InvalidateDerived) (
 	return effect, nil
 }
 
-// derivedGuard says why the target may not be invalidated now: the map must
-// mark it derived, and every derived_from source must pass its live
-// store-state checks. A source that cannot be read does not pass.
-func (r storeRun) derivedGuard(ctx context.Context) []string {
+// derivedSourceState describes, as evidence, the target's derivation: whether
+// the accepted map marks it data.role derived, and for every derived_from
+// source whether it passed its live store-state checks.
+func (r storeRun) derivedSourceState(ctx context.Context) []string {
 	data := r.component.Data
 	if data == nil || data.Role != appmap.RoleDerived {
-		return []string{fmt.Sprintf("the accepted application map does not mark %s data.role derived; only a derived copy may be dropped", r.component.Name)}
+		return []string{fmt.Sprintf("the accepted application map does not mark %s data.role derived", r.component.Name)}
 	}
 	if len(data.DerivedFrom) == 0 {
 		return []string{fmt.Sprintf("%s names no derived_from source", r.component.Name)}
 	}
-	var problems []string
+	var state []string
 	for _, name := range data.DerivedFrom {
 		source, ok := componentNamed(r.all, name)
 		if !ok || source.Data == nil {
-			problems = append(problems, fmt.Sprintf("derived_from source %s is not a data component of the accepted map", name))
+			state = append(state, fmt.Sprintf("derived_from source %s is not a data component of the accepted map", name))
 			continue
 		}
-		for _, problem := range r.sourceProblems(ctx, source) {
-			problems = append(problems, fmt.Sprintf("source %s %s; repair the authoritative source first, then invalidate the copy", name, problem))
+		problems := r.sourceProblems(ctx, source)
+		if len(problems) == 0 {
+			state = append(state, fmt.Sprintf("source %s passed its store-state checks", name))
+		}
+		for _, problem := range problems {
+			state = append(state, fmt.Sprintf("source %s %s", name, problem))
 		}
 	}
-	return problems
+	return state
 }
 
 // podReadContext carries pod-read results into a detection context.
