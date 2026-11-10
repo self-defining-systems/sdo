@@ -487,8 +487,8 @@ func TestAutomaticStageNeverWritesRecords(t *testing.T) {
 func TestStoreActionsDeclareTheirDataEffect(t *testing.T) {
 	reach := dataReach{view: storeView(), holders: dataHolders{"StatefulSet/db": {Name: "db", Workload: "StatefulSet/db", HoldsData: true}}, namespace: "app"}
 	for action, want := range map[program.Action]program.DataEffect{
-		storeBackup("b", itemScope): program.EffectRead,
-		removePoison("b"):           program.EffectDataWrite,
+		storeBackup("b", itemScope):                          program.EffectRead,
+		removePoison("b"):                                    program.EffectDataWrite,
 		program.RestoreBackup{Target: dbTarget, Backup: "b"}: program.EffectDataWrite,
 	} {
 		effects := reach.effects(action)
@@ -525,16 +525,20 @@ func TestBackedStoreWritesAreNotUnconfirmed(t *testing.T) {
 		applications []RecordedPlanApplication
 		unconfirmed  bool
 	}{
-		"repair with its covering backup":    {[]RecordedPlanApplication{backupReport("before", itemScope, at), writeApplication(removePoison("before"))}, false},
-		"repair with a whole-store backup":   {[]RecordedPlanApplication{backupReport("before", whole, at), writeApplication(removePoison("before"))}, false},
-		"repair naming no recorded backup":   {[]RecordedPlanApplication{writeApplication(removePoison("before"))}, true},
-		"repair with a narrower backup":      {[]RecordedPlanApplication{backupReport("before", program.DataScope{Selector: "item:1"}, at), writeApplication(removePoison("before"))}, true},
-		"backup alone":                       {[]RecordedPlanApplication{backupReport("before", itemScope, at)}, false},
-		"restore without a fresh backup":     {[]RecordedPlanApplication{backupReport("before", itemScope, at), writeApplication(restore)}, true},
-		"restore after a fresh backup":       {[]RecordedPlanApplication{backupReport("before", itemScope, at), backupReport("pre-restore", itemScope, at.Add(time.Minute)), writeApplication(restore)}, false},
-		"restore after an older other":       {[]RecordedPlanApplication{backupReport("before", itemScope, at), backupReport("older", itemScope, at.Add(-time.Minute)), writeApplication(restore)}, true},
-		"opaque command even with a backup":  {[]RecordedPlanApplication{backupReport("before", whole, at), writeApplication(opaque)}, true},
-		"repair whose backup was not stored": {[]RecordedPlanApplication{func() RecordedPlanApplication { r := backupReport("before", itemScope, at); r.Result.ActionReports[0].Status = "unknown"; return r }(), writeApplication(removePoison("before"))}, true},
+		"repair with its covering backup":   {[]RecordedPlanApplication{backupReport("before", itemScope, at), writeApplication(removePoison("before"))}, false},
+		"repair with a whole-store backup":  {[]RecordedPlanApplication{backupReport("before", whole, at), writeApplication(removePoison("before"))}, false},
+		"repair naming no recorded backup":  {[]RecordedPlanApplication{writeApplication(removePoison("before"))}, true},
+		"repair with a narrower backup":     {[]RecordedPlanApplication{backupReport("before", program.DataScope{Selector: "item:1"}, at), writeApplication(removePoison("before"))}, true},
+		"backup alone":                      {[]RecordedPlanApplication{backupReport("before", itemScope, at)}, false},
+		"restore without a fresh backup":    {[]RecordedPlanApplication{backupReport("before", itemScope, at), writeApplication(restore)}, true},
+		"restore after a fresh backup":      {[]RecordedPlanApplication{backupReport("before", itemScope, at), backupReport("pre-restore", itemScope, at.Add(time.Minute)), writeApplication(restore)}, false},
+		"restore after an older other":      {[]RecordedPlanApplication{backupReport("before", itemScope, at), backupReport("older", itemScope, at.Add(-time.Minute)), writeApplication(restore)}, true},
+		"opaque command even with a backup": {[]RecordedPlanApplication{backupReport("before", whole, at), writeApplication(opaque)}, true},
+		"repair whose backup was not stored": {[]RecordedPlanApplication{func() RecordedPlanApplication {
+			r := backupReport("before", itemScope, at)
+			r.Result.ActionReports[0].Status = "unknown"
+			return r
+		}(), writeApplication(removePoison("before"))}, true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			risks := unbackedDataWrites(storeView(), test.applications, holders, "app")

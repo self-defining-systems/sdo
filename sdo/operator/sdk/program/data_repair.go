@@ -30,9 +30,9 @@ type StoreTarget struct {
 // items (0 is 10000, at most 100000); a larger scope is refused.
 type DataScope = storeops.Scope
 
-// StoreBackup copies the records of one scope into the controller's backup
-// storage (outside .sdo/, on the controller's repository volume, per incident)
-// and records its ID, item count, size, SHA-256 and the store's facts at
+// StoreBackup copies a scope's records to backup storage.
+// The storage is outside .sdo/, on the controller's repository volume, per
+// incident. It records its ID, item count, size, SHA-256 and the store's facts at
 // backup time. It changes nothing in the store (effect read) and fails when the
 // scope holds more than its limit or the dump exceeds the size cap. ID names
 // the backup within the incident; it is immutable. A redis backup holds
@@ -45,9 +45,8 @@ type StoreBackup struct {
 	Reason string
 }
 
-// InvalidateDerived drops the entries of a derived store (a cache) in Scope so
-// they are read again from their source (effect derived-invalidate). The
-// controller runs it only when the accepted application map marks the
+// InvalidateDerived drops a derived cache's entries to refill from source.
+// Its effect is derived-invalidate on Scope. The controller runs it only when the accepted application map marks the
 // component data.role derived and every derived_from source passes its live
 // store-state checks (it answers, accepts writes and refuses none of SDO's
 // reads). Repair the source first: flushing a cache whose source is damaged
@@ -59,8 +58,8 @@ type InvalidateDerived struct {
 	Reason string
 }
 
-// RepairData changes the records of one scope with one engine-native
-// statement (effect data-write): a redis single-key write per matched key
+// RepairData runs one write on a backed-up scope.
+// Its effect is data-write. The statement is a redis single-key write per matched key
 // ("SREM member"), a mongodb update document or pipeline, a postgres SET
 // clause, or "delete". The controller requires Backup to name a StoreBackup
 // of this incident whose scope covers Scope, counts the matching items first
@@ -78,8 +77,8 @@ type RepairData struct {
 	Reason    string
 }
 
-// RestoreBackup puts the records of one StoreBackup of this incident back
-// (effect data-write): redis keys are restored with REPLACE, mongodb documents
+// RestoreBackup puts a StoreBackup of this incident back.
+// Its effect is data-write: redis keys are restored with REPLACE, mongodb documents
 // upserted by _id, postgres rows replaced by primary key in one transaction.
 // Items created since the backup stay, and writes made since the backup to
 // the restored items are lost: name them in the outcome. It is a responder

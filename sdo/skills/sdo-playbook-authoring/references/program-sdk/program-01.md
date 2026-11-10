@@ -158,14 +158,14 @@ func DataAction(action Action) Action
     or nil when action is not one.
 
 func StalledRolloutRelease(view RolloutView, deployment sdk.ObjectRef) []Action
-    StalledRolloutRelease returns the standard release of a Deployment
-    rollout whose replacement cannot get the place the old revision holds:
-    a current-revision Pod is Unschedulable, or its ReplicaSet cannot create
-    Pods because the namespace quota is exceeded. It is one RetireOldRevision
-    for each old revision that still keeps a replica, in name order, and nothing
-    otherwise, so a crashing, merely slow or misconfigured rollout never loses
-    the revision that still serves. SDO offers the same actions to the responder
-    when it hands off a stalled rollout.
+    StalledRolloutRelease releases a rollout the old revision blocks. The
+    replacement cannot get the place the old revision holds: a current-revision
+    Pod is Unschedulable, or its ReplicaSet cannot create Pods because the
+    namespace quota is exceeded. It is one RetireOldRevision for each old
+    revision that still keeps a replica, in name order, and nothing otherwise,
+    so a crashing, merely slow or misconfigured rollout never loses the revision
+    that still serves. SDO offers the same actions to the responder when it
+    hands off a stalled rollout.
 
 type AdmissionWebhook struct {
 	Configuration  sdk.ObjectRef      `json:"configuration"`
@@ -177,14 +177,13 @@ type AdmissionWebhook struct {
 	ServingSecrets []WebhookSecretKey `json:"serving_secrets,omitempty"`
 	CABundle       string             `json:"ca_bundle,omitempty"`
 }
-    AdmissionWebhook is one webhook entry that admits Pod creation in the
-    asked namespace, with its backend: the Service, its ready endpoint count
-    and the Secrets its Pods mount. CABundle is a digest, never certificate
-    bytes. To repair a broken admission webhook, bind the failing Namespace
-    or workload (not the webhook configuration or Secret), read it with
-    ReadView.AdmissionWebhooksFor, and repair with SyncWebhookCA for the CA,
-    PatchObject for failurePolicy or the service reference, or DeleteObject for
-    an orphaned entry.
+    AdmissionWebhook is one webhook entry admitting Pods in the namespace. Its
+    backend is the Service, its ready endpoint count and the Secrets its Pods
+    mount. CABundle is a digest, never certificate bytes. To repair a broken
+    admission webhook, bind the failing Namespace or workload (not the webhook
+    configuration or Secret), read it with ReadView.AdmissionWebhooksFor,
+    and repair with SyncWebhookCA for the CA, PatchObject for failurePolicy or
+    the service reference, or DeleteObject for an orphaned entry.
 
 func (w AdmissionWebhook) CATarget(secret WebhookSecretKey) WebhookCA
     CATarget names this entry and one serving Secret key for SyncWebhookCA and

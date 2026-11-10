@@ -8,14 +8,14 @@ type InvalidateDerived struct {
 	Scope  DataScope
 	Reason string
 }
-    InvalidateDerived drops the entries of a derived store (a cache) in Scope
-    so they are read again from their source (effect derived-invalidate).
-    The controller runs it only when the accepted application map marks the
-    component data.role derived and every derived_from source passes its live
-    store-state checks (it answers, accepts writes and refuses none of SDO's
-    reads). Repair the source first: flushing a cache whose source is damaged
-    refills it with the damage. The automatic stage may run it under the same
-    guard. Only redis supports it today.
+    InvalidateDerived drops a derived cache's entries to refill from source.
+    Its effect is derived-invalidate on Scope. The controller runs it only when
+    the accepted application map marks the component data.role derived and
+    every derived_from source passes its live store-state checks (it answers,
+    accepts writes and refuses none of SDO's reads). Repair the source first:
+    flushing a cache whose source is damaged refills it with the damage.
+    The automatic stage may run it under the same guard. Only redis supports it
+    today.
 
 func (a InvalidateDerived) Validate() error
 
@@ -229,15 +229,15 @@ type RepairData struct {
 	Backup    string
 	Reason    string
 }
-    RepairData changes the records of one scope with one engine-native statement
-    (effect data-write): a redis single-key write per matched key ("SREM
-    member"), a mongodb update document or pipeline, a postgres SET clause,
-    or "delete". The controller requires Backup to name a StoreBackup of
-    this incident whose scope covers Scope, counts the matching items first
-    and refuses unless the count is within [ExpectMin, ExpectMax], writes
-    (atomically with the count on redis and postgres), then counts again and
-    reads the store's facts. It never runs automatically. A backed repair does
-    not make the outcome unconfirmed by itself.
+    RepairData runs one write on a backed-up scope. Its effect is data-write.
+    The statement is a redis single-key write per matched key ("SREM member"),
+    a mongodb update document or pipeline, a postgres SET clause, or "delete".
+    The controller requires Backup to name a StoreBackup of this incident whose
+    scope covers Scope, counts the matching items first and refuses unless the
+    count is within [ExpectMin, ExpectMax], writes (atomically with the count on
+    redis and postgres), then counts again and reads the store's facts. It never
+    runs automatically. A backed repair does not make the outcome unconfirmed by
+    itself.
 
 func (a RepairData) Validate() error
 
@@ -260,8 +260,8 @@ type RestoreBackup struct {
 	Backup string
 	Reason string
 }
-    RestoreBackup puts the records of one StoreBackup of this incident back
-    (effect data-write): redis keys are restored with REPLACE, mongodb documents
+    RestoreBackup puts a StoreBackup of this incident back. Its effect is
+    data-write: redis keys are restored with REPLACE, mongodb documents
     upserted by _id, postgres rows replaced by primary key in one transaction.
     Items created since the backup stay, and writes made since the backup to the
     restored items are lost: name them in the outcome. It is a responder action
@@ -269,4 +269,8 @@ type RestoreBackup struct {
     without it the restore is an unbacked write and the outcome is unconfirmed.
 
 func (a RestoreBackup) Validate() error
+
+type Result string
+    Result is a diagnosis verdict: Match means the fault is present, NoMatch
+    absent, Unknown that evidence is unavailable.
 ```

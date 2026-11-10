@@ -35,8 +35,8 @@ type PlanActionReport struct {
 	// DataRepair is what a RepairData, RestoreBackup or InvalidateDerived
 	// changed, as the store reported it.
 	DataRepair     *program.DataRepairEffect `json:"data_repair,omitempty"`
-	JobStatus      json.RawMessage             `json:"job_status,omitempty"`
-	RecordingError string                      `json:"recording_error,omitempty"`
+	JobStatus      json.RawMessage           `json:"job_status,omitempty"`
+	RecordingError string                    `json:"recording_error,omitempty"`
 }
 
 // PlanActionsComplete reports execution completion, independently of how many
