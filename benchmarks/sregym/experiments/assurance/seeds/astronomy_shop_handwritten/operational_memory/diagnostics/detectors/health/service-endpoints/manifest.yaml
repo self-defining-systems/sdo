@@ -14,6 +14,10 @@ watches:
       kind: Pod
     - apiVersion: apps/v1
       kind: Deployment
+    - apiVersion: apps/v1
+      kind: StatefulSet
+    - apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
 interval: 15s
 persistence:
     firing: 2
