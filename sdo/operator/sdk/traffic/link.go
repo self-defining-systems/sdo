@@ -194,6 +194,18 @@ type LinkObservations struct {
 	// LinkBaselineSamples successful dials, recorded once by the prober. Zero
 	// means no baseline yet, and latency is then not judged.
 	BaselineLatency time.Duration `json:"baselineLatencyNs,omitempty"`
+	// Vantage is where the dials were made from; empty means the prober.
+	Vantage LinkVantage `json:"vantage,omitempty"`
+	// ClientPod names the client Pod a client-vantage series was dialed from.
+	ClientPod string `json:"clientPod,omitempty"`
+}
+
+// EffectiveVantage is the observation's vantage, the prober by default.
+func (o LinkObservations) EffectiveVantage() LinkVantage {
+	if o.Vantage == "" {
+		return LinkVantageProber
+	}
+	return o.Vantage
 }
 
 func (w Workload) validateLinks() error {
@@ -264,13 +276,55 @@ func (d linkDetector) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk
 	return findings, nil
 }
 
-// LinkFailing reports whether the link's most recent dials, at least the
-// workload's Failures many and none older than the workload's MaxAge, all failed.
-func LinkFailing(window Window, observed LinkObservations) ([]LinkSample, bool) {
-	needed := window.Workload.Failures
+// LinkVantage names where a link's dials were made from.
+type LinkVantage string
+
+const (
+	// LinkVantageProber: the link-probe workload's own pod dialed the edge.
+	LinkVantageProber LinkVantage = "prober"
+	// LinkVantageClient: a vantage probe dialed the edge from inside a Pod
+	// of the calling workload, through that Pod's own network namespace,
+	// so impairment on the client's egress (traffic shaping, a full
+	// connection table, a DNS override) shows.
+	LinkVantageClient LinkVantage = "client"
+)
+
+// LinkSetting is how a series of fresh dials is judged: the time it is
+// judged at, how many consecutive failures report the link, how old the
+// newest judged dial may be, and the dial period.
+type LinkSetting struct {
+	ObservedAt time.Time
+	Failures   int
+	MaxAge     time.Duration
+	Period     time.Duration
+	// Source names who dialed, for evidence: a link-probe workload, or a
+	// vantage probe and the Pod it ran in.
+	Source string
+	// Detail is the human-readable setting, for evidence.
+	Detail string
+}
+
+// LinkSetting returns the setting of the window's link-probe workload.
+func (w Window) LinkSetting() LinkSetting {
+	needed := w.Workload.Failures
 	if needed < MinLinkFailures {
 		needed = DefaultLinkFailures
 	}
+	return LinkSetting{
+		ObservedAt: w.ObservedAt, Failures: needed, MaxAge: w.SLO().MaxAge.Duration(),
+		Period: max(w.Workload.Interval.Duration(), w.Workload.Timeout.Duration()), Source: w.Workload.Name,
+		Detail: fmt.Sprintf("(workload %s; interval %s, timeout %s)", w.Workload.Name, w.Workload.Interval.Duration(), w.Workload.Timeout.Duration()),
+	}
+}
+
+// LinkFailing reports whether the link's most recent dials, at least the
+// workload's Failures many and none older than the workload's MaxAge, all failed.
+func LinkFailing(window Window, observed LinkObservations) ([]LinkSample, bool) {
+	return linkFailing(window.LinkSetting(), observed)
+}
+
+func linkFailing(setting LinkSetting, observed LinkObservations) ([]LinkSample, bool) {
+	needed := max(setting.Failures, MinLinkFailures)
 	samples := observed.Samples
 	if !observed.Qualified || len(samples) < needed {
 		return nil, false
@@ -281,8 +335,7 @@ func LinkFailing(window Window, observed LinkObservations) ([]LinkSample, bool) 
 			return nil, false
 		}
 	}
-	maxAge := window.SLO().MaxAge.Duration()
-	if window.ObservedAt.Sub(run[len(run)-1].At) > maxAge {
+	if setting.ObservedAt.Sub(run[len(run)-1].At) > setting.MaxAge {
 		return nil, false
 	}
 	return run, true
@@ -311,15 +364,19 @@ type LinkJudgement struct {
 // workload's MaxAge bounds the slow window, and the loss window may reach back
 // 2*LinkLossWindow probe periods.
 func JudgeLink(window Window, observed LinkObservations) (LinkJudgement, bool) {
-	if run, failing := LinkFailing(window, observed); failing {
+	return JudgeLinkIn(window.LinkSetting(), observed)
+}
+
+// JudgeLinkIn judges dials with an explicit setting, so the same rules judge
+// a link-probe workload's dials and a vantage probe's dials from a client Pod.
+func JudgeLinkIn(setting LinkSetting, observed LinkObservations) (LinkJudgement, bool) {
+	if run, failing := linkFailing(setting, observed); failing {
 		return linkJudgement(LinkUnreachable, run), true
 	}
 	if !observed.Qualified {
 		return LinkJudgement{}, false
 	}
-	maxAge := window.SLO().MaxAge.Duration()
-	period := max(window.Workload.Interval.Duration(), window.Workload.Timeout.Duration())
-	if recent := freshLinkSamples(window, observed.Samples, max(maxAge, 2*LinkLossWindow*period), LinkLossWindow); len(recent) == LinkLossWindow {
+	if recent := freshLinkSamples(setting.ObservedAt, observed.Samples, max(setting.MaxAge, 2*LinkLossWindow*setting.Period), LinkLossWindow); len(recent) == LinkLossWindow {
 		if judged := linkJudgement(LinkIntermittent, recent); judged.Failed*100 >= LinkLossPercent*len(recent) {
 			return judged, true
 		}
@@ -327,11 +384,8 @@ func JudgeLink(window Window, observed LinkObservations) (LinkJudgement, bool) {
 	if observed.BaselineLatency <= 0 {
 		return LinkJudgement{}, false
 	}
-	needed := window.Workload.Failures
-	if needed < MinLinkFailures {
-		needed = DefaultLinkFailures
-	}
-	recent := freshLinkSamples(window, observed.Samples, maxAge, needed)
+	needed := max(setting.Failures, MinLinkFailures)
+	recent := freshLinkSamples(setting.ObservedAt, observed.Samples, setting.MaxAge, needed)
 	if len(recent) < needed {
 		return LinkJudgement{}, false
 	}
@@ -346,10 +400,10 @@ func JudgeLink(window Window, observed LinkObservations) (LinkJudgement, bool) {
 
 // freshLinkSamples returns the newest count samples that are within horizon
 // of the observation.
-func freshLinkSamples(window Window, samples []LinkSample, horizon time.Duration, count int) []LinkSample {
+func freshLinkSamples(observedAt time.Time, samples []LinkSample, horizon time.Duration, count int) []LinkSample {
 	recent := samples[max(0, len(samples)-count):]
 	for index, sample := range recent {
-		if window.ObservedAt.Sub(sample.At) <= horizon {
+		if observedAt.Sub(sample.At) <= horizon {
 			return recent[index:]
 		}
 	}
@@ -380,7 +434,16 @@ func linkJudgement(condition LinkCondition, samples []LinkSample) LinkJudgement 
 // latency and failure classes. The primary resource is the target Service;
 // the calling Service is related.
 func LinkFinding(spec sdk.DetectorSpec, namespace string, window Window, observed LinkObservations) (sdk.Finding, bool) {
-	judged, failing := JudgeLink(window, observed)
+	return LinkFindingIn(spec, namespace, window.LinkSetting(), observed)
+}
+
+// LinkFindingIn explains a link JudgeLinkIn reports. A client-vantage
+// finding has its own rule ID (the prober's with a ".client" suffix) and
+// names the client Pod, so it stands next to the prober's judgement of the
+// same edge: slow from the client while fast from the prober places the
+// impairment on the client's egress.
+func LinkFindingIn(spec sdk.DetectorSpec, namespace string, setting LinkSetting, observed LinkObservations) (sdk.Finding, bool) {
+	judged, failing := JudgeLinkIn(setting, observed)
 	if !failing {
 		return sdk.Finding{}, false
 	}
@@ -399,9 +462,15 @@ func LinkFinding(spec sdk.DetectorSpec, namespace string, window Window, observe
 		messages = append(messages, fmt.Sprintf("[%s] class=%s status=%s %s excerpt=%q (%s)",
 			sample.At.UTC().Format(time.RFC3339), sample.Class, sample.Status, sample.Error, sample.Excerpt, sample.Duration.Round(time.Millisecond)))
 	}
+	vantage := observed.EffectiveVantage()
 	span := run[len(run)-1].At.Sub(run[0].At).Round(time.Millisecond)
-	probes := fmt.Sprintf("fresh %s probes of Service %s port %d from the prober pod", link.EffectiveProtocol(), link.To, link.Port)
-	setting := fmt.Sprintf("(workload %s; interval %s, timeout %s)", window.Workload.Name, window.Workload.Interval.Duration(), window.Workload.Timeout.Duration())
+	from := "from the prober pod"
+	ruleID := LinkRuleIDPrefix + link.ID()
+	if vantage == LinkVantageClient {
+		from = fmt.Sprintf("from inside client Pod %s", observed.ClientPod)
+		ruleID += ".client"
+	}
+	probes := fmt.Sprintf("fresh %s probes of Service %s port %d %s", link.EffectiveProtocol(), link.To, link.Port, from)
 	latency := fmt.Sprintf("dial latency p50 %s, p95 %s", judged.P50.Round(time.Millisecond), judged.P95.Round(time.Millisecond))
 	var summary, evidence string
 	switch judged.Condition {
@@ -411,24 +480,27 @@ func LinkFinding(spec sdk.DetectorSpec, namespace string, window Window, observe
 		evidence = fmt.Sprintf(
 			"link %s: the last %d %s over %s %s had %s, above the bound %s (%dx the healthy baseline %s, floor %s); "+
 				"%d failed. The delay may sit on either end of the edge or between them.",
-			link, len(run), probes, span, setting, latency, judged.Bound, LinkLatencyFactor, judged.Baseline, MinLinkLatencyBound, judged.Failed)
+			link, len(run), probes, span, setting.Detail, latency, judged.Bound, LinkLatencyFactor, judged.Baseline, MinLinkLatencyBound, judged.Failed)
 	case LinkIntermittent:
 		summary = fmt.Sprintf("link %s is intermittent: %d of the last %d fresh dials failed", link, judged.Failed, len(run))
 		evidence = fmt.Sprintf(
 			"link %s: %d of the last %d %s failed over %s %s, not all in a row (threshold %d%%); %s. "+
 				"Failure classes: %v. Recent failures: %s.",
-			link, judged.Failed, len(run), probes, span, setting, LinkLossPercent, latency, classes, strings.Join(messages, "; "))
+			link, judged.Failed, len(run), probes, span, setting.Detail, LinkLossPercent, latency, classes, strings.Join(messages, "; "))
 	default:
 		summary = fmt.Sprintf("link %s is unreachable: %d consecutive fresh dials failed", link, len(run))
 		evidence = fmt.Sprintf(
 			"link %s: the last %d %s all failed over %s %s, after the link had connected before. Existing long-lived "+
 				"connections from %s to %s may still work, so user-facing probes can stay green. Recent failures: %s.",
-			link, len(run), probes, span, setting, link.From, link.To, strings.Join(messages, "; "))
+			link, len(run), probes, span, setting.Detail, link.From, link.To, strings.Join(messages, "; "))
+	}
+	if vantage == LinkVantageClient {
+		summary += " (client vantage " + observed.ClientPod + ")"
 	}
 	last := run[len(run)-1]
-	return sdk.Finding{
+	finding := sdk.Finding{
 		DetectorID:       spec.ID,
-		RuleID:           LinkRuleIDPrefix + link.ID(),
+		RuleID:           ruleID,
 		Status:           sdk.FindingActive,
 		Severity:         sdk.SeverityCritical,
 		Summary:          summary,
@@ -437,8 +509,9 @@ func LinkFinding(spec sdk.DetectorSpec, namespace string, window Window, observe
 		RelatedResources: []sdk.ObjectRef{{APIVersion: "v1", Kind: "Service", Namespace: namespace, Name: link.From}},
 		Playbooks:        append([]string(nil), spec.Playbooks...),
 		Metadata: map[string]any{
-			"workload": window.Workload.Name, "from": link.From, "to": link.To, "port": link.Port,
+			"workload": setting.Source, "from": link.From, "to": link.To, "port": link.Port,
 			"protocol":  string(link.EffectiveProtocol()),
+			"vantage":   string(vantage),
 			"condition": string(judged.Condition), "samples": len(run), "failed": judged.Failed, "failure_classes": classes,
 			"p50_ns": int64(judged.P50), "p95_ns": int64(judged.P95), "baseline_ns": int64(judged.Baseline), "bound_ns": int64(judged.Bound),
 			"last_class":           string(last.Class),
@@ -447,7 +520,12 @@ func LinkFinding(spec sdk.DetectorSpec, namespace string, window Window, observe
 			"last_latency_ns":      int64(last.Duration),
 			"consecutive_failures": judged.Consecutive, "last_error": last.Error,
 		},
-	}, true
+	}
+	if vantage == LinkVantageClient {
+		finding.Metadata["client_pod"] = observed.ClientPod
+		finding.RelatedResources = append(finding.RelatedResources, sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: namespace, Name: observed.ClientPod})
+	}
+	return finding, true
 }
 
 // UndrivenLinks returns the edges declared by link-probe workloads that no

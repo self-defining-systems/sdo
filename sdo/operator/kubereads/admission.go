@@ -6,6 +6,7 @@ package kubereads
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"sort"
 	"time"
 
@@ -66,6 +67,8 @@ func PodCreateRule(rules []admissionv1.RuleWithOperations) bool {
 // AdmissionWebhooksFor resolves, with the runtime's own grant, which webhook
 // entries admit Pod creation in the subject's namespace and what backs them. It
 // returns references, counts and a CA digest only: Secret objects are never read.
+// For a workload or Pod subject an entry's objectSelector must also match the
+// labels of the Pods the subject creates; a Namespace subject keeps every entry.
 func AdmissionWebhooksFor(ctx context.Context, client kubernetes.Interface, protectedNamespace string, subject sdk.ObjectRef) ([]program.AdmissionWebhook, error) {
 	namespace, err := AdmissionSubjectNamespace(subject)
 	if err != nil {
@@ -76,6 +79,100 @@ func AdmissionWebhooksFor(ctx context.Context, client kubernetes.Interface, prot
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+	var podLabels labels.Set
+	if subject.Kind != "Namespace" {
+		if podLabels, err = subjectPodLabels(ctx, client, subject); err != nil {
+			return nil, err
+		}
+	}
+	return admissionWebhooks(ctx, client, protectedNamespace, namespace, podLabels)
+}
+
+// NamespaceAdmissionWebhooks lists every webhook entry whose rules and
+// namespaceSelector admit Pod creation in namespace, whatever its
+// objectSelector, named in source or not and served in or outside the cluster.
+func NamespaceAdmissionWebhooks(ctx context.Context, client kubernetes.Interface, protectedNamespace, namespace string) ([]sdk.AdmissionWebhook, error) {
+	if client == nil {
+		return nil, fmt.Errorf("admission webhook observation unavailable")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return admissionWebhooks(ctx, client, protectedNamespace, namespace, nil)
+}
+
+// PodAdmissionWebhooks lists the entries that select a Pod with podLabels
+// created in namespace: rules, namespaceSelector and objectSelector.
+func PodAdmissionWebhooks(ctx context.Context, client kubernetes.Interface, protectedNamespace, namespace string, podLabels map[string]string) ([]sdk.AdmissionWebhook, error) {
+	if client == nil {
+		return nil, fmt.Errorf("admission webhook observation unavailable")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return admissionWebhooks(ctx, client, protectedNamespace, namespace, labels.Set(podLabels))
+}
+
+// subjectPodLabels returns the labels of the Pods a workload creates, or of
+// the Pod itself.
+func subjectPodLabels(ctx context.Context, client kubernetes.Interface, subject sdk.ObjectRef) (labels.Set, error) {
+	var (
+		template map[string]string
+		err      error
+	)
+	get := metav1.GetOptions{}
+	switch subject.Kind {
+	case "Pod":
+		var pod *corev1.Pod
+		if pod, err = client.CoreV1().Pods(subject.Namespace).Get(ctx, subject.Name, get); err == nil {
+			template = pod.Labels
+		}
+	case "Deployment":
+		if object, e := client.AppsV1().Deployments(subject.Namespace).Get(ctx, subject.Name, get); e == nil {
+			template = object.Spec.Template.Labels
+		} else {
+			err = e
+		}
+	case "StatefulSet":
+		if object, e := client.AppsV1().StatefulSets(subject.Namespace).Get(ctx, subject.Name, get); e == nil {
+			template = object.Spec.Template.Labels
+		} else {
+			err = e
+		}
+	case "DaemonSet":
+		if object, e := client.AppsV1().DaemonSets(subject.Namespace).Get(ctx, subject.Name, get); e == nil {
+			template = object.Spec.Template.Labels
+		} else {
+			err = e
+		}
+	case "ReplicaSet":
+		if object, e := client.AppsV1().ReplicaSets(subject.Namespace).Get(ctx, subject.Name, get); e == nil {
+			template = object.Spec.Template.Labels
+		} else {
+			err = e
+		}
+	case "Job":
+		if object, e := client.BatchV1().Jobs(subject.Namespace).Get(ctx, subject.Name, get); e == nil {
+			template = object.Spec.Template.Labels
+		} else {
+			err = e
+		}
+	case "CronJob":
+		if object, e := client.BatchV1().CronJobs(subject.Namespace).Get(ctx, subject.Name, get); e == nil {
+			template = object.Spec.JobTemplate.Spec.Template.Labels
+		} else {
+			err = e
+		}
+	default:
+		return labels.Set{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("admission webhook subject %s/%s read unavailable", subject.Kind, subject.Name)
+	}
+	return labels.Set(template), nil
+}
+
+// admissionWebhooks lists the entries that admit Pod creation in namespace;
+// with podLabels set, only those whose objectSelector matches them too.
+func admissionWebhooks(ctx context.Context, client kubernetes.Interface, protectedNamespace, namespace string, podLabels labels.Set) ([]sdk.AdmissionWebhook, error) {
 	ns, err := client.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("admission webhook namespace read unavailable")
@@ -83,7 +180,8 @@ func AdmissionWebhooksFor(ctx context.Context, client kubernetes.Interface, prot
 	type entry struct {
 		kind, config, name, failure string
 		rules                       []admissionv1.RuleWithOperations
-		selector                    *metav1.LabelSelector
+		selector, objectSelector    *metav1.LabelSelector
+		timeout                     *int32
 		client                      admissionv1.WebhookClientConfig
 	}
 	var entries []entry
@@ -93,7 +191,7 @@ func AdmissionWebhooksFor(ctx context.Context, client kubernetes.Interface, prot
 	}
 	for _, config := range validating.Items {
 		for _, w := range config.Webhooks {
-			entries = append(entries, entry{"ValidatingWebhookConfiguration", config.Name, w.Name, FailurePolicy(w.FailurePolicy), w.Rules, w.NamespaceSelector, w.ClientConfig})
+			entries = append(entries, entry{"ValidatingWebhookConfiguration", config.Name, w.Name, FailurePolicy(w.FailurePolicy), w.Rules, w.NamespaceSelector, w.ObjectSelector, w.TimeoutSeconds, w.ClientConfig})
 		}
 	}
 	mutating, err := client.AdmissionregistrationV1().MutatingWebhookConfigurations().List(ctx, metav1.ListOptions{})
@@ -102,32 +200,37 @@ func AdmissionWebhooksFor(ctx context.Context, client kubernetes.Interface, prot
 	}
 	for _, config := range mutating.Items {
 		for _, w := range config.Webhooks {
-			entries = append(entries, entry{"MutatingWebhookConfiguration", config.Name, w.Name, FailurePolicy(w.FailurePolicy), w.Rules, w.NamespaceSelector, w.ClientConfig})
+			entries = append(entries, entry{"MutatingWebhookConfiguration", config.Name, w.Name, FailurePolicy(w.FailurePolicy), w.Rules, w.NamespaceSelector, w.ObjectSelector, w.TimeoutSeconds, w.ClientConfig})
 		}
 	}
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].kind+"/"+entries[i].config+"/"+entries[i].name < entries[j].kind+"/"+entries[j].config+"/"+entries[j].name
 	})
-	var result []program.AdmissionWebhook
+	matches := func(selector *metav1.LabelSelector, set labels.Set) bool {
+		if selector == nil {
+			return true
+		}
+		parsed, err := metav1.LabelSelectorAsSelector(selector)
+		return err == nil && parsed.Matches(set)
+	}
+	var result []sdk.AdmissionWebhook
 	for _, e := range entries {
-		if !PodCreateRule(e.rules) {
+		if !PodCreateRule(e.rules) || !matches(e.selector, labels.Set(ns.Labels)) {
 			continue
 		}
-		selector := labels.Everything()
-		if e.selector != nil {
-			if selector, err = metav1.LabelSelectorAsSelector(e.selector); err != nil {
-				continue
-			}
-		}
-		if !selector.Matches(labels.Set(ns.Labels)) {
+		if podLabels != nil && !matches(e.objectSelector, podLabels) {
 			continue
 		}
 		if len(result) == program.MaxAdmissionWebhooks {
 			break
 		}
-		w := program.AdmissionWebhook{
+		w := sdk.AdmissionWebhook{
 			Configuration: sdk.ObjectRef{APIVersion: "admissionregistration.k8s.io/v1", Kind: e.kind, Name: e.config},
 			Webhook:       e.name, FailurePolicy: e.failure, CABundle: string(sdk.ProjectCABundle(e.client.CABundle)),
+			TimeoutSeconds: sdk.DefaultWebhookTimeoutSeconds, ObjectSelector: e.objectSelector.DeepCopy(),
+		}
+		if e.timeout != nil {
+			w.TimeoutSeconds = *e.timeout
 		}
 		if service := e.client.Service; service != nil {
 			w.Service = &sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: service.Namespace, Name: service.Name}
@@ -137,9 +240,21 @@ func AdmissionWebhooksFor(ctx context.Context, client kubernetes.Interface, prot
 			}
 			w.ReadyEndpoints, w.ServingSecrets = webhookBackend(ctx, client, protectedNamespace, service.Namespace, service.Name)
 		}
+		if e.client.URL != nil {
+			w.URL = webhookURLHost(*e.client.URL)
+		}
 		result = append(result, w)
 	}
 	return result, nil
+}
+
+// webhookURLHost keeps an external webhook URL's scheme and host only.
+func webhookURLHost(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" || parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return "[redacted external URL]"
+	}
+	return parsed.Scheme + "://" + parsed.Host
 }
 
 func FailurePolicy(p *admissionv1.FailurePolicyType) string {

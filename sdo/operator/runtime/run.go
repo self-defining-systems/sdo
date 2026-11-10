@@ -588,7 +588,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		protectedNamespace = *controlNamespace
 	}
 	podReadBaseline := NewPodReadBaseline(DefaultStateSettle)
-	observations := detectorObservations{Client: bootstrapProvider.Client, Clock: clock.Now, Telemetry: telemetrySources, ExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, PodReadBaseline: podReadBaseline}
+	vantageBaseline := NewVantageBaseline(DefaultStateSettle)
+	platformState := NewPlatformState(DefaultStateSettle)
+	observations := detectorObservations{Client: bootstrapProvider.Client, Clock: clock.Now, Telemetry: telemetrySources, ExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, PodReadBaseline: podReadBaseline,
+		VantageBaseline: vantageBaseline, Platform: platformState, VantageImage: lifecycleio.Getenv("SDO_VANTAGE_IMAGE")}
 	snapshotProvider, metricsObserver, err := observations.compose(snapshotProvider, detectors, initialTelemetrySources)
 	if err != nil {
 		return err
@@ -988,6 +991,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		controller.Baseline = stateTracker
 	}
 	controller.PodReadBaseline = podReadBaseline
+	controller.VantageBaseline = vantageBaseline
+	controller.Platform = platformState
+	platformState.SetInventory(controller.AcceptedSourceRefs)
 	if *cleanResponderHelpers {
 		controller.Helpers = KubernetesHelperCleaner{
 			Client: bootstrapProvider.Client, Namespaces: []string{*namespace, *controlNamespace},

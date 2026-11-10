@@ -44,6 +44,7 @@ func DefaultLatencyNote(id string) string
 func DefaultLatencyScenarios(workloads []Workload) []string
 func FromSeedPair(key string, count int, first func(index int) string, ...) (Param, Param)
 func LinkFinding(spec sdk.DetectorSpec, namespace string, window Window, ...) (sdk.Finding, bool)
+func LinkFindingIn(spec sdk.DetectorSpec, namespace string, setting LinkSetting, ...) (sdk.Finding, bool)
 func NewDetector(spec sdk.DetectorSpec, workload string) sdk.Detector
 func NewLinkDetector(spec sdk.DetectorSpec, workload string) sdk.Detector
 func ScenarioFinding(spec sdk.DetectorSpec, namespace string, workload Workload, ...) sdk.Finding
@@ -79,11 +80,15 @@ type LinkGRPCOptions struct{ ... }
 type LinkHTTPOptions struct{ ... }
 type LinkJudgement struct{ ... }
     func JudgeLink(window Window, observed LinkObservations) (LinkJudgement, bool)
+    func JudgeLinkIn(setting LinkSetting, observed LinkObservations) (LinkJudgement, bool)
 type LinkObservations struct{ ... }
 type LinkProtocol string
     const LinkProtocolTCP LinkProtocol = "tcp" ...
 type LinkSample struct{ ... }
     func LinkFailing(window Window, observed LinkObservations) ([]LinkSample, bool)
+type LinkSetting struct{ ... }
+type LinkVantage string
+    const LinkVantageProber LinkVantage = "prober" ...
 type Outcome string
     const OutcomeOK Outcome = "ok" ...
 type Param interface{ ... }

@@ -52,8 +52,8 @@ Full [SDK](program-sdk.md).
 
 - `DetectionContext.PodAdmission() (PodAdmissionResult, bool)`: returns the frozen dry-run result, false when unobserved.
 - `ReadView.AdmissionWebhooksFor(subject sdk.ObjectRef) ([]AdmissionWebhook, error)`: lists the webhook entries that admit Pod creation for a Namespace or workload; cluster webhook names need no observation grant.
-- `type AdmissionWebhook struct{Configuration sdk.ObjectRef; Webhook string; FailurePolicy string; Service *sdk.ObjectRef; Port int32; ReadyEndpoints int; ServingSecrets []WebhookSecretKey; CABundle string}`: is one webhook entry admitting Pods in the namespace.
-- `type WebhookCA struct{Ref sdk.ObjectRef; Webhook string; SecretNamespace string; SecretName string; SecretKey string}`: identifies one webhook and a Secret key.
+- `type AdmissionWebhook = sdk.AdmissionWebhook`: is one webhook entry admitting Pods (sdk.AdmissionWebhook).
+- `type WebhookCA = sdk.WebhookCA`: identifies one webhook and a Secret key (sdk.WebhookCA).
 - `ReadView.WebhookCAMatchesSecret(WebhookCA) (bool, error)`: reports whether one webhook's caBundle equals a Secret key without exposing either value.
 - `type SyncWebhookCA struct{Target WebhookCA; Reason string}`: Webhook repairs automatically requeue affected admission-blocked ReplicaSets.
 - `type RetryAdmission struct{ Ref sdk.ObjectRef }`: requeues one ReplicaSet that still needs Pods after admission FailedCreate.

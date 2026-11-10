@@ -13,6 +13,7 @@ import (
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 	"sdo.dev/operator/sdk/usage"
+	"sdo.dev/operator/sdk/vantage"
 )
 
 // Registration carries optional declarations as well as scheduling metadata.
@@ -22,6 +23,8 @@ type Registration struct {
 	Metrics      []metrics.Query
 	Logs         []logs.Query
 	PodReads     []podread.Query
+	Vantage      []vantage.Probe
+	Platform     bool
 	Usage        usage.Requirements
 	UsesUsage    bool
 	Reachability bool
@@ -43,6 +46,12 @@ func registration(d sdk.Detector) Registration {
 	}
 	if c, ok := d.(podread.Consumer); ok {
 		r.PodReads = c.PodReads()
+	}
+	if c, ok := d.(vantage.Consumer); ok {
+		r.Vantage = c.VantageProbes()
+	}
+	if c, ok := d.(sdk.PlatformConsumer); ok {
+		r.Platform = c.ConsumesPlatform()
 	}
 	if c, ok := d.(usage.Consumer); ok {
 		r.Usage = c.UsageRequirements()
@@ -87,6 +96,9 @@ func DecodeRegistration(wire *pb.MemoryDetectorRegistration) (Registration, erro
 		}
 	}
 	if err = podread.ValidateQueries(r.PodReads); err != nil {
+		return r, fmt.Errorf("detector %s: %w", r.ID, err)
+	}
+	if err = vantage.ValidateProbes(r.Vantage); err != nil {
 		return r, fmt.Errorf("detector %s: %w", r.ID, err)
 	}
 	return r, nil

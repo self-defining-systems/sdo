@@ -12,6 +12,7 @@ import (
 	"sdo.dev/operator/sdk/podread"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
+	"sdo.dev/operator/sdk/vantage"
 )
 
 // MaxCapturedSnapshotBytes is the encoded size a captured snapshot may reach.
@@ -41,6 +42,8 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string, refs ...sdk.Ob
 		s.Traffic = original.Traffic
 		s.Metrics = original.Metrics
 		s.PodReads = original.PodReads
+		s.Vantage = original.Vantage
+		s.Platform = original.Platform
 		s.Alerts = original.Alerts
 		s.Readings = original.Readings
 		s.Reachability = original.Reachability
@@ -55,6 +58,14 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string, refs ...sdk.Ob
 		}
 		if set, ok := view.(podread.ResultSet); ok {
 			s.PodReads = set.PodReadResults()
+		}
+		if set, ok := view.(vantage.ResultSet); ok {
+			s.Vantage = set.VantageResults()
+		}
+		if source, ok := view.(sdk.PlatformSource); ok {
+			if observed, ok := source.PlatformObservation(); ok {
+				s.Platform = &observed
+			}
 		}
 		if source, ok := view.(metrics.AlertSource); ok {
 			if alerts, ok := source.AlertsResult(); ok {

@@ -17,6 +17,7 @@ import (
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 	"sdo.dev/operator/sdk/usage"
+	"sdo.dev/operator/sdk/vantage"
 )
 
 // Sources is the complete optional input contract. New SDK input interfaces must
@@ -39,6 +40,9 @@ type Sources interface {
 	metrics.UsageSource
 	sdk.ObjectCaptureSource
 	sdk.ScopedObservationSource
+	vantage.Source
+	vantage.ResultSet
+	sdk.PlatformSource
 }
 
 // Carrier adds all optional inputs to the Kubernetes view. Its updates return a
@@ -60,6 +64,8 @@ type Carrier struct {
 	capture      sdk.ObjectCaptureSource
 	scoped       sdk.ScopedObservationSource
 	admission    *sdk.PodAdmissionResult
+	vantage      vantage.Source
+	platform     sdk.PlatformSource
 }
 
 // New adopts existing optional inputs once, or copies an existing carrier.
@@ -83,6 +89,8 @@ func New(base sdk.DetectionContext) Carrier {
 	c.podUsage, _ = base.(metrics.UsageSource)
 	c.capture, _ = base.(sdk.ObjectCaptureSource)
 	c.scoped, _ = base.(sdk.ScopedObservationSource)
+	c.vantage, _ = base.(vantage.Source)
+	c.platform, _ = base.(sdk.PlatformSource)
 	return c
 }
 
@@ -241,5 +249,28 @@ func (c Carrier) ObservationStatuses() []sdk.ObservationStatus {
 	return c.source().ObservationStatuses()
 }
 func (c Carrier) ObservationGeneration() string { return c.source().ObservationGeneration() }
+
+func (c Carrier) WithVantage(source vantage.Source) Carrier { c.vantage = source; return c }
+func (c Carrier) VantageResult(id string) (vantage.Result, bool) {
+	if c.vantage == nil {
+		return vantage.Result{}, false
+	}
+	return c.vantage.VantageResult(id)
+}
+
+// VantageResults lists the carried results when the vantage source can.
+func (c Carrier) VantageResults() map[string]vantage.Result {
+	if set, ok := c.vantage.(vantage.ResultSet); ok {
+		return set.VantageResults()
+	}
+	return nil
+}
+func (c Carrier) WithPlatform(source sdk.PlatformSource) Carrier { c.platform = source; return c }
+func (c Carrier) PlatformObservation() (sdk.PlatformObservation, bool) {
+	if c.platform == nil {
+		return sdk.PlatformObservation{}, false
+	}
+	return c.platform.PlatformObservation()
+}
 
 var _ Sources = Carrier{}
