@@ -176,7 +176,7 @@ type ResponderLoop struct {
 	scriptRefusals map[string]error
 
 	stageProgress       map[string]responseStageProgress
-	dataWorkloads       map[string]bool
+	dataWorkloads       dataHolders
 	dataWorkloadsRead   bool
 	applicationBindings map[string][]recoveryBinding
 	// WorkingProgramRoot is set by the production loop factory to the mounted

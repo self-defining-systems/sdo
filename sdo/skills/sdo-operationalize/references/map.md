@@ -12,6 +12,12 @@ components:
     workload: Deployment/orders-db  # Kind/name from the manifest inventory
     services: [orders-db]           # Services from the inventory that select this workload
     holds_data: true                # losing its contents loses user-visible data
+    data: {engine: postgres, role: authoritative}   # every data store; omit for stateless workloads
+  - name: orders-cache
+    workload: Deployment/orders-cache
+    services: [orders-cache]
+    holds_data: false               # refills from orders-db on a miss
+    data: {engine: redis, role: derived, derived_from: [orders-db]}
   - name: web
     workload: Deployment/web
     services: [web]
@@ -23,6 +29,7 @@ components:
 edges:
   - {from: web, to: orders, evidence: [config, observed], source: web/config.yaml}
   - {from: orders, to: orders-db, evidence: [config], source: orders/db.go}
+  - {from: orders, to: orders-cache, evidence: [config], source: orders/cache.go}
 operations:
   - id: place-order
     writes: true
@@ -31,7 +38,7 @@ operations:
   - id: list-orders
     writes: false
     entry: {service: web, port: 8080, method: GET, path: /orders}
-    path: [web, orders, orders-db]
+    path: [web, orders, orders-cache, orders-db]
 probes:
   - {scenario: call-list-orders, kind: call, operations: [list-orders]}
   - {scenario: write-place-order, kind: write-read, operations: [place-order, list-orders]}
@@ -45,6 +52,10 @@ Rules the memory check enforces:
 - Names are unique; components, workloads and Services exist in the inventory; edge ends and path entries are
   component names; `entry.service` is a Service of the first path component; every path component is reachable
   from the first through edges inside the path.
+- `data.engine` is one of postgres, mysql, mongodb, redis, memcached, consul, other. `data.role` is
+  `authoritative` (no `derived_from`) or `derived`: `derived_from` lists authoritative components, and a derived
+  component has `holds_data: false`. For an engine SDO can read (redis today), Go installs a
+  `store-state-<component>` health detector on the component's workload; do not author another.
 - `evidence` is a non-empty subset of `[config, observed]`; `source` cites the file for config evidence, or says
   how you observed the call.
 - A probe's path is the union of its operations' paths. Its scenario's `DependsOn` names at least one Service of

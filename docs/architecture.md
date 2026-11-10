@@ -285,9 +285,18 @@ that wrote, and the one `deterministic` report in `prior_stages` is updated in p
 the new attempts once, as `prior_stages` in its next tool reply.
 The stage reads the accepted application map. A plan that restarts, deletes, rolls back, scales down,
 reconciles, patches, applies or sends a write request to a workload marked `holds_data`, or its Pods or
-ReplicaSets, is skipped with reason `holds_data` and the finding goes to the responder. At closure, a
-`holds_data` workload with a Pod created since the incident opened (or a restarted container) and only
-volumes that die with the Pod makes the outcome `unconfirmed` (`DATA_MAY_BE_LOST`).
+ReplicaSets, is skipped with reason `holds_data` and the finding goes to the responder. So is a plan
+whose external action has a data effect the stage does not allow on a `holds_data` component
+(`runtime/data_effects.go`, classes in `sdk/program/effects.go`). Go assigns the effect: `Exec`,
+`EnsureExec`, `EnsureHTTP`, `RunScript` and `RunJob` are `unknown` on the component whose Pod they
+run in and on every one their inputs name (a Service, workload or Pod, as an object or by name in
+their text); `EnsureDatabaseUser` is `store-setting` on its target. Only `read` runs automatically
+today; an input the stage cannot read before the run counts as reaching every `holds_data` component.
+At closure, a `holds_data` workload with a Pod created since the incident opened (or a restarted
+container) and only volumes that die with the Pod makes the outcome `unconfirmed` (`DATA_MAY_BE_LOST`).
+So does an applied `unknown` or `data-write` effect on a `holds_data` component with no backup taken
+first (the SDK has no backup action yet); the responder may still make that repair, but it does not
+feed learning.
 Evidence for source-reconcile learning: every resource a write names, at each write boundary and at
 detect, gets one `DiffAgainstSource` recording in the incident capture (`recordSourceComparisons`); an
 object with no acceptance record keeps its declared-field result and the typed reason
@@ -356,7 +365,8 @@ The controller is split by stability and privilege:
 | `sdo/operator/sdk/generichealth/` | Go-installed relation-based wiring, StatefulSet/DaemonSet/Job/CronJob health, persistent warning events, application-node pressure, memory/PVC capacity forecasts and narrow newly appearing runtime crash signatures; observed time and frozen usage/log windows keep decisions deterministic |
 | `sdo/operator/sdk/workloadhealth/` | Zero-knowledge pod and Deployment state detector (failed, pending, unschedulable, crash-looping, image-pull, config-error, OOMKilled, unready, restarting, stuck-init pods; unavailable or deadline-exceeded Deployments) whose ages use the snapshot observation time |
 | `sdo/operator/sdk/traffic/` | Synthetic-traffic scenarios, parameter generators, workload profiles, the deterministic engine, sliding-window SLO evaluation, and the scenario SLO detector |
-| `sdo/operator/sdk/podread/`, `runtime/podread_observer.go` | Optional in-container command reads for learned detectors. A detector declares a role target and a command; the controller runs it on the declared interval through the Diagnose exec path (Pod identity check, control namespace refused), retains the readings between runs and freezes them into the snapshot, the memory-host observation and captures. Bounded per query (30 s minimum interval, 16 Pods, 3 s timeout, 4 KiB stdout) and per cycle (4 concurrent, 5 s budget). Idle without consumers; every failure is an explicit unavailable reading |
+| `sdo/operator/sdk/podread/`, `runtime/podread_observer.go` | Optional in-container command reads for learned detectors. A detector declares a role target and a command; the controller runs it on the declared interval through the Diagnose exec path (Pod identity check, control namespace refused), retains the readings between runs and freezes them into the snapshot, the memory-host observation and captures. Bounded per query (30 s minimum interval, 16 Pods, 3 s timeout, 4 KiB stdout) and per cycle (4 concurrent, 5 s budget). Idle without consumers; every failure is an explicit unavailable reading. A target selects by labels, image or owning workload (`Kind/name`). `runtime/podread_baseline.go` promotes each query's complete readings with the configuration baseline (recorded at the candidate moment, promoted only when that candidate settles) and carries them as `Result.Baseline`; they are in-memory controller state shared across memory-host swaps, never operational memory, and the healthy replay capture records them with its pod reads |
+| `sdo/operator/sdk/storestate/` | Value-free store facts (write blocks, replication role, connection and memory caps, principals, catalog and inventory counts) read through one bounded pod read per store with the engine's own CLI, a typed `Diff` against healthy baseline facts, and the deterministic `store-state` detector that names the changed item. Engine adapters are a closed table (redis, mongodb and postgres today; the application map's `data.engine` names the engine). An unavailable or unparsable read is a detector error, never a clear. The shared check's health preparation (`memory/generic_health_storestate.go`) installs a Go-owned `store-state-<component>` health detector for each map component whose engine has an adapter (at most `podread.MaxQueries/2`, authoritative first, pruned when the component leaves the map); it diffs against the promoted healthy readings. `storestate.Changes` is the read-only diff for Diagnose read views, and dispatch adds each changed store Pod to the incident's `state_changes` as kind `StoreState` |
 | `sdo/operator/sdk/logs/` | Optional log queries and deterministic rate, appeared and silence helpers. Runtime collection is idle without consumers; each cycle shares 64 KiB between current and previous logs per container, retains 20 cycles and at most three 256-byte matching excerpts per pattern, and marks capped counts as lower bounds |
 | `sdo/operator/sdk/metrics/` | Optional metrics input: PromQL query declarations, frozen results, the threshold detector and the firing-alerts detector |
 | `sdo/operator/core/` | Detector execution, snapshot validation, finding emission, and playbook-path validation |

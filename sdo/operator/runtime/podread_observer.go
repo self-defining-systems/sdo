@@ -55,10 +55,12 @@ func NewPodReadObserver(client kubernetes.Interface, exec kubereads.PodExec, pro
 	}, nil
 }
 
-// PodReadsSnapshotProvider adds the frozen pod reads to a snapshot.
+// PodReadsSnapshotProvider adds the frozen pod reads to a snapshot, each with
+// the promoted healthy readings of its query when Baseline holds them.
 type PodReadsSnapshotProvider struct {
 	Base     SnapshotProvider
 	Observer *PodReadObserver
+	Baseline *PodReadBaseline
 }
 
 func (p PodReadsSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
@@ -66,7 +68,9 @@ func (p PodReadsSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionCo
 	if err != nil {
 		return base, err
 	}
-	return inputs.New(base).WithPodReads(podReadResults(p.Observer.collect(ctx, base))), nil
+	results := maps.Clone(p.Observer.collect(ctx, base))
+	p.Baseline.attach(results)
+	return inputs.New(base).WithPodReads(podReadResults(results)), nil
 }
 
 type podReadResults map[string]podread.Result

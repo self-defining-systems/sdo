@@ -59,9 +59,11 @@ func PreparedHealthDetectorIDs(options HealthOptions, workloadFiles map[string][
 	return slices.Compact(ids)
 }
 
-// IsGenericHealthDetector reports whether id is one of GenericHealthDetectorIDs.
+// IsGenericHealthDetector reports whether id is one of GenericHealthDetectorIDs
+// or a store-state detector Go installs from the application map: both are
+// Go's policy floor, not the judge's authorship.
 func IsGenericHealthDetector(id string) bool {
-	return slices.Contains(GenericHealthDetectorIDs(), id)
+	return slices.Contains(GenericHealthDetectorIDs(), id) || isStoreStateDetector(id)
 }
 
 // HealthOptions selects the optional generic policy detectors.
@@ -95,6 +97,9 @@ func PrepareHealthWith(root string, options HealthOptions) error {
 		if err := removeBootstrapDetector(root, MetricsAlertsDetectorID); err != nil {
 			return err
 		}
+	}
+	if err := prepareStoreStateDetectors(root); err != nil {
+		return err
 	}
 	return prepareTrafficDetectors(root)
 }
@@ -175,7 +180,7 @@ func prepareTrafficDetectors(root string) error {
 		}
 		wanted[id] = true
 	}
-	return pruneStaleTrafficDetectors(root, wanted)
+	return pruneStaleBootstrapDetectors(root, trafficDetectorPrefix, wanted)
 }
 
 func isProbePurpose(purpose string) bool { return purpose == "health-probe" || purpose == "link-probe" }
@@ -227,10 +232,11 @@ func removeBootstrapDetector(root, id string) error {
 	return safefs.RemoveAll(root, layout.DetectorDir(layout.ClassHealth, id))
 }
 
-// pruneStaleTrafficDetectors removes Go-installed traffic detector packages
-// (manifest originating commit "lifecycle-bootstrap") that no probe workload
-// file backs. Judge-authored traffic-* packages are never touched.
-func pruneStaleTrafficDetectors(root string, wanted map[string]bool) error {
+// pruneStaleBootstrapDetectors removes Go-installed detector packages
+// (manifest originating commit "lifecycle-bootstrap") whose ID starts with
+// prefix and that nothing backs any more (a probe workload file, a map
+// component). Judge-authored packages are never touched.
+func pruneStaleBootstrapDetectors(root, prefix string, wanted map[string]bool) error {
 	base := layout.DetectorDir(layout.ClassHealth, "")
 	entries, err := os.ReadDir(filepath.Join(root, base))
 	if os.IsNotExist(err) {
@@ -241,7 +247,7 @@ func pruneStaleTrafficDetectors(root string, wanted map[string]bool) error {
 	}
 	for _, entry := range entries {
 		id := entry.Name()
-		if !entry.IsDir() || !strings.HasPrefix(id, trafficDetectorPrefix) || wanted[id] {
+		if !entry.IsDir() || !strings.HasPrefix(id, prefix) || wanted[id] {
 			continue
 		}
 		if err := removeBootstrapDetector(root, id); err != nil {
@@ -320,6 +326,9 @@ func genericPackage(id string) string {
 		return "podadmission"
 	case workloadHealthID:
 		return "workloads"
+	}
+	if isStoreStateDetector(id) {
+		return "storeread"
 	}
 	return "synthetic"
 }
