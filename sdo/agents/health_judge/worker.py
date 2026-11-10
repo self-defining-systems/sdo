@@ -15,7 +15,7 @@ from sdo.agents.lifecycle import (
     TopologyResourceDTO,
 )
 from sdo.agents.memory_diagnostics import render_validation_feedback
-from sdo.agents.provider import resolve_agent
+from sdo.agents.provider import lifecycle_timeout_seconds, resolve_agent
 from sdo.agents.responder import (
     KubernetesResultPublisher,
     prepare_claude_home,
@@ -71,7 +71,7 @@ def author_health_diagnostics(request: HealthJudgeRequest, checkout: Path) -> He
     ]
     resolved = resolve_agent("health_judge", "lifecycle")
     backend = (ClaudeLifecycleBackend if resolved.provider == "claude" else CodexLifecycleBackend)(
-        model=resolved.model, reasoning_effort=resolved.effort
+        model=resolved.model, reasoning_effort=resolved.effort, timeout_seconds=lifecycle_timeout_seconds()
     )
     artifact = backend.run_health_judge(
         repository=checkout,

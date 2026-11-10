@@ -132,7 +132,7 @@ class Plan(_message.Message):
     def __init__(self, actions: _Optional[_Iterable[_Union[Action, _Mapping]]] = ..., rationale: _Optional[str] = ...) -> None: ...
 
 class Action(_message.Message):
-    __slots__ = ("reconcile_from_source", "rollback", "set_field", "restart_rollout", "create_from_source", "delete_object", "delete_pod", "scale_workload", "exec", "remove_service_port", "ensure_database_user", "patch_object", "apply_object", "kubernetes_request", "wait_for", "ensure_exec", "ensure_http", "run_job", "run_script", "sync_webhook_ca", "retire_old_revision", "retry_admission", "store_backup", "invalidate_derived", "repair_data", "restore_backup")
+    __slots__ = ("reconcile_from_source", "rollback", "set_field", "restart_rollout", "create_from_source", "delete_object", "delete_pod", "scale_workload", "exec", "remove_service_port", "ensure_database_user", "patch_object", "apply_object", "kubernetes_request", "wait_for", "ensure_exec", "ensure_http", "run_job", "run_script", "sync_webhook_ca", "retire_old_revision", "retry_admission", "store_backup", "invalidate_derived", "repair_data", "restore_backup", "restore_store_item", "check_store_credential")
     RECONCILE_FROM_SOURCE_FIELD_NUMBER: _ClassVar[int]
     ROLLBACK_FIELD_NUMBER: _ClassVar[int]
     SET_FIELD_FIELD_NUMBER: _ClassVar[int]
@@ -159,6 +159,8 @@ class Action(_message.Message):
     INVALIDATE_DERIVED_FIELD_NUMBER: _ClassVar[int]
     REPAIR_DATA_FIELD_NUMBER: _ClassVar[int]
     RESTORE_BACKUP_FIELD_NUMBER: _ClassVar[int]
+    RESTORE_STORE_ITEM_FIELD_NUMBER: _ClassVar[int]
+    CHECK_STORE_CREDENTIAL_FIELD_NUMBER: _ClassVar[int]
     reconcile_from_source: ReconcileFromSource
     rollback: Rollback
     set_field: SetField
@@ -185,7 +187,9 @@ class Action(_message.Message):
     invalidate_derived: InvalidateDerived
     repair_data: RepairData
     restore_backup: RestoreBackup
-    def __init__(self, reconcile_from_source: _Optional[_Union[ReconcileFromSource, _Mapping]] = ..., rollback: _Optional[_Union[Rollback, _Mapping]] = ..., set_field: _Optional[_Union[SetField, _Mapping]] = ..., restart_rollout: _Optional[_Union[RestartRollout, _Mapping]] = ..., create_from_source: _Optional[_Union[CreateFromSource, _Mapping]] = ..., delete_object: _Optional[_Union[DeleteObject, _Mapping]] = ..., delete_pod: _Optional[_Union[DeletePod, _Mapping]] = ..., scale_workload: _Optional[_Union[ScaleWorkload, _Mapping]] = ..., exec: _Optional[_Union[Exec, _Mapping]] = ..., remove_service_port: _Optional[_Union[RemoveServicePort, _Mapping]] = ..., ensure_database_user: _Optional[_Union[EnsureDatabaseUser, _Mapping]] = ..., patch_object: _Optional[_Union[PatchObject, _Mapping]] = ..., apply_object: _Optional[_Union[ApplyObject, _Mapping]] = ..., kubernetes_request: _Optional[_Union[KubernetesRequest, _Mapping]] = ..., wait_for: _Optional[_Union[WaitFor, _Mapping]] = ..., ensure_exec: _Optional[_Union[EnsureExec, _Mapping]] = ..., ensure_http: _Optional[_Union[EnsureHttp, _Mapping]] = ..., run_job: _Optional[_Union[RunJob, _Mapping]] = ..., run_script: _Optional[_Union[RunScript, _Mapping]] = ..., sync_webhook_ca: _Optional[_Union[SyncWebhookCA, _Mapping]] = ..., retire_old_revision: _Optional[_Union[RetireOldRevision, _Mapping]] = ..., retry_admission: _Optional[_Union[RetryAdmission, _Mapping]] = ..., store_backup: _Optional[_Union[StoreBackup, _Mapping]] = ..., invalidate_derived: _Optional[_Union[InvalidateDerived, _Mapping]] = ..., repair_data: _Optional[_Union[RepairData, _Mapping]] = ..., restore_backup: _Optional[_Union[RestoreBackup, _Mapping]] = ...) -> None: ...
+    restore_store_item: RestoreStoreItem
+    check_store_credential: CheckStoreCredential
+    def __init__(self, reconcile_from_source: _Optional[_Union[ReconcileFromSource, _Mapping]] = ..., rollback: _Optional[_Union[Rollback, _Mapping]] = ..., set_field: _Optional[_Union[SetField, _Mapping]] = ..., restart_rollout: _Optional[_Union[RestartRollout, _Mapping]] = ..., create_from_source: _Optional[_Union[CreateFromSource, _Mapping]] = ..., delete_object: _Optional[_Union[DeleteObject, _Mapping]] = ..., delete_pod: _Optional[_Union[DeletePod, _Mapping]] = ..., scale_workload: _Optional[_Union[ScaleWorkload, _Mapping]] = ..., exec: _Optional[_Union[Exec, _Mapping]] = ..., remove_service_port: _Optional[_Union[RemoveServicePort, _Mapping]] = ..., ensure_database_user: _Optional[_Union[EnsureDatabaseUser, _Mapping]] = ..., patch_object: _Optional[_Union[PatchObject, _Mapping]] = ..., apply_object: _Optional[_Union[ApplyObject, _Mapping]] = ..., kubernetes_request: _Optional[_Union[KubernetesRequest, _Mapping]] = ..., wait_for: _Optional[_Union[WaitFor, _Mapping]] = ..., ensure_exec: _Optional[_Union[EnsureExec, _Mapping]] = ..., ensure_http: _Optional[_Union[EnsureHttp, _Mapping]] = ..., run_job: _Optional[_Union[RunJob, _Mapping]] = ..., run_script: _Optional[_Union[RunScript, _Mapping]] = ..., sync_webhook_ca: _Optional[_Union[SyncWebhookCA, _Mapping]] = ..., retire_old_revision: _Optional[_Union[RetireOldRevision, _Mapping]] = ..., retry_admission: _Optional[_Union[RetryAdmission, _Mapping]] = ..., store_backup: _Optional[_Union[StoreBackup, _Mapping]] = ..., invalidate_derived: _Optional[_Union[InvalidateDerived, _Mapping]] = ..., repair_data: _Optional[_Union[RepairData, _Mapping]] = ..., restore_backup: _Optional[_Union[RestoreBackup, _Mapping]] = ..., restore_store_item: _Optional[_Union[RestoreStoreItem, _Mapping]] = ..., check_store_credential: _Optional[_Union[CheckStoreCredential, _Mapping]] = ...) -> None: ...
 
 class CreateFromSource(_message.Message):
     __slots__ = ("ref", "reason")
@@ -888,8 +892,19 @@ class InvalidateDerived(_message.Message):
     reason: str
     def __init__(self, target: _Optional[_Union[StoreTarget, _Mapping]] = ..., scope: _Optional[_Union[DataScope, _Mapping]] = ..., reason: _Optional[str] = ...) -> None: ...
 
+class MemberPredicate(_message.Message):
+    __slots__ = ("not_digits", "missing_key", "not_in")
+    NOT_DIGITS_FIELD_NUMBER: _ClassVar[int]
+    MISSING_KEY_FIELD_NUMBER: _ClassVar[int]
+    IN_FIELD_NUMBER: _ClassVar[int]
+    NOT_IN_FIELD_NUMBER: _ClassVar[int]
+    not_digits: bool
+    missing_key: str
+    not_in: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, not_digits: _Optional[bool] = ..., missing_key: _Optional[str] = ..., not_in: _Optional[_Iterable[str]] = ..., **kwargs) -> None: ...
+
 class RepairData(_message.Message):
-    __slots__ = ("target", "scope", "statement", "expect_min", "expect_max", "backup", "reason")
+    __slots__ = ("target", "scope", "statement", "expect_min", "expect_max", "backup", "reason", "member_predicate", "copy_from")
     TARGET_FIELD_NUMBER: _ClassVar[int]
     SCOPE_FIELD_NUMBER: _ClassVar[int]
     STATEMENT_FIELD_NUMBER: _ClassVar[int]
@@ -897,6 +912,8 @@ class RepairData(_message.Message):
     EXPECT_MAX_FIELD_NUMBER: _ClassVar[int]
     BACKUP_FIELD_NUMBER: _ClassVar[int]
     REASON_FIELD_NUMBER: _ClassVar[int]
+    MEMBER_PREDICATE_FIELD_NUMBER: _ClassVar[int]
+    COPY_FROM_FIELD_NUMBER: _ClassVar[int]
     target: StoreTarget
     scope: DataScope
     statement: str
@@ -904,7 +921,9 @@ class RepairData(_message.Message):
     expect_max: int
     backup: str
     reason: str
-    def __init__(self, target: _Optional[_Union[StoreTarget, _Mapping]] = ..., scope: _Optional[_Union[DataScope, _Mapping]] = ..., statement: _Optional[str] = ..., expect_min: _Optional[int] = ..., expect_max: _Optional[int] = ..., backup: _Optional[str] = ..., reason: _Optional[str] = ...) -> None: ...
+    member_predicate: MemberPredicate
+    copy_from: DataScope
+    def __init__(self, target: _Optional[_Union[StoreTarget, _Mapping]] = ..., scope: _Optional[_Union[DataScope, _Mapping]] = ..., statement: _Optional[str] = ..., expect_min: _Optional[int] = ..., expect_max: _Optional[int] = ..., backup: _Optional[str] = ..., reason: _Optional[str] = ..., member_predicate: _Optional[_Union[MemberPredicate, _Mapping]] = ..., copy_from: _Optional[_Union[DataScope, _Mapping]] = ...) -> None: ...
 
 class RestoreBackup(_message.Message):
     __slots__ = ("target", "backup", "reason")
@@ -915,6 +934,64 @@ class RestoreBackup(_message.Message):
     backup: str
     reason: str
     def __init__(self, target: _Optional[_Union[StoreTarget, _Mapping]] = ..., backup: _Optional[str] = ..., reason: _Optional[str] = ...) -> None: ...
+
+class StoreItem(_message.Message):
+    __slots__ = ("kind", "scope", "name", "value")
+    KIND_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    VALUE_FIELD_NUMBER: _ClassVar[int]
+    kind: str
+    scope: str
+    name: str
+    value: str
+    def __init__(self, kind: _Optional[str] = ..., scope: _Optional[str] = ..., name: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+
+class StoreItemChange(_message.Message):
+    __slots__ = ("before", "after")
+    BEFORE_FIELD_NUMBER: _ClassVar[int]
+    AFTER_FIELD_NUMBER: _ClassVar[int]
+    before: StoreItem
+    after: StoreItem
+    def __init__(self, before: _Optional[_Union[StoreItem, _Mapping]] = ..., after: _Optional[_Union[StoreItem, _Mapping]] = ...) -> None: ...
+
+class RestoreStoreItem(_message.Message):
+    __slots__ = ("target", "change", "end_sessions", "reason")
+    TARGET_FIELD_NUMBER: _ClassVar[int]
+    CHANGE_FIELD_NUMBER: _ClassVar[int]
+    END_SESSIONS_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    target: StoreTarget
+    change: StoreItemChange
+    end_sessions: bool
+    reason: str
+    def __init__(self, target: _Optional[_Union[StoreTarget, _Mapping]] = ..., change: _Optional[_Union[StoreItemChange, _Mapping]] = ..., end_sessions: _Optional[bool] = ..., reason: _Optional[str] = ...) -> None: ...
+
+class StoreCredentialInputs(_message.Message):
+    __slots__ = ("user", "password", "database", "uri")
+    USER_FIELD_NUMBER: _ClassVar[int]
+    PASSWORD_FIELD_NUMBER: _ClassVar[int]
+    DATABASE_FIELD_NUMBER: _ClassVar[int]
+    URI_FIELD_NUMBER: _ClassVar[int]
+    user: str
+    password: str
+    database: str
+    uri: str
+    def __init__(self, user: _Optional[str] = ..., password: _Optional[str] = ..., database: _Optional[str] = ..., uri: _Optional[str] = ...) -> None: ...
+
+class CheckStoreCredential(_message.Message):
+    __slots__ = ("target", "client", "container", "credential", "reason")
+    TARGET_FIELD_NUMBER: _ClassVar[int]
+    CLIENT_FIELD_NUMBER: _ClassVar[int]
+    CONTAINER_FIELD_NUMBER: _ClassVar[int]
+    CREDENTIAL_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    target: StoreTarget
+    client: _common_pb2.ObjectRef
+    container: str
+    credential: StoreCredentialInputs
+    reason: str
+    def __init__(self, target: _Optional[_Union[StoreTarget, _Mapping]] = ..., client: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., container: _Optional[str] = ..., credential: _Optional[_Union[StoreCredentialInputs, _Mapping]] = ..., reason: _Optional[str] = ...) -> None: ...
 
 class RunScript(_message.Message):
     __slots__ = ("script", "env", "timeout", "reason")

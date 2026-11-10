@@ -52,6 +52,11 @@ const (
 //   - postgres: Database names the database ("" is the container's default),
 //     Collection is a table or schema.table and Selector is the body of a WHERE
 //     clause ("" is TRUE).
+//   - mysql: Database names the database ("" is the container's
+//     MYSQL_DATABASE), Collection is a table and Selector is the body of a
+//     WHERE clause ("" is TRUE).
+//   - memcached: Database and Collection are empty and Selector is a key glob
+//     ("" is every key); keys are listed with lru_crawler metadump.
 //
 // Limit bounds how many items the scope may hold (0 is DefaultLimit).
 type Scope struct {
@@ -97,9 +102,58 @@ type Engine interface {
 	// Invalidate drops the items of a derived store's scope so they are read
 	// again from their source, and prints "sdo-affected <n>".
 	Invalidate(port int, s Scope) (Command, error)
+	// Copy puts every item of from that into lacks into into's namespace,
+	// keeping items into already holds (a set or sorted set is merged
+	// member by member on redis), only when from matches [min, max] items;
+	// it prints "sdo-affected <n>" (items written) or "sdo-expect-failed
+	// <n>". from is left as it is.
+	Copy(port int, from, into Scope, min, max int) (Command, error)
+	// RemoveMembers removes, from every set, sorted set or list value the
+	// scope selects, the members the predicate selects, only when the scope
+	// matches [min, max] keys; it prints "sdo-affected <members removed>
+	// failed <keys of another type>" or "sdo-expect-failed <n>".
+	RemoveMembers(port int, s Scope, p MemberPredicate, min, max int) (Command, error)
 }
 
-var engines = map[string]Engine{"redis": redis{}, "mongodb": mongodb{}, "postgres": postgres{}}
+// MemberPredicate selects the members of a collection value to remove. A
+// member is removed when any condition set holds:
+//   - NotDigits: the member is not a decimal integer;
+//   - MissingKey: the key this pattern names, with {member} replaced by the
+//     member, does not exist in the same database (a dangling reference);
+//   - In: the member is one of these;
+//   - NotIn: the member is none of these (set NotIn to the valid members).
+type MemberPredicate struct {
+	NotDigits  bool     `json:"not_digits,omitempty"`
+	MissingKey string   `json:"missing_key,omitempty"`
+	In         []string `json:"in,omitempty"`
+	NotIn      []string `json:"not_in,omitempty"`
+}
+
+// MaxPredicateMembers bounds the members In and NotIn may each list.
+const MaxPredicateMembers = 1000
+
+// Validate requires at least one condition and bounded member lists.
+func (p MemberPredicate) Validate() error {
+	if !p.NotDigits && p.MissingKey == "" && len(p.In) == 0 && len(p.NotIn) == 0 {
+		return fmt.Errorf("member predicate sets no condition (not_digits, missing_key, in, not_in)")
+	}
+	if p.MissingKey != "" && (strings.Count(p.MissingKey, "{member}") != 1 || len(p.MissingKey) > 512 || strings.ContainsAny(p.MissingKey, "\n\r\x00")) {
+		return fmt.Errorf("member predicate missing_key %q must hold {member} once, on one line of at most 512 bytes", p.MissingKey)
+	}
+	for _, list := range [][]string{p.In, p.NotIn} {
+		if len(list) > MaxPredicateMembers {
+			return fmt.Errorf("member predicate lists %d members, more than %d", len(list), MaxPredicateMembers)
+		}
+		for _, m := range list {
+			if len(m) > 512 || strings.ContainsAny(m, "\x00") {
+				return fmt.Errorf("member predicate member must be at most 512 bytes without NUL")
+			}
+		}
+	}
+	return nil
+}
+
+var engines = map[string]Engine{"redis": redis{}, "mongodb": mongodb{}, "postgres": postgres{}, "mysql": mysql{}, "memcached": memcached{}}
 
 // For returns the engine's table, or false when SDO has no record operations
 // for the engine.
@@ -109,7 +163,7 @@ func For(engine string) (Engine, bool) {
 }
 
 // Engines lists the engines with record operations.
-func Engines() []string { return []string{"mongodb", "postgres", "redis"} }
+func Engines() []string { return []string{"memcached", "mongodb", "mysql", "postgres", "redis"} }
 
 // Covers reports whether a backup of scope backup holds every item of scope
 // target: the same namespace, and the same selector or the whole namespace.

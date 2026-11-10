@@ -342,10 +342,11 @@ func TestVerifyTellsTheResponderDataIsAtRisk(t *testing.T) {
 }
 
 // A responder's opaque command inside a data store may have changed its
-// records, and nothing backed them up first. Health cannot show the records
-// survived, so the closure commits unconfirmed and feeds no learning. A typed
-// store-setting change and a command that reaches no data stay verified.
-func TestClosureAfterUnbackedDataWriteIsNotVerifiedSuccess(t *testing.T) {
+// records. SDO records that data effect on the outcome and in verify, and the
+// closure stays verified: only a replaced data Pod without persistent storage
+// makes it unconfirmed. A typed store-setting change is recorded with its class;
+// a command that reaches no data records nothing.
+func TestClosureRecordsDataEffectsWithoutUnconfirming(t *testing.T) {
 	ctx := context.Background()
 	storePod, webPod := holdsDataRef("v1", "Pod", "store-0"), holdsDataRef("v1", "Pod", "web-1-a")
 	opaque := func(pod sdk.ObjectRef) program.Action {
@@ -354,11 +355,11 @@ func TestClosureAfterUnbackedDataWriteIsNotVerifiedSuccess(t *testing.T) {
 	user := program.EnsureDatabaseUser{Target: program.DatabaseTarget{Engine: program.MongoDB, Pod: storePod, Container: "store", Database: "app"}, User: "app", Roles: []program.DatabaseRole{{Database: "app", Name: "readWrite"}}, Password: program.CredentialRef{Env: "PASSWORD"}}
 	for name, test := range map[string]struct {
 		action program.Action
-		want   contracts.ClosureUnconfirmedReason
+		want   []string
 	}{
-		"opaque command in the store": {opaque(storePod), contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_DATA_MAY_BE_LOST},
-		"store setting":               {user, contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED},
-		"opaque command elsewhere":    {opaque(webPod), contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED},
+		"opaque command in the store": {opaque(storePod), []string{"StatefulSet/store", "effect unknown", "no backup"}},
+		"store setting":               {user, []string{"StatefulSet/store", "effect store-setting"}},
+		"opaque command elsewhere":    {opaque(webPod), nil},
 	} {
 		t.Run(name, func(t *testing.T) {
 			after := dataRiskOpened.Add(time.Minute)
@@ -389,15 +390,10 @@ func TestClosureAfterUnbackedDataWriteIsNotVerifiedSuccess(t *testing.T) {
 				t.Fatal(err)
 			}
 			pending := controller.pendingClosure
-			if pending == nil || pending.UnconfirmedReason != test.want {
-				t.Fatalf("closure = %+v, want reason %s", pending, test.want)
+			if pending == nil || pending.UnconfirmedReason != contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED {
+				t.Fatalf("closure = %+v, want it verified: a data effect is evidence, not a verdict", pending)
 			}
-			if test.want == contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED {
-				return
-			}
-			if !strings.Contains(pending.UnconfirmedDetail, "StatefulSet/store") || !strings.Contains(pending.UnconfirmedDetail, "backup") {
-				t.Fatalf("the closure must name the workload and the missing backup: %q", pending.UnconfirmedDetail)
-			}
+			requireDataEffectRecord(t, "closure notes", pending.SourceCheckNotes, test.want)
 
 			_, loop, _ := sameWriteLoop(t)
 			loop.Request.Namespace, loop.Request.DetectedAt = "app", dataRiskOpened
@@ -405,9 +401,36 @@ func TestClosureAfterUnbackedDataWriteIsNotVerifiedSuccess(t *testing.T) {
 			loop.Provider, loop.GitRead = riskSnapshots{view: holdsDataView()}, fakeArchitecture(holdsDataArchitecture)
 			loop.applicationsLog = result.PlanApplications
 			response := loop.Handle(ctx, ToolRequest{Command: "verify"})
-			if len(response.DataAtRisk) != 1 || !strings.Contains(response.DataAtRisk[0], "StatefulSet/store") {
-				t.Fatalf("verify data_at_risk = %v (error %q)", response.DataAtRisk, response.Error)
+			if len(response.DataAtRisk) != 0 {
+				t.Fatalf("verify data_at_risk = %v, want none: no data Pod was replaced", response.DataAtRisk)
 			}
+			requireDataEffectRecord(t, "verify data_effects", response.DataEffects, test.want)
 		})
+	}
+}
+
+// requireDataEffectRecord holds when records carry exactly one data-effect
+// line containing every want, or none when want is empty.
+func requireDataEffectRecord(t *testing.T, where string, records []string, want []string) {
+	t.Helper()
+	var found []string
+	for _, record := range records {
+		if strings.HasPrefix(record, "data effect:") {
+			found = append(found, record)
+		}
+	}
+	if len(want) == 0 {
+		if len(found) != 0 {
+			t.Fatalf("%s = %v, want no data effect", where, found)
+		}
+		return
+	}
+	if len(found) != 1 {
+		t.Fatalf("%s = %v, want one data effect", where, records)
+	}
+	for _, part := range want {
+		if !strings.Contains(found[0], part) {
+			t.Fatalf("%s = %q, want it to name %q", where, found[0], part)
+		}
 	}
 }

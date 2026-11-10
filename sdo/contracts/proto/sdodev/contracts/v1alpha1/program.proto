@@ -95,6 +95,8 @@ message Action {
     InvalidateDerived invalidate_derived = 24;
     RepairData repair_data = 25;
     RestoreBackup restore_backup = 26;
+    RestoreStoreItem restore_store_item = 27;
+    CheckStoreCredential check_store_credential = 28;
   }
 }
 
@@ -519,14 +521,14 @@ message RunJob {
 // Pod must belong to its workload. Port 0 is the engine default.
 message StoreTarget {
   string component = 1 [(buf.validate.field).string.min_len = 1];
-  string engine = 2 [(buf.validate.field).string = {in: ["redis", "mongodb", "postgres"]}];
+  string engine = 2 [(buf.validate.field).string = {in: ["redis", "mongodb", "postgres", "mysql", "memcached"]}];
   ObjectRef pod = 3 [(buf.validate.field).required = true];
   string container = 4 [(buf.validate.field).string.min_len = 1];
   int32 port = 5 [(buf.validate.field).int32 = {gte: 0, lte: 65535}];
 }
 // Engine-native read-only record selector: redis database number and key glob;
-// mongodb database, collection and JSON filter; postgres database, table and
-// WHERE body. Limit 0 is 10000.
+// mongodb database, collection and JSON filter; postgres or mysql database,
+// table and WHERE body; memcached key glob. Limit 0 is 10000.
 message DataScope {
   string database = 1;
   string collection = 2;
@@ -548,21 +550,70 @@ message InvalidateDerived {
   DataScope scope = 2;
   string reason = 3;
 }
-// Count-first, backup-required record repair. Never automatic. Effect: data-write.
+// Members of a collection value to remove: any condition set selects a member.
+message MemberPredicate {
+  bool not_digits = 1;
+  string missing_key = 2;
+  repeated string in = 3 [(buf.validate.field).repeated.max_items = 1000];
+  repeated string not_in = 4 [(buf.validate.field).repeated.max_items = 1000];
+}
+// Count-first record repair: exactly one of statement, member_predicate and
+// copy_from. Effect: data-write.
 message RepairData {
   StoreTarget target = 1 [(buf.validate.field).required = true];
   DataScope scope = 2;
-  string statement = 3 [(buf.validate.field).string.min_len = 1];
+  string statement = 3;
   int32 expect_min = 4 [(buf.validate.field).int32.gte = 0];
   int32 expect_max = 5 [(buf.validate.field).int32.gte = 1];
-  string backup = 6 [(buf.validate.field).string = {pattern: "^[a-z0-9][a-z0-9-]{0,62}$"}];
+  string backup = 6 [(buf.validate.field).string = {pattern: "^([a-z0-9][a-z0-9-]{0,62})?$"}];
   string reason = 7;
+  MemberPredicate member_predicate = 8;
+  DataScope copy_from = 9;
 }
 // Puts one backup of this incident back. Responder only. Effect: data-write.
 message RestoreBackup {
   StoreTarget target = 1 [(buf.validate.field).required = true];
   string backup = 2 [(buf.validate.field).string = {pattern: "^[a-z0-9][a-z0-9-]{0,62}$"}];
   string reason = 3;
+}
+
+// One value-free store-state fact.
+message StoreItem {
+  string kind = 1 [(buf.validate.field).string.min_len = 1];
+  string scope = 2;
+  string name = 3 [(buf.validate.field).string.min_len = 1];
+  string value = 4;
+}
+// A store-state item from its baseline (before, absent when added) to now
+// (after, absent when removed).
+message StoreItemChange {
+  StoreItem before = 1;
+  StoreItem after = 2;
+}
+// Puts one store-state item back to the controller's promoted healthy baseline
+// value with the engine's fixed inverse; records the prior value and verifies.
+// Effect: store-setting.
+message RestoreStoreItem {
+  StoreTarget target = 1 [(buf.validate.field).required = true];
+  StoreItemChange change = 2 [(buf.validate.field).required = true];
+  bool end_sessions = 3;
+  string reason = 4;
+}
+// Names, never holds, the client's credential environment variables.
+message StoreCredentialInputs {
+  string user = 1;
+  string password = 2;
+  string database = 3;
+  string uri = 4;
+}
+// One authentication attempt with the client container's credential
+// references against the store; value-free ok/denied/unreachable. Effect: read.
+message CheckStoreCredential {
+  StoreTarget target = 1 [(buf.validate.field).required = true];
+  ObjectRef client = 2 [(buf.validate.field).required = true];
+  string container = 3 [(buf.validate.field).string.min_len = 1];
+  StoreCredentialInputs credential = 4;
+  string reason = 5;
 }
 
 // Opaque bash effects use recorded open/fixed diagnosis, never invented effects.

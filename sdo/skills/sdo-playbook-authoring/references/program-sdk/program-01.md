@@ -9,7 +9,7 @@ package program // import "sdo.dev/operator/sdk/program"
 CONSTANTS
 
 const DefaultScriptTimeout = time.Minute
-const MaxAdmissionWebhooks = 16
+const MaxAdmissionWebhooks = sdk.MaxAdmissionWebhooks
     MaxAdmissionWebhooks bounds one AdmissionWebhooksFor answer.
 
 const MaxScriptBytes = 64 << 10
@@ -80,9 +80,10 @@ func CheckReplicaSetScales(plan Plan, view ReplicaSetOwnerView) error
 
 func DataActionEffect(action Action) (StoreTarget, DataEffect, bool)
     DataActionEffect is the data effect a store action declares on its target
-    component. The executor enforces it: a backup only reads, an invalidation
-    only drops a derived store's entries, and a repair or restore changes
-    records.
+    component: a backup only reads, an invalidation drops a store's entries,
+    and a repair or restore changes records. The controller records it;
+    an invalidation of a component the map does not mark derived is recorded as
+    a data write.
 
 func DocumentWriteRef(action Action) (sdk.ObjectRef, bool)
     DocumentWriteRef identifies actions that project edits onto an existing
@@ -167,28 +168,8 @@ func StalledRolloutRelease(view RolloutView, deployment sdk.ObjectRef) []Action
     that still serves. SDO offers the same actions to the responder when it
     hands off a stalled rollout.
 
-type AdmissionWebhook struct {
-	Configuration  sdk.ObjectRef      `json:"configuration"`
-	Webhook        string             `json:"webhook"`
-	FailurePolicy  string             `json:"failure_policy"`
-	Service        *sdk.ObjectRef     `json:"service,omitempty"`
-	Port           int32              `json:"port,omitempty"`
-	ReadyEndpoints int                `json:"ready_endpoints"`
-	ServingSecrets []WebhookSecretKey `json:"serving_secrets,omitempty"`
-	CABundle       string             `json:"ca_bundle,omitempty"`
-}
-    AdmissionWebhook is one webhook entry admitting Pods in the namespace. Its
-    backend is the Service, its ready endpoint count and the Secrets its Pods
-    mount. CABundle is a digest, never certificate bytes. To repair a broken
-    admission webhook, bind the failing Namespace or workload (not the webhook
-    configuration or Secret), read it with ReadView.AdmissionWebhooksFor,
-    and repair with SyncWebhookCA for the CA, PatchObject for failurePolicy or
-    the service reference, or DeleteObject for an orphaned entry.
-
-func (w AdmissionWebhook) CATarget(secret WebhookSecretKey) WebhookCA
-    CATarget names this entry and one serving Secret key for SyncWebhookCA and
-    WebhookCAMatchesSecret. An empty secret.Key means the Pod mounts the whole
-    Secret; set the key the serving certificate uses.
+type AdmissionWebhook = sdk.AdmissionWebhook
+    AdmissionWebhook is one webhook entry admitting Pods (sdk.AdmissionWebhook).
 
 type ApplyObject struct {
 	Ref    sdk.ObjectRef
@@ -231,4 +212,16 @@ func BindFinding(spec ProgramSpec, finding sdk.Finding) (Bindings, error)
     that sets named bindings without declaring its playbooks.
 
 func (b Bindings) Clone() Bindings
+
+func (b Bindings) Equal(other Bindings) bool
+    Equal compares object bindings through the shared citation parser and scalar
+    values through their JSON representation. Omitted known API versions are
+    equivalent to their defaults; namespace and explicit versions remain exact.
+
+func (b Bindings) Parameter(spec ProgramSpec, name string) (any, error)
+    Parameter resolves one declared value, including a validated default.
+
+func (b *Bindings) UnmarshalJSON(raw []byte) error
+    UnmarshalJSON imports object-only corpus bindings from existing recordings.
+    New recordings always use explicit objects and values maps.
 ```

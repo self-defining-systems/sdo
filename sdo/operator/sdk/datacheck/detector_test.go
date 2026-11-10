@@ -257,3 +257,74 @@ func TestUnavailableReadsNeverClear(t *testing.T) {
 		t.Fatal("an invalid check cleared")
 	}
 }
+
+// A cache value of newline-delimited JSON documents decodes into lines, one
+// document per line: healthy values pass, a garbage line fails the shape.
+func TestNDJSONValuesDecodeLineByLine(t *testing.T) {
+	const source = `component: rate-cache
+engine: memcached
+target: {image: memcached}
+read: {pattern: "{id}", decode: ndjson, ids: ["40", "41", "42"]}
+min_records: 0
+assert:
+  - shape: {"lines[].hotelId": digits}
+  - bounds: {field: lines, min: 1, count: true}
+`
+	d := detector(t, "rates", source)
+	good := `{"hotelId":"40","code":"RACK"}` + "\n" + `{"hotelId":"40","code":"PROMO"}`
+	bad := `{"hotelId":"41"}` + "\n" + `notjson`
+	wrong := `{"hotelId":"x"}`
+	value := func(id, v string) string { return "VALUE " + id + " 0 " + itoa(len(v)) + "\r\n" + v + "\r\n" }
+	if f := detect(t, d, value("40", good)+"END\r\n\nE\n"); len(f) != 0 {
+		t.Fatalf("healthy ndjson fired: %+v", f)
+	}
+	findings := detect(t, d, value("40", good)+value("41", bad)+value("42", wrong)+"END\r\n\nE\n")
+	if rules(findings) != datacheck.RuleShape {
+		t.Fatalf("findings = %+v", findings)
+	}
+	if e := findings[0].Evidence; !strings.Contains(e, "41: value is not JSON") || !strings.Contains(e, "42: lines[].hotelId is string, not digits") {
+		t.Fatalf("evidence = %q", e)
+	}
+}
+
+// A memcached check may sample its first keys: the read lists them with
+// lru_crawler metadump, in the store's own container, and sends get only.
+func TestMemcachedFirstListsKeysWithMetadump(t *testing.T) {
+	const source = `component: post-cache
+engine: memcached
+target: {image: memcached}
+read: {pattern: "post:{id}", decode: json, first: 5}
+assert:
+  - shape: {creator: object}
+`
+	check, err := datacheck.Parse([]byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := check.Validate("posts"); err != nil {
+		t.Fatalf("a memcached first read is refused: %v", err)
+	}
+	reads := check.Reads("posts")
+	if err := reads[0].Validate(); err != nil {
+		t.Fatalf("read = %v", err)
+	}
+	text := strings.Join(reads[0].Args, "")
+	for _, want := range []string{"lru_crawler metadump all", "head -n 5", "get"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("read lacks %q", want)
+		}
+	}
+	for _, write := range []string{"set ", "delete ", "flush_all", "incr ", "touch "} {
+		if strings.Contains(text, write) {
+			t.Errorf("read sends %q", write)
+		}
+	}
+	d := detector(t, "posts", source)
+	ok := `{"creator":{"id":1}}`
+	if f := detect(t, d, "VALUE post:1 0 "+itoa(len(ok))+"\r\n"+ok+"\r\nEND\r\n\nE\n"); len(f) != 0 {
+		t.Fatalf("findings = %+v", f)
+	}
+	if _, err := d.Detect(context.Background(), view(t, d, "ERR the store did not list its keys (lru_crawler metadump)\n")); err == nil {
+		t.Fatal("an unlisted cache cleared")
+	}
+}

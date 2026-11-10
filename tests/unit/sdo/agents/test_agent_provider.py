@@ -132,3 +132,18 @@ def test_every_agent_turn_takes_its_effort_from_the_resolved_agent() -> None:
                     if argument.arg == "reasoning_effort" and isinstance(default, ast.Constant):
                         offenders.append(f"{path.relative_to(root)}:{node.lineno} default {default.value!r}")
     assert offenders == []
+
+
+def test_the_lifecycle_session_timeout_is_configured_like_effort() -> None:
+    from sdo.agents.provider import DEFAULT_LIFECYCLE_TIMEOUT_SECONDS, lifecycle_timeout_seconds
+
+    assert lifecycle_timeout_seconds({}) == DEFAULT_LIFECYCLE_TIMEOUT_SECONDS
+    assert lifecycle_timeout_seconds({"SDO_LIFECYCLE_TIMEOUT_SECONDS": " 2700 "}) == 2700
+
+
+@pytest.mark.parametrize("value", ["0", "-5", "fifteen", "1.5"])
+def test_an_invalid_lifecycle_session_timeout_refuses_to_run(value: str) -> None:
+    from sdo.agents.provider import lifecycle_timeout_seconds
+
+    with pytest.raises(ValueError, match="SDO_LIFECYCLE_TIMEOUT_SECONDS"):
+        lifecycle_timeout_seconds({"SDO_LIFECYCLE_TIMEOUT_SECONDS": value})

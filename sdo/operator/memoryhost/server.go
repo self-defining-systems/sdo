@@ -22,6 +22,7 @@ import (
 	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
+	"sdo.dev/operator/sdk/vantage"
 	"sdo.dev/operator/sdk/usage"
 )
 
@@ -444,7 +445,18 @@ func observe(snapshot *sdktest.Snapshot, o *pb.MemoryObservation) error {
 			snapshot.PodReads[k] = *got
 		}
 	}
-	return nil
+	snapshot.Vantage = map[string]vantage.Result{}
+	for k, v := range o.Vantage {
+		got, e := decode[vantage.Result](v)
+		if e != nil {
+			return e
+		}
+		if got != nil {
+			snapshot.Vantage[k] = *got
+		}
+	}
+	snapshot.Platform, err = decode[sdk.PlatformObservation](o.Platform)
+	return err
 }
 
 // WithTraffic installs the immutable revision's host-owned traffic executor.

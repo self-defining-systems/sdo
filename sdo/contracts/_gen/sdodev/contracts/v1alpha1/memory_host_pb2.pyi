@@ -77,7 +77,7 @@ class MirrorResponse(_message.Message):
     def __init__(self, sequence: _Optional[int] = ...) -> None: ...
 
 class MemoryObservation(_message.Message):
-    __slots__ = ("observed_at", "traffic", "reachability", "metrics", "alerts", "usage", "logs", "scoped", "pod_admission", "pod_reads")
+    __slots__ = ("observed_at", "traffic", "reachability", "metrics", "alerts", "usage", "logs", "scoped", "pod_admission", "pod_reads", "vantage", "platform")
     class TrafficEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -106,6 +106,13 @@ class MemoryObservation(_message.Message):
         key: str
         value: _struct_pb2.Struct
         def __init__(self, key: _Optional[str] = ..., value: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ...) -> None: ...
+    class VantageEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: _struct_pb2.Struct
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ...) -> None: ...
     OBSERVED_AT_FIELD_NUMBER: _ClassVar[int]
     TRAFFIC_FIELD_NUMBER: _ClassVar[int]
     REACHABILITY_FIELD_NUMBER: _ClassVar[int]
@@ -116,6 +123,8 @@ class MemoryObservation(_message.Message):
     SCOPED_FIELD_NUMBER: _ClassVar[int]
     POD_ADMISSION_FIELD_NUMBER: _ClassVar[int]
     POD_READS_FIELD_NUMBER: _ClassVar[int]
+    VANTAGE_FIELD_NUMBER: _ClassVar[int]
+    PLATFORM_FIELD_NUMBER: _ClassVar[int]
     observed_at: _timestamp_pb2.Timestamp
     traffic: _containers.MessageMap[str, _struct_pb2.Struct]
     reachability: _struct_pb2.Struct
@@ -126,7 +135,9 @@ class MemoryObservation(_message.Message):
     scoped: _struct_pb2.Struct
     pod_admission: _struct_pb2.Struct
     pod_reads: _containers.MessageMap[str, _struct_pb2.Struct]
-    def __init__(self, observed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., traffic: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., reachability: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., metrics: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., alerts: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., usage: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., logs: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., scoped: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., pod_admission: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., pod_reads: _Optional[_Mapping[str, _struct_pb2.Struct]] = ...) -> None: ...
+    vantage: _containers.MessageMap[str, _struct_pb2.Struct]
+    platform: _struct_pb2.Struct
+    def __init__(self, observed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., traffic: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., reachability: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., metrics: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., alerts: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., usage: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., logs: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., scoped: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., pod_admission: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., pod_reads: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., vantage: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., platform: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ...) -> None: ...
 
 class EvaluateRequest(_message.Message):
     __slots__ = ("detector_ids", "mirror_sequence", "observation", "reads")

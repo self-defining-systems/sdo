@@ -35,7 +35,7 @@ func (d policyDetector) Detect(_ context.Context, view sdk.DetectionContext) ([]
   (empty until the application has been healthy once). Compare with it to report what changed since healthy.
 
 Go installs a `store-state-<component>` health detector for every map component whose `data.engine`
-`storestate.AdapterFor` reads (redis, mongodb and postgres today), at most eight (half of `podread.MaxQueries`),
+`storestate.AdapterFor` reads (redis, mongodb, postgres, mysql, memcached and consul), at most eight (half of `podread.MaxQueries`),
 authoritative stores first; it diffs against the promoted healthy readings. A store it has never read healthy (no CLI
 in the image, credentials the container does not expose, a refused read) is a coverage note on the clear verdict, not
 a finding. Do not author a second reader for those stores. For another store, or a fixed reference, use

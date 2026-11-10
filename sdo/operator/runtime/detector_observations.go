@@ -16,6 +16,7 @@ import (
 	"sdo.dev/operator/sdk/logs"
 	"sdo.dev/operator/sdk/podread"
 	"sdo.dev/operator/sdk/usage"
+	"sdo.dev/operator/sdk/vantage"
 )
 
 // detectorObservations is the one place that derives the Kubernetes-, log-,
@@ -39,6 +40,13 @@ type detectorObservations struct {
 	// PodReadBaseline, when set, carries the controller's promoted healthy
 	// readings with each pod read; it outlives every memory-host swap.
 	PodReadBaseline *PodReadBaseline
+	// VantageBaseline, when set, carries the promoted healthy vantage readings.
+	VantageBaseline *VantageBaseline
+	// Platform, when set, carries the source inventory reader and the
+	// promoted healthy platform observation.
+	Platform *PlatformState
+	// VantageImage replaces DefaultVantageImage.
+	VantageImage string
 }
 
 // compose wraps base with every observation the detectors declare. A
@@ -58,7 +66,7 @@ func (o detectorObservations) compose(base SnapshotProvider, detectors []sdk.Det
 	}
 	provider := base
 	if sdk.ConsumesPodAdmission(detectors) {
-		provider = podAdmissionSnapshotProvider{Base: provider, Client: o.Client}
+		provider = podAdmissionSnapshotProvider{Base: provider, Client: o.Client, ProtectedNamespace: o.ProtectedNamespace}
 	}
 	provider = withUsage(provider, detectors, o.Client, clock)
 	logsObserver, err := NewLogsObserver(o.Client, detectors, LogsObserverOptions{Clock: clock})
@@ -74,6 +82,16 @@ func (o detectorObservations) compose(base SnapshotProvider, detectors []sdk.Det
 	}
 	if podReads != nil {
 		provider = PodReadsSnapshotProvider{Base: provider, Observer: podReads, Baseline: o.PodReadBaseline}
+	}
+	vantageObserver, err := NewVantageObserver(o.Client, o.exec(), o.ProtectedNamespace, o.VantageImage, detectors, clock)
+	if err != nil {
+		return nil, nil, err
+	}
+	if vantageObserver != nil {
+		provider = VantageSnapshotProvider{Base: provider, Observer: vantageObserver, Baseline: o.VantageBaseline}
+	}
+	if sdk.ConsumesPlatform(detectors) {
+		provider = platformSnapshotProvider{Base: provider, Observer: &PlatformObserver{Client: o.Client, ProtectedNamespace: o.ProtectedNamespace, State: o.Platform, Clock: clock}}
 	}
 	return withMetrics(provider, detectors, o.Telemetry, designerSources, o.RequireMetrics, clock)
 }
@@ -101,14 +119,21 @@ func kubernetesObservations(detector sdk.Detector) string {
 	if consumer, ok := detector.(podread.Consumer); ok && len(consumer.PodReads()) > 0 {
 		return "pod read"
 	}
+	if consumer, ok := detector.(vantage.Consumer); ok && len(consumer.VantageProbes()) > 0 {
+		return "vantage probe"
+	}
+	if sdk.ConsumesPlatform([]sdk.Detector{detector}) {
+		return "platform"
+	}
 	return ""
 }
 
 // podAdmissionSnapshotProvider adds one bounded server-side dry-run Pod create
 // per snapshot, sourced from the snapshot's own Pods.
 type podAdmissionSnapshotProvider struct {
-	Base   SnapshotProvider
-	Client kubernetes.Interface
+	Base               SnapshotProvider
+	Client             kubernetes.Interface
+	ProtectedNamespace string
 }
 
 func (p podAdmissionSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
@@ -116,6 +141,14 @@ func (p podAdmissionSnapshotProvider) Snapshot(ctx context.Context) (sdk.Detecti
 	if err != nil {
 		return nil, err
 	}
-	result := controllercore.ObservePodAdmission(ctx, p.Client, base.Namespace(), base.Pods())
+	result, submitted := controllercore.ObservePodAdmission(ctx, p.Client, base)
+	if submitted != nil {
+		// The entries that select the submitted Pod: with one mutating
+		// candidate, Mutations is attributed exactly, and a dry run that
+		// timed out names the webhooks it waited on.
+		if webhooks, err := kubereads.PodAdmissionWebhooks(ctx, p.Client, p.ProtectedNamespace, base.Namespace(), submitted.Labels); err == nil {
+			result.Webhooks = webhooks
+		}
+	}
 	return inputs.New(base).WithPodAdmission(result), nil
 }

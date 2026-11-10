@@ -64,4 +64,6 @@ Rules the memory check enforces:
   writing operation) in `probe-write`, `read-later` scenarios (read side effect, a data-holding component on the
   path) in `probe-read-later`. Each scenario is in exactly one of them and has one probe entry.
 - Coverage: every operation is in a call or write-read probe; every writing operation is in a write-read probe;
-  every data-holding component on a writing operation's path is on a read-later probe's path.
+  every data-holding component on a writing operation's path is on a read-later probe's path. An operation broken
+  in the application as deployed is covered by a probe whose workload scenario is declared `knownBroken`
+  (`knownBroken: {reason: <one line>, failsWith: ["404"]}`); at most half of the operations may be.

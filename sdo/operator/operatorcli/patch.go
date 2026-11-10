@@ -11,6 +11,7 @@ import (
 
 	"sdo.dev/operator/operatorcli/internal/processio"
 	"sdo.dev/operator/patchset"
+	"sdo.dev/operator/planfile"
 )
 
 // PatchUsage documents "sdo-operator patch".
@@ -20,7 +21,8 @@ App files (everything outside .sdo/) are never published. You may edit them in
 your checkout as a scratch view, to read, run and test: the checkout already
 holds the repository's patch series applied. To keep a change, capture it as a
 patch; a publish is rejected (patch.uncaptured) while an app file differs from
-what the patches produce.
+what the patches produce. A patch no image build source or deployment input
+covers is kept but reported patch.undeployable: it cannot take effect.
 
   create --reason TEXT [--name SLUG] [--owner deployer|responder] [--incident ID] [--root .] [paths...]
         Capture the scratch edits of the given paths (default: all) as the next
@@ -105,6 +107,31 @@ func uncapturedLines(paths []string) []string {
 	return lines
 }
 
+// undeployableLines is the typed signal for a patch no deployment reads: it
+// stays recorded, but the plan has no image build source or renderer input
+// covering its files, so it cannot take effect on a running workload. A
+// checkout without a plan declares nothing to judge against.
+func undeployableLines(ctx context.Context, root string) ([]string, error) {
+	plan, err := planfile.Read(root, planCatalogs())
+	if errors.Is(err, planfile.ErrAbsent) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	patches, err := patchset.List(ctx, root)
+	if err != nil {
+		return nil, err
+	}
+	var lines []string
+	for _, p := range patches {
+		if unbuilt := planfile.Unbuilt(plan, p.Paths()); len(unbuilt) > 0 {
+			lines = append(lines, fmt.Sprintf("%s: patch.undeployable: recorded, but no image build source or deployment input covers %s, so it will not take effect and does not mitigate the incident; use a runtime mitigation", p.Name, strings.Join(unbuilt, ", ")))
+		}
+	}
+	return lines, nil
+}
+
 func patchCreate(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer) (int, error) {
 	flags := flag.NewFlagSet("patch create", flag.ContinueOnError)
 	reason := flags.String("reason", "", "why the patch exists: what fails without it")
@@ -144,6 +171,13 @@ func patchCreate(ctx context.Context, args []string, getenv func(string) string,
 		for _, line := range uncapturedLines(report.Uncaptured) {
 			fmt.Fprintln(stdout, line)
 		}
+	}
+	lines, err := undeployableLines(ctx, absolute)
+	if err != nil {
+		return exitInfra, err
+	}
+	for _, line := range lines {
+		fmt.Fprintln(stdout, line)
 	}
 	return exitClean, nil
 }
@@ -215,6 +249,10 @@ func patchCheck(ctx context.Context, args []string, stdout io.Writer) (int, erro
 	if err != nil {
 		return exitInfra, err
 	}
+	undeployable, err := undeployableLines(ctx, absolute)
+	if err != nil {
+		return exitInfra, err
+	}
 	if *asJSON {
 		if report.Uncaptured == nil {
 			report.Uncaptured = []string{}
@@ -224,10 +262,15 @@ func patchCheck(ctx context.Context, args []string, stdout io.Writer) (int, erro
 			Digest     string   `json:"digest"`
 			Effective  string   `json:"effective_tree"`
 			Uncaptured []string `json:"uncaptured"`
-		}{report.Patches, report.Digest, report.Effective, report.Uncaptured})
+			// Undeployable is one line per patch that cannot take effect.
+			Undeployable []string `json:"undeployable"`
+		}{report.Patches, report.Digest, report.Effective, report.Uncaptured, orEmpty(undeployable)})
 	} else {
 		fmt.Fprintf(stdout, "%d patch(es) apply; effective tree %s\n", report.Patches, report.Effective)
 		for _, line := range uncapturedLines(report.Uncaptured) {
+			fmt.Fprintln(stdout, line)
+		}
+		for _, line := range undeployable {
 			fmt.Fprintln(stdout, line)
 		}
 	}
@@ -238,4 +281,11 @@ func patchCheck(ctx context.Context, args []string, stdout io.Writer) (int, erro
 		return exitDiagnostics, nil
 	}
 	return exitClean, nil
+}
+
+func orEmpty(lines []string) []string {
+	if lines == nil {
+		return []string{}
+	}
+	return lines
 }

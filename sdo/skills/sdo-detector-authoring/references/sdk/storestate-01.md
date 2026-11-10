@@ -19,6 +19,18 @@ changed. A read that gives no answer is an error, never a healthy result.
 CONSTANTS
 
 const (
+	// CredentialOK: the store accepted the credential (or needs none).
+	CredentialOK = "ok"
+	// CredentialDenied: the store reached refused the credential.
+	CredentialDenied = "denied"
+	// CredentialUnreachable: no store answered the authentication.
+	CredentialUnreachable = "unreachable"
+	// CredentialError: the check could not run or its answer is unknown.
+	CredentialError = "error"
+)
+    Credential check results.
+
+const (
 	RuleWriteBlocked         = "store-state.write-blocked"
 	RuleRoleChanged          = "store-state.role-changed"
 	RulePrincipalChanged     = "store-state.principal-changed"
@@ -26,8 +38,48 @@ const (
 	RuleRefused              = "store-state.read-refused"
 	RuleConnectionsNearLimit = "store-state.connections-near-limit"
 	RuleMemoryNearLimit      = "store-state.memory-near-limit"
+	RuleNamespaceChanged     = "store-state.namespace-changed"
+	RuleRegistryChanged      = "store-state.registry-changed"
 )
     Rule IDs of store-state findings.
+
+const (
+	MinJudgedCount  = 10
+	NamespaceGrowth = 10
+)
+    Namespace judgement: a judged namespace (a table, collection, KV prefix or
+    key pattern) is reported when it disappears, when its count drops below half
+    of a baseline of at least MinJudgedCount, or grows past NamespaceGrowth
+    times such a baseline.
+
+const (
+	HolderIdle              = "idle"
+	HolderActive            = "active"
+	HolderIdleInTransaction = "idle-in-transaction"
+	HolderBlocked           = "blocked"
+	HolderConnected         = "connected"
+)
+    Holder states. A store that reports sessions says which state each is in;
+    a store that refused its session list (for example at its connection cap) is
+    read from the container's TCP table, where a connection is only connected.
+
+const (
+	// PayloadEJSON is MongoDB canonical Extended JSON (mongosh).
+	PayloadEJSON = "ejson"
+	// PayloadShell is a legacy mongo shell tojson() expression.
+	PayloadShell = "shell"
+	// PayloadPlaceholder stands in for real text in Restorable.
+	PayloadPlaceholder = "placeholder"
+)
+    Payload formats. A payload is engine text the restore passes back to the
+    same engine shell it was captured with.
+
+const (
+	MaxPayloadEntries    = 512
+	MaxPayloadEntryBytes = 64 * 1024
+	MaxPayloadBytes      = 1 << 20
+)
+    Bounds of one Payload.
 
 const (
 	MaxItems     = 512
@@ -35,11 +87,41 @@ const (
 )
     Bounds of one Facts value.
 
+const CredentialMarker = "SDO-AUTH"
+    CredentialMarker starts the one line a credential check prints.
+
+const MaxHolders = 12
+    MaxHolders bounds the holder groups of one read; the read lists the largest
+    groups first.
+
 const NearLimit = 0.95
     NearLimit is the fraction of a cap at which use is reported.
 
+const PeerLocal = "local"
+    PeerLocal is the peer of a session over the store's own socket or loopback
+    address: a process inside the store's Pod.
+
+const RestoredMarker = "#sdo-restored"
+    RestoredMarker is the line a restore command prints once the store accepted
+    every statement of the step.
+
 
 FUNCTIONS
+
+func CredentialCheckCommand(engine Engine, host string, port int, inputs CredentialInputs) ([]string, error)
+    CredentialCheckCommand is the argv of one authentication attempt against
+    the store at host:port with the client's credential, for a container that
+    carries the client's environment (its env and envFrom references, which the
+    kubelet resolves; SDO never reads the values) and the store engine's CLI.
+
+func CredentialCommand(tags []string, script string, args ...string) []string
+    CredentialCommand is the argv that runs script in a store's container with
+    the store's credentials found the same way every store-state read finds
+    them: P is the password and U its paired user, both possibly empty; args are
+    the script's $1.. . The record operations of storeops use it too.
+
+func IsNotRestorable(err error) bool
+    IsNotRestorable reports whether err says the item has no typed restore.
 
 func NewDetector(c Config) (sdk.Detector, error)
     NewDetector returns a deterministic detector of the store's facts.
@@ -53,6 +135,20 @@ func NewDetector(c Config) (sdk.Detector, error)
 func QueryID(engine Engine, component string) string
     QueryID is the pod read a store-state detector declares for component.
     It names the engine, so a reader without the detector can parse the output.
+
+func RenderHolders(groups []HolderGroup) string
+    RenderHolders is a short value-free account of the largest holder groups.
+
+func Restorable(engine Engine, change Change, baseline Facts) error
+    Restorable says whether a program may expect a RestoreStoreItem of change
+    to run: nil when the engine's table has an inverse for it, assuming the
+    controller holds the restore text it needs (captured with the baseline).
+    The executor still refuses when that text is missing or no longer matches
+    the baseline.
+
+func RestoreCommands(engine Engine, e Endpoint, change Change, baseline Facts, options RestoreOptions) ([][]string, error)
+    RestoreCommands returns the engine commands that restore change, or an error
+    when the engine has no restore table or the item none.
 
 func UsableAsBaseline(id string, result podread.Result) error
     UsableAsBaseline reports why a store-state pod read cannot become the
@@ -133,131 +229,29 @@ type Config struct {
 }
     Config declares one store component to watch.
 
-type Endpoint struct {
-	Port int
+type CredentialCheck struct {
+	Result string `json:"result"`
+	Class  string `json:"class,omitempty"`
+	Via    string `json:"via,omitempty"`
 }
-    Endpoint is where the store listens inside its own container.
+    CredentialCheck is the value-free answer of one authentication attempt
+    with a client's credential: the result and a short class (for example
+    "authenticated", "no-credential", "wrong-password", "max-clients").
+    Via is "uri" when the credential came as a connection URI, whose own host
+    was dialled. It never carries a user name, password or record.
 
-type Engine string
-    Engine names a store engine; the values match the application map's
-    data.engine.
+func ParseCredentialCheck(stdout string) (CredentialCheck, error)
+    ParseCredentialCheck reads the result line of a credential check.
 
-const (
-	EnginePostgres  Engine = "postgres"
-	EngineMySQL     Engine = "mysql"
-	EngineMongoDB   Engine = "mongodb"
-	EngineRedis     Engine = "redis"
-	EngineMemcached Engine = "memcached"
-	EngineConsul    Engine = "consul"
-)
-    Known engines. Only engines with an Adapter can be read.
-
-func ParseQueryID(id string) (Engine, string, bool)
-    ParseQueryID returns the engine and component of a store-state pod read.
-    Engines carry no '-', so the first segment after the prefix is the engine.
-
-type Facts struct {
-	Engine      Engine        `json:"engine"`
-	Component   string        `json:"component,omitempty"`
-	Pod         sdk.ObjectRef `json:"pod,omitzero"`
-	At          time.Time     `json:"at,omitzero"`
-	Writable    *bool         `json:"writable,omitempty"`
-	Connections *Gauge        `json:"connections,omitempty"`
-	Memory      *Gauge        `json:"memory,omitempty"`
-	Items       []Item        `json:"items"`
-	Unread      []ItemKind    `json:"unread,omitempty"`
-	Error       string        `json:"error,omitempty"`
+type CredentialInputs struct {
+	User     string
+	Password string
+	Database string
+	URI      string
 }
-    Facts is one read of one store instance. Writable, Connections and Memory
-    are nil when the read could not establish them. Error marks an unavailable
-    read; such Facts are never healthy. Unread lists the kinds the store
-    refused to show (a KindRefusal item says why): their items may be missing,
-    and a missing one is unknown, not removed.
-
-func Apply(f Facts, changes []Change) Facts
-    Apply returns facts with each change's After in place of its key: Apply(a,
-    Diff(a, b)) has the items of b.
-
-func NewFacts(engine Engine, items []Item) Facts
-    NewFacts returns facts whose items are sorted and unique by key (the last
-    item of a key wins).
-
-func Observe(ctx sdk.DetectionContext, d sdk.Detector) ([]Facts, error)
-    Observe returns the facts of every store Pod the read reached, for a
-    baseline or a diagnosis. Any missing, failed or unparsable read is an error.
-
-func (f Facts) Lookup(k Key) (Item, bool)
-    Lookup returns the item with key k.
-
-func (f Facts) Validate() error
-    Validate checks the item bounds, kinds, order and uniqueness.
-
-type Gauge struct {
-	Used int64 `json:"used"`
-	Max  int64 `json:"max"`
-}
-    Gauge is current use against a cap; Max 0 means no cap.
-
-func (g Gauge) Near(fraction float64) bool
-    Near reports use at or above fraction of a set cap.
-
-type Item struct {
-	Kind  ItemKind `json:"kind"`
-	Scope string   `json:"scope,omitempty"`
-	Name  string   `json:"name"`
-	Value string   `json:"value"`
-}
-    Item is one value-free fact. Scope is the database, collection or keyspace,
-    or empty for the server. Value is a setting value, a count, a digest,
-    a flag list or "active"; it is never a record or a secret.
-
-func (i Item) Key() Key
-    Key returns the item's identity.
-
-func (i Item) Less(o Item) bool
-    Less orders items by key.
-
-type ItemKind string
-    ItemKind classifies a fact. The set is closed; each engine uses a subset.
-
-const (
-	// KindSetting is a runtime setting and its value.
-	KindSetting ItemKind = "setting"
-	// KindWriteBlock is an active reason the store refuses writes; Value is "active".
-	KindWriteBlock ItemKind = "write-block"
-	// KindRole is the replication role.
-	KindRole ItemKind = "role"
-	// KindPrincipal is a user or credential requirement: its flags and grants,
-	// never a secret.
-	KindPrincipal ItemKind = "principal"
-	// KindNamespace is an inventory count of a database, collection or keyspace.
-	KindNamespace ItemKind = "namespace"
-	// KindIndex is an index and a digest of its definition.
-	KindIndex ItemKind = "index"
-	// KindValidator is a schema validator and a digest of its text.
-	KindValidator ItemKind = "validator"
-	// KindLock is a lock that blocks writers and its count.
-	KindLock ItemKind = "lock"
-	// KindKeyPattern is a count of keys or documents of one pattern.
-	KindKeyPattern ItemKind = "key-pattern"
-	// KindRegistryEntry is a count of registered entries.
-	KindRegistryEntry ItemKind = "registry-entry"
-	// KindRefusal is the store refusing one of SDO's own reads; Value is the
-	// class (auth-required, no-permission, max-clients, loading, unsupported,
-	// refused).
-	KindRefusal ItemKind = "refusal"
-)
-    Item kinds.
-
-type Key struct {
-	Kind  ItemKind `json:"kind"`
-	Scope string   `json:"scope,omitempty"`
-	Name  string   `json:"name"`
-}
-    Key identifies an item across two Facts.
-
-func (k Key) Less(o Key) bool
-    Less orders keys by kind, scope and name.
-
-func (k Key) String() string
+    CredentialInputs names, never holds, the client's credential: the
+    environment variables (a "<NAME>_FILE" variable names a mounted file) that
+    carry its user, password, database (the postgres database or the mongodb
+    authentication database) or connection URI. Empty names are discovered from
+    the variable names the way the store read discovers its own.
 ```

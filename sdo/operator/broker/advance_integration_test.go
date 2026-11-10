@@ -56,13 +56,6 @@ func gitOut(t *testing.T, root string, args ...string) string {
 	return strings.TrimSpace(testutil.Git(t, root, args...))
 }
 
-// The first test of the package to need an onboarded world pays for building
-// its template, so each variant is built by a test of its own, declared first,
-// and no behavior test carries the setup in its duration.
-func TestOnboardedWorldWithADeployerEditBuilds(t *testing.T) { onboardedTemplate(t, true) }
-
-func TestOnboardedWorldOfAProvidedDeploymentBuilds(t *testing.T) { onboardedTemplate(t, false) }
-
 func newAdvanceWorld(t *testing.T) *advanceWorld { return newOnboardedWorld(t, true) }
 
 // newOnboardedWorld onboards the synthetic source; editedByDeployer false is a

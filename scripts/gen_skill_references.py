@@ -136,8 +136,15 @@ CARD_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
         ),
     ),
     (
-        "Store records",
-        ("program.InvalidateDerived", "program.StoreBackup", "program.RepairData", "program.RestoreBackup"),
+        "Stores",
+        (
+            "program.InvalidateDerived",
+            "program.StoreBackup",
+            "program.RepairData",
+            "program.RestoreBackup",
+            "program.RestoreStoreItem",
+            "program.CheckStoreCredential",
+        ),
     ),
     (
         "Any other hand repair: commands, HTTP, Jobs, raw API objects",
@@ -320,6 +327,7 @@ def main() -> None:
                 "./usage",
                 "./logs",
                 "./podread",
+                "./vantage",
                 "./storestate",
             ),
             "sdk",

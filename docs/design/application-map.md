@@ -82,6 +82,11 @@ Field rules (all blocking unless marked note):
 - Every `holds_data` component that lies on the path of a writing operation lies on the path of some
   `read-later` probe.
 - Every edge's endpoints lie together on some operation path (note `map.unexercised-edge` otherwise).
+- An operation broken in the application as deployed is covered by a probe whose health-probe workload scenario
+  is declared `knownBroken` (a short reason and the baseline `failsWith` statuses). The probe still runs; the
+  traffic detector never fires on it nor waits for it to pass, and notes (O3, never a gate) when it starts
+  working or fails differently. Each such probe must exercise an operation no gated probe covers, and these
+  operations are at most half of the map's (`map.known-broken`); a workload keeps at least one gated scenario.
 
 Each gap is one diagnostic naming the operation, component or edge (`map.uncovered-operation`,
 `map.uncovered-write`, `map.uncovered-data`, `map.path-mismatch`, `map.unknown-name`, `map.schema`). They block
@@ -99,13 +104,11 @@ External actions get a data effect per component they reach: `read`, `derived-in
 `data-write` or `unknown` (`program.DataEffect`). Go computes it and an author cannot lower it. An `Exec`,
 `EnsureExec`, `EnsureHTTP`, `RunScript` or `RunJob` is `unknown` on the component whose Pod it runs in and on each
 component its inputs name: a Service, workload or Pod given as a value's object, or named in its command, script,
-URL or manifest text. An input the stage cannot read before the run (for example a value from accepted source)
-counts as reaching every `holds_data` component. `EnsureDatabaseUser` is `store-setting` on its target. On a
-`holds_data` component the stage allows only `read`; `derived-invalidate`, `store-setting` and `data-write` wait for
-the map roles, typed restores and backups that make them safe, and `unknown` is refused. This is a rule about kinds
-of action, not a trust gate. Without a map nothing is refused. The shared memory check has no
-matching rule because a program binds its workload from live findings, so its source does not say which one it will
-touch.
+URL or manifest text. An input SDO cannot read before the run (for example a value from accepted source) counts as
+reaching every `holds_data` component. `EnsureDatabaseUser` is `store-setting` on its target; the typed store
+actions declare their own class. The effect is recorded evidence, not a gate: the stage runs these actions, and only
+the Pod-replacing rule above refuses. The shared memory check has no matching rule because a program binds its
+workload from live findings, so its source does not say which one it will touch.
 
 ## Repairs that may have lost data
 
@@ -119,12 +122,11 @@ blockers. Reflection gets it as `data_at_risk` and may not publish learning from
 same fact as `data_at_risk[]` from `sdo verify`. A Pod replaced before the
 incident opened does not count.
 
-The same closure check also covers repairs that may have changed records in place. If an applied action had an
-`unknown` or `data-write` effect on a `holds_data` component and no backup was taken first (the SDK has no backup
-action yet, so none is), the closure commits `unconfirmed` with reason `DATA_MAY_BE_LOST` and a detail naming the
-workload and the action. The responder may still make such a repair; it just cannot feed learning. A typed
-`store-setting` change (`EnsureDatabaseUser`) does not count. At closure a recorded plan keeps its objects but not
-the text of its bound values, so only the Pods and objects it names count there.
+Repairs that change records in place do not make the closure unconfirmed. The closure records each applied data
+effect on a `holds_data` component as a `data effect:` note on the outcome (`source_check_notes`), and `sdo verify`
+lists the same lines in `data_effects[]`. For an `unknown` or `data-write` effect the note says whether a backup of
+this incident held the records it could change. At closure a recorded plan keeps its objects but not the text of its
+bound values, so only the Pods and objects it names count there.
 
 ## What the map does not hold
 

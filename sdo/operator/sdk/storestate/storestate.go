@@ -142,8 +142,11 @@ type Facts struct {
 	Connections *Gauge        `json:"connections,omitempty"`
 	Memory      *Gauge        `json:"memory,omitempty"`
 	Items       []Item        `json:"items"`
-	Unread      []ItemKind    `json:"unread,omitempty"`
-	Error       string        `json:"error,omitempty"`
+	// Holders groups the connections the store holds by peer and state; nil
+	// when the read could not list them. It is never part of Diff.
+	Holders []Holder   `json:"holders,omitempty"`
+	Unread  []ItemKind `json:"unread,omitempty"`
+	Error   string     `json:"error,omitempty"`
 }
 
 // unread reports whether items of kind may be missing from f.
@@ -193,6 +196,9 @@ func (f Facts) Validate() error {
 		if !knownKinds[k] {
 			return fmt.Errorf("store facts mark unknown kind %q unread", k)
 		}
+	}
+	if len(f.Holders) > MaxHolders {
+		return fmt.Errorf("store facts carry %d holder groups, more than %d", len(f.Holders), MaxHolders)
 	}
 	if size > MaxItemBytes {
 		return fmt.Errorf("store facts carry %d bytes, more than %d", size, MaxItemBytes)
@@ -310,7 +316,10 @@ type Adapter interface {
 	Parse(stdout string) (Facts, error)
 }
 
-var adapters = map[Engine]Adapter{EngineRedis: redisAdapter{}, EngineMongoDB: mongoAdapter{}, EnginePostgres: postgresAdapter{}}
+var adapters = map[Engine]Adapter{
+	EngineRedis: redisAdapter{}, EngineMongoDB: mongoAdapter{}, EnginePostgres: postgresAdapter{},
+	EngineMySQL: mysqlAdapter{}, EngineMemcached: memcachedAdapter{}, EngineConsul: consulAdapter{},
+}
 
 // AdapterFor returns the engine's adapter, or false when SDO has no reader for
 // the engine yet.

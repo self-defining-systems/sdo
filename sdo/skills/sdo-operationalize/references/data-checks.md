@@ -30,8 +30,11 @@ Reads by engine (all read-only; Go builds the command, bounds it and injects the
 |---|---|---|
 | mongodb | `database`, `collection`, `key`, `key_type`, `filter` (comparison and logic operators only) | the document's fields you assert on |
 | postgres | `table` (`[schema.]name`), `key` (column), `database`, `where` (columns, literals, `AND/OR/NOT`, `IS NULL`, `IN`, `LIKE`, `BETWEEN`; no functions) | the columns you assert on |
-| redis | `pattern` (one `{id}`, e.g. `"{id}:followers"`), `type` (string, hash, set, zset, list), `decode: json` for JSON strings, `key_type: number` to order ids numerically | hash: its fields; set, zset, list: `members` (at most 64; a zset highest score first) and `size`; string: `value` or the decoded JSON |
-| memcached | `pattern`, `decode: json`; `ids` or `range` only (memcached cannot list keys) | `value` or the decoded JSON |
+| redis | `pattern` (one `{id}`, e.g. `"{id}:followers"`), `type` (string, hash, set, zset, list), `decode` for strings, `key_type: number` to order ids numerically | hash: its fields; set, zset, list: `members` (at most 64; a zset highest score first) and `size`; string: `value` or the decoded JSON |
+| memcached | `pattern`, `decode`; `first` lists keys with `lru_crawler metadump` (in key order) | `value` or the decoded JSON |
+
+`decode` reads a string value as `text` (the field `value`), `json` (one document) or `ndjson` (one JSON document per
+line, as the list `lines`: assert `"lines[].field"`, or `bounds` with `count` on `lines`).
 
 Paths: `a.b` walks objects, `list[]` takes each element. Write a key with `[]` as a YAML string (`"members[]": digits`).
 Shape types: string, number, integer, digits (an integer or a string of digits), boolean, object, array, null,

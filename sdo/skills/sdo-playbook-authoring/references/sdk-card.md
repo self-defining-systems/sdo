@@ -9,7 +9,7 @@ Full [SDK](program-sdk.md).
 ## Program shape
 
 - `type ProgramSpec struct{ID string; Params []ParamSpec}`: names a playbook program (its directory ID) and declares the roles and values a finding or the responder binds; Diagnose and Mitigate must return identical specs.
-- `type ParamSpec struct{Name string; Kind Kind; Required bool; ValueKind ValueKind; Default any}`: declares roles bound by triggering detector findings; Diagnose reads additional objects through ReadView by name or relation, never role enumeration.
+- `type ParamSpec struct{Name string; Kind Kind; Required bool; ValueKind ValueKind; Default any}`: declares roles bound by triggering detector findings.
 - `type Bindings struct{Objects ObjectBindings; Values map[string]any}`: contains object identities and separately typed scalar parameters.
 - `func (b Bindings) Parameter(spec ProgramSpec, name string) (any, error)`: resolves one declared value, including a validated default.
 - `type Verdict struct{Result Result; Evidence []Evidence; Question string}`: is what Diagnose returns; NeedsJudgement requires a Question.
@@ -40,7 +40,7 @@ Full [SDK](program-sdk.md).
 - `type ContainerChange struct{Kind ContainerKind; Name string; Added bool; Removed bool; Fields []string}`: is one pod-template container that differs from accepted source, matched by kind and name.
 - `func (d SourceDiff) Field(path string) (FieldValues, error)`: compares one dotted field path, such as "spec.replicas", on both sides.
 - `func (f FieldValues) Differs() bool`: is true only for a field accepted source declares whose live value differs or is gone.
-- `type SetField struct{Ref sdk.ObjectRef; Path string; Value Value; Reason string; DocumentFormat string; DocumentPath []string}`: writes one schema-checked field (or one ConfigMap JSON/YAML entry) from a Value: accepted source, an observation or a declared parameter.
+- `type SetField struct{Ref sdk.ObjectRef; Path string; Value Value; Reason string; DocumentFormat string; DocumentPath []string}`: writes one schema-checked field (or one ConfigMap JSON/YAML entry) from a Value.
 - `func ValidateSetField(f SetField) error`: checks a dotted vocabulary path or a JSON pointer on a named nonsecret object.
 - `type ReconcileFromSource struct{ Ref sdk.ObjectRef }`: restores a whole source-owned object to accepted source, removing additions SourceDiff reports; prefer SetField for one field.
 - `type CreateFromSource struct{Ref sdk.ObjectRef; Reason string}`: restores a missing named object from accepted source.
@@ -52,8 +52,8 @@ Full [SDK](program-sdk.md).
 
 - `DetectionContext.PodAdmission() (PodAdmissionResult, bool)`: returns the frozen dry-run result, false when unobserved.
 - `ReadView.AdmissionWebhooksFor(subject sdk.ObjectRef) ([]AdmissionWebhook, error)`: lists the webhook entries that admit Pod creation for a Namespace or workload; cluster webhook names need no observation grant.
-- `type AdmissionWebhook struct{Configuration sdk.ObjectRef; Webhook string; FailurePolicy string; Service *sdk.ObjectRef; Port int32; ReadyEndpoints int; ServingSecrets []WebhookSecretKey; CABundle string}`: is one webhook entry admitting Pods in the namespace.
-- `type WebhookCA struct{Ref sdk.ObjectRef; Webhook string; SecretNamespace string; SecretName string; SecretKey string}`: identifies one webhook and a Secret key.
+- `type AdmissionWebhook = sdk.AdmissionWebhook`: is one webhook entry admitting Pods (sdk.AdmissionWebhook).
+- `type WebhookCA = sdk.WebhookCA`: identifies one webhook and a Secret key (sdk.WebhookCA).
 - `ReadView.WebhookCAMatchesSecret(WebhookCA) (bool, error)`: reports whether one webhook's caBundle equals a Secret key without exposing either value.
 - `type SyncWebhookCA struct{Target WebhookCA; Reason string}`: Webhook repairs automatically requeue affected admission-blocked ReplicaSets.
 - `type RetryAdmission struct{ Ref sdk.ObjectRef }`: requeues one ReplicaSet that still needs Pods after admission FailedCreate.
@@ -84,24 +84,26 @@ Full [SDK](program-sdk.md).
 - `type DatabaseRole struct{Database string; Name string}`: is one directly granted role in a named database.
 - `type EnsureDatabaseUser struct{Target DatabaseTarget; User string; Roles []DatabaseRole; Password CredentialRef; Reason string}`: creates a missing user or replaces all of an existing user's direct roles with Roles.
 
-## Store records
+## Stores
 
-- `type InvalidateDerived struct{Target StoreTarget; Scope DataScope; Reason string}`: drops a derived cache's entries to refill from source.
-- `type StoreBackup struct{ID string; Target StoreTarget; Scope DataScope; Reason string}`: copies a scope's records to backup storage.
-- `type RepairData struct{Target StoreTarget; Scope DataScope; Statement string; ExpectMin int; ExpectMax int; Backup string; Reason string}`: runs one write on a backed-up scope.
-- `type RestoreBackup struct{Target StoreTarget; Backup string; Reason string}`: puts a StoreBackup of this incident back.
+- `type InvalidateDerived struct{Target StoreTarget; Scope DataScope; Reason string}`: drops a derived cache's entries.
+- `type StoreBackup struct{ID string; Target StoreTarget; Scope DataScope; Reason string}`: copies a scope's records.
+- `type RepairData struct{Target StoreTarget; Scope DataScope; Statement string; MemberPredicate *MemberPredicate; CopyFrom *DataScope; ExpectMin int; ExpectMax int; Backup string; Reason string}`: runs one write on a scope.
+- `type RestoreBackup struct{Target StoreTarget; Backup string; Reason string}`: puts an incident's StoreBackup back.
+- `type RestoreStoreItem struct{Target StoreTarget; Change storestate.Change; EndSessions bool; Reason string}`: puts a store-state item back to its baseline.
+- `type CheckStoreCredential struct{Target StoreTarget; Client sdk.ObjectRef; Container string; Credential storestate.CredentialInputs; Reason string}`: tests a client's credential against a store.
 
 ## Any other hand repair: commands, HTTP, Jobs, raw API objects
 
 - `type RunScript struct{Script string; Env map[string]Value; Timeout time.Duration; Reason string}`: is a first-class learnable mitigation.
 - `type Exec struct{Pod sdk.ObjectRef; Container string; Command []Value}`: executes a provenance-derived command.
-- `type EnsureExec struct{Observe Command; Ensure Command; Expect int32; Reason string}`: runs Observe in a Pod and, unless it already exits with Expect, runs Ensure and observes again; effects are irreversible.
-- `type EnsureHTTP struct{Observe HTTPRequest; Ensure HTTPRequest; Expect int32; Reason string}`: sends Observe and, unless it already returns Expect, sends Ensure and observes again; effects are irreversible.
+- `type EnsureExec struct{Observe Command; Ensure Command; Expect int32; Reason string}`: runs Observe in a Pod and, unless it already exits with Expect, runs Ensure and observes again.
+- `type EnsureHTTP struct{Observe HTTPRequest; Ensure HTTPRequest; Expect int32; Reason string}`: sends Observe and, unless it already returns Expect, sends Ensure and observes again.
 - `type RunJob struct{Object ApplyObject; Completion WaitFor}`: creates a named Job or Pod and waits for its actual completion.
 - `type ApplyObject struct{Ref sdk.ObjectRef; Object map[string]any; Mode string; Reason string}`: creates a missing object or merges desired fields into an existing object.
-- `type KubernetesRequest struct{Ref sdk.ObjectRef; Method string; Path string; Query map[string]string; ContentType string; Body []byte; Reason string}`: exposes the Kubernetes HTTP API, including subresources, cluster resources and discovered kinds.
+- `type KubernetesRequest struct{Ref sdk.ObjectRef; Method string; Path string; Query map[string]string; ContentType string; Body []byte; Reason string}`: exposes the Kubernetes HTTP API.
 
 ## Corpus receipt links
 
-- `type ScriptOriginReceipt struct{ScriptDigest string; ID string; IncidentID string; Success bool; StartedAt time.Time; CompletedAt time.Time; Resources []sdk.ObjectRef}`: is protected historical evidence: the original successful repair a learned step encodes.
+- `type ScriptOriginReceipt struct{ScriptDigest string; ID string; IncidentID string; Success bool; StartedAt time.Time; CompletedAt time.Time; Resources []sdk.ObjectRef}`: is protected evidence of a learned step's original successful repair.
 - `func ScriptDigest(script string) string`: identifies exact script bytes; application inputs belong in Env.

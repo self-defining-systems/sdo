@@ -115,7 +115,7 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 			return result, fmt.Errorf("runtime action is outside incident namespace")
 		}
 		switch a := a.(type) {
-		case program.DeletePod, program.Exec, program.EnsureDatabaseUser, program.StoreBackup, program.RepairData, program.RestoreBackup, program.InvalidateDerived:
+		case program.DeletePod, program.Exec, program.EnsureDatabaseUser, program.StoreBackup, program.RepairData, program.RestoreBackup, program.InvalidateDerived, program.RestoreStoreItem, program.CheckStoreCredential:
 			object, getErr := e.Client.Get(ctx, ref)
 			if getErr != nil || object == nil || !samePlanRef(object, ref) || object.GetUID() == "" || object.GetResourceVersion() == "" {
 				if _, database := a.(program.EnsureDatabaseUser); database {
@@ -292,14 +292,15 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 			}
 			result.ActionReports[i].Status = "applied"
 			continue
-		case program.StoreBackup, program.RepairData, program.RestoreBackup, program.InvalidateDerived:
+		case program.StoreBackup, program.RepairData, program.RestoreBackup, program.InvalidateDerived, program.RestoreStoreItem, program.CheckStoreCredential:
 			current, getErr := e.Client.Get(ctx, ref)
 			if getErr != nil || current == nil || current.GetUID() != items[i].uid {
 				return result, fmt.Errorf("store action refused: Pod identity changed")
 			}
 			wrote, storeErr := e.applyStoreAction(ctx, incident, a, string(items[i].uid), &result.ActionReports[i])
 			if wrote {
-				result.Patches = append(result.Patches, PlanPatch{Ref: ref, Operation: storePatchOperation(a), Irreversible: true})
+				_, restore := a.(program.RestoreStoreItem)
+				result.Patches = append(result.Patches, PlanPatch{Ref: ref, Operation: storePatchOperation(a), Irreversible: !restore})
 			}
 			if storeErr != nil {
 				if wrote {

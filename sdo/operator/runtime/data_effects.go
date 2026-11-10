@@ -82,11 +82,15 @@ func (r dataReach) effects(action program.Action) dataEffects {
 		text(fmt.Sprint(resolved))
 	}
 	if target, declared, ok := program.DataActionEffect(action); ok {
-		// A typed store action declares its effect, and the executor holds
-		// it to that: it runs only the engine's fixed command for the class
-		// on the component the accepted map grounds.
+		// A typed store action declares its effect: the executor runs only
+		// the engine's fixed command for the class on the component the
+		// accepted map grounds. Dropping the entries of a component the map
+		// does not mark derived drops records, so it is a data write.
 		result.verb = storeActionVerb(action)
 		effect = declared
+		if holder := r.holders.named(target.Component); effect == program.EffectDerivedInvalidate && holder.HoldsData && (holder.Data == nil || holder.Data.Role != appmap.RoleDerived) {
+			effect = program.EffectDataWrite
+		}
 		object(target.Pod)
 		if r.holders.named(target.Component).HoldsData {
 			reached[target.Component] = true
@@ -247,42 +251,51 @@ func mayChangeRecords(effect program.DataEffect) bool {
 	return effect == program.EffectDataWrite || effect == program.EffectUnknown
 }
 
-// unbackedDataWrites names the holds_data workloads whose records an applied
-// action may have changed with no backup taken first. Only a typed store write
-// can be backed: a RepairData whose named StoreBackup of this incident covers
-// its scope, or a RestoreBackup after a fresh StoreBackup of the scope it
-// overwrites. An opaque command never is. Health probes see only the data
-// they wrote, so an unbacked repair cannot be shown to have kept the rest. The
-// responder stays free to make it; the closure just cannot feed learning. Only
-// inputs SDO can still see count here: a recorded plan keeps its objects but not
+// appliedDataEffects records, as evidence, the data effect each applied action
+// had on each holds_data component it reached during the incident, and whether
+// a backup of this incident held the records a write could change. Nothing
+// here refuses an action or changes the outcome: the responder and learned
+// programs may do anything, and the record says what SDO could see of it. Only
+// inputs SDO can still see count: a recorded plan keeps its objects but not
 // the text of its bound values.
-func unbackedDataWrites(view sdk.DetectionContext, applications []RecordedPlanApplication, holders dataHolders, namespace string) []string {
+func appliedDataEffects(view sdk.DetectionContext, applications []RecordedPlanApplication, holders dataHolders, namespace string) []string {
 	if len(holders) == 0 || view == nil {
 		return nil
 	}
 	reach := dataReach{view: view, holders: holders, namespace: namespace}
-	risks := map[string]string{}
+	seen := map[string]bool{}
+	var records []string
 	backups := appliedBackups(applications)
 	for _, application := range applications {
 		for _, action := range application.Result.ActionsApplied {
-			if backedStoreWrite(action, backups) {
-				continue
-			}
 			effects := reach.effects(action)
+			backed := backedStoreWrite(action, backups)
 			for _, touch := range effects.touches {
 				workload := holders.named(touch.Component).Workload
-				if mayChangeRecords(touch.Effect) && risks[workload] == "" {
-					risks[workload] = fmt.Sprintf("%s holds data, and a %s reached it during the incident with no backup taken first (data effect %s); health probes cannot show whether its records survived", workload, effects.verb, touch.Effect)
+				record := fmt.Sprintf("data effect: a %s reached %s (holds_data) with effect %s", effects.verb, workload, touch.Effect)
+				if mayChangeRecords(touch.Effect) {
+					if backed {
+						record += "; a backup of this incident held the records it could change"
+					} else {
+						record += "; no backup of this incident held the records it could change"
+					}
+				}
+				if !seen[record] {
+					seen[record] = true
+					records = append(records, record)
+				}
+			}
+			if effects.unreadInput {
+				record := fmt.Sprintf("data effect: a %s used an input SDO could not read, so it may have reached any holds_data workload (%s) with effect unknown", effects.verb, strings.Join(holders.workloads(), ", "))
+				if !seen[record] {
+					seen[record] = true
+					records = append(records, record)
 				}
 			}
 		}
 	}
-	result := make([]string, 0, len(risks))
-	for _, risk := range risks {
-		result = append(result, risk)
-	}
-	sort.Strings(result)
-	return result
+	sort.Strings(records)
+	return records
 }
 
 // appliedBackups lists the StoreBackup records the executor verified during
@@ -326,7 +339,7 @@ func backedStoreWrite(action program.Action, backups []program.StoreBackupRecord
 	return false
 }
 
-// storeActionVerb names a typed store action in a refusal or risk.
+// storeActionVerb names a typed store action in a data-effect record.
 func storeActionVerb(action program.Action) string {
 	switch program.DataAction(action).(type) {
 	case program.StoreBackup:
@@ -335,6 +348,10 @@ func storeActionVerb(action program.Action) string {
 		return "data repair"
 	case program.RestoreBackup:
 		return "backup restore"
+	case program.RestoreStoreItem:
+		return "store-item restore"
+	case program.CheckStoreCredential:
+		return "credential check"
 	}
 	return "derived-store invalidation"
 }

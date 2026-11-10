@@ -35,7 +35,8 @@ func (s *run) mapFinding(layer Layer, f appmap.Finding, line int) {
 
 type workloadScenarios struct {
 	Scenarios []struct {
-		ID string `yaml:"id"`
+		ID          string `yaml:"id"`
+		KnownBroken any    `yaml:"knownBroken"`
 	} `yaml:"scenarios"`
 }
 
@@ -73,6 +74,9 @@ func (s *run) applicationMap(ctx context.Context) {
 		w := appmap.Workload{Name: name}
 		for _, scenario := range decoded.Scenarios {
 			w.Scenarios = append(w.Scenarios, scenario.ID)
+			if scenario.KnownBroken != nil {
+				w.KnownBroken = append(w.KnownBroken, scenario.ID)
+			}
 		}
 		workloads = append(workloads, w)
 	}

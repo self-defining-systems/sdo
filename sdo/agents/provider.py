@@ -25,6 +25,9 @@ MODEL_ENV: dict[str, str] = dict(_ENVIRONMENT["models"])
 EFFORT_ENV: str = _ENVIRONMENT["effort"]
 DEFAULT_AGENT_EFFORT: str = _ENVIRONMENT["default_effort"]
 AGENT_EFFORTS: tuple[str, ...] = tuple(_ENVIRONMENT["efforts"])
+#: Seconds one lifecycle session (detection designer) may run; a slower effort or a larger app needs more.
+LIFECYCLE_TIMEOUT_ENV: str = _ENVIRONMENT["lifecycle_timeout"]
+DEFAULT_LIFECYCLE_TIMEOUT_SECONDS: int = int(_ENVIRONMENT["default_lifecycle_timeout_seconds"])
 SESSION_DIR_ENV = "SDO_SESSION_DIR"
 RESOLVED_LOG_NAME = "agent-resolved.jsonl"
 
@@ -51,6 +54,20 @@ def agent_effort(environ: Mapping[str, str] | None = None) -> str:
     if effort not in AGENT_EFFORTS:
         raise ValueError(f"unsupported agent effort {effort!r} ({EFFORT_ENV} must be one of {AGENT_EFFORTS})")
     return effort
+
+
+def lifecycle_timeout_seconds(environ: Mapping[str, str] | None = None) -> int:
+    """The configured lifecycle session limit (``DEFAULT_LIFECYCLE_TIMEOUT_SECONDS`` when unset)."""
+
+    environ = os.environ if environ is None else environ
+    raw = environ.get(LIFECYCLE_TIMEOUT_ENV, "").strip()
+    if not raw:
+        return DEFAULT_LIFECYCLE_TIMEOUT_SECONDS
+    if not raw.isdigit() or int(raw) <= 0:
+        raise ValueError(
+            f"unsupported lifecycle timeout {raw!r} ({LIFECYCLE_TIMEOUT_ENV} must be positive whole seconds)"
+        )
+    return int(raw)
 
 
 def resolve_agent(role: str, model: str, environ: Mapping[str, str] | None = None) -> ResolvedAgent:

@@ -60,59 +60,24 @@ func acceptedDataWorkloads(ctx context.Context, read gitRead, repository, commit
 
 // dataWorkloadWrite explains why plan may not run on the automatic path, or
 // returns "". Every action that restarts, removes, scales down or rewrites a
-// data-holding workload or one of its Pods is refused, and so is every external
-// action with an effect on a holds_data component that automaticDataEffect
-// does not allow. Creating or scaling up from zero loses nothing.
+// data-holding workload or one of its Pods is refused. Exec, RunScript and the
+// other external actions keep the Pods as far as the plan can tell, and
+// creating or scaling up from zero loses nothing. What an external action does
+// to stored records is recorded as its data effect, never refused here.
 func dataWorkloadWrite(view sdk.DetectionContext, plan program.Plan, holders dataHolders, namespace string) string {
 	if len(holders) == 0 {
-		for _, action := range plan.Actions {
-			if why := neverAutomaticStoreWrite(action); why != "" {
-				return why
-			}
-		}
 		return ""
 	}
-	reach := dataReach{view: view, holders: holders, namespace: namespace}
 	for _, action := range plan.Actions {
-		if why := neverAutomaticStoreWrite(action); why != "" {
-			return why
-		}
 		ref, verb := podReplacingWrite(view, action)
-		if verb != "" && (ref.Namespace == "" || ref.Namespace == namespace) {
-			if workload := owningWorkload(view, ref); holders[workload].HoldsData {
-				return fmt.Sprintf("%s of %s/%s refused on the automatic path: the application map marks %s holds_data, and replacing its Pods may lose its data; check what it holds, then act by hand if that is right", verb, ref.Kind, ref.Name, workload)
-			}
+		if verb == "" || (ref.Namespace != "" && ref.Namespace != namespace) {
+			continue
 		}
-		effects := reach.effects(action)
-		for _, touch := range effects.touches {
-			if why := automaticDataEffect(touch.Effect); why != "" {
-				workload := holders.named(touch.Component).Workload
-				return fmt.Sprintf("%s reaching %s refused on the automatic path: the application map marks %s holds_data and the %s's data effect there is %s; %s. Check what it does to the data, then act by hand if that is right", effects.verb, workload, workload, effects.verb, touch.Effect, why)
-			}
-		}
-		if effects.unreadInput {
-			return fmt.Sprintf("%s refused on the automatic path: an input it uses cannot be read before it runs, so it may reach any workload the application map marks holds_data (%s). Check what it does to the data, then act by hand if that is right", effects.verb, strings.Join(holders.workloads(), ", "))
+		if workload := owningWorkload(view, ref); holders[workload].HoldsData {
+			return fmt.Sprintf("%s of %s/%s refused on the automatic path: the application map marks %s holds_data, and replacing its Pods may lose its data; check what it holds, then act by hand if that is right", verb, ref.Kind, ref.Name, workload)
 		}
 	}
 	return ""
-}
-
-// automaticDataEffect is the automatic stage's rule for one effect on a
-// holds_data component: "" allows it, anything else says what would. Only a
-// read runs today. The other classes wait for the typed actions that make them
-// safe, and an opaque command is never trusted.
-func automaticDataEffect(effect program.DataEffect) string {
-	switch effect {
-	case program.EffectRead:
-		return ""
-	case program.EffectDerivedInvalidate:
-		return "dropping derived entries runs automatically only once the map says the component is derived and its source is healthy"
-	case program.EffectStoreSetting:
-		return "a store setting runs automatically only as a typed restore of a recorded prior value"
-	case program.EffectDataWrite:
-		return "a data write never runs automatically; a responder takes a StoreBackup of the scope, then RepairData"
-	}
-	return "SDO cannot see what an opaque command does to stored records"
 }
 
 // podReplacingWrite names the object an action would replace or remove Pods of.
@@ -254,38 +219,4 @@ func owningWorkload(view sdk.DetectionContext, ref sdk.ObjectRef) string {
 		}
 	}
 	return kind + "/" + name
-}
-
-// neverAutomaticStoreWrite refuses a typed record write on the automatic path,
-// whatever the map says of its target: a repair or restore is a responder's
-// judgement, backed or not.
-func neverAutomaticStoreWrite(action program.Action) string {
-	switch a := program.DataAction(action).(type) {
-	case program.RepairData:
-		return fmt.Sprintf("data repair of %s refused on the automatic path: a record write never runs automatically; a responder checks the count, takes a StoreBackup and repairs by hand", a.Target.Component)
-	case program.RestoreBackup:
-		return fmt.Sprintf("backup restore of %s refused on the automatic path: restoring a backup is a responder's decision", a.Target.Component)
-	}
-	return ""
-}
-
-// storeStageRefusal runs the live guard of every InvalidateDerived in plan:
-// the automatic stage may drop a derived copy only while the map marks it
-// derived and each source passes its store-state checks. It returns why not,
-// or "".
-func (e PlanExecutor) storeStageRefusal(ctx context.Context, incident IncidentRequest, plan program.Plan) string {
-	for _, action := range plan.Actions {
-		a, ok := program.DataAction(action).(program.InvalidateDerived)
-		if !ok {
-			continue
-		}
-		run, err := e.groundStore(ctx, incident, a.Target, "")
-		if err != nil {
-			return fmt.Sprintf("derived-store invalidation of %s refused on the automatic path: %v", a.Target.Component, err)
-		}
-		if problems := run.derivedGuard(ctx); len(problems) > 0 {
-			return fmt.Sprintf("derived-store invalidation of %s refused on the automatic path: %s", a.Target.Component, strings.Join(problems, "; "))
-		}
-	}
-	return ""
 }

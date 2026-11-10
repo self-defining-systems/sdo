@@ -33,6 +33,7 @@ const SyntheticHeader = "X-SDO-Synthetic" ...
 const APIVersion = "sdo.dev/v1alpha1" ...
 const DateLayout = "2006-01-02"
 const DefaultHealthMinDuration = 9 * time.Second
+const MaxKnownBrokenReason = 200
 const MaxLinkExcerpt = 256
 const RuleIDPrefix = "scenario-slo."
 var RequiredFaultClasses = []FaultClass{ ... }
@@ -43,7 +44,9 @@ func CheckDetects(ctx context.Context, scenario Scenario, class FaultClass) erro
 func DefaultLatencyNote(id string) string
 func DefaultLatencyScenarios(workloads []Workload) []string
 func FromSeedPair(key string, count int, first func(index int) string, ...) (Param, Param)
+func KnownBrokenChanges(window Window) string
 func LinkFinding(spec sdk.DetectorSpec, namespace string, window Window, ...) (sdk.Finding, bool)
+func LinkFindingIn(spec sdk.DetectorSpec, namespace string, setting LinkSetting, ...) (sdk.Finding, bool)
 func NewDetector(spec sdk.DetectorSpec, workload string) sdk.Detector
 func NewLinkDetector(spec sdk.DetectorSpec, workload string) sdk.Detector
 func ScenarioFinding(spec sdk.DetectorSpec, namespace string, workload Workload, ...) sdk.Finding
@@ -69,6 +72,7 @@ type HTTPEndpoint struct{ ... }
     func GET(path string, query Params) *HTTPEndpoint
     func POST(path string, query Params) *HTTPEndpoint
     func PUT(path string, query Params) *HTTPEndpoint
+type KnownBroken struct{ ... }
 type Link struct{ ... }
     func UndrivenLinks(catalog Catalog, workloads []Workload) []Link
 type LinkCondition string
@@ -79,11 +83,15 @@ type LinkGRPCOptions struct{ ... }
 type LinkHTTPOptions struct{ ... }
 type LinkJudgement struct{ ... }
     func JudgeLink(window Window, observed LinkObservations) (LinkJudgement, bool)
+    func JudgeLinkIn(setting LinkSetting, observed LinkObservations) (LinkJudgement, bool)
 type LinkObservations struct{ ... }
 type LinkProtocol string
     const LinkProtocolTCP LinkProtocol = "tcp" ...
 type LinkSample struct{ ... }
     func LinkFailing(window Window, observed LinkObservations) ([]LinkSample, bool)
+type LinkSetting struct{ ... }
+type LinkVantage string
+    const LinkVantageProber LinkVantage = "prober" ...
 type Outcome string
     const OutcomeOK Outcome = "ok" ...
 type Param interface{ ... }

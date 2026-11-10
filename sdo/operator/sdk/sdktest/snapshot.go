@@ -23,6 +23,7 @@ import (
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 	"sdo.dev/operator/sdk/usage"
+	"sdo.dev/operator/sdk/vantage"
 )
 
 type Snapshot struct {
@@ -69,6 +70,10 @@ type Snapshot struct {
 	Metrics map[string]metrics.Result `json:"metrics,omitempty"`
 	// PodReads holds frozen in-container command output by query ID.
 	PodReads map[string]podread.Result `json:"pod_reads,omitempty"`
+	// Vantage holds frozen vantage probe readings by probe ID.
+	Vantage map[string]vantage.Result `json:"vantage,omitempty"`
+	// Platform holds the frozen platform observation.
+	Platform *sdk.PlatformObservation `json:"platform,omitempty"`
 	// Alerts holds the frozen alerts of the evaluation cycle.
 	Alerts *metrics.AlertsResult `json:"alerts,omitempty"`
 	// Readings are the runtime observations made on this exact snapshot.
@@ -408,6 +413,23 @@ func (s Snapshot) PodReadResult(id string) (podread.Result, bool) {
 
 // PodReadResults implements podread.ResultSet: the recorded results.
 func (s Snapshot) PodReadResults() map[string]podread.Result { return maps.Clone(s.PodReads) }
+
+// VantageResult implements vantage.Source.
+func (s Snapshot) VantageResult(id string) (vantage.Result, bool) {
+	r, ok := s.Vantage[id]
+	return r, ok
+}
+
+// VantageResults implements vantage.ResultSet: the recorded results.
+func (s Snapshot) VantageResults() map[string]vantage.Result { return maps.Clone(s.Vantage) }
+
+// PlatformObservation implements sdk.PlatformSource.
+func (s Snapshot) PlatformObservation() (sdk.PlatformObservation, bool) {
+	if s.Platform == nil {
+		return sdk.PlatformObservation{}, false
+	}
+	return *s.Platform, true
+}
 
 func (s Snapshot) QueryMetrics(q metrics.Query) metrics.Result {
 	if err := q.Validate(); err != nil {

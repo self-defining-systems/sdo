@@ -58,13 +58,19 @@ const (
 	// the link. A single few-second data-plane stall stays below it.
 	LinkLossWindow  = 20
 	LinkLossPercent = 20
-	// LinkLatencyFactor and MinLinkLatencyBound set the slow bound: the
-	// median of the last Failures dials must exceed both LinkLatencyFactor
-	// times the healthy baseline and MinLinkLatencyBound.
+	// LinkLatencyFactor, LinkSpreadFactor and MinLinkLatencyBound set the
+	// slow bound: a window's median dial must exceed LinkLatencyFactor times
+	// the healthy baseline, the baseline plus LinkSpreadFactor times its
+	// spread, and MinLinkLatencyBound. Baseline and spread are first scaled by
+	// the slowdown the link's peers share (see JudgeLinkIn).
 	LinkLatencyFactor   = 5
+	LinkSpreadFactor    = 8
 	MinLinkLatencyBound = 50 * time.Millisecond
+	// LinkSlowWindows is how many consecutive windows of Failures dials must
+	// each be slow before a link is reported slow.
+	LinkSlowWindows = 3
 	// LinkBaselineSamples is how many first successful dials the prober
-	// takes the healthy baseline median from.
+	// takes the healthy baseline median and spread from.
 	LinkBaselineSamples = 10
 )
 const (
@@ -109,6 +115,9 @@ const DefaultHealthMinDuration = 9 * time.Second
     would otherwise dispatch a responder for nothing. Real faults in this suite
     are detected in 3-5s. Nine seconds clears the observed stalls with headroom
     while adding at most one more poll beyond real-fault detection.
+
+const MaxKnownBrokenReason = 200
+    MaxKnownBrokenReason bounds a KnownBroken reason.
 
 const MaxLinkExcerpt = 256
     MaxLinkExcerpt bounds response and error text stored in samples.
@@ -164,10 +173,24 @@ func FromSeedPair(key string, count int, first func(index int) string, second fu
     such as a user name and its password. The record index is kept in State
     under key, so later steps can reuse it with FromPrevious.
 
+func KnownBrokenChanges(window Window) string
+    KnownBrokenChanges describes the KnownBroken scenarios of window whose state
+    changed from their declaration: one that now meets its SLO, or one whose
+    recent failures include a status key outside FailsWith. It is empty when
+    every KnownBroken scenario still fails as declared or has too few samples to
+    judge. It is a note for the detection designer, never a finding.
+
 func LinkFinding(spec sdk.DetectorSpec, namespace string, window Window, observed LinkObservations) (sdk.Finding, bool)
     LinkFinding explains one link JudgeLink reports, with per-link p50/p95
     latency and failure classes. The primary resource is the target Service;
     the calling Service is related.
+
+func LinkFindingIn(spec sdk.DetectorSpec, namespace string, setting LinkSetting, observed LinkObservations) (sdk.Finding, bool)
+    LinkFindingIn explains a link JudgeLinkIn reports. A client-vantage finding
+    has its own rule ID (the prober's with a ".client" suffix) and names the
+    client Pod, so it stands next to the prober's judgement of the same edge:
+    slow from the client while fast from the prober places the impairment on the
+    client's egress.
 
 func NewDetector(spec sdk.DetectorSpec, workload string) sdk.Detector
     NewDetector returns a health detector that reports every qualified scenario
@@ -184,7 +207,9 @@ func NewLinkDetector(spec sdk.DetectorSpec, workload string) sdk.Detector
     of a link-probe workload that JudgeLink finds unreachable, intermittent or
     slow. It decides purely from the prober's samples; with no observations it
     reports nothing. The sample counts are the hysteresis, so unlike NewDetector
-    it does not add DefaultHealthMinDuration.
+    it does not add DefaultHealthMinDuration. Unreachable and intermittent links
+    are critical; a slow link still serves, so it is a warning: batch warnings
+    for slow links to open incidents.
 
 func ScenarioFinding(spec sdk.DetectorSpec, namespace string, workload Workload, scenario Descriptor, verdict SLOVerdict) sdk.Finding
     ScenarioFinding explains one unhealthy scenario. The primary resource is
@@ -200,52 +225,4 @@ TYPES
 
 type Arrival string
     Arrival is the inter-arrival pattern of iterations.
-
-const (
-	ArrivalUniform Arrival = "uniform"
-	ArrivalPoisson Arrival = "poisson"
-)
-type Catalog []Scenario
-    Catalog is the set of scenarios an application's generators provide.
-
-func (c Catalog) Scenario(id string) (Scenario, bool)
-    Scenario returns the scenario with the given ID.
-
-func (c Catalog) Validate() error
-    Validate validates every scenario and rejects duplicate IDs.
-
-type Clock interface {
-	Now() time.Time
-	After(time.Duration) <-chan time.Time
-}
-    Clock is the engine's only source of time.
-
-var RealClock Clock = realClock{}
-    RealClock is the wall clock.
-
-type Consumer interface {
-	TrafficWorkloads() []string
-}
-    Consumer is implemented by detectors that evaluate synthetic traffic. The
-    controller runtime asks the prober for exactly the workloads its detectors
-    consume.
-
-type Descriptor struct {
-	ID          string       `json:"id"`
-	Description string       `json:"description,omitempty"`
-	Target      Target       `json:"target"`
-	DependsOn   []string     `json:"dependsOn,omitempty"`
-	SideEffect  SideEffect   `json:"sideEffect"`
-	Setup       []string     `json:"setup,omitempty"`
-	Steps       []string     `json:"steps"`
-	Detects     []FaultClass `json:"detects"`
-}
-    Descriptor is the serializable description of a scenario that travels with
-    its observations, so detectors can explain and localize failures without the
-    generator code.
-
-type Doer interface {
-	Do(*http.Request) (*http.Response, error)
-}
-    Doer sends HTTP requests; *http.Client satisfies it.
 ```

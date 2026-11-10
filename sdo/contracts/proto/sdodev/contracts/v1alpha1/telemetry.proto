@@ -74,6 +74,11 @@ message LifecycleEvent {
   bool dispatch_error = 22;
   bool verified_while_responder_running = 26;
   double closure_stability_window_seconds = 27;
+  // incident_closed: finding keys that first activated while this incident's
+  // responder was in flight. The controller runs one incident at a time, so a
+  // separate fault's findings land here: they joined the open incident or held
+  // its closure, and were never part of the dispatched request.
+  repeated string after_dispatch_finding_keys = 28;
   reserved 23, 24, 25;
   reserved "load_pressure", "load_threshold", "release_backlog";
 }

@@ -20,6 +20,7 @@ import (
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/podread"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/vantage"
 )
 
 // CheckRenameInvariance requires a diagnosis to survive a consistent rename of
@@ -249,6 +250,7 @@ func renameSnapshot(source Snapshot, m *renameMapping) (Snapshot, error) {
 	result.Metrics, result.Alerts = source.Metrics, source.Alerts
 	result.Logs = source.Logs
 	result.PodReads = renamePodReads(source.PodReads, m)
+	result.Vantage = renameVantage(source.Vantage, m)
 	result.Usage, result.Reachability = source.Usage, source.Reachability
 	namespace := source.NamespaceName
 	for index := range result.ConfigMapList {
@@ -815,6 +817,26 @@ func renameGenericTree(value any, m *renameMapping) {
 			renameGenericTree(item, m)
 		}
 	}
+}
+
+// renameVantage renames the probed Pod and container, as a finding on a
+// reading names the Pod. Facts stay as recorded.
+func renameVantage(source map[string]vantage.Result, m *renameMapping) map[string]vantage.Result {
+	if source == nil {
+		return nil
+	}
+	result := make(map[string]vantage.Result, len(source))
+	for id, read := range source {
+		for _, list := range []*[]vantage.Reading{&read.Readings, &read.Baseline} {
+			*list = slices.Clone(*list)
+			for index := range *list {
+				(*list)[index].Pod = m.value((*list)[index].Pod)
+				(*list)[index].Container = m.value((*list)[index].Container)
+			}
+		}
+		result[id] = read
+	}
+	return result
 }
 
 // renamePodReads renames the read Pod and container, as a finding on a reading

@@ -588,7 +588,14 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		protectedNamespace = *controlNamespace
 	}
 	podReadBaseline := NewPodReadBaseline(DefaultStateSettle)
-	observations := detectorObservations{Client: bootstrapProvider.Client, Clock: clock.Now, Telemetry: telemetrySources, ExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, PodReadBaseline: podReadBaseline}
+	// Restore text is captured with each promoted store baseline and kept
+	// beside it in memory.
+	storePayloads := &StorePayloads{Run: TypedPlanClient{Client: bootstrapProvider.Client, ExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace}.StoreCommand}
+	podReadBaseline.Payloads = storePayloads
+	vantageBaseline := NewVantageBaseline(DefaultStateSettle)
+	platformState := NewPlatformState(DefaultStateSettle)
+	observations := detectorObservations{Client: bootstrapProvider.Client, Clock: clock.Now, Telemetry: telemetrySources, ExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, PodReadBaseline: podReadBaseline,
+		VantageBaseline: vantageBaseline, Platform: platformState, VantageImage: lifecycleio.Getenv("SDO_VANTAGE_IMAGE")}
 	snapshotProvider, metricsObserver, err := observations.compose(snapshotProvider, detectors, initialTelemetrySources)
 	if err != nil {
 		return err
@@ -708,7 +715,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				loop.WorkingProgramRoot = request.RepositoryWorktree
 				// Backups live on the repository volume beside the other
 				// controller state, outside the published .sdo/ tree.
-				loop.Executor.Stores = &StoreAccess{Read: loop.gitRead(), Snapshot: snapshotProvider, Backups: FileBackupStore{Root: filepath.Join(*repositoryMountPath, ".sdo-runtime", "backups")}}
+				loop.Executor.Stores = &StoreAccess{Read: loop.gitRead(), Snapshot: snapshotProvider, Backups: FileBackupStore{Root: filepath.Join(*repositoryMountPath, ".sdo-runtime", "backups")}, Payloads: storePayloads}
 				if menuEnabled != "0" {
 					loop.MenuConfig = productionResponderMenu()
 					loop.MenuConfig.Unexplained = func(ctx context.Context) (UnexplainedRemovalAssessment, error) {
@@ -988,6 +995,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		controller.Baseline = stateTracker
 	}
 	controller.PodReadBaseline = podReadBaseline
+	controller.VantageBaseline = vantageBaseline
+	controller.Platform = platformState
+	platformState.SetInventory(controller.AcceptedSourceRefs)
 	if *cleanResponderHelpers {
 		controller.Helpers = KubernetesHelperCleaner{
 			Client: bootstrapProvider.Client, Namespaces: []string{*namespace, *controlNamespace},

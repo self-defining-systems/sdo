@@ -4,9 +4,11 @@ Each confirmed root cause carries live `evidence`, the `explained_detectors` it 
 `static_context`. Static files (scripts, manifests, ConfigMap bodies) belong in `static_context`, never in live cause
 evidence.
 
+Every cause names its mechanism and its reach; both are required.
+
 Set `cause_class` to the mechanism, from the schema's list (for example `network-delay`, `network-loss`,
-`config-value-wrong`, `data-corrupt`, `state-lost`, `capacity-exhausted`, `code-defect`); leave it empty only when
-none fits.
+`config-value-wrong`, `data-corrupt`, `state-lost`, `capacity-exhausted`, `code-defect`); use `other` only when none
+fits.
 
 Set `reach`:
 

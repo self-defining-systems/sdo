@@ -28,7 +28,7 @@ func reachFixture() (*contracts.ConfirmedRootCause, []*contracts.Finding) {
 
 func TestReachValuesMatchProto(t *testing.T) {
 	declared := wire.StringIn(&contracts.ConfirmedRootCause{}, "reach")
-	named := []string{"", outcome.ReachInScope, outcome.ReachOutOfReach}
+	named := []string{outcome.ReachInScope, outcome.ReachOutOfReach}
 	slices.Sort(declared)
 	slices.Sort(named)
 	if !slices.Equal(declared, named) {

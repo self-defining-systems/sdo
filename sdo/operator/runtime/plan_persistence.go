@@ -128,6 +128,10 @@ func encodePersistedActions(actions []program.Action) ([]persistedAction, error)
 			kind = "repair_data"
 		case program.RestoreBackup, *program.RestoreBackup:
 			kind = "restore_backup"
+		case program.RestoreStoreItem, *program.RestoreStoreItem:
+			kind = "restore_store_item"
+		case program.CheckStoreCredential, *program.CheckStoreCredential:
+			kind = "check_store_credential"
 		case program.SetField, *program.SetField:
 			kind = "set_field"
 		case program.RestartRollout, *program.RestartRollout:
@@ -204,6 +208,10 @@ func decodePersistedActions(encoded []persistedAction) ([]program.Action, error)
 			action = &program.RepairData{}
 		case "restore_backup":
 			action = &program.RestoreBackup{}
+		case "restore_store_item":
+			action = &program.RestoreStoreItem{}
+		case "check_store_credential":
+			action = &program.CheckStoreCredential{}
 		case "set_field":
 			action = &program.SetField{}
 		case "restart_rollout":
@@ -266,6 +274,10 @@ func decodePersistedActions(encoded []persistedAction) ([]program.Action, error)
 		case *program.RepairData:
 			decoded = append(decoded, *value)
 		case *program.RestoreBackup:
+			decoded = append(decoded, *value)
+		case *program.RestoreStoreItem:
+			decoded = append(decoded, *value)
+		case *program.CheckStoreCredential:
 			decoded = append(decoded, *value)
 		case *program.SetField:
 			decoded = append(decoded, *value)

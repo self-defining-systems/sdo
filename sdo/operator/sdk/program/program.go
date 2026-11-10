@@ -30,7 +30,7 @@ type ProgramSpec struct {
 	Params []ParamSpec
 }
 
-// ParamSpec declares roles bound by triggering detector findings; Diagnose reads
+// ParamSpec declares roles bound by triggering detector findings. Diagnose reads
 // additional objects through ReadView by name or relation, never role enumeration.
 type ParamSpec struct {
 	Name     string
@@ -266,7 +266,7 @@ type Rollback struct {
 func (Rollback) action() {}
 
 // SetField writes one schema-checked field (or one ConfigMap JSON/YAML entry)
-// from a Value: accepted source, an observation or a declared parameter.
+// from a Value. The Value is accepted source, an observation or a declared parameter.
 type SetField struct {
 	Ref    sdk.ObjectRef
 	Path   string

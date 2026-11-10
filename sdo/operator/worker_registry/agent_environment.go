@@ -3,6 +3,8 @@ package worker_registry
 import (
 	"fmt"
 	"slices"
+	"strconv"
+	"time"
 )
 
 // ProviderEnvironment names the variable that selects a worker's agent provider.
@@ -22,17 +24,36 @@ const EffortEnvironment = "SDO_AGENT_EFFORT"
 // names the same list for the Python workers; a test keeps the two equal.
 var AgentEfforts = []string{"low", "medium", "high", "xhigh", "max"}
 
-// AgentEnvironment is the provider, model and effort a controller was configured
-// with, as the environment every agent worker Job reads. An unconfigured provider
-// adds nothing; an unknown provider or effort is an error, so no worker runs at an
-// effort other than the configured one.
-func AgentEnvironment(provider, model, effort string) (map[string]string, error) {
+// LifecycleTimeoutEnvironment names the variable that bounds one lifecycle
+// (detection designer) session, in whole seconds; workers use the shared default
+// (sdo/contracts/agent_env.json) when it is absent.
+const LifecycleTimeoutEnvironment = "SDO_LIFECYCLE_TIMEOUT_SECONDS"
+
+// DefaultLifecycleTimeout is the workers' lifecycle session limit when none is configured.
+const DefaultLifecycleTimeout = 900 * time.Second
+
+// AgentEnvironment is the provider, model, effort and lifecycle session limit a
+// controller was configured with, as the environment every agent worker Job
+// reads. An unconfigured provider, effort or limit (zero) adds nothing; an
+// unknown provider or effort or a negative limit is an error, so no worker runs
+// at a setting other than the configured one.
+func AgentEnvironment(provider, model, effort string, lifecycleTimeout time.Duration) (map[string]string, error) {
 	if effort != "" && !slices.Contains(AgentEfforts, effort) {
 		return nil, fmt.Errorf("unsupported agent effort %q: must be one of %v", effort, AgentEfforts)
+	}
+	if lifecycleTimeout < 0 {
+		return nil, fmt.Errorf("invalid lifecycle timeout %s: must not be negative", lifecycleTimeout)
 	}
 	environment := ProviderCapacityEnvironment()
 	if effort != "" {
 		environment[EffortEnvironment] = effort
+	}
+	if lifecycleTimeout > 0 {
+		seconds := lifecycleTimeout / time.Second
+		if lifecycleTimeout%time.Second > 0 {
+			seconds++
+		}
+		environment[LifecycleTimeoutEnvironment] = strconv.FormatInt(int64(seconds), 10)
 	}
 	if provider == "" {
 		return environment, nil

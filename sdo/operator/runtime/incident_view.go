@@ -97,8 +97,8 @@ func (c *Controller) refreshIncidentView(now time.Time, evaluated bool) {
 }
 
 // blockingFindingsLocked mirrors finalVerificationStates: closure waits on
-// every active health-detector finding, or without health detectors, on the
-// incident's own findings.
+// every active health-detector finding the recovery scope holds, or without
+// health detectors, on the incident's own findings.
 func (c *Controller) blockingFindingsLocked() []sdk.Finding {
 	health := make(map[string]struct{}, len(c.healthDetectorIDs))
 	for _, detectorID := range c.healthDetectorIDs {
@@ -109,8 +109,9 @@ func (c *Controller) blockingFindingsLocked() []sdk.Finding {
 		incident[key] = struct{}{}
 	}
 	findings := make([]sdk.Finding, 0)
+	scope := c.recoveryScopeLocked()
 	for key, state := range c.tracker.Snapshot() {
-		if !state.Active {
+		if !state.Active || !scope.holds(state.Finding) {
 			continue
 		}
 		_, isHealth := health[state.DetectorID]

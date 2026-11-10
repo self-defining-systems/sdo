@@ -21,6 +21,7 @@ import (
 	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/usage"
+	"sdo.dev/operator/sdk/vantage"
 )
 
 // MemoryHostRPC is implemented by the host manager, which leases the active
@@ -121,6 +122,8 @@ func (d *remoteDetector) Spec() sdk.DetectorSpec                { return d.Detec
 func (d *remoteDetector) MetricQueries() []metrics.Query        { return d.Metrics }
 func (d *remoteDetector) LogQueries() []logs.Query              { return d.Logs }
 func (d *remoteDetector) PodReads() []podread.Query             { return d.Registration.PodReads }
+func (d *remoteDetector) VantageProbes() []vantage.Probe        { return d.Registration.Vantage }
+func (d *remoteDetector) ConsumesPlatform() bool                { return d.Registration.Platform }
 func (d *remoteDetector) ConsumesUsage() bool                   { return d.UsesUsage }
 func (d *remoteDetector) UsageRequirements() usage.Requirements { return d.Usage }
 func (d *remoteDetector) ConsumesServiceReachability() bool     { return d.Reachability }
@@ -257,7 +260,7 @@ func (r *RemoteMemory) buildObservation(view sdk.DetectionContext) (*pb.MemoryOb
 		sourceView = wrapper.UnderlyingReadView()
 	}
 	source := inputs.New(sourceView)
-	out := &pb.MemoryObservation{Traffic: map[string]*structpb.Struct{}, Metrics: map[string]*structpb.Struct{}, Logs: map[string]*structpb.Struct{}, PodReads: map[string]*structpb.Struct{}}
+	out := &pb.MemoryObservation{Traffic: map[string]*structpb.Struct{}, Metrics: map[string]*structpb.Struct{}, Logs: map[string]*structpb.Struct{}, PodReads: map[string]*structpb.Struct{}, Vantage: map[string]*structpb.Struct{}}
 	if at := source.ObservedAt(); !at.IsZero() {
 		out.ObservedAt = timestamppb.New(at)
 		if err := out.ObservedAt.CheckValid(); err != nil {
@@ -276,6 +279,11 @@ func (r *RemoteMemory) buildObservation(view sdk.DetectionContext) (*pb.MemoryOb
 	}
 	if v, ok := source.PodAdmission(); ok {
 		if out.PodAdmission, err = wireStruct(v); err != nil {
+			return nil, err
+		}
+	}
+	if v, ok := source.PlatformObservation(); ok {
+		if out.Platform, err = wireStruct(v); err != nil {
 			return nil, err
 		}
 	}
@@ -325,6 +333,14 @@ func (r *RemoteMemory) buildObservation(view sdk.DetectionContext) (*pb.MemoryOb
 		for _, q := range spec.PodReads {
 			if v, ok := source.PodReadResult(q.ID); ok {
 				out.PodReads[q.ID], err = wireStruct(v)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+		for _, probe := range spec.Vantage {
+			if v, ok := source.VantageResult(probe.ID); ok {
+				out.Vantage[probe.ID], err = wireStruct(v)
 				if err != nil {
 					return nil, err
 				}

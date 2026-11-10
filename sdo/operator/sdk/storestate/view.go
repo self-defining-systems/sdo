@@ -48,7 +48,10 @@ type StoreChanges struct {
 	BaselineAt time.Time     `json:"baseline_at,omitzero"`
 	Baselined  bool          `json:"baselined"`
 	Changes    []Change      `json:"changes,omitempty"`
-	Error      string        `json:"error,omitempty"`
+	// Holders are the connections the store holds now, by peer and state,
+	// each peer resolved to its Pod and workload through the view's Pod IPs.
+	Holders []HolderGroup `json:"holders,omitempty"`
+	Error   string        `json:"error,omitempty"`
 }
 
 // Changes is the read-only diff of every store whose store-state pod read the
@@ -67,7 +70,7 @@ func Changes(view sdk.DetectionContext) []StoreChanges {
 			continue
 		}
 		adapter, _ := AdapterFor(engine)
-		out = append(out, storeChanges(adapter, component, result)...)
+		out = append(out, storeChanges(view, adapter, component, result)...)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Component != out[j].Component {
@@ -78,7 +81,7 @@ func Changes(view sdk.DetectionContext) []StoreChanges {
 	return out
 }
 
-func storeChanges(adapter Adapter, component string, result podread.Result) []StoreChanges {
+func storeChanges(view sdk.DetectionContext, adapter Adapter, component string, result podread.Result) []StoreChanges {
 	engine := adapter.Engine()
 	if result.Error != "" || len(result.Readings) == 0 {
 		reason := result.Error
@@ -100,6 +103,9 @@ func storeChanges(adapter Adapter, component string, result podread.Result) []St
 		if baseline, ok := pick(baselines, reading.Pod); ok {
 			entry.Baselined, entry.BaselineAt = true, baseline.At
 			entry.Changes = Diff(baseline, current)
+		}
+		if current.Holders != nil {
+			entry.Holders = ResolveHolders(view, entry.Pod, current.Holders)
 		}
 		out = append(out, entry)
 	}
@@ -179,6 +185,27 @@ func pick(baselines map[string]Facts, pod string) (Facts, bool) {
 	if len(baselines) == 1 {
 		for _, b := range baselines {
 			return b, true
+		}
+	}
+	return Facts{}, false
+}
+
+// Baseline returns the promoted healthy facts the view carries for one store
+// Pod of component: the Pod's own baseline, or the only one of a
+// single-instance store. False when the view has no usable baseline.
+func Baseline(view sdk.DetectionContext, component string, pod sdk.ObjectRef) (Facts, bool) {
+	set, ok := view.(podread.ResultSet)
+	if !ok {
+		return Facts{}, false
+	}
+	for id, result := range set.PodReadResults() {
+		engine, c, ok := ParseQueryID(id)
+		if !ok || c != component {
+			continue
+		}
+		adapter, _ := AdapterFor(engine)
+		if baseline, ok := pick(promotedBaselines(adapter, component, result), pod.Name); ok {
+			return baseline, true
 		}
 	}
 	return Facts{}, false

@@ -103,7 +103,7 @@ func TestApplicationMapRuleIDsMatchTheParser(t *testing.T) {
 		RuleMapMissing: appmap.RuleMissing, RuleMapSchema: appmap.RuleSchema, RuleMapUnknownName: appmap.RuleUnknownName,
 		RuleMapPathMismatch: appmap.RulePathMismatch, RuleMapUncoveredOp: appmap.RuleUncoveredOp,
 		RuleMapUncoveredWrite: appmap.RuleUncoveredWrite, RuleMapUncoveredData: appmap.RuleUncoveredData,
-		RuleMapUnexercisedEdge: appmap.RuleUnexercisedEdge,
+		RuleMapUnexercisedEdge: appmap.RuleUnexercisedEdge, RuleMapKnownBroken: appmap.RuleKnownBroken,
 	} {
 		if got != want {
 			t.Errorf("rule %q != %q", got, want)
@@ -187,6 +187,32 @@ func TestApplicationMapChecksWorkloadMembership(t *testing.T) {
 	blocking, _ := staticMapCheck(t, root, HealthJudge)
 	if !slices.ContainsFunc(blocking, func(d Diagnostic) bool { return d.Rule == RuleMapSchema && strings.Contains(d.Message, "extra") }) {
 		t.Fatalf("a scenario with no probe entry was accepted: %v", blocking)
+	}
+}
+
+// A route broken in the application as deployed is declared knownBroken on its
+// probe scenario: that covers its operation, and the same declaration over an
+// operation a gated probe already exercises is refused.
+func TestApplicationMapReadsKnownBrokenProbeScenarios(t *testing.T) {
+	yaml := strings.Replace(mapYAML, "probes:\n", `  - id: review
+    writes: false
+    entry: {service: web, port: 80, method: GET, path: /review}
+    path: [web, api]
+probes:
+  - {scenario: call-review, kind: call, operations: [review]}
+`, 1)
+	root := mapTree(t, &yaml)
+	brokenWorkload := mapWorkload("probe-call", "call-all", "call-review") +
+		"    knownBroken: {reason: the route returns 404 in the deployed source, failsWith: [\"404\"]}\n"
+	write(t, root, ".sdo/diagnostics/traffic/workloads/probe-call.yaml", brokenWorkload)
+	if blocking, _ := staticMapCheck(t, root, HealthJudge); len(mapRules(blocking)) != 0 {
+		t.Fatalf("a knownBroken probe did not cover its operation: %v", blocking)
+	}
+	hiding := strings.Replace(yaml, "operations: [review]}", "operations: [list-items]}", 1)
+	root = mapTree(t, &hiding)
+	write(t, root, ".sdo/diagnostics/traffic/workloads/probe-call.yaml", brokenWorkload)
+	if blocking, _ := staticMapCheck(t, root, HealthJudge); !slices.ContainsFunc(blocking, func(d Diagnostic) bool { return d.Rule == RuleMapKnownBroken }) {
+		t.Fatalf("a knownBroken probe over working operations was accepted: %v", blocking)
 	}
 }
 

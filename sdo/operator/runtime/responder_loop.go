@@ -87,6 +87,7 @@ type ToolResponse struct {
 
 	VerificationBlockers       []VerificationBlocker          `json:"verification_blockers,omitempty"`
 	DataAtRisk                 []string                       `json:"data_at_risk,omitempty"`
+	DataEffects                []string                       `json:"data_effects,omitempty"`
 	ActionReports              []PlanActionReport             `json:"action_reports,omitempty"`
 	ProgramRevisions           map[string]string              `json:"program_revisions,omitempty"`
 	OptionReports              []*contracts.MitigationReport  `json:"-"`
@@ -94,6 +95,10 @@ type ToolResponse struct {
 	Drift                      []sdk.Finding                  `json:"drift,omitempty"`
 	BeforeFindings             []sdk.Finding                  `json:"before_findings"`
 	ControllerFindings         []sdk.Finding                  `json:"controller_findings"`
+	// NewSinceDispatch are the current findings that first activated after
+	// this incident's responder launched. The controller runs one incident at
+	// a time, so they may be a separate fault; closure still waits on health.
+	NewSinceDispatch []sdk.Finding `json:"new_since_dispatch,omitempty"`
 	Progress                   *FindingProgress               `json:"progress,omitempty"`
 	IncidentVerified           *apihistory.IncidentVerified   `json:"incident_verified,omitempty"`
 	FailureReason              string                         `json:"failure_reason,omitempty"`
@@ -766,6 +771,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		if response.Error == "" {
 			l.closeLoop()
 			response.DataAtRisk = l.incidentDataAtRisk(ctx)
+			response.DataEffects = l.incidentDataEffects(ctx)
 		}
 	case "rollback":
 		l.rollbackApplication(ctx, request, &response)

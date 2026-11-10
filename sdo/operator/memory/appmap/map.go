@@ -21,6 +21,7 @@ const (
 	RuleUncoveredWrite  = "map.uncovered-write"
 	RuleUncoveredData   = "map.uncovered-data"
 	RuleUnexercisedEdge = "map.unexercised-edge"
+	RuleKnownBroken     = "map.known-broken"
 )
 
 // Probe kinds, and the health-probe workload that runs each.
@@ -164,10 +165,12 @@ func ParseInventory(doc string) Inventory {
 	return inv
 }
 
-// Workload is a traffic workload: its name and the scenario IDs it runs.
+// Workload is a traffic workload: its name, the scenario IDs it runs, and
+// those it declares knownBroken (failing on the application as deployed).
 type Workload struct {
-	Name      string
-	Scenarios []string
+	Name        string
+	Scenarios   []string
+	KnownBroken []string
 }
 
 var (
@@ -180,6 +183,10 @@ type checker struct {
 	findings []Finding
 	byName   map[string]Component
 	ops      map[string]Operation
+	// knownBroken holds the probe scenarios a probe workload declares
+	// knownBroken; broken holds the operations only such probes exercise.
+	knownBroken map[string]bool
+	broken      map[string]bool
 }
 
 func (c *checker) add(rule, hint, format string, args ...any) {
@@ -198,12 +205,13 @@ func opPaths(ops []Operation) map[string]Operation {
 // source inventory and the traffic workloads. Findings are sorted for a stable
 // report. Scenario facts (side effect, DependsOn) come from CheckScenarios.
 func (m Map) Check(inv Inventory, workloads []Workload) []Finding {
-	c := &checker{m: m, byName: map[string]Component{}, ops: map[string]Operation{}}
+	c := &checker{m: m, byName: map[string]Component{}, ops: map[string]Operation{}, knownBroken: map[string]bool{}, broken: map[string]bool{}}
 	c.schema()
 	c.dataRoles()
 	c.inventory(inv)
 	c.paths()
 	c.probes(workloads)
+	c.knownBrokenOperations()
 	c.coverage()
 	sort.SliceStable(c.findings, func(i, j int) bool { return c.findings[i].Rule < c.findings[j].Rule })
 	return c.findings
@@ -392,6 +400,9 @@ func (c *checker) probes(workloads []Workload) {
 		for _, id := range w.Scenarios {
 			holder[id] = append(holder[id], w.Name)
 		}
+		for _, id := range w.KnownBroken {
+			c.knownBroken[id] = true
+		}
 	}
 	seen := map[string]bool{}
 	for _, p := range c.m.Probes {
@@ -443,11 +454,48 @@ func (c *checker) probes(workloads []Workload) {
 	}
 }
 
+// knownBrokenOperations finds the operations that only knownBroken probes
+// exercise. Such an operation is covered without a gated probe, so each
+// knownBroken probe must exercise one, and they may be at most half of the
+// operations: a broken-at-baseline declaration never hides a working one.
+func (c *checker) knownBrokenOperations() {
+	gated := map[string]bool{}
+	for _, p := range c.m.Probes {
+		if !c.knownBroken[p.Scenario] {
+			for _, id := range p.Operations {
+				gated[id] = true
+			}
+		}
+	}
+	for _, p := range c.m.Probes {
+		if !c.knownBroken[p.Scenario] {
+			continue
+		}
+		own := false
+		for _, id := range p.Operations {
+			if _, ok := c.ops[id]; ok && !gated[id] {
+				c.broken[id], own = true, true
+			}
+		}
+		if !own {
+			c.add(RuleKnownBroken, "a knownBroken probe exercises an operation that is broken in the application; when its operations work, fix the scenario so it passes", "probe %s is knownBroken but a gated probe already exercises every operation it lists (%s)", p.Scenario, strings.Join(p.Operations, ", "))
+		}
+	}
+	if len(c.broken) > 0 && 2*len(c.broken) > len(c.ops) {
+		var ids []string
+		for id := range c.broken {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		c.add(RuleKnownBroken, "declare knownBroken only for operations broken in the application as deployed; check that the probes match the live application", "%d of %d operations are known-broken (%s); at most half may be", len(c.broken), len(c.ops), strings.Join(ids, ", "))
+	}
+}
+
 func (c *checker) coverage() {
 	inKind := func(kind string) map[string]bool {
 		out := map[string]bool{}
 		for _, p := range c.m.Probes {
-			if p.Kind == kind {
+			if p.Kind == kind && !c.knownBroken[p.Scenario] {
 				for _, id := range p.Operations {
 					out[id] = true
 				}
@@ -457,6 +505,9 @@ func (c *checker) coverage() {
 	}
 	call, write := inKind(KindCall), inKind(KindWriteRead)
 	for _, op := range c.m.Operations {
+		if c.broken[op.ID] {
+			continue
+		}
 		if !call[op.ID] {
 			c.add(RuleUncoveredOp, fmt.Sprintf("add a `call` probe scenario (workload %s) that exercises operation %s", WorkloadForKind[KindCall], op.ID), "operation %s is in no call probe", op.ID)
 		}
@@ -466,7 +517,7 @@ func (c *checker) coverage() {
 	}
 	readLater := map[string]bool{}
 	for _, p := range c.m.Probes {
-		if p.Kind != KindReadLater {
+		if p.Kind != KindReadLater || c.knownBroken[p.Scenario] {
 			continue
 		}
 		for _, id := range p.Operations {
@@ -482,7 +533,7 @@ func (c *checker) coverage() {
 			for _, b := range op.Path {
 				together[[2]string{a, b}] = true
 			}
-			if op.Writes {
+			if op.Writes && !c.broken[op.ID] {
 				written[a] = append(written[a], op.ID)
 			}
 		}

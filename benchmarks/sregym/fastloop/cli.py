@@ -61,7 +61,7 @@ from benchmarks.sregym.fastloop.wipe import (
 )
 from benchmarks.sregym.fastloop.worker_client import SregymWorker, worker_argv
 from benchmarks.sregym.repository_git import host_clone_command, host_git_command
-from sdo.agents.provider import AGENT_EFFORTS, DEFAULT_AGENT_EFFORT
+from sdo.agents.provider import AGENT_EFFORTS, DEFAULT_AGENT_EFFORT, DEFAULT_LIFECYCLE_TIMEOUT_SECONDS
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -632,6 +632,7 @@ def _runtime_config(args: argparse.Namespace, environment: FastloopEnvironment, 
         agent_provider=args.provider,
         replay=getattr(args, "replay", "on"),
         agent_effort=args.reasoning_effort,
+        lifecycle_timeout_seconds=getattr(args, "lifecycle_timeout", DEFAULT_LIFECYCLE_TIMEOUT_SECONDS),
         frozen_memory=getattr(args, "frozen_memory", False),
         external_incidents=getattr(args, "external_incidents", False),
         reflection_session=args.reflection_session,
@@ -1965,6 +1966,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=AGENT_EFFORTS,
         default=DEFAULT_AGENT_EFFORT,
         help="reasoning effort of every agent in the run: each SDO agent and the Codex baseline",
+    )
+    run.add_argument(
+        "--lifecycle-timeout",
+        type=int,
+        default=DEFAULT_LIFECYCLE_TIMEOUT_SECONDS,
+        help="seconds one SDO lifecycle (detection designer) session may run; raise it with the effort or app size",
     )
     run.add_argument("--timeout", type=int, default=3600, help="per-incident agent timeout in seconds")
 

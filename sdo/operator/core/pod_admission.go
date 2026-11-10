@@ -11,21 +11,28 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
+	"sdo.dev/operator/core/internal/kubeio"
 	"sdo.dev/operator/sdk"
 )
 
 // ObservePodAdmission issues exactly one bounded, server-side dry-run create
-// in the application namespace. It copies an existing app Pod's admission
-// inputs, dropping allocated identity, scheduling state and ephemeral containers.
-// The fallback also probes an empty namespace; the image is never pulled.
-func ObservePodAdmission(ctx context.Context, client kubernetes.Interface, namespace string, pods []corev1.Pod) sdk.PodAdmissionResult {
+// in the application namespace and returns its result and the Pod it
+// submitted. The Pod is built from the pod template of an existing app Pod's
+// controller (ReplicaSet, StatefulSet or DaemonSet) when the view holds it, so
+// admission mutates it as it would the workload's next Pod; otherwise the app
+// Pod's admission inputs are copied, dropping allocated identity, scheduling
+// state and ephemeral containers. The fallback also probes an empty
+// namespace; the image is never pulled. The result records how long the API
+// server took and which fields admission changed.
+func ObservePodAdmission(ctx context.Context, client kubernetes.Interface, view sdk.DetectionContext) (sdk.PodAdmissionResult, *corev1.Pod) {
+	namespace := view.Namespace()
 	r := sdk.PodAdmissionResult{Namespace: namespace}
 	if client == nil || namespace == "" {
 		r.Error = "Kubernetes client and application namespace are required"
-		return r
+		return r, nil
 	}
-	candidates := make([]corev1.Pod, 0, len(pods))
-	for _, pod := range pods {
+	candidates := make([]corev1.Pod, 0)
+	for _, pod := range view.Pods() {
 		if pod.Namespace == namespace && pod.DeletionTimestamp == nil && pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
 			candidates = append(candidates, pod)
 		}
@@ -33,8 +40,12 @@ func ObservePodAdmission(ctx context.Context, client kubernetes.Interface, names
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].Name < candidates[j].Name })
 	pod := &corev1.Pod{Spec: corev1.PodSpec{RestartPolicy: corev1.RestartPolicyNever, Containers: []corev1.Container{{Name: "admission", Image: "registry.k8s.io/pause:3.9"}}}}
 	if len(candidates) > 0 {
-		pod = candidates[0].DeepCopy()
-		r.SourcePod = pod.Name
+		r.SourcePod = candidates[0].Name
+		if template := controllerTemplate(view, candidates[0]); template != nil {
+			pod = &corev1.Pod{ObjectMeta: template.ObjectMeta, Spec: template.Spec}
+		} else {
+			pod = candidates[0].DeepCopy()
+		}
 	}
 	pod.TypeMeta = metav1.TypeMeta{APIVersion: "v1", Kind: "Pod"}
 	pod.ObjectMeta = metav1.ObjectMeta{Namespace: namespace, GenerateName: "sdo-admission-", Labels: pod.Labels, Annotations: pod.Annotations}
@@ -42,12 +53,18 @@ func ObservePodAdmission(ctx context.Context, client kubernetes.Interface, names
 	pod.Spec.NodeName = ""
 	pod.Spec.EphemeralContainers = nil
 	pod.Spec.Overhead = nil
+	submitted := pod.DeepCopy()
 	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	_, err := client.CoreV1().Pods(namespace).Create(probeCtx, pod, metav1.CreateOptions{DryRun: []string{metav1.DryRunAll}})
+	started := kubeio.Now()
+	admitted, err := client.CoreV1().Pods(namespace).Create(probeCtx, pod, metav1.CreateOptions{DryRun: []string{metav1.DryRunAll}})
+	r.Latency = kubeio.Now().Sub(started)
 	if err == nil {
 		r.Admitted = true
-		return r
+		if admitted != nil {
+			r.Mutations = sdk.AdmissionMutations(*submitted, *admitted)
+		}
+		return r, submitted
 	}
 	var status apierrors.APIStatus
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || apierrors.IsTimeout(err) || apierrors.IsServerTimeout(err) || !errors.As(err, &status) {
@@ -55,5 +72,35 @@ func ObservePodAdmission(ctx context.Context, client kubernetes.Interface, names
 	} else {
 		r.Rejection = err.Error()
 	}
-	return r
+	return r, submitted
+}
+
+// controllerTemplate returns the pod template of the Pod's controlling
+// ReplicaSet, StatefulSet or DaemonSet in the view, nil when absent.
+func controllerTemplate(view sdk.DetectionContext, pod corev1.Pod) *corev1.PodTemplateSpec {
+	owner := metav1.GetControllerOf(&pod)
+	if owner == nil {
+		return nil
+	}
+	switch owner.Kind {
+	case "ReplicaSet":
+		for _, item := range view.ReplicaSets() {
+			if item.Name == owner.Name && item.Namespace == pod.Namespace {
+				return item.Spec.Template.DeepCopy()
+			}
+		}
+	case "StatefulSet":
+		for _, item := range view.StatefulSets() {
+			if item.Name == owner.Name && item.Namespace == pod.Namespace {
+				return item.Spec.Template.DeepCopy()
+			}
+		}
+	case "DaemonSet":
+		for _, item := range view.DaemonSets() {
+			if item.Name == owner.Name && item.Namespace == pod.Namespace {
+				return item.Spec.Template.DeepCopy()
+			}
+		}
+	}
+	return nil
 }

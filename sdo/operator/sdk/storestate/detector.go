@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +22,17 @@ const (
 	RuleRefused              = "store-state.read-refused"
 	RuleConnectionsNearLimit = "store-state.connections-near-limit"
 	RuleMemoryNearLimit      = "store-state.memory-near-limit"
+	RuleNamespaceChanged     = "store-state.namespace-changed"
+	RuleRegistryChanged      = "store-state.registry-changed"
+)
+
+// Namespace judgement: a judged namespace (a table, collection, KV prefix or
+// key pattern) is reported when it disappears, when its count drops below
+// half of a baseline of at least MinJudgedCount, or grows past
+// NamespaceGrowth times such a baseline.
+const (
+	MinJudgedCount  = 10
+	NamespaceGrowth = 10
 )
 
 // NearLimit is the fraction of a cap at which use is reported.
@@ -287,6 +299,18 @@ func (d detector) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.Fin
 				findings = append(findings, d.finding(f, RulePrincipalChanged, c, fmt.Sprintf("store %s (%s) principal %s changed since the healthy baseline", d.config.Component, f.Engine, key.Name)))
 			case key.Kind == KindIndex || key.Kind == KindValidator || key.Kind == KindLock:
 				findings = append(findings, d.finding(f, RuleCatalogChanged, c, fmt.Sprintf("store %s (%s) %s changed since the healthy baseline", d.config.Component, f.Engine, key)))
+			case judgedNamespace(f.Engine, key):
+				if how := namespaceShift(c); how != "" {
+					finding := d.finding(f, RuleNamespaceChanged, c, fmt.Sprintf("store %s (%s) %s %s since the healthy baseline", d.config.Component, f.Engine, key, how))
+					if appeared := appearedNamespaces(f.Engine, changes); appeared != "" {
+						finding.Evidence += "; appeared since the healthy baseline: " + appeared
+					}
+					findings = append(findings, finding)
+				}
+			case key.Kind == KindRegistryEntry && key.Scope != "":
+				if how := registryShift(c); how != "" {
+					findings = append(findings, d.finding(f, RuleRegistryChanged, c, fmt.Sprintf("store %s (%s) %s %s since the healthy baseline", d.config.Component, f.Engine, key, how)))
+				}
 			}
 		}
 		// A blocked write cites the setting changes that explain it.
@@ -301,14 +325,117 @@ func (d detector) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.Fin
 		if f.Memory != nil && f.Memory.Near(NearLimit) && d.noEviction(f) {
 			findings = append(findings, d.gaugeFinding(f, RuleMemoryNearLimit, "memory", *f.Memory))
 		}
+		// A connection cap reached, or a read refused at it, names who holds
+		// the connections.
+		if len(f.Holders) > 0 {
+			groups := ResolveHolders(ctx, f.Pod, f.Holders)
+			for i := range findings {
+				finding := &findings[i]
+				if finding.PrimaryResource != f.Pod {
+					continue
+				}
+				change, _ := finding.Metadata["change"].(Change)
+				if finding.RuleID == RuleConnectionsNearLimit || finding.RuleID == RuleRefused && change.After != nil && change.After.Value == "max-clients" {
+					finding.Evidence += "; connections held: " + RenderHolders(groups)
+					finding.Metadata["holders"] = groups
+				}
+			}
+		}
 	}
 	sort.SliceStable(findings, func(i, j int) bool { return findings[i].Fingerprint < findings[j].Fingerprint })
 	return findings, nil
 }
 
 func (d detector) noEviction(f Facts) bool {
+	if evictions, ok := f.Lookup(Key{Kind: KindSetting, Name: "evictions"}); ok {
+		return evictions.Value == "off"
+	}
 	policy, ok := f.Lookup(Key{Kind: KindSetting, Name: "maxmemory-policy"})
 	return !ok || policy.Value == "noeviction"
+}
+
+// judgedNamespace reports whether the namespace-changed rule judges an item:
+// the tables and collections of a database, consul KV prefixes, and redis key
+// patterns. Server-wide totals and a cache's item counts are not judged.
+func judgedNamespace(engine Engine, k Key) bool {
+	switch {
+	case k.Kind == KindKeyPattern:
+		return true
+	case k.Kind != KindNamespace || k.Scope == "":
+		return false
+	}
+	switch engine {
+	case EngineMongoDB, EnginePostgres, EngineMySQL, EngineConsul:
+		return true
+	}
+	return false
+}
+
+// count reads a namespace count; an estimate marker "~" is dropped.
+func count(it *Item) (int64, bool) {
+	if it == nil {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(strings.TrimPrefix(it.Value, "~"), 10, 64)
+	return n, err == nil && n >= 0
+}
+
+// namespaceShift says how a judged namespace changed, or "" when the change
+// is within the judged bounds. A namespace that appeared is not judged by
+// itself (applications create tables and collections lazily); it is cited
+// with a disappearance.
+func namespaceShift(c Change) string {
+	before, hasBefore := count(c.Before)
+	after, hasAfter := count(c.After)
+	switch {
+	case c.Before == nil:
+		return ""
+	case c.After == nil:
+		if c.Before.Kind == KindKeyPattern && (!hasBefore || before < MinJudgedCount) {
+			return ""
+		}
+		return "disappeared"
+	case !hasBefore || !hasAfter || before < MinJudgedCount:
+		return ""
+	case after*2 < before:
+		return fmt.Sprintf("dropped from %d to %d", before, after)
+	case after > before*NamespaceGrowth:
+		return fmt.Sprintf("grew from %d to %d", before, after)
+	}
+	return ""
+}
+
+// appearedNamespaces lists the judged namespaces that appeared, for the
+// evidence of a disappearance (a rename shows as one of each).
+func appearedNamespaces(engine Engine, changes []Change) string {
+	var out []string
+	for _, c := range changes {
+		if c.Before == nil && c.After != nil && judgedNamespace(engine, c.After.Key()) {
+			out = append(out, fmt.Sprintf("%s (%s)", c.After.Key(), c.After.Value))
+		}
+	}
+	return strings.Join(out, ", ")
+}
+
+// registryShift says how a registry entry (a registered service, a cluster
+// member) changed, or "" for a change that loses nothing: a new entry, or a
+// service gaining instances.
+func registryShift(c Change) string {
+	switch {
+	case c.Before == nil:
+		return ""
+	case c.After == nil:
+		return "disappeared"
+	}
+	before, okB := count(c.Before)
+	after, okA := count(c.After)
+	if okB && okA {
+		if after < before {
+			return fmt.Sprintf("dropped from %d to %d", before, after)
+		}
+		return ""
+	}
+	return fmt.Sprintf("changed from %s to %s", c.Before.Value, c.After.Value)
 }
 
 func render(changes []Change) string {

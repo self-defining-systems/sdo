@@ -62,7 +62,7 @@ type ApplyObject struct {
 
 func (ApplyObject) action() {}
 
-// KubernetesRequest exposes the Kubernetes HTTP API, including subresources,
+// KubernetesRequest exposes the Kubernetes HTTP API. It reaches subresources,
 // cluster resources and discovered kinds. Query carries API options. Only the
 // plan checks bound operations (SDO identities hold a cluster-wide grant, so RBAC does not). Secret endpoints are never accessed.
 type KubernetesRequest struct {

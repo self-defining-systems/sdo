@@ -166,9 +166,10 @@ options:
   --wait SECONDS       wait for stable verification, a new/reactivated
                        finding, or this timeout (0: cached and instant)
 
-Key JSON fields: healthy, verification_status, findings[], detector_states[],
+Key JSON fields: healthy, verification_status, findings[],
+new_since_dispatch[], detector_states[],
 verification_blockers[{detector_id,reason}], drift[], drift_events[],
-data_at_risk[]
+data_at_risk[], data_effects[]
 
 
 <!-- replay:on -->

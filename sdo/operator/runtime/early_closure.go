@@ -366,6 +366,25 @@ func cloneVerification(response ToolResponse) ToolResponse {
 	_ = json.Unmarshal(data, &cloned)
 	return cloned
 }
+// markNewSinceDispatchLocked names the findings that first activated after the
+// responder launched. The controller runs one incident at a time, so such a
+// finding may be a separate fault; the responder is told so it reports it as
+// its own cause instead of folding it into this incident's diagnosis.
+func (c *Controller) markNewSinceDispatchLocked(response *ToolResponse) {
+	response.NewSinceDispatch = nil
+	if c.incidentDispatchedAt.IsZero() {
+		return
+	}
+	for _, finding := range response.Findings {
+		if c.arrivedAfterDispatchLocked(finding) {
+			response.NewSinceDispatch = append(response.NewSinceDispatch, finding)
+		}
+	}
+	if count := len(response.NewSinceDispatch); count > 0 {
+		response.Summary += fmt.Sprintf("; %d finding(s) new since dispatch (new_since_dispatch): possibly a separate fault, report it as its own cause; closure still waits on health", count)
+	}
+}
+
 func (c *Controller) cacheVerificationLocked(response ToolResponse) {
 	prior := map[string]bool{}
 	if c.cachedVerification != nil {
@@ -380,6 +399,7 @@ func (c *Controller) cacheVerificationLocked(response ToolResponse) {
 		}
 	}
 	copy := cloneVerification(response)
+	c.markNewSinceDispatchLocked(&copy)
 	c.cachedVerification = &copy
 	if c.currentIncidentRequest != nil {
 		c.cachedIncidentID = c.currentIncidentRequest.IncidentID

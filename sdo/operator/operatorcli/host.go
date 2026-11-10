@@ -74,6 +74,7 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	provider := flags.String("agent-provider", "codex", "agent provider")
 	replay := flags.String("replay", "", "replay and corpus capture: on (default) or off")
 	effort := flags.String("agent-effort", "", "reasoning effort of every agent worker (empty: the shared default)")
+	lifecycleTimeout := flags.Duration("lifecycle-timeout", 0, "limit of one lifecycle (detection designer) session (0: the shared default)")
 	registrationSource := flags.String("agent-registrations", "", "local registration JSON directory")
 	registrationConfigMap := flags.String("agent-registration-configmap", "", "registration ConfigMap name")
 	controllerDuration := flags.Duration("controller-duration", 0, "bounded controller run duration")
@@ -223,7 +224,7 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 		ControllerImage: *controllerImage, ResponderImage: *responderImage,
 		BuildKitImage: *buildkitImage,
 		RepositoryPVC: *repositoryPVC, CredentialsSecret: *credentialsSecret,
-		RegistryPushSecret: *registrySecret, RegistryHost: *registryHost, Model: *model, AgentProvider: *provider, AgentEffort: *effort, Replay: *replay,
+		RegistryPushSecret: *registrySecret, RegistryHost: *registryHost, Model: *model, AgentProvider: *provider, AgentEffort: *effort, LifecycleTimeout: *lifecycleTimeout, Replay: *replay,
 		RegistryInsecure: *registryInsecure, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
 		ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,
 		LateFindings: *lateFindings, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, FrozenMemory: *frozenMemory, ExternalIncidents: *externalIncidents,

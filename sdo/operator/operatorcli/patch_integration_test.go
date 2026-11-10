@@ -176,3 +176,31 @@ func TestDeploymentRenderReportsTypedRenderErrors(t *testing.T) {
 		t.Fatalf("render without a plan = %d, %s", code, errOut)
 	}
 }
+
+func TestPatchCLISignalsAPatchNoBuildSourceCovers(t *testing.T) {
+	work := cliWorld(t)
+	if err := os.WriteFile(filepath.Join(work, "README"), []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := patchCLI(t, "create", "--root", work, "--reason", patchCLIReason, "README")
+	if code != 0 || !strings.Contains(out, "patch.undeployable") || !strings.Contains(out, "README") {
+		t.Fatalf("create = %d\nout=%s\nerr=%s", code, out, errOut)
+	}
+	// The patch stays in memory: the signal is advice, not a rejection.
+	code, out, _ = patchCLI(t, "check", "--root", work)
+	if code != 0 || !strings.Contains(out, "patch.undeployable") {
+		t.Fatalf("check = %d\n%s", code, out)
+	}
+	code, out, _ = patchCLI(t, "check", "--root", work, "--json")
+	if code != 0 || !strings.Contains(out, `"undeployable":["0001-`) {
+		t.Fatalf("check --json = %d\n%s", code, out)
+	}
+	// A patch to a file the renderer reads is deployable and silent.
+	work = cliWorld(t)
+	if err := os.WriteFile(filepath.Join(work, "k8s", "cm.yaml"), []byte(strings.Replace(cmYAML, `"1"`, `"5"`, 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, out, _ = patchCLI(t, "create", "--root", work, "--reason", patchCLIReason, "k8s/cm.yaml"); strings.Contains(out, "undeployable") {
+		t.Fatalf("deployable patch flagged:\n%s", out)
+	}
+}

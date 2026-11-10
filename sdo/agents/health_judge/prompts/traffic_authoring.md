@@ -33,7 +33,10 @@ covers breaks.
    read-later scenarios that exist). Optional: timeout (2s) and slo {window, minSamples, maxAge, maxErrorRate,
    maxTimeoutRate, latencyPercentile, maxLatency}; set maxLatency per scenario to three times its slowest healthy
    iteration under load, at least 1s (memory check notes each one left on the default as
-   `traffic.default-latency`). Journey workloads run only on demand and never feed detection.
+   `traffic.default-latency`). Journey workloads run only on demand and never feed detection. A route that is
+   already broken in the application as deployed keeps its operation and probe: declare its health-probe scenario
+   `knownBroken: {reason, failsWith}` (a short reason and the failures seen live) so it is observed without
+   gating health; never use it to silence a probe that should pass.
 3. Firing policy: `traffic.NewDetector` defaults `Persistence.MinDuration` to `traffic.DefaultHealthMinDuration`
    (9s) for a health-class detector, so a brief data-plane stall does not dispatch a responder while lasting
    failures still fire. Do not set it lower.

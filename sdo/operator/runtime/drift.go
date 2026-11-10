@@ -458,6 +458,9 @@ func (c *Controller) attachDrift(finding sdk.Finding) bool {
 	}
 	if !found {
 		request.Findings = append(request.Findings, finding)
+		if !c.incidentDispatchedAt.IsZero() {
+			c.markLateJoinedLocked(key)
+		}
 	}
 	sortFindings(request.Findings)
 	request.DriftEvents = driftEventsForFindings(c.driftEvents, request.Findings)
@@ -498,7 +501,7 @@ func (c *Controller) observeUnexplainedDrift(now time.Time, finding sdk.Finding)
 	}
 	c.tracker.SetPolicy(finding.DetectorID, 1, 1, 0)
 	changes := c.tracker.Observe(now, finding.DetectorID, findings)
-	c.recordEvaluation(finding.DetectorID, now, findings)
+	c.recordEvaluation(finding.DetectorID, now, findings, nil)
 	c.recordFiring(sdk.DetectorSpec{ID: finding.DetectorID, Class: sdk.DetectorClassIncident, Owner: sdk.DetectorOwnerResponder}, now, findings, changes)
 }
 

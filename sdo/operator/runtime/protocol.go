@@ -109,6 +109,9 @@ type ConfirmedRootCause struct {
 	// ExplainedDetectors must clear after the fix.
 	ExplainedDetectors []string
 	StaticContext      []string
+	// CauseClass and Reach are the responder's typed classification; "" is unset.
+	CauseClass string
+	Reach      string
 }
 
 type AppliedPlaybook struct {
@@ -250,8 +253,9 @@ type IncidentClosure struct {
 	StatePersistenceFailure *contracts.StatePersistenceFailure
 	// SourceCheckNotes lists what the accepted-source checks found when the
 	// closure committed: checks that were unavailable, and objects that still
-	// differ from the accepted source. They are information on the outcome, not
-	// a verdict.
+	// differ from the accepted source, and the data effects applied actions had
+	// on holds_data components. They are information on the outcome, not a
+	// verdict.
 	SourceCheckNotes []string
 	// Frozen marks the closure's terminal identity: persisted, with the
 	// recheck's notes folded in, before the first broker attempt.

@@ -49,6 +49,7 @@
     "network-delay",
     "network-loss",
     "object-missing",
+    "other",
     "permission-denied",
     "process-runtime",
     "read-only",
