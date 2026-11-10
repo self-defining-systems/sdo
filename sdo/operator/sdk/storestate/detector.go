@@ -41,8 +41,10 @@ type Config struct {
 	// ReadInterval is the pod-read interval; 0 is podread.MinInterval.
 	ReadInterval time.Duration
 	// Baselines are facts from a healthy moment, one per store Pod name, or a
-	// single baseline every Pod is compared with. Without a baseline only
-	// absolute facts are judged: write blocks, refusals and near-cap use.
+	// single baseline every Pod is compared with. Without them the detector
+	// compares with the controller's promoted healthy readings of its pod
+	// read (podread.Result.Baseline), and without those only absolute facts
+	// are judged: write blocks, refusals and near-cap use.
 	Baselines []Facts
 }
 
@@ -80,7 +82,7 @@ func NewDetector(c Config) (sdk.Detector, error) {
 	if c.ReadInterval == 0 {
 		c.ReadInterval = podread.MinInterval
 	}
-	query := podread.Query{ID: "store-state-" + c.Component, Target: c.Target, Args: adapter.ReadCommand(Endpoint{Port: c.Port}), Interval: c.ReadInterval}
+	query := podread.Query{ID: QueryID(c.Engine, c.Component), Target: c.Target, Args: adapter.ReadCommand(Endpoint{Port: c.Port}), Interval: c.ReadInterval}
 	if err := query.Validate(); err != nil {
 		return nil, fmt.Errorf("store-state detector %s: %w", c.Spec.ID, err)
 	}
@@ -130,46 +132,41 @@ func Observe(ctx sdk.DetectionContext, d sdk.Detector) ([]Facts, error) {
 	if !ok {
 		return nil, fmt.Errorf("not a store-state detector")
 	}
-	return s.observe(ctx)
+	facts, _, err := s.observe(ctx)
+	return facts, err
 }
 
-func (d detector) observe(ctx sdk.DetectionContext) ([]Facts, error) {
+// observe parses the current readings and returns the baselines to compare
+// them with: the configured ones, or else the controller's promoted healthy
+// readings carried with the result.
+func (d detector) observe(ctx sdk.DetectionContext) ([]Facts, map[string]Facts, error) {
 	result, err := podread.Require(ctx, d.query.ID)
 	if err != nil {
-		return nil, fmt.Errorf("store %s: %w", d.config.Component, err)
+		return nil, nil, fmt.Errorf("store %s: %w", d.config.Component, err)
 	}
 	out := make([]Facts, 0, len(result.Readings))
 	for _, reading := range result.Readings {
-		f, err := d.adapter.Parse(reading.Stdout)
+		f, err := parseReading(d.adapter, d.config.Component, reading)
 		if err != nil {
-			return nil, fmt.Errorf("store %s Pod %s: %w", d.config.Component, reading.Pod, err)
+			return nil, nil, fmt.Errorf("store %s Pod %s: %w", d.config.Component, reading.Pod, err)
 		}
-		f.Component, f.Pod, f.At = d.config.Component, reading.Ref(), reading.ObservedAt
 		out = append(out, f)
 	}
-	return out, nil
-}
-
-func (d detector) baselineFor(pod string) (Facts, bool) {
-	if b, ok := d.baselines[pod]; ok {
-		return b, true
+	baselines := d.baselines
+	if len(baselines) == 0 {
+		baselines = promotedBaselines(d.adapter, d.config.Component, result)
 	}
-	if len(d.baselines) == 1 {
-		for _, b := range d.baselines {
-			return b, true
-		}
-	}
-	return Facts{}, false
+	return out, baselines, nil
 }
 
 func (d detector) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.Finding, error) {
-	facts, err := d.observe(ctx)
+	facts, baselines, err := d.observe(ctx)
 	if err != nil {
 		return nil, err
 	}
 	var findings []sdk.Finding
 	for _, f := range facts {
-		baseline, hasBaseline := d.baselineFor(f.Pod.Name)
+		baseline, hasBaseline := pick(baselines, f.Pod.Name)
 		var changes []Change
 		if hasBaseline {
 			changes = Diff(baseline, f)

@@ -54,7 +54,8 @@ Rules the memory check enforces:
   from the first through edges inside the path.
 - `data.engine` is one of postgres, mysql, mongodb, redis, memcached, consul, other. `data.role` is
   `authoritative` (no `derived_from`) or `derived`: `derived_from` lists authoritative components, and a derived
-  component has `holds_data: false`.
+  component has `holds_data: false`. For an engine SDO can read (redis today), Go installs a
+  `store-state-<component>` health detector on the component's workload; do not author another.
 - `evidence` is a non-empty subset of `[config, observed]`; `source` cites the file for config evidence, or says
   how you observed the call.
 - A probe's path is the union of its operations' paths. Its scenario's `DependsOn` names at least one Service of

@@ -22,6 +22,7 @@ import (
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/onboarding"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/podread"
 )
 
 type SnapshotProvider interface {
@@ -116,6 +117,10 @@ type Controller struct {
 	healthyMemoryBaselineAt time.Time
 	healthyMemoryReference  string
 	healthyMemoryCandidates map[time.Time]string
+	// podReadCandidates are the pod readings of the adopted and candidate
+	// baseline moments; podReadPromotedAt is the boundary last promoted.
+	podReadCandidates map[time.Time]map[string]podread.Result
+	podReadPromotedAt time.Time
 	// background tracks every goroutine an effect starts (responder dispatch,
 	// broker workspace/closure/acknowledgment, open@detect routing sweeps).
 	// They write under the session root until they return; Wait joins them.
@@ -201,6 +206,9 @@ type Controller struct {
 	// Baseline, when set, records healthy configuration and attaches the
 	// diff against it to each new incident request.
 	Baseline StateBaseline
+	// PodReadBaseline, when set, receives the pod readings of each promoted
+	// healthy baseline; the snapshot provider carries them with current reads.
+	PodReadBaseline *PodReadBaseline
 	// Helpers, when set, deletes responder helper objects once the
 	// responder completes, before recovery is verified.
 	Helpers HelperCleaner
@@ -665,6 +673,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			c.Baseline.Observe(now, healthy)
 		}
 		c.captureHealthyMemoryBaseline(ctx, now, snapshot, healthy)
+		c.promotePodReadBaseline(now, snapshot, healthy)
 	}
 	if c.adoptionNeeded {
 		c.mu.Lock()
@@ -818,6 +827,7 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 	if c.Baseline != nil {
 		request.StateChanges = cloneStateChanges(c.Baseline.Changes(now))
 	}
+	request.StateChanges = withStoreChanges(request.StateChanges, snapshot, now)
 	c.beginIncident(now, request, batch)
 	// The batcher is drained, so the incident is open before any file I/O: an
 	// observer exporting state mid-capture reads the work, never an idle gap.
