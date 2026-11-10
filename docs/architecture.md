@@ -298,9 +298,9 @@ target. Typed store actions (`sdk/program/data_repair.go`, engine commands in `s
 `CheckStoreCredential` `read`. All of them run on the automatic path and for the
 responder alike. `RestoreStoreItem` (`runtime/plan_store_restore.go`) puts one store-state item back to
 the controller's promoted baseline value through the engine's closed inverse table
-(`storestate.Restorer`: redis, mongodb and postgres; another engine's adapter adds its own), reads the
+(`storestate.Restorer`: redis, mongodb, postgres and mysql; another engine's adapter adds its own), reads the
 item first to record its prior value, does nothing at the baseline, and reads again to verify. Validator
-and index text the value-free read keeps only as a digest comes from `runtime/store_payloads.go`: the
+and index text (and a mysql account's `SHOW GRANTS` text) the value-free read keeps only as a digest or count comes from `runtime/store_payloads.go`: the
 controller reads it (`storestate.PayloadReader`) when the pod-read baseline promotes a store Pod and keeps
 it in memory beside that baseline (same lifetime, never in `.sdo/`, evidence or captures, never a
 credential); each entry carries its fact value and is used only while it matches the baseline. A
