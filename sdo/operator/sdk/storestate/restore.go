@@ -103,6 +103,9 @@ const (
 	PayloadEJSON = "ejson"
 	// PayloadShell is a legacy mongo shell tojson() expression.
 	PayloadShell = "shell"
+	// PayloadGrants is an account's MySQL SHOW GRANTS text, its statements
+	// joined by the unit separator.
+	PayloadGrants = "grants"
 	// PayloadPlaceholder stands in for real text in Restorable.
 	PayloadPlaceholder = "placeholder"
 )
@@ -155,7 +158,7 @@ func (p Payload) Validate() error {
 		if entry.Key.Name == "" || !knownKinds[entry.Key.Kind] {
 			return fmt.Errorf("restore payload entry %s has no valid key", entry.Key)
 		}
-		if entry.Format != PayloadEJSON && entry.Format != PayloadShell {
+		if entry.Format != PayloadEJSON && entry.Format != PayloadShell && entry.Format != PayloadGrants {
 			return fmt.Errorf("restore payload entry %s has format %q", entry.Key, entry.Format)
 		}
 		if len(entry.Text) > MaxPayloadEntryBytes {

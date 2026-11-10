@@ -68,6 +68,9 @@ const (
 	PayloadEJSON = "ejson"
 	// PayloadShell is a legacy mongo shell tojson() expression.
 	PayloadShell = "shell"
+	// PayloadGrants is an account's MySQL SHOW GRANTS text, its statements
+	// joined by the unit separator.
+	PayloadGrants = "grants"
 	// PayloadPlaceholder stands in for real text in Restorable.
 	PayloadPlaceholder = "placeholder"
 )
@@ -242,16 +245,4 @@ type CredentialCheck struct {
 
 func ParseCredentialCheck(stdout string) (CredentialCheck, error)
     ParseCredentialCheck reads the result line of a credential check.
-
-type CredentialInputs struct {
-	User     string
-	Password string
-	Database string
-	URI      string
-}
-    CredentialInputs names, never holds, the client's credential: the
-    environment variables (a "<NAME>_FILE" variable names a mounted file) that
-    carry its user, password, database (the postgres database or the mongodb
-    authentication database) or connection URI. Empty names are discovered from
-    the variable names the way the store read discovers its own.
 ```
