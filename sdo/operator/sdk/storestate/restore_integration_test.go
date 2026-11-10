@@ -163,7 +163,7 @@ func TestPostgresRestoreTable(t *testing.T) {
 		key   storestate.Key
 		want  []string
 	}{
-		"database read-only": {pairs: []string{"exampledb\t*\tsearch_path", "exampledb\t*\tdefault_transaction_read_only\ton\nexampledb\t*\tsearch_path"}, key: storestate.Key{Kind: storestate.KindWriteBlock, Scope: "exampledb", Name: "default-transaction-read-only"}, want: []string{`ALTER DATABASE "exampledb" RESET default_transaction_read_only`}},
+		"database read-only": {pairs: []string{"exampledb\t*\tsearch_path", "exampledb\t*\tdefault_transaction_read_only\ton\nexampledb\t*\tsearch_path"}, key: storestate.Key{Kind: storestate.KindWriteBlock, Scope: "exampledb", Name: "default-transaction-read-only"}, want: []string{`ALTER DATABASE "exampledb" RESET default_transaction_read_only`, "-c default_transaction_read_only=off"}},
 		"database setting":   {pairs: []string{"exampledb\t*\tsearch_path", "exampledb\t*\tdefault_transaction_read_only\ton\nexampledb\t*\tsearch_path"}, key: storestate.Key{Kind: storestate.KindSetting, Scope: "exampledb", Name: "default_transaction_read_only"}, want: []string{`ALTER DATABASE "exampledb" RESET default_transaction_read_only`}},
 		"role expired":       {pairs: []string{"appuser\tlogin", "appuser\tlogin expired"}, key: storestate.Key{Kind: storestate.KindPrincipal, Name: "appuser"}, want: []string{`ALTER ROLE "appuser" NOSUPERUSER LOGIN NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT -1 VALID UNTIL 'infinity'`}},
 		"role nologin":       {pairs: []string{"appuser\tlogin", "appuser\tnologin member-of=admin"}, key: storestate.Key{Kind: storestate.KindPrincipal, Name: "appuser"}, want: []string{`ALTER ROLE "appuser" NOSUPERUSER LOGIN`, `REVOKE "admin" FROM "appuser"`}},

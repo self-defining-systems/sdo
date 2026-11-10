@@ -9,9 +9,10 @@ import (
 )
 
 // postgresRestoreHead connects like the read: psql over the container's own
-// socket as the user the credential prelude found. q runs one statement in
-// database $d, printing at most five lines of the store's answer.
-const postgresRestoreHead = `U=${U:-postgres};D=${POSTGRES_DB:-${POSTGRESQL_DATABASE:-${PGDATABASE:-$U}}};export PGPASSWORD="$P" PGCONNECT_TIMEOUT=5
+// socket as the user the credential prelude found. Its session is never
+// read-only, so it can undo a database made read-only. q runs one statement
+// in database $d, printing at most five lines of the store's answer.
+const postgresRestoreHead = `U=${U:-postgres};D=${POSTGRES_DB:-${POSTGRESQL_DATABASE:-${PGDATABASE:-$U}}};export PGPASSWORD="$P" PGCONNECT_TIMEOUT=5 PGOPTIONS="${PGOPTIONS:+$PGOPTIONS }-c default_transaction_read_only=off"
 q(){ o=$(psql -X -q -At -v ON_ERROR_STOP=1 -p %d -U "$U" -d "$d" -c "$1" 2>&1);r=$?;printf '%%s\n' "$o"|tr -d '\r'|head -n5;return $r;}
 `
 
