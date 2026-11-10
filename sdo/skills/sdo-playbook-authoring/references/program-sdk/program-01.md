@@ -78,6 +78,12 @@ func CheckReplicaSetScales(plan Plan, view ReplicaSetOwnerView) error
     not a binding. Retiring an old revision is the only repair a program needs
     on a ReplicaSet; anything else risks an outage.
 
+func DataActionEffect(action Action) (StoreTarget, DataEffect, bool)
+    DataActionEffect is the data effect a store action declares on its target
+    component. The executor enforces it: a backup only reads, an invalidation
+    only drops a derived store's entries, and a repair or restore changes
+    records.
+
 func DocumentWriteRef(action Action) (sdk.ObjectRef, bool)
     DocumentWriteRef identifies actions that project edits onto an existing
     object. Their relative order within that object is preserved in its single
@@ -146,6 +152,10 @@ TYPES
 type Action interface {
 	// Has unexported methods.
 }
+
+func DataAction(action Action) Action
+    DataAction returns a store action given by value or pointer as its value,
+    or nil when action is not one.
 
 func StalledRolloutRelease(view RolloutView, deployment sdk.ObjectRef) []Action
     StalledRolloutRelease returns the standard release of a Deployment
@@ -222,16 +232,4 @@ func BindFinding(spec ProgramSpec, finding sdk.Finding) (Bindings, error)
     that sets named bindings without declaring its playbooks.
 
 func (b Bindings) Clone() Bindings
-
-func (b Bindings) Equal(other Bindings) bool
-    Equal compares object bindings through the shared citation parser and scalar
-    values through their JSON representation. Omitted known API versions are
-    equivalent to their defaults; namespace and explicit versions remain exact.
-
-func (b Bindings) Parameter(spec ProgramSpec, name string) (any, error)
-    Parameter resolves one declared value, including a validated default.
-
-func (b *Bindings) UnmarshalJSON(raw []byte) error
-    UnmarshalJSON imports object-only corpus bindings from existing recordings.
-    New recordings always use explicit objects and values maps.
 ```

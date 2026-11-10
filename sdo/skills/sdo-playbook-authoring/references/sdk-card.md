@@ -84,6 +84,15 @@ or reads. The full [program SDK](program-sdk.md) is rarely needed.
 - `type DatabaseRole struct{Database string; Name string}`: is one directly granted role in a named database.
 - `type EnsureDatabaseUser struct{Target DatabaseTarget; User string; Roles []DatabaseRole; Password CredentialRef; Reason string}`: creates a missing user or replaces all of an existing user's direct roles with Roles.
 
+## Store records: backup, derived-copy invalidation, repair, restore
+
+- `type StoreTarget struct{Component string; Engine string; Pod sdk.ObjectRef; Container string; Port int}`: selects one data store instance: its application-map component, the engine the map declares for it (redis, mongodb or postgres), and the Pod and container whose own CLI runs the operation.
+- `type DataScope = storeops.Scope`: selects records with an engine-native, read-only selector: for redis a database number and key glob, for mongodb a database, collection and JSON filter, for postgres a database, table and WHERE body.
+- `type StoreBackup struct{ID string; Target StoreTarget; Scope DataScope; Reason string}`: copies the records of one scope into the controller's backup storage (outside .sdo/, on the controller's repository volume, per incident) and records its ID, item count, size, SHA-256 and the store's facts at backup time.
+- `type InvalidateDerived struct{Target StoreTarget; Scope DataScope; Reason string}`: drops the entries of a derived store (a cache) in Scope so they are read again from their source (effect derived-invalidate).
+- `type RepairData struct{Target StoreTarget; Scope DataScope; Statement string; ExpectMin int; ExpectMax int; Backup string; Reason string}`: changes the records of one scope with one engine-native statement (effect data-write): a redis single-key write per matched key ("SREM member"), a mongodb update document or pipeline, a postgres SET clause, or "delete".
+- `type RestoreBackup struct{Target StoreTarget; Backup string; Reason string}`: puts the records of one StoreBackup of this incident back (effect data-write): redis keys are restored with REPLACE, mongodb documents upserted by _id, postgres rows replaced by primary key in one transaction.
+
 ## Any other hand repair: commands, HTTP, Jobs, raw API objects
 
 - `type RunScript struct{Script string; Env map[string]Value; Timeout time.Duration; Reason string}`: is a first-class learnable mitigation.

@@ -81,6 +81,23 @@ func (r dataReach) effects(action program.Action) dataEffects {
 		}
 		text(fmt.Sprint(resolved))
 	}
+	if target, declared, ok := program.DataActionEffect(action); ok {
+		// A typed store action declares its effect, and the executor holds
+		// it to that: it runs only the engine's fixed command for the class
+		// on the component the accepted map grounds.
+		result.verb = storeActionVerb(action)
+		effect = declared
+		object(target.Pod)
+		if r.holders.named(target.Component).HoldsData {
+			reached[target.Component] = true
+		}
+		for _, workload := range r.holders.workloads() {
+			if name := r.holders[workload].Name; reached[name] {
+				result.touches = append(result.touches, program.Touch{Component: name, Effect: effect})
+			}
+		}
+		return result
+	}
 	switch a := actionValue(action).(type) {
 	case program.Exec:
 		result.verb = "exec"
@@ -231,9 +248,11 @@ func mayChangeRecords(effect program.DataEffect) bool {
 }
 
 // unbackedDataWrites names the holds_data workloads whose records an applied
-// action may have changed with no backup taken first. The SDK has no backup
-// action yet, so every such write is unbacked. Health probes see only the data
-// they wrote, so a repair like this cannot be shown to have kept the rest. The
+// action may have changed with no backup taken first. Only a typed store write
+// can be backed: a RepairData whose named StoreBackup of this incident covers
+// its scope, or a RestoreBackup after a fresh StoreBackup of the scope it
+// overwrites. An opaque command never is. Health probes see only the data
+// they wrote, so an unbacked repair cannot be shown to have kept the rest. The
 // responder stays free to make it; the closure just cannot feed learning. Only
 // inputs SDO can still see count here: a recorded plan keeps its objects but not
 // the text of its bound values.
@@ -243,8 +262,12 @@ func unbackedDataWrites(view sdk.DetectionContext, applications []RecordedPlanAp
 	}
 	reach := dataReach{view: view, holders: holders, namespace: namespace}
 	risks := map[string]string{}
+	backups := appliedBackups(applications)
 	for _, application := range applications {
 		for _, action := range application.Result.ActionsApplied {
+			if backedStoreWrite(action, backups) {
+				continue
+			}
 			effects := reach.effects(action)
 			for _, touch := range effects.touches {
 				workload := holders.named(touch.Component).Workload
@@ -260,4 +283,58 @@ func unbackedDataWrites(view sdk.DetectionContext, applications []RecordedPlanAp
 	}
 	sort.Strings(result)
 	return result
+}
+
+// appliedBackups lists the StoreBackup records the executor verified during
+// the incident.
+func appliedBackups(applications []RecordedPlanApplication) []program.StoreBackupRecord {
+	var backups []program.StoreBackupRecord
+	for _, application := range applications {
+		for _, report := range application.Result.ActionReports {
+			if report.Status == "applied" && report.StoreBackup != nil {
+				backups = append(backups, *report.StoreBackup)
+			}
+		}
+	}
+	return backups
+}
+
+// backedStoreWrite holds for a typed store write whose overwritten records a
+// backup of this incident holds: the backup a RepairData names, covering its
+// scope; for a RestoreBackup, a backup of the restored scope taken after the
+// one it restores.
+func backedStoreWrite(action program.Action, backups []program.StoreBackupRecord) bool {
+	switch a := program.DataAction(action).(type) {
+	case program.RepairData:
+		for _, backup := range backups {
+			if backup.ID == a.Backup && backup.Covers(a.Target, a.Scope) {
+				return true
+			}
+		}
+	case program.RestoreBackup:
+		for _, restored := range backups {
+			if restored.ID != a.Backup {
+				continue
+			}
+			for _, fresh := range backups {
+				if fresh.ID != a.Backup && fresh.At.After(restored.At) && fresh.Covers(a.Target, restored.Scope) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// storeActionVerb names a typed store action in a refusal or risk.
+func storeActionVerb(action program.Action) string {
+	switch program.DataAction(action).(type) {
+	case program.StoreBackup:
+		return "store backup"
+	case program.RepairData:
+		return "data repair"
+	case program.RestoreBackup:
+		return "backup restore"
+	}
+	return "derived-store invalidation"
 }

@@ -28,7 +28,13 @@ type PlanActionReport struct {
 	ExternalEffect   *program.ExternalEffect   `json:"external_effect,omitempty"`
 	KubernetesEffect *program.KubernetesEffect `json:"kubernetes_effect,omitempty"`
 	// DatabaseUser is set only when the catalog read-back confirmed the user.
-	DatabaseUser   *program.DatabaseUserEffect `json:"database_user,omitempty"`
+	DatabaseUser *program.DatabaseUserEffect `json:"database_user,omitempty"`
+	// StoreBackup is set only after the dump was complete, counted, digested
+	// and stored.
+	StoreBackup *program.StoreBackupRecord `json:"store_backup,omitempty"`
+	// DataRepair is what a RepairData, RestoreBackup or InvalidateDerived
+	// changed, as the store reported it.
+	DataRepair     *program.DataRepairEffect `json:"data_repair,omitempty"`
 	JobStatus      json.RawMessage             `json:"job_status,omitempty"`
 	RecordingError string                      `json:"recording_error,omitempty"`
 }

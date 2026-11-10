@@ -23,6 +23,9 @@ func objectRefState(ref *contracts.ObjectRef) sdk.ObjectRef {
 func RefProto(ref sdk.ObjectRef) *contracts.ObjectRef { return refProto(ref) }
 
 func ActionProto(action program.Action) (*contracts.Action, error) {
+	if wire, ok := dataActionProto(action); ok {
+		return wire, nil
+	}
 	if IsGeneralAction(action) {
 		if _, legacyDelete := GeneralAction(action).(program.DeleteObject); !legacyDelete {
 			return generalActionProto(action)
@@ -134,6 +137,12 @@ func refProto(ref sdk.ObjectRef) *contracts.ObjectRef {
 
 func ActionState(action *contracts.Action) program.Action {
 	var decoded program.Action
+	if store := dataActionState(action); store != nil {
+		if (program.Plan{Actions: []program.Action{store}}).Validate() == nil {
+			return store
+		}
+		return nil
+	}
 	if general, err := GeneralActionState(action); err == nil {
 		if (program.Plan{Actions: []program.Action{general}}).Validate() == nil {
 			return general
@@ -299,7 +308,9 @@ func HasNonObjectEffect(actions []program.Action) bool {
 func classifyEffect(action *contracts.Action) (nonObject, known bool) {
 	switch action.GetKind().(type) {
 	case *contracts.Action_Exec, *contracts.Action_EnsureDatabaseUser, *contracts.Action_EnsureExec,
-		*contracts.Action_EnsureHttp, *contracts.Action_RunJob, *contracts.Action_RunScript:
+		*contracts.Action_EnsureHttp, *contracts.Action_RunJob, *contracts.Action_RunScript,
+		*contracts.Action_StoreBackup, *contracts.Action_InvalidateDerived, *contracts.Action_RepairData,
+		*contracts.Action_RestoreBackup:
 		return true, true
 	case *contracts.Action_ReconcileFromSource, *contracts.Action_Rollback, *contracts.Action_SetField,
 		*contracts.Action_RestartRollout, *contracts.Action_CreateFromSource, *contracts.Action_DeleteObject,

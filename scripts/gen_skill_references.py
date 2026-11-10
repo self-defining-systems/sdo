@@ -136,6 +136,17 @@ CARD_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
         ),
     ),
     (
+        "Store records: backup, derived-copy invalidation, repair, restore",
+        (
+            "program.StoreTarget",
+            "program.DataScope",
+            "program.StoreBackup",
+            "program.InvalidateDerived",
+            "program.RepairData",
+            "program.RestoreBackup",
+        ),
+    ),
+    (
         "Any other hand repair: commands, HTTP, Jobs, raw API objects",
         (
             "program.RunScript",

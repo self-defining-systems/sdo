@@ -27,6 +27,8 @@ var menuActionExamples = sync.OnceValue(func() map[string]map[string]any {
 	object := program.ApplyObject{Ref: pod, Mode: "create", Object: map[string]any{"apiVersion": "v1", "kind": "Pod", "metadata": map[string]any{"namespace": "app", "name": "example"}, "spec": map[string]any{"containers": []any{map[string]any{"name": "app", "image": "example.invalid/app"}}}}}
 	wait := program.WaitFor{Ref: pod, Path: "/status/phase", Equals: "Succeeded"}
 	reason := "restore intended behavior"
+	store := program.StoreTarget{Component: "store", Engine: "mongodb", Pod: pod, Container: "store"}
+	scope := program.DataScope{Database: "app", Collection: "items", Selector: `{"addr": {"$exists": true}}`, Limit: 1000}
 	actions := []program.Action{
 		program.SyncWebhookCA{Target: program.WebhookCA{Ref: sdk.ObjectRef{APIVersion: "admissionregistration.k8s.io/v1", Kind: "ValidatingWebhookConfiguration", Name: "policy"}, Webhook: "policy.example", SecretNamespace: "app", SecretName: "serving", SecretKey: "ca.crt"}, Reason: reason},
 		program.ReconcileFromSource{Ref: deployment},
@@ -50,6 +52,10 @@ var menuActionExamples = sync.OnceValue(func() map[string]map[string]any {
 		program.EnsureHTTP{Observe: http, Ensure: http},
 		program.RunJob{Object: object, Completion: wait},
 		program.RunScript{Script: ":", Env: map[string]program.Value{"POD": program.FromObserved(pod, "metadata.name")}},
+		program.StoreBackup{ID: "before-repair", Target: store, Scope: scope, Reason: "back up the records the repair changes"},
+		program.InvalidateDerived{Target: program.StoreTarget{Component: "cache", Engine: "redis", Pod: pod, Container: "cache"}, Scope: program.DataScope{Selector: "item:*"}, Reason: "drop copies made while the source was damaged"},
+		program.RepairData{Target: store, Scope: scope, Statement: `{"$rename": {"addr": "address"}}`, ExpectMin: 1, ExpectMax: 50, Backup: "before-repair", Reason: reason},
+		program.RestoreBackup{Target: store, Backup: "before-repair", Reason: "undo the repair"},
 	}
 	result := map[string]map[string]any{}
 	for _, action := range actions {
