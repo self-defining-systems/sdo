@@ -37,6 +37,8 @@ Capture each independent fix as its own patch, one reason each. Later patches ap
 - `patch.uncaptured`: an app file differs from what the patches produce. Capture it with `patch create`, or undo
   your edit by hand (`git checkout` restores the unpatched base, which differs from your checkout's patched view). A deployer publish and a responder closure both
   wait on this; an experiment you leave behind blocks them.
+- `patch.undeployable` (a note, not a rejection): the patch stays recorded, but no image build source or deployment
+  input covers its files, so it never reaches a running workload. It does not mitigate; use a runtime mitigation.
 - `patch.invalid`, `patch.owner`: see [rules](references/rules.md). Never hand-write headers; use `patch create`.
 - `patch check` kinds: `conflict` (context no longer matches: re-create the patch against current files),
   `upstreamed` (the change is already in the base: delete your own patch), `missing_file` (the file is gone upstream).
