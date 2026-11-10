@@ -46,27 +46,26 @@ type StoreBackup struct {
 }
 
 // InvalidateDerived drops a derived cache's entries to refill from source.
-// Its effect is derived-invalidate on Scope. The controller runs it only when the accepted application map marks the
-// component data.role derived and every derived_from source passes its live
-// store-state checks (it answers, accepts writes and refuses none of SDO's
-// reads). Repair the source first: flushing a cache whose source is damaged
-// refills it with the damage. The automatic stage may run it under the same
-// guard. Only redis supports it today.
+// Its effect is derived-invalidate on Scope when the accepted application map
+// marks the component data.role derived, and data-write otherwise. The
+// controller records the derivation it ran under: whether the map marks the
+// component derived and whether each derived_from source passed its live
+// store-state checks. Flushing a cache whose source is damaged refills it with
+// the damage. Only redis supports it today.
 type InvalidateDerived struct {
 	Target StoreTarget
 	Scope  DataScope
 	Reason string
 }
 
-// RepairData runs one write on a backed-up scope.
+// RepairData runs one write on a scope.
 // Its effect is data-write. The statement is a redis single-key write per matched key
 // ("SREM member"), a mongodb update document or pipeline, a postgres SET
-// clause, or "delete". The controller requires Backup to name a StoreBackup
-// of this incident whose scope covers Scope, counts the matching items first
-// and refuses unless the count is within [ExpectMin, ExpectMax], writes
+// clause, or "delete". The controller counts the matching items first and
+// refuses unless the count is within [ExpectMin, ExpectMax], writes
 // (atomically with the count on redis and postgres), then counts again and
-// reads the store's facts. It never runs automatically. A backed repair does
-// not make the outcome unconfirmed by itself.
+// reads the store's facts. Backup optionally names a StoreBackup of this
+// incident; the controller records it and whether it covers Scope.
 type RepairData struct {
 	Target    StoreTarget
 	Scope     DataScope
@@ -81,10 +80,8 @@ type RepairData struct {
 // Its effect is data-write: redis keys are restored with REPLACE, mongodb documents
 // upserted by _id, postgres rows replaced by primary key in one transaction.
 // Items created since the backup stay, and writes made since the backup to
-// the restored items are lost: name them in the outcome. It is a responder
-// action only, never automatic. Take a fresh StoreBackup of the same scope
-// first; without it the restore is an unbacked write and the outcome is
-// unconfirmed.
+// the restored items are lost: name them in the outcome. A fresh StoreBackup
+// of the same scope first is recorded as holding what the restore overwrote.
 type RestoreBackup struct {
 	Target StoreTarget
 	Backup string
@@ -126,15 +123,21 @@ func (r StoreBackupRecord) Covers(target StoreTarget, scope DataScope) bool {
 // DataRepairEffect is the controller's record of one RepairData,
 // RestoreBackup or InvalidateDerived: the items the scope matched before, the
 // items the store reports changed, the match count after, the backup it
-// relied on, and the store's facts afterwards.
+// named, and the store's facts afterwards.
 type DataRepairEffect struct {
-	Component  string            `json:"component"`
-	Before     int               `json:"before"`
-	Affected   int               `json:"affected"`
-	After      int               `json:"after"`
-	Backup     string            `json:"backup,omitempty"`
-	Facts      *storestate.Facts `json:"facts,omitempty"`
-	FactsError string            `json:"facts_error,omitempty"`
+	Component string `json:"component"`
+	Before    int    `json:"before"`
+	Affected  int    `json:"affected"`
+	After     int    `json:"after"`
+	Backup    string `json:"backup,omitempty"`
+	// BackupCovers says whether the named backup holds every item the
+	// repair's scope selects; nil when no backup was named.
+	BackupCovers *bool `json:"backup_covers,omitempty"`
+	// SourceState is an InvalidateDerived's derivation as SDO read it before
+	// the drop: the map's role for the target and each source's store state.
+	SourceState []string          `json:"source_state,omitempty"`
+	Facts       *storestate.Facts `json:"facts,omitempty"`
+	FactsError  string            `json:"facts_error,omitempty"`
 }
 
 var backupID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
@@ -203,8 +206,10 @@ func (a RepairData) Validate() error {
 	if a.ExpectMax == 0 {
 		return fmt.Errorf("RepairData with ExpectMax 0 changes nothing")
 	}
-	if err := validateBackupID(a.Backup); err != nil {
-		return fmt.Errorf("RepairData requires the ID of a StoreBackup taken in this incident: %w", err)
+	if a.Backup != "" {
+		if err := validateBackupID(a.Backup); err != nil {
+			return fmt.Errorf("RepairData Backup names a StoreBackup of this incident: %w", err)
+		}
 	}
 	return nil
 }
@@ -246,9 +251,10 @@ func DataAction(action Action) Action {
 }
 
 // DataActionEffect is the data effect a store action declares on its target
-// component. The executor enforces it: a backup only reads, an invalidation
-// only drops a derived store's entries, and a repair or restore changes
-// records.
+// component: a backup only reads, an invalidation drops a store's entries,
+// and a repair or restore changes records. The controller records it; an
+// invalidation of a component the map does not mark derived is recorded as a
+// data write.
 func DataActionEffect(action Action) (StoreTarget, DataEffect, bool) {
 	switch a := DataAction(action).(type) {
 	case StoreBackup:

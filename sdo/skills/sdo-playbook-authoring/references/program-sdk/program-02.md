@@ -71,18 +71,24 @@ const (
 	EffectUnknown DataEffect = "unknown"
 )
 type DataRepairEffect struct {
-	Component  string            `json:"component"`
-	Before     int               `json:"before"`
-	Affected   int               `json:"affected"`
-	After      int               `json:"after"`
-	Backup     string            `json:"backup,omitempty"`
-	Facts      *storestate.Facts `json:"facts,omitempty"`
-	FactsError string            `json:"facts_error,omitempty"`
+	Component string `json:"component"`
+	Before    int    `json:"before"`
+	Affected  int    `json:"affected"`
+	After     int    `json:"after"`
+	Backup    string `json:"backup,omitempty"`
+	// BackupCovers says whether the named backup holds every item the
+	// repair's scope selects; nil when no backup was named.
+	BackupCovers *bool `json:"backup_covers,omitempty"`
+	// SourceState is an InvalidateDerived's derivation as SDO read it before
+	// the drop: the map's role for the target and each source's store state.
+	SourceState []string          `json:"source_state,omitempty"`
+	Facts       *storestate.Facts `json:"facts,omitempty"`
+	FactsError  string            `json:"facts_error,omitempty"`
 }
     DataRepairEffect is the controller's record of one RepairData, RestoreBackup
     or InvalidateDerived: the items the scope matched before, the items the
-    store reports changed, the match count after, the backup it relied on,
-    and the store's facts afterwards.
+    store reports changed, the match count after, the backup it named, and the
+    store's facts afterwards.
 
 type DataScope = storeops.Scope
     DataScope selects records with an engine-native, read-only selector:
@@ -271,6 +277,4 @@ type HTTPRequest struct {
     exit code, including HTTP errors with --fail. Response bodies and stderr are
     never captured. Bearer names an environment variable; it is expanded only
     there.
-
-func (h HTTPRequest) Validate() error
 ```

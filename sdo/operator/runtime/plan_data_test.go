@@ -18,6 +18,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -286,31 +287,22 @@ func TestStoreBackupRecordsCountSizeDigestAndFacts(t *testing.T) {
 	}
 }
 
-// RepairData runs only with a backup of this incident that covers its scope
-// and a count within the expected bounds; any refusal writes nothing.
-func TestRepairDataRequiresACoveringBackupAndAnExpectedCount(t *testing.T) {
+// RepairData refuses only a count outside the expected bounds or a named
+// backup that does not exist in this incident; any refusal writes nothing.
+func TestRepairDataRefusesOnlyAnUnexpectedCountOrAMissingNamedBackup(t *testing.T) {
 	for name, test := range map[string]struct {
 		prepare func(*storeWorld)
 		repair  program.RepairData
 		refusal string
 	}{
-		"no backup": {repair: removePoison("before"), refusal: "take a StoreBackup"},
-		"backup of another scope": {prepare: func(w *storeWorld) {
-			_, _ = w.apply(t, storeBackup("before", program.DataScope{Selector: "other:*"}))
-		}, repair: removePoison("before"), refusal: "does not cover"},
-		"backup of another incident": {prepare: func(w *storeWorld) {
+		"named backup never taken": {repair: removePoison("before"), refusal: "name a StoreBackup of this incident, or none"},
+		"named backup of another incident": {prepare: func(w *storeWorld) {
 			incident := w.incident
 			w.incident.IncidentID = "synthetic-earlier"
 			_, _ = w.apply(t, storeBackup("before", itemScope))
 			w.incident = incident
-		}, repair: removePoison("before"), refusal: "take a StoreBackup"},
-		"count above the expected bound": {prepare: func(w *storeWorld) {
-			_, _ = w.apply(t, storeBackup("before", itemScope))
-		}, repair: func() program.RepairData { r := removePoison("before"); r.ExpectMax = 1; return r }(), refusal: "outside the expected [1, 1]"},
-		"items matched since the backup": {prepare: func(w *storeWorld) {
-			_, _ = w.apply(t, storeBackup("before", itemScope))
-			w.stores.sets["db-0"]["item:9"] = []string{"poison"}
-		}, repair: removePoison("before"), refusal: "take a fresh StoreBackup"},
+		}, repair: removePoison("before"), refusal: "name a StoreBackup of this incident"},
+		"count above the expected bound": {repair: func() program.RepairData { r := removePoison(""); r.ExpectMax = 1; return r }(), refusal: "outside the expected [1, 1]"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := newStoreWorld(t)
@@ -331,6 +323,47 @@ func TestRepairDataRequiresACoveringBackupAndAnExpectedCount(t *testing.T) {
 			}
 			if members := w.stores.sets["db-0"]["item:1"]; len(members) != 2 {
 				t.Fatalf("the store changed: %v", members)
+			}
+		})
+	}
+}
+
+// A backup is optional: a repair without one, or with one that does not cover
+// its scope, runs and records what it named and whether it covered the scope.
+func TestRepairDataRecordsItsBackupInsteadOfRequiringIt(t *testing.T) {
+	covers := func(b bool) *bool { return &b }
+	for name, test := range map[string]struct {
+		prepare func(*storeWorld)
+		repair  program.RepairData
+		covers  *bool
+	}{
+		"no backup": {repair: removePoison("")},
+		"backup of another scope": {prepare: func(w *storeWorld) {
+			_, _ = w.apply(t, storeBackup("before", program.DataScope{Selector: "other:*"}))
+		}, repair: removePoison("before"), covers: covers(false)},
+		"items matched since the backup": {prepare: func(w *storeWorld) {
+			_, _ = w.apply(t, storeBackup("before", itemScope))
+			w.stores.sets["db-0"]["item:9"] = []string{"poison"}
+		}, repair: removePoison("before"), covers: covers(true)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newStoreWorld(t)
+			if test.prepare != nil {
+				test.prepare(w)
+			}
+			result, err := w.apply(t, test.repair)
+			if err != nil {
+				t.Fatal(err)
+			}
+			effect := result.ActionReports[0].DataRepair
+			if effect == nil || effect.Affected == 0 || effect.Backup != test.repair.Backup {
+				t.Fatalf("effect = %+v", effect)
+			}
+			if (effect.BackupCovers == nil) != (test.covers == nil) || (test.covers != nil && *effect.BackupCovers != *test.covers) {
+				t.Fatalf("backup_covers = %v, want %v", effect.BackupCovers, test.covers)
+			}
+			if members := w.stores.sets["db-0"]["item:1"]; len(members) != 1 || members[0] != "good" {
+				t.Fatalf("item:1 = %v", members)
 			}
 		})
 	}
@@ -375,21 +408,22 @@ func TestRepairDataCountsWritesAndRechecks(t *testing.T) {
 	}
 }
 
-// Dropping a cache is allowed only for a copy the map marks derived, and only
-// while each source answers and accepts writes: a flush over a damaged source
-// refills the cache with the damage.
-func TestInvalidateDerivedRequiresADerivedTargetAndHealthySources(t *testing.T) {
+// Dropping a cache runs whatever its source's state; the controller records
+// the derivation it ran under, so a flush over a damaged source is visible as
+// evidence: whether the map marks the target derived and how each source read.
+func TestInvalidateDerivedRecordsTheSourceState(t *testing.T) {
 	writeBlocked := strings.Replace(healthyRedisRead, "min-replicas-to-write\n0", "min-replicas-to-write\n1", 1)
 	for name, test := range map[string]struct {
 		prepare func(*storeWorld)
 		target  program.StoreTarget
-		refusal string
+		pod     string
+		state   string
 	}{
-		"healthy source":        {target: cacheTarget},
-		"write-blocked source":  {prepare: func(w *storeWorld) { w.stores.facts["db-0"] = writeBlocked }, target: cacheTarget, refusal: "repair the authoritative source first"},
-		"unreadable source":     {prepare: func(w *storeWorld) { w.stores.broken["db-0"] = true }, target: cacheTarget, refusal: "source db"},
-		"authoritative target":  {target: dbTarget, refusal: "does not mark db data.role derived"},
-		"no running source Pod": {prepare: func(w *storeWorld) { w.stores.view.PodList[0].Status.Phase = corev1.PodPending }, target: cacheTarget, refusal: "no running Pod"},
+		"healthy source":        {target: cacheTarget, pod: "cache-1-a", state: "source db passed its store-state checks"},
+		"write-blocked source":  {prepare: func(w *storeWorld) { w.stores.facts["db-0"] = writeBlocked }, target: cacheTarget, pod: "cache-1-a", state: "source db fails its store-state check"},
+		"unreadable source":     {prepare: func(w *storeWorld) { w.stores.broken["db-0"] = true }, target: cacheTarget, pod: "cache-1-a", state: "source db"},
+		"authoritative target":  {target: dbTarget, pod: "db-0", state: "does not mark db data.role derived"},
+		"no running source Pod": {prepare: func(w *storeWorld) { w.stores.view.PodList[0].Status.Phase = corev1.PodPending }, target: cacheTarget, pod: "cache-1-a", state: "no running Pod"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := newStoreWorld(t)
@@ -397,23 +431,22 @@ func TestInvalidateDerivedRequiresADerivedTargetAndHealthySources(t *testing.T) 
 				test.prepare(w)
 				w.executor.Stores.Snapshot = riskSnapshots{view: w.stores.view}
 			}
-			action := program.InvalidateDerived{Target: test.target, Scope: itemScope, Reason: "synthetic"}
-			stage := w.executor.storeStageRefusal(context.Background(), w.incident, program.Plan{Actions: []program.Action{action}})
-			result, err := w.apply(t, action)
-			if test.refusal == "" {
-				if err != nil || stage != "" {
-					t.Fatalf("apply %v, stage %q", err, stage)
-				}
-				if effect := result.ActionReports[0].DataRepair; effect == nil || effect.Affected != 3 || len(w.stores.sets["cache-1-a"]) != 0 {
-					t.Fatalf("effect %+v, cache %v", effect, w.stores.sets["cache-1-a"])
-				}
-				return
+			result, err := w.apply(t, program.InvalidateDerived{Target: test.target, Scope: itemScope, Reason: "synthetic"})
+			if err != nil {
+				t.Fatal(err)
 			}
-			if err == nil || !strings.Contains(err.Error(), test.refusal) || !strings.Contains(stage, test.refusal) {
-				t.Fatalf("want refusal %q, got apply %v, stage %q", test.refusal, err, stage)
+			effect := result.ActionReports[0].DataRepair
+			remaining := 0
+			for key := range w.stores.sets[test.pod] {
+				if strings.HasPrefix(key, "item:") {
+					remaining++
+				}
 			}
-			if len(w.stores.sets["cache-1-a"]) != 3 || len(w.stores.sets["db-0"]) != 3 {
-				t.Fatal("a refused invalidation changed a store")
+			if effect == nil || effect.Affected == 0 || remaining != 0 {
+				t.Fatalf("effect %+v, store %v", effect, w.stores.sets[test.pod])
+			}
+			if !strings.Contains(strings.Join(effect.SourceState, "; "), test.state) {
+				t.Fatalf("source_state = %v, want it to record %q", effect.SourceState, test.state)
 			}
 		})
 	}
@@ -457,27 +490,23 @@ func TestStoreActionsAreGroundedInTheAcceptedMap(t *testing.T) {
 	}
 }
 
-// The automatic stage never repairs or restores records, whatever the map
-// says; it may take a backup, and the derived-copy guard decides invalidation.
-func TestAutomaticStageNeverWritesRecords(t *testing.T) {
+// The automatic stage refuses no typed store action by its data effect; the
+// effect is recorded instead.
+func TestAutomaticStageRunsStoreActions(t *testing.T) {
 	view := storeView()
 	holders := dataHolders{"StatefulSet/db": {Name: "db", Workload: "StatefulSet/db", Services: []string{"db"}, HoldsData: true}}
-	for name, test := range map[string]struct {
-		action  program.Action
-		holders dataHolders
-		refused bool
-	}{
-		"repair":                {removePoison("before"), holders, true},
-		"repair without a map":  {removePoison("before"), nil, true},
-		"restore":               {program.RestoreBackup{Target: dbTarget, Backup: "before"}, holders, true},
-		"backup":                {storeBackup("before", itemScope), holders, false},
-		"invalidate a derived":  {program.InvalidateDerived{Target: cacheTarget}, holders, false},
-		"invalidate a data pod": {program.InvalidateDerived{Target: program.StoreTarget{Component: "cache", Engine: "redis", Pod: storePodRef("db-0"), Container: "redis"}}, holders, true},
+	for name, action := range map[string]program.Action{
+		"repair":                removePoison("before"),
+		"restore":               program.RestoreBackup{Target: dbTarget, Backup: "before"},
+		"backup":                storeBackup("before", itemScope),
+		"invalidate a derived":  program.InvalidateDerived{Target: cacheTarget},
+		"invalidate a data pod": program.InvalidateDerived{Target: program.StoreTarget{Component: "cache", Engine: "redis", Pod: storePodRef("db-0"), Container: "redis"}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			got := dataWorkloadWrite(view, program.Plan{Actions: []program.Action{test.action}}, test.holders, "app")
-			if (got != "") != test.refused {
-				t.Fatalf("dataWorkloadWrite = %q, want refused=%v", got, test.refused)
+			for _, holders := range []dataHolders{holders, nil} {
+				if got := dataWorkloadWrite(view, program.Plan{Actions: []program.Action{action}}, holders, "app"); got != "" {
+					t.Fatalf("dataWorkloadWrite = %q, want the action to run", got)
+				}
 			}
 		})
 	}
@@ -499,6 +528,18 @@ func TestStoreActionsDeclareTheirDataEffect(t *testing.T) {
 	if effects := reach.effects(program.InvalidateDerived{Target: cacheTarget}); len(effects.touches) != 0 {
 		t.Fatalf("a derived copy is not a holds_data component: %+v", effects)
 	}
+	// Dropping the entries of a store the map does not mark derived drops
+	// records: it is recorded as a data write.
+	authoritative := dataHolders{"StatefulSet/db": {Name: "db", Workload: "StatefulSet/db", HoldsData: true, Data: &appmap.Data{Engine: "redis", Role: appmap.RoleAuthoritative}}}
+	reach.holders = authoritative
+	if effects := reach.effects(program.InvalidateDerived{Target: dbTarget}); len(effects.touches) != 1 || effects.touches[0].Effect != program.EffectDataWrite {
+		t.Fatalf("invalidating an authoritative store = %+v, want data-write", effects)
+	}
+	derived := dataHolders{"StatefulSet/db": {Name: "db", Workload: "StatefulSet/db", HoldsData: true, Data: &appmap.Data{Engine: "redis", Role: appmap.RoleDerived, DerivedFrom: []string{"origin"}}}}
+	reach.holders = derived
+	if effects := reach.effects(program.InvalidateDerived{Target: dbTarget}); len(effects.touches) != 1 || effects.touches[0].Effect != program.EffectDerivedInvalidate {
+		t.Fatalf("invalidating a derived holds_data store = %+v, want derived-invalidate", effects)
+	}
 }
 
 func backupReport(id string, scope program.DataScope, at time.Time) RecordedPlanApplication {
@@ -513,39 +554,49 @@ func writeApplication(action program.Action) RecordedPlanApplication {
 		ActionReports: []PlanActionReport{{ActionIndex: 0, Status: "applied"}}}}
 }
 
-// A write with a backup of what it overwrote does not make the outcome
-// unconfirmed by itself; any other write to a holds_data store still does.
-func TestBackedStoreWritesAreNotUnconfirmed(t *testing.T) {
+// Every applied data effect on a holds_data store is recorded, with whether a
+// backup of this incident held what a write could change. The record never
+// refuses anything or changes the outcome.
+func TestAppliedDataEffectsRecordBackupCoverage(t *testing.T) {
 	holders := dataHolders{"StatefulSet/db": {Name: "db", Workload: "StatefulSet/db", Services: []string{"db"}, HoldsData: true}}
 	at := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	whole := program.DataScope{}
 	restore := program.RestoreBackup{Target: dbTarget, Backup: "before"}
 	opaque := program.EnsureExec{Observe: program.Command{Pod: dbTarget.Pod, Container: "redis", Args: []string{"true"}}, Ensure: program.Command{Pod: dbTarget.Pod, Container: "redis", Args: []string{"redis-cli", "FLUSHALL"}}}
+	const held, notHeld = "a backup of this incident held", "no backup of this incident held"
 	for name, test := range map[string]struct {
 		applications []RecordedPlanApplication
-		unconfirmed  bool
+		want         []string
 	}{
-		"repair with its covering backup":   {[]RecordedPlanApplication{backupReport("before", itemScope, at), writeApplication(removePoison("before"))}, false},
-		"repair with a whole-store backup":  {[]RecordedPlanApplication{backupReport("before", whole, at), writeApplication(removePoison("before"))}, false},
-		"repair naming no recorded backup":  {[]RecordedPlanApplication{writeApplication(removePoison("before"))}, true},
-		"repair with a narrower backup":     {[]RecordedPlanApplication{backupReport("before", program.DataScope{Selector: "item:1"}, at), writeApplication(removePoison("before"))}, true},
-		"backup alone":                      {[]RecordedPlanApplication{backupReport("before", itemScope, at)}, false},
-		"restore without a fresh backup":    {[]RecordedPlanApplication{backupReport("before", itemScope, at), writeApplication(restore)}, true},
-		"restore after a fresh backup":      {[]RecordedPlanApplication{backupReport("before", itemScope, at), backupReport("pre-restore", itemScope, at.Add(time.Minute)), writeApplication(restore)}, false},
-		"restore after an older other":      {[]RecordedPlanApplication{backupReport("before", itemScope, at), backupReport("older", itemScope, at.Add(-time.Minute)), writeApplication(restore)}, true},
-		"opaque command even with a backup": {[]RecordedPlanApplication{backupReport("before", whole, at), writeApplication(opaque)}, true},
+		"repair with its covering backup":   {[]RecordedPlanApplication{backupReport("before", itemScope, at), writeApplication(removePoison("before"))}, []string{"data repair", "effect data-write", held}},
+		"repair with a whole-store backup":  {[]RecordedPlanApplication{backupReport("before", whole, at), writeApplication(removePoison("before"))}, []string{"data repair", held}},
+		"repair naming no recorded backup":  {[]RecordedPlanApplication{writeApplication(removePoison("before"))}, []string{"data repair", notHeld}},
+		"repair naming no backup at all":    {[]RecordedPlanApplication{writeApplication(removePoison(""))}, []string{"data repair", notHeld}},
+		"repair with a narrower backup":     {[]RecordedPlanApplication{backupReport("before", program.DataScope{Selector: "item:1"}, at), writeApplication(removePoison("before"))}, []string{"data repair", notHeld}},
+		"restore without a fresh backup":    {[]RecordedPlanApplication{backupReport("before", itemScope, at), writeApplication(restore)}, []string{"backup restore", notHeld}},
+		"restore after a fresh backup":      {[]RecordedPlanApplication{backupReport("before", itemScope, at), backupReport("pre-restore", itemScope, at.Add(time.Minute)), writeApplication(restore)}, []string{"backup restore", held}},
+		"restore after an older other":      {[]RecordedPlanApplication{backupReport("before", itemScope, at), backupReport("older", itemScope, at.Add(-time.Minute)), writeApplication(restore)}, []string{"backup restore", notHeld}},
+		"opaque command even with a backup": {[]RecordedPlanApplication{backupReport("before", whole, at), writeApplication(opaque)}, []string{"exec", "effect unknown", notHeld}},
 		"repair whose backup was not stored": {[]RecordedPlanApplication{func() RecordedPlanApplication {
 			r := backupReport("before", itemScope, at)
 			r.Result.ActionReports[0].Status = "unknown"
 			return r
-		}(), writeApplication(removePoison("before"))}, true},
+		}(), writeApplication(removePoison("before"))}, []string{"data repair", notHeld}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			risks := unbackedDataWrites(storeView(), test.applications, holders, "app")
-			if (len(risks) > 0) != test.unconfirmed {
-				t.Fatalf("risks = %v, want unconfirmed=%v", risks, test.unconfirmed)
+			records := appliedDataEffects(storeView(), test.applications, holders, "app")
+			var writes []string
+			for _, record := range records {
+				if !strings.Contains(record, "effect read") {
+					writes = append(writes, record)
+				}
 			}
+			requireDataEffectRecord(t, "data effects", writes, test.want)
 		})
+	}
+	backupOnly := appliedDataEffects(storeView(), []RecordedPlanApplication{backupReport("before", itemScope, at)}, holders, "app")
+	if len(backupOnly) != 1 || !strings.Contains(backupOnly[0], "store backup") || !strings.Contains(backupOnly[0], "effect read") || strings.Contains(backupOnly[0], "backup of this incident") {
+		t.Fatalf("a backup alone records a read: %v", backupOnly)
 	}
 }
 

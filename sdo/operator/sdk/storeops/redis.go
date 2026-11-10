@@ -3,6 +3,7 @@ package storeops
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -113,8 +114,23 @@ return 'sdo-affected ' .. n
 // redisWriteCommands are the single-key writes a redis repair may apply; the
 // key is always the matched key.
 var redisWriteCommands = map[string]bool{
-	"DEL": true, "UNLINK": true, "HDEL": true, "HSET": true, "SREM": true, "SADD": true,
-	"ZREM": true, "ZADD": true, "LREM": true, "SET": true, "EXPIRE": true, "PERSIST": true,
+	"DEL": true, "UNLINK": true, "SET": true, "APPEND": true, "INCRBY": true, "DECRBY": true,
+	"EXPIRE": true, "PEXPIRE": true, "EXPIREAT": true, "PEXPIREAT": true, "PERSIST": true,
+	"HDEL": true, "HSET": true, "HSETNX": true, "HINCRBY": true,
+	"SREM": true, "SADD": true,
+	"ZREM": true, "ZADD": true, "ZREMRANGEBYSCORE": true, "ZREMRANGEBYRANK": true, "ZREMRANGEBYLEX": true,
+	"LREM": true, "LPUSH": true, "RPUSH": true, "LSET": true, "LTRIM": true,
+	"XDEL": true, "XTRIM": true,
+}
+
+// redisWriteCommandNames lists redisWriteCommands for an error message.
+func redisWriteCommandNames() string {
+	names := make([]string, 0, len(redisWriteCommands))
+	for name := range redisWriteCommands {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
 }
 
 var redisDatabase = regexp.MustCompile(`^[0-9]{1,2}$`)
@@ -158,7 +174,7 @@ func (redis) ValidateStatement(statement string) error {
 		return fmt.Errorf("redis repair statement is empty")
 	}
 	if !redisWriteCommands[strings.ToUpper(words[0])] {
-		return fmt.Errorf("redis repair command %q is not a single-key write SDO applies per matched key (%s)", words[0], "DEL, UNLINK, HDEL, HSET, SREM, SADD, ZREM, ZADD, LREM, SET, EXPIRE, PERSIST")
+		return fmt.Errorf("redis repair command %q is not a single-key write SDO applies per matched key (%s)", words[0], redisWriteCommandNames())
 	}
 	if len(words) > 17 {
 		return fmt.Errorf("redis repair statement has more than 16 arguments")

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -79,30 +80,29 @@ func containerRestartedSince(pod corev1.Pod, since time.Time) bool {
 	return false
 }
 
-// closureDataRisk decides whether a health-clear closure may stand as verified.
-// It runs once, as the closure freezes: a frozen closure keeps its identity.
-func (c *Controller) closureDataRisk(ctx context.Context, snapshot sdk.DetectionContext, closure IncidentClosure) string {
+// closureDataRisk decides whether a health-clear closure may stand as verified,
+// and records the data effects its applied actions had on holds_data
+// components. Only a replaced holds_data Pod without persistent storage makes
+// the closure unconfirmed; data effects are evidence on the outcome. It runs
+// once, as the closure freezes: a frozen closure keeps its identity.
+func (c *Controller) closureDataRisk(ctx context.Context, snapshot sdk.DetectionContext, closure IncidentClosure) (risk string, effects []string) {
 	if snapshot == nil || len(closure.FinalDetectorStates) == 0 {
-		return ""
+		return "", nil
 	}
 	read := c.gitRead
 	if read == nil {
 		read = lifecycleio.GitOutput
 	}
 	workloads := acceptedDataWorkloads(ctx, read, closure.Request.RepositoryWorktree, closure.Request.SourceCommit)
-	risks := dataAtRisk(snapshot, workloads, closure.Request.Namespace, closure.DetectedAt)
 	if closure.Result != nil {
-		risks = append(risks, unbackedDataWrites(snapshot, closure.Result.PlanApplications, workloads, closure.Request.Namespace)...)
+		effects = appliedDataEffects(snapshot, closure.Result.PlanApplications, workloads, closure.Request.Namespace)
 	}
+	risks := dataAtRisk(snapshot, workloads, closure.Request.Namespace, closure.DetectedAt)
 	if len(risks) == 0 {
-		return ""
+		return "", effects
 	}
 	slog.Warn("closure_data_at_risk", "incident_id", closure.Request.IncidentID, "risks", risks)
-	detail := risks[0]
-	for _, risk := range risks[1:] {
-		detail += "; " + risk
-	}
-	return detail
+	return strings.Join(risks, "; "), effects
 }
 
 // incidentDataAtRisk is the same fact for the responder, on each verify.
@@ -122,8 +122,24 @@ func (l *ResponderLoop) incidentDataAtRisk(ctx context.Context) []string {
 	if err != nil {
 		return nil
 	}
-	risks := dataAtRisk(view, l.dataWorkloads, l.Request.Namespace, l.Request.DetectedAt)
-	return append(risks, unbackedDataWrites(view, l.applicationEvidenceLocked(), l.dataWorkloads, l.Request.Namespace)...)
+	return dataAtRisk(view, l.dataWorkloads, l.Request.Namespace, l.Request.DetectedAt)
+}
+
+// incidentDataEffects records, on each verify, the data effects the incident's
+// applied actions had on holds_data components. Caller holds l.mu.
+func (l *ResponderLoop) incidentDataEffects(ctx context.Context) []string {
+	if !l.dataWorkloadsRead {
+		l.dataWorkloads = acceptedDataWorkloads(ctx, l.gitRead(), l.Request.RepositoryWorktree, l.Request.SourceCommit)
+		l.dataWorkloadsRead = true
+	}
+	if len(l.dataWorkloads) == 0 {
+		return nil
+	}
+	view, err := l.snapshotView(ctx)
+	if err != nil {
+		return nil
+	}
+	return appliedDataEffects(view, l.applicationEvidenceLocked(), l.dataWorkloads, l.Request.Namespace)
 }
 
 // dataLossOutcome reports an outcome that may have lost data. It holds no

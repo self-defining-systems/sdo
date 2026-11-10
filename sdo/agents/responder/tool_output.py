@@ -113,6 +113,10 @@ def summarize_response(response: dict[str, Any], details_file: str) -> dict[str,
     data_at_risk = response.get("data_at_risk")
     if isinstance(data_at_risk, list) and data_at_risk:
         summary["data_at_risk"] = [_brief(str(risk), 240) for risk in data_at_risk]
+    # Recorded evidence of what applied actions did to holds_data stores; never a verdict.
+    data_effects = response.get("data_effects")
+    if isinstance(data_effects, list) and data_effects:
+        summary["data_effects"] = [_brief(str(effect), 240) for effect in data_effects]
     for name in ("findings", "drift_events", "program_runs", "detector_states", "patches"):
         if isinstance(response.get(name), list):
             summary[name.removesuffix("s") + "_count"] = len(response[name])
@@ -210,6 +214,7 @@ def render_summary(summary: dict[str, Any]) -> str:
     if summary.get("incident_verified"):
         lines.append(str(summary["incident_verified"]["message"]))
     lines.extend("data_at_risk: " + risk for risk in summary.get("data_at_risk", []))
+    lines.extend(str(effect) for effect in summary.get("data_effects", []))
     if summary.get("error") and summary["error"] != summary.get("summary"):
         lines.append("error: " + str(summary["error"]))
     status = [

@@ -403,16 +403,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			}
 			continue
 		}
-		refused := dataWorkloadWrite(view, loop.plans[planResponse.PlanID].plan, dataWorkloads, state.Request.Namespace)
-		if refused == "" {
-			plan := loop.plans[planResponse.PlanID].plan
-			if err := withoutResponderLocks(loop, "store-guard", true, func() {
-				refused = loop.Executor.storeStageRefusal(ctx, state.Request, plan)
-			}); err != nil {
-				return report, err
-			}
-		}
-		if refused != "" {
+		if refused := dataWorkloadWrite(view, loop.plans[planResponse.PlanID].plan, dataWorkloads, state.Request.Namespace); refused != "" {
 			attempt.Error = refused
 			if err := skip(stageHoldsData); err != nil {
 				return report, err

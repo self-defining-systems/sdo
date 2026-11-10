@@ -162,7 +162,7 @@ func TestDataWorkloadWriteClassifiesEveryPodReplacingAction(t *testing.T) {
 		"scale up from zero":       {program.ScaleWorkload{Ref: store, Replicas: program.FromSource(store, "spec.replicas")}, ""},
 		"read by request":          {program.KubernetesRequest{Ref: api, Method: "GET", Path: "/apis/apps/v1/namespaces/app/deployments/api"}, ""},
 		"wait":                     {program.WaitFor{Ref: api, Path: "/status/readyReplicas", Equals: 1}, ""},
-		"exec into a data pod":     {program.Exec{Pod: apiPod, Container: "api"}, "Deployment/api"},
+		"exec keeps the pod":       {program.Exec{Pod: apiPod, Container: "api"}, ""},
 		"recreate from source":     {program.CreateFromSource{Ref: api}, ""},
 		"restart stateless":        {program.RestartRollout{Ref: web}, ""},
 		"delete stateless pod":     {program.DeletePod{Ref: webPod}, ""},
@@ -199,11 +199,27 @@ func stageRefusal(action program.Action) string {
 	return dataWorkloadWrite(holdsDataView(), program.Plan{Actions: []program.Action{action}}, holdsDataHolders(), "app")
 }
 
-func requireHoldsDataRefusal(t *testing.T, got string, verb, workload string) {
+// requireRecordedNotRefused holds when the automatic stage runs the action and
+// SDO records its data effect on workload: the class is evidence, not a gate.
+func requireRecordedNotRefused(t *testing.T, action program.Action, verb, workload string, effect program.DataEffect) {
 	t.Helper()
-	if !strings.Contains(got, verb) || !strings.Contains(got, workload) || !strings.Contains(got, stageHoldsData) {
-		t.Fatalf("got %q, want a %s refusal naming %s and the holds_data mark", got, verb, workload)
+	if got := stageRefusal(action); got != "" {
+		t.Fatalf("the stage refused a %s by its data effect: %q", verb, got)
 	}
+	holders := holdsDataHolders()
+	effects := dataReach{view: holdsDataView(), holders: holders, namespace: "app"}.effects(action)
+	if effects.verb != verb {
+		t.Fatalf("verb = %q, want %q", effects.verb, verb)
+	}
+	for _, touch := range effects.touches {
+		if holders.named(touch.Component).Workload == workload && touch.Effect == effect {
+			return
+		}
+	}
+	if effects.unreadInput && effect == program.EffectUnknown {
+		return
+	}
+	t.Fatalf("effects = %+v, want %s on %s recorded", effects, effect, workload)
 }
 
 // boundValues are values whose text the plan resolved from its parameters,
@@ -221,28 +237,29 @@ func boundValues(t *testing.T, words map[string]any) map[string]program.Value {
 }
 
 // An opaque command inside a data store can do anything to its records, such
-// as a flush. The automatic stage cannot see inside it, so it refuses.
-func TestStageHoldsDataRefusesExecIntoDataPod(t *testing.T) {
+// as a flush. SDO cannot see inside it, so its effect is recorded unknown; the
+// automatic stage still runs it.
+func TestStageHoldsDataRecordsExecIntoDataPod(t *testing.T) {
 	command := boundValues(t, map[string]any{"word": "true"})["word"]
-	requireHoldsDataRefusal(t, stageRefusal(program.Exec{Pod: holdsDataRef("v1", "Pod", "store-0"), Container: "store", Command: []program.Value{command}}), "exec", "StatefulSet/store")
-	requireHoldsDataRefusal(t, stageRefusal(&program.Exec{Pod: holdsDataRef("v1", "Pod", "store-0"), Container: "store", Command: []program.Value{command}}), "exec", "StatefulSet/store")
+	requireRecordedNotRefused(t, program.Exec{Pod: holdsDataRef("v1", "Pod", "store-0"), Container: "store", Command: []program.Value{command}}, "exec", "StatefulSet/store", program.EffectUnknown)
+	requireRecordedNotRefused(t, &program.Exec{Pod: holdsDataRef("v1", "Pod", "store-0"), Container: "store", Command: []program.Value{command}}, "exec", "StatefulSet/store", program.EffectUnknown)
 }
 
-func TestStageHoldsDataRefusesEnsureExecIntoDataPod(t *testing.T) {
+func TestStageHoldsDataRecordsEnsureExecIntoDataPod(t *testing.T) {
 	observe := program.Command{Pod: holdsDataRef("v1", "Pod", "web-1-a"), Container: "web", Args: []string{"true"}}
 	ensure := program.Command{Pod: holdsDataRef("v1", "Pod", "store-0"), Container: "store", Args: []string{"sh", "-c", "flush-everything"}}
-	requireHoldsDataRefusal(t, stageRefusal(program.EnsureExec{Observe: observe, Ensure: ensure}), "exec", "StatefulSet/store")
+	requireRecordedNotRefused(t, program.EnsureExec{Observe: observe, Ensure: ensure}, "exec", "StatefulSet/store", program.EffectUnknown)
 	// The command runs in a stateless Pod but addresses the store by name.
 	ensure = program.Command{Pod: holdsDataRef("v1", "Pod", "web-1-a"), Container: "web", Args: []string{"client", "-h", "store.app.svc", "flush"}}
-	requireHoldsDataRefusal(t, stageRefusal(program.EnsureExec{Observe: observe, Ensure: ensure}), "exec", "StatefulSet/store")
+	requireRecordedNotRefused(t, program.EnsureExec{Observe: observe, Ensure: ensure}, "exec", "StatefulSet/store", program.EffectUnknown)
 }
 
-func TestStageHoldsDataRefusesEnsureDatabaseUserInDataPod(t *testing.T) {
+func TestStageHoldsDataRecordsEnsureDatabaseUserInDataPod(t *testing.T) {
 	target := program.DatabaseTarget{Engine: program.MongoDB, Pod: holdsDataRef("v1", "Pod", "store-0"), Container: "store", Database: "app"}
-	requireHoldsDataRefusal(t, stageRefusal(program.EnsureDatabaseUser{Target: target, User: "app", Roles: []program.DatabaseRole{{Database: "app", Name: "readWrite"}}, Password: program.CredentialRef{Env: "PASSWORD"}}), "database user", "StatefulSet/store")
+	requireRecordedNotRefused(t, program.EnsureDatabaseUser{Target: target, User: "app", Roles: []program.DatabaseRole{{Database: "app", Name: "readWrite"}}, Password: program.CredentialRef{Env: "PASSWORD"}}, "database user change", "StatefulSet/store", program.EffectStoreSetting)
 }
 
-func TestStageHoldsDataRefusesRunScriptBoundToDataService(t *testing.T) {
+func TestStageHoldsDataRecordsRunScriptBoundToDataService(t *testing.T) {
 	service := holdsDataRef("v1", "Service", "store")
 	observed := program.BindPlanValues(program.Plan{Actions: []program.Action{program.RunScript{Script: `client -h "$HOST" flush`, Env: map[string]program.Value{"HOST": program.FromObserved(service, "metadata.name")}}}},
 		program.ValueInputs{Observed: func(sdk.ObjectRef) (map[string]any, error) {
@@ -258,27 +275,29 @@ func TestStageHoldsDataRefusesRunScriptBoundToDataService(t *testing.T) {
 		"input unreadable here": program.RunScript{Script: `client -h "$HOST" flush`, Env: map[string]program.Value{"HOST": program.FromSource(holdsDataRef("v1", "ConfigMap", "settings"), "data.host")}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			requireHoldsDataRefusal(t, stageRefusal(action), "script", "StatefulSet/store")
+			requireRecordedNotRefused(t, action, "script", "StatefulSet/store", program.EffectUnknown)
 		})
 	}
 }
 
-func TestStageHoldsDataRefusesOtherOpaqueActionsReachingData(t *testing.T) {
+func TestStageHoldsDataRecordsOtherOpaqueActionsReachingData(t *testing.T) {
 	webPod := holdsDataRef("v1", "Pod", "web-1-a")
 	job := holdsDataRef("batch/v1", "Job", "fixer")
 	manifest := map[string]any{"apiVersion": "batch/v1", "kind": "Job", "metadata": map[string]any{"name": "fixer"}, "spec": map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"name": "fix", "args": []any{"client", "-h", "store", "flush"}}}}}}}
-	requireHoldsDataRefusal(t, stageRefusal(program.RunJob{Object: program.ApplyObject{Ref: job, Object: manifest}, Completion: program.WaitFor{Ref: job}}), "job", "StatefulSet/store")
+	requireRecordedNotRefused(t, program.RunJob{Object: program.ApplyObject{Ref: job, Object: manifest}, Completion: program.WaitFor{Ref: job}}, "job", "StatefulSet/store", program.EffectUnknown)
 	request := program.HTTPRequest{Pod: webPod, Container: "web", Method: "POST", URL: "http://store:8080/admin/flush"}
-	requireHoldsDataRefusal(t, stageRefusal(program.EnsureHTTP{Observe: request, Ensure: request}), "http", "StatefulSet/store")
+	requireRecordedNotRefused(t, program.EnsureHTTP{Observe: request, Ensure: request}, "http request", "StatefulSet/store", program.EffectUnknown)
 }
 
-// The class stops at data: opaque actions that reach no data component run as before.
-func TestStageHoldsDataAllowsExecIntoStatelessPod(t *testing.T) {
+// The class stops at data: opaque actions that reach no data component record
+// no data effect.
+func TestStageHoldsDataRecordsNothingForStatelessPod(t *testing.T) {
 	webPod := holdsDataRef("v1", "Pod", "web-1-a")
 	command := boundValues(t, map[string]any{"word": "true"})["word"]
 	job := holdsDataRef("batch/v1", "Job", "fixer")
 	manifest := map[string]any{"apiVersion": "batch/v1", "kind": "Job", "metadata": map[string]any{"name": "fixer"}, "spec": map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"name": "fix", "args": []any{"true"}}}}}}}
 	request := program.HTTPRequest{Pod: webPod, Container: "web", Method: "POST", URL: "http://web:8080/admin/reload"}
+	reach := dataReach{view: holdsDataView(), holders: holdsDataHolders(), namespace: "app"}
 	for name, action := range map[string]program.Action{
 		"exec":                program.Exec{Pod: webPod, Container: "web", Command: []program.Value{command}},
 		"ensure exec":         program.EnsureExec{Observe: program.Command{Pod: webPod, Container: "web", Args: []string{"true"}}, Ensure: program.Command{Pod: webPod, Container: "web", Args: []string{"reload"}}},
@@ -292,9 +311,9 @@ func TestStageHoldsDataAllowsExecIntoStatelessPod(t *testing.T) {
 			if got := stageRefusal(action); got != "" {
 				t.Fatalf("refused: %q", got)
 			}
+			if effects := reach.effects(action); len(effects.touches) != 0 || effects.unreadInput {
+				t.Fatalf("effects = %+v, want none on a stateless Pod", effects)
+			}
 		})
-	}
-	if got := dataWorkloadWrite(holdsDataView(), program.Plan{Actions: []program.Action{program.RunScript{Script: "client -h store flush"}}}, nil, "app"); got != "" {
-		t.Fatalf("no map must refuse nothing: %q", got)
 	}
 }
