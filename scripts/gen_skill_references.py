@@ -316,6 +316,7 @@ def main() -> None:
                 "./usage",
                 "./logs",
                 "./podread",
+                "./storestate",
             ),
             "sdk",
         ),

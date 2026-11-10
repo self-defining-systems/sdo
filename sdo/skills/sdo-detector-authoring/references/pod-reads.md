@@ -30,4 +30,8 @@ func (d policyDetector) Detect(_ context.Context, view sdk.DetectionContext) ([]
 - A repair shows once the read refreshes, so the closure wait includes `Interval`. Keep it short for detectors that
   verify repairs.
 
+For a store whose engine `storestate.AdapterFor` reads (the map's `data.engine`; redis today), use
+`storestate.NewDetector` instead of writing the command: it reads write blocks, role, caps, principals and inventory
+counts in one bounded read, diffs them against healthy `Baselines`, and names the changed item in each finding.
+
 Test with `sdktest.Snapshot.PodReads`; a capture records the readings, so replay sees the same values.
