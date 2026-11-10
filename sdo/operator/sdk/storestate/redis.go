@@ -24,7 +24,8 @@ var redisSettings = []string{
 // prelude found ($P) reaches it through REDISCLI_AUTH without being printed.
 // INFO is filtered to the fields parsed, requirepass is reduced to set or
 // empty, and ACL hashes and passwords are stripped, so the output carries no
-// secret.
+// secret. The key-pattern script runs as EVAL_RO so a write pause (CLIENT PAUSE
+// WRITE) does not hold it; redis before 7 lacks EVAL_RO and gets EVAL.
 const redisScript = `A=$1;Z=$2;shift 2;[ -n "$P" ]&&export REDISCLI_AUTH="$P"
 r(){ redis-cli -p %d "$@" 2>&1|tr -d '\r';}
 echo '== info';r INFO|grep -E '^(role|master_link_status|connected_slaves|min_slaves_good_slaves|connected_clients|maxclients|paused_[a-z_]+|used_memory|maxmemory|maxmemory_policy|rdb_last_bgsave_status|aof_last_write_status|loading|db[0-9]+):|^[A-Z(]|^Could'
@@ -34,7 +35,7 @@ echo '== config';for k in %s;do r CONFIG GET $k|head -n2;done
 o=$(r CONFIG GET requirepass);case "$o" in requirepass*)[ -n "$(printf %%s "$o"|sed -n 2p)" ]&&v=set||v=empty;printf 'requirepass\n%%s\n' $v;;*)printf '%%s\n' "$o"|head -n1;;esac
 echo '== acl';r ACL LIST|sed -E 's/ [#<>][^ ]*//g'|head -n32
 echo '== holders';eval "$A"
-echo '== keys';(IFS=;r EVAL "$*" 0)|head -n 26
+echo '== keys';k=$(IFS=;r EVAL_RO "$*" 0);case "$k" in *nknown*ommand*)k=$(IFS=;r EVAL "$*" 0);esac;printf '%%s\n' "$k"|head -n 26
 `
 
 // redisSectionKinds are the item kinds each section shows, so a refused
