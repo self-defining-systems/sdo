@@ -458,6 +458,9 @@ func (c *Controller) attachDrift(finding sdk.Finding) bool {
 	}
 	if !found {
 		request.Findings = append(request.Findings, finding)
+		if !c.incidentDispatchedAt.IsZero() {
+			c.markLateJoinedLocked(key)
+		}
 	}
 	sortFindings(request.Findings)
 	request.DriftEvents = driftEventsForFindings(c.driftEvents, request.Findings)

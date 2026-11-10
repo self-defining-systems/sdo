@@ -50,7 +50,7 @@ RESPONSE_FIELDS = {
     "menu": "menu.options[].{command, program_id, program_revision, disabled_reason, parameters}, "
     "unexplained_removal_blockers[]",
     "source": "source (accepted Kubernetes object)",
-    "verify": "healthy, verification_status, findings[], detector_states[], "
+    "verify": "healthy, verification_status, findings[], new_since_dispatch[], detector_states[], "
     "verification_blockers[{detector_id,reason}], drift[], drift_events[], data_at_risk[], "
     "data_effects[]",
     "report": "report.{status, attempt_id, rounds}, session",
