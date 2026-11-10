@@ -161,5 +161,10 @@ Replay outcomes, missing captures and detector coverage are information.
 - An `Exec`, `EnsureExec`, `EnsureHTTP`, `RunScript`, `RunJob` or `EnsureDatabaseUser` that runs in, binds or names
   a `holds_data` component never runs automatically: SDO skips it (`holds_data`) and hands the finding to a
   responder. The playbook still helps the responder, but do not count on it running alone.
+- Store records change only through typed actions with a declared effect: `StoreBackup` (read),
+  `InvalidateDerived` (derived-invalidate; runs automatically only while the map marks the target `derived` and
+  every `derived_from` source passes its live store-state checks), `RepairData` and `RestoreBackup`
+  (data-write; never automatic). A learned cache flush is an `InvalidateDerived`, not an `EnsureExec`; a learned
+  record repair stays a responder step that names the backup it needs.
 - Credentials stay references (env or ConfigMap key); never read Secret data. Learn into incident playbooks. The detection designer owns `health-objective` and health detectors: never edit
   them; when its generic program applied and hand repairs followed, encode those in an incident playbook.

@@ -67,6 +67,9 @@ func nonObjectActionSucceeded(action *contracts.Action, report *contracts.Action
 	case *contracts.Action_EnsureDatabaseUser:
 		// The executor reports applied only after a direct catalog read-back.
 		return true, true
+	case *contracts.Action_StoreBackup, *contracts.Action_RepairData, *contracts.Action_RestoreBackup, *contracts.Action_InvalidateDerived:
+		// The executor reports applied only after the store's own end marker.
+		return true, true
 	case *contracts.Action_RunJob:
 		return true, len(report.GetJobStatusJson()) > 0
 	case *contracts.Action_EnsureExec:

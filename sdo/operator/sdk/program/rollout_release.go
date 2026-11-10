@@ -30,8 +30,8 @@ type RolloutView interface {
 	Pods() []corev1.Pod
 }
 
-// StalledRolloutRelease returns the standard release of a Deployment rollout
-// whose replacement cannot get the place the old revision holds: a
+// StalledRolloutRelease releases a rollout the old revision blocks.
+// The replacement cannot get the place the old revision holds: a
 // current-revision Pod is Unschedulable, or its ReplicaSet cannot create Pods
 // because the namespace quota is exceeded. It is one RetireOldRevision for
 // each old revision that still keeps a replica, in name order, and nothing

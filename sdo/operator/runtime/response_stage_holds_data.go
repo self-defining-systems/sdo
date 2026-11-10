@@ -65,10 +65,18 @@ func acceptedDataWorkloads(ctx context.Context, read gitRead, repository, commit
 // does not allow. Creating or scaling up from zero loses nothing.
 func dataWorkloadWrite(view sdk.DetectionContext, plan program.Plan, holders dataHolders, namespace string) string {
 	if len(holders) == 0 {
+		for _, action := range plan.Actions {
+			if why := neverAutomaticStoreWrite(action); why != "" {
+				return why
+			}
+		}
 		return ""
 	}
 	reach := dataReach{view: view, holders: holders, namespace: namespace}
 	for _, action := range plan.Actions {
+		if why := neverAutomaticStoreWrite(action); why != "" {
+			return why
+		}
 		ref, verb := podReplacingWrite(view, action)
 		if verb != "" && (ref.Namespace == "" || ref.Namespace == namespace) {
 			if workload := owningWorkload(view, ref); holders[workload].HoldsData {
@@ -102,7 +110,7 @@ func automaticDataEffect(effect program.DataEffect) string {
 	case program.EffectStoreSetting:
 		return "a store setting runs automatically only as a typed restore of a recorded prior value"
 	case program.EffectDataWrite:
-		return "a data write runs automatically only after a verified backup of the same scope"
+		return "a data write never runs automatically; a responder takes a StoreBackup of the scope, then RepairData"
 	}
 	return "SDO cannot see what an opaque command does to stored records"
 }
@@ -246,4 +254,38 @@ func owningWorkload(view sdk.DetectionContext, ref sdk.ObjectRef) string {
 		}
 	}
 	return kind + "/" + name
+}
+
+// neverAutomaticStoreWrite refuses a typed record write on the automatic path,
+// whatever the map says of its target: a repair or restore is a responder's
+// judgement, backed or not.
+func neverAutomaticStoreWrite(action program.Action) string {
+	switch a := program.DataAction(action).(type) {
+	case program.RepairData:
+		return fmt.Sprintf("data repair of %s refused on the automatic path: a record write never runs automatically; a responder checks the count, takes a StoreBackup and repairs by hand", a.Target.Component)
+	case program.RestoreBackup:
+		return fmt.Sprintf("backup restore of %s refused on the automatic path: restoring a backup is a responder's decision", a.Target.Component)
+	}
+	return ""
+}
+
+// storeStageRefusal runs the live guard of every InvalidateDerived in plan:
+// the automatic stage may drop a derived copy only while the map marks it
+// derived and each source passes its store-state checks. It returns why not,
+// or "".
+func (e PlanExecutor) storeStageRefusal(ctx context.Context, incident IncidentRequest, plan program.Plan) string {
+	for _, action := range plan.Actions {
+		a, ok := program.DataAction(action).(program.InvalidateDerived)
+		if !ok {
+			continue
+		}
+		run, err := e.groundStore(ctx, incident, a.Target, "")
+		if err != nil {
+			return fmt.Sprintf("derived-store invalidation of %s refused on the automatic path: %v", a.Target.Component, err)
+		}
+		if problems := run.derivedGuard(ctx); len(problems) > 0 {
+			return fmt.Sprintf("derived-store invalidation of %s refused on the automatic path: %s", a.Target.Component, strings.Join(problems, "; "))
+		}
+	}
+	return ""
 }

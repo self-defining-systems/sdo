@@ -32,10 +32,16 @@ func hasRuntimeEffects(plan program.Plan) bool {
 		case program.EnsureDatabaseUser, *program.EnsureDatabaseUser, program.Exec, *program.Exec, program.DeletePod, *program.DeletePod:
 			return true
 		}
+		if program.DataAction(a) != nil {
+			return true
+		}
 	}
 	return false
 }
 func concreteRuntimeAction(a program.Action) program.Action {
+	if store := program.DataAction(a); store != nil {
+		return store
+	}
 	switch p := a.(type) {
 	case *program.EnsureDatabaseUser:
 		if p != nil {
@@ -109,7 +115,7 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 			return result, fmt.Errorf("runtime action is outside incident namespace")
 		}
 		switch a := a.(type) {
-		case program.DeletePod, program.Exec, program.EnsureDatabaseUser:
+		case program.DeletePod, program.Exec, program.EnsureDatabaseUser, program.StoreBackup, program.RepairData, program.RestoreBackup, program.InvalidateDerived:
 			object, getErr := e.Client.Get(ctx, ref)
 			if getErr != nil || object == nil || !samePlanRef(object, ref) || object.GetUID() == "" || object.GetResourceVersion() == "" {
 				if _, database := a.(program.EnsureDatabaseUser); database {
@@ -286,6 +292,23 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 			}
 			result.ActionReports[i].Status = "applied"
 			continue
+		case program.StoreBackup, program.RepairData, program.RestoreBackup, program.InvalidateDerived:
+			current, getErr := e.Client.Get(ctx, ref)
+			if getErr != nil || current == nil || current.GetUID() != items[i].uid {
+				return result, fmt.Errorf("store action refused: Pod identity changed")
+			}
+			wrote, storeErr := e.applyStoreAction(ctx, incident, a, string(items[i].uid), &result.ActionReports[i])
+			if wrote {
+				result.Patches = append(result.Patches, PlanPatch{Ref: ref, Operation: storePatchOperation(a), Irreversible: true})
+			}
+			if storeErr != nil {
+				if wrote {
+					result.ActionsApplied = append(result.ActionsApplied, original)
+					result.Applied = true
+					result.ActionReports[i].Status = "unknown"
+				}
+				return result, storeErr
+			}
 		case program.Exec:
 			current, getErr := e.Client.Get(ctx, ref)
 			if getErr != nil || current == nil || current.GetUID() != items[i].uid || current.GetResourceVersion() != items[i].rv {

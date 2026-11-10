@@ -120,6 +120,14 @@ func encodePersistedActions(actions []program.Action) ([]persistedAction, error)
 			kind = "ensure_database_user"
 		case program.Exec, *program.Exec:
 			kind = "exec"
+		case program.StoreBackup, *program.StoreBackup:
+			kind = "store_backup"
+		case program.InvalidateDerived, *program.InvalidateDerived:
+			kind = "invalidate_derived"
+		case program.RepairData, *program.RepairData:
+			kind = "repair_data"
+		case program.RestoreBackup, *program.RestoreBackup:
+			kind = "restore_backup"
 		case program.SetField, *program.SetField:
 			kind = "set_field"
 		case program.RestartRollout, *program.RestartRollout:
@@ -188,6 +196,14 @@ func decodePersistedActions(encoded []persistedAction) ([]program.Action, error)
 			action = &program.EnsureDatabaseUser{}
 		case "exec":
 			action = &program.Exec{}
+		case "store_backup":
+			action = &program.StoreBackup{}
+		case "invalidate_derived":
+			action = &program.InvalidateDerived{}
+		case "repair_data":
+			action = &program.RepairData{}
+		case "restore_backup":
+			action = &program.RestoreBackup{}
 		case "set_field":
 			action = &program.SetField{}
 		case "restart_rollout":
@@ -242,6 +258,14 @@ func decodePersistedActions(encoded []persistedAction) ([]program.Action, error)
 		case *program.EnsureDatabaseUser:
 			decoded = append(decoded, *value)
 		case *program.Exec:
+			decoded = append(decoded, *value)
+		case *program.StoreBackup:
+			decoded = append(decoded, *value)
+		case *program.InvalidateDerived:
+			decoded = append(decoded, *value)
+		case *program.RepairData:
+			decoded = append(decoded, *value)
+		case *program.RestoreBackup:
 			decoded = append(decoded, *value)
 		case *program.SetField:
 			decoded = append(decoded, *value)

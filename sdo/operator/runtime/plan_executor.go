@@ -134,6 +134,9 @@ type PlanExecutor struct {
 	// Sleep waits between conflict retries and diagnosis settling; nil uses the production timer.
 	Sleep  func(context.Context, time.Duration) error
 	Values program.ValueInputs
+	// Stores grounds and runs typed store actions (StoreBackup, RepairData,
+	// RestoreBackup, InvalidateDerived); nil refuses them.
+	Stores *StoreAccess
 	report *PlanActionReport
 }
 
@@ -973,6 +976,9 @@ func restoreDeclaredValue(current, declared any) any {
 func planActionRef(action program.Action) (sdk.ObjectRef, error) {
 	if ref, ok := externalRef(action); ok {
 		return ref, nil
+	}
+	if target, _, ok := program.DataActionEffect(action); ok {
+		return target.Pod, nil
 	}
 	switch a := generalAction(action).(type) {
 	case program.SyncWebhookCA:

@@ -706,6 +706,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					loop.Traffic = proberAPI
 				}
 				loop.WorkingProgramRoot = request.RepositoryWorktree
+				// Backups live on the repository volume beside the other
+				// controller state, outside the published .sdo/ tree.
+				loop.Executor.Stores = &StoreAccess{Read: loop.gitRead(), Snapshot: snapshotProvider, Backups: FileBackupStore{Root: filepath.Join(*repositoryMountPath, ".sdo-runtime", "backups")}}
 				if menuEnabled != "0" {
 					loop.MenuConfig = productionResponderMenu()
 					loop.MenuConfig.Unexplained = func(ctx context.Context) (UnexplainedRemovalAssessment, error) {

@@ -338,6 +338,9 @@ func (p Plan) Validate() error {
 		if err := validateDatabaseAction(action); err != nil {
 			return err
 		}
+		if err := validateDataAction(action); err != nil {
+			return err
+		}
 		if err := validateServicePortAction(action); err != nil {
 			return err
 		}
