@@ -25,7 +25,7 @@ const dataAtRiskEvaluation = validate.DataAtRiskDetector
 // record of what happened or who did it, and it covers a program, a hand repair
 // and a crash alike. Health cannot rule the loss out: probes see only the data
 // they wrote. An emptyDir outlives a container restart but not its Pod.
-func dataAtRisk(view sdk.DetectionContext, workloads map[string]bool, namespace string, since time.Time) []string {
+func dataAtRisk(view sdk.DetectionContext, workloads dataHolders, namespace string, since time.Time) []string {
 	if len(workloads) == 0 || since.IsZero() {
 		return nil
 	}
@@ -36,7 +36,7 @@ func dataAtRisk(view sdk.DetectionContext, workloads map[string]bool, namespace 
 			continue
 		}
 		workload := owningWorkload(view, sdk.ObjectRef{Kind: "Pod", Namespace: pod.Namespace, Name: pod.Name})
-		if !workloads[workload] || podHasPersistentStorage(pod) {
+		if !workloads[workload].HoldsData || podHasPersistentStorage(pod) {
 			continue
 		}
 		if !pod.CreationTimestamp.Time.Before(since) {
@@ -91,6 +91,9 @@ func (c *Controller) closureDataRisk(ctx context.Context, snapshot sdk.Detection
 	}
 	workloads := acceptedDataWorkloads(ctx, read, closure.Request.RepositoryWorktree, closure.Request.SourceCommit)
 	risks := dataAtRisk(snapshot, workloads, closure.Request.Namespace, closure.DetectedAt)
+	if closure.Result != nil {
+		risks = append(risks, unbackedDataWrites(snapshot, closure.Result.PlanApplications, workloads, closure.Request.Namespace)...)
+	}
 	if len(risks) == 0 {
 		return ""
 	}
@@ -103,6 +106,7 @@ func (c *Controller) closureDataRisk(ctx context.Context, snapshot sdk.Detection
 }
 
 // incidentDataAtRisk is the same fact for the responder, on each verify.
+// Caller holds l.mu.
 func (l *ResponderLoop) incidentDataAtRisk(ctx context.Context) []string {
 	if l.Request.DetectedAt.IsZero() {
 		return nil
@@ -118,7 +122,8 @@ func (l *ResponderLoop) incidentDataAtRisk(ctx context.Context) []string {
 	if err != nil {
 		return nil
 	}
-	return dataAtRisk(view, l.dataWorkloads, l.Request.Namespace, l.Request.DetectedAt)
+	risks := dataAtRisk(view, l.dataWorkloads, l.Request.Namespace, l.Request.DetectedAt)
+	return append(risks, unbackedDataWrites(view, l.applicationEvidenceLocked(), l.dataWorkloads, l.Request.Namespace)...)
 }
 
 // dataLossOutcome reports an outcome that may have lost data. It holds no

@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
@@ -52,7 +53,7 @@ func TestDataAtRiskIsAReplacedDataPodWithoutPersistentStorage(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			view := sdktest.Snapshot{NamespaceName: "app", PodList: []corev1.Pod{test.pod}}
-			got := dataAtRisk(view, map[string]bool{"StatefulSet/store": true}, "app", dataRiskOpened)
+			got := dataAtRisk(view, dataHolders{"StatefulSet/store": {Name: "store", Workload: "StatefulSet/store", HoldsData: true}}, "app", dataRiskOpened)
 			if test.risk && (len(got) != 1 || !strings.Contains(got[0], "StatefulSet/store")) {
 				t.Fatalf("want the workload named, got %v", got)
 			}
@@ -62,7 +63,7 @@ func TestDataAtRiskIsAReplacedDataPodWithoutPersistentStorage(t *testing.T) {
 		})
 	}
 	view := sdktest.Snapshot{NamespaceName: "app", PodList: []corev1.Pod{dataPod("store-0", after, nil, after)}}
-	if got := dataAtRisk(view, map[string]bool{"Deployment/other": true}, "app", dataRiskOpened); len(got) != 0 {
+	if got := dataAtRisk(view, dataHolders{"Deployment/other": {Name: "other", Workload: "Deployment/other", HoldsData: true}}, "app", dataRiskOpened); len(got) != 0 {
 		t.Fatalf("a workload the map does not mark is not at risk: %v", got)
 	}
 	if got := dataAtRisk(view, nil, "app", dataRiskOpened); len(got) != 0 {
@@ -337,5 +338,76 @@ func TestVerifyTellsTheResponderDataIsAtRisk(t *testing.T) {
 	response := loop.Handle(context.Background(), ToolRequest{Command: "verify"})
 	if len(response.DataAtRisk) != 1 || !strings.Contains(response.DataAtRisk[0], "StatefulSet/store") {
 		t.Fatalf("data_at_risk = %v (error %q)", response.DataAtRisk, response.Error)
+	}
+}
+
+// A responder's opaque command inside a data store may have changed its
+// records, and nothing backed them up first. Health cannot show the records
+// survived, so the closure commits unconfirmed and feeds no learning. A typed
+// store-setting change and a command that reaches no data stay verified.
+func TestClosureAfterUnbackedDataWriteIsNotVerifiedSuccess(t *testing.T) {
+	ctx := context.Background()
+	storePod, webPod := holdsDataRef("v1", "Pod", "store-0"), holdsDataRef("v1", "Pod", "web-1-a")
+	opaque := func(pod sdk.ObjectRef) program.Action {
+		return program.EnsureExec{Observe: program.Command{Pod: pod, Container: "c", Args: []string{"true"}}, Ensure: program.Command{Pod: pod, Container: "c", Args: []string{"flush"}}}
+	}
+	user := program.EnsureDatabaseUser{Target: program.DatabaseTarget{Engine: program.MongoDB, Pod: storePod, Container: "store", Database: "app"}, User: "app", Roles: []program.DatabaseRole{{Database: "app", Name: "readWrite"}}, Password: program.CredentialRef{Env: "PASSWORD"}}
+	for name, test := range map[string]struct {
+		action program.Action
+		want   contracts.ClosureUnconfirmedReason
+	}{
+		"opaque command in the store": {opaque(storePod), contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_DATA_MAY_BE_LOST},
+		"store setting":               {user, contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED},
+		"opaque command elsewhere":    {opaque(webPod), contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED},
+	} {
+		t.Run(name, func(t *testing.T) {
+			after := dataRiskOpened.Add(time.Minute)
+			cfg := testControllerConfig()
+			cfg.Namespace = "app"
+			world := &sameWriteWorld{}
+			world.healthy.Store(true)
+			controller, err := NewController(cfg, []sdk.Detector{sameWriteDetector{world: world}}, riskSnapshots{view: holdsDataView()}, &recordingDispatcher{}, after)
+			if err != nil {
+				t.Fatal(err)
+			}
+			controller.now = func() time.Time { return after.Add(time.Minute) }
+			controller.gitRead = fakeArchitecture(holdsDataArchitecture)
+			controller.broker = &riskBroker{}
+			result := completedResult("synthetic-incident")
+			result.Timing = TimingMetrics{StartedAt: dataRiskOpened, CompletedAt: after}
+			result.PlanApplications = []RecordedPlanApplication{{ID: "synthetic-application", StartedAt: after, CompletedAt: after,
+				Result: PlanApplicationResult{Plan: program.Plan{Actions: []program.Action{test.action}}, Applied: true, VerificationCompleted: true, VerificationPassed: true, ActionsApplied: []program.Action{test.action}}}}
+			request := IncidentRequest{SchemaVersion: ProtocolSchemaVersion, Application: "demo", Namespace: "app", IncidentID: "synthetic-incident", SourceCommit: "synthetic-accepted", RepositoryWorktree: "synthetic-worktree"}
+			controller.pendingClosure = &IncidentClosure{Request: request, Result: &result, DetectedAt: dataRiskOpened, DispatchedAt: dataRiskOpened, ResponderCompletedAt: after, VerifiedAt: after,
+				FinalDetectorStates: []DetectorEvaluation{{DetectorID: "traffic", EvaluatedAt: after, Status: DetectorEvaluationClear}}}
+			controller.closureState = contracts.ClosureState_CLOSURE_STATE_PENDING
+			effect, ok := controller.PendingClosureEffect()
+			if !ok || !effect.Freeze {
+				t.Fatalf("want a freeze effect, got %+v ok=%v", effect, ok)
+			}
+			if err := controller.ExecuteClosureEffect(ctx, effect); err != nil {
+				t.Fatal(err)
+			}
+			pending := controller.pendingClosure
+			if pending == nil || pending.UnconfirmedReason != test.want {
+				t.Fatalf("closure = %+v, want reason %s", pending, test.want)
+			}
+			if test.want == contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED {
+				return
+			}
+			if !strings.Contains(pending.UnconfirmedDetail, "StatefulSet/store") || !strings.Contains(pending.UnconfirmedDetail, "backup") {
+				t.Fatalf("the closure must name the workload and the missing backup: %q", pending.UnconfirmedDetail)
+			}
+
+			_, loop, _ := sameWriteLoop(t)
+			loop.Request.Namespace, loop.Request.DetectedAt = "app", dataRiskOpened
+			loop.Request.SourceCommit, loop.Request.RepositoryWorktree = "synthetic-accepted", "synthetic-worktree"
+			loop.Provider, loop.GitRead = riskSnapshots{view: holdsDataView()}, fakeArchitecture(holdsDataArchitecture)
+			loop.applicationsLog = result.PlanApplications
+			response := loop.Handle(ctx, ToolRequest{Command: "verify"})
+			if len(response.DataAtRisk) != 1 || !strings.Contains(response.DataAtRisk[0], "StatefulSet/store") {
+				t.Fatalf("verify data_at_risk = %v (error %q)", response.DataAtRisk, response.Error)
+			}
+		})
 	}
 }

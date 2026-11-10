@@ -22,10 +22,14 @@ import (
 // The program does not know; a responder can look first and act by hand.
 const stageHoldsData = "holds_data"
 
-// acceptedDataWorkloads reads the holds_data workloads ("Kind/name") of the
-// accepted application map. No map marks nothing, and an unreadable or malformed
-// one is the same: the shared check keeps a broken map out of accepted memory.
-func acceptedDataWorkloads(ctx context.Context, read gitRead, repository, commit string) map[string]bool {
+// dataHolders are the components the accepted application map marks
+// holds_data, by workload ("Kind/name").
+type dataHolders map[string]appmap.Component
+
+// acceptedDataWorkloads reads the holds_data components of the accepted
+// application map. No map marks nothing, and an unreadable or malformed one is
+// the same: the shared check keeps a broken map out of accepted memory.
+func acceptedDataWorkloads(ctx context.Context, read gitRead, repository, commit string) dataHolders {
 	if repository == "" || commit == "" {
 		return nil
 	}
@@ -45,45 +49,68 @@ func acceptedDataWorkloads(ctx context.Context, read gitRead, repository, commit
 		slog.Warn("application map unreadable; no workload is treated as holding data", "commit", commit, "error", err)
 		return nil
 	}
-	workloads := map[string]bool{}
+	holders := dataHolders{}
 	for _, component := range parsed.Components {
 		if component.HoldsData {
-			workloads[component.Workload] = true
+			holders[component.Workload] = component
 		}
 	}
-	return workloads
+	return holders
 }
 
 // dataWorkloadWrite explains why plan may not run on the automatic path, or
 // returns "". Every action that restarts, removes, scales down or rewrites a
-// data-holding workload or one of its Pods is refused. Exec and RunScript keep
-// the Pods as far as the plan can tell (their commands are opaque), and creating
-// or scaling up from zero loses nothing.
-func dataWorkloadWrite(view sdk.DetectionContext, plan program.Plan, workloads map[string]bool, namespace string) string {
-	if len(workloads) == 0 {
+// data-holding workload or one of its Pods is refused, and so is every external
+// action with an effect on a holds_data component that automaticDataEffect
+// does not allow. Creating or scaling up from zero loses nothing.
+func dataWorkloadWrite(view sdk.DetectionContext, plan program.Plan, holders dataHolders, namespace string) string {
+	if len(holders) == 0 {
 		return ""
 	}
+	reach := dataReach{view: view, holders: holders, namespace: namespace}
 	for _, action := range plan.Actions {
 		ref, verb := podReplacingWrite(view, action)
-		if verb == "" || (ref.Namespace != "" && ref.Namespace != namespace) {
-			continue
+		if verb != "" && (ref.Namespace == "" || ref.Namespace == namespace) {
+			if workload := owningWorkload(view, ref); holders[workload].HoldsData {
+				return fmt.Sprintf("%s of %s/%s refused on the automatic path: the application map marks %s holds_data, and replacing its Pods may lose its data; check what it holds, then act by hand if that is right", verb, ref.Kind, ref.Name, workload)
+			}
 		}
-		if workload := owningWorkload(view, ref); workloads[workload] {
-			return fmt.Sprintf("%s of %s/%s refused on the automatic path: the application map marks %s holds_data, and replacing its Pods may lose its data; check what it holds, then act by hand if that is right", verb, ref.Kind, ref.Name, workload)
+		effects := reach.effects(action)
+		for _, touch := range effects.touches {
+			if why := automaticDataEffect(touch.Effect); why != "" {
+				workload := holders.named(touch.Component).Workload
+				return fmt.Sprintf("%s reaching %s refused on the automatic path: the application map marks %s holds_data and the %s's data effect there is %s; %s. Check what it does to the data, then act by hand if that is right", effects.verb, workload, workload, effects.verb, touch.Effect, why)
+			}
+		}
+		if effects.unreadInput {
+			return fmt.Sprintf("%s refused on the automatic path: an input it uses cannot be read before it runs, so it may reach any workload the application map marks holds_data (%s). Check what it does to the data, then act by hand if that is right", effects.verb, strings.Join(holders.workloads(), ", "))
 		}
 	}
 	return ""
 }
 
+// automaticDataEffect is the automatic stage's rule for one effect on a
+// holds_data component: "" allows it, anything else says what would. Only a
+// read runs today. The other classes wait for the typed actions that make them
+// safe, and an opaque command is never trusted.
+func automaticDataEffect(effect program.DataEffect) string {
+	switch effect {
+	case program.EffectRead:
+		return ""
+	case program.EffectDerivedInvalidate:
+		return "dropping derived entries runs automatically only once the map says the component is derived and its source is healthy"
+	case program.EffectStoreSetting:
+		return "a store setting runs automatically only as a typed restore of a recorded prior value"
+	case program.EffectDataWrite:
+		return "a data write runs automatically only after a verified backup of the same scope"
+	}
+	return "SDO cannot see what an opaque command does to stored records"
+}
+
 // podReplacingWrite names the object an action would replace or remove Pods of.
 // An empty verb means it would not.
 func podReplacingWrite(view sdk.DetectionContext, action program.Action) (sdk.ObjectRef, string) {
-	value := reflect.ValueOf(action)
-	if value.Kind() == reflect.Pointer && !value.IsNil() {
-		//assertcheck:ok reflect Elem of a pointer to a program.Action
-		action = value.Elem().Interface().(program.Action)
-	}
-	switch a := action.(type) {
+	switch a := actionValue(action).(type) {
 	case program.RestartRollout:
 		return a.Ref, "restart"
 	case program.Rollback:
@@ -120,6 +147,16 @@ func podReplacingWrite(view sdk.DetectionContext, action program.Action) (sdk.Ob
 		return requestTarget(a.Path), "API request"
 	}
 	return sdk.ObjectRef{}, ""
+}
+
+// actionValue reads a program.Action given by pointer as its value.
+func actionValue(action program.Action) program.Action {
+	value := reflect.ValueOf(action)
+	if value.Kind() == reflect.Pointer && !value.IsNil() {
+		//assertcheck:ok reflect Elem of a pointer to a program.Action
+		return value.Elem().Interface().(program.Action)
+	}
+	return action
 }
 
 var requestTargetKinds = map[string]string{"pods": "Pod", "replicasets": "ReplicaSet", "deployments": "Deployment", "statefulsets": "StatefulSet", "daemonsets": "DaemonSet"}

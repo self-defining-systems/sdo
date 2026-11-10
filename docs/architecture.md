@@ -285,9 +285,18 @@ that wrote, and the one `deterministic` report in `prior_stages` is updated in p
 the new attempts once, as `prior_stages` in its next tool reply.
 The stage reads the accepted application map. A plan that restarts, deletes, rolls back, scales down,
 reconciles, patches, applies or sends a write request to a workload marked `holds_data`, or its Pods or
-ReplicaSets, is skipped with reason `holds_data` and the finding goes to the responder. At closure, a
-`holds_data` workload with a Pod created since the incident opened (or a restarted container) and only
-volumes that die with the Pod makes the outcome `unconfirmed` (`DATA_MAY_BE_LOST`).
+ReplicaSets, is skipped with reason `holds_data` and the finding goes to the responder. So is a plan
+whose external action has a data effect the stage does not allow on a `holds_data` component
+(`runtime/data_effects.go`, classes in `sdk/program/effects.go`). Go assigns the effect: `Exec`,
+`EnsureExec`, `EnsureHTTP`, `RunScript` and `RunJob` are `unknown` on the component whose Pod they
+run in and on every one their inputs name (a Service, workload or Pod, as an object or by name in
+their text); `EnsureDatabaseUser` is `store-setting` on its target. Only `read` runs automatically
+today; an input the stage cannot read before the run counts as reaching every `holds_data` component.
+At closure, a `holds_data` workload with a Pod created since the incident opened (or a restarted
+container) and only volumes that die with the Pod makes the outcome `unconfirmed` (`DATA_MAY_BE_LOST`).
+So does an applied `unknown` or `data-write` effect on a `holds_data` component with no backup taken
+first (the SDK has no backup action yet); the responder may still make that repair, but it does not
+feed learning.
 Evidence for source-reconcile learning: every resource a write names, at each write boundary and at
 detect, gets one `DiffAgainstSource` recording in the incident capture (`recordSourceComparisons`); an
 object with no acceptance record keeps its declared-field result and the typed reason
