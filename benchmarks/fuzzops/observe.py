@@ -98,8 +98,9 @@ def _get(obj: dict[str, Any], *names: str) -> Any:
     return None
 
 
-# SDO's typed cause classes (ConfirmedRootCause.cause_class) in fuzzops' mechanism vocabulary; a class with no
-# fuzzops counterpart falls back to the keyword map over the cause text.
+# SDO's typed cause classes (ConfirmedRootCause.cause_class, a closed vocabulary that includes "other") in
+# fuzzops' mechanism vocabulary. A class with no fuzzops counterpart ("other", and "dependency-unavailable", which
+# names no mechanism) and an unknown class fall back to the keyword map over the cause text.
 CAUSE_CLASS_MECHANISM = {
     "network-delay": "network-delay",
     "network-loss": "network-loss",
@@ -119,6 +120,19 @@ CAUSE_CLASS_MECHANISM = {
     "code-defect": "code-defect",
 }
 
+# (location, fault_type) a typed class implies when the keyword map has no entry for its mechanism.
+CAUSE_CLASS_PLACE = {"dependency-unavailable": ("dependency", "unavailable")}
+
+
+def _typed_traits(cause_class: str) -> tuple[str, str, str]:
+    """(mechanism, location, fault_type) a typed class fixes; empty strings for what it does not."""
+    mechanism = CAUSE_CLASS_MECHANISM.get(cause_class, "")
+    for _, known, location, fault_type in _MECHANISMS:
+        if mechanism and known == mechanism:
+            return mechanism, location, fault_type
+    location, fault_type = CAUSE_CLASS_PLACE.get(cause_class, ("", ""))
+    return mechanism, location, fault_type
+
 
 def cause_report(cause: dict[str, Any]) -> dict[str, Any]:
     """One confirmed root cause in fuzzops' report vocabulary (raw SDO class and text kept)."""
@@ -128,8 +142,11 @@ def cause_report(cause: dict[str, Any]) -> dict[str, Any]:
     evidence = " ".join(str(_get(e, "observation") or "") for e in (_get(cause, "evidence") or []))
     mechanism, location, fault_type = classify(summary + " " + evidence)
     cause_class = str(_get(cause, "cause_class") or "")
-    if CAUSE_CLASS_MECHANISM.get(cause_class):
-        mechanism = CAUSE_CLASS_MECHANISM[cause_class]
+    typed_mechanism, typed_location, typed_fault_type = _typed_traits(cause_class)
+    # The typed fields win over what the text suggests; the keyword map fills only what they leave open.
+    mechanism = typed_mechanism or mechanism
+    location = typed_location or location
+    fault_type = typed_fault_type or fault_type
     out: dict[str, Any] = {
         "component": comp,
         "location": location,
