@@ -254,7 +254,8 @@ func limitOf(scope program.DataScope) int {
 // errStoreUnchanged marks a refusal after which the store is known unchanged.
 var errStoreUnchanged = errors.New("store unchanged")
 
-// repair runs a RepairData: the count must be within the expected bounds,
+// repair runs a RepairData (a statement, a member removal or a copy, which
+// counts its CopyFrom source): the count must be within the expected bounds,
 // then the write, then a recount and a facts read. A named backup must be one
 // of this incident; whether it covers the scope is recorded, not required.
 func (r storeRun) repair(ctx context.Context, a program.RepairData) (program.DataRepairEffect, error) {
@@ -270,7 +271,11 @@ func (r storeRun) repair(ctx context.Context, a program.RepairData) (program.Dat
 		covers := record.Covers(a.Target, a.Scope)
 		effect.BackupCovers = &covers
 	}
-	before, err := r.count(ctx, a.Scope)
+	counted := a.Scope
+	if a.CopyFrom != nil {
+		counted = *a.CopyFrom
+	}
+	before, err := r.count(ctx, counted)
 	if err != nil {
 		return effect, fmt.Errorf("%w: RepairData refused: %v", errStoreUnchanged, err)
 	}
@@ -278,7 +283,19 @@ func (r storeRun) repair(ctx context.Context, a program.RepairData) (program.Dat
 	if before < a.ExpectMin || before > a.ExpectMax {
 		return effect, fmt.Errorf("%w: RepairData refused: the scope matches %d items, outside the expected [%d, %d]; nothing was written", errStoreUnchanged, before, a.ExpectMin, a.ExpectMax)
 	}
-	stdout, code, err := r.command(ctx, r.engine.Write(r.port(), a.Scope, a.Statement, a.ExpectMin, a.ExpectMax))
+	var command storeops.Command
+	switch {
+	case a.MemberPredicate != nil:
+		command, err = r.engine.RemoveMembers(r.port(), a.Scope, *a.MemberPredicate, a.ExpectMin, a.ExpectMax)
+	case a.CopyFrom != nil:
+		command, err = r.engine.Copy(r.port(), *a.CopyFrom, a.Scope, a.ExpectMin, a.ExpectMax)
+	default:
+		command = r.engine.Write(r.port(), a.Scope, a.Statement, a.ExpectMin, a.ExpectMax)
+	}
+	if err != nil {
+		return effect, fmt.Errorf("%w: RepairData refused: %v", errStoreUnchanged, err)
+	}
+	stdout, code, err := r.command(ctx, command)
 	if err != nil {
 		return effect, fmt.Errorf("RepairData outcome unknown: %w", err)
 	}

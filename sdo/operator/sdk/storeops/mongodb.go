@@ -138,3 +138,28 @@ func dumpItems(dump string) int {
 	n, _ := Parse(dump, MarkerEnd)
 	return n
 }
+
+// Copy inserts every document of from that into lacks (by _id; a duplicate
+// key keeps the target's document), only when from matches [min, max]
+// documents. The count and the inserts are not one transaction; the executor
+// counts again afterwards.
+func (e mongodb) Copy(port int, from, into Scope, min, max int) (Command, error) {
+	from, into = e.Normalize(from), e.Normalize(into)
+	if into.Selector != "{}" {
+		return Command{}, fmt.Errorf("mongodb copy target selects a whole collection; leave its selector empty")
+	}
+	if from.Database == into.Database && from.Collection == into.Collection {
+		return Command{}, fmt.Errorf("mongodb copy needs two different collections")
+	}
+	js := e.collection(from) + " var t = db.getSiblingDB(" + jsString(into.Database) + ").getCollection(" + jsString(into.Collection) + ");" +
+		fmt.Sprintf(" var n = c.countDocuments(f); if (n < %d || n > %d) { print('sdo-expect-failed ' + n); } else {", min, max) +
+		" var w = 0, x = 0; c.find(f).forEach(function (d) { try { t.insertOne(d); w++; } catch (err) { if (!(err.code === 11000 || /E11000/.test(String(err)))) { x++; } } });" +
+		" print('sdo-affected ' + w + ' failed ' + x); }"
+	return Command{Args: []string{"sh", "-c", mongoPrelude + `m "$sh_" --quiet --eval "$1"`, "sh", strconv.Itoa(port), js}}, nil
+}
+
+// RemoveMembers is refused: a mongodb repair removes array elements with a
+// $pull update document.
+func (mongodb) RemoveMembers(int, Scope, MemberPredicate, int, int) (Command, error) {
+	return Command{}, fmt.Errorf("mongodb removes array members with a $pull update statement")
+}

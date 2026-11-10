@@ -11,7 +11,8 @@ import (
 )
 
 // StoreTarget selects one data store instance: its application-map component,
-// the engine the map declares for it (redis, mongodb or postgres), and the Pod
+// the engine the map declares for it (redis, mongodb, postgres, mysql or
+// memcached), and the Pod
 // and container whose own CLI runs the operation. The controller refuses a
 // target the accepted map does not ground: the component must declare data
 // with this engine, and the Pod must belong to its workload. Port 0 is the
@@ -26,9 +27,15 @@ type StoreTarget struct {
 
 // DataScope selects records with an engine-native, read-only selector: for
 // redis a database number and key glob, for mongodb a database, collection and
-// JSON filter, for postgres a database, table and WHERE body. Limit bounds the
+// JSON filter, for postgres or mysql a database, table and WHERE body, for
+// memcached a key glob (keys listed with lru_crawler metadump). Limit bounds the
 // items (0 is 10000, at most 100000); a larger scope is refused.
 type DataScope = storeops.Scope
+
+// MemberPredicate selects the members of a set, sorted set or list to remove:
+// NotDigits, MissingKey ("post:{member}" absent in the same database), In or
+// NotIn; any condition set selects a member.
+type MemberPredicate = storeops.MemberPredicate
 
 // StoreBackup copies a scope's records to backup storage.
 // The storage is outside .sdo/, on the controller's repository volume, per
@@ -59,26 +66,41 @@ type InvalidateDerived struct {
 }
 
 // RepairData runs one write on a scope.
-// Its effect is data-write. The statement is a redis single-key write per matched key
-// ("SREM member"), a mongodb update document or pipeline, a postgres SET
-// clause, or "delete". The controller counts the matching items first and
-// refuses unless the count is within [ExpectMin, ExpectMax], writes
-// (atomically with the count on redis and postgres), then counts again and
-// reads the store's facts. Backup optionally names a StoreBackup of this
-// incident; the controller records it and whether it covers Scope.
+// Its effect is data-write. It sets exactly one of:
+//   - Statement: a redis single-key write per matched key ("SREM member"), a
+//     mongodb update document or pipeline, a postgres or mysql SET clause, or
+//     "delete" (the only memcached statement);
+//   - MemberPredicate (redis): remove the members it selects from every set,
+//     sorted set or list the scope matches, for example the members that are
+//     not digits or whose "post:{member}" key is missing;
+//   - CopyFrom: copy every item of the CopyFrom scope that Scope's namespace
+//     lacks into it (a renamed collection, table or key pattern back under
+//     its name; redis merges sets and sorted sets member by member). Scope
+//     names the target namespace whole; CopyFrom is left as it is.
+//
+// The controller counts the matching items first (the CopyFrom items for a
+// copy) and refuses unless the count is within [ExpectMin, ExpectMax], writes
+// (atomically with the count on redis, postgres and mysql), then counts
+// Scope again and reads the store's facts. Backup optionally names a
+// StoreBackup of this incident; the controller records it and whether it
+// covers Scope.
 type RepairData struct {
-	Target    StoreTarget
-	Scope     DataScope
-	Statement string
-	ExpectMin int
-	ExpectMax int
-	Backup    string
-	Reason    string
+	Target          StoreTarget
+	Scope           DataScope
+	Statement       string
+	MemberPredicate *MemberPredicate
+	CopyFrom        *DataScope
+	ExpectMin       int
+	ExpectMax       int
+	Backup          string
+	Reason          string
 }
 
 // RestoreBackup puts a StoreBackup of this incident back.
 // Its effect is data-write: redis keys are restored with REPLACE, mongodb documents
-// upserted by _id, postgres rows replaced by primary key in one transaction.
+// upserted by _id, postgres rows replaced by primary key in one transaction,
+// mysql rows with REPLACE in one transaction, memcached items set again with
+// their flags and expiry.
 // Items created since the backup stay, and writes made since the backup to
 // the restored items are lost: name them in the outcome. A fresh StoreBackup
 // of the same scope first is recorded as holding what the restore overwrote.
@@ -197,8 +219,31 @@ func (a RepairData) Validate() error {
 	if err := engine.ValidateScope(a.Scope); err != nil {
 		return err
 	}
-	if err := engine.ValidateStatement(a.Statement); err != nil {
-		return err
+	set := 0
+	for _, given := range []bool{a.Statement != "", a.MemberPredicate != nil, a.CopyFrom != nil} {
+		if given {
+			set++
+		}
+	}
+	if set != 1 {
+		return fmt.Errorf("RepairData sets exactly one of Statement, MemberPredicate and CopyFrom")
+	}
+	switch {
+	case a.MemberPredicate != nil:
+		if _, err := engine.RemoveMembers(0, a.Scope, *a.MemberPredicate, 0, 1); err != nil {
+			return err
+		}
+	case a.CopyFrom != nil:
+		if err := engine.ValidateScope(*a.CopyFrom); err != nil {
+			return fmt.Errorf("RepairData CopyFrom: %w", err)
+		}
+		if _, err := engine.Copy(0, *a.CopyFrom, a.Scope, 0, 1); err != nil {
+			return err
+		}
+	default:
+		if err := engine.ValidateStatement(a.Statement); err != nil {
+			return err
+		}
 	}
 	if a.ExpectMin < 0 || a.ExpectMax < a.ExpectMin {
 		return fmt.Errorf("RepairData requires 0 <= ExpectMin <= ExpectMax, got [%d, %d]", a.ExpectMin, a.ExpectMax)

@@ -888,8 +888,19 @@ class InvalidateDerived(_message.Message):
     reason: str
     def __init__(self, target: _Optional[_Union[StoreTarget, _Mapping]] = ..., scope: _Optional[_Union[DataScope, _Mapping]] = ..., reason: _Optional[str] = ...) -> None: ...
 
+class MemberPredicate(_message.Message):
+    __slots__ = ("not_digits", "missing_key", "not_in")
+    NOT_DIGITS_FIELD_NUMBER: _ClassVar[int]
+    MISSING_KEY_FIELD_NUMBER: _ClassVar[int]
+    IN_FIELD_NUMBER: _ClassVar[int]
+    NOT_IN_FIELD_NUMBER: _ClassVar[int]
+    not_digits: bool
+    missing_key: str
+    not_in: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, not_digits: _Optional[bool] = ..., missing_key: _Optional[str] = ..., not_in: _Optional[_Iterable[str]] = ..., **kwargs) -> None: ...
+
 class RepairData(_message.Message):
-    __slots__ = ("target", "scope", "statement", "expect_min", "expect_max", "backup", "reason")
+    __slots__ = ("target", "scope", "statement", "expect_min", "expect_max", "backup", "reason", "member_predicate", "copy_from")
     TARGET_FIELD_NUMBER: _ClassVar[int]
     SCOPE_FIELD_NUMBER: _ClassVar[int]
     STATEMENT_FIELD_NUMBER: _ClassVar[int]
@@ -897,6 +908,8 @@ class RepairData(_message.Message):
     EXPECT_MAX_FIELD_NUMBER: _ClassVar[int]
     BACKUP_FIELD_NUMBER: _ClassVar[int]
     REASON_FIELD_NUMBER: _ClassVar[int]
+    MEMBER_PREDICATE_FIELD_NUMBER: _ClassVar[int]
+    COPY_FROM_FIELD_NUMBER: _ClassVar[int]
     target: StoreTarget
     scope: DataScope
     statement: str
@@ -904,7 +917,9 @@ class RepairData(_message.Message):
     expect_max: int
     backup: str
     reason: str
-    def __init__(self, target: _Optional[_Union[StoreTarget, _Mapping]] = ..., scope: _Optional[_Union[DataScope, _Mapping]] = ..., statement: _Optional[str] = ..., expect_min: _Optional[int] = ..., expect_max: _Optional[int] = ..., backup: _Optional[str] = ..., reason: _Optional[str] = ...) -> None: ...
+    member_predicate: MemberPredicate
+    copy_from: DataScope
+    def __init__(self, target: _Optional[_Union[StoreTarget, _Mapping]] = ..., scope: _Optional[_Union[DataScope, _Mapping]] = ..., statement: _Optional[str] = ..., expect_min: _Optional[int] = ..., expect_max: _Optional[int] = ..., backup: _Optional[str] = ..., reason: _Optional[str] = ..., member_predicate: _Optional[_Union[MemberPredicate, _Mapping]] = ..., copy_from: _Optional[_Union[DataScope, _Mapping]] = ...) -> None: ...
 
 class RestoreBackup(_message.Message):
     __slots__ = ("target", "backup", "reason")

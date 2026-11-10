@@ -102,10 +102,12 @@ func decodeJSON(text string) (any, error) {
 }
 
 // decodeValue turns a string-typed value whose read says decode: json into
-// the decoded value; anything else is kept as read.
+// the decoded value, and one that says ndjson into {"lines": [...]} with one
+// decoded document per non-empty line ({"lines": {"$size": n}} past
+// MaxMembers); anything else is kept as read.
 func (s Store) decodeValue(id string, value any) record {
 	r := record{ID: id, Value: value}
-	if s.Read.Decode != "json" {
+	if s.Read.Decode != "json" && s.Read.Decode != "ndjson" {
 		return r
 	}
 	object, ok := value.(map[string]any)
@@ -116,6 +118,15 @@ func (s Store) decodeValue(id string, value any) record {
 	if !ok {
 		return r // a capped value ({"$long": n}) stays unchecked
 	}
+	if s.Read.Decode == "ndjson" {
+		lines, ok := decodeLines(text)
+		if !ok {
+			r.Value, r.Undecodable = nil, true
+			return r
+		}
+		r.Value = map[string]any{"lines": lines}
+		return r
+	}
 	decoded, err := decodeJSON(text)
 	if err != nil {
 		r.Value, r.Undecodable = nil, true
@@ -123,6 +134,34 @@ func (s Store) decodeValue(id string, value any) record {
 	}
 	r.Value = decoded
 	return r
+}
+
+// decodeLines decodes newline-delimited JSON; it is false when a non-empty
+// line is not one JSON document.
+func decodeLines(text string) (any, bool) {
+	var lines []any
+	n := 0
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		n++
+		v, err := decodeJSON(line)
+		if err != nil {
+			return nil, false
+		}
+		if len(lines) < MaxMembers {
+			lines = append(lines, v)
+		}
+	}
+	if n > MaxMembers {
+		return map[string]any{"$size": json.Number(fmt.Sprint(n))}, true
+	}
+	if lines == nil {
+		lines = []any{}
+	}
+	return lines, true
 }
 
 var memcachedValue = regexp.MustCompile(`^VALUE (\S+) \d+ (\d+)$`)

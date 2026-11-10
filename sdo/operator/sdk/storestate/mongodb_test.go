@@ -288,7 +288,8 @@ func TestMongoReadCommandIsBoundedAndReadOnly(t *testing.T) {
 // its read shows a write block.
 func TestParseNeverClaimsMoreThanItRead(t *testing.T) {
 	random := rand.New(rand.NewSource(7))
-	cases := map[storestate.Engine]string{storestate.EngineMongoDB: healthyMongo, storestate.EnginePostgres: healthyPostgres}
+	cases := map[storestate.Engine]string{storestate.EngineMongoDB: healthyMongo, storestate.EnginePostgres: healthyPostgres,
+		storestate.EngineMySQL: healthyMySQL, storestate.EngineMemcached: healthyMemcached, storestate.EngineConsul: healthyConsul}
 	for engine, healthy := range cases {
 		a := adapterFor(t, engine)
 		lines := strings.Split(healthy, "\n")

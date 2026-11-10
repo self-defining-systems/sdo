@@ -33,6 +33,7 @@ echo '== role';r ROLE|head -n1
 echo '== config';for k in %s;do r CONFIG GET $k|head -n2;done
 o=$(r CONFIG GET requirepass);case "$o" in requirepass*)[ -n "$(printf %%s "$o"|sed -n 2p)" ]&&v=set||v=empty;printf 'requirepass\n%%s\n' $v;;*)printf '%%s\n' "$o"|head -n1;;esac
 echo '== acl';r ACL LIST|sed -E 's/ [#<>][^ ]*//g'|head -n32
+echo '== keys';(IFS=;r EVAL "$*" 0)|head -n 26
 `
 
 // redisSectionKinds are the item kinds each section shows, so a refused
@@ -51,8 +52,42 @@ func (redisAdapter) Engine() Engine   { return EngineRedis }
 func (redisAdapter) DefaultPort() int { return 6379 }
 
 func (redisAdapter) ReadCommand(e Endpoint) []string {
-	return readCommand([]string{"REDISCLI", "REDIS"}, fmt.Sprintf(redisScript, e.Port, strings.Join(redisSettings, " ")))
+	return readCommand([]string{"REDISCLI", "REDIS"}, fmt.Sprintf(redisScript, e.Port, strings.Join(redisSettings, " ")), chunk(redisKeysLua, readChunkBytes)...)
 }
+
+// redisKeysLua counts the keys of database 0 per key pattern, scanning at
+// most 20000 keys. A key's pattern is its first ':'-separated segment
+// ("{n}" for digits, "*" for a long or unusual one), then ":{n}" or ":*" for
+// a second segment and ":*" for any more: "123" is "{n}", "123:followers"
+// "{n}:*", "user:42:cart" "user:{n}:*". It prints "complete" or "partial",
+// then "<pattern>\t<count>" for the 24 largest patterns and "more" when
+// there are others. Key names never leave the store beyond their pattern.
+const redisKeysLua = `local seen, counts, cur, it = {}, {}, '0', 0
+local function seg(x) if string.match(x, '^%d+$') then return '{n}' end if #x <= 32 and string.match(x, '^[%w_.-]*$') and not string.find(x, '%x%x%x%x%x%x%x%x') then return x end return '*' end
+repeat
+  local r = redis.call('SCAN', cur, 'COUNT', 1000)
+  cur = r[1]
+  for _, k in ipairs(r[2]) do
+    if not seen[k] then
+      seen[k] = true
+      local a, b, rest = string.match(k, '^([^:]*):?([^:]*):?(.*)$')
+      local p = seg(a)
+      if string.find(k, ':', 1, true) then
+        if string.match(b, '^%d+$') then p = p .. ':{n}' else p = p .. ':*' end
+        if rest ~= '' or select(2, string.gsub(k, ':', '')) > 1 then p = p .. ':*' end
+      end
+      counts[p] = (counts[p] or 0) + 1
+    end
+  end
+  it = it + 1
+until cur == '0' or it >= 20
+local list = {}
+for p, n in pairs(counts) do list[#list + 1] = {p, n} end
+table.sort(list, function(x, y) if x[2] ~= y[2] then return x[2] > y[2] end return x[1] < y[1] end)
+local out = {cur == '0' and 'complete' or 'partial'}
+for i, e in ipairs(list) do if i > 24 then out[#out + 1] = 'more' break end out[#out + 1] = e[1] .. '\t' .. e[2] end
+return out
+`
 
 var refusalLine = regexp.MustCompile(`^(\(error\) )?([A-Z][A-Z]+)\b`)
 
@@ -212,6 +247,9 @@ func (redisAdapter) Parse(stdout string) (Facts, error) {
 		}
 	}
 
+	keyItems, keysRead := redisKeyPatterns(sections["keys"])
+	items = append(items, keyItems...)
+
 	f := Facts{Engine: EngineRedis}
 	if answered["info"] {
 		f.Connections = gauge(info["connected_clients"], first(info["maxclients"], config["maxclients"]))
@@ -234,6 +272,9 @@ func (redisAdapter) Parse(stdout string) (Facts, error) {
 				unread[k] = true
 			}
 		}
+	}
+	if !keysRead {
+		unread[KindKeyPattern] = true
 	}
 	for k := range unread {
 		f.Unread = append(f.Unread, k)
@@ -298,4 +339,28 @@ func gauge(used, limit string) *Gauge {
 		return nil
 	}
 	return &Gauge{Used: u, Max: m}
+}
+
+// redisKeyPatterns reads the optional keys section: per-pattern key counts of
+// database 0. It is optional so readings taken before it existed still parse,
+// and a refused or partial scan leaves key patterns unread rather than
+// failing the read or raising a refusal.
+func redisKeyPatterns(lines []string) ([]Item, bool) {
+	if len(lines) == 0 || lines[0] != "complete" {
+		return nil, false
+	}
+	var items []Item
+	complete := true
+	for _, line := range lines[1:] {
+		if line == "more" {
+			complete = false
+			continue
+		}
+		pattern, count, ok := strings.Cut(line, "\t")
+		if !ok || pattern == "" {
+			return nil, false
+		}
+		items = append(items, Item{Kind: KindKeyPattern, Scope: "db0", Name: pattern, Value: count})
+	}
+	return items, complete
 }

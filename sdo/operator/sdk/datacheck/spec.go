@@ -119,7 +119,10 @@ type Target struct {
 // Read says which records to read. Database, Collection, Key, KeyType and
 // Filter are for mongodb; Database, Table, Key, KeyType and Where for
 // postgres; Pattern, Type and Decode for redis; Pattern and Decode for
-// memcached. The first store selects records with exactly one of IDs, Range
+// memcached. Decode reads a string value as text (the field value), json
+// (the fields of one JSON document) or ndjson (one JSON document per line,
+// as the list lines: lines[].field is each line's field). A memcached read
+// lists its keys for first with lru_crawler metadump. The first store selects records with exactly one of IDs, Range
 // or First; a lookup selects by the keys the first store printed.
 type Read struct {
 	Database   string         `yaml:"database,omitempty"`
@@ -340,8 +343,8 @@ func (s Store) validate(prefix string, subject bool) []error {
 	if r.KeyType != "" && r.KeyType != "string" && r.KeyType != "number" {
 		add("key_type is string or number")
 	}
-	if r.Decode != "" && r.Decode != "text" && r.Decode != "json" {
-		add("decode is text or json")
+	if r.Decode != "" && r.Decode != "text" && r.Decode != "json" && r.Decode != "ndjson" {
+		add("decode is text, json or ndjson")
 	}
 	field := func(name, value string) {
 		if value != "" {
@@ -396,9 +399,6 @@ func (s Store) validate(prefix string, subject bool) []error {
 		if s.Engine == EngineMemcached {
 			field("type", r.Type)
 			field("key_type", r.KeyType)
-			if r.First != 0 {
-				add("memcached cannot list its keys; select records with ids or range")
-			}
 		}
 		if r.Decode != "" && s.Engine == EngineRedis && r.Type != "string" {
 			add("decode applies to string values only")
@@ -585,7 +585,9 @@ func (s Store) fields(paths []string) []string {
 // readable reports a path the store's record shape cannot hold.
 func (s Store) readable(paths []string) error {
 	collection := s.Engine == EngineRedis && slices.Contains([]string{"set", "zset", "list"}, s.Read.Type)
-	text := (s.Engine == EngineRedis && s.Read.Type == "string" || s.Engine == EngineMemcached) && s.Read.Decode != "json"
+	stringValue := s.Engine == EngineRedis && s.Read.Type == "string" || s.Engine == EngineMemcached
+	text := stringValue && s.Read.Decode != "json" && s.Read.Decode != "ndjson"
+	lines := stringValue && s.Read.Decode == "ndjson"
 	for _, p := range paths {
 		top := strings.SplitN(p, ".", 2)[0]
 		switch {
@@ -593,6 +595,8 @@ func (s Store) readable(paths []string) error {
 			return fmt.Errorf("%s: a redis %s record has members, members[] and size only, not %s", s.Component, s.Read.Type, p)
 		case text && p != "value":
 			return fmt.Errorf("%s: a text value is the field value; decode: json reads fields of a JSON value, not %s", s.Component, p)
+		case lines && top != "lines" && top != "lines[]":
+			return fmt.Errorf("%s: an ndjson value is the list lines (lines[].field for each line's field), not %s", s.Component, p)
 		case s.Engine == EngineRedis && s.Read.Type == "hash" && p != top:
 			return fmt.Errorf("%s: a redis hash record has one level of fields, not %s", s.Component, p)
 		case s.Engine == EnginePostgres && strings.Contains(p, "."):

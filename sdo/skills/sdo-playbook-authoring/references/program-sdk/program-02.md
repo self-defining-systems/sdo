@@ -93,8 +93,9 @@ type DataRepairEffect struct {
 type DataScope = storeops.Scope
     DataScope selects records with an engine-native, read-only selector:
     for redis a database number and key glob, for mongodb a database, collection
-    and JSON filter, for postgres a database, table and WHERE body. Limit bounds
-    the items (0 is 10000, at most 100000); a larger scope is refused.
+    and JSON filter, for postgres or mysql a database, table and WHERE body,
+    for memcached a key glob (keys listed with lru_crawler metadump). Limit
+    bounds the items (0 is 10000, at most 100000); a larger scope is refused.
 
 type DatabaseAuth struct {
 	Database string        `json:"database"`
@@ -262,19 +263,4 @@ type HTTPProbe struct {
 	Headers map[string]string `json:"headers,omitempty"`
 }
     HTTPProbe is the request ProbeHTTP sends.
-
-type HTTPRequest struct {
-	Pod       sdk.ObjectRef            `json:"pod"`
-	Container string                   `json:"container"`
-	Method    string                   `json:"method"`
-	URL       string                   `json:"url"`
-	Headers   map[string]string        `json:"headers,omitempty"`
-	HeaderEnv map[string]CredentialRef `json:"header_env,omitempty"`
-	Body      string                   `json:"body,omitempty"`
-	Bearer    *CredentialRef           `json:"bearer,omitempty"`
-}
-    HTTPRequest uses curl inside a selected container. Its result is curl's
-    exit code, including HTTP errors with --fail. Response bodies and stderr are
-    never captured. Bearer names an environment variable; it is expanded only
-    there.
 ```

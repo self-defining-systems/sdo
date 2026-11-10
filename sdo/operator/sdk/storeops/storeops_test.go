@@ -22,7 +22,7 @@ func TestEnginesWithRecordOperations(t *testing.T) {
 			t.Fatalf("engine %s is incomplete", name)
 		}
 	}
-	for _, name := range []string{"memcached", "consul", "other", ""} {
+	for _, name := range []string{"consul", "other", ""} {
 		if _, ok := storeops.For(name); ok {
 			t.Fatalf("%q must have no record operations", name)
 		}
@@ -55,6 +55,16 @@ func TestScopeValidation(t *testing.T) {
 		"negative limit":           {"postgres", storeops.Scope{Collection: "items", Limit: -1}, false},
 		"limit at the maximum":     {"redis", storeops.Scope{Limit: storeops.MaxLimit}, true},
 		"postgres schema.table ok": {"postgres", storeops.Scope{Database: "app", Collection: "s.t"}, true},
+		"memcached every key":      {"memcached", storeops.Scope{}, true},
+		"memcached glob":           {"memcached", storeops.Scope{Selector: "*_cap"}, true},
+		"memcached database":       {"memcached", storeops.Scope{Database: "0"}, false},
+		"memcached space":          {"memcached", storeops.Scope{Selector: "a b"}, false},
+		"memcached shell text":     {"memcached", storeops.Scope{Selector: "$(x)"}, false},
+		"mysql where":              {"mysql", storeops.Scope{Database: "shop", Collection: "orders", Selector: "status = 'x'"}, true},
+		"mysql default database":   {"mysql", storeops.Scope{Collection: "orders"}, true},
+		"mysql schema.table":       {"mysql", storeops.Scope{Collection: "shop.orders"}, false},
+		"mysql hash comment":       {"mysql", storeops.Scope{Collection: "orders", Selector: "TRUE # x"}, false},
+		"mysql separator":          {"mysql", storeops.Scope{Collection: "orders", Selector: "TRUE; DROP TABLE orders"}, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			err := engine(t, test.engine).ValidateScope(test.scope)
@@ -95,6 +105,12 @@ func TestStatementValidation(t *testing.T) {
 		"postgres not a set clause":  {"postgres", "TRUNCATE items", false},
 		"postgres returning clause":  {"postgres", "SET a = 1 RETURNING *", false},
 		"postgres line break escape": {"postgres", "SET a = 1\n\\! sh", false},
+		"memcached delete":           {"memcached", "delete", true},
+		"memcached set":              {"memcached", "set 1", false},
+		"mysql set":                  {"mysql", "SET status = 'open'", true},
+		"mysql delete":               {"mysql", "delete", true},
+		"mysql own where":            {"mysql", "SET a = 1 WHERE TRUE", false},
+		"mysql comment":              {"mysql", "SET a = 1 # x", false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			err := engine(t, test.engine).ValidateStatement(test.statement)
@@ -176,11 +192,13 @@ func TestCommandsPassValuesAsArguments(t *testing.T) {
 	}
 }
 
-func TestDerivedInvalidationIsRedisOnly(t *testing.T) {
-	if _, err := engine(t, "redis").Invalidate(6379, storeops.Scope{}); err != nil {
-		t.Fatal(err)
+func TestDerivedInvalidationIsForCaches(t *testing.T) {
+	for _, name := range []string{"redis", "memcached"} {
+		if _, err := engine(t, name).Invalidate(1, storeops.Scope{}); err != nil {
+			t.Fatal(err)
+		}
 	}
-	for _, name := range []string{"mongodb", "postgres"} {
+	for _, name := range []string{"mongodb", "postgres", "mysql"} {
 		if _, err := engine(t, name).Invalidate(1, storeops.Scope{Database: "app", Collection: "items"}); err == nil {
 			t.Fatalf("%s must refuse invalidation", name)
 		}
@@ -197,5 +215,82 @@ func TestRestoreFeedsTheDumpOnStdin(t *testing.T) {
 		if c.Stdin != dump {
 			t.Fatalf("%s restore must read the dump on stdin", name)
 		}
+	}
+}
+
+// A whole-cache memcached invalidation is flush_all; a glob deletes only the
+// keys metadump lists for it.
+func TestMemcachedInvalidation(t *testing.T) {
+	mc := engine(t, "memcached")
+	all, _ := mc.Invalidate(11211, storeops.Scope{})
+	some, _ := mc.Invalidate(11211, storeops.Scope{Selector: "*_cap"})
+	if !strings.Contains(all.Args[2], "flush_all") || strings.Contains(some.Args[2], "flush_all") || !strings.Contains(some.Args[2], "lru_crawler metadump") {
+		t.Fatalf("commands = %q / %q", all.Args[2], some.Args[2])
+	}
+	if some.Args[5] != "^.*[_]cap$" && some.Args[5] != "^.*_cap$" {
+		t.Fatalf("glob ERE = %q", some.Args[5])
+	}
+}
+
+func TestMemberPredicates(t *testing.T) {
+	redis := engine(t, "redis")
+	for name, test := range map[string]struct {
+		p  storeops.MemberPredicate
+		ok bool
+	}{
+		"not digits":          {storeops.MemberPredicate{NotDigits: true}, true},
+		"dangling":            {storeops.MemberPredicate{MissingKey: "post:{member}"}, true},
+		"listed":              {storeops.MemberPredicate{In: []string{"x"}}, true},
+		"allowlist":           {storeops.MemberPredicate{NotIn: []string{"1", "2"}}, true},
+		"no condition":        {storeops.MemberPredicate{}, false},
+		"key without member":  {storeops.MemberPredicate{MissingKey: "post:1"}, false},
+		"key with two places": {storeops.MemberPredicate{MissingKey: "{member}:{member}"}, false},
+		"too many members":    {storeops.MemberPredicate{In: make([]string, storeops.MaxPredicateMembers+1)}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := redis.RemoveMembers(6379, storeops.Scope{Selector: "*:followers"}, test.p, 1, 10)
+			if (err == nil) != test.ok {
+				t.Fatalf("RemoveMembers = %v, want ok=%v", err, test.ok)
+			}
+		})
+	}
+	for _, name := range []string{"mongodb", "postgres", "mysql", "memcached"} {
+		if _, err := engine(t, name).RemoveMembers(1, storeops.Scope{}, storeops.MemberPredicate{NotDigits: true}, 1, 1); err == nil {
+			t.Fatalf("%s removed members", name)
+		}
+	}
+	// Members reach the script as arguments, never as program text.
+	hostile := `x'); redis.call('FLUSHALL') --`
+	c, err := redis.RemoveMembers(6379, storeops.Scope{}, storeops.MemberPredicate{In: []string{hostile}}, 1, 1)
+	if err != nil || strings.Contains(c.Args[2], hostile) || strings.Contains(c.Args[6], hostile) || c.Args[len(c.Args)-1] != hostile {
+		t.Fatalf("command = %q, %v", c.Args, err)
+	}
+}
+
+func TestCopyScopes(t *testing.T) {
+	for name, test := range map[string]struct {
+		engine     string
+		from, into storeops.Scope
+		ok         bool
+	}{
+		"redis renamed keys":        {"redis", storeops.Scope{Selector: "*:bak"}, storeops.Scope{Selector: "*"}, true},
+		"redis prefix move":         {"redis", storeops.Scope{Selector: "old:*"}, storeops.Scope{Selector: "new:*"}, true},
+		"redis two wildcards":       {"redis", storeops.Scope{Selector: "*:*"}, storeops.Scope{Selector: "*"}, false},
+		"redis across databases":    {"redis", storeops.Scope{Database: "1", Selector: "a:*"}, storeops.Scope{Selector: "a:*"}, false},
+		"mongodb collection":        {"mongodb", storeops.Scope{Database: "app", Collection: "post_old"}, storeops.Scope{Database: "app", Collection: "post"}, true},
+		"mongodb filtered source":   {"mongodb", storeops.Scope{Database: "app", Collection: "post_old", Selector: `{"a":1}`}, storeops.Scope{Database: "app", Collection: "post"}, true},
+		"mongodb filtered target":   {"mongodb", storeops.Scope{Database: "app", Collection: "post_old"}, storeops.Scope{Database: "app", Collection: "post", Selector: `{"a":1}`}, false},
+		"mongodb onto itself":       {"mongodb", storeops.Scope{Database: "app", Collection: "post"}, storeops.Scope{Database: "app", Collection: "post"}, false},
+		"postgres table":            {"postgres", storeops.Scope{Collection: "orders_old"}, storeops.Scope{Collection: "orders"}, true},
+		"postgres across databases": {"postgres", storeops.Scope{Database: "a", Collection: "t"}, storeops.Scope{Database: "b", Collection: "t"}, false},
+		"mysql table":               {"mysql", storeops.Scope{Collection: "orders_old"}, storeops.Scope{Collection: "orders"}, true},
+		"memcached":                 {"memcached", storeops.Scope{Selector: "a*"}, storeops.Scope{Selector: "b*"}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := engine(t, test.engine).Copy(1, test.from, test.into, 1, 10)
+			if (err == nil) != test.ok {
+				t.Fatalf("Copy = %v, want ok=%v", err, test.ok)
+			}
+		})
 	}
 }
