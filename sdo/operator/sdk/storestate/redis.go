@@ -85,40 +85,57 @@ func refusal(line string) (class string, refused bool) {
 	return "refused", true
 }
 
-func splitSections(stdout string) (map[string][]string, error) {
+// splitSections splits a read into its "== <name>" sections. Lines before the
+// first header, blank lines and "#" comments are dropped. A read without any
+// header reached no store and is an error.
+func splitSections(engine, stdout string) (map[string][]string, error) {
 	sections := map[string][]string{}
 	current := ""
 	for _, raw := range strings.Split(stdout, "\n") {
-		line := strings.TrimSpace(raw)
+		line := strings.TrimRight(raw, "\r")
+		if engine == "redis" {
+			line = strings.TrimSpace(line)
+		}
 		if name, ok := strings.CutPrefix(line, "== "); ok {
 			if _, dup := sections[name]; dup {
-				return nil, fmt.Errorf("redis read repeats section %q", name)
+				return nil, fmt.Errorf("%s read repeats section %q", engine, name)
 			}
 			current = name
 			sections[name] = nil
 			continue
 		}
-		if current == "" || line == "" || strings.HasPrefix(line, "#") {
+		if current == "" || strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 		sections[current] = append(sections[current], line)
 	}
-	for _, name := range redisSections {
-		lines, ok := sections[name]
-		if !ok {
-			return nil, fmt.Errorf("redis read lacks section %q", name)
-		}
-		if len(lines) == 0 {
-			return nil, fmt.Errorf("redis read section %q is empty", name)
-		}
+	if len(sections) == 0 {
+		return nil, fmt.Errorf("%s read has no sections: %q", engine, firstLine(stdout))
 	}
 	return sections, nil
 }
 
+func firstLine(s string) string {
+	line, _, _ := strings.Cut(strings.TrimSpace(s), "\n")
+	if len(line) > 200 {
+		line = line[:200]
+	}
+	return line
+}
+
 func (redisAdapter) Parse(stdout string) (Facts, error) {
-	sections, err := splitSections(stdout)
+	sections, err := splitSections("redis", stdout)
 	if err != nil {
 		return Facts{}, err
+	}
+	for _, name := range redisSections {
+		lines, ok := sections[name]
+		if !ok {
+			return Facts{}, fmt.Errorf("redis read lacks section %q", name)
+		}
+		if len(lines) == 0 {
+			return Facts{}, fmt.Errorf("redis read section %q is empty", name)
+		}
 	}
 	var items []Item
 	answered := map[string]bool{}

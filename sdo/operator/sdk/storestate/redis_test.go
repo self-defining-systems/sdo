@@ -239,7 +239,7 @@ func TestRedisReadCommandIsBoundedAndValueFree(t *testing.T) {
 }
 
 func TestEnginesWithoutAReaderHaveNoAdapter(t *testing.T) {
-	for _, engine := range []storestate.Engine{storestate.EngineMongoDB, storestate.EnginePostgres, "unknown"} {
+	for _, engine := range []storestate.Engine{storestate.EngineMySQL, storestate.EngineMemcached, storestate.EngineConsul, "unknown"} {
 		if _, ok := storestate.AdapterFor(engine); ok {
 			t.Errorf("%s has an adapter", engine)
 		}
