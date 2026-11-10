@@ -60,6 +60,7 @@ def prepare_dev_mount(
                         '[plugins."io.containerd.cri.v1.images".registry]\n  config_path = "/etc/containerd/certs.d"',
                     ],
                     "networking": {"disableDefaultCNI": True, "podSubnet": "192.168.0.0/16"},
+                    "kubeadmConfigPatches": ["kind: KubeletConfiguration\nmaxPods: 250\n"],
                     "nodes": [
                         {
                             "role": "control-plane",

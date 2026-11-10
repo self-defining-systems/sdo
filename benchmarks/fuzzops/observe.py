@@ -290,6 +290,34 @@ class Watcher:
         return lines, report
 
 
+_EVENTS = (
+    ("detected_at", "detected"),
+    ("localized_at", "localized"),
+    ("diagnosed_at", "diagnosed"),
+    ("mitigation_started_at", "mitigation_started"),
+    ("mitigated_at", "mitigated"),
+    ("escalated_at", "escalated"),
+)
+_CAUSE_FIELDS = ("component", "location", "fault_type", "mechanism", "summary", "reach", "causes")
+
+
+def timeline_events(watcher: Watcher, emitted: set[str]) -> list[dict[str, Any]]:
+    """fuzzops timeline lines for lifecycle stamps not emitted yet; cause stages carry the current cause."""
+    events: list[dict[str, Any]] = []
+    for stamp, event in _EVENTS:
+        at = watcher.stamps.get(stamp)
+        if not at or event in emitted:
+            continue
+        emitted.add(event)
+        line: dict[str, Any] = {"event": event, "at": at}
+        if event in {"localized", "diagnosed", "escalated"} and watcher.cause:
+            line.update({k: watcher.cause[k] for k in _CAUSE_FIELDS if k in watcher.cause})
+        if event == "escalated":
+            line["reach"] = "out-of-reach"
+        events.append(line)
+    return events
+
+
 def _now() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
@@ -326,6 +354,8 @@ def main(argv: list[str] | None = None) -> int:
     a = p.parse_args(argv)
     context = os.environ.get("FUZZOPS_KUBE_CONTEXT", "")
     report_path = os.environ.get("FUZZOPS_REPORT", "")
+    timeline_path = os.environ.get("FUZZOPS_TIMELINE", "")
+    emitted: set[str] = set()
     out = Path(os.environ.get("FUZZOPS_OUT") or ".")
     out.mkdir(parents=True, exist_ok=True)
     watcher = Watcher(started=datetime.now(UTC))
@@ -352,6 +382,13 @@ def main(argv: list[str] | None = None) -> int:
                 tmp.write_text(json.dumps(report))
                 tmp.replace(report_path)
                 (out / "report.json").write_text(json.dumps(report, indent=2))
+            events = timeline_events(watcher, emitted)
+            if events:
+                with (out / "timeline.jsonl").open("a") as copy:
+                    copy.writelines(json.dumps(e) + "\n" for e in events)
+                if timeline_path:
+                    with open(timeline_path, "a") as timeline:
+                        timeline.writelines(json.dumps(e) + "\n" for e in events)
             if watcher.closed and closed_at is None:
                 closed_at = time.monotonic()
         time.sleep(a.interval)

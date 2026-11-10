@@ -281,7 +281,8 @@ def up_preflight(args: argparse.Namespace) -> None:
 
     lane_images = (
         (args.controller_image, ()),
-        (args.responder_image, BENCHMARK_IMAGE_ENTRY_POINTS),
+        # A fuzzops-operated GitLab lane runs SDO's production responder: no benchmark worker entry points.
+        (args.responder_image, () if getattr(args, "app", None) == "gitlab" else BENCHMARK_IMAGE_ENTRY_POINTS),
     )
     for image, _modules in lane_images:
         if image is not None:

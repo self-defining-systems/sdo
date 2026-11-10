@@ -87,6 +87,8 @@ gitlab:
     email: root@example.com
   gitlab:
     webservice:
+      service:
+        type: NodePort   # the fuzzops entry is a NodePort Service; nodePort unset so Kubernetes picks it
       helmTests:
         enabled: false
       minReplicas: 1

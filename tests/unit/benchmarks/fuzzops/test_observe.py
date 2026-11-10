@@ -186,3 +186,20 @@ def test_watcher_report_carries_lifecycle_stamps_from_sdo_records() -> None:
     assert "escalated_at" in report
     assert report["summary"].startswith("SDO responder")
     assert w.step({**base, "incident_result": result, "responder_done": True})[1] is None
+
+
+def test_timeline_events_follow_stamps_once_and_carry_the_cause() -> None:
+    from datetime import UTC, datetime
+
+    from benchmarks.fuzzops.observe import Watcher, timeline_events
+
+    w = Watcher(started=datetime.now(UTC))
+    w.stamps = {"detected_at": "t1"}
+    emitted: set[str] = set()
+    assert timeline_events(w, emitted) == [{"event": "detected", "at": "t1"}]
+    assert timeline_events(w, emitted) == []
+    w.cause = {"component": "sts/x", "mechanism": "scaled-down", "summary": "s", "reach": "out-of-reach"}
+    w.stamps.update({"diagnosed_at": "t2", "escalated_at": "t3"})
+    events = timeline_events(w, emitted)
+    assert [e["event"] for e in events] == ["diagnosed", "escalated"]
+    assert events[0]["component"] == "sts/x" and events[1]["reach"] == "out-of-reach"
