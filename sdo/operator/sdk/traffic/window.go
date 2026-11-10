@@ -124,14 +124,7 @@ func Evaluate(scenarioID string, slo SLO, samples []Sample, now time.Time) SLOVe
 			latencies = append(latencies, sample.Latency)
 		}
 		if sample.Outcome != OutcomeTimeout {
-			key := "transport"
-			switch {
-			case sample.DialFailed:
-				key = "dial"
-			case sample.Status > 0:
-				key = strconv.Itoa(sample.Status)
-			}
-			verdict.StatusCounts[key]++
+			verdict.StatusCounts[statusKey(sample)]++
 		}
 		if sample.Outcome != OutcomeOK {
 			verdict.RecentFailures = append(verdict.RecentFailures, sample)
@@ -169,11 +162,25 @@ func Evaluate(scenarioID string, slo SLO, samples []Sample, now time.Time) SLOVe
 	return verdict
 }
 
-// Judge evaluates every qualified scenario of window at its ObservedAt.
+// statusKey is the SLOVerdict.StatusCounts key of one sample.
+func statusKey(sample Sample) string {
+	switch {
+	case sample.Outcome == OutcomeTimeout:
+		return "timeout"
+	case sample.DialFailed:
+		return "dial"
+	case sample.Status > 0:
+		return strconv.Itoa(sample.Status)
+	}
+	return "transport"
+}
+
+// Judge evaluates every qualified scenario of window at its ObservedAt,
+// except those the workload declares KnownBroken: they never gate health.
 func Judge(window Window) []SLOVerdict {
 	verdicts := make([]SLOVerdict, 0, len(window.Scenarios))
 	for _, observed := range window.Scenarios {
-		if !observed.Qualified {
+		if !observed.Qualified || window.Workload.KnownBrokenScenario(observed.Scenario.ID) != nil {
 			continue
 		}
 		id := observed.Scenario.ID

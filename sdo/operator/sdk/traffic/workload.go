@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	"regexp"
+	"strings"
 	"time"
 )
 
@@ -100,6 +102,42 @@ type WorkloadScenario struct {
 	ID     string `json:"id"`
 	Weight int    `json:"weight,omitempty"`
 	SLO    *SLO   `json:"slo,omitempty"`
+	// KnownBroken declares a health-probe scenario that already fails on the
+	// application as deployed (a route broken in the application itself). It
+	// is still probed and observed, but never fires and never holds health
+	// unconfirmed; the detector notes when it starts working or fails
+	// differently from FailsWith.
+	KnownBroken *KnownBroken `json:"knownBroken,omitempty"`
+}
+
+// KnownBroken is why a scenario fails at baseline and how.
+type KnownBroken struct {
+	// Reason says, in one short line, what is broken in the application.
+	Reason string `json:"reason"`
+	// FailsWith lists the failures observed at baseline, as the status keys of
+	// SLOVerdict.StatusCounts: an HTTP status code ("404"), "timeout", "dial"
+	// or "transport".
+	FailsWith []string `json:"failsWith"`
+}
+
+// MaxKnownBrokenReason bounds a KnownBroken reason.
+const MaxKnownBrokenReason = 200
+
+var failureKeyPattern = regexp.MustCompile(`^([1-5][0-9][0-9]|timeout|dial|transport)$`)
+
+func (k KnownBroken) validate() error {
+	if strings.TrimSpace(k.Reason) == "" || len(k.Reason) > MaxKnownBrokenReason {
+		return fmt.Errorf("knownBroken.reason must say in at most %d bytes what is broken in the application", MaxKnownBrokenReason)
+	}
+	if len(k.FailsWith) == 0 || len(k.FailsWith) > 8 {
+		return fmt.Errorf("knownBroken.failsWith must list 1 to 8 baseline failures")
+	}
+	for _, key := range k.FailsWith {
+		if !failureKeyPattern.MatchString(key) {
+			return fmt.Errorf("knownBroken.failsWith %q must be an HTTP status code, timeout, dial or transport", key)
+		}
+	}
+	return nil
 }
 
 // Workload is a validated workload profile. Use ParseWorkloadJSON.
@@ -258,7 +296,15 @@ func (w Workload) Validate() error {
 		return fmt.Errorf("traffic workload %s: at least one scenario is required; delete workloads/%s.yaml if no scenario belongs in this probe kind", w.Name, w.Name)
 	}
 	seen := make(map[string]bool, len(w.Scenarios))
+	gated := 0
 	for _, scenario := range w.Scenarios {
+		if scenario.KnownBroken == nil {
+			gated++
+		} else if w.Purpose != PurposeHealthProbe {
+			return fmt.Errorf("traffic workload %s: scenario %s: knownBroken applies only to a health-probe scenario", w.Name, scenario.ID)
+		} else if err := scenario.KnownBroken.validate(); err != nil {
+			return fmt.Errorf("traffic workload %s: scenario %s: %w", w.Name, scenario.ID, err)
+		}
 		if !scenarioPattern.MatchString(scenario.ID) {
 			return fmt.Errorf("traffic workload %s: scenario id %q is invalid", w.Name, scenario.ID)
 		}
@@ -273,6 +319,20 @@ func (w Workload) Validate() error {
 			if err := validateSLO(w.ScenarioSLO(scenario.ID)); err != nil {
 				return fmt.Errorf("traffic workload %s: scenario %s: %w", w.Name, scenario.ID, err)
 			}
+		}
+	}
+	if gated == 0 {
+		return fmt.Errorf("traffic workload %s: every scenario is knownBroken; a health probe needs at least one scenario that passes on the healthy application", w.Name)
+	}
+	return nil
+}
+
+// KnownBrokenScenario returns the KnownBroken declaration of scenario id, or
+// nil when the scenario gates health.
+func (w Workload) KnownBrokenScenario(id string) *KnownBroken {
+	for _, scenario := range w.Scenarios {
+		if scenario.ID == id {
+			return scenario.KnownBroken
 		}
 	}
 	return nil

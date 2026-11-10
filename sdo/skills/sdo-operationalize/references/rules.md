@@ -34,6 +34,10 @@ see them as notes. The diagnostic names the operation, component, edge or probe 
 - Every writing operation is in a write-read probe. Enforced by: `map.uncovered-write`.
 - Every data-holding component on a writing operation's path is on a read-later probe's path. Enforced by:
   `map.uncovered-data`.
+- A health-probe scenario declared `knownBroken` (with a short `reason` and the baseline `failsWith`) covers the
+  operations no gated probe exercises, without a write-read or read-later probe; it never gates health. Each such
+  probe must exercise one operation no gated probe covers, and these operations are at most half of the map's.
+  Enforced by: `map.known-broken`.
 - An edge no operation path crosses is noted, never refused: add the operation that uses it, or keep it as a
   known gap. Enforced by: `map.unexercised-edge`.
 

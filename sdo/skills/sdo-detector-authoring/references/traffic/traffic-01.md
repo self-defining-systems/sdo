@@ -116,6 +116,9 @@ const DefaultHealthMinDuration = 9 * time.Second
     are detected in 3-5s. Nine seconds clears the observed stalls with headroom
     while adding at most one more poll beyond real-fault detection.
 
+const MaxKnownBrokenReason = 200
+    MaxKnownBrokenReason bounds a KnownBroken reason.
+
 const MaxLinkExcerpt = 256
     MaxLinkExcerpt bounds response and error text stored in samples.
 
@@ -170,6 +173,13 @@ func FromSeedPair(key string, count int, first func(index int) string, second fu
     such as a user name and its password. The record index is kept in State
     under key, so later steps can reuse it with FromPrevious.
 
+func KnownBrokenChanges(window Window) string
+    KnownBrokenChanges describes the KnownBroken scenarios of window whose state
+    changed from their declaration: one that now meets its SLO, or one whose
+    recent failures include a status key outside FailsWith. It is empty when
+    every KnownBroken scenario still fails as declared or has too few samples to
+    judge. It is a note for the detection designer, never a finding.
+
 func LinkFinding(spec sdk.DetectorSpec, namespace string, window Window, observed LinkObservations) (sdk.Finding, bool)
     LinkFinding explains one link JudgeLink reports, with per-link p50/p95
     latency and failure classes. The primary resource is the target Service;
@@ -215,26 +225,4 @@ TYPES
 
 type Arrival string
     Arrival is the inter-arrival pattern of iterations.
-
-const (
-	ArrivalUniform Arrival = "uniform"
-	ArrivalPoisson Arrival = "poisson"
-)
-type Catalog []Scenario
-    Catalog is the set of scenarios an application's generators provide.
-
-func (c Catalog) Scenario(id string) (Scenario, bool)
-    Scenario returns the scenario with the given ID.
-
-func (c Catalog) Validate() error
-    Validate validates every scenario and rejects duplicate IDs.
-
-type Clock interface {
-	Now() time.Time
-	After(time.Duration) <-chan time.Time
-}
-    Clock is the engine's only source of time.
-
-var RealClock Clock = realClock{}
-    RealClock is the wall clock.
 ```

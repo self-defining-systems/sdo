@@ -118,6 +118,7 @@ const (
 	RuleMapUncoveredWrite  = "map.uncovered-write"
 	RuleMapUncoveredData   = "map.uncovered-data"
 	RuleMapUnexercisedEdge = "map.unexercised-edge"
+	RuleMapKnownBroken     = "map.known-broken"
 	// Ownership of the map region: the designer changes nothing outside it,
 	// and nobody else changes it.
 	RuleMapOutsideRegion = "ownership.map-outside-region"

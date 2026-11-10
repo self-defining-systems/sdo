@@ -33,6 +33,7 @@ const SyntheticHeader = "X-SDO-Synthetic" ...
 const APIVersion = "sdo.dev/v1alpha1" ...
 const DateLayout = "2006-01-02"
 const DefaultHealthMinDuration = 9 * time.Second
+const MaxKnownBrokenReason = 200
 const MaxLinkExcerpt = 256
 const RuleIDPrefix = "scenario-slo."
 var RequiredFaultClasses = []FaultClass{ ... }
@@ -43,6 +44,7 @@ func CheckDetects(ctx context.Context, scenario Scenario, class FaultClass) erro
 func DefaultLatencyNote(id string) string
 func DefaultLatencyScenarios(workloads []Workload) []string
 func FromSeedPair(key string, count int, first func(index int) string, ...) (Param, Param)
+func KnownBrokenChanges(window Window) string
 func LinkFinding(spec sdk.DetectorSpec, namespace string, window Window, ...) (sdk.Finding, bool)
 func LinkFindingIn(spec sdk.DetectorSpec, namespace string, setting LinkSetting, ...) (sdk.Finding, bool)
 func NewDetector(spec sdk.DetectorSpec, workload string) sdk.Detector
@@ -70,6 +72,7 @@ type HTTPEndpoint struct{ ... }
     func GET(path string, query Params) *HTTPEndpoint
     func POST(path string, query Params) *HTTPEndpoint
     func PUT(path string, query Params) *HTTPEndpoint
+type KnownBroken struct{ ... }
 type Link struct{ ... }
     func UndrivenLinks(catalog Catalog, workloads []Workload) []Link
 type LinkCondition string
