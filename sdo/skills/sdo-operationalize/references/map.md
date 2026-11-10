@@ -56,8 +56,11 @@ Rules the memory check enforces:
   `authoritative` (no `derived_from`) or `derived`: `derived_from` lists authoritative components, and a derived
   component has `holds_data: false`. For an engine SDO can read (redis today), Go installs a
   `store-state-<component>` health detector on the component's workload; do not author another.
-- `evidence` is a non-empty subset of `[config, observed]`; `source` cites the file for config evidence, or says
-  how you observed the call.
+- `evidence` is a non-empty subset of `[config, manifest, observed]`: `config` is the application source or its
+  config files, `manifest` the rendered manifests (an env value, a ConfigMap entry, an image, a volume), `observed`
+  the live application. `source` cites the file for config evidence, the object and field for manifest evidence,
+  or says how you observed the call. A component may carry the same `evidence` list for what grounds its
+  `holds_data` and `data`; omit it when the source declares them.
 - A probe's path is the union of its operations' paths. Its scenario's `DependsOn` names at least one Service of
   every component on that path and no other Service.
 - `call` scenarios are in workload `probe-call`, `write-read` scenarios (a write side effect, at least one
