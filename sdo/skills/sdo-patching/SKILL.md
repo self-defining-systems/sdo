@@ -5,6 +5,8 @@ description: Keep a change to a vendored or application file as a reasoned patch
 
 # Patches: the only way a source change persists
 
+A patch that no build source covers does not mitigate (`patch.undeployable`); use a runtime mitigation instead.
+
 Agents write only `.sdo/`. Application files (everything outside `.sdo/`) are never published or committed. Go applies
 the patch series in `.sdo/deployment/patches/` to the accepted repository to build the **effective tree**; every render,
 build, drift read, upgrade and responder uses that tree. Your checkout already holds the series applied.
