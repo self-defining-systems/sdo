@@ -257,11 +257,12 @@ func TestMongoUnavailableReadIsAnError(t *testing.T) {
 func readCommandIsBounded(t *testing.T, engine storestate.Engine, port int) string {
 	t.Helper()
 	argv := adapterFor(t, engine).ReadCommand(storestate.Endpoint{Port: port})
-	if len(argv) < 4 || argv[0] != "sh" || argv[1] != "-c" {
+	// sh -c <credential prelude> $0 <engine script> $1...
+	if len(argv) < 5 || argv[0] != "sh" || argv[1] != "-c" {
 		t.Fatalf("argv = %q", argv)
 	}
-	if len(argv)-4 > 9 {
-		t.Fatalf("the read passes %d positional arguments; sh reads $1-$9", len(argv)-4)
+	if len(argv)-5 > 9 {
+		t.Fatalf("the read passes %d positional arguments; sh reads $1-$9", len(argv)-5)
 	}
 	q := podread.Query{ID: "store-state-x", Target: podread.Target{Labels: map[string]string{"app": "x"}}, Args: argv, Interval: podread.MinInterval}
 	if err := q.Validate(); err != nil {

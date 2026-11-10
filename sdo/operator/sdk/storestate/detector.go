@@ -46,6 +46,17 @@ type Config struct {
 	// read (podread.Result.Baseline), and without those only absolute facts
 	// are judged: write blocks, refusals and near-cap use.
 	Baselines []Facts
+	// GapWithoutBaseline makes a store Pod the detector has no healthy
+	// baseline for a coverage gap instead of a finding or an error: a read
+	// that is unavailable, unparsable or refused clears, and
+	// ConfirmationReason says why the store is not observed. Go sets it on
+	// the readers it installs from the application map, which no designer
+	// checked against the store's image or credentials, so a store SDO cannot
+	// read never stalls deployment acceptance or an incident's recovery. Once
+	// the Pod was read healthy, the same reads are a refusal finding or a
+	// detector error as usual. Absolute facts of a readable store (write
+	// blocks, near-cap use) are judged either way.
+	GapWithoutBaseline bool
 }
 
 type detector struct {
@@ -61,7 +72,8 @@ type detector struct {
 // baseline, a refusal of its own read, and connection or memory use at
 // NearLimit of a cap (memory only under a noeviction policy). Each finding
 // names the component, the Pod and the changed item. A read that gives no
-// complete answer is a detector error, never a clear.
+// complete answer is a detector error, never a clear, except a store a
+// GapWithoutBaseline reader has never read healthy, which is a coverage gap.
 func NewDetector(c Config) (sdk.Detector, error) {
 	if c.Spec.ID == "" {
 		return nil, fmt.Errorf("store-state detector requires a spec ID")
@@ -159,8 +171,91 @@ func (d detector) observe(ctx sdk.DetectionContext) ([]Facts, map[string]Facts, 
 	return out, baselines, nil
 }
 
+// ConfirmationReason names the store Pods a GapWithoutBaseline reader does
+// not observe and why; it is empty when every Pod is observed. The runtime
+// records it with the clear evaluation, so the gap reaches the health verdict
+// without holding it.
+func (d detector) ConfirmationReason(ctx sdk.DetectionContext) string {
+	if !d.config.GapWithoutBaseline {
+		return ""
+	}
+	_, _, gaps, err := d.assess(ctx)
+	if err != nil || len(gaps) == 0 {
+		return ""
+	}
+	reason := fmt.Sprintf("store %s (%s) not observed until it is read healthy once: %s", d.config.Component, d.config.Engine, strings.Join(gaps, "; "))
+	if len(reason) > maxGapReasonBytes {
+		reason = reason[:maxGapReasonBytes] + "..."
+	}
+	return reason
+}
+
+// maxGapReasonBytes bounds a coverage reason; its head names the cause.
+const maxGapReasonBytes = 400
+
+// assess is observe for a GapWithoutBaseline reader: a Pod without a healthy
+// baseline whose read gives no answer, or a refused one, is a gap (named in
+// gaps, its refusals dropped) rather than an error or a finding. A reader
+// without the option, and a Pod with a baseline, keep observe's contract.
+func (d detector) assess(ctx sdk.DetectionContext) ([]Facts, map[string]Facts, []string, error) {
+	if !d.config.GapWithoutBaseline {
+		facts, baselines, err := d.observe(ctx)
+		return facts, baselines, nil, err
+	}
+	result, found := podread.ResultFrom(ctx, d.query.ID)
+	baselines := d.baselines
+	if len(baselines) == 0 {
+		baselines = promotedBaselines(d.adapter, d.config.Component, result)
+	}
+	if !found || result.Error != "" || len(result.Readings) == 0 {
+		if len(baselines) > 0 {
+			_, err := podread.Require(ctx, d.query.ID)
+			return nil, nil, nil, fmt.Errorf("store %s: %w", d.config.Component, err)
+		}
+		reason := result.Error
+		switch {
+		case !found:
+			reason = "no pod read in this evaluation"
+		case reason == "":
+			reason = "no readings"
+		}
+		return nil, baselines, []string{reason}, nil
+	}
+	var facts []Facts
+	var gaps []string
+	for _, reading := range result.Readings {
+		_, baselined := pick(baselines, reading.Pod)
+		f, err := parseReading(d.adapter, d.config.Component, reading)
+		switch {
+		case err != nil && baselined:
+			return nil, nil, nil, fmt.Errorf("store %s Pod %s: %w", d.config.Component, reading.Pod, err)
+		case err != nil:
+			gaps = append(gaps, fmt.Sprintf("Pod %s: %s", reading.Pod, firstLine(err.Error())))
+			continue
+		}
+		if refused := refusals(f); len(refused) > 0 && !baselined {
+			gaps = append(gaps, fmt.Sprintf("Pod %s refuses %s", reading.Pod, strings.Join(refused, ", ")))
+			f.Items = slices.DeleteFunc(slices.Clone(f.Items), func(it Item) bool { return it.Kind == KindRefusal })
+		}
+		facts = append(facts, f)
+	}
+	return facts, baselines, gaps, nil
+}
+
+// refusals lists a read's refusals other than an unsupported command, as
+// "<section> <class>".
+func refusals(f Facts) []string {
+	var out []string
+	for _, it := range f.Items {
+		if it.Kind == KindRefusal && it.Value != "unsupported" {
+			out = append(out, it.Name+" "+it.Value)
+		}
+	}
+	return out
+}
+
 func (d detector) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.Finding, error) {
-	facts, baselines, err := d.observe(ctx)
+	facts, baselines, _, err := d.assess(ctx)
 	if err != nil {
 		return nil, err
 	}

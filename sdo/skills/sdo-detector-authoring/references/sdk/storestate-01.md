@@ -46,12 +46,21 @@ func NewDetector(c Config) (sdk.Detector, error)
     It reports a write block, a role, principal or catalog change against
     the baseline, a refusal of its own read, and connection or memory use at
     NearLimit of a cap (memory only under a noeviction policy). Each finding
-    names the component, the Pod and the changed item. A read that gives no
-    complete answer is a detector error, never a clear.
+    names the component, the Pod and the changed item. A read that gives
+    no complete answer is a detector error, never a clear, except a store a
+    GapWithoutBaseline reader has never read healthy, which is a coverage gap.
 
 func QueryID(engine Engine, component string) string
     QueryID is the pod read a store-state detector declares for component.
     It names the engine, so a reader without the detector can parse the output.
+
+func UsableAsBaseline(id string, result podread.Result) error
+    UsableAsBaseline reports why a store-state pod read cannot become the
+    healthy reference: a reading that is unavailable, unparsable, refused (other
+    than an unsupported command) or shows a write block. A store whose read was
+    refused when health was promoted is never observed, so its later refusals
+    stay coverage gaps instead of being compared with a refused reference.
+    It returns nil for a pod read that is not a store-state read.
 
 
 TYPES
@@ -110,6 +119,17 @@ type Config struct {
 	// read (podread.Result.Baseline), and without those only absolute facts
 	// are judged: write blocks, refusals and near-cap use.
 	Baselines []Facts
+	// GapWithoutBaseline makes a store Pod the detector has no healthy
+	// baseline for a coverage gap instead of a finding or an error: a read
+	// that is unavailable, unparsable or refused clears, and
+	// ConfirmationReason says why the store is not observed. Go sets it on
+	// the readers it installs from the application map, which no designer
+	// checked against the store's image or credentials, so a store SDO cannot
+	// read never stalls deployment acceptance or an incident's recovery. Once
+	// the Pod was read healthy, the same reads are a refusal finding or a
+	// detector error as usual. Absolute facts of a readable store (write
+	// blocks, near-cap use) are judged either way.
+	GapWithoutBaseline bool
 }
     Config declares one store component to watch.
 
@@ -240,25 +260,4 @@ func (k Key) Less(o Key) bool
     Less orders keys by kind, scope and name.
 
 func (k Key) String() string
-
-type StoreChanges struct {
-	Component  string        `json:"component"`
-	Engine     Engine        `json:"engine"`
-	Pod        sdk.ObjectRef `json:"pod"`
-	ObservedAt time.Time     `json:"observed_at,omitzero"`
-	BaselineAt time.Time     `json:"baseline_at,omitzero"`
-	Baselined  bool          `json:"baselined"`
-	Changes    []Change      `json:"changes,omitempty"`
-	Error      string        `json:"error,omitempty"`
-}
-    StoreChanges is one store Pod's facts against the controller's promoted
-    healthy baseline. Baselined is false when no usable baseline reading exists
-    for the Pod; Changes is then empty. Error is set when the current read gave
-    no answer, and the other fields are then unknown.
-
-func Changes(view sdk.DetectionContext) []StoreChanges
-    Changes is the read-only diff of every store whose store-state pod read the
-    view carries (a detection snapshot, a Diagnose read view or a capture),
-    sorted by component and Pod. It reads only frozen results and never fails:
-    a read without an answer is an entry with Error.
 ```

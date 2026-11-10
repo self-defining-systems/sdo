@@ -36,7 +36,8 @@ func (d policyDetector) Detect(_ context.Context, view sdk.DetectionContext) ([]
 
 Go installs a `store-state-<component>` health detector for every map component whose `data.engine`
 `storestate.AdapterFor` reads (redis, mongodb and postgres today), at most four, authoritative stores first; it diffs against the promoted
-healthy readings. Do not author a second reader for those stores. For another store, or a fixed reference, use
+healthy readings. A store it has never read healthy (no CLI in the image, credentials the container does not expose, a
+refused read) is a coverage note on the clear verdict, not a finding. Do not author a second reader for those stores. For another store, or a fixed reference, use
 `storestate.NewDetector` instead of writing the command: it reads write blocks, role, caps, principals and inventory
 counts in one bounded read, diffs them against `Baselines` (or the promoted readings), and names the changed item in
 each finding. Go's readers take one pod read each from the 8-query budget.

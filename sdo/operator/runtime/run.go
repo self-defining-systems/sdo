@@ -587,7 +587,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if *controlNamespace != *namespace {
 		protectedNamespace = *controlNamespace
 	}
-	podReadBaseline := NewPodReadBaseline()
+	podReadBaseline := NewPodReadBaseline(DefaultStateSettle)
 	observations := detectorObservations{Client: bootstrapProvider.Client, Clock: clock.Now, Telemetry: telemetrySources, ExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, PodReadBaseline: podReadBaseline}
 	snapshotProvider, metricsObserver, err := observations.compose(snapshotProvider, detectors, initialTelemetrySources)
 	if err != nil {

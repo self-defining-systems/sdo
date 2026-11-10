@@ -12,14 +12,6 @@ import (
 	"sdo.dev/operator/sdk/storestate"
 )
 
-// boundaryBaseline is a StateBaseline whose adopted and candidate boundaries
-// the test sets, as the StateTracker's settle would.
-type boundaryBaseline struct{ baselineAt, candidateAt time.Time }
-
-func (b *boundaryBaseline) Observe(time.Time, bool)         {}
-func (b *boundaryBaseline) Changes(time.Time) *StateChanges { return nil }
-func (b *boundaryBaseline) BaselineAt() time.Time           { return b.baselineAt }
-func (b *boundaryBaseline) BaselineCandidateAt() time.Time  { return b.candidateAt }
 func readingsSnapshot(query podread.Query, stdout ...string) sdktest.Snapshot {
 	result := podread.Result{Query: query}
 	for i, out := range stdout {
@@ -40,45 +32,79 @@ func promoted(b *PodReadBaseline, query podread.Query) []string {
 	return out
 }
 
-// The pod-read baseline is promoted with the configuration baseline: the
-// readings of the candidate moment become the reference only once that
-// candidate settled, and a reading taken after it (a fault still below its
-// firing threshold) is never absorbed.
-func TestPodReadBaselinePromotesWithTheHealthyBaseline(t *testing.T) {
-	t0 := time.Unix(1000, 0).UTC()
-	t1, t2, t3 := t0.Add(time.Minute), t0.Add(2*time.Minute), t0.Add(3*time.Minute)
-	boundaries := &boundaryBaseline{}
-	c := &Controller{Baseline: boundaries, PodReadBaseline: NewPodReadBaseline()}
-	query := storeQuery()
+// The pod-read baseline settles in every mode, with or without the
+// configuration baseline (--state-baseline): the readings at the start of a
+// healthy stretch become the reference only once the stretch lasted
+// DefaultStateSettle, so neither the first clear evaluation nor a reading
+// taken during a fault still below its firing threshold is absorbed. A
+// restarted controller starts with an empty holder and waits the same way.
+func TestPodReadBaselineSettlesInEveryMode(t *testing.T) {
+	for name, baseline := range map[string]StateBaseline{"without state baseline": nil, "with state baseline": &boundaryBaseline{}} {
+		t.Run(name, func(t *testing.T) {
+			t0 := time.Unix(1000, 0).UTC()
+			at := func(d time.Duration) time.Time { return t0.Add(d) }
+			c := &Controller{Baseline: baseline, PodReadBaseline: NewPodReadBaseline(DefaultStateSettle)}
+			query := storeQuery()
 
-	// No adopted baseline yet: nothing is promoted.
-	c.promotePodReadBaseline(t0, readingsSnapshot(query, "first"), true)
-	if got := promoted(c.PodReadBaseline, query); len(got) != 0 {
-		t.Fatalf("promoted before any baseline: %v", got)
+			c.promotePodReadBaseline(t0, readingsSnapshot(query, "first"), true)
+			c.promotePodReadBaseline(at(time.Minute), readingsSnapshot(query, "drifted"), true)
+			if got := promoted(c.PodReadBaseline, query); len(got) != 0 {
+				t.Fatalf("promoted before the stretch settled: %v", got)
+			}
+			c.promotePodReadBaseline(at(DefaultStateSettle), readingsSnapshot(query, "settled"), true)
+			if got := promoted(c.PodReadBaseline, query); len(got) != 1 || got[0] != "first" {
+				t.Fatalf("settled baseline = %v, want the readings at the start of the stretch", got)
+			}
+			// An unhealthy evaluation ends the stretch: the next candidate
+			// starts again and must settle again.
+			c.promotePodReadBaseline(at(DefaultStateSettle+time.Minute), readingsSnapshot(query, "bad"), false)
+			c.promotePodReadBaseline(at(DefaultStateSettle+2*time.Minute), readingsSnapshot(query, "again"), true)
+			c.promotePodReadBaseline(at(2*DefaultStateSettle+time.Minute), readingsSnapshot(query, "x"), true)
+			if got := promoted(c.PodReadBaseline, query); got[0] != "first" {
+				t.Fatalf("a candidate promoted across an unhealthy evaluation: %v", got)
+			}
+			c.promotePodReadBaseline(at(2*DefaultStateSettle+2*time.Minute), readingsSnapshot(query, "y"), true)
+			if got := promoted(c.PodReadBaseline, query); got[0] != "again" {
+				t.Fatalf("second settled baseline = %v", got)
+			}
+		})
 	}
-	boundaries.baselineAt = t0
-	c.promotePodReadBaseline(t0, readingsSnapshot(query, "first"), true)
-	if got := promoted(c.PodReadBaseline, query); len(got) != 1 || got[0] != "first" {
-		t.Fatalf("first baseline = %v", got)
+}
+
+// boundaryBaseline is a StateBaseline that adopts its first observation at
+// once, as the StateTracker does; the pod-read settle does not follow it.
+type boundaryBaseline struct{ baselineAt time.Time }
+
+func (b *boundaryBaseline) Observe(now time.Time, healthy bool) {
+	if healthy && b.baselineAt.IsZero() {
+		b.baselineAt = now
 	}
-	boundaries.candidateAt = t1
-	c.promotePodReadBaseline(t1, readingsSnapshot(query, "candidate"), true)
-	c.promotePodReadBaseline(t2, readingsSnapshot(query, "drifted"), true)
-	if got := promoted(c.PodReadBaseline, query); got[0] != "first" {
-		t.Fatalf("candidate promoted before it settled: %v", got)
+}
+func (b *boundaryBaseline) Changes(time.Time) *StateChanges { return nil }
+func (b *boundaryBaseline) BaselineAt() time.Time           { return b.baselineAt }
+func (b *boundaryBaseline) BaselineCandidateAt() time.Time  { return time.Time{} }
+
+// A store read with a refusal never becomes the reference, however long
+// health lasted: the store stays unobserved (a coverage gap), and a store
+// that was observed keeps its earlier healthy reference, so a later refusal
+// is still compared with it and fires.
+func TestPodReadBaselineNeverPromotesARefusedStoreRead(t *testing.T) {
+	id := storestate.QueryID(storestate.EngineRedis, "kv")
+	query := podread.Query{ID: id}
+	refused := ""
+	for _, section := range []string{"info", "dbsize", "role", "config", "acl"} {
+		refused += "== " + section + "\nNOAUTH Authentication required.\n"
 	}
-	boundaries.baselineAt, boundaries.candidateAt = t1, t3
-	c.promotePodReadBaseline(t3, readingsSnapshot(query, "later"), true)
-	if got := promoted(c.PodReadBaseline, query); len(got) != 1 || got[0] != "candidate" {
-		t.Fatalf("settled baseline = %v, want the candidate's readings", got)
+	b := NewPodReadBaseline(DefaultStateSettle)
+	b.Promote(map[string]podread.Result{id: readingsSnapshot(query, refused).PodReads[id]})
+	if got := promoted(b, query); len(got) != 0 {
+		t.Fatalf("a refused store read became the baseline: %v", got)
 	}
-	// An unhealthy evaluation never records a candidate.
-	boundaries.candidateAt = t3.Add(time.Minute)
-	c.promotePodReadBaseline(boundaries.candidateAt, readingsSnapshot(query, "bad"), false)
-	boundaries.baselineAt = boundaries.candidateAt
-	c.promotePodReadBaseline(boundaries.candidateAt.Add(time.Minute), readingsSnapshot(query, "x"), true)
-	if got := promoted(c.PodReadBaseline, query); got[0] != "candidate" {
-		t.Fatalf("an unhealthy observation was promoted: %v", got)
+	b.Promote(map[string]podread.Result{id: readingsSnapshot(query, syntheticRedis).PodReads[id]})
+	b.Promote(map[string]podread.Result{id: readingsSnapshot(query, refused).PodReads[id]})
+	b.Promote(map[string]podread.Result{id: readingsSnapshot(query, syntheticRedis, refused).PodReads[id]})
+	if got := promoted(b, query); len(got) != 1 || got[0] != syntheticRedis {
+		t.Fatalf("baseline = %v, want the earlier healthy read", got)
 	}
 }
 
@@ -86,7 +112,7 @@ func TestPodReadBaselinePromotesWithTheHealthyBaseline(t *testing.T) {
 // keeps its earlier reference, and a changed declaration gets none.
 func TestPodReadBaselineKeepsOnlyCompleteReadingsOfTheSameQuery(t *testing.T) {
 	query := storeQuery()
-	b := NewPodReadBaseline()
+	b := NewPodReadBaseline(DefaultStateSettle)
 	b.Promote(map[string]podread.Result{query.ID: {Query: query, Readings: []podread.Reading{{Pod: "a", Stdout: "good"}, {Pod: "b", Error: "exec timed out"}, {Pod: "c", Stdout: "partial", Truncated: true}}}})
 	if got := promoted(b, query); len(got) != 1 || got[0] != "good" {
 		t.Fatalf("baseline = %v", got)
@@ -107,7 +133,7 @@ func TestPodReadBaselineKeepsOnlyCompleteReadingsOfTheSameQuery(t *testing.T) {
 func TestPodReadsSnapshotCarriesThePromotedBaseline(t *testing.T) {
 	now := time.Unix(1000, 0).UTC()
 	observer := podReadObserver(t, answering("good"), func() time.Time { return now })
-	baseline := NewPodReadBaseline()
+	baseline := NewPodReadBaseline(DefaultStateSettle)
 	baseline.Promote(map[string]podread.Result{storeReadID: {Query: storeQuery(), Readings: []podread.Reading{{Pod: "a", Stdout: "healthy"}}}})
 	provider := PodReadsSnapshotProvider{Base: staticProvider{snapshot: storeSnapshot(runningStorePod("a"))}, Observer: observer, Baseline: baseline}
 	snapshot, err := provider.Snapshot(context.Background())

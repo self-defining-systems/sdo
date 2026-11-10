@@ -20,11 +20,12 @@ var redisSettings = []string{
 }
 
 // redisScript prints one "== <section>" header per section. redis-cli runs in
-// the store's container against its own port; REDISCLI_AUTH, or the common
-// REDIS_PASSWORD, supplies a password without printing it. INFO is filtered to
-// the fields parsed, requirepass is reduced to set or empty, and ACL hashes and
-// passwords are stripped, so the output carries no secret.
-const redisScript = `a="${REDISCLI_AUTH:-${REDIS_PASSWORD:-}}";[ -n "$a" ]&&export REDISCLI_AUTH="$a"
+// the store's container against its own port; the password the credential
+// prelude found ($P) reaches it through REDISCLI_AUTH without being printed.
+// INFO is filtered to the fields parsed, requirepass is reduced to set or
+// empty, and ACL hashes and passwords are stripped, so the output carries no
+// secret.
+const redisScript = `[ -n "$P" ]&&export REDISCLI_AUTH="$P"
 r(){ redis-cli -p %d "$@" 2>&1|tr -d '\r';}
 echo '== info';r INFO|grep -E '^(role|master_link_status|connected_slaves|min_slaves_good_slaves|connected_clients|maxclients|paused_[a-z_]+|used_memory|maxmemory|maxmemory_policy|rdb_last_bgsave_status|aof_last_write_status|loading|db[0-9]+):|^[A-Z(]|^Could'
 echo '== dbsize';r DBSIZE|head -n1
@@ -50,7 +51,7 @@ func (redisAdapter) Engine() Engine   { return EngineRedis }
 func (redisAdapter) DefaultPort() int { return 6379 }
 
 func (redisAdapter) ReadCommand(e Endpoint) []string {
-	return []string{"sh", "-c", fmt.Sprintf(redisScript, e.Port, strings.Join(redisSettings, " "))}
+	return readCommand([]string{"REDISCLI", "REDIS"}, fmt.Sprintf(redisScript, e.Port, strings.Join(redisSettings, " ")))
 }
 
 var refusalLine = regexp.MustCompile(`^(\(error\) )?([A-Z][A-Z]+)\b`)

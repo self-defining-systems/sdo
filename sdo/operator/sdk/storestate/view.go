@@ -1,6 +1,7 @@
 package storestate
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -137,6 +138,36 @@ func promotedBaselines(adapter Adapter, component string, result podread.Result)
 		out[reading.Pod] = f
 	}
 	return out
+}
+
+// UsableAsBaseline reports why a store-state pod read cannot become the
+// healthy reference: a reading that is unavailable, unparsable, refused (other
+// than an unsupported command) or shows a write block. A store whose read was
+// refused when health was promoted is never observed, so its later refusals
+// stay coverage gaps instead of being compared with a refused reference. It
+// returns nil for a pod read that is not a store-state read.
+func UsableAsBaseline(id string, result podread.Result) error {
+	engine, component, ok := ParseQueryID(id)
+	if !ok {
+		return nil
+	}
+	adapter, _ := AdapterFor(engine)
+	if result.Error != "" {
+		return readingError{result.Error}
+	}
+	if len(result.Readings) == 0 {
+		return readingError{"no readings"}
+	}
+	for _, reading := range result.Readings {
+		f, err := parseReading(adapter, component, reading)
+		if err == nil {
+			err = validBaseline(Config{Component: component, Engine: engine}, f)
+		}
+		if err != nil {
+			return fmt.Errorf("store %s Pod %s: %w", component, reading.Pod, err)
+		}
+	}
+	return nil
 }
 
 // pick returns the baseline of pod, or the only baseline when there is one, so

@@ -51,6 +51,9 @@ func scopeOf(source lifecycle.DeploymentReceipt) HealthScope {
 type HealthEvaluation struct {
 	Status    string
 	Detectors []lifecycle.DetectorState
+	// CoverageNotes are clear detectors that named what they could not
+	// observe; they never hold the verdict.
+	CoverageNotes []lifecycle.DetectorState
 }
 
 type AcceptedDetectorProbe struct {
@@ -122,6 +125,10 @@ func decodeHealthVerdict(stdout, stderr []byte) (HealthEvaluation, error) {
 	}
 	result := HealthEvaluation{Status: string(verdict.Status)}
 	for _, state := range verdict.DetectorStates {
+		if state.Status == "clear" && state.Reason != "" {
+			result.CoverageNotes = append(result.CoverageNotes, lifecycle.DetectorState{DetectorID: state.DetectorID, Status: state.Status, Reason: state.Reason})
+			continue
+		}
 		if state.Status != "pending" {
 			continue
 		}
@@ -158,7 +165,7 @@ func evidenceSuffix(evidence string) string {
 // unavailable are waited out; everything else that is not clear is the
 // deployed source's problem.
 func verdictOf(evaluation HealthEvaluation) lifecycle.HealthVerdict {
-	verdict := lifecycle.HealthVerdict{Summary: "accepted health detectors report " + evaluation.Status, Detectors: evaluation.Detectors}
+	verdict := lifecycle.HealthVerdict{Summary: "accepted health detectors report " + evaluation.Status, Detectors: evaluation.Detectors, CoverageNotes: evaluation.CoverageNotes}
 	switch evaluation.Status {
 	case "clear":
 		verdict.Outcome = lifecycle.VerificationClear
