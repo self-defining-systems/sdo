@@ -2795,12 +2795,15 @@ type ConfirmedRootCause struct {
 	Evidence           []*RootCauseEvidence   `protobuf:"bytes,3,rep,name=evidence,proto3" json:"evidence,omitempty"`
 	ExplainedDetectors []string               `protobuf:"bytes,4,rep,name=explained_detectors,json=explainedDetectors,proto3" json:"explained_detectors,omitempty"`
 	StaticContext      []string               `protobuf:"bytes,5,rep,name=static_context,json=staticContext,proto3" json:"static_context,omitempty"`
-	// Optional mechanism class from SDO's own closed vocabulary; "" is unset.
-	// Benchmark adapters map it to their own taxonomies.
+	// Mechanism class from SDO's own closed vocabulary; "other" when none fits.
+	// A responder must choose one; "" remains only on controller-synthesized
+	// causes and is never offered to the model. Benchmark adapters map it to
+	// their own taxonomies.
 	CauseClass string `protobuf:"bytes,6,opt,name=cause_class,json=causeClass,proto3" json:"cause_class,omitempty"`
 	// Whether the cause can be repaired from the application's namespace.
 	// "out-of-reach" localizes a cause the responder cannot fix there (node,
-	// network fabric, external service or cluster policy); "" is unset.
+	// network fabric, external service or cluster policy). A responder must
+	// choose one; "" remains only on controller-synthesized causes.
 	Reach         string `protobuf:"bytes,7,opt,name=reach,proto3" json:"reach,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -4829,17 +4832,17 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x11RootCauseEvidence\x12^\n" +
 	"\x04kind\x18\x01 \x01(\tBJ\xbaHGrER\x10detector-findingR\x11synthetic-trafficR\fstate-changeR\x10live-observationR\x04kind\x12\x1f\n" +
 	"\x06source\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06source\x12)\n" +
-	"\vobservation\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\vobservation\"\xcd\x05\n" +
+	"\vobservation\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\vobservation\"\xd6\x05\n" +
 	"\x12ConfirmedRootCause\x12!\n" +
 	"\asummary\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\asummary\x12L\n" +
 	"\tresources\x18\x02 \x03(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\b\xbaH\x05\x92\x01\x02\b\x01R\tresources\x12H\n" +
 	"\bevidence\x18\x03 \x03(\v2,.sdodev.contracts.v1alpha1.RootCauseEvidenceR\bevidence\x12S\n" +
 	"\x13explained_detectors\x18\x04 \x03(\tB\"\xbaH\x1f\x92\x01\x1c\"\x1ar\x182\x16^[a-z0-9][a-z0-9_.-]*$R\x12explainedDetectors\x12%\n" +
-	"\x0estatic_context\x18\x05 \x03(\tR\rstaticContext\x12\xc8\x02\n" +
-	"\vcause_class\x18\x06 \x01(\tB\xa6\x02\xbaH\xa2\x02r\x9f\x02R\x00R\rnetwork-delayR\fnetwork-lossR\x0fnetwork-blockedR\x16dependency-unavailableR\x12config-value-wrongR\x0eobject-missingR\x11admission-mutatedR\x12admission-rejectedR\x11permission-deniedR\x12credential-invalidR\x12capacity-exhaustedR\x0fprocess-runtimeR\n" +
-	"state-lostR\fdata-corruptR\fdata-missingR\tread-onlyR\vcode-defectR\n" +
-	"causeClass\x125\n" +
-	"\x05reach\x18\a \x01(\tB\x1f\xbaH\x1cr\x1aR\x00R\bin-scopeR\fout-of-reachR\x05reach\"\xd0\x02\n" +
+	"\x0estatic_context\x18\x05 \x03(\tR\rstaticContext\x12\xd0\x02\n" +
+	"\vcause_class\x18\x06 \x01(\tB\xae\x02\xbaH\xaa\x02\xd8\x01\x01r\xa4\x02R\rnetwork-delayR\fnetwork-lossR\x0fnetwork-blockedR\x16dependency-unavailableR\x12config-value-wrongR\x0eobject-missingR\x11admission-mutatedR\x12admission-rejectedR\x11permission-deniedR\x12credential-invalidR\x12capacity-exhaustedR\x0fprocess-runtimeR\n" +
+	"state-lostR\fdata-corruptR\fdata-missingR\tread-onlyR\vcode-defectR\x05otherR\n" +
+	"causeClass\x126\n" +
+	"\x05reach\x18\a \x01(\tB \xbaH\x1d\xd8\x01\x01r\x18R\bin-scopeR\fout-of-reachR\x05reach\"\xd0\x02\n" +
 	"\x0fAppliedPlaybook\x12<\n" +
 	"\vplaybook_id\x18\x01 \x01(\tB\x1b\xbaH\x18r\x16\x10\x012\x12^[a-z][a-z0-9_-]*$R\n" +
 	"playbookId\x12p\n" +

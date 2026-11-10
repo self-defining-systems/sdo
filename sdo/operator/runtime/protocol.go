@@ -109,6 +109,9 @@ type ConfirmedRootCause struct {
 	// ExplainedDetectors must clear after the fix.
 	ExplainedDetectors []string
 	StaticContext      []string
+	// CauseClass and Reach are the responder's typed classification; "" is unset.
+	CauseClass string
+	Reach      string
 }
 
 type AppliedPlaybook struct {
