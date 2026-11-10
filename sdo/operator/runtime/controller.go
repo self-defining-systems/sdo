@@ -204,6 +204,10 @@ type Controller struct {
 	// PodReadBaseline, when set, receives the pod readings of each promoted
 	// healthy baseline; the snapshot provider carries them with current reads.
 	PodReadBaseline *PodReadBaseline
+	// VantageBaseline and Platform, when set, receive the vantage readings
+	// and platform observation of each promoted healthy baseline.
+	VantageBaseline *VantageBaseline
+	Platform        *PlatformState
 	// Helpers, when set, deletes responder helper objects once the
 	// responder completes, before recovery is verified.
 	Helpers HelperCleaner
@@ -669,6 +673,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		}
 		c.captureHealthyMemoryBaseline(ctx, now, snapshot, healthy)
 		c.promotePodReadBaseline(now, snapshot, healthy)
+		c.promoteObservationBaselines(now, snapshot, healthy)
 	}
 	if c.adoptionNeeded {
 		c.mu.Lock()

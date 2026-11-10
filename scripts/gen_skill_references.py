@@ -320,6 +320,7 @@ def main() -> None:
                 "./usage",
                 "./logs",
                 "./podread",
+                "./vantage",
                 "./storestate",
             ),
             "sdk",

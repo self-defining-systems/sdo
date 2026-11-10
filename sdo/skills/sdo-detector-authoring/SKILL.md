@@ -48,7 +48,10 @@ The runtime caches reads per snapshot and records results and failures for repla
 Logs cap at 64 KiB/5 s, probes at 5 s. Read failures are errors/Unknown, never clearance;
 a successful probe with `Success:false` is an observed failure. Keep always-on reads cheap and use Diagnose for depth.
 To judge state only a running process knows (a store's config, role or access list), even before users are affected,
-declare [pod reads](references/pod-reads.md).
+declare [pod reads](references/pod-reads.md). For process limits and states, cgroup limits, `/dev/shm`, sockets,
+traffic shaping or dials from a client Pod, whatever its image, and for namespace policy (LimitRanges, quotas, RBAC,
+admission webhooks) and the accepted source inventory, use [vantage probes and the platform
+observation](references/vantage-and-platform.md).
 Test using `sdktest.Snapshot.Readings` plus phase recordings; never fill absent evidence with healthy answers.
 
 ## Synthetic traffic confirmation

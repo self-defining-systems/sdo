@@ -21,6 +21,7 @@ import (
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 	"sdo.dev/operator/sdk/usage"
+	"sdo.dev/operator/sdk/vantage"
 )
 
 // Inventory SDK source interfaces from disk, not a hand-maintained count. Adding
@@ -44,6 +45,9 @@ func TestSDKInputInterfaceInventory(t *testing.T) {
 		"metrics.UsageSource":              reflect.TypeFor[metrics.UsageSource](),
 		"sdk.ObjectCaptureSource":          reflect.TypeFor[sdk.ObjectCaptureSource](),
 		"sdk.ScopedObservationSource":      reflect.TypeFor[sdk.ScopedObservationSource](),
+		"vantage.Source":                   reflect.TypeFor[vantage.Source](),
+		"vantage.ResultSet":                reflect.TypeFor[vantage.ResultSet](),
+		"sdk.PlatformSource":               reflect.TypeFor[sdk.PlatformSource](),
 	}
 	seen := map[string]bool{}
 	err := filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error {

@@ -144,6 +144,10 @@ type Snapshot struct {
 	Metrics map[string]metrics.Result `json:"metrics,omitempty"`
 	// PodReads holds frozen in-container command output by query ID.
 	PodReads map[string]podread.Result `json:"pod_reads,omitempty"`
+	// Vantage holds frozen vantage probe readings by probe ID.
+	Vantage map[string]vantage.Result `json:"vantage,omitempty"`
+	// Platform holds the frozen platform observation.
+	Platform *sdk.PlatformObservation `json:"platform,omitempty"`
 	// Alerts holds the frozen alerts of the evaluation cycle.
 	Alerts *metrics.AlertsResult `json:"alerts,omitempty"`
 	// Readings are the runtime observations made on this exact snapshot.
@@ -219,11 +223,4 @@ func (s Snapshot) NetworkPolicies() []networkingv1.NetworkPolicy
 func (s Snapshot) NodeUsage(ref sdk.ObjectRef) (*metricsv1beta1.NodeMetrics, error)
 
 func (s Snapshot) Nodes() []corev1.Node
-
-func (s Snapshot) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error)
-
-func (s Snapshot) Observe(o program.ExternalOperation) (int32, error)
-
-func (s Snapshot) ObservedAt() time.Time
-    ObservedAt implements sdk.ObservationClock; it is zero when unrecorded.
 ```

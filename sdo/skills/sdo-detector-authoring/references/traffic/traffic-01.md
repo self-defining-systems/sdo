@@ -169,6 +169,13 @@ func LinkFinding(spec sdk.DetectorSpec, namespace string, window Window, observe
     latency and failure classes. The primary resource is the target Service;
     the calling Service is related.
 
+func LinkFindingIn(spec sdk.DetectorSpec, namespace string, setting LinkSetting, observed LinkObservations) (sdk.Finding, bool)
+    LinkFindingIn explains a link JudgeLinkIn reports. A client-vantage finding
+    has its own rule ID (the prober's with a ".client" suffix) and names the
+    client Pod, so it stands next to the prober's judgement of the same edge:
+    slow from the client while fast from the prober places the impairment on the
+    client's egress.
+
 func NewDetector(spec sdk.DetectorSpec, workload string) sdk.Detector
     NewDetector returns a health detector that reports every qualified scenario
     of a health-probe workload that violates its SLO. It decides purely
@@ -229,23 +236,4 @@ type Consumer interface {
     Consumer is implemented by detectors that evaluate synthetic traffic. The
     controller runtime asks the prober for exactly the workloads its detectors
     consume.
-
-type Descriptor struct {
-	ID          string       `json:"id"`
-	Description string       `json:"description,omitempty"`
-	Target      Target       `json:"target"`
-	DependsOn   []string     `json:"dependsOn,omitempty"`
-	SideEffect  SideEffect   `json:"sideEffect"`
-	Setup       []string     `json:"setup,omitempty"`
-	Steps       []string     `json:"steps"`
-	Detects     []FaultClass `json:"detects"`
-}
-    Descriptor is the serializable description of a scenario that travels with
-    its observations, so detectors can explain and localize failures without the
-    generator code.
-
-type Doer interface {
-	Do(*http.Request) (*http.Response, error)
-}
-    Doer sends HTTP requests; *http.Client satisfies it.
 ```

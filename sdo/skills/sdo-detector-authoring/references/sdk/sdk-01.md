@@ -8,6 +8,34 @@ package sdk // import "sdo.dev/operator/sdk"
 
 CONSTANTS
 
+const (
+	PlatformNamespace         = "namespace"
+	PlatformLimitRanges       = "limit_ranges"
+	PlatformResourceQuotas    = "resource_quotas"
+	PlatformRoles             = "roles"
+	PlatformRoleBindings      = "role_bindings"
+	PlatformAdmissionWebhooks = "admission_webhooks"
+	PlatformSourceInventory   = "source_inventory"
+)
+    Platform observation parts, the keys of PlatformObservation.Errors.
+
+const (
+	PlatformAdded    = "added"
+	PlatformRemoved  = "removed"
+	PlatformModified = "modified"
+)
+    Platform change kinds.
+
+const DefaultWebhookTimeoutSeconds = 10
+    DefaultWebhookTimeoutSeconds is the API server's timeout for a webhook entry
+    that declares none.
+
+const MaxAdmissionMutations = 32
+    MaxAdmissionMutations bounds the mutations one observation records.
+
+const MaxAdmissionWebhooks = 16
+    MaxAdmissionWebhooks bounds one admission webhook answer.
+
 const MaxObservationObjects = 500
 const MaxObservationTargets = 32
 const ObservationObserved = "observed"
@@ -35,6 +63,10 @@ func ClearingHorizon(detector Detector, view DetectionContext) time.Duration
     ClearingHorizon is how long after a condition resolves a fresh evaluation
     of the detector may still report it: its rolling window plus the evaluations
     its clearing policy needs at its own cadence.
+
+func ConsumesPlatform(detectors []Detector) bool
+    ConsumesPlatform reports whether any detector reads the platform
+    observation.
 
 func ConsumesPodAdmission(detectors []Detector) bool
     ConsumesPodAdmission enables the bounded API observation only for bundles
@@ -132,6 +164,40 @@ func TypedObjects(view any) []unstructured.Unstructured
 
 TYPES
 
+type AdmissionWebhook struct {
+	Configuration  ObjectRef             `json:"configuration"`
+	Webhook        string                `json:"webhook"`
+	FailurePolicy  string                `json:"failure_policy"`
+	TimeoutSeconds int32                 `json:"timeout_seconds,omitempty"`
+	ObjectSelector *metav1.LabelSelector `json:"object_selector,omitempty"`
+	Service        *ObjectRef            `json:"service,omitempty"`
+	Port           int32                 `json:"port,omitempty"`
+	URL            string                `json:"url,omitempty"`
+	ReadyEndpoints int                   `json:"ready_endpoints"`
+	ServingSecrets []WebhookSecretKey    `json:"serving_secrets,omitempty"`
+	CABundle       string                `json:"ca_bundle,omitempty"`
+}
+    AdmissionWebhook is one webhook entry admitting Pods in the namespace.
+    Its backend is the Service, its ready endpoint count and the Secrets its
+    Pods mount, or, for a webhook served outside the cluster, the URL's scheme
+    and host. CABundle is a digest, never certificate bytes. TimeoutSeconds
+    is how long the API server waits for it (DefaultWebhookTimeoutSeconds
+    when the entry declares none); ObjectSelector, when set, limits it to Pods
+    whose labels match. To repair a broken admission webhook, bind the failing
+    Namespace or workload (not the webhook configuration or Secret), read it
+    with ReadView.AdmissionWebhooksFor, and repair with SyncWebhookCA for the
+    CA, PatchObject for failurePolicy or the service reference, or DeleteObject
+    for an orphaned entry.
+
+func (w AdmissionWebhook) CATarget(secret WebhookSecretKey) WebhookCA
+    CATarget names this entry and one serving Secret key for SyncWebhookCA and
+    WebhookCAMatchesSecret. An empty secret.Key means the Pod mounts the whole
+    Secret; set the key the serving certificate uses.
+
+func (w AdmissionWebhook) Mutating() bool
+    Mutating reports whether the entry belongs to a
+    MutatingWebhookConfiguration.
+
 type BatchingPolicy struct {
 	Severity FindingSeverity
 	Debounce time.Duration
@@ -168,84 +234,4 @@ func ConfigMapReferencesForDeployment(deployment appsv1.Deployment) []ConfigMapR
     name so detector output does not depend on manifest field ordering. If the
     same ConfigMap is referenced as both optional and required, the required
     reference wins.
-
-type ContainerChange struct {
-	Kind ContainerKind
-	Name string
-	// Added is a live container accepted source does not have; Removed the reverse.
-	Added   bool
-	Removed bool
-	// Fields are the container fields accepted source declares whose live
-	// values differ, such as "image" or "command". Undeclared live fields
-	// (server defaults) never appear.
-	Fields []string
-}
-    ContainerChange is one pod-template container that differs from accepted
-    source, matched by kind and name.
-
-func (c ContainerChange) Changed(field string) bool
-    Changed reports whether field is one of the container's differing declared
-    fields.
-
-type ContainerKind string
-    ContainerKind is the pod-spec list a container belongs to.
-
-const (
-	AppContainer       ContainerKind = "app"
-	InitContainer      ContainerKind = "init"
-	EphemeralContainer ContainerKind = "ephemeral"
-)
-type DetectionContext interface {
-	StatefulSets() []appsv1.StatefulSet
-	DaemonSets() []appsv1.DaemonSet
-	Jobs() []batchv1.Job
-	CronJobs() []batchv1.CronJob
-	PersistentVolumeClaims() []corev1.PersistentVolumeClaim
-	ServiceAccounts() []corev1.ServiceAccount
-	HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutoscaler
-	PodDisruptionBudgets() []policyv1.PodDisruptionBudget
-	Ingresses() []networkingv1.Ingress
-	Nodes() []corev1.Node
-	Secrets() []SecretMetadata
-
-	// DiffAgainstSource compares a captured resource with accepted source, including
-	// source absence. Runtime reads are frozen per snapshot and recorded for replay.
-	// DiffAgainstSource compares quantities by value and excludes controller bookkeeping (revision, last-applied and restart annotations, status and managedFields), accepted server defaults, and replicas targeted by an HPA.
-	DiffAgainstSource(ref ObjectRef) (SourceDiff, error)
-	// PodAdmission returns the frozen dry-run result, false when unobserved.
-	PodAdmission() (PodAdmissionResult, bool)
-	Namespace() string
-	ConfigMaps() []corev1.ConfigMap
-	Services() []corev1.Service
-	Pods() []corev1.Pod
-	Deployments() []appsv1.Deployment
-	ReplicaSets() []appsv1.ReplicaSet
-	Endpoints() []corev1.Endpoints
-	EndpointSlices() []discoveryv1.EndpointSlice
-	NetworkPolicies() []networkingv1.NetworkPolicy
-	Events() []corev1.Event
-	ReadyEndpointCountForService(namespace string, service string) int
-	PodsForService(namespace string, service string) []corev1.Pod
-	RecentEventsFor(namespace string, kind string, name string) []corev1.Event
-}
-    DetectionContext is the frozen snapshot read by detectors and, through
-    ReadView, by programs.
-
-type Detector interface {
-	Spec() DetectorSpec
-	Detect(context.Context, DetectionContext) ([]Finding, error)
-}
-
-type DetectorClass string
-
-const (
-	DetectorClassHealth   DetectorClass = "health"
-	DetectorClassIncident DetectorClass = "incident"
-)
-type DetectorOwner string
-
-const (
-	DetectorOwnerHealthJudge DetectorOwner = "health_judge"
-	DetectorOwnerResponder   DetectorOwner = "responder"
-)
 ```
