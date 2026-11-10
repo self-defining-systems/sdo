@@ -47,6 +47,8 @@ class InstallConfig:
     model: str = "gpt-6-luna"
     effort: str = ""
     operation_id: str = "fuzzops-onboard"
+    source: Path | None = None
+    max_attempts: int = 3
     kind_cluster: str = "kind"
 
     def __post_init__(self) -> None:
@@ -81,7 +83,7 @@ class InstallConfig:
             "--operation-id",
             self.operation_id,
             "--max-attempts",
-            "1",
+            str(self.max_attempts),
             "--controller-image",
             self.controller_image,
             "--responder-image",
@@ -189,7 +191,7 @@ def install(cfg: InstallConfig, *, description: str) -> int:
     pack = SourcePack(cfg.pack)
     repository = cfg.work / "app"
     if not repository.exists():
-        write_app_repository(pack, repository, description=description)
+        write_app_repository(pack, repository, description=description, source=cfg.source)
     write_attached_pack(pack, cfg.work / "pack")
     plan = deployment_plan(pack.manifests(), cfg.namespace)
     for line in declare_node_images(cfg, images(pack.manifests())):
@@ -216,6 +218,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--provider", default="codex")
     p.add_argument("--model", default="gpt-6-luna")
     p.add_argument("--effort", default="")
+    p.add_argument("--source", type=Path, help="the app's source code, copied under src/ (no vendor or deploy files)")
+    p.add_argument("--max-attempts", type=int, default=3, help="deployment and designer attempts")
     p.add_argument("--operation-id", default="fuzzops-onboard", help="durable operation identity (new per attempt)")
     p.add_argument("--kind-cluster", default="kind", help="kind cluster whose nodes hold the preloaded app images")
     a = p.parse_args(argv)
@@ -235,6 +239,8 @@ def main(argv: list[str] | None = None) -> int:
         effort=a.effort,
         kind_cluster=a.kind_cluster,
         operation_id=a.operation_id,
+        source=a.source.resolve() if a.source else None,
+        max_attempts=a.max_attempts,
     )
     cfg.work.mkdir(parents=True, exist_ok=True)
     return install(cfg, description=a.description)

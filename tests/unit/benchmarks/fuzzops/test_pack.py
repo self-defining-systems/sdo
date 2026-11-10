@@ -168,3 +168,15 @@ def test_digest_tags_names_preloaded_images_by_their_node_digest() -> None:
         ("docker.io/library/busybox:1", "docker.io/library/busybox@sha256:" + "b" * 64),
     ]
     assert normalized("registry.local:5000/a/b:1") == "registry.local:5000/a/b:1"
+
+
+def test_app_repository_carries_source_without_vendor_or_upstream_deploy_files(tmp_path: Path) -> None:
+    src = tmp_path / "upstream"
+    for rel in ("cmd/web/main.go", "vendor/x/x.go", "kubernetes/web.yaml", "go.mod"):
+        (src / rel).parent.mkdir(parents=True, exist_ok=True)
+        (src / rel).write_text("synthetic\n")
+    repo = write_app_repository(_pack(tmp_path / "pack"), tmp_path / "app", description="Synthetic.", source=src)
+    assert (repo / "src" / "cmd" / "web" / "main.go").is_file()
+    assert (repo / "src" / "go.mod").is_file()
+    assert not (repo / "src" / "vendor").exists()
+    assert not (repo / "src" / "kubernetes").exists()

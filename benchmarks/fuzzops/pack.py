@@ -112,13 +112,23 @@ def deployment_plan(manifests: list[Path], namespace: str) -> dict[str, Any]:
     }
 
 
-def write_app_repository(pack: SourcePack, out: Path, *, description: str) -> Path:
-    """A fresh Git repository at ``out`` with the pack's manifests under ``k8s/`` and one commit."""
+SOURCE_DIR = "src"
+# Upstream deployment files would contradict the pack's manifests, and vendored modules only add bulk.
+_SOURCE_SKIP = shutil.ignore_patterns(".git", "vendor", "kubernetes", "helm-chart", "openshift", "knative")
+
+
+def write_app_repository(pack: SourcePack, out: Path, *, description: str, source: Path | None = None) -> Path:
+    """A fresh Git repository at ``out``: the pack's manifests under ``k8s/``, the app's source code (when given)
+    under ``src/`` so SDO's agents can ground their work in it, and one commit."""
     if out.exists() and any(out.iterdir()):
         raise PackError(f"{out} is not empty")
     (out / MANIFEST_DIR).mkdir(parents=True)
     for path in pack.manifests():
         shutil.copy2(path, out / MANIFEST_DIR / path.name)
+    if source is not None:
+        if not source.is_dir():
+            raise PackError(f"source {source} is not a directory")
+        shutil.copytree(source, out / SOURCE_DIR, ignore=_SOURCE_SKIP, symlinks=True)
     (out / "README.md").write_text(description.rstrip() + "\n")
     git = ["git", "-C", str(out), "-c", "user.name=fuzzops adapter", "-c", "user.email=fuzzops-adapter@invalid"]
     subprocess.run([*git[:3], "init", "-q", "-b", "main"], check=True)
