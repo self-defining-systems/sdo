@@ -134,6 +134,24 @@ func validateLimit(s Scope) error {
 	return nil
 }
 
+// ParseFailed reads the items a write rejected, from "sdo-affected <n> failed
+// <m>"; engines that apply a write atomically report none.
+func ParseFailed(stdout string) int {
+	for _, line := range strings.Split(stdout, "\n") {
+		if !strings.HasPrefix(line, MarkerAffected+" ") {
+			continue
+		}
+		fields := strings.Fields(line)
+		for i := 0; i+1 < len(fields); i++ {
+			if fields[i] == "failed" {
+				n, _ := strconv.Atoi(fields[i+1])
+				return n
+			}
+		}
+	}
+	return 0
+}
+
 // Parse reads the value of the last line "<marker> <n>" of stdout.
 func Parse(stdout, marker string) (int, bool) {
 	lines := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
@@ -155,7 +173,7 @@ func dumpWrapper(tool string) string {
 	return `{ ` + tool + `; echo "#sdo-rc $?"; } | awk -v limit="$L" '
 /^#sdo-rc / { rc = $2; next }
 { if (rc != "") bad = 1; n++; if (n > limit) { over = 1; exit } print }
-END { if (over) exit ` + strconv.Itoa(ExitLimit) + `; if (bad || rc != "0") exit 3; print "#sdo-end " n }'`
+END { if (over || rc == "` + strconv.Itoa(ExitLimit) + `") exit ` + strconv.Itoa(ExitLimit) + `; if (bad || rc != "0") exit 3; print "#sdo-end " (n + 0) }'`
 }
 
 // jsString renders s as a JavaScript string literal.

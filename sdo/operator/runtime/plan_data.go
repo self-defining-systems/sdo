@@ -292,6 +292,10 @@ func (r storeRun) repair(ctx context.Context, a program.RepairData) (program.Dat
 		return effect, fmt.Errorf("RepairData outcome unknown: the write gave no answer (exit %d)", code)
 	}
 	effect.Affected = affected
+	if failed := storeops.ParseFailed(stdout); failed > 0 {
+		effect.Facts, effect.FactsError = r.facts(ctx)
+		return effect, fmt.Errorf("RepairData applied in part: %d matched items rejected the statement (for example a key of another type) while %d changed; restore backup %s or repair the rest by hand", failed, affected, a.Backup)
+	}
 	after, err := r.count(ctx, a.Scope)
 	if err != nil {
 		return effect, fmt.Errorf("RepairData applied; the recount failed: %w", err)
@@ -405,7 +409,11 @@ func (r storeRun) sourceProblems(ctx context.Context, source appmap.Component) [
 	if err != nil {
 		return []string{err.Error()}
 	}
-	query := detector.(podread.Consumer).PodReads()[0]
+	consumer, ok := detector.(podread.Consumer)
+	if !ok || len(consumer.PodReads()) != 1 {
+		return []string{"cannot be read: the store-state detector declares no pod read"}
+	}
+	query := consumer.PodReads()[0]
 	view, err := r.access.Snapshot.Snapshot(ctx)
 	if err != nil {
 		return []string{"cannot be read: cluster snapshot unavailable"}

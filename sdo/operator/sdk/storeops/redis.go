@@ -181,7 +181,7 @@ echo "sdo-count $n"`, redisCountLua, s.Selector)
 func (e redis) Backup(port int, s Scope) Command {
 	s = e.Normalize(s)
 	return e.eval(port, s, `L="$3"
-`+dumpWrapper(`r EVAL "$1" 0 "$2" "$3" | awk '$0 == "sdo-ok" { ok = 1; next } { if (ok) bad = 1; print } END { exit (ok && !bad) ? 0 : 1 }'`), redisBackupLua, s.Selector, strconv.Itoa(s.limit()))
+`+dumpWrapper(`r EVAL "$1" 0 "$2" "$3" | awk '/^SDO_LIMIT/ { over = 1 } $0 == "sdo-ok" { ok = 1; next } { if (ok) bad = 1; print } END { if (over) exit `+strconv.Itoa(ExitLimit)+`; exit (ok && !bad) ? 0 : 1 }'`), redisBackupLua, s.Selector, strconv.Itoa(s.limit()))
 }
 
 func (e redis) Write(port int, s Scope, statement string, min, max int) Command {
