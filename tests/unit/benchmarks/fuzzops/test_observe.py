@@ -137,3 +137,52 @@ def test_watcher_reads_lower_camel_protojson() -> None:
         }
     )
     assert lines == ["sdo: incident opened at 12:00:01 (d: s)"]
+
+
+def test_typed_cause_class_and_reach_reach_the_report() -> None:
+    result = {
+        "confirmed_root_causes": [
+            {
+                "summary": "link to the cache is slow",
+                "cause_class": "capacity-exhausted",
+                "reach": "in-scope",
+                "resources": [{"kind": "Deployment", "name": "cache"}],
+            },
+            {
+                "summary": "upstream network is down",
+                "cause_class": "network-loss",
+                "reach": "out-of-reach",
+                "resources": [{"kind": "Service", "name": "upstream"}],
+            },
+        ]
+    }
+    report = report_from_result(result)
+    assert report is not None
+    assert report["mechanism"] == "resource-exhausted"
+    assert report["sdo_cause_class"] == "capacity-exhausted"
+    assert report["reach"] == "in-scope"
+    assert [c["mechanism"] for c in report["causes"]] == ["resource-exhausted", "network-loss"]
+
+
+def test_watcher_report_carries_lifecycle_stamps_from_sdo_records() -> None:
+    w = Watcher(started=START)
+    base = {
+        "incident_open": True,
+        "incident_detected_at": _at(5),
+        "incident_request": {"incident_id": "inc-1", "findings": [_finding()]},
+    }
+    _, report = w.step(base)
+    assert report is not None
+    assert report["detected_at"] == _at(5)
+    assert "localized_at" in report
+    result = _result()
+    result["repair_actions"][0].update({"started_at": _at(20), "completed_at": _at(25)})
+    result["confirmed_root_causes"][0]["reach"] = "out-of-reach"
+    _, report = w.step({**base, "incident_result": result, "responder_done": True})
+    assert report is not None
+    assert report["mitigation_started_at"] == _at(20)
+    assert report["mitigated_at"] == _at(25)
+    assert "diagnosed_at" in report
+    assert "escalated_at" in report
+    assert report["summary"].startswith("SDO responder")
+    assert w.step({**base, "incident_result": result, "responder_done": True})[1] is None

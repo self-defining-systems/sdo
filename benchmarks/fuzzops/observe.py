@@ -98,27 +98,81 @@ def _get(obj: dict[str, Any], *names: str) -> Any:
     return None
 
 
-def report_from_result(result: dict[str, Any]) -> dict[str, str] | None:
-    """fuzzops report from an IncidentResult's first confirmed root cause."""
-    causes = _get(result, "confirmed_root_causes") or []
-    if not causes:
-        return None
-    cause = causes[0]
+# SDO's typed cause classes (ConfirmedRootCause.cause_class) in fuzzops' mechanism vocabulary; a class with no
+# fuzzops counterpart falls back to the keyword map over the cause text.
+CAUSE_CLASS_MECHANISM = {
+    "network-delay": "network-delay",
+    "network-loss": "network-loss",
+    "network-blocked": "network-blocked",
+    "config-value-wrong": "config-value-wrong",
+    "object-missing": "object-deleted",
+    "admission-mutated": "admission-mutated",
+    "admission-rejected": "admission-blocked",
+    "permission-denied": "permission-removed",
+    "credential-invalid": "credentials-revoked",
+    "capacity-exhausted": "resource-exhausted",
+    "process-runtime": "process-stopped",
+    "state-lost": "state-lost",
+    "data-corrupt": "data-corrupt",
+    "data-missing": "data-missing",
+    "read-only": "read-only",
+    "code-defect": "code-defect",
+}
+
+
+def cause_report(cause: dict[str, Any]) -> dict[str, Any]:
+    """One confirmed root cause in fuzzops' report vocabulary (raw SDO class and text kept)."""
     summary = str(_get(cause, "summary") or "")
     refs = _get(cause, "resources") or []
     comp = component(refs[0]) if refs else ""
     evidence = " ".join(str(_get(e, "observation") or "") for e in (_get(cause, "evidence") or []))
     mechanism, location, fault_type = classify(summary + " " + evidence)
-    return {
+    cause_class = str(_get(cause, "cause_class") or "")
+    if CAUSE_CLASS_MECHANISM.get(cause_class):
+        mechanism = CAUSE_CLASS_MECHANISM[cause_class]
+    out: dict[str, Any] = {
         "component": comp,
         "location": location,
         "fault_type": fault_type,
         "mechanism": mechanism,
         "summary": "SDO responder: " + summary,
     }
+    if cause_class:
+        out["sdo_cause_class"] = cause_class
+    reach = str(_get(cause, "reach") or "")
+    if reach:
+        out["reach"] = reach
+    return out
 
 
-def report_from_findings(findings: list[dict[str, Any]]) -> dict[str, str] | None:
+def report_from_result(result: dict[str, Any]) -> dict[str, Any] | None:
+    """fuzzops report from an IncidentResult: the first confirmed root cause is primary, all are in ``causes``."""
+    causes = [cause_report(c) for c in (_get(result, "confirmed_root_causes") or [])]
+    if not causes:
+        return None
+    report = dict(causes[0])
+    if len(causes) > 1:
+        report["causes"] = causes
+    return report
+
+
+def lifecycle_times(state: dict[str, Any], result: dict[str, Any]) -> dict[str, str]:
+    """fuzzops lifecycle stamps (``<stage>_at``) from SDO's own incident record."""
+    stamps: dict[str, str] = {}
+    detected = _get(state, "incident_detected_at")
+    if detected:
+        stamps["detected_at"] = str(detected)
+    actions = _get(result, "repair_actions") or []
+    started = sorted(str(_get(a, "started_at")) for a in actions if _get(a, "started_at"))
+    if started:
+        stamps["mitigation_started_at"] = started[0]
+    done = sorted(str(_get(a, "completed_at")) for a in actions if _get(a, "success") and _get(a, "completed_at"))
+    if done:
+        stamps["mitigated_at"] = done[-1]
+    return stamps
+
+
+def report_from_findings(findings: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Preliminary fuzzops report from the incident's detector findings (before the responder answers)."""
     for finding in findings:
         ref = _get(finding, "primary_resource") or {}
@@ -144,15 +198,35 @@ class Watcher:
     seen: set[str] = field(default_factory=set)
     incident: str = ""
     closed: bool = False
+    stamps: dict[str, str] = field(default_factory=dict)
+    cause: dict[str, Any] | None = None
 
     def _once(self, key: str, line: str, out: list[str]) -> None:
         if key not in self.seen:
             self.seen.add(key)
             out.append(line)
 
-    def step(self, state: dict[str, Any]) -> tuple[list[str], dict[str, str] | None]:
+    def step(self, state: dict[str, Any]) -> tuple[list[str], dict[str, Any] | None]:
+        """Action lines for new SDO steps, and the report to write when it changed (cause plus lifecycle stamps)."""
+        lines, cause = self._step(state)
+        if cause is not None:
+            self.cause = cause
+        if self.cause is None:
+            return lines, None
+        report = {**self.cause, **self.stamps}
+        if cause is None and report == self._last:
+            return lines, None
+        self._last = report
+        return lines, report
+
+    _last: dict[str, Any] | None = None
+
+    def _stamp(self, name: str, value: str) -> None:
+        self.stamps.setdefault(name, value)
+
+    def _step(self, state: dict[str, Any]) -> tuple[list[str], dict[str, Any] | None]:
         lines: list[str] = []
-        report: dict[str, str] | None = None
+        report: dict[str, Any] | None = None
         request = _get(state, "incident_request") or {}
         result = _get(state, "incident_result") or {}
         closure = _get(state, "pending_closure") or {}
@@ -169,10 +243,13 @@ class Watcher:
             self._once(
                 "open", f"sdo: incident opened at {detected.strftime('%H:%M:%S')} ({what or 'findings pending'})", lines
             )
+            self._stamp("detected_at", str(_get(state, "incident_detected_at")))
             if findings and "report:findings" not in self.seen and "report:result" not in self.seen:
                 report = report_from_findings(findings)
                 if report:
                     self.seen.add("report:findings")
+                    if report.get("component"):
+                        self._stamp("localized_at", _now())
             if _get(state, "incident_dispatched_at"):
                 self._once("dispatch", "sdo: responder dispatched", lines)
         if not self.incident:
@@ -191,10 +268,16 @@ class Watcher:
                     f"sdo repair ({ok}): {_get(action, 'kind')} {_get(action, 'target')}: {_get(action, 'summary')}",
                     lines,
                 )
+            for name, value in lifecycle_times(state, result).items():
+                if name != "detected_at":
+                    self._stamp(name, value)
             if "report:result" not in self.seen:
                 report = report_from_result(result) or report
                 if report and report["summary"].startswith("SDO responder"):
                     self.seen.add("report:result")
+                    self._stamp("diagnosed_at", _now())
+                    if report.get("reach") == "out-of-reach":
+                        self._stamp("escalated_at", _now())
                     self._once("diagnosis", f"sdo diagnosis: {report['summary']}", lines)
             if _get(state, "responder_done"):
                 self._once("done", f"sdo: responder done ({_get(result, 'status') or 'no status'})", lines)
@@ -205,6 +288,10 @@ class Watcher:
             self.closed = True
             self._once("closed", f"sdo: incident {self.incident} closed", lines)
         return lines, report
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _parse_time(value: Any) -> datetime | None:
