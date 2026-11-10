@@ -310,7 +310,7 @@ type Adapter interface {
 	Parse(stdout string) (Facts, error)
 }
 
-var adapters = map[Engine]Adapter{EngineRedis: redisAdapter{}}
+var adapters = map[Engine]Adapter{EngineRedis: redisAdapter{}, EngineMongoDB: mongoAdapter{}, EnginePostgres: postgresAdapter{}}
 
 // AdapterFor returns the engine's adapter, or false when SDO has no reader for
 // the engine yet.
