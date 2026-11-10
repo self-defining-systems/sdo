@@ -158,5 +158,8 @@ Replay outcomes, missing captures and detector coverage are information.
   narrow `SetField`; `ReconcileFromSource` restores a whole object. After a workload write, append
   `program.StalledRolloutRelease(v, ref)`.
 - A recorded `kubectl exec <pod>` becomes `EnsureExec` on a Pod of the bound workload, never a Pod name.
+- An `Exec`, `EnsureExec`, `EnsureHTTP`, `RunScript`, `RunJob` or `EnsureDatabaseUser` that runs in, binds or names
+  a `holds_data` component never runs automatically: SDO skips it (`holds_data`) and hands the finding to a
+  responder. The playbook still helps the responder, but do not count on it running alone.
 - Credentials stay references (env or ConfigMap key); never read Secret data. Learn into incident playbooks. The detection designer owns `health-objective` and health detectors: never edit
   them; when its generic program applied and hand repairs followed, encode those in an incident playbook.

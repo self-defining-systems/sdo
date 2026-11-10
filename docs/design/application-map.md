@@ -93,8 +93,17 @@ designer gap.
 The stage refuses a matched program whose plan would restart, delete, scale down or otherwise rewrite a workload the
 accepted map marks `holds_data`, or one of its Pods. The attempt is recorded as `skipped` with `skip_reason:
 holds_data` and an error naming the action, and the finding goes to the responder, who may act by hand. Creating the
-workload, scaling it up, and `Exec` or `RunScript` steps run as before: the plan cannot see inside a command. This
-is a rule about one kind of action, not a trust gate. Without a map nothing is refused. The shared memory check has no
+workload and scaling it up run as before.
+
+External actions get a data effect per component they reach: `read`, `derived-invalidate`, `store-setting`,
+`data-write` or `unknown` (`program.DataEffect`). Go computes it and an author cannot lower it. An `Exec`,
+`EnsureExec`, `EnsureHTTP`, `RunScript` or `RunJob` is `unknown` on the component whose Pod it runs in and on each
+component its inputs name: a Service, workload or Pod given as a value's object, or named in its command, script,
+URL or manifest text. An input the stage cannot read before the run (for example a value from accepted source)
+counts as reaching every `holds_data` component. `EnsureDatabaseUser` is `store-setting` on its target. On a
+`holds_data` component the stage allows only `read`; `derived-invalidate`, `store-setting` and `data-write` wait for
+the map roles, typed restores and backups that make them safe, and `unknown` is refused. This is a rule about kinds
+of action, not a trust gate. Without a map nothing is refused. The shared memory check has no
 matching rule because a program binds its workload from live findings, so its source does not say which one it will
 touch.
 
@@ -109,6 +118,13 @@ says why through a pending `controller.data-at-risk` entry in `detector_history`
 blockers. Reflection gets it as `data_at_risk` and may not publish learning from the closure, and the responder sees the
 same fact as `data_at_risk[]` from `sdo verify`. A Pod replaced before the
 incident opened does not count.
+
+The same closure check also covers repairs that may have changed records in place. If an applied action had an
+`unknown` or `data-write` effect on a `holds_data` component and no backup was taken first (the SDK has no backup
+action yet, so none is), the closure commits `unconfirmed` with reason `DATA_MAY_BE_LOST` and a detail naming the
+workload and the action. The responder may still make such a repair; it just cannot feed learning. A typed
+`store-setting` change (`EnsureDatabaseUser`) does not count. At closure a recorded plan keeps its objects but not
+the text of its bound values, so only the Pods and objects it names count there.
 
 ## What the map does not hold
 

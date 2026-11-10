@@ -39,6 +39,25 @@ type CredentialRef struct {
 
 func (r CredentialRef) Validate() error
 
+type DataEffect string
+    DataEffect classifies what an action may do to the records of a store.
+    Go assigns it from what it can see of the action; an author's word never
+    lowers it, so anything opaque is EffectUnknown.
+
+const (
+	// EffectRead changes nothing.
+	EffectRead DataEffect = "read"
+	// EffectDerivedInvalidate drops entries of a component that only holds
+	// copies of another component's data (a cache that refills).
+	EffectDerivedInvalidate DataEffect = "derived-invalidate"
+	// EffectStoreSetting changes a store's runtime setting or catalog item
+	// (an account, a role, a flag), not its records.
+	EffectStoreSetting DataEffect = "store-setting"
+	// EffectDataWrite changes records.
+	EffectDataWrite DataEffect = "data-write"
+	// EffectUnknown is the default for anything opaque: it may do any of the above.
+	EffectUnknown DataEffect = "unknown"
+)
 type DatabaseAuth struct {
 	Database string        `json:"database"`
 	Username CredentialRef `json:"username"`
@@ -266,26 +285,4 @@ type KubernetesRequest struct {
     cluster resources and discovered kinds. Query carries API options. Only the
     plan checks bound operations (SDO identities hold a cluster-wide grant,
     so RBAC does not). Secret endpoints are never accessed.
-
-func (r KubernetesRequest) CredentialResponse() bool
-    CredentialResponse identifies API operations whose response is a credential,
-    rather than cluster evidence. Their bodies are never read by the controller.
-    Use a container command when the generated value must be consumed there.
-
-func (r KubernetesRequest) Validate() error
-
-type ListEdit struct {
-	Path  string         `json:"path"`
-	Match map[string]any `json:"match"`
-	Op    string         `json:"op"`
-	Value any            `json:"value,omitempty"`
-}
-    ListEdit selects exactly one list element by matching all fields in Match.
-    Op is remove, replace, or insert (immediately before the matched element).
-    Use ordinary JSON patch's /- path to append, including to an empty list.
-
-type Mitigator interface {
-	Spec() ProgramSpec
-	Mitigate(context.Context, ReadView, Bindings) (Plan, error)
-}
 ```
