@@ -588,6 +588,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		protectedNamespace = *controlNamespace
 	}
 	podReadBaseline := NewPodReadBaseline(DefaultStateSettle)
+	// Restore text is captured with each promoted store baseline and kept
+	// beside it in memory.
+	storePayloads := &StorePayloads{Run: TypedPlanClient{Client: bootstrapProvider.Client, ExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace}.StoreCommand}
+	podReadBaseline.Payloads = storePayloads
 	vantageBaseline := NewVantageBaseline(DefaultStateSettle)
 	platformState := NewPlatformState(DefaultStateSettle)
 	observations := detectorObservations{Client: bootstrapProvider.Client, Clock: clock.Now, Telemetry: telemetrySources, ExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, PodReadBaseline: podReadBaseline,
@@ -711,7 +715,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				loop.WorkingProgramRoot = request.RepositoryWorktree
 				// Backups live on the repository volume beside the other
 				// controller state, outside the published .sdo/ tree.
-				loop.Executor.Stores = &StoreAccess{Read: loop.gitRead(), Snapshot: snapshotProvider, Backups: FileBackupStore{Root: filepath.Join(*repositoryMountPath, ".sdo-runtime", "backups")}}
+				loop.Executor.Stores = &StoreAccess{Read: loop.gitRead(), Snapshot: snapshotProvider, Backups: FileBackupStore{Root: filepath.Join(*repositoryMountPath, ".sdo-runtime", "backups")}, Payloads: storePayloads}
 				if menuEnabled != "0" {
 					loop.MenuConfig = productionResponderMenu()
 					loop.MenuConfig.Unexplained = func(ctx context.Context) (UnexplainedRemovalAssessment, error) {

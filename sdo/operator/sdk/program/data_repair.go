@@ -37,7 +37,7 @@ type DataScope = storeops.Scope
 // NotIn; any condition set selects a member.
 type MemberPredicate = storeops.MemberPredicate
 
-// StoreBackup copies a scope's records to backup storage.
+// StoreBackup copies a scope's records. They go to backup storage.
 // The storage is outside .sdo/, on the controller's repository volume, per
 // incident. It records its ID, item count, size, SHA-256 and the store's facts at
 // backup time. It changes nothing in the store (effect read) and fails when the
@@ -52,7 +52,7 @@ type StoreBackup struct {
 	Reason string
 }
 
-// InvalidateDerived drops a derived cache's entries to refill from source.
+// InvalidateDerived drops a derived cache's entries. They refill from source.
 // Its effect is derived-invalidate on Scope when the accepted application map
 // marks the component data.role derived, and data-write otherwise. The
 // controller records the derivation it ran under: whether the map marks the
@@ -96,7 +96,7 @@ type RepairData struct {
 	Reason          string
 }
 
-// RestoreBackup puts a StoreBackup of this incident back.
+// RestoreBackup puts an incident's StoreBackup back.
 // Its effect is data-write: redis keys are restored with REPLACE, mongodb documents
 // upserted by _id, postgres rows replaced by primary key in one transaction,
 // mysql rows with REPLACE in one transaction, memcached items set again with
@@ -166,17 +166,11 @@ var backupID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 // Validate checks the target's identity and engine.
 func (t StoreTarget) Validate() error {
-	if t.Component == "" {
-		return fmt.Errorf("store target requires an application-map component")
+	if err := t.validateIdentity(); err != nil {
+		return err
 	}
 	if _, ok := storeops.For(t.Engine); !ok {
 		return fmt.Errorf("store target engine %q has no record operations (%v)", t.Engine, storeops.Engines())
-	}
-	if err := (Command{Pod: t.Pod, Container: t.Container, Args: []string{"sh"}}).Validate(); err != nil {
-		return fmt.Errorf("store target requires a named Pod and container")
-	}
-	if t.Port < 0 || t.Port > 65535 {
-		return fmt.Errorf("store target port %d is out of range", t.Port)
 	}
 	return nil
 }
@@ -273,8 +267,16 @@ func (a RestoreBackup) Validate() error {
 // or nil when action is not one.
 func DataAction(action Action) Action {
 	switch a := action.(type) {
-	case StoreBackup, InvalidateDerived, RepairData, RestoreBackup:
+	case StoreBackup, InvalidateDerived, RepairData, RestoreBackup, RestoreStoreItem, CheckStoreCredential:
 		return a
+	case *RestoreStoreItem:
+		if a != nil {
+			return *a
+		}
+	case *CheckStoreCredential:
+		if a != nil {
+			return *a
+		}
 	case *StoreBackup:
 		if a != nil {
 			return *a
@@ -310,6 +312,10 @@ func DataActionEffect(action Action) (StoreTarget, DataEffect, bool) {
 		return a.Target, EffectDataWrite, true
 	case RestoreBackup:
 		return a.Target, EffectDataWrite, true
+	case RestoreStoreItem:
+		return a.Target, EffectStoreSetting, true
+	case CheckStoreCredential:
+		return a.Target, EffectRead, true
 	}
 	return StoreTarget{}, "", false
 }
@@ -324,9 +330,13 @@ func validateDataAction(action Action) error {
 		return a.Validate()
 	case RestoreBackup:
 		return a.Validate()
+	case RestoreStoreItem:
+		return a.Validate()
+	case CheckStoreCredential:
+		return a.Validate()
 	}
 	switch action.(type) {
-	case *StoreBackup, *InvalidateDerived, *RepairData, *RestoreBackup:
+	case *StoreBackup, *InvalidateDerived, *RepairData, *RestoreBackup, *RestoreStoreItem, *CheckStoreCredential:
 		return fmt.Errorf("nil store action")
 	}
 	return nil

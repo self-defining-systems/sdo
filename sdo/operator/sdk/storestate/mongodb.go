@@ -38,9 +38,10 @@ $m "$@" 2>&1
 // command fails prints one "ERR <codeName> <message>" line instead. It reads
 // command results and catalog metadata only: counts come from collection
 // metadata, users from usersInfo without credentials, validators as their
-// level and action, never their text. Users stop at 16 and the catalog at the
+// level, action and a digest of their text (never the text), connection
+// holders grouped by client address and state. Users stop at 16 and the catalog at the
 // output budget, each marked "more".
-const mongoRead = `var o=[],A=db.getSiblingDB("admin"),T="\t";function N(x){return String(Number(x))}
+const mongoRead = mongoValues + `var o=[],A=db.getSiblingDB("admin"),T="\t";
 function c(r){if(!r.ok){var e=Error(r.errmsg);e.codeName=r.codeName;throw e}return r}
 function s(n,f){var l=[];o.push("== "+n);try{f(l);o=o.concat(l)}catch(e){o.push("ERR "+(e.codeName||"-")+" "+String(e.message||e).split("\n")[0])}}
 function B(l,b){var u=0;for(var j=0;j<l.length;j++){u+=l[j].length+1;if(u>b){l.length=j;l.push("more");return}}}
@@ -48,10 +49,21 @@ s("server",function(l){var h=c(A.runCommand({isMaster:1}));l.push("role"+T+(h.is
 var p=c(A.runCommand({getCmdLineOpts:1})).parsed,z=p.security||{},q=p.replication||{};l.push("set"+T+"authorization"+T+(z.authorization||"disabled"),"set"+T+"replSetName"+T+(q.replSetName||"-"),"set"+T+"storageReadOnly"+T+!!(p.storage||{}).readOnly)})
 s("params",function(l){var g=c(A.runCommand({getParameter:1,notablescan:1,cursorTimeoutMillis:1,transactionLifetimeLimitSeconds:1,maxTransactionLockRequestTimeoutMillis:1}));for(var k in g)if(k!="ok")l.push("set"+T+k+T+g[k])})
 s("locks",function(l){var r=c(A.runCommand({currentOp:1,waitingForLock:true}));l.push("fsync"+T+(r.fsyncLock?1:0),"waiting"+T+r.inprog.length)})
+s("holders",function(l){var n={},k=[];c(A.runCommand({currentOp:1,$all:true})).inprog.forEach(function(x){var p=String(x.client||"").replace(/:[0-9]+$/,"");if(!p||x.command&&x.command.currentOp)return;var q=p+T+(x.waitingForLock?"blocked":x.active?"active":x.transaction?"idle-in-transaction":"idle");if(!n[q]){n[q]=0;k.push(q)}n[q]++});k.sort(function(a,b){return n[b]-n[a]}).slice(0,12).forEach(function(q){l.push("holder"+T+q+T+n[q])})})
 s("users",function(l){var u=c(A.runCommand({usersInfo:{forAllDBs:true}})).users;u.slice(0,16).forEach(function(u){l.push("user"+T+u.db+T+u.user+T+u.roles.map(function(r){return r.role+"@"+r.db}).sort().join(","))});if(u.length>16)l.push("more")})
-s("catalog",function(l){c(A.runCommand({listDatabases:1,nameOnly:true})).databases.map(function(x){return x.name}).sort().forEach(function(n){if(n=="local"||n=="config")return;var d=db.getSiblingDB(n);l.push("db"+T+n+T+c(d.runCommand({profile:-1})).was);d.getCollectionInfos({type:"collection"}).sort(function(a,b){return a.name<b.name?-1:1}).forEach(function(i){if(i.name.indexOf("system.")==0)return;var v=i.options.validator,y=v&&Object.keys(v).length?(i.options.validationLevel||"strict")+"/"+(i.options.validationAction||"error"):"-";
-l.push("coll"+T+n+T+i.name+T+N(c(d.runCommand({count:i.name})).n)+T+y);c(d.runCommand({listIndexes:i.name})).cursor.firstBatch.forEach(function(x){if(x.name=="_id_")return;var k=[];for(var f in x.key)k.push(f+":"+(typeof x.key[f]=="string"?x.key[f]:N(x.key[f])));l.push("index"+T+n+T+i.name+T+x.name+T+[k.join(",")].concat(x.unique?["unique"]:[],x.sparse?["sparse"]:[],x.partialFilterExpression?["partial"]:[],x.expireAfterSeconds!=null?["ttl="+N(x.expireAfterSeconds)]:[]).join(" "))})})});B(l,3800-o.join("\n").length)})
+s("catalog",function(l){c(A.runCommand({listDatabases:1,nameOnly:true})).databases.map(function(x){return x.name}).sort().forEach(function(n){if(n=="local"||n=="config")return;var d=db.getSiblingDB(n);l.push("db"+T+n+T+c(d.runCommand({profile:-1})).was);d.getCollectionInfos({type:"collection"}).sort(function(a,b){return a.name<b.name?-1:1}).forEach(function(i){if(i.name.indexOf("system.")==0)return;
+l.push("coll"+T+n+T+i.name+T+N(c(d.runCommand({count:i.name})).n)+T+VV(i));c(d.runCommand({listIndexes:i.name})).cursor.firstBatch.forEach(function(x){if(x.name=="_id_")return;l.push("index"+T+n+T+i.name+T+x.name+T+IV(x))})})});B(l,3800-o.join("\n").length)})
 print(o.join("\n"))
+`
+
+// mongoValues are the value functions the read and the restore-payload read
+// share, so a payload entry carries exactly the value of its fact: N a count,
+// H an FNV-1a digest, VV a collection's validator ("-", or level/action/digest
+// of its text), IV an index's key and options.
+const mongoValues = `function N(x){return String(Number(x))}
+function H(t){var h=2166136261;for(var j=0;j<t.length;j++){h^=t.charCodeAt(j);h=Math.imul(h,16777619)>>>0}return("0000000"+h.toString(16)).slice(-8)}
+function VV(i){var v=i.options.validator;return v&&Object.keys(v).length?(i.options.validationLevel||"strict")+"/"+(i.options.validationAction||"error")+"/"+H(JSON.stringify(v)):"-"}
+function IV(x){var k=[];for(var f in x.key)k.push(f+":"+(typeof x.key[f]=="string"?x.key[f]:N(x.key[f])));return[k.join(",")].concat(x.unique?["unique"]:[],x.sparse?["sparse"]:[],x.partialFilterExpression?["partial"]:[],x.expireAfterSeconds!=null?["ttl="+N(x.expireAfterSeconds)]:[]).join(" ")}
 `
 
 type mongoAdapter struct{}
@@ -151,6 +163,11 @@ func (mongoAdapter) Parse(stdout string) (Facts, error) {
 		}
 	}
 	f := Facts{Engine: EngineMongoDB}
+	if lines, present := sections["holders"]; !present || len(lines) == 0 || !strings.HasPrefix(lines[0], "ERR ") {
+		if f.Holders, err = parseHolders(lines, present); err != nil {
+			return Facts{}, fmt.Errorf("mongodb read: %w", err)
+		}
+	}
 	role, readOnly := "", false
 	for _, name := range mongoSections {
 		if !answered[name] {

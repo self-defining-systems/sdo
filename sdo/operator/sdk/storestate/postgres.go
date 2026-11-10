@@ -31,13 +31,15 @@ var postgresRowLimits = map[string]int{"dbsettings": 33, "roles": 25, "databases
 // postgresScript runs psql over the container's own socket as the user the
 // credential prelude found ($U, else postgres), so local trust applies; the
 // password it found ($P) reaches psql through the environment and is never
-// printed. The queries arrive as positional arguments ($5 onwards is the
-// catalog query, split). The catalog is read in each database that accepts
-// connections and cut at the output budget with a "== more" marker.
+// printed. The queries arrive as positional arguments ($5 is the holders
+// query, $6 the TCP fallback, $7 onwards the catalog query, split). Holders
+// fall back to the TCP table when the server refuses the session list. The
+// catalog is read in each database that accepts connections and cut at the
+// output budget with a "== more" marker.
 const postgresScript = `U=${U:-postgres};D=${POSTGRES_DB:-${POSTGRESQL_DATABASE:-${PGDATABASE:-$U}}};T=$(printf '\t');export PGPASSWORD="$P" PGCONNECT_TIMEOUT=2
 q(){ psql -X -q -At -F "$T" -p %d -U "$U" -d "$1" -c "$2" 2>&1|tr -d '\r'|head -n 100;}
-h=$(echo '== server';q "$D" "$1";echo '== dbsettings';q "$D" "$2";echo '== roles';q "$D" "$3";echo '== databases';q "$D" "$4")
-printf '%%s\n' "$h";c="$5$6$7$8$9";psql -X -q -At -p %d -U "$U" -d "$D" -c "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY 1 LIMIT 8" 2>/dev/null|while IFS= read -r d;do echo "== catalog $d";q "$d" "$c";done|awk -v b=$((3900-${#h})) '{n+=length($0)+1;if(n>b){print "== more";exit}print}'
+h=$(echo '== server';q "$D" "$1";echo '== dbsettings';q "$D" "$2";echo '== roles';q "$D" "$3";echo '== databases';q "$D" "$4";echo '== holders';o=$(q "$D" "$5");case "$o" in holder*)printf '%%s\n' "$o";;*)eval "$6";;esac)
+printf '%%s\n' "$h";c="$7$8$9${10}${11}";psql -X -q -At -p %d -U "$U" -d "$D" -c "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY 1 LIMIT 8" 2>/dev/null|while IFS= read -r d;do echo "== catalog $d";q "$d" "$c";done|awk -v b=$((3900-${#h})) '{n+=length($0)+1;if(n>b){print "== more";exit}print}'
 `
 
 // postgresQueries are the server-wide queries, one per section. Settings,
@@ -48,7 +50,12 @@ var postgresQueries = []string{
 	`SELECT coalesce(d.datname,'*'),coalesce(r.rolname,'*'),split_part(c,'=',1),CASE WHEN split_part(c,'=',1) LIKE '%.%' THEN 'set' ELSE substr(c,strpos(c,'=')+1) END FROM pg_db_role_setting s LEFT JOIN pg_database d ON d.oid=s.setdatabase LEFT JOIN pg_roles r ON r.oid=s.setrole,unnest(s.setconfig) c ORDER BY 1,2,3 LIMIT 33`,
 	`SELECT rolname,concat_ws(' ',CASE WHEN rolsuper THEN 'superuser' END,CASE WHEN rolcanlogin THEN 'login' ELSE 'nologin' END,CASE WHEN rolcreatedb THEN 'createdb' END,CASE WHEN rolcreaterole THEN 'createrole' END,CASE WHEN rolreplication THEN 'replication' END,CASE WHEN rolbypassrls THEN 'bypassrls' END,CASE WHEN rolconnlimit>=0 THEN 'connlimit='||rolconnlimit END,CASE WHEN rolvaliduntil<now() THEN 'expired' WHEN rolvaliduntil<'infinity' THEN 'valid-until='||rolvaliduntil::date END,(SELECT 'member-of='||string_agg(b.rolname,',' ORDER BY b.rolname) FROM pg_auth_members m JOIN pg_roles b ON b.oid=m.roleid WHERE m.member=r.oid)) FROM pg_roles r WHERE rolname!~'^pg_' ORDER BY 1 LIMIT 25`,
 	`SELECT datname,datallowconn,datconnlimit FROM pg_database WHERE NOT datistemplate ORDER BY 1 LIMIT 17`,
+	postgresHolders,
 }
+
+// postgresHolders groups the client sessions other than the read's own by
+// peer address (local for the Unix socket) and state.
+const postgresHolders = `SELECT 'holder',coalesce(host(client_addr),'local'),s,count(*) FROM(SELECT client_addr,CASE WHEN wait_event_type='Lock' THEN 'blocked' WHEN state='idle' THEN 'idle' WHEN state LIKE 'idle in transaction%' THEN 'idle-in-transaction' ELSE 'active' END s FROM pg_stat_activity WHERE backend_type='client backend' AND pid<>pg_backend_pid())x GROUP BY 2,3 ORDER BY 4 DESC,2,3 LIMIT 12`
 
 // postgresCatalog is the per-database catalog query: tables with their
 // planner row estimate, indexes, constraints and triggers with a digest of
@@ -68,7 +75,7 @@ func (postgresAdapter) Engine() Engine   { return EnginePostgres }
 func (postgresAdapter) DefaultPort() int { return 5432 }
 
 func (postgresAdapter) ReadCommand(e Endpoint) []string {
-	args := append(append([]string{}, postgresQueries...), chunk(postgresCatalog, readChunkBytes)...)
+	args := append(append(append([]string{}, postgresQueries...), tcpHoldersSnippet(e.Port)), chunk(postgresCatalog, readChunkBytes)...)
 	return readCommand([]string{"POSTGRES", "POSTGRESQL", "PG"}, fmt.Sprintf(postgresScript, e.Port, e.Port), args...)
 }
 
@@ -154,6 +161,10 @@ func (postgresAdapter) Parse(stdout string) (Facts, error) {
 	}
 
 	f := Facts{Engine: EnginePostgres}
+	holders, present := sections["holders"]
+	if f.Holders, err = parseHolders(holders, present); err != nil {
+		return Facts{}, fmt.Errorf("postgres read: %w", err)
+	}
 	var blocks []Item
 	malformed := func(section, line string) error {
 		return fmt.Errorf("postgres %s line is malformed: %q", section, line)

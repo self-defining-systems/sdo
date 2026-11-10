@@ -310,7 +310,7 @@ func classifyEffect(action *contracts.Action) (nonObject, known bool) {
 	case *contracts.Action_Exec, *contracts.Action_EnsureDatabaseUser, *contracts.Action_EnsureExec,
 		*contracts.Action_EnsureHttp, *contracts.Action_RunJob, *contracts.Action_RunScript,
 		*contracts.Action_StoreBackup, *contracts.Action_InvalidateDerived, *contracts.Action_RepairData,
-		*contracts.Action_RestoreBackup:
+		*contracts.Action_RestoreBackup, *contracts.Action_RestoreStoreItem, *contracts.Action_CheckStoreCredential:
 		return true, true
 	case *contracts.Action_ReconcileFromSource, *contracts.Action_Rollback, *contracts.Action_SetField,
 		*contracts.Action_RestartRollout, *contracts.Action_CreateFromSource, *contracts.Action_DeleteObject,

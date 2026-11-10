@@ -165,5 +165,10 @@ Replay outcomes, missing captures and detector coverage are information.
   with each `derived_from` source's live store state), `RepairData` and `RestoreBackup` (data-write; a repair's
   backup is optional and recorded). They run automatically too. A learned cache flush is clearer as an
   `InvalidateDerived` than an `EnsureExec`, because SDO records more about it.
+- A changed store setting, write block, role, principal, validator or index is clearer as
+  `RestoreStoreItem{Target, Change}` (store-setting) per entry of `storestate.Changes(view)` that
+  `storestate.Restorable` accepts than as an `EnsureExec` with a hand-written inverse: SDO restores its own
+  baseline value, records the prior value and verifies it. `CheckStoreCredential` (read) tests a client's
+  credential; `StoreChanges.Holders` groups a store's connections by peer workload and state.
 - Credentials stay references (env or ConfigMap key); never read Secret data. Learn into incident playbooks. The detection designer owns `health-objective` and health detectors: never edit
   them; when its generic program applied and hand repairs followed, encode those in an incident playbook.

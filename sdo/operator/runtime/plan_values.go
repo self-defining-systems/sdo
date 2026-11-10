@@ -34,7 +34,11 @@ type PlanActionReport struct {
 	StoreBackup *program.StoreBackupRecord `json:"store_backup,omitempty"`
 	// DataRepair is what a RepairData, RestoreBackup or InvalidateDerived
 	// changed, as the store reported it.
-	DataRepair     *program.DataRepairEffect `json:"data_repair,omitempty"`
+	DataRepair *program.DataRepairEffect `json:"data_repair,omitempty"`
+	// StoreRestore is a RestoreStoreItem's baseline, prior and verified value.
+	StoreRestore *program.StoreRestoreEffect `json:"store_restore,omitempty"`
+	// StoreCredential is a CheckStoreCredential's value-free result.
+	StoreCredential *program.StoreCredentialEffect `json:"store_credential,omitempty"`
 	JobStatus      json.RawMessage           `json:"job_status,omitempty"`
 	RecordingError string                    `json:"recording_error,omitempty"`
 }

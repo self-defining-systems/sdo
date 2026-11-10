@@ -125,7 +125,7 @@ type ExternalEffect struct {
 }
 
 // EnsureExec runs Observe in a Pod and, unless it already exits with Expect,
-// runs Ensure and observes again; effects are irreversible.
+// runs Ensure and observes again. Effects are irreversible.
 type EnsureExec struct {
 	Observe Command
 	Ensure  Command
@@ -136,7 +136,7 @@ type EnsureExec struct {
 func (EnsureExec) action() {}
 
 // EnsureHTTP sends Observe and, unless it already returns Expect, sends Ensure
-// and observes again; effects are irreversible.
+// and observes again. Effects are irreversible.
 type EnsureHTTP struct {
 	Observe HTTPRequest
 	Ensure  HTTPRequest
