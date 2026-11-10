@@ -188,13 +188,16 @@ def test_worker_projection_drops_every_annotated_field_recursively() -> None:
     sweep(ReflectionResult.DESCRIPTOR)
 
 
-def test_incident_schema_asks_for_cause_class_and_reach_from_their_closed_vocabularies() -> None:
-    cause = _incident_result_schema()["properties"]["confirmed_root_causes"]["items"]["properties"]
+def test_incident_schema_requires_a_chosen_cause_class_and_reach() -> None:
+    cause = _incident_result_schema()["properties"]["confirmed_root_causes"]["items"]
 
-    assert cause["reach"]["enum"] == ["", "in-scope", "out-of-reach"]
-    classes = cause["cause_class"]["enum"]
-    assert classes[0] == ""
-    assert {"network-delay", "network-loss", "config-value-wrong", "data-corrupt", "code-defect"} <= set(classes)
+    assert {"cause_class", "reach"} <= set(cause["required"])
+    assert cause["properties"]["reach"]["enum"] == ["in-scope", "out-of-reach"]
+    classes = cause["properties"]["cause_class"]["enum"]
+    assert "" not in classes
+    assert {"network-delay", "network-loss", "config-value-wrong", "data-corrupt", "code-defect", "other"} <= set(
+        classes
+    )
 
 
 @pytest.mark.parametrize(("field", "value"), [("cause_class", "gremlins"), ("reach", "outside")])

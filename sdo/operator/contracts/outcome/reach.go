@@ -6,7 +6,8 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
 
-// Values of ConfirmedRootCause.reach; "" is unset. TestReachValuesMatchProto
+// Values of ConfirmedRootCause.reach; "" is unset (controller-synthesized
+// causes only). TestReachValuesMatchProto
 // keeps them equal to the rule in messages.proto.
 const (
 	ReachInScope    = "in-scope"
