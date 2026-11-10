@@ -85,6 +85,7 @@ var operatorOwned = map[string]string{
 	"runtime/jitview/cmd/gen/main.go":                reasonTool,
 	"runtime/native_broker.go":                       reasonLedger,
 	"runtime/routing_capture.go":                     reasonLedger,
+	"runtime/store_backups.go":                       "controller-owned backup state under .sdo-runtime/backups on the repository volume, keyed by incident digest; never a checkout and never published",
 	"runtime/source_inventory_report.go":             reasonLedger,
 	"safefs/safefs.go":                               reasonSafefs,
 	"shellpath/kubernetes.go":                        reasonScratch,
