@@ -45,3 +45,29 @@ func TestObservePodAdmissionSubmitsTheTemplateAndRecordsMutations(t *testing.T) 
 		t.Fatalf("mutations = %+v", result.Mutations)
 	}
 }
+
+func TestObservePodAdmissionGivesAStatefulSetTemplateItsClaimVolumes(t *testing.T) {
+	yes := true
+	mount := []corev1.VolumeMount{{Name: "data", MountPath: "/data"}}
+	template := corev1.PodTemplateSpec{
+		ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "db"}},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "db", Image: "registry.example/db:1", VolumeMounts: mount}}},
+	}
+	running := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "db-0", Namespace: "app", Labels: template.Labels,
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "StatefulSet", Name: "db", Controller: &yes}}},
+		Spec: corev1.PodSpec{Containers: template.Spec.Containers, Volumes: []corev1.Volume{{Name: "data", VolumeSource: corev1.VolumeSource{
+			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "data-db-0"}}}}},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	set := appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "app"}, Spec: appsv1.StatefulSetSpec{Template: template,
+		VolumeClaimTemplates: []corev1.PersistentVolumeClaim{{ObjectMeta: metav1.ObjectMeta{Name: "data"}}}}}
+	view := DetectionSnapshot{NamespaceName: "app", PodList: []corev1.Pod{running}, StatefulSetList: []appsv1.StatefulSet{set}}
+	result, submitted := ObservePodAdmission(context.Background(), fake.NewSimpleClientset(), view)
+	if !result.Admitted || submitted == nil {
+		t.Fatalf("result = %+v", result)
+	}
+	if len(submitted.Spec.Volumes) != 1 || submitted.Spec.Volumes[0].Name != "data" || submitted.Spec.Volumes[0].PersistentVolumeClaim.ClaimName != "data-db-0" {
+		t.Fatalf("volumes = %+v, want the claim volume every mount needs", submitted.Spec.Volumes)
+	}
+}
