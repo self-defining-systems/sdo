@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 
@@ -236,6 +237,9 @@ func (c *Controller) classifyFindingLocked(detectorID string, finding sdk.Findin
 	}
 	incidentID := c.currentIncidentRequest.IncidentID
 	key := FindingStateKey(detectorID, FindingFingerprint(finding))
+	if _, late := c.lateJoinedKeys[key]; late {
+		return incidentID, RelationAfterDispatch
+	}
 	for _, existing := range c.currentIncidentRequest.Findings {
 		if FindingStateKey(existing.DetectorID, FindingFingerprint(existing)) == key {
 			return incidentID, RelationBeforeDispatch
@@ -249,10 +253,19 @@ func (c *Controller) classifyFindingLocked(detectorID string, finding sdk.Findin
 
 // noteBatchedLocked marks findings that became part of an incident's batch.
 // Activation records carry the relation known at activation time, usually
-// no_incident because the batcher debounces; this settles it.
+// no_incident because the batcher debounces; this settles it. A finding that
+// joins after the responder launched stays after_dispatch: joining the open
+// incident does not make it part of the dispatched request.
 func (c *Controller) noteBatchedLocked(incidentID string, findings []sdk.Finding) {
+	relation := RelationBeforeDispatch
+	if !c.incidentDispatchedAt.IsZero() {
+		relation = RelationAfterDispatch
+	}
 	for _, finding := range findings {
 		fingerprint := FindingFingerprint(finding)
+		if relation == RelationAfterDispatch {
+			c.markLateJoinedLocked(FindingStateKey(finding.DetectorID, fingerprint))
+		}
 		spec := c.detectorSpecs[finding.DetectorID]
 		if spec.ID == "" {
 			spec.ID = finding.DetectorID
@@ -260,15 +273,53 @@ func (c *Controller) noteBatchedLocked(incidentID string, findings []sdk.Finding
 			spec.Owner = sdk.DetectorOwnerResponder
 		}
 		if index := c.timelineIndexLocked(finding.DetectorID, fingerprint); index >= 0 {
-			c.timeline[index].Relation = RelationBeforeDispatch
+			c.timeline[index].Relation = relation
 		}
 		firing := 0
 		if state, ok := c.tracker.states[FindingStateKey(finding.DetectorID, fingerprint)]; ok {
 			firing = state.FiringCount
 		}
-		c.emitFiringLocked(FiringBatched, spec.ID, finding, c.evaluationAt, incidentID, RelationBeforeDispatch,
+		c.emitFiringLocked(FiringBatched, spec.ID, finding, c.evaluationAt, incidentID, relation,
 			firing, 0, firingEventID(incidentID, finding.DetectorID, fingerprint, string(FiringBatched)))
 	}
+}
+
+func (c *Controller) markLateJoinedLocked(key string) {
+	if c.lateJoinedKeys == nil {
+		c.lateJoinedKeys = map[string]struct{}{}
+	}
+	c.lateJoinedKeys[key] = struct{}{}
+}
+
+func lateJoinedFromTimeline(timeline []DetectorTimelineEntry) map[string]struct{} {
+	keys := map[string]struct{}{}
+	for _, key := range afterDispatchKeys(timeline) {
+		keys[key] = struct{}{}
+	}
+	return keys
+}
+
+// afterDispatchKeys lists, sorted, the finding keys that first activated
+// while the incident's responder was in flight.
+func afterDispatchKeys(timeline []DetectorTimelineEntry) []string {
+	var keys []string
+	for _, entry := range timeline {
+		if entry.Relation == RelationAfterDispatch {
+			keys = append(keys, entry.key())
+		}
+	}
+	sort.Strings(keys)
+	return slices.Compact(keys)
+}
+
+// arrivedAfterDispatchLocked reports whether a finding first activated while
+// the open incident's responder was in flight.
+func (c *Controller) arrivedAfterDispatchLocked(finding sdk.Finding) bool {
+	if _, late := c.lateJoinedKeys[FindingStateKey(finding.DetectorID, FindingFingerprint(finding))]; late {
+		return true
+	}
+	index := c.timelineIndexLocked(finding.DetectorID, FindingFingerprint(finding))
+	return index >= 0 && c.timeline[index].Relation == RelationAfterDispatch
 }
 
 // pruneTimelineLocked drops entries that cleared before this incident opened

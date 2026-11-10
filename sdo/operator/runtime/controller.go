@@ -228,8 +228,12 @@ type Controller struct {
 	evaluationAt time.Time
 	// timeline summarizes each finding's firing history since the last incident
 	// closure was cut.
-	timeline      []DetectorTimelineEntry
-	stateRestored bool
+	timeline []DetectorTimelineEntry
+	// lateJoinedKeys are the open incident's findings that joined its request
+	// after the responder launched (learned matches, late drift). They stay
+	// after_dispatch in telemetry; restore rebuilds them from the timeline.
+	lateJoinedKeys map[string]struct{}
+	stateRestored  bool
 
 	// CheckHealth refuses evaluation and effects while the compiled detector bundle
 	// lags the accepted health policy; the rebuilt controller resumes the work.
@@ -870,6 +874,7 @@ func (c *Controller) beginIncident(now time.Time, request IncidentRequest, batch
 		c.dispatchState = contracts.DispatchState_DISPATCH_STATE_WORKSPACE_PENDING
 	}
 	c.incidentFindingKeys = findingKeys(batch)
+	c.lateJoinedKeys = nil
 	c.noteBatchedLocked(request.IncidentID, batch)
 	c.pruneTimelineLocked(batch)
 	c.emitLifecycleLocked(&contracts.LifecycleEvent{
@@ -1784,6 +1789,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		DispatchError:                 closure.DispatchError != "",
 		VerifiedWhileResponderRunning: early,
 		ClosureStabilityWindowSeconds: windowUsed.Seconds(),
+		AfterDispatchFindingKeys:      afterDispatchKeys(closure.DetectorTimeline),
 	})
 	c.timeline = nil
 	projected, err := incidentClosureContract(closure)
@@ -2082,6 +2088,7 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	c.evaluationIteration = int(state.GetEvaluationIteration())
 	c.stepCount = state.GetStepCount()
 	c.timeline = cloneTimeline(detectorTimelineState(state.GetDetectorTimeline()))
+	c.lateJoinedKeys = lateJoinedFromTimeline(c.timeline)
 	return nil
 }
 

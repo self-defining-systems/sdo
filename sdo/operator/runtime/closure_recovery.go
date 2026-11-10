@@ -44,6 +44,7 @@ func (c *Controller) resumeClosureVerification(ctx context.Context, effect Closu
 	c.incidentFindingKeys = findingKeys(closure.Request.Findings)
 	c.cleanedHelpers = append([]string(nil), closure.CleanedHelpers...)
 	c.timeline = cloneTimeline(closure.DetectorTimeline)
+	c.lateJoinedKeys = lateJoinedFromTimeline(c.timeline)
 	c.closureStableSince = time.Time{}
 	c.recoverySafetyLost = true
 	c.mu.Unlock()

@@ -260,8 +260,13 @@ type LifecycleEvent struct {
 	DispatchError                 bool                   `protobuf:"varint,22,opt,name=dispatch_error,json=dispatchError,proto3" json:"dispatch_error,omitempty"`
 	VerifiedWhileResponderRunning bool                   `protobuf:"varint,26,opt,name=verified_while_responder_running,json=verifiedWhileResponderRunning,proto3" json:"verified_while_responder_running,omitempty"`
 	ClosureStabilityWindowSeconds float64                `protobuf:"fixed64,27,opt,name=closure_stability_window_seconds,json=closureStabilityWindowSeconds,proto3" json:"closure_stability_window_seconds,omitempty"`
-	unknownFields                 protoimpl.UnknownFields
-	sizeCache                     protoimpl.SizeCache
+	// incident_closed: finding keys that first activated while this incident's
+	// responder was in flight. The controller runs one incident at a time, so a
+	// separate fault's findings land here: they joined the open incident or held
+	// its closure, and were never part of the dispatched request.
+	AfterDispatchFindingKeys []string `protobuf:"bytes,28,rep,name=after_dispatch_finding_keys,json=afterDispatchFindingKeys,proto3" json:"after_dispatch_finding_keys,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
 }
 
 func (x *LifecycleEvent) Reset() {
@@ -434,6 +439,13 @@ func (x *LifecycleEvent) GetClosureStabilityWindowSeconds() float64 {
 	return 0
 }
 
+func (x *LifecycleEvent) GetAfterDispatchFindingKeys() []string {
+	if x != nil {
+		return x.AfterDispatchFindingKeys
+	}
+	return nil
+}
+
 var File_sdodev_contracts_v1alpha1_telemetry_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_telemetry_proto_rawDesc = "" +
@@ -469,7 +481,8 @@ const file_sdodev_contracts_v1alpha1_telemetry_proto_rawDesc = "" +
 	"\x11dispatch_relation\x18\x15 \x01(\tB3\xbaH0r.R\x0fbefore_dispatchR\x0eafter_dispatchR\vno_incidentR\x10dispatchRelation\x1aj\n" +
 	"\x16ParameterBindingsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12:\n" +
-	"\x05value\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x05value:\x028\x01\"\xf7\t\n" +
+	"\x05value\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x05value:\x028\x01\"\xb6\n" +
+	"\n" +
 	"\x0eLifecycleEvent\x12D\n" +
 	"\x0eschema_version\x18\x01 \x01(\tB\x1d\xbaH\x1ar\x18\n" +
 	"\x16sdo.lifecycle-event/v1R\rschemaVersion\x12\"\n" +
@@ -494,7 +507,8 @@ const file_sdodev_contracts_v1alpha1_telemetry_proto_rawDesc = "" +
 	"\x11health_cleared_at\x18\x14 \x01(\v2\x1a.google.protobuf.TimestampR\x0fhealthClearedAt\x12%\n" +
 	"\x0edispatch_error\x18\x16 \x01(\bR\rdispatchError\x12G\n" +
 	" verified_while_responder_running\x18\x1a \x01(\bR\x1dverifiedWhileResponderRunning\x12G\n" +
-	" closure_stability_window_seconds\x18\x1b \x01(\x01R\x1dclosureStabilityWindowSecondsJ\x04\b\t\x10\n" +
+	" closure_stability_window_seconds\x18\x1b \x01(\x01R\x1dclosureStabilityWindowSeconds\x12=\n" +
+	"\x1bafter_dispatch_finding_keys\x18\x1c \x03(\tR\x18afterDispatchFindingKeysJ\x04\b\t\x10\n" +
 	"J\x04\b\n" +
 	"\x10\vJ\x04\b\v\x10\fJ\x04\b\x15\x10\x16J\x04\b\x17\x10\x18J\x04\b\x18\x10\x19J\x04\b\x19\x10\x1aR\x12parent_incident_idR\x11follow_up_attemptR\rsuperseded_byR\x18detector_review_requiredR\rload_pressureR\x0eload_thresholdR\x0frelease_backlogB\x81\x02\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\x0eTelemetryProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"

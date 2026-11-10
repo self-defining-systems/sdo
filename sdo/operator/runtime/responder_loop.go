@@ -95,6 +95,10 @@ type ToolResponse struct {
 	Drift                      []sdk.Finding                  `json:"drift,omitempty"`
 	BeforeFindings             []sdk.Finding                  `json:"before_findings"`
 	ControllerFindings         []sdk.Finding                  `json:"controller_findings"`
+	// NewSinceDispatch are the current findings that first activated after
+	// this incident's responder launched. The controller runs one incident at
+	// a time, so they may be a separate fault; closure still waits on health.
+	NewSinceDispatch []sdk.Finding `json:"new_since_dispatch,omitempty"`
 	Progress                   *FindingProgress               `json:"progress,omitempty"`
 	IncidentVerified           *apihistory.IncidentVerified   `json:"incident_verified,omitempty"`
 	FailureReason              string                         `json:"failure_reason,omitempty"`

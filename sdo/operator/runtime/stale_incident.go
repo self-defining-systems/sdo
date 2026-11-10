@@ -138,7 +138,8 @@ func (c *Controller) retireExpiredIncident(ctx context.Context, now time.Time) e
 		c.mu.Unlock()
 		return err
 	}
-	c.emitLifecycleLocked(&contracts.LifecycleEvent{Event: PhaseClosed, RecordedAt: contractTimestamp(now), IncidentId: request.IncidentID, DispatchError: true})
+	c.emitLifecycleLocked(&contracts.LifecycleEvent{Event: PhaseClosed, RecordedAt: contractTimestamp(now), IncidentId: request.IncidentID, DispatchError: true,
+		AfterDispatchFindingKeys: afterDispatchKeys(c.timeline)})
 	failure := cloneClosureFailure(c.closureFailure)
 	c.clearIncidentLocked()
 	c.timeline = nil
