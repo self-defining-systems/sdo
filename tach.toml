@@ -118,5 +118,9 @@ depends_on = [
 ]
 
 [[modules]]
+path = "benchmarks.fuzzops"
+depends_on = []
+
+[[modules]]
 path = "benchmarks.sregym.repository_git"
 depends_on = []

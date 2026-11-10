@@ -7,6 +7,7 @@ SDO autonomously deploys and operates applications using source-grounded agents,
 - [`sdo/`](sdo/AGENTS.md) — agent implementations, typed contracts, operational-memory adapters, and operator code
 - `sdo/operator/` — Go detector SDK, execution core, controller runtime and builder, worker registry, commit broker, outcome store, and installer
 - [`benchmarks/sregym/`](benchmarks/sregym/AGENTS.md) — first-party SREGym adapters, protocol clients, runners, experiments, and analysis
+- [`benchmarks/fuzzops/`](benchmarks/fuzzops/AGENTS.md) — fuzzops adapter: SDO operates a fuzzops app pack while fuzzops injects and grades
 - `third_party/sregym/` — external SREGym harness Git submodule
 - `libs/` — shared agent turn-runner library
 - `apps/` — source-deployment evaluation applications
