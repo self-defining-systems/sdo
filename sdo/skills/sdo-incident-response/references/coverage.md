@@ -1,5 +1,7 @@
 # Coverage and learned repairs
 
+Matches in `playbook_coverage` come detector-picked first: a detector listed that playbook in the finding's `playbooks`, SDO diagnosed it first, and the automatic stage applied only such matches. Treat the pick and its result as your starting point. The full playbook set is still available and the pick can be wrong: later matches are generic fan-out over every program, reported for you to judge, never applied automatically. With no detector pick, find playbooks yourself.
+
 `playbook_coverage`: matches/bindings, mitigation, unexplained findings. Counts inform; never permission gates. Diagnosis-only matches supply evidence. Apply `can_mitigate` matches by running their `mitigate_command`; check rollout, current status, late findings, preconditions and accepted-source values. Investigate contradictions. Keep verified stage receipts; `plan_not_executable` is terminal for that revision and binding, while other bindings remain eligible; `ineffective` means the playbook already applied here and left those findings open. Partial playbooks: stages/`sdo mitigate NAME` handle mechanics; README guides judgement.
 
 Ready matches include named object/scalar bindings and the command that applies them. Use that supplied

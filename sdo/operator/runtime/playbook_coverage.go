@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"slices"
 	"sort"
 
 	"google.golang.org/protobuf/proto"
@@ -70,6 +71,17 @@ func buildPlaybookCoverage(findings []sdk.Finding, runs []ProgramRun, view sdk.D
 	for _, key := range keys {
 		result.Matches = append(result.Matches, matches[key])
 	}
+	// The detector's picks (an explained finding lists the playbook) come first;
+	// the rest of the full playbook set follows. Order is stable within each group.
+	picked := func(match *contracts.PlaybookMatch) bool {
+		for _, finding := range findings {
+			if finding.Status == sdk.FindingActive && FindingNamesPlaybook(finding, match.PlaybookId) && slices.Contains(match.ExplainedFindingFingerprints, FindingFingerprint(finding)) {
+				return true
+			}
+		}
+		return false
+	}
+	sort.SliceStable(result.Matches, func(i, j int) bool { return picked(result.Matches[i]) && !picked(result.Matches[j]) })
 	unexplained := map[string]bool{}
 	for _, finding := range findings {
 		if finding.Status == sdk.FindingActive {

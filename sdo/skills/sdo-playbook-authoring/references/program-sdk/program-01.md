@@ -214,6 +214,9 @@ func BindFinding(spec ProgramSpec, finding sdk.Finding) (Bindings, error)
     of the declared kind in the finding can bind a role. Additional objects are
     read by Diagnose through ReadView, by name or relation.
 
+    A finding that lists playbooks binds only those programs, by name or by
+    resource; every other program gets an error.
+
     Named bindings are the finding detector's claim about what its own playbooks
     repair, so they bind only programs the finding lists by logical ID (the
     Finding.Playbooks contract; the controller rejects any other reference).
@@ -230,8 +233,4 @@ func (b Bindings) Equal(other Bindings) bool
 
 func (b Bindings) Parameter(spec ProgramSpec, name string) (any, error)
     Parameter resolves one declared value, including a validated default.
-
-func (b *Bindings) UnmarshalJSON(raw []byte) error
-    UnmarshalJSON imports object-only corpus bindings from existing recordings.
-    New recordings always use explicit objects and values maps.
 ```

@@ -15,6 +15,22 @@ import (
 
 const DefaultDiagnosisDeadline = 10 * time.Second
 
+// GenericDiagnosisWorkers bounds concurrent diagnoses of candidates no
+// detector routed (findings that list no playbook).
+const GenericDiagnosisWorkers = 8
+
+// FindingNamesPlaybook reports whether the finding's detector routed to the
+// playbook by listing it. Only such candidates are detector-routed; the
+// automatic stage applies matches from no others.
+func FindingNamesPlaybook(finding sdk.Finding, id string) bool {
+	for _, reference := range finding.Playbooks {
+		if got, err := layout.PlaybookID(reference); err == nil && got == id {
+			return true
+		}
+	}
+	return false
+}
+
 // ProgramRun is one diagnosis for a concrete finding or hint binding.
 type ProgramRun struct {
 	CanMitigate        *bool            `json:"can_mitigate,omitempty"`
@@ -31,6 +47,8 @@ type ProgramRun struct {
 }
 
 // SelectProgramCandidates diagnoses finding-bound programs under one deadline.
+// A "hint" BindingSource marks a detector-routed run: the finding lists the
+// playbook.
 func SelectProgramCandidates(ctx context.Context, registry program.ProgramRegistry, view program.ReadView, findings []sdk.Finding, deadline time.Duration) []ProgramRun {
 	if registry == nil {
 		return nil
@@ -49,20 +67,29 @@ func SelectProgramCandidates(ctx context.Context, registry program.ProgramRegist
 		source      string
 		id          string
 		bindings    program.Bindings
+		routed      bool
 	}
 	var candidates []candidate
 	seen := map[string]bool{}
 	aliases := map[string][]candidate{}
-	add := func(id string, bindings program.Bindings, fingerprint, source string) {
+	add := func(id string, bindings program.Bindings, fingerprint, source string, routed bool) {
 		key := id + "\x00" + bindingKey(bindings)
 		if seen[key] {
+			// One detector-routed finding makes the shared diagnosis routed.
+			if routed {
+				for index := range candidates {
+					if candidates[index].id == id && sameBindings(candidates[index].bindings, bindings) {
+						candidates[index].routed = true
+					}
+				}
+			}
 			if fingerprint != "" {
-				aliases[key] = append(aliases[key], candidate{fingerprint: fingerprint, source: source, id: id, bindings: bindings})
+				aliases[key] = append(aliases[key], candidate{fingerprint: fingerprint, source: source, id: id, bindings: bindings, routed: routed})
 			}
 			return
 		}
 		seen[key] = true
-		candidates = append(candidates, candidate{fingerprint: fingerprint, source: source, id: id, bindings: bindings})
+		candidates = append(candidates, candidate{fingerprint: fingerprint, source: source, id: id, bindings: bindings, routed: routed})
 	}
 	for _, finding := range findings {
 		if finding.Status != sdk.FindingActive {
@@ -71,11 +98,10 @@ func SelectProgramCandidates(ctx context.Context, registry program.ProgramRegist
 		for _, spec := range registry.List() {
 			bindings, source, ok := findingProgramBindings(spec, finding)
 			if ok {
-				add(spec.ID, bindings, FindingFingerprint(finding), source)
+				add(spec.ID, bindings, FindingFingerprint(finding), source, FindingNamesPlaybook(finding, spec.ID))
 			}
 		}
 	}
-	results := make(chan ProgramRun, len(candidates))
 	appendAssociations := func(runs []ProgramRun, run ProgramRun) []ProgramRun {
 		_, canMitigate := registry.Mitigator(run.ProgramID)
 		run.CanMitigate = &canMitigate
@@ -88,39 +114,74 @@ func SelectProgramCandidates(ctx context.Context, registry program.ProgramRegist
 		}
 		return runs
 	}
+	// Detector-routed candidates (the finding lists the playbook) run first
+	// under their own budget, so generic fan-out cannot starve them. Generic
+	// candidates then run with bounded concurrency under what remains.
+	var routed, generic []candidate
 	for _, item := range candidates {
-		go func(candidate candidate) {
-			started := lifecycleio.Now()
-			diagnoser, ok := registry.Diagnoser(candidate.id)
-			if !ok {
-				return
-			}
-			verdict := program.RunDiagnose(ctx, diagnoser, view, candidate.bindings, deadline)
-			results <- ProgramRun{FindingFingerprint: candidate.fingerprint, BindingSource: candidate.source, ProgramID: candidate.id, Bindings: candidate.bindings, Verdict: verdict, Duration: lifecycleio.Since(started)}
-		}(item)
-	}
-	runs := make([]ProgramRun, 0, len(candidates))
-	for range candidates {
-		select {
-		case run := <-results:
-			runs = appendAssociations(runs, run)
-		case <-ctx.Done():
-			for _, candidate := range candidates {
-				found := false
-				for _, run := range runs {
-					if run.ProgramID == candidate.id && sameBindings(run.Bindings, candidate.bindings) {
-						found = true
-						break
-					}
-				}
-				if !found {
-					runs = appendAssociations(runs, ProgramRun{FindingFingerprint: candidate.fingerprint, BindingSource: candidate.source, ProgramID: candidate.id, Bindings: candidate.bindings, Verdict: program.Verdict{Result: program.Unknown, Evidence: []program.Evidence{{Fact: "diagnosis", Observed: ctx.Err().Error(), Expected: "completed before deadline"}}}, Duration: deadline})
-				}
-			}
-			sortProgramRuns(runs)
-			return runs
+		if item.routed {
+			routed = append(routed, item)
+		} else {
+			generic = append(generic, item)
 		}
 	}
+	runTier := func(ctx context.Context, tier []candidate, workers int) []ProgramRun {
+		if len(tier) == 0 {
+			return nil
+		}
+		type result struct {
+			index int
+			run   ProgramRun
+		}
+		queue := make(chan int, len(tier))
+		for index := range tier {
+			queue <- index
+		}
+		close(queue)
+		results := make(chan result, len(tier))
+		if workers > len(tier) {
+			workers = len(tier)
+		}
+		for range workers {
+			go func() {
+				for index := range queue {
+					if ctx.Err() != nil {
+						return
+					}
+					candidate := tier[index]
+					started := lifecycleio.Now()
+					diagnoser, ok := registry.Diagnoser(candidate.id)
+					if !ok {
+						continue
+					}
+					verdict := program.RunDiagnose(ctx, diagnoser, view, candidate.bindings, deadline)
+					results <- result{index, ProgramRun{FindingFingerprint: candidate.fingerprint, BindingSource: candidate.source, ProgramID: candidate.id, Bindings: candidate.bindings, Verdict: verdict, Duration: lifecycleio.Since(started)}}
+				}
+			}()
+		}
+		var runs []ProgramRun
+		finished := make([]bool, len(tier))
+		for count := 0; count < len(tier); {
+			select {
+			case got := <-results:
+				finished[got.index] = true
+				count++
+				runs = appendAssociations(runs, got.run)
+			case <-ctx.Done():
+				for index, candidate := range tier {
+					if !finished[index] {
+						runs = appendAssociations(runs, ProgramRun{FindingFingerprint: candidate.fingerprint, BindingSource: candidate.source, ProgramID: candidate.id, Bindings: candidate.bindings, Verdict: program.Verdict{Result: program.Unknown, Evidence: []program.Evidence{{Fact: "diagnosis", Observed: ctx.Err().Error(), Expected: "completed before deadline"}}}, Duration: deadline})
+					}
+				}
+				return runs
+			}
+		}
+		return runs
+	}
+	routedCtx, cancelRouted := context.WithTimeout(ctx, deadline/2)
+	runs := runTier(routedCtx, routed, len(routed))
+	cancelRouted()
+	runs = append(runs, runTier(ctx, generic, GenericDiagnosisWorkers)...)
 	sortProgramRuns(runs)
 	return runs
 }
@@ -137,6 +198,9 @@ func findingProgramBindings(spec program.ProgramSpec, finding sdk.Finding) (prog
 	}
 	if err == nil && (!hasObjectRoles || len(bound.Objects) > 0) {
 		source := "finding"
+		if FindingNamesPlaybook(finding, spec.ID) {
+			source = "hint"
+		}
 		for name, ref := range bound.Objects {
 			if finding.ParameterBindings[name] == ref && ref.Kind != "" {
 				source = "hint"
@@ -144,11 +208,8 @@ func findingProgramBindings(spec program.ProgramSpec, finding sdk.Finding) (prog
 		}
 		return bound, source, true
 	}
-	for _, reference := range finding.Playbooks {
-		id, err := layout.PlaybookID(reference)
-		if err == nil && id == spec.ID {
-			return cloneProgramBindings(bound), "hint", true
-		}
+	if FindingNamesPlaybook(finding, spec.ID) {
+		return cloneProgramBindings(bound), "hint", true
 	}
 	return program.Bindings{}, "", false
 }

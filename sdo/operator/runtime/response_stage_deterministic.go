@@ -487,7 +487,18 @@ func stageCandidates(state *IncidentState) []stageCandidate {
 	var matches []stageCandidate
 	for _, match := range state.Coverage.GetMatches() {
 		bindings := programBindingsState(match.Bindings)
-		matches = append(matches, stageCandidate{PlaybookMatch: match, targets: matchedFindingFingerprints(state.Request.Findings, state.Request.InitialProgramRuns, match.PlaybookId, bindings)})
+		targets := matchedFindingFingerprints(state.Request.Findings, state.Request.InitialProgramRuns, match.PlaybookId, bindings)
+		// Only a detector-named match (a bound finding lists the playbook) is
+		// applied automatically. Generic fan-out matches stay in coverage for the
+		// responder to judge.
+		named := false
+		for _, finding := range state.Request.Findings {
+			named = named || (FindingNamesPlaybook(finding, match.PlaybookId) && slices.Contains(targets, FindingFingerprint(finding)))
+		}
+		if !named {
+			continue
+		}
+		matches = append(matches, stageCandidate{PlaybookMatch: match, targets: targets})
 	}
 	// Namespace admission is a prerequisite for workload recovery. Prioritize
 	// its covered fixes using the detector contract, never playbook names or

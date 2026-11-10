@@ -12,6 +12,9 @@ import (
 // of the declared kind in the finding can bind a role. Additional objects are
 // read by Diagnose through ReadView, by name or relation.
 //
+// A finding that lists playbooks binds only those programs, by name or by
+// resource; every other program gets an error.
+//
 // Named bindings are the finding detector's claim about what its own playbooks
 // repair, so they bind only programs the finding lists by logical ID (the
 // Finding.Playbooks contract; the controller rejects any other reference). A
@@ -37,6 +40,11 @@ func BindFinding(spec ProgramSpec, finding sdk.Finding) (Bindings, error) {
 			b.Objects[p.Name] = ref
 			used[key] = true
 		}
+	}
+	if len(finding.Playbooks) > 0 && !named {
+		// A finding that names playbooks routes only those; it never offers its
+		// resources to other programs by role kind.
+		return b, fmt.Errorf("program.finding-bindings: program %q: finding lists playbooks %v, not this one", spec.ID, finding.Playbooks)
 	}
 	// Resolve required roles before optional peers of the same kind. Within
 	// either group, two unbound roles of one kind require explicit named bindings.
