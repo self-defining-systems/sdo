@@ -159,6 +159,14 @@ def test_workflow_is_visible_in_the_real_provider_turn(tmp_path: Path, monkeypat
     assert len(agent.requests) == 1
 
 
+def _without_checkout_path(text: str) -> str:
+    """The checkout location is not guidance text: measure with a fixed-length skills root."""
+    from sdo.agents.replay import selected_skills_root
+    from sdo.agents.responder.codex import SKILLS_ROOT
+
+    return text.replace(str(selected_skills_root(SKILLS_ROOT)), "/sdo/skills")
+
+
 def test_actual_benchmark_transport_and_pull_guidance_fit_the_instruction_cap(monkeypatch) -> None:
     from benchmarks.sregym.adapter.runtime import _responder_instructions
     from sdo.agents.responder.codex import _responder_prompt
@@ -170,7 +178,7 @@ def test_actual_benchmark_transport_and_pull_guidance_fit_the_instruction_cap(mo
     request = incident()
     with prepared_incident_data(request) as data:
         prompt = _responder_prompt(request, incident_data=data)
-    assert len(prompt.split("Incident request", 1)[0]) <= 1500
+    assert len(_without_checkout_path(str(prompt).split("Incident request", 1)[0])) <= 1500
 
 
 def test_act_help_and_workflow_preserve_separate_causes_for_combined_edits() -> None:
@@ -207,4 +215,4 @@ def test_partial_reuse_prompt_starts_from_receipts_without_mandatory_discovery()
     assert "combine edits to one object" in instructions
     assert "re-check saved diagnoses" in instructions
     assert "Read " not in instructions
-    assert len(instructions) <= 1500
+    assert len(_without_checkout_path(instructions)) <= 1500
