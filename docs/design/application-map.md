@@ -35,11 +35,15 @@ components:                       # one per application workload the designer co
     workload: Deployment/post-storage-mongodb   # Kind/name present in the manifest inventory
     services: [post-storage-mongodb]            # Service names (in the inventory) that select this workload
     holds_data: true              # losing its contents loses user-visible data (not a cache that refills)
+    evidence: [manifest]          # optional: what grounds holds_data and data, same values as an edge's;
+                                  # omitted when the application source declares them
+    data: {engine: mongodb, role: authoritative}   # every data store: engine and authoritative/derived
 edges:                            # directed: caller -> callee
   - from: post-storage-service    # component name
     to: post-storage-mongodb      # component name
-    evidence: [config]            # non-empty subset of [config, observed]
+    evidence: [config]            # non-empty subset of [config, manifest, observed]
     source: config/service-config.json   # config: application source path that declares the call;
+                                         # manifest: the rendered object and field that name the callee;
                                          # observed-only: one line saying how it was observed
 operations:                       # user-facing operations at the entry point
   - id: compose-post              # logical ID, [a-z0-9-], unique
@@ -55,7 +59,9 @@ probes:                           # one entry per probe scenario in the health w
 
 Field rules (all blocking unless marked note):
 
-1. `version` is 1. Unknown fields are rejected.
+1. `version` is 1. Unknown fields are rejected. Evidence values are `config` (application source or its config
+   files), `manifest` (the rendered manifests: image, volume, env value, ConfigMap entry; all there is for an
+   application deployed without source) and `observed` (the live application).
 2. Component `workload` and every `services` entry resolve in the accepted source inventory. Names are unique.
 3. Edge endpoints are component names; no self-edges; no duplicate (from, to).
 4. Operation `entry.service` is a Service of `path[0]`. `entry.method` is an HTTP method. Every component in

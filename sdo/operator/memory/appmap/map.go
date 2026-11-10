@@ -56,8 +56,26 @@ type Component struct {
 	Workload  string   `yaml:"workload"`
 	Services  []string `yaml:"services"`
 	HoldsData bool     `yaml:"holds_data"`
-	Data      *Data    `yaml:"data,omitempty"`
+	// Evidence says what grounds holds_data and data: the same vocabulary as
+	// an edge's. Empty means the author read it from the application source.
+	Evidence []string `yaml:"evidence,omitempty"`
+	Data     *Data    `yaml:"data,omitempty"`
 }
+
+// Evidence kinds: what grounds a component's role or an edge. config is the
+// application source or its config files; manifest is the rendered manifests
+// (an image, a volume, an env value, a ConfigMap entry), which is all there is
+// for an application deployed without source; observed is the live
+// application.
+const (
+	EvidenceConfig   = "config"
+	EvidenceManifest = "manifest"
+	EvidenceObserved = "observed"
+)
+
+var knownEvidence = map[string]bool{EvidenceConfig: true, EvidenceManifest: true, EvidenceObserved: true}
+
+const evidenceHint = "evidence is a non-empty subset of [config, manifest, observed]"
 
 // Engines a component's data role may name. Other is a store SDO has no
 // engine-specific reader for.
@@ -231,6 +249,11 @@ func (c *checker) schema() {
 			continue
 		}
 		c.byName[comp.Name] = comp
+		for _, ev := range comp.Evidence {
+			if !knownEvidence[ev] {
+				c.add(RuleSchema, evidenceHint+"; omit it when the source declares the role", "component %s: evidence %q is not config, manifest or observed", comp.Name, ev)
+			}
+		}
 	}
 	edges := map[[2]string]bool{}
 	for _, e := range c.m.Edges {
@@ -251,15 +274,15 @@ func (c *checker) schema() {
 		}
 		edges[[2]string{e.From, e.To}] = true
 		if len(e.Evidence) == 0 {
-			c.add(RuleSchema, "evidence is a non-empty subset of [config, observed]", "edge %s has no evidence", label)
+			c.add(RuleSchema, evidenceHint, "edge %s has no evidence", label)
 		}
 		for _, ev := range e.Evidence {
-			if ev != "config" && ev != "observed" {
-				c.add(RuleSchema, "evidence is a non-empty subset of [config, observed]", "edge %s: evidence %q is not config or observed", label, ev)
+			if !knownEvidence[ev] {
+				c.add(RuleSchema, evidenceHint, "edge %s: evidence %q is not config, manifest or observed", label, ev)
 			}
 		}
 		if strings.TrimSpace(e.Source) == "" {
-			c.add(RuleSchema, "config: the source path that declares the call; observed: one line saying how it was observed", "edge %s has no source", label)
+			c.add(RuleSchema, "config: the source path that declares the call; manifest: the object and field that name the callee; observed: one line saying how it was observed", "edge %s has no source", label)
 		}
 	}
 	seenOp := map[string]bool{}
