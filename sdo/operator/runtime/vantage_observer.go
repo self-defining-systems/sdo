@@ -445,3 +445,32 @@ func samePeer(a, b *vantage.Peer) bool {
 func (c *Controller) promoteObservationBaselines(now time.Time, snapshot sdk.DetectionContext, healthy bool) {
 	c.VantageBaseline.observe(now.UTC(), healthy, snapshot)
 }
+
+// awaitVantageHelpers takes snapshots until no vantage reading reports its
+// helper starting, or the budget is spent. The first collection on a Pod only
+// attaches the helper, so a one-shot evaluation that judged that collection
+// would always fail its vantage detectors; the controller loop needs no wait
+// (the probe stays due and the next cycle reads it).
+func awaitVantageHelpers(ctx context.Context, provider SnapshotProvider, budget time.Duration, sleep func(time.Duration)) {
+	const poll = 2 * time.Second
+	for waited := time.Duration(0); ; waited += poll {
+		snapshot, err := provider.Snapshot(ctx)
+		if err != nil || ctx.Err() != nil {
+			return
+		}
+		set, ok := snapshot.(vantage.ResultSet)
+		if !ok {
+			return
+		}
+		starting := false
+		for _, result := range set.VantageResults() {
+			for _, reading := range result.Readings {
+				starting = starting || strings.HasPrefix(reading.Error, errVantageHelperStarting.Error())
+			}
+		}
+		if !starting || waited+poll > budget {
+			return
+		}
+		sleep(poll)
+	}
+}
