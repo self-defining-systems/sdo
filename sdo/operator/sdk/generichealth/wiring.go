@@ -89,15 +89,17 @@ func protocol(p core.Protocol) core.Protocol {
 }
 
 // portDeclared reports whether a selected Pod declares the Service port's
-// target. A named target must match a declared port name. A numeric target
-// (an unset one defaults to the Service port) must match a declared
-// containerPort of the same protocol. containerPort declarations are optional
-// in Kubernetes, so a Pod whose containers declare no ports at all leaves a
-// numeric target unknown and is treated as declared.
+// target. Only a named target depends on a declaration: Kubernetes resolves
+// the name from the declared container ports (same name and protocol), so an
+// unresolved name leaves the Service without that port. containerPort
+// declarations are otherwise informational: a numeric target reaches the Pod
+// port whether or not a container declares it (images listen on undeclared
+// ports, or declare one under another protocol), so it is always treated as
+// declared. Whether anything listens there is for the reachability detector,
+// which dials the port.
 func portDeclared(p core.Pod, port core.ServicePort) bool {
-	number := port.TargetPort.IntVal
-	if port.TargetPort.Type == intstr.Int && number == 0 {
-		number = port.Port
+	if port.TargetPort.Type != intstr.String {
+		return true
 	}
 	containers := append([]core.Container(nil), p.Spec.Containers...)
 	for _, c := range p.Spec.InitContainers {
@@ -106,22 +108,14 @@ func portDeclared(p core.Pod, port core.ServicePort) bool {
 			containers = append(containers, c)
 		}
 	}
-	anyDeclared := false
 	for _, c := range containers {
 		for _, cp := range c.Ports {
-			anyDeclared = true
-			if protocol(cp.Protocol) != protocol(port.Protocol) {
-				continue
-			}
-			if port.TargetPort.Type == intstr.String && cp.Name == port.TargetPort.StrVal {
-				return true
-			}
-			if port.TargetPort.Type == intstr.Int && cp.ContainerPort == number {
+			if cp.Name == port.TargetPort.StrVal && protocol(cp.Protocol) == protocol(port.Protocol) {
 				return true
 			}
 		}
 	}
-	return port.TargetPort.Type == intstr.Int && !anyDeclared
+	return false
 }
 func (e *evaluation) wiring() {
 	ns := e.ctx.Namespace()

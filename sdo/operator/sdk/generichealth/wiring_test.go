@@ -47,7 +47,13 @@ func targetPortFindings(t *testing.T, s sdktest.Snapshot) int {
 	return n
 }
 
-func TestServiceTargetPortJudgesNumericTargetAgainstDeclaredContainerPorts(t *testing.T) {
+// containerPort declarations are informational in Kubernetes: a numeric
+// target reaches the Pod's port whether or not a container declares it (an
+// image may listen on undeclared ports, or declare a port under another
+// protocol). Only a named target depends on a declaration, because Kubernetes
+// resolves the name from the declared ports; a numeric target that nothing
+// listens on is the reachability detector's (it dials the port).
+func TestServiceTargetPortJudgesOnlyNamedTargets(t *testing.T) {
 	cases := []struct {
 		name   string
 		target intstr.IntOrString
@@ -55,12 +61,14 @@ func TestServiceTargetPortJudgesNumericTargetAgainstDeclaredContainerPorts(t *te
 		want   int
 	}{
 		{"numeric matches declared port", intstr.FromInt32(8080), []core.ContainerPort{{ContainerPort: 8080}}, 0},
-		{"numeric matches no declared port", intstr.FromInt32(9999), []core.ContainerPort{{ContainerPort: 8080}}, 1},
-		{"numeric matches port of other protocol", intstr.FromInt32(8080), []core.ContainerPort{{ContainerPort: 8080, Protocol: core.ProtocolUDP}}, 1},
+		{"numeric matches no declared port", intstr.FromInt32(9999), []core.ContainerPort{{ContainerPort: 8080}}, 0},
+		{"numeric matches port of other protocol", intstr.FromInt32(8080), []core.ContainerPort{{ContainerPort: 8080, Protocol: core.ProtocolUDP}}, 0},
 		{"unset target defaults to service port", intstr.IntOrString{}, []core.ContainerPort{{ContainerPort: 80}}, 0},
-		{"pod declares no ports, so the target is unknown", intstr.FromInt32(9999), nil, 0},
+		{"pod declares no ports", intstr.FromInt32(9999), nil, 0},
 		{"named matches declared port", intstr.FromString("web"), []core.ContainerPort{{Name: "web", ContainerPort: 8080}}, 0},
 		{"named matches no declared port", intstr.FromString("other"), []core.ContainerPort{{Name: "web", ContainerPort: 8080}}, 1},
+		{"named matches port of other protocol", intstr.FromString("web"), []core.ContainerPort{{Name: "web", ContainerPort: 8080, Protocol: core.ProtocolUDP}}, 1},
+		{"named target with no declared ports", intstr.FromString("web"), nil, 1},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
