@@ -493,9 +493,11 @@ func (n NativeIncidentBroker) processClosure(ctx context.Context, closure Incide
 		}
 
 		// The persisted decision prevents a restart from changing learning policy.
-		// A failed attempt's reflection is queued behind the acknowledgment so
-		// the incident's follow-up starts from the outcome commit at once.
-		if ledger.RequiresReflection && !ledger.ReflectionProcessed && ledger.OutcomeDocument.GetClassification() != outcomeclass.Success {
+		// Reflection is queued behind the acknowledgment, whatever the outcome:
+		// the controller handles one incident at a time, and a reflection run
+		// inside the closure held it pending for the agent's whole run, so a
+		// fault that started meanwhile went unanswered.
+		if ledger.RequiresReflection && !ledger.ReflectionProcessed {
 			if !ledger.ReflectionQueued {
 				ledger.ReflectionQueued = true
 				ledger.ReflectionQueuedAt = contractTimestamp(n.clock())
@@ -503,12 +505,6 @@ func (n NativeIncidentBroker) processClosure(ctx context.Context, closure Incide
 					return err
 				}
 			}
-		} else if ledger.RequiresReflection && !ledger.ReflectionProcessed {
-			if err := n.reflectLocked(ctx, ledger); err != nil {
-				return err
-			}
-			// Persist this marker together with its receipt below. A checkpoint
-			// declaring processing complete without a receipt cannot authorize ACK.
 		}
 		if ledger.OutcomeCommit == "" {
 			return errors.New("closure has no authoritative outcome commit")

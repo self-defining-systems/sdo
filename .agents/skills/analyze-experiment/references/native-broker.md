@@ -71,6 +71,7 @@ Absent fields mean `*_UNSPECIFIED`; old lowercase strings and undefined numbers
 are rejected. `runtime/internal/lifecycleio` persists generated messages.
 `BrokerLedger.reflection_phase` drives dispatch/result inspection/review/publication/
 reset/done; `reflection_results` retains completed decisions after rejection.
+Every reflection, success included, is queued behind the closure acknowledgment (`reflection_queued`), so the closure never waits for the reflection agent; before this, a success closure stayed `CLOSURE_STATE_PENDING` for the whole reflection run and the next fault waited.
 A queued reflection ends with one closure phase: `reflection_committed` only after the
 broker found `reflection_commit` on the accepted branch, `reflection_failed` for a failed
 decision,
