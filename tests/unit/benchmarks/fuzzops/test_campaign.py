@@ -479,3 +479,19 @@ def test_a_lane_whose_invalid_round_ran_without_churn_stays_in_the_churn_column(
     monkeypatch.setattr("benchmarks.fuzzops.table.grade", lambda fuzzops, out, records: [])
     by_column, _ = collect(campaign, tmp_path / "fuzzops")
     assert list(by_column) == ["v1abcdef0-E-churn"]
+
+
+def test_churn_on_the_faulted_workload_is_not_a_churn_finding() -> None:
+    rec = {
+        "fault": "puma-single-thread@config:deploy/gitlab-webservice-default/webservice/PUMA_THREADS_MAX",
+        "churn": {"events": [{"objects": ["pod/gitlab-webservice-default-7d9f-abc", "pod/gitlab-toolbox-x"]}]},
+    }
+    outcomes = [
+        {
+            "findings": [
+                _finding("workload-health", "gitlab-webservice-default-7d9f-abc"),
+                _finding("x", "gitlab-toolbox-x"),
+            ]
+        }
+    ]
+    assert churn_findings(outcomes, rec) == 1

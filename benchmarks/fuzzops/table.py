@@ -198,9 +198,14 @@ def churn_findings(outcomes: list[dict[str, Any]], rec: dict[str, Any]) -> int |
     events = (rec.get("churn") or {}).get("events")
     if rec.get("churn") is None:
         return None
-    touched = {str(x).split("/")[-1] for ev in events or [] for x in ev.get("objects") or []}
-    root = str(((rec.get("lifecycle") or {}).get("root_cause") or {}).get("component") or "").split("/")[-1]
-    touched.discard(root)
+    root = str(((rec.get("lifecycle") or {}).get("root_cause") or {}).get("component") or "")
+    faulted = fault_targets(str(rec.get("fault") or ""), root)
+    touched = {
+        name
+        for ev in events or []
+        for x in ev.get("objects") or []
+        if not any((name := str(x).split("/")[-1]) == t or name.startswith(t + "-") for t in faulted)
+    }
     seen = set()
     for o in outcomes:
         for f in o.get("findings") or []:
