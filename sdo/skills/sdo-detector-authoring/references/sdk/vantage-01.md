@@ -228,6 +228,9 @@ type Dial struct {
 	Class  string `json:"class,omitempty"`
 	Status string `json:"status,omitempty"`
 	Error  string `json:"error,omitempty"`
+	// HostCPUStall is the CPU stall of the node the dial ran on
+	// (traffic.LinkSample.HostCPUStall); zero when the kernel reports none.
+	HostCPUStall float64 `json:"host_cpu_stall,omitempty"`
 }
     Dial is one fresh connection of a TCPConnect or HTTPGet probe.
 
@@ -246,7 +249,4 @@ func Judge(reading, base Reading) []Judgement
     probe's healthy baseline reading, zero when there is none). Dialing kinds
     are judged by the link rules (ClientLinks), not here. A reading with an
     error shows nothing.
-
-type Kind string
-    Kind is one probe kind. Each has a fixed command and fixed facts.
 ```

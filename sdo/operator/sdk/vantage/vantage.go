@@ -238,6 +238,9 @@ type Dial struct {
 	Class  string `json:"class,omitempty"`
 	Status string `json:"status,omitempty"`
 	Error  string `json:"error,omitempty"`
+	// HostCPUStall is the CPU stall of the node the dial ran on
+	// (traffic.LinkSample.HostCPUStall); zero when the kernel reports none.
+	HostCPUStall float64 `json:"host_cpu_stall,omitempty"`
 }
 
 // Reading is one Pod's answer to a probe. Error means the probe gave no

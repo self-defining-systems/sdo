@@ -41,7 +41,7 @@ func ClientLinks(result Result, link traffic.Link) []traffic.LinkObservations {
 			observed.Qualified = observed.Qualified || dial.OK
 			observed.Samples = append(observed.Samples, traffic.LinkSample{
 				At: dial.At, Duration: dial.Duration, OK: dial.OK, Error: dial.Error,
-				Class: traffic.LinkFailureClass(dial.Class), Status: dial.Status,
+				Class: traffic.LinkFailureClass(dial.Class), Status: dial.Status, HostCPUStall: dial.HostCPUStall,
 			})
 		}
 		out = append(out, observed)
