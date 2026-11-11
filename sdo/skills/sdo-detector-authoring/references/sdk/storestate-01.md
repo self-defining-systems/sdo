@@ -222,4 +222,31 @@ func (c Change) Key() Key
     Key returns the changed item's identity.
 
 func (c Change) String() string
+
+type Config struct {
+	// Spec is the detector's spec; a v1 Pod watch is added when absent.
+	Spec sdk.DetectorSpec
+	// Component is the application-map component the store belongs to.
+	Component string
+	// Engine selects the adapter; it must have one (AdapterFor).
+	Engine Engine
+	// Target selects the store's Pods and container by role.
+	Target podread.Target
+	// Port is where the store listens in its container; 0 is the engine default.
+	Port int
+	// ReadInterval is the pod-read interval; 0 is podread.MinInterval.
+	ReadInterval time.Duration
+	// GapWithoutBaseline makes a store Pod the detector has no healthy
+	// baseline for a coverage gap instead of a finding or an error: a read
+	// that is unavailable, unparsable or refused clears, and
+	// ConfirmationReason says why the store is not observed. Go sets it on
+	// the readers it installs from the application map, which no designer
+	// checked against the store's image or credentials, so a store SDO cannot
+	// read never stalls deployment acceptance or an incident's recovery. Once
+	// the Pod was read healthy, the same reads are a refusal finding or a
+	// detector error as usual. Absolute facts of a readable store (write
+	// blocks, near-cap use) are judged either way.
+	GapWithoutBaseline bool
+}
+    Config declares one store component to watch.
 ```

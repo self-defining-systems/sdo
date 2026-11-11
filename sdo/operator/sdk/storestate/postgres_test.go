@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/storestate"
 )
 
@@ -248,18 +247,15 @@ func TestPostgresReadCommandIsBoundedAndReadOnly(t *testing.T) {
 }
 
 func TestPostgresDetectorReportsAReadOnlyDatabase(t *testing.T) {
-	baseline := parsePostgres(t, healthyPostgres)
-	baseline.Component = "orders-db"
-	baseline.Pod = sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "shop", Name: "cache-0"}
-	c := config(t, baseline)
+	c := config(t)
 	c.Component, c.Engine = "orders-db", storestate.EnginePostgres
 	d := detector(t, c)
-	findings, err := d.Detect(context.Background(), snapshot(t, d, reading(healthyPostgres)))
+	findings, err := d.Detect(context.Background(), promotedSnapshot(t, d, healthyPostgres, reading(healthyPostgres)))
 	if err != nil || len(findings) != 0 {
 		t.Fatalf("healthy: %+v, %v", findings, err)
 	}
 	readOnly := strings.Replace(healthyPostgres, "== roles", "exampledb\t*\tdefault_transaction_read_only\ton\n== roles", 1)
-	findings, err = d.Detect(context.Background(), snapshot(t, d, reading(readOnly)))
+	findings, err = d.Detect(context.Background(), promotedSnapshot(t, d, healthyPostgres, reading(readOnly)))
 	if err != nil {
 		t.Fatal(err)
 	}

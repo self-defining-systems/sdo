@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/storestate"
 )
 
@@ -14,13 +13,10 @@ import (
 // healthyPostgres against current and returns the rule IDs it reports.
 func postgresChurnFindings(t *testing.T, current string) map[string]int {
 	t.Helper()
-	baseline := parsePostgres(t, healthyPostgres)
-	baseline.Component = "db"
-	baseline.Pod = sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "shop", Name: "cache-0"}
-	c := config(t, baseline)
+	c := config(t)
 	c.Component, c.Engine = "db", storestate.EnginePostgres
 	d := detector(t, c)
-	findings, err := d.Detect(context.Background(), snapshot(t, d, reading(current)))
+	findings, err := d.Detect(context.Background(), promotedSnapshot(t, d, healthyPostgres, reading(current)))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -164,15 +164,12 @@ func TestConsulFacts(t *testing.T) {
 
 func storeDetector(t *testing.T, engine storestate.Engine, healthy string) (sdk.Detector, func(string) []sdk.Finding) {
 	t.Helper()
-	baseline := parseAs(t, engine, healthy)
-	baseline.Component = "cache"
-	baseline.Pod = sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "shop", Name: "cache-0"}
-	c := config(t, baseline)
+	c := config(t)
 	c.Engine = engine
 	d := detector(t, c)
 	return d, func(read string) []sdk.Finding {
 		t.Helper()
-		findings, err := d.Detect(context.Background(), snapshot(t, d, reading(read)))
+		findings, err := d.Detect(context.Background(), promotedSnapshot(t, d, healthy, reading(read)))
 		if err != nil {
 			t.Fatal(err)
 		}

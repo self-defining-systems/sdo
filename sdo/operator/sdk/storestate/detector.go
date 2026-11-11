@@ -58,12 +58,6 @@ type Config struct {
 	Port int
 	// ReadInterval is the pod-read interval; 0 is podread.MinInterval.
 	ReadInterval time.Duration
-	// Baselines are facts from a healthy moment, one per store Pod name, or a
-	// single baseline every Pod is compared with. Without them the detector
-	// compares with the controller's promoted healthy readings of its pod
-	// read (podread.Result.Baseline), and without those only absolute facts
-	// are judged: write blocks, refusals and near-cap use.
-	Baselines []Facts
 	// GapWithoutBaseline makes a store Pod the detector has no healthy
 	// baseline for a coverage gap instead of a finding or an error: a read
 	// that is unavailable, unparsable or refused clears, and
@@ -78,11 +72,10 @@ type Config struct {
 }
 
 type detector struct {
-	spec      sdk.DetectorSpec
-	config    Config
-	adapter   Adapter
-	query     podread.Query
-	baselines map[string]Facts
+	spec    sdk.DetectorSpec
+	config  Config
+	adapter Adapter
+	query   podread.Query
 }
 
 // NewDetector returns a deterministic detector of the store's facts. It
@@ -117,21 +110,11 @@ func NewDetector(c Config) (sdk.Detector, error) {
 	if err := query.Validate(); err != nil {
 		return nil, fmt.Errorf("store-state detector %s: %w", c.Spec.ID, err)
 	}
-	baselines := map[string]Facts{}
-	for _, b := range c.Baselines {
-		if err := validBaseline(c, b); err != nil {
-			return nil, fmt.Errorf("store-state detector %s: %w", c.Spec.ID, err)
-		}
-		if _, dup := baselines[b.Pod.Name]; dup {
-			return nil, fmt.Errorf("store-state detector %s: two baselines for Pod %q", c.Spec.ID, b.Pod.Name)
-		}
-		baselines[b.Pod.Name] = b
-	}
 	spec := c.Spec
 	if !slices.ContainsFunc(spec.Watches, func(w sdk.WatchKind) bool { return w.APIVersion == "v1" && w.Kind == "Pod" }) {
 		spec.Watches = append(slices.Clone(spec.Watches), sdk.WatchKind{APIVersion: "v1", Kind: "Pod"})
 	}
-	return detector{spec: spec, config: c, adapter: adapter, query: query, baselines: baselines}, nil
+	return detector{spec: spec, config: c, adapter: adapter, query: query}, nil
 }
 
 func validBaseline(c Config, b Facts) error {
@@ -167,9 +150,10 @@ func Observe(ctx sdk.DetectionContext, d sdk.Detector) ([]Facts, error) {
 	return facts, err
 }
 
-// observe parses the current readings and returns the baselines to compare
-// them with: the configured ones, or else the controller's promoted healthy
-// readings carried with the result.
+// observe parses the current readings and returns the controller's promoted
+// healthy readings carried with the result to compare them with. Without
+// those only absolute facts are judged: write blocks, refusals and near-cap
+// use.
 func (d detector) observe(ctx sdk.DetectionContext) ([]Facts, reference, error) {
 	result, err := podread.Require(ctx, d.query.ID)
 	if err != nil {
@@ -193,12 +177,8 @@ type reference struct {
 	history   map[string][]Facts
 }
 
-// reference returns the configured baselines (a history of one reading
-// each), or else the controller's promoted ones and their history.
+// reference returns the controller's promoted baselines and their history.
 func (d detector) reference(result podread.Result) reference {
-	if len(d.baselines) > 0 {
-		return reference{baselines: d.baselines}
-	}
 	return reference{baselines: promotedBaselines(d.adapter, d.config.Component, result), history: promotedHistory(d.adapter, d.config.Component, result)}
 }
 
