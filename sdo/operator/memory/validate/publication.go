@@ -180,7 +180,9 @@ func lifecycleChecks(ctx context.Context, r Request, paths []string, structurall
 					return nil, err
 				}
 				repairVerified := r.RepairVerified == nil || r.RepairVerified(outcome)
-				if r.Decision.GetLearningDecision() == "updated" && !repairVerified {
+				escalation, diagnoseOnlyUpdate := EscalationReflectionDiagnostics(r.Root, outcome, r.Decision, paths)
+				ds = append(ds, escalation...)
+				if r.Decision.GetLearningDecision() == "updated" && !repairVerified && !diagnoseOnlyUpdate {
 					ds = append(ds, Diagnostic{Rule: RuleReflectionRepairRequired, Message: "this closure has no independently verified repaired cause, so updated learning (README-only edits included) is never published", Hint: "return no_change with a no-recorded-repair reason or a typed SDK gap, and revert your edits"})
 				}
 				if structurallyValid {

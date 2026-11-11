@@ -12,6 +12,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	outcomeclass "sdo.dev/operator/contracts/outcome"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/worker_registry"
@@ -122,10 +123,17 @@ func (d KubernetesJobDispatcher) continueResponder(ctx context.Context, executor
 		noProgress := responderNoProgress(state.Feedback, verification, repairs)
 		deniedNoProgress := !verification.Healthy && verification.Error == "" && authorizationDeniedNoProgress(state.Feedback, verification, repairs)
 		observationOnly := len(verification.Findings) == 0 && (verification.Error == "" || len(verification.VerificationBlockers) > 0)
-		state.Done = verification.Healthy || exhausted || noProgress || deniedNoProgress || observationOnly
+		escalated := !verification.Healthy && responderEscalated(request, result)
+		state.Done = verification.Healthy || exhausted || noProgress || deniedNoProgress || observationOnly || escalated
 		if verification.Healthy {
 			result.Status = IncidentCompleted
 			result.FinalDetectorStates = verification.DetectorStates
+		} else if escalated {
+			// The responder localized a cause nothing in the namespace can fix,
+			// from the incident's opening evidence: another turn cannot restore
+			// health. Completing hands closure the escalation to record.
+			result.Status = IncidentCompleted
+			result.ResponseLoopExhausted, result.Error = false, ""
 		} else if deniedNoProgress {
 			result.Status = IncidentFailed
 			result.Error = "authorization_denied_no_progress"
@@ -235,6 +243,9 @@ func (d KubernetesJobDispatcher) ContinueAfterVerification(ctx context.Context, 
 		return false, nil
 	}
 	repairs := loop.continuationRepairs(result)
+	if !verification.Healthy && responderEscalated(request, result) {
+		return false, nil
+	}
 	switch state.Result.GetError() {
 	case "authorization_denied_no_progress":
 		return false, nil
@@ -618,4 +629,22 @@ func (c *Controller) driftRepromptRecord() *contracts.DriftReprompt {
 	}
 	defer loop.mu.Unlock()
 	return cloneDriftReprompt(loop.continuation.Result.GetDriftReprompt())
+}
+
+// responderEscalated reports whether the responder's accumulated result
+// confirms an out-of-reach cause from the incident's opening findings, by the
+// same rule closure uses to record an escalation (outcome.Escalation).
+func responderEscalated(request IncidentRequest, result IncidentResult) bool {
+	if len(result.ConfirmedRootCauses) == 0 {
+		return false
+	}
+	message, err := incidentResultContract(result)
+	if err != nil {
+		return false
+	}
+	opening, err := findingsContract(request.Findings)
+	if err != nil {
+		return false
+	}
+	return outcomeclass.Escalation(message.GetConfirmedRootCauses(), opening, message.GetRepairActions())
 }

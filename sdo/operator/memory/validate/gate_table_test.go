@@ -295,6 +295,42 @@ func gateTrafficEdit(name, content string) func(*testing.T, string) {
 	return gateWrite(".sdo/diagnostics/traffic/workloads/"+name+".yaml", content)
 }
 
+// gateEscalatedOutcome is a closure the responder escalated: health never
+// returned and it confirmed an out-of-reach cause; with stage set, the
+// automatic stage escalated it on an accepted playbook first.
+func gateEscalatedOutcome(stage bool) *contracts.OutcomeRecord {
+	o := &contracts.OutcomeRecord{Classification: "escalated"}
+	if stage {
+		o.PriorStages = []*contracts.StageReport{{Stage: "deterministic", Mitigations: []*contracts.StageMitigation{{PlaybookId: "base", Result: "escalated"}}}}
+	}
+	return o
+}
+
+// gateDiagnoseOnlyPlaybook adds a new playbook over an escalated closure: the
+// accepted targetport Diagnose under a new ID, with mitigate.go only when
+// withMitigate is set. The closure holds no verified repair.
+func gateDiagnoseOnlyPlaybook(name string, withMitigate bool, rules ...string) gateRow {
+	row := gateDuplicateRepair(name, func(diagnose, mitigate string) (string, string) {
+		return diagnose, strings.ReplaceAll(mitigate, "spec.ports[%d].targetPort", "spec.ports[%d].port")
+	}, rules...)
+	row.path = ""
+	prepare, edit := row.prepare, row.edit
+	row.prepare = func(t *testing.T, r string) {
+		prepare(t, r)
+		gateOutcome(gateEscalatedOutcome(false))(t, r)
+	}
+	row.edit = func(t *testing.T, r string) {
+		edit(t, r)
+		if !withMitigate {
+			if err := os.Remove(filepath.Join(r, ".sdo/playbooks/api-port-repair/mitigate.go")); err != nil {
+				t.Fatal(err)
+			}
+			generateIndex(t, r)
+		}
+	}
+	return gateWithRepairVerifier(name, false, row)
+}
+
 var gateRows = []gateRow{
 	// Good trees: each must pass, including the optional classes.
 	{name: "good tree", kind: gateStatic},
@@ -579,6 +615,12 @@ var gateRows = []gateRow{
 	gateWithRepairVerifier("README-only learning without a verified repaired cause", false, gateReflection("unverified closure updates a playbook", gateClean(), gateUpdated("base"), gatePlaybookEdit, RuleReflectionRepairRequired)),
 	gateWithRepairVerifier("no_change without a verified repaired cause", false, gateReflection("unverified closure declines", gateClean(), gateNoChange, func(*testing.T, string) {})),
 	gateWithRepairVerifier("README learning with a verified repaired cause", true, gateReflection("verified closure updates a playbook", gateClean(), gateUpdated("base"), gatePlaybookEdit)),
+	// An escalated closure grants one update, a Diagnose-only playbook, and asks
+	// for it unless an accepted playbook already escalated the fault.
+	gateWithRepairVerifier("escalated closure declines", false, gateReflection("escalated closure declines", gateEscalatedOutcome(false), gateNoChange, func(*testing.T, string) {}, RuleReflectionEscalationDiagnose)),
+	gateWithRepairVerifier("stage-escalated closure declines", false, gateReflection("stage-escalated closure declines", gateEscalatedOutcome(true), gateNoChange, func(*testing.T, string) {})),
+	gateDiagnoseOnlyPlaybook("escalated closure saves a Diagnose-only playbook", false),
+	gateDiagnoseOnlyPlaybook("escalated closure saves a repair", true, RuleReflectionRepairRequired),
 	gateReflection("applied playbook failed and was not updated", gateStaleOutcome(), gateNoChange, func(*testing.T, string) {}, RuleReflectionStalePlaybook),
 	// R6': without a verified repaired cause no update may publish, so the
 	// check must not also demand that the applied playbook change; the two

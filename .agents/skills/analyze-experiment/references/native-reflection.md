@@ -69,7 +69,7 @@ self-check does not judge it. A rejection feeds the normal correction loop, not 
 state even when no worker result was delivered. When no resumable session exists,
 the accepted outcome carries `reflection_skip_reason=no_session`; reflection
 never falls back to a fresh session. The ledger's skip decision also names
-`no_session`.
+`no_session`. An escalated closure the responder confirmed (no automatic-stage escalation) is the exception: its one publishable update is a Diagnose-only playbook carrying the out-of-reach verdict, and `no_change` there is flagged as `reflection.escalation-diagnose`.
 
 Shared `memory check` and broker publication validate every changed detector,
 program, script and library against the committed incident's verified cause
