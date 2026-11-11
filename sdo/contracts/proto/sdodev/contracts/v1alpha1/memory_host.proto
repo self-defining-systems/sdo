@@ -81,10 +81,9 @@ message MemoryObservation {
   map<string, google.protobuf.Struct> pod_reads = 11;
   // Frozen vantage probe readings by probe ID (vantage.Result).
   map<string, google.protobuf.Struct> vantage = 12;
-  // Frozen platform observation (sdk.PlatformObservation): Namespace
-  // metadata, LimitRanges, ResourceQuotas, Roles, RoleBindings, admission
-  // webhooks and the accepted source inventory. Absent means unobserved.
-  google.protobuf.Struct platform = 13;
+  // The platform observation (sdk.Platform) was deleted unused.
+  reserved 13;
+  reserved "platform";
 }
 message EvaluateRequest {
   repeated string detector_ids = 1;

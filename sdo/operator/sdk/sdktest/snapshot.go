@@ -72,8 +72,6 @@ type Snapshot struct {
 	PodReads map[string]podread.Result `json:"pod_reads,omitempty"`
 	// Vantage holds frozen vantage probe readings by probe ID.
 	Vantage map[string]vantage.Result `json:"vantage,omitempty"`
-	// Platform holds the frozen platform observation.
-	Platform *sdk.PlatformObservation `json:"platform,omitempty"`
 	// Alerts holds the frozen alerts of the evaluation cycle.
 	Alerts *metrics.AlertsResult `json:"alerts,omitempty"`
 	// ApplicationMap is a synthetic accepted application map; nil replays the
@@ -428,14 +426,6 @@ func (s Snapshot) VantageResult(id string) (vantage.Result, bool) {
 
 // VantageResults implements vantage.ResultSet: the recorded results.
 func (s Snapshot) VantageResults() map[string]vantage.Result { return maps.Clone(s.Vantage) }
-
-// PlatformObservation implements sdk.PlatformSource.
-func (s Snapshot) PlatformObservation() (sdk.PlatformObservation, bool) {
-	if s.Platform == nil {
-		return sdk.PlatformObservation{}, false
-	}
-	return *s.Platform, true
-}
 
 func (s Snapshot) QueryMetrics(q metrics.Query) metrics.Result {
 	if err := q.Validate(); err != nil {

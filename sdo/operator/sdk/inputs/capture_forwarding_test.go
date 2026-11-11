@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -29,8 +28,7 @@ func TestCaptureThroughAnEmbeddingReadViewKeepsEveryObservation(t *testing.T) {
 		Metrics:      map[string]metrics.Result{"p99": {Error: "synthetic"}},
 		Alerts:       &metrics.AlertsResult{Error: "synthetic"},
 		Reachability: &servicehealth.ReachabilityWindow{ObservedAt: now, Failures: 3},
-		Vantage:      map[string]vantage.Result{"limits": {Error: "synthetic"}},
-		Platform:     &sdk.PlatformObservation{ObservedAt: now, Errors: map[string]string{sdk.PlatformRoles: "synthetic"}}}
+		Vantage:      map[string]vantage.Result{"limits": {Error: "synthetic"}}}
 	want, err := sdktest.CaptureSnapshot(source, "app")
 	if err != nil {
 		t.Fatal(err)
@@ -39,7 +37,7 @@ func TestCaptureThroughAnEmbeddingReadViewKeepsEveryObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{"Traffic", "Metrics", "Alerts", "Reachability", "ObservedAtTime", "Vantage", "Platform"} {
+	for _, field := range []string{"Traffic", "Metrics", "Alerts", "Reachability", "ObservedAtTime", "Vantage"} {
 		if g, w := reflect.ValueOf(got).FieldByName(field).Interface(), reflect.ValueOf(want).FieldByName(field).Interface(); !reflect.DeepEqual(g, w) {
 			t.Errorf("%s through an embedding read view = %v, want %v", field, g, w)
 		}

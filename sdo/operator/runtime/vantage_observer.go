@@ -440,9 +440,8 @@ func samePeer(a, b *vantage.Peer) bool {
 	return a == nil && b == nil || a != nil && b != nil && *a == *b
 }
 
-// promoteObservationBaselines feeds each complete evaluation to the vantage
-// and platform baselines, whose own settle decides promotion.
+// promoteObservationBaselines feeds each complete evaluation to the client
+// dial baseline, whose own settle decides promotion.
 func (c *Controller) promoteObservationBaselines(now time.Time, snapshot sdk.DetectionContext, healthy bool) {
 	c.VantageBaseline.observe(now.UTC(), healthy, snapshot)
-	c.Platform.observe(now.UTC(), healthy, snapshot)
 }

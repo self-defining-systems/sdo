@@ -42,7 +42,6 @@ type Sources interface {
 	sdk.ScopedObservationSource
 	vantage.Source
 	vantage.ResultSet
-	sdk.PlatformSource
 }
 
 // Carrier adds all optional inputs to the Kubernetes view. Its updates return a
@@ -65,7 +64,6 @@ type Carrier struct {
 	scoped       sdk.ScopedObservationSource
 	admission    *sdk.PodAdmissionResult
 	vantage      vantage.Source
-	platform     sdk.PlatformSource
 }
 
 // New adopts existing optional inputs once, or copies an existing carrier.
@@ -90,7 +88,6 @@ func New(base sdk.DetectionContext) Carrier {
 	c.capture, _ = base.(sdk.ObjectCaptureSource)
 	c.scoped, _ = base.(sdk.ScopedObservationSource)
 	c.vantage, _ = base.(vantage.Source)
-	c.platform, _ = base.(sdk.PlatformSource)
 	return c
 }
 
@@ -264,13 +261,6 @@ func (c Carrier) VantageResults() map[string]vantage.Result {
 		return set.VantageResults()
 	}
 	return nil
-}
-func (c Carrier) WithPlatform(source sdk.PlatformSource) Carrier { c.platform = source; return c }
-func (c Carrier) PlatformObservation() (sdk.PlatformObservation, bool) {
-	if c.platform == nil {
-		return sdk.PlatformObservation{}, false
-	}
-	return c.platform.PlatformObservation()
 }
 
 var _ Sources = Carrier{}

@@ -123,7 +123,6 @@ func (d *remoteDetector) MetricQueries() []metrics.Query        { return d.Metri
 func (d *remoteDetector) LogQueries() []logs.Query              { return d.Logs }
 func (d *remoteDetector) PodReads() []podread.Query             { return d.Registration.PodReads }
 func (d *remoteDetector) VantageProbes() []vantage.Probe        { return d.Registration.Vantage }
-func (d *remoteDetector) ConsumesPlatform() bool                { return d.Registration.Platform }
 func (d *remoteDetector) ConsumesUsage() bool                   { return d.UsesUsage }
 func (d *remoteDetector) UsageRequirements() usage.Requirements { return d.Usage }
 func (d *remoteDetector) ConsumesServiceReachability() bool     { return d.Reachability }
@@ -279,11 +278,6 @@ func (r *RemoteMemory) buildObservation(view sdk.DetectionContext) (*pb.MemoryOb
 	}
 	if v, ok := source.PodAdmission(); ok {
 		if out.PodAdmission, err = wireStruct(v); err != nil {
-			return nil, err
-		}
-	}
-	if v, ok := source.PlatformObservation(); ok {
-		if out.Platform, err = wireStruct(v); err != nil {
 			return nil, err
 		}
 	}

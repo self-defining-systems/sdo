@@ -8,24 +8,6 @@ package sdk // import "sdo.dev/operator/sdk"
 
 CONSTANTS
 
-const (
-	PlatformNamespace         = "namespace"
-	PlatformLimitRanges       = "limit_ranges"
-	PlatformResourceQuotas    = "resource_quotas"
-	PlatformRoles             = "roles"
-	PlatformRoleBindings      = "role_bindings"
-	PlatformAdmissionWebhooks = "admission_webhooks"
-	PlatformSourceInventory   = "source_inventory"
-)
-    Platform observation parts, the keys of PlatformObservation.Errors.
-
-const (
-	PlatformAdded    = "added"
-	PlatformRemoved  = "removed"
-	PlatformModified = "modified"
-)
-    Platform change kinds.
-
 const DefaultWebhookTimeoutSeconds = 10
     DefaultWebhookTimeoutSeconds is the API server's timeout for a webhook entry
     that declares none.
@@ -63,10 +45,6 @@ func ClearingHorizon(detector Detector, view DetectionContext) time.Duration
     ClearingHorizon is how long after a condition resolves a fresh evaluation
     of the detector may still report it: its rolling window plus the evaluations
     its clearing policy needs at its own cadence.
-
-func ConsumesPlatform(detectors []Detector) bool
-    ConsumesPlatform reports whether any detector reads the platform
-    observation.
 
 func ConsumesPodAdmission(detectors []Detector) bool
     ConsumesPodAdmission enables the bounded API observation only for bundles
@@ -233,4 +211,25 @@ type ConfigMapReference struct {
 }
     ConfigMapReference describes a ConfigMap consumed by a Deployment pod
     template. Optional references do not make an absent ConfigMap a fault.
+
+func ConfigMapReferencesForDeployment(deployment appsv1.Deployment) []ConfigMapReference
+    ConfigMapReferencesForDeployment returns the distinct ConfigMaps referenced
+    by a Deployment's volumes and container environment. Results are sorted by
+    name so detector output does not depend on manifest field ordering. If the
+    same ConfigMap is referenced as both optional and required, the required
+    reference wins.
+
+type ContainerChange struct {
+	Kind ContainerKind
+	Name string
+	// Added is a live container accepted source does not have; Removed the reverse.
+	Added   bool
+	Removed bool
+	// Fields are the container fields accepted source declares whose live
+	// values differ, such as "image" or "command". Undeclared live fields
+	// (server defaults) never appear.
+	Fields []string
+}
+    ContainerChange is one pod-template container that differs from accepted
+    source, matched by kind and name.
 ```

@@ -24,7 +24,6 @@ type Registration struct {
 	Logs         []logs.Query
 	PodReads     []podread.Query
 	Vantage      []vantage.Probe
-	Platform     bool
 	Usage        usage.Requirements
 	UsesUsage    bool
 	Reachability bool
@@ -49,9 +48,6 @@ func registration(d sdk.Detector) Registration {
 	}
 	if c, ok := d.(vantage.Consumer); ok {
 		r.Vantage = c.VantageProbes()
-	}
-	if c, ok := d.(sdk.PlatformConsumer); ok {
-		r.Platform = c.ConsumesPlatform()
 	}
 	if c, ok := d.(usage.Consumer); ok {
 		r.Usage = c.UsageRequirements()

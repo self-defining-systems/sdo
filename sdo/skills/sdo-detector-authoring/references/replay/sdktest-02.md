@@ -159,8 +159,6 @@ type Snapshot struct {
 	PodReads map[string]podread.Result `json:"pod_reads,omitempty"`
 	// Vantage holds frozen vantage probe readings by probe ID.
 	Vantage map[string]vantage.Result `json:"vantage,omitempty"`
-	// Platform holds the frozen platform observation.
-	Platform *sdk.PlatformObservation `json:"platform,omitempty"`
 	// Alerts holds the frozen alerts of the evaluation cycle.
 	Alerts *metrics.AlertsResult `json:"alerts,omitempty"`
 	// ApplicationMap is a synthetic accepted application map; nil replays the
@@ -220,4 +218,6 @@ func (s Snapshot) HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutosc
 func (s Snapshot) Ingresses() []networkingv1.Ingress
 
 func (s Snapshot) Jobs() []batchv1.Job
+
+func (s Snapshot) KubernetesRead(q program.KubernetesRequest) (json.RawMessage, error)
 ```
