@@ -14,7 +14,7 @@ import (
 // a rotated credential reaches the probes within it.
 const CredentialTTL = 30 * time.Second
 
-// SecretCredentials is the prober's traffic.CredentialSource: it reads one key
+// SecretCredentials is the prober's traffic.CredentialReader: it reads one key
 // of a Secret in the application namespace, the way the kubelet resolves a
 // Pod's secretKeyRef. Only the memory host's prober holds the value, in
 // memory; it is never logged, persisted or returned over the host socket.
@@ -33,7 +33,7 @@ type cachedCredential struct {
 	at    time.Time
 }
 
-// Value implements traffic.CredentialSource.
+// Value implements traffic.CredentialReader.
 func (s *SecretCredentials) Value(ctx context.Context, secret, key string) (string, error) {
 	now := time.Now
 	if s.Now != nil {

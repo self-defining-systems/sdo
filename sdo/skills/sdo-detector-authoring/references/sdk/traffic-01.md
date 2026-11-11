@@ -59,7 +59,7 @@ type Clock interface{ ... }
     var RealClock Clock = realClock{}
 type Consumer interface{ ... }
 type Credential struct{ ... }
-type CredentialSource interface{ ... }
+type CredentialReader interface{ ... }
 type Descriptor struct{ ... }
 type Doer interface{ ... }
 type Duration time.Duration

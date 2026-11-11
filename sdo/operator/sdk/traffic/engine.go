@@ -93,12 +93,12 @@ type Engine struct {
 	// ShareSetup use one record.
 	setups *setupRecord
 	// credentials reads the Secret keys scenarios declare; nil reads none.
-	credentials CredentialSource
+	credentials CredentialReader
 }
 
 // UseCredentials lets scenarios that declare Credentials read them from
 // source at run time.
-func (e *Engine) UseCredentials(source CredentialSource) { e.credentials = source }
+func (e *Engine) UseCredentials(source CredentialReader) { e.credentials = source }
 
 // setupRecord holds, per scenario whose setup steps succeeded, the State
 // they saved.

@@ -53,7 +53,7 @@ type Config struct {
 	HostCPUStall func() (float64, bool)
 	// Credentials reads the Secret keys scenarios declare; nil reads none,
 	// and such scenarios record invalid samples.
-	Credentials traffic.CredentialSource
+	Credentials traffic.CredentialReader
 }
 
 // NewHTTPClient is the prober's default client: no keep-alives, so every

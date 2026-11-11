@@ -21,8 +21,8 @@ type Credential struct {
 	As     string `json:"as"`
 }
 
-// CredentialSource reads one key of a Secret in the application namespace.
-type CredentialSource interface {
+// CredentialReader reads one key of a Secret in the application namespace.
+type CredentialReader interface {
 	Value(ctx context.Context, secret, key string) (string, error)
 }
 

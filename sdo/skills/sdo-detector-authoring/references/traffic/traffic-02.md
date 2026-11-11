@@ -69,10 +69,10 @@ type Credential struct {
     path, query, form or JSON body, or with WithBasicAuth. Operational memory
     and agents hold the reference, never the value, and no sample carries it.
 
-type CredentialSource interface {
+type CredentialReader interface {
 	Value(ctx context.Context, secret, key string) (string, error)
 }
-    CredentialSource reads one key of a Secret in the application namespace.
+    CredentialReader reads one key of a Secret in the application namespace.
 
 type Descriptor struct {
 	ID          string       `json:"id"`
@@ -161,7 +161,7 @@ func (e *Engine) ShareSetup(source *Engine)
     was lost afterwards then fails every engine instead of being written again.
     Both engines must run the same catalog.
 
-func (e *Engine) UseCredentials(source CredentialSource)
+func (e *Engine) UseCredentials(source CredentialReader)
     UseCredentials lets scenarios that declare Credentials read them from source
     at run time.
 
