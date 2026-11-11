@@ -26,6 +26,9 @@ func ActionProto(action program.Action) (*contracts.Action, error) {
 	if wire, ok := dataActionProto(action); ok {
 		return wire, nil
 	}
+	if wire, ok, err := contractActionProto(action); ok {
+		return wire, err
+	}
 	if IsGeneralAction(action) {
 		if _, legacyDelete := GeneralAction(action).(program.DeleteObject); !legacyDelete {
 			return generalActionProto(action)
@@ -140,6 +143,15 @@ func ActionState(action *contracts.Action) program.Action {
 	if store := dataActionState(action); store != nil {
 		if (program.Plan{Actions: []program.Action{store}}).Validate() == nil {
 			return store
+		}
+		return nil
+	}
+	if decoded := contractActionState(action); decoded != nil {
+		if _, escalation := decoded.(program.Escalate); escalation {
+			return decoded
+		}
+		if (program.Plan{Actions: []program.Action{decoded}}).Validate() == nil {
+			return decoded
 		}
 		return nil
 	}
@@ -317,7 +329,7 @@ func classifyEffect(action *contracts.Action) (nonObject, known bool) {
 		*contracts.Action_DeletePod, *contracts.Action_ScaleWorkload, *contracts.Action_RemoveServicePort,
 		*contracts.Action_PatchObject, *contracts.Action_ApplyObject, *contracts.Action_KubernetesRequest,
 		*contracts.Action_WaitFor, *contracts.Action_SyncWebhookCa, *contracts.Action_RetireOldRevision,
-		*contracts.Action_RetryAdmission:
+		*contracts.Action_RetryAdmission, *contracts.Action_Escalate, *contracts.Action_ProposeSourceChange:
 		return false, true
 	}
 	return true, false

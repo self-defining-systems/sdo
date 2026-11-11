@@ -16,14 +16,15 @@ import (
 	"sdo.dev/operator/sdk"
 )
 
-// KubernetesPlanRollouts waits for touched Deployments to finish rolling out.
+// KubernetesPlanRollouts waits for touched Deployments, StatefulSets and
+// DaemonSets to finish rolling out.
 type KubernetesPlanRollouts struct {
 	// Clock controls rollout polling; nil uses production timers.
 	Clock  kclock.WithTicker
 	Client kubernetes.Interface
 }
 
-// Observe checks touched Deployments once. Pending never consumes a rollout wait.
+// Observe checks touched workloads once. Pending never consumes a rollout wait.
 func (w KubernetesPlanRollouts) Observe(ctx context.Context, refs []sdk.ObjectRef) error {
 	if w.Client == nil {
 		return errors.New("Kubernetes rollout client is required")
@@ -32,18 +33,11 @@ func (w KubernetesPlanRollouts) Observe(ctx context.Context, refs []sdk.ObjectRe
 	var blockers []*contracts.RolloutBlocker
 	stalled := 0
 	for _, ref := range refs {
-		if ref.Kind != "Deployment" || ref.APIVersion != "apps/v1" {
-			continue
-		}
-		object, err := w.Client.AppsV1().Deployments(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+		blocker, stuck, err := w.rolloutState(ctx, ref, started)
 		if err != nil {
-			return fmt.Errorf("observe rollout %s/%s: %w", ref.Namespace, ref.Name, err)
+			return err
 		}
-		if !deployment.DeploymentRolloutComplete(object) {
-			blocker, stuck, admission := w.rolloutBlocker(ctx, object, started)
-			if admission != nil {
-				return admission
-			}
+		if blocker != nil {
 			blockers = append(blockers, blocker)
 			if stuck {
 				stalled++
@@ -67,7 +61,7 @@ const rolloutStallGrace = 2 * time.Second
 // the rollout failed or that its writes should be undone.
 var errRolloutStalled = errors.New("rollout cannot progress without another actor")
 
-// Wait settles each Deployment on its own: it returns once every one has
+// Wait settles each workload on its own: it returns once every one has
 // completed or stalled, so a stalled rollout never spends the bounded wait.
 func (w KubernetesPlanRollouts) Wait(ctx context.Context, refs []sdk.ObjectRef) error {
 	if w.Client == nil {
@@ -80,20 +74,13 @@ func (w KubernetesPlanRollouts) Wait(ctx context.Context, refs []sdk.ObjectRef) 
 	for {
 		var blockers, stalled []*contracts.RolloutBlocker
 		for _, ref := range refs {
-			if ref.Kind != "Deployment" || ref.APIVersion != "apps/v1" {
-				continue
-			}
-			deploymentObject, err := w.Client.AppsV1().Deployments(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+			blocker, stuck, err := w.rolloutState(ctx, ref, started)
 			if err != nil {
-				return fmt.Errorf("observe rollout %s/%s: %w", ref.Namespace, ref.Name, err)
+				return err
 			}
-			if deployment.DeploymentRolloutComplete(deploymentObject) {
+			if blocker == nil {
 				delete(stalledSince, ref)
 				continue
-			}
-			blocker, stuck, admission := w.rolloutBlocker(ctx, deploymentObject, started)
-			if admission != nil {
-				return admission
 			}
 			blockers = append(blockers, blocker)
 			if !stuck {
@@ -119,4 +106,52 @@ func (w KubernetesPlanRollouts) Wait(ctx context.Context, refs []sdk.ObjectRef) 
 		case <-ticker.C():
 		}
 	}
+}
+
+// rolloutState reads one touched object. A nil blocker means it is not a
+// workload with a rollout or its rollout is complete. Only a Deployment's
+// ReplicaSet and Pod join can prove a stall; a StatefulSet or DaemonSet
+// rollout is reported pending until it completes or the budget ends.
+func (w KubernetesPlanRollouts) rolloutState(ctx context.Context, ref sdk.ObjectRef, started time.Time) (*contracts.RolloutBlocker, bool, error) {
+	if ref.APIVersion != "apps/v1" {
+		return nil, false, nil
+	}
+	switch ref.Kind {
+	case "Deployment":
+		object, err := w.Client.AppsV1().Deployments(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+		if err != nil {
+			return nil, false, fmt.Errorf("observe rollout %s/%s: %w", ref.Namespace, ref.Name, err)
+		}
+		if deployment.DeploymentRolloutComplete(object) {
+			return nil, false, nil
+		}
+		blocker, stuck, admission := w.rolloutBlocker(ctx, object, started)
+		if admission != nil {
+			return nil, false, admission
+		}
+		return blocker, stuck, nil
+	case "StatefulSet":
+		object, err := w.Client.AppsV1().StatefulSets(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+		if err != nil {
+			return nil, false, fmt.Errorf("observe rollout %s/%s: %w", ref.Namespace, ref.Name, err)
+		}
+		if deployment.StatefulSetRolloutComplete(object) {
+			return nil, false, nil
+		}
+		desired := int32(1)
+		if object.Spec.Replicas != nil {
+			desired = *object.Spec.Replicas
+		}
+		return &contracts.RolloutBlocker{Ref: planRefProto(ref), Reason: fmt.Sprintf("%d/%d updated, %d ready; revision %s of %s; observed generation %d/%d", object.Status.UpdatedReplicas, desired, object.Status.ReadyReplicas, object.Status.CurrentRevision, object.Status.UpdateRevision, object.Status.ObservedGeneration, object.Generation)}, false, nil
+	case "DaemonSet":
+		object, err := w.Client.AppsV1().DaemonSets(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+		if err != nil {
+			return nil, false, fmt.Errorf("observe rollout %s/%s: %w", ref.Namespace, ref.Name, err)
+		}
+		if deployment.DaemonSetRolloutComplete(object) {
+			return nil, false, nil
+		}
+		return &contracts.RolloutBlocker{Ref: planRefProto(ref), Reason: fmt.Sprintf("%d/%d scheduled nodes updated, %d available; observed generation %d/%d", object.Status.UpdatedNumberScheduled, object.Status.DesiredNumberScheduled, object.Status.NumberAvailable, object.Status.ObservedGeneration, object.Generation)}, false, nil
+	}
+	return nil, false, nil
 }

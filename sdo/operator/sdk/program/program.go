@@ -16,22 +16,24 @@ import (
 	"time"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/datacheck"
 	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/metrics"
 )
 
 type Kind string
 
-// ProgramSpec names a playbook program (its directory ID) and declares the
-// roles and values a finding or the responder binds; Diagnose and Mitigate
-// must return identical specs.
+// ProgramSpec names a playbook program (its directory ID) and its roles.
+// It declares the roles and values a finding or the responder binds; Diagnose
+// and Mitigate must return identical specs.
 type ProgramSpec struct {
 	ID     string
 	Params []ParamSpec
 }
 
-// ParamSpec declares roles bound by triggering detector findings. Diagnose reads
-// additional objects through ReadView by name or relation, never role enumeration.
+// ParamSpec declares one role or value a triggering finding binds.
+// Diagnose reads additional objects through ReadView by name or relation,
+// never role enumeration.
 type ParamSpec struct {
 	Name     string
 	Kind     Kind
@@ -143,7 +145,8 @@ type ReadView interface {
 	inputs.Sources
 	// WebhookCAMatchesSecret reports whether one webhook's caBundle equals a Secret key without exposing either value.
 	WebhookCAMatchesSecret(WebhookCA) (bool, error)
-	// AdmissionWebhooksFor lists the webhook entries that admit Pod creation for a Namespace or workload; cluster webhook names need no observation grant.
+	// AdmissionWebhooksFor lists the webhooks admitting Pods for a Namespace or workload.
+	// Cluster webhook names need no observation grant.
 	AdmissionWebhooksFor(subject sdk.ObjectRef) ([]AdmissionWebhook, error)
 	sdk.ObjectReader
 	sdk.DetectionContext
@@ -156,6 +159,11 @@ type ReadView interface {
 	metrics.AlertSource
 	metrics.QuerySource
 	traffic.Source
+	// AppMap is the accepted application map.
+	AppMap() (AppMap, error)
+	// DataChecks are the accepted data-check files by ID; datacheck.Verdicts
+	// re-judges them over this view's frozen reads.
+	datacheck.Accepted
 	servicehealth.ReachabilitySource
 	Logs(pod sdk.ObjectRef, container string, since time.Duration) (string, error)
 	// LogsWithOptions reads bounded container logs; Previous selects the last terminated instance.
@@ -210,13 +218,25 @@ type Evidence struct {
 }
 
 // Verdict is what Diagnose returns; NeedsJudgement requires a Question.
+// CauseClass and Reach state the diagnosed cause in the responder's closed
+// vocabulary (CauseClasses, ReachInScope or ReachOutOfReach); a Match whose
+// Reach is out-of-reach lets the automatic stage escalate the incident instead
+// of repairing it (see Escalate).
 type Verdict struct {
-	Result   Result     `json:"result"`
-	Evidence []Evidence `json:"evidence,omitempty"`
-	Question string     `json:"question,omitempty"`
+	Result     Result     `json:"result"`
+	Evidence   []Evidence `json:"evidence,omitempty"`
+	Question   string     `json:"question,omitempty"`
+	CauseClass string     `json:"cause_class,omitempty"`
+	Reach      string     `json:"reach,omitempty"`
 }
 
 func (v Verdict) Validate() error {
+	if err := validateCause(v.CauseClass, v.Reach); err != nil {
+		return err
+	}
+	if v.Reach != "" && v.Result != Match {
+		return fmt.Errorf("reach states a matched cause; a %s verdict has none", v.Result)
+	}
 	switch v.Result {
 	case Match, NoMatch, Unknown:
 		if v.Question != "" {
@@ -265,8 +285,8 @@ type Rollback struct {
 
 func (Rollback) action() {}
 
-// SetField writes one schema-checked field (or one ConfigMap JSON/YAML entry)
-// from a Value. The Value is accepted source, an observation or a declared parameter.
+// SetField writes one schema-checked field or ConfigMap JSON/YAML entry.
+// The Value is accepted source, an observation or a declared parameter.
 type SetField struct {
 	Ref    sdk.ObjectRef
 	Path   string
@@ -308,8 +328,23 @@ type Exec struct {
 
 func (Exec) action() {}
 
-// RestartRollout restarts a Deployment's Pods like kubectl rollout restart;
-// Ref must be an apps/v1 Deployment.
+// Escalate closes the incident as escalated, without a repair.
+// The program's Diagnose matched an out-of-reach cause (Verdict.Reach ReachOutOfReach) the
+// application namespace cannot fix, such as a node, the network fabric, an
+// external dependency or cluster policy. It writes nothing. It must be the only
+// action of its plan. Resources name the out-of-reach objects the verdict's
+// evidence observed; the controller records them as the confirmed cause.
+type Escalate struct {
+	Reason    string
+	Resources []sdk.ObjectRef
+}
+
+func (Escalate) action() {}
+
+// RestartRollout restarts a workload's Pods like kubectl rollout restart.
+// It stamps the Pod template's kubectl.kubernetes.io/restartedAt annotation, and
+// the workload's own update strategy replaces the Pods. Ref must be one named
+// apps/v1 Deployment, StatefulSet or DaemonSet.
 type RestartRollout struct {
 	Ref    sdk.ObjectRef
 	Reason string
@@ -326,6 +361,12 @@ type Plan struct {
 
 func (p Plan) Validate() error {
 	if err := validateAtomicWrites(p); err != nil {
+		return err
+	}
+	if err := validateEscalation(p); err != nil {
+		return err
+	}
+	if err := validateSourceChanges(p); err != nil {
 		return err
 	}
 	for _, action := range p.Actions {
@@ -349,6 +390,11 @@ func (p Plan) Validate() error {
 		}
 		if err := validateObjectAction(action); err != nil {
 			return err
+		}
+		if change, ok := SourceChangeAction(action); ok {
+			if err := change.Validate(); err != nil {
+				return err
+			}
 		}
 		if action == nil {
 			return fmt.Errorf("nil action")

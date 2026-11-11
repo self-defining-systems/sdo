@@ -76,6 +76,12 @@ type Snapshot struct {
 	Platform *sdk.PlatformObservation `json:"platform,omitempty"`
 	// Alerts holds the frozen alerts of the evaluation cycle.
 	Alerts *metrics.AlertsResult `json:"alerts,omitempty"`
+	// ApplicationMap is a synthetic accepted application map; nil replays the
+	// recorded AppMap read.
+	ApplicationMap *program.AppMap `json:"application_map,omitempty"`
+	// AcceptedDataChecks are synthetic accepted data-check files by ID; nil
+	// replays the recorded DataChecks read.
+	AcceptedDataChecks map[string]string `json:"accepted_data_checks,omitempty"`
 	// Readings are the runtime observations made on this exact snapshot.
 	Readings     []PrimitiveCall                   `json:"readings,omitempty"`
 	Reachability *servicehealth.ReachabilityWindow `json:"reachability,omitempty"`

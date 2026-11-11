@@ -39,6 +39,9 @@ type PlanActionReport struct {
 	StoreRestore *program.StoreRestoreEffect `json:"store_restore,omitempty"`
 	// StoreCredential is a CheckStoreCredential's value-free result.
 	StoreCredential *program.StoreCredentialEffect `json:"store_credential,omitempty"`
+	// SourceChange is a ProposeSourceChange's resolved proposal; nothing was
+	// written.
+	SourceChange *program.SourceChangeProposal `json:"source_change,omitempty"`
 	JobStatus      json.RawMessage           `json:"job_status,omitempty"`
 	RecordingError string                    `json:"recording_error,omitempty"`
 }

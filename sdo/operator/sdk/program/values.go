@@ -272,6 +272,17 @@ func BindPlanValues(plan Plan, in ValueInputs) Plan {
 		case SetField:
 			a.Value = bind(a.Value)
 			out.Actions[i] = a
+		case ProposeSourceChange:
+			a.Value = bind(a.Value)
+			out.Actions[i] = a
+		case *ProposeSourceChange:
+			if a != nil {
+				bound := *a
+				bound.Value = bind(bound.Value)
+				out.Actions[i] = bound
+			} else {
+				out.Actions[i] = action
+			}
 		case ScaleWorkload:
 			a.Replicas = bind(a.Replicas)
 			out.Actions[i] = a

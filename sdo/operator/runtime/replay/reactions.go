@@ -113,7 +113,7 @@ func workloadRef(action program.Action) (sdk.ObjectRef, bool) {
 			return workloadRef(*a)
 		}
 	}
-	return ref, ref.APIVersion == "apps/v1" && (ref.Kind == "Deployment" || ref.Kind == "StatefulSet")
+	return ref, ref.APIVersion == "apps/v1" && (ref.Kind == "Deployment" || ref.Kind == "StatefulSet" || ref.Kind == "DaemonSet")
 }
 func concrete(a program.Action) program.Action {
 	switch v := a.(type) {

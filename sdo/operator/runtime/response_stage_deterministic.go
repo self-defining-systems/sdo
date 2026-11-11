@@ -327,13 +327,9 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			}
 			continue
 		}
-		_, ok := loop.Programs.Mitigator(match.PlaybookId)
-		if !ok {
-			if err := skip("no_mitigation"); err != nil {
-				return report, err
-			}
-			continue
-		}
+		// A Diagnose-only playbook still runs: an out-of-reach diagnosis
+		// escalates without a mitigation.
+		mitigator, canMitigate := loop.Programs.Mitigator(match.PlaybookId)
 		diagnoser, ok := loop.Programs.Diagnoser(match.PlaybookId)
 		if !ok {
 			if err := skip("diagnose_unavailable"); err != nil {
@@ -371,6 +367,20 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		}
 		if len(match.targets) == 0 {
 			if err := skip("unexplained_coverage"); err != nil {
+				return report, err
+			}
+			continue
+		}
+		if escalation, ok := stageEscalation(ctx, mitigator, canMitigate, view, bindings, before, loop.deadline()); ok {
+			escalateStageAttempt(state, attempt, match, bindings, before, escalation)
+			progressed = true
+			if err := save(false); err != nil {
+				return report, err
+			}
+			continue
+		}
+		if !canMitigate {
+			if err := skip("no_mitigation"); err != nil {
 				return report, err
 			}
 			continue

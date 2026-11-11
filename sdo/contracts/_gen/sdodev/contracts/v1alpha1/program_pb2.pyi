@@ -90,7 +90,7 @@ class Binding(_message.Message):
     def __init__(self, name: _Optional[str] = ..., object: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., value: _Optional[_Union[_struct_pb2.Value, _Mapping]] = ...) -> None: ...
 
 class Verdict(_message.Message):
-    __slots__ = ("result", "evidence", "question")
+    __slots__ = ("result", "evidence", "question", "cause_class", "reach")
     class Result(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
         __slots__ = ()
         RESULT_UNSPECIFIED: _ClassVar[Verdict.Result]
@@ -106,10 +106,14 @@ class Verdict(_message.Message):
     RESULT_FIELD_NUMBER: _ClassVar[int]
     EVIDENCE_FIELD_NUMBER: _ClassVar[int]
     QUESTION_FIELD_NUMBER: _ClassVar[int]
+    CAUSE_CLASS_FIELD_NUMBER: _ClassVar[int]
+    REACH_FIELD_NUMBER: _ClassVar[int]
     result: Verdict.Result
     evidence: _containers.RepeatedCompositeFieldContainer[Evidence]
     question: str
-    def __init__(self, result: _Optional[_Union[Verdict.Result, str]] = ..., evidence: _Optional[_Iterable[_Union[Evidence, _Mapping]]] = ..., question: _Optional[str] = ...) -> None: ...
+    cause_class: str
+    reach: str
+    def __init__(self, result: _Optional[_Union[Verdict.Result, str]] = ..., evidence: _Optional[_Iterable[_Union[Evidence, _Mapping]]] = ..., question: _Optional[str] = ..., cause_class: _Optional[str] = ..., reach: _Optional[str] = ...) -> None: ...
 
 class Evidence(_message.Message):
     __slots__ = ("resource", "fact", "observed", "expected")
@@ -132,7 +136,7 @@ class Plan(_message.Message):
     def __init__(self, actions: _Optional[_Iterable[_Union[Action, _Mapping]]] = ..., rationale: _Optional[str] = ...) -> None: ...
 
 class Action(_message.Message):
-    __slots__ = ("reconcile_from_source", "rollback", "set_field", "restart_rollout", "create_from_source", "delete_object", "delete_pod", "scale_workload", "exec", "remove_service_port", "ensure_database_user", "patch_object", "apply_object", "kubernetes_request", "wait_for", "ensure_exec", "ensure_http", "run_job", "run_script", "sync_webhook_ca", "retire_old_revision", "retry_admission", "store_backup", "invalidate_derived", "repair_data", "restore_backup", "restore_store_item", "check_store_credential")
+    __slots__ = ("reconcile_from_source", "rollback", "set_field", "restart_rollout", "create_from_source", "delete_object", "delete_pod", "scale_workload", "exec", "remove_service_port", "ensure_database_user", "patch_object", "apply_object", "kubernetes_request", "wait_for", "ensure_exec", "ensure_http", "run_job", "run_script", "sync_webhook_ca", "retire_old_revision", "retry_admission", "store_backup", "invalidate_derived", "repair_data", "restore_backup", "restore_store_item", "check_store_credential", "escalate", "propose_source_change")
     RECONCILE_FROM_SOURCE_FIELD_NUMBER: _ClassVar[int]
     ROLLBACK_FIELD_NUMBER: _ClassVar[int]
     SET_FIELD_FIELD_NUMBER: _ClassVar[int]
@@ -161,6 +165,8 @@ class Action(_message.Message):
     RESTORE_BACKUP_FIELD_NUMBER: _ClassVar[int]
     RESTORE_STORE_ITEM_FIELD_NUMBER: _ClassVar[int]
     CHECK_STORE_CREDENTIAL_FIELD_NUMBER: _ClassVar[int]
+    ESCALATE_FIELD_NUMBER: _ClassVar[int]
+    PROPOSE_SOURCE_CHANGE_FIELD_NUMBER: _ClassVar[int]
     reconcile_from_source: ReconcileFromSource
     rollback: Rollback
     set_field: SetField
@@ -189,7 +195,29 @@ class Action(_message.Message):
     restore_backup: RestoreBackup
     restore_store_item: RestoreStoreItem
     check_store_credential: CheckStoreCredential
-    def __init__(self, reconcile_from_source: _Optional[_Union[ReconcileFromSource, _Mapping]] = ..., rollback: _Optional[_Union[Rollback, _Mapping]] = ..., set_field: _Optional[_Union[SetField, _Mapping]] = ..., restart_rollout: _Optional[_Union[RestartRollout, _Mapping]] = ..., create_from_source: _Optional[_Union[CreateFromSource, _Mapping]] = ..., delete_object: _Optional[_Union[DeleteObject, _Mapping]] = ..., delete_pod: _Optional[_Union[DeletePod, _Mapping]] = ..., scale_workload: _Optional[_Union[ScaleWorkload, _Mapping]] = ..., exec: _Optional[_Union[Exec, _Mapping]] = ..., remove_service_port: _Optional[_Union[RemoveServicePort, _Mapping]] = ..., ensure_database_user: _Optional[_Union[EnsureDatabaseUser, _Mapping]] = ..., patch_object: _Optional[_Union[PatchObject, _Mapping]] = ..., apply_object: _Optional[_Union[ApplyObject, _Mapping]] = ..., kubernetes_request: _Optional[_Union[KubernetesRequest, _Mapping]] = ..., wait_for: _Optional[_Union[WaitFor, _Mapping]] = ..., ensure_exec: _Optional[_Union[EnsureExec, _Mapping]] = ..., ensure_http: _Optional[_Union[EnsureHttp, _Mapping]] = ..., run_job: _Optional[_Union[RunJob, _Mapping]] = ..., run_script: _Optional[_Union[RunScript, _Mapping]] = ..., sync_webhook_ca: _Optional[_Union[SyncWebhookCA, _Mapping]] = ..., retire_old_revision: _Optional[_Union[RetireOldRevision, _Mapping]] = ..., retry_admission: _Optional[_Union[RetryAdmission, _Mapping]] = ..., store_backup: _Optional[_Union[StoreBackup, _Mapping]] = ..., invalidate_derived: _Optional[_Union[InvalidateDerived, _Mapping]] = ..., repair_data: _Optional[_Union[RepairData, _Mapping]] = ..., restore_backup: _Optional[_Union[RestoreBackup, _Mapping]] = ..., restore_store_item: _Optional[_Union[RestoreStoreItem, _Mapping]] = ..., check_store_credential: _Optional[_Union[CheckStoreCredential, _Mapping]] = ...) -> None: ...
+    escalate: Escalate
+    propose_source_change: ProposeSourceChange
+    def __init__(self, reconcile_from_source: _Optional[_Union[ReconcileFromSource, _Mapping]] = ..., rollback: _Optional[_Union[Rollback, _Mapping]] = ..., set_field: _Optional[_Union[SetField, _Mapping]] = ..., restart_rollout: _Optional[_Union[RestartRollout, _Mapping]] = ..., create_from_source: _Optional[_Union[CreateFromSource, _Mapping]] = ..., delete_object: _Optional[_Union[DeleteObject, _Mapping]] = ..., delete_pod: _Optional[_Union[DeletePod, _Mapping]] = ..., scale_workload: _Optional[_Union[ScaleWorkload, _Mapping]] = ..., exec: _Optional[_Union[Exec, _Mapping]] = ..., remove_service_port: _Optional[_Union[RemoveServicePort, _Mapping]] = ..., ensure_database_user: _Optional[_Union[EnsureDatabaseUser, _Mapping]] = ..., patch_object: _Optional[_Union[PatchObject, _Mapping]] = ..., apply_object: _Optional[_Union[ApplyObject, _Mapping]] = ..., kubernetes_request: _Optional[_Union[KubernetesRequest, _Mapping]] = ..., wait_for: _Optional[_Union[WaitFor, _Mapping]] = ..., ensure_exec: _Optional[_Union[EnsureExec, _Mapping]] = ..., ensure_http: _Optional[_Union[EnsureHttp, _Mapping]] = ..., run_job: _Optional[_Union[RunJob, _Mapping]] = ..., run_script: _Optional[_Union[RunScript, _Mapping]] = ..., sync_webhook_ca: _Optional[_Union[SyncWebhookCA, _Mapping]] = ..., retire_old_revision: _Optional[_Union[RetireOldRevision, _Mapping]] = ..., retry_admission: _Optional[_Union[RetryAdmission, _Mapping]] = ..., store_backup: _Optional[_Union[StoreBackup, _Mapping]] = ..., invalidate_derived: _Optional[_Union[InvalidateDerived, _Mapping]] = ..., repair_data: _Optional[_Union[RepairData, _Mapping]] = ..., restore_backup: _Optional[_Union[RestoreBackup, _Mapping]] = ..., restore_store_item: _Optional[_Union[RestoreStoreItem, _Mapping]] = ..., check_store_credential: _Optional[_Union[CheckStoreCredential, _Mapping]] = ..., escalate: _Optional[_Union[Escalate, _Mapping]] = ..., propose_source_change: _Optional[_Union[ProposeSourceChange, _Mapping]] = ...) -> None: ...
+
+class Escalate(_message.Message):
+    __slots__ = ("reason", "resources")
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    RESOURCES_FIELD_NUMBER: _ClassVar[int]
+    reason: str
+    resources: _containers.RepeatedCompositeFieldContainer[_common_pb2.ObjectRef]
+    def __init__(self, reason: _Optional[str] = ..., resources: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ...) -> None: ...
+
+class ProposeSourceChange(_message.Message):
+    __slots__ = ("ref", "path", "value", "reason")
+    REF_FIELD_NUMBER: _ClassVar[int]
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    VALUE_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    ref: _common_pb2.ObjectRef
+    path: str
+    value: PlanValue
+    reason: str
+    def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., path: _Optional[str] = ..., value: _Optional[_Union[PlanValue, _Mapping]] = ..., reason: _Optional[str] = ...) -> None: ...
 
 class CreateFromSource(_message.Message):
     __slots__ = ("ref", "reason")
@@ -290,7 +318,7 @@ class ValueProvenance(_message.Message):
     def __init__(self, origin: _Optional[str] = ..., ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., path: _Optional[str] = ..., source_commit: _Optional[str] = ..., resource_version: _Optional[str] = ..., parameter: _Optional[str] = ...) -> None: ...
 
 class ActionReport(_message.Message):
-    __slots__ = ("webhook_ca_digest", "action_index", "status", "values", "exit_code", "external_effect_json", "kubernetes_effect_json", "recording_error", "job_status_json", "script_result_json", "source_reconcile", "failure_reason")
+    __slots__ = ("webhook_ca_digest", "action_index", "status", "values", "exit_code", "external_effect_json", "kubernetes_effect_json", "recording_error", "job_status_json", "script_result_json", "source_reconcile", "source_change_json", "failure_reason")
     WEBHOOK_CA_DIGEST_FIELD_NUMBER: _ClassVar[int]
     ACTION_INDEX_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
@@ -302,6 +330,7 @@ class ActionReport(_message.Message):
     JOB_STATUS_JSON_FIELD_NUMBER: _ClassVar[int]
     SCRIPT_RESULT_JSON_FIELD_NUMBER: _ClassVar[int]
     SOURCE_RECONCILE_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_CHANGE_JSON_FIELD_NUMBER: _ClassVar[int]
     FAILURE_REASON_FIELD_NUMBER: _ClassVar[int]
     webhook_ca_digest: str
     action_index: int
@@ -314,8 +343,9 @@ class ActionReport(_message.Message):
     job_status_json: bytes
     script_result_json: bytes
     source_reconcile: SourceReconcileResult
+    source_change_json: bytes
     failure_reason: str
-    def __init__(self, webhook_ca_digest: _Optional[str] = ..., action_index: _Optional[int] = ..., status: _Optional[str] = ..., values: _Optional[_Iterable[_Union[ValueProvenance, _Mapping]]] = ..., exit_code: _Optional[int] = ..., external_effect_json: _Optional[bytes] = ..., kubernetes_effect_json: _Optional[bytes] = ..., recording_error: _Optional[str] = ..., job_status_json: _Optional[bytes] = ..., script_result_json: _Optional[bytes] = ..., source_reconcile: _Optional[_Union[SourceReconcileResult, _Mapping]] = ..., failure_reason: _Optional[str] = ...) -> None: ...
+    def __init__(self, webhook_ca_digest: _Optional[str] = ..., action_index: _Optional[int] = ..., status: _Optional[str] = ..., values: _Optional[_Iterable[_Union[ValueProvenance, _Mapping]]] = ..., exit_code: _Optional[int] = ..., external_effect_json: _Optional[bytes] = ..., kubernetes_effect_json: _Optional[bytes] = ..., recording_error: _Optional[str] = ..., job_status_json: _Optional[bytes] = ..., script_result_json: _Optional[bytes] = ..., source_reconcile: _Optional[_Union[SourceReconcileResult, _Mapping]] = ..., source_change_json: _Optional[bytes] = ..., failure_reason: _Optional[str] = ...) -> None: ...
 
 class SourceReconcileResult(_message.Message):
     __slots__ = ("ref", "converged", "residual_paths", "observation_error", "additions_known", "rollout_steps")

@@ -35,6 +35,9 @@ func reconcileEarlyCauses(synthesized, reported []ConfirmedRootCause) []Confirme
 }
 
 func mergeEarlyCauseEvidence(owner *ConfirmedRootCause, prior ConfirmedRootCause) {
+	if owner.CauseClass == "" && owner.Reach == "" {
+		owner.CauseClass, owner.Reach = prior.CauseClass, prior.Reach
+	}
 	for _, evidence := range prior.Evidence {
 		if !slices.Contains(owner.Evidence, evidence) {
 			owner.Evidence = append(owner.Evidence, evidence)

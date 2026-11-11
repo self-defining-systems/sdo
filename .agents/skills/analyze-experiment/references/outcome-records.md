@@ -209,3 +209,11 @@ Source inventory drift events with `source="missing from live inventory"` descri
 A repair action receipt may report `script_unprovenanced` when planning refuses executable bytes without successful original-receipt lineage. This is a planning refusal, not an executed repair or a verified mitigation; inspect the error and accepted program revision before retrying.
 
 Admission repair plans may append `retry_admission` actions for affected ReplicaSets in the incident namespace. The executor records their live metadata write and preserves replicas/templates; this is an irreversible controller requeue, not admission or application recovery proof. A recovery failure does not compensate the completed webhook repair. Use the final independent verification and Pod/rollout evidence when measuring recovery after a webhook delete, fail-open or CA sync.
+
+Program records: `ProgramRun.verdict` carries optional `cause_class` and `reach` (the
+`ConfirmedRootCause` vocabulary). A plan `ActionReport.source_change_json` is a
+`ProposeSourceChange` with its resolved value (`{ref, path, value, reason}`); nothing was written.
+After a `success` outcome Go captures each such proposal as a responder-owned patch under
+`.sdo/deployment/patches/` in the reflection checkout (`memory.CaptureSourceProposals`); a proposal
+whose object has no single YAML source file is logged `source_proposal_not_captured` and left to
+reflection. Escalated stage attempts appear in `prior_stages` with result `escalated`.

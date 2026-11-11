@@ -85,7 +85,7 @@ func (e PlanExecutor) waitForRollouts(ctx context.Context, incident IncidentRequ
 	}
 	if len(pending.Blockers) == 0 {
 		for _, ref := range refs {
-			if ref.Kind == "Deployment" {
+			if ref.APIVersion == "apps/v1" && (ref.Kind == "Deployment" || ref.Kind == "StatefulSet" || ref.Kind == "DaemonSet") {
 				pending.Blockers = append(pending.Blockers, &contracts.RolloutBlocker{Ref: planRefProto(ref), Reason: "rollout did not complete within the remaining budget"})
 			}
 		}

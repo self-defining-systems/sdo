@@ -155,6 +155,9 @@ func (e PlanExecutor) clock() func() time.Time {
 // plan is compensated; once every write has landed, a failed rollout wait or
 // health verification is reported and left to the caller.
 func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
+	if handled, result, err := e.applyContractActions(ctx, incident, plan, dryRun); handled {
+		return result, err
+	}
 	now := e.clock()
 	started := now()
 	defer func() { result.Duration = now().Sub(started) }()
@@ -890,8 +893,8 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 		return e.prepareAction(ctx, incident, *a, current)
 
 	case program.RestartRollout:
-		if a.Ref.Kind != "Deployment" || a.Ref.APIVersion != "apps/v1" {
-			return nil, errors.New("RestartRollout requires an apps/v1 Deployment")
+		if err := program.ValidateRestartRollout(a); err != nil {
+			return nil, err
 		}
 		now := lifecycleio.Now
 		if e.Now != nil {

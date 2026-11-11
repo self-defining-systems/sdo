@@ -307,7 +307,16 @@ credential); each entry carries its fact value and is used only while it matches
 password is restored only from the store container's own environment. `CheckStoreCredential`
 (`runtime/store_credential_probe.go`) runs one short-lived Pod with the store's image on the store's node
 and the client container's env and envFrom references, authenticates once against the store Pod IP and
-records `ok`, `denied` or `unreachable` without reading data or any value. Every store action is grounded in the accepted map (the component declares data with
+records `ok`, `denied` or `unreachable` without reading data or any value. Programs read the accepted application map (`ReadView.AppMap`: components,
+workloads, data roles, `holds_data`, `derived_from`) and accepted data checks (`ReadView.DataChecks`,
+re-judged over frozen reads by `datacheck.Verdicts`), and `program.StoreTargetFor` resolves a store
+action's Pod and container from the map, so a program acts on the cache or source a bound object
+relates to without naming a component. A Diagnose verdict may state `CauseClass` and `Reach`; a
+matched `out-of-reach` verdict from a Diagnose-only playbook, or a plan whose only action is
+`Escalate`, makes the automatic stage record an `escalated` attempt and an out-of-reach cause instead
+of repairing (`runtime/response_stage_escalation.go`). `ProposeSourceChange` writes nothing: the
+executor records its resolved value, and only after a `success` outcome does Go capture it as a
+responder-owned patch in the reflection checkout, published through the broker's patch validation. Every store action is grounded in the accepted map (the component declares data with
 the action's engine and the Pod belongs to its workload); `RepairData` refuses only a count outside its
 expected bounds or a named backup that is not one of this incident, and `RestoreBackup` needs the ID of
 the backup to put back.

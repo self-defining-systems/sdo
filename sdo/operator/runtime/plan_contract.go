@@ -76,6 +76,9 @@ func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 		if report.KubernetesEffect != nil {
 			encoded.KubernetesEffectJson, _ = json.Marshal(report.KubernetesEffect)
 		}
+		if report.SourceChange != nil {
+			encoded.SourceChangeJson, _ = json.Marshal(report.SourceChange)
+		}
 		for _, v := range report.Values {
 			var ref *contracts.ObjectRef
 			if v.Origin != program.ParameterValue {
@@ -133,6 +136,12 @@ func planApplicationState(application *contracts.PlanApplication) RecordedPlanAp
 			var effect program.KubernetesEffect
 			if utiljson.Unmarshal(report.GetKubernetesEffectJson(), &effect) == nil {
 				decoded.KubernetesEffect = &effect
+			}
+		}
+		if len(report.GetSourceChangeJson()) > 0 {
+			var change program.SourceChangeProposal
+			if json.Unmarshal(report.GetSourceChangeJson(), &change) == nil {
+				decoded.SourceChange = &change
 			}
 		}
 		for _, v := range report.GetValues() {

@@ -87,23 +87,41 @@ func protocol(p core.Protocol) core.Protocol {
 	}
 	return p
 }
+
+// portDeclared reports whether a selected Pod declares the Service port's
+// target. A named target must match a declared port name. A numeric target
+// (an unset one defaults to the Service port) must match a declared
+// containerPort of the same protocol. containerPort declarations are optional
+// in Kubernetes, so a Pod whose containers declare no ports at all leaves a
+// numeric target unknown and is treated as declared.
 func portDeclared(p core.Pod, port core.ServicePort) bool {
-	// Numeric target ports route directly; containerPort declarations are optional.
-	if port.TargetPort.Type == intstr.Int {
-		return true
+	number := port.TargetPort.IntVal
+	if port.TargetPort.Type == intstr.Int && number == 0 {
+		number = port.Port
 	}
-	for _, c := range p.Spec.Containers {
+	containers := append([]core.Container(nil), p.Spec.Containers...)
+	for _, c := range p.Spec.InitContainers {
+		// Restartable init containers are sidecars that serve for the Pod's life.
+		if c.RestartPolicy != nil && *c.RestartPolicy == core.ContainerRestartPolicyAlways {
+			containers = append(containers, c)
+		}
+	}
+	anyDeclared := false
+	for _, c := range containers {
 		for _, cp := range c.Ports {
+			anyDeclared = true
 			if protocol(cp.Protocol) != protocol(port.Protocol) {
 				continue
 			}
 			if port.TargetPort.Type == intstr.String && cp.Name == port.TargetPort.StrVal {
 				return true
 			}
-
+			if port.TargetPort.Type == intstr.Int && cp.ContainerPort == number {
+				return true
+			}
 		}
 	}
-	return false
+	return port.TargetPort.Type == intstr.Int && !anyDeclared
 }
 func (e *evaluation) wiring() {
 	ns := e.ctx.Namespace()

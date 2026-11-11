@@ -8,6 +8,20 @@ package program // import "sdo.dev/operator/sdk/program"
 
 CONSTANTS
 
+const (
+	DataRoleAuthoritative = "authoritative"
+	DataRoleDerived       = "derived"
+)
+    Data roles of the application map. An authoritative store is the source of
+    truth for its data; a derived one (a cache, an index) is rebuilt from the
+    components it is derived from.
+
+const (
+	ReachInScope    = "in-scope"
+	ReachOutOfReach = "out-of-reach"
+)
+    Values of Verdict.Reach.
+
 const DefaultScriptTimeout = time.Minute
 const MaxAdmissionWebhooks = sdk.MaxAdmissionWebhooks
     MaxAdmissionWebhooks bounds one AdmissionWebhooksFor answer.
@@ -55,6 +69,9 @@ func ApplySetFieldAction(current map[string]any, a SetField, value any) error
 func BoundedLogOptions(options corev1.PodLogOptions) (corev1.PodLogOptions, error)
     BoundedLogOptions copies upstream options and enforces finite reads of at
     most 64 KiB.
+
+func CauseClasses() []string
+    CauseClasses lists the values Verdict.CauseClass may take besides "".
 
 func CheckFindingRoles(spec ProgramSpec) error
     CheckFindingRoles rejects object roles that no unnamed finding can bind.
@@ -133,6 +150,10 @@ func ValidateResolvedSetField(f SetField, value any) error
     ValidateResolvedSetField checks the resolved schema without changing
     provenance.
 
+func ValidateRestartRollout(a RestartRollout) error
+    ValidateRestartRollout accepts one named, namespaced apps/v1 Deployment,
+    StatefulSet or DaemonSet: the workloads kubectl rollout restart restarts.
+
 func ValidateSetField(f SetField) error
     ValidateSetField checks a dotted vocabulary path or a JSON pointer on
     a named nonsecret object. Dotted paths have an explicit allowlist and
@@ -146,6 +167,10 @@ func ValidateValueBinding(spec ParamSpec, value any) error
     ValidateValueBinding checks types without coercing strings to numbers or
     booleans. Quantities and durations use their Kubernetes and Go textual
     syntax.
+
+func WorkloadOf(view sdk.DetectionContext, ref sdk.ObjectRef) string
+    WorkloadOf returns "Kind/name" of the workload that controls ref: a Pod's
+    controller, a ReplicaSet's Deployment, or ref itself.
 
 
 TYPES
@@ -171,6 +196,48 @@ func StalledRolloutRelease(view RolloutView, deployment sdk.ObjectRef) []Action
 type AdmissionWebhook = sdk.AdmissionWebhook
     AdmissionWebhook is one webhook entry admitting Pods (sdk.AdmissionWebhook).
 
+type AppComponent struct {
+	Name      string    `json:"name"`
+	Workload  string    `json:"workload"`
+	Services  []string  `json:"services,omitempty"`
+	HoldsData bool      `json:"holds_data"`
+	Data      *DataRole `json:"data,omitempty"`
+}
+    AppComponent is one component of the application map. Workload is
+    "Kind/name" in the application namespace.
+
+func (c AppComponent) WorkloadRef(namespace string) sdk.ObjectRef
+    WorkloadRef is the component's workload in namespace.
+
+type AppEdge struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+    AppEdge is one directed call between components.
+
+type AppMap struct {
+	Components []AppComponent `json:"components"`
+	Edges      []AppEdge      `json:"edges,omitempty"`
+}
+    AppMap is the accepted application map, read-only: the components,
+    the workload each runs as, the data each holds and the calls between them.
+    A program reads it through ReadView.AppMap to resolve the store, cache or
+    source to act on from a bound object, instead of naming a component.
+
+func (m AppMap) Component(name string) (AppComponent, bool)
+    Component returns the component named name.
+
+func (m AppMap) ComponentOf(view sdk.DetectionContext, ref sdk.ObjectRef) (AppComponent, bool)
+    ComponentOf returns the component whose workload owns ref: the workload
+    itself, or a Pod or ReplicaSet it controls, followed through the view's
+    controller references.
+
+func (m AppMap) Derived(source string) []AppComponent
+    Derived lists the derived components rebuilt from source, by name.
+
+func (m AppMap) Sources(derived string) []AppComponent
+    Sources lists the components derived is rebuilt from.
+
 type ApplyObject struct {
 	Ref    sdk.ObjectRef
 	Object map[string]any
@@ -184,44 +251,4 @@ type ApplyObject struct {
     fieldManager query parameter.
 
 func (a ApplyObject) Validate() error
-
-type AtomicWriteConflictError struct{ Ref sdk.ObjectRef }
-    AtomicWriteConflictError refuses a plan whose object edits cannot be
-    combined without moving them across an opaque runtime or object-lifecycle
-    effect.
-
-func (e *AtomicWriteConflictError) Error() string
-
-type Bindings struct {
-	Objects ObjectBindings `json:"objects,omitempty"`
-	Values  map[string]any `json:"values,omitempty"`
-}
-    Bindings contains object identities and separately typed scalar parameters.
-
-func BindFinding(spec ProgramSpec, finding sdk.Finding) (Bindings, error)
-    BindFinding binds one finding without enumerating objects or assignments.
-    Explicit ParameterBindings take precedence; otherwise only a unique resource
-    of the declared kind in the finding can bind a role. Additional objects are
-    read by Diagnose through ReadView, by name or relation.
-
-    Named bindings are the finding detector's claim about what its own playbooks
-    repair, so they bind only programs the finding lists by logical ID (the
-    Finding.Playbooks contract; the controller rejects any other reference).
-    A finding that lists no playbook (drift and source-inventory findings)
-    offers them to every program; the memory check refuses an incident detector
-    that sets named bindings without declaring its playbooks.
-
-func (b Bindings) Clone() Bindings
-
-func (b Bindings) Equal(other Bindings) bool
-    Equal compares object bindings through the shared citation parser and scalar
-    values through their JSON representation. Omitted known API versions are
-    equivalent to their defaults; namespace and explicit versions remain exact.
-
-func (b Bindings) Parameter(spec ProgramSpec, name string) (any, error)
-    Parameter resolves one declared value, including a validated default.
-
-func (b *Bindings) UnmarshalJSON(raw []byte) error
-    UnmarshalJSON imports object-only corpus bindings from existing recordings.
-    New recordings always use explicit objects and values maps.
 ```

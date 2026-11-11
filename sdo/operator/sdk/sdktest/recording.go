@@ -383,6 +383,12 @@ func RecordPrimitiveCalls(view program.ReadView, calls []PrimitiveCall) ([]Primi
 			}
 			_, _ = recorder.DatabaseUsers(target)
 			continue
+		case "AppMap":
+			_, _ = recorder.AppMap()
+			continue
+		case "DataChecks":
+			_, _ = recorder.DataChecks()
+			continue
 		case "ExternalEffect", "JobCompletion", "KubernetesEffect", "RunScriptReceipt", "RepairReceipt":
 			// Effects are historical write evidence, never repeat mutations.
 			continue

@@ -172,3 +172,8 @@ Replay outcomes, missing captures and detector coverage are information.
   credential; `StoreChanges.Holders` groups a store's connections by peer workload and state.
 - Credentials stay references (env or ConfigMap key); never read Secret data. Learn into incident playbooks. The detection designer owns `health-objective` and health detectors: never edit
   them; when its generic program applied and hand repairs followed, encode those in an incident playbook.
+- Resolve stores by relation: `v.AppMap()` (`ComponentOf`, `Derived`), `program.StoreTargetFor`,
+  `datacheck.Verdicts(v)`; never name a component.
+- An out-of-reach cause: `Verdict{Match, CauseClass, Reach: program.ReachOutOfReach}` with no Mitigate or a
+  sole `program.Escalate`; SDO closes it `escalated`.
+- `program.ProposeSourceChange` (last in a plan) becomes a responder patch after verified recovery.

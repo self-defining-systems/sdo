@@ -90,7 +90,7 @@ type liveRollouts struct {
 	fetched bool
 }
 
-// incomplete reports whether a Deployment the attempt wrote is still rolling
+// incomplete reports whether a workload the attempt wrote is still rolling
 // out. An unreadable cluster says nothing; the recovery window then decides.
 func (r *liveRollouts) incomplete(attempt *contracts.StageMitigation) bool {
 	if !r.fetched {
@@ -103,12 +103,24 @@ func (r *liveRollouts) incomplete(attempt *contracts.StageMitigation) bool {
 		return false
 	}
 	for _, touched := range attempt.GetTouchedObjects() {
-		if touched.GetKind() != "Deployment" {
-			continue
-		}
-		for _, deployment := range r.view.Deployments() {
-			if deployment.Name == touched.GetName() && deployment.Namespace == touched.GetNamespace() && !deploymentpkg.DeploymentRolloutComplete(&deployment) {
-				return true
+		switch touched.GetKind() {
+		case "Deployment":
+			for _, item := range r.view.Deployments() {
+				if item.Name == touched.GetName() && item.Namespace == touched.GetNamespace() && !deploymentpkg.DeploymentRolloutComplete(&item) {
+					return true
+				}
+			}
+		case "StatefulSet":
+			for _, item := range r.view.StatefulSets() {
+				if item.Name == touched.GetName() && item.Namespace == touched.GetNamespace() && !deploymentpkg.StatefulSetRolloutComplete(&item) {
+					return true
+				}
+			}
+		case "DaemonSet":
+			for _, item := range r.view.DaemonSets() {
+				if item.Name == touched.GetName() && item.Namespace == touched.GetNamespace() && !deploymentpkg.DaemonSetRolloutComplete(&item) {
+					return true
+				}
 			}
 		}
 	}

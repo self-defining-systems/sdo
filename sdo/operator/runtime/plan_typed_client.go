@@ -57,6 +57,8 @@ func (c TypedPlanClient) Get(ctx context.Context, ref sdk.ObjectRef) (*unstructu
 		object, err = c.Client.AppsV1().ReplicaSets(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
 	case "apps/v1/StatefulSet":
 		object, err = c.Client.AppsV1().StatefulSets(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+	case "apps/v1/DaemonSet":
+		object, err = c.Client.AppsV1().DaemonSets(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
 	case "v1/Service":
 		object, err = c.Client.CoreV1().Services(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
 	case "v1/ConfigMap":
@@ -116,6 +118,9 @@ func (c TypedPlanClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind type
 		return err
 	case "apps/v1/StatefulSet":
 		_, err := c.Client.AppsV1().StatefulSets(ref.Namespace).Patch(ctx, ref.Name, kind, patch, metav1.PatchOptions{})
+		return err
+	case "apps/v1/DaemonSet":
+		_, err := c.Client.AppsV1().DaemonSets(ref.Namespace).Patch(ctx, ref.Name, kind, patch, metav1.PatchOptions{})
 		return err
 	case "v1/Service":
 		_, err := c.Client.CoreV1().Services(ref.Namespace).Patch(ctx, ref.Name, kind, patch, metav1.PatchOptions{})
@@ -187,6 +192,11 @@ func (c TypedPlanClient) Create(ctx context.Context, ref sdk.ObjectRef, object *
 		if err = kruntime.DefaultUnstructuredConverter.FromUnstructured(object.Object, typed); err == nil {
 			result, err = c.Client.AppsV1().StatefulSets(ref.Namespace).Create(ctx, typed, metav1.CreateOptions{})
 		}
+	case "apps/v1/DaemonSet":
+		typed := new(appsv1.DaemonSet)
+		if err = kruntime.DefaultUnstructuredConverter.FromUnstructured(object.Object, typed); err == nil {
+			result, err = c.Client.AppsV1().DaemonSets(ref.Namespace).Create(ctx, typed, metav1.CreateOptions{})
+		}
 	case "networking.k8s.io/v1/NetworkPolicy":
 		typed := new(networkingv1.NetworkPolicy)
 		if err = kruntime.DefaultUnstructuredConverter.FromUnstructured(object.Object, typed); err == nil {
@@ -242,6 +252,8 @@ func (c TypedPlanClient) Delete(ctx context.Context, ref sdk.ObjectRef, uid type
 		return c.Client.AppsV1().Deployments(ref.Namespace).Delete(ctx, ref.Name, options)
 	case "apps/v1/StatefulSet":
 		return c.Client.AppsV1().StatefulSets(ref.Namespace).Delete(ctx, ref.Name, options)
+	case "apps/v1/DaemonSet":
+		return c.Client.AppsV1().DaemonSets(ref.Namespace).Delete(ctx, ref.Name, options)
 	case "networking.k8s.io/v1/NetworkPolicy":
 		return c.Client.NetworkingV1().NetworkPolicies(ref.Namespace).Delete(ctx, ref.Name, options)
 	case "autoscaling/v2/HorizontalPodAutoscaler":
