@@ -19,8 +19,8 @@ import (
 // only when a connection is opened. A link probe therefore dials each declared
 // service-to-service edge afresh, at every interval, from a pod of its own,
 // and reports the edge when it is unreachable (several consecutive failures),
-// intermittent (a failure fraction over a window, not necessarily
-// consecutive) or slow (median dial latency far above the link's own healthy
+// intermittent (a failure fraction over a window, in recurring bursts, not
+// necessarily consecutive) or slow (median dial latency far above the link's own healthy
 // baseline and its spread, persistently, and beyond any slowdown every other
 // link dialed from the same place shows at the same time). Protocol handshakes prove the listener can serve without
 // application credentials or queries.
@@ -44,10 +44,15 @@ const (
 	MaxLinkInterval     = 1 * time.Minute
 
 	// LinkLossWindow is how many recent dials an intermittent judgement
-	// needs; LinkLossPercent of them failing, consecutive or not, reports
-	// the link. A single few-second data-plane stall stays below it.
+	// needs; LinkLossPercent of them failing, consecutive or not, in at least
+	// LinkLossBursts separate bursts reports the link. A burst ends after
+	// LinkBurstGap consecutive successful dials. One stall (a slow node, a
+	// burst of DNS timeouts), even with a stray success inside it, is one
+	// burst and stays below it; a stall long enough is unreachable instead.
 	LinkLossWindow  = 20
 	LinkLossPercent = 20
+	LinkLossBursts  = 2
+	LinkBurstGap    = 3
 	// LinkLatencyFactor, LinkSpreadFactor and MinLinkLatencyBound set the
 	// slow bound: a window's median dial must exceed LinkLatencyFactor times
 	// the healthy baseline, the baseline plus LinkSpreadFactor times its
@@ -403,7 +408,7 @@ func JudgeLinkIn(setting LinkSetting, observed LinkObservations) (LinkJudgement,
 		return LinkJudgement{}, false
 	}
 	if recent := freshLinkSamples(setting.ObservedAt, observed.Samples, max(setting.MaxAge, 2*LinkLossWindow*setting.Period), LinkLossWindow); len(recent) == LinkLossWindow {
-		if judged := linkJudgement(LinkIntermittent, recent); judged.Failed*100 >= LinkLossPercent*len(recent) {
+		if judged := linkJudgement(LinkIntermittent, recent); judged.Failed*100 >= LinkLossPercent*len(recent) && failureBursts(recent) >= LinkLossBursts {
 			return judged, true
 		}
 	}
@@ -427,6 +432,23 @@ func JudgeLinkIn(setting LinkSetting, observed LinkObservations) (LinkJudgement,
 	judged := linkJudgement(LinkSlow, recent)
 	judged.Baseline, judged.Spread, judged.Shared, judged.Bound = observed.BaselineLatency, observed.BaselineSpread, shared, bound
 	return judged, true
+}
+
+// failureBursts counts the separate runs of failed dials in samples: a run
+// ends after LinkBurstGap consecutive successful dials.
+func failureBursts(samples []LinkSample) int {
+	bursts, successes := 0, LinkBurstGap
+	for _, sample := range samples {
+		if sample.OK {
+			successes++
+			continue
+		}
+		if successes >= LinkBurstGap {
+			bursts++
+		}
+		successes = 0
+	}
+	return bursts
 }
 
 // slowLinkSamples returns the LinkSlowWindows windows of fresh dials the slow
