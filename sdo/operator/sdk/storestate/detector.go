@@ -3,6 +3,7 @@ package storestate
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strconv"
@@ -22,6 +23,7 @@ const (
 	RuleRefused              = "store-state.read-refused"
 	RuleConnectionsNearLimit = "store-state.connections-near-limit"
 	RuleMemoryNearLimit      = "store-state.memory-near-limit"
+	RuleSequenceNearLimit    = "store-state.sequence-near-limit"
 	RuleNamespaceChanged     = "store-state.namespace-changed"
 	RuleRegistryChanged      = "store-state.registry-changed"
 )
@@ -324,6 +326,13 @@ func (d detector) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.Fin
 		}
 		if f.Memory != nil && f.Memory.Near(NearLimit) && d.noEviction(f) {
 			findings = append(findings, d.gaugeFinding(f, RuleMemoryNearLimit, "memory", *f.Memory))
+		}
+		for _, name := range slices.Sorted(maps.Keys(f.Sequences)) {
+			if g := f.Sequences[name]; g.Near(NearLimit) {
+				finding := d.gaugeFinding(f, RuleSequenceNearLimit, "sequence "+name, g)
+				finding.Fingerprint += "/" + name
+				findings = append(findings, finding)
+			}
 		}
 		// A connection cap reached, or a read refused at it, names who holds
 		// the connections.

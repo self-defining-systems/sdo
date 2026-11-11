@@ -38,6 +38,7 @@ const (
 	RuleRefused              = "store-state.read-refused"
 	RuleConnectionsNearLimit = "store-state.connections-near-limit"
 	RuleMemoryNearLimit      = "store-state.memory-near-limit"
+	RuleSequenceNearLimit    = "store-state.sequence-near-limit"
 	RuleNamespaceChanged     = "store-state.namespace-changed"
 	RuleRegistryChanged      = "store-state.registry-changed"
 )
@@ -97,6 +98,10 @@ const MaxHolders = 12
     MaxHolders bounds the holder groups of one read; the read lists the largest
     groups first.
 
+const MaxSequences = 5
+    MaxSequences bounds the sequences one read reports (the read lists only
+    those already past SequenceReported of their maximum).
+
 const NearLimit = 0.95
     NearLimit is the fraction of a cap at which use is reported.
 
@@ -107,6 +112,10 @@ const PeerLocal = "local"
 const RestoredMarker = "#sdo-restored"
     RestoredMarker is the line a restore command prints once the store accepted
     every statement of the step.
+
+const SequenceReported = 0.9
+    SequenceReported is the share of its maximum a sequence must have used
+    before the read lists it.
 
 
 FUNCTIONS
