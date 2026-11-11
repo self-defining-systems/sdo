@@ -160,7 +160,8 @@ CARD_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "program.KubernetesRequest",
         ),
     ),
-    ("Corpus receipt links", ("program.ScriptOriginReceipt", "program.ScriptDigest")),
+    ("App procedures (architecture map `procedures`)", ("program.RunProcedure", "program.ObserveProcedure")),
+    ("Corpus receipt links", ("program.ScriptDigest",)),
 )
 CARD_PACKAGES = {"program": "./program", "sdk": "."}
 

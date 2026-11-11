@@ -48,6 +48,8 @@ Keep revisions that applied cleanly unless this incident shows failure or incomp
 - Roles come from findings: one `ParamSpec` per object Kind. Read other objects through ReadView by
   relation (selector, owner, mount), never by app name; put unavoidable app facts in the README.
 - Write values only as `FromSource`, `FromObserved` or `FromParam` (a declared scalar with a default).
+- Prefer the app's own procedure (architecture map `procedures`) over hand-made steps when one fits:
+  `RunProcedure` as the step, `ObserveProcedure` on a `check` one as Diagnose evidence.
 - Diagnose returns Match on positive evidence about the bound component, NoMatch when absent, an error
   (Unknown) when a read is unavailable. A healthy, source-matching object is no evidence. Confirm the fault class on the
   bound target (image, ports, a read or exec); NoMatch on a workload of the wrong kind, with a near-miss test.

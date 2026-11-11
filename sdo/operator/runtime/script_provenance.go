@@ -150,11 +150,19 @@ func (l *ResponderLoop) scriptProvenance(id string) ScriptProvenance {
 	}}
 }
 
-func checkPlanScriptProvenance(ctx context.Context, id string, plan program.Plan, origins []ScriptProvenance) error {
+// checkPlanScriptProvenance requires each RunScript to carry authority: an
+// application procedure script exactly as RunProcedure renders an entry of
+// the accepted application map, or an original successful receipt.
+func checkPlanScriptProvenance(ctx context.Context, id string, plan program.Plan, view program.ReadView, origins []ScriptProvenance) error {
 	for _, action := range plan.Actions {
 		script, ok := concreteExternalAction(action).(program.RunScript)
 		if !ok {
 			continue
+		}
+		if _, procedure := program.ProcedureOf(script); procedure && view != nil {
+			if m, err := view.AppMap(); err == nil && program.AcceptedProcedureScript(m, script.Script) {
+				continue
+			}
 		}
 		err := fmt.Errorf("accepted script provenance unavailable")
 		if len(origins) == 1 && origins[0].check != nil {

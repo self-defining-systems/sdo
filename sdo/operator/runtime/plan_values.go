@@ -16,6 +16,9 @@ type PlanActionReport struct {
 	SourceReconcile *contracts.SourceReconcileResult `json:"source_reconcile,omitempty"`
 	WebhookCADigest string                           `json:"webhook_ca_digest,omitempty"`
 	Script          *ScriptExecutionResult           `json:"script,omitempty"`
+	// Procedure is the application procedure the action runs, with its effect
+	// class; it is recorded, never a gate.
+	Procedure     *program.ProcedureRun `json:"procedure,omitempty"`
 	FailureReason   string                           `json:"failure_reason,omitempty"`
 	ActionIndex     int                              `json:"action_index"`
 	Status          string                           `json:"status"`
@@ -68,6 +71,9 @@ func newPlanReports(plan program.Plan) []PlanActionReport {
 	out := make([]PlanActionReport, len(plan.Actions))
 	for i := range out {
 		out[i] = PlanActionReport{ActionIndex: i, Status: "prepared"}
+		if run, ok := program.ProcedureOf(plan.Actions[i]); ok {
+			out[i].Procedure = &run
+		}
 	}
 	return out
 }
