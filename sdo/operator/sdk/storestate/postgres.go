@@ -28,6 +28,10 @@ var postgresSectionKinds = map[string][]ItemKind{
 // unread.
 var postgresRowLimits = map[string]int{"dbsettings": 33, "roles": 25, "databases": 17}
 
+// postgresCatalogRows is the row cut of each database's catalog read (the
+// script's head -n 100).
+const postgresCatalogRows = 100
+
 // postgresScript runs psql over the container's own socket as the user the
 // credential prelude found ($U, else postgres), so local trust applies; the
 // password it found ($P) reaches psql through the environment and is never
@@ -257,6 +261,16 @@ func (postgresAdapter) Parse(stdout string) (Facts, error) {
 	for name, lines := range sections {
 		db, ok := strings.CutPrefix(name, "catalog ")
 		if !ok {
+			continue
+		}
+		if len(lines) >= postgresCatalogRows {
+			// The script cuts each database's catalog at postgresCatalogRows
+			// rows with no marker: a full section is a partial read, and items
+			// at its edge come and go as the application adds objects (a new
+			// time partition shifts the window), so its kinds are unread.
+			for _, k := range postgresCatalogKinds {
+				unread[k] = true
+			}
 			continue
 		}
 		if len(lines) > 0 {
