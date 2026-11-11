@@ -56,12 +56,17 @@ def test_plan_round_trips_and_rejects_a_variant_equal_to_first(tmp_path: Path) -
         PlanItem("a", "a@1", "a@1")
 
 
-def test_instance_ids_read_fuzzops_instances() -> None:
-    raw = [
-        {"template": "t", "target": {"id": "dependency:deploy/x:1"}, "params": {"k": "v"}},
-        {"template": "u", "id": "u@y"},
-    ]
-    assert instance_ids(raw) == [("t", "t@dependency:deploy/x:1?k=v"), ("u", "u@y")]
+def test_instance_ids_use_the_ids_fuzzops_writes() -> None:
+    raw = {
+        "instances": [
+            {"template": "t", "target": {"id": "dependency:deploy/x:1"}, "params": {"users": 30}},
+            {"template": "u", "target": {"id": "platform:deploy/y"}, "params": {}},
+        ],
+        "ids": ["t@dependency:deploy/x:1", "u@platform:deploy/y"],
+    }
+    assert instance_ids(raw) == [("t", "t@dependency:deploy/x:1"), ("u", "u@platform:deploy/y")]
+    del raw["ids"]
+    assert instance_ids(raw)[1] == ("u", "u@platform:deploy/y")
 
 
 @pytest.mark.parametrize(

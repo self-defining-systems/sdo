@@ -111,16 +111,17 @@ class Plan:
 
 
 def instance_ids(instances: Any) -> list[tuple[str, str]]:
-    """(template, instance ID) for every instance in a fuzzops instances file, in file order."""
+    """(template, instance ID) for every instance in a fuzzops instances file, in file order.
+
+    The IDs are the ones fuzzops writes (``ids``: template@target plus non-default parameters only); a file without
+    them gives template@target, which names a parameterless instance correctly.
+    """
     rows = instances if isinstance(instances, list) else instances.get("instances", [])
+    ids = [] if isinstance(instances, list) else instances.get("ids") or []
     out = []
-    for inst in rows:
+    for i, inst in enumerate(rows):
         template = inst.get("template", "")
-        target = (inst.get("target") or {}).get("id", "")
-        iid = inst.get("id") or f"{template}@{target}"
-        params = inst.get("params") or {}
-        if not inst.get("id") and params:
-            iid += "?" + "&".join(f"{k}={params[k]}" for k in sorted(params))
+        iid = ids[i] if i < len(ids) else f"{template}@{(inst.get('target') or {}).get('id', '')}"
         out.append((template, iid))
     return out
 
