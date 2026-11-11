@@ -349,10 +349,13 @@ type fakeVerifier struct {
 	calls    int
 	// candidateRoots records the root of each VerifyCandidate call.
 	candidateRoots []string
+	// objectives records the health objective of each VerifyCandidate call.
+	objectives []string
 }
 
 func (v *fakeVerifier) VerifyCandidate(ctx context.Context, root, commit, namespace, objective string, source lifecycle.DeploymentReceipt) (lifecycle.HealthVerdict, error) {
 	v.candidateRoots = append(v.candidateRoots, root+"@"+commit)
+	v.objectives = append(v.objectives, objective)
 	return v.Verify(ctx, commit, namespace, objective, source)
 }
 

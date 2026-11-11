@@ -72,3 +72,20 @@ func TestRefreshHealthOfASeededInstallPublishesWithoutLiveVerification(t *testin
 		t.Fatalf("receipt=%+v stages=%d accepts=%d, want a plain publication with no staged verification", receipt, fake.stages, fake.accepts)
 	}
 }
+
+// The controller's refresh carries the accepted objective in the revision, not
+// in its Config: the candidate is verified against that objective. Without it
+// every refresh of a deployed application failed its verification and the
+// controller crash-looped on start.
+func TestRefreshHealthVerifiesAgainstTheAcceptedObjective(t *testing.T) {
+	h, fake := gateHarness(t, clear)
+	fake.source = deployedSource()
+	cfg := refreshConfig()
+	cfg.HealthObjective = ""
+	if _, err := h.coordinator.RefreshHealth(context.Background(), cfg, refreshRevision()); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.verifier.objectives) != 1 || h.verifier.objectives[0] != refreshRevision().Objective {
+		t.Fatalf("verified objectives = %q, want the accepted %q", h.verifier.objectives, refreshRevision().Objective)
+	}
+}
