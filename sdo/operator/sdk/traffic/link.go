@@ -67,6 +67,14 @@ const (
 	// LinkBaselineSamples is how many first successful dials the prober
 	// takes the healthy baseline median and spread from.
 	LinkBaselineSamples = 10
+	// HostStallBound is the host CPU stall (the percent of time some runnable
+	// task waited for a CPU, PSI "some" avg10) at which a dial is taken on a
+	// stalled host. A calm host stays below 10%; on an oversubscribed one
+	// heavy handshakes (a database backend, an HTTP worker) time out and slow
+	// down at 35% and more while light targets stay fast, so the peers'
+	// shared slowdown does not show it. A dial timeout or slowness on a
+	// stalled host is evidence of the host, not of one link (see JudgeLinkIn).
+	HostStallBound = 25.0
 )
 
 // LinkCondition names how a reported link is unhealthy.
@@ -193,6 +201,18 @@ type LinkSample struct {
 	Class    LinkFailureClass `json:"class,omitempty"`
 	Status   string           `json:"status,omitempty"`
 	Excerpt  string           `json:"excerpt,omitempty"`
+	// HostCPUStall is the host-wide CPU stall where the dial was made, PSI
+	// "some" avg10 in percent; zero when unknown.
+	HostCPUStall float64 `json:"hostCpuStall,omitempty"`
+}
+
+// hostStalled reports whether the dial was made on a stalled host.
+func (s LinkSample) hostStalled() bool { return s.HostCPUStall >= HostStallBound }
+
+// hostExplained reports whether a stalled host explains the dial's failure:
+// a timeout. A refusal, reset or protocol failure is never the host's.
+func (s LinkSample) hostExplained() bool {
+	return !s.OK && s.Class == LinkFailureTimeout && s.hostStalled()
 }
 
 // LinkObservations are one link's recent samples, oldest first.
@@ -353,10 +373,18 @@ func linkFailing(setting LinkSetting, observed LinkObservations) ([]LinkSample, 
 		return nil, false
 	}
 	run := samples[len(samples)-needed:]
+	explained := true
 	for _, sample := range run {
 		if sample.OK {
 			return nil, false
 		}
+		explained = explained && sample.hostExplained()
+	}
+	// Timeouts on a stalled host are the host's until they outlast a whole
+	// loss window: a heavy handshake can stall for seconds, a dead target
+	// keeps failing.
+	if explained && needed < LinkLossWindow {
+		return linkFailing(LinkSetting{ObservedAt: setting.ObservedAt, Failures: LinkLossWindow, MaxAge: setting.MaxAge}, observed)
 	}
 	if setting.ObservedAt.Sub(run[len(run)-1].At) > setting.MaxAge {
 		return nil, false
@@ -391,7 +419,12 @@ type LinkJudgement struct {
 // LinkSpreadFactor times its spread, and MinLinkLatencyBound, where baseline
 // and spread are first multiplied by the slowdown the link's peers (the
 // setting's Peers) share. A loaded prober node slows every dial alike, so it
-// never makes one link slow. Only recent samples are judged: the slow and loss
+// never makes one link slow. A stalled host (HostStallBound) explains dial
+// timeouts and slowness everywhere at once, even where the peers stay fast:
+// slowness is not judged while any judged dial was made on a stalled host,
+// its timeouts do not count toward intermittent, and a run of them is
+// unreachable only once it fills LinkLossWindow dials. Refusals, resets and
+// protocol failures are judged as usual. Only recent samples are judged: the slow and loss
 // windows reach back at most the larger of MaxAge and twice their length in
 // probe periods.
 func JudgeLink(window Window, observed LinkObservations) (LinkJudgement, bool) {
@@ -408,7 +441,7 @@ func JudgeLinkIn(setting LinkSetting, observed LinkObservations) (LinkJudgement,
 		return LinkJudgement{}, false
 	}
 	if recent := freshLinkSamples(setting.ObservedAt, observed.Samples, max(setting.MaxAge, 2*LinkLossWindow*setting.Period), LinkLossWindow); len(recent) == LinkLossWindow {
-		if judged := linkJudgement(LinkIntermittent, recent); judged.Failed*100 >= LinkLossPercent*len(recent) && failureBursts(recent) >= LinkLossBursts {
+		if judged := linkJudgement(LinkIntermittent, discountHostStall(recent)); judged.Failed*100 >= LinkLossPercent*len(recent) && failureBursts(recent) >= LinkLossBursts {
 			return judged, true
 		}
 	}
@@ -417,7 +450,7 @@ func JudgeLinkIn(setting LinkSetting, observed LinkObservations) (LinkJudgement,
 	}
 	size := max(setting.Failures, MinLinkFailures)
 	recent, ok := slowLinkSamples(setting, observed)
-	if !ok {
+	if !ok || slices.ContainsFunc(recent, LinkSample.hostStalled) {
 		return LinkJudgement{}, false
 	}
 	shared := sharedLinkSlowdown(setting, observed)
@@ -432,6 +465,22 @@ func JudgeLinkIn(setting LinkSetting, observed LinkObservations) (LinkJudgement,
 	judged := linkJudgement(LinkSlow, recent)
 	judged.Baseline, judged.Spread, judged.Shared, judged.Bound = observed.BaselineLatency, observed.BaselineSpread, shared, bound
 	return judged, true
+}
+
+// discountHostStall returns samples with each timeout a stalled host explains
+// counted as served, so recurring timeouts of an oversubscribed host never make
+// a link intermittent while other failures still do.
+func discountHostStall(samples []LinkSample) []LinkSample {
+	if !slices.ContainsFunc(samples, LinkSample.hostExplained) {
+		return samples
+	}
+	out := slices.Clone(samples)
+	for index, sample := range out {
+		if sample.hostExplained() {
+			out[index].OK, out[index].Class, out[index].Error = true, "", ""
+		}
+	}
+	return out
 }
 
 // failureBursts counts the separate runs of failed dials in samples: a run

@@ -77,6 +77,14 @@ const (
 	// LinkBaselineSamples is how many first successful dials the prober
 	// takes the healthy baseline median and spread from.
 	LinkBaselineSamples = 10
+	// HostStallBound is the host CPU stall (the percent of time some runnable
+	// task waited for a CPU, PSI "some" avg10) at which a dial is taken on a
+	// stalled host. A calm host stays below 10%; on an oversubscribed one
+	// heavy handshakes (a database backend, an HTTP worker) time out and slow
+	// down at 35% and more while light targets stay fast, so the peers'
+	// shared slowdown does not show it. A dial timeout or slowness on a
+	// stalled host is evidence of the host, not of one link (see JudgeLinkIn).
+	HostStallBound = 25.0
 )
 const (
 	// SyntheticHeader marks every synthetic request so application logs and
@@ -206,18 +214,4 @@ func NewDetector(spec sdk.DetectorSpec, workload string) sdk.Detector
     so judge-authored and lifecycle-generated traffic-health detectors alike
     require a sustained violation before they fire, not just an evaluation
     count.
-
-func NewLinkDetector(spec sdk.DetectorSpec, workload string) sdk.Detector
-    NewLinkDetector returns a health detector that reports every qualified link
-    of a link-probe workload that JudgeLink finds unreachable, intermittent or
-    slow. It decides purely from the prober's samples; with no observations it
-    reports nothing. The sample counts are the hysteresis, so unlike NewDetector
-    it does not add DefaultHealthMinDuration. Unreachable and intermittent links
-    are critical; a slow link still serves, so it is a warning: batch warnings
-    for slow links to open incidents.
-
-func ScenarioFinding(spec sdk.DetectorSpec, namespace string, workload Workload, scenario Descriptor, verdict SLOVerdict) sdk.Finding
-    ScenarioFinding explains one unhealthy scenario. The primary resource is
-    the Service the scenario calls; the Services it depends on are related,
-    so the finding localizes the fault along the request path.
 ```

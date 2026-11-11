@@ -100,6 +100,11 @@ func (p *Prober) dialLink(ctx context.Context, workload traffic.Workload, state 
 	sample.Excerpt = bounded(sample.Excerpt)
 	sample.Duration = p.config.Clock.Now().Sub(started)
 	sample.OK = err == nil
+	if p.config.HostCPUStall != nil {
+		if stall, ok := p.config.HostCPUStall(); ok {
+			sample.HostCPUStall = stall
+		}
+	}
 	if err != nil {
 		sample.Error = bounded(err.Error())
 		if sample.Class == "" {

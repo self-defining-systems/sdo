@@ -60,7 +60,7 @@ func main(){
  catalog,documents:=generated.TrafficCatalog(),generated.TrafficWorkloads
  if !*synthetic {catalog,documents=nil,nil}
  workloads,err:=prober.ParseWorkloads(documents);if err!=nil{log.Fatal(err)}
- engine,err:=prober.New(prober.Config{Namespace:*namespace,Catalog:catalog,Workloads:workloads});if err!=nil{log.Fatal(err)}
+ engine,err:=prober.New(prober.Config{Namespace:*namespace,Catalog:catalog,Workloads:workloads,HostCPUStall:prober.HostCPUStall});if err!=nil{log.Fatal(err)}
  trafficHost:=prober.NewHost(engine);defer trafficHost.Close()
  server.WithTraffic(trafficHost)
  reader,restConfig,err:=core.NewKubernetesClientAndConfig();if err!=nil{log.Fatal(err)}
