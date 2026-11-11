@@ -14,7 +14,9 @@ func (q *rolloutQueue) QueuedReflections() ([]string, error)                    
 func (q *rolloutQueue) ProcessQueuedReflection(context.Context, string) error         { return nil }
 func (q *rolloutQueue) AbandonQueuedReflection(context.Context, string, string) error { return nil }
 func (q *rolloutQueue) QueuedReflectionRolloutPending(string) (bool, error)           { return q.pending, nil }
-func (q *rolloutQueue) QueuedReflectionCommit(string) (string, error)                 { return q.commit, nil }
+func (q *rolloutQueue) QueuedReflectionServingCommit(context.Context, string) (string, error) {
+	return q.commit, nil
+}
 
 // A reflection that commits after its closure must become the commit the host
 // activates; otherwise the rollout handoff compares the repository HEAD (the

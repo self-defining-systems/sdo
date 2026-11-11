@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -136,5 +137,35 @@ func TestQueuedReflectionCommittedOnlyWhenAcceptedBranchHasTheCommit(t *testing.
 	}
 	if _, ok := ledger.GetClosurePhaseTimestamps()["reflection_committed"]; !ok {
 		t.Fatalf("reflection_committed not recorded: %v", ledger.GetClosurePhaseTimestamps())
+	}
+}
+
+// The host must serve the accepted HEAD once a queued reflection committed:
+// HEAD contains the reflection and whatever was accepted after it (another
+// incident's outcome closing while the reflection ran). Activating the
+// reflection commit itself after a newer publication can never stage (the
+// accepted revision moved) and wedged the controller with that closure
+// committed but never acknowledged.
+func TestQueuedReflectionServesTheAcceptedHeadAfterALaterPublication(t *testing.T) {
+	root := t.TempDir()
+	accepted := filepath.Join(root, "accepted")
+	ledger := queuedReflectionLedger(t, root, func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string, ReflectionFeedback) (ReflectionDecision, error) {
+		queuedReflectionGit(t, accepted, "commit", "-q", "--allow-empty", "-m", "sdo(incident-1): validated reflection\n\nSDO-Incident: incident-1\nSDO-Phase: reflection")
+		return ReflectionDecision{LearningDecision: "updated"}, nil
+	})
+	reflection := ledger.GetReflectionCommit()
+	queuedReflectionGit(t, accepted, "commit", "-q", "--allow-empty", "-m", "sdo(incident-2): validated outcome")
+	head := strings.TrimSpace(queuedReflectionGit(t, accepted, "rev-parse", "HEAD"))
+	repository, err := broker.New(accepted, filepath.Join(root, "proposals"), nil, broker.ObservationPolicy{Telemetry: broker.Telemetry{Registry: telemetry.NewRegistry()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	native := NativeIncidentBroker{Repository: repository, LedgerRoot: filepath.Join(root, "ledger")}
+	got, err := native.QueuedReflectionServingCommit(context.Background(), "incident-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != head || got == reflection {
+		t.Fatalf("serving commit = %q, want the accepted head %q (reflection %q)", got, head, reflection)
 	}
 }

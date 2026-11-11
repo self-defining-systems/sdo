@@ -683,14 +683,16 @@ func (n NativeIncidentBroker) QueuedReflectionRolloutPending(incidentID string) 
 	return ledger.ReflectionQueued && reflectionRolloutPending(ledger), nil
 }
 
-// QueuedReflectionCommit is the reflection commit a queued incident's ledger
-// records ("" when reflection published nothing).
-func (n NativeIncidentBroker) QueuedReflectionCommit(incidentID string) (string, error) {
+// QueuedReflectionServingCommit is the accepted commit the host must serve for
+// a queued incident's reflection: the accepted HEAD once the reflection
+// committed (it contains the reflection and anything accepted after it, such as
+// another incident's outcome), or "" when reflection published nothing.
+func (n NativeIncidentBroker) QueuedReflectionServingCommit(ctx context.Context, incidentID string) (string, error) {
 	ledger, err := n.readLedger(incidentID)
-	if err != nil {
+	if err != nil || ledger.GetReflectionCommit() == "" {
 		return "", err
 	}
-	return ledger.GetReflectionCommit(), nil
+	return n.Repository.AcceptedHead(ctx)
 }
 
 func reflectionRolloutPending(ledger *contracts.BrokerLedger) bool {

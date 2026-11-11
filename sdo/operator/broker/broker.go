@@ -869,6 +869,12 @@ func (b *Broker) advanceHead(ctx context.Context, stage, commit string) error {
 	return nil
 }
 
+// AcceptedHead is the tip of the accepted branch: every accepted outcome,
+// reflection and advance, newest last.
+func (b *Broker) AcceptedHead(ctx context.Context) (string, error) {
+	return gitText(ctx, b.target, "rev-parse", "HEAD")
+}
+
 // AcceptedCommitAt authenticates an exact historical broker commit still in
 // accepted ancestry. Later outcome annotations cannot replace its identity.
 func (b *Broker) AcceptedCommitAt(ctx context.Context, incidentID string, phase Phase, commit string) (Receipt, bool, error) {
