@@ -15,6 +15,7 @@ Memory exists so later incidents are fixed faster and cheaper. Read and reason a
 ## Memory principles
 
 - Treat memory as advice and accepted source as intent; check both against live state before acting.
+- Compile the investigation: the checks that discriminated the cause become the playbook's Diagnose and the mechanical fix steps its program, so a repeat skips the investigation.
 - Keep one failure mechanism per playbook; refine it when only a resource or parameter differs.
 - Avoid hard-coded service or app names: prefer runtime bindings from findings, Diagnose or responder values; isolate unavoidable names in one logical helper and document app constants in the playbook README.
 - Use detectors to find problems proactively and playbooks to diagnose and mitigate; their relationship need not be one to one.
