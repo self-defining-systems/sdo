@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,8 +24,8 @@ import (
 	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
-	"sdo.dev/operator/sdk/vantage"
 	"sdo.dev/operator/sdk/usage"
+	"sdo.dev/operator/sdk/vantage"
 )
 
 // Server owns registrations and a controller-fed mirror. Each evaluation gets
@@ -143,7 +145,7 @@ func (s *Server) Apply(frame *pb.MirrorRequest) error {
 		}
 		if item.Ref.Kind == "Secret" {
 			for key := range item.Object.Fields {
-				if key != "name" && key != "namespace" && key != "type" && key != "dataKeys" && key != "labels" {
+				if !secretFields[key] {
 					return errors.New("Secret mirror may contain metadata only")
 				}
 			}
@@ -188,6 +190,20 @@ func (s *Server) Mirror(stream grpc.ClientStreamingServer[pb.MirrorRequest, pb.M
 		sequence = frame.Sequence
 	}
 }
+
+// secretFields are the only fields a mirrored Secret may carry: the JSON
+// fields of the value-free sdk.SecretMetadata projection, derived from the
+// type so a field added there is admitted here and nothing else is.
+var secretFields = func() map[string]bool {
+	out := map[string]bool{}
+	t := reflect.TypeFor[sdk.SecretMetadata]()
+	for i := range t.NumField() {
+		if name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ","); name != "" && name != "-" {
+			out[name] = true
+		}
+	}
+	return out
+}()
 
 var snapshotFields = map[string]string{"ConfigMap": "configMaps", "Service": "services", "Pod": "pods", "Deployment": "deployments", "StatefulSet": "statefulSets", "DaemonSet": "daemonSets", "Job": "jobs", "CronJob": "cronJobs", "PersistentVolumeClaim": "persistentVolumeClaims", "ServiceAccount": "serviceAccounts", "HorizontalPodAutoscaler": "horizontalPodAutoscalers", "PodDisruptionBudget": "podDisruptionBudgets", "Ingress": "ingresses", "Node": "nodes", "Secret": "secrets", "ReplicaSet": "replicaSets", "Endpoints": "endpoints", "EndpointSlice": "endpointSlices", "NetworkPolicy": "networkPolicies", "Event": "events"}
 
