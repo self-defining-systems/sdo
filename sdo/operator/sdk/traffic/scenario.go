@@ -162,6 +162,8 @@ type Scenario struct {
 	Steps       []Step
 	Cleanup     []Step
 	Detects     []FaultClass
+	// Credentials name Secret keys the steps send; see Credential.
+	Credentials []Credential
 }
 
 // Descriptor is the serializable description of a scenario that travels with
@@ -270,6 +272,9 @@ func (s Scenario) Validate() error {
 		if step.Endpoint == nil {
 			return fmt.Errorf("scenario %s: step %s has no endpoint", s.ID, step.Name)
 		}
+	}
+	if err := s.validateCredentials(); err != nil {
+		return err
 	}
 	for _, class := range s.Detects {
 		if !knownFaultClasses[class] {

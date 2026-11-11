@@ -2,6 +2,7 @@ package traffic
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"math/rand/v2"
@@ -241,6 +242,8 @@ type HTTPEndpoint struct {
 	jsonChecks []func(document any, state State) error
 	// cookies maps State keys to the response cookies SaveCookie stores.
 	cookies map[string]string
+	// basicUser and basicPassword are the WithBasicAuth templates.
+	basicUser, basicPassword string
 }
 
 type existingAnswer struct {
@@ -289,6 +292,14 @@ func (e *HTTPEndpoint) WithHeader(name string, value string) *HTTPEndpoint {
 		e.Headers = map[string]string{}
 	}
 	e.Headers[name] = value
+	return e
+}
+
+// WithBasicAuth sends HTTP basic authentication. Each {key} in user and
+// password is filled from State, for example a password a Credential put
+// there ("{password}").
+func (e *HTTPEndpoint) WithBasicAuth(user string, password string) *HTTPEndpoint {
+	e.basicUser, e.basicPassword = user, password
 	return e
 }
 
@@ -450,6 +461,20 @@ func (e *HTTPEndpoint) Build(_ context.Context, rng *rand.Rand, state State) (Re
 			}
 			request.Headers[name] = filled
 		}
+	}
+	if e.basicUser != "" || e.basicPassword != "" {
+		user, err := fillState(e.basicUser, state)
+		if err != nil {
+			return Request{}, fmt.Errorf("%s %s: basic auth user: %w", e.Method, e.Path, err)
+		}
+		password, err := fillState(e.basicPassword, state)
+		if err != nil {
+			return Request{}, fmt.Errorf("%s %s: basic auth password: %w", e.Method, e.Path, err)
+		}
+		if request.Headers == nil {
+			request.Headers = map[string]string{}
+		}
+		request.Headers["Authorization"] = "Basic " + base64.StdEncoding.EncodeToString([]byte(user+":"+password))
 	}
 	if e.JSON != "" {
 		if len(e.Form) > 0 {

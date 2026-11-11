@@ -92,7 +92,13 @@ type Engine struct {
 	// setups records the scenarios whose setup steps succeeded; engines that
 	// ShareSetup use one record.
 	setups *setupRecord
+	// credentials reads the Secret keys scenarios declare; nil reads none.
+	credentials CredentialReader
 }
+
+// UseCredentials lets scenarios that declare Credentials read them from
+// source at run time.
+func (e *Engine) UseCredentials(source CredentialReader) { e.credentials = source }
 
 // setupRecord holds, per scenario whose setup steps succeeded, the State
 // they saved.
@@ -170,6 +176,9 @@ func (e *Engine) Plan(ctx context.Context, iteration uint64) ([]Request, error) 
 	scenario := e.ScenarioAt(iteration)
 	rng := e.Rand(iteration)
 	state := State{}
+	for _, c := range scenario.Credentials {
+		state[c.As] = "[credential]"
+	}
 	requests := make([]Request, 0, len(scenario.Steps))
 	for _, step := range scenario.Steps {
 		request, err := step.Endpoint.Build(ctx, rng, state)
@@ -187,7 +196,7 @@ func (e *Engine) Plan(ctx context.Context, iteration uint64) ([]Request, error) 
 // its latency. Cleanup steps of a write-with-cleanup scenario run after any
 // request was sent, even when a step failed; their failures are reported in
 // CleanupError and do not change the outcome.
-func (e *Engine) Iterate(ctx context.Context, iteration uint64) (string, Sample) {
+func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, result Sample) {
 	if ctx == nil {
 		// Agent-authored tests sometimes pass nil; treat it as "no deadline"
 		// instead of panicking inside the clock.
@@ -200,10 +209,23 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (string, Sample)
 	iterationCtx, cancel := e.withTimeout(ctx, e.workload.IterationTimeout.Duration())
 	defer cancel()
 	base := e.baseURL(scenario.normalizedTarget())
+	credentials, err := e.credentialState(iterationCtx, scenario)
+	if err != nil {
+		// The probe cannot measure; that says nothing about the application.
+		sample.Outcome, sample.Step, sample.Error = OutcomeInvalid, "credentials", bounded(err.Error())
+		return scenario.ID, sample
+	}
+	defer func() { result.redact(credentials) }()
+	for key, value := range credentials {
+		state[key] = value
+	}
 	// Setup draws from its own copy of the iteration's source, so the steps
 	// build the same requests whether or not setup ran first.
 	if failed := e.setup(iterationCtx, scenario, e.Rand(iteration), state, base, &sample); failed {
 		return scenario.ID, sample
+	}
+	for key, value := range credentials {
+		state[key] = value
 	}
 	started := e.clock.Now()
 	for _, step := range scenario.Steps {
@@ -245,7 +267,12 @@ func (e *Engine) setup(ctx context.Context, scenario Scenario, rng *rand.Rand, s
 	e.setups.mu.Unlock()
 	if !done {
 		started := e.clock.Now()
+		// Setup steps see the iteration's credentials; the record keeps only
+		// what they saved, so a rotated credential is read afresh.
 		saved = State{}
+		for key, value := range state {
+			saved[key] = value
+		}
 		for _, step := range scenario.Setup {
 			result := e.step(ctx, scenario, step, rng, saved, base, phaseSetup)
 			sample.Requests += result.sent
@@ -258,6 +285,9 @@ func (e *Engine) setup(ctx context.Context, scenario Scenario, rng *rand.Rand, s
 				sample.Latency = e.since(started)
 				return true
 			}
+		}
+		for _, c := range scenario.Credentials {
+			delete(saved, c.As)
 		}
 		e.setups.mu.Lock()
 		e.setups.saved[scenario.ID] = saved

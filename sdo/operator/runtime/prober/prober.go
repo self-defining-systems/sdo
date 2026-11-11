@@ -51,6 +51,9 @@ type Config struct {
 	// dial (traffic.LinkSample.HostCPUStall); nil records none. Production
 	// passes HostCPUStall.
 	HostCPUStall func() (float64, bool)
+	// Credentials reads the Secret keys scenarios declare; nil reads none,
+	// and such scenarios record invalid samples.
+	Credentials traffic.CredentialReader
 }
 
 // NewHTTPClient is the prober's default client: no keep-alives, so every
@@ -177,6 +180,7 @@ func New(config Config) (*Prober, error) {
 		if err != nil {
 			return nil, err
 		}
+		engine.UseCredentials(config.Credentials)
 		prober.shareSetup(engine)
 		prober.probes[workload.Name] = newProbe(engine)
 	}
@@ -351,6 +355,7 @@ func (p *Prober) Burst(ctx context.Context, request BurstRequest) (BurstResult, 
 	if err != nil {
 		return BurstResult{}, err
 	}
+	engine.UseCredentials(p.config.Credentials)
 	p.mu.Lock()
 	p.shareSetup(engine)
 	p.mu.Unlock()
