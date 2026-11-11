@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"context"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -68,6 +70,52 @@ func TestPodReadBaselineSettlesInEveryMode(t *testing.T) {
 				t.Fatalf("second settled baseline = %v", got)
 			}
 		})
+	}
+}
+
+// Every settled healthy stretch adds its readings to the query's history,
+// carried with each current result; a stretch that ended unhealthy adds
+// none, and the history stays bounded per Pod while spanning the whole
+// healthy past.
+func TestPodReadBaselineCarriesTheSettledHealthyHistory(t *testing.T) {
+	t0 := time.Unix(1000, 0).UTC()
+	query := storeQuery()
+	b := NewPodReadBaseline(DefaultStateSettle)
+	observe := func(i int, healthy bool) {
+		at := t0.Add(time.Duration(i) * 30 * time.Second)
+		b.Observe(at, healthy, map[string]podread.Result{query.ID: {Query: query, Readings: []podread.Reading{{Namespace: "app", Pod: "a", ObservedAt: at, Stdout: fmt.Sprintf("r%d", i)}}}})
+	}
+	history := func() []string {
+		results := map[string]podread.Result{query.ID: {Query: query}}
+		b.attach(results)
+		var out []string
+		for _, r := range results[query.ID].History {
+			out = append(out, r.Stdout)
+		}
+		return out
+	}
+	for i := 0; i <= 4; i++ { // r0..r3 settle at r4
+		observe(i, true)
+	}
+	if got := strings.Join(history(), ","); got != "r0,r1,r2,r3" {
+		t.Fatalf("history after one settled stretch = %s", got)
+	}
+	observe(5, true)
+	observe(6, false) // r4, r5 never settle
+	if got := strings.Join(history(), ","); got != "r0,r1,r2,r3" {
+		t.Fatalf("an unhealthy stretch entered the history: %s", got)
+	}
+	for i := 7; i <= 60; i++ {
+		observe(i, true)
+	}
+	got := history()
+	// Stretches settle every four readings from r7; the last settled one is
+	// r55..r58 (r59, r60 are the open candidate).
+	if len(got) != podread.HistoryPerPod || got[0] != "r0" || got[len(got)-1] != "r58" {
+		t.Fatalf("history = %v, want %d readings from r0 to r58", got, podread.HistoryPerPod)
+	}
+	if slices.Contains(got, "r4") || slices.Contains(got, "r5") {
+		t.Fatalf("history kept a reading of the unhealthy stretch: %v", got)
 	}
 }
 

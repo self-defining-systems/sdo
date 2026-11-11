@@ -336,13 +336,21 @@ func (r Reading) Ref() sdk.ObjectRef {
 // Baseline holds the complete readings of the same query at the controller's
 // last promoted healthy baseline, one per Pod read then. It is empty until the
 // application has been healthy once, and it is a reference, never a current
-// read.
+// read. History holds complete readings of the same query taken during every
+// settled healthy stretch, each Pod's oldest first: at most HistoryPerPod per
+// Pod, spread over the whole history as it grows. It shows how the healthy
+// application varies, so a current reading can be judged against that range
+// rather than against one moment.
 type Result struct {
 	Query    Query     `json:"query"`
 	Readings []Reading `json:"readings,omitempty"`
 	Baseline []Reading `json:"baseline,omitempty"`
+	History  []Reading `json:"history,omitempty"`
 	Error    string    `json:"error,omitempty"`
 }
+
+// HistoryPerPod bounds the healthy readings Result.History keeps per Pod.
+const HistoryPerPod = 8
 
 // Source supplies frozen query results.
 type Source interface {

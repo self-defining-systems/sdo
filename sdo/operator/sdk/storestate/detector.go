@@ -29,10 +29,15 @@ const (
 )
 
 // Namespace judgement: a judged namespace (a table, collection, KV prefix or
+// Namespace judgement: a judged namespace (a table, collection, KV prefix or
 // key pattern) is reported when it disappears or when its count drops below
 // half of a baseline of at least MinJudgedCount. Growth is not judged: an
 // application writes its tables, so a count grows with time and traffic past
-// any multiple of a healthy reading.
+// any multiple of a healthy reading. A namespace the healthy application
+// itself shrinks (smaller in a healthy reading than in the one before, or
+// gone from one) is not judged at all: removing its entries is the
+// application's own churn (a queue drained, a lease or lock released, a
+// temporary table dropped).
 const MinJudgedCount = 10
 
 // NearLimit is the fraction of a cap at which use is reported.
@@ -163,24 +168,51 @@ func Observe(ctx sdk.DetectionContext, d sdk.Detector) ([]Facts, error) {
 // observe parses the current readings and returns the baselines to compare
 // them with: the configured ones, or else the controller's promoted healthy
 // readings carried with the result.
-func (d detector) observe(ctx sdk.DetectionContext) ([]Facts, map[string]Facts, error) {
+func (d detector) observe(ctx sdk.DetectionContext) ([]Facts, reference, error) {
 	result, err := podread.Require(ctx, d.query.ID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("store %s: %w", d.config.Component, err)
+		return nil, reference{}, fmt.Errorf("store %s: %w", d.config.Component, err)
 	}
 	out := make([]Facts, 0, len(result.Readings))
 	for _, reading := range result.Readings {
 		f, err := parseReading(d.adapter, d.config.Component, reading)
 		if err != nil {
-			return nil, nil, fmt.Errorf("store %s Pod %s: %w", d.config.Component, reading.Pod, err)
+			return nil, reference{}, fmt.Errorf("store %s Pod %s: %w", d.config.Component, reading.Pod, err)
 		}
 		out = append(out, f)
 	}
-	baselines := d.baselines
-	if len(baselines) == 0 {
-		baselines = promotedBaselines(d.adapter, d.config.Component, result)
+	return out, d.reference(result), nil
+}
+
+// reference is what a store Pod's facts are judged against: its healthy
+// baseline and the healthy history around it.
+type reference struct {
+	baselines map[string]Facts
+	history   map[string][]Facts
+}
+
+// reference returns the configured baselines (a history of one reading
+// each), or else the controller's promoted ones and their history.
+func (d detector) reference(result podread.Result) reference {
+	if len(d.baselines) > 0 {
+		return reference{baselines: d.baselines}
 	}
-	return out, baselines, nil
+	return reference{baselines: promotedBaselines(d.adapter, d.config.Component, result), history: promotedHistory(d.adapter, d.config.Component, result)}
+}
+
+// pick returns pod's baseline (pick) and the healthy readings of the baseline's
+// Pod, the baseline included, oldest first.
+func (r reference) pick(pod string) (Facts, []Facts, bool) {
+	baseline, ok := pick(r.baselines, pod)
+	if !ok {
+		return Facts{}, nil, false
+	}
+	samples := slices.Clone(r.history[baseline.Pod.Name])
+	if !slices.ContainsFunc(samples, func(f Facts) bool { return f.At.Equal(baseline.At) }) {
+		samples = append(samples, baseline)
+	}
+	slices.SortStableFunc(samples, func(a, b Facts) int { return a.At.Compare(b.At) })
+	return baseline, samples, true
 }
 
 // ConfirmationReason names the store Pods a GapWithoutBaseline reader does
@@ -209,20 +241,17 @@ const maxGapReasonBytes = 400
 // baseline whose read gives no answer, or a refused one, is a gap (named in
 // gaps, its refusals dropped) rather than an error or a finding. A reader
 // without the option, and a Pod with a baseline, keep observe's contract.
-func (d detector) assess(ctx sdk.DetectionContext) ([]Facts, map[string]Facts, []string, error) {
+func (d detector) assess(ctx sdk.DetectionContext) ([]Facts, reference, []string, error) {
 	if !d.config.GapWithoutBaseline {
-		facts, baselines, err := d.observe(ctx)
-		return facts, baselines, nil, err
+		facts, ref, err := d.observe(ctx)
+		return facts, ref, nil, err
 	}
 	result, found := podread.ResultFrom(ctx, d.query.ID)
-	baselines := d.baselines
-	if len(baselines) == 0 {
-		baselines = promotedBaselines(d.adapter, d.config.Component, result)
-	}
+	ref := d.reference(result)
 	if !found || result.Error != "" || len(result.Readings) == 0 {
-		if len(baselines) > 0 {
+		if len(ref.baselines) > 0 {
 			_, err := podread.Require(ctx, d.query.ID)
-			return nil, nil, nil, fmt.Errorf("store %s: %w", d.config.Component, err)
+			return nil, reference{}, nil, fmt.Errorf("store %s: %w", d.config.Component, err)
 		}
 		reason := result.Error
 		switch {
@@ -231,16 +260,16 @@ func (d detector) assess(ctx sdk.DetectionContext) ([]Facts, map[string]Facts, [
 		case reason == "":
 			reason = "no readings"
 		}
-		return nil, baselines, []string{reason}, nil
+		return nil, ref, []string{reason}, nil
 	}
 	var facts []Facts
 	var gaps []string
 	for _, reading := range result.Readings {
-		_, baselined := pick(baselines, reading.Pod)
+		_, baselined := pick(ref.baselines, reading.Pod)
 		f, err := parseReading(d.adapter, d.config.Component, reading)
 		switch {
 		case err != nil && baselined:
-			return nil, nil, nil, fmt.Errorf("store %s Pod %s: %w", d.config.Component, reading.Pod, err)
+			return nil, reference{}, nil, fmt.Errorf("store %s Pod %s: %w", d.config.Component, reading.Pod, err)
 		case err != nil:
 			gaps = append(gaps, fmt.Sprintf("Pod %s: %s", reading.Pod, firstLine(err.Error())))
 			continue
@@ -251,7 +280,7 @@ func (d detector) assess(ctx sdk.DetectionContext) ([]Facts, map[string]Facts, [
 		}
 		facts = append(facts, f)
 	}
-	return facts, baselines, gaps, nil
+	return facts, ref, gaps, nil
 }
 
 // refusals lists a read's refusals other than an unsupported command, as
@@ -267,13 +296,13 @@ func refusals(f Facts) []string {
 }
 
 func (d detector) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.Finding, error) {
-	facts, baselines, _, err := d.assess(ctx)
+	facts, ref, _, err := d.assess(ctx)
 	if err != nil {
 		return nil, err
 	}
 	var findings []sdk.Finding
 	for _, f := range facts {
-		baseline, hasBaseline := pick(baselines, f.Pod.Name)
+		baseline, healthy, hasBaseline := ref.pick(f.Pod.Name)
 		var changes []Change
 		if hasBaseline {
 			changes = Diff(baseline, f)
@@ -297,10 +326,10 @@ func (d detector) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.Fin
 				findings = append(findings, d.finding(f, RuleRoleChanged, c, fmt.Sprintf("store %s (%s) %s changed since the healthy baseline", d.config.Component, f.Engine, key.Name)))
 			case key.Kind == KindPrincipal:
 				findings = append(findings, d.finding(f, RulePrincipalChanged, c, fmt.Sprintf("store %s (%s) principal %s changed since the healthy baseline", d.config.Component, f.Engine, key.Name)))
-			case (key.Kind == KindIndex || key.Kind == KindValidator || key.Kind == KindLock) && judgedCatalogChange(baseline, f, c):
+			case (key.Kind == KindIndex || key.Kind == KindValidator || key.Kind == KindLock) && judgedCatalogChange(healthy, f, c):
 				findings = append(findings, d.finding(f, RuleCatalogChanged, c, fmt.Sprintf("store %s (%s) %s changed since the healthy baseline", d.config.Component, f.Engine, key)))
 			case judgedNamespace(f.Engine, key):
-				if how := namespaceShift(c); how != "" {
+				if how := namespaceShift(c, rangeOf(healthy, key)); how != "" {
 					finding := d.finding(f, RuleNamespaceChanged, c, fmt.Sprintf("store %s (%s) %s %s since the healthy baseline", d.config.Component, f.Engine, key, how))
 					if appeared := appearedNamespaces(f.Engine, changes); appeared != "" {
 						finding.Evidence += "; appeared since the healthy baseline: " + appeared
@@ -368,10 +397,12 @@ func (d detector) noEviction(f Facts) bool {
 //     lock) is judged, and a lock that blocks writes is also a write block;
 //   - an index or validator belongs to its table's lifecycle when the table
 //     itself appeared or disappeared (a new or rotated time partition, judged by
-//     the namespace rule); on a table that existed before and still exists, an
-//     added, removed or changed one is judged (a constraint added to a live
-//     table rejects writes that used to succeed).
-func judgedCatalogChange(baseline, current Facts, c Change) bool {
+//     the namespace rule) or was missing from a healthy reading (a table the
+//     application creates and drops itself); on a table present in every
+//     healthy reading that still exists, an added, removed or changed one is
+//     judged (a constraint added to a live table rejects writes that used to
+//     succeed).
+func judgedCatalogChange(healthy []Facts, current Facts, c Change) bool {
 	key := c.Key()
 	if key.Kind == KindLock {
 		return !(c.Before != nil && c.Before.Value == "active" || c.After != nil && c.After.Value == "active")
@@ -381,9 +412,8 @@ func judgedCatalogChange(baseline, current Facts, c Change) bool {
 		return c.Before != nil
 	}
 	table := Key{Kind: KindNamespace, Scope: db, Name: object}
-	_, before := baseline.Lookup(table)
 	_, after := current.Lookup(table)
-	return before && after
+	return after && rangeOf(healthy, table).present
 }
 
 // judgedNamespace reports whether the namespace-changed rule judges an item:
@@ -412,24 +442,59 @@ func count(it *Item) (int64, bool) {
 	return n, err == nil && n >= 0
 }
 
-// namespaceShift says how a judged namespace changed, or "" when the change
-// is within the judged bounds. A namespace that appeared is not judged by
-// itself (applications create tables and collections lazily); it is cited
-// with a disappearance.
-func namespaceShift(c Change) string {
+// healthyRange is how one namespace behaved over a Pod's healthy readings
+// that could read its kind, oldest first.
+type healthyRange struct {
+	// present is true when every such reading has the namespace.
+	present bool
+	// counted is true when every reading that has it gives a count.
+	counted bool
+	// shrank is true when a reading has fewer entries than the one before,
+	// or lacks the namespace the one before had.
+	shrank bool
+}
+
+func rangeOf(healthy []Facts, k Key) healthyRange {
+	r := healthyRange{present: true, counted: true}
+	var prev int64
+	seen := false
+	for _, f := range healthy {
+		if f.unread(k.Kind) {
+			continue
+		}
+		var n int64
+		if it, ok := f.Lookup(k); !ok {
+			r.present = false
+		} else if v, ok := count(&it); ok {
+			n = v
+		} else {
+			r.counted = false
+			continue
+		}
+		r.shrank = r.shrank || seen && n < prev
+		prev, seen = n, true
+	}
+	return r
+}
+
+// namespaceShift says how a judged namespace changed from its baseline, given
+// how it behaved while healthy, or "" when the change is within the judged
+// bounds. A namespace that appeared is not judged by itself (applications
+// create tables and collections lazily); it is cited with a disappearance.
+func namespaceShift(c Change, healthy healthyRange) string {
 	before, hasBefore := count(c.Before)
 	after, hasAfter := count(c.After)
 	switch {
 	case c.Before == nil:
 		return ""
 	case c.After == nil:
-		if c.Before.Kind == KindKeyPattern && (!hasBefore || before < MinJudgedCount) {
+		if healthy.shrank || c.Before.Kind == KindKeyPattern && (!hasBefore || before < MinJudgedCount) {
 			return ""
 		}
 		return "disappeared"
-	case !hasBefore || !hasAfter || before < MinJudgedCount:
+	case !hasBefore || !hasAfter || !healthy.counted:
 		return ""
-	case after*2 < before:
+	case !healthy.shrank && before >= MinJudgedCount && after*2 < before:
 		return fmt.Sprintf("dropped from %d to %d", before, after)
 	}
 	return ""
