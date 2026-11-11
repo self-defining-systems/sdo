@@ -41,11 +41,10 @@ import (
 type PodReadBaseline struct {
 	mu      sync.RWMutex
 	results map[string]podread.Result
-	// settle is how long health must last before the readings at the start
-	// of the stretch are promoted.
-	settle      time.Duration
-	candidateAt time.Time
-	candidate   map[string]podread.Result
+	// stretch decides when the readings at the start of a healthy stretch
+	// are promoted.
+	stretch   healthyStretch
+	candidate map[string]podread.Result
 	// samples are the complete readings of the candidate stretch, per query.
 	samples map[string][]podread.Reading
 	// history holds the readings of every settled stretch, per query
@@ -59,10 +58,7 @@ type PodReadBaseline struct {
 // NewPodReadBaseline returns an empty holder whose promotions settle for
 // settle (DefaultStateSettle when not positive).
 func NewPodReadBaseline(settle time.Duration) *PodReadBaseline {
-	if settle <= 0 {
-		settle = DefaultStateSettle
-	}
-	return &PodReadBaseline{results: map[string]podread.Result{}, history: map[string]podread.Result{}, settle: settle}
+	return &PodReadBaseline{results: map[string]podread.Result{}, history: map[string]podread.Result{}, stretch: newHealthyStretch(settle)}
 }
 
 // Observe records one evaluation. A healthy one starts a candidate with its
@@ -73,19 +69,18 @@ func (b *PodReadBaseline) Observe(now time.Time, healthy bool, results map[strin
 		return
 	}
 	b.mu.Lock()
-	if !healthy {
-		b.candidate, b.candidateAt, b.samples = nil, time.Time{}, nil
-		b.mu.Unlock()
-		return
-	}
 	var settled map[string]podread.Result
 	var stretch map[string][]podread.Reading
-	switch {
-	case b.candidate == nil:
-		b.candidate, b.candidateAt, b.samples = maps.Clone(results), now, nil
-	case now.Sub(b.candidateAt) >= b.settle:
+	switch event, _ := b.stretch.observe(now, healthy); event {
+	case stretchBroken:
+		b.candidate, b.samples = nil, nil
+		b.mu.Unlock()
+		return
+	case stretchStarted:
+		b.candidate, b.samples = maps.Clone(results), nil
+	case stretchSettled:
 		settled, stretch = b.candidate, b.samples
-		b.candidate, b.candidateAt, b.samples = maps.Clone(results), now, nil
+		b.candidate, b.samples = maps.Clone(results), nil
 	}
 	b.samples = withSamples(b.samples, results)
 	b.mu.Unlock()
@@ -161,10 +156,8 @@ func withSamples(samples map[string][]podread.Reading, results map[string]podrea
 	return samples
 }
 
-// spreadHistory keeps at most perPod readings of each Pod, oldest first.
-// Over the bound it drops, one at a time, the reading closest in time to the
-// one before it (never a Pod's first or newest), so the kept readings span the
-// whole healthy history as evenly as they can.
+// spreadHistory keeps at most perPod readings of each Pod, spread over time
+// (spreadByTime).
 func spreadHistory(readings []podread.Reading, perPod int) []podread.Reading {
 	byPod := map[string][]podread.Reading{}
 	for _, r := range readings {
@@ -172,18 +165,7 @@ func spreadHistory(readings []podread.Reading, perPod int) []podread.Reading {
 	}
 	var out []podread.Reading
 	for _, pod := range slices.Sorted(maps.Keys(byPod)) {
-		kept := byPod[pod]
-		slices.SortStableFunc(kept, func(a, b podread.Reading) int { return a.ObservedAt.Compare(b.ObservedAt) })
-		for len(kept) > perPod {
-			drop := 1
-			for i := 2; i < len(kept)-1; i++ {
-				if kept[i].ObservedAt.Sub(kept[i-1].ObservedAt) < kept[drop].ObservedAt.Sub(kept[drop-1].ObservedAt) {
-					drop = i
-				}
-			}
-			kept = slices.Delete(kept, drop, drop+1)
-		}
-		out = append(out, kept...)
+		out = append(out, spreadByTime(byPod[pod], func(r podread.Reading) time.Time { return r.ObservedAt }, perPod)...)
 	}
 	return out
 }
