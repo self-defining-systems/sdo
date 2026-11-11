@@ -18,6 +18,15 @@ operator and `run --skip-reset`.
   records them as actions), writes `$FUZZOPS_REPORT` from the detector findings and then from the responder's
   confirmed root causes, keeps every state snapshot under `$FUZZOPS_OUT`, and exits after closure.
 
+- `campaign.py`: one lane's rounds on persistent memory. `plan` picks, per template, a first instance and a
+  variant from a fuzzops instances file; `lane` runs `first`, `repeat` and `variant` as `exec:sdo-<round>` (graded
+  apart by fuzzops), waits for SDO to be idle (no incident, closure or queued reflection) before each run, and copies
+  the accepted outcomes and playbooks after it.
+- `table.py`: merges a lane's records with the app's noop and `best-fix` baselines, grades them with
+  `fuzzops report --plain` and joins SDO's outcome records into a per-version table (verdict, bad seconds against
+  noop and best-fix, lost writes, harmful actions, lifecycle times, cause class and reach, tokens and cost,
+  auto-applied, repeat/first ratios).
+
 ## Run
 
 ```bash
