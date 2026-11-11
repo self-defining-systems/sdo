@@ -2,12 +2,14 @@ package memory
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path"
 	"path/filepath"
 	"sdo.dev/operator/apihistory"
+	"sdo.dev/operator/evidencesink"
 	"strings"
 )
 
@@ -59,6 +61,9 @@ func PrepareIncidentSession(repositoryMount, pvcSubPath, incidentID string) (str
 			return "", fmt.Errorf("incident session directory is not a real directory: %s", directory)
 		}
 	}
+	if err := recordIncidentIdentity(local, incidentID); err != nil {
+		return "", err
+	}
 	if _, err := os.Stat(apihistory.GenerationPath(filepath.Join(local, "api-history"))); errors.Is(err, os.ErrNotExist) {
 		if err := apihistory.BeginGeneration(filepath.Join(local, "api-history")); err != nil {
 			return "", err
@@ -94,4 +99,25 @@ func RemoveIncidentSession(repositoryMount, incidentID string) error {
 		}
 	}
 	return os.RemoveAll(filepath.Join(sessions, digest))
+}
+
+// recordIncidentIdentity writes the exact incident ID next to the session once: the directory is named by a digest,
+// and the evidence sink mirrors this file so an incident still in flight is identifiable after the run.
+func recordIncidentIdentity(session, incidentID string) error {
+	data, err := json.Marshal(map[string]string{"schema": "sdo.incident-session/v1", "incident_id": incidentID})
+	if err != nil {
+		return err
+	}
+	file, err := os.OpenFile(filepath.Join(session, evidencesink.IncidentIdentityFile), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if errors.Is(err, os.ErrExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("record incident session identity: %w", err)
+	}
+	_, writeErr := file.Write(append(data, '\n'))
+	if closeErr := file.Close(); writeErr == nil {
+		writeErr = closeErr
+	}
+	return writeErr
 }

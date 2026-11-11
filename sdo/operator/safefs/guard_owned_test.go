@@ -24,6 +24,8 @@ var operatorOwned = map[string]string{
 	"apihistory/mutation_gate.go":                    reasonState,
 	"apihistory/store.go":                            reasonState,
 	"apihistory/writer.go":                           reasonState,
+	"evidencesink/mirror.go":                         "only reads runtime evidence, opening each file with O_NOFOLLOW",
+	"evidencesink/sink.go":                           "writes only below the runner-owned evidence sink, never a checkout; paths are allowlisted relative names and symlinked directories are refused",
 	"broker/advance.go":                              "removes broker-owned proposal roots (whole directories, never a path inside a checkout)",
 	"broker/advance_patches.go":                      "removes a MkdirTemp scratch directory",
 	"broker/attestation.go":                          "materializes an attestation tree into a fresh broker-created scratch directory",

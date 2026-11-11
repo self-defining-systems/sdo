@@ -53,6 +53,13 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "evidence-sink" {
+		if err := operatorcli.RunEvidenceSinkProcess(os.Args[1:], os.Stderr); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && (os.Args[1] == "evidence" || os.Args[1] == "api-proxy") {
 		var err error
 		if os.Args[1] == "evidence" {
