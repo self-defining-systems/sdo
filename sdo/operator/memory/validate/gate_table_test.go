@@ -975,6 +975,8 @@ var gateRuleCoverage = map[string]string{
 	RuleMapUncoveredWrite:     "covered by application_map_test.go",
 	RuleMapUncoveredData:      "covered by application_map_test.go",
 	RuleMapUnexercisedEdge:    "covered by application_map_test.go",
+	RuleMapUncoveredEdge:      "covered by application_map_test.go",
+	RuleMapUnprobedEdge:       "covered by application_map_test.go",
 	RuleMapKnownBroken:        "covered by application_map_test.go and the appmap package's known-broken tests",
 	RuleMapOutsideRegion:      "covered by application_map_test.go",
 	RuleMapRegionOwner:        "covered by application_map_test.go",

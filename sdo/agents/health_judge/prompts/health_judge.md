@@ -8,6 +8,10 @@ ${architecture}
 Resources: ${resources}
 Validation feedback: ${feedback}
 
+Probe every mapped edge from an entry component: an operation whose path crosses it and a probe that exercises
+it. A probe coverage section after the architecture lists the edges the accepted map leaves uncovered. Record an
+edge `unprobed` only when no synthetic request can cross it; needing authentication is not such a reason.
+
 Follow ${skills_root}/sdo-operationalize/SKILL.md: map the application, write probes and detectors from the
 map, and calibrate them on the live application. The skill directory is the one place outside this checkout you
 may read. The trusted SDK reference is ${skills_root}/sdo-detector-authoring/references/sdk.md and the

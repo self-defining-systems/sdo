@@ -106,6 +106,7 @@ func TestApplicationMapRuleIDsMatchTheParser(t *testing.T) {
 		RuleMapPathMismatch: appmap.RulePathMismatch, RuleMapUncoveredOp: appmap.RuleUncoveredOp,
 		RuleMapUncoveredWrite: appmap.RuleUncoveredWrite, RuleMapUncoveredData: appmap.RuleUncoveredData,
 		RuleMapUnexercisedEdge: appmap.RuleUnexercisedEdge, RuleMapKnownBroken: appmap.RuleKnownBroken,
+		RuleMapUncoveredEdge: appmap.RuleUncoveredEdge, RuleMapUnprobedEdge: appmap.RuleUnprobedEdge,
 	} {
 		if got != want {
 			t.Errorf("rule %q != %q", got, want)
@@ -156,6 +157,7 @@ func TestApplicationMapGapsBlockTheDesignerAndAreNotesForOthers(t *testing.T) {
 		{"workload missing from the inventory", strings.Replace(mapYAML, "StatefulSet/db", "StatefulSet/dbx", 1), RuleMapUnknownName, "StatefulSet/dbx", ""},
 		{"entry service not of the entry component", strings.Replace(mapYAML, "entry: {service: web, port: 80, method: GET", "entry: {service: api, port: 80, method: GET", 1), RuleMapPathMismatch, "list-items", ""},
 		{"schema: unknown field", mapYAML + "flavor: x\n", RuleMapSchema, "flavor", ""},
+		{"entry edge on no probed path", strings.Replace(mapYAML, "edges:\n", "edges:\n  - {from: web, to: cache, evidence: [manifest], source: ConfigMap/web key cache-url}\n", 1), RuleMapUncoveredEdge, "web -> cache", "unprobed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := mapTree(t, &tc.yaml)
@@ -179,6 +181,24 @@ func TestApplicationMapGapsBlockTheDesignerAndAreNotesForOthers(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// An edge the designer records unprobed, with the reason, replaces the probe:
+// it is a coverage gap note for every actor, carried to the operability
+// report, never a rejection.
+func TestUnprobedEntryEdgeIsACoverageNote(t *testing.T) {
+	yaml := strings.Replace(mapYAML, "edges:\n", "edges:\n  - {from: web, to: cache, evidence: [manifest], source: ConfigMap/web key cache-url, unprobed: warmed at start only}\n", 1)
+	for _, actor := range []Actor{HealthJudge, Responder} {
+		blocking, notes := staticMapCheck(t, mapTree(t, &yaml), actor)
+		if len(blocking) != 0 {
+			t.Fatalf("%s: rejected: %v", actor, blocking)
+		}
+		if !slices.ContainsFunc(notes, func(d Diagnostic) bool {
+			return d.Rule == RuleMapUnprobedEdge && strings.Contains(d.Message, "web -> cache") && strings.Contains(d.Message, "warmed at start only")
+		}) {
+			t.Fatalf("%s: no unprobed-edge note with the reason: %v", actor, notes)
+		}
 	}
 }
 
@@ -296,9 +316,22 @@ probes: []
 `
 
 // A map seeded from manifests alone, with no source, is accepted for every
-// actor: only the note that no operation exercises its edges yet.
+// actor but the designer: only notes that no operation exercises its edges
+// yet. The designer must cover the edges from entry components (or record why
+// no request can cross them) before its commit is accepted.
 func TestSeededApplicationMapIsAccepted(t *testing.T) {
-	for _, actor := range []Actor{Upkeep, HealthJudge, Responder} {
+	yaml := seededYAML
+	root := mapTree(t, &yaml)
+	for _, name := range []string{"probe-call", "probe-write", "probe-read-later"} {
+		if err := os.Remove(filepath.Join(root, ".sdo/diagnostics/traffic/workloads", name+".yaml")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	blocking, _ := staticMapCheck(t, root, HealthJudge)
+	if got := mapRules(blocking); len(got) != 1 || got[0] != RuleMapUncoveredEdge || !strings.Contains(blocking[0].Message, "web -> api") {
+		t.Fatalf("designer: want only the uncovered entry edge web -> api: %v", blocking)
+	}
+	for _, actor := range []Actor{Upkeep, Responder} {
 		yaml := seededYAML
 		root := mapTree(t, &yaml)
 		for _, name := range []string{"probe-call", "probe-write", "probe-read-later"} {
@@ -311,7 +344,7 @@ func TestSeededApplicationMapIsAccepted(t *testing.T) {
 			t.Fatalf("%s: seeded map rejected: %v", actor, blocking)
 		}
 		for _, d := range notes {
-			if strings.HasPrefix(d.Rule, "map.") && d.Rule != RuleMapUnexercisedEdge {
+			if strings.HasPrefix(d.Rule, "map.") && d.Rule != RuleMapUnexercisedEdge && d.Rule != RuleMapUncoveredEdge {
 				t.Fatalf("%s: unexpected note %v", actor, d)
 			}
 		}

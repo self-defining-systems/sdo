@@ -38,8 +38,13 @@ see them as notes. The diagnostic names the operation, component, edge or probe 
   operations no gated probe exercises, without a write-read or read-later probe; it never gates health. Each such
   probe must exercise one operation no gated probe covers, and these operations are at most half of the map's.
   Enforced by: `map.known-broken`.
-- An edge no operation path crosses is noted, never refused: add the operation that uses it, or keep it as a
-  known gap. Enforced by: `map.unexercised-edge`.
+- Every edge from an entry component (the first component of an operation's path, or a component whose Service no
+  edge calls) lies on the path of an operation some probe exercises, or records `unprobed: <why>` when no
+  synthetic request can cross it. Enforced by: `map.uncovered-edge`. A recorded reason is a coverage gap note in
+  the operability report, and a probe that crosses the edge makes the reason wrong (`map.schema`). Enforced by:
+  `map.unprobed-edge`.
+- Any other edge no operation path crosses is noted, never refused: add the operation that uses it, or keep it as
+  a known gap. Enforced by: `map.unexercised-edge`.
 
 ## Telemetry bindings
 

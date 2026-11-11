@@ -73,7 +73,8 @@ commands:
         Coverage gaps (a verified cause without a program, a skipped healthy replay,
         a recorded fault no detector reaches, a links.yaml edge no health-probe
         scenario drives: traffic.undriven-edge, a health-probe scenario on the
-        default latency bound: traffic.default-latency) never fail the check: they print as
+        default latency bound: traffic.default-latency, a map edge the designer
+        recorded unprobed with its reason: map.unprobed-edge) never fail the check: they print as
         coverage_gap lines, or in the JSON coverage_gaps field. Replay outcomes and
         reasons use program.replay-observation and are retained with reflection.
         Exit 0 when clean,
