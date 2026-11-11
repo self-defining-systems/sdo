@@ -62,7 +62,10 @@ func (redisAdapter) ReadCommand(e Endpoint) []string {
 // most 20000 keys. A key's pattern is its first ':'-separated segment
 // ("{n}" for digits, "*" for a long or unusual one), then ":{n}" or ":*" for
 // a second segment and ":*" for any more: "123" is "{n}", "123:followers"
-// "{n}:*", "user:42:cart" "user:{n}:*". It prints "complete" or "partial",
+// "{n}:*", "user:42:cart" "user:{n}:*". Only keys without an expiry are
+// counted: an expiring key is meant to disappear (a cache entry, a lock, a
+// short-lived job record), so its pattern's count churns with load and is no
+// evidence of lost data. It prints "complete" or "partial",
 // then "<pattern>\t<count>" for the 24 largest patterns and "more" when
 // there are others. Key names never leave the store beyond their pattern.
 const redisKeysLua = `local seen, counts, cur, it = {}, {}, '0', 0
@@ -71,7 +74,7 @@ repeat
   local r = redis.call('SCAN', cur, 'COUNT', 1000)
   cur = r[1]
   for _, k in ipairs(r[2]) do
-    if not seen[k] then
+    if not seen[k] and redis.call('PTTL', k) == -1 then
       seen[k] = true
       local a, b, rest = string.match(k, '^([^:]*):?([^:]*):?(.*)$')
       local p = seg(a)
