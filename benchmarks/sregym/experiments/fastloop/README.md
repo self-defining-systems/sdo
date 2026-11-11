@@ -318,10 +318,10 @@ and outside this repository. Hand-authored scripts use the same stand-in; see th
 
 ## Evidence sink
 
-`up --evidence-root <host dir>` (SREGym and toy dev lanes, at cluster creation) mounts the directory on every node at
+`up --evidence-root <host dir>` (SREGym, toy and GitLab dev lanes, at cluster creation) mounts the directory on every node at
 `/opt/sdo-evidence`, makes it writable for the controller uid and installs the controller with that evidence sink. The
 evidence sidecar then mirrors trajectories, task records, ledgers, usage and telemetry to
-`<host dir>/<run-id>/` while rows run (SREGym lanes: `<cluster>-<results dir>`; toy: the control namespace); deleting the namespace or the cluster leaves it intact. Keep the
+`<host dir>/<run-id>/` while rows run (rows: `<cluster>-<results dir>`; a toy or GitLab `up`: the control namespace); deleting the namespace or the cluster leaves it intact. Keep the
 host directory in `sdo-exp`. The layout is in [the architecture](../../../../docs/architecture.md#run-evidence-sink).
 
 # Tier 2a: toy real cluster
