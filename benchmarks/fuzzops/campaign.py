@@ -266,6 +266,7 @@ class LaneConfig:
     controller_image: str = ""
     extra: list[str] = field(default_factory=list)
     unhealthy_retries: int = 2
+    evidence_dir: str = ""
 
     def __post_init__(self) -> None:
         for t in self.templates:
@@ -346,6 +347,7 @@ def run_lane(cfg: LaneConfig, log: Callable[[str], None] = print) -> int:
         "namespace": cfg.namespace,
         "control_namespace": cfg.control_namespace,
         "window": cfg.window,
+        "evidence_dir": cfg.evidence_dir,
         "templates": cfg.templates,
         "plan": json.loads(cfg.plan.dump()),
         "started": _now(),
@@ -449,6 +451,9 @@ def main(argv: list[str] | None = None) -> int:
     ln.add_argument("--kubeconfig", default="")
     ln.add_argument("--operator-binary", default="", help="seal an evidence snapshot at each closure")
     ln.add_argument("--controller-image", default="")
+    ln.add_argument(
+        "--evidence-dir", default="", help="the host directory of this lane's evidence sink run (<sink>/<run-id>)"
+    )
     a = p.parse_args(argv)
     if a.cmd == "plan":
         pairs = instance_ids(json.loads(a.instances_file.read_text()))
@@ -473,6 +478,7 @@ def main(argv: list[str] | None = None) -> int:
         kubeconfig=a.kubeconfig,
         operator_binary=a.operator_binary,
         controller_image=a.controller_image,
+        evidence_dir=a.evidence_dir,
     )
     return run_lane(cfg, log=lambda m: print(f"{_now()} {m}", flush=True))
 
