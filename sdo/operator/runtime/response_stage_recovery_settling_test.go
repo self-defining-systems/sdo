@@ -99,6 +99,9 @@ type settlingCase struct {
 	// traffic replaces the learned stall detector and program with ones that
 	// read the "health" workload's samples, as learned memory does.
 	traffic *settlingTraffic
+	// storeRestart is how long, after the write, a health detector's store
+	// read finds the restarted store's container not running; zero never.
+	storeRestart time.Duration
 }
 
 // settlingTraffic is the health workload's samples: one per second for scenario
@@ -241,6 +244,9 @@ func settlingStageOn(t *testing.T, tc settlingCase, world *settlingWorld) (*Dete
 		restart = trafficStallProgram{restartProgram{id: "api-request-stall"}}
 	}
 	detectors := []sdk.Detector{traffic, stallDetector}
+	if tc.storeRestart > 0 {
+		detectors = append(detectors, restartingStoreDetector{world: world, until: clock.Now().Add(tc.storeRestart)})
+	}
 	registry, err := program.NewRegistry([]program.Diagnoser{restart}, []program.Mitigator{restart})
 	if err != nil {
 		t.Fatal(err)

@@ -251,8 +251,16 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 		if err = e.reportSourceResiduals(ctx, incident, &result); err != nil {
 			return result, err
 		}
-		result.VerificationPassed, err = e.Verifier.Verify(ctx)
-		result.VerificationCompleted = err == nil
+		// Verification observes the landed writes. An observation that fails
+		// (a detector that cannot read a store the plan is restarting) leaves
+		// verification incomplete for recovery settlement to finish; it is not
+		// the writes failing. Only cancellation ends the application.
+		passed, verifyErr := e.Verifier.Verify(ctx)
+		if ctx.Err() != nil {
+			return result, ctx.Err()
+		}
+		result.VerificationPassed = verifyErr == nil && passed
+		result.VerificationCompleted = verifyErr == nil
 	}
 	return result, err
 }
