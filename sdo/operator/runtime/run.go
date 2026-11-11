@@ -49,6 +49,7 @@ import (
 	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
+	"sdo.dev/operator/sdk/vantage"
 	"sdo.dev/operator/shellpath"
 	"sdo.dev/operator/telemetry"
 	"sdo.dev/operator/toolchain"
@@ -2038,6 +2039,9 @@ func evaluateOnce(
 	provider, _, err = detectorObservations{Client: client, Clock: clock.Now, RequireMetrics: true, Telemetry: telemetrySources, ExecConfig: execConfig}.compose(provider, detectors, designerSources)
 	if err != nil {
 		return err
+	}
+	if probes, _ := vantage.Probes(detectors); len(probes) > 0 {
+		awaitVantageHelpers(ctx, provider, evaluateOnceWarmupBudget, func(d time.Duration) { _ = waitOnClock(ctx, clock, d) })
 	}
 	provider = ReadSnapshotProvider{Base: provider, View: func(snapshot sdk.DetectionContext) program.ReadView {
 		probe, _ := trafficAPI.(PrimitiveProber)
