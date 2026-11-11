@@ -8,7 +8,10 @@ import (
 // The commands run in the helper container with a POSIX shell and the
 // BusyBox tools (adjtimex, awk, df, nc, tc, wget). They read only: /proc,
 // the target container's cgroup and /dev/shm through its process root
-// (/proc/PID/root), and the Pod's network namespace. The target processes
+// (/proc/PID/root), and the Pod's network namespace. After each dial a
+// dialing kind prints the node's CPU stall ("psi <avg10>" from
+// /proc/pressure/cpu, which a container does not namespace), so a client dial
+// records host load as a prober dial does. The target processes
 // are those outside the helper's own cgroup. A peer is passed as positional
 // arguments, never spliced into the script.
 var targets = `self=$(cat /proc/self/cgroup); pids=""; n=0
@@ -20,16 +23,17 @@ root=/proc/$first/root
 `
 
 const clock = `now() { adjtimex | awk '/tv_sec/{s=$2} /tv_usec/{u=$2} END{print s, u}'; }
+psi() { awk '$1=="some"{split($2,a,"="); if(a[1]=="avg10") print "psi", a[2]}' /proc/pressure/cpu 2>/dev/null; }
 `
 
 var scripts = map[Kind]string{
 	TCPConnect: clock + `i=0; while [ $i -lt ` + strconv.Itoa(DialsPerProbe) + ` ]; do i=$((i+1))
 a=$(now); out=$(nc -z -w ` + strconv.Itoa(int(DialTimeout.Seconds())) + ` "$1" "$2" </dev/null 2>&1); rc=$?; b=$(now)
-echo "dial $rc $a $b $(echo "$out" | head -c 160 | tr '\n' ' ')"; done
+echo "dial $rc $a $b $(echo "$out" | head -c 160 | tr '\n' ' ')"; psi; done
 `,
 	HTTPGet: clock + `i=0; while [ $i -lt ` + strconv.Itoa(DialsPerProbe) + ` ]; do i=$((i+1))
 a=$(now); out=$(wget -q -S -O /dev/null -T ` + strconv.Itoa(int(DialTimeout.Seconds())) + ` "http://$1:$2$3" 2>&1); rc=$?; b=$(now)
-echo "dial $rc $a $b $(echo "$out" | grep -E 'HTTP/|wget:' | head -n 2 | head -c 160 | tr '\n' ' ')"; done
+echo "dial $rc $a $b $(echo "$out" | grep -E 'HTTP/|wget:' | head -n 2 | head -c 160 | tr '\n' ' ')"; psi; done
 `,
 	Qdisc: `tc qdisc show`,
 	ProcLimits: targets + `for p in $pids; do echo "pid $p $(head -c 32 /proc/$p/comm 2>/dev/null)"

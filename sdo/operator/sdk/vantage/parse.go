@@ -106,6 +106,15 @@ func parseDials(kind Kind, stdout string, observedAt time.Time) ([]Dial, error) 
 	var dials []Dial
 	for _, line := range strings.Split(stdout, "\n") {
 		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[0] == "psi" && len(dials) > 0 {
+			// The node's CPU stall right after the dial before it.
+			stall, err := strconv.ParseFloat(fields[1], 64)
+			if err != nil || stall < 0 {
+				return nil, fmt.Errorf("malformed stall line %q", line)
+			}
+			dials[len(dials)-1].HostCPUStall = stall
+			continue
+		}
 		if len(fields) < 6 || fields[0] != "dial" {
 			continue
 		}
