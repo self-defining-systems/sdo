@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go/buf/validate"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -164,53 +165,93 @@ func menuActionParameter(field protoreflect.FieldDescriptor, raw string, inputs 
 		}
 		return env, nil
 	}
-	if field.Message() != nil && field.Message().Name() == "ObjectRef" {
-		ref, err := sdk.ParseObjectRef(raw)
+	if !field.IsList() {
+		item, err := menuTextElement(field, raw)
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{"api_version": ref.APIVersion, "kind": ref.Kind, "namespace": ref.Namespace, "name": ref.Name}, nil
+		return menuElement(field, item, string(field.Name()), inputs)
 	}
-	if field.Message() != nil && field.Message().Name() == "PlanValue" {
-		var value any
-		if err := json.Unmarshal([]byte(raw), &value); err != nil {
-			value = raw
+	// A list takes a JSON array, or one element given the way a singular field
+	// of its element type is given; repeated --bind values arrive as an array.
+	var items []any
+	if !strings.HasPrefix(strings.TrimSpace(raw), "[") || json.Unmarshal([]byte(raw), &items) != nil {
+		item, err := menuTextElement(field, raw)
+		if err != nil {
+			return nil, err
 		}
-		if field.IsList() {
-			items, ok := value.([]any)
-			if !ok {
-				return nil, fmt.Errorf("expected a JSON list of values")
-			}
-			converted := make([]any, 0, len(items))
-			for i, item := range items {
-				v, err := menuRawValue(item, fmt.Sprintf("%s_%d", field.Name(), i), inputs)
-				if err != nil {
-					return nil, err
-				}
-				converted = append(converted, v)
-			}
-			return converted, nil
-		}
-		return menuRawValue(value, string(field.Name()), inputs)
+		items = []any{item}
 	}
-	if field.Message() != nil && field.Message().FullName() == "google.protobuf.Duration" {
-		var value string
-		if json.Unmarshal([]byte(raw), &value) == nil {
+	converted := make([]any, 0, len(items))
+	for i, item := range items {
+		value, err := menuElement(field, item, fmt.Sprintf("%s_%d", field.Name(), i), inputs)
+		if err != nil {
+			return nil, err
+		}
+		converted = append(converted, value)
+	}
+	return converted, nil
+}
+
+// menuTextElement decodes one element of field given as command-line text into
+// the JSON value menuElement takes.
+func menuTextElement(field protoreflect.FieldDescriptor, raw string) (any, error) {
+	if field.Message() != nil {
+		switch {
+		case field.Message().Name() == "ObjectRef":
+			return raw, nil
+		case field.Message().Name() == "PlanValue", field.Message().FullName() == "google.protobuf.Duration":
+			var value any
+			if err := json.Unmarshal([]byte(raw), &value); err != nil {
+				return raw, nil
+			}
 			return value, nil
 		}
-		return raw, nil
 	}
-	if field.Kind() == protoreflect.BytesKind && !field.IsList() {
+	switch field.Kind() {
+	case protoreflect.BytesKind:
 		return base64.StdEncoding.EncodeToString([]byte(raw)), nil
-	}
-	if field.Kind() == protoreflect.StringKind && !field.IsList() {
+	case protoreflect.StringKind:
 		return raw, nil
 	}
 	var value any
 	if err := json.Unmarshal([]byte(raw), &value); err != nil {
-		return nil, fmt.Errorf("expected %s JSON (%s)", menuInputSchema(field).Type, field.Kind())
+		return nil, fmt.Errorf("expected %s JSON (%s)", menuSingularSchema(field).Type, field.Kind())
 	}
-	return menuNormalizeReferences(field, value, string(field.Name()))
+	return value, nil
+}
+
+// menuElement normalizes one decoded element of field: object references take
+// every accepted spelling and raw values become controller-bound parameters.
+func menuElement(field protoreflect.FieldDescriptor, value any, name string, inputs *program.ValueInputs) (any, error) {
+	if field.Message() != nil && field.Message().Name() == "ObjectRef" {
+		return menuParseReference(value)
+	}
+	if field.Message() != nil && field.Message().Name() == "PlanValue" {
+		return menuRawValue(value, name, inputs)
+	}
+	return menuNormalizeReferenceValue(field, value, name)
+}
+
+// menuListText joins repeated --bind values for one list parameter into the
+// JSON array menuActionParameter takes; each value is one element.
+func menuListText(field protoreflect.FieldDescriptor, values []string) (string, error) {
+	if len(values) == 1 {
+		return values[0], nil
+	}
+	if !field.IsList() {
+		return "", fmt.Errorf("parameter %s takes one value; only list parameters repeat --bind", field.Name())
+	}
+	items := make([]any, 0, len(values))
+	for _, raw := range values {
+		item, err := menuTextElement(field, raw)
+		if err != nil {
+			return "", fmt.Errorf("parameter %s: %w", field.Name(), err)
+		}
+		items = append(items, item)
+	}
+	encoded, err := json.Marshal(items)
+	return string(encoded), err
 }
 
 func menuScalarParameter(spec program.ParamSpec, raw string) (any, error) {

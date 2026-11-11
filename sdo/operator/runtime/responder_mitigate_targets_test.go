@@ -49,8 +49,8 @@ func TestDiagnoseMatchNamesTheCommandThatFixesIt(t *testing.T) {
 }
 
 func TestMitigateByNameAppliesTheExactProgramAndBindings(t *testing.T) {
-	for name, parameters := range map[string]map[string]string{
-		"explicit binding":         {"deployment": apiBinding},
+	for name, parameters := range map[string]map[string]BindValues{
+		"explicit binding":         {"deployment": {apiBinding}},
 		"the one recorded binding": nil,
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -71,7 +71,7 @@ func TestMitigateByNameAppliesTheExactProgramAndBindings(t *testing.T) {
 
 func TestMitigateWrongRoleIsRefusedBeforeAnyWrite(t *testing.T) {
 	world, loop := targetLoop(t)
-	response := loop.Handle(context.Background(), ToolRequest{Command: "mitigate", Targets: []MitigateTarget{{Name: "aware-restart", Parameters: map[string]string{"redis": apiBinding}}}})
+	response := loop.Handle(context.Background(), ToolRequest{Command: "mitigate", Targets: []MitigateTarget{{Name: "aware-restart", Parameters: map[string]BindValues{"redis": {apiBinding}}}}})
 	if want := "aware-restart has no parameter 'redis'; it takes deployment=Deployment/NAMESPACE/NAME"; response.Error != want {
 		t.Fatalf("error = %q, want %q", response.Error, want)
 	}
@@ -125,8 +125,8 @@ func TestMenuNamesCommandsForEveryOption(t *testing.T) {
 func TestSeveralFixesRunTogetherAndOverlappingWritesAreRefused(t *testing.T) {
 	world, loop := targetLoop(t)
 	response := loop.Handle(context.Background(), ToolRequest{Command: "mitigate", Targets: []MitigateTarget{
-		{Name: "aware-restart", Parameters: map[string]string{"deployment": apiBinding}},
-		{Name: "blind-restart", Parameters: map[string]string{"deployment": apiBinding}},
+		{Name: "aware-restart", Parameters: map[string]BindValues{"deployment": {apiBinding}}},
+		{Name: "blind-restart", Parameters: map[string]BindValues{"deployment": {apiBinding}}},
 	}})
 	if response.Report == nil || response.Report.Status != contracts.MitigationReport_STATUS_REFUSED {
 		t.Fatalf("two fixes writing one object must be refused: %+v", response)
@@ -140,7 +140,7 @@ func mitigateReport(t *testing.T, name string) ToolResponse {
 	t.Helper()
 	world, loop := targetLoop(t)
 	world.observed.Store(1) // the rollout has already completed; traffic has not recovered
-	response := loop.Handle(context.Background(), ToolRequest{Command: "mitigate", Targets: []MitigateTarget{{Name: name, Parameters: map[string]string{"deployment": apiBinding}}}})
+	response := loop.Handle(context.Background(), ToolRequest{Command: "mitigate", Targets: []MitigateTarget{{Name: name, Parameters: map[string]BindValues{"deployment": {apiBinding}}}}})
 	if response.Error != "" || response.Report == nil {
 		t.Fatalf("mitigate failed: %+v", response)
 	}

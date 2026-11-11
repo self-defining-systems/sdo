@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"google.golang.org/protobuf/reflect/protoreflect"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -16,9 +17,73 @@ import (
 // Parameters are the raw --bind values; Go types them against the playbook's
 // declared parameters, so the responder never sees an option hash.
 type MitigateTarget struct {
-	Name                string            `json:"name"`
-	Parameters          map[string]string `json:"parameters,omitempty"`
-	FindingFingerprints []string          `json:"finding_fingerprints,omitempty"`
+	Name                string                `json:"name"`
+	Parameters          map[string]BindValues `json:"parameters,omitempty"`
+	FindingFingerprints []string              `json:"finding_fingerprints,omitempty"`
+}
+
+// BindValues are one name's --bind values in command-line order. A name given
+// once arrives as a string; a repeated name arrives as a list, and only a
+// list-typed parameter accepts more than one value.
+type BindValues []string
+
+func (v *BindValues) UnmarshalJSON(data []byte) error {
+	var one string
+	if json.Unmarshal(data, &one) == nil {
+		*v = BindValues{one}
+		return nil
+	}
+	var many []string
+	if err := json.Unmarshal(data, &many); err != nil || len(many) == 0 {
+		return fmt.Errorf("binding: expected a string or a nonempty list of strings")
+	}
+	*v = many
+	return nil
+}
+
+// actionBindings joins each list parameter's repeated values into one JSON
+// array, deriving list-ness from the action's contract field.
+func actionBindings(action protoreflect.FieldDescriptor, parameters map[string]BindValues) (map[string]string, error) {
+	if parameters == nil {
+		return nil, nil
+	}
+	joined := make(map[string]string, len(parameters))
+	for name, values := range parameters {
+		if len(values) == 0 {
+			return nil, fmt.Errorf("parameter %s has no value", name)
+		}
+		field := action.Message().Fields().ByName(protoreflect.Name(name))
+		if field == nil {
+			field = action.Message().Fields().ByJSONName(name)
+		}
+		if field == nil {
+			// menuRawPlan names the unknown parameter.
+			joined[name] = values[0]
+			continue
+		}
+		text, err := menuListText(field, values)
+		if err != nil {
+			return nil, err
+		}
+		joined[name] = text
+	}
+	return joined, nil
+}
+
+// programBindingTexts refuses a repeated name: playbook parameters each take
+// one value.
+func programBindingTexts(spec program.ProgramSpec, parameters map[string]BindValues) (map[string]string, error) {
+	if parameters == nil {
+		return nil, nil
+	}
+	texts := make(map[string]string, len(parameters))
+	for name, values := range parameters {
+		if len(values) != 1 {
+			return nil, fmt.Errorf("%s: parameter %s takes one value; it takes %s", spec.ID, name, programUsage(spec))
+		}
+		texts[name] = values[0]
+	}
+	return texts, nil
 }
 
 func (l *ResponderLoop) programSpec(id string) (program.ProgramSpec, bool) {
@@ -182,8 +247,12 @@ func (l *ResponderLoop) resolveMitigateTargets(request *ToolRequest) error {
 		option := &contracts.MitigationOptionSelection{FindingFingerprints: target.FindingFingerprints}
 		if action, ok := actions[target.Name]; ok {
 			l.menuEntries.advertise(map[string]menuEntry{target.Name: action})
+			parameters, err := actionBindings(action.action, target.Parameters)
+			if err != nil {
+				return fmt.Errorf("%s: %w", target.Name, err)
+			}
 			option.OptionId = target.Name
-			option.Parameters = target.Parameters
+			option.Parameters = parameters
 			options = append(options, option)
 			continue
 		}
@@ -194,7 +263,11 @@ func (l *ResponderLoop) resolveMitigateTargets(request *ToolRequest) error {
 		if _, ok := l.Programs.Mitigator(spec.ID); !ok {
 			return fmt.Errorf("%s only diagnoses; it has no fix to apply", spec.ID)
 		}
-		bindings, err := l.bindForMitigation(spec, target.Parameters)
+		parameters, err := programBindingTexts(spec, target.Parameters)
+		if err != nil {
+			return err
+		}
+		bindings, err := l.bindForMitigation(spec, parameters)
 		if err != nil {
 			return err
 		}
