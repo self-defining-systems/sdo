@@ -8,7 +8,16 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from benchmarks.fuzzops.campaign import CampaignError, Plan, PlanItem, choose, idle_reason, instance_ids, wait_idle
+from benchmarks.fuzzops.campaign import (
+    CampaignError,
+    Plan,
+    PlanItem,
+    SoftIdle,
+    choose,
+    idle_reason,
+    instance_ids,
+    wait_idle,
+)
 from benchmarks.fuzzops.table import (
     Row,
     auto_applied,
@@ -225,3 +234,15 @@ def test_lane_outcomes_prefer_the_evidence_sink_and_carry_reflection(tmp_path: P
     got = {o["incident_id"]: o for o in lane_outcomes(lane)}
     assert set(got) == {"a", "b"}
     assert (got["a"]["classification"], got["a"]["_reflection_decision"]) == ("success", "failed")
+
+
+def test_wait_idle_stops_waiting_for_a_stuck_reflection() -> None:
+    clock = iter(range(0, 10_000, 10))
+    with pytest.raises(SoftIdle, match="reflection queued"):
+        wait_idle(
+            lambda: {"queued_reflection_incident_ids": ["i"]},
+            reflection_wait=60,
+            sleep=lambda _: None,
+            clock=lambda: next(clock),
+            log=lambda _: None,
+        )
