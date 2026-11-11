@@ -42,9 +42,14 @@ if TYPE_CHECKING:
     from mcp.types import ContentBlock
 
 # Codex forwards only a small default environment to MCP servers. Carry the
-# worker-pinned ownership and offline toolchain settings explicitly.
+# worker-pinned ownership and offline toolchain settings explicitly: every
+# variable `sdo-operator memory check` reads, so the agent's in-turn check runs
+# under the same telemetry policy and code path as the worker's final check.
 VALIDATION_ENVIRONMENT = (
     "SDO_REPLAY",
+    "SDO_TELEMETRY_POLICY",
+    "SDO_MEMORY_VALIDATION",
+    "SDO_CODE_PATH",
     "SDO_MEMORY_CHECK_DIR",
     "SDO_MEMORY_CHECK_TIMEOUT_FILE",
     "SDO_ACTOR",
