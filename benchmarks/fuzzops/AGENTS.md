@@ -49,3 +49,11 @@ same cluster, so SDO never sees their namespaces.
 - Several SDO+app pairs may share one kind node; `install` tolerates a concurrent install re-tagging the same images.
 - SDO handles one incident at a time: between faults wait until the controller state has no open incident and no
   `pending_closure`.
+
+## Evidence
+
+- Save each pair's runtime evidence (responder sessions and Codex rollouts, lifecycle tasks, telemetry) with
+  `sdo-operator runtime-artifacts` until SDO's native evidence sink lands: the observer seals a snapshot when an
+  incident closes (`--operator-binary`, `--controller-image`), and `python -m benchmarks.fuzzops.evidence export`
+  runs before any control namespace is deleted. Output goes to sdo-exp. `evidence.EvidenceTarget` is the hook for the
+  sink's configuration.
