@@ -287,6 +287,7 @@ class LaneConfig:
     #: Shell command that brings a broken app back to health between rounds (``$NAMESPACE``, ``$KUBE_CONTEXT`` set),
     #: run when the app is still unhealthy before an inject: SDO missed the previous fault or never repaired it.
     heal_cmd: str = ""
+    reflection_wait: float = REFLECTION_WAIT_S
 
     def __post_init__(self) -> None:
         for t in self.templates:
@@ -393,7 +394,7 @@ def run_lane(cfg: LaneConfig, log: Callable[[str], None] = print) -> int:
             rc = 1
             for attempt in range(cfg.unhealthy_retries + 1):
                 try:
-                    waited, soft = settle(kube, cfg.control_namespace, log)
+                    waited, soft = settle(kube, cfg.control_namespace, log, cfg.reflection_wait)
                 except CampaignError as exc:
                     log(f"{template} {round_}: skipped, {exc}")
                     break
@@ -435,7 +436,7 @@ def run_lane(cfg: LaneConfig, log: Callable[[str], None] = print) -> int:
             if rc != 0:
                 failures += 1
             try:
-                settle(kube, cfg.control_namespace, log)
+                settle(kube, cfg.control_namespace, log, cfg.reflection_wait)
                 kube.copy_memory(cfg.control_namespace, cfg.out / "memory")
             except CampaignError as exc:
                 log(f"{template} {round_}: {exc}")
@@ -453,10 +454,12 @@ def heal(cfg: LaneConfig) -> int:
     return subprocess.run(["sh", "-c", cfg.heal_cmd], env=env, check=False, timeout=900).returncode
 
 
-def settle(kube: Kube, control_namespace: str, log: Callable[[str], None]) -> tuple[float, str]:
+def settle(
+    kube: Kube, control_namespace: str, log: Callable[[str], None], reflection_wait: float = REFLECTION_WAIT_S
+) -> tuple[float, str]:
     """Wait for SDO to be idle; (seconds waited, the reflection reason when the lane stopped waiting for it)."""
     try:
-        return wait_idle(lambda: kube.state(control_namespace), log=log), ""
+        return wait_idle(lambda: kube.state(control_namespace), log=log, reflection_wait=reflection_wait), ""
     except SoftIdle as soft:
         return soft.waited, soft.why
 
@@ -526,6 +529,7 @@ def main(argv: list[str] | None = None) -> int:
         controller_image=a.controller_image,
         evidence_dir=a.evidence_dir,
         heal_cmd=a.heal_cmd,
+        reflection_wait=a.reflection_wait,
     )
     return run_lane(cfg, log=lambda m: print(f"{_now()} {m}", flush=True))
 
