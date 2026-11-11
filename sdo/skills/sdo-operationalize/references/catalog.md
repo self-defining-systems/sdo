@@ -36,8 +36,9 @@ scenarios, workloads and links.
   This includes alert rules the application ships, once its backend loads them.
 - `cluster-wiring`: Service selectors matching no pods or several workloads, named target ports no container
   declares, missing pod-template references and keys (ConfigMap, Secret, PVC, ServiceAccount), unbound PVCs,
-  missing Ingress backends, NetworkPolicies isolating all ingress or egress of pods behind a Service, and
-  ExternalName Services pointing at missing in-namespace Services.
+  missing Ingress backends, NetworkPolicies isolating all ingress or egress of pods behind a Service,
+  ExternalName Services pointing at missing in-namespace Services, and, while a user-facing probe fails, pods that
+  started before a Secret they read last changed (metadata only, never values).
 - `workload-controllers`: StatefulSets and DaemonSets below desired ready or stuck on an old revision, failed
   Jobs, overdue CronJobs.
 - `warning-events`: lasting mount, scheduling, back-off, probe, eviction and OOM warnings on application objects

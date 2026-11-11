@@ -265,3 +265,27 @@ func (w Window) WarmupHorizon() time.Duration {
 	}
 	return longest
 }
+
+// FailingUserScenarios lists, as "workload/scenario" sorted, every qualified
+// health-probe scenario of the context's carried windows that violates its
+// SLO now: the user-facing failures a cause-only detector may gate on. It is
+// empty when the context carries no traffic.
+func FailingUserScenarios(ctx sdk.DetectionContext) []string {
+	set, ok := ctx.(WindowSet)
+	if !ok {
+		return nil
+	}
+	var failing []string
+	for name, window := range set.TrafficWindows() {
+		if window.Workload.Purpose != PurposeHealthProbe || window.LoadError != "" {
+			continue
+		}
+		for _, verdict := range Judge(window) {
+			if !verdict.Healthy {
+				failing = append(failing, name+"/"+verdict.ScenarioID)
+			}
+		}
+	}
+	sort.Strings(failing)
+	return failing
+}

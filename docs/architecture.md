@@ -986,7 +986,10 @@ ownership and production interfaces are unchanged. See the
 [testing guide](testing-guide.md#hand-authored-agent-scripts-no-model).
 Generic health bootstrap also installs `cluster-wiring`, `workload-controllers`, `warning-events`,
 `node-health`, `resource-saturation` and `runtime-crashes`. Cause findings and batching use warn;
-StatefulSet/DaemonSet unavailability is critical. Wiring skips converging workloads. Controller
+StatefulSet/DaemonSet unavailability is critical. Wiring skips converging workloads. While a
+health-probe scenario fails, wiring also reports running pods that started before a Secret they
+read (env or volume) last changed; the change time comes from managedFields and creation metadata,
+never Secret data. Controller
 workloads get a ten-minute progress window; OnDelete and partitioned updates retain old revisions
 intentionally. Cron schedules use the standard five-field parser with explicit timezone (UTC default).
 Warning events require repeated occurrences spanning a minute, seen within two minutes, and clear
