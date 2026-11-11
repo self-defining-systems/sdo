@@ -167,6 +167,18 @@ def test_current_outcome_says_when_data_may_be_lost() -> None:
     assert current_outcome_view(outcome)["data_at_risk"] == [reason]
 
 
+def test_current_outcome_says_when_no_probe_verified_recovery() -> None:
+    outcome = _outcome("synthetic-incident")
+    assert "recovery_unprobed" not in current_outcome_view(outcome)
+
+    outcome.classification = "unconfirmed"
+    reason = "Service store (Pod store-0) is crossed by no qualified health probe"
+    outcome.detector_history.append(
+        DetectorEvaluation(detector_id="controller.recovery-unprobed", status="pending", reason=reason)
+    )
+    assert current_outcome_view(outcome)["recovery_unprobed"] == [reason]
+
+
 def test_current_outcome_shows_source_check_notes_only_when_recorded() -> None:
     outcome = _outcome("inc-1")
     assert "source_check_notes" not in current_outcome_view(outcome)

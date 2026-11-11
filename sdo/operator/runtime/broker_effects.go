@@ -324,6 +324,10 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		if risk != "" {
 			unconfirmed, unconfirmedReason = risk, contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_DATA_MAY_BE_LOST
 			unconfirmedStates = []DetectorEvaluation{{DetectorID: dataAtRiskEvaluation, EvaluatedAt: c.clock(), Status: DetectorEvaluationPending, Reason: risk}}
+		} else if gap := closureRecoveryUnprobed(snapshot, effect.Closure); gap != "" {
+			// Readiness is not recovery: no probe crossed a faulted Service.
+			unconfirmed, unconfirmedReason = gap, contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE
+			unconfirmedStates = []DetectorEvaluation{{DetectorID: recoveryUnprobedEvaluation, EvaluatedAt: c.clock(), Status: DetectorEvaluationPending, Reason: gap}}
 		}
 	}
 	effectKind := lifecyclecore.ProcessClosure

@@ -13,6 +13,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -135,7 +136,7 @@ func TestClosureAfterDataPodReplacementIsNotVerifiedSuccess(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if derived.Record.GetClassification() != "unconfirmed" || derived.RequiresReflection || !dataLossOutcome(derived.Record) {
+			if derived.Record.GetClassification() != "unconfirmed" || derived.RequiresReflection || !validate.DataLossOutcome(derived.Record) {
 				t.Fatalf("the outcome must be unconfirmed and carry the reason: %+v", derived.Record)
 			}
 		})
@@ -294,7 +295,7 @@ func TestResponderRestartOfDataStoreInOnboardedNamespaceIsNotVerified(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if derived.Record.GetClassification() != "unconfirmed" || !dataLossOutcome(derived.Record) {
+	if derived.Record.GetClassification() != "unconfirmed" || !validate.DataLossOutcome(derived.Record) {
 		t.Fatalf("outcome = %+v", derived.Record)
 	}
 

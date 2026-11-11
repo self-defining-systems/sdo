@@ -134,6 +134,17 @@ blockers. Reflection gets it as `data_at_risk` and may not publish learning from
 same fact as `data_at_risk[]` from `sdo verify`. A Pod replaced before the
 incident opened does not count.
 
+## Recovery no probe crossed
+
+A Pod becoming Ready shows that its process answers its own probe, not that users' requests through it succeed. As a
+health-clear closure freezes in an application that has health probes, the controller lists the Services the
+incident's findings reach (the Service itself, or the Services selecting a named Pod or workload). If no qualified
+health-probe scenario enters or crosses one of them (`Target` or `DependsOn`), the closure commits `unconfirmed` with
+reason `OBSERVATION_INCOMPLETE`, and a pending `controller.recovery-unprobed` entry in `detector_history` names the
+Service. Reflection gets it as `recovery_unprobed` and may not publish learning from the closure. A Service a probe
+crosses needs no extra rule: that probe's detector is a health detector, so a probe that keeps failing keeps the
+incident open. Map coverage (`map.uncovered-edge`) is what puts such a probe on every edge from an entry component.
+
 Repairs that change records in place do not make the closure unconfirmed. The closure records each applied data
 effect on a `holds_data` component as a `data effect:` note on the outcome (`source_check_notes`), and `sdo verify`
 lists the same lines in `data_effects[]`. For an `unknown` or `data-write` effect the note says whether a backup of
