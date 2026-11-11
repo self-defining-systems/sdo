@@ -7,8 +7,11 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	operator "sdo.dev/operator/runtime"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -65,6 +68,13 @@ func (w *reaction) finish(ctx context.Context) error {
 			if bytes.Equal(left, right) {
 				continue
 			}
+			// The controller leaves the Pods it will not roll (OnDelete, an
+			// OrderedReady StatefulSet waiting on an unready Pod); a Pod deleted
+			// by the executor is recreated from the new template.
+			stuck, err := w.podsControllerWillNotRoll(before)
+			if err != nil {
+				return err
+			}
 			for podRef, old := range w.cluster.initial {
 				if podRef.Kind != "Pod" || podRef.Namespace != ref.Namespace || w.cluster.simDeleted[podRef] {
 					continue
@@ -73,16 +83,50 @@ func (w *reaction) finish(ctx context.Context) error {
 				if err != nil {
 					return err
 				}
-				if owned {
-					if err = w.replace(ctx, podRef, old, template, true); err != nil {
-						return err
-					}
+				if !owned {
+					continue
+				}
+				live, err := w.cluster.Get(ctx, podRef)
+				if err != nil && !apierrors.IsNotFound(err) {
+					return err
+				}
+				gone := err != nil || live.GetUID() != old.GetUID()
+				if !gone && stuck[old.GetUID()] {
+					continue
+				}
+				if err = w.replace(ctx, podRef, old, template, !gone); err != nil {
+					return err
 				}
 			}
 		}
 		w.done[index] = true
 	}
 	return nil
+}
+
+// podsControllerWillNotRoll applies the production controller rule to the
+// workload's pre-plan Pods.
+func (w *reaction) podsControllerWillNotRoll(workload *unstructured.Unstructured) (map[types.UID]bool, error) {
+	var pods []corev1.Pod
+	for ref, object := range w.cluster.initial {
+		if ref.Kind != "Pod" || ref.Namespace != workload.GetNamespace() {
+			continue
+		}
+		var pod corev1.Pod
+		if err := kruntime.DefaultUnstructuredConverter.FromUnstructured(object.Object, &pod); err != nil {
+			return nil, err
+		}
+		pods = append(pods, pod)
+	}
+	found, err := operator.PodsControllerWillNotRoll(workload, pods)
+	if err != nil {
+		return nil, err
+	}
+	stuck := map[types.UID]bool{}
+	for _, item := range found {
+		stuck[item.Pod.UID] = true
+	}
+	return stuck, nil
 }
 
 func workloadRef(action program.Action) (sdk.ObjectRef, bool) {

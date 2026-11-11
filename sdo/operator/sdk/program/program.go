@@ -343,8 +343,11 @@ func (Escalate) action() {}
 
 // RestartRollout restarts a workload's Pods like kubectl rollout restart.
 // It stamps the Pod template's kubectl.kubernetes.io/restartedAt annotation, and
-// the workload's own update strategy replaces the Pods. Ref must be one named
-// apps/v1 Deployment, StatefulSet or DaemonSet.
+// the workload's own update strategy replaces the Pods. Pods the controller
+// will not replace (an OnDelete strategy, or an OrderedReady StatefulSet
+// waiting on an unready Pod) are deleted so they restart too; the receipt names
+// each deleted Pod and why. Ref must be one named apps/v1 Deployment,
+// StatefulSet or DaemonSet.
 type RestartRollout struct {
 	Ref    sdk.ObjectRef
 	Reason string

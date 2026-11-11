@@ -1396,8 +1396,11 @@ type PlanObjectEffect struct {
 	Irreversible bool                   `protobuf:"varint,6,opt,name=irreversible,proto3" json:"irreversible,omitempty"`
 	// Read-only nonsecret evidence. Never replay or auto-recreate from it.
 	DeletedPreImage *structpb.Struct `protobuf:"bytes,7,opt,name=deleted_pre_image,json=deletedPreImage,proto3" json:"deleted_pre_image,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Why the executor made this effect when the action did not name it, such as
+	// a Pod a restart deleted because its controller would not replace it.
+	Reason        string `protobuf:"bytes,8,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *PlanObjectEffect) Reset() {
@@ -1477,6 +1480,13 @@ func (x *PlanObjectEffect) GetDeletedPreImage() *structpb.Struct {
 		return x.DeletedPreImage
 	}
 	return nil
+}
+
+func (x *PlanObjectEffect) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
 }
 
 type ReconcileFromSource struct {
@@ -5932,7 +5942,7 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x06reason\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06reason\"o\n" +
 	"\fDeleteObject\x12>\n" +
 	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\x12\x1f\n" +
-	"\x06reason\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06reason\"\xe3\x02\n" +
+	"\x06reason\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06reason\"\xfb\x02\n" +
 	"\x10PlanObjectEffect\x12:\n" +
 	"\toperation\x18\x01 \x01(\tB\x1c\xbaH\x19r\x17R\x06createR\x06deleteR\x05patchR\toperation\x12>\n" +
 	"\x03ref\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\x12\x10\n" +
@@ -5940,7 +5950,8 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x05state\x18\x04 \x01(\tB$\xbaH!r\x1fR\vnot_appliedR\aappliedR\aunknownR\x05state\x12\x1c\n" +
 	"\tconfirmed\x18\x05 \x01(\bR\tconfirmed\x12\"\n" +
 	"\firreversible\x18\x06 \x01(\bR\firreversible\x12C\n" +
-	"\x11deleted_pre_image\x18\a \x01(\v2\x17.google.protobuf.StructR\x0fdeletedPreImage\"U\n" +
+	"\x11deleted_pre_image\x18\a \x01(\v2\x17.google.protobuf.StructR\x0fdeletedPreImage\x12\x16\n" +
+	"\x06reason\x18\b \x01(\tR\x06reason\"U\n" +
 	"\x13ReconcileFromSource\x12>\n" +
 	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\"t\n" +
 	"\bRollback\x12>\n" +
