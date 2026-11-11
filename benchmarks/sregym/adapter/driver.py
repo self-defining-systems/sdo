@@ -360,6 +360,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="record the healthy namespace before fault injection; reject learned detectors that fire on it",
     )
     parser.add_argument(
+        "--evidence-sink-host-path",
+        default=str(config.get("evidence_sink_host_path", "")),
+        help="node directory that receives run evidence and outlives the control namespace (kind: an extraMounts path)",
+    )
+    parser.add_argument(
+        "--evidence-run-id",
+        default=str(config.get("evidence_run_id", "")),
+        help="run directory inside the evidence sink (default: the control namespace)",
+    )
+    parser.add_argument(
         "--persistent-controller",
         action=argparse.BooleanOptionalAction,
         default=bool(config.get("persistent_controller", False)),
@@ -740,6 +750,8 @@ def _launch_native_lifecycle(
         responder_namespaces=args.responder_namespaces,
         healthy_baseline=args.healthy_baseline,
         max_response_loops=args.max_response_loops,
+        evidence_sink_host_path=args.evidence_sink_host_path,
+        evidence_run_id=args.evidence_run_id,
         response_timeout_seconds=args.timeout_sec,
         verification_timeout_seconds=int(wait_for(WaitKind.VERIFICATION_SAMPLE)),
         duration_seconds=None if persistent else args.timeout_sec,
@@ -1051,6 +1063,8 @@ def _run_persistent(args: argparse.Namespace, api_base: str, started: float) -> 
         late_findings=args.late_findings,
         healthy_baseline=args.healthy_baseline,
         max_response_loops=args.max_response_loops,
+        evidence_sink_host_path=args.evidence_sink_host_path,
+        evidence_run_id=args.evidence_run_id,
         submission_api_base=_in_cluster_api_base(api_base),
         submission_relay_target_base=_relay_target_api_base(api_base),
         artifacts_dir=receipt_dir,

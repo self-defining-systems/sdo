@@ -356,6 +356,7 @@ def test_toy_controller_publishes_selected_registrations(tmp_path, monkeypatch, 
         dev_mount=tmp_path,
         kubeconfig=tmp_path / "config",
         images=images,
+        evidence_root=None,
         apply_operator_env=lambda environ: environ.update(SDO_DEV_MOUNT="1", SDO_OPERATOR_BIN="synthetic"),
     )
     published = []
@@ -445,6 +446,7 @@ def test_frozen_toy_install_preserves_policy_at_native_boundary(tmp_path, monkey
         application="toy",
         cluster="toy-private",
         images=SimpleNamespace(controller="controller:test", responder="responder:test"),
+        evidence_root=None,
         apply_operator_env=lambda _: None,
     )
     monkeypatch.setenv("KUBECONFIG", str(environment.kubeconfig))
@@ -528,6 +530,7 @@ def test_fresh_toy_install_runs_the_host_lifecycle_not_the_seed_install(tmp_path
         application="toy",
         cluster="toy-private",
         images=SimpleNamespace(controller="controller:test", responder="responder:test"),
+        evidence_root=None,
         apply_operator_env=lambda _: None,
     )
     monkeypatch.setenv("KUBECONFIG", str(environment.kubeconfig))
@@ -611,6 +614,7 @@ def test_non_raw_install_declares_no_deployment_source_and_raw_declares_kubernet
         application="toy",
         cluster="toy-private",
         images=SimpleNamespace(controller="controller:test", responder="responder:test"),
+        evidence_root=None,
         apply_operator_env=lambda _: None,
     )
     toy.prepare_workspace(tmp_path, "toy:test", fresh=True, variant="helm")

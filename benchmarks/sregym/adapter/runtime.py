@@ -90,6 +90,9 @@ class RuntimeConfig:
     source_kind: str = ""
     source_config: str = ""
     shared_accepted_id: str = ""
+    # Evidence sink node directory and run ID (see ``NativeInstallConfig``); empty: no sink.
+    evidence_sink_host_path: str = ""
+    evidence_run_id: str = ""
 
     def __post_init__(self) -> None:
         if bool(self.source_kind) != bool(self.source_config):
@@ -200,6 +203,8 @@ def native_install_config(config: RuntimeConfig) -> NativeInstallConfig:
         deployment_source=config.deployment_source,
         deployment_policy=config.deployment_policy,
         shared_accepted_id=config.shared_accepted_id,
+        evidence_sink_host_path=config.evidence_sink_host_path,
+        evidence_run_id=config.evidence_run_id,
     )
 
 

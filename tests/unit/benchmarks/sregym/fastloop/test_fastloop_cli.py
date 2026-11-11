@@ -315,6 +315,25 @@ def test_dev_kind_config_mounts_the_worktree_on_every_node(tmp_path: Path) -> No
     assert all(node["extraMounts"] == [{"hostPath": str(worktree), "containerPath": "/opt/sdo-dev"}] for node in nodes)
 
 
+def test_dev_kind_config_mounts_the_evidence_root_on_every_node(tmp_path: Path) -> None:
+    import yaml
+
+    from benchmarks.sregym.fastloop.dev import EVIDENCE_NODE_ROOT, prepare_evidence_root, write_kind_config
+
+    source = tmp_path / "kind.yaml"
+    source.write_text("kind: Cluster\nnodes:\n  - role: control-plane\n  - role: worker\n", encoding="utf-8")
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    evidence = prepare_evidence_root(tmp_path / "evidence")
+    assert evidence.stat().st_mode & 0o777 == 0o777
+    result = write_kind_config(source, tmp_path / "dev.yaml", worktree, evidence_root=evidence)
+
+    nodes = yaml.safe_load(result.read_text(encoding="utf-8"))["nodes"]
+    assert all(
+        {"hostPath": str(evidence), "containerPath": EVIDENCE_NODE_ROOT} in node["extraMounts"] for node in nodes
+    )
+
+
 def test_up_cache_requires_every_node_to_have_the_requested_image_digests(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

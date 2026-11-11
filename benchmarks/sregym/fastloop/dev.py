@@ -12,13 +12,39 @@ import yaml
 
 from benchmarks.sregym.adapter import WaitKind, wait_for
 
+#: Where a lane's evidence root appears on every kind node; the installer's evidence sink host path.
+EVIDENCE_NODE_ROOT = "/opt/sdo-evidence"
 
-def write_kind_config(source: Path, destination: Path, worktree: Path, parallel_root: Path | None = None) -> Path:
+
+def node_mounts(worktree: Path, parallel_root: Path | None, evidence_root: Path | None) -> list[dict[str, str]]:
+    mounts = [{"hostPath": str(worktree), "containerPath": "/opt/sdo-dev"}]
+    if parallel_root is not None:
+        mounts.append({"hostPath": str(parallel_root.resolve()), "containerPath": "/opt/sdo-parallel"})
+    if evidence_root is not None:
+        mounts.append({"hostPath": str(evidence_root.resolve()), "containerPath": EVIDENCE_NODE_ROOT})
+    return mounts
+
+
+def prepare_evidence_root(evidence_root: Path) -> Path:
+    """Create the host directory the evidence sidecar (uid 65532) writes through the node mount."""
+
+    root = evidence_root.resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    root.chmod(0o777)
+    return root
+
+
+def write_kind_config(
+    source: Path,
+    destination: Path,
+    worktree: Path,
+    parallel_root: Path | None = None,
+    *,
+    evidence_root: Path | None = None,
+) -> Path:
     config = yaml.safe_load(source.read_text(encoding="utf-8"))
     for node in config["nodes"]:
-        node.setdefault("extraMounts", []).append({"hostPath": str(worktree), "containerPath": "/opt/sdo-dev"})
-        if parallel_root is not None:
-            node["extraMounts"].append({"hostPath": str(parallel_root.resolve()), "containerPath": "/opt/sdo-parallel"})
+        node.setdefault("extraMounts", []).extend(node_mounts(worktree, parallel_root, evidence_root))
     config.setdefault("containerdConfigPatches", []).extend(
         [
             '[plugins."io.containerd.grpc.v1.cri".registry]\n  config_path = "/etc/containerd/certs.d"',
@@ -30,7 +56,12 @@ def write_kind_config(source: Path, destination: Path, worktree: Path, parallel_
 
 
 def prepare_dev_mount(
-    worktree: Path, sregym_dir: Path | None, run_dir: Path, parallel_root: Path | None = None
+    worktree: Path,
+    sregym_dir: Path | None,
+    run_dir: Path,
+    parallel_root: Path | None = None,
+    *,
+    evidence_root: Path | None = None,
 ) -> Path:
     if not (worktree / "sdo" / "operator" / "go.mod").is_file():
         raise ValueError(f"--dev-mount is not an SDO worktree: {worktree}")
@@ -63,7 +94,7 @@ def prepare_dev_mount(
                     "nodes": [
                         {
                             "role": "control-plane",
-                            "extraMounts": [{"hostPath": str(worktree), "containerPath": "/opt/sdo-dev"}],
+                            "extraMounts": node_mounts(worktree, None, evidence_root),
                         }
                     ],
                 }
@@ -75,7 +106,7 @@ def prepare_dev_mount(
     base = (
         sregym_dir / "kind" / ("kind-config-arm.yaml" if "arm" in arch or "aarch" in arch else "kind-config-x86.yaml")
     )
-    return write_kind_config(base, run_dir / "kind-dev.yaml", worktree, parallel_root)
+    return write_kind_config(base, run_dir / "kind-dev.yaml", worktree, parallel_root, evidence_root=evidence_root)
 
 
 def _copy_dev_snapshot(worktree: Path, node: str, target: str) -> None:

@@ -56,6 +56,8 @@ class FastloopEnvironment(BaseModel):
     worker_env: dict[str, str] = Field(default_factory=dict)
     #: Optional host directory mounted on every kind node before shared attachment.
     parallel_root: Path | None = None
+    #: Optional host directory mounted on every kind node as the controller's evidence sink.
+    evidence_root: Path | None = None
     parallel_lane: str = ""
     shared_accepted_id: str = ""
     #: GitHub repository and run branch the lane's accepted memory replicates (remote sharing).

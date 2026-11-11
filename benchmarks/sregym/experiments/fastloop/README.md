@@ -316,6 +316,14 @@ The recorder saves no command environment or auth files. Keep run directories pr
 and outside this repository. Hand-authored scripts use the same stand-in; see the
 [testing guide](../../../../docs/testing-guide.md#hand-authored-agent-scripts-no-model).
 
+## Evidence sink
+
+`up --evidence-root <host dir>` (SREGym and toy dev lanes, at cluster creation) mounts the directory on every node at
+`/opt/sdo-evidence`, makes it writable for the controller uid and installs the controller with that evidence sink. The
+evidence sidecar then mirrors trajectories, task records, ledgers, usage and telemetry to
+`<host dir>/<run-id>/` while rows run (SREGym lanes: `<cluster>-<results dir>`; toy: the control namespace); deleting the namespace or the cluster leaves it intact. Keep the
+host directory in `sdo-exp`. The layout is in [the architecture](../../../../docs/architecture.md#run-evidence-sink).
+
 # Tier 2a: toy real cluster
 
 The reusable [toy application](../../../../apps/toy/README.md) has three tiny HTTP
