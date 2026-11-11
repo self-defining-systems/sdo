@@ -25,6 +25,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from benchmarks.fuzzops.evidence import EvidenceError, EvidenceTarget, snapshot, snapshot_id_for
+
 STATE_CONFIGMAP = "sdo-controller-state"
 STATE_KEY = "runtime-state.json"
 
@@ -350,6 +352,15 @@ def read_state(context: str, control_namespace: str, kubeconfig: str = "") -> di
     return json.loads(raw) if raw else None
 
 
+def seal_boundary(target: EvidenceTarget, incident: str) -> None:
+    """Seal the runtime evidence at an incident boundary; a failure is reported, never fatal."""
+    try:
+        sealed = snapshot(target, snapshot_id_for(incident))
+        print(f"sdo: evidence snapshot {sealed.get('snapshot_id')} sealed ({sealed.get('bytes')} bytes)", flush=True)
+    except (EvidenceError, OSError, subprocess.TimeoutExpired, ValueError) as exc:
+        print(f"evidence snapshot failed: {exc}", file=sys.stderr, flush=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--control-namespace", required=True)
@@ -363,7 +374,17 @@ def main(argv: list[str] | None = None) -> int:
         help="seconds before the watcher's start an incident may have opened and still be this window's "
         "(the watcher starts after the inject; run it only when SDO has no open incident)",
     )
+    p.add_argument("--operator-binary", type=Path, help="seal an evidence snapshot when the incident closes")
+    p.add_argument("--controller-image", default="", help="with --operator-binary: the controller image")
     a = p.parse_args(argv)
+    evidence: EvidenceTarget | None = None
+    if a.operator_binary is not None and a.controller_image:
+        evidence = EvidenceTarget(
+            a.operator_binary.resolve(),
+            a.control_namespace,
+            a.controller_image,
+            Path(a.kubeconfig) if a.kubeconfig else None,
+        )
     context = os.environ.get("FUZZOPS_KUBE_CONTEXT", "")
     report_path = os.environ.get("FUZZOPS_REPORT", "")
     timeline_path = os.environ.get("FUZZOPS_TIMELINE", "")
@@ -403,6 +424,8 @@ def main(argv: list[str] | None = None) -> int:
                         timeline.writelines(json.dumps(e) + "\n" for e in events)
             if watcher.closed and closed_at is None:
                 closed_at = time.monotonic()
+                if evidence is not None:
+                    seal_boundary(evidence, watcher.incident)
         time.sleep(a.interval)
     return 0
 
