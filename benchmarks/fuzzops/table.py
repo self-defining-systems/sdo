@@ -418,13 +418,18 @@ class FalseAlarm:
 
 
 def false_alarms(app: str, column: str, lane: Path) -> list[FalseAlarm]:
-    """Incidents SDO opened while no fault was active: outside every round's inject..window end, or inside one but
+    """Incidents SDO opened while no fault was active: outside every round's inject..run end (window, undo and
+    tail), or inside one but
     on churned workloads only, within two minutes of a churn action (after churn)."""
     windows: list[tuple[datetime, datetime, dict[str, Any]]] = []
     for rec_path in sorted((lane / "runs").glob("*/record.json")):
         rec = _read(rec_path) or {}
         life = rec.get("lifecycle") or {}
         start, end = _ts(life.get("inject_at")), _ts(life.get("window_end"))
+        began = _ts(rec.get("started"))
+        if began is not None and end is not None:
+            # The undo and the tail follow the window; what they restart is the round's, not a false alarm.
+            end = max(end, began + timedelta(seconds=float(rec.get("seconds") or 0)))
         if start is not None and end is not None:
             windows.append((start, end, rec))
     out = []
