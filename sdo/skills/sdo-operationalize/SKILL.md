@@ -5,8 +5,7 @@ description: Detection design for an application. Map its operations, components
 
 # Detection design
 
-The detection designer (task actor `health_judge`) decides what SDO watches. It works in three steps: map the
-application, write probes and detectors from the map, and calibrate them on the live application. Keep the
+The detection designer (task actor `health_judge`) decides what SDO watches, in the three steps below. Keep the
 result small and general: the map and the three probe kinds should catch whatever breaks an operation, a hop
 or stored data. Write probes with the `sdo-detector-authoring` traffic reference; use the `sdo-memory` commands.
 The memory check enforces the map [rules](references/rules.md). `operability.*` findings: [feedback](references/feedback.md).
@@ -87,10 +86,11 @@ Reach the live application through its Services (cluster DNS, or `kubectl` when 
 ## Other detectors
 
 Go installs generic checks of workloads, Services and nodes. Probes see only records they wrote: write [data
-checks](references/data-checks.md) for derived stores, keys resolved across stores and records the read path
-decodes. Add a cause detector only for a mechanism nothing else localizes ([catalog](references/catalog.md),
-[methods](references/methods.md)); never weaken a probe to silence it. Else instrument the source through
-source repair ([instrumentation](references/methods.md#application-instrumentation), [telemetry](references/telemetry.md)).
+checks](references/data-checks.md) for derived stores, cross-store keys and records the read path decodes. For each
+component on a user operation, write [log signals](references/log-signals.md) for the failures its source and docs
+say it logs. Add a cause detector only for a mechanism nothing else localizes ([catalog](references/catalog.md),
+[methods](references/methods.md)); never weaken a probe to silence it. Else instrument the source
+([instrumentation](references/methods.md#application-instrumentation), [telemetry](references/telemetry.md)).
 
 ## After an incident (reflection)
 

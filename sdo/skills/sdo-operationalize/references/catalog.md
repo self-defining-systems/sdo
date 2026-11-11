@@ -123,6 +123,7 @@ detector so the observed value, limit and window are in Evidence.
 - Silence: `logs.Silent` for a workload that logs steadily while healthy (for example a request log) and goes
   quiet while Running.
 - Keep patterns specific: one regex per failure the source names, not one per log line.
+- Prefer a [log signal](log-signals.md) file over detector code: it judges counts against the healthy history.
 
 ## 8. Change windows and traces
 

@@ -42,6 +42,8 @@ type detectorObservations struct {
 	PodReadBaseline *PodReadBaseline
 	// VantageBaseline, when set, carries the promoted healthy vantage readings.
 	VantageBaseline *VantageBaseline
+	// LogsBaseline, when set, carries the healthy log history of each query.
+	LogsBaseline *LogsBaseline
 	// Platform, when set, carries the source inventory reader and the
 	// promoted healthy platform observation.
 	Platform *PlatformState
@@ -74,7 +76,7 @@ func (o detectorObservations) compose(base SnapshotProvider, detectors []sdk.Det
 		return nil, nil, err
 	}
 	if logsObserver != nil {
-		provider = LogsSnapshotProvider{Base: provider, Observer: logsObserver}
+		provider = LogsSnapshotProvider{Base: provider, Observer: logsObserver, Baseline: o.LogsBaseline}
 	}
 	podReads, err := NewPodReadObserver(o.Client, o.exec(), o.ProtectedNamespace, detectors, clock)
 	if err != nil {

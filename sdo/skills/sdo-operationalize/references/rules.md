@@ -78,3 +78,13 @@ designer writes them, in the initial phase.
   when a reference or equivalence needs one. Enforced by: `data-check.invalid`.
 - Every store a check reads is a map component whose `data.engine` is the check's engine; an equivalence compares a
   `role: derived` component with a component in its `derived_from`. Enforced by: `data-check.component`.
+
+## Log signals
+
+Log signals are `.sdo/diagnostics/logs/<signal-id>.yaml`; see [log signals](log-signals.md). Only the detection
+designer writes them, in the initial phase.
+
+- A signal is strict YAML: 1 to 8 components, an optional `window` from 30s to 5m, 1 to 8 `signals` and `expect`
+  patterns together with unique IDs, each a valid RE2 that does not match an empty line; all log signals together
+  hold at most 48 patterns. Enforced by: `log-signal.invalid`.
+- Every component is an application-map component with a workload. Enforced by: `log-signal.component`.

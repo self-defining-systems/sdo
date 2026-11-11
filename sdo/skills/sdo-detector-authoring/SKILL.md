@@ -69,7 +69,9 @@ patterns with their own IDs, and `Previous` for a crashed container's tail). Dec
 ID. A kubelet usage detector implements `usage.Consumer`: `UsageRequirements()` returns
 `usage.Requirements{Throttling: true}` only when it needs CPU throttling. Declare `usage.Watch` and read with
 `usage.From(ctx)`. A missing input or a source error is a detector error, never a clear. Test with
-`sdktest.Snapshot.Logs` and `sdktest.Snapshot.Usage`.
+`sdktest.Snapshot.Logs` and `sdktest.Snapshot.Usage`. `Result.History` holds the same query's windows from
+settled healthy stretches (empty until health settles): judge a count against it, never against zero. A health
+log detector over map components is a log signal file, not code (`sdo-operationalize` log signals).
 
 ## Metrics detectors (optional input)
 

@@ -170,6 +170,9 @@ func detectorPath(id string) string {
 	if check, ok := memory.DataCheckOfDetector(id); ok {
 		return layout.DataCheckPath(check)
 	}
+	if signal, ok := memory.LogSignalOfDetector(id); ok {
+		return layout.LogSignalPath(signal)
+	}
 	return layout.DetectorManifestPath(layout.ClassHealth, id)
 }
 
