@@ -90,6 +90,66 @@ func (d clientLinkDetector) Spec() sdk.DetectorSpec { return d.spec }
 func (d clientLinkDetector) VantageProbes() []Probe { return []Probe{d.probe} }
 
 func (d clientLinkDetector) Detect(_ context.Context, view sdk.DetectionContext) ([]sdk.Finding, error) {
+	return d.detect(view)
+}
+
+// ClientLink is one edge a client-links detector dials from the Pods of its
+// calling role.
+type ClientLink struct {
+	ID   string
+	From podread.Target
+	Link traffic.Link
+}
+
+type clientLinksDetector struct {
+	spec  sdk.DetectorSpec
+	links []clientLinkDetector
+}
+
+// NewClientLinksDetector is NewClientLinkDetector for several edges under one
+// detector: each link is dialed from inside its own calling role's Pods, so a
+// fault on the client's side of an edge (loss or a partition on the client's
+// egress) is seen even when the prober reaches the callee.
+func NewClientLinksDetector(spec sdk.DetectorSpec, links []ClientLink, interval time.Duration) (sdk.Detector, error) {
+	d := clientLinksDetector{spec: spec}
+	for _, l := range links {
+		single, err := NewClientLinkDetector(spec, l.ID, l.From, l.Link, interval)
+		if err != nil {
+			return nil, err
+		}
+		link, ok := single.(clientLinkDetector)
+		if !ok {
+			return nil, fmt.Errorf("client link %s: unexpected detector %T", l.ID, single)
+		}
+		d.links = append(d.links, link)
+	}
+	return d, ValidateDetector(d)
+}
+
+func (d clientLinksDetector) Spec() sdk.DetectorSpec { return d.spec }
+
+func (d clientLinksDetector) VantageProbes() []Probe {
+	probes := make([]Probe, 0, len(d.links))
+	for _, l := range d.links {
+		probes = append(probes, l.probe)
+	}
+	return probes
+}
+
+func (d clientLinksDetector) Detect(_ context.Context, view sdk.DetectionContext) ([]sdk.Finding, error) {
+	var findings []sdk.Finding
+	for _, l := range d.links {
+		found, err := l.detect(view)
+		if err != nil {
+			return nil, err
+		}
+		findings = append(findings, found...)
+	}
+	sort.Slice(findings, func(i, j int) bool { return findings[i].Fingerprint < findings[j].Fingerprint })
+	return findings, nil
+}
+
+func (d clientLinkDetector) detect(view sdk.DetectionContext) ([]sdk.Finding, error) {
 	result, err := Require(view, d.probe.ID)
 	if err != nil {
 		return nil, err

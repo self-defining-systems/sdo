@@ -24,6 +24,7 @@ const (
 	RuleUncoveredEdge   = "map.uncovered-edge"
 	RuleUnprobedEdge    = "map.unprobed-edge"
 	RuleKnownBroken     = "map.known-broken"
+	RulePossibleEdge    = "map.possible-edge"
 )
 
 // Probe kinds, and the health-probe workload that runs each.
@@ -762,6 +763,31 @@ func dedupe(items []string) []string {
 			seen[item] = true
 			out = append(out, item)
 		}
+	}
+	return out
+}
+
+// PossibleEdgePrefix starts each line of the architecture text, outside the
+// map, that lists a call only a Secret reference suggests.
+const PossibleEdgePrefix = "- possible edge: "
+
+var possibleEdgeLine = regexp.MustCompile(`(?m)^- possible edge: ([a-z0-9-]+) -> ([a-z0-9-]+) \((.*)\)$`)
+
+// CheckPossibleEdges notes each possible edge the architecture text lists
+// outside the map that the map has not adopted as an edge: a dependency whose
+// address only a Secret holds, which no probe or link covers until the
+// designer confirms and maps it.
+func (m Map) CheckPossibleEdges(doc string) []Finding {
+	mapped := map[[2]string]bool{}
+	for _, e := range m.Edges {
+		mapped[[2]string{e.From, e.To}] = true
+	}
+	var out []Finding
+	for _, match := range possibleEdgeLine.FindAllStringSubmatch(Outside(doc), -1) {
+		if mapped[[2]string{match[1], match[2]}] {
+			continue
+		}
+		out = append(out, Finding{Rule: RulePossibleEdge, Message: fmt.Sprintf("possible edge %s -> %s (%s) is not in the map", match[1], match[2], match[3]), Hint: "note only: confirm the call on the live application and add the edge, so probes and link checks cover it"})
 	}
 	return out
 }

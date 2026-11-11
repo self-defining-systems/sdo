@@ -156,6 +156,12 @@ func NewClientLinkDetector(spec sdk.DetectorSpec, id string, from podread.Target
     edge fine, which places the impairment on the client side ("impairment":
     "client-egress").
 
+func NewClientLinksDetector(spec sdk.DetectorSpec, links []ClientLink, interval time.Duration) (sdk.Detector, error)
+    NewClientLinksDetector is NewClientLinkDetector for several edges under
+    one detector: each link is dialed from inside its own calling role's Pods,
+    so a fault on the client's side of an edge (loss or a partition on the
+    client's egress) is seen even when the prober reaches the callee.
+
 func NewDetector(spec sdk.DetectorSpec, probes ...Probe) (sdk.Detector, error)
     NewDetector returns a detector that runs the given state probes and reports
     one finding per Pod and condition Judge finds, primary resource the Pod and
@@ -172,6 +178,14 @@ func ValidateProbes(probes []Probe) error
 
 
 TYPES
+
+type ClientLink struct {
+	ID   string
+	From podread.Target
+	Link traffic.Link
+}
+    ClientLink is one edge a client-links detector dials from the Pods of its
+    calling role.
 
 type Condition string
     Condition names what a state probe reading shows.

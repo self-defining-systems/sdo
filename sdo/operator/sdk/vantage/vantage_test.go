@@ -248,3 +248,33 @@ func TestWithHistoryKeepsALossWindow(t *testing.T) {
 		t.Fatal("a replaced Pod must not inherit another Pod's dials")
 	}
 }
+
+// Several edges under one detector: each is dialed from its own client role,
+// and a client-side loss on one edge is reported for that edge only.
+func TestClientLinksDetectorDialsEachEdgeFromItsClient(t *testing.T) {
+	db := traffic.Link{From: "api", To: "db", Port: 5432}
+	cache := traffic.Link{From: "api", To: "cache", Port: 6379}
+	d, err := vantage.NewClientLinksDetector(spec("client-links"), []vantage.ClientLink{{ID: "api.db.5432", From: role, Link: db}, {ID: "api.cache.6379", From: role, Link: cache}}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	probes := d.(vantage.Consumer).VantageProbes()
+	if len(probes) != 2 || probes[0].To.Host != "db" || probes[1].To.Host != "cache" {
+		t.Fatalf("probes = %+v", probes)
+	}
+	healthy := reading(vantage.TCPConnect, nil)
+	healthy.Dials = dials(t0.Add(-4*time.Second), 4, 2*time.Millisecond, true)
+	lost := reading(vantage.TCPConnect, nil)
+	lost.Dials = dials(t0.Add(-4*time.Second), vantage.DialsPerProbe, time.Second, false)
+	snapshot := sdktest.Snapshot{NamespaceName: "app", Vantage: map[string]vantage.Result{
+		"api.db.5432":    {Probe: probes[0], Readings: []vantage.Reading{lost}, Baseline: []vantage.Reading{healthy}},
+		"api.cache.6379": {Probe: probes[1], Readings: []vantage.Reading{healthy}, Baseline: []vantage.Reading{healthy}},
+	}}
+	findings, err := d.Detect(context.Background(), snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 || !strings.Contains(findings[0].RuleID, db.ID()) || findings[0].Metadata["vantage"] != "client" {
+		t.Fatalf("findings = %+v", findings)
+	}
+}

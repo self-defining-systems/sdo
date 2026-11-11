@@ -39,8 +39,8 @@ Preserve incident detectors, other playbooks, the human goal, outcomes, schema-v
 Never put physical operational-memory paths in Go, the map or narrative; use logical IDs.
 
 The shared memory check installs generic detectors for workloads, Services, wiring, events, nodes, saturation,
-runtime crashes, links and each health-probe traffic workload (`traffic-<workload>`); do not author those
-packages. Derive what a check depends on from objects observed at detection time, never hard-coded names. The
+runtime crashes, links (dialed from the prober and from each caller's Pods) and each health-probe traffic workload
+(`traffic-<workload>`); do not author those packages. Derive what a check depends on from objects observed at detection time, never hard-coded names. The
 controller evaluates one configured namespace: never embed the literal "default" in detector source; use
 DetectionContext.Namespace() for absent resources and each observed object's Namespace otherwise.
 

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"go/format"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"slices"
@@ -63,7 +65,7 @@ func PreparedHealthDetectorIDs(options HealthOptions, workloadFiles map[string][
 // or a store-state detector Go installs from the application map: both are
 // Go's policy floor, not the judge's authorship.
 func IsGenericHealthDetector(id string) bool {
-	return slices.Contains(GenericHealthDetectorIDs(), id) || isStoreStateDetector(id)
+	return slices.Contains(GenericHealthDetectorIDs(), id) || isStoreStateDetector(id) || id == ClientLinksDetectorID
 }
 
 // HealthOptions selects the optional generic policy detectors.
@@ -102,6 +104,9 @@ func PrepareHealthWith(root string, options HealthOptions) error {
 		return err
 	}
 	if err := prepareTrafficDetectors(root); err != nil {
+		return err
+	}
+	if err := prepareClientLinksDetector(root); err != nil {
 		return err
 	}
 	return prepareDataCheckDetectors(root)
@@ -275,7 +280,13 @@ func genericManifest(id, interval string, watches []layout.Watch) layout.Detecto
 }
 
 func writeGenericDetector(root string, manifest layout.DetectorManifest, source string) error {
-	test := fmt.Sprintf("package %s\n\nimport \"testing\"\n\nfunc TestRegistration(t *testing.T) { if New().Spec().ID != %q { t.Fatal(\"unexpected detector ID\") } }\n", genericPackage(manifest.ID), manifest.ID)
+	// The test shares the source's own package clause, so the two never name
+	// different packages in one directory.
+	clause, err := parser.ParseFile(token.NewFileSet(), layout.DetectorFileName, source, parser.PackageClauseOnly)
+	if err != nil {
+		return err
+	}
+	test := fmt.Sprintf("package %s\n\nimport \"testing\"\n\nfunc TestRegistration(t *testing.T) { if New().Spec().ID != %q { t.Fatal(\"unexpected detector ID\") } }\n", clause.Name.Name, manifest.ID)
 	formatted, err := format.Source([]byte(source))
 	if err != nil {
 		return err
@@ -320,25 +331,6 @@ func writeGenericDetector(root string, manifest layout.DetectorManifest, source 
 		}
 	}
 	return layout.WriteDetector(root, layout.Detector{Class: layout.ClassHealth, Manifest: manifest, Files: files[:2]})
-}
-
-func genericPackage(id string) string {
-	switch id {
-	case "service-endpoints":
-		return "serviceendpoints"
-	case "service-reachability":
-		return "servicereachability"
-	case MetricsAlertsDetectorID:
-		return "metricsalerts"
-	case "pod-admission":
-		return "podadmission"
-	case workloadHealthID:
-		return "workloads"
-	}
-	if isStoreStateDetector(id) {
-		return "storeread"
-	}
-	return "synthetic"
 }
 
 // reachabilityWatches mirrors servicehealth.ReachabilityWatches, which the

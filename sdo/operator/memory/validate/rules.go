@@ -126,6 +126,7 @@ const (
 	RuleMapUncoveredEdge   = "map.uncovered-edge"
 	RuleMapUnprobedEdge    = "map.unprobed-edge"
 	RuleMapKnownBroken     = "map.known-broken"
+	RuleMapPossibleEdge    = "map.possible-edge"
 	// Ownership of the map region: the designer changes nothing outside it,
 	// and nobody else changes it.
 	RuleMapOutsideRegion = "ownership.map-outside-region"

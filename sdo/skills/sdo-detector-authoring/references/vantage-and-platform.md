@@ -22,7 +22,9 @@ namespace, and runs one fixed read per kind. Implement `vantage.Consumer` and wa
   healthy.
 - Facts are named by the `vantage.Fact*` constants. `vantage.Require` errs for a missing, failed or still-starting
   probe; never turn that into a clear.
-- Limits: 30 second minimum interval, 16 Pods and 16 probes, 6 second timeout, 4 dials per run.
+- Limits: 30 second minimum interval, 16 Pods and 16 probes, 6 second timeout, 4 dials per run. The 16 probes are
+  counted across all detectors, including Go's `client-links` (up to 8); the memory check refuses more
+  (`detector.controller-start`).
 - Test with `sdktest.Snapshot.Vantage`.
 
 ## Platform observation

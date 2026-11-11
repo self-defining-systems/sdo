@@ -28,6 +28,8 @@ import (
 type Seed struct {
 	Map     appmap.Map
 	Entries []Entry
+	// Possible are calls only a Secret reference suggests; see PossibleEdge.
+	Possible []PossibleEdge
 }
 
 // Entry is a Service the application is probably entered through: exposed
@@ -87,7 +89,7 @@ func FromObjects(objects []*unstructured.Unstructured) Seed {
 		s.findEdges(s.components[name])
 	}
 	s.classify()
-	return Seed{Map: s.buildMap(), Entries: s.entries()}
+	return Seed{Map: s.buildMap(), Entries: s.entries(), Possible: s.findPossibleEdges()}
 }
 
 func objectKey(o *unstructured.Unstructured) string {
@@ -615,6 +617,12 @@ func (seed Seed) Region() string {
 func (seed Seed) Summary() string {
 	var b strings.Builder
 	b.WriteString("# Seeded application map\n\nGo seeded the application map at the end of this file from the rendered manifests alone (images, volumes, Services, env values and ConfigMap entries; evidence `manifest`). Where application source is shipped, it is the better authority.\n")
+	if len(seed.Possible) > 0 {
+		b.WriteString("\nPossible edges: a Secret reference (env var, Secret or key name) names the callee's Service, so the address is not in the manifests and Go did not read it. Confirm each on the live application (the caller's connections or logs) and map it, or leave it:\n")
+		for _, e := range seed.Possible {
+			b.WriteString(possibleEdgeLine(e) + "\n")
+		}
+	}
 	if len(seed.Entries) == 0 {
 		b.WriteString("\nNo entry candidates were found in the manifests.\n")
 		return b.String()
