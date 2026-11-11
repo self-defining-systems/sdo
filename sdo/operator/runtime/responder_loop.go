@@ -1231,7 +1231,14 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	entry.Pending = planApplicationPending(result)
 	entry.RolledBack = result.RolledBack
 	entry.RollbackError = result.RollbackError
-	entry.Error = response.Error
+	// The application's error is its execution's. A failed observation in the
+	// verification above (an unavailable detector read, a snapshot error) stays
+	// on the response and its detector states: the write's outcome is not yet
+	// observed, which recovery settlement keeps observing, not a failed write.
+	entry.Error = ""
+	if err != nil {
+		entry.Error = err.Error()
+	}
 	if result.Applied || result.PendingAction != nil {
 		l.applications[id] = result
 	}
