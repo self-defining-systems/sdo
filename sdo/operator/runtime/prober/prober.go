@@ -47,6 +47,10 @@ type Config struct {
 	DialContext func(ctx context.Context, network string, address string) (net.Conn, error)
 	// LinkAddress overrides Service DNS addressing of links, for tests.
 	LinkAddress func(traffic.Link) string
+	// HostCPUStall reads the host-wide CPU stall recorded with each link
+	// dial (traffic.LinkSample.HostCPUStall); nil records none. Production
+	// passes HostCPUStall.
+	HostCPUStall func() (float64, bool)
 }
 
 // NewHTTPClient is the prober's default client: no keep-alives, so every
