@@ -45,15 +45,6 @@ const (
     Rule IDs of store-state findings.
 
 const (
-	MinJudgedCount  = 10
-	NamespaceGrowth = 10
-)
-    Namespace judgement: a judged namespace (a table, collection, KV prefix or
-    key pattern) is reported when it disappears, when its count drops below half
-    of a baseline of at least MinJudgedCount, or grows past NamespaceGrowth
-    times such a baseline.
-
-const (
 	HolderIdle              = "idle"
 	HolderActive            = "active"
 	HolderIdleInTransaction = "idle-in-transaction"
@@ -101,6 +92,13 @@ const MaxHolders = 12
 const MaxSequences = 5
     MaxSequences bounds the sequences one read reports (the read lists only
     those already past SequenceReported of their maximum).
+
+const MinJudgedCount = 10
+    Namespace judgement: a judged namespace (a table, collection, KV prefix
+    or key pattern) is reported when it disappears or when its count drops
+    below half of a baseline of at least MinJudgedCount. Growth is not judged:
+    an application writes its tables, so a count grows with time and traffic
+    past any multiple of a healthy reading.
 
 const NearLimit = 0.95
     NearLimit is the fraction of a cap at which use is reported.

@@ -29,13 +29,11 @@ const (
 )
 
 // Namespace judgement: a judged namespace (a table, collection, KV prefix or
-// key pattern) is reported when it disappears, when its count drops below
-// half of a baseline of at least MinJudgedCount, or grows past
-// NamespaceGrowth times such a baseline.
-const (
-	MinJudgedCount  = 10
-	NamespaceGrowth = 10
-)
+// key pattern) is reported when it disappears or when its count drops below
+// half of a baseline of at least MinJudgedCount. Growth is not judged: an
+// application writes its tables, so a count grows with time and traffic past
+// any multiple of a healthy reading.
+const MinJudgedCount = 10
 
 // NearLimit is the fraction of a cap at which use is reported.
 const NearLimit = 0.95
@@ -433,8 +431,6 @@ func namespaceShift(c Change) string {
 		return ""
 	case after*2 < before:
 		return fmt.Sprintf("dropped from %d to %d", before, after)
-	case after > before*NamespaceGrowth:
-		return fmt.Sprintf("grew from %d to %d", before, after)
 	}
 	return ""
 }
