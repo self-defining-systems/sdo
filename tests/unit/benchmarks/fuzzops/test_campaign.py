@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from agentshim import TokenUsage, cost_usd, default_pricing, price_for
 
 from benchmarks.fuzzops.campaign import (
     CampaignError,
@@ -26,6 +27,7 @@ from benchmarks.fuzzops.table import (
     build_rows,
     false_alarms,
     lane_outcomes,
+    outcome_cost,
     outcomes_in,
     ratios,
     reach_ok,
@@ -161,6 +163,8 @@ def _lane(tmp: Path) -> Path:
                     "incident_id": f"inc-{round_}",
                     "classification": "success",
                     "resolution_path": path,
+                    "responder_backend": "codex",
+                    "responder_model": "gpt-6-luna",
                     "usage": usage if round_ == "first" else {},
                     "timestamps": {
                         "detected_at": f"2026-01-01T{hour}:00:10Z",
@@ -354,3 +358,33 @@ def test_an_incident_during_a_rounds_undo_and_tail_is_not_a_false_alarm(tmp_path
             )
         )
     assert [a.incident for a in false_alarms("gitlab", "v1", lane)] == ["between"]
+
+
+@pytest.mark.parametrize(
+    ("model", "priced"),
+    [("gpt-6-luna", True), ("gpt-6-sol", True), ("not-a-priced-model", False)],
+)
+def test_incident_cost_uses_the_model_the_outcome_records(model: str, priced: bool) -> None:
+    usage = {"input_tokens": 1_000_000, "cached_input_tokens": 800_000, "output_tokens": 10_000}
+    outcome = {"responder_backend": "codex", "responder_model": model, "usage": usage}
+    tin, tc, tout, cost = outcome_cost(usage, outcome)
+    assert (tin, tc, tout) == (1_000_000, 800_000, 10_000)
+    price = price_for("codex", model, default_pricing())
+    if priced:
+        assert price is not None
+        assert cost == round(
+            cost_usd(TokenUsage(input_tokens=tin, cached_input_tokens=tc, output_tokens=tout), price), 4
+        )
+    else:
+        assert cost is None
+
+
+def test_a_column_on_an_unpriced_model_reports_tokens_and_no_cost(tmp_path: Path) -> None:
+    lane = _lane(tmp_path)
+    for f in (lane / "memory" / ".sdo" / "outcomes").glob("*.json"):
+        doc = json.loads(f.read_text())
+        doc["responder_model"] = "not-a-priced-model"
+        f.write_text(json.dumps(doc))
+    first, _ = build_rows("hotel", "v1", [lane], [])
+    assert first.tokens_in == 1_000_000
+    assert first.cost_usd is None

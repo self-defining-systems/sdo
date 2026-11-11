@@ -65,10 +65,10 @@ class Row:
     tokens_in: int = 0
     tokens_cached: int = 0
     tokens_out: int = 0
-    cost_usd: float = 0.0
+    cost_usd: float | None = 0.0  # None: a model without a known price
     auto_applied: str = ""
     reflection: str = ""
-    reflection_cost_usd: float = 0.0
+    reflection_cost_usd: float | None = 0.0
     incidents: list[str] = field(default_factory=list)
     note: str = ""
 
@@ -112,15 +112,20 @@ def harmful_of(cell: dict[str, Any]) -> list[str]:
     return sorted(set(out))
 
 
-def outcome_cost(usage: dict[str, Any]) -> tuple[int, int, int, float]:
+def outcome_cost(usage: dict[str, Any], outcome: dict[str, Any]) -> tuple[int, int, int, float | None]:
+    """Tokens and USD of *usage*, priced as the model the outcome records (``responder_backend``/``responder_model``).
+
+    The cost is ``None`` when that model has no known price: a column never borrows another model's price.
+    """
     tokens = TokenUsage(
         input_tokens=int(usage.get("input_tokens") or 0),
         cached_input_tokens=int(usage.get("cached_input_tokens") or 0),
         output_tokens=int(usage.get("output_tokens") or 0),
     )
-    price = price_for("codex", "gpt-6-luna", default_pricing())
-    cost = cost_usd(tokens, price) if price is not None else 0.0
-    return tokens.input_tokens, tokens.cached_input_tokens, tokens.output_tokens, round(cost, 4)
+    backend = str(outcome.get("responder_backend") or "codex")
+    price = price_for(backend, str(outcome.get("responder_model") or ""), default_pricing())
+    cost = round(cost_usd(tokens, price), 4) if price is not None else None
+    return tokens.input_tokens, tokens.cached_input_tokens, tokens.output_tokens, cost
 
 
 def outcomes_in(
@@ -163,13 +168,13 @@ def fill_from_outcomes(row: Row, picked: list[dict[str, Any]], inject: datetime 
         return
     first = picked[0]
     for o in picked:
-        tin, tc, tout, cost = outcome_cost(o.get("usage") or {})
+        tin, tc, tout, cost = outcome_cost(o.get("usage") or {}, o)
         row.tokens_in += tin
         row.tokens_cached += tc
         row.tokens_out += tout
-        row.cost_usd = round(row.cost_usd + cost, 4)
+        row.cost_usd = None if cost is None or row.cost_usd is None else round(row.cost_usd + cost, 4)
     row.reflection = str(first.get("_reflection_decision") or "")
-    row.reflection_cost_usd = outcome_cost(first.get("_reflection_usage") or {})[3]
+    row.reflection_cost_usd = outcome_cost(first.get("_reflection_usage") or {}, first)[3]
     row.classification = str(first.get("classification") or "")
     causes = first.get("confirmed_root_causes") or []
     row.cause_class = ",".join(sorted({str(c.get("cause_class") or "") for c in causes} - {""}))
@@ -312,7 +317,7 @@ def ratios(rows: list[Row]) -> list[Ratio]:
             continue
         ft, rt = _time(f), _time(r)
         tr = round(rt / ft, 2) if ft and rt is not None else None
-        cr = round(r.cost_usd / f.cost_usd, 2) if f.cost_usd else None
+        cr = round(r.cost_usd / f.cost_usd, 2) if f.cost_usd and r.cost_usd is not None else None
         out.append(Ratio(r.app, r.version, r.template, r.round, tr, cr, rt, r.auto_applied))
     return out
 
