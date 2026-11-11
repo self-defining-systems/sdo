@@ -12,8 +12,9 @@ import (
 // proposal, in a private clone, as the actor and phase that will publish it.
 // What it returns fails before any agent edit, so the agent cannot be blamed
 // and cannot fix it (a stale detector package, an invalid accepted file). The
-// empty-diff diagnostic is the one expected finding of an unedited tree and is
-// excluded: it is what the agent's edit is for.
+// agent's obligations (the empty diff, the designer's coverage of a seeded map)
+// are expected findings of an unedited tree and are excluded: they are what
+// the agent's edit is for.
 func (b *Broker) CheckBase(ctx context.Context, incidentID string, actor Actor, phase Phase) ([]*contracts.MemoryDiagnostic, error) {
 	if b.validator == nil && b.codePath != "shell" {
 		return nil, errors.New("base validation is not configured")
@@ -38,7 +39,7 @@ func (b *Broker) CheckBase(ctx context.Context, incidentID string, actor Actor, 
 			return err
 		}
 		for _, d := range all {
-			if d.Rule != validate.RuleEmptyDiff {
+			if !validate.AgentObligation(d.Rule) {
 				diagnostics = append(diagnostics, d)
 			}
 		}
