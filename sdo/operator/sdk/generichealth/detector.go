@@ -29,7 +29,8 @@ func NewWiring(s sdk.DetectorSpec) sdk.Detector { return detector{s, "wiring"} }
 // NewWorkloads checks StatefulSets, DaemonSets, Jobs and CronJobs.
 func NewWorkloads(s sdk.DetectorSpec) sdk.Detector { return detector{s, "workloads"} }
 
-// NewWarnings checks persistent recent warning events on extant application objects.
+// NewWarnings checks persistent recent warning events on extant application
+// objects whose current state is not healthy.
 func NewWarnings(s sdk.DetectorSpec) sdk.Detector { return detector{s, "warnings"} }
 
 // NewNodes checks only nodes hosting application pods.
@@ -123,9 +124,11 @@ func (e *evaluation) warnings() {
 	for _, t := range e.templates() {
 		objects[t.r.Kind+"/"+t.r.Name] = !t.rolling
 	}
+	podHealthy := map[string]bool{}
 	for _, p := range e.ctx.Pods() {
 		if p.Namespace == e.ctx.Namespace() && p.DeletionTimestamp == nil && !e.podRolling(p) {
 			objects["Pod/"+p.Name] = true
+			podHealthy[p.Name] = healthyPod(p)
 		}
 	}
 	for _, s := range e.ctx.Services() {
@@ -151,22 +154,16 @@ func (e *evaluation) warnings() {
 			last = v.Series.LastObservedTime.Time
 			count = v.Series.Count
 		}
-		// A recovered pod's old failures must not remain active merely because
-		// Kubernetes retains the Event object after recovery.
-		recovered := false
-		if r.Kind == "Pod" {
-			for _, pod := range e.ctx.Pods() {
-				if pod.Namespace != r.Namespace || pod.Name != r.Name {
-					continue
-				}
-				for _, c := range pod.Status.Conditions {
-					if c.Type == core.PodReady && c.Status == core.ConditionTrue && !c.LastTransitionTime.IsZero() && !last.After(c.LastTransitionTime.Time) {
-						recovered = true
-					}
-				}
-			}
-		}
-		if recovered {
+		// An event-derived finding describes the object's current state: it
+		// clears once that state shows health and never needs a replacement or
+		// spec edit to clear. Kubernetes keeps Events after recovery, and probes
+		// fail transiently under load on a pod that never stops serving, so a
+		// pod that is Ready (or completed) now has no event finding. Readiness
+		// failures that remove capacity remain reported from state by
+		// workload-health (unready container) and service-endpoints. Controller
+		// events (FailedCreate) recur only while the controller cannot reach
+		// its desired state, so the recency window below clears them.
+		if r.Kind == "Pod" && podHealthy[r.Name] {
 			continue
 		}
 		if last.IsZero() {
@@ -178,4 +175,18 @@ func (e *evaluation) warnings() {
 		}
 		e.emit("warning-"+v.Reason, sdk.ObjectRef{APIVersion: r.APIVersion, Kind: r.Kind, Namespace: r.Namespace, Name: r.Name}, fmt.Sprintf("reason=%s count=%d first=%s last=%s message=%s", v.Reason, count, first, last, v.Message), false)
 	}
+}
+
+// healthyPod reports whether a pod's current state shows health: it is Ready
+// or ran to completion.
+func healthyPod(p core.Pod) bool {
+	if p.Status.Phase == core.PodSucceeded {
+		return true
+	}
+	for _, c := range p.Status.Conditions {
+		if c.Type == core.PodReady {
+			return c.Status == core.ConditionTrue
+		}
+	}
+	return false
 }

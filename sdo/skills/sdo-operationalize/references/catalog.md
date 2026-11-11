@@ -40,7 +40,8 @@ scenarios, workloads and links.
   ExternalName Services pointing at missing in-namespace Services.
 - `workload-controllers`: StatefulSets and DaemonSets below desired ready or stuck on an old revision, failed
   Jobs, overdue CronJobs.
-- `warning-events`: lasting mount, scheduling, back-off, probe, eviction and OOM warnings on application objects.
+- `warning-events`: lasting mount, scheduling, back-off, probe, eviction and OOM warnings on application objects
+  that are unhealthy now; a Ready or completed pod has none.
 - `node-health`: nodes running application pods that are NotReady or under memory, disk or PID pressure.
 - `resource-saturation`: memory working set above 90% of its limit, PVC bytes or inodes above 90% or forecast
   to run out (CPU throttling only when enabled).
