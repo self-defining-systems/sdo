@@ -1031,7 +1031,9 @@ detector/program errors, never clearance or an authorized empty plan.
 
 `builder.Workspace.BuildMemoryHost` builds the host from the same staged
 diagnostics, playbooks and shared library used by `validate.Check`. Validation
-builds that executable too. The controller alone executes plans. The host owns
+builds that executable too. Building it executes no tests: `validate.Check`
+(repeated by the broker) is the only acceptance gate, authored playbook tests
+are informational there, and a commit the broker accepted always activates. The controller alone executes plans. The host owns
 bounded namespace-scoped log reads and GET/HEAD/TCP probes and returns typed
 primitive receipts; the controller records those through its existing program
 evidence and corpus sinks. Source/baseline diffs arrive as frozen typed read inputs. Source comparison uses

@@ -77,18 +77,20 @@ func main(){
 	return nil
 }
 
-// BuildMemoryHost builds the same entry point selected by Check.
+// BuildMemoryHost builds the same entry point selected by Check. It is not a
+// second acceptance gate: Check (repeated by the broker) is the only one, and
+// it treats authored playbook tests as informational, so building executes no
+// tests. A tree the broker accepted must activate.
 func (workspace *Workspace) BuildMemoryHost(ctx context.Context) (MemoryHostArtifact, error) {
 	if err := workspace.prepareMemoryHost(); err != nil {
 		return MemoryHostArtifact{}, err
 	}
 	path := filepath.Join(workspace.Directory, "sdo-memory-host")
-	stages := [][]string{{"mod", "tidy"}, {"test", "./..."}, {"build", "-trimpath", "-buildvcs=false", "-o", path, "./cmd/memory-host"}}
+	build := []string{"build", "-trimpath", "-buildvcs=false", "-o", path, "./cmd/memory-host"}
 	if workspace.compileOnly {
-		// An adopted build is unvalidated by design: compile, never execute tests.
-		stages = [][]string{{"mod", "tidy"}, lean("build", "-trimpath", "-buildvcs=false", "-o", path, "./cmd/memory-host")}
+		build = lean(build...)
 	}
-	for _, args := range stages {
+	for _, args := range [][]string{{"mod", "tidy"}, build} {
 		if err := workspace.runGo(ctx, args...); err != nil {
 			return MemoryHostArtifact{}, err
 		}
