@@ -44,6 +44,7 @@ func TestCatalogChurnIsNotACatalogChange(t *testing.T) {
 		"new partition with its fk":     {strings.Replace(healthyPostgres, "constraint\tpublic.items", newPartition, 1), 0},
 		"table locked":                  {strings.Replace(healthyPostgres, "table\tpublic.items", "lock\tpublic.items\tAccessExclusiveLock\theld\ntable\tpublic.items", 1), 1},
 		"check dropped from live table": {strings.Replace(healthyPostgres, "constraint\tpublic.items\titems_qty_check\tc 064079ee\n", "", 1), 1},
+		"check added to a live table":   {strings.Replace(healthyPostgres, "constraint\tpublic.items", "constraint\tpublic.items\titems_title_check\tc 99aa00bb\nconstraint\tpublic.items", 1), 1},
 	} {
 		if got := postgresChurnFindings(t, test.current)[storestate.RuleCatalogChanged]; got != test.want {
 			t.Errorf("%s: catalog-changed findings = %d, want %d", name, got, test.want)
