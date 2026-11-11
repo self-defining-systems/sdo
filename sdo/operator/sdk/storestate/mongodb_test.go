@@ -1,6 +1,7 @@
 package storestate_test
 
 import (
+	"fmt"
 	"context"
 	"math/rand"
 	"regexp"
@@ -261,8 +262,10 @@ func readCommandIsBounded(t *testing.T, engine storestate.Engine, port int) stri
 	if len(argv) < 5 || argv[0] != "sh" || argv[1] != "-c" {
 		t.Fatalf("argv = %q", argv)
 	}
-	if len(argv)-5 > 9 {
-		t.Fatalf("the read passes %d positional arguments; sh reads $1-$9", len(argv)-5)
+	for n := 10; n <= len(argv)-5; n++ {
+		if !strings.Contains(argv[4], fmt.Sprintf("${%d}", n)) {
+			t.Fatalf("the read passes %d positional arguments but its script never reads ${%d} (sh reads $10 as $1 then 0)", len(argv)-5, n)
+		}
 	}
 	q := podread.Query{ID: "store-state-x", Target: podread.Target{Labels: map[string]string{"app": "x"}}, Args: argv, Interval: podread.MinInterval}
 	if err := q.Validate(); err != nil {
