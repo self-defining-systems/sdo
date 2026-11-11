@@ -27,6 +27,8 @@ from typing import Any
 
 from agentshim import TokenUsage, cost_usd, default_pricing, price_for
 
+from benchmarks.fuzzops.window import belongs, fault_targets
+
 SDO_PREFIX = "exec:sdo-"
 
 
@@ -121,14 +123,24 @@ def outcome_cost(usage: dict[str, Any]) -> tuple[int, int, int, float]:
     return tokens.input_tokens, tokens.cached_input_tokens, tokens.output_tokens, round(cost, 4)
 
 
-def outcomes_in(outcomes: list[dict[str, Any]], start: datetime, end: datetime) -> list[dict[str, Any]]:
-    """Outcome records whose incident SDO detected inside [start, end], by detection time."""
-    picked = []
-    for o in outcomes:
-        at = _ts((o.get("timestamps") or {}).get("detected_at"))
-        if at is not None and start <= at <= end:
-            picked.append((at, o))
-    return [o for _, o in sorted(picked, key=lambda p: p[0])]
+def outcomes_in(
+    outcomes: list[dict[str, Any]],
+    start: datetime,
+    end: datetime,
+    inject: datetime | None = None,
+    targets: frozenset[str] = frozenset(),
+) -> list[dict[str, Any]]:
+    """Outcome records of the run's incidents, by detection time.
+
+    An incident detected inside [start, end] belongs to the run; so does one detected before the inject and still open
+    at it when its findings, causes or repair actions name the faulted component (see ``window.belongs``).
+    """
+    picked = [
+        (_ts((o.get("timestamps") or {}).get("detected_at")), o)
+        for o in outcomes
+        if belongs(o, start, end, inject, targets)
+    ]
+    return [o for _, o in sorted(picked, key=lambda p: p[0] or start)]
 
 
 def auto_applied(outcome: dict[str, Any]) -> str:
@@ -251,11 +263,17 @@ def build_rows(app: str, version: str, lanes: list[Path], grades: list[dict[str,
                 row.best_bad = round(best.get("Bad", 0.0), 1)
             row.toward_best = toward_best(row.bad, row.noop_bad, row.best_bad)
             started = _ts(rec.get("started"))
+            root = (rec.get("lifecycle") or {}).get("root_cause") or {}
             inject = _ts((rec.get("lifecycle") or {}).get("inject_at")) or started
             if started is not None:
                 end_s = float(rec.get("seconds") or 0) + 120
+                targets = fault_targets(str(rec.get("fault") or ""), str(root.get("component") or ""))
                 picked = outcomes_in(
-                    outcomes, started, started.fromtimestamp(started.timestamp() + end_s, started.tzinfo)
+                    outcomes,
+                    started,
+                    started.fromtimestamp(started.timestamp() + end_s, started.tzinfo),
+                    inject,
+                    targets,
                 )
                 fill_from_outcomes(row, picked, inject)
             row.reach_ok = reach_ok(row.expected_reach, row.sdo_reach)
