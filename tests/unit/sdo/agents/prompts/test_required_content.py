@@ -8,6 +8,7 @@ import pytest
 
 from sdo.agents.context_output import budget_for
 from sdo.agents.prompt_templates import named_prompt, render_prompt
+from sdo.contracts import repair_action_state
 
 
 def test_over_budget_instructions_fail_instead_of_becoming_a_summary(monkeypatch, tmp_path):
@@ -130,7 +131,11 @@ def test_recorded_scale_questions_and_repairs_reach_the_real_session_prompt(monk
     assert view["classification"] == live.outcome.classification
     assert view["incident_id"] == live.outcome.incident_id
     assert view["repair_actions"] == [
-        {**json_format.MessageToDict(action, preserving_proto_field_name=True), "success": action.success}
+        {
+            **json_format.MessageToDict(action, preserving_proto_field_name=True),
+            "success": action.success,
+            "status": repair_action_state(action, live.outcome.plan_applications),
+        }
         for action in live.outcome.repair_actions
     ]
     assert len(view["repair_actions"]) == 24

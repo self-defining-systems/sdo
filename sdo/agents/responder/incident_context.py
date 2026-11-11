@@ -73,7 +73,11 @@ def prior_response_summary(request: IncidentRequest) -> dict[str, Any]:
                 "incident_id": item.incident_id,
                 "truncated": item.truncated,
                 "successful_actions": [
-                    {"action_id": action.action_id, "summary": _clip(action.summary), "success": True}
+                    {
+                        "action_id": action.action_id,
+                        "summary": _clip(action.summary),
+                        "status": "verified" if action.success else "applied",
+                    }
                     for action in item.successful_actions[:2]
                 ],
                 "actions_omitted": max(0, len(item.successful_actions) - 2),

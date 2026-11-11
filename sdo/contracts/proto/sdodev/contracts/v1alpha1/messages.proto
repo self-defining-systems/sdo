@@ -500,7 +500,12 @@ message RepairActionReceipt {
   google.protobuf.Timestamp completed_at = 8 [(buf.validate.field).required = true];
   bool success = 9;
   bool reversible = 10;
-  string failure_reason = 11 [(buf.validate.field).string = {in: ["", "authorization_denied", "execution_failed", "delete_not_confirmed", "outcome_unknown", "incident_verified", "source_residual", "script_unprovenanced"]}];
+  // Why the action failed. A receipt reads FAILED only with a reason; an empty
+  // reason with success false is an applied action whose own verification
+  // never ran (the incident is verified as a whole). Records written before
+  // the application reasons (rolled_back to verification_failed) existed can
+  // leave a rollback, error or pending application without one.
+  string failure_reason = 11 [(buf.validate.field).string = {in: ["", "authorization_denied", "execution_failed", "delete_not_confirmed", "outcome_unknown", "incident_verified", "source_residual", "script_unprovenanced", "rolled_back", "rollback_failed", "application_error", "settlement_rejected", "application_pending", "verification_failed"]}];
   // Controller ownerReference chains of written resources, read from the
   // live object before the write. Cause attribution follows these chains,
   // never generated names.

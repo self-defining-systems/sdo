@@ -58,7 +58,9 @@ preimages are never persisted or restored. Only partial write failures auto-comp
 A report query reflects a later explicit rollback; already returned response snapshots stay stable.
 
 Menu action receipts enter `IncidentResult.repair_actions` with action identity,
-resources, timing, details and success. Menu reports are not legacy PlanApplication
+resources, timing, details and success; a rolled-back menu action has `success: false` and
+`failure_reason: rolled_back` (older records: no reason; read the [receipt rule](outcome-records.md)).
+Menu reports are not legacy PlanApplication
 proof and add no positive program trust credit. Intermediate rounds are not independent
 incidents. Terminal menu success alone is not controller health verification, broker
 ACK or a strict benchmark receipt.

@@ -331,13 +331,17 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 			}
 			rr.Actions = append(rr.Actions, receipt)
 			if receipt.State == contracts.MitigationActionReceipt_STATE_APPLIED {
+				rollback := ""
+				if result.RolledBack {
+					rollback = "rolled_back"
+				}
 				resources := []sdk.ObjectRef{patch.Ref}
 				if index < len(result.ActionReports) {
 					if scriptRefs := scriptRepairResources(result.ActionReports[index]); len(scriptRefs) > 0 {
 						resources = scriptRefs
 					}
 				}
-				l.menuRepairs = append(l.menuRepairs, RepairActionReceipt{ActionID: receipt.ActionId, Kind: "mitigation-menu", Target: patch.Ref.Kind + "/" + patch.Ref.Name, Resources: resources, Summary: "responder executed SDK plan action", Details: fmt.Sprintf("attempt %s round %d action %d via ordinary PlanExecutor", attempt, round, index+1), Success: !result.RolledBack, StartedAt: started, CompletedAt: completed, Owners: preImageOwners(result.PreImages, resources)})
+				l.menuRepairs = append(l.menuRepairs, RepairActionReceipt{ActionID: receipt.ActionId, Kind: "mitigation-menu", Target: patch.Ref.Kind + "/" + patch.Ref.Name, Resources: resources, Summary: "responder executed SDK plan action", Details: fmt.Sprintf("attempt %s round %d action %d via ordinary PlanExecutor", attempt, round, index+1), Success: !result.RolledBack, FailureReason: rollback, StartedAt: started, CompletedAt: completed, Owners: preImageOwners(result.PreImages, resources)})
 			}
 		}
 		l.observeMitigationHealth(result, response)

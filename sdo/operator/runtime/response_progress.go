@@ -88,7 +88,8 @@ func responseProgress(records []*contracts.OutcomeRecord, findings []sdk.Finding
 		progress := &contracts.ResponseProgress{IncidentId: record.GetIncidentId()}
 		errors := append([]string(nil), record.GetProgramFailureSignals()...)
 		for _, action := range record.GetRepairActions() {
-			if !action.GetSuccess() {
+			failed := RepairActionFailed(action, record.GetPlanApplications())
+			if failed {
 				reason := action.GetFailureReason()
 				if reason == "" {
 					reason = action.GetSummary()
@@ -103,7 +104,7 @@ func responseProgress(records []*contracts.OutcomeRecord, findings []sdk.Finding
 					errors = append(errors, reason)
 				}
 			}
-			if action.GetSuccess() {
+			if !failed {
 				progress.SuccessfulActions = append(progress.SuccessfulActions, proto.Clone(action).(*contracts.RepairActionReceipt))
 			}
 		}
@@ -255,4 +256,41 @@ func clipProgressMessage(message protoreflect.Message, textBytes, count int) boo
 		return true
 	})
 	return changed
+}
+
+// RepairActionFailed is the one reading of a receipt: it failed only when it
+// names a failure_reason. An unsuccessful receipt without one is an applied
+// action whose own verification never ran (the incident is verified as a
+// whole). Records written before every failure path set a reason can leave a
+// rolled-back, errored or pending application's program receipt without one,
+// so such a receipt reads applied only when its plan application in the same
+// record shows it applied cleanly without running its own verification;
+// otherwise it falls back to success.
+func RepairActionFailed(action *contracts.RepairActionReceipt, applications []*contracts.PlanApplication) bool {
+	if action.GetFailureReason() != "" {
+		return true
+	}
+	if action.GetSuccess() {
+		return false
+	}
+	application := receiptApplication(action.GetActionId(), applications)
+	return application == nil || !application.GetApplied() || application.GetError() != "" || application.GetRolledBack() || application.GetRollbackError() != "" ||
+		application.GetRolloutPending() != nil || application.GetVerificationCompleted() ||
+		application.GetSettlementRejectionReason() != contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED
+}
+
+// receiptApplication returns the plan application a controller program
+// receipt (sdo-program-<application ID>[-...]) was written for, or nil.
+func receiptApplication(actionID string, applications []*contracts.PlanApplication) *contracts.PlanApplication {
+	var best *contracts.PlanApplication
+	for _, application := range applications {
+		prefix := "sdo-program-" + application.GetApplicationId()
+		if application.GetApplicationId() == "" || (actionID != prefix && !strings.HasPrefix(actionID, prefix+"-")) {
+			continue
+		}
+		if best == nil || len(application.GetApplicationId()) > len(best.GetApplicationId()) {
+			best = application
+		}
+	}
+	return best
 }

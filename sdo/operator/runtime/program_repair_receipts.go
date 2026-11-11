@@ -20,6 +20,26 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 		used[receipt.ActionID] = true
 	}
 	for _, application := range applications {
+		// failure names why the application's receipts are not successful.
+		// Empty means it took effect and nothing failed: its own verification
+		// passed, or it never ran one because the responder verifies the
+		// incident as a whole. A receipt reads FAILED only with a reason.
+		failure := ""
+		switch {
+		case application.RollbackError != "":
+			failure = "rollback_failed"
+		case application.RolledBack:
+			failure = "rolled_back"
+		case application.Error != "":
+			failure = "application_error"
+		case application.Result.SettlementRejectionReason != contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED:
+			failure = "settlement_rejected"
+		case application.Pending || planApplicationPending(application.Result):
+			failure = "application_pending"
+		case application.Result.VerificationCompleted && !application.Result.VerificationPassed:
+			failure = "verification_failed"
+		}
+		verified := failure == "" && application.Result.VerificationCompleted && application.Result.VerificationPassed
 		refs := []sdk.ObjectRef{}
 		seen := map[sdk.ObjectRef]bool{}
 		actions := application.Result.Plan.Actions
@@ -32,7 +52,7 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 				scoped := scriptRepairResources(report)
 				if report.Status == "applied" && application.Result.Applied && report.Script != nil && report.Script.ScriptDigest == program.ScriptDigest(script.Script) && !application.RolledBack && application.RollbackError == "" {
 					id := uniqueRepairID(fmt.Sprintf("sdo-program-%s-script-%d", application.ID, index+1), used)
-					result = append(result, RepairActionReceipt{ActionID: id, Kind: "run-script", ScriptDigest: report.Script.ScriptDigest, Resources: scoped, Target: "script", Summary: "completed script", Details: "controller-recorded exact script digest", StartedAt: application.StartedAt, CompletedAt: application.CompletedAt, Success: application.Result.SettlementRejectionReason == contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED && application.Result.VerificationCompleted && application.Result.VerificationPassed && application.Error == "" && !application.Pending && !planApplicationPending(application.Result)})
+					result = append(result, RepairActionReceipt{ActionID: id, Kind: "run-script", ScriptDigest: report.Script.ScriptDigest, Resources: scoped, Target: "script", Summary: "completed script", Details: "controller-recorded exact script digest", StartedAt: application.StartedAt, CompletedAt: application.CompletedAt, Success: verified, FailureReason: failure})
 					for _, ref := range scoped {
 						if !seen[ref] {
 							seen[ref] = true
@@ -107,7 +127,7 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 			ActionID: id, Kind: "program-plan", Target: refs[0].Kind + "/" + refs[0].Name, Resources: refs,
 			Summary: summary, Details: details,
 			StartedAt: application.StartedAt, CompletedAt: application.CompletedAt,
-			Success: application.Result.SettlementRejectionReason == contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED && application.Result.VerificationCompleted && application.Result.VerificationPassed && application.Error == "" && !application.Pending && !planApplicationPending(application.Result) && !application.RolledBack && application.RollbackError == "", Reversible: !irreversible && !hasAppliedScript(actions) && len(application.Result.PreImages) >= len(refs),
+			Success: verified, FailureReason: failure, Reversible: !irreversible && !hasAppliedScript(actions) && len(application.Result.PreImages) >= len(refs),
 			Owners: preImageOwners(application.Result.PreImages, refs),
 		})
 	}
