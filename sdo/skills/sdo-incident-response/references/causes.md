@@ -18,6 +18,7 @@ Set `reach`:
 
 For an out-of-reach cause, cite the opening finding that shows it as `detector-finding` evidence whose `source` is
 its detector ID, and do not repair around it: restarting, rolling back or scaling unrelated workloads does not fix
-it and can cause harm. SDO then ends the response without waiting for health, records the outcome `escalated` and routes the cause to a
+it and can cause harm. To escalate from a live turn, run `sdo mitigate Escalate --bind reason=...` and name the
+affected objects with one `--bind resources=Kind/NAMESPACE/NAME` per object. SDO then ends the response without waiting for health, records the outcome `escalated` and routes the cause to a
 human. An escalation is never a success; reflection saves its localization as a Diagnose-only playbook so a repeat
 escalates without an agent.

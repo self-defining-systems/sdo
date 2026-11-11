@@ -35,13 +35,11 @@ func exampleText(t *testing.T, value any) string {
 	return string(encoded)
 }
 
-// syntheticElement stands in for a list element a menu example does not show.
+// syntheticElement stands in for a plain-string list element a menu example
+// does not show; object-reference and structured lists must show one.
 func syntheticElement(t *testing.T, action string, field protoreflect.FieldDescriptor) any {
 	t.Helper()
-	switch {
-	case field.Message() != nil && field.Message().Name() == "ObjectRef":
-		return "Service/app/example"
-	case field.Message() == nil && field.Kind() == protoreflect.StringKind:
+	if field.Message() == nil && field.Kind() == protoreflect.StringKind {
 		return "example"
 	}
 	t.Fatalf("%s.%s: list parameter needs a menu example", action, field.Name())
@@ -155,5 +153,61 @@ func TestMitigateTargetDecodesOneOrRepeatedBindValues(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(`{"name":"Exec","parameters":{"command":[]}}`), &target); err == nil {
 		t.Fatal("an empty value list was accepted")
+	}
+}
+
+// The menu says how to bind every list parameter and shows an element for
+// every object-reference list, so an escalation can name its resources.
+func TestMenuShowsHowToBindEveryListParameter(t *testing.T) {
+	for name, entry := range rawMenuActions() {
+		for _, parameter := range menuActionParameters(entry.action) {
+			if !parameter.Repeated {
+				continue
+			}
+			if !strings.Contains(parameter.Schema.Description, "Repeat --bind "+parameter.Name+"=") {
+				t.Errorf("%s.%s: schema does not say how to bind a list: %q", name, parameter.Name, parameter.Schema.Description)
+			}
+			field := entry.action.Message().Fields().ByName(protoreflect.Name(parameter.Name))
+			if field.Message() != nil && field.Message().Name() == "ObjectRef" {
+				if example, _ := parameter.Example.([]any); len(example) == 0 {
+					t.Errorf("%s.%s: object-reference list needs a menu example", name, parameter.Name)
+				}
+			}
+		}
+	}
+}
+
+func TestEscalationNamesItsResources(t *testing.T) {
+	for form, resources := range map[string]BindValues{
+		"repeated --bind": {"Service/app/db", "Pod/app/db-0"},
+		"JSON array":      {`["Service/app/db","Pod/app/db-0"]`},
+	} {
+		plan, err := bindAction(t, "Escalate", map[string]BindValues{"reason": {"the network path to db drops every packet"}, "resources": resources})
+		if err != nil {
+			t.Fatalf("%s: %v", form, err)
+		}
+		escalation, ok := program.EscalationOf(*plan)
+		if !ok || len(escalation.Resources) != 2 || escalation.Resources[1].Kind != "Pod" {
+			t.Fatalf("%s: escalation = %+v", form, plan.Actions)
+		}
+		encoded, err := encodePersistedActions(plan.Actions)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoded, err := decodePersistedActions(encoded)
+		if err != nil {
+			t.Fatal(err)
+		}
+		recorded, ok := program.EscalationOf(program.Plan{Actions: decoded})
+		if !ok || len(recorded.Resources) != 2 || recorded.Resources[0].Name != "db" {
+			t.Fatalf("%s: recorded escalation = %+v", form, decoded)
+		}
+	}
+	plan, err := bindAction(t, "Escalate", map[string]BindValues{"reason": {"the network path to db drops every packet"}, "resources": {"Service/app/db"}})
+	if err != nil {
+		t.Fatalf("one binding: %v", err)
+	}
+	if escalation, ok := program.EscalationOf(*plan); !ok || len(escalation.Resources) != 1 {
+		t.Fatalf("one binding: escalation = %+v", plan.Actions)
 	}
 }

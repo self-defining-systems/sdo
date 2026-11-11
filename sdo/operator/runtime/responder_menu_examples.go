@@ -56,6 +56,7 @@ var menuActionExamples = sync.OnceValue(func() map[string]map[string]any {
 		program.InvalidateDerived{Target: program.StoreTarget{Component: "cache", Engine: "redis", Pod: pod, Container: "cache"}, Scope: program.DataScope{Selector: "item:*"}, Reason: "drop copies made while the source was damaged"},
 		program.RepairData{Target: store, Scope: scope, Statement: `{"$rename": {"addr": "address"}}`, ExpectMin: 1, ExpectMax: 50, Backup: "before-repair", Reason: reason},
 		program.RestoreBackup{Target: store, Backup: "before-repair", Reason: "undo the repair"},
+		program.Escalate{Reason: "the network path to the store drops every packet; nothing in the namespace can fix it", Resources: []sdk.ObjectRef{service, pod}},
 	}
 	result := map[string]map[string]any{}
 	for _, action := range actions {

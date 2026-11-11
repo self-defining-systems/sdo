@@ -72,6 +72,9 @@ func menuActionParameters(action protoreflect.FieldDescriptor) []MenuParameter {
 		if action.Message().Name() == "EnsureDatabaseUser" && f.Name() == "target" {
 			schema.Description = "Database Pod/container and catalog; target.auth authenticates catalog reads separately from the create-user password. Failures name the safe execution stage; correct source-declared references before retrying."
 		}
+		if f.IsList() {
+			schema.Description = strings.TrimSpace(schema.Description + " Repeat --bind " + string(f.Name()) + "=ELEMENT once per element, or give one JSON array.")
+		}
 		params = append(params, MenuParameter{Name: string(f.Name()), Kind: kind, Required: required, Repeated: f.IsList(), Schema: schema, Example: examples[string(f.Name())]})
 	}
 	return params
