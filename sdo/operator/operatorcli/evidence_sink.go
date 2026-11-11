@@ -79,7 +79,11 @@ func RunEvidenceSink(ctx context.Context, cfg EvidenceSinkConfig, clock Evidence
 	// An unusable sink (for example a host directory the controller uid cannot write) is reported and retried; it
 	// never blocks or fails the Pod's main container.
 	var mirror *evidencesink.Mirror
-	pass := func(label string) {
+	pass := func(final bool) {
+		label := "pass"
+		if final {
+			label = "final pass"
+		}
 		if mirror == nil {
 			dir, err := evidencesink.OpenDir(cfg.SinkRoot, cfg.RunID, clock.Now())
 			if err != nil {
@@ -88,18 +92,23 @@ func RunEvidenceSink(ctx context.Context, cfg EvidenceSinkConfig, clock Evidence
 			}
 			mirror = &evidencesink.Mirror{RuntimeRoot: cfg.RuntimeRoot, LedgerRoot: cfg.LedgerRoot, Sink: dir, Now: clock.Now}
 		}
-		if err := mirror.Pass(); err != nil {
+		run := mirror.Pass
+		if final {
+			run = mirror.FinalPass
+		}
+		if err := run(); err != nil {
 			fmt.Fprintf(log, "evidence-sink %s: %v\n", label, err)
 		}
 	}
 	for {
-		pass("pass")
 		if cfg.Once || ctx.Err() != nil {
+			pass(true)
 			return nil
 		}
+		pass(false)
 		if err := clock.WaitUntil(ctx, clock.Now().Add(cfg.Interval)); err != nil {
-			// Termination: one last pass keeps evidence written just before it.
-			pass("final pass")
+			// Termination: one last pass keeps evidence written just before it and seals what is ready.
+			pass(true)
 			return nil
 		}
 	}

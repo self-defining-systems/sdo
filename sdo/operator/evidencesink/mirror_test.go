@@ -100,6 +100,13 @@ func pass(t *testing.T, m *Mirror) {
 	}
 }
 
+// settle runs a pass that copies changes and one more that finds the units quiet and seals them.
+func settle(t *testing.T, m *Mirror) {
+	t.Helper()
+	pass(t, m)
+	pass(t, m)
+}
+
 func readSink(t *testing.T, dir *Dir, relative string) string {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(dir.Root(), filepath.FromSlash(relative)))
@@ -162,7 +169,7 @@ func TestSyntheticIncidentWritesLayoutAndIndex(t *testing.T) {
 	seedRun(f)
 	f.ledger(incidentID, true)
 	m, dir := f.mirror()
-	pass(t, m)
+	settle(t, m)
 
 	incident := IncidentPath(incidentID)
 	for _, want := range []string{
@@ -243,7 +250,7 @@ func TestSourceTeardownLeavesSinkIntact(t *testing.T) {
 	seedRun(f)
 	f.ledger(incidentID, true)
 	m, dir := f.mirror()
-	pass(t, m)
+	settle(t, m)
 	before := sinkFiles(t, dir)
 
 	// Deleting the control namespace deletes the repository PVC: the runtime root and the ledgers disappear.
@@ -302,8 +309,12 @@ func TestOpenIncidentIsMirroredLiveAndSealedAtClosure(t *testing.T) {
 		}
 		return n
 	}
+	if countIncident() != 0 {
+		t.Fatal("an incident was sealed in the pass that still changed it")
+	}
+	pass(t, m)
 	if countIncident() != 1 {
-		t.Fatal("closure did not seal the incident once")
+		t.Fatal("closure did not seal the settled incident once")
 	}
 	pass(t, m)
 	if countIncident() != 1 {
@@ -313,9 +324,41 @@ func TestOpenIncidentIsMirroredLiveAndSealedAtClosure(t *testing.T) {
 	// Reflection resumes the session after closure: the unit is resealed with a new record.
 	f.appendTo(session+rollout, "{\"type\":\"reflection\"}\n")
 	f.clock = f.clock.Add(time.Minute)
-	pass(t, m)
+	settle(t, m)
 	if countIncident() != 2 {
 		t.Fatal("later evidence did not reseal the incident")
+	}
+}
+
+func TestIncidentStillChangingIsSealedOnceWhenItSettlesOrAtTheFinalPass(t *testing.T) {
+	f := newFixture(t)
+	session := seedRun(f)
+	f.ledger(incidentID, true)
+	m, dir := f.mirror()
+	rollout := session + "/codex/sessions/2026/01/02/rollout-a.jsonl"
+	for range 3 {
+		// A reflection still writing after closure changes the unit on every pass.
+		f.appendTo(rollout, "{\"type\":\"reflection\"}\n")
+		pass(t, m)
+	}
+	incidents := func() int {
+		n := 0
+		for _, record := range records(t, dir) {
+			if record.Kind == KindIncident {
+				n++
+			}
+		}
+		return n
+	}
+	if incidents() != 0 {
+		t.Fatalf("a changing incident was sealed %d times", incidents())
+	}
+	f.appendTo(rollout, "{\"type\":\"last\"}\n")
+	if err := m.FinalPass(); err != nil {
+		t.Fatal(err)
+	}
+	if incidents() != 1 || !strings.HasSuffix(readSink(t, dir, IncidentPath(incidentID)+"/codex/sessions/2026/01/02/rollout-a.jsonl"), "{\"type\":\"last\"}\n") {
+		t.Fatalf("final pass sealed %d incidents", incidents())
 	}
 }
 
@@ -324,7 +367,7 @@ func TestRestartDoesNotReseal(t *testing.T) {
 	seedRun(f)
 	f.ledger(incidentID, true)
 	m, dir := f.mirror()
-	pass(t, m)
+	settle(t, m)
 	restarted, _ := f.mirror()
 	f.clock = f.clock.Add(time.Hour)
 	pass(t, restarted)
