@@ -144,6 +144,9 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 	if cfg.ExternalIncidents {
 		args = append(args, "--external-incidents")
 	}
+	if cfg.WatchOnly {
+		args = append(args, "--watch-only")
+	}
 	if cfg.FrozenMemory {
 		args = append(args, "--frozen-memory")
 	}

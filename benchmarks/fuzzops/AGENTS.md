@@ -40,6 +40,13 @@ same cluster, so SDO never sees their namespaces.
   vocabulary; the report keeps the raw text in `summary`. Report both when grading diagnoses.
 - Run outputs (fuzzops results, observer snapshots, logs) go to the external `sdo-exp` directory.
 
+## Watch-only
+
+`install --watch-only` installs SDO with `--frozen-memory --watch-only`: detection, incident opening, verification
+and closure run as usual, but no automatic stage, responder or reflection runs and accepted memory never changes.
+Use it to measure detector precision (incidents opened on a healthy app) and detection/localization per fault
+without agent cost; the incident record is the controller state, its lifecycle telemetry and the broker ledger.
+
 ## Helm packs and parallel pairs
 
 - A Helm-based pack (for example GitLab) is rendered with `helm template -n <namespace> --no-hooks` into a

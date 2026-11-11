@@ -250,6 +250,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "exit after one closure is durably acknowledged")
 	frozenMemory := flags.Bool("frozen-memory", false, "keep closure evidence private and disable learning")
 	externalIncidents := flags.Bool("external-incidents", false, "accept external alerts only; close on responder completion")
+	watchOnly := flags.Bool("watch-only", false, "detect, open, verify and close incidents but never respond: no automatic stage, responder or reflection (requires frozen memory)")
 	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
 	maintenanceConfigMap := flags.String(
 		"maintenance-configmap", MaintenanceConfigMapName, "maintenance ConfigMap in the control namespace",
@@ -305,6 +306,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 
 	if *externalIncidents && !*frozenMemory {
 		return errors.New("external incidents require frozen memory")
+	}
+	if *watchOnly && !*frozenMemory {
+		return errors.New("watch-only requires frozen memory")
 	}
 	if *externalIncidents {
 		detectors = nil
@@ -839,7 +843,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if options.NativeBroker != nil {
 		corpusSessionRoot = options.NativeBroker.SessionRoot
 	}
-	controller, err = NewController(ControllerConfig{ExternalIncidentsOnly: *externalIncidents, Telemetry: telemetryContext,
+	controller, err = NewController(ControllerConfig{ExternalIncidentsOnly: *externalIncidents, WatchOnly: *watchOnly, Telemetry: telemetryContext,
 		CodePath: selectedPathConfig, CodePathRegistry: codePathRegistry,
 		Application: *application, Namespace: *namespace,
 		SourceCommit: resolvedSourceCommit, DeployedCommit: resolvedDeployedCommit,
