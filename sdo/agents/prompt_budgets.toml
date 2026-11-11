@@ -164,6 +164,10 @@ reason = "Operationalization skill description; shares the existing 200-characte
 max_chars = 200
 reason = "New responder workflow skill description; shares the existing 200-character skill-index allowance."
 
+[skills.sdo-incident-navigation]
+max_chars = 200
+reason = "Responder investigation-method skill description; shares the existing 200-character skill-index allowance."
+
 [skills.sdo-patching]
 max_chars = 200
 reason = "Patch-capture skill description; shares the existing 200-character skill-index allowance."
