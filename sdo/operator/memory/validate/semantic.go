@@ -40,6 +40,7 @@ func (s *run) semantic(ctx context.Context) error {
 		}
 		s.telemetryRules()
 		s.dataCheckRules()
+		s.logSignalRules()
 		if err := s.programRules(ctx); err != nil {
 			return err
 		}

@@ -963,6 +963,8 @@ func TestGateNotes(t *testing.T) {
 var gateRuleCoverage = map[string]string{
 	RuleDataCheckInvalid:      "covered by data_checks_test.go (TestDataChecksAreValidatedAsReadOnlyAndBounded) and the datacheck package's validation table",
 	RuleDataCheckComponent:    "covered by data_checks_test.go (TestDataChecksResolveToMapComponentsWithDataRoles): it needs an application map with data roles",
+	RuleLogSignalInvalid:      "covered by log_signals_test.go (TestLogSignalsResolveToMapComponents, TestLogSignalsSharePatternBudget) and the logsignal package's validation table",
+	RuleLogSignalComponent:    "covered by log_signals_test.go (TestLogSignalsResolveToMapComponents): it needs an application map",
 	RulePatchUncaptured:       "covered by the broker publish tests (broker/enforcement_integration_test.go): it needs the agent checkout's working tree, which the shared check never sees",
 	RuleSnapshotProjection:    "no row yet: a defensive check behind the static layers; no authored change reaches it",
 	RuleTrafficUndrivenEdge:   "no row yet: informational, needs generated traffic replay results from the real toolchain on a tree with declared edges",

@@ -213,6 +213,9 @@ type Controller struct {
 	// and platform observation of each promoted healthy baseline.
 	VantageBaseline *VantageBaseline
 	Platform        *PlatformState
+	// LogsBaseline, when set, samples the log windows of each settled
+	// healthy stretch; the snapshot provider carries them as history.
+	LogsBaseline *LogsBaseline
 	// Helpers, when set, deletes responder helper objects once the
 	// responder completes, before recovery is verified.
 	Helpers HelperCleaner

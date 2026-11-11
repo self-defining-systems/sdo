@@ -137,6 +137,12 @@ const (
 	RuleDataCheckInvalid   = "data-check.invalid"
 	RuleDataCheckComponent = "data-check.component"
 
+	// Log signals (.sdo/diagnostics/logs), the detection designer's
+	// declarative log-line detectors: schema and bounds, and the
+	// application-map components whose workloads' logs they read.
+	RuleLogSignalInvalid   = "log-signal.invalid"
+	RuleLogSignalComponent = "log-signal.component"
+
 	// Explicit Go health-bootstrap preparation.
 	RuleGenericHealth = "bootstrap.generic-health"
 

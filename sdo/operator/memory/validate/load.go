@@ -41,6 +41,8 @@ type run struct {
 	telemetry map[layout.Kind]textFile
 	// dataChecks holds the data check files by ID, checked by dataCheckRules.
 	dataChecks map[string]textFile
+	// logSignals holds the log signal files by ID, checked by logSignalRules.
+	logSignals map[string]textFile
 	playbooks  map[string]*playbook
 	detectors  map[string]*detector
 }
@@ -122,6 +124,7 @@ func (s *run) load(ctx context.Context) error {
 	s.workloads = map[string]textFile{}
 	s.telemetry = map[layout.Kind]textFile{}
 	s.dataChecks = map[string]textFile{}
+	s.logSignals = map[string]textFile{}
 	s.memory = true
 	if s.req.Base != "" {
 		changed, err := ChangedPaths(ctx, s.req.Root, s.req.Base)
@@ -392,6 +395,9 @@ func (s *run) visit(rel, abs string) error {
 		s.telemetry[kind] = file
 	case layout.KindDataCheck:
 		s.dataChecks[id] = file
+		s.checkYAML(file)
+	case layout.KindLogSignal:
+		s.logSignals[id] = file
 		s.checkYAML(file)
 	case layout.KindLegacyDetectorManifest:
 		s.legacyPath = rel

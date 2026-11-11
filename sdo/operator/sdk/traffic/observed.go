@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+
+	"sdo.dev/operator/sdk/redact"
 )
 
 // maxObservedScan bounds how much of a response body is examined for an
@@ -14,34 +16,10 @@ var (
 	titlePattern  = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
 	hiddenPattern = regexp.MustCompile(`(?is)<(script|style|noscript|svg)\b.*?</(?:script|style|noscript|svg)>`)
 	tagPattern    = regexp.MustCompile(`(?s)<[^>]*>`)
-	// Secret-looking text, replaced before a response reaches a sample, a
-	// finding or an agent's feedback.
-	secretPatterns = []struct {
-		re   *regexp.Regexp
-		with string
-	}{
-		{regexp.MustCompile(`(?i)(<input[^>]*name=["'][^"']*(?:token|secret|pass|key|auth)[^"']*["'][^>]*value=["'])[^"']*`), "${1}[redacted]"},
-		{regexp.MustCompile(`(?i)(name=["'][^"']*(?:token|secret|pass|key|auth)[^"']*["']\s+value=["'])[^"']*`), "${1}[redacted]"},
-		{regexp.MustCompile(`(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}`), "${1} [redacted]"},
-		{regexp.MustCompile(`(?i)((?:pass(?:word|wd)?|secret|token|api[_-]?key|authorization|credential|cookie)[\w-]*["']?\s*[:=]\s*["']?)[^\s"'<>&,;]+`), "${1}[redacted]"},
-		{regexp.MustCompile(`eyJ[\w-]+\.[\w-]+\.[\w-]+`), "[redacted]"},
-	}
-	opaquePattern = regexp.MustCompile(`[A-Za-z0-9+_=-]{40,}`)
 )
 
 // redactSecrets replaces credentials, tokens and long opaque strings.
-func redactSecrets(text string) string {
-	for _, p := range secretPatterns {
-		text = p.re.ReplaceAllString(text, p.with)
-	}
-	// A long run mixing letters and digits is a key or digest, not prose.
-	return opaquePattern.ReplaceAllStringFunc(text, func(run string) string {
-		if strings.ContainsAny(run, "0123456789") && strings.ContainsAny(run, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ") {
-			return "[redacted]"
-		}
-		return run
-	})
-}
+func redactSecrets(text string) string { return redact.Secrets(text) }
 
 // observedExcerpt describes a response for an author whose assertion failed:
 // the page title and the visible text near the expected phrase (or its start),

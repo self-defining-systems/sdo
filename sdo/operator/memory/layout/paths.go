@@ -33,6 +33,7 @@ const (
 	TrafficGeneratorsDir   = DiagnosticsDir + "/traffic/generators"
 	TrafficWorkloadsDir    = DiagnosticsDir + "/traffic/workloads"
 	DataChecksDir          = DiagnosticsDir + "/data"
+	LogSignalsDir          = DiagnosticsDir + "/logs"
 	ManifestFileName       = "manifest.yaml"
 	DetectorFileName       = "detector.go"
 	DetectorTestFileName   = "detector_test.go"
@@ -61,7 +62,9 @@ const (
 	// binding files under .sdo/diagnostics/telemetry, which the controller reads
 	// from the accepted revision; version 6 adds the detection designer's data
 	// checks under .sdo/diagnostics/data. Versions 4 to 6 need no conversion: no
-	// earlier repository holds those files.
+	// earlier repository holds those files. The optional log signal files under
+	// .sdo/diagnostics/logs are additive and not bumped: no reader of an earlier
+	// file changes, and a binary that does not know them rejects the path.
 	CurrentSchemaVersion = 6
 )
 
@@ -95,6 +98,7 @@ const (
 	KindTelemetrySources         Kind = "telemetry-sources"
 	KindTelemetryBackends        Kind = "telemetry-backends"
 	KindDataCheck                Kind = "data-check"
+	KindLogSignal                Kind = "log-signal"
 	KindOutcome                  Kind = "outcome"
 )
 
@@ -320,6 +324,10 @@ func classifyDiagnostics(parts []string) (Kind, string, bool) {
 		if match := dataCheckFile.FindStringSubmatch(parts[1]); match != nil {
 			return KindDataCheck, match[1], true
 		}
+	case len(parts) == 2 && parts[0] == "logs":
+		if match := dataCheckFile.FindStringSubmatch(parts[1]); match != nil {
+			return KindLogSignal, match[1], true
+		}
 	}
 	return "", "", false
 }
@@ -369,6 +377,10 @@ func DetectorPackage(class Class, id string) string {
 
 // DataCheckPath is the repository-relative file of one data check.
 func DataCheckPath(id string) string { return path.Join(DataChecksDir, id+".yaml") }
+
+// LogSignalPath is the repository-relative file of one log signal; its stem
+// follows DataCheckIDPattern.
+func LogSignalPath(id string) string { return path.Join(LogSignalsDir, id+".yaml") }
 
 // PlaybookDir is the repository-relative directory of a playbook.
 func PlaybookDir(id string) string { return path.Join(PlaybooksDir, id) }

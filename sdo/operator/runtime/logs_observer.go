@@ -18,6 +18,7 @@ import (
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/logs"
+	"sdo.dev/operator/sdk/redact"
 )
 
 // LogsObserverOptions supplies the cycle clock; zero uses time.Now.
@@ -26,7 +27,7 @@ type LogsObserverOptions struct{ Clock func() time.Time }
 // LogsObserver collects at most 64 KiB per container per cycle (including
 // previous logs), with a 5 second request timeout and 20 retained cycles.
 // It keeps no raw logs, only counts and at most three 256-byte excerpts per
-// pattern per cycle. Initial current reads cover the preceding minute. A capped
+// pattern per cycle, redacted (sdk/redact) before they are kept. Initial current reads cover the preceding minute. A capped
 // read drops the unread remainder through the cycle timestamp (counts are lower
 // bounds), preventing a single oversized line from stalling the cursor.
 // More than 256 containers fails closed. Collection is idle
@@ -77,10 +78,12 @@ func NewLogsObserver(client kubernetes.Interface, ds []sdk.Detector, opt LogsObs
 	return o, nil
 }
 
-// LogsSnapshotProvider adds a cycle's frozen log counts to a snapshot.
+// LogsSnapshotProvider adds a cycle's frozen log counts to a snapshot, with
+// the healthy history Baseline holds for each query.
 type LogsSnapshotProvider struct {
 	Base     SnapshotProvider
 	Observer *LogsObserver
+	Baseline *LogsBaseline
 }
 
 func (p LogsSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
@@ -88,7 +91,9 @@ func (p LogsSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionContex
 	if err != nil || p.Observer == nil {
 		return base, err
 	}
-	return inputs.New(base).WithLogs(logResults(p.Observer.collect(ctx, base))), nil
+	results := p.Observer.collect(ctx, base)
+	p.Baseline.attach(results)
+	return inputs.New(base).WithLogs(logResults(results)), nil
 }
 
 type logResults map[string]logs.Result
@@ -99,6 +104,17 @@ func (r logResults) LogResult(id string) (logs.Result, bool) {
 }
 func cloneLogResult(r logs.Result) logs.Result {
 	r.Query.Patterns = append([]logs.Pattern(nil), r.Query.Patterns...)
+	r.History = append([]logs.Sample(nil), r.History...)
+	for i := range r.History {
+		r.History[i].Windows = append([]logs.Window(nil), r.History[i].Windows...)
+		for j := range r.History[i].Windows {
+			w := &r.History[i].Windows[j]
+			w.Cycles = append([]logs.Cycle(nil), w.Cycles...)
+			for k := range w.Cycles {
+				w.Cycles[k] = cloneLogCycle(w.Cycles[k])
+			}
+		}
+	}
 	r.Windows = append([]logs.Window(nil), r.Windows...)
 	for i := range r.Windows {
 		w := &r.Windows[i]
@@ -179,7 +195,7 @@ func (o *LogsObserver) collect(ctx context.Context, base sdk.DetectionContext) m
 			key := string(pod.UID) + "/" + name
 			state := o.states[key]
 			if state == nil {
-				state = &logState{window: logs.Window{Namespace: pod.Namespace, Pod: pod.Name, UID: string(pod.UID), Container: name, RestartCount: status.RestartCount}, last: at.Add(-time.Minute)}
+				state = &logState{window: logs.Window{Namespace: pod.Namespace, Pod: pod.Name, UID: string(pod.UID), Container: name, Workload: podWorkload(pod), RestartCount: status.RestartCount}, last: at.Add(-time.Minute)}
 			}
 			if state.window.RestartCount != status.RestartCount {
 				state.window.RestartCount = status.RestartCount
@@ -255,10 +271,7 @@ func (o *LogsObserver) collect(ctx context.Context, base sdk.DetectionContext) m
 			c.Start = start
 			c.Running = status.State.Running != nil
 			c.Previous = previous
-			state.window.Cycles = append(state.window.Cycles, c)
-			if len(state.window.Cycles) > logs.WindowCycles {
-				state.window.Cycles = append([]logs.Cycle(nil), state.window.Cycles[len(state.window.Cycles)-logs.WindowCycles:]...)
-			}
+			state.window.Cycles = retainCycles(append(state.window.Cycles, c), at)
 			next[key] = state
 			for _, q := range o.queries {
 				w := state.window
@@ -285,6 +298,36 @@ func (o *LogsObserver) collect(ctx context.Context, base sdk.DetectionContext) m
 	o.states = next
 	return results
 }
+// retainCycles keeps the last logs.WindowCycles cycles and every cycle that
+// ended within logs.RetainSpan of at, at most logs.MaxWindowCycles, so a window
+// spans RetainSpan however often snapshots are taken.
+func retainCycles(cycles []logs.Cycle, at time.Time) []logs.Cycle {
+	drop := 0
+	for len(cycles)-drop > logs.MaxWindowCycles || len(cycles)-drop > logs.WindowCycles && cycles[drop].End.Before(at.Add(-logs.RetainSpan)) {
+		drop++
+	}
+	if drop == 0 {
+		return cycles
+	}
+	return append([]logs.Cycle(nil), cycles[drop:]...)
+}
+
+// podWorkload is the "Kind/name" controller of pod as the application map
+// names it: a Deployment for the Pods of its ReplicaSets (named after it and
+// the Pod's template hash), else the controlling owner; "" without one.
+func podWorkload(pod corev1.Pod) string {
+	for _, owner := range pod.OwnerReferences {
+		if owner.Controller == nil || !*owner.Controller {
+			continue
+		}
+		if hash := pod.Labels["pod-template-hash"]; owner.Kind == "ReplicaSet" && hash != "" && strings.HasSuffix(owner.Name, "-"+hash) {
+			return "Deployment/" + strings.TrimSuffix(owner.Name, "-"+hash)
+		}
+		return owner.Kind + "/" + owner.Name
+	}
+	return ""
+}
+
 func projectLogCycle(c logs.Cycle, q logs.Query) logs.Cycle {
 	m := map[string]logs.Match{}
 	for _, p := range q.Patterns {
@@ -380,7 +423,8 @@ func (o *LogsObserver) fetch(ctx context.Context, ns, pod, container string, pre
 				m := c.Matches[expr]
 				m.Count++
 				if len(m.Excerpts) < logs.MaxExcerpts {
-					m.Excerpts = append(m.Excerpts, text[:min(len(text), logs.MaxExcerptBytes)])
+					clean := redact.Secrets(text)
+					m.Excerpts = append(m.Excerpts, clean[:min(len(clean), logs.MaxExcerptBytes)])
 				}
 				c.Matches[expr] = m
 			}

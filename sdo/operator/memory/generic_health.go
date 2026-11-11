@@ -104,7 +104,10 @@ func PrepareHealthWith(root string, options HealthOptions) error {
 	if err := prepareTrafficDetectors(root); err != nil {
 		return err
 	}
-	return prepareDataCheckDetectors(root)
+	if err := prepareDataCheckDetectors(root); err != nil {
+		return err
+	}
+	return prepareLogSignalDetectors(root)
 }
 
 // plannedDetector is one generic detector package Go installs.

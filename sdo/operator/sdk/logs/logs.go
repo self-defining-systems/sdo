@@ -20,14 +20,21 @@ var Watch = sdk.WatchKind{APIVersion: "sdo.dev/v1alpha1", Kind: "Logs"}
 // MaxPatterns bounds both each query and total declared patterns across queries.
 const (
 	MaxQueries      = 32
-	MaxPatterns     = 32
+	MaxPatterns     = 64
 	MaxPatternBytes = 1024
 	MaxIDBytes      = 128
 	LimitBytes      = 64 * 1024
 	WindowCycles    = 20
-	MaxExcerpts     = 3
-	MaxExcerptBytes = 256
-	MaxContainers   = 256
+	// RetainSpan keeps cycles younger than this beyond WindowCycles, so a
+	// window covers RetainSpan however often snapshots are taken, up to
+	// MaxWindowCycles.
+	RetainSpan      = 5 * time.Minute
+	MaxWindowCycles = 240
+	// MaxHistorySamples bounds the healthy samples Result.History keeps.
+	MaxHistorySamples = 16
+	MaxExcerpts       = 3
+	MaxExcerptBytes   = 256
+	MaxContainers     = 256
 )
 
 // Pattern names an RE2 expression evaluated by the runtime once per line.
@@ -156,21 +163,39 @@ type Termination struct {
 	Tail         Cycle
 }
 
-// Window holds current-incarnation cycles and at most WindowCycles completed
-// container tails retained across restarts. Removed pods discard their history.
+// Window holds the current incarnation's cycles (the last WindowCycles, and
+// every cycle younger than RetainSpan up to MaxWindowCycles) and at most
+// WindowCycles completed container tails retained across restarts. Removed
+// pods discard their history. Workload is the "Kind/name" controller of the
+// Pod (a Deployment for its ReplicaSets' Pods), as the application map names
+// it; empty for a Pod no workload controls.
 type Window struct {
 	Namespace, Pod, UID, Container string
+	Workload                       string
 	RestartCount                   int32
 	Cycles                         []Cycle
 	Terminations                   []Termination
 }
 
 // Result is a query's frozen windows; Error is neither health nor a finding.
+// History holds samples of the same query taken during settled healthy
+// stretches (at most MaxHistorySamples, spread over time, oldest first), so a
+// detector judges a count against how the healthy application logs rather
+// than against zero. It is empty until the application has been healthy for a
+// settle period and is never a current read.
 type Result struct {
 	Query      Query
 	ObservedAt time.Time
 	Windows    []Window
+	History    []Sample
 	Error      string
+}
+
+// Sample is the windows of one healthy stretch: counts only (no excerpts),
+// each window's cycles cut to the stretch, which ends at End.
+type Sample struct {
+	End     time.Time
+	Windows []Window
 }
 
 // Source supplies frozen query results.

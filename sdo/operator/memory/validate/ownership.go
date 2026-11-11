@@ -107,6 +107,8 @@ var grants = []grant{
 	{actor: HealthJudge, phase: InitialPhase, kinds: telemetryKinds},
 	// Data checks are the detection designer's alone, like health detectors.
 	{actor: HealthJudge, phase: InitialPhase, kinds: []layout.Kind{layout.KindDataCheck}},
+	// Log signals are the detection designer's alone, like data checks.
+	{actor: HealthJudge, phase: InitialPhase, kinds: []layout.Kind{layout.KindLogSignal}},
 	// The designer edits arch.md only between the application-map markers;
 	// architectureRegionOwnership enforces that, since a grant is per file.
 	{actor: HealthJudge, phase: InitialPhase, kinds: []layout.Kind{layout.KindArchitecture}},
