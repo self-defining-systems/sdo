@@ -332,3 +332,25 @@ def test_false_alarms_are_incidents_outside_every_fault_window(tmp_path: Path) -
     )
     (alarm,) = false_alarms("hotel", "v1", lane)
     assert (alarm.incident, alarm.detectors, alarm.after_churn) == ("between", ["traffic-probe-call"], False)
+
+
+def test_an_incident_during_a_rounds_undo_and_tail_is_not_a_false_alarm(tmp_path: Path) -> None:
+    lane = _lane(tmp_path)  # rounds start (and inject) at 12:00 and 13:00
+    for i, hour in ((0, 12), (1, 13)):
+        rec_path = next((lane / "runs").glob(f"00{i}-*/record.json"))
+        rec = json.loads(rec_path.read_text())
+        rec["lifecycle"]["window_end"] = f"2026-01-01T{hour}:10:00Z"
+        rec["seconds"] = 900  # the window, then the undo and the tail, until 12:15
+        rec_path.write_text(json.dumps(rec))
+    outcomes = lane / "memory" / ".sdo" / "outcomes"
+    for name, at in (("undo", "12:12:00"), ("between", "12:30:00")):
+        (outcomes / f"{name}.json").write_text(
+            json.dumps(
+                {
+                    "incident_id": name,
+                    "timestamps": {"detected_at": f"2026-01-01T{at}Z"},
+                    "findings": [{"detector_id": "service-endpoints"}],
+                }
+            )
+        )
+    assert [a.incident for a in false_alarms("gitlab", "v1", lane)] == ["between"]
