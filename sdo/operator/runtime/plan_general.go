@@ -181,6 +181,20 @@ func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest,
 		if mutating {
 			effect.Before, effect.BeforeKnown = readImage()
 		}
+		deleteBound := false
+		if a.Method == "DELETE" && effect.BeforeKnown && effect.Before != nil {
+			before := &unstructured.Unstructured{Object: effect.Before}
+			if before.GetUID() != "" && before.GetResourceVersion() != "" {
+				a, err = bindRawDelete(a, before)
+				if err != nil {
+					r.Applied, r.ActionsApplied, r.Patches = false, nil, nil
+					r.ActionReports[0].Status = "refused"
+					return r, err
+				}
+				effect.Request = a
+				deleteBound = true
+			}
+		}
 		effect.Response, err = client.KubernetesRequest(ctx, a)
 		if errors.Is(err, ErrKubernetesAPITransportUnavailable) || apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) || apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
 			r.Applied = false
@@ -208,6 +222,12 @@ func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest,
 					r.ActionReports[0].Status = "unknown"
 					r.ActionReports[0].FailureReason = "delete_not_confirmed"
 					return r, fmt.Errorf("delete_not_confirmed: API accepted DELETE but absence is unconfirmed")
+				}
+				if deleteBound && effect.AfterKnown && effect.After == nil {
+					// Record the independently read identity and absence at the
+					// write boundary, even if later health verification is busy.
+					r.PreImages = []PlanPreImage{newPlanPreImage(a.Ref, patch.Before)}
+					r.ObjectEffects = []PlanObjectEffect{{Operation: "delete", Ref: a.Ref, UID: string(patch.Before.GetUID()), State: "applied", Confirmed: true, Irreversible: true, DeletedPreImage: patch.Before.DeepCopy()}}
 				}
 				if a.Method == "DELETE" && effect.After != nil {
 					r.ActionReports[0].Observed = "terminating"
