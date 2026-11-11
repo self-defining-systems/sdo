@@ -107,6 +107,7 @@ func TestApplicationMapRuleIDsMatchTheParser(t *testing.T) {
 		RuleMapUncoveredWrite: appmap.RuleUncoveredWrite, RuleMapUncoveredData: appmap.RuleUncoveredData,
 		RuleMapUnexercisedEdge: appmap.RuleUnexercisedEdge, RuleMapKnownBroken: appmap.RuleKnownBroken,
 		RuleMapUncoveredEdge: appmap.RuleUncoveredEdge, RuleMapUnprobedEdge: appmap.RuleUnprobedEdge,
+		RuleMapPossibleEdge: appmap.RulePossibleEdge,
 	} {
 		if got != want {
 			t.Errorf("rule %q != %q", got, want)
@@ -391,5 +392,31 @@ func TestApplicationMapWithoutAnInventoryRejectsUnknownNames(t *testing.T) {
 	blocking, _ := staticMapCheck(t, root, HealthJudge)
 	if got := mapRules(blocking); !slices.Contains(got, RuleMapUnknownName) {
 		t.Fatalf("expected unknown-name findings: %v", blocking)
+	}
+}
+
+// A call only a Secret reference suggests is listed outside the map; until the
+// designer maps it, it is a coverage note for every actor, never a rejection.
+func TestPossibleEdgeIsACoverageNoteUntilMapped(t *testing.T) {
+	yaml := mapYAML
+	root := mapTree(t, &yaml)
+	text := strings.Replace(mapInventory+"\n"+mapRegion(yaml), "# Manifest inventory\n", "# Manifest inventory\n\n"+appmap.PossibleEdgePrefix+"web -> db (Deployment/web env DATABASE_URL from Secret/db key url)\n", 1)
+	write(t, root, layout.ArchitectureFile, text)
+	for _, actor := range []Actor{HealthJudge, Responder} {
+		blocking, notes := staticMapCheck(t, root, actor)
+		if len(blocking) != 0 {
+			t.Fatalf("%s: rejected: %v", actor, blocking)
+		}
+		if !slices.ContainsFunc(notes, func(d Diagnostic) bool {
+			return d.Rule == RuleMapPossibleEdge && strings.Contains(d.Message, "web -> db") && strings.Contains(d.Message, "Secret/db")
+		}) {
+			t.Fatalf("%s: no possible-edge note: %v", actor, notes)
+		}
+	}
+	mapped := strings.Replace(yaml, "edges:\n", "edges:\n  - {from: web, to: db, evidence: [observed], source: web connections}\n", 1)
+	root = mapTree(t, &mapped)
+	write(t, root, layout.ArchitectureFile, strings.Replace(mapInventory+"\n"+mapRegion(mapped), "# Manifest inventory\n", "# Manifest inventory\n\n"+appmap.PossibleEdgePrefix+"web -> db (x)\n", 1))
+	if _, notes := staticMapCheck(t, root, HealthJudge); slices.ContainsFunc(notes, func(d Diagnostic) bool { return d.Rule == RuleMapPossibleEdge }) {
+		t.Fatalf("a mapped possible edge is still noted: %v", notes)
 	}
 }

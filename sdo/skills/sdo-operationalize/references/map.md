@@ -82,7 +82,9 @@ Rules the memory check enforces:
 
 When the architecture has no map, Go seeds one from the rendered manifests, all with evidence `manifest`: one
 component per workload, store roles by well-known image (`holds_data` from the engine or persistent volumes), edges
-from env values and ConfigMap entries that name a Service address, and no operations or probes. The entry
+from env values and ConfigMap entries that name a Service address, and no operations or probes. A call whose
+address only a Secret holds is listed above the map as a possible edge (from the env var, Secret and key names,
+never the value): confirm it live and map it. The entry
 candidates above the map list exposed or uncalled Services with the workload's health endpoints. Start from the seed:
 drop components that are not part of the app, fix roles and edges, add the operations and probes. With source,
 confirm each entry against it. Without source, use the manifests, what you know of well-known software and the live

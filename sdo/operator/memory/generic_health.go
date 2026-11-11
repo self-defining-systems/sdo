@@ -63,7 +63,7 @@ func PreparedHealthDetectorIDs(options HealthOptions, workloadFiles map[string][
 // or a store-state detector Go installs from the application map: both are
 // Go's policy floor, not the judge's authorship.
 func IsGenericHealthDetector(id string) bool {
-	return slices.Contains(GenericHealthDetectorIDs(), id) || isStoreStateDetector(id)
+	return slices.Contains(GenericHealthDetectorIDs(), id) || isStoreStateDetector(id) || id == ClientLinksDetectorID
 }
 
 // HealthOptions selects the optional generic policy detectors.
@@ -102,6 +102,9 @@ func PrepareHealthWith(root string, options HealthOptions) error {
 		return err
 	}
 	if err := prepareTrafficDetectors(root); err != nil {
+		return err
+	}
+	if err := prepareClientLinksDetector(root); err != nil {
 		return err
 	}
 	return prepareDataCheckDetectors(root)

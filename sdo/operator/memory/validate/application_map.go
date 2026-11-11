@@ -16,7 +16,7 @@ func (r Request) mapBlocks() bool { return r.Actor == HealthJudge && r.Phase == 
 
 // mapAlwaysNote lists the findings that never reject.
 func mapAlwaysNote(rule string) bool {
-	return rule == RuleMapMissing || rule == RuleMapUnexercisedEdge || rule == RuleMapUnprobedEdge
+	return rule == RuleMapMissing || rule == RuleMapUnexercisedEdge || rule == RuleMapUnprobedEdge || rule == RuleMapPossibleEdge
 }
 
 // mapFinding records one map finding: blocking for the designer once a map
@@ -82,6 +82,9 @@ func (s *run) applicationMap(ctx context.Context) {
 	}
 	for _, f := range parsed.Check(s.mapInventory(), workloads) {
 		s.mapFinding(Semantic, f, region.Line)
+	}
+	for _, f := range parsed.CheckPossibleEdges(source) {
+		s.mapFinding(Semantic, f, 0)
 	}
 }
 

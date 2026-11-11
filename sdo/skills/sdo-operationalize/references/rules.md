@@ -45,6 +45,9 @@ see them as notes. The diagnostic names the operation, component, edge or probe 
   `map.unprobed-edge`.
 - Any other edge no operation path crosses is noted, never refused: add the operation that uses it, or keep it as
   a known gap. Enforced by: `map.unexercised-edge`.
+- A possible edge Go lists above the map (a Secret reference names the callee's Service; the address is unread) is
+  noted until the map has the edge: confirm the call on the live application and add it. Enforced by:
+  `map.possible-edge`.
 
 ## Telemetry bindings
 
