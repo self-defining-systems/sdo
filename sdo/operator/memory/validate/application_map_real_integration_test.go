@@ -4,10 +4,13 @@ package validate
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
+	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
 )
 
@@ -91,4 +94,28 @@ func TestApplicationMapAgainstCompiledScenarios(t *testing.T) {
 			t.Fatalf("designer: %v %v", got, err)
 		}
 	})
+	// Go's client-links detector, installed from the map and the link-probe
+	// workload, compiles and loads in the controller with the designer's tree.
+	t.Run("client links compile and load", func(t *testing.T) {
+		t.Parallel()
+		root := mapCompileTree(t, `read("call-all", "web", "api", "db")`)
+		write(t, root, ".sdo/diagnostics/traffic/workloads/links.yaml", "apiVersion: sdo.dev/v1alpha1\nkind: TrafficWorkload\nname: links\npurpose: link-probe\nlinks:\n  - {from: api, to: db, port: 5432, protocol: postgres}\n  - {from: web, to: api, port: 8080, protocol: http, http: {path: /health}}\n")
+		if err := memory.PrepareHealth(root); err != nil {
+			t.Fatal(err)
+		}
+		if !detectorInstalled(root, memory.ClientLinksDetectorID) {
+			t.Fatal("client-links was not installed")
+		}
+		request := compileRequest(root)
+		request.Actor, request.Phase = HealthJudge, InitialPhase
+		got, err := CompileCandidate(ctx, request)
+		if err != nil || len(got) != 0 {
+			t.Fatalf("rejected: %v %v", got, err)
+		}
+	})
+}
+
+func detectorInstalled(root, id string) bool {
+	_, err := os.Stat(filepath.Join(root, layout.DetectorDir(layout.ClassHealth, id), layout.DetectorFileName))
+	return err == nil
 }
