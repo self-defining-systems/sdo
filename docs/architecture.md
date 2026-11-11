@@ -361,7 +361,12 @@ ordinary executor's automatic compensation.
 
 Menu action receipts enter ordinary incident repair evidence. A terminal menu success is not independent
 broker closure or positive program trust credit. Controller health verification, broker ACK and the
-benchmark adapter's strict receipt remain separate evidence. See the
+benchmark adapter's strict receipt remain separate evidence. A repair-action receipt reads FAILED only when it
+names a `failure_reason`, which every failure path sets (rollback, rollback error, application error, settlement
+rejection, pending application, failed verification, per-action failures); `success: false` without one is an applied
+action whose own verification never ran. Readers of older records without those reasons fall back to `success` unless
+the receipt's plan application shows a clean, unverified application (`runtime.RepairActionFailed`,
+`sdo.contracts.repair_action_state`). Gates still read `success`. See the
 [analysis reference](../.agents/skills/analyze-experiment/references/mitigation-menu.md).
 
 ## Benchmark fault and result boundary

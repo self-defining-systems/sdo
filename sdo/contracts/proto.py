@@ -25,7 +25,7 @@ import sys
 from types import SimpleNamespace
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Literal, TypeVar
 
 _GEN_ROOT = Path(__file__).resolve().parent / "_gen"
 if str(_GEN_ROOT) not in sys.path:
@@ -58,6 +58,8 @@ from sdodev.contracts.v1alpha1 import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from google.protobuf.message import Message
 
 _MessageT = TypeVar("_MessageT", bound="Message")
@@ -436,6 +438,54 @@ def datetime_timestamp(value: datetime) -> Timestamp:
 def timestamp_rfc3339(value: Timestamp) -> str:
     """The RFC 3339 UTC text of a proto ``Timestamp``, the protojson form."""
     return value.ToJsonString()
+
+
+RepairActionState = Literal["verified", "applied", "failed"]
+
+
+def repair_action_state(
+    action: messages_pb2.RepairActionReceipt, applications: Sequence[program_pb2.PlanApplication] = ()
+) -> RepairActionState:
+    """The one reading of a repair-action receipt (Go: ``runtime.RepairActionFailed``).
+
+    A receipt failed only when it names a ``failure_reason``. An unsuccessful
+    receipt without one is an applied action whose own verification never ran;
+    the incident is verified as a whole. Records written before every failure
+    path set a reason can leave a rolled-back, errored or pending application's
+    program receipt without one, so it reads applied only when its plan
+    application in the same record shows it applied cleanly without running its
+    own verification; otherwise it falls back to ``success``.
+    """
+    if action.failure_reason:
+        return "failed"
+    if action.success:
+        return "verified"
+    application = _receipt_application(action.action_id, applications)
+    if (
+        application is None
+        or not application.applied
+        or application.error
+        or application.rolled_back
+        or application.rollback_error
+        or application.HasField("rollout_pending")
+        or application.verification_completed
+        or application.settlement_rejection_reason
+    ):
+        return "failed"
+    return "applied"
+
+
+def _receipt_application(
+    action_id: str, applications: Sequence[program_pb2.PlanApplication]
+) -> program_pb2.PlanApplication | None:
+    best = None
+    for application in applications:
+        prefix = "sdo-program-" + application.application_id
+        if not application.application_id or (action_id != prefix and not action_id.startswith(prefix + "-")):
+            continue
+        if best is None or len(application.application_id) > len(best.application_id):
+            best = application
+    return best
 
 
 def _string_rule(message: type[Message], field: str):

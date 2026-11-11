@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 from google.protobuf import json_format
 
 from sdo.agents.context_output import save_context
+from sdo.contracts import repair_action_state
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -295,7 +296,7 @@ def prior_outcome_view(record: OutcomeRecord) -> dict[str, Any]:
                 "kind": action.kind,
                 "target": action.target,
                 "summary": action.summary,
-                "success": action.success,
+                "status": repair_action_state(action, record.plan_applications),
             }
             for action in record.repair_actions[:_HISTORY_ITEMS]
         ],

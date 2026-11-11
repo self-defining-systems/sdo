@@ -201,3 +201,17 @@ def test_oversized_action_identity_degrades_without_failing():
     prompt = continuation_prompt(json.dumps(payload))
     assert len(prompt) <= MAX_CONTINUATION_CHARS
     assert "already_done:" in prompt
+
+
+def test_applied_action_without_its_own_verification_is_progress_not_a_failure() -> None:
+    from tests.unit.sdo.agents.responder.continuation_cases import action_id, ten_receipt_continuation
+
+    payload = ten_receipt_continuation()
+    applied = payload["already_done"][0]
+    applied["receipt"]["success"] = False
+    rolled = payload["already_done"][1]
+    rolled["receipt"]["success"] = False
+    rolled["receipt"]["failure_reason"] = "rolled_back"
+    _, done = continuation_prompt(json.dumps(payload)).split("already_done:", 1)
+    assert f"{action_id(0)} applied" in done
+    assert action_id(1) not in done

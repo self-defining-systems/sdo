@@ -130,12 +130,16 @@ def _completed_at(repair: CompletedRepair) -> datetime:
         return datetime.min.replace(tzinfo=timezone.utc)
 
 
+_DONE = frozenset({"success", "applied"})
+
+
 def _status(repair: CompletedRepair) -> str:
     if repair.rolled_back:
         return "rolled-back"
-    if repair.error or not repair.receipt.success or repair.receipt.failure_reason:
+    # FAILED needs a failure_reason; an applied action left to incident-level verification is progress.
+    if repair.error or repair.receipt.failure_reason:
         return "failed"
-    return "success"
+    return "success" if repair.receipt.success else "applied"
 
 
 def _action(repair: CompletedRepair, width: int) -> str:
@@ -152,8 +156,8 @@ def continuation_prompt(payload: str) -> RenderedPrompt:
     matched = {
         repair.action_id for repair in repairs if any(_matches(repair, finding) for finding in feedback.still_broken)
     }
-    done = [repair for repair in repairs if _status(repair) == "success" and repair.action_id not in matched]
-    unmatched = [repair for repair in repairs if _status(repair) != "success" and repair.action_id not in matched]
+    done = [repair for repair in repairs if _status(repair) in _DONE and repair.action_id not in matched]
+    unmatched = [repair for repair in repairs if _status(repair) not in _DONE and repair.action_id not in matched]
     rows = []
     for finding in feedback.still_broken:
         attempts = [repair for repair in repairs if _matches(repair, finding)]

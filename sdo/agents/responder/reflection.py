@@ -45,7 +45,7 @@ from sdo.agents.responder.session_turn import (
     unwrap_branch,
 )
 from sdo.agents.telemetry_context import telemetry_context
-from sdo.contracts import ReflectionResult, model_output_schema, validate, worker_result_payload
+from sdo.contracts import ReflectionResult, model_output_schema, repair_action_state, validate, worker_result_payload
 from sdo.contracts import SdkGap as ProtoSdkGap
 
 ReflectionGuidance = Literal["baseline", "generalize", "generalize-spec"]
@@ -311,7 +311,11 @@ def _logical_learning_request(
         "incident_id": outcome.incident_id,
         "classification": outcome.classification,
         "repair_actions": [
-            {**json_format.MessageToDict(action, preserving_proto_field_name=True), "success": action.success}
+            {
+                **json_format.MessageToDict(action, preserving_proto_field_name=True),
+                "success": action.success,
+                "status": repair_action_state(action, outcome.plan_applications),
+            }
             for action in outcome.repair_actions
         ],
         "full_current_outcome_path": outcome_path,

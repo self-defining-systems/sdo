@@ -3207,18 +3207,23 @@ func (x *TimingMetrics) GetCompletedAt() *timestamppb.Timestamp {
 }
 
 type RepairActionReceipt struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ActionId      string                 `protobuf:"bytes,1,opt,name=action_id,json=actionId,proto3" json:"action_id,omitempty"`
-	Kind          string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
-	Target        string                 `protobuf:"bytes,3,opt,name=target,proto3" json:"target,omitempty"`
-	Resources     []*ObjectRef           `protobuf:"bytes,4,rep,name=resources,proto3" json:"resources,omitempty"`
-	Summary       string                 `protobuf:"bytes,5,opt,name=summary,proto3" json:"summary,omitempty"`
-	Details       string                 `protobuf:"bytes,6,opt,name=details,proto3" json:"details,omitempty"`
-	StartedAt     *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
-	CompletedAt   *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=completed_at,json=completedAt,proto3" json:"completed_at,omitempty"`
-	Success       bool                   `protobuf:"varint,9,opt,name=success,proto3" json:"success,omitempty"`
-	Reversible    bool                   `protobuf:"varint,10,opt,name=reversible,proto3" json:"reversible,omitempty"`
-	FailureReason string                 `protobuf:"bytes,11,opt,name=failure_reason,json=failureReason,proto3" json:"failure_reason,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	ActionId    string                 `protobuf:"bytes,1,opt,name=action_id,json=actionId,proto3" json:"action_id,omitempty"`
+	Kind        string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
+	Target      string                 `protobuf:"bytes,3,opt,name=target,proto3" json:"target,omitempty"`
+	Resources   []*ObjectRef           `protobuf:"bytes,4,rep,name=resources,proto3" json:"resources,omitempty"`
+	Summary     string                 `protobuf:"bytes,5,opt,name=summary,proto3" json:"summary,omitempty"`
+	Details     string                 `protobuf:"bytes,6,opt,name=details,proto3" json:"details,omitempty"`
+	StartedAt   *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	CompletedAt *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=completed_at,json=completedAt,proto3" json:"completed_at,omitempty"`
+	Success     bool                   `protobuf:"varint,9,opt,name=success,proto3" json:"success,omitempty"`
+	Reversible  bool                   `protobuf:"varint,10,opt,name=reversible,proto3" json:"reversible,omitempty"`
+	// Why the action failed. A receipt reads FAILED only with a reason; an empty
+	// reason with success false is an applied action whose own verification
+	// never ran (the incident is verified as a whole). Records written before
+	// the application reasons (rolled_back to verification_failed) existed can
+	// leave a rollback, error or pending application without one.
+	FailureReason string `protobuf:"bytes,11,opt,name=failure_reason,json=failureReason,proto3" json:"failure_reason,omitempty"`
 	// Controller ownerReference chains of written resources, read from the
 	// live object before the write. Cause attribution follows these chains,
 	// never generated names.
@@ -4913,7 +4918,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\n" +
 	"started_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\tstartedAt\x12E\n" +
 	"\fcompleted_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\vcompletedAt:g\xbaHd\x1ab\n" +
-	"\x0etiming.ordered\x12*completed_at must not be before started_at\x1a$this.completed_at >= this.started_at\"\xe8\x06\n" +
+	"\x0etiming.ordered\x12*completed_at must not be before started_at\x1a$this.completed_at >= this.started_at\"\xd8\a\n" +
 	"\x13RepairActionReceipt\x12$\n" +
 	"\taction_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\bactionId\x12\x1b\n" +
 	"\x04kind\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04kind\x12\x1f\n" +
@@ -4928,8 +4933,8 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\n" +
 	"reversible\x18\n" +
 	" \x01(\bR\n" +
-	"reversible\x12\xba\x01\n" +
-	"\x0efailure_reason\x18\v \x01(\tB\x92\x01\xbaH\x8e\x01r\x8b\x01R\x00R\x14authorization_deniedR\x10execution_failedR\x14delete_not_confirmedR\x0foutcome_unknownR\x11incident_verifiedR\x0fsource_residualR\x14script_unprovenancedR\rfailureReason\x12G\n" +
+	"reversible\x12\xaa\x02\n" +
+	"\x0efailure_reason\x18\v \x01(\tB\x82\x02\xbaH\xfe\x01r\xfb\x01R\x00R\x14authorization_deniedR\x10execution_failedR\x14delete_not_confirmedR\x0foutcome_unknownR\x11incident_verifiedR\x0fsource_residualR\x14script_unprovenancedR\vrolled_backR\x0frollback_failedR\x11application_errorR\x13settlement_rejectedR\x13application_pendingR\x13verification_failedR\rfailureReason\x12G\n" +
 	"\x06owners\x18\f \x03(\v2).sdodev.contracts.v1alpha1.ResourceOwnersB\x04\xc8\xf3\x18\x01R\x06owners\x12)\n" +
 	"\rscript_digest\x18\r \x01(\tB\x04\xc8\xf3\x18\x01R\fscriptDigest:n\xbaHk\x1ai\n" +
 	"\x15repair_action.ordered\x12*completed_at must not be before started_at\x1a$this.completed_at >= this.started_at\"\xab\x01\n" +
