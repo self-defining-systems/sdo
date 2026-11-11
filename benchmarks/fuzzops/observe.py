@@ -21,7 +21,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -234,16 +234,21 @@ class Watcher:
             result = _get(closure, "result") or {}
         if not request and closure:
             request = _get(closure, "request") or {}
-        detected = _parse_time(_get(state, "incident_detected_at"))
+        detected_raw = _get(state, "incident_detected_at") or _get(closure, "detected_at")
+        detected = _parse_time(detected_raw)
         incident = str(_get(request, "incident_id") or _get(result, "incident_id") or "")
-        if _get(state, "incident_open") and detected is not None and detected >= self.started:
+        # An incident SDO opened (and maybe already handed to closure) shortly
+        # before this watcher started still belongs to the window: the watcher
+        # starts some seconds after the inject, and a fast detection beats it.
+        active = bool(_get(state, "incident_open") or closure)
+        if active and detected is not None and detected >= self.started:
             self.incident = self.incident or incident or f"detected-{detected.isoformat()}"
             findings = _get(request, "findings") or []
             what = "; ".join(f"{_get(f, 'detector_id')}: {_get(f, 'summary')}" for f in findings[:3])
             self._once(
                 "open", f"sdo: incident opened at {detected.strftime('%H:%M:%S')} ({what or 'findings pending'})", lines
             )
-            self._stamp("detected_at", str(_get(state, "incident_detected_at")))
+            self._stamp("detected_at", str(detected_raw))
             if findings and "report:findings" not in self.seen and "report:result" not in self.seen:
                 report = report_from_findings(findings)
                 if report:
@@ -351,6 +356,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--kubeconfig", default=os.environ.get("KUBECONFIG", ""))
     p.add_argument("--interval", type=float, default=3.0)
     p.add_argument("--linger", type=float, default=20.0, help="seconds to keep watching after closure")
+    p.add_argument(
+        "--lookback",
+        type=float,
+        default=90.0,
+        help="seconds before the watcher's start an incident may have opened and still be this window's "
+        "(the watcher starts after the inject; run it only when SDO has no open incident)",
+    )
     a = p.parse_args(argv)
     context = os.environ.get("FUZZOPS_KUBE_CONTEXT", "")
     report_path = os.environ.get("FUZZOPS_REPORT", "")
@@ -358,7 +370,7 @@ def main(argv: list[str] | None = None) -> int:
     emitted: set[str] = set()
     out = Path(os.environ.get("FUZZOPS_OUT") or ".")
     out.mkdir(parents=True, exist_ok=True)
-    watcher = Watcher(started=datetime.now(UTC))
+    watcher = Watcher(started=datetime.now(UTC) - timedelta(seconds=a.lookback))
     last_raw = ""
     closed_at: float | None = None
     n = 0

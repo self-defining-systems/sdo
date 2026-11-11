@@ -204,3 +204,26 @@ def test_timeline_events_follow_stamps_once_and_carry_the_cause() -> None:
     assert [e["event"] for e in events] == ["diagnosed", "escalated"]
     assert events[0]["component"] == "sts/x"
     assert events[1]["reach"] == "out-of-reach"
+
+
+def test_an_incident_already_in_closure_when_the_watcher_starts_is_reported() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from benchmarks.fuzzops.observe import Watcher
+
+    now = datetime.now(UTC)
+    detected = (now - timedelta(seconds=20)).isoformat()
+    w = Watcher(started=now - timedelta(seconds=90))
+    state = {
+        "pending_closure": {
+            "detected_at": detected,
+            "request": {
+                "incident_id": "app-1",
+                "findings": [{"detector_id": "service-endpoints", "summary": "no endpoints"}],
+            },
+        },
+        "closure_state": "CLOSURE_STATE_PENDING",
+    }
+    lines, _ = w.step(state)
+    assert any("incident opened" in line for line in lines)
+    assert w.stamps["detected_at"] == detected
