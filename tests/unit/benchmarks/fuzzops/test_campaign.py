@@ -10,10 +10,12 @@ import pytest
 
 from benchmarks.fuzzops.campaign import (
     CampaignError,
+    LaneConfig,
     Plan,
     PlanItem,
     SoftIdle,
     choose,
+    heal,
     idle_reason,
     instance_ids,
     wait_idle,
@@ -246,3 +248,21 @@ def test_wait_idle_stops_waiting_for_a_stuck_reflection() -> None:
             clock=lambda: next(clock),
             log=lambda _: None,
         )
+
+
+def test_heal_runs_the_lane_command_with_the_namespace(tmp_path: Path) -> None:
+    out = tmp_path / "healed"
+    cfg = LaneConfig(
+        plan=Plan("a", "/i.json", (PlanItem("t", "t@x"),)),
+        templates=["t"],
+        out=tmp_path,
+        fuzzops=tmp_path,
+        pack=tmp_path,
+        namespace="ns1",
+        control_namespace="ns1-sdo",
+        kind_cluster="c",
+        sdo_version="v",
+        heal_cmd=f'echo "$NAMESPACE $KUBE_CONTEXT" > {out}',
+    )
+    assert heal(cfg) == 0
+    assert out.read_text().split() == ["ns1", "kind-c"]

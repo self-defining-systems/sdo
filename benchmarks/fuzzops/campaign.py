@@ -284,6 +284,9 @@ class LaneConfig:
     extra: list[str] = field(default_factory=list)
     unhealthy_retries: int = 2
     evidence_dir: str = ""
+    #: Shell command that brings a broken app back to health between rounds (``$NAMESPACE``, ``$KUBE_CONTEXT`` set),
+    #: run when the app is still unhealthy before an inject: SDO missed the previous fault or never repaired it.
+    heal_cmd: str = ""
 
     def __post_init__(self) -> None:
         for t in self.templates:
@@ -374,6 +377,7 @@ def run_lane(cfg: LaneConfig, log: Callable[[str], None] = print) -> int:
     runs.mkdir(exist_ok=True)
     n = len(list(runs.iterdir()))
     failures = 0
+    healed_rounds: list[str] = []
     for template in cfg.templates:
         for round_, instance in cfg.plan.item(template).rounds():
             done = [
@@ -424,6 +428,10 @@ def run_lane(cfg: LaneConfig, log: Callable[[str], None] = print) -> int:
                     break
                 log(f"{template} {round_}: app not healthy before inject, retrying after SDO is idle")
                 run_dir.rename(run_dir.with_name(run_dir.name + "-unhealthy"))
+                if cfg.heal_cmd and attempt == 0:
+                    healed = heal(cfg)
+                    log(f"{template} {round_}: healed the app with the lane's heal command (exit {healed})")
+                    healed_rounds.append(f"{template}/{round_}")
             if rc != 0:
                 failures += 1
             try:
@@ -432,9 +440,17 @@ def run_lane(cfg: LaneConfig, log: Callable[[str], None] = print) -> int:
             except CampaignError as exc:
                 log(f"{template} {round_}: {exc}")
                 failures += 1
+    meta["healed_before"] = healed_rounds
     meta["ended"] = _now()
     (cfg.out / "lane.json").write_text(json.dumps(meta, indent=2) + "\n")
     return 1 if failures else 0
+
+
+def heal(cfg: LaneConfig) -> int:
+    env = {**os.environ, "NAMESPACE": cfg.namespace, "KUBE_CONTEXT": cfg.context}
+    if cfg.kubeconfig:
+        env["KUBECONFIG"] = cfg.kubeconfig
+    return subprocess.run(["sh", "-c", cfg.heal_cmd], env=env, check=False, timeout=900).returncode
 
 
 def settle(kube: Kube, control_namespace: str, log: Callable[[str], None]) -> tuple[float, str]:
@@ -509,6 +525,7 @@ def main(argv: list[str] | None = None) -> int:
         operator_binary=a.operator_binary,
         controller_image=a.controller_image,
         evidence_dir=a.evidence_dir,
+        heal_cmd=a.heal_cmd,
     )
     return run_lane(cfg, log=lambda m: print(f"{_now()} {m}", flush=True))
 
