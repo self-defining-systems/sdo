@@ -207,8 +207,11 @@ func TestConsulRegistrationsLostIsAFinding(t *testing.T) {
 	}
 }
 
-// A table that disappeared, shrank by more than half or grew tenfold is a
-// namespace finding; one that appeared is cited, not judged by itself.
+// A table that disappeared or shrank by more than half is a namespace finding;
+// one that appeared is cited, not judged by itself. Growth is not judged: an
+// application writes its tables, so a count grows with time and traffic past
+// any multiple of a healthy reading (a timeline collection grew tenfold in 25
+// minutes of ordinary posting).
 func TestNamespaceChangedRule(t *testing.T) {
 	_, detect := storeDetector(t, storestate.EngineMySQL, healthyMySQL)
 	for name, test := range map[string]struct {
@@ -219,10 +222,10 @@ func TestNamespaceChangedRule(t *testing.T) {
 		"healthy":           {healthyMySQL, 0, ""},
 		"renamed":           {strings.Replace(healthyMySQL, "shop\torders\t80", "shop\torders_old\t80", 1), 1, "appeared since the healthy baseline: namespace shop/orders_old (80)"},
 		"emptied":           {strings.Replace(healthyMySQL, "shop\torders\t80", "shop\torders\t10", 1), 1, "dropped from 80 to 10"},
-		"overflowed":        {strings.Replace(healthyMySQL, "shop\torders\t80", "shop\torders\t10080", 1), 1, "grew from 80 to 10080"},
+		"grew tenfold":      {strings.Replace(healthyMySQL, "shop\torders\t80", "shop\torders\t10080", 1), 0, ""},
 		"within bounds":     {strings.Replace(healthyMySQL, "shop\torders\t80", "shop\torders\t60", 1), 0, ""},
 		"new table":         {strings.Replace(healthyMySQL, "== indexes", "shop\tsessions\t5\n== indexes", 1), 0, ""},
-		"estimated growth":  {strings.Replace(healthyMySQL, "shop\torders\t80", "shop\torders\t~900000", 1), 1, "grew from 80 to 900000"},
+		"estimated growth":  {strings.Replace(healthyMySQL, "shop\torders\t80", "shop\torders\t~900000", 1), 0, ""},
 		"small table moved": {strings.Replace(healthyMySQL, "shop\titems\t40", "shop\titems\t1", 1), 1, "dropped from 40 to 1"},
 	} {
 		t.Run(name, func(t *testing.T) {
