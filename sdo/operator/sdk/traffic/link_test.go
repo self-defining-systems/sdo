@@ -83,6 +83,39 @@ func TestLinkFindingReportsIntermittentLossWithoutConsecutiveFailures(t *testing
 	}
 }
 
+// One stall of a few seconds (a slow node, a DNS timeout burst) fails a run of
+// dials, possibly with a stray success inside it, then the link recovers. It
+// is neither unreachable (no run of Failures consecutive failures) nor
+// intermittent: the failures are one event, not a recurring loss.
+func TestLinkFindingIgnoresOneStall(t *testing.T) {
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	for name, failed := range map[string]map[int]bool{
+		"four consecutive failures":           {8: true, 9: true, 10: true, 11: true},
+		"six failures with one success inside": {8: true, 9: true, 11: true, 12: true, 13: true, 14: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			window, observed := linkTestWindow(now, 5*time.Millisecond, linkSamples(now, repeatDuration(5*time.Millisecond, 20), failed))
+			if _, failing := LinkFailing(window, observed); failing {
+				t.Fatal("fixture must not be a consecutive-failure run")
+			}
+			if finding, firing := LinkFinding(sdk.DetectorSpec{ID: "traffic-links"}, "app", window, observed); firing {
+				t.Fatalf("one stall reported: %s", finding.Summary)
+			}
+		})
+	}
+}
+
+// Stalls that recur within the window are an intermittent link.
+func TestLinkFindingReportsRecurringStalls(t *testing.T) {
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	failed := map[int]bool{2: true, 3: true, 4: true, 5: true, 14: true, 15: true, 16: true, 17: true}
+	window, observed := linkTestWindow(now, 5*time.Millisecond, linkSamples(now, repeatDuration(5*time.Millisecond, 20), failed))
+	finding, firing := LinkFinding(sdk.DetectorSpec{ID: "traffic-links"}, "app", window, observed)
+	if !firing || finding.Metadata["condition"] != string(LinkIntermittent) {
+		t.Fatalf("recurring stalls not reported intermittent: firing=%v metadata=%v", firing, finding.Metadata)
+	}
+}
+
 func TestLinkFindingIgnoresHealthyJitterAndRareLoss(t *testing.T) {
 	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
 	durations := make([]time.Duration, 0, 20)

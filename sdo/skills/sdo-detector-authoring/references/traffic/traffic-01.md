@@ -54,10 +54,15 @@ const (
 	MaxLinkInterval     = 1 * time.Minute
 
 	// LinkLossWindow is how many recent dials an intermittent judgement
-	// needs; LinkLossPercent of them failing, consecutive or not, reports
-	// the link. A single few-second data-plane stall stays below it.
+	// needs; LinkLossPercent of them failing, consecutive or not, in at least
+	// LinkLossBursts separate bursts reports the link. A burst ends after
+	// LinkBurstGap consecutive successful dials. One stall (a slow node, a
+	// burst of DNS timeouts), even with a stray success inside it, is one
+	// burst and stays below it; a stall long enough is unreachable instead.
 	LinkLossWindow  = 20
 	LinkLossPercent = 20
+	LinkLossBursts  = 2
+	LinkBurstGap    = 3
 	// LinkLatencyFactor, LinkSpreadFactor and MinLinkLatencyBound set the
 	// slow bound: a window's median dial must exceed LinkLatencyFactor times
 	// the healthy baseline, the baseline plus LinkSpreadFactor times its
@@ -215,14 +220,4 @@ func ScenarioFinding(spec sdk.DetectorSpec, namespace string, workload Workload,
     ScenarioFinding explains one unhealthy scenario. The primary resource is
     the Service the scenario calls; the Services it depends on are related,
     so the finding localizes the fault along the request path.
-
-func UndrivenLinkNote(link Link) string
-    UndrivenLinkNote is the non-blocking memory-check note for an edge
-    UndrivenLinks returns.
-
-
-TYPES
-
-type Arrival string
-    Arrival is the inter-arrival pattern of iterations.
 ```
