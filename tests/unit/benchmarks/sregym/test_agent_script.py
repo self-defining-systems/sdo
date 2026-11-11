@@ -257,7 +257,7 @@ def test_responder_repair_tool_cli_and_reflection_edit_against_fake_api(scripted
     for name in ("requests", "responses"):
         (tools / name).mkdir(parents=True)
     unpublished = tools / "requests/.unpublished.json"
-    unpublished.write_text(json.dumps({"command": "apply", "plan_ids": ["synthetic-repair"]}))
+    unpublished.write_text(json.dumps({"command": "mitigate", "targets": [{"name": "synthetic-repair"}]}))
     monkeypatch.setenv("SDO_TOOLS_DIR", str(tools))
     monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tools / "scratch"))
     monkeypatch.setenv("SDO_AGENT_SCRIPT_INCIDENT", incident)
@@ -282,7 +282,7 @@ def test_responder_repair_tool_cli_and_reflection_edit_against_fake_api(scripted
                         "steps": [
                             {
                                 "kind": "tool",
-                                "argv": ["sdo", "--json", "apply", "synthetic-repair"],
+                                "argv": ["sdo", "--json", "mitigate", "synthetic-repair"],
                                 "contains": "details_file",
                             }
                         ],
@@ -326,7 +326,10 @@ def test_responder_repair_tool_cli_and_reflection_edit_against_fake_api(scripted
                     for request in (tools / "requests").glob("*.json"):
                         if request.name.startswith("."):
                             continue
-                        assert json.loads(request.read_text()) == {"command": "apply", "plan_ids": ["synthetic-repair"]}
+                        assert json.loads(request.read_text()) == {
+                            "command": "mitigate",
+                            "targets": [{"name": "synthetic-repair"}],
+                        }
                         patch = urllib.request.Request(
                             url,
                             data=json.dumps({"spec": {"ports": [{"port": 80, "targetPort": 80}]}}).encode(),
