@@ -16,6 +16,9 @@ type ReflectionQueue interface {
 	ProcessQueuedReflection(context.Context, string) error
 	AbandonQueuedReflection(context.Context, string, string) error
 	QueuedReflectionRolloutPending(string) (bool, error)
+	// QueuedReflectionCommit is the accepted reflection commit of a queued
+	// incident ("" when its reflection committed nothing).
+	QueuedReflectionCommit(string) (string, error)
 }
 
 type reflectionCompletion struct {
@@ -182,6 +185,20 @@ func (c *Controller) reflectionWorkOpen() bool {
 func (c *Controller) activateQueuedRollout(ctx context.Context, queue ReflectionQueue, incident string) error {
 	if c.memoryRefresh == nil {
 		return nil
+	}
+	// A queued reflection commits after its closure set the accepted commit to
+	// the outcome; the host must activate the reflection's commit (the
+	// repository HEAD the rollout handoff verifies), or the learned memory is
+	// never served and the rollout stays pending forever.
+	commit, err := queue.QueuedReflectionCommit(incident)
+	if err != nil {
+		c.reportBrokerError("queued reflection commit "+incident, err)
+		return nil
+	}
+	if commit != "" {
+		c.mu.Lock()
+		c.config.SourceCommit = commit
+		c.mu.Unlock()
 	}
 	ready, err := c.memoryRefresh(ctx)
 	if err != nil {

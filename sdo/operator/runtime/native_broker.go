@@ -683,6 +683,16 @@ func (n NativeIncidentBroker) QueuedReflectionRolloutPending(incidentID string) 
 	return ledger.ReflectionQueued && reflectionRolloutPending(ledger), nil
 }
 
+// QueuedReflectionCommit is the reflection commit a queued incident's ledger
+// records ("" when reflection published nothing).
+func (n NativeIncidentBroker) QueuedReflectionCommit(incidentID string) (string, error) {
+	ledger, err := n.readLedger(incidentID)
+	if err != nil {
+		return "", err
+	}
+	return ledger.GetReflectionCommit(), nil
+}
+
 func reflectionRolloutPending(ledger *contracts.BrokerLedger) bool {
 	return ledger.RolloutExpectation != nil && !successfulRollout(rolloutReceiptsState(ledger.RolloutReceipts))
 }
