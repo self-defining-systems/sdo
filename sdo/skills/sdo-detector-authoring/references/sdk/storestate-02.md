@@ -52,7 +52,11 @@ type Facts struct {
 	Writable    *bool         `json:"writable,omitempty"`
 	Connections *Gauge        `json:"connections,omitempty"`
 	Memory      *Gauge        `json:"memory,omitempty"`
-	Items       []Item        `json:"items"`
+	// Sequences are the id generators (a sequence, an auto-increment) the read
+	// found close to the largest value their type holds, by name; the next
+	// insert into their table fails once one reaches its maximum.
+	Sequences map[string]Gauge `json:"sequences,omitempty"`
+	Items     []Item           `json:"items"`
 	// Holders groups the connections the store holds by peer and state; nil
 	// when the read could not list them. It is never part of Diff.
 	Holders []Holder   `json:"holders,omitempty"`
@@ -254,22 +258,4 @@ type Restorer interface {
     own environment already holds (the Secret the workload uses), or not at all.
 
     An adapter of another engine implements it to make its items restorable.
-
-type StoreChanges struct {
-	Component  string        `json:"component"`
-	Engine     Engine        `json:"engine"`
-	Pod        sdk.ObjectRef `json:"pod"`
-	ObservedAt time.Time     `json:"observed_at,omitzero"`
-	BaselineAt time.Time     `json:"baseline_at,omitzero"`
-	Baselined  bool          `json:"baselined"`
-	Changes    []Change      `json:"changes,omitempty"`
-	// Holders are the connections the store holds now, by peer and state,
-	// each peer resolved to its Pod and workload through the view's Pod IPs.
-	Holders []HolderGroup `json:"holders,omitempty"`
-	Error   string        `json:"error,omitempty"`
-}
-    StoreChanges is one store Pod's facts against the controller's promoted
-    healthy baseline. Baselined is false when no usable baseline reading exists
-    for the Pod; Changes is then empty. Error is set when the current read gave
-    no answer, and the other fields are then unknown.
 ```

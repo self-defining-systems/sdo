@@ -50,7 +50,7 @@ printf '%%s\n' "$h";c="$7$8$9${10}${11}";psql -X -q -At -p %d -U "$U" -d "$D" -c
 // role flags and catalog definitions are read; a custom (dotted) setting's
 // value, a role's password and every row of every table are not.
 var postgresQueries = []string{
-	`SELECT 'role',CASE WHEN pg_is_in_recovery() THEN 'standby' ELSE 'primary' END UNION ALL SELECT 'conn',count(*)||E'\t'||current_setting('max_connections') FROM pg_stat_activity WHERE backend_type='client backend' UNION ALL SELECT 'waiting',count(*)::text FROM pg_locks WHERE NOT granted UNION ALL (SELECT 'set',name||E'\t'||setting FROM pg_settings WHERE name IN('default_transaction_read_only','transaction_read_only','max_connections','superuser_reserved_connections','statement_timeout','lock_timeout','idle_in_transaction_session_timeout','idle_session_timeout','synchronous_commit','synchronous_standby_names','max_locks_per_transaction','max_prepared_transactions','fsync','work_mem','temp_file_limit','password_encryption','log_min_duration_statement','wal_level') ORDER BY 2)`,
+	`SELECT 'role',CASE WHEN pg_is_in_recovery() THEN 'standby' ELSE 'primary' END UNION ALL SELECT 'conn',count(*)||E'\t'||current_setting('max_connections') FROM pg_stat_activity WHERE backend_type='client backend' UNION ALL SELECT 'waiting',count(*)::text FROM pg_locks WHERE NOT granted UNION ALL (SELECT 'seq',schemaname||'.'||sequencename||E'\t'||last_value||E'\t'||max_value FROM pg_sequences WHERE last_value IS NOT NULL AND max_value>0 AND last_value>=max_value*0.9 ORDER BY last_value::numeric/max_value DESC LIMIT 5) UNION ALL (SELECT 'set',name||E'\t'||setting FROM pg_settings WHERE name IN('default_transaction_read_only','transaction_read_only','max_connections','superuser_reserved_connections','statement_timeout','lock_timeout','idle_in_transaction_session_timeout','idle_session_timeout','synchronous_commit','synchronous_standby_names','max_locks_per_transaction','max_prepared_transactions','fsync','work_mem','temp_file_limit','password_encryption','log_min_duration_statement','wal_level') ORDER BY 2)`,
 	`SELECT coalesce(d.datname,'*'),coalesce(r.rolname,'*'),split_part(c,'=',1),CASE WHEN split_part(c,'=',1) LIKE '%.%' THEN 'set' ELSE substr(c,strpos(c,'=')+1) END FROM pg_db_role_setting s LEFT JOIN pg_database d ON d.oid=s.setdatabase LEFT JOIN pg_roles r ON r.oid=s.setrole,unnest(s.setconfig) c ORDER BY 1,2,3 LIMIT 33`,
 	`SELECT rolname,concat_ws(' ',CASE WHEN rolsuper THEN 'superuser' END,CASE WHEN rolcanlogin THEN 'login' ELSE 'nologin' END,CASE WHEN rolcreatedb THEN 'createdb' END,CASE WHEN rolcreaterole THEN 'createrole' END,CASE WHEN rolreplication THEN 'replication' END,CASE WHEN rolbypassrls THEN 'bypassrls' END,CASE WHEN rolconnlimit>=0 THEN 'connlimit='||rolconnlimit END,CASE WHEN rolvaliduntil<now() THEN 'expired' WHEN rolvaliduntil<'infinity' THEN 'valid-until='||rolvaliduntil::date END,(SELECT 'member-of='||string_agg(b.rolname,',' ORDER BY b.rolname) FROM pg_auth_members m JOIN pg_roles b ON b.oid=m.roleid WHERE m.member=r.oid)) FROM pg_roles r WHERE rolname!~'^pg_' ORDER BY 1 LIMIT 25`,
 	`SELECT datname,datallowconn,datconnlimit FROM pg_database WHERE NOT datistemplate ORDER BY 1 LIMIT 17`,
@@ -184,6 +184,13 @@ func (postgresAdapter) Parse(stdout string) (Facts, error) {
 				items = append(items, Item{Kind: KindRole, Name: "role", Value: fields[1]})
 				if fields[1] == "standby" {
 					blocks = append(blocks, Item{Kind: KindWriteBlock, Name: "in-recovery", Value: "active"})
+				}
+			case fields[0] == "seq" && len(fields) == 4:
+				if g := gauge(fields[2], fields[3]); g != nil {
+					if f.Sequences == nil {
+						f.Sequences = map[string]Gauge{}
+					}
+					f.Sequences[fields[1]] = *g
 				}
 			case fields[0] == "conn" && len(fields) == 3:
 				f.Connections = gauge(fields[1], fields[2])

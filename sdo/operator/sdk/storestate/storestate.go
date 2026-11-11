@@ -123,6 +123,14 @@ type Gauge struct {
 	Max  int64 `json:"max"`
 }
 
+// MaxSequences bounds the sequences one read reports (the read lists only
+// those already past SequenceReported of their maximum).
+const MaxSequences = 5
+
+// SequenceReported is the share of its maximum a sequence must have used
+// before the read lists it.
+const SequenceReported = 0.9
+
 // Near reports use at or above fraction of a set cap.
 func (g Gauge) Near(fraction float64) bool {
 	return g.Max > 0 && float64(g.Used) >= fraction*float64(g.Max)
@@ -141,7 +149,11 @@ type Facts struct {
 	Writable    *bool         `json:"writable,omitempty"`
 	Connections *Gauge        `json:"connections,omitempty"`
 	Memory      *Gauge        `json:"memory,omitempty"`
-	Items       []Item        `json:"items"`
+	// Sequences are the id generators (a sequence, an auto-increment) the read
+	// found close to the largest value their type holds, by name; the next
+	// insert into their table fails once one reaches its maximum.
+	Sequences map[string]Gauge `json:"sequences,omitempty"`
+	Items     []Item           `json:"items"`
 	// Holders groups the connections the store holds by peer and state; nil
 	// when the read could not list them. It is never part of Diff.
 	Holders []Holder   `json:"holders,omitempty"`
@@ -196,6 +208,9 @@ func (f Facts) Validate() error {
 		if !knownKinds[k] {
 			return fmt.Errorf("store facts mark unknown kind %q unread", k)
 		}
+	}
+	if len(f.Sequences) > MaxSequences {
+		return fmt.Errorf("store facts carry %d sequences, more than %d", len(f.Sequences), MaxSequences)
 	}
 	if len(f.Holders) > MaxHolders {
 		return fmt.Errorf("store facts carry %d holder groups, more than %d", len(f.Holders), MaxHolders)
