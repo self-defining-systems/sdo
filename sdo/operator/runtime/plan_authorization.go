@@ -16,7 +16,8 @@ func planAuthorizationMode(action program.Action) string {
 		if a != nil {
 			return planAuthorizationMode(*a)
 		}
-	case program.ReconcileFromSource, *program.ReconcileFromSource, program.CreateFromSource, *program.CreateFromSource:
+	case program.ReconcileFromSource, *program.ReconcileFromSource, program.CreateFromSource, *program.CreateFromSource,
+		program.RestoreSecretFromSource, *program.RestoreSecretFromSource:
 		return "accepted-source"
 	}
 	return "incident-namespace"

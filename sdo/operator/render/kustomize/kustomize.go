@@ -73,7 +73,8 @@ func renderRoot(ctx context.Context, fsys render.FS, env render.Env, cfg *contra
 	if !fs.ValidPath(root) {
 		return render.Result{}, fmt.Errorf("kustomize path %q must be a relative path inside the source tree", cfg.GetPath())
 	}
-	l := &loader{ctx: ctx, fsys: fsys, omit: env.Secrets == render.SecretsOmit, mem: filesys.MakeFsInMemory(), loaded: map[string]bool{}}
+	l := &loader{ctx: ctx, fsys: fsys, omit: env.Secrets == render.SecretsOmit, omitInputs: env.Secrets != render.SecretsInclude,
+		mem: filesys.MakeFsInMemory(), loaded: map[string]bool{}, generated: map[string]bool{}}
 	if err := l.loadDir(root); err != nil {
 		return render.Result{}, err
 	}
@@ -83,7 +84,8 @@ func renderRoot(ctx context.Context, fsys render.FS, env render.Env, cfg *contra
 	resmap, err := krusty.MakeKustomizer(options).Run(l.mem, path.Join("/source", root))
 	if err != nil {
 		if !l.omit {
-			// Build errors can quote input lines, and SecretsInclude loads Secret inputs.
+			// Build errors can quote input lines, and SecretsInclude loads Secret
+			// inputs (SecretsLiteral keeps literal Secret manifests).
 			return render.Result{}, fmt.Errorf("kustomize build of %s failed", root)
 		}
 		return render.Result{}, fmt.Errorf("kustomize build of %s failed: %w", root, err)
@@ -97,6 +99,12 @@ func renderRoot(ctx context.Context, fsys render.FS, env render.Env, cfg *contra
 		obj := &unstructured.Unstructured{}
 		if err := obj.UnmarshalJSON(data); err != nil {
 			return render.Result{}, fmt.Errorf("kustomize build of %s: decode resource: %w", root, err)
+		}
+		if !l.omit && l.omitInputs && obj.GetKind() == "Secret" && obj.GetAPIVersion() == "v1" && l.generated[obj.GetName()] {
+			// SecretsLiteral: a generator never loaded its inputs, so whatever
+			// data a generated or generator-merged Secret carries is not the
+			// accepted value. Keep identity only.
+			obj.Object = render.SecretIdentity(obj.Object)
 		}
 		if l.omit && obj.GetKind() == "Secret" && obj.GetAPIVersion() == "v1" {
 			// A merge or replace generator with no inputs leaves the default
@@ -114,11 +122,15 @@ func renderRoot(ctx context.Context, fsys render.FS, env render.Env, cfg *contra
 }
 
 type loader struct {
-	ctx    context.Context
-	fsys   render.FS
-	omit   bool
-	mem    filesys.FileSystem
-	loaded map[string]bool
+	ctx  context.Context
+	fsys render.FS
+	// omit reduces Secret manifests to identity (SecretsOmit); omitInputs
+	// leaves Secret generator inputs unread (SecretsOmit and SecretsLiteral).
+	omit, omitInputs bool
+	mem              filesys.FileSystem
+	loaded           map[string]bool
+	// generated names every Secret a generator creates or merges into.
+	generated map[string]bool
 }
 
 // safe joins a kustomization-relative input and rejects anything that is not a
@@ -261,7 +273,7 @@ func (l *loader) loadKustomization(name string) error {
 	if err := l.loadConfigMapGenerators(doc, base, name); err != nil {
 		return err
 	}
-	if l.omit {
+	if l.omitInputs {
 		// A create generator becomes a value-free virtual resource that exists
 		// only in the private filesystem, never in Git or the source tree. A
 		// merge or replace generator acts on a Secret an earlier layer already
@@ -391,7 +403,7 @@ func (l *loader) loadSecretGenerators(doc map[string]any, base, name string) ([]
 			return nil, err
 		}
 		for _, target := range inputs {
-			if l.omit {
+			if l.omitInputs {
 				if _, err := l.fsys.Stat(target); err != nil && !errors.Is(err, fs.ErrNotExist) {
 					return nil, fmt.Errorf("Secret input %s: %w", target, err)
 				}
@@ -404,6 +416,9 @@ func (l *loader) loadSecretGenerators(doc map[string]any, base, name string) ([]
 			if err := l.write(target, content); err != nil {
 				return nil, err
 			}
+		}
+		if name, ok := generator["name"].(string); ok {
+			l.generated[name] = true
 		}
 		out = append(out, generator)
 	}

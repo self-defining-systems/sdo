@@ -86,6 +86,7 @@ CARD_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "program.ValidateSetField",
             "program.ReconcileFromSource",
             "program.CreateFromSource",
+            "program.RestoreSecretFromSource",
             "program.DeleteObject",
             "program.PatchObject",
             "program.Rollback",

@@ -109,7 +109,17 @@ message Action {
     CheckStoreCredential check_store_credential = 28;
     Escalate escalate = 29;
     ProposeSourceChange propose_source_change = 30;
+    RestoreSecretFromSource restore_secret_from_source = 31;
   }
+}
+
+// Restores a Secret's data to the literal data the accepted source declares
+// (data/stringData in a rendered manifest), creating the Secret when it is
+// absent. Go resolves and writes the values; none crosses the runtime boundary.
+// Refused when source does not declare the Secret with literal data.
+message RestoreSecretFromSource {
+  ObjectRef ref = 1 [(buf.validate.field).required = true];
+  string reason = 2 [(buf.validate.field).string.min_len = 1];
 }
 
 // Closes the incident as escalated without a write: the diagnosed cause is out
@@ -213,6 +223,7 @@ message ActionReport {
   SourceReconcileResult source_reconcile = 12;
   // A ProposeSourceChange with its value resolved: {ref, path, value, reason}.
   bytes source_change_json = 13;
+  SecretRestoreResult secret_restore = 14;
   string failure_reason = 9 [(buf.validate.field).string = {in: ["", "authorization_denied", "execution_failed", "delete_not_confirmed", "outcome_unknown", "source_residual"]}];
 }
 
@@ -225,6 +236,19 @@ message SourceReconcileResult {
   string observation_error = 4;
   bool additions_known = 5;
   repeated SourceRolloutStep rollout_steps = 6;
+}
+
+// What a RestoreSecretFromSource wrote: key names and short digests of the
+// declared values only, never a value.
+message SecretRestoreResult {
+  ObjectRef ref = 1;
+  repeated string keys = 2;
+  // Keys whose live value differed or was missing.
+  repeated string restored = 3;
+  // Live keys the source does not declare; the restore removed them.
+  repeated string removed = 4;
+  map<string, string> digests = 5;
+  bool created = 6;
 }
 
 message SourceRolloutStep {

@@ -227,6 +227,10 @@ func planValueState(v *contracts.PlanValue) program.Value {
 
 func GeneralAction(a program.Action) program.Action {
 	switch p := a.(type) {
+	case *program.RestoreSecretFromSource:
+		if p != nil {
+			return *p
+		}
 	case *program.SyncWebhookCA:
 		if p != nil {
 			return *p
@@ -257,7 +261,7 @@ func GeneralAction(a program.Action) program.Action {
 
 func IsGeneralAction(a program.Action) bool {
 	switch GeneralAction(a).(type) {
-	case program.SyncWebhookCA, program.PatchObject, program.ApplyObject, program.KubernetesRequest, program.WaitFor, program.DeleteObject:
+	case program.SyncWebhookCA, program.RestoreSecretFromSource, program.PatchObject, program.ApplyObject, program.KubernetesRequest, program.WaitFor, program.DeleteObject:
 		return true
 	}
 	return IsExternalAction(a)
@@ -329,7 +333,8 @@ func classifyEffect(action *contracts.Action) (nonObject, known bool) {
 		*contracts.Action_DeletePod, *contracts.Action_ScaleWorkload, *contracts.Action_RemoveServicePort,
 		*contracts.Action_PatchObject, *contracts.Action_ApplyObject, *contracts.Action_KubernetesRequest,
 		*contracts.Action_WaitFor, *contracts.Action_SyncWebhookCa, *contracts.Action_RetireOldRevision,
-		*contracts.Action_RetryAdmission, *contracts.Action_Escalate, *contracts.Action_ProposeSourceChange:
+		*contracts.Action_RetryAdmission, *contracts.Action_Escalate, *contracts.Action_ProposeSourceChange,
+		*contracts.Action_RestoreSecretFromSource:
 		return false, true
 	}
 	return true, false
@@ -392,6 +397,8 @@ func generalActionProto(action program.Action) (*contracts.Action, error) {
 		return nil, err
 	}
 	switch a := GeneralAction(action).(type) {
+	case program.RestoreSecretFromSource:
+		return &contracts.Action{Kind: &contracts.Action_RestoreSecretFromSource{RestoreSecretFromSource: &contracts.RestoreSecretFromSource{Ref: refProto(a.Ref), Reason: a.Reason}}}, nil
 	case program.SyncWebhookCA:
 		t := a.Target
 		return &contracts.Action{Kind: &contracts.Action_SyncWebhookCa{SyncWebhookCa: &contracts.SyncWebhookCA{Ref: refProto(t.Ref), Webhook: t.Webhook, SecretNamespace: t.SecretNamespace, SecretName: t.SecretName, SecretKey: t.SecretKey, Reason: a.Reason}}}, nil
@@ -445,6 +452,9 @@ func generalActionProto(action program.Action) (*contracts.Action, error) {
 // GeneralActionState decodes the general, external and database action kinds.
 func GeneralActionState(action *contracts.Action) (program.Action, error) {
 	switch kind := action.GetKind().(type) {
+	case *contracts.Action_RestoreSecretFromSource:
+		a := kind.RestoreSecretFromSource
+		return program.RestoreSecretFromSource{Ref: objectRefState(a.GetRef()), Reason: a.GetReason()}, nil
 	case *contracts.Action_SyncWebhookCa:
 		a := kind.SyncWebhookCa
 		return program.SyncWebhookCA{Target: program.WebhookCA{Ref: objectRefState(a.GetRef()), Webhook: a.GetWebhook(), SecretNamespace: a.GetSecretNamespace(), SecretName: a.GetSecretName(), SecretKey: a.GetSecretKey()}, Reason: a.GetReason()}, nil

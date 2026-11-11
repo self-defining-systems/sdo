@@ -169,6 +169,16 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 	if v.Source == nil || v.SourceCommit == "" {
 		return program.Diff{}, errors.New("accepted source is unavailable")
 	}
+	if isSecretRef(ref) {
+		// Value-blind: Go compares declared and live data; the diff names keys.
+		ctx, cancel := context.WithTimeout(v.context(), DefaultDiagnosisDeadline)
+		defer cancel()
+		diff, err := secretSourceDiff(ctx, v.Client, v.Source, v.SourceCommit, v.Namespace(), ref)
+		if err != nil {
+			return program.Diff{}, err
+		}
+		return program.Diff{Changed: diff.Changed(), Text: secretDiffText(ref, diff)}, nil
+	}
 	observed, err := v.snapshotObject(ref)
 	if err != nil && !errors.Is(err, errSnapshotObjectAbsent) {
 		return program.Diff{}, err

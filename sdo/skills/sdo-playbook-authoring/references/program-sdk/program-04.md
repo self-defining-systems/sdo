@@ -204,38 +204,18 @@ type RestoreBackup struct {
 
 func (a RestoreBackup) Validate() error
 
-type RestoreStoreItem struct {
-	Target      StoreTarget
-	Change      storestate.Change
-	EndSessions bool
-	Reason      string
+type RestoreSecretFromSource struct {
+	Ref    sdk.ObjectRef
+	Reason string
 }
-    RestoreStoreItem puts a store-state item back to its baseline.
-    Its effect is store-setting. Change names the item, normally one entry of
-    storestate.Changes(view) for the Target Pod; the controller restores the
-    value of its own promoted healthy baseline, not the one in Change. It runs
-    the engine's fixed inverse (storestate.RestoreCommands): CONFIG SET, ACL
-    SETUSER, REPLICAOF NO ONE or CLIENT UNPAUSE on redis; collMod, fsyncUnlock,
-    dropIndexes/createIndexes, setParameter or updateUser on mongodb;
-    ALTER SYSTEM/DATABASE/ROLE or pg_promote on postgres. A validator or index
-    text comes from the restore text the controller captured with the baseline.
-    A password is restored only from the store container's own environment.
-    The executor reads the item first and records its prior value, does
-    nothing when it already has the baseline value, and reads the facts again
-    to verify it. EndSessions also ends the sessions a restored per-database
-    or per-role postgres setting applies to, so clients reconnect with it.
-    storestate.Restorable says beforehand whether an item has an inverse.
+    RestoreSecretFromSource restores declared Secret data. It writes the literal
+    data the accepted source declares (data/stringData in a rendered manifest),
+    creating the Secret when it is absent; undeclared keys are removed. Go
+    resolves and writes the values: no value reaches a program, agent or record,
+    and the receipt names keys and short value digests only. Refused when source
+    does not declare the Secret with literal data (generated or external secret
+    material). DiffAgainstSource on a Secret names keys that differ.
 
-func (a RestoreStoreItem) Validate() error
-
-type Result string
-    Result is a diagnosis verdict: Match means the fault is present, NoMatch
-    absent, Unknown that evidence is unavailable.
-
-const (
-	Match          Result = "Match"
-	NoMatch        Result = "NoMatch"
-	Unknown        Result = "Unknown"
-	NeedsJudgement Result = "NeedsJudgement"
-)
+func (a RestoreSecretFromSource) Validate() error
+    Validate requires a named, namespaced v1 Secret and a reason.
 ```

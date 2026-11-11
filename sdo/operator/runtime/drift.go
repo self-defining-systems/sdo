@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"reflect"
@@ -15,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes"
 
+	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -60,6 +62,10 @@ func (c *Controller) processDrift(ctx context.Context, now time.Time, snapshot s
 				continue
 			}
 		}
+		if object != nil && isSecretRef(sdk.ObjectRef{APIVersion: object.GetAPIVersion(), Kind: object.GetKind()}) {
+			c.processSecretDrift(ctx, now, view, change)
+			continue
+		}
 		event, err := classifier.Classify(ctx, change, view, now)
 		if err != nil {
 			c.retryDrift(change)
@@ -84,6 +90,69 @@ func (c *Controller) processDrift(ctx context.Context, now time.Time, snapshot s
 		}
 	}
 
+}
+
+// processSecretDrift compares a changed or deleted Secret with the literal
+// data accepted source declares. The informer holds no values; Go reads the
+// live Secret once and compares digests in memory. Creations are the
+// deployer's or another owner's and are not compared; Secrets that source does
+// not declare with literal data have nothing to compare.
+func (c *Controller) processSecretDrift(ctx context.Context, now time.Time, view program.ReadView, change ObjectChange) {
+	if change.Initial || change.Old == nil {
+		return
+	}
+	object := change.Old
+	if change.New != nil {
+		object = change.New
+	}
+	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Secret", Namespace: object.GetNamespace(), Name: object.GetName()}
+	if ref.Namespace != view.Namespace() || ref.Name == "" {
+		return
+	}
+	// The identity-only (cached) render decides whether source declares the
+	// Secret at all; only a declared Secret pays for the literal render.
+	commit := c.CurrentAcceptedCommit()
+	if c.drift.Source == nil || commit == "" {
+		return
+	}
+	manifests, err := c.drift.Source.AcceptedManifests(ctx, commit, ref.Namespace)
+	if err != nil {
+		c.retryDrift(change)
+		if c.OnError != nil {
+			c.OnError(fmt.Errorf("compare Secret %s with accepted source: %w", ref.Name, err))
+		}
+		return
+	}
+	declared := false
+	for _, manifest := range manifests {
+		declared = declared || manifest.GetKind() == "Secret" && manifest.GetAPIVersion() == "v1" && manifest.GetName() == ref.Name
+	}
+	if !declared {
+		return
+	}
+	diff, err := secretSourceDiff(ctx, c.drift.Client, c.drift.Source, commit, ref.Namespace, ref)
+	var refusal *rendered.SecretSourceError
+	if errors.As(err, &refusal) && refusal.Reason != rendered.SecretSourceUnavailable {
+		return
+	}
+	if err != nil {
+		c.retryDrift(change)
+		if c.OnError != nil {
+			c.OnError(fmt.Errorf("compare Secret %s with accepted source: %w", ref.Name, err))
+		}
+		return
+	}
+	event := secretDriftEvent(ref, diff, sdk.DriftEvent{Manager: "unknown", ObservedAt: now.UTC()})
+	if event == nil {
+		return
+	}
+	c.mu.Lock()
+	c.driftEvents = append(c.driftEvents, *event)
+	if len(c.driftEvents) > 40 {
+		c.driftEvents = append([]sdk.DriftEvent(nil), c.driftEvents[len(c.driftEvents)-40:]...)
+	}
+	c.mu.Unlock()
+	c.queueUnexplainedFinding(now, *event)
 }
 
 func safeDriftText(value string) string {

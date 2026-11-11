@@ -24,6 +24,12 @@ const (
 	SecretsOmit SecretMode = iota
 	// SecretsInclude is the trusted deployer's mode.
 	SecretsInclude
+	// SecretsLiteral keeps the data a rendered Secret manifest writes
+	// literally (data, stringData) and, like SecretsOmit, never reads inputs
+	// that exist only to feed Secret values: a generator-made Secret stays
+	// identity-only. Only the controller's value-blind Secret comparison and
+	// restore render in this mode; the values stay in Go memory.
+	SecretsLiteral
 )
 
 // Env is everything outside the tree that may influence a render. It must be

@@ -63,6 +63,9 @@ func menuActionParameters(action protoreflect.FieldDescriptor) []MenuParameter {
 		if action.Message().Name() == "SyncWebhookCA" && f.Name() == "secret_key" {
 			schema.Description = "Sync a named Secret key into one webhook caBundle privately; receipts expose only the reference and digest."
 		}
+		if action.Message().Name() == "RestoreSecretFromSource" && f.Name() == "ref" {
+			schema.Description = "Secret whose data accepted source declares literally; Go writes that data (recreating a deleted Secret, removing undeclared keys) and the receipt names keys and value digests only. Refused when source does not declare the Secret with literal data (generated or external)."
+		}
 		if action.Message().Name() == "RetryAdmission" && f.Name() == "ref" {
 			schema.Description = "Requeue an admission-blocked ReplicaSet in the incident namespace after repairing its webhook; live FailedCreate and missing Pods required. No replica or template changes; independent verification still required."
 		}

@@ -169,6 +169,8 @@ func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) 
 			{APIVersion: "batch/v1", Kind: "Job"}, {APIVersion: "batch/v1", Kind: "CronJob"},
 			{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "Role"}, {APIVersion: "rbac.authorization.k8s.io/v1", Kind: "RoleBinding"},
 			{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole"}, {APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRoleBinding"},
+			// Value-free: the Secret transform keeps identity and key names only.
+			{APIVersion: "v1", Kind: "Secret"},
 		} {
 			if !inventoryClusterKind(watch.Kind) {
 				watch.Namespace = config.Namespace

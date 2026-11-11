@@ -16,6 +16,7 @@ expected fixed snapshots alone never establish command semantics or success.
 | --- | --- | --- |
 | apply | ReconcileFromSource only; arbitrary desired object missing | ApplyObject; create or merge desired object, API replay |
 | create | CreateFromSource only | ApplyObject (create mode); API replay |
+| restore-secret | RestoreSecretFromSource: the literal data accepted source declares for a Secret, resolved and written in Go; receipts name keys and value digests; refused without literal source data | none (Secret data never enters a plan); API replay against the accepted render |
 | replace | source-owned fields only | ApplyObject (replace mode); API replay |
 | patch-json | SetField limited; remove/insert missing | PatchObject JSON patch; API replay |
 | patch-merge | SetField limited | PatchObject merge patch; API replay |

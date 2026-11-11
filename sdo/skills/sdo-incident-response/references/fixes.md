@@ -41,7 +41,11 @@ keyed lists. `CreateFromSource` restores a named missing object, including decla
 accepted source; source/config restores may recycle blocked dependent Pods once, and Pod deletion receipts are
 irreversible. `ReconcileFromSource` converges source-owned configuration, removes additions since acceptance, and
 reports residual source differences and remaining old-revision ReplicaSets/Pods. `DeleteObject` irreversibly
-removes an allowed named source-absent object and never auto-recreates it. Webhook repairs requeue affected
+removes an allowed named source-absent object and never auto-recreates it. `RestoreSecretFromSource` writes a
+Secret's data exactly as accepted source declares it literally (recreating it if deleted, removing undeclared keys);
+the receipt (`action_results[].secret_restore`) names keys and value digests only. It refuses a Secret source
+does not declare with literal data (`secret_not_declared`, `secret_not_literal`: generated or external material);
+fix that through its owner or escalate. Webhook repairs requeue affected
 admission-blocked ReplicaSets automatically; after raw repairs use `RetryAdmission` in the incident namespace and
 verify recovery. `RetireOldRevision` scales an old-revision ReplicaSet to zero; stalled rollouts name it as their
 release.
