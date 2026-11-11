@@ -56,6 +56,7 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	sourceKind := flags.String("source-kind", "", "upstream watcher kind to follow (published as .sdo/goal/sources.yaml)")
 	sourceConfig := flags.String("source-config", "", "JSON config of the followed upstream")
 	deploymentPlan := flags.String("deployment-plan", "", "provided DeploymentPlan as ProtoJSON (source, image sources, expected workload IDs): the deployer agent is skipped and the plan is deployed as given")
+	evidenceFlags := registerEvidenceSinkFlags(flags)
 	var policyFlags deploymentpolicy.Flags
 	flags.StringVar(&policyFlags.AllowedRegistries, "allow-registry", "", "comma-separated registry hosts deployments may pull from (enforced; empty: no allowlist)")
 	flags.BoolVar(&policyFlags.ScopeBlocking, "scope-blocking", false, "refuse foreign-namespace and cluster-scoped objects unless granted")
@@ -214,7 +215,12 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	if err != nil {
 		return HostConfig{}, err
 	}
+	evidenceSink, err := evidenceFlags.resolve(controlForTelemetry)
+	if err != nil {
+		return HostConfig{}, err
+	}
 	config := install.Config{
+		EvidenceSink: evidenceSink,
 		BackendRecipes: telemetrysources.Recipes(), TelemetryProfile: telemetryProfile,
 		SourceKind: *sourceKind, SourceConfig: *sourceConfig, DeploymentPlan: compactPlan, DeploymentPolicy: deploymentPolicy,
 		CodePath:           selectedCodePath,

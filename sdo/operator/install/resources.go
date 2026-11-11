@@ -108,6 +108,9 @@ type Config struct {
 	// DeploymentPlan): the operate Job deploys it instead of asking the
 	// deployer agent for a plan.
 	DeploymentPlan string
+	// EvidenceSink is the runner's evidence sink as compact JSON (EvidenceSink.Format); empty keeps evidence only on
+	// the repository volume. The controller and operate Pods then run the evidence sidecar.
+	EvidenceSink string
 }
 
 type Plan struct {
@@ -263,6 +266,9 @@ func (c Config) validate() error {
 	}
 
 	if _, err := deploymentpolicy.Parse(c.DeploymentPolicy); err != nil {
+		return err
+	}
+	if _, err := ParseEvidenceSink(c.EvidenceSink); err != nil {
 		return err
 	}
 	if err := checkExtraControllerArgs(c.ExtraControllerArgs); err != nil {
@@ -543,6 +549,8 @@ func controllerJob(c Config) *batchv1.Job {
 		pod.Volumes = append(pod.Volumes, corev1.Volume{Name: "memory-upstream-ssh", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: c.MemoryUpstreamSSHSecret, DefaultMode: &mode}}})
 		pod.Containers[0].VolumeMounts = append(pod.Containers[0].VolumeMounts, corev1.VolumeMount{Name: "memory-upstream-ssh", MountPath: MemoryUpstreamSSHDir, ReadOnly: true})
 	}
+	// validate already parsed the sink.
+	_ = evidenceSinkSidecar(c, pod)
 	if devmount.Enabled() {
 		pod.Containers[0].Env = append(pod.Containers[0].Env, corev1.EnvVar{Name: "SDO_DEV_MOUNT", Value: "1"})
 		devmount.Apply(pod)

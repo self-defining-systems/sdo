@@ -141,6 +141,9 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 	if cfg.DeploymentPolicy != "" {
 		args = append(args, "--deployment-policy", cfg.DeploymentPolicy)
 	}
+	if cfg.EvidenceSink != "" {
+		args = append(args, "--evidence-sink", cfg.EvidenceSink)
+	}
 	if cfg.ExternalIncidents {
 		args = append(args, "--external-incidents")
 	}
@@ -211,6 +214,9 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: "registrations", MountPath: cfg.registrationDirectory(), ReadOnly: true})
 	}
 	pod.Containers = []corev1.Container{container}
+	if err := evidenceSinkSidecar(cfg, pod); err != nil {
+		return nil, err
+	}
 	if devmount.Enabled() {
 		pod.Containers[0].Env = append(pod.Containers[0].Env, corev1.EnvVar{Name: "SDO_DEV_MOUNT", Value: "1"})
 		devmount.Apply(pod)

@@ -49,7 +49,7 @@ When multiple runs are in scope and subagents are available, assign one run or o
 6. **Comparison** — normalized metrics and behavior differences when multiple runs are requested.
 7. **Recommendations** — concrete changes or follow-up experiments.
 
-At evidence discovery, read [evidence hierarchy and provenance](references/trajectory-schema.md).
+At evidence discovery, read [evidence hierarchy and provenance](references/trajectory-schema.md); for a run with an evidence sink (trajectories outside the cluster), read [evidence sink](references/evidence-sink.md).
 Before judging mitigation or learning, read [outcomes and program evidence](references/outcome-records.md).
 For synthetic latency, timeout counts and effective scenario SLOs, read [traffic health evidence](references/traffic-health.md).
 When Pods are Ready but creation or admission fails, read [admission health evidence](references/admission-health.md).

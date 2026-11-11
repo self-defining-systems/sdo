@@ -52,6 +52,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	sourceConfig := flags.String("source-config", "", "JSON config of the followed upstream")
 	deploymentPlan := flags.String("deployment-plan", "", "provided DeploymentPlan as ProtoJSON; the deployer agent is skipped and the plan is deployed as given")
 	deploymentPolicyFlag := flags.String("deployment-policy", "", "install-time DeploymentPolicy as ProtoJSON (registry allowlist, scope grants); empty is no policy")
+	evidenceSink := flags.String("evidence-sink", "", "evidence sink as compact JSON (run_id, volume); empty keeps evidence on the repository volume")
 	operationID := flags.String("operation-id", "", "durable operation identity")
 	maxAttempts := flags.Int("max-attempts", 3, "maximum deployment attempts")
 	controllerImage := flags.String("controller-image", "", "controller image")
@@ -191,6 +192,9 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	if _, err := deploymentpolicy.Parse(*deploymentPolicyFlag); err != nil {
 		return OperateConfig{}, err
 	}
+	if _, err := install.ParseEvidenceSink(*evidenceSink); err != nil {
+		return OperateConfig{}, err
+	}
 	providedPlan, err := rendered.ParseDeploymentPlan(*deploymentPlan)
 	if err != nil {
 		return OperateConfig{}, err
@@ -209,7 +213,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			ResponderMenu:      menuEnabled,
 			ObservationCeiling: ceiling,
 			Namespace:          *namespace, ControlNamespace: control, Application: *application,
-			SourceKind: *sourceKind, SourceConfig: *sourceConfig, DeploymentPlan: *deploymentPlan, DeploymentPolicy: *deploymentPolicyFlag,
+			SourceKind: *sourceKind, SourceConfig: *sourceConfig, DeploymentPlan: *deploymentPlan, DeploymentPolicy: *deploymentPolicyFlag, EvidenceSink: *evidenceSink,
 			ControllerImage: *controllerImage, ResponderImage: *responderImage,
 			ScriptImage: *scriptImage, RepositoryPVC: *repositoryPVC,
 			CredentialsSecret: *credentialsSecret, Model: *model, AgentProvider: *provider, AgentEffort: *effort, LifecycleTimeout: *lifecycleTimeout, Replay: *replay,

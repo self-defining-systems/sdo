@@ -97,6 +97,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	standby := flags.Bool("responder-standby", true, "pre-start a responder; false forces cold Jobs")
 	var responderEnv repeatable
 	flags.Var(&responderEnv, "responder-env", "responder environment NAME=VALUE")
+	evidenceFlags := registerEvidenceSinkFlags(flags)
 	var policyFlags deploymentpolicy.Flags
 	flags.StringVar(&policyFlags.AllowedRegistries, "allow-registry", "", "comma-separated registry hosts deployments may pull from (enforced; empty: no allowlist)")
 	flags.BoolVar(&policyFlags.ScopeBlocking, "scope-blocking", false, "refuse foreign-namespace and cluster-scoped objects unless granted")
@@ -156,7 +157,12 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	if err != nil {
 		return InstallExistingConfig{}, err
 	}
+	evidenceSink, err := evidenceFlags.resolve(controlForTelemetry)
+	if err != nil {
+		return InstallExistingConfig{}, err
+	}
 	config := install.Config{
+		EvidenceSink: evidenceSink,
 		BackendRecipes: telemetrysources.Recipes(), TelemetryProfile: telemetryProfile,
 		CodePath:  selectedCodePath,
 		Namespace: *namespace, ControlNamespace: *controlNamespace, Application: *application,
