@@ -24,6 +24,8 @@ The authoring reference tool supplies the routing example.
   findings that list none (controller drift) offer them to every program, so an incident detector that binds
   roles declares its playbooks (`detector.unscoped-binding`). Unnamed roles still bind from its resources.
 - An emergency literal is a declared parameter the responder supplies and justifies.
+- Generalize: for a changed field, Diagnose on the source field that differs and restore it `FromSource`;
+  a Diagnose testing the value this incident showed misses the next one.
 - Action fields use the compiled SDK contract. The shared memory check also rejects unknown parameter
   names in documented built-in selections against the executor descriptor; object namespaces belong in
   their typed references, not invented top-level parameters. Prefer typed executable steps over recipes.
