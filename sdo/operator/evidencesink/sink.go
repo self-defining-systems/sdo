@@ -81,17 +81,8 @@ type Record struct {
 	Status   string `json:"status,omitempty"`
 }
 
-// Sink stores evidence for one run. Paths are slash-separated and relative to the run.
-type Sink interface {
-	// Put atomically replaces one file: a reader sees the old or the new content, never a partial file.
-	Put(relative string, content io.Reader) (Stored, error)
-	// Append adds one index record.
-	Append(Record) error
-	// Records returns the index records already written, so a restarted mirror does not reseal.
-	Records() ([]Record, error)
-}
-
-// Dir is the structured-files sink: <root>/<run-id>/ holding layout.json, index.jsonl and the evidence tree.
+// Dir is the evidence sink of one run: <root>/<run-id>/ holding layout.json, index.jsonl and the evidence tree.
+// Paths are slash-separated and relative to the run.
 // Directories are world-writable and files world-readable so the runner (a different uid than the controller)
 // can read and clean them up.
 type Dir struct {

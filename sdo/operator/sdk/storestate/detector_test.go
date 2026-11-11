@@ -12,14 +12,13 @@ import (
 	"sdo.dev/operator/sdk/storestate"
 )
 
-func config(t *testing.T, baseline ...storestate.Facts) storestate.Config {
+func config(t *testing.T) storestate.Config {
 	t.Helper()
 	return storestate.Config{
 		Spec:      sdk.DetectorSpec{ID: "store-state-cache", Class: sdk.DetectorClassHealth, Owner: sdk.DetectorOwnerHealthJudge, Interval: time.Minute},
 		Component: "cache",
 		Engine:    storestate.EngineRedis,
 		Target:    podread.Target{Labels: map[string]string{"app": "cache"}},
-		Baselines: baseline,
 	}
 }
 
@@ -48,26 +47,30 @@ func reading(stdout string) podread.Reading {
 	return podread.Reading{Namespace: "shop", Pod: "cache-0", Container: "store", ObservedAt: time.Unix(100, 0).UTC(), Stdout: stdout}
 }
 
-func healthyBaseline(t *testing.T) storestate.Facts {
+// promotedSnapshot is snapshot with healthy as the controller's promoted
+// healthy reading of the store Pod (podread.Result.Baseline).
+func promotedSnapshot(t *testing.T, d sdk.Detector, healthy string, readings ...podread.Reading) sdktest.Snapshot {
 	t.Helper()
-	f := parse(t, healthyRedis)
-	f.Component = "cache"
-	f.Pod = sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "shop", Name: "cache-0"}
-	return f
+	s := snapshot(t, d, readings...)
+	for id, result := range s.PodReads {
+		result.Baseline = []podread.Reading{reading(healthy)}
+		s.PodReads[id] = result
+	}
+	return s
 }
 
 func TestDetectorClearsOnlyOnACompleteHealthyRead(t *testing.T) {
-	d := detector(t, config(t, healthyBaseline(t)))
-	findings, err := d.Detect(context.Background(), snapshot(t, d, reading(healthyRedis)))
+	d := detector(t, config(t))
+	findings, err := d.Detect(context.Background(), promotedSnapshot(t, d, healthyRedis, reading(healthyRedis)))
 	if err != nil || len(findings) != 0 {
 		t.Fatalf("healthy: %+v, %v", findings, err)
 	}
 }
 
 func TestDetectorFindingNamesTheComponentAndTheChangedItem(t *testing.T) {
-	d := detector(t, config(t, healthyBaseline(t)))
+	d := detector(t, config(t))
 	current := strings.Replace(healthyRedis, "min-replicas-to-write\n0", "min-replicas-to-write\n1", 1)
-	findings, err := d.Detect(context.Background(), snapshot(t, d, reading(current)))
+	findings, err := d.Detect(context.Background(), promotedSnapshot(t, d, healthyRedis, reading(current)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,8 +119,8 @@ func TestDetectorRules(t *testing.T) {
 		"memory full": {"maxmemory:0", "maxmemory:1048000", storestate.RuleMemoryNearLimit},
 	} {
 		t.Run(name, func(t *testing.T) {
-			d := detector(t, config(t, healthyBaseline(t)))
-			findings, err := d.Detect(context.Background(), snapshot(t, d, reading(strings.Replace(healthyRedis, test.from, test.to, 1))))
+			d := detector(t, config(t))
+			findings, err := d.Detect(context.Background(), promotedSnapshot(t, d, healthyRedis, reading(strings.Replace(healthyRedis, test.from, test.to, 1))))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -144,7 +147,7 @@ func TestDetectorWithoutBaselineJudgesAbsoluteFacts(t *testing.T) {
 }
 
 func TestDetectorUnavailableReadIsAnErrorNeverClear(t *testing.T) {
-	d := detector(t, config(t, healthyBaseline(t)))
+	d := detector(t, config(t))
 	id := d.(podread.Consumer).PodReads()[0].ID
 	for name, s := range map[string]sdktest.Snapshot{
 		"no read":       {},
@@ -168,18 +171,13 @@ func TestNewDetectorValidatesConfig(t *testing.T) {
 	for name, change := range map[string]func(*storestate.Config){
 		"no component": func(c *storestate.Config) { c.Component = "" },
 		"no id":        func(c *storestate.Config) { c.Spec.ID = "" },
-		// Baselines are cleared so only the missing adapter can refuse it.
-		"engine not read":    func(c *storestate.Config) { c.Engine, c.Baselines = "unknown", nil },
-		"no target":          func(c *storestate.Config) { c.Target = podread.Target{} },
-		"bad port":           func(c *storestate.Config) { c.Port = 70000 },
-		"short interval":     func(c *storestate.Config) { c.ReadInterval = time.Second },
-		"foreign baseline":   func(c *storestate.Config) { c.Baselines[0].Component = "other" },
-		"unavailable":        func(c *storestate.Config) { c.Baselines[0].Error = "unavailable" },
-		"wrong engine":       func(c *storestate.Config) { c.Baselines[0].Engine = storestate.EnginePostgres },
-		"ambiguous baseline": func(c *storestate.Config) { c.Baselines = append(c.Baselines, c.Baselines[0]) },
+		"engine not read": func(c *storestate.Config) { c.Engine = "unknown" },
+		"no target":       func(c *storestate.Config) { c.Target = podread.Target{} },
+		"bad port":        func(c *storestate.Config) { c.Port = 70000 },
+		"short interval":  func(c *storestate.Config) { c.ReadInterval = time.Second },
 	} {
 		t.Run(name, func(t *testing.T) {
-			c := config(t, healthyBaseline(t))
+			c := config(t)
 			change(&c)
 			if _, err := storestate.NewDetector(c); err == nil {
 				t.Fatal("NewDetector accepted the config")

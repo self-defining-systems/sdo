@@ -68,7 +68,7 @@ type Mirror struct {
 	RuntimeRoot string
 	// LedgerRoot is the absolute native broker ledger directory; empty mirrors no ledgers.
 	LedgerRoot string
-	Sink       Sink
+	Sink       *Dir
 	Now        func() time.Time
 
 	loaded  bool
