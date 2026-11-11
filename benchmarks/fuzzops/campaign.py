@@ -111,16 +111,17 @@ class Plan:
 
 
 def instance_ids(instances: Any) -> list[tuple[str, str]]:
-    """(template, instance ID) for every instance in a fuzzops instances file, in file order."""
+    """(template, instance ID) for every instance in a fuzzops instances file, in file order.
+
+    The IDs are the ones fuzzops writes (``ids``: template@target plus non-default parameters only); a file without
+    them gives template@target, which names a parameterless instance correctly.
+    """
     rows = instances if isinstance(instances, list) else instances.get("instances", [])
+    ids = [] if isinstance(instances, list) else instances.get("ids") or []
     out = []
-    for inst in rows:
+    for i, inst in enumerate(rows):
         template = inst.get("template", "")
-        target = (inst.get("target") or {}).get("id", "")
-        iid = inst.get("id") or f"{template}@{target}"
-        params = inst.get("params") or {}
-        if not inst.get("id") and params:
-            iid += "?" + "&".join(f"{k}={params[k]}" for k in sorted(params))
+        iid = ids[i] if i < len(ids) else f"{template}@{(inst.get('target') or {}).get('id', '')}"
         out.append((template, iid))
     return out
 
@@ -287,6 +288,7 @@ class LaneConfig:
     #: Shell command that brings a broken app back to health between rounds (``$NAMESPACE``, ``$KUBE_CONTEXT`` set),
     #: run when the app is still unhealthy before an inject: SDO missed the previous fault or never repaired it.
     heal_cmd: str = ""
+    reflection_wait: float = REFLECTION_WAIT_S
 
     def __post_init__(self) -> None:
         for t in self.templates:
@@ -393,7 +395,7 @@ def run_lane(cfg: LaneConfig, log: Callable[[str], None] = print) -> int:
             rc = 1
             for attempt in range(cfg.unhealthy_retries + 1):
                 try:
-                    waited, soft = settle(kube, cfg.control_namespace, log)
+                    waited, soft = settle(kube, cfg.control_namespace, log, cfg.reflection_wait)
                 except CampaignError as exc:
                     log(f"{template} {round_}: skipped, {exc}")
                     break
@@ -435,7 +437,7 @@ def run_lane(cfg: LaneConfig, log: Callable[[str], None] = print) -> int:
             if rc != 0:
                 failures += 1
             try:
-                settle(kube, cfg.control_namespace, log)
+                settle(kube, cfg.control_namespace, log, cfg.reflection_wait)
                 kube.copy_memory(cfg.control_namespace, cfg.out / "memory")
             except CampaignError as exc:
                 log(f"{template} {round_}: {exc}")
@@ -453,10 +455,12 @@ def heal(cfg: LaneConfig) -> int:
     return subprocess.run(["sh", "-c", cfg.heal_cmd], env=env, check=False, timeout=900).returncode
 
 
-def settle(kube: Kube, control_namespace: str, log: Callable[[str], None]) -> tuple[float, str]:
+def settle(
+    kube: Kube, control_namespace: str, log: Callable[[str], None], reflection_wait: float = REFLECTION_WAIT_S
+) -> tuple[float, str]:
     """Wait for SDO to be idle; (seconds waited, the reflection reason when the lane stopped waiting for it)."""
     try:
-        return wait_idle(lambda: kube.state(control_namespace), log=log), ""
+        return wait_idle(lambda: kube.state(control_namespace), log=log, reflection_wait=reflection_wait), ""
     except SoftIdle as soft:
         return soft.waited, soft.why
 
@@ -500,6 +504,13 @@ def main(argv: list[str] | None = None) -> int:
     ln.add_argument(
         "--evidence-dir", default="", help="the host directory of this lane's evidence sink run (<sink>/<run-id>)"
     )
+    ln.add_argument("--heal-cmd", default="", help="shell command restoring a broken app before a retried round")
+    ln.add_argument(
+        "--reflection-wait",
+        type=float,
+        default=REFLECTION_WAIT_S,
+        help="seconds a round waits for a queued reflection before it runs on the active memory",
+    )
     a = p.parse_args(argv)
     if a.cmd == "plan":
         pairs = instance_ids(json.loads(a.instances_file.read_text()))
@@ -526,6 +537,7 @@ def main(argv: list[str] | None = None) -> int:
         controller_image=a.controller_image,
         evidence_dir=a.evidence_dir,
         heal_cmd=a.heal_cmd,
+        reflection_wait=a.reflection_wait,
     )
     return run_lane(cfg, log=lambda m: print(f"{_now()} {m}", flush=True))
 

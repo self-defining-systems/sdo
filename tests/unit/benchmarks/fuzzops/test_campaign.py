@@ -56,12 +56,17 @@ def test_plan_round_trips_and_rejects_a_variant_equal_to_first(tmp_path: Path) -
         PlanItem("a", "a@1", "a@1")
 
 
-def test_instance_ids_read_fuzzops_instances() -> None:
-    raw = [
-        {"template": "t", "target": {"id": "dependency:deploy/x:1"}, "params": {"k": "v"}},
-        {"template": "u", "id": "u@y"},
-    ]
-    assert instance_ids(raw) == [("t", "t@dependency:deploy/x:1?k=v"), ("u", "u@y")]
+def test_instance_ids_use_the_ids_fuzzops_writes() -> None:
+    raw = {
+        "instances": [
+            {"template": "t", "target": {"id": "dependency:deploy/x:1"}, "params": {"users": 30}},
+            {"template": "u", "target": {"id": "platform:deploy/y"}, "params": {}},
+        ],
+        "ids": ["t@dependency:deploy/x:1", "u@platform:deploy/y"],
+    }
+    assert instance_ids(raw) == [("t", "t@dependency:deploy/x:1"), ("u", "u@platform:deploy/y")]
+    del raw["ids"]
+    assert instance_ids(raw)[1] == ("u", "u@platform:deploy/y")
 
 
 @pytest.mark.parametrize(
@@ -266,3 +271,40 @@ def test_heal_runs_the_lane_command_with_the_namespace(tmp_path: Path) -> None:
     )
     assert heal(cfg) == 0
     assert out.read_text().split() == ["ns1", "kind-c"]
+
+
+def test_lane_cli_builds_the_lane_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every LaneConfig field the CLI sets has its flag (a missing one crashed every lane at start)."""
+    import benchmarks.fuzzops.campaign as campaign
+
+    plan = tmp_path / "plan.json"
+    plan.write_text(Plan("a", "/i.json", (PlanItem("t", "t@x"),)).dump())
+    seen: list[LaneConfig] = []
+    monkeypatch.setattr(campaign, "run_lane", lambda cfg, log: seen.append(cfg) or 0)
+    argv = [
+        "lane",
+        "--plan",
+        str(plan),
+        "--out",
+        str(tmp_path),
+        "--fuzzops",
+        str(tmp_path),
+        "--pack",
+        str(tmp_path),
+        "--namespace",
+        "n",
+        "--control-namespace",
+        "n-sdo",
+        "--kind-cluster",
+        "c",
+        "--sdo-version",
+        "v",
+        "--heal-cmd",
+        "true",
+        "--reflection-wait",
+        "60",
+        "--evidence-dir",
+        "/e",
+    ]
+    assert campaign.main(argv) == 0
+    assert (seen[0].heal_cmd, seen[0].reflection_wait, seen[0].evidence_dir) == ("true", 60.0, "/e")
