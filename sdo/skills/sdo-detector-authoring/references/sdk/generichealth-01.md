@@ -12,6 +12,10 @@ errors.
 
 CONSTANTS
 
+const CrashRecoveredAfter = 10 * time.Minute
+    CrashRecoveredAfter is how long a crashed container's successor must have
+    been running and Ready before the crash is history rather than health.
+
 const ProgressWindow = 10 * time.Minute
     ProgressWindow allows ordinary controller convergence before reporting
     faults.
