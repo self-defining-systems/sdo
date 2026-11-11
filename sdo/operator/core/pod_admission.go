@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -92,7 +93,7 @@ func controllerTemplate(view sdk.DetectionContext, pod corev1.Pod) *corev1.PodTe
 	case "StatefulSet":
 		for _, item := range view.StatefulSets() {
 			if item.Name == owner.Name && item.Namespace == pod.Namespace {
-				return item.Spec.Template.DeepCopy()
+				return withClaimVolumes(item.Spec.Template.DeepCopy(), item, pod)
 			}
 		}
 	case "DaemonSet":
@@ -103,4 +104,29 @@ func controllerTemplate(view sdk.DetectionContext, pod corev1.Pod) *corev1.PodTe
 		}
 	}
 	return nil
+}
+
+// withClaimVolumes adds the volumes the StatefulSet controller adds to each Pod
+// for its volumeClaimTemplates: the template alone mounts volumes it does not
+// declare, which admission rejects. The source Pod's own volume is reused when
+// it has one; otherwise the ordinal-0 claim name the controller would use.
+func withClaimVolumes(template *corev1.PodTemplateSpec, set appsv1.StatefulSet, source corev1.Pod) *corev1.PodTemplateSpec {
+	declared := map[string]bool{}
+	for _, volume := range template.Spec.Volumes {
+		declared[volume.Name] = true
+	}
+	for _, claim := range set.Spec.VolumeClaimTemplates {
+		if declared[claim.Name] {
+			continue
+		}
+		volume := corev1.Volume{Name: claim.Name, VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: claim.Name + "-" + set.Name + "-0"}}}
+		for _, own := range source.Spec.Volumes {
+			if own.Name == claim.Name {
+				volume = *own.DeepCopy()
+			}
+		}
+		template.Spec.Volumes = append(template.Spec.Volumes, volume)
+		declared[claim.Name] = true
+	}
+	return template
 }
