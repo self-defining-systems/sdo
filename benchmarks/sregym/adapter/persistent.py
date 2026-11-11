@@ -316,6 +316,9 @@ def controller_settings(payload: dict[str, Any]) -> dict[str, Any]:
     }
     # A controller recorded before the policy existed was installed without one.
     settings.setdefault("deployment_policy", json.loads(json.dumps(asdict(DeploymentPolicyConfig()))))
+    # Controllers recorded before the evidence sink existed were installed without one.
+    settings.setdefault("evidence_sink_host_path", "")
+    settings.setdefault("evidence_run_id", "")
     return settings
 
 

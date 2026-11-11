@@ -22,6 +22,7 @@ import json
 import logging
 import os
 import platform
+import re
 import socket
 import subprocess
 import sys
@@ -351,6 +352,15 @@ def _up(args: argparse.Namespace) -> int:
         parallel_root.mkdir(parents=True, exist_ok=True)
     if prior is not None and prior.parallel_root != parallel_root:
         raise ValueError("--parallel-root must match the root mounted when this lane was created")
+    evidence_root = args.evidence_root.resolve() if getattr(args, "evidence_root", None) is not None else None
+    if evidence_root is not None:
+        if args.dev_mount is None:
+            raise ValueError("--evidence-root requires a --dev-mount lane (the node mount is set at cluster creation)")
+        from benchmarks.sregym.fastloop.dev import prepare_evidence_root
+
+        prepare_evidence_root(evidence_root)
+    if prior is not None and prior.evidence_root != evidence_root:
+        raise ValueError("--evidence-root must match the root mounted when this lane was created")
     if prior is not None and prior.dev_mount != args.dev_mount:
         raise ValueError(
             "up --dev-mount must match the worktree used to create this environment; "
@@ -368,10 +378,9 @@ def _up(args: argparse.Namespace) -> int:
     if args.dev_mount is not None:
         from benchmarks.sregym.fastloop.dev import prepare_dev_mount
 
-        if parallel_root is None:
-            prepare_dev_mount(args.dev_mount, args.sregym_dir.resolve(), run_dir)
-        else:
-            prepare_dev_mount(args.dev_mount, args.sregym_dir.resolve(), run_dir, parallel_root)
+        prepare_dev_mount(
+            args.dev_mount, args.sregym_dir.resolve(), run_dir, parallel_root, evidence_root=evidence_root
+        )
     seed_commit = prior.seed_commit if prior is not None else None
     if seed_commit is None and (workspace / ".git").exists():
         seed_commit = subprocess.run(
@@ -446,6 +455,7 @@ def _up(args: argparse.Namespace) -> int:
         allow_stale_images=getattr(args, "allow_stale_images", False),
         worker_env=worker_env,
         parallel_root=parallel_root,
+        evidence_root=evidence_root,
     )
     worker = SregymWorker(
         worker_argv(placeholder.sregym_dir, private_tmp=private_tmp),
@@ -605,8 +615,16 @@ def _cluster_ops(args: argparse.Namespace, namespace: str, *, ops: ClusterOps | 
     return selected
 
 
+def lane_evidence_run_id(environment: FastloopEnvironment, results_dir: Path) -> str:
+    """One evidence run directory per lane and results directory, as a valid run ID."""
+
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", f"{environment.cluster}-{results_dir.name}").strip("-.")
+    return slug[:128] or "fastloop"
+
+
 def _runtime_config(args: argparse.Namespace, environment: FastloopEnvironment, results_dir: Path) -> RuntimeConfig:
     from benchmarks.sregym.adapter import RuntimeConfig, control_namespace_for
+    from benchmarks.sregym.fastloop.dev import EVIDENCE_NODE_ROOT
 
     registrations = args.agent_registrations.resolve() if args.agent_registrations else None
     if registrations is None and environment.app == "toy":
@@ -648,6 +666,8 @@ def _runtime_config(args: argparse.Namespace, environment: FastloopEnvironment, 
         responder_namespaces=getattr(args, "responder_namespaces", ()),
         shared_accepted_id=environment.shared_accepted_id,
         reuse_existing=bool(environment.shared_accepted_id),
+        evidence_sink_host_path=EVIDENCE_NODE_ROOT if environment.evidence_root is not None else "",
+        evidence_run_id=lane_evidence_run_id(environment, results_dir) if environment.evidence_root is not None else "",
     )
 
 
@@ -1123,10 +1143,7 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
             None if environment.app == "toy" else environment.sregym_dir,
             environment.run_dir,
         )
-        if environment.parallel_root is None:
-            prepare_dev_mount(*mount_args)
-        else:
-            prepare_dev_mount(*mount_args, environment.parallel_root)
+        prepare_dev_mount(*mount_args, environment.parallel_root, evidence_root=environment.evidence_root)
     environment.apply_operator_env(os.environ)
     os.environ["KUBECONFIG"] = str(environment.kubeconfig)
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -1526,7 +1543,13 @@ def _reset(args: argparse.Namespace) -> int:
     if mount is not None:
         from benchmarks.sregym.fastloop.dev import prepare_dev_mount
 
-        prepare_dev_mount(mount, None if environment.app == "toy" else environment.sregym_dir, environment.run_dir)
+        prepare_dev_mount(
+            mount,
+            None if environment.app == "toy" else environment.sregym_dir,
+            environment.run_dir,
+            environment.parallel_root,
+            evidence_root=environment.evidence_root,
+        )
     saved_toy = None
     if environment.app == "toy":
         from benchmarks.sregym.fastloop.toy_reset import ToyControllerTemplate
@@ -1804,6 +1827,11 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument("--no-dev-mount", dest="dev_mount", action="store_const", const=None)
     up.add_argument(
         "--parallel-root", type=Path, help="NVMe directory bind-mounted on every node for later shared attachment"
+    )
+    up.add_argument(
+        "--evidence-root",
+        type=Path,
+        help="host directory bind-mounted on every node as the controller's evidence sink (outlives the namespace)",
     )
     up.add_argument("--redeploy", action="store_true", help="redeploy even if the application is healthy")
     up.add_argument(

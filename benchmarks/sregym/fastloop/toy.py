@@ -28,6 +28,7 @@ from benchmarks.sregym.adapter import (
     wait_for,
 )
 from benchmarks.sregym.fastloop.accepted_source import AcceptedSource
+from benchmarks.sregym.fastloop.dev import EVIDENCE_NODE_ROOT
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment, Images
 from benchmarks.sregym.fastloop.host_limits import HostLimits, NodeLimits, apply_node_limits
 from benchmarks.sregym.fastloop.toy_upstream import UpstreamLayout, serve_upstream, source_config
@@ -338,7 +339,9 @@ def up(args: Any) -> int:
             raise ValueError("toy environment requires a development mount")
         env.worker_env.update(host_limits.worker_env())
         env.save()
-        prepare_dev_mount(env.dev_mount, None, run_dir)
+        if getattr(args, "evidence_root", None) is not None and args.evidence_root.resolve() != env.evidence_root:
+            raise ValueError("--evidence-root must match the root mounted when this lane was created")
+        prepare_dev_mount(env.dev_mount, None, run_dir, evidence_root=env.evidence_root)
         config = install_controller(
             env,
             registrations=getattr(args, "agent_registrations", None),
@@ -353,7 +356,12 @@ def up(args: Any) -> int:
     ).stdout.splitlines()
     if cluster in clusters:
         raise ValueError(f"{cluster} already exists without this run directory; refusing to adopt it")
-    config = prepare_dev_mount(worktree, None, run_dir)
+    evidence_root = getattr(args, "evidence_root", None)
+    if evidence_root is not None:
+        from benchmarks.sregym.fastloop.dev import prepare_evidence_root
+
+        evidence_root = prepare_evidence_root(evidence_root)
+    config = prepare_dev_mount(worktree, None, run_dir, evidence_root=evidence_root)
     if prebuilt:
         build = run_dir / "image"
         build.mkdir(exist_ok=True)
@@ -422,6 +430,7 @@ def up(args: Any) -> int:
         seed_commit=seed,
         dev_mount=worktree,
         images=images,
+        evidence_root=evidence_root,
         worker_env={
             "FASTLOOP_TOY_IMAGE": image,
             **host_limits.worker_env(),
@@ -524,6 +533,7 @@ def install_controller(
             if variant in PROVIDED_VARIANTS
             else "",
             agent_registrations=registrations.resolve() if registrations else None,
+            evidence_sink_host_path=EVIDENCE_NODE_ROOT if environment.evidence_root is not None else "",
         )
     if frozen_memory and not config.frozen_memory:
         config = replace(config, frozen_memory=True)

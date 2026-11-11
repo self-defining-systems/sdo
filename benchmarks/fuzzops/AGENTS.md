@@ -41,6 +41,14 @@ fuzzops run --pack <dir>/pack --namespace <ns> --skip-reset --operator exec:sdo 
 Baselines (`noop`, `codex`) run on a copy of the same pack deployed by fuzzops itself in another namespace of the
 same cluster, so SDO never sees their namespaces.
 
+## Evidence sink
+
+Pass `--evidence-sink-host-path <node dir> [--evidence-run-id <id>]` to `install` so SDO's trajectories, task records,
+ledgers and usage are mirrored out of the control namespace while the run goes (layout: `docs/architecture.md`,
+"Run evidence sink"). On kind the directory must be a node mount made when the cluster is created, for example
+`extraMounts: [{hostPath: <sdo-exp run dir>/evidence, containerPath: /opt/sdo-evidence}]` with the host directory
+`chmod 0777` (the sidecar runs as uid 65532). Deleting the namespaces then leaves `<host dir>/<run-id>/` intact.
+
 ## Rules
 
 - Production code under `sdo/` never imports this package; this package uses SDO only through `sdo-operator` and

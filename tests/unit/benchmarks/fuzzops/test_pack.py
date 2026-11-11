@@ -132,6 +132,16 @@ def test_host_args_select_agent_model_and_effort_through_production_flags(tmp_pa
     assert "--agent-effort" not in _install_config(tmp_path).host_args(tmp_path, {})
 
 
+def test_host_args_name_the_evidence_sink_only_when_configured(tmp_path: Path) -> None:
+    assert "--evidence-sink-host-path" not in _install_config(tmp_path).host_args(tmp_path, {})
+    args = _install_config(tmp_path, evidence_sink_host_path="/opt/sdo-evidence", evidence_run_id="row-1").host_args(
+        tmp_path, {}
+    )
+    assert args[-4:] == ["--evidence-sink-host-path", "/opt/sdo-evidence", "--evidence-run-id", "row-1"]
+    with pytest.raises(ValueError, match="requires evidence_sink_host_path"):
+        _install_config(tmp_path, evidence_run_id="row-1")
+
+
 @pytest.mark.parametrize(
     ("overrides", "error"),
     [({"control_namespace": "app"}, ValueError), ({"objective": ""}, ValueError), ({"work": Path("rel")}, ValueError)],

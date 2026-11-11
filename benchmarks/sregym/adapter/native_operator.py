@@ -68,6 +68,26 @@ def validate_code_path_overrides(value: str) -> None:
         raise ValueError("code_path_overrides must be a JSON object")
 
 
+def validate_evidence_sink(host_path: str, run_id: str) -> None:
+    """Shape checks only; the Go installer owns the sink rules (volume kind, run ID charset)."""
+
+    if host_path and not host_path.startswith("/"):
+        raise ValueError("evidence_sink_host_path must be an absolute node path")
+    if run_id and not host_path:
+        raise ValueError("evidence_run_id requires evidence_sink_host_path")
+
+
+def evidence_sink_args(host_path: str, run_id: str) -> list[str]:
+    """The installer flags for an evidence sink; empty when there is none."""
+
+    args: list[str] = []
+    if host_path:
+        args.extend(("--evidence-sink-host-path", host_path))
+    if run_id:
+        args.extend(("--evidence-run-id", run_id))
+    return args
+
+
 @dataclass(frozen=True)
 class NativeInstallConfig:
     repository: Path
@@ -108,8 +128,13 @@ class NativeInstallConfig:
     # Install-time deployment policy (registry allowlist, scope grants); the default is no policy.
     deployment_policy: DeploymentPolicyConfig = DeploymentPolicyConfig()
     shared_accepted_id: str = ""
+    # Evidence sink: a directory on the node (for kind, an extraMounts target) that receives run evidence and
+    # outlives the control namespace; empty keeps evidence on the repository PVC. The run ID names the run directory.
+    evidence_sink_host_path: str = ""
+    evidence_run_id: str = ""
 
     def __post_init__(self) -> None:
+        validate_evidence_sink(self.evidence_sink_host_path, self.evidence_run_id)
         if type(self.external_incidents) is not bool:
             raise TypeError("external_incidents must be a boolean")
         if self.external_incidents and not self.frozen_memory:
@@ -215,6 +240,7 @@ class NativeInstallConfig:
         if self.code_path_overrides:
             args.extend(("--code-path-overrides", self.code_path_overrides))
         args.extend(self.deployment_policy.args())
+        args.extend(evidence_sink_args(self.evidence_sink_host_path, self.evidence_run_id))
         return args
 
 

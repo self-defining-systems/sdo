@@ -51,8 +51,17 @@ class InstallConfig:
     max_attempts: int = 3
     kind_cluster: str = "kind"
     watch_only: bool = False
+    #: Node directory that receives SDO's run evidence and outlives the control namespace (for kind, the
+    #: ``containerPath`` of an ``extraMounts`` entry made when the cluster was created); empty: no sink.
+    evidence_sink_host_path: str = ""
+    #: Run directory inside the sink; empty: the control namespace.
+    evidence_run_id: str = ""
 
     def __post_init__(self) -> None:
+        if self.evidence_sink_host_path and not self.evidence_sink_host_path.startswith("/"):
+            raise ValueError("evidence_sink_host_path must be an absolute node path")
+        if self.evidence_run_id and not self.evidence_sink_host_path:
+            raise ValueError("evidence_run_id requires evidence_sink_host_path")
         for name in ("namespace", "control_namespace", "objective", "controller_image", "responder_image", "model"):
             if not getattr(self, name):
                 raise ValueError(f"{name} is required")
@@ -111,6 +120,10 @@ class InstallConfig:
         if self.watch_only:
             # Detection and closure only: no response, no reflection, accepted memory unchanged.
             args += ["--frozen-memory", "--watch-only"]
+        if self.evidence_sink_host_path:
+            args += ["--evidence-sink-host-path", self.evidence_sink_host_path]
+        if self.evidence_run_id:
+            args += ["--evidence-run-id", self.evidence_run_id]
         return args
 
 
@@ -238,6 +251,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--watch-only", action="store_true", help="SDO detects and records incidents but never responds (frozen memory)"
     )
+    p.add_argument(
+        "--evidence-sink-host-path",
+        default="",
+        help="node directory (a kind extraMounts target) that keeps SDO's run evidence after the namespace is gone",
+    )
+    p.add_argument("--evidence-run-id", default="", help="run directory inside the evidence sink")
     a = p.parse_args(argv)
     cfg = InstallConfig(
         pack=a.pack.resolve(),
@@ -258,6 +277,8 @@ def main(argv: list[str] | None = None) -> int:
         source=a.source.resolve() if a.source else None,
         max_attempts=a.max_attempts,
         watch_only=a.watch_only,
+        evidence_sink_host_path=a.evidence_sink_host_path,
+        evidence_run_id=a.evidence_run_id,
     )
     cfg.work.mkdir(parents=True, exist_ok=True)
     return install(cfg, description=a.description)
