@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/worker_registry"
@@ -17,23 +18,64 @@ type transportRung struct {
 	apply func() bool
 }
 
-// degradeToFit applies rungs in their fixed order until the request fits the transport limit, and returns the
-// steps that removed something. A request that still does not fit after the last rung is the caller's to skip.
-func degradeToFit(size func() (int, error), rungs []transportRung) (steps []string, fits bool, err error) {
+// fitStep is one rung the degrade ladder tried, with the request's transport size before and after it.
+type fitStep struct {
+	name          string
+	before, after int
+	applied       bool
+}
+
+// degradeToFit applies rungs in their fixed order until the request fits the transport limit, and returns every
+// rung it tried with the size it left. A request that still does not fit after the last rung is the caller's to
+// skip; requestTooLargeDetail then says what each rung removed and what remains largest.
+func degradeToFit(size func() (int, error), rungs []transportRung) (steps []fitStep, fits bool, err error) {
+	current, err := size()
+	if err != nil {
+		return nil, false, err
+	}
 	for _, rung := range rungs {
-		current, err := size()
-		if err != nil {
-			return steps, false, err
-		}
 		if current <= worker_registry.MaxRequestBytes {
 			return steps, true, nil
 		}
-		if rung.apply() {
-			steps = append(steps, rung.name)
+		applied := rung.apply()
+		after, err := size()
+		if err != nil {
+			return steps, false, err
+		}
+		steps = append(steps, fitStep{name: rung.name, before: current, after: after, applied: applied})
+		current = after
+	}
+	return steps, current <= worker_registry.MaxRequestBytes, nil
+}
+
+// appliedSteps names the rungs that removed something: the request's recorded compaction.
+func appliedSteps(steps []fitStep) []string {
+	var names []string
+	for _, step := range steps {
+		if step.applied {
+			names = append(names, step.name)
 		}
 	}
-	final, err := size()
-	return steps, err == nil && final <= worker_registry.MaxRequestBytes, err
+	return names
+}
+
+// describeFit renders every rung tried with its effect on the transport size.
+func describeFit(steps []fitStep) string {
+	parts := make([]string, 0, len(steps))
+	for _, step := range steps {
+		if step.applied {
+			parts = append(parts, fmt.Sprintf("%s %d->%d bytes", step.name, step.before, step.after))
+		} else {
+			parts = append(parts, fmt.Sprintf("%s nothing to remove at %d bytes", step.name, step.before))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+// requestTooLargeDetail is the record of a request that does not fit after every rung: what each rung removed
+// and the request fields that remain largest.
+func requestTooLargeDetail(steps []fitStep, task *contracts.AgentTask) string {
+	return describeFit(steps) + "; largest remaining: " + strings.Join(worker_registry.RequestComponents(task), ", ")
 }
 
 // wireSize is the size the Job transport measures: the canonical task payload.
@@ -49,6 +91,7 @@ const (
 	keptCallBytes     = 512
 	keptDetectorRuns  = 64
 	keptDocumentBytes = 16 << 10
+	keptEvidenceBytes = 1 << 10
 )
 
 const omittedForTransport = "omitted: the request exceeded the transport limit; open the file in the checkout"
@@ -98,6 +141,39 @@ func clipSnapshotDocuments(snapshot *contracts.OperationalMemorySnapshot) bool {
 			changed = true
 		}
 	}
+	return changed
+}
+
+// clipProgramEvidence bounds the observed and expected text of every program verdict in message. A Diagnose may
+// quote a whole object diff as evidence, so each run's size otherwise grows with the object, not with the run
+// count. The incident outcome keeps the full text.
+func clipProgramEvidence(message proto.Message) bool {
+	changed := false
+	var walk func(protoreflect.Message)
+	walk = func(m protoreflect.Message) {
+		if evidence, ok := m.Interface().(*contracts.Evidence); ok {
+			evidence.Observed, changed = clipUTF8(evidence.Observed, keptEvidenceBytes, changed)
+			evidence.Expected, changed = clipUTF8(evidence.Expected, keptEvidenceBytes, changed)
+			return
+		}
+		m.Range(func(field protoreflect.FieldDescriptor, value protoreflect.Value) bool {
+			switch {
+			case field.IsMap():
+				if field.MapValue().Message() != nil {
+					value.Map().Range(func(_ protoreflect.MapKey, item protoreflect.Value) bool { walk(item.Message()); return true })
+				}
+			case field.Message() == nil:
+			case field.IsList():
+				for index := range value.List().Len() {
+					walk(value.List().Get(index).Message())
+				}
+			default:
+				walk(value.Message())
+			}
+			return true
+		})
+	}
+	walk(message.ProtoReflect())
 	return changed
 }
 

@@ -3,9 +3,12 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"sdo.dev/operator/runtime/internal/lifecycleio"
+	"slices"
 	"strings"
 	"time"
+
+	"google.golang.org/protobuf/proto"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
@@ -294,8 +297,16 @@ func responsePipelineResult(state *IncidentState, started, completed time.Time) 
 				result.PlanApplications = append(result.PlanApplications, planApplicationState(application))
 			}
 		}
+		// The agent's loop starts from the stage's runs, so a stage run may already be recorded.
+		recorded := make([]*contracts.ProgramRun, 0, len(result.ProgramRuns))
+		for _, run := range result.ProgramRuns {
+			recorded = append(recorded, programRunContract(run))
+		}
 		for _, run := range prior.ProgramRuns {
-			result.ProgramRuns = append(result.ProgramRuns, programRunState(run))
+			if !slices.ContainsFunc(recorded, func(seen *contracts.ProgramRun) bool { return proto.Equal(seen, run) }) {
+				result.ProgramRuns = append(result.ProgramRuns, programRunState(run))
+				recorded = append(recorded, run)
+			}
 		}
 		seenCalls := map[ToolCall]bool{}
 		for _, call := range result.ProgramToolCalls {
