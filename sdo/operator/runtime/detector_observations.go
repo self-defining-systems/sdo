@@ -42,9 +42,6 @@ type detectorObservations struct {
 	PodReadBaseline *PodReadBaseline
 	// VantageBaseline, when set, carries the promoted healthy vantage readings.
 	VantageBaseline *VantageBaseline
-	// Platform, when set, carries the source inventory reader and the
-	// promoted healthy platform observation.
-	Platform *PlatformState
 	// VantageImage replaces DefaultVantageImage.
 	VantageImage string
 }
@@ -90,9 +87,6 @@ func (o detectorObservations) compose(base SnapshotProvider, detectors []sdk.Det
 	if vantageObserver != nil {
 		provider = VantageSnapshotProvider{Base: provider, Observer: vantageObserver, Baseline: o.VantageBaseline}
 	}
-	if sdk.ConsumesPlatform(detectors) {
-		provider = platformSnapshotProvider{Base: provider, Observer: &PlatformObserver{Client: o.Client, ProtectedNamespace: o.ProtectedNamespace, State: o.Platform, Clock: clock}}
-	}
 	return withMetrics(provider, detectors, o.Telemetry, designerSources, o.RequireMetrics, clock)
 }
 
@@ -121,9 +115,6 @@ func kubernetesObservations(detector sdk.Detector) string {
 	}
 	if consumer, ok := detector.(vantage.Consumer); ok && len(consumer.VantageProbes()) > 0 {
 		return "vantage probe"
-	}
-	if sdk.ConsumesPlatform([]sdk.Detector{detector}) {
-		return "platform"
 	}
 	return ""
 }

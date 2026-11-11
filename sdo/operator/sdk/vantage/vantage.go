@@ -1,16 +1,15 @@
-// Package vantage gives deterministic detectors typed, read-only probes made
+// Package vantage gives deterministic detectors typed, read-only dials made
 // from inside an application Pod: a fresh TCP or HTTP dial to a named peer
-// from the Pod's own network namespace, its traffic-control queueing
-// disciplines, its processes' limits and states, its container cgroup's CPU,
-// memory and IO limits and pressure, its /dev/shm usage and its socket table.
+// from the Pod's own network namespace, so a fault on the client's side of an
+// edge is seen even when the prober reaches the callee.
 //
 // The kinds are a closed set and each runs a fixed command. The runtime runs
 // them in a helper container it attaches to the Pod (an ephemeral container
-// of a pinned minimal tools image that shares the target container's process
-// namespace and the Pod's network namespace), so a probe works whatever the
-// application image holds. A detector declares probes (Consumer); the runtime
-// runs them on their interval within a collection budget and freezes typed
-// readings into the snapshot. No exec occurs in detectors.
+// of a pinned minimal tools image in the Pod's network namespace), so a dial
+// works whatever the application image holds. A detector declares probes
+// (Consumer); the runtime runs them on their interval within a collection
+// budget and freezes typed readings into the snapshot. No exec occurs in
+// detectors.
 package vantage
 
 import (
@@ -39,32 +38,10 @@ const (
 	TCPConnect Kind = "tcp-connect"
 	// HTTPGet sends GET To.Path DialsPerProbe times on fresh connections.
 	HTTPGet Kind = "http-get"
-	// Qdisc lists the queueing disciplines of the Pod's interfaces (netem,
-	// tbf and other shaping show here).
-	Qdisc Kind = "qdisc"
-	// ProcLimits reads each process's open-files and processes limits and
-	// open descriptor count.
-	ProcLimits Kind = "proc-limits"
-	// ProcState counts the target container's processes by scheduler state
-	// (running, sleeping, stopped, zombie, uninterruptible).
-	ProcState Kind = "proc-state"
-	// CgroupCPU reads the container cgroup's cpu.max, cpu.stat throttling and
-	// cpu.pressure.
-	CgroupCPU Kind = "cgroup-cpu"
-	// CgroupMemory reads memory.max, memory.current, memory.events and
-	// memory.pressure.
-	CgroupMemory Kind = "cgroup-memory"
-	// CgroupIO reads io.max and io.pressure.
-	CgroupIO Kind = "cgroup-io"
-	// ShmUsage reads the size and use of the Pod's /dev/shm.
-	ShmUsage Kind = "shm-usage"
-	// SocketSummary counts the Pod's TCP sockets by state, overall and per
-	// remote peer.
-	SocketSummary Kind = "socket-summary"
 )
 
 // Kinds lists every probe kind.
-var Kinds = []Kind{TCPConnect, HTTPGet, Qdisc, ProcLimits, ProcState, CgroupCPU, CgroupMemory, CgroupIO, ShmUsage, SocketSummary}
+var Kinds = []Kind{TCPConnect, HTTPGet}
 
 // Dials reports whether the kind dials a peer.
 func (k Kind) Dials() bool { return k == TCPConnect || k == HTTPGet }
@@ -87,10 +64,6 @@ const (
 	// MaxDialHistory dials are kept per Pod across runs, newest last, so a
 	// loss judgement sees a window of traffic.LinkLossWindow dials.
 	MaxDialHistory = 20
-	// MaxProcesses bounds the processes one process probe reads.
-	MaxProcesses = 64
-	// MaxPeers bounds the peers a socket summary reports.
-	MaxPeers = 32
 )
 
 // Peer is a dial target: a Service name or other DNS name, or an IP address,
@@ -272,26 +245,6 @@ func (r Reading) Ref() sdk.ObjectRef {
 func (r Reading) Fact(key string) (string, bool) {
 	value, ok := r.Facts[key]
 	return value, ok
-}
-
-// Int returns an integer fact.
-func (r Reading) Int(key string) (int64, bool) {
-	value, ok := r.Facts[key]
-	if !ok {
-		return 0, false
-	}
-	n, err := strconv.ParseInt(value, 10, 64)
-	return n, err == nil
-}
-
-// Float returns a decimal fact.
-func (r Reading) Float(key string) (float64, bool) {
-	value, ok := r.Facts[key]
-	if !ok {
-		return 0, false
-	}
-	n, err := strconv.ParseFloat(value, 64)
-	return n, err == nil
 }
 
 // Result is a probe's frozen readings. Baseline holds the complete readings

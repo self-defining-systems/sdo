@@ -471,8 +471,7 @@ func observe(snapshot *sdktest.Snapshot, o *pb.MemoryObservation) error {
 			snapshot.Vantage[k] = *got
 		}
 	}
-	snapshot.Platform, err = decode[sdk.PlatformObservation](o.Platform)
-	return err
+	return nil
 }
 
 // WithTraffic installs the immutable revision's host-owned traffic executor.

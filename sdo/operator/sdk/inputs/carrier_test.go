@@ -47,7 +47,6 @@ func TestSDKInputInterfaceInventory(t *testing.T) {
 		"sdk.ScopedObservationSource":      reflect.TypeFor[sdk.ScopedObservationSource](),
 		"vantage.Source":                   reflect.TypeFor[vantage.Source](),
 		"vantage.ResultSet":                reflect.TypeFor[vantage.ResultSet](),
-		"sdk.PlatformSource":               reflect.TypeFor[sdk.PlatformSource](),
 	}
 	seen := map[string]bool{}
 	err := filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error {

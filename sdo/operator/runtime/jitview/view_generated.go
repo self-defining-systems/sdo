@@ -247,13 +247,6 @@ func (v *View) PersistentVolumeClaims() (r0 []p4.PersistentVolumeClaim) {
 	}
 	return
 }
-func (v *View) PlatformObservation() (r0 p0.PlatformObservation, r1 bool) {
-	err := v.call("PlatformObservation", []any{}, []any{&r0, &r1})
-	if err != nil {
-		panic(err)
-	}
-	return
-}
 func (v *View) PodAdmission() (r0 p0.PodAdmissionResult, r1 bool) {
 	err := v.call("PodAdmission", []any{}, []any{&r0, &r1})
 	if err != nil {

@@ -43,7 +43,6 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string, refs ...sdk.Ob
 		s.Metrics = original.Metrics
 		s.PodReads = original.PodReads
 		s.Vantage = original.Vantage
-		s.Platform = original.Platform
 		s.Alerts = original.Alerts
 		s.Readings = original.Readings
 		s.Reachability = original.Reachability
@@ -61,11 +60,6 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string, refs ...sdk.Ob
 		}
 		if set, ok := view.(vantage.ResultSet); ok {
 			s.Vantage = set.VantageResults()
-		}
-		if source, ok := view.(sdk.PlatformSource); ok {
-			if observed, ok := source.PlatformObservation(); ok {
-				s.Platform = &observed
-			}
 		}
 		if source, ok := view.(metrics.AlertSource); ok {
 			if alerts, ok := source.AlertsResult(); ok {
