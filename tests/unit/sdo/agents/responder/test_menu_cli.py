@@ -90,9 +90,19 @@ def test_plan_and_apply_are_not_responder_commands(command) -> None:
         tools_cli.main([command, "x"])
 
 
-def test_duplicate_bind_names_are_refused(monkeypatch, capsys) -> None:
+def test_repeated_mitigate_bind_carries_list_elements_in_order(monkeypatch) -> None:
+    seen = _capture(monkeypatch)
+    argv = ["mitigate", "Exec", "--bind", "pod=Pod/app/db-0", "--bind", "command=sh", "--bind", "command=-c"]
+    assert tools_cli.main([*argv, "--bind", "command=psql -c 'select 1'"]) == 0
+    assert seen[0]["targets"] == [
+        {"name": "Exec", "parameters": {"pod": "Pod/app/db-0", "command": ["sh", "-c", "psql -c 'select 1'"]}}
+    ]
+
+
+@pytest.mark.parametrize("command", ["diagnose", "menu"])
+def test_duplicate_playbook_bind_names_are_refused(monkeypatch, capsys, command) -> None:
     monkeypatch.setattr(tools_cli, "_exchange", lambda *_: pytest.fail("duplicate reached the controller"))
-    assert tools_cli.main(["mitigate", "a", "--bind", "x=1", "--bind", "x=2"]) == 1
+    assert tools_cli.main([command, "a", "--bind", "x=1", "--bind", "x=2"]) == 1
     assert "duplicate binding name" in capsys.readouterr().err
 
 

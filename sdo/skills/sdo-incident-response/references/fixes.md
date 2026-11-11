@@ -2,7 +2,8 @@
 
 `sdo diagnose NAME --bind ROLE=Kind/NAMESPACE/NAME` and `sdo mitigate NAME --bind ...` take the same name and
 flags. A match prints `To fix: sdo mitigate ...`; run that line. `--bind` also carries plain values
-(`--bind replicas=3`); structured values are JSON text. A wrong or missing role is an error that names what the
+(`--bind replicas=3`); structured values are JSON text. A list parameter takes its name once per element
+(`--bind command=sh --bind command=-c --bind 'command=...'`) or one JSON array. A wrong or missing role is an error that names what the
 playbook takes. Built-in actions use the same form: `sdo mitigate DeletePod --bind ref=Pod/app/api-0`.
 `sdo menu` lists fixes as commands; `sdo menu NAME` narrows to one.
 

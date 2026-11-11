@@ -195,7 +195,10 @@ def _parser() -> argparse.ArgumentParser:
         type=_binding,
         default=[],
         metavar="NAME=VALUE",
-        help="a parameter: an object is NAME=Kind/NAMESPACE/NAME; structured values are JSON text",
+        help=(
+            "a parameter: an object is NAME=Kind/NAMESPACE/NAME; structured values are JSON text; "
+            "repeat a list parameter's NAME once per element, or give it a JSON array"
+        ),
     )
     mitigate.add_argument(
         "--finding",
@@ -344,15 +347,23 @@ def command_surface() -> CommandSurface:
 def _named_parameters(binds: list[tuple[str, str]]) -> dict[str, str]:
     parameters = dict(binds)
     if len(parameters) != len(binds):
-        raise ValueError("duplicate binding name")
+        raise ValueError("duplicate binding name: playbook parameters take one value each")
     return parameters
+
+
+def _target_parameters(binds: list[tuple[str, str]]) -> dict[str, str | list[str]]:
+    """A repeated name becomes a list; Go accepts it only for a list-typed parameter."""
+    grouped: dict[str, list[str]] = {}
+    for name, value in binds:
+        grouped.setdefault(name, []).append(value)
+    return {name: values[0] if len(values) == 1 else values for name, values in grouped.items()}
 
 
 def _target(args: argparse.Namespace) -> dict[str, object]:
     """One playbook or action by name; Go resolves it to the exact selection."""
     target: dict[str, object] = {"name": args.target}
     if args.bind:
-        target["parameters"] = _named_parameters(args.bind)
+        target["parameters"] = _target_parameters(args.bind)
     if args.finding:
         target["finding_fingerprints"] = args.finding
     return target
