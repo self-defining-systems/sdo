@@ -29,6 +29,9 @@ const (
     MaxConcurrent and CollectionBudget apply across every query of a cycle,
     lookups (Keys) included.
 
+const HistoryPerPod = 8
+    HistoryPerPod bounds the healthy readings Result.History keeps per Pod.
+
 const KeysPlaceholder = "{{keys}}"
     KeysPlaceholder marks where a lookup's keys go in its arguments.
 
@@ -118,13 +121,18 @@ type Result struct {
 	Query    Query     `json:"query"`
 	Readings []Reading `json:"readings,omitempty"`
 	Baseline []Reading `json:"baseline,omitempty"`
+	History  []Reading `json:"history,omitempty"`
 	Error    string    `json:"error,omitempty"`
 }
     Result is a query's frozen readings; Error is neither health nor a finding.
     Baseline holds the complete readings of the same query at the controller's
     last promoted healthy baseline, one per Pod read then. It is empty until the
     application has been healthy once, and it is a reference, never a current
-    read.
+    read. History holds complete readings of the same query taken during every
+    settled healthy stretch, each Pod's oldest first: at most HistoryPerPod per
+    Pod, spread over the whole history as it grows. It shows how the healthy
+    application varies, so a current reading can be judged against that range
+    rather than against one moment.
 
 func Require(ctx sdk.DetectionContext, id string) (Result, error)
     Require returns a result in which every reading is complete, or a detector

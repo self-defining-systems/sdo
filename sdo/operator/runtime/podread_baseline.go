@@ -24,7 +24,11 @@ import (
 // (DefaultStateSettle, the configuration baseline's settle), so neither the
 // first clear evaluation nor a fault still below its firing threshold is
 // absorbed. A store-state read with a refusal is never promoted
-// (storestate.UsableAsBaseline).
+// (storestate.UsableAsBaseline). The complete healthy readings of every
+// settled stretch also form the query's history (podread.Result.History),
+// bounded per Pod and spread over time, so a reader judges how the healthy
+// application varies, not only the moment the reference was taken; readings
+// of a stretch that ended unhealthy never enter it.
 //
 // The holder is in-memory controller state, never written to operational
 // memory or persisted elsewhere: a restarted controller starts empty, its
@@ -42,6 +46,11 @@ type PodReadBaseline struct {
 	settle      time.Duration
 	candidateAt time.Time
 	candidate   map[string]podread.Result
+	// samples are the complete readings of the candidate stretch, per query.
+	samples map[string][]podread.Reading
+	// history holds the readings of every settled stretch, per query
+	// declaration (podread.Result.History).
+	history map[string]podread.Result
 	// Payloads, when set, captures the restore text of each promoted
 	// store-state reading (StorePayloads).
 	Payloads *StorePayloads
@@ -53,7 +62,7 @@ func NewPodReadBaseline(settle time.Duration) *PodReadBaseline {
 	if settle <= 0 {
 		settle = DefaultStateSettle
 	}
-	return &PodReadBaseline{results: map[string]podread.Result{}, settle: settle}
+	return &PodReadBaseline{results: map[string]podread.Result{}, history: map[string]podread.Result{}, settle: settle}
 }
 
 // Observe records one evaluation. A healthy one starts a candidate with its
@@ -65,31 +74,40 @@ func (b *PodReadBaseline) Observe(now time.Time, healthy bool, results map[strin
 	}
 	b.mu.Lock()
 	if !healthy {
-		b.candidate, b.candidateAt = nil, time.Time{}
+		b.candidate, b.candidateAt, b.samples = nil, time.Time{}, nil
 		b.mu.Unlock()
 		return
 	}
 	var settled map[string]podread.Result
+	var stretch map[string][]podread.Reading
 	switch {
 	case b.candidate == nil:
-		b.candidate, b.candidateAt = maps.Clone(results), now
+		b.candidate, b.candidateAt, b.samples = maps.Clone(results), now, nil
 	case now.Sub(b.candidateAt) >= b.settle:
-		settled = b.candidate
-		b.candidate, b.candidateAt = maps.Clone(results), now
+		settled, stretch = b.candidate, b.samples
+		b.candidate, b.candidateAt, b.samples = maps.Clone(results), now, nil
 	}
+	b.samples = withSamples(b.samples, results)
 	b.mu.Unlock()
 	if settled != nil {
-		b.Promote(settled)
+		b.promote(settled, stretch)
 	}
 }
 
-// Promote replaces each query's reference with its complete readings. A query
-// with no complete reading, or a store-state read that cannot be a healthy
-// reference, keeps its earlier reference.
+// Promote replaces each query's reference with its complete readings and adds
+// them to the query's history. A query with no complete reading, or a
+// store-state read that cannot be a healthy reference, keeps its earlier
+// reference.
 func (b *PodReadBaseline) Promote(results map[string]podread.Result) {
 	if b == nil {
 		return
 	}
+	b.promote(results, withSamples(nil, results))
+}
+
+// promote is Promote with the readings of the settled stretch, which extend
+// each promoted query's history.
+func (b *PodReadBaseline) promote(results map[string]podread.Result, stretch map[string][]podread.Reading) {
 	b.mu.Lock()
 	promoted := map[string]podread.Result{}
 	for id, result := range results {
@@ -104,9 +122,70 @@ func (b *PodReadBaseline) Promote(results map[string]podread.Result) {
 		}
 		b.results[id] = podread.Result{Query: result.Query, Readings: complete}
 		promoted[id] = b.results[id]
+		history := b.history[id]
+		if !reflect.DeepEqual(history.Query, result.Query) {
+			history = podread.Result{Query: result.Query}
+		}
+		for _, r := range stretch[id] {
+			if storestate.UsableAsBaseline(id, podread.Result{Query: result.Query, Readings: []podread.Reading{r}}) == nil {
+				history.Readings = append(history.Readings, r)
+			}
+		}
+		history.Readings = spreadHistory(history.Readings, podread.HistoryPerPod)
+		b.history[id] = history
 	}
 	b.mu.Unlock()
 	b.Payloads.promoted(promoted)
+}
+
+// withSamples appends each result's complete readings to samples, skipping a
+// reading already held (the same Pod read at the same moment, carried by
+// several evaluations).
+func withSamples(samples map[string][]podread.Reading, results map[string]podread.Result) map[string][]podread.Reading {
+	for id, result := range results {
+		if result.Error != "" {
+			continue
+		}
+		for _, r := range result.Readings {
+			if r.Error != "" || r.Truncated || slices.ContainsFunc(samples[id], func(s podread.Reading) bool {
+				return s.Pod == r.Pod && s.ObservedAt.Equal(r.ObservedAt) && s.Stdout == r.Stdout
+			}) {
+				continue
+			}
+			if samples == nil {
+				samples = map[string][]podread.Reading{}
+			}
+			samples[id] = append(samples[id], r)
+		}
+	}
+	return samples
+}
+
+// spreadHistory keeps at most perPod readings of each Pod, oldest first.
+// Over the bound it drops, one at a time, the reading closest in time to the
+// one before it (never a Pod's first or newest), so the kept readings span the
+// whole healthy history as evenly as they can.
+func spreadHistory(readings []podread.Reading, perPod int) []podread.Reading {
+	byPod := map[string][]podread.Reading{}
+	for _, r := range readings {
+		byPod[r.Pod] = append(byPod[r.Pod], r)
+	}
+	var out []podread.Reading
+	for _, pod := range slices.Sorted(maps.Keys(byPod)) {
+		kept := byPod[pod]
+		slices.SortStableFunc(kept, func(a, b podread.Reading) int { return a.ObservedAt.Compare(b.ObservedAt) })
+		for len(kept) > perPod {
+			drop := 1
+			for i := 2; i < len(kept)-1; i++ {
+				if kept[i].ObservedAt.Sub(kept[i-1].ObservedAt) < kept[drop].ObservedAt.Sub(kept[drop-1].ObservedAt) {
+					drop = i
+				}
+			}
+			kept = slices.Delete(kept, drop, drop+1)
+		}
+		out = append(out, kept...)
+	}
+	return out
 }
 
 // attach sets each result's Baseline to the promoted readings of the same
@@ -123,6 +202,9 @@ func (b *PodReadBaseline) attach(results map[string]podread.Result) {
 			continue
 		}
 		result.Baseline = slices.Clone(promoted.Readings)
+		if history, ok := b.history[id]; ok && reflect.DeepEqual(history.Query, result.Query) {
+			result.History = slices.Clone(history.Readings)
+		}
 		results[id] = result
 	}
 }

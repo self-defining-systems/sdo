@@ -146,6 +146,21 @@ func promotedBaselines(adapter Adapter, component string, result podread.Result)
 	return out
 }
 
+// promotedHistory parses the result's healthy history (podread.Result.History),
+// by Pod name, oldest first. A reading that does not parse into a healthy
+// baseline is dropped.
+func promotedHistory(adapter Adapter, component string, result podread.Result) map[string][]Facts {
+	out := map[string][]Facts{}
+	for _, reading := range result.History {
+		f, err := parseReading(adapter, component, reading)
+		if err != nil || validBaseline(Config{Component: component, Engine: adapter.Engine()}, f) != nil {
+			continue
+		}
+		out[reading.Pod] = append(out[reading.Pod], f)
+	}
+	return out
+}
+
 // UsableAsBaseline reports why a store-state pod read cannot become the
 // healthy reference: a reading that is unavailable, unparsable, refused (other
 // than an unsupported command) or shows a write block. A store whose read was

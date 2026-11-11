@@ -94,11 +94,16 @@ const MaxSequences = 5
     those already past SequenceReported of their maximum).
 
 const MinJudgedCount = 10
+    Namespace judgement: a judged namespace (a table, collection, KV prefix or
     Namespace judgement: a judged namespace (a table, collection, KV prefix
     or key pattern) is reported when it disappears or when its count drops
     below half of a baseline of at least MinJudgedCount. Growth is not judged:
     an application writes its tables, so a count grows with time and traffic
-    past any multiple of a healthy reading.
+    past any multiple of a healthy reading. A namespace the healthy application
+    itself shrinks (smaller in a healthy reading than in the one before, or gone
+    from one) is not judged at all: removing its entries is the application's
+    own churn (a queue drained, a lease or lock released, a temporary table
+    dropped).
 
 const NearLimit = 0.95
     NearLimit is the fraction of a cap at which use is reported.
@@ -238,18 +243,4 @@ type Config struct {
 	GapWithoutBaseline bool
 }
     Config declares one store component to watch.
-
-type CredentialCheck struct {
-	Result string `json:"result"`
-	Class  string `json:"class,omitempty"`
-	Via    string `json:"via,omitempty"`
-}
-    CredentialCheck is the value-free answer of one authentication attempt
-    with a client's credential: the result and a short class (for example
-    "authenticated", "no-credential", "wrong-password", "max-clients").
-    Via is "uri" when the credential came as a connection URI, whose own host
-    was dialled. It never carries a user name, password or record.
-
-func ParseCredentialCheck(stdout string) (CredentialCheck, error)
-    ParseCredentialCheck reads the result line of a credential check.
 ```
