@@ -128,6 +128,26 @@ func (e *evaluation) capacity(rule string, r sdk.ObjectRef, value float64, limit
 
 type crashes struct{ spec sdk.DetectorSpec }
 
+// CrashRecoveredAfter is how long a crashed container's successor must have
+// been running and Ready before the crash is history rather than health.
+const CrashRecoveredAfter = 10 * time.Minute
+
+// containerServingSince returns when the current incarnation of a pod's
+// container started, and whether it is running and Ready now.
+func (e *evaluation) containerServingSince(pod, container string) (time.Time, bool) {
+	for _, p := range e.ctx.Pods() {
+		if p.Namespace != e.ctx.Namespace() || p.Name != pod || p.DeletionTimestamp != nil {
+			continue
+		}
+		for _, c := range p.Status.ContainerStatuses {
+			if c.Name == container && c.Ready && c.State.Running != nil {
+				return c.State.Running.StartedAt.Time, true
+			}
+		}
+	}
+	return time.Time{}, false
+}
+
 // NewCrashes reports failed-container crash tails and newly appearing runtime
 // signatures in surviving containers, never generic error lines.
 func NewCrashes(s sdk.DetectorSpec) sdk.Detector { return crashes{s} }
@@ -151,8 +171,16 @@ func (d crashes) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.Find
 		if w.Namespace != ctx.Namespace() {
 			continue
 		}
+		recoveredSince, recovered := e.containerServingSince(w.Pod, w.Container)
 		for _, t := range w.Terminations {
 			if t.ExitCode == 0 || t.Tail.Error != "" {
+				continue
+			}
+			// Kubernetes retains the last termination for the container's life.
+			// A successor that has been Ready for CrashRecoveredAfter has
+			// recovered from it (a service that started before its database);
+			// a recent crash stays reported, so periodic crashes are found.
+			if recovered && !recoveredSince.Before(t.FinishedAt) && r.ObservedAt.Sub(recoveredSince) >= CrashRecoveredAfter {
 				continue
 			}
 			for _, p := range d.LogQueries()[0].Patterns {
