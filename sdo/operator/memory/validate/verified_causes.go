@@ -245,11 +245,27 @@ func repairRecorded(outcome *contracts.OutcomeRecord, resources []*contracts.Obj
 // closure may have lost data.
 const DataAtRiskDetector = "controller.data-at-risk"
 
+// RecoveryUnprobedDetector is the pending evaluation the controller records
+// when a closure's faulted Service is crossed by no qualified probe, so only
+// readiness showed it recovered.
+const RecoveryUnprobedDetector = "controller.recovery-unprobed"
+
 // DataLossOutcome reports an outcome that may have lost data. It holds no
 // verified repair, whatever its receipts say.
 func DataLossOutcome(outcome *contracts.OutcomeRecord) bool {
+	return hasEvaluation(outcome, DataAtRiskDetector)
+}
+
+// UnverifiedRecoveryOutcome reports an outcome whose recovery SDO could not
+// verify: it may have lost data, or no probe crossed a faulted Service. It
+// holds no verified repair, whatever its receipts say.
+func UnverifiedRecoveryOutcome(outcome *contracts.OutcomeRecord) bool {
+	return DataLossOutcome(outcome) || hasEvaluation(outcome, RecoveryUnprobedDetector)
+}
+
+func hasEvaluation(outcome *contracts.OutcomeRecord, id string) bool {
 	for _, evaluation := range outcome.GetDetectorHistory() {
-		if evaluation.GetDetectorId() == DataAtRiskDetector {
+		if evaluation.GetDetectorId() == id {
 			return true
 		}
 	}
@@ -261,7 +277,7 @@ func DataLossOutcome(outcome *contracts.OutcomeRecord) bool {
 // receives, not the complete failed record) holds an independently verified
 // repaired cause. The broker and the worker's own check share it.
 func ReflectionRepairVerified(learningView *contracts.OutcomeRecord) bool {
-	if DataLossOutcome(learningView) {
+	if UnverifiedRecoveryOutcome(learningView) {
 		return false
 	}
 	return learningView.GetClassification() == "success" || len(VerifiedReflectionCauses(learningView)) > 0

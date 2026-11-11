@@ -69,6 +69,8 @@ def collapse_detector_history(evaluations: Sequence[DetectorEvaluation]) -> list
 
 # The controller's pending evaluation for a repair that may have lost data.
 _DATA_AT_RISK = "controller.data-at-risk"
+# The controller's pending evaluation for a recovery no health probe crossed.
+_RECOVERY_UNPROBED = "controller.recovery-unprobed"
 
 
 def current_outcome_view(outcome: OutcomeRecord) -> dict[str, Any]:
@@ -90,6 +92,9 @@ def current_outcome_view(outcome: OutcomeRecord) -> dict[str, Any]:
     data_at_risk = [item.reason for item in outcome.detector_history if item.detector_id == _DATA_AT_RISK]
     if data_at_risk:
         view["data_at_risk"] = data_at_risk  # why this closure is unconfirmed; it teaches no fix
+    unprobed = [item.reason for item in outcome.detector_history if item.detector_id == _RECOVERY_UNPROBED]
+    if unprobed:
+        view["recovery_unprobed"] = unprobed  # readiness alone showed recovery; it teaches no fix
     view["detector_history"] = collapse_detector_history(outcome.detector_history)
     compaction = {}
     if view["program_runs"]:

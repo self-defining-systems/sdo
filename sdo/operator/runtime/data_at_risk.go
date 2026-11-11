@@ -142,6 +142,9 @@ func (l *ResponderLoop) incidentDataEffects(ctx context.Context) []string {
 	return appliedDataEffects(view, l.applicationEvidenceLocked(), l.dataWorkloads, l.Request.Namespace)
 }
 
-// dataLossOutcome reports an outcome that may have lost data. It holds no
-// verified repair, whatever its receipts say.
-func dataLossOutcome(outcome *contracts.OutcomeRecord) bool { return validate.DataLossOutcome(outcome) }
+// unverifiedRecoveryOutcome reports an outcome whose recovery SDO could not
+// verify (data may be lost, or no probe crossed a faulted Service). It holds
+// no verified repair, whatever its receipts say.
+func unverifiedRecoveryOutcome(outcome *contracts.OutcomeRecord) bool {
+	return validate.UnverifiedRecoveryOutcome(outcome)
+}

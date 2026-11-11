@@ -332,6 +332,11 @@ expected bounds or a named backup that is not one of this incident, and `Restore
 the backup to put back.
 At closure, a `holds_data` workload with a Pod created since the incident opened (or a restarted
 container) and only volumes that die with the Pod makes the outcome `unconfirmed` (`DATA_MAY_BE_LOST`).
+Readiness is not recovery: when the application has health probes and a Service the incident's findings reach (the
+Service, or the Services selecting a named Pod or workload) is entered or crossed by no qualified health-probe
+scenario, the closure commits `unconfirmed` (`OBSERVATION_INCOMPLETE`) with a pending `controller.recovery-unprobed`
+entry naming the Service (`runtime/recovery_unprobed.go`); like data at risk, it credits no repair to reflection
+(`validate.UnverifiedRecoveryOutcome`). A Service a probe does cross recovers only once that probe's detector is clear.
 Data effects never change the outcome: each applied effect is recorded as a `data effect:` line in the
 closure's `source_check_notes` (and in verify's `data_effects[]`), with, for `unknown` and `data-write`,
 whether a backup of this incident held the records it could change (a `RepairData` whose named
