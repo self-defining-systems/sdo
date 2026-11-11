@@ -220,6 +220,7 @@ func (e *evaluation) wiring() {
 			}
 		}
 	}
+	e.secretVersions()
 }
 func (e *evaluation) referenceExists(ns string, r sdk.PodTemplateReference) bool {
 	switch r.Kind {

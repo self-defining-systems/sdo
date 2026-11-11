@@ -43,6 +43,7 @@ func CheckCatalog(ctx context.Context, catalog Catalog) []error
 func CheckDetects(ctx context.Context, scenario Scenario, class FaultClass) error
 func DefaultLatencyNote(id string) string
 func DefaultLatencyScenarios(workloads []Workload) []string
+func FailingUserScenarios(ctx sdk.DetectionContext) []string
 func FromSeedPair(key string, count int, first func(index int) string, ...) (Param, Param)
 func KnownBrokenChanges(window Window) string
 func LinkFinding(spec sdk.DetectorSpec, namespace string, window Window, ...) (sdk.Finding, bool)

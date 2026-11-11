@@ -181,6 +181,12 @@ func DefaultLatencyScenarios(workloads []Workload) []string
     service is pinned at its CPU limit. Each scenario returned is a critical
     path whose slowdown health cannot see.
 
+func FailingUserScenarios(ctx sdk.DetectionContext) []string
+    FailingUserScenarios lists, as "workload/scenario" sorted, every qualified
+    health-probe scenario of the context's carried windows that violates its SLO
+    now: the user-facing failures a cause-only detector may gate on. It is empty
+    when the context carries no traffic.
+
 func FromSeedPair(key string, count int, first func(index int) string, second func(index int) string) (Param, Param)
     FromSeedPair returns two parameters rendered from the same seeded record,
     such as a user name and its password. The record index is kept in State

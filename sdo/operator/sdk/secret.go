@@ -1,24 +1,31 @@
 package sdk
 
 import (
+	"encoding/json"
 	"sort"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// SecretMetadata exposes only identity, type, labels and data key names. It cannot hold Secret values.
+// SecretMetadata exposes only identity, type, labels, data key names and
+// when the data last changed. It cannot hold Secret values.
 type SecretMetadata struct {
 	Name      string            `json:"name"`
 	Namespace string            `json:"namespace"`
 	Type      corev1.SecretType `json:"type"`
 	Labels    map[string]string `json:"labels,omitempty"`
 	DataKeys  []string          `json:"dataKeys"`
+	// DataChangedAt is when the Secret's data was last written, from metadata
+	// only: the latest managedFields time of a manager that owns data fields,
+	// else the creation time. Zero when the object records neither.
+	DataChangedAt time.Time `json:"dataChangedAt,omitzero"`
 }
 
 // SecretMetadataFrom discards values, annotations and all other Secret fields.
 func SecretMetadataFrom(secret corev1.Secret) SecretMetadata {
-	result := SecretMetadata{Name: secret.Name, Namespace: secret.Namespace, Type: secret.Type, Labels: map[string]string{}}
+	result := SecretMetadata{Name: secret.Name, Namespace: secret.Namespace, Type: secret.Type, Labels: map[string]string{}, DataChangedAt: SecretDataChangedAt(secret.ObjectMeta)}
 	for key, value := range secret.Labels {
 		result.Labels[key] = value
 	}
@@ -34,6 +41,36 @@ func SecretMetadataFrom(secret corev1.Secret) SecretMetadata {
 	}
 	sort.Strings(result.DataKeys)
 	return result
+}
+
+// SecretDataChangedAt derives when a Secret's data was last written from its
+// object metadata alone. managedFields list the field paths each manager owns
+// and when it last wrote, never values; a manager that owns only labels or
+// annotations does not move the time.
+func SecretDataChangedAt(meta metav1.ObjectMeta) time.Time {
+	var latest time.Time
+	for _, entry := range meta.ManagedFields {
+		if entry.Time == nil || entry.FieldsV1 == nil || !ownsSecretData(entry.FieldsV1.Raw) {
+			continue
+		}
+		if entry.Time.After(latest) {
+			latest = entry.Time.Time
+		}
+	}
+	if latest.IsZero() {
+		latest = meta.CreationTimestamp.Time
+	}
+	return latest.UTC()
+}
+
+func ownsSecretData(raw []byte) bool {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		return false
+	}
+	_, data := fields["f:data"]
+	_, stringData := fields["f:stringData"]
+	return data || stringData
 }
 
 // DeepCopy returns an independent copy of the metadata.

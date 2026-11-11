@@ -204,16 +204,7 @@ func (c *KubernetesCache) build() (informers.SharedInformerFactory, map[string]c
 		if watch.Kind == "Secret" {
 			if err := informer.SetTransform(func(object any) (any, error) {
 				if secret, ok := object.(*corev1.Secret); ok {
-					metadata := sdk.SecretMetadataFrom(*secret)
-					safe := &corev1.Secret{ObjectMeta: metadata.ObjectMeta(), Type: metadata.Type, Data: map[string][]byte{}}
-					// Informer update classification needs the server revision. Neither
-					// this revision nor UID is exported in SecretMetadata.
-					safe.ResourceVersion = secret.ResourceVersion
-					safe.UID = secret.UID
-					for _, key := range metadata.DataKeys {
-						safe.Data[key] = nil
-					}
-					return safe, nil
+					return valueFreeSecret(secret), nil
 				}
 				return object, nil
 			}); err != nil {
@@ -226,6 +217,27 @@ func (c *KubernetesCache) build() (informers.SharedInformerFactory, map[string]c
 		}
 	}
 	return factory, built, nil
+}
+
+// valueFreeSecret is the only form of a Secret the cache stores: its data
+// values are dropped at the informer edge, while everything SecretMetadataFrom
+// derives (identity, type, labels, data key names, data change time) survives,
+// so snapshots built from the cache equal those built from the full object.
+func valueFreeSecret(secret *corev1.Secret) *corev1.Secret {
+	metadata := sdk.SecretMetadataFrom(*secret)
+	safe := &corev1.Secret{ObjectMeta: metadata.ObjectMeta(), Type: metadata.Type, Data: map[string][]byte{}}
+	// Informer update classification needs the server revision. Neither
+	// this revision nor UID is exported in SecretMetadata.
+	safe.ResourceVersion = secret.ResourceVersion
+	safe.UID = secret.UID
+	// Field ownership and creation time carry no values; snapshots derive
+	// SecretMetadata.DataChangedAt from them.
+	safe.CreationTimestamp = secret.CreationTimestamp
+	safe.ManagedFields = secret.ManagedFields
+	for _, key := range metadata.DataKeys {
+		safe.Data[key] = nil
+	}
+	return safe
 }
 
 // Start begins observing the namespace. Calling it on a running cache is a no-op.

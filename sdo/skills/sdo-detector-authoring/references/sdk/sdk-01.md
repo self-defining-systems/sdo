@@ -135,6 +135,12 @@ func ScopedObject(source ScopedObservationSource, ref ObjectRef) (*unstructured.
     ScopedObject reads one object of a declared scoped observation target.
     It is the single projection shared by live and host-side read views.
 
+func SecretDataChangedAt(meta metav1.ObjectMeta) time.Time
+    SecretDataChangedAt derives when a Secret's data was last written from its
+    object metadata alone. managedFields list the field paths each manager owns
+    and when it last wrote, never values; a manager that owns only labels or
+    annotations does not move the time.
+
 func ServiceExpectsEndpoints(service corev1.Service) bool
     ServiceExpectsEndpoints reports whether Kubernetes can back a Service with
     Endpoints, EndpointSlices, or selected pods. ExternalName Services are DNS
@@ -227,11 +233,4 @@ type ConfigMapReference struct {
 }
     ConfigMapReference describes a ConfigMap consumed by a Deployment pod
     template. Optional references do not make an absent ConfigMap a fault.
-
-func ConfigMapReferencesForDeployment(deployment appsv1.Deployment) []ConfigMapReference
-    ConfigMapReferencesForDeployment returns the distinct ConfigMaps referenced
-    by a Deployment's volumes and container environment. Results are sorted by
-    name so detector output does not depend on manifest field ordering. If the
-    same ConfigMap is referenced as both optional and required, the required
-    reference wins.
 ```

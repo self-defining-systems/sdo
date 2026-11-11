@@ -23,7 +23,9 @@ type detector struct {
 
 func (d detector) Spec() sdk.DetectorSpec { return d.spec }
 
-// NewWiring checks selectors, ports, references, storage, ingress and DNS aliases.
+// NewWiring checks selectors, ports, references, storage, ingress, DNS aliases
+// and, while a user-facing probe fails, pods that started before a Secret they
+// read last changed.
 func NewWiring(s sdk.DetectorSpec) sdk.Detector { return detector{s, "wiring"} }
 
 // NewWorkloads checks StatefulSets, DaemonSets, Jobs and CronJobs.
