@@ -52,21 +52,19 @@ func TestCatalogChurnIsNotACatalogChange(t *testing.T) {
 	}
 }
 
-func TestPostgresCatalogCutAtItsRowLimitIsUnread(t *testing.T) {
+// The catalog query bounds its own output (itemized or grouped), so no row
+// count cuts it: a long itemized catalog is read in full.
+func TestPostgresLongCatalogIsReadInFull(t *testing.T) {
 	var rows strings.Builder
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 120; i++ {
 		fmt.Fprintf(&rows, "constraint\tpart.t%03d\tc%03d\tf 1234abcd\n", i, i)
 	}
-	cut := strings.Replace(healthyPostgres, "== catalog exampledb\n", "== catalog exampledb\n"+rows.String(), 1)
-	f := parsePostgres(t, cut)
-	unread := map[storestate.ItemKind]bool{}
-	for _, k := range f.Unread {
-		unread[k] = true
+	long := strings.Replace(healthyPostgres, "== catalog exampledb\n", "== catalog exampledb\n"+rows.String(), 1)
+	f := parsePostgres(t, long)
+	if len(f.Unread) != 0 {
+		t.Fatalf("unread = %v, want a complete read", f.Unread)
 	}
-	if !unread[storestate.KindValidator] || !unread[storestate.KindIndex] || !unread[storestate.KindNamespace] {
-		t.Fatalf("unread = %v, want the catalog kinds of a cut catalog", f.Unread)
-	}
-	if got := postgresChurnFindings(t, cut); len(got) != 0 {
-		t.Fatalf("a cut catalog raised %v", got)
+	if _, ok := f.Lookup(storestate.Key{Kind: storestate.KindValidator, Scope: "exampledb.part.t119", Name: "c119"}); !ok {
+		t.Fatal("the 120th catalog row was dropped")
 	}
 }

@@ -401,7 +401,10 @@ func (d detector) noEviction(f Facts) bool {
 //     application creates and drops itself); on a table present in every
 //     healthy reading that still exists, an added, removed or changed one is
 //     judged (a constraint added to a live table rejects writes that used to
-//     succeed).
+//     succeed);
+//   - a group digest of a large catalog (catalog_group.go) is judged when its
+//     value changed under the same scope, which names the group's tables: a
+//     definition changed while every table of the group still exists.
 func judgedCatalogChange(healthy []Facts, current Facts, c Change) bool {
 	key := c.Key()
 	if key.Kind == KindLock {
@@ -411,9 +414,17 @@ func judgedCatalogChange(healthy []Facts, current Facts, c Change) bool {
 	if !scoped {
 		return c.Before != nil
 	}
+	if isCatalogGroup(object) {
+		// The scope carries the group's table digest: a change under the same
+		// scope is a definition changed on tables that all still exist.
+		return c.Before != nil && c.After != nil
+	}
 	table := Key{Kind: KindNamespace, Scope: db, Name: object}
 	_, after := current.Lookup(table)
-	return after && rangeOf(healthy, table).present
+	// The table must have been read in a healthy reading, not only be
+	// unread in all of them (a catalog read as group digests lists none).
+	seen := slices.ContainsFunc(healthy, func(f Facts) bool { _, ok := f.Lookup(table); return ok })
+	return after && seen && rangeOf(healthy, table).present
 }
 
 // judgedNamespace reports whether the namespace-changed rule judges an item:

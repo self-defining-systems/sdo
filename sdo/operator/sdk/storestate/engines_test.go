@@ -34,7 +34,7 @@ END
 const healthyMySQL = "== vars\nmax_connections\t151\noffline_mode\tOFF\nread_only\tOFF\nsuper_read_only\tOFF\ninnodb_read_only\tOFF\nsql_mode\tSTRICT_TRANS_TABLES\n" +
 	"== status\nThreads_connected\t3\nThreads_running\t1\n== role\nprimary\n" +
 	"== users\napp\t%\t2026-01-01T00:00:00\tunlocked global=1 schema=18 table=0\nroot\t%\t2026-01-01T00:00:00\tunlocked global=28 schema=0 table=0\n" +
-	"== tables\nshop\titems\t40\nshop\torders\t80\n== indexes\nshop\titems\tPRIMARY\tunique b80bb774\n== locks\nwaiting\t0\ntrx-waiting\t0\n== mdl\n"
+	"== locks\nwaiting\t0\ntrx-waiting\t0\n== mdl\n== indexes\nshop\titems\tPRIMARY\tunique b80bb774\n== tables\nshop\titems\t40\nshop\torders\t80\n"
 
 const healthyConsul = "== info\nleader = true\nleader_addr = 127.0.0.1:8300\nserver = true\nnum_peers = 0\nstate = Leader\n" +
 	"== services\nconsul\nsrv-a\nsrv-b\n== instances\nconsul\t1\nsrv-a\t2\nsrv-b\t1\n== nodes\nnode-1\n" +
@@ -130,9 +130,11 @@ func TestMySQLRecordsRefusalsAsFacts(t *testing.T) {
 	if _, err := adapterFor(t, storestate.EngineMySQL).Parse(unreachable); err == nil {
 		t.Fatal("an unreachable server parsed")
 	}
-	cut := strings.Replace(healthyMySQL, "== indexes", "== more\n== indexes", 1)
-	if f := parseAs(t, storestate.EngineMySQL, cut); !strings.Contains(strings.Join(kinds(f.Unread), ","), "index") {
-		t.Fatalf("a cut catalog is read: %v", f.Unread)
+	// The budget ran out in indexes: indexes and the absent tables are
+	// unread, the locks read before them are not.
+	cut := healthyMySQL[:strings.Index(healthyMySQL, "== tables")] + "== more\n"
+	if f := parseAs(t, storestate.EngineMySQL, cut); strings.Join(kinds(f.Unread), ",") != "index,namespace" {
+		t.Fatalf("a cut catalog: unread = %v, want index,namespace", f.Unread)
 	}
 }
 
@@ -224,7 +226,7 @@ func TestNamespaceChangedRule(t *testing.T) {
 		"emptied":           {strings.Replace(healthyMySQL, "shop\torders\t80", "shop\torders\t10", 1), 1, "dropped from 80 to 10"},
 		"grew tenfold":      {strings.Replace(healthyMySQL, "shop\torders\t80", "shop\torders\t10080", 1), 0, ""},
 		"within bounds":     {strings.Replace(healthyMySQL, "shop\torders\t80", "shop\torders\t60", 1), 0, ""},
-		"new table":         {strings.Replace(healthyMySQL, "== indexes", "shop\tsessions\t5\n== indexes", 1), 0, ""},
+		"new table":         {healthyMySQL + "shop\tsessions\t5\n", 0, ""},
 		"estimated growth":  {strings.Replace(healthyMySQL, "shop\torders\t80", "shop\torders\t~900000", 1), 0, ""},
 		"small table moved": {strings.Replace(healthyMySQL, "shop\titems\t40", "shop\titems\t1", 1), 1, "dropped from 40 to 1"},
 	} {

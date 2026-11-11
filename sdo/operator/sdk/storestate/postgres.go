@@ -28,22 +28,19 @@ var postgresSectionKinds = map[string][]ItemKind{
 // unread.
 var postgresRowLimits = map[string]int{"dbsettings": 33, "roles": 25, "databases": 17}
 
-// postgresCatalogRows is the row cut of each database's catalog read (the
-// script's head -n 100).
-const postgresCatalogRows = 100
-
 // postgresScript runs psql over the container's own socket as the user the
 // credential prelude found ($U, else postgres), so local trust applies; the
 // password it found ($P) reaches psql through the environment and is never
 // printed. The queries arrive as positional arguments ($5 is the holders
 // query, $6 the TCP fallback, $7 onwards the catalog query, split). Holders
 // fall back to the TCP table when the server refuses the session list. The
-// catalog is read in each database that accepts connections and cut at the
+// catalog is read in each database that accepts connections; its query bounds
+// its own size (postgresCatalog), and the whole read is still cut at the
 // output budget with a "== more" marker.
 const postgresScript = `U=${U:-postgres};D=${POSTGRES_DB:-${POSTGRESQL_DATABASE:-${PGDATABASE:-$U}}};T=$(printf '\t');export PGPASSWORD="$P" PGCONNECT_TIMEOUT=2
-q(){ psql -X -q -At -F "$T" -p %d -U "$U" -d "$1" -c "$2" 2>&1|tr -d '\r'|head -n 100;}
+p(){ psql -X -q -At -F "$T" -p %d -U "$U" -d "$1" -c "$2" 2>&1|tr -d '\r';};q(){ p "$@"|head -n 100;}
 h=$(echo '== server';q "$D" "$1";echo '== dbsettings';q "$D" "$2";echo '== roles';q "$D" "$3";echo '== databases';q "$D" "$4";echo '== holders';o=$(q "$D" "$5");case "$o" in holder*)printf '%%s\n' "$o";;*)eval "$6";;esac)
-printf '%%s\n' "$h";c="$7$8$9${10}${11}";psql -X -q -At -p %d -U "$U" -d "$D" -c "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY 1 LIMIT 8" 2>/dev/null|while IFS= read -r d;do echo "== catalog $d";q "$d" "$c";done|awk -v b=$((3900-${#h})) '{n+=length($0)+1;if(n>b){print "== more";exit}print}'
+printf '%%s\n' "$h";c="$7$8$9${10}${11}${12}";psql -X -q -At -p %d -U "$U" -d "$D" -c "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY 1 LIMIT 8" 2>/dev/null|while IFS= read -r d;do echo "== catalog $d";p "$d" "$c";done|awk -v b=$((3900-${#h})) '{n+=length($0)+1;if(n>b){print "== more";exit}print}'
 `
 
 // postgresQueries are the server-wide queries, one per section. Settings,
@@ -61,17 +58,35 @@ var postgresQueries = []string{
 // peer address (local for the Unix socket) and state.
 const postgresHolders = `SELECT 'holder',coalesce(host(client_addr),'local'),s,count(*) FROM(SELECT client_addr,CASE WHEN wait_event_type='Lock' THEN 'blocked' WHEN state='idle' THEN 'idle' WHEN state LIKE 'idle in transaction%' THEN 'idle-in-transaction' ELSE 'active' END s FROM pg_stat_activity WHERE backend_type='client backend' AND pid<>pg_backend_pid())x GROUP BY 2,3 ORDER BY 4 DESC,2,3 LIMIT 12`
 
-// postgresCatalog is the per-database catalog query: tables with their
-// planner row estimate, indexes, constraints and triggers with a digest of
-// their definition, locks that block writers, and each login role's grant
-// counts. Rows are (kind, object, name, value).
-const postgresCatalog = `SELECT * FROM(SELECT 'table' k,n.nspname||'.'||c.relname o,'' m,CASE WHEN c.reltuples<0 THEN '?' ELSE c.reltuples::bigint::text END v FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind IN('r','p') AND n.nspname!~'^(pg_|information_schema)'` +
-	` UNION ALL SELECT 'index',n.nspname||'.'||t.relname,ic.relname,concat_ws(' ',CASE WHEN i.indisprimary THEN 'primary' END,CASE WHEN i.indisunique THEN 'unique' END,CASE WHEN NOT i.indisvalid THEN 'invalid' END,left(md5(pg_get_indexdef(i.indexrelid)),8)) FROM pg_index i JOIN pg_class ic ON ic.oid=i.indexrelid JOIN pg_class t ON t.oid=i.indrelid JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname!~'^(pg_|information_schema)'` +
-	` UNION ALL SELECT 'constraint',n.nspname||'.'||t.relname,o.conname,concat_ws(' ',o.contype::text,CASE WHEN NOT o.convalidated THEN 'not-valid' END,left(md5(pg_get_constraintdef(o.oid)),8)) FROM pg_constraint o JOIN pg_class t ON t.oid=o.conrelid JOIN pg_namespace n ON n.oid=t.relnamespace WHERE o.contype IN('c','f','x') AND n.nspname!~'^(pg_|information_schema)'` +
-	` UNION ALL SELECT 'trigger',n.nspname||'.'||t.relname,g.tgname,'trigger '||g.tgenabled::text||' '||left(md5(pg_get_triggerdef(g.oid)),8) FROM pg_trigger g JOIN pg_class t ON t.oid=g.tgrelid JOIN pg_namespace n ON n.oid=t.relnamespace WHERE NOT g.tgisinternal` +
-	` UNION ALL SELECT 'lock',l.relation::regclass::text,l.mode,'held' FROM pg_locks l WHERE l.database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND l.granted AND l.mode IN('ShareLock','ShareRowExclusiveLock','ExclusiveLock','AccessExclusiveLock') AND l.pid<>pg_backend_pid() GROUP BY 2,3` +
-	` UNION ALL SELECT 'grant',r.rolname,'',concat_ws(' ','connect='||has_database_privilege(r.oid,current_database(),'CONNECT'),'select='||count(t.oid)FILTER(WHERE has_table_privilege(r.oid,t.oid,'SELECT')),'insert='||count(t.oid)FILTER(WHERE has_table_privilege(r.oid,t.oid,'INSERT')),'update='||count(t.oid)FILTER(WHERE has_table_privilege(r.oid,t.oid,'UPDATE')),'delete='||count(t.oid)FILTER(WHERE has_table_privilege(r.oid,t.oid,'DELETE')))` +
-	` FROM pg_roles r LEFT JOIN pg_class t ON t.relkind IN('r','p') AND t.relnamespace IN(SELECT oid FROM pg_namespace WHERE nspname!~'^(pg_|information_schema)') WHERE r.rolcanlogin AND r.rolname!~'^pg_' GROUP BY r.oid,r.rolname)x ORDER BY 1,2,3`
+// postgresCatalog is the per-database catalog query. Rows are (kind, object,
+// name, value): locks that block writers first, then the tables with their
+// planner row estimate and their indexes, constraints and triggers with a
+// digest of each definition, and each login role's grant counts ("all" when
+// the role holds the privilege on every table, so a new table the role owns
+// or is granted by default changes nothing). When the
+// itemized tables and definitions exceed postgresCatalogItemBytesSQL, the query
+// prints one group digest per table group instead (catalog_group.go), so the
+// output stays bounded and complete on a schema of any size. A constraint
+// cloned onto a table from a partitioned parent (conparentid) is left out: the
+// parent's own constraint carries its definition, and the clones change
+// whenever the parent gains a partition.
+const postgresCatalog = `WITH s AS(SELECT c.oid,n.nspname||'.'||c.relname o,c.reltuples r FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind IN('r','p') AND n.nspname!~'^(pg_|information_schema)'),` +
+	`d AS(SELECT 'index' k,s.o,ic.relname m,concat_ws(' ',CASE WHEN i.indisprimary THEN 'primary' END,CASE WHEN i.indisunique THEN 'unique' END,CASE WHEN NOT i.indisvalid THEN 'invalid' END,left(md5(pg_get_indexdef(i.indexrelid)),8)) v FROM pg_index i JOIN pg_class ic ON ic.oid=i.indexrelid JOIN s ON s.oid=i.indrelid` +
+	` UNION ALL SELECT 'constraint',s.o,o.conname,concat_ws(' ',o.contype::text,CASE WHEN NOT o.convalidated THEN 'not-valid' END,left(md5(pg_get_constraintdef(o.oid)),8)) FROM pg_constraint o JOIN s ON s.oid=o.conrelid WHERE o.contype IN('c','f','x') AND o.conparentid=0` +
+	` UNION ALL SELECT 'trigger',s.o,g.tgname,'trigger '||g.tgenabled::text||' '||left(md5(pg_get_triggerdef(g.oid)),8) FROM pg_trigger g JOIN s ON s.oid=g.tgrelid WHERE NOT g.tgisinternal),` +
+	`tb AS(SELECT 'table' k,o,'' m,CASE WHEN r<0 THEN '?' ELSE r::bigint::text END v FROM s),` +
+	`z AS(SELECT coalesce(sum(length(k)+length(o)+length(m)+length(v)+4),0)<=` + postgresCatalogItemBytesSQL + ` f FROM(SELECT * FROM d UNION ALL SELECT * FROM tb)a)` +
+	`SELECT k,o,m,v FROM(SELECT 0 p,'lock' k,l.relation::regclass::text o,l.mode m,'held' v FROM pg_locks l WHERE l.database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND l.granted AND l.mode IN('ShareLock','ShareRowExclusiveLock','ExclusiveLock','AccessExclusiveLock') AND l.pid<>pg_backend_pid() GROUP BY 3,4` +
+	` UNION ALL SELECT 1,k,o,m,v FROM d,z WHERE f UNION ALL SELECT 1,k,o,m,v FROM tb,z WHERE f` +
+	` UNION ALL SELECT 1,'group',lpad(g::text,2,'0')||' '||left(md5(string_agg(o,',' ORDER BY o)),8),'',count(*)||' '||left(md5(string_agg(o||'='||coalesce(x,''),',' ORDER BY o)),8) FROM(SELECT s.o,get_byte(decode(md5(s.o),'hex'),0)%` + catalogGroups + ` g,y.x FROM s LEFT JOIN(SELECT o,string_agg(k||' '||m||' '||v,',' ORDER BY k,m) x FROM d GROUP BY o)y ON y.o=s.o)q,z WHERE NOT f GROUP BY g` +
+	` UNION ALL SELECT 1,'grant',r.rolname,'',concat_ws(' ','connect='||has_database_privilege(r.oid,current_database(),'CONNECT'),'select='||CASE count(t.oid)FILTER(WHERE has_table_privilege(r.oid,t.oid,'SELECT')) WHEN count(t.oid) THEN 'all' ELSE (count(t.oid)FILTER(WHERE has_table_privilege(r.oid,t.oid,'SELECT')))::text END,'insert='||CASE count(t.oid)FILTER(WHERE has_table_privilege(r.oid,t.oid,'INSERT')) WHEN count(t.oid) THEN 'all' ELSE (count(t.oid)FILTER(WHERE has_table_privilege(r.oid,t.oid,'INSERT')))::text END,'update='||CASE count(t.oid)FILTER(WHERE has_table_privilege(r.oid,t.oid,'UPDATE')) WHEN count(t.oid) THEN 'all' ELSE (count(t.oid)FILTER(WHERE has_table_privilege(r.oid,t.oid,'UPDATE')))::text END,'delete='||CASE count(t.oid)FILTER(WHERE has_table_privilege(r.oid,t.oid,'DELETE')) WHEN count(t.oid) THEN 'all' ELSE (count(t.oid)FILTER(WHERE has_table_privilege(r.oid,t.oid,'DELETE')))::text END)` +
+	` FROM pg_roles r LEFT JOIN pg_class t ON t.relkind IN('r','p') AND t.relnamespace IN(SELECT oid FROM pg_namespace WHERE nspname!~'^(pg_|information_schema)') WHERE r.rolcanlogin AND r.rolname!~'^pg_' GROUP BY r.oid,r.rolname)x ORDER BY p,k,o,m`
+
+// postgresCatalogItemBytesSQL bounds a database's itemized catalog in bytes;
+// above it the catalog is read as group digests.
+const (
+	postgresCatalogItemBytesSQL = "1500"
+)
 
 type postgresAdapter struct{}
 
@@ -270,16 +285,6 @@ func (postgresAdapter) Parse(stdout string) (Facts, error) {
 		if !ok {
 			continue
 		}
-		if len(lines) >= postgresCatalogRows {
-			// The script cuts each database's catalog at postgresCatalogRows
-			// rows with no marker: a full section is a partial read, and items
-			// at its edge come and go as the application adds objects (a new
-			// time partition shifts the window), so its kinds are unread.
-			for _, k := range postgresCatalogKinds {
-				unread[k] = true
-			}
-			continue
-		}
 		if len(lines) > 0 {
 			if class, refused := postgresRefusal(lines[0]); refused {
 				if class == "unreachable" {
@@ -306,6 +311,11 @@ func (postgresAdapter) Parse(stdout string) (Facts, error) {
 				items = append(items, Item{Kind: KindLock, Scope: db + "." + object, Name: item, Value: value})
 			case "grant":
 				items = append(items, Item{Kind: KindPrincipal, Scope: db, Name: object, Value: value})
+			case "group":
+				// A catalog read as group digests lists no table, index or
+				// trigger by itself; the digests stand for them.
+				items = append(items, catalogGroupItem(KindValidator, db, object, value))
+				unread[KindNamespace], unread[KindIndex] = true, true
 			default:
 				return Facts{}, malformed(name, line)
 			}

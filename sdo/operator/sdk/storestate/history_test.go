@@ -95,7 +95,7 @@ func TestNamespaceIsJudgedAgainstItsHealthyHistory(t *testing.T) {
 func TestTableMissingFromAHealthyReadingIsNotJudged(t *testing.T) {
 	tmp := "shop\tscratch\t50\n"
 	tmpIndex := "shop\tscratch\tPRIMARY\tunique 00aa11bb\n"
-	with := strings.Replace(strings.Replace(healthyMySQL, "== indexes\n", tmp+"== indexes\n", 1), "== locks", tmpIndex+"== locks", 1)
+	with := strings.Replace(healthyMySQL, "== tables\n", tmpIndex+"== tables\n", 1) + tmp
 	healthy := []string{with, healthyMySQL, with}
 	if got := promotedFindings(t, storestate.EngineMySQL, strings.Replace(with, "shop\titems\tPRIMARY\tunique b80bb774\n", "", 1), healthy...); ruleSet(got)[storestate.RuleCatalogChanged] != 1 {
 		t.Fatalf("an index dropped from a stable table: %+v", got)

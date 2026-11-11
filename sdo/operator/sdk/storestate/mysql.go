@@ -10,6 +10,9 @@ import (
 // the output budget with a "more" section.
 var mysqlSections = []string{"vars", "status", "role", "users"}
 
+// mysqlCatalogOrder is the order the read prints the catalog sections in.
+var mysqlCatalogOrder = []string{"locks", "mdl", "indexes", "tables"}
+
 // mysqlCatalogSections are the catalog sections and the kinds they show.
 var mysqlCatalogSections = map[string][]ItemKind{
 	"tables":  {KindNamespace},
@@ -32,8 +35,9 @@ var mysqlRowLimits = map[string]int{"users": 25, "indexes": 129, "mdl": 16}
 // mysqlScript runs the image's mysql (or mariadb) client against the store's
 // own port as the user the credential prelude found ($U, else root), with
 // the password ($P) in an option file on a here-document descriptor, never
-// in argv or output. Queries arrive as positional arguments. The catalog is
-// cut at the output budget with a "== more" marker.
+// in argv or output. Queries arrive as positional arguments. The catalog
+// sections follow in mysqlCatalogOrder, locks first so a large catalog never
+// hides them, cut at the output budget with a "== more" marker.
 const mysqlScript = `PORT=%d;DB=
 U=${U:-root};W=$(printf '%%s' "$P"|sed 's/[\\"]/\\&/g')
 c=mysql;command -v mysql >/dev/null 2>&1||c=mariadb
@@ -44,7 +48,7 @@ SDOEOF
 }
 r(){ o=$(q 'SHOW REPLICA STATUS');case "$o" in ERROR*1064*|ERROR*syntax*)o=$(q 'SHOW SLAVE STATUS');;esac;case "$o" in ERROR*|*"not found"*)printf '%%s\n' "$o"|head -n1;;'')echo primary;;*)echo replica;;esac;}
 h=$(echo '== vars';q "$1";echo '== status';q "$2";echo '== role';r;echo '== users';q "$3")
-printf '%%s\n' "$h";{ echo '== tables';q "$4";echo '== indexes';q "$5";echo '== locks';q "$6";echo '== mdl';q "$7";}|awk -v b=$((3900-${#h})) '{n+=length($0)+1;if(n>b){print "== more";exit}print}'
+printf '%%s\n' "$h";{ echo '== locks';q "$7";echo '== mdl';q "$8";echo '== indexes';q "$5$6";echo '== tables';q "$4";}|awk -v b=$((3900-${#h})) '{n+=length($0)+1;if(n>b){print "== more";exit}print}'
 `
 
 // mysqlQueries are the read's queries: settings, connection status, users
@@ -58,10 +62,19 @@ var mysqlQueries = []string{
 	`SHOW GLOBAL STATUS WHERE Variable_name IN('Threads_connected','Threads_running')`,
 	`SELECT u.user,u.host,IFNULL(DATE_FORMAT(u.password_last_changed,'%Y-%m-%dT%H:%i:%s'),'-'),CONCAT_WS(' ',IF(u.account_locked='Y','locked','unlocked'),IF(u.password_expired='Y','expired',NULL),CONCAT('global=',(SELECT COUNT(*) FROM information_schema.user_privileges p WHERE p.grantee=CONCAT('''',u.user,'''@''',u.host,''''))),CONCAT('schema=',(SELECT COUNT(*) FROM information_schema.schema_privileges p WHERE p.grantee=CONCAT('''',u.user,'''@''',u.host,''''))),CONCAT('table=',(SELECT COUNT(*) FROM information_schema.table_privileges p WHERE p.grantee=CONCAT('''',u.user,'''@''',u.host,'''')))) FROM mysql.user u WHERE u.user NOT LIKE 'mysql.%' ORDER BY 1,2 LIMIT 25`,
 	"SET SESSION group_concat_max_len=65536; SELECT IFNULL(GROUP_CONCAT(CONCAT('SELECT ',QUOTE(table_schema),',',QUOTE(table_name),',',IF(IFNULL(table_rows,0)>100000,QUOTE(CONCAT('~',table_rows)),CONCAT('COUNT(*) FROM `',REPLACE(table_schema,'`','``'),'`.`',REPLACE(table_name,'`','``'),'`'))) SEPARATOR ' UNION ALL '),'SELECT 1,1,1 FROM DUAL WHERE FALSE') INTO @sdo_q FROM (SELECT table_schema,table_name,table_rows FROM information_schema.tables WHERE table_type='BASE TABLE' AND table_schema NOT IN('mysql','information_schema','performance_schema','sys') ORDER BY 1,2 LIMIT 64) t; PREPARE sdo_s FROM @sdo_q; EXECUTE sdo_s; SELECT 'more','','' FROM information_schema.tables WHERE table_type='BASE TABLE' AND table_schema NOT IN('mysql','information_schema','performance_schema','sys') HAVING COUNT(*)>64",
-	`SELECT table_schema,table_name,index_name,CONCAT_WS(' ',IF(MAX(non_unique)=0,'unique',NULL),LEFT(MD5(GROUP_CONCAT(column_name ORDER BY seq_in_index)),8)) FROM information_schema.statistics WHERE table_schema NOT IN('mysql','information_schema','performance_schema','sys') GROUP BY 1,2,3 ORDER BY 1,2,3 LIMIT 129`,
+	mysqlIndexes,
 	`SELECT 'waiting',COUNT(*) FROM information_schema.processlist WHERE state LIKE 'Waiting for%lock%' UNION ALL SELECT 'trx-waiting',COUNT(*) FROM information_schema.innodb_trx WHERE trx_state='LOCK WAIT'`,
 	`SELECT object_type,IFNULL(object_schema,''),IFNULL(object_name,''),lock_type FROM performance_schema.metadata_locks WHERE lock_status='GRANTED' AND (object_type='GLOBAL' AND lock_type='SHARED' OR object_type='TABLE' AND lock_type IN('SHARED_NO_READ_WRITE','SHARED_READ_ONLY','SHARED_NO_WRITE','EXCLUSIVE')) GROUP BY 1,2,3,4 ORDER BY 1,2,3,4 LIMIT 16`,
 }
+
+// mysqlIndexes reads each index with a digest of its columns, or, on a
+// schema with more than mysqlIndexItems indexes, one group digest per table
+// group of each schema (catalog_group.go): rows (schema, table, index, value),
+// a group row with an empty table. It is passed split across two arguments.
+const mysqlIndexes = `SET SESSION group_concat_max_len=1048576; SELECT s,t,n,v FROM (SELECT table_schema s,table_name t,index_name n,CONCAT_WS(' ',IF(MAX(non_unique)=0,'unique',NULL),LEFT(MD5(GROUP_CONCAT(column_name ORDER BY seq_in_index)),8)) v FROM information_schema.statistics WHERE table_schema NOT IN('mysql','information_schema','performance_schema','sys') GROUP BY 1,2,3) a WHERE (SELECT COUNT(*) FROM (SELECT table_schema s,table_name t,index_name n,CONCAT_WS(' ',IF(MAX(non_unique)=0,'unique',NULL),LEFT(MD5(GROUP_CONCAT(column_name ORDER BY seq_in_index)),8)) v FROM information_schema.statistics WHERE table_schema NOT IN('mysql','information_schema','performance_schema','sys') GROUP BY 1,2,3) b)<=` + mysqlIndexItems + ` UNION ALL SELECT s,'',CONCAT(LPAD(g,2,'0'),' ',LEFT(MD5(GROUP_CONCAT(t ORDER BY t)),8)),CONCAT(COUNT(*),' ',LEFT(MD5(GROUP_CONCAT(CONCAT(t,'=',x) ORDER BY t)),8)) FROM (SELECT s,t,CONV(LEFT(MD5(CONCAT(s,'.',t)),2),16,10)%` + catalogGroups + ` g,GROUP_CONCAT(CONCAT(n,' ',v) ORDER BY n) x FROM (SELECT table_schema s,table_name t,index_name n,CONCAT_WS(' ',IF(MAX(non_unique)=0,'unique',NULL),LEFT(MD5(GROUP_CONCAT(column_name ORDER BY seq_in_index)),8)) v FROM information_schema.statistics WHERE table_schema NOT IN('mysql','information_schema','performance_schema','sys') GROUP BY 1,2,3) c GROUP BY s,t) d WHERE (SELECT COUNT(*) FROM (SELECT table_schema s,table_name t,index_name n,CONCAT_WS(' ',IF(MAX(non_unique)=0,'unique',NULL),LEFT(MD5(GROUP_CONCAT(column_name ORDER BY seq_in_index)),8)) v FROM information_schema.statistics WHERE table_schema NOT IN('mysql','information_schema','performance_schema','sys') GROUP BY 1,2,3) e)>` + mysqlIndexItems + ` GROUP BY s,g ORDER BY 1,2,3 LIMIT 129`
+
+// mysqlIndexItems is the most indexes the read lists one by one.
+const mysqlIndexItems = "32"
 
 type mysqlAdapter struct{}
 
@@ -71,6 +84,14 @@ func (mysqlAdapter) DefaultPort() int { return 3306 }
 func (mysqlAdapter) ReadCommand(e Endpoint) []string {
 	var args []string
 	for _, q := range mysqlQueries {
+		if q == mysqlIndexes {
+			parts := chunk(q, readChunkBytes)
+			if len(parts) > 2 {
+				panic("mysql index query exceeds two pod-read arguments")
+			}
+			args = append(args, append(parts, "")[:2]...)
+			continue
+		}
 		if len(q) > readChunkBytes {
 			panic("mysql read query exceeds the pod-read argument bound")
 		}
@@ -123,7 +144,7 @@ func (mysqlAdapter) Parse(stdout string) (Facts, error) {
 	var items []Item
 	unread := map[ItemKind]bool{}
 	answered := map[string]bool{}
-	all := append(append([]string{}, mysqlSections...), "tables", "indexes", "locks", "mdl")
+	all := append(append([]string{}, mysqlSections...), mysqlCatalogOrder...)
 	kindsOf := func(name string) []ItemKind {
 		if k, ok := mysqlSectionKinds[name]; ok {
 			return k
@@ -159,9 +180,14 @@ func (mysqlAdapter) Parse(stdout string) (Facts, error) {
 		answered[name] = true
 	}
 	if _, cut := sections["more"]; cut {
-		for _, kinds := range mysqlCatalogSections {
-			for _, k := range kinds {
-				unread[k] = true
+		// The budget ran out in the last catalog section printed; the ones
+		// before it are complete and the ones after it are absent (unread).
+		for i := len(mysqlCatalogOrder) - 1; i >= 0; i-- {
+			if _, ok := sections[mysqlCatalogOrder[i]]; ok {
+				for _, k := range mysqlCatalogSections[mysqlCatalogOrder[i]] {
+					unread[k] = true
+				}
+				break
 			}
 		}
 	}
@@ -240,6 +266,12 @@ func (mysqlAdapter) Parse(stdout string) (Facts, error) {
 			fields := strings.Split(line, "\t")
 			if len(fields) != 4 {
 				return Facts{}, malformed("indexes", line)
+			}
+			if fields[1] == "" {
+				// A group digest stands for the indexes of its tables.
+				items = append(items, catalogGroupItem(KindValidator, fields[0], fields[2], fields[3]))
+				unread[KindIndex] = true
+				continue
 			}
 			items = append(items, Item{Kind: KindIndex, Scope: fields[0] + "." + fields[1], Name: fields[2], Value: fields[3]})
 		}

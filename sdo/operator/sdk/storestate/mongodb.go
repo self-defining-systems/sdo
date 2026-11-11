@@ -39,8 +39,10 @@ $m "$@" 2>&1
 // command results and catalog metadata only: counts come from collection
 // metadata, users from usersInfo without credentials, validators as their
 // level, action and a digest of their text (never the text), connection
-// holders grouped by client address and state. Users stop at 16 and the catalog at the
-// output budget, each marked "more".
+// holders grouped by client address and state. Users stop at 16, marked
+// "more". A catalog larger than the output budget is read as one group digest
+// per collection group of each database (catalog_group.go) instead of being
+// cut; a group digest that still overflows is marked "more".
 const mongoRead = mongoValues + `var o=[],A=db.getSiblingDB("admin"),T="\t";
 function c(r){if(!r.ok){var e=Error(r.errmsg);e.codeName=r.codeName;throw e}return r}
 function s(n,f){var l=[];o.push("== "+n);try{f(l);o=o.concat(l)}catch(e){o.push("ERR "+(e.codeName||"-")+" "+String(e.message||e).split("\n")[0])}}
@@ -51,8 +53,9 @@ s("params",function(l){var g=c(A.runCommand({getParameter:1,notablescan:1,cursor
 s("locks",function(l){var r=c(A.runCommand({currentOp:1,waitingForLock:true}));l.push("fsync"+T+(r.fsyncLock?1:0),"waiting"+T+r.inprog.length)})
 s("holders",function(l){var n={},k=[];c(A.runCommand({currentOp:1,$all:true})).inprog.forEach(function(x){var p=String(x.client||"").replace(/:[0-9]+$/,"");if(!p||x.command&&x.command.currentOp)return;var q=p+T+(x.waitingForLock?"blocked":x.active?"active":x.transaction?"idle-in-transaction":"idle");if(!n[q]){n[q]=0;k.push(q)}n[q]++});k.sort(function(a,b){return n[b]-n[a]}).slice(0,12).forEach(function(q){l.push("holder"+T+q+T+n[q])})})
 s("users",function(l){var u=c(A.runCommand({usersInfo:{forAllDBs:true}})).users;u.slice(0,16).forEach(function(u){l.push("user"+T+u.db+T+u.user+T+u.roles.map(function(r){return r.role+"@"+r.db}).sort().join(","))});if(u.length>16)l.push("more")})
-s("catalog",function(l){c(A.runCommand({listDatabases:1,nameOnly:true})).databases.map(function(x){return x.name}).sort().forEach(function(n){if(n=="local"||n=="config")return;var d=db.getSiblingDB(n);l.push("db"+T+n+T+c(d.runCommand({profile:-1})).was);d.getCollectionInfos({type:"collection"}).sort(function(a,b){return a.name<b.name?-1:1}).forEach(function(i){if(i.name.indexOf("system.")==0)return;
-l.push("coll"+T+n+T+i.name+T+N(c(d.runCommand({count:i.name})).n)+T+VV(i));c(d.runCommand({listIndexes:i.name})).cursor.firstBatch.forEach(function(x){if(x.name=="_id_")return;l.push("index"+T+n+T+i.name+T+x.name+T+IV(x))})})});B(l,3800-o.join("\n").length)})
+s("catalog",function(l){var G=[];c(A.runCommand({listDatabases:1,nameOnly:true})).databases.map(function(x){return x.name}).sort().forEach(function(n){if(n=="local"||n=="config")return;var d=db.getSiblingDB(n),g={};G.push([n,g]);l.push("db"+T+n+T+c(d.runCommand({profile:-1})).was);d.getCollectionInfos({type:"collection"}).sort(function(a,b){return a.name<b.name?-1:1}).forEach(function(i){if(i.name.indexOf("system.")==0)return;
+var v=VV(i),k=parseInt(H(i.name).slice(0,2),16)%` + catalogGroups + `;l.push("coll"+T+n+T+i.name+T+N(c(d.runCommand({count:i.name})).n)+T+v);c(d.runCommand({listIndexes:i.name})).cursor.firstBatch.forEach(function(x){if(x.name=="_id_")return;l.push("index"+T+n+T+i.name+T+x.name+T+IV(x));v+=","+x.name+" "+IV(x)});(g[k]=g[k]||{n:[],v:[]}).n.push(i.name);g[k].v.push(i.name+"="+v)})});
+var b=3800-o.join("\n").length;if(l.join("\n").length>b){var D=l.filter(function(x){return x.indexOf("db"+T)==0});l.length=0;D.forEach(function(x){l.push(x)});G.forEach(function(e){for(var k in e[1])l.push("group"+T+e[0]+T+("0"+k).slice(-2)+" "+H(e[1][k].n.join(","))+T+e[1][k].n.length+" "+H(e[1][k].v.join(",")))})}B(l,b)})
 print(o.join("\n"))
 `
 
@@ -206,6 +209,11 @@ func (mongoAdapter) Parse(stdout string) (Facts, error) {
 				if fields[4] != "-" {
 					items = append(items, Item{Kind: KindValidator, Scope: fields[1], Name: fields[2], Value: fields[4]})
 				}
+			case fields[0] == "group" && len(fields) == 4:
+				// A group digest stands for its collections' counts,
+				// validators and indexes.
+				items = append(items, catalogGroupItem(KindIndex, fields[1], fields[2], fields[3]))
+				unread[KindNamespace], unread[KindValidator] = true, true
 			case fields[0] == "index" && len(fields) == 5:
 				items = append(items, Item{Kind: KindIndex, Scope: fields[1] + "." + fields[2], Name: fields[3], Value: fields[4]})
 			default:
