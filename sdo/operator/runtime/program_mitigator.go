@@ -134,7 +134,7 @@ func BuildMitigationPlan(ctx context.Context, p program.Mitigator, view program.
 			plan, err = detachExecutablePlan(plan, program.ReadFrom(observed))
 		}
 		if err == nil {
-			err = checkPlanScriptProvenance(ctx, p.Spec().ID, plan, origins)
+			err = checkPlanScriptProvenance(ctx, p.Spec().ID, plan, isolated, origins)
 		}
 		if err == nil {
 			plan, err = bindMitigationValues(plan, p.Spec(), bindings, isolated)

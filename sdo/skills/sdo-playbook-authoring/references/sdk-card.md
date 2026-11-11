@@ -105,7 +105,11 @@ Full [SDK](program-sdk.md).
 - `type ApplyObject struct{Ref sdk.ObjectRef; Object map[string]any; Mode string; Reason string}`: creates a missing object or merges desired fields into an existing object.
 - `type KubernetesRequest struct{Ref sdk.ObjectRef; Method string; Path string; Query map[string]string; ContentType string; Body []byte; Reason string}`: exposes the Kubernetes HTTP API.
 
+## App procedures (architecture map `procedures`)
+
+- `func RunProcedure(view ReadView, id string, params map[string]any) (Action, error)`: runs a procedure the application ships, from the accepted map.
+- `func ObserveProcedure(view ReadView, id string, params map[string]any) (int32, error)`: runs a check procedure as Diagnose evidence; 0 is a pass.
+
 ## Corpus receipt links
 
-- `type ScriptOriginReceipt struct{ScriptDigest string; ID string; IncidentID string; Success bool; StartedAt time.Time; CompletedAt time.Time; Resources []sdk.ObjectRef}`: is protected evidence of a learned step's original successful repair.
 - `func ScriptDigest(script string) string`: identifies exact script bytes; application inputs belong in Env.

@@ -56,6 +56,10 @@ const MaxScriptBytes = 64 << 10
 const MaxScriptOutputBytes = 64 << 10
 const MaxScriptTimeout = 5 * time.Minute
 const MongoDB = "mongodb"
+const ProcedureExitMarker = "sdo-procedure-exit"
+    ProcedureExitMarker is the last line a procedure script prints: the
+    procedure's exit code.
+
 
 VARIABLES
 
@@ -65,6 +69,11 @@ var ErrReplicaSetScaleRefused = errors.New("replicaset_scale_refused")
 
 
 FUNCTIONS
+
+func AcceptedProcedureScript(m AppMap, script string) bool
+    AcceptedProcedureScript reports whether script is exactly what RunProcedure
+    renders for a procedure of the accepted map, so that the map entry is its
+    authority.
 
 func AdmissionFailedCreate(set appsv1.ReplicaSet) []string
     AdmissionFailedCreate returns current admission failure messages only
@@ -153,6 +162,13 @@ func MergeObject(object map[string]any, ref sdk.ObjectRef, desired json.RawMessa
     MergeObject projects apply-style updates using the built-in keyed-list
     schema when available. Custom resources retain JSON merge semantics.
 
+func ObserveProcedure(view ReadView, id string, params map[string]any) (int32, error)
+    ObserveProcedure runs a check procedure as Diagnose evidence; 0 is a pass.
+    It runs the bound command in the declared container of one running
+    Pod of the component's workload (ready first, then by name) through
+    ReadView.Observe and returns the exit code. Only a check procedure is a
+    read.
+
 func ProjectPatch(object map[string]any, a PatchObject) (map[string]any, error)
     ProjectPatch is the shared atomic projection used by production and replay.
     Errors leave the input untouched. The API server still validates its schema.
@@ -209,49 +225,20 @@ func DataAction(action Action) Action
     DataAction returns a store action given by value or pointer as its value,
     or nil when action is not one.
 
-func StalledRolloutRelease(view RolloutView, deployment sdk.ObjectRef) []Action
-    StalledRolloutRelease releases a rollout the old revision blocks. The
-    replacement cannot get the place the old revision holds: a current-revision
-    Pod is Unschedulable, or its ReplicaSet cannot create Pods because the
-    namespace quota is exceeded. It is one RetireOldRevision for each old
-    revision that still keeps a replica, in name order, and nothing otherwise,
-    so a crashing, merely slow or misconfigured rollout never loses the revision
-    that still serves. SDO offers the same actions to the responder when it
-    hands off a stalled rollout.
+func RunProcedure(view ReadView, id string, params map[string]any) (Action, error)
+    RunProcedure runs a procedure the application ships, from the accepted map.
+    It binds and validates params against the procedure's typed parameters and
+    returns:
 
-type AdmissionWebhook = sdk.AdmissionWebhook
-    AdmissionWebhook is one webhook entry admitting Pods (sdk.AdmissionWebhook).
+      - for a procedure in a component, a RunScript that runs the bound command
+        in the declared container of one Pod of the component's workload and
+        exits with the command's exit code;
+      - for a Job procedure, a RunScript that deletes and re-creates the
+        live Job from its own template and waits for it to complete,
+        or CreateFromSource when the Job is no longer live.
 
-type AppComponent struct {
-	Name      string    `json:"name"`
-	Workload  string    `json:"workload"`
-	Services  []string  `json:"services,omitempty"`
-	HoldsData bool      `json:"holds_data"`
-	Data      *DataRole `json:"data,omitempty"`
-}
-    AppComponent is one component of the application map. Workload is
-    "Kind/name" in the application namespace.
-
-func (c AppComponent) WorkloadRef(namespace string) sdk.ObjectRef
-    WorkloadRef is the component's workload in namespace.
-
-type AppEdge struct {
-	From string `json:"from"`
-	To   string `json:"to"`
-}
-    AppEdge is one directed call between components.
-
-type AppMap struct {
-	Components []AppComponent `json:"components"`
-	Edges      []AppEdge      `json:"edges,omitempty"`
-	Procedures []Procedure    `json:"procedures,omitempty"`
-}
-    AppMap is the accepted application map, read-only: the components,
-    the workload each runs as, the data each holds, the calls between them and
-    the operations procedures the application ships. A program reads it through
-    ReadView.AppMap to resolve the store, cache or source to act on from a bound
-    object, instead of naming a component.
-
-func (m AppMap) Component(name string) (AppComponent, bool)
-    Component returns the component named name.
+    Both run through the RunScript executor (or the typed source path) with
+    the same budgets, timeouts, output capture and record/replay, and the run's
+    effect class is recorded on the attempt. The script's authority is the
+    accepted architecture entry, so it needs no original receipt.
 ```

@@ -312,7 +312,15 @@ records `ok`, `denied` or `unreachable` without reading data or any value. Progr
 workloads, data roles, `holds_data`, `derived_from`) and accepted data checks (`ReadView.DataChecks`,
 re-judged over frozen reads by `datacheck.Verdicts`), and `program.StoreTargetFor` resolves a store
 action's Pod and container from the map, so a program acts on the cache or source a bound object
-relates to without naming a component. A Diagnose verdict may state `CauseClass` and `Reach`; a
+relates to without naming a component. `program.RunProcedure(view, id, params)` runs a procedure the
+application ships (the map's `procedures`): it binds the typed parameters and returns a `RunScript`
+that runs the command in the declared container through `kubectl exec` on the component's workload,
+or re-creates a Job from its live template (a `CreateFromSource` when the Job is gone), so it shares
+the script executor's budgets, timeouts, output capture and record/replay. Its authority is the
+accepted map entry: `checkPlanScriptProvenance` accepts exactly the bytes `AcceptedProcedureScript`
+re-renders from the map, with no original receipt. Each attempt's action report records `procedure`
+(id, effect class, parameters); the class gates nothing. `program.ObserveProcedure` runs a `check`
+procedure through `ReadView.Observe` as Diagnose evidence (exit code; reads time out at 5 s). A Diagnose verdict may state `CauseClass` and `Reach`; a
 matched `out-of-reach` verdict from a Diagnose-only playbook, or a plan whose only action is
 `Escalate`, makes the automatic stage record an `escalated` attempt and an out-of-reach cause instead
 of repairing (`runtime/response_stage_escalation.go`). `ProposeSourceChange` writes nothing: the

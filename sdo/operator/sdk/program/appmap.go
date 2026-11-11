@@ -159,23 +159,10 @@ func StoreTargetFor(view ReadView, component string) (StoreTarget, error) {
 	if c.Data == nil {
 		return StoreTarget{}, fmt.Errorf("component %s declares no data role in the application map", component)
 	}
-	var pods []corev1.Pod
-	for _, pod := range view.Pods() {
-		if pod.Status.Phase == corev1.PodRunning && pod.DeletionTimestamp == nil &&
-			WorkloadOf(view, sdk.ObjectRef{Kind: "Pod", Namespace: pod.Namespace, Name: pod.Name}) == c.Workload {
-			pods = append(pods, pod)
-		}
+	pod, err := runningPod(view, c)
+	if err != nil {
+		return StoreTarget{}, err
 	}
-	if len(pods) == 0 {
-		return StoreTarget{}, fmt.Errorf("component %s has no running Pod", component)
-	}
-	sort.SliceStable(pods, func(i, j int) bool {
-		if ready(pods[i]) != ready(pods[j]) {
-			return ready(pods[i])
-		}
-		return pods[i].Name < pods[j].Name
-	})
-	pod := pods[0]
 	container, err := storeContainer(pod, c.Data.Engine)
 	if err != nil {
 		return StoreTarget{}, fmt.Errorf("component %s Pod %s: %w", component, pod.Name, err)

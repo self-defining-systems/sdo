@@ -27,6 +27,12 @@ remaining allowance; it belongs to a single fix.
 - Script fixes are learnable; unlinked bytes are refused as `script_unprovenanced`.
 - Learned preconditions are rechecked against live state before any write.
 
+## Application procedures
+
+The architecture's application map lists the procedures the application itself ships (`procedures`: admin tasks,
+self-checks, Jobs, each with where it runs, its command and an effect class). Prefer one of them over a hand-made
+change when it fits, and use a `check` one as evidence. Saved playbooks run them with `RunProcedure`.
+
 ## Playbook programs
 
 Programs use the current checkout, including shared libraries and new playbook IDs. Edits compile on demand;
