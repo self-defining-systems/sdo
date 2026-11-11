@@ -241,7 +241,8 @@ func TestRedisReadCommandIsBoundedAndValueFree(t *testing.T) {
 			t.Errorf("script contains %q", forbidden)
 		}
 	}
-	// The key-pattern scan only reads: SCAN is its one command.
+	// The key-pattern scan only reads key metadata: SCAN, and PTTL to leave
+	// expiring keys out.
 	lua := strings.Join(argv[5:], "")
 	for _, arg := range argv[5:] {
 		if len(arg) > 1024 {
@@ -253,7 +254,7 @@ func TestRedisReadCommandIsBoundedAndValueFree(t *testing.T) {
 		t.Fatal("the key-pattern scan calls nothing")
 	}
 	for _, call := range calls {
-		if call[2] != "SCAN" {
+		if call[2] != "SCAN" && call[2] != "PTTL" {
 			t.Errorf("the key-pattern scan calls %s", call[2])
 		}
 	}
