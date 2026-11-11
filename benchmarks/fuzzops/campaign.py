@@ -503,6 +503,13 @@ def main(argv: list[str] | None = None) -> int:
     ln.add_argument(
         "--evidence-dir", default="", help="the host directory of this lane's evidence sink run (<sink>/<run-id>)"
     )
+    ln.add_argument("--heal-cmd", default="", help="shell command restoring a broken app before a retried round")
+    ln.add_argument(
+        "--reflection-wait",
+        type=float,
+        default=REFLECTION_WAIT_S,
+        help="seconds a round waits for a queued reflection before it runs on the active memory",
+    )
     a = p.parse_args(argv)
     if a.cmd == "plan":
         pairs = instance_ids(json.loads(a.instances_file.read_text()))
