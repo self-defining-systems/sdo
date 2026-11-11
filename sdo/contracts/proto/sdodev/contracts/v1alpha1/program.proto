@@ -148,6 +148,9 @@ message PlanObjectEffect {
   bool irreversible = 6;
   // Read-only nonsecret evidence. Never replay or auto-recreate from it.
   google.protobuf.Struct deleted_pre_image = 7;
+  // Why the executor made this effect when the action did not name it, such as
+  // a Pod a restart deleted because its controller would not replace it.
+  string reason = 8;
 }
 
 message ReconcileFromSource {

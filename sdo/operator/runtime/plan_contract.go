@@ -48,7 +48,7 @@ func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 		application.Verification = &contracts.Verdict{Result: verdict}
 	}
 	for _, effect := range r.observedObjectEffects() {
-		encoded := &contracts.PlanObjectEffect{Operation: effect.Operation, Ref: planRefProto(effect.Ref), Uid: effect.UID, State: effect.State, Confirmed: effect.Confirmed, Irreversible: effect.Irreversible}
+		encoded := &contracts.PlanObjectEffect{Operation: effect.Operation, Ref: planRefProto(effect.Ref), Uid: effect.UID, State: effect.State, Confirmed: effect.Confirmed, Irreversible: effect.Irreversible, Reason: effect.Reason}
 		if effect.DeletedPreImage != nil {
 			object := effect.DeletedPreImage.DeepCopy().Object
 			sdk.ProjectWebhookCABundles(object)
@@ -107,7 +107,7 @@ func planApplicationState(application *contracts.PlanApplication) RecordedPlanAp
 		}
 	}
 	for _, effect := range application.GetObjectEffects() {
-		decoded := PlanObjectEffect{Operation: effect.GetOperation(), Ref: objectRefState(effect.GetRef()), UID: effect.GetUid(), State: effect.GetState(), Confirmed: effect.GetConfirmed(), Irreversible: effect.GetIrreversible()}
+		decoded := PlanObjectEffect{Operation: effect.GetOperation(), Ref: objectRefState(effect.GetRef()), UID: effect.GetUid(), State: effect.GetState(), Confirmed: effect.GetConfirmed(), Irreversible: effect.GetIrreversible(), Reason: effect.GetReason()}
 		if effect.GetDeletedPreImage() != nil {
 			decoded.DeletedPreImage = &unstructured.Unstructured{Object: effect.GetDeletedPreImage().AsMap()}
 		}

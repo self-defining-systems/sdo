@@ -375,6 +375,14 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 	if dryRun {
 		return result, nil
 	}
+	workloads := make(map[sdk.ObjectRef]*unstructured.Unstructured, len(result.PreImages))
+	for _, image := range result.PreImages {
+		workloads[image.Ref] = image.Object
+	}
+	stuckPods, err := e.stuckRestartPods(ctx, plan, workloads)
+	if err != nil {
+		return result, err
+	}
 	for index := 0; index < len(result.Patches); {
 		patch := &result.Patches[index]
 		count := patch.ActionCount
@@ -405,7 +413,9 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 	}
 	writesLanded = true
 	result.Applied = true
-
+	if err := e.replaceStuckPods(ctx, stuckPods, &result); err != nil {
+		return result, err
+	}
 	return result, nil
 }
 
