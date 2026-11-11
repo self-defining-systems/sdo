@@ -59,6 +59,7 @@ type Config struct {
 	ForceReflection                            bool
 	FrozenMemory                               bool
 	ExternalIncidents                          bool
+	WatchOnly                                  bool
 	LateFindings                               string
 	MaxResponseLoops                           int
 	HealthyBaseline                            bool
@@ -158,6 +159,12 @@ func (c Config) controlNamespace() string {
 func (c Config) validate() error {
 	if c.ExternalIncidents && !c.FrozenMemory {
 		return errors.New("external incidents require frozen memory")
+	}
+	if c.WatchOnly && !c.FrozenMemory {
+		return errors.New("watch-only requires frozen memory")
+	}
+	if c.WatchOnly && c.ExternalIncidents {
+		return errors.New("watch-only conflicts with external incidents")
 	}
 	if c.FrozenMemory && c.ForceReflection {
 		return errors.New("frozen memory conflicts with force reflection")
@@ -420,6 +427,9 @@ func controllerJob(c Config) *batchv1.Job {
 	args = append(args, "--reflection-guidance", reflectionGuidance(c))
 	if c.ExternalIncidents {
 		args = append(args, "--external-incidents")
+	}
+	if c.WatchOnly {
+		args = append(args, "--watch-only")
 	}
 	if c.FrozenMemory {
 		args = append(args, "--frozen-memory")

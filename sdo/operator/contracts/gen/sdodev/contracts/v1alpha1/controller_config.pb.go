@@ -146,6 +146,9 @@ type ControllerConfig struct {
 	DeploymentPolicy *DeploymentPolicy `protobuf:"bytes,115,opt,name=deployment_policy,json=deploymentPolicy,proto3" json:"deployment_policy,omitempty"`
 	// Disable detector admission/verification; accept external alerts only.
 	ExternalIncidents bool `protobuf:"varint,111,opt,name=external_incidents,json=externalIncidents,proto3" json:"external_incidents,omitempty"`
+	// Detect, open, verify and close incidents as usual, but never respond:
+	// no automatic stage, responder or reflection runs (requires frozen memory).
+	WatchOnly bool `protobuf:"varint,118,opt,name=watch_only,json=watchOnly,proto3" json:"watch_only,omitempty"`
 	// The trusted in-cluster build and apply identity the controller deploys
 	// with: the parent's upstream advances and the child's accepted responder
 	// source repairs. Absent means nothing can build an image.
@@ -638,6 +641,13 @@ func (x *ControllerConfig) GetExternalIncidents() bool {
 	return false
 }
 
+func (x *ControllerConfig) GetWatchOnly() bool {
+	if x != nil {
+		return x.WatchOnly
+	}
+	return false
+}
+
 func (x *ControllerConfig) GetDeployIdentity() *DeployIdentity {
 	if x != nil {
 		return x.DeployIdentity
@@ -951,7 +961,7 @@ var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDesc
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\x1a1sdodev/contracts/v1alpha1/deployment_source.proto\"\x87#\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\x1a1sdodev/contracts/v1alpha1/deployment_source.proto\"\xa6#\n" +
 	"\x10ControllerConfig\x12,\n" +
 	"\x12memory_host_binary\x18R \x01(\tR\x10memoryHostBinary\x12,\n" +
 	"\x12memory_host_digest\x18S \x01(\tR\x10memoryHostDigest\x12%\n" +
@@ -1023,7 +1033,9 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\rfrozen_memory\x18n \x01(\bR\ffrozenMemory\x12[\n" +
 	"\x12render_environment\x18q \x01(\v2,.sdodev.contracts.v1alpha1.RenderEnvironmentR\x11renderEnvironment\x12X\n" +
 	"\x11deployment_policy\x18s \x01(\v2+.sdodev.contracts.v1alpha1.DeploymentPolicyR\x10deploymentPolicy\x12-\n" +
-	"\x12external_incidents\x18o \x01(\bR\x11externalIncidents\x12R\n" +
+	"\x12external_incidents\x18o \x01(\bR\x11externalIncidents\x12\x1d\n" +
+	"\n" +
+	"watch_only\x18v \x01(\bR\twatchOnly\x12R\n" +
 	"\x0fdeploy_identity\x18r \x01(\v2).sdodev.contracts.v1alpha1.DeployIdentityR\x0edeployIdentity\x12<\n" +
 	"\x1atelemetry_environment_file\x18t \x01(\tR\x18telemetryEnvironmentFileB\x14\n" +
 	"\x12_synthetic_trafficB\x1a\n" +

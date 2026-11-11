@@ -113,6 +113,7 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 	boolFlag("--force-reflection", config.GetForceReflection())
 	boolFlag("--frozen-memory", config.GetFrozenMemory())
 	boolFlag("--external-incidents", config.GetExternalIncidents())
+	boolFlag("--watch-only", config.GetWatchOnly())
 	str("--maintenance-configmap", config.GetMaintenanceConfigmap())
 	dur("--maintenance-poll-interval", config.GetMaintenancePollInterval())
 	dur("--resume-sync-timeout", config.GetResumeSyncTimeout())

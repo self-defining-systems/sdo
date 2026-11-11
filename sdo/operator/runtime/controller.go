@@ -35,6 +35,10 @@ type Dispatcher interface {
 
 type ControllerConfig struct {
 	ExternalIncidentsOnly bool
+	// WatchOnly detects, opens, verifies and closes incidents as usual but never
+	// responds: the controller's dispatcher is replaced by one that idles until
+	// the incident ends, and no automatic stage is selected.
+	WatchOnly bool
 	// Telemetry is the launch revision's telemetry context; a memory swap
 	// replaces it with the new revision's (RemoteMemory.Telemetry).
 	Telemetry        *contracts.TelemetryContext
@@ -275,6 +279,13 @@ func NewController(
 	if config.ExternalIncidentsOnly {
 		detectors = nil
 		config.CodePath.Overrides.ResponseStages = []string{"agent"}
+	}
+	if config.WatchOnly {
+		if config.ExternalIncidentsOnly {
+			return nil, fmt.Errorf("watch-only conflicts with external incidents")
+		}
+		config.CodePath.Overrides.ResponseStages = []string{"agent"}
+		dispatcher = watchOnlyDispatcher{}
 	}
 	registry := config.CodePathRegistry
 	if registry == nil {

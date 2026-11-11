@@ -78,6 +78,15 @@ health assertion and currently requires frozen memory: evidence stays private an
 never grants learned trust or changes accepted source. Worker snapshots omit the
 detector catalog and detector tools report awaiting responder completion.
 
+Watch-only mode (`--watch-only`, `ControllerConfig.watch_only`, requires frozen
+memory and excludes external incidents) is the opposite measurement: detection,
+incident opening, independent verification and closure run unchanged, but
+`NewController` selects no automatic stage and replaces the dispatcher with one
+that starts no worker and returns only when the controller ends the response
+(verified health, or the response deadline). No responder dispatch is recorded and
+frozen memory skips reflection, so every incident's findings, detectors and
+open/close times are recorded with no agent run and no change to the cluster.
+
 The benchmark adapter alone sends the generic alert after injection and grades the
 cluster with its oracle after responder completion. Fault identity, injection metadata
 and oracle answers never enter the production alert or worker request.

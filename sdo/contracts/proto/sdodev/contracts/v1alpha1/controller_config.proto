@@ -177,6 +177,9 @@ message ControllerConfig {
   DeploymentPolicy deployment_policy = 115;
   // Disable detector admission/verification; accept external alerts only.
   bool external_incidents = 111;
+  // Detect, open, verify and close incidents as usual, but never respond:
+  // no automatic stage, responder or reflection runs (requires frozen memory).
+  bool watch_only = 118;
   // The trusted in-cluster build and apply identity the controller deploys
   // with: the parent's upstream advances and the child's accepted responder
   // source repairs. Absent means nothing can build an image.

@@ -113,6 +113,7 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, er
 	reflectionGuidance := flags.String("reflection-guidance", "baseline", "reflection guidance mode")
 	frozenMemory := flags.Bool("frozen-memory", false, "keep closure evidence private and disable learning")
 	externalIncidents := flags.Bool("external-incidents", false, "accept external alerts only; close on responder completion (requires frozen memory)")
+	watchOnly := flags.Bool("watch-only", false, "detect, open, verify and close incidents but never respond: no automatic stage, responder or reflection (requires frozen memory)")
 	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
 	healthyBaseline := flags.Bool("healthy-baseline", false, "validate incident detectors against recorded healthy snapshots")
 	telemetryEnvironment := flags.String("telemetry-environment", "", "telemetry environment document: the sources the operator provides, their credential directory and the pinning mode")
@@ -195,7 +196,7 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, er
 		ExitAfterClosure: *exitAfterClosure,
 		ScriptImage:      *scriptImage, ToolchainImage: *toolchainImage, AgentRegistrationDirectory: *registrations, ResponderAgentId: *responderID,
 		BrokerMode: *brokerMode, WorkerMountMode: *workerMountMode,
-		ResponderBackend: *backend, ResponderModel: *model, AgentEffort: *effort, LifecycleTimeout: lifecycleTimeoutProto(*lifecycleTimeout), Replay: *replay, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, FrozenMemory: *frozenMemory, ExternalIncidents: *externalIncidents, HealthyBaseline: *healthyBaseline, TelemetryEnvironmentFile: *telemetryEnvironment,
+		ResponderBackend: *backend, ResponderModel: *model, AgentEffort: *effort, LifecycleTimeout: lifecycleTimeoutProto(*lifecycleTimeout), Replay: *replay, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, FrozenMemory: *frozenMemory, ExternalIncidents: *externalIncidents, WatchOnly: *watchOnly, HealthyBaseline: *healthyBaseline, TelemetryEnvironmentFile: *telemetryEnvironment,
 	}
 	// The child deploys a responder's source repair with the identity the
 	// parent deploys upstream advances with.
