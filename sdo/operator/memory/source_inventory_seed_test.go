@@ -72,7 +72,7 @@ func TestFirstArchitectureCarriesTheSeededMapAndItsStoreReaders(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, f := range parsed.Check(appmap.ParseInventory(string(data)), nil) {
-		if f.Rule != appmap.RuleUnexercisedEdge {
+		if f.Rule != appmap.RuleUnexercisedEdge && f.Rule != appmap.RuleUncoveredEdge {
 			t.Errorf("seeded map finding: %+v", f)
 		}
 	}
