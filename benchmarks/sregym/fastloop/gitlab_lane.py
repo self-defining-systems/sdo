@@ -208,6 +208,7 @@ def lane_runtime_config(environment: Any, plan: dict[str, Any], *, registrations
     SDO follows the lane's upstream (``--source-kind git``) so a pushed release advances the accepted source.
     """
     from benchmarks.sregym.adapter import RuntimeConfig
+    from benchmarks.sregym.fastloop.dev import EVIDENCE_NODE_ROOT
 
     return RuntimeConfig(
         repository=environment.workspace,
@@ -229,6 +230,7 @@ def lane_runtime_config(environment: Any, plan: dict[str, Any], *, registrations
         source_kind="git",
         source_config=json.dumps(source_config(lane_upstream(environment))),
         agent_registrations=registrations.resolve() if registrations else None,
+        evidence_sink_host_path=EVIDENCE_NODE_ROOT if environment.evidence_root is not None else "",
     )
 
 
@@ -297,7 +299,7 @@ def reonboard(args: Any) -> int:
 def up(args: Any) -> int:
     """``fastloop up --app gitlab``: cluster, prerequisites, source workspace, SDO install with the provided source."""
     from benchmarks.sregym.fastloop import toy
-    from benchmarks.sregym.fastloop.dev import prepare_dev_mount
+    from benchmarks.sregym.fastloop.dev import prepare_dev_mount, prepare_evidence_root
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment, Images
     from benchmarks.sregym.fastloop.host_limits import HostLimits, NodeLimits, apply_node_limits
     from benchmarks.sregym.fastloop.toy_cni import CALICO_IMAGES, install_calico
@@ -321,7 +323,10 @@ def up(args: Any) -> int:
     started = time.monotonic()
     run_dir.mkdir(parents=True, exist_ok=True)
     worktree = args.dev_mount.resolve()
-    config = prepare_dev_mount(worktree, None, run_dir)
+    evidence_root = getattr(args, "evidence_root", None)
+    if evidence_root is not None:
+        evidence_root = prepare_evidence_root(evidence_root)
+    config = prepare_dev_mount(worktree, None, run_dir, evidence_root=evidence_root)
     kubeconfig = run_dir / "kubeconfig"
     subprocess.run(
         [
@@ -369,6 +374,7 @@ def up(args: Any) -> int:
         seed_commit=seed,
         dev_mount=worktree,
         images=images,
+        evidence_root=evidence_root,
         worker_env=host_limits.worker_env(),
     )
     env.baseline_path.write_text("{}\n", encoding="utf-8")

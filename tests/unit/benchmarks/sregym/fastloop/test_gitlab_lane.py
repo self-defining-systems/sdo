@@ -64,6 +64,7 @@ def test_runtime_config_installs_the_provided_source_without_manifest_paths(tmp_
         application=gitlab_lane.APPLICATION,
         images=SimpleNamespace(controller="controller:x", responder="responder:x"),
         cluster="fastloop-w0",
+        evidence_root=None,
     )
     plan = gitlab_lane.plan_from_workloads(_workloads())
     config = gitlab_lane.lane_runtime_config(environment, plan)
@@ -72,6 +73,25 @@ def test_runtime_config_installs_the_provided_source_without_manifest_paths(tmp_
     assert config.deployment_source == assemble.deployment_source()
     assert config.control_namespace == "gitlab-sdo"
     assert config.persistent
+
+
+def test_runtime_config_names_the_evidence_sink_only_for_a_lane_with_an_evidence_root(tmp_path: Path) -> None:
+    from benchmarks.sregym.fastloop.dev import EVIDENCE_NODE_ROOT
+
+    def environment(root: Path | None) -> SimpleNamespace:
+        return SimpleNamespace(
+            workspace=tmp_path,
+            namespace=gitlab_lane.NAMESPACE,
+            application=gitlab_lane.APPLICATION,
+            images=SimpleNamespace(controller="controller:x", responder="responder:x"),
+            cluster="fastloop-w0",
+            evidence_root=root,
+        )
+
+    plan = gitlab_lane.plan_from_workloads(_workloads())
+    assert gitlab_lane.lane_runtime_config(environment(None), plan).evidence_sink_host_path == ""
+    config = gitlab_lane.lane_runtime_config(environment(tmp_path / "evidence"), plan)
+    assert config.evidence_sink_host_path == EVIDENCE_NODE_ROOT
 
 
 def test_lane_policy_allows_the_chart_the_datastores_and_the_lane_registry() -> None:
@@ -96,6 +116,7 @@ def test_runtime_config_carries_the_lane_policy(tmp_path: Path) -> None:
         application=gitlab_lane.APPLICATION,
         images=SimpleNamespace(controller="controller:x", responder="responder:x"),
         cluster="fastloop-w0",
+        evidence_root=None,
     )
     config = gitlab_lane.lane_runtime_config(environment, gitlab_lane.plan_from_workloads(_workloads()))
     assert config.deployment_policy == gitlab_lane.deployment_policy()
@@ -183,6 +204,7 @@ def test_onboarding_hands_the_plan_to_the_native_lifecycle(monkeypatch: pytest.M
         application=gitlab_lane.APPLICATION,
         images=SimpleNamespace(controller="controller:x", responder="responder:x"),
         cluster="fastloop-w0",
+        evidence_root=None,
         kubeconfig=tmp_path / "kubeconfig",
         apply_operator_env=lambda environ: None,
     )

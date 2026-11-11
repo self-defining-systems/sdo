@@ -134,6 +134,7 @@ def test_the_lane_installs_sdo_following_its_own_upstream(tmp_path: Path) -> Non
         application=gitlab_lane.APPLICATION,
         images=SimpleNamespace(controller="controller:x", responder="responder:x"),
         cluster="fastloop-w0",
+        evidence_root=None,
     )
     config = gitlab_lane.lane_runtime_config(environment, {"plan": 1})
     assert config.source_kind == "git"
