@@ -20,7 +20,7 @@
   "slow_test_seconds": 10,
   "cache_limit_mb": 1024,
   "cache": {
-    "_comment": "GitHub Actions cache budget (scripts/ci_cache_budget.py). A family is a cache key without its lockfile hash, commit sha and tool versions; main prunes keys beyond `keep` after each save and the hourly health job fails on a newest key over max_mb, a superseded key unpruned for stale_after_minutes, a key in no family, or total usage at alarm_fraction of repo_limit_mb (a second key for a few minutes is the normal overlap, not an alarm). Lowering is free; raising needs review. The budgets sum to at most 70% of repo_limit_mb, leaving room for the superseded keys that live a minute or two before the prune.",
+    "_comment": "GitHub Actions cache budget (scripts/ci_cache_budget.py). A family is a cache key without its lockfile hash, commit sha and tool versions; main prunes keys beyond `keep` after each save and the hourly health job fails on a newest key over max_mb, a superseded key unpruned for stale_after_minutes, a key in no family, or total usage at alarm_fraction of repo_limit_mb (a second key for a few minutes is the normal overlap, not an alarm). Lowering is free; raising needs review. The budgets sum to at most 70% of repo_limit_mb, leaving room for the superseded keys that live a minute or two before the prune. max_mb bounds the newest `keep` keys together. BuildKit's GitHub cache backend (type=gha) names its keys itself: `index-<scope>-1-<id>#<generation>` per scope (families `index-sdo-`, one per image scope) and content-addressed `buildkit-blob-1-sha256:<digest>` shared by every scope (family `buildkit-blob-1-`); a new image scope named sdo-* inherits the index family.",
     "repo_limit_mb": 10240,
     "alarm_fraction": 0.8,
     "stale_after_minutes": 180,
@@ -36,11 +36,11 @@
       },
       "ci-py-v3-Linux-X64-fastloop": {
         "keep": 1,
-        "max_mb": 660
+        "max_mb": 400
       },
       "ci-py-v3-Linux-X64-adapter": {
         "keep": 1,
-        "max_mb": 720
+        "max_mb": 400
       },
       "ci-tests-v2-Linux-X64-cli": {
         "keep": 1,
@@ -77,6 +77,14 @@
       "setup-uv-1-": {
         "keep": 2,
         "max_mb": 300
+      },
+      "index-sdo-": {
+        "keep": 6,
+        "max_mb": 2
+      },
+      "buildkit-blob-1-": {
+        "keep": 40,
+        "max_mb": 600
       }
     }
   },

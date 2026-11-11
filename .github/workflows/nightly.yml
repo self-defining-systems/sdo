@@ -298,11 +298,11 @@ jobs:
           load: true
           set: |
             controller.cache-from=type=gha,scope=sdo-controller
-            controller.cache-to=type=gha,scope=sdo-controller,mode=max
+            controller.cache-to=type=gha,scope=sdo-controller,mode=min
             responder.cache-from=type=gha,scope=sdo-responder
-            responder.cache-to=type=gha,scope=sdo-responder,mode=max
+            responder.cache-to=type=gha,scope=sdo-responder,mode=min
             benchmark.cache-from=type=gha,scope=sdo-benchmark
-            benchmark.cache-to=type=gha,scope=sdo-benchmark,mode=max
+            benchmark.cache-to=type=gha,scope=sdo-benchmark,mode=min
       - name: Smoke and probe every affected image
         env:
           SDO_IMAGES: ${{ steps.image-inputs.outputs.images }}

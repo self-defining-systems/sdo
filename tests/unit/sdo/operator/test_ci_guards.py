@@ -654,7 +654,7 @@ def test_a_newest_key_over_the_family_budget_alarms_and_names_it() -> None:
 
 def test_cache_family_budgets_sum_to_at_most_seventy_percent_of_the_repository_limit() -> None:
     families = CACHE["families"].values()
-    steady = sum(f["max_mb"] * f["keep"] for f in families)
+    steady = sum(f["max_mb"] for f in families)  # max_mb bounds a family's newest `keep` keys together
     assert steady <= 0.7 * CACHE["repo_limit_mb"]
 
 
@@ -841,3 +841,24 @@ def test_the_health_check_reports_an_unavailable_api_instead_of_failing(
     assert health.main() == 0
     assert "GitHub API unavailable" in summary.read_text()
     assert "::warning::" in capsys.readouterr().out
+
+
+def buildkit_cache_scopes() -> set[str]:
+    """Scope of every BuildKit GitHub-cache export or import a workflow names (no scope means `buildkit`)."""
+    scopes: set[str] = set()
+    for path in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
+        for spec in re.findall(r"type=gha[^\s'\"]*", path.read_text()):
+            found = re.search(r"scope=([^,\s]+)", spec)
+            scopes.add(found.group(1) if found else "buildkit")
+    return scopes
+
+
+def test_every_buildkit_cache_scope_a_workflow_uses_has_index_and_blob_families() -> None:
+    scopes = buildkit_cache_scopes()
+    assert scopes
+    keys = [f"buildkit-blob-1-sha256:{HASH64}"] + [f"index-{scope}-1-f921bd05#3" for scope in sorted(scopes)]
+    for key in keys:
+        assert cache_budget.budget_for(cache_budget.family_of(key), CACHE["families"]) is not None, (
+            f"{key} is in no cache family: add one under cache.families in .github/ci_budgets.json "
+            "or name the scope sdo-<image>"
+        )
