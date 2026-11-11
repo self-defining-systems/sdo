@@ -20,7 +20,8 @@ declare every store edge with its protocol to make delay and loss on it visible.
   set of the probe's own data, `Each` for the shape of every returned member, `Contains` for text pages. A
   write-read iteration reads back the change it just made; re-applying the same write each iteration hides lost
   state. Log in as a test identity Setup created (`SaveCookie`, `WithHeader` placeholders), never with forged
-  credentials.
+  credentials; without self-service sign-up, name an application Secret key in `Credentials` (only the prober
+  reads it).
 - Send form bodies with `WithForm(params)` and JSON bodies with `WithJSON(template, params)`: each `{key}` in the
   template is filled from `params` or from an earlier step's `SaveJSON`, escaped for a JSON string; write `"{key}"`
   for a string and `{key}` for a number.

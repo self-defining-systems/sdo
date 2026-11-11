@@ -60,10 +60,10 @@ func main(){
  catalog,documents:=generated.TrafficCatalog(),generated.TrafficWorkloads
  if !*synthetic {catalog,documents=nil,nil}
  workloads,err:=prober.ParseWorkloads(documents);if err!=nil{log.Fatal(err)}
- engine,err:=prober.New(prober.Config{Namespace:*namespace,Catalog:catalog,Workloads:workloads,HostCPUStall:prober.HostCPUStall});if err!=nil{log.Fatal(err)}
+ reader,restConfig,err:=core.NewKubernetesClientAndConfig();if err!=nil{log.Fatal(err)}
+ engine,err:=prober.New(prober.Config{Namespace:*namespace,Catalog:catalog,Workloads:workloads,HostCPUStall:prober.HostCPUStall,Credentials:&hostio.SecretCredentials{Client:reader,Namespace:*namespace}});if err!=nil{log.Fatal(err)}
  trafficHost:=prober.NewHost(engine);defer trafficHost.Close()
  server.WithTraffic(trafficHost)
- reader,restConfig,err:=core.NewKubernetesClientAndConfig();if err!=nil{log.Fatal(err)}
  objects,err:=core.NewGenericCapture(*namespace);if err!=nil{log.Fatal(err)}
  server.WithObjects(objects,*protected)
  server.WithReadFactory(func(ctx context.Context,snapshot sdktest.Snapshot)(program.ReadView,error){return hostio.NewLiveReadView(ctx,snapshot,hostio.ReadBackends{Client:reader,Config:restConfig,ProtectedNamespace:*protected}),nil})

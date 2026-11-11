@@ -420,7 +420,7 @@ The controller is split by stability and privilege:
 | `sdo/operator/sdk/metrics/` | Optional metrics input: PromQL query declarations, frozen results, the threshold detector and the firing-alerts detector |
 | `sdo/operator/memory/mapseed/` | Deterministic application-map seed from the rendered accepted objects (Secrets never read): one component per workload, data roles by well-known store image (`holds_data` from the engine or persistent volumes), call edges from env values, args and imported or mounted ConfigMaps that name a Service address, entry candidates (exposed or uncalled Services with the workload's HTTP health probes), and one procedure per Job (re-created from its template, effect `long` until the designer corrects it). Every seeded role and edge carries evidence `manifest`. The first architecture commit carries it when there is no map, so an application deployed without source still gets data roles, Go's store readers and a starting map for the designer |
 | `sdo/operator/core/` | Detector execution, snapshot validation, finding emission, and playbook-path validation |
-| `sdo/operator/runtime/prober/` | Host-owned routing and traffic engine: continuous probes, bounded bursts, read-only primitives and stateless reachability rounds (no Kubernetes dependency) |
+| `sdo/operator/runtime/prober/` | Host-owned routing and traffic engine: continuous probes, bounded bursts, read-only primitives and stateless reachability rounds (no Kubernetes dependency). A scenario that must authenticate names a Secret key of the application namespace (`traffic.Credential`); the memory host passes `hostio.SecretCredentials` (a 30 s cached read, as the kubelet resolves a `secretKeyRef`), the engine puts the value in the iteration State only, never in the setup record, and redacts it from every sample; an unreadable key is an invalid sample, not a health signal |
 | `sdo/operator/memoryhost/` | Accepted detector/program/traffic execution, mirror barriers, candidate activation, leased retirement and crash recovery; the host never mutates. Each call carries the frozen scoped observation and pod-admission result in `MemoryObservation`; generic `Object`/`CaptureObjects` reads use the host's own discovery-backed reader, which refuses the SDO control namespace |
 | `sdo/operator/runtime/internal/lifecycleio/external_incident.go` | Kubernetes alert inbox edge; decodes generic typed alerts, without benchmark or health authority |
 | `sdo/operator/runtime/` (including `jitview/`) | Kubernetes cache, scheduler, finding state, batching, playbook coverage, responder jobs, incident-scoped program selection and loop, plan execution, broker effects, leader election, durable state, remote memory-host routing observations, and the Service reachability observer that derives dial targets from the snapshot |
@@ -589,7 +589,7 @@ and `--responder-namespace` keep their meaning for the runtime (which namespaces
 the responder may repair in, and creating the fault-backend namespaces) but add
 no separate grant. The read-only detector runner Pod keeps its own narrow Role.
 Credential hygiene is separate from RBAC: Secret contents never reach logs,
-prompts or memory.
+prompts or memory. The one reader of an application Secret value is the memory host's prober, for a probe scenario's declared `Credentials`; the value stays in that process.
 
 ## Controller/responder interaction
 
