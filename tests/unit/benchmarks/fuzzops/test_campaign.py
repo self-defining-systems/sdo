@@ -76,6 +76,9 @@ def test_instance_ids_use_the_ids_fuzzops_writes() -> None:
         (None, "no controller state yet"),
         ({"incident_open": True}, "incident open"),
         ({"pending_closure": {"request": {}}}, "closure pending"),
+        # A permanently failed closure stays in the state for evidence and never blocks the next incident.
+        ({"pending_closure": {"request": {}}, "closure_state": "CLOSURE_STATE_FAILED"}, ""),
+        ({"pendingClosure": {"request": {}}, "closureState": "CLOSURE_STATE_FAILED"}, ""),
         ({"queued_reflection_incident_ids": ["i"]}, "reflection queued"),
         ({"queuedReflectionsUnknown": True}, "reflection queue unknown"),
         ({"version": "sdo.controller/v1"}, ""),

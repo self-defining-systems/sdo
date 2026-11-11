@@ -154,12 +154,15 @@ def slug(text: str, limit: int = 70) -> str:
 
 
 def idle_reason(state: dict[str, Any] | None) -> str:
-    """Why SDO is not idle ("" when it is): an open incident, a closure in progress, or reflection still queued."""
+    """Why SDO is not idle ("" when it is): an open incident, a closure in progress (not one that failed for good),
+    or reflection still queued."""
     if state is None:
         return "no controller state yet"
     if state.get("incident_open") or state.get("incidentOpen"):
         return "incident open"
-    if state.get("pending_closure") or state.get("pendingClosure"):
+    failed = (state.get("closure_state") or state.get("closureState")) == "CLOSURE_STATE_FAILED"
+    # A permanently failed closure stays in the state as evidence and does not block the next incident.
+    if (state.get("pending_closure") or state.get("pendingClosure")) and not failed:
         return "closure pending"
     if state.get("queued_reflection_incident_ids") or state.get("queuedReflectionIncidentIds"):
         return "reflection queued"
