@@ -25,12 +25,15 @@ from benchmarks.fuzzops.table import (
     Row,
     auto_applied,
     build_rows,
+    churn_findings,
+    collect,
     false_alarms,
     lane_outcomes,
     outcome_cost,
     outcomes_in,
     ratios,
     reach_ok,
+    summary,
     toward_best,
 )
 
@@ -388,3 +391,91 @@ def test_a_column_on_an_unpriced_model_reports_tokens_and_no_cost(tmp_path: Path
     first, _ = build_rows("hotel", "v1", [lane], [])
     assert first.tokens_in == 1_000_000
     assert first.cost_usd is None
+
+
+def _churned_round(lane: Path) -> None:
+    """Round 0 (12:00-12:10): a node drain at 12:03 deletes a toolbox Pod; the fault is on gitlab-redis."""
+    rec_path = next((lane / "runs").glob("000-*/record.json"))
+    rec = json.loads(rec_path.read_text())
+    rec["lifecycle"].update({"window_end": "2026-01-01T12:10:00Z", "root_cause": {"component": "sts/gitlab-redis"}})
+    rec["churn"] = {
+        "events": [
+            {
+                "kind": "node-drain",
+                "target": "deploy/gitlab-toolbox",
+                "start": "2026-01-01T12:03:00Z",
+                "end": "2026-01-01T12:03:30Z",
+                "objects": ["pod/gitlab-toolbox-abc"],
+            }
+        ]
+    }
+    rec_path.write_text(json.dumps(rec))
+
+
+def _finding(detector: str, name: str) -> dict[str, Any]:
+    return {"detector_id": detector, "primary_resource": {"kind": "Pod", "name": name}}
+
+
+def test_churn_findings_count_absorbed_and_separate_findings_on_churned_objects(tmp_path: Path) -> None:
+    """The same churn counts the same whether its findings joined the open fault incident or opened their own."""
+    lane = _lane(tmp_path)
+    _churned_round(lane)
+    outcomes = lane / "memory" / ".sdo" / "outcomes"
+    for f in outcomes.glob("*.json"):
+        f.unlink()
+    absorbed = [_finding("workload-health", "gitlab-toolbox-abc"), _finding("store-state", "gitlab-redis")]
+    separate = [_finding("service-endpoints", "gitlab-toolbox-abc"), _finding("workload-health", "gitlab-toolbox-abc")]
+    for name, at, findings in (("fault", "12:01:00", absorbed), ("churn", "12:04:00", separate)):
+        (outcomes / f"{name}.json").write_text(
+            json.dumps({"incident_id": name, "timestamps": {"detected_at": f"2026-01-01T{at}Z"}, "findings": findings})
+        )
+    rec = json.loads(next((lane / "runs").glob("000-*/record.json")).read_text())
+    picked = [json.loads(f.read_text()) for f in sorted(outcomes.glob("*.json"))]
+    assert churn_findings(picked, rec) == 2  # (workload-health, toolbox Pod) once, (service-endpoints, toolbox Pod)
+    first = next(r for r in build_rows("gitlab", "v1", [lane], []) if r.round == "first")
+    assert first.churn_findings == 2
+
+
+def test_a_round_without_churn_has_no_churn_findings(tmp_path: Path) -> None:
+    lane = _lane(tmp_path)
+    rows = build_rows("gitlab", "v1", [lane], [])
+    assert {r.churn_findings for r in rows} == {None}
+
+
+def test_summary_compares_churn_findings_and_false_alarms_per_round(tmp_path: Path) -> None:
+    lane = _lane(tmp_path)
+    _churned_round(lane)
+    outcomes = lane / "memory" / ".sdo" / "outcomes"
+    for f in outcomes.glob("*.json"):
+        f.unlink()
+    (outcomes / "churn.json").write_text(
+        json.dumps(
+            {
+                "incident_id": "churn",
+                "timestamps": {"detected_at": "2026-01-01T12:04:00Z"},
+                "findings": [_finding("workload-health", "gitlab-toolbox-abc")],
+            }
+        )
+    )
+    rows = build_rows("gitlab", "v1", [lane], [])
+    alarms = false_alarms("gitlab", "v1", lane)
+    text = summary({"v1": rows}, alarms)
+    # 2 valid rounds, 1 with churn: 1 churn finding there and 1 false alarm after churn, per churned round
+    assert "| gitlab | v1 | 2 | 1 | 1 | 1 | 1 | 1 |" in text
+
+
+def test_a_lane_whose_invalid_round_ran_without_churn_stays_in_the_churn_column(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed inject records no churn; only valid rounds say whether the lane ran with churn."""
+    campaign = tmp_path / "campaign"
+    lane = _lane(campaign / "gitlab" / "lanes")
+    (lane / "lane.json").write_text(json.dumps({"app": "gitlab", "sdo_version": "v1abcdef0", "arm": "E"}))
+    _churned_round(lane)
+    rec_path = next((lane / "runs").glob("001-*/record.json"))
+    rec = json.loads(rec_path.read_text())
+    rec.update({"valid": False, "error": "inject: rollout status timed out"})
+    rec_path.write_text(json.dumps(rec))
+    monkeypatch.setattr("benchmarks.fuzzops.table.grade", lambda fuzzops, out, records: [])
+    by_column, _ = collect(campaign, tmp_path / "fuzzops")
+    assert list(by_column) == ["v1abcdef0-E-churn"]

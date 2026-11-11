@@ -70,6 +70,9 @@ class Row:
     reflection: str = ""
     reflection_cost_usd: float | None = 0.0
     incidents: list[str] = field(default_factory=list)
+    #: Distinct (detector, resource) findings on objects the round's background churn touched, whether they joined
+    #: the open fault incident or opened their own; None when the round ran without churn.
+    churn_findings: int | None = None
     note: str = ""
 
 
@@ -185,6 +188,28 @@ def fill_from_outcomes(row: Row, picked: list[dict[str, Any]], inject: datetime 
         row.closed_s = round((done - inject).total_seconds(), 1)
 
 
+def churn_findings(outcomes: list[dict[str, Any]], rec: dict[str, Any]) -> int | None:
+    """Findings caused by the round's background churn: distinct (detector, resource name) pairs, over every incident
+    of the round, whose primary resource is an object a churn action touched (the faulted component excluded).
+
+    A responder that closes the fault incident sooner turns churn findings that would have joined it into separate
+    incidents (counted as false alarms after churn); this count is the same either way, so columns compare fairly.
+    """
+    events = (rec.get("churn") or {}).get("events")
+    if rec.get("churn") is None:
+        return None
+    touched = {str(x).split("/")[-1] for ev in events or [] for x in ev.get("objects") or []}
+    root = str(((rec.get("lifecycle") or {}).get("root_cause") or {}).get("component") or "").split("/")[-1]
+    touched.discard(root)
+    seen = set()
+    for o in outcomes:
+        for f in o.get("findings") or []:
+            name = str((f.get("primary_resource") or {}).get("name") or "")
+            if name in touched:
+                seen.add((str(f.get("detector_id") or ""), name))
+    return len(seen)
+
+
 def reach_ok(expected: str, said: str) -> str:
     if not expected:
         return ""
@@ -281,6 +306,7 @@ def build_rows(app: str, version: str, lanes: list[Path], grades: list[dict[str,
                     targets,
                 )
                 fill_from_outcomes(row, picked, inject)
+                row.churn_findings = churn_findings(picked, rec)
             row.reach_ok = reach_ok(row.expected_reach, row.sdo_reach)
             rows.append(row)
     return rows
@@ -352,6 +378,7 @@ COLUMNS = [
     ("cause_class", "cause class"),
     ("diagnosed", "cause right"),
     ("reach_ok", "reach right"),
+    ("churn_findings", "churn findings"),
     ("tokens_in", "tokens in"),
     ("cost_usd", "cost $"),
     ("auto_applied", "auto-applied"),
@@ -480,7 +507,9 @@ def collect(campaign: Path, fuzzops: Path) -> tuple[dict[str, list[Row]], list[F
                 text = rec.read_text().strip()
                 if text and not rec.parent.name.endswith("-unhealthy"):
                     lines.append(json.dumps(json.loads(text)))
-            churn = sum(_churned(x) for x in lines) * 2 > len(lines) if lines else bool(meta.get("churn"))
+            # A round whose inject failed records no churn; the valid rounds say whether the lane ran with churn.
+            basis = [x for x in lines if json.loads(x).get("valid")] or lines
+            churn = sum(_churned(x) for x in basis) * 2 > len(basis) if basis else bool(meta.get("churn"))
             key = column_key(meta, churn)
             lanes_by.setdefault(key, []).append(lane)
             records_by.setdefault(key, []).extend(lines)
@@ -551,6 +580,29 @@ def summary(by_column: dict[str, list[Row]], alarms: list[FalseAlarm]) -> str:
                     f"{_fmt(cr[len(cr) // 2] if cr else None)} | {_rate(auto, len(rat))} | "
                     f"{_fmt(rt[len(rt) // 2] if rt else None)} |"
                 )
+    churn = [
+        "",
+        "### Churn findings per round (false alarms compared fairly)",
+        "",
+        "A faster close turns churn findings that would have joined the fault incident into their own incidents (false "
+        "alarms after churn); churn findings count them either way. Per round with churn.",
+        "",
+        "| app | column | rounds | rounds with churn | churn findings | per churned round | false alarms after churn "
+        "| per churned round |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for key in sorted(by_column):
+        for app in sorted({r.app for r in by_column[key]}):
+            valid = [r for r in by_column[key] if r.app == app and r.valid]
+            churned = [r for r in valid if r.churn_findings is not None]
+            found = sum(r.churn_findings or 0 for r in churned)
+            after = sum(a.after_churn for a in alarms if a.app == app and a.column == key)
+            n_churned = len(churned)
+            per_found = _fmt(found / n_churned) if n_churned else "-"
+            per_after = _fmt(after / n_churned) if n_churned else "-"
+            churn.append(
+                f"| {app} | {key} | {len(valid)} | {n_churned} | {found} | {per_found} | {after} | {per_after} |"
+            )
     fa = [
         "",
         "### False alarms (incidents while no fault was active)",
@@ -567,7 +619,7 @@ def summary(by_column: dict[str, list[Row]], alarms: list[FalseAlarm]) -> str:
         fa.append(f"| {app} | {col} | {det} | {between} | {churned} |")
     if not counts:
         fa.append("| - | - | none | 0 | 0 |")
-    return "\n".join(lines + rec_lines + fa) + "\n"
+    return "\n".join(lines + rec_lines + churn + fa) + "\n"
 
 
 def main(argv: list[str] | None = None) -> int:
