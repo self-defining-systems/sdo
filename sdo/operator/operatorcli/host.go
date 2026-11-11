@@ -221,7 +221,7 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 		return HostConfig{}, err
 	}
 	config := install.Config{
-		EvidenceSink: evidenceSink,
+		EvidenceSink:   evidenceSink,
 		BackendRecipes: telemetrysources.Recipes(), TelemetryProfile: telemetryProfile,
 		SourceKind: *sourceKind, SourceConfig: *sourceConfig, DeploymentPlan: compactPlan, DeploymentPolicy: deploymentPolicy,
 		CodePath:           selectedCodePath,

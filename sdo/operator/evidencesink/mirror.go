@@ -17,8 +17,8 @@ import (
 	"syscall"
 	"time"
 
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"google.golang.org/protobuf/encoding/protojson"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
 
 // Place maps one runtime evidence path (relative to .sdo-runtime) to its sink path, or reports false for a path
@@ -76,6 +76,8 @@ type Mirror struct {
 	stored  map[string]storedFile  // sink path -> stored content
 	sealed  map[string]string      // unit path -> last sealed digest
 	dirty   map[string]bool        // unit path -> content changed since its last seal
+	changed map[string]bool        // unit path -> content changed in the current pass
+	final   bool                   // the current pass is the last one: seal without waiting to settle
 }
 
 type ledgerUnit struct {
@@ -85,8 +87,20 @@ type ledgerUnit struct {
 }
 
 // Pass runs one mirror pass: read ledgers, copy changed evidence, then seal. Ledgers are read first so every file
-// written before the ledger state that triggers a seal is already copied when the seal is computed.
+// written before the ledger state that triggers a seal is already copied when the seal is computed. A unit is
+// sealed only in a pass that changed none of its files, so an incident whose ledger is still being updated after
+// acknowledgement (reflection) gets one seal when it settles, not one per update.
 func (m *Mirror) Pass() error {
+	return m.pass(false)
+}
+
+// FinalPass is the last pass before the mirror stops: every unit ready to seal is sealed, settled or not.
+func (m *Mirror) FinalPass() error {
+	return m.pass(true)
+}
+
+func (m *Mirror) pass(final bool) error {
+	m.final, m.changed = final, map[string]bool{}
 	if m.Sink == nil || m.Now == nil || !filepath.IsAbs(m.RuntimeRoot) {
 		return errors.New("evidence mirror requires a sink, a clock and an absolute runtime root")
 	}
@@ -251,6 +265,7 @@ func (m *Mirror) record(target string, stored Stored) {
 	if stored.Changed {
 		if unit := unitOf(target); unit != "" {
 			m.dirty[unit] = true
+			m.changed[unit] = true
 		}
 	}
 }
@@ -281,6 +296,9 @@ type sealDocument struct {
 // again only when the unit's content changed after its last seal.
 func (m *Mirror) seal(unit string, record Record) error {
 	if _, sealed := m.sealed[unit]; sealed && !m.dirty[unit] {
+		return nil
+	}
+	if m.changed[unit] && !m.final {
 		return nil
 	}
 	document := sealDocument{Schema: SealSchema, Path: unit, SealedAt: m.Now().UTC()}

@@ -163,7 +163,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 		return InstallExistingConfig{}, err
 	}
 	config := install.Config{
-		EvidenceSink: evidenceSink,
+		EvidenceSink:   evidenceSink,
 		BackendRecipes: telemetrysources.Recipes(), TelemetryProfile: telemetryProfile,
 		CodePath:  selectedCodePath,
 		Namespace: *namespace, ControlNamespace: *controlNamespace, Application: *application,
