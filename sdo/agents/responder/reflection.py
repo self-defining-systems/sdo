@@ -548,7 +548,9 @@ def memory_check_correction(check: ValidationResult, idempotency_key: str) -> Re
         "responder",
         "reflection_check_correction",
         part="reflection.instructions",
-        diagnostics=named_prompt("reflection.validation_feedback", feedback),
+        # The diagnostics are data of any length: over the budget they spill to a
+        # details file the prompt points at instead of failing the reflection.
+        diagnostics=named_prompt("reflection.validation_feedback", feedback, required=False),
     )
     return render_prompt(
         "responder",

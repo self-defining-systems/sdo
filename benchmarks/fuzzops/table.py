@@ -2,7 +2,7 @@
 
 Campaign layout (all under one sdo-exp directory)::
 
-    <campaign>/<app>/baseline/runs.jsonl          fuzzops suite: noop and best-fix runs (and screens) per instance
+    <campaign>/<app>/baseline*/runs.jsonl         fuzzops suites: noop and best-fix runs (and screens) per instance
     <campaign>/<app>/lanes/<lane>/lane.json       benchmarks.fuzzops.campaign lane metadata (sdo_version, plan)
     <campaign>/<app>/lanes/<lane>/runs/*/         record.json (fuzzops record), run.json (round, instance)
     <campaign>/<app>/lanes/<lane>/memory/.sdo/outcomes/*.json   SDO's accepted outcome records
@@ -342,8 +342,7 @@ def grade(fuzzops: Path, out: Path, records: list[str]) -> list[dict[str, Any]]:
 def collect(campaign: Path, fuzzops: Path) -> dict[str, list[Row]]:
     by_version: dict[str, list[Row]] = {}
     for app_dir in sorted(p for p in campaign.iterdir() if (p / "lanes").is_dir()):
-        baseline = app_dir / "baseline" / "runs.jsonl"
-        base = baseline.read_text().splitlines() if baseline.is_file() else []
+        base = [line for f in sorted(app_dir.glob("baseline*/runs.jsonl")) for line in f.read_text().splitlines()]
         lanes_by: dict[str, list[Path]] = {}
         for lane in sorted((app_dir / "lanes").iterdir()):
             meta = lane / "lane.json"

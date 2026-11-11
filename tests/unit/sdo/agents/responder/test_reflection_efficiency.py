@@ -1,5 +1,6 @@
 """Reflection keeps all accepted memory visible and reserves independent acceptance time."""
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -208,3 +209,18 @@ def test_reflection_sessions_show_all_memory_once_with_incident_entries_first(tm
     assert prompt.index('"id": "linked"') < prompt.index('"id": "unrelated-0"')
     assert "Inspect only incident-relevant memory" not in prompt
     assert len(snapshot.playbooks) == 46
+
+
+def test_memory_check_correction_fits_any_number_of_diagnostics(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rejected proposal with many diagnostics still yields a correction turn (it once failed the reflection)."""
+    monkeypatch.setenv("SDO_SESSION_DIR", str(tmp_path))
+    diagnostics = [
+        {"rule": "reflection.program-required", "path": f".sdo/playbooks/p{i}/mitigate.go", "message": "x" * 120}
+        for i in range(40)
+    ]
+    check = ValidationResult(1, False, json.dumps({"diagnostics": diagnostics}), "")
+    prompt = reflection.memory_check_correction(check, "reflection:toy-incident:outcome")
+    assert "memory check rejected your final proposal" in prompt
+    assert "reflection.program-required" in expand_context(prompt)
