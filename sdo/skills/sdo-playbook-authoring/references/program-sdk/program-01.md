@@ -22,6 +22,32 @@ const (
 )
     Values of Verdict.Reach.
 
+const (
+	// ProcedureCheck only reads: a self-check or status report.
+	ProcedureCheck = "check"
+	// ProcedureRepair is idempotent: running it again changes nothing more.
+	ProcedureRepair = "repair"
+	// ProcedureData changes application records.
+	ProcedureData = "data"
+	// ProcedureLong runs for a long time, such as a migration or a backup.
+	ProcedureLong = "long"
+)
+    Effect classes of an application procedure. The class is recorded on every
+    run; it never gates one.
+
+const (
+	ProcedureString = "string"
+	ProcedureInt    = "int"
+	ProcedureBool   = "bool"
+)
+    Parameter types of a procedure.
+
+const (
+	MaxProcedureArgs     = 32
+	MaxProcedureArgBytes = 1024
+)
+    Bounds of a procedure declaration and its bound command.
+
 const DefaultScriptTimeout = time.Minute
 const MaxAdmissionWebhooks = sdk.MaxAdmissionWebhooks
     MaxAdmissionWebhooks bounds one AdmissionWebhooksFor answer.
@@ -218,37 +244,14 @@ type AppEdge struct {
 type AppMap struct {
 	Components []AppComponent `json:"components"`
 	Edges      []AppEdge      `json:"edges,omitempty"`
+	Procedures []Procedure    `json:"procedures,omitempty"`
 }
     AppMap is the accepted application map, read-only: the components,
-    the workload each runs as, the data each holds and the calls between them.
-    A program reads it through ReadView.AppMap to resolve the store, cache or
-    source to act on from a bound object, instead of naming a component.
+    the workload each runs as, the data each holds, the calls between them and
+    the operations procedures the application ships. A program reads it through
+    ReadView.AppMap to resolve the store, cache or source to act on from a bound
+    object, instead of naming a component.
 
 func (m AppMap) Component(name string) (AppComponent, bool)
     Component returns the component named name.
-
-func (m AppMap) ComponentOf(view sdk.DetectionContext, ref sdk.ObjectRef) (AppComponent, bool)
-    ComponentOf returns the component whose workload owns ref: the workload
-    itself, or a Pod or ReplicaSet it controls, followed through the view's
-    controller references.
-
-func (m AppMap) Derived(source string) []AppComponent
-    Derived lists the derived components rebuilt from source, by name.
-
-func (m AppMap) Sources(derived string) []AppComponent
-    Sources lists the components derived is rebuilt from.
-
-type ApplyObject struct {
-	Ref    sdk.ObjectRef
-	Object map[string]any
-	Mode   string
-	Reason string
-}
-    ApplyObject creates a missing object or merges desired fields into
-    an existing object. Mode create refuses an existing object; replace
-    replaces its document. For server-side apply and field ownership,
-    use KubernetesRequest with the application/apply-patch+yaml content type and
-    fieldManager query parameter.
-
-func (a ApplyObject) Validate() error
 ```

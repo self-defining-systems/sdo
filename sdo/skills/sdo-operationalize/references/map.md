@@ -80,3 +80,29 @@ candidates above the map list exposed or uncalled Services with the workload's h
 drop components that are not part of the app, fix roles and edges, add the operations and probes. With source,
 confirm each entry against it. Without source, use the manifests, what you know of well-known software and the live
 application (routes, connections, logs): keep `manifest` or `observed` evidence and never claim `config`.
+
+## Procedures
+
+`procedures` (optional, after `probes`) lists the operations procedures the application itself ships: admin CLI
+tasks, self-checks, maintenance commands and Jobs its docs or source describe. Responders and playbooks reach for
+them before hand-made changes, and run a `check` one as diagnosis evidence.
+
+```yaml
+procedures:
+  - id: orders-check                  # unique logical ID
+    component: orders                 # runs in this component's workload
+    container: app                    # container of its Pods
+    command: [orders-admin, check, "--scope={{scope}}"]   # argv; {{name}} is a declared parameter
+    params:
+      - {name: scope, type: string, pattern: "[a-z]+", default: all}   # type string|int|bool; required: true
+    effect: check                     # check (read-only) | repair (idempotent) | data (changes records) | long
+    verify: exits 0 and prints no errors   # optional: how to tell it worked
+    timeout: 2m                       # optional, at most 5m
+    source: docs/operations.md        # file, doc or manifest object that declares it
+  - {id: orders-migrate, job: Job/orders-migrate, effect: data, source: "manifest Job/orders-migrate"}
+```
+
+A procedure runs in a component (`component`, `container`, `command`) or re-creates a Job of the inventory from its
+template (`job`, no command or params). Every placeholder names a declared parameter and every parameter appears in
+the command; a string value without `pattern` is one plain word. Go seeds each Job of the manifests with effect
+`long`: correct the class, and add the procedures only source and docs reveal.
