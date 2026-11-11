@@ -38,11 +38,20 @@ if TYPE_CHECKING:
 
 ROUNDS = ("first", "repeat", "variant")
 IDLE_TIMEOUT_S = 40 * 60.0
+REFLECTION_WAIT_S = 15 * 60.0
 MEMORY_PATHS = (".sdo/outcomes", ".sdo/playbooks")
 
 
 class CampaignError(RuntimeError):
     """A lane cannot go on (SDO never became idle, the plan is malformed)."""
+
+
+class SoftIdle(Exception):
+    """SDO has no open incident or closure, but a reflection stayed queued past the lane's patience."""
+
+    def __init__(self, why: str, waited: float) -> None:
+        super().__init__(why)
+        self.why, self.waited = why, waited
 
 
 @dataclass(frozen=True)
@@ -226,14 +235,22 @@ def wait_idle(
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
     log: Callable[[str], None] = print,
+    reflection_wait: float = REFLECTION_WAIT_S,
 ) -> float:
-    """Wait until SDO is idle twice in a row (one poll apart); returns the seconds waited."""
+    """Wait until SDO is idle twice in a row (one poll apart); returns the seconds waited.
+
+    A reflection still queued after ``reflection_wait`` (with no incident or closure open) no longer holds the next
+    round: the round runs on whatever memory is active, and the lane records that it did (``soft_idle``).
+    """
     start, last, calm = clock(), "", 0
     while True:
         try:
             why = idle_reason(read())
         except (subprocess.SubprocessError, json.JSONDecodeError, OSError) as exc:
             why = f"state read failed: {exc}"
+        if why.startswith("reflection") and clock() - start > reflection_wait:
+            log(f"proceeding although {why} after {reflection_wait:.0f}s")
+            raise SoftIdle(why, clock() - start)
         calm = calm + 1 if not why else 0
         if calm >= 2:
             return clock() - start
@@ -371,7 +388,11 @@ def run_lane(cfg: LaneConfig, log: Callable[[str], None] = print) -> int:
                 continue
             rc = 1
             for attempt in range(cfg.unhealthy_retries + 1):
-                waited = wait_idle(lambda: kube.state(cfg.control_namespace), log=log)
+                try:
+                    waited, soft = settle(kube, cfg.control_namespace, log)
+                except CampaignError as exc:
+                    log(f"{template} {round_}: skipped, {exc}")
+                    break
                 n += 1
                 run_dir = runs / f"{n:03d}-{slug(template, 40)}-{round_}"
                 run_dir.mkdir()
@@ -381,6 +402,7 @@ def run_lane(cfg: LaneConfig, log: Callable[[str], None] = print) -> int:
                     "instance": instance,
                     "attempt": attempt,
                     "idle_wait_s": round(waited),
+                    "soft_idle": soft,
                     "started": _now(),
                     "sdo_version": cfg.sdo_version,
                 }
@@ -405,7 +427,7 @@ def run_lane(cfg: LaneConfig, log: Callable[[str], None] = print) -> int:
             if rc != 0:
                 failures += 1
             try:
-                wait_idle(lambda: kube.state(cfg.control_namespace), log=log)
+                settle(kube, cfg.control_namespace, log)
                 kube.copy_memory(cfg.control_namespace, cfg.out / "memory")
             except CampaignError as exc:
                 log(f"{template} {round_}: {exc}")
@@ -413,6 +435,14 @@ def run_lane(cfg: LaneConfig, log: Callable[[str], None] = print) -> int:
     meta["ended"] = _now()
     (cfg.out / "lane.json").write_text(json.dumps(meta, indent=2) + "\n")
     return 1 if failures else 0
+
+
+def settle(kube: Kube, control_namespace: str, log: Callable[[str], None]) -> tuple[float, str]:
+    """Wait for SDO to be idle; (seconds waited, the reflection reason when the lane stopped waiting for it)."""
+    try:
+        return wait_idle(lambda: kube.state(control_namespace), log=log), ""
+    except SoftIdle as soft:
+        return soft.waited, soft.why
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
