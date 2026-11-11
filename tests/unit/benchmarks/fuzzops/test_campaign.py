@@ -24,6 +24,7 @@ from benchmarks.fuzzops.table import (
     Row,
     auto_applied,
     build_rows,
+    false_alarms,
     lane_outcomes,
     outcomes_in,
     ratios,
@@ -308,3 +309,23 @@ def test_lane_cli_builds_the_lane_config(tmp_path: Path, monkeypatch: pytest.Mon
     ]
     assert campaign.main(argv) == 0
     assert (seen[0].heal_cmd, seen[0].reflection_wait, seen[0].evidence_dir) == ("true", 60.0, "/e")
+
+
+def test_false_alarms_are_incidents_outside_every_fault_window(tmp_path: Path) -> None:
+    lane = _lane(tmp_path)  # rounds inject at 12:00 and 13:00, 600 s windows
+    for i, hour in ((0, 12), (1, 13)):
+        rec_path = next((lane / "runs").glob(f"00{i}-*/record.json"))
+        rec = json.loads(rec_path.read_text())
+        rec["lifecycle"]["window_end"] = f"2026-01-01T{hour}:10:00Z"
+        rec_path.write_text(json.dumps(rec))
+    (lane / "memory" / ".sdo" / "outcomes" / "x.json").write_text(
+        json.dumps(
+            {
+                "incident_id": "between",
+                "timestamps": {"detected_at": "2026-01-01T12:30:00Z"},
+                "findings": [{"detector_id": "traffic-probe-call"}],
+            }
+        )
+    )
+    (alarm,) = false_alarms("hotel", "v1", lane)
+    assert (alarm.incident, alarm.detectors, alarm.after_churn) == ("between", ["traffic-probe-call"], False)
