@@ -242,6 +242,9 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 		}
 		declared := flattenDriftPaths(source)
 		if live == nil || declaredFieldDifference(normalized, live, declared) {
+			// Keep observing until the declared difference is repaired; only then
+			// can a missing acceptance point be safely recorded.
+			unsettled = unsettled || !acceptanceRecordBound(live, source)
 			changes = append(changes, adoptionChange{ref: ref, change: ObjectChange{Old: normalized, New: live, Adoption: true}})
 			continue
 		}

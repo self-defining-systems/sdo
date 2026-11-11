@@ -51,6 +51,15 @@ func (c *Controller) processDrift(ctx context.Context, now time.Time, snapshot s
 		if object == nil {
 			object = change.Old
 		}
+		if change.New != nil {
+			// Lost records must restart adoption even when declaredSourceDiff
+			// can still admit the declared drift without additions provenance.
+			record, recorded := readAcceptanceRecord(change.New)
+			_, previouslyRecorded := readAcceptanceRecord(change.Old)
+			if previouslyRecorded && (!recorded || record.UID != string(change.New.GetUID())) {
+				c.adoptionNeeded = true
+			}
+		}
 		if object != nil {
 			ref := sdk.ObjectRef{APIVersion: object.GetAPIVersion(), Kind: object.GetKind(), Namespace: object.GetNamespace(), Name: object.GetName()}
 			if ref.Namespace != view.Namespace() && !driftRefAllowed(view, ref) {
