@@ -13,6 +13,7 @@ from benchmarks.fuzzops.table import (
     Row,
     auto_applied,
     build_rows,
+    lane_outcomes,
     outcomes_in,
     ratios,
     reach_ok,
@@ -202,3 +203,25 @@ def test_rows_without_a_record_are_kept_invalid(tmp_path: Path) -> None:
     rows = build_rows("hotel", "v1", [lane], [])
     assert isinstance(rows[0], Row)
     assert (rows[0].valid, rows[0].note) == (False, "no record")
+
+
+def test_lane_outcomes_prefer_the_evidence_sink_and_carry_reflection(tmp_path: Path) -> None:
+    lane, sink = tmp_path / "lane", tmp_path / "sink"
+    (lane / "memory" / ".sdo" / "outcomes").mkdir(parents=True)
+    (sink / "incidents" / "abc").mkdir(parents=True)
+    (lane / "lane.json").write_text(json.dumps({"evidence_dir": str(sink)}))
+    (lane / "memory" / ".sdo" / "outcomes" / "a.json").write_text(
+        json.dumps({"incident_id": "a", "classification": "x"})
+    )
+    (lane / "memory" / ".sdo" / "outcomes" / "b.json").write_text(json.dumps({"incident_id": "b"}))
+    (sink / "incidents" / "abc" / "ledger.json").write_text(
+        json.dumps(
+            {
+                "outcome_document": {"incident_id": "a", "classification": "success"},
+                "reflection_decision": {"learning_decision": "failed", "usage": {"input_tokens": "10"}},
+            }
+        )
+    )
+    got = {o["incident_id"]: o for o in lane_outcomes(lane)}
+    assert set(got) == {"a", "b"}
+    assert (got["a"]["classification"], got["a"]["_reflection_decision"]) == ("success", "failed")

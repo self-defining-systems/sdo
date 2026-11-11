@@ -65,6 +65,8 @@ class Row:
     tokens_out: int = 0
     cost_usd: float = 0.0
     auto_applied: str = ""
+    reflection: str = ""
+    reflection_cost_usd: float = 0.0
     incidents: list[str] = field(default_factory=list)
     note: str = ""
 
@@ -154,6 +156,8 @@ def fill_from_outcomes(row: Row, picked: list[dict[str, Any]], inject: datetime 
         row.tokens_cached += tc
         row.tokens_out += tout
         row.cost_usd = round(row.cost_usd + cost, 4)
+    row.reflection = str(first.get("_reflection_decision") or "")
+    row.reflection_cost_usd = outcome_cost(first.get("_reflection_usage") or {})[3]
     row.classification = str(first.get("classification") or "")
     causes = first.get("confirmed_root_causes") or []
     row.cause_class = ",".join(sorted({str(c.get("cause_class") or "") for c in causes} - {""}))
@@ -172,11 +176,41 @@ def reach_ok(expected: str, said: str) -> str:
     return "yes" if expected in said.split(",") else "no"
 
 
+def lane_outcomes(lane: Path) -> list[dict[str, Any]]:
+    """The lane's outcome records: the evidence sink's incident ledgers when the lane had a sink (they also carry
+    reflection usage), and the accepted memory copy for incidents the sink does not hold."""
+    by_id: dict[str, dict[str, Any]] = {}
+    meta = _read(lane / "lane.json") or {}
+    sink = Path(meta["evidence_dir"]) if meta.get("evidence_dir") else None
+    if sink is not None and (sink / "incidents").is_dir():
+        for ledger_path in sorted((sink / "incidents").glob("*/ledger.json")):
+            ledger = _read(ledger_path) or {}
+            doc = ledger.get("outcome_document")
+            if isinstance(doc, dict) and doc.get("incident_id"):
+                doc = dict(doc)
+                doc["_reflection_usage"] = (ledger.get("reflection_decision") or {}).get("usage") or {}
+                doc["_reflection_decision"] = (ledger.get("reflection_decision") or {}).get("learning_decision", "")
+                by_id[doc["incident_id"]] = doc
+    for p in sorted((lane / "memory" / ".sdo" / "outcomes").glob("*.json")):
+        doc = _read(p)
+        if doc and doc.get("incident_id") and doc["incident_id"] not in by_id:
+            by_id[doc["incident_id"]] = doc
+    return list(by_id.values())
+
+
+def _read(path: Path) -> dict[str, Any] | None:
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def build_rows(app: str, version: str, lanes: list[Path], grades: list[dict[str, Any]]) -> list[Row]:
     cells = {(c["Fault"], c["Operator"]): c for c in grades}
     rows = []
     for lane in lanes:
-        outcomes = [json.loads(p.read_text()) for p in sorted((lane / "memory" / ".sdo" / "outcomes").glob("*.json"))]
+        outcomes = lane_outcomes(lane)
         for run_dir in sorted((lane / "runs").iterdir()):
             info_path, rec_path = run_dir / "run.json", run_dir / "record.json"
             if not info_path.is_file() or run_dir.name.endswith("-unhealthy"):
@@ -298,6 +332,8 @@ COLUMNS = [
     ("tokens_in", "tokens in"),
     ("cost_usd", "cost $"),
     ("auto_applied", "auto-applied"),
+    ("reflection", "learned"),
+    ("reflection_cost_usd", "reflection $"),
     ("note", "note"),
 ]
 
