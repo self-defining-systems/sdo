@@ -81,6 +81,8 @@ func encodePersistedActions(actions []program.Action) ([]persistedAction, error)
 		switch action.(type) {
 		case program.SyncWebhookCA, *program.SyncWebhookCA:
 			kind = "sync_webhook_ca"
+		case program.RestoreSecretFromSource, *program.RestoreSecretFromSource:
+			kind = "restore_secret_from_source"
 		case program.PatchObject, *program.PatchObject:
 			kind = "patch_object"
 		case program.ApplyObject, *program.ApplyObject:
@@ -171,6 +173,8 @@ func decodePersistedActions(encoded []persistedAction) ([]program.Action, error)
 			action = &program.KubernetesRequest{}
 		case "sync_webhook_ca":
 			action = &program.SyncWebhookCA{}
+		case "restore_secret_from_source":
+			action = &program.RestoreSecretFromSource{}
 		case "wait_for":
 			action = &program.WaitFor{}
 		case "ensure_exec":
@@ -235,6 +239,8 @@ func decodePersistedActions(encoded []persistedAction) ([]program.Action, error)
 		}
 		switch value := action.(type) {
 		case *program.SyncWebhookCA:
+			decoded = append(decoded, *value)
+		case *program.RestoreSecretFromSource:
 			decoded = append(decoded, *value)
 		case *program.PatchObject:
 			decoded = append(decoded, *value)

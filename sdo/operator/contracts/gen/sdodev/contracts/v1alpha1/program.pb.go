@@ -239,7 +239,7 @@ func (x RecoveryWait_ExitReason) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use RecoveryWait_ExitReason.Descriptor instead.
 func (RecoveryWait_ExitReason) EnumDescriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{30, 0}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{32, 0}
 }
 
 type ProgramSpec struct {
@@ -661,6 +661,7 @@ type Action struct {
 	//	*Action_CheckStoreCredential
 	//	*Action_Escalate
 	//	*Action_ProposeSourceChange
+	//	*Action_RestoreSecretFromSource
 	Kind          isAction_Kind `protobuf_oneof:"kind"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -973,6 +974,15 @@ func (x *Action) GetProposeSourceChange() *ProposeSourceChange {
 	return nil
 }
 
+func (x *Action) GetRestoreSecretFromSource() *RestoreSecretFromSource {
+	if x != nil {
+		if x, ok := x.Kind.(*Action_RestoreSecretFromSource); ok {
+			return x.RestoreSecretFromSource
+		}
+	}
+	return nil
+}
+
 type isAction_Kind interface {
 	isAction_Kind()
 }
@@ -1097,6 +1107,10 @@ type Action_ProposeSourceChange struct {
 	ProposeSourceChange *ProposeSourceChange `protobuf:"bytes,30,opt,name=propose_source_change,json=proposeSourceChange,proto3,oneof"`
 }
 
+type Action_RestoreSecretFromSource struct {
+	RestoreSecretFromSource *RestoreSecretFromSource `protobuf:"bytes,31,opt,name=restore_secret_from_source,json=restoreSecretFromSource,proto3,oneof"`
+}
+
 func (*Action_ReconcileFromSource) isAction_Kind() {}
 
 func (*Action_Rollback) isAction_Kind() {}
@@ -1157,6 +1171,64 @@ func (*Action_Escalate) isAction_Kind() {}
 
 func (*Action_ProposeSourceChange) isAction_Kind() {}
 
+func (*Action_RestoreSecretFromSource) isAction_Kind() {}
+
+// Restores a Secret's data to the literal data the accepted source declares
+// (data/stringData in a rendered manifest), creating the Secret when it is
+// absent. Go resolves and writes the values; none crosses the runtime boundary.
+// Refused when source does not declare the Secret with literal data.
+type RestoreSecretFromSource struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ref           *ObjectRef             `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
+	Reason        string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RestoreSecretFromSource) Reset() {
+	*x = RestoreSecretFromSource{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RestoreSecretFromSource) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RestoreSecretFromSource) ProtoMessage() {}
+
+func (x *RestoreSecretFromSource) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RestoreSecretFromSource.ProtoReflect.Descriptor instead.
+func (*RestoreSecretFromSource) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *RestoreSecretFromSource) GetRef() *ObjectRef {
+	if x != nil {
+		return x.Ref
+	}
+	return nil
+}
+
+func (x *RestoreSecretFromSource) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
 // Closes the incident as escalated without a write: the diagnosed cause is out
 // of reach of the application namespace. The only action of its plan.
 type Escalate struct {
@@ -1169,7 +1241,7 @@ type Escalate struct {
 
 func (x *Escalate) Reset() {
 	*x = Escalate{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[7]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1181,7 +1253,7 @@ func (x *Escalate) String() string {
 func (*Escalate) ProtoMessage() {}
 
 func (x *Escalate) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[7]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1194,7 +1266,7 @@ func (x *Escalate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Escalate.ProtoReflect.Descriptor instead.
 func (*Escalate) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{7}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *Escalate) GetReason() string {
@@ -1225,7 +1297,7 @@ type ProposeSourceChange struct {
 
 func (x *ProposeSourceChange) Reset() {
 	*x = ProposeSourceChange{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[8]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1237,7 +1309,7 @@ func (x *ProposeSourceChange) String() string {
 func (*ProposeSourceChange) ProtoMessage() {}
 
 func (x *ProposeSourceChange) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[8]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1250,7 +1322,7 @@ func (x *ProposeSourceChange) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProposeSourceChange.ProtoReflect.Descriptor instead.
 func (*ProposeSourceChange) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{8}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ProposeSourceChange) GetRef() *ObjectRef {
@@ -1291,7 +1363,7 @@ type CreateFromSource struct {
 
 func (x *CreateFromSource) Reset() {
 	*x = CreateFromSource{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[9]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1303,7 +1375,7 @@ func (x *CreateFromSource) String() string {
 func (*CreateFromSource) ProtoMessage() {}
 
 func (x *CreateFromSource) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[9]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1316,7 +1388,7 @@ func (x *CreateFromSource) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateFromSource.ProtoReflect.Descriptor instead.
 func (*CreateFromSource) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{9}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *CreateFromSource) GetRef() *ObjectRef {
@@ -1344,7 +1416,7 @@ type DeleteObject struct {
 
 func (x *DeleteObject) Reset() {
 	*x = DeleteObject{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[10]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1356,7 +1428,7 @@ func (x *DeleteObject) String() string {
 func (*DeleteObject) ProtoMessage() {}
 
 func (x *DeleteObject) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[10]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1369,7 +1441,7 @@ func (x *DeleteObject) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteObject.ProtoReflect.Descriptor instead.
 func (*DeleteObject) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{10}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *DeleteObject) GetRef() *ObjectRef {
@@ -1405,7 +1477,7 @@ type PlanObjectEffect struct {
 
 func (x *PlanObjectEffect) Reset() {
 	*x = PlanObjectEffect{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[11]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1417,7 +1489,7 @@ func (x *PlanObjectEffect) String() string {
 func (*PlanObjectEffect) ProtoMessage() {}
 
 func (x *PlanObjectEffect) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[11]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1430,7 +1502,7 @@ func (x *PlanObjectEffect) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlanObjectEffect.ProtoReflect.Descriptor instead.
 func (*PlanObjectEffect) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{11}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *PlanObjectEffect) GetOperation() string {
@@ -1498,7 +1570,7 @@ type ReconcileFromSource struct {
 
 func (x *ReconcileFromSource) Reset() {
 	*x = ReconcileFromSource{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[12]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1510,7 +1582,7 @@ func (x *ReconcileFromSource) String() string {
 func (*ReconcileFromSource) ProtoMessage() {}
 
 func (x *ReconcileFromSource) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[12]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1523,7 +1595,7 @@ func (x *ReconcileFromSource) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReconcileFromSource.ProtoReflect.Descriptor instead.
 func (*ReconcileFromSource) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{12}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ReconcileFromSource) GetRef() *ObjectRef {
@@ -1543,7 +1615,7 @@ type Rollback struct {
 
 func (x *Rollback) Reset() {
 	*x = Rollback{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[13]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1555,7 +1627,7 @@ func (x *Rollback) String() string {
 func (*Rollback) ProtoMessage() {}
 
 func (x *Rollback) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[13]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1568,7 +1640,7 @@ func (x *Rollback) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Rollback.ProtoReflect.Descriptor instead.
 func (*Rollback) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{13}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *Rollback) GetRef() *ObjectRef {
@@ -1599,7 +1671,7 @@ type SetField struct {
 
 func (x *SetField) Reset() {
 	*x = SetField{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[14]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1611,7 +1683,7 @@ func (x *SetField) String() string {
 func (*SetField) ProtoMessage() {}
 
 func (x *SetField) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[14]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1624,7 +1696,7 @@ func (x *SetField) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetField.ProtoReflect.Descriptor instead.
 func (*SetField) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{14}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *SetField) GetRef() *ObjectRef {
@@ -1684,7 +1756,7 @@ type PlanValue struct {
 
 func (x *PlanValue) Reset() {
 	*x = PlanValue{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[15]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1696,7 +1768,7 @@ func (x *PlanValue) String() string {
 func (*PlanValue) ProtoMessage() {}
 
 func (x *PlanValue) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[15]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1709,7 +1781,7 @@ func (x *PlanValue) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlanValue.ProtoReflect.Descriptor instead.
 func (*PlanValue) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{15}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *PlanValue) GetOrigin() isPlanValue_Origin {
@@ -1778,7 +1850,7 @@ type ValueField struct {
 
 func (x *ValueField) Reset() {
 	*x = ValueField{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[16]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1790,7 +1862,7 @@ func (x *ValueField) String() string {
 func (*ValueField) ProtoMessage() {}
 
 func (x *ValueField) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[16]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1803,7 +1875,7 @@ func (x *ValueField) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ValueField.ProtoReflect.Descriptor instead.
 func (*ValueField) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{16}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *ValueField) GetRef() *ObjectRef {
@@ -1834,7 +1906,7 @@ type ValueProvenance struct {
 
 func (x *ValueProvenance) Reset() {
 	*x = ValueProvenance{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[17]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1846,7 +1918,7 @@ func (x *ValueProvenance) String() string {
 func (*ValueProvenance) ProtoMessage() {}
 
 func (x *ValueProvenance) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[17]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1859,7 +1931,7 @@ func (x *ValueProvenance) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ValueProvenance.ProtoReflect.Descriptor instead.
 func (*ValueProvenance) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{17}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ValueProvenance) GetOrigin() string {
@@ -1920,15 +1992,16 @@ type ActionReport struct {
 	ScriptResultJson     []byte                 `protobuf:"bytes,10,opt,name=script_result_json,json=scriptResultJson,proto3" json:"script_result_json,omitempty"`
 	SourceReconcile      *SourceReconcileResult `protobuf:"bytes,12,opt,name=source_reconcile,json=sourceReconcile,proto3" json:"source_reconcile,omitempty"`
 	// A ProposeSourceChange with its value resolved: {ref, path, value, reason}.
-	SourceChangeJson []byte `protobuf:"bytes,13,opt,name=source_change_json,json=sourceChangeJson,proto3" json:"source_change_json,omitempty"`
-	FailureReason    string `protobuf:"bytes,9,opt,name=failure_reason,json=failureReason,proto3" json:"failure_reason,omitempty"`
+	SourceChangeJson []byte               `protobuf:"bytes,13,opt,name=source_change_json,json=sourceChangeJson,proto3" json:"source_change_json,omitempty"`
+	SecretRestore    *SecretRestoreResult `protobuf:"bytes,14,opt,name=secret_restore,json=secretRestore,proto3" json:"secret_restore,omitempty"`
+	FailureReason    string               `protobuf:"bytes,9,opt,name=failure_reason,json=failureReason,proto3" json:"failure_reason,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
 
 func (x *ActionReport) Reset() {
 	*x = ActionReport{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[18]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1940,7 +2013,7 @@ func (x *ActionReport) String() string {
 func (*ActionReport) ProtoMessage() {}
 
 func (x *ActionReport) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[18]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1953,7 +2026,7 @@ func (x *ActionReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActionReport.ProtoReflect.Descriptor instead.
 func (*ActionReport) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{18}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ActionReport) GetWebhookCaDigest() string {
@@ -2040,6 +2113,13 @@ func (x *ActionReport) GetSourceChangeJson() []byte {
 	return nil
 }
 
+func (x *ActionReport) GetSecretRestore() *SecretRestoreResult {
+	if x != nil {
+		return x.SecretRestore
+	}
+	return nil
+}
+
 func (x *ActionReport) GetFailureReason() string {
 	if x != nil {
 		return x.FailureReason
@@ -2063,7 +2143,7 @@ type SourceReconcileResult struct {
 
 func (x *SourceReconcileResult) Reset() {
 	*x = SourceReconcileResult{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[19]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2075,7 +2155,7 @@ func (x *SourceReconcileResult) String() string {
 func (*SourceReconcileResult) ProtoMessage() {}
 
 func (x *SourceReconcileResult) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[19]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2088,7 +2168,7 @@ func (x *SourceReconcileResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SourceReconcileResult.ProtoReflect.Descriptor instead.
 func (*SourceReconcileResult) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{19}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *SourceReconcileResult) GetRef() *ObjectRef {
@@ -2133,6 +2213,94 @@ func (x *SourceReconcileResult) GetRolloutSteps() []*SourceRolloutStep {
 	return nil
 }
 
+// What a RestoreSecretFromSource wrote: key names and short digests of the
+// declared values only, never a value.
+type SecretRestoreResult struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Ref   *ObjectRef             `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
+	Keys  []string               `protobuf:"bytes,2,rep,name=keys,proto3" json:"keys,omitempty"`
+	// Keys whose live value differed or was missing.
+	Restored []string `protobuf:"bytes,3,rep,name=restored,proto3" json:"restored,omitempty"`
+	// Live keys the source does not declare; the restore removed them.
+	Removed       []string          `protobuf:"bytes,4,rep,name=removed,proto3" json:"removed,omitempty"`
+	Digests       map[string]string `protobuf:"bytes,5,rep,name=digests,proto3" json:"digests,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Created       bool              `protobuf:"varint,6,opt,name=created,proto3" json:"created,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SecretRestoreResult) Reset() {
+	*x = SecretRestoreResult{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SecretRestoreResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SecretRestoreResult) ProtoMessage() {}
+
+func (x *SecretRestoreResult) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SecretRestoreResult.ProtoReflect.Descriptor instead.
+func (*SecretRestoreResult) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *SecretRestoreResult) GetRef() *ObjectRef {
+	if x != nil {
+		return x.Ref
+	}
+	return nil
+}
+
+func (x *SecretRestoreResult) GetKeys() []string {
+	if x != nil {
+		return x.Keys
+	}
+	return nil
+}
+
+func (x *SecretRestoreResult) GetRestored() []string {
+	if x != nil {
+		return x.Restored
+	}
+	return nil
+}
+
+func (x *SecretRestoreResult) GetRemoved() []string {
+	if x != nil {
+		return x.Removed
+	}
+	return nil
+}
+
+func (x *SecretRestoreResult) GetDigests() map[string]string {
+	if x != nil {
+		return x.Digests
+	}
+	return nil
+}
+
+func (x *SecretRestoreResult) GetCreated() bool {
+	if x != nil {
+		return x.Created
+	}
+	return false
+}
+
 type SourceRolloutStep struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Workload      *ObjectRef             `protobuf:"bytes,4,opt,name=workload,proto3" json:"workload,omitempty"`
@@ -2145,7 +2313,7 @@ type SourceRolloutStep struct {
 
 func (x *SourceRolloutStep) Reset() {
 	*x = SourceRolloutStep{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[20]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2157,7 +2325,7 @@ func (x *SourceRolloutStep) String() string {
 func (*SourceRolloutStep) ProtoMessage() {}
 
 func (x *SourceRolloutStep) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[20]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2170,7 +2338,7 @@ func (x *SourceRolloutStep) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SourceRolloutStep.ProtoReflect.Descriptor instead.
 func (*SourceRolloutStep) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{20}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *SourceRolloutStep) GetWorkload() *ObjectRef {
@@ -2210,7 +2378,7 @@ type DeletePod struct {
 
 func (x *DeletePod) Reset() {
 	*x = DeletePod{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[21]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2222,7 +2390,7 @@ func (x *DeletePod) String() string {
 func (*DeletePod) ProtoMessage() {}
 
 func (x *DeletePod) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[21]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2235,7 +2403,7 @@ func (x *DeletePod) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeletePod.ProtoReflect.Descriptor instead.
 func (*DeletePod) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{21}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *DeletePod) GetRef() *ObjectRef {
@@ -2255,7 +2423,7 @@ type ScaleWorkload struct {
 
 func (x *ScaleWorkload) Reset() {
 	*x = ScaleWorkload{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[22]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2267,7 +2435,7 @@ func (x *ScaleWorkload) String() string {
 func (*ScaleWorkload) ProtoMessage() {}
 
 func (x *ScaleWorkload) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[22]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2280,7 +2448,7 @@ func (x *ScaleWorkload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ScaleWorkload.ProtoReflect.Descriptor instead.
 func (*ScaleWorkload) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{22}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *ScaleWorkload) GetRef() *ObjectRef {
@@ -2307,7 +2475,7 @@ type RetryAdmission struct {
 
 func (x *RetryAdmission) Reset() {
 	*x = RetryAdmission{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[23]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2319,7 +2487,7 @@ func (x *RetryAdmission) String() string {
 func (*RetryAdmission) ProtoMessage() {}
 
 func (x *RetryAdmission) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[23]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2332,7 +2500,7 @@ func (x *RetryAdmission) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RetryAdmission.ProtoReflect.Descriptor instead.
 func (*RetryAdmission) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{23}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *RetryAdmission) GetRef() *ObjectRef {
@@ -2353,7 +2521,7 @@ type RetireOldRevision struct {
 
 func (x *RetireOldRevision) Reset() {
 	*x = RetireOldRevision{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[24]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2365,7 +2533,7 @@ func (x *RetireOldRevision) String() string {
 func (*RetireOldRevision) ProtoMessage() {}
 
 func (x *RetireOldRevision) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[24]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2378,7 +2546,7 @@ func (x *RetireOldRevision) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RetireOldRevision.ProtoReflect.Descriptor instead.
 func (*RetireOldRevision) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{24}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *RetireOldRevision) GetRef() *ObjectRef {
@@ -2399,7 +2567,7 @@ type Exec struct {
 
 func (x *Exec) Reset() {
 	*x = Exec{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[25]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2411,7 +2579,7 @@ func (x *Exec) String() string {
 func (*Exec) ProtoMessage() {}
 
 func (x *Exec) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[25]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2424,7 +2592,7 @@ func (x *Exec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Exec.ProtoReflect.Descriptor instead.
 func (*Exec) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{25}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *Exec) GetPod() *ObjectRef {
@@ -2458,7 +2626,7 @@ type RestartRollout struct {
 
 func (x *RestartRollout) Reset() {
 	*x = RestartRollout{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[26]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2470,7 +2638,7 @@ func (x *RestartRollout) String() string {
 func (*RestartRollout) ProtoMessage() {}
 
 func (x *RestartRollout) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[26]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2483,7 +2651,7 @@ func (x *RestartRollout) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RestartRollout.ProtoReflect.Descriptor instead.
 func (*RestartRollout) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{26}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *RestartRollout) GetRef() *ObjectRef {
@@ -2518,7 +2686,7 @@ type ProgramRun struct {
 
 func (x *ProgramRun) Reset() {
 	*x = ProgramRun{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[27]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2530,7 +2698,7 @@ func (x *ProgramRun) String() string {
 func (*ProgramRun) ProtoMessage() {}
 
 func (x *ProgramRun) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[27]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2543,7 +2711,7 @@ func (x *ProgramRun) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProgramRun.ProtoReflect.Descriptor instead.
 func (*ProgramRun) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{27}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *ProgramRun) GetProgramId() string {
@@ -2623,7 +2791,7 @@ type RolloutPending struct {
 
 func (x *RolloutPending) Reset() {
 	*x = RolloutPending{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[28]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2635,7 +2803,7 @@ func (x *RolloutPending) String() string {
 func (*RolloutPending) ProtoMessage() {}
 
 func (x *RolloutPending) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[28]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2648,7 +2816,7 @@ func (x *RolloutPending) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RolloutPending.ProtoReflect.Descriptor instead.
 func (*RolloutPending) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{28}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *RolloutPending) GetReasonCode() string {
@@ -2701,7 +2869,7 @@ type RolloutBlocker struct {
 
 func (x *RolloutBlocker) Reset() {
 	*x = RolloutBlocker{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[29]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2713,7 +2881,7 @@ func (x *RolloutBlocker) String() string {
 func (*RolloutBlocker) ProtoMessage() {}
 
 func (x *RolloutBlocker) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[29]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2726,7 +2894,7 @@ func (x *RolloutBlocker) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RolloutBlocker.ProtoReflect.Descriptor instead.
 func (*RolloutBlocker) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{29}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *RolloutBlocker) GetRef() *ObjectRef {
@@ -2768,7 +2936,7 @@ type RecoveryWait struct {
 
 func (x *RecoveryWait) Reset() {
 	*x = RecoveryWait{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[30]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2780,7 +2948,7 @@ func (x *RecoveryWait) String() string {
 func (*RecoveryWait) ProtoMessage() {}
 
 func (x *RecoveryWait) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[30]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2793,7 +2961,7 @@ func (x *RecoveryWait) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RecoveryWait.ProtoReflect.Descriptor instead.
 func (*RecoveryWait) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{30}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *RecoveryWait) GetExitReason() RecoveryWait_ExitReason {
@@ -2844,7 +3012,7 @@ type PlanApplication struct {
 
 func (x *PlanApplication) Reset() {
 	*x = PlanApplication{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[31]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2856,7 +3024,7 @@ func (x *PlanApplication) String() string {
 func (*PlanApplication) ProtoMessage() {}
 
 func (x *PlanApplication) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[31]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2869,7 +3037,7 @@ func (x *PlanApplication) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlanApplication.ProtoReflect.Descriptor instead.
 func (*PlanApplication) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{31}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *PlanApplication) GetPlan() *Plan {
@@ -3040,7 +3208,7 @@ type ProgramToolCall struct {
 
 func (x *ProgramToolCall) Reset() {
 	*x = ProgramToolCall{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[32]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3052,7 +3220,7 @@ func (x *ProgramToolCall) String() string {
 func (*ProgramToolCall) ProtoMessage() {}
 
 func (x *ProgramToolCall) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[32]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3065,7 +3233,7 @@ func (x *ProgramToolCall) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProgramToolCall.ProtoReflect.Descriptor instead.
 func (*ProgramToolCall) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{32}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *ProgramToolCall) GetCommand() string {
@@ -3118,7 +3286,7 @@ type PlanPreImage struct {
 
 func (x *PlanPreImage) Reset() {
 	*x = PlanPreImage{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[33]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3130,7 +3298,7 @@ func (x *PlanPreImage) String() string {
 func (*PlanPreImage) ProtoMessage() {}
 
 func (x *PlanPreImage) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[33]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3143,7 +3311,7 @@ func (x *PlanPreImage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlanPreImage.ProtoReflect.Descriptor instead.
 func (*PlanPreImage) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{33}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{35}
 }
 
 type PlanPatch struct {
@@ -3154,7 +3322,7 @@ type PlanPatch struct {
 
 func (x *PlanPatch) Reset() {
 	*x = PlanPatch{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[34]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3166,7 +3334,7 @@ func (x *PlanPatch) String() string {
 func (*PlanPatch) ProtoMessage() {}
 
 func (x *PlanPatch) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[34]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3179,7 +3347,7 @@ func (x *PlanPatch) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlanPatch.ProtoReflect.Descriptor instead.
 func (*PlanPatch) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{34}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{36}
 }
 
 // Go-owned per-cause work; grouping is exactly the responder's confirmed resources.
@@ -3195,7 +3363,7 @@ type ReflectionCauseWork struct {
 
 func (x *ReflectionCauseWork) Reset() {
 	*x = ReflectionCauseWork{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[35]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3207,7 +3375,7 @@ func (x *ReflectionCauseWork) String() string {
 func (*ReflectionCauseWork) ProtoMessage() {}
 
 func (x *ReflectionCauseWork) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[35]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3220,7 +3388,7 @@ func (x *ReflectionCauseWork) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReflectionCauseWork.ProtoReflect.Descriptor instead.
 func (*ReflectionCauseWork) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{35}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *ReflectionCauseWork) GetCauseIndex() uint32 {
@@ -3271,7 +3439,7 @@ type ReflectionWorkItem struct {
 
 func (x *ReflectionWorkItem) Reset() {
 	*x = ReflectionWorkItem{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[36]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3283,7 +3451,7 @@ func (x *ReflectionWorkItem) String() string {
 func (*ReflectionWorkItem) ProtoMessage() {}
 
 func (x *ReflectionWorkItem) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[36]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3296,7 +3464,7 @@ func (x *ReflectionWorkItem) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReflectionWorkItem.ProtoReflect.Descriptor instead.
 func (*ReflectionWorkItem) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{36}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *ReflectionWorkItem) GetProgramId() string {
@@ -3383,7 +3551,7 @@ type ReflectionEligibility struct {
 
 func (x *ReflectionEligibility) Reset() {
 	*x = ReflectionEligibility{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[37]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3395,7 +3563,7 @@ func (x *ReflectionEligibility) String() string {
 func (*ReflectionEligibility) ProtoMessage() {}
 
 func (x *ReflectionEligibility) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[37]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3408,7 +3576,7 @@ func (x *ReflectionEligibility) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReflectionEligibility.ProtoReflect.Descriptor instead.
 func (*ReflectionEligibility) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{37}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *ReflectionEligibility) GetVersion() uint32 {
@@ -3450,7 +3618,7 @@ type PlaybookCoverage struct {
 
 func (x *PlaybookCoverage) Reset() {
 	*x = PlaybookCoverage{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[38]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3462,7 +3630,7 @@ func (x *PlaybookCoverage) String() string {
 func (*PlaybookCoverage) ProtoMessage() {}
 
 func (x *PlaybookCoverage) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[38]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3475,7 +3643,7 @@ func (x *PlaybookCoverage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlaybookCoverage.ProtoReflect.Descriptor instead.
 func (*PlaybookCoverage) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{38}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *PlaybookCoverage) GetMatches() []*PlaybookMatch {
@@ -3509,7 +3677,7 @@ type PlaybookMatch struct {
 
 func (x *PlaybookMatch) Reset() {
 	*x = PlaybookMatch{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[39]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3521,7 +3689,7 @@ func (x *PlaybookMatch) String() string {
 func (*PlaybookMatch) ProtoMessage() {}
 
 func (x *PlaybookMatch) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[39]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3534,7 +3702,7 @@ func (x *PlaybookMatch) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlaybookMatch.ProtoReflect.Descriptor instead.
 func (*PlaybookMatch) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{39}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *PlaybookMatch) GetPlaybookId() string {
@@ -3607,7 +3775,7 @@ type RemoveServicePort struct {
 
 func (x *RemoveServicePort) Reset() {
 	*x = RemoveServicePort{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[40]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3619,7 +3787,7 @@ func (x *RemoveServicePort) String() string {
 func (*RemoveServicePort) ProtoMessage() {}
 
 func (x *RemoveServicePort) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[40]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3632,7 +3800,7 @@ func (x *RemoveServicePort) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveServicePort.ProtoReflect.Descriptor instead.
 func (*RemoveServicePort) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{40}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *RemoveServicePort) GetRef() *ObjectRef {
@@ -3688,7 +3856,7 @@ type ConfigMapCredentialRef struct {
 
 func (x *ConfigMapCredentialRef) Reset() {
 	*x = ConfigMapCredentialRef{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[41]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3700,7 +3868,7 @@ func (x *ConfigMapCredentialRef) String() string {
 func (*ConfigMapCredentialRef) ProtoMessage() {}
 
 func (x *ConfigMapCredentialRef) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[41]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3713,7 +3881,7 @@ func (x *ConfigMapCredentialRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConfigMapCredentialRef.ProtoReflect.Descriptor instead.
 func (*ConfigMapCredentialRef) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{41}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *ConfigMapCredentialRef) GetName() string {
@@ -3750,7 +3918,7 @@ type CredentialRef struct {
 
 func (x *CredentialRef) Reset() {
 	*x = CredentialRef{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[42]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3762,7 +3930,7 @@ func (x *CredentialRef) String() string {
 func (*CredentialRef) ProtoMessage() {}
 
 func (x *CredentialRef) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[42]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3775,7 +3943,7 @@ func (x *CredentialRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CredentialRef.ProtoReflect.Descriptor instead.
 func (*CredentialRef) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{42}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *CredentialRef) GetKind() isCredentialRef_Kind {
@@ -3830,7 +3998,7 @@ type DatabaseAuth struct {
 
 func (x *DatabaseAuth) Reset() {
 	*x = DatabaseAuth{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[43]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3842,7 +4010,7 @@ func (x *DatabaseAuth) String() string {
 func (*DatabaseAuth) ProtoMessage() {}
 
 func (x *DatabaseAuth) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[43]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3855,7 +4023,7 @@ func (x *DatabaseAuth) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DatabaseAuth.ProtoReflect.Descriptor instead.
 func (*DatabaseAuth) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{43}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *DatabaseAuth) GetDatabase() string {
@@ -3893,7 +4061,7 @@ type DatabaseTarget struct {
 
 func (x *DatabaseTarget) Reset() {
 	*x = DatabaseTarget{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[44]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3905,7 +4073,7 @@ func (x *DatabaseTarget) String() string {
 func (*DatabaseTarget) ProtoMessage() {}
 
 func (x *DatabaseTarget) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[44]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3918,7 +4086,7 @@ func (x *DatabaseTarget) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DatabaseTarget.ProtoReflect.Descriptor instead.
 func (*DatabaseTarget) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{44}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *DatabaseTarget) GetEngine() string {
@@ -3973,7 +4141,7 @@ type DatabaseRole struct {
 
 func (x *DatabaseRole) Reset() {
 	*x = DatabaseRole{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[45]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3985,7 +4153,7 @@ func (x *DatabaseRole) String() string {
 func (*DatabaseRole) ProtoMessage() {}
 
 func (x *DatabaseRole) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[45]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3998,7 +4166,7 @@ func (x *DatabaseRole) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DatabaseRole.ProtoReflect.Descriptor instead.
 func (*DatabaseRole) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{45}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *DatabaseRole) GetDatabase() string {
@@ -4028,7 +4196,7 @@ type EnsureDatabaseUser struct {
 
 func (x *EnsureDatabaseUser) Reset() {
 	*x = EnsureDatabaseUser{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[46]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4040,7 +4208,7 @@ func (x *EnsureDatabaseUser) String() string {
 func (*EnsureDatabaseUser) ProtoMessage() {}
 
 func (x *EnsureDatabaseUser) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[46]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4053,7 +4221,7 @@ func (x *EnsureDatabaseUser) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnsureDatabaseUser.ProtoReflect.Descriptor instead.
 func (*EnsureDatabaseUser) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{46}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *EnsureDatabaseUser) GetTarget() *DatabaseTarget {
@@ -4105,7 +4273,7 @@ type PatchObject struct {
 
 func (x *PatchObject) Reset() {
 	*x = PatchObject{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[47]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4117,7 +4285,7 @@ func (x *PatchObject) String() string {
 func (*PatchObject) ProtoMessage() {}
 
 func (x *PatchObject) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[47]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4130,7 +4298,7 @@ func (x *PatchObject) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PatchObject.ProtoReflect.Descriptor instead.
 func (*PatchObject) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{47}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *PatchObject) GetRef() *ObjectRef {
@@ -4180,7 +4348,7 @@ type ListEdit struct {
 
 func (x *ListEdit) Reset() {
 	*x = ListEdit{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[48]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4192,7 +4360,7 @@ func (x *ListEdit) String() string {
 func (*ListEdit) ProtoMessage() {}
 
 func (x *ListEdit) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[48]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4205,7 +4373,7 @@ func (x *ListEdit) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListEdit.ProtoReflect.Descriptor instead.
 func (*ListEdit) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{48}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *ListEdit) GetPath() string {
@@ -4248,7 +4416,7 @@ type ApplyObject struct {
 
 func (x *ApplyObject) Reset() {
 	*x = ApplyObject{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[49]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4260,7 +4428,7 @@ func (x *ApplyObject) String() string {
 func (*ApplyObject) ProtoMessage() {}
 
 func (x *ApplyObject) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[49]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4273,7 +4441,7 @@ func (x *ApplyObject) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApplyObject.ProtoReflect.Descriptor instead.
 func (*ApplyObject) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{49}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *ApplyObject) GetRef() *ObjectRef {
@@ -4319,7 +4487,7 @@ type KubernetesRequest struct {
 
 func (x *KubernetesRequest) Reset() {
 	*x = KubernetesRequest{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[50]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4331,7 +4499,7 @@ func (x *KubernetesRequest) String() string {
 func (*KubernetesRequest) ProtoMessage() {}
 
 func (x *KubernetesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[50]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4344,7 +4512,7 @@ func (x *KubernetesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KubernetesRequest.ProtoReflect.Descriptor instead.
 func (*KubernetesRequest) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{50}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *KubernetesRequest) GetRef() *ObjectRef {
@@ -4409,7 +4577,7 @@ type WaitFor struct {
 
 func (x *WaitFor) Reset() {
 	*x = WaitFor{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[51]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4421,7 +4589,7 @@ func (x *WaitFor) String() string {
 func (*WaitFor) ProtoMessage() {}
 
 func (x *WaitFor) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[51]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4434,7 +4602,7 @@ func (x *WaitFor) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WaitFor.ProtoReflect.Descriptor instead.
 func (*WaitFor) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{51}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *WaitFor) GetRef() *ObjectRef {
@@ -4484,7 +4652,7 @@ type Command struct {
 
 func (x *Command) Reset() {
 	*x = Command{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[52]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4496,7 +4664,7 @@ func (x *Command) String() string {
 func (*Command) ProtoMessage() {}
 
 func (x *Command) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[52]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4509,7 +4677,7 @@ func (x *Command) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Command.ProtoReflect.Descriptor instead.
 func (*Command) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{52}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{54}
 }
 
 func (x *Command) GetPod() *ObjectRef {
@@ -4556,7 +4724,7 @@ type HttpRequest struct {
 
 func (x *HttpRequest) Reset() {
 	*x = HttpRequest{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[53]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4568,7 +4736,7 @@ func (x *HttpRequest) String() string {
 func (*HttpRequest) ProtoMessage() {}
 
 func (x *HttpRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[53]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4581,7 +4749,7 @@ func (x *HttpRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HttpRequest.ProtoReflect.Descriptor instead.
 func (*HttpRequest) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{53}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{55}
 }
 
 func (x *HttpRequest) GetPod() *ObjectRef {
@@ -4652,7 +4820,7 @@ type EnsureExec struct {
 
 func (x *EnsureExec) Reset() {
 	*x = EnsureExec{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[54]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4664,7 +4832,7 @@ func (x *EnsureExec) String() string {
 func (*EnsureExec) ProtoMessage() {}
 
 func (x *EnsureExec) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[54]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4677,7 +4845,7 @@ func (x *EnsureExec) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnsureExec.ProtoReflect.Descriptor instead.
 func (*EnsureExec) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{54}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{56}
 }
 
 func (x *EnsureExec) GetObserve() *Command {
@@ -4720,7 +4888,7 @@ type EnsureHttp struct {
 
 func (x *EnsureHttp) Reset() {
 	*x = EnsureHttp{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[55]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4732,7 +4900,7 @@ func (x *EnsureHttp) String() string {
 func (*EnsureHttp) ProtoMessage() {}
 
 func (x *EnsureHttp) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[55]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4745,7 +4913,7 @@ func (x *EnsureHttp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnsureHttp.ProtoReflect.Descriptor instead.
 func (*EnsureHttp) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{55}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{57}
 }
 
 func (x *EnsureHttp) GetObserve() *HttpRequest {
@@ -4786,7 +4954,7 @@ type RunJob struct {
 
 func (x *RunJob) Reset() {
 	*x = RunJob{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[56]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[58]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4798,7 +4966,7 @@ func (x *RunJob) String() string {
 func (*RunJob) ProtoMessage() {}
 
 func (x *RunJob) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[56]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[58]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4811,7 +4979,7 @@ func (x *RunJob) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunJob.ProtoReflect.Descriptor instead.
 func (*RunJob) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{56}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{58}
 }
 
 func (x *RunJob) GetObject() *ApplyObject {
@@ -4844,7 +5012,7 @@ type StoreTarget struct {
 
 func (x *StoreTarget) Reset() {
 	*x = StoreTarget{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[57]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4856,7 +5024,7 @@ func (x *StoreTarget) String() string {
 func (*StoreTarget) ProtoMessage() {}
 
 func (x *StoreTarget) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[57]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4869,7 +5037,7 @@ func (x *StoreTarget) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StoreTarget.ProtoReflect.Descriptor instead.
 func (*StoreTarget) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{57}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{59}
 }
 
 func (x *StoreTarget) GetComponent() string {
@@ -4922,7 +5090,7 @@ type DataScope struct {
 
 func (x *DataScope) Reset() {
 	*x = DataScope{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[58]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4934,7 +5102,7 @@ func (x *DataScope) String() string {
 func (*DataScope) ProtoMessage() {}
 
 func (x *DataScope) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[58]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4947,7 +5115,7 @@ func (x *DataScope) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DataScope.ProtoReflect.Descriptor instead.
 func (*DataScope) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{58}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{60}
 }
 
 func (x *DataScope) GetDatabase() string {
@@ -4992,7 +5160,7 @@ type StoreBackup struct {
 
 func (x *StoreBackup) Reset() {
 	*x = StoreBackup{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[59]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[61]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5004,7 +5172,7 @@ func (x *StoreBackup) String() string {
 func (*StoreBackup) ProtoMessage() {}
 
 func (x *StoreBackup) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[59]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[61]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5017,7 +5185,7 @@ func (x *StoreBackup) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StoreBackup.ProtoReflect.Descriptor instead.
 func (*StoreBackup) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{59}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{61}
 }
 
 func (x *StoreBackup) GetId() string {
@@ -5061,7 +5229,7 @@ type InvalidateDerived struct {
 
 func (x *InvalidateDerived) Reset() {
 	*x = InvalidateDerived{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[60]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[62]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5073,7 +5241,7 @@ func (x *InvalidateDerived) String() string {
 func (*InvalidateDerived) ProtoMessage() {}
 
 func (x *InvalidateDerived) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[60]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[62]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5086,7 +5254,7 @@ func (x *InvalidateDerived) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InvalidateDerived.ProtoReflect.Descriptor instead.
 func (*InvalidateDerived) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{60}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{62}
 }
 
 func (x *InvalidateDerived) GetTarget() *StoreTarget {
@@ -5123,7 +5291,7 @@ type MemberPredicate struct {
 
 func (x *MemberPredicate) Reset() {
 	*x = MemberPredicate{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[61]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[63]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5135,7 +5303,7 @@ func (x *MemberPredicate) String() string {
 func (*MemberPredicate) ProtoMessage() {}
 
 func (x *MemberPredicate) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[61]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[63]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5148,7 +5316,7 @@ func (x *MemberPredicate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MemberPredicate.ProtoReflect.Descriptor instead.
 func (*MemberPredicate) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{61}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{63}
 }
 
 func (x *MemberPredicate) GetNotDigits() bool {
@@ -5198,7 +5366,7 @@ type RepairData struct {
 
 func (x *RepairData) Reset() {
 	*x = RepairData{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[62]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[64]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5210,7 +5378,7 @@ func (x *RepairData) String() string {
 func (*RepairData) ProtoMessage() {}
 
 func (x *RepairData) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[62]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[64]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5223,7 +5391,7 @@ func (x *RepairData) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RepairData.ProtoReflect.Descriptor instead.
 func (*RepairData) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{62}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{64}
 }
 
 func (x *RepairData) GetTarget() *StoreTarget {
@@ -5301,7 +5469,7 @@ type RestoreBackup struct {
 
 func (x *RestoreBackup) Reset() {
 	*x = RestoreBackup{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[63]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[65]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5313,7 +5481,7 @@ func (x *RestoreBackup) String() string {
 func (*RestoreBackup) ProtoMessage() {}
 
 func (x *RestoreBackup) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[63]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[65]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5326,7 +5494,7 @@ func (x *RestoreBackup) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RestoreBackup.ProtoReflect.Descriptor instead.
 func (*RestoreBackup) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{63}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{65}
 }
 
 func (x *RestoreBackup) GetTarget() *StoreTarget {
@@ -5363,7 +5531,7 @@ type StoreItem struct {
 
 func (x *StoreItem) Reset() {
 	*x = StoreItem{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[64]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[66]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5375,7 +5543,7 @@ func (x *StoreItem) String() string {
 func (*StoreItem) ProtoMessage() {}
 
 func (x *StoreItem) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[64]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[66]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5388,7 +5556,7 @@ func (x *StoreItem) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StoreItem.ProtoReflect.Descriptor instead.
 func (*StoreItem) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{64}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{66}
 }
 
 func (x *StoreItem) GetKind() string {
@@ -5431,7 +5599,7 @@ type StoreItemChange struct {
 
 func (x *StoreItemChange) Reset() {
 	*x = StoreItemChange{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[65]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[67]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5443,7 +5611,7 @@ func (x *StoreItemChange) String() string {
 func (*StoreItemChange) ProtoMessage() {}
 
 func (x *StoreItemChange) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[65]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[67]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5456,7 +5624,7 @@ func (x *StoreItemChange) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StoreItemChange.ProtoReflect.Descriptor instead.
 func (*StoreItemChange) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{65}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{67}
 }
 
 func (x *StoreItemChange) GetBefore() *StoreItem {
@@ -5488,7 +5656,7 @@ type RestoreStoreItem struct {
 
 func (x *RestoreStoreItem) Reset() {
 	*x = RestoreStoreItem{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[66]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[68]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5500,7 +5668,7 @@ func (x *RestoreStoreItem) String() string {
 func (*RestoreStoreItem) ProtoMessage() {}
 
 func (x *RestoreStoreItem) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[66]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[68]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5513,7 +5681,7 @@ func (x *RestoreStoreItem) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RestoreStoreItem.ProtoReflect.Descriptor instead.
 func (*RestoreStoreItem) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{66}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{68}
 }
 
 func (x *RestoreStoreItem) GetTarget() *StoreTarget {
@@ -5557,7 +5725,7 @@ type StoreCredentialInputs struct {
 
 func (x *StoreCredentialInputs) Reset() {
 	*x = StoreCredentialInputs{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[67]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[69]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5569,7 +5737,7 @@ func (x *StoreCredentialInputs) String() string {
 func (*StoreCredentialInputs) ProtoMessage() {}
 
 func (x *StoreCredentialInputs) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[67]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[69]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5582,7 +5750,7 @@ func (x *StoreCredentialInputs) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StoreCredentialInputs.ProtoReflect.Descriptor instead.
 func (*StoreCredentialInputs) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{67}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{69}
 }
 
 func (x *StoreCredentialInputs) GetUser() string {
@@ -5628,7 +5796,7 @@ type CheckStoreCredential struct {
 
 func (x *CheckStoreCredential) Reset() {
 	*x = CheckStoreCredential{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[68]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[70]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5640,7 +5808,7 @@ func (x *CheckStoreCredential) String() string {
 func (*CheckStoreCredential) ProtoMessage() {}
 
 func (x *CheckStoreCredential) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[68]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[70]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5653,7 +5821,7 @@ func (x *CheckStoreCredential) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckStoreCredential.ProtoReflect.Descriptor instead.
 func (*CheckStoreCredential) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{68}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{70}
 }
 
 func (x *CheckStoreCredential) GetTarget() *StoreTarget {
@@ -5704,7 +5872,7 @@ type RunScript struct {
 
 func (x *RunScript) Reset() {
 	*x = RunScript{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[69]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[71]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5716,7 +5884,7 @@ func (x *RunScript) String() string {
 func (*RunScript) ProtoMessage() {}
 
 func (x *RunScript) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[69]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[71]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5729,7 +5897,7 @@ func (x *RunScript) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunScript.ProtoReflect.Descriptor instead.
 func (*RunScript) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{69}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{71}
 }
 
 func (x *RunScript) GetScript() string {
@@ -5775,7 +5943,7 @@ type SyncWebhookCA struct {
 
 func (x *SyncWebhookCA) Reset() {
 	*x = SyncWebhookCA{}
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[70]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[72]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5787,7 +5955,7 @@ func (x *SyncWebhookCA) String() string {
 func (*SyncWebhookCA) ProtoMessage() {}
 
 func (x *SyncWebhookCA) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[70]
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[72]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5800,7 +5968,7 @@ func (x *SyncWebhookCA) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SyncWebhookCA.ProtoReflect.Descriptor instead.
 func (*SyncWebhookCA) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{70}
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{72}
 }
 
 func (x *SyncWebhookCA) GetRef() *ObjectRef {
@@ -5889,7 +6057,7 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\bexpected\x18\x04 \x01(\tR\bexpected\"a\n" +
 	"\x04Plan\x12;\n" +
 	"\aactions\x18\x01 \x03(\v2!.sdodev.contracts.v1alpha1.ActionR\aactions\x12\x1c\n" +
-	"\trationale\x18\x02 \x01(\tR\trationale\"\xb0\x13\n" +
+	"\trationale\x18\x02 \x01(\tR\trationale\"\xa3\x14\n" +
 	"\x06Action\x12d\n" +
 	"\x15reconcile_from_source\x18\x01 \x01(\v2..sdodev.contracts.v1alpha1.ReconcileFromSourceH\x00R\x13reconcileFromSource\x12A\n" +
 	"\brollback\x18\x02 \x01(\v2#.sdodev.contracts.v1alpha1.RollbackH\x00R\brollback\x12B\n" +
@@ -5926,8 +6094,12 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x12restore_store_item\x18\x1b \x01(\v2+.sdodev.contracts.v1alpha1.RestoreStoreItemH\x00R\x10restoreStoreItem\x12g\n" +
 	"\x16check_store_credential\x18\x1c \x01(\v2/.sdodev.contracts.v1alpha1.CheckStoreCredentialH\x00R\x14checkStoreCredential\x12A\n" +
 	"\bescalate\x18\x1d \x01(\v2#.sdodev.contracts.v1alpha1.EscalateH\x00R\bescalate\x12d\n" +
-	"\x15propose_source_change\x18\x1e \x01(\v2..sdodev.contracts.v1alpha1.ProposeSourceChangeH\x00R\x13proposeSourceChangeB\r\n" +
-	"\x04kind\x12\x05\xbaH\x02\b\x01\"o\n" +
+	"\x15propose_source_change\x18\x1e \x01(\v2..sdodev.contracts.v1alpha1.ProposeSourceChangeH\x00R\x13proposeSourceChange\x12q\n" +
+	"\x1arestore_secret_from_source\x18\x1f \x01(\v22.sdodev.contracts.v1alpha1.RestoreSecretFromSourceH\x00R\x17restoreSecretFromSourceB\r\n" +
+	"\x04kind\x12\x05\xbaH\x02\b\x01\"z\n" +
+	"\x17RestoreSecretFromSource\x12>\n" +
+	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\x12\x1f\n" +
+	"\x06reason\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06reason\"o\n" +
 	"\bEscalate\x12\x1f\n" +
 	"\x06reason\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06reason\x12B\n" +
 	"\tresources\x18\x02 \x03(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\tresources\"\xda\x01\n" +
@@ -5980,7 +6152,7 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x04path\x18\x03 \x01(\tR\x04path\x12#\n" +
 	"\rsource_commit\x18\x04 \x01(\tR\fsourceCommit\x12)\n" +
 	"\x10resource_version\x18\x05 \x01(\tR\x0fresourceVersion\x12\x1c\n" +
-	"\tparameter\x18\x06 \x01(\tR\tparameter\"\xa1\x06\n" +
+	"\tparameter\x18\x06 \x01(\tR\tparameter\"\xf8\x06\n" +
 	"\fActionReport\x12*\n" +
 	"\x11webhook_ca_digest\x18\v \x01(\tR\x0fwebhookCaDigest\x12!\n" +
 	"\faction_index\x18\x01 \x01(\rR\vactionIndex\x12K\n" +
@@ -5994,7 +6166,8 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x12script_result_json\x18\n" +
 	" \x01(\fR\x10scriptResultJson\x12[\n" +
 	"\x10source_reconcile\x18\f \x01(\v20.sdodev.contracts.v1alpha1.SourceReconcileResultR\x0fsourceReconcile\x12,\n" +
-	"\x12source_change_json\x18\r \x01(\fR\x10sourceChangeJson\x12\x8e\x01\n" +
+	"\x12source_change_json\x18\r \x01(\fR\x10sourceChangeJson\x12U\n" +
+	"\x0esecret_restore\x18\x0e \x01(\v2..sdodev.contracts.v1alpha1.SecretRestoreResultR\rsecretRestore\x12\x8e\x01\n" +
 	"\x0efailure_reason\x18\t \x01(\tBg\xbaHdrbR\x00R\x14authorization_deniedR\x10execution_failedR\x14delete_not_confirmedR\x0foutcome_unknownR\x0fsource_residualR\rfailureReasonB\f\n" +
 	"\n" +
 	"_exit_code\"\xbd\x02\n" +
@@ -6004,7 +6177,17 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x0eresidual_paths\x18\x03 \x03(\tR\rresidualPaths\x12+\n" +
 	"\x11observation_error\x18\x04 \x01(\tR\x10observationError\x12'\n" +
 	"\x0fadditions_known\x18\x05 \x01(\bR\x0eadditionsKnown\x12Q\n" +
-	"\rrollout_steps\x18\x06 \x03(\v2,.sdodev.contracts.v1alpha1.SourceRolloutStepR\frolloutSteps\"\xbb\x01\n" +
+	"\rrollout_steps\x18\x06 \x03(\v2,.sdodev.contracts.v1alpha1.SourceRolloutStepR\frolloutSteps\"\xc4\x02\n" +
+	"\x13SecretRestoreResult\x126\n" +
+	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x03ref\x12\x12\n" +
+	"\x04keys\x18\x02 \x03(\tR\x04keys\x12\x1a\n" +
+	"\brestored\x18\x03 \x03(\tR\brestored\x12\x18\n" +
+	"\aremoved\x18\x04 \x03(\tR\aremoved\x12U\n" +
+	"\adigests\x18\x05 \x03(\v2;.sdodev.contracts.v1alpha1.SecretRestoreResult.DigestsEntryR\adigests\x12\x18\n" +
+	"\acreated\x18\x06 \x01(\bR\acreated\x1a:\n" +
+	"\fDigestsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xbb\x01\n" +
 	"\x11SourceRolloutStep\x12@\n" +
 	"\bworkload\x18\x04 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\bworkload\x126\n" +
 	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x03ref\x12\x16\n" +
@@ -6387,245 +6570,253 @@ func file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP() []byte {
 }
 
 var file_sdodev_contracts_v1alpha1_program_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_sdodev_contracts_v1alpha1_program_proto_msgTypes = make([]protoimpl.MessageInfo, 75)
+var file_sdodev_contracts_v1alpha1_program_proto_msgTypes = make([]protoimpl.MessageInfo, 78)
 var file_sdodev_contracts_v1alpha1_program_proto_goTypes = []any{
-	(SettlementRejectionReason)(0), // 0: sdodev.contracts.v1alpha1.SettlementRejectionReason
-	(Verdict_Result)(0),            // 1: sdodev.contracts.v1alpha1.Verdict.Result
-	(RecoveryWait_ExitReason)(0),   // 2: sdodev.contracts.v1alpha1.RecoveryWait.ExitReason
-	(*ProgramSpec)(nil),            // 3: sdodev.contracts.v1alpha1.ProgramSpec
-	(*ParamSpec)(nil),              // 4: sdodev.contracts.v1alpha1.ParamSpec
-	(*Binding)(nil),                // 5: sdodev.contracts.v1alpha1.Binding
-	(*Verdict)(nil),                // 6: sdodev.contracts.v1alpha1.Verdict
-	(*Evidence)(nil),               // 7: sdodev.contracts.v1alpha1.Evidence
-	(*Plan)(nil),                   // 8: sdodev.contracts.v1alpha1.Plan
-	(*Action)(nil),                 // 9: sdodev.contracts.v1alpha1.Action
-	(*Escalate)(nil),               // 10: sdodev.contracts.v1alpha1.Escalate
-	(*ProposeSourceChange)(nil),    // 11: sdodev.contracts.v1alpha1.ProposeSourceChange
-	(*CreateFromSource)(nil),       // 12: sdodev.contracts.v1alpha1.CreateFromSource
-	(*DeleteObject)(nil),           // 13: sdodev.contracts.v1alpha1.DeleteObject
-	(*PlanObjectEffect)(nil),       // 14: sdodev.contracts.v1alpha1.PlanObjectEffect
-	(*ReconcileFromSource)(nil),    // 15: sdodev.contracts.v1alpha1.ReconcileFromSource
-	(*Rollback)(nil),               // 16: sdodev.contracts.v1alpha1.Rollback
-	(*SetField)(nil),               // 17: sdodev.contracts.v1alpha1.SetField
-	(*PlanValue)(nil),              // 18: sdodev.contracts.v1alpha1.PlanValue
-	(*ValueField)(nil),             // 19: sdodev.contracts.v1alpha1.ValueField
-	(*ValueProvenance)(nil),        // 20: sdodev.contracts.v1alpha1.ValueProvenance
-	(*ActionReport)(nil),           // 21: sdodev.contracts.v1alpha1.ActionReport
-	(*SourceReconcileResult)(nil),  // 22: sdodev.contracts.v1alpha1.SourceReconcileResult
-	(*SourceRolloutStep)(nil),      // 23: sdodev.contracts.v1alpha1.SourceRolloutStep
-	(*DeletePod)(nil),              // 24: sdodev.contracts.v1alpha1.DeletePod
-	(*ScaleWorkload)(nil),          // 25: sdodev.contracts.v1alpha1.ScaleWorkload
-	(*RetryAdmission)(nil),         // 26: sdodev.contracts.v1alpha1.RetryAdmission
-	(*RetireOldRevision)(nil),      // 27: sdodev.contracts.v1alpha1.RetireOldRevision
-	(*Exec)(nil),                   // 28: sdodev.contracts.v1alpha1.Exec
-	(*RestartRollout)(nil),         // 29: sdodev.contracts.v1alpha1.RestartRollout
-	(*ProgramRun)(nil),             // 30: sdodev.contracts.v1alpha1.ProgramRun
-	(*RolloutPending)(nil),         // 31: sdodev.contracts.v1alpha1.RolloutPending
-	(*RolloutBlocker)(nil),         // 32: sdodev.contracts.v1alpha1.RolloutBlocker
-	(*RecoveryWait)(nil),           // 33: sdodev.contracts.v1alpha1.RecoveryWait
-	(*PlanApplication)(nil),        // 34: sdodev.contracts.v1alpha1.PlanApplication
-	(*ProgramToolCall)(nil),        // 35: sdodev.contracts.v1alpha1.ProgramToolCall
-	(*PlanPreImage)(nil),           // 36: sdodev.contracts.v1alpha1.PlanPreImage
-	(*PlanPatch)(nil),              // 37: sdodev.contracts.v1alpha1.PlanPatch
-	(*ReflectionCauseWork)(nil),    // 38: sdodev.contracts.v1alpha1.ReflectionCauseWork
-	(*ReflectionWorkItem)(nil),     // 39: sdodev.contracts.v1alpha1.ReflectionWorkItem
-	(*ReflectionEligibility)(nil),  // 40: sdodev.contracts.v1alpha1.ReflectionEligibility
-	(*PlaybookCoverage)(nil),       // 41: sdodev.contracts.v1alpha1.PlaybookCoverage
-	(*PlaybookMatch)(nil),          // 42: sdodev.contracts.v1alpha1.PlaybookMatch
-	(*RemoveServicePort)(nil),      // 43: sdodev.contracts.v1alpha1.RemoveServicePort
-	(*ConfigMapCredentialRef)(nil), // 44: sdodev.contracts.v1alpha1.ConfigMapCredentialRef
-	(*CredentialRef)(nil),          // 45: sdodev.contracts.v1alpha1.CredentialRef
-	(*DatabaseAuth)(nil),           // 46: sdodev.contracts.v1alpha1.DatabaseAuth
-	(*DatabaseTarget)(nil),         // 47: sdodev.contracts.v1alpha1.DatabaseTarget
-	(*DatabaseRole)(nil),           // 48: sdodev.contracts.v1alpha1.DatabaseRole
-	(*EnsureDatabaseUser)(nil),     // 49: sdodev.contracts.v1alpha1.EnsureDatabaseUser
-	(*PatchObject)(nil),            // 50: sdodev.contracts.v1alpha1.PatchObject
-	(*ListEdit)(nil),               // 51: sdodev.contracts.v1alpha1.ListEdit
-	(*ApplyObject)(nil),            // 52: sdodev.contracts.v1alpha1.ApplyObject
-	(*KubernetesRequest)(nil),      // 53: sdodev.contracts.v1alpha1.KubernetesRequest
-	(*WaitFor)(nil),                // 54: sdodev.contracts.v1alpha1.WaitFor
-	(*Command)(nil),                // 55: sdodev.contracts.v1alpha1.Command
-	(*HttpRequest)(nil),            // 56: sdodev.contracts.v1alpha1.HttpRequest
-	(*EnsureExec)(nil),             // 57: sdodev.contracts.v1alpha1.EnsureExec
-	(*EnsureHttp)(nil),             // 58: sdodev.contracts.v1alpha1.EnsureHttp
-	(*RunJob)(nil),                 // 59: sdodev.contracts.v1alpha1.RunJob
-	(*StoreTarget)(nil),            // 60: sdodev.contracts.v1alpha1.StoreTarget
-	(*DataScope)(nil),              // 61: sdodev.contracts.v1alpha1.DataScope
-	(*StoreBackup)(nil),            // 62: sdodev.contracts.v1alpha1.StoreBackup
-	(*InvalidateDerived)(nil),      // 63: sdodev.contracts.v1alpha1.InvalidateDerived
-	(*MemberPredicate)(nil),        // 64: sdodev.contracts.v1alpha1.MemberPredicate
-	(*RepairData)(nil),             // 65: sdodev.contracts.v1alpha1.RepairData
-	(*RestoreBackup)(nil),          // 66: sdodev.contracts.v1alpha1.RestoreBackup
-	(*StoreItem)(nil),              // 67: sdodev.contracts.v1alpha1.StoreItem
-	(*StoreItemChange)(nil),        // 68: sdodev.contracts.v1alpha1.StoreItemChange
-	(*RestoreStoreItem)(nil),       // 69: sdodev.contracts.v1alpha1.RestoreStoreItem
-	(*StoreCredentialInputs)(nil),  // 70: sdodev.contracts.v1alpha1.StoreCredentialInputs
-	(*CheckStoreCredential)(nil),   // 71: sdodev.contracts.v1alpha1.CheckStoreCredential
-	(*RunScript)(nil),              // 72: sdodev.contracts.v1alpha1.RunScript
-	(*SyncWebhookCA)(nil),          // 73: sdodev.contracts.v1alpha1.SyncWebhookCA
-	nil,                            // 74: sdodev.contracts.v1alpha1.KubernetesRequest.QueryEntry
-	nil,                            // 75: sdodev.contracts.v1alpha1.HttpRequest.HeadersEntry
-	nil,                            // 76: sdodev.contracts.v1alpha1.HttpRequest.HeaderEnvEntry
-	nil,                            // 77: sdodev.contracts.v1alpha1.RunScript.EnvEntry
-	(*structpb.Value)(nil),         // 78: google.protobuf.Value
-	(*ObjectRef)(nil),              // 79: sdodev.contracts.v1alpha1.ObjectRef
-	(*structpb.Struct)(nil),        // 80: google.protobuf.Struct
-	(*durationpb.Duration)(nil),    // 81: google.protobuf.Duration
-	(*timestamppb.Timestamp)(nil),  // 82: google.protobuf.Timestamp
+	(SettlementRejectionReason)(0),  // 0: sdodev.contracts.v1alpha1.SettlementRejectionReason
+	(Verdict_Result)(0),             // 1: sdodev.contracts.v1alpha1.Verdict.Result
+	(RecoveryWait_ExitReason)(0),    // 2: sdodev.contracts.v1alpha1.RecoveryWait.ExitReason
+	(*ProgramSpec)(nil),             // 3: sdodev.contracts.v1alpha1.ProgramSpec
+	(*ParamSpec)(nil),               // 4: sdodev.contracts.v1alpha1.ParamSpec
+	(*Binding)(nil),                 // 5: sdodev.contracts.v1alpha1.Binding
+	(*Verdict)(nil),                 // 6: sdodev.contracts.v1alpha1.Verdict
+	(*Evidence)(nil),                // 7: sdodev.contracts.v1alpha1.Evidence
+	(*Plan)(nil),                    // 8: sdodev.contracts.v1alpha1.Plan
+	(*Action)(nil),                  // 9: sdodev.contracts.v1alpha1.Action
+	(*RestoreSecretFromSource)(nil), // 10: sdodev.contracts.v1alpha1.RestoreSecretFromSource
+	(*Escalate)(nil),                // 11: sdodev.contracts.v1alpha1.Escalate
+	(*ProposeSourceChange)(nil),     // 12: sdodev.contracts.v1alpha1.ProposeSourceChange
+	(*CreateFromSource)(nil),        // 13: sdodev.contracts.v1alpha1.CreateFromSource
+	(*DeleteObject)(nil),            // 14: sdodev.contracts.v1alpha1.DeleteObject
+	(*PlanObjectEffect)(nil),        // 15: sdodev.contracts.v1alpha1.PlanObjectEffect
+	(*ReconcileFromSource)(nil),     // 16: sdodev.contracts.v1alpha1.ReconcileFromSource
+	(*Rollback)(nil),                // 17: sdodev.contracts.v1alpha1.Rollback
+	(*SetField)(nil),                // 18: sdodev.contracts.v1alpha1.SetField
+	(*PlanValue)(nil),               // 19: sdodev.contracts.v1alpha1.PlanValue
+	(*ValueField)(nil),              // 20: sdodev.contracts.v1alpha1.ValueField
+	(*ValueProvenance)(nil),         // 21: sdodev.contracts.v1alpha1.ValueProvenance
+	(*ActionReport)(nil),            // 22: sdodev.contracts.v1alpha1.ActionReport
+	(*SourceReconcileResult)(nil),   // 23: sdodev.contracts.v1alpha1.SourceReconcileResult
+	(*SecretRestoreResult)(nil),     // 24: sdodev.contracts.v1alpha1.SecretRestoreResult
+	(*SourceRolloutStep)(nil),       // 25: sdodev.contracts.v1alpha1.SourceRolloutStep
+	(*DeletePod)(nil),               // 26: sdodev.contracts.v1alpha1.DeletePod
+	(*ScaleWorkload)(nil),           // 27: sdodev.contracts.v1alpha1.ScaleWorkload
+	(*RetryAdmission)(nil),          // 28: sdodev.contracts.v1alpha1.RetryAdmission
+	(*RetireOldRevision)(nil),       // 29: sdodev.contracts.v1alpha1.RetireOldRevision
+	(*Exec)(nil),                    // 30: sdodev.contracts.v1alpha1.Exec
+	(*RestartRollout)(nil),          // 31: sdodev.contracts.v1alpha1.RestartRollout
+	(*ProgramRun)(nil),              // 32: sdodev.contracts.v1alpha1.ProgramRun
+	(*RolloutPending)(nil),          // 33: sdodev.contracts.v1alpha1.RolloutPending
+	(*RolloutBlocker)(nil),          // 34: sdodev.contracts.v1alpha1.RolloutBlocker
+	(*RecoveryWait)(nil),            // 35: sdodev.contracts.v1alpha1.RecoveryWait
+	(*PlanApplication)(nil),         // 36: sdodev.contracts.v1alpha1.PlanApplication
+	(*ProgramToolCall)(nil),         // 37: sdodev.contracts.v1alpha1.ProgramToolCall
+	(*PlanPreImage)(nil),            // 38: sdodev.contracts.v1alpha1.PlanPreImage
+	(*PlanPatch)(nil),               // 39: sdodev.contracts.v1alpha1.PlanPatch
+	(*ReflectionCauseWork)(nil),     // 40: sdodev.contracts.v1alpha1.ReflectionCauseWork
+	(*ReflectionWorkItem)(nil),      // 41: sdodev.contracts.v1alpha1.ReflectionWorkItem
+	(*ReflectionEligibility)(nil),   // 42: sdodev.contracts.v1alpha1.ReflectionEligibility
+	(*PlaybookCoverage)(nil),        // 43: sdodev.contracts.v1alpha1.PlaybookCoverage
+	(*PlaybookMatch)(nil),           // 44: sdodev.contracts.v1alpha1.PlaybookMatch
+	(*RemoveServicePort)(nil),       // 45: sdodev.contracts.v1alpha1.RemoveServicePort
+	(*ConfigMapCredentialRef)(nil),  // 46: sdodev.contracts.v1alpha1.ConfigMapCredentialRef
+	(*CredentialRef)(nil),           // 47: sdodev.contracts.v1alpha1.CredentialRef
+	(*DatabaseAuth)(nil),            // 48: sdodev.contracts.v1alpha1.DatabaseAuth
+	(*DatabaseTarget)(nil),          // 49: sdodev.contracts.v1alpha1.DatabaseTarget
+	(*DatabaseRole)(nil),            // 50: sdodev.contracts.v1alpha1.DatabaseRole
+	(*EnsureDatabaseUser)(nil),      // 51: sdodev.contracts.v1alpha1.EnsureDatabaseUser
+	(*PatchObject)(nil),             // 52: sdodev.contracts.v1alpha1.PatchObject
+	(*ListEdit)(nil),                // 53: sdodev.contracts.v1alpha1.ListEdit
+	(*ApplyObject)(nil),             // 54: sdodev.contracts.v1alpha1.ApplyObject
+	(*KubernetesRequest)(nil),       // 55: sdodev.contracts.v1alpha1.KubernetesRequest
+	(*WaitFor)(nil),                 // 56: sdodev.contracts.v1alpha1.WaitFor
+	(*Command)(nil),                 // 57: sdodev.contracts.v1alpha1.Command
+	(*HttpRequest)(nil),             // 58: sdodev.contracts.v1alpha1.HttpRequest
+	(*EnsureExec)(nil),              // 59: sdodev.contracts.v1alpha1.EnsureExec
+	(*EnsureHttp)(nil),              // 60: sdodev.contracts.v1alpha1.EnsureHttp
+	(*RunJob)(nil),                  // 61: sdodev.contracts.v1alpha1.RunJob
+	(*StoreTarget)(nil),             // 62: sdodev.contracts.v1alpha1.StoreTarget
+	(*DataScope)(nil),               // 63: sdodev.contracts.v1alpha1.DataScope
+	(*StoreBackup)(nil),             // 64: sdodev.contracts.v1alpha1.StoreBackup
+	(*InvalidateDerived)(nil),       // 65: sdodev.contracts.v1alpha1.InvalidateDerived
+	(*MemberPredicate)(nil),         // 66: sdodev.contracts.v1alpha1.MemberPredicate
+	(*RepairData)(nil),              // 67: sdodev.contracts.v1alpha1.RepairData
+	(*RestoreBackup)(nil),           // 68: sdodev.contracts.v1alpha1.RestoreBackup
+	(*StoreItem)(nil),               // 69: sdodev.contracts.v1alpha1.StoreItem
+	(*StoreItemChange)(nil),         // 70: sdodev.contracts.v1alpha1.StoreItemChange
+	(*RestoreStoreItem)(nil),        // 71: sdodev.contracts.v1alpha1.RestoreStoreItem
+	(*StoreCredentialInputs)(nil),   // 72: sdodev.contracts.v1alpha1.StoreCredentialInputs
+	(*CheckStoreCredential)(nil),    // 73: sdodev.contracts.v1alpha1.CheckStoreCredential
+	(*RunScript)(nil),               // 74: sdodev.contracts.v1alpha1.RunScript
+	(*SyncWebhookCA)(nil),           // 75: sdodev.contracts.v1alpha1.SyncWebhookCA
+	nil,                             // 76: sdodev.contracts.v1alpha1.SecretRestoreResult.DigestsEntry
+	nil,                             // 77: sdodev.contracts.v1alpha1.KubernetesRequest.QueryEntry
+	nil,                             // 78: sdodev.contracts.v1alpha1.HttpRequest.HeadersEntry
+	nil,                             // 79: sdodev.contracts.v1alpha1.HttpRequest.HeaderEnvEntry
+	nil,                             // 80: sdodev.contracts.v1alpha1.RunScript.EnvEntry
+	(*structpb.Value)(nil),          // 81: google.protobuf.Value
+	(*ObjectRef)(nil),               // 82: sdodev.contracts.v1alpha1.ObjectRef
+	(*structpb.Struct)(nil),         // 83: google.protobuf.Struct
+	(*durationpb.Duration)(nil),     // 84: google.protobuf.Duration
+	(*timestamppb.Timestamp)(nil),   // 85: google.protobuf.Timestamp
 }
 var file_sdodev_contracts_v1alpha1_program_proto_depIdxs = []int32{
 	4,   // 0: sdodev.contracts.v1alpha1.ProgramSpec.params:type_name -> sdodev.contracts.v1alpha1.ParamSpec
-	78,  // 1: sdodev.contracts.v1alpha1.ParamSpec.default:type_name -> google.protobuf.Value
-	79,  // 2: sdodev.contracts.v1alpha1.Binding.object:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	78,  // 3: sdodev.contracts.v1alpha1.Binding.value:type_name -> google.protobuf.Value
+	81,  // 1: sdodev.contracts.v1alpha1.ParamSpec.default:type_name -> google.protobuf.Value
+	82,  // 2: sdodev.contracts.v1alpha1.Binding.object:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	81,  // 3: sdodev.contracts.v1alpha1.Binding.value:type_name -> google.protobuf.Value
 	1,   // 4: sdodev.contracts.v1alpha1.Verdict.result:type_name -> sdodev.contracts.v1alpha1.Verdict.Result
 	7,   // 5: sdodev.contracts.v1alpha1.Verdict.evidence:type_name -> sdodev.contracts.v1alpha1.Evidence
-	79,  // 6: sdodev.contracts.v1alpha1.Evidence.resource:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	82,  // 6: sdodev.contracts.v1alpha1.Evidence.resource:type_name -> sdodev.contracts.v1alpha1.ObjectRef
 	9,   // 7: sdodev.contracts.v1alpha1.Plan.actions:type_name -> sdodev.contracts.v1alpha1.Action
-	15,  // 8: sdodev.contracts.v1alpha1.Action.reconcile_from_source:type_name -> sdodev.contracts.v1alpha1.ReconcileFromSource
-	16,  // 9: sdodev.contracts.v1alpha1.Action.rollback:type_name -> sdodev.contracts.v1alpha1.Rollback
-	17,  // 10: sdodev.contracts.v1alpha1.Action.set_field:type_name -> sdodev.contracts.v1alpha1.SetField
-	29,  // 11: sdodev.contracts.v1alpha1.Action.restart_rollout:type_name -> sdodev.contracts.v1alpha1.RestartRollout
-	12,  // 12: sdodev.contracts.v1alpha1.Action.create_from_source:type_name -> sdodev.contracts.v1alpha1.CreateFromSource
-	13,  // 13: sdodev.contracts.v1alpha1.Action.delete_object:type_name -> sdodev.contracts.v1alpha1.DeleteObject
-	24,  // 14: sdodev.contracts.v1alpha1.Action.delete_pod:type_name -> sdodev.contracts.v1alpha1.DeletePod
-	25,  // 15: sdodev.contracts.v1alpha1.Action.scale_workload:type_name -> sdodev.contracts.v1alpha1.ScaleWorkload
-	28,  // 16: sdodev.contracts.v1alpha1.Action.exec:type_name -> sdodev.contracts.v1alpha1.Exec
-	43,  // 17: sdodev.contracts.v1alpha1.Action.remove_service_port:type_name -> sdodev.contracts.v1alpha1.RemoveServicePort
-	49,  // 18: sdodev.contracts.v1alpha1.Action.ensure_database_user:type_name -> sdodev.contracts.v1alpha1.EnsureDatabaseUser
-	50,  // 19: sdodev.contracts.v1alpha1.Action.patch_object:type_name -> sdodev.contracts.v1alpha1.PatchObject
-	52,  // 20: sdodev.contracts.v1alpha1.Action.apply_object:type_name -> sdodev.contracts.v1alpha1.ApplyObject
-	53,  // 21: sdodev.contracts.v1alpha1.Action.kubernetes_request:type_name -> sdodev.contracts.v1alpha1.KubernetesRequest
-	54,  // 22: sdodev.contracts.v1alpha1.Action.wait_for:type_name -> sdodev.contracts.v1alpha1.WaitFor
-	57,  // 23: sdodev.contracts.v1alpha1.Action.ensure_exec:type_name -> sdodev.contracts.v1alpha1.EnsureExec
-	58,  // 24: sdodev.contracts.v1alpha1.Action.ensure_http:type_name -> sdodev.contracts.v1alpha1.EnsureHttp
-	59,  // 25: sdodev.contracts.v1alpha1.Action.run_job:type_name -> sdodev.contracts.v1alpha1.RunJob
-	72,  // 26: sdodev.contracts.v1alpha1.Action.run_script:type_name -> sdodev.contracts.v1alpha1.RunScript
-	73,  // 27: sdodev.contracts.v1alpha1.Action.sync_webhook_ca:type_name -> sdodev.contracts.v1alpha1.SyncWebhookCA
-	27,  // 28: sdodev.contracts.v1alpha1.Action.retire_old_revision:type_name -> sdodev.contracts.v1alpha1.RetireOldRevision
-	26,  // 29: sdodev.contracts.v1alpha1.Action.retry_admission:type_name -> sdodev.contracts.v1alpha1.RetryAdmission
-	62,  // 30: sdodev.contracts.v1alpha1.Action.store_backup:type_name -> sdodev.contracts.v1alpha1.StoreBackup
-	63,  // 31: sdodev.contracts.v1alpha1.Action.invalidate_derived:type_name -> sdodev.contracts.v1alpha1.InvalidateDerived
-	65,  // 32: sdodev.contracts.v1alpha1.Action.repair_data:type_name -> sdodev.contracts.v1alpha1.RepairData
-	66,  // 33: sdodev.contracts.v1alpha1.Action.restore_backup:type_name -> sdodev.contracts.v1alpha1.RestoreBackup
-	69,  // 34: sdodev.contracts.v1alpha1.Action.restore_store_item:type_name -> sdodev.contracts.v1alpha1.RestoreStoreItem
-	71,  // 35: sdodev.contracts.v1alpha1.Action.check_store_credential:type_name -> sdodev.contracts.v1alpha1.CheckStoreCredential
-	10,  // 36: sdodev.contracts.v1alpha1.Action.escalate:type_name -> sdodev.contracts.v1alpha1.Escalate
-	11,  // 37: sdodev.contracts.v1alpha1.Action.propose_source_change:type_name -> sdodev.contracts.v1alpha1.ProposeSourceChange
-	79,  // 38: sdodev.contracts.v1alpha1.Escalate.resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	79,  // 39: sdodev.contracts.v1alpha1.ProposeSourceChange.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	18,  // 40: sdodev.contracts.v1alpha1.ProposeSourceChange.value:type_name -> sdodev.contracts.v1alpha1.PlanValue
-	79,  // 41: sdodev.contracts.v1alpha1.CreateFromSource.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	79,  // 42: sdodev.contracts.v1alpha1.DeleteObject.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	79,  // 43: sdodev.contracts.v1alpha1.PlanObjectEffect.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	80,  // 44: sdodev.contracts.v1alpha1.PlanObjectEffect.deleted_pre_image:type_name -> google.protobuf.Struct
-	79,  // 45: sdodev.contracts.v1alpha1.ReconcileFromSource.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	79,  // 46: sdodev.contracts.v1alpha1.Rollback.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	79,  // 47: sdodev.contracts.v1alpha1.SetField.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	18,  // 48: sdodev.contracts.v1alpha1.SetField.value:type_name -> sdodev.contracts.v1alpha1.PlanValue
-	19,  // 49: sdodev.contracts.v1alpha1.PlanValue.source:type_name -> sdodev.contracts.v1alpha1.ValueField
-	19,  // 50: sdodev.contracts.v1alpha1.PlanValue.observed:type_name -> sdodev.contracts.v1alpha1.ValueField
-	79,  // 51: sdodev.contracts.v1alpha1.ValueField.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	79,  // 52: sdodev.contracts.v1alpha1.ValueProvenance.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	20,  // 53: sdodev.contracts.v1alpha1.ActionReport.values:type_name -> sdodev.contracts.v1alpha1.ValueProvenance
-	22,  // 54: sdodev.contracts.v1alpha1.ActionReport.source_reconcile:type_name -> sdodev.contracts.v1alpha1.SourceReconcileResult
-	79,  // 55: sdodev.contracts.v1alpha1.SourceReconcileResult.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	23,  // 56: sdodev.contracts.v1alpha1.SourceReconcileResult.rollout_steps:type_name -> sdodev.contracts.v1alpha1.SourceRolloutStep
-	79,  // 57: sdodev.contracts.v1alpha1.SourceRolloutStep.workload:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	79,  // 58: sdodev.contracts.v1alpha1.SourceRolloutStep.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	79,  // 59: sdodev.contracts.v1alpha1.DeletePod.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	79,  // 60: sdodev.contracts.v1alpha1.ScaleWorkload.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	18,  // 61: sdodev.contracts.v1alpha1.ScaleWorkload.replicas:type_name -> sdodev.contracts.v1alpha1.PlanValue
-	79,  // 62: sdodev.contracts.v1alpha1.RetryAdmission.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	79,  // 63: sdodev.contracts.v1alpha1.RetireOldRevision.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	79,  // 64: sdodev.contracts.v1alpha1.Exec.pod:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	18,  // 65: sdodev.contracts.v1alpha1.Exec.command:type_name -> sdodev.contracts.v1alpha1.PlanValue
-	79,  // 66: sdodev.contracts.v1alpha1.RestartRollout.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	5,   // 67: sdodev.contracts.v1alpha1.ProgramRun.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
-	6,   // 68: sdodev.contracts.v1alpha1.ProgramRun.verdict:type_name -> sdodev.contracts.v1alpha1.Verdict
-	81,  // 69: sdodev.contracts.v1alpha1.ProgramRun.duration:type_name -> google.protobuf.Duration
-	79,  // 70: sdodev.contracts.v1alpha1.RolloutPending.admission_configurations:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	32,  // 71: sdodev.contracts.v1alpha1.RolloutPending.blockers:type_name -> sdodev.contracts.v1alpha1.RolloutBlocker
-	79,  // 72: sdodev.contracts.v1alpha1.RolloutBlocker.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	9,   // 73: sdodev.contracts.v1alpha1.RolloutBlocker.release:type_name -> sdodev.contracts.v1alpha1.Action
-	2,   // 74: sdodev.contracts.v1alpha1.RecoveryWait.exit_reason:type_name -> sdodev.contracts.v1alpha1.RecoveryWait.ExitReason
-	81,  // 75: sdodev.contracts.v1alpha1.RecoveryWait.duration:type_name -> google.protobuf.Duration
-	8,   // 76: sdodev.contracts.v1alpha1.PlanApplication.plan:type_name -> sdodev.contracts.v1alpha1.Plan
-	6,   // 77: sdodev.contracts.v1alpha1.PlanApplication.verification:type_name -> sdodev.contracts.v1alpha1.Verdict
-	81,  // 78: sdodev.contracts.v1alpha1.PlanApplication.duration:type_name -> google.protobuf.Duration
-	9,   // 79: sdodev.contracts.v1alpha1.PlanApplication.actions_applied:type_name -> sdodev.contracts.v1alpha1.Action
-	82,  // 80: sdodev.contracts.v1alpha1.PlanApplication.started_at:type_name -> google.protobuf.Timestamp
-	82,  // 81: sdodev.contracts.v1alpha1.PlanApplication.completed_at:type_name -> google.protobuf.Timestamp
-	14,  // 82: sdodev.contracts.v1alpha1.PlanApplication.object_effects:type_name -> sdodev.contracts.v1alpha1.PlanObjectEffect
-	21,  // 83: sdodev.contracts.v1alpha1.PlanApplication.action_reports:type_name -> sdodev.contracts.v1alpha1.ActionReport
-	31,  // 84: sdodev.contracts.v1alpha1.PlanApplication.rollout_pending:type_name -> sdodev.contracts.v1alpha1.RolloutPending
-	33,  // 85: sdodev.contracts.v1alpha1.PlanApplication.recovery_wait:type_name -> sdodev.contracts.v1alpha1.RecoveryWait
-	0,   // 86: sdodev.contracts.v1alpha1.PlanApplication.settlement_rejection_reason:type_name -> sdodev.contracts.v1alpha1.SettlementRejectionReason
-	82,  // 87: sdodev.contracts.v1alpha1.ProgramToolCall.at:type_name -> google.protobuf.Timestamp
-	79,  // 88: sdodev.contracts.v1alpha1.ReflectionCauseWork.resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	39,  // 89: sdodev.contracts.v1alpha1.ReflectionCauseWork.items:type_name -> sdodev.contracts.v1alpha1.ReflectionWorkItem
-	5,   // 90: sdodev.contracts.v1alpha1.ReflectionWorkItem.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
-	79,  // 91: sdodev.contracts.v1alpha1.ReflectionWorkItem.resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	30,  // 92: sdodev.contracts.v1alpha1.ReflectionWorkItem.evaluation:type_name -> sdodev.contracts.v1alpha1.ProgramRun
-	38,  // 93: sdodev.contracts.v1alpha1.ReflectionEligibility.causes:type_name -> sdodev.contracts.v1alpha1.ReflectionCauseWork
-	39,  // 94: sdodev.contracts.v1alpha1.ReflectionEligibility.unassigned:type_name -> sdodev.contracts.v1alpha1.ReflectionWorkItem
-	42,  // 95: sdodev.contracts.v1alpha1.PlaybookCoverage.matches:type_name -> sdodev.contracts.v1alpha1.PlaybookMatch
-	5,   // 96: sdodev.contracts.v1alpha1.PlaybookMatch.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
-	79,  // 97: sdodev.contracts.v1alpha1.RemoveServicePort.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	44,  // 98: sdodev.contracts.v1alpha1.CredentialRef.config_map:type_name -> sdodev.contracts.v1alpha1.ConfigMapCredentialRef
-	45,  // 99: sdodev.contracts.v1alpha1.DatabaseAuth.username:type_name -> sdodev.contracts.v1alpha1.CredentialRef
-	45,  // 100: sdodev.contracts.v1alpha1.DatabaseAuth.password:type_name -> sdodev.contracts.v1alpha1.CredentialRef
-	79,  // 101: sdodev.contracts.v1alpha1.DatabaseTarget.pod:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	46,  // 102: sdodev.contracts.v1alpha1.DatabaseTarget.auth:type_name -> sdodev.contracts.v1alpha1.DatabaseAuth
-	47,  // 103: sdodev.contracts.v1alpha1.EnsureDatabaseUser.target:type_name -> sdodev.contracts.v1alpha1.DatabaseTarget
-	48,  // 104: sdodev.contracts.v1alpha1.EnsureDatabaseUser.roles:type_name -> sdodev.contracts.v1alpha1.DatabaseRole
-	45,  // 105: sdodev.contracts.v1alpha1.EnsureDatabaseUser.password:type_name -> sdodev.contracts.v1alpha1.CredentialRef
-	79,  // 106: sdodev.contracts.v1alpha1.PatchObject.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	51,  // 107: sdodev.contracts.v1alpha1.PatchObject.edits:type_name -> sdodev.contracts.v1alpha1.ListEdit
-	79,  // 108: sdodev.contracts.v1alpha1.ApplyObject.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	79,  // 109: sdodev.contracts.v1alpha1.KubernetesRequest.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	74,  // 110: sdodev.contracts.v1alpha1.KubernetesRequest.query:type_name -> sdodev.contracts.v1alpha1.KubernetesRequest.QueryEntry
-	79,  // 111: sdodev.contracts.v1alpha1.WaitFor.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	81,  // 112: sdodev.contracts.v1alpha1.WaitFor.timeout:type_name -> google.protobuf.Duration
-	81,  // 113: sdodev.contracts.v1alpha1.WaitFor.interval:type_name -> google.protobuf.Duration
-	79,  // 114: sdodev.contracts.v1alpha1.Command.pod:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	79,  // 115: sdodev.contracts.v1alpha1.HttpRequest.pod:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	75,  // 116: sdodev.contracts.v1alpha1.HttpRequest.headers:type_name -> sdodev.contracts.v1alpha1.HttpRequest.HeadersEntry
-	45,  // 117: sdodev.contracts.v1alpha1.HttpRequest.bearer:type_name -> sdodev.contracts.v1alpha1.CredentialRef
-	76,  // 118: sdodev.contracts.v1alpha1.HttpRequest.header_env:type_name -> sdodev.contracts.v1alpha1.HttpRequest.HeaderEnvEntry
-	55,  // 119: sdodev.contracts.v1alpha1.EnsureExec.observe:type_name -> sdodev.contracts.v1alpha1.Command
-	55,  // 120: sdodev.contracts.v1alpha1.EnsureExec.ensure:type_name -> sdodev.contracts.v1alpha1.Command
-	56,  // 121: sdodev.contracts.v1alpha1.EnsureHttp.observe:type_name -> sdodev.contracts.v1alpha1.HttpRequest
-	56,  // 122: sdodev.contracts.v1alpha1.EnsureHttp.ensure:type_name -> sdodev.contracts.v1alpha1.HttpRequest
-	52,  // 123: sdodev.contracts.v1alpha1.RunJob.object:type_name -> sdodev.contracts.v1alpha1.ApplyObject
-	54,  // 124: sdodev.contracts.v1alpha1.RunJob.completion:type_name -> sdodev.contracts.v1alpha1.WaitFor
-	79,  // 125: sdodev.contracts.v1alpha1.StoreTarget.pod:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	60,  // 126: sdodev.contracts.v1alpha1.StoreBackup.target:type_name -> sdodev.contracts.v1alpha1.StoreTarget
-	61,  // 127: sdodev.contracts.v1alpha1.StoreBackup.scope:type_name -> sdodev.contracts.v1alpha1.DataScope
-	60,  // 128: sdodev.contracts.v1alpha1.InvalidateDerived.target:type_name -> sdodev.contracts.v1alpha1.StoreTarget
-	61,  // 129: sdodev.contracts.v1alpha1.InvalidateDerived.scope:type_name -> sdodev.contracts.v1alpha1.DataScope
-	60,  // 130: sdodev.contracts.v1alpha1.RepairData.target:type_name -> sdodev.contracts.v1alpha1.StoreTarget
-	61,  // 131: sdodev.contracts.v1alpha1.RepairData.scope:type_name -> sdodev.contracts.v1alpha1.DataScope
-	64,  // 132: sdodev.contracts.v1alpha1.RepairData.member_predicate:type_name -> sdodev.contracts.v1alpha1.MemberPredicate
-	61,  // 133: sdodev.contracts.v1alpha1.RepairData.copy_from:type_name -> sdodev.contracts.v1alpha1.DataScope
-	60,  // 134: sdodev.contracts.v1alpha1.RestoreBackup.target:type_name -> sdodev.contracts.v1alpha1.StoreTarget
-	67,  // 135: sdodev.contracts.v1alpha1.StoreItemChange.before:type_name -> sdodev.contracts.v1alpha1.StoreItem
-	67,  // 136: sdodev.contracts.v1alpha1.StoreItemChange.after:type_name -> sdodev.contracts.v1alpha1.StoreItem
-	60,  // 137: sdodev.contracts.v1alpha1.RestoreStoreItem.target:type_name -> sdodev.contracts.v1alpha1.StoreTarget
-	68,  // 138: sdodev.contracts.v1alpha1.RestoreStoreItem.change:type_name -> sdodev.contracts.v1alpha1.StoreItemChange
-	60,  // 139: sdodev.contracts.v1alpha1.CheckStoreCredential.target:type_name -> sdodev.contracts.v1alpha1.StoreTarget
-	79,  // 140: sdodev.contracts.v1alpha1.CheckStoreCredential.client:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	70,  // 141: sdodev.contracts.v1alpha1.CheckStoreCredential.credential:type_name -> sdodev.contracts.v1alpha1.StoreCredentialInputs
-	77,  // 142: sdodev.contracts.v1alpha1.RunScript.env:type_name -> sdodev.contracts.v1alpha1.RunScript.EnvEntry
-	81,  // 143: sdodev.contracts.v1alpha1.RunScript.timeout:type_name -> google.protobuf.Duration
-	79,  // 144: sdodev.contracts.v1alpha1.SyncWebhookCA.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	45,  // 145: sdodev.contracts.v1alpha1.HttpRequest.HeaderEnvEntry.value:type_name -> sdodev.contracts.v1alpha1.CredentialRef
-	18,  // 146: sdodev.contracts.v1alpha1.RunScript.EnvEntry.value:type_name -> sdodev.contracts.v1alpha1.PlanValue
-	147, // [147:147] is the sub-list for method output_type
-	147, // [147:147] is the sub-list for method input_type
-	147, // [147:147] is the sub-list for extension type_name
-	147, // [147:147] is the sub-list for extension extendee
-	0,   // [0:147] is the sub-list for field type_name
+	16,  // 8: sdodev.contracts.v1alpha1.Action.reconcile_from_source:type_name -> sdodev.contracts.v1alpha1.ReconcileFromSource
+	17,  // 9: sdodev.contracts.v1alpha1.Action.rollback:type_name -> sdodev.contracts.v1alpha1.Rollback
+	18,  // 10: sdodev.contracts.v1alpha1.Action.set_field:type_name -> sdodev.contracts.v1alpha1.SetField
+	31,  // 11: sdodev.contracts.v1alpha1.Action.restart_rollout:type_name -> sdodev.contracts.v1alpha1.RestartRollout
+	13,  // 12: sdodev.contracts.v1alpha1.Action.create_from_source:type_name -> sdodev.contracts.v1alpha1.CreateFromSource
+	14,  // 13: sdodev.contracts.v1alpha1.Action.delete_object:type_name -> sdodev.contracts.v1alpha1.DeleteObject
+	26,  // 14: sdodev.contracts.v1alpha1.Action.delete_pod:type_name -> sdodev.contracts.v1alpha1.DeletePod
+	27,  // 15: sdodev.contracts.v1alpha1.Action.scale_workload:type_name -> sdodev.contracts.v1alpha1.ScaleWorkload
+	30,  // 16: sdodev.contracts.v1alpha1.Action.exec:type_name -> sdodev.contracts.v1alpha1.Exec
+	45,  // 17: sdodev.contracts.v1alpha1.Action.remove_service_port:type_name -> sdodev.contracts.v1alpha1.RemoveServicePort
+	51,  // 18: sdodev.contracts.v1alpha1.Action.ensure_database_user:type_name -> sdodev.contracts.v1alpha1.EnsureDatabaseUser
+	52,  // 19: sdodev.contracts.v1alpha1.Action.patch_object:type_name -> sdodev.contracts.v1alpha1.PatchObject
+	54,  // 20: sdodev.contracts.v1alpha1.Action.apply_object:type_name -> sdodev.contracts.v1alpha1.ApplyObject
+	55,  // 21: sdodev.contracts.v1alpha1.Action.kubernetes_request:type_name -> sdodev.contracts.v1alpha1.KubernetesRequest
+	56,  // 22: sdodev.contracts.v1alpha1.Action.wait_for:type_name -> sdodev.contracts.v1alpha1.WaitFor
+	59,  // 23: sdodev.contracts.v1alpha1.Action.ensure_exec:type_name -> sdodev.contracts.v1alpha1.EnsureExec
+	60,  // 24: sdodev.contracts.v1alpha1.Action.ensure_http:type_name -> sdodev.contracts.v1alpha1.EnsureHttp
+	61,  // 25: sdodev.contracts.v1alpha1.Action.run_job:type_name -> sdodev.contracts.v1alpha1.RunJob
+	74,  // 26: sdodev.contracts.v1alpha1.Action.run_script:type_name -> sdodev.contracts.v1alpha1.RunScript
+	75,  // 27: sdodev.contracts.v1alpha1.Action.sync_webhook_ca:type_name -> sdodev.contracts.v1alpha1.SyncWebhookCA
+	29,  // 28: sdodev.contracts.v1alpha1.Action.retire_old_revision:type_name -> sdodev.contracts.v1alpha1.RetireOldRevision
+	28,  // 29: sdodev.contracts.v1alpha1.Action.retry_admission:type_name -> sdodev.contracts.v1alpha1.RetryAdmission
+	64,  // 30: sdodev.contracts.v1alpha1.Action.store_backup:type_name -> sdodev.contracts.v1alpha1.StoreBackup
+	65,  // 31: sdodev.contracts.v1alpha1.Action.invalidate_derived:type_name -> sdodev.contracts.v1alpha1.InvalidateDerived
+	67,  // 32: sdodev.contracts.v1alpha1.Action.repair_data:type_name -> sdodev.contracts.v1alpha1.RepairData
+	68,  // 33: sdodev.contracts.v1alpha1.Action.restore_backup:type_name -> sdodev.contracts.v1alpha1.RestoreBackup
+	71,  // 34: sdodev.contracts.v1alpha1.Action.restore_store_item:type_name -> sdodev.contracts.v1alpha1.RestoreStoreItem
+	73,  // 35: sdodev.contracts.v1alpha1.Action.check_store_credential:type_name -> sdodev.contracts.v1alpha1.CheckStoreCredential
+	11,  // 36: sdodev.contracts.v1alpha1.Action.escalate:type_name -> sdodev.contracts.v1alpha1.Escalate
+	12,  // 37: sdodev.contracts.v1alpha1.Action.propose_source_change:type_name -> sdodev.contracts.v1alpha1.ProposeSourceChange
+	10,  // 38: sdodev.contracts.v1alpha1.Action.restore_secret_from_source:type_name -> sdodev.contracts.v1alpha1.RestoreSecretFromSource
+	82,  // 39: sdodev.contracts.v1alpha1.RestoreSecretFromSource.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	82,  // 40: sdodev.contracts.v1alpha1.Escalate.resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	82,  // 41: sdodev.contracts.v1alpha1.ProposeSourceChange.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	19,  // 42: sdodev.contracts.v1alpha1.ProposeSourceChange.value:type_name -> sdodev.contracts.v1alpha1.PlanValue
+	82,  // 43: sdodev.contracts.v1alpha1.CreateFromSource.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	82,  // 44: sdodev.contracts.v1alpha1.DeleteObject.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	82,  // 45: sdodev.contracts.v1alpha1.PlanObjectEffect.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	83,  // 46: sdodev.contracts.v1alpha1.PlanObjectEffect.deleted_pre_image:type_name -> google.protobuf.Struct
+	82,  // 47: sdodev.contracts.v1alpha1.ReconcileFromSource.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	82,  // 48: sdodev.contracts.v1alpha1.Rollback.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	82,  // 49: sdodev.contracts.v1alpha1.SetField.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	19,  // 50: sdodev.contracts.v1alpha1.SetField.value:type_name -> sdodev.contracts.v1alpha1.PlanValue
+	20,  // 51: sdodev.contracts.v1alpha1.PlanValue.source:type_name -> sdodev.contracts.v1alpha1.ValueField
+	20,  // 52: sdodev.contracts.v1alpha1.PlanValue.observed:type_name -> sdodev.contracts.v1alpha1.ValueField
+	82,  // 53: sdodev.contracts.v1alpha1.ValueField.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	82,  // 54: sdodev.contracts.v1alpha1.ValueProvenance.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	21,  // 55: sdodev.contracts.v1alpha1.ActionReport.values:type_name -> sdodev.contracts.v1alpha1.ValueProvenance
+	23,  // 56: sdodev.contracts.v1alpha1.ActionReport.source_reconcile:type_name -> sdodev.contracts.v1alpha1.SourceReconcileResult
+	24,  // 57: sdodev.contracts.v1alpha1.ActionReport.secret_restore:type_name -> sdodev.contracts.v1alpha1.SecretRestoreResult
+	82,  // 58: sdodev.contracts.v1alpha1.SourceReconcileResult.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	25,  // 59: sdodev.contracts.v1alpha1.SourceReconcileResult.rollout_steps:type_name -> sdodev.contracts.v1alpha1.SourceRolloutStep
+	82,  // 60: sdodev.contracts.v1alpha1.SecretRestoreResult.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	76,  // 61: sdodev.contracts.v1alpha1.SecretRestoreResult.digests:type_name -> sdodev.contracts.v1alpha1.SecretRestoreResult.DigestsEntry
+	82,  // 62: sdodev.contracts.v1alpha1.SourceRolloutStep.workload:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	82,  // 63: sdodev.contracts.v1alpha1.SourceRolloutStep.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	82,  // 64: sdodev.contracts.v1alpha1.DeletePod.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	82,  // 65: sdodev.contracts.v1alpha1.ScaleWorkload.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	19,  // 66: sdodev.contracts.v1alpha1.ScaleWorkload.replicas:type_name -> sdodev.contracts.v1alpha1.PlanValue
+	82,  // 67: sdodev.contracts.v1alpha1.RetryAdmission.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	82,  // 68: sdodev.contracts.v1alpha1.RetireOldRevision.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	82,  // 69: sdodev.contracts.v1alpha1.Exec.pod:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	19,  // 70: sdodev.contracts.v1alpha1.Exec.command:type_name -> sdodev.contracts.v1alpha1.PlanValue
+	82,  // 71: sdodev.contracts.v1alpha1.RestartRollout.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	5,   // 72: sdodev.contracts.v1alpha1.ProgramRun.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
+	6,   // 73: sdodev.contracts.v1alpha1.ProgramRun.verdict:type_name -> sdodev.contracts.v1alpha1.Verdict
+	84,  // 74: sdodev.contracts.v1alpha1.ProgramRun.duration:type_name -> google.protobuf.Duration
+	82,  // 75: sdodev.contracts.v1alpha1.RolloutPending.admission_configurations:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	34,  // 76: sdodev.contracts.v1alpha1.RolloutPending.blockers:type_name -> sdodev.contracts.v1alpha1.RolloutBlocker
+	82,  // 77: sdodev.contracts.v1alpha1.RolloutBlocker.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	9,   // 78: sdodev.contracts.v1alpha1.RolloutBlocker.release:type_name -> sdodev.contracts.v1alpha1.Action
+	2,   // 79: sdodev.contracts.v1alpha1.RecoveryWait.exit_reason:type_name -> sdodev.contracts.v1alpha1.RecoveryWait.ExitReason
+	84,  // 80: sdodev.contracts.v1alpha1.RecoveryWait.duration:type_name -> google.protobuf.Duration
+	8,   // 81: sdodev.contracts.v1alpha1.PlanApplication.plan:type_name -> sdodev.contracts.v1alpha1.Plan
+	6,   // 82: sdodev.contracts.v1alpha1.PlanApplication.verification:type_name -> sdodev.contracts.v1alpha1.Verdict
+	84,  // 83: sdodev.contracts.v1alpha1.PlanApplication.duration:type_name -> google.protobuf.Duration
+	9,   // 84: sdodev.contracts.v1alpha1.PlanApplication.actions_applied:type_name -> sdodev.contracts.v1alpha1.Action
+	85,  // 85: sdodev.contracts.v1alpha1.PlanApplication.started_at:type_name -> google.protobuf.Timestamp
+	85,  // 86: sdodev.contracts.v1alpha1.PlanApplication.completed_at:type_name -> google.protobuf.Timestamp
+	15,  // 87: sdodev.contracts.v1alpha1.PlanApplication.object_effects:type_name -> sdodev.contracts.v1alpha1.PlanObjectEffect
+	22,  // 88: sdodev.contracts.v1alpha1.PlanApplication.action_reports:type_name -> sdodev.contracts.v1alpha1.ActionReport
+	33,  // 89: sdodev.contracts.v1alpha1.PlanApplication.rollout_pending:type_name -> sdodev.contracts.v1alpha1.RolloutPending
+	35,  // 90: sdodev.contracts.v1alpha1.PlanApplication.recovery_wait:type_name -> sdodev.contracts.v1alpha1.RecoveryWait
+	0,   // 91: sdodev.contracts.v1alpha1.PlanApplication.settlement_rejection_reason:type_name -> sdodev.contracts.v1alpha1.SettlementRejectionReason
+	85,  // 92: sdodev.contracts.v1alpha1.ProgramToolCall.at:type_name -> google.protobuf.Timestamp
+	82,  // 93: sdodev.contracts.v1alpha1.ReflectionCauseWork.resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	41,  // 94: sdodev.contracts.v1alpha1.ReflectionCauseWork.items:type_name -> sdodev.contracts.v1alpha1.ReflectionWorkItem
+	5,   // 95: sdodev.contracts.v1alpha1.ReflectionWorkItem.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
+	82,  // 96: sdodev.contracts.v1alpha1.ReflectionWorkItem.resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	32,  // 97: sdodev.contracts.v1alpha1.ReflectionWorkItem.evaluation:type_name -> sdodev.contracts.v1alpha1.ProgramRun
+	40,  // 98: sdodev.contracts.v1alpha1.ReflectionEligibility.causes:type_name -> sdodev.contracts.v1alpha1.ReflectionCauseWork
+	41,  // 99: sdodev.contracts.v1alpha1.ReflectionEligibility.unassigned:type_name -> sdodev.contracts.v1alpha1.ReflectionWorkItem
+	44,  // 100: sdodev.contracts.v1alpha1.PlaybookCoverage.matches:type_name -> sdodev.contracts.v1alpha1.PlaybookMatch
+	5,   // 101: sdodev.contracts.v1alpha1.PlaybookMatch.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
+	82,  // 102: sdodev.contracts.v1alpha1.RemoveServicePort.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	46,  // 103: sdodev.contracts.v1alpha1.CredentialRef.config_map:type_name -> sdodev.contracts.v1alpha1.ConfigMapCredentialRef
+	47,  // 104: sdodev.contracts.v1alpha1.DatabaseAuth.username:type_name -> sdodev.contracts.v1alpha1.CredentialRef
+	47,  // 105: sdodev.contracts.v1alpha1.DatabaseAuth.password:type_name -> sdodev.contracts.v1alpha1.CredentialRef
+	82,  // 106: sdodev.contracts.v1alpha1.DatabaseTarget.pod:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	48,  // 107: sdodev.contracts.v1alpha1.DatabaseTarget.auth:type_name -> sdodev.contracts.v1alpha1.DatabaseAuth
+	49,  // 108: sdodev.contracts.v1alpha1.EnsureDatabaseUser.target:type_name -> sdodev.contracts.v1alpha1.DatabaseTarget
+	50,  // 109: sdodev.contracts.v1alpha1.EnsureDatabaseUser.roles:type_name -> sdodev.contracts.v1alpha1.DatabaseRole
+	47,  // 110: sdodev.contracts.v1alpha1.EnsureDatabaseUser.password:type_name -> sdodev.contracts.v1alpha1.CredentialRef
+	82,  // 111: sdodev.contracts.v1alpha1.PatchObject.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	53,  // 112: sdodev.contracts.v1alpha1.PatchObject.edits:type_name -> sdodev.contracts.v1alpha1.ListEdit
+	82,  // 113: sdodev.contracts.v1alpha1.ApplyObject.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	82,  // 114: sdodev.contracts.v1alpha1.KubernetesRequest.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	77,  // 115: sdodev.contracts.v1alpha1.KubernetesRequest.query:type_name -> sdodev.contracts.v1alpha1.KubernetesRequest.QueryEntry
+	82,  // 116: sdodev.contracts.v1alpha1.WaitFor.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	84,  // 117: sdodev.contracts.v1alpha1.WaitFor.timeout:type_name -> google.protobuf.Duration
+	84,  // 118: sdodev.contracts.v1alpha1.WaitFor.interval:type_name -> google.protobuf.Duration
+	82,  // 119: sdodev.contracts.v1alpha1.Command.pod:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	82,  // 120: sdodev.contracts.v1alpha1.HttpRequest.pod:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	78,  // 121: sdodev.contracts.v1alpha1.HttpRequest.headers:type_name -> sdodev.contracts.v1alpha1.HttpRequest.HeadersEntry
+	47,  // 122: sdodev.contracts.v1alpha1.HttpRequest.bearer:type_name -> sdodev.contracts.v1alpha1.CredentialRef
+	79,  // 123: sdodev.contracts.v1alpha1.HttpRequest.header_env:type_name -> sdodev.contracts.v1alpha1.HttpRequest.HeaderEnvEntry
+	57,  // 124: sdodev.contracts.v1alpha1.EnsureExec.observe:type_name -> sdodev.contracts.v1alpha1.Command
+	57,  // 125: sdodev.contracts.v1alpha1.EnsureExec.ensure:type_name -> sdodev.contracts.v1alpha1.Command
+	58,  // 126: sdodev.contracts.v1alpha1.EnsureHttp.observe:type_name -> sdodev.contracts.v1alpha1.HttpRequest
+	58,  // 127: sdodev.contracts.v1alpha1.EnsureHttp.ensure:type_name -> sdodev.contracts.v1alpha1.HttpRequest
+	54,  // 128: sdodev.contracts.v1alpha1.RunJob.object:type_name -> sdodev.contracts.v1alpha1.ApplyObject
+	56,  // 129: sdodev.contracts.v1alpha1.RunJob.completion:type_name -> sdodev.contracts.v1alpha1.WaitFor
+	82,  // 130: sdodev.contracts.v1alpha1.StoreTarget.pod:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	62,  // 131: sdodev.contracts.v1alpha1.StoreBackup.target:type_name -> sdodev.contracts.v1alpha1.StoreTarget
+	63,  // 132: sdodev.contracts.v1alpha1.StoreBackup.scope:type_name -> sdodev.contracts.v1alpha1.DataScope
+	62,  // 133: sdodev.contracts.v1alpha1.InvalidateDerived.target:type_name -> sdodev.contracts.v1alpha1.StoreTarget
+	63,  // 134: sdodev.contracts.v1alpha1.InvalidateDerived.scope:type_name -> sdodev.contracts.v1alpha1.DataScope
+	62,  // 135: sdodev.contracts.v1alpha1.RepairData.target:type_name -> sdodev.contracts.v1alpha1.StoreTarget
+	63,  // 136: sdodev.contracts.v1alpha1.RepairData.scope:type_name -> sdodev.contracts.v1alpha1.DataScope
+	66,  // 137: sdodev.contracts.v1alpha1.RepairData.member_predicate:type_name -> sdodev.contracts.v1alpha1.MemberPredicate
+	63,  // 138: sdodev.contracts.v1alpha1.RepairData.copy_from:type_name -> sdodev.contracts.v1alpha1.DataScope
+	62,  // 139: sdodev.contracts.v1alpha1.RestoreBackup.target:type_name -> sdodev.contracts.v1alpha1.StoreTarget
+	69,  // 140: sdodev.contracts.v1alpha1.StoreItemChange.before:type_name -> sdodev.contracts.v1alpha1.StoreItem
+	69,  // 141: sdodev.contracts.v1alpha1.StoreItemChange.after:type_name -> sdodev.contracts.v1alpha1.StoreItem
+	62,  // 142: sdodev.contracts.v1alpha1.RestoreStoreItem.target:type_name -> sdodev.contracts.v1alpha1.StoreTarget
+	70,  // 143: sdodev.contracts.v1alpha1.RestoreStoreItem.change:type_name -> sdodev.contracts.v1alpha1.StoreItemChange
+	62,  // 144: sdodev.contracts.v1alpha1.CheckStoreCredential.target:type_name -> sdodev.contracts.v1alpha1.StoreTarget
+	82,  // 145: sdodev.contracts.v1alpha1.CheckStoreCredential.client:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	72,  // 146: sdodev.contracts.v1alpha1.CheckStoreCredential.credential:type_name -> sdodev.contracts.v1alpha1.StoreCredentialInputs
+	80,  // 147: sdodev.contracts.v1alpha1.RunScript.env:type_name -> sdodev.contracts.v1alpha1.RunScript.EnvEntry
+	84,  // 148: sdodev.contracts.v1alpha1.RunScript.timeout:type_name -> google.protobuf.Duration
+	82,  // 149: sdodev.contracts.v1alpha1.SyncWebhookCA.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	47,  // 150: sdodev.contracts.v1alpha1.HttpRequest.HeaderEnvEntry.value:type_name -> sdodev.contracts.v1alpha1.CredentialRef
+	19,  // 151: sdodev.contracts.v1alpha1.RunScript.EnvEntry.value:type_name -> sdodev.contracts.v1alpha1.PlanValue
+	152, // [152:152] is the sub-list for method output_type
+	152, // [152:152] is the sub-list for method input_type
+	152, // [152:152] is the sub-list for extension type_name
+	152, // [152:152] is the sub-list for extension extendee
+	0,   // [0:152] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_program_proto_init() }
@@ -6665,17 +6856,18 @@ func file_sdodev_contracts_v1alpha1_program_proto_init() {
 		(*Action_CheckStoreCredential)(nil),
 		(*Action_Escalate)(nil),
 		(*Action_ProposeSourceChange)(nil),
+		(*Action_RestoreSecretFromSource)(nil),
 	}
-	file_sdodev_contracts_v1alpha1_program_proto_msgTypes[15].OneofWrappers = []any{
+	file_sdodev_contracts_v1alpha1_program_proto_msgTypes[16].OneofWrappers = []any{
 		(*PlanValue_Source)(nil),
 		(*PlanValue_Observed)(nil),
 		(*PlanValue_Parameter)(nil),
 	}
-	file_sdodev_contracts_v1alpha1_program_proto_msgTypes[18].OneofWrappers = []any{}
-	file_sdodev_contracts_v1alpha1_program_proto_msgTypes[27].OneofWrappers = []any{}
-	file_sdodev_contracts_v1alpha1_program_proto_msgTypes[31].OneofWrappers = []any{}
-	file_sdodev_contracts_v1alpha1_program_proto_msgTypes[37].OneofWrappers = []any{}
-	file_sdodev_contracts_v1alpha1_program_proto_msgTypes[42].OneofWrappers = []any{
+	file_sdodev_contracts_v1alpha1_program_proto_msgTypes[19].OneofWrappers = []any{}
+	file_sdodev_contracts_v1alpha1_program_proto_msgTypes[29].OneofWrappers = []any{}
+	file_sdodev_contracts_v1alpha1_program_proto_msgTypes[33].OneofWrappers = []any{}
+	file_sdodev_contracts_v1alpha1_program_proto_msgTypes[39].OneofWrappers = []any{}
+	file_sdodev_contracts_v1alpha1_program_proto_msgTypes[44].OneofWrappers = []any{
 		(*CredentialRef_Env)(nil),
 		(*CredentialRef_ConfigMap)(nil),
 	}
@@ -6685,7 +6877,7 @@ func file_sdodev_contracts_v1alpha1_program_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sdodev_contracts_v1alpha1_program_proto_rawDesc), len(file_sdodev_contracts_v1alpha1_program_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   75,
+			NumMessages:   78,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

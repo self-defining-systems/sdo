@@ -136,7 +136,7 @@ class Plan(_message.Message):
     def __init__(self, actions: _Optional[_Iterable[_Union[Action, _Mapping]]] = ..., rationale: _Optional[str] = ...) -> None: ...
 
 class Action(_message.Message):
-    __slots__ = ("reconcile_from_source", "rollback", "set_field", "restart_rollout", "create_from_source", "delete_object", "delete_pod", "scale_workload", "exec", "remove_service_port", "ensure_database_user", "patch_object", "apply_object", "kubernetes_request", "wait_for", "ensure_exec", "ensure_http", "run_job", "run_script", "sync_webhook_ca", "retire_old_revision", "retry_admission", "store_backup", "invalidate_derived", "repair_data", "restore_backup", "restore_store_item", "check_store_credential", "escalate", "propose_source_change")
+    __slots__ = ("reconcile_from_source", "rollback", "set_field", "restart_rollout", "create_from_source", "delete_object", "delete_pod", "scale_workload", "exec", "remove_service_port", "ensure_database_user", "patch_object", "apply_object", "kubernetes_request", "wait_for", "ensure_exec", "ensure_http", "run_job", "run_script", "sync_webhook_ca", "retire_old_revision", "retry_admission", "store_backup", "invalidate_derived", "repair_data", "restore_backup", "restore_store_item", "check_store_credential", "escalate", "propose_source_change", "restore_secret_from_source")
     RECONCILE_FROM_SOURCE_FIELD_NUMBER: _ClassVar[int]
     ROLLBACK_FIELD_NUMBER: _ClassVar[int]
     SET_FIELD_FIELD_NUMBER: _ClassVar[int]
@@ -167,6 +167,7 @@ class Action(_message.Message):
     CHECK_STORE_CREDENTIAL_FIELD_NUMBER: _ClassVar[int]
     ESCALATE_FIELD_NUMBER: _ClassVar[int]
     PROPOSE_SOURCE_CHANGE_FIELD_NUMBER: _ClassVar[int]
+    RESTORE_SECRET_FROM_SOURCE_FIELD_NUMBER: _ClassVar[int]
     reconcile_from_source: ReconcileFromSource
     rollback: Rollback
     set_field: SetField
@@ -197,7 +198,16 @@ class Action(_message.Message):
     check_store_credential: CheckStoreCredential
     escalate: Escalate
     propose_source_change: ProposeSourceChange
-    def __init__(self, reconcile_from_source: _Optional[_Union[ReconcileFromSource, _Mapping]] = ..., rollback: _Optional[_Union[Rollback, _Mapping]] = ..., set_field: _Optional[_Union[SetField, _Mapping]] = ..., restart_rollout: _Optional[_Union[RestartRollout, _Mapping]] = ..., create_from_source: _Optional[_Union[CreateFromSource, _Mapping]] = ..., delete_object: _Optional[_Union[DeleteObject, _Mapping]] = ..., delete_pod: _Optional[_Union[DeletePod, _Mapping]] = ..., scale_workload: _Optional[_Union[ScaleWorkload, _Mapping]] = ..., exec: _Optional[_Union[Exec, _Mapping]] = ..., remove_service_port: _Optional[_Union[RemoveServicePort, _Mapping]] = ..., ensure_database_user: _Optional[_Union[EnsureDatabaseUser, _Mapping]] = ..., patch_object: _Optional[_Union[PatchObject, _Mapping]] = ..., apply_object: _Optional[_Union[ApplyObject, _Mapping]] = ..., kubernetes_request: _Optional[_Union[KubernetesRequest, _Mapping]] = ..., wait_for: _Optional[_Union[WaitFor, _Mapping]] = ..., ensure_exec: _Optional[_Union[EnsureExec, _Mapping]] = ..., ensure_http: _Optional[_Union[EnsureHttp, _Mapping]] = ..., run_job: _Optional[_Union[RunJob, _Mapping]] = ..., run_script: _Optional[_Union[RunScript, _Mapping]] = ..., sync_webhook_ca: _Optional[_Union[SyncWebhookCA, _Mapping]] = ..., retire_old_revision: _Optional[_Union[RetireOldRevision, _Mapping]] = ..., retry_admission: _Optional[_Union[RetryAdmission, _Mapping]] = ..., store_backup: _Optional[_Union[StoreBackup, _Mapping]] = ..., invalidate_derived: _Optional[_Union[InvalidateDerived, _Mapping]] = ..., repair_data: _Optional[_Union[RepairData, _Mapping]] = ..., restore_backup: _Optional[_Union[RestoreBackup, _Mapping]] = ..., restore_store_item: _Optional[_Union[RestoreStoreItem, _Mapping]] = ..., check_store_credential: _Optional[_Union[CheckStoreCredential, _Mapping]] = ..., escalate: _Optional[_Union[Escalate, _Mapping]] = ..., propose_source_change: _Optional[_Union[ProposeSourceChange, _Mapping]] = ...) -> None: ...
+    restore_secret_from_source: RestoreSecretFromSource
+    def __init__(self, reconcile_from_source: _Optional[_Union[ReconcileFromSource, _Mapping]] = ..., rollback: _Optional[_Union[Rollback, _Mapping]] = ..., set_field: _Optional[_Union[SetField, _Mapping]] = ..., restart_rollout: _Optional[_Union[RestartRollout, _Mapping]] = ..., create_from_source: _Optional[_Union[CreateFromSource, _Mapping]] = ..., delete_object: _Optional[_Union[DeleteObject, _Mapping]] = ..., delete_pod: _Optional[_Union[DeletePod, _Mapping]] = ..., scale_workload: _Optional[_Union[ScaleWorkload, _Mapping]] = ..., exec: _Optional[_Union[Exec, _Mapping]] = ..., remove_service_port: _Optional[_Union[RemoveServicePort, _Mapping]] = ..., ensure_database_user: _Optional[_Union[EnsureDatabaseUser, _Mapping]] = ..., patch_object: _Optional[_Union[PatchObject, _Mapping]] = ..., apply_object: _Optional[_Union[ApplyObject, _Mapping]] = ..., kubernetes_request: _Optional[_Union[KubernetesRequest, _Mapping]] = ..., wait_for: _Optional[_Union[WaitFor, _Mapping]] = ..., ensure_exec: _Optional[_Union[EnsureExec, _Mapping]] = ..., ensure_http: _Optional[_Union[EnsureHttp, _Mapping]] = ..., run_job: _Optional[_Union[RunJob, _Mapping]] = ..., run_script: _Optional[_Union[RunScript, _Mapping]] = ..., sync_webhook_ca: _Optional[_Union[SyncWebhookCA, _Mapping]] = ..., retire_old_revision: _Optional[_Union[RetireOldRevision, _Mapping]] = ..., retry_admission: _Optional[_Union[RetryAdmission, _Mapping]] = ..., store_backup: _Optional[_Union[StoreBackup, _Mapping]] = ..., invalidate_derived: _Optional[_Union[InvalidateDerived, _Mapping]] = ..., repair_data: _Optional[_Union[RepairData, _Mapping]] = ..., restore_backup: _Optional[_Union[RestoreBackup, _Mapping]] = ..., restore_store_item: _Optional[_Union[RestoreStoreItem, _Mapping]] = ..., check_store_credential: _Optional[_Union[CheckStoreCredential, _Mapping]] = ..., escalate: _Optional[_Union[Escalate, _Mapping]] = ..., propose_source_change: _Optional[_Union[ProposeSourceChange, _Mapping]] = ..., restore_secret_from_source: _Optional[_Union[RestoreSecretFromSource, _Mapping]] = ...) -> None: ...
+
+class RestoreSecretFromSource(_message.Message):
+    __slots__ = ("ref", "reason")
+    REF_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    ref: _common_pb2.ObjectRef
+    reason: str
+    def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., reason: _Optional[str] = ...) -> None: ...
 
 class Escalate(_message.Message):
     __slots__ = ("reason", "resources")
@@ -320,7 +330,7 @@ class ValueProvenance(_message.Message):
     def __init__(self, origin: _Optional[str] = ..., ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., path: _Optional[str] = ..., source_commit: _Optional[str] = ..., resource_version: _Optional[str] = ..., parameter: _Optional[str] = ...) -> None: ...
 
 class ActionReport(_message.Message):
-    __slots__ = ("webhook_ca_digest", "action_index", "status", "values", "exit_code", "external_effect_json", "kubernetes_effect_json", "recording_error", "job_status_json", "script_result_json", "source_reconcile", "source_change_json", "failure_reason")
+    __slots__ = ("webhook_ca_digest", "action_index", "status", "values", "exit_code", "external_effect_json", "kubernetes_effect_json", "recording_error", "job_status_json", "script_result_json", "source_reconcile", "source_change_json", "secret_restore", "failure_reason")
     WEBHOOK_CA_DIGEST_FIELD_NUMBER: _ClassVar[int]
     ACTION_INDEX_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
@@ -333,6 +343,7 @@ class ActionReport(_message.Message):
     SCRIPT_RESULT_JSON_FIELD_NUMBER: _ClassVar[int]
     SOURCE_RECONCILE_FIELD_NUMBER: _ClassVar[int]
     SOURCE_CHANGE_JSON_FIELD_NUMBER: _ClassVar[int]
+    SECRET_RESTORE_FIELD_NUMBER: _ClassVar[int]
     FAILURE_REASON_FIELD_NUMBER: _ClassVar[int]
     webhook_ca_digest: str
     action_index: int
@@ -346,8 +357,9 @@ class ActionReport(_message.Message):
     script_result_json: bytes
     source_reconcile: SourceReconcileResult
     source_change_json: bytes
+    secret_restore: SecretRestoreResult
     failure_reason: str
-    def __init__(self, webhook_ca_digest: _Optional[str] = ..., action_index: _Optional[int] = ..., status: _Optional[str] = ..., values: _Optional[_Iterable[_Union[ValueProvenance, _Mapping]]] = ..., exit_code: _Optional[int] = ..., external_effect_json: _Optional[bytes] = ..., kubernetes_effect_json: _Optional[bytes] = ..., recording_error: _Optional[str] = ..., job_status_json: _Optional[bytes] = ..., script_result_json: _Optional[bytes] = ..., source_reconcile: _Optional[_Union[SourceReconcileResult, _Mapping]] = ..., source_change_json: _Optional[bytes] = ..., failure_reason: _Optional[str] = ...) -> None: ...
+    def __init__(self, webhook_ca_digest: _Optional[str] = ..., action_index: _Optional[int] = ..., status: _Optional[str] = ..., values: _Optional[_Iterable[_Union[ValueProvenance, _Mapping]]] = ..., exit_code: _Optional[int] = ..., external_effect_json: _Optional[bytes] = ..., kubernetes_effect_json: _Optional[bytes] = ..., recording_error: _Optional[str] = ..., job_status_json: _Optional[bytes] = ..., script_result_json: _Optional[bytes] = ..., source_reconcile: _Optional[_Union[SourceReconcileResult, _Mapping]] = ..., source_change_json: _Optional[bytes] = ..., secret_restore: _Optional[_Union[SecretRestoreResult, _Mapping]] = ..., failure_reason: _Optional[str] = ...) -> None: ...
 
 class SourceReconcileResult(_message.Message):
     __slots__ = ("ref", "converged", "residual_paths", "observation_error", "additions_known", "rollout_steps")
@@ -364,6 +376,29 @@ class SourceReconcileResult(_message.Message):
     additions_known: bool
     rollout_steps: _containers.RepeatedCompositeFieldContainer[SourceRolloutStep]
     def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., converged: _Optional[bool] = ..., residual_paths: _Optional[_Iterable[str]] = ..., observation_error: _Optional[str] = ..., additions_known: _Optional[bool] = ..., rollout_steps: _Optional[_Iterable[_Union[SourceRolloutStep, _Mapping]]] = ...) -> None: ...
+
+class SecretRestoreResult(_message.Message):
+    __slots__ = ("ref", "keys", "restored", "removed", "digests", "created")
+    class DigestsEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    REF_FIELD_NUMBER: _ClassVar[int]
+    KEYS_FIELD_NUMBER: _ClassVar[int]
+    RESTORED_FIELD_NUMBER: _ClassVar[int]
+    REMOVED_FIELD_NUMBER: _ClassVar[int]
+    DIGESTS_FIELD_NUMBER: _ClassVar[int]
+    CREATED_FIELD_NUMBER: _ClassVar[int]
+    ref: _common_pb2.ObjectRef
+    keys: _containers.RepeatedScalarFieldContainer[str]
+    restored: _containers.RepeatedScalarFieldContainer[str]
+    removed: _containers.RepeatedScalarFieldContainer[str]
+    digests: _containers.ScalarMap[str, str]
+    created: bool
+    def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., keys: _Optional[_Iterable[str]] = ..., restored: _Optional[_Iterable[str]] = ..., removed: _Optional[_Iterable[str]] = ..., digests: _Optional[_Mapping[str, str]] = ..., created: _Optional[bool] = ...) -> None: ...
 
 class SourceRolloutStep(_message.Message):
     __slots__ = ("workload", "ref", "status", "error")

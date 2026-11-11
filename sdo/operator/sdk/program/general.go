@@ -94,7 +94,7 @@ func ValidateGeneralRef(ref sdk.ObjectRef) error {
 		return fmt.Errorf("operation requires a named versioned object")
 	}
 	if strings.EqualFold(ref.Kind, "Secret") {
-		return fmt.Errorf("Secret data is unavailable; use credential references")
+		return fmt.Errorf("Secret data is unavailable; use credential references, or RestoreSecretFromSource to restore declared Secret data")
 	}
 	return nil
 }
@@ -332,6 +332,13 @@ func ProjectPatch(object map[string]any, a PatchObject) (map[string]any, error) 
 
 func validateGeneralAction(action Action) error {
 	switch a := action.(type) {
+	case RestoreSecretFromSource:
+		return a.Validate()
+	case *RestoreSecretFromSource:
+		if a != nil {
+			return a.Validate()
+		}
+		return fmt.Errorf("nil RestoreSecretFromSource")
 	case SyncWebhookCA:
 		return a.Validate()
 	case *SyncWebhookCA:

@@ -1004,6 +1004,8 @@ func planActionRef(action program.Action) (sdk.ObjectRef, error) {
 	switch a := generalAction(action).(type) {
 	case program.SyncWebhookCA:
 		return a.Target.Ref, nil
+	case program.RestoreSecretFromSource:
+		return a.Ref, nil
 	case program.PatchObject:
 		return a.Ref, nil
 	case program.ApplyObject:

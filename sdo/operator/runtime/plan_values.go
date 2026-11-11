@@ -15,10 +15,13 @@ import (
 type PlanActionReport struct {
 	SourceReconcile *contracts.SourceReconcileResult `json:"source_reconcile,omitempty"`
 	WebhookCADigest string                           `json:"webhook_ca_digest,omitempty"`
-	Script          *ScriptExecutionResult           `json:"script,omitempty"`
-	FailureReason   string                           `json:"failure_reason,omitempty"`
-	ActionIndex     int                              `json:"action_index"`
-	Status          string                           `json:"status"`
+	// SecretRestore names the keys and value digests a RestoreSecretFromSource
+	// wrote; it never holds a value.
+	SecretRestore *contracts.SecretRestoreResult `json:"secret_restore,omitempty"`
+	Script        *ScriptExecutionResult         `json:"script,omitempty"`
+	FailureReason string                         `json:"failure_reason,omitempty"`
+	ActionIndex   int                            `json:"action_index"`
+	Status        string                         `json:"status"`
 	// Observed qualifies an applied action whose effect is still in progress:
 	// "terminating" is a Pod delete the API server accepted while the Pod stays
 	// readable until it stops, so absence was not observed.
@@ -41,9 +44,9 @@ type PlanActionReport struct {
 	StoreCredential *program.StoreCredentialEffect `json:"store_credential,omitempty"`
 	// SourceChange is a ProposeSourceChange's resolved proposal; nothing was
 	// written.
-	SourceChange *program.SourceChangeProposal `json:"source_change,omitempty"`
-	JobStatus      json.RawMessage           `json:"job_status,omitempty"`
-	RecordingError string                    `json:"recording_error,omitempty"`
+	SourceChange   *program.SourceChangeProposal `json:"source_change,omitempty"`
+	JobStatus      json.RawMessage               `json:"job_status,omitempty"`
+	RecordingError string                        `json:"recording_error,omitempty"`
 }
 
 // PlanActionsComplete reports execution completion, independently of how many

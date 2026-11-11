@@ -69,6 +69,7 @@ func (c TypedPlanClient) unavailableMenuActions() map[string]bool {
 	unavailable := map[string]bool{}
 	if c.Client == nil {
 		unavailable["SyncWebhookCA"] = true
+		unavailable["RestoreSecretFromSource"] = true
 	}
 	if c.ScriptImage == "" {
 		unavailable["RunScript"] = true

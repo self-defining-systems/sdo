@@ -36,6 +36,7 @@ var menuActionExamples = sync.OnceValue(func() map[string]map[string]any {
 		program.SetField{Ref: service, Path: "spec.ports[0].targetPort", Value: program.FromSource(service, "spec.ports[0].targetPort"), Reason: reason},
 		program.RestartRollout{Ref: deployment, Reason: reason},
 		program.CreateFromSource{Ref: service, Reason: reason},
+		program.RestoreSecretFromSource{Ref: sdk.ObjectRef{APIVersion: "v1", Kind: "Secret", Namespace: "app", Name: "example"}, Reason: reason},
 		program.DeleteObject{Ref: service, Reason: reason},
 		program.DeletePod{Ref: pod},
 		program.ScaleWorkload{Ref: deployment, Replicas: program.FromSource(deployment, "spec.replicas")},

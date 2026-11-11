@@ -44,6 +44,7 @@ Full [SDK](program-sdk.md).
 - `func ValidateSetField(f SetField) error`: checks a dotted vocabulary path or a JSON pointer on a named nonsecret object.
 - `type ReconcileFromSource struct{ Ref sdk.ObjectRef }`: restores a whole source-owned object to accepted source, removing additions SourceDiff reports; prefer SetField for one field.
 - `type CreateFromSource struct{Ref sdk.ObjectRef; Reason string}`: restores a missing named object from accepted source.
+- `type RestoreSecretFromSource struct{Ref sdk.ObjectRef; Reason string}`: restores declared Secret data.
 - `type DeleteObject struct{Ref sdk.ObjectRef; Reason string}`: irreversibly deletes a named object in the incident namespace.
 - `type PatchObject struct{Ref sdk.ObjectRef; Type string; Patch json.RawMessage; Edits []ListEdit; Reason string}`: patches any nonsecret Kubernetes object.
 - `type Rollback struct{Ref sdk.ObjectRef; ToRevision string}`: restores a workload's fields from an explicit earlier revision.

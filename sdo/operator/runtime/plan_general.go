@@ -132,6 +132,9 @@ func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest,
 	if ca, ok := action.(program.SyncWebhookCA); ok {
 		return e.webhookCAStep(ctx, ca, dry)
 	}
+	if restore, ok := action.(program.RestoreSecretFromSource); ok {
+		return e.secretRestoreStep(ctx, incident, restore, dry)
+	}
 	if script, ok := action.(program.RunScript); ok {
 		return e.scriptStep(ctx, incident, script, dry)
 	}
@@ -518,7 +521,7 @@ func (e PlanExecutor) preflightGeneral(ctx context.Context, incident IncidentReq
 		}
 		var step PlanApplicationResult
 		var err error
-		if _, privateCA := a.(program.SyncWebhookCA); privateCA {
+		if privateValueAction(a) {
 			step, err = e.generalStep(ctx, incident, a, true)
 		} else if isGeneralAction(a) {
 			step, err = projected.generalStep(ctx, incident, a, true)
@@ -543,4 +546,14 @@ func terminatingPod(ref sdk.ObjectRef, object map[string]any) bool {
 	}
 	stamp, found, _ := unstructured.NestedString(object, "metadata", "deletionTimestamp")
 	return found && stamp != ""
+}
+
+// privateValueAction marks actions whose values Go resolves privately; their
+// preflight runs against the real transport, never the object preview.
+func privateValueAction(a program.Action) bool {
+	switch a.(type) {
+	case program.SyncWebhookCA, program.RestoreSecretFromSource:
+		return true
+	}
+	return false
 }
