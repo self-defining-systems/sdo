@@ -112,7 +112,9 @@ const (
 
 	// Application map (the region of .sdo/arch.md the detection designer owns).
 	// Blocking for the designer's commits once a map exists, notes for other
-	// actors; map.missing and map.unexercised-edge are always notes.
+	// actors; map.missing, map.unexercised-edge and map.unprobed-edge are
+	// always notes. map.uncovered-edge is an edge from an entry component that
+	// no probed operation crosses and that records no unprobed reason.
 	RuleMapMissing         = "map.missing"
 	RuleMapSchema          = "map.schema"
 	RuleMapUnknownName     = "map.unknown-name"
@@ -121,6 +123,8 @@ const (
 	RuleMapUncoveredWrite  = "map.uncovered-write"
 	RuleMapUncoveredData   = "map.uncovered-data"
 	RuleMapUnexercisedEdge = "map.unexercised-edge"
+	RuleMapUncoveredEdge   = "map.uncovered-edge"
+	RuleMapUnprobedEdge    = "map.unprobed-edge"
 	RuleMapKnownBroken     = "map.known-broken"
 	// Ownership of the map region: the designer changes nothing outside it,
 	// and nobody else changes it.

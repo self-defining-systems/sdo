@@ -8,8 +8,18 @@ import (
 
 type BootstrapStore struct{}
 
+// ReadArchitecture is the architecture text of the detection designer's
+// brief: the file's text, then the probe coverage obligations Go computes from
+// its application map.
 func (BootstrapStore) ReadArchitecture(checkout string) (string, error) {
-	return memory.ReadArchitecture(checkout)
+	text, err := memory.ReadArchitecture(checkout)
+	if err != nil {
+		return "", err
+	}
+	if obligations := memory.CoverageObligations(checkout); obligations != "" {
+		text += "\n" + obligations
+	}
+	return text, nil
 }
 
 func (BootstrapStore) WriteGoal(checkout, application, objective string, sources []layout.Source) error {

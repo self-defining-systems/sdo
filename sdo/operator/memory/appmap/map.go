@@ -21,6 +21,8 @@ const (
 	RuleUncoveredWrite  = "map.uncovered-write"
 	RuleUncoveredData   = "map.uncovered-data"
 	RuleUnexercisedEdge = "map.unexercised-edge"
+	RuleUncoveredEdge   = "map.uncovered-edge"
+	RuleUnprobedEdge    = "map.unprobed-edge"
 	RuleKnownBroken     = "map.known-broken"
 )
 
@@ -109,12 +111,16 @@ type Data struct {
 	DerivedFrom []string `yaml:"derived_from,omitempty"`
 }
 
-// Edge is a directed call from one component to another.
+// Edge is a directed call from one component to another. Unprobed records,
+// for an edge from an entry component that no probed operation crosses, why
+// no synthetic request can cross it; the memory check reports it as a coverage
+// gap instead of asking for a probe.
 type Edge struct {
 	From     string   `yaml:"from"`
 	To       string   `yaml:"to"`
 	Evidence []string `yaml:"evidence"`
 	Source   string   `yaml:"source"`
+	Unprobed string   `yaml:"unprobed,omitempty"`
 }
 
 // Entry is where an operation enters the application.
@@ -569,11 +575,83 @@ func (c *checker) coverage() {
 			c.add(RuleUncoveredData, fmt.Sprintf("add a `read-later` probe scenario (workload %s) that reads back, in a later iteration, data written earlier through %s", WorkloadForKind[KindReadLater], strings.Join(dedupe(written[comp.Name]), ", ")), "data component %s (written by %s) is on no read-later probe path", comp.Name, strings.Join(dedupe(written[comp.Name]), ", "))
 		}
 	}
+	probed := c.m.probedPairs()
+	entry := c.m.entryComponents()
 	for _, e := range c.m.Edges {
-		if !together[[2]string{e.From, e.To}] {
+		reason := strings.TrimSpace(e.Unprobed)
+		switch {
+		case probed[[2]string{e.From, e.To}] && reason != "":
+			c.add(RuleSchema, "remove unprobed: a probe already crosses this edge", "edge %s -> %s is recorded unprobed (%s) but a probed operation crosses it", e.From, e.To, reason)
+		case probed[[2]string{e.From, e.To}]:
+		case reason != "":
+			c.add(RuleUnprobedEdge, "note only: a coverage gap the designer recorded; cover it with a probe when a request can cross it", "edge %s -> %s is not probed: %s", e.From, e.To, reason)
+		case entry[e.From]:
+			c.add(RuleUncoveredEdge, fmt.Sprintf("add an operation whose path crosses %s -> %s and a probe that exercises it; only when no synthetic request can cross it, set `unprobed: <why>` on the edge", e.From, e.To), "edge %s -> %s from entry component %s lies on no probed operation path", e.From, e.To, e.From)
+		case !together[[2]string{e.From, e.To}]:
 			c.add(RuleUnexercisedEdge, "note only: an operation whose path includes both ends would exercise it", "edge %s -> %s lies on no operation path", e.From, e.To)
 		}
 	}
+}
+
+// probedPairs holds the component pairs that share the path of an operation
+// some probe exercises.
+func (m Map) probedPairs() map[[2]string]bool {
+	ops := opPaths(m.Operations)
+	out := map[[2]string]bool{}
+	for _, p := range m.Probes {
+		for _, id := range p.Operations {
+			path := ops[id].Path
+			for _, a := range path {
+				for _, b := range path {
+					out[[2]string{a, b}] = true
+				}
+			}
+		}
+	}
+	return out
+}
+
+// entryComponents are where requests enter the application: the first
+// component of an operation's path, and every component with a Service that
+// no edge calls.
+func (m Map) entryComponents() map[string]bool {
+	called := map[string]bool{}
+	for _, e := range m.Edges {
+		called[e.To] = true
+	}
+	out := map[string]bool{}
+	for _, op := range m.Operations {
+		if len(op.Path) > 0 {
+			out[op.Path[0]] = true
+		}
+	}
+	for _, comp := range m.Components {
+		if len(comp.Services) > 0 && !called[comp.Name] {
+			out[comp.Name] = true
+		}
+	}
+	return out
+}
+
+// UncoveredEdges lists, sorted, the edges from an entry component that no
+// probed operation crosses and that record no unprobed reason: the edges the
+// detection designer must cover with a probe or explain.
+func (m Map) UncoveredEdges() []Edge {
+	probed := m.probedPairs()
+	entry := m.entryComponents()
+	var out []Edge
+	for _, e := range m.Edges {
+		if entry[e.From] && !probed[[2]string{e.From, e.To}] && strings.TrimSpace(e.Unprobed) == "" {
+			out = append(out, e)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].From != out[j].From {
+			return out[i].From < out[j].From
+		}
+		return out[i].To < out[j].To
+	})
+	return out
 }
 
 // Scenario is what the compiled traffic catalog says about a scenario.

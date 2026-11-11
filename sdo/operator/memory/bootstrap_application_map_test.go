@@ -45,3 +45,51 @@ func TestWriteArchitectureCarriesTheApplicationMapVerbatim(t *testing.T) {
 		t.Fatalf("agents do not see the map in the architecture text: %v\n%s", err, text)
 	}
 }
+
+// The designer's brief lists the mapped edges from entry components that no
+// probed operation crosses, so coverage gaps drive probe design instead of
+// being found only after acceptance.
+func TestDesignerBriefListsUncoveredEntryEdges(t *testing.T) {
+	checkout := t.TempDir()
+	if err := memory.WriteArchitecture(checkout, "shop", "c1", "# Manifest inventory\n\n- Deployment/shop/web (source: web.yaml)\n"); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(checkout, layout.ArchitectureFile)
+	first, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	region := appmap.BeginMarker + "\n```yaml\n" + `version: 1
+components:
+  - {name: web, workload: Deployment/web, services: [web], holds_data: false}
+  - {name: db, workload: StatefulSet/db, services: [db], holds_data: true}
+  - {name: blobs, workload: StatefulSet/blobs, services: [blobs], holds_data: true}
+edges:
+  - {from: web, to: db, evidence: [manifest], source: ConfigMap/web key dsn}
+  - {from: web, to: blobs, evidence: [manifest], source: ConfigMap/web key blob-url}
+operations:
+  - id: sign-in
+    writes: false
+    entry: {service: web, port: 80, method: GET, path: /sign-in}
+    path: [web, db]
+probes:
+  - {scenario: call-sign-in, kind: call, operations: [sign-in]}
+` + "```\n" + appmap.EndMarker + "\n"
+	if err := os.WriteFile(path, append(first, []byte("\n"+region)...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	brief := memory.CoverageObligations(checkout)
+	if !strings.Contains(brief, "web -> blobs") || strings.Contains(brief, "web -> db") || !strings.Contains(brief, "unprobed") {
+		t.Fatalf("brief does not list exactly the uncovered entry edge:\n%s", brief)
+	}
+	if text, err := memory.ReadArchitecture(checkout); err != nil || strings.Contains(text, "web -> blobs lies") {
+		t.Fatalf("the architecture text itself stays what the file holds: %v", err)
+	}
+	covered := strings.Replace(region, "path: [web, db]", "path: [web, db, blobs]", 1)
+	if err := os.WriteFile(path, append(first, []byte("\n"+covered)...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if brief := memory.CoverageObligations(checkout); brief != "" {
+		t.Fatalf("a fully covered map has no obligations:\n%s", brief)
+	}
+}

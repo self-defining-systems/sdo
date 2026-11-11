@@ -49,6 +49,6 @@ covers breaks.
    (grpc.tls when required), redis, memcached, mongodb, postgres or mysql; tcp only when none fits. A link proves
    the server answers its protocol, not that queries succeed. Optional: interval (1s), timeout (1s), failures
    (5 consecutive failed fresh probes report the edge). `sdo-operator memory check` notes each link no
-   health-probe scenario drives (`traffic.undriven-edge`); drive it, or write a YAML comment above the link
-   saying why no synthetic request can safely cross it.
+   health-probe scenario drives (`traffic.undriven-edge`); drive it, or record why no synthetic request can
+   cross it as `unprobed` on its map edge.
 Omit synthetic traffic only for an application that serves no HTTP.

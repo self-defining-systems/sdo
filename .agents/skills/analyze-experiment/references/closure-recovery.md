@@ -11,3 +11,5 @@ broker rejection and does not consume its retry budget. Broker rejection backoff
 remains authoritative, and settled closures stop scheduling observation wakes.
 Without this wake, a paused controller could fall back to an hour-long sleep
 while a restarted recovery observer needed a fresh stability window.
+
+A closure is only as good as the probes that cross the faulted component. Every health probe holds closure while it fails (critical severity), whatever finding opened the incident, so an incident "cleared without action" after a pod restart while users still failed means no probed operation crossed that component: check the map for an `unprobed` reason or a missing operation on its edges (`map.uncovered-edge`, `map.unprobed-edge`) and classify it as detection coverage, not closure.

@@ -369,8 +369,10 @@ func TestSeedRegionPassesTheMapCheck(t *testing.T) {
 			inv.Services[o.GetName()] = true
 		}
 	}
+	// The seed has no operations yet: its edges are unexercised, and those
+	// from an entry component are the designer's to cover.
 	for _, f := range parsed.Check(inv, nil) {
-		if f.Rule != appmap.RuleUnexercisedEdge {
+		if f.Rule != appmap.RuleUnexercisedEdge && f.Rule != appmap.RuleUncoveredEdge {
 			t.Errorf("finding %+v", f)
 		}
 	}

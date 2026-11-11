@@ -26,8 +26,8 @@ declare every store edge with its protocol to make delay and loss on it visible.
   for a string and `{key}` for a number.
 - Journey workloads run only on demand and never feed detection, so a write placed only there detects nothing.
 - `sdo-operator memory check` lists each edge no health-probe scenario drives as a `traffic.undriven-edge` coverage
-  gap. It never fails the check. Drive the edge, or write a comment above that link in `links.yaml` saying why no
-  synthetic request can safely cross it.
+  gap. It never fails the check. Drive the edge, or record why no synthetic request can cross it as `unprobed` on
+  its map edge.
 
 ## Latency and saturation
 

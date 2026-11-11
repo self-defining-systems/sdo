@@ -5,14 +5,39 @@ Usage: python3 -m benchmarks.sregym.agent_script.synthetic_health_judge TASK_JSO
 """
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
+
+_EDGE = re.compile(r"^(\s*- \{from: .*?)\}\s*$")
+
+
+def record_unprobed_edges(architecture: Path) -> None:
+    """This designer writes no probes: record every mapped edge as unprobed, with the reason."""
+    if not architecture.exists():
+        return
+    text = architecture.read_text()
+    begin, end = "<!-- sdo:application-map:begin -->", "<!-- sdo:application-map:end -->"
+    if begin not in text or end not in text:
+        return
+    head, rest = text.split(begin, 1)
+    region, tail = rest.split(end, 1)
+    if "operations: []" not in region:
+        return
+    lines = []
+    for line in region.split("\n"):
+        match = _EDGE.match(line)
+        if match and "unprobed:" not in line:
+            line = match.group(1) + ", unprobed: the scripted designer writes no probes}"
+        lines.append(line)
+    architecture.write_text(head + begin + "\n".join(lines) + end + tail)
 
 
 def main() -> None:
     task = json.loads(Path(sys.argv[1]).read_text())
     root = Path(task["workspace"]["checkoutPath"])
+    record_unprobed_edges(root / ".sdo/arch.md")
     detector = root / ".sdo/diagnostics/detectors/health/application-config"
     detector.mkdir(parents=True, exist_ok=True)
     (detector / "manifest.yaml").write_text("""apiVersion: sdo.dev/v1alpha1
