@@ -22,6 +22,8 @@ operator and `run --skip-reset`.
   variant from a fuzzops instances file; `lane` runs `first`, `repeat` and `variant` as `exec:sdo-<round>` (graded
   apart by fuzzops), waits for SDO to be idle (no incident, closure or queued reflection) before each run, and copies
   the accepted outcomes and playbooks after it.
+- `window.py`: which incidents belong to a run: detected in the window, or open at the inject with findings, causes
+  or repair actions naming the faulted component by resource ref. `table.py` and `observe.py` (`--fault`) share it.
 - `table.py`: merges a lane's records with the app's noop and `best-fix` baselines, grades them with
   `fuzzops report --plain` and joins SDO's outcome records into a per-version table (verdict, bad seconds against
   noop and best-fix, lost writes, harmful actions, lifecycle times, cause class and reach, tokens and cost,

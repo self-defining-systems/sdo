@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from benchmarks.fuzzops.evidence import EvidenceError, EvidenceTarget, snapshot, snapshot_id_for
+from benchmarks.fuzzops.window import concerns, fault_targets
 
 STATE_CONFIGMAP = "sdo-controller-state"
 STATE_KEY = "runtime-state.json"
@@ -197,6 +198,7 @@ class Watcher:
     """Turns successive controller states into action lines and reports. Pure: no I/O."""
 
     started: datetime
+    targets: frozenset[str] = frozenset()  # resource names of the faulted component (see ``window``)
     seen: set[str] = field(default_factory=set)
     incident: str = ""
     closed: bool = False
@@ -243,7 +245,20 @@ class Watcher:
         # before this watcher started still belongs to the window: the watcher
         # starts some seconds after the inject, and a fast detection beats it.
         active = bool(_get(state, "incident_open") or closure)
-        if active and detected is not None and detected >= self.started:
+        # Older than the lookback but still open now, so open at the inject: it is this window's when its findings,
+        # causes or repair actions name the faulted component.
+        mine = detected is not None and (
+            detected >= self.started
+            or concerns(
+                {
+                    "findings": _get(request, "findings") or [],
+                    "confirmed_root_causes": _get(result, "confirmed_root_causes") or [],
+                    "repair_actions": _get(result, "repair_actions") or [],
+                },
+                self.targets,
+            )
+        )
+        if active and detected is not None and mine:
             self.incident = self.incident or incident or f"detected-{detected.isoformat()}"
             findings = _get(request, "findings") or []
             what = "; ".join(f"{_get(f, 'detector_id')}: {_get(f, 'summary')}" for f in findings[:3])
@@ -374,6 +389,12 @@ def main(argv: list[str] | None = None) -> int:
         help="seconds before the watcher's start an incident may have opened and still be this window's "
         "(the watcher starts after the inject; run it only when SDO has no open incident)",
     )
+    p.add_argument(
+        "--fault",
+        default="",
+        help="the fuzzops instance ID; an incident still open from before the lookback that names its component "
+        "by resource reference belongs to this window",
+    )
     p.add_argument("--operator-binary", type=Path, help="seal an evidence snapshot when the incident closes")
     p.add_argument("--controller-image", default="", help="with --operator-binary: the controller image")
     a = p.parse_args(argv)
@@ -391,7 +412,7 @@ def main(argv: list[str] | None = None) -> int:
     emitted: set[str] = set()
     out = Path(os.environ.get("FUZZOPS_OUT") or ".")
     out.mkdir(parents=True, exist_ok=True)
-    watcher = Watcher(started=datetime.now(UTC) - timedelta(seconds=a.lookback))
+    watcher = Watcher(started=datetime.now(UTC) - timedelta(seconds=a.lookback), targets=fault_targets(a.fault))
     last_raw = ""
     closed_at: float | None = None
     n = 0

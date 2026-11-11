@@ -311,7 +311,7 @@ class LaneConfig:
     def context(self) -> str:
         return f"kind-{self.kind_cluster}"
 
-    def observer(self) -> str:
+    def observer(self, instance: str) -> str:
         cmd = [
             "uv",
             "run",
@@ -321,6 +321,8 @@ class LaneConfig:
             "benchmarks.fuzzops.observe",
             "--control-namespace",
             self.control_namespace,
+            "--fault",
+            instance,
         ]
         if self.operator_binary and self.controller_image:
             cmd += ["--operator-binary", self.operator_binary, "--controller-image", self.controller_image]
@@ -352,7 +354,7 @@ class LaneConfig:
             *self.extra,
         ]
 
-    def env(self, run_dir: Path) -> dict[str, str]:
+    def env(self, run_dir: Path, instance: str) -> dict[str, str]:
         env = dict(os.environ)
         env.update(
             {
@@ -364,7 +366,7 @@ class LaneConfig:
         )
         for r in ROUNDS:
             label = re.sub(r"[^A-Za-z0-9]", "_", self.operator(r).removeprefix("exec:")).upper()
-            env[f"FUZZOPS_EXEC_CMD_{label}"] = self.observer()
+            env[f"FUZZOPS_EXEC_CMD_{label}"] = self.observer(instance)
         if self.kubeconfig:
             env["KUBECONFIG"] = self.kubeconfig
         return env
@@ -439,7 +441,7 @@ def run_lane(cfg: LaneConfig, log: Callable[[str], None] = print) -> int:
                         cfg.run_args(round_, instance, ROUND_SEEDS[round_]),
                         stdout=out,
                         stderr=err,
-                        env=cfg.env(run_dir),
+                        env=cfg.env(run_dir, instance),
                         cwd=cfg.fuzzops,
                         check=False,
                     ).returncode
