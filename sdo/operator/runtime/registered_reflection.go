@@ -11,7 +11,6 @@ import (
 	"os"
 	"regexp"
 	"sort"
-	"strings"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -224,12 +223,16 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 				Deadline: lifecyclecore.ReflectionDeadline(dispatchAt, w.Timeout),
 			}, nil
 		}
-		fits, err := fitReflectionRequest(request, build)
+		fits, steps, err := fitReflectionRequest(request, build)
 		if err != nil {
 			return ReflectionDecision{}, err
 		}
 		if !fits {
-			return w.withUsage(ReflectionDecision{LearningDecision: "failed", FailureReason: ReflectionRequestTooLarge, Error: fmt.Sprintf("reflection request is over the %d byte transport limit after %s; reflection skipped, the incident closes on health", worker_registry.MaxRequestBytes, strings.Join(request.Compaction, ", "))}, workspace.IncidentID)
+			oversized, err := build()
+			if err != nil {
+				return ReflectionDecision{}, err
+			}
+			return w.withUsage(ReflectionDecision{LearningDecision: "failed", FailureReason: ReflectionRequestTooLarge, Error: fmt.Sprintf("reflection request is over the %d byte transport limit after every reduction: %s; reflection skipped, the incident closes on health", worker_registry.MaxRequestBytes, requestTooLargeDetail(steps, oversized))}, workspace.IncidentID)
 		}
 		if err := wire.Validate(request); err != nil {
 			return ReflectionDecision{}, err
@@ -392,8 +395,9 @@ const ReflectionRequestTooLarge = "request_too_large"
 
 // fitReflectionRequest degrades the request in a fixed order until the frozen task fits the transport limit,
 // recording each lossy step on the request: earlier incidents, then memory the incident does not touch, then
-// the outcome's raw program runs and tool calls. It reports false when the request still does not fit.
-func fitReflectionRequest(request *contracts.ReflectionRequest, build func() (*contracts.AgentTask, error)) (bool, error) {
+// program verdict evidence text, then the outcome's raw program runs and tool calls. It reports false, with every
+// step tried, when the request still does not fit.
+func fitReflectionRequest(request *contracts.ReflectionRequest, build func() (*contracts.AgentTask, error)) (bool, []fitStep, error) {
 	size := func() (int, error) {
 		task, err := build()
 		if err != nil {
@@ -411,6 +415,7 @@ func fitReflectionRequest(request *contracts.ReflectionRequest, build func() (*c
 		{"drop_prior_incident_history", func() bool { changed := len(request.PriorOutcomes) > 0; request.PriorOutcomes = nil; return changed }},
 		{"trim_memory_to_touched", func() bool { return trimSnapshotToTouched(request.MemorySnapshot, mentions()) }},
 		{"clip_memory_documents", func() bool { return clipSnapshotDocuments(request.MemorySnapshot) }},
+		{"clip_program_evidence", func() bool { return clipProgramEvidence(request) }},
 		{"cap_program_runs_and_tool_calls", func() bool {
 			if request.Outcome == nil {
 				return false
@@ -421,8 +426,8 @@ func fitReflectionRequest(request *contracts.ReflectionRequest, build func() (*c
 			return runsChanged || callsChanged
 		}},
 	})
-	request.Compaction = append(request.Compaction, steps...)
-	return fits, err
+	request.Compaction = append(request.Compaction, appliedSteps(steps)...)
+	return fits, steps, err
 }
 
 func transportSize(task *contracts.AgentTask) int {

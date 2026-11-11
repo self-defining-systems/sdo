@@ -3,7 +3,6 @@ package runtime
 import (
 	"bytes"
 	"fmt"
-	"strings"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -64,7 +63,7 @@ func encodeIncidentAgentTask(request IncidentRequest, registry *worker_registry.
 			},
 		}, nil
 	}
-	fits, err := fitIncidentRequest(typedRequest, build)
+	fits, steps, err := fitIncidentRequest(typedRequest, build)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -74,7 +73,7 @@ func encodeIncidentAgentTask(request IncidentRequest, registry *worker_registry.
 	}
 	if !fits {
 		size, _ := wireSize(task)()
-		return nil, nil, &worker_registry.RequestTooLargeError{TaskID: task.GetTaskId(), Bytes: size, Limit: worker_registry.MaxRequestBytes, Components: append([]string{"after " + strings.Join(typedRequest.Compaction, ", ")}, worker_registry.RequestComponents(task)...)}
+		return nil, nil, &worker_registry.RequestTooLargeError{TaskID: task.GetTaskId(), Bytes: size, Limit: worker_registry.MaxRequestBytes, Components: append([]string{"after every reduction: " + describeFit(steps)}, worker_registry.RequestComponents(task)...)}
 	}
 	payload, err := wire.Canonical(task)
 	if err != nil {
@@ -118,8 +117,9 @@ func withoutResponderOwners(result *contracts.IncidentResult) *contracts.Inciden
 
 // fitIncidentRequest degrades a responder request in a fixed order until the frozen task fits the transport
 // limit, recording each lossy step on the request: prior-incident evidence, then memory the incident does not
-// touch, then raw program runs and old detector evaluations. It reports false when the request still does not fit.
-func fitIncidentRequest(request *contracts.IncidentRequest, build func() (*contracts.AgentTask, error)) (bool, error) {
+// touch, then program verdict evidence text, then raw program runs and old detector evaluations. It reports false,
+// with every step tried, when the request still does not fit.
+func fitIncidentRequest(request *contracts.IncidentRequest, build func() (*contracts.AgentTask, error)) (bool, []fitStep, error) {
 	size := func() (int, error) {
 		task, err := build()
 		if err != nil {
@@ -146,6 +146,7 @@ func fitIncidentRequest(request *contracts.IncidentRequest, build func() (*contr
 		}},
 		{"trim_memory_to_touched", func() bool { return trimSnapshotToTouched(request.MemorySnapshot, mentions()) }},
 		{"clip_memory_documents", func() bool { return clipSnapshotDocuments(request.MemorySnapshot) }},
+		{"clip_program_evidence", func() bool { return clipProgramEvidence(request) }},
 		{"cap_program_runs_and_detector_history", func() bool {
 			runs, changed := capProgramRuns(request.InitialProgramRuns)
 			request.InitialProgramRuns = runs
@@ -155,6 +156,6 @@ func fitIncidentRequest(request *contracts.IncidentRequest, build func() (*contr
 			return changed
 		}},
 	})
-	request.Compaction = append(request.Compaction, steps...)
-	return fits, err
+	request.Compaction = append(request.Compaction, appliedSteps(steps)...)
+	return fits, steps, err
 }
