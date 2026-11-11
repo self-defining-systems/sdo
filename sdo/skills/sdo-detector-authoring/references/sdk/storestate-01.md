@@ -41,6 +41,7 @@ const (
 	RuleSequenceNearLimit    = "store-state.sequence-near-limit"
 	RuleNamespaceChanged     = "store-state.namespace-changed"
 	RuleRegistryChanged      = "store-state.registry-changed"
+	RuleLockWaiters          = "store-state.lock-waiters"
 )
     Rule IDs of store-state findings.
 
@@ -85,9 +86,19 @@ const (
 const CredentialMarker = "SDO-AUTH"
     CredentialMarker starts the one line a credential check prints.
 
+const LockWaitThreshold = 30 * time.Second
+    LockWaitThreshold is how long sessions must have waited on one holder's
+    lock before the lock-waiters rule judges it. Ordinary contention clears
+    in milliseconds; a lock still blocking others after this long is held by a
+    session that is not finishing.
+
 const MaxHolders = 12
     MaxHolders bounds the holder groups of one read; the read lists the largest
     groups first.
+
+const MaxLockWaits = 8
+    MaxLockWaits bounds the lock waits of one read; the read lists the holders
+    with the most waiters first.
 
 const MaxSequences = 5
     MaxSequences bounds the sequences one read reports (the read lists only
@@ -141,10 +152,11 @@ func IsNotRestorable(err error) bool
 func NewDetector(c Config) (sdk.Detector, error)
     NewDetector returns a deterministic detector of the store's facts.
     It reports a write block, a role, principal or catalog change against
-    the baseline, a refusal of its own read, and connection or memory use at
-    NearLimit of a cap (memory only under a noeviction policy). Each finding
-    names the component, the Pod and the changed item. A read that gives
-    no complete answer is a detector error, never a clear, except a store a
+    the baseline, a refusal of its own read, connection or memory use at
+    NearLimit of a cap (memory only under a noeviction policy), and a session
+    holding a lock others have waited on for LockWaitThreshold. Each finding
+    names the component, the Pod and the changed item. A read that gives no
+    complete answer is a detector error, never a clear, except a store a
     GapWithoutBaseline reader has never read healthy, which is a coverage gap.
 
 func QueryID(engine Engine, component string) string
@@ -210,37 +222,4 @@ func (c Change) Key() Key
     Key returns the changed item's identity.
 
 func (c Change) String() string
-
-type Config struct {
-	// Spec is the detector's spec; a v1 Pod watch is added when absent.
-	Spec sdk.DetectorSpec
-	// Component is the application-map component the store belongs to.
-	Component string
-	// Engine selects the adapter; it must have one (AdapterFor).
-	Engine Engine
-	// Target selects the store's Pods and container by role.
-	Target podread.Target
-	// Port is where the store listens in its container; 0 is the engine default.
-	Port int
-	// ReadInterval is the pod-read interval; 0 is podread.MinInterval.
-	ReadInterval time.Duration
-	// Baselines are facts from a healthy moment, one per store Pod name, or a
-	// single baseline every Pod is compared with. Without them the detector
-	// compares with the controller's promoted healthy readings of its pod
-	// read (podread.Result.Baseline), and without those only absolute facts
-	// are judged: write blocks, refusals and near-cap use.
-	Baselines []Facts
-	// GapWithoutBaseline makes a store Pod the detector has no healthy
-	// baseline for a coverage gap instead of a finding or an error: a read
-	// that is unavailable, unparsable or refused clears, and
-	// ConfirmationReason says why the store is not observed. Go sets it on
-	// the readers it installs from the application map, which no designer
-	// checked against the store's image or credentials, so a store SDO cannot
-	// read never stalls deployment acceptance or an incident's recovery. Once
-	// the Pod was read healthy, the same reads are a refusal finding or a
-	// detector error as usual. Absolute facts of a readable store (write
-	// blocks, near-cap use) are judged either way.
-	GapWithoutBaseline bool
-}
-    Config declares one store component to watch.
 ```

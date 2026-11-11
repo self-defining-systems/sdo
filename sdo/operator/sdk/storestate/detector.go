@@ -26,6 +26,7 @@ const (
 	RuleSequenceNearLimit    = "store-state.sequence-near-limit"
 	RuleNamespaceChanged     = "store-state.namespace-changed"
 	RuleRegistryChanged      = "store-state.registry-changed"
+	RuleLockWaiters          = "store-state.lock-waiters"
 )
 
 // Namespace judgement: a judged namespace (a table, collection, KV prefix or
@@ -86,8 +87,9 @@ type detector struct {
 
 // NewDetector returns a deterministic detector of the store's facts. It
 // reports a write block, a role, principal or catalog change against the
-// baseline, a refusal of its own read, and connection or memory use at
-// NearLimit of a cap (memory only under a noeviction policy). Each finding
+// baseline, a refusal of its own read, connection or memory use at NearLimit
+// of a cap (memory only under a noeviction policy), and a session holding a
+// lock others have waited on for LockWaitThreshold. Each finding
 // names the component, the Pod and the changed item. A read that gives no
 // complete answer is a detector error, never a clear, except a store a
 // GapWithoutBaseline reader has never read healthy, which is a coverage gap.
@@ -342,6 +344,17 @@ func (d detector) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.Fin
 				}
 			}
 		}
+		// A session holding a lock others have waited on for
+		// LockWaitThreshold is judged against the healthy history: a lock
+		// object the healthy application itself kept sessions waiting on
+		// that long is its own behavior.
+		if hasBaseline {
+			for _, w := range f.LockWaits {
+				if w.Waited >= LockWaitThreshold && !routineLockWait(healthy, w.Object) {
+					findings = append(findings, d.lockWaitFinding(ctx, f, w))
+				}
+			}
+		}
 		// A blocked write cites the setting changes that explain it.
 		for i := range findings {
 			if findings[i].RuleID == RuleWriteBlocked && findings[i].PrimaryResource == f.Pod && len(cites[KindSetting]) > 0 {
@@ -568,6 +581,29 @@ func (d detector) finding(f Facts, rule string, c Change, summary string) sdk.Fi
 		Playbooks:       slices.Clone(d.spec.Playbooks),
 		Fingerprint:     fmt.Sprintf("%s/%s/%s/%s/%s", d.spec.ID, rule, f.Pod.Namespace, f.Pod.Name, c.Key()),
 		Metadata:        map[string]any{"component": d.config.Component, "engine": string(f.Engine), "change": c},
+	}
+}
+
+// lockWaitFinding names the holding session (its id, peer resolved to its
+// Pod and workload, state, mode and transaction age), the locked object and
+// the sessions waiting on it, so the holder can be ended with the store's own
+// terminate command. The fingerprint is the object's, so the finding persists
+// across reads while any session keeps others waiting on it.
+func (d detector) lockWaitFinding(view sdk.DetectionContext, f Facts, w LockWait) sdk.Finding {
+	holder := ResolveHolders(view, f.Pod, []Holder{{Peer: w.Peer, State: w.State, Count: 1}})[0]
+	evidence := fmt.Sprintf("Pod %s: %s", f.Pod.Name, w)
+	if holder.Workload != "" {
+		evidence += fmt.Sprintf("; the holder connects from %s %s", holder.Workload, holder.Pod)
+	}
+	return sdk.Finding{
+		DetectorID: d.spec.ID, RuleID: RuleLockWaiters, Status: sdk.FindingActive, Severity: sdk.SeverityCritical,
+		Summary: fmt.Sprintf("store %s (%s) session %s holds a lock on %s that %d session(s) have waited on for %s",
+			d.config.Component, f.Engine, w.Holder, w.Object, w.Waiters, w.Waited),
+		Evidence:        evidence,
+		PrimaryResource: f.Pod,
+		Playbooks:       slices.Clone(d.spec.Playbooks),
+		Fingerprint:     fmt.Sprintf("%s/%s/%s/%s/%s", d.spec.ID, RuleLockWaiters, f.Pod.Namespace, f.Pod.Name, w.Object),
+		Metadata:        map[string]any{"component": d.config.Component, "engine": string(f.Engine), "lock_wait": w, "holder": holder},
 	}
 }
 

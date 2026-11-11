@@ -32,15 +32,20 @@ var postgresRowLimits = map[string]int{"dbsettings": 33, "roles": 25, "databases
 // credential prelude found ($U, else postgres), so local trust applies; the
 // password it found ($P) reaches psql through the environment and is never
 // printed. The queries arrive as positional arguments ($5 is the holders
-// query, $6 the TCP fallback, $7 onwards the catalog query, split). Holders
-// fall back to the TCP table when the server refuses the session list. The
+// query, $6 the lock-waits query, $7 the TCP fallback, $8 onwards the catalog
+// query, split). Holders fall back to the TCP table when the server refuses
+// the session list. The server-wide queries read only system views, which
+// never wait on a table lock; the catalog query sets a short lock_timeout, so
+// a statement that would queue behind a lock (the very lock a fault holds)
+// fails fast as a "locked" refusal instead of stalling the whole read past
+// its time budget. The
 // catalog is read in each database that accepts connections; its query bounds
 // its own size (postgresCatalog), and the whole read is still cut at the
 // output budget with a "== more" marker.
 const postgresScript = `U=${U:-postgres};D=${POSTGRES_DB:-${POSTGRESQL_DATABASE:-${PGDATABASE:-$U}}};T=$(printf '\t');export PGPASSWORD="$P" PGCONNECT_TIMEOUT=2
 p(){ psql -X -q -At -F "$T" -p %d -U "$U" -d "$1" -c "$2" 2>&1|tr -d '\r';};q(){ p "$@"|head -n 100;}
-h=$(echo '== server';q "$D" "$1";echo '== dbsettings';q "$D" "$2";echo '== roles';q "$D" "$3";echo '== databases';q "$D" "$4";echo '== holders';o=$(q "$D" "$5");case "$o" in holder*)printf '%%s\n' "$o";;*)eval "$6";;esac)
-printf '%%s\n' "$h";c="$7$8$9${10}${11}${12}";psql -X -q -At -p %d -U "$U" -d "$D" -c "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY 1 LIMIT 8" 2>/dev/null|while IFS= read -r d;do echo "== catalog $d";p "$d" "$c";done|awk -v b=$((3900-${#h})) '{n+=length($0)+1;if(n>b){print "== more";exit}print}'
+h=$(echo '== server';q "$D" "$1";echo '== dbsettings';q "$D" "$2";echo '== roles';q "$D" "$3";echo '== databases';q "$D" "$4";echo '== holders';o=$(q "$D" "$5");case "$o" in holder*)printf '%%s\n' "$o";;*)eval "$7";;esac;echo '== lockwaits';q "$D" "$6")
+printf '%%s\n' "$h";c="SET lock_timeout=500;$8$9${10}${11}${12}${13}";psql -X -q -At -p %d -U "$U" -d "$D" -c "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY 1 LIMIT 8" 2>/dev/null|while IFS= read -r d;do echo "== catalog $d";p "$d" "$c";done|awk -v b=$((3900-${#h})) '{n+=length($0)+1;if(n>b){print "== more";exit}print}'
 `
 
 // postgresQueries are the server-wide queries, one per section. Settings,
@@ -52,11 +57,20 @@ var postgresQueries = []string{
 	`SELECT rolname,concat_ws(' ',CASE WHEN rolsuper THEN 'superuser' END,CASE WHEN rolcanlogin THEN 'login' ELSE 'nologin' END,CASE WHEN rolcreatedb THEN 'createdb' END,CASE WHEN rolcreaterole THEN 'createrole' END,CASE WHEN rolreplication THEN 'replication' END,CASE WHEN rolbypassrls THEN 'bypassrls' END,CASE WHEN rolconnlimit>=0 THEN 'connlimit='||rolconnlimit END,CASE WHEN rolvaliduntil<now() THEN 'expired' WHEN rolvaliduntil<'infinity' THEN 'valid-until='||rolvaliduntil::date END,(SELECT 'member-of='||string_agg(b.rolname,',' ORDER BY b.rolname) FROM pg_auth_members m JOIN pg_roles b ON b.oid=m.roleid WHERE m.member=r.oid)) FROM pg_roles r WHERE rolname!~'^pg_' ORDER BY 1 LIMIT 25`,
 	`SELECT datname,datallowconn,datconnlimit FROM pg_database WHERE NOT datistemplate ORDER BY 1 LIMIT 17`,
 	postgresHolders,
+	postgresLockWaits,
 }
 
 // postgresHolders groups the client sessions other than the read's own by
 // peer address (local for the Unix socket) and state.
 const postgresHolders = `SELECT 'holder',coalesce(host(client_addr),'local'),s,count(*) FROM(SELECT client_addr,CASE WHEN wait_event_type='Lock' THEN 'blocked' WHEN state='idle' THEN 'idle' WHEN state LIKE 'idle in transaction%' THEN 'idle-in-transaction' ELSE 'active' END s FROM pg_stat_activity WHERE backend_type='client backend' AND pid<>pg_backend_pid())x GROUP BY 2,3 ORDER BY 4 DESC,2,3 LIMIT 12`
+
+// postgresLockWaits lists each session other sessions wait on, per locked
+// relation (or lock type for a lock on no relation): the holder's pid, peer,
+// state and mode on it, the waiter count, the longest wait (since the
+// waiter's statement started) and the holder's transaction age, in seconds.
+// pg_locks and pg_stat_activity never wait on a lock, and no query text is
+// read. Rows match lockWaitLine.
+const postgresLockWaits = `SELECT 'lockwait',b.pid,coalesce(host(h.client_addr),'local'),coalesce(h.state,''),coalesce(string_agg(DISTINCT hl.mode,','),''),coalesce(w.relation::regclass::text,w.locktype),count(DISTINCT w.pid),coalesce(max(extract(epoch FROM now()-a.query_start))::bigint,-1),coalesce(extract(epoch FROM now()-coalesce(h.xact_start,h.backend_start))::bigint,-1) FROM pg_locks w JOIN pg_stat_activity a ON a.pid=w.pid CROSS JOIN LATERAL unnest(pg_blocking_pids(w.pid)) b(pid) JOIN pg_stat_activity h ON h.pid=b.pid LEFT JOIN pg_locks hl ON hl.pid=b.pid AND hl.granted AND hl.locktype=w.locktype AND hl.database IS NOT DISTINCT FROM w.database AND hl.relation IS NOT DISTINCT FROM w.relation AND hl.transactionid IS NOT DISTINCT FROM w.transactionid AND hl.objid IS NOT DISTINCT FROM w.objid WHERE NOT w.granted GROUP BY b.pid,h.client_addr,h.state,h.xact_start,h.backend_start,w.relation,w.locktype ORDER BY 7 DESC,8 DESC LIMIT ` + "8"
 
 // postgresCatalog is the per-database catalog query. Rows are (kind, object,
 // name, value): locks that block writers first, then the tables with their
@@ -69,11 +83,14 @@ const postgresHolders = `SELECT 'holder',coalesce(host(client_addr),'local'),s,c
 // output stays bounded and complete on a schema of any size. A constraint
 // cloned onto a table from a partitioned parent (conparentid) is left out: the
 // parent's own constraint carries its definition, and the clones change
-// whenever the parent gains a partition.
+// whenever the parent gains a partition. Each definition digest is taken from
+// its catalog row, never pg_get_indexdef, pg_get_constraintdef or
+// pg_get_triggerdef: those lock the table to print an expression, so the read
+// would queue behind the very lock a fault holds.
 const postgresCatalog = `WITH s AS(SELECT c.oid,n.nspname||'.'||c.relname o,c.reltuples r FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind IN('r','p') AND n.nspname!~'^(pg_|information_schema)'),` +
-	`d AS(SELECT 'index' k,s.o,ic.relname m,concat_ws(' ',CASE WHEN i.indisprimary THEN 'primary' END,CASE WHEN i.indisunique THEN 'unique' END,CASE WHEN NOT i.indisvalid THEN 'invalid' END,left(md5(pg_get_indexdef(i.indexrelid)),8)) v FROM pg_index i JOIN pg_class ic ON ic.oid=i.indexrelid JOIN s ON s.oid=i.indrelid` +
-	` UNION ALL SELECT 'constraint',s.o,o.conname,concat_ws(' ',o.contype::text,CASE WHEN NOT o.convalidated THEN 'not-valid' END,left(md5(pg_get_constraintdef(o.oid)),8)) FROM pg_constraint o JOIN s ON s.oid=o.conrelid WHERE o.contype IN('c','f','x') AND o.conparentid=0` +
-	` UNION ALL SELECT 'trigger',s.o,g.tgname,'trigger '||g.tgenabled::text||' '||left(md5(pg_get_triggerdef(g.oid)),8) FROM pg_trigger g JOIN s ON s.oid=g.tgrelid WHERE NOT g.tgisinternal),` +
+	`d AS(SELECT 'index' k,s.o,ic.relname m,concat_ws(' ',CASE WHEN i.indisprimary THEN 'primary' END,CASE WHEN i.indisunique THEN 'unique' END,CASE WHEN NOT i.indisvalid THEN 'invalid' END,left(md5(concat_ws(' ',ic.relam,i.indkey,i.indclass,i.indcollation,i.indoption,i.indexprs,i.indpred)),8)) v FROM pg_index i JOIN pg_class ic ON ic.oid=i.indexrelid JOIN s ON s.oid=i.indrelid` +
+	` UNION ALL SELECT 'constraint',s.o,o.conname,concat_ws(' ',o.contype::text,CASE WHEN NOT o.convalidated THEN 'not-valid' END,left(md5(concat_ws(' ',o.conkey,o.confrelid,o.confkey,o.confupdtype,o.confdeltype,o.confmatchtype,o.condeferrable,o.condeferred,o.conexclop,o.conbin)),8)) FROM pg_constraint o JOIN s ON s.oid=o.conrelid WHERE o.contype IN('c','f','x') AND o.conparentid=0` +
+	` UNION ALL SELECT 'trigger',s.o,g.tgname,'trigger '||g.tgenabled::text||' '||left(md5(concat_ws(' ',g.tgtype,g.tgfoid::regprocedure,g.tgattr,encode(g.tgargs,'hex'),g.tgqual,g.tgdeferrable,g.tginitdeferred,g.tgconstraint)),8) FROM pg_trigger g JOIN s ON s.oid=g.tgrelid WHERE NOT g.tgisinternal),` +
 	`tb AS(SELECT 'table' k,o,'' m,CASE WHEN r<0 THEN '?' ELSE r::bigint::text END v FROM s),` +
 	`z AS(SELECT coalesce(sum(length(k)+length(o)+length(m)+length(v)+4),0)<=` + postgresCatalogItemBytesSQL + ` f FROM(SELECT * FROM d UNION ALL SELECT * FROM tb)a)` +
 	`SELECT k,o,m,v FROM(SELECT 0 p,'lock' k,l.relation::regclass::text o,l.mode m,'held' v FROM pg_locks l WHERE l.database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND l.granted AND l.mode IN('ShareLock','ShareRowExclusiveLock','ExclusiveLock','AccessExclusiveLock') AND l.pid<>pg_backend_pid() GROUP BY 3,4` +
@@ -115,6 +132,8 @@ func postgresRefusal(line string) (class string, refused bool) {
 		return "auth-required", true
 	case strings.Contains(lower, "permission denied"), strings.Contains(lower, "must be superuser"):
 		return "no-permission", true
+	case strings.Contains(lower, "lock timeout"):
+		return "locked", true
 	case strings.Contains(lower, "starting up"), strings.Contains(lower, "recovery mode"):
 		return "loading", true
 	case strings.Contains(lower, "not found"), strings.Contains(lower, "no such file"), strings.Contains(lower, "connection refused"),
@@ -182,6 +201,18 @@ func (postgresAdapter) Parse(stdout string) (Facts, error) {
 	f := Facts{Engine: EnginePostgres}
 	holders, present := sections["holders"]
 	if f.Holders, err = parseHolders(holders, present); err != nil {
+		return Facts{}, fmt.Errorf("postgres read: %w", err)
+	}
+	// Lock waits are an auxiliary read: a server that cannot answer it (an
+	// old server, a refused session) leaves them unknown rather than refusing
+	// the store's facts.
+	lockWaits, present := sections["lockwaits"]
+	if present && len(lockWaits) > 0 {
+		if _, refused := postgresRefusal(lockWaits[0]); refused {
+			present = false
+		}
+	}
+	if f.LockWaits, err = parseLockWaits(lockWaits, present); err != nil {
 		return Facts{}, fmt.Errorf("postgres read: %w", err)
 	}
 	var blocks []Item
