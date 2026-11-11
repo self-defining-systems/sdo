@@ -24,12 +24,14 @@ const (
 )
 
 // AppMap is the accepted application map, read-only: the components, the
-// workload each runs as, the data each holds and the calls between them. A
-// program reads it through ReadView.AppMap to resolve the store, cache or
-// source to act on from a bound object, instead of naming a component.
+// workload each runs as, the data each holds, the calls between them and the
+// operations procedures the application ships. A program reads it through
+// ReadView.AppMap to resolve the store, cache or source to act on from a bound
+// object, instead of naming a component.
 type AppMap struct {
 	Components []AppComponent `json:"components"`
 	Edges      []AppEdge      `json:"edges,omitempty"`
+	Procedures []Procedure    `json:"procedures,omitempty"`
 }
 
 // AppComponent is one component of the application map. Workload is

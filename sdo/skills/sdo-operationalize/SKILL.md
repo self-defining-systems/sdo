@@ -15,7 +15,7 @@ The memory check enforces the map [rules](references/rules.md). `operability.*` 
 
 Read the source, config, manifests (the Go inventory lists every resource) and the live application. Start from
 Go's [seeded map](references/map.md#seeded-map) when no one wrote one. Write the map in the [map](references/map.md)
-format (a route broken as deployed: `knownBroken`) between the architecture file's map markers; only that text is yours.
+format (a route broken as deployed: `knownBroken`) between the architecture file's map markers; only that text is yours. Record the ops [procedures](references/map.md#procedures) the app ships.
 
 - **Operations**: every user-facing route at the entry point (router, mux, proxy config), with its Service,
   port, method and path. `writes: true` when it changes stored state.
@@ -79,7 +79,7 @@ Reach the live application through its Services (cluster DNS, or `kubectl` when 
    at the workload's rate, never single requests. Set `maxLatency` to the larger of three times the slowest
    and 1 s, below the iteration timeout. Record fastest, median, slowest and the bound in `Calibration`.
 4. Compute the probe request rate (iterations per second times requests per iteration, summed over the three
-   workloads) and compare it with the application's request rate if you can observe it.
+   workloads) and compare it with the application's request rate if observable.
 5. Write a `Calibration` section in the health-objective playbook: what passed, the observed paths, the probe
    rate and anything you could not check (no live access counts; say so). Then run `sdo-operator memory check`
    until it exits 0.

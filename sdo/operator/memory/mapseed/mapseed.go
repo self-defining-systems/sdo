@@ -71,6 +71,7 @@ type seeder struct {
 	namespaces map[string]bool
 	edges      map[[2]string]appmap.Edge
 	ingress    map[string][]string // Service -> how an Ingress exposes it
+	jobs       []string            // Job names, each a procedure the application ships
 }
 
 // FromObjects seeds an application map from rendered objects.
@@ -121,6 +122,8 @@ func (s *seeder) add(o *unstructured.Unstructured) {
 		s.configMaps[namespaceOf(o)+"/"+name] = o
 	case kind == "Ingress":
 		s.addIngress(o)
+	case kind == "Job":
+		s.jobs = append(s.jobs, name)
 	case componentKinds[kind]:
 		id := logicalName(name)
 		if _, dup := s.components[id]; dup || id == "" {
@@ -466,6 +469,19 @@ func (s *seeder) buildMap() appmap.Map {
 	sort.Slice(m.Edges, func(i, j int) bool {
 		return m.Edges[i].From+"\x00"+m.Edges[i].To < m.Edges[j].From+"\x00"+m.Edges[j].To
 	})
+	// A Job is a procedure the application ships, re-created from its
+	// template. Its effect is unknown from the manifest; long is the seed and
+	// the designer corrects it.
+	seen := map[string]bool{}
+	for _, name := range s.jobs {
+		id := logicalName(name)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		m.Procedures = append(m.Procedures, appmap.Procedure{ID: id, Job: "Job/" + name, Effect: "long", Source: "manifest Job/" + name})
+	}
+	sort.Slice(m.Procedures, func(i, j int) bool { return m.Procedures[i].ID < m.Procedures[j].ID })
 	return m
 }
 
@@ -550,7 +566,8 @@ func healthEndpoints(o *unstructured.Unstructured) []string {
 // regionHeader is the comment the seeded map opens with.
 const regionHeader = `# Seeded by SDO from the rendered manifests, without application source
 # (evidence: manifest). Review it: fix roles and edges you know better, add
-# observed edges, then add operations and probes for the entry candidates.
+# observed edges, then add operations and probes for the entry candidates,
+# and the procedures the application ships (each Job is seeded as one).
 `
 
 // Region is the seeded map as an application-map region, markers included.
@@ -582,7 +599,14 @@ func (seed Seed) Region() string {
 	for _, e := range seed.Map.Edges {
 		fmt.Fprintf(&b, "  - {from: %s, to: %s, evidence: [%s], source: %s}\n", e.From, e.To, strings.Join(e.Evidence, ", "), quote(e.Source))
 	}
-	b.WriteString("operations: []\nprobes: []\n```\n" + appmap.EndMarker + "\n")
+	b.WriteString("operations: []\nprobes: []\n")
+	if len(seed.Map.Procedures) > 0 {
+		b.WriteString("procedures:\n")
+	}
+	for _, p := range seed.Map.Procedures {
+		fmt.Fprintf(&b, "  - {id: %s, job: %s, effect: %s, source: %s}\n", p.ID, quote(p.Job), p.Effect, quote(p.Source))
+	}
+	b.WriteString("```\n" + appmap.EndMarker + "\n")
 	return b.String()
 }
 

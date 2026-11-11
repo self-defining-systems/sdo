@@ -84,6 +84,7 @@ func programMap(m appmap.Map) program.AppMap {
 	for _, e := range m.Edges {
 		out.Edges = append(out.Edges, program.AppEdge{From: e.From, To: e.To})
 	}
+	out.Procedures = m.ProgramProcedures()
 	return out
 }
 

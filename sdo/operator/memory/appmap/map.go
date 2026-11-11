@@ -48,6 +48,8 @@ type Map struct {
 	Edges      []Edge      `yaml:"edges"`
 	Operations []Operation `yaml:"operations"`
 	Probes     []Probe     `yaml:"probes"`
+	// Procedures are the operations procedures the application ships.
+	Procedures []Procedure `yaml:"procedures,omitempty"`
 }
 
 // Component is one application workload that is part of the app.
@@ -231,6 +233,7 @@ func (m Map) Check(inv Inventory, workloads []Workload) []Finding {
 	c.probes(workloads)
 	c.knownBrokenOperations()
 	c.coverage()
+	c.procedures(inv)
 	sort.SliceStable(c.findings, func(i, j int) bool { return c.findings[i].Rule < c.findings[j].Rule })
 	return c.findings
 }

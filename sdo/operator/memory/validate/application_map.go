@@ -59,7 +59,7 @@ func (s *run) applicationMap(ctx context.Context) {
 	}
 	parsed, err := appmap.Parse(region.YAML)
 	if err != nil {
-		s.mapFinding(Semantic, appmap.Finding{Rule: RuleMapSchema, Message: "application map does not parse: " + err.Error(), Hint: "version 1 fields only: components, edges, operations, probes; unknown or duplicate keys are rejected"}, errorLine(err, region.YAMLLine-1))
+		s.mapFinding(Semantic, appmap.Finding{Rule: RuleMapSchema, Message: "application map does not parse: " + err.Error(), Hint: "version 1 fields only: components, edges, operations, probes, procedures; unknown or duplicate keys are rejected"}, errorLine(err, region.YAMLLine-1))
 		return
 	}
 	if line := firstLine([]byte(region.Block), layout.ContainsPhysicalPath); line > 0 {

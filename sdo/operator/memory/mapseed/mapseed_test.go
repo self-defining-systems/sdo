@@ -331,6 +331,23 @@ func TestSeedListsEntryCandidatesWithHealthEndpoints(t *testing.T) {
 	}
 }
 
+// A Job of the rendered manifests is a procedure the application ships: Go
+// seeds it as a re-created Job with a long effect, and the designer corrects
+// the effect class and adds the procedures only source or docs reveal.
+func TestSeedRecordsEachJobAsAProcedure(t *testing.T) {
+	seed := FromObjects(objects(t, chart))
+	if len(seed.Map.Procedures) != 1 {
+		t.Fatalf("procedures = %+v", seed.Map.Procedures)
+	}
+	p := seed.Map.Procedures[0]
+	if p.ID != "shop-migrations" || p.Job != "Job/shop-migrations" || p.Effect != "long" || p.Source != "manifest Job/shop-migrations" {
+		t.Fatalf("procedure = %+v", p)
+	}
+	if !strings.Contains(seed.Region(), "procedures:\n  - {id: shop-migrations, job: \"Job/shop-migrations\", effect: long, source: \"manifest Job/shop-migrations\"}\n") {
+		t.Fatalf("region = %s", seed.Region())
+	}
+}
+
 // The seeded region is an application map the memory check accepts against
 // the inventory of the same objects: only the non-blocking note for edges no
 // operation exercises yet.
@@ -357,7 +374,7 @@ func TestSeedRegionPassesTheMapCheck(t *testing.T) {
 			t.Errorf("finding %+v", f)
 		}
 	}
-	if len(parsed.Components) != len(seed.Map.Components) || len(parsed.Edges) != len(seed.Map.Edges) {
+	if len(parsed.Components) != len(seed.Map.Components) || len(parsed.Edges) != len(seed.Map.Edges) || len(parsed.Procedures) != len(seed.Map.Procedures) {
 		t.Fatalf("round trip lost entries:\n%s", region.YAML)
 	}
 }
