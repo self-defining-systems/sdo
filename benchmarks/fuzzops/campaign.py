@@ -37,6 +37,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 ROUNDS = ("first", "repeat", "variant")
+#: Seed per round: the same seeds as the instance's noop runs (1..3), so fuzzops' background churn, drawn from the
+#: seed, is paired between an SDO round and a noop run.
+ROUND_SEEDS = {"first": 1, "repeat": 2, "variant": 1}
 IDLE_TIMEOUT_S = 40 * 60.0
 REFLECTION_WAIT_S = 15 * 60.0
 MEMORY_PATHS = (".sdo/outcomes", ".sdo/playbooks")
@@ -289,10 +292,18 @@ class LaneConfig:
     #: run when the app is still unhealthy before an inject: SDO missed the previous fault or never repaired it.
     heal_cmd: str = ""
     reflection_wait: float = REFLECTION_WAIT_S
+    #: Experiment arm (an SDO build variant); rounds of different arms are graded apart (``exec:sdo-<arm>-<round>``).
+    arm: str = ""
+    #: Rounds to run, in plan order (default all).
+    rounds: tuple[str, ...] = ROUNDS
 
     def __post_init__(self) -> None:
         for t in self.templates:
             self.plan.item(t)
+        if unknown := set(self.rounds) - set(ROUNDS):
+            raise ValueError(f"unknown rounds {sorted(unknown)}")
+        if self.arm and not re.fullmatch(r"[A-Za-z0-9]+", self.arm):
+            raise ValueError("an arm label is letters and digits")
         if self.namespace == self.control_namespace:
             raise ValueError("namespace and control namespace must differ")
 
@@ -315,6 +326,9 @@ class LaneConfig:
             cmd += ["--operator-binary", self.operator_binary, "--controller-image", self.controller_image]
         return f"cd {shlex.quote(str(self.sdo_root))} && exec " + shlex.join(cmd)
 
+    def operator(self, round_: str) -> str:
+        return f"exec:sdo-{self.arm}-{round_}" if self.arm else f"exec:sdo-{round_}"
+
     def run_args(self, round_: str, instance: str, seed: int) -> list[str]:
         return [
             str(self.fuzzops / "bin" / "fuzzops"),
@@ -325,7 +339,7 @@ class LaneConfig:
             self.namespace,
             "--skip-reset",
             "--operator",
-            f"exec:sdo-{round_}",
+            self.operator(round_),
             "--instance-file",
             self.plan.instances_file,
             "--instance",
@@ -349,7 +363,8 @@ class LaneConfig:
             }
         )
         for r in ROUNDS:
-            env[f"FUZZOPS_EXEC_CMD_SDO_{r.upper()}"] = self.observer()
+            label = re.sub(r"[^A-Za-z0-9]", "_", self.operator(r).removeprefix("exec:")).upper()
+            env[f"FUZZOPS_EXEC_CMD_{label}"] = self.observer()
         if self.kubeconfig:
             env["KUBECONFIG"] = self.kubeconfig
         return env
@@ -365,6 +380,7 @@ def run_lane(cfg: LaneConfig, log: Callable[[str], None] = print) -> int:
     meta = {
         "app": cfg.plan.app,
         "sdo_version": cfg.sdo_version,
+        "arm": cfg.arm,
         "kind_cluster": cfg.kind_cluster,
         "namespace": cfg.namespace,
         "control_namespace": cfg.control_namespace,
@@ -382,6 +398,8 @@ def run_lane(cfg: LaneConfig, log: Callable[[str], None] = print) -> int:
     healed_rounds: list[str] = []
     for template in cfg.templates:
         for round_, instance in cfg.plan.item(template).rounds():
+            if round_ not in cfg.rounds:
+                continue
             done = [
                 d
                 for d in runs.iterdir()
@@ -411,11 +429,14 @@ def run_lane(cfg: LaneConfig, log: Callable[[str], None] = print) -> int:
                     "soft_idle": soft,
                     "started": _now(),
                     "sdo_version": cfg.sdo_version,
+                    "arm": cfg.arm,
+                    "operator": cfg.operator(round_),
+                    "seed": ROUND_SEEDS[round_],
                 }
                 log(f"{template} {round_} -> {instance} (run {run_dir.name})")
                 with (run_dir / "record.json").open("w") as out, (run_dir / "run.log").open("w") as err:
                     rc = subprocess.run(
-                        cfg.run_args(round_, instance, n),
+                        cfg.run_args(round_, instance, ROUND_SEEDS[round_]),
                         stdout=out,
                         stderr=err,
                         env=cfg.env(run_dir),
@@ -504,6 +525,8 @@ def main(argv: list[str] | None = None) -> int:
     ln.add_argument(
         "--evidence-dir", default="", help="the host directory of this lane's evidence sink run (<sink>/<run-id>)"
     )
+    ln.add_argument("--arm", default="", help="experiment arm label (graded apart as exec:sdo-<arm>-<round>)")
+    ln.add_argument("--rounds", default=",".join(ROUNDS), help="rounds to run (comma-separated)")
     ln.add_argument("--heal-cmd", default="", help="shell command restoring a broken app before a retried round")
     ln.add_argument(
         "--reflection-wait",
@@ -537,6 +560,8 @@ def main(argv: list[str] | None = None) -> int:
         controller_image=a.controller_image,
         evidence_dir=a.evidence_dir,
         heal_cmd=a.heal_cmd,
+        arm=a.arm,
+        rounds=tuple(r for r in a.rounds.split(",") if r),
         reflection_wait=a.reflection_wait,
     )
     return run_lane(cfg, log=lambda m: print(f"{_now()} {m}", flush=True))

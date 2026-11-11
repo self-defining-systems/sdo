@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -411,6 +412,19 @@ func (w *reaction) Wait(ctx context.Context, refs []sdk.ObjectRef) error {
 		*w.effects = append(*w.effects, "simulated:rollout-status:"+ref.Kind+"/"+ref.Name)
 	}
 	return nil
+}
+
+// NamespacePods reads the current replay Pods through the snapshot projection,
+// as AdmissionReplicaSets does.
+func (c *cluster) NamespacePods(ctx context.Context, namespace string) ([]corev1.Pod, error) {
+	if namespace == "" || namespace != c.original.NamespaceName {
+		return nil, fmt.Errorf("pod list namespace differs from replay")
+	}
+	snapshot, err := c.snapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return snapshot.Pods(), nil
 }
 
 // AdmissionReplicaSets reads the current replay inventory through the same

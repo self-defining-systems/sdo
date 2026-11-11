@@ -60,8 +60,9 @@ const (
 	// KindRegistryEntry is a count of registered entries.
 	KindRegistryEntry ItemKind = "registry-entry"
 	// KindRefusal is the store refusing one of SDO's own reads; Value is the
-	// class (auth-required, no-permission, max-clients, loading, unsupported,
-	// refused).
+	// class (auth-required, no-permission, max-clients, loading, locked
+	// (the read gave up waiting on a lock another session holds),
+	// unsupported, refused).
 	KindRefusal ItemKind = "refusal"
 )
 
@@ -156,9 +157,13 @@ type Facts struct {
 	Items     []Item           `json:"items"`
 	// Holders groups the connections the store holds by peer and state; nil
 	// when the read could not list them. It is never part of Diff.
-	Holders []Holder   `json:"holders,omitempty"`
-	Unread  []ItemKind `json:"unread,omitempty"`
-	Error   string     `json:"error,omitempty"`
+	Holders []Holder `json:"holders,omitempty"`
+	// LockWaits are the sessions holding a lock others wait for, most
+	// waiters first; nil when the read could not list them, empty when none
+	// waits. They are never part of Diff.
+	LockWaits []LockWait `json:"lock_waits,omitempty"`
+	Unread    []ItemKind `json:"unread,omitempty"`
+	Error     string     `json:"error,omitempty"`
 }
 
 // unread reports whether items of kind may be missing from f.
@@ -214,6 +219,9 @@ func (f Facts) Validate() error {
 	}
 	if len(f.Holders) > MaxHolders {
 		return fmt.Errorf("store facts carry %d holder groups, more than %d", len(f.Holders), MaxHolders)
+	}
+	if len(f.LockWaits) > MaxLockWaits {
+		return fmt.Errorf("store facts carry %d lock waits, more than %d", len(f.LockWaits), MaxLockWaits)
 	}
 	if size > MaxItemBytes {
 		return fmt.Errorf("store facts carry %d bytes, more than %d", size, MaxItemBytes)

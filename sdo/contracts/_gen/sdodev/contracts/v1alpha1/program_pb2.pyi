@@ -236,7 +236,7 @@ class DeleteObject(_message.Message):
     def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., reason: _Optional[str] = ...) -> None: ...
 
 class PlanObjectEffect(_message.Message):
-    __slots__ = ("operation", "ref", "uid", "state", "confirmed", "irreversible", "deleted_pre_image")
+    __slots__ = ("operation", "ref", "uid", "state", "confirmed", "irreversible", "deleted_pre_image", "reason")
     OPERATION_FIELD_NUMBER: _ClassVar[int]
     REF_FIELD_NUMBER: _ClassVar[int]
     UID_FIELD_NUMBER: _ClassVar[int]
@@ -244,6 +244,7 @@ class PlanObjectEffect(_message.Message):
     CONFIRMED_FIELD_NUMBER: _ClassVar[int]
     IRREVERSIBLE_FIELD_NUMBER: _ClassVar[int]
     DELETED_PRE_IMAGE_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
     operation: str
     ref: _common_pb2.ObjectRef
     uid: str
@@ -251,7 +252,8 @@ class PlanObjectEffect(_message.Message):
     confirmed: bool
     irreversible: bool
     deleted_pre_image: _struct_pb2.Struct
-    def __init__(self, operation: _Optional[str] = ..., ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., uid: _Optional[str] = ..., state: _Optional[str] = ..., confirmed: _Optional[bool] = ..., irreversible: _Optional[bool] = ..., deleted_pre_image: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ...) -> None: ...
+    reason: str
+    def __init__(self, operation: _Optional[str] = ..., ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., uid: _Optional[str] = ..., state: _Optional[str] = ..., confirmed: _Optional[bool] = ..., irreversible: _Optional[bool] = ..., deleted_pre_image: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., reason: _Optional[str] = ...) -> None: ...
 
 class ReconcileFromSource(_message.Message):
     __slots__ = ("ref",)

@@ -41,6 +41,8 @@ type PlanObjectEffect struct {
 	Confirmed       bool
 	Irreversible    bool
 	DeletedPreImage *unstructured.Unstructured `json:",omitempty"`
+	// Reason says why the executor made an effect the action did not name.
+	Reason string `json:",omitempty"`
 }
 
 func objectActionOperation(action program.Action) string {

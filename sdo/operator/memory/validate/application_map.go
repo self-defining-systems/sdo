@@ -16,7 +16,7 @@ func (r Request) mapBlocks() bool { return r.Actor == HealthJudge && r.Phase == 
 
 // mapAlwaysNote lists the findings that never reject.
 func mapAlwaysNote(rule string) bool {
-	return rule == RuleMapMissing || rule == RuleMapUnexercisedEdge
+	return rule == RuleMapMissing || rule == RuleMapUnexercisedEdge || rule == RuleMapUnprobedEdge
 }
 
 // mapFinding records one map finding: blocking for the designer once a map

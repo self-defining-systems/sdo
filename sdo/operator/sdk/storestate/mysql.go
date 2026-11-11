@@ -35,19 +35,23 @@ var mysqlRowLimits = map[string]int{"users": 25, "indexes": 129, "mdl": 16}
 // mysqlScript runs the image's mysql (or mariadb) client against the store's
 // own port as the user the credential prelude found ($U, else root), with
 // the password ($P) in an option file on a here-document descriptor, never
-// in argv or output. Queries arrive as positional arguments. The catalog
+// in argv or output. Each session waits at most a second for a metadata
+// lock, so a count of a table a fault holds locked fails fast instead of
+// stalling the whole read past its time budget (the vars section reads the
+// global lock_wait_timeout, not the session's). Queries arrive as positional
+// arguments; $9 is the lock-waits query. The catalog
 // sections follow in mysqlCatalogOrder, locks first so a large catalog never
 // hides them, cut at the output budget with a "== more" marker.
 const mysqlScript = `PORT=%d;DB=
 U=${U:-root};W=$(printf '%%s' "$P"|sed 's/[\\"]/\\&/g')
 c=mysql;command -v mysql >/dev/null 2>&1||c=mariadb
-q(){ $c --defaults-extra-file=/dev/fd/3 --protocol=TCP -h 127.0.0.1 -P "$PORT" -u "$U" --connect-timeout=2 -N -B -e "$1" 3<<SDOEOF 2>&1|grep -v '^mysql: \[Warning\]'|head -n 140
+q(){ $c --defaults-extra-file=/dev/fd/3 --protocol=TCP -h 127.0.0.1 -P "$PORT" -u "$U" --connect-timeout=2 --init-command='SET SESSION lock_wait_timeout=1' -N -B -e "$1" 3<<SDOEOF 2>&1|grep -v '^mysql: \[Warning\]'|head -n 140
 [client]
 password="$W"
 SDOEOF
 }
 r(){ o=$(q 'SHOW REPLICA STATUS');case "$o" in ERROR*1064*|ERROR*syntax*)o=$(q 'SHOW SLAVE STATUS');;esac;case "$o" in ERROR*|*"not found"*)printf '%%s\n' "$o"|head -n1;;'')echo primary;;*)echo replica;;esac;}
-h=$(echo '== vars';q "$1";echo '== status';q "$2";echo '== role';r;echo '== users';q "$3")
+h=$(echo '== vars';q "$1";echo '== status';q "$2";echo '== role';r;echo '== users';q "$3";echo '== lockwaits';q "$9")
 printf '%%s\n' "$h";{ echo '== locks';q "$7";echo '== mdl';q "$8";echo '== indexes';q "$5$6";echo '== tables';q "$4";}|awk -v b=$((3900-${#h})) '{n+=length($0)+1;if(n>b){print "== more";exit}print}'
 `
 
@@ -65,7 +69,16 @@ var mysqlQueries = []string{
 	mysqlIndexes,
 	`SELECT 'waiting',COUNT(*) FROM information_schema.processlist WHERE state LIKE 'Waiting for%lock%' UNION ALL SELECT 'trx-waiting',COUNT(*) FROM information_schema.innodb_trx WHERE trx_state='LOCK WAIT'`,
 	`SELECT object_type,IFNULL(object_schema,''),IFNULL(object_name,''),lock_type FROM performance_schema.metadata_locks WHERE lock_status='GRANTED' AND (object_type='GLOBAL' AND lock_type='SHARED' OR object_type='TABLE' AND lock_type IN('SHARED_NO_READ_WRITE','SHARED_READ_ONLY','SHARED_NO_WRITE','EXCLUSIVE')) GROUP BY 1,2,3,4 ORDER BY 1,2,3,4 LIMIT 16`,
+	mysqlLockWaits,
 }
+
+// mysqlLockWaits lists each session other sessions wait on, per locked table:
+// metadata-lock waits (LOCK TABLES, DDL) and InnoDB row-lock waits through
+// the sys schema views, with the holder's processlist id, peer and command,
+// its lock type, the waiter count, the longest wait and the holder's
+// transaction age (else its time in the current command), in seconds. No
+// query text is read. Rows match lockWaitLine.
+const mysqlLockWaits = "SELECT 'lockwait',b,IFNULL(MAX(IF(p.host LIKE 'localhost%','local',SUBSTRING_INDEX(p.host,':',1))),''),IFNULL(MAX(p.command),''),m,o,COUNT(DISTINCT w),MAX(s),IFNULL(MAX(IFNULL(TIMESTAMPDIFF(SECOND,t.trx_started,NOW()),p.time)),-1) FROM(SELECT blocking_pid b,LOWER(blocking_lock_type) m,CONCAT(object_schema,'.',object_name) o,waiting_pid w,waiting_query_secs s FROM sys.schema_table_lock_waits UNION ALL SELECT blocking_pid,LOWER(blocking_lock_mode),REPLACE(locked_table,'`',''),waiting_pid,wait_age_secs FROM sys.innodb_lock_waits)x LEFT JOIN information_schema.processlist p ON p.id=b LEFT JOIN information_schema.innodb_trx t ON t.trx_mysql_thread_id=b GROUP BY b,m,o ORDER BY 7 DESC,8 DESC LIMIT 8"
 
 // mysqlIndexes reads each index with a digest of its columns, or, on a
 // schema with more than mysqlIndexItems indexes, one group digest per table
@@ -114,6 +127,8 @@ func mysqlRefusal(line string) (class string, refused bool) {
 		return "auth-failed", true
 	case strings.Contains(line, " 1142 "), strings.Contains(line, " 1227 "), strings.Contains(line, " 1044 "), strings.Contains(lower, "command denied"):
 		return "no-permission", true
+	case strings.Contains(line, " 1205 "), strings.Contains(lower, "lock wait timeout"):
+		return "locked", true
 	case strings.Contains(line, " 1064 "), strings.Contains(line, " 1146 "), strings.Contains(line, " 1054 "), strings.Contains(line, " 1109 "):
 		return "unsupported", true
 	case strings.Contains(line, " 2002 "), strings.Contains(line, " 2003 "), strings.Contains(line, " 2013 "), strings.Contains(lower, "can't connect"),
@@ -214,6 +229,21 @@ func (mysqlAdapter) Parse(stdout string) (Facts, error) {
 		return Facts{}, fmt.Errorf("mysql read section vars is empty")
 	}
 	f := Facts{Engine: EngineMySQL}
+	// Lock waits are an auxiliary read: a server without the sys schema or
+	// its instruments leaves them unknown rather than refusing the store's
+	// facts.
+	lockWaits, present := sections["lockwaits"]
+	if present && len(lockWaits) > 0 {
+		if class, refused := mysqlRefusal(lockWaits[0]); refused {
+			if class == "unreachable" {
+				return Facts{}, fmt.Errorf("mysql read section lockwaits: %s", lockWaits[0])
+			}
+			present = false
+		}
+	}
+	if f.LockWaits, err = parseLockWaits(lockWaits, present); err != nil {
+		return Facts{}, fmt.Errorf("mysql read: %w", err)
+	}
 	for name, value := range vars {
 		items = append(items, Item{Kind: KindSetting, Name: name, Value: value})
 	}
