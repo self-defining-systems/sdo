@@ -27,6 +27,7 @@ from sdo.contracts import (
     MemoryDiagnostic,
     OperationalMemorySnapshot,
     OutcomeRecord,
+    RepairActionStatus,
     StateChanges,
     datetime_timestamp,
 )
@@ -217,6 +218,7 @@ def test_reflection_saves_partial_learning_for_verified_parts(
         summary="Restore the observed listener port",
         details='$ kubectl patch service api -p \'{"spec":{"ports":[{"port":80,"targetPort":8080}]}}\'\nexit 0',
         success=True,
+        status=RepairActionStatus.REPAIR_ACTION_STATUS_APPLIED,
     )
     SessionReflector(backend).resume(
         session_id="session-1",
@@ -621,3 +623,43 @@ def test_reflection_preserves_mixed_learning_and_offers_undetected_repairs(tmp_p
     details, _ = decoder.raw_decode(current_text[end:].lstrip())
     assert required["classification"] == outcome.classification
     assert details["undetected_causes"][0]["repair_action_id"] == "recorded-patch"
+
+
+def test_reflection_brief_shows_applied_unverified_action_as_applied_and_real_failure_as_failed(
+    tmp_path: Path,
+) -> None:
+    from sdo.agents.responder.reflection_brief import incident_brief
+
+    closure = _fresh_closure(tmp_path)
+    assert closure.result is not None
+    payload = json_format.MessageToDict(closure.result, preserving_proto_field_name=True)
+    window = {"started_at": "2026-07-09T18:08:00Z", "completed_at": "2026-07-09T18:09:00Z"}
+    payload["repair_actions"] = [
+        {
+            "action_id": "sdo-program-applied",
+            "kind": "program-plan",
+            "target": "Deployment/synthetic-unverified",
+            "summary": "applied program plan action:RestartRollout",
+            "details": "controller confirmed 1 applied resource effects",
+            "success": False,
+            "status": "REPAIR_ACTION_STATUS_APPLIED",
+            **window,
+        },
+        {
+            "action_id": "sdo-program-failed",
+            "kind": "program-plan",
+            "target": "Deployment/synthetic-broken",
+            "summary": "program plan action failed",
+            "details": "controller action 1: execution_failed",
+            "failure_reason": "execution_failed",
+            "status": "REPAIR_ACTION_STATUS_FAILED",
+            **window,
+        },
+    ]
+    closure.result.CopyFrom(from_dict(IncidentResult, payload))
+    lines = expand_context(incident_brief(closure, worktree=tmp_path)).splitlines()
+    applied = next(line for line in lines if "synthetic-unverified" in line)
+    failed = next(line for line in lines if "synthetic-broken" in line)
+    assert "FAILED" not in applied
+    assert "applied" in applied
+    assert "FAILED" in failed

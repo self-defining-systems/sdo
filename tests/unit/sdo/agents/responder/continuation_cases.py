@@ -64,6 +64,13 @@ def ten_receipt_continuation() -> dict[str, Any]:
                     "started_at": f"2026-01-01T00:00:{index:02d}Z",
                     "completed_at": f"2026-01-01T00:01:{index:02d}Z",
                     "success": success,
+                    "status": (
+                        "REPAIR_ACTION_STATUS_FAILED"
+                        if not success
+                        else "REPAIR_ACTION_STATUS_VERIFIED"
+                        if index < 4
+                        else "REPAIR_ACTION_STATUS_APPLIED"
+                    ),
                     "reversible": False,
                 },
             }

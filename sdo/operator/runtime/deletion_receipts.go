@@ -8,6 +8,7 @@ import (
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 )
 
@@ -49,6 +50,7 @@ func (l *ResponderLoop) checkDeletionReceipts(ctx context.Context, receipts []Re
 		if reason != "" {
 			receipt.Success = false
 			receipt.FailureReason = reason
+			receipt.Status = contracts.RepairActionStatus_REPAIR_ACTION_STATUS_FAILED
 		}
 	}
 	return result

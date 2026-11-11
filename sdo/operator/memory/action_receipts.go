@@ -52,6 +52,12 @@ func IncidentActionReceipts(repositoryMount, incidentID string) ([]*contracts.Re
 		// The journal is agent-writable: owner chains come only from SDO's
 		// own observations, never this file.
 		receipt.Owners = nil
+		// Only the controller verifies an action by itself; an agent command
+		// either took effect or failed.
+		receipt.Status = contracts.RepairActionStatus_REPAIR_ACTION_STATUS_APPLIED
+		if !receipt.GetSuccess() || receipt.GetFailureReason() != "" {
+			receipt.Status = contracts.RepairActionStatus_REPAIR_ACTION_STATUS_FAILED
+		}
 		if states[receipt.ActionId] == "" {
 			order = append(order, receipt.ActionId)
 		}

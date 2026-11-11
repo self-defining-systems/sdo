@@ -334,8 +334,10 @@ type continuationReceipt struct {
 	Details       string          `json:"details"`
 	StartedAt     time.Time       `json:"started_at"`
 	CompletedAt   time.Time       `json:"completed_at"`
-	Success       bool            `json:"success"`
-	Reversible    bool            `json:"reversible"`
+	Success       bool                         `json:"success"`
+	// Status is the RepairActionStatus enum name, readable by the responder.
+	Status     string `json:"status"`
+	Reversible bool   `json:"reversible"`
 	// Owners reach the outcome for cause attribution, not the responder.
 	Owners []ResourceOwners `json:"-"`
 }
@@ -460,7 +462,7 @@ func (l *ResponderLoop) applicationRepairsLocked() []continuationRepair {
 }
 
 func feedbackReceipt(receipt RepairActionReceipt) continuationReceipt {
-	return continuationReceipt{ActionID: receipt.ActionID, Kind: receipt.Kind, Target: receipt.Target, Resources: receipt.Resources, Summary: receipt.Summary, Details: receipt.Details, StartedAt: receipt.StartedAt, CompletedAt: receipt.CompletedAt, Success: receipt.Success, Reversible: receipt.Reversible, FailureReason: receipt.FailureReason, ScriptDigest: receipt.ScriptDigest, Owners: receipt.Owners}
+	return continuationReceipt{ActionID: receipt.ActionID, Kind: receipt.Kind, Target: receipt.Target, Resources: receipt.Resources, Summary: receipt.Summary, Details: receipt.Details, StartedAt: receipt.StartedAt, CompletedAt: receipt.CompletedAt, Success: receipt.Success, Status: receipt.Status.String(), Reversible: receipt.Reversible, FailureReason: receipt.FailureReason, ScriptDigest: receipt.ScriptDigest, Owners: receipt.Owners}
 }
 
 func continuationFeedback(attempt int, verification ToolResponse, repairs ...continuationRepair) ([]byte, error) {

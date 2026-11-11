@@ -143,6 +143,7 @@
         ],
         "reversible": true,
         "started_at": "1970-01-01T00:00:01.500Z",
+        "status": "REPAIR_ACTION_STATUS_APPLIED",
         "success": true,
         "summary": "restore the selector",
         "target": "Service/frontend"
@@ -345,6 +346,7 @@
           ],
           "reversible": true,
           "started_at": "1970-01-01T00:00:01.500Z",
+          "status": "REPAIR_ACTION_STATUS_APPLIED",
           "success": true,
           "summary": "restore the selector",
           "target": "Service/frontend"

@@ -13,7 +13,7 @@ from sdo.agents.prompt_templates import count_chars, render_prompt
 from sdo.agents.responder.rollout_release import release_lines
 from sdo.agents.responder.tool_output import write_json
 from sdo.agents.responder.tools_cli import command_purposes, command_surface
-from sdo.contracts import Verdict
+from sdo.contracts import Verdict, repair_action_status
 
 MAX_INCIDENT_SUMMARY_CHARS = budget_for("responder.incident_data")
 
@@ -73,7 +73,11 @@ def prior_response_summary(request: IncidentRequest) -> dict[str, Any]:
                 "incident_id": item.incident_id,
                 "truncated": item.truncated,
                 "successful_actions": [
-                    {"action_id": action.action_id, "summary": _clip(action.summary), "success": True}
+                    {
+                        "action_id": action.action_id,
+                        "summary": _clip(action.summary),
+                        "status": repair_action_status(action),
+                    }
                     for action in item.successful_actions[:2]
                 ],
                 "actions_omitted": max(0, len(item.successful_actions) - 2),

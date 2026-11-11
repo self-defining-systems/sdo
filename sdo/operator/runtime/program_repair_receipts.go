@@ -30,9 +30,10 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 			if script, isScript := concreteExternalAction(action).(program.RunScript); isScript && index < len(application.Result.ActionReports) {
 				report := application.Result.ActionReports[index]
 				scoped := scriptRepairResources(report)
+				verified := programApplicationVerified(application)
 				if report.Status == "applied" && application.Result.Applied && report.Script != nil && report.Script.ScriptDigest == program.ScriptDigest(script.Script) && !application.RolledBack && application.RollbackError == "" {
 					id := uniqueRepairID(fmt.Sprintf("sdo-program-%s-script-%d", application.ID, index+1), used)
-					result = append(result, RepairActionReceipt{ActionID: id, Kind: "run-script", ScriptDigest: report.Script.ScriptDigest, Resources: scoped, Target: "script", Summary: "completed script", Details: "controller-recorded exact script digest", StartedAt: application.StartedAt, CompletedAt: application.CompletedAt, Success: application.Result.SettlementRejectionReason == contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED && application.Result.VerificationCompleted && application.Result.VerificationPassed && application.Error == "" && !application.Pending && !planApplicationPending(application.Result)})
+					result = append(result, RepairActionReceipt{ActionID: id, Kind: "run-script", ScriptDigest: report.Script.ScriptDigest, Resources: scoped, Target: "script", Summary: "completed script", Details: "controller-recorded exact script digest", StartedAt: application.StartedAt, CompletedAt: application.CompletedAt, Success: verified, Status: appliedStatus(verified)})
 					for _, ref := range scoped {
 						if !seen[ref] {
 							seen[ref] = true
@@ -42,7 +43,7 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 				}
 				if report.FailureReason != "" {
 					id := uniqueRepairID(fmt.Sprintf("sdo-program-%s-failed-%d", application.ID, index+1), used)
-					result = append(result, RepairActionReceipt{ActionID: id, Kind: "run-script", Resources: scoped, Summary: "script execution failed or outcome unknown", StartedAt: application.StartedAt, CompletedAt: application.CompletedAt, FailureReason: report.FailureReason})
+					result = append(result, RepairActionReceipt{ActionID: id, Kind: "run-script", Resources: scoped, Summary: "script execution failed or outcome unknown", StartedAt: application.StartedAt, CompletedAt: application.CompletedAt, FailureReason: report.FailureReason, Status: contracts.RepairActionStatus_REPAIR_ACTION_STATUS_FAILED})
 				}
 				continue
 			}
@@ -74,7 +75,7 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 			}
 			if reason != "" {
 				id := uniqueRepairID(fmt.Sprintf("sdo-program-%s-failed-%d", application.ID, index+1), used)
-				result = append(result, RepairActionReceipt{ActionID: id, Kind: "program-plan", Target: ref.Kind + "/" + ref.Name, Resources: []sdk.ObjectRef{ref}, Summary: "program plan action failed", Details: fmt.Sprintf("controller action %d in %s: %s", index+1, application.ID, reason), StartedAt: application.StartedAt, CompletedAt: application.CompletedAt, FailureReason: reason})
+				result = append(result, RepairActionReceipt{ActionID: id, Kind: "program-plan", Target: ref.Kind + "/" + ref.Name, Resources: []sdk.ObjectRef{ref}, Summary: "program plan action failed", Details: fmt.Sprintf("controller action %d in %s: %s", index+1, application.ID, reason), StartedAt: application.StartedAt, CompletedAt: application.CompletedAt, FailureReason: reason, Status: contracts.RepairActionStatus_REPAIR_ACTION_STATUS_FAILED})
 				continue
 			}
 			if applied && application.Result.Applied && !seen[ref] {
@@ -97,6 +98,12 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 			continue
 		}
 		id := uniqueRepairID("sdo-program-"+application.ID, used)
+		undone := application.RolledBack || application.RollbackError != ""
+		verified := programApplicationVerified(application) && !undone
+		status := appliedStatus(verified)
+		if undone {
+			status = contracts.RepairActionStatus_REPAIR_ACTION_STATUS_FAILED
+		}
 		summary := "applied program plan " + strings.Join(application.ProgramIDs, ", ")
 		details := fmt.Sprintf("controller confirmed %d applied resource effects in %s", len(refs), application.ID)
 		if hasAppliedScript(actions) {
@@ -107,11 +114,38 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 			ActionID: id, Kind: "program-plan", Target: refs[0].Kind + "/" + refs[0].Name, Resources: refs,
 			Summary: summary, Details: details,
 			StartedAt: application.StartedAt, CompletedAt: application.CompletedAt,
-			Success: application.Result.SettlementRejectionReason == contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED && application.Result.VerificationCompleted && application.Result.VerificationPassed && application.Error == "" && !application.Pending && !planApplicationPending(application.Result) && !application.RolledBack && application.RollbackError == "", Reversible: !irreversible && !hasAppliedScript(actions) && len(application.Result.PreImages) >= len(refs),
+			Success: verified, Status: status, Reversible: !irreversible && !hasAppliedScript(actions) && len(application.Result.PreImages) >= len(refs),
 			Owners: preImageOwners(application.Result.PreImages, refs),
 		})
 	}
 	return result
+}
+
+// programApplicationVerified is true only when the controller's own recovery
+// verification for this application completed and passed. A responder-driven
+// menu application never gets one: the responder verifies the whole incident.
+func programApplicationVerified(application RecordedPlanApplication) bool {
+	return application.Result.SettlementRejectionReason == contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED && application.Result.VerificationCompleted && application.Result.VerificationPassed && application.Error == "" && !application.Pending && !planApplicationPending(application.Result)
+}
+
+// appliedStatus classifies an action that took effect: verified by the
+// controller for this action alone, or applied and left to incident-level
+// verification. Neither is a failure.
+func appliedStatus(verified bool) contracts.RepairActionStatus {
+	if verified {
+		return contracts.RepairActionStatus_REPAIR_ACTION_STATUS_VERIFIED
+	}
+	return contracts.RepairActionStatus_REPAIR_ACTION_STATUS_APPLIED
+}
+
+// executedStatus classifies an action whose success means it took effect
+// (agent commands, menu writes, observed API mutations); none is verified on
+// its own.
+func executedStatus(success bool, failureReason string) contracts.RepairActionStatus {
+	if !success || failureReason != "" {
+		return contracts.RepairActionStatus_REPAIR_ACTION_STATUS_FAILED
+	}
+	return contracts.RepairActionStatus_REPAIR_ACTION_STATUS_APPLIED
 }
 
 // preImageOwners records each written resource's controller owner chain from
@@ -179,5 +213,5 @@ func (l *ResponderLoop) ApplicationRepairReceipts(existing []RepairActionReceipt
 // repairActionFromContinuation is shared by normal and early closure so the
 // same persisted controller facts reach either outcome path.
 func repairActionFromContinuation(receipt continuationReceipt) RepairActionReceipt {
-	return RepairActionReceipt{ActionID: receipt.ActionID, Kind: receipt.Kind, Target: receipt.Target, Resources: append([]sdk.ObjectRef(nil), receipt.Resources...), Summary: receipt.Summary, Details: receipt.Details, StartedAt: receipt.StartedAt, CompletedAt: receipt.CompletedAt, Success: receipt.Success, Reversible: receipt.Reversible, ScriptDigest: receipt.ScriptDigest, FailureReason: receipt.FailureReason, Owners: append([]ResourceOwners(nil), receipt.Owners...)}
+	return RepairActionReceipt{ActionID: receipt.ActionID, Kind: receipt.Kind, Target: receipt.Target, Resources: append([]sdk.ObjectRef(nil), receipt.Resources...), Summary: receipt.Summary, Details: receipt.Details, StartedAt: receipt.StartedAt, CompletedAt: receipt.CompletedAt, Success: receipt.Success, Status: contracts.RepairActionStatus(contracts.RepairActionStatus_value[receipt.Status]), Reversible: receipt.Reversible, ScriptDigest: receipt.ScriptDigest, FailureReason: receipt.FailureReason, Owners: append([]ResourceOwners(nil), receipt.Owners...)}
 }

@@ -129,6 +129,7 @@ def assurance_script(
                     "started_at": f"{{{{steps.{index}.started_at}}}}",
                     "completed_at": f"{{{{steps.{index}.completed_at}}}}",
                     "success": success,
+                    "status": "REPAIR_ACTION_STATUS_APPLIED" if success else "REPAIR_ACTION_STATUS_FAILED",
                     "reversible": False,
                 }
             )

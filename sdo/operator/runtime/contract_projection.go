@@ -320,12 +320,7 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 		message.UnresolvedFindings = append(message.UnresolvedFindings, encoded)
 	}
 	for _, action := range result.RepairActions {
-		message.RepairActions = append(message.RepairActions, &contracts.RepairActionReceipt{
-			ActionId: action.ActionID, Kind: action.Kind, Target: action.Target, Resources: objectRefsContract(action.Resources),
-			Summary: action.Summary, Details: action.Details, StartedAt: optionalTimestamp(action.StartedAt),
-			CompletedAt: optionalTimestamp(action.CompletedAt), Success: action.Success, Reversible: action.Reversible, FailureReason: action.FailureReason, ScriptDigest: action.ScriptDigest,
-			Owners: resourceOwnersContract(action.Owners),
-		})
+		message.RepairActions = append(message.RepairActions, repairActionContract(action))
 	}
 	for _, evidence := range result.VerificationEvidence {
 		message.VerificationEvidence = append(message.VerificationEvidence, &contracts.VerificationEvidence{
@@ -407,7 +402,7 @@ func incidentResultState(message *contracts.IncidentResult) IncidentResult {
 		result.RepairActions = append(result.RepairActions, RepairActionReceipt{
 			ActionID: action.GetActionId(), Kind: action.GetKind(), Target: action.GetTarget(), Resources: objectRefsState(action.GetResources()),
 			Summary: action.GetSummary(), Details: action.GetDetails(), StartedAt: controllerTime(action.GetStartedAt()),
-			CompletedAt: controllerTime(action.GetCompletedAt()), Success: action.GetSuccess(), Reversible: action.GetReversible(), FailureReason: action.GetFailureReason(), ScriptDigest: action.GetScriptDigest(),
+			CompletedAt: controllerTime(action.GetCompletedAt()), Success: action.GetSuccess(), Status: action.GetStatus(), Reversible: action.GetReversible(), FailureReason: action.GetFailureReason(), ScriptDigest: action.GetScriptDigest(),
 			Owners: resourceOwnersState(action.GetOwners()),
 		})
 	}
@@ -808,4 +803,13 @@ func rolloutReceiptsState(receipts []*contracts.ControllerRolloutReceipt) []Cont
 		result = append(result, item)
 	}
 	return result
+}
+
+func repairActionContract(action RepairActionReceipt) *contracts.RepairActionReceipt {
+	return &contracts.RepairActionReceipt{
+		ActionId: action.ActionID, Kind: action.Kind, Target: action.Target, Resources: objectRefsContract(action.Resources),
+		Summary: action.Summary, Details: action.Details, StartedAt: optionalTimestamp(action.StartedAt),
+		CompletedAt: optionalTimestamp(action.CompletedAt), Success: action.Success, Status: action.Status, Reversible: action.Reversible, FailureReason: action.FailureReason, ScriptDigest: action.ScriptDigest,
+		Owners: resourceOwnersContract(action.Owners),
+	}
 }

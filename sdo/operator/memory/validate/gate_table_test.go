@@ -125,14 +125,14 @@ func gateRepairOutcome() *contracts.OutcomeRecord {
 	app := &contracts.PlanApplication{ApplicationId: "apply-1", ProgramIds: []string{"base"}, Applied: true, VerificationCompleted: true, VerificationPassed: true, CompletedAt: at, Plan: &contracts.Plan{}}
 	return &contracts.OutcomeRecord{Classification: "success",
 		AppliedPlaybooks: []string{"base"},
-		RepairActions:    []*contracts.RepairActionReceipt{{ActionId: "sdo-program-apply-1", Kind: "program-plan", Success: true, Resources: []*contracts.ObjectRef{ref}, StartedAt: at, CompletedAt: at}},
+		RepairActions:    []*contracts.RepairActionReceipt{{ActionId: "sdo-program-apply-1", Kind: "program-plan", Success: true, Status: contracts.RepairActionStatus_REPAIR_ACTION_STATUS_VERIFIED, Resources: []*contracts.ObjectRef{ref}, StartedAt: at, CompletedAt: at}},
 		PlanApplications: []*contracts.PlanApplication{app},
 		PriorStages:      []*contracts.StageReport{{Stage: "deterministic", Mitigations: []*contracts.StageMitigation{{PlaybookId: "base", Result: "applied_cleared", ApplyReceipt: app}}}},
 	}
 }
 
 func gateHandRepair(o *contracts.OutcomeRecord) *contracts.OutcomeRecord {
-	o.RepairActions = append(o.RepairActions, &contracts.RepairActionReceipt{ActionId: "manual-port", Kind: "exec", Success: true})
+	o.RepairActions = append(o.RepairActions, &contracts.RepairActionReceipt{ActionId: "manual-port", Kind: "exec", Success: true, Status: contracts.RepairActionStatus_REPAIR_ACTION_STATUS_APPLIED})
 	return o
 }
 
@@ -938,7 +938,7 @@ func gateUndetectedCause(t *testing.T) []Diagnostic {
 	outcome := &contracts.OutcomeRecord{IncidentId: "first", Classification: "success",
 		ConfirmedRootCauses:      []*contracts.ConfirmedRootCause{{Resources: []*contracts.ObjectRef{front}}},
 		Findings:                 []*contracts.Finding{{DetectorId: "fixture", Status: "active", Fingerprint: "other", PrimaryResource: &contracts.ObjectRef{Kind: "Service", Namespace: "demo", Name: "other"}}},
-		RepairActions:            []*contracts.RepairActionReceipt{{ActionId: "fixture-front", Success: true, Resources: []*contracts.ObjectRef{front}, StartedAt: timestamppb.New(at), CompletedAt: timestamppb.New(at.Add(time.Second))}},
+		RepairActions:            []*contracts.RepairActionReceipt{{ActionId: "fixture-front", Success: true, Status: contracts.RepairActionStatus_REPAIR_ACTION_STATUS_APPLIED, Resources: []*contracts.ObjectRef{front}, StartedAt: timestamppb.New(at), CompletedAt: timestamppb.New(at.Add(time.Second))}},
 		FinalHealthDetectorState: []*contracts.DetectorEvaluation{{DetectorId: "fixture", Status: "clear", EvaluatedAt: timestamppb.New(at.Add(2 * time.Second))}},
 	}
 	return ReflectionCoverageGaps(root, outcome, gateUpdated("service-targetport-mismatch"))

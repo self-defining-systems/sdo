@@ -484,11 +484,43 @@ message TimingMetrics {
   google.protobuf.Timestamp completed_at = 2 [(buf.validate.field).required = true];
 }
 
+// RepairActionStatus is what happened to one repair action itself. It is not
+// the incident's recovery: an applied action can belong to an incident whose
+// recovery is verified as a whole rather than per action.
+enum RepairActionStatus {
+  REPAIR_ACTION_STATUS_UNSPECIFIED = 0;
+  // The action took effect and nothing verified it by itself, for example a
+  // responder mitigation-menu action whose incident is verified as a whole.
+  // This is not a failure.
+  REPAIR_ACTION_STATUS_APPLIED = 1;
+  // The action took effect and the controller's own recovery verification
+  // for this action passed.
+  REPAIR_ACTION_STATUS_VERIFIED = 2;
+  // The action did not take effect, was rolled back, was rejected, or its
+  // outcome is unknown.
+  REPAIR_ACTION_STATUS_FAILED = 3;
+}
+
 message RepairActionReceipt {
   option (buf.validate.message).cel = {
     id: "repair_action.ordered"
     message: "completed_at must not be before started_at"
     expression: "this.completed_at >= this.started_at"
+  };
+  option (buf.validate.message).cel = {
+    id: "repair_action.failure_reason_is_failed"
+    message: "a repair action with a failure_reason has status FAILED"
+    expression: "this.failure_reason == '' || this.status == 3"
+  };
+  option (buf.validate.message).cel = {
+    id: "repair_action.success_not_failed"
+    message: "a successful repair action cannot have status FAILED"
+    expression: "!this.success || this.status != 3"
+  };
+  option (buf.validate.message).cel = {
+    id: "repair_action.verified_is_success"
+    message: "a VERIFIED repair action is successful"
+    expression: "this.status != 2 || this.success"
   };
   string action_id = 1 [(buf.validate.field).string.min_len = 1];
   string kind = 2 [(buf.validate.field).string.min_len = 1];
@@ -507,6 +539,12 @@ message RepairActionReceipt {
   repeated ResourceOwners owners = 12 [(controller_owned) = true];
   // Controller-recorded SHA256 of the exact executed RunScript bytes.
   string script_digest = 13 [(controller_owned) = true];
+  // What happened to this action itself; render this, not success. success
+  // keeps its per-kind evidence meaning for trust and attribution gates.
+  RepairActionStatus status = 14 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: [0]
+  }];
 }
 
 // ResourceOwners is one written resource's controller owner chain, nearest

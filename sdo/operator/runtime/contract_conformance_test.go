@@ -103,6 +103,22 @@ func TestProtoValidateMirrorsHandInvariants(t *testing.T) {
 			},
 		},
 		{
+			name:    "repair action without a status",
+			message: &contractsv1alpha1.RepairActionReceipt{ActionId: "a", Kind: "k", Target: "t", Summary: "s", Details: "d", StartedAt: early, CompletedAt: late},
+		},
+		{
+			name:    "repair action with a failure reason that is not failed",
+			message: &contractsv1alpha1.RepairActionReceipt{ActionId: "a", Kind: "k", Target: "t", Summary: "s", Details: "d", StartedAt: early, CompletedAt: late, FailureReason: "execution_failed", Status: contractsv1alpha1.RepairActionStatus_REPAIR_ACTION_STATUS_APPLIED},
+		},
+		{
+			name:    "successful repair action marked failed",
+			message: &contractsv1alpha1.RepairActionReceipt{ActionId: "a", Kind: "k", Target: "t", Summary: "s", Details: "d", StartedAt: early, CompletedAt: late, Success: true, Status: contractsv1alpha1.RepairActionStatus_REPAIR_ACTION_STATUS_FAILED},
+		},
+		{
+			name:    "verified repair action that is not successful",
+			message: &contractsv1alpha1.RepairActionReceipt{ActionId: "a", Kind: "k", Target: "t", Summary: "s", Details: "d", StartedAt: early, CompletedAt: late, Status: contractsv1alpha1.RepairActionStatus_REPAIR_ACTION_STATUS_VERIFIED},
+		},
+		{
 			// DetectorTimelineEntry._ordered_timestamps.
 			name: "timeline last_seen before first_activated",
 			message: &contractsv1alpha1.DetectorTimelineEntry{
@@ -143,8 +159,8 @@ func TestProtoValidateMirrorsHandInvariants(t *testing.T) {
 		Usage:  &contractsv1alpha1.UsageMetrics{InputTokens: 10, OutputTokens: 4, ReasoningOutputTokens: 1},
 		Timing: &contractsv1alpha1.TimingMetrics{StartedAt: early, CompletedAt: late},
 		RepairActions: []*contractsv1alpha1.RepairActionReceipt{
-			{ActionId: "one", Kind: "k", Target: "t", Summary: "s", Details: "d", StartedAt: early, CompletedAt: late},
-			{ActionId: "two", Kind: "k", Target: "t", Summary: "s", Details: "d", StartedAt: early, CompletedAt: late},
+			{ActionId: "one", Kind: "k", Target: "t", Summary: "s", Details: "d", StartedAt: early, CompletedAt: late, Status: contractsv1alpha1.RepairActionStatus_REPAIR_ACTION_STATUS_APPLIED},
+			{ActionId: "two", Kind: "k", Target: "t", Summary: "s", Details: "d", StartedAt: early, CompletedAt: late, Status: contractsv1alpha1.RepairActionStatus_REPAIR_ACTION_STATUS_FAILED},
 		},
 	}
 	if err := validator.Validate(ok); err != nil {

@@ -27,7 +27,7 @@ def test_continuation_has_only_current_findings_and_receipts() -> None:
                 "action_id": "repair-a",
                 "kind": "recorded-action",
                 "summary": "first repaired",
-                "receipt": {"action_id": "repair-a", "success": True},
+                "receipt": {"action_id": "repair-a", "success": True, "status": "REPAIR_ACTION_STATUS_APPLIED"},
             }
         ],
     }
@@ -82,6 +82,7 @@ def test_latest_receipt_matches_exact_resource_and_excludes_unresolved_success()
             **old["receipt"],
             "action_id": "retry-account",
             "success": True,
+            "status": "REPAIR_ACTION_STATUS_APPLIED",
             "completed_at": "2026-01-01T00:02:00Z",
         },
         "error": "",

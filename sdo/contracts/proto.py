@@ -159,6 +159,7 @@ VerificationEvidence = messages_pb2.VerificationEvidence
 UsageMetrics = messages_pb2.UsageMetrics
 TimingMetrics = messages_pb2.TimingMetrics
 RepairActionReceipt = messages_pb2.RepairActionReceipt
+RepairActionStatus = messages_pb2.RepairActionStatus
 IncidentResult = messages_pb2.IncidentResult
 LateFindingsPull = messages_pb2.LateFindingsPull
 IncidentView = messages_pb2.IncidentView
@@ -377,6 +378,8 @@ __all__ = [
     "HealthJudgeResult",
     "SourceResource",
     "RepairActionReceipt",
+    "RepairActionStatus",
+    "repair_action_status",
     "CreateFromSource",
     "DeleteObject",
     "PlanObjectEffect",
@@ -407,6 +410,24 @@ __all__ = [
     "parse_json",
     "to_canonical_json",
 ]
+
+
+_REPAIR_ACTION_STATUS_LABELS = {
+    messages_pb2.REPAIR_ACTION_STATUS_APPLIED: "applied",
+    messages_pb2.REPAIR_ACTION_STATUS_VERIFIED: "verified",
+    messages_pb2.REPAIR_ACTION_STATUS_FAILED: "failed",
+}
+
+
+def repair_action_status(action: messages_pb2.RepairActionReceipt) -> str:
+    """What happened to one repair action: ``applied``, ``verified`` or ``failed``.
+
+    ``applied`` took effect and was left to incident-level verification; it is
+    not a failure. Render this instead of ``success``, whose meaning is per kind.
+    """
+    if action.status not in _REPAIR_ACTION_STATUS_LABELS:
+        raise ValueError(f"repair action {action.action_id!r} has no status")
+    return _REPAIR_ACTION_STATUS_LABELS[action.status]
 
 
 def to_canonical_json(message: Message) -> str:

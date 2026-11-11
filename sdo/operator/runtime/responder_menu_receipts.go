@@ -32,6 +32,7 @@ func (l *ResponderLoop) updateMenuRollback(applicationID string, result PlanAppl
 	for i := range l.menuRepairs {
 		if strings.HasPrefix(l.menuRepairs[i].ActionID, applicationID+"-a") {
 			l.menuRepairs[i].Success = false
+			l.menuRepairs[i].Status = contracts.RepairActionStatus_REPAIR_ACTION_STATUS_FAILED
 		}
 	}
 	for _, report := range l.menuReports {

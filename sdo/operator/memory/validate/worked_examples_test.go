@@ -56,7 +56,7 @@ func TestWorkedExamplesPassTheReflectionMemoryCheck(t *testing.T) {
 			if err := json.Unmarshal(call.Result, &link); err != nil {
 				t.Fatal(err)
 			}
-			receipt := &contracts.RepairActionReceipt{ActionId: link.ID, Kind: "sdo-act", Target: c.Name(), Summary: "worked example repair", Details: "synthetic", Success: true, ScriptDigest: link.ScriptDigest, StartedAt: timestamppb.New(link.StartedAt), CompletedAt: timestamppb.New(link.CompletedAt)}
+			receipt := &contracts.RepairActionReceipt{ActionId: link.ID, Kind: "sdo-act", Target: c.Name(), Summary: "worked example repair", Details: "synthetic", Success: true, Status: contracts.RepairActionStatus_REPAIR_ACTION_STATUS_APPLIED, ScriptDigest: link.ScriptDigest, StartedAt: timestamppb.New(link.StartedAt), CompletedAt: timestamppb.New(link.CompletedAt)}
 			for _, ref := range link.Resources {
 				receipt.Resources = append(receipt.Resources, &contracts.ObjectRef{ApiVersion: ref.APIVersion, Kind: ref.Kind, Namespace: ref.Namespace, Name: ref.Name})
 			}

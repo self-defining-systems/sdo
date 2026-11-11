@@ -54,7 +54,12 @@ def _continuation_payload() -> dict[str, object]:
                 "action_id": f"act-{i:04d}",
                 "kind": "recorded-action",
                 "summary": "restart workload " * 10,
-                "receipt": {"action_id": f"act-{i:04d}", "success": True, "resources": [resources[i]]},
+                "receipt": {
+                    "action_id": f"act-{i:04d}",
+                    "success": True,
+                    "status": "REPAIR_ACTION_STATUS_APPLIED",
+                    "resources": [resources[i]],
+                },
             }
             for i in range(WORKLOADS)
         ],

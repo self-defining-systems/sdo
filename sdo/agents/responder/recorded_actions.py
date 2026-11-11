@@ -430,6 +430,8 @@ def _receipt(
         "started_at": _timestamp(started),
         "completed_at": _timestamp(finished),
         "success": code == 0,
+        # An agent command took effect or failed; only the controller verifies an action by itself.
+        "status": "REPAIR_ACTION_STATUS_APPLIED" if code == 0 else "REPAIR_ACTION_STATUS_FAILED",
         "reversible": reversible,
         "failure_reason": (
             "outcome_unknown"

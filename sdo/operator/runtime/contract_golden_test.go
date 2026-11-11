@@ -194,7 +194,7 @@ func TestGoContractFixtures(t *testing.T) {
 				ActionID: "restore-selector", Kind: "kubectl", Target: "Service/frontend",
 				Resources: []sdk.ObjectRef{{Kind: "Service", Name: "frontend"}},
 				Summary:   "restore the selector", Details: "kubectl apply", StartedAt: time.Unix(1, 500_000_000).UTC(),
-				CompletedAt: time.Unix(1, 600_000_000).UTC(), Success: true, Reversible: true,
+				CompletedAt: time.Unix(1, 600_000_000).UTC(), Success: true, Status: contracts.RepairActionStatus_REPAIR_ACTION_STATUS_APPLIED, Reversible: true,
 			},
 		)
 	})

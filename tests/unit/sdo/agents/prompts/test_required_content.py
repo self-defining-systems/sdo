@@ -93,7 +93,7 @@ def test_recorded_scale_questions_and_repairs_reach_the_real_session_prompt(monk
     from google.protobuf import json_format
 
     from sdo.agents.responder.reflection import SessionReflector
-    from sdo.contracts import MemoryDiagnostic
+    from sdo.contracts import MemoryDiagnostic, repair_action_status
     from tests.unit.sdo.agents.prompts.cases import ReflectionCapture, recorded_scale_reflection
 
     monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
@@ -130,7 +130,11 @@ def test_recorded_scale_questions_and_repairs_reach_the_real_session_prompt(monk
     assert view["classification"] == live.outcome.classification
     assert view["incident_id"] == live.outcome.incident_id
     assert view["repair_actions"] == [
-        {**json_format.MessageToDict(action, preserving_proto_field_name=True), "success": action.success}
+        {
+            **json_format.MessageToDict(action, preserving_proto_field_name=True),
+            "success": action.success,
+            "status": repair_action_status(action),
+        }
         for action in live.outcome.repair_actions
     ]
     assert len(view["repair_actions"]) == 24

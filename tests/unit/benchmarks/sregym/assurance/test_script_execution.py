@@ -345,6 +345,7 @@ def _prepare_policy_reflection(
                     "summary": "remove isolation",
                     "details": "policy deleted and absence observed",
                     "success": True,
+                    "status": "REPAIR_ACTION_STATUS_APPLIED",
                     "resources": [resource],
                     "started_at": "2026-01-01T00:00:01Z",
                     "completed_at": "2026-01-01T00:00:02Z",

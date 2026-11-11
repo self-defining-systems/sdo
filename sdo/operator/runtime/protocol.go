@@ -150,7 +150,10 @@ type RepairActionReceipt struct {
 	StartedAt   time.Time
 	CompletedAt time.Time
 	Success     bool
-	Reversible  bool
+	// Status is what happened to the action itself; see
+	// contracts.RepairActionStatus. Success keeps its per-kind evidence meaning.
+	Status     contracts.RepairActionStatus
+	Reversible bool
 	// Owners are written resources' controller owner chains read at write
 	// time; cause attribution follows them instead of generated names.
 	Owners []ResourceOwners

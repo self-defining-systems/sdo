@@ -18,7 +18,7 @@ from google.protobuf import json_format
 from sdo.agents.prompt_templates import RenderedPrompt, join_prompts, named_prompt, render_prompt
 from sdo.agents.responder import recorded_actions
 from sdo.agents.responder.detection_learning import detection_learning
-from sdo.contracts import Verdict, timestamp_datetime, to_canonical_json
+from sdo.contracts import Verdict, repair_action_status, timestamp_datetime, to_canonical_json
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -30,6 +30,10 @@ if TYPE_CHECKING:
 
 _MAX_FULL_FINDINGS = 4
 _MAX_PLAYBOOK_EXCERPTS = 4
+
+
+# An applied action left to incident-level verification is not a failure.
+_REPAIR_STATUS_TEXT = {"verified": "ok", "applied": "applied", "failed": "FAILED"}
 
 
 def _iso(value: Timestamp) -> str:
@@ -372,7 +376,7 @@ def _result_section(result: IncidentResult | None, dispatch_error: str) -> str:
     lines.extend(
         _result_line(
             "result_section_16",
-            value="ok" if action.success else "FAILED",
+            value=_REPAIR_STATUS_TEXT[repair_action_status(action)],
             kind=action.kind,
             target=action.target,
             summary=action.summary,

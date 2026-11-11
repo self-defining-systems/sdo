@@ -135,7 +135,7 @@ func apiRepairReceipts(history apihistory.History, incident string, resources []
 				continue
 			}
 			digest := sha256.Sum256([]byte(incident + "\x00" + history.Manifest.Generation + "\x00" + event.RequestID))
-			result = append(result, &contracts.RepairActionReceipt{ActionId: fmt.Sprintf("sdo-api-%x", digest), Kind: "kubernetes-api", Target: ref.GetKind() + "/" + ref.GetName(), Resources: []*contracts.ObjectRef{{ApiVersion: ref.GetApiVersion(), Kind: ref.GetKind(), Namespace: ref.GetNamespace(), Name: ref.GetName()}}, Summary: "observed Kubernetes API mutation", Details: "controller-observed " + strings.TrimSuffix(event.Verb+" "+event.Subresource, " ") + " with API confirmation; recovery requires independent verification", StartedAt: timestamppb.New(event.Started), CompletedAt: timestamppb.New(completed), Success: true})
+			result = append(result, &contracts.RepairActionReceipt{ActionId: fmt.Sprintf("sdo-api-%x", digest), Kind: "kubernetes-api", Target: ref.GetKind() + "/" + ref.GetName(), Resources: []*contracts.ObjectRef{{ApiVersion: ref.GetApiVersion(), Kind: ref.GetKind(), Namespace: ref.GetNamespace(), Name: ref.GetName()}}, Summary: "observed Kubernetes API mutation", Details: "controller-observed " + strings.TrimSuffix(event.Verb+" "+event.Subresource, " ") + " with API confirmation; recovery requires independent verification", StartedAt: timestamppb.New(event.Started), CompletedAt: timestamppb.New(completed), Success: true, Status: contracts.RepairActionStatus_REPAIR_ACTION_STATUS_APPLIED})
 			break
 		}
 	}

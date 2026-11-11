@@ -15,7 +15,7 @@ from sdo.agents.responder.incident_context import (
     prepared_incident_data,
 )
 from sdo.agents.responder.tools_cli import command_surface
-from sdo.contracts import IncidentRequest, OperationalMemorySnapshot, Verdict
+from sdo.contracts import IncidentRequest, OperationalMemorySnapshot, RepairActionStatus, Verdict
 from tests.context_helpers import incident_document, incident_facts_path
 
 
@@ -259,7 +259,11 @@ def test_failed_episode_progress_stays_inline_with_full_results_in_facts() -> No
     request.findings[0].evidence = "large fact " * 4000
     prior = request.prior_response_progress.add(incident_id="failed-episode")
     prior.successful_actions.add(
-        action_id="source-fixed", success=True, summary="source reconciled", details="write read back " * 4000
+        action_id="source-fixed",
+        success=True,
+        status=RepairActionStatus.REPAIR_ACTION_STATUS_APPLIED,
+        summary="source reconciled",
+        details="write read back " * 4000,
     )
     prior.blockers.add(reason_code="admission_blocked", reason="validate.example.test denied Pods")
     with prepared_incident_data(request) as rendered:
@@ -279,7 +283,12 @@ def test_many_prior_episodes_keep_latest_progress_within_first_prompt_budget() -
     for index in range(10):
         episode = request.prior_response_progress.add(incident_id=f"episode-{index}", error="blocker " * 200)
         for action in range(8):
-            episode.successful_actions.add(action_id=f"done-{index}-{action}", success=True, summary="repaired " * 100)
+            episode.successful_actions.add(
+                action_id=f"done-{index}-{action}",
+                success=True,
+                status=RepairActionStatus.REPAIR_ACTION_STATUS_APPLIED,
+                summary="repaired " * 100,
+            )
         episode.blockers.add(reason_code="admission_blocked", reason="webhook denial " * 200)
     with prepared_incident_data(request) as rendered:
         assert len(rendered) <= MAX_INCIDENT_SUMMARY_CHARS

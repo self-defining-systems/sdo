@@ -26,6 +26,7 @@ from sdo.contracts.proto import (
     OutcomeTimestamps,
     ProgramRun,
     RepairActionReceipt,
+    RepairActionStatus,
     Verdict,
 )
 from tests.context_helpers import expand_context
@@ -94,6 +95,7 @@ def _outcome(incident_id: str, *, evaluations: int = 20) -> OutcomeRecord:
                 started_at=_stamp(_T0),
                 completed_at=_stamp(_T0),
                 success=True,
+                status=RepairActionStatus.REPAIR_ACTION_STATUS_APPLIED,
                 reversible=True,
             )
         ],
@@ -454,7 +456,11 @@ def test_prior_history_stays_bounded_when_one_incident_has_many_transitions(tmp_
     for index in range(100):
         prior.detector_history.extend(_evaluations(f"detector-{index}", ["clear", "firing"] * 10))
         prior.confirmed_root_causes.add(summary=f"cause {index}: " + "observed " * 1000)
-        prior.repair_actions.add(kind="exec", summary=f"repair {index}: " + "observed " * 1000)
+        prior.repair_actions.add(
+            kind="exec",
+            status=RepairActionStatus.REPAIR_ACTION_STATUS_APPLIED,
+            summary=f"repair {index}: " + "observed " * 1000,
+        )
     before = prior.SerializeToString()
     current = _outcome("inc-current")
     small = _prompt([], current, tmp_path)

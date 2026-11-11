@@ -60,6 +60,7 @@ for event in request.drift_events:
             "started_at": action_start,
             "completed_at": _now(),
             "success": True,
+            "status": "REPAIR_ACTION_STATUS_APPLIED",
             "reversible": ref["kind"] != "NetworkPolicy",
         }
     )
@@ -120,6 +121,7 @@ if not first.get("healthy"):
                 "started_at": action_start,
                 "completed_at": _now(),
                 "success": True,
+                "status": "REPAIR_ACTION_STATUS_APPLIED",
                 "reversible": True,
             }
         )

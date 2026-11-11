@@ -226,6 +226,7 @@ def live_shaped_reflection(scale: int = 1) -> SimpleNamespace:
                     "started_at": "2026-01-01T00:00:00.000000000Z",
                     "completed_at": "2026-01-01T00:00:01.000000000Z",
                     "success": True,
+                    "status": "REPAIR_ACTION_STATUS_VERIFIED",
                 }
                 for index in range(3 * scale)
             ],
@@ -370,6 +371,7 @@ def rendered_cases(*, scale: int = 1) -> dict[str, str]:
                             "started_at": "2026-01-01T00:00:00Z",
                             "completed_at": "2026-01-01T00:00:01Z",
                             "success": True,
+                            "status": "REPAIR_ACTION_STATUS_VERIFIED",
                             "reversible": True,
                         },
                     }

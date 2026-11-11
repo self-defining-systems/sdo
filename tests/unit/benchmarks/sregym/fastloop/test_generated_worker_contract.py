@@ -68,6 +68,7 @@ def _accepted_app(tmp_path: Path, *, verified: bool = False) -> Path:
                 "summary": "restore accepted target port",
                 "details": "target port patched and read back",
                 "success": True,
+                "status": "REPAIR_ACTION_STATUS_APPLIED",
                 "resources": [resource],
                 "started_at": "2026-01-01T00:00:01Z",
                 "completed_at": "2026-01-01T00:00:02Z",

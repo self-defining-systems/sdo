@@ -64,7 +64,7 @@ func TestSuccessReflectionRunsAfterTheClosureIsAcknowledged(t *testing.T) {
 		Result: &IncidentResult{
 			SchemaVersion: ProtocolSchemaVersion, IncidentID: workspace.IncidentID,
 			Status: IncidentCompleted, ResponderSessionID: "synthetic-session",
-			RepairActions:       []RepairActionReceipt{{ActionID: "sdo-act-1", Kind: "kubectl-rollout-restart", Target: "Deployment/demo/app", Resources: []sdk.ObjectRef{app}, Summary: "restart", Details: "synthetic receipt", Success: true, StartedAt: now, CompletedAt: now}},
+			RepairActions:       []RepairActionReceipt{{ActionID: "sdo-act-1", Kind: "kubectl-rollout-restart", Target: "Deployment/demo/app", Resources: []sdk.ObjectRef{app}, Summary: "restart", Details: "synthetic receipt", Success: true, Status: contracts.RepairActionStatus_REPAIR_ACTION_STATUS_APPLIED, StartedAt: now, CompletedAt: now}},
 			FinalDetectorStates: []DetectorEvaluation{{DetectorID: "health", EvaluatedAt: now.Add(time.Second), Status: DetectorEvaluationClear}},
 			Timing:              TimingMetrics{StartedAt: now, CompletedAt: now.Add(time.Second)},
 		},

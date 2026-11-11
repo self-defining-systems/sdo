@@ -553,7 +553,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 				if response.Error == "incident_verified" {
 					response.FailureReason = "incident_verified"
 				}
-				response.Receipt = &contracts.RepairActionReceipt{FailureReason: response.FailureReason, ActionId: "sdo-rejected-" + l.sessionID, Kind: request.Command, Summary: "incident is closed", StartedAt: contractTimestamp(started.UTC()), CompletedAt: contractTimestamp(l.clock().UTC())}
+				response.Receipt = &contracts.RepairActionReceipt{FailureReason: response.FailureReason, Status: contracts.RepairActionStatus_REPAIR_ACTION_STATUS_FAILED, ActionId: "sdo-rejected-" + l.sessionID, Kind: request.Command, Summary: "incident is closed", StartedAt: contractTimestamp(started.UTC()), CompletedAt: contractTimestamp(l.clock().UTC())}
 				return response
 			}
 			defer func() {
@@ -564,7 +564,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		} else if l.IncidentStatus != nil && l.IncidentStatus() != nil {
 			response.Error = "incident_verified"
 			response.FailureReason = "incident_verified"
-			response.Receipt = &contracts.RepairActionReceipt{FailureReason: "incident_verified", ActionId: "sdo-rejected-" + l.sessionID, Kind: request.Command, Summary: "incident is closed", StartedAt: contractTimestamp(started.UTC()), CompletedAt: contractTimestamp(l.clock().UTC())}
+			response.Receipt = &contracts.RepairActionReceipt{FailureReason: "incident_verified", Status: contracts.RepairActionStatus_REPAIR_ACTION_STATUS_FAILED, ActionId: "sdo-rejected-" + l.sessionID, Kind: request.Command, Summary: "incident is closed", StartedAt: contractTimestamp(started.UTC()), CompletedAt: contractTimestamp(l.clock().UTC())}
 			return response
 		}
 	}

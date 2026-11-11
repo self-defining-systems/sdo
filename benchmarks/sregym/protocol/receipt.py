@@ -103,6 +103,10 @@ class _RepairActionReceipt(BaseModel):
     started_at: datetime
     completed_at: datetime
     success: bool
+    # v1 receipts predate RepairActionStatus; a current receipt carries it.
+    status: (
+        Literal["REPAIR_ACTION_STATUS_APPLIED", "REPAIR_ACTION_STATUS_VERIFIED", "REPAIR_ACTION_STATUS_FAILED"] | None
+    ) = None
     reversible: bool
 
     @model_validator(mode="after")

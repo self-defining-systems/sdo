@@ -82,6 +82,7 @@
       "started_at": "2026-07-09T18:08:00Z",
       "completed_at": "2026-07-09T18:09:00Z",
       "success": true,
+      "status": "REPAIR_ACTION_STATUS_APPLIED",
       "reversible": true
     }
   ],

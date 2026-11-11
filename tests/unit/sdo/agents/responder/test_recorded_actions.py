@@ -106,6 +106,7 @@ def test_act_runs_one_mutation_and_records_its_receipt(scratch: Path, capsys: py
     ]
     assert receipt["summary"] == "Restored the accepted rate image"
     assert receipt["success"] is True
+    assert receipt["status"] == "REPAIR_ACTION_STATUS_APPLIED"
     assert receipt["reversible"] is True
     assert "$ echo 'deployment.apps/rate image updated'" in str(receipt["details"])
     assert receipt["started_at"] <= receipt["completed_at"]
@@ -131,6 +132,7 @@ def test_act_records_a_failed_mutation_and_propagates_its_exit_code(scratch: Pat
     assert code == 3
     (receipt,) = _recorded(scratch)
     assert receipt["success"] is False
+    assert receipt["status"] == "REPAIR_ACTION_STATUS_FAILED"
     assert "boom" in str(receipt["details"])
 
 
@@ -616,6 +618,7 @@ def test_a_started_only_entry_is_a_recorded_unfinished_mutation(scratch: Path) -
         "started_at": "2026-10-22T10:00:00.000Z",
         "completed_at": "2026-10-22T10:00:00.000Z",
         "success": False,
+        "status": "REPAIR_ACTION_STATUS_FAILED",
         "reversible": True,
     }
     scratch.mkdir(parents=True)

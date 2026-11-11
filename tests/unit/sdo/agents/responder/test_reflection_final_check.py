@@ -67,6 +67,7 @@ def accepted_reflection(tmp_path: Path, memory_binary: Path, monkeypatch: pytest
                         "summary": "restore catalog",
                         "details": "catalog restored and observed",
                         "success": True,
+                        "status": "REPAIR_ACTION_STATUS_APPLIED",
                         "resources": [{"api_version": "v1", "kind": "Service", "namespace": "demo", "name": "api"}],
                         "started_at": "2026-01-01T00:00:01Z",
                         "completed_at": "2026-01-01T00:00:02Z",

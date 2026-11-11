@@ -88,7 +88,10 @@ func responseProgress(records []*contracts.OutcomeRecord, findings []sdk.Finding
 		progress := &contracts.ResponseProgress{IncidentId: record.GetIncidentId()}
 		errors := append([]string(nil), record.GetProgramFailureSignals()...)
 		for _, action := range record.GetRepairActions() {
-			if !action.GetSuccess() {
+			// An applied action left to incident-level verification is
+			// progress, not an error.
+			failed := action.GetStatus() == contracts.RepairActionStatus_REPAIR_ACTION_STATUS_FAILED
+			if failed {
 				reason := action.GetFailureReason()
 				if reason == "" {
 					reason = action.GetSummary()
@@ -103,7 +106,7 @@ func responseProgress(records []*contracts.OutcomeRecord, findings []sdk.Finding
 					errors = append(errors, reason)
 				}
 			}
-			if action.GetSuccess() {
+			if !failed {
 				progress.SuccessfulActions = append(progress.SuccessfulActions, proto.Clone(action).(*contracts.RepairActionReceipt))
 			}
 		}

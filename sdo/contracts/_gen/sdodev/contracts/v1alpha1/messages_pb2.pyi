@@ -17,6 +17,13 @@ from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
+class RepairActionStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    REPAIR_ACTION_STATUS_UNSPECIFIED: _ClassVar[RepairActionStatus]
+    REPAIR_ACTION_STATUS_APPLIED: _ClassVar[RepairActionStatus]
+    REPAIR_ACTION_STATUS_VERIFIED: _ClassVar[RepairActionStatus]
+    REPAIR_ACTION_STATUS_FAILED: _ClassVar[RepairActionStatus]
+
 class ClosureUnconfirmedReason(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED: _ClassVar[ClosureUnconfirmedReason]
@@ -24,6 +31,10 @@ class ClosureUnconfirmedReason(int, metaclass=_enum_type_wrapper.EnumTypeWrapper
     CLOSURE_UNCONFIRMED_REASON_OBSERVER_UNAVAILABLE: _ClassVar[ClosureUnconfirmedReason]
     CLOSURE_UNCONFIRMED_REASON_EXTERNAL_COMPLETION: _ClassVar[ClosureUnconfirmedReason]
     CLOSURE_UNCONFIRMED_REASON_DATA_MAY_BE_LOST: _ClassVar[ClosureUnconfirmedReason]
+REPAIR_ACTION_STATUS_UNSPECIFIED: RepairActionStatus
+REPAIR_ACTION_STATUS_APPLIED: RepairActionStatus
+REPAIR_ACTION_STATUS_VERIFIED: RepairActionStatus
+REPAIR_ACTION_STATUS_FAILED: RepairActionStatus
 CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED: ClosureUnconfirmedReason
 CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE: ClosureUnconfirmedReason
 CLOSURE_UNCONFIRMED_REASON_OBSERVER_UNAVAILABLE: ClosureUnconfirmedReason
@@ -634,7 +645,7 @@ class TimingMetrics(_message.Message):
     def __init__(self, started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class RepairActionReceipt(_message.Message):
-    __slots__ = ("action_id", "kind", "target", "resources", "summary", "details", "started_at", "completed_at", "success", "reversible", "failure_reason", "owners", "script_digest")
+    __slots__ = ("action_id", "kind", "target", "resources", "summary", "details", "started_at", "completed_at", "success", "reversible", "failure_reason", "owners", "script_digest", "status")
     ACTION_ID_FIELD_NUMBER: _ClassVar[int]
     KIND_FIELD_NUMBER: _ClassVar[int]
     TARGET_FIELD_NUMBER: _ClassVar[int]
@@ -648,6 +659,7 @@ class RepairActionReceipt(_message.Message):
     FAILURE_REASON_FIELD_NUMBER: _ClassVar[int]
     OWNERS_FIELD_NUMBER: _ClassVar[int]
     SCRIPT_DIGEST_FIELD_NUMBER: _ClassVar[int]
+    STATUS_FIELD_NUMBER: _ClassVar[int]
     action_id: str
     kind: str
     target: str
@@ -661,7 +673,8 @@ class RepairActionReceipt(_message.Message):
     failure_reason: str
     owners: _containers.RepeatedCompositeFieldContainer[ResourceOwners]
     script_digest: str
-    def __init__(self, action_id: _Optional[str] = ..., kind: _Optional[str] = ..., target: _Optional[str] = ..., resources: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., summary: _Optional[str] = ..., details: _Optional[str] = ..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., success: _Optional[bool] = ..., reversible: _Optional[bool] = ..., failure_reason: _Optional[str] = ..., owners: _Optional[_Iterable[_Union[ResourceOwners, _Mapping]]] = ..., script_digest: _Optional[str] = ...) -> None: ...
+    status: RepairActionStatus
+    def __init__(self, action_id: _Optional[str] = ..., kind: _Optional[str] = ..., target: _Optional[str] = ..., resources: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., summary: _Optional[str] = ..., details: _Optional[str] = ..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., success: _Optional[bool] = ..., reversible: _Optional[bool] = ..., failure_reason: _Optional[str] = ..., owners: _Optional[_Iterable[_Union[ResourceOwners, _Mapping]]] = ..., script_digest: _Optional[str] = ..., status: _Optional[_Union[RepairActionStatus, str]] = ...) -> None: ...
 
 class ResourceOwners(_message.Message):
     __slots__ = ("resource", "owner_chain")
