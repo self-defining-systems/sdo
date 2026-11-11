@@ -2,6 +2,8 @@ package validate
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -257,7 +259,9 @@ func TestOnlyTheDesignerChangesTheMapRegion(t *testing.T) {
 		{"upkeep carries the region verbatim", Upkeep, withMap, appmap.Carry(withMap, inventoryRewrite), nil},
 		{"upkeep drops the map", Upkeep, withMap, inventoryRewrite, []string{RuleMapRegionOwner}},
 		{"upkeep edits the map", Upkeep, withMap, edited, []string{RuleMapRegionOwner}},
-		{"upkeep adds a map", Upkeep, mapInventory, withMap, []string{RuleMapRegionOwner}},
+		{"upkeep seeds a map where there is none", Upkeep, mapInventory, withMap, nil},
+		{"upkeep seeds the first architecture", Upkeep, "", withMap, nil},
+		{"upkeep replaces an accepted map with a seed", Upkeep, withMap, inventoryRewrite + "\n" + mapRegion(seededYAML), []string{RuleMapRegionOwner}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var got []string
@@ -270,6 +274,47 @@ func TestOnlyTheDesignerChangesTheMapRegion(t *testing.T) {
 				t.Fatalf("rules = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// seededYAML is the shop map as Go seeds it from rendered manifests: every
+// role and edge has manifest evidence, and there are no operations or probes
+// yet.
+const seededYAML = `# Seeded by SDO from the rendered manifests.
+version: 1
+components:
+  - {name: api, workload: "Deployment/api", services: ["api"], holds_data: false, evidence: [manifest]}
+  - {name: cache, workload: "Deployment/cache", services: ["cache"], holds_data: false, evidence: [manifest], data: {engine: redis, role: authoritative}}
+  - {name: db, workload: "StatefulSet/db", services: ["db"], holds_data: true, evidence: [manifest], data: {engine: postgres, role: authoritative}}
+  - {name: web, workload: "Deployment/web", services: ["web"], holds_data: false, evidence: [manifest]}
+edges:
+  - {from: api, to: cache, evidence: [manifest], source: "Deployment/api env CACHE_HOST"}
+  - {from: api, to: db, evidence: [manifest], source: "Deployment/api ConfigMap/api key database.yml"}
+  - {from: web, to: api, evidence: [manifest], source: "Deployment/web env API_URL"}
+operations: []
+probes: []
+`
+
+// A map seeded from manifests alone, with no source, is accepted for every
+// actor: only the note that no operation exercises its edges yet.
+func TestSeededApplicationMapIsAccepted(t *testing.T) {
+	for _, actor := range []Actor{Upkeep, HealthJudge, Responder} {
+		yaml := seededYAML
+		root := mapTree(t, &yaml)
+		for _, name := range []string{"probe-call", "probe-write", "probe-read-later"} {
+			if err := os.Remove(filepath.Join(root, ".sdo/diagnostics/traffic/workloads", name+".yaml")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		blocking, notes := staticMapCheck(t, root, actor)
+		if got := mapRules(blocking); len(got) != 0 {
+			t.Fatalf("%s: seeded map rejected: %v", actor, blocking)
+		}
+		for _, d := range notes {
+			if strings.HasPrefix(d.Rule, "map.") && d.Rule != RuleMapUnexercisedEdge {
+				t.Fatalf("%s: unexpected note %v", actor, d)
+			}
+		}
 	}
 }
 

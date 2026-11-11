@@ -18,12 +18,18 @@ version: 1
 <!-- sdo:application-map:end -->
 ````
 
+- When the base has no region, Go upkeep seeds one on the architecture commit from the rendered manifests
+  (`sdo/operator/memory/mapseed`): components, data roles by well-known store image, `holds_data` from the engine or
+  persistent volumes, edges from env values and ConfigMap addresses, no operations or probes, all with evidence
+  `manifest`. Entry candidates (exposed or uncalled Services, with the workload's HTTP health probes) go in the
+  Go-owned text above the region. An application deployed without source thus still gets data roles and Go's
+  store readers, and the designer starts from the seed. Once a region exists it is the designer's.
 - Go upkeep keeps writing the front matter and the manifest inventory. The detection designer edits only the text
   between the markers (`SDO_ACTOR=health_judge`, `SDO_PHASE=initial`). Everything outside the markers must be
   byte-identical to the base for that actor. If a later Go rewrite of the inventory happens, it copies the
   region verbatim.
 - At most one region. No region means "no map": the coverage check reports `map.missing` as a non-blocking note
-  until the designer has written one, so existing memory keeps validating.
+  until the designer has written one, so existing memory keeps validating. (Go seeds a new architecture whose manifests declare workloads.)
 - The map holds logical names only (Service and workload names, operation and scenario IDs), never `.sdo/` paths.
 
 ## Schema
@@ -35,11 +41,15 @@ components:                       # one per application workload the designer co
     workload: Deployment/post-storage-mongodb   # Kind/name present in the manifest inventory
     services: [post-storage-mongodb]            # Service names (in the inventory) that select this workload
     holds_data: true              # losing its contents loses user-visible data (not a cache that refills)
+    evidence: [manifest]          # optional: what grounds holds_data and data, same values as an edge's;
+                                  # omitted when the application source declares them
+    data: {engine: mongodb, role: authoritative}   # every data store: engine and authoritative/derived
 edges:                            # directed: caller -> callee
   - from: post-storage-service    # component name
     to: post-storage-mongodb      # component name
-    evidence: [config]            # non-empty subset of [config, observed]
+    evidence: [config]            # non-empty subset of [config, manifest, observed]
     source: config/service-config.json   # config: application source path that declares the call;
+                                         # manifest: the rendered object and field that name the callee;
                                          # observed-only: one line saying how it was observed
 operations:                       # user-facing operations at the entry point
   - id: compose-post              # logical ID, [a-z0-9-], unique
@@ -55,7 +65,9 @@ probes:                           # one entry per probe scenario in the health w
 
 Field rules (all blocking unless marked note):
 
-1. `version` is 1. Unknown fields are rejected.
+1. `version` is 1. Unknown fields are rejected. Evidence values are `config` (application source or its config
+   files), `manifest` (the rendered manifests: image, volume, env value, ConfigMap entry; all there is for an
+   application deployed without source) and `observed` (the live application).
 2. Component `workload` and every `services` entry resolve in the accepted source inventory. Names are unique.
 3. Edge endpoints are component names; no self-edges; no duplicate (from, to).
 4. Operation `entry.service` is a Service of `path[0]`. `entry.method` is an HTTP method. Every component in

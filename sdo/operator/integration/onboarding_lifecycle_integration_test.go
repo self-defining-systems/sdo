@@ -32,6 +32,7 @@ import (
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/lifecycle"
+	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/operability"
 	"sdo.dev/operator/operability/offline"
@@ -171,7 +172,7 @@ probes:
 const onbControl = "sdo-ctl"
 
 // onbEdit is one judge edit: a path relative to the checkout and its content;
-// an architecture edit appends the map region instead.
+// an architecture edit replaces the map region instead.
 type onbEdit struct{ path, content string }
 
 // goodProposal is the health judge's known-good proposal for app: the map,
@@ -266,7 +267,9 @@ func (j *onbJudge) run(ctx context.Context, task *contracts.AgentTask, environme
 			if err != nil {
 				return nil, err
 			}
-			edit.content = string(current) + edit.content
+			// The judge edits only the map region: it replaces a
+			// region Go seeded and keeps everything outside it.
+			edit.content = appmap.Outside(string(current)) + "\n" + edit.content
 		}
 		if strings.HasSuffix(edit.path, ".go") {
 			// The judge formats its Go sources, as the skill tells it to.

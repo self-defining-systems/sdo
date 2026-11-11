@@ -98,8 +98,9 @@ func Outside(doc string) string {
 }
 
 // Carry returns regenerated with the region of previous appended verbatim, so
-// a Go rewrite of the inventory never loses the designer's map. Without a
-// well-formed region in previous it returns regenerated unchanged.
+// a Go rewrite of the inventory never loses the designer's map; a seeded
+// region in regenerated gives way to it. Without a well-formed region in
+// previous it returns regenerated unchanged, seed included.
 func Carry(previous, regenerated string) string {
 	region, found, err := Find(previous)
 	if !found || err != nil {
@@ -109,5 +110,5 @@ func Carry(previous, regenerated string) string {
 	if !strings.HasSuffix(block, "\n") {
 		block += "\n"
 	}
-	return strings.TrimRight(regenerated, "\n") + "\n\n" + block
+	return Outside(regenerated) + "\n\n" + block
 }

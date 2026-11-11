@@ -17,7 +17,7 @@ see them as notes. The diagnostic names the operation, component, edge or probe 
 
 - The block is strict YAML of the [map](map.md) format: version 1, no unknown fields or duplicate keys, unique
   names of lowercase letters, digits and `-`, an entry with a Service, a port and a path starting with `/`,
-  non-empty edge evidence from `[config, observed]`, logical names only (no memory paths). Each probe entry lists the operations
+  non-empty edge evidence (and optional component evidence) from `[config, manifest, observed]`, logical names only (no memory paths). Each probe entry lists the operations
   its steps exercise, and each scenario of the three probe workloads has exactly one probe entry of the matching
   kind. A write-read scenario writes; a read-later scenario is a read, reaches a data-holding component, and
   creates the data it reads in its own setup steps. A probe scenario checks more than statuses in at least one
