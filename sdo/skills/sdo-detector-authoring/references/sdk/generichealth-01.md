@@ -33,7 +33,7 @@ func NewSaturation(s sdk.DetectorSpec, throttling bool) sdk.Detector
 
 func NewWarnings(s sdk.DetectorSpec) sdk.Detector
     NewWarnings checks persistent recent warning events on extant application
-    objects.
+    objects whose current state is not healthy.
 
 func NewWiring(s sdk.DetectorSpec) sdk.Detector
     NewWiring checks selectors, ports, references, storage, ingress and DNS
