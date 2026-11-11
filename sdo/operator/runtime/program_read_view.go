@@ -447,12 +447,22 @@ func (v LiveReadView) Object(ref sdk.ObjectRef) (object *unstructured.Unstructur
 		}
 	}
 	if source, ok := v.DetectionContext.(sdk.ObjectReader); ok {
-		return source.Object(ref)
-	}
-	if ref.Namespace != v.Namespace() {
+		object, err = source.Object(ref)
+	} else if ref.Namespace != v.Namespace() {
 		return v.scopedObject(ref)
+	} else {
+		object, err = sdk.FindObject(sdk.TypedObjects(v.DetectionContext), ref)
 	}
-	return sdk.FindObject(sdk.TypedObjects(v.DetectionContext), ref)
+	// An omitted snapshot object is not proof of absence. Resolve it through
+	// the live read boundary so source comparison can distinguish a confirmed
+	// deletion from a failed or incomplete observation. Scoped failures retain
+	// their authority above; offline views still fail closed.
+	if errors.Is(err, sdk.ErrObjectNotCaptured) && v.Client != nil && ref.Namespace == v.Namespace() {
+		ctx, cancel := context.WithTimeout(v.context(), DefaultDiagnosisDeadline)
+		defer cancel()
+		return (TypedPlanClient{Client: v.Client, ProtectedNamespace: v.ProtectedNamespace}).Get(ctx, ref)
+	}
+	return object, err
 }
 func (v LiveReadView) snapshotObject(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
 	object, err := v.Object(ref)
