@@ -297,7 +297,7 @@ func (d detector) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.Fin
 				findings = append(findings, d.finding(f, RuleRoleChanged, c, fmt.Sprintf("store %s (%s) %s changed since the healthy baseline", d.config.Component, f.Engine, key.Name)))
 			case key.Kind == KindPrincipal:
 				findings = append(findings, d.finding(f, RulePrincipalChanged, c, fmt.Sprintf("store %s (%s) principal %s changed since the healthy baseline", d.config.Component, f.Engine, key.Name)))
-			case (key.Kind == KindIndex || key.Kind == KindValidator || key.Kind == KindLock) && judgedCatalogChange(f, c):
+			case (key.Kind == KindIndex || key.Kind == KindValidator || key.Kind == KindLock) && judgedCatalogChange(baseline, f, c):
 				findings = append(findings, d.finding(f, RuleCatalogChanged, c, fmt.Sprintf("store %s (%s) %s changed since the healthy baseline", d.config.Component, f.Engine, key)))
 			case judgedNamespace(f.Engine, key):
 				if how := namespaceShift(c); how != "" {
@@ -359,26 +359,24 @@ func (d detector) noEviction(f Facts) bool {
 //   - lock activity (waiters, an active lock counter, Value "active") comes and
 //     goes with load; only a held lock (fsync, a global read lock, a metadata
 //     lock) is judged, and a lock that blocks writes is also a write block;
-//   - an index or validator that appeared was created by the application (a new
-//     table, a new time partition); it is not judged, like a new namespace;
-//   - an index or validator that disappeared with its own table is the table's
-//     lifecycle (a dropped or rotated partition), judged by the namespace rule.
-func judgedCatalogChange(f Facts, c Change) bool {
+//   - an index or validator belongs to its table's lifecycle when the table
+//     itself appeared or disappeared (a new or rotated time partition, judged by
+//     the namespace rule); on a table that existed before and still exists, an
+//     added, removed or changed one is judged (a constraint added to a live
+//     table rejects writes that used to succeed).
+func judgedCatalogChange(baseline, current Facts, c Change) bool {
 	key := c.Key()
 	if key.Kind == KindLock {
 		return !(c.Before != nil && c.Before.Value == "active" || c.After != nil && c.After.Value == "active")
 	}
-	if c.Before == nil {
-		return false
+	db, object, scoped := strings.Cut(key.Scope, ".")
+	if !scoped {
+		return c.Before != nil
 	}
-	if c.After == nil {
-		if db, object, ok := strings.Cut(key.Scope, "."); ok {
-			if _, tableKept := f.Lookup(Key{Kind: KindNamespace, Scope: db, Name: object}); !tableKept {
-				return false
-			}
-		}
-	}
-	return true
+	table := Key{Kind: KindNamespace, Scope: db, Name: object}
+	_, before := baseline.Lookup(table)
+	_, after := current.Lookup(table)
+	return before && after
 }
 
 // judgedNamespace reports whether the namespace-changed rule judges an item:
