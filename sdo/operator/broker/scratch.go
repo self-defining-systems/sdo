@@ -164,22 +164,51 @@ func (b *Broker) ScratchFeedback(ctx context.Context, incidentID string, phase P
 	return ScratchFeedback(ctx, proposal.Path)
 }
 
-// UncapturedPaths are the app files a prepared proposal's checkout holds that its patch series does not reproduce:
-// the edits the agent left, in sorted order. Empty for phases whose checkout is not materialized.
+// UncapturedPaths are the app files a prepared proposal's checkout holds that the agent has not committed: the
+// scratch a source publication discards (SourceChangeOf), in sorted order. Empty for phases whose checkout is not
+// materialized. A history the agent rewrote below its base has no scratch to report; publication records that.
 func (b *Broker) UncapturedPaths(ctx context.Context, incidentID string, phase Phase) ([]string, error) {
 	if !materializesPatches(phase) {
 		return nil, nil
 	}
+	change, err := b.SourceChange(ctx, incidentID, phase)
+	var failure *validate.Failure
+	if errors.As(err, &failure) {
+		return nil, nil
+	}
+	return change.Scratch, err
+}
+
+// SourceRuleDiagnostics are the messages of the source rules (source.policy, source.size, the Secret rules) the
+// committed source of a prepared proposal breaks right now, one line each. They are the same checks a publication
+// applies, so the closing turn can ask the agent to fix a commit before the publication would refuse it.
+func (b *Broker) SourceRuleDiagnostics(ctx context.Context, incidentID string, phase Phase) ([]string, error) {
 	proposal, err := b.proposal(incidentID, phase)
 	if err != nil {
 		return nil, err
 	}
-	paths, err := UncapturedScratch(ctx, proposal.Path)
-	var invalid *patchset.PatchError
-	if errors.As(err, &invalid) {
-		return nil, nil
+	change, err := SourceChangeOf(ctx, proposal.Path, proposal.BaseCommit)
+	if err != nil {
+		var failure *validate.Failure
+		if errors.As(err, &failure) {
+			return diagnosticLines(failure.Diagnostics), nil
+		}
+		return nil, err
 	}
-	return paths, err
+	err = b.requireSourceRules(ctx, proposal.Path, proposal.BaseCommit, change)
+	var failure *validate.Failure
+	if errors.As(err, &failure) {
+		return diagnosticLines(failure.Diagnostics), nil
+	}
+	return nil, err
+}
+
+func diagnosticLines(diagnostics []validate.Diagnostic) []string {
+	lines := make([]string, 0, len(diagnostics))
+	for _, d := range diagnostics {
+		lines = append(lines, strings.TrimSpace(d.Rule+" "+d.Path+": "+d.Message+" "+d.Hint))
+	}
+	return lines
 }
 
 // ProposalCheckout is the path of a prepared proposal's checkout.

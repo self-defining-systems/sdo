@@ -152,23 +152,72 @@ type LeftoverCleaner interface {
 	Cleanup(ctx context.Context, closure IncidentClosure, workspace IncidentWorkspace, leftovers []string, turn int) error
 }
 
-// resolveLeftovers runs the closing turn's cleanup loop for a verified closure's proposal checkout, then returns what
-// is still uncaptured. Without a session, a cleaner or a turn budget nothing is asked and the leftovers are returned as
-// they are, to be recorded as source_repair_uncaptured by the caller.
-func (n NativeIncidentBroker) resolveLeftovers(ctx context.Context, closure IncidentClosure, id string) ([]string, error) {
-	leftovers := func(ctx context.Context) ([]string, error) {
-		return n.Repository.UncapturedPaths(ctx, id, broker.ProposalPhase)
+// cleanupBeforePublish runs the closing turn's cleanup loop after the acknowledgment and before the source
+// publication, in the responder's own proposal checkout and outside the ledger lock. It asks the agent, up to
+// response.cleanup_turns times, to commit or remove the app files it left uncommitted and to fix a commit the source
+// rules would refuse. The turn counter is saved before each dispatch and the end is recorded as the phase
+// cleanup_done, so a restart or a deferred publication never repeats a turn. A failed turn never returns an error: it
+// ends the loop and publication goes on, because an error here would count toward abandoning committed source.
+func (n NativeIncidentBroker) cleanupBeforePublish(ctx context.Context, id string) {
+	var ledger *contracts.BrokerLedger
+	if err := n.withLock(func() (err error) { ledger, err = n.readLedger(id); return err }); err != nil {
+		slog.Warn("closing cleanup skipped", "incident_id", id, "error", err)
+		return
 	}
-	if n.Cleaner == nil || n.CleanupTurns <= 0 || !hasResponderSession(closure) {
-		return leftovers(ctx)
+	if _, done := ledger.GetClosurePhaseTimestamps()["cleanup_done"]; done || ledger.SourceRepair != sourcePending {
+		return
+	}
+	finish := func() {
+		_ = n.withLock(func() error {
+			current, err := n.readLedger(id)
+			if err != nil {
+				return err
+			}
+			return n.recordPhase(current, "cleanup_done")
+		})
+	}
+	closure := incidentClosureState(ledger.Closure)
+	// Escalated closures get no turn (committed source still publishes), nor does a closure without a session,
+	// a cleaner or a turn budget.
+	if ledger.GetClosure().GetEscalatedAt() != nil || n.Cleaner == nil || n.CleanupTurns <= 0 || !hasResponderSession(closure) {
+		finish()
+		return
+	}
+	leftovers := func(ctx context.Context) ([]string, error) {
+		scratch, err := n.Repository.UncapturedPaths(ctx, id, broker.ProposalPhase)
+		if err != nil {
+			return nil, err
+		}
+		rules, err := n.Repository.SourceRuleDiagnostics(ctx, id, broker.ProposalPhase)
+		if err != nil {
+			return nil, err
+		}
+		return append(scratch, rules...), nil
 	}
 	checkout, err := n.Repository.ProposalCheckout(id, broker.ProposalPhase)
 	if err != nil {
-		return nil, err
+		slog.Warn("closing cleanup skipped", "incident_id", id, "error", err)
+		finish()
+		return
 	}
 	workspace := IncidentWorkspace{IncidentID: id, Worktree: checkout, BaseCommit: closure.Request.RepositoryBaseCommit}
-	remaining, _, err := ResolveLeftovers(ctx, n.CleanupTurns, leftovers, func(ctx context.Context, paths []string, number int) error {
-		return n.Cleaner.Cleanup(ctx, closure, workspace, paths, number)
+	used := int(ledger.GetCleanupTurnsUsed())
+	_, _, err = ResolveLeftovers(ctx, max(0, n.CleanupTurns-used), leftovers, func(ctx context.Context, lines []string, number int) error {
+		turn := used + number
+		if err := n.withLock(func() error {
+			current, err := n.readLedger(id)
+			if err != nil {
+				return err
+			}
+			current.CleanupTurnsUsed = uint32(turn)
+			return n.saveLedger(current)
+		}); err != nil {
+			return err
+		}
+		return n.Cleaner.Cleanup(ctx, closure, workspace, lines, turn)
 	})
-	return remaining, err
+	if err != nil {
+		slog.Warn("closing cleanup ended on an error", "incident_id", id, "error", err)
+	}
+	finish()
 }
