@@ -794,3 +794,49 @@ def test_reset_after_install_waits_for_the_controller(monkeypatch: pytest.Monkey
             sleep=lambda s: now.__setitem__(0, now[0] + s),
             clock=lambda: now[0],
         )
+
+
+def _fake_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, registry_fails: bool = False) -> Path:
+    """docker, kind and a host registry script that log their calls; returns the log."""
+    log = tmp_path / "calls.log"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name, body in {
+        "docker": 'echo "docker $*" >> "$CALLS"\n',
+        "kind": 'echo "kind $*" >> "$CALLS"\n[ "$1 $2" = "get nodes" ] && echo c-control-plane && echo c-worker\nexit 0\n',
+    }.items():
+        (bin_dir / name).write_text(f"#!/bin/sh\n{body}")
+        (bin_dir / name).chmod(0o755)
+    script = tmp_path / "registry.sh"
+    script.write_text(f'#!/bin/sh\necho "registry $*" >> "$CALLS"\n{"exit 1" if registry_fails else "exit 0"}\n')
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
+    monkeypatch.setenv("CALLS", str(log))
+    return log
+
+
+def test_operator_images_go_through_the_host_registry_when_the_bench_offers_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log = _fake_tools(tmp_path, monkeypatch)
+    lines: list[str] = []
+    hooks.load_images("c", ["img:a", "img:b"], lines.append, registry=tmp_path / "registry.sh")
+    calls = log.read_text().splitlines()
+    assert "registry push img:a img:b" in calls
+    assert not any(call.startswith("kind load") for call in calls)
+
+
+def test_operator_images_are_loaded_into_the_nodes_without_a_registry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log = _fake_tools(tmp_path, monkeypatch)
+    hooks.load_images("c", ["img:a"], lambda _line: None, registry=None)
+    assert any(call.startswith("kind load docker-image") for call in log.read_text().splitlines())
+
+
+def test_a_failing_registry_falls_back_to_loading_the_nodes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    log = _fake_tools(tmp_path, monkeypatch, registry_fails=True)
+    lines: list[str] = []
+    hooks.load_images("c", ["img:a"], lines.append, registry=tmp_path / "registry.sh")
+    assert any(call.startswith("kind load docker-image") for call in log.read_text().splitlines())
+    assert any("registry" in line and "falling back" in line for line in lines)
