@@ -31,6 +31,13 @@ func queuedReflectionGit(t *testing.T, dir string, args ...string) string {
 // given worker and returns the ledger it leaves.
 func queuedReflectionLedger(t *testing.T, root string, worker ReflectionWorkerFunc) *contracts.BrokerLedger {
 	t.Helper()
+	return queuedReflectionLedgerWith(t, root, worker, nil)
+}
+
+// queuedReflectionLedgerWith is queuedReflectionLedger with a hook that may change the broker (its code path) and the
+// closure (for example to escalate it) before the closure is processed.
+func queuedReflectionLedgerWith(t *testing.T, root string, worker ReflectionWorkerFunc, configure func(*NativeIncidentBroker, *IncidentClosure)) *contracts.BrokerLedger {
+	t.Helper()
 	accepted := filepath.Join(root, "accepted")
 	if err := os.MkdirAll(accepted, 0o755); err != nil {
 		t.Fatal(err)
@@ -75,6 +82,9 @@ func queuedReflectionLedger(t *testing.T, root string, worker ReflectionWorkerFu
 		},
 		FinalDetectorStates: []DetectorEvaluation{{DetectorID: "health", EvaluatedAt: now.Add(time.Second), Status: DetectorEvaluationClear}},
 		DetectedAt:          now, DispatchedAt: now, ResponderCompletedAt: now.Add(time.Second), VerifiedAt: now.Add(time.Second),
+	}
+	if configure != nil {
+		configure(&native, &closure)
 	}
 	receipt, err := native.ProcessClosure(ctx, closure)
 	if err != nil {
@@ -170,5 +180,32 @@ func TestQueuedReflectionServesTheAcceptedHeadAfterALaterPublication(t *testing.
 	}
 	if got != head || got == reflection {
 		t.Fatalf("serving commit = %q, want the accepted head %q (reflection %q)", got, head, reflection)
+	}
+}
+
+// The wiring, not just the gate: an escalated close never reaches the reflection worker on either code path, and
+// the ledger records why. (The responder had a fix and a session; escalation alone withholds learning.)
+func TestAnEscalatedCloseNeverCallsTheReflectionWorkerOnEitherCodePath(t *testing.T) {
+	for _, path := range []string{"go", "shell"} {
+		t.Run(path, func(t *testing.T) {
+			calls := 0
+			ledger := queuedReflectionLedgerWith(t, t.TempDir(), func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string, ReflectionFeedback) (ReflectionDecision, error) {
+				calls++
+				return ReflectionDecision{LearningDecision: "updated"}, nil
+			}, func(native *NativeIncidentBroker, closure *IncidentClosure) {
+				native.CodePath = CodePathConfig{Name: path}
+				closure.EscalatedAt = closure.VerifiedAt
+			})
+			if calls != 0 {
+				t.Fatalf("%s path: the reflection worker ran %d time(s) for an escalated close", path, calls)
+			}
+			decision := ledger.GetReflectionDecision()
+			if decision.GetLearningDecision() != "no_change" || decision.GetNoChangeReason() != "escalated_no_learning" {
+				t.Fatalf("%s path: decision = %v, want no_change/escalated_no_learning", path, decision)
+			}
+			if ledger.GetReflectionCommit() != "" {
+				t.Fatalf("%s path: an escalated close published a learning commit %q", path, ledger.GetReflectionCommit())
+			}
+		})
 	}
 }
