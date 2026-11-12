@@ -41,7 +41,7 @@ table or `settings`). Per-run values are environment variables: `SDO_AGENT_PROVI
 `sdo-operator config print --config benchmarks/fuzzops/sdo-bench.yaml [--config F]...` prints what a lane runs with,
 and the controller records the resolved file as `.sdo-runtime/config.yaml` in the run evidence.
 
-- `fastloop run` keeps its lane flags (`--repair-policy`, `--reflection-session`, `--reflection-guidance`,
+- `fastloop run` keeps its lane flags (`--repair-policy`, `--reflection-guidance`,
   `--late-findings`, `--lifecycle-timeout`, `--reasoning-effort`, `--healthy-baseline`, ...); each defaults to the
   configured value and is written to the overlay only when given. `--config FILE` (repeatable) adds overlay files.
   `--reasoning-effort` unset resolves the configured `agent.effort` for the records and the Codex baseline.

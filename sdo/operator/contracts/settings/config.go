@@ -134,7 +134,6 @@ type Response struct {
 // Learning governs what the operator keeps from incidents.
 type Learning struct {
 	Replay             string `yaml:"replay" doc:"replay and corpus capture: on or off"`
-	ReflectionSession  string `yaml:"reflection_session" doc:"reflection session: resume continues the responder's private session (it requires a valid responder session token of the same accepted closure; sessions live outside the accepted repository for a bounded retention) or fresh starts a new one"`
 	ReflectionGuidance string `yaml:"reflection_guidance" doc:"the agent's learning instructions: baseline learns from each confirmed cause; generalize compares related incident signatures and parameterizes a shared playbook; generalize-spec favors predicates visible in resource spec or status. None changes the detector SDK or the validator"`
 	ForceReflection    bool   `yaml:"force_reflection" doc:"always dispatch reflection after a verified closure (not with a frozen mode)"`
 	HealthyBaseline    bool   `yaml:"healthy_baseline" doc:"opt-in detector gate: a proposal that changes incident detector source is replayed against healthy snapshots a runner recorded with sdo-operator baseline-write (one sdktest.Snapshot JSON per file, outside the accepted repository); a detector that fires on one fails validation, and a missing baseline fails closed. It never reads benchmark verdicts"`
@@ -187,7 +186,7 @@ func Default() Config {
 		Detection: Detection{
 			SelfHealHold: Duration(DefaultSelfHealHold), StabilityWindow: Duration(15 * time.Second), DriftBatchWindow: Duration(20 * time.Second),
 		},
-		Learning: Learning{Replay: "on", ReflectionSession: "resume", ReflectionGuidance: "baseline", LateFindings: "off"},
+		Learning: Learning{Replay: "on", ReflectionGuidance: "baseline", LateFindings: "off"},
 		Deployment: Deployment{
 			MaxAttempts: 3, BuildTimeout: Duration(DefaultBuildTimeout), BuildBudget: Duration(DefaultBuildBudget),
 			RolloutTimeout: Duration(DefaultRolloutTimeout),
@@ -260,7 +259,6 @@ func (c Config) Validate() error {
 	positive("detection.stability_window", c.Detection.StabilityWindow)
 	positive("detection.drift_batch_window", c.Detection.DriftBatchWindow)
 	oneOf("learning.replay", c.Learning.Replay, "on", "off")
-	oneOf("learning.reflection_session", c.Learning.ReflectionSession, "fresh", "resume")
 	oneOf("learning.reflection_guidance", c.Learning.ReflectionGuidance, "baseline", "generalize", "generalize-spec")
 	oneOf("learning.late_findings", c.Learning.LateFindings, "off", "pull")
 	if c.Mode != ModeOperate && c.Learning.ForceReflection {

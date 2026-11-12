@@ -147,10 +147,20 @@ def run_reflection_task(
     closure.request.memory_snapshot.CopyFrom(request.memory_snapshot)
     if closure.request.incident_id != outcome.incident_id:
         raise ValueError("reflection outcome incident does not match closure")
-    session_mode = request.session_mode or "fresh"
+    session_mode = request.session_mode or "resume"
     if session_mode not in {"fresh", "resume"}:
         raise ValueError(f"invalid reflection session mode {session_mode!r}")
     prior_session = closure.result.responder_session_id if closure.HasField("result") else ""
+    if session_mode == "fresh" and prior_session:
+        # A new session is only for a closure that has no responder session (the automatic stage
+        # resolved it without an agent); it is never a way around a session that exists.
+        raise ValueError("a fresh reflection is only for a closure without a responder session")
+    if session_mode == "fresh":
+        print(
+            "reflection: no responder session (resolved by the automatic stage); fresh session",
+            file=sys.stderr,
+            flush=True,
+        )
     invalid_session = session_mode == "resume" and not _SESSION_TOKEN.fullmatch(prior_session or "")
     guidance = request.guidance or "baseline"
     if guidance not in REFLECTION_GUIDANCE_MODES:

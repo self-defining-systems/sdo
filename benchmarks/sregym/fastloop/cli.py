@@ -652,7 +652,6 @@ def _runtime_config(args: argparse.Namespace, environment: FastloopEnvironment, 
         lifecycle_timeout_seconds=getattr(args, "lifecycle_timeout", None),
         frozen_memory=getattr(args, "frozen_memory", False),
         external_incidents=getattr(args, "external_incidents", False),
-        reflection_session=getattr(args, "reflection_session", None),
         reflection_guidance=getattr(args, "reflection_guidance", None),
         code_path=getattr(args, "code_path", "go"),
         code_path_overrides=getattr(args, "code_path_overrides", "") or "",
@@ -1969,7 +1968,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--ablation-repository", help="override the per-app variant repository (toy proof uses a local repo)"
     )
     run.add_argument("--frozen-memory", action="store_true", help="keep closure evidence private and disable learning")
-    run.add_argument("--reflection-session", choices=("resume", "fresh"), default=None, help="default: configured")
     run.add_argument("--code-path", choices=("go", "shell"), default="go")
     run.add_argument(
         "--code-path-overrides",

@@ -119,7 +119,6 @@ class NativeInstallConfig:
     lifecycle_timeout_seconds: int | None = None
     repair_policy: str | None = None
     late_findings: str | None = None
-    reflection_session: str | None = None
     reflection_guidance: str | None = None
     force_reflection: bool | None = None
     code_path: str | None = None
@@ -213,7 +212,6 @@ class NativeInstallConfig:
             "learning": _present(
                 {
                     "replay": self.replay,
-                    "reflection_session": self.reflection_session,
                     "reflection_guidance": self.reflection_guidance,
                     "force_reflection": self.force_reflection,
                     "healthy_baseline": self.healthy_baseline,

@@ -138,8 +138,6 @@ def test_a_format_1_baseline_translates_its_controller_flags_to_config(tmp_path:
             "10",
             "--repair-policy",
             "recorded-actions",
-            "--reflection-session",
-            "resume",
             "--reflection-guidance",
             "baseline",
             "--healthy-baseline",
@@ -169,7 +167,7 @@ def test_a_format_1_baseline_translates_its_controller_flags_to_config(tmp_path:
             "repair_policy": "recorded-actions",
             "permissive_namespaces": ["a", "b"],
         },
-        "learning": {"reflection_session": "resume", "reflection_guidance": "baseline", "healthy_baseline": True},
+        "learning": {"reflection_guidance": "baseline", "healthy_baseline": True},
         "deployment": {"policy": {"allowed_registries": ["r1", "r2"]}},
     }
     assert json.loads(loaded.to_json())["format"] == 2

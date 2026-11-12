@@ -878,7 +878,7 @@ uv run python -m benchmarks.sregym.fastloop reset --run-dir "$TOY_RUN" --dev-mou
 uv run python -m benchmarks.sregym.fastloop run --run-dir "$TOY_RUN" --agent sdo \
   --agent-registrations /absolute/script-registrations \
   --stream tests/fixtures/sregym/fastloop/toy_latent_repeat.json \
-  --reflection-session fresh --diagnosis-grading off --no-checkpoints
+  --diagnosis-grading off --no-checkpoints
 ```
 
 The launcher reads the ConfigMap once at worker startup. Override its name with

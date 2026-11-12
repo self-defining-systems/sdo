@@ -82,6 +82,7 @@ def test_reflection_worker_uses_typed_context_and_returns_decision(tmp_path: Pat
         closure=closure,
         outcome=_outcome(closure.request.incident_id),
         outcome_commit="outcome-commit",
+        session_mode="fresh",
     )
     cause = request.cause_work.add(cause_index=0)
     cause.items.add(
@@ -121,7 +122,7 @@ def test_reflection_worker_restores_result_program_runs_from_the_outcome(tmp_pat
     del closure.result.program_runs[:]
     outcome = _outcome(closure.request.incident_id)
     outcome.program_runs.add(program_id="targetport").duration.FromMilliseconds(5)
-    request = ReflectionRequest(closure=closure, outcome=outcome, outcome_commit="outcome-commit")
+    request = ReflectionRequest(closure=closure, outcome=outcome, outcome_commit="outcome-commit", session_mode="fresh")
     request.memory_snapshot.accepted_commit = "outcome-commit"
     packed = Any()
     packed.Pack(request)
@@ -152,7 +153,7 @@ def test_reflection_worker_restores_result_transcripts_from_the_outcome(tmp_path
     outcome = _outcome(closure.request.incident_id)
     outcome.program_tool_calls.add(command="kubectl get pods", summary="listed")
     outcome.plan_applications.add(application_id="plan-1")
-    request = ReflectionRequest(closure=closure, outcome=outcome, outcome_commit="outcome-commit")
+    request = ReflectionRequest(closure=closure, outcome=outcome, outcome_commit="outcome-commit", session_mode="fresh")
     request.memory_snapshot.accepted_commit = "outcome-commit"
     packed = Any()
     packed.Pack(request)
@@ -243,6 +244,7 @@ def test_reflection_worker_uses_typed_guidance_for_builtin_reflector(
         closure=closure,
         outcome=_outcome(closure.request.incident_id),
         outcome_commit="outcome-commit",
+        session_mode="fresh",
         guidance="generalize-spec",
     )
     request.memory_snapshot.accepted_commit = "outcome-commit"
@@ -419,6 +421,7 @@ def test_reflection_worker_requires_commit_bound_logical_memory(tmp_path: Path) 
         closure=closure,
         outcome=_outcome(closure.request.incident_id),
         outcome_commit="outcome-commit",
+        session_mode="fresh",
     )
     task = AgentTask(
         schema_version="sdo.dev/v1alpha1",
@@ -442,6 +445,7 @@ def test_reflection_worker_keeps_direct_edits_and_returns_logical_ids(tmp_path: 
         closure=closure,
         outcome=outcome,
         outcome_commit="outcome-commit",
+        session_mode="fresh",
     )
     request.memory_snapshot.accepted_commit = "outcome-commit"
     packed = Any()
@@ -486,6 +490,7 @@ def test_reflection_worker_forwards_go_retry_diagnostics(tmp_path: Path) -> None
         closure=closure,
         outcome=_outcome(closure.request.incident_id),
         outcome_commit="outcome-commit",
+        session_mode="fresh",
         validation_attempt=2,
         previous_diagnostics=[MemoryDiagnostic(rule="detector.manifest", message="bad id")],
     )
@@ -569,7 +574,9 @@ def test_registered_task_preserves_settled_work_in_actual_session_prompt(
 
 def _task_path(tmp_path: Path, *, deadline: float | None = None) -> Path:
     closure = _closure()
-    request = ReflectionRequest(closure=closure, outcome=_outcome(closure.request.incident_id), outcome_commit="c")
+    request = ReflectionRequest(
+        closure=closure, outcome=_outcome(closure.request.incident_id), outcome_commit="c", session_mode="fresh"
+    )
     request.memory_snapshot.accepted_commit = "c"
     task = AgentTask(
         schema_version="sdo.dev/v1alpha1",
@@ -732,7 +739,10 @@ def _moved_head_task(tmp_path: Path, *, snapshot_on_base: bool = True, outcome_a
     base = _git(tmp_path, "rev-parse", "HEAD")
     closure = _closure()
     request = ReflectionRequest(
-        closure=closure, outcome=_outcome(closure.request.incident_id), outcome_commit=outcome_commit
+        closure=closure,
+        outcome=_outcome(closure.request.incident_id),
+        outcome_commit=outcome_commit,
+        session_mode="fresh",
     )
     request.memory_snapshot.accepted_commit = base if snapshot_on_base else outcome_commit
     packed = Any()

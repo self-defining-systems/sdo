@@ -33,14 +33,13 @@ def test_native_host_prepares_benchmark_registry_and_go_settings(
         # The benchmark profile sets the repair policy; the lane overrides nothing it did not choose.
         assert config.install.repair_policy is None
         assert config.install.config_files == (BENCH_PROFILE,)
-        assert config.install.reflection_session == "resume"
         assert config.install.exit_after_closure is True
         assert config.registry_host == "sdo-benchmark-registry.demo-sdo.svc.cluster.local:5000"
         assert "SDO_SREGYM_API_BASE=http://sdo-sregym-bridge:8000" in config.install.responder_env
         return {"installed": True, "operation_id": config.operation_id}
 
     monkeypatch.setattr(driver, "launch_host", launch)
-    args = driver._parse_args(["--reflection-session", "resume"])
+    args = driver._parse_args([])
     driver._launch_native_lifecycle(
         args,
         repository=tmp_path,
@@ -324,7 +323,6 @@ def test_runtime_install_preserves_shared_settings_on_every_lifecycle_path(
         verification_timeout_seconds=43,
         repair_policy="recorded-actions",
         agent_provider="claude",
-        reflection_session="fresh",
         reflection_guidance="generalize",
         force_reflection=True,
         late_findings="pull",

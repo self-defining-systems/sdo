@@ -103,23 +103,22 @@ def test_agent_settings_keep_native_reflection_options(monkeypatch: pytest.Monke
         "SREGYM_EXPERIMENT_AGENT_CONFIG",
         json.dumps(
             {
-                "reflection_session": "resume",
                 "reflection_guidance": "generalize-spec",
                 "late_findings": "pull",
             }
         ),
     )
     args = driver._parse_args([])
-    assert args.reflection_session == "resume"
     assert args.reflection_guidance == "generalize-spec"
     assert args.late_findings == "pull"
 
 
-def test_reflection_session_is_configured_unless_the_lane_selects_one(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_reflection_session_is_not_selectable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reflection resumes the responder's session; no flag or lane setting picks another."""
     monkeypatch.delenv("SREGYM_EXPERIMENT_AGENT_CONFIG", raising=False)
-    # Unset: the operator config (production default resume) decides.
-    assert driver._parse_args([]).reflection_session is None
-    assert driver._parse_args(["--reflection-session", "fresh"]).reflection_session == "fresh"
+    assert not hasattr(driver._parse_args([]), "reflection_session")
+    with pytest.raises(SystemExit):
+        driver._parse_args(["--reflection-session", "fresh"])
 
 
 def test_the_experiment_config_table_and_files_reach_the_install(monkeypatch: pytest.MonkeyPatch) -> None:

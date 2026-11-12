@@ -56,7 +56,6 @@ def worker(args, state_path, app, control):
             model="scripted-no-model",
             kubeconfig=Path(os.environ["KUBECONFIG"]),
             registration_configmap="sdo-agent-registrations",
-            reflection_session="fresh",
             deployment_source=raw_source(("kubernetes",)),
         )
     )

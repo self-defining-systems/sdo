@@ -213,7 +213,9 @@ def test_scripted_entry_points_complete_on_seed_copy_with_fake_kubernetes_api(
         return ""
 
     monkeypatch.setattr(scripts, "_command", operator_command)
-    reflection = ReflectionRequest(closure=closure, outcome=outcome, outcome_commit="outcome-commit")
+    reflection = ReflectionRequest(
+        closure=closure, outcome=outcome, outcome_commit="outcome-commit", session_mode="fresh"
+    )
     reflection.memory_snapshot.accepted_commit = "outcome-commit"
     packed.Pack(reflection)
     task = AgentTask(

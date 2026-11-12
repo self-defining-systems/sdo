@@ -144,7 +144,6 @@ def _run(args: argparse.Namespace) -> int:
         model="gpt-6-luna",
         timeout_seconds=args.timeout,
         agent_provider="codex",
-        reflection_session=args.reflection_session,
         controller_namespace=control_namespace_for(environment.namespace),
     )
     inner = SdoPersistentAgent(
@@ -241,7 +240,6 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--tag", default="assure", help="scripted image tag (build_images.sh)")
     run.add_argument("--timeout", type=int, default=900, help="responder timeout in seconds")
     run.add_argument("--verification-timeout", type=int, default=1200, help="seconds to wait for a verified incident")
-    run.add_argument("--reflection-session", choices=("resume", "fresh"), default="fresh")
     run.add_argument("--skip-image-load", action="store_true")
     run.add_argument(
         "--fresh", action="store_true", help="tear down the controller and reset the workspace to the seed first"
