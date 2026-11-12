@@ -1,1 +1,0 @@
-Applied playbook: ${playbook_id}${scripts}

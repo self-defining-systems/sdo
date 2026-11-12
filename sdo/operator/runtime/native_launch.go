@@ -173,22 +173,23 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 	if selected.Selection.DetectorSource == "shell" {
 		catalog = memory.OpenShellCatalogReader(config.GetAppRoot())
 	}
-	native.Reflector = RegisteredReflectionWorker{
+	worker := RegisteredReflectionWorker{
 		Replay: policy.Learning.Replay, TaskStore: &lifecycleio.TaskStore{Root: filepath.Join(native.LedgerRoot, "reflection-tasks")},
 		Executor: freshExecutor,
 		AgentID:  reflectorID, TaskType: reflectionTask, Outcomes: memory.NewJSONStore(config.GetAppRoot()), Timeout: time.Duration(policy.Response.Timeout),
-		Guidance:          policy.Learning.ReflectionGuidance,
 		Catalog:           catalog,
 		CorpusSessionRoot: config.GetRepositoryMountPath(),
 		SessionExecutor: func(incidentID string) (ReflectionTaskExecutor, error) {
 			return sessionExecutor(incidentID, true)
 		},
-		FreshSessionExecutor: func(incidentID string) (ReflectionTaskExecutor, error) { return sessionExecutor(incidentID, false) },
 		UsageLogPath: func(incidentID string) string {
 			digest := fmt.Sprintf("%x", sha256.Sum256([]byte(incidentID)))[:32]
 			return filepath.Join(config.GetRepositoryMountPath(), ".sdo-runtime", "sessions", digest, "reflection-usage.jsonl")
 		},
 	}
+	native.Reflector = worker
+	native.Cleaner = worker
+	native.CleanupTurns = policy.Response.CleanupTurns
 	return nil
 }
 

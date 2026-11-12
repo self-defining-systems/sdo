@@ -1,6 +1,7 @@
 package operatorcli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -79,6 +80,10 @@ commands:
         Exit 0 when clean,
         1 for diagnostics, 2 for missing inputs or infrastructure/usage errors,
         124 for an exceeded validation deadline. Report timeouts; do not retry.
+  test <id> [--replay on|off] [--root .]
+        Replay one playbook on the captured cases of this incident: the same check as
+        "memory check", reduced to the playbook's own replay lines and whether anything
+        blocks. At most about 1 KB; Unknown is not a failure.
   ls [--root .] [--kind goal|architecture|playbook|script|detector] [--json]
         List artifacts by logical ID.
   new playbook <id> [--root .] [--incident I]
@@ -122,6 +127,8 @@ func RunMemory(ctx context.Context, args []string, getenv func(string) string, s
 		err = memoryImport(ctx, args[1:], getenv, stdout)
 	case "check":
 		code, err = memoryCheck(ctx, args[1:], getenv, stdout)
+	case "test":
+		code, err = memoryTest(ctx, args[1:], getenv, stdout)
 	case "ls":
 		err = memoryList(args[1:], stdout)
 	case "new":
@@ -523,4 +530,46 @@ func normalizeCorpusForReplay(root string, paths []string, replay string) ([]str
 		return nil, nil
 	}
 	return validate.NormalizeCapturedCorpus(root, paths)
+}
+
+// memoryTest is "memory check" read for one playbook: its replay verdicts per captured case and whether anything blocks
+// publication. It runs the same check, so it cannot disagree with the broker's, and prints at most a few short lines.
+func memoryTest(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer) (int, error) {
+	flags := flag.NewFlagSet("memory test", flag.ContinueOnError)
+	replayFlag := flags.String("replay", getenv(settings.ReplayEnvironment), "replay policy: on or off")
+	root := flags.String("root", ".", "repository checkout to validate")
+	positional, err := parseFlags(flags, args)
+	if err != nil {
+		return exitInfra, err
+	}
+	if len(positional) != 1 || !layout.ValidPlaybookID(positional[0]) {
+		return exitInfra, fmt.Errorf("test takes one playbook ID, got %q", positional)
+	}
+	id := positional[0]
+	var report bytes.Buffer
+	code, err := memoryCheck(ctx, []string{"--json", "--root", *root, "--replay", *replayFlag}, getenv, &report)
+	if err != nil {
+		return code, err
+	}
+	checked := &contracts.MemoryCheckReport{}
+	if err := protojson.Unmarshal(report.Bytes(), checked); err != nil {
+		return exitInfra, fmt.Errorf("read memory check report: %w", err)
+	}
+	fmt.Fprintf(stdout, "playbook %s\n", id)
+	replayed := 0
+	for _, note := range checked.GetMitigationReplayNotes() {
+		if note.GetProgramId() == id {
+			replayed++
+			fmt.Fprintf(stdout, "  case %s: mitigation replay %s\n", note.GetCaseId(), strings.ToLower(strings.TrimPrefix(note.GetStatus().String(), "STATUS_")))
+		}
+	}
+	if replayed == 0 {
+		fmt.Fprintln(stdout, "  no captured case replays this playbook yet (Unknown is not a failure)")
+	}
+	if blocking := checked.GetDiagnostics(); len(blocking) > 0 {
+		fmt.Fprintf(stdout, "  blocking: %d problem(s); run memory check for the list\n", len(blocking))
+		return exitDiagnostics, nil
+	}
+	fmt.Fprintln(stdout, "  blocking: none")
+	return exitClean, nil
 }

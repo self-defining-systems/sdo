@@ -120,8 +120,6 @@ def instruction_files(root: Path) -> list[Path]:
         "sdo/agents/deployer/worker.py",
         "sdo/agents/responder/codex.py",
         "sdo/agents/responder/reflection.py",
-        "sdo/agents/responder/reflection_authoring.py",
-        "sdo/agents/responder/reflection_brief.py",
     ):
         path = root / relative
         if path.exists():

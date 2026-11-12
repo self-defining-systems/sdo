@@ -1,1 +1,0 @@
-Post-response health detector states

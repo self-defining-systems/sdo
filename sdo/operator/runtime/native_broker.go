@@ -60,11 +60,11 @@ type ReflectionWorker interface {
 // is 1-based; after a broker rejection Diagnostics are that rejection's typed
 // validator findings.
 type ReflectionFeedback struct {
-	DispatchAt     time.Time
-	Attempt        uint32
-	Diagnostics    []*contracts.MemoryDiagnostic
-	CauseWork      []*contracts.ReflectionCauseWork
-	UnassignedWork []*contracts.ReflectionWorkItem
+	DispatchAt  time.Time
+	Attempt     uint32
+	Diagnostics []*contracts.MemoryDiagnostic
+	// Changes is the closing turn's change list (ClosingChangeLines), rendered by Go from the recording.
+	Changes []string
 }
 
 type ReflectionDecision struct {
@@ -92,25 +92,30 @@ type NativeIncidentBroker struct {
 	CodePath    CodePathConfig
 	ShellReader shellpath.Reader
 
-	Now                  func() time.Time
-	Repository           *broker.Broker
-	LedgerRoot           string
-	Deriver              OutcomeDeriver
-	Reflector            ReflectionWorker
-	ResponderBackend     string
-	ResponderModel       string
-	SessionRoot          string
-	SessionRetention     time.Duration
-	PhaseLog             io.Writer
-	ForceReflection      bool
-	FrozenMemory         bool
-	Programs             program.ProgramRegistry
+	Now              func() time.Time
+	Repository       *broker.Broker
+	LedgerRoot       string
+	Deriver          OutcomeDeriver
+	Reflector        ReflectionWorker
+	ResponderBackend string
+	ResponderModel   string
+	SessionRoot      string
+	SessionRetention time.Duration
+	PhaseLog         io.Writer
+	ForceReflection  bool
+	FrozenMemory     bool
+	Programs         program.ProgramRegistry
 
 	// Repairs accepts the responder's source repair: a change to deployment
 	// inputs is deployed and verified by the trusted Deployer first. A
 	// configuration that cannot deploy declares PlainPublication; nil refuses
 	// a deployment-input repair (held, ErrRepairerRequired names why).
 	Repairs SourceRepairer
+
+	// Cleaner asks the responder's session, after Recovered and before the source repair is accepted, to keep or
+	// remove the app edits it left uncaptured, up to CleanupTurns times (response.cleanup_turns).
+	Cleaner      LeftoverCleaner
+	CleanupTurns int
 }
 
 type ControllerRolloutExpectation struct {
@@ -373,6 +378,15 @@ func (n NativeIncidentBroker) processClosure(ctx context.Context, closure Incide
 				// outcome below is still committed.
 				uncaptured := false
 				if verified {
+					// The closing turn's cleanup: the same session keeps (captures as a patch) or removes what
+					// it left, before the partition is read; what is still left is recorded below.
+					if _, err := n.resolveLeftovers(ctx, closure, id); err != nil {
+						return err
+					}
+					partition, err = n.Repository.ProposalPartition(ctx, id, broker.ProposalPhase)
+					if err != nil {
+						return err
+					}
 					feedback, err := n.Repository.ScratchFeedback(ctx, id, broker.ProposalPhase)
 					if err != nil {
 						return err
@@ -744,6 +758,9 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 			return nil, err
 		}
 		if selected.Selection.MemoryValidation != "go" {
+			if closedShell := incidentClosureState(effect.Closure); hasResponderSession(closedShell) && !ClosingLearns(effect.Outcome.GetClassification(), closingChangesOf(closedShell)) {
+				return noLearningDecision(effect.Outcome.GetClassification(), false), nil
+			}
 			if n.Reflector == nil {
 				return nil, errors.New("shell learning requires a registered reflection worker")
 			}
@@ -770,7 +787,9 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 			}
 			capturedProposals = len(created) > 0
 		}
-		if effect.Attempt == 1 && !n.ForceReflection && !capturedProposals && coveredRepeatCandidate(effect.Outcome) {
+		closed := incidentClosureState(effect.Closure)
+		noLearning := hasResponderSession(closed) && !ClosingLearns(effect.Outcome.GetClassification(), closingChangesOf(closed))
+		if !noLearning && effect.Attempt == 1 && !n.ForceReflection && !capturedProposals && coveredRepeatCandidate(effect.Outcome) {
 			decision := &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "accepted_programs_no_new_evidence"}
 			checkCtx := ctx
 			if n.SessionRoot != "" {
@@ -796,7 +815,6 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 		if effect.Outcome.GetReflectionEligibility() != nil {
 			proto.Merge(eligibility, effect.Outcome.GetReflectionEligibility())
 		}
-		work, unassigned := eligibility.GetCauses(), eligibility.GetUnassigned()
 		positive, negative := settledProgramCases(eligibility)
 		origins := settledCaptureOrigins(eligibility)
 		capture := ""
@@ -810,15 +828,6 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 				paths, err := memory.RecordCorpus(workspace.Worktree, capture, effect.IncidentID, positive, origins, outcomeCaseContext(effect.Outcome))
 				prepared = err == nil && len(paths) > 0
 			}
-			if !prepared {
-				for _, cause := range work {
-					for _, item := range cause.Items {
-						if item.Disposition == "covered" {
-							item.Disposition, item.Reason, item.Question = "question", "uncertain", "The exact repair is covered, but captured peer evidence could not be recorded. Review the case preparation failure."
-						}
-					}
-				}
-			}
 		}
 		if capture != "" && len(negative) > 0 {
 			if _, err := memory.RecordFixedNoMatchCorpus(workspace.Worktree, capture, effect.IncidentID, negative, origins); err != nil {
@@ -826,13 +835,22 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 			}
 			negativePrepared = true
 		}
-		if effect.Attempt == 1 && !n.ForceReflection && !hasResponderSession(incidentClosureState(effect.Closure)) && !stageOnlyClosure(incidentClosureState(effect.Closure)) && (prepared || negativePrepared || capturedProposals) && !causeWorkNeedsModel(work) && !reflectionItemsNeedModel(unassigned) {
-			return &contracts.ReflectionDecision{LearningDecision: "updated"}, nil
+		if !hasResponderSession(closed) {
+			// No agent ran, so there is no session to ask: what Go settled above is the whole record.
+			if prepared || negativePrepared || capturedProposals {
+				return &contracts.ReflectionDecision{LearningDecision: "updated"}, nil
+			}
+			return &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "no_session"}, nil
+		}
+		if noLearning {
+			// The closing turn only cleans up (it ran with the closure): an escalated, failed or unconfirmed close
+			// teaches nothing, and neither does a success that holds only restores. Files Go wrote stay published.
+			return noLearningDecision(effect.Outcome.GetClassification(), prepared || negativePrepared || capturedProposals), nil
 		}
 		if n.Reflector == nil {
-			return nil, errors.New("unsettled learning requires a registered reflection worker")
+			return nil, errors.New("closing turn requires a registered reflection worker")
 		}
-		decision, err := n.Reflector.Reflect(ctx, incidentClosureState(effect.Closure), workspace, effect.Outcome, effect.ProposalCommit, effect.OutcomeCommit, ReflectionFeedback{Attempt: effect.Attempt, Diagnostics: effect.Diagnostics, DispatchAt: controllerTime(effect.DispatchAt), CauseWork: work, UnassignedWork: unassigned})
+		decision, err := n.Reflector.Reflect(ctx, closed, workspace, effect.Outcome, effect.ProposalCommit, effect.OutcomeCommit, ReflectionFeedback{Attempt: effect.Attempt, Diagnostics: effect.Diagnostics, DispatchAt: controllerTime(effect.DispatchAt), Changes: ClosingChangeLines(closingChangesOf(closed))})
 		if err != nil {
 			return nil, fmt.Errorf("reflection worker: %w", err)
 		}

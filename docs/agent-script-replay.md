@@ -14,7 +14,6 @@ production validation contract and is unchanged.
 | `fastloop.replay`, checkpoint export, `file_edits` | Retain tasks, results, captures, edits | Keep bounded content-addressed storage. Convert each exported dispatch into `script.json`. Archived conversion uses temporary storage. |
 | `agent_script.converter` and CLI | Convert recordings into executable actions | Keep one converter and one stand-in; commands execute again, file edits become write/delete actions. |
 | `analysis.reflection_replay` | Execute a fresh model reflection from a saved workspace | Delete alternate execution tool; preserve ledger/delta readers and their tests as `reflection_artifacts`. Use stage scripts for offline execution. |
-| `analysis.reflection_prompt_replay` | Read prompts and estimate size/cost changes | Keep: no agent execution or model call. |
 | `analysis.incident_cost`, `stream_curve`, `run_validity` | Read rollouts, receipts and outcomes | Keep evidence readers unchanged. |
 | `run-experiment`, `test-sdo` skills | Select validation/replay workflow | Point offline worker replay to scripts; retain live experiment and detector replay instructions. |
 | `analyze-experiment` skill and benchmark-results reference | Explain artifacts and broker evidence | Describe scripts, preserve prompt/tool/outcome analysis and independent verdict checks. |

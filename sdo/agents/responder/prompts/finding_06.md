@@ -1,1 +1,0 @@
-  metadata (object shapes, verbatim JSON):

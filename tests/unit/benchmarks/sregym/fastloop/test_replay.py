@@ -503,8 +503,8 @@ def test_scripted_reflection_replay_runs_worker_again(
     from google.protobuf.any_pb2 import Any as ProtoAny
 
     from sdo.agents.responder.reflection_worker import run_reflection_task
-    from tests.unit.sdo.agents.responder.test_reflection_outcomes import _outcome
-    from tests.unit.sdo.agents.responder.test_reflection_worker import _closure
+    from tests.unit.sdo.agents.responder.reflection_fixtures import _outcome
+    from tests.unit.sdo.agents.responder.reflection_fixtures import _closure
 
     source = tmp_path / "source"
     program = source / ".sdo/playbooks/service-targetport-mismatch"
@@ -513,9 +513,7 @@ def test_scripted_reflection_replay_runs_worker_again(
     closure = _closure()
     incident_id = closure.request.incident_id
     commit = prepare_reflection_memory(source, incident_id)
-    request = ReflectionRequest(
-        closure=closure, outcome=_outcome(incident_id), outcome_commit=commit, session_mode="fresh"
-    )
+    request = ReflectionRequest(closure=closure, outcome=_outcome(incident_id), outcome_commit=commit)
     request.memory_snapshot.accepted_commit = commit
     packed = ProtoAny()
     packed.Pack(request)

@@ -11,7 +11,6 @@ import pytest
 
 from scripts.check_skill_sizes import violations
 from sdo.agents.context_output import budget_for
-from sdo.agents.responder.reflection_validation import validation_server
 from sdo.agents.responder.tools_cli import command_surface
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -126,12 +125,7 @@ def test_every_template_placeholder_has_a_cap_entry():
 
 
 @pytest.mark.asyncio
-async def test_every_registered_tool_has_output_and_description_caps(tmp_path):
-    tools = await validation_server(tmp_path).list_tools()
-    assert tools
-    for tool in tools:
-        assert len(tool.description or "") <= budget_for("tool_description." + tool.name)
-        assert budget_for("tool_reply." + tool.name) > 0
+async def test_every_registered_tool_has_an_output_cap(tmp_path):
     for command in command_surface()["commands"]:
         assert budget_for("tool_stdout." + command) > 0
 
@@ -162,7 +156,7 @@ def test_every_registered_capability_has_a_production_render_fixture():
             "sdo-reflector",
             "outcome-reflection-direct-v1",
             ("python3", "-m", "sdo.agents.responder.reflection_worker"),
-        ): cases["reflection_resume_5"],
+        ): cases["closing_learning"],
         ("sdo-responder", "incident-response", ("python3", "-m", "sdo.agents.responder.worker")): cases[
             "responder_cold_two"
         ],

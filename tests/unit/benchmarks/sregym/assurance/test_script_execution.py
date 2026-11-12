@@ -378,7 +378,7 @@ def test_resumed_reflection_accounts_its_tokens_and_edits_final_files(
         idempotency_key=f"reflection:{request.incident_id}:{commit}",
     )
 
-    assert turn.learning_decision == "updated"
+    assert turn.note
     responder, reflection = _turn_records(scripted["store"])
     assert reflection["session_id"] == responder["session_id"]
     assert reflection["resumed"] is True
@@ -465,7 +465,7 @@ def test_scripted_reflection_fixes_local_diagnostics_in_the_same_checkout(
         prompt="Reflect on the verified closure",
         idempotency_key=f"reflection:{request.incident_id}:{'a' * 40}",
     )
-    assert turn.learning_decision == "updated"
+    assert turn.note
     reflection = _turn_records(scripted["store"])[-1]
     checks = [
         command for command in reflection["commands"] if command["command"].startswith("sdo-operator memory check")

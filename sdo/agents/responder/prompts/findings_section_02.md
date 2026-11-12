@@ -1,1 +1,0 @@
-Application ${application} in namespace ${namespace}; source commit ${source_commit}, deployed commit ${deployed_commit}.

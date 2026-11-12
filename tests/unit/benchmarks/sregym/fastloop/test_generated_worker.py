@@ -21,8 +21,8 @@ from sdo.contracts import (
 from sdo.contracts.proto import parse_json, to_canonical_json
 from tests.proto_messages import evolve, from_dict
 from tests.unit.benchmarks.sregym.fastloop import script_harness as scripts
-from tests.unit.sdo.agents.responder.test_reflection_outcomes import _outcome
-from tests.unit.sdo.agents.responder.test_reflection_worker import _closure
+from tests.unit.sdo.agents.responder.reflection_fixtures import _outcome
+from tests.unit.sdo.agents.responder.reflection_fixtures import _closure
 
 FIXTURES = Path(__file__).resolve().parents[4] / "fixtures" / "sdo" / "contracts"
 ROOT = Path(__file__).resolve().parents[5]
@@ -213,9 +213,7 @@ def test_scripted_entry_points_complete_on_seed_copy_with_fake_kubernetes_api(
         return ""
 
     monkeypatch.setattr(scripts, "_command", operator_command)
-    reflection = ReflectionRequest(
-        closure=closure, outcome=outcome, outcome_commit="outcome-commit", session_mode="fresh"
-    )
+    reflection = ReflectionRequest(closure=closure, outcome=outcome, outcome_commit="outcome-commit")
     reflection.memory_snapshot.accepted_commit = "outcome-commit"
     packed.Pack(reflection)
     task = AgentTask(
@@ -232,6 +230,7 @@ def test_scripted_entry_points_complete_on_seed_copy_with_fake_kubernetes_api(
     decision = ReflectionResult()
     assert reflected.response.Unpack(decision)
     assert reflected.status == "completed"
+    # The scripted turn replied with one line; the decision is derived from what it wrote to the checkout.
     assert decision.learning_decision == "updated"
     assert list(decision.proposed_artifact_ids) == [scripts.PROGRAM_ID]
     assert not decision.HasField("artifact_proposal")

@@ -642,25 +642,6 @@ var gateRows = []gateRow{
 	gateReflection("reflection without a decision and an empty diff derives no_change", gateClean(), nil, func(*testing.T, string) {}),
 	gateReflection("reflection whose explicit decision contradicts the diff", gateClean(), gateNoChange, gatePlaybookEdit, RuleReflectionDecision),
 	gateReflection("reflection updates a playbook", gateClean(), gateUpdated("base"), gatePlaybookEdit),
-	gateWithRepairVerifier("README-only learning without a verified repaired cause", false, gateReflection("unverified closure updates a playbook", gateClean(), gateUpdated("base"), gatePlaybookEdit, RuleReflectionRepairRequired)),
-	gateWithRepairVerifier("no_change without a verified repaired cause", false, gateReflection("unverified closure declines", gateClean(), gateNoChange, func(*testing.T, string) {})),
-	gateWithRepairVerifier("README learning with a verified repaired cause", true, gateReflection("verified closure updates a playbook", gateClean(), gateUpdated("base"), gatePlaybookEdit)),
-	// An escalated closure grants one update, a Diagnose-only playbook, and asks
-	// for it unless an accepted playbook already escalated the fault.
-	gateWithRepairVerifier("escalated closure declines", false, gateReflection("escalated closure declines", gateEscalatedOutcome(false), gateNoChange, func(*testing.T, string) {}, RuleReflectionEscalationDiagnose)),
-	gateWithRepairVerifier("stage-escalated closure declines", false, gateReflection("stage-escalated closure declines", gateEscalatedOutcome(true), gateNoChange, func(*testing.T, string) {})),
-	gateDiagnoseOnlyPlaybook("escalated closure saves a Diagnose-only playbook", false),
-	gateDiagnoseOnlyPlaybook("escalated closure saves a repair", true, RuleReflectionRepairRequired),
-	gateReflection("applied playbook failed and was not updated", gateStaleOutcome(), gateNoChange, func(*testing.T, string) {}, RuleReflectionStalePlaybook),
-	// R6': without a verified repaired cause no update may publish, so the
-	// check must not also demand that the applied playbook change; the two
-	// rules together would refuse every result.
-	gateWithRepairVerifier("unsettled playbook in a closure without a verified repair", false, gateReflection("unverified closure keeps its playbook", gateStaleOutcome(), gateNoChange, func(*testing.T, string) {})),
-	gateWithRepairVerifier("failed playbook in a closure with a verified repair", true, gateReflection("verified closure keeps a failed playbook", gateStaleOutcome(), gateNoChange, func(*testing.T, string) {}, RuleReflectionStalePlaybook)),
-	gateReflection("hand repair has no program", gateHandRepair(gateRepairOutcome()), gateNoChange, func(*testing.T, string) {}, RuleReflectionProgramRequired),
-	gateReflection("sdk gap that is free text", gateHandRepair(gateRepairOutcome()),
-		&contracts.ReflectionDecision{LearningDecision: "sdk_gap", NoChangeReason: "needs a primitive", SdkGaps: []*contracts.SdkGap{{FaultClass: "routing", Primitive: "do the repair by hand", Reason: "no primitive", ScratchScript: "inspect"}}},
-		func(*testing.T, string) {}, RuleReflectionSDKGapUnavailable, RuleReflectionProgramRequired),
 	gateDuplicateRepair("new playbook copies an existing program modulo names and prose", func(diagnose, mitigate string) (string, string) {
 		return diagnose, strings.ReplaceAll(strings.ReplaceAll(mitigate, "use a selected pod port", "restore the api Service port"), "replacementValue", "value")
 	}, RuleDuplicateRepair),
@@ -958,24 +939,7 @@ func gateCompileNotes(t *testing.T) []Diagnostic {
 	return notes
 }
 
-// gateUndetectedCause is a verified repair of Service demo/front whose
-// finding is on another object, so no detector binds the program's roles.
-func gateUndetectedCause(t *testing.T) []Diagnostic {
-	root := t.TempDir()
-	copyTree(t, gateProgramFixture, filepath.Join(root, ".sdo"))
-	front := &contracts.ObjectRef{Kind: "Service", Namespace: "demo", Name: "front"}
-	at := time.Unix(100, 0)
-	outcome := &contracts.OutcomeRecord{IncidentId: "first", Classification: "success",
-		ConfirmedRootCauses:      []*contracts.ConfirmedRootCause{{Resources: []*contracts.ObjectRef{front}}},
-		Findings:                 []*contracts.Finding{{DetectorId: "fixture", Status: "active", Fingerprint: "other", PrimaryResource: &contracts.ObjectRef{Kind: "Service", Namespace: "demo", Name: "other"}}},
-		RepairActions:            []*contracts.RepairActionReceipt{{ActionId: "fixture-front", Success: true, Resources: []*contracts.ObjectRef{front}, StartedAt: timestamppb.New(at), CompletedAt: timestamppb.New(at.Add(time.Second))}},
-		FinalHealthDetectorState: []*contracts.DetectorEvaluation{{DetectorId: "fixture", Status: "clear", EvaluatedAt: timestamppb.New(at.Add(2 * time.Second))}},
-	}
-	return ReflectionCoverageGaps(root, outcome, gateUpdated("service-targetport-mismatch"))
-}
-
 var gateNoteRows = []gateNoteRow{
-	{"verified cause has a program no detector binds", RuleReflectionDetectorRequired, gateUndetectedCause},
 	{"healthy replay input is missing", RuleReplayObservation, gateCompileNotes},
 }
 

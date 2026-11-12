@@ -179,26 +179,8 @@ func lifecycleChecks(ctx context.Context, r Request, paths []string, structurall
 				if err := wire.UnmarshalLenientMigrating([]byte(raw), outcome); err != nil {
 					return nil, err
 				}
-				repairVerified := r.RepairVerified == nil || r.RepairVerified(outcome)
-				escalation, diagnoseOnlyUpdate := EscalationReflectionDiagnostics(r.Root, outcome, r.Decision, paths)
-				ds = append(ds, escalation...)
-				if r.Decision.GetLearningDecision() == "updated" && !repairVerified && !diagnoseOnlyUpdate {
-					ds = append(ds, Diagnostic{Rule: RuleReflectionRepairRequired, Message: "this closure has no independently verified repaired cause, so updated learning (README-only edits included) is never published", Hint: "return no_change with a no-recorded-repair reason or a typed SDK gap, and revert your edits"})
-				}
-				if structurallyValid {
-					for _, d := range ReflectionRepairDiagnostics(r.Root, outcome, r.Decision, paths, r.Replay) {
-						// Without a verified repaired cause no update may publish, so the
-						// check cannot also demand that an applied playbook change: the
-						// pair would refuse every result. The outcome keeps its failure.
-						if d.Rule == RuleReflectionStalePlaybook && !repairVerified {
-							continue
-						}
-						ds = append(ds, d)
-					}
-				}
-				if r.Replay != "off" {
-					r.noteGaps(ReflectionCoverageGaps(r.Root, outcome, r.Decision)...)
-				}
+				// SDO decides learning (the closing turn's gate, the corpus case, the match key and credit): the
+				// agent's playbook is checked for what it is, not for covering every recorded repair or cause.
 				if structurallyValid {
 					var originErr error
 					if r.Replay == "off" {
@@ -250,7 +232,7 @@ func ReflectionDiagnostics(d *contracts.ReflectionDecision, paths []string) []Di
 	if d == nil {
 		return fail("reflection requires an explicit learning decision")
 	}
-	if reason := d.GetDeclineReason(); reason != "" && reason != DeclineNoRecordedRepair {
+	if reason := d.GetDeclineReason(); reason != "" && reason != "no_recorded_repair" {
 		return fail("decline_reason must be empty or no_recorded_repair")
 	}
 	switch d.GetLearningDecision() {

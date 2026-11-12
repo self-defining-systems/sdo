@@ -5,7 +5,6 @@ package sdodev.contracts.v1alpha1;
 import "buf/validate/validate.proto";
 import "google/protobuf/any.proto";
 import "google/protobuf/timestamp.proto";
-import "sdodev/contracts/v1alpha1/program.proto";
 import "sdodev/contracts/v1alpha1/memory_diagnostic.proto";
 import "sdodev/contracts/v1alpha1/messages.proto";
 import "sdodev/contracts/v1alpha1/outcome.proto";
@@ -96,13 +95,10 @@ message ReflectionRequest {
   string proposal_commit = 4;
   string outcome_commit = 5;
   OperationalMemorySnapshot memory_snapshot = 6;
-  // Empty resumes. "resume" continues the responder session in closure.result and needs a valid ID;
-  // "fresh" is set only for a closure the automatic stage resolved without any agent (no session exists).
-  string session_mode = 7 [(buf.validate.field).string = {in: ["", "fresh", "resume"]}];
-  // Empty selects baseline. Other modes are generalize and generalize-spec.
-  string guidance = 8 [(buf.validate.field).string = {in: ["", "baseline", "generalize", "generalize-spec"]}];
+  // The closing turn always continues the responder session in closure.result (session_mode and guidance are gone).
+  reserved 7, 8, 10, 14, 15;
+  reserved "session_mode", "guidance", "prior_outcomes", "cause_work", "unassigned_work";
   OutcomeRecord outcome = 9;
-  repeated OutcomeRecord prior_outcomes = 10;
   // Go-owned retry feedback: the broker rejected the previous attempt's
   // proposal. validation_attempt is 1 for the first dispatch; later attempts
   // carry that rejection's diagnostics.
@@ -110,10 +106,14 @@ message ReflectionRequest {
   repeated MemoryDiagnostic previous_diagnostics = 12;
   reserved 13;
   reserved "depth";
-  repeated ReflectionCauseWork cause_work = 14;
-  repeated ReflectionWorkItem unassigned_work = 15;
   // Go-owned: each lossy step taken so the request fit the transport limit, in order.
   repeated string compaction = 16;
+  // Go-owned: the incident's recorded changes for the closing turn, ranked and bounded (about 1.5 KB), one line each.
+  repeated string changes = 19;
+  // Go-owned: a cleanup-only turn (1-based) asks the session to keep or remove the app files it left uncaptured in the
+  // checkout; it carries no outcome, memory snapshot or changes. Zero is the learning turn.
+  uint32 cleanup_turn = 20;
+  repeated string leftovers = 21;
 }
 
 message ReflectionResult {

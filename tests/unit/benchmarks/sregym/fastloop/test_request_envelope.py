@@ -19,8 +19,8 @@ from sdo.contracts import (
     to_canonical_json,
     validate,
 )
-from tests.unit.sdo.agents.responder.test_reflection_outcomes import _outcome
-from tests.unit.sdo.agents.responder.test_reflection_worker import _closure
+from tests.unit.sdo.agents.responder.reflection_fixtures import _outcome
+from tests.unit.sdo.agents.responder.reflection_fixtures import _closure
 
 ROOT = Path(__file__).resolve().parents[5]
 NATIVE_REQUEST_BYTES = 512 << 10
@@ -28,9 +28,7 @@ NATIVE_REQUEST_BYTES = 512 << 10
 
 def reflection_task(checkout: Path, base: str = "synthetic-outcome") -> AgentTask:
     closure = _closure()
-    request = ReflectionRequest(
-        closure=closure, outcome=_outcome(closure.request.incident_id), outcome_commit=base, session_mode="fresh"
-    )
+    request = ReflectionRequest(closure=closure, outcome=_outcome(closure.request.incident_id), outcome_commit=base)
     # Logical memory, rather than invalid envelope padding, makes a real large request.
     request.memory_snapshot.accepted_commit = base
     request.memory_snapshot.architecture_markdown = "Synthetic architecture.\n" * 12000
@@ -195,19 +193,14 @@ def test_unrecordable_reflection_edits_still_publish(
             published.append(payload)
 
     class Reflector:
-        def resume(self, **_: object) -> ReflectionTurn:
+        def learn(self, **_: object) -> ReflectionTurn:
             if cause == "oversized":
                 # A sparse file reports a size beyond every benchmark evidence limit.
                 with (checkout / "oversized.bin").open("wb") as stream:
                     stream.truncate(64 << 20)
             elif cause == "symlink":
                 (checkout / "linked").symlink_to(tmp_path, target_is_directory=True)
-            return ReflectionTurn(
-                summary="Synthetic oversized edit set",
-                learning_decision="no_change",
-                no_change_reason="No independently verified new learning",
-                playbook_ids=[],
-            )
+            return ReflectionTurn(note="Synthetic oversized edit set")
 
     monkeypatch.setattr(recording_worker, "KubernetesResultPublisher", lambda **_: Publisher())
     monkeypatch.setattr(recording_worker, "SessionReflector", lambda *_, **__: Reflector())

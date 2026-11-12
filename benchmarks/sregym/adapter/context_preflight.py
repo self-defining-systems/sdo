@@ -17,10 +17,10 @@ from sdo.agents.responder import (
     command_surface,
     print_tool_response,
     render_incident_prompt,
-    render_reflection_prompt,
 )
+from sdo.agents.responder.reflection import closing_prompt
 from sdo.agents.session_context import measure_session
-from sdo.contracts import IncidentClosure, IncidentRequest, OperationalMemorySnapshot, OutcomeRecord
+from sdo.contracts import IncidentRequest, OperationalMemorySnapshot
 
 
 class ContextRollout(Protocol):
@@ -76,19 +76,13 @@ def check_context_shapes(
             id=f"repair-{index}",
             markdown="---\ndescription: Synthetic repair\n---\n" + "body " * 1000,
         )
-    outcome = OutcomeRecord(
-        schema_version=1, incident_id=request.incident_id, classification="success", findings=request.findings
-    )
     before = os.environ.get("SDO_SESSION_SCRATCH")
     os.environ["SDO_SESSION_SCRATCH"] = str(directory)
     try:
         responder = render_incident_prompt(request)
-        reflection = render_reflection_prompt(
-            outcome=outcome,
-            history=[],
-            outcome_commit="b" * 40,
-            closure=IncidentClosure(request=request),
-            guidance="baseline",
+        reflection = closing_prompt(
+            incident_id=request.incident_id,
+            changes=[f"{index}. api-exec Pod/synthetic-{index}" for index in range(1, 40)],
         )
         rollouts = {}
         for role, prompt in (("responder", responder), ("reflection", reflection)):
