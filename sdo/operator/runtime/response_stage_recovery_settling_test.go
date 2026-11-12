@@ -102,6 +102,11 @@ type settlingCase struct {
 	// storeRestart is how long, after the write, a health detector's store
 	// read finds the restarted store's container not running; zero never.
 	storeRestart time.Duration
+	// churnFrom and churnUntil bound a critical health finding on
+	// Deployment/web, a component no stage write touches, measured from the
+	// start; zero churnUntil adds none. The incident's accepted map then
+	// names web and api as separate components.
+	churnFrom, churnUntil time.Duration
 }
 
 // settlingTraffic is the health workload's samples: one per second for scenario
@@ -247,6 +252,9 @@ func settlingStageOn(t *testing.T, tc settlingCase, world *settlingWorld) (*Dete
 	if tc.storeRestart > 0 {
 		detectors = append(detectors, restartingStoreDetector{world: world, until: clock.Now().Add(tc.storeRestart)})
 	}
+	if tc.churnUntil > 0 {
+		detectors = append(detectors, churnDetector{clock: clock, from: clock.Now().Add(tc.churnFrom), until: clock.Now().Add(tc.churnUntil)})
+	}
 	registry, err := program.NewRegistry([]program.Diagnoser{restart}, []program.Mitigator{restart})
 	if err != nil {
 		t.Fatal(err)
@@ -270,6 +278,9 @@ func settlingStageOn(t *testing.T, tc settlingCase, world *settlingWorld) (*Dete
 	loop.Now = clock.Now
 	loop.ReadView = func(v sdk.DetectionContext) program.ReadView {
 		return &sdktest.ReplayReadView{Snapshot: v.(sdktest.Snapshot)}
+	}
+	if tc.churnUntil > 0 {
+		loop.GitRead = fakeArchitecture(churnArch)
 	}
 	loop.saveToolState = func(context.Context, []byte) error { return nil }
 	if world.saved != nil {
@@ -355,20 +366,6 @@ type trafficStallDetector struct{ settlingDetector }
 
 func (trafficStallDetector) TrafficWorkloads() []string { return []string{"health"} }
 
-// A traffic consumer that declares no window still lags behind a repair by
-// its workload's window, so the wait gives its findings that window; a
-// detector that judges current state gets none.
-func TestSettlingHorizonOfTrafficConsumers(t *testing.T) {
-	view := sdktest.Snapshot{NamespaceName: "app", Traffic: map[string]traffic.Window{"health": {Workload: traffic.Workload{Name: "health", RatePerSecond: 3, Scenarios: []traffic.WorkloadScenario{{ID: "read", Weight: 1}}}}}}
-	stall := settlingDetector{id: "learned-stall", class: sdk.DetectorClassIncident}
-	if got := settlingHorizon(trafficStallDetector{stall}, view); got < traffic.DefaultMaxAge {
-		t.Fatalf("traffic consumer horizon = %s, want at least the workload window %s", got, traffic.DefaultMaxAge)
-	}
-	if got := settlingHorizon(stall, view); got != 0 {
-		t.Fatalf("current-state detector horizon = %s, want 0", got)
-	}
-}
-
 // A controller restart mid-wait resumes the write's settling window from when
 // its effect was first seen; it does not grant a fresh one.
 func TestRecoveryWaitWindowSurvivesControllerRestart(t *testing.T) {
@@ -418,52 +415,3 @@ func TestRecoveryWaitWindowSurvivesControllerRestart(t *testing.T) {
 	}
 }
 
-// Positive evidence of recovery is fresh samples: enough of them, taken after
-// the write took effect, within the scenario's SLO. Samples that predate the
-// write or stopped arriving prove nothing. A learned traffic detector without
-// its own confirmation contract is confirmed by the same samples, and its
-// window bounds the closure recheck.
-func TestTrafficRecoveryEvidenceNeedsFreshSamples(t *testing.T) {
-	now := time.Date(2100, 1, 1, 0, 1, 0, 0, time.UTC)
-	effect := now.Add(-10 * time.Second)
-	view := func(at ...time.Duration) sdktest.Snapshot {
-		var samples []traffic.Sample
-		for _, offset := range at {
-			samples = append(samples, traffic.Sample{At: now.Add(offset), Latency: 10 * time.Millisecond, Status: 200, Outcome: traffic.OutcomeOK, Requests: 1})
-		}
-		return sdktest.Snapshot{NamespaceName: "app", Traffic: map[string]traffic.Window{"health": {
-			Workload:   traffic.Workload{Name: "health", Purpose: traffic.PurposeHealthProbe, RatePerSecond: 1, Scenarios: []traffic.WorkloadScenario{{ID: "read", Weight: 1}}},
-			ObservedAt: now,
-			Scenarios:  []traffic.ScenarioObservations{{Scenario: traffic.Descriptor{ID: "read"}, Samples: samples, Qualified: true}},
-		}}}
-	}
-	learned := trafficLearnedStall{settlingDetector{id: "learned-stall", class: sdk.DetectorClassIncident}}
-	for _, tc := range []struct {
-		name      string
-		view      sdktest.Snapshot
-		evidence  bool
-		confirmed bool
-	}{
-		{"fresh samples after the write", view(-6*time.Second, -4*time.Second, -2*time.Second), true, true},
-		{"samples only before the write", view(-20*time.Second, -15*time.Second, -12*time.Second), false, true},
-		{"too few samples after the write", view(-20*time.Second, -15*time.Second, -2*time.Second), false, true},
-		{"samples stopped arriving", view(-50*time.Second, -45*time.Second, -40*time.Second), false, false},
-		{"no observations", sdktest.Snapshot{NamespaceName: "app"}, false, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if reason := recoveryTrafficEvidence(learned, tc.view, effect); (reason == "") != tc.evidence {
-				t.Fatalf("evidence = %q, want proven %v", reason, tc.evidence)
-			}
-			if got := detectorConfirmed(learned, tc.view); got != tc.confirmed {
-				t.Fatalf("confirmed = %v (%s), want %v", got, detectorConfirmationReason(learned, tc.view), tc.confirmed)
-			}
-		})
-	}
-	if got := detectorClearingHorizon(learned, view()); got < traffic.DefaultMaxAge {
-		t.Fatalf("closure bound of a learned traffic detector = %s, want at least its workload window %s", got, traffic.DefaultMaxAge)
-	}
-	current := settlingDetector{id: "current", class: sdk.DetectorClassIncident}
-	if reason := recoveryTrafficEvidence(current, view(), effect); reason != "" || !detectorConfirmed(current, view()) {
-		t.Fatalf("a detector that reads no traffic needs no traffic evidence: %q", reason)
-	}
-}

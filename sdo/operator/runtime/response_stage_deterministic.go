@@ -11,7 +11,6 @@ import (
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"slices"
 	"sort"
-	"strings"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -19,8 +18,6 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
-	"sdo.dev/operator/sdk/servicehealth"
-	"sdo.dev/operator/sdk/traffic"
 	"sdo.dev/operator/sdk/workloadhealth"
 )
 
@@ -101,9 +98,6 @@ type DeterministicResponseStage struct {
 
 type responseStageProgress struct {
 	RecoveryDeadline time.Time
-	// EffectSettled is when each application's effect was first seen complete,
-	// by application ID, so a restart cannot grant a write a fresh window.
-	EffectSettled      map[string]time.Time
 	Report             *contracts.StageReport
 	Coverage           *contracts.PlaybookCoverage
 	InitialProgramRuns []ProgramRun
@@ -170,7 +164,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	save := func(complete bool) error {
 		retainAdmissionStageFindings(state, report)
 		report.RemainingFindingFingerprints = findingFingerprints(state.Findings)
-		loop.stageProgress[stage.Name()] = responseStageProgress{Report: report, Coverage: cloneCoverage(state.Coverage), InitialProgramRuns: append([]ProgramRun(nil), state.Request.InitialProgramRuns...), Complete: complete, RecoveryDeadline: progress.RecoveryDeadline, EffectSettled: progress.EffectSettled}
+		loop.stageProgress[stage.Name()] = responseStageProgress{Report: report, Coverage: cloneCoverage(state.Coverage), InitialProgramRuns: append([]ProgramRun(nil), state.Request.InitialProgramRuns...), Complete: complete, RecoveryDeadline: progress.RecoveryDeadline}
 		return loop.persistToolState(ctx)
 	}
 	// Always reobserve after recovery. A recorded attempt is never replayed,
@@ -563,7 +557,6 @@ func recordedPlanContract(application RecordedPlanApplication) (*contracts.PlanA
 // This type owns that storage edge so all checkpoints use ProtoJSON.
 type encodedResponseStageProgress struct {
 	RecoveryDeadline   time.Time
-	EffectSettled      map[string]time.Time `json:",omitempty"`
 	Report             json.RawMessage
 	Coverage           json.RawMessage
 	InitialProgramRuns []ProgramRun
@@ -571,7 +564,7 @@ type encodedResponseStageProgress struct {
 }
 
 func (progress responseStageProgress) MarshalJSON() ([]byte, error) {
-	encoded := encodedResponseStageProgress{RecoveryDeadline: progress.RecoveryDeadline, EffectSettled: progress.EffectSettled, InitialProgramRuns: progress.InitialProgramRuns, Complete: progress.Complete}
+	encoded := encodedResponseStageProgress{RecoveryDeadline: progress.RecoveryDeadline, InitialProgramRuns: progress.InitialProgramRuns, Complete: progress.Complete}
 	if progress.Report != nil {
 		raw, err := protojson.Marshal(progress.Report)
 		if err != nil {
@@ -593,7 +586,7 @@ func (progress *responseStageProgress) UnmarshalJSON(raw []byte) error {
 	if err := json.Unmarshal(raw, &encoded); err != nil {
 		return err
 	}
-	*progress = responseStageProgress{RecoveryDeadline: encoded.RecoveryDeadline, EffectSettled: encoded.EffectSettled, Complete: encoded.Complete, InitialProgramRuns: encoded.InitialProgramRuns}
+	*progress = responseStageProgress{RecoveryDeadline: encoded.RecoveryDeadline, Complete: encoded.Complete, InitialProgramRuns: encoded.InitialProgramRuns}
 	if len(encoded.Report) > 0 && string(encoded.Report) != "null" {
 		progress.Report = &contracts.StageReport{}
 		if err := protojson.Unmarshal(encoded.Report, progress.Report); err != nil {
@@ -908,18 +901,13 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 		interval = 250 * time.Millisecond
 	}
 	effects := recoveryEffects{}
-	// When each application's effect was first seen complete, so windowed
-	// detectors get their own window from that point and no longer. It is
-	// checkpointed: a restart resumes the window, it does not grant a new one.
-	if progress.EffectSettled == nil {
-		progress.EffectSettled = map[string]time.Time{}
-	}
-	effectSettled := progress.EffectSettled
+	// When this wait first saw each open finding; a finding on a component no
+	// stage write touched hands off once it outlasts its clearing horizon.
+	firstOpen := map[string]time.Time{}
 	for {
 		pending := false
 		applied := false
 		var settling []*contracts.StageMitigation
-		covered := map[string]bool{}
 		for _, attempt := range report.Mitigations {
 			if reason := attempt.GetApplyReceipt().GetRolloutPending().GetReasonCode(); reason == "rollout_stalled" || reason == "admission_blocked" {
 				exit = contracts.RecoveryWait_EXIT_REASON_BLOCKER
@@ -927,9 +915,6 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			}
 			if attempt.GetApplyReceipt().GetApplied() && !attempt.GetApplyReceipt().GetRolledBack() {
 				applied = true
-				for _, fp := range append(append([]string(nil), attempt.ClearedFindingFingerprints...), attempt.RemainingFindingFingerprints...) {
-					covered[fp] = true
-				}
 			}
 			switch attempt.Result {
 			case "rollout_pending_at_handoff":
@@ -946,9 +931,6 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 					pending = true
 					continue
 				}
-				if _, settled := effectSettled[attempt.GetApplyReceipt().GetApplicationId()]; !settled {
-					effectSettled[attempt.GetApplyReceipt().GetApplicationId()] = now()
-				}
 				settling = append(settling, attempt)
 			default:
 				// Real failure or a verified dependency needs another actor.
@@ -957,7 +939,7 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			}
 		}
 		if !applied && len(state.Findings) > 0 {
-			exit = contracts.RecoveryWait_EXIT_REASON_UNCOVERED
+			exit = contracts.RecoveryWait_EXIT_REASON_NOTHING_APPLIED
 			return nil
 		}
 		if !applied && !pending && len(state.Findings) == 0 {
@@ -987,73 +969,88 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 		}
 		state.Findings = effects.observe(view, state.Findings)
 		state.refreshUnexplained()
-		health := map[string]sdk.Detector{}
-		detectors := map[string]sdk.Detector{}
-		for _, detector := range loop.Detectors {
-			detectors[detector.Spec().ID] = detector
-			if detector.Spec().Class == sdk.DetectorClassHealth {
-				health[detector.Spec().ID] = detector
-			}
-		}
-		if !pending && len(state.Findings) == 0 {
-			clearance := recoveryClearance(view, detectors, seen, report.Mitigations, effectSettled, now())
-			if clearance.proven() {
-				exit = contracts.RecoveryWait_EXIT_REASON_CLEARED
-				promoteSettledAttempts(settling)
-				return nil
-			}
-			held, heldReason = clearance.held, clearance.reason
-			if !clearance.keepWaiting {
-				branch = "clearance unproven"
-				return nil
-			}
-		}
-		for _, attempt := range settling {
-			if len(state.Findings) == 0 {
-				break // recoveryClearance above decides while nothing is open.
-			}
-			if !remainingFindingsSettle(view, detectors, state.Findings, attempt, now().Sub(effectSettled[attempt.GetApplyReceipt().GetApplicationId()])) {
-				branch = "findings of " + attempt.GetPlaybookId() + " do not settle"
-				return nil
-			}
-		}
-		for _, finding := range state.Findings {
-			if covered[FindingFingerprint(finding)] {
-				continue
-			}
-			_, settling := effects[FindingFingerprint(finding)]
-			if health[finding.DetectorID] != nil {
-				for _, reservation := range loop.pendingWrites {
-					if reservation.Superseded {
-						continue
-					}
-					refs := reservation.Refs
-					if reservation.WriteRefs != nil {
-						refs = *reservation.WriteRefs
-					}
-					for _, ref := range refs {
-						settling = settling || stageFindingDependsOnWrite(view, health[finding.DetectorID], finding, ref)
-					}
-				}
-			}
-			if health[finding.DetectorID] != nil && !settling {
-				for _, attempt := range report.Mitigations {
-					if attempt.GetApplyReceipt().GetApplied() && !attempt.GetApplyReceipt().GetRolledBack() {
-						for _, ref := range attempt.TouchedObjects {
-							settling = settling || stageFindingDependsOnWrite(view, health[finding.DetectorID], finding, objectRefState(ref))
+		if !pending {
+			check := loop.stageRecoveryCheck(observe, view, state, seen)
+			horizonOf := func(id string) (horizon, window time.Duration) {
+				for _, detector := range loop.Detectors {
+					if detector.Spec().ID == id {
+						horizon = detectorClearingHorizon(detector, view) + 2*detector.Spec().Interval
+						if detectorWindow(detector, view) > 0 {
+							window = horizon
 						}
 					}
 				}
+				return max(horizon, 2*interval), window
 			}
-			if health[finding.DetectorID] != nil && !settling {
-				for _, attempt := range report.Mitigations {
-					settling = settling || nonObjectEffectExplains(attempt, seen, finding)
+			// A program that still diagnoses its fault after its write is not
+			// credited with recovery, whatever the members show; it gets the
+			// longest rolling window among the incident's detectors, since its
+			// own diagnosis may read the same lagging evidence.
+			matching := ""
+			for _, attempt := range report.Mitigations {
+				if receipt := attempt.GetApplyReceipt(); receipt.GetApplied() && !receipt.GetRolledBack() &&
+					attempt.GetPostApplyDiagnose().GetVerdict().GetResult() == contracts.Verdict_RESULT_MATCH {
+					matching = "program " + attempt.GetPlaybookId() + " still diagnoses the fault after its write"
 				}
 			}
-			if !settling {
-				branch = "finding " + FindingFingerprint(finding) + " depends on no write"
-				exit = contracts.RecoveryWait_EXIT_REASON_UNCOVERED
+			if len(state.Findings) == 0 {
+				switch decideStageRecovery(check, matching, report) {
+				case stageCleared:
+					exit = contracts.RecoveryWait_EXIT_REASON_CLEARED
+					promoteSettledAttempts(settling)
+					return nil
+				case stageHandOff:
+					held, heldReason = sortedFindings(seen), check.reason
+					branch = "recovered below operation strength"
+					return nil
+				default:
+					held, heldReason = sortedFindings(seen), check.reason
+					if matching != "" {
+						heldReason = matching
+					}
+				}
+			}
+			var settled time.Duration
+			if since := check.record.GetSince(); check.record.GetWritesSettled() && since != nil {
+				settled = now().Sub(since.AsTime())
+			} else {
+				settled = -1
+			}
+			for _, finding := range state.Findings {
+				fp := FindingFingerprint(finding)
+				if _, ok := firstOpen[fp]; !ok {
+					firstOpen[fp] = now()
+				}
+				horizon, _ := horizonOf(finding.DetectorID)
+				if !check.touched(finding) {
+					// Another cause needs another actor, but churn that clears on
+					// its own (a drained node, a scale-up) gets its horizon first.
+					if now().Sub(firstOpen[fp]) >= horizon {
+						branch = "finding " + fp + " on a component no stage write touched persisted past its horizon"
+						exit = contracts.RecoveryWait_EXIT_REASON_UNCOVERED
+						return nil
+					}
+					continue
+				}
+				if settled >= horizon {
+					branch = "finding " + fp + " persisted past its horizon after the stage's writes settled"
+					return nil
+				}
+			}
+			if check.verdict == recoveryPending && len(state.Findings) == 0 && settled >= check.horizon+2*interval {
+				branch = "not recovered within its members' horizon: " + check.reason
 				return nil
+			}
+			if matching != "" && check.verdict != recoveryPending && len(state.Findings) == 0 {
+				var window time.Duration
+				for _, finding := range seen {
+					_, w := horizonOf(finding.DetectorID)
+					window = max(window, w)
+				}
+				if settled >= window {
+					branch = matching
+					return nil
+				}
 			}
 		}
 		left := progress.RecoveryDeadline.Sub(now())
@@ -1122,24 +1119,6 @@ func nonObjectEffectConfirmed(attempt *contracts.StageMitigation) bool {
 	return nonObjectEffectsSucceeded(actions, reports)
 }
 
-// nonObjectEffectExplains reports a confirmed non-object attempt that targeted
-// this finding, or another finding about the same resource (the judge's
-// health finding on the journey its incident finding reported).
-func nonObjectEffectExplains(attempt *contracts.StageMitigation, seen map[string]sdk.Finding, finding sdk.Finding) bool {
-	if !nonObjectEffectConfirmed(attempt) {
-		return false
-	}
-	for _, fp := range append(append([]string(nil), attempt.ClearedFindingFingerprints...), attempt.RemainingFindingFingerprints...) {
-		if fp == FindingFingerprint(finding) {
-			return true
-		}
-		if target, ok := seen[fp]; ok && sameResource(target.PrimaryResource, finding.PrimaryResource) {
-			return true
-		}
-	}
-	return false
-}
-
 // writeTakingEffect reports an applied, unreverted, completely executed write
 // that settlement has not refuted: its rollout may still be in progress, or the
 // only objections are health or a diagnosis that may read the same windowed
@@ -1167,67 +1146,31 @@ func writeTakingEffect(attempt *contracts.StageMitigation) bool {
 	return false
 }
 
-// remainingFindingsSettle reports whether the recovery wait can keep observing
-// an attempt whose write has taken effect: every finding still open for it
-// depends on an object it wrote (or the attempt targeted it with a confirmed
-// non-object effect), and is either a health finding of a verified
-// write, or comes from a detector that judges a rolling window which, counted
-// from when the write took effect (since), has not yet rolled over. The
-// window is what separates a detector catching up from a fault that persists;
-// an incident finding without one still goes to investigation at once.
-func remainingFindingsSettle(view sdk.DetectionContext, detectors map[string]sdk.Detector, findings []sdk.Finding, attempt *contracts.StageMitigation, since time.Duration) bool {
-	remaining := map[string]bool{}
-	for _, fp := range attempt.RemainingFindingFingerprints {
-		remaining[fp] = true
-	}
-	open := map[string]sdk.Finding{}
-	for _, finding := range findings {
-		open[FindingFingerprint(finding)] = finding
-	}
-	verified := writeVerifiedForSettling(attempt)
-	var horizon time.Duration
-	windowed := false
-	for _, finding := range findings {
-		detector := detectors[finding.DetectorID]
-		depends := detector != nil && nonObjectEffectExplains(attempt, open, finding)
-		for _, ref := range attempt.TouchedObjects {
-			depends = depends || (detector != nil && stageFindingDependsOnWrite(view, detector, finding, objectRefState(ref)))
-		}
-		if !remaining[FindingFingerprint(finding)] {
-			// Other open findings that depend on the write lag behind it alike.
-			if depends {
-				horizon = max(horizon, settlingHorizon(detector, view))
-			}
-			continue
-		}
-		if !depends {
-			return false
-		}
-		window := settlingHorizon(detector, view)
-		horizon = max(horizon, window)
-		switch {
-		case window > 0 && (detector.Spec().Class == sdk.DetectorClassIncident || !verified):
-			windowed = true
-		case detector.Spec().Class == sdk.DetectorClassHealth && verified:
-		default:
-			return false
-		}
-	}
-	if verified && !windowed {
-		return true
-	}
-	return since < horizon
-}
+// stageDecision is what the stage's wait does once every finding is clear.
+type stageDecision int
 
-// settlingHorizon is how long after a repair takes effect the detector may
-// still report the fault from its rolling window, or zero when it judges
-// current state. A traffic consumer's window is its workloads' traffic window,
-// whether or not the detector declares one itself.
-func settlingHorizon(detector sdk.Detector, view sdk.DetectionContext) time.Duration {
-	if detectorWindow(detector, view) <= 0 {
-		return 0
+const (
+	stageWait stageDecision = iota
+	stageCleared
+	stageHandOff
+)
+
+// decideStageRecovery applies the recovered test to a stage whose findings
+// have all cleared. It clears (the responder is skipped) when every in-scope
+// component recovered at operation strength, or at reachability strength when
+// every stage write is proven by its own receipt to have restored accepted
+// source. A component nothing observes, or a reachability recovery after an
+// unproven write (a restart), goes to the responder. A program that still
+// diagnoses its fault, or members that have not passed yet, keep it waiting.
+func decideStageRecovery(check recoveryCheck, matching string, report *contracts.StageReport) stageDecision {
+	switch {
+	case matching != "" || check.verdict == recoveryPending:
+		return stageWait
+	case check.verdict == recoveryVerified,
+		!check.unobservable && stageWritesRestoredSource(report):
+		return stageCleared
 	}
-	return detectorClearingHorizon(detector, view)
+	return stageHandOff
 }
 
 // promoteSettledAttempts records attempts whose remaining findings cleared on
@@ -1244,33 +1187,6 @@ func promoteSettledAttempts(attempts []*contracts.StageMitigation) {
 	}
 }
 
-// A Service can depend on a workload without every Service configuration fault
-// being a rollout symptom. Exact write objects retain their existing scope;
-// cross-object Service admission requires an SDK availability/traffic role or
-// a declared observation window, then the same typed relation join as coverage.
-func stageFindingDependsOnWrite(view sdk.DetectionContext, detector sdk.Detector, finding sdk.Finding, ref sdk.ObjectRef) bool {
-	if sameResource(ref, finding.PrimaryResource) {
-		return true
-	}
-	if finding.PrimaryResource.Kind == "Service" {
-		if finding.RuleID == servicehealth.RuleSelectorMatchesNoPods {
-			return false
-		}
-		_, trafficRole := detector.(traffic.Consumer)
-		_, windowedRole := detector.(sdk.WindowedDetector)
-		endpointRole := finding.RuleID == servicehealth.RuleNoReadyEndpoints || finding.RuleID == servicehealth.RuleServicePortUnreachable
-		if !trafficRole && !windowedRole && !endpointRole {
-			// Authored rule names carry no role. Accepted Service configuration
-			// with missing backends can still demonstrate availability dependence.
-			diff, err := view.DiffAgainstSource(finding.PrimaryResource)
-			if err != nil || diff.Changed || diff.SourceAbsent || view.ReadyEndpointCountForService(finding.PrimaryResource.Namespace, finding.PrimaryResource.Name) != 0 {
-				return false
-			}
-		}
-	}
-	return coverageFindingRelated(view, finding, program.Bindings{Objects: map[string]sdk.ObjectRef{"write": ref}})
-}
-
 func recoveryTimeLeft(stage *DeterministicResponseStage, deadline time.Time, legacy time.Duration) time.Duration {
 	if deadline.IsZero() {
 		return max(0, legacy)
@@ -1280,102 +1196,6 @@ func recoveryTimeLeft(stage *DeterministicResponseStage, deadline time.Time, leg
 		now = lifecycleio.Now
 	}
 	return max(0, deadline.Sub(now()))
-}
-
-// stageClearance is whether findings that all cleared prove the stage's writes
-// recovered the incident.
-type stageClearance struct {
-	// held are the cleared findings handed to the responder when not proven.
-	held   []sdk.Finding
-	reason string
-	// keepWaiting is set while proof may still arrive within the recovery bound.
-	keepWaiting bool
-}
-
-func (c stageClearance) proven() bool { return c.reason == "" }
-
-// recoveryClearance decides a recovery wait whose findings have all cleared.
-// Clearance is recovery only on positive evidence:
-//   - every traffic detector that reported the incident has fresh samples
-//     after the latest write took effect (recoveryTrafficEvidence); until they
-//     arrive the wait keeps observing, and the recovery bound hands off;
-//   - no applied program still diagnoses the fault. Its own diagnosis may read
-//     the same lagging window, so the wait keeps observing for the longest
-//     window among the incident's detectors from the write's effect; a program
-//     still matching after that (one blind to its own repair, or a fault the
-//     detectors stopped seeing) goes to the responder with its findings.
-//
-// A program whose diagnose did not run or failed has no verdict either way,
-// so it neither proves nor holds recovery.
-func recoveryClearance(view sdk.DetectionContext, detectors map[string]sdk.Detector, seen map[string]sdk.Finding, attempts []*contracts.StageMitigation, effectSettled map[string]time.Time, now time.Time) stageClearance {
-	var since time.Time
-	var matching []*contracts.StageMitigation
-	for _, attempt := range attempts {
-		receipt := attempt.GetApplyReceipt()
-		if !receipt.GetApplied() || receipt.GetRolledBack() {
-			continue
-		}
-		effect, ok := effectSettled[receipt.GetApplicationId()]
-		if !ok && receipt.GetCompletedAt() != nil {
-			effect = receipt.GetCompletedAt().AsTime()
-		}
-		if effect.After(since) {
-			since = effect
-		}
-		if attempt.GetPostApplyDiagnose().GetVerdict().GetResult() == contracts.Verdict_RESULT_MATCH {
-			matching = append(matching, attempt)
-		}
-	}
-	byDetector := map[string][]sdk.Finding{}
-	for _, finding := range sortedFindings(seen) {
-		byDetector[finding.DetectorID] = append(byDetector[finding.DetectorID], finding)
-	}
-	ids := make([]string, 0, len(byDetector))
-	for id := range byDetector {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	clearance := stageClearance{}
-	var reasons []string
-	heldFingerprints := map[string]bool{}
-	hold := func(findings ...sdk.Finding) {
-		for _, finding := range findings {
-			if fp := FindingFingerprint(finding); !heldFingerprints[fp] {
-				heldFingerprints[fp] = true
-				clearance.held = append(clearance.held, finding)
-			}
-		}
-	}
-	var horizon time.Duration
-	for _, id := range ids {
-		detector := detectors[id]
-		if detector == nil {
-			continue
-		}
-		horizon = max(horizon, settlingHorizon(detector, view))
-		if reason := recoveryTrafficEvidence(detector, view, since); reason != "" {
-			reasons = append(reasons, fmt.Sprintf("detector %s cleared without fresh traffic: %s", id, reason))
-			hold(byDetector[id]...)
-			clearance.keepWaiting = true
-		}
-	}
-	for _, attempt := range matching {
-		reasons = append(reasons, fmt.Sprintf("program %s still diagnoses the fault after its write", attempt.GetPlaybookId()))
-		for _, fp := range append(append([]string(nil), attempt.RemainingFindingFingerprints...), attempt.ClearedFindingFingerprints...) {
-			if finding, ok := seen[fp]; ok {
-				hold(finding)
-			}
-		}
-		if len(attempt.RemainingFindingFingerprints)+len(attempt.ClearedFindingFingerprints) == 0 {
-			hold(sortedFindings(seen)...)
-		}
-		if now.Sub(since) < horizon {
-			clearance.keepWaiting = true
-		}
-	}
-	sortFindings(clearance.held)
-	clearance.reason = strings.Join(reasons, "; ")
-	return clearance
 }
 
 func sortedFindings(byFingerprint map[string]sdk.Finding) []sdk.Finding {

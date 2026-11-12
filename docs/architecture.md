@@ -346,7 +346,12 @@ stability window, then commits `unconfirmed` (`OBSERVATION_INCOMPLETE`); an in-s
 strength commits `unconfirmed` with the reason. The closure and outcome carry `RecoveryVerification` (strength,
 members and scope per component, per-write settle times); like data at risk, a close below operation strength
 credits no repair to reflection (`validate.UnverifiedRecoveryOutcome`/`WeakRecovery`). An application with no
-health-probe workload is outside the test (`probed: false`) and rests on its detectors.
+health-probe workload is outside the test (`probed: false`) and rests on its detectors. The automatic stage's recovery wait asks the same test
+(`stageRecoveryCheck`, also used before the first responder claim): it exits `CLEARED` at operation strength, or at
+reachability strength when every stage write's receipt has `restored_source` (Go's source diff showed a departure the
+incident opened on before the write and none after; Secrets are never diffed); it hands a finding on a component no
+stage write touched to the responder only after that finding outlives its clearing horizon, and exits
+`NOTHING_APPLIED` when no learned playbook applied.
 Data effects never change the outcome: each applied effect is recorded as a `data effect:` line in the
 closure's `source_check_notes` (and in verify's `data_effects[]`), with, for `unknown` and `data-write`,
 whether a backup of this incident held the records it could change (a `RepairData` whose named

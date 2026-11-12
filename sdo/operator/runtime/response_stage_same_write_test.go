@@ -168,8 +168,9 @@ func sameWriteLoop(t *testing.T) (*sameWriteWorld, *ResponderLoop, *IncidentStat
 func TestDeterministicStageSkipsSameWriteInProgress(t *testing.T) {
 	ctx := context.Background()
 	world, loop, state := sameWriteLoop(t)
+	instant := newInstantRecoveryClock()
 	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, KeepLoop: true,
-		recoveryWait: func(context.Context, time.Duration) error { return nil }}
+		recoveryNow: instant.now, recoveryWait: instant.wait}
 	report, err := stage.Run(ctx, state)
 	if err != nil {
 		t.Fatal(err)
@@ -219,8 +220,9 @@ func TestDeterministicStageSkipsSameWriteAfterRestore(t *testing.T) {
 		saved = append(saved, append([]byte(nil), payload...))
 		return nil
 	}
+	instant := newInstantRecoveryClock()
 	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return first }, KeepLoop: true,
-		recoveryWait: func(context.Context, time.Duration) error { return nil }}
+		recoveryNow: instant.now, recoveryWait: instant.wait}
 	if _, err := stage.Run(ctx, state); err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +249,7 @@ func TestDeterministicStageSkipsSameWriteAfterRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	resumed := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return second }, KeepLoop: true,
-		recoveryWait: func(context.Context, time.Duration) error { return nil }}
+		recoveryNow: instant.now, recoveryWait: instant.wait}
 	report, err := resumed.Run(ctx, restored)
 	if err != nil {
 		t.Fatal(err)

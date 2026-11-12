@@ -46,9 +46,6 @@ func (c ComponentCoverage) Obligation() bool {
 // excluded by the inventory writer). When none is mapped, they are the entry
 // Services of the declared operations whose port is not a metrics port. A
 // Service nothing calls is not an entry by itself.
-//
-// TODO(recovered-test U1): a structured entry list in the human-owned goal
-// would take precedence over exposure; see the design doc.
 func (m Map) Coverage(inv Inventory, workloads []Workload) Coverage {
 	knownBroken := map[string]bool{}
 	for _, w := range workloads {

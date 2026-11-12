@@ -100,6 +100,9 @@ type PlanApplicationResult struct {
 	FinalVerificationBasis    string
 	SettlementRejectionReason contracts.SettlementRejectionReason
 	RecoveryWait              *contracts.RecoveryWait
+	// RestoredSource: every object the plan wrote departed from accepted
+	// source when the incident opened and matches it after the write.
+	RestoredSource bool
 	ActionsApplied            []program.Action
 	Patches                   []PlanPatch
 	Duration                  time.Duration

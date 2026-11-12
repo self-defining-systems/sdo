@@ -47,6 +47,25 @@ type recoveryCheck struct {
 	verdict recoveryVerdict
 	reason  string
 	horizon time.Duration
+	// unobservable is set when an in-scope component has no member at all.
+	unobservable bool
+	// components maps each held finding's fingerprint to its component.
+	components map[string]string
+	// written holds the components and objects an SDO write touched.
+	written map[string]bool
+}
+
+// touched reports whether an SDO write touched the finding's component or
+// its primary resource.
+func (c recoveryCheck) touched(finding sdk.Finding) bool {
+	if name := c.components[FindingFingerprint(finding)]; name != "" && c.written[name] {
+		return true
+	}
+	return c.written[objectKeyString(finding.PrimaryResource)]
+}
+
+func objectKeyString(ref sdk.ObjectRef) string {
+	return "object:" + ref.Kind + "/" + ref.Namespace + "/" + ref.Name
 }
 
 // verificationInput is everything Recovered reads: the accepted map, the live
@@ -89,22 +108,7 @@ func (c *Controller) closureRecoveryCheck(ctx context.Context, snapshot sdk.Dete
 	if snapshot == nil || len(closure.FinalDetectorStates) == 0 {
 		return recoveryCheck{}
 	}
-	read := c.gitRead
-	if read == nil {
-		return recoveryCheck{}
-	}
-	document, err := read(ctx, closure.Request.RepositoryWorktree, "show", closure.Request.SourceCommit+":"+layout.ArchitectureFile)
-	if err != nil {
-		return recoveryCheck{}
-	}
-	region, found, err := appmap.Find(string(document))
-	if !found || err != nil {
-		return recoveryCheck{}
-	}
-	m, err := appmap.Parse(region.YAML)
-	if err != nil {
-		return recoveryCheck{}
-	}
+	m, document := acceptedVerificationMap(ctx, c.gitRead, closure.Request)
 	opening := map[string]bool{}
 	late := lateJoinedFromTimeline(closure.DetectorTimeline)
 	for _, finding := range closure.Request.Findings {
@@ -113,9 +117,35 @@ func (c *Controller) closureRecoveryCheck(ctx context.Context, snapshot sdk.Dete
 			opening[key] = true
 		}
 	}
-	return recovered(verificationInput{m: m, doc: string(document), view: snapshot, request: closure.Request, result: closure.Result,
+	return recovered(verificationInput{m: m, doc: document, view: snapshot, request: closure.Request, result: closure.Result,
 		detected: closure.DetectedAt, opening: opening, stability: closure.ClosureStabilityWindow})
 }
+
+// acceptedVerificationMap reads the application map at the incident's
+// accepted commit. An unreadable or absent map is the empty map: the recovered
+// test then verifies the whole application through every running probe.
+func acceptedVerificationMap(ctx context.Context, read gitRead, request IncidentRequest) (appmap.Map, string) {
+	if read == nil || request.SourceCommit == "" {
+		return appmap.Map{}, ""
+	}
+	document, err := read(ctx, request.RepositoryWorktree, "show", request.SourceCommit+":"+layout.ArchitectureFile)
+	if err != nil {
+		return appmap.Map{}, ""
+	}
+	region, found, err := appmap.Find(string(document))
+	if !found || err != nil {
+		return appmap.Map{}, ""
+	}
+	m, err := appmap.Parse(region.YAML)
+	if err != nil {
+		return appmap.Map{}, ""
+	}
+	return m, string(document)
+}
+
+// wholeApplication names the one component of an application without a
+// readable map: every running gated probe is its member.
+const wholeApplication = "(application)"
 
 // recovered is the one "recovered" test. Each component an incident finding
 // faulted, or an SDO write touched, has a verification set: the probes of user
@@ -133,10 +163,6 @@ func recovered(in verificationInput) recoveryCheck {
 	for _, window := range windows {
 		record.Probed = record.Probed || window.Workload.Purpose == traffic.PurposeHealthProbe
 	}
-	if !record.Probed {
-		// No health probes (review U4): the closure rests on its detectors.
-		return recoveryCheck{record: record}
-	}
 	resolve := newComponentResolver(in.m, in.view, in.request.Namespace)
 	coverage := in.m.Coverage(appmap.ParseInventory(in.doc), windowWorkloads(windows))
 	sets := map[string]*componentSet{}
@@ -147,14 +173,19 @@ func recovered(in verificationInput) recoveryCheck {
 		return sets[name]
 	}
 	scope := newRecoveryScope(keysOf(in.opening))
+	check := recoveryCheck{record: record, components: map[string]string{}, written: map[string]bool{}}
 	for _, finding := range in.request.Findings {
 		if strings.HasPrefix(finding.DetectorID, "drift.") || !scope.holds(finding) {
 			continue
 		}
 		name := resolve.component(finding.PrimaryResource)
+		if len(in.m.Components) == 0 {
+			name = wholeApplication
+		}
 		if name == "" {
 			continue
 		}
+		check.components[FindingFingerprint(finding)] = name
 		set := get(name)
 		if in.opening[FindingStateKey(finding.DetectorID, FindingFingerprint(finding))] {
 			set.inScope = true
@@ -170,16 +201,30 @@ func recovered(in verificationInput) recoveryCheck {
 	record.WritesSettled = settled
 	for _, w := range writes {
 		record.Writes = append(record.Writes, &contracts.WriteSettlement{ApplicationId: w.id, SettledAt: optionalTimestamp(w.settledAt), Settled: w.settled})
+		for _, ref := range w.refs {
+			check.written[objectKeyString(ref)] = true
+		}
 		for _, name := range w.components {
+			check.written[name] = true
 			get(name).inScope = true
 		}
+	}
+	if len(in.m.Components) == 0 && len(writes) > 0 {
+		// Without a map no write resolves to a component: any write touches
+		// the whole application.
+		check.written[wholeApplication] = true
+		get(wholeApplication).inScope = true
+	}
+	if !record.Probed {
+		// No health probes (review U4): the closure rests on its detectors.
+		// The record keeps only the writes and their settle times.
+		return check
 	}
 	names := make([]string, 0, len(sets))
 	for name := range sets {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	check := recoveryCheck{record: record}
 	var weak, pending []string
 	for _, name := range names {
 		set := sets[name]
@@ -207,6 +252,7 @@ func recovered(in verificationInput) recoveryCheck {
 		case contracts.VerificationStrength_VERIFICATION_STRENGTH_REACHABILITY:
 			weak = append(weak, name+": reachability only (no probe of a user operation covers it; its link dials passed)")
 		case contracts.VerificationStrength_VERIFICATION_STRENGTH_UNOBSERVABLE:
+			check.unobservable = true
 			weak = append(weak, name+": no probe or link covers it")
 		}
 	}
@@ -241,6 +287,13 @@ func buildMembers(set *componentSet, m appmap.Map, coverage appmap.Coverage, win
 	probes := coverage.Components[set.name].Probes
 	if set.edgeFrom != "" {
 		probes = probesCrossing(m, coverage, set.edgeFrom, set.name)
+	}
+	if set.name == wholeApplication {
+		probes = nil
+		for id := range running {
+			probes = append(probes, id)
+		}
+		sort.Strings(probes)
 	}
 	for _, id := range probes {
 		if window, ok := running[id]; ok {
@@ -415,6 +468,7 @@ type sdoWrite struct {
 	settledAt  time.Time
 	settled    bool
 	components []string
+	refs       []sdk.ObjectRef
 }
 
 // sdoWrites lists every SDO mutation of the incident (applied plans, rolled
@@ -434,6 +488,15 @@ func sdoWrites(in verificationInput, resolve componentResolver) (writes []sdoWri
 				refs = append(refs, effect.Ref)
 			}
 		}
+		if len(refs) == 0 && (application.Result.Applied || application.Result.RolledBack) {
+			// No recorded object effect (a rollout still pending when the plan
+			// returned): the objects its actions name are what it wrote.
+			for _, action := range application.Result.Plan.Actions {
+				if ref, err := planActionRef(action); err == nil && ref.Name != "" {
+					refs = append(refs, ref)
+				}
+			}
+		}
 		if !application.Result.Applied && !application.Result.RolledBack && len(refs) == 0 {
 			continue
 		}
@@ -446,7 +509,7 @@ func sdoWrites(in verificationInput, resolve componentResolver) (writes []sdoWri
 		// settles. Either way the settle time is never earlier than the
 		// latest Ready transition of the written workloads' Pods.
 		pendingAtCompletion := application.Pending || application.Result.RolloutPending != nil
-		w := sdoWrite{id: id, settledAt: application.CompletedAt, settled: !pendingAtCompletion || len(refs) > 0}
+		w := sdoWrite{id: id, settledAt: application.CompletedAt, settled: !pendingAtCompletion || len(refs) > 0, refs: refs}
 		for _, ref := range refs {
 			if name := resolve.component(ref); name != "" && !containsString(w.components, name) {
 				w.components = append(w.components, name)
@@ -463,7 +526,7 @@ func sdoWrites(in verificationInput, resolve componentResolver) (writes []sdoWri
 		if !action.Success {
 			continue
 		}
-		w := sdoWrite{id: action.ActionID, settledAt: action.CompletedAt, settled: true}
+		w := sdoWrite{id: action.ActionID, settledAt: action.CompletedAt, settled: true, refs: action.Resources}
 		for _, ref := range action.Resources {
 			if name := resolve.component(ref); name != "" && !containsString(w.components, name) {
 				w.components = append(w.components, name)
@@ -602,14 +665,19 @@ func (r componentResolver) selecting(podLabels map[string]string) string {
 // workload a written object belongs to, and whether that workload is still
 // rolling out (a Pod not Ready, or fewer updated replicas than desired).
 func (r componentResolver) readySince(ref sdk.ObjectRef) (time.Time, bool) {
-	component := r.component(ref)
-	if component == "" {
-		return time.Time{}, false
-	}
 	var workload string
-	for kindName, name := range r.byWorkload {
-		if name == component {
-			workload = kindName
+	switch ref.Kind {
+	case "Deployment", "StatefulSet", "DaemonSet":
+		workload = ref.Kind + "/" + ref.Name
+	default:
+		component := r.component(ref)
+		if component == "" {
+			return time.Time{}, false
+		}
+		for kindName, name := range r.byWorkload {
+			if name == component {
+				workload = kindName
+			}
 		}
 	}
 	var latest time.Time
@@ -679,4 +747,36 @@ func containsString(items []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// stageRecoveryCheck is the recovered test for the automatic stage's wait:
+// the same predicate as closure, over the incident's findings so far and the
+// loop's recorded writes, observed on view.
+func (l *ResponderLoop) stageRecoveryCheck(ctx context.Context, view sdk.DetectionContext, state *IncidentState, seen map[string]sdk.Finding) recoveryCheck {
+	m, document := acceptedVerificationMap(ctx, l.gitRead(), state.Request)
+	opening := map[string]bool{}
+	for _, finding := range state.Request.Findings {
+		opening[FindingStateKey(finding.DetectorID, FindingFingerprint(finding))] = true
+	}
+	request := state.Request
+	request.Findings = sortedFindings(seen)
+	result := IncidentResult{PlanApplications: l.applicationEvidenceLocked()}
+	return recovered(verificationInput{m: m, doc: document, view: view, request: request, result: &result, detected: state.Request.DetectedAt, opening: opening})
+}
+
+// stageWritesRestoredSource reports a stage whose every applied write is
+// proven by its own receipt to have restored accepted source.
+func stageWritesRestoredSource(report *contracts.StageReport) bool {
+	any := false
+	for _, attempt := range report.GetMitigations() {
+		receipt := attempt.GetApplyReceipt()
+		if !receipt.GetApplied() || receipt.GetRolledBack() {
+			continue
+		}
+		if !receipt.GetRestoredSource() {
+			return false
+		}
+		any = true
+	}
+	return any
 }

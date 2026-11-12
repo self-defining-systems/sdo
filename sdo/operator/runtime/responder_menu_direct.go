@@ -270,7 +270,11 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 			}
 		}
 		started := lifecycleio.Now().UTC()
+		restore := l.sourceRestoreBefore(ctx, plan)
 		result, applyErr := executor.Apply(ctx, l.mitigationIncident([]selectedPlan{{programID: entry.programID, bindings: bindings, targetFingerprints: targetFingerprints}}), plan, false)
+		if applyErr == nil && result.Applied && !result.RolledBack {
+			result.RestoredSource = restore.restored(ctx, l)
+		}
 		completed := lifecycleio.Now().UTC()
 
 		if result.Applied || result.PendingAction != nil {
