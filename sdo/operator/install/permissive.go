@@ -15,8 +15,8 @@ const PermissiveResponderAnnotation = "sdo.dev/permissive-responder-namespaces"
 // validatePermissive checks the opt-in that lets the responder repair outside
 // the application namespace.
 func (c Config) validatePermissive() error {
-	if !c.PermissiveResponder {
-		if len(c.ResponderNamespaces) != 0 {
+	if !c.Settings.Response.Permissive {
+		if len(c.Settings.Response.PermissiveNamespaces) != 0 {
 			return fmt.Errorf("responder namespaces require permissive responder opt-in")
 		}
 		return nil
@@ -24,7 +24,7 @@ func (c Config) validatePermissive() error {
 	if c.Namespace == c.controlNamespace() {
 		return fmt.Errorf("permissive responder requires a separate control namespace")
 	}
-	for _, ns := range c.ResponderNamespaces {
+	for _, ns := range c.Settings.Response.PermissiveNamespaces {
 		if !namespaceName.MatchString(ns) || ns == c.controlNamespace() || strings.HasPrefix(ns, "kube-") {
 			return fmt.Errorf("invalid permissive responder namespace %q", ns)
 		}
@@ -35,10 +35,10 @@ func (c Config) validatePermissive() error {
 // A fault may create its backend only during injection. Prepare its namespace
 // now so the responder's Role already exists when that happens.
 func (i Installer) ensurePermissiveNamespaces(ctx context.Context, c Config) error {
-	if !c.PermissiveResponder {
+	if !c.Settings.Response.Permissive {
 		return nil
 	}
-	for _, ns := range c.ResponderNamespaces {
+	for _, ns := range c.Settings.Response.PermissiveNamespaces {
 		if _, err := i.Client.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
 			return fmt.Errorf("ensure responder namespace %s: %w", ns, err)
 		}

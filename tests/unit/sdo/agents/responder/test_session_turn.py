@@ -99,7 +99,7 @@ def test_responder_and_reflection_turns_send_the_same_model_visible_schema_and_m
     monkeypatch.setenv("SDO_PHASE", "responder")
     execute_incident(request, provider=provider, executor=responder.agent.executor)
     prepare_reflection_memory(reflection_root)
-    backend_type(executor=reflection.agent.executor).resume(
+    backend_type(reasoning_effort="medium", executor=reflection.agent.executor).resume(
         session_id="session-1", worktree=reflection_root, prompt="reflect", idempotency_key="reflection:test"
     )
 
@@ -207,7 +207,7 @@ def test_reflection_resumes_once_when_it_answers_in_the_wrong_branch(
     ]
     agent = ScriptedAgent(lambda _request: replies.pop(0))
 
-    turn = backend_type(executor=agent.executor).resume(
+    turn = backend_type(reasoning_effort="medium", executor=agent.executor).resume(
         session_id="session-1", worktree=tmp_path, prompt="reflect", idempotency_key="reflection:test"
     )
 
@@ -223,7 +223,7 @@ def test_reflection_raises_the_typed_error_when_the_correction_is_also_wrong(tmp
     )
 
     with pytest.raises(WrongBranchError, match="no reflection object; it filled incident_result"):
-        CodexSessionBackend(executor=agent.executor).resume(
+        CodexSessionBackend(reasoning_effort="medium", executor=agent.executor).resume(
             session_id="session-1", worktree=tmp_path, prompt="reflect", idempotency_key="reflection:test"
         )
 

@@ -28,8 +28,8 @@ func environmentConfig() Config {
 		TelemetryProfile: prometheusProfile(),
 		BackendRecipes:   []telemetry.BackendRecipe{recipe.New()},
 		Namespace:        "app", Application: "app", RepositoryPVC: "repo", CredentialsSecret: "creds",
-		ControllerImage: "controller:test", ResponderImage: "responder:test", Model: "m", Replay: "on",
-		NativeCommand: []string{"/usr/local/bin/sdo-operator"}, AcceptedCommit: strings.Repeat("c", 40), TimeoutSeconds: 60, VerificationTimeoutSeconds: 60,
+		ControllerImage: "controller:test", ResponderImage: "responder:test", Settings: testSettings(),
+		NativeCommand: []string{"/usr/local/bin/sdo-operator"}, AcceptedCommit: strings.Repeat("c", 40),
 	}
 }
 

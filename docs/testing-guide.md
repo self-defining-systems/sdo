@@ -468,6 +468,10 @@ Live-run findings about SDO behavior become seeded deterministic-simulation sche
 
 Tests for `benchmarks/sregym/adapter/` should prove that benchmark resources are added through the runtime extension interface and that strict receipts derive from durable controller/broker evidence. Add architecture tests that reject imports from SREGym packages in production modules.
 
+Operator configuration reaches a launch as `--config` files and `SDO_*` variables (`docs/config.md`), so adapter tests assert the overlay and environment a launch carries, not knob flags: `tests/unit/benchmarks/sregym/adapter/launch_capture.py` reads the lane overlay while the faked command runs and stubs the `sdo-operator config print` resolution. `tests/fixtures/sdo/contracts/adapter_launch_args.json` pins the argv with repository-relative profile paths, the overlay content (`<command>.config`) and the variables (`<command>.env`). `tests/unit/benchmarks/fuzzops/test_config.py` resolves the benchmark profile with the real binary (`operator_binary`) and checks it still yields the values benchmark lanes ran with.
+
+Workers have no defaults of their own: the controller sets `SDO_AGENT_EFFORT`, `SDO_LIFECYCLE_TIMEOUT_SECONDS`, `SDO_MEMORY_CHECK_TIMEOUT_SECONDS` and a reflection task's `SDO_REFLECTION_DEADLINE`. The autouse `_controller_worker_environment` fixture in `tests/conftest.py` sets them as the controller would; a test of the unset case deletes them, and worker backends are constructed with an explicit `reasoning_effort`.
+
 ## Test style
 
 - Write a failing reproducer before fixing a bug; see [Fix the class](#fix-the-class-not-the-instance).

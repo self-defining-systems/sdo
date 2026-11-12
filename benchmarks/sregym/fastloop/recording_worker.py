@@ -17,6 +17,7 @@ from benchmarks.sregym.fastloop.file_edits import (
     record_file_edits,
 )
 from benchmarks.sregym.fastloop.model_recording import ModelRecorder
+from sdo.agents.provider import agent_effort
 from sdo.agents.responder import (
     AGENT_SKILLS,
     CodexSessionBackend,
@@ -126,7 +127,7 @@ def main(argv: list[str] | None = None) -> int:
             if not task.request.Unpack(request):
                 raise ValueError("recording reflector requires a typed reflection request")
             reflector = SessionReflector(
-                CodexSessionBackend(model="gpt-6-luna", executor=recording),
+                CodexSessionBackend(model="gpt-6-luna", reasoning_effort=agent_effort(), executor=recording),
                 guidance=request.guidance or "baseline",
             )
             run_reflection_task(task_path, result_name, publisher, reflector=reflector)

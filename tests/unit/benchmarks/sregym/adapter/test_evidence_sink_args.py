@@ -1,4 +1,4 @@
-"""Launchers name the evidence sink as installer flags; the default is no sink (evidence stays on the PVC)."""
+"""Launchers name the evidence sink as SDO_EVIDENCE_* variables; the default is no sink (evidence stays on the PVC)."""
 
 from __future__ import annotations
 
@@ -28,13 +28,14 @@ def _install(**overrides: object) -> NativeInstallConfig:
     )
 
 
-def test_no_sink_adds_no_flag() -> None:
+def test_no_sink_sets_no_variable() -> None:
+    assert not any(name.startswith("SDO_EVIDENCE") for name in _install().environment())
     assert not any(arg.startswith("--evidence") for arg in _install().common_args())
 
 
-def test_sink_flags_follow_the_configuration() -> None:
-    args = _install(evidence_sink_host_path="/opt/sdo-evidence", evidence_run_id="lane-1").common_args()
-    assert args[-4:] == ["--evidence-sink-host-path", "/opt/sdo-evidence", "--evidence-run-id", "lane-1"]
+def test_sink_variables_follow_the_configuration() -> None:
+    env = _install(evidence_sink_host_path="/opt/sdo-evidence", evidence_run_id="lane-1").environment()
+    assert (env["SDO_EVIDENCE_HOST_PATH"], env["SDO_EVIDENCE_RUN_ID"]) == ("/opt/sdo-evidence", "lane-1")
 
 
 @pytest.mark.parametrize(

@@ -17,7 +17,7 @@ func hostArgs(extra ...string) []string {
 		"host", "--repository", "/repo", "--namespace", "app", "--application", "app", "--health-objective", "stay healthy",
 		"--operation-id", "op-1", "--controller-image", "controller:test", "--responder-image", "responder:test",
 		"--buildkit-image", "buildkit@sha256:" + strings.Repeat("a", 64), "--registry-push-secret", "push",
-		"--repository-pvc", "repo", "--credentials-secret", "creds", "--model", "m",
+		"--repository-pvc", "repo", "--credentials-secret", "creds", "--config", testModelConfig,
 	}
 	return append(args, extra...)
 }
@@ -60,8 +60,9 @@ func TestHostDeploymentPlanReachesTheOperateJobConfig(t *testing.T) {
 }
 
 // The adapter's own emitted host argv (tests/fixtures/sdo/contracts) is what
-// the harness really sends: its plan, in the adapter's ProtoJSON spelling, must
-// parse into a provided helm plan with a BuildKit image.
+// the harness really sends: every flag must exist, and its plan, in the
+// adapter's ProtoJSON spelling, must parse into a provided helm plan with a
+// BuildKit image.
 func TestHostParsesTheAdapterEmittedDeploymentPlan(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "..", "tests", "fixtures", "sdo", "contracts", "adapter_launch_args.json"))
 	if err != nil {
@@ -71,7 +72,16 @@ func TestHostParsesTheAdapterEmittedDeploymentPlan(t *testing.T) {
 	if err := json.Unmarshal(data, &emitted); err != nil {
 		t.Fatal(err)
 	}
-	launch, err := ParseHostLaunch(emitted["host"])
+	// The adapter's --config files name lane files that exist only where it runs; the argv's spelling is under test.
+	var args []string
+	for i := 0; i < len(emitted["host"]); i++ {
+		if emitted["host"][i] == "--config" {
+			i++
+			continue
+		}
+		args = append(args, emitted["host"][i])
+	}
+	launch, err := ParseHostLaunchEnv(append(args, "--config", testModelConfig), nil)
 	if err != nil {
 		t.Fatalf("adapter host argv does not parse: %v", err)
 	}

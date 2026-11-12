@@ -370,7 +370,7 @@ def test_responder_repair_tool_cli_and_reflection_edit_against_fake_api(scripted
             ]
             assert unpublished.exists(), "the synthetic controller must ignore atomic request staging files"
             assert api.objects[("services", "api")]["spec"]["ports"][0]["targetPort"] == 80
-            reflected = CodexSessionBackend(model="unused").resume(
+            reflected = CodexSessionBackend(reasoning_effort="medium", model="unused").resume(
                 session_id=completed.responder_session_id,
                 worktree=root,
                 prompt="Reflect on independently verified closure",

@@ -102,7 +102,9 @@ def test_agent_cannot_consume_the_final_check_reserve(tmp_path: Path, monkeypatc
         return ValidationResult(0, False, "", "")
 
     agent = ScriptedAgent(respond)
-    backend = backend_type(executor=agent.executor, timeout_seconds=900, memory_checker=check)
+    backend = backend_type(
+        reasoning_effort="medium", executor=agent.executor, timeout_seconds=900, memory_checker=check
+    )
     run = backend._run
 
     def capture(**kwargs):
@@ -130,6 +132,7 @@ def test_unchanged_blocking_diagnostics_stop_correction_early(tmp_path: Path) ->
         )
     )
     backend = reflection.CodexSessionBackend(
+        reasoning_effort="medium",
         executor=agent.executor,
         memory_checker=lambda *_: ValidationResult(
             1, False, '{"diagnostics":[{"rule":"program.compile","message":"same error"}]}', ""

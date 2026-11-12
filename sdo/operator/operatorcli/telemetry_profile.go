@@ -1,7 +1,6 @@
 package operatorcli
 
 import (
-	"flag"
 	"fmt"
 	"net/url"
 	"os"
@@ -12,26 +11,6 @@ import (
 	"sdo.dev/operator/operatorcli/catalog/telemetrysources"
 	"sdo.dev/operator/telemetry"
 )
-
-// telemetryFlags are the operator CLI's telemetry surface, shared by operate,
-// host and install-existing.
-type telemetryFlags struct {
-	profile *string
-	sources repeatable
-}
-
-func registerTelemetryFlags(flags *flag.FlagSet) *telemetryFlags {
-	f := &telemetryFlags{}
-	f.profile = flags.String("telemetry-profile", telemetrysources.DefaultProfileName,
-		"application telemetry profile: a built-in name (prometheus-default, none), a YAML or JSON file, or an inline JSON document")
-	flags.Var(&f.sources, "telemetry-source", "operator-provided external Prometheus-compatible metrics source ID=URL (repeatable); the first becomes the default when the profile has none")
-	return f
-}
-
-// resolve turns the flags into one validated profile for the control namespace.
-func (f *telemetryFlags) resolve(controlNamespace string) (telemetry.Profile, error) {
-	return resolveTelemetry(*f.profile, f.sources, controlNamespace)
-}
 
 // resolveTelemetry is one validated profile for the control namespace: the named profile plus the operator-provided
 // ID=URL sources.
@@ -67,7 +46,7 @@ func loadTelemetryProfile(value, controlNamespace string) (telemetry.Profile, er
 	}
 	data, err := os.ReadFile(value)
 	if err != nil {
-		return telemetry.Profile{}, fmt.Errorf("--telemetry-profile %q is not a built-in profile (%s, %s) and not a readable file: %w", value, telemetrysources.DefaultProfileName, telemetrysources.NoneProfileName, err)
+		return telemetry.Profile{}, fmt.Errorf("telemetry profile %q is not a built-in profile (%s, %s) and not a readable file: %w", value, telemetrysources.DefaultProfileName, telemetrysources.NoneProfileName, err)
 	}
 	document, err := yaml.YAMLToJSONStrict(data)
 	if err != nil {

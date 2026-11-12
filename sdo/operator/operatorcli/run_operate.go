@@ -69,7 +69,7 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		control = config.Lifecycle.Namespace
 	}
 	validation := broker.SubprocessValidator{}
-	if config.Install.HealthyBaseline {
+	if config.Install.Settings.Learning.HealthyBaseline {
 		validation.HealthyBaseline = filepath.Join(config.RepositoryMount, ".sdo-baseline/healthy")
 	}
 	ceiling, policyErr := observation.CeilingFromEnvironment()
@@ -77,7 +77,7 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		return lifecycle.Result{}, policyErr
 	}
 
-	repository, err := onboardingBroker(config, control, selectMemoryValidator(config.Install.CodePath, validation.Validator()), ceiling, telemetryRegistry())
+	repository, err := onboardingBroker(config, control, selectMemoryValidator(config.Install.CodePathSelection(), validation.Validator()), ceiling, telemetryRegistry())
 	if err != nil {
 		return lifecycle.Result{}, err
 	}
@@ -113,7 +113,7 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		return lifecycle.Result{}, err
 	}
 	defer removeTelemetryEnvironment()
-	var healthProbe deployment.HealthProbe = deployment.AcceptedDetectorProbe{Replay: config.Install.Replay, TelemetryEnvironment: telemetryEnvironment}
+	var healthProbe deployment.HealthProbe = deployment.AcceptedDetectorProbe{Settings: mountedSettings, TelemetryEnvironment: telemetryEnvironment}
 	if runner, enabled := install.ShellRunnerConfig(config.Install); enabled {
 		healthProbe = deployment.ShellDetectorProbe{Config: runner}
 	}
@@ -138,9 +138,9 @@ func operateIdentity(config OperateConfig) deployIdentity {
 	return deployIdentity{
 		BuildKitImage: config.BuildKitImage, RegistryPushSecret: config.RegistryPushSecret,
 		RegistryHost: config.Install.RegistryHost, RegistryInsecure: config.Install.RegistryInsecure,
-		BuildTimeout:   time.Duration(config.Install.BuildTimeoutSeconds) * time.Second,
-		BuildBudget:    time.Duration(config.Install.BuildBudgetSeconds) * time.Second,
-		RolloutTimeout: time.Duration(config.Install.RolloutTimeoutSeconds) * time.Second,
+		BuildTimeout:   time.Duration(config.Install.Settings.Deployment.BuildTimeout),
+		BuildBudget:    time.Duration(config.Install.Settings.Deployment.BuildBudget),
+		RolloutTimeout: time.Duration(config.Install.Settings.Deployment.RolloutTimeout),
 	}
 }
 
@@ -149,15 +149,8 @@ func operateIdentity(config OperateConfig) deployIdentity {
 // and the broker's policy environment, so the health judge's own `memory
 // check` and the broker judge one proposal by the same rules.
 func lifecycleWorkers(config OperateConfig, client kubernetes.Interface, control string, registry *worker_registry.Registry, repository *broker.Broker) (worker_registry.KubernetesExecutor, error) {
-	agentEnvironment, err := worker_registry.AgentEnvironment(config.Install.AgentProvider, config.Install.Model, config.Install.AgentEffort, config.Install.AgentReasoningSummary, config.Install.LifecycleTimeout)
-	if err != nil {
-		return worker_registry.KubernetesExecutor{}, err
-	}
-	replay, err := settings.Replay(config.Install.Replay)
-	if err != nil {
-		return worker_registry.KubernetesExecutor{}, err
-	}
-	agentEnvironment[settings.ReplayEnvironment] = replay
+	agentEnvironment := worker_registry.AgentEnvironment(config.Install.Settings.Agent)
+	agentEnvironment[settings.ReplayEnvironment] = config.Install.Settings.Learning.Replay
 	workers := worker_registry.KubernetesExecutor{
 		ToolchainImage: config.Install.ControllerImage,
 		Client:         client, Namespace: control, Registry: registry, ServiceAccount: "sdo-responder",
@@ -165,7 +158,7 @@ func lifecycleWorkers(config OperateConfig, client kubernetes.Interface, control
 		CredentialsSecret: config.Install.CredentialsSecret,
 		Environment:       agentEnvironment,
 	}
-	workers.Environment = codePathWorkerEnvironment(config.Install.CodePath, workers.Environment)
+	workers.Environment = codePathWorkerEnvironment(config.Install.CodePathSelection(), workers.Environment)
 	policy, err := repository.PolicyEnvironment()
 	if err != nil {
 		return worker_registry.KubernetesExecutor{}, err

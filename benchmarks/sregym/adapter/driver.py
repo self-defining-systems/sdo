@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from benchmarks.fuzzops.config import BENCH_PROFILE
 from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
 from benchmarks.sregym.adapter.cluster_resources import (
     BenchmarkClusterResourcesConfig,
@@ -75,7 +76,6 @@ from benchmarks.sregym.protocol.injection import InvalidInjectionError
 from benchmarks.sregym.protocol.schema import READY_STAGES, TERMINAL_STAGES
 
 logger = logging.getLogger(__name__)
-DEFAULT_REFLECTION_SESSION = "resume"
 
 DEFAULT_BUILDKIT_IMAGE = "moby/buildkit@sha256:ef31818fffd0b9133d710742e06b492553f7ebc54f5fd66cd21a1a9bf2e51f76"
 
@@ -309,7 +309,20 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--registry-push-secret", default=config.get("registry_push_secret", "sdo-registry-push"))
     parser.add_argument("--buildkit-image", default=config.get("buildkit_image", DEFAULT_BUILDKIT_IMAGE))
     parser.add_argument("--kind-cluster-name", default=config.get("kind_cluster_name"))
-    parser.add_argument("--max-deployment-attempts", type=int, default=int(config.get("max_deployment_attempts", 3)))
+    parser.add_argument(
+        "--max-deployment-attempts",
+        type=int,
+        default=config.get("max_deployment_attempts"),
+        help="default: the configured deployment.max_attempts",
+    )
+    parser.add_argument(
+        "--config",
+        dest="config_files",
+        type=Path,
+        action="append",
+        default=[Path(path) for path in config.get("config_files", ())],
+        help="operator config overlay file passed after benchmarks/fuzzops/sdo-bench.yaml (repeatable; docs/config.md)",
+    )
     parser.add_argument(
         "--deployment-source-paths",
         dest="deployment_source_paths",
@@ -338,21 +351,28 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--reflection-session",
         choices=("resume", "fresh"),
-        default=config.get("reflection_session", DEFAULT_REFLECTION_SESSION),
+        default=config.get("reflection_session"),
+        help="default: the configured learning.reflection_session",
     )
     parser.add_argument(
         "--reflection-guidance",
         choices=("baseline", "generalize", "generalize-spec"),
-        default=config.get("reflection_guidance", "baseline"),
-        help="reflection guidance: baseline, generalize, or generalize-spec (generalize with spec-first predicates)",
+        default=config.get("reflection_guidance"),
+        help="reflection guidance: baseline, generalize, or generalize-spec (generalize with spec-first predicates); "
+        "default: the configured value",
     )
     parser.add_argument(
         "--late-findings",
         choices=("off", "pull"),
-        default=config.get("late_findings", "off"),
-        help="let the responder pull findings that activated after dispatch (off by default)",
+        default=config.get("late_findings"),
+        help="let the responder pull findings that activated after dispatch (default: the configured value)",
     )
-    parser.add_argument("--max-response-loops", type=int, default=int(config.get("max_response_loops", 10)))
+    parser.add_argument(
+        "--max-response-loops",
+        type=int,
+        default=config.get("max_response_loops"),
+        help="default: the configured response.max_loops",
+    )
     parser.add_argument(
         "--healthy-baseline",
         action=argparse.BooleanOptionalAction,
@@ -385,6 +405,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--enable-summary", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-inject-summary", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+    settings = config.get("config", {})
+    if not isinstance(settings, dict):
+        raise ValueError("the experiment's config must be a table of operator config sections (docs/config.md)")
+    # The experiment's operator config overlay, merged after the benchmark profile and the files.
+    args.settings = settings
     if "deployed_manifest_paths" in config:
         raise ValueError(
             "deployed_manifest_paths is no longer accepted; configure [agent.sdo_codex.deployment_source] "
@@ -741,19 +766,19 @@ def _launch_native_lifecycle(
         model=args.model,
         kubeconfig=kubeconfig,
         agent_provider=args.provider,
-        repair_policy=getattr(args, "repair_policy", "recorded-actions"),
         late_findings=args.late_findings,
         reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
         deployment_source=args.deployment_source,
         permissive_responder=args.permissive_responder,
         responder_namespaces=args.responder_namespaces,
-        healthy_baseline=args.healthy_baseline,
+        healthy_baseline=args.healthy_baseline or None,
         max_response_loops=args.max_response_loops,
         evidence_sink_host_path=args.evidence_sink_host_path,
         evidence_run_id=args.evidence_run_id,
         response_timeout_seconds=args.timeout_sec,
-        verification_timeout_seconds=int(wait_for(WaitKind.VERIFICATION_SAMPLE)),
+        settings=getattr(args, "settings", {}),
+        config_files=(BENCH_PROFILE, *getattr(args, "config_files", ())),
         duration_seconds=None if persistent else args.timeout_sec,
         exit_after_closure=not persistent,
         registration_configmap="sdo-agent-registrations" if args.agent_registrations else None,
@@ -854,7 +879,6 @@ def _native_install_for_run(
         model=args.model,
         kubeconfig=Path(raw_kubeconfig),
         agent_provider=args.provider,
-        repair_policy="recorded-actions",
         late_findings=args.late_findings,
         reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
@@ -863,7 +887,8 @@ def _native_install_for_run(
         responder_namespaces=args.responder_namespaces,
         max_response_loops=args.max_response_loops,
         response_timeout_seconds=args.timeout_sec,
-        verification_timeout_seconds=int(wait_for(WaitKind.VERIFICATION_SAMPLE)),
+        settings=getattr(args, "settings", {}),
+        config_files=(BENCH_PROFILE, *getattr(args, "config_files", ())),
         duration_seconds=args.timeout_sec,
         exit_after_closure=True,
         responder_env=(
@@ -1053,7 +1078,6 @@ def _run_persistent(args: argparse.Namespace, api_base: str, started: float) -> 
         credentials_secret=args.credentials_secret,
         model=args.model,
         timeout_seconds=args.timeout_sec,
-        repair_policy="recorded-actions",
         agent_provider=args.provider,
         reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
@@ -1061,8 +1085,10 @@ def _run_persistent(args: argparse.Namespace, api_base: str, started: float) -> 
         permissive_responder=args.permissive_responder,
         responder_namespaces=args.responder_namespaces,
         late_findings=args.late_findings,
-        healthy_baseline=args.healthy_baseline,
+        healthy_baseline=args.healthy_baseline or None,
         max_response_loops=args.max_response_loops,
+        settings=args.settings,
+        config_files=tuple(args.config_files),
         evidence_sink_host_path=args.evidence_sink_host_path,
         evidence_run_id=args.evidence_run_id,
         submission_api_base=_in_cluster_api_base(api_base),

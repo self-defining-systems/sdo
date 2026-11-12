@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"fmt"
 
+	"sdo.dev/operator/contracts/settings"
+
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -27,17 +29,14 @@ const (
 // SettingsFile is the path of the resolved configuration inside a process that mounts it.
 func SettingsFile() string { return SettingsDir + "/" + SettingsFileName }
 
-// settingsConfigMap renders the resolved configuration; nil when the caller supplied none.
-func settingsConfigMap(c Config) (*corev1.ConfigMap, error) {
-	if c.Settings == nil {
-		return nil, nil
-	}
-	document, err := c.Settings.YAML()
+// settingsConfigMap renders the resolved configuration as the sdo-config ConfigMap.
+func settingsConfigMap(cfg settings.Config, namespace string) (*corev1.ConfigMap, error) {
+	document, err := cfg.YAML()
 	if err != nil {
 		return nil, fmt.Errorf("resolved config: %w", err)
 	}
 	return &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Name: SettingsConfigMapName, Namespace: c.controlNamespace()},
+		ObjectMeta: metav1.ObjectMeta{Name: SettingsConfigMapName, Namespace: namespace},
 		Data:       map[string]string{SettingsFileName: string(document)},
 	}, nil
 }
@@ -54,9 +53,6 @@ func settingsHash(configMap *corev1.ConfigMap) string {
 }
 
 func (i Installer) ensureSettings(ctx context.Context, p Plan) error {
-	if p.Settings == nil {
-		return nil
-	}
 	configMaps := i.Client.CoreV1().ConfigMaps(p.Settings.Namespace)
 	prior, err := configMaps.Get(ctx, SettingsConfigMapName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {

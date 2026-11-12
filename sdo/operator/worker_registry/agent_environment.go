@@ -1,8 +1,6 @@
 package worker_registry
 
 import (
-	"fmt"
-	"slices"
 	"strconv"
 	"time"
 
@@ -10,17 +8,11 @@ import (
 )
 
 // ProviderEnvironment names the variable that selects a worker's agent provider.
-// Workers default to Codex when it is absent, so a configured provider must
-// always travel with the Job.
 const ProviderEnvironment = "SDO_AGENT_PROVIDER"
 
 // ModelEnvironments are the per-role model variables workers read. sdo/contracts/agent_env.json
 // names the same set for the Python workers; a test keeps the two equal.
 var ModelEnvironments = []string{"SDO_RESPONDER_MODEL", "SDO_REFLECTION_MODEL", "SDO_LIFECYCLE_MODEL", "SDO_DEPLOYMENT_MODEL"}
-
-// EffortEnvironment names the variable that sets the reasoning effort of every
-// agent worker (deployer, health judge, responder, reflection).
-const EffortEnvironment = "SDO_AGENT_EFFORT"
 
 // ReasoningSummaryEnvironment names the variable carrying the Codex reasoning summary mode.
 const ReasoningSummaryEnvironment = "SDO_AGENT_REASONING_SUMMARY"
@@ -28,58 +20,42 @@ const ReasoningSummaryEnvironment = "SDO_AGENT_REASONING_SUMMARY"
 // ReasoningSummaries are the summary modes a worker accepts.
 var ReasoningSummaries = settings.ReasoningSummaries
 
+// EffortEnvironment names the variable that sets the reasoning effort of every
+// agent worker (deployer, health judge, responder, reflection).
+const EffortEnvironment = "SDO_AGENT_EFFORT"
+
 // AgentEfforts are the efforts a worker accepts; sdo/contracts/agent_env.json
 // names the same list for the Python workers; a test keeps the two equal.
 var AgentEfforts = settings.AgentEfforts
 
 // LifecycleTimeoutEnvironment names the variable that bounds one lifecycle
-// (detection designer) session, in whole seconds; workers use the shared default
-// (sdo/contracts/agent_env.json) when it is absent.
-const LifecycleTimeoutEnvironment = "SDO_LIFECYCLE_TIMEOUT_SECONDS"
+// (detection designer) session, in whole seconds.
+const LifecycleTimeoutEnvironment = settings.LifecycleTimeoutEnvironment
 
-// DefaultLifecycleTimeout is the workers' lifecycle session limit when none is configured.
-const DefaultLifecycleTimeout = settings.DefaultLifecycleTimeout
+// MemoryCheckTimeoutEnvironment names the variable that bounds one memory check a worker runs, in whole seconds.
+const MemoryCheckTimeoutEnvironment = settings.MemoryCheckTimeoutEnvironment
 
-// AgentEnvironment is the provider, model, effort and lifecycle session limit a
-// controller was configured with, as the environment every agent worker Job
-// reads. An unconfigured provider, effort or limit (zero) adds nothing; an
-// unknown provider or effort or a negative limit is an error, so no worker runs
-// at a setting other than the configured one.
-func AgentEnvironment(provider, model, effort, reasoningSummary string, lifecycleTimeout time.Duration) (map[string]string, error) {
-	if effort != "" && !slices.Contains(AgentEfforts, effort) {
-		return nil, fmt.Errorf("unsupported agent effort %q: must be one of %v", effort, AgentEfforts)
-	}
-	if reasoningSummary != "" && !slices.Contains(ReasoningSummaries, reasoningSummary) {
-		return nil, fmt.Errorf("unsupported reasoning summary %q: must be one of %v", reasoningSummary, ReasoningSummaries)
-	}
-	if lifecycleTimeout < 0 {
-		return nil, fmt.Errorf("invalid lifecycle timeout %s: must not be negative", lifecycleTimeout)
-	}
+// AgentEnvironment is the agent section of the resolved operator configuration as the environment every agent
+// worker Job reads: provider, model, effort and both limits are always set, so no worker falls back to a default of
+// its own. The section was validated when the configuration was read.
+func AgentEnvironment(agent settings.Agent) map[string]string {
 	environment := ProviderCapacityEnvironment()
-	if effort != "" {
-		environment[EffortEnvironment] = effort
+	environment[ProviderEnvironment] = agent.Provider
+	for _, name := range ModelEnvironments {
+		environment[name] = agent.Model
 	}
-	if reasoningSummary != "" {
-		environment[ReasoningSummaryEnvironment] = reasoningSummary
+	environment[EffortEnvironment] = agent.Effort
+	environment[ReasoningSummaryEnvironment] = agent.ReasoningSummary
+	environment[LifecycleTimeoutEnvironment] = wholeSeconds(time.Duration(agent.LifecycleTimeout))
+	environment[MemoryCheckTimeoutEnvironment] = wholeSeconds(time.Duration(agent.MemoryCheckTimeout))
+	return environment
+}
+
+// wholeSeconds rounds a limit up, so a worker never runs shorter than configured.
+func wholeSeconds(limit time.Duration) string {
+	seconds := limit / time.Second
+	if limit%time.Second > 0 {
+		seconds++
 	}
-	if lifecycleTimeout > 0 {
-		seconds := lifecycleTimeout / time.Second
-		if lifecycleTimeout%time.Second > 0 {
-			seconds++
-		}
-		environment[LifecycleTimeoutEnvironment] = strconv.FormatInt(int64(seconds), 10)
-	}
-	if provider == "" {
-		return environment, nil
-	}
-	if provider != "codex" && provider != "claude" {
-		return nil, fmt.Errorf("unsupported responder backend %q: must be codex or claude", provider)
-	}
-	environment[ProviderEnvironment] = provider
-	if model != "" {
-		for _, name := range ModelEnvironments {
-			environment[name] = model
-		}
-	}
-	return environment, nil
+	return strconv.FormatInt(int64(seconds), 10)
 }

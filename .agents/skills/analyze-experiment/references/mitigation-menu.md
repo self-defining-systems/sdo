@@ -1,7 +1,7 @@
 # Mitigation menu receipts
 
-The menu is a convenience over direct commands. The controller enables it with
-`SDO_RESPONDER_MENU=1`; unset or `0` leaves it off. `menu` lists accepted Mitigators
+The menu is a convenience over direct commands. Operator config `response.menu` (default on; host env
+`SDO_RESPONSE_MENU`) decides it, and the controller passes it to workers as `SDO_RESPONDER_MENU=1`; `0` leaves it off. `menu` lists accepted Mitigators
 with declared object/value parameters and registered raw actions as one-action plans.
 `mitigate NAME [--bind NAME=VALUE ...] [--rounds N]` and multi-fix calls use the ordinary PlanExecutor,
 existing controller RBAC and always-on executor checks. There are no menu-specific

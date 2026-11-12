@@ -4,8 +4,10 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"k8s.io/client-go/kubernetes/fake"
+	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/deployment"
 )
 
@@ -16,7 +18,10 @@ func operateTestConfig(registryHost string) OperateConfig {
 	config.RepositoryMount, config.WorktreeRoot = "/repo", "/repo/worktrees"
 	config.BuildKitImage, config.RegistryPushSecret = "buildkit@sha256:"+strings.Repeat("a", 64), "push"
 	config.Install.RegistryHost = registryHost
-	config.Install.BuildBudgetSeconds = 60
+	policy := settings.Default()
+	policy.Agent.Model = "m"
+	policy.Deployment.BuildTimeout, policy.Deployment.BuildBudget = settings.Duration(time.Minute), settings.Duration(time.Minute)
+	config.Install.Settings = &policy
 	return config
 }
 

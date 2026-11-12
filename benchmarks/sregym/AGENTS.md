@@ -28,6 +28,51 @@ The external SREGym implementation is a separately pinned Git submodule at `thir
 - Keep changes to the external harness in `third_party/sregym/`; do not copy its implementation into first-party packages.
 - The harness deploys exactly the image refs the app source declares. SDO accepts the source as desired state, so a harness-only tag is unexplained drift at time zero (a baseline incident before any injection) and the first reconcile would write the source's ref back. Source builds use a lane-private tag only to build and load; the harness then publishes the image on the lane's nodes under the declared ref (`source_deploy._declare_image`) and applies the unmodified manifests and charts.
 
+## Operator configuration and experiment settings
+
+Every SREGym and fastloop lane installs SDO with operator configuration, never one flag per knob
+([`docs/config.md`](../../docs/config.md)): `--config benchmarks/fuzzops/sdo-bench.yaml` (the benchmark profile; only
+`response.repair_policy: recorded-actions` differs from production), then the lane's own `--config` files, then a
+temporary overlay of the values the lane chose (`NativeInstallConfig.overlay()`, plus an experiment's `[...config]`
+table or `settings`). Per-run values are environment variables: `SDO_AGENT_PROVIDER`, `SDO_AGENT_MODEL`,
+`SDO_AGENT_EFFORT`, `SDO_MODE` (`frozen` or `external`; fuzzops' watch-only install sets `watch-only`), and
+`SDO_EVIDENCE_HOST_PATH` (`/opt/sdo-evidence`, only on lanes created with an evidence root) with
+`SDO_EVIDENCE_RUN_ID`. A knob a lane leaves unset (`None`) is decided by the files and the production default.
+`sdo-operator config print --config benchmarks/fuzzops/sdo-bench.yaml [--config F]...` prints what a lane runs with,
+and the controller records the resolved file as `.sdo-runtime/config.yaml` in the run evidence.
+
+- `fastloop run` keeps its lane flags (`--repair-policy`, `--reflection-session`, `--reflection-guidance`,
+  `--late-findings`, `--lifecycle-timeout`, `--reasoning-effort`, `--healthy-baseline`, ...); each defaults to the
+  configured value and is written to the overlay only when given. `--config FILE` (repeatable) adds overlay files.
+  `--reasoning-effort` unset resolves the configured `agent.effort` for the records and the Codex baseline.
+- The SREGym driver reads the same lane settings from `[agent.sdo_codex]`; `config_files = [...]` and a `config`
+  table (sections of `docs/config.md`) become overlay files after the profile.
+- `--healthy-baseline` is an opt-in detector gate (`learning.healthy_baseline`). The harness captures healthy
+  Kubernetes snapshots before injecting a fault and publishes them to a controller-owned directory outside the
+  accepted repository with `sdo-operator baseline-write`; the controller validation replays a proposed incident
+  detector against them and fails a detector that fires on a healthy snapshot. It reads no benchmark verdicts, and a
+  missing baseline fails validation closed, so set it only on lanes that capture snapshots.
+- Local runners that start workers without a controller (`skilleval`, `agent_script` replays) set the worker
+  variables a controller would (`SDO_AGENT_EFFORT`, `SDO_LIFECYCLE_TIMEOUT_SECONDS`,
+  `SDO_MEMORY_CHECK_TIMEOUT_SECONDS`) from `sdo-operator config print`; workers have no defaults of their own.
+
+SREGym options remain under `runner/` and its experiment configurations. Benchmark adapters may call the Go host,
+controller inspection, maintenance and evidence commands; production code does not import benchmark packages.
+`preserve_infrastructure = true` retains shared benchmark storage and observability between attempts after checking
+readiness. `defer_diagnosis_grading = true` runs benchmark diagnosis grading in the background while mitigation
+proceeds. `fast_namespace_teardown = true` accelerates benchmark cleanup. `source_build_cache = true` reuses source
+images with matching build-context digests. These settings do not alter the Go broker's acceptance rules.
+
+| Section | Purpose |
+|---|---|
+| `[runner]` | Agent, model, parallelism, problem selection, and application workspace |
+| `[runner.variants]` | Variant generation, ordering, limits, and seeds |
+| `[runner.env]` | Benchmark worker and judge environment |
+| `[agent.sdo_codex]` | SDO benchmark adapter model, timeout and lane settings (`config`, `config_files`) |
+| `[pipeline]`, `[defaults]`, `[[stages]]` | Multi-stage experiments and stage overrides |
+
+Use emitted configuration snapshots when analyzing results: they contain resolved defaults and stage overrides.
+
 ## Grading
 
 - Every experiment config uses the SREGym judge `judge_model_id = "codex-gpt-6-luna"`. The Codex CLI judge backend (`third_party/sregym/llm_backend/codex_cli_backend.py`) runs it at `xhigh` reasoning by default (`JUDGE_REASONING_EFFORT`). Use the same judge for every arm of a comparison.

@@ -17,8 +17,12 @@ also passes `--self-heal-hold 60s` in its `controller_flags` (until the central 
   the `DeploymentPlan` (raw renderer, every workload expected) and the attached pack (same entry, journeys and
   app-specific faults; `up` only waits for the app, `down` refuses).
 - `install.py`: provisions the namespaces and Secrets (credentials copied by `kubectl --from-file`, never read) and
-  runs `sdo-operator host --deployment-plan` with the production agent flags (`--agent-provider`, `--model`,
-  `--agent-effort`). No deployer agent runs; the detection designer and the controller do.
+  runs `sdo-operator host --deployment-plan --config sdo-bench.yaml [--config F]...` with the agent provider, model
+  and effort as `SDO_AGENT_*` variables. No deployer agent runs; the detection designer and the controller do.
+- `sdo-bench.yaml`: the benchmark profile, the only operator configuration file every benchmark harness passes
+  (fuzzops hooks and install, the SREGym adapter and fastloop). It holds only the fields that differ from production
+  defaults ([`docs/config.md`](../../docs/config.md)): `response.repair_policy: recorded-actions`. `config.py` builds
+  the `--config` arguments and `SDO_*` variables and translates format-1 baseline flags.
 - `observe.py`: the command of `exec:sdo`. It polls `sdo-controller-state`, prints one line per SDO step (fuzzops
   records them as actions), writes `$FUZZOPS_REPORT` from the detector findings and then from the responder's
   confirmed root causes, keeps every state snapshot under `$FUZZOPS_OUT`, and exits after closure.
@@ -41,7 +45,7 @@ fuzzops-bench.md`). It runs `uv run -q python -m benchmarks.fuzzops.hooks <verb>
 | verb | does |
 |---|---|
 | `check` | no cluster access: `baseline.json` well formed, its namespace is `FUZZOPS_NAMESPACE`, the render matches its sha256, the bundle has the branch at the commit |
-| `prepare` | plain-manifest pack from the live app (the namespace's one Helm release, Jobs and namespaces dropped, the pack's other files beside `manifests/`; or the pack's own `manifests/`), refuse a render that differs from the baseline's (key order, document order and null-valued keys ignored), attached pack in `$BENCH_LANE_DIR/pack`, `go build` of `sdo-operator`, `kind load` of `sdo-{controller,responder,script-tools}:<image_tag>` on the workers, namespaces and credentials (`--from-file`), node image digest names, the bundle branch cloned as `main`, production `install-existing` with the baseline's controller flags, the settings' model, effort and provider, and always `--evidence-sink-host-path $BENCH_EVIDENCE_NODE --evidence-run-id $BENCH_EVIDENCE_RUN` (either unset: fails before any work). An operator left in the control namespace is removed first. Last stdout line: `{"pack", "operator_version", "memory"}` |
+| `prepare` | plain-manifest pack from the live app (the namespace's one Helm release, Jobs and namespaces dropped, the pack's other files beside `manifests/`; or the pack's own `manifests/`), refuse a render that differs from the baseline's (key order, document order and null-valued keys ignored), attached pack in `$BENCH_LANE_DIR/pack`, `go build` of `sdo-operator`, `kind load` of `sdo-{controller,responder,script-tools}:<image_tag>` on the workers, namespaces and credentials (`--from-file`), node image digest names, the bundle branch cloned as `main`, production `install-existing --config sdo-bench.yaml [--config $BENCH_LANE_DIR/sdo-config/baseline.yaml] [--config $BENCH_LANE_DIR/sdo-config/experiment.yaml]` with `SDO_AGENT_PROVIDER`, `SDO_AGENT_MODEL`, `SDO_AGENT_EFFORT` from the settings and always `SDO_EVIDENCE_HOST_PATH=$BENCH_EVIDENCE_NODE SDO_EVIDENCE_RUN_ID=$BENCH_EVIDENCE_RUN` (either unset: fails before any work); the argv and variables are kept as `install-existing-args.json` and `install-existing-env.json`. An operator left in the control namespace is removed first. Last stdout line: `{"pack", "operator_version", "memory"}` |
 | `idle` | two kubectl reads: controller pod (`job-name=sdo-controller-run`) Ready, `sdo-controller-state` written within 60 s (newest managedFields time; every controller step advances `step_count`, so a live controller writes it), and no open incident, pending closure or queued reflection. Busy reasons: `alarm: incident open <id>`, `busy: ...`, `down: ...`, `stale: ...` |
 | `watch` | `observe.py` on the control namespace with `--fault $BENCH_FAULT` (none for a healthy run); no PVC snapshot (the sink carries the evidence) |
 | `collect` | best effort into `BENCH_OUT`: `memory/.sdo/{outcomes,playbooks}`, `controller-state.json`, `controller.log` since the inject (from the cluster), and from the host sink only `evidence/` (the interval's incidents and lifecycle tasks, relative paths kept, with their `index.jsonl` records) and `transcripts.json`; then `view.json` and `view/transcripts/` (below); last the operator reset between problems, `sdo-operator incidents reset` (open or escalated incidents close as RESET with no learning credit, memory untouched; receipt `incidents-reset.json`), so the next run's gate starts clean; `collect.json` |
@@ -49,7 +53,9 @@ fuzzops-bench.md`). It runs `uv run -q python -m benchmarks.fuzzops.hooks <verb>
 | `transcripts` | read-only, 2 min, only `$BENCH_EVIDENCE_HOST/$BENCH_EVIDENCE_RUN` on the host: exit 0 when `layout.json` has schema `sdo.evidence/v1` and every `incidents/*/` with a `ledger.json` holds a `rollout-*.jsonl` (anywhere below it) unless no agent ran; else exit 1 with `no sink: <why>` or `transcripts missing: N (<short ids>)` first. The bench runs it at the end of every build check (the lane is not ready until it passes) and after every teardown (a failure is recorded; the reset proceeds) |
 
 `BENCH_OPERATOR` names the baseline directory and the settings (`model`, `effort`, `provider` default `codex`,
-`image_tag` default `fz-<revision[:8]>`, `auth_file` default `~/.codex/auth.json`). The operator images must already be
+`image_tag` default `fz-<revision[:8]>`, `auth_file` default `~/.codex/auth.json`, and an optional `config` object: an
+operator config overlay passed after the baseline's; it may not set `agent.provider`, `agent.model`, `agent.effort`
+or `evidence`, which the hook sets). The operator images must already be
 built on the host (`scripts/build_sdo_images.sh`); `prepare` fails clearly when one is missing.
 
 ### Baselines
@@ -58,18 +64,21 @@ A baseline directory (outside the repository, in sdo-exp) holds the accepted mem
 made on and `baseline.json`:
 
 ```json
-{"format": 1, "namespace": "<app ns>", "control_namespace": "<optional, default <ns>-sdo>",
+{"format": 2, "namespace": "<app ns>", "control_namespace": "<optional, default <ns>-sdo>",
  "application": "<optional, default ns>", "bundle": "memory.bundle", "branch": "<branch>", "commit": "<40 hex>",
  "render": "<relative path>", "render_sha256": "<hex>", "objective": "<health objective>",
- "controller_flags": ["--response-timeout", "1800s", "..."], "sdo_revision": "<commit it was made with>"}
+ "config": {"response": {"max_loops": 5}}, "sdo_revision": "<commit it was made with>"}
 ```
 
-Paths are relative to the directory. `controller_flags` are extra `install-existing` flags; the ones the hook sets
-(namespaces, images, model, effort, provider, credentials, PVC, kubeconfig) are refused. The memory names its
-namespaces, so a baseline restores only into its own namespace. `python -m benchmarks.fuzzops.hooks baseline
---kubeconfig F --context C --namespace NS --out DIR [--objective ...] [--branch B] [--pack P]` archives a running
-lane's accepted memory (bundle from the controller's application repository) and its live render as a new baseline.
-Never commit baseline data into this repository.
+Paths are relative to the directory. `config` is the operator config overlay the lane ran with beyond
+`sdo-bench.yaml` (usually `{}`); keys the hook sets (`agent.provider`, `agent.model`, `agent.effort`, `evidence`) are
+refused. A format-1 manifest (`controller_flags`, pre-config `install-existing` flags) is translated to `config` when
+it is read: each known flag maps to its key (`--response-timeout` to `response.timeout`, `--frozen-memory` and
+`--watch-only` to `mode`, ...), and a flag without a key, or one the hook sets, is refused with its name. The memory
+names its namespaces, so a baseline restores only into its own namespace. `python -m benchmarks.fuzzops.hooks baseline
+--kubeconfig F --context C --namespace NS --out DIR [--objective ...] [--branch B] [--pack P] [--config JSON]`
+archives a running lane's accepted memory (bundle from the controller's application repository) and its live render
+as a new format-2 baseline. Never commit baseline data into this repository.
 
 ## Fresh install (to make a baseline)
 
@@ -80,7 +89,7 @@ designer) only makes new baseline memory; archive it with `hooks baseline` once 
 python -m benchmarks.fuzzops.install --pack <fuzzops>/examples/<app> --work <dir> --namespace <ns> \
   --control-namespace <ns>-sdo --objective '<health objective>' --controller-image sdo-controller:<tag> \
   --responder-image sdo-responder:<tag> --operator-binary <sdo-operator> --kubeconfig <kubeconfig> \
-  --model gpt-6-luna --effort xhigh
+  --model gpt-6-luna --effort xhigh [--config <overlay.yaml>]
 export FUZZOPS_EXEC_CMD_SDO="cd <sdo> && uv run python -m benchmarks.fuzzops.observe --control-namespace <ns>-sdo"
 fuzzops run --pack <dir>/pack --namespace <ns> --skip-reset --operator exec:sdo --fault '<instance id>' --window 600s
 ```
@@ -129,7 +138,8 @@ reflection was dispatched (`reflection_dispatch_at` unset, phase not `DISPATCH`)
 usage and failed before its session started (`session_unavailable`, `session_handoff_invalid`, `request_too_large`).
 Anything else, including an incident with no closure yet, counts as an agent run that needs a rollout.
 
-For a manual `install`, pass `--evidence-sink-host-path <node dir> [--evidence-run-id <id>]` so SDO's trajectories, task records,
+For a manual `install`, pass `--evidence-sink-host-path <node dir> [--evidence-run-id <id>]` (set as
+`SDO_EVIDENCE_HOST_PATH` and `SDO_EVIDENCE_RUN_ID`) so SDO's trajectories, task records,
 ledgers and usage are mirrored out of the control namespace while the run goes (layout: `docs/architecture.md`,
 "Run evidence sink"). On kind the directory must be a node mount made when the cluster is created, for example
 `extraMounts: [{hostPath: <sdo-exp run dir>/evidence, containerPath: /opt/sdo-evidence}]` with the host directory
@@ -145,7 +155,7 @@ ledgers and usage are mirrored out of the control namespace while the run goes (
 
 ## Watch-only
 
-`install --watch-only` installs SDO with `--frozen-memory --watch-only`: detection, incident opening, verification
+`install --watch-only` installs SDO with `SDO_MODE=watch-only`: detection, incident opening, verification
 and closure run as usual, but no automatic stage, responder or reflection runs and accepted memory never changes.
 Use it to measure detector precision (incidents opened on a healthy app) and detection/localization per fault
 without agent cost; the incident record is the controller state, its lifecycle telemetry and the broker ledger.

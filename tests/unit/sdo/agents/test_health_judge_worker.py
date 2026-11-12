@@ -135,7 +135,9 @@ def test_judge_authors_final_files_in_writable_session(
     agent = ScriptedAgent(respond)
     monkeypatch.setenv("SDO_AGENT_PROVIDER", "codex")
     monkeypatch.setattr(
-        judge_worker, "CodexLifecycleBackend", lambda **kwargs: CodexLifecycleBackend(executor=agent.executor)
+        judge_worker,
+        "CodexLifecycleBackend",
+        lambda **kwargs: CodexLifecycleBackend(reasoning_effort="medium", timeout_seconds=900, executor=agent.executor),
     )
     with fake_codex_login(monkeypatch):
         result = judge_worker.author_health_diagnostics(request, tmp_path)

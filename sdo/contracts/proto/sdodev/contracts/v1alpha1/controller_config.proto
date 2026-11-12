@@ -9,8 +9,14 @@ syntax = "proto3";
 // build error instead.
 //
 // This is distinct from the in-process runtime.ControllerConfig (detector
-// thresholds, intervals), which the controller derives from this launch config.
+// thresholds, intervals), which the controller derives from this launch config
+// and the operator configuration at settings_path.
 // Serialized as protojson like every other contract.
+//
+// ControllerConfig is wiring: namespaces, images, the PVC, commits and paths.
+// Timing and policy (timeouts, loops, repair policy, mode, reflection, agent
+// provider, model and effort) live only in the operator configuration
+// (contracts/settings), read from settings_path.
 package sdodev.contracts.v1alpha1;
 
 import "buf/validate/validate.proto";
@@ -31,18 +37,18 @@ message ControllerConfig {
   string source_commit = 5;
   string deployed_commit = 6;
 
-  // Responder dispatch.
-  // Deprecated and ignored: the controller resolves the worker through the agent
-  // registry. Kept so existing ControllerConfig documents stay wire-compatible.
-  string dispatcher = 7 [deprecated = true];
-  repeated string dispatcher_args = 9 [deprecated = true];
-  string dispatcher_mode = 8 [(buf.validate.field).string = {in: ["job"]}];
+  // Responder dispatch. The controller resolves the worker through the agent
+  // registry and always dispatches Kubernetes Jobs.
+  reserved 7, 8, 9;
+  reserved "dispatcher", "dispatcher_mode", "dispatcher_args";
   string responder_image = 10;
   string repository_pvc = 11;
   string repository_mount_path = 12;
   string repository_pvc_subpath = 13;
   string responder_credentials_secret = 14;
-  repeated string responder_env = 15;
+  // Responder environment is the operator configuration's agent.extra_env.
+  reserved 15;
+  reserved "responder_env";
 
   reserved 16, 18;
   reserved "broker", "broker_args";
@@ -52,38 +58,32 @@ message ControllerConfig {
   // Telemetry.
   string firing_telemetry_path = 19;
 
-  // Timing and policy.
+  // Bounded run. Every other timing and policy value is operator
+  // configuration (settings_path).
   google.protobuf.Duration duration = 20;
-  google.protobuf.Duration response_timeout = 21;
-  google.protobuf.Duration verification_timeout = 22;
-  reserved 23, 24;
-  reserved "max_follow_ups", "follow_up_cooldown";
-  string repair_policy = 25 [(buf.validate.field).string = {in: ["commit", "recorded-actions"]}];
+  reserved 21, 22, 23, 24, 25;
+  reserved "response_timeout", "verification_timeout", "max_follow_ups", "follow_up_cooldown", "repair_policy";
 
   // Leader election.
-  string lease_name = 26;
-  google.protobuf.Duration lease_duration = 27;
+  reserved 26, 27;
+  reserved "lease_name", "lease_duration";
   string identity = 28;
 
-  // Lifecycle. Non-zero controller defaults (synthetic_traffic,
-  // clean_responder_helpers, state_baseline are true) use `optional` so an unset
-  // field keeps the controller default rather than flipping to false.
+  // Lifecycle.
   bool exit_after_closure = 29;
   reserved 30;
   reserved "restart_after_closure";
   string maintenance_configmap = 31;
-  google.protobuf.Duration maintenance_poll_interval = 32;
-  google.protobuf.Duration resume_sync_timeout = 33;
-  optional bool synthetic_traffic = 34;
-  google.protobuf.Duration synthetic_traffic_warmup = 35;
+  reserved 32, 33, 34, 35;
+  reserved "maintenance_poll_interval", "resume_sync_timeout", "synthetic_traffic", "synthetic_traffic_warmup";
   reserved 36;
   reserved "prober_binary";
   reserved 37;
   reserved "prober_image";
   reserved 38;
   reserved "prober_url";
-  optional bool clean_responder_helpers = 39;
-  optional bool state_baseline = 40;
+  reserved 39, 40;
+  reserved "clean_responder_helpers", "state_baseline";
 
   // Directory of agent registration manifests. When omitted the controller
   // reads the built-in manifests baked into its image, with responder_image
@@ -106,28 +106,13 @@ message ControllerConfig {
   reserved "validator_image";
   reserved 48;
   reserved "schema_identity";
-  string responder_backend = 49;
-  string responder_model = 50;
-  // Reasoning effort every agent worker runs at; empty means the shared default (sdo/contracts/agent_env.json).
-  string agent_effort = 101;
-  // Reasoning summary mode Codex workers record; empty means the shared default (sdo/contracts/agent_env.json).
-  string agent_reasoning_summary = 120;
-  // Limit of one lifecycle (detection designer) session; unset means the shared default (sdo/contracts/agent_env.json).
-  google.protobuf.Duration lifecycle_timeout = 117 [(buf.validate.field).duration.gte = {}];
-  // Trusted run policy; empty preserves default-on replay and corpus capture.
-  string replay = 102 [(buf.validate.field).string = {in: ["", "on", "off"]}];
+  // Agent provider, model, effort, lifecycle limit, replay and reflection
+  // policy are operator configuration.
+  reserved 49, 50, 101, 117, 102;
+  reserved "responder_backend", "responder_model", "agent_effort", "lifecycle_timeout", "replay";
   string worker_mount_mode = 51;
-
-  // Operator policy for the outcome reflection session. A resumed session
-  // requires a valid responder session ID from the accepted closure.
-  string reflection_session = 52 [(buf.validate.field).string = {in: ["", "fresh", "resume"]}];
-  string reflection_guidance = 53 [(buf.validate.field).string = {in: ["", "baseline", "generalize", "generalize-spec"]}];
-
-  // Replays incident detectors on benchmark-supplied healthy snapshots. The
-  // validator receives only the bounded snapshot directory, read-only.
-  bool healthy_baseline = 54;
-  int32 max_response_loops = 55 [(buf.validate.field).int32.gte = 0];
-  google.protobuf.Duration diagnosis_deadline = 56;
+  reserved 52, 53, 54, 55, 56;
+  reserved "reflection_session", "reflection_guidance", "healthy_baseline", "max_response_loops", "diagnosis_deadline";
   reserved 57;
   reserved 58;
   reserved "drift_sweep_interval";
@@ -136,7 +121,8 @@ message ControllerConfig {
   google.protobuf.Duration drift_batch_window = 66;
   reserved 67, 68;
   reserved "drift_dispatches_per_hour", "drift_tokens_per_hour";
-  bool force_reflection = 62;
+  reserved 62;
+  reserved "force_reflection";
   reserved 63;
   reserved "deployed_manifest_paths";
   reserved 64;
@@ -157,19 +143,21 @@ message ControllerConfig {
   // How long a Kubernetes failure condition without its own give-up signal
   // must hold before it opens an incident. Unset uses the controller default.
   google.protobuf.Duration self_heal_hold = 119 [(buf.validate.field).duration.gt = {}];
-  google.protobuf.Duration responder_report_grace = 77;
-  // Pre-start one idle responder; false forces the ordinary cold Job path.
-  optional bool responder_standby = 78;
+  reserved 77, 78;
+  reserved "responder_report_grace", "responder_standby";
   // Fixed tool image for application-local RunScript Jobs.
   string script_image = 79;
   // Shared remote branch the accepted repository replicates, so lanes of one
   // application on several hosts share one accepted memory. Unset keeps the
   // accepted repository local.
   MemoryUpstream memory_upstream = 80;
-  // Named programming-model plugin set. An omitted value preserves Go.
+  // Named programming-model plugin set: the launcher's typed projection of the
+  // operator configuration's agent.code_path and agent.code_path_overrides.
+  // An omitted value preserves Go.
   CodePathConfig code_path = 100;
-  // Keep repeat evidence private and disable learning.
-  bool frozen_memory = 110;
+  // The mode (frozen memory, external incidents, watch-only) is operator configuration.
+  reserved 110, 111, 118;
+  reserved "frozen_memory", "external_incidents", "watch_only";
   // The deployment source is read from the accepted .sdo/deployment/plan.yaml.
   reserved 112;
   reserved "deployment_source";
@@ -180,11 +168,6 @@ message ControllerConfig {
   // allowlist, namespace and cluster-scope grants); absent means no limit
   // beyond today's notes.
   DeploymentPolicy deployment_policy = 115;
-  // Disable detector admission/verification; accept external alerts only.
-  bool external_incidents = 111;
-  // Detect, open, verify and close incidents as usual, but never respond:
-  // no automatic stage, responder or reflection runs (requires frozen memory).
-  bool watch_only = 118;
   // The trusted in-cluster build and apply identity the controller deploys
   // with: the parent's upstream advances and the child's accepted responder
   // source repairs. Absent means nothing can build an image.
@@ -193,6 +176,9 @@ message ControllerConfig {
   // credential directory, pinning mode). Unset provides no operator source:
   // detectors that query one report an error instead of health.
   string telemetry_environment_file = 116;
+  // Path of the resolved operator configuration (contracts/settings.Config
+  // YAML) the controller read at start: every timing and policy value. Required.
+  string settings_path = 120 [(buf.validate.field).string.min_len = 1];
 }
 
 // DeployIdentity is the BuildKit Job image, the registry push Secret and the

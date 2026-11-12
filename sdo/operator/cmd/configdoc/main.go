@@ -39,13 +39,19 @@ nothing here changes what an accepted detector decides.
 1. the defaults in this file;
 2. each ` + "`--config FILE`" + ` (YAML, repeatable, applied in order; an unknown key is an error);
 3. ` + "`SDO_<SECTION>_<KEY>`" + ` environment variables, derived from the YAML key path (the top-level ` + "`mode`" + ` is ` + "`SDO_MODE`" + `).
-   A list or an object is JSON. A variable that starts with a section prefix but names no key is an error;
-4. the pre-config command-line flags, when explicitly given (they are being removed).
+   A list or an object is JSON. A variable that starts with a section prefix but names no key is an error.
+
+No knob has a command-line flag of its own; the flags of ` + "`host`" + ` and ` + "`install-existing`" + ` name only the installation
+(repository, namespaces, images, Secrets, PVC, registry, source and plan, agent registrations, run bounds).
 
 The installer writes the resolved result to the ` + "`sdo-config`" + ` ConfigMap, mounted read-only at ` + "`/etc/sdo/config.yaml`" + ` in the
-operate and controller Jobs. Its hash is part of the controller's install fingerprint, so running ` + "`install-existing`" + ` again with
-a changed configuration replaces the controller. The controller also records the file under ` + "`.sdo-runtime/config.yaml`" + `,
-which the evidence sink carries to the run directory.
+operate and controller Jobs, which refuse to start without it; no policy value crosses their command lines. The controller
+records the file under ` + "`.sdo-runtime/config.yaml`" + ` at start, its compiled child and its deployment health checks read that
+record, and the evidence sink carries it to the run directory.
+
+A value is read once, when a process starts; there is no hot reload. The ConfigMap's hash is part of the controller's
+install fingerprint, so running ` + "`install-existing`" + ` again with a changed configuration replaces the running controller
+(one way: the new values apply only through that replacement).
 
 ` + "`sdo-operator config print [--config FILE]...`" + ` prints the resolved YAML.
 

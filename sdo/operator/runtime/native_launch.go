@@ -28,13 +28,7 @@ import (
 // nativeBrokerFromLaunch makes the compiled controller child select the Go
 // broker from its typed launch contract. Native mode and proposal-only worker
 // mounts are one validation decision, before leader election or dispatch.
-func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfig, client kubernetes.Interface, repairDeployer RepairDeployerFactory, registry *telemetry.Registry) (*NativeIncidentBroker, kubernetes.Interface, error) {
-	if config != nil && config.GetExternalIncidents() && !config.GetFrozenMemory() {
-		return nil, nil, errors.New("external incidents require frozen memory")
-	}
-	if config != nil && config.GetFrozenMemory() && config.GetForceReflection() {
-		return nil, nil, errors.New("frozen memory conflicts with force reflection")
-	}
+func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfig, policy settings.Config, client kubernetes.Interface, repairDeployer RepairDeployerFactory, registry *telemetry.Registry) (*NativeIncidentBroker, kubernetes.Interface, error) {
 	if config == nil {
 		return nil, nil, errors.New("native broker requires typed controller config")
 	}
@@ -44,9 +38,8 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 	if config.GetBrokerMode() != "native" || config.GetWorkerMountMode() != "proposal-only" {
 		return nil, nil, errors.New("native broker requires proposal-only worker mounts")
 	}
-	if config.GetResponderBackend() == "" || config.GetResponderModel() == "" ||
-		config.GetBrokerWorktreeRoot() == "" || config.GetAppRoot() == "" || config.GetRepositoryPvc() == "" || config.GetRepositoryMountPath() == "" {
-		return nil, nil, errors.New("native broker requires responder identity, proposal root, and repository mount")
+	if config.GetBrokerWorktreeRoot() == "" || config.GetAppRoot() == "" || config.GetRepositoryPvc() == "" || config.GetRepositoryMountPath() == "" {
+		return nil, nil, errors.New("native broker requires proposal root and repository mount")
 	}
 	if err := toolchain.ValidateImage(config.GetToolchainImage()); err != nil {
 		return nil, nil, err
@@ -58,7 +51,7 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 			return nil, nil, fmt.Errorf("native broker Kubernetes client: %w", err)
 		}
 	}
-	if _, err := AgentWorkerEnvironment(config, registry); err != nil {
+	if _, err := AgentWorkerEnvironment(config, policy, registry); err != nil {
 		return nil, nil, err
 	}
 	controlNamespace := config.GetControlNamespace()
@@ -66,7 +59,7 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 		controlNamespace = config.GetNamespace()
 	}
 	validation := broker.SubprocessValidator{}
-	if config.GetHealthyBaseline() {
+	if policy.Learning.HealthyBaseline {
 		validation.HealthyBaseline = filepath.Join(config.GetRepositoryMountPath(), ".sdo-baseline/healthy")
 	}
 	ceiling, policyErr := observation.CeilingFromEnvironment()
@@ -86,7 +79,7 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 	if err != nil {
 		return nil, nil, fmt.Errorf("native repository broker: %w", err)
 	}
-	repository, err := broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), selectedCodePath.Memory.Validate, broker.ObservationPolicy{Telemetry: brokerTelemetry, Replay: config.GetReplay(), CodePath: memoryCodePath, Ceiling: ceiling, ApplicationNamespace: config.GetNamespace()})
+	repository, err := broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), selectedCodePath.Memory.Validate, broker.ObservationPolicy{Telemetry: brokerTelemetry, Replay: policy.Learning.Replay, CodePath: memoryCodePath, Ceiling: ceiling, ApplicationNamespace: config.GetNamespace()})
 	if err != nil {
 		return nil, nil, fmt.Errorf("native repository broker: %w", err)
 	}
@@ -97,21 +90,24 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 	if err != nil {
 		return nil, nil, err
 	}
-	repairs, err := repairsFromLaunch(config, client, repository, repairDeployer)
+	frozenMemory := policy.Mode != settings.ModeOperate
+	repairs, err := repairsFromLaunch(config, frozenMemory, client, repository, repairDeployer)
 	if err != nil {
 		return nil, nil, err
 	}
 	return &NativeIncidentBroker{
-		Replay: config.GetReplay(), Repository: repository, LedgerRoot: ledgerRoot, Repairs: repairs,
+		Replay: policy.Learning.Replay, Repository: repository, LedgerRoot: ledgerRoot, Repairs: repairs,
 		CodePath: codePathConfigFromContract(config.GetCodePath()),
-		Deriver:  ProtoOutcomeDeriver{SessionRoot: config.GetRepositoryMountPath()}, ResponderBackend: config.GetResponderBackend(), ResponderModel: config.GetResponderModel(),
-		ForceReflection: config.GetForceReflection(), FrozenMemory: config.GetFrozenMemory(), PhaseLog: os.Stdout,
+		Deriver:  ProtoOutcomeDeriver{SessionRoot: config.GetRepositoryMountPath()}, ResponderBackend: policy.Agent.Provider, ResponderModel: policy.Agent.Model,
+		ForceReflection: policy.Learning.ForceReflection, FrozenMemory: frozenMemory, PhaseLog: os.Stdout,
 		LateFindingsVerifier: latefindings.Store{Client: client, Namespace: controlNamespace},
 		SessionRoot:          config.GetRepositoryMountPath(), SessionRetention: DefaultSessionRetention,
 	}, client, nil
 }
 
-func attachNativeReflector(native *NativeIncidentBroker, config *contracts.ControllerConfig, client kubernetes.Interface, registry *worker_registry.Registry, telemetryRegistry *telemetry.Registry, timeout time.Duration) error {
+// attachNativeReflector wires reflection. Its task deadline is response.timeout, the bound of the responder session
+// a resumed reflection continues; workers receive it as SDO_REFLECTION_DEADLINE.
+func attachNativeReflector(native *NativeIncidentBroker, config *contracts.ControllerConfig, policy settings.Config, client kubernetes.Interface, registry *worker_registry.Registry, telemetryRegistry *telemetry.Registry) error {
 	if native == nil {
 		return nil
 	}
@@ -126,14 +122,11 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 	if err != nil {
 		return fmt.Errorf("native reflection agent registration: %w", err)
 	}
-	if timeout <= 0 {
-		timeout = 30 * time.Minute
-	}
 	namespace := config.GetControlNamespace()
 	if namespace == "" {
 		namespace = config.GetNamespace()
 	}
-	agentEnvironment, err := AgentWorkerEnvironment(config, telemetryRegistry)
+	agentEnvironment, err := AgentWorkerEnvironment(config, policy, telemetryRegistry)
 	if err != nil {
 		return err
 	}
@@ -141,7 +134,7 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 		ToolchainImage: config.GetToolchainImage(),
 		Client:         client, Namespace: namespace, Registry: registry,
 		ServiceAccount: "sdo-responder", RepositoryPVC: config.GetRepositoryPvc(), RepositoryMountPath: config.GetRepositoryMountPath(),
-		RepositoryPVCSubPath: config.GetRepositoryPvcSubpath(), CredentialsSecret: config.GetResponderCredentialsSecret(), HealthyBaseline: config.GetHealthyBaseline(),
+		RepositoryPVCSubPath: config.GetRepositoryPvcSubpath(), CredentialsSecret: config.GetResponderCredentialsSecret(), HealthyBaseline: policy.Learning.HealthyBaseline,
 		Environment: agentEnvironment,
 		OnPhase:     recordClosurePhase,
 	}
@@ -171,7 +164,7 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 		directory := filepath.Join(config.GetRepositoryMountPath(), relative, "tools")
 		executor.Environment["SDO_TOOLS_DIR"] = "/sdo/session/tools"
 		executor.Environment["SDO_MEMORY_CHECK_DIR"] = "/sdo/session/tools"
-		return reflectionCheckExecutor{Executor: executor, Directory: directory, Handle: reflectionCheckHandler(native.Repository, config.GetRepositoryMountPath(), incidentID)}, nil
+		return reflectionCheckExecutor{Executor: executor, Directory: directory, Handle: reflectionCheckHandler(native.Repository, config.GetRepositoryMountPath(), incidentID, time.Duration(policy.Agent.MemoryCheckTimeout))}, nil
 
 	}
 	catalog := memory.OpenCatalogReader(config.GetAppRoot())
@@ -183,11 +176,11 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 		catalog = memory.OpenShellCatalogReader(config.GetAppRoot())
 	}
 	native.Reflector = RegisteredReflectionWorker{
-		Replay: config.GetReplay(), TaskStore: &lifecycleio.TaskStore{Root: filepath.Join(native.LedgerRoot, "reflection-tasks")},
+		Replay: policy.Learning.Replay, TaskStore: &lifecycleio.TaskStore{Root: filepath.Join(native.LedgerRoot, "reflection-tasks")},
 		Executor: freshExecutor,
-		AgentID:  reflectorID, TaskType: reflectionTask, Outcomes: memory.NewJSONStore(config.GetAppRoot()), Timeout: timeout,
-		SessionMode:       config.GetReflectionSession(),
-		Guidance:          config.GetReflectionGuidance(),
+		AgentID:  reflectorID, TaskType: reflectionTask, Outcomes: memory.NewJSONStore(config.GetAppRoot()), Timeout: time.Duration(policy.Response.Timeout),
+		SessionMode:       policy.Learning.ReflectionSession,
+		Guidance:          policy.Learning.ReflectionGuidance,
 		Catalog:           catalog,
 		CorpusSessionRoot: config.GetRepositoryMountPath(),
 		SessionExecutor: func(incidentID string) (ReflectionTaskExecutor, error) {
@@ -202,27 +195,22 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 	return nil
 }
 
-// AgentWorkerEnvironment is the provider and model the controller was configured
-// with, plus the broker's telemetry policy (the controller's environment under
-// the same derivation as its brokers), as the environment every agent worker
-// Job reads. Workers default to Codex
-// when SDO_AGENT_PROVIDER is absent, so a configured provider must always travel
-// with the Job. An unconfigured provider adds nothing; an unknown one is an error.
-func AgentWorkerEnvironment(config *contracts.ControllerConfig, telemetryRegistry *telemetry.Registry) (map[string]string, error) {
-	environment, err := worker_registry.AgentEnvironment(config.GetResponderBackend(), config.GetResponderModel(), config.GetAgentEffort(), config.GetAgentReasoningSummary(), config.GetLifecycleTimeout().AsDuration())
-	if err != nil {
-		return nil, err
-	}
-	replay, err := settings.Replay(config.GetReplay())
+// AgentWorkerEnvironment is the agent section of the operator configuration
+// (provider, model, effort and limits, always set), the replay policy, plus the
+// broker's telemetry policy (the controller's environment under the same
+// derivation as its brokers), as the environment every agent worker Job reads.
+func AgentWorkerEnvironment(config *contracts.ControllerConfig, policy settings.Config, telemetryRegistry *telemetry.Registry) (map[string]string, error) {
+	environment := worker_registry.AgentEnvironment(policy.Agent)
+	replay, err := settings.Replay(policy.Learning.Replay)
 	if err != nil {
 		return nil, err
 	}
 	environment[settings.ReplayEnvironment] = replay
-	policy, err := broker.ControllerPolicyEnvironment(config, telemetryRegistry)
+	telemetryPolicy, err := broker.ControllerPolicyEnvironment(config, telemetryRegistry)
 	if err != nil {
 		return nil, fmt.Errorf("agent worker telemetry policy: %w", err)
 	}
-	for name, value := range policy {
+	for name, value := range telemetryPolicy {
 		environment[name] = value
 	}
 	selected, err := codePathFromContract(config.GetCodePath())
@@ -240,13 +228,13 @@ func AgentWorkerEnvironment(config *contracts.ControllerConfig, telemetryRegistr
 	return environment, nil
 }
 
-// withAgentEnvironment makes the launch config authoritative for provider and
-// model over any hand-written responder environment entries.
-func withAgentEnvironment(environment map[string]string, config *contracts.ControllerConfig, telemetryRegistry *telemetry.Registry) (map[string]string, error) {
+// withAgentEnvironment makes the operator configuration authoritative for
+// provider, model, effort and limits over any agent.extra_env entries.
+func withAgentEnvironment(environment map[string]string, config *contracts.ControllerConfig, policy settings.Config, telemetryRegistry *telemetry.Registry) (map[string]string, error) {
 	if config == nil {
 		return environment, nil
 	}
-	agent, err := AgentWorkerEnvironment(config, telemetryRegistry)
+	agent, err := AgentWorkerEnvironment(config, policy, telemetryRegistry)
 	if err != nil {
 		return nil, err
 	}

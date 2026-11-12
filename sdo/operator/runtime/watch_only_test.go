@@ -9,6 +9,7 @@ import (
 	"time"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/sdk"
 )
 
@@ -24,7 +25,7 @@ func TestWatchOnlyIncidentClosesOnHealthWithoutResponding(t *testing.T) {
 	cfg.FiringThreshold, cfg.ClearThreshold = 1, 1
 	cfg.ClosureStabilityWindow = 5 * time.Second
 	cfg.VerificationTimeout = 5 * time.Minute
-	cfg.WatchOnly = true
+	cfg = cfg.WithMode(settings.ModeWatchOnly)
 	responder := &recordingDispatcher{requests: make(chan IncidentRequest, 8)}
 	controller, err := NewController(cfg, []sdk.Detector{sameWriteDetector{world: world}}, newRestartedStore(opened), responder, opened)
 	if err != nil {
@@ -113,12 +114,19 @@ func TestWatchOnlyRejectsExternalIncidents(t *testing.T) {
 	}
 }
 
-func TestWatchOnlyLaunchFlag(t *testing.T) {
-	if args := controllerConfigToArgs(&contracts.ControllerConfig{WatchOnly: true, FrozenMemory: true}); !slices.Contains(args, "--watch-only") {
-		t.Fatalf("watch-only config args = %v", args)
+// The mode is configuration only: the launch carries no mode flag for the
+// child to parse.
+func TestModeIsNotALaunchFlag(t *testing.T) {
+	for _, mode := range settings.Modes {
+		cfg := testControllerConfig().WithMode(mode)
+		if cfg.WatchOnly != (mode == settings.ModeWatchOnly) || cfg.ExternalIncidentsOnly != (mode == settings.ModeExternal) {
+			t.Fatalf("mode %s = %+v", mode, cfg)
+		}
 	}
-	if args := controllerConfigToArgs(&contracts.ControllerConfig{}); slices.Contains(args, "--watch-only") {
-		t.Fatalf("default config args = %v", args)
+	for _, arg := range controllerConfigToArgs(&contracts.ControllerConfig{}) {
+		if strings.Contains(arg, "watch-only") || strings.Contains(arg, "frozen") || strings.Contains(arg, "external") {
+			t.Fatalf("launch args carry a mode: %v", arg)
+		}
 	}
 }
 

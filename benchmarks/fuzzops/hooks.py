@@ -9,8 +9,9 @@ ever touches its own lane. Verbs (environment: ``BENCH_*`` and ``FUZZOPS_*``, se
 ``prepare``   on a fresh app copy: build the plain-manifest pack from the live app (the namespace's one Helm release,
               or the pack's own ``manifests/``), refuse a render that differs from the baseline's, write the attached
               pack, build ``sdo-operator``, load the operator images onto the worker nodes, provision the namespaces,
-              clone the baseline memory and run production ``sdo-operator install-existing`` with the lane's evidence
-              sink (``BENCH_EVIDENCE_NODE``, ``BENCH_EVIDENCE_RUN``; required). The last stdout line is
+              clone the baseline memory and run production ``sdo-operator install-existing`` with the benchmark
+              profile, the baseline's and the experiment's config overlays, and the lane's evidence sink
+              (``BENCH_EVIDENCE_NODE``, ``BENCH_EVIDENCE_RUN``; required). The last stdout line is
               ``{"pack", "operator_version", "memory"}``. It ends with an operator reset between problems
               (``sdo-operator incidents reset``), so the lane starts with no incident.
 ``idle``      exit 0 when the controller pod is Ready, its state ConfigMap changed within 60 s and SDO owns no incident
@@ -32,13 +33,15 @@ ever touches its own lane. Verbs (environment: ``BENCH_*`` and ``FUZZOPS_*``, se
 
 Baseline directory: ``baseline.json`` (``Baseline``) beside the memory bundle and the render it was made on::
 
-    {"format": 1, "namespace": "<app namespace>", "control_namespace": "<ns>-sdo" (optional),
+    {"format": 2, "namespace": "<app namespace>", "control_namespace": "<ns>-sdo" (optional),
      "application": "<ns>" (optional), "bundle": "memory.bundle", "branch": "<branch>", "commit": "<40 hex>",
      "render": "<path of the plain render>", "render_sha256": "<hex>", "objective": "<health objective>",
-     "controller_flags": ["--response-timeout", "1800s", ...], "sdo_revision": "<SDO commit it was made with>"}
+     "config": {"response": {"max_loops": 5}, ...}, "sdo_revision": "<SDO commit it was made with>"}
 
-Paths are relative to the baseline directory. ``controller_flags`` are extra ``install-existing`` flags; the flags the
-hook sets itself (``HOOK_FLAGS``) are refused there.
+Paths are relative to the baseline directory. ``config`` is an operator config overlay (``docs/config.md``) passed
+after the benchmark profile; the keys the hook sets from the operator block and the lane (agent provider, model and
+effort, the evidence sink) are refused there. A format-1 manifest's ``controller_flags`` (pre-config
+``install-existing`` flags) are translated to ``config`` when it is read; a flag without a config key is refused.
 """
 
 from __future__ import annotations
@@ -60,7 +63,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from benchmarks.fuzzops import observe, sink, view
+from benchmarks.fuzzops import config, observe, sink, view
 from benchmarks.fuzzops.install import (
     CREDENTIALS_SECRET,
     REPOSITORY_PVC,
@@ -74,7 +77,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
 BASELINE_FILE = "baseline.json"
-BASELINE_FORMAT = 1
+BASELINE_FORMAT = 2
 STATE_CONFIGMAP = observe.STATE_CONFIGMAP
 STATE_KEY = observe.STATE_KEY
 CONTROLLER_JOB = "sdo-controller-run"
@@ -96,30 +99,14 @@ HOOK_FLAGS = frozenset(
         "--script-image",
         "--repository-pvc",
         "--credentials-secret",
-        "--agent-provider",
-        "--model",
-        "--agent-effort",
         "--kubeconfig",
-        "--evidence-sink-host-path",
-        "--evidence-sink-volume",
-        "--evidence-run-id",
     }
 )
-#: Controller flags a new baseline records unless told otherwise (the flags SDO's fuzzops lanes ran with).
-DEFAULT_CONTROLLER_FLAGS = (
-    "--response-timeout",
-    "1800s",
-    "--verification-timeout",
-    "300s",
-    "--reflection-session",
-    "resume",
-    "--reflection-guidance",
-    "baseline",
-    "--max-response-loops",
-    "10",
-    "--repair-policy",
-    "recorded-actions",
-)
+#: Config keys the hook sets from the operator block and the lane; a baseline overlay may not.
+HOOK_KEYS = frozenset({("agent", "provider"), ("agent", "model"), ("agent", "effort"), ("evidence",)})
+#: The overlay a new baseline records unless told otherwise. The values SDO's fuzzops lanes ran with are the
+#: production defaults plus the benchmark profile (``sdo-bench.yaml``), so nothing more is recorded.
+DEFAULT_CONFIG: dict[str, Any] = {}
 _DNS_LABEL = re.compile(r"^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$")
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
 
@@ -153,7 +140,7 @@ class Baseline:
     control_namespace: str = ""
     application: str = ""
     objective: str = ""
-    controller_flags: tuple[str, ...] = ()
+    config: dict[str, Any] = field(default_factory=dict)
     render_sha256: str = ""
     sdo_revision: str = ""
     format: int = BASELINE_FORMAT
@@ -175,13 +162,7 @@ class Baseline:
             raise ValueError(f"branch {self.branch!r} is not a branch name")
         _relative("bundle", self.bundle)
         _relative("render", self.render)
-        if not isinstance(self.controller_flags, tuple) or not all(isinstance(f, str) for f in self.controller_flags):
-            raise TypeError("controller_flags must be a tuple of strings")
-        for flag in self.controller_flags:
-            if flag.split("=", 1)[0] in HOOK_FLAGS:
-                raise ValueError(f"controller flag {flag} is set by the hook, not the baseline")
-        if self.controller_flags and not self.controller_flags[0].startswith("--"):
-            raise ValueError("controller_flags must start with a flag")
+        refuse_hook_keys(self.config, "baseline config")
 
     @property
     def control(self) -> str:
@@ -207,10 +188,11 @@ class Baseline:
             raise ValueError(f"{manifest} is not JSON: {exc}") from exc
         if not isinstance(raw, dict):
             raise ValueError(f"{manifest} is not a JSON object")
+        if raw.get("format") == 1:
+            raw = _translate_format_1(raw, manifest)
         known = {f for f in cls.__dataclass_fields__ if f != "root"}
         if unknown := set(raw) - known:
             raise ValueError(f"{manifest} has unknown fields {sorted(unknown)}")
-        raw["controller_flags"] = tuple(raw.get("controller_flags") or ())
         try:
             return cls(**raw, root=root)
         except TypeError as exc:
@@ -218,8 +200,35 @@ class Baseline:
 
     def to_json(self) -> str:
         data = {k: v for k, v in asdict(self).items() if k != "root"}
-        data["controller_flags"] = list(self.controller_flags)
         return json.dumps(data, indent=2) + "\n"
+
+
+def refuse_hook_keys(overlay: Any, what: str) -> None:
+    """Refuse an overlay that is not a mapping or sets a key the hook sets from the operator block or the lane."""
+    if not isinstance(overlay, dict):
+        raise TypeError(f"{what} must be an object of config sections")
+    for path in HOOK_KEYS:
+        section: Any = overlay
+        for key in path[:-1]:
+            section = section.get(key) if isinstance(section, dict) else None
+        if isinstance(section, dict) and path[-1] in section:
+            raise ValueError(f"{what} sets {'.'.join(path)}, which the hook sets from the operator block or the lane")
+
+
+def _translate_format_1(raw: dict[str, Any], manifest: Path) -> dict[str, Any]:
+    """A format-1 manifest as format 2: its ``controller_flags`` become the equivalent ``config`` overlay."""
+    flags = raw.get("controller_flags") or []
+    if not isinstance(flags, list) or not all(isinstance(flag, str) for flag in flags):
+        raise ValueError(f"{manifest}: controller_flags must be a list of strings")
+    for flag in flags:
+        if flag.split("=", 1)[0] in HOOK_FLAGS:
+            raise ValueError(f"{manifest}: controller flag {flag} is set by the hook, not the baseline")
+    try:
+        overlay = config.translate_flags(flags)
+    except ValueError as exc:
+        raise ValueError(f"{manifest}: format-1 controller_flags cannot be translated: {exc}") from exc
+    translated = {key: value for key, value in raw.items() if key != "controller_flags"}
+    return {**translated, "format": BASELINE_FORMAT, "config": overlay}
 
 
 def sha256_file(path: Path) -> str:
@@ -236,7 +245,6 @@ def write_baseline(root: Path, baseline: Baseline) -> Baseline:
     if not render.is_file():
         raise ValueError(f"render {render} is missing")
     fields = {k: v for k, v in asdict(baseline).items() if k != "root"}
-    fields["controller_flags"] = baseline.controller_flags
     fields["render_sha256"] = sha256_file(render)
     written = Baseline(**fields, root=root)
     (root / BASELINE_FILE).write_text(written.to_json())
@@ -290,6 +298,8 @@ class OperatorBlock:
     provider: str = "codex"
     image_tag: str = ""
     auth_file: Path = field(default_factory=lambda: Path.home() / ".codex" / "auth.json")
+    #: ``settings.config``: the experiment's operator config overlay, passed after the baseline's.
+    config: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.revision:
@@ -298,6 +308,7 @@ class OperatorBlock:
             raise ValueError("the operator block's baseline must be an absolute path")
         if not self.image_tag:
             object.__setattr__(self, "image_tag", f"fz-{self.revision[:8]}")
+        refuse_hook_keys(self.config, "settings.config")
 
     @classmethod
     def load(cls, path: Path) -> OperatorBlock:
@@ -319,8 +330,9 @@ class OperatorBlock:
                 provider=str(settings.get("provider") or "codex"),
                 image_tag=str(settings.get("image_tag") or ""),
                 auth_file=Path(str(settings.get("auth_file") or Path.home() / ".codex" / "auth.json")).expanduser(),
+                config=settings.get("config") or {},
             )
-        except ValueError as exc:
+        except (TypeError, ValueError) as exc:
             raise HookError(f"BENCH_OPERATOR: {exc}") from exc
 
     def images(self) -> dict[str, str]:
@@ -627,17 +639,19 @@ def pack_docs(pack: SourcePack) -> list[dict[str, Any]]:
 # ---- install -------------------------------------------------------------------------------------------------
 
 
-def install_existing_args(
+def install_existing_launch(
     binary: Path,
     repository: Path,
     baseline: Baseline,
     block: OperatorBlock,
     kubeconfig: Path,
-    evidence_flags: list[str],
-) -> list[str]:
-    """The production ``sdo-operator install-existing`` command restoring the baseline on the lane, with the lane's
-    evidence sink (``sink.install_flags``)."""
-    if "--evidence-sink-host-path" not in evidence_flags or "--evidence-run-id" not in evidence_flags:
+    evidence_env: Mapping[str, str],
+    config_dir: Path,
+) -> tuple[list[str], dict[str, str]]:
+    """The production ``sdo-operator install-existing`` command restoring the baseline on the lane and its
+    ``SDO_*`` environment: the benchmark profile, then the baseline's and the experiment's overlays (written to
+    ``config_dir``), the settings' agent and the lane's evidence sink (``sink.install_env``)."""
+    if not evidence_env.get("SDO_EVIDENCE_HOST_PATH") or not evidence_env.get("SDO_EVIDENCE_RUN_ID"):
         raise HookError("install-existing needs the lane's evidence sink and run ID")
     image = block.images()
     if not block.model:
@@ -663,14 +677,16 @@ def install_existing_args(
         REPOSITORY_PVC,
         "--credentials-secret",
         CREDENTIALS_SECRET,
-        "--agent-provider",
-        block.provider,
-        "--model",
-        block.model,
+        "--kubeconfig",
+        str(kubeconfig),
     ]
-    if block.effort:
-        args += ["--agent-effort", block.effort]
-    return [*args, *evidence_flags, *baseline.controller_flags, "--kubeconfig", str(kubeconfig)]
+    files = [config.BENCH_PROFILE]
+    config_dir.mkdir(parents=True, exist_ok=True)
+    for name, overlay in (("baseline", baseline.config), ("experiment", block.config)):
+        if overlay:
+            files.append(config.write_overlay(overlay, config_dir / f"{name}.yaml"))
+    environment = config.operator_env(provider=block.provider, model=block.model, effort=block.effort)
+    return [*args, *config.config_args(files)], {**environment, **evidence_env}
 
 
 def _run(args: list[str], what: str, timeout: float = 600, **kwargs: Any) -> subprocess.CompletedProcess[str]:
@@ -760,7 +776,7 @@ def check(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
 
 def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     try:
-        evidence_flags = sink.install_flags(env)
+        evidence_env = sink.install_env(env)
     except sink.SinkError as exc:
         raise HookError(str(exc)) from exc
     block = _operator(env)
@@ -826,17 +842,27 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     # (g) the baseline memory as the accepted repository
     memory = clone_baseline(baseline, lane_dir / "app")
     # (h) production restore: install-existing, history kept, no install-time agents
-    args = install_existing_args(binary.resolve(), lane_dir / "app", baseline, block, kubeconfig, evidence_flags)
+    args, launch_env = install_existing_launch(
+        binary.resolve(), lane_dir / "app", baseline, block, kubeconfig, evidence_env, lane_dir / "sdo-config"
+    )
     (lane_dir / "install-existing-args.json").write_text(json.dumps(args, indent=1) + "\n")
+    (lane_dir / "install-existing-env.json").write_text(json.dumps(launch_env, indent=1, sort_keys=True) + "\n")
     with (
         (lane_dir / "install-existing.json").open("w") as receipt,
         (lane_dir / "install-existing.log").open("w") as log,
     ):
-        rc = subprocess.run(args, stdout=receipt, stderr=log, timeout=1500, check=False).returncode
+        rc = subprocess.run(
+            args, stdout=receipt, stderr=log, timeout=1500, check=False, env={**os.environ, **launch_env}
+        ).returncode
     if env.get("BENCH_OUT"):
         bench_out = Path(env["BENCH_OUT"])
         bench_out.mkdir(parents=True, exist_ok=True)
-        for name in ("install-existing-args.json", "install-existing.json", "install-existing.log"):
+        for name in (
+            "install-existing-args.json",
+            "install-existing-env.json",
+            "install-existing.json",
+            "install-existing.log",
+        ):
             shutil.copy2(lane_dir / name, bench_out / name)
     if rc != 0:
         tail = (lane_dir / "install-existing.log").read_text()[-300:].strip().replace("\n", " ")
@@ -1072,7 +1098,7 @@ def archive_baseline(a: argparse.Namespace) -> Baseline:
     }
     docs = pack_docs(SourcePack(a.pack.resolve())) if a.pack else helm_render(env, a.namespace)
     (out / "render.yaml").write_text(yaml.safe_dump_all(docs, sort_keys=False))
-    flags = tuple(json.loads(a.controller_flags)) if a.controller_flags else DEFAULT_CONTROLLER_FLAGS
+    overlay = json.loads(a.config) if a.config else DEFAULT_CONFIG
     return write_baseline(
         out,
         Baseline(
@@ -1083,7 +1109,7 @@ def archive_baseline(a: argparse.Namespace) -> Baseline:
             commit=commit,
             render="render.yaml",
             objective=a.objective,
-            controller_flags=flags,
+            config=overlay,
             sdo_revision=a.sdo_revision or checkout_revision(),
         ),
     )
@@ -1099,7 +1125,11 @@ def baseline_main(argv: list[str]) -> int:
     p.add_argument("--objective", default="", help="the health objective the memory was made for (documentation)")
     p.add_argument("--branch", default="baseline", help="branch name in the bundle")
     p.add_argument("--pack", type=Path, help="a plain-manifest pack to take the render from (default: helm)")
-    p.add_argument("--controller-flags", default="", help="JSON list of install-existing flags (default: the lanes')")
+    p.add_argument(
+        "--config",
+        default="",
+        help="JSON operator config overlay the lanes ran with beyond sdo-bench.yaml (default: none)",
+    )
     p.add_argument("--sdo-revision", default="", help="the SDO commit the lane ran (default: this checkout)")
     baseline = archive_baseline(p.parse_args(argv))
     print(json.dumps({"baseline": str(baseline.root), "commit": baseline.commit}))

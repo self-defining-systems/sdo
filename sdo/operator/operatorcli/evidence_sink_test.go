@@ -3,8 +3,6 @@ package operatorcli
 import (
 	"bytes"
 	"context"
-	"flag"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,20 +13,15 @@ import (
 	"sdo.dev/operator/install"
 )
 
-func TestEvidenceSinkFlagsResolveToInstallConfig(t *testing.T) {
-	parse := func(args ...string) (string, error) {
-		flags := flag.NewFlagSet("t", flag.ContinueOnError)
-		flags.SetOutput(io.Discard)
-		sinkFlags := registerEvidenceSinkFlags(flags)
-		if err := flags.Parse(args); err != nil {
-			return "", err
-		}
-		return sinkFlags.resolve("app-sdo")
+func TestEvidenceConfigResolvesToInstallConfig(t *testing.T) {
+	parse := func(environ ...string) (string, error) {
+		launch, err := ParseHostLaunchEnv(hostArgs("--control-namespace", "app-sdo"), environ)
+		return launch.Install.EvidenceSink, err
 	}
 	if got, err := parse(); err != nil || got != "" {
-		t.Fatalf("no flags = %q, %v; want no sink", got, err)
+		t.Fatalf("no evidence config = %q, %v; want no sink", got, err)
 	}
-	encoded, err := parse("--evidence-sink-host-path", "/var/sdo-evidence")
+	encoded, err := parse("SDO_EVIDENCE_HOST_PATH=/var/sdo-evidence")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,21 +29,21 @@ func TestEvidenceSinkFlagsResolveToInstallConfig(t *testing.T) {
 	if err != nil || sink.RunID != "app-sdo" || sink.Volume.HostPath == nil || sink.Volume.HostPath.Path != "/var/sdo-evidence" {
 		t.Fatalf("host path sink = %+v, %v", sink, err)
 	}
-	encoded, err = parse("--evidence-sink-volume", `{"nfs":{"server":"nfs.example","path":"/evidence"}}`, "--evidence-run-id", "row-7")
+	encoded, err = parse(`SDO_EVIDENCE_VOLUME={"nfs":{"server":"nfs.example","path":"/evidence"}}`, "SDO_EVIDENCE_RUN_ID=row-7")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if sink, err = install.ParseEvidenceSink(encoded); err != nil || sink.RunID != "row-7" || sink.Volume.NFS == nil {
 		t.Fatalf("volume sink = %+v, %v", sink, err)
 	}
-	for _, args := range [][]string{
-		{"--evidence-run-id", "row-7"},
-		{"--evidence-sink-host-path", "/a", "--evidence-sink-volume", `{"nfs":{"server":"s","path":"/e"}}`},
-		{"--evidence-sink-volume", `{"emptyDir":{}}`},
-		{"--evidence-sink-volume", `{"hostPath":{"path":"/e"},"bogus":1}`},
+	for _, environ := range [][]string{
+		{"SDO_EVIDENCE_RUN_ID=row-7"},
+		{"SDO_EVIDENCE_HOST_PATH=/a", `SDO_EVIDENCE_VOLUME={"nfs":{"server":"s","path":"/e"}}`},
+		{`SDO_EVIDENCE_VOLUME={"emptyDir":{}}`},
+		{`SDO_EVIDENCE_VOLUME={"hostPath":{"path":"/e"},"bogus":1}`},
 	} {
-		if _, err := parse(args...); err == nil {
-			t.Errorf("%v accepted", args)
+		if _, err := parse(environ...); err == nil {
+			t.Errorf("%v accepted", environ)
 		}
 	}
 }

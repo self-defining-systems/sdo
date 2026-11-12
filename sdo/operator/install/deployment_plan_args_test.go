@@ -9,11 +9,11 @@ import (
 func TestOperateJobPassesProvidedDeploymentPlan(t *testing.T) {
 	cfg := Config{
 		Namespace: "app", Application: "app", RepositoryPVC: "repo", CredentialsSecret: "creds",
-		ControllerImage: "controller:test", ResponderImage: "responder:test", Model: "m", Replay: "on", NativeCommand: []string{"/usr/local/bin/sdo-operator"}, AcceptedCommit: strings.Repeat("c", 40), TimeoutSeconds: 60, VerificationTimeoutSeconds: 60,
+		ControllerImage: "controller:test", ResponderImage: "responder:test", Settings: testSettings(), NativeCommand: []string{"/usr/local/bin/sdo-operator"}, AcceptedCommit: strings.Repeat("c", 40),
 		BuildKitImage: "buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "push",
 		DeploymentPlan: `{"source":{"rendererId":"raw"}}`,
 	}
-	job, err := OperateJob(cfg, "stay healthy", "op-1", 3)
+	job, err := OperateJob(cfg, "stay healthy", "op-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,7 +22,7 @@ func TestOperateJobPassesProvidedDeploymentPlan(t *testing.T) {
 		t.Fatalf("operate args lack the provided plan: %v", args)
 	}
 	cfg.DeploymentPlan = ""
-	job, err = OperateJob(cfg, "stay healthy", "op-1", 3)
+	job, err = OperateJob(cfg, "stay healthy", "op-1")
 	if err != nil {
 		t.Fatal(err)
 	}

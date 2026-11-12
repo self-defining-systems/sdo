@@ -9,18 +9,22 @@
 3. runs ``sdo-operator host --deployment-plan``: SDO applies exactly the pack's manifests, writes the goal and
    architecture, the detection designer authors health detectors, and the long-running controller starts.
 
-The agent backend and model are the production flags (``--agent-provider``, ``--model``, ``--agent-effort``).
+Operator configuration is the benchmark profile (``sdo-bench.yaml``) and any ``--config`` overlay files, passed to
+``host`` as ``--config`` in that order; the agent backend, model and effort, the evidence sink and the watch-only mode
+are ``SDO_*`` variables (``docs/config.md``).
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from benchmarks.fuzzops import config
 from benchmarks.fuzzops.pack import SourcePack, deployment_plan, images, write_app_repository, write_attached_pack
 
 BUILDKIT_IMAGE = "moby/buildkit@sha256:ef31818fffd0b9133d710742e06b492553f7ebc54f5fd66cd21a1a9bf2e51f76"
@@ -48,7 +52,8 @@ class InstallConfig:
     effort: str = ""
     operation_id: str = "fuzzops-onboard"
     source: Path | None = None
-    max_attempts: int = 3
+    #: Deployment attempts; ``None`` keeps the configured value.
+    max_attempts: int | None = None
     kind_cluster: str = "kind"
     watch_only: bool = False
     #: Node directory that receives SDO's run evidence and outlives the control namespace (for kind, the
@@ -56,12 +61,11 @@ class InstallConfig:
     evidence_sink_host_path: str = ""
     #: Run directory inside the sink; empty: the control namespace.
     evidence_run_id: str = ""
+    #: Operator config overlay files passed after the benchmark profile, in order.
+    config_files: tuple[Path, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.evidence_sink_host_path and not self.evidence_sink_host_path.startswith("/"):
-            raise ValueError("evidence_sink_host_path must be an absolute node path")
-        if self.evidence_run_id and not self.evidence_sink_host_path:
-            raise ValueError("evidence_run_id requires evidence_sink_host_path")
+        self.host_env()
         for name in ("namespace", "control_namespace", "objective", "controller_image", "responder_image", "model"):
             if not getattr(self, name):
                 raise ValueError(f"{name} is required")
@@ -92,8 +96,6 @@ class InstallConfig:
             self.objective,
             "--operation-id",
             self.operation_id,
-            "--max-attempts",
-            str(self.max_attempts),
             "--controller-image",
             self.controller_image,
             "--responder-image",
@@ -106,25 +108,27 @@ class InstallConfig:
             CREDENTIALS_SECRET,
             "--registry-push-secret",
             REGISTRY_SECRET,
-            "--agent-provider",
-            self.provider,
-            "--model",
-            self.model,
             "--deployment-plan",
             json.dumps(plan, separators=(",", ":"), sort_keys=True),
             "--kubeconfig",
             str(self.kubeconfig),
         ]
-        if self.effort:
-            args += ["--agent-effort", self.effort]
-        if self.watch_only:
+        return [*args, *config.config_args((config.BENCH_PROFILE, *self.config_files))]
+
+    def host_env(self) -> dict[str, str]:
+        """The ``SDO_*`` variables of the ``host`` launch: agent, evidence sink, attempts and mode."""
+        env = config.operator_env(
+            provider=self.provider,
+            model=self.model,
+            effort=self.effort,
+            evidence_host_path=self.evidence_sink_host_path,
+            evidence_run_id=self.evidence_run_id,
             # Detection and closure only: no response, no reflection, accepted memory unchanged.
-            args += ["--frozen-memory", "--watch-only"]
-        if self.evidence_sink_host_path:
-            args += ["--evidence-sink-host-path", self.evidence_sink_host_path]
-        if self.evidence_run_id:
-            args += ["--evidence-run-id", self.evidence_run_id]
-        return args
+            mode="watch-only" if self.watch_only else "",
+        )
+        if self.max_attempts is not None:
+            env["SDO_DEPLOYMENT_MAX_ATTEMPTS"] = str(self.max_attempts)
+        return env
 
 
 def _kubectl(cfg: InstallConfig, *args: str, stdin: str | None = None) -> None:
@@ -225,7 +229,13 @@ def install(cfg: InstallConfig, *, description: str) -> int:
     (cfg.work / "deployment-plan.json").write_text(json.dumps(plan, indent=2) + "\n")
     provision_namespaces(cfg)
     with (cfg.work / "host-receipt.json").open("w") as receipt, (cfg.work / "host.log").open("w") as log:
-        return subprocess.run(cfg.host_args(repository, plan), stdout=receipt, stderr=log, check=False).returncode
+        return subprocess.run(
+            cfg.host_args(repository, plan),
+            stdout=receipt,
+            stderr=log,
+            check=False,
+            env={**os.environ, **cfg.host_env()},
+        ).returncode
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -245,7 +255,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--model", default="gpt-6-luna")
     p.add_argument("--effort", default="")
     p.add_argument("--source", type=Path, help="the app's source code, copied under src/ (no vendor or deploy files)")
-    p.add_argument("--max-attempts", type=int, default=3, help="deployment and designer attempts")
+    p.add_argument("--max-attempts", type=int, help="deployment and designer attempts (default: the configured value)")
     p.add_argument("--operation-id", default="fuzzops-onboard", help="durable operation identity (new per attempt)")
     p.add_argument("--kind-cluster", default="kind", help="kind cluster whose nodes hold the preloaded app images")
     p.add_argument(
@@ -257,6 +267,13 @@ def main(argv: list[str] | None = None) -> int:
         help="node directory (a kind extraMounts target) that keeps SDO's run evidence after the namespace is gone",
     )
     p.add_argument("--evidence-run-id", default="", help="run directory inside the evidence sink")
+    p.add_argument(
+        "--config",
+        type=Path,
+        action="append",
+        default=[],
+        help="operator config overlay file passed after sdo-bench.yaml (repeatable; docs/config.md)",
+    )
     a = p.parse_args(argv)
     cfg = InstallConfig(
         pack=a.pack.resolve(),
@@ -279,6 +296,7 @@ def main(argv: list[str] | None = None) -> int:
         watch_only=a.watch_only,
         evidence_sink_host_path=a.evidence_sink_host_path,
         evidence_run_id=a.evidence_run_id,
+        config_files=tuple(path.resolve() for path in a.config),
     )
     cfg.work.mkdir(parents=True, exist_ok=True)
     return install(cfg, description=a.description)

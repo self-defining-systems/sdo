@@ -125,7 +125,7 @@ def source_flag_value(source: dict[str, Any]) -> str:
 
 @dataclass(frozen=True)
 class DeploymentPolicyConfig:
-    """The install-time deployment policy a launcher hands the Go installer (``host`` and ``install-existing`` flags).
+    """The install-time deployment policy a launcher hands the Go installer (config ``deployment.policy``).
 
     The default is no policy: no registry allowlist and foreign or cluster-scoped objects are notes, today's behavior.
     Production owns the semantics and the validation (``deploymentpolicy``); this only names the lane's choices.
@@ -138,19 +138,16 @@ class DeploymentPolicyConfig:
 
     def __post_init__(self) -> None:
         # Content rules (host charset, grants needing scope_blocking) belong to
-        # Go's deploymentpolicy.Validate, which the installer runs on these flags.
+        # Go's deploymentpolicy.Validate, which the installer runs on the resolved config.
         if type(self.scope_blocking) is not bool:
             raise TypeError("scope_blocking must be a boolean")
 
-    def args(self) -> list[str]:
-        """The flags, in the order the Go parser documents; empty when there is no policy."""
-        args: list[str] = []
-        if self.allowed_registries:
-            args.extend(("--allow-registry", ",".join(self.allowed_registries)))
-        if self.scope_blocking:
-            args.append("--scope-blocking")
-        if self.granted_namespaces:
-            args.extend(("--grant-namespace", ",".join(self.granted_namespaces)))
-        if self.granted_cluster_kinds:
-            args.extend(("--grant-cluster-kind", ",".join(self.granted_cluster_kinds)))
-        return args
+    def settings(self) -> dict[str, object]:
+        """The ``deployment.policy`` config object; empty when there is no policy."""
+        values: dict[str, object] = {
+            "allowed_registries": list(self.allowed_registries),
+            "scope_blocking": self.scope_blocking,
+            "granted_namespaces": list(self.granted_namespaces),
+            "granted_cluster_kinds": list(self.granted_cluster_kinds),
+        }
+        return {key: value for key, value in values.items() if value}

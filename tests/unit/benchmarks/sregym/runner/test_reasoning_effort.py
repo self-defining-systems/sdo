@@ -19,7 +19,7 @@ from benchmarks.sregym.runner.experiment import (
     load_experiment_config,
 )
 from benchmarks.sregym.runner.pipeline import load_pipeline_config, merge_stage_config
-from sdo.agents.provider import DEFAULT_AGENT_EFFORT
+from benchmarks.sregym.runner.preflight import ModelPolicy
 
 EXPERIMENTS = Path(__file__).resolve().parents[5] / "benchmarks" / "sregym" / "experiments"
 COMPARED_AGENTS = {"codex", "sdo_codex"}
@@ -96,4 +96,4 @@ def test_sdo_and_codex_baseline_arms_declare_the_same_reasoning_effort() -> None
     }
 
     assert {agent for agent, _ in efforts} == COMPARED_AGENTS
-    assert {effort for _, effort in efforts} == {DEFAULT_AGENT_EFFORT}
+    assert {effort for _, effort in efforts} == {ModelPolicy().agent_effort}

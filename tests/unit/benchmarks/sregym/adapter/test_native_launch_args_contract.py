@@ -3,6 +3,11 @@
 The fixture is the exact argv the adapter emits with every option set, so an
 adapter change that adds or removes a flag fails this suite. Regenerate with
 ``SDO_UPDATE_LAUNCH_ARGS_FIXTURE=1``.
+
+Operator configuration crosses as ``--config`` files and ``SDO_*`` variables. In
+the fixture a ``--config`` path is repository-relative (the benchmark profile) or
+``<command>.config.yaml`` (the lane overlay, whose content is the fixture's
+``<command>.config`` entry), and ``<command>.env`` lists the launch variables.
 """
 
 from __future__ import annotations
@@ -36,6 +41,7 @@ from benchmarks.sregym.adapter.native_operator import (
     stop_runtime,
     sync_existing,
 )
+from tests.unit.benchmarks.sregym.adapter.launch_capture import config_files, overlay, stub_resolution
 
 if TYPE_CHECKING:
     import pytest
@@ -53,7 +59,8 @@ ADAPTER_COMMANDS = {
     "stop",
     "reset-control-state",
 }
-FIXTURE = Path(__file__).resolve().parents[5] / "tests" / "fixtures" / "sdo" / "contracts" / "adapter_launch_args.json"
+REPOSITORY = Path(__file__).resolve().parents[5]
+FIXTURE = REPOSITORY / "tests" / "fixtures" / "sdo" / "contracts" / "adapter_launch_args.json"
 
 
 def _install() -> NativeInstallConfig:
@@ -71,6 +78,8 @@ def _install() -> NativeInstallConfig:
         kubeconfig=root / "lane.kubeconfig",
         agent_provider="claude",
         agent_effort="high",
+        replay="on",
+        lifecycle_timeout_seconds=900,
         repair_policy="recorded-actions",
         late_findings="pull",
         reflection_session="fresh",
@@ -84,6 +93,8 @@ def _install() -> NativeInstallConfig:
         healthy_baseline=True,
         registration_configmap="registrations",
         responder_env=("SDO_SUBMISSION_MODE=relay",),
+        evidence_sink_host_path="/opt/sdo-evidence",
+        evidence_run_id="run-1",
         deployment_source=raw_source(("kubernetes",)),
         deployment_policy=DeploymentPolicyConfig(
             allowed_registries=("registry:5000", "docker.io"),
@@ -96,10 +107,21 @@ def _install() -> NativeInstallConfig:
 
 def _emitted(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[str]]:
     monkeypatch.setenv("SDO_OPERATOR_BIN", "/tmp/sdo-operator")
+    stub_resolution(monkeypatch)
     argv: dict[str, list[str]] = {}
 
-    def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        argv[command[1]] = command[1:]
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        name = command[1]
+        argv[name] = _normalized(name, command[1:])
+        if "--config" in command:
+            argv[f"{name}.config"] = [json.dumps(overlay(command), sort_keys=True)]
+            launch_env = kwargs["env"]
+            assert isinstance(launch_env, dict)
+            argv[f"{name}.env"] = sorted(
+                f"{key}={value}"
+                for key, value in launch_env.items()
+                if key.startswith("SDO_") and key not in ("SDO_OPERATOR_BIN", "SDO_UPDATE_LAUNCH_ARGS_FIXTURE")
+            )
         receipt = {
             "installed": True,
             "reused": False,
@@ -151,9 +173,30 @@ def _emitted(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[str]]:
     return argv
 
 
+def _normalized(name: str, args: list[str]) -> list[str]:
+    files = config_files(args)
+    normal = list(args)
+    for index, item in enumerate(args):
+        if item == "--config":
+            path = Path(args[index + 1])
+            normal[index + 1] = (
+                str(path.relative_to(REPOSITORY)) if path.is_relative_to(REPOSITORY) else f"{name}.config.yaml"
+            )
+    assert len(files) <= 2
+    return normal
+
+
 def test_adapter_emitted_launch_args_match_fixture(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in [
+        name
+        for name in os.environ
+        if name.startswith("SDO_") and name not in ("SDO_OPERATOR_BIN", "SDO_UPDATE_LAUNCH_ARGS_FIXTURE")
+    ]:
+        monkeypatch.delenv(name)
     emitted = _emitted(monkeypatch)
-    assert set(emitted) == ADAPTER_COMMANDS - {"observe-controller"}
+    launched = {name for name in emitted if "." not in name}
+    assert launched == ADAPTER_COMMANDS - {"observe-controller"}
+    assert {name.split(".")[0] for name in emitted if "." in name} == {"install-existing", "host"}
     if os.environ.get("SDO_UPDATE_LAUNCH_ARGS_FIXTURE") == "1":
         FIXTURE.write_text(json.dumps(emitted, indent=2) + "\n", encoding="utf-8")
     assert json.loads(FIXTURE.read_text(encoding="utf-8")) == emitted

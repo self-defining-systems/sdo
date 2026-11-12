@@ -119,6 +119,10 @@ def codex(argv: list[str], *, stdin: str | None = None) -> int:
     return 0
 
 
+#: The worker variables a controller always sets; a local run without them resolves them from the config.
+LOCAL_WORKER_VARIABLES = ("SDO_AGENT_EFFORT", "SDO_LIFECYCLE_TIMEOUT_SECONDS", "SDO_MEMORY_CHECK_TIMEOUT_SECONDS")
+
+
 @contextmanager
 def script_environment():
     """Prepare the stand-in CLI environment for a production worker."""
@@ -146,6 +150,12 @@ def script_environment():
         binary.chmod(0o755)
         env["PATH"] = str(directory) + os.pathsep + env["PATH"]
         env.setdefault("SDO_AGENT_SCRIPT_STATE", str(directory / "state"))
+        # A controller sets the agent effort and limits in every worker Job; a local replay takes them, like
+        # every other operator value, from `sdo-operator config print`, never from a default of its own.
+        if any(not env.get(name) for name in LOCAL_WORKER_VARIABLES):
+            from benchmarks.fuzzops.config import local_operator, worker_environment
+
+            env = {**worker_environment(local_operator()), **{k: v for k, v in env.items() if v}}
         # Resolve role providers without requiring a real login or a model API.
         env["SDO_AGENT_PROVIDER"] = "codex"
         # The operator mounts the incident's provider home across worker Jobs.

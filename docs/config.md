@@ -12,13 +12,19 @@ nothing here changes what an accepted detector decides.
 1. the defaults in this file;
 2. each `--config FILE` (YAML, repeatable, applied in order; an unknown key is an error);
 3. `SDO_<SECTION>_<KEY>` environment variables, derived from the YAML key path (the top-level `mode` is `SDO_MODE`).
-   A list or an object is JSON. A variable that starts with a section prefix but names no key is an error;
-4. the pre-config command-line flags, when explicitly given (they are being removed).
+   A list or an object is JSON. A variable that starts with a section prefix but names no key is an error.
+
+No knob has a command-line flag of its own; the flags of `host` and `install-existing` name only the installation
+(repository, namespaces, images, Secrets, PVC, registry, source and plan, agent registrations, run bounds).
 
 The installer writes the resolved result to the `sdo-config` ConfigMap, mounted read-only at `/etc/sdo/config.yaml` in the
-operate and controller Jobs. Its hash is part of the controller's install fingerprint, so running `install-existing` again with
-a changed configuration replaces the controller. The controller also records the file under `.sdo-runtime/config.yaml`,
-which the evidence sink carries to the run directory.
+operate and controller Jobs, which refuse to start without it; no policy value crosses their command lines. The controller
+records the file under `.sdo-runtime/config.yaml` at start, its compiled child and its deployment health checks read that
+record, and the evidence sink carries it to the run directory.
+
+A value is read once, when a process starts; there is no hot reload. The ConfigMap's hash is part of the controller's
+install fingerprint, so running `install-existing` again with a changed configuration replaces the running controller
+(one way: the new values apply only through that replacement).
 
 `sdo-operator config print [--config FILE]...` prints the resolved YAML.
 
@@ -44,7 +50,7 @@ environment; use `SDO_AGENT_CODE_PATH` and `SDO_RESPONSE_MENU`.
 | `agent.lifecycle_timeout` | `SDO_AGENT_LIFECYCLE_TIMEOUT` | duration | `15m0s` | limit of one lifecycle (detection designer) session |
 | `agent.memory_check_timeout` | `SDO_AGENT_MEMORY_CHECK_TIMEOUT` | duration | `5m0s` | limit of one memory check a worker runs on its checkout |
 | `agent.code_path` | `SDO_AGENT_CODE_PATH` | string | `go` | programming-model plugin set: go or shell |
-| `agent.code_path_overrides` | `SDO_AGENT_CODE_PATH_OVERRIDES` | string | `""` | CodePathOverrides as a JSON object; empty selects the code path's own stages |
+| `agent.code_path_overrides` | `SDO_AGENT_CODE_PATH_OVERRIDES` | string | `""` | CodePathOverrides as a JSON object (for example {"response_stages":["agent"]}); empty selects the code path's own seams |
 | `agent.extra_env` | `SDO_AGENT_EXTRA_ENV` | list (JSON) | `[]` | extra NAME=VALUE environment of responder workers |
 
 ### `response`
@@ -55,7 +61,8 @@ environment; use `SDO_AGENT_CODE_PATH` and `SDO_RESPONSE_MENU`.
 | `response.verification_timeout` | `SDO_RESPONSE_VERIFICATION_TIMEOUT` | duration | `5m0s` | how long the independent verification of a repair may take |
 | `response.max_loops` | `SDO_RESPONSE_MAX_LOOPS` | int | `10` | mitigation rounds the responder agent may use per incident (the automatic stage's one apply does not count) |
 | `response.diagnosis_deadline` | `SDO_RESPONSE_DIAGNOSIS_DEADLINE` | duration | `10s` | shared deadline of candidate diagnosis in the automatic stage |
-| `response.repair_policy` | `SDO_RESPONSE_REPAIR_POLICY` | string | `commit` | repair evidence policy: commit (a source repair is committed) or recorded-actions (live repairs are recorded without a source commit) |
+| `response.stage_budget` | `SDO_RESPONSE_STAGE_BUDGET` | duration | `45s` | scheduling bound of one automatic-stage pass; a pass re-run on the responder's loop may take twice this |
+| `response.repair_policy` | `SDO_RESPONSE_REPAIR_POLICY` | string | `commit` | the evidence the controller requires for a responder repair: commit (a source repair is committed through the broker; production) or recorded-actions (live cluster repairs are recorded as actions without a source commit; benchmark runs) |
 | `response.standby` | `SDO_RESPONSE_STANDBY` | bool | `true` | pre-start a responder worker; false forces cold Jobs |
 | `response.menu` | `SDO_RESPONSE_MENU` | bool | `true` | offer the responder its tool menu |
 | `response.permissive` | `SDO_RESPONSE_PERMISSIVE` | bool | `false` | broad lane repair permissions excluding Secret and credential APIs |
@@ -66,11 +73,11 @@ environment; use `SDO_AGENT_CODE_PATH` and `SDO_RESPONSE_MENU`.
 | Key | Env | Type | Default | Description |
 |---|---|---|---|---|
 | `learning.replay` | `SDO_LEARNING_REPLAY` | string | `on` | replay and corpus capture: on or off |
-| `learning.reflection_session` | `SDO_LEARNING_REFLECTION_SESSION` | string | `resume` | reflection session mode: resume (continue the responder's session) or fresh |
-| `learning.reflection_guidance` | `SDO_LEARNING_REFLECTION_GUIDANCE` | string | `baseline` | reflection guidance: baseline, generalize or generalize-spec |
+| `learning.reflection_session` | `SDO_LEARNING_REFLECTION_SESSION` | string | `resume` | reflection session: resume continues the responder's private session (it requires a valid responder session token of the same accepted closure; sessions live outside the accepted repository for a bounded retention) or fresh starts a new one |
+| `learning.reflection_guidance` | `SDO_LEARNING_REFLECTION_GUIDANCE` | string | `baseline` | the agent's learning instructions: baseline learns from each confirmed cause; generalize compares related incident signatures and parameterizes a shared playbook; generalize-spec favors predicates visible in resource spec or status. None changes the detector SDK or the validator |
 | `learning.force_reflection` | `SDO_LEARNING_FORCE_REFLECTION` | bool | `false` | always dispatch reflection after a verified closure (not with a frozen mode) |
-| `learning.healthy_baseline` | `SDO_LEARNING_HEALTHY_BASELINE` | bool | `false` | validate incident detectors against recorded healthy snapshots |
-| `learning.late_findings` | `SDO_LEARNING_LATE_FINDINGS` | string | `off` | late finding mode: off or pull |
+| `learning.healthy_baseline` | `SDO_LEARNING_HEALTHY_BASELINE` | bool | `false` | opt-in detector gate: a proposal that changes incident detector source is replayed against healthy snapshots a runner recorded with sdo-operator baseline-write (one sdktest.Snapshot JSON per file, outside the accepted repository); a detector that fires on one fails validation, and a missing baseline fails closed. It never reads benchmark verdicts |
+| `learning.late_findings` | `SDO_LEARNING_LATE_FINDINGS` | string | `off` | late findings: off, or pull (the controller publishes a bounded incident-specific report that a responder fetches with sdo-operator late-findings --incident-id ID; the broker checks the claim against the controller-owned report) |
 
 ### `deployment`
 
@@ -126,4 +133,8 @@ transport, not knobs, and keep their names.
 - `SDO_INCIDENT_ID`
 - `SDO_REPLAY`
 - `SDO_CODE_PATH`
-- `SDO_RESPONDER_MENU`
+- `SDO_LIFECYCLE_TIMEOUT_SECONDS`
+- `SDO_MEMORY_CHECK_TIMEOUT_SECONDS`
+- `SDO_RESPONDER_MODEL`
+- `SDO_REFLECTION_MODEL`
+- `SDO_LIFECYCLE_MODEL`

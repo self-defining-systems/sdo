@@ -17,7 +17,6 @@ from sdo.contracts import ReflectionResult, to_canonical_json
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-VALIDATION_TIMEOUT_SECONDS = 300
 VALIDATION_TIMEOUT_EXIT_CODE = 124
 VALIDATION_TIMEOUT_FILE_ENV = "SDO_MEMORY_CHECK_TIMEOUT_FILE"
 

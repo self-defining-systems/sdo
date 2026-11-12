@@ -36,7 +36,7 @@ func operateArgs(extra ...string) []string {
 		"--operation-id", "op-1", "--controller-image", "controller:test", "--responder-image", "responder:test",
 		"--buildkit-image", "buildkit@sha256:" + strings.Repeat("a", 64), "--registry-push-secret", "push",
 		"--repository-pvc", "repo", "--repository-mount-path", "/workspace", "--credentials-secret", "creds",
-		"--model", "m", "--worktree-root", "/workspace/worktrees",
+		"--worktree-root", "/workspace/worktrees",
 	}
 	return append(args, extra...)
 }

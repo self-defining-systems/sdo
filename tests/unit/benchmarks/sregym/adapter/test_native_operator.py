@@ -5,13 +5,13 @@ from __future__ import annotations
 import json
 import subprocess
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
+# The receipt checker binds the real subprocess.run when first imported; import it before any test fakes it.
+import benchmarks.sregym.protocol.native_receipt  # noqa: F401
+from benchmarks.fuzzops.config import BENCH_PROFILE
 from benchmarks.sregym.adapter.deployment_source import raw_source
 from benchmarks.sregym.adapter.native_operator import (
     NativeHostConfig,
@@ -26,6 +26,7 @@ from benchmarks.sregym.adapter.native_operator import (
     set_maintenance,
     sync_existing,
 )
+from tests.unit.benchmarks.sregym.adapter.launch_capture import overlay, stub_resolution
 
 
 def _install(tmp_path: Path) -> NativeInstallConfig:
@@ -47,14 +48,18 @@ def _install(tmp_path: Path) -> NativeInstallConfig:
 
 
 @pytest.mark.parametrize("code_path", ["go", "shell"])
-def test_install_existing_invokes_go_cli_and_parses_receipt(
+def test_install_existing_invokes_go_cli_with_config_files_and_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code_path: str
 ) -> None:
-    calls: list[list[str]] = []
+    calls: list[tuple[list[str], dict[str, str], dict[str, object]]] = []
     monkeypatch.setenv("SDO_OPERATOR_BIN", "/tmp/sdo-operator")
+    stub_resolution(monkeypatch)
 
-    def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        calls.append(command)
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        env = kwargs.get("env")
+        if command[0] == "/tmp/sdo-operator":
+            assert isinstance(env, dict)
+            calls.append((command, env, overlay(command)))
         return subprocess.CompletedProcess(
             command,
             0,
@@ -72,38 +77,68 @@ def test_install_existing_invokes_go_cli_and_parses_receipt(
             responder_namespaces=("policy-system",),
             max_response_loops=3,
             deployment_source=raw_source(("kubernetes",)),
+            agent_effort="high",
         )
     )
 
-    if code_path == "shell":
-        assert calls[0][calls[0].index("--code-path") + 1] == "shell"
-    else:
-        assert "--code-path" not in calls[0]
+    command, env, settings = calls[0]
     assert receipt.reused
     assert receipt.accepted_commit == "a" * 40
-    assert calls[0][0:2] == ["/tmp/sdo-operator", "install-existing"]
-    assert "--repair-policy" in calls[0]
-    assert "recorded-actions" in calls[0]
-    assert "--responder-env" in calls[0]
-    assert "--late-findings" in calls[0]
-    assert "--permissive-responder" in calls[0]
-    assert calls[0][calls[0].index("--responder-namespace") + 1] == "policy-system"
-    assert "--healthy-baseline" in calls[0]
-    assert calls[0][calls[0].index("--max-response-loops") + 1] == "3"
-    assert json.loads(calls[0][calls[0].index("--deployment-source") + 1]) == raw_source(("kubernetes",))
-    assert "--deployed-manifest-path" not in calls[0]
-    assert "--drift-tokens-per-hour" not in calls[0]
-    assert "pull" in calls[0]
-    assert calls[0][0] != "python3"
-    assert "-m" not in calls[0]
+    assert command[0:2] == ["/tmp/sdo-operator", "install-existing"]
+    assert settings == {
+        "agent": {"code_path": code_path, "extra_env": ["SDO_SREGYM_API_BASE=http://sdo-sregym-bridge:8000"]},
+        "response": {
+            "max_loops": 3,
+            "repair_policy": "recorded-actions",
+            "permissive": True,
+            "permissive_namespaces": ["policy-system"],
+        },
+        "learning": {"healthy_baseline": True, "late_findings": "pull"},
+    }
+    assert (env["SDO_AGENT_MODEL"], env["SDO_AGENT_EFFORT"]) == ("gpt-6-luna", "high")
+    assert "SDO_MODE" not in env
+    assert json.loads(command[command.index("--deployment-source") + 1]) == raw_source(("kubernetes",))
+    knob_flags = ("--model", "--agent-", "--repair-policy", "--late-findings", "--max-response-loops", "--code-path")
+    assert not [arg for arg in command if arg.startswith(knob_flags)]
+    assert command[0] != "python3"
+    assert "-m" not in command
+    # The overlay lives for the launch only.
+    assert not Path(command[command.index("--config", command.index("--config") + 1) + 1]).exists()
+
+
+def test_frozen_and_external_memory_select_the_mode(tmp_path: Path) -> None:
+    install = _install(tmp_path)
+    assert "SDO_MODE" not in install.environment()
+    assert replace(install, frozen_memory=True).environment()["SDO_MODE"] == "frozen"
+    assert replace(install, frozen_memory=True, external_incidents=True).environment()["SDO_MODE"] == "external"
+
+
+def test_a_lane_that_sets_no_knob_passes_only_the_benchmark_profile(tmp_path: Path) -> None:
+    from benchmarks.sregym.adapter.native_operator import launch_config
+
+    bare = replace(_install(tmp_path), repair_policy=None, late_findings=None, responder_env=())
+    assert bare.overlay() == {}
+    with launch_config(bare) as (args, _env):
+        assert args == ["--config", str(BENCH_PROFILE)]
+
+
+def test_lane_settings_merge_over_the_typed_fields(tmp_path: Path) -> None:
+    install = replace(
+        _install(tmp_path),
+        max_response_loops=3,
+        settings={"response": {"max_loops": 5, "standby": False}, "mode": "watch-only"},
+    )
+    assert install.overlay()["response"] == {"max_loops": 5, "repair_policy": "recorded-actions", "standby": False}
+    assert install.overlay()["mode"] == "watch-only"
 
 
 def test_host_requires_typed_registry_and_strict_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SDO_OPERATOR_BIN", "/tmp/sdo-operator")
-    calls: list[list[str]] = []
+    stub_resolution(monkeypatch)
+    calls: list[tuple[list[str], dict[str, object]]] = []
 
     def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        calls.append(command)
+        calls.append((command, overlay(command)))
         return subprocess.CompletedProcess(command, 0, "warning\n{}", "")
 
     monkeypatch.setattr(subprocess, "run", run)
@@ -115,16 +150,18 @@ def test_host_requires_typed_registry_and_strict_json(tmp_path: Path, monkeypatc
         registry_push_secret="registry-push",
         registry_host="registry.hotel-sdo.svc.cluster.local:5000",
         registry_insecure=True,
+        max_attempts=2,
     )
     with pytest.raises(NativeOperatorError, match="JSON object"):
         launch_host(host)
-    assert calls[0][0:2] == ["/tmp/sdo-operator", "host"]
-    assert "--registry-insecure" in calls[0]
-    assert "--registry-push-secret" in calls[0]
-    assert "--registry-host" in calls[0]
-    assert "--healthy-baseline" in calls[0]
-    assert "--late-findings" in calls[0]
-    assert "pull" in calls[0]
+    command, settings = calls[0]
+    assert command[0:2] == ["/tmp/sdo-operator", "host"]
+    assert "--registry-insecure" in command
+    assert "--registry-push-secret" in command
+    assert "--registry-host" in command
+    assert "--max-attempts" not in command
+    assert settings["learning"] == {"healthy_baseline": True, "late_findings": "pull"}
+    assert settings["deployment"] == {"max_attempts": 2}
 
 
 def test_sync_and_maintenance_use_go_cli_without_python_broker(
@@ -328,6 +365,7 @@ def test_install_records_abort_target_before_transport_call(tmp_path, monkeypatc
         raise NativeOperatorError("interrupted install")
 
     monkeypatch.setattr(native_operator, "execute_operator", interrupted)
+    stub_resolution(monkeypatch)
     with pytest.raises(NativeOperatorError, match="interrupted install"):
         install_existing(config)
 
@@ -345,6 +383,7 @@ def test_host_accepts_optional_goal_and_absent_goal_commit(tmp_path: Path, monke
     )
     receipt = {"installed": True, "operation_id": "no-goal"}
     receipt.update(dict.fromkeys(("schema_commit", "source_commit", "architecture_commit", "judge_commit"), "a" * 40))
+    stub_resolution(monkeypatch)
     monkeypatch.setattr(native_operator, "_run", lambda *args, **kwargs: receipt)
     assert launch_host(host) == receipt
 
@@ -355,7 +394,7 @@ def test_adapter_agent_efforts_match_the_production_provider() -> None:
     from sdo.agents import provider
 
     assert native_operator.AGENT_EFFORTS == provider.AGENT_EFFORTS
-    assert native_operator.DEFAULT_AGENT_EFFORT == provider.DEFAULT_AGENT_EFFORT
+    assert not hasattr(native_operator, "DEFAULT_AGENT_EFFORT")
 
 
 @pytest.mark.parametrize("failure", ["not_ready", "exec_failed", "timeout", "mismatch"])

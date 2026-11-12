@@ -242,7 +242,9 @@ def test_live_lifecycle_callers_use_the_pod_boundary(
 
     monkeypatch.setattr(prompt_templates, "_run_structured_turn", boundary)
     monkeypatch.setenv("SDO_AGENT_PROVIDER", provider)
-    backend = (ClaudeLifecycleBackend if provider == "claude" else CodexLifecycleBackend)()
+    backend = (ClaudeLifecycleBackend if provider == "claude" else CodexLifecycleBackend)(
+        reasoning_effort="medium", timeout_seconds=900
+    )
 
     def invoke() -> None:
         if role == "source":

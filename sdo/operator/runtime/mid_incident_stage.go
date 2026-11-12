@@ -193,7 +193,7 @@ func (c *Controller) runMidIncidentPass(ctx context.Context, incidentID string, 
 	defer cancel()
 	// The pass holds the loop's locks, so no read inside it may hang: twice the
 	// stage's own budget covers its checks, apply and rollout wait.
-	actionCtx, stop := context.WithTimeout(actionCtx, 2*DefaultStageBudget)
+	actionCtx, stop := context.WithTimeout(actionCtx, 2*c.config.StageBudget)
 	defer stop()
 	c.mu.Lock()
 	if c.currentIncidentRequest == nil || c.currentIncidentRequest.IncidentID != incidentID {

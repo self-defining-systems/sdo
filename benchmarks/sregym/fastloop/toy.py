@@ -521,7 +521,6 @@ def install_controller(
             credentials_secret="sdo-agent-credentials",
             model="gpt-6-luna",
             timeout_seconds=int(wait_for(WaitKind.RESPONSE, 2)),
-            repair_policy="recorded-actions",
             frozen_memory=frozen_memory,
             persistent=True,
             kind_cluster_name=environment.cluster,

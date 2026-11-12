@@ -55,10 +55,12 @@ type ControllerConfig struct {
 	ResponseTimeout        time.Duration
 	VerificationTimeout    time.Duration
 	ClosureStabilityWindow time.Duration
-	ResponderReportGrace   time.Duration
-	FiringThreshold        int
-	ClearThreshold         int
-	BatchDebounce          time.Duration
+	// StageBudget bounds one automatic-stage pass; a pass re-run on the
+	// responder's loop gets twice this.
+	StageBudget     time.Duration
+	FiringThreshold int
+	ClearThreshold  int
+	BatchDebounce   time.Duration
 	// ConfirmationInterval bounds how long a detector with a finding below its
 	// firing threshold waits for its next evaluation. Zero leaves confirmation
 	// to watch events and the detector's own interval.
@@ -263,6 +265,28 @@ type Controller struct {
 	dispatchJitter func() float64
 }
 
+// WithSettings fills the timing and policy fields from the operator
+// configuration. Every NewController caller (the controller, --evaluate-once,
+// embedded runs and tests) takes them from settings.Default() or settings.Read;
+// the mode fields stay the caller's, since an evaluation runs every detector
+// whatever the mode.
+func (c ControllerConfig) WithSettings(policy settings.Config) ControllerConfig {
+	c.Replay = policy.Learning.Replay
+	c.ResponseTimeout = time.Duration(policy.Response.Timeout)
+	c.VerificationTimeout = time.Duration(policy.Response.VerificationTimeout)
+	c.StageBudget = time.Duration(policy.Response.StageBudget)
+	c.RepairPolicy = policy.Response.RepairPolicy
+	return c
+}
+
+// WithMode applies the operator configuration's mode: watch-only never
+// responds, external accepts external alerts only. Frozen memory is the
+// broker's (NativeIncidentBroker.FrozenMemory).
+func (c ControllerConfig) WithMode(mode settings.Mode) ControllerConfig {
+	c.ExternalIncidentsOnly, c.WatchOnly = mode == settings.ModeExternal, mode == settings.ModeWatchOnly
+	return c
+}
+
 func NewController(
 	config ControllerConfig,
 	detectors []sdk.Detector,
@@ -304,32 +328,22 @@ func NewController(
 	if config.FiringThreshold < 1 || config.ClearThreshold < 1 {
 		return nil, fmt.Errorf("firing and clear thresholds must be positive")
 	}
-	if config.ResponseTimeout <= 0 {
-		return nil, fmt.Errorf("response timeout must be positive")
+	// Timing and policy come from the operator configuration (WithSettings);
+	// the controller has no defaults of its own for them.
+	if config.ResponseTimeout <= 0 || config.VerificationTimeout <= 0 || config.StageBudget <= 0 {
+		return nil, fmt.Errorf("response timeout, verification timeout and stage budget must be positive (ControllerConfig.WithSettings)")
 	}
-	if config.ClosureStabilityWindow < 0 || config.ResponderReportGrace < 0 {
-		return nil, fmt.Errorf("closure stability window and report grace must not be negative")
+	if config.ClosureStabilityWindow < 0 {
+		return nil, fmt.Errorf("closure stability window must not be negative")
 	}
 	if config.ClosureStabilityWindow == 0 {
 		config.ClosureStabilityWindow = 15 * time.Second
-	}
-	if config.ResponderReportGrace == 0 {
-		config.ResponderReportGrace = 30 * time.Second
-	}
-	if config.VerificationTimeout < 0 {
-		return nil, fmt.Errorf("verification timeout must not be negative")
 	}
 	if config.ConfirmationInterval < 0 {
 		return nil, fmt.Errorf("confirmation interval must not be negative")
 	}
 	if err := config.GateConfirmation.validate(); err != nil {
 		return nil, err
-	}
-	if config.VerificationTimeout == 0 {
-		config.VerificationTimeout = config.ResponseTimeout
-	}
-	if config.RepairPolicy == "" {
-		config.RepairPolicy = "commit"
 	}
 	if config.RepairPolicy != "commit" && config.RepairPolicy != "recorded-actions" {
 		return nil, fmt.Errorf("unsupported repair policy %q", config.RepairPolicy)
@@ -974,7 +988,6 @@ func playbookIDs(playbooks []SurfacedPlaybook) []string {
 	}
 	return ids
 }
-
 
 // goBackground runs work on a goroutine that Wait joins. Every goroutine an
 // effect starts goes through here, so no write outlives the caller.

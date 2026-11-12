@@ -75,21 +75,20 @@ git -C "${application}" add README.md
 git -C "${application}" commit -qm "seed native smoke application"
 
 (cd "${repo_root}/sdo/operator" && go build -o "${workspace}/sdo-operator" ./cmd/sdo-operator)
-timeout 1200s "${workspace}/sdo-operator" host \
+# Operator configuration is the production defaults plus SDO_* variables (docs/config.md).
+SDO_AGENT_MODEL=fixture SDO_DEPLOYMENT_MAX_ATTEMPTS=1 timeout 1200s "${workspace}/sdo-operator" host \
   --repository "${application}" \
   --namespace demo \
   --control-namespace "${control_namespace}" \
   --application demo \
   --health-objective 'The demo Deployment has an available replica.' \
   --operation-id native-smoke \
-  --max-attempts 1 \
   --controller-image "sdo-controller:${image_tag}" \
   --responder-image "sdo-responder:${image_tag}" \
   --buildkit-image "${buildkit_image}" \
   --repository-pvc sdo-application-repository \
   --credentials-secret sdo-agent-credentials \
   --registry-push-secret sdo-registry-push \
-  --model fixture \
   --agent-registrations "${repo_root}/tests/fixtures/sdo/native_smoke/registrations" \
   --agent-registration-configmap sdo-native-smoke-agents \
   >"${workspace}/receipt.json"

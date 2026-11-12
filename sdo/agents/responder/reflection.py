@@ -22,13 +22,12 @@ from sdo.agents.context_output import ContextText, save_context
 from sdo.agents.memory_diagnostics import render_validation_feedback
 from sdo.agents.prompt_templates import RenderedPrompt, join_prompts, named_prompt, render_prompt
 from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
-from sdo.agents.provider import DEFAULT_AGENT_EFFORT
+from sdo.agents.provider import memory_check_timeout_seconds
 from sdo.agents.replay import replay_mode, selected_skills_root
 from sdo.agents.responder.credentials import SKILLS_ROOT
 from sdo.agents.responder.detection_learning import detection_learning
 from sdo.agents.responder.memory_check import (
     VALIDATION_TIMEOUT_FILE_ENV,
-    VALIDATION_TIMEOUT_SECONDS,
     MemoryCheckTimeout,
     ValidationResult,
     check_reflection_result,
@@ -166,8 +165,6 @@ class ResponderSessionUnavailable(RuntimeError):
 REFLECTION_DEADLINE_ENV = "SDO_REFLECTION_DEADLINE"
 #: The agent stops this long before that deadline so its typed result is published first.
 REFLECTION_RESULT_MARGIN_SECONDS = 120.0
-#: Budget without a bound deadline: the controller's default 30-minute task deadline.
-DEFAULT_REFLECTION_SECONDS = 1800.0 - REFLECTION_RESULT_MARGIN_SECONDS
 
 
 class ReflectionDeadlineExceeded(RuntimeError):
@@ -188,7 +185,9 @@ def reflection_budget_seconds() -> float:
     """Seconds the reflection agent may use, ending before the frozen task deadline."""
     raw = os.environ.get(REFLECTION_DEADLINE_ENV)
     if not raw:
-        return DEFAULT_REFLECTION_SECONDS
+        raise ReflectionDeadlineExceeded(
+            f"{REFLECTION_DEADLINE_ENV} is not set; the controller binds every reflection task to a deadline"
+        )
     budget = float(raw) - time.time() - REFLECTION_RESULT_MARGIN_SECONDS
     if not budget > 0:
         raise ReflectionDeadlineExceeded("reflection task deadline leaves no agent budget")
@@ -576,7 +575,7 @@ class CodexSessionBackend:
         self,
         *,
         model: str | None = None,
-        reasoning_effort: str = DEFAULT_AGENT_EFFORT,
+        reasoning_effort: str,
         timeout_seconds: float | None = None,
         executor: CommandExecutor | None = None,
         memory_checker: Callable[[Path, ReflectionResult, float], ValidationResult] = check_reflection_result,
@@ -646,7 +645,8 @@ class CodexSessionBackend:
         deadline = time.monotonic() + budget
         # Keep validation inside the frozen worker budget. Small explicit test or
         # operator budgets reserve the same fraction, up to one full check.
-        validation_reserve = min(VALIDATION_TIMEOUT_SECONDS, budget / 3)
+        check_limit = memory_check_timeout_seconds()
+        validation_reserve = min(check_limit, budget / 3)
 
         def remaining() -> float:
             left = deadline - time.monotonic()
@@ -691,7 +691,7 @@ class CodexSessionBackend:
             decision = json_format.ParseDict(
                 worker_result_payload(payload, ReflectionResult.DESCRIPTOR), ReflectionResult()
             )
-            check = self.memory_checker(worktree, decision, min(VALIDATION_TIMEOUT_SECONDS, remaining()))
+            check = self.memory_checker(worktree, decision, min(check_limit, remaining()))
             if check.exit_code == 0 and not check.timed_out:
                 return ReflectionTurn.from_model_output(
                     json_format.MessageToDict(decision, preserving_proto_field_name=True)

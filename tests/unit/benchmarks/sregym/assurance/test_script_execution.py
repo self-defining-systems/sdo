@@ -371,7 +371,7 @@ def test_resumed_reflection_accounts_its_tokens_and_edits_final_files(
     assert result.responder_session_id
 
     commit = _prepare_policy_reflection(worktree, request.incident_id, prepare_reflection_memory, monkeypatch)
-    turn = CodexSessionBackend(model="gpt-6-luna").resume(
+    turn = CodexSessionBackend(reasoning_effort="medium", model="gpt-6-luna").resume(
         session_id=result.responder_session_id,
         worktree=worktree,
         prompt="The controller has independently verified incident closure.",
@@ -459,7 +459,7 @@ def test_scripted_reflection_fixes_local_diagnostics_in_the_same_checkout(
     _script(scripted["store"], reflection="invalid_then_learn")
     responder = execute_incident(request, model="gpt-6-luna", provider="codex")
     _prepare_policy_reflection(worktree, request.incident_id, prepare_reflection_memory, monkeypatch)
-    turn = CodexSessionBackend(model="gpt-6-luna").resume(
+    turn = CodexSessionBackend(reasoning_effort="medium", model="gpt-6-luna").resume(
         session_id=responder.responder_session_id,
         worktree=worktree,
         prompt="Reflect on the verified closure",

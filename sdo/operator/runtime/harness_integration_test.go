@@ -22,6 +22,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/memoryhost"
 	"sdo.dev/operator/runtime/sim"
@@ -434,8 +435,10 @@ func (h *harness) crashController(why string) {
 
 func (h *harness) runController(ctx context.Context) {
 	args := []string{"--namespace", hotel, "--control-namespace", harnessControlNamespace, "--app-root", h.repo,
-		"--application", "hotel", "--synthetic-traffic=false", "--lease-duration", "3s", "--drift-batch-window", "20ms",
-		"--verification-timeout", "20s", "--closure-stability-window", "5s", "--response-timeout", "30s", "--source-commit", harnessAcceptedCommit, "--repository-mount-path", h.t.TempDir()}
+		"--application", "hotel", "--drift-batch-window", "20ms",
+		"--closure-stability-window", "5s", "--source-commit", harnessAcceptedCommit, "--repository-mount-path", h.t.TempDir()}
+	policy := settings.Default()
+	policy.Response.Timeout, policy.Response.VerificationTimeout = settings.Duration(30*time.Second), settings.Duration(20*time.Second)
 	for ctx.Err() == nil {
 		runCtx, cancel := context.WithCancel(ctx)
 		h.mu.Lock()
@@ -446,7 +449,8 @@ func (h *harness) runController(ctx context.Context) {
 		revision := h.revision
 		h.mu.Unlock()
 		err := RunWithOptions(runCtx, remote.Detectors, RuntimeOptions{
-			Args: args, Stdout: h.out, Stderr: h.out, Client: h.clientFor("sdo-controller", inc, true), Dispatcher: harnessAgent{h, inc}, AcceptedScope: harnessAcceptedScope, PlanGit: harnessPlanGit,
+			Args: args, Settings: &policy, LeaseDuration: 3 * time.Second,
+			Stdout: h.out, Stderr: h.out, Client: h.clientFor("sdo-controller", inc, true), Dispatcher: harnessAgent{h, inc}, AcceptedScope: harnessAcceptedScope, PlanGit: harnessPlanGit,
 			Programs: remote.Programs, InformerSync: fastSyncPolicy(), InformerResync: 10 * time.Minute,
 			Wired: func(c *Controller) {
 				c.SetLifecycleSink(tapSink{h, inc})

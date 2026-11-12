@@ -11,10 +11,8 @@ import (
 	"fmt"
 	"regexp"
 	"sdo.dev/operator/contracts/settings"
-	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -22,7 +20,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/deploymentpolicy"
 	"sdo.dev/operator/devmount"
 	"sdo.dev/operator/memory/observation"
@@ -42,45 +39,21 @@ const (
 )
 
 type Config struct {
-	CodePath *contracts.CodePathConfig
-
-	// Settings is the resolved operator configuration. The installer renders it as the sdo-config ConfigMap, mounts
-	// it into the operate and controller Jobs and binds its hash into the install fingerprint.
+	// Settings is the resolved operator configuration, required: every timing and policy value. The installer
+	// renders it as the sdo-config ConfigMap, mounts it into the operate and controller Jobs (no policy value crosses
+	// their argv) and binds its hash into the install fingerprint.
 	Settings *settings.Config
 
-	ResponderMenu                            bool
-	ObservationCeiling                       sdk.ObservationScope
-	Namespace, ControlNamespace, Application string
-	ControllerImage, ResponderImage          string
-	ScriptImage                              string
-	RepositoryPVC, CredentialsSecret, Model  string
-	AcceptedCommit                           string
-	RepairPolicy, AgentProvider, AgentEffort string
-	// AgentReasoningSummary is the Codex reasoning summary mode; empty selects the shared default.
-	AgentReasoningSummary string
-	// LifecycleTimeout bounds one lifecycle (detection designer) session; zero selects the shared default.
-	LifecycleTimeout                           time.Duration
-	Replay                                     string
-	ReflectionSession, ReflectionGuidance      string
-	ForceReflection                            bool
-	FrozenMemory                               bool
-	ExternalIncidents                          bool
-	WatchOnly                                  bool
-	LateFindings                               string
-	MaxResponseLoops                           int
-	HealthyBaseline                            bool
-	TimeoutSeconds, VerificationTimeoutSeconds int
-	// BuildTimeoutSeconds bounds one source image build and BuildBudgetSeconds all builds of one
-	// deployment attempt; zero selects the deployment package defaults.
-	BuildTimeoutSeconds, BuildBudgetSeconds int
-	// RolloutTimeoutSeconds bounds the wait for one workload rollout; zero selects the default.
-	RolloutTimeoutSeconds                        int
+	ObservationCeiling                           sdk.ObservationScope
+	Namespace, ControlNamespace, Application     string
+	ControllerImage, ResponderImage              string
+	ScriptImage                                  string
+	RepositoryPVC, CredentialsSecret             string
+	AcceptedCommit                               string
 	ControllerDurationSeconds                    int
 	ExitAfterClosure                             bool
 	NativeCommand, NativeArgs                    []string
 	ExtraControllerArgs                          []string
-	ResponderEnv                                 []string
-	ResponderStandby                             *bool
 	Credentials                                  map[string][]byte
 	RegistrationConfigMap, RegistrationDirectory string
 	RegistrationData                             map[string]string
@@ -94,8 +67,6 @@ type Config struct {
 	RegistryInsecure                 bool
 	RegistryPushDockerConfig         []byte
 	ReuseExisting, WaitForCompletion bool
-	PermissiveResponder              bool
-	ResponderNamespaces              []string
 	// TelemetryProfile is the environment's statement of application
 	// telemetry; the installer applies its recipes and hands its environment
 	// to the controller. The zero profile applies and provides nothing.
@@ -133,7 +104,7 @@ type Plan struct {
 
 	// TelemetryEnvironment is the controller's telemetry environment document.
 	TelemetryEnvironment *corev1.ConfigMap
-	// Settings is the sdo-config ConfigMap; nil when the install carries no resolved configuration.
+	// Settings is the sdo-config ConfigMap.
 	Settings *corev1.ConfigMap
 }
 
@@ -167,25 +138,23 @@ func (c Config) controlNamespace() string {
 	}
 	return c.Namespace
 }
-func (c Config) validate() error {
-	if c.Settings != nil {
-		if err := c.Settings.Validate(); err != nil {
-			return fmt.Errorf("resolved config: %w", err)
-		}
-	}
-	if c.ExternalIncidents && !c.FrozenMemory {
-		return errors.New("external incidents require frozen memory")
-	}
-	if c.WatchOnly && !c.FrozenMemory {
-		return errors.New("watch-only requires frozen memory")
-	}
-	if c.WatchOnly && c.ExternalIncidents {
-		return errors.New("watch-only conflicts with external incidents")
-	}
-	if c.FrozenMemory && c.ForceReflection {
-		return errors.New("frozen memory conflicts with force reflection")
-	}
 
+// CodePathSelection is the code path the resolved configuration selects (nil for plain go).
+func (c Config) CodePathSelection() *contracts.CodePathConfig {
+	if c.Settings == nil {
+		return nil
+	}
+	selection, _ := c.Settings.Agent.CodePathSelection() // validated with the configuration
+	return selection
+}
+
+func (c Config) validate() error {
+	if c.Settings == nil {
+		return errors.New("install requires the resolved operator configuration")
+	}
+	if err := c.Settings.Validate(); err != nil {
+		return fmt.Errorf("resolved config: %w", err)
+	}
 	if err := c.ObservationCeiling.Validate(); err != nil {
 		return err
 	}
@@ -205,9 +174,6 @@ func (c Config) validate() error {
 	}
 	if c.MemoryUpstreamSSHSecret != "" && !namespaceName.MatchString(c.MemoryUpstreamSSHSecret) {
 		return fmt.Errorf("memory upstream ssh Secret must be a Kubernetes DNS label: %q", c.MemoryUpstreamSSHSecret)
-	}
-	if strings.TrimSpace(c.Model) == "" {
-		return errors.New("agent model is required")
 	}
 	if c.RegistrationConfigMap != "" && !namespaceName.MatchString(c.RegistrationConfigMap) {
 		return errors.New("registration ConfigMap must be a Kubernetes DNS label")
@@ -236,58 +202,12 @@ func (c Config) validate() error {
 	if c.BuildKitImage != "" && !pinnedImage.MatchString(c.BuildKitImage) {
 		return errors.New("BuildKit image must be pinned by sha256 digest")
 	}
-	if c.TimeoutSeconds <= 0 {
-		return errors.New("controller timeout must be positive")
-	}
 	if c.ControllerDurationSeconds < 0 {
 		return errors.New("controller duration must be nonnegative")
-	}
-	if c.BuildTimeoutSeconds < 0 || c.BuildBudgetSeconds < 0 {
-		return errors.New("build timeout and budget cannot be negative")
-	}
-	if c.RolloutTimeoutSeconds < 0 {
-		return errors.New("rollout timeout cannot be negative")
-	}
-	if c.BuildTimeoutSeconds > 0 && c.BuildBudgetSeconds > 0 && c.BuildTimeoutSeconds > c.BuildBudgetSeconds {
-		return errors.New("per-build timeout cannot exceed the build budget")
-	}
-	if c.VerificationTimeoutSeconds < 0 {
-		return errors.New("verification timeout cannot be negative")
 	}
 	if !commitID.MatchString(c.AcceptedCommit) {
 		return errors.New("native install requires a full accepted commit ID")
 	}
-	if c.RepairPolicy != "" && !slices.Contains(wire.StringIn(&contracts.ControllerConfig{}, "repair_policy"), c.RepairPolicy) {
-		return errors.New("invalid repair policy")
-	}
-	if c.AgentProvider != "" && c.AgentProvider != "codex" && c.AgentProvider != "claude" {
-		return errors.New("invalid agent provider")
-	}
-	if _, err := settings.Replay(c.Replay); err != nil {
-		return err
-	}
-	if c.AgentEffort != "" && !slices.Contains(worker_registry.AgentEfforts, c.AgentEffort) {
-		return fmt.Errorf("invalid agent effort %q", c.AgentEffort)
-	}
-	if c.AgentReasoningSummary != "" && !slices.Contains(worker_registry.ReasoningSummaries, c.AgentReasoningSummary) {
-		return fmt.Errorf("invalid agent reasoning summary %q", c.AgentReasoningSummary)
-	}
-	if c.LifecycleTimeout < 0 {
-		return fmt.Errorf("invalid lifecycle timeout %s", c.LifecycleTimeout)
-	}
-	if c.ReflectionSession != "" && !slices.Contains(wire.StringIn(&contracts.ControllerConfig{}, "reflection_session"), c.ReflectionSession) {
-		return errors.New("invalid reflection session")
-	}
-	if c.ReflectionGuidance != "" && !slices.Contains(wire.StringIn(&contracts.ControllerConfig{}, "reflection_guidance"), c.ReflectionGuidance) {
-		return errors.New("invalid reflection guidance")
-	}
-	if c.LateFindings != "" && c.LateFindings != "off" && c.LateFindings != "pull" {
-		return errors.New("invalid late findings mode")
-	}
-	if c.MaxResponseLoops < 0 {
-		return errors.New("max response loops cannot be negative")
-	}
-
 	if _, err := deploymentpolicy.Parse(c.DeploymentPolicy); err != nil {
 		return err
 	}
@@ -296,18 +216,6 @@ func (c Config) validate() error {
 	}
 	if err := checkExtraControllerArgs(c.ExtraControllerArgs); err != nil {
 		return err
-	}
-	for _, value := range c.ResponderEnv {
-		name, content, found := strings.Cut(value, "=")
-		if !found || !environmentName.MatchString(name) || strings.ContainsAny(content, "\r\n") {
-			return fmt.Errorf("invalid responder environment %q", value)
-		}
-		if name == observation.CeilingEnvironment {
-			return errors.New("observation ceiling is installer-owned")
-		}
-		if name == "SDO_LATE_FINDINGS" {
-			return errors.New("duplicate SDO_LATE_FINDINGS responder setting; use LateFindings")
-		}
 	}
 	if err := c.validatePermissive(); err != nil {
 		return err
@@ -346,7 +254,7 @@ func Resources(c Config) (Plan, error) {
 		return Plan{}, err
 	}
 	plan.TelemetryEnvironment = environment
-	if plan.Settings, err = settingsConfigMap(c); err != nil {
+	if plan.Settings, err = settingsConfigMap(*c.Settings, control); err != nil {
 		return Plan{}, err
 	}
 	plan.SyncPod = syncPod(c)
@@ -358,22 +266,17 @@ func Resources(c Config) (Plan, error) {
 	// makes a changed environment a changed install.
 	digest := sha256.Sum256([]byte(environment.Data[telemetryEnvironmentFile]))
 	plan.Job.Spec.Template.Annotations = map[string]string{"sdo.dev/telemetry-environment-hash": hex.EncodeToString(digest[:8])}
-	if plan.Settings != nil {
-		mountSettings(&plan.Job.Spec.Template.Spec)
-		plan.Job.Spec.Template.Annotations[SettingsHashAnnotation] = settingsHash(plan.Settings)
-	}
+	mountSettings(&plan.Job.Spec.Template.Spec)
+	plan.Job.Spec.Template.Annotations[SettingsHashAnnotation] = settingsHash(plan.Settings)
 	if c.AcceptedCommit != "" {
 		plan.Job.Spec.Template.Annotations["sdo.dev/accepted-commit"] = c.AcceptedCommit
 	}
-	if c.PermissiveResponder {
-		settings, err := json.Marshal(c.ResponderNamespaces)
+	if c.Settings.Response.Permissive {
+		namespaces, err := json.Marshal(c.Settings.Response.PermissiveNamespaces)
 		if err != nil {
 			return Plan{}, err
 		}
-		if plan.Job.Spec.Template.Annotations == nil {
-			plan.Job.Spec.Template.Annotations = map[string]string{}
-		}
-		plan.Job.Spec.Template.Annotations[PermissiveResponderAnnotation] = string(settings)
+		plan.Job.Spec.Template.Annotations[PermissiveResponderAnnotation] = string(namespaces)
 	}
 
 	labelInstallPlan(c, &plan)
@@ -427,64 +330,16 @@ func controllerJob(c Config) *batchv1.Job {
 		"--application", c.Application, "--responder-image", c.ResponderImage,
 		"--toolchain-image", c.ControllerImage, "--repository-pvc", c.RepositoryPVC,
 		"--repository-mount-path", "/workspace", "--credentials-secret", c.CredentialsSecret,
-		"--worktree-root", "/workspace/worktrees", "--response-timeout", fmt.Sprintf("%ds", c.TimeoutSeconds),
-		"--verification-timeout", fmt.Sprintf("%ds", verificationTimeout(c)),
+		"--worktree-root", "/workspace/worktrees",
 	}
 	if control != c.Namespace {
 		args = append(args, "--control-namespace", control)
 	}
 	command := append([]string{}, c.NativeCommand...)
-	provider := c.AgentProvider
-	if provider == "" {
-		provider = "codex"
-	}
-	args = append(args, codePathArgs(c)...)
 	if c.ScriptImage != "" {
 		args = append(args, "--script-image", c.ScriptImage)
 	}
-	args = append(args, "--broker-mode=native", "--worker-mount-mode=proposal-only", "--model", c.Model, "--responder-backend", provider)
-	if c.Replay != "" {
-		args = append(args, "--replay", c.Replay)
-	}
-	if c.AgentEffort != "" {
-		args = append(args, "--agent-effort", c.AgentEffort)
-	}
-	if c.AgentReasoningSummary != "" {
-		args = append(args, "--agent-reasoning-summary", c.AgentReasoningSummary)
-	}
-	if c.LifecycleTimeout > 0 {
-		args = append(args, "--lifecycle-timeout", c.LifecycleTimeout.String())
-	}
-	args = append(args, "--reflection-session", reflectionSession(c))
-	args = append(args, "--reflection-guidance", reflectionGuidance(c))
-	if c.ExternalIncidents {
-		args = append(args, "--external-incidents")
-	}
-	if c.WatchOnly {
-		args = append(args, "--watch-only")
-	}
-	if c.FrozenMemory {
-		args = append(args, "--frozen-memory")
-	}
-	if c.ForceReflection {
-		args = append(args, "--force-reflection")
-	}
-	if c.MaxResponseLoops > 0 {
-		args = append(args, "--max-response-loops", fmt.Sprint(c.MaxResponseLoops))
-	}
-
-	if c.RepairPolicy != "" {
-		args = append(args, "--repair-policy", c.RepairPolicy)
-	}
-	for _, value := range c.ResponderEnv {
-		args = append(args, "--responder-env="+value)
-	}
-	if c.LateFindings == "pull" {
-		args = append(args, "--responder-env=SDO_LATE_FINDINGS=pull")
-	}
-	if c.ResponderStandby != nil {
-		args = append(args, fmt.Sprintf("--responder-standby=%t", *c.ResponderStandby))
-	}
+	args = append(args, "--broker-mode=native", "--worker-mount-mode=proposal-only")
 	args = append(args, c.NativeArgs...)
 	if c.DeploymentPolicy != "" {
 		args = append(args, "--deployment-policy", c.DeploymentPolicy)
@@ -495,9 +350,6 @@ func controllerJob(c Config) *batchv1.Job {
 	}
 	if c.ExitAfterClosure {
 		args = append(args, "--exit-after-closure")
-	}
-	if c.HealthyBaseline {
-		args = append(args, "--healthy-baseline")
 	}
 	args = append(args, "--telemetry-environment", TelemetryEnvironmentFile())
 	if c.RegistrationConfigMap != "" {
@@ -544,13 +396,11 @@ func controllerJob(c Config) *batchv1.Job {
 		VolumeMounts:    []corev1.VolumeMount{{Name: "repository", MountPath: "/workspace"}},
 	}}
 	policyJSON, _ := json.Marshal(c.ObservationCeiling)
-	menu := responderMenuValue(c.ResponderMenu)
 	pod.Containers = []corev1.Container{{
 		Name: "controller", Image: c.ControllerImage, ImagePullPolicy: corev1.PullIfNotPresent,
 		Command: command, Args: args,
 		EnvFrom: []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: c.CredentialsSecret}}}},
 		Env: []corev1.EnvVar{
-			{Name: "SDO_RESPONDER_MENU", Value: menu},
 			{Name: "CODEX_HOME", Value: "/workspace/.sdo-runtime/codex"},
 			{Name: "CLAUDE_CONFIG_DIR", Value: "/workspace/.sdo-runtime/claude"},
 			{Name: "TMPDIR", Value: "/workspace/.sdo-runtime/build/tmp"},
@@ -602,7 +452,7 @@ func controllerDeployArgs(c Config) []string {
 	if c.BuildKitImage == "" || c.RegistryPushSecret == "" {
 		return nil
 	}
-	args := append([]string{"--buildkit-image", c.BuildKitImage, "--registry-push-secret", c.RegistryPushSecret}, operateBuildArgs(c)...)
+	args := []string{"--buildkit-image", c.BuildKitImage, "--registry-push-secret", c.RegistryPushSecret}
 	if c.RegistryHost != "" {
 		args = append(args, "--registry-host", c.RegistryHost)
 	}
@@ -621,30 +471,6 @@ func (c Config) registrationDirectory() string {
 		return c.RegistrationDirectory
 	}
 	return "/sdo/registrations"
-}
-func verificationTimeout(c Config) int {
-	if c.VerificationTimeoutSeconds > 0 {
-		return c.VerificationTimeoutSeconds
-	}
-	return 300
-}
-func buildTimeout(c Config) time.Duration {
-	if c.BuildTimeoutSeconds > 0 {
-		return time.Duration(c.BuildTimeoutSeconds) * time.Second
-	}
-	return settings.DefaultBuildTimeout
-}
-func rolloutTimeout(c Config) time.Duration {
-	if c.RolloutTimeoutSeconds > 0 {
-		return time.Duration(c.RolloutTimeoutSeconds) * time.Second
-	}
-	return settings.DefaultRolloutTimeout
-}
-func buildBudget(c Config) time.Duration {
-	if c.BuildBudgetSeconds > 0 {
-		return time.Duration(c.BuildBudgetSeconds) * time.Second
-	}
-	return settings.DefaultBuildBudget
 }
 func hasArg(args []string, want string) bool {
 	for _, arg := range args {

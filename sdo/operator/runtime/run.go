@@ -112,17 +112,25 @@ type RuntimeOptions struct {
 	// source repair for a typed launch. Nil is refused for launches that need
 	// one (not frozen memory, not shell detectors).
 	RepairDeployer RepairDeployerFactory
+	// Settings is the operator configuration of an embedded run without a typed
+	// launch; nil runs settings.Default(). A typed launch reads its own
+	// (ControllerConfig.settings_path) and refuses this one.
+	Settings *settings.Config
+	// LeaseDuration shortens leader election in embedded runs that restart the
+	// controller; zero is the production lease.
+	LeaseDuration time.Duration
 }
+
+// Controller-internal constants: none is operator configuration.
+const (
+	controllerLeaseName     = "sdo-controller"
+	defaultLeaseDuration    = 60 * time.Second
+	maintenancePollInterval = time.Second
+	resumeSyncTimeout       = time.Minute
+	syntheticTrafficWarmup  = 5 * time.Second
+)
 
 const defaultStateBaselineStartTimeout = 30 * time.Second
-
-type repeatedFlag []string
-
-func (values *repeatedFlag) String() string { return fmt.Sprint([]string(*values)) }
-func (values *repeatedFlag) Set(value string) error {
-	*values = append(*values, value)
-	return nil
-}
 
 // Run launches the stable controller; accepted code executes in the memory host.
 // renderers is the deployment-renderer catalog and registry the application-
@@ -160,6 +168,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		stderr = os.Stderr
 	}
 	var launchConfig *contractsv1alpha1.ControllerConfig
+	policy := settings.Default()
+	if options.Settings != nil {
+		policy = *options.Settings
+	}
 	if len(args) > 0 && args[0] == LaunchConfigFlag {
 		// Launch from one typed ControllerConfig the launcher mounted, instead
 		// of a hand-mirrored flag list. The config expands to this controller's
@@ -176,7 +188,14 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		if options.NativeBroker != nil {
 			return errors.New("native broker was supplied twice")
 		}
-		native, client, err := nativeBrokerFromLaunch(ctx, config, options.Client, options.RepairDeployer, options.Telemetry)
+		if options.Settings != nil {
+			return errors.New("operator configuration was supplied twice")
+		}
+		// Every timing and policy value: the record the parent wrote at its start.
+		if policy, err = settings.Read(config.GetSettingsPath()); err != nil {
+			return err
+		}
+		native, client, err := nativeBrokerFromLaunch(ctx, config, policy, options.Client, options.RepairDeployer, options.Telemetry)
 		if err != nil {
 			return err
 		}
@@ -189,14 +208,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 
 	flags := flag.NewFlagSet("sdo-controller", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	replay := flags.String("replay", "", "replay and corpus capture: on (default) or off")
-	codePathName := flags.String("code-path", "go", "programming-model plugin set")
-	codePathOverrides := flags.String("code-path-overrides", "", "optional named code-path seam overrides as JSON")
-	var codePathFlagConfig CodePathConfig
-	flags.Func("response-stages", "ordered response stages; overrides the selected code path", func(value string) error {
-		codePathFlagConfig.Overrides.ResponseStages = strings.Split(value, ",")
-		return nil
-	})
 	namespace := flags.String("namespace", "", "Kubernetes namespace to observe")
 	controlNamespace := flags.String(
 		"control-namespace",
@@ -207,8 +218,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	application := flags.String("application", "", "application identity; defaults to repository directory name")
 	sourceCommit := flags.String("source-commit", "", "source repository commit; defaults to git HEAD")
 	deployedCommit := flags.String("deployed-commit", "", "deployed commit; defaults to source commit")
-	flags.String("dispatcher", "", "deprecated; use agent registrations")
-	dispatcherMode := flags.String("dispatcher-mode", "job", "dispatcher mode: job (production) or local (development)")
 	responderImage := flags.String("responder-image", "", "responder container image for job mode")
 	agentRegistrationDirectory := flags.String("agent-registration-directory", "", "directory of strict ProtoJSON agent registrations; defaults to the built-in manifests in the controller image, launched with --responder-image")
 	responderAgentID := flags.String("responder-agent-id", "", "registered agent ID for incident response; defaults to the one agent registered for incident requests")
@@ -216,9 +225,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	repositoryMountPath := flags.String("repository-mount-path", "/workspace", "shared repository PVC mount root for job mode")
 	repositoryPVCSubPath := flags.String("repository-pvc-subpath", "", "optional shared repository PVC subPath for job mode")
 	credentialsSecret := flags.String("responder-credentials-secret", "", "Codex credentials Secret for job mode")
-	var responderEnvironment repeatedFlag
-	responderStandby := flags.Bool("responder-standby", true, "pre-start a responder; false forces cold Jobs")
-	flags.Var(&responderEnvironment, "responder-env", "responder Job environment NAME=VALUE; may be repeated")
 	telemetryPath := flags.String(
 		"firing-telemetry-path",
 		"",
@@ -232,42 +238,15 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			"in job mode and to disabled in local mode; \"off\" disables it",
 	)
 	duration := flags.Duration("duration", 0, "bounded controller duration; zero runs until cancellation")
-	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "incident responder timeout")
-	verificationTimeout := flags.Duration(
-		"verification-timeout",
-		5*time.Minute,
-		"maximum wait for independent health detectors to clear after a response; the incident then closes as failed",
-	)
-	maxResponseLoops := flags.Int("max-response-loops", DefaultMaxResponseLoops, "maximum mitigation rounds the responder agent may use per incident (the automatic stage's one apply does not count)")
 	memoryHostBinary := flags.String("memory-host-binary", "", "validated host binary")
 	memoryHostDigest := flags.String("memory-host-digest", "", "validated host digest")
-	diagnosisDeadline := flags.Duration("diagnosis-deadline", DefaultDiagnosisDeadline, "shared deadline for candidate diagnosis")
 	driftBatchWindow := flags.Duration("drift-batch-window", 20*time.Second, "batch window for unexplained drift")
-	repairPolicy := flags.String("repair-policy", "recorded-actions", "repair evidence policy: commit or recorded-actions")
-	leaseName := flags.String("lease-name", "sdo-controller", "leader-election Lease name")
-	leaseDuration := flags.Duration("lease-duration", 60*time.Second, "leader-election Lease duration")
 	identity := flags.String("identity", defaultIdentity(), "unique leader-election identity")
 	closureStability := flags.Duration("closure-stability-window", 15*time.Second, "stable independent verification required to close a running incident")
 	selfHealHold := flags.Duration("self-heal-hold", sdk.DefaultSelfHealHold, "how long a Kubernetes failure condition without its own give-up signal must hold before it opens an incident (self_heal_hold)")
-	reportGrace := flags.Duration("responder-report-grace", 30*time.Second, "deprecated compatibility setting; verified recovery does not wait for final narration")
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "exit after one closure is durably acknowledged")
-	frozenMemory := flags.Bool("frozen-memory", false, "keep closure evidence private and disable learning")
-	externalIncidents := flags.Bool("external-incidents", false, "accept external alerts only; close on responder completion")
-	watchOnly := flags.Bool("watch-only", false, "detect, open, verify and close incidents but never respond: no automatic stage, responder or reflection (requires frozen memory)")
-	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
 	maintenanceConfigMap := flags.String(
 		"maintenance-configmap", MaintenanceConfigMapName, "maintenance ConfigMap in the control namespace",
-	)
-	maintenancePollInterval := flags.Duration("maintenance-poll-interval", time.Second, "maintenance ConfigMap poll interval")
-	resumeSyncTimeout := flags.Duration(
-		"resume-sync-timeout", time.Minute, "maximum wait for a fresh application cache when maintenance ends",
-	)
-	syntheticTraffic := flags.Bool(
-		"synthetic-traffic", true, "run accepted synthetic traffic in the memory host",
-	)
-	syntheticWarmup := flags.Duration(
-		"synthetic-traffic-warmup", 5*time.Second,
-		"maximum wait for a first sample of every synthetic scenario before the first evaluation after start or resume",
 	)
 	toolchainImage := flags.String("toolchain-image", "", "trusted controller image supplying Go to workers (required in job mode)")
 	scriptImage := flags.String("script-image", "", "fixed script-tools image; defaults to the trusted toolchain image")
@@ -275,24 +254,23 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		"telemetry-environment", "",
 		"telemetry environment document: the sources the operator provides, their credential directory and the pinning mode",
 	)
-	cleanResponderHelpers := flags.Bool(
-		"clean-responder-helpers", true,
-		"delete pods and Jobs labelled "+ResponderHelperLabel+"=true once the responder completes",
-	)
-	stateBaseline := flags.Bool(
-		"state-baseline", true,
-		"attach the application's configuration changes since its last healthy baseline to each incident",
-	)
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 
-	selectedPathConfig, err := codePathFromFlags(*codePathName, *codePathOverrides)
+	selection, err := policy.Agent.CodePathSelection()
 	if err != nil {
 		return err
 	}
-	if codePathFlagConfig.Overrides.ResponseStages != nil {
-		selectedPathConfig.Overrides.ResponseStages = codePathFlagConfig.Overrides.ResponseStages
+	selectedPathConfig := codePathConfigFromContract(selection)
+	// The mode decides what runs; an external-incidents controller has no
+	// detectors, synthetic traffic or state baseline.
+	externalIncidents := policy.Mode == settings.ModeExternal
+	frozenMemory, forceReflection := policy.Mode != settings.ModeOperate, policy.Learning.ForceReflection
+	syntheticTraffic, stateBaseline := !externalIncidents, !externalIncidents
+	leaseDuration := options.LeaseDuration
+	if leaseDuration <= 0 {
+		leaseDuration = defaultLeaseDuration
 	}
 	codePathRegistry := NewCodePathRegistry()
 	selectedCodePath, err := codePathRegistry.Resolve(selectedPathConfig)
@@ -302,21 +280,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if selectedCodePath.Selection.Coverage == "none" {
 		options.Programs = nil
 	}
-	menuEnabled := lifecycleio.Getenv("SDO_RESPONDER_MENU")
-	if menuEnabled != "" && menuEnabled != "0" && menuEnabled != "1" {
-		return errors.New("SDO_RESPONDER_MENU must be 0 or 1")
-	}
-
-	if *externalIncidents && !*frozenMemory {
-		return errors.New("external incidents require frozen memory")
-	}
-	if *watchOnly && !*frozenMemory {
-		return errors.New("watch-only requires frozen memory")
-	}
-	if *externalIncidents {
+	if externalIncidents {
 		detectors = nil
-		*syntheticTraffic = false
-		*stateBaseline = false
 	}
 	var hostManager *memoryhost.Manager
 	// initialTelemetrySources are the launch revision's accepted telemetry
@@ -328,7 +293,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		if err := hostManager.Publish(ctx, sdktest.Snapshot{NamespaceName: *namespace}); err != nil {
 			return err
 		}
-		child, err := hostio.Launch(hostio.LaunchConfig{Namespace: *namespace, ProtectedNamespace: hostProtectedNamespace(*controlNamespace, *namespace), DisableSyntheticTraffic: !*syntheticTraffic, ProbeIdentitySeed: hostio.ProbeIdentitySeedPath(*repositoryMountPath), Binary: *memoryHostBinary, Digest: *memoryHostDigest, Commit: launchConfig.GetControllerRevision(), MemoryBytes: 512 << 20, Output: stderr})
+		child, err := hostio.Launch(hostio.LaunchConfig{Namespace: *namespace, ProtectedNamespace: hostProtectedNamespace(*controlNamespace, *namespace), DisableSyntheticTraffic: !syntheticTraffic, ProbeIdentitySeed: hostio.ProbeIdentitySeedPath(*repositoryMountPath), Binary: *memoryHostBinary, Digest: *memoryHostDigest, Commit: launchConfig.GetControllerRevision(), MemoryBytes: 512 << 20, Output: stderr})
 		if err != nil {
 			return err
 		}
@@ -352,24 +317,24 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		if err != nil {
 			return err
 		}
-		hostio.SetRecovery(hostManager, hostio.LaunchConfig{Namespace: *namespace, ProtectedNamespace: hostProtectedNamespace(*controlNamespace, *namespace), DisableSyntheticTraffic: !*syntheticTraffic, ProbeIdentitySeed: hostio.ProbeIdentitySeedPath(*repositoryMountPath), Binary: *memoryHostBinary, Digest: *memoryHostDigest, Commit: launchConfig.GetControllerRevision(), MemoryBytes: 512 << 20, Output: stderr})
+		hostio.SetRecovery(hostManager, hostio.LaunchConfig{Namespace: *namespace, ProtectedNamespace: hostProtectedNamespace(*controlNamespace, *namespace), DisableSyntheticTraffic: !syntheticTraffic, ProbeIdentitySeed: hostio.ProbeIdentitySeedPath(*repositoryMountPath), Binary: *memoryHostBinary, Digest: *memoryHostDigest, Commit: launchConfig.GetControllerRevision(), MemoryBytes: 512 << 20, Output: stderr})
 		detectors, options.Programs, initialTelemetrySources = remote.Detectors, remote.Programs, remote.TelemetrySources
-		if *externalIncidents {
+		if externalIncidents {
 			detectors = nil
 		}
 	}
-	if *frozenMemory && *forceReflection {
+	if frozenMemory && forceReflection {
 		return errors.New("frozen memory conflicts with force reflection")
 	}
 	if options.NativeBroker != nil {
-		options.NativeBroker.FrozenMemory = *frozenMemory
+		options.NativeBroker.FrozenMemory = frozenMemory
 	}
-	if options.NativeBroker != nil && *forceReflection {
+	if options.NativeBroker != nil && forceReflection {
 		options.NativeBroker.ForceReflection = true
 	}
 
-	if *maxResponseLoops < 1 || *diagnosisDeadline <= 0 || *driftBatchWindow <= 0 || *selfHealHold <= 0 {
-		return errors.New("response loops, diagnosis deadline, drift batch window and self-heal hold must be positive")
+	if *driftBatchWindow <= 0 || *selfHealHold <= 0 {
+		return errors.New("drift batch window and self-heal hold must be positive")
 	}
 	if *controlNamespace == "" {
 		*controlNamespace = *namespace
@@ -379,9 +344,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 	if *namespace == "" || *appRoot == "" {
 		return fmt.Errorf("namespace and app-root are required")
-	}
-	if *dispatcherMode != "job" {
-		return fmt.Errorf("unsupported dispatcher mode %q", *dispatcherMode)
 	}
 	jobDispatch := options.Dispatcher == nil
 	if jobDispatch {
@@ -397,9 +359,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 	if jobDispatch && options.NativeBroker == nil {
 		return errors.New("job controller requires the Go incident broker")
-	}
-	if *repairPolicy != "commit" && *repairPolicy != "recorded-actions" {
-		return fmt.Errorf("unsupported repair policy %q", *repairPolicy)
 	}
 	var registeredWorkers *worker_registry.Registry
 	if jobDispatch {
@@ -475,7 +434,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if stateStartTimeout <= 0 {
 		stateStartTimeout = defaultStateBaselineStartTimeout
 	}
-	elector := NewLeaseElectorWithClock(leaseClient, *controlNamespace, *leaseName, *identity, *leaseDuration, clock)
+	elector := NewLeaseElectorWithClock(leaseClient, *controlNamespace, controllerLeaseName, *identity, leaseDuration, clock)
 	// Startup reads retry on transient API errors, as the steady loop does.
 	retryStartup := func(call func() error) error {
 		return retryTransient(ctx, clock, func(err error) { fmt.Fprintf(stderr, "transient API error at startup, retrying: %v\n", err) }, call)
@@ -494,7 +453,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-clock.After(*leaseDuration / 3):
+		case <-clock.After(leaseDuration / 3):
 		}
 	}
 	defer func() {
@@ -506,7 +465,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}()
 	renewalCtx, cancelRenewal := context.WithCancel(ctx)
 	defer cancelRenewal()
-	renewalInterval := *leaseDuration / 3
+	renewalInterval := leaseDuration / 3
 	if renewalInterval <= 0 {
 		renewalInterval = time.Second
 	}
@@ -548,9 +507,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		proberAPI = MemoryTraffic{RPC: hostManager}
 	}
 	var trafficObserver *TrafficObserver
-	if *syntheticTraffic && hostManager != nil {
+	if syntheticTraffic && hostManager != nil {
 		trafficObserver = &TrafficObserver{api: proberAPI, workloads: append([]string(nil), trafficWorkloads...), notify: func() { kubernetesCache.Notify(traffic.Watch) }, interval: DefaultTrafficPollInterval}
-	} else if *syntheticTraffic {
+	} else if syntheticTraffic {
 		trafficObserver = NewTrafficObserver(proberAPI, trafficWorkloads, func() { kubernetesCache.Notify(traffic.Watch) }, 0)
 	}
 	if trafficObserver != nil {
@@ -610,15 +569,18 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err != nil {
 		return err
 	}
-	replayMode, err := settings.Replay(*replay)
+	replayMode, err := settings.Replay(policy.Learning.Replay)
 	if err != nil {
 		return err
 	}
-	jobEnvironment, err := parseResponderEnvironment(responderEnvironment)
+	jobEnvironment, err := parseResponderEnvironment(policy.Agent.ExtraEnv)
 	if err != nil {
 		return err
 	}
-	if jobEnvironment, err = withAgentEnvironment(jobEnvironment, launchConfig, options.Telemetry); err != nil {
+	if policy.Learning.LateFindings == "pull" {
+		jobEnvironment["SDO_LATE_FINDINGS"] = "pull"
+	}
+	if jobEnvironment, err = withAgentEnvironment(jobEnvironment, launchConfig, policy, options.Telemetry); err != nil {
 		return err
 	}
 	jobEnvironment[settings.ReplayEnvironment] = replayMode
@@ -639,12 +601,12 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		if options.NativeBroker != nil {
 			options.NativeBroker.Programs = options.Programs
 		}
-		if err := attachNativeReflector(options.NativeBroker, launchConfig, bootstrapProvider.Client, registeredWorkers, options.Telemetry, *responseTimeout); err != nil {
+		if err := attachNativeReflector(options.NativeBroker, launchConfig, policy, bootstrapProvider.Client, registeredWorkers, options.Telemetry); err != nil {
 			return err
 		}
 	}
 	var stateTracker *StateTracker
-	if *stateBaseline {
+	if stateBaseline {
 		metadataClient := options.MetadataClient
 		if metadataClient == nil && !clientInjected {
 			metadataClient, err = core.NewKubernetesMetadataClient()
@@ -713,8 +675,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				loop := NewResponderLoop(request, options.Programs, snapshotProvider, detectors, PlanExecutor{
 					Client: GenericPlanClient{TypedPlanClient: TypedPlanClient{Client: bootstrapProvider.Client, ExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, ScriptImage: scriptJobImage}, Objects: genericCapture}, Source: planSource,
 
-					Now: clock.Now, Sleep: func(ctx context.Context, delay time.Duration) error { return waitOnClock(ctx, clock, delay) }, Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client, Clock: clock}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider, Timeout: *verificationTimeout, PollInterval: time.Second}, Observer: kubernetesCache,
-				}, *maxResponseLoops)
+					Now: clock.Now, Sleep: func(ctx context.Context, delay time.Duration) error { return waitOnClock(ctx, clock, delay) }, Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client, Clock: clock}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider, Timeout: time.Duration(policy.Response.VerificationTimeout), PollInterval: time.Second}, Observer: kubernetesCache,
+				}, policy.Response.MaxLoops)
 				if len(TrafficWorkloadNames(detectors)) > 0 {
 					loop.Traffic = proberAPI
 				}
@@ -722,7 +684,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				// Backups live on the repository volume beside the other
 				// controller state, outside the published .sdo/ tree.
 				loop.Executor.Stores = &StoreAccess{Read: loop.gitRead(), Snapshot: snapshotProvider, Backups: FileBackupStore{Root: filepath.Join(*repositoryMountPath, ".sdo-runtime", "backups")}, Payloads: storePayloads}
-				if menuEnabled != "0" {
+				if policy.Response.Menu {
 					loop.MenuConfig = productionResponderMenu()
 					loop.MenuConfig.Unexplained = func(ctx context.Context) (UnexplainedRemovalAssessment, error) {
 						if controller == nil {
@@ -788,10 +750,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					defer controller.mu.Unlock()
 					return cloneIncidentRequest(controller.currentIncidentRequest)
 				}
-				loop.DiagnosisDeadline = *diagnosisDeadline
+				loop.DiagnosisDeadline = time.Duration(policy.Response.DiagnosisDeadline)
 				if options.NativeBroker != nil {
 					loop.RecoverySessionRoot = options.NativeBroker.SessionRoot
-					if *replay != "off" {
+					if replayMode != "off" {
 						loop.CorpusSessionRoot = options.NativeBroker.SessionRoot
 					}
 				}
@@ -808,7 +770,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 	// A standby pool wraps the Kubernetes Job dispatcher; an injected dispatcher has none.
 	jobDispatcher, isJobDispatcher := dispatcher.(KubernetesJobDispatcher)
-	if !clientInjected && jobDispatch && isJobDispatcher && *responderStandby && standbyEnabled(jobEnvironment) {
+	if !clientInjected && jobDispatch && isJobDispatcher && policy.Response.Standby && standbyEnabled(jobEnvironment) {
 		d := jobDispatcher
 		standbyEnvironment := make(map[string]string, len(jobEnvironment)+5)
 		for name, value := range jobEnvironment {
@@ -843,23 +805,19 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if options.NativeBroker != nil {
 		corpusSessionRoot = options.NativeBroker.SessionRoot
 	}
-	controller, err = NewController(ControllerConfig{ExternalIncidentsOnly: *externalIncidents, WatchOnly: *watchOnly, Telemetry: telemetryContext,
+	controller, err = NewController(ControllerConfig{Telemetry: telemetryContext,
 		CodePath: selectedPathConfig, CodePathRegistry: codePathRegistry,
 		Application: *application, Namespace: *namespace,
 		SourceCommit: resolvedSourceCommit, DeployedCommit: resolvedDeployedCommit,
-		RepositoryWorktree: resolvedRoot, ResponseTimeout: *responseTimeout,
-		Replay: *replay, CorpusSessionRoot: corpusSessionRoot,
-		VerificationTimeout:    *verificationTimeout,
+		RepositoryWorktree: resolvedRoot, CorpusSessionRoot: corpusSessionRoot,
 		ClosureStabilityWindow: *closureStability,
-		ResponderReportGrace:   *reportGrace,
-		RepairPolicy:           *repairPolicy,
 		FiringThreshold:        2, ClearThreshold: 2, BatchDebounce: 500 * time.Millisecond,
 		ConfirmationInterval: time.Second,
 		// The submit gate confirms a clearing finding on 3 fresh evaluations
 		// over at least 2 s instead of waiting for the detector's interval;
 		// closure keeps the health judge's clear persistence.
 		GateConfirmation: GateConfirmationPolicy{Evaluations: 3, Window: 2 * time.Second, Interval: time.Second},
-	}, detectors, snapshotProvider, dispatcher, start)
+	}.WithSettings(policy).WithMode(policy.Mode), detectors, snapshotProvider, dispatcher, start)
 	if err != nil {
 		return err
 	}
@@ -872,7 +830,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if options.PlanGit != nil {
 		controller.gitRead = options.PlanGit
 	}
-	if !*externalIncidents {
+	if !externalIncidents {
 		controller.ConfigureDrift(DriftControllerConfig{Inventory: true, Events: kubernetesCache, Source: planSource, Client: bootstrapProvider.Client, BatchWindow: *driftBatchWindow,
 			View: func(snapshot sdk.DetectionContext) program.ReadView {
 				if cycle, ok := snapshot.(*CycleReadView); ok {
@@ -909,7 +867,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if err != nil {
 				return memoryCandidate{commit: commit, err: err}
 			}
-			child, err := hostio.Launch(hostio.LaunchConfig{Namespace: *namespace, ProtectedNamespace: hostProtectedNamespace(*controlNamespace, *namespace), DisableSyntheticTraffic: !*syntheticTraffic, ProbeIdentitySeed: hostio.ProbeIdentitySeedPath(*repositoryMountPath), Binary: artifact.Path, Digest: artifact.Digest, Commit: commit, MemoryBytes: 512 << 20, Output: stderr})
+			child, err := hostio.Launch(hostio.LaunchConfig{Namespace: *namespace, ProtectedNamespace: hostProtectedNamespace(*controlNamespace, *namespace), DisableSyntheticTraffic: !syntheticTraffic, ProbeIdentitySeed: hostio.ProbeIdentitySeedPath(*repositoryMountPath), Binary: artifact.Path, Digest: artifact.Digest, Commit: commit, MemoryBytes: 512 << 20, Output: stderr})
 			if err != nil {
 				_ = workspace.Close()
 				return memoryCandidate{commit: commit, err: err}
@@ -939,7 +897,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if err != nil {
 				return err
 			}
-			if *externalIncidents {
+			if externalIncidents {
 				remote.Detectors = nil
 			}
 			if err := core.ValidateDetectors(remote.Detectors); err != nil {
@@ -969,7 +927,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			detectors, options.Programs, snapshotProvider, metricsObserver = remote.Detectors, remote.Programs, next, nextMetrics
 			memoryCatalogMu.Unlock()
 			_ = json.NewEncoder(stdout).Encode(map[string]any{"memory_host_activation": candidate.commit, "binary_digest": candidate.digest, "activation_latency_ms": clock.Now().Sub(candidate.started).Milliseconds(), "controller_revision": launchConfig.GetControllerRevision()})
-			hostio.SetRecovery(hostManager, hostio.LaunchConfig{Namespace: *namespace, ProtectedNamespace: hostProtectedNamespace(*controlNamespace, *namespace), DisableSyntheticTraffic: !*syntheticTraffic, ProbeIdentitySeed: hostio.ProbeIdentitySeedPath(*repositoryMountPath), Binary: candidate.binary, Digest: candidate.digest, Commit: candidate.commit, MemoryBytes: 512 << 20, Output: stderr})
+			hostio.SetRecovery(hostManager, hostio.LaunchConfig{Namespace: *namespace, ProtectedNamespace: hostProtectedNamespace(*controlNamespace, *namespace), DisableSyntheticTraffic: !syntheticTraffic, ProbeIdentitySeed: hostio.ProbeIdentitySeedPath(*repositoryMountPath), Binary: candidate.binary, Digest: candidate.digest, Commit: candidate.commit, MemoryBytes: 512 << 20, Output: stderr})
 			return nil
 		}
 		defer activation.close()
@@ -1001,18 +959,16 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			return true, nil
 		}
 	}
-	if *stateBaseline {
+	if stateBaseline {
 		controller.Baseline = stateTracker
 	}
 	controller.PodReadBaseline = podReadBaseline
 	controller.VantageBaseline = vantageBaseline
-	if *cleanResponderHelpers {
-		controller.Helpers = KubernetesHelperCleaner{
-			Client: bootstrapProvider.Client, Namespaces: []string{*namespace, *controlNamespace},
-		}
+	controller.Helpers = KubernetesHelperCleaner{
+		Client: bootstrapProvider.Client, Namespaces: []string{*namespace, *controlNamespace},
 	}
 	if launchConfig != nil && selectedCodePath.Selection.DetectorSource != "shell" {
-		controller.CheckHealth = acceptedHealthGuard(resolvedRoot, launchConfig.GetControllerRevision(), planSource.ShapeOf(*namespace), launchConfig.GetFrozenMemory())
+		controller.CheckHealth = acceptedHealthGuard(resolvedRoot, launchConfig.GetControllerRevision(), planSource.ShapeOf(*namespace), frozenMemory)
 	}
 	controller.CanAct = elector.IsLeader
 	controller.GuardAction = elector.GuardContext
@@ -1136,7 +1092,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	// evaluation, which may be the all-clear that precedes a fault, judges
 	// observed traffic.
 	startTraffic := func() {
-		if hostManager != nil && *syntheticTraffic {
+		if hostManager != nil && syntheticTraffic {
 			if err := (MemoryTraffic{RPC: hostManager}).Start(runCtx); err != nil {
 				fmt.Fprintf(stderr, "memory traffic startup: %v\n", err)
 			}
@@ -1154,7 +1110,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		started := clock.Now()
 		resetErr := trafficObserver.Reset(runCtx)
 		trafficObserver.Start(runCtx)
-		warm := trafficObserver.AwaitWarm(runCtx, *syntheticWarmup)
+		warm := trafficObserver.AwaitWarm(runCtx, syntheticTrafficWarmup)
 		record := map[string]any{
 			"synthetic_traffic": trafficObserver.Summary(), "synthetic_traffic_warm": warm,
 			"synthetic_traffic_startup_ms": clock.Since(started).Milliseconds(),
@@ -1272,8 +1228,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	// controller: a baseline it cannot measure is an unavailable state that
 	// later passes measure again.
 	acceptBaseline := func(gate func(context.Context, *Controller, string, string, bool, *ServiceReachabilityObserver, SnapshotProvider, *ReachabilityReference, []sdk.Detector)) {
-		if !*externalIncidents && launchConfig != nil && options.NativeBroker != nil {
-			gate(runCtx, controller, resolvedRoot, *repositoryMountPath, launchConfig.GetHealthyBaseline(), reachabilityObserver, snapshotProvider, reachabilityReference, detectors)
+		if !externalIncidents && launchConfig != nil && options.NativeBroker != nil {
+			gate(runCtx, controller, resolvedRoot, *repositoryMountPath, policy.Learning.HealthyBaseline, reachabilityObserver, snapshotProvider, reachabilityReference, detectors)
 		}
 	}
 	persistControllerState := func() {
@@ -1320,9 +1276,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		}
 		return err
 	}
-	maintenanceChanges := maintenance.Watch(runCtx, desired, *maintenancePollInterval, controller.OnError)
+	maintenanceChanges := maintenance.Watch(runCtx, desired, maintenancePollInterval, controller.OnError)
 	resets := install.ResetRequests{Client: bootstrapProvider.Client, Namespace: *controlNamespace}
-	resetRequests := watchResets(runCtx, resets, clock, *maintenancePollInterval, controller.OnError)
+	resetRequests := watchResets(runCtx, resets, clock, maintenancePollInterval, controller.OnError)
 	// A pause is a barrier the declaring side waits on: once the loop observes
 	// nothing and every in-flight pass drained, the generation it stopped under
 	// is acknowledged. A failed acknowledgement is retried while paused.
@@ -1356,7 +1312,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		// observing; a controller launched inside that pause has none running.
 		// An unsynced informer reads as an empty namespace, so the resume waits
 		// for the sync and retries it; Do returns an error only when the run is ending.
-		if err := syncPolicy.Do(runCtx, *resumeSyncTimeout, func(syncCtx context.Context) error {
+		if err := syncPolicy.Do(runCtx, resumeSyncTimeout, func(syncCtx context.Context) error {
 			if wasPaused {
 				return observeApplication(syncCtx, preserved)
 			}
@@ -1860,8 +1816,16 @@ func evaluateOnce(
 	telemetryEnvironment := flags.String("telemetry-environment", "", "telemetry environment document for metric and alert health evaluation")
 	classesFlag := flags.String("classes", "", "comma-separated detector classes to evaluate (default: every class)")
 	pinsFile := flags.String("image-pins", "", "JSON rendered.ReceiptPins of the deployment under verification: desired state reads return the images it applied")
+	settingsFile := flags.String("settings", "", "operator configuration the evaluation runs under (the sdo-config mount or the controller's record); empty runs the defaults")
 	if err := flags.Parse(args); err != nil {
 		return err
+	}
+	policy := settings.Default()
+	if *settingsFile != "" {
+		var err error
+		if policy, err = settings.Read(*settingsFile); err != nil {
+			return err
+		}
 	}
 	if *namespace == "" {
 		return fmt.Errorf("namespace is required")
@@ -2079,9 +2043,9 @@ func evaluateOnce(
 	controller, err := NewController(ControllerConfig{
 		Application: *application, Namespace: *namespace,
 		SourceCommit: "evaluation", DeployedCommit: "evaluation",
-		RepositoryWorktree: ".", ResponseTimeout: time.Minute,
-		FiringThreshold: 1, ClearThreshold: 1,
-	}, detectors, provider, evaluationDispatcher{}, start)
+		RepositoryWorktree: ".",
+		FiringThreshold:    1, ClearThreshold: 1,
+	}.WithSettings(policy), detectors, provider, evaluationDispatcher{}, start)
 	if err != nil {
 		return err
 	}

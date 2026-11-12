@@ -143,7 +143,6 @@ def _run(args: argparse.Namespace) -> int:
         credentials_secret="sdo-agent-credentials",
         model="gpt-6-luna",
         timeout_seconds=args.timeout,
-        repair_policy="recorded-actions",
         agent_provider="codex",
         reflection_session=args.reflection_session,
         controller_namespace=control_namespace_for(environment.namespace),

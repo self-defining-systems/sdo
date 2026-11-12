@@ -8,7 +8,7 @@ There is no source-plan policy file, reviewed-fixture digest policy, policy TTL,
 
 At incident open, Go builds deterministic coverage from all matching diagnoses and detector findings. It sends all matches and unexplained finding fingerprints to the responder; the agent chooses every mitigation or raw action. Failed verification leaves completed writes in place. Only the agent requests rollback, with compensation retained for a partially failed write batch.
 
-Defaults are repair policy `recorded-actions`, 10 response loops, 5 validation retries and 5 minutes for verification. `SDO_RESPONDER_MENU` defaults on; `0` disables it. Verified program success/failure counts remain durable information, without execution thresholds. Save-time replay remains required after edits.
+Defaults ([docs/config.md](config.md)) are repair policy `commit` (benchmarks run `recorded-actions` from `benchmarks/fuzzops/sdo-bench.yaml`), 10 response loops, 5 validation retries and 5 minutes for verification. The menu (`response.menu`, worker variable `SDO_RESPONDER_MENU`) defaults on. Verified program success/failure counts remain durable information, without execution thresholds. Save-time replay remains required after edits.
 
 Plan patch receipts retain the existing Authorization field as value provenance: `accepted-source`, `parameter`, `observed`, or `incident-namespace` for actions without a selected value. It no longer denotes an administrator policy grant. Action reports retain value-level provenance. Retired controller-config tags 72–74 and their field names are reserved.
 

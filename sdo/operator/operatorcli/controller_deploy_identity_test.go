@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/operatorcli/deploywire"
 )
@@ -13,8 +14,11 @@ import (
 // identity: the operate launch -> install config -> controller Job args ->
 // controller launch chain must carry it unchanged.
 func TestOperateIdentityReachesTheControllerParent(t *testing.T) {
-	launch, err := ParseOperateLaunch(operateArgs("--registry-host", "registry.synthetic.invalid:5000", "--registry-insecure",
-		"--build-timeout", "7m", "--build-budget", "11m", "--rollout-timeout", "3m"))
+	withMountedSettings(t, func(c *settings.Config) {
+		c.Deployment.BuildTimeout, c.Deployment.BuildBudget = settings.Duration(7*time.Minute), settings.Duration(11*time.Minute)
+		c.Deployment.RolloutTimeout = settings.Duration(3 * time.Minute)
+	})
+	launch, err := ParseOperateLaunch(operateArgs("--registry-host", "registry.synthetic.invalid:5000", "--registry-insecure"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +28,7 @@ func TestOperateIdentityReachesTheControllerParent(t *testing.T) {
 		t.Fatal(err)
 	}
 	args := plan.Job.Spec.Template.Spec.Containers[0].Args
-	_, identity, err := parseControllerLaunch(args)
+	_, identity, _, err := parseControllerLaunch(args)
 	if err != nil {
 		t.Fatalf("controller Job args %v: %v", args, err)
 	}
@@ -44,7 +48,7 @@ func TestOperateIdentityReachesTheControllerParent(t *testing.T) {
 // Seeded and install-existing controllers have no build identity: they
 // launch unchanged and do not follow.
 func TestControllerWithoutIdentityDoesNotDeploy(t *testing.T) {
-	_, identity, err := parseControllerLaunch(controllerLaunchArgs())
+	_, identity, _, err := parseControllerLaunch(controllerLaunchArgs())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,9 +59,8 @@ func TestControllerWithoutIdentityDoesNotDeploy(t *testing.T) {
 		{"--buildkit-image", "buildkit@sha256:" + strings.Repeat("a", 64)},
 		{"--registry-push-secret", "push"},
 		{"--registry-insecure"},
-		{"--build-timeout", "-1s"},
 	} {
-		if _, _, err := parseControllerLaunch(controllerLaunchArgs(args...)); err == nil {
+		if _, _, _, err := parseControllerLaunch(controllerLaunchArgs(args...)); err == nil {
 			t.Fatalf("%v accepted", args)
 		}
 	}
@@ -66,9 +69,10 @@ func TestControllerWithoutIdentityDoesNotDeploy(t *testing.T) {
 // The identity the parent parsed from the controller Job's arguments is the
 // one the child reads from its typed launch config.
 func TestControllerLaunchCarriesItsDeployIdentityToTheChild(t *testing.T) {
-	run, identity, err := parseControllerLaunch(controllerLaunchArgs(
+	withMountedSettings(t, func(c *settings.Config) { c.Deployment.RolloutTimeout = settings.Duration(3 * time.Minute) })
+	run, identity, _, err := parseControllerLaunch(controllerLaunchArgs(
 		"--buildkit-image", "buildkit@sha256:"+strings.Repeat("a", 64), "--registry-push-secret", "push",
-		"--registry-host", "registry.synthetic.invalid:5000", "--build-timeout", "7m", "--build-budget", "11m", "--rollout-timeout", "3m"))
+		"--registry-host", "registry.synthetic.invalid:5000"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +82,7 @@ func TestControllerLaunchCarriesItsDeployIdentityToTheChild(t *testing.T) {
 	}
 	// No identity flags: the child's identity cannot build, so it deploys only
 	// prebuilt images.
-	run, _, err = parseControllerLaunch(controllerLaunchArgs())
+	run, _, _, err = parseControllerLaunch(controllerLaunchArgs())
 	if err != nil {
 		t.Fatal(err)
 	}

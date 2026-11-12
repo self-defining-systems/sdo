@@ -13,6 +13,7 @@ import (
 	"sdo.dev/operator/deployment/internal/deploymentio"
 
 	"sdo.dev/operator/builder"
+	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/evaluation"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory"
@@ -57,7 +58,9 @@ type HealthEvaluation struct {
 }
 
 type AcceptedDetectorProbe struct {
-	Replay          string
+	// Settings is the operator configuration file the probe and its --evaluate-once run read (the sdo-config mount
+	// or the controller's record of it); empty evaluates under settings.Default().
+	Settings        string
 	RequireComplete bool
 	Kubeconfig      string
 	// TelemetryEnvironment is the telemetry environment document the probe's
@@ -78,7 +81,13 @@ func (probe AcceptedDetectorProbe) Evaluate(ctx context.Context, acceptedRoot, o
 	if err != nil {
 		return HealthEvaluation{}, fmt.Errorf("resolve accepted diagnostics: %w", err)
 	}
-	workspace, err := builder.BuildWorkspace(bounded, builder.Config{Replay: probe.Replay, ApplicationRoot: acceptedRoot, DiagnosticsRoot: projected.Directory, OperatorRoot: operatorRoot})
+	policy := settings.Default()
+	if probe.Settings != "" {
+		if policy, err = settings.Read(probe.Settings); err != nil {
+			return HealthEvaluation{}, err
+		}
+	}
+	workspace, err := builder.BuildWorkspace(bounded, builder.Config{Replay: policy.Learning.Replay, ApplicationRoot: acceptedRoot, DiagnosticsRoot: projected.Directory, OperatorRoot: operatorRoot})
 	if err != nil {
 		return HealthEvaluation{}, fmt.Errorf("stage accepted diagnostics: %w", err)
 	}
@@ -308,6 +317,9 @@ func (probe AcceptedDetectorProbe) evaluationArgs(acceptedRoot, namespace string
 	}
 	if probe.TelemetryEnvironment != "" {
 		args = append(args, "--telemetry-environment", probe.TelemetryEnvironment)
+	}
+	if probe.Settings != "" {
+		args = append(args, "--settings", probe.Settings)
 	}
 	return args
 }

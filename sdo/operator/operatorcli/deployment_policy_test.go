@@ -28,11 +28,12 @@ func wantPolicy(t *testing.T, got *contracts.DeploymentPolicy) {
 	}
 }
 
-// The policy is install configuration: operator flags to the install Config,
+// The policy is install configuration: deployment.policy to the install Config,
 // the Config to the operate Job and controller arguments, the arguments to the
 // controller's launch config. It is never read from agent input.
-func TestInstallPolicyFlagsReachTheInstallConfig(t *testing.T) {
-	launch, err := ParseHostLaunch(hostArgs("--allow-registry", "ghcr.io", "--scope-blocking", "--grant-namespace", "monitoring", "--grant-cluster-kind", "ClusterRole"))
+func TestInstallPolicyConfigReachesTheInstallConfig(t *testing.T) {
+	file := configFile(t, "deployment:\n  policy:\n    allowed_registries: [ghcr.io]\n    scope_blocking: true\n    granted_namespaces: [monitoring]\n    granted_cluster_kinds: [ClusterRole]\n")
+	launch, err := ParseHostLaunch(hostArgs("--config", file))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,10 +46,10 @@ func TestInstallPolicyFlagsReachTheInstallConfig(t *testing.T) {
 	if err != nil || plain.Install.DeploymentPolicy != "" {
 		t.Fatalf("no flags = %q, %v; want no policy (today's behavior)", plain.Install.DeploymentPolicy, err)
 	}
-	if _, err := ParseHostLaunch(hostArgs("--grant-namespace", "monitoring")); err == nil {
-		t.Fatal("grants without --scope-blocking accepted")
+	if _, err := ParseHostLaunch(hostArgs("--config", configFile(t, "deployment:\n  policy:\n    granted_namespaces: [monitoring]\n"))); err == nil {
+		t.Fatal("grants without scope_blocking accepted")
 	}
-	existing, err := ParseInstallExistingLaunch(existingLaunchArgs("--allow-registry", "ghcr.io", "--scope-blocking", "--grant-namespace", "monitoring", "--grant-cluster-kind", "ClusterRole"))
+	existing, err := ParseInstallExistingLaunch(existingLaunchArgs("--config", file))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,12 +68,12 @@ func TestOperateAndControllerParseThePolicyFlag(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantPolicy(t, policy)
-	controller, _, err := parseControllerLaunch(controllerLaunchArgs("--deployment-policy", policyJSON))
+	controller, _, _, err := parseControllerLaunch(controllerLaunchArgs("--deployment-policy", policyJSON))
 	if err != nil {
 		t.Fatal(err)
 	}
 	wantPolicy(t, controller.Controller.GetDeploymentPolicy())
-	plain, _, err := parseControllerLaunch(controllerLaunchArgs())
+	plain, _, _, err := parseControllerLaunch(controllerLaunchArgs())
 	if err != nil || plain.Controller.GetDeploymentPolicy() != nil {
 		t.Fatalf("no flag = %v, %v; want none", plain.Controller.GetDeploymentPolicy(), err)
 	}
@@ -80,7 +81,7 @@ func TestOperateAndControllerParseThePolicyFlag(t *testing.T) {
 		if _, err := ParseOperateLaunch(operateArgs("--deployment-policy", bad)); err == nil {
 			t.Errorf("operate accepted %q", bad)
 		}
-		if _, _, err := parseControllerLaunch(controllerLaunchArgs("--deployment-policy", bad)); err == nil {
+		if _, _, _, err := parseControllerLaunch(controllerLaunchArgs("--deployment-policy", bad)); err == nil {
 			t.Errorf("controller accepted %q", bad)
 		}
 	}
@@ -118,7 +119,7 @@ func TestProductionDeployersRefuseOffAllowlistImages(t *testing.T) {
 		Namespace: "demo", ControlNamespace: "sdo-system", AcceptedRoot: repo,
 		WorkspaceRoot: config.WorktreeRoot, RepositoryMount: config.RepositoryMount, RepositoryPVC: "repo",
 	}
-	controller, _, err := parseControllerLaunch(controllerLaunchArgs("--deployment-policy", `{"allowedRegistries":["registry.synthetic.invalid"]}`))
+	controller, _, _, err := parseControllerLaunch(controllerLaunchArgs("--deployment-policy", `{"allowedRegistries":["registry.synthetic.invalid"]}`))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,6 +1,6 @@
 # Frozen-memory repeats
 
-`--frozen-memory` suppresses all closure publication, including source proposals,
+Operator config `mode: frozen` (`SDO_MODE=frozen`; the pre-config flag was `--frozen-memory`) suppresses all closure publication, including source proposals,
 outcome documents, captured learning artifacts and reflection. Independently derived
 outcomes remain in the private native broker ledger, with `frozenMemory: true` and
 `reflectionSkippedReason: frozen_memory`. They never enter accepted memory, program

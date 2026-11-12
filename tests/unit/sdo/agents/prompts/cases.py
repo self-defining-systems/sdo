@@ -538,7 +538,7 @@ def rendered_cases(*, scale: int = 1) -> dict[str, str]:
 
             patch.setattr(reflection, "run_structured_turn", capture_transport)
             try:
-                CodexSessionBackend().fresh(
+                CodexSessionBackend(reasoning_effort="medium").fresh(
                     worktree=Path("/application"),
                     prompt=capture.prompt,
                     idempotency_key="reflection:toy-incident:outcome",
@@ -597,7 +597,7 @@ def rendered_cases(*, scale: int = 1) -> dict[str, str]:
             ),
             Path("/application"),
         )
-        backend = CodexLifecycleBackend()
+        backend = CodexLifecycleBackend(reasoning_effort="medium", timeout_seconds=900)
         architecture = "Toy API depends on the store."
         resources = [
             TopologyResourceDTO(

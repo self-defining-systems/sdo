@@ -25,7 +25,7 @@ def test_lifecycle_accepts_provided_resource_reads(
         lambda request: reply(provider, output, session_id="fresh-session", commands=[f"{reader} {resource}"])
     )
     backend_type = CodexLifecycleBackend if provider == "codex" else ClaudeLifecycleBackend
-    backend = backend_type(executor=agent.executor)
+    backend = backend_type(reasoning_effort="medium", timeout_seconds=900, executor=agent.executor)
     with fake_codex_login(monkeypatch):
         result = backend.run_health_judge(
             repository=repository,
@@ -54,7 +54,7 @@ def test_external_read_does_not_bypass_handoff_validation(
     )
     backend_type = CodexLifecycleBackend if provider == "codex" else ClaudeLifecycleBackend
     with fake_codex_login(monkeypatch), pytest.raises(LifecycleAgentError, match="invalid structured"):
-        backend_type(executor=agent.executor).run_health_judge(
+        backend_type(reasoning_effort="medium", timeout_seconds=900, executor=agent.executor).run_health_judge(
             repository=tmp_path,
             application="synthetic",
             health_objective="",

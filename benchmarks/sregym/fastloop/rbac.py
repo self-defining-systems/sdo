@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from benchmarks.sregym.adapter import NativeInstallConfig, WaitKind, kubectl, wait_for
+from benchmarks.sregym.adapter import NativeInstallConfig, WaitKind, kubectl, launch_config, wait_for
 
 
 def canonical_rules(rules: list[dict[str, Any]]) -> list[str]:
@@ -95,14 +95,16 @@ def installer_rbac(namespace: str, config: NativeInstallConfig | None = None) ->
     # A prepared executable (scripts/test_python.sh builds one per job) skips a `go run` compile per call.
     prepared = os.environ.get("SDO_RBAC_HELPER_BIN", "").strip()
     command = [prepared] if prepared else ["go", "run", str(Path(__file__).with_name("rbac_go") / "main.go")]
-    result = subprocess.run(
-        [*command, "install-existing", *config.common_args()],
-        cwd=root / "sdo/operator",
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=wait_for(WaitKind.COMMAND),
-    )
+    with launch_config(config) as (config_args, env):
+        result = subprocess.run(
+            [*command, "install-existing", *config.common_args(), *config_args],
+            cwd=root / "sdo/operator",
+            env={**os.environ, **env},
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=wait_for(WaitKind.COMMAND),
+        )
     return json.loads(result.stdout)
 
 

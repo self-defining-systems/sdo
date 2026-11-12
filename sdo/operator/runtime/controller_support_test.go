@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	goruntime "runtime"
+	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
 	"sync"
@@ -76,12 +77,16 @@ func controllerDetector(id string, interval time.Duration, samples ...sdk.Findin
 	}
 }
 
+// testControllerConfig takes its timing and policy from the production
+// defaults, as every NewController caller does, with a one-minute response.
 func testControllerConfig() ControllerConfig {
-	return ControllerConfig{
+	cfg := ControllerConfig{
 		Application: "demo", Namespace: "demo", SourceCommit: "source", DeployedCommit: "deployed",
 		RepositoryWorktree: "/tmp/demo",
-		ResponseTimeout:    time.Minute, FiringThreshold: 2, ClearThreshold: 2,
-	}
+		FiringThreshold:    2, ClearThreshold: 2,
+	}.WithSettings(settings.Default())
+	cfg.ResponseTimeout = time.Minute
+	return cfg
 }
 
 func completedResult(incidentID string) IncidentResult {

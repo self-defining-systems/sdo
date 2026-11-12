@@ -20,11 +20,11 @@ from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import TextContent
 
 from sdo.agents.context_output import budget_for, save_context
+from sdo.agents.provider import MEMORY_CHECK_TIMEOUT_ENV, memory_check_timeout_seconds
 from sdo.agents.replay import replay_mode
 from sdo.agents.responder.memory_check import (
     MAX_FAILED_MEMORY_CHECKS,
     VALIDATION_TIMEOUT_EXIT_CODE,
-    VALIDATION_TIMEOUT_SECONDS,
     ValidationResult,
     failed_checks,
     prior_timeout,
@@ -52,6 +52,7 @@ VALIDATION_ENVIRONMENT = (
     "SDO_CODE_PATH",
     "SDO_MEMORY_CHECK_DIR",
     "SDO_MEMORY_CHECK_TIMEOUT_FILE",
+    MEMORY_CHECK_TIMEOUT_ENV,
     "SDO_ACTOR",
     "SDO_SESSION_SCRATCH",
     "SDO_SESSION_DIR",
@@ -75,7 +76,13 @@ VALIDATION_ENVIRONMENT = (
     "GOFLAGS",
     "CGO_ENABLED",
 )
-VALIDATION_TOOL_TIMEOUT_SECONDS = VALIDATION_TIMEOUT_SECONDS + 30
+#: The provider's tool call outlives the check it runs by this margin.
+VALIDATION_TOOL_MARGIN_SECONDS = 30
+
+
+def validation_tool_timeout_seconds() -> int:
+    """How long the provider waits for one validation tool call: the configured check limit plus a margin."""
+    return memory_check_timeout_seconds() + VALIDATION_TOOL_MARGIN_SECONDS
 
 
 class _TextToolServer(FastMCP):
@@ -220,16 +227,18 @@ def _replay_disagreements(stdout: str, own: set[str] | None) -> list[str]:
 def validation_server(
     root: Path,
     *,
-    timeout_seconds: float = VALIDATION_TIMEOUT_SECONDS,
+    timeout_seconds: float | None = None,
     expire: Callable[[float], Awaitable[object]] = asyncio.sleep,
 ) -> _TextToolServer:
-    """Serve the reflection tools; ``expire(timeout_seconds)`` returns when a check times out."""
-    if (
-        isinstance(timeout_seconds, bool)
-        or not math.isfinite(timeout_seconds)
-        or not 0 < timeout_seconds <= VALIDATION_TIMEOUT_SECONDS
-    ):
-        raise ValueError(f"validation timeout must be positive and at most {VALIDATION_TIMEOUT_SECONDS}s")
+    """Serve the reflection tools; ``expire(timeout_seconds)`` returns when a check times out.
+
+    ``timeout_seconds`` defaults to, and may not exceed, the configured memory-check limit.
+    """
+    limit = memory_check_timeout_seconds()
+    if timeout_seconds is None:
+        timeout_seconds = limit
+    if isinstance(timeout_seconds, bool) or not math.isfinite(timeout_seconds) or not 0 < timeout_seconds <= limit:
+        raise ValueError(f"validation timeout must be positive and at most {limit}s")
     checkout = root.resolve(strict=True)
     if not checkout.is_dir():
         raise ValueError("validation root must be a checkout directory")
@@ -409,7 +418,7 @@ async def _format_changed_memory_go(checkout: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
-    parser.add_argument("--timeout-seconds", type=float, default=VALIDATION_TIMEOUT_SECONDS)
+    parser.add_argument("--timeout-seconds", type=float, default=None, help="default: the configured check limit")
     args = parser.parse_args()
     validation_server(args.root, timeout_seconds=args.timeout_seconds).run(transport="stdio")
 

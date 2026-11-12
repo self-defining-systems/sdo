@@ -171,3 +171,30 @@ func TestEnvironmentNamesTableCoversEveryField(t *testing.T) {
 		}
 	}
 }
+
+// The one validator covers what the parsers and the installer used to check: the stage budget, the code-path
+// overrides and worker variables another setting owns.
+func TestValidateCoversTheRetiredParserChecks(t *testing.T) {
+	for name, mutate := range map[string]func(*settings.Config){
+		"response.stage_budget":     func(c *settings.Config) { c.Response.StageBudget = 0 },
+		"agent.code_path_overrides": func(c *settings.Config) { c.Agent.CodePathOverrides = `{"bogus":1}` },
+		"learning.late_findings":    func(c *settings.Config) { c.Agent.ExtraEnv = []string{"SDO_LATE_FINDINGS=pull"} },
+		"the installer":             func(c *settings.Config) { c.Agent.ExtraEnv = []string{"SDO_OBSERVATION_CEILING={}"} },
+	} {
+		cfg := settings.Default()
+		cfg.Agent.Model = "m"
+		mutate(&cfg)
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), name) {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+	cfg := settings.Default()
+	cfg.Agent.CodePath, cfg.Agent.CodePathOverrides = "shell", `{"response_stages":["agent"]}`
+	selection, err := cfg.Agent.CodePathSelection()
+	if err != nil || selection.GetName() != "shell" || len(selection.GetOverrides().GetResponseStages()) != 1 {
+		t.Fatalf("code path selection = %v, %v", selection, err)
+	}
+	if plain, err := settings.Default().Agent.CodePathSelection(); err != nil || plain != nil {
+		t.Fatalf("the default go code path selects nothing: %v, %v", plain, err)
+	}
+}

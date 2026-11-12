@@ -1,7 +1,10 @@
 """Benchmark launch bridge for the production Go operator command.
 
 This module passes benchmark configuration to the typed Go CLI. It never
-implements a commit broker or writes operational memory itself.
+implements a commit broker or writes operational memory itself. Operator
+configuration crosses as ``--config`` files (the benchmark profile, then the
+lane's overlay) and ``SDO_*`` variables, never as one flag per knob
+(``docs/config.md``).
 """
 
 from __future__ import annotations
@@ -13,29 +16,31 @@ import re
 import shutil
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from contextlib import contextmanager
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from google.protobuf import json_format
 
+from benchmarks.fuzzops import config as operator_config
 from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
 from benchmarks.sregym.adapter.deployment_source import DeploymentPolicyConfig, plan_flag_value, source_flag_value
 from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from sdo.contracts import ControllerObservation
 
 _OPERATOR_MODULE = Path(__file__).resolve().parents[3] / "sdo" / "operator"
 # SREGym's venv imports this module without SDO's agent dependencies, so the
-# effort settings come from the shared worker-environment manifest itself.
+# effort names come from the shared worker-environment manifest itself.
 _AGENT_ENVIRONMENT = json.loads(
     (Path(__file__).resolve().parents[3] / "sdo" / "contracts" / "agent_env.json").read_text("utf-8")
 )
-DEFAULT_AGENT_EFFORT: str = _AGENT_ENVIRONMENT["default_effort"]
 AGENT_EFFORTS: tuple[str, ...] = tuple(_AGENT_ENVIRONMENT["efforts"])
-DEFAULT_LIFECYCLE_TIMEOUT_SECONDS: int = int(_AGENT_ENVIRONMENT["default_lifecycle_timeout_seconds"])
 _IMAGE_DIGEST = re.compile(r"@sha256:[0-9a-f]{64}$")
 _REGISTRY_HOST = re.compile(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[1-9][0-9]{0,4})?\Z")
 
@@ -77,19 +82,22 @@ def validate_evidence_sink(host_path: str, run_id: str) -> None:
         raise ValueError("evidence_run_id requires evidence_sink_host_path")
 
 
-def evidence_sink_args(host_path: str, run_id: str) -> list[str]:
-    """The installer flags for an evidence sink; empty when there is none."""
+def _seconds(value: int | None) -> str | None:
+    return None if value is None else f"{value}s"
 
-    args: list[str] = []
-    if host_path:
-        args.extend(("--evidence-sink-host-path", host_path))
-    if run_id:
-        args.extend(("--evidence-run-id", run_id))
-    return args
+
+def _present(values: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in values.items() if value is not None and value != [] and value != {}}
 
 
 @dataclass(frozen=True)
 class NativeInstallConfig:
+    """One lane's ``install-existing``/``host`` launch.
+
+    A knob left ``None`` is not overridden: the config files (``config_files``, the benchmark profile by default)
+    and the production defaults decide it, and Go validates every value.
+    """
+
     repository: Path
     namespace: str
     control_namespace: str
@@ -100,33 +108,38 @@ class NativeInstallConfig:
     credentials_secret: str
     model: str
     kubeconfig: Path | None = None
-    agent_provider: str = "codex"
-    replay: str = "on"
-    agent_effort: str = DEFAULT_AGENT_EFFORT
-    lifecycle_timeout_seconds: int = DEFAULT_LIFECYCLE_TIMEOUT_SECONDS
-    repair_policy: str = "recorded-actions"
-    late_findings: str = "off"
-    reflection_session: str = "resume"
-    reflection_guidance: str = "baseline"
-    force_reflection: bool = False
+    # Per-run agent selection and evidence sink: ``SDO_*`` variables; empty keeps the configured value.
+    agent_provider: str = ""
+    agent_effort: str = ""
+    # ``frozen_memory`` alone is mode ``frozen``; with ``external_incidents`` it is ``external`` (``SDO_MODE``).
     frozen_memory: bool = False
     external_incidents: bool = False
-    code_path: str = "go"
-    code_path_overrides: str = ""
-
-    max_response_loops: int = 10
-    response_timeout_seconds: int = int(wait_for(WaitKind.RESPONSE))
-    verification_timeout_seconds: int = int(wait_for(WaitKind.VERIFICATION_SAMPLE))
-    duration_seconds: int | None = None
-    exit_after_closure: bool = False
-    healthy_baseline: bool = False
-    permissive_responder: bool = False
+    # Lane overlay (written to a temporary config file after ``config_files``).
+    replay: str | None = None
+    lifecycle_timeout_seconds: int | None = None
+    repair_policy: str | None = None
+    late_findings: str | None = None
+    reflection_session: str | None = None
+    reflection_guidance: str | None = None
+    force_reflection: bool | None = None
+    code_path: str | None = None
+    code_path_overrides: str | None = None
+    max_response_loops: int | None = None
+    response_timeout_seconds: int | None = None
+    verification_timeout_seconds: int | None = None
+    healthy_baseline: bool | None = None
+    permissive_responder: bool | None = None
     responder_namespaces: tuple[str, ...] = ()
-    registration_configmap: str | None = None
     responder_env: tuple[str, ...] = ()
-    deployment_source: dict[str, Any] | None = None
     # Install-time deployment policy (registry allowlist, scope grants); the default is no policy.
     deployment_policy: DeploymentPolicyConfig = DeploymentPolicyConfig()
+    # Any further config keys of the lane or experiment, merged over the fields above.
+    settings: dict[str, Any] = field(default_factory=dict)
+    config_files: tuple[Path, ...] = (operator_config.BENCH_PROFILE,)
+    duration_seconds: int | None = None
+    exit_after_closure: bool = False
+    registration_configmap: str | None = None
+    deployment_source: dict[str, Any] | None = None
     shared_accepted_id: str = ""
     # Evidence sink: a directory on the node (for kind, an extraMounts target) that receives run evidence and
     # outlives the control namespace; empty keeps evidence on the repository PVC. The run ID names the run directory.
@@ -135,25 +148,20 @@ class NativeInstallConfig:
 
     def __post_init__(self) -> None:
         validate_evidence_sink(self.evidence_sink_host_path, self.evidence_run_id)
-        if type(self.external_incidents) is not bool:
-            raise TypeError("external_incidents must be a boolean")
+        for name in ("frozen_memory", "external_incidents"):
+            if type(getattr(self, name)) is not bool:
+                raise TypeError(f"{name} must be a boolean")
         if self.external_incidents and not self.frozen_memory:
             raise ValueError("external incidents require frozen memory")
-        if type(self.frozen_memory) is not bool:
-            raise TypeError("frozen_memory must be a boolean")
-        if self.frozen_memory and self.force_reflection:
-            raise ValueError("frozen memory conflicts with force reflection")
         if self.shared_accepted_id and not re.fullmatch(r"[0-9a-f]{32}", self.shared_accepted_id):
             raise ValueError("shared accepted identity must be a 128-bit hexadecimal ID")
-        if type(self.permissive_responder) is not bool:
-            raise TypeError("permissive_responder must be a boolean")
-        if self.responder_namespaces and not self.permissive_responder:
-            raise ValueError("responder_namespaces requires permissive_responder")
         if not self.repository.is_absolute():
             raise ValueError("accepted repository path must be absolute")
         if self.kubeconfig is not None and not self.kubeconfig.is_absolute():
             raise ValueError("kubeconfig path must be absolute")
-        for field in (
+        if not isinstance(self.settings, dict):
+            raise TypeError("settings must be a mapping of config sections")
+        for field_name in (
             "namespace",
             "control_namespace",
             "application",
@@ -163,38 +171,69 @@ class NativeInstallConfig:
             "credentials_secret",
             "model",
         ):
-            if not getattr(self, field).strip():
-                raise ValueError(f"{field} must be non-empty")
-        if self.agent_provider not in ("codex", "claude"):
-            raise ValueError("agent_provider must be codex or claude")
-        if self.replay not in ("on", "off"):
-            raise ValueError("replay must be on or off")
-        if self.agent_effort not in AGENT_EFFORTS:
-            raise ValueError(f"agent_effort must be one of {AGENT_EFFORTS}")
-        if type(self.lifecycle_timeout_seconds) is not int or self.lifecycle_timeout_seconds <= 0:
-            raise ValueError("lifecycle_timeout_seconds must be a positive integer")
-        if self.repair_policy not in ("commit", "recorded-actions"):
-            raise ValueError("repair_policy must be commit or recorded-actions")
-
-        if self.late_findings not in ("off", "pull"):
-            raise ValueError("late_findings must be off or pull")
-        if self.reflection_session not in ("fresh", "resume"):
-            raise ValueError("reflection_session must be fresh or resume")
-        if self.code_path not in ("go", "shell"):
-            raise ValueError("code_path must be go or shell")
-        if self.reflection_guidance not in ("baseline", "generalize", "generalize-spec"):
-            raise ValueError("reflection_guidance must be baseline, generalize, or generalize-spec")
-        validate_code_path_overrides(self.code_path_overrides)
-        if self.max_response_loops <= 0:
-            raise ValueError("max_response_loops must be positive")
-        if self.response_timeout_seconds <= 0 or self.verification_timeout_seconds <= 0:
-            raise ValueError("controller timeouts must be positive")
+            if not getattr(self, field_name).strip():
+                raise ValueError(f"{field_name} must be non-empty")
+        if self.code_path_overrides:
+            validate_code_path_overrides(self.code_path_overrides)
         if self.duration_seconds is not None and self.duration_seconds <= 0:
             raise ValueError("duration_seconds must be positive when set")
         for value in self.responder_env:
             name, separator, content = value.partition("=")
             if not separator or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) or "\n" in content or "\r" in content:
                 raise ValueError(f"invalid responder environment {value!r}")
+
+    @property
+    def mode(self) -> str:
+        """``SDO_MODE``; empty leaves the configured mode."""
+        if self.external_incidents:
+            return "external"
+        return "frozen" if self.frozen_memory else ""
+
+    def overlay(self) -> dict[str, Any]:
+        """The lane's config overlay: every field set here, then ``settings``."""
+        sections = {
+            "agent": _present(
+                {
+                    "lifecycle_timeout": _seconds(self.lifecycle_timeout_seconds),
+                    "code_path": self.code_path,
+                    "code_path_overrides": self.code_path_overrides or None,
+                    "extra_env": list(self.responder_env),
+                }
+            ),
+            "response": _present(
+                {
+                    "timeout": _seconds(self.response_timeout_seconds),
+                    "verification_timeout": _seconds(self.verification_timeout_seconds),
+                    "max_loops": self.max_response_loops,
+                    "repair_policy": self.repair_policy,
+                    "permissive": self.permissive_responder,
+                    "permissive_namespaces": list(self.responder_namespaces),
+                }
+            ),
+            "learning": _present(
+                {
+                    "replay": self.replay,
+                    "reflection_session": self.reflection_session,
+                    "reflection_guidance": self.reflection_guidance,
+                    "force_reflection": self.force_reflection,
+                    "healthy_baseline": self.healthy_baseline,
+                    "late_findings": self.late_findings,
+                }
+            ),
+            "deployment": _present({"policy": self.deployment_policy.settings()}),
+        }
+        return operator_config.merge(_present(sections), self.settings)
+
+    def environment(self) -> dict[str, str]:
+        """The ``SDO_*`` variables of the launch: agent, mode and evidence sink."""
+        return operator_config.operator_env(
+            provider=self.agent_provider,
+            model=self.model,
+            effort=self.agent_effort,
+            evidence_host_path=self.evidence_sink_host_path,
+            evidence_run_id=self.evidence_run_id,
+            mode=self.mode,
+        )
 
     def common_args(self) -> list[str]:
         args = [
@@ -214,34 +253,47 @@ class NativeInstallConfig:
             self.repository_pvc,
             "--credentials-secret",
             self.credentials_secret,
-            "--model",
-            self.model,
-            "--agent-provider",
-            self.agent_provider,
-            "--replay",
-            self.replay,
-            "--agent-effort",
-            self.agent_effort,
-            "--lifecycle-timeout",
-            f"{self.lifecycle_timeout_seconds}s",
         ]
         if self.kubeconfig is not None:
             args.extend(("--kubeconfig", str(self.kubeconfig)))
         if self.registration_configmap:
             args.extend(("--agent-registration-configmap", self.registration_configmap))
-        if self.healthy_baseline:
-            args.append("--healthy-baseline")
-        if self.permissive_responder:
-            args.append("--permissive-responder")
-        for namespace in self.responder_namespaces:
-            args.extend(("--responder-namespace", namespace))
-        for value in self.responder_env:
-            args.extend(("--responder-env", value))
-        if self.code_path_overrides:
-            args.extend(("--code-path-overrides", self.code_path_overrides))
-        args.extend(self.deployment_policy.args())
-        args.extend(evidence_sink_args(self.evidence_sink_host_path, self.evidence_run_id))
         return args
+
+
+@contextmanager
+def launch_config(config: NativeInstallConfig) -> Iterator[tuple[list[str], dict[str, str]]]:
+    """``--config`` arguments and ``SDO_*`` variables of one launch; the overlay file lives for the block."""
+    files = list(config.config_files)
+    overlay = config.overlay()
+    written = operator_config.temporary_overlay(overlay, prefix="sdo-lane-config-") if overlay else None
+    try:
+        if written is not None:
+            files.append(written)
+        yield operator_config.config_args(files), config.environment()
+    finally:
+        if written is not None:
+            written.unlink(missing_ok=True)
+
+
+def resolved_settings(config: NativeInstallConfig) -> dict[str, Any]:
+    """The configuration this launch resolves to (``sdo-operator config print``)."""
+    prefix, _ = operator_command()
+    with launch_config(config) as (args, env):
+        files = [Path(value) for flag, value in zip(args[::2], args[1::2], strict=True) if flag == "--config"]
+        return operator_config.resolved(prefix, files, env)
+
+
+def configured_agent_effort(config_files: tuple[Path, ...] = ()) -> str:
+    """The agent effort a lane runs at when it sets none: its config files over the Go default."""
+    prefix, _ = operator_command()
+    files = (operator_config.BENCH_PROFILE, *config_files)
+    settings = operator_config.resolved(prefix, files, {}, complete=False)
+    return str(settings["agent"]["effort"])
+
+
+def _launch_seconds(settings: dict[str, Any], section: str, key: str) -> float:
+    return operator_config.duration_seconds(str(settings[section][key]))
 
 
 @dataclass(frozen=True)
@@ -253,7 +305,8 @@ class NativeHostConfig:
     registry_push_secret: str
     registry_host: str
     registry_insecure: bool = False
-    max_attempts: int = 3
+    # Deployment attempts (``deployment.max_attempts``); ``None`` keeps the configured value.
+    max_attempts: int | None = None
     agent_registrations: Path | None = None
     # ProtoJSON DeploymentPlan for an app that ships its own deployment; ``None``: the deployer agent authors one.
     deployment_plan: dict[str, Any] | None = None
@@ -266,7 +319,7 @@ class NativeHostConfig:
             raise ValueError("source_kind and source_config must be given together")
         if not self.operation_id.strip():
             raise ValueError("host launch requires operation ID")
-        if self.max_attempts < 1:
+        if self.max_attempts is not None and self.max_attempts < 1:
             raise ValueError("max_attempts must be positive")
         if not _IMAGE_DIGEST.search(self.buildkit_image):
             raise ValueError("BuildKit image must be pinned by sha256 digest")
@@ -335,12 +388,27 @@ def operator_command() -> tuple[list[str], Path | None]:
     return [_source_operator(_OPERATOR_MODULE)], _OPERATOR_MODULE
 
 
-def execute_operator(command: str, args: list[str], *, timeout: float, input_text: str | None = None) -> str:
+def execute_operator(
+    command: str,
+    args: list[str],
+    *,
+    timeout: float,
+    input_text: str | None = None,
+    env: dict[str, str] | None = None,
+) -> str:
     prefix, cwd = operator_command()
     argv = [*prefix, command, *args]
+    environment = {**os.environ, **env} if env else None
     try:
         result = subprocess.run(
-            argv, cwd=cwd, input=input_text, capture_output=True, text=True, timeout=timeout, check=False
+            argv,
+            cwd=cwd,
+            input=input_text,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+            env=environment,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise NativeOperatorError(f"Go operator {command} could not run: {exc}") from exc
@@ -373,8 +441,8 @@ def observe_controller_state(
     return result
 
 
-def _run(command: str, args: list[str], *, timeout: int) -> dict[str, Any]:
-    stdout = execute_operator(command, args, timeout=timeout)
+def _run(command: str, args: list[str], *, timeout: int, env: dict[str, str] | None = None) -> dict[str, Any]:
+    stdout = execute_operator(command, args, timeout=timeout, env=env)
     try:
         value = json.loads(stdout)
     except json.JSONDecodeError as exc:
@@ -739,30 +807,16 @@ def install_existing(config: NativeInstallConfig) -> NativeInstallReceipt:
             "shared accepted memory requires its prepared running controller; seeding is forbidden"
         )
     _record_launch(config)
+    response_timeout = _launch_seconds(resolved_settings(config), "response", "timeout")
     args = config.common_args()
-    args.extend(("--repair-policy", config.repair_policy))
-    args.extend(("--late-findings", config.late_findings))
-    args.extend(("--reflection-session", config.reflection_session))
-    args.extend(("--reflection-guidance", config.reflection_guidance))
-    if config.code_path != "go":
-        args.extend(("--code-path", config.code_path))
-    if config.external_incidents:
-        args.append("--external-incidents")
-    if config.frozen_memory:
-        args.append("--frozen-memory")
-    if config.force_reflection:
-        args.append("--force-reflection")
     if config.deployment_source is not None:
         args.extend(("--deployment-source", source_flag_value(config.deployment_source)))
-
-    args.extend(("--max-response-loops", str(config.max_response_loops)))
-    args.extend(("--response-timeout", f"{config.response_timeout_seconds}s"))
-    args.extend(("--verification-timeout", f"{config.verification_timeout_seconds}s"))
     if config.duration_seconds is not None:
         args.extend(("--duration", f"{config.duration_seconds}s"))
     if config.exit_after_closure:
         args.append("--exit-after-closure")
-    value = _run("install-existing", args, timeout=config.response_timeout_seconds + 600)
+    with launch_config(config) as (config_args, env):
+        value = _run("install-existing", [*args, *config_args], timeout=int(response_timeout) + 600, env=env)
     if value.get("installed") is not True or type(value.get("reused")) is not bool:
         raise NativeOperatorError("Go install-existing returned an invalid installation receipt")
     fingerprint = value.get("fingerprint")
@@ -793,9 +847,9 @@ def inspect_existing(config: NativeInstallConfig) -> NativeExistingReceipt:
     if config.kubeconfig is not None:
         args.extend(("--kubeconfig", str(config.kubeconfig)))
     value = _run("inspect-existing", args, timeout=int(wait_for(WaitKind.SLOW_COMMAND)))
-    for field in ("job_uid", "pod_uid", "fingerprint"):
-        if not isinstance(value.get(field), str) or not value[field].strip():
-            raise NativeOperatorError(f"Go inspect-existing lacks {field}")
+    for name in ("job_uid", "pod_uid", "fingerprint"):
+        if not isinstance(value.get(name), str) or not value[name].strip():
+            raise NativeOperatorError(f"Go inspect-existing lacks {name}")
     commit = value.get("accepted_commit")
     if not isinstance(commit, str) or re.fullmatch(r"[0-9a-f]{40}", commit) is None:
         raise NativeOperatorError("Go inspect-existing lacks a full accepted commit")
@@ -804,29 +858,23 @@ def inspect_existing(config: NativeInstallConfig) -> NativeExistingReceipt:
 
 def launch_host(config: NativeHostConfig) -> dict[str, Any]:
     _record_launch(config.install)
+    install = config.install
+    if config.max_attempts is not None:
+        install = replace(
+            install,
+            settings=operator_config.merge(install.settings, {"deployment": {"max_attempts": config.max_attempts}}),
+        )
+    resolved = resolved_settings(install)
+    attempts = int(resolved["deployment"]["max_attempts"])
+    per_attempt = _launch_seconds(resolved, "response", "timeout") + _launch_seconds(
+        resolved, "agent", "lifecycle_timeout"
+    )
     args = config.install.common_args()
-    args.extend(("--late-findings", config.install.late_findings))
-    args.extend(("--reflection-session", config.install.reflection_session))
-    args.extend(("--reflection-guidance", config.install.reflection_guidance))
-    if config.install.code_path != "go":
-        args.extend(("--code-path", config.install.code_path))
-    if config.install.external_incidents:
-        args.append("--external-incidents")
-    if config.install.frozen_memory:
-        args.append("--frozen-memory")
-    if config.install.force_reflection:
-        args.append("--force-reflection")
-
-    args.extend(("--max-response-loops", str(config.install.max_response_loops)))
-    args.extend(("--repair-policy", config.install.repair_policy))
-    args.extend(("--response-timeout", f"{config.install.response_timeout_seconds}s"))
-    args.extend(("--verification-timeout", f"{config.install.verification_timeout_seconds}s"))
     if config.install.duration_seconds is not None:
         args.extend(("--controller-duration", f"{config.install.duration_seconds}s"))
     if config.install.exit_after_closure:
         args.append("--exit-after-closure")
     args.extend(("--health-objective", config.health_objective, "--operation-id", config.operation_id))
-    args.extend(("--max-attempts", str(config.max_attempts)))
     args.extend(("--buildkit-image", config.buildkit_image, "--registry-push-secret", config.registry_push_secret))
     args.extend(("--registry-host", config.registry_host))
     if config.registry_insecure:
@@ -837,20 +885,16 @@ def launch_host(config: NativeHostConfig) -> dict[str, Any]:
         args.extend(("--deployment-plan", plan_flag_value(config.deployment_plan)))
     if config.source_kind:
         args.extend(("--source-kind", config.source_kind, "--source-config", config.source_config))
-    value = _run(
-        "host",
-        args,
-        timeout=config.max_attempts
-        * (config.install.response_timeout_seconds + config.install.lifecycle_timeout_seconds),
-    )
+    with launch_config(install) as (config_args, env):
+        value = _run("host", [*args, *config_args], timeout=int(attempts * per_attempt), env=env)
     if value.get("installed") is not True or value.get("operation_id") != config.operation_id:
         raise NativeOperatorError("Go host returned an invalid operation receipt")
     fields = ["schema_commit", "source_commit", "architecture_commit", "judge_commit"]
     if config.health_objective.strip() or value.get("goal_commit"):
         fields.append("goal_commit")
-    for field in fields:
-        if not isinstance(value.get(field), str) or not re.fullmatch(r"[0-9a-f]{40}", value[field]):
-            raise NativeOperatorError(f"Go host receipt lacks {field}")
+    for name in fields:
+        if not isinstance(value.get(name), str) or not re.fullmatch(r"[0-9a-f]{40}", value[name]):
+            raise NativeOperatorError(f"Go host receipt lacks {name}")
     return value
 
 

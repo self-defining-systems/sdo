@@ -54,12 +54,12 @@ def _need(env: Mapping[str, str], *names: str) -> list[str]:
     return values
 
 
-def install_flags(env: Mapping[str, str]) -> list[str]:
-    """The ``install-existing`` flags that point SDO's evidence sink at the lane's node mount."""
+def install_env(env: Mapping[str, str]) -> dict[str, str]:
+    """The ``install-existing`` variables that point SDO's evidence sink at the lane's node mount."""
     node, run = _need(env, "BENCH_EVIDENCE_NODE", "BENCH_EVIDENCE_RUN")
     if not node.startswith("/"):
         raise SinkError(f"BENCH_EVIDENCE_NODE must be an absolute node path, got {node!r}")
-    return ["--evidence-sink-host-path", node, "--evidence-run-id", run]
+    return {"SDO_EVIDENCE_HOST_PATH": node, "SDO_EVIDENCE_RUN_ID": run}
 
 
 def host_run_dir(env: Mapping[str, str]) -> Path:

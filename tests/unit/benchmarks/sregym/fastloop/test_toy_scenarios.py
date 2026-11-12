@@ -340,12 +340,11 @@ def test_helm_onboarding_provides_the_plan_of_the_assembled_source(
 
 def test_provided_toy_plans_may_pull_only_from_the_lane_registry():
     for variant in ("helm", "kustomize"):
-        assert deployment_policy(variant, "sdo-toy").args() == [
-            "--allow-registry",
-            "sdo-benchmark-registry.sdo-toy-sdo.svc.cluster.local:5000",
-        ]
+        assert deployment_policy(variant, "sdo-toy").settings() == {
+            "allowed_registries": ["sdo-benchmark-registry.sdo-toy-sdo.svc.cluster.local:5000"]
+        }
     # The raw lane runs a kind-loaded image: no policy, as before.
-    assert [deployment_policy(v, "sdo-toy").args() for v in ("raw", "compose")] == [[], []]
+    assert [deployment_policy(v, "sdo-toy").settings() for v in ("raw", "compose")] == [{}, {}]
 
 
 @pytest.mark.go_integration

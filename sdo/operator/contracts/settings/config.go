@@ -87,7 +87,7 @@ type Agent struct {
 	LifecycleTimeout   Duration `yaml:"lifecycle_timeout" doc:"limit of one lifecycle (detection designer) session"`
 	MemoryCheckTimeout Duration `yaml:"memory_check_timeout" doc:"limit of one memory check a worker runs on its checkout"`
 	CodePath           string   `yaml:"code_path" doc:"programming-model plugin set: go or shell"`
-	CodePathOverrides  string   `yaml:"code_path_overrides" doc:"CodePathOverrides as a JSON object; empty selects the code path's own stages"`
+	CodePathOverrides  string   `yaml:"code_path_overrides" doc:"CodePathOverrides as a JSON object (for example {\"response_stages\":[\"agent\"]}); empty selects the code path's own seams"`
 	ExtraEnv           []string `yaml:"extra_env" doc:"extra NAME=VALUE environment of responder workers"`
 }
 
@@ -97,7 +97,8 @@ type Response struct {
 	VerificationTimeout  Duration `yaml:"verification_timeout" doc:"how long the independent verification of a repair may take"`
 	MaxLoops             int      `yaml:"max_loops" doc:"mitigation rounds the responder agent may use per incident (the automatic stage's one apply does not count)"`
 	DiagnosisDeadline    Duration `yaml:"diagnosis_deadline" doc:"shared deadline of candidate diagnosis in the automatic stage"`
-	RepairPolicy         string   `yaml:"repair_policy" doc:"repair evidence policy: commit (a source repair is committed) or recorded-actions (live repairs are recorded without a source commit)"`
+	StageBudget          Duration `yaml:"stage_budget" doc:"scheduling bound of one automatic-stage pass; a pass re-run on the responder's loop may take twice this"`
+	RepairPolicy         string   `yaml:"repair_policy" doc:"the evidence the controller requires for a responder repair: commit (a source repair is committed through the broker; production) or recorded-actions (live cluster repairs are recorded as actions without a source commit; benchmark runs)"`
 	Standby              bool     `yaml:"standby" doc:"pre-start a responder worker; false forces cold Jobs"`
 	Menu                 bool     `yaml:"menu" doc:"offer the responder its tool menu"`
 	Permissive           bool     `yaml:"permissive" doc:"broad lane repair permissions excluding Secret and credential APIs"`
@@ -107,11 +108,11 @@ type Response struct {
 // Learning governs what the operator keeps from incidents.
 type Learning struct {
 	Replay             string `yaml:"replay" doc:"replay and corpus capture: on or off"`
-	ReflectionSession  string `yaml:"reflection_session" doc:"reflection session mode: resume (continue the responder's session) or fresh"`
-	ReflectionGuidance string `yaml:"reflection_guidance" doc:"reflection guidance: baseline, generalize or generalize-spec"`
+	ReflectionSession  string `yaml:"reflection_session" doc:"reflection session: resume continues the responder's private session (it requires a valid responder session token of the same accepted closure; sessions live outside the accepted repository for a bounded retention) or fresh starts a new one"`
+	ReflectionGuidance string `yaml:"reflection_guidance" doc:"the agent's learning instructions: baseline learns from each confirmed cause; generalize compares related incident signatures and parameterizes a shared playbook; generalize-spec favors predicates visible in resource spec or status. None changes the detector SDK or the validator"`
 	ForceReflection    bool   `yaml:"force_reflection" doc:"always dispatch reflection after a verified closure (not with a frozen mode)"`
-	HealthyBaseline    bool   `yaml:"healthy_baseline" doc:"validate incident detectors against recorded healthy snapshots"`
-	LateFindings       string `yaml:"late_findings" doc:"late finding mode: off or pull"`
+	HealthyBaseline    bool   `yaml:"healthy_baseline" doc:"opt-in detector gate: a proposal that changes incident detector source is replayed against healthy snapshots a runner recorded with sdo-operator baseline-write (one sdktest.Snapshot JSON per file, outside the accepted repository); a detector that fires on one fails validation, and a missing baseline fails closed. It never reads benchmark verdicts"`
+	LateFindings       string `yaml:"late_findings" doc:"late findings: off, or pull (the controller publishes a bounded incident-specific report that a responder fetches with sdo-operator late-findings --incident-id ID; the broker checks the claim against the controller-owned report)"`
 }
 
 // Deployment bounds deployment attempts and the policy they run under.
@@ -154,7 +155,8 @@ func Default() Config {
 		},
 		Response: Response{
 			Timeout: Duration(30 * time.Minute), VerificationTimeout: Duration(5 * time.Minute), MaxLoops: 10,
-			DiagnosisDeadline: Duration(10 * time.Second), RepairPolicy: "commit", Standby: true, Menu: true,
+			DiagnosisDeadline: Duration(10 * time.Second), StageBudget: Duration(45 * time.Second), RepairPolicy: "commit",
+			Standby: true, Menu: true,
 		},
 		Learning: Learning{Replay: "on", ReflectionSession: "resume", ReflectionGuidance: "baseline", LateFindings: "off"},
 		Deployment: Deployment{
@@ -166,6 +168,12 @@ func Default() Config {
 }
 
 var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// ownedWorkerEnvironment are worker variables another setting or the installer owns; agent.extra_env cannot set them.
+var ownedWorkerEnvironment = map[string]string{
+	"SDO_LATE_FINDINGS":       "learning.late_findings",
+	"SDO_OBSERVATION_CEILING": "the installer",
+}
 
 // Validate is the only place a configuration value is checked: ranges, enums and cross-field rules.
 func (c Config) Validate() error {
@@ -195,10 +203,16 @@ func (c Config) Validate() error {
 	positive("agent.lifecycle_timeout", c.Agent.LifecycleTimeout)
 	positive("agent.memory_check_timeout", c.Agent.MemoryCheckTimeout)
 	oneOf("agent.code_path", c.Agent.CodePath, "go", "shell")
+	if _, err := c.Agent.CodePathSelection(); err != nil {
+		bad("agent.code_path_overrides", "%v", err)
+	}
 	for _, value := range c.Agent.ExtraEnv {
 		name, content, found := strings.Cut(value, "=")
 		if !found || !envName.MatchString(name) || strings.ContainsAny(content, "\r\n") {
 			bad("agent.extra_env", "%q is not NAME=VALUE", value)
+		}
+		if owner, owned := ownedWorkerEnvironment[name]; owned {
+			bad("agent.extra_env", "%s is set by %s", name, owner)
 		}
 	}
 	if c.Response.Timeout < Duration(time.Second) {
@@ -211,6 +225,7 @@ func (c Config) Validate() error {
 		bad("response.max_loops", "%d must be at least 1", c.Response.MaxLoops)
 	}
 	positive("response.diagnosis_deadline", c.Response.DiagnosisDeadline)
+	positive("response.stage_budget", c.Response.StageBudget)
 	oneOf("response.repair_policy", c.Response.RepairPolicy, "commit", "recorded-actions")
 	oneOf("learning.replay", c.Learning.Replay, "on", "off")
 	oneOf("learning.reflection_session", c.Learning.ReflectionSession, "fresh", "resume")

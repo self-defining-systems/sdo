@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 import subprocess
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
 
 from benchmarks.fuzzops import hooks
+from benchmarks.fuzzops.config import BENCH_PROFILE
 from benchmarks.fuzzops.hooks import (
     Baseline,
     HookError,
@@ -18,15 +20,12 @@ from benchmarks.fuzzops.hooks import (
     OperatorBlock,
     idle_reason,
     idle_verdict,
-    install_existing_args,
+    install_existing_launch,
     plain_docs,
     plain_pack,
     render_difference,
     write_baseline,
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 COMMIT = "a" * 40
 
@@ -90,14 +89,14 @@ def _baseline_dir(tmp: Path, namespace: str = "ns1", **fields: Any) -> Path:
             commit=commit,
             render="render.yaml",
             objective="users are served",
-            controller_flags=("--response-timeout", "1800s"),
+            config={"response": {"timeout": "1800s"}},
             **fields,
         ),
     )
     return root
 
 
-def _operator_file(tmp: Path, baseline: Path, **settings: str) -> Path:
+def _operator_file(tmp: Path, baseline: Path, **settings: Any) -> Path:
     path = tmp / "operator.json"
     path.write_text(
         json.dumps({"hooks": "sdo", "revision": "0123456789abcdef", "baseline": str(baseline), "settings": settings})
@@ -113,10 +112,80 @@ def test_baseline_manifest_round_trips_with_the_render_digest(tmp_path: Path) ->
     loaded = Baseline.load(root)
     assert loaded.control == "ns1-sdo"
     assert loaded.app_name == "ns1"
-    assert loaded.controller_flags == ("--response-timeout", "1800s")
+    assert loaded.config == {"response": {"timeout": "1800s"}}
     assert len(loaded.render_sha256) == 64
     raw = json.loads((root / "baseline.json").read_text())
-    assert raw["format"] == 1
+    assert raw["format"] == 2
+    assert "controller_flags" not in raw
+
+
+def _format_1(root: Path, flags: list[str]) -> None:
+    raw = json.loads((root / "baseline.json").read_text())
+    del raw["config"]
+    raw.update(format=1, controller_flags=flags)
+    (root / "baseline.json").write_text(json.dumps(raw))
+
+
+def test_a_format_1_baseline_translates_its_controller_flags_to_config(tmp_path: Path) -> None:
+    root = _baseline_dir(tmp_path)
+    _format_1(
+        root,
+        [
+            "--response-timeout",
+            "1800s",
+            "--verification-timeout=300s",
+            "--max-response-loops",
+            "10",
+            "--repair-policy",
+            "recorded-actions",
+            "--reflection-session",
+            "resume",
+            "--reflection-guidance",
+            "baseline",
+            "--healthy-baseline",
+            "--responder-namespace",
+            "a",
+            "--responder-namespace",
+            "b",
+            "--allow-registry",
+            "r1,r2",
+            "--frozen-memory",
+        ],
+    )
+    loaded = Baseline.load(root)
+    assert loaded.format == 2
+    assert loaded.config == {
+        "mode": "frozen",
+        "response": {
+            "timeout": "1800s",
+            "verification_timeout": "300s",
+            "max_loops": 10,
+            "repair_policy": "recorded-actions",
+            "permissive_namespaces": ["a", "b"],
+        },
+        "learning": {"reflection_session": "resume", "reflection_guidance": "baseline", "healthy_baseline": True},
+        "deployment": {"policy": {"allowed_registries": ["r1", "r2"]}},
+    }
+    assert json.loads(loaded.to_json())["format"] == 2
+
+
+@pytest.mark.parametrize(
+    ("flags", "message"),
+    [
+        (["--self-heal-hold", "60s"], "--self-heal-hold has no operator config key"),
+        (["--model", "x"], "--model has no operator config key"),
+        (["--kubeconfig=/k"], "set by the hook"),
+        (["--watch-only"], "require --frozen-memory"),
+        (["--max-response-loops"], "needs a value"),
+    ],
+)
+def test_a_format_1_baseline_with_an_untranslatable_flag_is_refused(
+    tmp_path: Path, flags: list[str], message: str
+) -> None:
+    root = _baseline_dir(tmp_path)
+    _format_1(root, flags)
+    with pytest.raises(ValueError, match=message):
+        Baseline.load(root)
 
 
 @pytest.mark.parametrize(
@@ -124,8 +193,9 @@ def test_baseline_manifest_round_trips_with_the_render_digest(tmp_path: Path) ->
     [
         ({"commit": "abc"}, "40 hex"),
         ({"bundle": "../memory.bundle"}, "inside the baseline"),
-        ({"controller_flags": ("--model", "x")}, "set by the hook"),
-        ({"controller_flags": ("--kubeconfig=/k",)}, "set by the hook"),
+        ({"config": {"agent": {"model": "x"}}}, "agent.model, which the hook sets"),
+        ({"config": {"evidence": {"run_id": "r"}}}, "evidence, which the hook sets"),
+        ({"format": 1}, "format 1 is not 2"),
         ({"namespace": ""}, "namespace"),
         ({"control_namespace": "ns1"}, "differ"),
     ],
@@ -342,12 +412,31 @@ def test_idle_reports_a_missing_controller_as_busy(monkeypatch: pytest.MonkeyPat
 # ---- install, teardown, watch --------------------------------------------------------------------------------
 
 
-def test_install_existing_args_take_the_baseline_flags_and_the_settings(tmp_path: Path) -> None:
+SINK_ENV = {"SDO_EVIDENCE_HOST_PATH": "/bench-evidence", "SDO_EVIDENCE_RUN_ID": "e-l-1"}
+
+
+def test_install_existing_launch_passes_profile_baseline_and_experiment_config_and_the_settings(
+    tmp_path: Path,
+) -> None:
     root = _baseline_dir(tmp_path)
-    block = OperatorBlock.load(_operator_file(tmp_path, root, model="gpt-x", effort="medium", image_tag="fz-t"))
-    sink_flags = ["--evidence-sink-host-path", "/bench-evidence", "--evidence-run-id", "e-l-1"]
-    args = install_existing_args(
-        tmp_path / "sdo-operator", tmp_path / "app", Baseline.load(root), block, tmp_path / "kubeconfig", sink_flags
+    block = OperatorBlock.load(
+        _operator_file(
+            tmp_path,
+            root,
+            model="gpt-x",
+            effort="medium",
+            image_tag="fz-t",
+            config={"response": {"max_loops": 3}},
+        )
+    )
+    args, env = install_existing_launch(
+        tmp_path / "sdo-operator",
+        tmp_path / "app",
+        Baseline.load(root),
+        block,
+        tmp_path / "kubeconfig",
+        SINK_ENV,
+        tmp_path / "config",
     )
     assert args[1] == "install-existing"
 
@@ -355,27 +444,39 @@ def test_install_existing_args_take_the_baseline_flags_and_the_settings(tmp_path
         return args[args.index(name) + 1]
 
     assert (flag("--namespace"), flag("--control-namespace"), flag("--application")) == ("ns1", "ns1-sdo", "ns1")
-    assert (flag("--model"), flag("--agent-effort"), flag("--agent-provider")) == ("gpt-x", "medium", "codex")
     assert flag("--controller-image") == "sdo-controller:fz-t"
     assert flag("--script-image") == "sdo-script-tools:fz-t"
-    assert flag("--response-timeout") == "1800s"
     assert flag("--kubeconfig") == str(tmp_path / "kubeconfig")
-    assert (flag("--evidence-sink-host-path"), flag("--evidence-run-id")) == ("/bench-evidence", "e-l-1")
+    files = [Path(args[i + 1]) for i, arg in enumerate(args) if arg == "--config"]
+    assert files == [BENCH_PROFILE, tmp_path / "config" / "baseline.yaml", tmp_path / "config" / "experiment.yaml"]
+    assert yaml.safe_load(files[1].read_text()) == {"response": {"timeout": "1800s"}}
+    assert yaml.safe_load(files[2].read_text()) == {"response": {"max_loops": 3}}
+    assert env == {
+        "SDO_AGENT_PROVIDER": "codex",
+        "SDO_AGENT_MODEL": "gpt-x",
+        "SDO_AGENT_EFFORT": "medium",
+        **SINK_ENV,
+    }
+    assert not any(arg.startswith(("--model", "--agent-", "--evidence-", "--response-")) for arg in args)
 
 
-def test_install_existing_args_refuse_a_lane_without_an_evidence_sink(tmp_path: Path) -> None:
+def test_install_existing_launch_refuses_a_lane_without_an_evidence_sink(tmp_path: Path) -> None:
     root = _baseline_dir(tmp_path)
     block = OperatorBlock.load(_operator_file(tmp_path, root, model="gpt-x"))
     with pytest.raises(HookError, match="evidence sink"):
-        install_existing_args(tmp_path / "b", tmp_path / "app", Baseline.load(root), block, tmp_path / "k", [])
-
-
-@pytest.mark.parametrize("flag", ["--evidence-sink-host-path", "--evidence-run-id", "--evidence-sink-volume"])
-def test_a_baseline_cannot_set_the_evidence_sink(flag: str) -> None:
-    with pytest.raises(ValueError, match="set by the hook"):
-        Baseline(
-            namespace="ns1", bundle="b", branch="x", commit=COMMIT, render="r", controller_flags=(flag, "/elsewhere")
+        install_existing_launch(
+            tmp_path / "b", tmp_path / "app", Baseline.load(root), block, tmp_path / "k", {}, tmp_path / "c"
         )
+
+
+def test_the_experiment_config_cannot_set_what_the_hook_sets(tmp_path: Path) -> None:
+    root = _baseline_dir(tmp_path)
+    with pytest.raises(HookError, match="agent.effort"):
+        OperatorBlock.load(_operator_file(tmp_path, root, model="gpt-x", config={"agent": {"effort": "low"}}))
+
+
+def test_the_benchmark_profile_differs_from_production_only_in_the_repair_policy() -> None:
+    assert yaml.safe_load(BENCH_PROFILE.read_text()) == {"response": {"repair_policy": "recorded-actions"}}
 
 
 @pytest.mark.parametrize("missing", ["BENCH_EVIDENCE_NODE", "BENCH_EVIDENCE_RUN"])

@@ -125,7 +125,7 @@ def test_uncovered_repair_reprompts_once_for_an_executable_step(
         return reply(provider, payload, session_id="reflection-session", branch="reflection")
 
     agent = ScriptedAgent(respond)
-    backend = backend_type(executor=agent.executor)
+    backend = backend_type(reasoning_effort="medium", executor=agent.executor)
     kwargs = {"worktree": learned_reflection, "prompt": "reflect", "idempotency_key": "one-dispatch"}
     result = backend.fresh(**kwargs) if fresh else backend.resume(session_id="responder-session", **kwargs)
     assert result.learning_decision == "updated"
@@ -182,7 +182,7 @@ def test_worker_does_not_publish_persistently_rejected_memory(
         task_path,
         "result",
         Publisher(),
-        reflector=SessionReflector(CodexSessionBackend(executor=agent.executor)),
+        reflector=SessionReflector(CodexSessionBackend(reasoning_effort="medium", executor=agent.executor)),
     )
     assert len(agent.requests) == 2  # unchanged blocking diagnostics stop after one correction
     # The rejected memory is never published; the controller receives a typed failure instead.
@@ -220,7 +220,7 @@ def test_final_check_rechecks_edits_after_an_earlier_pass(
         return reply("codex", decision, session_id="reflection-session", branch="reflection")
 
     agent = ScriptedAgent(respond)
-    result = CodexSessionBackend(executor=agent.executor).fresh(
+    result = CodexSessionBackend(reasoning_effort="medium", executor=agent.executor).fresh(
         worktree=tmp_path,
         prompt="reflect",
         idempotency_key="one-dispatch",
@@ -261,7 +261,9 @@ def test_final_check_stops_at_original_deadline(
 
     agent = ScriptedAgent(respond)
     with pytest.raises(RuntimeError, match="layout.unknown-path"):
-        CodexSessionBackend(executor=agent.executor, memory_checker=check, timeout_seconds=30).fresh(
+        CodexSessionBackend(
+            reasoning_effort="medium", executor=agent.executor, memory_checker=check, timeout_seconds=30
+        ).fresh(
             worktree=accepted_reflection,
             prompt="reflect",
             idempotency_key="one-dispatch",
@@ -430,7 +432,7 @@ def test_repeat_chain_is_corrected_in_the_same_reflection_session(learned_reflec
         )
 
     agent = ScriptedAgent(respond)
-    result = CodexSessionBackend(executor=agent.executor).fresh(
+    result = CodexSessionBackend(reasoning_effort="medium", executor=agent.executor).fresh(
         worktree=root, prompt="reflect", idempotency_key="repeat-chain"
     )
     assert calls == 2
@@ -460,7 +462,7 @@ def test_missing_healthy_capture_keeps_the_learned_detector_without_reprompt(
             branch="reflection",
         )
     )
-    result = backend_type(executor=agent.executor).fresh(
+    result = backend_type(reasoning_effort="medium", executor=agent.executor).fresh(
         worktree=root, prompt="reflect", idempotency_key="baseline-missing"
     )
     assert len(agent.requests) == 1
@@ -491,7 +493,9 @@ def test_shared_acceptance_of_decline_reason_survives_python_view(
             branch="reflection",
         )
     )
-    result = backend_type(executor=agent.executor).fresh(worktree=tmp_path, prompt="reflect", idempotency_key="decline")
+    result = backend_type(reasoning_effort="medium", executor=agent.executor).fresh(
+        worktree=tmp_path, prompt="reflect", idempotency_key="decline"
+    )
     assert result.no_change_reason == reason
     assert result.decline_reason == "no_recorded_repair"
     assert len(agent.requests) == 1
@@ -528,7 +532,7 @@ def test_memory_timeout_is_terminal_before_any_provider_correction(
         )
     )
     with pytest.raises(RuntimeError) as failure:
-        backend_type(executor=agent.executor, memory_checker=check).fresh(
+        backend_type(reasoning_effort="medium", executor=agent.executor, memory_checker=check).fresh(
             worktree=tmp_path,
             prompt="reflect",
             idempotency_key="one-dispatch",
@@ -581,7 +585,7 @@ def test_unchanged_compiler_diagnostics_stop_despite_stage_timing_logs(
         )
     )
     with pytest.raises(RuntimeError, match="unchanged_validation_failure"):
-        CodexSessionBackend(executor=agent.executor).fresh(
+        CodexSessionBackend(reasoning_effort="medium", executor=agent.executor).fresh(
             worktree=learned_reflection,
             prompt="reflect",
             idempotency_key="one-dispatch",
@@ -614,5 +618,7 @@ def test_broker_deadline_exit_stops_the_final_checker_without_reprompt(
         )
     )
     with pytest.raises(MemoryCheckTimeout, match="context deadline exceeded"):
-        backend_type(executor=agent.executor).fresh(worktree=tmp_path, prompt="reflect", idempotency_key="one-dispatch")
+        backend_type(reasoning_effort="medium", executor=agent.executor).fresh(
+            worktree=tmp_path, prompt="reflect", idempotency_key="one-dispatch"
+        )
     assert len(agent.requests) == 1

@@ -59,6 +59,7 @@ depends_on = [
 [[modules]]
 path = "benchmarks.sregym.adapter"
 depends_on = [
+    "benchmarks.fuzzops",
     "benchmarks.sregym.repository_git",
     "libs.agent_cli",
     "sdo.agents.health_judge",
@@ -70,6 +71,7 @@ depends_on = [
 [[modules]]
 path = "benchmarks.sregym.fastloop"
 depends_on = [
+    "benchmarks.fuzzops",
     "benchmarks.sregym.repository_git",
     "libs.agent_cli",
     "benchmarks.sregym.faults",
@@ -82,6 +84,7 @@ depends_on = [
 [[modules]]
 path = "benchmarks.sregym.skilleval"
 depends_on = [
+    "benchmarks.fuzzops",
     "benchmarks.sregym.repository_git",
     "libs.agent_cli",
     "sdo.agents.responder",

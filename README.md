@@ -155,7 +155,7 @@ To resume a run, pass its log directory instead: `uv run python -m benchmarks.sr
 | `apps/` | Applications used for source-deployment evaluation (Git submodules) |
 | `tests/` | Unit and integration tests |
 
-[docs/architecture.md](docs/architecture.md) covers component boundaries, artifact ownership and the controller lifecycle. [docs/feature-flags.md](docs/feature-flags.md) lists the opt-in runtime switches.
+[docs/architecture.md](docs/architecture.md) covers component boundaries, artifact ownership and the controller lifecycle. [docs/config.md](docs/config.md) is the operator configuration reference: every timing and policy knob, its default and its environment name.
 
 ## Development
 

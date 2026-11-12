@@ -30,7 +30,7 @@ func TestLaunchWiresTheSourceRepairDeployer(t *testing.T) {
 	}
 	config := repairLaunch()
 	child := &broker.Broker{}
-	repairs, err := repairsFromLaunch(config, fake.NewSimpleClientset(), child, factory)
+	repairs, err := repairsFromLaunch(config, false, fake.NewSimpleClientset(), child, factory)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,24 +45,25 @@ func TestLaunchWiresTheSourceRepairDeployer(t *testing.T) {
 // other launch without a factory fails instead of publishing repairs
 // undeployed, and a factory failure fails the launch.
 func TestLaunchSourceRepairDeployerGuards(t *testing.T) {
-	frozen := repairLaunch()
-	frozen.FrozenMemory = true
 	shell := repairLaunch()
 	shell.CodePath = &contracts.CodePathConfig{Name: "shell"}
-	for name, config := range map[string]*contracts.ControllerConfig{"frozen": frozen, "shell": shell} {
-		repairs, err := repairsFromLaunch(config, fake.NewSimpleClientset(), &broker.Broker{}, nil)
+	for name, launch := range map[string]struct {
+		config *contracts.ControllerConfig
+		frozen bool
+	}{"frozen": {repairLaunch(), true}, "shell": {shell, false}} {
+		repairs, err := repairsFromLaunch(launch.config, launch.frozen, fake.NewSimpleClientset(), &broker.Broker{}, nil)
 		plain, ok := repairs.(PlainPublication)
 		if err != nil || !ok || plain.Reason == "" {
 			t.Fatalf("%s: repairs = %v, %v, want a declared plain publication", name, repairs, err)
 		}
 	}
-	if _, err := repairsFromLaunch(repairLaunch(), fake.NewSimpleClientset(), &broker.Broker{}, nil); err == nil || !strings.Contains(err.Error(), "not wired") {
+	if _, err := repairsFromLaunch(repairLaunch(), false, fake.NewSimpleClientset(), &broker.Broker{}, nil); err == nil || !strings.Contains(err.Error(), "not wired") {
 		t.Fatalf("a launch without a factory = %v, want a not-wired error", err)
 	}
 	failing := func(*contracts.ControllerConfig, kubernetes.Interface, lifecycle.RepairBroker) (lifecycle.RepairDeployer, error) {
 		return lifecycle.RepairDeployer{}, errors.New("invalid identity")
 	}
-	if _, err := repairsFromLaunch(repairLaunch(), fake.NewSimpleClientset(), &broker.Broker{}, failing); err == nil || !strings.Contains(err.Error(), "invalid identity") {
+	if _, err := repairsFromLaunch(repairLaunch(), false, fake.NewSimpleClientset(), &broker.Broker{}, failing); err == nil || !strings.Contains(err.Error(), "invalid identity") {
 		t.Fatalf("a factory failure = %v", err)
 	}
 }

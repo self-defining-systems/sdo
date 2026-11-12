@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Literal
 from agentshim import StdioMcpServer
 
 from sdo.agents.prompt_templates import render_prompt
-from sdo.agents.responder.reflection_validation import VALIDATION_ENVIRONMENT, VALIDATION_TOOL_TIMEOUT_SECONDS
+from sdo.agents.responder.reflection_validation import VALIDATION_ENVIRONMENT, validation_tool_timeout_seconds
 from sdo.agents.responder.writer_termination import KubernetesWriterObserver, worker_identity
 
 if TYPE_CHECKING:
@@ -99,7 +99,7 @@ def session_mcp_servers(worktree: Path, provider: str) -> list[McpServer]:
             command=sys.executable,
             args=["-m", "sdo.agents.responder.reflection_validation", "--root", str(worktree.resolve())],
             env={key: os.environ[key] for key in VALIDATION_ENVIRONMENT if key in os.environ},
-            tool_timeout_s=VALIDATION_TOOL_TIMEOUT_SECONDS if provider == "codex" else None,
+            tool_timeout_s=validation_tool_timeout_seconds() if provider == "codex" else None,
         )
     ]
 
@@ -118,7 +118,7 @@ def session_turn_options(
         else None,
         "output_schema": session_output_schema(),
         "mcp_servers": session_mcp_servers(worktree, provider),
-        "environment": {"MCP_TOOL_TIMEOUT": str(VALIDATION_TOOL_TIMEOUT_SECONDS * 1000)}
+        "environment": {"MCP_TOOL_TIMEOUT": str(validation_tool_timeout_seconds() * 1000)}
         if provider == "claude"
         else None,
     }

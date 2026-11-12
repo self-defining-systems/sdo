@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import inspect
 import json
+import os
 import tempfile
 from pathlib import Path
 from typing import get_args
@@ -84,6 +85,8 @@ async def render_contract() -> str:
         "its size and path with a short partial head. Search or extract from that file; the head is not "
         "the whole result.",
     ]
+    # The rendered tool help does not depend on the limit, which a running controller supplies per worker.
+    os.environ.setdefault("SDO_MEMORY_CHECK_TIMEOUT_SECONDS", "300")
     with tempfile.TemporaryDirectory() as directory:
         server = validation_server(Path(directory))
         tools = await server.list_tools()

@@ -12,7 +12,7 @@ from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 DESCRIPTOR: _descriptor.FileDescriptor
 
 class ControllerConfig(_message.Message):
-    __slots__ = ("memory_host_binary", "memory_host_digest", "namespace", "control_namespace", "app_root", "application", "source_commit", "deployed_commit", "dispatcher", "dispatcher_args", "dispatcher_mode", "responder_image", "repository_pvc", "repository_mount_path", "repository_pvc_subpath", "responder_credentials_secret", "responder_env", "broker_worktree_root", "firing_telemetry_path", "duration", "response_timeout", "verification_timeout", "repair_policy", "lease_name", "lease_duration", "identity", "exit_after_closure", "maintenance_configmap", "maintenance_poll_interval", "resume_sync_timeout", "synthetic_traffic", "synthetic_traffic_warmup", "clean_responder_helpers", "state_baseline", "agent_registration_directory", "responder_agent_id", "diagnostics_fingerprint", "controller_artifact_digest", "controller_revision", "broker_mode", "responder_backend", "responder_model", "agent_effort", "agent_reasoning_summary", "lifecycle_timeout", "replay", "worker_mount_mode", "reflection_session", "reflection_guidance", "healthy_baseline", "max_response_loops", "diagnosis_deadline", "drift_batch_window", "force_reflection", "toolchain_image", "closure_stability_window", "self_heal_hold", "responder_report_grace", "responder_standby", "script_image", "memory_upstream", "code_path", "frozen_memory", "render_environment", "deployment_policy", "external_incidents", "watch_only", "deploy_identity", "telemetry_environment_file")
+    __slots__ = ("memory_host_binary", "memory_host_digest", "namespace", "control_namespace", "app_root", "application", "source_commit", "deployed_commit", "responder_image", "repository_pvc", "repository_mount_path", "repository_pvc_subpath", "responder_credentials_secret", "broker_worktree_root", "firing_telemetry_path", "duration", "identity", "exit_after_closure", "maintenance_configmap", "agent_registration_directory", "responder_agent_id", "diagnostics_fingerprint", "controller_artifact_digest", "controller_revision", "broker_mode", "worker_mount_mode", "drift_batch_window", "toolchain_image", "closure_stability_window", "self_heal_hold", "script_image", "memory_upstream", "code_path", "render_environment", "deployment_policy", "deploy_identity", "telemetry_environment_file", "settings_path")
     MEMORY_HOST_BINARY_FIELD_NUMBER: _ClassVar[int]
     MEMORY_HOST_DIGEST_FIELD_NUMBER: _ClassVar[int]
     NAMESPACE_FIELD_NUMBER: _ClassVar[int]
@@ -21,67 +21,36 @@ class ControllerConfig(_message.Message):
     APPLICATION_FIELD_NUMBER: _ClassVar[int]
     SOURCE_COMMIT_FIELD_NUMBER: _ClassVar[int]
     DEPLOYED_COMMIT_FIELD_NUMBER: _ClassVar[int]
-    DISPATCHER_FIELD_NUMBER: _ClassVar[int]
-    DISPATCHER_ARGS_FIELD_NUMBER: _ClassVar[int]
-    DISPATCHER_MODE_FIELD_NUMBER: _ClassVar[int]
     RESPONDER_IMAGE_FIELD_NUMBER: _ClassVar[int]
     REPOSITORY_PVC_FIELD_NUMBER: _ClassVar[int]
     REPOSITORY_MOUNT_PATH_FIELD_NUMBER: _ClassVar[int]
     REPOSITORY_PVC_SUBPATH_FIELD_NUMBER: _ClassVar[int]
     RESPONDER_CREDENTIALS_SECRET_FIELD_NUMBER: _ClassVar[int]
-    RESPONDER_ENV_FIELD_NUMBER: _ClassVar[int]
     BROKER_WORKTREE_ROOT_FIELD_NUMBER: _ClassVar[int]
     FIRING_TELEMETRY_PATH_FIELD_NUMBER: _ClassVar[int]
     DURATION_FIELD_NUMBER: _ClassVar[int]
-    RESPONSE_TIMEOUT_FIELD_NUMBER: _ClassVar[int]
-    VERIFICATION_TIMEOUT_FIELD_NUMBER: _ClassVar[int]
-    REPAIR_POLICY_FIELD_NUMBER: _ClassVar[int]
-    LEASE_NAME_FIELD_NUMBER: _ClassVar[int]
-    LEASE_DURATION_FIELD_NUMBER: _ClassVar[int]
     IDENTITY_FIELD_NUMBER: _ClassVar[int]
     EXIT_AFTER_CLOSURE_FIELD_NUMBER: _ClassVar[int]
     MAINTENANCE_CONFIGMAP_FIELD_NUMBER: _ClassVar[int]
-    MAINTENANCE_POLL_INTERVAL_FIELD_NUMBER: _ClassVar[int]
-    RESUME_SYNC_TIMEOUT_FIELD_NUMBER: _ClassVar[int]
-    SYNTHETIC_TRAFFIC_FIELD_NUMBER: _ClassVar[int]
-    SYNTHETIC_TRAFFIC_WARMUP_FIELD_NUMBER: _ClassVar[int]
-    CLEAN_RESPONDER_HELPERS_FIELD_NUMBER: _ClassVar[int]
-    STATE_BASELINE_FIELD_NUMBER: _ClassVar[int]
     AGENT_REGISTRATION_DIRECTORY_FIELD_NUMBER: _ClassVar[int]
     RESPONDER_AGENT_ID_FIELD_NUMBER: _ClassVar[int]
     DIAGNOSTICS_FINGERPRINT_FIELD_NUMBER: _ClassVar[int]
     CONTROLLER_ARTIFACT_DIGEST_FIELD_NUMBER: _ClassVar[int]
     CONTROLLER_REVISION_FIELD_NUMBER: _ClassVar[int]
     BROKER_MODE_FIELD_NUMBER: _ClassVar[int]
-    RESPONDER_BACKEND_FIELD_NUMBER: _ClassVar[int]
-    RESPONDER_MODEL_FIELD_NUMBER: _ClassVar[int]
-    AGENT_EFFORT_FIELD_NUMBER: _ClassVar[int]
-    AGENT_REASONING_SUMMARY_FIELD_NUMBER: _ClassVar[int]
-    LIFECYCLE_TIMEOUT_FIELD_NUMBER: _ClassVar[int]
-    REPLAY_FIELD_NUMBER: _ClassVar[int]
     WORKER_MOUNT_MODE_FIELD_NUMBER: _ClassVar[int]
-    REFLECTION_SESSION_FIELD_NUMBER: _ClassVar[int]
-    REFLECTION_GUIDANCE_FIELD_NUMBER: _ClassVar[int]
-    HEALTHY_BASELINE_FIELD_NUMBER: _ClassVar[int]
-    MAX_RESPONSE_LOOPS_FIELD_NUMBER: _ClassVar[int]
-    DIAGNOSIS_DEADLINE_FIELD_NUMBER: _ClassVar[int]
     DRIFT_BATCH_WINDOW_FIELD_NUMBER: _ClassVar[int]
-    FORCE_REFLECTION_FIELD_NUMBER: _ClassVar[int]
     TOOLCHAIN_IMAGE_FIELD_NUMBER: _ClassVar[int]
     CLOSURE_STABILITY_WINDOW_FIELD_NUMBER: _ClassVar[int]
     SELF_HEAL_HOLD_FIELD_NUMBER: _ClassVar[int]
-    RESPONDER_REPORT_GRACE_FIELD_NUMBER: _ClassVar[int]
-    RESPONDER_STANDBY_FIELD_NUMBER: _ClassVar[int]
     SCRIPT_IMAGE_FIELD_NUMBER: _ClassVar[int]
     MEMORY_UPSTREAM_FIELD_NUMBER: _ClassVar[int]
     CODE_PATH_FIELD_NUMBER: _ClassVar[int]
-    FROZEN_MEMORY_FIELD_NUMBER: _ClassVar[int]
     RENDER_ENVIRONMENT_FIELD_NUMBER: _ClassVar[int]
     DEPLOYMENT_POLICY_FIELD_NUMBER: _ClassVar[int]
-    EXTERNAL_INCIDENTS_FIELD_NUMBER: _ClassVar[int]
-    WATCH_ONLY_FIELD_NUMBER: _ClassVar[int]
     DEPLOY_IDENTITY_FIELD_NUMBER: _ClassVar[int]
     TELEMETRY_ENVIRONMENT_FILE_FIELD_NUMBER: _ClassVar[int]
+    SETTINGS_PATH_FIELD_NUMBER: _ClassVar[int]
     memory_host_binary: str
     memory_host_digest: str
     namespace: str
@@ -90,68 +59,37 @@ class ControllerConfig(_message.Message):
     application: str
     source_commit: str
     deployed_commit: str
-    dispatcher: str
-    dispatcher_args: _containers.RepeatedScalarFieldContainer[str]
-    dispatcher_mode: str
     responder_image: str
     repository_pvc: str
     repository_mount_path: str
     repository_pvc_subpath: str
     responder_credentials_secret: str
-    responder_env: _containers.RepeatedScalarFieldContainer[str]
     broker_worktree_root: str
     firing_telemetry_path: str
     duration: _duration_pb2.Duration
-    response_timeout: _duration_pb2.Duration
-    verification_timeout: _duration_pb2.Duration
-    repair_policy: str
-    lease_name: str
-    lease_duration: _duration_pb2.Duration
     identity: str
     exit_after_closure: bool
     maintenance_configmap: str
-    maintenance_poll_interval: _duration_pb2.Duration
-    resume_sync_timeout: _duration_pb2.Duration
-    synthetic_traffic: bool
-    synthetic_traffic_warmup: _duration_pb2.Duration
-    clean_responder_helpers: bool
-    state_baseline: bool
     agent_registration_directory: str
     responder_agent_id: str
     diagnostics_fingerprint: str
     controller_artifact_digest: str
     controller_revision: str
     broker_mode: str
-    responder_backend: str
-    responder_model: str
-    agent_effort: str
-    agent_reasoning_summary: str
-    lifecycle_timeout: _duration_pb2.Duration
-    replay: str
     worker_mount_mode: str
-    reflection_session: str
-    reflection_guidance: str
-    healthy_baseline: bool
-    max_response_loops: int
-    diagnosis_deadline: _duration_pb2.Duration
     drift_batch_window: _duration_pb2.Duration
-    force_reflection: bool
     toolchain_image: str
     closure_stability_window: _duration_pb2.Duration
     self_heal_hold: _duration_pb2.Duration
-    responder_report_grace: _duration_pb2.Duration
-    responder_standby: bool
     script_image: str
     memory_upstream: MemoryUpstream
     code_path: CodePathConfig
-    frozen_memory: bool
     render_environment: _deployment_source_pb2.RenderEnvironment
     deployment_policy: _deployment_source_pb2.DeploymentPolicy
-    external_incidents: bool
-    watch_only: bool
     deploy_identity: DeployIdentity
     telemetry_environment_file: str
-    def __init__(self, memory_host_binary: _Optional[str] = ..., memory_host_digest: _Optional[str] = ..., namespace: _Optional[str] = ..., control_namespace: _Optional[str] = ..., app_root: _Optional[str] = ..., application: _Optional[str] = ..., source_commit: _Optional[str] = ..., deployed_commit: _Optional[str] = ..., dispatcher: _Optional[str] = ..., dispatcher_args: _Optional[_Iterable[str]] = ..., dispatcher_mode: _Optional[str] = ..., responder_image: _Optional[str] = ..., repository_pvc: _Optional[str] = ..., repository_mount_path: _Optional[str] = ..., repository_pvc_subpath: _Optional[str] = ..., responder_credentials_secret: _Optional[str] = ..., responder_env: _Optional[_Iterable[str]] = ..., broker_worktree_root: _Optional[str] = ..., firing_telemetry_path: _Optional[str] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., response_timeout: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., verification_timeout: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., repair_policy: _Optional[str] = ..., lease_name: _Optional[str] = ..., lease_duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., identity: _Optional[str] = ..., exit_after_closure: _Optional[bool] = ..., maintenance_configmap: _Optional[str] = ..., maintenance_poll_interval: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., resume_sync_timeout: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., synthetic_traffic: _Optional[bool] = ..., synthetic_traffic_warmup: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., clean_responder_helpers: _Optional[bool] = ..., state_baseline: _Optional[bool] = ..., agent_registration_directory: _Optional[str] = ..., responder_agent_id: _Optional[str] = ..., diagnostics_fingerprint: _Optional[str] = ..., controller_artifact_digest: _Optional[str] = ..., controller_revision: _Optional[str] = ..., broker_mode: _Optional[str] = ..., responder_backend: _Optional[str] = ..., responder_model: _Optional[str] = ..., agent_effort: _Optional[str] = ..., agent_reasoning_summary: _Optional[str] = ..., lifecycle_timeout: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., replay: _Optional[str] = ..., worker_mount_mode: _Optional[str] = ..., reflection_session: _Optional[str] = ..., reflection_guidance: _Optional[str] = ..., healthy_baseline: _Optional[bool] = ..., max_response_loops: _Optional[int] = ..., diagnosis_deadline: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., drift_batch_window: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., force_reflection: _Optional[bool] = ..., toolchain_image: _Optional[str] = ..., closure_stability_window: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., self_heal_hold: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., responder_report_grace: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., responder_standby: _Optional[bool] = ..., script_image: _Optional[str] = ..., memory_upstream: _Optional[_Union[MemoryUpstream, _Mapping]] = ..., code_path: _Optional[_Union[CodePathConfig, _Mapping]] = ..., frozen_memory: _Optional[bool] = ..., render_environment: _Optional[_Union[_deployment_source_pb2.RenderEnvironment, _Mapping]] = ..., deployment_policy: _Optional[_Union[_deployment_source_pb2.DeploymentPolicy, _Mapping]] = ..., external_incidents: _Optional[bool] = ..., watch_only: _Optional[bool] = ..., deploy_identity: _Optional[_Union[DeployIdentity, _Mapping]] = ..., telemetry_environment_file: _Optional[str] = ...) -> None: ...
+    settings_path: str
+    def __init__(self, memory_host_binary: _Optional[str] = ..., memory_host_digest: _Optional[str] = ..., namespace: _Optional[str] = ..., control_namespace: _Optional[str] = ..., app_root: _Optional[str] = ..., application: _Optional[str] = ..., source_commit: _Optional[str] = ..., deployed_commit: _Optional[str] = ..., responder_image: _Optional[str] = ..., repository_pvc: _Optional[str] = ..., repository_mount_path: _Optional[str] = ..., repository_pvc_subpath: _Optional[str] = ..., responder_credentials_secret: _Optional[str] = ..., broker_worktree_root: _Optional[str] = ..., firing_telemetry_path: _Optional[str] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., identity: _Optional[str] = ..., exit_after_closure: _Optional[bool] = ..., maintenance_configmap: _Optional[str] = ..., agent_registration_directory: _Optional[str] = ..., responder_agent_id: _Optional[str] = ..., diagnostics_fingerprint: _Optional[str] = ..., controller_artifact_digest: _Optional[str] = ..., controller_revision: _Optional[str] = ..., broker_mode: _Optional[str] = ..., worker_mount_mode: _Optional[str] = ..., drift_batch_window: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., toolchain_image: _Optional[str] = ..., closure_stability_window: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., self_heal_hold: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., script_image: _Optional[str] = ..., memory_upstream: _Optional[_Union[MemoryUpstream, _Mapping]] = ..., code_path: _Optional[_Union[CodePathConfig, _Mapping]] = ..., render_environment: _Optional[_Union[_deployment_source_pb2.RenderEnvironment, _Mapping]] = ..., deployment_policy: _Optional[_Union[_deployment_source_pb2.DeploymentPolicy, _Mapping]] = ..., deploy_identity: _Optional[_Union[DeployIdentity, _Mapping]] = ..., telemetry_environment_file: _Optional[str] = ..., settings_path: _Optional[str] = ...) -> None: ...
 
 class DeployIdentity(_message.Message):
     __slots__ = ("buildkit_image", "registry_push_secret", "registry_host", "registry_insecure", "build_timeout", "build_budget", "rollout_timeout")

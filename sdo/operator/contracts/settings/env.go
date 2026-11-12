@@ -30,9 +30,17 @@ var workerTransport = []string{
 // workerTransportPrefixes are families of such variables.
 var workerTransportPrefixes = []string{"SDO_AGENT_SCRIPT"}
 
+// MemoryCheckTimeoutEnvironment carries agent.memory_check_timeout, in whole seconds, to the workers that run
+// `sdo-operator memory check`.
+const MemoryCheckTimeoutEnvironment = "SDO_MEMORY_CHECK_TIMEOUT_SECONDS"
+
+// LifecycleTimeoutEnvironment carries agent.lifecycle_timeout, in whole seconds, to lifecycle workers.
+const LifecycleTimeoutEnvironment = "SDO_LIFECYCLE_TIMEOUT_SECONDS"
+
 // WorkerVariables names the internal worker and installer variables for the generated reference.
 func WorkerVariables() []string {
-	return append(append([]string{}, workerTransport...), "SDO_AGENT_SCRIPT_*", "SDO_TASK_PATH", "SDO_INCIDENT_ID", "SDO_REPLAY", "SDO_CODE_PATH", "SDO_RESPONDER_MENU")
+	return append(append([]string{}, workerTransport...), "SDO_AGENT_SCRIPT_*", "SDO_TASK_PATH", "SDO_INCIDENT_ID", ReplayEnvironment, "SDO_CODE_PATH",
+		LifecycleTimeoutEnvironment, MemoryCheckTimeoutEnvironment, "SDO_RESPONDER_MODEL", "SDO_REFLECTION_MODEL", "SDO_LIFECYCLE_MODEL")
 }
 
 // renamedEnvironment maps host environment names that used to select a knob to their configuration names. They stay

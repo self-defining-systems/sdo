@@ -13,8 +13,14 @@
 // build error instead.
 //
 // This is distinct from the in-process runtime.ControllerConfig (detector
-// thresholds, intervals), which the controller derives from this launch config.
+// thresholds, intervals), which the controller derives from this launch config
+// and the operator configuration at settings_path.
 // Serialized as protojson like every other contract.
+//
+// ControllerConfig is wiring: namespaces, images, the PVC, commits and paths.
+// Timing and policy (timeouts, loops, repair policy, mode, reflection, agent
+// provider, model and effort) live only in the operator configuration
+// (contracts/settings), read from settings_path.
 
 package contractsv1alpha1
 
@@ -40,51 +46,28 @@ type ControllerConfig struct {
 	MemoryHostBinary string                 `protobuf:"bytes,82,opt,name=memory_host_binary,json=memoryHostBinary,proto3" json:"memory_host_binary,omitempty"`
 	MemoryHostDigest string                 `protobuf:"bytes,83,opt,name=memory_host_digest,json=memoryHostDigest,proto3" json:"memory_host_digest,omitempty"`
 	// Observation and identity.
-	Namespace        string `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
-	ControlNamespace string `protobuf:"bytes,2,opt,name=control_namespace,json=controlNamespace,proto3" json:"control_namespace,omitempty"`
-	AppRoot          string `protobuf:"bytes,3,opt,name=app_root,json=appRoot,proto3" json:"app_root,omitempty"`
-	Application      string `protobuf:"bytes,4,opt,name=application,proto3" json:"application,omitempty"`
-	SourceCommit     string `protobuf:"bytes,5,opt,name=source_commit,json=sourceCommit,proto3" json:"source_commit,omitempty"`
-	DeployedCommit   string `protobuf:"bytes,6,opt,name=deployed_commit,json=deployedCommit,proto3" json:"deployed_commit,omitempty"`
-	// Responder dispatch.
-	// Deprecated and ignored: the controller resolves the worker through the agent
-	// registry. Kept so existing ControllerConfig documents stay wire-compatible.
-	//
-	// Deprecated: Marked as deprecated in sdodev/contracts/v1alpha1/controller_config.proto.
-	Dispatcher string `protobuf:"bytes,7,opt,name=dispatcher,proto3" json:"dispatcher,omitempty"`
-	// Deprecated: Marked as deprecated in sdodev/contracts/v1alpha1/controller_config.proto.
-	DispatcherArgs             []string `protobuf:"bytes,9,rep,name=dispatcher_args,json=dispatcherArgs,proto3" json:"dispatcher_args,omitempty"`
-	DispatcherMode             string   `protobuf:"bytes,8,opt,name=dispatcher_mode,json=dispatcherMode,proto3" json:"dispatcher_mode,omitempty"`
-	ResponderImage             string   `protobuf:"bytes,10,opt,name=responder_image,json=responderImage,proto3" json:"responder_image,omitempty"`
-	RepositoryPvc              string   `protobuf:"bytes,11,opt,name=repository_pvc,json=repositoryPvc,proto3" json:"repository_pvc,omitempty"`
-	RepositoryMountPath        string   `protobuf:"bytes,12,opt,name=repository_mount_path,json=repositoryMountPath,proto3" json:"repository_mount_path,omitempty"`
-	RepositoryPvcSubpath       string   `protobuf:"bytes,13,opt,name=repository_pvc_subpath,json=repositoryPvcSubpath,proto3" json:"repository_pvc_subpath,omitempty"`
-	ResponderCredentialsSecret string   `protobuf:"bytes,14,opt,name=responder_credentials_secret,json=responderCredentialsSecret,proto3" json:"responder_credentials_secret,omitempty"`
-	ResponderEnv               []string `protobuf:"bytes,15,rep,name=responder_env,json=responderEnv,proto3" json:"responder_env,omitempty"`
+	Namespace                  string `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	ControlNamespace           string `protobuf:"bytes,2,opt,name=control_namespace,json=controlNamespace,proto3" json:"control_namespace,omitempty"`
+	AppRoot                    string `protobuf:"bytes,3,opt,name=app_root,json=appRoot,proto3" json:"app_root,omitempty"`
+	Application                string `protobuf:"bytes,4,opt,name=application,proto3" json:"application,omitempty"`
+	SourceCommit               string `protobuf:"bytes,5,opt,name=source_commit,json=sourceCommit,proto3" json:"source_commit,omitempty"`
+	DeployedCommit             string `protobuf:"bytes,6,opt,name=deployed_commit,json=deployedCommit,proto3" json:"deployed_commit,omitempty"`
+	ResponderImage             string `protobuf:"bytes,10,opt,name=responder_image,json=responderImage,proto3" json:"responder_image,omitempty"`
+	RepositoryPvc              string `protobuf:"bytes,11,opt,name=repository_pvc,json=repositoryPvc,proto3" json:"repository_pvc,omitempty"`
+	RepositoryMountPath        string `protobuf:"bytes,12,opt,name=repository_mount_path,json=repositoryMountPath,proto3" json:"repository_mount_path,omitempty"`
+	RepositoryPvcSubpath       string `protobuf:"bytes,13,opt,name=repository_pvc_subpath,json=repositoryPvcSubpath,proto3" json:"repository_pvc_subpath,omitempty"`
+	ResponderCredentialsSecret string `protobuf:"bytes,14,opt,name=responder_credentials_secret,json=responderCredentialsSecret,proto3" json:"responder_credentials_secret,omitempty"`
 	// Go-owned repository broker proposal root.
 	BrokerWorktreeRoot string `protobuf:"bytes,17,opt,name=broker_worktree_root,json=brokerWorktreeRoot,proto3" json:"broker_worktree_root,omitempty"`
 	// Telemetry.
 	FiringTelemetryPath string `protobuf:"bytes,19,opt,name=firing_telemetry_path,json=firingTelemetryPath,proto3" json:"firing_telemetry_path,omitempty"`
-	// Timing and policy.
-	Duration            *durationpb.Duration `protobuf:"bytes,20,opt,name=duration,proto3" json:"duration,omitempty"`
-	ResponseTimeout     *durationpb.Duration `protobuf:"bytes,21,opt,name=response_timeout,json=responseTimeout,proto3" json:"response_timeout,omitempty"`
-	VerificationTimeout *durationpb.Duration `protobuf:"bytes,22,opt,name=verification_timeout,json=verificationTimeout,proto3" json:"verification_timeout,omitempty"`
-	RepairPolicy        string               `protobuf:"bytes,25,opt,name=repair_policy,json=repairPolicy,proto3" json:"repair_policy,omitempty"`
-	// Leader election.
-	LeaseName     string               `protobuf:"bytes,26,opt,name=lease_name,json=leaseName,proto3" json:"lease_name,omitempty"`
-	LeaseDuration *durationpb.Duration `protobuf:"bytes,27,opt,name=lease_duration,json=leaseDuration,proto3" json:"lease_duration,omitempty"`
-	Identity      string               `protobuf:"bytes,28,opt,name=identity,proto3" json:"identity,omitempty"`
-	// Lifecycle. Non-zero controller defaults (synthetic_traffic,
-	// clean_responder_helpers, state_baseline are true) use `optional` so an unset
-	// field keeps the controller default rather than flipping to false.
-	ExitAfterClosure        bool                 `protobuf:"varint,29,opt,name=exit_after_closure,json=exitAfterClosure,proto3" json:"exit_after_closure,omitempty"`
-	MaintenanceConfigmap    string               `protobuf:"bytes,31,opt,name=maintenance_configmap,json=maintenanceConfigmap,proto3" json:"maintenance_configmap,omitempty"`
-	MaintenancePollInterval *durationpb.Duration `protobuf:"bytes,32,opt,name=maintenance_poll_interval,json=maintenancePollInterval,proto3" json:"maintenance_poll_interval,omitempty"`
-	ResumeSyncTimeout       *durationpb.Duration `protobuf:"bytes,33,opt,name=resume_sync_timeout,json=resumeSyncTimeout,proto3" json:"resume_sync_timeout,omitempty"`
-	SyntheticTraffic        *bool                `protobuf:"varint,34,opt,name=synthetic_traffic,json=syntheticTraffic,proto3,oneof" json:"synthetic_traffic,omitempty"`
-	SyntheticTrafficWarmup  *durationpb.Duration `protobuf:"bytes,35,opt,name=synthetic_traffic_warmup,json=syntheticTrafficWarmup,proto3" json:"synthetic_traffic_warmup,omitempty"`
-	CleanResponderHelpers   *bool                `protobuf:"varint,39,opt,name=clean_responder_helpers,json=cleanResponderHelpers,proto3,oneof" json:"clean_responder_helpers,omitempty"`
-	StateBaseline           *bool                `protobuf:"varint,40,opt,name=state_baseline,json=stateBaseline,proto3,oneof" json:"state_baseline,omitempty"`
+	// Bounded run. Every other timing and policy value is operator
+	// configuration (settings_path).
+	Duration *durationpb.Duration `protobuf:"bytes,20,opt,name=duration,proto3" json:"duration,omitempty"`
+	Identity string               `protobuf:"bytes,28,opt,name=identity,proto3" json:"identity,omitempty"`
+	// Lifecycle.
+	ExitAfterClosure     bool   `protobuf:"varint,29,opt,name=exit_after_closure,json=exitAfterClosure,proto3" json:"exit_after_closure,omitempty"`
+	MaintenanceConfigmap string `protobuf:"bytes,31,opt,name=maintenance_configmap,json=maintenanceConfigmap,proto3" json:"maintenance_configmap,omitempty"`
 	// Directory of agent registration manifests. When omitted the controller
 	// reads the built-in manifests baked into its image, with responder_image
 	// substituted as their launch image.
@@ -99,49 +82,26 @@ type ControllerConfig struct {
 	// Native broker selection is carried into the compiled controller child.
 	// A native launch must also use proposal-only worker mounts; these fields
 	// are checked together before the controller acquires its lease.
-	BrokerMode       string `protobuf:"bytes,46,opt,name=broker_mode,json=brokerMode,proto3" json:"broker_mode,omitempty"`
-	ResponderBackend string `protobuf:"bytes,49,opt,name=responder_backend,json=responderBackend,proto3" json:"responder_backend,omitempty"`
-	ResponderModel   string `protobuf:"bytes,50,opt,name=responder_model,json=responderModel,proto3" json:"responder_model,omitempty"`
-	// Reasoning effort every agent worker runs at; empty means the shared default (sdo/contracts/agent_env.json).
-	AgentEffort string `protobuf:"bytes,101,opt,name=agent_effort,json=agentEffort,proto3" json:"agent_effort,omitempty"`
-	// Reasoning summary mode Codex workers record; empty means the shared default (sdo/contracts/agent_env.json).
-	AgentReasoningSummary string `protobuf:"bytes,120,opt,name=agent_reasoning_summary,json=agentReasoningSummary,proto3" json:"agent_reasoning_summary,omitempty"`
-	// Limit of one lifecycle (detection designer) session; unset means the shared default (sdo/contracts/agent_env.json).
-	LifecycleTimeout *durationpb.Duration `protobuf:"bytes,117,opt,name=lifecycle_timeout,json=lifecycleTimeout,proto3" json:"lifecycle_timeout,omitempty"`
-	// Trusted run policy; empty preserves default-on replay and corpus capture.
-	Replay          string `protobuf:"bytes,102,opt,name=replay,proto3" json:"replay,omitempty"`
-	WorkerMountMode string `protobuf:"bytes,51,opt,name=worker_mount_mode,json=workerMountMode,proto3" json:"worker_mount_mode,omitempty"`
-	// Operator policy for the outcome reflection session. A resumed session
-	// requires a valid responder session ID from the accepted closure.
-	ReflectionSession  string `protobuf:"bytes,52,opt,name=reflection_session,json=reflectionSession,proto3" json:"reflection_session,omitempty"`
-	ReflectionGuidance string `protobuf:"bytes,53,opt,name=reflection_guidance,json=reflectionGuidance,proto3" json:"reflection_guidance,omitempty"`
-	// Replays incident detectors on benchmark-supplied healthy snapshots. The
-	// validator receives only the bounded snapshot directory, read-only.
-	HealthyBaseline   bool                 `protobuf:"varint,54,opt,name=healthy_baseline,json=healthyBaseline,proto3" json:"healthy_baseline,omitempty"`
-	MaxResponseLoops  int32                `protobuf:"varint,55,opt,name=max_response_loops,json=maxResponseLoops,proto3" json:"max_response_loops,omitempty"`
-	DiagnosisDeadline *durationpb.Duration `protobuf:"bytes,56,opt,name=diagnosis_deadline,json=diagnosisDeadline,proto3" json:"diagnosis_deadline,omitempty"`
-	DriftBatchWindow  *durationpb.Duration `protobuf:"bytes,66,opt,name=drift_batch_window,json=driftBatchWindow,proto3" json:"drift_batch_window,omitempty"`
-	ForceReflection   bool                 `protobuf:"varint,62,opt,name=force_reflection,json=forceReflection,proto3" json:"force_reflection,omitempty"`
+	BrokerMode       string               `protobuf:"bytes,46,opt,name=broker_mode,json=brokerMode,proto3" json:"broker_mode,omitempty"`
+	WorkerMountMode  string               `protobuf:"bytes,51,opt,name=worker_mount_mode,json=workerMountMode,proto3" json:"worker_mount_mode,omitempty"`
+	DriftBatchWindow *durationpb.Duration `protobuf:"bytes,66,opt,name=drift_batch_window,json=driftBatchWindow,proto3" json:"drift_batch_window,omitempty"`
 	// Trusted controller image supplying Go to compiler-free workers and validators.
 	// Required at startup, independently of the optional traffic prober image.
 	ToolchainImage         string               `protobuf:"bytes,75,opt,name=toolchain_image,json=toolchainImage,proto3" json:"toolchain_image,omitempty"`
 	ClosureStabilityWindow *durationpb.Duration `protobuf:"bytes,76,opt,name=closure_stability_window,json=closureStabilityWindow,proto3" json:"closure_stability_window,omitempty"`
 	// How long a Kubernetes failure condition without its own give-up signal
 	// must hold before it opens an incident. Unset uses the controller default.
-	SelfHealHold         *durationpb.Duration `protobuf:"bytes,119,opt,name=self_heal_hold,json=selfHealHold,proto3" json:"self_heal_hold,omitempty"`
-	ResponderReportGrace *durationpb.Duration `protobuf:"bytes,77,opt,name=responder_report_grace,json=responderReportGrace,proto3" json:"responder_report_grace,omitempty"`
-	// Pre-start one idle responder; false forces the ordinary cold Job path.
-	ResponderStandby *bool `protobuf:"varint,78,opt,name=responder_standby,json=responderStandby,proto3,oneof" json:"responder_standby,omitempty"`
+	SelfHealHold *durationpb.Duration `protobuf:"bytes,119,opt,name=self_heal_hold,json=selfHealHold,proto3" json:"self_heal_hold,omitempty"`
 	// Fixed tool image for application-local RunScript Jobs.
 	ScriptImage string `protobuf:"bytes,79,opt,name=script_image,json=scriptImage,proto3" json:"script_image,omitempty"`
 	// Shared remote branch the accepted repository replicates, so lanes of one
 	// application on several hosts share one accepted memory. Unset keeps the
 	// accepted repository local.
 	MemoryUpstream *MemoryUpstream `protobuf:"bytes,80,opt,name=memory_upstream,json=memoryUpstream,proto3" json:"memory_upstream,omitempty"`
-	// Named programming-model plugin set. An omitted value preserves Go.
+	// Named programming-model plugin set: the launcher's typed projection of the
+	// operator configuration's agent.code_path and agent.code_path_overrides.
+	// An omitted value preserves Go.
 	CodePath *CodePathConfig `protobuf:"bytes,100,opt,name=code_path,json=codePath,proto3" json:"code_path,omitempty"`
-	// Keep repeat evidence private and disable learning.
-	FrozenMemory bool `protobuf:"varint,110,opt,name=frozen_memory,json=frozenMemory,proto3" json:"frozen_memory,omitempty"`
 	// render_environment is the install-time render environment of the accepted
 	// deployment; absent means unknown (renderer defaults).
 	RenderEnvironment *RenderEnvironment `protobuf:"bytes,113,opt,name=render_environment,json=renderEnvironment,proto3" json:"render_environment,omitempty"`
@@ -149,11 +109,6 @@ type ControllerConfig struct {
 	// allowlist, namespace and cluster-scope grants); absent means no limit
 	// beyond today's notes.
 	DeploymentPolicy *DeploymentPolicy `protobuf:"bytes,115,opt,name=deployment_policy,json=deploymentPolicy,proto3" json:"deployment_policy,omitempty"`
-	// Disable detector admission/verification; accept external alerts only.
-	ExternalIncidents bool `protobuf:"varint,111,opt,name=external_incidents,json=externalIncidents,proto3" json:"external_incidents,omitempty"`
-	// Detect, open, verify and close incidents as usual, but never respond:
-	// no automatic stage, responder or reflection runs (requires frozen memory).
-	WatchOnly bool `protobuf:"varint,118,opt,name=watch_only,json=watchOnly,proto3" json:"watch_only,omitempty"`
 	// The trusted in-cluster build and apply identity the controller deploys
 	// with: the parent's upstream advances and the child's accepted responder
 	// source repairs. Absent means nothing can build an image.
@@ -162,8 +117,11 @@ type ControllerConfig struct {
 	// credential directory, pinning mode). Unset provides no operator source:
 	// detectors that query one report an error instead of health.
 	TelemetryEnvironmentFile string `protobuf:"bytes,116,opt,name=telemetry_environment_file,json=telemetryEnvironmentFile,proto3" json:"telemetry_environment_file,omitempty"`
-	unknownFields            protoimpl.UnknownFields
-	sizeCache                protoimpl.SizeCache
+	// Path of the resolved operator configuration (contracts/settings.Config
+	// YAML) the controller read at start: every timing and policy value. Required.
+	SettingsPath  string `protobuf:"bytes,120,opt,name=settings_path,json=settingsPath,proto3" json:"settings_path,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ControllerConfig) Reset() {
@@ -252,29 +210,6 @@ func (x *ControllerConfig) GetDeployedCommit() string {
 	return ""
 }
 
-// Deprecated: Marked as deprecated in sdodev/contracts/v1alpha1/controller_config.proto.
-func (x *ControllerConfig) GetDispatcher() string {
-	if x != nil {
-		return x.Dispatcher
-	}
-	return ""
-}
-
-// Deprecated: Marked as deprecated in sdodev/contracts/v1alpha1/controller_config.proto.
-func (x *ControllerConfig) GetDispatcherArgs() []string {
-	if x != nil {
-		return x.DispatcherArgs
-	}
-	return nil
-}
-
-func (x *ControllerConfig) GetDispatcherMode() string {
-	if x != nil {
-		return x.DispatcherMode
-	}
-	return ""
-}
-
 func (x *ControllerConfig) GetResponderImage() string {
 	if x != nil {
 		return x.ResponderImage
@@ -310,13 +245,6 @@ func (x *ControllerConfig) GetResponderCredentialsSecret() string {
 	return ""
 }
 
-func (x *ControllerConfig) GetResponderEnv() []string {
-	if x != nil {
-		return x.ResponderEnv
-	}
-	return nil
-}
-
 func (x *ControllerConfig) GetBrokerWorktreeRoot() string {
 	if x != nil {
 		return x.BrokerWorktreeRoot
@@ -334,41 +262,6 @@ func (x *ControllerConfig) GetFiringTelemetryPath() string {
 func (x *ControllerConfig) GetDuration() *durationpb.Duration {
 	if x != nil {
 		return x.Duration
-	}
-	return nil
-}
-
-func (x *ControllerConfig) GetResponseTimeout() *durationpb.Duration {
-	if x != nil {
-		return x.ResponseTimeout
-	}
-	return nil
-}
-
-func (x *ControllerConfig) GetVerificationTimeout() *durationpb.Duration {
-	if x != nil {
-		return x.VerificationTimeout
-	}
-	return nil
-}
-
-func (x *ControllerConfig) GetRepairPolicy() string {
-	if x != nil {
-		return x.RepairPolicy
-	}
-	return ""
-}
-
-func (x *ControllerConfig) GetLeaseName() string {
-	if x != nil {
-		return x.LeaseName
-	}
-	return ""
-}
-
-func (x *ControllerConfig) GetLeaseDuration() *durationpb.Duration {
-	if x != nil {
-		return x.LeaseDuration
 	}
 	return nil
 }
@@ -392,48 +285,6 @@ func (x *ControllerConfig) GetMaintenanceConfigmap() string {
 		return x.MaintenanceConfigmap
 	}
 	return ""
-}
-
-func (x *ControllerConfig) GetMaintenancePollInterval() *durationpb.Duration {
-	if x != nil {
-		return x.MaintenancePollInterval
-	}
-	return nil
-}
-
-func (x *ControllerConfig) GetResumeSyncTimeout() *durationpb.Duration {
-	if x != nil {
-		return x.ResumeSyncTimeout
-	}
-	return nil
-}
-
-func (x *ControllerConfig) GetSyntheticTraffic() bool {
-	if x != nil && x.SyntheticTraffic != nil {
-		return *x.SyntheticTraffic
-	}
-	return false
-}
-
-func (x *ControllerConfig) GetSyntheticTrafficWarmup() *durationpb.Duration {
-	if x != nil {
-		return x.SyntheticTrafficWarmup
-	}
-	return nil
-}
-
-func (x *ControllerConfig) GetCleanResponderHelpers() bool {
-	if x != nil && x.CleanResponderHelpers != nil {
-		return *x.CleanResponderHelpers
-	}
-	return false
-}
-
-func (x *ControllerConfig) GetStateBaseline() bool {
-	if x != nil && x.StateBaseline != nil {
-		return *x.StateBaseline
-	}
-	return false
 }
 
 func (x *ControllerConfig) GetAgentRegistrationDirectory() string {
@@ -478,48 +329,6 @@ func (x *ControllerConfig) GetBrokerMode() string {
 	return ""
 }
 
-func (x *ControllerConfig) GetResponderBackend() string {
-	if x != nil {
-		return x.ResponderBackend
-	}
-	return ""
-}
-
-func (x *ControllerConfig) GetResponderModel() string {
-	if x != nil {
-		return x.ResponderModel
-	}
-	return ""
-}
-
-func (x *ControllerConfig) GetAgentEffort() string {
-	if x != nil {
-		return x.AgentEffort
-	}
-	return ""
-}
-
-func (x *ControllerConfig) GetAgentReasoningSummary() string {
-	if x != nil {
-		return x.AgentReasoningSummary
-	}
-	return ""
-}
-
-func (x *ControllerConfig) GetLifecycleTimeout() *durationpb.Duration {
-	if x != nil {
-		return x.LifecycleTimeout
-	}
-	return nil
-}
-
-func (x *ControllerConfig) GetReplay() string {
-	if x != nil {
-		return x.Replay
-	}
-	return ""
-}
-
 func (x *ControllerConfig) GetWorkerMountMode() string {
 	if x != nil {
 		return x.WorkerMountMode
@@ -527,53 +336,11 @@ func (x *ControllerConfig) GetWorkerMountMode() string {
 	return ""
 }
 
-func (x *ControllerConfig) GetReflectionSession() string {
-	if x != nil {
-		return x.ReflectionSession
-	}
-	return ""
-}
-
-func (x *ControllerConfig) GetReflectionGuidance() string {
-	if x != nil {
-		return x.ReflectionGuidance
-	}
-	return ""
-}
-
-func (x *ControllerConfig) GetHealthyBaseline() bool {
-	if x != nil {
-		return x.HealthyBaseline
-	}
-	return false
-}
-
-func (x *ControllerConfig) GetMaxResponseLoops() int32 {
-	if x != nil {
-		return x.MaxResponseLoops
-	}
-	return 0
-}
-
-func (x *ControllerConfig) GetDiagnosisDeadline() *durationpb.Duration {
-	if x != nil {
-		return x.DiagnosisDeadline
-	}
-	return nil
-}
-
 func (x *ControllerConfig) GetDriftBatchWindow() *durationpb.Duration {
 	if x != nil {
 		return x.DriftBatchWindow
 	}
 	return nil
-}
-
-func (x *ControllerConfig) GetForceReflection() bool {
-	if x != nil {
-		return x.ForceReflection
-	}
-	return false
 }
 
 func (x *ControllerConfig) GetToolchainImage() string {
@@ -597,20 +364,6 @@ func (x *ControllerConfig) GetSelfHealHold() *durationpb.Duration {
 	return nil
 }
 
-func (x *ControllerConfig) GetResponderReportGrace() *durationpb.Duration {
-	if x != nil {
-		return x.ResponderReportGrace
-	}
-	return nil
-}
-
-func (x *ControllerConfig) GetResponderStandby() bool {
-	if x != nil && x.ResponderStandby != nil {
-		return *x.ResponderStandby
-	}
-	return false
-}
-
 func (x *ControllerConfig) GetScriptImage() string {
 	if x != nil {
 		return x.ScriptImage
@@ -632,13 +385,6 @@ func (x *ControllerConfig) GetCodePath() *CodePathConfig {
 	return nil
 }
 
-func (x *ControllerConfig) GetFrozenMemory() bool {
-	if x != nil {
-		return x.FrozenMemory
-	}
-	return false
-}
-
 func (x *ControllerConfig) GetRenderEnvironment() *RenderEnvironment {
 	if x != nil {
 		return x.RenderEnvironment
@@ -653,20 +399,6 @@ func (x *ControllerConfig) GetDeploymentPolicy() *DeploymentPolicy {
 	return nil
 }
 
-func (x *ControllerConfig) GetExternalIncidents() bool {
-	if x != nil {
-		return x.ExternalIncidents
-	}
-	return false
-}
-
-func (x *ControllerConfig) GetWatchOnly() bool {
-	if x != nil {
-		return x.WatchOnly
-	}
-	return false
-}
-
 func (x *ControllerConfig) GetDeployIdentity() *DeployIdentity {
 	if x != nil {
 		return x.DeployIdentity
@@ -677,6 +409,13 @@ func (x *ControllerConfig) GetDeployIdentity() *DeployIdentity {
 func (x *ControllerConfig) GetTelemetryEnvironmentFile() string {
 	if x != nil {
 		return x.TelemetryEnvironmentFile
+	}
+	return ""
+}
+
+func (x *ControllerConfig) GetSettingsPath() string {
+	if x != nil {
+		return x.SettingsPath
 	}
 	return ""
 }
@@ -980,7 +719,7 @@ var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDesc
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\x1a1sdodev/contracts/v1alpha1/deployment_source.proto\"\xa9$\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\x1a1sdodev/contracts/v1alpha1/deployment_source.proto\"\xce\x1b\n" +
 	"\x10ControllerConfig\x12,\n" +
 	"\x12memory_host_binary\x18R \x01(\tR\x10memoryHostBinary\x12,\n" +
 	"\x12memory_host_digest\x18S \x01(\tR\x10memoryHostDigest\x12%\n" +
@@ -989,81 +728,44 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\bapp_root\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\aappRoot\x12 \n" +
 	"\vapplication\x18\x04 \x01(\tR\vapplication\x12#\n" +
 	"\rsource_commit\x18\x05 \x01(\tR\fsourceCommit\x12'\n" +
-	"\x0fdeployed_commit\x18\x06 \x01(\tR\x0edeployedCommit\x12\"\n" +
-	"\n" +
-	"dispatcher\x18\a \x01(\tB\x02\x18\x01R\n" +
-	"dispatcher\x12+\n" +
-	"\x0fdispatcher_args\x18\t \x03(\tB\x02\x18\x01R\x0edispatcherArgs\x123\n" +
-	"\x0fdispatcher_mode\x18\b \x01(\tB\n" +
-	"\xbaH\ar\x05R\x03jobR\x0edispatcherMode\x12'\n" +
+	"\x0fdeployed_commit\x18\x06 \x01(\tR\x0edeployedCommit\x12'\n" +
 	"\x0fresponder_image\x18\n" +
 	" \x01(\tR\x0eresponderImage\x12%\n" +
 	"\x0erepository_pvc\x18\v \x01(\tR\rrepositoryPvc\x122\n" +
 	"\x15repository_mount_path\x18\f \x01(\tR\x13repositoryMountPath\x124\n" +
 	"\x16repository_pvc_subpath\x18\r \x01(\tR\x14repositoryPvcSubpath\x12@\n" +
-	"\x1cresponder_credentials_secret\x18\x0e \x01(\tR\x1aresponderCredentialsSecret\x12#\n" +
-	"\rresponder_env\x18\x0f \x03(\tR\fresponderEnv\x120\n" +
+	"\x1cresponder_credentials_secret\x18\x0e \x01(\tR\x1aresponderCredentialsSecret\x120\n" +
 	"\x14broker_worktree_root\x18\x11 \x01(\tR\x12brokerWorktreeRoot\x122\n" +
 	"\x15firing_telemetry_path\x18\x13 \x01(\tR\x13firingTelemetryPath\x125\n" +
-	"\bduration\x18\x14 \x01(\v2\x19.google.protobuf.DurationR\bduration\x12D\n" +
-	"\x10response_timeout\x18\x15 \x01(\v2\x19.google.protobuf.DurationR\x0fresponseTimeout\x12L\n" +
-	"\x14verification_timeout\x18\x16 \x01(\v2\x19.google.protobuf.DurationR\x13verificationTimeout\x12D\n" +
-	"\rrepair_policy\x18\x19 \x01(\tB\x1f\xbaH\x1cr\x1aR\x06commitR\x10recorded-actionsR\frepairPolicy\x12\x1d\n" +
-	"\n" +
-	"lease_name\x18\x1a \x01(\tR\tleaseName\x12@\n" +
-	"\x0elease_duration\x18\x1b \x01(\v2\x19.google.protobuf.DurationR\rleaseDuration\x12\x1a\n" +
+	"\bduration\x18\x14 \x01(\v2\x19.google.protobuf.DurationR\bduration\x12\x1a\n" +
 	"\bidentity\x18\x1c \x01(\tR\bidentity\x12,\n" +
 	"\x12exit_after_closure\x18\x1d \x01(\bR\x10exitAfterClosure\x123\n" +
-	"\x15maintenance_configmap\x18\x1f \x01(\tR\x14maintenanceConfigmap\x12U\n" +
-	"\x19maintenance_poll_interval\x18  \x01(\v2\x19.google.protobuf.DurationR\x17maintenancePollInterval\x12I\n" +
-	"\x13resume_sync_timeout\x18! \x01(\v2\x19.google.protobuf.DurationR\x11resumeSyncTimeout\x120\n" +
-	"\x11synthetic_traffic\x18\" \x01(\bH\x00R\x10syntheticTraffic\x88\x01\x01\x12S\n" +
-	"\x18synthetic_traffic_warmup\x18# \x01(\v2\x19.google.protobuf.DurationR\x16syntheticTrafficWarmup\x12;\n" +
-	"\x17clean_responder_helpers\x18' \x01(\bH\x01R\x15cleanResponderHelpers\x88\x01\x01\x12*\n" +
-	"\x0estate_baseline\x18( \x01(\bH\x02R\rstateBaseline\x88\x01\x01\x12@\n" +
+	"\x15maintenance_configmap\x18\x1f \x01(\tR\x14maintenanceConfigmap\x12@\n" +
 	"\x1cagent_registration_directory\x18) \x01(\tR\x1aagentRegistrationDirectory\x12,\n" +
 	"\x12responder_agent_id\x18* \x01(\tR\x10responderAgentId\x127\n" +
 	"\x17diagnostics_fingerprint\x18+ \x01(\tR\x16diagnosticsFingerprint\x12<\n" +
 	"\x1acontroller_artifact_digest\x18, \x01(\tR\x18controllerArtifactDigest\x12/\n" +
 	"\x13controller_revision\x18- \x01(\tR\x12controllerRevision\x12\x1f\n" +
 	"\vbroker_mode\x18. \x01(\tR\n" +
-	"brokerMode\x12+\n" +
-	"\x11responder_backend\x181 \x01(\tR\x10responderBackend\x12'\n" +
-	"\x0fresponder_model\x182 \x01(\tR\x0eresponderModel\x12!\n" +
-	"\fagent_effort\x18e \x01(\tR\vagentEffort\x126\n" +
-	"\x17agent_reasoning_summary\x18x \x01(\tR\x15agentReasoningSummary\x12P\n" +
-	"\x11lifecycle_timeout\x18u \x01(\v2\x19.google.protobuf.DurationB\b\xbaH\x05\xaa\x01\x022\x00R\x10lifecycleTimeout\x12(\n" +
-	"\x06replay\x18f \x01(\tB\x10\xbaH\rr\vR\x00R\x02onR\x03offR\x06replay\x12*\n" +
-	"\x11worker_mount_mode\x183 \x01(\tR\x0fworkerMountMode\x12E\n" +
-	"\x12reflection_session\x184 \x01(\tB\x16\xbaH\x13r\x11R\x00R\x05freshR\x06resumeR\x11reflectionSession\x12_\n" +
-	"\x13reflection_guidance\x185 \x01(\tB.\xbaH+r)R\x00R\bbaselineR\n" +
-	"generalizeR\x0fgeneralize-specR\x12reflectionGuidance\x12)\n" +
-	"\x10healthy_baseline\x186 \x01(\bR\x0fhealthyBaseline\x125\n" +
-	"\x12max_response_loops\x187 \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\x10maxResponseLoops\x12H\n" +
-	"\x12diagnosis_deadline\x188 \x01(\v2\x19.google.protobuf.DurationR\x11diagnosisDeadline\x12G\n" +
-	"\x12drift_batch_window\x18B \x01(\v2\x19.google.protobuf.DurationR\x10driftBatchWindow\x12)\n" +
-	"\x10force_reflection\x18> \x01(\bR\x0fforceReflection\x12'\n" +
+	"brokerMode\x12*\n" +
+	"\x11worker_mount_mode\x183 \x01(\tR\x0fworkerMountMode\x12G\n" +
+	"\x12drift_batch_window\x18B \x01(\v2\x19.google.protobuf.DurationR\x10driftBatchWindow\x12'\n" +
 	"\x0ftoolchain_image\x18K \x01(\tR\x0etoolchainImage\x12S\n" +
 	"\x18closure_stability_window\x18L \x01(\v2\x19.google.protobuf.DurationR\x16closureStabilityWindow\x12I\n" +
-	"\x0eself_heal_hold\x18w \x01(\v2\x19.google.protobuf.DurationB\b\xbaH\x05\xaa\x01\x02*\x00R\fselfHealHold\x12O\n" +
-	"\x16responder_report_grace\x18M \x01(\v2\x19.google.protobuf.DurationR\x14responderReportGrace\x120\n" +
-	"\x11responder_standby\x18N \x01(\bH\x03R\x10responderStandby\x88\x01\x01\x12!\n" +
+	"\x0eself_heal_hold\x18w \x01(\v2\x19.google.protobuf.DurationB\b\xbaH\x05\xaa\x01\x02*\x00R\fselfHealHold\x12!\n" +
 	"\fscript_image\x18O \x01(\tR\vscriptImage\x12R\n" +
 	"\x0fmemory_upstream\x18P \x01(\v2).sdodev.contracts.v1alpha1.MemoryUpstreamR\x0ememoryUpstream\x12F\n" +
-	"\tcode_path\x18d \x01(\v2).sdodev.contracts.v1alpha1.CodePathConfigR\bcodePath\x12#\n" +
-	"\rfrozen_memory\x18n \x01(\bR\ffrozenMemory\x12[\n" +
+	"\tcode_path\x18d \x01(\v2).sdodev.contracts.v1alpha1.CodePathConfigR\bcodePath\x12[\n" +
 	"\x12render_environment\x18q \x01(\v2,.sdodev.contracts.v1alpha1.RenderEnvironmentR\x11renderEnvironment\x12X\n" +
-	"\x11deployment_policy\x18s \x01(\v2+.sdodev.contracts.v1alpha1.DeploymentPolicyR\x10deploymentPolicy\x12-\n" +
-	"\x12external_incidents\x18o \x01(\bR\x11externalIncidents\x12\x1d\n" +
-	"\n" +
-	"watch_only\x18v \x01(\bR\twatchOnly\x12R\n" +
+	"\x11deployment_policy\x18s \x01(\v2+.sdodev.contracts.v1alpha1.DeploymentPolicyR\x10deploymentPolicy\x12R\n" +
 	"\x0fdeploy_identity\x18r \x01(\v2).sdodev.contracts.v1alpha1.DeployIdentityR\x0edeployIdentity\x12<\n" +
-	"\x1atelemetry_environment_file\x18t \x01(\tR\x18telemetryEnvironmentFileB\x14\n" +
-	"\x12_synthetic_trafficB\x1a\n" +
-	"\x18_clean_responder_helpersB\x11\n" +
-	"\x0f_state_baselineB\x14\n" +
-	"\x12_responder_standbyJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x17\x10\x18J\x04\b\x18\x10\x19J\x04\b\x1e\x10\x1fJ\x04\b$\x10%J\x04\b%\x10&J\x04\b&\x10'J\x04\b/\x100J\x04\b0\x101J\x04\b9\x10:J\x04\b:\x10;J\x04\b;\x10<J\x04\b<\x10=J\x04\b=\x10>J\x04\bC\x10DJ\x04\bD\x10EJ\x04\b?\x10@J\x04\b@\x10AJ\x04\bA\x10BJ\x04\bE\x10FJ\x04\bF\x10GJ\x04\bG\x10HJ\x04\bQ\x10RJ\x04\bH\x10IJ\x04\bI\x10JJ\x04\bJ\x10KJ\x04\bp\x10qR\vmemory_hostR\x06brokerR\vbroker_argsR\x0emax_follow_upsR\x12follow_up_cooldownR\x15restart_after_closureR\rprober_binaryR\fprober_imageR\n" +
-	"prober_urlR\x0fvalidator_imageR\x0fschema_identityR\x14drift_sweep_intervalR\x1adrift_investigation_windowR'drift_investigation_dispatches_per_hourR#drift_investigation_tokens_per_hourR\x19drift_dispatches_per_hourR\x15drift_tokens_per_hourR\x17deployed_manifest_pathsR\x14program_min_durationR\vmetrics_urlR\x12metrics_token_fileR\x13metrics_publish_urlR\x17plan_safety_policy_jsonR\x19plan_safety_policy_sha256R\x17plan_source_policy_jsonR\x11deployment_source\"\xfd\x02\n" +
+	"\x1atelemetry_environment_file\x18t \x01(\tR\x18telemetryEnvironmentFile\x12,\n" +
+	"\rsettings_path\x18x \x01(\tB\a\xbaH\x04r\x02\x10\x01R\fsettingsPathJ\x04\b\a\x10\bJ\x04\b\b\x10\tJ\x04\b\t\x10\n" +
+	"J\x04\b\x0f\x10\x10J\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x15\x10\x16J\x04\b\x16\x10\x17J\x04\b\x17\x10\x18J\x04\b\x18\x10\x19J\x04\b\x19\x10\x1aJ\x04\b\x1a\x10\x1bJ\x04\b\x1b\x10\x1cJ\x04\b\x1e\x10\x1fJ\x04\b \x10!J\x04\b!\x10\"J\x04\b\"\x10#J\x04\b#\x10$J\x04\b$\x10%J\x04\b%\x10&J\x04\b&\x10'J\x04\b'\x10(J\x04\b(\x10)J\x04\b/\x100J\x04\b0\x101J\x04\b1\x102J\x04\b2\x103J\x04\be\x10fJ\x04\bu\x10vJ\x04\bf\x10gJ\x04\b4\x105J\x04\b5\x106J\x04\b6\x107J\x04\b7\x108J\x04\b8\x109J\x04\b9\x10:J\x04\b:\x10;J\x04\b;\x10<J\x04\b<\x10=J\x04\b=\x10>J\x04\bC\x10DJ\x04\bD\x10EJ\x04\b>\x10?J\x04\b?\x10@J\x04\b@\x10AJ\x04\bA\x10BJ\x04\bE\x10FJ\x04\bF\x10GJ\x04\bG\x10HJ\x04\bQ\x10RJ\x04\bH\x10IJ\x04\bI\x10JJ\x04\bJ\x10KJ\x04\bM\x10NJ\x04\bN\x10OJ\x04\bn\x10oJ\x04\bo\x10pJ\x04\bv\x10wJ\x04\bp\x10qR\vmemory_hostR\n" +
+	"dispatcherR\x0fdispatcher_modeR\x0fdispatcher_argsR\rresponder_envR\x06brokerR\vbroker_argsR\x10response_timeoutR\x14verification_timeoutR\x0emax_follow_upsR\x12follow_up_cooldownR\rrepair_policyR\n" +
+	"lease_nameR\x0elease_durationR\x15restart_after_closureR\x19maintenance_poll_intervalR\x13resume_sync_timeoutR\x11synthetic_trafficR\x18synthetic_traffic_warmupR\rprober_binaryR\fprober_imageR\n" +
+	"prober_urlR\x17clean_responder_helpersR\x0estate_baselineR\x0fvalidator_imageR\x0fschema_identityR\x11responder_backendR\x0fresponder_modelR\fagent_effortR\x11lifecycle_timeoutR\x06replayR\x12reflection_sessionR\x13reflection_guidanceR\x10healthy_baselineR\x12max_response_loopsR\x12diagnosis_deadlineR\x14drift_sweep_intervalR\x1adrift_investigation_windowR'drift_investigation_dispatches_per_hourR#drift_investigation_tokens_per_hourR\x19drift_dispatches_per_hourR\x15drift_tokens_per_hourR\x10force_reflectionR\x17deployed_manifest_pathsR\x14program_min_durationR\vmetrics_urlR\x12metrics_token_fileR\x13metrics_publish_urlR\x17plan_safety_policy_jsonR\x19plan_safety_policy_sha256R\x17plan_source_policy_jsonR\x16responder_report_graceR\x11responder_standbyR\rfrozen_memoryR\x12external_incidentsR\n" +
+	"watch_onlyR\x11deployment_source\"\xfd\x02\n" +
 	"\x0eDeployIdentity\x12%\n" +
 	"\x0ebuildkit_image\x18\x01 \x01(\tR\rbuildkitImage\x120\n" +
 	"\x14registry_push_secret\x18\x02 \x01(\tR\x12registryPushSecret\x12#\n" +
@@ -1115,32 +817,23 @@ var file_sdodev_contracts_v1alpha1_controller_config_proto_goTypes = []any{
 }
 var file_sdodev_contracts_v1alpha1_controller_config_proto_depIdxs = []int32{
 	5,  // 0: sdodev.contracts.v1alpha1.ControllerConfig.duration:type_name -> google.protobuf.Duration
-	5,  // 1: sdodev.contracts.v1alpha1.ControllerConfig.response_timeout:type_name -> google.protobuf.Duration
-	5,  // 2: sdodev.contracts.v1alpha1.ControllerConfig.verification_timeout:type_name -> google.protobuf.Duration
-	5,  // 3: sdodev.contracts.v1alpha1.ControllerConfig.lease_duration:type_name -> google.protobuf.Duration
-	5,  // 4: sdodev.contracts.v1alpha1.ControllerConfig.maintenance_poll_interval:type_name -> google.protobuf.Duration
-	5,  // 5: sdodev.contracts.v1alpha1.ControllerConfig.resume_sync_timeout:type_name -> google.protobuf.Duration
-	5,  // 6: sdodev.contracts.v1alpha1.ControllerConfig.synthetic_traffic_warmup:type_name -> google.protobuf.Duration
-	5,  // 7: sdodev.contracts.v1alpha1.ControllerConfig.lifecycle_timeout:type_name -> google.protobuf.Duration
-	5,  // 8: sdodev.contracts.v1alpha1.ControllerConfig.diagnosis_deadline:type_name -> google.protobuf.Duration
-	5,  // 9: sdodev.contracts.v1alpha1.ControllerConfig.drift_batch_window:type_name -> google.protobuf.Duration
-	5,  // 10: sdodev.contracts.v1alpha1.ControllerConfig.closure_stability_window:type_name -> google.protobuf.Duration
-	5,  // 11: sdodev.contracts.v1alpha1.ControllerConfig.self_heal_hold:type_name -> google.protobuf.Duration
-	5,  // 12: sdodev.contracts.v1alpha1.ControllerConfig.responder_report_grace:type_name -> google.protobuf.Duration
-	2,  // 13: sdodev.contracts.v1alpha1.ControllerConfig.memory_upstream:type_name -> sdodev.contracts.v1alpha1.MemoryUpstream
-	3,  // 14: sdodev.contracts.v1alpha1.ControllerConfig.code_path:type_name -> sdodev.contracts.v1alpha1.CodePathConfig
-	6,  // 15: sdodev.contracts.v1alpha1.ControllerConfig.render_environment:type_name -> sdodev.contracts.v1alpha1.RenderEnvironment
-	7,  // 16: sdodev.contracts.v1alpha1.ControllerConfig.deployment_policy:type_name -> sdodev.contracts.v1alpha1.DeploymentPolicy
-	1,  // 17: sdodev.contracts.v1alpha1.ControllerConfig.deploy_identity:type_name -> sdodev.contracts.v1alpha1.DeployIdentity
-	5,  // 18: sdodev.contracts.v1alpha1.DeployIdentity.build_timeout:type_name -> google.protobuf.Duration
-	5,  // 19: sdodev.contracts.v1alpha1.DeployIdentity.build_budget:type_name -> google.protobuf.Duration
-	5,  // 20: sdodev.contracts.v1alpha1.DeployIdentity.rollout_timeout:type_name -> google.protobuf.Duration
-	4,  // 21: sdodev.contracts.v1alpha1.CodePathConfig.overrides:type_name -> sdodev.contracts.v1alpha1.CodePathOverrides
-	22, // [22:22] is the sub-list for method output_type
-	22, // [22:22] is the sub-list for method input_type
-	22, // [22:22] is the sub-list for extension type_name
-	22, // [22:22] is the sub-list for extension extendee
-	0,  // [0:22] is the sub-list for field type_name
+	5,  // 1: sdodev.contracts.v1alpha1.ControllerConfig.drift_batch_window:type_name -> google.protobuf.Duration
+	5,  // 2: sdodev.contracts.v1alpha1.ControllerConfig.closure_stability_window:type_name -> google.protobuf.Duration
+	5,  // 3: sdodev.contracts.v1alpha1.ControllerConfig.self_heal_hold:type_name -> google.protobuf.Duration
+	2,  // 4: sdodev.contracts.v1alpha1.ControllerConfig.memory_upstream:type_name -> sdodev.contracts.v1alpha1.MemoryUpstream
+	3,  // 5: sdodev.contracts.v1alpha1.ControllerConfig.code_path:type_name -> sdodev.contracts.v1alpha1.CodePathConfig
+	6,  // 6: sdodev.contracts.v1alpha1.ControllerConfig.render_environment:type_name -> sdodev.contracts.v1alpha1.RenderEnvironment
+	7,  // 7: sdodev.contracts.v1alpha1.ControllerConfig.deployment_policy:type_name -> sdodev.contracts.v1alpha1.DeploymentPolicy
+	1,  // 8: sdodev.contracts.v1alpha1.ControllerConfig.deploy_identity:type_name -> sdodev.contracts.v1alpha1.DeployIdentity
+	5,  // 9: sdodev.contracts.v1alpha1.DeployIdentity.build_timeout:type_name -> google.protobuf.Duration
+	5,  // 10: sdodev.contracts.v1alpha1.DeployIdentity.build_budget:type_name -> google.protobuf.Duration
+	5,  // 11: sdodev.contracts.v1alpha1.DeployIdentity.rollout_timeout:type_name -> google.protobuf.Duration
+	4,  // 12: sdodev.contracts.v1alpha1.CodePathConfig.overrides:type_name -> sdodev.contracts.v1alpha1.CodePathOverrides
+	13, // [13:13] is the sub-list for method output_type
+	13, // [13:13] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_controller_config_proto_init() }
@@ -1149,7 +842,6 @@ func file_sdodev_contracts_v1alpha1_controller_config_proto_init() {
 		return
 	}
 	file_sdodev_contracts_v1alpha1_deployment_source_proto_init()
-	file_sdodev_contracts_v1alpha1_controller_config_proto_msgTypes[0].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

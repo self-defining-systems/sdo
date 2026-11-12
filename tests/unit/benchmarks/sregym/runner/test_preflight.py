@@ -7,7 +7,6 @@ the preflight names it with a remedy, before anything launches.
 from __future__ import annotations
 
 import dataclasses
-import inspect
 import json
 import os
 import subprocess
@@ -18,6 +17,7 @@ import pytest
 import yaml
 from sregym_fake_host import CODEX_PIN, FakeHost
 
+from benchmarks.fuzzops.config import BENCH_PROFILE, resolved
 from benchmarks.sregym.runner.experiment import ExperimentConfig, RunnerEnv, load_experiment_config
 from benchmarks.sregym.runner.preflight import (
     GB,
@@ -36,8 +36,6 @@ from benchmarks.sregym.runner.preflight import (
     read_quota_snapshot,
     run_preflight,
 )
-from sdo.agents.lifecycle.agents import CodexLifecycleBackend
-from sdo.agents.provider import DEFAULT_AGENT_EFFORT
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
 EXPERIMENTS = REPO_ROOT / "benchmarks" / "sregym" / "experiments"
@@ -487,10 +485,10 @@ def test_warn_mode_launches_but_marks_the_report_waived(fake_host: FakeHost, sre
     assert report.to_dict()["waived"] is True
 
 
-def test_policy_effort_is_the_effort_sdo_pins_in_code() -> None:
-    lifecycle_default = inspect.signature(CodexLifecycleBackend.__init__).parameters["reasoning_effort"].default
+def test_policy_effort_is_the_effort_the_benchmark_profile_runs(operator_binary: Path) -> None:
+    configured = resolved([str(operator_binary)], (BENCH_PROFILE,), {}, complete=False)
 
-    assert ModelPolicy().agent_effort == DEFAULT_AGENT_EFFORT == lifecycle_default
+    assert ModelPolicy().agent_effort == configured["agent"]["effort"]
 
 
 def test_settings_reject_nonsense() -> None:
