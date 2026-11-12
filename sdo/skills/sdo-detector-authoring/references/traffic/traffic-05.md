@@ -21,6 +21,10 @@ type Sample struct {
 	// Error explains a failed sample: the transport error, the check's
 	// reason, or a bounded excerpt of the unexpected response body.
 	Error string `json:"error,omitempty"`
+	// Observed is what the other side answered, apart from the probe's own
+	// Error: a bounded, redacted excerpt of the server's response body, or the
+	// transport error cause without the client's method and URL prefix.
+	Observed string `json:"observed,omitempty"`
 	// DialFailed marks a failure that happened while establishing the
 	// connection (DNS or TCP dial), rather than while sending the request,
 	// reading the response, or checking it. A NetworkPolicy or a stopped
@@ -240,7 +244,4 @@ func (w Workload) Validate() error
 func (w Workload) ValidateAgainst(catalog Catalog) error
     ValidateAgainst checks that every scenario the workload names exists in the
     catalog. A health probe may hold only write scenarios.
-
-func (w Workload) WithDefaults() Workload
-    WithDefaults fills unset fields.
 ```
