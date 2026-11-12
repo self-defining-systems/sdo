@@ -21,6 +21,8 @@ func TestAgentEnvironmentNamesMatchTheSharedManifest(t *testing.T) {
 		Provider         string            `json:"provider"`
 		Effort           string            `json:"effort"`
 		Efforts          []string          `json:"efforts"`
+		Summary          string            `json:"reasoning_summary"`
+		Summaries        []string          `json:"reasoning_summaries"`
 		Models           map[string]string `json:"models"`
 		LifecycleTimeout string            `json:"lifecycle_timeout"`
 	}
@@ -33,7 +35,7 @@ func TestAgentEnvironmentNamesMatchTheSharedManifest(t *testing.T) {
 	}
 	slices.Sort(models)
 	goModels := slices.Sorted(slices.Values(ModelEnvironments))
-	if manifest.Provider != ProviderEnvironment || manifest.Effort != EffortEnvironment || manifest.LifecycleTimeout != LifecycleTimeoutEnvironment ||
+	if manifest.Provider != ProviderEnvironment || manifest.Effort != EffortEnvironment || manifest.Summary != ReasoningSummaryEnvironment || !slices.Equal(manifest.Summaries, ReasoningSummaries) || manifest.LifecycleTimeout != LifecycleTimeoutEnvironment ||
 		!slices.Equal(manifest.Efforts, AgentEfforts) || !slices.Equal(models, goModels) {
 		t.Fatalf("agent_env.json %+v differs from the Go worker environment names", manifest)
 	}
@@ -46,7 +48,7 @@ func TestEveryWorkerCarriesTheConfiguredAgentSettings(t *testing.T) {
 	agent.Model = "m"
 	environment := AgentEnvironment(agent)
 	want := map[string]string{
-		ProviderEnvironment: "codex", EffortEnvironment: "medium",
+		ProviderEnvironment: "codex", EffortEnvironment: "medium", ReasoningSummaryEnvironment: "auto",
 		LifecycleTimeoutEnvironment: "900", MemoryCheckTimeoutEnvironment: "300",
 	}
 	for _, name := range ModelEnvironments {

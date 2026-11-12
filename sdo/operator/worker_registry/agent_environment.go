@@ -14,6 +14,12 @@ const ProviderEnvironment = "SDO_AGENT_PROVIDER"
 // names the same set for the Python workers; a test keeps the two equal.
 var ModelEnvironments = []string{"SDO_RESPONDER_MODEL", "SDO_REFLECTION_MODEL", "SDO_LIFECYCLE_MODEL", "SDO_DEPLOYMENT_MODEL"}
 
+// ReasoningSummaryEnvironment names the variable carrying the Codex reasoning summary mode.
+const ReasoningSummaryEnvironment = "SDO_AGENT_REASONING_SUMMARY"
+
+// ReasoningSummaries are the summary modes a worker accepts.
+var ReasoningSummaries = settings.ReasoningSummaries
+
 // EffortEnvironment names the variable that sets the reasoning effort of every
 // agent worker (deployer, health judge, responder, reflection).
 const EffortEnvironment = "SDO_AGENT_EFFORT"
@@ -39,6 +45,7 @@ func AgentEnvironment(agent settings.Agent) map[string]string {
 		environment[name] = agent.Model
 	}
 	environment[EffortEnvironment] = agent.Effort
+	environment[ReasoningSummaryEnvironment] = agent.ReasoningSummary
 	environment[LifecycleTimeoutEnvironment] = wholeSeconds(time.Duration(agent.LifecycleTimeout))
 	environment[MemoryCheckTimeoutEnvironment] = wholeSeconds(time.Duration(agent.MemoryCheckTimeout))
 	return environment

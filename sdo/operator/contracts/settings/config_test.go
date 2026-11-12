@@ -77,14 +77,14 @@ func TestResolveRejectsUnknownKeysAndMistypedEnvironmentNames(t *testing.T) {
 
 func TestEnvironmentNamesAreDerivedFromTheYAMLTags(t *testing.T) {
 	cfg, err := settings.Resolve(nil, []string{
-		"SDO_MODE=watch-only", "SDO_AGENT_PROVIDER=claude", "SDO_AGENT_EFFORT=high",
+		"SDO_MODE=watch-only", "SDO_AGENT_PROVIDER=claude", "SDO_AGENT_EFFORT=high", "SDO_AGENT_REASONING_SUMMARY=concise",
 		"SDO_RESPONSE_STANDBY=false", `SDO_AGENT_EXTRA_ENV=["A=1","B=2"]`,
 		`SDO_DEPLOYMENT_POLICY={"scope_blocking":true}`,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Mode != settings.ModeWatchOnly || cfg.Agent.Provider != "claude" || cfg.Agent.Effort != "high" || cfg.Response.Standby || len(cfg.Agent.ExtraEnv) != 2 || !cfg.Deployment.Policy.ScopeBlocking {
+	if cfg.Mode != settings.ModeWatchOnly || cfg.Agent.Provider != "claude" || cfg.Agent.Effort != "high" || cfg.Agent.ReasoningSummary != "concise" || cfg.Response.Standby || len(cfg.Agent.ExtraEnv) != 2 || !cfg.Deployment.Policy.ScopeBlocking {
 		t.Fatalf("env not applied: %+v", cfg)
 	}
 }
@@ -106,6 +106,7 @@ func TestValidateIsTheOnePlaceValuesAreChecked(t *testing.T) {
 		"mode":                          func(c *settings.Config) { c.Mode = "sideways" },
 		"agent.provider":                func(c *settings.Config) { c.Agent.Provider = "gemini" },
 		"agent.effort":                  func(c *settings.Config) { c.Agent.Effort = "extreme" },
+		"agent.reasoning_summary":       func(c *settings.Config) { c.Agent.ReasoningSummary = "verbose" },
 		"response.timeout":              func(c *settings.Config) { c.Response.Timeout = 0 },
 		"response.verification_timeout": func(c *settings.Config) { c.Response.VerificationTimeout = 0 },
 		"response.max_loops":            func(c *settings.Config) { c.Response.MaxLoops = 0 },
