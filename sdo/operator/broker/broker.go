@@ -415,7 +415,7 @@ func (b *Broker) publishOrStage(ctx context.Context, incidentID string, actor Ac
 			}
 		}
 		// Playbook fault_class and index entries are derived, never rejected.
-		if normalized, err := validate.NormalizeAuthoredPlaybooks(proposal.Path, paths); err != nil {
+		if normalized, err := validate.NormalizeAuthoredPlaybooks(proposal.Path, paths, incidentID); err != nil {
 			return fmt.Errorf("normalize authored playbooks: %w", err)
 		} else if len(normalized) > 0 {
 			if paths, err = validate.ChangedPaths(ctx, proposal.Path, proposal.BaseCommit); err != nil {

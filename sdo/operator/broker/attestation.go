@@ -47,7 +47,7 @@ func (b *Broker) CheckReflection(ctx context.Context, incidentID string, decisio
 		if _, err = validate.NormalizeAuthoredWhitespace(p.Path, paths); err != nil {
 			return err
 		}
-		if _, err = validate.NormalizeAuthoredPlaybooks(p.Path, paths); err != nil {
+		if _, err = validate.NormalizeAuthoredPlaybooks(p.Path, paths, incidentID); err != nil {
 			return err
 		}
 		if _, err = b.normalizeCorpus(p.Path, paths); err != nil {

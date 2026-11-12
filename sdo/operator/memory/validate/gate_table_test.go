@@ -502,7 +502,7 @@ var gateRows = []gateRow{
 	{name: "upstream advance cannot change memory", kind: gateOwnership, actor: Upstream, phase: AdvancePhase, rules: []string{RuleOwnershipDenied}, path: layout.GoalFile,
 		edit: gateWrite(layout.GoalFile, "---\nschema_version: 1\nowner: human\n---\nNew goal\n")},
 	{name: "upkeep stamps the schema alone", kind: gateOwnership, actor: Upkeep, phase: InitialPhase, edit: func(t *testing.T, r string) {
-		write(t, r, layout.SchemaVersionFile, "7\n")
+		write(t, r, layout.SchemaVersionFile, "8\n")
 		write(t, r, layout.DiagnosticsGoModFile, "module m\n")
 	}},
 	{name: "responder cannot edit the goal", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleOwnershipDenied}, path: layout.GoalFile,
@@ -610,7 +610,12 @@ var gateRows = []gateRow{
 	gateReflection("cluster-local value in memory", gateClean(), gateUpdated(), gateTrafficEdit("incident-x", "name: incident-x\nclusterIP: 10.96.0.12\n"), RuleClusterLocal),
 	gateReflection("Secret data in memory", gateClean(), gateUpdated(), gateTrafficEdit("incident-x", "apiVersion: v1\nkind: Secret\nmetadata:\n  name: db\ndata:\n  password: c2VjcmV0\n"), RuleSecretData),
 	gateReflection("credential material in memory", gateClean(), gateUpdated(), gateTrafficEdit("incident-x", "name: incident-x\nnote: key AKIA"+"ABCDEFGHIJKLMNOP\n"), RuleSecretMaterial),
-	gateReflection("reflection without a decision", gateClean(), nil, gatePlaybookEdit, RuleReflectionDecision),
+	// Go derives the decision the agent never needs to get right: a diff that
+	// holds a playbook is an update of exactly that playbook, an empty one is
+	// no_change. An explicit decision that contradicts the diff still blocks.
+	gateReflection("reflection without a decision derives an update from the diff", gateClean(), nil, gatePlaybookEdit),
+	gateReflection("reflection without a decision and an empty diff derives no_change", gateClean(), nil, func(*testing.T, string) {}),
+	gateReflection("reflection whose explicit decision contradicts the diff", gateClean(), gateNoChange, gatePlaybookEdit, RuleReflectionDecision),
 	gateReflection("reflection updates a playbook", gateClean(), gateUpdated("base"), gatePlaybookEdit),
 	gateWithRepairVerifier("README-only learning without a verified repaired cause", false, gateReflection("unverified closure updates a playbook", gateClean(), gateUpdated("base"), gatePlaybookEdit, RuleReflectionRepairRequired)),
 	gateWithRepairVerifier("no_change without a verified repaired cause", false, gateReflection("unverified closure declines", gateClean(), gateNoChange, func(*testing.T, string) {})),

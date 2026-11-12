@@ -12,11 +12,19 @@ import (
 
 var faultClassLine = regexp.MustCompile(`(?m)^fault_class:.*$`)
 
+// frontMatterKey matches an existing top-level key of a README's front matter.
+func frontMatterKey(front, key string) bool {
+	return regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(key) + `:`).MatchString(front)
+}
+
 // NormalizeAuthoredPlaybooks derives what an author never needs to get right:
-// each changed playbook's fault_class comes from its ID, and a change below the
-// playbooks directory regenerates the playbook index, dropping any edit to it.
-// Like whitespace, it is fixed, never rejected. It returns the paths it rewrote.
-func NormalizeAuthoredPlaybooks(root string, paths []string) ([]string, error) {
+// each changed playbook's fault_class comes from its ID, its schema stamp,
+// owner and originating incident are filled in when absent (incidentID empty
+// invents no incident), and a change below the playbooks directory regenerates
+// the playbook index, dropping any edit to it. Like whitespace, it is fixed,
+// never rejected, and a value the README already holds is never overwritten.
+// It returns the paths it rewrote.
+func NormalizeAuthoredPlaybooks(root string, paths []string, incidentID string) ([]string, error) {
 	var changed []string
 	touched := false
 	for _, path := range paths {
@@ -33,20 +41,28 @@ func NormalizeAuthoredPlaybooks(root string, paths []string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		doc, err := layout.ParseDocument(data)
-		if err != nil {
+		front, rest, found := strings.Cut(strings.TrimPrefix(string(data), "---\n"), "---\n")
+		if !strings.HasPrefix(string(data), "---\n") || !found {
 			continue
 		}
-		fault := layout.PlaybookFaultClass(id)
-		if doc.Meta["fault_class"] != fault {
-			front, rest, _ := strings.Cut(strings.TrimPrefix(doc.Source, "---\n"), "---\n")
-			line := "fault_class: " + fault
-			if faultClassLine.MatchString(front) {
-				front = faultClassLine.ReplaceAllLiteralString(front, line)
-			} else {
-				front += line + "\n"
+		for _, stamp := range []struct{ key, line string }{
+			{"schema_version", "schema_version: 1"},
+			{"owner", "owner: responder"},
+			{"originating_incident", "originating_incident: " + incidentID},
+		} {
+			if !frontMatterKey(front, stamp.key) && (stamp.key != "originating_incident" || incidentID != "") {
+				front += stamp.line + "\n"
 			}
-			if err := safefs.WriteFile(root, path, []byte("---\n"+front+"---\n"+rest), 0o644); err != nil {
+		}
+		fault := layout.PlaybookFaultClass(id)
+		line := "fault_class: " + fault
+		if faultClassLine.MatchString(front) {
+			front = faultClassLine.ReplaceAllLiteralString(front, line)
+		} else {
+			front += line + "\n"
+		}
+		if updated := "---\n" + front + "---\n" + rest; updated != string(data) {
+			if err := safefs.WriteFile(root, path, []byte(updated), 0o644); err != nil {
 				return nil, err
 			}
 			changed = append(changed, path)

@@ -69,7 +69,7 @@ def test_native_host_requires_explicit_kind_lane(monkeypatch: pytest.MonkeyPatch
         )
 
 
-@pytest.mark.parametrize(("schema_version", "provenance"), [(1, True), (7, True), (7, False)])
+@pytest.mark.parametrize(("schema_version", "provenance"), [(1, True), (8, True), (8, False)])
 def test_seeded_workspace_installs_controller_without_running_the_lifecycle(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, schema_version: int, provenance: bool
 ) -> None:
@@ -130,7 +130,7 @@ def test_native_seed_requires_complete_lifecycle_artifacts(tmp_path: Path, missi
     detector = sdo / "diagnostics/detectors/health/example"
     detector.mkdir(parents=True)
     (detector / "manifest.yaml").write_text("id: example\n", encoding="utf-8")
-    for name, body in {"schema-version": "7\n", "goal.md": "Healthy\n", "arch.md": "Synthetic\n"}.items():
+    for name, body in {"schema-version": "8\n", "goal.md": "Healthy\n", "arch.md": "Synthetic\n"}.items():
         if name != missing:
             (sdo / name).write_text(body, encoding="utf-8")
     assert driver._has_accepted_lifecycle(tmp_path) is False
@@ -169,7 +169,7 @@ def test_scripts_override_requires_accepted_lifecycle_before_cluster_access(
         )
 
 
-@pytest.mark.parametrize("schema_version", [1, 7])
+@pytest.mark.parametrize("schema_version", [1, 8])
 def test_seeded_workspace_publishes_scripts_registrations(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, schema_version: int
 ) -> None:
