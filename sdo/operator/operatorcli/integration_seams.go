@@ -6,9 +6,6 @@ package operatorcli
 // (the root module must not require runtime: runtime requires the root).
 // Production code does not use these names; each is the production value.
 
-// AdvanceMaintenance is the advance's maintenance pause.
-type AdvanceMaintenance = advanceMaintenance
-
 // LifecycleRegistry builds the operate Job's worker registry.
 var LifecycleRegistry = lifecycleRegistry
 

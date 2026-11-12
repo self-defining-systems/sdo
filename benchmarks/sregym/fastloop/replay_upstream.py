@@ -111,6 +111,8 @@ def _not_sdo(path: str) -> bool:
 class _Scratch:
     def __init__(self, config: ReplayConfig, git: GitRunner, directory: Path) -> None:
         self.config, self._git, self.dir = config, git, directory
+        #: Commit messages for steps that have no upstream commit to read one from (a patch file).
+        self.messages: dict[str, str] = {}
         self.env = {
             "GIT_AUTHOR_NAME": config.author_name,
             "GIT_AUTHOR_EMAIL": config.author_email,
@@ -139,6 +141,8 @@ class _Scratch:
         self.git("clean", "-fdq")
 
     def message(self, commit: str) -> bytes:
+        if commit in self.messages:
+            return f"{self.messages[commit]}\n\n{TRAILER}: {commit}\n".encode()
         body = self.text("log", "-1", "--format=%B", commit)
         return f"{body}\n\n{TRAILER}: {commit}\n".encode()
 
@@ -233,3 +237,46 @@ def _replay_one(scratch: _Scratch, prev: str, commit: str) -> ReplayRecord:
         if outcome != "raced":
             return ReplayRecord(commit, outcome, pushed_sha=sha, attempts=attempt)
     raise ReplayError(f"push of {commit} lost the race {config.max_push_retries} times")
+
+
+def replay_patch(
+    branch_remote: str,
+    branch: str,
+    patch: Path,
+    *,
+    label: str,
+    message: str = "",
+    git: GitRunner = run_git,
+    max_push_retries: int = 5,
+) -> ReplayRecord:
+    """Push one scripted change, a patch file, to ``branch`` the way an engineer would.
+
+    The patch is applied three-way onto the branch's current head, excluding ``.sdo/``, committed as
+    ``bench-replayer`` with a ``Replayed-From: <label>`` trailer and pushed without force; a lost push race
+    refetches and re-applies. A patch that does not apply is a ``conflict`` record, nothing is pushed.
+    """
+    config = ReplayConfig(
+        branch_remote=branch_remote,
+        branch=branch,
+        upstream_repo=branch_remote,
+        commits=(label,),
+        mode="tree",
+        max_push_retries=max_push_retries,
+    )
+    data = Path(patch).read_bytes()
+    with tempfile.TemporaryDirectory(prefix="replay-patch-") as tmp:
+        scratch = _Scratch(config, git, Path(tmp))
+        scratch.messages[label] = message or label
+        scratch.setup()
+        for attempt in range(1, max_push_retries + 1):
+            scratch.sync_head()
+            applied = scratch.git("apply", "-3", "--index", f"--exclude={SDO_DIR}/*", stdin=data, ok=True)
+            if applied.returncode != 0:
+                unmerged = scratch.git("diff", "--name-only", "--diff-filter=U", ok=True).stdout.decode().split("\n")
+                paths = tuple(p for p in unmerged if p)
+                scratch.git("reset", "-q", "--hard", "HEAD")
+                return ReplayRecord(label, "conflict", paths, attempts=attempt)
+            outcome, sha = scratch.commit_and_push(label)
+            if outcome != "raced":
+                return ReplayRecord(label, outcome, pushed_sha=sha, attempts=attempt)
+    raise ReplayError(f"push of {label} lost the race {max_push_retries} times")

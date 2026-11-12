@@ -7,14 +7,12 @@ import hashlib
 import io
 import json
 import tarfile
-from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
 import yaml
 
 from apps.gitlab import assemble
-from benchmarks.sregym.fastloop import gitlab_lane
 from benchmarks.sregym.fastloop.gitlab_releases import RELEASES_PATH, load_releases, parse_releases
 from tests.unit.apps.test_gitlab_workspace import FILES
 
@@ -125,23 +123,6 @@ def test_bump_dependency_is_idempotent_and_refuses_an_unknown_dependency(tmp_pat
     assert "name: postgresql\n    version: 0.1.0" in chart_yaml.read_text()
     with pytest.raises(ValueError, match="nope"):
         assemble.bump_dependency(chart_yaml, "nope", "1.0.0")
-
-
-def test_the_lane_installs_sdo_following_its_own_upstream(tmp_path: Path) -> None:
-    environment = SimpleNamespace(
-        workspace=tmp_path,
-        namespace=gitlab_lane.NAMESPACE,
-        application=gitlab_lane.APPLICATION,
-        images=SimpleNamespace(controller="controller:x", responder="responder:x"),
-        cluster="fastloop-w0",
-        evidence_root=None,
-    )
-    config = gitlab_lane.lane_runtime_config(environment, {"plan": 1})
-    assert config.source_kind == "git"
-    source = json.loads(config.source_config)
-    assert source["repository"] == gitlab_lane.lane_upstream(environment).cluster_url
-    assert source["repository"].startswith("git://toy-upstream.gitlab-upstream.svc.cluster.local:")
-    assert source["ref"] == "main"
 
 
 def test_up_takes_the_release_the_lane_starts_at() -> None:

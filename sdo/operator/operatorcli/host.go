@@ -51,8 +51,8 @@ func ParseHostLaunchEnv(args []string, environ []string) (HostConfig, error) {
 	objective := flags.String("health-objective", "", "human health objective")
 	flags.StringVar(objective, "goal", "", "human health objective")
 	goalFile := flags.String("goal-file", "", "file containing human health objective")
-	sourceKind := flags.String("source-kind", "", "upstream watcher kind to follow (published as .sdo/goal/sources.yaml)")
-	sourceConfig := flags.String("source-config", "", "JSON config of the followed upstream")
+	sourceBranchURL := flags.String("source-branch-url", "", "Git remote of the one branch SDO commits to and deploys from (source.branch); engineers and the benchmark replayer push to it")
+	sourceBranch := flags.String("source-branch", "", "name of that branch (never main or master)")
 	deploymentPlan := flags.String("deployment-plan", "", "provided DeploymentPlan as ProtoJSON (source, image sources, expected workload IDs): the deployer agent is skipped and the plan is deployed as given")
 	var configFiles repeatable
 	flags.Var(&configFiles, "config", "operator configuration YAML (repeatable; later files override earlier ones; see docs/config.md)")
@@ -140,13 +140,6 @@ func ParseHostLaunchEnv(args []string, environ []string) (HostConfig, error) {
 			return HostConfig{}, err
 		}
 	}
-	sources, err := parseSourceFlags(*sourceKind, *sourceConfig)
-	if err != nil {
-		return HostConfig{}, err
-	}
-	if len(sources) > 0 && strings.TrimSpace(*objective) == "" {
-		return HostConfig{}, errors.New("a followed source is published with the human goal and requires a health objective")
-	}
 	providedPlan, err := rendered.ParseDeploymentPlan(*deploymentPlan)
 	if err != nil {
 		return HostConfig{}, err
@@ -160,7 +153,7 @@ func ParseHostLaunchEnv(args []string, environ []string) (HostConfig, error) {
 		controlForTelemetry = *namespace
 	}
 	config := install.Config{
-		SourceKind: *sourceKind, SourceConfig: *sourceConfig, DeploymentPlan: compactPlan,
+		DeploymentPlan:     compactPlan,
 		ObservationCeiling: ceiling,
 		Namespace:          *namespace, ControlNamespace: *control, Application: *application,
 		ControllerImage: *controllerImage, ResponderImage: *responderImage,
@@ -171,6 +164,7 @@ func ParseHostLaunchEnv(args []string, environ []string) (HostConfig, error) {
 		ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,
 		NativeCommand:         []string{"/usr/local/bin/sdo-operator"},
 		RegistrationConfigMap: *registrationConfigMap,
+		MemoryUpstreamURL:     *sourceBranchURL, MemoryUpstreamBranch: *sourceBranch,
 	}
 	if err := applySettings(&config, resolved, controlForTelemetry); err != nil {
 		return HostConfig{}, err

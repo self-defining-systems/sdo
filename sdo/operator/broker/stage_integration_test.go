@@ -343,31 +343,6 @@ func TestRejectedCandidateLeavesHeadAndCheckoutIntact(t *testing.T) {
 	}
 }
 
-// An upstream advance is accepted only through PublishAdvance: staging it is
-// refused by the shared check and leaves the advance proposal publishable.
-func TestStagingAnAdvanceIsRefused(t *testing.T) {
-	w := newOnboardedWorld(t, false)
-	ctx := context.Background()
-	before := w.head(t)
-	upstream := w.push(t, w.seed, map[string]*string{"new.txt": text("added upstream\n")})
-	if _, _, _, err := w.broker.ProposeAdvance(ctx, "advance-1", w.seed, upstream); err != nil {
-		t.Fatal(err)
-	}
-	_, err := w.broker.StageCandidate(ctx, "advance-1", UpstreamActor, AdvancePhase)
-	diagnostics, typed := RejectionDiagnostics(err)
-	if !typed || !slices.ContainsFunc(diagnostics, func(d *contracts.MemoryDiagnostic) bool { return d.GetRule() == "lifecycle.verified-source" }) {
-		t.Fatalf("staging an advance = %v", err)
-	}
-	requireHead(t, w, before, "staged advance")
-	proposal, err := w.broker.ProposalInfo("advance-1", AdvancePhase)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := publishAdvance(ctx, w.broker, "advance-1", upstream, w.seed, advanceEvidence(t, proposal.Path, "advance-1")); err != nil {
-		t.Fatalf("advance after a refused stage: %v", err)
-	}
-}
-
 // With a memory remote, Accept replicates the candidate; a peer publication
 // that won the race makes the candidate stale instead of being overwritten.
 func TestAcceptReplicatesAndRefusesWhenTheMemoryRemoteMoved(t *testing.T) {

@@ -31,7 +31,7 @@ from benchmarks.sregym.fastloop.accepted_source import AcceptedSource
 from benchmarks.sregym.fastloop.dev import EVIDENCE_NODE_ROOT
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment, Images
 from benchmarks.sregym.fastloop.host_limits import HostLimits, NodeLimits, apply_node_limits
-from benchmarks.sregym.fastloop.toy_upstream import UpstreamLayout, serve_upstream, source_config
+from benchmarks.sregym.fastloop.toy_upstream import UpstreamLayout, serve_upstream
 from benchmarks.sregym.repository_git import host_git_command
 
 logger = logging.getLogger(__name__)
@@ -527,10 +527,8 @@ def install_controller(
             deployment_source=raw_source(("kubernetes",)) if variant == "raw" else None,
             deployment_plan=provided_deployment_plan(variant, environment.namespace, environment.workspace),
             deployment_policy=deployment_policy(variant, environment.namespace),
-            source_kind="git" if variant in PROVIDED_VARIANTS else "",
-            source_config=json.dumps(source_config(UpstreamLayout(environment.namespace)))
-            if variant in PROVIDED_VARIANTS
-            else "",
+            source_branch_url=UpstreamLayout(environment.namespace).cluster_url if variant in PROVIDED_VARIANTS else "",
+            source_branch=UpstreamLayout(environment.namespace).ref if variant in PROVIDED_VARIANTS else "",
             agent_registrations=registrations.resolve() if registrations else None,
             evidence_sink_host_path=EVIDENCE_NODE_ROOT if environment.evidence_root is not None else "",
         )

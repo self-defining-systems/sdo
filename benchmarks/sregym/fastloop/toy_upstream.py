@@ -1,9 +1,9 @@
 """Toy upstream for the e2e lane: an in-cluster Git server and a replayer that pushes scripted commits.
 
-SDO follows a Git ref (``--source-kind git``). The benchmark owns the remote: a ``git daemon`` Deployment in
+The benchmark owns a Git remote that stands in for engineers pushing code: a ``git daemon`` Deployment in
 ``<lane>-upstream`` (the controller image carries git), seeded with the workspace's source commit, and a replayer
 that applies ``apps/toy/commits/<name>.patch`` on a host clone and pushes it to the followed ref. Nothing here
-imports SDO production code; the only coupling is the Git ref and the ``--source-*`` flag values.
+imports SDO production code; the only coupling is the Git branch SDO commits to and deploys from (``source.branch``).
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter import WaitKind, wait_for
+from benchmarks.sregym.fastloop.replay_upstream import ReplayError, replay_patch, run_git
 from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
@@ -47,7 +48,7 @@ class UpstreamLayout:
     """Where the toy's Git remote lives for one lane."""
 
     lane_namespace: str
-    ref: str = "main"
+    ref: str = "sdo-source"
     poll_interval: str = "5s"
 
     def __post_init__(self) -> None:
@@ -68,7 +69,7 @@ class UpstreamLayout:
         return f"git://{SERVICE}.{self.namespace}.svc.cluster.local:{GIT_PORT}/{REPOSITORY}"
 
 
-def daemon_script(base_path: str = BASE_PATH, *, port: int = GIT_PORT, ref: str = "main") -> str:
+def daemon_script(base_path: str = BASE_PATH, *, port: int = GIT_PORT, ref: str = "sdo-source") -> str:
     """Shell run by the server container: create the bare repo once, then serve it with push enabled."""
     repo = f"{base_path}/{REPOSITORY}"
     return (
@@ -121,16 +122,6 @@ def upstream_manifests(layout: UpstreamLayout, image: str) -> list[dict[str, Any
             "spec": {"selector": labels, "ports": [{"name": "git", "port": GIT_PORT, "targetPort": GIT_PORT}]},
         },
     ]
-
-
-def source_config(layout: UpstreamLayout) -> dict[str, Any]:
-    """The ``GitPollConfig`` (proto JSON) the controller follows."""
-    return {"repository": layout.cluster_url, "ref": layout.ref, "poll_interval": layout.poll_interval}
-
-
-def source_args(layout: UpstreamLayout) -> list[str]:
-    """Controller install flags that make SDO follow this upstream."""
-    return ["--source-kind", "git", "--source-config", json.dumps(source_config(layout), sort_keys=True)]
 
 
 def available_commits(directory: Path = COMMITS_DIR) -> tuple[str, ...]:
@@ -196,17 +187,25 @@ def push_change(
 
 
 def replay_commit(name: str, remote: str, layout: UpstreamLayout, *, directory: Path = COMMITS_DIR) -> str:
-    """Apply ``<name>.patch`` on a fresh clone of the followed ref and push it (fast-forward only).
+    """Replay ``<name>.patch`` onto the lane's SDO branch as an engineer would (``replay_upstream.replay_patch``).
 
-    Returns the pushed commit SHA. A patch that does not apply, or a push the remote rejects, raises
-    ``UpstreamError`` and changes nothing upstream.
+    Returns the pushed commit SHA. A patch that does not apply, or a push that keeps losing the race, raises
+    ``UpstreamError`` and changes nothing on the branch.
     """
     patch = patch_path(name, directory)
+    try:
+        record = replay_patch(remote, layout.ref, patch, label=f"toy upstream: {name}", git=_replay_git)
+    except ReplayError as exc:
+        raise UpstreamError(str(exc)) from exc
+    if record.status == "conflict":
+        raise UpstreamError(f"{name}.patch conflicts with the branch on {', '.join(record.paths)}")
+    if record.status != "pushed":
+        raise UpstreamError(f"{name}.patch changed nothing on {layout.ref}")
+    return record.pushed_sha
 
-    def apply(clone: Path) -> None:
-        _git(clone, "apply", "--index", str(patch.resolve()))
 
-    return push_change(remote, layout, f"toy upstream: {name}", apply)
+def _replay_git(args, cwd=None, stdin=None, env=None):  # type: ignore[no-untyped-def]
+    return run_git(args, cwd, stdin, {**_GIT_ENV, **(env or {})})
 
 
 def _environment() -> dict[str, str]:
@@ -312,7 +311,7 @@ def add_toy_parser(commands: Any) -> None:
     def shared(parser: Any, *, remote: bool) -> None:
         parser.add_argument("--run-dir", type=Path, help="fastloop lane directory (lane namespace and kubeconfig)")
         parser.add_argument("--lane-namespace", help="lane namespace when no --run-dir is given")
-        parser.add_argument("--ref", default="main", help="followed branch")
+        parser.add_argument("--ref", default="sdo-source", help="followed branch")
         parser.add_argument("--poll-interval", default="5s")
         if remote:
             parser.add_argument("--remote", help="push to this Git URL instead of port-forwarding the lane's server")
@@ -333,10 +332,6 @@ def add_toy_parser(commands: Any) -> None:
     scenario.add_argument("--verdict-seconds", type=float, help="how long SDO has to accept or hold the commit")
     scenario.add_argument("--steady-seconds", type=float, help="quiet window after the verdict")
     scenario.set_defaults(handler=_scenario)
-
-    args = actions.add_parser("source-args", help="print the controller flags that follow this upstream")
-    shared(args, remote=False)
-    args.set_defaults(handler=_source_args)
 
 
 def _lane(args: Any) -> tuple[UpstreamLayout, Any]:
@@ -378,12 +373,6 @@ def _push(args: Any) -> int:
     else:
         raise SystemExit("push needs --remote or --run-dir")
     print(json.dumps({"commit": args.commit, "pushed": sha, "ref": layout.ref}, sort_keys=True))
-    return 0
-
-
-def _source_args(args: Any) -> int:
-    layout, _ = _lane(args)
-    print(json.dumps(source_args(layout)))
     return 0
 
 

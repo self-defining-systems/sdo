@@ -29,7 +29,7 @@ from benchmarks.sregym.adapter import (
     wait_for,
 )
 from benchmarks.sregym.fastloop.gitlab_releases import load_releases
-from benchmarks.sregym.fastloop.toy_upstream import UpstreamLayout, serve_upstream, source_config
+from benchmarks.sregym.fastloop.toy_upstream import UpstreamLayout, serve_upstream
 from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
@@ -205,7 +205,7 @@ def lane_upstream(environment: Any) -> UpstreamLayout:
 def lane_runtime_config(environment: Any, plan: dict[str, Any], *, registrations: Path | None = None) -> Any:
     """The controller install for the lane: the provided plan, no manifest paths, persistent, recorded actions.
 
-    SDO follows the lane's upstream (``--source-kind git``) so a pushed release advances the accepted source.
+    The lane's upstream is a remote engineers push to; SDO deploys the branch heads it syncs from its memory remote.
     """
     from benchmarks.sregym.adapter import RuntimeConfig
     from benchmarks.sregym.fastloop.dev import EVIDENCE_NODE_ROOT
@@ -226,8 +226,8 @@ def lane_runtime_config(environment: Any, plan: dict[str, Any], *, registrations
         deployment_source=deployment_source(),
         deployment_plan=plan,
         deployment_policy=deployment_policy(),
-        source_kind="git",
-        source_config=json.dumps(source_config(lane_upstream(environment))),
+        source_branch_url=lane_upstream(environment).cluster_url,
+        source_branch=lane_upstream(environment).ref,
         agent_registrations=registrations.resolve() if registrations else None,
         evidence_sink_host_path=EVIDENCE_NODE_ROOT if environment.evidence_root is not None else "",
     )

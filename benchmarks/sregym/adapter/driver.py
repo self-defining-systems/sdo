@@ -816,8 +816,8 @@ def _launch_native_lifecycle(
         max_attempts=args.max_deployment_attempts,
         agent_registrations=Path(args.agent_registrations).resolve() if args.agent_registrations else None,
         deployment_plan=getattr(args, "deployment_plan", None),
-        source_kind=getattr(args, "source_kind", ""),
-        source_config=getattr(args, "source_config", ""),
+        source_branch_url=getattr(args, "source_branch_url", ""),
+        source_branch=getattr(args, "source_branch", ""),
     )
     return launch_host(host)
 
@@ -832,8 +832,8 @@ def launch_native_lifecycle(config: RuntimeConfig, health_objective: str, api_ba
         max_deployment_attempts=config.max_deployment_attempts,
         agent_registrations=config.agent_registrations,
         deployment_plan=config.deployment_plan,
-        source_kind=config.source_kind,
-        source_config=config.source_config,
+        source_branch_url=config.source_branch_url,
+        source_branch=config.source_branch,
     )
     return _launch_native_lifecycle(
         args,

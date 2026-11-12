@@ -429,7 +429,7 @@ def _seeded_remote(tmp_path: Path) -> tuple[str, UpstreamLayout]:
     remote = tmp_path / "remote.git"
     _git("init", "--bare", "-q", "-b", "main", str(remote))
     _git("-C", str(workspace), "push", "-q", str(remote), "HEAD:refs/heads/main")
-    return str(remote), UpstreamLayout("gitlab")
+    return str(remote), UpstreamLayout("gitlab", ref="main")
 
 
 def test_push_release_replaces_the_vendored_chart_and_bumps_the_dependency(tmp_path: Path) -> None:
@@ -472,7 +472,7 @@ def test_push_release_refuses_a_remote_that_is_not_a_gitlab_lane_and_changes_not
     before = _git("--git-dir", str(remote), "rev-parse", "main")
     archive = _archive(tmp_path, "10.5.0")
     with pytest.raises(UpstreamError, match="is this a gitlab lane"):
-        gr.push_release(_release(archive, "10.5.0"), archive, str(remote), UpstreamLayout("gitlab"))
+        gr.push_release(_release(archive, "10.5.0"), archive, str(remote), UpstreamLayout("gitlab", ref="main"))
     assert _git("--git-dir", str(remote), "rev-parse", "main") == before
 
 

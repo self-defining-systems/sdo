@@ -89,7 +89,7 @@ func TestEveryVerifyCandidatePathAppliesTelemetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if coordinators < 2 || others < 2 {
+	if coordinators < 2 || others < 1 {
 		t.Fatalf("saw %d coordinators and %d advancer/repair verifiers; the walk is not seeing production code", coordinators, others)
 	}
 }

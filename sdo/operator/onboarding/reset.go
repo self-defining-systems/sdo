@@ -10,8 +10,12 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-	"sdo.dev/operator/upstream"
 )
+
+// HeadHoldConfigMapName is the control-namespace ConfigMap that holds the one
+// branch head the cluster refused (the runtime writes it). The two upstream
+// names that follow it are left by earlier versions and are retired with it.
+const HeadHoldConfigMapName = "sdo-head-hold"
 
 // ResetControlState retires namespace-lifetime onboarding authority before a
 // from-scratch reinstall. The caller must stop the controller and its workers
@@ -22,7 +26,7 @@ func ResetControlState(ctx context.Context, client kubernetes.Interface, control
 		return deleted, fmt.Errorf("reset control state requires an explicit control namespace")
 	}
 	var records []*corev1.ConfigMap
-	for _, name := range []string{ConfigMapName, PendingConfigMapName, AttemptConfigMapName, WindowConfigMapName, RejectedConfigMapName, "sdo-controller-state", "sdo-controller-maintenance", "sdo-controller-maintenance-ack", upstream.HoldsConfigMapName, upstream.ObligationsConfigMapName} {
+	for _, name := range []string{ConfigMapName, PendingConfigMapName, AttemptConfigMapName, WindowConfigMapName, RejectedConfigMapName, "sdo-controller-state", "sdo-controller-maintenance", "sdo-controller-maintenance-ack", HeadHoldConfigMapName, "sdo-upstream-holds", "sdo-upstream-obligations"} {
 		cm, err := client.CoreV1().ConfigMaps(control).Get(ctx, name, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
 			continue
