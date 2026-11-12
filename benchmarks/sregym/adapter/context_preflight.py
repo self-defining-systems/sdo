@@ -14,11 +14,11 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 from sdo.agents.responder import (
+    closing_prompt,
     command_surface,
     print_tool_response,
     render_incident_prompt,
 )
-from sdo.agents.responder.reflection import closing_prompt
 from sdo.agents.session_context import measure_session
 from sdo.contracts import IncidentRequest, OperationalMemorySnapshot
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 import pytest
 
 from sdo.agents.context_output import budget_for

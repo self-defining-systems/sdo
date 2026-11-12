@@ -191,9 +191,7 @@ jobs:
       - name: Slow Python suites moved out of pull-request CI
         run: |
           uv run pytest -n 2 --durations=30 \
-            tests/unit/benchmarks/sregym/fastloop/test_recorded_reflection_stage.py \
             tests/unit/benchmarks/sregym/fastloop/test_generated_worker_contract.py \
-            tests/unit/sdo/agents/responder/test_reflection_final_check.py \
             tests/unit/benchmarks/sregym/assurance/test_script_execution.py \
             tests/unit/benchmarks/sregym/fastloop/test_sdo3_s3a_contracts.py \
             tests/unit/benchmarks/sregym/fastloop/test_fastloop_fault_tracker.py \
@@ -227,7 +225,6 @@ jobs:
           SDO_PROPERTY_FULL: "1"
         run: |
           uv run pytest -n 2 \
-            "tests/unit/sdo/agents/responder/test_recorded_actions.py::test_arbitrary_command_text_round_trips_through_the_recorded_receipts" \
             "tests/unit/benchmarks/sregym/fastloop/test_runtime_fault_probes.py::test_private_transport_errors_are_sanitized_for_every_operation"
       - name: Quarantined Python tests (pull requests skip them; see .github/ci_quarantine.json)
         run: |

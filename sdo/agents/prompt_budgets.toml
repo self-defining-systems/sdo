@@ -96,6 +96,10 @@ reason = "Baseline synthetic fixture maximum: 187 Unicode code points; byte-iden
 max_chars = 200
 reason = "Baseline synthetic fixture maximum: 175 Unicode code points; byte-identical template extraction."
 
+[skills.playbook-writing]
+max_chars = 200
+reason = "Baseline synthetic fixture maximum: 191 Unicode code points; byte-identical template extraction."
+
 [skills.sdo-playbook-authoring]
 max_chars = 200
 reason = "Baseline synthetic fixture maximum: 191 Unicode code points; byte-identical template extraction."
@@ -401,8 +405,8 @@ max_chars = 1700
 reason = "Go renders the incident's recorded changes, ranked and cut to 1.5 KB, with a count of lines left out. A non-restore change is never dropped for a restore."
 
 [reflection.leftovers]
-max_chars = 1200
-reason = "At most 20 uncaptured app paths, one per line, with a count of the rest."
+max_chars = 800
+reason = "At most 12 uncaptured app paths, one per line, with a count of the rest."
 
 [template_data.responder-scriptify-incident_id]
 max_chars = 256

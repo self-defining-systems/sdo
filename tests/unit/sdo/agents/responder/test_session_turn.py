@@ -91,7 +91,8 @@ def test_responder_and_closing_turns_send_the_same_schema_and_no_mcp_server(
 
     assert responder.schemas == reflection.schemas
     assert json.loads(responder.schemas[0]) == session_output_schema()
-    assert responder.servers == [{}] and reflection.servers == [{}]
+    assert responder.servers == [{}]
+    assert reflection.servers == [{}]
 
 
 def test_session_schema_is_a_strict_wrapper_of_both_turn_results() -> None:

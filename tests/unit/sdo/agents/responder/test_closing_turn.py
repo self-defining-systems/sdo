@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from google.protobuf import json_format
@@ -35,6 +34,7 @@ from tests.structured_turns import ScriptedAgent, failure, reply
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from agentshim import CommandRequest
     from agentshim.testing import FakeRun
@@ -153,7 +153,9 @@ def test_the_cleanup_turn_resumes_the_same_session_with_the_leftovers_and_no_out
     assert result.status == "completed"
     assert list(agent.requests[0].argv)[1:4] == ["exec", "resume", RESPONDER_SESSION]
     (prompt,) = agent.prompts
-    assert "app/main.go" in prompt and "app/debug.txt" in prompt and "Cleanup turn 2" in prompt
+    assert "app/main.go" in prompt
+    assert "app/debug.txt" in prompt
+    assert "Cleanup turn 2" in prompt
     decision = ReflectionResult()
     assert result.response.Unpack(decision)
     assert decision.learning_decision == "no_change"

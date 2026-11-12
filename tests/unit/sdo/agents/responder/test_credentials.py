@@ -93,7 +93,7 @@ def test_no_skills_leaves_the_home_without_a_skills_directory(tmp_path: Path) ->
     ("agent", "skills"),
     [
         ("responder", {"incident-response", "sdo-operating", "sdo-patching"}),
-        ("reflector", {"sdo-memory", "sdo-detector-authoring", "sdo-playbook-authoring", "sdo-operationalize"}),
+        ("reflector", {"playbook-writing"}),
         ("health-judge", {"sdo-memory", "sdo-detector-authoring", "sdo-playbook-authoring", "sdo-operationalize"}),
         ("source_deployment", {"sdo-memory", "sdo-deploy", "sdo-patching"}),
     ],

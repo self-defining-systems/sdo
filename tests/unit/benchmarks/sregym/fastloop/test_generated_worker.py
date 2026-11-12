@@ -21,8 +21,7 @@ from sdo.contracts import (
 from sdo.contracts.proto import parse_json, to_canonical_json
 from tests.proto_messages import evolve, from_dict
 from tests.unit.benchmarks.sregym.fastloop import script_harness as scripts
-from tests.unit.sdo.agents.responder.reflection_fixtures import _outcome
-from tests.unit.sdo.agents.responder.reflection_fixtures import _closure
+from tests.unit.sdo.agents.responder.reflection_fixtures import _closure, _outcome
 
 FIXTURES = Path(__file__).resolve().parents[4] / "fixtures" / "sdo" / "contracts"
 ROOT = Path(__file__).resolve().parents[5]

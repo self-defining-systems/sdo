@@ -22,7 +22,6 @@ production validation contract and is unchanged.
 | Testing guide and fastloop README | Document stage replay and checkpoints | Replace alternate agents/cache fallback with script export/conversion and explicit missing-turn failure. |
 | Architecture, lifecycle-state-machine, operator configuration (config.md), validation/toy-cluster and design docs | Describe boundaries, capture evidence or program validation | Update architecture replay boundary; retain unrelated evidence/program replay contracts. |
 | `test_model_recording` | Capture fidelity, correction ordering, exhaustion | Replace cache assertions with live capture → converter → script selection/execution and exhaustion. |
-| `test_recorded_reflection_stage` | Worker/broker acceptance, repeated corrections, rejection, corpus provenance | Migrate all assertions to script-driven real reflection and broker. |
 | `test_replay` | Checkpoint bounds/integrity, generated responder/reflection behavior | Retain storage tests and run generated scripts through real workers. |
 | `test_script_replay_cli` | Reject removed public selectors | Verify both agent variants and live fallback are unavailable. |
 | `test_recording_registration`, `test_recording_export`, `test_file_edits` | Live capture and evidence fidelity | Retain; no playback registrations/executor. |

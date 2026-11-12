@@ -98,4 +98,5 @@ def _closure() -> IncidentClosure:
             architecture_markdown="Architecture",
         )
     )
+    closure.result.responder_session_id = "responder-session-0001"
     return closure

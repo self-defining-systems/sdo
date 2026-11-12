@@ -21,6 +21,7 @@ _EXPORTS = {
     "IncidentStatusState": "incident_status",
     "KubernetesResultPublisher": "job",
     "ReflectionTurn": "reflection",
+    "closing_prompt": "reflection",
     "SessionReflector": "reflection",
     "VerifyBurstResult": "incident_status",
     "VerifyScenarioVerdict": "incident_status",
@@ -89,6 +90,9 @@ if TYPE_CHECKING:
     )
     from sdo.agents.responder.reflection import (
         SessionReflector as SessionReflector,
+    )
+    from sdo.agents.responder.reflection import (
+        closing_prompt as closing_prompt,
     )
     from sdo.agents.responder.reflection import (
         reflection_output_schema as reflection_output_schema,

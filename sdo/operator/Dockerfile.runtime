@@ -199,6 +199,7 @@ RUN test -f /opt/sdo/sdo/skills/sdo-memory/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-operating/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-detector-authoring/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-playbook-authoring/SKILL.md \
+    && test -f /opt/sdo/sdo/skills/playbook-writing/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-operationalize/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-deploy/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-patching/SKILL.md \
@@ -225,6 +226,7 @@ RUN test -f /opt/sdo/sdo/skills/sdo-memory/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-operating/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-detector-authoring/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-playbook-authoring/SKILL.md \
+    && test -f /opt/sdo/sdo/skills/playbook-writing/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-operationalize/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-deploy/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-patching/SKILL.md \

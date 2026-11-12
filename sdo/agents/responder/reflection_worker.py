@@ -2,8 +2,8 @@
 
 The controller dispatches it twice over an incident's life, always into the responder's own session: once to clean up
 the app edits the agent left (a cleanup turn, in the incident's proposal checkout, before the source repair is
-accepted) and once, when the incident earned it, to turn the fix into a playbook (the learning turn, in a checkout of the
-outcome commit).
+accepted) and once, when the incident earned it, to turn the fix into a playbook (the learning turn, in a checkout
+of the outcome commit).
 """
 
 from __future__ import annotations

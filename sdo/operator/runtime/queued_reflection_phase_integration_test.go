@@ -68,10 +68,13 @@ func queuedReflectionLedger(t *testing.T, root string, worker ReflectionWorkerFu
 		},
 		Result: &IncidentResult{
 			SchemaVersion: ProtocolSchemaVersion, IncidentID: workspace.IncidentID,
-			Status: IncidentFailed, ResponderSessionID: "synthetic-session",
-			Timing: TimingMetrics{StartedAt: now, CompletedAt: now.Add(time.Second)},
+			Status: IncidentCompleted, ResponderSessionID: "synthetic-session",
+			// A recorded fix on a verified closure: the closing turn's gate lets the learning turn through.
+			RepairActions: []RepairActionReceipt{{Kind: "api-exec", Target: "Pod/app-1", Success: true}},
+			Timing:        TimingMetrics{StartedAt: now, CompletedAt: now.Add(time.Second)},
 		},
-		DetectedAt: now, DispatchedAt: now, ResponderCompletedAt: now.Add(time.Second), VerifiedAt: now.Add(time.Second),
+		FinalDetectorStates: []DetectorEvaluation{{DetectorID: "health", EvaluatedAt: now.Add(time.Second), Status: DetectorEvaluationClear}},
+		DetectedAt:          now, DispatchedAt: now, ResponderCompletedAt: now.Add(time.Second), VerifiedAt: now.Add(time.Second),
 	}
 	receipt, err := native.ProcessClosure(ctx, closure)
 	if err != nil {

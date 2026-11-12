@@ -19,8 +19,7 @@ from sdo.contracts import (
     to_canonical_json,
     validate,
 )
-from tests.unit.sdo.agents.responder.reflection_fixtures import _outcome
-from tests.unit.sdo.agents.responder.reflection_fixtures import _closure
+from tests.unit.sdo.agents.responder.reflection_fixtures import _closure, _outcome
 
 ROOT = Path(__file__).resolve().parents[5]
 NATIVE_REQUEST_BYTES = 512 << 10

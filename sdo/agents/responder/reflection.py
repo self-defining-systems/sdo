@@ -1,9 +1,10 @@
 """The closing turn: the responder's own session gets one short message after Recovered.
 
 SDO sends it once the opening alerts cleared and stayed clear. It either asks the agent to turn the fix into a playbook
-(``closing_prompt``) or, when the incident earned no learning (an escalated close, a restore only), to keep or remove the
-app files it left uncaptured (``cleanup_prompt``). Go decides which and renders the recorded changes; the agent edits
-``.sdo/playbooks/`` and replies with one line. Go derives the decision, the corpus case, the match key and credit.
+(``closing_prompt``) or, when the incident earned no learning (an escalated close, a restore only), to keep
+or remove the app files it left uncaptured (``cleanup_prompt``). Go decides which and renders the recorded changes;
+the agent edits ``.sdo/playbooks/`` and replies with one line. Go derives the decision, the corpus case, the match key
+and credit.
 """
 
 from __future__ import annotations
@@ -145,7 +146,7 @@ def closing_prompt(*, incident_id: str, changes: Sequence[str]) -> RenderedPromp
 
 def cleanup_prompt(*, leftovers: Sequence[str], turn: int) -> RenderedPrompt:
     """The cleanup turn: keep or remove the app files left uncaptured."""
-    shown = list(leftovers)[:20]
+    shown = list(leftovers)[:12]
     listed = "\n".join(shown) + (f"\n(and {len(leftovers) - len(shown)} more)" if len(leftovers) > len(shown) else "")
     return render_prompt(
         "responder",
@@ -211,7 +212,7 @@ class SessionReflector:
         outcome_commit: str,
         worktree: Path,
         changes: Sequence[str],
-        closure: IncidentClosure | None = None,  # noqa: ARG002 - scripted workers read the closure; the live turn does not
+        closure: IncidentClosure | None = None,
     ) -> ReflectionTurn:
         return self.backend.resume(
             session_id=session_id,

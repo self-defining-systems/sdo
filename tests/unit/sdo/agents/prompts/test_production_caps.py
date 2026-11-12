@@ -12,7 +12,7 @@ from tests.unit.sdo.agents.responder.tool_output_cases import large_response
 
 def test_large_prompt_sections_spill_losslessly(monkeypatch, tmp_path):
     monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
-    for name, limit in (("reflection.leftovers", 1200), ("source_deployment.incident_data", 100)):
+    for name, limit in (("reflection.leftovers", 800), ("source_deployment.incident_data", 100)):
         original = "界 evidence\n" * 20000
         prompt = named_prompt(name, original, required=False)
         assert len(prompt) <= limit
@@ -44,10 +44,10 @@ def test_all_cli_commands_bound_json_output(monkeypatch, tmp_path, capsys):
 
 def test_repeated_sections_share_one_aggregate_budget(monkeypatch, tmp_path):
     monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
-    prompt = named_prompt("reflection.leftovers", "x" * 900, required=False) + named_prompt(
-        "reflection.leftovers", "y" * 900, required=False
+    prompt = named_prompt("reflection.leftovers", "x" * 600, required=False) + named_prompt(
+        "reflection.leftovers", "y" * 600, required=False
     )
-    assert len(prompt) <= 1200
+    assert len(prompt) <= 800
 
 
 def test_generic_summary_preserves_json_shape_and_complete_paths(monkeypatch, tmp_path):

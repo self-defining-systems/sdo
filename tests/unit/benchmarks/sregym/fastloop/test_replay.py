@@ -503,8 +503,7 @@ def test_scripted_reflection_replay_runs_worker_again(
     from google.protobuf.any_pb2 import Any as ProtoAny
 
     from sdo.agents.responder.reflection_worker import run_reflection_task
-    from tests.unit.sdo.agents.responder.reflection_fixtures import _outcome
-    from tests.unit.sdo.agents.responder.reflection_fixtures import _closure
+    from tests.unit.sdo.agents.responder.reflection_fixtures import _closure, _outcome
 
     source = tmp_path / "source"
     program = source / ".sdo/playbooks/service-targetport-mismatch"
