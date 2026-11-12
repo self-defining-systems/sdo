@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -211,5 +212,91 @@ func TestSetupSafetyRules(t *testing.T) {
 	}
 	if got := valid.Describe().Setup; len(got) != 1 || got[0] != "ensure-fixture" {
 		t.Fatalf("descriptor setup steps = %v", got)
+	}
+}
+
+// tokenStore is a synthetic application whose POST /tokens creates a new
+// token on every call (no duplicate answer an ensure step could accept), and
+// whose POST /items fails while failPosts is positive.
+type tokenStore struct {
+	itemStore
+	tokens    int
+	passwords []string
+}
+
+func (s *tokenStore) Do(request *http.Request) (*http.Response, error) {
+	if request.Method != http.MethodPost || request.URL.Path != "/tokens" {
+		return s.itemStore.Do(request)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tokens++
+	s.passwords = append(s.passwords, request.URL.Query().Get("password"))
+	body := `{"token":"tok-` + strconv.Itoa(s.tokens) + `"}`
+	return &http.Response{StatusCode: http.StatusCreated, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
+}
+
+// tokenScenario creates a credential, then ensures a fixture with it.
+func tokenScenario() Scenario {
+	return Scenario{
+		ID: "items-token", Target: Target{Service: "web", Port: 80}, SideEffect: SideEffectRead, Marker: "sdo-later",
+		Users: []ProbeUser{{Name: "sdo-later-user", As: "user_password"}},
+		Setup: []Step{
+			{Name: "create-token", Endpoint: POST("/tokens", Params{"name": Const("sdo-later-token"), "password": FromPrevious("user_password")}).
+				Status(http.StatusCreated).SaveJSON("token", "token")},
+			{Name: "ensure-fixture", Endpoint: POST("/items", Params{"name": Const("sdo-later-fixture")}).
+				WithHeader("Authorization", "Bearer {token}").OrExisting(http.StatusConflict, "already exists")},
+		},
+		Steps: []Step{{Name: "read-fixture", Endpoint: GET("/items", nil).WithHeader("Authorization", "Bearer {token}").Contains("sdo-later-fixture")}},
+	}
+}
+
+// A setup step that succeeded is not repeated when a later setup step fails:
+// a retry resumes at the failed step with the State saved so far, so a
+// credential setup creates does not pile up while the application is unstable.
+func TestSetupRetryResumesAfterTheLastStepThatSucceeded(t *testing.T) {
+	store := &tokenStore{itemStore: itemStore{items: map[string]bool{}, failPosts: 3}}
+	engine := setupEngine(t, tokenScenario(), store)
+	engine.UsePasswords(passwords{"sdo-later-user": "pw-1"})
+	ctx := context.Background()
+
+	for iteration := uint64(0); iteration < 3; iteration++ {
+		if _, sample := engine.Iterate(ctx, iteration); sample.Outcome != OutcomeError || sample.Step != "ensure-fixture" {
+			t.Fatalf("iteration %d must fail at the failing setup step: %+v", iteration, sample)
+		}
+	}
+	_, sample := engine.Iterate(ctx, 3)
+	if sample.Outcome != OutcomeOK || sample.Requests != 2 {
+		t.Fatalf("resumed setup (one request) then the read: %+v", sample)
+	}
+	if store.tokens != 1 {
+		t.Fatalf("setup created %d tokens across retries of a later step, want 1", store.tokens)
+	}
+	if _, sample = engine.Iterate(ctx, 4); sample.Outcome != OutcomeOK || sample.Requests != 1 || store.tokens != 1 {
+		t.Fatalf("setup ran again after it completed: %+v, tokens %d", sample, store.tokens)
+	}
+	if len(store.passwords) != 1 || store.passwords[0] != "pw-1" {
+		t.Fatalf("the token step did not see the probe user's password: %q", store.passwords)
+	}
+}
+
+// A resumed setup step sees the current probe-user passwords, as the first
+// attempt did.
+func TestResumedSetupStepSeesProbeUserPasswords(t *testing.T) {
+	scenario := tokenScenario()
+	scenario.Setup[1].Endpoint = POST("/items", Params{"name": Const("sdo-later-fixture"), "password": FromPrevious("user_password")}).
+		WithHeader("Authorization", "Bearer {token}").OrExisting(http.StatusConflict, "already exists")
+	store := &tokenStore{itemStore: itemStore{items: map[string]bool{}, failPosts: 1}}
+	engine := setupEngine(t, scenario, store)
+	engine.UsePasswords(passwords{"sdo-later-user": "pw-1"})
+	ctx := context.Background()
+	if _, sample := engine.Iterate(ctx, 0); sample.Step != "ensure-fixture" {
+		t.Fatalf("first attempt must fail at ensure-fixture: %+v", sample)
+	}
+	if _, kept := engine.setups.progress[scenario.ID].saved["user_password"]; kept {
+		t.Fatal("the record of a partial setup kept the password")
+	}
+	if _, sample := engine.Iterate(ctx, 1); sample.Outcome != OutcomeOK {
+		t.Fatalf("a resumed step lost the probe user's password: %+v", sample)
 	}
 }

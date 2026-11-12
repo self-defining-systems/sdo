@@ -86,6 +86,15 @@ var (
 // iteration starts with an empty State.
 type State map[string]string
 
+// clone returns a copy of s; a nil State yields an empty one.
+func (s State) clone() State {
+	copied := make(State, len(s))
+	for key, value := range s {
+		copied[key] = value
+	}
+	return copied
+}
+
 // Request is one HTTP request relative to a scenario's target Service.
 type Request struct {
 	Method  string            `json:"method"`
@@ -145,12 +154,15 @@ type Target struct {
 //
 // Setup steps create the scenario's own test data (a test identity, a
 // fixture a later read must find) so the scenario never depends on data set up
-// by hand. The engine runs them before the first iteration and again only
-// until they succeed once; data lost afterwards then fails the Steps instead
-// of being written again, also in the controller's verify bursts, which share
-// the continuous probe's setup. Setup requests may write in any scenario and must
-// carry the Marker; make them idempotent (OrExisting) because a restarted
-// prober runs them again. Values they save are visible to every iteration.
+// by hand. The engine runs them at the start of the first iterations until
+// each has succeeded once; a retry resumes at the first step that has not
+// succeeded, with the State the earlier ones saved, so a step that succeeded
+// (one that created a credential, say) is not repeated when a later one fails.
+// Data lost afterwards then fails the Steps instead of being written again,
+// also in the controller's verify bursts, which share the continuous probe's
+// setup. Setup requests may write in any scenario and must carry the Marker;
+// make them idempotent (OrExisting) because a restarted prober runs them
+// again. Values they save are visible to every iteration.
 type Scenario struct {
 	ID          string
 	Description string

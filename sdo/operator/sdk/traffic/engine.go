@@ -89,8 +89,8 @@ type Engine struct {
 	baseURL   func(Target) string
 	clock     Clock
 
-	// setups records the scenarios whose setup steps succeeded; engines that
-	// ShareSetup use one record.
+	// setups records, per scenario, the setup steps that succeeded; engines
+	// that ShareSetup use one record.
 	setups *setupRecord
 	// passwords returns the passwords of the probe users scenarios declare;
 	// nil provisions none.
@@ -101,11 +101,17 @@ type Engine struct {
 // source returns. A prober gives every engine the same source.
 func (e *Engine) UsePasswords(source Passwords) { e.passwords = source }
 
-// setupRecord holds, per scenario whose setup steps succeeded, the State
-// they saved.
+// setupRecord holds, per scenario, how far its setup steps got.
 type setupRecord struct {
-	mu    sync.Mutex
-	saved map[string]State
+	mu       sync.Mutex
+	progress map[string]setupProgress
+}
+
+// setupProgress is how many of a scenario's setup steps succeeded, in order,
+// and the State they saved, without probe-user passwords.
+type setupProgress struct {
+	done  int
+	saved State
 }
 
 // NewEngine validates workload against catalog and prepares its schedule.
@@ -134,12 +140,12 @@ func NewEngine(workload Workload, catalog Catalog, client Doer, baseURL func(Tar
 	}
 	return &Engine{
 		workload: workload, scenarios: scenarios, schedule: weightedSchedule(workload.Scenarios),
-		client: client, baseURL: baseURL, clock: clock, setups: &setupRecord{saved: map[string]State{}},
+		client: client, baseURL: baseURL, clock: clock, setups: &setupRecord{progress: map[string]setupProgress{}},
 	}, nil
 }
 
 // ShareSetup makes e use source's record of completed setup steps, so a
-// scenario set up by either engine is never set up again by the other. A
+// setup step that succeeded in either engine is never run again by the other. A
 // process that runs the same catalog in several engines (a continuous probe
 // and its verify bursts) shares one record: data a setup step wrote and that
 // was lost afterwards then fails every engine instead of being written again.
@@ -192,9 +198,10 @@ func (e *Engine) Plan(ctx context.Context, iteration uint64) ([]Request, error) 
 }
 
 // Iterate runs iteration once and never returns an error: every failure is
-// a sample. A scenario's setup steps run first until they succeed once in this
-// engine (or an engine it shares setup with); a failed setup step fails the sample, and setup time is not part of
-// its latency. Cleanup steps of a write-with-cleanup scenario run after any
+// a sample. A scenario's setup steps run first until each has succeeded once in
+// this engine (or an engine it shares setup with); a retry resumes at the
+// first step that has not succeeded. A failed setup step fails the sample, and
+// setup time is not part of its latency. Cleanup steps of a write-with-cleanup scenario run after any
 // request was sent, even when a step failed; their failures are reported in
 // CleanupError and do not change the outcome.
 func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, result Sample) {
@@ -258,26 +265,33 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, resul
 	return scenario.ID, sample
 }
 
-// setup runs scenario's setup steps unless they already succeeded in this
-// engine or one it shares setup with, and copies the State they saved into state. It reports whether a
-// setup step failed; the failure is then recorded in sample.
+// setup runs scenario's setup steps that have not yet succeeded in this
+// engine or one it shares setup with, starting from the State the earlier
+// ones saved, and copies the State of all of them into state. A step that
+// succeeded never runs again, so a write it made (a credential, a fixture) is
+// not repeated when a later step fails and the setup is retried. It reports
+// whether a setup step failed; the failure is then recorded in sample.
 func (e *Engine) setup(ctx context.Context, scenario Scenario, rng *rand.Rand, state State, base string, sample *Sample) bool {
 	if len(scenario.Setup) == 0 {
 		return false
 	}
 	e.setups.mu.Lock()
-	saved, done := e.setups.saved[scenario.ID]
+	progress := e.setups.progress[scenario.ID]
 	e.setups.mu.Unlock()
-	if !done {
+	if progress.done < len(scenario.Setup) {
 		started := e.clock.Now()
 		// Setup steps see the iteration's passwords; the record keeps only
-		// what they saved.
-		saved = State{}
+		// what the steps saved.
+		saved := progress.saved.clone()
 		for key, value := range state {
 			saved[key] = value
 		}
-		for _, step := range scenario.Setup {
-			result := e.step(ctx, scenario, step, rng, saved, base, phaseSetup)
+		for index := progress.done; index < len(scenario.Setup); index++ {
+			step := scenario.Setup[index]
+			// A step may change State before it fails; only a passing step's
+			// changes are kept.
+			attempt := saved.clone()
+			result := e.step(ctx, scenario, step, rng, attempt, base, phaseSetup)
 			sample.Requests += result.sent
 			if result.status != 0 {
 				sample.Status = result.status
@@ -288,18 +302,29 @@ func (e *Engine) setup(ctx context.Context, scenario Scenario, rng *rand.Rand, s
 				sample.Latency = e.since(started)
 				return true
 			}
+			saved = attempt
+			e.setups.advance(scenario, index+1, saved)
 		}
-		for _, u := range scenario.Users {
-			delete(saved, u.As)
-		}
-		e.setups.mu.Lock()
-		e.setups.saved[scenario.ID] = saved
-		e.setups.mu.Unlock()
+		progress = setupProgress{done: len(scenario.Setup), saved: saved}
 	}
-	for key, value := range saved {
+	for key, value := range progress.saved {
 		state[key] = value
 	}
 	return false
+}
+
+// advance records that scenario's first done setup steps succeeded with
+// saved, unless a concurrent iteration already recorded at least as many.
+func (r *setupRecord) advance(scenario Scenario, done int, saved State) {
+	kept := saved.clone()
+	for _, u := range scenario.Users {
+		delete(kept, u.As)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.progress[scenario.ID].done < done {
+		r.progress[scenario.ID] = setupProgress{done: done, saved: kept}
+	}
 }
 
 type stepResult struct {

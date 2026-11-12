@@ -14,7 +14,7 @@ declare every store edge with its protocol to make delay and loss on it visible.
   (`SideEffectIdempotentWrite`, one whose repeats leave the same synthetic state) or a self-cleaning one
   (`SideEffectWriteWithCleanup` with `Cleanup` steps), and never touch real users' data.
 - A scenario creates the test identities and data it needs in `Setup` steps (marked writes, run once per prober
-  start until they succeed; verify bursts reuse that setup), never relying on data set up by hand. End each with `OrExisting(status, text)`, the
+  start; a retry resumes at the first step that has not succeeded; verify bursts reuse that setup), never relying on data set up by hand. End each with `OrExisting(status, text)`, the
   application's answer for a duplicate, so it passes on a fresh application and on one that has the data.
 - Check content, not only the status: `JSONEquals` for the exact value a write chose, `ExactSet` for the exact
   set of the probe's own data, `Each` for the shape of every returned member, `Contains` for text pages. A

@@ -110,8 +110,8 @@ func TestProbeUserPasswordNeverReachesASample(t *testing.T) {
 	if _, sample := engine.Iterate(context.Background(), 1); sample.Outcome != OutcomeOK {
 		t.Fatalf("sample = %+v", sample)
 	}
-	for _, saved := range engine.setups.saved {
-		if _, kept := saved["writer_password"]; kept {
+	for _, progress := range engine.setups.progress {
+		if _, kept := progress.saved["writer_password"]; kept {
 			t.Fatal("the setup record kept the password")
 		}
 	}
