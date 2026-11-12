@@ -96,3 +96,44 @@ func TestACommitPushedToTheSourceBranchBecomesTheHeadToDeploy(t *testing.T) {
 		t.Fatalf("the accepted head is %s: the sync did not fast-forward onto the pushed commit %s", got, pushed)
 	}
 }
+
+// A local history and a branch that both moved are never merged: the local
+// history stays accepted, it is preserved on a side branch, and the source
+// branch is left as the engineer pushed it.
+func TestADivergedBranchIsHeldNotMerged(t *testing.T) {
+	ctx := context.Background()
+	w := newPatchWorld(t, false)
+	remote := t.TempDir() + "/remote.git"
+	testutil.Git(t, "", "init", "-q", "--bare", remote)
+	testutil.Git(t, w.accepted, "push", "-q", remote, "HEAD:refs/heads/sdo-source")
+	if err := w.broker.SetUpstream(Upstream{URL: remote, Branch: "sdo-source"}); err != nil {
+		t.Fatal(err)
+	}
+	// A local accepted commit that never reached the remote.
+	writeFiles(t, w.accepted, map[string]string{"local.txt": "local\n"})
+	testutil.Git(t, w.accepted, "add", ".")
+	testutil.Git(t, w.accepted, "commit", "-qm", "local history")
+	local := w.head(t)
+	// An engineer pushes meanwhile.
+	engineer := t.TempDir() + "/engineer"
+	testutil.Git(t, "", "clone", "-q", "--branch", "sdo-source", remote, engineer)
+	testutil.ConfigureGit(t, engineer)
+	writeFiles(t, engineer, map[string]string{"engineer.txt": "engineer\n"})
+	testutil.Git(t, engineer, "add", ".")
+	testutil.Git(t, engineer, "commit", "-qm", "engineer history")
+	testutil.Git(t, engineer, "push", "-q", "origin", "HEAD:refs/heads/sdo-source")
+	pushed := gitOut(t, engineer, "rev-parse", "HEAD")
+
+	if _, _, err := w.broker.HeadToDeploy(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if w.head(t) != local {
+		t.Fatal("diverged histories were merged into the accepted head")
+	}
+	if got := gitOut(t, remote, "rev-parse", "refs/heads/sdo-source"); got != pushed {
+		t.Fatal("the source branch was touched")
+	}
+	if got := gitOut(t, remote, "rev-parse", "refs/heads/sdo-held/diverged-"+local[:12]); got != local {
+		t.Fatalf("the side branch holds %s, want the local history %s", got, local)
+	}
+}
