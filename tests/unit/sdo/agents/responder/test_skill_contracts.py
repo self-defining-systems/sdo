@@ -61,7 +61,7 @@ def test_advertised_capture_phases_match_controller(tmp_path: Path) -> None:
     assert '"fixed"' in (repository / "sdo/operator/runtime/closure_evidence.go").read_text()
 
 
-@pytest.mark.parametrize("role", ["responder", "reflector"])
+@pytest.mark.parametrize("role", ["reflector"])
 def test_worker_installs_linked_skill_contracts(tmp_path: Path, role: str) -> None:
     install_skills(tmp_path, AGENT_SKILLS[role])
     installed = tmp_path / "skills"

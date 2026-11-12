@@ -48,7 +48,7 @@ def test_fixture_skill_root_is_independent_of_checkout(monkeypatch, tmp_path: Pa
     for module in (codex, reflection, lifecycle_agents):
         monkeypatch.setattr(module, "SKILLS_ROOT", tmp_path / "other-checkout/skills")
     prompts = rendered_cases()
-    assert "Read /opt/sdo/skills/sdo-incident-response/SKILL.md" in prompts["responder_cold_two"]
+    assert "Read your skills: /opt/sdo/skills/incident-response/SKILL.md" in prompts["responder_cold_two"]
     assert "/opt/sdo/skills/sdo-detector-authoring/references/sdk.md" in prompts["lifecycle_HealthJudgeDraft"]
     assert "Authoring guide: /opt/sdo/skills/sdo-playbook-authoring/SKILL.md" in prompts["reflection_resume_2"]
 

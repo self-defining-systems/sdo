@@ -18,7 +18,7 @@ from sdo.agents.replay import selected_skills_root
 from sdo.agents.responder import recorded_actions
 from sdo.agents.responder.continuation import continuation_prompt
 from sdo.agents.responder.credentials import SKILLS_ROOT
-from sdo.agents.responder.incident_context import observe_only_handoff, prepared_incident_data
+from sdo.agents.responder.incident_opening import onset, opened_on
 from sdo.agents.responder.result_output import parse_incident_result
 from sdo.agents.responder.session_recovery import SessionRecoveryError, open_recovery
 from sdo.agents.responder.session_turn import (
@@ -91,18 +91,6 @@ def execute_incident(
     provider: str | None = None,
     executor: CommandExecutor | None = None,
 ) -> IncidentResult:
-    with prepared_incident_data(request) as data:
-        return _execute_incident(request, incident_data=data, model=model, provider=provider, executor=executor)
-
-
-def _execute_incident(
-    request: IncidentRequest,
-    *,
-    incident_data: str,
-    model: str | None = None,
-    provider: str | None = None,
-    executor: CommandExecutor | None = None,
-) -> IncidentResult:
     try:
         if provider is None:
             resolved = resolve_agent("responder", "responder")
@@ -114,7 +102,7 @@ def _execute_incident(
             model, effort = model or os.getenv(MODEL_ENV["responder"]) or None, agent_effort()
     except ValueError as exc:
         raise ResponderExecutionError(str(exc)) from exc
-    prompt = _responder_prompt(request, incident_data=incident_data)
+    prompt = _responder_prompt(request)
     try:
         recovery = open_recovery(request.incident_id, selected_provider)
         resume_session_id = recovery.resume_session_id() if recovery is not None else None
@@ -243,51 +231,20 @@ def _incident_result_schema() -> dict[str, object]:
     return model_output_schema(IncidentResult.DESCRIPTOR, omit=_MODEL_OMITS)
 
 
-LATE_FINDINGS_ENV = "SDO_LATE_FINDINGS"
-LATE_FINDINGS_MODES = ("off", "pull")
-LATE_FINDINGS_COMMAND = "sdo-operator late-findings"
-
-
-def late_findings_guidance(request: IncidentRequest, *, mode: str | None = None) -> str:
-    """Pull-before-act paragraph; empty unless the ``pull`` mode is selected (default: the environment)."""
-
-    selected = (os.getenv(LATE_FINDINGS_ENV, "") if mode is None else mode).strip() or "off"
-    if selected not in LATE_FINDINGS_MODES:
-        raise ValueError(f"late-findings mode must be one of {', '.join(LATE_FINDINGS_MODES)}: {selected!r}")
-    if selected == "off":
-        return ""
-    command = render_prompt(
-        "responder",
-        "late_findings_guidance_01",
-        part="responder.instructions",
-        late_findings_command=LATE_FINDINGS_COMMAND,
-        incident_id=request.incident_id,
-    )
-    return render_prompt("responder", "late_findings_guidance_02", part="responder.instructions", command=command)
-
-
-def _responder_prompt(request: IncidentRequest, *, incident_data: str) -> RenderedPrompt:
+def _responder_prompt(request: IncidentRequest) -> RenderedPrompt:
     if not request.HasField("memory_snapshot"):
         raise ValueError("incident responder requires a logical memory snapshot")
     prompt = render_prompt(
         "responder",
-        "incident_external_instructions"
-        if request.external_message
-        else "incident_shell"
-        if agent_guidance() == "shell"
-        else "incident_observe_instructions"
-        if observe_only_handoff(request)
-        else "incident_reuse_instructions"
-        if request.prior_stages
-        else "incident_response_instructions",
+        "incident_shell" if agent_guidance() == "shell" else "incident_prompt",
         part="responder.instructions",
         incident_id=request.incident_id,
+        namespace=request.namespace,
+        opened_on=opened_on(request),
+        onset=onset(request),
         skills_root=selected_skills_root(SKILLS_ROOT),
-        repair_policy=request.repair_policy,
         branch_instruction=branch_instruction("incident_result"),
     )
-    if not request.external_message:
-        prompt += late_findings_guidance(request)
     extra = "\n".join(
         part
         for part in (
@@ -306,7 +263,7 @@ def _responder_prompt(request: IncidentRequest, *, incident_data: str) -> Render
                 extra_instructions=named_prompt("responder.additional_context", extra, required=False),
             ),
         )
-    return prompt + named_prompt("responder.incident_data", incident_data)
+    return prompt
 
 
 render_incident_prompt = _responder_prompt

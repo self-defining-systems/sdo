@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any
 _EXPORTS = {
     "render_incident_prompt": "codex",
     "render_reflection_prompt": "reflection",
-    "prepared_incident_data": "incident_context",
     "print_tool_response": "tools_cli",
     "command_surface": "tools_cli",
     "await_standby_claim": "standby",
@@ -60,7 +59,6 @@ if TYPE_CHECKING:
     from sdo.agents.responder.credentials import (
         prepare_codex_home as prepare_codex_home,
     )
-    from sdo.agents.responder.incident_context import prepared_incident_data as prepared_incident_data
     from sdo.agents.responder.incident_status import (
         IncidentStatusReport as IncidentStatusReport,
     )

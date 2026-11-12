@@ -108,16 +108,13 @@ RL1 typed SDK gaps include resources to scope a decline to one confirmed cause; 
 
 Incident-open `playbook_coverage` is copied from the controller request into outcome field 35. The match and unexplained-finding lists retain their initial deterministic ordering. Match IDs and bindings link to application/action receipts; coverage alone is not repair attribution. See [agent-selected repair evidence](automatic-repair.md).
 
-Responder prompt accounting now groups the short workflow routing under
-`responder.instructions` and the compact request, accepted intent and latest
-detector evaluations under `responder.incident_data`. Warm/cold strategy,
-inlined playbook bodies, separate verification/no-action paragraphs and their
-former part names were removed; the responder loads `sdo-incident-response`
-instead. Optional transport instructions remain `responder.additional_context`.
-The request still carries controller-built playbook coverage and actionable
-initial program evidence, with NoMatch sweeps counted as omitted. Large facts
-use a private temporary JSON file for the response turn; the bounded inline
-pointer is not evidence that findings or intent were discarded. Full worker
+The responder's first message is three lines under `responder.instructions`:
+the incident, its opening alerts and onset, the two skills to read
+(`incident-response`, `sdo-operating`) and "Start with `sdo detect`". It holds no
+finding and no request JSON; `sdo detect` is the first read. Warm/cold strategy,
+`responder.incident_data`, inlined playbook bodies and their former part names
+were removed. Optional transport instructions remain `responder.additional_context`.
+The request still carries controller-built playbook coverage; `sdo detect` shows it. Full worker
 requests and durable outcomes remain authoritative. Reflection prompt context
 and responder-session resume behavior are unchanged by this responder rewrite.
 

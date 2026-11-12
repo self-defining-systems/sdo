@@ -19,7 +19,6 @@ from sdo.agents.prompt_templates import (
     render_prompt,
 )
 from sdo.agents.responder.continuation import MAX_CONTINUATION_CHARS, continuation_prompt
-from sdo.agents.responder.incident_context import prepared_incident_data
 from tests.unit.sdo.agents.prompts.cases import incident, rendered_cases, responder_prompt
 from tests.unit.sdo.agents.responder.continuation_cases import ten_receipt_continuation
 from tests.unit.sdo.agents.responder.tool_output_cases import rendered_stdout_cases
@@ -57,10 +56,6 @@ def measured_parts() -> dict[str, int]:
     for name, output in rendered_stdout_cases().items():
         command = name.split(".", 1)[0]
         maxima[f"tool_stdout.{command}"] = max(maxima[f"tool_stdout.{command}"], count_chars(output))
-    for request in (incident(3, warm=True), incident(5, oversized=True), incident(100, oversized=True)):
-        with prepared_incident_data(request) as summary:
-            maxima["tool_stdout.incident"] = max(maxima["tool_stdout.incident"], count_chars(summary))
-    maxima["tool_stdout.incident"] = max(maxima["tool_stdout.incident"], maxima["responder.incident_data"])
     return dict(sorted(maxima.items()))
 
 
@@ -81,26 +76,25 @@ def test_count_unicode_code_points(text: str, expected: int) -> None:
 
 def test_strict_template_requires_every_value() -> None:
     with pytest.raises(KeyError, match="incident_id"):
-        render_prompt("responder", "incident_response_instructions", part="responder.instructions")
+        render_prompt("responder", "incident_prompt", part="responder.instructions")
 
 
 def test_parts_survive_composition() -> None:
     left = named_prompt("responder.instructions", "é界")
-    right = named_prompt("responder.incident_data", "\r\n🙂")
+    right = named_prompt("responder.additional_context", "\r\n🙂")
     prompt = join_prompts("|", [left, right], part="reflection_brief.separators")
     assert prompt.final == "é界|\r\n🙂"
     assert prompt.parts == (
         PromptPart("responder.instructions", "é界"),
         PromptPart("reflection_brief.separators", "|"),
-        PromptPart("responder.incident_data", "\r\n🙂"),
+        PromptPart("responder.additional_context", "\r\n🙂"),
     )
     assert (left + right).parts == (*left.parts, *right.parts)
 
 
-def test_incident_data_cap_preserves_overflow_instead_of_inline_memory_bodies() -> None:
-    request = incident(5, oversized=True)
-    with prepared_incident_data(request) as rendered:
-        assert len(rendered) <= 12000
-        assert '"details_file"' in rendered
+def test_the_first_message_stays_small_however_large_the_incident() -> None:
+    for request in (incident(5, oversized=True), incident(100, oversized=True)):
+        rendered = str(responder_prompt(request))
+        assert len(rendered.encode()) <= 600
         assert "手" * 100 not in rendered
         assert "検" * 100 not in rendered

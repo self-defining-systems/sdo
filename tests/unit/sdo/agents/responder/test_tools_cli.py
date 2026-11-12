@@ -88,14 +88,6 @@ def test_status_help_points_at_stage_results(capsys):
     assert "prior_stages" in capsys.readouterr().out
 
 
-def test_skill_explains_prior_stages():
-    skill = (
-        Path(__file__).resolve().parents[5] / "sdo/skills/sdo-incident-response/references/coverage.md"
-    ).read_text()
-
-    assert "prior_stages" in skill
-
-
 def test_documented_cli_examples_send_valid_requests(monkeypatch):
     seen = []
     monkeypatch.setattr(tools_cli, "_exchange", lambda request, _: seen.append(request) or {"summary": "ok"})
@@ -174,10 +166,8 @@ def test_local_help_is_a_concise_capability_index() -> None:
     assert len(help_text) < 2000
 
 
-def test_incident_command_index_keeps_details_in_reference(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_incident_command_index_keeps_details_in_help(monkeypatch: pytest.MonkeyPatch) -> None:
     import argparse
-
-    from sdo.agents.responder.command_reference import render_reference_bundle
 
     parser = tools_cli._parser()
     commands = next(action for action in parser._actions if isinstance(action, argparse._SubParsersAction))
@@ -187,17 +177,13 @@ def test_incident_command_index_keeps_details_in_reference(monkeypatch: pytest.M
     assert surface["commands"] == {
         name: f"sdo {name}: {purpose}; read sdo {name} --help for arguments." for name, purpose in purposes.items()
     }
-    assert surface["reference"] == "sdo-incident-response/references/commands.md"
+    assert surface["reference"] == "sdo-operating/SKILL.md"
     assert all("\n" not in text for text in surface["commands"].values())
 
     for name, command in commands.choices.items():
         command.description = f"Detailed {name} behavior " * 100
         command.epilog = f"Detailed {name} output " * 100
     assert tools_cli.command_surface() == surface
-    reference = "\n".join(render_reference_bundle().values())
-    for name in commands.choices:
-        assert f"Detailed {name} behavior" in reference
-        assert f"Detailed {name} output" in reference
 
 
 @pytest.mark.parametrize("response", [{"summary": "captured"}, {"error": "capture failed"}])
@@ -309,8 +295,6 @@ def test_check_does_not_report_health_when_detection_failed(monkeypatch, capsys)
 
 @pytest.mark.parametrize("command", ["menu", "detect", "mitigate", "source"])
 def test_cli_bounds_stdout_and_preserves_full_response_in_private_json(monkeypatch, capsys, tmp_path, command):
-    from pathlib import Path
-
     response = {
         "command": command,
         "summary": "peer findings remain",
@@ -358,8 +342,6 @@ def test_cli_bounds_stdout_and_preserves_full_response_in_private_json(monkeypat
 
 
 def test_cli_persists_small_responses_too(monkeypatch, capsys):
-    from pathlib import Path
-
     response = {"command": "verify", "healthy": True, "summary": "clear"}
     monkeypatch.setattr(tools_cli, "_exchange", lambda *_: response)
     assert tools_cli.main(["verify"]) == 0
@@ -382,8 +364,6 @@ def test_json_flag_works_before_or_after_the_subcommand(monkeypatch, capsys, arg
 
 
 def test_act_full_json_preserves_existing_output_redaction(monkeypatch, capsys, tmp_path):
-    from pathlib import Path
-
     from sdo.agents.responder import tool_output
 
     monkeypatch.setattr(tool_output, "OUTPUT_ROOT", tmp_path / "outputs")
@@ -415,8 +395,6 @@ def test_act_full_json_preserves_existing_output_redaction(monkeypatch, capsys, 
 
 
 def test_client_side_failures_also_produce_compact_output_and_complete_json(monkeypatch, capsys):
-    from pathlib import Path
-
     monkeypatch.setattr(tools_cli, "_exchange", lambda *_: {"error": "menu read failed"})
     assert tools_cli.main(["mitigate", "repair"]) == 1
     text = expand_context(capsys.readouterr().out)
@@ -452,14 +430,6 @@ def test_verify_wait_uses_cached_controller_protocol(monkeypatch, capsys):
 def test_verify_wait_rejects_invalid_timeouts(value, monkeypatch):
     monkeypatch.setattr(tools_cli, "_exchange", lambda *_: pytest.fail("invalid wait reached controller"))
     assert tools_cli.main(["verify", "--wait", value]) == 1
-
-
-def test_fix_reference_keeps_the_detail_the_short_help_dropped():
-    reference = (
-        Path(__file__).resolve().parents[5] / "sdo/skills/sdo-incident-response/references/fixes.md"
-    ).read_text()
-    for detail in ("EnsureDatabaseUser", "config_map", "assignment", "diagnosis_persists", "working-tree:", "--"):
-        assert detail in reference
 
 
 def test_mitigate_passes_structured_values_as_json_text(monkeypatch):

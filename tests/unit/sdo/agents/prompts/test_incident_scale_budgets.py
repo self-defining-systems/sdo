@@ -8,11 +8,10 @@ import pytest
 from sdo.agents.context_output import budget_for
 from sdo.agents.prompt_templates import RenderedPrompt
 from sdo.agents.responder.continuation import continuation_prompt
-from sdo.agents.responder.incident_context import prepared_incident_data
 from sdo.agents.responder.session_recovery import SessionRecovery
 from sdo.contracts import MitigationReport, MitigationSession
 from tests.context_helpers import expand_context
-from tests.unit.sdo.agents.prompts.cases import incident
+from tests.unit.sdo.agents.prompts.cases import incident, responder_prompt
 
 WORKLOADS = 60
 
@@ -78,7 +77,7 @@ def test_continuation_for_dozens_of_workloads_fits_and_keeps_essentials() -> Non
     assert json.loads(evidence.read_text()) == payload
 
 
-def test_responder_incident_data_for_many_findings_and_stage_actions_fits() -> None:
+def test_responder_first_message_for_many_findings_and_stage_actions_fits() -> None:
     request = incident(WORKLOADS, oversized=True, pending=True)
     report = request.prior_stages.add(stage="deterministic", remaining_finding_fingerprints=["f" * 500] * WORKLOADS)
     for index in range(WORKLOADS):
@@ -86,14 +85,10 @@ def test_responder_incident_data_for_many_findings_and_stage_actions_fits() -> N
             playbook_id=f"repair-{index}-" + "p" * 200, program_revision="rev", result="apply_error", error="e" * 2000
         )
     request.external_message = "operator note " * 400
-    with prepared_incident_data(request) as rendered:
-        assert len(rendered) <= budget_for("responder.incident_data")
-        document = json.loads(rendered[rendered.index("{") :])
-        assert document["incident_id"] == request.incident_id
-        assert document["namespace"] == request.namespace
-        assert document["details_file"]
-        assert document["findings"] or document["findings_omitted"]
-        assert Path(document["details_file"]).exists()
+    rendered = str(responder_prompt(request))
+    assert len(rendered.encode()) <= 800
+    assert request.incident_id in rendered
+    assert "repair-0-" not in rendered
 
 
 def test_pending_reports_for_a_large_incident_spill_instead_of_failing(tmp_path: Path) -> None:
