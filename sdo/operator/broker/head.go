@@ -15,12 +15,21 @@ import (
 
 func headDeploymentID(commit string) string { return "head-" + commit }
 
+// HeadChange is a branch head whose effective source needs a deployment.
+type HeadChange struct {
+	Commit string
+	// EffectiveTree and PatchesDigest identify the source a deployment (or a
+	// hold) is about; a hold is superseded only when they change.
+	EffectiveTree string
+	PatchesDigest string
+}
+
 // HeadToDeploy reports the accepted head when its effective source differs
 // from the newest recorded deployment, after syncing the memory remote. It is
 // false for an install with no recorded deployment (a seeded one), whose
 // source nothing SDO owns can deploy. A memory-only head changes no effective
 // tree and needs no deployment.
-func (b *Broker) HeadToDeploy(ctx context.Context) (commit string, needed bool, err error) {
+func (b *Broker) HeadToDeploy(ctx context.Context) (change HeadChange, needed bool, err error) {
 	err = b.locked(func() error {
 		if err := b.syncUpstream(ctx); err != nil {
 			return err
@@ -48,10 +57,10 @@ func (b *Broker) HeadToDeploy(ctx context.Context) (commit string, needed bool, 
 		if effective.ID == recorded.EffectiveTree && effective.PatchesDigest == recorded.PatchesDigest {
 			return nil
 		}
-		commit, needed = head, true
+		change, needed = HeadChange{Commit: head, EffectiveTree: effective.ID, PatchesDigest: effective.PatchesDigest}, true
 		return nil
 	})
-	return commit, needed, err
+	return change, needed, err
 }
 
 // HeadCheckout is a clean checkout of an accepted commit, for the deployer and
