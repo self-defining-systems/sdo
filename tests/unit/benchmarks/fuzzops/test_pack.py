@@ -115,6 +115,7 @@ def _install_config(tmp_path: Path, **overrides: object) -> InstallConfig:
         "operator_binary": tmp_path / "sdo-operator",
         "kubeconfig": tmp_path / "kc",
         "auth_file": tmp_path / "auth.json",
+        "model": "gpt-6-luna",
     }
     values.update(overrides)
     return InstallConfig(**values)  # type: ignore[arg-type]
