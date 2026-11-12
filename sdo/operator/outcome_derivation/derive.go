@@ -129,6 +129,7 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 		ResolutionPath: result.GetResolutionPath(), PlaybookCoverage: cloneMessage(request.GetPlaybookCoverage()),
 		DisabledSetupDetectors: cloneMessages(request.GetDisabledSetupDetectors()),
 		PriorStages:            cloneMessages(request.GetPriorStages()), SourceCheckNotes: append([]string(nil), closure.GetSourceCheckNotes()...),
+		RecoveryVerification: cloneMessage(closure.GetRecoveryVerification()),
 	}
 	for _, label := range CheckedDriftAssessments(request.GetDriftEvents(), result.GetDriftEvents()) {
 		for i, event := range record.DriftEvents {

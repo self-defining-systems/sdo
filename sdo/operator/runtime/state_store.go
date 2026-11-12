@@ -117,6 +117,9 @@ func cloneIncidentClosure(closure *IncidentClosure) *IncidentClosure {
 	copy.PartialDetectorStates = cloneEvaluations(closure.PartialDetectorStates)
 	copy.DetectorTimeline = cloneTimeline(closure.DetectorTimeline)
 	copy.SourceCheckNotes = append([]string(nil), closure.SourceCheckNotes...)
+	if closure.RecoveryVerification != nil {
+		copy.RecoveryVerification = proto.Clone(closure.RecoveryVerification).(*contracts.RecoveryVerification)
+	}
 	copy.FinalStateChanges = cloneStateChanges(closure.FinalStateChanges)
 	if closure.HealthClearedAt != nil {
 		clearedAt := *closure.HealthClearedAt

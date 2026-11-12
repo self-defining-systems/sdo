@@ -40,6 +40,61 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type VerificationStrength int32
+
+const (
+	VerificationStrength_VERIFICATION_STRENGTH_UNSPECIFIED VerificationStrength = 0
+	// A probe of a user operation entering at a user entry covers the component.
+	VerificationStrength_VERIFICATION_STRENGTH_OPERATION VerificationStrength = 1
+	// Only link dials into the component (a protocol handshake) observe it.
+	VerificationStrength_VERIFICATION_STRENGTH_REACHABILITY VerificationStrength = 2
+	// Nothing observes the component.
+	VerificationStrength_VERIFICATION_STRENGTH_UNOBSERVABLE VerificationStrength = 3
+)
+
+// Enum value maps for VerificationStrength.
+var (
+	VerificationStrength_name = map[int32]string{
+		0: "VERIFICATION_STRENGTH_UNSPECIFIED",
+		1: "VERIFICATION_STRENGTH_OPERATION",
+		2: "VERIFICATION_STRENGTH_REACHABILITY",
+		3: "VERIFICATION_STRENGTH_UNOBSERVABLE",
+	}
+	VerificationStrength_value = map[string]int32{
+		"VERIFICATION_STRENGTH_UNSPECIFIED":  0,
+		"VERIFICATION_STRENGTH_OPERATION":    1,
+		"VERIFICATION_STRENGTH_REACHABILITY": 2,
+		"VERIFICATION_STRENGTH_UNOBSERVABLE": 3,
+	}
+)
+
+func (x VerificationStrength) Enum() *VerificationStrength {
+	p := new(VerificationStrength)
+	*p = x
+	return p
+}
+
+func (x VerificationStrength) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (VerificationStrength) Descriptor() protoreflect.EnumDescriptor {
+	return file_sdodev_contracts_v1alpha1_messages_proto_enumTypes[0].Descriptor()
+}
+
+func (VerificationStrength) Type() protoreflect.EnumType {
+	return &file_sdodev_contracts_v1alpha1_messages_proto_enumTypes[0]
+}
+
+func (x VerificationStrength) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use VerificationStrength.Descriptor instead.
+func (VerificationStrength) EnumDescriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_messages_proto_rawDescGZIP(), []int{0}
+}
+
 // ClosureUnconfirmedReason explains why a verified closure was committed
 // unconfirmed instead of superseded. Incomplete is "not yet", never a contradiction.
 type ClosureUnconfirmedReason int32
@@ -85,11 +140,11 @@ func (x ClosureUnconfirmedReason) String() string {
 }
 
 func (ClosureUnconfirmedReason) Descriptor() protoreflect.EnumDescriptor {
-	return file_sdodev_contracts_v1alpha1_messages_proto_enumTypes[0].Descriptor()
+	return file_sdodev_contracts_v1alpha1_messages_proto_enumTypes[1].Descriptor()
 }
 
 func (ClosureUnconfirmedReason) Type() protoreflect.EnumType {
-	return &file_sdodev_contracts_v1alpha1_messages_proto_enumTypes[0]
+	return &file_sdodev_contracts_v1alpha1_messages_proto_enumTypes[1]
 }
 
 func (x ClosureUnconfirmedReason) Number() protoreflect.EnumNumber {
@@ -98,7 +153,7 @@ func (x ClosureUnconfirmedReason) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ClosureUnconfirmedReason.Descriptor instead.
 func (ClosureUnconfirmedReason) EnumDescriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_messages_proto_rawDescGZIP(), []int{0}
+	return file_sdodev_contracts_v1alpha1_messages_proto_rawDescGZIP(), []int{1}
 }
 
 // Finding is one detector observation. Mirrors sdk.Finding.
@@ -3991,9 +4046,12 @@ type IncidentClosure struct {
 	// Set durably before the first broker attempt, with the closure-time
 	// recheck's notes folded in. A frozen closure is the incident's terminal
 	// identity: every later attempt, across restarts, sends these exact bytes.
-	Frozen        bool `protobuf:"varint,28,opt,name=frozen,proto3" json:"frozen,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Frozen bool `protobuf:"varint,28,opt,name=frozen,proto3" json:"frozen,omitempty"`
+	// Controller-computed: whether each faulted component's verification set
+	// passed after SDO's last write settled, and at what strength.
+	RecoveryVerification *RecoveryVerification `protobuf:"bytes,29,opt,name=recovery_verification,json=recoveryVerification,proto3" json:"recovery_verification,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *IncidentClosure) Reset() {
@@ -4201,6 +4259,319 @@ func (x *IncidentClosure) GetFrozen() bool {
 	return false
 }
 
+func (x *IncidentClosure) GetRecoveryVerification() *RecoveryVerification {
+	if x != nil {
+		return x.RecoveryVerification
+	}
+	return nil
+}
+
+// RecoveryVerification is the controller's one "recovered" test for a
+// closure: for each component an incident finding faulted, the probes of user
+// operations that cover it (operation strength) or, when none do, the link
+// dials into it (reachability strength), and whether each passed in a
+// sustained way after SDO's last write settled.
+type RecoveryVerification struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// False when the application has no health-probe workload: its closures rest
+	// on its detectors and this record decides nothing (review U4).
+	Probed bool `protobuf:"varint,1,opt,name=probed,proto3" json:"probed,omitempty"`
+	// The later of detection and the settle time of SDO's last write.
+	Since *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=since,proto3" json:"since,omitempty"`
+	// False when an SDO write had not settled (its rollout still pending), so
+	// nothing could verify.
+	WritesSettled bool                     `protobuf:"varint,3,opt,name=writes_settled,json=writesSettled,proto3" json:"writes_settled,omitempty"`
+	Components    []*ComponentVerification `protobuf:"bytes,4,rep,name=components,proto3" json:"components,omitempty"`
+	Writes        []*WriteSettlement       `protobuf:"bytes,5,rep,name=writes,proto3" json:"writes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RecoveryVerification) Reset() {
+	*x = RecoveryVerification{}
+	mi := &file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[43]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RecoveryVerification) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RecoveryVerification) ProtoMessage() {}
+
+func (x *RecoveryVerification) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[43]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RecoveryVerification.ProtoReflect.Descriptor instead.
+func (*RecoveryVerification) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_messages_proto_rawDescGZIP(), []int{43}
+}
+
+func (x *RecoveryVerification) GetProbed() bool {
+	if x != nil {
+		return x.Probed
+	}
+	return false
+}
+
+func (x *RecoveryVerification) GetSince() *timestamppb.Timestamp {
+	if x != nil {
+		return x.Since
+	}
+	return nil
+}
+
+func (x *RecoveryVerification) GetWritesSettled() bool {
+	if x != nil {
+		return x.WritesSettled
+	}
+	return false
+}
+
+func (x *RecoveryVerification) GetComponents() []*ComponentVerification {
+	if x != nil {
+		return x.Components
+	}
+	return nil
+}
+
+func (x *RecoveryVerification) GetWrites() []*WriteSettlement {
+	if x != nil {
+		return x.Writes
+	}
+	return nil
+}
+
+type ComponentVerification struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Component string                 `protobuf:"bytes,1,opt,name=component,proto3" json:"component,omitempty"`
+	Strength  VerificationStrength   `protobuf:"varint,2,opt,name=strength,proto3,enum=sdodev.contracts.v1alpha1.VerificationStrength" json:"strength,omitempty"`
+	Members   []*VerificationMember  `protobuf:"bytes,3,rep,name=members,proto3" json:"members,omitempty"`
+	// Every member passed in a sustained way since the record's since.
+	Recovered bool `protobuf:"varint,4,opt,name=recovered,proto3" json:"recovered,omitempty"`
+	// An opening finding names the component or an SDO write touched it. Only
+	// in-scope components decide the closure label; the others are recorded and
+	// must still clear their findings (review C3).
+	InScope bool `protobuf:"varint,5,opt,name=in_scope,json=inScope,proto3" json:"in_scope,omitempty"`
+	// Set when a held finding names one edge into the component (a link
+	// finding): the members then cross that edge.
+	EdgeFrom      string `protobuf:"bytes,6,opt,name=edge_from,json=edgeFrom,proto3" json:"edge_from,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ComponentVerification) Reset() {
+	*x = ComponentVerification{}
+	mi := &file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[44]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ComponentVerification) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ComponentVerification) ProtoMessage() {}
+
+func (x *ComponentVerification) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[44]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ComponentVerification.ProtoReflect.Descriptor instead.
+func (*ComponentVerification) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_messages_proto_rawDescGZIP(), []int{44}
+}
+
+func (x *ComponentVerification) GetComponent() string {
+	if x != nil {
+		return x.Component
+	}
+	return ""
+}
+
+func (x *ComponentVerification) GetStrength() VerificationStrength {
+	if x != nil {
+		return x.Strength
+	}
+	return VerificationStrength_VERIFICATION_STRENGTH_UNSPECIFIED
+}
+
+func (x *ComponentVerification) GetMembers() []*VerificationMember {
+	if x != nil {
+		return x.Members
+	}
+	return nil
+}
+
+func (x *ComponentVerification) GetRecovered() bool {
+	if x != nil {
+		return x.Recovered
+	}
+	return false
+}
+
+func (x *ComponentVerification) GetInScope() bool {
+	if x != nil {
+		return x.InScope
+	}
+	return false
+}
+
+func (x *ComponentVerification) GetEdgeFrom() string {
+	if x != nil {
+		return x.EdgeFrom
+	}
+	return ""
+}
+
+type VerificationMember struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Kind          string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
+	Passed        bool                   `protobuf:"varint,3,opt,name=passed,proto3" json:"passed,omitempty"`
+	Detail        string                 `protobuf:"bytes,4,opt,name=detail,proto3" json:"detail,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VerificationMember) Reset() {
+	*x = VerificationMember{}
+	mi := &file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[45]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VerificationMember) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VerificationMember) ProtoMessage() {}
+
+func (x *VerificationMember) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[45]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VerificationMember.ProtoReflect.Descriptor instead.
+func (*VerificationMember) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_messages_proto_rawDescGZIP(), []int{45}
+}
+
+func (x *VerificationMember) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *VerificationMember) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *VerificationMember) GetPassed() bool {
+	if x != nil {
+		return x.Passed
+	}
+	return false
+}
+
+func (x *VerificationMember) GetDetail() string {
+	if x != nil {
+		return x.Detail
+	}
+	return ""
+}
+
+// When one SDO write settled: the plan's completion, or the latest Ready
+// transition of the written workload's current Pods, whichever is later.
+type WriteSettlement struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ApplicationId string                 `protobuf:"bytes,1,opt,name=application_id,json=applicationId,proto3" json:"application_id,omitempty"`
+	SettledAt     *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=settled_at,json=settledAt,proto3" json:"settled_at,omitempty"`
+	Settled       bool                   `protobuf:"varint,3,opt,name=settled,proto3" json:"settled,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WriteSettlement) Reset() {
+	*x = WriteSettlement{}
+	mi := &file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[46]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WriteSettlement) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WriteSettlement) ProtoMessage() {}
+
+func (x *WriteSettlement) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[46]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WriteSettlement.ProtoReflect.Descriptor instead.
+func (*WriteSettlement) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_messages_proto_rawDescGZIP(), []int{46}
+}
+
+func (x *WriteSettlement) GetApplicationId() string {
+	if x != nil {
+		return x.ApplicationId
+	}
+	return ""
+}
+
+func (x *WriteSettlement) GetSettledAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.SettledAt
+	}
+	return nil
+}
+
+func (x *WriteSettlement) GetSettled() bool {
+	if x != nil {
+		return x.Settled
+	}
+	return false
+}
+
 // Controller-owned evidence from one response stage. Finding credit describes
 // a fresh scoped observation; independent controller verification owns closure.
 type StageReport struct {
@@ -4219,7 +4590,7 @@ type StageReport struct {
 
 func (x *StageReport) Reset() {
 	*x = StageReport{}
-	mi := &file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[43]
+	mi := &file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4231,7 +4602,7 @@ func (x *StageReport) String() string {
 func (*StageReport) ProtoMessage() {}
 
 func (x *StageReport) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[43]
+	mi := &file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4244,7 +4615,7 @@ func (x *StageReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StageReport.ProtoReflect.Descriptor instead.
 func (*StageReport) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_messages_proto_rawDescGZIP(), []int{43}
+	return file_sdodev_contracts_v1alpha1_messages_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *StageReport) GetStage() string {
@@ -4330,7 +4701,7 @@ type StageMitigation struct {
 
 func (x *StageMitigation) Reset() {
 	*x = StageMitigation{}
-	mi := &file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[44]
+	mi := &file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4342,7 +4713,7 @@ func (x *StageMitigation) String() string {
 func (*StageMitigation) ProtoMessage() {}
 
 func (x *StageMitigation) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[44]
+	mi := &file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4355,7 +4726,7 @@ func (x *StageMitigation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StageMitigation.ProtoReflect.Descriptor instead.
 func (*StageMitigation) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_messages_proto_rawDescGZIP(), []int{44}
+	return file_sdodev_contracts_v1alpha1_messages_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *StageMitigation) GetPlaybookId() string {
@@ -4496,7 +4867,7 @@ type DriftReprompt struct {
 
 func (x *DriftReprompt) Reset() {
 	*x = DriftReprompt{}
-	mi := &file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[45]
+	mi := &file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4508,7 +4879,7 @@ func (x *DriftReprompt) String() string {
 func (*DriftReprompt) ProtoMessage() {}
 
 func (x *DriftReprompt) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[45]
+	mi := &file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4521,7 +4892,7 @@ func (x *DriftReprompt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DriftReprompt.ProtoReflect.Descriptor instead.
 func (*DriftReprompt) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_messages_proto_rawDescGZIP(), []int{45}
+	return file_sdodev_contracts_v1alpha1_messages_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *DriftReprompt) GetFindingsBefore() int32 {
@@ -4550,7 +4921,7 @@ type StatePersistenceFailure struct {
 
 func (x *StatePersistenceFailure) Reset() {
 	*x = StatePersistenceFailure{}
-	mi := &file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[46]
+	mi := &file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4562,7 +4933,7 @@ func (x *StatePersistenceFailure) String() string {
 func (*StatePersistenceFailure) ProtoMessage() {}
 
 func (x *StatePersistenceFailure) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[46]
+	mi := &file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4575,7 +4946,7 @@ func (x *StatePersistenceFailure) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatePersistenceFailure.ProtoReflect.Descriptor instead.
 func (*StatePersistenceFailure) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_messages_proto_rawDescGZIP(), []int{46}
+	return file_sdodev_contracts_v1alpha1_messages_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *StatePersistenceFailure) GetReason() string {
@@ -5014,7 +5385,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x05value:\x028\x01:\x9d\x02\xbaH\x99\x02\x1a\x80\x01\n" +
 	"\x1etimeline.last_seen_after_first\x120last_seen_at must not precede first_activated_at\x1a,this.last_seen_at >= this.first_activated_at\x1a\x93\x01\n" +
 	"\x1ctimeline.cleared_after_first\x12.cleared_at must not precede first_activated_at\x1aC!has(this.cleared_at) || this.cleared_at >= this.first_activated_atB\r\n" +
-	"\v_cleared_at\"\xe9\x0f\n" +
+	"\v_cleared_at\"\xcf\x10\n" +
 	"\x0fIncidentClosure\x12L\n" +
 	"\arequest\x18\x01 \x01(\v2*.sdodev.contracts.v1alpha1.IncidentRequestB\x06\xbaH\x03\xc8\x01\x01R\arequest\x12A\n" +
 	"\x06result\x18\x02 \x01(\v2).sdodev.contracts.v1alpha1.IncidentResultR\x06result\x12*\n" +
@@ -5043,9 +5414,36 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x12unconfirmed_detail\x18\x19 \x01(\tR\x11unconfirmedDetail\x12,\n" +
 	"\x12source_check_notes\x18\x1a \x03(\tR\x10sourceCheckNotes\x12n\n" +
 	"\x19state_persistence_failure\x18\x1b \x01(\v22.sdodev.contracts.v1alpha1.StatePersistenceFailureR\x17statePersistenceFailure\x12\x16\n" +
-	"\x06frozen\x18\x1c \x01(\bR\x06frozenB\x11\n" +
+	"\x06frozen\x18\x1c \x01(\bR\x06frozen\x12d\n" +
+	"\x15recovery_verification\x18\x1d \x01(\v2/.sdodev.contracts.v1alpha1.RecoveryVerificationR\x14recoveryVerificationB\x11\n" +
 	"\x0f_dispatch_errorB\x14\n" +
-	"\x12_health_cleared_atJ\x04\b\x10\x10\x11J\x04\b\x11\x10\x12J\x04\b\x12\x10\x13R\x16observed_state_changesR\x1bdetector_review_required_atR\x16detector_review_reason\"\xa1\x03\n" +
+	"\x12_health_cleared_atJ\x04\b\x10\x10\x11J\x04\b\x11\x10\x12J\x04\b\x12\x10\x13R\x16observed_state_changesR\x1bdetector_review_required_atR\x16detector_review_reason\"\x9d\x02\n" +
+	"\x14RecoveryVerification\x12\x16\n" +
+	"\x06probed\x18\x01 \x01(\bR\x06probed\x120\n" +
+	"\x05since\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05since\x12%\n" +
+	"\x0ewrites_settled\x18\x03 \x01(\bR\rwritesSettled\x12P\n" +
+	"\n" +
+	"components\x18\x04 \x03(\v20.sdodev.contracts.v1alpha1.ComponentVerificationR\n" +
+	"components\x12B\n" +
+	"\x06writes\x18\x05 \x03(\v2*.sdodev.contracts.v1alpha1.WriteSettlementR\x06writes\"\xb6\x02\n" +
+	"\x15ComponentVerification\x12%\n" +
+	"\tcomponent\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tcomponent\x12W\n" +
+	"\bstrength\x18\x02 \x01(\x0e2/.sdodev.contracts.v1alpha1.VerificationStrengthB\n" +
+	"\xbaH\a\x82\x01\x04\x10\x01 \x00R\bstrength\x12G\n" +
+	"\amembers\x18\x03 \x03(\v2-.sdodev.contracts.v1alpha1.VerificationMemberR\amembers\x12\x1c\n" +
+	"\trecovered\x18\x04 \x01(\bR\trecovered\x12\x19\n" +
+	"\bin_scope\x18\x05 \x01(\bR\ainScope\x12\x1b\n" +
+	"\tedge_from\x18\x06 \x01(\tR\bedgeFrom\"\x85\x01\n" +
+	"\x12VerificationMember\x12\x17\n" +
+	"\x02id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x02id\x12&\n" +
+	"\x04kind\x18\x02 \x01(\tB\x12\xbaH\x0fr\rR\x05probeR\x04linkR\x04kind\x12\x16\n" +
+	"\x06passed\x18\x03 \x01(\bR\x06passed\x12\x16\n" +
+	"\x06detail\x18\x04 \x01(\tR\x06detail\"\x8d\x01\n" +
+	"\x0fWriteSettlement\x12%\n" +
+	"\x0eapplication_id\x18\x01 \x01(\tR\rapplicationId\x129\n" +
+	"\n" +
+	"settled_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\tsettledAt\x12\x18\n" +
+	"\asettled\x18\x03 \x01(\bR\asettled\"\xa1\x03\n" +
 	"\vStageReport\x12\x1d\n" +
 	"\x05stage\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x05stage\x12L\n" +
 	"\vmitigations\x18\x02 \x03(\v2*.sdodev.contracts.v1alpha1.StageMitigationR\vmitigations\x12D\n" +
@@ -5088,7 +5486,12 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x17StatePersistenceFailure\x128\n" +
 	"\x06reason\x18\x01 \x01(\tB \xbaH\x1dr\x1b\n" +
 	"\x19state_persistence_invalidR\x06reason\x12\x1f\n" +
-	"\x06detail\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06detail*\x97\x02\n" +
+	"\x06detail\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06detail*\xb2\x01\n" +
+	"\x14VerificationStrength\x12%\n" +
+	"!VERIFICATION_STRENGTH_UNSPECIFIED\x10\x00\x12#\n" +
+	"\x1fVERIFICATION_STRENGTH_OPERATION\x10\x01\x12&\n" +
+	"\"VERIFICATION_STRENGTH_REACHABILITY\x10\x02\x12&\n" +
+	"\"VERIFICATION_STRENGTH_UNOBSERVABLE\x10\x03*\x97\x02\n" +
 	"\x18ClosureUnconfirmedReason\x12*\n" +
 	"&CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED\x10\x00\x125\n" +
 	"1CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE\x10\x01\x123\n" +
@@ -5109,199 +5512,211 @@ func file_sdodev_contracts_v1alpha1_messages_proto_rawDescGZIP() []byte {
 	return file_sdodev_contracts_v1alpha1_messages_proto_rawDescData
 }
 
-var file_sdodev_contracts_v1alpha1_messages_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_sdodev_contracts_v1alpha1_messages_proto_msgTypes = make([]protoimpl.MessageInfo, 51)
+var file_sdodev_contracts_v1alpha1_messages_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_sdodev_contracts_v1alpha1_messages_proto_msgTypes = make([]protoimpl.MessageInfo, 55)
 var file_sdodev_contracts_v1alpha1_messages_proto_goTypes = []any{
-	(ClosureUnconfirmedReason)(0),       // 0: sdodev.contracts.v1alpha1.ClosureUnconfirmedReason
-	(*Finding)(nil),                     // 1: sdodev.contracts.v1alpha1.Finding
-	(*DriftField)(nil),                  // 2: sdodev.contracts.v1alpha1.DriftField
-	(*DriftEvent)(nil),                  // 3: sdodev.contracts.v1alpha1.DriftEvent
-	(*DriftEvidence)(nil),               // 4: sdodev.contracts.v1alpha1.DriftEvidence
-	(*DetectorEvaluation)(nil),          // 5: sdodev.contracts.v1alpha1.DetectorEvaluation
-	(*SurfacedPlaybook)(nil),            // 6: sdodev.contracts.v1alpha1.SurfacedPlaybook
-	(*PriorOutcomeEvidence)(nil),        // 7: sdodev.contracts.v1alpha1.PriorOutcomeEvidence
-	(*StateFieldChange)(nil),            // 8: sdodev.contracts.v1alpha1.StateFieldChange
-	(*StateChange)(nil),                 // 9: sdodev.contracts.v1alpha1.StateChange
-	(*StateChanges)(nil),                // 10: sdodev.contracts.v1alpha1.StateChanges
-	(*MemoryWatch)(nil),                 // 11: sdodev.contracts.v1alpha1.MemoryWatch
-	(*MemoryDetector)(nil),              // 12: sdodev.contracts.v1alpha1.MemoryDetector
-	(*MemoryScript)(nil),                // 13: sdodev.contracts.v1alpha1.MemoryScript
-	(*MemoryPlaybook)(nil),              // 14: sdodev.contracts.v1alpha1.MemoryPlaybook
-	(*OperationalMemorySnapshot)(nil),   // 15: sdodev.contracts.v1alpha1.OperationalMemorySnapshot
-	(*ProposedGoSource)(nil),            // 16: sdodev.contracts.v1alpha1.ProposedGoSource
-	(*ProposedDetector)(nil),            // 17: sdodev.contracts.v1alpha1.ProposedDetector
-	(*ProposedPlaybook)(nil),            // 18: sdodev.contracts.v1alpha1.ProposedPlaybook
-	(*ProposedTrafficGenerator)(nil),    // 19: sdodev.contracts.v1alpha1.ProposedTrafficGenerator
-	(*OperationalArtifactProposal)(nil), // 20: sdodev.contracts.v1alpha1.OperationalArtifactProposal
-	(*TelemetryContext)(nil),            // 21: sdodev.contracts.v1alpha1.TelemetryContext
-	(*TelemetryRecipe)(nil),             // 22: sdodev.contracts.v1alpha1.TelemetryRecipe
-	(*TelemetrySource)(nil),             // 23: sdodev.contracts.v1alpha1.TelemetrySource
-	(*TelemetryPublish)(nil),            // 24: sdodev.contracts.v1alpha1.TelemetryPublish
-	(*DisabledSetupDetector)(nil),       // 25: sdodev.contracts.v1alpha1.DisabledSetupDetector
-	(*NamespaceOnboarding)(nil),         // 26: sdodev.contracts.v1alpha1.NamespaceOnboarding
-	(*InstallEnvironmentObject)(nil),    // 27: sdodev.contracts.v1alpha1.InstallEnvironmentObject
-	(*ExternalIncident)(nil),            // 28: sdodev.contracts.v1alpha1.ExternalIncident
-	(*IncidentRequest)(nil),             // 29: sdodev.contracts.v1alpha1.IncidentRequest
-	(*ResponseProgress)(nil),            // 30: sdodev.contracts.v1alpha1.ResponseProgress
-	(*RootCauseEvidence)(nil),           // 31: sdodev.contracts.v1alpha1.RootCauseEvidence
-	(*ConfirmedRootCause)(nil),          // 32: sdodev.contracts.v1alpha1.ConfirmedRootCause
-	(*AppliedPlaybook)(nil),             // 33: sdodev.contracts.v1alpha1.AppliedPlaybook
-	(*VerificationEvidence)(nil),        // 34: sdodev.contracts.v1alpha1.VerificationEvidence
-	(*UsageMetrics)(nil),                // 35: sdodev.contracts.v1alpha1.UsageMetrics
-	(*TimingMetrics)(nil),               // 36: sdodev.contracts.v1alpha1.TimingMetrics
-	(*RepairActionReceipt)(nil),         // 37: sdodev.contracts.v1alpha1.RepairActionReceipt
-	(*ResourceOwners)(nil),              // 38: sdodev.contracts.v1alpha1.ResourceOwners
-	(*IncidentResult)(nil),              // 39: sdodev.contracts.v1alpha1.IncidentResult
-	(*LateFindingsPull)(nil),            // 40: sdodev.contracts.v1alpha1.LateFindingsPull
-	(*IncidentView)(nil),                // 41: sdodev.contracts.v1alpha1.IncidentView
-	(*DetectorTimelineEntry)(nil),       // 42: sdodev.contracts.v1alpha1.DetectorTimelineEntry
-	(*IncidentClosure)(nil),             // 43: sdodev.contracts.v1alpha1.IncidentClosure
-	(*StageReport)(nil),                 // 44: sdodev.contracts.v1alpha1.StageReport
-	(*StageMitigation)(nil),             // 45: sdodev.contracts.v1alpha1.StageMitigation
-	(*DriftReprompt)(nil),               // 46: sdodev.contracts.v1alpha1.DriftReprompt
-	(*StatePersistenceFailure)(nil),     // 47: sdodev.contracts.v1alpha1.StatePersistenceFailure
-	nil,                                 // 48: sdodev.contracts.v1alpha1.Finding.ParameterBindingsEntry
-	nil,                                 // 49: sdodev.contracts.v1alpha1.SurfacedPlaybook.ParameterBindingsEntry
-	nil,                                 // 50: sdodev.contracts.v1alpha1.AppliedPlaybook.ParameterBindingsEntry
-	nil,                                 // 51: sdodev.contracts.v1alpha1.DetectorTimelineEntry.ParameterBindingsEntry
-	(*ObjectRef)(nil),                   // 52: sdodev.contracts.v1alpha1.ObjectRef
-	(*structpb.Struct)(nil),             // 53: google.protobuf.Struct
-	(*timestamppb.Timestamp)(nil),       // 54: google.protobuf.Timestamp
-	(*CodePathConfig)(nil),              // 55: sdodev.contracts.v1alpha1.CodePathConfig
-	(*TrafficWorkload)(nil),             // 56: sdodev.contracts.v1alpha1.TrafficWorkload
-	(*ProgramRun)(nil),                  // 57: sdodev.contracts.v1alpha1.ProgramRun
-	(*PlaybookCoverage)(nil),            // 58: sdodev.contracts.v1alpha1.PlaybookCoverage
-	(*RolloutPending)(nil),              // 59: sdodev.contracts.v1alpha1.RolloutPending
-	(*ProgramToolCall)(nil),             // 60: sdodev.contracts.v1alpha1.ProgramToolCall
-	(*PlanApplication)(nil),             // 61: sdodev.contracts.v1alpha1.PlanApplication
-	(*durationpb.Duration)(nil),         // 62: google.protobuf.Duration
-	(*RecoveryWait)(nil),                // 63: sdodev.contracts.v1alpha1.RecoveryWait
-	(*Binding)(nil),                     // 64: sdodev.contracts.v1alpha1.Binding
+	(VerificationStrength)(0),           // 0: sdodev.contracts.v1alpha1.VerificationStrength
+	(ClosureUnconfirmedReason)(0),       // 1: sdodev.contracts.v1alpha1.ClosureUnconfirmedReason
+	(*Finding)(nil),                     // 2: sdodev.contracts.v1alpha1.Finding
+	(*DriftField)(nil),                  // 3: sdodev.contracts.v1alpha1.DriftField
+	(*DriftEvent)(nil),                  // 4: sdodev.contracts.v1alpha1.DriftEvent
+	(*DriftEvidence)(nil),               // 5: sdodev.contracts.v1alpha1.DriftEvidence
+	(*DetectorEvaluation)(nil),          // 6: sdodev.contracts.v1alpha1.DetectorEvaluation
+	(*SurfacedPlaybook)(nil),            // 7: sdodev.contracts.v1alpha1.SurfacedPlaybook
+	(*PriorOutcomeEvidence)(nil),        // 8: sdodev.contracts.v1alpha1.PriorOutcomeEvidence
+	(*StateFieldChange)(nil),            // 9: sdodev.contracts.v1alpha1.StateFieldChange
+	(*StateChange)(nil),                 // 10: sdodev.contracts.v1alpha1.StateChange
+	(*StateChanges)(nil),                // 11: sdodev.contracts.v1alpha1.StateChanges
+	(*MemoryWatch)(nil),                 // 12: sdodev.contracts.v1alpha1.MemoryWatch
+	(*MemoryDetector)(nil),              // 13: sdodev.contracts.v1alpha1.MemoryDetector
+	(*MemoryScript)(nil),                // 14: sdodev.contracts.v1alpha1.MemoryScript
+	(*MemoryPlaybook)(nil),              // 15: sdodev.contracts.v1alpha1.MemoryPlaybook
+	(*OperationalMemorySnapshot)(nil),   // 16: sdodev.contracts.v1alpha1.OperationalMemorySnapshot
+	(*ProposedGoSource)(nil),            // 17: sdodev.contracts.v1alpha1.ProposedGoSource
+	(*ProposedDetector)(nil),            // 18: sdodev.contracts.v1alpha1.ProposedDetector
+	(*ProposedPlaybook)(nil),            // 19: sdodev.contracts.v1alpha1.ProposedPlaybook
+	(*ProposedTrafficGenerator)(nil),    // 20: sdodev.contracts.v1alpha1.ProposedTrafficGenerator
+	(*OperationalArtifactProposal)(nil), // 21: sdodev.contracts.v1alpha1.OperationalArtifactProposal
+	(*TelemetryContext)(nil),            // 22: sdodev.contracts.v1alpha1.TelemetryContext
+	(*TelemetryRecipe)(nil),             // 23: sdodev.contracts.v1alpha1.TelemetryRecipe
+	(*TelemetrySource)(nil),             // 24: sdodev.contracts.v1alpha1.TelemetrySource
+	(*TelemetryPublish)(nil),            // 25: sdodev.contracts.v1alpha1.TelemetryPublish
+	(*DisabledSetupDetector)(nil),       // 26: sdodev.contracts.v1alpha1.DisabledSetupDetector
+	(*NamespaceOnboarding)(nil),         // 27: sdodev.contracts.v1alpha1.NamespaceOnboarding
+	(*InstallEnvironmentObject)(nil),    // 28: sdodev.contracts.v1alpha1.InstallEnvironmentObject
+	(*ExternalIncident)(nil),            // 29: sdodev.contracts.v1alpha1.ExternalIncident
+	(*IncidentRequest)(nil),             // 30: sdodev.contracts.v1alpha1.IncidentRequest
+	(*ResponseProgress)(nil),            // 31: sdodev.contracts.v1alpha1.ResponseProgress
+	(*RootCauseEvidence)(nil),           // 32: sdodev.contracts.v1alpha1.RootCauseEvidence
+	(*ConfirmedRootCause)(nil),          // 33: sdodev.contracts.v1alpha1.ConfirmedRootCause
+	(*AppliedPlaybook)(nil),             // 34: sdodev.contracts.v1alpha1.AppliedPlaybook
+	(*VerificationEvidence)(nil),        // 35: sdodev.contracts.v1alpha1.VerificationEvidence
+	(*UsageMetrics)(nil),                // 36: sdodev.contracts.v1alpha1.UsageMetrics
+	(*TimingMetrics)(nil),               // 37: sdodev.contracts.v1alpha1.TimingMetrics
+	(*RepairActionReceipt)(nil),         // 38: sdodev.contracts.v1alpha1.RepairActionReceipt
+	(*ResourceOwners)(nil),              // 39: sdodev.contracts.v1alpha1.ResourceOwners
+	(*IncidentResult)(nil),              // 40: sdodev.contracts.v1alpha1.IncidentResult
+	(*LateFindingsPull)(nil),            // 41: sdodev.contracts.v1alpha1.LateFindingsPull
+	(*IncidentView)(nil),                // 42: sdodev.contracts.v1alpha1.IncidentView
+	(*DetectorTimelineEntry)(nil),       // 43: sdodev.contracts.v1alpha1.DetectorTimelineEntry
+	(*IncidentClosure)(nil),             // 44: sdodev.contracts.v1alpha1.IncidentClosure
+	(*RecoveryVerification)(nil),        // 45: sdodev.contracts.v1alpha1.RecoveryVerification
+	(*ComponentVerification)(nil),       // 46: sdodev.contracts.v1alpha1.ComponentVerification
+	(*VerificationMember)(nil),          // 47: sdodev.contracts.v1alpha1.VerificationMember
+	(*WriteSettlement)(nil),             // 48: sdodev.contracts.v1alpha1.WriteSettlement
+	(*StageReport)(nil),                 // 49: sdodev.contracts.v1alpha1.StageReport
+	(*StageMitigation)(nil),             // 50: sdodev.contracts.v1alpha1.StageMitigation
+	(*DriftReprompt)(nil),               // 51: sdodev.contracts.v1alpha1.DriftReprompt
+	(*StatePersistenceFailure)(nil),     // 52: sdodev.contracts.v1alpha1.StatePersistenceFailure
+	nil,                                 // 53: sdodev.contracts.v1alpha1.Finding.ParameterBindingsEntry
+	nil,                                 // 54: sdodev.contracts.v1alpha1.SurfacedPlaybook.ParameterBindingsEntry
+	nil,                                 // 55: sdodev.contracts.v1alpha1.AppliedPlaybook.ParameterBindingsEntry
+	nil,                                 // 56: sdodev.contracts.v1alpha1.DetectorTimelineEntry.ParameterBindingsEntry
+	(*ObjectRef)(nil),                   // 57: sdodev.contracts.v1alpha1.ObjectRef
+	(*structpb.Struct)(nil),             // 58: google.protobuf.Struct
+	(*timestamppb.Timestamp)(nil),       // 59: google.protobuf.Timestamp
+	(*CodePathConfig)(nil),              // 60: sdodev.contracts.v1alpha1.CodePathConfig
+	(*TrafficWorkload)(nil),             // 61: sdodev.contracts.v1alpha1.TrafficWorkload
+	(*ProgramRun)(nil),                  // 62: sdodev.contracts.v1alpha1.ProgramRun
+	(*PlaybookCoverage)(nil),            // 63: sdodev.contracts.v1alpha1.PlaybookCoverage
+	(*RolloutPending)(nil),              // 64: sdodev.contracts.v1alpha1.RolloutPending
+	(*ProgramToolCall)(nil),             // 65: sdodev.contracts.v1alpha1.ProgramToolCall
+	(*PlanApplication)(nil),             // 66: sdodev.contracts.v1alpha1.PlanApplication
+	(*durationpb.Duration)(nil),         // 67: google.protobuf.Duration
+	(*RecoveryWait)(nil),                // 68: sdodev.contracts.v1alpha1.RecoveryWait
+	(*Binding)(nil),                     // 69: sdodev.contracts.v1alpha1.Binding
 }
 var file_sdodev_contracts_v1alpha1_messages_proto_depIdxs = []int32{
-	52,  // 0: sdodev.contracts.v1alpha1.Finding.primary_resource:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	52,  // 1: sdodev.contracts.v1alpha1.Finding.related_resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	48,  // 2: sdodev.contracts.v1alpha1.Finding.parameter_bindings:type_name -> sdodev.contracts.v1alpha1.Finding.ParameterBindingsEntry
-	53,  // 3: sdodev.contracts.v1alpha1.Finding.metadata:type_name -> google.protobuf.Struct
-	52,  // 4: sdodev.contracts.v1alpha1.DriftEvent.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	2,   // 5: sdodev.contracts.v1alpha1.DriftEvent.fields:type_name -> sdodev.contracts.v1alpha1.DriftField
-	54,  // 6: sdodev.contracts.v1alpha1.DriftEvent.observed_at:type_name -> google.protobuf.Timestamp
-	54,  // 7: sdodev.contracts.v1alpha1.DriftEvent.manager_at:type_name -> google.protobuf.Timestamp
-	4,   // 8: sdodev.contracts.v1alpha1.DriftEvent.investigation_evidence:type_name -> sdodev.contracts.v1alpha1.DriftEvidence
-	54,  // 9: sdodev.contracts.v1alpha1.DetectorEvaluation.evaluated_at:type_name -> google.protobuf.Timestamp
-	49,  // 10: sdodev.contracts.v1alpha1.SurfacedPlaybook.parameter_bindings:type_name -> sdodev.contracts.v1alpha1.SurfacedPlaybook.ParameterBindingsEntry
-	8,   // 11: sdodev.contracts.v1alpha1.StateChange.fields:type_name -> sdodev.contracts.v1alpha1.StateFieldChange
-	54,  // 12: sdodev.contracts.v1alpha1.StateChanges.baseline_at:type_name -> google.protobuf.Timestamp
-	54,  // 13: sdodev.contracts.v1alpha1.StateChanges.observed_at:type_name -> google.protobuf.Timestamp
-	9,   // 14: sdodev.contracts.v1alpha1.StateChanges.changes:type_name -> sdodev.contracts.v1alpha1.StateChange
-	11,  // 15: sdodev.contracts.v1alpha1.MemoryDetector.watches:type_name -> sdodev.contracts.v1alpha1.MemoryWatch
-	13,  // 16: sdodev.contracts.v1alpha1.MemoryPlaybook.scripts:type_name -> sdodev.contracts.v1alpha1.MemoryScript
-	55,  // 17: sdodev.contracts.v1alpha1.OperationalMemorySnapshot.code_path:type_name -> sdodev.contracts.v1alpha1.CodePathConfig
-	12,  // 18: sdodev.contracts.v1alpha1.OperationalMemorySnapshot.detectors:type_name -> sdodev.contracts.v1alpha1.MemoryDetector
-	14,  // 19: sdodev.contracts.v1alpha1.OperationalMemorySnapshot.playbooks:type_name -> sdodev.contracts.v1alpha1.MemoryPlaybook
-	11,  // 20: sdodev.contracts.v1alpha1.ProposedDetector.watches:type_name -> sdodev.contracts.v1alpha1.MemoryWatch
-	16,  // 21: sdodev.contracts.v1alpha1.ProposedDetector.sources:type_name -> sdodev.contracts.v1alpha1.ProposedGoSource
-	13,  // 22: sdodev.contracts.v1alpha1.ProposedPlaybook.scripts:type_name -> sdodev.contracts.v1alpha1.MemoryScript
-	16,  // 23: sdodev.contracts.v1alpha1.ProposedTrafficGenerator.sources:type_name -> sdodev.contracts.v1alpha1.ProposedGoSource
-	17,  // 24: sdodev.contracts.v1alpha1.OperationalArtifactProposal.detectors:type_name -> sdodev.contracts.v1alpha1.ProposedDetector
-	18,  // 25: sdodev.contracts.v1alpha1.OperationalArtifactProposal.playbooks:type_name -> sdodev.contracts.v1alpha1.ProposedPlaybook
-	19,  // 26: sdodev.contracts.v1alpha1.OperationalArtifactProposal.traffic_generators:type_name -> sdodev.contracts.v1alpha1.ProposedTrafficGenerator
-	56,  // 27: sdodev.contracts.v1alpha1.OperationalArtifactProposal.traffic_workloads:type_name -> sdodev.contracts.v1alpha1.TrafficWorkload
-	23,  // 28: sdodev.contracts.v1alpha1.TelemetryContext.sources:type_name -> sdodev.contracts.v1alpha1.TelemetrySource
-	22,  // 29: sdodev.contracts.v1alpha1.TelemetryContext.recipes:type_name -> sdodev.contracts.v1alpha1.TelemetryRecipe
-	24,  // 30: sdodev.contracts.v1alpha1.TelemetrySource.publish:type_name -> sdodev.contracts.v1alpha1.TelemetryPublish
-	54,  // 31: sdodev.contracts.v1alpha1.DisabledSetupDetector.disabled_at:type_name -> google.protobuf.Timestamp
-	25,  // 32: sdodev.contracts.v1alpha1.NamespaceOnboarding.disabled_setup_detectors:type_name -> sdodev.contracts.v1alpha1.DisabledSetupDetector
-	54,  // 33: sdodev.contracts.v1alpha1.NamespaceOnboarding.established_at:type_name -> google.protobuf.Timestamp
-	52,  // 34: sdodev.contracts.v1alpha1.NamespaceOnboarding.objects:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	27,  // 35: sdodev.contracts.v1alpha1.NamespaceOnboarding.environment_objects:type_name -> sdodev.contracts.v1alpha1.InstallEnvironmentObject
-	52,  // 36: sdodev.contracts.v1alpha1.InstallEnvironmentObject.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	1,   // 37: sdodev.contracts.v1alpha1.IncidentRequest.findings:type_name -> sdodev.contracts.v1alpha1.Finding
-	5,   // 38: sdodev.contracts.v1alpha1.IncidentRequest.detector_history:type_name -> sdodev.contracts.v1alpha1.DetectorEvaluation
-	6,   // 39: sdodev.contracts.v1alpha1.IncidentRequest.surfaced_playbooks:type_name -> sdodev.contracts.v1alpha1.SurfacedPlaybook
-	7,   // 40: sdodev.contracts.v1alpha1.IncidentRequest.relevant_outcomes:type_name -> sdodev.contracts.v1alpha1.PriorOutcomeEvidence
-	54,  // 41: sdodev.contracts.v1alpha1.IncidentRequest.response_deadline:type_name -> google.protobuf.Timestamp
-	10,  // 42: sdodev.contracts.v1alpha1.IncidentRequest.state_changes:type_name -> sdodev.contracts.v1alpha1.StateChanges
-	15,  // 43: sdodev.contracts.v1alpha1.IncidentRequest.memory_snapshot:type_name -> sdodev.contracts.v1alpha1.OperationalMemorySnapshot
-	57,  // 44: sdodev.contracts.v1alpha1.IncidentRequest.initial_program_runs:type_name -> sdodev.contracts.v1alpha1.ProgramRun
-	3,   // 45: sdodev.contracts.v1alpha1.IncidentRequest.drift_events:type_name -> sdodev.contracts.v1alpha1.DriftEvent
-	58,  // 46: sdodev.contracts.v1alpha1.IncidentRequest.playbook_coverage:type_name -> sdodev.contracts.v1alpha1.PlaybookCoverage
-	26,  // 47: sdodev.contracts.v1alpha1.IncidentRequest.namespace_onboarding:type_name -> sdodev.contracts.v1alpha1.NamespaceOnboarding
-	44,  // 48: sdodev.contracts.v1alpha1.IncidentRequest.prior_stages:type_name -> sdodev.contracts.v1alpha1.StageReport
-	30,  // 49: sdodev.contracts.v1alpha1.IncidentRequest.prior_response_progress:type_name -> sdodev.contracts.v1alpha1.ResponseProgress
-	25,  // 50: sdodev.contracts.v1alpha1.IncidentRequest.disabled_setup_detectors:type_name -> sdodev.contracts.v1alpha1.DisabledSetupDetector
-	54,  // 51: sdodev.contracts.v1alpha1.IncidentRequest.detected_at:type_name -> google.protobuf.Timestamp
-	21,  // 52: sdodev.contracts.v1alpha1.IncidentRequest.telemetry:type_name -> sdodev.contracts.v1alpha1.TelemetryContext
-	37,  // 53: sdodev.contracts.v1alpha1.ResponseProgress.successful_actions:type_name -> sdodev.contracts.v1alpha1.RepairActionReceipt
-	59,  // 54: sdodev.contracts.v1alpha1.ResponseProgress.blockers:type_name -> sdodev.contracts.v1alpha1.RolloutPending
-	52,  // 55: sdodev.contracts.v1alpha1.ConfirmedRootCause.resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	31,  // 56: sdodev.contracts.v1alpha1.ConfirmedRootCause.evidence:type_name -> sdodev.contracts.v1alpha1.RootCauseEvidence
-	50,  // 57: sdodev.contracts.v1alpha1.AppliedPlaybook.parameter_bindings:type_name -> sdodev.contracts.v1alpha1.AppliedPlaybook.ParameterBindingsEntry
-	54,  // 58: sdodev.contracts.v1alpha1.VerificationEvidence.observed_at:type_name -> google.protobuf.Timestamp
-	54,  // 59: sdodev.contracts.v1alpha1.TimingMetrics.started_at:type_name -> google.protobuf.Timestamp
-	54,  // 60: sdodev.contracts.v1alpha1.TimingMetrics.completed_at:type_name -> google.protobuf.Timestamp
-	52,  // 61: sdodev.contracts.v1alpha1.RepairActionReceipt.resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	54,  // 62: sdodev.contracts.v1alpha1.RepairActionReceipt.started_at:type_name -> google.protobuf.Timestamp
-	54,  // 63: sdodev.contracts.v1alpha1.RepairActionReceipt.completed_at:type_name -> google.protobuf.Timestamp
-	38,  // 64: sdodev.contracts.v1alpha1.RepairActionReceipt.owners:type_name -> sdodev.contracts.v1alpha1.ResourceOwners
-	52,  // 65: sdodev.contracts.v1alpha1.ResourceOwners.resource:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	52,  // 66: sdodev.contracts.v1alpha1.ResourceOwners.owner_chain:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	32,  // 67: sdodev.contracts.v1alpha1.IncidentResult.confirmed_root_causes:type_name -> sdodev.contracts.v1alpha1.ConfirmedRootCause
-	33,  // 68: sdodev.contracts.v1alpha1.IncidentResult.applied_playbooks:type_name -> sdodev.contracts.v1alpha1.AppliedPlaybook
-	37,  // 69: sdodev.contracts.v1alpha1.IncidentResult.repair_actions:type_name -> sdodev.contracts.v1alpha1.RepairActionReceipt
-	5,   // 70: sdodev.contracts.v1alpha1.IncidentResult.final_detector_states:type_name -> sdodev.contracts.v1alpha1.DetectorEvaluation
-	34,  // 71: sdodev.contracts.v1alpha1.IncidentResult.verification_evidence:type_name -> sdodev.contracts.v1alpha1.VerificationEvidence
-	35,  // 72: sdodev.contracts.v1alpha1.IncidentResult.usage:type_name -> sdodev.contracts.v1alpha1.UsageMetrics
-	36,  // 73: sdodev.contracts.v1alpha1.IncidentResult.timing:type_name -> sdodev.contracts.v1alpha1.TimingMetrics
-	40,  // 74: sdodev.contracts.v1alpha1.IncidentResult.late_findings_pull:type_name -> sdodev.contracts.v1alpha1.LateFindingsPull
-	60,  // 75: sdodev.contracts.v1alpha1.IncidentResult.program_tool_calls:type_name -> sdodev.contracts.v1alpha1.ProgramToolCall
-	57,  // 76: sdodev.contracts.v1alpha1.IncidentResult.program_runs:type_name -> sdodev.contracts.v1alpha1.ProgramRun
-	61,  // 77: sdodev.contracts.v1alpha1.IncidentResult.plan_applications:type_name -> sdodev.contracts.v1alpha1.PlanApplication
-	3,   // 78: sdodev.contracts.v1alpha1.IncidentResult.drift_events:type_name -> sdodev.contracts.v1alpha1.DriftEvent
-	1,   // 79: sdodev.contracts.v1alpha1.IncidentResult.unresolved_findings:type_name -> sdodev.contracts.v1alpha1.Finding
-	46,  // 80: sdodev.contracts.v1alpha1.IncidentResult.drift_reprompt:type_name -> sdodev.contracts.v1alpha1.DriftReprompt
-	54,  // 81: sdodev.contracts.v1alpha1.IncidentView.observed_at:type_name -> google.protobuf.Timestamp
-	1,   // 82: sdodev.contracts.v1alpha1.IncidentView.blocking_findings:type_name -> sdodev.contracts.v1alpha1.Finding
-	1,   // 83: sdodev.contracts.v1alpha1.IncidentView.clearing_findings:type_name -> sdodev.contracts.v1alpha1.Finding
-	10,  // 84: sdodev.contracts.v1alpha1.IncidentView.state_changes:type_name -> sdodev.contracts.v1alpha1.StateChanges
-	3,   // 85: sdodev.contracts.v1alpha1.IncidentView.drift_events:type_name -> sdodev.contracts.v1alpha1.DriftEvent
-	51,  // 86: sdodev.contracts.v1alpha1.DetectorTimelineEntry.parameter_bindings:type_name -> sdodev.contracts.v1alpha1.DetectorTimelineEntry.ParameterBindingsEntry
-	54,  // 87: sdodev.contracts.v1alpha1.DetectorTimelineEntry.first_activated_at:type_name -> google.protobuf.Timestamp
-	54,  // 88: sdodev.contracts.v1alpha1.DetectorTimelineEntry.last_seen_at:type_name -> google.protobuf.Timestamp
-	54,  // 89: sdodev.contracts.v1alpha1.DetectorTimelineEntry.cleared_at:type_name -> google.protobuf.Timestamp
-	29,  // 90: sdodev.contracts.v1alpha1.IncidentClosure.request:type_name -> sdodev.contracts.v1alpha1.IncidentRequest
-	39,  // 91: sdodev.contracts.v1alpha1.IncidentClosure.result:type_name -> sdodev.contracts.v1alpha1.IncidentResult
-	5,   // 92: sdodev.contracts.v1alpha1.IncidentClosure.final_detector_states:type_name -> sdodev.contracts.v1alpha1.DetectorEvaluation
-	5,   // 93: sdodev.contracts.v1alpha1.IncidentClosure.incident_detector_states:type_name -> sdodev.contracts.v1alpha1.DetectorEvaluation
-	42,  // 94: sdodev.contracts.v1alpha1.IncidentClosure.detector_timeline:type_name -> sdodev.contracts.v1alpha1.DetectorTimelineEntry
-	10,  // 95: sdodev.contracts.v1alpha1.IncidentClosure.final_state_changes:type_name -> sdodev.contracts.v1alpha1.StateChanges
-	54,  // 96: sdodev.contracts.v1alpha1.IncidentClosure.detected_at:type_name -> google.protobuf.Timestamp
-	54,  // 97: sdodev.contracts.v1alpha1.IncidentClosure.dispatched_at:type_name -> google.protobuf.Timestamp
-	54,  // 98: sdodev.contracts.v1alpha1.IncidentClosure.responder_completed_at:type_name -> google.protobuf.Timestamp
-	54,  // 99: sdodev.contracts.v1alpha1.IncidentClosure.verified_at:type_name -> google.protobuf.Timestamp
-	54,  // 100: sdodev.contracts.v1alpha1.IncidentClosure.health_cleared_at:type_name -> google.protobuf.Timestamp
-	5,   // 101: sdodev.contracts.v1alpha1.IncidentClosure.partial_detector_states:type_name -> sdodev.contracts.v1alpha1.DetectorEvaluation
-	62,  // 102: sdodev.contracts.v1alpha1.IncidentClosure.closure_stability_window:type_name -> google.protobuf.Duration
-	0,   // 103: sdodev.contracts.v1alpha1.IncidentClosure.unconfirmed_reason:type_name -> sdodev.contracts.v1alpha1.ClosureUnconfirmedReason
-	47,  // 104: sdodev.contracts.v1alpha1.IncidentClosure.state_persistence_failure:type_name -> sdodev.contracts.v1alpha1.StatePersistenceFailure
-	45,  // 105: sdodev.contracts.v1alpha1.StageReport.mitigations:type_name -> sdodev.contracts.v1alpha1.StageMitigation
-	63,  // 106: sdodev.contracts.v1alpha1.StageReport.recovery_wait:type_name -> sdodev.contracts.v1alpha1.RecoveryWait
-	54,  // 107: sdodev.contracts.v1alpha1.StageReport.started_at:type_name -> google.protobuf.Timestamp
-	64,  // 108: sdodev.contracts.v1alpha1.StageMitigation.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
-	61,  // 109: sdodev.contracts.v1alpha1.StageMitigation.apply_receipt:type_name -> sdodev.contracts.v1alpha1.PlanApplication
-	57,  // 110: sdodev.contracts.v1alpha1.StageMitigation.post_apply_diagnose:type_name -> sdodev.contracts.v1alpha1.ProgramRun
-	52,  // 111: sdodev.contracts.v1alpha1.StageMitigation.touched_objects:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	57,  // 112: sdodev.contracts.v1alpha1.StageMitigation.escalation:type_name -> sdodev.contracts.v1alpha1.ProgramRun
-	52,  // 113: sdodev.contracts.v1alpha1.StageMitigation.escalated_resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	52,  // 114: sdodev.contracts.v1alpha1.Finding.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	52,  // 115: sdodev.contracts.v1alpha1.SurfacedPlaybook.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	52,  // 116: sdodev.contracts.v1alpha1.AppliedPlaybook.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	52,  // 117: sdodev.contracts.v1alpha1.DetectorTimelineEntry.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	118, // [118:118] is the sub-list for method output_type
-	118, // [118:118] is the sub-list for method input_type
-	118, // [118:118] is the sub-list for extension type_name
-	118, // [118:118] is the sub-list for extension extendee
-	0,   // [0:118] is the sub-list for field type_name
+	57,  // 0: sdodev.contracts.v1alpha1.Finding.primary_resource:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	57,  // 1: sdodev.contracts.v1alpha1.Finding.related_resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	53,  // 2: sdodev.contracts.v1alpha1.Finding.parameter_bindings:type_name -> sdodev.contracts.v1alpha1.Finding.ParameterBindingsEntry
+	58,  // 3: sdodev.contracts.v1alpha1.Finding.metadata:type_name -> google.protobuf.Struct
+	57,  // 4: sdodev.contracts.v1alpha1.DriftEvent.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	3,   // 5: sdodev.contracts.v1alpha1.DriftEvent.fields:type_name -> sdodev.contracts.v1alpha1.DriftField
+	59,  // 6: sdodev.contracts.v1alpha1.DriftEvent.observed_at:type_name -> google.protobuf.Timestamp
+	59,  // 7: sdodev.contracts.v1alpha1.DriftEvent.manager_at:type_name -> google.protobuf.Timestamp
+	5,   // 8: sdodev.contracts.v1alpha1.DriftEvent.investigation_evidence:type_name -> sdodev.contracts.v1alpha1.DriftEvidence
+	59,  // 9: sdodev.contracts.v1alpha1.DetectorEvaluation.evaluated_at:type_name -> google.protobuf.Timestamp
+	54,  // 10: sdodev.contracts.v1alpha1.SurfacedPlaybook.parameter_bindings:type_name -> sdodev.contracts.v1alpha1.SurfacedPlaybook.ParameterBindingsEntry
+	9,   // 11: sdodev.contracts.v1alpha1.StateChange.fields:type_name -> sdodev.contracts.v1alpha1.StateFieldChange
+	59,  // 12: sdodev.contracts.v1alpha1.StateChanges.baseline_at:type_name -> google.protobuf.Timestamp
+	59,  // 13: sdodev.contracts.v1alpha1.StateChanges.observed_at:type_name -> google.protobuf.Timestamp
+	10,  // 14: sdodev.contracts.v1alpha1.StateChanges.changes:type_name -> sdodev.contracts.v1alpha1.StateChange
+	12,  // 15: sdodev.contracts.v1alpha1.MemoryDetector.watches:type_name -> sdodev.contracts.v1alpha1.MemoryWatch
+	14,  // 16: sdodev.contracts.v1alpha1.MemoryPlaybook.scripts:type_name -> sdodev.contracts.v1alpha1.MemoryScript
+	60,  // 17: sdodev.contracts.v1alpha1.OperationalMemorySnapshot.code_path:type_name -> sdodev.contracts.v1alpha1.CodePathConfig
+	13,  // 18: sdodev.contracts.v1alpha1.OperationalMemorySnapshot.detectors:type_name -> sdodev.contracts.v1alpha1.MemoryDetector
+	15,  // 19: sdodev.contracts.v1alpha1.OperationalMemorySnapshot.playbooks:type_name -> sdodev.contracts.v1alpha1.MemoryPlaybook
+	12,  // 20: sdodev.contracts.v1alpha1.ProposedDetector.watches:type_name -> sdodev.contracts.v1alpha1.MemoryWatch
+	17,  // 21: sdodev.contracts.v1alpha1.ProposedDetector.sources:type_name -> sdodev.contracts.v1alpha1.ProposedGoSource
+	14,  // 22: sdodev.contracts.v1alpha1.ProposedPlaybook.scripts:type_name -> sdodev.contracts.v1alpha1.MemoryScript
+	17,  // 23: sdodev.contracts.v1alpha1.ProposedTrafficGenerator.sources:type_name -> sdodev.contracts.v1alpha1.ProposedGoSource
+	18,  // 24: sdodev.contracts.v1alpha1.OperationalArtifactProposal.detectors:type_name -> sdodev.contracts.v1alpha1.ProposedDetector
+	19,  // 25: sdodev.contracts.v1alpha1.OperationalArtifactProposal.playbooks:type_name -> sdodev.contracts.v1alpha1.ProposedPlaybook
+	20,  // 26: sdodev.contracts.v1alpha1.OperationalArtifactProposal.traffic_generators:type_name -> sdodev.contracts.v1alpha1.ProposedTrafficGenerator
+	61,  // 27: sdodev.contracts.v1alpha1.OperationalArtifactProposal.traffic_workloads:type_name -> sdodev.contracts.v1alpha1.TrafficWorkload
+	24,  // 28: sdodev.contracts.v1alpha1.TelemetryContext.sources:type_name -> sdodev.contracts.v1alpha1.TelemetrySource
+	23,  // 29: sdodev.contracts.v1alpha1.TelemetryContext.recipes:type_name -> sdodev.contracts.v1alpha1.TelemetryRecipe
+	25,  // 30: sdodev.contracts.v1alpha1.TelemetrySource.publish:type_name -> sdodev.contracts.v1alpha1.TelemetryPublish
+	59,  // 31: sdodev.contracts.v1alpha1.DisabledSetupDetector.disabled_at:type_name -> google.protobuf.Timestamp
+	26,  // 32: sdodev.contracts.v1alpha1.NamespaceOnboarding.disabled_setup_detectors:type_name -> sdodev.contracts.v1alpha1.DisabledSetupDetector
+	59,  // 33: sdodev.contracts.v1alpha1.NamespaceOnboarding.established_at:type_name -> google.protobuf.Timestamp
+	57,  // 34: sdodev.contracts.v1alpha1.NamespaceOnboarding.objects:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	28,  // 35: sdodev.contracts.v1alpha1.NamespaceOnboarding.environment_objects:type_name -> sdodev.contracts.v1alpha1.InstallEnvironmentObject
+	57,  // 36: sdodev.contracts.v1alpha1.InstallEnvironmentObject.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	2,   // 37: sdodev.contracts.v1alpha1.IncidentRequest.findings:type_name -> sdodev.contracts.v1alpha1.Finding
+	6,   // 38: sdodev.contracts.v1alpha1.IncidentRequest.detector_history:type_name -> sdodev.contracts.v1alpha1.DetectorEvaluation
+	7,   // 39: sdodev.contracts.v1alpha1.IncidentRequest.surfaced_playbooks:type_name -> sdodev.contracts.v1alpha1.SurfacedPlaybook
+	8,   // 40: sdodev.contracts.v1alpha1.IncidentRequest.relevant_outcomes:type_name -> sdodev.contracts.v1alpha1.PriorOutcomeEvidence
+	59,  // 41: sdodev.contracts.v1alpha1.IncidentRequest.response_deadline:type_name -> google.protobuf.Timestamp
+	11,  // 42: sdodev.contracts.v1alpha1.IncidentRequest.state_changes:type_name -> sdodev.contracts.v1alpha1.StateChanges
+	16,  // 43: sdodev.contracts.v1alpha1.IncidentRequest.memory_snapshot:type_name -> sdodev.contracts.v1alpha1.OperationalMemorySnapshot
+	62,  // 44: sdodev.contracts.v1alpha1.IncidentRequest.initial_program_runs:type_name -> sdodev.contracts.v1alpha1.ProgramRun
+	4,   // 45: sdodev.contracts.v1alpha1.IncidentRequest.drift_events:type_name -> sdodev.contracts.v1alpha1.DriftEvent
+	63,  // 46: sdodev.contracts.v1alpha1.IncidentRequest.playbook_coverage:type_name -> sdodev.contracts.v1alpha1.PlaybookCoverage
+	27,  // 47: sdodev.contracts.v1alpha1.IncidentRequest.namespace_onboarding:type_name -> sdodev.contracts.v1alpha1.NamespaceOnboarding
+	49,  // 48: sdodev.contracts.v1alpha1.IncidentRequest.prior_stages:type_name -> sdodev.contracts.v1alpha1.StageReport
+	31,  // 49: sdodev.contracts.v1alpha1.IncidentRequest.prior_response_progress:type_name -> sdodev.contracts.v1alpha1.ResponseProgress
+	26,  // 50: sdodev.contracts.v1alpha1.IncidentRequest.disabled_setup_detectors:type_name -> sdodev.contracts.v1alpha1.DisabledSetupDetector
+	59,  // 51: sdodev.contracts.v1alpha1.IncidentRequest.detected_at:type_name -> google.protobuf.Timestamp
+	22,  // 52: sdodev.contracts.v1alpha1.IncidentRequest.telemetry:type_name -> sdodev.contracts.v1alpha1.TelemetryContext
+	38,  // 53: sdodev.contracts.v1alpha1.ResponseProgress.successful_actions:type_name -> sdodev.contracts.v1alpha1.RepairActionReceipt
+	64,  // 54: sdodev.contracts.v1alpha1.ResponseProgress.blockers:type_name -> sdodev.contracts.v1alpha1.RolloutPending
+	57,  // 55: sdodev.contracts.v1alpha1.ConfirmedRootCause.resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	32,  // 56: sdodev.contracts.v1alpha1.ConfirmedRootCause.evidence:type_name -> sdodev.contracts.v1alpha1.RootCauseEvidence
+	55,  // 57: sdodev.contracts.v1alpha1.AppliedPlaybook.parameter_bindings:type_name -> sdodev.contracts.v1alpha1.AppliedPlaybook.ParameterBindingsEntry
+	59,  // 58: sdodev.contracts.v1alpha1.VerificationEvidence.observed_at:type_name -> google.protobuf.Timestamp
+	59,  // 59: sdodev.contracts.v1alpha1.TimingMetrics.started_at:type_name -> google.protobuf.Timestamp
+	59,  // 60: sdodev.contracts.v1alpha1.TimingMetrics.completed_at:type_name -> google.protobuf.Timestamp
+	57,  // 61: sdodev.contracts.v1alpha1.RepairActionReceipt.resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	59,  // 62: sdodev.contracts.v1alpha1.RepairActionReceipt.started_at:type_name -> google.protobuf.Timestamp
+	59,  // 63: sdodev.contracts.v1alpha1.RepairActionReceipt.completed_at:type_name -> google.protobuf.Timestamp
+	39,  // 64: sdodev.contracts.v1alpha1.RepairActionReceipt.owners:type_name -> sdodev.contracts.v1alpha1.ResourceOwners
+	57,  // 65: sdodev.contracts.v1alpha1.ResourceOwners.resource:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	57,  // 66: sdodev.contracts.v1alpha1.ResourceOwners.owner_chain:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	33,  // 67: sdodev.contracts.v1alpha1.IncidentResult.confirmed_root_causes:type_name -> sdodev.contracts.v1alpha1.ConfirmedRootCause
+	34,  // 68: sdodev.contracts.v1alpha1.IncidentResult.applied_playbooks:type_name -> sdodev.contracts.v1alpha1.AppliedPlaybook
+	38,  // 69: sdodev.contracts.v1alpha1.IncidentResult.repair_actions:type_name -> sdodev.contracts.v1alpha1.RepairActionReceipt
+	6,   // 70: sdodev.contracts.v1alpha1.IncidentResult.final_detector_states:type_name -> sdodev.contracts.v1alpha1.DetectorEvaluation
+	35,  // 71: sdodev.contracts.v1alpha1.IncidentResult.verification_evidence:type_name -> sdodev.contracts.v1alpha1.VerificationEvidence
+	36,  // 72: sdodev.contracts.v1alpha1.IncidentResult.usage:type_name -> sdodev.contracts.v1alpha1.UsageMetrics
+	37,  // 73: sdodev.contracts.v1alpha1.IncidentResult.timing:type_name -> sdodev.contracts.v1alpha1.TimingMetrics
+	41,  // 74: sdodev.contracts.v1alpha1.IncidentResult.late_findings_pull:type_name -> sdodev.contracts.v1alpha1.LateFindingsPull
+	65,  // 75: sdodev.contracts.v1alpha1.IncidentResult.program_tool_calls:type_name -> sdodev.contracts.v1alpha1.ProgramToolCall
+	62,  // 76: sdodev.contracts.v1alpha1.IncidentResult.program_runs:type_name -> sdodev.contracts.v1alpha1.ProgramRun
+	66,  // 77: sdodev.contracts.v1alpha1.IncidentResult.plan_applications:type_name -> sdodev.contracts.v1alpha1.PlanApplication
+	4,   // 78: sdodev.contracts.v1alpha1.IncidentResult.drift_events:type_name -> sdodev.contracts.v1alpha1.DriftEvent
+	2,   // 79: sdodev.contracts.v1alpha1.IncidentResult.unresolved_findings:type_name -> sdodev.contracts.v1alpha1.Finding
+	51,  // 80: sdodev.contracts.v1alpha1.IncidentResult.drift_reprompt:type_name -> sdodev.contracts.v1alpha1.DriftReprompt
+	59,  // 81: sdodev.contracts.v1alpha1.IncidentView.observed_at:type_name -> google.protobuf.Timestamp
+	2,   // 82: sdodev.contracts.v1alpha1.IncidentView.blocking_findings:type_name -> sdodev.contracts.v1alpha1.Finding
+	2,   // 83: sdodev.contracts.v1alpha1.IncidentView.clearing_findings:type_name -> sdodev.contracts.v1alpha1.Finding
+	11,  // 84: sdodev.contracts.v1alpha1.IncidentView.state_changes:type_name -> sdodev.contracts.v1alpha1.StateChanges
+	4,   // 85: sdodev.contracts.v1alpha1.IncidentView.drift_events:type_name -> sdodev.contracts.v1alpha1.DriftEvent
+	56,  // 86: sdodev.contracts.v1alpha1.DetectorTimelineEntry.parameter_bindings:type_name -> sdodev.contracts.v1alpha1.DetectorTimelineEntry.ParameterBindingsEntry
+	59,  // 87: sdodev.contracts.v1alpha1.DetectorTimelineEntry.first_activated_at:type_name -> google.protobuf.Timestamp
+	59,  // 88: sdodev.contracts.v1alpha1.DetectorTimelineEntry.last_seen_at:type_name -> google.protobuf.Timestamp
+	59,  // 89: sdodev.contracts.v1alpha1.DetectorTimelineEntry.cleared_at:type_name -> google.protobuf.Timestamp
+	30,  // 90: sdodev.contracts.v1alpha1.IncidentClosure.request:type_name -> sdodev.contracts.v1alpha1.IncidentRequest
+	40,  // 91: sdodev.contracts.v1alpha1.IncidentClosure.result:type_name -> sdodev.contracts.v1alpha1.IncidentResult
+	6,   // 92: sdodev.contracts.v1alpha1.IncidentClosure.final_detector_states:type_name -> sdodev.contracts.v1alpha1.DetectorEvaluation
+	6,   // 93: sdodev.contracts.v1alpha1.IncidentClosure.incident_detector_states:type_name -> sdodev.contracts.v1alpha1.DetectorEvaluation
+	43,  // 94: sdodev.contracts.v1alpha1.IncidentClosure.detector_timeline:type_name -> sdodev.contracts.v1alpha1.DetectorTimelineEntry
+	11,  // 95: sdodev.contracts.v1alpha1.IncidentClosure.final_state_changes:type_name -> sdodev.contracts.v1alpha1.StateChanges
+	59,  // 96: sdodev.contracts.v1alpha1.IncidentClosure.detected_at:type_name -> google.protobuf.Timestamp
+	59,  // 97: sdodev.contracts.v1alpha1.IncidentClosure.dispatched_at:type_name -> google.protobuf.Timestamp
+	59,  // 98: sdodev.contracts.v1alpha1.IncidentClosure.responder_completed_at:type_name -> google.protobuf.Timestamp
+	59,  // 99: sdodev.contracts.v1alpha1.IncidentClosure.verified_at:type_name -> google.protobuf.Timestamp
+	59,  // 100: sdodev.contracts.v1alpha1.IncidentClosure.health_cleared_at:type_name -> google.protobuf.Timestamp
+	6,   // 101: sdodev.contracts.v1alpha1.IncidentClosure.partial_detector_states:type_name -> sdodev.contracts.v1alpha1.DetectorEvaluation
+	67,  // 102: sdodev.contracts.v1alpha1.IncidentClosure.closure_stability_window:type_name -> google.protobuf.Duration
+	1,   // 103: sdodev.contracts.v1alpha1.IncidentClosure.unconfirmed_reason:type_name -> sdodev.contracts.v1alpha1.ClosureUnconfirmedReason
+	52,  // 104: sdodev.contracts.v1alpha1.IncidentClosure.state_persistence_failure:type_name -> sdodev.contracts.v1alpha1.StatePersistenceFailure
+	45,  // 105: sdodev.contracts.v1alpha1.IncidentClosure.recovery_verification:type_name -> sdodev.contracts.v1alpha1.RecoveryVerification
+	59,  // 106: sdodev.contracts.v1alpha1.RecoveryVerification.since:type_name -> google.protobuf.Timestamp
+	46,  // 107: sdodev.contracts.v1alpha1.RecoveryVerification.components:type_name -> sdodev.contracts.v1alpha1.ComponentVerification
+	48,  // 108: sdodev.contracts.v1alpha1.RecoveryVerification.writes:type_name -> sdodev.contracts.v1alpha1.WriteSettlement
+	0,   // 109: sdodev.contracts.v1alpha1.ComponentVerification.strength:type_name -> sdodev.contracts.v1alpha1.VerificationStrength
+	47,  // 110: sdodev.contracts.v1alpha1.ComponentVerification.members:type_name -> sdodev.contracts.v1alpha1.VerificationMember
+	59,  // 111: sdodev.contracts.v1alpha1.WriteSettlement.settled_at:type_name -> google.protobuf.Timestamp
+	50,  // 112: sdodev.contracts.v1alpha1.StageReport.mitigations:type_name -> sdodev.contracts.v1alpha1.StageMitigation
+	68,  // 113: sdodev.contracts.v1alpha1.StageReport.recovery_wait:type_name -> sdodev.contracts.v1alpha1.RecoveryWait
+	59,  // 114: sdodev.contracts.v1alpha1.StageReport.started_at:type_name -> google.protobuf.Timestamp
+	69,  // 115: sdodev.contracts.v1alpha1.StageMitigation.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
+	66,  // 116: sdodev.contracts.v1alpha1.StageMitigation.apply_receipt:type_name -> sdodev.contracts.v1alpha1.PlanApplication
+	62,  // 117: sdodev.contracts.v1alpha1.StageMitigation.post_apply_diagnose:type_name -> sdodev.contracts.v1alpha1.ProgramRun
+	57,  // 118: sdodev.contracts.v1alpha1.StageMitigation.touched_objects:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	62,  // 119: sdodev.contracts.v1alpha1.StageMitigation.escalation:type_name -> sdodev.contracts.v1alpha1.ProgramRun
+	57,  // 120: sdodev.contracts.v1alpha1.StageMitigation.escalated_resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	57,  // 121: sdodev.contracts.v1alpha1.Finding.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	57,  // 122: sdodev.contracts.v1alpha1.SurfacedPlaybook.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	57,  // 123: sdodev.contracts.v1alpha1.AppliedPlaybook.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	57,  // 124: sdodev.contracts.v1alpha1.DetectorTimelineEntry.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	125, // [125:125] is the sub-list for method output_type
+	125, // [125:125] is the sub-list for method input_type
+	125, // [125:125] is the sub-list for extension type_name
+	125, // [125:125] is the sub-list for extension extendee
+	0,   // [0:125] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_messages_proto_init() }
@@ -5321,14 +5736,14 @@ func file_sdodev_contracts_v1alpha1_messages_proto_init() {
 	file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[38].OneofWrappers = []any{}
 	file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[41].OneofWrappers = []any{}
 	file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[42].OneofWrappers = []any{}
-	file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[45].OneofWrappers = []any{}
+	file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[49].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sdodev_contracts_v1alpha1_messages_proto_rawDesc), len(file_sdodev_contracts_v1alpha1_messages_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   51,
+			NumEnums:      2,
+			NumMessages:   55,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

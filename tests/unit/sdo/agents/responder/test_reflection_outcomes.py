@@ -27,6 +27,7 @@ from sdo.contracts.proto import (
     ProgramRun,
     RepairActionReceipt,
     Verdict,
+    VerificationStrength,
 )
 from tests.context_helpers import expand_context
 
@@ -167,16 +168,26 @@ def test_current_outcome_says_when_data_may_be_lost() -> None:
     assert current_outcome_view(outcome)["data_at_risk"] == [reason]
 
 
-def test_current_outcome_says_when_no_probe_verified_recovery() -> None:
+def test_current_outcome_says_which_components_no_operation_probe_verified() -> None:
     outcome = _outcome("synthetic-incident")
-    assert "recovery_unprobed" not in current_outcome_view(outcome)
+    assert "recovery_unverified" not in current_outcome_view(outcome)
 
     outcome.classification = "unconfirmed"
-    reason = "Service store (Pod store-0) is crossed by no qualified health probe"
-    outcome.detector_history.append(
-        DetectorEvaluation(detector_id="controller.recovery-unprobed", status="pending", reason=reason)
+    outcome.recovery_verification.probed = True
+    outcome.recovery_verification.writes_settled = True
+    outcome.recovery_verification.components.add(
+        component="store",
+        strength=VerificationStrength.VERIFICATION_STRENGTH_REACHABILITY,
+        recovered=True,
+        in_scope=True,
     )
-    assert current_outcome_view(outcome)["recovery_unprobed"] == [reason]
+    outcome.recovery_verification.components.add(
+        component="front", strength=VerificationStrength.VERIFICATION_STRENGTH_OPERATION, recovered=True, in_scope=True
+    )
+    outcome.recovery_verification.components.add(
+        component="gate", strength=VerificationStrength.VERIFICATION_STRENGTH_UNOBSERVABLE, in_scope=False
+    )
+    assert current_outcome_view(outcome)["recovery_unverified"] == ["store: reachability only"]
 
 
 def test_current_outcome_shows_source_check_notes_only_when_recorded() -> None:

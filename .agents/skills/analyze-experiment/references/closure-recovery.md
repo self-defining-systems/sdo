@@ -12,4 +12,6 @@ remains authoritative, and settled closures stop scheduling observation wakes.
 Without this wake, a paused controller could fall back to an hour-long sleep
 while a restarted recovery observer needed a fresh stability window.
 
+Read a closure's `recovery_verification` first: per faulted or SDO-written component, its strength (a probe of a user operation, link dials only, or nothing), its members and whether each passed after SDO's last write settled (`since`). An `unconfirmed` close names the weak in-scope component in `unconfirmed_detail`; joined components SDO never touched are recorded with `in_scope: false` and do not change the label.
+
 A closure is only as good as the probes that cross the faulted component. Every health probe holds closure while it fails (critical severity), whatever finding opened the incident, so an incident "cleared without action" after a pod restart while users still failed means no probed operation crossed that component: check the map for an `unprobed` reason on the component or a missing user operation through an exposed entry (`map.coverage`, `map.unprobed`; older memories used the per-edge `map.uncovered-edge`/`map.unprobed-edge`) and classify it as detection coverage, not closure.

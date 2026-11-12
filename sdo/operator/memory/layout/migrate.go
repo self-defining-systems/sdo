@@ -146,6 +146,9 @@ var schemaMigrations = map[int]func(*schemaPlan) error{
 	// Version 6 adds .sdo/diagnostics/data, which no earlier repository holds:
 	// the step only stamps.
 	6: func(*schemaPlan) error { return nil },
+	// Version 7 adds recovery_verification to outcome documents. Earlier
+	// outcomes are not reinterpreted: the step only stamps.
+	7: func(*schemaPlan) error { return nil },
 }
 
 type fileRewrite struct {

@@ -245,11 +245,6 @@ func repairRecorded(outcome *contracts.OutcomeRecord, resources []*contracts.Obj
 // closure may have lost data.
 const DataAtRiskDetector = "controller.data-at-risk"
 
-// RecoveryUnprobedDetector is the pending evaluation the controller records
-// when a closure's faulted Service is crossed by no qualified probe, so only
-// readiness showed it recovered.
-const RecoveryUnprobedDetector = "controller.recovery-unprobed"
-
 // DataLossOutcome reports an outcome that may have lost data. It holds no
 // verified repair, whatever its receipts say.
 func DataLossOutcome(outcome *contracts.OutcomeRecord) bool {
@@ -257,10 +252,32 @@ func DataLossOutcome(outcome *contracts.OutcomeRecord) bool {
 }
 
 // UnverifiedRecoveryOutcome reports an outcome whose recovery SDO could not
-// verify: it may have lost data, or no probe crossed a faulted Service. It
-// holds no verified repair, whatever its receipts say.
+// verify at operation strength: it may have lost data, an SDO write had not
+// settled, or a component in the closure's scope (an opening finding names it
+// or an SDO write touched it) did not recover, or recovered only at
+// reachability strength or unobserved. It holds no verified repair, whatever
+// its receipts say. Until one credit rule decides what reachability evidence
+// may teach (R8), every weak close is blocked from learning. An application
+// with no health probes is outside the recovered test (U4).
 func UnverifiedRecoveryOutcome(outcome *contracts.OutcomeRecord) bool {
-	return DataLossOutcome(outcome) || hasEvaluation(outcome, RecoveryUnprobedDetector)
+	return DataLossOutcome(outcome) || WeakRecovery(outcome.GetRecoveryVerification())
+}
+
+// WeakRecovery reports a recovery verification that did not show every
+// in-scope component recovered at operation strength.
+func WeakRecovery(verification *contracts.RecoveryVerification) bool {
+	if !verification.GetProbed() {
+		return false
+	}
+	if !verification.GetWritesSettled() {
+		return true
+	}
+	for _, component := range verification.GetComponents() {
+		if component.GetInScope() && (!component.GetRecovered() || component.GetStrength() != contracts.VerificationStrength_VERIFICATION_STRENGTH_OPERATION) {
+			return true
+		}
+	}
+	return false
 }
 
 func hasEvaluation(outcome *contracts.OutcomeRecord, id string) bool {

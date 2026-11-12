@@ -71,6 +71,9 @@ message OutcomeRecord {
   DriftReprompt drift_reprompt = 39;
   repeated DisabledSetupDetector disabled_setup_detectors = 40;
   StatePersistenceFailure state_persistence_failure = 41;
+  // Controller-observed: the closure's recovery verification set, strength
+  // per component and whether it recovered after SDO's last write settled.
+  RecoveryVerification recovery_verification = 42;
 }
 
 message OutcomeTimestamps {

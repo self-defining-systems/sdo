@@ -60,9 +60,11 @@ const (
 	// retires the unused rendered class; version 5 adds the optional telemetry
 	// binding files under .sdo/diagnostics/telemetry, which the controller reads
 	// from the accepted revision; version 6 adds the detection designer's data
-	// checks under .sdo/diagnostics/data. Versions 4 to 6 need no conversion: no
-	// earlier repository holds those files.
-	CurrentSchemaVersion = 6
+	// checks under .sdo/diagnostics/data; version 7 adds the controller's
+	// recovery verification to each outcome document. Versions 4 to 7 need no
+	// conversion: no earlier repository holds those files, and an earlier
+	// outcome keeps what it recorded.
+	CurrentSchemaVersion = 7
 )
 
 // Kind names a class of file in operational memory.

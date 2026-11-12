@@ -140,6 +140,8 @@ ControllerConfig = controller_config_pb2.ControllerConfig
 ExternalIncident = messages_pb2.ExternalIncident
 Finding = messages_pb2.Finding
 DetectorEvaluation = messages_pb2.DetectorEvaluation
+RecoveryVerification = messages_pb2.RecoveryVerification
+VerificationStrength = messages_pb2.VerificationStrength
 SurfacedPlaybook = messages_pb2.SurfacedPlaybook
 PriorOutcomeEvidence = messages_pb2.PriorOutcomeEvidence
 ResponseProgress = messages_pb2.ResponseProgress
@@ -289,6 +291,8 @@ __all__ = [
     "ConfirmedRootCause",
     "ControllerConfig",
     "DetectorEvaluation",
+    "RecoveryVerification",
+    "VerificationStrength",
     "DetectorTimelineEntry",
     "Evidence",
     "Finding",
