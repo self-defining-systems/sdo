@@ -2,8 +2,10 @@ package validate
 
 import (
 	"slices"
+	"strings"
 	"time"
 
+	"sdo.dev/operator/apihistory"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
 
@@ -179,8 +181,13 @@ func OwnedCauseWrites(action *contracts.RepairActionReceipt, resources []*contra
 
 // unchainedControlledWrite reports a write to a Pod, ReplicaSet or Job that
 // is not a cause resource and has no recorded owner chain. Its owner is
-// unknown, so it conservatively counts as part of every cause's repair.
+// unknown, so it conservatively counts as part of every cause's repair. A
+// helper write is the exception: the agent created the object in this
+// incident, or it was a top-level object with no owner, so it has none.
 func unchainedControlledWrite(action *contracts.RepairActionReceipt, resources []*contracts.ObjectRef) bool {
+	if apihistory.HelperKind(action.GetKind()) && strings.HasPrefix(action.GetActionId(), apihistory.WriteIDPrefix) {
+		return false
+	}
 	return slices.ContainsFunc(action.GetResources(), func(written *contracts.ObjectRef) bool {
 		switch written.GetKind() {
 		case "Pod", "ReplicaSet", "Job":
