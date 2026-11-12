@@ -325,12 +325,16 @@ class BenchRun:
 
     def picked(self) -> list[dict[str, Any]]:
         """The outcome records of the incidents that belong to this run's interval."""
+        return self.pick(self.outcomes())
+
+    def pick(self, outcomes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """The ones among ``outcomes`` (outcome documents, snake_case) that belong to this run's interval."""
         inject, end = self.inject, self.end
         if inject is None or end is None:
             return []
         root = str((((self.record or {}).get("lifecycle") or {}).get("root_cause") or {}).get("component") or "")
         targets = fault_targets(self.record_fault, root) if not self.healthy else frozenset()
-        return outcomes_in(self.outcomes(), inject, end, inject, targets)
+        return outcomes_in(outcomes, inject, end, inject, targets)
 
 
 def bench_runs(exp: Path) -> list[BenchRun]:

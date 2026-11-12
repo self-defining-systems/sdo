@@ -595,3 +595,17 @@ def test_collect_copies_the_interval_from_the_host_sink(tmp_path: Path, monkeypa
         "missing": [],
     }
     assert json.loads((out / "collect.json").read_text())["parts"]["evidence"].startswith("ok")
+    assert json.loads((out / "collect.json").read_text())["parts"]["view"].startswith("ok")
+    assert json.loads((out / "view.json").read_text())["schema"] == "fuzzops.view/v1"
+
+
+def test_collect_records_a_view_failure_without_raising(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(hooks.subprocess, "run", lambda cmd, **_: subprocess.CompletedProcess(cmd, 1, "", "no"))
+
+    def broken(_: Path) -> dict[str, Any]:
+        raise ValueError("boom")
+
+    monkeypatch.setattr(hooks.view, "write", broken)
+    out = tmp_path / "out"
+    hooks.collect(_sink_env(tmp_path, BENCH_OUT=str(out)), out=lambda _: None)
+    assert json.loads((out / "collect.json").read_text())["parts"]["view"] == "error: boom"
