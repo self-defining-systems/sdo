@@ -1,6 +1,7 @@
 package wire_test
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -45,21 +46,12 @@ func TestUnmarshalIsStrictAndValidated(t *testing.T) {
 }
 
 func TestIDPatternsRejectPhysicalPaths(t *testing.T) {
-	receipt := &contracts.LateFindingsReceipt{
-		IncidentId: "i", ReportDigest: strings.Repeat("a", 64),
-		PlaybookIds: []string{".sdo/playbooks/x/README.md"},
-	}
-	if err := wire.Validate(receipt); err == nil {
+	pattern := regexp.MustCompile(wire.StringPattern(&contracts.Finding{}, "playbook_ids"))
+	if pattern.MatchString(".sdo/playbooks/x/README.md") {
 		t.Fatal("physical playbook path accepted as a playbook ID")
 	}
-	receipt.PlaybookIds = []string{"restart-pod"}
-	receipt.DetectorIds = []string{"Bad ID"}
-	if err := wire.Validate(receipt); err == nil {
-		t.Fatal("malformed detector ID accepted")
-	}
-	receipt.DetectorIds = []string{"health.pod-ready"}
-	if err := wire.Validate(receipt); err != nil {
-		t.Fatalf("valid receipt rejected: %v", err)
+	if !pattern.MatchString("restart-pod") {
+		t.Fatal("logical playbook ID rejected")
 	}
 }
 
@@ -70,7 +62,7 @@ func TestRuleReaders(t *testing.T) {
 	if got := wire.StringIn(&contracts.AgentResult{}, "status"); len(got) != 3 {
 		t.Fatalf("status values = %v", got)
 	}
-	if got := wire.StringPattern(&contracts.LateFindingsReceipt{}, "playbook_ids"); got == "" {
+	if got := wire.StringPattern(&contracts.Finding{}, "playbook_ids"); got == "" {
 		t.Fatal("empty item pattern")
 	}
 }

@@ -83,7 +83,6 @@ type KubernetesExecutor struct {
 	SessionPVCSubPath      string
 	HealthyBaseline        bool
 	CredentialsSecret      string
-	LateFindingsConfigMap  string
 	Environment            map[string]string
 	// Clock controls polling; nil uses the Kubernetes wall clock.
 	Clock        clock.WithTicker
@@ -280,13 +279,9 @@ func (e KubernetesExecutor) execute(ctx context.Context, task *contracts.AgentTa
 				if err := os.MkdirAll(filepath.Join(session, "startup"), 0700); err != nil {
 					return nil, err
 				}
-				if err := os.MkdirAll(filepath.Join(session, "late-findings"), 0700); err != nil {
-					return nil, err
-				}
 			}
 		}
 	}
-	e.projectLateFindings(ctx, task)
 	if e.WarmBinding != nil {
 		if err := e.publishWarmTask(ctx, task); err != nil {
 			var unpublished *standbyClaimUnpublished
@@ -326,7 +321,6 @@ func (e KubernetesExecutor) execute(ctx context.Context, task *contracts.AgentTa
 	defer ticker.Stop()
 	observed := map[string]bool{}
 	for {
-		e.projectLateFindings(ctx, task)
 		if e.OnPhase != nil && !observed["pod_ready"] {
 			pods, err := e.Client.CoreV1().Pods(e.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "batch.kubernetes.io/job-name=" + jobName})
 			if err == nil {
@@ -538,14 +532,6 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 		if e.CapturedCorpusReadOnly || reflection {
 			mounts = append(mounts, corev1.VolumeMount{Name: "repository", MountPath: "/sdo/session/corpus", SubPath: path.Join(e.SessionPVCSubPath, "corpus"), ReadOnly: true})
 		}
-	}
-	if e.SessionPVCSubPath != "" && task.GetRequest().MessageIs(&contracts.IncidentRequest{}) {
-		// The controller projects the report into this directory (see
-		// projectLateFindings); both paths are read-only for the worker.
-		lateFindings := path.Join(e.SessionPVCSubPath, "late-findings")
-		mounts = append(mounts,
-			corev1.VolumeMount{Name: "repository", MountPath: "/sdo/session/late-findings", SubPath: lateFindings, ReadOnly: true},
-			corev1.VolumeMount{Name: "repository", MountPath: "/sdo/late-findings", SubPath: lateFindings, ReadOnly: true})
 	}
 	if e.CredentialsSecret != "" {
 		envFrom = append(envFrom, corev1.EnvFromSource{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: e.CredentialsSecret}}})

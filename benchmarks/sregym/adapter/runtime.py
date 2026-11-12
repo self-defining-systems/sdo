@@ -63,7 +63,6 @@ class RuntimeConfig:
     code_path: str = "go"
     code_path_overrides: str = ""
 
-    late_findings: str | None = None
     max_response_loops: int | None = None
     healthy_baseline: bool | None = None
     permissive_responder: bool = False
@@ -171,7 +170,6 @@ def native_install_config(config: RuntimeConfig) -> NativeInstallConfig:
         agent_effort=config.agent_effort,
         lifecycle_timeout_seconds=config.lifecycle_timeout_seconds,
         repair_policy=config.repair_policy,
-        late_findings=config.late_findings,
         reflection_guidance=config.reflection_guidance,
         force_reflection=config.force_reflection,
         frozen_memory=config.frozen_memory,

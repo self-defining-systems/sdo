@@ -16,7 +16,6 @@ import (
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/core"
-	"sdo.dev/operator/latefindings"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
@@ -100,8 +99,7 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 		CodePath: codePathConfigFromContract(config.GetCodePath()),
 		Deriver:  ProtoOutcomeDeriver{SessionRoot: config.GetRepositoryMountPath()}, ResponderBackend: policy.Agent.Provider, ResponderModel: policy.Agent.Model,
 		ForceReflection: policy.Learning.ForceReflection, FrozenMemory: frozenMemory, PhaseLog: os.Stdout,
-		LateFindingsVerifier: latefindings.Store{Client: client, Namespace: controlNamespace},
-		SessionRoot:          config.GetRepositoryMountPath(), SessionRetention: DefaultSessionRetention,
+		SessionRoot: config.GetRepositoryMountPath(), SessionRetention: DefaultSessionRetention,
 	}, client, nil
 }
 

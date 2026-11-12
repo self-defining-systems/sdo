@@ -29,8 +29,5 @@ func validateIncidentResultFor(result IncidentResult, request IncidentRequest) e
 	if result.IncidentID != request.IncidentID {
 		return fmt.Errorf("incident id %q does not match request %q", result.IncidentID, request.IncidentID)
 	}
-	if pull := result.LateFindingsPull; pull != nil && pull.IncidentID != request.IncidentID {
-		return fmt.Errorf("late findings pull names incident %q, not %q", pull.IncidentID, request.IncidentID)
-	}
 	return nil
 }

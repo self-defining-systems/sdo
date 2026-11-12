@@ -193,7 +193,6 @@ type IncidentResult struct {
 	Usage                 UsageMetrics
 	Timing                TimingMetrics
 	ResponderSessionID    string
-	LateFindingsPull      *LateFindingsPull
 	Error                 string
 	ProgramToolCalls      []ToolCall
 	ProgramRuns           []ProgramRun
@@ -202,17 +201,6 @@ type IncidentResult struct {
 	ResponseLoopsUsed     int
 	ResponseLoopExhausted bool
 	ResolutionPath        string
-}
-
-// LateFindingsPull is a worker's claim that it consumed a controller-authored
-// logical telemetry report. The dispatcher checks its digest and IDs against
-// the controller's report history before accepting the result.
-type LateFindingsPull struct {
-	IncidentID   string
-	PullCount    uint32
-	DetectorIDs  []string
-	PlaybookIDs  []string
-	ReportDigest string
 }
 
 type IncidentClosure struct {

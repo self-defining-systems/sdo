@@ -171,7 +171,6 @@ _MODEL_OMITS: dict[str, tuple[str, ...]] = {
         "usage",
         "responder_session_id",
         "error",
-        "late_findings_pull",
         "repair_actions",
     ),
     "sdodev.contracts.v1alpha1.AppliedPlaybook": ("parameter_bindings", "script_names"),

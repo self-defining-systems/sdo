@@ -150,67 +150,6 @@ def test_native_worker_requires_commit_bound_logical_memory(tmp_path: Path) -> N
     assert publisher.published is None
 
 
-def test_worker_folds_go_late_findings_receipts_into_typed_result(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / "agent-task.json"
-    _task(path)
-    result = _result()
-    receipts = tmp_path / "late-findings.jsonl"
-    receipts.write_text(
-        "\n".join(
-            json.dumps(row)
-            for row in (
-                {
-                    "incident_id": result.incident_id,
-                    "detector_ids": ["detector-a"],
-                    "playbook_ids": ["playbook-a"],
-                    "report_digest": "a" * 64,
-                },
-                {
-                    "incident_id": result.incident_id,
-                    "detector_ids": ["detector-b", "detector-a"],
-                    "playbook_ids": ["playbook-b"],
-                    "report_digest": "b" * 64,
-                },
-            )
-        )
-        + "\n"
-    )
-    monkeypatch.setenv("SDO_LATE_FINDINGS_RECEIPTS_PATH", str(receipts))
-    publisher = RecordingPublisher()
-
-    run_worker_task(path, "result-map", publisher, executor=lambda _: result)
-
-    assert publisher.published is not None
-    envelope = parse_json(publisher.published[2], AgentResult())
-    typed = IncidentResult()
-    assert envelope.response.Unpack(typed)
-    assert typed.late_findings_pull.incident_id == result.incident_id
-    assert typed.late_findings_pull.pull_count == 2
-    assert list(typed.late_findings_pull.detector_ids) == ["detector-a", "detector-b"]
-    assert list(typed.late_findings_pull.playbook_ids) == ["playbook-a", "playbook-b"]
-    assert typed.late_findings_pull.report_digest == "b" * 64
-
-
-def test_worker_rejects_invalid_go_late_findings_receipt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    path = tmp_path / "agent-task.json"
-    _task(path)
-    result = _result()
-    receipts = tmp_path / "late-findings.jsonl"
-    receipts.write_text(
-        json.dumps({"incident_id": result.incident_id, "detector_ids": [], "playbook_ids": [], "report_digest": "bad"})
-        + "\n"
-    )
-    monkeypatch.setenv("SDO_LATE_FINDINGS_RECEIPTS_PATH", str(receipts))
-    publisher = RecordingPublisher()
-
-    with pytest.raises(ValueError, match="late-findings receipt"):
-        run_worker_task(path, "result-map", publisher, executor=lambda _: result)
-
-    assert publisher.published is None
-
-
 def test_warm_worker_validates_canonical_task_before_local_workspace_alias(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

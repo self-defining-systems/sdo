@@ -148,7 +148,6 @@ type Learning struct {
 	ReflectionGuidance string `yaml:"reflection_guidance" doc:"the agent's learning instructions: baseline learns from each confirmed cause; generalize compares related incident signatures and parameterizes a shared playbook; generalize-spec favors predicates visible in resource spec or status. None changes the detector SDK or the validator"`
 	ForceReflection    bool   `yaml:"force_reflection" doc:"always dispatch reflection after a verified closure (not with a frozen mode)"`
 	HealthyBaseline    bool   `yaml:"healthy_baseline" doc:"opt-in detector gate: a proposal that changes incident detector source is replayed against healthy snapshots a runner recorded with sdo-operator baseline-write (one sdktest.Snapshot JSON per file, outside the accepted repository); a detector that fires on one fails validation, and a missing baseline fails closed. It never reads benchmark verdicts"`
-	LateFindings       string `yaml:"late_findings" doc:"late findings: off, or pull (the controller publishes a bounded incident-specific report that a responder fetches with sdo-operator late-findings --incident-id ID; the broker checks the claim against the controller-owned report)"`
 }
 
 // Deployment bounds deployment attempts and the policy they run under.
@@ -198,7 +197,7 @@ func Default() Config {
 		Detection: Detection{
 			SelfHealHold: Duration(DefaultSelfHealHold), StabilityWindow: Duration(15 * time.Second), DriftBatchWindow: Duration(20 * time.Second),
 		},
-		Learning: Learning{Replay: "on", ReflectionGuidance: "baseline", LateFindings: "off"},
+		Learning: Learning{Replay: "on", ReflectionGuidance: "baseline"},
 		Deployment: Deployment{
 			MaxAttempts: 3, BuildTimeout: Duration(DefaultBuildTimeout), BuildBudget: Duration(DefaultBuildBudget),
 			RolloutTimeout: Duration(DefaultRolloutTimeout),
@@ -211,7 +210,6 @@ var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // ownedWorkerEnvironment are worker variables another setting or the installer owns; agent.extra_env cannot set them.
 var ownedWorkerEnvironment = map[string]string{
-	"SDO_LATE_FINDINGS":       "learning.late_findings",
 	"SDO_OBSERVATION_CEILING": "the installer",
 }
 
@@ -277,7 +275,6 @@ func (c Config) Validate() error {
 	positive("detection.drift_batch_window", c.Detection.DriftBatchWindow)
 	oneOf("learning.replay", c.Learning.Replay, "on", "off")
 	oneOf("learning.reflection_guidance", c.Learning.ReflectionGuidance, "baseline", "generalize", "generalize-spec")
-	oneOf("learning.late_findings", c.Learning.LateFindings, "off", "pull")
 	if c.Mode != ModeOperate && c.Learning.ForceReflection {
 		bad("learning.force_reflection", "conflicts with mode %s, which keeps memory frozen", c.Mode)
 	}

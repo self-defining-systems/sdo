@@ -415,7 +415,6 @@ def test_runtime_config_round_trips_all_options_through_payload_and_state(tmp_pa
         repair_policy="recorded-actions",
         agent_provider="claude",
         reflection_guidance="generalize",
-        late_findings="pull",
         max_response_loops=6,
         healthy_baseline=True,
         controller_namespace="hotel-sdo",

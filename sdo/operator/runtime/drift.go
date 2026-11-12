@@ -432,8 +432,8 @@ func (c *Controller) queueUnexplainedFinding(now time.Time, event sdk.DriftEvent
 	c.attachBeforeLaunch([]sdk.Finding{finding}, false)
 }
 
-// Record activation before attaching to the moving incident so the existing
-// late-findings transport sees an after-dispatch activation exactly once.
+// Record activation before attaching to the moving incident so an
+// after-dispatch activation is seen exactly once.
 func (c *Controller) observeUnexplainedDrift(now time.Time, finding sdk.Finding) {
 	findings := []sdk.Finding{finding}
 	for _, state := range c.tracker.Snapshot() {

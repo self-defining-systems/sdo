@@ -27,7 +27,6 @@ def _config(tmp_path: Path) -> runtime.RuntimeConfig:
         verification_timeout_seconds=45,
         repair_policy="recorded-actions",
         controller_namespace="demo-sdo",
-        late_findings="pull",
         persistent=True,
     )
 
@@ -46,7 +45,6 @@ def test_persistent_install_calls_go_reuse_with_typed_settings(tmp_path: Path, m
     native = captured[0]
     assert native.control_namespace == "demo-sdo"
     assert native.repair_policy == "recorded-actions"
-    assert native.late_findings == "pull"
     assert native.response_timeout_seconds == 90
 
 
