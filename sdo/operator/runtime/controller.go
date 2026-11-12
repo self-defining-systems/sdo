@@ -1221,6 +1221,7 @@ func (c *Controller) incidentRequest(now time.Time, findings []sdk.Finding) Inci
 			c.config.RepositoryWorktree, findings, c.config.SourceCommit, c.detectorOrigins(),
 		),
 		SourceCommit: c.config.SourceCommit, DeployedCommit: c.config.DeployedCommit,
+		DeploymentInFlight: c.deploymentInFlight(),
 		RepositoryWorktree: c.config.RepositoryWorktree, RepositoryBaseCommit: c.config.SourceCommit,
 		ResponseDeadline:  now.Add(c.config.ResponseTimeout).UTC(),
 		CancellationToken: "cancel-" + incidentID,
@@ -2365,4 +2366,34 @@ func (c *Controller) evaluationDetectorIDs() []string {
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+// deploymentInFlight reports whether an accepted-source rollout has not yet
+// converged: a queued reflection awaiting its rollout, or a committed closure
+// whose rollout the broker still holds pending. An unreadable ledger counts as
+// in flight, so the source comparison is never trusted on a guess.
+func (c *Controller) deploymentInFlight() bool {
+	c.mu.Lock()
+	broker := c.broker
+	receipt := c.closureReceipt
+	committed := c.closureState == contracts.ClosureState_CLOSURE_STATE_COMMITTED
+	queued := append([]string(nil), c.reflections.queued...)
+	inFlight := c.reflections.rollout != "" || c.reflections.unknown
+	c.mu.Unlock()
+	if inFlight || broker == nil {
+		return inFlight
+	}
+	if rolloutBroker, ok := broker.(rolloutPendingBroker); ok && committed && receipt != nil {
+		if pending, err := rolloutBroker.RolloutPending(*receipt); err != nil || pending {
+			return true
+		}
+	}
+	if queue, ok := broker.(ReflectionQueue); ok {
+		for _, incident := range queued {
+			if pending, err := queue.QueuedReflectionRolloutPending(incident); err != nil || pending {
+				return true
+			}
+		}
+	}
+	return false
 }
