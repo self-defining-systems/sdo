@@ -437,10 +437,11 @@ def _history_section(outcome: OutcomeRecord, history: list[OutcomeRecord]) -> st
 class SessionReflector:
     """Reflect on a verified outcome.
 
-    The first attempt resumes the responder session (``session_mode="resume"``)
-    or, opt-in, starts a fresh session from a compact incident brief
-    (``"fresh"``). A retry after a broker rejection carries typed diagnostics in the same
-    resumed incident session.
+    The first attempt resumes the responder session (``session_mode="resume"``).
+    Only a closure the automatic stage resolved without any agent has no session;
+    the controller marks that one ``"fresh"`` and it starts from a compact incident
+    brief. A retry after a broker rejection carries typed diagnostics in the same
+    session.
     """
 
     def __init__(self, backend: StatefulResponderBackend, *, guidance: str = "baseline") -> None:
@@ -604,7 +605,7 @@ class CodexSessionBackend:
         prompt: str,
         idempotency_key: str,
     ) -> ReflectionTurn:
-        """Run a new session in the incident worktree; used for validation retries."""
+        """Run a new session in the incident worktree; only for a closure without a responder session."""
 
         return self._turn(worktree=worktree, prompt=prompt, idempotency_key=idempotency_key, session_id=None)
 

@@ -116,9 +116,9 @@ message ControllerConfig {
   string replay = 102 [(buf.validate.field).string = {in: ["", "on", "off"]}];
   string worker_mount_mode = 51;
 
-  // Operator policy for the outcome reflection session. A resumed session
-  // requires a valid responder session ID from the accepted closure.
-  string reflection_session = 52 [(buf.validate.field).string = {in: ["", "fresh", "resume"]}];
+  // Reflection always resumes the responder's session; there is no policy.
+  reserved 52;
+  reserved "reflection_session";
   string reflection_guidance = 53 [(buf.validate.field).string = {in: ["", "baseline", "generalize", "generalize-spec"]}];
 
   // Replays incident detectors on benchmark-supplied healthy snapshots. The

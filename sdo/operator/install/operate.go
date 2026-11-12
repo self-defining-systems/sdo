@@ -127,7 +127,6 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 		"--buildkit-image", cfg.BuildKitImage, "--registry-push-secret", cfg.RegistryPushSecret,
 		"--repair-policy", defaultRepairPolicy(cfg), "--response-timeout", fmt.Sprintf("%ds", cfg.TimeoutSeconds),
 		"--verification-timeout", fmt.Sprintf("%ds", verificationTimeout(cfg)),
-		"--reflection-session", reflectionSession(cfg),
 		"--reflection-guidance", reflectionGuidance(cfg),
 	}
 	args = append(args, codePathArgs(cfg)...)
@@ -243,12 +242,6 @@ func defaultRepairPolicy(c Config) string {
 		return c.RepairPolicy
 	}
 	return "recorded-actions"
-}
-func reflectionSession(c Config) string {
-	if c.ReflectionSession != "" {
-		return c.ReflectionSession
-	}
-	return "resume"
 }
 func reflectionGuidance(c Config) string {
 	if c.ReflectionGuidance != "" {

@@ -112,7 +112,6 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, er
 	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
 	verificationTimeout := flags.Duration("verification-timeout", 5*time.Minute, "verification timeout")
 	repairPolicy := flags.String("repair-policy", "recorded-actions", "repair evidence policy")
-	reflectionSession := flags.String("reflection-session", "resume", "reflection session mode: fresh or resume")
 	reflectionGuidance := flags.String("reflection-guidance", "baseline", "reflection guidance mode")
 	frozenMemory := flags.Bool("frozen-memory", false, "keep closure evidence private and disable learning")
 	externalIncidents := flags.Bool("external-incidents", false, "accept external alerts only; close on responder completion (requires frozen memory)")
@@ -199,7 +198,7 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, er
 		ExitAfterClosure: *exitAfterClosure,
 		ScriptImage:      *scriptImage, ToolchainImage: *toolchainImage, AgentRegistrationDirectory: *registrations, ResponderAgentId: *responderID,
 		BrokerMode: *brokerMode, WorkerMountMode: *workerMountMode,
-		ResponderBackend: *backend, ResponderModel: *model, AgentEffort: *effort, LifecycleTimeout: lifecycleTimeoutProto(*lifecycleTimeout), Replay: *replay, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, FrozenMemory: *frozenMemory, ExternalIncidents: *externalIncidents, WatchOnly: *watchOnly, HealthyBaseline: *healthyBaseline, TelemetryEnvironmentFile: *telemetryEnvironment,
+		ResponderBackend: *backend, ResponderModel: *model, AgentEffort: *effort, LifecycleTimeout: lifecycleTimeoutProto(*lifecycleTimeout), Replay: *replay, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, FrozenMemory: *frozenMemory, ExternalIncidents: *externalIncidents, WatchOnly: *watchOnly, HealthyBaseline: *healthyBaseline, TelemetryEnvironmentFile: *telemetryEnvironment,
 	}
 	// The child deploys a responder's source repair with the identity the
 	// parent deploys upstream advances with.

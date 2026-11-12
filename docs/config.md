@@ -65,7 +65,6 @@ environment; use `SDO_AGENT_CODE_PATH` and `SDO_RESPONSE_MENU`.
 | Key | Env | Type | Default | Description |
 |---|---|---|---|---|
 | `learning.replay` | `SDO_LEARNING_REPLAY` | string | `on` | replay and corpus capture: on or off |
-| `learning.reflection_session` | `SDO_LEARNING_REFLECTION_SESSION` | string | `resume` | reflection session mode: resume (continue the responder's session) or fresh |
 | `learning.reflection_guidance` | `SDO_LEARNING_REFLECTION_GUIDANCE` | string | `baseline` | reflection guidance: baseline, generalize or generalize-spec |
 | `learning.force_reflection` | `SDO_LEARNING_FORCE_REFLECTION` | bool | `false` | always dispatch reflection after a verified closure (not with a frozen mode) |
 | `learning.healthy_baseline` | `SDO_LEARNING_HEALTHY_BASELINE` | bool | `false` | validate incident detectors against recorded healthy snapshots |

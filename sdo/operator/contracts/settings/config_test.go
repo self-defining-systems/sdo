@@ -49,7 +49,7 @@ func TestResolveAppliesDefaultsThenFilesInOrderThenEnvironment(t *testing.T) {
 	if cfg.Agent.Model != "from-file" {
 		t.Errorf("a key no later source sets keeps the earlier value: model = %q", cfg.Agent.Model)
 	}
-	if cfg.Learning.ReflectionSession != settings.Default().Learning.ReflectionSession {
+	if cfg.Learning.ReflectionGuidance != settings.Default().Learning.ReflectionGuidance {
 		t.Errorf("an untouched key keeps its default")
 	}
 }
@@ -111,7 +111,6 @@ func TestValidateIsTheOnePlaceValuesAreChecked(t *testing.T) {
 		"response.max_loops":            func(c *settings.Config) { c.Response.MaxLoops = 0 },
 		"response.repair_policy":        func(c *settings.Config) { c.Response.RepairPolicy = "yolo" },
 		"learning.replay":               func(c *settings.Config) { c.Learning.Replay = "maybe" },
-		"learning.reflection_session":   func(c *settings.Config) { c.Learning.ReflectionSession = "other" },
 		"learning.reflection_guidance":  func(c *settings.Config) { c.Learning.ReflectionGuidance = "other" },
 		"learning.late_findings":        func(c *settings.Config) { c.Learning.LateFindings = "push" },
 		"force_reflection":              func(c *settings.Config) { c.Mode = settings.ModeFrozen; c.Learning.ForceReflection = true },

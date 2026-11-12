@@ -59,7 +59,7 @@ type Config struct {
 	// LifecycleTimeout bounds one lifecycle (detection designer) session; zero selects the shared default.
 	LifecycleTimeout                           time.Duration
 	Replay                                     string
-	ReflectionSession, ReflectionGuidance      string
+	ReflectionGuidance                         string
 	ForceReflection                            bool
 	FrozenMemory                               bool
 	ExternalIncidents                          bool
@@ -270,9 +270,6 @@ func (c Config) validate() error {
 	if c.LifecycleTimeout < 0 {
 		return fmt.Errorf("invalid lifecycle timeout %s", c.LifecycleTimeout)
 	}
-	if c.ReflectionSession != "" && !slices.Contains(wire.StringIn(&contracts.ControllerConfig{}, "reflection_session"), c.ReflectionSession) {
-		return errors.New("invalid reflection session")
-	}
 	if c.ReflectionGuidance != "" && !slices.Contains(wire.StringIn(&contracts.ControllerConfig{}, "reflection_guidance"), c.ReflectionGuidance) {
 		return errors.New("invalid reflection guidance")
 	}
@@ -447,7 +444,6 @@ func controllerJob(c Config) *batchv1.Job {
 	if c.LifecycleTimeout > 0 {
 		args = append(args, "--lifecycle-timeout", c.LifecycleTimeout.String())
 	}
-	args = append(args, "--reflection-session", reflectionSession(c))
 	args = append(args, "--reflection-guidance", reflectionGuidance(c))
 	if c.ExternalIncidents {
 		args = append(args, "--external-incidents")

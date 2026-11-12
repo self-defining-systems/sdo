@@ -57,7 +57,6 @@ def worker(args, state_path, app, control):
             kubeconfig=Path(os.environ["KUBECONFIG"]),
             registration_configmap="sdo-agent-registrations",
             repair_policy="recorded-actions",
-            reflection_session="fresh",
             deployment_source=raw_source(("kubernetes",)),
         )
     )

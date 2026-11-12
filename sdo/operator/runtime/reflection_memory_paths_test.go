@@ -50,11 +50,12 @@ func pathsReflection(t *testing.T, snapshot *contracts.OperationalMemorySnapshot
 	t.Helper()
 	executor := &pathsExecutor{}
 	outcome := &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident-a", Classification: "success"}
-	worker := RegisteredReflectionWorker{Executor: executor, AgentID: "reflector", TaskType: "reflection", Outcomes: pathsOutcomes{record: outcome}, Catalog: pathsCatalog{snapshot: snapshot}, Timeout: time.Hour, SessionMode: "fresh"}
+	worker := RegisteredReflectionWorker{Executor: executor, AgentID: "reflector", TaskType: "reflection", Outcomes: pathsOutcomes{record: outcome}, Catalog: pathsCatalog{snapshot: snapshot}, Timeout: time.Hour,
+		SessionExecutor: func(string) (ReflectionTaskExecutor, error) { return executor, nil }}
 	now := lifecycleio.Now().UTC()
 	finding := sdk.Finding{DetectorID: "health", RuleID: "health", Status: sdk.FindingActive, Severity: sdk.SeverityWarning, Summary: "fault", Evidence: "evidence",
 		PrimaryResource: sdk.ObjectRef{Kind: "Deployment", Name: "health"}, Fingerprint: "health"}
-	result.SchemaVersion, result.IncidentID, result.Status = ProtocolSchemaVersion, "incident-a", IncidentCompleted
+	result.SchemaVersion, result.IncidentID, result.Status, result.ResponderSessionID = ProtocolSchemaVersion, "incident-a", IncidentCompleted, "responder-session"
 	result.Timing = TimingMetrics{StartedAt: now, CompletedAt: now.Add(time.Second)}
 	closure := IncidentClosure{
 		Request: IncidentRequest{

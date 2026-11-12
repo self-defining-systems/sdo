@@ -80,7 +80,6 @@ func ParseInstallExistingLaunchEnv(args []string, environ []string) (InstallExis
 	flags.String("agent-effort", "", "reasoning effort of every agent worker (empty: the shared default)")
 	flags.Duration("lifecycle-timeout", 0, "limit of one lifecycle (detection designer) session (0: the shared default)")
 	flags.String("repair-policy", "recorded-actions", "repair evidence policy")
-	flags.String("reflection-session", "resume", "reflection session mode: fresh or resume")
 	flags.String("reflection-guidance", "baseline", "reflection guidance mode")
 	flags.Bool("frozen-memory", false, "keep closure evidence private and disable learning")
 	flags.Bool("external-incidents", false, "accept external alerts only; close on responder completion (requires frozen memory)")

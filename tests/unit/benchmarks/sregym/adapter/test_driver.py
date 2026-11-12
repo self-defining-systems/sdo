@@ -106,22 +106,22 @@ def test_agent_settings_keep_native_reflection_options(monkeypatch: pytest.Monke
         "SREGYM_EXPERIMENT_AGENT_CONFIG",
         json.dumps(
             {
-                "reflection_session": "resume",
                 "reflection_guidance": "generalize-spec",
                 "late_findings": "pull",
             }
         ),
     )
     args = driver._parse_args([])
-    assert args.reflection_session == "resume"
     assert args.reflection_guidance == "generalize-spec"
     assert args.late_findings == "pull"
 
 
-def test_reflection_defaults_to_resume_and_fresh_remains_selectable(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_reflection_session_is_not_selectable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reflection always resumes the responder's session, so the adapter has no such flag."""
     monkeypatch.delenv("SREGYM_EXPERIMENT_AGENT_CONFIG", raising=False)
-    assert driver._parse_args([]).reflection_session == "resume"
-    assert driver._parse_args(["--reflection-session", "fresh"]).reflection_session == "fresh"
+    assert not hasattr(driver._parse_args([]), "reflection_session")
+    with pytest.raises(SystemExit):
+        driver._parse_args(["--reflection-session", "fresh"])
 
 
 def test_receipt_is_persisted_atomically(tmp_path: Path) -> None:

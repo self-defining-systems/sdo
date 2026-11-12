@@ -106,7 +106,6 @@ class NativeInstallConfig:
     lifecycle_timeout_seconds: int = DEFAULT_LIFECYCLE_TIMEOUT_SECONDS
     repair_policy: str = "recorded-actions"
     late_findings: str = "off"
-    reflection_session: str = "resume"
     reflection_guidance: str = "baseline"
     force_reflection: bool = False
     frozen_memory: bool = False
@@ -178,8 +177,6 @@ class NativeInstallConfig:
 
         if self.late_findings not in ("off", "pull"):
             raise ValueError("late_findings must be off or pull")
-        if self.reflection_session not in ("fresh", "resume"):
-            raise ValueError("reflection_session must be fresh or resume")
         if self.code_path not in ("go", "shell"):
             raise ValueError("code_path must be go or shell")
         if self.reflection_guidance not in ("baseline", "generalize", "generalize-spec"):
@@ -742,7 +739,6 @@ def install_existing(config: NativeInstallConfig) -> NativeInstallReceipt:
     args = config.common_args()
     args.extend(("--repair-policy", config.repair_policy))
     args.extend(("--late-findings", config.late_findings))
-    args.extend(("--reflection-session", config.reflection_session))
     args.extend(("--reflection-guidance", config.reflection_guidance))
     if config.code_path != "go":
         args.extend(("--code-path", config.code_path))
@@ -806,7 +802,6 @@ def launch_host(config: NativeHostConfig) -> dict[str, Any]:
     _record_launch(config.install)
     args = config.install.common_args()
     args.extend(("--late-findings", config.install.late_findings))
-    args.extend(("--reflection-session", config.install.reflection_session))
     args.extend(("--reflection-guidance", config.install.reflection_guidance))
     if config.install.code_path != "go":
         args.extend(("--code-path", config.install.code_path))

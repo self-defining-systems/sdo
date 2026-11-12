@@ -17,7 +17,7 @@ hotel_reservation stream) showed no such trend.
 
 Causes:
 
-1. Reflection runs in a fresh session by default (since #5), and the native
+1. Reflection ran in a fresh session by default (since #5), and the native
    worker does not pass the responder's commands, so reflection cannot see
    what worked.
 2. Reusable steps have no checkable form, so nothing makes them generalize and
@@ -220,8 +220,8 @@ Coverage is copied unchanged into the outcome; application and action receipts s
 
 ## Reflection
 
-- `reflection_session = "resume"` becomes the default for this design, so
-  reflection runs in the responder's own session.
+- Reflection runs in the responder's own session; there is no setting that
+  selects another.
 - During the incident the responder writes multi-step or re-runnable checks as
   parameterized scratch scripts. They are never saved, but they are evidence
   for reflection.

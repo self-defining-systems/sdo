@@ -110,8 +110,6 @@ DEFAULT_CONTROLLER_FLAGS = (
     "1800s",
     "--verification-timeout",
     "300s",
-    "--reflection-session",
-    "resume",
     "--reflection-guidance",
     "baseline",
     "--max-response-loops",

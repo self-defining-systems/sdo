@@ -54,7 +54,6 @@ class RuntimeConfig:
     replay: str = "on"
     agent_effort: str = DEFAULT_AGENT_EFFORT
     lifecycle_timeout_seconds: int = DEFAULT_LIFECYCLE_TIMEOUT_SECONDS
-    reflection_session: str = "resume"
     reflection_guidance: str = "baseline"
     force_reflection: bool = False
     frozen_memory: bool = False
@@ -132,8 +131,6 @@ class RuntimeConfig:
             raise ValueError("replay must be on or off")
         if self.agent_effort not in AGENT_EFFORTS:
             raise ValueError(f"agent_effort must be one of {AGENT_EFFORTS}")
-        if self.reflection_session not in ("fresh", "resume"):
-            raise ValueError("reflection_session must be fresh or resume")
         if self.code_path not in ("go", "shell"):
             raise ValueError("code_path must be go or shell")
         validate_code_path_overrides(self.code_path_overrides)
@@ -185,7 +182,6 @@ def native_install_config(config: RuntimeConfig) -> NativeInstallConfig:
         lifecycle_timeout_seconds=config.lifecycle_timeout_seconds,
         repair_policy=config.repair_policy,
         late_findings=config.late_findings,
-        reflection_session=config.reflection_session,
         reflection_guidance=config.reflection_guidance,
         force_reflection=config.force_reflection,
         frozen_memory=config.frozen_memory,

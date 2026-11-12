@@ -44,7 +44,7 @@ These fields describe retired Python ledgers, not current ProtoJSON:
 `reflection_attempts` counts turns including backend failures;
 `reflection_backend_error` is the last such failure;
 `reflection_fresh_retry_attempts` counts fresh retries after validation rejection.
-`reflection_session_mode` records `fresh` or `resume`; the first turn fixes it.
+`reflection_session_mode` records `resume` (a responder session exists, which is every closure an agent handled) or `fresh` (only a closure the automatic stage resolved with no agent, logged as "no responder session"); a resume that cannot run is a `failed` reflection decision with `session_unavailable`, `session_handoff_invalid` or `session_handoff_timeout`, never a silent fresh session.
 The rejected diff was `<sha256(incident_id)>.reflection-rejected.diff`.
 `reflection_skipped_reason` explained deterministic reuse from verified exact or
 learned-detector matches and trusted successful playbooks. Such a skip used zero

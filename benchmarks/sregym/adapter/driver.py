@@ -75,7 +75,6 @@ from benchmarks.sregym.protocol.injection import InvalidInjectionError
 from benchmarks.sregym.protocol.schema import READY_STAGES, TERMINAL_STAGES
 
 logger = logging.getLogger(__name__)
-DEFAULT_REFLECTION_SESSION = "resume"
 
 DEFAULT_BUILDKIT_IMAGE = "moby/buildkit@sha256:ef31818fffd0b9133d710742e06b492553f7ebc54f5fd66cd21a1a9bf2e51f76"
 
@@ -335,11 +334,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="additional reviewed responder namespace; repeat to replace the configured list",
     )
     parser.add_argument("--agent-registrations", default=config.get("agent_registrations"))
-    parser.add_argument(
-        "--reflection-session",
-        choices=("resume", "fresh"),
-        default=config.get("reflection_session", DEFAULT_REFLECTION_SESSION),
-    )
     parser.add_argument(
         "--reflection-guidance",
         choices=("baseline", "generalize", "generalize-spec"),
@@ -743,7 +737,6 @@ def _launch_native_lifecycle(
         agent_provider=args.provider,
         repair_policy=getattr(args, "repair_policy", "recorded-actions"),
         late_findings=args.late_findings,
-        reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
         deployment_source=args.deployment_source,
         permissive_responder=args.permissive_responder,
@@ -856,7 +849,6 @@ def _native_install_for_run(
         agent_provider=args.provider,
         repair_policy="recorded-actions",
         late_findings=args.late_findings,
-        reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
         deployment_source=args.deployment_source,
         permissive_responder=args.permissive_responder,
@@ -1055,7 +1047,6 @@ def _run_persistent(args: argparse.Namespace, api_base: str, started: float) -> 
         timeout_seconds=args.timeout_sec,
         repair_policy="recorded-actions",
         agent_provider=args.provider,
-        reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
         deployment_source=args.deployment_source,
         permissive_responder=args.permissive_responder,

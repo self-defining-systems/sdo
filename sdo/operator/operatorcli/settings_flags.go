@@ -68,8 +68,6 @@ func overlayLegacyFlags(cfg *settings.Config, flags *flag.FlagSet) error {
 			setIfNotEmpty(&cfg.Learning.Replay, value)
 		case "repair-policy":
 			cfg.Response.RepairPolicy = value
-		case "reflection-session":
-			cfg.Learning.ReflectionSession = value
 		case "reflection-guidance":
 			cfg.Learning.ReflectionGuidance = value
 		case "late-findings":
@@ -200,7 +198,7 @@ func applySettings(c *install.Config, cfg settings.Config, controlNamespace stri
 	c.CodePath, c.DeploymentPolicy, c.TelemetryProfile, c.EvidenceSink = codePath, encodedPolicy, profile, sink
 	c.Model, c.AgentProvider, c.AgentEffort, c.LifecycleTimeout = cfg.Agent.Model, cfg.Agent.Provider, cfg.Agent.Effort, time.Duration(cfg.Agent.LifecycleTimeout)
 	c.ResponderEnv = cfg.Agent.ExtraEnv
-	c.Replay, c.ReflectionSession, c.ReflectionGuidance, c.ForceReflection = cfg.Learning.Replay, cfg.Learning.ReflectionSession, cfg.Learning.ReflectionGuidance, cfg.Learning.ForceReflection
+	c.Replay, c.ReflectionGuidance, c.ForceReflection = cfg.Learning.Replay, cfg.Learning.ReflectionGuidance, cfg.Learning.ForceReflection
 	c.HealthyBaseline, c.LateFindings = cfg.Learning.HealthyBaseline, cfg.Learning.LateFindings
 	c.FrozenMemory, c.WatchOnly, c.ExternalIncidents = frozen, cfg.Mode == settings.ModeWatchOnly, cfg.Mode == settings.ModeExternal
 	c.RepairPolicy, c.MaxResponseLoops, c.ResponderStandby, c.ResponderMenu = cfg.Response.RepairPolicy, cfg.Response.MaxLoops, &standby, cfg.Response.Menu

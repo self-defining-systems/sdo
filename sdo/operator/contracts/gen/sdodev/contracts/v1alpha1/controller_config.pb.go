@@ -107,11 +107,8 @@ type ControllerConfig struct {
 	// Limit of one lifecycle (detection designer) session; unset means the shared default (sdo/contracts/agent_env.json).
 	LifecycleTimeout *durationpb.Duration `protobuf:"bytes,117,opt,name=lifecycle_timeout,json=lifecycleTimeout,proto3" json:"lifecycle_timeout,omitempty"`
 	// Trusted run policy; empty preserves default-on replay and corpus capture.
-	Replay          string `protobuf:"bytes,102,opt,name=replay,proto3" json:"replay,omitempty"`
-	WorkerMountMode string `protobuf:"bytes,51,opt,name=worker_mount_mode,json=workerMountMode,proto3" json:"worker_mount_mode,omitempty"`
-	// Operator policy for the outcome reflection session. A resumed session
-	// requires a valid responder session ID from the accepted closure.
-	ReflectionSession  string `protobuf:"bytes,52,opt,name=reflection_session,json=reflectionSession,proto3" json:"reflection_session,omitempty"`
+	Replay             string `protobuf:"bytes,102,opt,name=replay,proto3" json:"replay,omitempty"`
+	WorkerMountMode    string `protobuf:"bytes,51,opt,name=worker_mount_mode,json=workerMountMode,proto3" json:"worker_mount_mode,omitempty"`
 	ReflectionGuidance string `protobuf:"bytes,53,opt,name=reflection_guidance,json=reflectionGuidance,proto3" json:"reflection_guidance,omitempty"`
 	// Replays incident detectors on benchmark-supplied healthy snapshots. The
 	// validator receives only the bounded snapshot directory, read-only.
@@ -514,13 +511,6 @@ func (x *ControllerConfig) GetReplay() string {
 func (x *ControllerConfig) GetWorkerMountMode() string {
 	if x != nil {
 		return x.WorkerMountMode
-	}
-	return ""
-}
-
-func (x *ControllerConfig) GetReflectionSession() string {
-	if x != nil {
-		return x.ReflectionSession
 	}
 	return ""
 }
@@ -971,7 +961,7 @@ var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDesc
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\x1a1sdodev/contracts/v1alpha1/deployment_source.proto\"\xf1#\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\x1a1sdodev/contracts/v1alpha1/deployment_source.proto\"\xc4#\n" +
 	"\x10ControllerConfig\x12,\n" +
 	"\x12memory_host_binary\x18R \x01(\tR\x10memoryHostBinary\x12,\n" +
 	"\x12memory_host_digest\x18S \x01(\tR\x10memoryHostDigest\x12%\n" +
@@ -1024,8 +1014,7 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\fagent_effort\x18e \x01(\tR\vagentEffort\x12P\n" +
 	"\x11lifecycle_timeout\x18u \x01(\v2\x19.google.protobuf.DurationB\b\xbaH\x05\xaa\x01\x022\x00R\x10lifecycleTimeout\x12(\n" +
 	"\x06replay\x18f \x01(\tB\x10\xbaH\rr\vR\x00R\x02onR\x03offR\x06replay\x12*\n" +
-	"\x11worker_mount_mode\x183 \x01(\tR\x0fworkerMountMode\x12E\n" +
-	"\x12reflection_session\x184 \x01(\tB\x16\xbaH\x13r\x11R\x00R\x05freshR\x06resumeR\x11reflectionSession\x12_\n" +
+	"\x11worker_mount_mode\x183 \x01(\tR\x0fworkerMountMode\x12_\n" +
 	"\x13reflection_guidance\x185 \x01(\tB.\xbaH+r)R\x00R\bbaselineR\n" +
 	"generalizeR\x0fgeneralize-specR\x12reflectionGuidance\x12)\n" +
 	"\x10healthy_baseline\x186 \x01(\bR\x0fhealthyBaseline\x125\n" +
@@ -1052,8 +1041,8 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\x12_synthetic_trafficB\x1a\n" +
 	"\x18_clean_responder_helpersB\x11\n" +
 	"\x0f_state_baselineB\x14\n" +
-	"\x12_responder_standbyJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x17\x10\x18J\x04\b\x18\x10\x19J\x04\b\x1e\x10\x1fJ\x04\b$\x10%J\x04\b%\x10&J\x04\b&\x10'J\x04\b/\x100J\x04\b0\x101J\x04\b9\x10:J\x04\b:\x10;J\x04\b;\x10<J\x04\b<\x10=J\x04\b=\x10>J\x04\bC\x10DJ\x04\bD\x10EJ\x04\b?\x10@J\x04\b@\x10AJ\x04\bA\x10BJ\x04\bE\x10FJ\x04\bF\x10GJ\x04\bG\x10HJ\x04\bQ\x10RJ\x04\bH\x10IJ\x04\bI\x10JJ\x04\bJ\x10KJ\x04\bp\x10qR\vmemory_hostR\x06brokerR\vbroker_argsR\x0emax_follow_upsR\x12follow_up_cooldownR\x15restart_after_closureR\rprober_binaryR\fprober_imageR\n" +
-	"prober_urlR\x0fvalidator_imageR\x0fschema_identityR\x14drift_sweep_intervalR\x1adrift_investigation_windowR'drift_investigation_dispatches_per_hourR#drift_investigation_tokens_per_hourR\x19drift_dispatches_per_hourR\x15drift_tokens_per_hourR\x17deployed_manifest_pathsR\x14program_min_durationR\vmetrics_urlR\x12metrics_token_fileR\x13metrics_publish_urlR\x17plan_safety_policy_jsonR\x19plan_safety_policy_sha256R\x17plan_source_policy_jsonR\x11deployment_source\"\xfd\x02\n" +
+	"\x12_responder_standbyJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x17\x10\x18J\x04\b\x18\x10\x19J\x04\b\x1e\x10\x1fJ\x04\b$\x10%J\x04\b%\x10&J\x04\b&\x10'J\x04\b/\x100J\x04\b0\x101J\x04\b4\x105J\x04\b9\x10:J\x04\b:\x10;J\x04\b;\x10<J\x04\b<\x10=J\x04\b=\x10>J\x04\bC\x10DJ\x04\bD\x10EJ\x04\b?\x10@J\x04\b@\x10AJ\x04\bA\x10BJ\x04\bE\x10FJ\x04\bF\x10GJ\x04\bG\x10HJ\x04\bQ\x10RJ\x04\bH\x10IJ\x04\bI\x10JJ\x04\bJ\x10KJ\x04\bp\x10qR\vmemory_hostR\x06brokerR\vbroker_argsR\x0emax_follow_upsR\x12follow_up_cooldownR\x15restart_after_closureR\rprober_binaryR\fprober_imageR\n" +
+	"prober_urlR\x0fvalidator_imageR\x0fschema_identityR\x12reflection_sessionR\x14drift_sweep_intervalR\x1adrift_investigation_windowR'drift_investigation_dispatches_per_hourR#drift_investigation_tokens_per_hourR\x19drift_dispatches_per_hourR\x15drift_tokens_per_hourR\x17deployed_manifest_pathsR\x14program_min_durationR\vmetrics_urlR\x12metrics_token_fileR\x13metrics_publish_urlR\x17plan_safety_policy_jsonR\x19plan_safety_policy_sha256R\x17plan_source_policy_jsonR\x11deployment_source\"\xfd\x02\n" +
 	"\x0eDeployIdentity\x12%\n" +
 	"\x0ebuildkit_image\x18\x01 \x01(\tR\rbuildkitImage\x120\n" +
 	"\x14registry_push_secret\x18\x02 \x01(\tR\x12registryPushSecret\x12#\n" +

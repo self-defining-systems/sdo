@@ -41,13 +41,21 @@ type RegisteredReflectionWorker struct {
 	Outcomes    memory.Reader
 	Catalog     memory.CatalogReader
 	Timeout     time.Duration
-	SessionMode string
 	Guidance    string
 	// SessionExecutor supplies the narrow per-incident session transport for resume.
 	SessionExecutor      func(incidentID string) (ReflectionTaskExecutor, error)
 	FreshSessionExecutor func(incidentID string) (ReflectionTaskExecutor, error)
 	UsageLogPath         func(incidentID string) string
 	CorpusSessionRoot    string
+}
+
+// frozenSessionMode is the session mode a frozen task carries; a task that
+// names none resumes, as every default does.
+func frozenSessionMode(mode string) string {
+	if mode == "" {
+		return "resume"
+	}
+	return mode
 }
 
 var resumableSessionID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
@@ -93,16 +101,17 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 			return ReflectionDecision{}, errors.New("frozen reflection task differs from registered worker or workspace")
 		}
 	}
-	mode := w.SessionMode
-	if mode == "" {
-		mode = "resume"
-	}
 	guidance := w.Guidance
 	if guidance == "" {
 		guidance = "baseline"
 	}
-	if mode == "resume" && stageOnlyClosure(closure) {
+	// Reflection continues the responder's session. Only a closure the
+	// automatic stage resolved without any agent has no session to continue;
+	// that is the sole case that starts a new one, and it says so.
+	mode := "resume"
+	if stageOnlyClosure(closure) {
 		mode = "fresh"
+		log.Printf("reflection for incident %s: no responder session (the automatic stage resolved it without an agent); starting a fresh reflection session", workspace.IncidentID)
 	}
 	if mode == "resume" && !hasResponderSession(closure) {
 		return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "no_session"}, nil
@@ -112,7 +121,7 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 		if err := task.GetRequest().UnmarshalTo(frozen); err != nil {
 			return ReflectionDecision{}, err
 		}
-		mode = frozen.GetSessionMode()
+		mode = frozenSessionMode(frozen.GetSessionMode())
 	}
 	executor := w.Executor
 	if mode == "fresh" && w.FreshSessionExecutor != nil {

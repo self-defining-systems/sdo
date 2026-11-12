@@ -246,7 +246,7 @@ uv run python -m benchmarks.sregym.fastloop run \
   --run-dir "$SDO_SCRIPTED_RUN" --agent sdo \
   --agent-registrations benchmarks/sregym/fastloop/agent_registrations \
   --stream tests/fixtures/sregym/fastloop/pbprog_repeat.json \
-  --diagnosis-grading off --reflection-session fresh --timeout 300
+  --diagnosis-grading off --timeout 300
 ```
 
 The worker image keeps the production SDO tool, Go CLI, and typed worker
@@ -349,7 +349,7 @@ uv run python -m benchmarks.sregym.fastloop up --app toy \
   --run-dir "$TOY_RUN" --cluster-prefix my-toy- --dev-mount "$PWD"
 uv run python -m benchmarks.sregym.fastloop run --run-dir "$TOY_RUN" --agent sdo \
   --stream tests/fixtures/sregym/fastloop/toy_latent_repeat.json \
-  --reflection-session fresh --diagnosis-grading off \
+  --diagnosis-grading off \
   --timeout 300 --detection-timeout 75 --no-checkpoints
 uv run python -m benchmarks.sregym.fastloop reset --run-dir "$TOY_RUN"
 ```

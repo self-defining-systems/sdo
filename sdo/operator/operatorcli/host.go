@@ -88,7 +88,6 @@ func ParseHostLaunchEnv(args []string, environ []string) (HostConfig, error) {
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "stop after first closure")
 	flags.String("late-findings", "off", "late finding pull mode: off or pull")
 	flags.String("repair-policy", "recorded-actions", "repair evidence policy")
-	flags.String("reflection-session", "resume", "reflection session mode: fresh or resume")
 	flags.String("reflection-guidance", "baseline", "reflection guidance mode")
 	flags.Bool("frozen-memory", false, "keep closure evidence private and disable learning")
 	flags.Bool("external-incidents", false, "accept external alerts only; close on responder completion (requires frozen memory)")

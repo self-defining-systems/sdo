@@ -371,8 +371,6 @@ def run_arguments(code_root: Path, run_dir: Path, scenario: Scenario, run_id: st
         str(scenario_stream(code_root, scenario)),
         "--run-id",
         run_id,
-        "--reflection-session",
-        "fresh",
         "--diagnosis-grading",
         "off",
         "--timeout",

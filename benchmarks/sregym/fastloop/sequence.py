@@ -119,8 +119,6 @@ def execute_row(plan: SequencePlan, index: int, results: Path) -> None:
         "gpt-6-luna",
         "--repair-policy",
         "recorded-actions",
-        "--reflection-session",
-        "resume",
         "--timeout",
         str(plan.timeout_seconds),
         "--detection-timeout",

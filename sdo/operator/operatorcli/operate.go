@@ -78,7 +78,6 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "stop after first closure")
 	lateFindings := flags.String("late-findings", "off", "late finding pull mode: off or pull")
 	repairPolicy := flags.String("repair-policy", "recorded-actions", "repair evidence policy")
-	reflectionSession := flags.String("reflection-session", "resume", "reflection session mode: fresh or resume")
 	reflectionGuidance := flags.String("reflection-guidance", "baseline", "reflection guidance mode")
 	frozenMemory := flags.Bool("frozen-memory", false, "keep closure evidence private and disable learning")
 	externalIncidents := flags.Bool("external-incidents", false, "accept external alerts only; close on responder completion (requires frozen memory)")
@@ -133,9 +132,6 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	}
 	if (*repairPolicy != "commit" && *repairPolicy != "recorded-actions") || *responseTimeout < time.Second || *verificationTimeout < time.Second {
 		return OperateConfig{}, errors.New("operate requires supported repair policy and positive controller timeouts")
-	}
-	if *reflectionSession != "fresh" && *reflectionSession != "resume" {
-		return OperateConfig{}, fmt.Errorf("unsupported reflection session mode %q", *reflectionSession)
 	}
 	if *reflectionGuidance != "baseline" && *reflectionGuidance != "generalize" && *reflectionGuidance != "generalize-spec" {
 		return OperateConfig{}, fmt.Errorf("unsupported reflection guidance %q", *reflectionGuidance)
@@ -222,7 +218,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			BuildKitImage: *buildkitImage, RegistryPushSecret: *registryPushSecret,
 			RegistryInsecure: *registryInsecure, RegistryHost: *registryHost, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
 			ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,
-			LateFindings: *lateFindings, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, FrozenMemory: *frozenMemory, ExternalIncidents: *externalIncidents, WatchOnly: *watchOnly,
+			LateFindings: *lateFindings, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, FrozenMemory: *frozenMemory, ExternalIncidents: *externalIncidents, WatchOnly: *watchOnly,
 			MaxResponseLoops: *maxResponseLoops,
 			TimeoutSeconds:   int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()), BuildTimeoutSeconds: int(buildTimeout.Seconds()), BuildBudgetSeconds: int(buildBudget.Seconds()), RolloutTimeoutSeconds: int(rolloutTimeout.Seconds()), RepairPolicy: *repairPolicy,
 			NativeCommand:         []string{"/usr/local/bin/sdo-operator"},

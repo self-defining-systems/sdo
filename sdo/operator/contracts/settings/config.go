@@ -102,7 +102,6 @@ type Response struct {
 // Learning governs what the operator keeps from incidents.
 type Learning struct {
 	Replay             string `yaml:"replay" doc:"replay and corpus capture: on or off"`
-	ReflectionSession  string `yaml:"reflection_session" doc:"reflection session mode: resume (continue the responder's session) or fresh"`
 	ReflectionGuidance string `yaml:"reflection_guidance" doc:"reflection guidance: baseline, generalize or generalize-spec"`
 	ForceReflection    bool   `yaml:"force_reflection" doc:"always dispatch reflection after a verified closure (not with a frozen mode)"`
 	HealthyBaseline    bool   `yaml:"healthy_baseline" doc:"validate incident detectors against recorded healthy snapshots"`
@@ -151,7 +150,7 @@ func Default() Config {
 			Timeout: Duration(30 * time.Minute), VerificationTimeout: Duration(5 * time.Minute), MaxLoops: 10,
 			DiagnosisDeadline: Duration(10 * time.Second), RepairPolicy: "commit", Standby: true, Menu: true,
 		},
-		Learning: Learning{Replay: "on", ReflectionSession: "resume", ReflectionGuidance: "baseline", LateFindings: "off"},
+		Learning: Learning{Replay: "on", ReflectionGuidance: "baseline", LateFindings: "off"},
 		Deployment: Deployment{
 			MaxAttempts: 3, BuildTimeout: Duration(DefaultBuildTimeout), BuildBudget: Duration(DefaultBuildBudget),
 			RolloutTimeout: Duration(DefaultRolloutTimeout),
@@ -207,7 +206,6 @@ func (c Config) Validate() error {
 	positive("response.diagnosis_deadline", c.Response.DiagnosisDeadline)
 	oneOf("response.repair_policy", c.Response.RepairPolicy, "commit", "recorded-actions")
 	oneOf("learning.replay", c.Learning.Replay, "on", "off")
-	oneOf("learning.reflection_session", c.Learning.ReflectionSession, "fresh", "resume")
 	oneOf("learning.reflection_guidance", c.Learning.ReflectionGuidance, "baseline", "generalize", "generalize-spec")
 	oneOf("learning.late_findings", c.Learning.LateFindings, "off", "pull")
 	if c.Mode != ModeOperate && c.Learning.ForceReflection {
