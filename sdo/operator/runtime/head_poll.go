@@ -14,6 +14,7 @@ import (
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/onboarding"
 )
 
 // DefaultHeadPollInterval is how often the controller looks for a branch head
@@ -192,9 +193,33 @@ func (n *NativeIncidentBroker) headPoller() *HeadPoller {
 	}
 	return &HeadPoller{
 		Deployer: lifecycle.HeadDeployer{Broker: n.Repository, Deployer: deployer, Holds: holds},
+		Interval: n.HeadPollInterval,
 		Config: func() (lifecycle.RepairConfig, error) {
 			objective, err := memory.AcceptedHealthObjective(repairer.AppRoot)
 			return lifecycle.RepairConfig{Namespace: repairer.Namespace, HealthObjective: objective}, err
 		},
+	}
+}
+
+// onboardingPending is the gate check for a staged namespace onboarding whose
+// single install evaluation has neither completed nor been rejected: a deploy
+// must not overlap it. A failed read is "not pending": the next check retries.
+func onboardingPending(client kubernetes.Interface, control, application string) func() string {
+	return func() string {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		pending, err := onboarding.Pending(ctx, client, control, application)
+		if err != nil || pending == nil {
+			return ""
+		}
+		if completed, err := onboarding.Load(ctx, client, control, application); err != nil || completed != nil {
+			return ""
+		}
+		for _, name := range []string{onboarding.RejectedConfigMapName, onboarding.WindowConfigMapName} {
+			if marked, err := onboarding.Marked(ctx, client, control, name); err != nil || marked {
+				return ""
+			}
+		}
+		return "namespace onboarding is pending"
 	}
 }

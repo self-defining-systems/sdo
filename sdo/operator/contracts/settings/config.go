@@ -79,6 +79,12 @@ type Config struct {
 	Deployment Deployment `yaml:"deployment"`
 	Evidence   Evidence   `yaml:"evidence"`
 	Telemetry  Telemetry  `yaml:"telemetry"`
+	Source     Source     `yaml:"source"`
+}
+
+// Source is the one branch of the application repository SDO commits to and deploys from.
+type Source struct {
+	PollInterval Duration `yaml:"poll_interval" doc:"how often the controller looks for a branch head SDO did not write (an engineer's push), to deploy and verify it"`
 }
 
 // Agent selects and bounds the agent workers.
@@ -204,6 +210,7 @@ func Default() Config {
 			RolloutTimeout: Duration(DefaultRolloutTimeout),
 		},
 		Telemetry: Telemetry{Profile: "prometheus-default"},
+		Source:    Source{PollInterval: Duration(30 * time.Second)},
 	}
 }
 
@@ -271,6 +278,7 @@ func (c Config) Validate() error {
 	if c.Response.StartupBound < 0 {
 		bad("response.startup_bound", "%s must not be negative", c.Response.StartupBound)
 	}
+	positive("source.poll_interval", c.Source.PollInterval)
 	oneOf("response.repair_policy", c.Response.RepairPolicy, "commit", "recorded-actions")
 	oneOf("response.after_playbook", c.Response.AfterPlaybook, AfterPlaybookAgent, AfterPlaybookEscalate, AfterPlaybookWait)
 	positive("response.after_playbook_wait", c.Response.AfterPlaybookWait)

@@ -95,15 +95,16 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 		return nil, nil, err
 	}
 	gate := &SourceGate{}
+	gate.Add(onboardingPending(client, controlNamespace, config.GetApplication()))
 	if deploying, ok := repairs.(DeploymentRepairer); ok {
 		deploying.Gate = gate
 		repairs = deploying
 	}
 	return &NativeIncidentBroker{
 		Replay: policy.Learning.Replay, Repository: repository, LedgerRoot: ledgerRoot, Repairs: repairs, SourceGate: gate,
-		HeadHolds: ConfigMapHeadHolds{Client: client, Namespace: controlNamespace},
-		CodePath:  codePathConfigFromContract(config.GetCodePath()),
-		Deriver:   ProtoOutcomeDeriver{SessionRoot: config.GetRepositoryMountPath()}, ResponderBackend: policy.Agent.Provider, ResponderModel: policy.Agent.Model,
+		HeadHolds: ConfigMapHeadHolds{Client: client, Namespace: controlNamespace}, HeadPollInterval: time.Duration(policy.Source.PollInterval),
+		CodePath: codePathConfigFromContract(config.GetCodePath()),
+		Deriver:  ProtoOutcomeDeriver{SessionRoot: config.GetRepositoryMountPath()}, ResponderBackend: policy.Agent.Provider, ResponderModel: policy.Agent.Model,
 		ForceReflection: policy.Learning.ForceReflection, FrozenMemory: frozenMemory, PhaseLog: os.Stdout,
 		SessionRoot: config.GetRepositoryMountPath(), SessionRetention: DefaultSessionRetention,
 	}, client, nil

@@ -123,6 +123,12 @@ stage's default 90 seconds), then the incident escalates. Production keeps `agen
 | `telemetry.profile` | `SDO_TELEMETRY_PROFILE` | string | `prometheus-default` | application telemetry profile: a built-in name (prometheus-default, none), a YAML or JSON file, or an inline JSON document |
 | `telemetry.sources` | `SDO_TELEMETRY_SOURCES` | list (JSON) | `[]` | operator-provided external Prometheus-compatible metrics sources as ID=URL; the first becomes the default when the profile has none |
 
+### `source`
+
+| Key | Env | Type | Default | Description |
+|---|---|---|---|---|
+| `source.poll_interval` | `SDO_SOURCE_POLL_INTERVAL` | duration | `30s` | how often the controller looks for a branch head SDO did not write (an engineer's push), to deploy and verify it |
+
 ## App-memory defaults
 
 These are not operator configuration. Each is authored per detector or probe in app memory; the SDK constant is the
