@@ -33,8 +33,10 @@ const SyntheticHeader = "X-SDO-Synthetic" ...
 const APIVersion = "sdo.dev/v1alpha1" ...
 const DateLayout = "2006-01-02"
 const DefaultHealthMinDuration = 9 * time.Second
+const MaxExecStderr = 512
 const MaxKnownBrokenReason = 200
 const MaxLinkExcerpt = 256
+const MethodExec = "EXEC"
 const RuleIDPrefix = "scenario-slo."
 var RequiredFaultClasses = []FaultClass{ ... }
 var Watch = sdk.WatchKind{ ... }
@@ -63,6 +65,9 @@ type Duration time.Duration
 type Endpoint interface{ ... }
 type Engine struct{ ... }
     func NewEngine(workload Workload, catalog Catalog, client Doer, baseURL func(Target) string, ...) (*Engine, error)
+type Exec struct{ ... }
+type ExecResult struct{ ... }
+type Execer interface{ ... }
 type FailureMatch struct{ ... }
     func MatchFailures(window Window, patterns ...logs.Pattern) ([]FailureMatch, error)
 type FaultClass string
@@ -104,6 +109,7 @@ type Param interface{ ... }
     func OneOf(values ...string) Param
 type Params map[string]Param
 type Passwords interface{ ... }
+type ProbeKeys interface{ ... }
 type ProbeUser struct{ ... }
 type Purpose string
     const PurposeHealthProbe Purpose = "health-probe" ...

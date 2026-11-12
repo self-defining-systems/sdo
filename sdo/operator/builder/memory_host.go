@@ -63,7 +63,7 @@ func main(){
  workloads,err:=prober.ParseWorkloads(documents);if err!=nil{log.Fatal(err)}
  reader,restConfig,err:=core.NewKubernetesClientAndConfig();if err!=nil{log.Fatal(err)}
  passwords:=hostio.NewProbeUsers(generated.ApplicationMapYAML,os.Getenv(hostio.ProbeIdentitySeedEnv),*namespace,*protected,reader,kubereads.SPDYExec{Client:reader,Config:restConfig})
- engine,err:=prober.New(prober.Config{Namespace:*namespace,Catalog:catalog,Workloads:workloads,HostCPUStall:prober.HostCPUStall,Passwords:passwords});if err!=nil{log.Fatal(err)}
+ engine,err:=prober.New(prober.Config{Namespace:*namespace,Catalog:catalog,Workloads:workloads,HostCPUStall:prober.HostCPUStall,Passwords:passwords,Signer:passwords.SSHSigner});if err!=nil{log.Fatal(err)}
  trafficHost:=prober.NewHost(engine);defer trafficHost.Close()
  server.WithTraffic(trafficHost)
  objects,err:=core.NewGenericCapture(*namespace);if err!=nil{log.Fatal(err)}

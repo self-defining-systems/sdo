@@ -169,6 +169,8 @@ func statusKey(sample Sample) string {
 		return "timeout"
 	case sample.DialFailed:
 		return "dial"
+	case sample.Exit != nil:
+		return "exit " + strconv.Itoa(*sample.Exit)
 	case sample.Status > 0:
 		return strconv.Itoa(sample.Status)
 	}

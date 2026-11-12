@@ -127,6 +127,10 @@ type Edge struct {
 	Unprobed string   `yaml:"unprobed,omitempty"`
 }
 
+// MethodExec is the entry method of an operation users reach over SSH; the
+// entry path is then the command name.
+const MethodExec = "EXEC"
+
 // Entry is where an operation enters the application.
 type Entry struct {
 	Service string `yaml:"service"`
@@ -248,7 +252,8 @@ type Workload struct {
 
 var (
 	idPattern  = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
-	httpMethod = map[string]bool{"GET": true, "HEAD": true, "POST": true, "PUT": true, "PATCH": true, "DELETE": true, "OPTIONS": true}
+	commandPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$`)
+	httpMethod     = map[string]bool{"GET": true, "HEAD": true, "POST": true, "PUT": true, "PATCH": true, "DELETE": true, "OPTIONS": true}
 )
 
 type checker struct {
@@ -354,11 +359,18 @@ func (c *checker) schema() {
 		}
 		seenOp[op.ID] = true
 		c.ops[op.ID] = op
-		if !httpMethod[op.Entry.Method] {
-			c.add(RuleSchema, "use an upper-case HTTP method such as GET or POST", "operation %s: entry method %q is not an HTTP method", op.ID, op.Entry.Method)
+		if op.Entry.Method == MethodExec {
+			// An operation users reach over SSH: path is the command name.
+			if !commandPattern.MatchString(op.Entry.Path) {
+				c.add(RuleSchema, "an EXEC entry's path is the command name users run over SSH, such as receive-data", "operation %s: EXEC entry path %q is not a command name", op.ID, op.Entry.Path)
+			}
+		} else if !httpMethod[op.Entry.Method] {
+			c.add(RuleSchema, "use an upper-case HTTP method such as GET or POST, or EXEC for a command users run over SSH", "operation %s: entry method %q is not an HTTP method or EXEC", op.ID, op.Entry.Method)
+		} else if !strings.HasPrefix(op.Entry.Path, "/") {
+			c.add(RuleSchema, "an HTTP entry's path starts with /", "operation %s: entry path %q does not start with /", op.ID, op.Entry.Path)
 		}
-		if op.Entry.Port < 1 || op.Entry.Port > 65535 || op.Entry.Service == "" || !strings.HasPrefix(op.Entry.Path, "/") {
-			c.add(RuleSchema, "entry needs a service, a port in 1-65535 and a path starting with /", "operation %s: entry %+v is incomplete", op.ID, op.Entry)
+		if op.Entry.Port < 1 || op.Entry.Port > 65535 || op.Entry.Service == "" {
+			c.add(RuleSchema, "entry needs a service and a port in 1-65535", "operation %s: entry %+v is incomplete", op.ID, op.Entry)
 		}
 		if len(op.Path) == 0 {
 			c.add(RuleSchema, "path lists the components the operation reaches, entry component first", "operation %s has an empty path", op.ID)

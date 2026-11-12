@@ -41,8 +41,12 @@ type Sample struct {
 	At        time.Time     `json:"at"`
 	Latency   time.Duration `json:"latency"`
 	Iteration uint64        `json:"iteration"`
-	// Status is the last HTTP status received, or 0 when none arrived.
-	Status  int     `json:"status,omitempty"`
+	// Status is the last HTTP status received, or 0 when none arrived or
+	// the last answer was an exit status.
+	Status int `json:"status,omitempty"`
+	// Exit is the exit status of the last EXEC, when the last answer was
+	// one.
+	Exit    *int    `json:"exit,omitempty"`
 	Outcome Outcome `json:"outcome"`
 	// Step names the step that failed; Request is its method and URL path
 	// with query, so the failure can be reproduced by hand.
@@ -95,6 +99,8 @@ type Engine struct {
 	// passwords returns the passwords of the probe users scenarios declare;
 	// nil provisions none.
 	passwords Passwords
+	// execer runs EXEC steps on ssh targets; nil runs none.
+	execer Execer
 }
 
 // UsePasswords lets scenarios that declare Users sign in with the passwords
@@ -185,6 +191,9 @@ func (e *Engine) Plan(ctx context.Context, iteration uint64) ([]Request, error) 
 	state := State{}
 	for _, u := range scenario.Users {
 		state[u.As] = passwordPlaceholder
+		if u.SSHKey != "" {
+			state[u.SSHKey] = publicKeyPlaceholder
+		}
 	}
 	requests := make([]Request, 0, len(scenario.Steps))
 	for _, step := range scenario.Steps {
@@ -216,8 +225,7 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, resul
 	sample := Sample{At: e.clock.Now().UTC(), Iteration: iteration, Outcome: OutcomeOK}
 	iterationCtx, cancel := e.withTimeout(ctx, e.workload.IterationTimeout.Duration())
 	defer cancel()
-	base := e.baseURL(scenario.normalizedTarget())
-	passwords, err := e.userState(iterationCtx, scenario)
+	passwords, keys, err := e.userState(iterationCtx, scenario)
 	if err != nil {
 		// The probe cannot measure; that says nothing about the application.
 		sample.Outcome, sample.Step, sample.Error = OutcomeInvalid, "probe-users", bounded(err.Error())
@@ -226,24 +234,25 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, resul
 	// Texts are kept whole until the passwords are replaced, then bounded, so
 	// a cut never leaves part of a password behind.
 	defer func() { result.redact(passwords); result.bound() }()
-	for key, value := range passwords {
-		state[key] = value
+	for _, values := range []State{passwords, keys} {
+		for key, value := range values {
+			state[key] = value
+		}
 	}
 	// Setup draws from its own copy of the iteration's source, so the steps
 	// build the same requests whether or not setup ran first.
-	if failed := e.setup(iterationCtx, scenario, e.Rand(iteration), state, base, &sample); failed {
+	if failed := e.setup(iterationCtx, scenario, e.Rand(iteration), state, passwords, &sample); failed {
 		return scenario.ID, sample
 	}
-	for key, value := range passwords {
-		state[key] = value
+	for _, values := range []State{passwords, keys} {
+		for key, value := range values {
+			state[key] = value
+		}
 	}
 	started := e.clock.Now()
 	for _, step := range scenario.Steps {
-		result := e.step(iterationCtx, scenario, step, rng, state, base, phaseStep)
-		sample.Requests += result.sent
-		if result.status != 0 {
-			sample.Status = result.status
-		}
+		result := e.step(iterationCtx, scenario, step, rng, state, passwords, phaseStep)
+		sample.record(result)
 		if result.outcome != OutcomeOK {
 			sample.Outcome, sample.Step, sample.Request, sample.Error = result.outcome, step.Name, result.request, result.err
 			sample.DialFailed = result.dial
@@ -255,7 +264,7 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, resul
 		cleanupCtx, cancelCleanup := e.withTimeout(context.WithoutCancel(ctx), e.workload.IterationTimeout.Duration())
 		defer cancelCleanup()
 		for _, step := range scenario.Cleanup {
-			result := e.step(cleanupCtx, scenario, step, rng, state, base, phaseCleanup)
+			result := e.step(cleanupCtx, scenario, step, rng, state, passwords, phaseCleanup)
 			if result.outcome != OutcomeOK {
 				sample.CleanupError = step.Name + ": " + result.err
 				break
@@ -271,7 +280,7 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, resul
 // succeeded never runs again, so a write it made (a credential, a fixture) is
 // not repeated when a later step fails and the setup is retried. It reports
 // whether a setup step failed; the failure is then recorded in sample.
-func (e *Engine) setup(ctx context.Context, scenario Scenario, rng *rand.Rand, state State, base string, sample *Sample) bool {
+func (e *Engine) setup(ctx context.Context, scenario Scenario, rng *rand.Rand, state State, passwords State, sample *Sample) bool {
 	if len(scenario.Setup) == 0 {
 		return false
 	}
@@ -291,11 +300,8 @@ func (e *Engine) setup(ctx context.Context, scenario Scenario, rng *rand.Rand, s
 			// A step may change State before it fails; only a passing step's
 			// changes are kept.
 			attempt := saved.clone()
-			result := e.step(ctx, scenario, step, rng, attempt, base, phaseSetup)
-			sample.Requests += result.sent
-			if result.status != 0 {
-				sample.Status = result.status
-			}
+			result := e.step(ctx, scenario, step, rng, attempt, passwords, phaseSetup)
+			sample.record(result)
 			if result.outcome != OutcomeOK {
 				sample.Outcome, sample.Step, sample.Request, sample.Error = result.outcome, step.Name, result.request, result.err
 				sample.DialFailed = result.dial
@@ -319,6 +325,7 @@ func (r *setupRecord) advance(scenario Scenario, done int, saved State) {
 	kept := saved.clone()
 	for _, u := range scenario.Users {
 		delete(kept, u.As)
+		delete(kept, u.SSHKey)
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -330,24 +337,48 @@ func (r *setupRecord) advance(scenario Scenario, done int, saved State) {
 type stepResult struct {
 	outcome Outcome
 	status  int
+	exit    *int
 	sent    int
 	request string
 	err     string
 	dial    bool
 }
 
-func (e *Engine) step(ctx context.Context, scenario Scenario, step Step, rng *rand.Rand, state State, base string, phase stepPhase) stepResult {
+// record adds a step's request count and last answer to the sample.
+func (sample *Sample) record(result stepResult) {
+	sample.Requests += result.sent
+	switch {
+	case result.exit != nil:
+		exit := *result.exit
+		sample.Exit, sample.Status = &exit, 0
+	case result.status != 0:
+		sample.Exit, sample.Status = nil, result.status
+	}
+}
+
+func (e *Engine) step(ctx context.Context, scenario Scenario, step Step, rng *rand.Rand, state State, passwords State, phase stepPhase) stepResult {
 	request, err := step.Endpoint.Build(ctx, rng, state)
 	if err != nil {
 		return stepResult{outcome: OutcomeInvalid, err: "build: " + err.Error()}
 	}
-	line := requestLine(request)
-	if err := checkRequest(scenario, request, phase); err != nil {
+	target := scenario.stepTarget(step)
+	lineTarget := step.Target
+	if target.Scheme == "ssh" {
+		lineTarget = &target
+	}
+	line := requestLine(request, lineTarget)
+	if err := checkRequest(scenario, target, request, phase); err != nil {
 		return stepResult{outcome: OutcomeInvalid, request: line, err: err.Error()}
+	}
+	if target.Scheme == "ssh" {
+		if carriesPassword(request, passwords) {
+			return stepResult{outcome: OutcomeInvalid, request: line, err: "an EXEC request may not send a probe-user password"}
+		}
+		return e.execStep(ctx, scenario, step, target, request, state, line)
 	}
 	requestCtx, cancel := e.withTimeout(ctx, e.workload.Timeout.Duration())
 	defer cancel()
-	built, err := BuildHTTPRequest(requestCtx, base, request)
+	built, err := BuildHTTPRequest(requestCtx, e.baseURL(target), request)
 	if err != nil {
 		return stepResult{outcome: OutcomeInvalid, request: line, err: err.Error()}
 	}
@@ -471,12 +502,26 @@ func BuildHTTPRequest(ctx context.Context, baseURL string, request Request) (*ht
 	return built, nil
 }
 
-func requestLine(request Request) string {
+// requestLine is the method and path of request; a step with its own
+// target names it, and an EXEC always names its ssh target.
+func requestLine(request Request, target *Target) string {
+	prefix := ""
+	if target != nil {
+		normalized := target.normalized()
+		user := ""
+		if normalized.User != "" {
+			user = normalized.User + "@"
+		}
+		prefix = fmt.Sprintf("%s://%s%s:%d", normalized.Scheme, user, normalized.Service, normalized.Port)
+	}
+	if request.Method == MethodExec {
+		return strings.TrimSpace(request.Method + " " + prefix + " " + request.Path)
+	}
 	query := url.Values{}
 	for key, value := range request.Query {
 		query.Set(key, value)
 	}
-	line := request.Method + " " + request.Path
+	line := request.Method + " " + prefix + request.Path
 	if encoded := query.Encode(); encoded != "" {
 		line += "?" + encoded
 	}

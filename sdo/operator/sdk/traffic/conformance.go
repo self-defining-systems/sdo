@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"syscall"
@@ -25,6 +26,24 @@ func (d faultDoer) Do(request *http.Request) (*http.Response, error) {
 		return nil, context.DeadlineExceeded
 	default:
 		return nil, fmt.Errorf("unknown fault class %q", d.class)
+	}
+}
+
+// faultExecer simulates one fault class for every EXEC.
+type faultExecer struct{ class FaultClass }
+
+func (d faultExecer) Exec(context.Context, Exec) (ExecResult, error) {
+	switch d.class {
+	case FaultUnreachable:
+		return ExecResult{}, &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}
+	case FaultErrorStatus:
+		return ExecResult{Exit: 1, Stderr: "remote command failed"}, nil
+	case FaultWrongBody:
+		return ExecResult{Exit: 0}, nil
+	case FaultSlow:
+		return ExecResult{}, context.DeadlineExceeded
+	default:
+		return ExecResult{}, fmt.Errorf("unknown fault class %q", d.class)
 	}
 }
 
@@ -65,6 +84,7 @@ func CheckDetects(ctx context.Context, scenario Scenario, class FaultClass) erro
 	// A declared probe user gets a synthetic password: conformance judges the
 	// scenario's checks, never a provisioned identity.
 	engine.UsePasswords(syntheticPasswords{})
+	engine.UseExec(faultExecer{class: class})
 	_, sample := engine.Iterate(ctx, 0)
 	switch sample.Outcome {
 	case OutcomeError, OutcomeTimeout:
@@ -99,4 +119,8 @@ type syntheticPasswords struct{}
 
 func (syntheticPasswords) Password(context.Context, string) (string, error) {
 	return "conformance-password", nil
+}
+
+func (syntheticPasswords) SSHPublicKey(context.Context, string) (string, error) {
+	return "ssh-ed25519 AAAAconformance", nil
 }
