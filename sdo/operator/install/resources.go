@@ -44,6 +44,10 @@ const (
 type Config struct {
 	CodePath *contracts.CodePathConfig
 
+	// Settings is the resolved operator configuration. The installer renders it as the sdo-config ConfigMap, mounts
+	// it into the operate and controller Jobs and binds its hash into the install fingerprint.
+	Settings *settings.Config
+
 	ResponderMenu                            bool
 	ObservationCeiling                       sdk.ObservationScope
 	Namespace, ControlNamespace, Application string
@@ -127,6 +131,8 @@ type Plan struct {
 
 	// TelemetryEnvironment is the controller's telemetry environment document.
 	TelemetryEnvironment *corev1.ConfigMap
+	// Settings is the sdo-config ConfigMap; nil when the install carries no resolved configuration.
+	Settings *corev1.ConfigMap
 }
 
 var namespaceName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
@@ -160,6 +166,11 @@ func (c Config) controlNamespace() string {
 	return c.Namespace
 }
 func (c Config) validate() error {
+	if c.Settings != nil {
+		if err := c.Settings.Validate(); err != nil {
+			return fmt.Errorf("resolved config: %w", err)
+		}
+	}
 	if c.ExternalIncidents && !c.FrozenMemory {
 		return errors.New("external incidents require frozen memory")
 	}
@@ -330,6 +341,9 @@ func Resources(c Config) (Plan, error) {
 		return Plan{}, err
 	}
 	plan.TelemetryEnvironment = environment
+	if plan.Settings, err = settingsConfigMap(c); err != nil {
+		return Plan{}, err
+	}
 	plan.SyncPod = syncPod(c)
 	plan.Job = controllerJob(c)
 	if err := worker_registry.ApplyProviderCapacity(&plan.Job.Spec.Template.Spec, worker_registry.ProviderCapacityEnvironment()); err != nil {
@@ -339,6 +353,10 @@ func Resources(c Config) (Plan, error) {
 	// makes a changed environment a changed install.
 	digest := sha256.Sum256([]byte(environment.Data[telemetryEnvironmentFile]))
 	plan.Job.Spec.Template.Annotations = map[string]string{"sdo.dev/telemetry-environment-hash": hex.EncodeToString(digest[:8])}
+	if plan.Settings != nil {
+		mountSettings(&plan.Job.Spec.Template.Spec)
+		plan.Job.Spec.Template.Annotations[SettingsHashAnnotation] = settingsHash(plan.Settings)
+	}
 	if c.AcceptedCommit != "" {
 		plan.Job.Spec.Template.Annotations["sdo.dev/accepted-commit"] = c.AcceptedCommit
 	}

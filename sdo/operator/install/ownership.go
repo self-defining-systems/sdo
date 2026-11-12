@@ -25,6 +25,9 @@ func labelInstallPlan(c Config, p *Plan) {
 	if p.TelemetryEnvironment != nil {
 		labelInstallObjects(c.Namespace, p.TelemetryEnvironment)
 	}
+	if p.Settings != nil {
+		labelInstallObjects(c.Namespace, p.Settings)
+	}
 	labelInstallObjects(c.Namespace, p.ServiceAccounts...)
 	labelInstallObjects(c.Namespace, p.ClusterRoles...)
 	labelInstallObjects(c.Namespace, p.ClusterBindings...)

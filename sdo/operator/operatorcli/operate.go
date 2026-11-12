@@ -244,5 +244,9 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			return OperateConfig{}, fmt.Errorf("invalid responder environment %q", value)
 		}
 	}
+	// The controller this Job installs carries the same sdo-config the Job was started with.
+	if config.Install.Settings, err = loadMountedSettings(mountedSettings); err != nil {
+		return OperateConfig{}, err
+	}
 	return config, nil
 }

@@ -5,6 +5,9 @@ import (
 	"strings"
 )
 
+// ResolvedConfigFile is the controller's copy of the operator configuration it runs under.
+const ResolvedConfigFile = "config.yaml"
+
 var commandReportName = regexp.MustCompile(`^[0-9]{4,}-(act|apply|mitigate)\.json$`)
 
 // Allowed reports whether one path relative to the runtime evidence root (.sdo-runtime) is run evidence that may
@@ -21,6 +24,9 @@ func Allowed(name string) bool {
 	base := strings.ToLower(parts[len(parts)-1])
 	if base != "token_usage.json" && (strings.Contains(base, "auth") || strings.Contains(base, "credential") || strings.Contains(base, "token")) {
 		return false
+	}
+	if name == ResolvedConfigFile {
+		return true
 	}
 	if len(parts) == 2 && (parts[0] == "usage" || parts[0] == "telemetry") {
 		return strings.HasSuffix(base, ".jsonl") || parts[0] == "telemetry" && strings.HasSuffix(base, ".jsonl.1")

@@ -14,6 +14,7 @@ Use existing gates when extending a contract. New agent implementations and comm
 | `libs/agent_cli/claude_accounts.py`, `scripts/prepare_claude_accounts.py` | Host-local cswap inventory, private mounted account references, per-account admission and crash-safe health; alias-only account evidence and state-change posts. |
 | `scripts/prepare_opus_host_pool.py` | Provision static host tokens and hard-link aliases under existing kind extraMount roots; reject different alias inodes or capacity without replacing live files. |
 | `scripts/check_skill_sizes.py` | Glob-based skill document size gate in `check_errors.sh`; 100 lines/1,200 words per SKILL.md, 2,000 words/12k characters per reference file. |
+| `scripts/gen_config_docs.sh` | Generate `docs/config.md` from `contracts/settings` tags and `Default()` with `sdo/operator/cmd/configdoc`; `--check` fails on drift (run by `check_go_errors.sh`). |
 | `scripts/gen_skill_references.sh` | Generate SDK indexes and bounded topic files from `go doc`; `--check` rejects missing, stale and orphan generated files. |
 | `scripts/update_prompt_goldens.py` | Regenerate normalized prompt goldens after intentional changes. |
 | `scripts/check_prompt_budgets.py` | Every commit's budget raises require an isolated manifest-only commit and `Budget-Reason:` trailer; decreases need no exception. CI runs it on pull requests only: the merge queue squashes the PR into one commit, which the per-commit policy cannot judge. |

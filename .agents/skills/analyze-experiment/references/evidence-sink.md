@@ -15,6 +15,7 @@ trajectories live outside the cluster under `<sink>/<run-id>/` and survive names
 - `lifecycle/<task-key>/`: designer, deployer and judge tasks (`task.json`, `request.json`, `result.json` or
   `error.json`, rollouts).
 - `usage/`, `telemetry/` (detector firings, lifecycle events), `controller/` (controller-process sessions).
+- `config.yaml`: the resolved operator configuration (keys in `docs/config.md`) the controller ran under. Read it before comparing runs: a different `response.timeout`, `mode` or `agent.effort` explains a different result. A run without it predates the `sdo-config` ConfigMap.
 
 Completeness:
 

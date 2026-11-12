@@ -413,3 +413,15 @@ func TestOpenDirRejectsInvalidRunID(t *testing.T) {
 		}
 	}
 }
+
+// The controller writes its resolved operator configuration once under .sdo-runtime, and the sink carries it to the
+// run directory, so an analysis sees the exact values the run used.
+func TestResolvedConfigIsMirroredToTheRunDirectory(t *testing.T) {
+	f := newFixture(t)
+	f.write("config.yaml", "response:\n  timeout: 20m0s\n")
+	m, dir := f.mirror()
+	pass(t, m)
+	if got := sinkFiles(t, dir)["config.yaml"]; !strings.Contains(got, "timeout: 20m0s") {
+		t.Fatalf("the resolved config is not in the sink: %v", sinkFiles(t, dir))
+	}
+}

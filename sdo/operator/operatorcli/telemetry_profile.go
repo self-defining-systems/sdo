@@ -30,21 +30,27 @@ func registerTelemetryFlags(flags *flag.FlagSet) *telemetryFlags {
 
 // resolve turns the flags into one validated profile for the control namespace.
 func (f *telemetryFlags) resolve(controlNamespace string) (telemetry.Profile, error) {
-	profile, err := loadTelemetryProfile(*f.profile, controlNamespace)
+	return resolveTelemetry(*f.profile, f.sources, controlNamespace)
+}
+
+// resolveTelemetry is one validated profile for the control namespace: the named profile plus the operator-provided
+// ID=URL sources.
+func resolveTelemetry(profileName string, sourceList []string, controlNamespace string) (telemetry.Profile, error) {
+	profile, err := loadTelemetryProfile(profileName, controlNamespace)
 	if err != nil {
 		return telemetry.Profile{}, err
 	}
-	for _, value := range f.sources {
+	for _, value := range sourceList {
 		id, endpoint, ok := strings.Cut(value, "=")
 		if !ok || id == "" || endpoint == "" {
-			return telemetry.Profile{}, fmt.Errorf("--telemetry-source %q must be ID=URL", value)
+			return telemetry.Profile{}, fmt.Errorf("telemetry source %q must be ID=URL", value)
 		}
 		if parsed, err := url.Parse(endpoint); err != nil || parsed.Host == "" {
-			return telemetry.Profile{}, fmt.Errorf("--telemetry-source %q: %q is not a URL", value, endpoint)
+			return telemetry.Profile{}, fmt.Errorf("telemetry source %q: %q is not a URL", value, endpoint)
 		}
 		profile, err = profile.WithSource(telemetry.ProfileSource{ID: id, Adapter: "prometheus", Kinds: []telemetry.Kind{telemetry.KindMetrics}, Endpoint: endpoint})
 		if err != nil {
-			return telemetry.Profile{}, fmt.Errorf("--telemetry-source %q: %w", value, err)
+			return telemetry.Profile{}, fmt.Errorf("telemetry source %q: %w", value, err)
 		}
 	}
 	return profile, nil
