@@ -167,6 +167,12 @@ Replay outcomes, missing captures and detector coverage are information.
   `storestate.Restorable` accepts than as an `EnsureExec` with a hand-written inverse: SDO restores its own
   baseline value, records the prior value and verifies it. `CheckStoreCredential` (read) tests a client's
   credential; `StoreChanges.Holders` groups a store's connections by peer workload and state.
+- To make the app pick up a change in a store, choose by where the stale copy lives: a cache the map marks
+  `data.role: derived` from the store you wrote, and that only refills from it (`AppMap.Derived`), gets
+  `InvalidateDerived` on the written scope; any other copy (in-process memory, a pool, a primary that is not
+  derived) gets `RestartRollout` of the components with a map edge to the written store. `holds_data` no longer
+  refuses a restart. There is no wait action: a copy that expires on its own is judged by the post-apply health
+  wait, so do not add a sleep.
 - Credentials stay references (env or ConfigMap key); never read Secret data. Learn into incident playbooks. The detection designer owns `health-objective` and health detectors: never edit
   them; when its generic program applied and hand repairs followed, encode those in an incident playbook.
 - Resolve stores by relation: `v.AppMap()` (`ComponentOf`, `Derived`), `program.StoreTargetFor`,
