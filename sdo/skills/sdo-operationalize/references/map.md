@@ -56,7 +56,8 @@ probes:
 Rules the memory check enforces:
 
 - Names are unique; components, workloads and Services exist in the inventory; edge ends and path entries are
-  component names; `entry.service` is a Service of the first path component; every path component is reachable
+  component names; `entry.service` is a Service of the first path component; `entry.method` is an HTTP method with
+  an absolute `path`, or `EXEC` for an operation users run over SSH, whose `path` is the command name; every path component is reachable
   from the first through edges inside the path.
 - `data.engine` is one of postgres, mysql, mongodb, redis, memcached, consul, other. `data.role` is
   `authoritative` (no `derived_from`) or `derived`: `derived_from` lists authoritative components, and a derived

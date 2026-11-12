@@ -61,6 +61,14 @@ Without a delete or overwrite route, keep every write on the fixed test identity
   application's normal login with `{As}` (form, JSON or `WithBasicAuth`) and saves the session or a token it
   creates. Until the user is provisioned the scenario's samples are invalid, not failures. Never read an
   application Secret for a probe.
+- A user operation the application serves over SSH (for example a version-control push or fetch) is probed with
+  an ssh step: give the step its own `Target: &traffic.Target{Service, Port, Scheme: "ssh", User}` (the Service
+  is in `DependsOn`) and write an `Endpoint` whose `Build` returns `traffic.Request{Method: traffic.MethodExec,
+  Path: <command line>, Body: <stdin>}` and whose `Check` judges `Status` (the exit status) and `Body` (stdout).
+  The probe user that signs it in sets `SSHKey: "<state key>"`; register `{<state key>}` (its public key line)
+  through the application's own API in a Setup step with `OrExisting` (the key is the same after every restart).
+  An EXEC is a write: it carries the `Marker` and runs only in Setup, Cleanup or a write scenario's Steps.
+  Failure reasons hide 40-character hex runs, so name object IDs by a short prefix in `Fail`.
 - Create the test identity in Setup through the application's own sign-up operation (an ensure step), and log
   in through its own login operation: save the session with `SaveCookie` or `SaveJSON` and send it with
   `WithHeader` (`{key}` placeholders) or `FromPrevious`.

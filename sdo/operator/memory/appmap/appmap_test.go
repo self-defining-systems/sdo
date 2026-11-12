@@ -273,3 +273,26 @@ func TestCheckScenariosComparesTheCatalogWithTheMap(t *testing.T) {
 		t.Fatalf("a call probe may have any side effect: %+v", got)
 	}
 }
+
+// An operation users reach over SSH has an EXEC entry whose path is the
+// command name; it needs no leading slash, but it must name a command.
+func TestOperationEntryMayBeAnSSHCommand(t *testing.T) {
+	exec := replace("entry: {service: web, port: 80, method: POST, path: /items}", "entry: {service: web, port: 22, method: EXEC, path: receive-items}")
+	m, err := Parse(exec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Check(ParseInventory(shopInventory), shopWorkloads); has(got, RuleSchema, "add-item") {
+		t.Fatalf("EXEC entry rejected: %+v", got)
+	}
+	for name, path := range map[string]string{"empty": `""`, "two words": `"receive items"`, "http path": "/items"} {
+		bad := replace("entry: {service: web, port: 80, method: POST, path: /items}", "entry: {service: web, port: 22, method: EXEC, path: "+path+"}")
+		m, err := Parse(bad)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := m.Check(ParseInventory(shopInventory), shopWorkloads); !has(got, RuleSchema, "add-item") {
+			t.Errorf("%s: EXEC entry path %s accepted", name, path)
+		}
+	}
+}

@@ -52,7 +52,8 @@ type FaultClass string
 const (
 	// FaultUnreachable: the target refuses connections or does not resolve.
 	FaultUnreachable FaultClass = "unreachable"
-	// FaultErrorStatus: the target answers with a 5xx status.
+	// FaultErrorStatus: the target answers with a 5xx status, or an EXEC
+	// exits non-zero.
 	FaultErrorStatus FaultClass = "error-status"
 	// FaultWrongBody: the target answers 200 with an empty or wrong body.
 	FaultWrongBody FaultClass = "wrong-body"
@@ -78,6 +79,7 @@ const (
 var (
 	namePattern     = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
 	scenarioPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{0,62}$`)
+	sshUserPattern  = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,31}$`)
 	methods         = map[string]bool{"GET": true, "HEAD": true, "POST": true, "PUT": true, "PATCH": true, "DELETE": true}
 )
 
@@ -95,7 +97,18 @@ func (s State) clone() State {
 	return copied
 }
 
-// Request is one HTTP request relative to a scenario's target Service.
+// MethodExec is the method of a request to an "ssh" target: Path is the
+// remote command line, run as the target's User signed in with the key of the
+// scenario's probe user that declares SSHKey; Body is the command's standard
+// input, closed after it is written. Its Response has the command's exit
+// status as Status and its standard output, bounded by MaxResponseBody, as
+// Body. Query and Headers are not allowed. An EXEC is always a write: it
+// carries the Marker, so it runs only in setup, cleanup, or the steps of a
+// write scenario.
+const MethodExec = "EXEC"
+
+// Request is one request relative to a step's target Service: an HTTP
+// request, or an EXEC on an "ssh" target.
 type Request struct {
 	Method  string            `json:"method"`
 	Path    string            `json:"path"`
@@ -134,17 +147,24 @@ type Endpoint interface {
 	Check(response Response, state State) Verdict
 }
 
-// Step is one named request of a scenario.
+// Step is one named request of a scenario. Target, when set, overrides the
+// scenario's target for this step, so one journey can, for example, register
+// a key over HTTP and then use it over SSH. Its Service must be the
+// scenario's target or one of its DependsOn.
 type Step struct {
 	Name     string
 	Endpoint Endpoint
+	Target   *Target
 }
 
 // Target is the Service, in the application namespace, a scenario calls.
+// Scheme is "http" (the default), "https" or "ssh"; User is the SSH login
+// name and is set exactly when Scheme is "ssh".
 type Target struct {
 	Service string `json:"service"`
 	Port    int    `json:"port"`
 	Scheme  string `json:"scheme,omitempty"`
+	User    string `json:"user,omitempty"`
 }
 
 // Scenario is one user journey. DependsOn names the Services on its request
@@ -240,12 +260,44 @@ func (s Scenario) FaultClasses() []FaultClass {
 	return classes
 }
 
-func (s Scenario) normalizedTarget() Target {
-	target := s.Target
-	if target.Scheme == "" {
-		target.Scheme = "http"
+func (s Scenario) normalizedTarget() Target { return s.Target.normalized() }
+
+func (t Target) normalized() Target {
+	if t.Scheme == "" {
+		t.Scheme = "http"
 	}
-	return target
+	return t
+}
+
+// stepTarget is the target step calls.
+func (s Scenario) stepTarget(step Step) Target {
+	if step.Target != nil {
+		return step.Target.normalized()
+	}
+	return s.normalizedTarget()
+}
+
+func (t Target) validate() error {
+	target := t.normalized()
+	if !namePattern.MatchString(target.Service) {
+		return fmt.Errorf("target service %q must be a Service name", target.Service)
+	}
+	if target.Port < 1 || target.Port > 65535 {
+		return fmt.Errorf("target port %d is out of range", target.Port)
+	}
+	switch target.Scheme {
+	case "http", "https":
+		if target.User != "" {
+			return fmt.Errorf("target %s: only an ssh target has a User", target.Service)
+		}
+	case "ssh":
+		if !sshUserPattern.MatchString(target.User) {
+			return fmt.Errorf("target %s: an ssh target needs a User, one word of letters, digits, '_', '.' or '-'", target.Service)
+		}
+	default:
+		return fmt.Errorf("target %s: scheme must be http, https or ssh", target.Service)
+	}
+	return nil
 }
 
 // Validate reports the first problem that makes the scenario unsafe or
@@ -256,20 +308,15 @@ func (s Scenario) Validate() error {
 	if !scenarioPattern.MatchString(s.ID) {
 		return fmt.Errorf("scenario id %q must be lowercase letters, digits, '.', '_', or '-'", s.ID)
 	}
-	target := s.normalizedTarget()
-	if !namePattern.MatchString(target.Service) {
-		return fmt.Errorf("scenario %s: target service %q must be a Service name", s.ID, target.Service)
+	if err := s.Target.validate(); err != nil {
+		return fmt.Errorf("scenario %s: %w", s.ID, err)
 	}
-	if target.Port < 1 || target.Port > 65535 {
-		return fmt.Errorf("scenario %s: target port %d is out of range", s.ID, target.Port)
-	}
-	if target.Scheme != "http" && target.Scheme != "https" {
-		return fmt.Errorf("scenario %s: target scheme must be http or https", s.ID)
-	}
+	onPath := map[string]bool{s.Target.Service: true}
 	for _, service := range s.DependsOn {
 		if !namePattern.MatchString(service) {
 			return fmt.Errorf("scenario %s: dependency %q must be a Service name", s.ID, service)
 		}
+		onPath[service] = true
 	}
 	if len(s.Steps) == 0 || len(s.Steps) > MaxSteps {
 		return fmt.Errorf("scenario %s: needs 1 to %d steps", s.ID, MaxSteps)
@@ -283,6 +330,14 @@ func (s Scenario) Validate() error {
 		}
 		if step.Endpoint == nil {
 			return fmt.Errorf("scenario %s: step %s has no endpoint", s.ID, step.Name)
+		}
+		if step.Target != nil {
+			if err := step.Target.validate(); err != nil {
+				return fmt.Errorf("scenario %s: step %s: %w", s.ID, step.Name, err)
+			}
+			if !onPath[step.Target.Service] {
+				return fmt.Errorf("scenario %s: step %s calls Service %s, which is neither the scenario's target nor in DependsOn", s.ID, step.Name, step.Target.Service)
+			}
 		}
 	}
 	if err := s.validateUsers(); err != nil {
@@ -302,6 +357,9 @@ func (s Scenario) Validate() error {
 			return fmt.Errorf("scenario %s: a read scenario has no cleanup, and a marker only for its setup steps", s.ID)
 		}
 		for _, step := range s.Steps {
+			if s.stepTarget(step).Scheme == "ssh" {
+				return fmt.Errorf("scenario %s: read scenario step %s runs an EXEC on an ssh target, which writes; move it to a setup step or declare a write side effect", s.ID, step.Name)
+			}
 			if endpoint, ok := step.Endpoint.(*HTTPEndpoint); ok && endpoint.Method != http.MethodGet && endpoint.Method != http.MethodHead {
 				return fmt.Errorf("scenario %s: read scenario step %s sends %s; move the write to a setup step or declare a write side effect", s.ID, step.Name, endpoint.Method)
 			}
@@ -357,11 +415,20 @@ func (c Catalog) Scenario(id string) (Scenario, bool) {
 // checkRequest enforces the per-request safety rules the engine applies to
 // every built request. Writes and cleanup requests carry the marker; a read
 // scenario writes only in its setup steps.
-func checkRequest(scenario Scenario, request Request, phase stepPhase) error {
-	if !methods[request.Method] {
+func checkRequest(scenario Scenario, target Target, request Request, phase stepPhase) error {
+	if target.Scheme == "ssh" {
+		if request.Method != MethodExec {
+			return fmt.Errorf("an ssh target runs only %s requests, not %q", MethodExec, request.Method)
+		}
+		if strings.TrimSpace(request.Path) == "" || strings.ContainsAny(request.Path, "\x00\r\n") {
+			return fmt.Errorf("EXEC command must be one non-empty line")
+		}
+		if len(request.Query) > 0 || len(request.Headers) > 0 {
+			return fmt.Errorf("an EXEC request has no query or headers")
+		}
+	} else if !methods[request.Method] {
 		return fmt.Errorf("method %q is not one of GET, HEAD, POST, PUT, PATCH, DELETE", request.Method)
-	}
-	if !strings.HasPrefix(request.Path, "/") || strings.HasPrefix(request.Path, "//") ||
+	} else if !strings.HasPrefix(request.Path, "/") || strings.HasPrefix(request.Path, "//") ||
 		strings.Contains(request.Path, "://") || strings.ContainsAny(request.Path, "?# \t\r\n") {
 		return fmt.Errorf("path %q must be an absolute path on the target, without a host, query, or fragment", request.Path)
 	}

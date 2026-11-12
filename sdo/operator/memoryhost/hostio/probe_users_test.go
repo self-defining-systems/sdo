@@ -15,6 +15,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"golang.org/x/crypto/ssh"
 	"k8s.io/client-go/kubernetes/fake"
 	utilexec "k8s.io/client-go/util/exec"
 	"sdo.dev/operator/sdk"
@@ -202,5 +203,49 @@ func TestProbeIdentitySeedIsCreatedOnce(t *testing.T) {
 	}
 	if _, err := LoadProbeIdentitySeed(path); err == nil {
 		t.Fatal("a damaged seed was accepted")
+	}
+}
+
+// A probe user's SSH key is derived from the seed like its password: the
+// same on every host, different per user, served only once the user is
+// provisioned, and its private half is reachable only as a signer.
+func TestProbeUserSSHKeyIsDerivedFromTheSeed(t *testing.T) {
+	seedPath := filepath.Join(t.TempDir(), "probe-identity", "seed")
+	users := NewProbeUsers(identityMap, seedPath, "app", "", identityCluster(), &recordingExec{})
+	if _, err := users.SSHPublicKey(context.Background(), "sdoprobe-writer"); err == nil {
+		t.Fatal("a key is unavailable before the user is provisioned")
+	}
+	if _, err := users.SSHSigner("sdoprobe-writer"); err == nil {
+		t.Fatal("a signer is unavailable before the user is provisioned")
+	}
+	_, _ = users.Password(context.Background(), "sdoprobe-writer")
+	waitAttempt(t, users, "sdoprobe-writer")
+	line, err := users.SSHPublicKey(context.Background(), "sdoprobe-writer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(line, "ssh-ed25519 AAAA") || strings.ContainsAny(line, "\n") || strings.Count(line, " ") != 1 {
+		t.Fatalf("public key line = %q", line)
+	}
+	signer, err := users.SSHSigner("sdoprobe-writer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(signer.PublicKey()))); got != line {
+		t.Fatalf("signer key %q differs from the public line %q", got, line)
+	}
+	other := NewProbeUsers(identityMap, seedPath, "app", "", identityCluster(), &recordingExec{})
+	_, _ = other.Password(context.Background(), "sdoprobe-writer")
+	waitAttempt(t, other, "sdoprobe-writer")
+	if again, err := other.SSHPublicKey(context.Background(), "sdoprobe-writer"); err != nil || again != line {
+		t.Fatalf("another host derives %q (%v), want %q", again, err, line)
+	}
+	seed := []byte(strings.Repeat("s", probeIdentitySeedBytes))
+	writer, reader := ProbeUserSSHKey(seed, "sdoprobe-writer"), ProbeUserSSHKey(seed, "sdoprobe-reader")
+	if writer.Equal(reader) || !writer.Equal(ProbeUserSSHKey(seed, "sdoprobe-writer")) {
+		t.Fatal("derivation must be stable per user and differ across users")
+	}
+	if strings.Contains(line, ProbeUserPassword(seed, "sdoprobe-writer")) {
+		t.Fatal("the key line must not carry the password")
 	}
 }

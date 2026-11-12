@@ -129,11 +129,25 @@ const DefaultHealthMinDuration = 9 * time.Second
     are detected in 3-5s. Nine seconds clears the observed stalls with headroom
     while adding at most one more poll beyond real-fault detection.
 
+const MaxExecStderr = 512
+    MaxExecStderr bounds the standard error of an EXEC kept for a failure
+    reason.
+
 const MaxKnownBrokenReason = 200
     MaxKnownBrokenReason bounds a KnownBroken reason.
 
 const MaxLinkExcerpt = 256
     MaxLinkExcerpt bounds response and error text stored in samples.
+
+const MethodExec = "EXEC"
+    MethodExec is the method of a request to an "ssh" target: Path is the
+    remote command line, run as the target's User signed in with the key of
+    the scenario's probe user that declares SSHKey; Body is the command's
+    standard input, closed after it is written. Its Response has the command's
+    exit status as Status and its standard output, bounded by MaxResponseBody,
+    as Body. Query and Headers are not allowed. An EXEC is always a write:
+    it carries the Marker, so it runs only in setup, cleanup, or the steps of a
+    write scenario.
 
 const RuleIDPrefix = "scenario-slo."
     RuleIDPrefix prefixes the rule ID of each scenario finding
@@ -203,21 +217,4 @@ func LinkFinding(spec sdk.DetectorSpec, namespace string, window Window, observe
     LinkFinding explains one link JudgeLink reports, with per-link p50/p95
     latency and failure classes. The primary resource is the target Service;
     the calling Service is related.
-
-func LinkFindingIn(spec sdk.DetectorSpec, namespace string, setting LinkSetting, observed LinkObservations) (sdk.Finding, bool)
-    LinkFindingIn explains a link JudgeLinkIn reports. A client-vantage finding
-    has its own rule ID (the prober's with a ".client" suffix) and names the
-    client Pod, so it stands next to the prober's judgement of the same edge:
-    slow from the client while fast from the prober places the impairment on the
-    client's egress.
-
-func NewDetector(spec sdk.DetectorSpec, workload string) sdk.Detector
-    NewDetector returns a health detector that reports every qualified scenario
-    of a health-probe workload that violates its SLO. It decides purely
-    from the prober's observed samples; missing or unproven observations
-    remain unconfirmed and cannot establish health. A health-class spec that
-    leaves Persistence.MinDuration unset gets DefaultHealthMinDuration,
-    so judge-authored and lifecycle-generated traffic-health detectors alike
-    require a sustained violation before they fire, not just an evaluation
-    count.
 ```

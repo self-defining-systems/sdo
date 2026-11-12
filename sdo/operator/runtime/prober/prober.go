@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/crypto/ssh"
 	"sdo.dev/operator/sdk/traffic"
 )
 
@@ -56,6 +57,13 @@ type Config struct {
 	// bursts) shares it. Nil provisions none, and such scenarios record
 	// invalid samples.
 	Passwords traffic.Passwords
+	// Signer returns the SSH key of a provisioned probe user; with it, the
+	// prober runs scenarios' ssh steps through an SSHExecer. Nil runs none,
+	// and such steps record invalid samples. Passwords supplies the public
+	// key lines (traffic.ProbeKeys).
+	Signer func(user string) (ssh.Signer, error)
+	// Exec overrides the SSH transport, for tests.
+	Exec traffic.Execer
 }
 
 // NewHTTPClient is the prober's default client: no keep-alives, so every
@@ -138,6 +146,9 @@ func New(config Config) (*Prober, error) {
 		namespace, domain := config.Namespace, config.ClusterDomain
 		config.BaseURL = func(target traffic.Target) string { return ServiceBaseURL(target, namespace, domain) }
 	}
+	if config.Exec == nil && config.Signer != nil {
+		config.Exec = &SSHExecer{Signer: config.Signer}
+	}
 	if config.DialContext == nil {
 		config.DialContext = (&net.Dialer{}).DialContext
 	}
@@ -183,6 +194,7 @@ func New(config Config) (*Prober, error) {
 			return nil, err
 		}
 		engine.UsePasswords(config.Passwords)
+		engine.UseExec(config.Exec)
 		prober.shareSetup(engine)
 		prober.probes[workload.Name] = newProbe(engine)
 	}
@@ -358,6 +370,7 @@ func (p *Prober) Burst(ctx context.Context, request BurstRequest) (BurstResult, 
 		return BurstResult{}, err
 	}
 	engine.UsePasswords(p.config.Passwords)
+	engine.UseExec(p.config.Exec)
 	p.mu.Lock()
 	p.shareSetup(engine)
 	p.mu.Unlock()

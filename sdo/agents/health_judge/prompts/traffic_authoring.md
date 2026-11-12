@@ -24,7 +24,12 @@ covers breaks.
    in as the test identity (.SaveCookie(name, key), then .WithHeader("Cookie", "name={key}")), never with a token
    forged from application secrets. When the application offers no self-service identity, a scenario signs in as
    probe users (`Users: []traffic.ProbeUser{{Name, As}}`, names containing the Marker) that the map's
-   `probe_identity` procedure provisions with an SDO-generated password; never read an application Secret. Generators only build requests and check responses: never import net, os,
+   `probe_identity` procedure provisions with an SDO-generated password; never read an application Secret. A user
+   operation served over SSH is a step with its own `Target: &traffic.Target{..., Scheme: "ssh", User}` whose
+   Endpoint builds `traffic.Request{Method: traffic.MethodExec, Path: command, Body: stdin}` and checks the exit
+   status (Response.Status) and stdout; its probe user sets `SSHKey: "<state key>"`, and a Setup step registers
+   `{<state key>}` (the public key line) through the application's API (references: probes.md "Identities and
+   sessions"). Generators only build requests and check responses: never import net, os,
    or the clock, and draw randomness only from the rng the engine passes.
 2. Workloads: files `.sdo/diagnostics/traffic/workloads/<name>.yaml` with apiVersion sdo.dev/v1alpha1, kind
    TrafficWorkload, name equal to the file name, purpose, ratePerSecond and scenarios [{id, weight}]. Write the

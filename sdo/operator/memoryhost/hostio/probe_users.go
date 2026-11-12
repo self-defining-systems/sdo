@@ -2,6 +2,7 @@ package hostio
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"golang.org/x/crypto/ssh"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"sdo.dev/operator/kubereads"
@@ -114,6 +116,15 @@ func ProbeUserPassword(seed []byte, user string) string {
 	return string(password)
 }
 
+// ProbeUserSSHKey derives a probe user's ed25519 key from the seed, with
+// its own domain separation from the password, so every memory host signs
+// with the same key and the application's registration of it stays valid.
+func ProbeUserSSHKey(seed []byte, user string) ed25519.PrivateKey {
+	mac := hmac.New(sha256.New, seed)
+	mac.Write([]byte("sdo-probe-ssh\x00" + user + "\x00"))
+	return ed25519.NewKeyFromSeed(mac.Sum(nil))
+}
+
 // keyStream draws uniformly distributed characters from HMAC-SHA256 blocks.
 type keyStream struct {
 	seed    []byte
@@ -203,6 +214,32 @@ func NewProbeUsers(mapYAML, seedPath, namespace, protectedNamespace string, clie
 	}
 	users.Procedure, users.Workload = procedure, workload
 	return users
+}
+
+// SSHPublicKey implements traffic.ProbeKeys: the user's authorized-keys line,
+// once the user is provisioned. It starts no run; Password does.
+func (p *ProbeUsers) SSHPublicKey(_ context.Context, user string) (string, error) {
+	signer, err := p.SSHSigner(user)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(signer.PublicKey()))), nil
+}
+
+// SSHSigner signs the prober's SSH sessions as user, once the user is
+// provisioned. The private key stays inside the signer.
+func (p *ProbeUsers) SSHSigner(user string) (ssh.Signer, error) {
+	if p.Unavailable != "" {
+		return nil, errors.New(p.Unavailable)
+	}
+	p.mu.Lock()
+	state, seed := p.users[user], p.seed
+	ready := state != nil && state.ready
+	p.mu.Unlock()
+	if !ready || seed == nil {
+		return nil, fmt.Errorf("identity pending: probe user %s is not provisioned yet", user)
+	}
+	return ssh.NewSignerFromKey(ProbeUserSSHKey(seed, user))
 }
 
 // Password implements traffic.Passwords. It never waits for a run.
