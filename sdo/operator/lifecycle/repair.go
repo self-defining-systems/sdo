@@ -99,7 +99,7 @@ type RepairDeployer struct {
 	// open: without the pause the rollout would itself open one. Nil deploys
 	// without a pause (tests, and configurations that never detect).
 	Maintenance MaintenanceWindow
-	// Now stamps the pause's expiry; nil reads the clock.
+	// Now stamps the pause's expiry; required with Maintenance.
 	Now func() time.Time
 	// Busy names work the deploy must not overlap (an open incident, another
 	// closure in flight), or "". It is read after the pause is acknowledged,
@@ -166,10 +166,10 @@ func (r RepairDeployer) paused(ctx context.Context, deploy func() (RepairResult,
 	if r.Maintenance == nil {
 		return deploy()
 	}
-	now := time.Now
-	if r.Now != nil {
-		now = r.Now
+	if r.Now == nil {
+		return RepairResult{}, errors.New("source repair with a maintenance window needs a clock")
 	}
+	now := r.Now
 	advancer := Advancer{Maintenance: r.Maintenance, Wait: r.Wait}
 	var cfg AdvanceConfig
 	expiresAt := now().Add(orDefault(cfg.PauseAckTimeout, DefaultPauseAckTimeout) + orDefault(cfg.PauseApplyBound, DefaultPauseApplyBound) + orDefault(cfg.SettleWindow, DefaultSettleWindow))
