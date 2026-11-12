@@ -87,7 +87,7 @@ func (a Autoscaled) OmitReplicas(object *unstructured.Unstructured) bool {
 
 // ReplicasHandoffManager is the neutral field manager that holds spec.replicas
 // of an autoscaled workload while SDO stops applying it.
-const ReplicasHandoffManager = "sdo-replicas-handoff"
+const ReplicasHandoffManager = sdk.ReplicasHandoffFieldManager
 
 // ReplicasHandoff is the apply document that transfers ownership of
 // spec.replicas from the deployer. Under server-side apply, a manager that

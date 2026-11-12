@@ -143,7 +143,7 @@ func (c DriftClassifier) Classify(ctx context.Context, change ObjectChange, view
 	if owner == nil {
 		owner = change.New
 	}
-	owned := ownedDriftPaths(owner, "sdo-deployer")
+	owned := ownedDriftPaths(owner, sdk.DeployerFieldManager)
 	if change.Adoption {
 		owned = flattenDriftPaths(change.Old)
 	}
@@ -205,7 +205,7 @@ func (c DriftClassifier) Classify(ctx context.Context, change ObjectChange, view
 		return nil, nil
 	}
 	sort.Strings(paths)
-	manager, operation, managerAt := changedDriftManager(change, paths, "sdo-deployer")
+	manager, operation, managerAt := changedDriftManager(change, paths, sdk.DeployerFieldManager)
 	event := &sdk.DriftEvent{Ref: ref, Fields: make([]sdk.DriftField, 0, min(len(paths), maxDriftFields)), Source: "differs from accepted manifest", Manager: manager, Operation: operation, ManagerAt: managerAt, ObservedAt: now.UTC(), Classification: sdk.DriftUnexplained}
 	for _, path := range paths[:min(len(paths), maxDriftFields)] {
 		event.Fields = append(event.Fields, sdk.DriftField{Path: path, Old: renderDriftValue(path, before[path]), Source: renderDriftValue(path, sourceValues[path]), New: renderDriftValue(path, after[path])})
@@ -386,7 +386,7 @@ func changedDriftManager(change ObjectChange, paths []string, fallback string) (
 	}
 	for _, entry := range change.New.GetManagedFields() {
 		prior := old[entry.Manager+"/"+string(entry.Operation)]
-		if entry.FieldsV1 == nil || entry.Manager == "sdo-deployer" || prior.FieldsV1 != nil && string(prior.FieldsV1.Raw) == string(entry.FieldsV1.Raw) && reflect.DeepEqual(prior.Time, entry.Time) {
+		if entry.FieldsV1 == nil || entry.Manager == sdk.DeployerFieldManager || prior.FieldsV1 != nil && string(prior.FieldsV1.Raw) == string(entry.FieldsV1.Raw) && reflect.DeepEqual(prior.Time, entry.Time) {
 			continue
 		}
 		owned := ownedDriftPathsForEntry(change.New, entry)
@@ -401,7 +401,7 @@ func changedDriftManager(change ObjectChange, paths []string, fallback string) (
 		}
 	}
 	for _, entry := range change.New.GetManagedFields() {
-		if entry.Manager == "sdo-deployer" && entry.Time != nil {
+		if entry.Manager == sdk.DeployerFieldManager && entry.Time != nil {
 			at := entry.Time.Time.UTC()
 			return entry.Manager, string(entry.Operation), &at
 		}

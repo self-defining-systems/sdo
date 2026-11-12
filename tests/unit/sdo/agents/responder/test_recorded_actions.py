@@ -125,6 +125,54 @@ def test_act_names_kubectl_verbs_and_gives_each_action_its_own_id(scratch: Path,
     assert first["action_id"] != second["action_id"]
 
 
+_SECRET_GO = Path(__file__).resolve().parents[5] / "sdo" / "operator" / "sdk" / "secret.go"
+
+
+@pytest.mark.parametrize(
+    ("argv", "stamped"),
+    [
+        (["-n", "app", "patch", "secret", "token", "-p", "{}"], True),
+        (["-n", "app", "apply", "--server-side", "-f", "x.yaml", "--field-manager", "helm"], True),
+        (["-n", "app", "apply", "-f", "x.yaml", "--field-manager=helm"], True),
+        (["-n", "app", "create", "secret", "generic", "token"], True),
+        (["-n", "app", "label", "secret", "token", "a=b"], True),
+        (["-n", "app", "set", "image", "deployment/rate", "rate=img"], True),
+        (["-n", "app", "delete", "pod", "rate-0"], False),
+        (["-n", "app", "get", "secret", "token"], False),
+        (["-n", "app", "create", "token", "sa"], False),
+        (["-n", "app", "apply", "view-last-applied", "secret/token"], False),
+    ],
+)
+def test_act_writes_every_kubectl_mutation_as_the_responder_field_manager(
+    scratch: Path, tmp_path: Path, argv: list[str], stamped: bool
+) -> None:
+    """The cluster attributes the responder's writes to SDO, so they never read as a foreign Secret data change."""
+    kubectl = tmp_path / "bin" / "kubectl"
+    kubectl.parent.mkdir()
+    seen = tmp_path / "argv"
+    kubectl.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > {shlex.quote(str(seen))}\n', encoding="utf-8")
+    kubectl.chmod(0o755)
+
+    assert tools_cli.main(["act", "--resource", "Secret/app/token", "--", str(kubectl), *argv]) == 0
+
+    ran = seen.read_text(encoding="utf-8").splitlines()
+    managers = [token for token in ran if token.startswith("--field-manager")]
+    if stamped:
+        assert managers == [f"--field-manager={tools_cli.RESPONDER_FIELD_MANAGER}"]
+        assert "helm" not in ran
+    else:
+        assert managers == []
+    assert [token for token in ran if not token.startswith("--field-manager") and token != "helm"] == [
+        token for token in argv if not token.startswith("--field-manager") and token != "helm"
+    ]
+
+
+def test_the_responder_field_manager_is_one_the_sdk_treats_as_sdo() -> None:
+    source = _SECRET_GO.read_text(encoding="utf-8")
+    assert re.search(r'ResponderFieldManager\s*=\s*"' + re.escape(tools_cli.RESPONDER_FIELD_MANAGER) + '"', source)
+    assert "ResponderFieldManager}" in source
+
+
 def test_act_records_a_failed_mutation_and_propagates_its_exit_code(scratch: Path) -> None:
     code = tools_cli.main(["act", "--resource", "Service/app/api", "--", "sh", "-c", "echo boom >&2; exit 3"])
 
@@ -700,7 +748,9 @@ def test_a_repair_and_verify_leave_one_receipt_and_run_the_stubbed_tools(
     assert tools_cli.main(["verify"]) == 0
 
     assert exchanges == ["pre-apply", "verify"]
-    assert log.read_text(encoding="utf-8").splitlines() == [f"-n hotel patch service reservation -p {patch}"]
+    assert log.read_text(encoding="utf-8").splitlines() == [
+        f"-n hotel patch service reservation -p {patch} --field-manager={tools_cli.RESPONDER_FIELD_MANAGER}"
+    ]
     (receipt,) = _recorded(scratch)
     assert receipt["kind"] == "kubectl-patch"
     assert receipt["resources"] == [
@@ -962,7 +1012,8 @@ def test_sdo_options_trailing_a_kubectl_command_belong_to_sdo(
     )  # fmt: skip
 
     assert code == 0
-    assert log.read_text().split() == ["-n", "app", "set", "image", "deployment/rate", "rate=img"]
+    stamp = f"--field-manager={tools_cli.RESPONDER_FIELD_MANAGER}"
+    assert log.read_text().split() == ["-n", "app", "set", "image", "deployment/rate", "rate=img", stamp]
     assert json.loads(expand_context(capsys.readouterr().out))["command"] == "act"
     (receipt,) = _recorded(scratch)
     assert receipt["summary"] == "restore rate image"
@@ -978,7 +1029,7 @@ def test_kubectl_keeps_every_flag_it_defines_and_its_own_wrapped_command(scratch
 
     argv = ["-n", "app", "create", "role", "reader", "--verb=get", "--resource=pods"]
     assert tools_cli.main(["act", "--resource", "Role/app/reader", "--", str(kubectl), *argv]) == 0
-    assert log.read_text().split() == argv
+    assert log.read_text().split() == [*argv, f"--field-manager={tools_cli.RESPONDER_FIELD_MANAGER}"]
 
 
 def test_other_wrapped_programs_receive_their_arguments_verbatim(

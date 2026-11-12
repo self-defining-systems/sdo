@@ -998,7 +998,8 @@ Generic health bootstrap also installs `cluster-wiring`, `workload-controllers`,
 StatefulSet/DaemonSet unavailability is critical. Wiring skips converging workloads. While a
 health-probe scenario fails, wiring also reports running pods that started before a Secret they
 read (env or volume) last changed; the change time comes from managedFields and creation metadata,
-never Secret data. Controller
+never Secret data, and counts only managers other than SDO's own (`sdk.SDOFieldManagers`: the deployer,
+acceptance, replicas handoff, and the responder, whose `sdo act` kubectl writes carry its manager). Controller
 workloads get a ten-minute progress window; OnDelete and partitioned updates retain old revisions
 intentionally. Cron schedules use the standard five-field parser with explicit timezone (UTC default).
 Warning events require repeated occurrences spanning a minute, seen within two minutes, and clear

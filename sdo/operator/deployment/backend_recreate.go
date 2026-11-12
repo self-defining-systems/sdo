@@ -23,7 +23,7 @@ var _ ReplicasHandoff = CommandBackend{}
 // change. A dry run that fails for any other reason returns no conflicts:
 // the apply that follows fails with the server's own answer.
 func (b CommandBackend) ImmutableConflicts(ctx context.Context, documents []byte) ([]ImmutableConflict, error) {
-	args := b.kubectlArgs("apply", "--server-side", "--force-conflicts", "--field-manager=sdo-deployer", "--dry-run=server", "--filename=-")
+	args := b.kubectlArgs("apply", "--server-side", "--force-conflicts", "--field-manager="+sdk.DeployerFieldManager, "--dry-run=server", "--filename=-")
 	output, err := b.run(ctx, b.kubectl(), args, documents)
 	if err == nil {
 		return nil, nil
@@ -78,7 +78,7 @@ func (b CommandBackend) AppliedJobs(ctx context.Context, namespace string) ([]Li
 func appliedByDeployer(metadata map[string]any) bool {
 	for _, raw := range objectSlice(metadata, "managedFields") {
 		entry, _ := raw.(map[string]any)
-		if objectString(entry, "manager") == "sdo-deployer" && objectString(entry, "operation") == "Apply" {
+		if objectString(entry, "manager") == sdk.DeployerFieldManager && objectString(entry, "operation") == "Apply" {
 			return true
 		}
 	}
@@ -277,7 +277,7 @@ func (b CommandBackend) HandOffReplicas(ctx context.Context, ref sdk.ObjectRef) 
 		return fmt.Errorf("decode %s/%s: %w", ref.Kind, ref.Name, err)
 	}
 	live := &unstructured.Unstructured{Object: object}
-	if !rendered.SolelyOwnsReplicas(live, "sdo-deployer") {
+	if !rendered.SolelyOwnsReplicas(live, sdk.DeployerFieldManager) {
 		return nil
 	}
 	document, ok := rendered.ReplicasHandoff(live)

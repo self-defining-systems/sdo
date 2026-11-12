@@ -30,6 +30,14 @@ ACT_USAGE = "sdo act --resource Kind/namespace/name [--summary TEXT] [--irrevers
 # A kubectl command may carry them in any position before its own --; kubectl keeps every
 # flag it defines (--resource included) and other programs receive their arguments verbatim.
 SDO_ACT_FLAGS = {"--json": False, "--irreversible": False, "--summary": True}
+#: Field manager of every kubectl write the responder makes through ``sdo act``. Mirror of
+#: ``ResponderFieldManager`` in ``sdo/operator/sdk/secret.go``, which SDO treats as its own: the responder's writes
+#: never read as a foreign Secret data change.
+RESPONDER_FIELD_MANAGER = "sdo-responder"
+#: kubectl verbs that write objects and accept ``--field-manager``.
+_FIELD_MANAGED_VERBS = frozenset({"apply", "create", "patch", "edit", "replace", "label", "annotate", "set"})
+#: Subcommands of those verbs that reject ``--field-manager``.
+_UNMANAGED_SUBCOMMANDS = frozenset({("create", "token"), ("apply", "view-last-applied"), ("apply", "set-last-applied")})
 _USAGE_ERROR = re.compile(r"unknown (?:shorthand )?flag|unknown command|for usage\.")
 
 OBJECT_REFERENCE_HELP = (
@@ -471,7 +479,26 @@ def _act_command(args: argparse.Namespace) -> list[str]:
             if value is None or args.summary not in (None, value):
                 raise ValueError(f"{name} takes one value; usage: {ACT_USAGE}")
             args.summary = value
-    return kept
+    return _as_responder(kept)
+
+
+def _as_responder(command: list[str]) -> list[str]:
+    """Write a mutating kubectl command as SDO's responder field manager, replacing any manager it names."""
+    words = recorded_actions.kubectl_words(command)
+    if not words or words[0] not in _FIELD_MANAGED_VERBS or tuple(words[:2]) in _UNMANAGED_SUBCOMMANDS:
+        return command
+    kept: list[str] = []
+    tokens = iter(command)
+    for token in tokens:
+        if token == "--":
+            kept.extend([token, *tokens])
+            break
+        if token == "--field-manager":
+            next(tokens, None)
+        elif not token.startswith("--field-manager="):
+            kept.append(token)
+    end = kept.index("--") if "--" in kept else len(kept)
+    return [*kept[:end], f"--field-manager={RESPONDER_FIELD_MANAGER}", *kept[end:]]
 
 
 def _usage_hint(command: list[str], output: str) -> str | None:

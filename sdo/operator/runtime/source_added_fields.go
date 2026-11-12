@@ -25,7 +25,7 @@ import (
 // apply that does not carry the key must not delete it.
 const acceptedPathsAnnotation = "sdo.dev/accepted-paths"
 
-const acceptanceFieldManager = "sdo-acceptance"
+const acceptanceFieldManager = sdk.AcceptanceFieldManager
 
 // A record larger than this is not written; the object then has no
 // acceptance point and its source comparison fails closed.
@@ -304,7 +304,7 @@ func ownedBySubresourceWriters(object *unstructured.Unstructured) map[string]boo
 func ownedByWriters(object *unstructured.Unstructured, include func(metav1.ManagedFieldsEntry) bool) map[string]bool {
 	owned := map[string]bool{}
 	for _, entry := range object.GetManagedFields() {
-		if entry.Manager == "sdo-deployer" || entry.Manager == acceptanceFieldManager || entry.FieldsV1 == nil || !include(entry) {
+		if entry.Manager == sdk.DeployerFieldManager || entry.Manager == acceptanceFieldManager || entry.FieldsV1 == nil || !include(entry) {
 			continue
 		}
 		var fields map[string]any
