@@ -59,20 +59,11 @@ func RunController(ctx context.Context, args []string) error {
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	following := make(chan struct{})
-	// A deployment that violates the policy in force is a typed hold: detection
-	// keeps running, no upstream revision is deployed.
-	refused := controllerPolicyHold(ctx, run.Controller, identity, slog.Default())
-	go func() {
-		defer close(following)
-		if refused != nil {
-			return
-		}
-		followUpstream(ctx, run.Controller, run.Build.OperatorRoot, identity)
-	}()
+	// A deployment that violates the policy in force is published as a typed
+	// hold; detection keeps running either way.
+	controllerPolicyHold(ctx, run.Controller, identity, slog.Default())
 	err = builder.Run(ctx, run, builder.RestartPolicy{})
 	cancel()
-	<-following
 	return err
 }
 

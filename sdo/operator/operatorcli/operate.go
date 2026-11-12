@@ -43,8 +43,6 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	controlNamespace := flags.String("control-namespace", "", "controller namespace")
 	application := flags.String("application", "", "application identity")
 	objective := flags.String("health-objective", "", "human health objective")
-	sourceKind := flags.String("source-kind", "", "upstream watcher kind to follow (published as .sdo/goal/sources.yaml)")
-	sourceConfig := flags.String("source-config", "", "JSON config of the followed upstream")
 	deploymentPlan := flags.String("deployment-plan", "", "provided DeploymentPlan as ProtoJSON; the deployer agent is skipped and the plan is deployed as given")
 	deploymentPolicyFlag := flags.String("deployment-policy", "", "the installer's resolved DeploymentPolicy as ProtoJSON; empty is no policy")
 	evidenceSink := flags.String("evidence-sink", "", "the installer's resolved evidence sink as compact JSON (run_id, volume); empty keeps evidence on the repository volume")
@@ -134,13 +132,6 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	if err != nil {
 		return OperateConfig{}, err
 	}
-	sources, err := parseSourceFlags(*sourceKind, *sourceConfig)
-	if err != nil {
-		return OperateConfig{}, err
-	}
-	if len(sources) > 0 && strings.TrimSpace(*objective) == "" {
-		return OperateConfig{}, errors.New("a followed source is published with the human goal and requires --health-objective")
-	}
 	if _, err := deploymentpolicy.Parse(*deploymentPolicyFlag); err != nil {
 		return OperateConfig{}, err
 	}
@@ -156,7 +147,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			ProvidedPlan:   providedPlan,
 			SettingsDigest: policy.DetectionDigest(),
 			OperationID:    *operationID, Application: *application, Namespace: *namespace,
-			HealthObjective: *objective, Sources: sources, DeployerAgentID: *deployerID, JudgeAgentID: *judgeID,
+			HealthObjective: *objective, DeployerAgentID: *deployerID, JudgeAgentID: *judgeID,
 			RegistryHost: *registryHost,
 			MaxAttempts:  policy.Deployment.MaxAttempts,
 		},
@@ -165,7 +156,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			BackendRecipes: telemetrysources.Recipes(), TelemetryProfile: profile,
 			ObservationCeiling: ceiling,
 			Namespace:          *namespace, ControlNamespace: control, Application: *application,
-			SourceKind: *sourceKind, SourceConfig: *sourceConfig, DeploymentPlan: *deploymentPlan, DeploymentPolicy: *deploymentPolicyFlag, EvidenceSink: *evidenceSink,
+			DeploymentPlan: *deploymentPlan, DeploymentPolicy: *deploymentPolicyFlag, EvidenceSink: *evidenceSink,
 			ControllerImage: *controllerImage, ResponderImage: *responderImage,
 			ScriptImage: *scriptImage, RepositoryPVC: *repositoryPVC,
 			CredentialsSecret: *credentialsSecret,

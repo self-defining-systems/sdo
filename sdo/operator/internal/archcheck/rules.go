@@ -16,7 +16,6 @@ func Rules() Config {
 		Families: []Family{
 			{Dir: "render", SupportDirs: []string{"rendertest"}},
 			{Dir: "imagesrc", SupportDirs: []string{"imagesrctest"}},
-			{Dir: "upstream", SupportDirs: []string{"upstreamtest"}},
 			{Dir: "telemetry", SupportDirs: []string{"telemetrytest"}},
 		},
 		WiringDirs: []string{"operatorcli"},
@@ -48,11 +47,6 @@ func Rules() Config {
 				Name:     "HelmRenderConfig",
 				Import:   module + "/contracts/gen/sdodev/contracts/v1alpha1",
 				OwnerPkg: module + "/render/helm",
-			},
-			{
-				Name:     "GitPollConfig",
-				Import:   module + "/contracts/gen/sdodev/contracts/v1alpha1",
-				OwnerPkg: module + "/upstream/gitpoll",
 			},
 			{
 				Name:     "BuildKitImageConfig",

@@ -161,7 +161,7 @@ func (h ConfigMapHeadHolds) Hold(ctx context.Context, change broker.HeadChange, 
 	configMaps := h.Client.CoreV1().ConfigMaps(h.Namespace)
 	configMap, err := configMaps.Get(ctx, headHoldConfigMap, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		_, err = configMaps.Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: headHoldConfigMap, Namespace: h.Namespace}, Data: map[string]string{"hold": string(data)}}, metav1.CreateOptions{})
+		_, err = configMaps.Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: headHoldConfigMap, Namespace: h.Namespace, Labels: map[string]string{"app.kubernetes.io/managed-by": "sdo"}}, Data: map[string]string{"hold": string(data)}}, metav1.CreateOptions{})
 		return err
 	}
 	if err != nil {

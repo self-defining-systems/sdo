@@ -174,8 +174,8 @@ func (r RepairDeployer) paused(ctx context.Context, deploy func() (RepairResult,
 		return RepairResult{}, errors.New("source repair with a maintenance window needs a clock")
 	}
 	now := r.Now
-	advancer := Advancer{Maintenance: r.Maintenance, Wait: r.Wait}
-	var cfg AdvanceConfig
+	advancer := pauseControl{maintenance: r.Maintenance, wait: r.Wait}
+	var cfg pauseBounds
 	expiresAt := now().Add(orDefault(cfg.PauseAckTimeout, DefaultPauseAckTimeout) + orDefault(cfg.PauseApplyBound, DefaultPauseApplyBound) + orDefault(cfg.SettleWindow, DefaultSettleWindow))
 	if err := r.Maintenance.Pause(ctx, "source repair", expiresAt); err != nil {
 		if errors.Is(err, ErrMaintenanceBusy) {

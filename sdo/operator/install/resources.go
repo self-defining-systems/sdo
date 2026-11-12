@@ -78,10 +78,6 @@ type Config struct {
 	// branch. MemoryUpstreamSSHSecret names an existing Secret holding the
 	// ssh "identity" and "known_hosts", mounted read-only.
 	MemoryUpstreamURL, MemoryUpstreamBranch, MemoryUpstreamSSHSecret string
-	// SourceKind and SourceConfig (one JSON object) name the upstream the
-	// deployment follows; the operate Job publishes them as
-	// .sdo/goal/sources.yaml with the human goal. Both or neither.
-	SourceKind, SourceConfig string
 	// DeploymentPlan is a provided deployment (compact ProtoJSON
 	// DeploymentPlan): the operate Job deploys it instead of asking the
 	// deployer agent for a plan.
@@ -165,9 +161,6 @@ func (c Config) validate() error {
 	}
 	if c.ControllerImage == "" || c.ResponderImage == "" {
 		return errors.New("controller and responder images are required")
-	}
-	if (c.SourceKind == "") != (c.SourceConfig == "") {
-		return errors.New("followed source requires both a kind and a config")
 	}
 	if (c.MemoryUpstreamURL == "") != (c.MemoryUpstreamBranch == "") || (c.MemoryUpstreamSSHSecret != "" && c.MemoryUpstreamURL == "") {
 		return errors.New("memory upstream requires both a URL and a branch")

@@ -97,7 +97,6 @@ var operatorOwned = map[string]string{
 	"shellpath/kubernetes.go":                        reasonScratch,
 	"shellpath/repository.go":                        reasonScratch,
 	"toolchain/shared.go":                            reasonScratch,
-	"upstream/upstreamtest/upstreamtest.go":          reasonTool,
 	"worker_registry/kubernetes.go":                  reasonSession,
 	"worker_registry/staged_task.go":                 reasonSession,
 	"worker_registry/standby.go":                     reasonSession,
@@ -136,7 +135,6 @@ var subprocessOwned = map[string]string{
 	"shellpath/internal/shellio/shellio.go":         reasonExec,
 	"toolchain/download.go":                         reasonExec,
 	"toolchain/shared.go":                           reasonExec,
-	"upstream/gitpoll/internal/gitio/gitio.go":      reasonExec,
 	"worker_registry/internal/workerio/env.go":      reasonExec,
 }
 

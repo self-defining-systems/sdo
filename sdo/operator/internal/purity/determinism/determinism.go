@@ -40,7 +40,6 @@ var Edges = map[string]bool{
 	"sdo/operator/rendered/internal/renderio":                true, // Rendered-source Git reads
 	"sdo/operator/internal/sandboxio":                        true, // Bounded child process of the same binary (Helm render isolation)
 	"sdo/operator/patchset/internal/gitio":                   true, // Patch application git processes and private scratch directory
-	"sdo/operator/upstream/gitpoll/internal/gitio":           true, // Git ls-remote and fetch processes
 	"sdo/operator/shellpath/internal/shellio":                true, // Shell detector processes, runner server, timers and environment
 	"sdo/operator/worker_registry/internal/workerio":         true, // Worker clocks, warm-standby processes, sockets and environment
 	"sdo/operator/cmd/sdo-go-cache/internal/cacheio":         true, // Go cache helper environment and clock

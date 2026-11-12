@@ -8,7 +8,6 @@ import (
 	"sdo.dev/operator/internal/archcheck"
 	"sdo.dev/operator/operatorcli/catalog/images"
 	"sdo.dev/operator/operatorcli/catalog/renderers"
-	"sdo.dev/operator/operatorcli/catalog/upstreams"
 )
 
 // TestEveryPluginConfigTypeIsInTheArchcheckRegistry fails when a built-in
@@ -34,15 +33,7 @@ func TestEveryPluginConfigTypeIsInTheArchcheckRegistry(t *testing.T) {
 	for _, d := range imgs.Describe() {
 		used[protoName(d.ConfigType)] = "image source " + d.ID
 	}
-	ups := upstreams.Catalog()
-	for _, id := range ups.IDs() {
-		packed, err := ups.ParseConfig(id, []byte("{}"))
-		if err != nil {
-			t.Fatalf("upstream %s: %v", id, err)
-		}
-		used[protoName(packed.GetTypeUrl())] = "upstream watcher " + id
-	}
-	if len(used) < 6 {
+	if len(used) < 2 {
 		t.Fatalf("only %d plugin config types discovered (%v): the discovery is not seeing the catalogs", len(used), used)
 	}
 	for name, who := range used {

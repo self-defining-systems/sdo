@@ -49,16 +49,6 @@ def test_layout_rejects_bad_values():
         up.UpstreamLayout("sdo-toy", poll_interval="soon")
 
 
-def test_source_args_name_the_in_cluster_service():
-    args = up.source_args(LAYOUT)
-    assert args[:3] == ["--source-kind", "git", "--source-config"]
-    assert json.loads(args[3]) == {
-        "repository": "git://toy-upstream.sdo-toy-upstream.svc.cluster.local:9418/toy.git",
-        "ref": "main",
-        "poll_interval": "5s",
-    }
-
-
 def test_manifests_serve_push_enabled_daemon_in_the_upstream_namespace():
     namespace, deployment, service = up.upstream_manifests(LAYOUT, "img:1")
     assert namespace["metadata"]["name"] == "sdo-toy-upstream"
@@ -180,7 +170,7 @@ def test_the_manifest_daemon_script_serves_seed_and_push_over_git_protocol(tmp_p
         process.wait(timeout=5)
 
 
-def test_cli_push_and_source_args(tmp_path, capsys):
+def test_cli_push(tmp_path, capsys):
     workspace, remote = seeded(tmp_path)
     up.seed_upstream(workspace, remote, LAYOUT)
     parser = build_parser()
@@ -188,8 +178,5 @@ def test_cli_push_and_source_args(tmp_path, capsys):
     assert args.handler(args) == 0
     pushed = json.loads(capsys.readouterr().out)
     assert pushed["pushed"] == git(tmp_path / "remote.git", "rev-parse", "main")
-    args = parser.parse_args(["toy", "source-args", "--lane-namespace", "sdo-toy"])
-    assert args.handler(args) == 0
-    assert json.loads(capsys.readouterr().out)[:2] == ["--source-kind", "git"]
     with pytest.raises(SystemExit):
         parser.parse_args(["toy", "push", "--commit", "unknown", "--remote", remote])
