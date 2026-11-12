@@ -55,8 +55,16 @@ func WriteSchema(checkout string) error {
 	if checkout == "" {
 		return fmt.Errorf("checkout is required")
 	}
-	if _, err := layout.Migrate(checkout); err != nil {
+	migrated, err := layout.Migrate(checkout)
+	if err != nil {
 		return fmt.Errorf("migrate operational memory: %w", err)
+	}
+	if migrated {
+		// Go-installed generic detectors Go no longer plans would stop the
+		// migrated tree compiling; upkeep drops them with the schema stamp.
+		if err := PruneStrandedGenericDetectors(checkout); err != nil {
+			return fmt.Errorf("migrate operational memory: %w", err)
+		}
 	}
 	if err := safefs.WriteFile(checkout, layout.DiagnosticsGoModFile, []byte("module app-diagnostics\n\ngo 1.24\n\nrequire sdo.dev/operator/sdk v0.0.0\n"), 0o644); err != nil {
 		return fmt.Errorf("write diagnostics module: %w", err)

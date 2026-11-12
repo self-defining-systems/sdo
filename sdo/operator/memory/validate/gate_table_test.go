@@ -505,6 +505,24 @@ var gateRows = []gateRow{
 		write(t, r, layout.SchemaVersionFile, "8\n")
 		write(t, r, layout.DiagnosticsGoModFile, "module m\n")
 	}},
+	{name: "upkeep migration drops a retired Go-installed generic detector", kind: gateOwnership, actor: Upkeep, phase: InitialPhase,
+		prepare: func(t *testing.T, r string) {
+			write(t, r, layout.SchemaVersionFile, "7\n")
+			gateStrandedDetector(t, r, "synthetic-retired", "lifecycle-bootstrap")
+		},
+		edit: func(t *testing.T, r string) {
+			write(t, r, layout.SchemaVersionFile, "8\n")
+			remove(t, r, layout.DetectorDir(layout.ClassHealth, "synthetic-retired"))
+		}},
+	{name: "upkeep migration cannot drop an authored detector", kind: gateOwnership, actor: Upkeep, phase: InitialPhase, rules: []string{RuleUpkeepMigration},
+		prepare: func(t *testing.T, r string) {
+			write(t, r, layout.SchemaVersionFile, "7\n")
+			gateStrandedDetector(t, r, "synthetic-authored", "initial")
+		},
+		edit: func(t *testing.T, r string) {
+			write(t, r, layout.SchemaVersionFile, "8\n")
+			remove(t, r, layout.DetectorDir(layout.ClassHealth, "synthetic-authored"))
+		}},
 	{name: "responder cannot edit the goal", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleOwnershipDenied}, path: layout.GoalFile,
 		edit: gateWrite(layout.GoalFile, "---\nschema_version: 1\nowner: human\n---\nNew goal\n")},
 	{name: "responder cannot edit outcomes", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleOwnershipDenied}, edit: gateWrite(layout.OutcomePath("inc"), "{}\n")},
@@ -1070,4 +1088,14 @@ func gateRead(t *testing.T, root, name string) string {
 func gateAppFileDenied(actor Actor, phase Phase) gateRow {
 	return gateRow{name: fmt.Sprintf("%s may not change an app file in %s", actor, phase), kind: gateOwnership, actor: actor, phase: phase,
 		rules: []string{RuleOwnershipDenied}, edit: gateWrite("app.txt", "edit\n")}
+}
+
+// gateStrandedDetector writes a synthetic health detector package with the
+// given originating commit ("lifecycle-bootstrap" marks a Go-installed one).
+func gateStrandedDetector(t *testing.T, root, id, origin string) {
+	t.Helper()
+	manifest := strings.Replace(gateRead(t, root, gateHealthManifest), "id: health", "id: "+id, 1)
+	manifest = strings.Replace(manifest, "originatingCommit: initial", "originatingCommit: "+origin, 1)
+	write(t, root, layout.DetectorManifestPath(layout.ClassHealth, id), manifest)
+	write(t, root, layout.DetectorDir(layout.ClassHealth, id)+"/detector.go", "package synthetic\n")
 }

@@ -342,6 +342,11 @@ func (s *run) upkeepMigration(base string) error {
 		fail("upkeep requires an older accepted schema")
 		return nil
 	}
+	// The migration also drops Go-installed generic detectors Go no longer
+	// plans (memory.WriteSchema); nothing else about a detector may change.
+	if err := memory.PruneStrandedGenericDetectors(base); err != nil {
+		return fmt.Errorf("plan accepted migration: %w", err)
+	}
 	expected, err := migrationDetectorFiles(base)
 	if err != nil {
 		return err
