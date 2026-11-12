@@ -1,16 +1,23 @@
-"""Per-SDO-version results table of a fuzzops campaign: first try, exact repeat and same-app variant.
+"""SDO's results table for fuzzops-bench experiments: first try, repeats on learned memory, and false alarms.
 
-Campaign layout (all under one sdo-exp directory)::
+fuzzops-bench grades every experiment itself (``fuzzops-bench results``); this table joins those grades with SDO's
+own outcome records, which the ``collect`` hook (``benchmarks.fuzzops.hooks``) copied after every run. One experiment
+is one column. Bench layout read here (``<exp>`` = ``<root>/<experiment>``)::
 
-    <campaign>/<app>/baseline*/runs.jsonl         fuzzops suites: noop and best-fix runs (and screens) per instance
-    <campaign>/<app>/lanes/<lane>/lane.json       benchmarks.fuzzops.campaign lane metadata (sdo_version, plan)
-    <campaign>/<app>/lanes/<lane>/runs/*/         record.json (fuzzops record), run.json (round, instance)
-    <campaign>/<app>/lanes/<lane>/memory/.sdo/outcomes/*.json   SDO's accepted outcome records
+    <exp>/runs/<run-id>/run.json            bench run: fault, sequence, position, seed, attempt, status, reason, lane,
+                                            host, operator_label, inject_at, settle_end
+    <exp>/runs/<run-id>/record.json         the fuzzops run record (fault, operator, seed, valid, window, lifecycle)
+    <exp>/runs/<run-id>/operator/memory/.sdo/outcomes/*.json   SDO's accepted outcome records after the run
+    <exp>/results/grades.json               fuzzops grade cells (Fault, Operator, Grade, NoopBad, Life, ...)
+    <exp>/results/runs.csv                  per run: fault, position, seed, lane, host, status, reason, grade
+    <exp>/gates.jsonl                       failed ready gates (``alarm``: SDO had an incident open while gating)
 
-For each app and SDO version the baselines and that version's SDO runs are merged into one ``runs.jsonl`` and graded
-by ``fuzzops report --plain`` (SDO runs on another cluster than its baselines, so no interference rule); the table
-joins those grades (``grades.json``) with SDO's outcome records: tokens and cost, cause class, reach, and whether the
-learned playbook applied automatically. ``python -m benchmarks.fuzzops.table <campaign> --fuzzops <checkout>``.
+A run owns ``[inject_at, settle_end]``; SDO incidents belong to it when detected in that interval or open at the
+inject and naming the faulted component (``window.belongs``). Only ``done`` runs are graded and counted. Healthy runs
+(fault ``healthy``) give the false alarms; a fault run's incidents only on objects its background churn touched are
+false alarms after churn.
+
+``uv run python -m benchmarks.fuzzops.table <exp> [<exp> ...] [--out DIR]``
 """
 
 from __future__ import annotations
@@ -18,7 +25,6 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
@@ -29,19 +35,24 @@ from agentshim import TokenUsage, cost_usd, default_pricing, price_for
 
 from benchmarks.fuzzops.window import belongs, fault_targets
 
-SDO_PREFIX = "exec:sdo-"
+HEALTHY = "healthy"
+#: Seconds after the inject an incident may still belong to a run that has no settle end.
+DEFAULT_SPAN_S = 1800.0
 
 
 @dataclass
 class Row:
-    app: str
-    version: str  # the column key: SDO version, arm and churn setting
-    lane: str
-    template: str
-    round: str
-    instance: str
+    experiment: str  # the column
+    run: str
+    fault: str
+    sequence: int
+    position: int
+    seed: int
+    lane: str = ""
+    host: str = ""
+    status: str = ""
     valid: bool = True
-    verdict: str = ""
+    grade: str = ""
     bad: float | None = None
     noop_bad: float | None = None
     best_bad: float | None = None
@@ -70,10 +81,14 @@ class Row:
     reflection: str = ""
     reflection_cost_usd: float | None = 0.0
     incidents: list[str] = field(default_factory=list)
-    #: Distinct (detector, resource) findings on objects the round's background churn touched, whether they joined
-    #: the open fault incident or opened their own; None when the round ran without churn.
+    #: Distinct (detector, resource) findings on objects the run's background churn touched, whether they joined
+    #: the open fault incident or opened their own; None when the run had no churn.
     churn_findings: int | None = None
     note: str = ""
+
+    @property
+    def round(self) -> str:
+        return "first" if self.position <= 1 else "repeat"
 
 
 def _opt(v: Any) -> float | None:
@@ -188,19 +203,28 @@ def fill_from_outcomes(row: Row, picked: list[dict[str, Any]], inject: datetime 
         row.closed_s = round((done - inject).total_seconds(), 1)
 
 
+def _churn_touched(rec: dict[str, Any]) -> set[str]:
+    touched = {
+        str(x).split("/")[-1] for ev in (rec.get("churn") or {}).get("events") or [] for x in ev.get("objects") or []
+    }
+    touched.discard(_root_name(rec))
+    return touched
+
+
+def _root_name(rec: dict[str, Any]) -> str:
+    return str(((rec.get("lifecycle") or {}).get("root_cause") or {}).get("component") or "").split("/")[-1]
+
+
 def churn_findings(outcomes: list[dict[str, Any]], rec: dict[str, Any]) -> int | None:
-    """Findings caused by the round's background churn: distinct (detector, resource name) pairs, over every incident
-    of the round, whose primary resource is an object a churn action touched (the faulted component excluded).
+    """Findings caused by the run's background churn: distinct (detector, resource name) pairs, over every incident
+    of the run, whose primary resource is an object a churn action touched (the faulted component excluded).
 
     A responder that closes the fault incident sooner turns churn findings that would have joined it into separate
     incidents (counted as false alarms after churn); this count is the same either way, so columns compare fairly.
     """
-    events = (rec.get("churn") or {}).get("events")
     if rec.get("churn") is None:
         return None
-    touched = {str(x).split("/")[-1] for ev in events or [] for x in ev.get("objects") or []}
-    root = str(((rec.get("lifecycle") or {}).get("root_cause") or {}).get("component") or "").split("/")[-1]
-    touched.discard(root)
+    touched = _churn_touched(rec)
     seen = set()
     for o in outcomes:
         for f in o.get("findings") or []:
@@ -218,28 +242,6 @@ def reach_ok(expected: str, said: str) -> str:
     return "yes" if expected in said.split(",") else "no"
 
 
-def lane_outcomes(lane: Path) -> list[dict[str, Any]]:
-    """The lane's outcome records: the evidence sink's incident ledgers when the lane had a sink (they also carry
-    reflection usage), and the accepted memory copy for incidents the sink does not hold."""
-    by_id: dict[str, dict[str, Any]] = {}
-    meta = _read(lane / "lane.json") or {}
-    sink = Path(meta["evidence_dir"]) if meta.get("evidence_dir") else None
-    if sink is not None and (sink / "incidents").is_dir():
-        for ledger_path in sorted((sink / "incidents").glob("*/ledger.json")):
-            ledger = _read(ledger_path) or {}
-            doc = ledger.get("outcome_document")
-            if isinstance(doc, dict) and doc.get("incident_id"):
-                doc = dict(doc)
-                doc["_reflection_usage"] = (ledger.get("reflection_decision") or {}).get("usage") or {}
-                doc["_reflection_decision"] = (ledger.get("reflection_decision") or {}).get("learning_decision", "")
-                by_id[doc["incident_id"]] = doc
-    for p in sorted((lane / "memory" / ".sdo" / "outcomes").glob("*.json")):
-        doc = _read(p)
-        if doc and doc.get("incident_id") and doc["incident_id"] not in by_id:
-            by_id[doc["incident_id"]] = doc
-    return list(by_id.values())
-
-
 def _read(path: Path) -> dict[str, Any] | None:
     try:
         data = json.loads(path.read_text())
@@ -248,103 +250,241 @@ def _read(path: Path) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
-def build_rows(app: str, version: str, lanes: list[Path], grades: list[dict[str, Any]]) -> list[Row]:
-    cells = {(c["Fault"], c["Operator"]): c for c in grades}
+# ---- the bench layout ----------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class BenchRun:
+    """One ``<exp>/runs/<run-id>/`` directory."""
+
+    path: Path
+    info: dict[str, Any]
+    record: dict[str, Any] | None
+
+    @property
+    def id(self) -> str:
+        return str(self.info.get("id") or self.path.name)
+
+    @property
+    def fault(self) -> str:
+        return str(self.info.get("fault") or "")
+
+    @property
+    def healthy(self) -> bool:
+        return self.fault == HEALTHY
+
+    @property
+    def done(self) -> bool:
+        return self.info.get("status") == "done"
+
+    @property
+    def inject(self) -> datetime | None:
+        rec = self.record or {}
+        return (
+            _ts(self.info.get("inject_at"))
+            or _ts((rec.get("lifecycle") or {}).get("inject_at"))
+            or _ts(rec.get("started"))
+        )
+
+    @property
+    def end(self) -> datetime | None:
+        """The end of the run's interval: the settle end, else the run's end, else a default span after the inject."""
+        end = _ts(self.info.get("settle_end")) or _ts(self.info.get("ended"))
+        if end is None and self.inject is not None:
+            end = self.inject + timedelta(seconds=DEFAULT_SPAN_S)
+        return end
+
+    @property
+    def operator_label(self) -> str:
+        return str((self.record or {}).get("operator") or self.info.get("operator_label") or "")
+
+    @property
+    def record_fault(self) -> str:
+        """The fault as fuzzops grades it (the instance ID; ``none`` for a healthy run)."""
+        return str((self.record or {}).get("fault") or self.fault)
+
+    def outcomes(self) -> list[dict[str, Any]]:
+        """SDO's outcome records after this run: the accepted memory the collect hook copied, plus incident ledgers
+        (which also carry reflection usage) when the run's operator output holds an evidence sink tree."""
+        by_id: dict[str, dict[str, Any]] = {}
+        for ledger_path in sorted((self.path / "operator").glob("**/incidents/*/ledger.json")):
+            ledger = _read(ledger_path) or {}
+            doc = ledger.get("outcome_document")
+            if isinstance(doc, dict) and doc.get("incident_id"):
+                doc = dict(doc)
+                doc["_reflection_usage"] = (ledger.get("reflection_decision") or {}).get("usage") or {}
+                doc["_reflection_decision"] = (ledger.get("reflection_decision") or {}).get("learning_decision", "")
+                by_id[doc["incident_id"]] = doc
+        for p in sorted((self.path / "operator" / "memory" / ".sdo" / "outcomes").glob("*.json")):
+            doc = _read(p)
+            if doc and doc.get("incident_id") and doc["incident_id"] not in by_id:
+                by_id[doc["incident_id"]] = doc
+        return list(by_id.values())
+
+    def picked(self) -> list[dict[str, Any]]:
+        """The outcome records of the incidents that belong to this run's interval."""
+        inject, end = self.inject, self.end
+        if inject is None or end is None:
+            return []
+        root = str((((self.record or {}).get("lifecycle") or {}).get("root_cause") or {}).get("component") or "")
+        targets = fault_targets(self.record_fault, root) if not self.healthy else frozenset()
+        return outcomes_in(self.outcomes(), inject, end, inject, targets)
+
+
+def bench_runs(exp: Path) -> list[BenchRun]:
+    """Every run directory with a ``run.json``, by fault, sequence, position and attempt."""
+    runs = []
+    for run_dir in sorted((exp / "runs").iterdir()) if (exp / "runs").is_dir() else []:
+        info = _read(run_dir / "run.json")
+        if info is None:
+            continue
+        runs.append(BenchRun(run_dir, info, _read(run_dir / "record.json")))
+
+    def key(r: BenchRun) -> tuple[str, int, int, int]:
+        return (
+            r.fault,
+            int(r.info.get("sequence") or 0),
+            int(r.info.get("position") or 0),
+            int(r.info.get("attempt") or 0),
+        )
+
+    return sorted(runs, key=key)
+
+
+def _cell_get(cell: dict[str, Any], name: str) -> Any:
+    """A grade cell field under fuzzops' Go name (``Fault``) or a lower-case JSON name (``fault``)."""
+    if name in cell:
+        return cell[name]
+    return cell.get(name.lower())
+
+
+def read_grades(exp: Path) -> list[dict[str, Any]]:
+    try:
+        data = json.loads((exp / "results" / "grades.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    return [c for c in data if isinstance(c, dict)] if isinstance(data, list) else []
+
+
+def read_run_grades(exp: Path) -> dict[tuple[str, int, int, str], str]:
+    """``runs.csv`` grades by (fault, position, seed, lane)."""
+    out: dict[tuple[str, int, int, str], str] = {}
+    try:
+        with (exp / "results" / "runs.csv").open(newline="") as f:
+            for r in csv.DictReader(f):
+                try:
+                    out[
+                        (r.get("fault", ""), int(r.get("position") or 0), int(r.get("seed") or 0), r.get("lane", ""))
+                    ] = r.get("grade") or ""
+                except ValueError:
+                    continue
+    except OSError:
+        pass
+    return out
+
+
+def build_rows(exp: Path, grades: list[dict[str, Any]], run_grades: dict[tuple[str, int, int, str], str]) -> list[Row]:
+    """One row per fault run of the experiment (healthy runs give false alarms instead)."""
+    cells = {(str(_cell_get(c, "Fault")), str(_cell_get(c, "Operator"))): c for c in grades}
     rows = []
-    for lane in lanes:
-        outcomes = lane_outcomes(lane)
-        for run_dir in sorted((lane / "runs").iterdir()):
-            info_path, rec_path = run_dir / "run.json", run_dir / "record.json"
-            if not info_path.is_file() or run_dir.name.endswith("-unhealthy"):
-                continue
-            info = json.loads(info_path.read_text())
-            row = Row(app, version, lane.name, info["template"], info["round"], info["instance"])
-            try:
-                rec = json.loads(rec_path.read_text())
-            except (OSError, json.JSONDecodeError):
-                row.valid, row.note = False, "no record"
-                rows.append(row)
-                continue
-            row.valid = bool(rec.get("valid"))
-            if not row.valid:
-                row.note = str(rec.get("invalid_reason") or rec.get("error") or "invalid")[:120]
-            cell = cells.get((row.instance, info.get("operator") or SDO_PREFIX + row.round)) or {}
-            best = cells.get((row.instance, "best-fix")) or {}
-            bad = (
-                (rec.get("window") or {}).get("BadSeconds", 0)
-                + (rec.get("bad_seconds_added") or 0)
-                + (rec.get("tail") or {}).get("BadSeconds", 0)
-            )
-            row.bad = float(bad) if row.valid else None
-            if cell:
-                row.verdict = str(cell.get("Grade") or "")
-                row.noop_bad = round(cell.get("NoopBad", 0.0), 1) if cell.get("NoopRuns") else None
-                row.lost, row.noop_lost = cell.get("Lost"), cell.get("NoopLost")
-                row.harmful = harmful_of(cell)
-                life = cell.get("Life") or {}
-                row.expected_reach = str(life.get("Reach") or "")
-                runs = life.get("Runs") or []
-                mine = next((r for r in runs if r.get("Seed") == rec.get("seed")), runs[0] if runs else {})
-                row.detect_s, row.localize_s = _opt(mine.get("DetectSec")), _opt(mine.get("LocalSec"))
-                row.diagnose_s, row.escalate_s = _opt(mine.get("DiagSec")), _opt(mine.get("ReachSec"))
-                row.mitigate_s = _opt(mine.get("RecoverySec")) if mine.get("UsersHurt") else None
-                row.localized, row.diagnosed = str(mine.get("Localized") or ""), str(mine.get("Diagnosed") or "")
-            if best.get("Runs"):
-                row.best_bad = round(best.get("Bad", 0.0), 1)
-            row.toward_best = toward_best(row.bad, row.noop_bad, row.best_bad)
-            started = _ts(rec.get("started"))
-            root = (rec.get("lifecycle") or {}).get("root_cause") or {}
-            inject = _ts((rec.get("lifecycle") or {}).get("inject_at")) or started
-            if started is not None:
-                end_s = float(rec.get("seconds") or 0) + 120
-                targets = fault_targets(str(rec.get("fault") or ""), str(root.get("component") or ""))
-                picked = outcomes_in(
-                    outcomes,
-                    started,
-                    started.fromtimestamp(started.timestamp() + end_s, started.tzinfo),
-                    inject,
-                    targets,
-                )
-                fill_from_outcomes(row, picked, inject)
-                row.churn_findings = churn_findings(picked, rec)
-            row.reach_ok = reach_ok(row.expected_reach, row.sdo_reach)
+    for run in bench_runs(exp):
+        if run.healthy:
+            continue
+        info, rec = run.info, run.record
+        row = Row(
+            experiment=str(info.get("experiment") or exp.name),
+            run=run.id,
+            fault=run.fault,
+            sequence=int(info.get("sequence") or 0),
+            position=int(info.get("position") or 0),
+            seed=int(info.get("seed") or 0),
+            lane=str(info.get("lane") or ""),
+            host=str(info.get("host") or ""),
+            status=str(info.get("status") or ""),
+        )
+        if not run.done:
+            row.valid, row.note = False, str(info.get("reason") or info.get("status") or "not done")[:120]
             rows.append(row)
+            continue
+        if rec is None:
+            row.valid, row.note = False, "no record"
+            rows.append(row)
+            continue
+        row.valid = bool(rec.get("valid"))
+        if not row.valid:
+            row.note = str(rec.get("invalid_reason") or rec.get("error") or "invalid")[:120]
+        cell = cells.get((run.record_fault, run.operator_label)) or {}
+        best = cells.get((run.record_fault, "best-fix")) or {}
+        bad = (
+            (rec.get("window") or {}).get("BadSeconds", 0)
+            + (rec.get("bad_seconds_added") or 0)
+            + (rec.get("tail") or {}).get("BadSeconds", 0)
+        )
+        row.bad = float(bad) if row.valid else None
+        row.grade = run_grades.get((row.fault, row.position, row.seed, row.lane), "") or str(
+            _cell_get(cell, "Grade") or ""
+        )
+        if cell:
+            row.noop_bad = round(_cell_get(cell, "NoopBad") or 0.0, 1) if _cell_get(cell, "NoopRuns") else None
+            row.lost, row.noop_lost = _cell_get(cell, "Lost"), _cell_get(cell, "NoopLost")
+            row.harmful = harmful_of(cell)
+            life = _cell_get(cell, "Life") or {}
+            row.expected_reach = str(life.get("Reach") or "")
+            life_runs = life.get("Runs") or []
+            mine = next((r for r in life_runs if r.get("Seed") == rec.get("seed")), life_runs[0] if life_runs else {})
+            row.detect_s, row.localize_s = _opt(mine.get("DetectSec")), _opt(mine.get("LocalSec"))
+            row.diagnose_s, row.escalate_s = _opt(mine.get("DiagSec")), _opt(mine.get("ReachSec"))
+            row.mitigate_s = _opt(mine.get("RecoverySec")) if mine.get("UsersHurt") else None
+            row.localized, row.diagnosed = str(mine.get("Localized") or ""), str(mine.get("Diagnosed") or "")
+        if _cell_get(best, "Runs"):
+            row.best_bad = round(_cell_get(best, "Bad") or 0.0, 1)
+        row.toward_best = toward_best(row.bad, row.noop_bad, row.best_bad)
+        picked = run.picked()
+        fill_from_outcomes(row, picked, run.inject)
+        row.churn_findings = churn_findings(picked, rec)
+        row.reach_ok = reach_ok(row.expected_reach, row.sdo_reach)
+        rows.append(row)
     return rows
 
 
 @dataclass
 class Ratio:
-    app: str
-    version: str
-    template: str
-    round: str
+    experiment: str
+    fault: str
+    sequence: int
+    position: int
     time_ratio: float | None
     cost_ratio: float | None
-    repeat_mitigate_s: float | None
+    repeat_time_s: float | None
     auto_applied: str
 
 
 def _time(row: Row) -> float | None:
-    """The round's response time: users recovered, else SDO escalated, else SDO closed."""
+    """The run's response time: users recovered, else SDO escalated, else SDO closed."""
     for v in (row.mitigate_s, row.escalate_s, row.closed_s):
         if v is not None:
             return v
     return None
 
 
+def _counted(row: Row) -> bool:
+    return row.valid and row.status == "done"
+
+
 def ratios(rows: list[Row]) -> list[Ratio]:
-    first = {(r.app, r.version, r.lane, r.template): r for r in rows if r.round == "first" and r.valid}
+    """Each repeat against the first run of its sequence (same lane, the memory the earlier runs left)."""
+    first = {(r.experiment, r.fault, r.sequence): r for r in rows if r.position == 1 and _counted(r)}
     out = []
     for r in rows:
-        if r.round == "first" or not r.valid:
+        if r.position <= 1 or not _counted(r):
             continue
-        f = first.get((r.app, r.version, r.lane, r.template))
+        f = first.get((r.experiment, r.fault, r.sequence))
         if f is None:
             continue
         ft, rt = _time(f), _time(r)
         tr = round(rt / ft, 2) if ft and rt is not None else None
         cr = round(r.cost_usd / f.cost_usd, 2) if f.cost_usd and r.cost_usd is not None else None
-        out.append(Ratio(r.app, r.version, r.template, r.round, tr, cr, rt, r.auto_applied))
+        out.append(Ratio(r.experiment, r.fault, r.sequence, r.position, tr, cr, rt, r.auto_applied))
     return out
 
 
@@ -359,10 +499,10 @@ def _fmt(v: Any) -> str:
 
 
 COLUMNS = [
-    ("app", "app"),
-    ("template", "fault"),
-    ("round", "round"),
-    ("verdict", "vs noop"),
+    ("fault", "fault"),
+    ("sequence", "q"),
+    ("position", "r"),
+    ("grade", "grade"),
     ("bad", "bad s"),
     ("noop_bad", "noop"),
     ("best_bad", "best-fix"),
@@ -384,15 +524,17 @@ COLUMNS = [
     ("auto_applied", "auto-applied"),
     ("reflection", "learned"),
     ("reflection_cost_usd", "reflection $"),
+    ("lane", "lane"),
     ("note", "note"),
 ]
 
 
-def markdown(version: str, rows: list[Row], rat: list[Ratio]) -> str:
+def markdown(column: str, rows: list[Row], rat: list[Ratio]) -> str:
     lines = [
-        f"## Column {version}",
+        f"## Column {column}",
         "",
-        "Times are seconds from the inject. `noop->best`: 0 = no better than noop, 1 = as good as the reference fix.",
+        "Times are seconds from the inject. `noop->best`: 0 = no better than noop, 1 = as good as the reference fix. "
+        "`q`/`r`: sequence and position (r1 = first try, later positions repeat on the memory the earlier left).",
         "",
         "| " + " | ".join(h for _, h in COLUMNS) + " |",
         "|" + "---|" * len(COLUMNS),
@@ -403,123 +545,114 @@ def markdown(version: str, rows: list[Row], rat: list[Ratio]) -> str:
     if rat:
         lines += [
             "",
-            "### Recurrence: repeat and variant against first try",
+            "### Recurrence: repeats against the first try of their sequence",
             "",
-            "| app | fault | round | time ratio | cost ratio | time s | auto-applied |",
+            "| fault | q | r | time ratio | cost ratio | time s | auto-applied |",
             "|---|---|---|---|---|---|---|",
         ]
         for q in rat:
             lines.append(
-                f"| {q.app} | {q.template} | {q.round} | {_fmt(q.time_ratio)} | {_fmt(q.cost_ratio)} | "
-                f"{_fmt(q.repeat_mitigate_s)} | {q.auto_applied} |"
+                f"| {q.fault} | {q.sequence} | {q.position} | {_fmt(q.time_ratio)} | {_fmt(q.cost_ratio)} | "
+                f"{_fmt(q.repeat_time_s)} | {q.auto_applied} |"
             )
     return "\n".join(lines) + "\n"
 
 
-def grade(fuzzops: Path, out: Path, records: list[str]) -> list[dict[str, Any]]:
-    out.mkdir(parents=True, exist_ok=True)
-    (out / "runs.jsonl").write_text("".join(line if line.endswith("\n") else line + "\n" for line in records))
-    subprocess.run(
-        [str(fuzzops / "bin" / "fuzzops"), "report", "--plain", str(out)], check=True, capture_output=True, text=True
-    )
-    return json.loads((out / "grades.json").read_text()) or []
-
-
-def _churned(line: str) -> bool:
-    try:
-        return json.loads(line).get("churn") is not None
-    except json.JSONDecodeError:
-        return False
-
-
-def column_key(meta: dict[str, Any], churn: bool) -> str:
-    """One table column: the SDO version, the arm and whether fuzzops' background churn was on."""
-    arm = f"-{meta['arm']}" if meta.get("arm") else ""
-    return f"{meta['sdo_version'][:9]}{arm}-{'churn' if churn else 'nochurn'}"
-
-
 @dataclass
 class FalseAlarm:
-    app: str
     column: str
+    run: str
     lane: str
     incident: str
     detectors: list[str]
     detected_at: str
-    after_churn: bool
+    kind: str  # "healthy run" or "after churn"
 
 
-def false_alarms(app: str, column: str, lane: Path) -> list[FalseAlarm]:
-    """Incidents SDO opened while no fault was active: outside every round's inject..run end (window, undo and
-    tail), or inside one but
-    on churned workloads only, within two minutes of a churn action (after churn)."""
-    windows: list[tuple[datetime, datetime, dict[str, Any]]] = []
-    for rec_path in sorted((lane / "runs").glob("*/record.json")):
-        rec = _read(rec_path) or {}
-        life = rec.get("lifecycle") or {}
-        start, end = _ts(life.get("inject_at")), _ts(life.get("window_end"))
-        began = _ts(rec.get("started"))
-        if began is not None and end is not None:
-            # The undo and the tail follow the window; what they restart is the round's, not a false alarm.
-            end = max(end, began + timedelta(seconds=float(rec.get("seconds") or 0)))
-        if start is not None and end is not None:
-            windows.append((start, end, rec))
+def _churn_only(o: dict[str, Any], rec: dict[str, Any], at: datetime) -> bool:
+    """Whether every finding of the incident is on an object a churn action touched within two minutes before it."""
+    touched: set[str] = set()
+    for ev in (rec.get("churn") or {}).get("events") or []:
+        ended = _ts(ev.get("end")) or _ts(ev.get("start"))
+        if ended is not None and timedelta(0) <= at - ended <= timedelta(minutes=2):
+            touched |= {str(x).split("/")[-1] for x in (ev.get("objects") or [])}
+    names = {str((f.get("primary_resource") or {}).get("name") or "") for f in o.get("findings") or []} - {""}
+    return bool(touched and names and names <= touched and _root_name(rec) not in names)
+
+
+def false_alarms(exp: Path) -> list[FalseAlarm]:
+    """Incidents SDO opened while no fault was active: in a healthy run's interval, or in a fault run's interval on
+    churned objects only, within two minutes of a churn action (after churn). Only done runs count."""
     out = []
-    for o in lane_outcomes(lane):
-        at = _ts((o.get("timestamps") or {}).get("detected_at"))
-        if at is None:
+    for run in bench_runs(exp):
+        if not run.done:
             continue
-        findings = o.get("findings") or []
-        detectors = sorted({str(f.get("detector_id") or "") for f in findings} - {""})
-        inside = [rec for start, end, rec in windows if start <= at <= end]
-        churn_hit = False
-        for rec in inside:
-            touched: set[str] = set()
-            for ev in (rec.get("churn") or {}).get("events") or []:
-                ended = _ts(ev.get("end")) or _ts(ev.get("start"))
-                if ended is not None and timedelta(0) <= at - ended <= timedelta(minutes=2):
-                    touched |= {str(x).split("/")[-1] for x in (ev.get("objects") or [])}
-            names = {str((f.get("primary_resource") or {}).get("name") or "") for f in findings} - {""}
-            root = str(((rec.get("lifecycle") or {}).get("root_cause") or {}).get("component") or "").split("/")[-1]
-            if touched and names and names <= touched and root not in names:
-                churn_hit = True
-        if inside and not churn_hit:
-            continue
-        out.append(
-            FalseAlarm(app, column, lane.name, str(o.get("incident_id") or ""), detectors, at.isoformat(), churn_hit)
-        )
+        rec = run.record or {}
+        column = str(run.info.get("experiment") or exp.name)
+        for o in run.picked():
+            at = _ts((o.get("timestamps") or {}).get("detected_at"))
+            if at is None:
+                continue
+            if run.healthy:
+                kind = "healthy run"
+            elif _churn_only(o, rec, at):
+                kind = "after churn"
+            else:
+                continue
+            detectors = sorted({str(f.get("detector_id") or "") for f in o.get("findings") or []} - {""})
+            out.append(
+                FalseAlarm(
+                    column,
+                    run.id,
+                    str(run.info.get("lane") or ""),
+                    str(o.get("incident_id") or ""),
+                    detectors,
+                    at.isoformat(),
+                    kind,
+                )
+            )
     return out
 
 
-def collect(campaign: Path, fuzzops: Path) -> tuple[dict[str, list[Row]], list[FalseAlarm]]:
+@dataclass
+class GateAlarm:
+    column: str
+    run: str
+    lane: str
+    at: str
+    reasons: list[str]
+
+
+def gate_alarms(exp: Path) -> list[GateAlarm]:
+    """Failed ready gates during which SDO had an incident open (``gates.jsonl`` lines with ``alarm: true``)."""
+    out = []
+    try:
+        lines = (exp / "gates.jsonl").read_text().splitlines()
+    except OSError:
+        return []
+    for line in lines:
+        try:
+            g = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(g, dict) and g.get("alarm"):
+            reasons = [str(r) for r in g.get("reasons") or []]
+            out.append(
+                GateAlarm(exp.name, str(g.get("run") or ""), str(g.get("lane") or ""), str(g.get("at") or ""), reasons)
+            )
+    return out
+
+
+def collect(experiments: list[Path]) -> tuple[dict[str, list[Row]], list[FalseAlarm], list[GateAlarm]]:
     by_column: dict[str, list[Row]] = {}
     alarms: list[FalseAlarm] = []
-    for app_dir in sorted(p for p in campaign.iterdir() if (p / "lanes").is_dir()):
-        base = [line for f in sorted(app_dir.glob("baseline*/runs.jsonl")) for line in f.read_text().splitlines()]
-        lanes_by: dict[str, list[Path]] = {}
-        records_by: dict[str, list[str]] = {}
-        for lane in sorted((app_dir / "lanes").iterdir()):
-            meta = _read(lane / "lane.json")
-            if meta is None:
-                continue
-            lines = []
-            for rec in sorted((lane / "runs").glob("*/record.json")):
-                text = rec.read_text().strip()
-                if text and not rec.parent.name.endswith("-unhealthy"):
-                    lines.append(json.dumps(json.loads(text)))
-            # A round whose inject failed records no churn; the valid rounds say whether the lane ran with churn.
-            basis = [x for x in lines if json.loads(x).get("valid")] or lines
-            churn = sum(_churned(x) for x in basis) * 2 > len(basis) if basis else bool(meta.get("churn"))
-            key = column_key(meta, churn)
-            lanes_by.setdefault(key, []).append(lane)
-            records_by.setdefault(key, []).extend(lines)
-            alarms.extend(false_alarms(app_dir.name, key, lane))
-        for key, lanes in lanes_by.items():
-            churn = key.endswith("-churn")
-            records = [x for x in base if x.strip() and _churned(x) == churn] + records_by[key]
-            grades = grade(fuzzops, app_dir / f"graded-{key}", records)
-            by_column.setdefault(key, []).extend(build_rows(app_dir.name, key, lanes, grades))
-    return by_column, alarms
+    gates: list[GateAlarm] = []
+    for exp in experiments:
+        rows = build_rows(exp, read_grades(exp), read_run_grades(exp))
+        by_column.setdefault(exp.name, []).extend(rows)
+        alarms += false_alarms(exp)
+        gates += gate_alarms(exp)
+    return by_column, alarms, gates
 
 
 def _rate(n: int, d: int) -> str:
@@ -530,118 +663,124 @@ def _mean(xs: list[float]) -> float | None:
     return round(sum(xs) / len(xs), 1) if xs else None
 
 
-def summary(by_column: dict[str, list[Row]], alarms: list[FalseAlarm]) -> str:
-    """Per question: first try, recurrence, false alarms; one line per app and column (arms side by side)."""
+def _median(xs: list[float]) -> float | None:
+    xs = sorted(xs)
+    return xs[len(xs) // 2] if xs else None
+
+
+def summary(by_column: dict[str, list[Row]], alarms: list[FalseAlarm], gates: list[GateAlarm] | None = None) -> str:
+    """Per question: first try, recurrence, churn findings, false alarms; one line per column."""
+    gates = gates or []
     lines = [
         "## Summary",
         "",
-        "### First try",
+        "### First try (position 1)",
         "",
-        "| app | column | rounds | detected | right component | right cause | fixed or escalated | bad s | noop "
-        "| best-fix | noop->best |",
-        "|---|---|---|---|---|---|---|---|---|---|---|",
+        "| column | runs | detected | right component | right cause | fixed or escalated | bad s | noop | best-fix "
+        "| noop->best |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     rec_lines = [
         "",
-        "### Recurrence (repeat / first, same lane)",
+        "### Recurrence (repeat / first, same sequence)",
         "",
-        "| app | column | pairs | median time ratio | median cost ratio | auto-applied | repeat time s |",
+        "| column | pairs | median time ratio | median cost ratio | auto-applied | median repeat time s |",
+        "|---|---|---|---|---|---|",
+    ]
+    churn = [
+        "",
+        "### Churn findings per run (false alarms compared fairly)",
+        "",
+        "A faster close turns churn findings that would have joined the fault incident into their own incidents (false "
+        "alarms after churn); churn findings count them either way. Per run with churn.",
+        "",
+        "| column | runs | runs with churn | churn findings | per churned run | false alarms after churn "
+        "| per churned run |",
         "|---|---|---|---|---|---|---|",
     ]
     for key in sorted(by_column):
-        rows = by_column[key]
-        for app in sorted({r.app for r in rows}):
-            first = [r for r in rows if r.app == app and r.round == "first" and r.valid]
-            if first:
-                n = len(first)
-                det = sum(r.detect_s is not None for r in first)
-                comp = sum(r.localized == "yes" for r in first)
-                cause = sum(r.diagnosed == "yes" for r in first)
-                fixed = sum(
-                    r.mitigate_s is not None or (r.reach_ok == "yes" and r.expected_reach == "out-of-reach")
-                    for r in first
-                )
-                lines.append(
-                    f"| {app} | {key} | {n} | {_rate(det, n)} | {_rate(comp, n)} | {_rate(cause, n)} | "
-                    f"{_rate(fixed, n)} | "
-                    f"{_fmt(_mean([r.bad for r in first if r.bad is not None]))} | "
-                    f"{_fmt(_mean([r.noop_bad for r in first if r.noop_bad is not None]))} | "
-                    f"{_fmt(_mean([r.best_bad for r in first if r.best_bad is not None]))} | "
-                    f"{_fmt(_mean([r.toward_best for r in first if r.toward_best is not None]))} |"
-                )
-            rat = [q for q in ratios([r for r in rows if r.app == app]) if q.round == "repeat"]
-            if rat:
-                tr = sorted(q.time_ratio for q in rat if q.time_ratio is not None)
-                cr = sorted(q.cost_ratio for q in rat if q.cost_ratio is not None)
-                auto = sum(q.auto_applied == "yes" for q in rat)
-                rt = sorted(q.repeat_mitigate_s for q in rat if q.repeat_mitigate_s is not None)
-                rec_lines.append(
-                    f"| {app} | {key} | {len(rat)} | {_fmt(tr[len(tr) // 2] if tr else None)} | "
-                    f"{_fmt(cr[len(cr) // 2] if cr else None)} | {_rate(auto, len(rat))} | "
-                    f"{_fmt(rt[len(rt) // 2] if rt else None)} |"
-                )
-    churn = [
-        "",
-        "### Churn findings per round (false alarms compared fairly)",
-        "",
-        "A faster close turns churn findings that would have joined the fault incident into their own incidents (false "
-        "alarms after churn); churn findings count them either way. Per round with churn.",
-        "",
-        "| app | column | rounds | rounds with churn | churn findings | per churned round | false alarms after churn "
-        "| per churned round |",
-        "|---|---|---|---|---|---|---|---|",
-    ]
-    for key in sorted(by_column):
-        for app in sorted({r.app for r in by_column[key]}):
-            valid = [r for r in by_column[key] if r.app == app and r.valid]
-            churned = [r for r in valid if r.churn_findings is not None]
-            found = sum(r.churn_findings or 0 for r in churned)
-            after = sum(a.after_churn for a in alarms if a.app == app and a.column == key)
-            n_churned = len(churned)
-            per_found = _fmt(found / n_churned) if n_churned else "-"
-            per_after = _fmt(after / n_churned) if n_churned else "-"
-            churn.append(
-                f"| {app} | {key} | {len(valid)} | {n_churned} | {found} | {per_found} | {after} | {per_after} |"
+        rows = [r for r in by_column[key] if _counted(r)]
+        first = [r for r in rows if r.position == 1]
+        if first:
+            n = len(first)
+            det = sum(r.detect_s is not None for r in first)
+            comp = sum(r.localized == "yes" for r in first)
+            cause = sum(r.diagnosed == "yes" for r in first)
+            fixed = sum(
+                r.mitigate_s is not None or (r.reach_ok == "yes" and r.expected_reach == "out-of-reach") for r in first
             )
+            lines.append(
+                f"| {key} | {n} | {_rate(det, n)} | {_rate(comp, n)} | {_rate(cause, n)} | {_rate(fixed, n)} | "
+                f"{_fmt(_mean([r.bad for r in first if r.bad is not None]))} | "
+                f"{_fmt(_mean([r.noop_bad for r in first if r.noop_bad is not None]))} | "
+                f"{_fmt(_mean([r.best_bad for r in first if r.best_bad is not None]))} | "
+                f"{_fmt(_mean([r.toward_best for r in first if r.toward_best is not None]))} |"
+            )
+        rat = ratios(rows)
+        if rat:
+            auto = sum(q.auto_applied == "yes" for q in rat)
+            rec_lines.append(
+                f"| {key} | {len(rat)} | {_fmt(_median([q.time_ratio for q in rat if q.time_ratio is not None]))} | "
+                f"{_fmt(_median([q.cost_ratio for q in rat if q.cost_ratio is not None]))} | {_rate(auto, len(rat))} | "
+                f"{_fmt(_median([q.repeat_time_s for q in rat if q.repeat_time_s is not None]))} |"
+            )
+        churned = [r for r in rows if r.churn_findings is not None]
+        found = sum(r.churn_findings or 0 for r in churned)
+        after = sum(a.kind == "after churn" for a in alarms if a.column == key)
+        n_churned = len(churned)
+        per_found = _fmt(found / n_churned) if n_churned else "-"
+        per_after = _fmt(after / n_churned) if n_churned else "-"
+        churn.append(f"| {key} | {len(rows)} | {n_churned} | {found} | {per_found} | {after} | {per_after} |")
     fa = [
         "",
         "### False alarms (incidents while no fault was active)",
         "",
-        "| app | column | detector | between rounds | after churn |",
-        "|---|---|---|---|---|",
+        "| column | detector | healthy runs | after churn |",
+        "|---|---|---|---|",
     ]
-    counts: dict[tuple[str, str, str], list[int]] = {}
+    counts: dict[tuple[str, str], list[int]] = {}
     for a in alarms:
         for d in a.detectors or ["(none)"]:
-            c = counts.setdefault((a.app, a.column, d), [0, 0])
-            c[1 if a.after_churn else 0] += 1
-    for (app, col, det), (between, churned) in sorted(counts.items()):
-        fa.append(f"| {app} | {col} | {det} | {between} | {churned} |")
+            c = counts.setdefault((a.column, d), [0, 0])
+            c[1 if a.kind == "after churn" else 0] += 1
+    for (col, det), (healthy, churned_n) in sorted(counts.items()):
+        fa.append(f"| {col} | {det} | {healthy} | {churned_n} |")
     if not counts:
-        fa.append("| - | - | none | 0 | 0 |")
-    return "\n".join(lines + rec_lines + churn + fa) + "\n"
+        fa.append("| - | none | 0 | 0 |")
+    gate_lines = ["", "### Alarms while gating (an incident open before an inject)", ""]
+    per_gate: dict[str, int] = {}
+    for g in gates:
+        per_gate[g.column] = per_gate.get(g.column, 0) + 1
+    gate_lines += [f"- {col}: {n}" for col, n in sorted(per_gate.items())] or ["- none"]
+    return "\n".join(lines + rec_lines + churn + fa + gate_lines) + "\n"
 
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("campaign", type=Path)
-    p.add_argument("--fuzzops", type=Path, required=True, help="fuzzops checkout with bin/fuzzops built")
+    p.add_argument("experiments", type=Path, nargs="+", help="bench experiment directories (<root>/<experiment>)")
+    p.add_argument("--out", type=Path, help="output directory (default: <experiment>/sdo-table for one experiment)")
     a = p.parse_args(argv)
-    by_column, alarms = collect(a.campaign, a.fuzzops.resolve())
-    parts = [summary(by_column, alarms)]
+    if a.out is None and len(a.experiments) > 1:
+        p.error("--out is required for several experiments")
+    out: Path = a.out or a.experiments[0] / "sdo-table"
+    out.mkdir(parents=True, exist_ok=True)
+    by_column, alarms, gates = collect([e.resolve() for e in a.experiments])
+    parts = [summary(by_column, alarms, gates)]
     all_rows: list[Row] = []
     for key in sorted(by_column):
         rows = by_column[key]
         all_rows += rows
         parts.append(markdown(key, rows, ratios(rows)))
-    (a.campaign / "table.md").write_text("# SDO under fuzzops\n\n" + "\n".join(parts))
-    with (a.campaign / "table.csv").open("w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=list(asdict(all_rows[0]).keys()) if all_rows else ["app"])
+    (out / "table.md").write_text("# SDO under fuzzops-bench\n\n" + "\n".join(parts))
+    with (out / "table.csv").open("w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(asdict(all_rows[0]).keys()) if all_rows else ["experiment"])
         w.writeheader()
         for r in all_rows:
             w.writerow({k: (json.dumps(v) if isinstance(v, list) else v) for k, v in asdict(r).items()})
-    (a.campaign / "false-alarms.json").write_text(json.dumps([asdict(x) for x in alarms], indent=2) + "\n")
-    print(f"{len(all_rows)} rows, {len(alarms)} false alarms -> {a.campaign}/table.md")
+    (out / "false-alarms.json").write_text(
+        json.dumps({"incidents": [asdict(x) for x in alarms], "gates": [asdict(g) for g in gates]}, indent=2) + "\n"
+    )
+    print(f"{len(all_rows)} rows, {len(alarms)} false alarms, {len(gates)} gate alarms -> {out}/table.md")
     return 0
 
 

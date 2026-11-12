@@ -59,7 +59,7 @@ For first-mutation capture and evidence-gap semantics, read [capture boundaries]
 For acceptance, ownership and restart analysis, read [native broker and memory](references/native-broker.md).
 For why onboarding or an advance was accepted, corrected or held (items O1-O6, causes, owners, the `sdo-operability` ConfigMap, `SDO-Operability` trailer), read [operability report evidence](references/operability-report.md).
 For traffic settling between recovery proof and broker closure, read [closure recovery observations](references/closure-recovery.md).
-For fuzzops first-try, repeat and variant rounds and their results table, read [fuzzops campaign results](references/fuzzops-campaign.md).
+For fuzzops-bench experiments (SDO hooks, run layout, first try and repeats, false alarms) and the SDO table, read [fuzzops-bench results](references/fuzzops-bench.md).
 For incident deadlines and restart recovery, read [native incident recovery](references/native-incident-recovery.md).
 For per-cause learning, reflection skips and retired incidents, read [native reflection](references/native-reflection.md); for cleared lifecycle effects and repair-encoding counts, read [reflection settlement](references/reflection-settlement.md).
 For setup costs and interrupted responder accounting, read [phase-bound usage evidence](references/setup-usage.md).
