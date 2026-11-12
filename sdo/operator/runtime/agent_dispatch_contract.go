@@ -8,6 +8,7 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/worker_registry"
 )
@@ -34,6 +35,12 @@ func encodeIncidentAgentTask(request IncidentRequest, registry *worker_registry.
 	if len(snapshots) == 1 {
 		if snapshots[0] == nil || snapshots[0].GetAcceptedCommit() != request.RepositoryBaseCommit {
 			return nil, nil, fmt.Errorf("memory snapshot differs from broker proposal base commit")
+		}
+		if snapshots[0].GetCodePath().GetName() != "shell" {
+			// Evidence can quote agent prose naming memory files; a native
+			// worker sees it in logical form. The snapshot, attached after, is
+			// SDO's own logical memory, so the guard below still refuses a leak there.
+			memory.LogicalizeMessage(typedRequest)
 		}
 		typedRequest.MemorySnapshot = snapshots[0]
 		if request.ExternalMessage != "" {
