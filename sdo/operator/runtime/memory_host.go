@@ -351,8 +351,9 @@ type remoteProgram struct {
 
 func (p *remoteProgram) Spec() program.ProgramSpec { return p.spec }
 
-// reads freezes the source and baseline diffs of every object the program may inspect. It runs before the
-// host lease and mirror barrier are taken, because a diff may call the API server.
+// reads freezes the source and baseline diffs of every object the program may inspect, and the accepted
+// application map and data checks. It runs before the host lease and mirror barrier are taken, because a
+// diff may call the API server.
 func (p *remoteProgram) reads(view program.ReadView, b program.Bindings) ([]*pb.MemoryReadReceipt, error) {
 	if err := program.ValidateBindings(p.spec, b); err != nil {
 		return nil, err
@@ -376,7 +377,15 @@ func (p *remoteProgram) reads(view program.ReadView, b program.Bindings) ([]*pb.
 			seen[ref] = true
 		}
 	}
-	return frozenMemoryReads(view, refs)
+	reads, err := frozenMemoryReads(view, refs)
+	if err != nil {
+		return nil, err
+	}
+	accepted, err := memoryhost.EncodeReceipts(acceptedMemoryInputs(view))
+	if err != nil {
+		return nil, err
+	}
+	return append(reads, accepted...), nil
 }
 func (p *remoteProgram) input(view program.ReadView, b program.Bindings, sequence uint64, reads []*pb.MemoryReadReceipt) (*pb.MemoryProgramInput, error) {
 	observation, err := p.remote.observation(view)
