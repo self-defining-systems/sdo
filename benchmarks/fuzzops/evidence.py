@@ -1,14 +1,12 @@
-"""Runtime evidence of an attached SDO for fuzzops runs: sealed snapshots and a full export.
+"""Runtime evidence of an attached SDO for manual fuzzops pairs without an evidence sink.
 
-Until SDO's native evidence sink exists, a runner saves each pair's evidence with ``sdo-operator
-runtime-artifacts``, as the SREGym adapter does: a sealed snapshot at every incident boundary (the observer seals
-one when it sees the incident close) and a full export before the control namespace is torn down.
+The fuzzops-bench hooks never use this: every lane installs SDO with an evidence sink on a host mount and reads
+evidence from there (``benchmarks.fuzzops.sink``). A manual pair without a sink saves its evidence with ``sdo-operator
+runtime-artifacts``: a sealed snapshot at every incident boundary (the observer's ``--operator-binary``) and a full
+export before the control namespace is deleted. A snapshot left on the repository PVC is lost with the namespace.
 
 ``python -m benchmarks.fuzzops.evidence export|snapshot --operator-binary ... --control-namespace ... \
 --controller-image ... --output-dir <sdo-exp dir> [--snapshot-id ID] [--kubeconfig ...]``
-
-Sink hook: when the native sink lands, ``EvidenceTarget`` is where its mounted-volume configuration goes (the
-install passes it to ``sdo-operator host``); these commands then become a fallback.
 """
 
 from __future__ import annotations

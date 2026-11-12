@@ -8,6 +8,8 @@ is one column. Bench layout read here (``<exp>`` = ``<root>/<experiment>``)::
                                             host, operator_label, inject_at, settle_end
     <exp>/runs/<run-id>/record.json         the fuzzops run record (fault, operator, seed, valid, window, lifecycle)
     <exp>/runs/<run-id>/operator/memory/.sdo/outcomes/*.json   SDO's accepted outcome records after the run
+    <exp>/runs/<run-id>/operator/evidence/incidents/*/ledger.json   broker ledgers of the run's interval, copied from
+                                            the lane's host evidence sink (also carry reflection usage)
     <exp>/results/grades.json               fuzzops grade cells (Fault, Operator, Grade, NoopBad, Life, ...)
     <exp>/results/runs.csv                  per run: fault, position, seed, lane, host, status, reason, grade
     <exp>/gates.jsonl                       failed ready gates (``alarm``: SDO had an incident open while gating)
