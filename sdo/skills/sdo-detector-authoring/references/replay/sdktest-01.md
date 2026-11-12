@@ -85,8 +85,8 @@ func ProjectCapturedObject(raw []byte) ([]byte, error)
     Secrets entirely; this also protects recorded JSON.
 
 func ScriptOrigin(script program.RunScript, c CorpusCase) (program.ScriptOriginReceipt, error)
-    ScriptOrigin checks linkage to an original successful timed receipt of the
-    case's incident. Every recorded mutation path qualifies (RunScript,
+    ScriptOrigin checks linkage to an original successful timed receipt of
+    the case's incident. Every recorded mutation path qualifies (RunScript,
     observed API writes); when the receipt recorded script bytes, they must be
     these bytes.
 
@@ -228,4 +228,6 @@ func (v *RecordingReadView) MutatingWebhookConfiguration(name string) (*admissio
 func (v *RecordingReadView) MutatingWebhookConfigurations() ([]admissionv1.MutatingWebhookConfiguration, error)
 
 func (v *RecordingReadView) NodeUsage(ref sdk.ObjectRef) (*metricsv1beta1.NodeMetrics, error)
+
+func (v *RecordingReadView) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error)
 ```

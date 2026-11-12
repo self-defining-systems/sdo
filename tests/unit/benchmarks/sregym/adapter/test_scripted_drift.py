@@ -247,5 +247,4 @@ def test_scripted_policy_drift_requires_source_absence_and_total_ingress_isolati
     assert deleted == ([] if near_miss else ["deny"])
     assert response.status == ("failed" if near_miss else "completed")
     if not near_miss:
-        assert response.repair_actions[0].kind == "kubectl-delete"
-        assert response.repair_actions[0].target == "NetworkPolicy/deny"
+        assert not response.repair_actions  # the recording of the scripted kubectl calls is the receipt
