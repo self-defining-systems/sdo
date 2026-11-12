@@ -3,7 +3,6 @@ package worker_registry
 import (
 	"cmp"
 	"fmt"
-	"os"
 	"path"
 	"path/filepath"
 
@@ -12,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"sdo.dev/operator/apihistory"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/safefs"
 )
 
 // addAPIHistory fronts every agent Job's Kubernetes access with the recording proxy. The native sidecar alone
@@ -77,11 +77,10 @@ func (e KubernetesExecutor) prepareHistory(directory string) error {
 	if err != nil {
 		return fmt.Errorf("api history: %w", err)
 	}
-	history := filepath.Join(e.RepositoryMountPath, relative, directory)
-	if err := os.MkdirAll(history, 0700); err != nil {
+	if err := safefs.MkdirAll(e.RepositoryMountPath, filepath.Join(relative, directory), 0700); err != nil {
 		return fmt.Errorf("api history: %w", err)
 	}
-	if err := apihistory.BeginGeneration(history); err != nil {
+	if err := apihistory.BeginGeneration(filepath.Join(e.RepositoryMountPath, relative, directory)); err != nil {
 		return fmt.Errorf("api history generation: %w", err)
 	}
 	return nil
