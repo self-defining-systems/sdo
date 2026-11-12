@@ -147,6 +147,7 @@ class FaultOps(Protocol):
     def apply(self, actions: Sequence[Action]) -> None: ...
     def unhealthy(self) -> list[str]: ...
     def incident_open(self) -> bool: ...
+    def startup_holding(self) -> bool: ...
     def outcomes(self) -> list[OutcomeRead]: ...
     def human_edits(self) -> int: ...
     def restored_by(self, spec: FaultSpec, since: datetime) -> str | None:
@@ -213,11 +214,21 @@ class FaultResult:
     wall_seconds: float = 0.0
 
 
+def startup_holding(state: dict[str, Any]) -> bool:
+    """Whether the controller state shows a start-up period still holding: begun, neither established nor past
+    its bound. SDO opens no incident then, so an injection would be measured against a deaf controller."""
+    startup = state.get("startup") or {}
+    if not (startup.get("began_at") or startup.get("beganAt")):
+        return False
+    ended = ("established_at", "establishedAt", "bound_reached_at", "boundReachedAt")
+    return not any(startup.get(key) for key in ended)
+
+
 def _stable_healthy(ops: FaultOps, window: float, poll: float) -> bool:
     """Healthy at every poll across ``window`` seconds."""
     end = ops.clock() + window
     while True:
-        if ops.unhealthy() or ops.incident_open():
+        if ops.unhealthy() or ops.incident_open() or ops.startup_holding():
             return False
         if ops.clock() >= end:
             return True
@@ -591,9 +602,15 @@ class KubectlFaultOps:
         bad = workload_unready(self._listing())
         return [b for b in bad if self.plan_ids is None or b in self.plan_ids]
 
-    def incident_open(self) -> bool:
+    def _state(self) -> dict[str, Any]:
         state = json.loads(self._kubectl(self.control, "get", "configmap", STATE_CONFIGMAP, "-o", "json").stdout)
-        return bool(json.loads(state["data"]["runtime-state.json"]).get("incident_open"))
+        return json.loads(state["data"]["runtime-state.json"])
+
+    def incident_open(self) -> bool:
+        return bool(self._state().get("incident_open"))
+
+    def startup_holding(self) -> bool:
+        return startup_holding(self._state())
 
     def _controller(self) -> str:
         pods = json.loads(self._kubectl(self.control, "get", "pods", "-l", CONTROLLER_SELECTOR, "-o", "json").stdout)

@@ -67,6 +67,7 @@ environment; use `SDO_AGENT_CODE_PATH` and `SDO_RESPONSE_MENU`.
 | `response.menu` | `SDO_RESPONSE_MENU` | bool | `true` | offer the responder its tool menu |
 | `response.permissive` | `SDO_RESPONSE_PERMISSIVE` | bool | `false` | broad lane repair permissions excluding Secret and credential APIs |
 | `response.permissive_namespaces` | `SDO_RESPONSE_PERMISSIVE_NAMESPACES` | list (JSON) | `[]` | additional lane namespaces the permissive responder may repair |
+| `response.startup_bound` | `SDO_RESPONSE_STARTUP_BOUND` | duration | `30m0s` | how long a new install waits for SDO to see its application healthy (2 min with no opener firing) before incidents open anyway; until then no incident opens. 0s turns the start-up period off |
 
 ### `detection`
 

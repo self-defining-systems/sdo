@@ -382,9 +382,19 @@ def _kube(env: Mapping[str, str]) -> Kube:
 # ---- SDO state -----------------------------------------------------------------------------------------------
 
 
+def _startup_holding(state: dict[str, Any]) -> bool:
+    """Whether a new install's start-up period still holds its openers: begun, neither established nor past its
+    bound. SDO opens no incident then, so an injected fault would only wait."""
+    startup = state.get("startup") or {}
+    if not (startup.get("began_at") or startup.get("beganAt")):
+        return False
+    ended = ("established_at", "establishedAt", "bound_reached_at", "boundReachedAt")
+    return not any(startup.get(key) for key in ended)
+
+
 def idle_reason(state: dict[str, Any] | None) -> str:
     """Why SDO is not idle ("" when it is): an open incident, a closure in progress (not one that failed for good),
-    or reflection still queued."""
+    reflection still queued, or a new install SDO has not yet seen healthy."""
     if state is None:
         return "no controller state yet"
     if state.get("incident_open") or state.get("incidentOpen"):
@@ -397,6 +407,8 @@ def idle_reason(state: dict[str, Any] | None) -> str:
         return "reflection queued"
     if state.get("queued_reflections_unknown") or state.get("queuedReflectionsUnknown"):
         return "reflection queue unknown"
+    if _startup_holding(state):
+        return "startup baseline pending"
     return ""
 
 

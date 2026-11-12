@@ -2034,11 +2034,14 @@ func evaluateOnce(
 		return LiveReadView{Carrier: inputs.New(snapshot), Context: ctx, Client: readClient, Prober: probe, Source: readSource, SourceCommit: readCommit}
 	}}
 	start := clock.Now().UTC()
-	controller, err := NewController(ControllerConfig{
+	once := ControllerConfig{
 		Application: *application, Namespace: *namespace,
 		SourceCommit: "evaluation", DeployedCommit: "evaluation",
 		RepositoryWorktree: ".",
-	}.WithSettings(policy), detectors, provider, evaluationDispatcher{}, start)
+	}.WithSettings(policy)
+	// One evaluation never dispatches, so it has no start-up period.
+	once.StartupBound = 0
+	controller, err := NewController(once, detectors, provider, evaluationDispatcher{}, start)
 	if err != nil {
 		return err
 	}

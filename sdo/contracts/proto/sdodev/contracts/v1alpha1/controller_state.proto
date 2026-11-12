@@ -220,8 +220,32 @@ message ControllerState {
   repeated DisabledSetupDetector disabled_setup_detectors = 47;
   // Preserve completion policy when the acknowledged closure payload is retired.
   string last_acknowledged_external_incident_id = 48;
+  // The install's start-up period: no incident opens until the controller has
+  // seen the application healthy once, or the bound passes. Unset when the
+  // period is off. It is persisted so a restart neither starts a new period
+  // nor extends one.
+  StartupPeriod startup = 49;
   reserved 32, 33, 34;
   reserved "drift_investigation", "drift_admission", "program_sweep_cursors";
+}
+
+// StartupPeriod records whether a new install has been seen healthy: one
+// settle window with no opener active, confirming or batched, after every
+// opener detector completed an evaluation. Until then the controller opens no
+// incident. Established and bound_reached are terminal.
+message StartupPeriod {
+  // When the install's first controller process started the period.
+  google.protobuf.Timestamp began_at = 1;
+  // When incidents open even without a healthy window.
+  google.protobuf.Timestamp bound_at = 2;
+  // The end of the first healthy window.
+  google.protobuf.Timestamp established_at = 3;
+  // The first step at or after bound_at without a healthy window; held
+  // openers then open an incident through the ordinary path.
+  google.protobuf.Timestamp bound_reached_at = 4;
+  // Why no period ran although one is configured: "restored-state" for an
+  // install whose persisted state predates the period.
+  string skipped_reason = 5 [(buf.validate.field).string = {in: ["", "restored-state"]}];
 }
 
 // ReflectionDecision is the learning decision the broker recorded for an
