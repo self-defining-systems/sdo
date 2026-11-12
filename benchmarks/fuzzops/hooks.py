@@ -52,6 +52,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -840,7 +841,8 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     if rc != 0:
         tail = (lane_dir / "install-existing.log").read_text()[-300:].strip().replace("\n", " ")
         raise HookError(f"install-existing exited {rc}: {tail}")
-    reset = reset_incidents(binary.resolve(), baseline.control, kubeconfig)
+    # install-existing returns before the controller runs: the reset waits for it to acknowledge.
+    reset = reset_when_running(binary.resolve(), baseline.control, kubeconfig)
     out(f"incidents reset: generation {reset.get('generation')}")
     out(json.dumps({"pack": str(attached), "operator_version": revision, "memory": memory}))
     return 0
@@ -873,6 +875,28 @@ def reset_incidents(binary: Path, control: str, kubeconfig: Path | None) -> dict
         why = (proc.stderr or proc.stdout).strip()[-300:]
         raise HookError(f"incidents reset not acknowledged (exit {proc.returncode}): {why}")
     return receipt
+
+
+RESET_PATIENCE_S = 15 * 60.0
+
+
+def reset_when_running(
+    binary: Path,
+    control: str,
+    kubeconfig: Path | None,
+    patience: float = RESET_PATIENCE_S,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> dict[str, Any]:
+    """``reset_incidents`` tried again until the controller, just installed, acknowledges (at most ``patience``)."""
+    start = clock()
+    while True:
+        try:
+            return reset_incidents(binary, control, kubeconfig)
+        except HookError:
+            if clock() - start > patience:
+                raise
+        sleep(15.0)
 
 
 def idle(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:

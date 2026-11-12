@@ -656,3 +656,33 @@ def test_collect_ends_with_an_operator_reset(tmp_path: Path, monkeypatch: pytest
     assert len(resets) == 1
     assert json.loads((out / "collect.json").read_text())["parts"]["reset"] == "ok (generation 7)"
     assert json.loads((out / "incidents-reset.json").read_text())["generation"] == 7
+
+
+def test_reset_after_install_waits_for_the_controller(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    answers = [(1, ""), (1, ""), (0, '{"generation": 1, "acknowledged": true}')]
+    monkeypatch.setattr(
+        hooks.subprocess,
+        "run",
+        lambda cmd, **_: subprocess.CompletedProcess(cmd, *answers.pop(0), "not running"),
+    )
+    now = [0.0]
+    receipt = hooks.reset_when_running(
+        tmp_path / "sdo-operator",
+        "fg1-sdo",
+        None,
+        patience=100,
+        sleep=lambda s: now.__setitem__(0, now[0] + s),
+        clock=lambda: now[0],
+    )
+    assert receipt["generation"] == 1
+    assert not answers
+    answers[:] = [(1, "")] * 20
+    with pytest.raises(hooks.HookError, match="not acknowledged"):
+        hooks.reset_when_running(
+            tmp_path / "sdo-operator",
+            "fg1-sdo",
+            None,
+            patience=30,
+            sleep=lambda s: now.__setitem__(0, now[0] + s),
+            clock=lambda: now[0],
+        )
