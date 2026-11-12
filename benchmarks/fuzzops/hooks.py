@@ -8,7 +8,8 @@ ever touches its own lane. Verbs (environment: ``BENCH_*`` and ``FUZZOPS_*``, se
               matches its digest and its bundle holds the branch at the commit.
 ``prepare``   on a fresh app copy: build the plain-manifest pack from the live app (the namespace's one Helm release,
               or the pack's own ``manifests/``), refuse a render that differs from the baseline's, write the attached
-              pack, build ``sdo-operator``, load the operator images onto the worker nodes, provision the namespaces,
+              pack, build ``sdo-operator``, push the operator images to the host registry (``BENCH_REGISTRY``; load
+              them onto the worker nodes when there is none), provision the namespaces,
               clone the baseline memory and run production ``sdo-operator install-existing`` with the benchmark
               profile, the baseline's and the experiment's config overlays, and the lane's evidence sink
               (``BENCH_EVIDENCE_NODE``, ``BENCH_EVIDENCE_RUN``; required). The last stdout line is
@@ -712,12 +713,21 @@ def build_operator(out: Path) -> Path:
     return out
 
 
-def load_images(cluster: str, wanted: list[str], log: Callable[[str], None]) -> None:
-    """Load the operator images onto the cluster's worker nodes (all nodes when it has none); kind skips nodes
-    that already hold the same image ID."""
+def load_images(cluster: str, wanted: list[str], log: Callable[[str], None], registry: Path | None = None) -> None:
+    """Make the operator images available to the lane's nodes. With the host's registry script (``BENCH_REGISTRY``)
+    each image is pushed once per host and nodes pull it on demand; without one, or when that fails, the images are
+    loaded onto the worker nodes (all nodes when it has none); kind skips nodes that already hold the same image ID."""
     for image in wanted:
         if subprocess.run(["docker", "image", "inspect", image], capture_output=True, check=False).returncode != 0:
             raise HookError(f"image {image} does not exist on this host (build it with scripts/build_sdo_images.sh)")
+    if registry is not None:
+        try:
+            _run(["bash", str(registry), "up"], "registry up", 300)
+            _run(["bash", str(registry), "push", *wanted], "registry push", 1800)
+            log(f"pushed {', '.join(wanted)} to the host registry")
+            return
+        except HookError as exc:
+            log(f"host registry unavailable, falling back to loading the nodes: {exc}")
     nodes = _run(["kind", "get", "nodes", "--name", cluster], "kind get nodes").stdout.split()
     workers = [n for n in nodes if "worker" in n] or nodes
     if not workers:
@@ -806,7 +816,13 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     binary = build_operator(lane_dir / "bin" / "sdo-operator")
     # (e) the operator images on the workers
     image = block.images()
-    load_images(cluster, [image["controller"], image["responder"], image["script"]], out)
+    registry = Path(env["BENCH_REGISTRY"]) if env.get("BENCH_REGISTRY") else None
+    load_images(
+        cluster,
+        [image["controller"], image["responder"], image["script"]],
+        out,
+        registry=registry if registry is not None and registry.is_file() else None,
+    )
     kube = _kube(env)
     if (
         subprocess.run(
