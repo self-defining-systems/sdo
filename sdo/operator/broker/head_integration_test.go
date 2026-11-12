@@ -66,3 +66,33 @@ func TestHeadDeploymentEvidenceMustBindToTheCommit(t *testing.T) {
 	}
 	_ = before
 }
+
+// A commit pushed to the branch SDO syncs with (an engineer's, or the benchmark
+// replayer's) is fast-forwarded into the accepted repository and becomes the
+// head to deploy: the replay needs nothing from SDO but the branch.
+func TestACommitPushedToTheSourceBranchBecomesTheHeadToDeploy(t *testing.T) {
+	ctx := context.Background()
+	w := newPatchWorld(t, false)
+	remote := t.TempDir() + "/remote.git"
+	testutil.Git(t, "", "init", "-q", "--bare", remote)
+	testutil.Git(t, w.accepted, "push", "-q", remote, "HEAD:refs/heads/sdo-source")
+	if err := w.broker.SetUpstream(Upstream{URL: remote, Branch: "sdo-source"}); err != nil {
+		t.Fatal(err)
+	}
+	engineer := t.TempDir() + "/engineer"
+	testutil.Git(t, "", "clone", "-q", "--branch", "sdo-source", remote, engineer)
+	testutil.ConfigureGit(t, engineer)
+	writeFiles(t, engineer, map[string]string{"app.txt": "one\ntwo\nthree replayed\n"})
+	testutil.Git(t, engineer, "add", ".")
+	testutil.Git(t, engineer, "-c", "user.name=bench-replayer", "-c", "user.email=bench-replayer@localhost", "commit", "-qm", "replayed\n\nReplayed-From: c1")
+	testutil.Git(t, engineer, "push", "-q", "origin", "HEAD:refs/heads/sdo-source")
+	pushed := gitOut(t, engineer, "rev-parse", "HEAD")
+
+	change, needed, err := w.broker.HeadToDeploy(ctx)
+	if err != nil || !needed || change.Commit != pushed {
+		t.Fatalf("HeadToDeploy = %+v %v %v, want the pushed commit %s", change, needed, err, pushed)
+	}
+	if got := w.head(t); got != pushed {
+		t.Fatalf("the accepted head is %s: the sync did not fast-forward onto the pushed commit %s", got, pushed)
+	}
+}
