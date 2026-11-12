@@ -693,6 +693,41 @@ Status meanings:
 - **Active** — selected by the public production command.
 - **Benchmark-only** — lives behind the SREGym adapter and is excluded from production imports.
 
+## Agent Kubernetes API recording
+
+Every agent Job with a session mount reaches Kubernetes through the recording proxy
+(below). The proxy has a scope, `--scope incident:<id>` for the responder and
+`--scope task:<key>` for every other agent (reflection, deployer, health judge and
+lifecycle tasks). A responder may write; every other scope is read-only at the proxy
+(403 `scope_read_only`, recorded), because agents write only `.sdo/` and Go deploys.
+Reflection reads the incident's recording and records its own calls to
+`api-history-reflection/` beside it; a lifecycle task records to `api-history/` in its
+task evidence directory. The controller creates each directory and its generation
+boundary before launching the Job.
+
+The proxy fails closed. Before it forwards a write, exec, attach or port-forward it
+reserves the record's start and end envelopes from a dedicated envelope budget
+(`Store.Admit`, separate from the blob budget and the ordinary queue, bounded to
+`MaxAdmittedWrites` per history). If it cannot reserve, because the store did not
+open, failed or is closed, or the budget is spent, it answers 503
+`recording_unavailable` and forwards nothing; reads are still forwarded. It forces
+`fieldManager=sdo-responder` on every responder write, whatever client sent it. It
+records verb, object, status, resulting resource version and the changed field paths
+(keys only, each segment checked against the identifier grammars, nothing below
+Secret or ConfigMap `data`); for exec, attach and port-forward it records the
+target, container, an allowlist-redacted command (program base name plus only
+arguments with no `=`, `:`, `@`, quote or attached flag value; a shell's `-c` payload
+withheld) and the session span. No request body, Secret value or credential-shaped
+argument is stored, and streams pass through untouched. The redacted `events.jsonl`
+and `manifest.json` of each recording are mirrored to the evidence sink
+(`incidents/<d>/api-history*/`, `lifecycle/<key>/api-history/`); blobs, the identity
+key and the mutation fence stay in the cluster.
+
+Not yet enforced (deferred to a security pass): the agent container still holds the
+Pod's service-account token and the in-cluster service variables, so a client that
+ignores the kubeconfig can bypass the proxy, and the proxy still refuses no
+credential-bearing paths. Nothing here narrows the SDO service accounts.
+
 ## Responder Kubernetes API history
 
 Native responder Jobs start one Go recording proxy as a Kubernetes native sidecar
@@ -835,7 +870,7 @@ and executor checks govern execution; the benchmark adapter owns strict experime
 | Public lifecycle | `sdo/operator/operatorcli/`, `lifecycle/`, `deployment/`, `artifacts/` | Active | Go host and in-cluster operate coordinate sequential role-owned proposals with trusted deployment and health evidence. |
 | Lifecycle decisions | `sdo/operator/lifecycle/`, `artifacts/`, `deployment/` | Active | Source receipt binds the candidate tree, observed immutable images, the `DeploymentSource`, and the render and environment digests of what it rendered; architecture cites the broker-accepted source commit. The admitted `DeploymentPlan` (source, image declarations, expected workloads) is `.sdo/deployment/plan.yaml` in the accepted tree: Go writes its canonical form into the proposal at admission (a provided plan, `--deployment-plan`, takes the same path), the broker's `PublishVerifiedSource` and `PublishAdvance` require the staged tree's plan to name the deployed source, `Broker.AcceptedSourceEvidence` returns the newest deployment's evidence with the plan read from the accepted HEAD tree, and broker source evidence (`<broker workspace>/source-evidence/`, not `.sdo/`) keeps digests only; records from before deployment sources, or that still carry a plan, fail with a reinstall message. Restart re-verification re-renders the source and reports a digest mismatch as a renderer change, not drift. The controller and the `--evaluate-once` probe read the deployment source from the plan of the tree they are given (accepted checkout or candidate root); the install adapter passes the controller no source flag. |
 | Modular agent registration | `sdo/contracts/proto/.../worker.proto`, `sdo/operator/worker_registry/`, `sdo/agents/registrations/` | Active | Strict ProtoJSON capabilities and typed task/result URLs select workers without assuming Python or a model provider; Kubernetes Jobs mount isolated proposal checkouts. |
-| Responder API observations | `sdo/operator/apihistory/`, `kubeproxy/`, `operatorcli/evidence.go`, `worker_registry/` | Stage 1 | Per-task localhost sidecar uses Pod RBAC; bounded projected runtime history and read-only CLI expose last-observed state and Unknown without replay or coverage decisions. |
+| Responder API observations | `sdo/operator/apihistory/`, `kubeproxy/`, `operatorcli/evidence.go`, `worker_registry/` | Stage 1 | Per-Job localhost sidecar (every agent Job; responder writable, others read-only) uses Pod RBAC, fails closed on writes it cannot record and forces the responder field manager; bounded projected runtime history and read-only CLI expose last-observed state and Unknown without replay or coverage decisions. |
 | Built-in agents | `sdo/agents/{source_deployment,health_judge,responder}/` | Active | Each implementation owns its prompts and provider choice; tasks carry logical memory snapshots; reflection and the judge return decisions/IDs after direct file edits. |
 | Provider capacity | `libs/agent_cli/provider_capacity.py`, `sdo/operator/worker_registry/provider_capacity.go` | Active, explicit shared/per-host Opus pool or per-account Claude pool | Claude throttling has typed bounded backoff. Opus roles share either one eight-slot filesystem pool or static host shares (default 4 + 4) through existing node hostPaths. All app mount aliases on a host retain the same lock inodes. Registered-account mode assigns lane primaries, projects refreshable Secret references and enforces per-account concurrency/health. Benchmark adapters record alias-only selection/failover and interpret wait evidence and NOT-GRADED rows; production never sees grades. See [configuration](provider-capacity.md). |
 | Code-path composition | `sdo/operator/runtime/code_path*.go`, `sdo/operator/shellpath/` | Active, shell opt-in | Named plugin sets select detector source, coverage, ordered PIPE stages, memory validation, activation and role guidance. Go remains the default; shell uses a long-lived read-only runner and shared incident lifecycle. |

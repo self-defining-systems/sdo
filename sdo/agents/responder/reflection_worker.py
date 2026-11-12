@@ -15,7 +15,7 @@ from libs.agent_cli.structured import StructuredTurnTimeout
 from sdo.agents.provider import memory_check_timeout_seconds, resolve_agent
 from sdo.agents.responder.credentials import prepare_claude_home, prepare_codex_home, skills_for_role
 from sdo.agents.responder.detection_learning import detector_learning_needed
-from sdo.agents.responder.job import KubernetesResultPublisher
+from sdo.agents.responder.job import KubernetesResultPublisher, export_proxy_kubeconfig
 from sdo.agents.responder.memory_check import MemoryCheckTimeout, check_reflection_result
 from sdo.agents.responder.reflection import (
     REFLECTION_DEADLINE_ENV,
@@ -288,6 +288,7 @@ def main() -> int:
         record_worker_failure(ValueError("SDO_NAMESPACE and SDO_RESULT_CONFIGMAP are required"))
         return 2
     try:
+        export_proxy_kubeconfig(namespace)
         prepare_codex_home(skills=skills_for_role("reflector"))
         prepare_claude_home(skills=skills_for_role("reflector"))
         run_reflection_task(

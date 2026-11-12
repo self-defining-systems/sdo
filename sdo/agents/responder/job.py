@@ -58,43 +58,51 @@ class KubernetesResultPublisher:
 
 
 def write_application_kubeconfig(namespace: str) -> Path | None:
-    """Point in-pod kubectl at the incident's application namespace.
+    """Point in-pod kubectl at the recording proxy, defaulting to ``namespace``.
 
     A responder Job may run in the controller's own namespace, so the pod's
-    service-account namespace is not the application. Outside a pod (no
-    service-account token) the ambient kubeconfig is left untouched.
+    service-account namespace is not the application. With ``SDO_API_PROXY_URL``
+    set, every Kubernetes call goes through SDO's recording proxy, which holds
+    the credential; the kubeconfig carries none. Without a proxy, in a pod, the
+    pod's service account is used directly; outside a pod (no token) the
+    ambient kubeconfig is left untouched.
     """
 
-    token = SERVICE_ACCOUNT_ROOT / "token"
-    host = os.environ.get("KUBERNETES_SERVICE_HOST", "").strip()
-    if not token.is_file() or not host:
-        return None
-    port = os.environ.get("KUBERNETES_SERVICE_PORT_HTTPS", "443")
+    proxy_url = os.environ.get("SDO_API_PROXY_URL", "")
+    if proxy_url:
+        if proxy_url != "http://127.0.0.1:18080":
+            raise ValueError("SDO_API_PROXY_URL must be the responder localhost proxy")
+        cluster: dict[str, str] = {"server": proxy_url}
+        user: dict[str, str] = {}
+    else:
+        token = SERVICE_ACCOUNT_ROOT / "token"
+        host = os.environ.get("KUBERNETES_SERVICE_HOST", "").strip()
+        if not token.is_file() or not host:
+            return None
+        port = os.environ.get("KUBERNETES_SERVICE_PORT_HTTPS", "443")
+        cluster = {"server": f"https://{host}:{port}", "certificate-authority": str(SERVICE_ACCOUNT_ROOT / "ca.crt")}
+        user = {"tokenFile": str(token)}
     config = {
         "apiVersion": "v1",
         "kind": "Config",
-        "clusters": [
-            {
-                "name": "in-cluster",
-                "cluster": {
-                    "server": f"https://{host}:{port}",
-                    "certificate-authority": str(SERVICE_ACCOUNT_ROOT / "ca.crt"),
-                },
-            }
-        ],
-        "users": [{"name": "responder", "user": {"tokenFile": str(token)}}],
+        "clusters": [{"name": "in-cluster", "cluster": cluster}],
+        "users": [{"name": "responder", "user": user}],
         "contexts": [
             {"name": "application", "context": {"cluster": "in-cluster", "user": "responder", "namespace": namespace}}
         ],
         "current-context": "application",
     }
-    proxy_url = os.environ.get("SDO_API_PROXY_URL", "")
-    if proxy_url:
-        if proxy_url != "http://127.0.0.1:18080":
-            raise ValueError("SDO_API_PROXY_URL must be the responder localhost proxy")
-        config["clusters"][0]["cluster"] = {"server": proxy_url}
-        config["users"][0]["user"] = {}
     path = Path(tempfile.gettempdir()) / "sdo-responder-kubeconfig.json"
     path.write_text(json.dumps(config), encoding="utf-8")
     path.chmod(0o600)
     return path
+
+
+def export_proxy_kubeconfig(namespace: str) -> None:
+    """Make kubectl and every kubeconfig client in this agent Job use the recording proxy, when it exists."""
+
+    if not os.environ.get("SDO_API_PROXY_URL"):
+        return
+    kubeconfig = write_application_kubeconfig(namespace)
+    if kubeconfig is not None:
+        os.environ["KUBECONFIG"] = str(kubeconfig)

@@ -4,14 +4,17 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"k8s.io/client-go/rest"
 	"sdo.dev/operator/apihistory"
 	"sdo.dev/operator/kubeproxy"
 	"sdo.dev/operator/operatorcli/internal/processio"
+	"sdo.dev/operator/sdk"
 )
 
 const APIProxyAddress = "127.0.0.1:18080"
@@ -24,13 +27,17 @@ func RunAPIProxy(ctx context.Context, args []string) error {
 	}
 	flags := flag.NewFlagSet("api-proxy", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	incident := flags.String("incident", "", "controller-assigned incident")
+	scopeFlag := flags.String("scope", "", "incident:<id> for a responder, task:<key> for any other agent (read-only)")
 	directory := flags.String("directory", "", "runtime history directory")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if *incident == "" || *directory == "" || flags.NArg() != 0 {
-		return errors.New("api-proxy requires --incident and --directory")
+	if *scopeFlag == "" || *directory == "" || flags.NArg() != 0 {
+		return errors.New("api-proxy requires --scope and --directory")
+	}
+	scope, err := parseProxyScope(*scopeFlag)
+	if err != nil {
+		return err
 	}
 	config, err := rest.InClusterConfig()
 	if err != nil {
@@ -50,20 +57,58 @@ func RunAPIProxy(ctx context.Context, args []string) error {
 	if leaseErr == nil {
 		defer lease.Close()
 	}
-	var recorder kubeproxy.Recorder
-	store, storeErr := apihistory.Open(*directory, *incident, apihistory.Limits{})
+	// A store that cannot open leaves the endpoint up (the startup probe and reads still work) but refuses every
+	// write, exec, attach and port-forward: no write is forwarded without a record.
+	var recorder kubeproxy.Recorder = unavailableRecorder{}
+	store, storeErr := apihistory.Open(*directory, scope.historyIdentity(), apihistory.Limits{})
 	if storeErr == nil {
 		recorder = store
 		defer store.Close()
 	}
 	// Disabled markers and writer liveness make failed initialization Unknown.
-	// Recording failure must not prevent the forwarding endpoint from starting.
-	gate, err := apihistory.PrepareMutationGate(*directory)
-	if err != nil {
-		return err
+	var gate *apihistory.MutationGate
+	if scope.Kind == "incident" {
+		gate, err = apihistory.PrepareMutationGate(*directory)
+		if err != nil {
+			return err
+		}
 	}
-	return processio.ServeHTTP(ctx, APIProxyAddress, kubeproxy.NewWithMutationGate(upstream, reads, writes, recorder, gate))
+	return processio.ServeHTTP(ctx, APIProxyAddress, kubeproxy.NewRecording(upstream, reads, writes, scope.config(recorder, gate)))
 }
+
+// proxyScope is whom the proxy fronts. An incident scope is a responder: it may write, every write is forced to
+// the responder field manager, and the incident's mutation fence applies. Any other agent is read-only.
+type proxyScope struct{ Kind, ID string }
+
+func parseProxyScope(value string) (proxyScope, error) {
+	kind, id, ok := strings.Cut(value, ":")
+	if !ok || id == "" || (kind != "incident" && kind != "task") {
+		return proxyScope{}, fmt.Errorf("api-proxy scope %q must be incident:<id> or task:<key>", value)
+	}
+	return proxyScope{Kind: kind, ID: id}, nil
+}
+
+// historyIdentity is the identity stored in the history manifest: the incident ID, which readers already match.
+func (s proxyScope) historyIdentity() string {
+	if s.Kind == "incident" {
+		return s.ID
+	}
+	return s.Kind + ":" + s.ID
+}
+
+func (s proxyScope) config(recorder kubeproxy.Recorder, gate *apihistory.MutationGate) kubeproxy.Config {
+	if s.Kind == "incident" {
+		return kubeproxy.Config{Recorder: recorder, Gate: gate, FieldManager: sdk.ResponderFieldManager}
+	}
+	return kubeproxy.Config{Recorder: recorder, ReadOnly: true}
+}
+
+// unavailableRecorder stands in for a store that failed to open. It records nothing and admits nothing.
+type unavailableRecorder struct{}
+
+func (unavailableRecorder) Record(apihistory.Event, []byte) {}
+func (unavailableRecorder) Gap()                            {}
+func (unavailableRecorder) Admit() error                    { return apihistory.ErrRecordingUnavailable }
 
 // apiProxyTransports shares one authenticated connection pool for an incident.
 // The proxy strips retry-authorizing headers and replay bodies on writes.

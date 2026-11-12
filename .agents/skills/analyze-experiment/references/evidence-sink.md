@@ -25,7 +25,15 @@ Completeness:
   files are the prefix mirrored up to then, at most ~10 s behind. That is evidence, not a closed incident.
 - `sha256sum seal.json` equals the index record's `sha256`; each file's digest is listed inside it. A file whose
   digest differs from `seal.json` changed after the seal; prefer the later record.
-- The sink copies only allowlisted evidence; API history, caches and credentials are never there.
+- The sink copies only allowlisted evidence; caches and credentials are never there. The agent API recording is there
+  only as the redacted `api-history/events.jsonl` and `manifest.json` (`incidents/<d>/api-history/` for the responder,
+  `incidents/<d>/api-history-reflection/` for reflection, `lifecycle/<key>/api-history/` for lifecycle tasks); blobs,
+  the identity key and the mutation fence never are. Each write has `start` and `end` events with the changed field
+  paths (keys only), `field_manager` `sdo-responder` for responder writes, and for exec/attach/port-forward the
+  container, a redacted `command` (`<withheld>` marks an argument outside the safe-token grammar) and `session_end`.
+  A refusal is an `end` event with status 403 and omission `scope_read_only` (non-responder agents are read-only).
+  A write the proxy could not record is answered 503 `recording_unavailable` and never reaches the API server, so it
+  has no event at all.
 - Every agent Job with a session records its CLI session on the session mount (`incidents/<d>/codex/...` or
   `lifecycle/<key>/codex/...`). Builds before the "durable agent session homes" fix ran a fresh-session reflection
   (stage-only closures, `ReflectionSession=fresh`) with a pod-local `/tmp/codex`. A missing reflection rollout for such

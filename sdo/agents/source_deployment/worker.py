@@ -16,6 +16,7 @@ from sdo.agents.provider import ResolvedAgent, resolve_agent
 from sdo.agents.responder import (
     AGENT_SKILLS,
     KubernetesResultPublisher,
+    export_proxy_kubeconfig,
     prepare_claude_home,
     prepare_codex_home,
     record_worker_failure,
@@ -201,6 +202,7 @@ def main() -> int:
         prepare_claude_home(skills=AGENT_SKILLS["source_deployment"])
         task_path = Path(os.environ.get("SDO_TASK_PATH", str(DEFAULT_TASK_PATH)))
         task = cast("AgentTask", parse_json(task_path.read_text(encoding="utf-8"), AgentTask()))
+        export_proxy_kubeconfig(namespace)
         publisher = KubernetesResultPublisher(namespace=namespace)
         if task.request.Is(SourceDeploymentRequest.DESCRIPTOR):
             run_deployment_task(task_path, result_name, publisher)
