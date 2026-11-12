@@ -63,8 +63,6 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 	e.SessionPVCSubPath = path.Join(e.RepositoryPVCSubPath, evidence.relative)
 	e.Environment = cloneEnvironment(e.Environment)
 	e.Environment["SDO_TURN_USAGE_LOG"] = "/sdo/session/setup-usage.jsonl"
-	e.Environment["CODEX_HOME"] = "/sdo/session/codex"
-	e.Environment["CLAUDE_CONFIG_DIR"] = "/sdo/session/claude"
 	result, err := e.execute(ctx, task)
 	evidence.finish(result, err)
 	return result, err

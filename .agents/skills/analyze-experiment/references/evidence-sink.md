@@ -23,3 +23,8 @@ Completeness:
 - `sha256sum seal.json` equals the index record's `sha256`; each file's digest is listed inside it. A file whose
   digest differs from `seal.json` changed after the seal; prefer the later record.
 - The sink copies only allowlisted evidence; API history, caches and credentials are never there.
+- Every agent Job with a session records its CLI session on the session mount (`incidents/<d>/codex/...` or
+  `lifecycle/<key>/codex/...`). Builds before the "durable agent session homes" fix ran a fresh-session reflection
+  (stage-only closures, `ReflectionSession=fresh`) with a pod-local `/tmp/codex`. A missing reflection rollout for such
+  an incident on those builds is expected, not a sink fault.
+- No sink configured means evidence lived only on the repository PVC. Deleting the control namespace deletes it.

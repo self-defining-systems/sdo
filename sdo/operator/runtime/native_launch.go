@@ -142,7 +142,7 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 		Client:         client, Namespace: namespace, Registry: registry,
 		ServiceAccount: "sdo-responder", RepositoryPVC: config.GetRepositoryPvc(), RepositoryMountPath: config.GetRepositoryMountPath(),
 		RepositoryPVCSubPath: config.GetRepositoryPvcSubpath(), CredentialsSecret: config.GetResponderCredentialsSecret(), HealthyBaseline: config.GetHealthyBaseline(),
-		Environment: mergeEnvironment(agentEnvironment, map[string]string{"CODEX_HOME": "/tmp/codex", "CLAUDE_CONFIG_DIR": "/tmp/claude"}),
+		Environment: agentEnvironment,
 		OnPhase:     recordClosurePhase,
 	}
 	sessionExecutor := func(incidentID string, resume bool) (ReflectionTaskExecutor, error) {
@@ -153,11 +153,8 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 		executor := freshExecutor
 		executor.SessionPVCSubPath = subPath
 		executor.CapturedCorpusReadOnly = true
-		executor.Environment = mergeEnvironment(agentEnvironment, map[string]string{"CODEX_HOME": "/tmp/codex", "CLAUDE_CONFIG_DIR": "/tmp/claude", "SDO_TURN_USAGE_LOG": "/sdo/session/reflection-usage.jsonl"})
-		if resume {
-			executor.Environment["CODEX_HOME"] = "/sdo/session/codex"
-			executor.Environment["CLAUDE_CONFIG_DIR"] = "/sdo/session/claude"
-		}
+		// The executor puts the agent CLI homes on the session mount, fresh or resumed, so the transcript is kept.
+		executor.Environment = mergeEnvironment(agentEnvironment, map[string]string{"SDO_TURN_USAGE_LOG": "/sdo/session/reflection-usage.jsonl"})
 
 		if native.Repository == nil || native.Repository.ValidationToolchain == "" {
 			return executor, nil

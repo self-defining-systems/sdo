@@ -158,7 +158,6 @@ func lifecycleWorkers(config OperateConfig, client kubernetes.Interface, control
 		return worker_registry.KubernetesExecutor{}, err
 	}
 	agentEnvironment[settings.ReplayEnvironment] = replay
-	agentEnvironment["CODEX_HOME"], agentEnvironment["CLAUDE_CONFIG_DIR"] = "/tmp/codex", "/tmp/claude"
 	workers := worker_registry.KubernetesExecutor{
 		ToolchainImage: config.Install.ControllerImage,
 		Client:         client, Namespace: control, Registry: registry, ServiceAccount: "sdo-responder",

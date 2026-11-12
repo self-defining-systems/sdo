@@ -469,6 +469,10 @@ const (
 	// CodexHomesMountPath is the private writable directory for per-turn Codex homes. Codex rejects a home under
 	// /tmp or the checkout, and the worker's root filesystem is read-only.
 	CodexHomesMountPath = "/sdo/codex-homes"
+	// SessionCodexHome and SessionClaudeHome are the agent CLI homes of every Job with a session mount: its session
+	// rollout lands on the repository volume, where the evidence sink and the runtime-artifacts export read it.
+	SessionCodexHome  = "/sdo/session/codex"
+	SessionClaudeHome = "/sdo/session/claude"
 )
 
 func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.AgentTask, launch *contracts.KubernetesJobLaunch, jobName string, request requestSource, resultName, proposalSubPath string) error {
@@ -596,15 +600,16 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 	for _, identity := range workerIdentityEnvironment() {
 		reserved[identity.Name] = true
 	}
-	names := make([]string, 0, len(e.Environment))
-	for name := range e.Environment {
+	configured := e.agentEnvironment()
+	names := make([]string, 0, len(configured))
+	for name := range configured {
 		if !reserved[name] {
 			names = append(names, name)
 		}
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		env = append(env, corev1.EnvVar{Name: name, Value: e.Environment[name]})
+		env = append(env, corev1.EnvVar{Name: name, Value: configured[name]})
 	}
 	// Unconfined seccomp: Codex's bubblewrap sandbox needs unprivileged user namespaces, which RuntimeDefault denies
 	// (verified: `codex sandbox` fails under RuntimeDefault and runs under Unconfined). The pod stays non-root with
@@ -717,6 +722,17 @@ func JobName(taskID string) string {
 		prefix = "task"
 	}
 	return "sdo-" + prefix + "-" + suffix
+}
+
+// agentEnvironment is the configured worker environment with the agent CLI homes the executor owns: a Job with a
+// session mount always records its session there, so no caller can put a transcript on the pod's own filesystem.
+func (e KubernetesExecutor) agentEnvironment() map[string]string {
+	environment := cloneEnvironment(e.Environment)
+	if e.SessionPVCSubPath != "" {
+		environment["CODEX_HOME"] = SessionCodexHome
+		environment["CLAUDE_CONFIG_DIR"] = SessionClaudeHome
+	}
+	return environment
 }
 
 func cloneEnvironment(source map[string]string) map[string]string {
