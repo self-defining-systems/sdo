@@ -297,3 +297,45 @@ func historySnapshot(t *testing.T, store *apihistory.Store, dir string) apihisto
 	}
 	return h
 }
+
+// Every write the proxy relays on a named object first records that object's state, so a raw kubectl write has the
+// same "before" evidence a plan application captures: one place covers every write path.
+func TestWriteRecordsTheObjectsStateBeforeForwardingIt(t *testing.T) {
+	store, dir := openStore(t)
+	proxy, upstream := serve(t, kubeproxy.Config{Recorder: store})
+
+	do(t, "PATCH", proxy.URL+"/apis/apps/v1/namespaces/app/deployments/api", "application/merge-patch+json", `{"spec":{"replicas":2}}`)
+
+	if upstream.count() != 2 || upstream.requests[0].Method != "GET" || upstream.requests[1].Method != "PATCH" {
+		t.Fatalf("upstream saw %d requests, want the before-state GET then the PATCH", upstream.count())
+	}
+	h := history(t, store, dir)
+	var before *apihistory.Event
+	for i := range h.Events {
+		if h.Events[i].Phase == "before" {
+			before = &h.Events[i]
+		}
+	}
+	if before == nil {
+		t.Fatalf("no before-state event recorded: %+v", h.Events)
+	}
+	if before.Resource != "deployments" || before.Name != "api" || !strings.Contains(string(h.Body(*before)), `"resourceVersion":"42"`) {
+		t.Fatalf("before event = %+v body %q, want the deployment as it stood", *before, h.Body(*before))
+	}
+}
+
+// A create has no prior object, and exec sessions and refused writes have none to read.
+func TestNoBeforeStateForACreateOrASession(t *testing.T) {
+	store, dir := openStore(t)
+	proxy, upstream := serve(t, kubeproxy.Config{Recorder: store})
+	do(t, "POST", proxy.URL+"/api/v1/namespaces/app/configmaps", "application/json", `{}`)
+	do(t, "GET", proxy.URL+"/api/v1/namespaces/app/pods/api-0/exec?command=ls&container=api", "", "")
+	if upstream.count() != 2 {
+		t.Fatalf("upstream saw %d requests, want only the two the client sent", upstream.count())
+	}
+	for _, e := range history(t, store, dir).Events {
+		if e.Phase == "before" {
+			t.Fatalf("unexpected before-state event %+v", e)
+		}
+	}
+}
