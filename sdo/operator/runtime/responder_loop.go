@@ -221,6 +221,9 @@ type ResponderLoop struct {
 	PendingStallTimeout   time.Duration
 	MaxBatches            int
 	Trust                 map[string]ProgramTrust
+	// Credits are the (symptom, component) pairs each learned playbook earned;
+	// a playbook without any keeps the finding binding.
+	Credits               ProgramCredits
 	CorpusSessionRoot     string
 	RecoverySessionRoot   string
 	capturePhase          string
@@ -317,6 +320,16 @@ func NewResponderLoopWithOptions(request IncidentRequest, programs program.Progr
 		return memory.AppendCapturedRecording(loop.CorpusSessionRoot, loop.Request.IncidentID, phase, call)
 	}
 	return loop, nil
+}
+
+// setCredits installs the pairs the learned playbooks earned. The loop may
+// already be published to the controller, so it takes the same locks as tools.
+func (l *ResponderLoop) setCredits(credits ProgramCredits) {
+	l.operationMu.Lock()
+	defer l.operationMu.Unlock()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.Credits = credits
 }
 
 // initializeDispatch may run after LoopFactory has published this loop to the
@@ -423,7 +436,7 @@ func (l *ResponderLoop) InitialDiagnose(ctx context.Context) []ProgramRun {
 	defer l.mu.Unlock()
 	l.capturePhase = "open@detect"
 	defer func() { l.capturePhase = "" }()
-	return l.diagnose(ctx, l.findings)
+	return l.diagnose(ctx, l.findings, true)
 }
 
 func (l *ResponderLoop) LoopsUsed() int { l.mu.Lock(); defer l.mu.Unlock(); return l.batches }
@@ -934,15 +947,22 @@ func (l *ResponderLoop) RefreshDiagnose(ctx context.Context) []ProgramRun {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.capturePhase = ""
-	return l.diagnose(ctx, l.findings)
+	return l.diagnose(ctx, l.findings, true)
 }
 
-func (l *ResponderLoop) diagnose(ctx context.Context, findings []sdk.Finding) []ProgramRun {
+// selectCandidates diagnoses the candidates for findings. stage is the
+// automatic stage, which binds a playbook with credited pairs only through
+// them; the responder's own diagnosis also sees the finding-bound ones.
+func (l *ResponderLoop) selectCandidates(ctx context.Context, view program.ReadView, findings []sdk.Finding, stage bool) []ProgramRun {
+	return SelectKeyedProgramCandidates(ctx, l.Programs, view, findings, l.deadline(), KeyedMatching{Credits: l.Credits, OpeningKeys: l.Request.OpeningKeys, Stage: stage})
+}
+
+func (l *ResponderLoop) diagnose(ctx context.Context, findings []sdk.Finding, stage bool) []ProgramRun {
 	view, err := l.snapshotView(ctx)
 	if err != nil {
 		return nil
 	}
-	runs := SelectProgramCandidates(ctx, l.Programs, view, findings, l.deadline())
+	runs := l.selectCandidates(ctx, view, findings, stage)
 	l.stampProgramRuns(runs)
 	l.rememberMatchedViews(ctx, runs, view)
 	l.lastDiagnosisView = view
@@ -989,7 +1009,7 @@ func (l *ResponderLoop) refresh(ctx context.Context, diagnose bool) ([]sdk.Findi
 	if !diagnose {
 		return findings, nil, states, ""
 	}
-	runs := SelectProgramCandidates(ctx, l.Programs, view, findings, l.deadline())
+	runs := l.selectCandidates(ctx, view, findings, false)
 	l.stampProgramRuns(runs)
 	l.runs = append(l.runs, runs...)
 	return findings, runs, states, ""
@@ -1320,7 +1340,7 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 	response.Findings, response.DetectorStates = append([]sdk.Finding(nil), findings...), states
 	response.Drift = append([]sdk.Finding(nil), l.drift...)
 	if len(findings) > 0 {
-		runs := SelectProgramCandidates(ctx, l.Programs, view, findings, l.deadline())
+		runs := l.selectCandidates(ctx, view, findings, false)
 		l.stampProgramRuns(runs)
 		response.ProgramRuns = append(response.ProgramRuns, runs...)
 		l.runs = append(l.runs, runs...)

@@ -11,6 +11,7 @@ import (
 
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
+	"slices"
 )
 
 const DefaultDiagnosisDeadline = 10 * time.Second
@@ -28,10 +29,42 @@ type ProgramRun struct {
 	// MitigateCommand is the command that applies this playbook with these
 	// bindings; set on a matching diagnosis that has a fix.
 	MitigateCommand string `json:"mitigate_command,omitempty"`
+	// suspectRank orders credited bindings by where their suspect first
+	// appears in the findings; it is never persisted.
+	suspectRank int
 }
+
+// BindingSourceCredited marks a run bound through a playbook's credited
+// (symptom, component) pair rather than through a finding's resources.
+const BindingSourceCredited = "credited"
+
+// KeyedMatching binds playbooks by the pairs they were credited for.
+type KeyedMatching struct {
+	// Credits are the pairs each playbook earned. A playbook without any keeps
+	// the finding binding.
+	Credits ProgramCredits
+	// OpeningKeys are the alerts the incident opened on: the symptom side of a pair.
+	OpeningKeys []string
+	// Stage is the automatic stage: a playbook with credited pairs binds only
+	// through them, and of several credited Matches only the first in suspect
+	// order is kept. The responder's own diagnosis (Stage false) also sees the
+	// finding-bound candidates, so a playbook that matches a suspect it was not
+	// yet credited for can still be offered.
+	Stage bool
+}
+
+func (k KeyedMatching) active() bool { return len(k.Credits) > 0 }
 
 // SelectProgramCandidates diagnoses finding-bound programs under one deadline.
 func SelectProgramCandidates(ctx context.Context, registry program.ProgramRegistry, view program.ReadView, findings []sdk.Finding, deadline time.Duration) []ProgramRun {
+	return SelectKeyedProgramCandidates(ctx, registry, view, findings, deadline, KeyedMatching{})
+}
+
+// SelectKeyedProgramCandidates is SelectProgramCandidates plus credited-pair
+// binding: for each pair whose symptom the incident opened on, a suspect (a
+// resource a finding names) equal to the pair's component binds the playbook's
+// component role, provided every other parameter binds too.
+func SelectKeyedProgramCandidates(ctx context.Context, registry program.ProgramRegistry, view program.ReadView, findings []sdk.Finding, deadline time.Duration, keyed KeyedMatching) []ProgramRun {
 	if registry == nil {
 		return nil
 	}
@@ -49,29 +82,40 @@ func SelectProgramCandidates(ctx context.Context, registry program.ProgramRegist
 		source      string
 		id          string
 		bindings    program.Bindings
+		rank        int
 	}
 	var candidates []candidate
 	seen := map[string]bool{}
 	aliases := map[string][]candidate{}
-	add := func(id string, bindings program.Bindings, fingerprint, source string) {
+	add := func(id string, bindings program.Bindings, fingerprint, source string, rank int) {
 		key := id + "\x00" + bindingKey(bindings)
 		if seen[key] {
 			if fingerprint != "" {
-				aliases[key] = append(aliases[key], candidate{fingerprint: fingerprint, source: source, id: id, bindings: bindings})
+				aliases[key] = append(aliases[key], candidate{fingerprint: fingerprint, source: source, id: id, bindings: bindings, rank: rank})
 			}
 			return
 		}
 		seen[key] = true
-		candidates = append(candidates, candidate{fingerprint: fingerprint, source: source, id: id, bindings: bindings})
+		candidates = append(candidates, candidate{fingerprint: fingerprint, source: source, id: id, bindings: bindings, rank: rank})
 	}
 	for _, finding := range findings {
 		if finding.Status != sdk.FindingActive {
 			continue
 		}
 		for _, spec := range registry.List() {
+			if keyed.Stage && keyed.Credits.Has(spec.ID) {
+				continue
+			}
 			bindings, source, ok := findingProgramBindings(spec, finding)
 			if ok {
-				add(spec.ID, bindings, FindingFingerprint(finding), source)
+				add(spec.ID, bindings, FindingFingerprint(finding), source, 0)
+			}
+		}
+	}
+	if keyed.active() {
+		for _, spec := range registry.List() {
+			for _, credited := range creditedBindings(spec, keyed, findings) {
+				add(spec.ID, credited.bindings, credited.fingerprint, BindingSourceCredited, credited.rank)
 			}
 		}
 	}
@@ -96,7 +140,7 @@ func SelectProgramCandidates(ctx context.Context, registry program.ProgramRegist
 				return
 			}
 			verdict := program.RunDiagnose(ctx, diagnoser, view, candidate.bindings, deadline)
-			results <- ProgramRun{FindingFingerprint: candidate.fingerprint, BindingSource: candidate.source, ProgramID: candidate.id, Bindings: candidate.bindings, Verdict: verdict, Duration: lifecycleio.Since(started)}
+			results <- ProgramRun{FindingFingerprint: candidate.fingerprint, BindingSource: candidate.source, ProgramID: candidate.id, Bindings: candidate.bindings, Verdict: verdict, Duration: lifecycleio.Since(started), suspectRank: candidate.rank}
 		}(item)
 	}
 	runs := make([]ProgramRun, 0, len(candidates))
@@ -114,15 +158,79 @@ func SelectProgramCandidates(ctx context.Context, registry program.ProgramRegist
 					}
 				}
 				if !found {
-					runs = appendAssociations(runs, ProgramRun{FindingFingerprint: candidate.fingerprint, BindingSource: candidate.source, ProgramID: candidate.id, Bindings: candidate.bindings, Verdict: program.Verdict{Result: program.Unknown, Evidence: []program.Evidence{{Fact: "diagnosis", Observed: ctx.Err().Error(), Expected: "completed before deadline"}}}, Duration: deadline})
+					runs = appendAssociations(runs, ProgramRun{FindingFingerprint: candidate.fingerprint, BindingSource: candidate.source, ProgramID: candidate.id, Bindings: candidate.bindings, Verdict: program.Verdict{Result: program.Unknown, Evidence: []program.Evidence{{Fact: "diagnosis", Observed: ctx.Err().Error(), Expected: "completed before deadline"}}}, Duration: deadline, suspectRank: candidate.rank})
 				}
 			}
 			sortProgramRuns(runs)
-			return runs
+			return keyedStageRuns(runs, keyed)
 		}
 	}
 	sortProgramRuns(runs)
-	return runs
+	return keyedStageRuns(runs, keyed)
+}
+
+type creditedBinding struct {
+	bindings    program.Bindings
+	fingerprint string
+	rank        int
+}
+
+// creditedBindings binds the spec's component role to each suspect, in the
+// order the findings name them, whose (symptom, component) pair the playbook was
+// credited for. Every other parameter must bind as well: a pair never leaves a
+// required role unbound. The finding that named the suspect is the run's
+// finding, so coverage explains it.
+func creditedBindings(spec program.ProgramSpec, keyed KeyedMatching, findings []sdk.Finding) []creditedBinding {
+	var result []creditedBinding
+	if !keyed.Credits.Has(spec.ID) {
+		return nil
+	}
+	rank := 0
+	for _, finding := range findings {
+		if finding.Status != sdk.FindingActive {
+			continue
+		}
+		for _, suspect := range append([]sdk.ObjectRef{finding.PrimaryResource}, finding.RelatedResources...) {
+			if suspect.Name == "" {
+				continue
+			}
+			rank++
+			for _, symptom := range keyed.OpeningKeys {
+				if !keyed.Credits.Credited(spec.ID, symptom, suspect) {
+					continue
+				}
+				bindings := program.Bindings{Objects: program.ObjectBindings{ComponentRole: suspect}}
+				if program.ValidateBindings(spec, bindings) != nil {
+					break
+				}
+				result = append(result, creditedBinding{bindings: bindings, fingerprint: FindingFingerprint(finding), rank: rank})
+				break
+			}
+		}
+	}
+	return result
+}
+
+// keyedStageRuns keeps, for each playbook with credited pairs, only the first
+// Match in suspect order: one playbook application per stage pass. Diagnoses
+// that did not Match stay as evidence.
+func keyedStageRuns(runs []ProgramRun, keyed KeyedMatching) []ProgramRun {
+	if !keyed.Stage || !keyed.active() {
+		return runs
+	}
+	first := map[string]int{}
+	for _, run := range runs {
+		if run.BindingSource != BindingSourceCredited || run.Verdict.Result != program.Match {
+			continue
+		}
+		if rank, ok := first[run.ProgramID]; !ok || run.suspectRank < rank {
+			first[run.ProgramID] = run.suspectRank
+		}
+	}
+	return slices.DeleteFunc(runs, func(run ProgramRun) bool {
+		rank, ok := first[run.ProgramID]
+		return ok && run.BindingSource == BindingSourceCredited && run.Verdict.Result == program.Match && run.suspectRank != rank
+	})
 }
 
 // findingProgramBindings is the shared candidate/target boundary. Optional

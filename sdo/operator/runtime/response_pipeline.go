@@ -39,11 +39,12 @@ func (d KubernetesJobDispatcher) DeterministicResponseStage() ResponseStage {
 		return nil
 	}
 	return &DeterministicResponseStage{NewLoop: d.LoopFactory, Restore: func(ctx context.Context, request IncidentRequest, loop *ResponderLoop) error {
-		trust, err := d.programTrust(ctx, request)
+		trust, credits, err := d.programLearning(ctx, request)
 		if err != nil {
 			return err
 		}
 		loop.Trust = trust
+		loop.setCredits(credits)
 		return d.restoreToolState(ctx, request, loop)
 	}}
 }
