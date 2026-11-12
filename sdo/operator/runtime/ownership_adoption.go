@@ -245,7 +245,7 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 			changes = append(changes, adoptionChange{ref: ref, change: ObjectChange{Old: normalized, New: live, Adoption: true}})
 			continue
 		}
-		owned := ownedDriftPaths(live, "sdo-deployer")
+		owned := ownedDriftPaths(live, sdk.DeployerFieldManager)
 		allOwned := true
 		for path := range declared {
 			if !ownsDriftPath(owned, path) {
@@ -529,7 +529,7 @@ func carrySourceTreeStamp(source, live *unstructured.Unstructured) *unstructured
 func carryOwnedOmissions(source, live *unstructured.Unstructured) *unstructured.Unstructured {
 	out := source.DeepCopy()
 	for _, entry := range live.GetManagedFields() {
-		if entry.Manager != "sdo-deployer" || entry.Operation != metav1.ManagedFieldsOperationApply || entry.FieldsV1 == nil {
+		if entry.Manager != sdk.DeployerFieldManager || entry.Operation != metav1.ManagedFieldsOperationApply || entry.FieldsV1 == nil {
 			continue
 		}
 		var fields map[string]any
@@ -585,7 +585,7 @@ func adoptedAndRecorded(live, source *unstructured.Unstructured) bool {
 	if !acceptanceRecordBound(live, source) {
 		return false
 	}
-	owned := ownedDriftPaths(live, "sdo-deployer")
+	owned := ownedDriftPaths(live, sdk.DeployerFieldManager)
 	for path := range flattenDriftPaths(source) {
 		if !ownsDriftPath(owned, path) {
 			return false
@@ -635,7 +635,7 @@ func adoptionConflicts(live *unstructured.Unstructured, declared map[string]bool
 	count := 0
 	managers := map[string]bool{}
 	for _, entry := range live.GetManagedFields() {
-		if entry.Manager == "sdo-deployer" || entry.FieldsV1 == nil {
+		if entry.Manager == sdk.DeployerFieldManager || entry.FieldsV1 == nil {
 			continue
 		}
 		var fields map[string]any

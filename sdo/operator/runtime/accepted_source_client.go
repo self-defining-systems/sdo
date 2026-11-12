@@ -102,7 +102,7 @@ func (r acceptedResource) get(ctx context.Context, ref sdk.ObjectRef) (*unstruct
 }
 
 func (r acceptedResource) apply(ctx context.Context, ref sdk.ObjectRef, source *unstructured.Unstructured, dryRun bool) (*unstructured.Unstructured, error) {
-	return r.applyAs(ctx, ref, source, dryRun, "sdo-deployer")
+	return r.applyAs(ctx, ref, source, dryRun, sdk.DeployerFieldManager)
 }
 
 // recordAcceptance writes only the acceptance record, under its own field

@@ -217,21 +217,30 @@ def scrub_shell_command(line: str) -> str:
     return line
 
 
-def action_kind(command: Sequence[str]) -> str:
-    """``kubectl-<verb>`` for kubectl commands, ``command-<program>`` otherwise."""
+def kubectl_words(command: Sequence[str]) -> list[str]:
+    """The positional words of a kubectl command (verb, subcommand, arguments), without flags or their values."""
 
-    program = Path(command[0]).name
-    if program != "kubectl":
-        return f"command-{program}"
     words: list[str] = []
     skip_value = False
     for token in command[1:]:
+        if token == "--":
+            break
         if skip_value:
             skip_value = False
         elif token in _KUBECTL_VALUE_FLAGS:
             skip_value = True
         elif not token.startswith("-"):
             words.append(token)
+    return words
+
+
+def action_kind(command: Sequence[str]) -> str:
+    """``kubectl-<verb>`` for kubectl commands, ``command-<program>`` otherwise."""
+
+    program = Path(command[0]).name
+    if program != "kubectl":
+        return f"command-{program}"
+    words = kubectl_words(command)
     if not words:
         return "kubectl"
     if words[0] in _KUBECTL_COMPOUND_VERBS and len(words) > 1:

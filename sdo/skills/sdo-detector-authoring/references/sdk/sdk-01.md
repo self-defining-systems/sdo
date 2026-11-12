@@ -8,6 +8,25 @@ package sdk // import "sdo.dev/operator/sdk"
 
 CONSTANTS
 
+const (
+	DeployerFieldManager        = "sdo-deployer"
+	AcceptanceFieldManager      = "sdo-acceptance"
+	ReplicasHandoffFieldManager = "sdo-replicas-handoff"
+	// ResponderFieldManager is stamped by `sdo act` on every mutating kubectl
+	// command the responder runs (mirrored in sdo/agents/responder/tools_cli.py).
+	ResponderFieldManager = "sdo-responder"
+)
+    Field managers through which SDO writes application objects. Their writes
+    are SDO's own and never count as a Secret data change: adopting an app
+    server-side applies every accepted Secret with identical values, which adds
+    an SDO entry with a new time while the data stays as the app wrote it.
+
+const BeforeFirstApplyFieldManager = "before-first-apply"
+    BeforeFirstApplyFieldManager is the Kubernetes API server's name for the
+    fields an object already had when its first server-side apply arrived.
+    The entry is stamped with that apply's time, so it says nothing about when
+    those fields were written.
+
 const DefaultWebhookTimeoutSeconds = 10
     DefaultWebhookTimeoutSeconds is the API server's timeout for a webhook entry
     that declares none.
@@ -66,6 +85,9 @@ func FormatObjectRef(ref ObjectRef) (string, error)
     namespace/kind ordering, so parsing the formatted value preserves every
     ObjectRef field.
 
+func IsSDOFieldManager(manager string) bool
+    IsSDOFieldManager reports whether manager is one of SDO's own.
+
 func IsSupportedWatchKind(watch WatchKind) bool
     IsSupportedWatchKind reports whether a watch names a snapshot or controller
     input. Kubernetes kinds require their exact served API version.
@@ -109,15 +131,21 @@ func ProjectWebhookCAJSON(raw []byte) ([]byte, error)
     values while hiding CA bytes before a raw read can reach programs or
     recordings.
 
+func SDOFieldManagers() []string
+    SDOFieldManagers lists every field manager SDO writes application objects
+    as.
+
 func ScopedObject(source ScopedObservationSource, ref ObjectRef) (*unstructured.Unstructured, error)
     ScopedObject reads one object of a declared scoped observation target.
     It is the single projection shared by live and host-side read views.
 
 func SecretDataChangedAt(meta metav1.ObjectMeta) time.Time
-    SecretDataChangedAt derives when a Secret's data was last written from its
-    object metadata alone. managedFields list the field paths each manager owns
-    and when it last wrote, never values; a manager that owns only labels or
-    annotations does not move the time.
+    SecretDataChangedAt derives when a manager other than SDO last wrote a
+    Secret's data from its object metadata alone. managedFields list the field
+    paths each manager owns and when it last changed the object, never values;
+    a manager that owns only labels or annotations does not move the time,
+    and SDO's own managers never do. Data a before-first-apply entry owns dates
+    from creation, the only bound metadata gives for it.
 
 func ServiceExpectsEndpoints(service corev1.Service) bool
     ServiceExpectsEndpoints reports whether Kubernetes can back a Service with
@@ -195,41 +223,4 @@ type ConfigMapKeyReference struct {
     ConfigMapKeyReference identifies an explicitly selected ConfigMap key.
     Optional follows Kubernetes semantics: a missing optional key is not a
     fault.
-
-func ConfigMapKeyReferencesForDeployment(deployment appsv1.Deployment) []ConfigMapKeyReference
-    ConfigMapKeyReferencesForDeployment returns explicit keys consumed through
-    container/init-container env, ConfigMap volumes, and projected volumes.
-    EnvFrom and volumes without Items consume all available keys and therefore
-    impose no individual key requirement. Secret references are never returned.
-    Results are sorted by name/key; required references win over optional ones.
-    This is reference metadata only, not a credential-safety assertion about
-    data.
-
-type ConfigMapReference struct {
-	Name     string `json:"name"`
-	Optional bool   `json:"optional"`
-}
-    ConfigMapReference describes a ConfigMap consumed by a Deployment pod
-    template. Optional references do not make an absent ConfigMap a fault.
-
-func ConfigMapReferencesForDeployment(deployment appsv1.Deployment) []ConfigMapReference
-    ConfigMapReferencesForDeployment returns the distinct ConfigMaps referenced
-    by a Deployment's volumes and container environment. Results are sorted by
-    name so detector output does not depend on manifest field ordering. If the
-    same ConfigMap is referenced as both optional and required, the required
-    reference wins.
-
-type ContainerChange struct {
-	Kind ContainerKind
-	Name string
-	// Added is a live container accepted source does not have; Removed the reverse.
-	Added   bool
-	Removed bool
-	// Fields are the container fields accepted source declares whose live
-	// values differ, such as "image" or "command". Undeclared live fields
-	// (server defaults) never appear.
-	Fields []string
-}
-    ContainerChange is one pod-template container that differs from accepted
-    source, matched by kind and name.
 ```

@@ -16,7 +16,9 @@ import (
 
 var secretNow = time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 
-func at(minutes int) meta.Time { return meta.NewTime(secretNow.Add(time.Duration(minutes) * time.Minute)) }
+func at(minutes int) meta.Time {
+	return meta.NewTime(secretNow.Add(time.Duration(minutes) * time.Minute))
+}
 
 // rotatedSecret is a Secret created long ago whose data a manager rewrote at
 // changed, while another manager later touched only its labels.
@@ -166,5 +168,62 @@ func TestSecretReaderRulesNeverConsultSecretData(t *testing.T) {
 		if strings.Contains(f.Evidence, "old-value") || strings.Contains(f.Evidence, "new-value") {
 			t.Fatalf("evidence leaks a value: %q", f.Evidence)
 		}
+	}
+}
+
+// adoptedSecret is a Secret a foreign manager wrote at written, which SDO's
+// deployer then adopted at adopted by server-side applying the same data.
+// Only field ownership records the adoption; no value is involved.
+func adoptedSecret(written, adopted meta.Time, sdoManager string) core.Secret {
+	return core.Secret{
+		ObjectMeta: meta.ObjectMeta{Namespace: "ns", Name: "shared-token", CreationTimestamp: written, ManagedFields: []meta.ManagedFieldsEntry{
+			{Manager: "installer", Operation: meta.ManagedFieldsOperationUpdate, Time: &written, FieldsV1: &meta.FieldsV1{Raw: []byte(`{"f:data":{".":{},"f:token":{}},"f:type":{}}`)}},
+			{Manager: sdoManager, Operation: meta.ManagedFieldsOperationApply, Time: &adopted, FieldsV1: &meta.FieldsV1{Raw: []byte(`{"f:data":{"f:token":{}}}`)}},
+		}},
+	}
+}
+
+// SDO's own writes of a Secret (adoption, accepted applies, acceptance
+// records) never count as a data change, so Pods that started before SDO
+// adopted the app are not stale readers. A later write by any other manager
+// still is a change.
+func TestSDOWritesDoNotMoveSecretDataChange(t *testing.T) {
+	for _, manager := range sdk.SDOFieldManagers() {
+		t.Run(manager, func(t *testing.T) {
+			secret := adoptedSecret(at(-600), at(-30), manager)
+			pod := readerPod("store-0", "store", at(-120), false)
+			if got := secretFindings(t, secretSnapshot(secret, true, pod)); len(got) != 0 {
+				t.Fatalf("an SDO adoption apply marked readers stale: %+v", got)
+			}
+			if changed := sdk.SecretMetadataFrom(secret).DataChangedAt; !changed.Equal(at(-600).Time) {
+				t.Fatalf("DataChangedAt = %s, want the foreign write %s", changed, at(-600).Time)
+			}
+			rotated := at(-10)
+			secret.ManagedFields = append(secret.ManagedFields, meta.ManagedFieldsEntry{Manager: "rotator", Operation: meta.ManagedFieldsOperationUpdate, Time: &rotated, FieldsV1: &meta.FieldsV1{Raw: []byte(`{"f:data":{"f:token":{}}}`)}})
+			got := secretFindings(t, secretSnapshot(secret, true, pod))
+			if len(got) != 1 || got[0].RuleID != RuleSecretReadersPredateChange {
+				t.Fatalf("a foreign data write after the reader started: findings = %+v, want one %s", got, RuleSecretReadersPredateChange)
+			}
+		})
+	}
+}
+
+// A Secret whose data only SDO has written carries no foreign change time,
+// so no reader is stale; creation time stands in only for objects that carry
+// no field ownership at all.
+func TestSecretDataChangeWithoutForeignOwner(t *testing.T) {
+	adopted := at(-30)
+	owned := core.Secret{ObjectMeta: meta.ObjectMeta{Namespace: "ns", Name: "shared-token", CreationTimestamp: adopted, ManagedFields: []meta.ManagedFieldsEntry{
+		{Manager: sdk.SDOFieldManagers()[0], Operation: meta.ManagedFieldsOperationApply, Time: &adopted, FieldsV1: &meta.FieldsV1{Raw: []byte(`{"f:data":{"f:token":{}}}`)}},
+	}}}
+	if changed := sdk.SecretMetadataFrom(owned).DataChangedAt; !changed.IsZero() {
+		t.Fatalf("SDO-only Secret DataChangedAt = %s, want zero", changed)
+	}
+	if got := secretFindings(t, secretSnapshot(owned, true, readerPod("store-0", "store", at(-120), false))); len(got) != 0 {
+		t.Fatalf("SDO-only Secret marked readers stale: %+v", got)
+	}
+	bare := core.Secret{ObjectMeta: meta.ObjectMeta{Namespace: "ns", Name: "shared-token", CreationTimestamp: at(-10)}}
+	if changed := sdk.SecretMetadataFrom(bare).DataChangedAt; !changed.Equal(at(-10).Time) {
+		t.Fatalf("unattributed Secret DataChangedAt = %s, want its creation time", changed)
 	}
 }

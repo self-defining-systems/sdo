@@ -45,7 +45,7 @@ func (b CommandBackend) Apply(ctx context.Context, documents []byte) error {
 	if len(documents) == 0 {
 		return errors.New("deployment manifests are empty")
 	}
-	args := b.kubectlArgs("apply", "--server-side", "--force-conflicts", "--field-manager=sdo-deployer", "--filename=-")
+	args := b.kubectlArgs("apply", "--server-side", "--force-conflicts", "--field-manager="+sdk.DeployerFieldManager, "--filename=-")
 	output, err := b.run(ctx, b.kubectl(), args, documents)
 	if err != nil {
 		return fmt.Errorf("apply Kubernetes manifests: %w: %s", err, strings.TrimSpace(string(output)))

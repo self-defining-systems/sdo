@@ -255,7 +255,7 @@ func finalPlanDesiredFieldsMatch(preview PlanApplicationResult, getFinal func(sd
 // different value in a repaired field earn equivalent-repair credit.
 func planComparableFields(object, declared, owner *unstructured.Unstructured, changed map[string]bool) map[string]any {
 	observed := flattenDriftObject(object)
-	owned := ownedDriftPaths(owner, "sdo-deployer")
+	owned := ownedDriftPaths(owner, sdk.DeployerFieldManager)
 	fields := map[string]any{}
 	paths := flattenDriftObject(declared)
 	for path := range changed {
