@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -30,10 +29,11 @@ func fakeArchitecture(document string) gitRead {
 	}
 }
 
-func runHoldsDataStage(t *testing.T, document string) (*sameWriteWorld, map[string]string, map[string]string) {
-	t.Helper()
+// A learned restart of a workload the map marks holds_data runs on the
+// automatic path like any other match: SDO refuses no repair for its kind.
+func TestDeterministicStageRunsLearnedRestartOfDataHoldingWorkload(t *testing.T) {
 	world, loop, state := sameWriteLoop(t)
-	loop.GitRead = fakeArchitecture(document)
+	loop.GitRead = fakeArchitecture(holdsDataArchitecture)
 	state.Request.RepositoryWorktree = "synthetic-worktree"
 	loop.Request.RepositoryWorktree = "synthetic-worktree"
 	instant := newInstantRecoveryClock()
@@ -43,57 +43,16 @@ func runHoldsDataStage(t *testing.T, document string) (*sameWriteWorld, map[stri
 	if err != nil {
 		t.Fatal(err)
 	}
-	reasons, details := map[string]string{}, map[string]string{}
-	for _, attempt := range report.Mitigations {
-		reasons[attempt.PlaybookId] = attempt.SkipReason
-		details[attempt.PlaybookId] = attempt.Error
-		if attempt.SkipReason == stageHoldsData && (attempt.Result != "skipped" || attempt.GetApplyReceipt() != nil) {
-			t.Fatalf("a refused program must be recorded as skipped with no receipt: %v", attempt)
-		}
-	}
-	if attempts := len(report.Mitigations); attempts == 0 {
+	if len(report.Mitigations) == 0 {
 		t.Fatal("the stage attempted nothing")
 	}
-	if len(state.Findings) == 0 {
-		t.Fatal("a refused program must leave its findings to the responder")
+	if got := world.restarts.Load(); got != 1 {
+		t.Fatalf("the data-holding Deployment was written %d times, want the one restart", got)
 	}
-	return world, reasons, details
-}
-
-// The opening incident of this rule: a matched program restarts a store the
-// map says holds data. The stage writes nothing and tells the responder why.
-func TestDeterministicStageRefusesRestartOfDataHoldingWorkload(t *testing.T) {
-	world, reasons, details := runHoldsDataStage(t, holdsDataArchitecture)
-	if got := world.restarts.Load(); got != 0 {
-		t.Fatalf("the data-holding Deployment was written %d times", got)
-	}
-	if reasons["aware-restart"] != stageHoldsData || reasons["blind-restart"] != stageHoldsData {
-		t.Fatalf("both matched programs must be refused: %v", reasons)
-	}
-	if !strings.Contains(details["aware-restart"], "Deployment/api") || !strings.Contains(details["aware-restart"], "holds_data") {
-		t.Fatalf("the refusal must name the workload and the map fact: %q", details["aware-restart"])
-	}
-}
-
-// Everything else runs as it did: no map, or a map that does not mark it.
-func TestDeterministicStageRunsMatchedProgramsWithoutDataHoldingMark(t *testing.T) {
-	for name, document := range map[string]string{
-		"no architecture": "",
-		"no map":          "# Architecture\n",
-		"malformed map":   "<!-- sdo:application-map:begin -->\n```yaml\nnot: [a map\n```\n<!-- sdo:application-map:end -->\n",
-		"not marked":      strings.ReplaceAll(holdsDataArchitecture, "holds_data: true", "holds_data: false"),
-	} {
-		t.Run(name, func(t *testing.T) {
-			world, reasons, _ := runHoldsDataStage(t, document)
-			if got := world.restarts.Load(); got != 1 {
-				t.Fatalf("the Deployment was written %d times, want the one restart", got)
-			}
-			for id, reason := range reasons {
-				if reason == stageHoldsData {
-					t.Fatalf("%s was refused without a data-holding mark", id)
-				}
-			}
-		})
+	for _, attempt := range report.Mitigations {
+		if attempt.SkipReason == "holds_data" {
+			t.Fatalf("%s was skipped for holds_data", attempt.PlaybookId)
+		}
 	}
 }
 
@@ -128,64 +87,6 @@ func holdsDataView() sdktest.Snapshot {
 	}
 }
 
-func TestDataWorkloadWriteClassifiesEveryPodReplacingAction(t *testing.T) {
-	view := holdsDataView()
-	ref := func(apiVersion, kind, name string) sdk.ObjectRef {
-		return sdk.ObjectRef{APIVersion: apiVersion, Kind: kind, Namespace: "app", Name: name}
-	}
-	api, store, web := ref("apps/v1", "Deployment", "api"), ref("apps/v1", "StatefulSet", "store"), ref("apps/v1", "Deployment", "web")
-	apiPod, storePod, webPod := ref("v1", "Pod", "api-1-a"), ref("v1", "Pod", "store-0"), ref("v1", "Pod", "web-1-a")
-	apiRS := ref("apps/v1", "ReplicaSet", "api-1")
-	config := ref("v1", "ConfigMap", "api-config")
-	for name, test := range map[string]struct {
-		action  program.Action
-		refused string
-	}{
-		"restart":                  {program.RestartRollout{Ref: api}, "Deployment/api"},
-		"restart by pointer":       {&program.RestartRollout{Ref: api}, "Deployment/api"},
-		"restart data workload":    {program.RestartRollout{Ref: store}, "StatefulSet/store"},
-		"rollback":                 {program.Rollback{Ref: api, ToRevision: "1"}, "Deployment/api"},
-		"reconcile":                {program.ReconcileFromSource{Ref: store}, "StatefulSet/store"},
-		"delete workload":          {program.DeleteObject{Ref: store}, "StatefulSet/store"},
-		"delete pod":               {program.DeletePod{Ref: apiPod}, "Deployment/api"},
-		"delete stateful pod":      {program.DeletePod{Ref: storePod}, "StatefulSet/store"},
-		"delete pod as object":     {program.DeleteObject{Ref: apiPod}, "Deployment/api"},
-		"retire revision":          {program.RetireOldRevision{Ref: apiRS}, "Deployment/api"},
-		"scale replicaset":         {program.ScaleWorkload{Ref: apiRS, Replicas: program.FromParam("n")}, "Deployment/api"},
-		"scale from source":        {program.ScaleWorkload{Ref: api, Replicas: program.FromSource(api, "spec.replicas")}, "Deployment/api"},
-		"template field":           {program.SetField{Ref: api, Path: "spec.template.spec.containers[0].image", Value: program.FromSource(api, "x")}, "Deployment/api"},
-		"replicas field":           {program.SetField{Ref: api, Path: "spec.replicas", Value: program.FromSource(api, "spec.replicas")}, "Deployment/api"},
-		"patch workload":           {program.PatchObject{Ref: api, Type: "merge"}, "Deployment/api"},
-		"apply workload":           {program.ApplyObject{Ref: api}, "Deployment/api"},
-		"evict pod by request":     {program.KubernetesRequest{Ref: apiPod, Method: "POST", Path: "/api/v1/namespaces/app/pods/api-1-a/eviction"}, "Deployment/api"},
-		"delete by raw path":       {program.KubernetesRequest{Method: "DELETE", Path: "/apis/apps/v1/namespaces/app/statefulsets/store"}, "StatefulSet/store"},
-		"evict by raw path":        {program.KubernetesRequest{Method: "POST", Path: "/api/v1/namespaces/app/pods/api-1-a/eviction"}, "Deployment/api"},
-		"scale up from zero":       {program.ScaleWorkload{Ref: store, Replicas: program.FromSource(store, "spec.replicas")}, ""},
-		"read by request":          {program.KubernetesRequest{Ref: api, Method: "GET", Path: "/apis/apps/v1/namespaces/app/deployments/api"}, ""},
-		"wait":                     {program.WaitFor{Ref: api, Path: "/status/readyReplicas", Equals: 1}, ""},
-		"exec keeps the pod":       {program.Exec{Pod: apiPod, Container: "api"}, ""},
-		"recreate from source":     {program.CreateFromSource{Ref: api}, ""},
-		"restart stateless":        {program.RestartRollout{Ref: web}, ""},
-		"delete stateless pod":     {program.DeletePod{Ref: webPod}, ""},
-		"unrelated object":         {program.DeleteObject{Ref: config}, ""},
-		"same name other space":    {program.RestartRollout{Ref: sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "other", Name: "api"}}, ""},
-		"pod no longer observable": {program.DeletePod{Ref: ref("v1", "Pod", "gone")}, ""},
-	} {
-		t.Run(name, func(t *testing.T) {
-			got := dataWorkloadWrite(view, program.Plan{Actions: []program.Action{test.action}}, holdsDataHolders(), "app")
-			if test.refused == "" && got != "" {
-				t.Fatalf("refused: %q", got)
-			}
-			if test.refused != "" && !strings.Contains(got, test.refused) {
-				t.Fatalf("got %q, want a refusal naming %s", got, test.refused)
-			}
-		})
-	}
-	if got := dataWorkloadWrite(view, program.Plan{Actions: []program.Action{program.RestartRollout{Ref: api}}}, nil, "app"); got != "" {
-		t.Fatalf("no map must refuse nothing: %q", got)
-	}
-}
-
 // holdsDataHolders reads holdsDataArchitecture the way the stage does.
 func holdsDataHolders() dataHolders {
 	return acceptedDataWorkloads(context.Background(), fakeArchitecture(holdsDataArchitecture), "synthetic-worktree", "synthetic-accepted")
@@ -195,18 +96,10 @@ func holdsDataRef(apiVersion, kind, name string) sdk.ObjectRef {
 	return sdk.ObjectRef{APIVersion: apiVersion, Kind: kind, Namespace: "app", Name: name}
 }
 
-// stageRefusal is what the automatic stage says about a one-action plan.
-func stageRefusal(action program.Action) string {
-	return dataWorkloadWrite(holdsDataView(), program.Plan{Actions: []program.Action{action}}, holdsDataHolders(), "app")
-}
-
-// requireRecordedNotRefused holds when the automatic stage runs the action and
-// SDO records its data effect on workload: the class is evidence, not a gate.
-func requireRecordedNotRefused(t *testing.T, action program.Action, verb, workload string, effect program.DataEffect) {
+// requireRecordedDataEffect holds when SDO records the action's data effect on
+// workload: the class is evidence, not a gate.
+func requireRecordedDataEffect(t *testing.T, action program.Action, verb, workload string, effect program.DataEffect) {
 	t.Helper()
-	if got := stageRefusal(action); got != "" {
-		t.Fatalf("the stage refused a %s by its data effect: %q", verb, got)
-	}
 	holders := holdsDataHolders()
 	effects := dataReach{view: holdsDataView(), holders: holders, namespace: "app"}.effects(action)
 	if effects.verb != verb {
@@ -238,29 +131,28 @@ func boundValues(t *testing.T, words map[string]any) map[string]program.Value {
 }
 
 // An opaque command inside a data store can do anything to its records, such
-// as a flush. SDO cannot see inside it, so its effect is recorded unknown; the
-// automatic stage still runs it.
-func TestStageHoldsDataRecordsExecIntoDataPod(t *testing.T) {
+// as a flush. SDO cannot see inside it, so its effect is recorded unknown.
+func TestDataEffectsRecordExecIntoDataPod(t *testing.T) {
 	command := boundValues(t, map[string]any{"word": "true"})["word"]
-	requireRecordedNotRefused(t, program.Exec{Pod: holdsDataRef("v1", "Pod", "store-0"), Container: "store", Command: []program.Value{command}}, "exec", "StatefulSet/store", program.EffectUnknown)
-	requireRecordedNotRefused(t, &program.Exec{Pod: holdsDataRef("v1", "Pod", "store-0"), Container: "store", Command: []program.Value{command}}, "exec", "StatefulSet/store", program.EffectUnknown)
+	requireRecordedDataEffect(t, program.Exec{Pod: holdsDataRef("v1", "Pod", "store-0"), Container: "store", Command: []program.Value{command}}, "exec", "StatefulSet/store", program.EffectUnknown)
+	requireRecordedDataEffect(t, &program.Exec{Pod: holdsDataRef("v1", "Pod", "store-0"), Container: "store", Command: []program.Value{command}}, "exec", "StatefulSet/store", program.EffectUnknown)
 }
 
-func TestStageHoldsDataRecordsEnsureExecIntoDataPod(t *testing.T) {
+func TestDataEffectsRecordEnsureExecIntoDataPod(t *testing.T) {
 	observe := program.Command{Pod: holdsDataRef("v1", "Pod", "web-1-a"), Container: "web", Args: []string{"true"}}
 	ensure := program.Command{Pod: holdsDataRef("v1", "Pod", "store-0"), Container: "store", Args: []string{"sh", "-c", "flush-everything"}}
-	requireRecordedNotRefused(t, program.EnsureExec{Observe: observe, Ensure: ensure}, "exec", "StatefulSet/store", program.EffectUnknown)
+	requireRecordedDataEffect(t, program.EnsureExec{Observe: observe, Ensure: ensure}, "exec", "StatefulSet/store", program.EffectUnknown)
 	// The command runs in a stateless Pod but addresses the store by name.
 	ensure = program.Command{Pod: holdsDataRef("v1", "Pod", "web-1-a"), Container: "web", Args: []string{"client", "-h", "store.app.svc", "flush"}}
-	requireRecordedNotRefused(t, program.EnsureExec{Observe: observe, Ensure: ensure}, "exec", "StatefulSet/store", program.EffectUnknown)
+	requireRecordedDataEffect(t, program.EnsureExec{Observe: observe, Ensure: ensure}, "exec", "StatefulSet/store", program.EffectUnknown)
 }
 
-func TestStageHoldsDataRecordsEnsureDatabaseUserInDataPod(t *testing.T) {
+func TestDataEffectsRecordEnsureDatabaseUserInDataPod(t *testing.T) {
 	target := program.DatabaseTarget{Engine: program.MongoDB, Pod: holdsDataRef("v1", "Pod", "store-0"), Container: "store", Database: "app"}
-	requireRecordedNotRefused(t, program.EnsureDatabaseUser{Target: target, User: "app", Roles: []program.DatabaseRole{{Database: "app", Name: "readWrite"}}, Password: program.CredentialRef{Env: "PASSWORD"}}, "database user change", "StatefulSet/store", program.EffectStoreSetting)
+	requireRecordedDataEffect(t, program.EnsureDatabaseUser{Target: target, User: "app", Roles: []program.DatabaseRole{{Database: "app", Name: "readWrite"}}, Password: program.CredentialRef{Env: "PASSWORD"}}, "database user change", "StatefulSet/store", program.EffectStoreSetting)
 }
 
-func TestStageHoldsDataRecordsRunScriptBoundToDataService(t *testing.T) {
+func TestDataEffectsRecordRunScriptBoundToDataService(t *testing.T) {
 	service := holdsDataRef("v1", "Service", "store")
 	observed := program.BindPlanValues(program.Plan{Actions: []program.Action{program.RunScript{Script: `client -h "$HOST" flush`, Env: map[string]program.Value{"HOST": program.FromObserved(service, "metadata.name")}}}},
 		program.ValueInputs{Observed: func(sdk.ObjectRef) (map[string]any, error) {
@@ -276,23 +168,23 @@ func TestStageHoldsDataRecordsRunScriptBoundToDataService(t *testing.T) {
 		"input unreadable here": program.RunScript{Script: `client -h "$HOST" flush`, Env: map[string]program.Value{"HOST": program.FromSource(holdsDataRef("v1", "ConfigMap", "settings"), "data.host")}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			requireRecordedNotRefused(t, action, "script", "StatefulSet/store", program.EffectUnknown)
+			requireRecordedDataEffect(t, action, "script", "StatefulSet/store", program.EffectUnknown)
 		})
 	}
 }
 
-func TestStageHoldsDataRecordsOtherOpaqueActionsReachingData(t *testing.T) {
+func TestDataEffectsRecordOtherOpaqueActionsReachingData(t *testing.T) {
 	webPod := holdsDataRef("v1", "Pod", "web-1-a")
 	job := holdsDataRef("batch/v1", "Job", "fixer")
 	manifest := map[string]any{"apiVersion": "batch/v1", "kind": "Job", "metadata": map[string]any{"name": "fixer"}, "spec": map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"name": "fix", "args": []any{"client", "-h", "store", "flush"}}}}}}}
-	requireRecordedNotRefused(t, program.RunJob{Object: program.ApplyObject{Ref: job, Object: manifest}, Completion: program.WaitFor{Ref: job}}, "job", "StatefulSet/store", program.EffectUnknown)
+	requireRecordedDataEffect(t, program.RunJob{Object: program.ApplyObject{Ref: job, Object: manifest}, Completion: program.WaitFor{Ref: job}}, "job", "StatefulSet/store", program.EffectUnknown)
 	request := program.HTTPRequest{Pod: webPod, Container: "web", Method: "POST", URL: "http://store:8080/admin/flush"}
-	requireRecordedNotRefused(t, program.EnsureHTTP{Observe: request, Ensure: request}, "http request", "StatefulSet/store", program.EffectUnknown)
+	requireRecordedDataEffect(t, program.EnsureHTTP{Observe: request, Ensure: request}, "http request", "StatefulSet/store", program.EffectUnknown)
 }
 
 // The class stops at data: opaque actions that reach no data component record
 // no data effect.
-func TestStageHoldsDataRecordsNothingForStatelessPod(t *testing.T) {
+func TestDataEffectsRecordNothingForStatelessPod(t *testing.T) {
 	webPod := holdsDataRef("v1", "Pod", "web-1-a")
 	command := boundValues(t, map[string]any{"word": "true"})["word"]
 	job := holdsDataRef("batch/v1", "Job", "fixer")
@@ -309,9 +201,6 @@ func TestStageHoldsDataRecordsNothingForStatelessPod(t *testing.T) {
 		"http":                program.EnsureHTTP{Observe: request, Ensure: request},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := stageRefusal(action); got != "" {
-				t.Fatalf("refused: %q", got)
-			}
 			if effects := reach.effects(action); len(effects.touches) != 0 || effects.unreadInput {
 				t.Fatalf("effects = %+v, want none on a stateless Pod", effects)
 			}

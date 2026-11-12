@@ -59,8 +59,7 @@ RESPONSE_FIELDS = {
     "unexplained_removal_blockers[]",
     "source": "source (accepted Kubernetes object)",
     "verify": "healthy, verification_status, findings[], new_since_dispatch[], detector_states[], "
-    "verification_blockers[{detector_id,reason}], drift[], drift_events[], data_at_risk[], "
-    "data_effects[]",
+    "verification_blockers[{detector_id,reason}], drift[], drift_events[], data_effects[]",
     "report": "report.{status, attempt_id, rounds}, session",
     "act": "actions[].{success, exit_code, receipt, output, failure_reason, hint}",
     "mitigate": (

@@ -300,7 +300,6 @@ def _logical_learning_request(
             "undetected_causes",
             "final_detector_states",
             "source_check_notes",
-            "data_at_risk",
             "disabled_setup_detectors",
         )
         if key in outcome_view

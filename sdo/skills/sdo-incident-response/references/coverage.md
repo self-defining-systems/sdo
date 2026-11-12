@@ -36,9 +36,6 @@ and warning events, beside the affected program. `applied_cleared` is shown as `
 `rollout_pending_at_handoff` means applied but rollout pending; failed and skipped results remain explicit.
 `skipped (already_attempted)` means another program planned the same write that an earlier stage action had
 already applied and that was still settling; SDO did not repeat it, and recovery belongs to that earlier action.
-`skipped (holds_data)` means the program would have restarted, deleted, rewritten or scaled down a workload the
-application map marks `holds_data`, so SDO did not run it. The line names the action; the object is unchanged and the
-finding is yours. The restart may still be right, but look at what holds the data and what it holds first.
 Commands, scripts, Jobs, HTTP calls, database-user changes and the typed [store data](store-data.md) actions are
 never skipped for what they do to stored records: SDO runs them and records their data effect as evidence.
 Blocker messages are observations at handoff, so confirm whether they still apply. Absence of a blocker

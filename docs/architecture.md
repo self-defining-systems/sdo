@@ -293,10 +293,7 @@ activates after dispatch (`attachLearnedActivation`, at most eight passes, each 
 The finding joins the open incident, a pass redoes attempts that were only skipped and never repeats one
 that wrote, and the one `deterministic` report in `prior_stages` is updated in place. The responder reads
 the new attempts once, as `prior_stages` in its next tool reply.
-The stage reads the accepted application map. A plan that restarts, deletes, rolls back, scales down,
-reconciles, patches, applies or sends a write request to a workload marked `holds_data`, or its Pods or
-ReplicaSets, is skipped with reason `holds_data` and the finding goes to the responder. That is the
-only data rule that refuses: what an action does to stored records is recorded evidence, never a gate
+SDO refuses no repair for its kind: what an action does to stored records is recorded evidence, never a gate
 (`runtime/data_effects.go`, classes in `sdk/program/effects.go`). Go assigns each applied action a data
 effect per `holds_data` component it reaches: `Exec`, `EnsureExec`, `EnsureHTTP`, `RunScript` and `RunJob`
 are `unknown` on the component whose Pod they run in and on every one their inputs name (a Service,
@@ -330,8 +327,6 @@ responder-owned patch in the reflection checkout, published through the broker's
 the action's engine and the Pod belongs to its workload); `RepairData` refuses only a count outside its
 expected bounds or a named backup that is not one of this incident, and `RestoreBackup` needs the ID of
 the backup to put back.
-At closure, a `holds_data` workload with a Pod created since the incident opened (or a restarted
-container) and only volumes that die with the Pod makes the outcome `unconfirmed` (`DATA_MAY_BE_LOST`).
 Readiness is not recovery. One predicate, Recovered (`runtime/recovery_verification.go`), closes an incident,
 clears the automatic stage and ends the responder session: the alerts the incident opened on (`opening_keys`) cleared
 and stayed clear for the stability window after SDO's last change settled. `since` is the later of detection and the

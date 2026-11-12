@@ -317,31 +317,26 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		return err
 	}
 	if effect.Freeze && needsRecheck && unconfirmed == "" && denied == "" && verificationErr == nil && expiredHealth == nil {
-		risk, dataEffects := c.closureDataRisk(actionCtx, snapshot, effect.Closure)
+		dataEffects := c.closureDataEffects(actionCtx, snapshot, effect.Closure)
 		if len(dataEffects) > 0 {
 			slog.Info("closure_data_effects", "incident_id", effect.Closure.Request.IncidentID, "effects", dataEffects)
 			notes = append(notes, dataEffects...)
 		}
-		if risk != "" {
-			unconfirmed, unconfirmedReason = risk, contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_DATA_MAY_BE_LOST
-			unconfirmedStates = []DetectorEvaluation{{DetectorID: dataAtRiskEvaluation, EvaluatedAt: c.clock(), Status: DetectorEvaluationPending, Reason: risk}}
-		} else {
-			// The same Recovered predicate closure used: the opening user tests
-			// still pass after SDO's last write settled.
-			check := c.closureRecoveryCheck(actionCtx, snapshot, effect.Closure)
-			verification = check.record
-			if check.verdict == recoveryPending {
-				if !c.closureRecheckWaitExpired(effect.Identity, check.horizon+effect.Closure.ClosureStabilityWindow) {
-					c.scheduleClosureRecheck()
-					cancel()
-					return nil
-				}
-				unconfirmed = "not recovered by the verification bound: " + check.reason
-				unconfirmedReason = contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE
+		// The same Recovered predicate closure used: the opening user tests
+		// still pass after SDO's last write settled.
+		check := c.closureRecoveryCheck(actionCtx, snapshot, effect.Closure)
+		verification = check.record
+		if check.verdict == recoveryPending {
+			if !c.closureRecheckWaitExpired(effect.Identity, check.horizon+effect.Closure.ClosureStabilityWindow) {
+				c.scheduleClosureRecheck()
+				cancel()
+				return nil
 			}
-			if unconfirmed != "" {
-				slog.Warn("closure_recovery_unverified", "incident_id", effect.Closure.Request.IncidentID, "reason", unconfirmed)
-			}
+			unconfirmed = "not recovered by the verification bound: " + check.reason
+			unconfirmedReason = contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE
+		}
+		if unconfirmed != "" {
+			slog.Warn("closure_recovery_unverified", "incident_id", effect.Closure.Request.IncidentID, "reason", unconfirmed)
 		}
 	}
 	effectKind := lifecyclecore.ProcessClosure
