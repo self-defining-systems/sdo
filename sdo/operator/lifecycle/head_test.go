@@ -52,7 +52,7 @@ func (w *headWorld) RecordHeadDeployment(_ context.Context, commit string, evide
 }
 
 func (w *headWorld) deployer() lifecycle.HeadDeployer {
-	repair := lifecycle.RepairDeployer{Readiness: w, Verifier: w, Wait: func(context.Context, time.Duration) error { return nil }, Now: time.Now}
+	repair := lifecycle.RepairDeployer{Readiness: w, Verifier: w, Wait: func(context.Context, time.Duration) error { return nil }, Now: func() time.Time { return time.Unix(1, 0) }}
 	if w.pause != nil {
 		repair.Maintenance = w.pause
 		repair.Busy = func(context.Context) (string, error) { return w.busy, nil }
