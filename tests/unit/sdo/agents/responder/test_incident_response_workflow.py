@@ -216,3 +216,56 @@ def test_partial_reuse_prompt_starts_from_receipts_without_mandatory_discovery()
     assert "re-check saved diagnoses" in instructions
     assert "Read " not in instructions
     assert len(_without_checkout_path(instructions)) <= 1500
+
+
+def _handoff_request(*, observe_only: bool):
+    from sdo.contracts import IncidentRequest, OperationalMemorySnapshot
+
+    request = IncidentRequest(
+        incident_id="handoff", memory_snapshot=OperationalMemorySnapshot(accepted_commit="accepted")
+    )
+    stage = request.prior_stages.add(stage="deterministic")
+    stage.handoff_state.repair_state = stage.handoff_state.REPAIR_STATE_PENDING_CONFIRMATION
+    stage.handoff_state.observe_only = observe_only
+    return request
+
+
+def test_pending_confirmation_handoff_is_observe_first_and_names_no_verb() -> None:
+    from sdo.agents.responder.codex import _responder_prompt
+    from sdo.agents.responder.incident_context import prepared_incident_data
+
+    request = _handoff_request(observe_only=True)
+    with prepared_incident_data(request) as data:
+        prompt = _responder_prompt(request, incident_data=data)
+    instructions = str(prompt).split("Incident request:", 1)[0]
+    assert "Observe first" in instructions
+    assert "baseline_clue" in instructions
+    assert "probe_lag" in instructions
+    assert "observe_until" in instructions
+    assert "independent repairs" not in instructions
+    assert "Restoring accepted source is always allowed" in instructions
+    # The test is the effect on the workload, not a list of forbidden verbs.
+    assert "restart" not in instructions
+    assert "delete" not in instructions
+
+
+def test_handoff_without_observe_only_keeps_the_ordinary_reuse_prompt() -> None:
+    from sdo.agents.responder.codex import _responder_prompt
+    from sdo.agents.responder.incident_context import prepared_incident_data
+
+    request = _handoff_request(observe_only=False)
+    with prepared_incident_data(request) as data:
+        prompt = _responder_prompt(request, incident_data=data)
+    instructions = str(prompt).split("Incident request:", 1)[0]
+    assert "Observe first" not in instructions
+    assert "handoff_state limits further rounds" in instructions
+
+
+def test_brief_carries_the_typed_handoff_state() -> None:
+    from sdo.agents.responder.incident_context import handoff_state_brief
+    from sdo.contracts import IncidentRequest
+
+    brief = handoff_state_brief(_handoff_request(observe_only=True))
+    assert brief is not None
+    assert brief["observe_only"] is True
+    assert handoff_state_brief(IncidentRequest(incident_id="x")) is None

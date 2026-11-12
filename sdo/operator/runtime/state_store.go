@@ -42,6 +42,7 @@ func cloneIncidentRequest(request *IncidentRequest) *IncidentRequest {
 	// reject null (a cold incident surfaces no playbook and no outcome).
 	copy.Findings = append(make([]sdk.Finding, 0, len(request.Findings)), request.Findings...)
 	copy.OpeningKeys = append([]string(nil), request.OpeningKeys...)
+	copy.StandingKeys = append([]string(nil), request.StandingKeys...)
 	copy.DriftEvents = append([]sdk.DriftEvent(nil), request.DriftEvents...)
 	copy.NamespaceOnboarding = cloneNamespaceOnboarding(request.NamespaceOnboarding)
 	copy.DisabledSetupDetectors = cloneDisabledSetupDetectors(request.DisabledSetupDetectors)

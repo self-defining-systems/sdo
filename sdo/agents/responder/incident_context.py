@@ -293,6 +293,19 @@ def _rollout_pending(request: IncidentRequest) -> list[dict[str, Any]]:
     return [json_format.MessageToDict(item, preserving_proto_field_name=True) for item in pending]
 
 
+def observe_only_handoff(request: IncidentRequest) -> bool:
+    """The controller decided the applied repair is waiting on its detectors (Go owns the state)."""
+    return any(report.handoff_state.observe_only for report in request.prior_stages)
+
+
+def handoff_state_brief(request: IncidentRequest) -> dict[str, Any] | None:
+    """The controller's typed hand-off state, rendered as sent."""
+    for report in request.prior_stages:
+        if report.HasField("handoff_state"):
+            return json_format.MessageToDict(report.handoff_state, preserving_proto_field_name=True)
+    return None
+
+
 def responder_brief(
     request: IncidentRequest, *, details_file: str, full: dict[str, Any], playbook_paths: Mapping[str, str]
 ) -> dict[str, Any]:
@@ -312,6 +325,8 @@ def responder_brief(
     if request.prior_stages:
         brief["stage_actions"] = stage_action_lines(request.prior_stages)
         brief["checked_stage_receipts"] = checked_stage_receipts(request.prior_stages)
+        if (handoff := handoff_state_brief(request)) is not None:
+            brief["handoff_state"] = handoff
         brief["stage_cleared_findings"] = len(
             {fingerprint for report in request.prior_stages for fingerprint in report.cleared_finding_fingerprints}
         )

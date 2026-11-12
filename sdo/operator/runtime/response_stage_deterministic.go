@@ -426,6 +426,9 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	if err := ctx.Err(); err != nil {
 		return report, err
 	}
+	if err := stage.settleLagBeforeHandoff(ctx, loop, state, report, save); err != nil {
+		return report, err
+	}
 	// Use the responder's completion verifier for final field equivalence;
 	// application success alone does not grant reflection learning authority.
 	var applications []RecordedPlanApplication

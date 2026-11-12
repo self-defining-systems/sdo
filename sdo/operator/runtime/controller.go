@@ -870,10 +870,12 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 	}
 	// The batch holds only openers. The clues active now join as evidence.
 	opening := findingKeys(batch)
-	batch = append(batch, c.activeClues(batch)...)
+	clues := c.activeClues(batch)
+	batch = append(batch, clues...)
 	sortFindings(batch)
 	request := c.incidentRequest(now, batch)
 	request.OpeningKeys = opening
+	request.StandingKeys = findingKeys(clues)
 	request.ObservationGeneration = observationGeneration(snapshot)
 	if c.Baseline != nil {
 		request.StateChanges = cloneStateChanges(c.Baseline.Changes(now))
