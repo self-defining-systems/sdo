@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"google.golang.org/protobuf/types/known/timestamppb"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -130,8 +129,14 @@ func verifyFinding(detector, kind, name string, severity sdk.FindingSeverity) sd
 		PrimaryResource: sdk.ObjectRef{Kind: kind, Namespace: "app", Name: name}}
 }
 
+// browseTest is the failing user test the synthetic incident opens on.
+func browseTest() sdk.Finding {
+	return sdk.Finding{DetectorID: "traffic-probe-call", RuleID: "scenario-slo.browse-items", Status: sdk.FindingActive, Severity: sdk.SeverityCritical,
+		PrimaryResource: sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "front"}}
+}
+
 // runVerify is recovered() over the synthetic map: findings[:opening] opened
-// the incident, the rest joined later.
+// the incident, the rest are clues.
 func runVerify(t *testing.T, world verifyWorld, findings []sdk.Finding, opening int, result *IncidentResult) recoveryCheck {
 	t.Helper()
 	region, found, err := appmap.Find(verifyArch)
@@ -142,23 +147,8 @@ func runVerify(t *testing.T, world verifyWorld, findings []sdk.Finding, opening 
 	if err != nil {
 		t.Fatal(err)
 	}
-	keys := map[string]bool{}
-	for _, finding := range findings[:opening] {
-		keys[FindingStateKey(finding.DetectorID, FindingFingerprint(finding))] = true
-	}
-	return recovered(verificationInput{m: m, doc: verifyArch, view: world.view(), request: IncidentRequest{Namespace: "app", Findings: findings},
-		result: result, detected: verifyT0, opening: keys, stability: 10 * time.Second})
-}
-
-func componentOf(t *testing.T, check recoveryCheck, name string) *contracts.ComponentVerification {
-	t.Helper()
-	for _, component := range check.record.GetComponents() {
-		if component.GetComponent() == name {
-			return component
-		}
-	}
-	t.Fatalf("no verification for component %s: %v", name, check.record)
-	return nil
+	request := IncidentRequest{Namespace: "app", Findings: findings, OpeningKeys: findingKeys(findings[:opening])}
+	return recovered(verificationInput{m: m, view: world.view(), request: request, result: result, detected: verifyT0, stability: 10 * time.Second})
 }
 
 func restartOf(kind, name string, completed time.Time) *IncidentResult {
@@ -166,27 +156,25 @@ func restartOf(kind, name string, completed time.Time) *IncidentResult {
 		Result: PlanApplicationResult{Applied: true, ObjectEffects: []PlanObjectEffect{{Operation: "patch", Ref: sdk.ObjectRef{Kind: kind, Namespace: "app", Name: name}, State: "applied"}}}}}}
 }
 
-// (c) A store finding whose component a user operation through the entry
-// covers verifies once that probe passes, at operation strength.
-func TestStoreFindingCoveredByAnEntryOperationVerifies(t *testing.T) {
+// An opening user test that passes in a sustained way after SDO's write
+// settled is Recovered; the record names the opening alerts.
+func TestOpeningUserTestPassingAfterTheWriteRecovers(t *testing.T) {
 	now := verifyT0.Add(2 * time.Minute)
-	check := runVerify(t, verifyWorld{now: now}, []sdk.Finding{verifyFinding("store-state", "StatefulSet", "db", sdk.SeverityCritical)}, 1, restartOf("StatefulSet", "db", verifyT0.Add(30*time.Second)))
+	check := runVerify(t, verifyWorld{now: now}, []sdk.Finding{browseTest()}, 1, restartOf("StatefulSet", "db", verifyT0.Add(30*time.Second)))
 	if check.verdict != recoveryVerified {
 		t.Fatalf("verdict %v: %s", check.verdict, check.reason)
 	}
-	db := componentOf(t, check, "db")
-	if db.GetStrength() != contracts.VerificationStrength_VERIFICATION_STRENGTH_OPERATION || !db.GetRecovered() || !db.GetInScope() || len(db.GetMembers()) != 1 || db.GetMembers()[0].GetId() != "browse-items" {
-		t.Fatalf("db = %v", db)
+	if keys := check.record.GetOpeningKeys(); len(keys) != 1 || check.record.GetStableSince() == nil {
+		t.Fatalf("record = %v", check.record)
 	}
 }
 
-// (e) A probe that passed only before SDO's last write settled does not
-// verify: it failed after the write.
-func TestProbePassingOnlyBeforeTheWriteSettledDoesNotVerify(t *testing.T) {
+// Passing samples from before SDO's last write settled do not count.
+func TestUserTestPassingOnlyBeforeTheWriteSettledDoesNotRecover(t *testing.T) {
 	write := verifyT0.Add(30 * time.Second)
 	now := write.Add(time.Minute)
 	failing := func(at time.Time) bool { return at.Before(write) }
-	check := runVerify(t, verifyWorld{now: now, probeOK: failing}, []sdk.Finding{verifyFinding("store-state", "StatefulSet", "db", sdk.SeverityCritical)}, 1, restartOf("StatefulSet", "db", write))
+	check := runVerify(t, verifyWorld{now: now, probeOK: failing}, []sdk.Finding{browseTest()}, 1, restartOf("StatefulSet", "db", write))
 	if check.verdict != recoveryPending || !strings.Contains(check.reason, "browse-items") {
 		t.Fatalf("verdict %v: %s", check.verdict, check.reason)
 	}
@@ -195,144 +183,54 @@ func TestProbePassingOnlyBeforeTheWriteSettledDoesNotVerify(t *testing.T) {
 	}
 }
 
-// A flapping member (passes, then fails again) does not verify.
-func TestFlappingMemberDoesNotVerify(t *testing.T) {
+// A user test that passes, then fails again, does not recover.
+func TestFlappingUserTestDoesNotRecover(t *testing.T) {
 	write := verifyT0.Add(30 * time.Second)
 	now := write.Add(time.Minute)
 	flapping := func(at time.Time) bool { return at.Before(now.Add(-3 * time.Second)) }
-	check := runVerify(t, verifyWorld{now: now, probeOK: flapping}, []sdk.Finding{verifyFinding("store-state", "StatefulSet", "db", sdk.SeverityCritical)}, 1, restartOf("StatefulSet", "db", write))
+	check := runVerify(t, verifyWorld{now: now, probeOK: flapping}, []sdk.Finding{browseTest()}, 1, restartOf("StatefulSet", "db", write))
 	if check.verdict != recoveryPending {
-		t.Fatalf("a member failing again after passing verified: %v %s", check.verdict, check.reason)
+		t.Fatalf("a user test failing again after passing recovered: %v %s", check.verdict, check.reason)
 	}
 }
 
-// (d) A component only links observe recovers at reachability strength: the
-// closure is weak, and the record says so.
-func TestLinkOnlyComponentIsReachabilityStrength(t *testing.T) {
+// A clue never holds Recovered, and a condition opener is decided by its
+// detector history, not here.
+func TestCluesAndConditionsDoNotHoldTheUserTestPredicate(t *testing.T) {
 	now := verifyT0.Add(2 * time.Minute)
-	check := runVerify(t, verifyWorld{now: now}, []sdk.Finding{verifyFinding("workload-health", "Deployment", "cache", sdk.SeverityCritical)}, 1, nil)
-	if check.verdict != recoveryWeak || !strings.Contains(check.reason, "cache: reachability only") {
-		t.Fatalf("verdict %v: %s", check.verdict, check.reason)
-	}
-	cache := componentOf(t, check, "cache")
-	if cache.GetStrength() != contracts.VerificationStrength_VERIFICATION_STRENGTH_REACHABILITY || !cache.GetRecovered() || cache.GetMembers()[0].GetKind() != memberLink {
-		t.Fatalf("cache = %v", cache)
-	}
-}
-
-// A component nothing observes is unobservable, and the closure is weak.
-func TestUnobservableComponentIsWeak(t *testing.T) {
-	now := verifyT0.Add(2 * time.Minute)
-	check := runVerify(t, verifyWorld{now: now}, []sdk.Finding{verifyFinding("workload-health", "Pod", "ssh-gate-1", sdk.SeverityCritical)}, 1, nil)
-	if check.verdict != recoveryWeak || componentOf(t, check, "ssh-gate").GetStrength() != contracts.VerificationStrength_VERIFICATION_STRENGTH_UNOBSERVABLE {
-		t.Fatalf("verdict %v: %s %v", check.verdict, check.reason, check.record)
-	}
-}
-
-// (a, review C3) A critical finding that joins the incident on a component SDO
-// never touched is a clue: it does not downgrade the closure the opening
-// finding decides, and adds no component to the record.
-func TestJoinedCriticalFindingOnAnUntouchedComponentDoesNotDowngrade(t *testing.T) {
-	now := verifyT0.Add(2 * time.Minute)
-	findings := []sdk.Finding{
-		verifyFinding("store-state", "StatefulSet", "db", sdk.SeverityCritical),
-		verifyFinding("workload-health", "Pod", "ssh-gate-1", sdk.SeverityCritical),
-	}
-	check := runVerify(t, verifyWorld{now: now}, findings, 1, restartOf("StatefulSet", "db", verifyT0.Add(30*time.Second)))
-	if check.verdict != recoveryVerified {
-		t.Fatalf("verdict %v: %s", check.verdict, check.reason)
-	}
-	for _, component := range check.record.GetComponents() {
-		if component.GetComponent() == "ssh-gate" {
-			t.Fatalf("a joined clue's component was recorded: %v", component)
-		}
-	}
-	// The same component written by SDO is in scope.
-	result := restartOf("StatefulSet", "db", verifyT0.Add(30*time.Second))
-	result.PlanApplications[0].Result.ObjectEffects = append(result.PlanApplications[0].Result.ObjectEffects, PlanObjectEffect{Operation: "delete", Ref: sdk.ObjectRef{Kind: "Pod", Namespace: "app", Name: "ssh-gate-7f9c-x2"}, State: "applied"})
-	if check := runVerify(t, verifyWorld{now: now}, findings, 1, result); check.verdict != recoveryWeak || !componentOf(t, check, "ssh-gate").GetInScope() {
-		t.Fatalf("a component SDO wrote is in scope: %v %s", check.verdict, check.reason)
-	}
-}
-
-// (b) A related resource is context, not a fault location: a finding on the
-// covered db that names the uncovered cache as related leaves the close at
-// operation strength.
-func TestRelatedResourceAddsNoComponent(t *testing.T) {
-	now := verifyT0.Add(2 * time.Minute)
-	finding := verifyFinding("store-state", "StatefulSet", "db", sdk.SeverityCritical)
-	finding.RelatedResources = []sdk.ObjectRef{{Kind: "Pod", Namespace: "app", Name: "cache-1"}}
-	check := runVerify(t, verifyWorld{now: now}, []sdk.Finding{finding}, 1, nil)
-	if check.verdict != recoveryVerified || len(check.record.GetComponents()) != 1 {
-		t.Fatalf("verdict %v: %s %v", check.verdict, check.reason, check.record)
-	}
-}
-
-// (g) A probe the accepted map lists that no window runs any more (a later
-// health commit removed it) is dropped: the component falls back to its link
-// dials instead of waiting.
-func TestRemovedProbeFallsBackToLinks(t *testing.T) {
-	now := verifyT0.Add(2 * time.Minute)
-	check := runVerify(t, verifyWorld{now: now, noScenario: true}, []sdk.Finding{verifyFinding("workload-health", "Deployment", "api", sdk.SeverityCritical)}, 1, nil)
-	api := componentOf(t, check, "api")
-	if api.GetStrength() != contracts.VerificationStrength_VERIFICATION_STRENGTH_REACHABILITY || check.verdict != recoveryWeak {
-		t.Fatalf("api = %v (verdict %v %s)", api, check.verdict, check.reason)
-	}
-}
-
-// A held finding on one edge is verified by that edge: a probe that covers
-// both ends without crossing the edge does not count, the edge's links do.
-func TestEdgeFindingIsVerifiedByThatEdge(t *testing.T) {
-	now := verifyT0.Add(2 * time.Minute)
-	finding := verifyFinding("links", "Service", "cache", sdk.SeverityCritical)
-	finding.RuleID = traffic.LinkRuleIDPrefix + "api->cache"
-	finding.Metadata = map[string]any{"from": "api", "to": "cache"}
-	broken := verifyWorld{now: now, links: map[string]func(time.Time) bool{traffic.Link{From: "api", To: "cache", Port: 80, Protocol: "tcp"}.ID(): func(time.Time) bool { return false }}}
-	check := runVerify(t, broken, []sdk.Finding{finding}, 1, nil)
-	cache := componentOf(t, check, "cache")
-	if cache.GetEdgeFrom() != "api" || cache.GetRecovered() || check.verdict != recoveryPending {
-		t.Fatalf("cache = %v (verdict %v %s)", cache, check.verdict, check.reason)
+	failing := func(time.Time) bool { return false }
+	condition := verifyFinding("workload-health", "Deployment", "api", sdk.SeverityCritical)
+	if check := runVerify(t, verifyWorld{now: now, probeOK: failing}, []sdk.Finding{condition, browseTest()}, 1, nil); check.verdict != recoveryVerified {
+		t.Fatalf("a failing user test that is only a clue held recovery: %s", check.reason)
 	}
 }
 
 // An unsettled write (its workload still rolling out) holds the verdict.
 func TestUnsettledWriteHoldsRecovery(t *testing.T) {
 	now := verifyT0.Add(2 * time.Minute)
-	world := verifyWorld{now: now}
-	result := restartOf("Deployment", "api", verifyT0.Add(30*time.Second))
 	region, _, _ := appmap.Find(verifyArch)
 	m, _ := appmap.Parse(region.YAML)
-	view := world.view()
+	view := verifyWorld{now: now}.view()
 	view.PodList[1].Status.Conditions[0].Status = corev1.ConditionFalse
-	check := recovered(verificationInput{m: m, doc: verifyArch, view: view, request: IncidentRequest{Namespace: "app", Findings: []sdk.Finding{verifyFinding("workload-health", "Deployment", "api", sdk.SeverityCritical)}},
-		result: result, detected: verifyT0, opening: map[string]bool{FindingStateKey("workload-health", FindingFingerprint(verifyFinding("workload-health", "Deployment", "api", sdk.SeverityCritical))): true}})
+	opening := browseTest()
+	check := recovered(verificationInput{m: m, view: view, request: IncidentRequest{Namespace: "app", Findings: []sdk.Finding{opening}, OpeningKeys: findingKeys([]sdk.Finding{opening})},
+		result: restartOf("Deployment", "api", verifyT0.Add(30*time.Second)), detected: verifyT0})
 	if check.verdict != recoveryPending || check.record.GetWritesSettled() {
 		t.Fatalf("verdict %v: %s", check.verdict, check.reason)
 	}
 }
 
-// (review U4) An application with no health probes is outside the test: its
-// closures rest on its detectors, as before.
-func TestNoHealthProbesIsOutsideTheTest(t *testing.T) {
-	check := runVerify(t, verifyWorld{now: verifyT0.Add(time.Minute), noProbes: true}, []sdk.Finding{verifyFinding("workload-health", "Deployment", "cache", sdk.SeverityCritical)}, 1, nil)
-	if check.verdict != recoveryVerified || check.record.GetProbed() {
-		t.Fatalf("verdict %v: %v", check.verdict, check.record)
-	}
-}
-
-// The closure asks the one recovered test. A finding on a component only links
-// observe commits unconfirmed with the reason and the per-component record,
-// and reflection may not learn from it; a finding on a component a passing
-// user-operation probe covers commits verified, with the record.
-func TestClosureCommitsTheRecoveredTestsVerdict(t *testing.T) {
+// The broker's recheck at freeze asks the same predicate: an opening user test
+// that has not passed since the write keeps the closure waiting, unfrozen; one
+// that passed freezes it verified with the record.
+func TestClosureCommitsTheRecoveredVerdict(t *testing.T) {
 	ctx := t.Context()
 	for name, test := range map[string]struct {
-		finding  sdk.Finding
-		want     contracts.ClosureUnconfirmedReason
-		strength contracts.VerificationStrength
+		probeOK func(time.Time) bool
+		frozen  bool
 	}{
-		"reachability only": {verifyFinding("workload-health", "Service", "cache", sdk.SeverityCritical), contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE, contracts.VerificationStrength_VERIFICATION_STRENGTH_REACHABILITY},
-		"operation covered": {verifyFinding("workload-health", "Service", "db", sdk.SeverityCritical), contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED, contracts.VerificationStrength_VERIFICATION_STRENGTH_OPERATION},
+		"user test recovered": {always, true},
+		"user test failing":   {func(time.Time) bool { return false }, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			now := verifyT0.Add(2 * time.Minute)
@@ -341,7 +239,7 @@ func TestClosureCommitsTheRecoveredTestsVerdict(t *testing.T) {
 			cfg.Namespace = "app"
 			world := &sameWriteWorld{}
 			world.healthy.Store(true)
-			controller, err := NewController(cfg, []sdk.Detector{sameWriteDetector{world: world}}, riskSnapshots{view: verifyWorld{now: now}.view()}, &recordingDispatcher{}, after)
+			controller, err := NewController(cfg, []sdk.Detector{sameWriteDetector{world: world}}, riskSnapshots{view: verifyWorld{now: now, probeOK: test.probeOK}.view()}, &recordingDispatcher{}, after)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -351,9 +249,9 @@ func TestClosureCommitsTheRecoveredTestsVerdict(t *testing.T) {
 			result := completedResult("synthetic-incident")
 			result.Timing = TimingMetrics{StartedAt: verifyT0, CompletedAt: after}
 			request := IncidentRequest{SchemaVersion: ProtocolSchemaVersion, Application: "demo", Namespace: "app", IncidentID: "synthetic-incident", SourceCommit: "synthetic-accepted", RepositoryWorktree: "synthetic-worktree",
-				Findings: []sdk.Finding{test.finding}}
+				Findings: []sdk.Finding{browseTest()}, OpeningKeys: findingKeys([]sdk.Finding{browseTest()})}
 			controller.pendingClosure = &IncidentClosure{Request: request, Result: &result, DetectedAt: verifyT0, DispatchedAt: verifyT0, ResponderCompletedAt: after, VerifiedAt: after,
-				FinalDetectorStates: []DetectorEvaluation{{DetectorID: "traffic", EvaluatedAt: after, Status: DetectorEvaluationClear}}}
+				FinalDetectorStates: []DetectorEvaluation{{DetectorID: "traffic-probe-call", EvaluatedAt: after, Status: DetectorEvaluationClear}}}
 			controller.closureState = contracts.ClosureState_CLOSURE_STATE_PENDING
 			effect, ok := controller.PendingClosureEffect()
 			if !ok || !effect.Freeze {
@@ -364,62 +262,18 @@ func TestClosureCommitsTheRecoveredTestsVerdict(t *testing.T) {
 			}
 			awaitEffectGoroutines(controller)
 			pending := controller.pendingClosure
-			if pending == nil {
-				t.Fatal("closure lost")
+			if pending == nil || pending.Frozen != test.frozen {
+				t.Fatalf("frozen = %v, want %v: %+v", pending != nil && pending.Frozen, test.frozen, pending)
 			}
-			if pending.UnconfirmedReason != test.want {
-				t.Fatalf("reason = %s, want %s (detail %q)", pending.UnconfirmedReason, test.want, pending.UnconfirmedDetail)
-			}
-			components := pending.RecoveryVerification.GetComponents()
-			if len(components) != 1 || components[0].GetStrength() != test.strength {
-				t.Fatalf("verification = %v", pending.RecoveryVerification)
-			}
-			derived, err := ProtoOutcomeDeriver{}.Derive(ctx, *pending, "", "synthetic", "synthetic")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if derived.Record.GetRecoveryVerification().GetComponents()[0].GetStrength() != test.strength {
-				t.Fatalf("the outcome does not carry the record: %v", derived.Record.GetRecoveryVerification())
-			}
-			if test.want == contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED {
-				if unverifiedRecoveryOutcome(derived.Record) {
-					t.Fatal("an operation-strength recovery is verified")
-				}
+			if !test.frozen {
 				return
 			}
-			if !strings.Contains(pending.UnconfirmedDetail, "cache: reachability only") || len(pending.FinalDetectorStates) != 0 {
-				t.Fatalf("the closure must name the component and make no health claim: %+v", pending)
+			if pending.UnconfirmedReason != contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED {
+				t.Fatalf("a recovered closure is unconfirmed: %s %q", pending.UnconfirmedReason, pending.UnconfirmedDetail)
 			}
-			if derived.Record.GetClassification() != "unconfirmed" || derived.RequiresReflection || !unverifiedRecoveryOutcome(derived.Record) {
-				t.Fatalf("the outcome must be unconfirmed and carry the reason: %+v", derived.Record)
+			if keys := pending.RecoveryVerification.GetOpeningKeys(); len(keys) != 1 {
+				t.Fatalf("verification = %v", pending.RecoveryVerification)
 			}
 		})
-	}
-}
-
-// (review C4) Until one credit rule decides what reachability evidence may
-// teach, a close whose in-scope component recovered below operation strength
-// gives reflection no verified repair: the partial path stays blocked.
-func TestReachabilityCloseGivesReflectionNoVerifiedRepair(t *testing.T) {
-	at := timestamppb.New(verifyT0)
-	ref := &contracts.ObjectRef{ApiVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "cache"}
-	outcome := &contracts.OutcomeRecord{
-		Classification: "unconfirmed",
-		RecoveryVerification: &contracts.RecoveryVerification{Probed: true, WritesSettled: true, Components: []*contracts.ComponentVerification{
-			{Component: "cache", Strength: contracts.VerificationStrength_VERIFICATION_STRENGTH_REACHABILITY, Recovered: true, InScope: true}}},
-		ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Summary: "cache restarted", Resources: []*contracts.ObjectRef{ref}}},
-		RepairActions:       []*contracts.RepairActionReceipt{{Success: true, Resources: []*contracts.ObjectRef{ref}, StartedAt: at, CompletedAt: at}},
-	}
-	if got := partialRepairCauses(outcome); len(got) != 0 {
-		t.Fatalf("a repair verified only at reachability is no verified cause: %v", got)
-	}
-	if reflectionRepairVerified(outcome) {
-		t.Fatal("reflection must not publish learning from a recovery no operation probe verified")
-	}
-	// The same component out of scope (a joined finding SDO never touched)
-	// does not block learning from the in-scope repair.
-	outcome.RecoveryVerification.Components[0].InScope = false
-	if unverifiedRecoveryOutcome(outcome) {
-		t.Fatal("an out-of-scope component does not block learning")
 	}
 }

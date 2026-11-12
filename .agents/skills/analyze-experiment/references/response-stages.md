@@ -170,20 +170,13 @@ findings remained; it is not a coverage verdict (before it existed, these waits
 exited `UNCOVERED`, which is why historical stage tables show mostly
 `UNCOVERED`). The wait asks the same recovered test as closure
 (`runtime/recovery_verification.go`, see closure-recovery.md) over the
-incident's findings so far and the stage's writes: once every finding is clear
-it exits `CLEARED` when every in-scope component recovered at operation strength
-after the writes settled, or at reachability strength when every stage write's
-receipt has `restored_source` (the object departed from accepted source when the
-incident opened, no earlier SDO write touched it, and it matches source after
-the write; Secrets never). A component nothing observes, or a reachability
-recovery after an unproven write (a restart), hands off (`FAILED`, log
-`recovery_wait_unproven`, branch `recovered below operation strength`). An
-applied program whose post-apply diagnose still `MATCH`es keeps the wait open
-for the incident detectors' longest rolling window, then hands off. A finding
-on a component no stage write touched hands off as `UNCOVERED` only after it
-outlives its detector's clearing horizon (plus two intervals) from when the
-wait first saw it, so churn that clears on its own (a drained node, a scale-up)
-no longer sends a correct playbook's incident to the responder. A finding on a
+incident's opening alerts and the stage's writes: once every finding is clear
+it exits `CLEARED` when Recovered holds (every opening user test passed again
+after the writes settled). An applied program whose post-apply diagnose still
+`MATCH`es keeps the wait open for the incident detectors' longest rolling
+window, then hands off. Historical receipts may carry `restored_source` and
+waits may show `recovered below operation strength` or an `UNCOVERED` churn
+hand-off; both are gone. A finding on a
 written component hands off (`FAILED`) once it outlives its detector's horizon
 counted from the writes' settle time; members that have not passed by their
 horizon do too. Settle times come from the receipts and live Pod readiness, so

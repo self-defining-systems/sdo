@@ -138,14 +138,9 @@ incident opened does not count.
 
 ## Recovery verification
 
-A Pod becoming Ready shows that its process answers its own probe, not that users' requests through it succeed. As a
-health-clear closure freezes in an application that has health probes, the controller builds each faulted
-component's verification set from the map's coverage: the probes of user operations that cover it (operation
-strength), else the link dials into it (reachability strength). Every member must pass in a sustained way after SDO's
-last write settled. An in-scope component (an opening finding names it, or SDO wrote to it) below operation strength
-commits the closure `unconfirmed` with reason `OBSERVATION_INCOMPLETE`; the outcome's `recovery_verification` records
-every component's strength, members and scope. Reflection gets the weak components as `recovery_unverified` and may
-not publish learning from the closure. Map coverage (`map.coverage`) is what puts such a probe on every user-path
+A Pod becoming Ready shows that its process answers its own probe, not that users' requests through it succeed. Map coverage decides
+which probe scenarios are user tests: a failing one opens an incident, and Recovered requires it to pass in a sustained
+way after SDO's last write settled. Map coverage (`map.coverage`) is what puts such a probe on every user-path
 component.
 
 Repairs that change records in place do not make the closure unconfirmed. The closure records each applied data

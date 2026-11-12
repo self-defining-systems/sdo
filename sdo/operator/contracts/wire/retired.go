@@ -21,6 +21,9 @@ import (
 var retiredFieldNames = map[string]string{
 	"sdodev.contracts.v1alpha1.ReflectionEligibility.evidence_gap_count":   "no_repair_count",
 	"sdodev.contracts.v1alpha1.BrokerLedger.reflection_evidence_gap_count": "reflection_no_repair_count",
+	"sdodev.contracts.v1alpha1.RecoveryVerification.probed":                "",
+	"sdodev.contracts.v1alpha1.RecoveryVerification.components":            "",
+	"sdodev.contracts.v1alpha1.PlanApplication.restored_source":             "",
 }
 
 // retiredValues maps "<message>.<field>" to retired value -> successor, for

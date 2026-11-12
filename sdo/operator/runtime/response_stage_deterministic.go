@@ -903,7 +903,6 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 	effects := recoveryEffects{}
 	// When this wait first saw each open finding; a finding on a component no
 	// stage write touched hands off once it outlasts its clearing horizon.
-	firstOpen := map[string]time.Time{}
 	for {
 		pending := false
 		applied := false
@@ -970,7 +969,7 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 		state.Findings = effects.observe(view, state.Findings)
 		state.refreshUnexplained()
 		if !pending {
-			check := loop.stageRecoveryCheck(observe, view, state, seen)
+			check := loop.stageRecoveryCheck(observe, view, state)
 			horizonOf := func(id string) (horizon, window time.Duration) {
 				for _, detector := range loop.Detectors {
 					if detector.Spec().ID == id {
@@ -994,14 +993,10 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 				}
 			}
 			if len(state.Findings) == 0 {
-				switch decideStageRecovery(check, matching, report) {
+				switch decideStageRecovery(check, matching) {
 				case stageCleared:
 					exit = contracts.RecoveryWait_EXIT_REASON_CLEARED
 					promoteSettledAttempts(settling)
-					return nil
-				case stageHandOff:
-					held, heldReason = sortedFindings(seen), check.reason
-					branch = "recovered below operation strength"
 					return nil
 				default:
 					held, heldReason = sortedFindings(seen), check.reason
@@ -1018,20 +1013,7 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			}
 			for _, finding := range state.Findings {
 				fp := FindingFingerprint(finding)
-				if _, ok := firstOpen[fp]; !ok {
-					firstOpen[fp] = now()
-				}
 				horizon, _ := horizonOf(finding.DetectorID)
-				if !check.touched(finding) {
-					// Another cause needs another actor, but churn that clears on
-					// its own (a drained node, a scale-up) gets its horizon first.
-					if now().Sub(firstOpen[fp]) >= horizon {
-						branch = "finding " + fp + " on a component no stage write touched persisted past its horizon"
-						exit = contracts.RecoveryWait_EXIT_REASON_UNCOVERED
-						return nil
-					}
-					continue
-				}
 				if settled >= horizon {
 					branch = "finding " + fp + " persisted past its horizon after the stage's writes settled"
 					return nil
@@ -1152,25 +1134,18 @@ type stageDecision int
 const (
 	stageWait stageDecision = iota
 	stageCleared
-	stageHandOff
 )
 
-// decideStageRecovery applies the recovered test to a stage whose findings
-// have all cleared. It clears (the responder is skipped) when every in-scope
-// component recovered at operation strength, or at reachability strength when
-// every stage write is proven by its own receipt to have restored accepted
-// source. A component nothing observes, or a reachability recovery after an
-// unproven write (a restart), goes to the responder. A program that still
-// diagnoses its fault, or members that have not passed yet, keep it waiting.
-func decideStageRecovery(check recoveryCheck, matching string, report *contracts.StageReport) stageDecision {
-	switch {
-	case matching != "" || check.verdict == recoveryPending:
+// decideStageRecovery applies Recovered to a stage whose findings have all
+// cleared: it clears (the responder is skipped) when the opening alerts
+// recovered. A program that still diagnoses its fault, or opening user tests
+// that have not passed since the stage's writes settled, keep it waiting; the
+// stage budget then hands off.
+func decideStageRecovery(check recoveryCheck, matching string) stageDecision {
+	if matching != "" || check.verdict == recoveryPending {
 		return stageWait
-	case check.verdict == recoveryVerified,
-		!check.unobservable && stageWritesRestoredSource(report):
-		return stageCleared
 	}
-	return stageHandOff
+	return stageCleared
 }
 
 // promoteSettledAttempts records attempts whose remaining findings cleared on

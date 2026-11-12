@@ -1497,8 +1497,17 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		}
 	}
 	source := closureSourceReport{}
+	recovery := recoveryCheck{verdict: recoveryVerified}
 	if snapshotErr == nil {
 		source = c.verifyClosureSource(ctx, now, snapshot, observedResult, rolloutRefs...)
+		c.mu.Lock()
+		request, result := cloneIncidentRequest(c.currentIncidentRequest), observedResult
+		if result == nil {
+			result = cloneIncidentResult(c.currentIncidentResult)
+		}
+		detected, stability := c.incidentDetectedAt, c.config.ClosureStabilityWindow
+		c.mu.Unlock()
+		recovery = c.recoveryCheck(ctx, snapshot, *request, result, detected, stability)
 	}
 	c.mu.Lock()
 	// Any observed responder write restarts the stability window, including
@@ -1577,10 +1586,17 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	if verified && !terminalFailure {
 		requiresStability = true
 		verified = c.recoveryProofLocked(now, finalStates, safe && (guard == nil || !guard.Pending))
-		verification.Healthy = verified
-		if !verified {
+		if verified && recovery.verdict == recoveryPending {
+			// Findings clearing is not Recovered: the opening user tests must
+			// pass again after SDO's last write settled. The stability window
+			// restarts, so the next check has a future wake.
+			verified = false
+			c.closureStableSince = now
+			verification.Summary = recovery.reason
+		} else if !verified {
 			verification.Summary = recoveryStabilitySummary
 		}
+		verification.Healthy = verified
 		c.cacheVerificationLocked(verification)
 		if !verified && (early || now.Before(c.verificationDeadlineLocked()) || c.recoveryWindowRunningLocked(now)) {
 			c.mu.Unlock()

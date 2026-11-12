@@ -251,33 +251,12 @@ func DataLossOutcome(outcome *contracts.OutcomeRecord) bool {
 	return hasEvaluation(outcome, DataAtRiskDetector)
 }
 
-// UnverifiedRecoveryOutcome reports an outcome whose recovery SDO could not
-// verify at operation strength: it may have lost data, an SDO write had not
-// settled, or a component in the closure's scope (an opening finding names it
-// or an SDO write touched it) did not recover, or recovered only at
-// reachability strength or unobserved. It holds no verified repair, whatever
-// its receipts say. Until one credit rule decides what reachability evidence
-// may teach (R8), every weak close is blocked from learning. An application
-// with no health probes is outside the recovered test (U4).
+// UnverifiedRecoveryOutcome reports an outcome that holds no verified repair
+// whatever its receipts say: a historic closure that may have lost data.
+// Recovery itself is decided before closure (the opening alerts recovered);
+// a closure that did not recover is not success.
 func UnverifiedRecoveryOutcome(outcome *contracts.OutcomeRecord) bool {
-	return DataLossOutcome(outcome) || WeakRecovery(outcome.GetRecoveryVerification())
-}
-
-// WeakRecovery reports a recovery verification that did not show every
-// in-scope component recovered at operation strength.
-func WeakRecovery(verification *contracts.RecoveryVerification) bool {
-	if !verification.GetProbed() {
-		return false
-	}
-	if !verification.GetWritesSettled() {
-		return true
-	}
-	for _, component := range verification.GetComponents() {
-		if component.GetInScope() && (!component.GetRecovered() || component.GetStrength() != contracts.VerificationStrength_VERIFICATION_STRENGTH_OPERATION) {
-			return true
-		}
-	}
-	return false
+	return DataLossOutcome(outcome)
 }
 
 func hasEvaluation(outcome *contracts.OutcomeRecord, id string) bool {

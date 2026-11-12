@@ -19,12 +19,12 @@ from typing import TYPE_CHECKING, Any
 from google.protobuf import json_format
 
 from sdo.agents.context_output import save_context
-from sdo.contracts import VerificationStrength, repair_action_state
+from sdo.contracts import repair_action_state
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from sdo.contracts import DetectorEvaluation, ObjectRef, OutcomeRecord, RecoveryVerification
+    from sdo.contracts import DetectorEvaluation, ObjectRef, OutcomeRecord
 
 
 def _timestamp(evaluation: DetectorEvaluation) -> str:
@@ -70,28 +70,6 @@ def collapse_detector_history(evaluations: Sequence[DetectorEvaluation]) -> list
 
 # The controller's pending evaluation for a repair that may have lost data.
 _DATA_AT_RISK = "controller.data-at-risk"
-_STRENGTH_TEXT = {
-    VerificationStrength.VERIFICATION_STRENGTH_REACHABILITY: "reachability only",
-    VerificationStrength.VERIFICATION_STRENGTH_UNOBSERVABLE: "unobserved",
-}
-
-
-def _recovery_unverified(verification: RecoveryVerification) -> list[str]:
-    """In-scope components the closure did not verify at operation strength."""
-
-    if not verification.probed:
-        return []
-    out = []
-    for component in verification.components:
-        if not component.in_scope:
-            continue
-        if component.strength != VerificationStrength.VERIFICATION_STRENGTH_OPERATION:
-            out.append(f"{component.component}: {_STRENGTH_TEXT.get(component.strength, 'unverified')}")
-        elif not component.recovered:
-            out.append(f"{component.component}: not recovered")
-    if not verification.writes_settled:
-        out.append("an SDO write had not settled")
-    return out
 
 
 def current_outcome_view(outcome: OutcomeRecord) -> dict[str, Any]:
@@ -113,9 +91,6 @@ def current_outcome_view(outcome: OutcomeRecord) -> dict[str, Any]:
     data_at_risk = [item.reason for item in outcome.detector_history if item.detector_id == _DATA_AT_RISK]
     if data_at_risk:
         view["data_at_risk"] = data_at_risk  # why this closure is unconfirmed; it teaches no fix
-    unverified = _recovery_unverified(outcome.recovery_verification)
-    if unverified:
-        view["recovery_unverified"] = unverified  # no user-operation probe showed recovery; it teaches no fix
     view["detector_history"] = collapse_detector_history(outcome.detector_history)
     compaction = {}
     if view["program_runs"]:

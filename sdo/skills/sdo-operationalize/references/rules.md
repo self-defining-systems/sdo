@@ -45,8 +45,8 @@ see them as notes. The diagnostic names the operation, component, edge or probe 
   operation enters at a user entry Service and includes the component on its path, or the component records
   `unprobed: <why>` when no synthetic request can reach it. An operation entering elsewhere (a metrics scrape, an
   internal API) covers nothing. Enforced by: `map.coverage`.
-- A recorded component reason is a coverage gap note in the operability report; the component is then verified
-  at reachability strength (its link dials) only. A probe that covers the component makes the reason wrong
+- A recorded component reason is a coverage gap note in the operability report; no user test then opens an
+  incident or proves recovery through that component. A probe that covers the component makes the reason wrong
   (`map.schema`). An exposed Service users never use (an operator or observability UI) records the reason on its
   component. `unprobed` on an edge is an informational note only and satisfies nothing. Enforced by:
   `map.unprobed`.
