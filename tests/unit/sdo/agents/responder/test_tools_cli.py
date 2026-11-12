@@ -241,6 +241,24 @@ def test_detect_repeated_detector_selection(monkeypatch: pytest.MonkeyPatch) -> 
     assert seen == [{"command": "detect"}, {"command": "detect", "detector_ids": ["a", "b", "c"]}]
 
 
+def test_detect_prints_the_compact_summary_and_expands_one_item(monkeypatch, capsys, tmp_path):
+    seen: list[dict[str, object]] = []
+    summary = "incident inc-1\nOPENED ON\ncreate  HTTP 429\n  more: sdo detect --finding create"
+    monkeypatch.setenv("SDO_API_HISTORY_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        tools_cli,
+        "_exchange",
+        lambda request, _: seen.append(request)
+        or {"command": "detect", "text": summary, "findings": [{"summary": "x"}]},
+    )
+    assert tools_cli.main(["detect"]) == 0
+    assert capsys.readouterr().out.strip() == summary
+    assert tools_cli.main(["detect", "--finding", "create"]) == 0
+    assert seen == [{"command": "detect"}, {"command": "detect", "finding": "create"}]
+    assert tools_cli.main(["--json", "detect"]) == 0
+    assert json.loads(capsys.readouterr().out.splitlines()[-1])["findings"] == [{"summary": "x"}]
+
+
 def test_mitigate_cli_preserves_explicit_target_finding_fingerprints(monkeypatch):
     seen = []
     monkeypatch.setattr(tools_cli, "_exchange", lambda request, _: seen.append(request) or {"summary": "ok"})
