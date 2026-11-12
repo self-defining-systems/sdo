@@ -168,7 +168,7 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 		sort.SliceStable(history, func(i, j int) bool { return verifiedTime(history[i]).Before(verifiedTime(history[j])) })
 		history = history[max(0, len(history)-maxReflectionHistory):]
 		trimReflectionClosure(closed)
-		request := &contracts.ReflectionRequest{Telemetry: closed.GetRequest().GetTelemetry(), Closure: closed, Outcome: current, PriorOutcomes: history, ProposalCommit: proposalCommit, OutcomeCommit: outcomeCommit, SessionMode: mode, Guidance: guidance, ValidationAttempt: attempt, PreviousDiagnostics: feedback.Diagnostics, CauseWork: feedback.CauseWork, UnassignedWork: feedback.UnassignedWork}
+		request := &contracts.ReflectionRequest{Telemetry: closed.GetRequest().GetTelemetry(), Closure: closed, Outcome: current, PriorOutcomes: history, ProposalCommit: proposalCommit, OutcomeCommit: outcomeCommit, SessionMode: mode, Guidance: guidance, ValidationAttempt: attempt, CauseWork: feedback.CauseWork, UnassignedWork: feedback.UnassignedWork}
 		if w.Catalog != nil {
 			snapshot, err := memory.SnapshotAt(ctx, w.Catalog, workspace.BaseCommit)
 			if err != nil {
@@ -176,6 +176,14 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 			}
 			if snapshot.GetAcceptedCommit() != workspace.BaseCommit {
 				return ReflectionDecision{}, errors.New("reflection memory snapshot differs from broker proposal base commit")
+			}
+			if snapshot.GetCodePath().GetName() != "shell" {
+				// The closure and work items can quote agent prose naming memory
+				// files (a captured patch, an outcome it read); the worker sees
+				// them in logical form. The snapshot, attached after, is SDO's own
+				// logical memory, so the guard below still refuses a leak there.
+				request = proto.Clone(request).(*contracts.ReflectionRequest)
+				memory.LogicalizeMessage(request)
 			}
 			request.MemorySnapshot = snapshot
 			currentWire, err := wire.Marshal(current)
@@ -205,6 +213,8 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 				return ReflectionDecision{}, errors.New("physical operational memory path leaked into reflection task")
 			}
 		}
+		// Validator diagnostics name the files the retry must fix; they stay literal.
+		request.PreviousDiagnostics = feedback.Diagnostics
 		dispatchAt := feedback.DispatchAt
 		if dispatchAt.IsZero() {
 			dispatchAt = closure.VerifiedAt
