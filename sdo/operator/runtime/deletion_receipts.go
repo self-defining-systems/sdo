@@ -3,9 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
-	"reflect"
 	"strings"
-	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sdo.dev/operator/sdk"
@@ -52,70 +50,6 @@ func (l *ResponderLoop) checkDeletionReceipts(ctx context.Context, receipts []Re
 		}
 	}
 	return result
-}
-
-// A continuation gets one opportunity to use a different mitigation. Stop only
-// when the exact broken set persists and every remaining resource has a typed
-// authorization denial. Successful peer repairs and other failures do not stop it.
-func authorizationDeniedNoProgress(previous string, verification ToolResponse, repairs []continuationRepair) bool {
-	var prior responderFeedback
-	if previous == "" || json.Unmarshal([]byte(previous), &prior) != nil || len(prior.StillBroken) == 0 || len(prior.StillBroken) != len(verification.Findings) {
-		return false
-	}
-	before := map[string]bool{}
-	for _, finding := range prior.StillBroken {
-		before[finding.Fingerprint] = true
-	}
-	denied := map[sdk.ObjectRef]bool{}
-	latest := map[sdk.ObjectRef]time.Time{}
-	for _, repair := range repairs {
-		for _, ref := range repair.Receipt.Resources {
-			if stamp, found := latest[ref]; found && repair.Receipt.CompletedAt.Before(stamp) {
-				continue
-			}
-			latest[ref] = repair.Receipt.CompletedAt
-			denied[ref] = !repair.Receipt.Success && repair.Receipt.FailureReason == "authorization_denied"
-		}
-	}
-	for _, finding := range verification.Findings {
-		if !before[FindingFingerprint(finding)] || !denied[finding.PrimaryResource] {
-			return false
-		}
-	}
-	return len(verification.Findings) > 0
-}
-
-// Only unchanged, stable source-absent inventory with completed, known failed
-// attempts can stop early. Health and uncertain effects retain the response
-// budget; a finding fingerprint alone says nothing about recovery progress.
-func responderNoProgress(previous string, verification ToolResponse, repairs []continuationRepair) bool {
-	var prior responderFeedback
-	if verification.Healthy || verification.Error != "" || previous == "" || json.Unmarshal([]byte(previous), &prior) != nil || prior.Error != "" || len(prior.StillBroken) == 0 || len(prior.StillBroken) != len(verification.Findings) {
-		return false
-	}
-	before := map[string]sdkFindingFeedback{}
-	for _, finding := range prior.StillBroken {
-		before[finding.Fingerprint] = finding
-	}
-	remaining := map[sdk.ObjectRef]bool{}
-	for _, finding := range verification.Findings {
-		stable, _ := finding.Metadata["stable_inventory"].(bool)
-		if !inventoryFinding(finding) || !stable || inventoryEvent(finding).Source != "absent from accepted source" {
-			return false
-		}
-		old, found := before[FindingFingerprint(finding)]
-		if !found || old.Resource != finding.PrimaryResource || old.DetectorID != finding.DetectorID || old.RuleID != finding.RuleID || old.Summary != finding.Summary || inventoryProgressEvidence(old.Evidence) != inventoryProgressEvidence(finding.Evidence) {
-			return false
-		}
-		delete(before, FindingFingerprint(finding))
-		remaining[finding.PrimaryResource] = true
-	}
-	if len(before) != 0 {
-		return false
-	}
-	oldAttempts, oldOK := failedInventoryAttempts(prior.AlreadyDone, remaining)
-	attempts, ok := failedInventoryAttempts(repairs, remaining)
-	return oldOK && ok && reflect.DeepEqual(oldAttempts, attempts)
 }
 
 // SourceInventory evidence includes the sample time. Ignore only that clock

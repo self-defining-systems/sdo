@@ -64,7 +64,6 @@ func TestRecoveryProofWaitsOnlyOnOpeningAlerts(t *testing.T) {
 			c.currentIncidentRequest = &IncidentRequest{IncidentID: "synthetic", Application: "demo", Findings: opened, ResponseDeadline: now.Add(time.Minute)}
 			c.incidentFindingKeys = findingKeys(opened)
 			c.incidentDetectedAt, c.incidentDispatchedAt, c.responderCompletedAt = now.Add(-3*time.Second), now.Add(-2*time.Second), now.Add(-time.Second)
-			c.verificationDeadline = now.Add(time.Minute)
 			result := completedResult("synthetic")
 			result.RepairActions = []RepairActionReceipt{{ActionID: "synthetic-scale", Kind: "kubectl-scale", Success: true}}
 			c.currentIncidentResult = &result

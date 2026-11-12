@@ -222,47 +222,6 @@ func (c *Controller) finishEarlyReport(ctx context.Context, now time.Time) {
 	c.mu.Unlock()
 }
 
-// A frozen verification deadline belongs to the incident, including a pending
-// or running blocker turn. Healthy drift turns clear it at admission and retain
-// their original response budget. Reuse the report-grace termination protocol:
-// cancel scheduling, prove durable worker quiescence, then publish closure.
-func (c *Controller) settleBoundedContinuation(ctx context.Context, now time.Time) bool {
-	c.mu.Lock()
-	if !c.incidentOpen || c.currentIncidentRequest == nil || c.responderDone || c.verificationDeadline.IsZero() || now.Before(c.verificationDeadlineLocked()) {
-		c.mu.Unlock()
-		return true
-	}
-	if now.Before(c.earlyStopRetryAt) {
-		c.mu.Unlock()
-		return false
-	}
-	id := c.currentIncidentRequest.IncidentID
-	attempts := max(0, c.currentIncidentRequest.MaxResponseLoops)
-	cancel := c.responderCancel
-	c.mu.Unlock()
-	if err := c.stopResponderWork(ctx, id, attempts, cancel); err != nil {
-		c.mu.Lock()
-		c.earlyStopRetryAt = now.Add(time.Second)
-		c.mu.Unlock()
-		if !errors.Is(err, errResponderTerminating) {
-			c.reportBrokerError("end bounded responder continuation", err)
-		}
-		return false
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.currentIncidentRequest == nil || c.currentIncidentRequest.IncidentID != id {
-		return false
-	}
-	c.responderDone = true
-	c.responderCompletedAt = now.UTC()
-	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_COMPLETED
-	c.earlyStopRetryAt = time.Time{}
-	// Keep the completed first-turn report. Cancellation of its optional turn
-	// does not turn incomplete independent observation into a worker failure.
-	return true
-}
-
 // Stop scheduling turns before inventory and prove Job/Pod quiescence even
 // when dispatch completion has already arrived. Both bounded lifecycle paths
 // use this same termination protocol.

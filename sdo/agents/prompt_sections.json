@@ -81,9 +81,6 @@
   "responder/commands_section_07": {
     "omitted": "template_data.responder-commands_section_07-omitted"
   },
-  "responder/continuation": {
-    "feedback": "template_data.responder-continuation-feedback"
-  },
   "responder/fenced_01": {
     "fence": "template_data.responder-fenced_01-fence",
     "text": "reflection_brief.findings",

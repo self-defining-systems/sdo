@@ -659,6 +659,9 @@ message IncidentClosure {
   // Controller-computed: whether each faulted component's verification set
   // passed after SDO's last write settled, and at what strength.
   RecoveryVerification recovery_verification = 29;
+  // When the responder returned (or its response timeout passed) before
+  // Recovered held: the incident escalated. Unset otherwise.
+  google.protobuf.Timestamp escalated_at = 30;
 }
 
 // RecoveryVerification is the controller's one "recovered" test for a

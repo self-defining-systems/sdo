@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"strings"
@@ -10,33 +9,74 @@ import (
 
 	"sdo.dev/operator/sdk"
 
-	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	outcomeclass "sdo.dev/operator/contracts/outcome"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/worker_registry"
 )
 
-// Response continuation is controller state, separate from provider sessions and
-// apply batches. Persist it before dispatch so restart rejoins the same task.
+// The responder's single task record is controller state, separate from provider
+// sessions and apply batches. Persist it before dispatch so a restart rejoins the
+// same task: SDO sends the agent exactly one incident turn per incident.
 type responderContinuation struct {
-	Attempts            int
-	UnconfirmedPrompted bool
-	Feedback            string
-	Result              *contracts.IncidentResult
-	Done                bool
+	Attempts int
+	Result   *contracts.IncidentResult
+	Done     bool
 }
 
 type agentTaskExecutor interface {
 	Execute(context.Context, *contracts.AgentTask) (*contracts.AgentResult, error)
 }
 
+// executeResponder runs the incident's one agent task. The agent's own loop,
+// guided by `sdo detect`, pursues the opening alerts; SDO never prompts it again
+// for the same symptoms. When it returns before Recovered the controller
+// escalates the incident.
 func (d KubernetesJobDispatcher) executeResponder(ctx context.Context, executor worker_registry.KubernetesExecutor, task *contracts.AgentTask, loop *ResponderLoop, request IncidentRequest) (IncidentResult, error) {
 	if loop == nil {
 		return d.executeResponderTask(ctx, executor, task)
 	}
-	return d.continueResponder(ctx, executor, task, loop, request, lifecycleio.Now)
+	var state responderContinuation
+	loop.locked(func() { state = loop.continuation })
+	if state.Done && state.Result != nil {
+		return incidentResultState(state.Result), nil
+	}
+	payload, err := wire.Canonical(task)
+	if err != nil {
+		return IncidentResult{}, err
+	}
+	executor.TaskPayload = string(payload)
+	result, err := d.executeResponderTask(ctx, executor, task)
+	if err != nil {
+		return IncidentResult{}, err
+	}
+	result.RepairActions = loop.checkDeletionReceipts(ctx, result.RepairActions)
+	verification := loop.Handle(ctx, ToolRequest{Command: "verify"})
+	if loop.VerifyResult != nil {
+		verification = loop.VerifyResult(ctx, result)
+	}
+	if verification.Error == "" {
+		// The controller's check observes this turn's writes.
+		loop.locked(loop.closeLoop)
+	}
+	if err := ctx.Err(); err != nil {
+		return IncidentResult{}, err
+	}
+	result.UnresolvedFindings = append([]sdk.Finding(nil), verification.Findings...)
+	result.ResponseLoopsUsed = 1
+	result.VerificationEvidence = append(result.VerificationEvidence, VerificationEvidence{Name: "controller-response-verification", Passed: verification.Healthy, Details: verification.Summary, ObservedAt: lifecycleio.Now().UTC()})
+	if verification.Healthy {
+		result.Status = IncidentCompleted
+		result.FinalDetectorStates = verification.DetectorStates
+	}
+	state.Attempts, state.Done = 1, true
+	if state.Result, err = incidentResultContract(result); err != nil {
+		return IncidentResult{}, err
+	}
+	if err := loop.saveContinuation(ctx, state); err != nil {
+		return IncidentResult{}, err
+	}
+	return result, nil
 }
 
 func (d KubernetesJobDispatcher) executeResponderTask(ctx context.Context, executor agentTaskExecutor, task *contracts.AgentTask) (IncidentResult, error) {
@@ -44,144 +84,17 @@ func (d KubernetesJobDispatcher) executeResponderTask(ctx context.Context, execu
 	if err != nil {
 		return IncidentResult{}, err
 	}
-	decoded, err := incidentResultFromAgent(result, task, d.Registry)
-	// Only controller continuation state may publish this evidence.
-	decoded.DriftReprompt = nil
-	return decoded, err
+	return incidentResultFromAgent(result, task, d.Registry)
 }
 
-func (d KubernetesJobDispatcher) continueResponder(ctx context.Context, executor worker_registry.KubernetesExecutor, original *contracts.AgentTask, loop *ResponderLoop, request IncidentRequest, now func() time.Time) (IncidentResult, error) {
-	for {
-		if err := ctx.Err(); err != nil {
-			return IncidentResult{}, err
-		}
-		var state responderContinuation
-		loop.locked(func() { state = loop.continuation })
-		if state.Done && state.Result != nil {
-			return incidentResultState(state.Result), nil
-		}
-		if state.Result != nil && !now().Before(request.ResponseDeadline) {
-			result := incidentResultState(state.Result)
-			result.Status, result.ResponseLoopExhausted, result.Error = IncidentFailed, true, "original response deadline exhausted with unresolved findings"
-			state.Done = true
-			var err error
-			state.Result, err = incidentResultContract(result)
-			if err != nil {
-				return IncidentResult{}, err
-			}
-			if err := loop.saveContinuation(ctx, state); err != nil {
-				return IncidentResult{}, err
-			}
-			return result, nil
-		}
-		task := proto.Clone(original).(*contracts.AgentTask)
-		if state.Attempts > 0 {
-			task.TaskId = fmt.Sprintf("%s-continue-%d", original.GetTaskId(), state.Attempts)
-			executor.Environment["SDO_RESPONSE_CONTINUATION"] = state.Feedback
-		}
-		payload, err := wire.Canonical(task)
-		if err != nil {
-			return IncidentResult{}, err
-		}
-		executor.TaskPayload = string(payload)
-		result, err := d.executeResponderTask(ctx, executor, task)
-		if err != nil {
-			return IncidentResult{}, err
-		}
-		result.RepairActions = loop.checkDeletionReceipts(ctx, result.RepairActions)
-		result = accumulateResponderResult(state.Result, result)
-		verify := func() ToolResponse {
-			if loop.VerifyResult != nil {
-				return loop.VerifyResult(ctx, result)
-			}
-			return loop.Handle(ctx, ToolRequest{Command: "verify"})
-		}
-		verification := verify()
-		if verification.Error == "" {
-			// The controller's check observes this turn's writes.
-			loop.locked(loop.closeLoop)
-		}
-		// Observation waits belong to the controller's verification bound.
-		// Return a completed worker promptly; ContinueAfterVerification owns
-		// the one named-blocker continuation, including across restarts.
-		if err := ctx.Err(); err != nil {
-			return IncidentResult{}, err
-		}
-		if result.DriftReprompt != nil && result.DriftReprompt.FindingsAfter == nil && verification.Error == "" {
-			result.DriftReprompt.FindingsAfter = proto.Int32(int32(len(verification.Drift)))
-		}
-		result.UnresolvedFindings = append([]sdk.Finding(nil), verification.Findings...)
-		state.Attempts++
-		result.ResponseLoopsUsed = state.Attempts
-		result.VerificationEvidence = append(result.VerificationEvidence, VerificationEvidence{Name: "controller-response-verification", Passed: verification.Healthy, Details: verification.Summary, ObservedAt: now().UTC()})
-		limit := loop.MaxBatches
-		if request.MaxResponseLoops > 0 && request.MaxResponseLoops < limit {
-			limit = request.MaxResponseLoops
-		}
-		exhausted := state.Attempts >= limit || loop.Exhausted() || !now().Before(request.ResponseDeadline)
-		repairs := loop.continuationRepairs(result)
-		noProgress := responderNoProgress(state.Feedback, verification, repairs)
-		deniedNoProgress := !verification.Healthy && verification.Error == "" && authorizationDeniedNoProgress(state.Feedback, verification, repairs)
-		observationOnly := len(verification.Findings) == 0 && (verification.Error == "" || len(verification.VerificationBlockers) > 0)
-		escalated := !verification.Healthy && responderEscalated(request, result)
-		state.Done = verification.Healthy || exhausted || noProgress || deniedNoProgress || observationOnly || escalated
-		if verification.Healthy {
-			result.Status = IncidentCompleted
-			result.FinalDetectorStates = verification.DetectorStates
-		} else if escalated {
-			// The responder localized a cause nothing in the namespace can fix,
-			// from the incident's opening evidence: another turn cannot restore
-			// health. Completing hands closure the escalation to record.
-			result.Status = IncidentCompleted
-			result.ResponseLoopExhausted, result.Error = false, ""
-		} else if deniedNoProgress {
-			result.Status = IncidentFailed
-			result.Error = "authorization_denied_no_progress"
-		} else if noProgress {
-			result.Status = IncidentFailed
-			result.Error = "no_progress"
-		} else if exhausted && !observationOnly {
-			result.Status = IncidentFailed
-			result.ResponseLoopExhausted = true
-			result.Error = "response deadline or loop budget exhausted with unresolved findings"
-		}
-		encoded, err := continuationFeedback(state.Attempts, verification, repairs...)
-		if err != nil {
-			return IncidentResult{}, err
-		}
-		state.Feedback = string(encoded)
-		state.Result, err = incidentResultContract(result)
-		if err != nil {
-			return IncidentResult{}, err
-		}
-		if err := loop.saveContinuation(ctx, state); err != nil {
-			return IncidentResult{}, err
-		}
-		if state.Done {
-			return result, nil
-		}
-	}
-}
-
-type sdkFindingFeedback struct {
-	Resource    sdk.ObjectRef `json:"primary_resource"`
-	Fingerprint string        `json:"fingerprint"`
-	RuleID      string        `json:"rule_id"`
-	DetectorID  string        `json:"detector_id"`
-	Summary     string        `json:"summary"`
-	Evidence    string        `json:"evidence"`
-}
-
+// accumulateResponderResult merges a later report into the receipts and usage
+// of an earlier snapshot, by action identity, so no action is replayed or
+// credited twice.
 func accumulateResponderResult(previous *contracts.IncidentResult, current IncidentResult) IncidentResult {
 	if previous == nil {
 		return current
 	}
 	prior := incidentResultState(previous)
-	if current.DriftReprompt == nil {
-		current.DriftReprompt = cloneDriftReprompt(prior.DriftReprompt)
-	}
-	// Resumed workers retain prior receipts. Merge by action identity so actions
-	// are never replayed or credited twice; usage is incremental per CLI turn.
 	seen := map[string]bool{}
 	for _, action := range current.RepairActions {
 		seen[action.ActionID] = true
@@ -209,102 +122,6 @@ func accumulateResponderResult(previous *contracts.IncidentResult, current Incid
 	}
 	current.Usage = *memory.AddUsage(&prior.Usage, &current.Usage)
 	return current
-}
-
-// ContinueAfterVerification lets the observation controller resume a response
-// when its later independent verification contradicts the dispatcher's check.
-// The request, workspace, provider checkpoint and original deadline stay fixed.
-func (d KubernetesJobDispatcher) ContinueAfterVerification(ctx context.Context, request IncidentRequest, verification ToolResponse, now time.Time) (bool, error) {
-	unconfirmedPrompt := !verification.Healthy && len(verification.Findings) == 0 && len(verification.VerificationBlockers) > 0
-	driftPrompt := verification.Healthy && len(verification.Drift) > 0 && len(verification.Findings) == 0 && verification.Error == ""
-	if (!driftPrompt && (verification.Healthy || (len(verification.Findings) == 0 && verification.Error == "" && !unconfirmedPrompt))) || d.LoopFactory == nil || !now.Before(request.ResponseDeadline) {
-		return false, nil
-	}
-	loop := d.LoopFactory(request)
-	if loop == nil {
-		return false, nil
-	}
-	if err := d.restoreToolState(ctx, request, loop); err != nil {
-		return false, err
-	}
-	state := loop.continuation
-	limit := loop.MaxBatches
-	if request.MaxResponseLoops > 0 && request.MaxResponseLoops < limit {
-		limit = request.MaxResponseLoops
-	}
-	if state.Result == nil {
-		return false, nil
-	}
-	if unconfirmedPrompt && state.UnconfirmedPrompted {
-		return !state.Done, nil
-	}
-	result := incidentResultState(state.Result)
-	if driftPrompt && !driftRepromptCanProgress(verification.Drift, &result) {
-		return false, nil
-	}
-	repairs := loop.continuationRepairs(result)
-	if !verification.Healthy && responderEscalated(request, result) {
-		return false, nil
-	}
-	switch state.Result.GetError() {
-	case "authorization_denied_no_progress":
-		return false, nil
-	case "no_progress":
-		if responderNoProgress(state.Feedback, verification, repairs) {
-			return false, nil
-		}
-	}
-	if driftPrompt && state.Result.GetDriftReprompt() != nil {
-		// Terminal stops above also apply to replay of a pending transition.
-		return !state.Done, nil
-	}
-	if !driftPrompt && (state.Attempts >= limit || loop.Exhausted()) {
-		return false, nil
-	}
-	if !state.Done {
-		return true, nil
-	} // replay of a controller transition after a crash
-	feedback, err := continuationFeedback(state.Attempts, verification, repairs...)
-	if err != nil {
-		return false, err
-	}
-	if driftPrompt {
-		state.Result = proto.Clone(state.Result).(*contracts.IncidentResult)
-		state.Result.DriftReprompt = &contracts.DriftReprompt{FindingsBefore: int32(len(verification.Drift))}
-	}
-	state.Done = false
-	if unconfirmedPrompt {
-		state.UnconfirmedPrompted = true
-	}
-	state.Feedback = string(feedback)
-	if err := loop.saveContinuation(ctx, state); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-// The optional drift turn may extend a successful response, but cannot reopen a
-// terminal response. Inventory with completed known failures has already used
-// its remediation opportunity; reporting it again cannot authorize progress.
-// Both closure and durable continuation recovery use this same admission rule.
-func driftRepromptCanProgress(drift []sdk.Finding, result *IncidentResult) bool {
-	if len(drift) == 0 || result == nil || result.Status != IncidentCompleted || result.Error != "" || result.ResponseLoopExhausted {
-		return false
-	}
-	repairs := make([]continuationRepair, 0, len(result.RepairActions))
-	for _, receipt := range result.RepairActions {
-		repairs = append(repairs, continuationRepair{ActionID: receipt.ActionID, Receipt: feedbackReceipt(receipt)})
-	}
-	for _, finding := range drift {
-		stable, _ := finding.Metadata["stable_inventory"].(bool)
-		if !inventoryFinding(finding) || !stable || inventoryEvent(finding).Source != "absent from accepted source" {
-			return true
-		}
-		if _, terminal := failedInventoryAttempts(repairs, map[sdk.ObjectRef]bool{finding.PrimaryResource: true}); !terminal {
-			return true
-		}
-	}
-	return false
 }
 
 func (l *ResponderLoop) saveContinuation(ctx context.Context, state responderContinuation) error {
@@ -349,90 +166,6 @@ type continuationRepair struct {
 	Error         string              `json:"error,omitempty"`
 	Receipt       continuationReceipt `json:"receipt"`
 }
-type responderFeedback struct {
-	VerificationBlockers []VerificationBlocker `json:"verification_blockers,omitempty"`
-	Attempt              int                   `json:"attempt"`
-	Healthy              bool                  `json:"healthy"`
-	Error                string                `json:"error,omitempty"`
-	Summary              string                `json:"summary"`
-	StillBroken          []sdkFindingFeedback  `json:"still_broken"`
-	// SourceDifferences are objects that differ from the accepted source.
-	// They are information; only still_broken and healthy decide closure.
-	SourceDifferences []sdkFindingFeedback `json:"source_differences,omitempty"`
-	AlreadyDone       []continuationRepair `json:"already_done"`
-}
-
-func (l *ResponderLoop) continuationRepairs(result IncidentResult) []continuationRepair {
-	repairs := make([]continuationRepair, 0)
-	var previousFeedback string
-	var completed []continuationRepair
-	menuActions := map[string]MenuRoundExecution{}
-	l.locked(func() {
-		previousFeedback = l.continuation.Feedback
-		completed = l.applicationRepairsLocked()
-		for _, executions := range l.menuExecutions {
-			for _, execution := range executions {
-				for _, receipt := range l.menuRepairs {
-					if execution.ApplicationID != "" && strings.HasPrefix(receipt.ActionID, execution.ApplicationID+"-a") {
-						menuActions[receipt.ActionID] = execution
-					}
-				}
-			}
-		}
-	})
-	var previous responderFeedback
-	if previousFeedback != "" {
-		_ = json.Unmarshal([]byte(previousFeedback), &previous)
-	}
-	seen := map[string]bool{}
-	// Controller-produced receipts take precedence over provider-authored data.
-	for _, repair := range completed {
-		repairs = append(repairs, repair)
-		seen[repair.ActionID] = true
-	}
-	for _, receipt := range append(l.MenuRepairActions(), result.RepairActions...) {
-		if seen[receipt.ActionID] {
-			continue
-		}
-		seen[receipt.ActionID] = true
-		repair := continuationRepair{Kind: "recorded-action", ActionID: receipt.ActionID, Summary: receipt.Summary, Receipt: feedbackReceipt(receipt)}
-		if execution, ok := menuActions[receipt.ActionID]; ok {
-			repair.Kind = "program-application"
-			repair.ApplicationID = execution.ApplicationID
-			if execution.ProgramID != "" {
-				repair.ProgramIDs = []string{execution.ProgramID}
-			}
-			repair.RolledBack = execution.RolledBack
-			repair.Error = execution.Error
-		}
-		repairs = append(repairs, repair)
-	}
-	for _, repair := range previous.AlreadyDone {
-		if !seen[repair.ActionID] {
-			repairs = append(repairs, repair)
-			seen[repair.ActionID] = true
-		}
-	}
-	// A recorded application summarizes all of its applied action resources.
-	// Menu receipts remain durable evidence, but must not list that same repair
-	// twice in the continuation. Preserve individual receipts when no application
-	// summary exists, including restored feedback from older tool state.
-	aggregateApplications := map[string]bool{}
-	for _, repair := range repairs {
-		if repair.ApplicationID != "" && repair.Receipt.Kind == "program-plan" {
-			aggregateApplications[repair.ApplicationID] = true
-		}
-	}
-	unique := repairs[:0]
-	for _, repair := range repairs {
-		if aggregateApplications[repair.ApplicationID] && repair.Receipt.Kind != "program-plan" {
-			continue
-		}
-		unique = append(unique, repair)
-	}
-	return unique
-}
-
 // Caller holds l.mu. This projection contains immutable repair facts only;
 // execution plans, live handles and rollback preimages never enter tool state.
 func (l *ResponderLoop) applicationRepairsLocked() []continuationRepair {
@@ -461,17 +194,6 @@ func (l *ResponderLoop) applicationRepairsLocked() []continuationRepair {
 
 func feedbackReceipt(receipt RepairActionReceipt) continuationReceipt {
 	return continuationReceipt{ActionID: receipt.ActionID, Kind: receipt.Kind, Target: receipt.Target, Resources: receipt.Resources, Summary: receipt.Summary, Details: receipt.Details, StartedAt: receipt.StartedAt, CompletedAt: receipt.CompletedAt, Success: receipt.Success, Reversible: receipt.Reversible, FailureReason: receipt.FailureReason, ScriptDigest: receipt.ScriptDigest, Owners: receipt.Owners}
-}
-
-func continuationFeedback(attempt int, verification ToolResponse, repairs ...continuationRepair) ([]byte, error) {
-	feedback := responderFeedback{VerificationBlockers: verification.VerificationBlockers, Attempt: attempt, Healthy: verification.Healthy, Error: verification.Error, Summary: verification.Summary, StillBroken: []sdkFindingFeedback{}, SourceDifferences: []sdkFindingFeedback{}, AlreadyDone: append([]continuationRepair{}, repairs...)}
-	for _, finding := range verification.Drift {
-		feedback.SourceDifferences = append(feedback.SourceDifferences, sdkFindingFeedback{Resource: finding.PrimaryResource, Fingerprint: FindingFingerprint(finding), DetectorID: finding.DetectorID, RuleID: finding.RuleID, Summary: finding.Summary, Evidence: finding.Evidence})
-	}
-	for _, finding := range verification.Findings {
-		feedback.StillBroken = append(feedback.StillBroken, sdkFindingFeedback{Resource: finding.PrimaryResource, Fingerprint: FindingFingerprint(finding), DetectorID: finding.DetectorID, RuleID: finding.RuleID, Summary: finding.Summary, Evidence: finding.Evidence})
-	}
-	return json.Marshal(feedback)
 }
 
 // Caller holds c.mu. Closure drift has already been freshly checked against
@@ -594,57 +316,4 @@ func (c *Controller) responderResultVerification(ctx context.Context, incidentID
 		response.Summary = "awaiting controller recovery stability proof"
 	}
 	return response
-}
-
-func cloneDriftReprompt(value *contracts.DriftReprompt) *contracts.DriftReprompt {
-	if value == nil {
-		return nil
-	}
-	return proto.Clone(value).(*contracts.DriftReprompt)
-}
-
-func (l *ResponderLoop) driftRepromptPending() bool {
-	if l == nil {
-		return false
-	}
-	// A busy tool already makes early closure unsafe. Never stall observation.
-	if !l.mu.TryLock() {
-		return true
-	}
-	defer l.mu.Unlock()
-	return l.continuation.Result.GetDriftReprompt() != nil && !l.continuation.Done
-}
-
-// Read the dispatcher's durable marker after its LoopFactory registered the loop.
-func (c *Controller) driftRepromptRecord() *contracts.DriftReprompt {
-	c.mu.Lock()
-	loop := c.responderLoop
-	c.mu.Unlock()
-	if loop == nil {
-		return nil
-	}
-	// Completion and observation must not wait on long-running tool I/O.
-	if !loop.mu.TryLock() {
-		return nil
-	}
-	defer loop.mu.Unlock()
-	return cloneDriftReprompt(loop.continuation.Result.GetDriftReprompt())
-}
-
-// responderEscalated reports whether the responder's accumulated result
-// confirms an out-of-reach cause from the incident's opening findings, by the
-// same rule closure uses to record an escalation (outcome.Escalation).
-func responderEscalated(request IncidentRequest, result IncidentResult) bool {
-	if len(result.ConfirmedRootCauses) == 0 {
-		return false
-	}
-	message, err := incidentResultContract(result)
-	if err != nil {
-		return false
-	}
-	opening, err := findingsContract(request.Findings)
-	if err != nil {
-		return false
-	}
-	return outcomeclass.Escalation(message.GetConfirmedRootCauses(), opening, message.GetRepairActions())
 }
