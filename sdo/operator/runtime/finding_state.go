@@ -196,16 +196,6 @@ func (t *FindingStateTracker) observe(now time.Time, detectorID string, findings
 	return changes
 }
 
-// Quiet reports that no finding is active or pending confirmation.
-func (t *FindingStateTracker) Quiet() bool {
-	for _, state := range t.states {
-		if state.Active || state.FiringCount > 0 {
-			return false
-		}
-	}
-	return true
-}
-
 func (t *FindingStateTracker) HasActiveKeys(keys []string) bool {
 	for _, key := range keys {
 		if state, ok := t.states[key]; ok && state.Active {

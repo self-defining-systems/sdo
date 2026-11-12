@@ -2446,7 +2446,11 @@ type IncidentRequest struct {
 	// When the controller opened this incident.
 	DetectedAt *timestamppb.Timestamp `protobuf:"bytes,35,opt,name=detected_at,json=detectedAt,proto3" json:"detected_at,omitempty"`
 	// Go-owned: the telemetry bindings of the accepted memory revision plus the environment.
-	Telemetry     *TelemetryContext `protobuf:"bytes,36,opt,name=telemetry,proto3" json:"telemetry,omitempty"`
+	Telemetry *TelemetryContext `protobuf:"bytes,36,opt,name=telemetry,proto3" json:"telemetry,omitempty"`
+	// Go-owned: the finding keys of the alerts the incident opened on (failing
+	// user tests or held Kubernetes conditions). Recovery is judged on these
+	// alone; every other finding in the request is a clue.
+	OpeningKeys   []string `protobuf:"bytes,37,rep,name=opening_keys,json=openingKeys,proto3" json:"opening_keys,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2694,6 +2698,13 @@ func (x *IncidentRequest) GetDetectedAt() *timestamppb.Timestamp {
 func (x *IncidentRequest) GetTelemetry() *TelemetryContext {
 	if x != nil {
 		return x.Telemetry
+	}
+	return nil
+}
+
+func (x *IncidentRequest) GetOpeningKeys() []string {
+	if x != nil {
+		return x.OpeningKeys
 	}
 	return nil
 }
@@ -5183,7 +5194,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x02id\x12%\n" +
 	"\tnamespace\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tnamespace\x12$\n" +
 	"\amessage\x18\x03 \x01(\tB\n" +
-	"\xbaH\ar\x05\x10\x01\x18\x80 R\amessage\"\xdb\x14\n" +
+	"\xbaH\ar\x05\x10\x01\x18\x80 R\amessage\"\xfe\x14\n" +
 	"\x0fIncidentRequest\x12>\n" +
 	"\x0eschema_version\x18\x01 \x01(\tB\x17\xbaH\x14r\x12\n" +
 	"\x10sdo.dev/v1alpha1R\rschemaVersion\x12)\n" +
@@ -5221,7 +5232,8 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x10external_message\x18\" \x01(\tB\b\xbaH\x05r\x03\x18\x80 R\x0fexternalMessage\x12;\n" +
 	"\vdetected_at\x18# \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"detectedAt\x12I\n" +
-	"\ttelemetry\x18$ \x01(\v2+.sdodev.contracts.v1alpha1.TelemetryContextR\ttelemetry:\xff\x02\xbaH\xfb\x02\x1a\xf8\x02\n" +
+	"\ttelemetry\x18$ \x01(\v2+.sdodev.contracts.v1alpha1.TelemetryContextR\ttelemetry\x12!\n" +
+	"\fopening_keys\x18% \x03(\tR\vopeningKeys:\xff\x02\xbaH\xfb\x02\x1a\xf8\x02\n" +
 	"\x10incident.trigger\x12^detected incidents require findings and history; external incidents carry no detector evidence\x1a\x83\x02this.external_message == '' ? (size(this.findings) > 0 && size(this.detector_history) > 0) : (size(this.findings) == 0 && size(this.detector_history) == 0 && size(this.drift_events) == 0 && !has(this.state_changes) && size(this.disabled_setup_detectors) == 0)J\x04\b\v\x10\fJ\x04\b\f\x10\rJ\x04\b\x13\x10\x14J\x04\b\x18\x10\x19J\x04\b!\x10\"R\x19architecture_summary_pathR\x15health_objective_pathR\tfollow_upR\x0emetrics_source\"\xb8\x02\n" +
 	"\x10ResponseProgress\x12\x1f\n" +
 	"\vincident_id\x18\x01 \x01(\tR\n" +

@@ -64,6 +64,9 @@ type Snapshot struct {
 	NetworkPolicyList  []networkingv1.NetworkPolicy            `json:"networkPolicies,omitempty"`
 	EventList          []corev1.Event                          `json:"events,omitempty"`
 	ObservedAtTime     *time.Time                              `json:"observedAt,omitempty"`
+	// SelfHealHoldTime is the controller's self-heal hold at capture; nil
+	// replays with sdk.DefaultSelfHealHold.
+	SelfHealHoldTime *time.Duration `json:"selfHealHold,omitempty"`
 	// Traffic holds synthetic-traffic observations by workload name.
 	Traffic map[string]traffic.Window `json:"traffic,omitempty"`
 	// Metrics holds frozen metric query results by query ID.
@@ -91,6 +94,14 @@ func (s Snapshot) ObservedAt() time.Time {
 		return time.Time{}
 	}
 	return *s.ObservedAtTime
+}
+
+// SelfHealHold implements sdk.SelfHealPolicy; it is zero when unrecorded.
+func (s Snapshot) SelfHealHold() time.Duration {
+	if s.SelfHealHoldTime == nil {
+		return 0
+	}
+	return *s.SelfHealHoldTime
 }
 
 func (s Snapshot) StatefulSets() []appsv1.StatefulSet {

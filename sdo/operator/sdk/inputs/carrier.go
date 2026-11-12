@@ -26,6 +26,7 @@ import (
 // window and result sets that snapshot capture copies for replay.
 type Sources interface {
 	sdk.ObservationClock
+	sdk.SelfHealPolicy
 	traffic.Source
 	traffic.WindowSet
 	metrics.ResultSet
@@ -51,6 +52,7 @@ type Sources interface {
 type Carrier struct {
 	sdk.DetectionContext
 	clock        sdk.ObservationClock
+	selfHeal     sdk.SelfHealPolicy
 	traffic      traffic.Source
 	reachability servicehealth.ReachabilitySource
 	metrics      metrics.Source
@@ -76,6 +78,7 @@ func New(base sdk.DetectionContext) Carrier {
 	}
 	c := Carrier{DetectionContext: base}
 	c.clock, _ = base.(sdk.ObservationClock)
+	c.selfHeal, _ = base.(sdk.SelfHealPolicy)
 	c.traffic, _ = base.(traffic.Source)
 	c.reachability, _ = base.(servicehealth.ReachabilitySource)
 	c.metrics, _ = base.(metrics.Source)
@@ -109,6 +112,14 @@ func (c Carrier) ObservedAt() time.Time {
 		return time.Time{}
 	}
 	return c.clock.ObservedAt()
+}
+
+// SelfHealHold is the carried self-heal hold; zero when the base has none.
+func (c Carrier) SelfHealHold() time.Duration {
+	if c.selfHeal == nil {
+		return 0
+	}
+	return c.selfHeal.SelfHealHold()
 }
 func (c Carrier) WithTraffic(source traffic.Source) Carrier { c.traffic = source; return c }
 func (c Carrier) TrafficWindow(id string) (traffic.Window, bool) {

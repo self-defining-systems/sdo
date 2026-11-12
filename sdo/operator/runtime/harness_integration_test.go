@@ -147,7 +147,7 @@ func (d standinDetector) Detect(ctx context.Context, view sdk.DetectionContext) 
 
 func (d standinDetector) finding(fingerprint string) sdk.Finding {
 	return sdk.Finding{
-		DetectorID: d.spec.ID, RuleID: "fault", Status: sdk.FindingActive, Severity: sdk.SeverityCritical,
+		DetectorID: d.spec.ID, RuleID: "scenario-slo.fault", Status: sdk.FindingActive, Severity: sdk.SeverityCritical,
 		Summary: "stand-in fault", Evidence: "fault object " + fingerprint,
 		PrimaryResource: sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: hotel, Name: faultConfigMapName(d.spec.ID)},
 		Fingerprint:     fingerprint,

@@ -1,10 +1,10 @@
 {
   "blocking_detectors": [
-    "cause"
+    "workload-health"
   ],
   "blocking_findings": [
     {
-      "detector_id": "cause",
+      "detector_id": "workload-health",
       "evidence": "evidence",
       "fingerprint": "cause",
       "primary_resource": {

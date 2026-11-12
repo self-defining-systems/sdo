@@ -40,15 +40,9 @@ func (c *Controller) recoveryDetectorIDs(request IncidentRequest) []string {
 // second stability clock. Caller holds c.mu.
 func (c *Controller) recoveryTrackersClear(request IncidentRequest) bool {
 	if len(c.healthDetectorIDs) == 0 {
-		var findings []sdk.Finding
-		for _, finding := range request.Findings {
-			if !strings.HasPrefix(finding.DetectorID, "drift.") {
-				findings = append(findings, finding)
-			}
-		}
-		return !c.tracker.HasActiveKeys(findingKeys(findings))
+		return !c.tracker.HasActiveKeys(openingKeys(&request))
 	}
-	scope := newRecoveryScope(findingKeys(request.Findings))
+	scope := newRecoveryScope(openingKeys(&request))
 	return len(scope.blocking(c.tracker.ActiveFindings(c.healthDetectorIDs, nil))) == 0
 }
 
@@ -103,11 +97,11 @@ func (c *Controller) observeRecoveryHealth(ctx context.Context, now time.Time, s
 	scope := c.recoveryScope()
 	for i, id := range pending {
 		read := reads[id]
-		c.recordRecoveryObservation(id, now, read.findings, read.status, read.err, detectorConfirmationReason(detectors[i], snapshot), scope)
+		c.recordRecoveryObservation(ctx, id, now, read.findings, read.status, read.err, detectorConfirmationReason(detectors[i], snapshot), scope)
 	}
 }
 
-func (c *Controller) recordRecoveryObservation(id string, now time.Time, findings []sdk.Finding, status DetectorEvaluationStatus, err error, reason string, scope recoveryScope) {
+func (c *Controller) recordRecoveryObservation(ctx context.Context, id string, now time.Time, findings []sdk.Finding, status DetectorEvaluationStatus, err error, reason string, scope recoveryScope) {
 	states, _ := c.latestEvaluations([]string{id}, time.Time{}, false)
 	if len(states) > 0 && states[0].EvaluatedAt.Equal(now) && states[0].Status == status {
 		return
@@ -127,13 +121,7 @@ func (c *Controller) recordRecoveryObservation(id string, now time.Time, finding
 			spec := detector.Spec()
 			c.recordFiring(spec, now, findings, changes)
 			for _, finding := range changes.Activated {
-				if c.mergeIntoOpenIncident(finding) || c.attachBeforeLaunch([]sdk.Finding{finding}) {
-					continue
-				}
-				if spec.Class != "" && !severityAtLeast(finding.Severity, spec.Batching.Severity) {
-					continue
-				}
-				c.batcher.AddAtWithDebounce(finding, now, spec.Batching.Debounce)
+				c.admitActivation(ctx, finding, now, spec)
 			}
 		}
 	}

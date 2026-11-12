@@ -10,8 +10,13 @@ workload state: failed, stuck, crashing, or unready pods and Deployments that
 do not reach their desired availability. It reports workloads, not Services;
 servicehealth covers Services without ready endpoints.
 
-Every age is measured against sdk.ObservationTime, never the wall clock,
-so one snapshot always yields the same findings.
+Every rule except progress-deadline-exceeded reports a condition only once it
+outlived Kubernetes' own self-healing: it has held for the context's self-heal
+hold (sdk.HeldPastSelfHeal), measured from a Kubernetes timestamp. Ages use
+sdk.ObservationTime, never the wall clock, so one snapshot always yields the
+same findings. Container waiting states and not-ready are held from the Pod's
+ContainersReady=False transition, since a waiting state has no timestamp of its
+own.
 
 CONSTANTS
 
@@ -20,10 +25,10 @@ const (
 	RulePodFailed = "workload-pod-failed"
 	// RulePodUnknown: the kubelet stopped reporting a pod (phase Unknown).
 	RulePodUnknown = "workload-pod-unknown"
-	// RulePodPending: a scheduled pod stayed Pending past PendingGrace.
+	// RulePodPending: a pod stayed Pending past the hold since creation.
 	RulePodPending = "workload-pod-pending"
-	// RulePodUnschedulable: a pod stayed Pending past PendingGrace because
-	// the scheduler found no node (PodScheduled=False, Unschedulable).
+	// RulePodUnschedulable: a pod stayed Pending because the scheduler found
+	// no node (PodScheduled=False, Unschedulable) past the hold.
 	RulePodUnschedulable = "workload-pod-unschedulable"
 	// RuleCrashLooping: a container waits in CrashLoopBackOff.
 	RuleCrashLooping = "workload-container-crash-looping"
@@ -34,27 +39,20 @@ const (
 	RuleConfigError = "workload-container-config-error"
 	// RuleWaiting: a container waits for any other non-startup reason.
 	RuleWaiting = "workload-container-waiting"
-	// RuleOOMKilled: a container is, or within RestartWindow was, OOMKilled.
-	RuleOOMKilled = "workload-container-oom-killed"
-	// RuleTerminatedError: a container's current state is terminated with a
-	// reason other than Completed.
-	RuleTerminatedError = "workload-container-terminated-error"
-	// RuleNotReady: a running container of a Running pod is unready past
-	// NotReadyGrace after it started.
+	// RuleNotReady: a running container of a Running pod is unready.
 	RuleNotReady = "workload-container-not-ready"
-	// RuleInitStuck: an init container has not completed within
-	// InitContainerGrace.
+	// RuleInitStuck: an init container has not completed.
 	RuleInitStuck = "workload-init-container-stuck"
-	// RuleRestartChurn: a container restarted at least RestartThreshold times,
-	// last terminated within RestartWindow, and has not since run ready for
-	// NotReadyGrace.
-	RuleRestartChurn = "workload-container-restart-churn"
-	// RuleDeploymentUnavailable: a Deployment has fewer available replicas
-	// than desired past DeploymentGrace since its last progress, and no pod
-	// finding explains it.
+	// RuleDeploymentUnavailable: a Deployment reports Available=False with
+	// fewer available replicas than desired, and no pod finding explains it.
 	RuleDeploymentUnavailable = "workload-deployment-unavailable"
+	// RuleReplicaFailure: a Deployment reports ReplicaFailure=True (a Pod
+	// create was refused). Set on the first failed create, so it is held like
+	// every other condition.
+	RuleReplicaFailure = "workload-deployment-replica-failure"
 	// RuleProgressDeadlineExceeded: a Deployment reports Progressing=False
-	// with reason ProgressDeadlineExceeded.
+	// with reason ProgressDeadlineExceeded, Kubernetes' own give-up signal.
+	// It is not held.
 	RuleProgressDeadlineExceeded = "workload-deployment-progress-deadline-exceeded"
 )
     Rule IDs are stable. A finding is emitted once per rule and primary
@@ -68,10 +66,7 @@ const RulePodAdmissionRejected = "pod-admission-rejected"
 FUNCTIONS
 
 func NewDetector(spec sdk.DetectorSpec) sdk.Detector
-    NewDetector returns the workload health detector with DefaultPolicy.
-
-func NewDetectorWithPolicy(spec sdk.DetectorSpec, policy Policy) (sdk.Detector, error)
-    NewDetectorWithPolicy returns the workload health detector with policy.
+    NewDetector returns the workload health detector.
 
 func NewPodAdmissionDetector(spec sdk.DetectorSpec) sdk.Detector
     NewPodAdmissionDetector checks admission independently of existing Pod
@@ -80,33 +75,4 @@ func NewPodAdmissionDetector(spec sdk.DetectorSpec) sdk.Detector
 
 func Watches() []sdk.WatchKind
     Watches are the resources whose changes can change the verdict.
-
-
-TYPES
-
-type Policy struct {
-	// PendingGrace is how long a pod may stay Pending after creation.
-	PendingGrace time.Duration
-	// NotReadyGrace is how long a started container may stay unready, and
-	// how long a restarted container must run ready to count as recovered.
-	NotReadyGrace time.Duration
-	// InitContainerGrace is how long an init container may take.
-	InitContainerGrace time.Duration
-	// DeploymentGrace is how long a Deployment may stay below its desired
-	// availability after its last recorded progress.
-	DeploymentGrace time.Duration
-	// RestartWindow bounds how recent a last termination must be to count
-	// for restart churn and for a past OOM kill.
-	RestartWindow time.Duration
-	// RestartThreshold is the restart count at which recent restarts churn.
-	RestartThreshold int32
-}
-    Policy holds the detector's thresholds. All durations are measured against
-    the snapshot's observation time.
-
-func DefaultPolicy() Policy
-    DefaultPolicy returns the thresholds the generic health detector uses.
-
-func (p Policy) Validate() error
-    Validate rejects non-positive thresholds.
 ```

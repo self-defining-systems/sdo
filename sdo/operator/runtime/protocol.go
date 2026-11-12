@@ -54,6 +54,10 @@ type PriorOutcomeEvidence struct {
 }
 
 type IncidentRequest struct {
+	// OpeningKeys are the finding keys of the alerts the incident opened on:
+	// failing user tests or held Kubernetes conditions (opens). Recovery is
+	// judged on them alone; every other finding in Findings is a clue.
+	OpeningKeys            []string
 	ExternalMessage        string
 	Telemetry              *contracts.TelemetryContext
 	DisabledSetupDetectors []*contracts.DisabledSetupDetector
@@ -248,12 +252,12 @@ type IncidentClosure struct {
 	CleanedHelpers []string // UnconfirmedReason is set when the closure-time recheck never saw a
 	// complete observation window within its bound: the closure commits as
 	// unverified (final states moved to partial) instead of being superseded.
-	UnconfirmedReason       contracts.ClosureUnconfirmedReason
-	UnconfirmedDetail       string
+	UnconfirmedReason contracts.ClosureUnconfirmedReason
+	UnconfirmedDetail string
 	// RecoveryVerification is the closure's recovered test: each faulted
 	// component's verification set, its strength and whether it recovered
 	// after SDO's last write settled. nil when it was not computed.
-	RecoveryVerification *contracts.RecoveryVerification
+	RecoveryVerification    *contracts.RecoveryVerification
 	StatePersistenceFailure *contracts.StatePersistenceFailure
 	// SourceCheckNotes lists what the accepted-source checks found when the
 	// closure committed: checks that were unavailable, and objects that still

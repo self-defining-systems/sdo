@@ -43,13 +43,11 @@ scenarios, workloads and links.
   Jobs, overdue CronJobs.
 - `warning-events`: lasting mount, scheduling, back-off, probe, eviction and OOM warnings on application objects
   that are unhealthy now; a Ready or completed pod has none.
-- `node-health`: nodes running application pods that are NotReady or under memory, disk or PID pressure.
+- `node-health`: nodes running application pods that stay NotReady past the self-heal hold.
 - `resource-saturation`: memory working set above 90% of its limit, PVC bytes or inodes above 90% or forecast
   to run out (CPU throttling only when enabled).
-- `runtime-crashes`: Go panics, Python tracebacks, Java fatal errors and segfaults in a crashed or running
-  container's logs, with its last lines as evidence.
-- Controller drift: live fields that differ from the accepted source, and foreign changes. These open their own
-  incidents.
+- Controller drift: live fields that differ from the accepted source, and foreign changes. These are clues: they
+  never open an incident.
 
 Spend your detectors on what only the source can tell: the layers below list those.
 
@@ -116,7 +114,7 @@ detector so the observed value, limit and window are in Evidence.
 ## 7. Logs (Logs, warn)
 
 - Known-bad lines: patterns built from the error strings the source logs (`log.Error` calls and fatal paths).
-  `runtime-crashes` already covers generic panics, tracebacks and segfaults. Fire on `logs.Appeared`, so a line
+  Fire on `logs.Appeared`, so a line
   that also appears while healthy never pages.
 - Error rate: `logs.Rate` of error-level lines above the healthy rate. With truncated evidence the rate is a
   lower bound: a high value still counts, a low one proves nothing.

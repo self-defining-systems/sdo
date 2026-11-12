@@ -196,6 +196,7 @@ type Controller struct {
 	incidentView                       *IncidentView
 	broker                             IncidentBroker
 	gitRead                            gitRead
+	openers                            openers
 	workspaceResults                   chan workspaceCompletion
 	closureResults                     chan closureCompletion
 	acknowledgmentResults              chan acknowledgmentCompletion
@@ -485,7 +486,6 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		c.refreshIncidentView(now, false)
 		return nil
 	}
-	c.attachPendingDrift()
 	if err := c.prepareSourceInventory(ctx); err != nil {
 		return err
 	}
@@ -640,21 +640,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		}
 		c.mu.Unlock()
 		for _, finding := range changes.Activated {
-			if c.mergeIntoOpenIncident(finding) || c.attachLearnedActivation(ctx, finding) {
-				continue
-			}
-			batchSpec := c.detectorSpecs[spec.ID]
-			if batchSpec.Class != "" && !severityAtLeast(finding.Severity, batchSpec.Batching.Severity) {
-				continue
-			}
-			if c.attachBeforeLaunch([]sdk.Finding{finding}) {
-				continue
-			}
-			if batchSpec.Class == "" {
-				c.batcher.AddAt(finding, now)
-			} else {
-				c.batcher.AddAtWithDebounce(finding, now, batchSpec.Batching.Debounce)
-			}
+			c.admitActivation(ctx, finding, now, c.detectorSpecs[spec.ID])
 		}
 		c.recordFiring(spec, now, validFindings, changes)
 	}
@@ -711,15 +697,27 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	return err
 }
 
-// quiet reports that nothing is wrong or pending: no incident or closure,
-// no active or pending finding, and nothing waiting in the batcher. Only a
+// quiet reports that nothing is wrong or pending: no incident or closure, no
+// active or confirming opener, and nothing waiting in the batcher. Clues do
+// not count: a persistent clue must not stall the healthy baselines. Only a
 // quiet state may become the configuration baseline.
 func (c *Controller) quiet() bool {
 	c.mu.Lock()
 	busy := c.incidentOpen || c.closureBlocksNextLocked()
 	c.mu.Unlock()
 	_, batched := c.batcher.Deadline()
-	return !busy && !batched && c.tracker.Quiet()
+	return !busy && !batched && !c.openerFiring("")
+}
+
+// openerFiring reports whether the tracker holds an active or confirming
+// opener, of detectorID or, when it is empty, of any detector.
+func (c *Controller) openerFiring(detectorID string) bool {
+	for _, state := range c.tracker.Snapshot() {
+		if (state.Active || state.FiringCount > 0) && (detectorID == "" || state.DetectorID == detectorID) && c.opens(state.Finding) {
+			return true
+		}
+	}
+	return false
 }
 
 // EvaluateAll evaluates every detector against one fresh snapshot, for example
@@ -728,6 +726,32 @@ func (c *Controller) EvaluateAll(ctx context.Context, now time.Time) error {
 	c.adoptionNeeded = c.drift != nil && c.drift.Source != nil && c.drift.Client != nil
 	c.scheduler.ExpediteAll(now)
 	return c.StepEvents(ctx, now, nil)
+}
+
+// admitActivation is the one entry for a newly active finding. A finding
+// already in the open incident is refreshed; a clue joins the incident before
+// launch, or as a learned playbook's activation after it, and otherwise stays
+// tracked only. An opener joins the incident's opening alerts before launch
+// and otherwise waits in the batcher for the next incident.
+func (c *Controller) admitActivation(ctx context.Context, finding sdk.Finding, now time.Time, spec sdk.DetectorSpec) {
+	if c.mergeIntoOpenIncident(finding) {
+		return
+	}
+	if !c.opens(finding) {
+		if !c.attachBeforeLaunch([]sdk.Finding{finding}, false) {
+			c.attachLearnedActivation(ctx, finding)
+		}
+		return
+	}
+	// A later opener never joins a launched incident: it opens the next one.
+	if c.attachBeforeLaunch([]sdk.Finding{finding}, true) {
+		return
+	}
+	if spec.Class == "" {
+		c.batcher.AddAt(finding, now)
+		return
+	}
+	c.batcher.AddAtWithDebounce(finding, now, spec.Batching.Debounce)
 }
 
 func (c *Controller) mergeIntoOpenIncident(finding sdk.Finding) bool {
@@ -755,7 +779,8 @@ func (c *Controller) mergeIntoOpenIncident(finding sdk.Finding) bool {
 // responder has never been launched. The request is still only controller
 // state, so the responder receives one incident with all corroborating
 // evidence instead of the later finding waiting in the batcher until closure.
-func (c *Controller) attachBeforeLaunch(findings []sdk.Finding) bool {
+// Openers also join the incident's opening alerts; clues never do.
+func (c *Controller) attachBeforeLaunch(findings []sdk.Finding, opening bool) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.canAttachBeforeLaunchLocked() {
@@ -768,7 +793,12 @@ func (c *Controller) attachBeforeLaunch(findings []sdk.Finding) bool {
 	}
 	for _, finding := range findings {
 		finding.Fingerprint = FindingFingerprint(finding)
-		if _, ok := existing[FindingStateKey(finding.DetectorID, finding.Fingerprint)]; ok {
+		key := FindingStateKey(finding.DetectorID, finding.Fingerprint)
+		if opening && !slices.Contains(request.OpeningKeys, key) {
+			request.OpeningKeys = append(request.OpeningKeys, key)
+			sort.Strings(request.OpeningKeys)
+		}
+		if _, ok := existing[key]; ok {
 			continue
 		}
 		request.Findings = append(request.Findings, finding)
@@ -810,7 +840,7 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 		attachable := c.canAttachBeforeLaunchLocked()
 		c.mu.Unlock()
 		if attachable && c.batcher.Ready(now) {
-			c.attachBeforeLaunch(c.batcher.DrainReady(now))
+			c.attachBeforeLaunch(c.batcher.DrainReady(now), true)
 		}
 		return nil
 	}
@@ -831,13 +861,12 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 	if len(batch) == 0 {
 		return nil
 	}
-	// Drift is already confirmed when queued; its window only coalesces
-	// drift-only incidents. A health incident must not leave it behind.
-	if hasNonDriftFinding(batch) {
-		batch = append(batch, c.batcher.DrainDetectorPrefix("drift.")...)
-		sortFindings(batch)
-	}
+	// The batch holds only openers. The clues active now join as evidence.
+	opening := findingKeys(batch)
+	batch = append(batch, c.activeClues(batch)...)
+	sortFindings(batch)
 	request := c.incidentRequest(now, batch)
+	request.OpeningKeys = opening
 	request.ObservationGeneration = observationGeneration(snapshot)
 	if c.Baseline != nil {
 		request.StateChanges = cloneStateChanges(c.Baseline.Changes(now))
@@ -934,15 +963,6 @@ func (c *Controller) captureOpenDetect(ctx context.Context, snapshot sdk.Detecti
 	})
 }
 
-func hasNonDriftFinding(findings []sdk.Finding) bool {
-	for _, finding := range findings {
-		if !strings.HasPrefix(finding.DetectorID, "drift.") {
-			return true
-		}
-	}
-	return false
-}
-
 // playbookIDs flattens surfaced playbooks to logical IDs for telemetry.
 func playbookIDs(playbooks []SurfacedPlaybook) []string {
 	if len(playbooks) == 0 {
@@ -955,12 +975,6 @@ func playbookIDs(playbooks []SurfacedPlaybook) []string {
 	return ids
 }
 
-func severityAtLeast(actual sdk.FindingSeverity, threshold sdk.FindingSeverity) bool {
-	rank := map[sdk.FindingSeverity]int{
-		sdk.SeverityInfo: 1, sdk.SeverityWarning: 2, sdk.SeverityCritical: 3, sdk.SeverityLatent: 3,
-	}
-	return rank[actual] >= rank[threshold]
-}
 
 // goBackground runs work on a goroutine that Wait joins. Every goroutine an
 // effect starts goes through here, so no write outlives the caller.
@@ -1416,7 +1430,6 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		c.verificationDeadline = c.verificationDeadlineLocked()
 	}
 	early := !c.responderDone
-	driftOnly := early && c.driftOnlyIncidentLocked()
 	requiresStability := early || c.codePath != nil && c.codePath.Selection.DetectorSource == "shell"
 	if early && c.responseStagesRunning || !early && c.closurePreparingLocked() {
 		c.mu.Unlock()
@@ -1428,8 +1441,8 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	}
 	loop := c.responderLoop
 	c.mu.Unlock()
-	// Keep observing while drift-only responses and the optional extra turn run.
-	waitForResponder := early && (driftOnly || loop.driftRepromptPending())
+	// Keep observing while the optional extra turn runs.
+	waitForResponder := early && loop.driftRepromptPending()
 	var guard *apihistory.MutationObservation
 	release := func() {}
 	safe := true
@@ -2254,20 +2267,6 @@ func (c *Controller) actionContext(ctx context.Context) (context.Context, contex
 	}
 	actionCtx, cancel := context.WithCancel(ctx)
 	return actionCtx, cancel, nil
-}
-
-// driftOnlyIncidentLocked reports whether the open incident has no finding
-// other than drift. Caller holds c.mu.
-func (c *Controller) driftOnlyIncidentLocked() bool {
-	if c.currentIncidentRequest == nil || len(c.currentIncidentRequest.Findings) == 0 {
-		return false
-	}
-	for _, finding := range c.currentIncidentRequest.Findings {
-		if !strings.HasPrefix(finding.DetectorID, "drift.") {
-			return false
-		}
-	}
-	return true
 }
 
 func (c *Controller) hasRetainedDrift() bool {

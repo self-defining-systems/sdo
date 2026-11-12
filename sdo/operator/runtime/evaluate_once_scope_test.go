@@ -92,9 +92,10 @@ func TestEvaluateOnceRefusesUnreadableImagePins(t *testing.T) {
 }
 
 // The gate leaves ordinary detection alone: after the advance, a real fault
-// seen by an incident detector still opens an incident through the controller.
-func TestIncidentDetectorStillOpensAnIncidentThroughOrdinaryDetection(t *testing.T) {
-	fault := classedDetector("deployment-image-drift", sdk.DetectorClassIncident, true)
+// seen by a Kubernetes condition detector still opens an incident through the
+// controller.
+func TestConditionDetectorStillOpensAnIncidentThroughOrdinaryDetection(t *testing.T) {
+	fault := classedDetector("workload-health", sdk.DetectorClassHealth, true)
 	dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
 	controller, err := NewController(testControllerConfig(), []sdk.Detector{fault}, staticProvider{snapshot: sdktest.Snapshot{}}, dispatcher, time.Unix(0, 0))
 	if err != nil {
@@ -108,7 +109,7 @@ func TestIncidentDetectorStillOpensAnIncidentThroughOrdinaryDetection(t *testing
 	}
 	executePendingEffect(t, controller)
 	request := awaitRequest(t, dispatcher.requests)
-	if len(request.Findings) == 0 || request.Findings[0].DetectorID != "deployment-image-drift" {
-		t.Fatalf("incident request = %+v, want the incident detector's finding", request)
+	if len(request.Findings) == 0 || request.Findings[0].DetectorID != "workload-health" {
+		t.Fatalf("incident request = %+v, want the condition detector's finding", request)
 	}
 }

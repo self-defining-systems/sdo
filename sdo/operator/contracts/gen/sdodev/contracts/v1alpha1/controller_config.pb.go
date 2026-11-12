@@ -124,7 +124,10 @@ type ControllerConfig struct {
 	// Required at startup, independently of the optional traffic prober image.
 	ToolchainImage         string               `protobuf:"bytes,75,opt,name=toolchain_image,json=toolchainImage,proto3" json:"toolchain_image,omitempty"`
 	ClosureStabilityWindow *durationpb.Duration `protobuf:"bytes,76,opt,name=closure_stability_window,json=closureStabilityWindow,proto3" json:"closure_stability_window,omitempty"`
-	ResponderReportGrace   *durationpb.Duration `protobuf:"bytes,77,opt,name=responder_report_grace,json=responderReportGrace,proto3" json:"responder_report_grace,omitempty"`
+	// How long a Kubernetes failure condition without its own give-up signal
+	// must hold before it opens an incident. Unset uses the controller default.
+	SelfHealHold         *durationpb.Duration `protobuf:"bytes,119,opt,name=self_heal_hold,json=selfHealHold,proto3" json:"self_heal_hold,omitempty"`
+	ResponderReportGrace *durationpb.Duration `protobuf:"bytes,77,opt,name=responder_report_grace,json=responderReportGrace,proto3" json:"responder_report_grace,omitempty"`
 	// Pre-start one idle responder; false forces the ordinary cold Job path.
 	ResponderStandby *bool `protobuf:"varint,78,opt,name=responder_standby,json=responderStandby,proto3,oneof" json:"responder_standby,omitempty"`
 	// Fixed tool image for application-local RunScript Jobs.
@@ -578,6 +581,13 @@ func (x *ControllerConfig) GetClosureStabilityWindow() *durationpb.Duration {
 	return nil
 }
 
+func (x *ControllerConfig) GetSelfHealHold() *durationpb.Duration {
+	if x != nil {
+		return x.SelfHealHold
+	}
+	return nil
+}
+
 func (x *ControllerConfig) GetResponderReportGrace() *durationpb.Duration {
 	if x != nil {
 		return x.ResponderReportGrace
@@ -961,7 +971,7 @@ var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDesc
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\x1a1sdodev/contracts/v1alpha1/deployment_source.proto\"\xa6#\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\x1a1sdodev/contracts/v1alpha1/deployment_source.proto\"\xf1#\n" +
 	"\x10ControllerConfig\x12,\n" +
 	"\x12memory_host_binary\x18R \x01(\tR\x10memoryHostBinary\x12,\n" +
 	"\x12memory_host_digest\x18S \x01(\tR\x10memoryHostDigest\x12%\n" +
@@ -1024,7 +1034,8 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\x12drift_batch_window\x18B \x01(\v2\x19.google.protobuf.DurationR\x10driftBatchWindow\x12)\n" +
 	"\x10force_reflection\x18> \x01(\bR\x0fforceReflection\x12'\n" +
 	"\x0ftoolchain_image\x18K \x01(\tR\x0etoolchainImage\x12S\n" +
-	"\x18closure_stability_window\x18L \x01(\v2\x19.google.protobuf.DurationR\x16closureStabilityWindow\x12O\n" +
+	"\x18closure_stability_window\x18L \x01(\v2\x19.google.protobuf.DurationR\x16closureStabilityWindow\x12I\n" +
+	"\x0eself_heal_hold\x18w \x01(\v2\x19.google.protobuf.DurationB\b\xbaH\x05\xaa\x01\x02*\x00R\fselfHealHold\x12O\n" +
 	"\x16responder_report_grace\x18M \x01(\v2\x19.google.protobuf.DurationR\x14responderReportGrace\x120\n" +
 	"\x11responder_standby\x18N \x01(\bH\x03R\x10responderStandby\x88\x01\x01\x12!\n" +
 	"\fscript_image\x18O \x01(\tR\vscriptImage\x12R\n" +
@@ -1104,21 +1115,22 @@ var file_sdodev_contracts_v1alpha1_controller_config_proto_depIdxs = []int32{
 	5,  // 8: sdodev.contracts.v1alpha1.ControllerConfig.diagnosis_deadline:type_name -> google.protobuf.Duration
 	5,  // 9: sdodev.contracts.v1alpha1.ControllerConfig.drift_batch_window:type_name -> google.protobuf.Duration
 	5,  // 10: sdodev.contracts.v1alpha1.ControllerConfig.closure_stability_window:type_name -> google.protobuf.Duration
-	5,  // 11: sdodev.contracts.v1alpha1.ControllerConfig.responder_report_grace:type_name -> google.protobuf.Duration
-	2,  // 12: sdodev.contracts.v1alpha1.ControllerConfig.memory_upstream:type_name -> sdodev.contracts.v1alpha1.MemoryUpstream
-	3,  // 13: sdodev.contracts.v1alpha1.ControllerConfig.code_path:type_name -> sdodev.contracts.v1alpha1.CodePathConfig
-	6,  // 14: sdodev.contracts.v1alpha1.ControllerConfig.render_environment:type_name -> sdodev.contracts.v1alpha1.RenderEnvironment
-	7,  // 15: sdodev.contracts.v1alpha1.ControllerConfig.deployment_policy:type_name -> sdodev.contracts.v1alpha1.DeploymentPolicy
-	1,  // 16: sdodev.contracts.v1alpha1.ControllerConfig.deploy_identity:type_name -> sdodev.contracts.v1alpha1.DeployIdentity
-	5,  // 17: sdodev.contracts.v1alpha1.DeployIdentity.build_timeout:type_name -> google.protobuf.Duration
-	5,  // 18: sdodev.contracts.v1alpha1.DeployIdentity.build_budget:type_name -> google.protobuf.Duration
-	5,  // 19: sdodev.contracts.v1alpha1.DeployIdentity.rollout_timeout:type_name -> google.protobuf.Duration
-	4,  // 20: sdodev.contracts.v1alpha1.CodePathConfig.overrides:type_name -> sdodev.contracts.v1alpha1.CodePathOverrides
-	21, // [21:21] is the sub-list for method output_type
-	21, // [21:21] is the sub-list for method input_type
-	21, // [21:21] is the sub-list for extension type_name
-	21, // [21:21] is the sub-list for extension extendee
-	0,  // [0:21] is the sub-list for field type_name
+	5,  // 11: sdodev.contracts.v1alpha1.ControllerConfig.self_heal_hold:type_name -> google.protobuf.Duration
+	5,  // 12: sdodev.contracts.v1alpha1.ControllerConfig.responder_report_grace:type_name -> google.protobuf.Duration
+	2,  // 13: sdodev.contracts.v1alpha1.ControllerConfig.memory_upstream:type_name -> sdodev.contracts.v1alpha1.MemoryUpstream
+	3,  // 14: sdodev.contracts.v1alpha1.ControllerConfig.code_path:type_name -> sdodev.contracts.v1alpha1.CodePathConfig
+	6,  // 15: sdodev.contracts.v1alpha1.ControllerConfig.render_environment:type_name -> sdodev.contracts.v1alpha1.RenderEnvironment
+	7,  // 16: sdodev.contracts.v1alpha1.ControllerConfig.deployment_policy:type_name -> sdodev.contracts.v1alpha1.DeploymentPolicy
+	1,  // 17: sdodev.contracts.v1alpha1.ControllerConfig.deploy_identity:type_name -> sdodev.contracts.v1alpha1.DeployIdentity
+	5,  // 18: sdodev.contracts.v1alpha1.DeployIdentity.build_timeout:type_name -> google.protobuf.Duration
+	5,  // 19: sdodev.contracts.v1alpha1.DeployIdentity.build_budget:type_name -> google.protobuf.Duration
+	5,  // 20: sdodev.contracts.v1alpha1.DeployIdentity.rollout_timeout:type_name -> google.protobuf.Duration
+	4,  // 21: sdodev.contracts.v1alpha1.CodePathConfig.overrides:type_name -> sdodev.contracts.v1alpha1.CodePathOverrides
+	22, // [22:22] is the sub-list for method output_type
+	22, // [22:22] is the sub-list for method input_type
+	22, // [22:22] is the sub-list for extension type_name
+	22, // [22:22] is the sub-list for extension extendee
+	0,  // [0:22] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_controller_config_proto_init() }

@@ -151,6 +151,9 @@ type Snapshot struct {
 	NetworkPolicyList  []networkingv1.NetworkPolicy            `json:"networkPolicies,omitempty"`
 	EventList          []corev1.Event                          `json:"events,omitempty"`
 	ObservedAtTime     *time.Time                              `json:"observedAt,omitempty"`
+	// SelfHealHoldTime is the controller's self-heal hold at capture; nil
+	// replays with sdk.DefaultSelfHealHold.
+	SelfHealHoldTime *time.Duration `json:"selfHealHold,omitempty"`
 	// Traffic holds synthetic-traffic observations by workload name.
 	Traffic map[string]traffic.Window `json:"traffic,omitempty"`
 	// Metrics holds frozen metric query results by query ID.
@@ -216,8 +219,4 @@ func (s Snapshot) Events() []corev1.Event
 func (s Snapshot) HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutoscaler
 
 func (s Snapshot) Ingresses() []networkingv1.Ingress
-
-func (s Snapshot) Jobs() []batchv1.Job
-
-func (s Snapshot) KubernetesRead(q program.KubernetesRequest) (json.RawMessage, error)
 ```

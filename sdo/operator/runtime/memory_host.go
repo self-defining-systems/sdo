@@ -8,6 +8,7 @@ import (
 	"sort"
 	"time"
 
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -265,6 +266,9 @@ func (r *RemoteMemory) buildObservation(view sdk.DetectionContext) (*pb.MemoryOb
 		if err := out.ObservedAt.CheckValid(); err != nil {
 			return nil, err
 		}
+	}
+	if hold := source.SelfHealHold(); hold > 0 {
+		out.SelfHealHold = durationpb.New(hold)
 	}
 	var err error
 	if len(source.ObservationStatuses()) > 0 {

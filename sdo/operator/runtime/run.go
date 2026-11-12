@@ -21,6 +21,7 @@ import (
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/builder"
 	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/install"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk/inputs"
 
@@ -247,6 +248,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	leaseDuration := flags.Duration("lease-duration", 60*time.Second, "leader-election Lease duration")
 	identity := flags.String("identity", defaultIdentity(), "unique leader-election identity")
 	closureStability := flags.Duration("closure-stability-window", 15*time.Second, "stable independent verification required to close a running incident")
+	selfHealHold := flags.Duration("self-heal-hold", sdk.DefaultSelfHealHold, "how long a Kubernetes failure condition without its own give-up signal must hold before it opens an incident (self_heal_hold)")
 	reportGrace := flags.Duration("responder-report-grace", 30*time.Second, "deprecated compatibility setting; verified recovery does not wait for final narration")
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "exit after one closure is durably acknowledged")
 	frozenMemory := flags.Bool("frozen-memory", false, "keep closure evidence private and disable learning")
@@ -366,8 +368,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		options.NativeBroker.ForceReflection = true
 	}
 
-	if *maxResponseLoops < 1 || *diagnosisDeadline <= 0 || *driftBatchWindow <= 0 {
-		return errors.New("response loops, diagnosis deadline and drift batch window must be positive")
+	if *maxResponseLoops < 1 || *diagnosisDeadline <= 0 || *driftBatchWindow <= 0 || *selfHealHold <= 0 {
+		return errors.New("response loops, diagnosis deadline, drift batch window and self-heal hold must be positive")
 	}
 	if *controlNamespace == "" {
 		*controlNamespace = *namespace
@@ -534,7 +536,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	kubernetesCache, err := NewKubernetesCache(KubernetesCacheConfig{
 		AcceptedScope: func(ctx context.Context) (sdk.ObservationScope, string, error) {
 			return acceptedScope(ctx, resolvedRoot)
-		}, GenericCapture: genericCapture, Scope: scope, Ceiling: ceiling, Generation: scopeCommit, Namespace: *namespace, Client: bootstrapProvider.Client, StateConfigMapName: stateConfigMapName, TrackDrift: true, Clock: clock.Now, TimerClock: clock, ResyncPeriod: options.InformerResync,
+		}, GenericCapture: genericCapture, Scope: scope, Ceiling: ceiling, Generation: scopeCommit, Namespace: *namespace, Client: bootstrapProvider.Client, StateConfigMapName: stateConfigMapName, TrackDrift: true, SelfHealHold: *selfHealHold, Clock: clock.Now, TimerClock: clock, ResyncPeriod: options.InformerResync,
 	}, detectors)
 	if err != nil {
 		return fmt.Errorf("create Kubernetes informer cache: %w", err)
@@ -864,6 +866,12 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	// Registered before the run context's cancel, so it runs after it: the
 	// caller may remove the repository mount once this function returns.
 	defer controller.Wait()
+	// Accepted-map reads (openers, closure verification) share the plan
+	// source's git edge.
+	controller.gitRead = lifecycleio.GitOutput
+	if options.PlanGit != nil {
+		controller.gitRead = options.PlanGit
+	}
 	if !*externalIncidents {
 		controller.ConfigureDrift(DriftControllerConfig{Inventory: true, Events: kubernetesCache, Source: planSource, Client: bootstrapProvider.Client, BatchWindow: *driftBatchWindow,
 			View: func(snapshot sdk.DetectionContext) program.ReadView {
@@ -1313,6 +1321,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		return err
 	}
 	maintenanceChanges := maintenance.Watch(runCtx, desired, *maintenancePollInterval, controller.OnError)
+	resets := install.ResetRequests{Client: bootstrapProvider.Client, Namespace: *controlNamespace}
+	resetRequests := watchResets(runCtx, resets, clock, *maintenancePollInterval, controller.OnError)
 	// A pause is a barrier the declaring side waits on: once the loop observes
 	// nothing and every in-flight pass drained, the generation it stopped under
 	// is acknowledged. A failed acknowledgement is retried while paused.
@@ -1456,6 +1466,22 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return err
 			}
 			persistControllerState()
+		case generation, ok := <-resetRequests:
+			if stopTimerForRuntimeEvent(runCtx, timer) || !ok {
+				return nil
+			}
+			incidentID, err := controller.ResetIncidents(runCtx, clock.Now().UTC())
+			if err != nil {
+				controller.reportBrokerError("reset incidents", err)
+				continue
+			}
+			persistControllerState()
+			if err := encoder.Encode(map[string]any{"controller_reset": generation, "reset_incident_id": incidentID}); err != nil {
+				fmt.Fprintln(stderr, err)
+			}
+			if err := resets.Acknowledge(runCtx, generation); err != nil {
+				controller.reportBrokerError("acknowledge reset", err)
+			}
 		case change, ok := <-maintenanceChanges:
 			if stopTimerForRuntimeEvent(runCtx, timer) || !ok {
 				return nil

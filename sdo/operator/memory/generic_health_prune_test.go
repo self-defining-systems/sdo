@@ -110,3 +110,21 @@ func TestPrepareHealthBatchesLinkDetectorWarnings(t *testing.T) {
 		t.Fatalf("link detector does not batch warnings:\n%s", files.String())
 	}
 }
+
+// A tree accepted before runtime-crashes was retired still carries its
+// Go-installed package; preparation removes it.
+func TestPrepareHealthRemovesRetiredRuntimeCrashesDetector(t *testing.T) {
+	root := t.TempDir()
+	if err := writeGenericDetector(root, genericManifest("runtime-crashes", "30s", nil), "package synthetic\n"); err != nil {
+		t.Fatal(err)
+	}
+	if !detectorExists(root, "runtime-crashes") {
+		t.Fatal("fixture package was not written")
+	}
+	if err := PrepareHealth(root); err != nil {
+		t.Fatal(err)
+	}
+	if detectorExists(root, "runtime-crashes") {
+		t.Fatal("the retired runtime-crashes package survived preparation")
+	}
+}

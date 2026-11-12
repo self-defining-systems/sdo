@@ -3,13 +3,17 @@
 // that do not reach their desired availability. It reports workloads, not
 // Services; servicehealth covers Services without ready endpoints.
 //
-// Every age is measured against sdk.ObservationTime, never the wall clock, so
-// one snapshot always yields the same findings.
+// Every rule except progress-deadline-exceeded reports a condition only once
+// it outlived Kubernetes' own self-healing: it has held for the context's
+// self-heal hold (sdk.HeldPastSelfHeal), measured from a Kubernetes timestamp.
+// Ages use sdk.ObservationTime, never the wall clock, so one snapshot always
+// yields the same findings. Container waiting states and not-ready are held
+// from the Pod's ContainersReady=False transition, since a waiting state has
+// no timestamp of its own.
 package workloadhealth
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -30,10 +34,10 @@ const (
 	RulePodFailed = "workload-pod-failed"
 	// RulePodUnknown: the kubelet stopped reporting a pod (phase Unknown).
 	RulePodUnknown = "workload-pod-unknown"
-	// RulePodPending: a scheduled pod stayed Pending past PendingGrace.
+	// RulePodPending: a pod stayed Pending past the hold since creation.
 	RulePodPending = "workload-pod-pending"
-	// RulePodUnschedulable: a pod stayed Pending past PendingGrace because
-	// the scheduler found no node (PodScheduled=False, Unschedulable).
+	// RulePodUnschedulable: a pod stayed Pending because the scheduler found
+	// no node (PodScheduled=False, Unschedulable) past the hold.
 	RulePodUnschedulable = "workload-pod-unschedulable"
 	// RuleCrashLooping: a container waits in CrashLoopBackOff.
 	RuleCrashLooping = "workload-container-crash-looping"
@@ -44,27 +48,20 @@ const (
 	RuleConfigError = "workload-container-config-error"
 	// RuleWaiting: a container waits for any other non-startup reason.
 	RuleWaiting = "workload-container-waiting"
-	// RuleOOMKilled: a container is, or within RestartWindow was, OOMKilled.
-	RuleOOMKilled = "workload-container-oom-killed"
-	// RuleTerminatedError: a container's current state is terminated with a
-	// reason other than Completed.
-	RuleTerminatedError = "workload-container-terminated-error"
-	// RuleNotReady: a running container of a Running pod is unready past
-	// NotReadyGrace after it started.
+	// RuleNotReady: a running container of a Running pod is unready.
 	RuleNotReady = "workload-container-not-ready"
-	// RuleInitStuck: an init container has not completed within
-	// InitContainerGrace.
+	// RuleInitStuck: an init container has not completed.
 	RuleInitStuck = "workload-init-container-stuck"
-	// RuleRestartChurn: a container restarted at least RestartThreshold times,
-	// last terminated within RestartWindow, and has not since run ready for
-	// NotReadyGrace.
-	RuleRestartChurn = "workload-container-restart-churn"
-	// RuleDeploymentUnavailable: a Deployment has fewer available replicas
-	// than desired past DeploymentGrace since its last progress, and no pod
-	// finding explains it.
+	// RuleDeploymentUnavailable: a Deployment reports Available=False with
+	// fewer available replicas than desired, and no pod finding explains it.
 	RuleDeploymentUnavailable = "workload-deployment-unavailable"
+	// RuleReplicaFailure: a Deployment reports ReplicaFailure=True (a Pod
+	// create was refused). Set on the first failed create, so it is held like
+	// every other condition.
+	RuleReplicaFailure = "workload-deployment-replica-failure"
 	// RuleProgressDeadlineExceeded: a Deployment reports Progressing=False
-	// with reason ProgressDeadlineExceeded.
+	// with reason ProgressDeadlineExceeded, Kubernetes' own give-up signal.
+	// It is not held.
 	RuleProgressDeadlineExceeded = "workload-deployment-progress-deadline-exceeded"
 )
 
@@ -80,68 +77,13 @@ func Watches() []sdk.WatchKind {
 	}
 }
 
-// Policy holds the detector's thresholds. All durations are measured against
-// the snapshot's observation time.
-type Policy struct {
-	// PendingGrace is how long a pod may stay Pending after creation.
-	PendingGrace time.Duration
-	// NotReadyGrace is how long a started container may stay unready, and
-	// how long a restarted container must run ready to count as recovered.
-	NotReadyGrace time.Duration
-	// InitContainerGrace is how long an init container may take.
-	InitContainerGrace time.Duration
-	// DeploymentGrace is how long a Deployment may stay below its desired
-	// availability after its last recorded progress.
-	DeploymentGrace time.Duration
-	// RestartWindow bounds how recent a last termination must be to count
-	// for restart churn and for a past OOM kill.
-	RestartWindow time.Duration
-	// RestartThreshold is the restart count at which recent restarts churn.
-	RestartThreshold int32
-}
-
-// DefaultPolicy returns the thresholds the generic health detector uses.
-func DefaultPolicy() Policy {
-	return Policy{
-		PendingGrace: time.Minute, NotReadyGrace: time.Minute, InitContainerGrace: 2 * time.Minute,
-		DeploymentGrace: 2 * time.Minute, RestartWindow: 5 * time.Minute, RestartThreshold: 3,
-	}
-}
-
-// Validate rejects non-positive thresholds.
-func (p Policy) Validate() error {
-	var problems []error
-	for name, value := range map[string]time.Duration{
-		"PendingGrace": p.PendingGrace, "NotReadyGrace": p.NotReadyGrace, "InitContainerGrace": p.InitContainerGrace,
-		"DeploymentGrace": p.DeploymentGrace, "RestartWindow": p.RestartWindow,
-	} {
-		if value <= 0 {
-			problems = append(problems, fmt.Errorf("workload health policy %s must be positive, got %s", name, value))
-		}
-	}
-	if p.RestartThreshold <= 0 {
-		problems = append(problems, fmt.Errorf("workload health policy RestartThreshold must be positive, got %d", p.RestartThreshold))
-	}
-	sort.Slice(problems, func(left, right int) bool { return problems[left].Error() < problems[right].Error() })
-	return errors.Join(problems...)
-}
-
 type detector struct {
-	spec   sdk.DetectorSpec
-	policy Policy
+	spec sdk.DetectorSpec
 }
 
-// NewDetector returns the workload health detector with DefaultPolicy.
+// NewDetector returns the workload health detector.
 func NewDetector(spec sdk.DetectorSpec) sdk.Detector {
-	return detector{spec: spec, policy: DefaultPolicy()}
-}
-
-// NewDetectorWithPolicy returns the workload health detector with policy.
-func NewDetectorWithPolicy(spec sdk.DetectorSpec, policy Policy) (sdk.Detector, error) {
-	if err := policy.Validate(); err != nil {
-		return nil, err
-	}
-	return detector{spec: spec, policy: policy}, nil
+	return detector{spec: spec}
 }
 
 func (d detector) Spec() sdk.DetectorSpec { return d.spec }
@@ -200,10 +142,19 @@ func (e *evaluation) inNamespace(namespace string) bool {
 	return e.namespace == "" || namespace == e.namespace
 }
 
-// elapsed reports whether at least grace has passed since since. An unknown
-// start or observation time never proves a grace period has elapsed.
-func (e *evaluation) elapsed(since time.Time, grace time.Duration) bool {
-	return !since.IsZero() && !e.now.IsZero() && e.now.Sub(since) >= grace
+// held reports whether a condition holding since since outlived the
+// self-heal hold.
+func (e *evaluation) held(since time.Time) bool {
+	return sdk.HeldPastSelfHeal(e.ctx, since)
+}
+
+// podFalseSince is when a pod condition last turned False, or the pod's
+// creation when the condition is absent or not False.
+func podFalseSince(pod corev1.Pod, kind corev1.PodConditionType) time.Time {
+	if condition := podCondition(pod, kind); condition != nil && condition.Status != corev1.ConditionTrue && !condition.LastTransitionTime.IsZero() {
+		return condition.LastTransitionTime.Time
+	}
+	return pod.CreationTimestamp.Time
 }
 
 // owner resolves a pod's primary resource. ok is false when the pod belongs
@@ -250,24 +201,33 @@ func (e *evaluation) pod(pod corev1.Pod, succeededJobs map[string]bool) {
 		}
 		// A Failed pod of a fully available Deployment (an old eviction) has
 		// already been replaced; it is history, not current health.
-		if deployment != nil && deployment.Status.AvailableReplicas >= desiredReplicas(*deployment) {
+		if deployment != nil && deployment.Status.AvailableReplicas >= desiredReplicas(*deployment) || !e.held(podFalseSince(pod, corev1.PodReady)) {
 			return
 		}
 		add(RulePodFailed, "is in phase Failed"+podReason(pod)+terminations(pod)+e.events("Pod", pod.Name), pod.Status.Reason)
 		return
 	case corev1.PodUnknown:
+		if !e.held(podFalseSince(pod, corev1.PodReady)) {
+			return
+		}
 		add(RulePodUnknown, "is in phase Unknown"+podReason(pod)+e.events("Pod", pod.Name), pod.Status.Reason)
 		return
 	}
 	found := e.containers(pod, add)
-	if found || pod.Status.Phase != corev1.PodPending || !e.elapsed(pod.CreationTimestamp.Time, e.d.policy.PendingGrace) {
+	if found || pod.Status.Phase != corev1.PodPending {
 		return
 	}
 	created := pod.CreationTimestamp.UTC().Format(time.RFC3339)
 	if condition := podCondition(pod, corev1.PodScheduled); condition != nil &&
 		condition.Status == corev1.ConditionFalse && condition.Reason == corev1.PodReasonUnschedulable {
+		if !e.held(podFalseSince(pod, corev1.PodScheduled)) {
+			return
+		}
 		add(RulePodUnschedulable, fmt.Sprintf("is Pending since %s and Unschedulable: %s%s",
 			created, condition.Message, e.events("Pod", pod.Name)), corev1.PodReasonUnschedulable)
+		return
+	}
+	if !e.held(pod.CreationTimestamp.Time) {
 		return
 	}
 	add(RulePodPending, fmt.Sprintf("is Pending since %s%s%s", created, waitingSummary(pod), e.events("Pod", pod.Name)), "Pending")
@@ -289,88 +249,72 @@ func (e *evaluation) containers(pod corev1.Pod, add func(rule, item, reason stri
 			events, eventsLoaded = e.events("Pod", pod.Name), true
 		}
 		add(rule, fmt.Sprintf("%s %s %s%s%s", label, status.Name, detail, containerFacts(status), events), reason)
-		found = true
 	}
+	initialized := e.held(podFalseSince(pod, corev1.PodInitialized))
 	for _, status := range pod.Status.InitContainerStatuses {
 		label := "init container"
 		if sidecars[status.Name] {
 			label = "sidecar container"
 		}
-		if e.container(pod, status, label, report) || sidecars[status.Name] {
+		if e.container(pod, status, label, report) {
+			found = true
 			continue
 		}
-		if status.State.Running != nil && e.elapsed(status.State.Running.StartedAt.Time, e.d.policy.InitContainerGrace) {
-			report(RuleInitStuck, label, status, "has been running since "+
-				status.State.Running.StartedAt.UTC().Format(time.RFC3339)+" without completing", "InitContainerRunning")
-		} else if status.State.Waiting != nil && e.elapsed(pod.CreationTimestamp.Time, e.d.policy.InitContainerGrace) {
-			report(RuleInitStuck, label, status, "is still waiting ("+status.State.Waiting.Reason+")", status.State.Waiting.Reason)
+		if sidecars[status.Name] {
+			continue
+		}
+		if status.State.Running != nil {
+			found = true
+			if initialized {
+				report(RuleInitStuck, label, status, "has been running since "+
+					status.State.Running.StartedAt.UTC().Format(time.RFC3339)+" without completing", "InitContainerRunning")
+			}
+		} else if status.State.Waiting != nil {
+			found = true
+			if initialized {
+				report(RuleInitStuck, label, status, "is still waiting ("+status.State.Waiting.Reason+")", status.State.Waiting.Reason)
+			}
 		}
 	}
 	for _, status := range pod.Status.ContainerStatuses {
-		e.container(pod, status, "container", report)
+		found = e.container(pod, status, "container", report) || found
 	}
 	return found
 }
 
 // container applies the per-container rules in precedence order and reports
-// whether one matched.
+// whether one matched. A matched rule is reported only once the Pod's
+// ContainersReady=False transition is held past the self-heal hold.
 func (e *evaluation) container(
 	pod corev1.Pod,
 	status corev1.ContainerStatus,
 	label string,
 	report func(rule, label string, status corev1.ContainerStatus, detail, reason string),
 ) bool {
-	policy := e.d.policy
-	waiting, terminated := status.State.Waiting, status.State.Terminated
-	last := status.LastTerminationState.Terminated
-	recentLast := last != nil && e.elapsed(last.FinishedAt.Time, 0) && !e.elapsed(last.FinishedAt.Time, policy.RestartWindow)
-	waitingDetail := func() string {
-		return "is waiting: " + waiting.Reason + optionalMessage(waiting.Message)
-	}
+	waiting := status.State.Waiting
+	var rule, detail, reason string
 	switch {
 	case waiting != nil && isConfigError(waiting.Reason):
-		report(RuleConfigError, label, status, waitingDetail(), waiting.Reason)
-		return true
+		rule = RuleConfigError
 	case waiting != nil && (waiting.Reason == "ImagePullBackOff" || waiting.Reason == "ErrImagePull"):
-		report(RuleImagePull, label, status, waitingDetail(), waiting.Reason)
-		return true
-	case terminated != nil && terminated.Reason == "OOMKilled":
-		report(RuleOOMKilled, label, status, "is terminated: OOMKilled", "OOMKilled")
-		return true
-	case recentLast && last.Reason == "OOMKilled":
-		detail := "was OOMKilled"
-		if waiting != nil {
-			detail += "; now waiting: " + waiting.Reason
-		}
-		report(RuleOOMKilled, label, status, detail, "OOMKilled")
-		return true
-	}
-	matched := false
-	stable := status.State.Running != nil && status.Ready && e.elapsed(status.State.Running.StartedAt.Time, policy.NotReadyGrace)
-	if recentLast && status.RestartCount >= policy.RestartThreshold && !stable {
-		report(RuleRestartChurn, label, status, fmt.Sprintf("restarted %d times, most recently within %s", status.RestartCount, policy.RestartWindow), "RestartChurn")
-		matched = true
-	}
-	switch {
+		rule = RuleImagePull
 	case waiting != nil && waiting.Reason == "CrashLoopBackOff":
-		report(RuleCrashLooping, label, status, waitingDetail(), waiting.Reason)
-		return true
+		rule = RuleCrashLooping
 	case waiting != nil && waiting.Reason != "" && waiting.Reason != "ContainerCreating" && waiting.Reason != "PodInitializing":
-		report(RuleWaiting, label, status, waitingDetail(), waiting.Reason)
-		return true
-	case terminated != nil && terminated.Reason != "Completed" && !(terminated.Reason == "" && terminated.ExitCode == 0):
-		if !matched {
-			report(RuleTerminatedError, label, status, "is terminated: "+terminationSummary(*terminated), terminated.Reason)
-		}
-		return true
+		rule = RuleWaiting
+	case label == "container" && pod.Status.Phase == corev1.PodRunning && status.State.Running != nil && !status.Ready:
+		rule, reason = RuleNotReady, "NotReady"
+		detail = "is running since " + status.State.Running.StartedAt.UTC().Format(time.RFC3339) + " but not ready"
+	default:
+		return false
 	}
-	if !matched && label == "container" && pod.Status.Phase == corev1.PodRunning && status.State.Running != nil &&
-		!status.Ready && e.elapsed(status.State.Running.StartedAt.Time, policy.NotReadyGrace) {
-		report(RuleNotReady, label, status, "is running since "+
-			status.State.Running.StartedAt.UTC().Format(time.RFC3339)+" but not ready", "NotReady")
-		return true
+	if waiting != nil {
+		detail, reason = "is waiting: "+waiting.Reason+optionalMessage(waiting.Message), waiting.Reason
 	}
-	return matched
+	if e.held(podFalseSince(pod, corev1.ContainersReady)) {
+		report(rule, label, status, detail, reason)
+	}
+	return true
 }
 
 func (e *evaluation) deployment(deployment appsv1.Deployment, pods []corev1.Pod) {
@@ -389,19 +333,24 @@ func (e *evaluation) deployment(deployment appsv1.Deployment, pods []corev1.Pod)
 			availability, replicaFailure(deployment), e.deploymentEvents(deployment)), "ProgressDeadlineExceeded")
 		return
 	}
+	if failure := deploymentCondition(deployment, appsv1.DeploymentReplicaFailure); failure != nil &&
+		failure.Status == corev1.ConditionTrue && e.held(failure.LastTransitionTime.Time) {
+		e.addDeployment(RuleReplicaFailure, ref, deployment, pods, fmt.Sprintf(
+			"Deployment %s cannot create replicas since %s; %s.%s%s", deployment.Name,
+			failure.LastTransitionTime.UTC().Format(time.RFC3339), availability, replicaFailure(deployment),
+			e.deploymentEvents(deployment)), failure.Reason)
+		return
+	}
 	if status.AvailableReplicas >= desired || e.hasPodFinding(ref) {
 		return
 	}
-	since := deployment.CreationTimestamp.Time
-	if progressing != nil && !progressing.LastUpdateTime.IsZero() {
-		since = progressing.LastUpdateTime.Time
-	}
-	if !e.elapsed(since, e.d.policy.DeploymentGrace) {
+	available := deploymentCondition(deployment, appsv1.DeploymentAvailable)
+	if available == nil || available.Status != corev1.ConditionFalse || !e.held(available.LastTransitionTime.Time) {
 		return
 	}
 	e.addDeployment(RuleDeploymentUnavailable, ref, deployment, pods, fmt.Sprintf(
-		"Deployment %s has %s; last progress at %s.%s%s", deployment.Name, availability,
-		since.UTC().Format(time.RFC3339), replicaFailure(deployment), e.deploymentEvents(deployment)), "Unavailable")
+		"Deployment %s has %s; unavailable since %s.%s%s", deployment.Name, availability,
+		available.LastTransitionTime.UTC().Format(time.RFC3339), replicaFailure(deployment), e.deploymentEvents(deployment)), "Unavailable")
 }
 
 func (e *evaluation) addDeployment(rule string, ref sdk.ObjectRef, deployment appsv1.Deployment, pods []corev1.Pod, item, reason string) {
@@ -497,12 +446,10 @@ var summaries = map[string]string{
 	RuleImagePull:                "container image cannot be pulled",
 	RuleConfigError:              "container cannot be created from its configuration",
 	RuleWaiting:                  "container stuck waiting",
-	RuleOOMKilled:                "container OOMKilled",
-	RuleTerminatedError:          "container terminated with an error",
 	RuleNotReady:                 "container running but not ready",
 	RuleInitStuck:                "init container not completing",
-	RuleRestartChurn:             "container restarting repeatedly",
 	RuleDeploymentUnavailable:    "fewer available replicas than desired",
+	RuleReplicaFailure:           "replicas cannot be created",
 	RuleProgressDeadlineExceeded: "rollout exceeded its progress deadline",
 }
 

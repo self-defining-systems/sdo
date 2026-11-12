@@ -9,11 +9,10 @@ import (
 	"sdo.dev/operator/sdk"
 )
 
-// A degradation finding (warning severity) that the incident did not open on
-// is its own incident, not a contradiction of this repair: it must not hold
-// the incident's recovery proof. An outage finding, or a degradation the
-// incident did open on, still does.
-func TestRecoveryProofIgnoresUnrelatedDegradation(t *testing.T) {
+// Only the alerts the incident opened on hold its recovery proof, at any
+// severity. Another finding, a clue or a later opener, is not a contradiction
+// of this repair: it stays tracked and, if it opens, opens its own incident.
+func TestRecoveryProofWaitsOnlyOnOpeningAlerts(t *testing.T) {
 	for _, scenario := range []struct {
 		name     string
 		severity sdk.FindingSeverity
@@ -21,7 +20,7 @@ func TestRecoveryProofIgnoresUnrelatedDegradation(t *testing.T) {
 		closes   bool
 	}{
 		{name: "unrelated-warning", severity: sdk.SeverityWarning, closes: true},
-		{name: "unrelated-critical", severity: sdk.SeverityCritical},
+		{name: "unrelated-critical", severity: sdk.SeverityCritical, closes: true},
 		{name: "own-warning", severity: sdk.SeverityWarning, own: true},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
@@ -88,7 +87,7 @@ func TestRecoveryProofIgnoresUnrelatedDegradation(t *testing.T) {
 				t.Fatalf("an unrelated slow link held the recovery proof: %+v", closed)
 			}
 			if !c.tracker.HasActiveKeys(findingKeys([]sdk.Finding{slow})) {
-				t.Fatal("the unrelated degradation stopped being tracked; it must still open its own incident")
+				t.Fatal("the unrelated finding stopped being tracked; it must still open its own incident")
 			}
 		})
 	}

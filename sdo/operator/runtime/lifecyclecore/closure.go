@@ -48,6 +48,10 @@ const (
 	Freeze
 	// Reobserve returns an unpublished closure to its original incident budget.
 	Reobserve
+	// Reset ends an open incident because an operator reset the controller
+	// between problems (sdo-operator incidents reset). It is archived as a
+	// failed closure: no outcome, no learning credit.
+	Reset
 )
 
 type RetryPolicy struct {
@@ -154,7 +158,7 @@ func Step(state *contracts.ControllerState, event Event) (*contracts.ControllerS
 		})
 		return next, nil
 	}
-	if (event.Kind == ResponseExpired || event.Kind == OwnerLost) && phase != contracts.ClosureState_CLOSURE_STATE_PENDING && phase != contracts.ClosureState_CLOSURE_STATE_PROCESSING {
+	if (event.Kind == ResponseExpired || event.Kind == OwnerLost || event.Kind == Reset) && phase != contracts.ClosureState_CLOSURE_STATE_PENDING && phase != contracts.ClosureState_CLOSURE_STATE_PROCESSING {
 		return next, nil
 	}
 	if event.Kind == Reobserve {
@@ -200,7 +204,7 @@ func Step(state *contracts.ControllerState, event Event) (*contracts.ControllerS
 		}
 		return next, nil
 	}
-	if event.Kind == Superseded || event.Kind == ResponseExpired || event.Kind == ObserverDenied || event.Kind == OwnerLost {
+	if event.Kind == Superseded || event.Kind == ResponseExpired || event.Kind == ObserverDenied || event.Kind == OwnerLost || event.Kind == Reset {
 		if pending == nil || phase == contracts.ClosureState_CLOSURE_STATE_FAILED {
 			return next, nil
 		}
@@ -212,6 +216,10 @@ func Step(state *contracts.ControllerState, event Event) (*contracts.ControllerS
 		if event.Kind == OwnerLost {
 			failure.Reason = contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_OWNER_LOST
 			failure.Action = "incident work without a live owner archived as failed; detect a fresh incident"
+		}
+		if event.Kind == Reset {
+			failure.Reason = contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_RESET
+			failure.Action = "incident ended by an operator reset; no outcome is recorded and nothing is learned"
 		}
 		if event.Kind == ObserverDenied {
 			failure.Reason = contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_OBSERVER_DENIED

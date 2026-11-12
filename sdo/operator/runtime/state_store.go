@@ -41,6 +41,7 @@ func cloneIncidentRequest(request *IncidentRequest) *IncidentRequest {
 	// Lists stay lists when empty: the responder's and the broker's schemas
 	// reject null (a cold incident surfaces no playbook and no outcome).
 	copy.Findings = append(make([]sdk.Finding, 0, len(request.Findings)), request.Findings...)
+	copy.OpeningKeys = append([]string(nil), request.OpeningKeys...)
 	copy.DriftEvents = append([]sdk.DriftEvent(nil), request.DriftEvents...)
 	copy.NamespaceOnboarding = cloneNamespaceOnboarding(request.NamespaceOnboarding)
 	copy.DisabledSetupDetectors = cloneDisabledSetupDetectors(request.DisabledSetupDetectors)

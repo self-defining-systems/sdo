@@ -354,6 +354,13 @@ func (v *View) Secrets() (r0 []p0.SecretMetadata) {
 	}
 	return
 }
+func (v *View) SelfHealHold() (r0 p12.Duration) {
+	err := v.call("SelfHealHold", []any{}, []any{&r0})
+	if err != nil {
+		panic(err)
+	}
+	return
+}
 func (v *View) ServiceAccounts() (r0 []p4.ServiceAccount) {
 	err := v.call("ServiceAccounts", []any{}, []any{&r0})
 	if err != nil {

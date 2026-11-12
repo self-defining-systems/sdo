@@ -27,6 +27,12 @@ const BeforeFirstApplyFieldManager = "before-first-apply"
     The entry is stamped with that apply's time, so it says nothing about when
     those fields were written.
 
+const DefaultSelfHealHold = 5 * time.Minute
+    DefaultSelfHealHold is how long a Kubernetes failure condition without its
+    own give-up signal must hold before it opens an incident: the kubelet's
+    CrashLoopBackOff maximum back-off, so a crash that Kubernetes still retries
+    has had one full retry.
+
 const DefaultWebhookTimeoutSeconds = 10
     DefaultWebhookTimeoutSeconds is the API server's timeout for a webhook entry
     that declares none.
@@ -84,6 +90,13 @@ func FormatObjectRef(ref ObjectRef) (string, error)
     retained explicitly. JSON is used when slash text would select legacy
     namespace/kind ordering, so parsing the formatted value preserves every
     ObjectRef field.
+
+func HeldPastSelfHeal(ctx DetectionContext, since time.Time) bool
+    HeldPastSelfHeal reports whether a condition that has held since since
+    outlived Kubernetes' own self-healing: at least the context's self-heal
+    hold passed by its observation time. since is a Kubernetes timestamp (a
+    condition's lastTransitionTime, an object's creation); an unknown since or
+    observation time never proves the hold elapsed.
 
 func IsSDOFieldManager(manager string) bool
     IsSDOFieldManager reports whether manager is one of SDO's own.
@@ -147,6 +160,10 @@ func SecretDataChangedAt(meta metav1.ObjectMeta) time.Time
     and SDO's own managers never do. Data a before-first-apply entry owns dates
     from creation, the only bound metadata gives for it.
 
+func SelfHealHold(ctx DetectionContext) time.Duration
+    SelfHealHold returns the context's self-heal hold, or DefaultSelfHealHold
+    when the context carries none.
+
 func ServiceExpectsEndpoints(service corev1.Service) bool
     ServiceExpectsEndpoints reports whether Kubernetes can back a Service with
     Endpoints, EndpointSlices, or selected pods. ExternalName Services are DNS
@@ -200,27 +217,4 @@ type AdmissionWebhook struct {
     with ReadView.AdmissionWebhooksFor, and repair with SyncWebhookCA for the
     CA, PatchObject for failurePolicy or the service reference, or DeleteObject
     for an orphaned entry.
-
-func (w AdmissionWebhook) CATarget(secret WebhookSecretKey) WebhookCA
-    CATarget names this entry and one serving Secret key for SyncWebhookCA and
-    WebhookCAMatchesSecret. An empty secret.Key means the Pod mounts the whole
-    Secret; set the key the serving certificate uses.
-
-func (w AdmissionWebhook) Mutating() bool
-    Mutating reports whether the entry belongs to a
-    MutatingWebhookConfiguration.
-
-type BatchingPolicy struct {
-	Severity FindingSeverity
-	Debounce time.Duration
-}
-
-type ConfigMapKeyReference struct {
-	Name     string `json:"name"`
-	Key      string `json:"key"`
-	Optional bool   `json:"optional"`
-}
-    ConfigMapKeyReference identifies an explicitly selected ConfigMap key.
-    Optional follows Kubernetes semantics: a missing optional key is not a
-    fault.
 ```

@@ -421,73 +421,15 @@ func ownedDriftPathsForEntry(object *unstructured.Unstructured, entry metav1.Man
 	return owned
 }
 
-// attachPendingDrift gives queued drift the same incident ownership as drift
-// arriving after launch. Individual batch deadlines must not strand evidence
-// across verification and acknowledgment, including after a controller restart.
-// Run before evaluating drift so clearance cannot retract the queued evidence
-// before it is retained in this incident's outcome.
-func (c *Controller) attachPendingDrift() {
-	c.mu.Lock()
-	open := c.incidentOpen && c.currentIncidentRequest != nil
-	c.mu.Unlock()
-	if !open {
-		return
-	}
-	for _, finding := range c.batcher.DrainDetectorPrefix("drift.") {
-		c.attachDrift(finding)
-	}
-}
-
-// attachDrift retains evidence arriving after launch without changing the frozen
-// worker request. Tools read the moving controller view on each call.
-func (c *Controller) attachDrift(finding sdk.Finding) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if !c.incidentOpen || c.currentIncidentRequest == nil {
-		return false
-	}
-	request := c.currentIncidentRequest
-	key := FindingStateKey(finding.DetectorID, FindingFingerprint(finding))
-	found := false
-	for i, old := range request.Findings {
-		if FindingStateKey(old.DetectorID, FindingFingerprint(old)) == key {
-			request.Findings[i] = finding
-			found = true
-			break
-		}
-	}
-	if !found {
-		request.Findings = append(request.Findings, finding)
-		if !c.incidentDispatchedAt.IsZero() {
-			c.markLateJoinedLocked(key)
-		}
-	}
-	sortFindings(request.Findings)
-	request.DriftEvents = driftEventsForFindings(c.driftEvents, request.Findings)
-	c.incidentFindingKeys = findingKeys(request.Findings)
-	if c.incidentDispatchedAt.IsZero() {
-		request.PreparedAgentTask = ""
-	}
-	if c.incidentDispatchedAt.IsZero() {
-		c.noteBatchedLocked(request.IncidentID, []sdk.Finding{finding})
-	}
-	return true
-}
-
 func (c *Controller) queueUnexplainedFinding(now time.Time, event sdk.DriftEvent) {
 	encoded, _ := json.Marshal(event)
 	finding := sdk.Finding{DetectorID: "drift.unexplained", RuleID: "unexplained", Status: sdk.FindingActive, Severity: sdk.SeverityLatent,
 		Summary: "unexplained drift; in the app namespace restore accepted-source differences unless positive evidence shows intended drift, then verify", Evidence: bounded(string(encoded)), PrimaryResource: event.Ref, ParameterBindings: map[string]sdk.ObjectRef{"resource": event.Ref}, Metadata: map[string]any{"drift_event": event}}
 	finding.Fingerprint = fmt.Sprintf("%s/%x", FindingFingerprint(finding), sha256.Sum256([]byte(driftEventKey(event))))
 	c.observeUnexplainedDrift(now, finding)
-	if c.attachDrift(finding) {
-		return
-	}
-	window := c.drift.BatchWindow
-	if window <= 0 {
-		window = 20 * time.Second
-	}
-	c.batcher.AddAtWithDebounce(finding, now, window)
+	// Drift is a clue: it joins an incident before launch and is otherwise
+	// read live; it never opens an incident.
+	c.attachBeforeLaunch([]sdk.Finding{finding}, false)
 }
 
 // Record activation before attaching to the moving incident so the existing

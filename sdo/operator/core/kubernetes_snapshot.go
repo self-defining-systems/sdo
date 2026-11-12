@@ -260,6 +260,9 @@ type DetectionSnapshot struct {
 	// ObservedAtTime is when the snapshot was read. Detectors read it through
 	// sdk.ObservationTime instead of calling time.Now.
 	ObservedAtTime time.Time
+	// SelfHealHoldTime is the controller's self-heal hold; zero means
+	// sdk.DefaultSelfHealHold.
+	SelfHealHoldTime time.Duration
 }
 
 func (s DetectionSnapshot) StatefulSets() []appsv1.StatefulSet {
@@ -299,6 +302,11 @@ func (s DetectionSnapshot) PodDisruptionBudgets() []policyv1.PodDisruptionBudget
 // ObservedAt implements sdk.ObservationClock.
 func (s DetectionSnapshot) ObservedAt() time.Time {
 	return s.ObservedAtTime
+}
+
+// SelfHealHold implements sdk.SelfHealPolicy.
+func (s DetectionSnapshot) SelfHealHold() time.Duration {
+	return s.SelfHealHoldTime
 }
 
 func (s DetectionSnapshot) TrafficWindow(workload string) (traffic.Window, bool) {
