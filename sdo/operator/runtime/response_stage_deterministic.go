@@ -955,6 +955,10 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 		}
 		state.Findings = effects.observe(view, state.Findings)
 		state.refreshUnexplained()
+		// Recovery is judged on what the stage's writes were meant to clear: a
+		// clue no detector re-observes and no attempt covered cannot clear by
+		// waiting, so it neither blocks nor times out the wait.
+		open, unrelated := splitStageFindings(state.Findings, loop.Detectors, report.Mitigations)
 		if !pending {
 			check := loop.stageRecoveryCheck(observe, view, state)
 			horizonOf := func(id string) (horizon, window time.Duration) {
@@ -979,10 +983,15 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 					matching = "program " + attempt.GetPlaybookId() + " still diagnoses the fault after its write"
 				}
 			}
-			if len(state.Findings) == 0 {
+			if len(open) == 0 {
 				switch decideStageRecovery(check, matching) {
 				case stageCleared:
 					exit = contracts.RecoveryWait_EXIT_REASON_CLEARED
+					if len(unrelated) > 0 {
+						slog.Info("recovery_wait_unrelated_findings", "incident_id", state.Request.IncidentID, "count", len(unrelated))
+					}
+					state.Findings = open
+					state.refreshUnexplained()
 					promoteSettledAttempts(settling)
 					return nil
 				default:
@@ -998,7 +1007,7 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			} else {
 				settled = -1
 			}
-			for _, finding := range state.Findings {
+			for _, finding := range open {
 				fp := FindingFingerprint(finding)
 				horizon, _ := horizonOf(finding.DetectorID)
 				if settled >= horizon {
@@ -1006,11 +1015,11 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 					return nil
 				}
 			}
-			if check.verdict == recoveryPending && len(state.Findings) == 0 && settled >= check.horizon+2*interval {
+			if check.verdict == recoveryPending && len(open) == 0 && settled >= check.horizon+2*interval {
 				branch = "not recovered within its members' horizon: " + check.reason
 				return nil
 			}
-			if matching != "" && check.verdict != recoveryPending && len(state.Findings) == 0 {
+			if matching != "" && check.verdict != recoveryPending && len(open) == 0 {
 				var window time.Duration
 				for _, finding := range seen {
 					_, w := horizonOf(finding.DetectorID)
@@ -1056,6 +1065,35 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			return err
 		}
 	}
+}
+
+// splitStageFindings separates the findings a recovery wait can judge from
+// unrelated ones: a finding no scheduled detector re-observes (event-sourced
+// drift) that no attempt of the stage covered. Such a finding has no way to
+// clear by waiting and says nothing about the stage's repair; closure and the
+// controller's own drift verification still own it.
+func splitStageFindings(findings []sdk.Finding, detectors []sdk.Detector, attempts []*contracts.StageMitigation) (open, unrelated []sdk.Finding) {
+	scheduled := map[string]bool{}
+	for _, detector := range detectors {
+		scheduled[detector.Spec().ID] = true
+	}
+	covered := map[string]bool{}
+	for _, attempt := range attempts {
+		for _, fp := range attempt.GetClearedFindingFingerprints() {
+			covered[fp] = true
+		}
+		for _, fp := range attempt.GetRemainingFindingFingerprints() {
+			covered[fp] = true
+		}
+	}
+	for _, finding := range findings {
+		if scheduled[finding.DetectorID] || covered[FindingFingerprint(finding)] {
+			open = append(open, finding)
+		} else {
+			unrelated = append(unrelated, finding)
+		}
+	}
+	return open, unrelated
 }
 
 // writeVerifiedForSettling reports an applied, unreverted write whose scoped verification passed and
