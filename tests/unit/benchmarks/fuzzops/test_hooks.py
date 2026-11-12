@@ -803,7 +803,11 @@ def _fake_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, registry_fai
     bin_dir.mkdir()
     for name, body in {
         "docker": 'echo "docker $*" >> "$CALLS"\n',
-        "kind": 'echo "kind $*" >> "$CALLS"\n[ "$1 $2" = "get nodes" ] && echo c-control-plane && echo c-worker\nexit 0\n',
+        "kind": (
+            'echo "kind $*" >> "$CALLS"\n'
+            '[ "$1 $2" = "get nodes" ] && echo c-control-plane && echo c-worker\n'
+            "exit 0\n"
+        ),
     }.items():
         (bin_dir / name).write_text(f"#!/bin/sh\n{body}")
         (bin_dir / name).chmod(0o755)

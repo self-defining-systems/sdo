@@ -8,8 +8,8 @@ ever touches its own lane. Verbs (environment: ``BENCH_*`` and ``FUZZOPS_*``, se
               matches its digest and its bundle holds the branch at the commit.
 ``prepare``   on a fresh app copy: build the plain-manifest pack from the live app (the namespace's one Helm release,
               or the pack's own ``manifests/``), refuse a render that differs from the baseline's, write the attached
-              pack, build ``sdo-operator``, push the operator images to the host registry (``BENCH_REGISTRY``; load them onto the
-              worker nodes when there is none), provision the namespaces,
+              pack, build ``sdo-operator``, push the operator images to the host registry (``BENCH_REGISTRY``; load
+              them onto the worker nodes when there is none), provision the namespaces,
               clone the baseline memory and run production ``sdo-operator install-existing`` with the benchmark
               profile, the baseline's and the experiment's config overlays, and the lane's evidence sink
               (``BENCH_EVIDENCE_NODE``, ``BENCH_EVIDENCE_RUN``; required). The last stdout line is
