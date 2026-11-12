@@ -2,7 +2,6 @@ package deploywire
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -57,7 +56,7 @@ func (m Maintenance) Pause(ctx context.Context, _ string, expiresAt time.Time) e
 		return err
 	}
 	if paused && !ours {
-		return errors.New("controller maintenance is paused by another owner")
+		return lifecycle.ErrMaintenanceBusy
 	}
 	return install.SetMaintenanceWithOptions(ctx, m.Client, m.Namespace, true, m.generation("paused"), install.MaintenanceOptions{ExpiresAt: expiresAt})
 }

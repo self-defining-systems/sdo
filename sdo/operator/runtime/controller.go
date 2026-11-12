@@ -208,6 +208,7 @@ type Controller struct {
 	closureResults                     chan closureCompletion
 	acknowledgmentResults              chan acknowledgmentCompletion
 	reflectionResults                  chan reflectionCompletion
+	head                               headPollState
 	reflections                        reflectionQueueState
 	busy                               busyWindow
 	// startup holds a new install's openers until the application is seen
@@ -494,6 +495,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	if err := c.driveQueuedReflections(ctx, now); err != nil {
 		return err
 	}
+	c.driveHeadPoll(ctx, now)
 	if c.config.ExternalIncidentsOnly {
 		c.maybeCloseIncident(ctx, now, nil)
 		if c.ExternalIncidents != nil {
@@ -1040,6 +1042,9 @@ func (c *Controller) nextWake() (time.Time, string) {
 	}
 	consider(c.scheduler.NextRun(), "detector schedule")
 	c.mu.Lock()
+	if c.head.poller != nil && !c.head.running {
+		consider(c.head.nextAt, "head poll")
+	}
 	// A batch deadline only matters when the batch can be dispatched or
 	// attached. Otherwise an expired deadline would spin the runtime loop for
 	// the whole incident.
@@ -2140,6 +2145,7 @@ func (c *Controller) SetIncidentBroker(broker IncidentBroker) error {
 	c.broker = broker
 	if native, ok := broker.(*NativeIncidentBroker); ok && native.SourceGate != nil {
 		native.SourceGate.Set(c.sourceDeployBusy)
+		c.head = headPollState{poller: native.headPoller()}
 	}
 	return nil
 }

@@ -15,10 +15,19 @@ import (
 type HeadBroker interface {
 	// HeadToDeploy syncs the branch and names the accepted head when its
 	// effective source differs from the newest recorded deployment.
-	HeadToDeploy(ctx context.Context) (commit string, needed bool, err error)
+	HeadToDeploy(ctx context.Context) (change broker.HeadChange, needed bool, err error)
 	AcceptedSourceEvidence(ctx context.Context) (accepted broker.AcceptedSource, found bool, err error)
 	HeadCheckout(ctx context.Context, commit string) (path string, release func(), err error)
 	RecordHeadDeployment(ctx context.Context, commit string, evidence broker.SourceEvidence) error
+}
+
+// HeadHolds remembers the heads the cluster or the detectors refused, so a
+// broken source is not applied again on every poll. A hold is about the head's
+// effective source: SDO's own memory commits on top of it do not supersede it.
+type HeadHolds interface {
+	// Held reports the hold on this effective source, if any.
+	Held(ctx context.Context, change broker.HeadChange) (detail string, held bool, err error)
+	Hold(ctx context.Context, change broker.HeadChange, reason HoldReason, detail string) error
 }
 
 // HeadOutcome is what Deploy did about the branch head.
@@ -56,6 +65,8 @@ type HeadDeployer struct {
 	// Deployer carries the readiness, the verifier, the maintenance pause,
 	// the busy gate, the clock and the wait; its Broker is unused.
 	Deployer RepairDeployer
+	// Holds, when set, keeps refused heads from being retried.
+	Holds HeadHolds
 }
 
 // Deploy deploys the branch head when it has not been deployed.
@@ -66,12 +77,23 @@ func (h HeadDeployer) Deploy(ctx context.Context, cfg RepairConfig) (HeadResult,
 	if h.Deployer.Readiness == nil || h.Deployer.Verifier == nil || cfg.Namespace == "" || cfg.HealthObjective == "" {
 		return HeadResult{}, errors.New("head deployment needs readiness, a verifier, a namespace and a health objective")
 	}
-	commit, needed, err := h.Broker.HeadToDeploy(ctx)
+	change, needed, err := h.Broker.HeadToDeploy(ctx)
 	if err != nil {
 		return HeadResult{}, err
 	}
 	if !needed {
 		return HeadResult{Outcome: HeadCurrent}, nil
+	}
+	commit := change.Commit
+	if h.Holds != nil {
+		// Checked before the pause: a held head must not suspend detection on every poll.
+		detail, held, err := h.Holds.Held(ctx, change)
+		if err != nil {
+			return HeadResult{}, err
+		}
+		if held {
+			return HeadResult{Outcome: HeadHeld, Commit: commit, Detail: detail}, nil
+		}
 	}
 	var out HeadResult
 	paused, err := h.Deployer.paused(ctx, func() (RepairResult, error) {
@@ -84,6 +106,11 @@ func (h HeadDeployer) Deploy(ctx context.Context, cfg RepairConfig) (HeadResult,
 	}
 	if paused.Outcome == RepairDeferred {
 		return HeadResult{Outcome: HeadDeferred, Commit: commit, Detail: paused.Detail}, nil
+	}
+	if out.Outcome == HeadHeld && h.Holds != nil {
+		if err := h.Holds.Hold(ctx, change, out.Hold, out.Detail); err != nil {
+			return HeadResult{}, fmt.Errorf("record head hold: %w", err)
+		}
 	}
 	return out, nil
 }

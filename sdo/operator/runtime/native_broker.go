@@ -25,6 +25,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
@@ -120,6 +121,9 @@ type NativeIncidentBroker struct {
 	// SourceGate is the controller's view of its own activity, read before a
 	// source deploy that runs after the closure. Nil is never busy.
 	SourceGate *SourceGate
+	// HeadHolds keeps the branch heads the cluster refused; nil disables the
+	// head poll.
+	HeadHolds lifecycle.HeadHolds
 }
 
 type ControllerRolloutExpectation struct {
@@ -475,6 +479,19 @@ func (n NativeIncidentBroker) processClosure(ctx context.Context, closure Incide
 // undeployed publication and never a retried error.
 func (n NativeIncidentBroker) acceptSourceRepair(ctx context.Context, id string, paths []string) (SourceRepair, error) {
 	if n.Repairs != nil {
+		// SDO's own repair is rebased onto the branch head, so a head the
+		// cluster refused must not be deployed under it: hold the repair too.
+		if n.HeadHolds != nil {
+			if change, needed, err := n.Repository.HeadToDeploy(ctx); err != nil {
+				return SourceRepair{}, err
+			} else if needed {
+				if detail, held, err := n.HeadHolds.Held(ctx, change); err != nil {
+					return SourceRepair{}, err
+				} else if held {
+					return SourceRepair{Held: "head_held: " + detail}, nil
+				}
+			}
+		}
 		return n.Repairs.Repair(ctx, id)
 	}
 	if slices.ContainsFunc(paths, func(p string) bool { return layout.IsEffectiveDeploymentInput(p) || !layout.IsMemoryPath(p) }) {

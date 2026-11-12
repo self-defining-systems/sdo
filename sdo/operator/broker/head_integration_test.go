@@ -24,9 +24,9 @@ func TestAForeignHeadIsDeployedAndRecordedWithoutATrailer(t *testing.T) {
 	testutil.Git(t, w.accepted, "commit", "-qm", "an engineer changes the app")
 	head := w.head(t)
 
-	commit, needed, err := w.broker.HeadToDeploy(ctx)
-	if err != nil || !needed || commit != head {
-		t.Fatalf("HeadToDeploy = %s %v %v, want %s", commit, needed, err, head)
+	change, needed, err := w.broker.HeadToDeploy(ctx)
+	if err != nil || !needed || change.Commit != head {
+		t.Fatalf("HeadToDeploy = %+v %v %v, want %s", change, needed, err, head)
 	}
 	evidence := advanceEvidenceFor(t, w.accepted, "engineered", true)
 	if err := w.broker.RecordHeadDeployment(ctx, head, evidence); err != nil {
