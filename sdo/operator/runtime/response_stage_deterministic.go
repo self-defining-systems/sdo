@@ -221,7 +221,6 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		state.Request.PlaybookCoverage = cloneCoverage(state.Coverage)
 		loop.Request = state.Request
 	}
-	dataWorkloads := acceptedDataWorkloads(ctx, loop.gitRead(), state.Request.RepositoryWorktree, state.Request.SourceCommit)
 	loop.operationMu.Lock()
 	defer loop.operationMu.Unlock()
 	loop.mu.Lock()
@@ -403,13 +402,6 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 				attempt.SkipReason = "script_unprovenanced"
 			}
 			if err := save(false); err != nil {
-				return report, err
-			}
-			continue
-		}
-		if refused := dataWorkloadWrite(view, loop.plans[planResponse.PlanID].plan, dataWorkloads, state.Request.Namespace); refused != "" {
-			attempt.Error = refused
-			if err := skip(stageHoldsData); err != nil {
 				return report, err
 			}
 			continue

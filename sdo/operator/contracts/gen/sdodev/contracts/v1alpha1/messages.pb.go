@@ -51,8 +51,9 @@ const (
 	ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVER_UNAVAILABLE ClosureUnconfirmedReason = 2
 	// Response completed without independent detector verification.
 	ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_EXTERNAL_COMPLETION ClosureUnconfirmedReason = 3
-	// Health cleared, but a workload the application map marks holds_data lost its
-	// Pods during the incident with nothing persistent to restore it from.
+	// Historic: health cleared, but a workload the application map marks holds_data
+	// lost its Pods during the incident with nothing persistent to restore it from.
+	// No longer written; what a repair did to data is recorded evidence.
 	ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_DATA_MAY_BE_LOST ClosureUnconfirmedReason = 4
 )
 

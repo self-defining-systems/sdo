@@ -39,29 +39,12 @@ def test_findings_are_bounded_per_item_and_never_grow_faster_than_linearly(count
     assert all(len(item.get("summary", "")) <= 160 for item in summary["still_broken"])
 
 
-def test_verify_says_data_is_at_risk_near_the_top_of_its_default_output() -> None:
-    risk = "Deployment/store holds data and has no persistent storage, and its Pod store-1 was replaced"
-    response = {
-        "command": "verify",
-        "summary": "controller independently verified healthy",
-        "healthy": True,
-        "data_at_risk": [risk],
-        "findings": [{"fingerprint": f"finding-{i}", "summary": "界" * 4000} for i in range(150)],
-    }
-    summary = tool_output.summarize_response(response, "/tmp/sdo/toy/0001-verify.json")
-    assert summary["data_at_risk"] == [risk]
-    assert f"data_at_risk: {risk}" in tool_output.render_summary(summary).splitlines()[:3]
-    healthy = tool_output.summarize_response({"command": "verify", "healthy": True}, "/tmp/sdo/toy/0002-verify.json")
-    assert "data_at_risk" not in tool_output.render_summary(healthy)
-
-
 def test_verify_shows_recorded_data_effects() -> None:
     effect = "data effect: a script reached StatefulSet/store (holds_data) with effect unknown"
     response = {"command": "verify", "summary": "healthy", "healthy": True, "data_effects": [effect]}
     summary = tool_output.summarize_response(response, "/tmp/sdo/toy/0001-verify.json")
     assert summary["data_effects"] == [effect]
     assert effect in tool_output.render_summary(summary).splitlines()
-    assert "data_at_risk" not in summary
     healthy = tool_output.summarize_response({"command": "verify", "healthy": True}, "/tmp/sdo/toy/0002-verify.json")
     assert "data effect" not in tool_output.render_summary(healthy)
 

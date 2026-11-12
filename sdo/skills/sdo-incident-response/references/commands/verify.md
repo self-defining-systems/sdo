@@ -12,4 +12,4 @@ External incidents have no detector gate: return your completed result after liv
 - `--scenario`: traffic scenario ID to burst; repeatable
 - `--wait`: wait for stable verification, a new/reactivated finding, or this timeout (0: cached and instant)
 
-Key JSON fields: `healthy, verification_status, findings[], new_since_dispatch[], detector_states[], verification_blockers[{detector_id,reason}], drift[], drift_events[], data_at_risk[], data_effects[]`.
+Key JSON fields: `healthy, verification_status, findings[], new_since_dispatch[], detector_states[], verification_blockers[{detector_id,reason}], drift[], drift_events[], data_effects[]`.

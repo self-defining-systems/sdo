@@ -158,12 +158,9 @@ Replay outcomes, missing captures and detector coverage are information.
   narrow `SetField`; `ReconcileFromSource` restores a whole object. After a workload write, append
   `program.StalledRolloutRelease(v, ref)`.
 - A recorded `kubectl exec <pod>` becomes `EnsureExec` on a Pod of the bound workload, never a Pod name.
-- An `Exec`, `EnsureExec`, `EnsureHTTP`, `RunScript`, `RunJob` or `EnsureDatabaseUser` that runs in, binds or names
-  a `holds_data` component runs automatically like any other action; SDO records its data effect (`unknown` for
-  opaque commands, `store-setting` for a database user change) as evidence, never as a refusal.
 - Typed store actions declare their effect: `StoreBackup` (read), `InvalidateDerived` (derived-invalidate, recorded
   with each `derived_from` source's live store state), `RepairData` and `RestoreBackup` (data-write; a repair's
-  backup is optional and recorded). They run automatically too. A learned cache flush is clearer as an
+  backup is optional and recorded). A learned cache flush is clearer as an
   `InvalidateDerived` than an `EnsureExec`, because SDO records more about it.
 - A changed store setting, write block, role, principal, validator or index is clearer as
   `RestoreStoreItem{Target, Change}` (store-setting) per entry of `storestate.Changes(view)` that

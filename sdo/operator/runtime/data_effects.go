@@ -1,16 +1,135 @@
 package runtime
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory/appmap"
+	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
+
+// dataHolders are the components the accepted application map marks
+// holds_data, by workload ("Kind/name").
+type dataHolders map[string]appmap.Component
+
+// acceptedDataWorkloads reads the holds_data components of the accepted
+// application map. No map marks nothing, and an unreadable or malformed one is
+// the same: the shared check keeps a broken map out of accepted memory.
+func acceptedDataWorkloads(ctx context.Context, read gitRead, repository, commit string) dataHolders {
+	if repository == "" || commit == "" {
+		return nil
+	}
+	document, err := read(ctx, repository, "show", commit+":"+layout.ArchitectureFile)
+	if err != nil {
+		return nil
+	}
+	region, found, err := appmap.Find(string(document))
+	if !found {
+		return nil
+	}
+	var parsed appmap.Map
+	if err == nil {
+		parsed, err = appmap.Parse(region.YAML)
+	}
+	if err != nil {
+		slog.Warn("application map unreadable; no workload is treated as holding data", "commit", commit, "error", err)
+		return nil
+	}
+	holders := dataHolders{}
+	for _, component := range parsed.Components {
+		if component.HoldsData {
+			holders[component.Workload] = component
+		}
+	}
+	return holders
+}
+
+// closureDataEffects records, once as the closure freezes, the data effects
+// its applied actions had on holds_data components. They are evidence on the
+// outcome, never a verdict.
+func (c *Controller) closureDataEffects(ctx context.Context, snapshot sdk.DetectionContext, closure IncidentClosure) []string {
+	if snapshot == nil || len(closure.FinalDetectorStates) == 0 || closure.Result == nil {
+		return nil
+	}
+	read := c.gitRead
+	if read == nil {
+		read = lifecycleio.GitOutput
+	}
+	workloads := acceptedDataWorkloads(ctx, read, closure.Request.RepositoryWorktree, closure.Request.SourceCommit)
+	return appliedDataEffects(snapshot, closure.Result.PlanApplications, workloads, closure.Request.Namespace)
+}
+
+// incidentDataEffects records, on each verify, the data effects the incident's
+// applied actions had on holds_data components. Caller holds l.mu.
+func (l *ResponderLoop) incidentDataEffects(ctx context.Context) []string {
+	if !l.dataWorkloadsRead {
+		l.dataWorkloads = acceptedDataWorkloads(ctx, l.gitRead(), l.Request.RepositoryWorktree, l.Request.SourceCommit)
+		l.dataWorkloadsRead = true
+	}
+	if len(l.dataWorkloads) == 0 {
+		return nil
+	}
+	view, err := l.snapshotView(ctx)
+	if err != nil {
+		return nil
+	}
+	return appliedDataEffects(view, l.applicationEvidenceLocked(), l.dataWorkloads, l.Request.Namespace)
+}
+
+// unverifiedRecoveryOutcome reports an outcome whose recovery SDO could not
+// verify. It holds no verified repair, whatever its receipts say.
+func unverifiedRecoveryOutcome(outcome *contracts.OutcomeRecord) bool {
+	return validate.UnverifiedRecoveryOutcome(outcome)
+}
+
+// actionValue reads a program.Action given by pointer as its value.
+func actionValue(action program.Action) program.Action {
+	value := reflect.ValueOf(action)
+	if value.Kind() == reflect.Pointer && !value.IsNil() {
+		//assertcheck:ok reflect Elem of a pointer to a program.Action
+		return value.Elem().Interface().(program.Action)
+	}
+	return action
+}
+
+// owningWorkload walks a Pod or ReplicaSet up its controller owners to the
+// "Kind/name" the application map uses.
+func owningWorkload(view sdk.DetectionContext, ref sdk.ObjectRef) string {
+	kind, name := ref.Kind, ref.Name
+	if kind == "Pod" {
+		for _, pod := range view.Pods() {
+			if pod.Namespace == ref.Namespace && pod.Name == name {
+				if owner := metav1.GetControllerOf(&pod); owner != nil {
+					kind, name = owner.Kind, owner.Name
+				}
+				break
+			}
+		}
+	}
+	if kind == "ReplicaSet" {
+		for _, replicaSet := range view.ReplicaSets() {
+			if replicaSet.Namespace == ref.Namespace && replicaSet.Name == name {
+				if owner := metav1.GetControllerOf(&replicaSet); owner != nil {
+					kind, name = owner.Kind, owner.Name
+				}
+				break
+			}
+		}
+	}
+	return kind + "/" + name
+}
 
 // workloads lists the holds_data workloads in a stable order.
 func (h dataHolders) workloads() []string {

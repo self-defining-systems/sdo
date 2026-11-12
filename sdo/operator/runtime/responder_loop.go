@@ -86,7 +86,6 @@ type ToolResponse struct {
 	MemoryCheckTimedOut bool                `json:"memory_check_timed_out,omitempty"`
 
 	VerificationBlockers       []VerificationBlocker          `json:"verification_blockers,omitempty"`
-	DataAtRisk                 []string                       `json:"data_at_risk,omitempty"`
 	DataEffects                []string                       `json:"data_effects,omitempty"`
 	ActionReports              []PlanActionReport             `json:"action_reports,omitempty"`
 	ProgramRevisions           map[string]string              `json:"program_revisions,omitempty"`
@@ -770,7 +769,6 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		}
 		if response.Error == "" {
 			l.closeLoop()
-			response.DataAtRisk = l.incidentDataAtRisk(ctx)
 			response.DataEffects = l.incidentDataEffects(ctx)
 		}
 	case "rollback":

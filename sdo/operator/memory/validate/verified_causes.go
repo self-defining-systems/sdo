@@ -241,12 +241,13 @@ func repairRecorded(outcome *contracts.OutcomeRecord, resources []*contracts.Obj
 	})
 }
 
-// DataAtRiskDetector is the pending evaluation the controller records when a
-// closure may have lost data.
+// DataAtRiskDetector is the pending evaluation the controller recorded when a
+// closure may have lost data. Nothing writes it any more; historic outcomes
+// that carry it still read the same.
 const DataAtRiskDetector = "controller.data-at-risk"
 
-// DataLossOutcome reports an outcome that may have lost data. It holds no
-// verified repair, whatever its receipts say.
+// DataLossOutcome reports a historic outcome that may have lost data. It holds
+// no verified repair, whatever its receipts say.
 func DataLossOutcome(outcome *contracts.OutcomeRecord) bool {
 	return hasEvaluation(outcome, DataAtRiskDetector)
 }

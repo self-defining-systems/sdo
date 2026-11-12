@@ -567,28 +567,6 @@ func TestStoreActionsAreGroundedInTheAcceptedMap(t *testing.T) {
 	}
 }
 
-// The automatic stage refuses no typed store action by its data effect; the
-// effect is recorded instead.
-func TestAutomaticStageRunsStoreActions(t *testing.T) {
-	view := storeView()
-	holders := dataHolders{"StatefulSet/db": {Name: "db", Workload: "StatefulSet/db", Services: []string{"db"}, HoldsData: true}}
-	for name, action := range map[string]program.Action{
-		"repair":                removePoison("before"),
-		"restore":               program.RestoreBackup{Target: dbTarget, Backup: "before"},
-		"backup":                storeBackup("before", itemScope),
-		"invalidate a derived":  program.InvalidateDerived{Target: cacheTarget},
-		"invalidate a data pod": program.InvalidateDerived{Target: program.StoreTarget{Component: "cache", Engine: "redis", Pod: storePodRef("db-0"), Container: "redis"}},
-	} {
-		t.Run(name, func(t *testing.T) {
-			for _, holders := range []dataHolders{holders, nil} {
-				if got := dataWorkloadWrite(view, program.Plan{Actions: []program.Action{action}}, holders, "app"); got != "" {
-					t.Fatalf("dataWorkloadWrite = %q, want the action to run", got)
-				}
-			}
-		})
-	}
-}
-
 // Store actions declare their effect precisely instead of unknown.
 func TestStoreActionsDeclareTheirDataEffect(t *testing.T) {
 	reach := dataReach{view: storeView(), holders: dataHolders{"StatefulSet/db": {Name: "db", Workload: "StatefulSet/db", HoldsData: true}}, namespace: "app"}

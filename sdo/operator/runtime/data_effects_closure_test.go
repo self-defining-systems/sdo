@@ -34,62 +34,23 @@ func dataPod(name string, created time.Time, volumes []corev1.Volume, started ti
 	}
 }
 
-func TestDataAtRiskIsAReplacedDataPodWithoutPersistentStorage(t *testing.T) {
-	before, after := dataRiskOpened.Add(-time.Minute), dataRiskOpened.Add(time.Minute)
-	config := corev1.Volume{Name: "config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{}}}
-	scratch := corev1.Volume{Name: "data", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}
-	claim := corev1.Volume{Name: "data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "data"}}}
-	for name, test := range map[string]struct {
-		pod  corev1.Pod
-		risk bool
-	}{
-		"replaced, config only":          {dataPod("store-0", after, []corev1.Volume{config}, after), true},
-		"replaced, no volume":            {dataPod("store-0", after, nil, after), true},
-		"replaced, emptyDir":             {dataPod("store-0", after, []corev1.Volume{scratch}, after), true},
-		"container restarted, no volume": {dataPod("store-0", before, []corev1.Volume{config}, after), true},
-		"container restarted, emptyDir":  {dataPod("store-0", before, []corev1.Volume{scratch}, after), false},
-		"replaced, persistent claim":     {dataPod("store-0", after, []corev1.Volume{claim}, after), false},
-		"untouched during the incident":  {dataPod("store-0", before, nil, before), false},
-		"replaced before the incident":   {dataPod("store-0", dataRiskOpened.Add(-time.Second), nil, dataRiskOpened.Add(-time.Second)), false},
-	} {
-		t.Run(name, func(t *testing.T) {
-			view := sdktest.Snapshot{NamespaceName: "app", PodList: []corev1.Pod{test.pod}}
-			got := dataAtRisk(view, dataHolders{"StatefulSet/store": {Name: "store", Workload: "StatefulSet/store", HoldsData: true}}, "app", dataRiskOpened)
-			if test.risk && (len(got) != 1 || !strings.Contains(got[0], "StatefulSet/store")) {
-				t.Fatalf("want the workload named, got %v", got)
-			}
-			if !test.risk && len(got) != 0 {
-				t.Fatalf("want no risk, got %v", got)
-			}
-		})
-	}
-	view := sdktest.Snapshot{NamespaceName: "app", PodList: []corev1.Pod{dataPod("store-0", after, nil, after)}}
-	if got := dataAtRisk(view, dataHolders{"Deployment/other": {Name: "other", Workload: "Deployment/other", HoldsData: true}}, "app", dataRiskOpened); len(got) != 0 {
-		t.Fatalf("a workload the map does not mark is not at risk: %v", got)
-	}
-	if got := dataAtRisk(view, nil, "app", dataRiskOpened); len(got) != 0 {
-		t.Fatalf("no map means no risk: %v", got)
-	}
-}
-
 // riskSnapshots serves one fixed cluster view to the closure recheck.
 type riskSnapshots struct{ view sdktest.Snapshot }
 
 func (s riskSnapshots) Snapshot(context.Context) (sdk.DetectionContext, error) { return s.view, nil }
 
-// A repair that replaced a volume-less data store is health-clear, and SDO
-// cannot see whether the data survived. The closure commits unconfirmed and says
-// why; the outcome carries the reason, and reflection may not learn from it.
-func TestClosureAfterDataPodReplacementIsNotVerifiedSuccess(t *testing.T) {
+// A repair that replaced a volume-less data store is health-clear. What the
+// replacement did to its data is no verdict: the closure label is the recovery
+// verdict's alone, whether or not the map marks the store holds_data.
+func TestReplacedDataPodWithoutClaimLeavesClosureLabelToRecovery(t *testing.T) {
 	ctx := context.Background()
 	for name, test := range map[string]struct {
 		document string
 		early    bool
-		want     contracts.ClosureUnconfirmedReason
 	}{
-		"marked store replaced":               {holdsDataArchitecture, false, contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_DATA_MAY_BE_LOST},
-		"verified while the responder worked": {holdsDataArchitecture, true, contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_DATA_MAY_BE_LOST},
-		"no map":                              {"", false, contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED},
+		"marked store replaced":               {holdsDataArchitecture, false},
+		"verified while the responder worked": {holdsDataArchitecture, true},
+		"no map":                              {"", false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			after := dataRiskOpened.Add(time.Minute)
@@ -104,8 +65,7 @@ func TestClosureAfterDataPodReplacementIsNotVerifiedSuccess(t *testing.T) {
 			}
 			controller.now = func() time.Time { return after.Add(time.Minute) }
 			controller.gitRead = fakeArchitecture(test.document)
-			broker := &riskBroker{}
-			controller.broker = broker
+			controller.broker = &riskBroker{}
 			result := completedResult("synthetic-incident")
 			result.Timing = TimingMetrics{StartedAt: dataRiskOpened, CompletedAt: after}
 			request := IncidentRequest{SchemaVersion: ProtocolSchemaVersion, Application: "demo", Namespace: "app", IncidentID: "synthetic-incident", SourceCommit: "synthetic-accepted", RepositoryWorktree: "synthetic-worktree"}
@@ -123,21 +83,15 @@ func TestClosureAfterDataPodReplacementIsNotVerifiedSuccess(t *testing.T) {
 			if pending == nil {
 				t.Fatal("closure lost")
 			}
-			if pending.UnconfirmedReason != test.want {
-				t.Fatalf("reason = %s, want %s (detail %q)", pending.UnconfirmedReason, test.want, pending.UnconfirmedDetail)
-			}
-			if test.want == contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED {
-				return
-			}
-			if !strings.Contains(pending.UnconfirmedDetail, "StatefulSet/store") || len(pending.FinalDetectorStates) != 0 {
-				t.Fatalf("the closure must name the workload and make no health claim: %+v", pending)
+			if pending.UnconfirmedReason != contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED || len(pending.FinalDetectorStates) == 0 {
+				t.Fatalf("the replaced Pod must not decide the label: reason %s (detail %q)", pending.UnconfirmedReason, pending.UnconfirmedDetail)
 			}
 			derived, err := ProtoOutcomeDeriver{}.Derive(ctx, *pending, "", "synthetic", "synthetic")
 			if err != nil {
 				t.Fatal(err)
 			}
-			if derived.Record.GetClassification() != "unconfirmed" || derived.RequiresReflection || !validate.DataLossOutcome(derived.Record) {
-				t.Fatalf("the outcome must be unconfirmed and carry the reason: %+v", derived.Record)
+			if derived.Record.GetClassification() == "unconfirmed" || validate.DataLossOutcome(derived.Record) {
+				t.Fatalf("the outcome must carry the recovery verdict, not a data-loss rule: %+v", derived.Record)
 			}
 		})
 	}
@@ -222,9 +176,9 @@ func (d *handRestartDispatcher) Dispatch(_ context.Context, request IncidentRequ
 }
 
 // A namespace SDO onboarded carries its onboarding record on every incident
-// request. A responder restarts the marked store by hand, health clears, and
-// the closure must still commit unconfirmed, with verify saying why.
-func TestResponderRestartOfDataStoreInOnboardedNamespaceIsNotVerified(t *testing.T) {
+// request. A responder restarts the marked store by hand and health clears:
+// the replaced Pod decides nothing, and the label is the recovery verdict's.
+func TestResponderRestartOfDataStoreInOnboardedNamespaceLeavesLabelToRecovery(t *testing.T) {
 	runOnOneProcessor(t)
 	ctx := context.Background()
 	opened := dataRiskOpened
@@ -288,31 +242,26 @@ func TestResponderRestartOfDataStoreInOnboardedNamespaceIsNotVerified(t *testing
 		t.Fatalf("the responder's request must look like production's: %+v", request)
 	}
 	closure := closures[0]
-	if closure.UnconfirmedReason != contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_DATA_MAY_BE_LOST || !strings.Contains(closure.UnconfirmedDetail, "Deployment/api") {
-		t.Fatalf("reason = %s, detail %q", closure.UnconfirmedReason, closure.UnconfirmedDetail)
+	if closure.UnconfirmedReason == contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_DATA_MAY_BE_LOST {
+		t.Fatalf("reason = %s, detail %q: a replaced Pod is no verdict", closure.UnconfirmedReason, closure.UnconfirmedDetail)
 	}
 	derived, err := ProtoOutcomeDeriver{}.Derive(ctx, closure, "", "synthetic", "synthetic")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if derived.Record.GetClassification() != "unconfirmed" || !validate.DataLossOutcome(derived.Record) {
+	if validate.DataLossOutcome(derived.Record) {
 		t.Fatalf("outcome = %+v", derived.Record)
-	}
-
-	_, loop, _ := sameWriteLoop(t)
-	loop.Request, loop.Provider, loop.GitRead = request, store, fakeArchitecture(holdsDataArchitecture)
-	response := loop.Handle(ctx, ToolRequest{Command: "verify"})
-	if len(response.DataAtRisk) != 1 || !strings.Contains(response.DataAtRisk[0], "Deployment/api") {
-		t.Fatalf("verify data_at_risk = %v (error %q)", response.DataAtRisk, response.Error)
 	}
 }
 
+// A historic outcome a data-at-risk closure wrote still reads the same: it
+// holds no verified repair and gives reflection nothing to learn.
 func TestDataLossOutcomeGivesReflectionNoVerifiedRepair(t *testing.T) {
 	at := timestamppb.New(dataRiskOpened)
 	ref := &contracts.ObjectRef{ApiVersion: "apps/v1", Kind: "StatefulSet", Namespace: "app", Name: "store"}
 	outcome := &contracts.OutcomeRecord{
 		Classification:      "unconfirmed",
-		DetectorHistory:     []*contracts.DetectorEvaluation{{DetectorId: dataAtRiskEvaluation, EvaluatedAt: at, Status: string(DetectorEvaluationPending), Reason: proto.String("StatefulSet/store has no persistent storage and its Pods were replaced")}},
+		DetectorHistory:     []*contracts.DetectorEvaluation{{DetectorId: validate.DataAtRiskDetector, EvaluatedAt: at, Status: string(DetectorEvaluationPending), Reason: proto.String("StatefulSet/store has no persistent storage and its Pods were replaced")}},
 		ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Summary: "store stalled", Resources: []*contracts.ObjectRef{ref}}},
 		RepairActions:       []*contracts.RepairActionReceipt{{Success: true, Resources: []*contracts.ObjectRef{ref}, StartedAt: at, CompletedAt: at}},
 	}
@@ -324,28 +273,10 @@ func TestDataLossOutcomeGivesReflectionNoVerifiedRepair(t *testing.T) {
 	}
 }
 
-func TestVerifyTellsTheResponderDataIsAtRisk(t *testing.T) {
-	_, loop, _ := sameWriteLoop(t)
-	after := dataRiskOpened.Add(time.Minute)
-	pods := []corev1.Pod{dataPod("store-0", after, nil, after)}
-	loop.Request.Namespace = "app"
-	loop.Provider = riskSnapshots{view: sdktest.Snapshot{NamespaceName: "app", PodList: pods}}
-	loop.Request.SourceCommit, loop.Request.RepositoryWorktree = "synthetic-accepted", "synthetic-worktree"
-	loop.GitRead = fakeArchitecture(holdsDataArchitecture)
-	if response := loop.Handle(context.Background(), ToolRequest{Command: "verify"}); len(response.DataAtRisk) != 0 {
-		t.Fatalf("an incident with no opening time reports nothing: %v", response.DataAtRisk)
-	}
-	loop.Request.DetectedAt = dataRiskOpened
-	response := loop.Handle(context.Background(), ToolRequest{Command: "verify"})
-	if len(response.DataAtRisk) != 1 || !strings.Contains(response.DataAtRisk[0], "StatefulSet/store") {
-		t.Fatalf("data_at_risk = %v (error %q)", response.DataAtRisk, response.Error)
-	}
-}
-
 // A responder's opaque command inside a data store may have changed its
 // records. SDO records that data effect on the outcome and in verify, and the
-// closure stays verified: only a replaced data Pod without persistent storage
-// makes it unconfirmed. A typed store-setting change is recorded with its class;
+// closure stays verified: a data effect is evidence, not a verdict. A typed
+// store-setting change is recorded with its class;
 // a command that reaches no data records nothing.
 func TestClosureRecordsDataEffectsWithoutUnconfirming(t *testing.T) {
 	ctx := context.Background()
@@ -402,9 +333,6 @@ func TestClosureRecordsDataEffectsWithoutUnconfirming(t *testing.T) {
 			loop.Provider, loop.GitRead = riskSnapshots{view: holdsDataView()}, fakeArchitecture(holdsDataArchitecture)
 			loop.applicationsLog = result.PlanApplications
 			response := loop.Handle(ctx, ToolRequest{Command: "verify"})
-			if len(response.DataAtRisk) != 0 {
-				t.Fatalf("verify data_at_risk = %v, want none: no data Pod was replaced", response.DataAtRisk)
-			}
 			requireDataEffectRecord(t, "verify data_effects", response.DataEffects, test.want)
 		})
 	}
