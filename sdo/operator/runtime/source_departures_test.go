@@ -253,3 +253,26 @@ func TestSecretDepartureNeedsAReadingPodAndNoLaterSDOWrite(t *testing.T) {
 		t.Fatalf("departures = %v", got)
 	}
 }
+
+func TestSourceDeparturesHonourTheInFlightFlagCarriedByTheRequest(t *testing.T) {
+	c := closedIncidentController(t)
+	request := c.incidentRequest(detectNow(), nil)
+	before := detectOnset.Add(-4 * time.Second)
+	request.DriftEvents = []sdk.DriftEvent{departureEvent(dref("Service", "api"), "kubectl", before, "spec.ports")}
+	view := departureView{detectFake: detectApp(), diffs: map[string]sdk.SourceDiff{"Service/api": {Changed: true}}}
+	for _, inFlight := range []bool{false, true} {
+		request.DeploymentInFlight = inFlight
+		message, err := incidentRequestContract(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		received := incidentRequestState(message)
+		if received.DeploymentInFlight != inFlight {
+			t.Fatalf("the flag did not cross the contract: sent %v, got %v", inFlight, received.DeploymentInFlight)
+		}
+		got := SourceDepartures(departureInput(*received, view, detectOnset), []sdk.ObjectRef{dref("Service", "api")})
+		if (len(got) == 0) != inFlight {
+			t.Fatalf("in flight %v: departures = %v", inFlight, got)
+		}
+	}
+}

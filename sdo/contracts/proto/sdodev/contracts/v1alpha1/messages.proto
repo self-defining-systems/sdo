@@ -358,6 +358,10 @@ message IncidentRequest {
   // Go-owned: the finding keys of the clues already active when the incident
   // opened. They are baseline, not evidence that the incident caused them.
   repeated string standing_keys = 38;
+  // Go-owned: the controller's rollout state when it built the request. True while an
+  // accepted-source rollout or advance has not converged; `sdo detect` then reports no
+  // source departures, since differences are SDO's own work in progress.
+  bool deployment_in_flight = 39;
 }
 
 message ResponseProgress {
