@@ -345,8 +345,9 @@ def test_idle_reports_a_missing_controller_as_busy(monkeypatch: pytest.MonkeyPat
 def test_install_existing_args_take_the_baseline_flags_and_the_settings(tmp_path: Path) -> None:
     root = _baseline_dir(tmp_path)
     block = OperatorBlock.load(_operator_file(tmp_path, root, model="gpt-x", effort="medium", image_tag="fz-t"))
+    sink_flags = ["--evidence-sink-host-path", "/bench-evidence", "--evidence-run-id", "e-l-1"]
     args = install_existing_args(
-        tmp_path / "sdo-operator", tmp_path / "app", Baseline.load(root), block, tmp_path / "kubeconfig"
+        tmp_path / "sdo-operator", tmp_path / "app", Baseline.load(root), block, tmp_path / "kubeconfig", sink_flags
     )
     assert args[1] == "install-existing"
 
@@ -359,6 +360,42 @@ def test_install_existing_args_take_the_baseline_flags_and_the_settings(tmp_path
     assert flag("--script-image") == "sdo-script-tools:fz-t"
     assert flag("--response-timeout") == "1800s"
     assert flag("--kubeconfig") == str(tmp_path / "kubeconfig")
+    assert (flag("--evidence-sink-host-path"), flag("--evidence-run-id")) == ("/bench-evidence", "e-l-1")
+
+
+def test_install_existing_args_refuse_a_lane_without_an_evidence_sink(tmp_path: Path) -> None:
+    root = _baseline_dir(tmp_path)
+    block = OperatorBlock.load(_operator_file(tmp_path, root, model="gpt-x"))
+    with pytest.raises(HookError, match="evidence sink"):
+        install_existing_args(tmp_path / "b", tmp_path / "app", Baseline.load(root), block, tmp_path / "k", [])
+
+
+@pytest.mark.parametrize("flag", ["--evidence-sink-host-path", "--evidence-run-id", "--evidence-sink-volume"])
+def test_a_baseline_cannot_set_the_evidence_sink(flag: str) -> None:
+    with pytest.raises(ValueError, match="set by the hook"):
+        Baseline(
+            namespace="ns1", bundle="b", branch="x", commit=COMMIT, render="r", controller_flags=(flag, "/elsewhere")
+        )
+
+
+@pytest.mark.parametrize("missing", ["BENCH_EVIDENCE_NODE", "BENCH_EVIDENCE_RUN"])
+def test_prepare_fails_before_any_work_without_the_evidence_sink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: str
+) -> None:
+    operator = _operator_file(tmp_path, _baseline_dir(tmp_path), model="gpt-x")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(hooks.subprocess, "run", lambda cmd, **_: calls.append(cmd))
+    env = {
+        "FUZZOPS_NAMESPACE": "ns1",
+        "BENCH_OPERATOR": str(operator),
+        "BENCH_EVIDENCE_HOST": str(tmp_path / "evidence"),
+        "BENCH_EVIDENCE_NODE": "/bench-evidence",
+        "BENCH_EVIDENCE_RUN": "e-l-1",
+    }
+    del env[missing]
+    with pytest.raises(HookError, match=missing):
+        hooks.prepare(env, out=lambda _: None)
+    assert calls == []
 
 
 def test_teardown_deletes_the_control_namespace_and_its_cluster_grant(
@@ -380,14 +417,17 @@ def test_teardown_deletes_the_control_namespace_and_its_cluster_grant(
     }
     assert hooks.teardown(env, out=lambda _: None) == 0
     deletes = [c[c.index("delete") + 1 :] for c in calls if "delete" in c]
-    assert deletes[0][:2] == ["namespace", "ns1-sdo"]
+    assert calls[0][calls[0].index("delete") + 1 :][:2] == ["namespace", "ns1-sdo"]
+    assert "--wait=true" in calls[0]
     assert ["clusterrolebinding", "sdo-admin-ns1-sdo"] in [d[:2] for d in deletes]
     assert ["clusterrole", "sdo-admin-ns1-sdo"] in [d[:2] for d in deletes]
     assert all("--ignore-not-found" in c for c in calls if "delete" in c)
     assert not any(c[c.index("delete") + 2] == "ns1" for c in calls if "delete" in c)
 
 
-def test_watch_runs_the_observer_for_the_fault(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_watch_runs_the_observer_for_the_fault_without_pvc_snapshots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     seen: list[list[str]] = []
     monkeypatch.setattr(hooks.observe, "main", lambda argv: seen.append(argv) or 0)
     (tmp_path / "bin").mkdir()
@@ -402,7 +442,7 @@ def test_watch_runs_the_observer_for_the_fault(tmp_path: Path, monkeypatch: pyte
     argv = seen[0]
     assert argv[argv.index("--control-namespace") + 1] == "ns1-sdo"
     assert argv[argv.index("--fault") + 1] == "t@deploy/web"
-    assert argv[argv.index("--controller-image") + 1] == "sdo-controller:fz-t"
+    assert "--operator-binary" not in argv
     env["BENCH_FAULT"] = "none"
     hooks.watch(env)
     assert "--fault" not in seen[1]
@@ -440,3 +480,118 @@ def test_rebranch_bundle_writes_the_named_branch(tmp_path: Path) -> None:
     assert hooks.rebranch_bundle(raw, out, "baseline", tmp_path / "work") == commit
     heads = subprocess.run(["git", "bundle", "list-heads", str(out)], check=True, capture_output=True, text=True)
     assert heads.stdout.split() == [commit, "refs/heads/baseline"]
+
+
+# ---- evidence sink: transcripts and collect ------------------------------------------------------------------
+
+
+def _sink_env(tmp: Path, **extra: str) -> dict[str, str]:
+    return {
+        "FUZZOPS_NAMESPACE": "ns1",
+        "BENCH_EVIDENCE_HOST": str(tmp / "evidence"),
+        "BENCH_EVIDENCE_NODE": "/bench-evidence",
+        "BENCH_EVIDENCE_RUN": "e-l-1",
+        **extra,
+    }
+
+
+def _sink_incident(run: Path, name: str, ledger: dict[str, Any], rollout: bool) -> None:
+    incident = run / "incidents" / name
+    incident.mkdir(parents=True)
+    (incident / "ledger.json").write_text(json.dumps(ledger))
+    if rollout:
+        sessions = incident / "codex" / "sessions" / "2026" / "11" / "12"
+        sessions.mkdir(parents=True)
+        (sessions / "rollout-1.jsonl").write_text("{}\n")
+
+
+RESPONDED = {
+    "incident_id": "inc-a",
+    "closure": {
+        "detected_at": "2026-11-12T10:01:00Z",
+        "result": {"responder_session_id": "s", "resolution_path": "responder"},
+    },
+    "outcome_document": {"incident_id": "inc-a", "classification": "success"},
+    "acknowledged": True,
+    "acknowledged_at": "2026-11-12T10:05:00Z",
+}
+
+
+def _sink_run(tmp: Path) -> Path:
+    run = tmp / "evidence" / "e-l-1"
+    run.mkdir(parents=True)
+    (run / "layout.json").write_text(json.dumps({"schema": "sdo.evidence/v1", "run_id": "e-l-1", "created_at": "x"}))
+    return run
+
+
+def test_transcripts_fails_without_a_sink_on_the_host(tmp_path: Path) -> None:
+    lines: list[str] = []
+    assert hooks.transcripts(_sink_env(tmp_path), out=lines.append) == 1
+    assert lines[0].startswith("no sink: ")
+    lines.clear()
+    assert hooks.transcripts({"FUZZOPS_NAMESPACE": "ns1"}, out=lines.append) == 1
+    assert lines[0].startswith("no sink: ")
+
+
+def test_transcripts_passes_on_a_fresh_sink_and_counts_missing_rollouts(tmp_path: Path) -> None:
+    run = _sink_run(tmp_path)
+    lines: list[str] = []
+    assert hooks.transcripts(_sink_env(tmp_path), out=lines.append) == 0
+    _sink_incident(run, "a" * 32, RESPONDED, rollout=False)
+    lines.clear()
+    assert hooks.transcripts(_sink_env(tmp_path), out=lines.append) == 1
+    assert lines[0] == f"transcripts missing: 1 ({'a' * 8})"
+
+
+def test_transcripts_verb_is_dispatched_by_main(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any) -> None:
+    _sink_run(tmp_path)
+    for name, value in _sink_env(tmp_path).items():
+        monkeypatch.setenv(name, value)
+    assert hooks.main(["transcripts"]) == 0
+    assert capsys.readouterr().out.startswith("transcripts: ok")
+
+
+def test_collect_copies_the_interval_from_the_host_sink(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    run = _sink_run(tmp_path)
+    _sink_incident(run, "a" * 32, RESPONDED, rollout=True)
+    old = {**RESPONDED, "incident_id": "inc-old"}
+    old["closure"] = {**RESPONDED["closure"], "detected_at": "2026-11-11T09:00:00Z"}
+    old["acknowledged_at"] = "2026-11-11T09:10:00Z"
+    _sink_incident(run, "b" * 32, old, rollout=True)
+    (run / "index.jsonl").write_text(
+        json.dumps(
+            {"kind": "incident", "id": "inc-a", "path": "incidents/" + "a" * 32, "sealed_at": "2026-11-12T10:06:00Z"}
+        )
+        + "\n"
+        + json.dumps(
+            {"kind": "incident", "id": "inc-old", "path": "incidents/" + "b" * 32, "sealed_at": "2026-11-11T09:11:00Z"}
+        )
+        + "\n"
+    )
+    calls: list[list[str]] = []
+
+    def run_cmd(cmd: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 1, "", "no cluster")
+
+    monkeypatch.setattr(hooks.subprocess, "run", run_cmd)
+    out = tmp_path / "out"
+    env = _sink_env(
+        tmp_path,
+        BENCH_OUT=str(out),
+        BENCH_INTERVAL_START="2026-11-12T10:00:00Z",
+        BENCH_INTERVAL_END="2026-11-12T10:30:00Z",
+    )
+    hooks.collect(env, out=lambda _: None)
+    assert not any("runtime-artifacts" in c for c in calls)
+    evidence = out / "evidence"
+    assert (evidence / "incidents" / ("a" * 32) / "ledger.json").is_file()
+    assert not (evidence / "incidents" / ("b" * 32)).exists()
+    assert [json.loads(line)["id"] for line in (evidence / "index.jsonl").read_text().splitlines()] == ["inc-a"]
+    summary = json.loads((out / "transcripts.json").read_text())
+    assert summary == {
+        "incidents": [{"id": "inc-a", "outcome": True, "agents_ran": True, "rollouts": 1}],
+        "rollouts": 1,
+        "missing": [],
+    }
+    assert json.loads((out / "collect.json").read_text())["parts"]["evidence"].startswith("ok")

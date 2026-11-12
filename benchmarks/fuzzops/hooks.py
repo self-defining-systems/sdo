@@ -9,14 +9,19 @@ ever touches its own lane. Verbs (environment: ``BENCH_*`` and ``FUZZOPS_*``, se
 ``prepare``   on a fresh app copy: build the plain-manifest pack from the live app (the namespace's one Helm release,
               or the pack's own ``manifests/``), refuse a render that differs from the baseline's, write the attached
               pack, build ``sdo-operator``, load the operator images onto the worker nodes, provision the namespaces,
-              clone the baseline memory and run production ``sdo-operator install-existing``. The last stdout line is
+              clone the baseline memory and run production ``sdo-operator install-existing`` with the lane's evidence
+              sink (``BENCH_EVIDENCE_NODE``, ``BENCH_EVIDENCE_RUN``; required). The last stdout line is
               ``{"pack", "operator_version", "memory"}``.
 ``idle``      exit 0 when the controller pod is Ready, its state ConfigMap changed within 60 s and SDO owns no incident
               work; otherwise exit 1 with the reason on the first line (``alarm: incident open <id>`` for an incident).
 ``watch``     the fault window's ``exec:`` command: ``benchmarks.fuzzops.observe``.
-``collect``   best effort: accepted outcomes and playbooks, the controller state, controller logs since the inject and
-              a runtime evidence export into ``BENCH_OUT``.
-``teardown``  delete the control namespace and the cluster grant install-existing made for it.
+``collect``   best effort: accepted outcomes and playbooks, the controller state, controller logs since the inject, and
+              from the host sink the interval's incidents and tasks (``evidence/``) and ``transcripts.json``.
+``teardown``  delete the control namespace (waiting, so the evidence sidecar's final pass runs), then the cluster grant
+              install-existing made for it.
+``transcripts`` read-only, the host sink only: exit 0 when ``$BENCH_EVIDENCE_HOST/$BENCH_EVIDENCE_RUN`` is an
+              ``sdo.evidence/v1`` run directory and every incident with a ledger holds a rollout unless no agent ran;
+              otherwise exit 1 with ``no sink: <why>`` or ``transcripts missing: N (<ids>)`` first.
 
 ``baseline`` (SDO only) archives a running lane's accepted memory and render into a new baseline directory.
 
@@ -49,7 +54,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from benchmarks.fuzzops import evidence, observe
+from benchmarks.fuzzops import observe, sink
 from benchmarks.fuzzops.install import (
     CREDENTIALS_SECRET,
     REPOSITORY_PVC,
@@ -89,6 +94,9 @@ HOOK_FLAGS = frozenset(
         "--model",
         "--agent-effort",
         "--kubeconfig",
+        "--evidence-sink-host-path",
+        "--evidence-sink-volume",
+        "--evidence-run-id",
     }
 )
 #: Controller flags a new baseline records unless told otherwise (the flags SDO's fuzzops lanes ran with).
@@ -350,10 +358,6 @@ def control_namespace(env: Mapping[str, str]) -> str:
 
 def _kube(env: Mapping[str, str]) -> Kube:
     return Kube(env.get("FUZZOPS_KUBE_CONTEXT", ""), env.get("KUBECONFIG", ""))
-
-
-def _binary(env: Mapping[str, str]) -> Path:
-    return Path(_need(env, "BENCH_LANE_DIR")) / "bin" / "sdo-operator"
 
 
 # ---- SDO state -----------------------------------------------------------------------------------------------
@@ -618,9 +622,17 @@ def pack_docs(pack: SourcePack) -> list[dict[str, Any]]:
 
 
 def install_existing_args(
-    binary: Path, repository: Path, baseline: Baseline, block: OperatorBlock, kubeconfig: Path
+    binary: Path,
+    repository: Path,
+    baseline: Baseline,
+    block: OperatorBlock,
+    kubeconfig: Path,
+    evidence_flags: list[str],
 ) -> list[str]:
-    """The production ``sdo-operator install-existing`` command restoring the baseline on the lane."""
+    """The production ``sdo-operator install-existing`` command restoring the baseline on the lane, with the lane's
+    evidence sink (``sink.install_flags``)."""
+    if "--evidence-sink-host-path" not in evidence_flags or "--evidence-run-id" not in evidence_flags:
+        raise HookError("install-existing needs the lane's evidence sink and run ID")
     image = block.images()
     if not block.model:
         raise HookError("the operator block's settings need a model")
@@ -652,7 +664,7 @@ def install_existing_args(
     ]
     if block.effort:
         args += ["--agent-effort", block.effort]
-    return [*args, *baseline.controller_flags, "--kubeconfig", str(kubeconfig)]
+    return [*args, *evidence_flags, *baseline.controller_flags, "--kubeconfig", str(kubeconfig)]
 
 
 def _run(args: list[str], what: str, timeout: float = 600, **kwargs: Any) -> subprocess.CompletedProcess[str]:
@@ -712,7 +724,8 @@ def clone_baseline(baseline: Baseline, repo: Path) -> str:
 
 
 def remove_operator(kube: Kube, control: str, log: Callable[[str], None]) -> None:
-    """Delete the control namespace (waiting until it is gone) and the cluster grant install-existing made for it."""
+    """Delete the control namespace first, waiting until it is gone (its Pods get SIGTERM, so the evidence sidecar
+    runs its final pass), then the cluster grant install-existing made for it."""
     _run(
         kube.cmd("delete", "namespace", control, "--ignore-not-found", "--wait=true", "--timeout=600s"),
         f"delete namespace {control}",
@@ -740,6 +753,10 @@ def check(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
 
 
 def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
+    try:
+        evidence_flags = sink.install_flags(env)
+    except sink.SinkError as exc:
+        raise HookError(str(exc)) from exc
     block = _operator(env)
     baseline = _baseline(block)
     namespace = _need(env, "FUZZOPS_NAMESPACE")
@@ -803,7 +820,7 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     # (g) the baseline memory as the accepted repository
     memory = clone_baseline(baseline, lane_dir / "app")
     # (h) production restore: install-existing, history kept, no install-time agents
-    args = install_existing_args(binary.resolve(), lane_dir / "app", baseline, block, kubeconfig)
+    args = install_existing_args(binary.resolve(), lane_dir / "app", baseline, block, kubeconfig, evidence_flags)
     (lane_dir / "install-existing-args.json").write_text(json.dumps(args, indent=1) + "\n")
     with (
         (lane_dir / "install-existing.json").open("w") as receipt,
@@ -840,13 +857,11 @@ def idle(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
 
 
 def watch(env: Mapping[str, str]) -> int:
+    """The observer only: the evidence sink carries the transcripts, so no snapshot is sealed on the PVC."""
     argv = ["--control-namespace", control_namespace(env)]
     fault = env.get("BENCH_FAULT", "none")
     if fault and fault != "none":
         argv += ["--fault", fault]
-    binary = _binary(env) if env.get("BENCH_LANE_DIR") else None
-    if binary is not None and binary.is_file() and env.get("BENCH_OPERATOR"):
-        argv += ["--operator-binary", str(binary), "--controller-image", _operator(env).images()["controller"]]
     return observe.main(argv)
 
 
@@ -888,22 +903,24 @@ def collect(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
             raise HookError(proc.stderr.strip()[-300:])
         return "ok"
 
-    def export() -> str:
-        binary = _binary(env)
-        if not binary.is_file():
-            raise HookError(f"no operator binary at {binary}")
-        target = evidence.EvidenceTarget(
-            binary.resolve(),
-            control,
-            _operator(env).images()["controller"],
-            Path(env["KUBECONFIG"]).resolve() if env.get("KUBECONFIG") else None,
+    def evidence() -> str:
+        copied = sink.copy_interval(
+            sink.host_run_dir(env),
+            dest / "evidence",
+            sink.parse_time(env.get("BENCH_INTERVAL_START")),
+            sink.parse_time(env.get("BENCH_INTERVAL_END")),
         )
-        return str(evidence.export(target, dest))
+        summary = copied.summary()
+        (dest / "transcripts.json").write_text(json.dumps(summary, indent=2) + "\n")
+        counts = f"{len(copied.incidents)} incidents, {copied.tasks} tasks, {summary['rollouts']} rollouts"
+        if summary["missing"]:
+            raise HookError(f"transcripts missing: {len(summary['missing'])} ({counts})")
+        return f"ok ({counts})"
 
     part("memory", memory)
     part("state", state)
     part("logs", logs)
-    part("evidence", export)
+    part("evidence", evidence)
     summary = {
         "control_namespace": control,
         "run": env.get("BENCH_RUN", ""),
@@ -920,6 +937,20 @@ def collect(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
 
 def teardown(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     remove_operator(_kube(env), control_namespace(env), out)
+    return 0
+
+
+def transcripts(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
+    try:
+        why = sink.transcripts_verdict(sink.host_run_dir(env))
+    except sink.SinkError as exc:
+        why = f"no sink: {exc}"
+    except OSError as exc:
+        why = f"no sink: unreadable: {exc}"
+    if why:
+        out(why)
+        return 1
+    out("transcripts: ok")
     return 0
 
 
@@ -1001,7 +1032,7 @@ def baseline_main(argv: list[str]) -> int:
     return 0
 
 
-VERBS = ("check", "prepare", "idle", "watch", "collect", "teardown")
+VERBS = ("check", "prepare", "idle", "watch", "collect", "teardown", "transcripts")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1015,7 +1046,15 @@ def main(argv: list[str] | None = None) -> int:
             return baseline_main(args[1:])
         if verb == "watch":
             return watch(env)
-        return {"check": check, "prepare": prepare, "idle": idle, "collect": collect, "teardown": teardown}[verb](env)
+        verbs: dict[str, Callable[[Mapping[str, str]], int]] = {
+            "check": check,
+            "prepare": prepare,
+            "idle": idle,
+            "collect": collect,
+            "teardown": teardown,
+            "transcripts": transcripts,
+        }
+        return verbs[verb](env)
     except (HookError, ValueError, OSError, subprocess.SubprocessError) as exc:
         reason = " ".join(str(exc).split()) or type(exc).__name__
         print(reason if verb == "check" else f"error: {reason}", flush=True)

@@ -27,8 +27,17 @@ run's cap) and the `collect` hook. Later positions of a sequence run on the memo
     exec/                                       the watch hook's FUZZOPS_OUT dirs (state-*.json, report.json,
                                                  timeline.jsonl)
     operator/                                   collect: memory/.sdo/{outcomes,playbooks}, controller-state.json,
-                                                 controller.log (since the inject), sdo_runtime/ (evidence
-                                                 export), collect.json (per-part ok/error)
+                                                 controller.log (since the inject), collect.json (per-part
+                                                 ok/error), and from the lane's host evidence sink:
+      evidence/                                 layout.json, index.jsonl (the interval's records),
+                                                 incidents/<sha256(id)[:32]>/ (incident.json, ledger.json,
+                                                 seal.json, rollouts under codex/sessions/ or claude/projects/
+                                                 as rollout-*.jsonl, scratch/sdo-reports/...), lifecycle/<task>/
+      transcripts.json                          {incidents: [{id, outcome, agents_ran, rollouts}], rollouts,
+                                                 missing: [ids with outcome and agents_ran but no rollout]}
+<root>/evidence/...                             each lane's host sink (BENCH_EVIDENCE_HOST), one run directory
+                                                 <exp>-<lane>-<build> per build; append-only, never cleaned by
+                                                 the bench; the source of every run's operator/evidence/
 <root>/<exp>/results/                           fuzzops-bench results: runs.jsonl (done records), report.md,
                                                  grades.json (fuzzops grade cells), runs.csv (fault, position,
                                                  seed, lane, host, status, reason, grade)
@@ -55,7 +64,12 @@ and the render. The `prepare` hook's receipt and log (`install-existing*.json|lo
 - Grade cells are keyed by (fault instance, operator label); each position is its own cell, so first and repeats
   never average together. `--with` baselines (`noop`, `best-fix` builtin experiments) supply noop and best-fix cells.
 - Before trusting a run, check `operator/collect.json`: a failed part (memory, state, logs, evidence) means that
-  run's SDO-side columns may be incomplete, not that the run is invalid.
+  run's SDO-side columns may be incomplete, not that the run is invalid. An `evidence` part failing with
+  `transcripts missing` names incidents whose outcome says an agent ran but whose rollouts never reached the host.
+- Transcripts (responder and reflection rollouts) live only in `operator/evidence/incidents/*/` (copied from the host
+  sink); `operator/transcripts.json` gives per-incident coverage. The lane timeline's `transcripts` check after each
+  teardown records `transcripts missing: N` when the sink lost any. Older experiments have `operator/sdo_runtime/`
+  (in-cluster export) instead.
 
 ## SDO table
 

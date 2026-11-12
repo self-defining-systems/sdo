@@ -35,11 +35,12 @@ fuzzops-bench.md`). It runs `uv run -q python -m benchmarks.fuzzops.hooks <verb>
 | verb | does |
 |---|---|
 | `check` | no cluster access: `baseline.json` well formed, its namespace is `FUZZOPS_NAMESPACE`, the render matches its sha256, the bundle has the branch at the commit |
-| `prepare` | plain-manifest pack from the live app (the namespace's one Helm release, Jobs and namespaces dropped, the pack's other files beside `manifests/`; or the pack's own `manifests/`), refuse a render that differs from the baseline's (key order, document order and null-valued keys ignored), attached pack in `$BENCH_LANE_DIR/pack`, `go build` of `sdo-operator`, `kind load` of `sdo-{controller,responder,script-tools}:<image_tag>` on the workers, namespaces and credentials (`--from-file`), node image digest names, the bundle branch cloned as `main`, production `install-existing` with the baseline's controller flags and the settings' model, effort and provider. An operator left in the control namespace is removed first. Last stdout line: `{"pack", "operator_version", "memory"}` |
+| `prepare` | plain-manifest pack from the live app (the namespace's one Helm release, Jobs and namespaces dropped, the pack's other files beside `manifests/`; or the pack's own `manifests/`), refuse a render that differs from the baseline's (key order, document order and null-valued keys ignored), attached pack in `$BENCH_LANE_DIR/pack`, `go build` of `sdo-operator`, `kind load` of `sdo-{controller,responder,script-tools}:<image_tag>` on the workers, namespaces and credentials (`--from-file`), node image digest names, the bundle branch cloned as `main`, production `install-existing` with the baseline's controller flags, the settings' model, effort and provider, and always `--evidence-sink-host-path $BENCH_EVIDENCE_NODE --evidence-run-id $BENCH_EVIDENCE_RUN` (either unset: fails before any work). An operator left in the control namespace is removed first. Last stdout line: `{"pack", "operator_version", "memory"}` |
 | `idle` | two kubectl reads: controller pod (`job-name=sdo-controller-run`) Ready, `sdo-controller-state` written within 60 s (newest managedFields time; every controller step advances `step_count`, so a live controller writes it), and no open incident, pending closure or queued reflection. Busy reasons: `alarm: incident open <id>`, `busy: ...`, `down: ...`, `stale: ...` |
-| `watch` | `observe.py` on the control namespace with `--fault $BENCH_FAULT` (none for a healthy run), sealing an evidence snapshot at closure |
-| `collect` | best effort into `BENCH_OUT`: `memory/.sdo/{outcomes,playbooks}`, `controller-state.json`, `controller.log` since the inject, `sdo_runtime/` (evidence export), `collect.json` |
-| `teardown` | delete the control namespace (waiting) and the `sdo-admin-<control namespace>` ClusterRole and binding; never the app namespace |
+| `watch` | `observe.py` on the control namespace with `--fault $BENCH_FAULT` (none for a healthy run); no PVC snapshot (the sink carries the evidence) |
+| `collect` | best effort into `BENCH_OUT`: `memory/.sdo/{outcomes,playbooks}`, `controller-state.json`, `controller.log` since the inject (from the cluster), and from the host sink only `evidence/` (the interval's incidents and lifecycle tasks, relative paths kept, with their `index.jsonl` records) and `transcripts.json`; `collect.json` |
+| `teardown` | delete the control namespace with `--wait` first (its Pods get SIGTERM, so the evidence sidecar runs its final pass), then the `sdo-admin-<control namespace>` ClusterRole and binding; never the app namespace. The bench waits for `idle` before it |
+| `transcripts` | read-only, 2 min, only `$BENCH_EVIDENCE_HOST/$BENCH_EVIDENCE_RUN` on the host: exit 0 when `layout.json` has schema `sdo.evidence/v1` and every `incidents/*/` with a `ledger.json` holds a `rollout-*.jsonl` (anywhere below it) unless no agent ran; else exit 1 with `no sink: <why>` or `transcripts missing: N (<short ids>)` first. The bench runs it at the end of every build check (the lane is not ready until it passes) and after every teardown (a failure is recorded; the reset proceeds) |
 
 `BENCH_OPERATOR` names the baseline directory and the settings (`model`, `effort`, `provider` default `codex`,
 `image_tag` default `fz-<revision[:8]>`, `auth_file` default `~/.codex/auth.json`). The operator images must already be
@@ -83,7 +84,25 @@ same cluster, so SDO never sees their namespaces.
 
 ## Evidence sink
 
-Pass `--evidence-sink-host-path <node dir> [--evidence-run-id <id>]` to `install` so SDO's trajectories, task records,
+Every fuzzops-bench lane has one, always (`sink.py`). The bench mounts a host directory (`BENCH_EVIDENCE_HOST`, never
+cleaned by the bench) on every kind node at `BENCH_EVIDENCE_NODE` and names the sink run `BENCH_EVIDENCE_RUN`
+(`<exp>-<lane>-<build step id>`, constant for the build). `prepare` installs SDO with that node path and run ID, so
+rollouts, task records and broker ledgers reach `$BENCH_EVIDENCE_HOST/$BENCH_EVIDENCE_RUN/` while the run goes (at most
+10 s behind; the SIGTERM pass of `teardown` flushes the rest). `transcripts` and `collect` read only that host
+directory. `collect` copies an incident when it was detected, verified, acknowledged, reflected or sealed in
+`[BENCH_INTERVAL_START, BENCH_INTERVAL_END]` or was open during it (an incident without a ledger: when its files changed
+since the start), and a lifecycle task sealed or written in the interval. `transcripts.json`:
+`{"incidents": [{"id", "outcome", "agents_ran", "rollouts"}], "rollouts", "missing": [ids with an outcome and an agent
+run but no rollout]}`.
+
+"No agent ran" (`sink.agents_ran` is false) is decided conservatively from the ledger: the incident has a closure whose
+responder result is absent because dispatch failed, or has no `responder_session_id`, a `resolution_path` other than
+`responder`, no usage and no response loop; the outcome document records no responder resolution, usage or loop; no
+reflection was dispatched (`reflection_dispatch_at` unset, phase not `DISPATCH`); and every reflection result has no
+usage and failed before its session started (`session_unavailable`, `session_handoff_invalid`, `request_too_large`).
+Anything else, including an incident with no closure yet, counts as an agent run that needs a rollout.
+
+For a manual `install`, pass `--evidence-sink-host-path <node dir> [--evidence-run-id <id>]` so SDO's trajectories, task records,
 ledgers and usage are mirrored out of the control namespace while the run goes (layout: `docs/architecture.md`,
 "Run evidence sink"). On kind the directory must be a node mount made when the cluster is created, for example
 `extraMounts: [{hostPath: <sdo-exp run dir>/evidence, containerPath: /opt/sdo-evidence}]` with the host directory
@@ -116,10 +135,9 @@ without agent cost; the incident record is the controller state, its lifecycle t
 - `hooks prepare` renders a Helm-based pack generically from the namespace's one release (`helm get manifest`), so
   any Helm pack works; the namespace is part of the render, which is why a baseline restores only into its own.
 
-## Evidence
+## Evidence without the bench
 
-- Save each pair's runtime evidence (responder sessions and Codex rollouts, lifecycle tasks, telemetry) with
-  `sdo-operator runtime-artifacts` until SDO's native evidence sink lands: the observer seals a snapshot when an
-  incident closes (`--operator-binary`, `--controller-image`), and `hooks collect` runs
-  `evidence.export` after every run, before any teardown deletes the control namespace. Output goes to sdo-exp. `evidence.EvidenceTarget` is the hook for the
-  sink's configuration.
+- The bench hooks never take evidence from the cluster: a `runtime-artifacts` snapshot sealed on the repository PVC is
+  lost with the control namespace. `evidence.py` (`sdo-operator runtime-artifacts` export, and the observer's
+  `--operator-binary` closure snapshot) remains for manual pairs without a sink; export before deleting the namespace.
+  Output goes to sdo-exp.
