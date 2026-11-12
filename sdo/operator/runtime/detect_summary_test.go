@@ -307,3 +307,16 @@ func TestDetectCommandReturnsTheCompactText(t *testing.T) {
 		t.Fatal("an unknown --finding is an error")
 	}
 }
+
+// A request persisted before opening keys existed opened on all of its
+// findings: every finding counts as an opening alert, none is a background clue.
+func TestDetectSummaryWithoutOpeningKeysTreatsEveryFindingAsOpening(t *testing.T) {
+	request := detectRequest()
+	request.OpeningKeys = nil
+	finding := sdk.Finding{DetectorID: "workload-health", RuleID: "crash-looping", Status: sdk.FindingActive, Summary: "legacy finding", PrimaryResource: sdk.ObjectRef{Kind: "Deployment", Namespace: "app", Name: "api"}}
+	request.Findings = []sdk.Finding{finding}
+	text := buildDetectSummary(detectInput{Request: request, Findings: request.Findings, View: detectApp(), Now: detectNow()}).Text
+	if !strings.Contains(text, "Deployment/api  legacy finding") || strings.Contains(text, "OTHER CLUES") {
+		t.Fatalf("legacy request:\n%s", text)
+	}
+}
