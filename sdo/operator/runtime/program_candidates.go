@@ -34,9 +34,24 @@ type ProgramRun struct {
 	suspectRank int
 }
 
-// BindingSourceCredited marks a run bound through a playbook's credited
-// (symptom, component) pair rather than through a finding's resources.
-const BindingSourceCredited = "credited"
+// Binding sources a candidate producer may emit. Each must be accepted by the
+// binding_source rule on contracts.ProgramRun (program.proto); the conformance
+// test checks every value in BindingSources against it.
+const (
+	// BindingSourceFinding binds through the resources a finding names.
+	BindingSourceFinding = "finding"
+	// BindingSourceHint binds through a finding's authored parameter hint or playbook reference.
+	BindingSourceHint = "hint"
+	// BindingSourceSuspect binds the built-in source-restore candidate by the
+	// suspect component on a failing path.
+	BindingSourceSuspect = "suspect"
+	// BindingSourceCredited marks a run bound through a playbook's credited
+	// (symptom, component) pair rather than through a finding's resources.
+	BindingSourceCredited = "credited"
+)
+
+// BindingSources lists every value a candidate producer can emit.
+var BindingSources = []string{BindingSourceFinding, BindingSourceHint, BindingSourceSuspect, BindingSourceCredited}
 
 // KeyedMatching binds playbooks by the pairs they were credited for.
 type KeyedMatching struct {
@@ -118,7 +133,7 @@ func SelectKeyedProgramCandidates(ctx context.Context, registry program.ProgramR
 	}
 	for _, restore := range keyed.Restore {
 		if _, ok := registry.Diagnoser(SourceRestoreID); ok {
-			add(SourceRestoreID, restore.bindings, restore.fingerprint, "suspect", restore.rank)
+			add(SourceRestoreID, restore.bindings, restore.fingerprint, BindingSourceSuspect, restore.rank)
 		}
 	}
 	if keyed.active() {
@@ -256,10 +271,10 @@ func findingProgramBindings(spec program.ProgramSpec, finding sdk.Finding) (prog
 		hasObjectRoles = hasObjectRoles || param.Kind != ""
 	}
 	if err == nil && (!hasObjectRoles || len(bound.Objects) > 0) {
-		source := "finding"
+		source := BindingSourceFinding
 		for name, ref := range bound.Objects {
 			if finding.ParameterBindings[name] == ref && ref.Kind != "" {
-				source = "hint"
+				source = BindingSourceHint
 			}
 		}
 		return bound, source, true
@@ -267,7 +282,7 @@ func findingProgramBindings(spec program.ProgramSpec, finding sdk.Finding) (prog
 	for _, reference := range finding.Playbooks {
 		id, err := layout.PlaybookID(reference)
 		if err == nil && id == spec.ID {
-			return cloneProgramBindings(bound), "hint", true
+			return cloneProgramBindings(bound), BindingSourceHint, true
 		}
 	}
 	return program.Bindings{}, "", false
