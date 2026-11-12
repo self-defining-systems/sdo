@@ -50,6 +50,7 @@ def test_native_deploy_consumes_the_same_accepted_render(
 ):
     import importlib
     import json
+    import subprocess
     from pathlib import Path
     from types import SimpleNamespace
 
@@ -63,6 +64,7 @@ def test_native_deploy_consumes_the_same_accepted_render(
     monkeypatch.setattr(builds._SUPPORTED_ADAPTERS[app_name], "ensure_images_loaded", lambda **kwargs: None)
     (tmp_path / "repo").mkdir()
     (tmp_path / "repo/build-input").write_text("accepted build input")
+    manifest_path = "kubernetes/astronomy-shop.yaml" if module == "astronomy_shop" else "kubernetes/app.yaml"
     source = commit_accepted_source(
         tmp_path / "repo",
         [
@@ -74,11 +76,16 @@ def test_native_deploy_consumes_the_same_accepted_render(
             }
         ],
         namespace=namespace,
-        path="kubernetes/astronomy-shop.yaml" if module == "astronomy_shop" else "kubernetes/app.yaml",
+        path=manifest_path,
         kustomize_root=module == "hotel_reservation",
     )
     # Dirty working bytes must not affect either deployment or restoration.
-    next((tmp_path / "repo/kubernetes").glob("*.yaml")).write_text("not accepted")
+    # Every tracked file, sorted: no directory-order dependence, and the kustomize
+    # root is dirtied too, so the render must read the commit, not the working tree.
+    dirtied = sorted((tmp_path / "repo/kubernetes").glob("*.yaml"))
+    assert {p.name for p in dirtied} >= {Path(manifest_path).name}
+    for dirty in dirtied:
+        dirty.write_text("not accepted")
     (tmp_path / "repo/build-input").write_text("unaccepted build input")
     applied = []
 
@@ -102,12 +109,10 @@ def test_native_deploy_consumes_the_same_accepted_render(
     newer = list(source.manifests)
     newer[0]["data"]["value"] = "new accepted revision"
     (tmp_path / "repo/build-input").write_text("accepted build input")
-    current = commit_accepted_source(
-        tmp_path / "repo",
-        newer,
-        namespace=namespace,
-        path="kubernetes/astronomy-shop.yaml" if module == "astronomy_shop" else "kubernetes/app.yaml",
-    )
+    # The next accepted revision starts from clean tracked files; the dirt above
+    # must not be committed into it.
+    subprocess.run(["git", "-C", str(tmp_path / "repo"), "checkout", "--", "kubernetes"], check=True)
+    current = commit_accepted_source(tmp_path / "repo", newer, namespace=namespace, path=manifest_path)
     applied.clear()
     app.deploy()
     assert applied == list(current.manifests)
