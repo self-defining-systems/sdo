@@ -44,7 +44,6 @@ from sdodev.contracts.v1alpha1 import (
     controller_observation_pb2,
     controller_state_pb2,
     deployment_source_pb2,
-    late_findings_pb2,
     lifecycle_pb2,
     memory_pb2,
     memory_diagnostic_pb2,
@@ -163,7 +162,6 @@ UsageMetrics = messages_pb2.UsageMetrics
 TimingMetrics = messages_pb2.TimingMetrics
 RepairActionReceipt = messages_pb2.RepairActionReceipt
 IncidentResult = messages_pb2.IncidentResult
-LateFindingsPull = messages_pb2.LateFindingsPull
 IncidentView = messages_pb2.IncidentView
 DetectorTimelineEntry = messages_pb2.DetectorTimelineEntry
 IncidentClosure = messages_pb2.IncidentClosure
@@ -187,11 +185,6 @@ MemoryOutcomes = memory_pb2.MemoryOutcomes
 FiringRecord = telemetry_pb2.FiringRecord
 LifecycleEvent = telemetry_pb2.LifecycleEvent
 
-LateFinding = late_findings_pb2.LateFinding
-LateFindingsReport = late_findings_pb2.LateFindingsReport
-LateFindingsSnapshot = late_findings_pb2.LateFindingsSnapshot
-LateFindingsHistory = late_findings_pb2.LateFindingsHistory
-LateFindingsReceipt = late_findings_pb2.LateFindingsReceipt
 
 ControllerState = controller_state_pb2.ControllerState
 FindingState = controller_state_pb2.FindingState
@@ -295,11 +288,6 @@ __all__ = [
     "Evidence",
     "Finding",
     "FiringRecord",
-    "LateFinding",
-    "LateFindingsHistory",
-    "LateFindingsReceipt",
-    "LateFindingsReport",
-    "LateFindingsSnapshot",
     "LifecycleEvent",
     "OUTCOME_CLASSIFICATIONS",
     "OutcomeClassification",
@@ -316,7 +304,6 @@ __all__ = [
     "DisabledSetupDetector",
     "InstallEnvironmentObject",
     "IncidentResult",
-    "LateFindingsPull",
     "MemoryDetector",
     "MemoryPlaybook",
     "MemoryScript",

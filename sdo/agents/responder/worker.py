@@ -11,8 +11,6 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
-from google.protobuf import json_format
-
 from libs.agent_cli.errors import rate_limit_failure
 from libs.agent_cli.startup import mark_startup
 from sdo.agents.responder.codex import ResponderExecutionError, execute_incident
@@ -26,8 +24,6 @@ from sdo.contracts import (
     AgentTask,
     IncidentRequest,
     IncidentResult,
-    LateFindingsPull,
-    LateFindingsReceipt,
     parse_json,
     to_canonical_json,
     validate,
@@ -41,51 +37,6 @@ DEFAULT_TASK_PATH = Path("/sdo/request/agent-task.json")
 
 class ResultPublisher(Protocol):
     def publish_payload(self, name: str, key: str, payload: str) -> None: ...
-
-
-def _late_findings_pull(incident_id: str) -> LateFindingsPull | None:
-    raw_path = os.environ.get("SDO_LATE_FINDINGS_RECEIPTS_PATH")
-    if not raw_path:
-        return None
-    path = Path(raw_path)
-    try:
-        size = path.stat().st_size
-    except FileNotFoundError:
-        return None
-    if size > 256_000:
-        raise ValueError("late-findings receipt file exceeds the worker limit")
-    try:
-        rows = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError) as exc:
-        raise ValueError(f"late-findings receipt could not be read: {exc}") from exc
-    if len(rows) > 32:
-        raise ValueError("late-findings receipt count exceeds the worker limit")
-    detector_ids: set[str] = set()
-    playbook_ids: set[str] = set()
-    last_digest = ""
-    for line in rows:
-        try:
-            receipt = cast("LateFindingsReceipt", parse_json(line, LateFindingsReceipt()))
-        except json_format.ParseError as exc:
-            raise ValueError(f"late-findings receipt is malformed: {exc}") from exc
-        try:
-            validate(receipt)
-        except ValueError as exc:
-            raise ValueError(f"late-findings receipt is invalid: {exc}") from exc
-        if receipt.incident_id != incident_id:
-            raise ValueError("late-findings receipt names another incident")
-        detector_ids.update(receipt.detector_ids)
-        playbook_ids.update(receipt.playbook_ids)
-        last_digest = receipt.report_digest
-    if not rows:
-        return None
-    return LateFindingsPull(
-        incident_id=incident_id,
-        pull_count=len(rows),
-        detector_ids=sorted(detector_ids),
-        playbook_ids=sorted(playbook_ids),
-        report_digest=last_digest,
-    )
 
 
 def run_worker_task(
@@ -136,9 +87,6 @@ def run_worker_task(
             raise ResponderExecutionError("native responder must return logical playbook and script names")
     if any("/" in artifact_id for artifact_id in result.proposed_artifact_ids):
         raise ResponderExecutionError("native responder must return logical artifact IDs")
-    late_findings_pull = _late_findings_pull(request.incident_id)
-    if late_findings_pull is not None:
-        result.late_findings_pull.CopyFrom(late_findings_pull)
     envelope = AgentResult(
         schema_version=SCHEMA_VERSION,
         task_id=task.task_id,

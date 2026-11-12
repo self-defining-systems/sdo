@@ -48,6 +48,19 @@ const (
 )
     Bounds of a procedure declaration and its bound command.
 
+const (
+	// MaxDiagnoseReads is the most Read calls one Diagnose makes. A Diagnose
+	// shares one diagnosis deadline, so a later read returns ErrDeadline.
+	MaxDiagnoseReads = 3
+	// MaxProbeFields is the most named fields one probe query extracts.
+	MaxProbeFields = 16
+	// MaxRows, MaxRowFields and MaxScalarBytes bound an Observation.
+	MaxRows        = storeops.MaxReadRows
+	MaxRowFields   = storeops.MaxReadFields
+	MaxScalarBytes = storeops.MaxReadValueBytes
+)
+    Bounds of one structured read.
+
 const DefaultProbeIdentityTimeout = 2 * time.Minute
     DefaultProbeIdentityTimeout bounds a probe-identity procedure that declares
     no timeout: an admin CLI may take a minute to boot.
@@ -55,6 +68,9 @@ const DefaultProbeIdentityTimeout = 2 * time.Minute
 const DefaultScriptTimeout = time.Minute
 const MaxAdmissionWebhooks = sdk.MaxAdmissionWebhooks
     MaxAdmissionWebhooks bounds one AdmissionWebhooksFor answer.
+
+const MaxProbeBodyBytes = 64 << 10
+    MaxProbeBodyBytes bounds the response body a probe query reads.
 
 const MaxScriptBytes = 64 << 10
 const MaxScriptOutputBytes = 64 << 10
@@ -65,6 +81,10 @@ const ProbeIdentityParam = "username"
 
 
 VARIABLES
+
+var ErrDeadline = errors.New("diagnosis read budget exhausted")
+    ErrDeadline is returned by a Read past a Diagnose's read budget. A Diagnose
+    turns it into Unknown.
 
 var ErrReplicaSetScaleRefused = errors.New("replicaset_scale_refused")
     ErrReplicaSetScaleRefused marks a program plan that scales a ReplicaSet it
@@ -147,6 +167,12 @@ func FieldValue(object map[string]any, path string) (any, error)
     FieldValue resolves numeric indexes, unique [name=NAME] list identities and
     bracketed ConfigMap keys. It does not invent missing intermediate objects.
 
+func GroundStoreTarget(v ReadView, t StoreTarget) error
+    GroundStoreTarget checks a store query's target against the accepted
+    application map and the snapshot, as the controller does for a store action:
+    the component declares data with this engine, the Pod belongs to its
+    workload, and the named container runs the engine's image.
+
 func Kubernetes(view ReadView, sourceBindings ...Bindings) (*kubeclient.ReadClient, error)
     Kubernetes constructs client-go-shaped read clients for this observation
     view. Build it once per Diagnose/mitigation or detector invocation.
@@ -175,6 +201,11 @@ func ScriptEnvText(value any) (string, error)
 
 func ValidateBindings(spec ProgramSpec, b Bindings) error
 func ValidateGeneralRef(ref sdk.ObjectRef) error
+func ValidateJSONPointer(pointer string) error
+    ValidateJSONPointer checks an RFC 6901 pointer to a value inside a body:
+    it begins with "/", has at most 8 segments and no segment is named like a
+    credential.
+
 func ValidateKubernetesRead(r KubernetesRequest) error
 func ValidateRemoveServicePort(a RemoveServicePort) error
     ValidateRemoveServicePort checks the target and exclusive port identity.
@@ -215,47 +246,4 @@ type Action interface {
 func DataAction(action Action) Action
     DataAction returns a store action given by value or pointer as its value,
     or nil when action is not one.
-
-func StalledRolloutRelease(view RolloutView, deployment sdk.ObjectRef) []Action
-    StalledRolloutRelease releases a rollout the old revision blocks. The
-    replacement cannot get the place the old revision holds: a current-revision
-    Pod is Unschedulable, or its ReplicaSet cannot create Pods because the
-    namespace quota is exceeded. It is one RetireOldRevision for each old
-    revision that still keeps a replica, in name order, and nothing otherwise,
-    so a crashing, merely slow or misconfigured rollout never loses the revision
-    that still serves. SDO offers the same actions to the responder when it
-    hands off a stalled rollout.
-
-type AdmissionWebhook = sdk.AdmissionWebhook
-    AdmissionWebhook is one webhook entry admitting Pods (sdk.AdmissionWebhook).
-
-type AppComponent struct {
-	Name      string    `json:"name"`
-	Workload  string    `json:"workload"`
-	Services  []string  `json:"services,omitempty"`
-	HoldsData bool      `json:"holds_data"`
-	Data      *DataRole `json:"data,omitempty"`
-}
-    AppComponent is one component of the application map. Workload is
-    "Kind/name" in the application namespace.
-
-func (c AppComponent) WorkloadRef(namespace string) sdk.ObjectRef
-    WorkloadRef is the component's workload in namespace.
-
-type AppEdge struct {
-	From string `json:"from"`
-	To   string `json:"to"`
-}
-    AppEdge is one directed call between components.
-
-type AppMap struct {
-	Components []AppComponent `json:"components"`
-	Edges      []AppEdge      `json:"edges,omitempty"`
-	Procedures []Procedure    `json:"procedures,omitempty"`
-}
-    AppMap is the accepted application map, read-only: the components,
-    the workload each runs as, the data each holds, the calls between them and
-    the operations procedures the application ships. A program reads it through
-    ReadView.AppMap to resolve the store, cache or source to act on from a bound
-    object, instead of naming a component.
 ```

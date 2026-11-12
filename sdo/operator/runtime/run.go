@@ -37,7 +37,6 @@ import (
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/evaluation"
-	"sdo.dev/operator/latefindings"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/memoryhost"
@@ -571,9 +570,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err != nil {
 		return err
 	}
-	if policy.Learning.LateFindings == "pull" {
-		jobEnvironment["SDO_LATE_FINDINGS"] = "pull"
-	}
 	if jobEnvironment, err = withAgentEnvironment(jobEnvironment, launchConfig, policy, options.Telemetry); err != nil {
 		return err
 	}
@@ -723,12 +719,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				}
 				loop.CachedFindings = func() ToolResponse { return controller.cachedFindingView(request.IncidentID) }
 				loop.ExternalReceipts = func() ([]RepairActionReceipt, bool, string, error) {
-					rows, pending, revision, err := memory.IncidentActionReceipts(*repositoryMountPath, request.IncidentID)
-					if err != nil {
-						return nil, pending, revision, err
-					}
-					result := incidentResultState(&contractsv1alpha1.IncidentResult{RepairActions: rows})
-					return result.RepairActions, pending, revision, nil
+					return agentWriteReceipts(*repositoryMountPath, request.IncidentID, controller.clock())
 				}
 				loop.VerifyResult = func(ctx context.Context, result IncidentResult) ToolResponse {
 					if controller == nil {
@@ -745,6 +736,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					return cloneIncidentRequest(controller.currentIncidentRequest)
 				}
 				loop.DiagnosisDeadline = time.Duration(policy.Response.DiagnosisDeadline)
+				loop.BuiltinRestoreAuto = policy.Response.BuiltinRestoreAuto
 				if options.NativeBroker != nil {
 					loop.RecoverySessionRoot = options.NativeBroker.SessionRoot
 					if replayMode != "off" {
@@ -991,9 +983,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 	if err := attachFiringTelemetry(controller, *telemetryPath, jobDispatch, *repositoryMountPath); err != nil {
 		fmt.Fprintln(stderr, err)
-	}
-	if options.NativeBroker != nil && jobDispatch {
-		controller.SetFiringSink(lateFindingSink{Downstream: controller.firingSink, Store: latefindings.Store{Client: bootstrapProvider.Client, Namespace: *controlNamespace}})
 	}
 	if err := attachLifecycleTelemetry(controller, *lifecyclePath, jobDispatch, *repositoryMountPath); err != nil {
 		fmt.Fprintln(stderr, err)

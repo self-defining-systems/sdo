@@ -117,6 +117,13 @@ func (c Config) DetectionDigest() string {
 	return hex.EncodeToString(sum[:])
 }
 
+// The values of response.after_playbook.
+const (
+	AfterPlaybookAgent    = "agent"
+	AfterPlaybookEscalate = "escalate"
+	AfterPlaybookWait     = "wait"
+)
+
 // Response bounds and shapes the incident response.
 type Response struct {
 	Timeout              Duration `yaml:"timeout" doc:"how long the responder may work on one incident; the reflection deadline derives from it"`
@@ -125,8 +132,11 @@ type Response struct {
 	DiagnosisDeadline    Duration `yaml:"diagnosis_deadline" doc:"shared deadline of candidate diagnosis in the automatic stage"`
 	StageBudget          Duration `yaml:"stage_budget" doc:"scheduling bound of one automatic-stage pass; a pass re-run on the responder's loop may take twice this"`
 	RepairPolicy         string   `yaml:"repair_policy" doc:"the evidence the controller requires for a responder repair: commit (a source repair is committed through the broker; production) or recorded-actions (live cluster repairs are recorded as actions without a source commit; benchmark runs)"`
+	AfterPlaybook        string   `yaml:"after_playbook" doc:"what happens when a learned playbook applied and the opening alerts did not recover within the stage's bound: agent (dispatch the agent, told what the playbook did), escalate (no agent; the incident stays open under ordinary closure and closes failed at the verification timeout if the alerts never clear) or wait (keep waiting for recovery up to after_playbook_wait, then escalate). When recovery holds, no agent runs in any setting; an alert that did not open the incident never dispatches the agent after an applied playbook"`
+	AfterPlaybookWait    Duration `yaml:"after_playbook_wait" doc:"how long after_playbook: wait keeps waiting for the opening alerts to recover after the playbook applied, capped by the response timeout"`
 	Standby              bool     `yaml:"standby" doc:"pre-start a responder worker; false forces cold Jobs"`
 	Menu                 bool     `yaml:"menu" doc:"offer the responder its tool menu"`
+	BuiltinRestoreAuto   bool     `yaml:"builtin_restore_auto" doc:"let the automatic stage apply the built-in source-restore playbook (put a component's non-SDO departures from accepted source back) when its diagnosis matches; off, it is only offered like any playbook and the responder decides"`
 	Permissive           bool     `yaml:"permissive" doc:"broad lane repair permissions excluding Secret and credential APIs"`
 	PermissiveNamespaces []string `yaml:"permissive_namespaces" doc:"additional lane namespaces the permissive responder may repair"`
 	StartupBound         Duration `yaml:"startup_bound" doc:"how long a new install waits for SDO to see its application healthy (2 min with no opener firing) before incidents open anyway; until then no incident opens. 0s turns the start-up period off"`
@@ -138,7 +148,6 @@ type Learning struct {
 	ReflectionGuidance string `yaml:"reflection_guidance" doc:"the agent's learning instructions: baseline learns from each confirmed cause; generalize compares related incident signatures and parameterizes a shared playbook; generalize-spec favors predicates visible in resource spec or status. None changes the detector SDK or the validator"`
 	ForceReflection    bool   `yaml:"force_reflection" doc:"always dispatch reflection after a verified closure (not with a frozen mode)"`
 	HealthyBaseline    bool   `yaml:"healthy_baseline" doc:"opt-in detector gate: a proposal that changes incident detector source is replayed against healthy snapshots a runner recorded with sdo-operator baseline-write (one sdktest.Snapshot JSON per file, outside the accepted repository); a detector that fires on one fails validation, and a missing baseline fails closed. It never reads benchmark verdicts"`
-	LateFindings       string `yaml:"late_findings" doc:"late findings: off, or pull (the controller publishes a bounded incident-specific report that a responder fetches with sdo-operator late-findings --incident-id ID; the broker checks the claim against the controller-owned report)"`
 }
 
 // Deployment bounds deployment attempts and the policy they run under.
@@ -182,12 +191,13 @@ func Default() Config {
 		Response: Response{
 			Timeout: Duration(30 * time.Minute), VerificationTimeout: Duration(5 * time.Minute), MaxLoops: 10,
 			DiagnosisDeadline: Duration(10 * time.Second), StageBudget: Duration(45 * time.Second), RepairPolicy: "commit",
+			AfterPlaybook: AfterPlaybookAgent, AfterPlaybookWait: Duration(5 * time.Minute),
 			Standby: true, Menu: true, StartupBound: Duration(30 * time.Minute),
 		},
 		Detection: Detection{
 			SelfHealHold: Duration(DefaultSelfHealHold), StabilityWindow: Duration(15 * time.Second), DriftBatchWindow: Duration(20 * time.Second),
 		},
-		Learning: Learning{Replay: "on", ReflectionGuidance: "baseline", LateFindings: "off"},
+		Learning: Learning{Replay: "on", ReflectionGuidance: "baseline"},
 		Deployment: Deployment{
 			MaxAttempts: 3, BuildTimeout: Duration(DefaultBuildTimeout), BuildBudget: Duration(DefaultBuildBudget),
 			RolloutTimeout: Duration(DefaultRolloutTimeout),
@@ -200,7 +210,6 @@ var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // ownedWorkerEnvironment are worker variables another setting or the installer owns; agent.extra_env cannot set them.
 var ownedWorkerEnvironment = map[string]string{
-	"SDO_LATE_FINDINGS":       "learning.late_findings",
 	"SDO_OBSERVATION_CEILING": "the installer",
 }
 
@@ -259,12 +268,13 @@ func (c Config) Validate() error {
 		bad("response.startup_bound", "%s must not be negative", c.Response.StartupBound)
 	}
 	oneOf("response.repair_policy", c.Response.RepairPolicy, "commit", "recorded-actions")
+	oneOf("response.after_playbook", c.Response.AfterPlaybook, AfterPlaybookAgent, AfterPlaybookEscalate, AfterPlaybookWait)
+	positive("response.after_playbook_wait", c.Response.AfterPlaybookWait)
 	positive("detection.self_heal_hold", c.Detection.SelfHealHold)
 	positive("detection.stability_window", c.Detection.StabilityWindow)
 	positive("detection.drift_batch_window", c.Detection.DriftBatchWindow)
 	oneOf("learning.replay", c.Learning.Replay, "on", "off")
 	oneOf("learning.reflection_guidance", c.Learning.ReflectionGuidance, "baseline", "generalize", "generalize-spec")
-	oneOf("learning.late_findings", c.Learning.LateFindings, "off", "pull")
 	if c.Mode != ModeOperate && c.Learning.ForceReflection {
 		bad("learning.force_reflection", "conflicts with mode %s, which keeps memory frozen", c.Mode)
 	}

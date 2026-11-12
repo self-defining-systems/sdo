@@ -1,1 +1,0 @@
-${late_findings_command} --incident-id ${incident_id}

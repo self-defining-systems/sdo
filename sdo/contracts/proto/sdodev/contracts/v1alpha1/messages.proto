@@ -358,6 +358,10 @@ message IncidentRequest {
   // Go-owned: the finding keys of the clues already active when the incident
   // opened. They are baseline, not evidence that the incident caused them.
   repeated string standing_keys = 38;
+  // Go-owned: the controller's rollout state when it built the request. True while an
+  // accepted-source rollout or advance has not converged; `sdo detect` then reports no
+  // source departures, since differences are SDO's own work in progress.
+  bool deployment_in_flight = 39;
 }
 
 message ResponseProgress {
@@ -550,7 +554,6 @@ message IncidentResult {
   TimingMetrics timing = 12 [(buf.validate.field).required = true];
   optional string responder_session_id = 13;
   optional string error = 14;
-  LateFindingsPull late_findings_pull = 15;
   repeated ProgramToolCall program_tool_calls = 16 [(controller_owned) = true];
   repeated ProgramRun program_runs = 17 [(controller_owned) = true];
   repeated PlanApplication plan_applications = 18 [(controller_owned) = true];
@@ -558,6 +561,8 @@ message IncidentResult {
   bool response_loop_exhausted = 20 [(controller_owned) = true];
   repeated string program_failure_signals = 21 [(controller_owned) = true];
   string resolution_path = 22 [(controller_owned) = true, (buf.validate.field).string = {in: ["", "responder", "deterministic"]}];
+  reserved 15;
+  reserved "late_findings_pull";
   reserved 23;
   reserved 24;
   reserved 25;
@@ -565,16 +570,6 @@ message IncidentResult {
   // Controller verification at terminal responder completion, never worker authority.
   repeated Finding unresolved_findings = 27 [(controller_owned) = true];
   DriftReprompt drift_reprompt = 28 [(controller_owned) = true];
-}
-
-// A responder claim that it read controller-published findings during its turn.
-// The broker independently checks this against controller-owned evidence.
-message LateFindingsPull {
-  string incident_id = 1 [(buf.validate.field).string.min_len = 1];
-  uint32 pull_count = 2 [(buf.validate.field).uint32.gte = 1];
-  repeated string detector_ids = 3 [(buf.validate.field).repeated.items.string.pattern = "^[a-z0-9][a-z0-9_.-]*$"];
-  repeated string playbook_ids = 4 [(buf.validate.field).repeated.items.string.pattern = "^[a-z][a-z0-9_-]*$"];
-  string report_digest = 5 [(buf.validate.field).string.pattern = "^[0-9a-f]{64}$"];
 }
 
 // IncidentView is the open incident as the controller's state ConfigMap
@@ -659,6 +654,9 @@ message IncidentClosure {
   // Controller-computed: whether each faulted component's verification set
   // passed after SDO's last write settled, and at what strength.
   RecoveryVerification recovery_verification = 29;
+  // When the responder returned (or its response timeout passed) before
+  // Recovered held: the incident escalated. Unset otherwise.
+  google.protobuf.Timestamp escalated_at = 30;
 }
 
 // RecoveryVerification is the controller's one "recovered" test for a

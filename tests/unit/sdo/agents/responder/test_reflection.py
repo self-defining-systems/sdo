@@ -551,7 +551,6 @@ def test_large_evidence_principle_is_stated_once(tmp_path: Path) -> None:
 
 
 def test_reflection_exposes_verified_onboarding_separately_from_findings(tmp_path: Path) -> None:
-    from sdo.agents.responder.incident_context import incident_data_view
     from sdo.agents.responder.reflection import _logical_learning_request
     from sdo.agents.responder.reflection_brief import incident_brief
 
@@ -561,8 +560,6 @@ def test_reflection_exposes_verified_onboarding_separately_from_findings(tmp_pat
     record.accepted_commit = "a" * 40
     record.established_at.CopyFrom(datetime_timestamp(datetime(2026, 10, 25, tzinfo=timezone.utc)))
     record.objects.add(api_version="v1", kind="ConfigMap", namespace=record.namespace, name="installer-script")
-    data = incident_data_view(closure.request)
-    assert data["namespace_onboarding"]["objects"][0]["name"] == "installer-script"
     for prompt in (
         incident_brief(closure, worktree=tmp_path),
         _logical_learning_request(

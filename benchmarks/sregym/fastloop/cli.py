@@ -655,7 +655,6 @@ def _runtime_config(args: argparse.Namespace, environment: FastloopEnvironment, 
         reflection_guidance=getattr(args, "reflection_guidance", None),
         code_path=getattr(args, "code_path", "go"),
         code_path_overrides=getattr(args, "code_path_overrides", "") or "",
-        late_findings=getattr(args, "late_findings", None),
         healthy_baseline=args.healthy_baseline or None,
         config_files=tuple(path.resolve() for path in getattr(args, "config", None) or ()),
         controller_namespace=control_namespace_for(environment.namespace),
@@ -1988,7 +1987,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="default: the configured value",
     )
-    run.add_argument("--late-findings", choices=("off", "pull"), default=None, help="default: the configured value")
     run.add_argument(
         "--healthy-baseline",
         action="store_true",

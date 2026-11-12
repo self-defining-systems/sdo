@@ -740,6 +740,10 @@ func renameRecordings(calls []PrimitiveCall, namespace string, m *renameMapping)
 				request.Headers[key] = m.exact(value)
 			}
 			args[1], _ = json.Marshal(request)
+		case "Read":
+			if len(args) != 1 {
+				return nil, fmt.Errorf("recording %d Read needs one query", index)
+			}
 		case "DiffAgainstSource", "DiffAgainstBaseline":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("recording %d %s needs one reference", index, call.Method)

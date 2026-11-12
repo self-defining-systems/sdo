@@ -44,12 +44,16 @@ func (c *Controller) finishedHoldUntil(work IncidentWork) time.Time {
 	if work.FinishedAt.IsZero() {
 		return time.Time{}
 	}
-	return work.FinishedAt.Add(c.config.VerificationTimeout + ownerLostGrace)
+	return work.FinishedAt.Add(finishedResultHold + ownerLostGrace)
 }
 
 // ownerLostGrace bounds how long open incident work may outlive its owner past
 // the durable response or verification bound before it fails as OWNER_LOST.
 const ownerLostGrace = time.Minute
+
+// finishedResultHold is how long a finished responder Job whose result is
+// unconsumed is kept for a re-dispatch to harvest.
+const finishedResultHold = 5 * time.Minute
 
 // retirement is a terminal path for an open incident with no live work.
 type retirement struct {
@@ -67,7 +71,7 @@ func (c *Controller) retireExpiredIncident(ctx context.Context, now time.Time) e
 	checker, checked := c.dispatcher.(incidentWorkChecker)
 	c.mu.Lock()
 	request := cloneIncidentRequest(c.currentIncidentRequest)
-	resultConsumed := c.responderDone || !c.verificationDeadline.IsZero()
+	resultConsumed := c.responderDone
 	retire, eligible := c.incidentRetirementLocked(now, checked)
 	c.mu.Unlock()
 	if !eligible {
@@ -183,14 +187,11 @@ func (c *Controller) incidentRetirementDueLocked(workActiveCheckable bool) (reti
 		return retirement{}, time.Time{}, false
 	}
 	switch {
-	case c.responderDone || !c.verificationDeadline.IsZero():
+	case c.responderDone:
 		// A harvested result belongs to the live controller, including after
-		// restart or during maintenance. Wake its closure at the verification
-		// bound; retireExpiredIncident drives it rather than archiving it.
-		if c.responderCompletedAt.IsZero() && c.verificationDeadline.IsZero() {
-			return retirement{}, time.Time{}, false
-		}
-		return retirement{}, c.verificationDeadlineLocked(), true
+		// restart or during maintenance, and an escalated incident stays open
+		// until its alerts clear or it is reset: neither retires by time.
+		return retirement{}, time.Time{}, false
 	case c.dispatchState == contracts.DispatchState_DISPATCH_STATE_RUNNING || c.dispatchState == contracts.DispatchState_DISPATCH_STATE_WORKSPACE_RUNNING:
 		if !workActiveCheckable {
 			return retirement{}, time.Time{}, false
@@ -210,8 +211,6 @@ func (c *Controller) retirementWakeLocked(now time.Time) time.Time {
 	switch {
 	case !ok:
 		return time.Time{}
-	case !c.verificationDeadline.IsZero() && c.earlyStopRetryAt.After(now):
-		return c.earlyStopRetryAt
 	case due.After(now):
 		return due
 	case c.finishedHoldWake.After(now):
@@ -230,6 +229,7 @@ func (c *Controller) clearIncidentLocked() {
 	c.finishedHoldWake = time.Time{}
 	c.earlyStopRetryAt = time.Time{}
 	c.incidentOpen = false
+	c.escalatedAt = time.Time{}
 	c.responderDone = false
 	c.currentIncidentRequest = nil
 	c.currentIncidentResult = nil
@@ -237,7 +237,6 @@ func (c *Controller) clearIncidentLocked() {
 	c.incidentDetectedAt = time.Time{}
 	c.incidentDispatchedAt = time.Time{}
 	c.responderCompletedAt = time.Time{}
-	c.verificationDeadline = time.Time{}
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_IDLE
 	c.incidentFindingKeys = nil
 	c.cleanedHelpers = nil

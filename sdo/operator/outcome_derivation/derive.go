@@ -172,25 +172,27 @@ func difference(left, right []string) []string {
 	return result
 }
 
-// classify reduces the closure to five outcomes: the responder Job failed or
-// health never verified (failed), health never verified but the responder
-// confirmed an out-of-reach cause from pre-repair controller evidence
-// (escalated), health cleared with no repair mutation
-// (cleared_without_action), a verified repair whose closure recheck window never
-// completed (unconfirmed), or anything else that cleared (success).
+// classify reduces the closure to five outcomes: the responder Job failed or the
+// incident was reset (failed), the responder ended before Recovered held
+// (escalated), a verified repair whose closure recheck window never completed
+// (unconfirmed), health cleared with no repair mutation (cleared_without_action),
+// or anything else that cleared (success). A closure only freezes verified or
+// failed, so an escalated one closed when its opening alerts cleared.
 func classify(closure *contractsv1alpha1.IncidentClosure, repairCommit string, healthVerified bool) string {
 	result := closure.GetResult()
-	if closure.GetStatePersistenceFailure() != nil || closure.GetRequest() == nil || closure.GetDispatchError() != "" || result == nil ||
-		result.GetStatus() == "failed" {
+	if closure.GetStatePersistenceFailure() != nil || closure.GetRequest() == nil || closure.GetDispatchError() != "" || result == nil {
+		return outcomeclass.Failed
+	}
+	if closure.GetEscalatedAt() != nil {
+		return outcomeclass.Escalated
+	}
+	if result.GetStatus() == "failed" {
 		return outcomeclass.Failed
 	}
 	if closure.GetUnconfirmedReason() != contractsv1alpha1.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED {
 		return outcomeclass.Unconfirmed
 	}
 	if !healthVerified {
-		if result.GetStatus() == "completed" && outcomeclass.Escalation(result.GetConfirmedRootCauses(), closure.GetRequest().GetFindings(), result.GetRepairActions()) {
-			return outcomeclass.Escalated
-		}
 		return outcomeclass.Failed
 	}
 	if repairCommit == "" {

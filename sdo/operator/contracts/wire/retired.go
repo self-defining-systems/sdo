@@ -24,6 +24,8 @@ var retiredFieldNames = map[string]string{
 	"sdodev.contracts.v1alpha1.RecoveryVerification.probed":                "",
 	"sdodev.contracts.v1alpha1.RecoveryVerification.components":            "",
 	"sdodev.contracts.v1alpha1.PlanApplication.restored_source":             "",
+	"sdodev.contracts.v1alpha1.ControllerState.verification_deadline_at":    "",
+	"sdodev.contracts.v1alpha1.IncidentResult.late_findings_pull":           "",
 }
 
 // retiredValues maps "<message>.<field>" to retired value -> successor, for

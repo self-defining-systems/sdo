@@ -146,7 +146,7 @@ func TestOperateAndControllerArgvCarryNoPolicyValues(t *testing.T) {
 		c.Response.Timeout, c.Response.VerificationTimeout = settings.Duration(91*time.Minute), settings.Duration(93*time.Minute)
 		c.Response.MaxLoops, c.Response.RepairPolicy, c.Response.Standby = 7, "recorded-actions", false
 		c.Learning.Replay, c.Learning.ReflectionGuidance = "off", "generalize"
-		c.Learning.HealthyBaseline, c.Learning.LateFindings = true, "pull"
+		c.Learning.HealthyBaseline = true
 		c.Deployment.BuildTimeout, c.Deployment.BuildBudget, c.Deployment.RolloutTimeout = settings.Duration(89*time.Minute), settings.Duration(99*time.Minute), settings.Duration(87*time.Minute)
 	})
 	plan, err := Resources(cfg)
@@ -159,7 +159,7 @@ func TestOperateAndControllerArgvCarryNoPolicyValues(t *testing.T) {
 	}
 	for name, args := range map[string][]string{"controller": plan.Job.Spec.Template.Spec.Containers[0].Args, "operate": operate.Spec.Template.Spec.Containers[0].Args} {
 		joined := strings.Join(args, " ")
-		for _, policy := range []string{"model-x", "xhigh", "1h37m", "EXTRA_X", "1h31m", "1h33m", "recorded-actions", "generalize", "fresh", "watch-only", "frozen", "healthy-baseline", "late-findings", "1h29m", "1h39m", "1h27m", "--replay", "--max-response-loops", "--responder-standby", "--max-attempts"} {
+		for _, policy := range []string{"model-x", "xhigh", "1h37m", "EXTRA_X", "1h31m", "1h33m", "recorded-actions", "generalize", "fresh", "watch-only", "frozen", "healthy-baseline", "1h29m", "1h39m", "1h27m", "--replay", "--max-response-loops", "--responder-standby", "--max-attempts"} {
 			if strings.Contains(joined, policy) {
 				t.Errorf("%s argv carries policy %q: %v", name, policy, args)
 			}

@@ -60,6 +60,10 @@ func ProgramCreditIndex(outcomes []*contracts.OutcomeRecord) ProgramCredits {
 			continue
 		}
 		id := application.GetProgramIds()[0]
+		if id == SourceRestoreID {
+			// Built in, never learned: no pair is credited for it.
+			continue
+		}
 		component, ok := applicationComponent(outcome, application, id)
 		if !ok {
 			continue

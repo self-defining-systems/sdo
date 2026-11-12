@@ -490,12 +490,10 @@ def test_a_receipt_the_model_returns_never_replaces_a_recorded_one(scratch: Path
 
 def test_prompt_routes_mutations_through_the_recorder_and_leaves_receipts_to_it() -> None:
     prompt = _responder_prompt(_request())
-    assert "sdo-incident-response/SKILL.md" in prompt
-    workflow = (SKILLS_ROOT / "sdo-incident-response/SKILL.md").read_text(encoding="utf-8")
-    workflow += (SKILLS_ROOT / "sdo-incident-response/references/live-repairs.md").read_text()
-    assert "Use recorded actions for live mutations" in workflow
-    assert "declare every changed resource" in workflow
-    assert "never hand-write receipts" in workflow
+    assert "sdo-operating/SKILL.md" in prompt
+    assert "Make changes through `mitigate` or `act` so SDO records them" in (
+        SKILLS_ROOT / "sdo-operating/SKILL.md"
+    ).read_text(encoding="utf-8")
 
 
 def test_the_prompt_example_is_a_command_the_cli_accepts() -> None:

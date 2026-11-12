@@ -270,17 +270,6 @@ func main() {
 		}
 		return
 	}
-	if len(os.Args) > 1 && os.Args[1] == "late-findings" {
-		config, err := operatorcli.ParseLateFindingsLaunch(os.Args[1:])
-		if err == nil {
-			err = operatorcli.RunLateFindings(context.Background(), config, os.Stdout)
-		}
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		return
-	}
 	if len(os.Args) > 1 && os.Args[1] == "incident-evidence" {
 		config, err := operatorcli.ParseIncidentEvidenceLaunch(os.Args[1:])
 		if err == nil {

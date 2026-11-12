@@ -29,6 +29,10 @@ const stagePlanNotExecutable = "plan_not_executable"
 // but not new evidence. A finding the earlier attempt did not target is.
 const stageIneffective = "ineffective"
 
+// stageBuiltinRestoreManual skips the built-in source-restore playbook, which
+// the stage applies only when response.builtin_restore_auto is set.
+const stageBuiltinRestoreManual = "builtin_restore_manual"
+
 // stageRevertedIneffective is an applied attempt that cleared none of its
 // findings while its diagnosis still matched, whose writes the stage restored
 // before handoff so the responder starts from the original fault.
@@ -87,8 +91,13 @@ type DeterministicResponseStage struct {
 	RolloutTimeout      time.Duration
 	ObservationInterval time.Duration
 	ObservationCeiling  time.Duration
-	recoveryNow         func() time.Time
-	recoveryWait        func(context.Context, time.Duration) error
+	// WaitBound is response.after_playbook_wait under the wait policy: the
+	// recovery wait lasts this long (instead of DefaultMitigationRolloutTimeout)
+	// and its soft give-ups (a finding past its horizon, a program still
+	// matching) no longer end it; a refuted or failed write still does.
+	WaitBound    time.Duration
+	recoveryNow  func() time.Time
+	recoveryWait func(context.Context, time.Duration) error
 }
 
 type responseStageProgress struct {
@@ -287,6 +296,12 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		}
 		if ineffective.covers(attempt.PlaybookId, attempt.ProgramRevision, match.targets) {
 			if err := skip(stageIneffective); err != nil {
+				return report, err
+			}
+			continue
+		}
+		if match.PlaybookId == SourceRestoreID && !loop.BuiltinRestoreAuto {
+			if err := skip(stageBuiltinRestoreManual); err != nil {
 				return report, err
 			}
 			continue
@@ -525,6 +540,11 @@ func updateStageFindings(state *IncidentState, response ToolResponse) {
 			findings = append(findings, finding)
 		}
 	}
+	if state.afterWrite {
+		// After a write the stage answers for what it was meant to clear: the
+		// opening alerts. A clue or a later alert is not its work.
+		findings = holdingFindings(newRecoveryScope(openingKeys(&state.Request)), findings)
+	}
 	sortFindings(findings)
 	state.Findings = findings
 	state.refreshUnexplained()
@@ -731,6 +751,7 @@ func (stage *DeterministicResponseStage) applyMatch(ctx context.Context, loop *R
 			item.attempt.TouchedObjects = touchedObjects(scoped)
 		}
 	}
+	state.afterWrite = state.afterWrite || receipt.GetApplied()
 	updateStageFindings(state, applied)
 	{
 		attempt := item.attempt
@@ -822,9 +843,15 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 	exit := contracts.RecoveryWait_EXIT_REASON_FAILED
 	// Every finding of this incident as last observed, and the ones a wait that
 	// could not prove recovery hands back to the responder.
+	// Recovered, and so the hand-off, is judged on the alerts that opened the
+	// incident; a clue or a later alert is never what waits or dispatches.
+	scope := newRecoveryScope(openingKeys(&state.Request))
+	state.afterWrite = state.afterWrite || playbookWrote(report)
 	seen := map[string]sdk.Finding{}
 	for _, finding := range append(append([]sdk.Finding(nil), state.Request.Findings...), state.Findings...) {
-		seen[FindingFingerprint(finding)] = finding
+		if scope.holds(finding) {
+			seen[FindingFingerprint(finding)] = finding
+		}
 	}
 	var held []sdk.Finding
 	heldReason := ""
@@ -832,6 +859,12 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 	branch := ""
 	defer func() {
 		slog.Info("recovery_wait_exit", "incident_id", state.Request.IncidentID, "exit", exit.String(), "branch", branch)
+		if playbookWrote(report) {
+			// After a playbook wrote, what is left for another actor is what it was
+			// meant to clear: the opening alerts.
+			state.Findings = holdingFindings(scope, state.Findings)
+			state.refreshUnexplained()
+		}
 		if exit != contracts.RecoveryWait_EXIT_REASON_CLEARED && len(state.Findings) == 0 && len(held) > 0 {
 			// Detector clearance without proof is not recovery: the responder gets
 			// the findings that cleared without it.
@@ -865,6 +898,9 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 	}()
 	if progress.RecoveryDeadline.IsZero() {
 		budget := DefaultMitigationRolloutTimeout
+		if stage.WaitBound > 0 {
+			budget = stage.WaitBound
+		}
 		if stage.Budget > 0 {
 			budget = min(budget, stage.Budget)
 		}
@@ -950,7 +986,9 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			return nil
 		}
 		for _, finding := range state.Findings {
-			seen[FindingFingerprint(finding)] = finding
+			if scope.holds(finding) {
+				seen[FindingFingerprint(finding)] = finding
+			}
 		}
 		state.Findings = retireDisappearedRecoveryEffects(view, state.Findings)
 		for fp, effect := range stageLifecycleEffects(view, loop.applicationEvidenceLocked(), state.Findings) {
@@ -961,7 +999,7 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 		// Recovery is judged on what the stage's writes were meant to clear: a
 		// clue no detector re-observes and no attempt covered cannot clear by
 		// waiting, so it neither blocks nor times out the wait.
-		open, unrelated := splitStageFindings(state.Findings, loop.Detectors, report.Mitigations)
+		open, unrelated := splitStageFindings(state.Findings, loop.Detectors, report.Mitigations, scope)
 		if !pending {
 			check := loop.stageRecoveryCheck(observe, view, state)
 			horizonOf := func(id string) (horizon, window time.Duration) {
@@ -1013,12 +1051,12 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			for _, finding := range open {
 				fp := FindingFingerprint(finding)
 				horizon, _ := horizonOf(finding.DetectorID)
-				if settled >= horizon {
+				if settled >= horizon && stage.WaitBound <= 0 {
 					branch = "finding " + fp + " persisted past its horizon after the stage's writes settled"
 					return nil
 				}
 			}
-			if check.verdict == recoveryPending && len(open) == 0 && settled >= check.horizon+2*interval {
+			if check.verdict == recoveryPending && len(open) == 0 && settled >= check.horizon+2*interval && stage.WaitBound <= 0 {
 				branch = "not recovered within its members' horizon: " + check.reason
 				return nil
 			}
@@ -1028,7 +1066,7 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 					_, w := horizonOf(finding.DetectorID)
 					window = max(window, w)
 				}
-				if settled >= window {
+				if settled >= window && stage.WaitBound <= 0 {
 					branch = matching
 					return nil
 				}
@@ -1071,11 +1109,12 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 }
 
 // splitStageFindings separates the findings a recovery wait can judge from
-// unrelated ones: a finding no scheduled detector re-observes (event-sourced
-// drift) that no attempt of the stage covered. Such a finding has no way to
-// clear by waiting and says nothing about the stage's repair; closure and the
-// controller's own drift verification still own it.
-func splitStageFindings(findings []sdk.Finding, detectors []sdk.Detector, attempts []*contracts.StageMitigation) (open, unrelated []sdk.Finding) {
+// unrelated ones. Only an opening alert is judged, and only when a scheduled
+// detector re-observes it or an attempt covered it; an event-sourced finding no
+// detector re-observes has no way to clear by waiting. A clue, a later alert
+// and such a finding say nothing about the stage's repair: closure and the
+// controller's own drift verification still own them.
+func splitStageFindings(findings []sdk.Finding, detectors []sdk.Detector, attempts []*contracts.StageMitigation, scope recoveryScope) (open, unrelated []sdk.Finding) {
 	scheduled := map[string]bool{}
 	for _, detector := range detectors {
 		scheduled[detector.Spec().ID] = true
@@ -1090,13 +1129,24 @@ func splitStageFindings(findings []sdk.Finding, detectors []sdk.Detector, attemp
 		}
 	}
 	for _, finding := range findings {
-		if scheduled[finding.DetectorID] || covered[FindingFingerprint(finding)] {
+		if scope.holds(finding) && (scheduled[finding.DetectorID] || covered[FindingFingerprint(finding)]) {
 			open = append(open, finding)
 		} else {
 			unrelated = append(unrelated, finding)
 		}
 	}
 	return open, unrelated
+}
+
+// holdingFindings are the findings the scope holds, in order.
+func holdingFindings(scope recoveryScope, findings []sdk.Finding) []sdk.Finding {
+	var held []sdk.Finding
+	for _, finding := range findings {
+		if scope.holds(finding) {
+			held = append(held, finding)
+		}
+	}
+	return held
 }
 
 // writeVerifiedForSettling reports an applied, unreverted write whose scoped verification passed and

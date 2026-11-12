@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 from google.protobuf import json_format
+from google.protobuf.timestamp_pb2 import Timestamp
 
 from benchmarks.sregym.adapter.runtime import _responder_instructions
 from sdo.agents.lifecycle import agents as lifecycle_agents
@@ -19,8 +20,6 @@ from sdo.agents.lifecycle.agents import (
 )
 from sdo.agents.responder import codex, reflection
 from sdo.agents.responder.codex import _responder_prompt
-from sdo.agents.responder.continuation import continuation_prompt
-from sdo.agents.responder.incident_context import prepared_incident_data
 from sdo.agents.responder.memory_check import ValidationResult
 from sdo.agents.responder.reflection import CodexSessionBackend, ReflectionTurn, SessionReflector
 from sdo.agents.responder.reflection_brief import incident_brief
@@ -75,6 +74,7 @@ def incident(
         deployed_commit="c" * 40,
         repair_policy="recorded",
         max_response_loops=3,
+        detected_at=Timestamp(seconds=1_700_000_000),
         memory_snapshot=OperationalMemorySnapshot(
             accepted_commit="a" * 40,
             goal_markdown="Keep the toy application available.\n" if memory else "",
@@ -155,8 +155,7 @@ def incident(
 
 
 def responder_prompt(request: IncidentRequest) -> str:
-    with prepared_incident_data(request) as data:
-        return _responder_prompt(request, incident_data=data)
+    return _responder_prompt(request)
 
 
 class ReflectionCapture:
@@ -330,54 +329,6 @@ def rendered_cases(*, scale: int = 1) -> dict[str, str]:
         return incident(count * scale, real_scale=scale > 1, **options)
 
     prompts: dict[str, str] = {}
-    prompts["responder_continuation"] = continuation_prompt(
-        json.dumps(
-            {
-                "attempt": 1,
-                "healthy": False,
-                "summary": "one current fault remains",
-                "still_broken": [
-                    {
-                        "primary_resource": {
-                            "api_version": "v1",
-                            "kind": "Service",
-                            "namespace": "toy",
-                            "name": "third",
-                        },
-                        "fingerprint": "health/third",
-                        "detector_id": "health",
-                        "rule_id": "routing",
-                        "summary": "third route is unavailable",
-                        "evidence": "fresh detector observation",
-                    }
-                ],
-                "already_done": [
-                    {
-                        "kind": "program-application",
-                        "action_id": f"repair-{index}",
-                        "application_id": f"application-{index}",
-                        "program_ids": ["restore-route"],
-                        "summary": f"repaired route {index}",
-                        "receipt": {
-                            "action_id": f"repair-{index}",
-                            "kind": "program-plan",
-                            "target": f"Service/route-{index}",
-                            "resources": [
-                                {"api_version": "v1", "kind": "Service", "namespace": "toy", "name": f"route-{index}"}
-                            ],
-                            "summary": "target port restored",
-                            "details": "synthetic controller receipt",
-                            "started_at": "2026-01-01T00:00:00Z",
-                            "completed_at": "2026-01-01T00:00:01Z",
-                            "success": True,
-                            "reversible": True,
-                        },
-                    }
-                    for index in range(2)
-                ],
-            }
-        )
-    )
     with pytest.MonkeyPatch.context() as patch:
         # Infrastructure configuration is an explicit fixture input, independent
         # of the checkout that runs the production builders.
@@ -387,62 +338,10 @@ def rendered_cases(*, scale: int = 1) -> dict[str, str]:
         # Prompt size caps count temporary-path characters; the golden root is
         # a fixed input rather than whatever TMPDIR the runner happens to use.
         patch.setattr(tempfile, "tempdir", "/tmp")
-        for name in ("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "SDO_LATE_FINDINGS", "SDO_API_HISTORY_DIR"):
+        for name in ("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "SDO_API_HISTORY_DIR"):
             patch.delenv(name, raising=False)
-        for name, request in {
-            "cold_two": scaled(memory=False),
-            "cold_five": scaled(5, memory=False),
-            "surfaced": scaled(),
-            "warm": scaled(warm=True),
-            "warm_pending": scaled(warm=True, pending=True),
-            "drift": scaled(drift=True),
-            "oversized": scaled(5, oversized=True),
-            "warm_oversized": scaled(warm=True, oversized=True),
-        }.items():
-            prompts[f"responder_{name}"] = responder_prompt(request)
-        matched = scaled(5, warm=True)
-        matched.initial_program_runs.add(
-            program_id="repair-0",
-            can_mitigate=True,
-            verdict={"result": "RESULT_MATCH"},
-        )
-        matched.initial_program_runs.add(program_id="unrelated", verdict={"result": "RESULT_NO_MATCH"})
-        match = matched.playbook_coverage.matches.add(
-            playbook_id="repair-0",
-            program_revision="d" * 40,
-            can_mitigate=True,
-            mitigate_command="sdo mitigate restore-port --bind service=Service/app/api",
-            verified_successes=2,
-            verified_failures=1,
-            explained_finding_fingerprints=[matched.findings[0].fingerprint],
-        )
-        match.bindings.add(name="service").object.CopyFrom(matched.findings[0].primary_resource)
-        matched.playbook_coverage.unexplained_finding_fingerprints.extend(
-            finding.fingerprint for finding in matched.findings[1:]
-        )
-        prompts["responder_matched_programs"] = responder_prompt(matched)
-        partial = scaled(warm=True)
-        stage = partial.prior_stages.add(stage="deterministic", cleared_finding_fingerprints=["settled-route"])
-        attempt = stage.mitigations.add(playbook_id="restore-route", result="applied_cleared", plan_action_count=1)
-        attempt.apply_receipt.application_id = "synthetic-application"
-        attempt.apply_receipt.applied = True
-        attempt.apply_receipt.verification_completed = True
-        attempt.apply_receipt.verification_passed = True
-        partial.memory_snapshot.playbooks.add(id="restore-route", markdown="# Restore route\nSaved route repair.")
-        partial.memory_snapshot.playbooks.add(
-            id="restore-workload", markdown="# Restore workload\nSaved workload repair."
-        )
-        stalled = stage.mitigations.add(
-            playbook_id="restore-workload", result="rollout_pending_at_handoff", plan_action_count=1
-        )
-        stalled.apply_receipt.application_id = "synthetic-pending-application"
-        stalled.apply_receipt.applied = True
-        blocker = stalled.apply_receipt.rollout_pending.blockers.add(reason="replacement creation refused")
-        blocker.ref.kind, blocker.ref.namespace, blocker.ref.name = "Deployment", "toy", "api"
-        blocker.warning_events.append("ReplicaSet/api-new FailedCreate: exceeded quota: pod-count")
-        prompts["responder_partial_reuse"] = responder_prompt(partial)
+        prompts["responder_cold_two"] = responder_prompt(scaled(memory=False))
         patch.setenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "Use the toy incident transport.")
-        patch.setenv("SDO_LATE_FINDINGS", "pull")
         prompts["responder_optional"] = responder_prompt(scaled())
         patch.setenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", _responder_instructions())
         prompts["responder_transport"] = responder_prompt(scaled())
@@ -653,5 +552,4 @@ def rendered_cases(*, scale: int = 1) -> dict[str, str]:
         result_type="IncidentResultValidationError",
         diagnostic="status: invalid value",
     )
-    prompts["incident_verified_final"] = render_prompt("responder", "verified_final", part="session.instructions")
     return prompts

@@ -87,6 +87,10 @@ type Engine interface {
 	ValidateStatement(string) error
 	// Count prints "sdo-count <n>": the items the scope selects.
 	Count(port int, s Scope) Command
+	// Read prints "sdo-count <n>", then one JSON object of the named fields
+	// per matching item (at most MaxReadRows), then "#sdo-end <rows>". The
+	// selector must pass ValidateRead. It changes nothing.
+	Read(port int, s Scope, fields []string) (Command, error)
 	// Backup prints one line per item, then "#sdo-end <n>". It exits
 	// ExitLimit when the scope holds more than its limit.
 	Backup(port int, s Scope) Command

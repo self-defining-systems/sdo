@@ -11,6 +11,7 @@ import (
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/sdk"
 )
 
@@ -117,7 +118,7 @@ func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRe
 		}
 		return merged, cloneStageReports(reports), err
 	}
-	state := &IncidentState{Request: request, Findings: append([]sdk.Finding(nil), request.Findings...), Coverage: cloneCoverage(request.PlaybookCoverage)}
+	state := &IncidentState{Request: request, Findings: append([]sdk.Finding(nil), request.Findings...), Coverage: cloneCoverage(request.PlaybookCoverage), AfterPlaybook: c.config.AfterPlaybook}
 	var stages []ResponseStage
 	automaticAvailable, agentConfigured := false, false
 	for _, name := range c.codePath.Selection.ResponseStages {
@@ -125,6 +126,9 @@ func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRe
 		case "deterministic":
 			if source, ok := c.dispatcher.(interface{ DeterministicResponseStage() ResponseStage }); ok {
 				if stage := source.DeterministicResponseStage(); stage != nil {
+					if deterministic, ok := stage.(*DeterministicResponseStage); ok && c.config.AfterPlaybook == settings.AfterPlaybookWait {
+						deterministic.WaitBound = c.config.AfterPlaybookWait
+					}
 					stages = append(stages, stage)
 					automaticAvailable = true
 				}

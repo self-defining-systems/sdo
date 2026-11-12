@@ -16,7 +16,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
-	"sdo.dev/operator/latefindings"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/worker_registry"
 )
@@ -261,7 +260,6 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 			environment[name] = value
 		}
 	}
-	lateConfigMap := ""
 	sessionSubPath := ""
 	if d.RequireMemorySnapshot {
 		rejoin := false
@@ -279,12 +277,6 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 		}
 		environment["SDO_SESSION_SCRATCH"] = "/sdo/session/scratch"
 		environment["SDO_RESPONDER_USAGE_DIR"] = "/sdo/session/usage"
-		environment[latefindings.ReceiptsPathEnv] = latefindings.DefaultReceiptsPath
-		store := latefindings.Store{Client: d.Client, Namespace: d.Namespace}
-		if err := store.Ensure(ctx, request.IncidentID); err != nil {
-			return IncidentResult{}, fmt.Errorf("prepare logical late findings transport: %w", err)
-		}
-		lateConfigMap = latefindings.ConfigMapName(request.IncidentID)
 	}
 	executor := worker_registry.KubernetesExecutor{
 		APIProxyImage:  d.APIProxyImage,
@@ -294,7 +286,6 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 		RepositoryMountPath: d.RepositoryMountPath, RepositoryPVCSubPath: d.RepositoryPVCSubPath,
 		CredentialsSecret: d.CredentialsSecret, Environment: environment, PollInterval: d.PollInterval, SessionPVCSubPath: sessionSubPath,
 		CapturedCorpusReadOnly: d.RequireMemorySnapshot,
-		LateFindingsConfigMap:  lateConfigMap,
 		TaskPayload:            request.PreparedAgentTask,
 	}
 	// Last observation before any standby binding or cold worker publication.
@@ -391,13 +382,6 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 		if result.ResponseLoopExhausted {
 			result.Status = IncidentFailed
 			result.Error = "response loop budget exhausted with unresolved findings"
-		}
-	}
-	if d.RequireMemorySnapshot && result.LateFindingsPull != nil {
-		pull := result.LateFindingsPull
-		store := latefindings.Store{Client: d.Client, Namespace: d.Namespace}
-		if err := store.VerifyPull(ctx, request.IncidentID, pull.PullCount, pull.ReportDigest, pull.DetectorIDs, pull.PlaybookIDs); err != nil {
-			return IncidentResult{}, fmt.Errorf("verify logical late findings pull: %w", err)
 		}
 	}
 	if err := validateIncidentResultFor(result, request); err != nil {

@@ -97,6 +97,10 @@ func classifyCauseWork(outcome *contracts.OutcomeRecord, fixed map[string]progra
 				}
 			}
 			key := matchedViewKey(run.GetProgramId(), bindings)
+			if run.GetProgramId() == SourceRestoreID {
+				// Built in and never learned: nothing here for a reflection to teach.
+				continue
+			}
 			if !relevant || seen[key] {
 				continue
 			}
@@ -127,7 +131,7 @@ func classifyCauseWork(outcome *contracts.OutcomeRecord, fixed map[string]progra
 		refinements := map[string]bool{}
 		for _, run := range outcome.GetProgramRuns() {
 			verdict := run.GetVerdict().GetResult()
-			if verdict != contracts.Verdict_RESULT_NO_MATCH && verdict != contracts.Verdict_RESULT_UNKNOWN {
+			if run.GetProgramId() == SourceRestoreID || verdict != contracts.Verdict_RESULT_NO_MATCH && verdict != contracts.Verdict_RESULT_UNKNOWN {
 				continue
 			}
 			instance := refinementBindingKey(run)
@@ -169,7 +173,7 @@ func classifyCauseWork(outcome *contracts.OutcomeRecord, fixed map[string]progra
 		for _, resource := range cause.GetResources() {
 			ref := objectRefState(resource)
 			ref.APIVersion = ""
-			if !seenWrites[ref] && written(ref) && !slices.ContainsFunc(addressedResources, func(bound sdk.ObjectRef) bool { return sameResource(bound, ref) }) {
+			if !seenWrites[ref] && written(ref) && !builtinRestoreWrote(outcome, ref) && !slices.ContainsFunc(addressedResources, func(bound sdk.ObjectRef) bool { return sameResource(bound, ref) }) {
 				seenWrites[ref] = true
 				work.Items = append(work.Items, &contracts.ReflectionWorkItem{Resources: []*contracts.ObjectRef{proto.Clone(resource).(*contracts.ObjectRef)}, Disposition: "question", Reason: "unbound_write", Question: "A repaired object in this confirmed cause had no matched program binding. What reusable relation is supported?"})
 			}
@@ -181,7 +185,7 @@ func classifyCauseWork(outcome *contracts.OutcomeRecord, fixed map[string]progra
 			for _, resource := range validate.OwnedCauseWrites(action, cause.GetResources()) {
 				ref := objectRefState(resource)
 				ref.APIVersion = ""
-				if !seenWrites[ref] {
+				if !seenWrites[ref] && !builtinRestoreWrote(outcome, ref) {
 					seenWrites[ref] = true
 					work.Items = append(work.Items, &contracts.ReflectionWorkItem{Resources: []*contracts.ObjectRef{proto.Clone(resource).(*contracts.ObjectRef)}, Disposition: "question", Reason: "unbound_write", Question: "This cause's repair also wrote an object a cause resource controls (owner reference at write time). Learn the write through its relation to that owner, never its generated name."})
 				}
@@ -402,7 +406,7 @@ func unassignedReflectionQuestions(outcome *contracts.OutcomeRecord, fixed map[s
 	items := []*contracts.ReflectionWorkItem{}
 	seen := map[string]bool{}
 	for _, run := range outcome.GetProgramRuns() {
-		if run.GetVerdict().GetResult() != contracts.Verdict_RESULT_MATCH {
+		if run.GetVerdict().GetResult() != contracts.Verdict_RESULT_MATCH || run.GetProgramId() == SourceRestoreID {
 			continue
 		}
 		relevant := false
@@ -440,7 +444,7 @@ func unassignedReflectionQuestions(outcome *contracts.OutcomeRecord, fixed map[s
 			for _, resource := range action.GetResources() {
 				ref := objectRefState(resource)
 				ref.APIVersion = ""
-				if !grouped(ref) && !ownedByCause(action, resource) && !seenWrites[ref] {
+				if !grouped(ref) && !ownedByCause(action, resource) && !seenWrites[ref] && !builtinRestoreWrote(outcome, ref) {
 					seenWrites[ref] = true
 					items = append(items, &contracts.ReflectionWorkItem{Resources: []*contracts.ObjectRef{proto.Clone(resource).(*contracts.ObjectRef)}, Disposition: "question", Reason: "unbound_write", Question: "A repaired resource is outside confirmed cause groups. Review the write without inventing a cause or granting credit."})
 				}
@@ -470,4 +474,20 @@ func settledCaptureOrigins(eligibility *contracts.ReflectionEligibility) map[str
 		origins[memory.CapturedInstanceKey(item.GetProgramId(), bindings)] = item.GetCaptureOpenPhase()
 	}
 	return origins
+}
+
+// builtinRestoreWrote reports whether the built-in source-restore playbook wrote
+// ref: a write it owns teaches nothing, because the playbook is not learned.
+func builtinRestoreWrote(outcome *contracts.OutcomeRecord, ref sdk.ObjectRef) bool {
+	for _, application := range outcome.GetPlanApplications() {
+		if len(application.GetProgramIds()) != 1 || application.GetProgramIds()[0] != SourceRestoreID {
+			continue
+		}
+		for _, receipt := range outcome.GetRepairActions() {
+			if receipt.GetSuccess() && validate.ApplicationOwnsRepair(application, receipt) && slices.ContainsFunc(receipt.GetResources(), func(resource *contracts.ObjectRef) bool { return sameResource(ref, objectRefState(resource)) }) {
+				return true
+			}
+		}
+	}
+	return false
 }

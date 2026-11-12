@@ -157,6 +157,8 @@ message TrafficRequest {
   map<string, string> http_headers = 9;
   int64 timeout_ns = 10;
   repeated TrafficDialTarget dial_targets = 11;
+  // JSON pointers (RFC 6901) to scalars in an HTTP probe's response body, by name.
+  map<string, string> http_fields = 12;
 }
 message TrafficResponse {
   map<string, google.protobuf.Struct> windows = 1;
@@ -164,6 +166,9 @@ message TrafficResponse {
   bool success = 3;
   string detail = 4;
   google.protobuf.Struct dials = 5;
+  int32 http_status = 6;
+  // The scalars an HTTP probe extracted by pointer; the body is dropped.
+  google.protobuf.Struct fields = 7;
 }
 
 message TrafficDialTarget {

@@ -459,7 +459,7 @@ class ExternalIncident(_message.Message):
     def __init__(self, id: _Optional[str] = ..., namespace: _Optional[str] = ..., message: _Optional[str] = ...) -> None: ...
 
 class IncidentRequest(_message.Message):
-    __slots__ = ("schema_version", "application", "namespace", "incident_id", "findings", "detector_history", "surfaced_playbooks", "relevant_outcomes", "source_commit", "deployed_commit", "repository_worktree", "repository_base_commit", "response_deadline", "cancellation_token", "repair_policy", "state_changes", "memory_snapshot", "initial_program_runs", "max_response_loops", "drift_events", "prepared_agent_task", "observation_generation", "playbook_coverage", "namespace_onboarding", "prior_stages", "compaction", "prior_response_progress", "disabled_setup_detectors", "external_message", "detected_at", "telemetry", "opening_keys", "standing_keys")
+    __slots__ = ("schema_version", "application", "namespace", "incident_id", "findings", "detector_history", "surfaced_playbooks", "relevant_outcomes", "source_commit", "deployed_commit", "repository_worktree", "repository_base_commit", "response_deadline", "cancellation_token", "repair_policy", "state_changes", "memory_snapshot", "initial_program_runs", "max_response_loops", "drift_events", "prepared_agent_task", "observation_generation", "playbook_coverage", "namespace_onboarding", "prior_stages", "compaction", "prior_response_progress", "disabled_setup_detectors", "external_message", "detected_at", "telemetry", "opening_keys", "standing_keys", "deployment_in_flight")
     SCHEMA_VERSION_FIELD_NUMBER: _ClassVar[int]
     APPLICATION_FIELD_NUMBER: _ClassVar[int]
     NAMESPACE_FIELD_NUMBER: _ClassVar[int]
@@ -493,6 +493,7 @@ class IncidentRequest(_message.Message):
     TELEMETRY_FIELD_NUMBER: _ClassVar[int]
     OPENING_KEYS_FIELD_NUMBER: _ClassVar[int]
     STANDING_KEYS_FIELD_NUMBER: _ClassVar[int]
+    DEPLOYMENT_IN_FLIGHT_FIELD_NUMBER: _ClassVar[int]
     schema_version: str
     application: str
     namespace: str
@@ -526,7 +527,8 @@ class IncidentRequest(_message.Message):
     telemetry: TelemetryContext
     opening_keys: _containers.RepeatedScalarFieldContainer[str]
     standing_keys: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, schema_version: _Optional[str] = ..., application: _Optional[str] = ..., namespace: _Optional[str] = ..., incident_id: _Optional[str] = ..., findings: _Optional[_Iterable[_Union[Finding, _Mapping]]] = ..., detector_history: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., surfaced_playbooks: _Optional[_Iterable[_Union[SurfacedPlaybook, _Mapping]]] = ..., relevant_outcomes: _Optional[_Iterable[_Union[PriorOutcomeEvidence, _Mapping]]] = ..., source_commit: _Optional[str] = ..., deployed_commit: _Optional[str] = ..., repository_worktree: _Optional[str] = ..., repository_base_commit: _Optional[str] = ..., response_deadline: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cancellation_token: _Optional[str] = ..., repair_policy: _Optional[str] = ..., state_changes: _Optional[_Union[StateChanges, _Mapping]] = ..., memory_snapshot: _Optional[_Union[OperationalMemorySnapshot, _Mapping]] = ..., initial_program_runs: _Optional[_Iterable[_Union[_program_pb2.ProgramRun, _Mapping]]] = ..., max_response_loops: _Optional[int] = ..., drift_events: _Optional[_Iterable[_Union[DriftEvent, _Mapping]]] = ..., prepared_agent_task: _Optional[str] = ..., observation_generation: _Optional[str] = ..., playbook_coverage: _Optional[_Union[_program_pb2.PlaybookCoverage, _Mapping]] = ..., namespace_onboarding: _Optional[_Union[NamespaceOnboarding, _Mapping]] = ..., prior_stages: _Optional[_Iterable[_Union[StageReport, _Mapping]]] = ..., compaction: _Optional[_Iterable[str]] = ..., prior_response_progress: _Optional[_Iterable[_Union[ResponseProgress, _Mapping]]] = ..., disabled_setup_detectors: _Optional[_Iterable[_Union[DisabledSetupDetector, _Mapping]]] = ..., external_message: _Optional[str] = ..., detected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., telemetry: _Optional[_Union[TelemetryContext, _Mapping]] = ..., opening_keys: _Optional[_Iterable[str]] = ..., standing_keys: _Optional[_Iterable[str]] = ...) -> None: ...
+    deployment_in_flight: bool
+    def __init__(self, schema_version: _Optional[str] = ..., application: _Optional[str] = ..., namespace: _Optional[str] = ..., incident_id: _Optional[str] = ..., findings: _Optional[_Iterable[_Union[Finding, _Mapping]]] = ..., detector_history: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., surfaced_playbooks: _Optional[_Iterable[_Union[SurfacedPlaybook, _Mapping]]] = ..., relevant_outcomes: _Optional[_Iterable[_Union[PriorOutcomeEvidence, _Mapping]]] = ..., source_commit: _Optional[str] = ..., deployed_commit: _Optional[str] = ..., repository_worktree: _Optional[str] = ..., repository_base_commit: _Optional[str] = ..., response_deadline: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cancellation_token: _Optional[str] = ..., repair_policy: _Optional[str] = ..., state_changes: _Optional[_Union[StateChanges, _Mapping]] = ..., memory_snapshot: _Optional[_Union[OperationalMemorySnapshot, _Mapping]] = ..., initial_program_runs: _Optional[_Iterable[_Union[_program_pb2.ProgramRun, _Mapping]]] = ..., max_response_loops: _Optional[int] = ..., drift_events: _Optional[_Iterable[_Union[DriftEvent, _Mapping]]] = ..., prepared_agent_task: _Optional[str] = ..., observation_generation: _Optional[str] = ..., playbook_coverage: _Optional[_Union[_program_pb2.PlaybookCoverage, _Mapping]] = ..., namespace_onboarding: _Optional[_Union[NamespaceOnboarding, _Mapping]] = ..., prior_stages: _Optional[_Iterable[_Union[StageReport, _Mapping]]] = ..., compaction: _Optional[_Iterable[str]] = ..., prior_response_progress: _Optional[_Iterable[_Union[ResponseProgress, _Mapping]]] = ..., disabled_setup_detectors: _Optional[_Iterable[_Union[DisabledSetupDetector, _Mapping]]] = ..., external_message: _Optional[str] = ..., detected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., telemetry: _Optional[_Union[TelemetryContext, _Mapping]] = ..., opening_keys: _Optional[_Iterable[str]] = ..., standing_keys: _Optional[_Iterable[str]] = ..., deployment_in_flight: _Optional[bool] = ...) -> None: ...
 
 class ResponseProgress(_message.Message):
     __slots__ = ("incident_id", "successful_actions", "blockers", "error", "truncated", "omitted_episodes")
@@ -676,7 +678,7 @@ class ResourceOwners(_message.Message):
     def __init__(self, resource: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., owner_chain: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ...) -> None: ...
 
 class IncidentResult(_message.Message):
-    __slots__ = ("schema_version", "incident_id", "status", "confirmed_root_causes", "applied_playbooks", "repair_changes", "repair_actions", "final_detector_states", "proposed_artifact_ids", "verification_evidence", "usage", "timing", "responder_session_id", "error", "late_findings_pull", "program_tool_calls", "program_runs", "plan_applications", "response_loops_used", "response_loop_exhausted", "program_failure_signals", "resolution_path", "drift_events", "unresolved_findings", "drift_reprompt")
+    __slots__ = ("schema_version", "incident_id", "status", "confirmed_root_causes", "applied_playbooks", "repair_changes", "repair_actions", "final_detector_states", "proposed_artifact_ids", "verification_evidence", "usage", "timing", "responder_session_id", "error", "program_tool_calls", "program_runs", "plan_applications", "response_loops_used", "response_loop_exhausted", "program_failure_signals", "resolution_path", "drift_events", "unresolved_findings", "drift_reprompt")
     SCHEMA_VERSION_FIELD_NUMBER: _ClassVar[int]
     INCIDENT_ID_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
@@ -691,7 +693,6 @@ class IncidentResult(_message.Message):
     TIMING_FIELD_NUMBER: _ClassVar[int]
     RESPONDER_SESSION_ID_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
-    LATE_FINDINGS_PULL_FIELD_NUMBER: _ClassVar[int]
     PROGRAM_TOOL_CALLS_FIELD_NUMBER: _ClassVar[int]
     PROGRAM_RUNS_FIELD_NUMBER: _ClassVar[int]
     PLAN_APPLICATIONS_FIELD_NUMBER: _ClassVar[int]
@@ -716,7 +717,6 @@ class IncidentResult(_message.Message):
     timing: TimingMetrics
     responder_session_id: str
     error: str
-    late_findings_pull: LateFindingsPull
     program_tool_calls: _containers.RepeatedCompositeFieldContainer[_program_pb2.ProgramToolCall]
     program_runs: _containers.RepeatedCompositeFieldContainer[_program_pb2.ProgramRun]
     plan_applications: _containers.RepeatedCompositeFieldContainer[_program_pb2.PlanApplication]
@@ -727,21 +727,7 @@ class IncidentResult(_message.Message):
     drift_events: _containers.RepeatedCompositeFieldContainer[DriftEvent]
     unresolved_findings: _containers.RepeatedCompositeFieldContainer[Finding]
     drift_reprompt: DriftReprompt
-    def __init__(self, schema_version: _Optional[str] = ..., incident_id: _Optional[str] = ..., status: _Optional[str] = ..., confirmed_root_causes: _Optional[_Iterable[_Union[ConfirmedRootCause, _Mapping]]] = ..., applied_playbooks: _Optional[_Iterable[_Union[AppliedPlaybook, _Mapping]]] = ..., repair_changes: _Optional[_Iterable[str]] = ..., repair_actions: _Optional[_Iterable[_Union[RepairActionReceipt, _Mapping]]] = ..., final_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., proposed_artifact_ids: _Optional[_Iterable[str]] = ..., verification_evidence: _Optional[_Iterable[_Union[VerificationEvidence, _Mapping]]] = ..., usage: _Optional[_Union[UsageMetrics, _Mapping]] = ..., timing: _Optional[_Union[TimingMetrics, _Mapping]] = ..., responder_session_id: _Optional[str] = ..., error: _Optional[str] = ..., late_findings_pull: _Optional[_Union[LateFindingsPull, _Mapping]] = ..., program_tool_calls: _Optional[_Iterable[_Union[_program_pb2.ProgramToolCall, _Mapping]]] = ..., program_runs: _Optional[_Iterable[_Union[_program_pb2.ProgramRun, _Mapping]]] = ..., plan_applications: _Optional[_Iterable[_Union[_program_pb2.PlanApplication, _Mapping]]] = ..., response_loops_used: _Optional[int] = ..., response_loop_exhausted: _Optional[bool] = ..., program_failure_signals: _Optional[_Iterable[str]] = ..., resolution_path: _Optional[str] = ..., drift_events: _Optional[_Iterable[_Union[DriftEvent, _Mapping]]] = ..., unresolved_findings: _Optional[_Iterable[_Union[Finding, _Mapping]]] = ..., drift_reprompt: _Optional[_Union[DriftReprompt, _Mapping]] = ...) -> None: ...
-
-class LateFindingsPull(_message.Message):
-    __slots__ = ("incident_id", "pull_count", "detector_ids", "playbook_ids", "report_digest")
-    INCIDENT_ID_FIELD_NUMBER: _ClassVar[int]
-    PULL_COUNT_FIELD_NUMBER: _ClassVar[int]
-    DETECTOR_IDS_FIELD_NUMBER: _ClassVar[int]
-    PLAYBOOK_IDS_FIELD_NUMBER: _ClassVar[int]
-    REPORT_DIGEST_FIELD_NUMBER: _ClassVar[int]
-    incident_id: str
-    pull_count: int
-    detector_ids: _containers.RepeatedScalarFieldContainer[str]
-    playbook_ids: _containers.RepeatedScalarFieldContainer[str]
-    report_digest: str
-    def __init__(self, incident_id: _Optional[str] = ..., pull_count: _Optional[int] = ..., detector_ids: _Optional[_Iterable[str]] = ..., playbook_ids: _Optional[_Iterable[str]] = ..., report_digest: _Optional[str] = ...) -> None: ...
+    def __init__(self, schema_version: _Optional[str] = ..., incident_id: _Optional[str] = ..., status: _Optional[str] = ..., confirmed_root_causes: _Optional[_Iterable[_Union[ConfirmedRootCause, _Mapping]]] = ..., applied_playbooks: _Optional[_Iterable[_Union[AppliedPlaybook, _Mapping]]] = ..., repair_changes: _Optional[_Iterable[str]] = ..., repair_actions: _Optional[_Iterable[_Union[RepairActionReceipt, _Mapping]]] = ..., final_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., proposed_artifact_ids: _Optional[_Iterable[str]] = ..., verification_evidence: _Optional[_Iterable[_Union[VerificationEvidence, _Mapping]]] = ..., usage: _Optional[_Union[UsageMetrics, _Mapping]] = ..., timing: _Optional[_Union[TimingMetrics, _Mapping]] = ..., responder_session_id: _Optional[str] = ..., error: _Optional[str] = ..., program_tool_calls: _Optional[_Iterable[_Union[_program_pb2.ProgramToolCall, _Mapping]]] = ..., program_runs: _Optional[_Iterable[_Union[_program_pb2.ProgramRun, _Mapping]]] = ..., plan_applications: _Optional[_Iterable[_Union[_program_pb2.PlanApplication, _Mapping]]] = ..., response_loops_used: _Optional[int] = ..., response_loop_exhausted: _Optional[bool] = ..., program_failure_signals: _Optional[_Iterable[str]] = ..., resolution_path: _Optional[str] = ..., drift_events: _Optional[_Iterable[_Union[DriftEvent, _Mapping]]] = ..., unresolved_findings: _Optional[_Iterable[_Union[Finding, _Mapping]]] = ..., drift_reprompt: _Optional[_Union[DriftReprompt, _Mapping]] = ...) -> None: ...
 
 class IncidentView(_message.Message):
     __slots__ = ("incident_id", "observed_at", "blocking_detectors", "blocking_findings", "clearing_findings", "state_changes", "drift_events")
@@ -797,7 +783,7 @@ class DetectorTimelineEntry(_message.Message):
     def __init__(self, detector_id: _Optional[str] = ..., detector_class: _Optional[str] = ..., owner: _Optional[str] = ..., rule_id: _Optional[str] = ..., fingerprint: _Optional[str] = ..., parameter_bindings: _Optional[_Mapping[str, _common_pb2.ObjectRef]] = ..., surfaced_playbook_ids: _Optional[_Iterable[str]] = ..., first_activated_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., last_seen_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cleared_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., relation: _Optional[str] = ..., activations: _Optional[int] = ...) -> None: ...
 
 class IncidentClosure(_message.Message):
-    __slots__ = ("request", "result", "dispatch_error", "final_detector_states", "incident_detector_states", "detector_timeline", "incident_detector_fired_before_dispatch", "incident_detector_fired_after_dispatch", "no_incident_detector_fired", "final_state_changes", "detected_at", "dispatched_at", "responder_completed_at", "verified_at", "health_cleared_at", "cleaned_helpers", "observation_generation", "partial_detector_states", "verified_while_responder_running", "closure_stability_window", "unconfirmed_reason", "unconfirmed_detail", "source_check_notes", "state_persistence_failure", "frozen", "recovery_verification")
+    __slots__ = ("request", "result", "dispatch_error", "final_detector_states", "incident_detector_states", "detector_timeline", "incident_detector_fired_before_dispatch", "incident_detector_fired_after_dispatch", "no_incident_detector_fired", "final_state_changes", "detected_at", "dispatched_at", "responder_completed_at", "verified_at", "health_cleared_at", "cleaned_helpers", "observation_generation", "partial_detector_states", "verified_while_responder_running", "closure_stability_window", "unconfirmed_reason", "unconfirmed_detail", "source_check_notes", "state_persistence_failure", "frozen", "recovery_verification", "escalated_at")
     REQUEST_FIELD_NUMBER: _ClassVar[int]
     RESULT_FIELD_NUMBER: _ClassVar[int]
     DISPATCH_ERROR_FIELD_NUMBER: _ClassVar[int]
@@ -824,6 +810,7 @@ class IncidentClosure(_message.Message):
     STATE_PERSISTENCE_FAILURE_FIELD_NUMBER: _ClassVar[int]
     FROZEN_FIELD_NUMBER: _ClassVar[int]
     RECOVERY_VERIFICATION_FIELD_NUMBER: _ClassVar[int]
+    ESCALATED_AT_FIELD_NUMBER: _ClassVar[int]
     request: IncidentRequest
     result: IncidentResult
     dispatch_error: str
@@ -850,7 +837,8 @@ class IncidentClosure(_message.Message):
     state_persistence_failure: StatePersistenceFailure
     frozen: bool
     recovery_verification: RecoveryVerification
-    def __init__(self, request: _Optional[_Union[IncidentRequest, _Mapping]] = ..., result: _Optional[_Union[IncidentResult, _Mapping]] = ..., dispatch_error: _Optional[str] = ..., final_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., incident_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., detector_timeline: _Optional[_Iterable[_Union[DetectorTimelineEntry, _Mapping]]] = ..., incident_detector_fired_before_dispatch: _Optional[bool] = ..., incident_detector_fired_after_dispatch: _Optional[bool] = ..., no_incident_detector_fired: _Optional[bool] = ..., final_state_changes: _Optional[_Union[StateChanges, _Mapping]] = ..., detected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., dispatched_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., responder_completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., verified_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., health_cleared_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cleaned_helpers: _Optional[_Iterable[str]] = ..., observation_generation: _Optional[str] = ..., partial_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., verified_while_responder_running: _Optional[bool] = ..., closure_stability_window: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., unconfirmed_reason: _Optional[_Union[ClosureUnconfirmedReason, str]] = ..., unconfirmed_detail: _Optional[str] = ..., source_check_notes: _Optional[_Iterable[str]] = ..., state_persistence_failure: _Optional[_Union[StatePersistenceFailure, _Mapping]] = ..., frozen: _Optional[bool] = ..., recovery_verification: _Optional[_Union[RecoveryVerification, _Mapping]] = ...) -> None: ...
+    escalated_at: _timestamp_pb2.Timestamp
+    def __init__(self, request: _Optional[_Union[IncidentRequest, _Mapping]] = ..., result: _Optional[_Union[IncidentResult, _Mapping]] = ..., dispatch_error: _Optional[str] = ..., final_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., incident_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., detector_timeline: _Optional[_Iterable[_Union[DetectorTimelineEntry, _Mapping]]] = ..., incident_detector_fired_before_dispatch: _Optional[bool] = ..., incident_detector_fired_after_dispatch: _Optional[bool] = ..., no_incident_detector_fired: _Optional[bool] = ..., final_state_changes: _Optional[_Union[StateChanges, _Mapping]] = ..., detected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., dispatched_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., responder_completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., verified_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., health_cleared_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cleaned_helpers: _Optional[_Iterable[str]] = ..., observation_generation: _Optional[str] = ..., partial_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., verified_while_responder_running: _Optional[bool] = ..., closure_stability_window: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., unconfirmed_reason: _Optional[_Union[ClosureUnconfirmedReason, str]] = ..., unconfirmed_detail: _Optional[str] = ..., source_check_notes: _Optional[_Iterable[str]] = ..., state_persistence_failure: _Optional[_Union[StatePersistenceFailure, _Mapping]] = ..., frozen: _Optional[bool] = ..., recovery_verification: _Optional[_Union[RecoveryVerification, _Mapping]] = ..., escalated_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class RecoveryVerification(_message.Message):
     __slots__ = ("since", "writes_settled", "writes", "opening_keys", "stable_since")

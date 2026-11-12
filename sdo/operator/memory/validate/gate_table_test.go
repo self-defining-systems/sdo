@@ -299,7 +299,14 @@ func gateTrafficEdit(name, content string) func(*testing.T, string) {
 // returned and it confirmed an out-of-reach cause; with stage set, the
 // automatic stage escalated it on an accepted playbook first.
 func gateEscalatedOutcome(stage bool) *contracts.OutcomeRecord {
-	o := &contracts.OutcomeRecord{Classification: "escalated"}
+	store := &contracts.ObjectRef{ApiVersion: "v1", Kind: "Service", Namespace: "app", Name: "store"}
+	finding := &contracts.Finding{DetectorId: "traffic-links", RuleId: "link-reachability.web.store.5432", Status: "active", Severity: "warn", Summary: "link to store delayed", Evidence: "p50 2s", Fingerprint: "link", PrimaryResource: store}
+	cause := &contracts.ConfirmedRootCause{
+		Summary: "delay on the network path to store", Resources: []*contracts.ObjectRef{store}, CauseClass: "network-delay", Reach: "out-of-reach",
+		Evidence: []*contracts.RootCauseEvidence{{Kind: "detector-finding", Source: "traffic-links", Observation: "p50 2s against 5ms healthy"}},
+	}
+	// Escalation learning needs a confirmed out-of-reach cause backed by an opening finding.
+	o := &contracts.OutcomeRecord{Classification: "escalated", Findings: []*contracts.Finding{finding}, ConfirmedRootCauses: []*contracts.ConfirmedRootCause{cause}}
 	if stage {
 		o.PriorStages = []*contracts.StageReport{{Stage: "deterministic", Mitigations: []*contracts.StageMitigation{{PlaybookId: "base", Result: "escalated"}}}}
 	}

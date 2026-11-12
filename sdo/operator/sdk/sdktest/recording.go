@@ -391,6 +391,16 @@ func RecordPrimitiveCalls(view program.ReadView, calls []PrimitiveCall) ([]Primi
 			}
 			_, _ = recorder.DatabaseUsers(target)
 			continue
+		case "Read":
+			if len(args) != 1 {
+				return nil, errors.New("invalid Read arguments")
+			}
+			var query program.Query
+			if err := json.Unmarshal(args[0], &query); err != nil {
+				return nil, err
+			}
+			_, _ = recorder.Read(query)
+			continue
 		case "AppMap":
 			_, _ = recorder.AppMap()
 			continue

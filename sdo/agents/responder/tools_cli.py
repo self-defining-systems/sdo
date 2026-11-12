@@ -115,13 +115,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = _CappedParser(
         prog="sdo",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Output: session schema. "
-        "prior_stages: receipts; checked_stage_receipts: application IDs and scoped checks; "
-        "stage_actions: results/rollout blockers; stage_playbooks: program IDs to READMEs. "
-        "findings: residual work. Full receipts/events: details_file. "
-        "prior_response_progress: failed-episode progress (bounded). "
-        "Keep repairs; admission_blocked: rollout prerequisite.\n\n"
-        "Examples (incident resources):\n  " + "\n  ".join(CLI_EXAMPLES),
+        epilog="Examples (incident resources):\n  " + "\n  ".join(CLI_EXAMPLES),
     )
     commands = parser.add_subparsers(dest="command", required=True)
     parser.add_argument(
@@ -199,7 +193,7 @@ def _parser() -> argparse.ArgumentParser:
             "sdo mitigate A --bind x=Kind/ns/a -- B --bind y=Kind/ns/b. "
             "Overlapping writes are refused." + " Programs use the current checkout; edits compile on demand."
         ),
-        epilog="Example: " + CLI_EXAMPLES[2] + "\nMore: sdo-incident-response/references/fixes.md",
+        epilog="Example: " + CLI_EXAMPLES[2],
     )
     mitigate.add_argument("target", metavar="NAME", help="playbook or built-in action")
     mitigate.add_argument(
@@ -264,13 +258,11 @@ def _parser() -> argparse.ArgumentParser:
         "Otherwise reads the controller's shared recovery proof: fresh health after the last repair, "
         "observed write effects, and the unchanged 15-second stability window. drift[] lists objects that still "
         "differ from accepted source and never decides healthy. "
-        "verification_status=awaiting_responder_completion: finish with evidence; proof follows your result. "
-        "Explain remaining source differences; SDO may resume once when progress remains. "
+        "verification_status=awaiting_responder_completion: fresh health is clear; "
+        "SDO ends your work when Recovered holds. "
         "Pending observation windows, including unproven synthetic scenarios, are not healthy. "
         "Settling traffic SLOs wait. "
-        "verification_blockers names incomplete detectors and reasons. SDO resumes once for these blockers, "
-        "then stops any running blocker turn and records an unconfirmed outcome "
-        "at the verification bound if they persist. "
+        "verification_blockers names incomplete detectors and reasons. "
         "Fresh deployment-rollout-pending findings name owned ReplicaSet/Pod blockers and old-template Pods, "
         "including after recorded actions; inspect their evidence before repeating workload writes. "
         "Wait on SDO's verification instead of sleeping. After closure, incident_verified is an "
@@ -346,7 +338,7 @@ def command_surface() -> CommandSurface:
             raise ValueError(f"{name}: listing description exceeds its budget")
     return {
         "commands": descriptions,
-        "reference": "sdo-incident-response/references/commands.md",
+        "reference": "sdo-operating/SKILL.md",
         "output": (
             "Full JSON: read details_file; --json uses the same caps. "
             "Menu: menu.options[].{option_id,parameters[].{name,schema}}. "

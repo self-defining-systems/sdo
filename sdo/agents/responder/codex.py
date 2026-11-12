@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import os
 import sys
-import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from google.protobuf import json_format
 
-from libs.agent_cli.structured import AGENT_PROVIDERS, StructuredTurnError, StructuredTurnInterrupted, turn_usage
+from libs.agent_cli.structured import AGENT_PROVIDERS, StructuredTurnError, turn_usage
 from libs.agent_cli.usage_checkpoint import UsageCheckpoint
 from sdo.agents.code_paths import agent_guidance
 from sdo.agents.prompt_templates import RenderedPrompt, named_prompt, render_prompt
@@ -16,9 +15,8 @@ from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
 from sdo.agents.provider import MODEL_ENV, agent_effort, resolve_agent
 from sdo.agents.replay import selected_skills_root
 from sdo.agents.responder import recorded_actions
-from sdo.agents.responder.continuation import continuation_prompt
 from sdo.agents.responder.credentials import SKILLS_ROOT
-from sdo.agents.responder.incident_context import observe_only_handoff, prepared_incident_data
+from sdo.agents.responder.incident_opening import onset, opened_on
 from sdo.agents.responder.result_output import parse_incident_result
 from sdo.agents.responder.session_recovery import SessionRecoveryError, open_recovery
 from sdo.agents.responder.session_turn import (
@@ -36,36 +34,11 @@ from sdo.contracts import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from agentshim import CommandExecutor
 
 
 class ResponderExecutionError(RuntimeError):
     pass
-
-
-#: Time a running turn keeps after SDO verifies recovery, so an in-flight
-#: command or answer can finish before the session is asked for its result.
-VERIFIED_SETTLE_SECONDS = 5.0
-
-
-def verified_recovery() -> Callable[[], bool] | None:
-    """True once the controller's verification marker has stood for the settle time."""
-    directory = os.environ.get("SDO_API_HISTORY_DIR")
-    if not directory:
-        return None
-    marker = Path(directory) / "incident-verified.json"
-    seen: list[float] = []
-
-    def settled() -> bool:
-        if not seen:
-            if not marker.exists():
-                return False
-            seen.append(time.monotonic())
-        return time.monotonic() - seen[0] >= VERIFIED_SETTLE_SECONDS
-
-    return settled
 
 
 def main() -> int:
@@ -91,18 +64,6 @@ def execute_incident(
     provider: str | None = None,
     executor: CommandExecutor | None = None,
 ) -> IncidentResult:
-    with prepared_incident_data(request) as data:
-        return _execute_incident(request, incident_data=data, model=model, provider=provider, executor=executor)
-
-
-def _execute_incident(
-    request: IncidentRequest,
-    *,
-    incident_data: str,
-    model: str | None = None,
-    provider: str | None = None,
-    executor: CommandExecutor | None = None,
-) -> IncidentResult:
     try:
         if provider is None:
             resolved = resolve_agent("responder", "responder")
@@ -114,7 +75,7 @@ def _execute_incident(
             model, effort = model or os.getenv(MODEL_ENV["responder"]) or None, agent_effort()
     except ValueError as exc:
         raise ResponderExecutionError(str(exc)) from exc
-    prompt = _responder_prompt(request, incident_data=incident_data)
+    prompt = _responder_prompt(request)
     try:
         recovery = open_recovery(request.incident_id, selected_provider)
         resume_session_id = recovery.resume_session_id() if recovery is not None else None
@@ -124,16 +85,7 @@ def _execute_incident(
         recorded_actions.reset()
     if recovery is not None:
         prompt += recovery.recovered_prompt()
-    continuation = os.environ.get("SDO_RESPONSE_CONTINUATION", "")
-    if continuation:
-        if recovery is None or resume_session_id is None:
-            raise ResponderExecutionError("controller continuation requires the existing provider session")
-        try:
-            prompt = continuation_prompt(continuation)
-        except ValueError as exc:
-            raise ResponderExecutionError(f"invalid controller continuation: {exc}") from exc
     corrected_result = False
-    verified = verified_recovery()
     usage: dict[str, int | float] = {}
     options = session_turn_options(selected_provider, Path(request.repository_worktree))
     options["environment"] = {**(options.get("environment") or {}), "SDO_INCIDENT_ID": request.incident_id}
@@ -162,21 +114,10 @@ def _execute_incident(
                 executor=executor,
                 on_session_started=recovery.checkpoint if recovery is not None else None,
                 on_usage=checkpoint.publish if checkpoint is not None else None,
-                interrupt_when=verified,
                 **options,
             )
         except SessionRecoveryError as exc:
             raise ResponderExecutionError(str(exc)) from exc
-        except StructuredTurnInterrupted as exc:
-            # SDO verified recovery: the rest of the session only produces the result.
-            for name, value in exc.usage.items():
-                usage[name] = usage.get(name, 0) + value
-            if not exc.session_id:
-                raise ResponderExecutionError(f"{selected_provider} responder stopped before a session") from exc
-            resume_session_id = exc.session_id
-            prompt = render_prompt("responder", "verified_final", part="session.instructions")
-            verified = None
-            continue
         except StructuredTurnError as exc:
             raise ResponderExecutionError(f"{selected_provider} responder failed: {exc}") from exc
         for name, value in turn_usage(completed).items():
@@ -230,7 +171,6 @@ _MODEL_OMITS: dict[str, tuple[str, ...]] = {
         "usage",
         "responder_session_id",
         "error",
-        "late_findings_pull",
         "repair_actions",
     ),
     "sdodev.contracts.v1alpha1.AppliedPlaybook": ("parameter_bindings", "script_names"),
@@ -243,51 +183,20 @@ def _incident_result_schema() -> dict[str, object]:
     return model_output_schema(IncidentResult.DESCRIPTOR, omit=_MODEL_OMITS)
 
 
-LATE_FINDINGS_ENV = "SDO_LATE_FINDINGS"
-LATE_FINDINGS_MODES = ("off", "pull")
-LATE_FINDINGS_COMMAND = "sdo-operator late-findings"
-
-
-def late_findings_guidance(request: IncidentRequest, *, mode: str | None = None) -> str:
-    """Pull-before-act paragraph; empty unless the ``pull`` mode is selected (default: the environment)."""
-
-    selected = (os.getenv(LATE_FINDINGS_ENV, "") if mode is None else mode).strip() or "off"
-    if selected not in LATE_FINDINGS_MODES:
-        raise ValueError(f"late-findings mode must be one of {', '.join(LATE_FINDINGS_MODES)}: {selected!r}")
-    if selected == "off":
-        return ""
-    command = render_prompt(
-        "responder",
-        "late_findings_guidance_01",
-        part="responder.instructions",
-        late_findings_command=LATE_FINDINGS_COMMAND,
-        incident_id=request.incident_id,
-    )
-    return render_prompt("responder", "late_findings_guidance_02", part="responder.instructions", command=command)
-
-
-def _responder_prompt(request: IncidentRequest, *, incident_data: str) -> RenderedPrompt:
+def _responder_prompt(request: IncidentRequest) -> RenderedPrompt:
     if not request.HasField("memory_snapshot"):
         raise ValueError("incident responder requires a logical memory snapshot")
     prompt = render_prompt(
         "responder",
-        "incident_external_instructions"
-        if request.external_message
-        else "incident_shell"
-        if agent_guidance() == "shell"
-        else "incident_observe_instructions"
-        if observe_only_handoff(request)
-        else "incident_reuse_instructions"
-        if request.prior_stages
-        else "incident_response_instructions",
+        "incident_shell" if agent_guidance() == "shell" else "incident_prompt",
         part="responder.instructions",
         incident_id=request.incident_id,
+        namespace=request.namespace,
+        opened_on=opened_on(request),
+        onset=onset(request),
         skills_root=selected_skills_root(SKILLS_ROOT),
-        repair_policy=request.repair_policy,
         branch_instruction=branch_instruction("incident_result"),
     )
-    if not request.external_message:
-        prompt += late_findings_guidance(request)
     extra = "\n".join(
         part
         for part in (
@@ -306,7 +215,7 @@ def _responder_prompt(request: IncidentRequest, *, incident_data: str) -> Render
                 extra_instructions=named_prompt("responder.additional_context", extra, required=False),
             ),
         )
-    return prompt + named_prompt("responder.incident_data", incident_data)
+    return prompt
 
 
 render_incident_prompt = _responder_prompt

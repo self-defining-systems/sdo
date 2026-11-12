@@ -107,8 +107,15 @@ rewrites nothing else. It reads only the collected copy (`evidence/`, `memory/.s
 `record.json` for the inject time and the run's incidents (`BenchRun.pick`; every incident of the copy without them).
 
 - `summary`: incidents, outcome, cause class, reach, auto-applied, responder tokens, reflection decision, learned count.
-- `events` (lanes `detect`, `stage`, `act`, `close`, `learn`) come from the ledger and outcome document; panels are the
-  incidents table, repair actions, one transcript per responder and reflection turn, and what the reflection learned.
+- `events` (lanes `detect`, `stage`, `act`, `read`, `close`, `learn`) come from the ledger and outcome document and,
+  for the agent's own Kubernetes calls, from the mirrored recording `incidents/<d>/api-history/events.jsonl` (about 60
+  lines in `view.py`, no production import): one `act` event per write (`api-patch Deployment/api: <changed field
+  paths>`, `(failed 403)`, `(refused: scope_read_only)`, `(open)` while unfinished), per exec or attach (spanning the
+  session, redacted command) and per port-forward; one `read` event per minute that had reads
+  (`42 reads: get pods ×30, list events ×12`). When an incident has a recording, the repair-actions loop keeps only the
+  kinds Go issues itself (`program-plan`, `run-script`, `mitigation-menu`, `sdo-mitigate`), so a write is not drawn
+  twice; without one (older runs) every repair action is drawn. Panels are the incidents table, repair actions, one
+  transcript per responder and reflection turn, and what the reflection learned.
 - Transcripts come from Codex `rollout-*.jsonl` `response_item` entries only, split at `task_started`; a turn whose
   prompt is about reflection is the reflection transcript. Codex runs carry no reasoning summaries today, so reasoning
   shows as "reasoning (not summarized)".

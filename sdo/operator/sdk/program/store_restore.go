@@ -15,8 +15,10 @@ import (
 // SETUSER, REPLICAOF NO ONE or CLIENT UNPAUSE on redis; collMod, fsyncUnlock,
 // dropIndexes/createIndexes, setParameter or updateUser on mongodb; ALTER
 // SYSTEM/DATABASE/ROLE or pg_promote on postgres. A validator or index text
-// comes from the restore text the controller captured with the baseline. A
-// password is restored only from the store container's own environment.
+// comes from the restore text the controller captured with the baseline. The
+// only password it restores is a redis requirepass, from the store container's
+// own environment; postgres ALTER ROLE, mysql and mongodb updateUser never set
+// or change one.
 // The executor reads the item first and records its prior value, does nothing
 // when it already has the baseline value, and reads the facts again to verify
 // it. EndSessions also ends the sessions a restored per-database or per-role

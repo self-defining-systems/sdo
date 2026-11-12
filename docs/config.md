@@ -31,6 +31,14 @@ install fingerprint, so running `install-existing` again with a changed configur
 For one release, `host` and `install-existing` refuse to start while `SDO_CODE_PATH` or `SDO_RESPONDER_MENU` is set in their
 environment; use `SDO_AGENT_CODE_PATH` and `SDO_RESPONSE_MENU`.
 
+## Benchmark profile
+
+`benchmarks/fuzzops/sdo-bench.yaml` is the profile every benchmark harness passes first. It sets only what differs from the
+defaults above: `response.repair_policy: recorded-actions`, `detection.self_heal_hold: 60s`, and, to measure the upper bound of what
+learned playbooks achieve alone, `response.after_playbook: wait` with `response.after_playbook_wait: 5m`: after a playbook applied,
+the agent is never dispatched; recovery gets the whole bound (slow readiness and windowed detectors need more than the
+stage's default 90 seconds), then the incident escalates. Production keeps `agent`.
+
 ## Keys
 
 ### Top level
@@ -63,8 +71,11 @@ environment; use `SDO_AGENT_CODE_PATH` and `SDO_RESPONSE_MENU`.
 | `response.diagnosis_deadline` | `SDO_RESPONSE_DIAGNOSIS_DEADLINE` | duration | `10s` | shared deadline of candidate diagnosis in the automatic stage |
 | `response.stage_budget` | `SDO_RESPONSE_STAGE_BUDGET` | duration | `45s` | scheduling bound of one automatic-stage pass; a pass re-run on the responder's loop may take twice this |
 | `response.repair_policy` | `SDO_RESPONSE_REPAIR_POLICY` | string | `commit` | the evidence the controller requires for a responder repair: commit (a source repair is committed through the broker; production) or recorded-actions (live cluster repairs are recorded as actions without a source commit; benchmark runs) |
+| `response.after_playbook` | `SDO_RESPONSE_AFTER_PLAYBOOK` | string | `agent` | what happens when a learned playbook applied and the opening alerts did not recover within the stage's bound: agent (dispatch the agent, told what the playbook did), escalate (no agent; the incident stays open under ordinary closure and closes failed at the verification timeout if the alerts never clear) or wait (keep waiting for recovery up to after_playbook_wait, then escalate). When recovery holds, no agent runs in any setting; an alert that did not open the incident never dispatches the agent after an applied playbook |
+| `response.after_playbook_wait` | `SDO_RESPONSE_AFTER_PLAYBOOK_WAIT` | duration | `5m0s` | how long after_playbook: wait keeps waiting for the opening alerts to recover after the playbook applied, capped by the response timeout |
 | `response.standby` | `SDO_RESPONSE_STANDBY` | bool | `true` | pre-start a responder worker; false forces cold Jobs |
 | `response.menu` | `SDO_RESPONSE_MENU` | bool | `true` | offer the responder its tool menu |
+| `response.builtin_restore_auto` | `SDO_RESPONSE_BUILTIN_RESTORE_AUTO` | bool | `false` | let the automatic stage apply the built-in source-restore playbook (put a component's non-SDO departures from accepted source back) when its diagnosis matches; off, it is only offered like any playbook and the responder decides |
 | `response.permissive` | `SDO_RESPONSE_PERMISSIVE` | bool | `false` | broad lane repair permissions excluding Secret and credential APIs |
 | `response.permissive_namespaces` | `SDO_RESPONSE_PERMISSIVE_NAMESPACES` | list (JSON) | `[]` | additional lane namespaces the permissive responder may repair |
 | `response.startup_bound` | `SDO_RESPONSE_STARTUP_BOUND` | duration | `30m0s` | how long a new install waits for SDO to see its application healthy (2 min with no opener firing) before incidents open anyway; until then no incident opens. 0s turns the start-up period off |
@@ -85,7 +96,6 @@ environment; use `SDO_AGENT_CODE_PATH` and `SDO_RESPONSE_MENU`.
 | `learning.reflection_guidance` | `SDO_LEARNING_REFLECTION_GUIDANCE` | string | `baseline` | the agent's learning instructions: baseline learns from each confirmed cause; generalize compares related incident signatures and parameterizes a shared playbook; generalize-spec favors predicates visible in resource spec or status. None changes the detector SDK or the validator |
 | `learning.force_reflection` | `SDO_LEARNING_FORCE_REFLECTION` | bool | `false` | always dispatch reflection after a verified closure (not with a frozen mode) |
 | `learning.healthy_baseline` | `SDO_LEARNING_HEALTHY_BASELINE` | bool | `false` | opt-in detector gate: a proposal that changes incident detector source is replayed against healthy snapshots a runner recorded with sdo-operator baseline-write (one sdktest.Snapshot JSON per file, outside the accepted repository); a detector that fires on one fails validation, and a missing baseline fails closed. It never reads benchmark verdicts |
-| `learning.late_findings` | `SDO_LEARNING_LATE_FINDINGS` | string | `off` | late findings: off, or pull (the controller publishes a bounded incident-specific report that a responder fetches with sdo-operator late-findings --incident-id ID; the broker checks the claim against the controller-owned report) |
 
 ### `deployment`
 
@@ -133,7 +143,6 @@ These are written by the controller into worker Jobs, or read by `sdo-operator m
 transport, not knobs, and keep their names.
 
 - `SDO_AGENT_GUIDANCE`
-- `SDO_RESPONSE_CONTINUATION`
 - `SDO_DEPLOYMENT_MODEL`
 - `SDO_TELEMETRY_POLICY`
 - `SDO_AGENT_SCRIPT_*`

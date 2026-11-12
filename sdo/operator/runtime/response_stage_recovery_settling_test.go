@@ -217,6 +217,13 @@ func newSettlingWorld(tc settlingCase) *settlingWorld {
 		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app", UID: "synthetic-deployment", Generation: 1}, Spec: appsv1.DeploymentSpec{Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "api"}}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "api"}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "api", Image: "api:v1"}}}}}, Status: appsv1.DeploymentStatus{ObservedGeneration: 1, Replicas: 1, UpdatedReplicas: 1, ReadyReplicas: 1, AvailableReplicas: 1}},
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "api-pod", Namespace: "app", UID: "synthetic-pod", Labels: map[string]string{"app": "api"}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "api", Image: "api:v1"}}}, Status: corev1.PodStatus{Phase: corev1.PodRunning}},
 	)}
+	if tc.churnUntil > 0 {
+		// A second component no stage write touches.
+		web := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "app", UID: "synthetic-web", Generation: 1}, Spec: appsv1.DeploymentSpec{Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "web"}}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "web"}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "web", Image: "web:v1"}}}}}, Status: appsv1.DeploymentStatus{ObservedGeneration: 1, Replicas: 1, UpdatedReplicas: 1}}
+		if _, err := inner.client.AppsV1().Deployments("app").Create(context.Background(), web, metav1.CreateOptions{}); err != nil {
+			panic(err)
+		}
+	}
 	inner.client.PrependReactor("*", "deployments", func(action ktesting.Action) (bool, kruntime.Object, error) {
 		if action.GetSubresource() == "" && (action.GetVerb() == "update" || action.GetVerb() == "patch") {
 			inner.restarts.Add(1)
@@ -280,6 +287,14 @@ func settlingStageOn(t *testing.T, tc settlingCase, world *settlingWorld) (*Dete
 	}
 	sortFindings(findings)
 	request := IncidentRequest{IncidentID: "synthetic-settling", Namespace: "app", SourceCommit: "synthetic-accepted", Findings: findings, RepairPolicy: "recorded-actions"}
+	if tc.churnUntil > 0 {
+		// The churn detector's alert is a clue, never an opening alert.
+		for _, finding := range findings {
+			if finding.DetectorID != "workload-health" {
+				request.OpeningKeys = append(request.OpeningKeys, findingKey(finding))
+			}
+		}
+	}
 	executor := PlanExecutor{Client: TypedPlanClient{Client: world.client}, Source: world, Rollouts: world, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: world}}
 	loop := NewResponderLoop(request, registry, world, detectors, executor, 5)
 	loop.Now = clock.Now

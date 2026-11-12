@@ -12,9 +12,10 @@ const (
 	// Unconfirmed is a verified repair whose closure-time recheck never saw a
 	// complete observation window. It is neither success nor failure evidence.
 	Unconfirmed = "unconfirmed"
-	// Escalated is a closure whose health never returned but whose responder
-	// confirmed an out-of-reach cause from controller observations taken
-	// before any repair (OutOfReachConfirmed). It routes the cause to a human;
-	// it is never success and grants no repair learning.
+	// Escalated is a closure whose responder ended (or timed out) before
+	// Recovered held; the incident stayed open until its opening alerts cleared.
+	// It routes the fault to a human, is never success and grants no repair
+	// learning. A confirmed out-of-reach cause (OutOfReachConfirmed) additionally
+	// asks reflection for a Diagnose-only playbook.
 	Escalated = "escalated"
 )

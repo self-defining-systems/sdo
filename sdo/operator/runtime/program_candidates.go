@@ -51,6 +51,10 @@ type KeyedMatching struct {
 	// finding-bound candidates, so a playbook that matches a suspect it was not
 	// yet credited for can still be offered.
 	Stage bool
+	// Restore are the built-in source-restore candidates: suspects on every
+	// failing path, bound by component name. They are offered like any playbook's
+	// candidates; whether the stage applies one is the loop's BuiltinRestoreAuto.
+	Restore []sourceRestoreCandidate
 }
 
 func (k KeyedMatching) active() bool { return len(k.Credits) > 0 }
@@ -103,7 +107,7 @@ func SelectKeyedProgramCandidates(ctx context.Context, registry program.ProgramR
 			continue
 		}
 		for _, spec := range registry.List() {
-			if keyed.Stage && keyed.Credits.Has(spec.ID) {
+			if spec.ID == SourceRestoreID || keyed.Stage && keyed.Credits.Has(spec.ID) {
 				continue
 			}
 			bindings, source, ok := findingProgramBindings(spec, finding)
@@ -112,8 +116,16 @@ func SelectKeyedProgramCandidates(ctx context.Context, registry program.ProgramR
 			}
 		}
 	}
+	for _, restore := range keyed.Restore {
+		if _, ok := registry.Diagnoser(SourceRestoreID); ok {
+			add(SourceRestoreID, restore.bindings, restore.fingerprint, "suspect", restore.rank)
+		}
+	}
 	if keyed.active() {
 		for _, spec := range registry.List() {
+			if spec.ID == SourceRestoreID {
+				continue
+			}
 			for _, credited := range creditedBindings(spec, keyed, findings) {
 				add(spec.ID, credited.bindings, credited.fingerprint, BindingSourceCredited, credited.rank)
 			}

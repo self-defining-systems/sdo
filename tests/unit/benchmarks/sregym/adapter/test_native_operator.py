@@ -42,7 +42,6 @@ def _install(tmp_path: Path) -> NativeInstallConfig:
         model="gpt-6-luna",
         kubeconfig=tmp_path / "lane.kubeconfig",
         repair_policy="recorded-actions",
-        late_findings="pull",
         responder_env=("SDO_SREGYM_API_BASE=http://sdo-sregym-bridge:8000",),
     )
 
@@ -93,12 +92,12 @@ def test_install_existing_invokes_go_cli_with_config_files_and_environment(
             "permissive": True,
             "permissive_namespaces": ["policy-system"],
         },
-        "learning": {"healthy_baseline": True, "late_findings": "pull"},
+        "learning": {"healthy_baseline": True},
     }
     assert (env["SDO_AGENT_MODEL"], env["SDO_AGENT_EFFORT"]) == ("gpt-6-luna", "high")
     assert "SDO_MODE" not in env
     assert json.loads(command[command.index("--deployment-source") + 1]) == raw_source(("kubernetes",))
-    knob_flags = ("--model", "--agent-", "--repair-policy", "--late-findings", "--max-response-loops", "--code-path")
+    knob_flags = ("--model", "--agent-", "--repair-policy", "--max-response-loops", "--code-path")
     assert not [arg for arg in command if arg.startswith(knob_flags)]
     assert command[0] != "python3"
     assert "-m" not in command
@@ -116,7 +115,7 @@ def test_frozen_and_external_memory_select_the_mode(tmp_path: Path) -> None:
 def test_a_lane_that_sets_no_knob_passes_only_the_benchmark_profile(tmp_path: Path) -> None:
     from benchmarks.sregym.adapter.native_operator import launch_config
 
-    bare = replace(_install(tmp_path), repair_policy=None, late_findings=None, responder_env=())
+    bare = replace(_install(tmp_path), repair_policy=None, responder_env=())
     assert bare.overlay() == {}
     with launch_config(bare) as (args, _env):
         assert args == ["--config", str(BENCH_PROFILE)]
@@ -160,7 +159,7 @@ def test_host_requires_typed_registry_and_strict_json(tmp_path: Path, monkeypatc
     assert "--registry-push-secret" in command
     assert "--registry-host" in command
     assert "--max-attempts" not in command
-    assert settings["learning"] == {"healthy_baseline": True, "late_findings": "pull"}
+    assert settings["learning"] == {"healthy_baseline": True}
     assert settings["deployment"] == {"max_attempts": 2}
 
 

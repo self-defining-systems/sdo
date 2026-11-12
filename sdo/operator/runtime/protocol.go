@@ -70,18 +70,23 @@ type IncidentRequest struct {
 	// ObservationGeneration binds the incident to accepted scope and installer policy.
 	ObservationGeneration string
 	// DetectedAt is when the controller opened this incident.
-	DetectedAt           time.Time
-	SchemaVersion        string
-	Application          string
-	Namespace            string
-	IncidentID           string
-	Findings             []sdk.Finding
-	DriftEvents          []sdk.DriftEvent
-	DetectorHistory      []DetectorEvaluation
-	SurfacedPlaybooks    []SurfacedPlaybook
-	RelevantOutcomes     []PriorOutcomeEvidence
-	SourceCommit         string
-	DeployedCommit       string
+	DetectedAt        time.Time
+	SchemaVersion     string
+	Application       string
+	Namespace         string
+	IncidentID        string
+	Findings          []sdk.Finding
+	DriftEvents       []sdk.DriftEvent
+	DetectorHistory   []DetectorEvaluation
+	SurfacedPlaybooks []SurfacedPlaybook
+	RelevantOutcomes  []PriorOutcomeEvidence
+	SourceCommit      string
+	DeployedCommit    string
+	// DeploymentInFlight is the controller's own rollout state when it built
+	// the request: an accepted-source rollout or advance has not converged.
+	// The source and deployed commits cannot say so (the source commit moves
+	// at every closure). It is controller-local, not part of the wire contract.
+	DeploymentInFlight   bool
 	RepositoryWorktree   string
 	RepositoryBaseCommit string
 	ResponseDeadline     time.Time
@@ -173,7 +178,6 @@ type IncidentResult struct {
 	// automaticStages carries an in-process pre-claim observation back to the
 	// pipeline. Durable evidence remains in request stage reports and receipts.
 	automaticStages       []*contracts.StageReport
-	DriftReprompt         *contracts.DriftReprompt
 	UnresolvedFindings    []sdk.Finding
 	DriftEvents           []sdk.DriftEvent
 	SchemaVersion         string
@@ -189,7 +193,6 @@ type IncidentResult struct {
 	Usage                 UsageMetrics
 	Timing                TimingMetrics
 	ResponderSessionID    string
-	LateFindingsPull      *LateFindingsPull
 	Error                 string
 	ProgramToolCalls      []ToolCall
 	ProgramRuns           []ProgramRun
@@ -198,17 +201,6 @@ type IncidentResult struct {
 	ResponseLoopsUsed     int
 	ResponseLoopExhausted bool
 	ResolutionPath        string
-}
-
-// LateFindingsPull is a worker's claim that it consumed a controller-authored
-// logical telemetry report. The dispatcher checks its digest and IDs against
-// the controller's report history before accepting the result.
-type LateFindingsPull struct {
-	IncidentID   string
-	PullCount    uint32
-	DetectorIDs  []string
-	PlaybookIDs  []string
-	ReportDigest string
 }
 
 type IncidentClosure struct {
@@ -260,7 +252,10 @@ type IncidentClosure struct {
 	// RecoveryVerification is the closure's recovered test: each faulted
 	// component's verification set, its strength and whether it recovered
 	// after SDO's last write settled. nil when it was not computed.
-	RecoveryVerification    *contracts.RecoveryVerification
+	RecoveryVerification *contracts.RecoveryVerification
+	// EscalatedAt is when the incident escalated: its responder ended before
+	// Recovered held. Zero otherwise.
+	EscalatedAt             time.Time
 	StatePersistenceFailure *contracts.StatePersistenceFailure
 	// SourceCheckNotes lists what the accepted-source checks found when the
 	// closure committed: checks that were unavailable, and objects that still

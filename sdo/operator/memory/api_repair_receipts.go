@@ -17,34 +17,6 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
 
-// IncidentAPIRepairReceipts retains positive, paired API mutation observations
-// even when shell commands bypass sdo act. It proves neither complete history
-// nor recovery: independent finding clearance remains the publication gate.
-// A hard-stopped writer may leave Open=true; durable complete request pairs
-// remain facts, while dropped/stale generations never grant receipt authority.
-func IncidentAPIRepairReceipts(root, incident string, resources []*contracts.ObjectRef, since, until time.Time) ([]*contracts.RepairActionReceipt, error) {
-	history, err := incidentAPIRepairHistory(root, incident, since, until)
-	if err != nil {
-		return nil, err
-	}
-	return apiRepairReceipts(history, incident, resources, since, until)
-}
-
-func incidentAPIRepairHistory(root, incident string, since, until time.Time) (apihistory.History, error) {
-	sub, err := PrepareIncidentSession(root, "", incident)
-	if err != nil {
-		return apihistory.History{}, err
-	}
-	history, err := apihistory.Read(filepath.Join(root, sub, "api-history"))
-	if err != nil {
-		return apihistory.History{}, err
-	}
-	if history.Manifest.Incident != incident || history.Manifest.Dropped != 0 || uint64(len(history.Events)) != history.Manifest.Events || since.IsZero() || until.Before(since) {
-		return apihistory.History{}, fmt.Errorf("API repair receipt evidence is incomplete, stale or outside the incident")
-	}
-	return history, nil
-}
-
 func apiRepairReceipts(history apihistory.History, incident string, resources []*contracts.ObjectRef, since, until time.Time) ([]*contracts.RepairActionReceipt, error) {
 	starts := map[string]apihistory.Event{}
 	ends := map[string]apihistory.Event{}
@@ -149,9 +121,11 @@ func apiRepairReceipts(history apihistory.History, incident string, resources []
 	return result, nil
 }
 
-// IncidentAPIRecoveryReceipts additionally proves that relevant mutation
-// observations are paired and conclusive. Positive repair receipts alone never
-// prove absence of an intervening write. Open read streams need not finish.
+// IncidentAPIRecoveryReceipts proves that relevant mutation observations are
+// paired and conclusive, and that no write record was lost (Manifest.WriteGaps;
+// lost bodies and interrupted read streams do not count). Positive repair
+// receipts alone never prove absence of an intervening write. Open read
+// streams need not finish.
 func IncidentAPIRecoveryReceipts(root, incident string, resources []*contracts.ObjectRef, since, until time.Time) ([]*contracts.RepairActionReceipt, error) {
 	sub, err := PrepareIncidentSession(root, "", incident)
 	if err != nil {
@@ -161,7 +135,7 @@ func IncidentAPIRecoveryReceipts(root, incident string, resources []*contracts.O
 	if err != nil {
 		return nil, err
 	}
-	if history.Manifest.Incident != incident || history.Manifest.Dropped != 0 || uint64(len(history.Events)) != history.Manifest.Events || since.IsZero() || until.Before(since) {
+	if history.Manifest.Incident != incident || history.Manifest.WriteGaps != 0 || uint64(len(history.Events)) != history.Manifest.Events || since.IsZero() || until.Before(since) {
 		return nil, fmt.Errorf("API recovery history is incomplete, stale or outside the incident")
 	}
 	starts, ends := map[string]apihistory.Event{}, map[string]apihistory.Event{}

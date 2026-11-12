@@ -105,9 +105,6 @@ type NativeIncidentBroker struct {
 	ForceReflection      bool
 	FrozenMemory         bool
 	Programs             program.ProgramRegistry
-	LateFindingsVerifier interface {
-		VerifyPull(context.Context, string, uint32, string, []string, []string) error
-	}
 
 	// Repairs accepts the responder's source repair: a change to deployment
 	// inputs is deployed and verified by the trusted Deployer first. A
@@ -262,14 +259,6 @@ func (n NativeIncidentBroker) processClosure(ctx context.Context, closure Incide
 	if closure.Result != nil {
 		if err := validateIncidentResultFor(*closure.Result, closure.Request); err != nil {
 			return ClosureReceipt{}, fmt.Errorf("invalid responder result: %w", err)
-		}
-		if pull := closure.Result.LateFindingsPull; pull != nil {
-			if n.LateFindingsVerifier == nil {
-				return ClosureReceipt{}, errors.New("late findings pull verifier is required")
-			}
-			if err := n.LateFindingsVerifier.VerifyPull(ctx, closure.Request.IncidentID, pull.PullCount, pull.ReportDigest, pull.DetectorIDs, pull.PlaybookIDs); err != nil {
-				return ClosureReceipt{}, fmt.Errorf("verify controller-authored late findings pull: %w", err)
-			}
 		}
 	}
 	var receipt ClosureReceipt

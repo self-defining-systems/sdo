@@ -54,16 +54,9 @@ def _request() -> IncidentRequest:
 
 def test_responder_uses_logical_snapshot_without_loading_memory_files() -> None:
     from sdo.agents.responder.codex import render_incident_prompt
-    from sdo.agents.responder.incident_context import prepared_incident_data
-    from tests.context_helpers import incident_facts_path
 
-    request = _request()
-    with prepared_incident_data(request) as data:
-        prompt = render_incident_prompt(request, incident_data=data)
-        facts = incident_facts_path(prompt).read_text(encoding="utf-8")
-    assert "checkout-independent health objective" in facts
-    assert "checkout-independent architecture" in facts
-    assert "missing-configmap" not in prompt
+    prompt = str(render_incident_prompt(_request()))
+    assert "checkout-independent" not in prompt
     assert "Restore the ConfigMap safely" not in prompt
     assert ".sdo/" not in prompt
 

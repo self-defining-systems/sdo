@@ -68,7 +68,7 @@ func TestResolveRejectsUnknownKeysAndMistypedEnvironmentNames(t *testing.T) {
 	if _, err := settings.Resolve(nil, []string{"SDO_RESPONSE_TIMEOUT=soon"}); err == nil {
 		t.Error("an unparsable value must be an error")
 	}
-	for _, transport := range []string{"SDO_AGENT_GUIDANCE=go", "SDO_RESPONSE_CONTINUATION=1", "SDO_AGENT_SCRIPT_STATE=x", "SDO_DEPLOYMENT_MODEL=m", "SDO_TELEMETRY_POLICY=x", "SDO_CODE_PATH=go"} {
+	for _, transport := range []string{"SDO_AGENT_GUIDANCE=go", "SDO_AGENT_SCRIPT_STATE=x", "SDO_DEPLOYMENT_MODEL=m", "SDO_TELEMETRY_POLICY=x", "SDO_CODE_PATH=go"} {
 		if _, err := settings.Resolve(nil, []string{transport}); err != nil {
 			t.Errorf("worker transport name %s shares a prefix but is not a knob: %v", transport, err)
 		}
@@ -113,7 +113,6 @@ func TestValidateIsTheOnePlaceValuesAreChecked(t *testing.T) {
 		"response.repair_policy":        func(c *settings.Config) { c.Response.RepairPolicy = "yolo" },
 		"learning.replay":               func(c *settings.Config) { c.Learning.Replay = "maybe" },
 		"learning.reflection_guidance":  func(c *settings.Config) { c.Learning.ReflectionGuidance = "other" },
-		"learning.late_findings":        func(c *settings.Config) { c.Learning.LateFindings = "push" },
 		"force_reflection":              func(c *settings.Config) { c.Mode = settings.ModeFrozen; c.Learning.ForceReflection = true },
 		"deployment.max_attempts":       func(c *settings.Config) { c.Deployment.MaxAttempts = 0 },
 		"build_timeout":                 func(c *settings.Config) { c.Deployment.BuildTimeout = settings.Duration(2 * time.Hour) },
@@ -177,7 +176,6 @@ func TestValidateCoversTheRetiredParserChecks(t *testing.T) {
 	for name, mutate := range map[string]func(*settings.Config){
 		"response.stage_budget":     func(c *settings.Config) { c.Response.StageBudget = 0 },
 		"agent.code_path_overrides": func(c *settings.Config) { c.Agent.CodePathOverrides = `{"bogus":1}` },
-		"learning.late_findings":    func(c *settings.Config) { c.Agent.ExtraEnv = []string{"SDO_LATE_FINDINGS=pull"} },
 		"the installer":             func(c *settings.Config) { c.Agent.ExtraEnv = []string{"SDO_OBSERVATION_CEILING={}"} },
 	} {
 		cfg := settings.Default()
@@ -283,5 +281,34 @@ func TestStartupBoundDefaultEnvironmentAndValidation(t *testing.T) {
 	bad.Response.StartupBound = settings.Duration(-time.Second)
 	if err := bad.Validate(); err == nil || !strings.Contains(err.Error(), "response.startup_bound") {
 		t.Fatalf("a negative bound must be refused, got %v", err)
+	}
+}
+
+// After a learned playbook applied and Recovered did not hold, the agent is dispatched by default; a profile
+// can withhold it (escalate) or let the playbook keep waiting first (wait).
+func TestAfterPlaybookDefaultsFileEnvironmentAndValidation(t *testing.T) {
+	def := settings.Default().Response
+	if def.AfterPlaybook != settings.AfterPlaybookAgent || time.Duration(def.AfterPlaybookWait) != 5*time.Minute {
+		t.Fatalf("after_playbook defaults = %q %v", def.AfterPlaybook, def.AfterPlaybookWait)
+	}
+	file := writeFile(t, "response:\n  after_playbook: wait\n  after_playbook_wait: 3m\n")
+	cfg, err := settings.Resolve([]string{file}, []string{"SDO_AGENT_MODEL=m"})
+	if err != nil || cfg.Response.AfterPlaybook != settings.AfterPlaybookWait || time.Duration(cfg.Response.AfterPlaybookWait) != 3*time.Minute {
+		t.Fatalf("file: %v %+v", err, cfg.Response)
+	}
+	cfg, err = settings.Resolve([]string{file}, []string{"SDO_AGENT_MODEL=m", "SDO_RESPONSE_AFTER_PLAYBOOK=escalate"})
+	if err != nil || cfg.Response.AfterPlaybook != settings.AfterPlaybookEscalate {
+		t.Fatalf("environment must win over the file: %v %+v", err, cfg.Response)
+	}
+	for _, mutate := range []func(*settings.Config){
+		func(c *settings.Config) { c.Response.AfterPlaybook = "never" },
+		func(c *settings.Config) { c.Response.AfterPlaybookWait = 0 },
+	} {
+		bad := settings.Default()
+		bad.Agent.Model = "m"
+		mutate(&bad)
+		if err := bad.Validate(); err == nil || !strings.Contains(err.Error(), "response.after_playbook") {
+			t.Fatalf("an invalid after_playbook value must be refused, got %v", err)
+		}
 	}
 }

@@ -356,12 +356,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "default: the configured value",
     )
     parser.add_argument(
-        "--late-findings",
-        choices=("off", "pull"),
-        default=config.get("late_findings"),
-        help="let the responder pull findings that activated after dispatch (default: the configured value)",
-    )
-    parser.add_argument(
         "--max-response-loops",
         type=int,
         default=config.get("max_response_loops"),
@@ -760,7 +754,6 @@ def _launch_native_lifecycle(
         model=args.model,
         kubeconfig=kubeconfig,
         agent_provider=args.provider,
-        late_findings=args.late_findings,
         reflection_guidance=args.reflection_guidance,
         deployment_source=args.deployment_source,
         permissive_responder=args.permissive_responder,
@@ -872,7 +865,6 @@ def _native_install_for_run(
         model=args.model,
         kubeconfig=Path(raw_kubeconfig),
         agent_provider=args.provider,
-        late_findings=args.late_findings,
         reflection_guidance=args.reflection_guidance,
         deployment_source=args.deployment_source,
         permissive_responder=args.permissive_responder,
@@ -1075,7 +1067,6 @@ def _run_persistent(args: argparse.Namespace, api_base: str, started: float) -> 
         deployment_source=args.deployment_source,
         permissive_responder=args.permissive_responder,
         responder_namespaces=args.responder_namespaces,
-        late_findings=args.late_findings,
         healthy_baseline=args.healthy_baseline or None,
         max_response_loops=args.max_response_loops,
         settings=args.settings,

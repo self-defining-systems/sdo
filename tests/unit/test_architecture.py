@@ -249,12 +249,6 @@ _LEGACY_REAL_TIME_TESTS = frozenset(
             "tests/unit/sdo/agents/responder/test_reflection_validation.py",
             "test_validation_tool_timeout_returns_failure_and_stops_children",
         ),
-        ("tests/unit/sdo/agents/responder/test_verified_close.py", "_exploring_until_stopped"),
-        ("tests/unit/sdo/agents/responder/test_verified_close.py", "respond"),
-        (
-            "tests/unit/sdo/agents/responder/test_verified_close.py",
-            "test_a_turn_that_answers_inside_the_settle_window_is_not_interrupted",
-        ),
     }
 )
 

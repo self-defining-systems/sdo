@@ -267,12 +267,10 @@ Go parity tests (the Go tests job runs them), the fast Python ratchets and the
 Python contract tests (the full Python suite contains them), and compiles the
 operator with `go list -export` instead of linking every command.
 
-The responder command guide is generated from the production CLI definitions and
-checked in seconds by `scripts/check_errors.sh`. After changing the command surface,
-run `uv run python -m sdo.agents.responder.command_reference` and commit the updated
-`sdo/skills/sdo-incident-response/references/commands.md`. The focused contract tests
-are in `tests/unit/sdo/agents/responder/test_command_reference.py`; they include a
-missing/stale-reference negative control. The responder image's cached model-tool
+The responder's two skills (`incident-response`, `sdo-operating`) are each one `SKILL.md` of 1,024
+to 1,536 bytes, checked by `tests/unit/sdo/agents/test_skill_size.py`. `sdo-operating` lists the
+`sdo` commands by hand, so after changing the command surface update it and keep it under the cap.
+The responder image's cached model-tool
 layer installs `jq` and runs a JSON extraction smoke check during the build.
 
 The model-bearing image build runs `scripts/check_model_cli_versions.py` against

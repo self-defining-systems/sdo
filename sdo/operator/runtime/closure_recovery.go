@@ -40,7 +40,6 @@ func (c *Controller) resumeClosureVerification(ctx context.Context, effect Closu
 	c.responderCompletedAt = closure.ResponderCompletedAt
 	c.responderDone = true
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_COMPLETED
-	c.verificationDeadline = c.closureVerificationDeadline(closure)
 	c.incidentFindingKeys = findingKeys(closure.Request.Findings)
 	c.cleanedHelpers = append([]string(nil), closure.CleanedHelpers...)
 	c.timeline = cloneTimeline(closure.DetectorTimeline)

@@ -109,14 +109,20 @@ func (h *Host) Traffic(ctx context.Context, r *pb.TrafficRequest) (*pb.TrafficRe
 	case pb.TrafficRequest_OPERATION_PROBE:
 		target := r.GetTarget()
 		request := PrimitiveRequest{To: sdk.ObjectRef{APIVersion: target.GetApiVersion(), Kind: target.GetKind(), Namespace: target.GetNamespace(), Name: target.GetName()}, Port: r.Port, PodIP: r.PodIp, Timeout: time.Duration(r.TimeoutNs)}
-		if r.HttpMethod != "" || r.HttpPath != "" || len(r.HttpHeaders) > 0 {
-			request.HTTP = &program.HTTPProbe{Method: r.HttpMethod, Path: r.HttpPath, Headers: r.HttpHeaders}
+		if r.HttpMethod != "" || r.HttpPath != "" || len(r.HttpHeaders) > 0 || len(r.HttpFields) > 0 {
+			request.HTTP = &program.HTTPProbe{Method: r.HttpMethod, Path: r.HttpPath, Headers: r.HttpHeaders, Fields: r.HttpFields}
 		}
 		result, err := h.engine.Primitive(ctx, request)
 		if err != nil {
 			return nil, err
 		}
-		out.Success, out.Detail = result.Success, result.Detail
+		out.Success, out.Detail, out.HttpStatus = result.Success, result.Detail, int32(result.Status)
+		if len(result.Fields) > 0 {
+			out.Fields, err = structpb.NewStruct(map[string]any(result.Fields))
+			if err != nil {
+				return nil, err
+			}
+		}
 	default:
 		return nil, errors.New("unknown traffic operation")
 	}

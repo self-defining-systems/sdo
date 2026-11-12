@@ -73,8 +73,7 @@ uv run --extra test python -m pytest -q -p no:tach \
     tests/unit/sdo/agents/prompts/test_golden.py::test_prompt_goldens \
     tests/unit/sdo/agents/responder/test_tools_cli.py::test_local_help_is_a_concise_capability_index \
     tests/unit/sdo/agents/responder/test_codex_responder.py::test_workflow_prefers_finishing_blocking_operations_to_model_polling \
-    tests/unit/sdo/agents/responder/test_incident_response_workflow.py::test_incident_workflow_installs_from_the_shipped_skill_root \
-    tests/unit/sdo/agents/responder/test_incident_context.py::test_many_stage_attempts_degrade_the_bounded_first_prompt
+    tests/unit/sdo/agents/responder/test_incident_response_workflow.py::test_incident_workflow_installs_from_the_shipped_skill_root
 fi
 
 # Pull-request CI checks this per commit in its final job; run it here against the merge base.
@@ -90,8 +89,7 @@ uv run python scripts/check_app_names.py
 echo "==> flaky-test quarantine deadlines"
 uv run python scripts/ci_quarantine.py check
 
-echo "==> responder command reference"
-uv run python -m sdo.agents.responder.command_reference --check
+echo "==> responder skill contracts"
 uv run python -m sdo.agents.responder.skill_contracts --check
 
 # A merge that keeps this branch's older SREGym pin silently reverts the base

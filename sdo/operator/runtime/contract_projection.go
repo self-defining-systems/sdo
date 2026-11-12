@@ -216,7 +216,7 @@ func incidentRequestContract(request IncidentRequest) (*contracts.IncidentReques
 		IncidentId: request.IncidentID, Findings: make([]*contracts.Finding, 0, len(request.Findings)),
 		DetectorHistory: evaluationsContract(request.DetectorHistory), SurfacedPlaybooks: make([]*contracts.SurfacedPlaybook, 0, len(request.SurfacedPlaybooks)),
 		RelevantOutcomes: make([]*contracts.PriorOutcomeEvidence, 0, len(request.RelevantOutcomes)),
-		SourceCommit:     request.SourceCommit, DeployedCommit: request.DeployedCommit,
+		SourceCommit:     request.SourceCommit, DeployedCommit: request.DeployedCommit, DeploymentInFlight: request.DeploymentInFlight,
 		RepositoryWorktree: request.RepositoryWorktree, RepositoryBaseCommit: request.RepositoryBaseCommit,
 		ResponseDeadline: optionalTimestamp(request.ResponseDeadline), CancellationToken: request.CancellationToken,
 		RepairPolicy: request.RepairPolicy, StateChanges: stateChangesContract(request.StateChanges),
@@ -257,7 +257,6 @@ func incidentRequestContract(request IncidentRequest) (*contracts.IncidentReques
 
 func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, error) {
 	message := &contracts.IncidentResult{
-		DriftReprompt: cloneDriftReprompt(result.DriftReprompt),
 		SchemaVersion: result.SchemaVersion, IncidentId: result.IncidentID, Status: string(result.Status),
 		ConfirmedRootCauses: make([]*contracts.ConfirmedRootCause, 0, len(result.ConfirmedRootCauses)),
 		DriftEvents:         driftEventsContract(result.DriftEvents),
@@ -347,19 +346,11 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 	if result.Error != "" {
 		message.Error = &result.Error
 	}
-	if result.LateFindingsPull != nil {
-		pull := result.LateFindingsPull
-		message.LateFindingsPull = &contracts.LateFindingsPull{
-			IncidentId: pull.IncidentID, PullCount: pull.PullCount, DetectorIds: append([]string(nil), pull.DetectorIDs...),
-			PlaybookIds: append([]string(nil), pull.PlaybookIDs...), ReportDigest: pull.ReportDigest,
-		}
-	}
 	return message, nil
 }
 
 func incidentResultState(message *contracts.IncidentResult) IncidentResult {
 	result := IncidentResult{
-		DriftReprompt: cloneDriftReprompt(message.GetDriftReprompt()),
 		SchemaVersion: message.GetSchemaVersion(), IncidentID: message.GetIncidentId(), Status: IncidentStatus(message.GetStatus()),
 		ConfirmedRootCauses:  make([]ConfirmedRootCause, 0, len(message.GetConfirmedRootCauses())),
 		DriftEvents:          driftEventsState(message.GetDriftEvents()),
@@ -418,12 +409,6 @@ func incidentResultState(message *contracts.IncidentResult) IncidentResult {
 			Name: evidence.GetName(), Passed: evidence.GetPassed(), Details: evidence.GetDetails(), ObservedAt: controllerTime(evidence.GetObservedAt()),
 		})
 	}
-	if pull := message.GetLateFindingsPull(); pull != nil {
-		result.LateFindingsPull = &LateFindingsPull{
-			IncidentID: pull.GetIncidentId(), PullCount: pull.GetPullCount(), DetectorIDs: append([]string(nil), pull.GetDetectorIds()...),
-			PlaybookIDs: append([]string(nil), pull.GetPlaybookIds()...), ReportDigest: pull.GetReportDigest(),
-		}
-	}
 	for _, finding := range message.GetUnresolvedFindings() {
 		result.UnresolvedFindings = append(result.UnresolvedFindings, findingState(finding))
 	}
@@ -458,6 +443,7 @@ func incidentClosureContract(closure IncidentClosure) (*contracts.IncidentClosur
 		StatePersistenceFailure: clonePersistenceFailure(closure.StatePersistenceFailure),
 		SourceCheckNotes:        append([]string(nil), closure.SourceCheckNotes...),
 		Frozen:                  closure.Frozen,
+		EscalatedAt:             optionalTimestamp(closure.EscalatedAt),
 	}
 	if closure.RecoveryVerification != nil {
 		message.RecoveryVerification = proto.Clone(closure.RecoveryVerification).(*contracts.RecoveryVerification)
@@ -567,7 +553,7 @@ func incidentRequestState(message *contracts.IncidentRequest) *IncidentRequest {
 		DetectorHistory:   evaluationsState(message.GetDetectorHistory()),
 		SurfacedPlaybooks: make([]SurfacedPlaybook, 0, len(message.GetSurfacedPlaybooks())),
 		RelevantOutcomes:  make([]PriorOutcomeEvidence, 0, len(message.GetRelevantOutcomes())),
-		SourceCommit:      message.GetSourceCommit(), DeployedCommit: message.GetDeployedCommit(),
+		SourceCommit:      message.GetSourceCommit(), DeployedCommit: message.GetDeployedCommit(), DeploymentInFlight: message.GetDeploymentInFlight(),
 		RepositoryWorktree: message.GetRepositoryWorktree(), RepositoryBaseCommit: message.GetRepositoryBaseCommit(),
 		ResponseDeadline: controllerTime(message.GetResponseDeadline()), CancellationToken: message.GetCancellationToken(),
 		RepairPolicy: message.GetRepairPolicy(), StateChanges: stateChangesState(message.GetStateChanges()),
@@ -656,6 +642,7 @@ func incidentClosureState(message *contracts.IncidentClosure) IncidentClosure {
 		StatePersistenceFailure: clonePersistenceFailure(message.GetStatePersistenceFailure()),
 		SourceCheckNotes:        append([]string(nil), message.GetSourceCheckNotes()...),
 		Frozen:                  message.GetFrozen(),
+		EscalatedAt:             controllerTime(message.GetEscalatedAt()),
 	}
 	if message.GetRecoveryVerification() != nil {
 		closure.RecoveryVerification = proto.Clone(message.GetRecoveryVerification()).(*contracts.RecoveryVerification)

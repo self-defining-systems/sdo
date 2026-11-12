@@ -161,7 +161,7 @@ func (p *StandbyPool) Ensure(ctx context.Context) error {
 	}
 	name := "sdo-standby-" + hex.EncodeToString(random[:])
 	directory := filepath.Join(p.root(), name)
-	for _, sub := range []string{"checkout", "session/api-history", "session/corpus", "session/startup", "session/late-findings", "session/tools/requests", "session/tools/responses", "control", "ready"} {
+	for _, sub := range []string{"checkout", "session/api-history", "session/corpus", "session/startup", "session/tools/requests", "session/tools/responses", "control", "ready"} {
 		if err := os.MkdirAll(filepath.Join(directory, sub), 0700); err != nil {
 			return err
 		}
@@ -209,7 +209,7 @@ func (p *StandbyPool) TryBind(ctx context.Context, e KubernetesExecutor, task *c
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	session, ok := warmSessionPath(e, task)
-	if p.current == nil || e.SessionPVCSubPath == "" || e.Environment["SDO_RESPONSE_CONTINUATION"] != "" || !ok {
+	if p.current == nil || e.SessionPVCSubPath == "" || !ok {
 		return e, nil
 	}
 	releaseStorage, available := memory.TrySessionStorageBinding()
