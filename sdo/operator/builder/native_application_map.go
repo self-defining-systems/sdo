@@ -21,23 +21,26 @@ const applicationMapFindings = "application-map-findings.json"
 // decides, by actor, whether they block. Without a well-formed map nothing is
 // generated; the static layer reports the map itself.
 func generateApplicationMapTest(applicationRoot, workspace string) error {
+	document := ""
 	data, err := os.ReadFile(filepath.Join(applicationRoot, filepath.FromSlash(layout.ArchitectureFile)))
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	region, found, err := appmap.Find(string(data))
-	if !found || err != nil {
-		return nil
+	if err == nil {
+		if region, found, findErr := appmap.Find(string(data)); found && findErr == nil {
+			if _, parseErr := appmap.Parse(region.YAML); parseErr == nil {
+				document = region.YAML
+			}
+		}
 	}
-	if _, err := appmap.Parse(region.YAML); err != nil {
-		return nil
-	}
-	source := "package generated\n\n// ApplicationMapYAML is the application map of the accepted architecture.\nconst ApplicationMapYAML = " + strconv.Quote(region.YAML) + "\n"
+	// The memory host reads the map's probe-identity procedure, so the
+	// constant exists, empty, without a well-formed map.
+	source := "package generated\n\n// ApplicationMapYAML is the application map of the accepted architecture; empty without one.\nconst ApplicationMapYAML = " + strconv.Quote(document) + "\n"
 	if err := os.WriteFile(filepath.Join(workspace, "generated", "application_map.go"), []byte(source), 0o644); err != nil {
 		return err
+	}
+	if document == "" {
+		return nil
 	}
 	return os.WriteFile(filepath.Join(workspace, "generated", "application_map_test.go"), []byte(applicationMapTest), 0o644)
 }
@@ -54,13 +57,16 @@ import (
 // TestApplicationMapMatchesScenarios records, as findings the memory check
 // classifies, where the probes' compiled scenarios disagree with the map: side
 // effect against probe kind, DependsOn against the probe's path, the
-// read-later setup that creates the data it reads, and status-only checks.
+// read-later setup that creates the data it reads, status-only checks, and
+// probe users the map's probe-identity procedure cannot provision.
 func TestApplicationMapMatchesScenarios(t *testing.T) {
     m, err := appmap.Parse(ApplicationMapYAML)
     if err != nil { t.Fatal(err) }
     scenarios := []appmap.Scenario{}
     for _, s := range TrafficCatalog() {
-        scenarios = append(scenarios, appmap.Scenario{ID: s.ID, SideEffect: string(s.SideEffect), DependsOn: s.DependsOn, SetupSteps: len(s.Setup), StatusOnly: s.StatusOnly()})
+        users := []string{}
+        for _, u := range s.Users { users = append(users, u.Name) }
+        scenarios = append(scenarios, appmap.Scenario{ID: s.ID, SideEffect: string(s.SideEffect), DependsOn: s.DependsOn, SetupSteps: len(s.Setup), StatusOnly: s.StatusOnly(), Users: users})
     }
     findings := m.CheckScenarios(scenarios)
     if findings == nil { findings = []appmap.Finding{} }

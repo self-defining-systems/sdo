@@ -115,3 +115,30 @@ A procedure runs in a component (`component`, `container`, `command`) or re-crea
 template (`job`, no command or params). Every placeholder names a declared parameter and every parameter appears in
 the command; a string value without `pattern` is one plain word. Go seeds each Job of the manifests with effect
 `long`: correct the class, and add the procedures only source and docs reveal.
+
+### Probe identity
+
+When probes must sign in and the application has no self-service sign-up that yields a usable account (an
+operator creates accounts, or sign-up waits for admin approval), mark one procedure `probe_identity: true`: a
+command the application ships that makes sure a **non-admin** user exists, can sign in and has the password it
+reads from stdin (one line). SDO derives a password per user name itself, runs the procedure once per user when
+a probe first needs it, and gives the password to the probe; it never reads an application Secret.
+
+```yaml
+  - id: probe-user
+    component: admin-tools            # a component whose container has the admin CLI
+    container: tools
+    command: [app-admin, users, ensure, "--username={{username}}", --password-from-stdin]
+    params:
+      - {name: username, type: string, pattern: "sdoprobe-[a-z0-9-]+", required: true}   # the only parameter
+    effect: data
+    timeout: 3m                       # default 2m; an admin CLI may boot slowly
+    probe_identity: true
+    source: docs/admin.md
+```
+
+- Exactly one parameter, a required string `username`; never a password parameter (argv reaches audit logs).
+- Idempotent: create the user when absent, approve or unblock it, set the password, never grant admin. Leave a
+  user whose password already matches untouched (some frameworks end every session on a password reset), and
+  exit nonzero on failure. A command that takes code inline must read stdin itself (for example
+  `STDIN.gets` / `input()`); confirm it live once with a throwaway name.

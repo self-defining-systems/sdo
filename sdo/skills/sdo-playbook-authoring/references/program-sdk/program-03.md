@@ -264,26 +264,4 @@ type ProbeResult struct {
 	Success bool   `json:"success"`
 	Detail  string `json:"detail,omitempty"`
 }
-
-type Procedure struct {
-	ID        string           `json:"id"`
-	Component string           `json:"component,omitempty"`
-	Container string           `json:"container,omitempty"`
-	Job       string           `json:"job,omitempty"`
-	Command   []string         `json:"command,omitempty"`
-	Params    []ProcedureParam `json:"params,omitempty"`
-	Effect    string           `json:"effect"`
-	// Verify says how to tell the procedure worked; it is advice for agents.
-	Verify  string        `json:"verify,omitempty"`
-	Timeout time.Duration `json:"timeout,omitempty"`
-	// Source is where the procedure is declared: a source file, a doc or a
-	// manifest object.
-	Source string `json:"source"`
-}
-    Procedure is one operations procedure the application itself ships:
-    a self-check, a repair task, a data task or a long job, recorded under
-    `procedures` in the accepted application map. It runs either in a
-    component's workload (Component, Container, Command) or by re-creating
-    a Job of the accepted source (Job). Command arguments may hold {{name}}
-    placeholders for declared parameters.
 ```

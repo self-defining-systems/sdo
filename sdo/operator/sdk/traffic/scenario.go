@@ -162,8 +162,8 @@ type Scenario struct {
 	Steps       []Step
 	Cleanup     []Step
 	Detects     []FaultClass
-	// Credentials name Secret keys the steps send; see Credential.
-	Credentials []Credential
+	// Users are the probe users the scenario signs in as; see ProbeUser.
+	Users []ProbeUser
 }
 
 // Descriptor is the serializable description of a scenario that travels with
@@ -273,7 +273,7 @@ func (s Scenario) Validate() error {
 			return fmt.Errorf("scenario %s: step %s has no endpoint", s.ID, step.Name)
 		}
 	}
-	if err := s.validateCredentials(); err != nil {
+	if err := s.validateUsers(); err != nil {
 		return err
 	}
 	for _, class := range s.Detects {

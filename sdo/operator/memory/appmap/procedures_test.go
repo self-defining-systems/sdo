@@ -96,3 +96,46 @@ func TestProcedureUnknownFieldIsRejected(t *testing.T) {
 		t.Fatal("an unknown procedure field parsed")
 	}
 }
+
+const identityProcedure = `  - id: probe-user
+    component: api
+    container: app
+    command: [shopctl, users, ensure, "--name={{username}}", --password-stdin]
+    params:
+      - {name: username, type: string, pattern: "sdoprobe-[a-z-]+", required: true}
+    effect: data
+    probe_identity: true
+    source: docs/admin.md
+`
+
+func TestProbeIdentityProcedureIsUnique(t *testing.T) {
+	if findings := procedureFindings(t, shopProcedures+identityProcedure); len(findings) != 0 {
+		t.Fatalf("findings = %+v", findings)
+	}
+	m := mustParse(t, shopYAML+shopProcedures+identityProcedure)
+	if identity, workload, ok := m.ProbeIdentity(); !ok || identity.ID != "probe-user" || !identity.ProbeIdentity || workload == "" {
+		t.Fatalf("identity = %+v, %s, %v", identity, workload, ok)
+	}
+	second := strings.Replace(identityProcedure, "id: probe-user", "id: probe-user-two", 1)
+	if findings := procedureFindings(t, shopProcedures+identityProcedure+second); !has(findings, RuleSchema, "probe_identity") {
+		t.Fatalf("two identity procedures accepted: %+v", findings)
+	}
+}
+
+// A scenario that signs in as probe users needs the identity procedure, and
+// each user name must bind to its username parameter.
+func TestScenarioUsersNeedTheIdentityProcedure(t *testing.T) {
+	scenario := Scenario{ID: "s", SideEffect: "read", Users: []string{"sdoprobe-writer"}}
+	without := mustParse(t, shopYAML+shopProcedures)
+	if findings := without.CheckScenarios([]Scenario{scenario}); !has(findings, RuleSchema, "probe_identity") {
+		t.Fatalf("findings = %+v", findings)
+	}
+	with := mustParse(t, shopYAML+shopProcedures+identityProcedure)
+	if findings := with.CheckScenarios([]Scenario{scenario}); has(findings, RuleSchema, "probe user") {
+		t.Fatalf("findings = %+v", findings)
+	}
+	scenario.Users = []string{"sdoprobe@writer"}
+	if findings := with.CheckScenarios([]Scenario{scenario}); !has(findings, RuleSchema, "probe user") {
+		t.Fatalf("a name the procedure rejects passed: %+v", findings)
+	}
+}

@@ -58,8 +58,6 @@ type Catalog []Scenario
 type Clock interface{ ... }
     var RealClock Clock = realClock{}
 type Consumer interface{ ... }
-type Credential struct{ ... }
-type CredentialReader interface{ ... }
 type Descriptor struct{ ... }
 type Doer interface{ ... }
 type Duration time.Duration
@@ -107,6 +105,8 @@ type Param interface{ ... }
     func IntBetween(low int, high int) Param
     func OneOf(values ...string) Param
 type Params map[string]Param
+type Passwords interface{ ... }
+type ProbeUser struct{ ... }
 type Purpose string
     const PurposeHealthProbe Purpose = "health-probe" ...
 type Request struct{ ... }

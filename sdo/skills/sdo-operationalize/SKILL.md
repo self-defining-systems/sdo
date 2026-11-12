@@ -42,9 +42,9 @@ Three probe kinds, each a set of traffic scenarios in its own continuous health 
   detector code for these probes. Do not lower their persistence.
 - Every scenario's `DependsOn` lists the Services of every component on its map path, and nothing else.
 - Add a `probes` entry to the map for every scenario: its kind and the operations its steps exercise.
-- Writes use a dedicated test identity (a synthetic user, account or key whose name contains the scenario's
-  `Marker`), never real users' data. Put the marker in every write request. Never forge credentials or tokens
-  from application secrets or config: log in as a test identity Setup created.
+- Writes use a synthetic test identity (user, account or key) named with the scenario's `Marker`, never real
+  users' data, and carry the marker. Never forge credentials from application secrets or config: sign in as a
+  test identity Setup created or, without self-service sign-up, a [probe identity](references/map.md#probe-identity).
 - Check exact content, never only statuses, and read back exactly the change each write-read iteration just
   made ([strict probes](references/probes.md)): re-applying one write every iteration re-heals what it reads.
 - Probes are self-contained: each passes on a freshly deployed application with nothing set up by hand. A

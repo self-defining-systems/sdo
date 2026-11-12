@@ -28,6 +28,9 @@ type LaunchConfig struct {
 	// ProtectedNamespace is the SDO control namespace; generic reads refuse it.
 	ProtectedNamespace      string
 	DisableSyntheticTraffic bool
+	// ProbeIdentitySeed is the file holding SDO's probe-identity seed (see
+	// ProbeIdentitySeedPath); empty provisions no probe users.
+	ProbeIdentitySeed string
 	Binary                  string
 	Commit                  string
 	Digest                  string
@@ -78,7 +81,7 @@ func Launch(config LaunchConfig) (*Process, error) {
 	args := []string{"--namespace", config.Namespace, "--protected-namespace", config.ProtectedNamespace, "--synthetic-traffic=" + strconv.FormatBool(!config.DisableSyntheticTraffic), "--socket", socket, "--commit", config.Commit, "--memory-bytes", strconv.FormatUint(config.MemoryBytes, 10)}
 	command := exec.Command(config.Binary, args...)
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	command.Env = append(os.Environ(), "GOMEMLIMIT="+strconv.FormatUint(config.MemoryBytes*3/4, 10))
+	command.Env = append(os.Environ(), "GOMEMLIMIT="+strconv.FormatUint(config.MemoryBytes*3/4, 10), ProbeIdentitySeedEnv+"="+config.ProbeIdentitySeed)
 	command.Stdout = config.Output
 	command.Stderr = config.Output
 	if err = command.Start(); err != nil {

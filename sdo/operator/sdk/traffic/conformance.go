@@ -62,9 +62,9 @@ func CheckDetects(ctx context.Context, scenario Scenario, class FaultClass) erro
 	if err != nil {
 		return err
 	}
-	// A declared credential reads a synthetic value: conformance judges the
-	// scenario's checks, never a Secret.
-	engine.UseCredentials(syntheticCredentials{})
+	// A declared probe user gets a synthetic password: conformance judges the
+	// scenario's checks, never a provisioned identity.
+	engine.UsePasswords(syntheticPasswords{})
 	_, sample := engine.Iterate(ctx, 0)
 	switch sample.Outcome {
 	case OutcomeError, OutcomeTimeout:
@@ -95,8 +95,8 @@ func CheckCatalog(ctx context.Context, catalog Catalog) []error {
 	return failures
 }
 
-type syntheticCredentials struct{}
+type syntheticPasswords struct{}
 
-func (syntheticCredentials) Value(context.Context, string, string) (string, error) {
-	return "conformance-credential", nil
+func (syntheticPasswords) Password(context.Context, string) (string, error) {
+	return "conformance-password", nil
 }

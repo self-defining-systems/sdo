@@ -92,13 +92,14 @@ type Engine struct {
 	// setups records the scenarios whose setup steps succeeded; engines that
 	// ShareSetup use one record.
 	setups *setupRecord
-	// credentials reads the Secret keys scenarios declare; nil reads none.
-	credentials CredentialReader
+	// passwords returns the passwords of the probe users scenarios declare;
+	// nil provisions none.
+	passwords Passwords
 }
 
-// UseCredentials lets scenarios that declare Credentials read them from
-// source at run time.
-func (e *Engine) UseCredentials(source CredentialReader) { e.credentials = source }
+// UsePasswords lets scenarios that declare Users sign in with the passwords
+// source returns. A prober gives every engine the same source.
+func (e *Engine) UsePasswords(source Passwords) { e.passwords = source }
 
 // setupRecord holds, per scenario whose setup steps succeeded, the State
 // they saved.
@@ -176,8 +177,8 @@ func (e *Engine) Plan(ctx context.Context, iteration uint64) ([]Request, error) 
 	scenario := e.ScenarioAt(iteration)
 	rng := e.Rand(iteration)
 	state := State{}
-	for _, c := range scenario.Credentials {
-		state[c.As] = "[credential]"
+	for _, u := range scenario.Users {
+		state[u.As] = passwordPlaceholder
 	}
 	requests := make([]Request, 0, len(scenario.Steps))
 	for _, step := range scenario.Steps {
@@ -209,14 +210,16 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, resul
 	iterationCtx, cancel := e.withTimeout(ctx, e.workload.IterationTimeout.Duration())
 	defer cancel()
 	base := e.baseURL(scenario.normalizedTarget())
-	credentials, err := e.credentialState(iterationCtx, scenario)
+	passwords, err := e.userState(iterationCtx, scenario)
 	if err != nil {
 		// The probe cannot measure; that says nothing about the application.
-		sample.Outcome, sample.Step, sample.Error = OutcomeInvalid, "credentials", bounded(err.Error())
+		sample.Outcome, sample.Step, sample.Error = OutcomeInvalid, "probe-users", bounded(err.Error())
 		return scenario.ID, sample
 	}
-	defer func() { result.redact(credentials) }()
-	for key, value := range credentials {
+	// Texts are kept whole until the passwords are replaced, then bounded, so
+	// a cut never leaves part of a password behind.
+	defer func() { result.redact(passwords); result.bound() }()
+	for key, value := range passwords {
 		state[key] = value
 	}
 	// Setup draws from its own copy of the iteration's source, so the steps
@@ -224,7 +227,7 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, resul
 	if failed := e.setup(iterationCtx, scenario, e.Rand(iteration), state, base, &sample); failed {
 		return scenario.ID, sample
 	}
-	for key, value := range credentials {
+	for key, value := range passwords {
 		state[key] = value
 	}
 	started := e.clock.Now()
@@ -247,7 +250,7 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, resul
 		for _, step := range scenario.Cleanup {
 			result := e.step(cleanupCtx, scenario, step, rng, state, base, phaseCleanup)
 			if result.outcome != OutcomeOK {
-				sample.CleanupError = bounded(step.Name + ": " + result.err)
+				sample.CleanupError = step.Name + ": " + result.err
 				break
 			}
 		}
@@ -267,8 +270,8 @@ func (e *Engine) setup(ctx context.Context, scenario Scenario, rng *rand.Rand, s
 	e.setups.mu.Unlock()
 	if !done {
 		started := e.clock.Now()
-		// Setup steps see the iteration's credentials; the record keeps only
-		// what they saved, so a rotated credential is read afresh.
+		// Setup steps see the iteration's passwords; the record keeps only
+		// what they saved.
 		saved = State{}
 		for key, value := range state {
 			saved[key] = value
@@ -286,8 +289,8 @@ func (e *Engine) setup(ctx context.Context, scenario Scenario, rng *rand.Rand, s
 				return true
 			}
 		}
-		for _, c := range scenario.Credentials {
-			delete(saved, c.As)
+		for _, u := range scenario.Users {
+			delete(saved, u.As)
 		}
 		e.setups.mu.Lock()
 		e.setups.saved[scenario.ID] = saved
@@ -311,25 +314,25 @@ type stepResult struct {
 func (e *Engine) step(ctx context.Context, scenario Scenario, step Step, rng *rand.Rand, state State, base string, phase stepPhase) stepResult {
 	request, err := step.Endpoint.Build(ctx, rng, state)
 	if err != nil {
-		return stepResult{outcome: OutcomeInvalid, err: bounded("build: " + err.Error())}
+		return stepResult{outcome: OutcomeInvalid, err: "build: " + err.Error()}
 	}
 	line := requestLine(request)
 	if err := checkRequest(scenario, request, phase); err != nil {
-		return stepResult{outcome: OutcomeInvalid, request: line, err: bounded(err.Error())}
+		return stepResult{outcome: OutcomeInvalid, request: line, err: err.Error()}
 	}
 	requestCtx, cancel := e.withTimeout(ctx, e.workload.Timeout.Duration())
 	defer cancel()
 	built, err := BuildHTTPRequest(requestCtx, base, request)
 	if err != nil {
-		return stepResult{outcome: OutcomeInvalid, request: line, err: bounded(err.Error())}
+		return stepResult{outcome: OutcomeInvalid, request: line, err: err.Error()}
 	}
 	response, err := e.client.Do(built)
 	if err != nil {
 		dial := isDialError(err)
 		if isTimeout(requestCtx, err) {
-			return stepResult{outcome: OutcomeTimeout, sent: 1, request: line, err: bounded(err.Error()), dial: dial}
+			return stepResult{outcome: OutcomeTimeout, sent: 1, request: line, err: err.Error(), dial: dial}
 		}
-		return stepResult{outcome: OutcomeError, sent: 1, request: line, err: bounded(err.Error()), dial: dial}
+		return stepResult{outcome: OutcomeError, sent: 1, request: line, err: err.Error(), dial: dial}
 	}
 	defer response.Body.Close()
 	body, readErr := io.ReadAll(io.LimitReader(response.Body, MaxResponseBody))
@@ -338,7 +341,7 @@ func (e *Engine) step(ctx context.Context, scenario Scenario, step Step, rng *ra
 		if isTimeout(requestCtx, readErr) {
 			outcome = OutcomeTimeout
 		}
-		return stepResult{outcome: outcome, status: response.StatusCode, sent: 1, request: line, err: bounded(readErr.Error())}
+		return stepResult{outcome: outcome, status: response.StatusCode, sent: 1, request: line, err: readErr.Error()}
 	}
 	verdict := step.Endpoint.Check(Response{Status: response.StatusCode, Header: response.Header.Clone(), Body: body}, state)
 	if !verdict.OK {
@@ -346,7 +349,7 @@ func (e *Engine) step(ctx context.Context, scenario Scenario, step Step, rng *ra
 		if strings.TrimSpace(reason) == "" {
 			reason = fmt.Sprintf("HTTP %d rejected by check", response.StatusCode)
 		}
-		return stepResult{outcome: OutcomeError, status: response.StatusCode, sent: 1, request: line, err: bounded(reason)}
+		return stepResult{outcome: OutcomeError, status: response.StatusCode, sent: 1, request: line, err: reason}
 	}
 	return stepResult{outcome: OutcomeOK, status: response.StatusCode, sent: 1, request: line}
 }
@@ -452,7 +455,7 @@ func requestLine(request Request) string {
 	if encoded := query.Encode(); encoded != "" {
 		line += "?" + encoded
 	}
-	return bounded(line)
+	return line
 }
 
 // weightedSchedule is one cycle of smooth weighted round-robin.
@@ -495,6 +498,19 @@ func isTimeout(ctx context.Context, err error) bool {
 func isDialError(err error) bool {
 	var opErr *net.OpError
 	return errors.As(err, &opErr) && opErr.Op == "dial"
+}
+
+// bound limits the sample's texts once its passwords are replaced.
+func (sample *Sample) bound() {
+	if sample.Error != "" {
+		sample.Error = bounded(sample.Error)
+	}
+	if sample.CleanupError != "" {
+		sample.CleanupError = bounded(sample.CleanupError)
+	}
+	if sample.Request != "" {
+		sample.Request = bounded(sample.Request)
+	}
 }
 
 func bounded(text string) string {

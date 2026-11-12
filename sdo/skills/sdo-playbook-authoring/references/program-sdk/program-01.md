@@ -48,6 +48,10 @@ const (
 )
     Bounds of a procedure declaration and its bound command.
 
+const DefaultProbeIdentityTimeout = 2 * time.Minute
+    DefaultProbeIdentityTimeout bounds a probe-identity procedure that declares
+    no timeout: an admin CLI may take a minute to boot.
+
 const DefaultScriptTimeout = time.Minute
 const MaxAdmissionWebhooks = sdk.MaxAdmissionWebhooks
     MaxAdmissionWebhooks bounds one AdmissionWebhooksFor answer.
@@ -56,6 +60,9 @@ const MaxScriptBytes = 64 << 10
 const MaxScriptOutputBytes = 64 << 10
 const MaxScriptTimeout = 5 * time.Minute
 const MongoDB = "mongodb"
+const ProbeIdentityParam = "username"
+    ProbeIdentityParam is the probe-identity procedure's only parameter.
+
 
 VARIABLES
 
@@ -251,7 +258,4 @@ type AppMap struct {
     the operations procedures the application ships. A program reads it through
     ReadView.AppMap to resolve the store, cache or source to act on from a bound
     object, instead of naming a component.
-
-func (m AppMap) Component(name string) (AppComponent, bool)
-    Component returns the component named name.
 ```
