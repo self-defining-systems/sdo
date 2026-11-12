@@ -88,6 +88,7 @@ func goldenIncident(
 		"workload-health", time.Second, stateFinding("cause"), stateFinding("cause"),
 		sdk.Finding{}, sdk.Finding{}, sdk.Finding{}, sdk.Finding{}, sdk.Finding{},
 	)
+	cause.spec.Persistence = sdk.PersistencePolicy{Firing: 2, Clearing: 2}
 	dispatcher := &fixedResultDispatcher{requests: make(chan IncidentRequest, 1), result: result}
 	config := testControllerConfig()
 	config.RepairPolicy = "recorded-actions"

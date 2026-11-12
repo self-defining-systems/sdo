@@ -9,7 +9,7 @@ operator and `run --skip-reset`.
 
 Between problems the hooks reset SDO's incidents (`sdo-operator incidents reset`): at the end of `prepare` and as the
 last part of `collect` (after the run settled and its evidence is copied, before the next gate). A benchmark baseline
-also passes `--self-heal-hold 60s` in its `controller_flags` (until the central config carries it).
+takes `detection.self_heal_hold: 60s` from `sdo-bench.yaml`; the hold is bound into every operability report subject.
 
 ## Pieces
 

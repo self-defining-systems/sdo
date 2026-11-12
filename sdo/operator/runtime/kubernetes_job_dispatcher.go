@@ -125,10 +125,11 @@ func (d KubernetesJobDispatcher) PrepareDispatch(ctx context.Context, request In
 			if err := d.reopenWithdrawnRecovery(ctx, request, loop); err != nil {
 				return IncidentRequest{}, err
 			}
-			trust, err := d.programTrust(ctx, request)
+			trust, credits, err := d.programLearning(ctx, request)
 			if err != nil {
 				return IncidentRequest{}, err
 			}
+			loop.setCredits(credits)
 			request = loop.prepareDispatch(ctx, request, trust, coverage)
 		}
 	}
@@ -170,7 +171,7 @@ func (l *ResponderLoop) prepareDispatch(ctx context.Context, request IncidentReq
 	}
 	l.capturePhase = "open@detect"
 	defer func() { l.capturePhase = "" }()
-	request.InitialProgramRuns = l.diagnose(ctx, l.findings)
+	request.InitialProgramRuns = l.diagnose(ctx, l.findings, false)
 	fillProgramRevisions(ctx, request.InitialProgramRuns, request.RepositoryWorktree, request.SourceCommit)
 	request.PlaybookCoverage = coverage.Coverage(request.Findings, request.InitialProgramRuns, l.lastDiagnosisView, trust)
 	request.MaxResponseLoops = l.MaxBatches
@@ -236,10 +237,11 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 			defer loop.CloseWorkingPrograms()
 		}
 		if loop != nil {
-			trust, err := d.programTrust(ctx, request)
+			trust, credits, err := d.programLearning(ctx, request)
 			if err != nil {
 				return IncidentResult{}, err
 			}
+			loop.setCredits(credits)
 			loop.initializeDispatch(trust, request.MaxResponseLoops, request.InitialProgramRuns)
 			if err := d.restoreToolState(ctx, request, loop); err != nil {
 				return IncidentResult{}, fmt.Errorf("restore responder tool state: %w", err)
@@ -408,24 +410,32 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 }
 
 func (d KubernetesJobDispatcher) programTrust(ctx context.Context, request IncidentRequest) (map[string]ProgramTrust, error) {
+	trust, _, err := d.programLearning(ctx, request)
+	return trust, err
+}
+
+// programLearning derives, from one read of the durable outcomes, what each
+// learned playbook has earned: trust counters and the credited (symptom,
+// component) pairs its key is built from.
+func (d KubernetesJobDispatcher) programLearning(ctx context.Context, request IncidentRequest) (map[string]ProgramTrust, ProgramCredits, error) {
 	// External alerts deliberately carry no Go detector/coverage authority.
 	// Trust is only diagnostic metadata for that coverage, not an execution gate.
 	// Do not walk all outcomes and executable corpus history twice before
 	// claiming a worker that cannot consume that evidence.
 	if request.ExternalMessage != "" || d.Outcomes == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	defer dispatchPreparationTiming(request.IncidentID, "program_trust")()
 	stored, _, err := memory.ListOutcomes(ctx, d.Outcomes, "program trust")
 	if err != nil {
-		return nil, fmt.Errorf("read program trust outcomes: %w", err)
+		return nil, nil, fmt.Errorf("read program trust outcomes: %w", err)
 	}
 	if d.AcceptedRepository != "" {
 		request.RepositoryWorktree = d.AcceptedRepository
 	}
 	stored, err = memory.AfterAdoption(ctx, request.RepositoryWorktree, stored)
 	if err != nil {
-		return nil, fmt.Errorf("read adoption learning boundary: %w", err)
+		return nil, nil, fmt.Errorf("read adoption learning boundary: %w", err)
 	}
 	records := make([]*contracts.OutcomeRecord, 0, len(stored))
 	for _, outcome := range stored {
@@ -441,7 +451,7 @@ func (d KubernetesJobDispatcher) programTrust(ctx context.Context, request Incid
 			slog.WarnContext(ctx, "optional program learning credit unavailable", "incident_id", request.IncidentID, "error", err)
 		}
 	}
-	return stats, nil
+	return stats, ProgramCreditIndex(records), nil
 }
 
 // ResponderJobFailedError preserves the controller's terminal dispatch signal.

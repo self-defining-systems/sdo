@@ -67,11 +67,8 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 	str("--firing-telemetry-path", config.GetFiringTelemetryPath())
 
 	dur("--duration", config.GetDuration())
-	dur("--closure-stability-window", config.GetClosureStabilityWindow())
-	dur("--self-heal-hold", config.GetSelfHealHold())
 	str("--memory-host-binary", config.GetMemoryHostBinary())
 	str("--memory-host-digest", config.GetMemoryHostDigest())
-	dur("--drift-batch-window", config.GetDriftBatchWindow())
 
 	str("--identity", config.GetIdentity())
 

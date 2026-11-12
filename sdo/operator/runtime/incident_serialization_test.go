@@ -95,7 +95,6 @@ func TestLaterOpenerAfterDispatchWaitsForTheNextIncident(t *testing.T) {
 	ctx := context.Background()
 	opened := time.Unix(20_000, 0).UTC()
 	cfg := testControllerConfig()
-	cfg.FiringThreshold, cfg.ClearThreshold = 1, 1
 	cfg.ClosureStabilityWindow = 5 * time.Second
 	cfg.VerificationTimeout = 5 * time.Minute
 	health := &twoFaultHealth{}
@@ -207,7 +206,6 @@ func TestLaterOpenerAfterDispatchWaitsForTheNextIncident(t *testing.T) {
 func TestLateJoinedFindingKeepsItsAfterDispatchRelation(t *testing.T) {
 	now := time.Unix(30_000, 0).UTC()
 	cfg := testControllerConfig()
-	cfg.FiringThreshold = 1
 	controller, err := NewController(cfg, nil, staticProvider{}, &recordingDispatcher{}, now)
 	if err != nil {
 		t.Fatal(err)

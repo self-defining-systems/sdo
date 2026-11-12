@@ -520,7 +520,7 @@ func onboardWith(t *testing.T, app onbApp, profile telemetry.Profile, options on
 	config := OperateConfig{
 		ApplicationRoot: root, RepositoryMount: mount, WorktreeRoot: filepath.Join(mount, "worktrees"),
 		Install: install.Config{Settings: &policy, TelemetryProfile: profile, BackendRecipes: telemetrysources.Recipes(), RepositoryPVC: "sdo-repository"},
-		Lifecycle: lifecycle.Config{
+		Lifecycle: lifecycle.Config{SettingsDigest: policy.DetectionDigest(),
 			OperationID: "onb", Application: app.name, Namespace: app.namespace, HealthObjective: "every synthetic workload stays available",
 			MaxAttempts: 1, PendingEvaluations: 1, InfrastructureTries: 1,
 			Sources: options.sources,

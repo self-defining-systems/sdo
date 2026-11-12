@@ -439,6 +439,7 @@ func (b *Broker) requireCandidateOperability(ctx context.Context, c Candidate, e
 	want := operability.Subject{
 		AcceptedCommit: c.Commit, BaseTree: deployed.BaseTree, EffectiveTree: evidence.EffectiveTree,
 		PatchesDigest: evidence.PatchesDigest, RenderDigest: deployed.RenderDigest, EnvDigest: deployed.EnvDigest,
+		SettingsDigest:  b.settingsDigest,
 		DiagnosticsTree: tree,
 	}
 	if _, err := checkOperability(*evidence.Operability, operability.StageComplete, want); err != nil {

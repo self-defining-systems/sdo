@@ -61,8 +61,8 @@ func TestMigrateToSchema4OnlyStamps(t *testing.T) {
 	if err != nil || !changed {
 		t.Fatalf("Migrate = %v, %v; want changed", changed, err)
 	}
-	if got, _ := os.ReadFile(filepath.Join(root, SchemaVersionFile)); string(got) != "7\n" {
-		t.Fatalf("schema-version = %q, want 7", got)
+	if got, _ := os.ReadFile(filepath.Join(root, SchemaVersionFile)); string(got) != "8\n" {
+		t.Fatalf("schema-version = %q, want 8", got)
 	}
 	var files []string
 	_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
@@ -77,5 +77,31 @@ func TestMigrateToSchema4OnlyStamps(t *testing.T) {
 	}
 	if changed, err := Migrate(root); err != nil || changed {
 		t.Fatalf("second Migrate = %v, %v; want unchanged", changed, err)
+	}
+}
+
+// A repository at schema 7 holds cases without the Go-written incident labels.
+// Migration stamps it and leaves every case byte for byte, so they stay valid.
+func TestMigrateToSchema8KeepsExistingCorpusCases(t *testing.T) {
+	root := t.TempDir()
+	labels := `{"root_cause_program_ids":["fix"],"bindings":{"objects":{}}}` + "\n"
+	for rel, content := range map[string]string{SchemaVersionFile: "7\n", GoalFile: "Goal\n", CorpusDir + "/case-1/labels.json": labels} {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	changed, err := Migrate(root)
+	if err != nil || !changed {
+		t.Fatalf("Migrate = %v, %v; want changed", changed, err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(root, SchemaVersionFile)); string(got) != "8\n" {
+		t.Fatalf("schema-version = %q, want 8", got)
+	}
+	if got, _ := os.ReadFile(filepath.Join(root, filepath.FromSlash(CorpusDir+"/case-1/labels.json"))); string(got) != labels {
+		t.Fatalf("an existing case changed: %q", got)
 	}
 }

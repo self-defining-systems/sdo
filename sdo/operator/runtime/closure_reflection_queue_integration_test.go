@@ -32,7 +32,7 @@ func TestSuccessReflectionRunsAfterTheClosureIsAcknowledged(t *testing.T) {
 	}
 	queuedReflectionGit(t, accepted, "add", ".")
 	queuedReflectionGit(t, accepted, "commit", "-qm", "synthetic base")
-	repository, err := broker.New(accepted, filepath.Join(root, "proposals"), nil, broker.ObservationPolicy{Telemetry: broker.Telemetry{Registry: telemetry.NewRegistry()}})
+	repository, err := broker.New(accepted, filepath.Join(root, "proposals"), nil, broker.ObservationPolicy{SettingsDigest: "settings-digest", Telemetry: broker.Telemetry{Registry: telemetry.NewRegistry()}})
 	if err != nil {
 		t.Fatal(err)
 	}

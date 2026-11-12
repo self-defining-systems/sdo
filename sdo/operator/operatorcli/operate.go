@@ -153,8 +153,9 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	}
 	config := OperateConfig{
 		Lifecycle: lifecycle.Config{
-			ProvidedPlan: providedPlan,
-			OperationID:  *operationID, Application: *application, Namespace: *namespace,
+			ProvidedPlan:   providedPlan,
+			SettingsDigest: policy.DetectionDigest(),
+			OperationID:    *operationID, Application: *application, Namespace: *namespace,
 			HealthObjective: *objective, Sources: sources, DeployerAgentID: *deployerID, JudgeAgentID: *judgeID,
 			RegistryHost: *registryHost,
 			MaxAttempts:  policy.Deployment.MaxAttempts,

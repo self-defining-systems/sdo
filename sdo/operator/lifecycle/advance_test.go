@@ -194,7 +194,7 @@ func (w *advWorld) CheckAdvance(_ context.Context, id, upstreamCommit, base stri
 
 func (w *advWorld) PublishAdvance(_ context.Context, id, upstreamCommit, base string, evidence broker.SourceEvidence, report operability.Report) (broker.Receipt, error) {
 	w.log("publish %s", id)
-	want := operability.Subject{AcceptedCommit: advHead, BaseTree: evidence.BaseTree, EffectiveTree: evidence.EffectiveTree, PatchesDigest: evidence.PatchesDigest, RenderDigest: evidence.RenderDigest, EnvDigest: evidence.EnvDigest}
+	want := operability.Subject{AcceptedCommit: advHead, BaseTree: evidence.BaseTree, EffectiveTree: evidence.EffectiveTree, PatchesDigest: evidence.PatchesDigest, RenderDigest: evidence.RenderDigest, EnvDigest: evidence.EnvDigest, SettingsDigest: "settings-digest"}
 	switch {
 	case report.Stage != operability.StageAdvance || report.Subject.BindsTo(want) != nil:
 		return broker.Receipt{}, errors.New("report is not a stage-advance report of the candidate")
@@ -425,7 +425,7 @@ func advRequest(t *testing.T) upstream.Request {
 	return upstream.Request{Source: upstream.Source{Path: ".", Kind: "git", Config: config}, Revision: upstream.Revision{ID: advRevision, Ref: "main"}, Prev: advPrev}
 }
 
-var advConfig = lifecycle.AdvanceConfig{Namespace: "toy", HealthObjective: "serve requests", GitDir: "/synthetic/accepted/.git", PendingEvaluations: 3, InfrastructureTries: 2}
+var advConfig = lifecycle.AdvanceConfig{SettingsDigest: "settings-digest", Namespace: "toy", HealthObjective: "serve requests", GitDir: "/synthetic/accepted/.git", PendingEvaluations: 3, InfrastructureTries: 2}
 
 func (w *advWorld) run(t *testing.T) (lifecycle.AdvanceResult, error) {
 	t.Helper()

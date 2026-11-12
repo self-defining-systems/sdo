@@ -3,8 +3,8 @@ package runtime
 import (
 	"context"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"maps"
 	kclock "k8s.io/utils/clock"
+	"maps"
 	"sort"
 	"sync"
 	"time"

@@ -291,7 +291,7 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 			Summary: cause.Summary, Resources: objectRefsContract(cause.Resources),
 			Evidence:           make([]*contracts.RootCauseEvidence, 0, len(cause.Evidence)),
 			ExplainedDetectors: append([]string(nil), cause.ExplainedDetectors...), StaticContext: append([]string(nil), cause.StaticContext...),
-			CauseClass:         cause.CauseClass, Reach: cause.Reach,
+			CauseClass: cause.CauseClass, Reach: cause.Reach,
 		}
 		for _, evidence := range cause.Evidence {
 			item.Evidence = append(item.Evidence, &contracts.RootCauseEvidence{Kind: evidence.Kind, Source: evidence.Source, Observation: evidence.Observation})
@@ -391,7 +391,7 @@ func incidentResultState(message *contracts.IncidentResult) IncidentResult {
 			Summary: cause.GetSummary(), Resources: objectRefsState(cause.GetResources()),
 			Evidence:           make([]RootCauseEvidence, 0, len(cause.GetEvidence())),
 			ExplainedDetectors: append([]string(nil), cause.GetExplainedDetectors()...), StaticContext: append([]string(nil), cause.GetStaticContext()...),
-			CauseClass:         cause.GetCauseClass(), Reach: cause.GetReach(),
+			CauseClass: cause.GetCauseClass(), Reach: cause.GetReach(),
 		}
 		for _, evidence := range cause.GetEvidence() {
 			item.Evidence = append(item.Evidence, RootCauseEvidence{Kind: evidence.GetKind(), Source: evidence.GetSource(), Observation: evidence.GetObservation()})

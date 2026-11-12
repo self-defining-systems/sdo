@@ -23,7 +23,7 @@ func deployedSource() *broker.AcceptedSource {
 }
 
 func refreshConfig() lifecycle.Config {
-	return lifecycle.Config{Application: "app", Namespace: "ns", InfrastructureTries: 1, PendingEvaluations: 1}
+	return lifecycle.Config{SettingsDigest: "settings-digest", Application: "app", Namespace: "ns", InfrastructureTries: 1, PendingEvaluations: 1}
 }
 
 // A refresh gates the judge's candidate against the live deployment, so a

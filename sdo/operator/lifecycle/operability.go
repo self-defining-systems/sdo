@@ -73,6 +73,7 @@ func (c Coordinator) offlineGate(ctx context.Context, cfg Config, proposal broke
 		subject := operability.Subject{
 			AcceptedCommit: proposal.BaseCommit, BaseTree: checks.BaseTree, EffectiveTree: checks.EffectiveTree,
 			PatchesDigest: checks.PatchesDigest, RenderDigest: checks.RenderDigest, EnvDigest: checks.EnvDigest,
+			SettingsDigest: cfg.SettingsDigest,
 		}
 		report, err = operability.New(operability.StageDeployment, subject.WithUnavailable()).With(checks.Checks...)
 		if err != nil {
@@ -122,6 +123,7 @@ func (c Coordinator) deploymentReport(ctx context.Context, cfg Config, proposal 
 		subject := operability.Subject{
 			AcceptedCommit: proposal.BaseCommit, BaseTree: receipt.BaseTree, EffectiveTree: receipt.EffectiveTree,
 			PatchesDigest: receipt.PatchesDigest, RenderDigest: receipt.RenderDigest, EnvDigest: receipt.EnvDigest,
+			SettingsDigest: cfg.SettingsDigest,
 		}
 		if report, err = operability.New(operability.StageDeployment, subject).With(operability.Combine(checks, live)...); err != nil {
 			return err

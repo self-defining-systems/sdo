@@ -18,7 +18,7 @@ import (
 
 func failingReport(t *testing.T, cause operability.Cause) operability.Report {
 	t.Helper()
-	subject := operability.Subject{AcceptedCommit: "c", BaseTree: "b", EffectiveTree: "e", PatchesDigest: "p", RenderDigest: "r", EnvDigest: "v"}
+	subject := operability.Subject{AcceptedCommit: "c", BaseTree: "b", EffectiveTree: "e", PatchesDigest: "p", RenderDigest: "r", EnvDigest: "v", SettingsDigest: "s"}
 	report, err := operability.New(operability.StageDeployment, subject).With(
 		operability.Check{ID: "O1.render", Phase: operability.PhaseOffline, Status: operability.StatusFail, Cause: cause, Detail: "synthetic failure"},
 		operability.Check{ID: "O2.images", Phase: operability.PhaseOffline, Status: operability.StatusPass},

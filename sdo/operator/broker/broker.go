@@ -131,6 +131,7 @@ type Broker struct {
 	PlanCatalogs planfile.Catalogs
 
 	observationCeiling   sdk.ObservationScope
+	settingsDigest       string
 	applicationNamespace string
 	target               string
 	workspaceRoot        string
@@ -200,6 +201,7 @@ func New(target, workspaceRoot string, validator Validator, policy ObservationPo
 	b.observationCeiling = policy.Ceiling
 	b.observationCeiling.Targets = append([]sdk.ObservationTarget(nil), policy.Ceiling.Targets...)
 	b.applicationNamespace = policy.ApplicationNamespace
+	b.settingsDigest = policy.SettingsDigest
 	return b, nil
 }
 
@@ -334,7 +336,7 @@ func (b *Broker) PublishVerifiedSource(ctx context.Context, incidentID string, e
 	if err := validateSourceEvidence(evidence); err != nil {
 		return Receipt{}, err
 	}
-	digest, err := deploymentReportDigest(report, evidence)
+	digest, err := deploymentReportDigest(report, evidence, b.settingsDigest)
 	if err != nil {
 		return Receipt{}, err
 	}
@@ -415,7 +417,7 @@ func (b *Broker) publishOrStage(ctx context.Context, incidentID string, actor Ac
 			}
 		}
 		// Playbook fault_class and index entries are derived, never rejected.
-		if normalized, err := validate.NormalizeAuthoredPlaybooks(proposal.Path, paths); err != nil {
+		if normalized, err := validate.NormalizeAuthoredPlaybooks(proposal.Path, paths, incidentID); err != nil {
 			return fmt.Errorf("normalize authored playbooks: %w", err)
 		} else if len(normalized) > 0 {
 			if paths, err = validate.ChangedPaths(ctx, proposal.Path, proposal.BaseCommit); err != nil {
@@ -1143,6 +1145,10 @@ type ObservationPolicy struct {
 
 	Ceiling              sdk.ObservationScope
 	ApplicationNamespace string
+
+	// SettingsDigest is settings.Config.DetectionDigest of the operator configuration. Operability reports must
+	// carry it in their subject: a report made under another self-heal hold does not bind.
+	SettingsDigest string
 }
 
 func (b *Broker) normalizeCorpus(root string, paths []string) ([]string, error) {

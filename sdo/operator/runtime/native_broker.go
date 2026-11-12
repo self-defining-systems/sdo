@@ -807,7 +807,7 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 		negativePrepared := false
 		if n.Replay != "off" && len(positive) > 0 {
 			if capture != "" {
-				paths, err := memory.RecordRepeatCorpus(workspace.Worktree, capture, effect.IncidentID, positive, origins)
+				paths, err := memory.RecordCorpus(workspace.Worktree, capture, effect.IncidentID, positive, origins, outcomeCaseContext(effect.Outcome))
 				prepared = err == nil && len(paths) > 0
 			}
 			if !prepared {
@@ -837,7 +837,7 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 			return nil, fmt.Errorf("reflection worker: %w", err)
 		}
 		if prepared {
-			if _, err := memory.RecordRepeatCorpus(workspace.Worktree, capture, effect.IncidentID, positive, origins); err != nil {
+			if _, err := memory.RecordCorpus(workspace.Worktree, capture, effect.IncidentID, positive, origins, outcomeCaseContext(effect.Outcome)); err != nil {
 				return nil, err
 			}
 		}

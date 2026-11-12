@@ -366,6 +366,7 @@ func cloneVerification(response ToolResponse) ToolResponse {
 	_ = json.Unmarshal(data, &cloned)
 	return cloned
 }
+
 // markNewSinceDispatchLocked names the findings that first activated after the
 // responder launched. The controller runs one incident at a time, so such a
 // finding may be a separate fault; the responder is told so it reports it as

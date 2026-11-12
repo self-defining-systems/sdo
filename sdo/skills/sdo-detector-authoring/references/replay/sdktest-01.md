@@ -109,16 +109,22 @@ func ValidateCorpusProvenance(dir string) error
 TYPES
 
 type CorpusCase struct {
-	ScriptOrigins          map[string]string `json:"script_origins,omitempty"`
-	Open                   Snapshot
-	Fixed                  Snapshot
-	Healthy                Snapshot
-	Recordings             []PrimitiveCall
-	RootCauseProgramIDs    []string
-	NoMatchProgramIDs      []string
-	Bindings               program.Bindings
-	PeerBindings           program.Bindings
-	Provenance             CorpusProvenance
+	ScriptOrigins       map[string]string `json:"script_origins,omitempty"`
+	Open                Snapshot
+	Fixed               Snapshot
+	Healthy             Snapshot
+	Recordings          []PrimitiveCall
+	RootCauseProgramIDs []string
+	NoMatchProgramIDs   []string
+	Bindings            program.Bindings
+	PeerBindings        program.Bindings
+	Provenance          CorpusProvenance
+	// OpeningKeys and Suspects are the incident's own labels, written by Go
+	// with the case: the alerts the incident opened on and the components that
+	// were suspect on the failing path. Cases written before they existed
+	// carry neither.
+	OpeningKeys            []string
+	Suspects               []sdk.ObjectRef
 	SyntheticNoMatchReason string
 	// HealthImpact marks visible impact in Open. Nil defaults to true for
 	// existing fault fixtures; false permits silent health detectors.
@@ -222,14 +228,4 @@ func (v *RecordingReadView) MutatingWebhookConfiguration(name string) (*admissio
 func (v *RecordingReadView) MutatingWebhookConfigurations() ([]admissionv1.MutatingWebhookConfiguration, error)
 
 func (v *RecordingReadView) NodeUsage(ref sdk.ObjectRef) (*metricsv1beta1.NodeMetrics, error)
-
-func (v *RecordingReadView) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error)
-
-func (v *RecordingReadView) ObservationGeneration() string
-
-func (v *RecordingReadView) ObservationStatuses() []sdk.ObservationStatus
-
-func (v *RecordingReadView) Observe(o program.ExternalOperation) (int32, error)
-
-func (v *RecordingReadView) ObservedAt() time.Time
 ```
