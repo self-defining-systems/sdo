@@ -102,7 +102,8 @@ class World:
 def test_clean_replay_pushes_three_engineer_commits_without_touching_sdo(tmp_path: Path) -> None:
     w = World(tmp_path, conflict=False)
     result = rp.replay(w.config())
-    assert [r.status for r in result.records] == ["pushed"] * 3 and not result.conflicts
+    assert [r.status for r in result.records] == ["pushed"] * 3
+    assert not result.conflicts
     for commit_id in (w.u1, w.u2, w.u3):
         assert any(f"Replayed-From: {commit_id}" in w.show(r.pushed_sha, "%B") for r in result.pushed)
     for r in result.pushed:
@@ -123,8 +124,10 @@ def test_conflict_with_sdo_commit_stops_replay_by_default(tmp_path: Path) -> Non
     w = World(tmp_path)
     result = rp.replay(w.config())
     assert [r.status for r in result.records] == ["pushed", "pushed", "conflict"]
-    assert len(result.conflicts) == 1 and result.conflicts[0].commit == w.u3
-    assert result.conflicts[0].paths == ("db.txt",) and result.stopped_at == w.u3
+    assert len(result.conflicts) == 1
+    assert result.conflicts[0].commit == w.u3
+    assert result.conflicts[0].paths == ("db.txt",)
+    assert result.stopped_at == w.u3
     assert git(w.remote, "show", "run:db.txt") == body("dSDO").strip()
 
 
@@ -133,7 +136,8 @@ def test_skip_policy_continues_past_conflict(tmp_path: Path) -> None:
     w2 = commit(w.up, "u4: front again", front_txt=body("f4"))
     result = rp.replay(w.config(commits=(w.u1, w.u3, w2), on_conflict="skip"))
     assert [r.status for r in result.records] == ["pushed", "skipped", "pushed"]
-    assert [r.commit for r in result.conflicts] == [w.u3] and not result.stopped_at
+    assert [r.commit for r in result.conflicts] == [w.u3]
+    assert not result.stopped_at
     assert git(w.remote, "show", "run:front.txt") == body("f4").strip()
 
 
@@ -149,9 +153,8 @@ def test_push_race_is_refetched_and_retried(tmp_path: Path) -> None:
 
     result = rp.replay(w.config(commits=(w.u1,)), git=racing)
     assert [(r.status, r.attempts) for r in result.records] == [("pushed", 2)]
-    assert (
-        git(w.remote, "show", "run:other.txt") == "x" and git(w.remote, "show", "run:front.txt") == body("f1").strip()
-    )
+    assert git(w.remote, "show", "run:other.txt") == "x"
+    assert git(w.remote, "show", "run:front.txt") == body("f1").strip()
 
 
 @pytest.mark.parametrize("branch", ["main", "master", "MAIN"])
