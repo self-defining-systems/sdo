@@ -17,19 +17,57 @@ operator and `run --skip-reset`.
 - `observe.py`: the command of `exec:sdo`. It polls `sdo-controller-state`, prints one line per SDO step (fuzzops
   records them as actions), writes `$FUZZOPS_REPORT` from the detector findings and then from the responder's
   confirmed root causes, keeps every state snapshot under `$FUZZOPS_OUT`, and exits after closure.
-
-- `campaign.py`: one lane's rounds on persistent memory. `plan` picks, per template, a first instance and a
-  variant from a fuzzops instances file; `lane` runs `first`, `repeat` and `variant` as `exec:sdo-<round>` (graded
-  apart by fuzzops), waits for SDO to be idle (no incident, closure or queued reflection) before each run, and copies
-  the accepted outcomes and playbooks after it.
 - `window.py`: which incidents belong to a run: detected in the window, or open at the inject with findings, causes
   or repair actions naming the faulted component by resource ref. `table.py` and `observe.py` (`--fault`) share it.
-- `table.py`: merges a lane's records with the app's noop and `best-fix` baselines, grades them with
-  `fuzzops report --plain` and joins SDO's outcome records into a per-version table (verdict, bad seconds against
-  noop and best-fix, lost writes, harmful actions, lifecycle times, cause class and reach, tokens and cost,
-  auto-applied, repeat/first ratios).
+- `table.py`: SDO's table over a fuzzops-bench experiment (one column per experiment): joins the bench's grades
+  (`results/grades.json`, `runs.csv`) with each run's collected outcome records (grade, bad seconds against noop and
+  best-fix, lost writes, harmful actions, lifecycle times, cause class and reach, tokens and cost, auto-applied,
+  repeat/first ratios per sequence, churn findings, false alarms from healthy runs and alarms while gating).
+- `hooks.py`: SDO's operator hooks for fuzzops-bench (below).
 
-## Run
+## fuzzops-bench hooks
+
+[fuzzops-bench](https://github.com/self-defining-systems/fuzzops) (fuzzops repository) schedules experiments on lanes
+(one kind cluster each), gates every inject on the app's journeys and the operator's `idle`, caps each run, grades only
+done runs and writes everything under one results directory (layout: `.agents/skills/analyze-experiment/references/
+fuzzops-bench.md`). It runs `uv run -q python -m benchmarks.fuzzops.hooks <verb>` in the pinned SDO checkout:
+
+| verb | does |
+|---|---|
+| `check` | no cluster access: `baseline.json` well formed, its namespace is `FUZZOPS_NAMESPACE`, the render matches its sha256, the bundle has the branch at the commit |
+| `prepare` | plain-manifest pack from the live app (the namespace's one Helm release, Jobs and namespaces dropped, the pack's other files beside `manifests/`; or the pack's own `manifests/`), refuse a render that differs from the baseline's (key order, document order and null-valued keys ignored), attached pack in `$BENCH_LANE_DIR/pack`, `go build` of `sdo-operator`, `kind load` of `sdo-{controller,responder,script-tools}:<image_tag>` on the workers, namespaces and credentials (`--from-file`), node image digest names, the bundle branch cloned as `main`, production `install-existing` with the baseline's controller flags and the settings' model, effort and provider. An operator left in the control namespace is removed first. Last stdout line: `{"pack", "operator_version", "memory"}` |
+| `idle` | two kubectl reads: controller pod (`job-name=sdo-controller-run`) Ready, `sdo-controller-state` written within 60 s (newest managedFields time; every controller step advances `step_count`, so a live controller writes it), and no open incident, pending closure or queued reflection. Busy reasons: `alarm: incident open <id>`, `busy: ...`, `down: ...`, `stale: ...` |
+| `watch` | `observe.py` on the control namespace with `--fault $BENCH_FAULT` (none for a healthy run), sealing an evidence snapshot at closure |
+| `collect` | best effort into `BENCH_OUT`: `memory/.sdo/{outcomes,playbooks}`, `controller-state.json`, `controller.log` since the inject, `sdo_runtime/` (evidence export), `collect.json` |
+| `teardown` | delete the control namespace (waiting) and the `sdo-admin-<control namespace>` ClusterRole and binding; never the app namespace |
+
+`BENCH_OPERATOR` names the baseline directory and the settings (`model`, `effort`, `provider` default `codex`,
+`image_tag` default `fz-<revision[:8]>`, `auth_file` default `~/.codex/auth.json`). The operator images must already be
+built on the host (`scripts/build_sdo_images.sh`); `prepare` fails clearly when one is missing.
+
+### Baselines
+
+A baseline directory (outside the repository, in sdo-exp) holds the accepted memory as a Git bundle, the render it was
+made on and `baseline.json`:
+
+```json
+{"format": 1, "namespace": "<app ns>", "control_namespace": "<optional, default <ns>-sdo>",
+ "application": "<optional, default ns>", "bundle": "memory.bundle", "branch": "<branch>", "commit": "<40 hex>",
+ "render": "<relative path>", "render_sha256": "<hex>", "objective": "<health objective>",
+ "controller_flags": ["--response-timeout", "1800s", "..."], "sdo_revision": "<commit it was made with>"}
+```
+
+Paths are relative to the directory. `controller_flags` are extra `install-existing` flags; the ones the hook sets
+(namespaces, images, model, effort, provider, credentials, PVC, kubeconfig) are refused. The memory names its
+namespaces, so a baseline restores only into its own namespace. `python -m benchmarks.fuzzops.hooks baseline
+--kubeconfig F --context C --namespace NS --out DIR [--objective ...] [--branch B] [--pack P]` archives a running
+lane's accepted memory (bundle from the controller's application repository) and its live render as a new baseline.
+Never commit baseline data into this repository.
+
+## Fresh install (to make a baseline)
+
+Experiments run through fuzzops-bench and the hooks above. A fresh install (deployment plan, detection
+designer) only makes new baseline memory; archive it with `hooks baseline` once it is accepted.
 
 ```bash
 python -m benchmarks.fuzzops.install --pack <fuzzops>/examples/<app> --work <dir> --namespace <ns> \
@@ -73,13 +111,15 @@ without agent cost; the incident record is the controller state, its lifecycle t
   render for one namespace wires another copy to the first one's services.
 - For an app fuzzops already deployed, the same `install` adopts it: SDO applies the identical render.
 - Several SDO+app pairs may share one kind node; `install` tolerates a concurrent install re-tagging the same images.
-- SDO handles one incident at a time: between faults wait until the controller state has no open incident and no
-  `pending_closure`.
+- SDO handles one incident at a time: fuzzops-bench injects only after `hooks idle` (no open incident, pending
+  closure or queued reflection) held for the whole ready gate.
+- `hooks prepare` renders a Helm-based pack generically from the namespace's one release (`helm get manifest`), so
+  any Helm pack works; the namespace is part of the render, which is why a baseline restores only into its own.
 
 ## Evidence
 
 - Save each pair's runtime evidence (responder sessions and Codex rollouts, lifecycle tasks, telemetry) with
   `sdo-operator runtime-artifacts` until SDO's native evidence sink lands: the observer seals a snapshot when an
-  incident closes (`--operator-binary`, `--controller-image`), and `python -m benchmarks.fuzzops.evidence export`
-  runs before any control namespace is deleted. Output goes to sdo-exp. `evidence.EvidenceTarget` is the hook for the
+  incident closes (`--operator-binary`, `--controller-image`), and `hooks collect` runs
+  `evidence.export` after every run, before any teardown deletes the control namespace. Output goes to sdo-exp. `evidence.EvidenceTarget` is the hook for the
   sink's configuration.
