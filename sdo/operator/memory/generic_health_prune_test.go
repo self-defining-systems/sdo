@@ -128,3 +128,70 @@ func TestPrepareHealthRemovesRetiredRuntimeCrashesDetector(t *testing.T) {
 		t.Fatal("the retired runtime-crashes package survived preparation")
 	}
 }
+
+func writeAuthoredDetector(t *testing.T, root, id string) {
+	t.Helper()
+	manifest := genericManifest(id, "30s", nil)
+	manifest.OriginatingCommit = "initial"
+	data, err := layout.MarshalDetectorManifest(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, layout.DetectorDir(layout.ClassHealth, id))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "manifest.yaml"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "detector.go"), []byte("package synthetic\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A schema migration drops the Go-installed generic detector Go no longer
+// plans and nothing else: current generic detectors and an authored detector
+// with a similar name stay.
+func TestWriteSchemaMigrationRemovesOnlyStrandedGenericDetectors(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, layout.Dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, layout.SchemaVersionFile), []byte("7\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, retired := range []string{"runtime-crashes", "synthetic-retired"} {
+		if err := writeGenericDetector(root, genericManifest(retired, "30s", nil), "package synthetic\n"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writeGenericDetector(root, genericManifest("warning-events", "30s", nil), "package synthetic\n"); err != nil {
+		t.Fatal(err)
+	}
+	writeAuthoredDetector(t, root, "runtime-crashes-authored")
+	if err := WriteSchema(root); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"runtime-crashes", "synthetic-retired"} {
+		if detectorExists(root, id) {
+			t.Fatalf("stranded generic detector %s survived migration", id)
+		}
+	}
+	for _, id := range []string{"warning-events", "runtime-crashes-authored"} {
+		if !detectorExists(root, id) {
+			t.Fatalf("detector %s was removed by migration", id)
+		}
+	}
+}
+
+// An authored detector that reuses a retired generic ID is not Go's and stays.
+func TestPruneStrandedKeepsAuthoredDetectorWithRetiredID(t *testing.T) {
+	root := t.TempDir()
+	writeAuthoredDetector(t, root, "runtime-crashes")
+	if err := PrepareHealth(root); err != nil {
+		t.Fatal(err)
+	}
+	if !detectorExists(root, "runtime-crashes") {
+		t.Fatal("an authored detector was removed")
+	}
+}
