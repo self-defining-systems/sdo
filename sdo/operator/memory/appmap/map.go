@@ -664,13 +664,16 @@ type Scenario struct {
 	SetupSteps int
 	// StatusOnly is true when no step checks more than the response status.
 	StatusOnly bool
+	// Users are the names of the probe users the scenario signs in as.
+	Users []string
 }
 
 // CheckScenarios applies the rules that need the compiled scenarios: each
 // probe's side effect matches its kind, and its DependsOn names a Service of
 // every component on the probe's path and none outside it; a read-later
 // scenario creates the data it reads in its own setup steps; no probe checks
-// only statuses.
+// only statuses; probe users are provisioned by the map's probe-identity
+// procedure.
 func (m Map) CheckScenarios(scenarios []Scenario) []Finding {
 	c := &checker{m: m, byName: map[string]Component{}, ops: opPaths(m.Operations)}
 	for _, comp := range m.Components {
@@ -733,6 +736,7 @@ func (m Map) CheckScenarios(scenarios []Scenario) []Finding {
 			}
 		}
 	}
+	c.checkProbeUsers(scenarios)
 	sort.SliceStable(c.findings, func(i, j int) bool { return c.findings[i].Rule < c.findings[j].Rule })
 	return c.findings
 }

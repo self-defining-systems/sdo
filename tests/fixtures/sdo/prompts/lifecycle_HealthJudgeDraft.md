@@ -68,9 +68,9 @@ covers breaks.
    .JSONEquals(path, "{key}") for a value the probe wrote, .ExactSet(path, field, values...) for the probe's own
    collection, .Each(path, field, pattern) for every member of other data, .Contains(...) only for text pages; log
    in as the test identity (.SaveCookie(name, key), then .WithHeader("Cookie", "name={key}")), never with a token
-   forged from application secrets. When the application offers no self-service identity, a scenario may name a
-   Secret key the application already keeps (`Credentials`); only the prober reads its value, so never copy it
-   into memory. Generators only build requests and check responses: never import net, os,
+   forged from application secrets. When the application offers no self-service identity, a scenario signs in as
+   probe users (`Users: []traffic.ProbeUser{{Name, As}}`, names containing the Marker) that the map's
+   `probe_identity` procedure provisions with an SDO-generated password; never read an application Secret. Generators only build requests and check responses: never import net, os,
    or the clock, and draw randomness only from the rng the engine passes.
 2. Workloads: files `.sdo/diagnostics/traffic/workloads/<name>.yaml` with apiVersion sdo.dev/v1alpha1, kind
    TrafficWorkload, name equal to the file name, purpose, ratePerSecond and scenarios [{id, weight}]. Write the

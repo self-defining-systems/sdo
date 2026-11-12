@@ -37,6 +37,7 @@ import (
  "sdo.dev/operator/memoryhost"
  "sdo.dev/operator/runtime/prober"
  "sdo.dev/operator/memoryhost/hostio"
+ "sdo.dev/operator/kubereads"
  "sdo.dev/operator/core"
  "sdo.dev/operator/sdk/program"
  "sdo.dev/operator/sdk/sdktest"
@@ -61,7 +62,8 @@ func main(){
  if !*synthetic {catalog,documents=nil,nil}
  workloads,err:=prober.ParseWorkloads(documents);if err!=nil{log.Fatal(err)}
  reader,restConfig,err:=core.NewKubernetesClientAndConfig();if err!=nil{log.Fatal(err)}
- engine,err:=prober.New(prober.Config{Namespace:*namespace,Catalog:catalog,Workloads:workloads,HostCPUStall:prober.HostCPUStall,Credentials:&hostio.SecretCredentials{Client:reader,Namespace:*namespace}});if err!=nil{log.Fatal(err)}
+ passwords:=hostio.NewProbeUsers(generated.ApplicationMapYAML,os.Getenv(hostio.ProbeIdentitySeedEnv),*namespace,*protected,reader,kubereads.SPDYExec{Client:reader,Config:restConfig})
+ engine,err:=prober.New(prober.Config{Namespace:*namespace,Catalog:catalog,Workloads:workloads,HostCPUStall:prober.HostCPUStall,Passwords:passwords});if err!=nil{log.Fatal(err)}
  trafficHost:=prober.NewHost(engine);defer trafficHost.Close()
  server.WithTraffic(trafficHost)
  objects,err:=core.NewGenericCapture(*namespace);if err!=nil{log.Fatal(err)}

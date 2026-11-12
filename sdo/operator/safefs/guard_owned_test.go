@@ -68,6 +68,7 @@ var operatorOwned = map[string]string{
 	"memory/validate/semantic.go":                    "removes a MkdirTemp scratch directory",
 	"memory/validate/whitespace.go":                  "MkdirTemp scratch index",
 	"memoryhost/hostio/process.go":                   reasonScratch,
+	"memoryhost/hostio/probe_users.go":               "controller-owned probe-identity seed under .sdo-runtime/probe-identity on the repository volume, a fixed path never in a checkout and never published",
 	"operatorcli/baseline_write.go":                  reasonCLI,
 	"operatorcli/late_findings.go":                   reasonCLI,
 	"operatorcli/operability_terminal.go":            reasonCLI,

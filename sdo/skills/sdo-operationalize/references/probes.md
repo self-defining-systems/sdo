@@ -53,12 +53,14 @@ Without a delete or overwrite route, keep every write on the fixed test identity
 
 - Never forge credentials, tokens, cookies or sessions, and never read secrets from the application's config,
   manifests or Secrets to sign one.
-- When the application has no self-service sign-up (accounts created by an operator, an API that takes only
-  tokens), name a Secret key the application already keeps in the scenario's `Credentials` (`{Secret, Key, As}`)
-  and send `{As}` in a header or form, or with `WithBasicAuth`. Only the prober reads the value, the way a Pod
-  takes a Secret by env; memory holds the reference. Check the key exists without reading values (`kubectl describe
-  secret` lists key names and sizes), and calibrate the step from a Pod that takes the key by env, never printing
-  it.
+- When the application has no self-service sign-up that yields a usable account (accounts created by an
+  operator, sign-up pending admin approval), declare the map's [probe identity](map.md#probe-identity) procedure
+  and list the users the scenario signs in as in `Users: []traffic.ProbeUser{{Name, As}}` (each name contains the
+  scenario's `Marker`; several users, such as a writer and a second member, are several entries). SDO provisions
+  each user with a password it generates and puts it in State under `As`; a Setup step signs in through the
+  application's normal login with `{As}` (form, JSON or `WithBasicAuth`) and saves the session or a token it
+  creates. Until the user is provisioned the scenario's samples are invalid, not failures. Never read an
+  application Secret for a probe.
 - Create the test identity in Setup through the application's own sign-up operation (an ensure step), and log
   in through its own login operation: save the session with `SaveCookie` or `SaveJSON` and send it with
   `WithHeader` (`{key}` placeholders) or `FromPrevious`.

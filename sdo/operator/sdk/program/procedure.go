@@ -68,6 +68,28 @@ type Procedure struct {
 	// Source is where the procedure is declared: a source file, a doc or a
 	// manifest object.
 	Source string `json:"source"`
+	// ProbeIdentity marks the procedure SDO runs to provision the test users
+	// health probes sign in as: it makes sure a non-admin user named by its
+	// only parameter, a required string username, exists, can sign in and has
+	// the password written to its stdin (the value, a newline, then EOF). It
+	// leaves a user whose password already matches untouched. At most one
+	// procedure of a map is the probe identity.
+	ProbeIdentity bool `json:"probe_identity,omitempty"`
+}
+
+// DefaultProbeIdentityTimeout bounds a probe-identity procedure that declares
+// no timeout: an admin CLI may take a minute to boot.
+const DefaultProbeIdentityTimeout = 2 * time.Minute
+
+// ProbeIdentityParam is the probe-identity procedure's only parameter.
+const ProbeIdentityParam = "username"
+
+// IdentityTimeout is how long one run of a probe-identity procedure may take.
+func (p Procedure) IdentityTimeout() time.Duration {
+	if p.Timeout > 0 {
+		return p.Timeout
+	}
+	return DefaultProbeIdentityTimeout
 }
 
 // ProcedureParam is one typed parameter of a procedure. Pattern is an RE2
@@ -100,6 +122,11 @@ func (p Procedure) Validate() error {
 	}
 	if (p.Component == "") == (p.Job == "") {
 		return fmt.Errorf("procedure %s runs either in a component (component, container, command) or as a Job (job: Job/<name>)", p.ID)
+	}
+	if p.ProbeIdentity {
+		if err := p.validateProbeIdentity(); err != nil {
+			return err
+		}
 	}
 	if p.Job != "" {
 		if !procedureJob.MatchString(p.Job) {
@@ -142,6 +169,21 @@ func (p Procedure) Validate() error {
 		if !used[name] {
 			return fmt.Errorf("procedure %s: parameter %s appears in no command argument", p.ID, name)
 		}
+	}
+	return nil
+}
+
+// validateProbeIdentity checks the shape SDO runs a probe-identity procedure
+// with: a component command, a data effect and exactly one required string
+// username parameter, so the password can only travel on stdin.
+func (p Procedure) validateProbeIdentity() error {
+	const shape = "runs in a component, has effect data and exactly one parameter, a required string username without a default; the password arrives on stdin"
+	if p.Component == "" || p.Effect != ProcedureData || len(p.Params) != 1 {
+		return fmt.Errorf("procedure %s: a probe identity procedure %s", p.ID, shape)
+	}
+	param := p.Params[0]
+	if param.Name != ProbeIdentityParam || param.Type != ProcedureString || !param.Required || param.Default != nil {
+		return fmt.Errorf("procedure %s: a probe identity procedure %s", p.ID, shape)
 	}
 	return nil
 }

@@ -56,24 +56,6 @@ type Consumer interface {
     controller runtime asks the prober for exactly the workloads its detectors
     consume.
 
-type Credential struct {
-	Secret string `json:"secret"`
-	Key    string `json:"key"`
-	As     string `json:"as"`
-}
-    Credential names a value the application keeps in a Secret of its own
-    namespace, for a scenario that must authenticate (an API token, the password
-    of an account the application ships). Only the prober reads the value,
-    at run time, the way a Pod takes a Secret key by env; it puts the value in
-    each iteration's State under As, so a step sends it with "{As}" in a header,
-    path, query, form or JSON body, or with WithBasicAuth. Operational memory
-    and agents hold the reference, never the value, and no sample carries it.
-
-type CredentialReader interface {
-	Value(ctx context.Context, secret, key string) (string, error)
-}
-    CredentialReader reads one key of a Secret in the application namespace.
-
 type Descriptor struct {
 	ID          string       `json:"id"`
 	Description string       `json:"description,omitempty"`
@@ -161,9 +143,9 @@ func (e *Engine) ShareSetup(source *Engine)
     was lost afterwards then fails every engine instead of being written again.
     Both engines must run the same catalog.
 
-func (e *Engine) UseCredentials(source CredentialReader)
-    UseCredentials lets scenarios that declare Credentials read them from source
-    at run time.
+func (e *Engine) UsePasswords(source Passwords)
+    UsePasswords lets scenarios that declare Users sign in with the passwords
+    source returns. A prober gives every engine the same source.
 
 func (e *Engine) Workload() Workload
     Workload returns the engine's workload with defaults applied.
@@ -247,4 +229,18 @@ func (e *HTTPEndpoint) Each(path string, field string, pattern string) *HTTPEndp
     Each requires the JSON array at dotted path ("" for the whole body) to be
     non-empty and every member's value at field ("" for the element itself) to
     match the RE2 pattern, so one malformed or dangling member fails the step.
+
+func (e *HTTPEndpoint) ExactSet(path string, field string, want ...string) *HTTPEndpoint
+    ExactSet requires the JSON array at dotted path ("" for the whole body)
+    to hold exactly the members want, in any order: none missing, none extra,
+    no duplicates. field is the dotted path of each member's value inside an
+    array element ("" when the elements are the values). Each {key} in want is
+    filled from State. Use it when the probe owns the data, so the healthy set
+    is known exactly.
+
+func (e *HTTPEndpoint) JSONEquals(path string, want string) *HTTPEndpoint
+    JSONEquals requires the JSON value at dotted path (object keys and array
+    indexes, for example "data.items.0.id") to equal want exactly. Each {key} in
+    want is replaced by the State value an earlier step saved, so a read-back
+    can require exactly the value the write chose.
 ```

@@ -70,3 +70,39 @@ func TestJobProcedureTakesNoCommand(t *testing.T) {
 		t.Fatal("a Job procedure with a command validated")
 	}
 }
+
+func syntheticIdentityProcedure() Procedure {
+	return Procedure{
+		ID: "probe-user", Component: "api", Container: "app", Effect: ProcedureData, Source: "docs/admin.md", ProbeIdentity: true,
+		Command: []string{"shopctl", "users", "ensure", "--name={{username}}", "--password-stdin"},
+		Params:  []ProcedureParam{{Name: "username", Type: ProcedureString, Required: true}},
+	}
+}
+
+// A probe-identity procedure takes exactly a required string username and
+// gets the password on stdin: no other parameter can carry it into argv.
+func TestProbeIdentityProcedureShape(t *testing.T) {
+	if err := syntheticIdentityProcedure().Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if timeout := syntheticIdentityProcedure().IdentityTimeout(); timeout != DefaultProbeIdentityTimeout {
+		t.Fatalf("default timeout = %s", timeout)
+	}
+	for name, edit := range map[string]func(*Procedure){
+		"job form":       func(p *Procedure) { p.Component, p.Container, p.Command, p.Params, p.Job = "", "", nil, nil, "Job/users" },
+		"effect":         func(p *Procedure) { p.Effect = ProcedureRepair },
+		"password param": func(p *Procedure) { p.Params = append(p.Params, ProcedureParam{Name: "password", Type: ProcedureString, Required: true}); p.Command = append(p.Command, "{{password}}") },
+		"optional user":  func(p *Procedure) { p.Params[0].Required = false },
+		"int user":       func(p *Procedure) { p.Params[0].Type = ProcedureInt },
+		"user default":   func(p *Procedure) { p.Params[0].Default = "sdoprobe-x" },
+		"no username":    func(p *Procedure) { p.Params[0].Name = "login"; p.Command[3] = "--name={{login}}" },
+	} {
+		procedure := syntheticIdentityProcedure()
+		procedure.Params = append([]ProcedureParam(nil), procedure.Params...)
+		procedure.Command = append([]string(nil), procedure.Command...)
+		edit(&procedure)
+		if err := procedure.Validate(); err == nil || !strings.Contains(err.Error(), "probe identity") {
+			t.Errorf("%s: accepted or unnamed error: %v", name, err)
+		}
+	}
+}

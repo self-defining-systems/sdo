@@ -296,7 +296,7 @@ func (e *HTTPEndpoint) WithHeader(name string, value string) *HTTPEndpoint {
 }
 
 // WithBasicAuth sends HTTP basic authentication. Each {key} in user and
-// password is filled from State, for example a password a Credential put
+// password is filled from State, for example a probe user's password put
 // there ("{password}").
 func (e *HTTPEndpoint) WithBasicAuth(user string, password string) *HTTPEndpoint {
 	e.basicUser, e.basicPassword = user, password

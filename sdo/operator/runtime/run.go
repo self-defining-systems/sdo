@@ -326,7 +326,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		if err := hostManager.Publish(ctx, sdktest.Snapshot{NamespaceName: *namespace}); err != nil {
 			return err
 		}
-		child, err := hostio.Launch(hostio.LaunchConfig{Namespace: *namespace, ProtectedNamespace: hostProtectedNamespace(*controlNamespace, *namespace), DisableSyntheticTraffic: !*syntheticTraffic, Binary: *memoryHostBinary, Digest: *memoryHostDigest, Commit: launchConfig.GetControllerRevision(), MemoryBytes: 512 << 20, Output: stderr})
+		child, err := hostio.Launch(hostio.LaunchConfig{Namespace: *namespace, ProtectedNamespace: hostProtectedNamespace(*controlNamespace, *namespace), DisableSyntheticTraffic: !*syntheticTraffic, ProbeIdentitySeed: hostio.ProbeIdentitySeedPath(*repositoryMountPath), Binary: *memoryHostBinary, Digest: *memoryHostDigest, Commit: launchConfig.GetControllerRevision(), MemoryBytes: 512 << 20, Output: stderr})
 		if err != nil {
 			return err
 		}
@@ -350,7 +350,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		if err != nil {
 			return err
 		}
-		hostio.SetRecovery(hostManager, hostio.LaunchConfig{Namespace: *namespace, ProtectedNamespace: hostProtectedNamespace(*controlNamespace, *namespace), DisableSyntheticTraffic: !*syntheticTraffic, Binary: *memoryHostBinary, Digest: *memoryHostDigest, Commit: launchConfig.GetControllerRevision(), MemoryBytes: 512 << 20, Output: stderr})
+		hostio.SetRecovery(hostManager, hostio.LaunchConfig{Namespace: *namespace, ProtectedNamespace: hostProtectedNamespace(*controlNamespace, *namespace), DisableSyntheticTraffic: !*syntheticTraffic, ProbeIdentitySeed: hostio.ProbeIdentitySeedPath(*repositoryMountPath), Binary: *memoryHostBinary, Digest: *memoryHostDigest, Commit: launchConfig.GetControllerRevision(), MemoryBytes: 512 << 20, Output: stderr})
 		detectors, options.Programs, initialTelemetrySources = remote.Detectors, remote.Programs, remote.TelemetrySources
 		if *externalIncidents {
 			detectors = nil
@@ -903,7 +903,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if err != nil {
 				return memoryCandidate{commit: commit, err: err}
 			}
-			child, err := hostio.Launch(hostio.LaunchConfig{Namespace: *namespace, ProtectedNamespace: hostProtectedNamespace(*controlNamespace, *namespace), DisableSyntheticTraffic: !*syntheticTraffic, Binary: artifact.Path, Digest: artifact.Digest, Commit: commit, MemoryBytes: 512 << 20, Output: stderr})
+			child, err := hostio.Launch(hostio.LaunchConfig{Namespace: *namespace, ProtectedNamespace: hostProtectedNamespace(*controlNamespace, *namespace), DisableSyntheticTraffic: !*syntheticTraffic, ProbeIdentitySeed: hostio.ProbeIdentitySeedPath(*repositoryMountPath), Binary: artifact.Path, Digest: artifact.Digest, Commit: commit, MemoryBytes: 512 << 20, Output: stderr})
 			if err != nil {
 				_ = workspace.Close()
 				return memoryCandidate{commit: commit, err: err}
@@ -963,7 +963,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			detectors, options.Programs, snapshotProvider, metricsObserver = remote.Detectors, remote.Programs, next, nextMetrics
 			memoryCatalogMu.Unlock()
 			_ = json.NewEncoder(stdout).Encode(map[string]any{"memory_host_activation": candidate.commit, "binary_digest": candidate.digest, "activation_latency_ms": clock.Now().Sub(candidate.started).Milliseconds(), "controller_revision": launchConfig.GetControllerRevision()})
-			hostio.SetRecovery(hostManager, hostio.LaunchConfig{Namespace: *namespace, ProtectedNamespace: hostProtectedNamespace(*controlNamespace, *namespace), DisableSyntheticTraffic: !*syntheticTraffic, Binary: candidate.binary, Digest: candidate.digest, Commit: candidate.commit, MemoryBytes: 512 << 20, Output: stderr})
+			hostio.SetRecovery(hostManager, hostio.LaunchConfig{Namespace: *namespace, ProtectedNamespace: hostProtectedNamespace(*controlNamespace, *namespace), DisableSyntheticTraffic: !*syntheticTraffic, ProbeIdentitySeed: hostio.ProbeIdentitySeedPath(*repositoryMountPath), Binary: candidate.binary, Digest: candidate.digest, Commit: candidate.commit, MemoryBytes: 512 << 20, Output: stderr})
 			return nil
 		}
 		defer activation.close()
@@ -1832,6 +1832,7 @@ func evaluateOnce(
 	hostBinary := flags.String("memory-host-binary", "", "validated memory host binary")
 	hostDigest := flags.String("memory-host-digest", "", "validated memory host digest")
 	memoryCommit := flags.String("memory-commit", "", "accepted memory revision")
+	repositoryMount := flags.String("repository-mount-path", "/workspace", "shared repository volume root; its .sdo-runtime holds the probe-identity seed the controller's probes use")
 	telemetryEnvironment := flags.String("telemetry-environment", "", "telemetry environment document for metric and alert health evaluation")
 	classesFlag := flags.String("classes", "", "comma-separated detector classes to evaluate (default: every class)")
 	pinsFile := flags.String("image-pins", "", "JSON rendered.ReceiptPins of the deployment under verification: desired state reads return the images it applied")
@@ -1872,7 +1873,7 @@ func evaluateOnce(
 		if err := manager.Publish(ctx, sdktest.Snapshot{NamespaceName: *namespace}); err != nil {
 			return err
 		}
-		child, err := hostio.Launch(hostio.LaunchConfig{Namespace: *namespace, Binary: *hostBinary, Digest: *hostDigest, Commit: *memoryCommit, MemoryBytes: 512 << 20, Output: stderr})
+		child, err := hostio.Launch(hostio.LaunchConfig{Namespace: *namespace, ProbeIdentitySeed: hostio.ProbeIdentitySeedPath(*repositoryMount), Binary: *hostBinary, Digest: *hostDigest, Commit: *memoryCommit, MemoryBytes: 512 << 20, Output: stderr})
 		if err != nil {
 			return err
 		}
