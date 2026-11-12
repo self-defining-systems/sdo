@@ -161,6 +161,8 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord) map[string]ProgramTr
 			stats[id] = state
 		}
 	}
+	// The built-in source-restore playbook is not learned: it earns no trust.
+	delete(stats, SourceRestoreID)
 	return stats
 }
 

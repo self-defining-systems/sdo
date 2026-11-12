@@ -94,3 +94,7 @@ one exact `AdmissionWebhooksFor` configuration/entry/serving-key relation, inclu
 pipes. Explicit fields are never overwritten; ambiguous or absent relations remain errors. No Secret read,
 key guess, program-name exception or extra mutation authority is added. Inspect the final bound plan when
 comparing older missing-Secret-parameter failures with current stage execution.
+
+## Source departures and the built-in `source-restore` playbook
+
+The `change:` line of a suspect in `sdo detect` comes first from `runtime.SourceDepartures`: a non-SDO manager's change that still differs from accepted source, with who, when and the `sdo mitigate ReconcileFromSource|CreateFromSource|DeleteObject --bind ref=Kind/ns/name` command on the expand line. The built-in `source-restore` playbook (`--bind component=NAME`) diagnoses and restores the same departures for a suspect on every failing path. It appears in a stage report as an attempt with `playbook_id: source-restore`; `skip_reason: builtin_restore_manual` is the default (`response.builtin_restore_auto` off) and the responder may `sdo mitigate` it. It is never learned: it earns no credited pair or trust, and its writes create no reflection work. Secrets show metadata only and have no command.

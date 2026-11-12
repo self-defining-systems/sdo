@@ -127,6 +127,7 @@ type Response struct {
 	RepairPolicy         string   `yaml:"repair_policy" doc:"the evidence the controller requires for a responder repair: commit (a source repair is committed through the broker; production) or recorded-actions (live cluster repairs are recorded as actions without a source commit; benchmark runs)"`
 	Standby              bool     `yaml:"standby" doc:"pre-start a responder worker; false forces cold Jobs"`
 	Menu                 bool     `yaml:"menu" doc:"offer the responder its tool menu"`
+	BuiltinRestoreAuto   bool     `yaml:"builtin_restore_auto" doc:"let the automatic stage apply the built-in source-restore playbook (put a component's non-SDO departures from accepted source back) when its diagnosis matches; off, it is only offered like any playbook and the responder decides"`
 	Permissive           bool     `yaml:"permissive" doc:"broad lane repair permissions excluding Secret and credential APIs"`
 	PermissiveNamespaces []string `yaml:"permissive_namespaces" doc:"additional lane namespaces the permissive responder may repair"`
 	StartupBound         Duration `yaml:"startup_bound" doc:"how long a new install waits for SDO to see its application healthy (2 min with no opener firing) before incidents open anyway; until then no incident opens. 0s turns the start-up period off"`

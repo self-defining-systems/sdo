@@ -179,6 +179,11 @@ type selectedPlan struct {
 
 // ResponderLoop holds one incident's tool state while its responder Job runs.
 type ResponderLoop struct {
+	// restoreEvidence is what the built-in source-restore playbook classifies with.
+	restoreEvidence *sourceRestoreEvidence
+	// BuiltinRestoreAuto lets the automatic stage apply the built-in
+	// source-restore playbook; off, the responder decides (response.builtin_restore_auto).
+	BuiltinRestoreAuto bool
 	scriptRefusals map[string]error
 
 	stageProgress       map[string]responseStageProgress
@@ -301,7 +306,9 @@ func NewResponderLoopWithOptions(request IncidentRequest, programs program.Progr
 		detectors = nil
 	}
 	detectors = withoutDisabledSetupDetectors(detectors, request.SourceCommit, request.DisabledSetupDetectors)
-	loop := &ResponderLoop{sessionID: session, Request: request, Programs: programs, Provider: provider, Detectors: detectors, Executor: executor, MaxBatches: maxBatches, plans: map[string]selectedPlan{}, applications: map[string]PlanApplicationResult{}, matchedViews: map[string]program.ReadView{}, matchedPlans: map[string]PlanApplicationResult{}, findings: append([]sdk.Finding(nil), request.Findings...)}
+	restoreEvidence := &sourceRestoreEvidence{}
+	restoreEvidence.set(request)
+	loop := &ResponderLoop{sessionID: session, Request: request, Programs: withSourceRestore(programs, restoreEvidence), restoreEvidence: restoreEvidence, Provider: provider, Detectors: detectors, Executor: executor, MaxBatches: maxBatches, plans: map[string]selectedPlan{}, applications: map[string]PlanApplicationResult{}, matchedViews: map[string]program.ReadView{}, matchedPlans: map[string]PlanApplicationResult{}, findings: append([]sdk.Finding(nil), request.Findings...)}
 	priorRecorder := executor.RecordPrimitive
 	loop.Executor.RecordPrimitive = func(call sdktest.PrimitiveCall) error {
 		if priorRecorder != nil {
@@ -927,6 +934,7 @@ func (l *ResponderLoop) snapshotView(ctx context.Context) (program.ReadView, err
 			return nil, err
 		}
 	}
+	l.restoreEvidence.set(l.Request)
 	// Captures are immutable historical evidence. Every operational diagnosis,
 	// including a resumed initial diagnosis, uses this attempt's fresh snapshot.
 	view := NewCycleReadView(l.ReadView(snapshot))
@@ -956,7 +964,7 @@ func (l *ResponderLoop) RefreshDiagnose(ctx context.Context) []ProgramRun {
 // automatic stage, which binds a playbook with credited pairs only through
 // them; the responder's own diagnosis also sees the finding-bound ones.
 func (l *ResponderLoop) selectCandidates(ctx context.Context, view program.ReadView, findings []sdk.Finding, stage bool) []ProgramRun {
-	return SelectKeyedProgramCandidates(ctx, l.Programs, view, findings, l.deadline(), KeyedMatching{Credits: l.Credits, OpeningKeys: l.Request.OpeningKeys, Stage: stage})
+	return SelectKeyedProgramCandidates(ctx, l.Programs, view, findings, l.deadline(), KeyedMatching{Credits: l.Credits, OpeningKeys: l.Request.OpeningKeys, Stage: stage, Restore: sourceRestoreCandidates(view, l.Request, findings)})
 }
 
 func (l *ResponderLoop) diagnose(ctx context.Context, findings []sdk.Finding, stage bool) []ProgramRun {
