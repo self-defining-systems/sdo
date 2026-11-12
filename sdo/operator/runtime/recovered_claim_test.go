@@ -35,3 +35,23 @@ func TestRecoveredClaimSkipsWorkerDespiteUnattributedWrite(t *testing.T) {
 		})
 	}
 }
+
+// A worker is skipped when the opening alerts recovered, whatever an unrelated
+// detector still reports.
+func TestRecoveredClaimIgnoresAnAlertThatDidNotOpenTheIncident(t *testing.T) {
+	opening := sdk.Finding{DetectorID: "health", RuleID: "broken", Status: sdk.FindingActive}
+	noise := sdk.Finding{DetectorID: "noise", RuleID: "firing", Status: sdk.FindingActive}
+	request := IncidentRequest{IncidentID: "synthetic", Findings: []sdk.Finding{opening, noise}, OpeningKeys: []string{findingKey(opening)},
+		PriorStages: []*contracts.StageReport{{Stage: "deterministic", Mitigations: []*contracts.StageMitigation{{Result: "rollout_failed", ApplyReceipt: &contracts.PlanApplication{Applied: true}}}}}}
+	detectors := []sdk.Detector{controllerDetector("health", time.Second, sdk.Finding{}), controllerDetector("noise", time.Second, noise)}
+	loop := NewResponderLoop(request, nil, staticProvider{}, detectors, PlanExecutor{}, 2)
+	loop.ReadView = func(v sdk.DetectionContext) program.ReadView { return program.ReadFrom(v) }
+	loop.stageProgress = map[string]responseStageProgress{}
+	state, err := (KubernetesJobDispatcher{}).beforeFirstResponderClaim(context.Background(), request, &contracts.AgentTask{}, loop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state == nil || deterministicStageReport(state.PriorStages).GetRecoveryWait().GetExitReason() != contracts.RecoveryWait_EXIT_REASON_CLEARED {
+		t.Fatalf("the claim must clear on the opening alerts: %+v", state)
+	}
+}

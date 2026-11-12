@@ -83,6 +83,17 @@ func (d KubernetesJobDispatcher) beforeFirstResponderClaim(ctx context.Context, 
 	if response.Error != "" {
 		return nil, fmt.Errorf("observe saved recovery before responder claim: %s", response.Error)
 	}
+	// A claim follows an applied write: only the opening alerts decide whether a
+	// worker is still needed.
+	scope := newRecoveryScope(openingKeys(&state.Request))
+	state.Findings = holdingFindings(scope, state.Findings)
+	state.refreshUnexplained()
+	openingDetectors := map[string]bool{}
+	for _, finding := range state.Request.Findings {
+		if scope.holds(finding) {
+			openingDetectors[finding.DetectorID] = true
+		}
+	}
 	_, refreshed := loop.settleRecoveryApplicationsLocked(ctx, IncidentResult{PlanApplications: loop.applicationEvidenceLocked()}, state.PriorStages)
 	if updated := deterministicStageReport(refreshed); updated != nil {
 		proto.Reset(report)
@@ -94,7 +105,7 @@ func (d KubernetesJobDispatcher) beforeFirstResponderClaim(ctx context.Context, 
 	if len(state.Findings) == 0 && len(response.DetectorStates) > 0 {
 		clear := true
 		for _, evaluation := range response.DetectorStates {
-			clear = clear && evaluation.Status == DetectorEvaluationClear
+			clear = clear && (evaluation.Status == DetectorEvaluationClear || !openingDetectors[evaluation.DetectorID])
 		}
 		if clear {
 			// The same proof the stage's own recovery wait requires; without it
