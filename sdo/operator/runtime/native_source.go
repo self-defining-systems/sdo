@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 
 	"sdo.dev/operator/broker"
@@ -24,10 +25,19 @@ const (
 )
 
 // SourceGate reports work that a source deploy after a closure must not
-// overlap. The controller sets it; a broker without one is never busy.
+// overlap. The controller sets it, and installation wiring may add checks (a
+// pending namespace onboarding); a broker without one is never busy.
 type SourceGate struct {
-	mu   sync.Mutex
-	busy func() string
+	mu     sync.Mutex
+	busy   func() string
+	checks []func() string
+}
+
+// Add registers one more reason a deploy must wait, read after the controller's own.
+func (g *SourceGate) Add(check func() string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.checks = append(g.checks, check)
 }
 
 // Set installs the controller's view of its own activity.
@@ -40,12 +50,19 @@ func (g *SourceGate) Set(busy func() string) {
 // Busy is the reason the deploy must wait, or "".
 func (g *SourceGate) Busy() string {
 	g.mu.Lock()
-	busy := g.busy
+	busy, checks := g.busy, append([]func() string(nil), g.checks...)
 	g.mu.Unlock()
-	if busy == nil {
-		return ""
+	if busy != nil {
+		if reason := busy(); reason != "" {
+			return reason
+		}
 	}
-	return busy()
+	for _, check := range checks {
+		if reason := check(); reason != "" {
+			return reason
+		}
+	}
+	return ""
 }
 
 // SourceDeferredError means a source publication did not start: a deploy
@@ -122,8 +139,22 @@ func (n NativeIncidentBroker) publishSource(ctx context.Context, id string) erro
 			repair = SourceRepair{Held: "held by an earlier attempt of this closure"}
 		} else if len(paths) > 0 {
 			repair, err = n.acceptSourceRepair(ctx, id, paths)
-			if errors.As(err, &failure) {
+			var conflict *broker.MemoryConflict
+			switch {
+			case errors.As(err, &failure):
 				repair, err = SourceRepair{Held: failure.Error()}, nil
+			case errors.As(err, &conflict):
+				// The change cannot be rebased onto the branch head. Keep it for a
+				// person on the side branch; nothing is deployed or retried.
+				branch, holdErr := n.Repository.HoldSource(ctx, id)
+				if holdErr != nil {
+					slog.Warn("source_conflict_not_kept", "incident_id", id, "error", holdErr)
+				}
+				detail := fmt.Sprintf("source_conflict: %s", strings.Join(conflict.Conflict.GetConflictingPaths(), ", "))
+				if branch != "" {
+					detail += " (kept on " + branch + ")"
+				}
+				repair, err = SourceRepair{Held: detail}, nil
 			}
 			if err != nil {
 				return err

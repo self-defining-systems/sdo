@@ -124,6 +124,8 @@ type NativeIncidentBroker struct {
 	// HeadHolds keeps the branch heads the cluster refused; nil disables the
 	// head poll.
 	HeadHolds lifecycle.HeadHolds
+	// HeadPollInterval is source.poll_interval: how often the head poll looks.
+	HeadPollInterval time.Duration
 }
 
 type ControllerRolloutExpectation struct {

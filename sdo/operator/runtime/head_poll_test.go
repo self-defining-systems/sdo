@@ -41,3 +41,27 @@ func TestHeadHoldIsKeyedByEffectiveSource(t *testing.T) {
 		t.Fatal("the earlier hold was not replaced")
 	}
 }
+
+// The gate reports the controller's own reason first, then every added check
+// (a pending onboarding), and is never busy when it has none.
+func TestSourceGateReadsTheControllerThenTheAddedChecks(t *testing.T) {
+	gate := &SourceGate{}
+	if gate.Busy() != "" {
+		t.Fatal("a gate with no checks is never busy")
+	}
+	gate.Add(func() string { return "namespace onboarding is pending" })
+	if got := gate.Busy(); got != "namespace onboarding is pending" {
+		t.Fatalf("busy = %q", got)
+	}
+	gate.Set(func() string { return "an incident is open" })
+	if got := gate.Busy(); got != "an incident is open" {
+		t.Fatalf("the controller's reason comes first: %q", got)
+	}
+}
+
+// With no onboarding staged the check says nothing.
+func TestAbsentOnboardingIsNotBusy(t *testing.T) {
+	if reason := onboardingPending(fake.NewSimpleClientset(), "sdo-system", "app")(); reason != "" {
+		t.Fatalf("reason = %q", reason)
+	}
+}

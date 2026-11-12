@@ -368,3 +368,24 @@ func TestAFailingRepairerIsRetried(t *testing.T) {
 		t.Fatalf("source repair = %q, want pending", ledger.GetSourceRepair())
 	}
 }
+
+// A source change that conflicts with the branch head is held as
+// source_conflict, never retried, and its commits are kept for a person.
+func TestASourceConflictIsHeldAndKeptNotRetried(t *testing.T) {
+	conflict := &broker.MemoryConflict{Conflict: &contracts.MemoryConflict{ConflictingPaths: []string{"app.txt"}}}
+	repairs := &recordedRepairer{err: conflict}
+	w := newRepairClosureWorld(t, repairs, "committed")
+	if _, err := w.closeAndPublish(t, "recorded-actions"); err != nil {
+		t.Fatalf("a conflict must not fail the publication: %v", err)
+	}
+	ledger, _ := w.native.readLedger("incident-1")
+	if ledger.GetSourceRepair() != "held" || !strings.Contains(ledger.GetSourceDetail(), "source_conflict: app.txt") {
+		t.Fatalf("source repair %q, detail %q", ledger.GetSourceRepair(), ledger.GetSourceDetail())
+	}
+	if repairGit(t, w.accepted, "rev-parse", "--verify", "refs/sdo/held/incident-1") == "" {
+		t.Fatal("the conflicting source was not kept")
+	}
+	if err := w.native.ProcessQueuedReflection(context.Background(), "incident-1"); err != nil || repairs.calls.Load() != 1 {
+		t.Fatalf("a later dispatch retried a conflict: %v, calls %d", err, repairs.calls.Load())
+	}
+}
