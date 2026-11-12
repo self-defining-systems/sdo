@@ -261,7 +261,12 @@ class Watcher:
         if active and detected is not None and mine:
             self.incident = self.incident or incident or f"detected-{detected.isoformat()}"
             findings = _get(request, "findings") or []
-            what = "; ".join(f"{_get(f, 'detector_id')}: {_get(f, 'summary')}" for f in findings[:3])
+            # The alerts that opened the incident, not the clues that joined it.
+            keys = set(_get(request, "opening_keys") or [])
+            openers = [
+                f for f in findings if f"{_get(f, 'detector_id')}\x00{_get(f, 'fingerprint')}" in keys
+            ] or findings
+            what = "; ".join(f"{_get(f, 'detector_id')}: {_get(f, 'summary')}" for f in openers[:3])
             self._once(
                 "open", f"sdo: incident opened at {detected.strftime('%H:%M:%S')} ({what or 'findings pending'})", lines
             )
