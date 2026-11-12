@@ -97,7 +97,7 @@ def symptom(request: IncidentRequest) -> str:
         key = (_status(str(meta.get("failure_status", "an unrecorded error"))), _short(str(meta.get("failure_observed", ""))))
         total = int(meta.get("samples", 0))
         groups.setdefault(key, []).append(f"{name} {failed}/{total}" if total else name)
-    lines = [f"Failing user tests{since}:"]
+    lines = [f"Failing user tests{since}; counts are failed/total samples in the window:"]
     for (status, observed), members in sorted(groups.items(), key=lambda item: -len(item[1]))[:_MAX_GROUPS]:
         lines.append(f"- {_names(members, _MAX_TESTS)} failed with {status}" + (f": {observed}" if observed else ""))
     if len(groups) > _MAX_GROUPS:

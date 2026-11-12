@@ -59,7 +59,7 @@ def test_failing_tests_sharing_a_status_and_error_are_grouped_with_their_counts(
         passing=("fixture-read", "pipeline-call"),
     )
     assert symptom(request) == (
-        "Failing user tests since 12:00:10 UTC (first failing sample):\n"
+        "Failing user tests since 12:00:10 UTC (first failing sample); counts are failed/total samples in the window:\n"
         '- commit-call 3/6, user-api 4/6 failed with HTTP 429: text "Retry later"\n'
         "- git-over-ssh 3/5 failed with timeout: i/o timeout\n"
         "Passing: fixture-read, pipeline-call. Re-check with `sdo verify`."

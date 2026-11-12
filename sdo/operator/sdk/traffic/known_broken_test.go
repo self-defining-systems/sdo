@@ -108,6 +108,11 @@ func TestKnownBrokenScenarioFailingDifferentlyIsANote(t *testing.T) {
 func TestKnownBrokenDoesNotHideTheOtherScenarios(t *testing.T) {
 	window := knownBrokenWindow(reviewSamples(OutcomeError, 404))
 	window.Scenarios[0].Samples = reviewSamples(OutcomeError, 500)
+	for i := range window.Scenarios[0].Samples {
+		// Spread the failures over longer than the health hold.
+		window.Scenarios[0].Samples[i].At = time.Unix(1000, 0).Add(time.Duration(i) * 3 * time.Second)
+	}
+	window.ObservedAt = time.Unix(1000, 0).Add(12 * time.Second)
 	findings, _, _ := evaluateKnownBroken(t, window)
 	if len(findings) != 1 || !strings.HasSuffix(findings[0].RuleID, ".list") {
 		t.Fatalf("findings = %+v, want exactly the list scenario", findings)

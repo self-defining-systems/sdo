@@ -442,9 +442,28 @@ func (l *ResponderLoop) InitialDiagnose(ctx context.Context) []ProgramRun {
 	defer l.operationMu.Unlock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.capturePhase = "open@detect"
+	// With no learned playbook there is nothing to record diagnoses for, and the
+	// controller stored open@detect when the incident opened: skip the retake
+	// and its source-comparison snapshot, which would delay the agent.
+	if l.hasLearnedPlaybooks() {
+		l.capturePhase = "open@detect"
+	}
 	defer func() { l.capturePhase = "" }()
 	return l.diagnose(ctx, l.findings, true)
+}
+
+// hasLearnedPlaybooks reports whether any registered playbook is not the
+// built-in source restore.
+func (l *ResponderLoop) hasLearnedPlaybooks() bool {
+	if l.Programs == nil {
+		return false
+	}
+	for _, spec := range l.Programs.List() {
+		if spec.ID != SourceRestoreID {
+			return true
+		}
+	}
+	return false
 }
 
 func (l *ResponderLoop) LoopsUsed() int { l.mu.Lock(); defer l.mu.Unlock(); return l.batches }

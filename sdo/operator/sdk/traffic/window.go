@@ -91,6 +91,9 @@ type SLOVerdict struct {
 	// FirstFailureAt is when the first failing sample of the judged window
 	// happened; zero when none failed.
 	FirstFailureAt time.Time
+	// FailureSpan is the time from the first to the last failing sample in
+	// the judged window; zero with fewer than two failing samples.
+	FailureSpan time.Duration
 }
 
 // Evaluate judges samples (oldest first) of one scenario at now. Invalid
@@ -115,7 +118,15 @@ func Evaluate(scenarioID string, slo SLO, samples []Sample, now time.Time) SLOVe
 	verdict.Evaluated = true
 	verdict.Span = recent[len(recent)-1].At.Sub(recent[0].At)
 	latencies := make([]time.Duration, 0, len(recent))
+	var firstFailure time.Time
 	for _, sample := range recent {
+		if sample.Outcome != OutcomeOK {
+			if firstFailure.IsZero() {
+				firstFailure = sample.At
+				verdict.FirstFailureAt = sample.At
+			}
+			verdict.FailureSpan = sample.At.Sub(firstFailure)
+		}
 		switch sample.Outcome {
 		case OutcomeTimeout:
 			verdict.Timeouts++
@@ -130,9 +141,6 @@ func Evaluate(scenarioID string, slo SLO, samples []Sample, now time.Time) SLOVe
 			verdict.StatusCounts[statusKey(sample)]++
 		}
 		if sample.Outcome != OutcomeOK {
-			if verdict.FirstFailureAt.IsZero() {
-				verdict.FirstFailureAt = sample.At
-			}
 			verdict.RecentFailures = append(verdict.RecentFailures, sample)
 		}
 	}

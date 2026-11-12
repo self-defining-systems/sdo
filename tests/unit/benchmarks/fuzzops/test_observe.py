@@ -114,6 +114,34 @@ def test_watcher_reports_each_step_once_and_closes() -> None:
     assert w.closed
 
 
+def test_incident_opened_line_names_the_opening_alerts_not_the_clues() -> None:
+    clue = {"detector_id": "resource-saturation", "fingerprint": "f-clue", "summary": "memory saturation"}
+    opener = {
+        "detector_id": "traffic-probe-call",
+        "fingerprint": "f-open",
+        "summary": "scenario commit-call violates its SLO",
+    }
+    state = {
+        "incident_open": True,
+        "incident_detected_at": _at(5),
+        "incident_request": {
+            "incident_id": "inc-3",
+            # Findings sort by fingerprint, so the clue comes first.
+            "findings": [clue, opener],
+            "opening_keys": ["traffic-probe-call\x00f-open"],
+            "standing_keys": ["resource-saturation\x00f-clue"],
+        },
+    }
+    lines, _ = Watcher(started=START).step(state)
+    assert lines == ["sdo: incident opened at 12:00:05 (traffic-probe-call: scenario commit-call violates its SLO)"]
+    camel = {
+        **state,
+        "incidentRequest": {**state["incident_request"], "openingKeys": state["incident_request"]["opening_keys"]},
+    }
+    del camel["incident_request"]
+    assert Watcher(started=START).step(camel)[0] == lines
+
+
 def test_watcher_ignores_incidents_detected_before_it_started() -> None:
     w = Watcher(started=START)
     old = {

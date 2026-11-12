@@ -24,7 +24,7 @@ def test_the_first_message_names_the_incident_and_the_failing_tests() -> None:
     prompt = str(_responder_prompt(_opened_by_a_test("login", "checkout")))
 
     assert prompt.startswith(
-        "Incident toy-incident in namespace toy.\nFailing user tests:\n- checkout, login failed with an unrecorded error\n"
+        "Incident toy-incident in namespace toy.\nFailing user tests; counts are failed/total samples in the window:\n- checkout, login failed with an unrecorded error\n"
     )
     assert f"{SKILLS_ROOT}/incident-response/SKILL.md" in prompt
     assert f"{SKILLS_ROOT}/sdo-operating/SKILL.md" in prompt
