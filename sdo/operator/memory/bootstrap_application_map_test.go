@@ -46,10 +46,10 @@ func TestWriteArchitectureCarriesTheApplicationMapVerbatim(t *testing.T) {
 	}
 }
 
-// The designer's brief lists the mapped edges from entry components that no
-// probed operation crosses, so coverage gaps drive probe design instead of
-// being found only after acceptance.
-func TestDesignerBriefListsUncoveredEntryEdges(t *testing.T) {
+// The designer's brief lists the user-path components no probed user
+// operation covers, so coverage gaps drive probe design instead of being found
+// only after acceptance.
+func TestDesignerBriefListsUncoveredUserPathComponents(t *testing.T) {
 	checkout := t.TempDir()
 	if err := memory.WriteArchitecture(checkout, "shop", "c1", "# Manifest inventory\n\n- Deployment/shop/web (source: web.yaml)\n"); err != nil {
 		t.Fatal(err)
@@ -79,10 +79,10 @@ probes:
 		t.Fatal(err)
 	}
 	brief := memory.CoverageObligations(checkout)
-	if !strings.Contains(brief, "web -> blobs") || strings.Contains(brief, "web -> db") || !strings.Contains(brief, "unprobed") {
-		t.Fatalf("brief does not list exactly the uncovered entry edge:\n%s", brief)
+	if !strings.Contains(brief, "- blobs\n") || strings.Contains(brief, "- db\n") || strings.Contains(brief, "- web\n") || !strings.Contains(brief, "unprobed") {
+		t.Fatalf("brief does not list exactly the uncovered component:\n%s", brief)
 	}
-	if text, err := memory.ReadArchitecture(checkout); err != nil || strings.Contains(text, "web -> blobs lies") {
+	if text, err := memory.ReadArchitecture(checkout); err != nil || strings.Contains(text, "Probe coverage") {
 		t.Fatalf("the architecture text itself stays what the file holds: %v", err)
 	}
 	covered := strings.Replace(region, "path: [web, db]", "path: [web, db, blobs]", 1)

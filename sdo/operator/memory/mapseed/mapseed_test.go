@@ -362,19 +362,25 @@ func TestSeedRegionPassesTheMapCheck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seeded map does not parse: %v\n%s", err, region.YAML)
 	}
-	inv := appmap.Inventory{Workloads: map[string]bool{}, Services: map[string]bool{}}
+	exposure, metrics := Exposure(objs)
+	inv := appmap.Inventory{Workloads: map[string]bool{}, Services: map[string]bool{}, Exposure: exposure, MetricsPorts: metrics}
 	for _, o := range objs {
 		inv.Workloads[o.GetKind()+"/"+o.GetName()] = true
 		if o.GetKind() == "Service" {
 			inv.Services[o.GetName()] = true
 		}
 	}
-	// The seed has no operations yet: its edges are unexercised, and those
-	// from an entry component are the designer's to cover.
+	// The seed has no operations yet: the components on the user path from
+	// the exposed web Service are the designer's to cover.
+	covered := 0
 	for _, f := range parsed.Check(inv, nil) {
-		if f.Rule != appmap.RuleUnexercisedEdge && f.Rule != appmap.RuleUncoveredEdge {
+		if f.Rule != appmap.RuleCoverage {
 			t.Errorf("finding %+v", f)
 		}
+		covered++
+	}
+	if covered == 0 {
+		t.Errorf("the exposed web Service puts its path on the designer's obligations")
 	}
 	if len(parsed.Components) != len(seed.Map.Components) || len(parsed.Edges) != len(seed.Map.Edges) || len(parsed.Procedures) != len(seed.Map.Procedures) {
 		t.Fatalf("round trip lost entries:\n%s", region.YAML)
@@ -424,5 +430,22 @@ func TestSeedIsDeterministic(t *testing.T) {
 	}
 	if again := FromObjects(objs).Region(); again != first {
 		t.Fatalf("object order changed the seed:\n%s\n---\n%s", first, again)
+	}
+}
+
+// The exposure fact: NodePort, LoadBalancer and Ingress backends with a
+// non-metrics port; a Service nothing calls is not exposed by that alone.
+func TestExposureListsServicesExposedOutsideTheCluster(t *testing.T) {
+	exposure, metrics := Exposure(objects(t, chart))
+	if got := exposure["shop-web"]; len(got) == 0 || got[0] != "NodePort" {
+		t.Fatalf("shop-web exposure = %v (all: %v)", got, exposure)
+	}
+	for name := range exposure {
+		if name != "shop-web" {
+			t.Errorf("only the NodePort web Service is exposed, got %s: %v", name, exposure[name])
+		}
+	}
+	if len(metrics["shop-web"]) != 1 {
+		t.Errorf("shop-web metrics ports = %v", metrics["shop-web"])
 	}
 }

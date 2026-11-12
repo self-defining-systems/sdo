@@ -16,17 +16,17 @@ func (r Request) mapBlocks() bool { return r.Actor == HealthJudge && r.Phase == 
 
 // mapAlwaysNote lists the findings that never reject.
 func mapAlwaysNote(rule string) bool {
-	return rule == RuleMapMissing || rule == RuleMapUnexercisedEdge || rule == RuleMapUnprobedEdge || rule == RuleMapPossibleEdge
+	return rule == RuleMapMissing || rule == RuleMapUnprobed || rule == RuleMapPossibleEdge
 }
 
 // AgentObligation reports whether a diagnostic names work the agent's edit is
 // for rather than a defect of the tree: the empty diff, and the coverage the
-// detection designer adds (operations, probes, entry edges). An unedited base
+// detection designer adds (operations, probes, user-path components). An unedited base
 // carries these by construction (Go seeds the map without probes), so the
 // base check never reports them; the designer's proposal is still held to them.
 func AgentObligation(rule string) bool {
 	switch rule {
-	case RuleEmptyDiff, RuleMapUncoveredOp, RuleMapUncoveredWrite, RuleMapUncoveredData, RuleMapUncoveredEdge:
+	case RuleEmptyDiff, RuleMapUncoveredOp, RuleMapUncoveredWrite, RuleMapUncoveredData, RuleMapCoverage:
 		return true
 	}
 	return false

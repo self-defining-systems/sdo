@@ -133,8 +133,9 @@ func TestCarryKeepsTheRegionVerbatim(t *testing.T) {
 
 func TestShopMapIsClean(t *testing.T) {
 	m := mustParse(t, shopYAML)
-	// The only finding is the note about the edge no operation path crosses.
-	if got := m.Check(ParseInventory(shopInventory), shopWorkloads); len(got) != 1 || !has(got, RuleUnexercisedEdge, "api -> cache") {
+	// The only finding is the cache, reachable from the entry web over api ->
+	// cache, which no probed operation covers.
+	if got := m.Check(ParseInventory(shopInventory), shopWorkloads); len(got) != 1 || !has(got, RuleCoverage, "component cache ") {
 		t.Fatalf("findings: %+v", got)
 	}
 	scenarios := []Scenario{
@@ -231,14 +232,6 @@ func TestScenariosInWrongWorkloadOrWithoutProbe(t *testing.T) {
 	}
 	if got := m.Check(ParseInventory(shopInventory), nil); !has(got, RuleSchema, "write-item") {
 		t.Fatalf("probes with no workloads: %+v", got)
-	}
-}
-
-func TestUnexercisedEdgeIsANote(t *testing.T) {
-	m := mustParse(t, shopYAML)
-	got := m.Check(ParseInventory(shopInventory), shopWorkloads)
-	if !has(got, RuleUnexercisedEdge, "api -> cache") {
-		t.Fatalf("no unexercised-edge finding: %+v", got)
 	}
 }
 

@@ -30,16 +30,8 @@ const MaxClientLinks = vantage.MaxProbes / 2
 // dials those links from its own Pod; these dial them from the client, so a
 // loss or partition on the client's side of an edge is seen too.
 func plannedClientLinks(root string) []vantage.ClientLink {
-	data, err := os.ReadFile(filepath.Join(root, layout.ArchitectureFile))
-	if err != nil {
-		return nil
-	}
-	region, found, err := appmap.Find(string(data))
-	if !found || err != nil {
-		return nil
-	}
-	parsed, err := appmap.Parse(region.YAML)
-	if err != nil {
+	parsed, coverage, ok := acceptedMap(root)
+	if !ok {
 		return nil
 	}
 	owner := map[string]appmap.Component{}
@@ -48,7 +40,6 @@ func plannedClientLinks(root string) []vantage.ClientLink {
 			owner[service] = component
 		}
 	}
-	entry := entryComponentNames(parsed)
 	directory := filepath.Join(root, layout.TrafficWorkloadsDir)
 	entries, err := os.ReadDir(directory)
 	if err != nil {
@@ -85,7 +76,7 @@ func plannedClientLinks(root string) []vantage.ClientLink {
 			links = append(links, vantage.ClientLink{ID: "client." + link.ID(), From: target, Link: link})
 		}
 	}
-	callerEntry := func(l vantage.ClientLink) bool { return entry[owner[l.Link.From].Name] }
+	callerEntry := func(l vantage.ClientLink) bool { return coverage.Components[owner[l.Link.From].Name].Entry }
 	sort.SliceStable(links, func(i, j int) bool {
 		if a, b := callerEntry(links[i]), callerEntry(links[j]); a != b {
 			return a
@@ -99,27 +90,6 @@ func plannedClientLinks(root string) []vantage.ClientLink {
 		return nil
 	}
 	return links
-}
-
-// entryComponentNames are the components requests enter: the first of an
-// operation's path, and every component with a Service no edge calls.
-func entryComponentNames(m appmap.Map) map[string]bool {
-	called := map[string]bool{}
-	for _, e := range m.Edges {
-		called[e.To] = true
-	}
-	out := map[string]bool{}
-	for _, op := range m.Operations {
-		if len(op.Path) > 0 {
-			out[op.Path[0]] = true
-		}
-	}
-	for _, c := range m.Components {
-		if len(c.Services) > 0 && !called[c.Name] {
-			out[c.Name] = true
-		}
-	}
-	return out
 }
 
 // prepareClientLinksDetector installs the client-links detector when a link

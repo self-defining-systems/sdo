@@ -26,9 +26,9 @@ declare every store edge with its protocol to make delay and loss on it visible.
   template is filled from `params` or from an earlier step's `SaveJSON`, escaped for a JSON string; write `"{key}"`
   for a string and `{key}` for a number.
 - Journey workloads run only on demand and never feed detection, so a write placed only there detects nothing.
-- `sdo-operator memory check` lists each edge no health-probe scenario drives as a `traffic.undriven-edge` coverage
-  gap. It never fails the check. Drive the edge, or record why no synthetic request can cross it as `unprobed` on
-  its map edge.
+- Coverage is per component (`map.coverage`): a component on the user path is covered by a probe whose operation
+  enters at a user entry Service and includes it, or records `unprobed: <why>` on its map component. The link
+  dials into an uncovered component are its only, reachability-strength, recovery evidence.
 
 ## Latency and saturation
 

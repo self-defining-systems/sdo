@@ -33,7 +33,7 @@ type Seed struct {
 }
 
 // Entry is a Service the application is probably entered through: exposed
-// outside the cluster, or one no other component calls.
+// outside the cluster, or, as a weaker candidate, one no other component calls.
 type Entry struct {
 	Component string
 	Service   string
@@ -487,9 +487,61 @@ func (s *seeder) buildMap() appmap.Map {
 	return m
 }
 
+// Exposure is, per Service with a port other than a metrics port, how the
+// rendered objects expose it outside the cluster: its type when NodePort or
+// LoadBalancer, and each Ingress that routes to it. Metrics are, per Service,
+// its metrics port numbers. It is the one definition of an exposed Service:
+// the seed's entry candidates and the manifest inventory both read it, and the
+// application map's coverage reads the inventory.
+func Exposure(objects []*unstructured.Unstructured) (exposure map[string][]string, metrics map[string][]int) {
+	s := &seeder{services: map[string]*service{}, ingress: map[string][]string{}, namespaces: map[string]bool{}}
+	for _, object := range objects {
+		switch object.GetKind() {
+		case "Service":
+			if _, dup := s.services[object.GetName()]; !dup && object.GetName() != "" {
+				s.services[object.GetName()] = &service{name: object.GetName(), object: object}
+			}
+		case "Ingress":
+			s.addIngress(object)
+		}
+	}
+	exposure, metrics = map[string][]string{}, map[string][]int{}
+	for name, svc := range s.services {
+		why, ports, metric := s.exposure(name, svc)
+		metrics[name] = metric
+		if len(why) > 0 && len(ports) > 0 {
+			exposure[name] = why
+		}
+	}
+	return exposure, metrics
+}
+
+// exposure is how one Service is exposed, its non-metrics ports and its
+// metrics port numbers.
+func (s *seeder) exposure(name string, svc *service) (why []string, ports []map[string]any, metrics []int) {
+	spec := mapValue(svc.object.Object["spec"])
+	if kind, _ := spec["type"].(string); kind == "NodePort" || kind == "LoadBalancer" {
+		why = append(why, kind)
+	}
+	why = append(why, s.ingress[name]...)
+	for _, port := range listValue(spec["ports"]) {
+		p := mapValue(port)
+		number := intValue(p["port"])
+		switch {
+		case number < 1:
+		case metricsPort.MatchString(stringValue(p["name"])):
+			metrics = append(metrics, number)
+		default:
+			ports = append(ports, p)
+		}
+	}
+	return why, ports, metrics
+}
+
 // entries lists the Service ports, other than metrics ports, of components
-// that are not stores and are exposed outside the cluster or called by no
-// other component.
+// that are not stores and are exposed outside the cluster. A Service no other
+// component calls is listed too, as a candidate only: it is not a user entry
+// unless it is exposed.
 func (s *seeder) entries() []Entry {
 	called := map[string]bool{}
 	for key := range s.edges {
@@ -505,27 +557,15 @@ func (s *seeder) entries() []Entry {
 		}
 		health := healthEndpoints(c.object)
 		for _, name := range c.Services {
-			svc := s.services[name]
-			spec := mapValue(svc.object.Object["spec"])
-			kind, _ := spec["type"].(string)
-			var why []string
-			if kind == "NodePort" || kind == "LoadBalancer" {
-				why = append(why, kind)
-			}
-			why = append(why, s.ingress[name]...)
+			why, ports, _ := s.exposure(name, s.services[name])
 			if len(why) == 0 && !called[id] {
-				why = append(why, "no other component calls it")
+				why = append(why, "not exposed and no other component calls it (a candidate, not a user entry)")
 			}
 			if len(why) == 0 {
 				continue
 			}
-			for _, port := range listValue(spec["ports"]) {
-				p := mapValue(port)
-				number := intValue(p["port"])
-				if number < 1 || metricsPort.MatchString(stringValue(p["name"])) {
-					continue
-				}
-				out = append(out, Entry{Component: id, Service: name, Port: number, PortName: stringValue(p["name"]), Exposure: strings.Join(why, ", "), Health: health})
+			for _, p := range ports {
+				out = append(out, Entry{Component: id, Service: name, Port: intValue(p["port"]), PortName: stringValue(p["name"]), Exposure: strings.Join(why, ", "), Health: health})
 			}
 		}
 	}

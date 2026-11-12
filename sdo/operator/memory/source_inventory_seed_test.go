@@ -72,7 +72,7 @@ func TestFirstArchitectureCarriesTheSeededMapAndItsStoreReaders(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, f := range parsed.Check(appmap.ParseInventory(string(data)), nil) {
-		if f.Rule != appmap.RuleUnexercisedEdge && f.Rule != appmap.RuleUncoveredEdge {
+		if f.Rule != appmap.RuleCoverage {
 			t.Errorf("seeded map finding: %+v", f)
 		}
 	}
@@ -114,5 +114,26 @@ func TestRegeneratedArchitectureKeepsTheDesignersMapOverTheSeed(t *testing.T) {
 	region, found, err := appmap.Find(string(second))
 	if err != nil || !found || region.Block != designer {
 		t.Fatalf("region = %q (%v, %v)\n%s", region.Block, found, err, second)
+	}
+}
+
+// The inventory records how each Service is exposed outside the cluster and
+// its metrics ports, and the application map's coverage reads them back from
+// the architecture text.
+func TestInventoryRecordsServiceExposureForCoverage(t *testing.T) {
+	objects := seedObjects()
+	web := objects[1]
+	web.Object["spec"].(map[string]any)["type"] = "NodePort"
+	web.Object["spec"].(map[string]any)["ports"] = []any{map[string]any{"name": "http", "port": int64(80)}, map[string]any{"name": "metrics", "port": int64(9090)}}
+	text := ArchitectureInventory(SourceFactsOf(objects, "raw"))
+	inv := appmap.ParseInventory(text)
+	if got := inv.Exposure["web"]; len(got) != 1 || got[0] != "NodePort" {
+		t.Fatalf("web exposure = %v\n%s", got, text)
+	}
+	if got := inv.MetricsPorts["web"]; len(got) != 1 || got[0] != 9090 {
+		t.Fatalf("web metrics ports = %v", got)
+	}
+	if len(inv.Exposure["api"]) != 0 || !inv.Services["api"] {
+		t.Fatalf("api is a ClusterIP Service: %+v", inv)
 	}
 }

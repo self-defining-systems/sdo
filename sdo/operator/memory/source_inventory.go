@@ -3,11 +3,13 @@ package memory
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/memory/mapseed"
 	"sdo.dev/operator/rendered"
 )
@@ -30,6 +32,7 @@ type SourceFacts struct {
 // turns it into objects.
 func SourceFactsOf(objects []*unstructured.Unstructured, renderer string) SourceFacts {
 	resources := make([]*contracts.SourceResource, 0, len(objects))
+	exposure, metrics := mapseed.Exposure(objects)
 	for _, object := range objects {
 		kind, name := object.GetKind(), object.GetName()
 		if kind == "" || name == "" {
@@ -39,12 +42,31 @@ func SourceFactsOf(objects []*unstructured.Unstructured, renderer string) Source
 		if namespace == "" {
 			namespace = "default"
 		}
-		resources = append(resources, &contracts.SourceResource{Kind: kind, Name: name, Namespace: namespace, Source: renderer, Dependencies: sourceDependencies(object.Object)})
+		dependencies := sourceDependencies(object.Object)
+		if kind == "Service" {
+			dependencies = append(dependencies, serviceFacts(exposure[name], metrics[name])...)
+			slices.Sort(dependencies)
+		}
+		resources = append(resources, &contracts.SourceResource{Kind: kind, Name: name, Namespace: namespace, Source: renderer, Dependencies: dependencies})
 	}
 	slices.SortFunc(resources, func(a, b *contracts.SourceResource) int {
 		return strings.Compare(a.Namespace+"\x00"+a.Kind+"\x00"+a.Name+"\x00"+a.Source, b.Namespace+"\x00"+b.Kind+"\x00"+b.Name+"\x00"+b.Source)
 	})
 	return SourceFacts{Resources: resources, Seed: mapseed.FromObjects(objects)}
+}
+
+// serviceFacts are the inventory sub-bullets the application map's coverage
+// reads for a Service: how it is exposed outside the cluster, and its metrics
+// ports.
+func serviceFacts(exposure []string, metrics []int) []string {
+	var out []string
+	for _, how := range exposure {
+		out = append(out, appmap.ExposurePrefix+how)
+	}
+	for _, port := range metrics {
+		out = append(out, appmap.MetricsPortPrefix+strconv.Itoa(port))
+	}
+	return out
 }
 
 func mapValue(value any) map[string]any {

@@ -62,15 +62,6 @@ type Link struct {
 }
     Link is one declared dependency edge: From calls To on Port.
 
-func UndrivenLinks(catalog Catalog, workloads []Workload) []Link
-    UndrivenLinks returns the edges declared by link-probe workloads that no
-    scenario of a health-probe workload drives, sorted by ID. A scenario drives
-    an edge when its Target or DependsOn names both ends. A link probe proves
-    only that a fresh connection opens; a fault that answers the connection but
-    fails the request (a broken payment call behind checkout) shows only through
-    a continuously probed scenario whose request crosses the edge, so each edge
-    returned here is one the health probes cannot see break.
-
 func (l Link) EffectiveProtocol() LinkProtocol
     EffectiveProtocol preserves the TCP default for older observations.
 
@@ -240,4 +231,25 @@ type LinkSetting struct {
 
 type LinkVantage string
     LinkVantage names where a link's dials were made from.
+
+const (
+	// LinkVantageProber: the link-probe workload's own pod dialed the edge.
+	LinkVantageProber LinkVantage = "prober"
+	// LinkVantageClient: a vantage probe dialed the edge from inside a Pod
+	// of the calling workload, through that Pod's own network namespace,
+	// so impairment on the client's egress (traffic shaping, a full
+	// connection table, a DNS override) shows.
+	LinkVantageClient LinkVantage = "client"
+)
+type Outcome string
+    Outcome classifies one iteration of a scenario.
+
+const (
+	OutcomeOK      Outcome = "ok"
+	OutcomeError   Outcome = "error"
+	OutcomeTimeout Outcome = "timeout"
+	// OutcomeInvalid marks a generator bug: a request could not be built or
+	// broke a safety rule, so nothing was sent. It is not a health signal.
+	OutcomeInvalid Outcome = "invalid"
+)
 ```

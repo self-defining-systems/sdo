@@ -228,20 +228,6 @@ import (
     "sdo.dev/operator/sdk/traffic"
 )
 
-// TestTrafficNotesUndrivenLinks records, as non-blocking coverage notes, the
-// declared dependency edges no continuously probed scenario crosses.
-func TestTrafficNotesUndrivenLinks(t *testing.T) {
-    workloads, err := prober.ParseWorkloads(TrafficWorkloads)
-    if err != nil { t.Fatal(err) }
-    notes := []string{}
-    for _, link := range traffic.UndrivenLinks(TrafficCatalog(), workloads) {
-        notes = append(notes, traffic.UndrivenLinkNote(link))
-    }
-    data, err := json.Marshal(notes)
-    if err != nil { t.Fatal(err) }
-    if err := os.WriteFile("` + trafficCoverageNotes + `", data, 0o600); err != nil { t.Fatal(err) }
-}
-
 // TestTrafficNotesDefaultLatencyBounds records, as non-blocking notes, the
 // continuously probed scenarios whose path may slow down without firing.
 func TestTrafficNotesDefaultLatencyBounds(t *testing.T) {

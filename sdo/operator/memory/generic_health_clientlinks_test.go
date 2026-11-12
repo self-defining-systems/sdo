@@ -62,7 +62,7 @@ func TestPrepareHealthDialsMappedLinksFromTheClient(t *testing.T) {
 }
 
 // Client dials share the vantage budget with the designer's probes: Go takes
-// at most half, links from entry components first.
+// at most half, links from entry components (the exposed web) first.
 func TestClientLinksAreCappedEntryFirst(t *testing.T) {
 	root := t.TempDir()
 	components := []string{syntheticStore, syntheticNoData}
@@ -73,9 +73,9 @@ func TestClientLinksAreCappedEntryFirst(t *testing.T) {
 	}
 	links += "  - {from: web, to: kv, port: 6379, protocol: redis}\n"
 	writeMap(t, root, components...)
-	// web is called by no edge in this map, but neither are a1..a9; make a1..a9 callees.
 	path := filepath.Join(root, layout.ArchitectureFile)
 	data, _ := os.ReadFile(path)
+	data = []byte(strings.Replace(string(data), "# Architecture\n", "# Architecture\n\n- Service/demo/web (source: k8s/web.yaml)\n  - exposure:NodePort\n", 1))
 	edges := "edges:\n"
 	for _, name := range []string{"a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9"} {
 		edges += "  - {from: web, to: " + name + ", evidence: [manifest], source: x}\n"

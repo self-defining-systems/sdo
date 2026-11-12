@@ -93,7 +93,9 @@ Field rules (all blocking unless marked note):
 - Every operation with `writes: true` is in some `write-read` probe.
 - Every `holds_data` component that lies on the path of a writing operation lies on the path of some
   `read-later` probe.
-- Every edge's endpoints lie together on some operation path (note `map.unexercised-edge` otherwise).
+- Every component on the user path (reachable from a Service the manifests expose outside the cluster, else from
+  the declared operations' entry Services) is covered by a probe whose operation enters at a user entry Service and
+  includes it, or records `unprobed: <why>` (`map.coverage`; the reason is the note `map.unprobed`).
 - An operation broken in the application as deployed is covered by a probe whose health-probe workload scenario
   is declared `knownBroken` (a short reason and the baseline `failsWith` statuses). The probe still runs; the
   traffic detector never fires on it nor waits for it to pass, and notes (O3, never a gate) when it starts
@@ -143,7 +145,7 @@ health-probe scenario enters or crosses one of them (`Target` or `DependsOn`), t
 reason `OBSERVATION_INCOMPLETE`, and a pending `controller.recovery-unprobed` entry in `detector_history` names the
 Service. Reflection gets it as `recovery_unprobed` and may not publish learning from the closure. A Service a probe
 crosses needs no extra rule: that probe's detector is a health detector, so a probe that keeps failing keeps the
-incident open. Map coverage (`map.uncovered-edge`) is what puts such a probe on every edge from an entry component.
+incident open. Map coverage (`map.coverage`) is what puts such a probe on every user-path component.
 
 Repairs that change records in place do not make the closure unconfirmed. The closure records each applied data
 effect on a `holds_data` component as a `data effect:` note on the outcome (`source_check_notes`), and `sdo verify`

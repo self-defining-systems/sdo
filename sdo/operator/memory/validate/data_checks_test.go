@@ -12,8 +12,8 @@ import (
 var dataMapYAML = strings.NewReplacer(
 	"{name: db, workload: StatefulSet/db, services: [db], holds_data: true}",
 	"{name: db, workload: StatefulSet/db, services: [db], holds_data: true, data: {engine: postgres, role: authoritative}}",
-	"{name: cache, workload: Deployment/cache, services: [cache], holds_data: false}",
-	"{name: cache, workload: Deployment/cache, services: [cache], holds_data: false, data: {engine: redis, role: derived, derived_from: [db]}}",
+	"{name: cache, workload: Deployment/cache, services: [cache], holds_data: false, unprobed: warmed at start only}",
+	"{name: cache, workload: Deployment/cache, services: [cache], holds_data: false, unprobed: warmed at start only, data: {engine: redis, role: derived, derived_from: [db]}}",
 ).Replace(mapYAML)
 
 var plainMapYAML = mapYAML
