@@ -1255,7 +1255,10 @@ func (n NativeIncidentBroker) ledgerPath(incidentID string) string {
 // evidence and broker Git attribution. ok is false when the closure is not
 // fully committed yet.
 func (n NativeIncidentBroker) committedClosureReceipt(ctx context.Context, closure IncidentClosure, receipt *ClosureReceipt) (recovered ClosureReceipt, ok bool, err error) {
-	err = n.withLock(func() error {
+	// Ledger writes use fsync + atomic rename, so this read needs no effect
+	// lock: another incident's reflection may own that lock while its Job runs,
+	// and the controller's closure check must not wait for the worker.
+	err = func() error {
 		if n.Repository == nil || closure.Request.IncidentID == "" {
 			return nil
 		}
@@ -1295,7 +1298,7 @@ func (n NativeIncidentBroker) committedClosureReceipt(ctx context.Context, closu
 		}
 		recovered, ok = *stored, true
 		return nil
-	})
+	}()
 	return recovered, ok, err
 }
 
