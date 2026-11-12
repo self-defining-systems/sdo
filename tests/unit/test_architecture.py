@@ -238,7 +238,6 @@ _LEGACY_REAL_TIME_TESTS = frozenset(
             "test_a_rollout_that_can_surge_is_never_touched",
         ),
         ("tests/unit/benchmarks/sregym/fastloop/test_surge_guard_worker_ops.py", "worker_op"),
-        ("tests/unit/sdo/agents/responder/test_recorded_actions.py", "_wait_for"),
     }
 )
 
@@ -307,3 +306,14 @@ def test_adapter_import_check_detects_missing_export(monkeypatch: pytest.MonkeyP
     assert len(errors) == 1
     assert "consumer.py:1" in errors[0]
     assert "ImageRetentionError" in errors[0]
+
+
+def test_no_production_file_names_the_removed_act_recorder() -> None:
+    """`sdo act` and its recorder are deleted; the recording of the agent's API calls is the receipt."""
+    banned = ("recorded_actions", "sdo-act-", "RESPONDER_FIELD_MANAGER")
+    offenders = [
+        str(path.relative_to(_REPO_ROOT))
+        for path in _iter_py_files(_REPO_ROOT / "sdo", _REPO_ROOT / "libs")
+        if any(name in path.read_text(encoding="utf-8") for name in banned)
+    ]
+    assert not offenders, offenders

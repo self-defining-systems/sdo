@@ -11,7 +11,7 @@ func TestRecordedMutationAcceptsGoDerivedAPIWritesNotGaps(t *testing.T) {
 		id, kind string
 		want     bool
 	}{
-		{"sdo-act-1", "kubectl-patch", true},
+		{"sdo-act-1", "kubectl-patch", false},
 		{"sdo-api-abc", "api-patch", true},
 		{"sdo-api-abc", "api-exec", true},
 		{"sdo-api-abc", "api-helper-delete", true},

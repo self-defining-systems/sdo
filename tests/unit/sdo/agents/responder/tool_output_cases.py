@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import io
 import json
-import sys
 from contextlib import redirect_stdout
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -81,7 +80,6 @@ def rendered_stdout_cases() -> dict[str, str]:
         "verify": [],
         "rollback": ["application"],
         "report": ["attempt", "--incident-id", "toy", "--session-id", "session", "--epoch", "1"],
-        "act": ["--resource", "Service/toy/api", "--", sys.executable, "-c", "print('change ' * 10000)"],
     }
     assert set(arguments) == set(tools_cli.command_surface()["commands"])
     samples = {}
@@ -101,7 +99,7 @@ def rendered_stdout_cases() -> dict[str, str]:
                 text = output.getvalue()
                 details = Path(text.split("Full JSON: ", 1)[1].splitlines()[0])
                 full = json.loads(details.read_text())
-                if command in {"mitigate", "act", "rollback"}:
+                if command in {"mitigate", "rollback"}:
                     assert len(full["actions"]) == 1
                     full = full["actions"][0]
                 assert full["command"] == command
@@ -110,8 +108,6 @@ def rendered_stdout_cases() -> dict[str, str]:
                     assert len(full["findings"]) == count
                 samples[f"{command}.{count}"] = output.getvalue()
         for command, args in arguments.items():
-            if command == "act":
-                continue
 
             def failed(request: dict[str, Any], _directory: Path) -> dict[str, Any]:
                 return {
@@ -127,7 +123,7 @@ def rendered_stdout_cases() -> dict[str, str]:
             text = output.getvalue()
             details = Path(text.split("Full JSON: ", 1)[1].splitlines()[0])
             full = json.loads(details.read_text())
-            if command in {"mitigate", "act", "rollback"}:
+            if command in {"mitigate", "rollback"}:
                 full = full["actions"][0]
             assert full["error"]
             samples[f"{command}.error"] = text

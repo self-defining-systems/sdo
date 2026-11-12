@@ -191,19 +191,12 @@ func validActionTimes(action *contracts.RepairActionReceipt) bool {
 	return action.GetStartedAt() != nil && action.GetStartedAt().CheckValid() == nil && action.GetCompletedAt() != nil && action.GetCompletedAt().CheckValid() == nil && !action.GetCompletedAt().AsTime().Before(action.GetStartedAt().AsTime())
 }
 
-// recordedMutation reports a successful repair receipt SDO itself recorded: a command through sdo act, or a
-// write Go derived from the recording of the agent's Kubernetes calls. A gap stands for a lost record, not a
+// recordedMutation reports a successful repair receipt SDO itself recorded: a write Go derived from the
+// recording of the agent's Kubernetes calls. A gap stands for a lost record, not a
 // change to any object.
 func recordedMutation(action *contracts.RepairActionReceipt) bool {
 	if strings.HasPrefix(action.GetActionId(), apihistory.WriteIDPrefix) && action.GetActionId() != apihistory.WriteIDPrefix {
 		return apihistory.DerivedWriteKind(action.GetKind()) && action.GetKind() != apihistory.GapKind
-	}
-	if !strings.HasPrefix(action.GetActionId(), "sdo-act-") || action.GetActionId() == "sdo-act-" {
-		return false
-	}
-	switch action.GetKind() {
-	case "kubectl-patch", "kubectl-apply", "kubectl-delete", "kubectl-scale", "kubectl-exec":
-		return true
 	}
 	return false
 }

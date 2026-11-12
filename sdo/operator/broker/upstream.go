@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"sdo.dev/operator/broker/internal/processio"
-	"sdo.dev/operator/memory/layout"
 )
 
 // upstreamRef records the last fetched head of the shared remote branch in
@@ -128,101 +127,25 @@ func (b *Broker) syncUpstream(ctx context.Context) error {
 			}
 			return nil
 		default:
-			merged, err := b.mergeDiverged(ctx, local, remote)
-			if err != nil {
-				return err
-			}
-			if merged == "" {
-				return nil
-			}
+			b.holdDiverged(ctx, local, remote)
+			return nil
 		}
 	}
 	return nil
 }
 
-// mergeDiverged joins local publications made while the remote was
-// unreachable with peers' publications. Each side was validated by its own
-// broker; when the two sides changed disjoint paths their union is recorded
-// as a merge commit whose first parent is the remote head. Overlapping
-// changes are not merged automatically: the local history is kept, preserved
-// on a side branch of the remote, and stays this lane's accepted memory.
-func (b *Broker) mergeDiverged(ctx context.Context, local, remote string) (string, error) {
-	base, err := gitText(ctx, b.target, "merge-base", local, remote)
-	if err != nil {
-		return "", fmt.Errorf("accepted memory shares no history with upstream %s: %w", b.upstream.Branch, err)
+// holdDiverged handles a local history and a remote branch that both moved
+// since they last agreed (local publications made while the remote was
+// unreachable, and a peer's or an engineer's push meanwhile). SDO never merges
+// them: the local history stays this controller's accepted state, it is
+// preserved on the remote side branch sdo-held/diverged-<commit> for a person,
+// and the source branch is not touched.
+func (b *Broker) holdDiverged(ctx context.Context, local, remote string) {
+	side := "sdo-held/diverged-" + local[:12]
+	if err := b.pushRef(ctx, b.target, local, side); err != nil {
+		b.upstreamUnavailable("preserve diverged memory", err)
 	}
-	ours, err := runGit(ctx, b.target, "diff", "--name-only", "-z", base, local)
-	if err != nil {
-		return "", err
-	}
-	theirs, err := runGit(ctx, b.target, "diff", "--name-only", "-z", base, remote)
-	if err != nil {
-		return "", err
-	}
-	peer := map[string]bool{}
-	for _, path := range nulPaths(theirs) {
-		peer[path] = true
-	}
-	for _, path := range nulPaths(ours) {
-		if path != layout.PlaybookIndexFile && peer[path] {
-			side := b.upstream.Branch + "-unmerged-" + local[:12]
-			if err := b.pushRef(ctx, b.target, local, side); err != nil {
-				b.upstreamUnavailable("preserve diverged memory", err)
-			}
-			log.Printf("memory upstream: local accepted memory %s and upstream %s both changed %s; kept locally and on branch %s", local, remote, path, side)
-			return "", nil
-		}
-	}
-	stage, cleanup, err := b.privateClone(ctx)
-	if err != nil {
-		return "", err
-	}
-	defer cleanup()
-	if _, err := runGit(ctx, stage, "fetch", "--no-tags", "--quiet", b.target, upstreamRef); err != nil {
-		return "", err
-	}
-	if _, err := runGit(ctx, stage, "checkout", "--quiet", "--detach", remote); err != nil {
-		return "", err
-	}
-	message := fmt.Sprintf("sdo(sync): merge accepted memory %s\n\nSDO-Actor: controller\nSDO-Phase: sync", local[:12])
-	if _, err := runGitEnv(ctx, stage, brokerGitEnv(), "merge", "--no-ff", "--no-commit", "--quiet", local); err != nil {
-		unmerged, listErr := runGit(ctx, stage, "diff", "--name-only", "--diff-filter=U", "-z")
-		if listErr != nil {
-			return "", listErr
-		}
-		paths := nulPaths(unmerged)
-		if len(paths) != 1 || paths[0] != layout.PlaybookIndexFile {
-			return "", fmt.Errorf("merge diverged accepted memory: %w", err)
-		}
-	}
-	// The index is derived from the combined playbooks, just as it is when a
-	// concurrent local proposal is replayed. It is never authored conflict data.
-	if _, err := layout.WritePlaybookIndex(stage); err != nil {
-		return "", fmt.Errorf("regenerate upstream playbook index: %w", err)
-	}
-	if _, err := runGit(ctx, stage, "add", "--all", "--", "."); err != nil {
-		return "", err
-	}
-	if _, err := runGitEnv(ctx, stage, brokerGitEnv(), "commit", "--quiet", "-m", message); err != nil {
-		return "", fmt.Errorf("commit diverged accepted memory: %w", err)
-	}
-	merged, err := gitText(ctx, stage, "rev-parse", "HEAD")
-	if err != nil {
-		return "", err
-	}
-	if err := b.pushUpstream(ctx, stage, merged); errors.Is(err, errUpstreamMoved) {
-		return merged, nil
-	} else if err != nil {
-		b.upstreamUnavailable("push merge", err)
-		return "", nil
-	}
-	if _, err := runGit(ctx, b.target, "fetch", "--no-tags", "--quiet", stage, merged); err != nil {
-		return "", err
-	}
-	if _, err := runGit(ctx, b.target, "merge", "--ff-only", "--quiet", merged); err != nil {
-		return "", fmt.Errorf("fast-forward accepted memory to merge: %w", err)
-	}
-	return merged, nil
+	log.Printf("memory upstream: local accepted history %s and upstream %s diverged; kept locally and on branch %s for a person to merge", local, remote, side)
 }
 
 // fetchUpstream returns the remote branch head and records it at upstreamRef.

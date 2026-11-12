@@ -14,7 +14,6 @@ from sdo.agents.prompt_templates import RenderedPrompt, named_prompt, render_pro
 from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
 from sdo.agents.provider import MODEL_ENV, agent_effort, resolve_agent
 from sdo.agents.replay import selected_skills_root
-from sdo.agents.responder import recorded_actions
 from sdo.agents.responder.credentials import SKILLS_ROOT
 from sdo.agents.responder.incident_opening import onset, opened_on
 from sdo.agents.responder.result_output import parse_incident_result
@@ -81,8 +80,6 @@ def execute_incident(
         resume_session_id = recovery.resume_session_id() if recovery is not None else None
     except SessionRecoveryError as exc:
         raise ResponderExecutionError(str(exc)) from exc
-    if resume_session_id is None:
-        recorded_actions.reset()
     if recovery is not None:
         prompt += recovery.recovered_prompt()
     corrected_result = False
@@ -153,10 +150,6 @@ def execute_incident(
             recovery.acknowledge_reports()
     except SessionRecoveryError as exc:
         raise ResponderExecutionError(str(exc)) from exc
-    try:
-        recorded_actions.merge_into(result)
-    except recorded_actions.RecordedActionsError as exc:
-        raise ResponderExecutionError(f"invalid recorded repair actions: {exc}") from exc
     if not result.HasField("responder_session_id"):
         result.responder_session_id = completed.session_id
     return result

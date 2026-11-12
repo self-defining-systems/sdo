@@ -13,7 +13,7 @@ const (
 	AcceptanceFieldManager      = "sdo-acceptance"
 	ReplicasHandoffFieldManager = "sdo-replicas-handoff"
 	// ResponderFieldManager is forced by the recording API proxy on every write a
-	// responder Job makes, whatever client sent it (`sdo act` also stamps it).
+	// responder Job makes, whatever client sent it.
 	ResponderFieldManager = "sdo-responder"
 )
     Field managers through which SDO writes application objects. Their writes
@@ -217,4 +217,9 @@ type AdmissionWebhook struct {
     with ReadView.AdmissionWebhooksFor, and repair with SyncWebhookCA for the
     CA, PatchObject for failurePolicy or the service reference, or DeleteObject
     for an orphaned entry.
+
+func (w AdmissionWebhook) CATarget(secret WebhookSecretKey) WebhookCA
+    CATarget names this entry and one serving Secret key for SyncWebhookCA and
+    WebhookCAMatchesSecret. An empty secret.Key means the Pod mounts the whole
+    Secret; set the key the serving certificate uses.
 ```

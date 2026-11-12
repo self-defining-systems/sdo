@@ -50,7 +50,7 @@ func (d KubernetesJobDispatcher) executeResponder(ctx context.Context, executor 
 	if err != nil {
 		return IncidentResult{}, err
 	}
-	result.RepairActions = loop.checkDeletionReceipts(ctx, result.RepairActions)
+	result.RepairActions = goIssuedReceipts(result.RepairActions)
 	verification := loop.Handle(ctx, ToolRequest{Command: "verify"})
 	if loop.VerifyResult != nil {
 		verification = loop.VerifyResult(ctx, result)

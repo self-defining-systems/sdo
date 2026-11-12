@@ -8,7 +8,8 @@ the cluster or a Secret and write nothing but ``dest/view.json`` and ``dest/view
 ``view.json`` is ``fuzzops.view/v1`` (fuzzops repository, ``docs/bench.md``): a scalar ``summary``, ``hide`` globs,
 timeline ``events``, and ``panels`` (tables and transcripts). The dataclasses below hold the contract's limits, so
 anything written is valid. Transcripts are normalized ``fuzzops.transcript/v1`` JSONL built from Codex
-``rollout-*.jsonl`` files (``response_item`` entries only) and redacted (``redact``) before they are written.
+``rollout-*.jsonl`` files (``response_item`` entries only) or Claude session files, and redacted (``redact``)
+before they are written.
 """
 
 from __future__ import annotations
@@ -52,7 +53,7 @@ ENTRY_LIMIT = 20000
 SUMMARY_KEY = re.compile(r"^[a-z0-9_]{1,40}$")
 ROLES = frozenset({"user", "assistant", "reasoning", "tool", "output", "note"})
 
-HIDE = ["evidence/**/rollout-*.jsonl", "evidence/**/model_io/**", "controller.log"]
+HIDE = ["evidence/**/rollout-*.jsonl", "evidence/**/claude/projects/**", "evidence/**/model_io/**", "controller.log"]
 
 REDACTED = "[redacted]"
 
@@ -854,6 +855,65 @@ def parse_rollout(path: Path) -> Rollout:
     return Rollout([t for t in turns if t.entries or t.prompt], identities)
 
 
+def _claude_blocks(content: Any) -> list[dict[str, Any]]:
+    if isinstance(content, str):
+        return [{"type": "text", "text": content}]
+    return [b for b in _list(content) if isinstance(b, dict)]
+
+
+def parse_claude_session(path: Path) -> Rollout:
+    """A Claude session file as turns (split at each plain user message) of normalized entries."""
+    turns: list[Turn] = []
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except OSError:
+        return Rollout([], set())
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        message = _dict(row.get("message")) if isinstance(row, dict) else {}
+        role, at = message.get("role"), stamp(row.get("timestamp"))
+        if role not in ("user", "assistant"):
+            continue
+        for block in _claude_blocks(message.get("content")):
+            kind = block.get("type")
+            if kind == "tool_result":
+                if not turns:
+                    turns.append(Turn())
+                turns[-1].entries.append(Entry("output", _truncate_output(_parts_text(block.get("content"))), at))
+                continue
+            if kind == "text" and isinstance(block.get("text"), str) and block["text"].strip():
+                text = block["text"]
+                if role == "user":
+                    turns.append(Turn(prompt=text + "\n"))
+                    turns[-1].entries.append(Entry("user", text, at))
+                else:
+                    if not turns:
+                        turns.append(Turn())
+                    turns[-1].entries.append(Entry("assistant", text, at))
+                    turns[-1].last_message = text
+            elif kind == "tool_use":
+                if not turns:
+                    turns.append(Turn())
+                args = _dict(block.get("input"))
+                text = str(args["command"]) if isinstance(args.get("command"), str) else json.dumps(args)
+                turns[-1].entries.append(Entry("tool", text, at, str(block.get("name") or "tool")))
+            elif kind == "thinking" and block.get("thinking"):
+                if not turns:
+                    turns.append(Turn())
+                turns[-1].entries.append(Entry("reasoning", str(block["thinking"]), at))
+    return Rollout([t for t in turns if t.entries or t.prompt], set())
+
+
+def _incident_sessions(directory: Path) -> list[tuple[Path, Rollout]]:
+    """Every transcript of one incident directory, parsed."""
+    return [(p, parse_rollout(p)) for p in sink.rollout_files(directory)] + [
+        (p, parse_claude_session(p)) for p in sink.claude_session_files(directory)
+    ]
+
+
 def _add_item(turn: Turn, item: dict[str, Any], at: str | None) -> None:
     kind = item.get("type")
     entries = turn.entries
@@ -905,10 +965,7 @@ def _write_transcripts(dest: Path, incidents: list[Incident], identities: set[st
     for incident in incidents:
         if not incident.dir:
             continue
-        for index, rollout_path in enumerate(sorted((dest / incident.dir).rglob(sink.ROLLOUT_GLOB))):
-            if not rollout_path.is_file():
-                continue
-            rollout = parse_rollout(rollout_path)
+        for index, (rollout_path, rollout) in enumerate(_incident_sessions(dest / incident.dir)):
             groups: dict[str, list[Entry]] = {"responder": [], "reflection": []}
             for position, turn in enumerate(rollout.turns):
                 role = "reflection" if _is_reflection(turn) and (position > 0 or turn.prompt) else "responder"
@@ -933,8 +990,8 @@ def _identities(dest: Path, incidents: list[Incident]) -> set[str]:
     ids: set[str] = set()
     for incident in incidents:
         if incident.dir:
-            for p in (dest / incident.dir).rglob(sink.ROLLOUT_GLOB):
-                ids |= parse_rollout(p).identities
+            for _, rollout in _incident_sessions(dest / incident.dir):
+                ids |= rollout.identities
     return ids
 
 

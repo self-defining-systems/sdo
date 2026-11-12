@@ -136,10 +136,6 @@ reason = "Compact high-level continuation principles; required progress is count
 max_chars = 1600
 reason = "CTXFAIL1: required ten-receipt progress with a verification error and rollback needs 1444 characters before preserving complete finding fingerprints. Keep every progress row and exact action/finding identity; the total continuation allowance is derived from these manifest caps."
 
-[tool_stdout.act]
-max_chars = 2048
-reason = "User decisions 130/134 require action/incident progress, the full-report path and generated schema within a 2 KiB emitted UTF-8 cap, including JSON framing; separately tested at the CLI boundary."
-
 [tool_stdout.check]
 max_chars = 1400
 reason = "Measured production rendering 1123 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."

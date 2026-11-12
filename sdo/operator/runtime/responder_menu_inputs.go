@@ -48,9 +48,9 @@ func menuNormalizeInput(data []byte) ([]byte, error) {
 	if err := json.Unmarshal(data, &envelope); err != nil || envelope == nil {
 		return nil, fmt.Errorf("tool request: expected JSON object")
 	}
-	// Source inspection, recorded-action capture and program bindings all
+	// Source inspection and program bindings both
 	// cross the same parser before the typed request is decoded.
-	for _, name := range []string{"ref", "refs", "bindings"} {
+	for _, name := range []string{"ref", "bindings"} {
 		raw, exists := envelope[name]
 		if !exists || string(raw) == "null" {
 			continue
@@ -60,19 +60,6 @@ func menuNormalizeInput(data []byte) ([]byte, error) {
 		switch name {
 		case "ref":
 			normalized, err = menuNormalizeCitation(raw)
-		case "refs":
-			var refs []json.RawMessage
-			if err = json.Unmarshal(raw, &refs); err == nil {
-				for i, ref := range refs {
-					refs[i], err = menuNormalizeCitation(ref)
-					if err != nil {
-						break
-					}
-				}
-				if err == nil {
-					normalized, err = json.Marshal(refs)
-				}
-			}
 		case "bindings":
 			normalized, err = menuNormalizeObjectBindings(raw)
 		}

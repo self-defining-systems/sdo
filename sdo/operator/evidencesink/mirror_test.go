@@ -153,7 +153,7 @@ func seedRun(f *fixture) string {
 	f.write(session+"/"+IncidentIdentityFile, `{"incident_id":"`+incidentID+`"}`)
 	f.write(session+"/responder-usage.jsonl", "{\"turn\":1}\n")
 	f.write(session+"/codex/sessions/2026/01/02/rollout-a.jsonl", "{\"type\":\"session_meta\"}\n")
-	f.write(session+"/scratch/sdo-reports/r1/0001-act.json", `{"act":true}`)
+	f.write(session+"/scratch/sdo-reports/r1/0001-mitigate.json", `{"mitigate":true}`)
 	f.write(session+"/checkpoints/c1/request.json", `{}`)
 	f.write("tasks/designer-0123456789ab/task.json", `{"schema":"sdo.task-evidence/v1","task_id":"designer/1","agent_id":"designer","task_type":"health"}`)
 	f.write("tasks/designer-0123456789ab/request.json", `{}`)
@@ -175,7 +175,7 @@ func TestSyntheticIncidentWritesLayoutAndIndex(t *testing.T) {
 	for _, want := range []string{
 		LayoutFile, IndexFile,
 		incident + "/" + IncidentIdentityFile, incident + "/responder-usage.jsonl", incident + "/" + LedgerFile, incident + "/" + SealFile,
-		incident + "/codex/sessions/2026/01/02/rollout-a.jsonl", incident + "/scratch/sdo-reports/r1/0001-act.json", incident + "/checkpoints/c1/request.json",
+		incident + "/codex/sessions/2026/01/02/rollout-a.jsonl", incident + "/scratch/sdo-reports/r1/0001-mitigate.json", incident + "/checkpoints/c1/request.json",
 		"lifecycle/designer-0123456789ab/task.json", "lifecycle/designer-0123456789ab/result.json", "lifecycle/designer-0123456789ab/codex/sessions/2026/rollout-d.jsonl",
 		"usage/controller-turns.jsonl", "telemetry/lifecycle-events.jsonl",
 	} {

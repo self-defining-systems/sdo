@@ -141,8 +141,8 @@ accepted commits to identify learned files. Do not infer Go-program credit from
 shell notes. Script timeouts/crashes are detector errors, never repaired faults.
 
 The agent's writes are derived by Go from the recording of its Kubernetes calls (`memory.AgentWrites`, the one reader;
-settle detection, the closure guard, the outcome's repair records and reflection's change list all use it, never the
-agent-writable `sdo act` journal). Receipts have stable `sdo-api-<digest>` IDs and `kind=api-<verb>` (`api-create`,
+settle detection, the closure guard, the outcome's repair records and reflection's change list all use it, never an
+agent-written journal). Receipts have stable `sdo-api-<digest>` IDs and `kind=api-<verb>` (`api-create`,
 `api-patch`, `api-put`, `api-delete`, `api-exec`, `api-attach`). A write is a paired, non-dry-run 2xx
 POST/PUT/PATCH/DELETE on any resource or subresource (not the review creates that persist nothing), or an established
 exec/attach session spanning to `session_end`; Details hold the changed field paths, or the redacted command and
@@ -154,8 +154,9 @@ recorder restart, a stale generation, a short event file); lost bodies, 300 KB l
 but not gaps. A gap is a write at `write_gap_at`: `AgentWrites` returns a receipt of kind `api-gap` there (it moves
 settle, never reaches the outcome), so a gap can delay Recovered by one settle horizon and never advance it. A request
 with a start and no end is pending while the recorder is live (an open exec keeps settle pending) and a gap at its
-start once it is not. Plan settlement (`IncidentAPIRecoveryReceipts`) stays unknown on any write gap. `sdo-act-*`
-receipts from the journal still arrive in worker results until the `sdo act` removal. These receipts still need fresh
+start once it is not. Plan settlement (`IncidentAPIRecoveryReceipts`) stays unknown on any write gap. Go drops a worker result's
+`repair_actions` entries whose ID is not Go-issued (`sdo-api-*`, `sdo-program-*`); `sdo act` and its journal are gone, and
+older runs' `sdo-act-*` receipts are historical. These receipts still need fresh
 independent finding clearance through the unchanged verified-cause gate.
 Opaque external commands continue to require recorded-action or RunScript
 receipts. The script replay basis remains `observed-transition`.
