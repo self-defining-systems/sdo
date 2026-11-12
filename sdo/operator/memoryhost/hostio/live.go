@@ -175,6 +175,17 @@ func (v *LiveReadView) ProbeHTTP(ref sdk.ObjectRef, p program.HTTPProbe) (progra
 		return program.ProbeResult{Detail: err.Error()}, nil
 	}
 	defer response.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64*1024))
-	return program.ProbeResult{Success: response.StatusCode >= 200 && response.StatusCode < 400, Detail: fmt.Sprintf("HTTP %d", response.StatusCode)}, nil
+	result := program.ProbeResult{Success: response.StatusCode >= 200 && response.StatusCode < 400, Detail: fmt.Sprintf("HTTP %d", response.StatusCode), Status: response.StatusCode}
+	body, _ := io.ReadAll(io.LimitReader(response.Body, program.MaxProbeBodyBytes+1))
+	if len(p.Fields) > 0 {
+		if len(body) > program.MaxProbeBodyBytes {
+			return result, fmt.Errorf("probe response body longer than %d bytes", program.MaxProbeBodyBytes)
+		}
+		fields, extractErr := program.ExtractJSONFields(body, p.Fields)
+		if extractErr != nil {
+			return result, extractErr
+		}
+		result.Fields = fields
+	}
+	return result, nil
 }

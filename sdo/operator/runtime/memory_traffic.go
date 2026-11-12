@@ -78,6 +78,7 @@ func (c MemoryTraffic) Probe(ctx context.Context, ref sdk.ObjectRef, port int32,
 		}
 		r.HttpPath = http.Path
 		r.HttpHeaders = http.Headers
+		r.HttpFields = http.Fields
 	}
 	return c.probe(ctx, r)
 }
@@ -92,7 +93,11 @@ func (c MemoryTraffic) probe(ctx context.Context, r *pb.TrafficRequest) (program
 	if response == nil {
 		return program.ProbeResult{}, errors.New("missing primitive result")
 	}
-	return program.ProbeResult{Success: response.Success, Detail: response.Detail}, nil
+	result := program.ProbeResult{Success: response.Success, Detail: response.Detail, Status: int(response.HttpStatus)}
+	if response.Fields != nil {
+		result.Fields = program.Row(response.Fields.AsMap())
+	}
+	return result, nil
 }
 
 func (c MemoryTraffic) DialTargets(ctx context.Context, r prober.DialRequest) (prober.DialResponse, error) {
