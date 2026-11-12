@@ -1,6 +1,6 @@
 ---
 name: sdo-patching
-description: Keep a change to an application file: a responder commits it, the deployer captures it as a reasoned patch. Use before editing any file outside .sdo/, and when a patch fails to apply.
+description: "Keep a change to an application file (a responder commits it, the deployer captures it as a reasoned patch). Use before editing any file outside .sdo/, and when a patch fails to apply."
 ---
 
 # Keeping a source change

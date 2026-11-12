@@ -36,7 +36,7 @@ func TestCommittingTheMaterializedViewKeepsNothing(t *testing.T) {
 	ctx := context.Background()
 	w := newPatchWorld(t, false)
 	seedIfNeeded(t, w)
-	w.addPatch(t, "deployer", replaceLine("one", "ONE"))
+	w.addPatch(t, "deployer", replaceLine("v05", "v05 patched"))
 	p, err := w.broker.CreateProposalForPhase(ctx, "inc-view", ProposalPhase)
 	if err != nil {
 		t.Fatal(err)
@@ -54,7 +54,7 @@ func TestAPartialCommitKeepsOnlyTheAgentsFiles(t *testing.T) {
 	ctx := context.Background()
 	w := newPatchWorld(t, false)
 	seedIfNeeded(t, w)
-	w.addPatch(t, "deployer", replaceLine("one", "ONE"))
+	w.addPatch(t, "deployer", replaceLine("v05", "v05 patched"))
 	p, err := w.broker.CreateProposalForPhase(ctx, "inc-partial", ProposalPhase)
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +79,7 @@ func TestACommitToAPatchedFileIsRefused(t *testing.T) {
 	ctx := context.Background()
 	w := newPatchWorld(t, false)
 	seedIfNeeded(t, w)
-	w.addPatch(t, "deployer", replaceLine("one", "ONE"))
+	w.addPatch(t, "deployer", replaceLine("v05", "v05 patched"))
 	p, err := w.broker.CreateProposalForPhase(ctx, "inc-overlap", ProposalPhase)
 	if err != nil {
 		t.Fatal(err)
