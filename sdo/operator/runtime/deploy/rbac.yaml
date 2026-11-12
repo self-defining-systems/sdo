@@ -40,6 +40,12 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list", "watch"]
+  # Restoring a Secret from accepted source (ReconcileFromSource of a Secret) is
+  # one merge patch of its data, written without reading it back. No create,
+  # update or delete.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["patch"]
   - apiGroups: ["apps"]
     resources: ["statefulsets", "daemonsets"]
     verbs: ["get", "list", "watch"]

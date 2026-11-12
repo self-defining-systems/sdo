@@ -56,6 +56,13 @@ func ReadFrom(view sdk.DetectionContext) ReadView
 type ReconcileFromSource struct{ Ref sdk.ObjectRef }
     ReconcileFromSource restores a whole source-owned object to accepted source,
     removing additions SourceDiff reports; prefer SetField for one field.
+    For a Secret the controller writes the literal data of the accepted render
+    (the keys the source declares; other keys stay) and nothing records a value:
+    the receipt names the keys. It refuses a Secret whose source has no
+    literal data or whose render is not deterministic (a generated password);
+    then Escalate. Restart the readers that started after the foreign change
+    with RestartRollout later in the same plan, because a running Pod keeps the
+    value it started with (finding secret-readers-predate-change names them).
 
 type RemoveServicePort struct {
 	Ref        sdk.ObjectRef
@@ -145,20 +152,22 @@ type RestoreStoreItem struct {
 	Reason      string
 }
     RestoreStoreItem puts a store-state item back to its baseline.
-    Its effect is store-setting. Change names the item, normally one entry of
-    storestate.Changes(view) for the Target Pod; the controller restores the
-    value of its own promoted healthy baseline, not the one in Change. It runs
-    the engine's fixed inverse (storestate.RestoreCommands): CONFIG SET, ACL
-    SETUSER, REPLICAOF NO ONE or CLIENT UNPAUSE on redis; collMod, fsyncUnlock,
-    dropIndexes/createIndexes, setParameter or updateUser on mongodb;
-    ALTER SYSTEM/DATABASE/ROLE or pg_promote on postgres. A validator or index
-    text comes from the restore text the controller captured with the baseline.
-    A password is restored only from the store container's own environment.
-    The executor reads the item first and records its prior value, does
-    nothing when it already has the baseline value, and reads the facts again
-    to verify it. EndSessions also ends the sessions a restored per-database
-    or per-role postgres setting applies to, so clients reconnect with it.
-    storestate.Restorable says beforehand whether an item has an inverse.
+    Its effect is store-setting. Change names the item, normally one entry
+    of storestate.Changes(view) for the Target Pod; the controller restores
+    the value of its own promoted healthy baseline, not the one in Change.
+    It runs the engine's fixed inverse (storestate.RestoreCommands): CONFIG SET,
+    ACL SETUSER, REPLICAOF NO ONE or CLIENT UNPAUSE on redis; collMod,
+    fsyncUnlock, dropIndexes/createIndexes, setParameter or updateUser on
+    mongodb; ALTER SYSTEM/DATABASE/ROLE or pg_promote on postgres. A validator
+    or index text comes from the restore text the controller captured with the
+    baseline. The only password it restores is a redis requirepass, from the
+    store container's own environment; postgres ALTER ROLE, mysql and mongodb
+    updateUser never set or change one. The executor reads the item first and
+    records its prior value, does nothing when it already has the baseline
+    value, and reads the facts again to verify it. EndSessions also ends the
+    sessions a restored per-database or per-role postgres setting applies to,
+    so clients reconnect with it. storestate.Restorable says beforehand whether
+    an item has an inverse.
 
 func (a RestoreStoreItem) Validate() error
 
@@ -228,29 +237,4 @@ func (r Row) IsNull(name string) bool
 
 func (r Row) String(name string) (string, bool)
     String reads a string field.
-
-type RunJob struct {
-	Object     ApplyObject
-	Completion WaitFor
-}
-    RunJob creates a named Job or Pod and waits for its actual completion.
-    Replay requires a recorded completion for this exact manifest.
-
-type RunScript struct {
-	Script  string
-	Env     map[string]Value
-	Timeout time.Duration
-	Reason  string
-}
-    RunScript is a first-class learnable mitigation. Application facts are
-    relation-derived Values injected as environment, never interpolated into
-    code. The executor runs bash in an app-local Job and records the observed
-    transition. Typed actions remain optional upgrades; opaque effects are never
-    simulated.
-
-func (a RunScript) Validate() error
-
-type Scalar = any
-    Scalar is one value of a Row: int64, float64, bool, string of at most 256
-    bytes, or nil.
 ```

@@ -190,7 +190,8 @@ type InvalidateDerived struct {
     The controller records the derivation it ran under: whether the map marks
     the component derived and whether each derived_from source passed its live
     store-state checks. Flushing a cache whose source is damaged refills it with
-    the damage. Only redis supports it today.
+    the damage. Redis and memcached support it; postgres, mysql and mongodb
+    refuse.
 
 func (a InvalidateDerived) Validate() error
 
