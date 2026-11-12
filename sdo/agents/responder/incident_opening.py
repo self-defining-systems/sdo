@@ -94,7 +94,10 @@ def symptom(request: IncidentRequest) -> str:
     groups: dict[tuple[str, str], list[str]] = {}
     for name, meta in sorted(tests):
         failed = int(meta.get("errors", 0)) + int(meta.get("timeouts", 0))
-        key = (_status(str(meta.get("failure_status", "an unrecorded error"))), _short(str(meta.get("failure_observed", ""))))
+        key = (
+            _status(str(meta.get("failure_status", "an unrecorded error"))),
+            _short(str(meta.get("failure_observed", ""))),
+        )
         total = int(meta.get("samples", 0))
         groups.setdefault(key, []).append(f"{name} {failed}/{total}" if total else name)
     lines = [f"Failing user tests{since}; counts are failed/total samples in the window:"]
