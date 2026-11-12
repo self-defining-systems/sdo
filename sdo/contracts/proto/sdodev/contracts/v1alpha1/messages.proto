@@ -362,6 +362,8 @@ message IncidentRequest {
   // accepted-source rollout or advance has not converged; `sdo detect` then reports no
   // source departures, since differences are SDO's own work in progress.
   bool deployment_in_flight = 39;
+  // Go-owned: the user tests judged healthy when the incident opened, sorted.
+  repeated string passing_tests = 40;
 }
 
 message ResponseProgress {

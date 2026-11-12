@@ -41,15 +41,14 @@ def test_the_first_message_template_renders_strictly() -> None:
     values = {
         "incident_id": "inc-1",
         "namespace": "ns",
-        "opened_on": "failing user tests: login",
-        "onset": "10:00:00",
+        "symptom": "Failing user tests since 10:00:00 UTC (first failing sample):",
         "skills_root": "/opt/sdo/sdo/skills",
         "branch_instruction": "Return incident_result and leave reflection null.",
     }
     template = Template((PROMPTS / "incident_prompt.md").read_text(encoding="utf-8"))
     rendered = template.substitute(values)
     assert "$" not in rendered
-    assert len(rendered.encode()) <= 600
+    assert len(rendered.encode()) <= 800
     for key in values:
         missing = {field: value for field, value in values.items() if field != key}
         with pytest.raises(KeyError, match=key):

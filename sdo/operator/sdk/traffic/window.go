@@ -88,6 +88,9 @@ type SLOVerdict struct {
 	StatusCounts   map[string]int
 	RecentFailures []Sample
 	Span           time.Duration
+	// FirstFailureAt is when the first failing sample of the judged window
+	// happened; zero when none failed.
+	FirstFailureAt time.Time
 	// FailureSpan is the time from the first to the last failing sample in
 	// the judged window; zero with fewer than two failing samples.
 	FailureSpan time.Duration
@@ -120,6 +123,7 @@ func Evaluate(scenarioID string, slo SLO, samples []Sample, now time.Time) SLOVe
 		if sample.Outcome != OutcomeOK {
 			if firstFailure.IsZero() {
 				firstFailure = sample.At
+				verdict.FirstFailureAt = sample.At
 			}
 			verdict.FailureSpan = sample.At.Sub(firstFailure)
 		}

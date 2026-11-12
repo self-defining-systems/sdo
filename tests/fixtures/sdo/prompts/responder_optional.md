@@ -1,4 +1,5 @@
-Incident toy-incident in namespace toy, opened on Service/component-0 unavailable at 22:13:20 (UTC).
+Incident toy-incident in namespace toy.
+Opened on Service/component-0 unavailable at 22:13:20 UTC.
 Read your skills: /opt/sdo/skills/incident-response/SKILL.md and /opt/sdo/skills/sdo-operating/SKILL.md.
 Start with `sdo detect`.
 Answer in the `incident_result` field and leave `reflection` null.

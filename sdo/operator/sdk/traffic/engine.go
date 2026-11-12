@@ -55,6 +55,10 @@ type Sample struct {
 	// Error explains a failed sample: the transport error, the check's
 	// reason, or a bounded excerpt of the unexpected response body.
 	Error string `json:"error,omitempty"`
+	// Observed is what the other side answered, apart from the probe's own
+	// Error: a bounded, redacted excerpt of the server's response body, or the
+	// transport error cause without the client's method and URL prefix.
+	Observed string `json:"observed,omitempty"`
 	// DialFailed marks a failure that happened while establishing the
 	// connection (DNS or TCP dial), rather than while sending the request,
 	// reading the response, or checking it. A NetworkPolicy or a stopped
@@ -255,7 +259,7 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, resul
 		sample.record(result)
 		if result.outcome != OutcomeOK {
 			sample.Outcome, sample.Step, sample.Request, sample.Error = result.outcome, step.Name, result.request, result.err
-			sample.DialFailed = result.dial
+			sample.Observed, sample.DialFailed = result.observed, result.dial
 			break
 		}
 	}
@@ -304,7 +308,7 @@ func (e *Engine) setup(ctx context.Context, scenario Scenario, rng *rand.Rand, s
 			sample.record(result)
 			if result.outcome != OutcomeOK {
 				sample.Outcome, sample.Step, sample.Request, sample.Error = result.outcome, step.Name, result.request, result.err
-				sample.DialFailed = result.dial
+				sample.Observed, sample.DialFailed = result.observed, result.dial
 				sample.Latency = e.since(started)
 				return true
 			}
@@ -341,7 +345,9 @@ type stepResult struct {
 	sent    int
 	request string
 	err     string
-	dial    bool
+	// observed is the server's body excerpt or the bare transport cause.
+	observed string
+	dial     bool
 }
 
 // record adds a step's request count and last answer to the sample.
@@ -385,10 +391,11 @@ func (e *Engine) step(ctx context.Context, scenario Scenario, step Step, rng *ra
 	response, err := e.client.Do(built)
 	if err != nil {
 		dial := isDialError(err)
+		cause := transportCause(err)
 		if isTimeout(requestCtx, err) {
-			return stepResult{outcome: OutcomeTimeout, sent: 1, request: line, err: err.Error(), dial: dial}
+			return stepResult{outcome: OutcomeTimeout, sent: 1, request: line, err: err.Error(), observed: cause, dial: dial}
 		}
-		return stepResult{outcome: OutcomeError, sent: 1, request: line, err: err.Error(), dial: dial}
+		return stepResult{outcome: OutcomeError, sent: 1, request: line, err: err.Error(), observed: cause, dial: dial}
 	}
 	defer response.Body.Close()
 	body, readErr := io.ReadAll(io.LimitReader(response.Body, MaxResponseBody))
@@ -405,7 +412,7 @@ func (e *Engine) step(ctx context.Context, scenario Scenario, step Step, rng *ra
 		if strings.TrimSpace(reason) == "" {
 			reason = fmt.Sprintf("HTTP %d rejected by check", response.StatusCode)
 		}
-		return stepResult{outcome: OutcomeError, status: response.StatusCode, sent: 1, request: line, err: reason}
+		return stepResult{outcome: OutcomeError, status: response.StatusCode, sent: 1, request: line, err: reason, observed: observedExcerpt(body, response.StatusCode, "")}
 	}
 	return stepResult{outcome: OutcomeOK, status: response.StatusCode, sent: 1, request: line}
 }
@@ -575,12 +582,24 @@ func (sample *Sample) bound() {
 	if sample.Error != "" {
 		sample.Error = bounded(sample.Error)
 	}
+	if sample.Observed != "" {
+		sample.Observed = bounded(sample.Observed)
+	}
 	if sample.CleanupError != "" {
 		sample.CleanupError = bounded(sample.CleanupError)
 	}
 	if sample.Request != "" {
 		sample.Request = bounded(sample.Request)
 	}
+}
+
+// transportCause is err without the client's `Method "URL":` prefix.
+func transportCause(err error) string {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return urlErr.Err.Error()
+	}
+	return err.Error()
 }
 
 func bounded(text string) string {

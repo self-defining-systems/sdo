@@ -1,4 +1,4 @@
-"""The responder's first message names the incident and its onset and sends it to the skills and `sdo detect`."""
+"""The responder's first message names the incident and its symptom and sends it to the skills and `sdo detect`."""
 
 from __future__ import annotations
 
@@ -23,7 +23,11 @@ def _opened_by_a_test(*scenarios: str):
 def test_the_first_message_names_the_incident_and_the_failing_tests() -> None:
     prompt = str(_responder_prompt(_opened_by_a_test("login", "checkout")))
 
-    assert "Incident toy-incident in namespace toy, opened on failing user tests: checkout, login at 22:13:20" in prompt
+    assert prompt.startswith(
+        "Incident toy-incident in namespace toy.\n"
+        "Failing user tests; counts are failed/total samples in the window:\n"
+        "- checkout, login failed with an unrecorded error\n"
+    )
     assert f"{SKILLS_ROOT}/incident-response/SKILL.md" in prompt
     assert f"{SKILLS_ROOT}/sdo-operating/SKILL.md" in prompt
     assert "Start with `sdo detect`." in prompt
@@ -33,7 +37,7 @@ def test_the_first_message_is_small_and_holds_no_finding() -> None:
     request = _opened_by_a_test("login")
     prompt = str(_responder_prompt(request))
 
-    assert len(prompt.encode()) <= 600
+    assert len(prompt.encode()) <= 1900
     for finding in request.findings:
         assert finding.summary not in prompt
         assert finding.fingerprint not in prompt
@@ -47,7 +51,7 @@ def test_a_condition_names_the_object_and_the_condition() -> None:
     request.findings[0].primary_resource.kind = "Deployment"
     request.findings[0].primary_resource.name = "api"
 
-    assert "opened on Deployment/api crash-looping" in str(_responder_prompt(request))
+    assert "Opened on Deployment/api crash-looping" in str(_responder_prompt(request))
 
 
 def test_an_external_alert_says_to_return_when_it_is_fixed() -> None:

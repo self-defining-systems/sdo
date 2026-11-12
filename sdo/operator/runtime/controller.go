@@ -23,6 +23,7 @@ import (
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/onboarding"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/traffic"
 )
 
 type SnapshotProvider interface {
@@ -901,6 +902,7 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 	request := c.incidentRequest(now, batch)
 	request.OpeningKeys = opening
 	request.StandingKeys = findingKeys(clues)
+	request.PassingTests = passingTests(snapshot)
 	request.ObservationGeneration = observationGeneration(snapshot)
 	if c.Baseline != nil {
 		request.StateChanges = cloneStateChanges(c.Baseline.Changes(now))
@@ -2354,4 +2356,23 @@ func (c *Controller) deploymentInFlight() bool {
 		}
 	}
 	return false
+}
+
+// passingTests lists the user tests every health-probe window judges healthy,
+// sorted: what still works when the incident opens.
+func passingTests(snapshot sdk.DetectionContext) []string {
+	set, ok := snapshot.(traffic.WindowSet)
+	if !ok {
+		return nil
+	}
+	var passing []string
+	for _, window := range set.TrafficWindows() {
+		for _, verdict := range traffic.Judge(window) {
+			if verdict.Evaluated && verdict.Healthy {
+				passing = append(passing, verdict.ScenarioID)
+			}
+		}
+	}
+	sort.Strings(passing)
+	return slices.Compact(passing)
 }

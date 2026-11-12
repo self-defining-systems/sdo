@@ -1,6 +1,7 @@
 package traffic
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"sort"
@@ -219,6 +220,30 @@ func ScenarioFinding(spec sdk.DetectorSpec, namespace string, workload Workload,
 		verdict.SLO.LatencyPercentile, verdict.Latency.Round(time.Millisecond), strings.Join(failures, "; "),
 		workload.Name, workload.Seed,
 	)
+	metadata := map[string]any{
+		"workload":           workload.Name,
+		"scenario":           scenario.ID,
+		"side_effect":        string(scenario.SideEffect),
+		"depends_on":         append([]string(nil), scenario.DependsOn...),
+		"samples":            verdict.Samples,
+		"errors":             verdict.Errors,
+		"timeouts":           verdict.Timeouts,
+		"error_rate":         verdict.ErrorRate,
+		"timeout_rate":       verdict.TimeoutRate,
+		"latency_percentile": verdict.SLO.LatencyPercentile,
+		"latency_ms":         verdict.Latency.Milliseconds(),
+		"status_counts":      verdict.StatusCounts,
+		"violations":         verdict.Violations,
+	}
+	if !verdict.FirstFailureAt.IsZero() {
+		metadata["first_failure_at"] = verdict.FirstFailureAt.UTC().Format(time.RFC3339Nano)
+	}
+	if n := len(verdict.RecentFailures); n > 0 {
+		last := verdict.RecentFailures[n-1]
+		metadata["failure_status"] = statusKey(last)
+		// What the server (or network) answered, else the probe's own error.
+		metadata["failure_observed"] = cmp.Or(last.Observed, last.Error)
+	}
 	related := make([]sdk.ObjectRef, 0, len(scenario.DependsOn))
 	for _, service := range scenario.DependsOn {
 		if service != scenario.Target.Service {
@@ -236,21 +261,7 @@ func ScenarioFinding(spec sdk.DetectorSpec, namespace string, workload Workload,
 		PrimaryResource:  sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: namespace, Name: scenario.Target.Service},
 		RelatedResources: related,
 		Playbooks:        append([]string(nil), spec.Playbooks...),
-		Metadata: map[string]any{
-			"workload":           workload.Name,
-			"scenario":           scenario.ID,
-			"side_effect":        string(scenario.SideEffect),
-			"depends_on":         append([]string(nil), scenario.DependsOn...),
-			"samples":            verdict.Samples,
-			"errors":             verdict.Errors,
-			"timeouts":           verdict.Timeouts,
-			"error_rate":         verdict.ErrorRate,
-			"timeout_rate":       verdict.TimeoutRate,
-			"latency_percentile": verdict.SLO.LatencyPercentile,
-			"latency_ms":         verdict.Latency.Milliseconds(),
-			"status_counts":      verdict.StatusCounts,
-			"violations":         verdict.Violations,
-		},
+		Metadata:         metadata,
 	}
 }
 

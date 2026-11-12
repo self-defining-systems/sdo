@@ -81,8 +81,7 @@
   "responder/incident_prompt": {
     "incident_id": "template_data.responder-incident_prompt-incident_id",
     "namespace": "template_data.responder-incident_prompt-namespace",
-    "opened_on": "template_data.responder-incident_prompt-opened_on",
-    "onset": "template_data.responder-incident_prompt-onset",
+    "symptom": "template_data.responder-incident_prompt-symptom",
     "skills_root": "template_data.responder-incident_prompt-skills_root",
     "branch_instruction": "template_data.responder-incident_prompt-branch_instruction"
   },
