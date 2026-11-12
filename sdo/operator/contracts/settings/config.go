@@ -129,6 +129,7 @@ type Response struct {
 	Menu                 bool     `yaml:"menu" doc:"offer the responder its tool menu"`
 	Permissive           bool     `yaml:"permissive" doc:"broad lane repair permissions excluding Secret and credential APIs"`
 	PermissiveNamespaces []string `yaml:"permissive_namespaces" doc:"additional lane namespaces the permissive responder may repair"`
+	StartupBound         Duration `yaml:"startup_bound" doc:"how long a new install waits for SDO to see its application healthy (2 min with no opener firing) before incidents open anyway; until then no incident opens. 0s turns the start-up period off"`
 }
 
 // Learning governs what the operator keeps from incidents.
@@ -181,7 +182,7 @@ func Default() Config {
 		Response: Response{
 			Timeout: Duration(30 * time.Minute), VerificationTimeout: Duration(5 * time.Minute), MaxLoops: 10,
 			DiagnosisDeadline: Duration(10 * time.Second), StageBudget: Duration(45 * time.Second), RepairPolicy: "commit",
-			Standby: true, Menu: true,
+			Standby: true, Menu: true, StartupBound: Duration(30 * time.Minute),
 		},
 		Detection: Detection{
 			SelfHealHold: Duration(DefaultSelfHealHold), StabilityWindow: Duration(15 * time.Second), DriftBatchWindow: Duration(20 * time.Second),
@@ -254,6 +255,9 @@ func (c Config) Validate() error {
 	}
 	positive("response.diagnosis_deadline", c.Response.DiagnosisDeadline)
 	positive("response.stage_budget", c.Response.StageBudget)
+	if c.Response.StartupBound < 0 {
+		bad("response.startup_bound", "%s must not be negative", c.Response.StartupBound)
+	}
 	oneOf("response.repair_policy", c.Response.RepairPolicy, "commit", "recorded-actions")
 	positive("detection.self_heal_hold", c.Detection.SelfHealHold)
 	positive("detection.stability_window", c.Detection.StabilityWindow)

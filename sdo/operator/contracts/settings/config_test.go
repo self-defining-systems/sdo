@@ -262,3 +262,26 @@ func TestDetectionDigestBindsOnlyTheDetectionSection(t *testing.T) {
 		t.Fatal("a 60s hold must not share the 5m digest")
 	}
 }
+
+// The start-up bound decides when a new install's incidents may open, not what a detector decides, so it is a
+// response setting: 30 min by default, overridable by file and environment, 0s turns the period off, and only a
+// negative value is refused (it is not tied to the self-heal hold).
+func TestStartupBoundDefaultEnvironmentAndValidation(t *testing.T) {
+	if got := time.Duration(settings.Default().Response.StartupBound); got != 30*time.Minute {
+		t.Fatalf("response.startup_bound default = %v, want 30m", got)
+	}
+	cfg, err := settings.Resolve(nil, []string{"SDO_AGENT_MODEL=m", "SDO_RESPONSE_STARTUP_BOUND=0s"})
+	if err != nil || cfg.Response.StartupBound != 0 {
+		t.Fatalf("0s from the environment turns the period off: %v %v", err, cfg.Response.StartupBound)
+	}
+	cfg, err = settings.Resolve([]string{writeFile(t, "response:\n  startup_bound: 2m\n")}, []string{"SDO_AGENT_MODEL=m"})
+	if err != nil || time.Duration(cfg.Response.StartupBound) != 2*time.Minute {
+		t.Fatalf("a bound shorter than the self-heal hold is valid: %v %v", err, cfg.Response.StartupBound)
+	}
+	bad := settings.Default()
+	bad.Agent.Model = "m"
+	bad.Response.StartupBound = settings.Duration(-time.Second)
+	if err := bad.Validate(); err == nil || !strings.Contains(err.Error(), "response.startup_bound") {
+		t.Fatalf("a negative bound must be refused, got %v", err)
+	}
+}

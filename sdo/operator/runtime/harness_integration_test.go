@@ -440,6 +440,8 @@ func (h *harness) runController(ctx context.Context) {
 	policy := settings.Default()
 	policy.Detection.DriftBatchWindow, policy.Detection.StabilityWindow = settings.Duration(20*time.Millisecond), settings.Duration(5*time.Second)
 	policy.Response.Timeout, policy.Response.VerificationTimeout = settings.Duration(30*time.Second), settings.Duration(20*time.Second)
+	// The harness injects at once; the start-up period has its own tests.
+	policy.Response.StartupBound = 0
 	for ctx.Err() == nil {
 		runCtx, cancel := context.WithCancel(ctx)
 		h.mu.Lock()

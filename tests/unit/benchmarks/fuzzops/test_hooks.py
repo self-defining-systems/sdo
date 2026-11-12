@@ -342,6 +342,12 @@ def test_plain_pack_keeps_a_pack_with_manifests(tmp_path: Path) -> None:
         ({"queued_reflection_incident_ids": ["i"]}, "reflection queued"),
         ({"queuedReflectionsUnknown": True}, "reflection queue unknown"),
         ({"version": "sdo.controller/v1"}, ""),
+        # A new install's start-up period holds until SDO has seen it healthy or the bound passes.
+        ({"startup": {"began_at": "t", "bound_at": "t"}}, "startup baseline pending"),
+        ({"startup": {"beganAt": "t", "boundAt": "t"}}, "startup baseline pending"),
+        ({"startup": {"began_at": "t", "established_at": "t"}}, ""),
+        ({"startup": {"began_at": "t", "bound_reached_at": "t"}}, ""),
+        ({"startup": {"skipped_reason": "restored-state"}}, ""),
     ],
 )
 def test_idle_reason(state: dict[str, Any] | None, why: str) -> None:
@@ -370,6 +376,8 @@ def test_an_open_incident_is_an_alarm_with_its_id() -> None:
         ({"version": "v"}, 140, True, "stale: state not updated for 140s"),
         ({"pending_closure": {"request": {}}}, 5, True, "busy: closure pending"),
         ({"queued_reflection_incident_ids": ["i"]}, 5, True, "busy: reflection queued"),
+        # Waiting for a first healthy window is ordinary busy, never an SDO alarm.
+        ({"startup": {"began_at": "t"}}, 5, True, "busy: startup baseline pending"),
     ],
 )
 def test_idle_verdict_reasons(state: dict[str, Any] | None, age: int, ready: bool, prefix: str) -> None:

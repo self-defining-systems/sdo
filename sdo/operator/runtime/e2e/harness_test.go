@@ -331,6 +331,8 @@ func (w *World) InstallController(configure ...func(*settings.Config)) {
 	policy := settings.Default()
 	policy.Agent.Model, policy.Response.RepairPolicy = "gpt-6-luna", "recorded-actions"
 	policy.Response.Timeout, policy.Response.VerificationTimeout = settings.Duration(300*time.Second), settings.Duration(120*time.Second)
+	// Scenarios inject at once; the start-up period has its own tests.
+	policy.Response.StartupBound = 0
 	for _, apply := range configure {
 		apply(&policy)
 	}

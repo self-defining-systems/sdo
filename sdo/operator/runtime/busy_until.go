@@ -72,7 +72,15 @@ func (c *Controller) busyKeyLocked() string {
 // and then abandoned in one more pass, each at most the response timeout, with
 // the retry backoff between; an incident in flight adds its response, closure
 // retry and verification plus its own reflection.
+//
+// While a new install's start-up period holds, the bound is the period's: no
+// incident can open before it, and observers that wait for idle must not act
+// on an install SDO has not yet seen healthy.
 func (c *Controller) busyUntilLocked(now time.Time) time.Time {
+	if c.startup.holding(now) {
+		c.busy = busyWindow{}
+		return c.startup.bound
+	}
 	inFlight, reflections := c.incidentWorkOpenLocked()
 	if !inFlight && reflections == 0 {
 		c.busy = busyWindow{}

@@ -192,6 +192,10 @@ class FakeLane:
         self.restored: tuple[str, datetime] | None = None
         self.leftover: gf.OutcomeRead | None = None  # an incident from before the injection, closing in PRECHECK
         self.leftover_closes_at = 10.0
+        self.startup_until = 0.0  # SDO holds a new install's openers until it has seen it healthy
+
+    def startup_holding(self) -> bool:
+        return self.t < self.startup_until
 
     def clock(self) -> float:
         return self.t
@@ -415,6 +419,32 @@ def test_unhealthy_baseline_before_injection_is_an_infra_error_without_injecting
     assert result.infra_stage == "pre_injection"
     assert lane.applied == []
     assert isinstance(gf.record_for(result, config()).injection, NotInjected)
+
+
+def test_injection_waits_for_the_start_up_period() -> None:
+    """A controller still holding a new install's openers would hide the fault; the baseline gate waits it out."""
+    lane = FakeLane("resolve")
+    lane.startup_until = 30
+    result = run(lane, baseline=60)
+    assert result.injected is not None
+    assert lane.injected_at is not None
+    assert lane.injected_at >= 30
+    assert result.outcome is gf.Outcome.RESOLVED
+
+
+@pytest.mark.parametrize(
+    ("state", "holding"),
+    [
+        ({}, False),
+        ({"startup": {"began_at": "2026-01-01T00:00:00Z", "bound_at": "2026-01-01T00:30:00Z"}}, True),
+        ({"startup": {"beganAt": "2026-01-01T00:00:00Z"}}, True),
+        ({"startup": {"began_at": "t", "established_at": "t"}}, False),
+        ({"startup": {"began_at": "t", "bound_reached_at": "t"}}, False),
+        ({"startup": {"skipped_reason": "restored-state"}}, False),
+    ],
+)
+def test_startup_holding_reads_the_controller_state(state: dict[str, Any], holding: bool) -> None:
+    assert gf.startup_holding(state) is holding
 
 
 def test_open_incident_before_injection_blocks_the_fault() -> None:

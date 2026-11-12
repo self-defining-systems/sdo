@@ -72,6 +72,9 @@ type ControllerConfig struct {
 	// GateConfirmation is the responder gate's clear hysteresis, published in
 	// the incident view. Zero makes the gate follow closure's clear count.
 	GateConfirmation GateConfirmationPolicy
+	// StartupBound is how long a new install holds its openers until the
+	// application is seen healthy (startupPeriod). Zero runs no period.
+	StartupBound time.Duration
 }
 
 type dispatchCompletion struct {
@@ -203,6 +206,9 @@ type Controller struct {
 	reflectionResults                  chan reflectionCompletion
 	reflections                        reflectionQueueState
 	busy                               busyWindow
+	// startup holds a new install's openers until the application is seen
+	// healthy or the bound passes; nil when the period is off.
+	startup *startupPeriod
 
 	// Baseline, when set, records healthy configuration and attaches the
 	// diff against it to each new incident request.
@@ -275,6 +281,7 @@ func (c ControllerConfig) WithSettings(policy settings.Config) ControllerConfig 
 	c.StageBudget = time.Duration(policy.Response.StageBudget)
 	c.ClosureStabilityWindow = time.Duration(policy.Detection.StabilityWindow)
 	c.RepairPolicy = policy.Response.RepairPolicy
+	c.StartupBound = time.Duration(policy.Response.StartupBound)
 	return c
 }
 
@@ -370,9 +377,13 @@ func NewController(
 		}
 	}
 	sort.Strings(healthDetectorIDs)
+	var startup *startupPeriod
+	if config.StartupBound > 0 && !config.ExternalIncidentsOnly {
+		startup = newStartupPeriod(start.UTC(), start.UTC().Add(config.StartupBound))
+	}
 	return &Controller{
 		config: config, codePath: resolvedPath, startedAt: start, scheduler: NewScheduler(detectors, start, config.Namespace), detectors: byID,
-		tracker:    tracker,
+		tracker: tracker, startup: startup,
 		gateClears: make(map[string]*gateClear), gateProbes: make(map[string]time.Time),
 		batcher: NewDebouncedBatcher(config.BatchDebounce), provider: provider, dispatcher: dispatcher,
 		results: make(chan dispatchCompletion, 1), healthDetectorIDs: healthDetectorIDs,
@@ -637,6 +648,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		sampleFindings = append(sampleFindings, validFindings...)
 		c.recordEvaluation(spec.ID, now, validFindings, c.recoveryScope())
 		c.history[len(c.history)-1].Reason = detectorConfirmationReason(detector, snapshot)
+		c.noteStartupEvaluation(spec.ID)
 		c.batcher.RemoveKeys(changes.Cleared)
 		if c.config.ConfirmationInterval > 0 && c.tracker.HasPendingDetector(spec.ID) {
 			c.scheduler.Expedite(spec.ID, now.Add(c.config.ConfirmationInterval))
@@ -682,6 +694,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		c.captureHealthyMemoryBaseline(ctx, now, snapshot, healthy)
 		c.promotePodReadBaseline(now, snapshot, healthy)
 		c.promoteObservationBaselines(now, snapshot, healthy)
+		c.observeStartup(now)
 	}
 	if c.adoptionNeeded {
 		c.mu.Lock()
@@ -854,6 +867,10 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 	if closurePending {
 		return nil
 	}
+	// A new install opens nothing until it is seen healthy (startupPeriod).
+	if c.startupHolds(now) {
+		return nil
+	}
 	if !c.batcher.Ready(now) {
 		return nil
 	}
@@ -1021,11 +1038,16 @@ func (c *Controller) nextWake() (time.Time, string) {
 	// A batch deadline only matters when the batch can be dispatched or
 	// attached. Otherwise an expired deadline would spin the runtime loop for
 	// the whole incident.
-	batchActionable := (!c.incidentOpen && (!c.closureBlocksNextLocked() || c.broker == nil)) ||
+	startupHolding := c.startup.holding(c.clock())
+	batchActionable := !startupHolding && (!c.incidentOpen && (!c.closureBlocksNextLocked() || c.broker == nil)) ||
 		c.canAttachBeforeLaunchLocked()
 	c.mu.Unlock()
 	if deadline, ok := c.batcher.Deadline(); ok && batchActionable {
 		consider(deadline, "finding batch deadline")
+	}
+	// Only a bound still ahead: a past one would spin the loop.
+	if startupHolding {
+		consider(c.startup.bound, "start-up bound")
 	}
 	c.mu.Lock()
 	verificationPending := c.incidentOpen && (c.responderDone || !c.verificationDeadline.IsZero()) && c.currentIncidentRequest != nil
@@ -2042,6 +2064,7 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 		AcceptedSourceDrift: driftEventsContract(c.acceptedSourceDrift), AcceptedSourceDriftRevision: c.acceptedSourceDriftRevision,
 		DriftEvents: driftEventsContract(c.driftEvents), OwnershipAdoption: adoptionContract(c.ownershipAdoption),
 		BusyUntil: optionalBusyUntil(c.busyUntilLocked(c.clock())),
+		Startup:   c.startup.contract(),
 	}
 	if c.currentIncidentRequest != nil {
 		message.IncidentRequest, err = incidentRequestContract(*c.currentIncidentRequest)
@@ -2141,6 +2164,9 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	c.stepCount = state.GetStepCount()
 	c.timeline = cloneTimeline(detectorTimelineState(state.GetDetectorTimeline()))
 	c.lateJoinedKeys = lateJoinedFromTimeline(c.timeline)
+	if c.startup != nil {
+		c.startup = restoredStartupPeriod(state.GetStartup())
+	}
 	return nil
 }
 

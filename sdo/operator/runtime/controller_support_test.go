@@ -79,12 +79,15 @@ func controllerDetector(id string, interval time.Duration, samples ...sdk.Findin
 
 // testControllerConfig takes its timing and policy from the production
 // defaults, as every NewController caller does, with a one-minute response.
+// It turns the start-up period off: its callers test what happens once
+// incidents may open, and startup_period_test.go sets the bound itself.
 func testControllerConfig() ControllerConfig {
 	cfg := ControllerConfig{
 		Application: "demo", Namespace: "demo", SourceCommit: "source", DeployedCommit: "deployed",
 		RepositoryWorktree: "/tmp/demo",
 	}.WithSettings(settings.Default())
 	cfg.ResponseTimeout = time.Minute
+	cfg.StartupBound = 0
 	return cfg
 }
 
