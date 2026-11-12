@@ -368,11 +368,8 @@ message PlanApplication {
   RecoveryWait recovery_wait = 24;
   string final_verification_basis = 22 [(buf.validate.field).string = {in: ["", "observed-transition", "recovery-settled"]}];
   SettlementRejectionReason settlement_rejection_reason = 23 [(buf.validate.field).enum.defined_only = true];
-  // Controller-observed: every non-Secret object the plan wrote departed from
-  // accepted source before it (a departure present before SDO's first write in
-  // the incident) and matches accepted source after it, or was source-absent
-  // and is gone. The write is proven by its own receipt.
-  bool restored_source = 25;
+  reserved 25;
+  reserved "restored_source";
 }
 
 message ProgramToolCall {

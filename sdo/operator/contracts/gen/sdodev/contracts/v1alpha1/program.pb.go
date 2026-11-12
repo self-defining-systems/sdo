@@ -2843,13 +2843,8 @@ type PlanApplication struct {
 	RecoveryWait              *RecoveryWait             `protobuf:"bytes,24,opt,name=recovery_wait,json=recoveryWait,proto3" json:"recovery_wait,omitempty"`
 	FinalVerificationBasis    string                    `protobuf:"bytes,22,opt,name=final_verification_basis,json=finalVerificationBasis,proto3" json:"final_verification_basis,omitempty"`
 	SettlementRejectionReason SettlementRejectionReason `protobuf:"varint,23,opt,name=settlement_rejection_reason,json=settlementRejectionReason,proto3,enum=sdodev.contracts.v1alpha1.SettlementRejectionReason" json:"settlement_rejection_reason,omitempty"`
-	// Controller-observed: every non-Secret object the plan wrote departed from
-	// accepted source before it (a departure present before SDO's first write in
-	// the incident) and matches accepted source after it, or was source-absent
-	// and is gone. The write is proven by its own receipt.
-	RestoredSource bool `protobuf:"varint,25,opt,name=restored_source,json=restoredSource,proto3" json:"restored_source,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
 }
 
 func (x *PlanApplication) Reset() {
@@ -3034,13 +3029,6 @@ func (x *PlanApplication) GetSettlementRejectionReason() SettlementRejectionReas
 		return x.SettlementRejectionReason
 	}
 	return SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED
-}
-
-func (x *PlanApplication) GetRestoredSource() bool {
-	if x != nil {
-		return x.RestoredSource
-	}
-	return false
 }
 
 type ProgramToolCall struct {
@@ -6080,7 +6068,7 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x13EXIT_REASON_BLOCKER\x10\x03\x12\x16\n" +
 	"\x12EXIT_REASON_FAILED\x10\x04\x12\x19\n" +
 	"\x15EXIT_REASON_UNCOVERED\x10\x05\x12\x1f\n" +
-	"\x1bEXIT_REASON_NOTHING_APPLIED\x10\x06\"\xb0\v\n" +
+	"\x1bEXIT_REASON_NOTHING_APPLIED\x10\x06\"\x9e\v\n" +
 	"\x0fPlanApplication\x12;\n" +
 	"\x04plan\x18\x01 \x01(\v2\x1f.sdodev.contracts.v1alpha1.PlanB\x06\xbaH\x03\xc8\x01\x01R\x04plan\x12\x18\n" +
 	"\aapplied\x18\x02 \x01(\bR\aapplied\x12\x17\n" +
@@ -6107,10 +6095,9 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x0frollout_pending\x18\x15 \x01(\v2).sdodev.contracts.v1alpha1.RolloutPendingR\x0erolloutPending\x12L\n" +
 	"\rrecovery_wait\x18\x18 \x01(\v2'.sdodev.contracts.v1alpha1.RecoveryWaitR\frecoveryWait\x12h\n" +
 	"\x18final_verification_basis\x18\x16 \x01(\tB.\xbaH+r)R\x00R\x13observed-transitionR\x10recovery-settledR\x16finalVerificationBasis\x12~\n" +
-	"\x1bsettlement_rejection_reason\x18\x17 \x01(\x0e24.sdodev.contracts.v1alpha1.SettlementRejectionReasonB\b\xbaH\x05\x82\x01\x02\x10\x01R\x19settlementRejectionReason\x12'\n" +
-	"\x0frestored_source\x18\x19 \x01(\bR\x0erestoredSourceB\x1d\n" +
-	"\x1b_final_equivalence_verifiedJ\x04\b\v\x10\fJ\x04\b\r\x10\x0eR\n" +
-	"pre_imagesR\apatches\"\xcf\x01\n" +
+	"\x1bsettlement_rejection_reason\x18\x17 \x01(\x0e24.sdodev.contracts.v1alpha1.SettlementRejectionReasonB\b\xbaH\x05\x82\x01\x02\x10\x01R\x19settlementRejectionReasonB\x1d\n" +
+	"\x1b_final_equivalence_verifiedJ\x04\b\v\x10\fJ\x04\b\r\x10\x0eJ\x04\b\x19\x10\x1aR\n" +
+	"pre_imagesR\apatchesR\x0frestored_source\"\xcf\x01\n" +
 	"\x0fProgramToolCall\x12\x18\n" +
 	"\acommand\x18\x01 \x01(\tR\acommand\x12*\n" +
 	"\x02at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\x12!\n" +

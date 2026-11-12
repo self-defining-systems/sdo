@@ -27,7 +27,6 @@ from sdo.contracts.proto import (
     ProgramRun,
     RepairActionReceipt,
     Verdict,
-    VerificationStrength,
 )
 from tests.context_helpers import expand_context
 
@@ -166,28 +165,6 @@ def test_current_outcome_says_when_data_may_be_lost() -> None:
         DetectorEvaluation(detector_id="controller.data-at-risk", status="pending", reason=reason)
     )
     assert current_outcome_view(outcome)["data_at_risk"] == [reason]
-
-
-def test_current_outcome_says_which_components_no_operation_probe_verified() -> None:
-    outcome = _outcome("synthetic-incident")
-    assert "recovery_unverified" not in current_outcome_view(outcome)
-
-    outcome.classification = "unconfirmed"
-    outcome.recovery_verification.probed = True
-    outcome.recovery_verification.writes_settled = True
-    outcome.recovery_verification.components.add(
-        component="store",
-        strength=VerificationStrength.VERIFICATION_STRENGTH_REACHABILITY,
-        recovered=True,
-        in_scope=True,
-    )
-    outcome.recovery_verification.components.add(
-        component="front", strength=VerificationStrength.VERIFICATION_STRENGTH_OPERATION, recovered=True, in_scope=True
-    )
-    outcome.recovery_verification.components.add(
-        component="gate", strength=VerificationStrength.VERIFICATION_STRENGTH_UNOBSERVABLE, in_scope=False
-    )
-    assert current_outcome_view(outcome)["recovery_unverified"] == ["store: reachability only"]
 
 
 def test_current_outcome_shows_source_check_notes_only_when_recorded() -> None:

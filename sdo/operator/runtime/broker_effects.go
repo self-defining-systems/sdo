@@ -326,12 +326,11 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 			unconfirmed, unconfirmedReason = risk, contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_DATA_MAY_BE_LOST
 			unconfirmedStates = []DetectorEvaluation{{DetectorID: dataAtRiskEvaluation, EvaluatedAt: c.clock(), Status: DetectorEvaluationPending, Reason: risk}}
 		} else {
-			// Readiness is not recovery: every in-scope faulted component's
-			// verification set must pass after SDO's last write settled.
+			// The same Recovered predicate closure used: the opening user tests
+			// still pass after SDO's last write settled.
 			check := c.closureRecoveryCheck(actionCtx, snapshot, effect.Closure)
 			verification = check.record
-			switch check.verdict {
-			case recoveryPending:
+			if check.verdict == recoveryPending {
 				if !c.closureRecheckWaitExpired(effect.Identity, check.horizon+effect.Closure.ClosureStabilityWindow) {
 					c.scheduleClosureRecheck()
 					cancel()
@@ -339,8 +338,6 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 				}
 				unconfirmed = "not recovered by the verification bound: " + check.reason
 				unconfirmedReason = contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE
-			case recoveryWeak:
-				unconfirmed, unconfirmedReason = check.reason, contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE
 			}
 			if unconfirmed != "" {
 				slog.Warn("closure_recovery_unverified", "incident_id", effect.Closure.Request.IncidentID, "reason", unconfirmed)

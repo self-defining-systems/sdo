@@ -1188,11 +1188,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	if request.stage && request.rolloutTimeout > 0 {
 		executor.RolloutTimeout = request.rolloutTimeout
 	}
-	restore := l.sourceRestoreBefore(ctx, batch)
 	result, err := executor.Apply(ctx, l.mitigationIncident(selected), batch, false)
-	if err == nil && result.Applied && !result.RolledBack {
-		result.RestoredSource = restore.restored(ctx, l)
-	}
 	response.ActionReports = result.ActionReports
 	completed := l.clock().UTC()
 	if result.RolloutPending != nil {

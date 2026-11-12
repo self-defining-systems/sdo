@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -12,118 +11,66 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/traffic"
 )
 
-// Verification member kinds.
-const (
-	memberProbe = "probe"
-	memberLink  = "link"
-)
-
-// recoveryVerdict is what the one "recovered" test concludes for a closure.
+// recoveryVerdict is what Recovered concludes.
 type recoveryVerdict int
 
 const (
-	// recoveryVerified: every in-scope component recovered at operation
-	// strength (or the application has no health probes).
+	// recoveryVerified: every opening user test passed in a sustained way
+	// since SDO's last write settled.
 	recoveryVerified recoveryVerdict = iota
-	// recoveryPending: an SDO write has not settled, or an in-scope member has
-	// not passed in a sustained way yet. Not a contradiction: wait.
+	// recoveryPending: an SDO write has not settled, or an opening user test
+	// has not passed in a sustained way yet. Not a contradiction: wait.
 	recoveryPending
-	// recoveryWeak: every in-scope member that can pass did, but some in-scope
-	// component is observed only at reachability strength, or not at all.
-	recoveryWeak
 )
 
-// recoveryCheck is the verification of one closure: the record the outcome
-// carries, the verdict, why it is not verified, and how long its members may
-// take to pass.
+// recoveryCheck is one evaluation of Recovered: the record the outcome
+// carries, the verdict, why it does not hold, and how long its user tests may
+// take to show it.
 type recoveryCheck struct {
 	record  *contracts.RecoveryVerification
 	verdict recoveryVerdict
 	reason  string
 	horizon time.Duration
-	// unobservable is set when an in-scope component has no member at all.
-	unobservable bool
-	// components maps each held finding's fingerprint to its component.
-	components map[string]string
-	// written holds the components and objects an SDO write touched.
-	written map[string]bool
 }
 
-// touched reports whether an SDO write touched the finding's component or
-// its primary resource.
-func (c recoveryCheck) touched(finding sdk.Finding) bool {
-	if name := c.components[FindingFingerprint(finding)]; name != "" && c.written[name] {
-		return true
-	}
-	return c.written[objectKeyString(finding.PrimaryResource)]
-}
-
-func objectKeyString(ref sdk.ObjectRef) string {
-	return "object:" + ref.Kind + "/" + ref.Namespace + "/" + ref.Name
-}
-
-// verificationInput is everything Recovered reads: the accepted map, the live
-// view (traffic windows, workloads, Pods), the incident's findings and SDO's
-// writes. It is a pure function of these.
+// verificationInput is everything Recovered reads: the accepted map (to
+// resolve written workloads), the live view (traffic windows, workloads,
+// Pods), the incident's opening alerts and SDO's writes. It is a pure function
+// of these.
 type verificationInput struct {
 	m        appmap.Map
-	doc      string
 	view     sdk.DetectionContext
 	request  IncidentRequest
 	result   *IncidentResult
 	detected time.Time
-	// opening is the set of finding keys the incident opened on; late joiners
-	// are not in it.
-	opening map[string]bool
-	// stability is the closure stability window: members must keep passing
-	// through it.
+	// stability is the closure stability window: opening user tests must keep
+	// passing through it.
 	stability time.Duration
 }
 
-type verificationMember struct {
-	id, kind string
-	scenario string
-	link     traffic.Link
-	window   string
-}
-
-type componentSet struct {
-	name     string
-	strength contracts.VerificationStrength
-	members  []verificationMember
-	inScope  bool
-	edgeFrom string
-}
-
-// closureRecoveryCheck runs the recovered test for a closure about to commit.
-// Its record is nil when nothing can be decided (no view or no readable
-// accepted map): the closure then rests on its detectors.
+// closureRecoveryCheck evaluates Recovered for a closure about to commit.
 func (c *Controller) closureRecoveryCheck(ctx context.Context, snapshot sdk.DetectionContext, closure IncidentClosure) recoveryCheck {
-	if snapshot == nil || len(closure.FinalDetectorStates) == 0 {
-		return recoveryCheck{}
+	return c.recoveryCheck(ctx, snapshot, closure.Request, closure.Result, closure.DetectedAt, closure.ClosureStabilityWindow)
+}
+
+// recoveryCheck evaluates Recovered for the open incident on snapshot.
+func (c *Controller) recoveryCheck(ctx context.Context, snapshot sdk.DetectionContext, request IncidentRequest, result *IncidentResult, detected time.Time, stability time.Duration) recoveryCheck {
+	if snapshot == nil {
+		return recoveryCheck{verdict: recoveryVerified}
 	}
-	m, document := acceptedVerificationMap(ctx, c.gitRead, closure.Request)
-	opening := map[string]bool{}
-	late := lateJoinedFromTimeline(closure.DetectorTimeline)
-	for _, finding := range closure.Request.Findings {
-		key := FindingStateKey(finding.DetectorID, FindingFingerprint(finding))
-		if _, joined := late[key]; !joined {
-			opening[key] = true
-		}
-	}
-	return recovered(verificationInput{m: m, doc: document, view: snapshot, request: closure.Request, result: closure.Result,
-		detected: closure.DetectedAt, opening: opening, stability: closure.ClosureStabilityWindow})
+	m, _ := acceptedVerificationMap(ctx, c.gitRead, request)
+	return recovered(verificationInput{m: m, view: snapshot, request: request, result: result, detected: detected, stability: stability})
 }
 
 // acceptedVerificationMap reads the application map at the incident's
-// accepted commit. An unreadable or absent map is the empty map: the recovered
-// test then verifies the whole application through every running probe.
+// accepted commit. An unreadable or absent map is the empty map.
 func acceptedVerificationMap(ctx context.Context, read gitRead, request IncidentRequest) (appmap.Map, string) {
 	if read == nil || request.SourceCommit == "" {
 		return appmap.Map{}, ""
@@ -143,291 +90,89 @@ func acceptedVerificationMap(ctx context.Context, read gitRead, request Incident
 	return m, string(document)
 }
 
-// wholeApplication names the one component of an application without a
-// readable map: every running gated probe is its member.
-const wholeApplication = "(application)"
+// openingUserTest names the probe workload and scenario of an opening key
+// that is a user test, or reports false for a Kubernetes condition.
+func openingUserTest(request IncidentRequest, key string) (workload, scenario string, ok bool) {
+	for _, finding := range request.Findings {
+		if FindingStateKey(finding.DetectorID, FindingFingerprint(finding)) != key {
+			continue
+		}
+		workload, isTraffic := strings.CutPrefix(finding.DetectorID, memory.TrafficDetectorPrefix)
+		scenario, isScenario := strings.CutPrefix(finding.RuleID, traffic.RuleIDPrefix)
+		return workload, scenario, isTraffic && isScenario
+	}
+	return "", "", false
+}
 
-// recovered is the one "recovered" test. Each component an incident finding
-// faulted, or an SDO write touched, has a verification set: the probes of user
-// operations that cover it (operation strength) or, when none do, the link
-// dials into it (reachability strength). It recovered when every member passed
-// in a sustained way since the later of detection and the settle time of SDO's
-// last write. Only components an opening finding names or SDO wrote to decide
-// the verdict; the others are recorded.
+// recovered is Recovered, the one predicate that closes an incident, clears
+// the automatic stage and ends the responder session: no SDO write is still
+// rolling out, and every opening user test passed in a sustained way since
+// the later of detection and the settle time of SDO's last write (fresh
+// samples meet its SLO, the trailing stability window too, the latest sample
+// is good). An opening Kubernetes condition recovers when its finding is
+// inactive with a clear streak of the stability window; the caller decides
+// that from detector history (closure) or the stage's live findings.
 func recovered(in verificationInput) recoveryCheck {
 	windows := map[string]traffic.Window{}
 	if set, ok := in.view.(traffic.WindowSet); ok {
 		windows = set.TrafficWindows()
 	}
-	record := &contracts.RecoveryVerification{}
-	for _, window := range windows {
-		record.Probed = record.Probed || window.Workload.Purpose == traffic.PurposeHealthProbe
-	}
-	resolve := newComponentResolver(in.m, in.view, in.request.Namespace)
-	coverage := in.m.Coverage(appmap.ParseInventory(in.doc), windowWorkloads(windows))
-	sets := map[string]*componentSet{}
-	get := func(name string) *componentSet {
-		if sets[name] == nil {
-			sets[name] = &componentSet{name: name}
-		}
-		return sets[name]
-	}
-	scope := newRecoveryScope(keysOf(in.opening))
-	check := recoveryCheck{record: record, components: map[string]string{}, written: map[string]bool{}}
-	for _, finding := range in.request.Findings {
-		if strings.HasPrefix(finding.DetectorID, "drift.") || !scope.holds(finding) {
-			continue
-		}
-		name := resolve.component(finding.PrimaryResource)
-		if len(in.m.Components) == 0 {
-			name = wholeApplication
-		}
-		if name == "" {
-			continue
-		}
-		check.components[FindingFingerprint(finding)] = name
-		set := get(name)
-		if in.opening[FindingStateKey(finding.DetectorID, FindingFingerprint(finding))] {
-			set.inScope = true
-		}
-		if strings.HasPrefix(finding.RuleID, traffic.LinkRuleIDPrefix) {
-			if from, _ := finding.Metadata["from"].(string); from != "" {
-				set.edgeFrom = resolve.byService[from]
-			}
-		}
-	}
-	writes, since, settled := sdoWrites(in, resolve)
+	opening := openingKeys(&in.request)
+	record := &contracts.RecoveryVerification{OpeningKeys: append([]string(nil), opening...)}
+	check := recoveryCheck{record: record}
+	writes, since, settled := sdoWrites(in, newComponentResolver(in.m, in.view, in.request.Namespace))
 	record.Since = timestamppb.New(since)
 	record.WritesSettled = settled
 	for _, w := range writes {
 		record.Writes = append(record.Writes, &contracts.WriteSettlement{ApplicationId: w.id, SettledAt: optionalTimestamp(w.settledAt), Settled: w.settled})
-		for _, ref := range w.refs {
-			check.written[objectKeyString(ref)] = true
-		}
-		for _, name := range w.components {
-			check.written[name] = true
-			get(name).inScope = true
-		}
 	}
-	if len(in.m.Components) == 0 && len(writes) > 0 {
-		// Without a map no write resolves to a component: any write touches
-		// the whole application.
-		check.written[wholeApplication] = true
-		get(wholeApplication).inScope = true
-	}
-	if !record.Probed {
-		// No health probes (review U4): the closure rests on its detectors.
-		// The record keeps only the writes and their settle times.
-		return check
-	}
-	names := make([]string, 0, len(sets))
-	for name := range sets {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	var weak, pending []string
-	for _, name := range names {
-		set := sets[name]
-		buildMembers(set, in.m, coverage, windows, resolve)
-		verification := &contracts.ComponentVerification{Component: name, Strength: set.strength, InScope: set.inScope, EdgeFrom: set.edgeFrom, Recovered: settled}
-		for _, member := range set.members {
-			passed, detail, horizon := memberPassed(member, windows, since, in.stability)
-			check.horizon = max(check.horizon, horizon)
-			verification.Members = append(verification.Members, &contracts.VerificationMember{Id: member.id, Kind: member.kind, Passed: passed, Detail: detail})
-			if !passed {
-				verification.Recovered = false
-				if set.inScope {
-					pending = append(pending, fmt.Sprintf("%s: %s %s %s", name, member.kind, member.id, detail))
-				}
-			}
-		}
-		if set.strength == contracts.VerificationStrength_VERIFICATION_STRENGTH_UNOBSERVABLE {
-			verification.Recovered = false
-		}
-		record.Components = append(record.Components, verification)
-		if !set.inScope {
+	var pending []string
+	userTests := 0
+	for _, key := range opening {
+		workload, scenario, ok := openingUserTest(in.request, key)
+		if !ok {
 			continue
 		}
-		switch set.strength {
-		case contracts.VerificationStrength_VERIFICATION_STRENGTH_REACHABILITY:
-			weak = append(weak, name+": reachability only (no probe of a user operation covers it; its link dials passed)")
-		case contracts.VerificationStrength_VERIFICATION_STRENGTH_UNOBSERVABLE:
-			check.unobservable = true
-			weak = append(weak, name+": no probe or link covers it")
+		userTests++
+		passed, detail, horizon := memberPassed(windows[workload], scenario, since, in.stability)
+		check.horizon = max(check.horizon, horizon)
+		if !passed {
+			pending = append(pending, fmt.Sprintf("user test %s %s", scenario, detail))
 		}
 	}
 	switch {
-	case !settled:
+	case !settled && userTests > 0:
+		// A condition opener's closure already waits on pending rollouts of
+		// the written workloads; a user test needs the settle time as since.
 		check.verdict, check.reason = recoveryPending, "an SDO write has not settled (its rollout is still pending)"
 	case len(pending) > 0:
 		check.verdict, check.reason = recoveryPending, "not recovered since SDO's last write settled: "+strings.Join(pending, "; ")
-	case len(weak) > 0:
-		check.verdict, check.reason = recoveryWeak, "recovery verified below operation strength: "+strings.Join(weak, "; ")
+	default:
+		if observed := sdk.ObservationTime(in.view); !observed.IsZero() {
+			record.StableSince = timestamppb.New(observed)
+		}
 	}
 	return check
 }
 
-// buildMembers fills a component's verification set and its strength. A held
-// finding on one edge is verified by probes whose operation path crosses that
-// edge, else by that edge's link dials. A probe the accepted map lists but no
-// health-probe window runs any more (a later health commit removed it) is
-// dropped, so the component falls back rather than waiting for it.
-func buildMembers(set *componentSet, m appmap.Map, coverage appmap.Coverage, windows map[string]traffic.Window, resolve componentResolver) {
-	running := map[string]string{}
-	for name, window := range windows {
-		if window.Workload.Purpose != traffic.PurposeHealthProbe {
-			continue
-		}
-		for _, observed := range window.Scenarios {
-			if !knownBrokenIn(window.Workload, observed.Scenario.ID) {
-				running[observed.Scenario.ID] = name
-			}
-		}
-	}
-	probes := coverage.Components[set.name].Probes
-	if set.edgeFrom != "" {
-		probes = probesCrossing(m, coverage, set.edgeFrom, set.name)
-	}
-	if set.name == wholeApplication {
-		probes = nil
-		for id := range running {
-			probes = append(probes, id)
-		}
-		sort.Strings(probes)
-	}
-	for _, id := range probes {
-		if window, ok := running[id]; ok {
-			set.members = append(set.members, verificationMember{id: id, kind: memberProbe, scenario: id, window: window})
-		}
-	}
-	if len(set.members) > 0 {
-		set.strength = contracts.VerificationStrength_VERIFICATION_STRENGTH_OPERATION
-		return
-	}
-	target := map[string]bool{}
-	for _, svc := range resolve.services[set.name] {
-		target[svc] = true
-	}
-	from := map[string]bool{}
-	for _, svc := range resolve.services[set.edgeFrom] {
-		from[svc] = true
-	}
-	seen := map[string]bool{}
-	var names []string
-	for name := range windows {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		window := windows[name]
-		if window.Workload.Purpose != traffic.PurposeLinkProbe {
-			continue
-		}
-		for _, observed := range window.Links {
-			link := observed.Link
-			if !target[link.To] || (set.edgeFrom != "" && !from[link.From]) || seen[link.ID()] {
-				continue
-			}
-			seen[link.ID()] = true
-			set.members = append(set.members, verificationMember{id: link.ID(), kind: memberLink, link: link, window: name})
-		}
-	}
-	if len(set.members) > 0 {
-		set.strength = contracts.VerificationStrength_VERIFICATION_STRENGTH_REACHABILITY
-		return
-	}
-	set.strength = contracts.VerificationStrength_VERIFICATION_STRENGTH_UNOBSERVABLE
-}
-
-func knownBrokenIn(workload traffic.Workload, id string) bool {
-	for _, scenario := range workload.Scenarios {
-		if scenario.ID == id {
-			return scenario.KnownBroken != nil
-		}
-	}
-	return false
-}
-
-// probesCrossing lists the covering probes of to whose operation path holds
-// from immediately before to: the probes that send a request over that edge.
-func probesCrossing(m appmap.Map, coverage appmap.Coverage, from, to string) []string {
-	ops := map[string]appmap.Operation{}
-	for _, op := range m.Operations {
-		ops[op.ID] = op
-	}
-	covering := map[string]bool{}
-	for _, id := range coverage.Components[to].Probes {
-		covering[id] = true
-	}
-	var out []string
-	for _, probe := range m.Probes {
-		if !covering[probe.Scenario] {
-			continue
-		}
-		for _, id := range probe.Operations {
-			path := ops[id].Path
-			for i := 0; i+1 < len(path); i++ {
-				if path[i] == from && path[i+1] == to && !containsString(out, probe.Scenario) {
-					out = append(out, probe.Scenario)
-				}
-			}
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-// memberPassed reports whether a member passed in a sustained way since
-// since: a probe's samples since then meet its SLO, and so do those in the
-// trailing stability window; a link's dials since then end in a run of
-// successes as long as its failure threshold and show no unreachable,
-// intermittent or slow judgement. horizon is how long the member needs to show
-// it.
-func memberPassed(member verificationMember, windows map[string]traffic.Window, since time.Time, stability time.Duration) (bool, string, time.Duration) {
-	window, ok := windows[member.window]
-	if !ok {
+// memberPassed reports whether a user test passed in a sustained way since
+// since: its samples since then meet its SLO, and so do those in the trailing
+// stability window, and its latest sample is good. horizon is how long the
+// test needs to show it.
+func memberPassed(window traffic.Window, scenario string, since time.Time, stability time.Duration) (bool, string, time.Duration) {
+	if window.Workload.Name == "" && len(window.Scenarios) == 0 {
 		return false, "has no observations", 0
 	}
 	if window.LoadError != "" {
 		return false, window.LoadError, 0
 	}
-	if member.kind == memberLink {
-		setting := window.LinkSetting()
-		needed := max(setting.Failures, traffic.MinLinkFailures)
-		horizon := time.Duration(needed+2) * setting.Period
-		for _, observed := range window.Links {
-			if observed.Link.ID() != member.link.ID() || observed.EffectiveVantage() != traffic.LinkVantageProber {
-				continue
-			}
-			var fresh []traffic.LinkSample
-			for _, sample := range observed.Samples {
-				if !sample.At.Before(since) {
-					fresh = append(fresh, sample)
-				}
-			}
-			if len(fresh) < needed {
-				return false, fmt.Sprintf("has %d of %d dials since the last write settled", len(fresh), needed), horizon
-			}
-			for _, sample := range fresh[len(fresh)-needed:] {
-				if !sample.OK {
-					return false, "failed a dial since the last write settled", horizon
-				}
-			}
-			observed.Samples = fresh
-			if judged, bad := traffic.JudgeLinkIn(setting, observed); bad {
-				return false, fmt.Sprintf("is %s since the last write settled", judged.Condition), horizon
-			}
-			return true, "", horizon
-		}
-		return false, "has no observations", horizon
-	}
-	slo := window.Workload.ScenarioSLO(member.scenario)
+	slo := window.Workload.ScenarioSLO(scenario)
 	horizon := slo.MaxAge.Duration() + 2*time.Second
 	if rate := window.Workload.RatePerSecond; rate > 0 {
 		horizon = max(horizon, time.Duration(float64(slo.MinSamples)/rate*float64(time.Second))+2*time.Second)
 	}
 	for _, observed := range window.Scenarios {
-		if observed.Scenario.ID != member.scenario {
+		if observed.Scenario.ID != scenario {
 			continue
 		}
 		if !observed.Qualified {
@@ -443,14 +188,14 @@ func memberPassed(member verificationMember, windows map[string]traffic.Window, 
 				trailing = append(trailing, sample)
 			}
 		}
-		verdict := traffic.Evaluate(member.scenario, slo, fresh, window.ObservedAt)
+		verdict := traffic.Evaluate(scenario, slo, fresh, window.ObservedAt)
 		switch {
 		case !verdict.Evaluated:
 			return false, fmt.Sprintf("has %d of %d samples since the last write settled", verdict.Samples, slo.MinSamples), horizon
 		case !verdict.Healthy:
 			return false, "violates its SLO since the last write settled: " + strings.Join(verdict.Violations, ", "), horizon
 		}
-		if trailed := traffic.Evaluate(member.scenario, slo, trailing, window.ObservedAt); trailed.Evaluated && !trailed.Healthy {
+		if trailed := traffic.Evaluate(scenario, slo, trailing, window.ObservedAt); trailed.Evaluated && !trailed.Healthy {
 			return false, "violates its SLO in the stability window: " + strings.Join(trailed.Violations, ", "), horizon
 		}
 		if last := fresh[len(fresh)-1]; last.Outcome != traffic.OutcomeOK && last.Outcome != traffic.OutcomeInvalid {
@@ -464,11 +209,9 @@ func memberPassed(member verificationMember, windows map[string]traffic.Window, 
 // sdoWrite is one SDO mutation in the incident: when it settled and the
 // components it touched.
 type sdoWrite struct {
-	id         string
-	settledAt  time.Time
-	settled    bool
-	components []string
-	refs       []sdk.ObjectRef
+	id        string
+	settledAt time.Time
+	settled   bool
 }
 
 // sdoWrites lists every SDO mutation of the incident (applied plans, rolled
@@ -509,11 +252,8 @@ func sdoWrites(in verificationInput, resolve componentResolver) (writes []sdoWri
 		// settles. Either way the settle time is never earlier than the
 		// latest Ready transition of the written workloads' Pods.
 		pendingAtCompletion := application.Pending || application.Result.RolloutPending != nil
-		w := sdoWrite{id: id, settledAt: application.CompletedAt, settled: !pendingAtCompletion || len(refs) > 0, refs: refs}
+		w := sdoWrite{id: id, settledAt: application.CompletedAt, settled: !pendingAtCompletion || len(refs) > 0}
 		for _, ref := range refs {
-			if name := resolve.component(ref); name != "" && !containsString(w.components, name) {
-				w.components = append(w.components, name)
-			}
 			ready, rolling := resolve.readySince(ref)
 			w.settled = w.settled && !rolling
 			if ready.After(w.settledAt) {
@@ -526,11 +266,8 @@ func sdoWrites(in verificationInput, resolve componentResolver) (writes []sdoWri
 		if !action.Success {
 			continue
 		}
-		w := sdoWrite{id: action.ActionID, settledAt: action.CompletedAt, settled: true, refs: action.Resources}
+		w := sdoWrite{id: action.ActionID, settledAt: action.CompletedAt, settled: true}
 		for _, ref := range action.Resources {
-			if name := resolve.component(ref); name != "" && !containsString(w.components, name) {
-				w.components = append(w.components, name)
-			}
 			ready, rolling := resolve.readySince(ref)
 			if rolling {
 				w.settled = false
@@ -715,68 +452,11 @@ func (r componentResolver) readySince(ref sdk.ObjectRef) (time.Time, bool) {
 	return latest, rolling
 }
 
-// windowWorkloads is what the map's coverage reads of the running probe
-// workloads: their scenario IDs and knownBroken declarations.
-func windowWorkloads(windows map[string]traffic.Window) []appmap.Workload {
-	var out []appmap.Workload
-	for name, window := range windows {
-		w := appmap.Workload{Name: name}
-		for _, scenario := range window.Workload.Scenarios {
-			w.Scenarios = append(w.Scenarios, scenario.ID)
-			if scenario.KnownBroken != nil {
-				w.KnownBroken = append(w.KnownBroken, scenario.ID)
-			}
-		}
-		out = append(out, w)
-	}
-	return out
-}
-
-func keysOf(set map[string]bool) []string {
-	out := make([]string, 0, len(set))
-	for key := range set {
-		out = append(out, key)
-	}
-	return out
-}
-
-func containsString(items []string, want string) bool {
-	for _, item := range items {
-		if item == want {
-			return true
-		}
-	}
-	return false
-}
-
-// stageRecoveryCheck is the recovered test for the automatic stage's wait:
-// the same predicate as closure, over the incident's findings so far and the
-// loop's recorded writes, observed on view.
-func (l *ResponderLoop) stageRecoveryCheck(ctx context.Context, view sdk.DetectionContext, state *IncidentState, seen map[string]sdk.Finding) recoveryCheck {
-	m, document := acceptedVerificationMap(ctx, l.gitRead(), state.Request)
-	opening := map[string]bool{}
-	for _, finding := range state.Request.Findings {
-		opening[FindingStateKey(finding.DetectorID, FindingFingerprint(finding))] = true
-	}
-	request := state.Request
-	request.Findings = sortedFindings(seen)
+// stageRecoveryCheck is Recovered for the automatic stage's wait and the
+// claim-time check: the incident's opening alerts and the loop's recorded
+// writes, observed on view.
+func (l *ResponderLoop) stageRecoveryCheck(ctx context.Context, view sdk.DetectionContext, state *IncidentState) recoveryCheck {
+	m, _ := acceptedVerificationMap(ctx, l.gitRead(), state.Request)
 	result := IncidentResult{PlanApplications: l.applicationEvidenceLocked()}
-	return recovered(verificationInput{m: m, doc: document, view: view, request: request, result: &result, detected: state.Request.DetectedAt, opening: opening})
-}
-
-// stageWritesRestoredSource reports a stage whose every applied write is
-// proven by its own receipt to have restored accepted source.
-func stageWritesRestoredSource(report *contracts.StageReport) bool {
-	any := false
-	for _, attempt := range report.GetMitigations() {
-		receipt := attempt.GetApplyReceipt()
-		if !receipt.GetApplied() || receipt.GetRolledBack() {
-			continue
-		}
-		if !receipt.GetRestoredSource() {
-			return false
-		}
-		any = true
-	}
-	return any
+	return recovered(verificationInput{m: m, view: view, request: state.Request, result: &result, detected: state.Request.DetectedAt})
 }
