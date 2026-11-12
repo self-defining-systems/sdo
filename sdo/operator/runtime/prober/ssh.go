@@ -46,11 +46,11 @@ func (x *SSHExecer) Exec(ctx context.Context, exec traffic.Exec) (traffic.ExecRe
 		return traffic.ExecResult{}, err
 	}
 	defer conn.Close()
-	// x/crypto/ssh takes no context: bound the connection by the request's
-	// deadline and close it when the request is cancelled.
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = conn.SetDeadline(deadline)
-	}
+	// x/crypto/ssh takes no context: close the connection once the request
+	// ends. The close runs only after ctx is done, so every error it causes
+	// sees ctx.Err() and is classified as the request's timeout or cancel
+	// (a separate connection deadline could fire first and look like a
+	// session that ended without an exit status).
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
 	clientConn, channels, requests, err := ssh.NewClientConn(conn, exec.Address, &ssh.ClientConfig{
