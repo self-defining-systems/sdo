@@ -12,8 +12,8 @@ covers breaks.
    probe's map path), SideEffect (traffic.SideEffectRead, SideEffectIdempotentWrite, or SideEffectWriteWithCleanup
    with Cleanup steps), Marker (writes and setup steps: a string of at least 6 characters naming the test
    identity; it appears in every write request), Setup (steps that create the scenario's own test identity or
-   fixture once per prober start; end each with .OrExisting(status, text) for the duplicate answer; never rely on
-   data set up by hand), Steps, and Detects (traffic.FaultWrongBody when a step checks the body,
+   fixture once per prober start; a retry resumes at the first step that has not succeeded; end each with
+   .OrExisting(status, text) for the duplicate answer; never rely on data set up by hand), Steps, and Detects (traffic.FaultWrongBody when a step checks the body,
    traffic.FaultSlow). A step is one line, for example `{Name: "list", Endpoint: traffic.GET("/items",
    traffic.Params{"page": traffic.IntBetween(1, 3)}).Contains("expected text")}`. Other parameter generators:
    Const, OneOf, IntBetween, FloatBetween, DateRange, DaysAfter, FromSeed(count, render), FromSeedPair(key, count,
