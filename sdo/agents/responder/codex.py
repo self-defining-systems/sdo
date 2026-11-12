@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+from datetime import UTC
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -28,7 +29,6 @@ from sdo.agents.responder.session_turn import (
     session_turn_options,
     unwrap_branch,
 )
-from sdo.agents.telemetry_context import telemetry_context
 from sdo.contracts import (
     IncidentRequest,
     IncidentResult,
@@ -136,7 +136,12 @@ def _execute_incident(
     verified = verified_recovery()
     usage: dict[str, int | float] = {}
     options = session_turn_options(selected_provider, Path(request.repository_worktree))
-    options["environment"] = {**(options.get("environment") or {}), "SDO_INCIDENT_ID": request.incident_id}
+    options["environment"] = {
+        **(options.get("environment") or {}),
+        "SDO_INCIDENT_ID": request.incident_id,
+        "SDO_INCIDENT_ONSET": incident_onset(request),
+        "SDO_INCIDENT_FACTS": os.environ.get("SDO_INCIDENT_FACTS", ""),
+    }
     while True:
         checkpoint_directory = os.environ.get("SDO_RESPONDER_USAGE_DIR", "")
         checkpoint = (
@@ -266,34 +271,46 @@ def late_findings_guidance(request: IncidentRequest, *, mode: str | None = None)
     return render_prompt("responder", "late_findings_guidance_02", part="responder.instructions", command=command)
 
 
+def incident_onset(request: IncidentRequest) -> str:
+    """Prototype: the first firing evaluation of a user-test (traffic) detector, else the detection time."""
+    firing = [
+        item.evaluated_at.ToDatetime(tzinfo=UTC)
+        for item in request.detector_history
+        if item.status == "firing" and item.detector_id.startswith("traffic-")
+    ]
+    if firing:
+        return min(firing).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if request.HasField("detected_at"):
+        return request.detected_at.ToDatetime(tzinfo=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return "unknown"
+
+
 def _responder_prompt(request: IncidentRequest, *, incident_data: str) -> RenderedPrompt:
     if not request.HasField("memory_snapshot"):
         raise ValueError("incident responder requires a logical memory snapshot")
+    if request.external_message or agent_guidance() == "shell":
+        prompt = render_prompt(
+            "responder",
+            "incident_external_instructions" if request.external_message else "incident_shell",
+            part="responder.instructions",
+            incident_id=request.incident_id,
+            skills_root=selected_skills_root(SKILLS_ROOT),
+            repair_policy=request.repair_policy,
+            branch_instruction=branch_instruction("incident_result"),
+        )
+        return prompt + named_prompt("responder.incident_data", incident_data)
+    # Prototype: three lines; the findings and request dump are reached through `sdo detect`.
     prompt = render_prompt(
         "responder",
-        "incident_external_instructions"
-        if request.external_message
-        else "incident_shell"
-        if agent_guidance() == "shell"
-        else "incident_reuse_instructions"
-        if request.prior_stages
-        else "incident_response_instructions",
+        "incident_response_instructions",
         part="responder.instructions",
         incident_id=request.incident_id,
+        namespace=request.namespace,
+        onset=incident_onset(request),
         skills_root=selected_skills_root(SKILLS_ROOT),
-        repair_policy=request.repair_policy,
         branch_instruction=branch_instruction("incident_result"),
     )
-    if not request.external_message:
-        prompt += late_findings_guidance(request)
-    extra = "\n".join(
-        part
-        for part in (
-            telemetry_context(request.telemetry, "responder"),
-            os.getenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "").strip(),
-        )
-        if part
-    )
+    extra = os.getenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "").strip()
     if extra:
         prompt += named_prompt(
             "responder.additional_context",
@@ -304,7 +321,7 @@ def _responder_prompt(request: IncidentRequest, *, incident_data: str) -> Render
                 extra_instructions=named_prompt("responder.additional_context", extra, required=False),
             ),
         )
-    return prompt + named_prompt("responder.incident_data", incident_data)
+    return prompt
 
 
 render_incident_prompt = _responder_prompt

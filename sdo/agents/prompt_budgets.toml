@@ -193,7 +193,7 @@ max_chars = 1400
 reason = "Measured production rendering 1123 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
 
 [tool_stdout.detect]
-max_chars = 1400
+max_chars = 2200
 reason = "Measured production rendering 1125 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
 
 [tool_stdout.diagnose]

@@ -160,6 +160,12 @@ def _parser() -> argparse.ArgumentParser:
             metavar="ID",
             help="detector IDs to run; repeat for more IDs (default: all)",
         )
+        if name == "detect":
+            check.add_argument(
+                "--finding",
+                metavar="ID",
+                help="print one finding or user test in full (fingerprint prefix or scenario)",
+            )
     for name in ("diagnose", "menu"):
         command = commands.add_parser(
             name,
@@ -636,6 +642,18 @@ def _split_fixes(arguments: list[str]) -> tuple[list[str], list[list[str]]]:
     return [*arguments[:start], *chunks[0]], chunks[1:]
 
 
+def _incident_namespace(response: dict[str, Any]) -> str:
+    try:
+        facts = json.loads(Path(os.environ.get("SDO_INCIDENT_FACTS", "")).read_text(encoding="utf-8"))
+        return str(facts["namespace"])
+    except (OSError, ValueError, KeyError):
+        for finding in response.get("findings") or []:
+            namespace = (finding.get("primary_resource") or {}).get("namespace")
+            if namespace:
+                return str(namespace)
+        return ""
+
+
 def _main(argv: list[str] | None = None) -> int:
     parser = _parser()
     first, more = _split_fixes(list(sys.argv[1:] if argv is None else argv))
@@ -650,6 +668,23 @@ def _main(argv: list[str] | None = None) -> int:
         directory = Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools"))
         response = _check(args, directory) if args.command == "check" else _exchange(_request(args), directory)
         response.setdefault("command", args.command)
+        if args.command == "detect" and not args.json and not response.get("error"):
+            from sdo.agents.responder import detect_summary
+
+            write_response(dict(response))
+            if args.finding:
+                print(detect_summary.render_finding(response, args.finding))
+            else:
+                print(
+                    detect_summary.render(
+                        response,
+                        namespace=_incident_namespace(response),
+                        root=Path.cwd(),
+                        onset_text=os.environ.get("SDO_INCIDENT_ONSET", ""),
+                        facts_path=os.environ.get("SDO_INCIDENT_FACTS", ""),
+                    )
+                )
+            return 0
         _print_response(response, full_json=args.json)
     except (OSError, ValueError, TimeoutError) as exc:
         _print_client_error(args, exc)

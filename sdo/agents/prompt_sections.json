@@ -164,8 +164,9 @@
   "responder/incident_response_instructions": {
     "incident_id": "template_data.responder-incident_response_instructions-incident_id",
     "skills_root": "template_data.responder-incident_response_instructions-skills_root",
-    "repair_policy": "template_data.responder-incident_response_instructions-repair_policy",
-    "branch_instruction": "template_data.responder-incident_response_instructions-branch_instruction"
+    "branch_instruction": "template_data.responder-incident_response_instructions-branch_instruction",
+    "namespace": "template_data.responder-incident_response_instructions-incident_id",
+    "onset": "template_data.responder-incident_response_instructions-incident_id"
   },
   "responder/incident_shell": {
     "incident_id": "template_data.responder-incident_shell-incident_id",

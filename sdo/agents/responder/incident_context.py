@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from contextlib import ExitStack, contextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -419,4 +420,5 @@ def prepared_incident_data(request: IncidentRequest) -> Iterator[str]:
             document["memory_accepted_commit"] = request.memory_snapshot.accepted_commit
         facts = write_json(document, command="incident", incident_id=request.incident_id)
         stack.callback(facts.unlink, missing_ok=True)
+        os.environ["SDO_INCIDENT_FACTS"] = str(facts)  # prototype: `sdo detect` reads playbook coverage here
         yield _render_data(responder_brief(request, details_file=str(facts), full=document, playbook_paths=paths))
