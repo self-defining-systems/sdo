@@ -377,19 +377,30 @@ func (n NativeIncidentBroker) processClosure(ctx context.Context, closure Incide
 				// Agents write only .sdo/: a source repair is a deployment patch,
 				// and the patch files are the non-working-program .sdo/ paths.
 				// App-file edits are scratch; one the series does not reproduce
-				// ends the closure with the patch.uncaptured correction text (the
-				// agent's turn is over, so there is nobody left to correct and
-				// publishing would only fail the same rule late).
+				// is a typed fact of this closure, never its failure: the
+				// agent's turn is over, so nobody can correct it and every
+				// retry would see the same checkout. The proposal (and the
+				// scratch) is not published and nothing is deployed; the
+				// outcome below is still committed.
+				uncaptured := false
 				if verified {
 					feedback, err := n.Repository.ScratchFeedback(ctx, id, broker.ProposalPhase)
 					if err != nil {
 						return err
 					}
 					if feedback != "" {
-						return fmt.Errorf("responder source repair is not published: %s", feedback)
+						uncaptured = true
+						slog.Warn("source_repair_uncaptured", "incident_id", id, "detail", feedback)
+						if _, seen := ledger.GetClosurePhaseTimestamps()["source_repair_uncaptured"]; !seen {
+							if err := n.recordPhase(ledger, "source_repair_uncaptured"); err != nil {
+								return err
+							}
+						}
 					}
 				}
-				if len(broker.SourceRepairPaths(partition.SDO)) > 0 && verified {
+				if uncaptured {
+					// Not published; see above.
+				} else if len(broker.SourceRepairPaths(partition.SDO)) > 0 && verified {
 					// A hold is final for this closure: a retry never deploys again.
 					repair := SourceRepair{Held: "held by an earlier attempt of this closure"}
 					if _, held := ledger.GetClosurePhaseTimestamps()["source_repair_held"]; !held {

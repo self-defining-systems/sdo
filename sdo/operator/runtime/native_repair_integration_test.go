@@ -260,3 +260,42 @@ func TestClosureWithoutAnyRepairerHoldsADeploymentInputRepair(t *testing.T) {
 		t.Fatal("a missing repairer claimed a deployment")
 	}
 }
+
+// App-file scratch that no patch reproduces is a typed fact of the closure,
+// never its failure: the agent's turn is over, so every retry would see the
+// same checkout. The outcome is committed, the repair (and the scratch) is
+// not published, and the repairer never deploys it.
+func TestClosureRecordsUncapturedScratchWithoutFailing(t *testing.T) {
+	for _, policy := range []string{"recorded-actions", "commit"} {
+		t.Run(policy, func(t *testing.T) {
+			repairs := &recordedRepairer{result: SourceRepair{Deployed: true}}
+			w := newRepairClosureWorld(t, policy, repairs)
+			if err := os.WriteFile(filepath.Join(w.workspace.Worktree, "app.txt"), []byte("synthetic app, edited after capture\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			before := w.head(t)
+			closure := w.closure(policy)
+			var receipt ClosureReceipt
+			for attempt := 1; attempt <= 2; attempt++ {
+				var err error
+				receipt, err = w.native.ProcessClosure(context.Background(), closure)
+				if err != nil {
+					t.Fatalf("attempt %d: uncaptured scratch failed the closure: %v", attempt, err)
+				}
+			}
+			if receipt.OutcomeCommit == "" || receipt.ProposalCommit != "" {
+				t.Fatalf("receipt = %+v, want an outcome and no published repair", receipt)
+			}
+			if repairs.calls.Load() != 0 {
+				t.Fatalf("the repairer ran %d times on an unpublished repair", repairs.calls.Load())
+			}
+			if strings.Contains(repairGit(t, w.accepted, "log", "--format=%B", before+"..HEAD"), "SDO-Phase: proposal") {
+				t.Fatal("a proposal with uncaptured scratch reached the accepted branch")
+			}
+			ledger, _ := w.native.readLedger("incident-1")
+			if _, ok := ledger.GetClosurePhaseTimestamps()["source_repair_uncaptured"]; !ok {
+				t.Fatalf("phases %v lack source_repair_uncaptured", ledger.GetClosurePhaseTimestamps())
+			}
+		})
+	}
+}
