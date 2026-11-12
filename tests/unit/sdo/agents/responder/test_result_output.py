@@ -25,7 +25,7 @@ def _model_reply() -> dict[str, Any]:
     """The fixture result as the model would return it: no worker-owned fields."""
 
     reply = _fixture("incident_result.json")
-    for owned in ("schema_version", "usage", "responder_session_id", "error", "late_findings_pull"):
+    for owned in ("schema_version", "usage", "responder_session_id", "error"):
         reply.pop(owned, None)
     return reply
 

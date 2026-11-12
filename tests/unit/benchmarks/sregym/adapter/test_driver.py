@@ -104,13 +104,11 @@ def test_agent_settings_keep_native_reflection_options(monkeypatch: pytest.Monke
         json.dumps(
             {
                 "reflection_guidance": "generalize-spec",
-                "late_findings": "pull",
             }
         ),
     )
     args = driver._parse_args([])
     assert args.reflection_guidance == "generalize-spec"
-    assert args.late_findings == "pull"
 
 
 def test_reflection_session_is_not_selectable(monkeypatch: pytest.MonkeyPatch) -> None:

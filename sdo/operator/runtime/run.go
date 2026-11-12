@@ -37,7 +37,6 @@ import (
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/evaluation"
-	"sdo.dev/operator/latefindings"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/memoryhost"
@@ -571,9 +570,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err != nil {
 		return err
 	}
-	if policy.Learning.LateFindings == "pull" {
-		jobEnvironment["SDO_LATE_FINDINGS"] = "pull"
-	}
 	if jobEnvironment, err = withAgentEnvironment(jobEnvironment, launchConfig, policy, options.Telemetry); err != nil {
 		return err
 	}
@@ -987,9 +983,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 	if err := attachFiringTelemetry(controller, *telemetryPath, jobDispatch, *repositoryMountPath); err != nil {
 		fmt.Fprintln(stderr, err)
-	}
-	if options.NativeBroker != nil && jobDispatch {
-		controller.SetFiringSink(lateFindingSink{Downstream: controller.firingSink, Store: latefindings.Store{Client: bootstrapProvider.Client, Namespace: *controlNamespace}})
 	}
 	if err := attachLifecycleTelemetry(controller, *lifecyclePath, jobDispatch, *repositoryMountPath); err != nil {
 		fmt.Fprintln(stderr, err)

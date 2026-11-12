@@ -325,7 +325,6 @@ def test_runtime_install_preserves_shared_settings_on_every_lifecycle_path(
         agent_provider="claude",
         reflection_guidance="generalize",
         force_reflection=True,
-        late_findings="pull",
         max_response_loops=4,
         healthy_baseline=True,
         controller_namespace="demo-sdo",

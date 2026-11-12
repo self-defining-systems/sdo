@@ -346,13 +346,6 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 	if result.Error != "" {
 		message.Error = &result.Error
 	}
-	if result.LateFindingsPull != nil {
-		pull := result.LateFindingsPull
-		message.LateFindingsPull = &contracts.LateFindingsPull{
-			IncidentId: pull.IncidentID, PullCount: pull.PullCount, DetectorIds: append([]string(nil), pull.DetectorIDs...),
-			PlaybookIds: append([]string(nil), pull.PlaybookIDs...), ReportDigest: pull.ReportDigest,
-		}
-	}
 	return message, nil
 }
 
@@ -415,12 +408,6 @@ func incidentResultState(message *contracts.IncidentResult) IncidentResult {
 		result.VerificationEvidence = append(result.VerificationEvidence, VerificationEvidence{
 			Name: evidence.GetName(), Passed: evidence.GetPassed(), Details: evidence.GetDetails(), ObservedAt: controllerTime(evidence.GetObservedAt()),
 		})
-	}
-	if pull := message.GetLateFindingsPull(); pull != nil {
-		result.LateFindingsPull = &LateFindingsPull{
-			IncidentID: pull.GetIncidentId(), PullCount: pull.GetPullCount(), DetectorIDs: append([]string(nil), pull.GetDetectorIds()...),
-			PlaybookIDs: append([]string(nil), pull.GetPlaybookIds()...), ReportDigest: pull.GetReportDigest(),
-		}
 	}
 	for _, finding := range message.GetUnresolvedFindings() {
 		result.UnresolvedFindings = append(result.UnresolvedFindings, findingState(finding))

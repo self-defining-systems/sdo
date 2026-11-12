@@ -32,7 +32,7 @@
     "install-existing.config.yaml"
   ],
   "install-existing.config": [
-    "{\"agent\": {\"extra_env\": [\"SDO_SUBMISSION_MODE=relay\"], \"lifecycle_timeout\": \"900s\"}, \"deployment\": {\"policy\": {\"allowed_registries\": [\"registry:5000\", \"docker.io\"], \"granted_cluster_kinds\": [\"ClusterRole\"], \"granted_namespaces\": [\"monitoring\"], \"scope_blocking\": true}}, \"learning\": {\"force_reflection\": true, \"healthy_baseline\": true, \"late_findings\": \"pull\", \"reflection_guidance\": \"generalize-spec\", \"replay\": \"on\"}, \"response\": {\"max_loops\": 3, \"repair_policy\": \"recorded-actions\", \"timeout\": \"600s\", \"verification_timeout\": \"90s\"}}"
+    "{\"agent\": {\"extra_env\": [\"SDO_SUBMISSION_MODE=relay\"], \"lifecycle_timeout\": \"900s\"}, \"deployment\": {\"policy\": {\"allowed_registries\": [\"registry:5000\", \"docker.io\"], \"granted_cluster_kinds\": [\"ClusterRole\"], \"granted_namespaces\": [\"monitoring\"], \"scope_blocking\": true}}, \"learning\": {\"force_reflection\": true, \"healthy_baseline\": true, \"reflection_guidance\": \"generalize-spec\", \"replay\": \"on\"}, \"response\": {\"max_loops\": 3, \"repair_policy\": \"recorded-actions\", \"timeout\": \"600s\", \"verification_timeout\": \"90s\"}}"
   ],
   "install-existing.env": [
     "SDO_AGENT_EFFORT=high",
@@ -174,7 +174,7 @@
     "host.config.yaml"
   ],
   "host.config": [
-    "{\"agent\": {\"extra_env\": [\"SDO_SUBMISSION_MODE=relay\"], \"lifecycle_timeout\": \"900s\"}, \"deployment\": {\"max_attempts\": 2, \"policy\": {\"allowed_registries\": [\"registry:5000\", \"docker.io\"], \"granted_cluster_kinds\": [\"ClusterRole\"], \"granted_namespaces\": [\"monitoring\"], \"scope_blocking\": true}}, \"learning\": {\"force_reflection\": true, \"healthy_baseline\": true, \"late_findings\": \"pull\", \"reflection_guidance\": \"generalize-spec\", \"replay\": \"on\"}, \"response\": {\"max_loops\": 3, \"repair_policy\": \"recorded-actions\", \"timeout\": \"600s\", \"verification_timeout\": \"90s\"}}"
+    "{\"agent\": {\"extra_env\": [\"SDO_SUBMISSION_MODE=relay\"], \"lifecycle_timeout\": \"900s\"}, \"deployment\": {\"max_attempts\": 2, \"policy\": {\"allowed_registries\": [\"registry:5000\", \"docker.io\"], \"granted_cluster_kinds\": [\"ClusterRole\"], \"granted_namespaces\": [\"monitoring\"], \"scope_blocking\": true}}, \"learning\": {\"force_reflection\": true, \"healthy_baseline\": true, \"reflection_guidance\": \"generalize-spec\", \"replay\": \"on\"}, \"response\": {\"max_loops\": 3, \"repair_policy\": \"recorded-actions\", \"timeout\": \"600s\", \"verification_timeout\": \"90s\"}}"
   ],
   "host.env": [
     "SDO_AGENT_EFFORT=high",

@@ -110,7 +110,6 @@ enforcement remains follow-up work.
 |---|---|---|
 | Broker | Ownership, commit eligibility, rejection/correction transitions and accepted-revision decisions | Git/worktree mutation, locks, bounded validation subprocesses and durable commit receipts |
 | Memory | Logical artifact projection, schema validation, snapshot selection and content identities | Repository reads, physical layout, outcome persistence |
-| Late findings | Report selection, digest/correlation rules and pull-budget transitions | HTTP transport, snapshot observation and report persistence |
 | Runtime controller | Scheduling, batching, incident/closure transitions and deadline calculation | Kubernetes caches/Jobs/ConfigMaps, timers, telemetry, leader election; lifecycle persistence is already `runtime/internal/lifecycleio` |
 | Response stages (deterministic, agent) | Stage order, attempt skip reasons, write-once per binding and restart re-observation | Host plan RPCs, action application, live snapshots and tool-state storage |
 | Program learning / coverage | Informational success/failure counts, revision binding and deterministic finding coverage | Live diagnosis snapshots, responder-selected actions, explicit rollback and capture replay |

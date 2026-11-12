@@ -42,7 +42,7 @@ table or `settings`). Per-run values are environment variables: `SDO_AGENT_PROVI
 and the controller records the resolved file as `.sdo-runtime/config.yaml` in the run evidence.
 
 - `fastloop run` keeps its lane flags (`--repair-policy`, `--reflection-guidance`,
-  `--late-findings`, `--lifecycle-timeout`, `--reasoning-effort`, `--healthy-baseline`, ...); each defaults to the
+  `--lifecycle-timeout`, `--reasoning-effort`, `--healthy-baseline`, ...); each defaults to the
   configured value and is written to the overlay only when given. `--config FILE` (repeatable) adds overlay files.
   `--reasoning-effort` unset resolves the configured `agent.effort` for the records and the Codex baseline.
 - The SREGym driver reads the same lane settings from `[agent.sdo_codex]`; `config_files = [...]` and a `config`

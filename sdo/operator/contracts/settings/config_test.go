@@ -113,7 +113,6 @@ func TestValidateIsTheOnePlaceValuesAreChecked(t *testing.T) {
 		"response.repair_policy":        func(c *settings.Config) { c.Response.RepairPolicy = "yolo" },
 		"learning.replay":               func(c *settings.Config) { c.Learning.Replay = "maybe" },
 		"learning.reflection_guidance":  func(c *settings.Config) { c.Learning.ReflectionGuidance = "other" },
-		"learning.late_findings":        func(c *settings.Config) { c.Learning.LateFindings = "push" },
 		"force_reflection":              func(c *settings.Config) { c.Mode = settings.ModeFrozen; c.Learning.ForceReflection = true },
 		"deployment.max_attempts":       func(c *settings.Config) { c.Deployment.MaxAttempts = 0 },
 		"build_timeout":                 func(c *settings.Config) { c.Deployment.BuildTimeout = settings.Duration(2 * time.Hour) },
@@ -177,7 +176,6 @@ func TestValidateCoversTheRetiredParserChecks(t *testing.T) {
 	for name, mutate := range map[string]func(*settings.Config){
 		"response.stage_budget":     func(c *settings.Config) { c.Response.StageBudget = 0 },
 		"agent.code_path_overrides": func(c *settings.Config) { c.Agent.CodePathOverrides = `{"bogus":1}` },
-		"learning.late_findings":    func(c *settings.Config) { c.Agent.ExtraEnv = []string{"SDO_LATE_FINDINGS=pull"} },
 		"the installer":             func(c *settings.Config) { c.Agent.ExtraEnv = []string{"SDO_OBSERVATION_CEILING={}"} },
 	} {
 		cfg := settings.Default()

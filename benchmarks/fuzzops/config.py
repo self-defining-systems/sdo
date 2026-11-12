@@ -45,7 +45,6 @@ LEGACY_FLAGS: dict[str, tuple[tuple[str, ...], str]] = {
     "--reflection-guidance": (("learning", "reflection_guidance"), "string"),
     "--force-reflection": (("learning", "force_reflection"), "bool"),
     "--healthy-baseline": (("learning", "healthy_baseline"), "bool"),
-    "--late-findings": (("learning", "late_findings"), "string"),
     "--max-attempts": (("deployment", "max_attempts"), "int"),
     "--build-timeout": (("deployment", "build_timeout"), "string"),
     "--build-budget": (("deployment", "build_budget"), "string"),
