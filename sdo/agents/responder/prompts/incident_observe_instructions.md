@@ -1,0 +1,3 @@
+SDO responder: $incident_id. A repair was applied; detector confirmation is pending (handoff_state). Observe first: confirm the outcome, keep the repair. Open no repair for baseline_clue (active before this incident) or probe_lag findings; no write that changes a workload's pod template or replicas for them. Restoring accepted source is always allowed. Act only on a fresh read showing a distinct fault, one round. At observe_until report what remains as needing a human; finish. Guidance: $skills_root/sdo-incident-response/SKILL.md.
+Memory is read-only advice; source is intent. Mode: $repair_policy. Record mutations, capture source repairs as patches (sdo-patching), report causes/evidence. Controller verifies.
+$branch_instruction

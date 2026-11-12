@@ -28,8 +28,17 @@ hold outcome publication after recovery and worker quiescence.
 
 For staged multi-fault work, clear blockers that prevent other repairs (admission, quota, scheduling,
 security policy) first, then re-run or re-trigger stalled saved repairs instead of re-deriving them.
-Start independent repairs together (`sdo mitigate A --bind ... -- B --bind ...`); combine repairs editing one object into one edit. Re-check with
+Start independent repairs together for distinct active faults (`sdo mitigate A --bind ... -- B --bind ...`); combine repairs editing one object into one edit. Re-check with
 saved diagnoses before closing. The brief is enough to start; no mandatory skill reread.
+
+`handoff_state` (Go-owned, in the brief) appears when a stage applied a repair that detectors have not
+yet confirmed. `residual_findings[].residual_class` is `probe_lag` (a probe that has not re-observed the
+repair; its error rate did not rise while SDO waited), `baseline_clue` (active before the incident opened and
+unchanged) or `active`. With `observe_only` true, confirm the outcome and open no repair for those findings;
+effect, not verb, is the test: any write that changes a workload's pod template or replica count replaces its
+Pods. Restoring an object to accepted source is always allowed. Act only on a fresh read showing a distinct
+fault, with evidence, within `mutation_rounds_per_finding` rounds per `active` finding. At `observe_until`,
+report what remains, with evidence, as needing a human and finish.
 
 `stage_actions` retains controller result labels and adds `blockers` from the saved rollout conditions
 and warning events, beside the affected program. `applied_cleared` is shown as `cleared`;

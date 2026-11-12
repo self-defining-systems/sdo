@@ -18,7 +18,7 @@ from sdo.agents.replay import selected_skills_root
 from sdo.agents.responder import recorded_actions
 from sdo.agents.responder.continuation import continuation_prompt
 from sdo.agents.responder.credentials import SKILLS_ROOT
-from sdo.agents.responder.incident_context import prepared_incident_data
+from sdo.agents.responder.incident_context import observe_only_handoff, prepared_incident_data
 from sdo.agents.responder.result_output import parse_incident_result
 from sdo.agents.responder.session_recovery import SessionRecoveryError, open_recovery
 from sdo.agents.responder.session_turn import (
@@ -275,6 +275,8 @@ def _responder_prompt(request: IncidentRequest, *, incident_data: str) -> Render
         if request.external_message
         else "incident_shell"
         if agent_guidance() == "shell"
+        else "incident_observe_instructions"
+        if observe_only_handoff(request)
         else "incident_reuse_instructions"
         if request.prior_stages
         else "incident_response_instructions",
