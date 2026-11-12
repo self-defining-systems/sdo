@@ -165,7 +165,7 @@ func (effects recoveryEffects) observe(snapshot sdk.DetectionContext, findings [
 func retireDisappearedRecoveryEffects(view program.ReadView, findings []sdk.Finding) []sdk.Finding {
 	remaining := make([]sdk.Finding, 0, len(findings))
 	for _, f := range findings {
-		if inventoryFinding(f) && inventoryEvent(f).Source == "absent from accepted source" && (f.PrimaryResource.Kind == "Pod" || f.PrimaryResource.Kind == "ReplicaSet") {
+		if inventoryFinding(f) && inventoryEvent(f).Source == "absent from accepted source" {
 			diff, err := view.DiffAgainstSource(f.PrimaryResource)
 			if err == nil && diff.SourceAbsent && !diff.Changed {
 				continue

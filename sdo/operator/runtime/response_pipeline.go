@@ -227,12 +227,10 @@ func responsePipelineResult(state *IncidentState, started, completed time.Time) 
 			if receipt.Applied {
 				result.AppliedPlaybooks = append(result.AppliedPlaybooks, AppliedPlaybook{PlaybookID: attempt.PlaybookId, ParameterBindings: programBindingsState(attempt.Bindings).Objects})
 			}
-			if attempt.Result != "applied_cleared" {
+			// An applied program always yields a cause, cleared or pending: the
+			// diagnosis it matched is what the repair addressed.
+			if !receipt.Applied || receipt.RolledBack {
 				continue
-			}
-			cleared := map[string]bool{}
-			for _, fp := range attempt.ClearedFindingFingerprints {
-				cleared[fp] = true
 			}
 			cause := ConfirmedRootCause{}
 			addRef := func(ref sdk.ObjectRef) {
@@ -243,9 +241,9 @@ func responsePipelineResult(state *IncidentState, started, completed time.Time) 
 				}
 				cause.Resources = append(cause.Resources, ref)
 			}
-			for _, finding := range state.Request.Findings {
+			for _, finding := range addressedFindings(attempt, state.Request.Findings) {
 				fp := FindingFingerprint(finding)
-				if !cleared[fp] || seenCause[fp] {
+				if seenCause[fp] {
 					continue
 				}
 				seenCause[fp] = true
@@ -254,6 +252,12 @@ func responsePipelineResult(state *IncidentState, started, completed time.Time) 
 				}
 				addRef(finding.PrimaryResource)
 				mergeEarlyCauseEvidence(&cause, ConfirmedRootCause{ExplainedDetectors: []string{finding.DetectorID}, Evidence: []RootCauseEvidence{{Kind: "detector-finding", Source: finding.DetectorID, Observation: finding.Evidence}}})
+			}
+			for _, ref := range programBindingsState(attempt.Bindings).Objects {
+				addRef(ref)
+			}
+			if cause.Summary == "" {
+				cause.Summary = "playbook " + attempt.PlaybookId + " applied"
 			}
 			if len(cause.Resources) > 0 {
 				for _, receipt := range ProgramRepairReceipts([]RecordedPlanApplication{application}, nil) {
@@ -388,4 +392,35 @@ func (c *Controller) prepareResponseStageHandoff(ctx context.Context, request In
 	c.responseStagesRunning = false
 	c.mu.Unlock()
 	return prepared, nil
+}
+
+// addressedFindings are the incident findings an applied attempt was matched
+// against, primary first: those that name its playbook or sit on an object it
+// bound lead and, when any exist, are the whole answer. An unrelated finding
+// that merely cleared beside the repair never speaks for its cause.
+func addressedFindings(attempt *contracts.StageMitigation, findings []sdk.Finding) []sdk.Finding {
+	covered := map[string]bool{}
+	for _, fp := range attempt.GetClearedFindingFingerprints() {
+		covered[fp] = true
+	}
+	for _, fp := range attempt.GetRemainingFindingFingerprints() {
+		covered[fp] = true
+	}
+	bound := map[sdk.ObjectRef]bool{}
+	for _, ref := range programBindingsState(attempt.GetBindings()).Objects {
+		bound[ref] = true
+	}
+	var primary, rest []sdk.Finding
+	for _, finding := range findings {
+		switch {
+		case slices.Contains(finding.Playbooks, attempt.GetPlaybookId()) || bound[finding.PrimaryResource]:
+			primary = append(primary, finding)
+		case covered[FindingFingerprint(finding)]:
+			rest = append(rest, finding)
+		}
+	}
+	if len(primary) > 0 {
+		return primary
+	}
+	return rest
 }

@@ -107,6 +107,10 @@ type settlingCase struct {
 	// start; zero churnUntil adds none. The incident's accepted map then
 	// names web and api as separate components.
 	churnFrom, churnUntil time.Duration
+	// unexplainedDrift adds an event-sourced drift.unexplained finding on an
+	// object no stage write touches and no detector re-observes: a clue that
+	// can never clear by detector evaluation.
+	unexplainedDrift bool
 }
 
 // settlingTraffic is the health workload's samples: one per second for scenario
@@ -271,6 +275,9 @@ func settlingStageOn(t *testing.T, tc settlingCase, world *settlingWorld) (*Dete
 		}
 		findings = append(findings, found...)
 	}
+	if tc.unexplainedDrift {
+		findings = append(findings, sdk.Finding{DetectorID: "drift.unexplained", RuleID: "unexplained", Status: sdk.FindingActive, Severity: sdk.SeverityLatent, Summary: "unexplained drift", PrimaryResource: sdk.ObjectRef{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy", Namespace: "app", Name: "synthetic-policy"}})
+	}
 	sortFindings(findings)
 	request := IncidentRequest{IncidentID: "synthetic-settling", Namespace: "app", SourceCommit: "synthetic-accepted", Findings: findings, RepairPolicy: "recorded-actions"}
 	executor := PlanExecutor{Client: TypedPlanClient{Client: world.client}, Source: world, Rollouts: world, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: world}}
@@ -325,6 +332,10 @@ func TestRecoveryWaitSettlesWhileEffectsAndWindowsCatchUp(t *testing.T) {
 			contracts.RecoveryWait_EXIT_REASON_FAILED, "applied_still_matching", true, 61 * time.Second, 65 * time.Second},
 		// Requests succeed again after the restart: fresh samples prove it.
 		{"traffic recovers after the restart", settlingCase{healAfter: 20 * time.Second, traffic: &settlingTraffic{}},
+			contracts.RecoveryWait_EXIT_REASON_CLEARED, "applied_cleared", false, 0, 25 * time.Second},
+		// Unrelated unexplained drift has no detector and no write aimed at it:
+		// recovery is judged on what the stage's writes were meant to clear.
+		{"unrelated unexplained drift never clears", settlingCase{healAfter: 20 * time.Second, traffic: &settlingTraffic{}, unexplainedDrift: true},
 			contracts.RecoveryWait_EXIT_REASON_CLEARED, "applied_cleared", false, 0, 25 * time.Second},
 		// The prober is starved after the restart: the learned detector's window
 		// empties and its finding goes quiet, while the program's latest sample
