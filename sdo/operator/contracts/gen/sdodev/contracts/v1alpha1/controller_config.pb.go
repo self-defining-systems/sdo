@@ -104,6 +104,8 @@ type ControllerConfig struct {
 	ResponderModel   string `protobuf:"bytes,50,opt,name=responder_model,json=responderModel,proto3" json:"responder_model,omitempty"`
 	// Reasoning effort every agent worker runs at; empty means the shared default (sdo/contracts/agent_env.json).
 	AgentEffort string `protobuf:"bytes,101,opt,name=agent_effort,json=agentEffort,proto3" json:"agent_effort,omitempty"`
+	// Reasoning summary mode Codex workers record; empty means the shared default (sdo/contracts/agent_env.json).
+	AgentReasoningSummary string `protobuf:"bytes,120,opt,name=agent_reasoning_summary,json=agentReasoningSummary,proto3" json:"agent_reasoning_summary,omitempty"`
 	// Limit of one lifecycle (detection designer) session; unset means the shared default (sdo/contracts/agent_env.json).
 	LifecycleTimeout *durationpb.Duration `protobuf:"bytes,117,opt,name=lifecycle_timeout,json=lifecycleTimeout,proto3" json:"lifecycle_timeout,omitempty"`
 	// Trusted run policy; empty preserves default-on replay and corpus capture.
@@ -493,6 +495,13 @@ func (x *ControllerConfig) GetResponderModel() string {
 func (x *ControllerConfig) GetAgentEffort() string {
 	if x != nil {
 		return x.AgentEffort
+	}
+	return ""
+}
+
+func (x *ControllerConfig) GetAgentReasoningSummary() string {
+	if x != nil {
+		return x.AgentReasoningSummary
 	}
 	return ""
 }
@@ -971,7 +980,7 @@ var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDesc
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\x1a1sdodev/contracts/v1alpha1/deployment_source.proto\"\xf1#\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\x1a1sdodev/contracts/v1alpha1/deployment_source.proto\"\xa9$\n" +
 	"\x10ControllerConfig\x12,\n" +
 	"\x12memory_host_binary\x18R \x01(\tR\x10memoryHostBinary\x12,\n" +
 	"\x12memory_host_digest\x18S \x01(\tR\x10memoryHostDigest\x12%\n" +
@@ -1021,7 +1030,8 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"brokerMode\x12+\n" +
 	"\x11responder_backend\x181 \x01(\tR\x10responderBackend\x12'\n" +
 	"\x0fresponder_model\x182 \x01(\tR\x0eresponderModel\x12!\n" +
-	"\fagent_effort\x18e \x01(\tR\vagentEffort\x12P\n" +
+	"\fagent_effort\x18e \x01(\tR\vagentEffort\x126\n" +
+	"\x17agent_reasoning_summary\x18x \x01(\tR\x15agentReasoningSummary\x12P\n" +
 	"\x11lifecycle_timeout\x18u \x01(\v2\x19.google.protobuf.DurationB\b\xbaH\x05\xaa\x01\x022\x00R\x10lifecycleTimeout\x12(\n" +
 	"\x06replay\x18f \x01(\tB\x10\xbaH\rr\vR\x00R\x02onR\x03offR\x06replay\x12*\n" +
 	"\x11worker_mount_mode\x183 \x01(\tR\x0fworkerMountMode\x12E\n" +

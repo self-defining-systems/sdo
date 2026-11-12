@@ -149,7 +149,7 @@ func operateIdentity(config OperateConfig) deployIdentity {
 // and the broker's policy environment, so the health judge's own `memory
 // check` and the broker judge one proposal by the same rules.
 func lifecycleWorkers(config OperateConfig, client kubernetes.Interface, control string, registry *worker_registry.Registry, repository *broker.Broker) (worker_registry.KubernetesExecutor, error) {
-	agentEnvironment, err := worker_registry.AgentEnvironment(config.Install.AgentProvider, config.Install.Model, config.Install.AgentEffort, config.Install.LifecycleTimeout)
+	agentEnvironment, err := worker_registry.AgentEnvironment(config.Install.AgentProvider, config.Install.Model, config.Install.AgentEffort, config.Install.AgentReasoningSummary, config.Install.LifecycleTimeout)
 	if err != nil {
 		return worker_registry.KubernetesExecutor{}, err
 	}

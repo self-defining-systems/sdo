@@ -23,12 +23,12 @@ from agentshim.testing import FakeRun, scripted_turn
 from libs.agent_cli.structured import (
     ACCESS_MODES,
     AGENT_PROVIDERS,
-    CODEX_SESSION_SETTINGS,
     DETECTOR_GATEWAY_COMMAND,
     MEMORY_CHECK_COMMAND,
     TURN_USAGE_LOG_ENV,
     StructuredTurnError,
     StructuredTurnTimeout,
+    codex_session_settings,
     run_structured_turn,
     turn_usage,
 )
@@ -873,6 +873,38 @@ def test_codex_turns_load_no_codex_bundled_skills_plugins_or_skill_list(access: 
         assert setting in overrides
 
 
+@pytest.mark.parametrize("access", ACCESS_MODES)
+def test_codex_turns_record_reasoning_summaries_by_default(access: str, tmp_path: Path) -> None:
+    """The rollout carries readable reasoning summaries, not only encrypted reasoning items."""
+    _, agent = _run("codex", tmp_path, access=access)
+    (argv,) = agent.argvs
+    assert "model_reasoning_summary=auto" in _config_overrides(argv)
+
+
+def test_the_reasoning_summary_setting_comes_from_the_agent_environment(tmp_path: Path) -> None:
+    _, agent = _run("codex", tmp_path, environment={"SDO_AGENT_REASONING_SUMMARY": "concise"})
+    (argv,) = agent.argvs
+    summaries = [o for o in _config_overrides(argv) if o.startswith("model_reasoning_summary=")]
+    assert summaries == ["model_reasoning_summary=concise"]
+
+
+def test_an_unknown_reasoning_summary_setting_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="SDO_AGENT_REASONING_SUMMARY"):
+        _run("codex", tmp_path, environment={"SDO_AGENT_REASONING_SUMMARY": "verbose"})
+
+
+def test_a_resumed_codex_turn_keeps_the_reasoning_summary_setting(tmp_path: Path) -> None:
+    env = {"SDO_AGENT_REASONING_SUMMARY": "concise"}
+    _, resumed = _run(
+        "codex",
+        tmp_path,
+        environment=env,
+        resume_session_id="s-1",
+        run=reply("codex", {"answer": "ok"}, session_id=None),
+    )
+    assert "model_reasoning_summary=concise" in _config_overrides(resumed.argvs[0])
+
+
 def test_resuming_a_codex_session_keeps_its_configuration(tmp_path: Path) -> None:
     """Codex appends a resumed turn to its rollout; a changed context would be injected anew.
 
@@ -897,7 +929,7 @@ def test_the_installed_codex_shows_the_model_no_skill_list_or_bundled_skills(tmp
     skill = home / "skills" / "sdo-memory"
     skill.mkdir(parents=True)
     (skill / "SKILL.md").write_text("---\nname: sdo-memory\ndescription: synthetic\n---\nbody\n")
-    settings = [argument for setting in CODEX_SESSION_SETTINGS for argument in ("-c", setting)]
+    settings = codex_session_settings({})
     rendered = subprocess.run(
         ["codex", "debug", "prompt-input", *settings, "hello"],
         env={**os.environ, "CODEX_HOME": str(home)},
@@ -918,3 +950,17 @@ def test_a_claude_turn_passes_the_configured_model_and_effort_to_the_cli(tmp_pat
     (argv,) = agent.argvs
     assert argv[argv.index("--model") + 1] == "claude-opus-5-5"
     assert argv[argv.index("--effort") + 1] == "medium"
+
+
+def test_the_reasoning_summary_names_match_the_shared_agent_manifest() -> None:
+    import json
+    from pathlib import Path
+
+    from libs.agent_cli import structured
+
+    manifest = json.loads(
+        (Path(__file__).resolve().parents[4] / "sdo" / "contracts" / "agent_env.json").read_text("utf-8")
+    )
+    assert manifest["reasoning_summary"] == structured.REASONING_SUMMARY_ENV
+    assert manifest["default_reasoning_summary"] == structured.DEFAULT_REASONING_SUMMARY
+    assert list(structured.REASONING_SUMMARIES) == manifest["reasoning_summaries"]

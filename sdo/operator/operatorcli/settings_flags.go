@@ -60,6 +60,8 @@ func overlayLegacyFlags(cfg *settings.Config, flags *flag.FlagSet) error {
 			cfg.Agent.Provider = value
 		case "agent-effort":
 			setIfNotEmpty(&cfg.Agent.Effort, value)
+		case "agent-reasoning-summary":
+			setIfNotEmpty(&cfg.Agent.ReasoningSummary, value)
 		case "lifecycle-timeout":
 			if value != "0s" {
 				duration(&cfg.Agent.LifecycleTimeout)
@@ -199,6 +201,7 @@ func applySettings(c *install.Config, cfg settings.Config, controlNamespace stri
 	c.Settings = &cfg
 	c.CodePath, c.DeploymentPolicy, c.TelemetryProfile, c.EvidenceSink = codePath, encodedPolicy, profile, sink
 	c.Model, c.AgentProvider, c.AgentEffort, c.LifecycleTimeout = cfg.Agent.Model, cfg.Agent.Provider, cfg.Agent.Effort, time.Duration(cfg.Agent.LifecycleTimeout)
+	c.AgentReasoningSummary = cfg.Agent.ReasoningSummary
 	c.ResponderEnv = cfg.Agent.ExtraEnv
 	c.Replay, c.ReflectionSession, c.ReflectionGuidance, c.ForceReflection = cfg.Learning.Replay, cfg.Learning.ReflectionSession, cfg.Learning.ReflectionGuidance, cfg.Learning.ForceReflection
 	c.HealthyBaseline, c.LateFindings = cfg.Learning.HealthyBaseline, cfg.Learning.LateFindings

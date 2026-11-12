@@ -20,6 +20,8 @@ func TestAgentEnvironmentNamesMatchTheSharedManifest(t *testing.T) {
 		Provider         string            `json:"provider"`
 		Effort           string            `json:"effort"`
 		Efforts          []string          `json:"efforts"`
+		Summary          string            `json:"reasoning_summary"`
+		Summaries        []string          `json:"reasoning_summaries"`
 		Models           map[string]string `json:"models"`
 		LifecycleTimeout string            `json:"lifecycle_timeout"`
 		DefaultTimeout   int               `json:"default_lifecycle_timeout_seconds"`
@@ -33,7 +35,7 @@ func TestAgentEnvironmentNamesMatchTheSharedManifest(t *testing.T) {
 	}
 	slices.Sort(models)
 	goModels := slices.Sorted(slices.Values(ModelEnvironments))
-	if manifest.Provider != ProviderEnvironment || manifest.Effort != EffortEnvironment || manifest.LifecycleTimeout != LifecycleTimeoutEnvironment ||
+	if manifest.Provider != ProviderEnvironment || manifest.Effort != EffortEnvironment || manifest.Summary != ReasoningSummaryEnvironment || !slices.Equal(manifest.Summaries, ReasoningSummaries) || manifest.LifecycleTimeout != LifecycleTimeoutEnvironment ||
 		time.Duration(manifest.DefaultTimeout)*time.Second != DefaultLifecycleTimeout ||
 		!slices.Equal(manifest.Efforts, AgentEfforts) || !slices.Equal(models, goModels) {
 		t.Fatalf("agent_env.json %+v differs from the Go worker environment names", manifest)
@@ -41,25 +43,38 @@ func TestAgentEnvironmentNamesMatchTheSharedManifest(t *testing.T) {
 }
 
 func TestConfiguredLifecycleTimeoutTravelsToEveryWorker(t *testing.T) {
-	environment, err := AgentEnvironment("codex", "", "xhigh", 45*time.Minute)
+	environment, err := AgentEnvironment("codex", "", "xhigh", "", 45*time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := environment[LifecycleTimeoutEnvironment]; got != "2700" {
 		t.Fatalf("lifecycle timeout = %q, want 2700", got)
 	}
-	unset, err := AgentEnvironment("codex", "", "", 0)
+	unset, err := AgentEnvironment("codex", "", "", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, present := unset[LifecycleTimeoutEnvironment]; present {
 		t.Fatal("an unconfigured lifecycle timeout must leave the worker default")
 	}
-	rounded, err := AgentEnvironment("", "", "", 1500*time.Millisecond)
+	rounded, err := AgentEnvironment("", "", "", "", 1500*time.Millisecond)
 	if err != nil || rounded[LifecycleTimeoutEnvironment] != "2" {
 		t.Fatalf("a sub-second remainder rounds up: %v %v", rounded, err)
 	}
-	if _, err := AgentEnvironment("", "", "", -time.Second); err == nil || !strings.Contains(err.Error(), "lifecycle timeout") {
+	if _, err := AgentEnvironment("", "", "", "", -time.Second); err == nil || !strings.Contains(err.Error(), "lifecycle timeout") {
 		t.Fatalf("negative lifecycle timeout: %v", err)
+	}
+}
+
+func TestReasoningSummaryTravelsToEveryWorker(t *testing.T) {
+	environment, err := AgentEnvironment("codex", "", "", "concise", 0)
+	if err != nil || environment[ReasoningSummaryEnvironment] != "concise" {
+		t.Fatalf("environment = %v, %v", environment, err)
+	}
+	if unset, err := AgentEnvironment("codex", "", "", "", 0); err != nil || unset[ReasoningSummaryEnvironment] != "" {
+		t.Fatalf("an unset summary adds nothing: %v, %v", unset, err)
+	}
+	if _, err := AgentEnvironment("codex", "", "", "verbose", 0); err == nil {
+		t.Fatal("an unknown summary mode is refused")
 	}
 }

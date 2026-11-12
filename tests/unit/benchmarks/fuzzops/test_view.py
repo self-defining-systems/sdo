@@ -308,6 +308,26 @@ def test_rollout_splits_into_responder_and_reflection(tmp_path: Path) -> None:
     assert all("hunter2x" not in e["text"] and ACCOUNT not in e["text"] for e in reflection)
 
 
+def test_a_rollout_with_reasoning_summaries_exports_them_to_the_transcript(tmp_path: Path) -> None:
+    dest = _collected(tmp_path, rollout=False)
+    path = dest / "evidence" / "incidents" / DIR / "codex" / "sessions" / "2026" / "11" / "11" / "rollout-x.jsonl"
+    path.parent.mkdir(parents=True)
+    summary = [
+        {"type": "summary_text", "text": "**Checking probes**"},
+        {"type": "summary_text", "text": "Then rollout"},
+    ]
+    records = [r for r in _rollout() if r.get("payload", {}).get("type") != "reasoning"]
+    records.insert(
+        3, {"type": "response_item", "payload": {"type": "reasoning", "summary": summary, "encrypted_content": "gAAA"}}
+    )
+    path.write_text("".join(json.dumps(r) + "\n" for r in records))
+    view.write(dest)
+    entries = _transcript(dest, f"{DIR[:12]}-responder.jsonl")[1:]
+    reasoning = [e for e in entries if e["role"] == "reasoning"]
+    assert [e["text"] for e in reasoning] == ["**Checking probes**\nThen rollout"]
+    assert all(e["text"] != "reasoning (not summarized)" for e in entries)
+
+
 def test_exec_cmd_is_extracted_from_javascript(tmp_path: Path) -> None:
     dest = _collected(tmp_path)
     view.write(dest)
