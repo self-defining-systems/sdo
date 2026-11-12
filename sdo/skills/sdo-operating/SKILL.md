@@ -15,11 +15,10 @@ The app map is `.sdo/arch.md`: components, edges, user operations, what holds da
 - `sdo menu [NAME]`: list fixes. `sdo mitigate NAME --bind ROLE=Kind/ns/name`: apply one
 - `sdo mitigate ReconcileFromSource --bind ref=Kind/ns/name`: restore an object from accepted source, e.g.
   `sdo mitigate ReconcileFromSource --bind ref=Deployment/shop/api`
-- `sdo act --resource Kind/ns/name -- COMMAND`: any other change
 - `sdo verify --wait SECONDS`: has it recovered?
 
-`sdo COMMAND --help` gives the syntax. Make changes through `mitigate` or `act` so SDO records them; use `kubectl`
-for reads. Keep a source fix with `git commit` (patching skill).
+`sdo COMMAND --help` gives the syntax. Use `kubectl` for reads and changes; SDO records every API
+call you make. A `kubectl exec` counts as a change; check recovery with `sdo verify`. Keep a source fix with `git commit` (patching skill).
 
 SDO decides recovery: the alerts that opened the incident cleared and stayed clear after your last change settled.
 SDO then ends your incident work and moves the session to its closing turn. Returning before that escalates to a

@@ -144,7 +144,7 @@ def test_menu_lists_commands_not_hash_ids(monkeypatch, capsys) -> None:
     assert "program-" + "ab" * 32 not in output
 
 
-def test_report_then_act_uses_existing_session_and_capture(monkeypatch, tmp_path) -> None:
+def test_report_uses_existing_session(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("SDO_TOOLS_DIR", str(tmp_path))
     calls = []
 
@@ -154,14 +154,12 @@ def test_report_then_act_uses_existing_session_and_capture(monkeypatch, tmp_path
         return {"summary": "settled", "report": {"status": "STATUS_UNRESOLVED"}}
 
     monkeypatch.setattr(tools_cli, "_exchange", exchange)
-    monkeypatch.setattr(tools_cli.recorded_actions, "run_and_record", lambda *_a, **_k: 0)
     assert (
         tools_cli.main(
             ["report", "attempt-1", "--incident-id", "synthetic-b3", "--session-id", "provider-session", "--epoch", "7"]
         )
         == 0
     )
-    assert tools_cli.main(["act", "--resource", "Deployment/app/frontend", "--", "true"]) == 0
     assert calls == [
         {
             "command": "report",
@@ -172,10 +170,6 @@ def test_report_then_act_uses_existing_session_and_capture(monkeypatch, tmp_path
                 "dispatch_epoch": "7",
                 "attempt_id": "attempt-1",
             },
-        },
-        {
-            "command": "pre-apply",
-            "refs": [{"api_version": "apps/v1", "kind": "Deployment", "namespace": "app", "name": "frontend"}],
         },
     ]
 

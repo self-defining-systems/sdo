@@ -1,17 +1,16 @@
 # First-mutation evidence boundary
 
 Controller-owned responder loops preserve `open@pre-apply.json` immediately
-before the first live repair. `sdo act` requests the internal `pre-apply` tool
-and waits for its acknowledgement before starting the local mutation or its
-receipt. Agent-selected typed `apply` uses the same helper.
+before the first live repair made through a typed plan application. The agent's
+own `kubectl` writes no longer request this capture (`sdo act`, the only command
+that did, is gone); their evidence is the API recording.
 The snapshot comes from the current provider for the current incident, not the
 preserved detect snapshot. `open@detect` stays unchanged as historical evidence.
 
 The first protected pre-apply file is retained across later commands and loop
 restarts. Capture is best effort: an unavailable tool transport, response timeout,
 invalid response, provider failure, or capture-write error must not block the
-repair. `sdo act` emits a `pre-apply evidence gap` warning and still executes the
-command, records its receipt, and returns its exit code. When the controller
+repair. When the controller
 observes capture failure it logs the cause and adds `pre_apply_capture_gap` to
 `program_failure_signals`, retained in incident/revision-bound responder state.
 Agent-selected typed applies proceed through their normal mutation and
@@ -21,7 +20,7 @@ with a repaired snapshot. An existing successful capture is acknowledged without
 replacement. This boundary performs no diagnosis, probes,
 settle sleep, benchmark check, or external fault lookup. It adds one ordinary
 snapshot and protected capture write per incident, plus the existing tool
-request/response round trip for `sdo act`. Existing `responder_tool_timing`
+request/response round trip for a typed plan application. Existing `responder_tool_timing`
 `capture_ms` and `total_ms` include this work.
 
 Captures do not invent primitive recordings. New pre-apply recording files begin
@@ -81,7 +80,7 @@ Kubernetes objects. Discovery lists every nonsecret listable kind in the app
 namespace and all namespaces touched by session actions, primitive/CLI reads,
 API-history envelopes or findings. Cluster objects require explicit references.
 `open@detect` retains its original boundary; newly discovered session scopes enter
-pre-apply and fixed captures. CLI pre-apply requests include declared targets
+pre-apply and fixed captures. Plan pre-apply captures include the plan's targets
 before the mutation receipt exists. Secret resources are never requested.
 
 Generic objects preserve unknown API fields and support SDK `Object` reads and

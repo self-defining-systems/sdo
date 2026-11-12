@@ -45,7 +45,7 @@ func recordWrite(store *apihistory.Store, id string, at time.Time, event apihist
 	}
 }
 
-// The agent's own kubectl patch, with no `sdo act` journal anywhere, is a write: it moves Recovered's since.
+// The agent's own kubectl patch is a write: it moves Recovered's since.
 func TestARawAgentPatchMovesRecoveredSince(t *testing.T) {
 	root, store := openRecording(t, "inc")
 	wrote := verifyT0.Add(90 * time.Second)

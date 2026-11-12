@@ -655,7 +655,7 @@ def test_the_recording_draws_agent_writes_once(tmp_path: Path) -> None:
     _recording(dest, *_writes())
     doc = view.write(dest)
     acts = [e["text"] for e in doc["events"] if e["lane"] == "act"]
-    assert not any(t.startswith("kubectl-patch") for t in acts)  # the `sdo act` receipt is the same write
+    assert not any(t.startswith("kubectl-patch") for t in acts)  # a kubectl receipt is the same write
     assert any(t.startswith("program-plan") for t in acts)  # Go's own writes do not pass the proxy
     assert any(t.startswith("api-patch Deployment/user") for t in acts)
     assert len({e["lane"] for e in doc["events"]}) <= view.MAX_LANES

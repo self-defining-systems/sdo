@@ -14,8 +14,7 @@ as legacy `response_item` tool calls and paired outputs. The item carries a
 `command` argv array, commonly `["/usr/bin/bash", "-lc", "<script>"]`;
 `payload.started_at_ms` and `payload.completed_at_ms` are epoch milliseconds.
 Use these execution clocks rather than the record's export timestamp. Unwrap
-the shell script and the `sdo act ... -- <command>` repair wrapper before
-classifying writes. Ignore reads, pre-injection commands, malformed or
+the shell script before classifying writes. Ignore reads, pre-injection commands, malformed or
 incomplete command items, and commands started after the mitigation POST; cap
 completion at that POST. `incident_cost` accepts both schemas without changing
 its output fields. A missing floor means no recognized command evidence, not

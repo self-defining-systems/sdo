@@ -571,9 +571,6 @@ that completion polls never post, and that malformed facts yield typed failures.
 Run it with `-fuzztime=30s -fuzzminimizetime=1s -parallel=2 -timeout=2m`; Nightly CI runs the same bounded target, with its seeds retained on PRs. Image scope tests verify
 separate Go compilation and binary-only copying into the benchmark worker.
 
-The Python object-ref parser and Hypothesis tests for `sdo act` receipt recording use
-`tests/fixtures/sdo/contracts/object_ref_grammar.json` (`test_recorded_actions.py`).
-
 SREGym discovery and worker contract tests use the pinned harness and its application
 charts without Kubernetes or model calls. Before running them in a fresh checkout,
 initialize both repository edges:

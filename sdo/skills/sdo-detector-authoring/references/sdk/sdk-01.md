@@ -13,7 +13,7 @@ const (
 	AcceptanceFieldManager      = "sdo-acceptance"
 	ReplicasHandoffFieldManager = "sdo-replicas-handoff"
 	// ResponderFieldManager is forced by the recording API proxy on every write a
-	// responder Job makes, whatever client sent it (`sdo act` also stamps it).
+	// responder Job makes, whatever client sent it.
 	ResponderFieldManager = "sdo-responder"
 )
     Field managers through which SDO writes application objects. Their writes

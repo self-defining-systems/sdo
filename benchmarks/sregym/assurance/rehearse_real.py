@@ -5,7 +5,7 @@
 
 One lane cluster per app; an app's problems run in sequence on it, apps in parallel. Each problem goes through
 ``fastloop run`` with the scripted registrations (admission, the real SREGym injection, detection, the scripted
-responder acting through SDO's normal act path, closure, harness recovery and full cleanup), then through a
+responder acting through plain kubectl on the recording proxy, closure, harness recovery and full cleanup), then through a
 cluster-object diff and a guarded reset so the next problem starts from a ready lane. Failures never stop the
 batch; every stage of every problem ends in a table grouped by error class.
 

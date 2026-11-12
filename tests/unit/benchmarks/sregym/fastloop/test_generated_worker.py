@@ -154,7 +154,8 @@ def test_scripted_entry_points_complete_on_seed_copy_with_fake_kubernetes_api(
     response = IncidentResult()
     assert result.response.Unpack(response)
     assert result.status == "completed"
-    assert {action.target for action in response.repair_actions} == {"Service/reservation", "Deployment/rate"}
+    assert not response.repair_actions  # the recording of the scripted kubectl calls is the receipt
+    assert response.repair_changes
     assert api.objects["Deployment", "rate"]["spec"]["template"]["spec"]["containers"][0]["image"] == "built:source"
     capture = tmp_path / "capture"
     capture.mkdir()

@@ -42,25 +42,16 @@ for event in request.drift_events:
         unsure.add((event.ref.kind, event.ref.name))
         continue
     ref = json_format.MessageToDict(event.ref, preserving_proto_field_name=True)
-    action_start = _now()
     if ref["kind"] == "NetworkPolicy":
         _command(["kubectl", "-n", request.namespace, "delete", "networkpolicy", ref["name"]])
     else:
         _patch_from_source(request, ref)
     repairs.append(
         {
-            "action_id": f"source-{len(repairs) + 1}",
-            "kind": "kubectl-delete" if ref["kind"] == "NetworkPolicy" else "kubectl-patch",
-            "target": f"{event.ref.kind}/{event.ref.name}",
             "resources": [ref],
             "summary": f"Removed source-absent NetworkPolicy/{event.ref.name}"
             if ref["kind"] == "NetworkPolicy"
             else f"Restored Service/{event.ref.name} from accepted source",
-            "details": label.investigation_reason,
-            "started_at": action_start,
-            "completed_at": _now(),
-            "success": True,
-            "reversible": ref["kind"] != "NetworkPolicy",
         }
     )
 """
@@ -107,21 +98,9 @@ if not first.get("healthy"):
         if key in seen:
             continue
         seen.add(key)
-        action_start = _now()
         _patch_from_source(request, ref)
         repairs.append(
-            {
-                "action_id": f"source-{len(repairs) + 1}",
-                "kind": "kubectl-patch",
-                "target": f"{ref['kind']}/{ref['name']}",
-                "resources": [ref],
-                "summary": f"Restored {ref['kind']}/{ref['name']} from accepted source",
-                "details": "Applied accepted source fields and waited for the rollout",
-                "started_at": action_start,
-                "completed_at": _now(),
-                "success": True,
-                "reversible": True,
-            }
+            {"resources": [ref], "summary": f"Restored {ref['kind']}/{ref['name']} from accepted source"}
         )
 """
 
@@ -178,7 +157,7 @@ result = json_format.ParseDict(
         "confirmed_root_causes": causes if repairs or plan_ids else [],
         "drift_events": [json_format.MessageToDict(label, preserving_proto_field_name=True) for label in labels],
         "applied_playbooks": [{"playbook_id": program_id} for program_id in programs],
-        "repair_actions": repairs,
+        "repair_actions": [],  # the recording of the agent's own API calls is the receipt
         "repair_changes": [item["summary"] for item in repairs],
         "verification_evidence": [
             {
