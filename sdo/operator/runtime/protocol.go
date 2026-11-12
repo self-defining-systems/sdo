@@ -86,7 +86,10 @@ type IncidentRequest struct {
 	// the request: an accepted-source rollout or advance has not converged.
 	// The source and deployed commits cannot say so (the source commit moves
 	// at every closure). It is controller-local, not part of the wire contract.
-	DeploymentInFlight   bool
+	DeploymentInFlight bool
+	// PassingTests are the user tests judged healthy when the incident opened,
+	// sorted, for the responder's first message.
+	PassingTests         []string
 	RepositoryWorktree   string
 	RepositoryBaseCommit string
 	ResponseDeadline     time.Time

@@ -153,7 +153,7 @@ func (e *Engine) userState(ctx context.Context, scenario Scenario) (passwords St
 // redact replaces every password in the sample's text.
 func (sample *Sample) redact(values State) {
 	for _, value := range values {
-		for _, field := range []*string{&sample.Request, &sample.Error, &sample.CleanupError, &sample.Step} {
+		for _, field := range []*string{&sample.Request, &sample.Error, &sample.Observed, &sample.CleanupError, &sample.Step} {
 			*field = strings.ReplaceAll(*field, value, passwordPlaceholder)
 		}
 	}
