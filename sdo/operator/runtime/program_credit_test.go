@@ -6,7 +6,9 @@ import (
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 )
 
 var creditEpoch = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -113,5 +115,17 @@ func TestOutcomeCaseContextNamesOpeningKeysAndSuspects(t *testing.T) {
 	got := outcomeCaseContext(outcome)
 	if len(got.OpeningKeys) != 1 || got.OpeningKeys[0] != "k1" || len(got.Suspects) != 2 {
 		t.Fatalf("context = %+v, want key k1 and two distinct suspects", got)
+	}
+}
+
+// A run bound through a credited pair is persisted with the incident's
+// request, so its binding source must be a value the wire contract accepts.
+func TestCreditedBindingSourceIsAValidProgramRunContract(t *testing.T) {
+	run := ProgramRun{ProgramID: "fix", BindingSource: BindingSourceCredited, Verdict: program.Verdict{Result: program.Match}, Bindings: program.Bindings{Objects: program.ObjectBindings{ComponentRole: sdk.ObjectRef{Kind: "Deployment", Namespace: "app", Name: "front"}}}}
+	if err := wire.Validate(programRunContract(run)); err != nil {
+		t.Fatalf("a credited run is not a valid ProgramRun: %v", err)
+	}
+	if got := programRunState(programRunContract(run)).BindingSource; got != BindingSourceCredited {
+		t.Fatalf("binding source round trip = %q", got)
 	}
 }
