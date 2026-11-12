@@ -193,8 +193,8 @@ max_chars = 1400
 reason = "Measured production rendering 1123 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
 
 [tool_stdout.detect]
-max_chars = 1400
-reason = "Measured production rendering 1125 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
+max_chars = 2048
+reason = "The compact detect summary is capped at 2048 bytes in Go (detect_summary.go); --json keeps the same cap through the details file."
 
 [tool_stdout.diagnose]
 max_chars = 900
