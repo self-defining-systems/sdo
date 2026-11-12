@@ -190,18 +190,8 @@ def assurance_script(
             ),
         }
     )
-    learned = {
-        "summary": f"Encoded {proposal.detector_id}",
-        "learning_decision": "updated",
-        "no_change_reason": None,
-        "proposed_artifact_ids": [proposal.playbook_id],
-    }
-    no_change = {
-        "summary": "No new learning",
-        "learning_decision": "no_change",
-        "no_change_reason": "This incident teaches nothing new",
-        "proposed_artifact_ids": [],
-    }
+    learned = {"note": f"Encoded {proposal.detector_id}"}
+    no_change = {"note": "No new learning"}
     # The shared memory check reads the explicit decision the reflection will return.
     decision = json.dumps({"learning_decision": "updated", "proposed_artifact_ids": [proposal.playbook_id]})
     decision_step = {

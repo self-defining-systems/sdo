@@ -1,1 +1,0 @@
-- ${application_id}: ${programs}; ${state}; verification ${verification}

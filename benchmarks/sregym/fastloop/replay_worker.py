@@ -35,7 +35,6 @@ from sdo.agents.provider import agent_effort
 from sdo.agents.responder import (
     CodexSessionBackend,
     SessionReflector,
-    capture_sections,
     execute_incident,
     run_reflection_task,
     run_worker_task,
@@ -131,6 +130,35 @@ class CapturedKubernetesAPI:
             )
             return {"healthy": healthy, "summary": "captured fake Kubernetes API"}
         raise CheckpointError(f"uncaptured responder tool {args[0]!r}")
+
+
+# Typed sections of a capture by object identity. Objects-only captures
+# (object_snapshot_version 2) store namespace-local objects once, in "objects".
+_SECTION_KINDS = {
+    ("v1", "ConfigMap"): "configMaps",
+    ("v1", "Service"): "services",
+    ("v1", "Pod"): "pods",
+    ("apps/v1", "Deployment"): "deployments",
+    ("apps/v1", "StatefulSet"): "statefulSets",
+    ("apps/v1", "ReplicaSet"): "replicaSets",
+    ("autoscaling/v2", "HorizontalPodAutoscaler"): "horizontalPodAutoscalers",
+    ("policy/v1", "PodDisruptionBudget"): "podDisruptionBudgets",
+    ("v1", "Endpoints"): "endpoints",
+    ("discovery.k8s.io/v1", "EndpointSlice"): "endpointSlices",
+    ("networking.k8s.io/v1", "NetworkPolicy"): "networkPolicies",
+    ("v1", "Event"): "events",
+}
+
+
+def capture_sections(snapshot: dict[str, Any]) -> dict[str, list[Any]]:
+    """List-valued capture fields, with typed sections rebuilt for objects-only captures."""
+    sections = {key: value for key, value in snapshot.items() if isinstance(value, list)}
+    if snapshot.get("object_snapshot_version", 0) >= 2:
+        for item in snapshot.get("objects") or []:
+            section = _SECTION_KINDS.get((item.get("apiVersion"), item.get("kind")))
+            if section and (item.get("metadata") or {}).get("namespace") == snapshot.get("namespace"):
+                sections.setdefault(section, []).append(item)
+    return sections
 
 
 def _objects(snapshot: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
@@ -320,8 +348,7 @@ def replay_generated_reflection(
                         "replay-result",
                         publisher,
                         reflector=SessionReflector(
-                            CodexSessionBackend(model="gpt-6-luna", reasoning_effort=agent_effort()),
-                            guidance=typed.guidance or "baseline",
+                            CodexSessionBackend(model="gpt-6-luna", reasoning_effort=agent_effort())
                         ),
                     )
         if publisher.payload is None:
@@ -554,10 +581,7 @@ def replay_script_worker(
             else:
                 if not isinstance(typed, ReflectionRequest):
                     raise CheckpointError("reflection checkpoint requires a reflection request")
-                guidance = typed.guidance or "baseline"
-                reflector = SessionReflector(
-                    CodexSessionBackend(model="gpt-6-luna", reasoning_effort=agent_effort()), guidance=guidance
-                )
+                reflector = SessionReflector(CodexSessionBackend(model="gpt-6-luna", reasoning_effort=agent_effort()))
                 result = run_reflection_task(task_path, "replay-result", publisher, reflector=reflector)
         if publisher.payload is None:
             raise CheckpointError("script worker did not publish a result")

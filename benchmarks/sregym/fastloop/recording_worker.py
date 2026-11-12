@@ -127,8 +127,7 @@ def main(argv: list[str] | None = None) -> int:
             if not task.request.Unpack(request):
                 raise ValueError("recording reflector requires a typed reflection request")
             reflector = SessionReflector(
-                CodexSessionBackend(model="gpt-6-luna", reasoning_effort=agent_effort(), executor=recording),
-                guidance=request.guidance or "baseline",
+                CodexSessionBackend(model="gpt-6-luna", reasoning_effort=agent_effort(), executor=recording)
             )
             run_reflection_task(task_path, result_name, publisher, reflector=reflector)
     except (OSError, ValueError, RuntimeError) as exc:

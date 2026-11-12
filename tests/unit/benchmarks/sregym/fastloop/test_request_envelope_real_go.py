@@ -17,7 +17,7 @@ from benchmarks.sregym.fastloop import recording_worker, replay
 from sdo.agents.responder.reflection import ReflectionTurn
 from sdo.contracts import IncidentClosure, to_canonical_json
 from tests.unit.benchmarks.sregym.fastloop.test_request_envelope import NATIVE_REQUEST_BYTES, ROOT, reflection_task
-from tests.unit.sdo.agents.responder.test_reflection_worker import _closure
+from tests.unit.sdo.agents.responder.reflection_fixtures import _closure
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -85,17 +85,12 @@ def test_large_reflection_record_ingest_load_and_replay(tmp_path: Path, monkeypa
             published.append(payload)
 
     class Reflector:
-        def resume(self, **kwargs: object) -> ReflectionTurn:
+        def learn(self, **kwargs: object) -> ReflectionTurn:
             assert kwargs["outcome_commit"] == base
             closure = kwargs["closure"]
             assert isinstance(closure, IncidentClosure)
             assert closure.request.memory_snapshot.architecture_markdown == ("Synthetic architecture.\n" * 12000)
-            return ReflectionTurn(
-                summary="Synthetic replay",
-                learning_decision="no_change",
-                no_change_reason="No independently verified new learning",
-                playbook_ids=[],
-            )
+            return ReflectionTurn(note="Synthetic replay")
 
     monkeypatch.setattr(recording_worker, "KubernetesResultPublisher", lambda **_: Publisher())
     monkeypatch.setattr(recording_worker, "SessionReflector", lambda *_, **__: Reflector())

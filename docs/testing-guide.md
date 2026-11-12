@@ -398,7 +398,7 @@ run the real workers through the agent-script stand-in. Live recordings are conv
 to scripts during export; archived recordings are converted in temporary storage.
 Commands execute against captured state, and file edits run before validation.
 Missing turns fail without a model call. There is one replay path and no live fallback.
-Prompt and rollout readers remain analysis tools, including `reflection_prompt_replay`;
+Prompt and rollout readers remain analysis tools;
 they do not execute agents. See the fastloop README for layout and commands.
 
 Use `scripts/run_tests.sh` for the repository-wide suite.

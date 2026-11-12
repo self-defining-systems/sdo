@@ -1,8 +1,8 @@
 """The turn configuration shared by the responder and its reflection turn.
 
-Reflection resumes the responder's session. Codex keys its prompt cache on a
+The closing turn resumes the responder's session. Codex keys its prompt cache on a
 request prefix that leads with the output schema and the tool list, so the two
-turns send one wrapper schema and one MCP server set; otherwise the resumed
+turns send one wrapper schema and no MCP server; otherwise the resumed
 turn's first request misses the responder's cached history. Each caller reads
 only its own branch of the wrapper.
 """
@@ -11,20 +11,14 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from agentshim import StdioMcpServer
-
 from sdo.agents.prompt_templates import render_prompt
-from sdo.agents.responder.reflection_validation import VALIDATION_ENVIRONMENT, validation_tool_timeout_seconds
 from sdo.agents.responder.writer_termination import KubernetesWriterObserver, worker_identity
 
 if TYPE_CHECKING:
     from typing import Any
-
-    from agentshim import McpServer
 
 TurnBranch = Literal["incident_result", "reflection"]
 
@@ -90,20 +84,6 @@ def session_output_schema() -> dict[str, object]:
     }
 
 
-def session_mcp_servers(worktree: Path, provider: str) -> list[McpServer]:
-    """The read-only memory-validation server; reflection calls it, the responder may ignore it."""
-
-    return [
-        StdioMcpServer(
-            name="sdo_reflection",
-            command=sys.executable,
-            args=["-m", "sdo.agents.responder.reflection_validation", "--root", str(worktree.resolve())],
-            env={key: os.environ[key] for key in VALIDATION_ENVIRONMENT if key in os.environ},
-            tool_timeout_s=validation_tool_timeout_seconds() if provider == "codex" else None,
-        )
-    ]
-
-
 def session_turn_options(
     provider: str, worktree: Path, *, phase: Literal["responder", "reflection"] = "responder"
 ) -> dict[str, Any]:
@@ -117,10 +97,6 @@ def session_turn_options(
         if os.environ.get("SDO_SESSION_DIR")
         else None,
         "output_schema": session_output_schema(),
-        "mcp_servers": session_mcp_servers(worktree, provider),
-        "environment": {"MCP_TOOL_TIMEOUT": str(validation_tool_timeout_seconds() * 1000)}
-        if provider == "claude"
-        else None,
     }
 
 

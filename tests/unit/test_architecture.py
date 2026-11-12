@@ -239,16 +239,6 @@ _LEGACY_REAL_TIME_TESTS = frozenset(
         ),
         ("tests/unit/benchmarks/sregym/fastloop/test_surge_guard_worker_ops.py", "worker_op"),
         ("tests/unit/sdo/agents/responder/test_recorded_actions.py", "_wait_for"),
-        ("tests/unit/sdo/agents/responder/test_reflection_final_check.py", "expire_once_started"),
-        (
-            "tests/unit/sdo/agents/responder/test_reflection_final_check.py",
-            "test_final_check_timeout_kills_the_validator_process_group",
-        ),
-        ("tests/unit/sdo/agents/responder/test_reflection_validation.py", "expire_once_started"),
-        (
-            "tests/unit/sdo/agents/responder/test_reflection_validation.py",
-            "test_validation_tool_timeout_returns_failure_and_stops_children",
-        ),
     }
 )
 

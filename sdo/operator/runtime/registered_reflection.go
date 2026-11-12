@@ -3,6 +3,7 @@ package runtime
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,7 +11,6 @@ import (
 	"log"
 	"os"
 	"regexp"
-	"sort"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -33,29 +33,18 @@ type ReflectionTaskExecutor interface {
 // implementation-neutral executor. Production supplies KubernetesExecutor,
 // which mounts only the broker-prepared proposal checkout.
 type RegisteredReflectionWorker struct {
-	Replay      string
-	TaskStore   *lifecycleio.TaskStore
-	Executor    ReflectionTaskExecutor
-	AgentID     string
-	TaskType    string
-	Outcomes    memory.Reader
-	Catalog     memory.CatalogReader
-	Timeout     time.Duration
-	Guidance    string
+	Replay    string
+	TaskStore *lifecycleio.TaskStore
+	Executor  ReflectionTaskExecutor
+	AgentID   string
+	TaskType  string
+	Outcomes  memory.Reader
+	Catalog   memory.CatalogReader
+	Timeout   time.Duration
 	// SessionExecutor supplies the narrow per-incident session transport for resume.
-	SessionExecutor      func(incidentID string) (ReflectionTaskExecutor, error)
-	FreshSessionExecutor func(incidentID string) (ReflectionTaskExecutor, error)
-	UsageLogPath         func(incidentID string) string
-	CorpusSessionRoot    string
-}
-
-// frozenSessionMode is the session mode a frozen task carries; a task that
-// names none resumes, as every default does.
-func frozenSessionMode(mode string) string {
-	if mode == "" {
-		return "resume"
-	}
-	return mode
+	SessionExecutor   func(incidentID string) (ReflectionTaskExecutor, error)
+	UsageLogPath      func(incidentID string) string
+	CorpusSessionRoot string
 }
 
 var resumableSessionID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
@@ -101,48 +90,20 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 			return ReflectionDecision{}, errors.New("frozen reflection task differs from registered worker or workspace")
 		}
 	}
-	guidance := w.Guidance
-	if guidance == "" {
-		guidance = "baseline"
-	}
-	// Reflection continues the responder's session. Only a closure the
-	// automatic stage resolved without any agent has no session to continue;
-	// that is the sole case that starts a new one, and it says so.
-	mode := "resume"
-	if stageOnlyClosure(closure) {
-		mode = "fresh"
-		log.Printf("reflection for incident %s: no responder session (the automatic stage resolved it without an agent); starting a fresh reflection session", workspace.IncidentID)
-	}
-	if mode == "resume" && !hasResponderSession(closure) {
+	// The closing turn continues the responder's session; a closure without one has nothing to ask.
+	if !hasResponderSession(closure) {
 		return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "no_session"}, nil
 	}
-	if task != nil {
-		frozen := &contracts.ReflectionRequest{}
-		if err := task.GetRequest().UnmarshalTo(frozen); err != nil {
-			return ReflectionDecision{}, err
-		}
-		mode = frozenSessionMode(frozen.GetSessionMode())
-	}
 	executor := w.Executor
-	if mode == "fresh" && w.FreshSessionExecutor != nil {
-		var err error
-		executor, err = w.FreshSessionExecutor(workspace.IncidentID)
-		if err != nil {
-			return ReflectionDecision{}, fmt.Errorf("prepare fresh reflection session: %w", err)
-		}
+	if w.SessionExecutor == nil {
+		return ReflectionDecision{}, errors.New("the closing turn requires isolated incident session transport")
 	}
-	if mode == "resume" {
-		if w.SessionExecutor == nil {
-			return ReflectionDecision{}, errors.New("resumed reflection requires isolated incident session transport")
-		}
-		var err error
-		executor, err = w.SessionExecutor(workspace.IncidentID)
-		if err != nil {
-			return ReflectionDecision{}, fmt.Errorf("prepare resumed reflection session: %w", err)
-		}
-		if executor == nil {
-			return ReflectionDecision{}, errors.New("resumed reflection session transport is unavailable")
-		}
+	executor, err := w.SessionExecutor(workspace.IncidentID)
+	if err != nil {
+		return ReflectionDecision{}, fmt.Errorf("prepare the closing turn's session: %w", err)
+	}
+	if executor == nil {
+		return ReflectionDecision{}, errors.New("the closing turn's session transport is unavailable")
 	}
 	if task == nil {
 		closed, err := toProtoClosure(closure)
@@ -160,24 +121,8 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 		if current.GetIncidentId() != workspace.IncidentID {
 			return ReflectionDecision{}, errors.New("reflection outcome incident differs from proposal")
 		}
-		prior, _, err := memory.ListOutcomes(ctx, w.Outcomes, "reflection prior outcomes")
-		if err != nil {
-			return ReflectionDecision{}, err
-		}
-		history := make([]*contracts.OutcomeRecord, 0, len(prior))
-		for _, record := range prior {
-			if record.IncidentID != workspace.IncidentID {
-				earlier, err := memory.LogicalOutcome(summarizeEarlierOutcome(record.Record))
-				if err != nil {
-					return ReflectionDecision{}, err
-				}
-				history = append(history, earlier)
-			}
-		}
-		sort.SliceStable(history, func(i, j int) bool { return verifiedTime(history[i]).Before(verifiedTime(history[j])) })
-		history = history[max(0, len(history)-maxReflectionHistory):]
 		trimReflectionClosure(closed)
-		request := &contracts.ReflectionRequest{Telemetry: closed.GetRequest().GetTelemetry(), Closure: closed, Outcome: current, PriorOutcomes: history, ProposalCommit: proposalCommit, OutcomeCommit: outcomeCommit, SessionMode: mode, Guidance: guidance, ValidationAttempt: attempt, CauseWork: feedback.CauseWork, UnassignedWork: feedback.UnassignedWork}
+		request := &contracts.ReflectionRequest{Telemetry: closed.GetRequest().GetTelemetry(), Closure: closed, Outcome: current, ProposalCommit: proposalCommit, OutcomeCommit: outcomeCommit, ValidationAttempt: attempt, Changes: feedback.Changes}
 		if w.Catalog != nil {
 			snapshot, err := memory.SnapshotAt(ctx, w.Catalog, workspace.BaseCommit)
 			if err != nil {
@@ -201,15 +146,6 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 			}
 			if snapshot.GetCodePath().GetName() != "shell" && bytes.Contains(currentWire, []byte(layout.PhysicalPathMarker)) {
 				return ReflectionDecision{}, errors.New("physical operational memory path in outcome evidence")
-			}
-			for _, priorOutcome := range history {
-				priorWire, err := wire.Marshal(priorOutcome)
-				if err != nil {
-					return ReflectionDecision{}, err
-				}
-				if snapshot.GetCodePath().GetName() != "shell" && bytes.Contains(priorWire, []byte(layout.PhysicalPathMarker)) {
-					return ReflectionDecision{}, errors.New("physical operational memory path in prior outcome evidence")
-				}
 			}
 			logicalRequest := proto.Clone(request).(*contracts.ReflectionRequest)
 			logicalRequest.PreviousDiagnostics = nil
@@ -274,7 +210,6 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 		return w.withUsage(ReflectionDecision{LearningDecision: "failed", FailureReason: "timeout", Error: fmt.Sprintf("reflection task %s exceeded frozen deadline %s", task.GetTaskId(), deadline.UTC().Format(time.RFC3339Nano))}, workspace.IncidentID)
 	}
 	var result *contracts.AgentResult
-	var err error
 	recovered := false
 	if recovery, ok := executor.(worker_registry.ReflectionResultRecoverer); ok {
 		result, recovered, err = recovery.RecoverCompleted(ctx, task)
@@ -431,7 +366,6 @@ func fitReflectionRequest(request *contracts.ReflectionRequest, build func() (*c
 		return text
 	}
 	steps, fits, err := degradeToFit(size, []transportRung{
-		{"drop_prior_incident_history", func() bool { changed := len(request.PriorOutcomes) > 0; request.PriorOutcomes = nil; return changed }},
 		{"trim_memory_to_touched", func() bool { return trimSnapshotToTouched(request.MemorySnapshot, mentions()) }},
 		{"clip_memory_documents", func() bool { return clipSnapshotDocuments(request.MemorySnapshot) }},
 		{"clip_program_evidence", func() bool { return clipProgramEvidence(request) }},
@@ -455,4 +389,52 @@ func transportSize(task *contracts.AgentTask) int {
 		return 0
 	}
 	return size
+}
+
+// Cleanup runs one cleanup-only closing turn in the responder's session, in the incident's proposal checkout. The
+// request carries the leftover paths and no outcome; the agent keeps (captures as a patch) or removes them. A turn that
+// fails or times out is an error the caller records and does not retry: the closure never fails on it.
+func (w RegisteredReflectionWorker) Cleanup(ctx context.Context, closure IncidentClosure, workspace IncidentWorkspace, leftovers []string, turn int) error {
+	if w.Executor == nil || w.AgentID == "" || w.TaskType == "" || w.Timeout <= 0 || w.SessionExecutor == nil {
+		return errors.New("cleanup turn requires executor, session transport, agent ID, task type and timeout")
+	}
+	if !hasResponderSession(closure) {
+		return errors.New("cleanup turn requires a responder session")
+	}
+	closed, err := toProtoClosure(closure)
+	if err != nil {
+		return err
+	}
+	trimReflectionClosure(closed)
+	request := &contracts.ReflectionRequest{Telemetry: closed.GetRequest().GetTelemetry(), Closure: closed, CleanupTurn: uint32(turn), Leftovers: leftovers}
+	payload, err := anypb.New(request)
+	if err != nil {
+		return err
+	}
+	taskID := fmt.Sprintf("closing-cleanup-%x-%d", sha256.Sum256([]byte(workspace.IncidentID)), turn)
+	task := &contracts.AgentTask{
+		SchemaVersion: worker_registry.SchemaVersion, TaskId: taskID, AgentId: w.AgentID, TaskType: w.TaskType, Request: payload,
+		Workspace: &contracts.ProposalWorkspace{ProposalId: taskID, CheckoutPath: workspace.Worktree, BaseCommit: workspace.BaseCommit},
+		Deadline:  lifecyclecore.ReflectionDeadline(lifecycleio.Now(), w.Timeout),
+	}
+	executor, err := w.SessionExecutor(workspace.IncidentID)
+	if err != nil {
+		return fmt.Errorf("prepare the cleanup turn's session: %w", err)
+	}
+	if executor == nil {
+		return errors.New("the cleanup turn's session transport is unavailable")
+	}
+	executionCtx, cancel := context.WithDeadline(ctx, task.GetDeadline().AsTime())
+	defer cancel()
+	result, err := executor.Execute(executionCtx, task)
+	if err != nil {
+		return err
+	}
+	if result.GetStatus() == "failed" {
+		return fmt.Errorf("cleanup turn failed (%s): %s", result.GetFailureReason(), result.GetErrorSummary())
+	}
+	if result.GetStatus() != "completed" || result.GetTaskId() != taskID {
+		return errors.New("cleanup turn returned a mismatched or incomplete result")
+	}
+	return nil
 }

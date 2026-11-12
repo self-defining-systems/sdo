@@ -229,9 +229,7 @@ jobs:
           SDO_PYTEST_SHARD: ${{ matrix.shard }}
         run: |
           SDO_PYTEST_LOG="$RUNNER_TEMP/pytest.log" bash ./scripts/test_python.sh --durations=30 \
-            --ignore=tests/unit/benchmarks/sregym/fastloop/test_recorded_reflection_stage.py \
             --ignore=tests/unit/benchmarks/sregym/fastloop/test_generated_worker_contract.py \
-            --ignore=tests/unit/sdo/agents/responder/test_reflection_final_check.py \
             --ignore=tests/unit/benchmarks/sregym/assurance/test_script_execution.py \
             --ignore=tests/unit/benchmarks/sregym/fastloop/test_sdo3_s3a_contracts.py \
             --ignore=tests/unit/benchmarks/sregym/fastloop/test_fastloop_fault_tracker.py \

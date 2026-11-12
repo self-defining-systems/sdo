@@ -163,3 +163,30 @@ func (b *Broker) ScratchFeedback(ctx context.Context, incidentID string, phase P
 	}
 	return ScratchFeedback(ctx, proposal.Path)
 }
+
+// UncapturedPaths are the app files a prepared proposal's checkout holds that its patch series does not reproduce:
+// the edits the agent left, in sorted order. Empty for phases whose checkout is not materialized.
+func (b *Broker) UncapturedPaths(ctx context.Context, incidentID string, phase Phase) ([]string, error) {
+	if !materializesPatches(phase) {
+		return nil, nil
+	}
+	proposal, err := b.proposal(incidentID, phase)
+	if err != nil {
+		return nil, err
+	}
+	paths, err := UncapturedScratch(ctx, proposal.Path)
+	var invalid *patchset.PatchError
+	if errors.As(err, &invalid) {
+		return nil, nil
+	}
+	return paths, err
+}
+
+// ProposalCheckout is the path of a prepared proposal's checkout.
+func (b *Broker) ProposalCheckout(incidentID string, phase Phase) (string, error) {
+	proposal, err := b.proposal(incidentID, phase)
+	if err != nil {
+		return "", err
+	}
+	return proposal.Path, nil
+}

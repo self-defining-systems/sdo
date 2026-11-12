@@ -1,1 +1,0 @@
-${kind} ${location}${version}

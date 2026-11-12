@@ -1,11 +1,8 @@
 package runtime
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"log"
-	"strings"
 	"testing"
 	"time"
 
@@ -36,7 +33,6 @@ func runReflectionSession(t *testing.T, mutate func(*IncidentClosure), configure
 			run.resumedIncidents = append(run.resumedIncidents, id)
 			return run.resume, nil
 		},
-		FreshSessionExecutor: func(string) (ReflectionTaskExecutor, error) { return run.fresh, nil },
 	}
 	if configure != nil {
 		configure(&worker)
@@ -63,7 +59,7 @@ func runReflectionSession(t *testing.T, mutate func(*IncidentClosure), configure
 		mutate(&closure)
 	}
 	workspace := IncidentWorkspace{IncidentID: "incident-a", Worktree: t.TempDir(), BaseCommit: syntheticPathsBase}
-	run.decision, run.err = worker.Reflect(context.Background(), closure, workspace, outcome, "proposal", "outcome", ReflectionFeedback{})
+	run.decision, run.err = worker.Reflect(context.Background(), closure, workspace, outcome, "proposal", "outcome", ReflectionFeedback{Changes: []string{"1. exec Pod/db-1"}})
 	for _, executor := range []*pathsExecutor{run.resume, run.fresh, run.shared} {
 		if executor.task != nil {
 			run.request = &contracts.ReflectionRequest{}
@@ -75,9 +71,8 @@ func runReflectionSession(t *testing.T, mutate func(*IncidentClosure), configure
 	return run
 }
 
-// A closure with a responder session is reflected on in that session: the
-// resume transport runs, the frozen request says resume and carries the
-// responder's session ID for the worker to continue.
+// The closing turn is the responder's own session: the resume transport runs and the
+// frozen request carries the session ID and the change list Go rendered for the worker.
 func TestReflectionResumesTheResponderSession(t *testing.T) {
 	run := runReflectionSession(t, nil, nil)
 	if !errors.Is(run.err, errPathsCaptured) || run.resume.task == nil {
@@ -86,8 +81,11 @@ func TestReflectionResumesTheResponderSession(t *testing.T) {
 	if run.fresh.task != nil || run.shared.task != nil {
 		t.Fatal("reflection ran outside the responder session transport")
 	}
-	if run.request.GetSessionMode() != "resume" || run.request.GetClosure().GetResult().GetResponderSessionId() != "responder-session-1" {
-		t.Fatalf("request mode=%q session=%q, want resume of responder-session-1", run.request.GetSessionMode(), run.request.GetClosure().GetResult().GetResponderSessionId())
+	if run.request.GetClosure().GetResult().GetResponderSessionId() != "responder-session-1" {
+		t.Fatalf("request session=%q, want responder-session-1", run.request.GetClosure().GetResult().GetResponderSessionId())
+	}
+	if got := run.request.GetChanges(); len(got) != 1 || got[0] != "1. exec Pod/db-1" {
+		t.Fatalf("request changes = %v, want the rendered change list", got)
 	}
 	if len(run.resumedIncidents) != 1 || run.resumedIncidents[0] != "incident-a" {
 		t.Fatalf("session transport prepared for %v, want incident-a", run.resumedIncidents)
@@ -160,35 +158,14 @@ func TestReflectionWithoutAResponderSessionIsSkippedNotFresh(t *testing.T) {
 	}
 }
 
-// The one deliberate fresh reflection: the controller's automatic stage
-// resolved the incident, no agent ran, so no session exists. It is logged as
-// such and runs on the fresh transport only.
-func TestStageOnlyReflectionIsFreshAndLogsNoResponderSession(t *testing.T) {
-	var logged bytes.Buffer
-	log.SetOutput(&logged)
-	defer log.SetOutput(log.Writer())
+// A closure the automatic stage resolved has no agent and so no session: the closing turn is skipped, never a fresh session.
+func TestStageOnlyClosureGetsNoClosingTurn(t *testing.T) {
 	run := runReflectionSession(t, func(c *IncidentClosure) {
 		c.Result.ResponderSessionID = ""
 		c.Result.ResolutionPath = "deterministic"
 		c.Request.PriorStages = []*contracts.StageReport{{Stage: "deterministic"}}
 	}, nil)
-	if !errors.Is(run.err, errPathsCaptured) || run.fresh.task == nil || run.resume.task != nil {
-		t.Fatalf("stage-only reflection did not run on the fresh transport: err=%v", run.err)
-	}
-	if run.request.GetSessionMode() != "fresh" {
-		t.Fatalf("request mode = %q, want fresh", run.request.GetSessionMode())
-	}
-	if !strings.Contains(logged.String(), "no responder session") || !strings.Contains(logged.String(), "incident-a") {
-		t.Fatalf("log = %q, want a no responder session line naming the incident", logged.String())
-	}
-}
-
-// A frozen task without a session mode (a build that never wrote one) resumes.
-func TestFrozenReflectionTaskWithoutSessionModeResumes(t *testing.T) {
-	if got := frozenSessionMode(""); got != "resume" {
-		t.Fatalf("frozenSessionMode(\"\") = %q, want resume", got)
-	}
-	if got := frozenSessionMode("fresh"); got != "fresh" {
-		t.Fatalf("frozenSessionMode(fresh) = %q", got)
+	if run.err != nil || run.decision.NoChangeReason != "no_session" || run.resume.task != nil || run.fresh.task != nil || run.shared.task != nil {
+		t.Fatalf("decision = %+v err = %v, want no_change/no_session and no dispatch", run.decision, run.err)
 	}
 }

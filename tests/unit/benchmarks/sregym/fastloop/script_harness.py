@@ -95,7 +95,7 @@ def respond(request):
 
 
 class Reflector:
-    def resume(self, *, worktree, incident_id, closure, **kwargs):
+    def learn(self, *, worktree, incident_id, closure, **kwargs):
         from benchmarks.sregym.agent_script.model import Delete, ScriptTurn, Tool, Write
         from benchmarks.sregym.agent_script.runner import execute
         from benchmarks.sregym.agent_script.wire import EventStream
@@ -123,9 +123,10 @@ class Reflector:
                 else:
                     # Decision commands use the same writable exchange as the generator.
                     execute(ScriptTurn(role="reflector", steps=[step], result={}), worktree, EventStream(io.StringIO()))
-        result = dict(script.turns[0].result)
-        result["playbook_ids"] = result.pop("proposed_artifact_ids", [])
-        return ReflectionTurn(**result)
+        return ReflectionTurn(note=script.turns[0].result["note"])
+
+    def cleanup(self, **kwargs):
+        return ReflectionTurn(note="nothing to clean up")
 
 
 def main(argv):
