@@ -225,7 +225,7 @@ def _parser() -> argparse.ArgumentParser:
         type=float,
         default=0,
         metavar="SECONDS",
-        help="wait for stable verification, a new/reactivated finding, or this timeout (0: cached and instant)",
+        help="wait for stable verification, a new/reactivated finding, or this timeout (0: cached and instant); returns at once while you have made no write",
     )
     commands.add_parser("rollback", help="roll back a plan application").add_argument("application_id")
     for name in ("mitigate", "rollback"):

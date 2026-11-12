@@ -766,10 +766,12 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			// A read-only closure check must not hold responder locks while
 			// waiting for that observation to finish.
 			var closure ToolResponse
+			// With no recorded write since the incident opened there is nothing to settle.
+			waitForSettle := request.WaitSeconds > 0 && l.WaitClosure != nil && l.hasWrites()
 			if err := withoutResponderLocks(l, "verify", true, func() {
 				if request.WaitSeconds < 0 || request.WaitSeconds > 86400 {
 					closure = ToolResponse{Command: "verify", Error: "wait seconds must be between 0 and 86400"}
-				} else if request.WaitSeconds > 0 && l.WaitClosure != nil {
+				} else if waitForSettle {
 					closure = l.WaitClosure(ctx, time.Duration(request.WaitSeconds*float64(time.Second)))
 				} else {
 					closure = l.VerifyClosure(ctx)
@@ -1494,4 +1496,15 @@ func (l *ResponderLoop) gitRead() gitRead {
 		return l.GitRead
 	}
 	return lifecycleio.GitOutput
+}
+
+// hasWrites reports whether the responder has changed anything since the incident opened: a plan application
+// of this loop, or a write in the recording of the agent's Kubernetes calls. A recording that cannot be read
+// yet counts as a write, so the wait is only skipped when none is certain.
+func (l *ResponderLoop) hasWrites() bool {
+	if len(l.applicationsLog) > 0 || l.ExternalReceipts == nil {
+		return true
+	}
+	receipts, pending, _, err := l.ExternalReceipts()
+	return err != nil || pending || len(receipts) > 0
 }
