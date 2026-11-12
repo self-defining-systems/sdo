@@ -231,7 +231,7 @@ def _parser() -> argparse.ArgumentParser:
             "command line). The command's exit code is returned. Do not hand-write receipts. "
             "Report one cause per independently fixable fault; combine edits to one object, "
             "keeping each cause's evidence separate. Declare all changed resources so the receipt "
-            "covers the combined edit. Start independent repairs together. "
+            "covers the combined edit. Start independent repairs together only for distinct active faults. "
             "When an admission control blocks recovery and its backend is gone, restore the backend if you can. "
             "Otherwise a scoped fail-open or removal that restores availability is acceptable; report it. "
             "SDO options go before --; the command after it runs verbatim, except that a kubectl command "

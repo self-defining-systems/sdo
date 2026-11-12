@@ -355,6 +355,9 @@ message IncidentRequest {
   // user tests or held Kubernetes conditions). Recovery is judged on these
   // alone; every other finding in the request is a clue.
   repeated string opening_keys = 37;
+  // Go-owned: the finding keys of the clues already active when the incident
+  // opened. They are baseline, not evidence that the incident caused them.
+  repeated string standing_keys = 38;
 }
 
 message ResponseProgress {
@@ -713,6 +716,71 @@ message StageReport {
   RecoveryWait recovery_wait = 6;
   // First execution of this stage; preserved across recovery and later passes.
   google.protobuf.Timestamp started_at = 7;
+  // Go-owned: set when this stage applied a repair whose detector confirmation
+  // is still pending at hand-off.
+  HandoffState handoff_state = 8;
+}
+
+// HandoffState is what the controller knows about a repair its automatic stage
+// applied and has not yet seen confirmed. The responder is told this state, not
+// asked to infer it. The controller decides the classes; the agent reads them.
+message HandoffState {
+  enum RepairState {
+    REPAIR_STATE_UNSPECIFIED = 0;
+    // A repair was applied and the detectors have not yet confirmed recovery.
+    REPAIR_STATE_PENDING_CONFIRMATION = 1;
+  }
+  enum PostApplyDiagnose {
+    POST_APPLY_DIAGNOSE_UNSPECIFIED = 0;
+    POST_APPLY_DIAGNOSE_NOT_RUN = 1;
+    // Every applied program no longer diagnoses its fault.
+    POST_APPLY_DIAGNOSE_NO_MATCH = 2;
+    // At least one applied program still diagnoses its fault.
+    POST_APPLY_DIAGNOSE_MATCH = 3;
+  }
+  enum ResidualClass {
+    RESIDUAL_CLASS_UNSPECIFIED = 0;
+    // A probe finding that has not yet re-observed the repair: the program no
+    // longer matches and the finding's SLO error rate did not rise while the
+    // controller observed it for one detector window. Lag is a defined class,
+    // not a guess: a probe that is red after an incomplete fix has a rising
+    // or unobserved rate and is ACTIVE.
+    RESIDUAL_CLASS_PROBE_LAG = 1;
+    // A finding that was active before the incident opened and has not changed
+    // its severity or summary since. It is baseline, not evidence of a fault.
+    RESIDUAL_CLASS_BASELINE_CLUE = 2;
+    // Anything else: an opening alert, a finding that arose after the incident
+    // opened, a changed clue, or a probe whose error rate was not shown to be
+    // non-increasing.
+    RESIDUAL_CLASS_ACTIVE = 3;
+  }
+  message ResidualFinding {
+    string key = 1;
+    string detector_id = 2;
+    ResidualClass residual_class = 3;
+    // When the controller opened the incident; a standing clue was first seen
+    // at or before it.
+    google.protobuf.Timestamp first_seen = 4;
+    bool changed_since_open = 5;
+  }
+  RepairState repair_state = 1;
+  repeated string applied_playbook_ids = 2;
+  google.protobuf.Timestamp applied_at = 3;
+  PostApplyDiagnose post_apply_diagnose = 4;
+  repeated ResidualFinding residual_findings = 5;
+  // The responder confirms the outcome and opens no new repair for a residual
+  // finding. Only set when the post-apply diagnosis does not match and every
+  // residual finding is PROBE_LAG or BASELINE_CLUE.
+  bool observe_only = 6;
+  // The time limit of observe_only. After it the responder reports what
+  // remains, with evidence, as needing a human, and finishes.
+  google.protobuf.Timestamp observe_until = 7;
+  // Further mutation rounds the responder may spend on one implicating
+  // (ACTIVE) residual finding. Zero while observe_only.
+  int32 mutation_rounds_per_finding = 8;
+  // The controller observed the residual findings for this long (one detector
+  // window at most) before handing off.
+  google.protobuf.Duration settlement_extension = 9;
 }
 
 message StageMitigation {

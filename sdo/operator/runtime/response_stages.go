@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 
+	"sdo.dev/operator/runtime/internal/lifecycleio"
+
 	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
@@ -148,6 +150,7 @@ func (AgentResponseStage) Name() string { return "agent" }
 func (stage AgentResponseStage) Run(ctx context.Context, state *IncidentState) (*contracts.StageReport, error) {
 	request := *cloneIncidentRequest(&state.Request)
 	if len(state.PriorStages) > 0 {
+		attachHandoffState(state, lifecycleio.Now())
 		request.PriorStages = cloneStageReports(state.PriorStages)
 		request.Findings = append([]sdk.Finding(nil), state.Findings...)
 		request.PreparedAgentTask = ""

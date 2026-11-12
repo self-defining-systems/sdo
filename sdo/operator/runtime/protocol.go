@@ -57,7 +57,10 @@ type IncidentRequest struct {
 	// OpeningKeys are the finding keys of the alerts the incident opened on:
 	// failing user tests or held Kubernetes conditions (opens). Recovery is
 	// judged on them alone; every other finding in Findings is a clue.
-	OpeningKeys            []string
+	OpeningKeys []string
+	// StandingKeys are the finding keys of the clues already active when the
+	// incident opened: baseline, never evidence the incident caused them.
+	StandingKeys           []string
 	ExternalMessage        string
 	Telemetry              *contracts.TelemetryContext
 	DisabledSetupDetectors []*contracts.DisabledSetupDetector

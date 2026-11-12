@@ -459,7 +459,7 @@ class ExternalIncident(_message.Message):
     def __init__(self, id: _Optional[str] = ..., namespace: _Optional[str] = ..., message: _Optional[str] = ...) -> None: ...
 
 class IncidentRequest(_message.Message):
-    __slots__ = ("schema_version", "application", "namespace", "incident_id", "findings", "detector_history", "surfaced_playbooks", "relevant_outcomes", "source_commit", "deployed_commit", "repository_worktree", "repository_base_commit", "response_deadline", "cancellation_token", "repair_policy", "state_changes", "memory_snapshot", "initial_program_runs", "max_response_loops", "drift_events", "prepared_agent_task", "observation_generation", "playbook_coverage", "namespace_onboarding", "prior_stages", "compaction", "prior_response_progress", "disabled_setup_detectors", "external_message", "detected_at", "telemetry", "opening_keys")
+    __slots__ = ("schema_version", "application", "namespace", "incident_id", "findings", "detector_history", "surfaced_playbooks", "relevant_outcomes", "source_commit", "deployed_commit", "repository_worktree", "repository_base_commit", "response_deadline", "cancellation_token", "repair_policy", "state_changes", "memory_snapshot", "initial_program_runs", "max_response_loops", "drift_events", "prepared_agent_task", "observation_generation", "playbook_coverage", "namespace_onboarding", "prior_stages", "compaction", "prior_response_progress", "disabled_setup_detectors", "external_message", "detected_at", "telemetry", "opening_keys", "standing_keys")
     SCHEMA_VERSION_FIELD_NUMBER: _ClassVar[int]
     APPLICATION_FIELD_NUMBER: _ClassVar[int]
     NAMESPACE_FIELD_NUMBER: _ClassVar[int]
@@ -492,6 +492,7 @@ class IncidentRequest(_message.Message):
     DETECTED_AT_FIELD_NUMBER: _ClassVar[int]
     TELEMETRY_FIELD_NUMBER: _ClassVar[int]
     OPENING_KEYS_FIELD_NUMBER: _ClassVar[int]
+    STANDING_KEYS_FIELD_NUMBER: _ClassVar[int]
     schema_version: str
     application: str
     namespace: str
@@ -524,7 +525,8 @@ class IncidentRequest(_message.Message):
     detected_at: _timestamp_pb2.Timestamp
     telemetry: TelemetryContext
     opening_keys: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, schema_version: _Optional[str] = ..., application: _Optional[str] = ..., namespace: _Optional[str] = ..., incident_id: _Optional[str] = ..., findings: _Optional[_Iterable[_Union[Finding, _Mapping]]] = ..., detector_history: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., surfaced_playbooks: _Optional[_Iterable[_Union[SurfacedPlaybook, _Mapping]]] = ..., relevant_outcomes: _Optional[_Iterable[_Union[PriorOutcomeEvidence, _Mapping]]] = ..., source_commit: _Optional[str] = ..., deployed_commit: _Optional[str] = ..., repository_worktree: _Optional[str] = ..., repository_base_commit: _Optional[str] = ..., response_deadline: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cancellation_token: _Optional[str] = ..., repair_policy: _Optional[str] = ..., state_changes: _Optional[_Union[StateChanges, _Mapping]] = ..., memory_snapshot: _Optional[_Union[OperationalMemorySnapshot, _Mapping]] = ..., initial_program_runs: _Optional[_Iterable[_Union[_program_pb2.ProgramRun, _Mapping]]] = ..., max_response_loops: _Optional[int] = ..., drift_events: _Optional[_Iterable[_Union[DriftEvent, _Mapping]]] = ..., prepared_agent_task: _Optional[str] = ..., observation_generation: _Optional[str] = ..., playbook_coverage: _Optional[_Union[_program_pb2.PlaybookCoverage, _Mapping]] = ..., namespace_onboarding: _Optional[_Union[NamespaceOnboarding, _Mapping]] = ..., prior_stages: _Optional[_Iterable[_Union[StageReport, _Mapping]]] = ..., compaction: _Optional[_Iterable[str]] = ..., prior_response_progress: _Optional[_Iterable[_Union[ResponseProgress, _Mapping]]] = ..., disabled_setup_detectors: _Optional[_Iterable[_Union[DisabledSetupDetector, _Mapping]]] = ..., external_message: _Optional[str] = ..., detected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., telemetry: _Optional[_Union[TelemetryContext, _Mapping]] = ..., opening_keys: _Optional[_Iterable[str]] = ...) -> None: ...
+    standing_keys: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, schema_version: _Optional[str] = ..., application: _Optional[str] = ..., namespace: _Optional[str] = ..., incident_id: _Optional[str] = ..., findings: _Optional[_Iterable[_Union[Finding, _Mapping]]] = ..., detector_history: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., surfaced_playbooks: _Optional[_Iterable[_Union[SurfacedPlaybook, _Mapping]]] = ..., relevant_outcomes: _Optional[_Iterable[_Union[PriorOutcomeEvidence, _Mapping]]] = ..., source_commit: _Optional[str] = ..., deployed_commit: _Optional[str] = ..., repository_worktree: _Optional[str] = ..., repository_base_commit: _Optional[str] = ..., response_deadline: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cancellation_token: _Optional[str] = ..., repair_policy: _Optional[str] = ..., state_changes: _Optional[_Union[StateChanges, _Mapping]] = ..., memory_snapshot: _Optional[_Union[OperationalMemorySnapshot, _Mapping]] = ..., initial_program_runs: _Optional[_Iterable[_Union[_program_pb2.ProgramRun, _Mapping]]] = ..., max_response_loops: _Optional[int] = ..., drift_events: _Optional[_Iterable[_Union[DriftEvent, _Mapping]]] = ..., prepared_agent_task: _Optional[str] = ..., observation_generation: _Optional[str] = ..., playbook_coverage: _Optional[_Union[_program_pb2.PlaybookCoverage, _Mapping]] = ..., namespace_onboarding: _Optional[_Union[NamespaceOnboarding, _Mapping]] = ..., prior_stages: _Optional[_Iterable[_Union[StageReport, _Mapping]]] = ..., compaction: _Optional[_Iterable[str]] = ..., prior_response_progress: _Optional[_Iterable[_Union[ResponseProgress, _Mapping]]] = ..., disabled_setup_detectors: _Optional[_Iterable[_Union[DisabledSetupDetector, _Mapping]]] = ..., external_message: _Optional[str] = ..., detected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., telemetry: _Optional[_Union[TelemetryContext, _Mapping]] = ..., opening_keys: _Optional[_Iterable[str]] = ..., standing_keys: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class ResponseProgress(_message.Message):
     __slots__ = ("incident_id", "successful_actions", "blockers", "error", "truncated", "omitted_episodes")
@@ -875,7 +877,7 @@ class WriteSettlement(_message.Message):
     def __init__(self, application_id: _Optional[str] = ..., settled_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., settled: _Optional[bool] = ...) -> None: ...
 
 class StageReport(_message.Message):
-    __slots__ = ("stage", "mitigations", "remaining_finding_fingerprints", "error", "cleared_finding_fingerprints", "recovery_wait", "started_at")
+    __slots__ = ("stage", "mitigations", "remaining_finding_fingerprints", "error", "cleared_finding_fingerprints", "recovery_wait", "started_at", "handoff_state")
     STAGE_FIELD_NUMBER: _ClassVar[int]
     MITIGATIONS_FIELD_NUMBER: _ClassVar[int]
     REMAINING_FINDING_FINGERPRINTS_FIELD_NUMBER: _ClassVar[int]
@@ -883,6 +885,7 @@ class StageReport(_message.Message):
     CLEARED_FINDING_FINGERPRINTS_FIELD_NUMBER: _ClassVar[int]
     RECOVERY_WAIT_FIELD_NUMBER: _ClassVar[int]
     STARTED_AT_FIELD_NUMBER: _ClassVar[int]
+    HANDOFF_STATE_FIELD_NUMBER: _ClassVar[int]
     stage: str
     mitigations: _containers.RepeatedCompositeFieldContainer[StageMitigation]
     remaining_finding_fingerprints: _containers.RepeatedScalarFieldContainer[str]
@@ -890,7 +893,69 @@ class StageReport(_message.Message):
     cleared_finding_fingerprints: _containers.RepeatedScalarFieldContainer[str]
     recovery_wait: _program_pb2.RecoveryWait
     started_at: _timestamp_pb2.Timestamp
-    def __init__(self, stage: _Optional[str] = ..., mitigations: _Optional[_Iterable[_Union[StageMitigation, _Mapping]]] = ..., remaining_finding_fingerprints: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., cleared_finding_fingerprints: _Optional[_Iterable[str]] = ..., recovery_wait: _Optional[_Union[_program_pb2.RecoveryWait, _Mapping]] = ..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
+    handoff_state: HandoffState
+    def __init__(self, stage: _Optional[str] = ..., mitigations: _Optional[_Iterable[_Union[StageMitigation, _Mapping]]] = ..., remaining_finding_fingerprints: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., cleared_finding_fingerprints: _Optional[_Iterable[str]] = ..., recovery_wait: _Optional[_Union[_program_pb2.RecoveryWait, _Mapping]] = ..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., handoff_state: _Optional[_Union[HandoffState, _Mapping]] = ...) -> None: ...
+
+class HandoffState(_message.Message):
+    __slots__ = ("repair_state", "applied_playbook_ids", "applied_at", "post_apply_diagnose", "residual_findings", "observe_only", "observe_until", "mutation_rounds_per_finding", "settlement_extension")
+    class RepairState(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+        __slots__ = ()
+        REPAIR_STATE_UNSPECIFIED: _ClassVar[HandoffState.RepairState]
+        REPAIR_STATE_PENDING_CONFIRMATION: _ClassVar[HandoffState.RepairState]
+    REPAIR_STATE_UNSPECIFIED: HandoffState.RepairState
+    REPAIR_STATE_PENDING_CONFIRMATION: HandoffState.RepairState
+    class PostApplyDiagnose(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+        __slots__ = ()
+        POST_APPLY_DIAGNOSE_UNSPECIFIED: _ClassVar[HandoffState.PostApplyDiagnose]
+        POST_APPLY_DIAGNOSE_NOT_RUN: _ClassVar[HandoffState.PostApplyDiagnose]
+        POST_APPLY_DIAGNOSE_NO_MATCH: _ClassVar[HandoffState.PostApplyDiagnose]
+        POST_APPLY_DIAGNOSE_MATCH: _ClassVar[HandoffState.PostApplyDiagnose]
+    POST_APPLY_DIAGNOSE_UNSPECIFIED: HandoffState.PostApplyDiagnose
+    POST_APPLY_DIAGNOSE_NOT_RUN: HandoffState.PostApplyDiagnose
+    POST_APPLY_DIAGNOSE_NO_MATCH: HandoffState.PostApplyDiagnose
+    POST_APPLY_DIAGNOSE_MATCH: HandoffState.PostApplyDiagnose
+    class ResidualClass(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+        __slots__ = ()
+        RESIDUAL_CLASS_UNSPECIFIED: _ClassVar[HandoffState.ResidualClass]
+        RESIDUAL_CLASS_PROBE_LAG: _ClassVar[HandoffState.ResidualClass]
+        RESIDUAL_CLASS_BASELINE_CLUE: _ClassVar[HandoffState.ResidualClass]
+        RESIDUAL_CLASS_ACTIVE: _ClassVar[HandoffState.ResidualClass]
+    RESIDUAL_CLASS_UNSPECIFIED: HandoffState.ResidualClass
+    RESIDUAL_CLASS_PROBE_LAG: HandoffState.ResidualClass
+    RESIDUAL_CLASS_BASELINE_CLUE: HandoffState.ResidualClass
+    RESIDUAL_CLASS_ACTIVE: HandoffState.ResidualClass
+    class ResidualFinding(_message.Message):
+        __slots__ = ("key", "detector_id", "residual_class", "first_seen", "changed_since_open")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        DETECTOR_ID_FIELD_NUMBER: _ClassVar[int]
+        RESIDUAL_CLASS_FIELD_NUMBER: _ClassVar[int]
+        FIRST_SEEN_FIELD_NUMBER: _ClassVar[int]
+        CHANGED_SINCE_OPEN_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        detector_id: str
+        residual_class: HandoffState.ResidualClass
+        first_seen: _timestamp_pb2.Timestamp
+        changed_since_open: bool
+        def __init__(self, key: _Optional[str] = ..., detector_id: _Optional[str] = ..., residual_class: _Optional[_Union[HandoffState.ResidualClass, str]] = ..., first_seen: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., changed_since_open: _Optional[bool] = ...) -> None: ...
+    REPAIR_STATE_FIELD_NUMBER: _ClassVar[int]
+    APPLIED_PLAYBOOK_IDS_FIELD_NUMBER: _ClassVar[int]
+    APPLIED_AT_FIELD_NUMBER: _ClassVar[int]
+    POST_APPLY_DIAGNOSE_FIELD_NUMBER: _ClassVar[int]
+    RESIDUAL_FINDINGS_FIELD_NUMBER: _ClassVar[int]
+    OBSERVE_ONLY_FIELD_NUMBER: _ClassVar[int]
+    OBSERVE_UNTIL_FIELD_NUMBER: _ClassVar[int]
+    MUTATION_ROUNDS_PER_FINDING_FIELD_NUMBER: _ClassVar[int]
+    SETTLEMENT_EXTENSION_FIELD_NUMBER: _ClassVar[int]
+    repair_state: HandoffState.RepairState
+    applied_playbook_ids: _containers.RepeatedScalarFieldContainer[str]
+    applied_at: _timestamp_pb2.Timestamp
+    post_apply_diagnose: HandoffState.PostApplyDiagnose
+    residual_findings: _containers.RepeatedCompositeFieldContainer[HandoffState.ResidualFinding]
+    observe_only: bool
+    observe_until: _timestamp_pb2.Timestamp
+    mutation_rounds_per_finding: int
+    settlement_extension: _duration_pb2.Duration
+    def __init__(self, repair_state: _Optional[_Union[HandoffState.RepairState, str]] = ..., applied_playbook_ids: _Optional[_Iterable[str]] = ..., applied_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., post_apply_diagnose: _Optional[_Union[HandoffState.PostApplyDiagnose, str]] = ..., residual_findings: _Optional[_Iterable[_Union[HandoffState.ResidualFinding, _Mapping]]] = ..., observe_only: _Optional[bool] = ..., observe_until: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., mutation_rounds_per_finding: _Optional[int] = ..., settlement_extension: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ...) -> None: ...
 
 class StageMitigation(_message.Message):
     __slots__ = ("playbook_id", "program_revision", "bindings", "plan_id", "apply_receipt", "result", "skip_reason", "post_apply_diagnose", "cleared_finding_fingerprints", "remaining_finding_fingerprints", "error", "plan_action_start", "plan_action_count", "touched_objects", "kept_reason", "escalation", "escalated_resources", "escalation_reason")

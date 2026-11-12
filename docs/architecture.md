@@ -341,6 +341,15 @@ recovery wait and the claim-time check (`stageRecoveryCheck`) exit `CLEARED` on 
 still diagnoses its fault, hand off when the stage budget ends, and exit `NOTHING_APPLIED` when no learned playbook
 applied. The closure and outcome carry `RecoveryVerification`: `since`, `writes_settled`, per-write settle times,
 `opening_keys` and `stable_since`.
+After a stage applied a repair that detectors have not confirmed, the stage's recovery wait is extended by Go to
+one detector window when the program no longer matches and only probe lag remains (`runtime/handoff_state.go`).
+The residual probe's SLO error rate must not rise while it waits. The deterministic `StageReport` then carries a
+typed `handoff_state`: `residual_findings[].residual_class` is `PROBE_LAG`, `BASELINE_CLUE` (in
+`IncidentRequest.standing_keys`, the clues already active at open, and unchanged in severity and summary) or
+`ACTIVE`; `observe_only` (with `observe_until`, after which the responder reports what remains for a human)
+holds only when the program does not match and every residual is lag or baseline, and the responder is then given
+the observe-first instruction; otherwise `mutation_rounds_per_finding` is 1. This is guidance carried by the task,
+not a refusal: SDO refuses no repair for its kind.
 Data effects never change the outcome: each applied effect is recorded as a `data effect:` line in the
 closure's `source_check_notes` (and in verify's `data_effects[]`), with, for `unknown` and `data-write`,
 whether a backup of this incident held the records it could change (a `RepairData` whose named
