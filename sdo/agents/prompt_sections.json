@@ -315,7 +315,6 @@
     "idempotency_key": "template_data.responder-turn_01-idempotency_key",
     "prompt": "template_data.responder-turn_01-prompt"
   },
-  "responder/verified_final": {},
   "responder/reflection_replay": {},
   "responder/detection_learning": {
     "facts": "reflection_brief.findings",
