@@ -737,6 +737,26 @@ and `manifest.json` of each recording are mirrored to the evidence sink
 (`incidents/<d>/api-history*/`, `lifecycle/<key>/api-history/`); blobs, the identity
 key and the mutation fence stay in the cluster.
 
+Go reads the agent's writes from that recording through one function,
+`memory.AgentWrites(root, incident, through)`. Settle detection and the closure guard
+(`ResponderLoop.ExternalReceipts`), the outcome's repair records
+(`ProtoOutcomeDeriver`) and reflection's change list and provenance (which read the
+outcome's repair actions) use it; none reads the agent-writable `sdo act` journal
+(`sdo act` stays until it is deleted after responder P6, and its receipts still
+arrive in worker results). A write is a paired 2xx POST, PUT, PATCH or DELETE (any
+resource or subresource, except review creates that persist nothing) or an
+established exec or attach session, with receipt kind `api-<verb>`; an exec counts as
+a write that settles when its session ends, and an open one keeps settlement
+pending. Completeness counts only lost write records: `manifest.write_gaps` (a lost
+start or end envelope of a write or session, a recorder restart, a stale generation)
+excludes lost bodies, oversized responses and interrupted streams, and a gap counts
+as an agent write at its time (`api-gap`, which never reaches the outcome), so it can
+delay Recovered by one settle horizon and never advance it. Objects the agent creates
+(and later changes), or that stood ownerless in the open capture, are helpers
+(`api-helper-<verb>`): the cause validator leaves them out of every cause's
+clearance window unless they are a cause resource. The fuzzops dashboard draws the
+mirrored recording as `act` and `read` lanes (`benchmarks/fuzzops/view.py`).
+
 Not yet enforced (deferred to a security pass): the agent container still holds the
 Pod's service-account token and the in-cluster service variables, so a client that
 ignores the kubeconfig can bypass the proxy, and the proxy still refuses no
@@ -884,7 +904,7 @@ and executor checks govern execution; the benchmark adapter owns strict experime
 | Public lifecycle | `sdo/operator/operatorcli/`, `lifecycle/`, `deployment/`, `artifacts/` | Active | Go host and in-cluster operate coordinate sequential role-owned proposals with trusted deployment and health evidence. |
 | Lifecycle decisions | `sdo/operator/lifecycle/`, `artifacts/`, `deployment/` | Active | Source receipt binds the candidate tree, observed immutable images, the `DeploymentSource`, and the render and environment digests of what it rendered; architecture cites the broker-accepted source commit. The admitted `DeploymentPlan` (source, image declarations, expected workloads) is `.sdo/deployment/plan.yaml` in the accepted tree: Go writes its canonical form into the proposal at admission (a provided plan, `--deployment-plan`, takes the same path), the broker's `PublishVerifiedSource` and `PublishAdvance` require the staged tree's plan to name the deployed source, `Broker.AcceptedSourceEvidence` returns the newest deployment's evidence with the plan read from the accepted HEAD tree, and broker source evidence (`<broker workspace>/source-evidence/`, not `.sdo/`) keeps digests only; records from before deployment sources, or that still carry a plan, fail with a reinstall message. Restart re-verification re-renders the source and reports a digest mismatch as a renderer change, not drift. The controller and the `--evaluate-once` probe read the deployment source from the plan of the tree they are given (accepted checkout or candidate root); the install adapter passes the controller no source flag. |
 | Modular agent registration | `sdo/contracts/proto/.../worker.proto`, `sdo/operator/worker_registry/`, `sdo/agents/registrations/` | Active | Strict ProtoJSON capabilities and typed task/result URLs select workers without assuming Python or a model provider; Kubernetes Jobs mount isolated proposal checkouts. |
-| Responder API observations | `sdo/operator/apihistory/`, `kubeproxy/`, `operatorcli/evidence.go`, `worker_registry/` | Stage 1 | Per-Job localhost sidecar (every agent Job; responder writable, others read-only) uses Pod RBAC, fails closed on writes it cannot record and forces the responder field manager; bounded projected runtime history and read-only CLI expose last-observed state and Unknown without replay or coverage decisions. |
+| Responder API observations | `sdo/operator/apihistory/`, `kubeproxy/`, `operatorcli/evidence.go`, `worker_registry/`, `sdo/operator/memory/agent_writes.go` | Stage 1 | Per-Job localhost sidecar (every agent Job; responder writable, others read-only) uses Pod RBAC, fails closed on writes it cannot record and forces the responder field manager; bounded projected runtime history and read-only CLI expose last-observed state and Unknown without replay or coverage decisions. `memory.AgentWrites` derives the agent's writes (receipts, pending, write gaps) from it for settle, the closure guard, outcome repair records and reflection. |
 | Built-in agents | `sdo/agents/{source_deployment,health_judge,responder}/` | Active | Each implementation owns its prompts and provider choice; tasks carry logical memory snapshots; reflection and the judge return decisions/IDs after direct file edits. |
 | Provider capacity | `libs/agent_cli/provider_capacity.py`, `sdo/operator/worker_registry/provider_capacity.go` | Active, explicit shared/per-host Opus pool or per-account Claude pool | Claude throttling has typed bounded backoff. Opus roles share either one eight-slot filesystem pool or static host shares (default 4 + 4) through existing node hostPaths. All app mount aliases on a host retain the same lock inodes. Registered-account mode assigns lane primaries, projects refreshable Secret references and enforces per-account concurrency/health. Benchmark adapters record alias-only selection/failover and interpret wait evidence and NOT-GRADED rows; production never sees grades. See [configuration](provider-capacity.md). |
 | Code-path composition | `sdo/operator/runtime/code_path*.go`, `sdo/operator/shellpath/` | Active, shell opt-in | Named plugin sets select detector source, coverage, ordered PIPE stages, memory validation, activation and role guidance. Go remains the default; shell uses a long-lived read-only runner and shared incident lifecycle. |

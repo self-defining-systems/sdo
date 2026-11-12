@@ -571,3 +571,99 @@ def test_redaction_is_linear_in_the_text() -> None:
     out = view.redact(text)
     assert time.monotonic() - start < 1.0
     assert out.endswith("password=" + view.REDACTED)
+
+
+# ---- the agent's recorded calls ------------------------------------------------------------------------------
+
+NS = {"version": "v1", "namespace": "ns"}
+
+
+def _call(request: str, at: str, end: str | None = None, **fields: Any) -> list[dict[str, Any]]:
+    """A recorded request: its start and, unless ``end`` is None, its end, as the sink mirrors the recording."""
+    start = {"request_id": request, "phase": "start", "started": at, **NS, **fields}
+    if end is None:
+        return [start]
+    outcome = {k: v for k, v in fields.items() if k in ("status", "omission", "changed_paths", "session_end")}
+    return [start, {**start, "phase": "end", "finished": end, "status": 200, **outcome}]
+
+
+def _recording(dest: Path, *events: dict[str, Any]) -> None:
+    history = dest / "evidence" / "incidents" / DIR / "api-history"
+    history.mkdir(parents=True)
+    (history / "events.jsonl").write_text("".join(json.dumps(e) + "\n" for e in events))
+    (history / "manifest.json").write_text(json.dumps({"incident": INCIDENT, "write_gaps": 0}))
+
+
+def _writes() -> list[dict[str, Any]]:
+    patch = {"verb": "patch", "group": "apps", "resource": "deployments", "name": "user"}
+    image = ["spec.template.spec.containers[api].image"]
+    pod = {"resource": "pods", "name": "db-0"}
+    config = {"verb": "patch", "resource": "configmaps", "name": "cfg"}
+    create = {"verb": "post", "resource": "pods", "name": "x"}
+    return [
+        *_call("r1", "2026-11-11T08:01:30Z", "2026-11-11T08:01:31Z", **patch, changed_paths=image),
+        *_call("r2", "2026-11-11T08:01:40Z", "2026-11-11T08:01:41Z", **config, status=403),
+        *_call("r3", "2026-11-11T08:01:42Z", "2026-11-11T08:01:42Z", **create, status=403, omission="scope_read_only"),
+        *_call(
+            "r4", "2026-11-11T08:01:45Z", "2026-11-11T08:01:45Z", verb="get", **pod, subresource="exec", container="db",
+            command=["psql", "<withheld>", "<withheld>"], status=101, session_end="2026-11-11T08:02:15Z",
+        ),
+        *_call(
+            "r5", "2026-11-11T08:01:50Z", "2026-11-11T08:01:50Z", verb="post", **pod, subresource="portforward",
+            ports=["5432"], status=101, session_end="2026-11-11T08:01:58Z",
+        ),
+        *_call("r9", "2026-11-11T08:02:20Z", verb="delete", resource="pods", name="gone"),
+    ]  # fmt: skip
+
+
+def _reads() -> list[dict[str, Any]]:
+    return [
+        *_call("r6", "2026-11-11T08:01:05Z", "2026-11-11T08:01:05Z", verb="get", resource="pods"),
+        *_call("r7", "2026-11-11T08:01:20Z", "2026-11-11T08:01:20Z", verb="get", resource="pods"),
+        *_call("r8", "2026-11-11T08:01:25Z", "2026-11-11T08:01:25Z", verb="list", resource="events"),
+    ]
+
+
+def test_recorded_writes_execs_and_reads_fill_the_act_and_read_lanes(tmp_path: Path) -> None:
+    dest = _collected(tmp_path)
+    _recording(dest, *_writes(), *_reads())
+    doc = view.write(dest)
+    _assert_valid(dest, doc)
+    link = f"evidence/incidents/{DIR}/api-history/events.jsonl"
+    acts = [e for e in doc["events"] if e["lane"] == "act" and e.get("file") == link]
+    assert [e["text"] for e in acts] == [
+        "api-patch Deployment/user: spec.template.spec.containers[api].image",
+        "api-patch ConfigMap/cfg (failed 403)",
+        "api-create Pod/x (refused: scope_read_only)",
+        "exec Pod/db-0 [db]: psql <withheld> <withheld>",
+        "port-forward Pod/db-0: 5432",
+        "api-delete Pod/gone (open)",
+    ]
+    assert acts[0]["component"] == "Deployment/user"
+    assert acts[3]["end"] == "2026-11-11T08:02:15Z"  # an exec spans its session
+    reads = [(e["at"], e["text"]) for e in doc["events"] if e["lane"] == "read"]
+    assert reads == [("2026-11-11T08:01:00Z", "3 reads: get pods \u00d72, list events \u00d71")]
+
+
+def test_the_recording_draws_agent_writes_once(tmp_path: Path) -> None:
+    dest = _collected(tmp_path)
+    ledger = dest / "evidence" / "incidents" / DIR / "ledger.json"
+    document = json.loads(ledger.read_text())
+    plan = {"kind": "program-plan", "target": "plan", "summary": "applied", "success": True}
+    document["outcome_document"]["repair_actions"].append({**plan, "started_at": "2026-11-11T08:01:20Z"})
+    ledger.write_text(json.dumps(document))
+    _recording(dest, *_writes())
+    doc = view.write(dest)
+    acts = [e["text"] for e in doc["events"] if e["lane"] == "act"]
+    assert not any(t.startswith("kubectl-patch") for t in acts)  # the `sdo act` receipt is the same write
+    assert any(t.startswith("program-plan") for t in acts)  # Go's own writes do not pass the proxy
+    assert any(t.startswith("api-patch Deployment/user") for t in acts)
+    assert len({e["lane"] for e in doc["events"]}) <= view.MAX_LANES
+
+
+def test_without_a_recording_the_repair_actions_still_draw_the_act_lane(tmp_path: Path) -> None:
+    dest = _collected(tmp_path)
+    doc = view.write(dest)
+    acts = [e["text"] for e in doc["events"] if e["lane"] == "act"]
+    assert acts == ["kubectl-patch Deployment/ns/user: restore probe"]
+    assert not [e for e in doc["events"] if e["lane"] == "read"]

@@ -56,7 +56,13 @@ HIDE = ["evidence/**/rollout-*.jsonl", "evidence/**/model_io/**", "controller.lo
 
 REDACTED = "[redacted]"
 
-LANES = ("detect", "stage", "act", "close", "learn")
+LANES = ("detect", "stage", "act", "read", "close", "learn")
+
+#: Receipt kinds Go itself issues. When the incident has a recording of the agent's Kubernetes calls, the ``act``
+#: lane draws those calls from it; the outcome's repair actions keep only these, so a write is never drawn twice.
+GO_ISSUED_KINDS = frozenset({"sdo-mitigate", "program-plan", "run-script", "mitigation-menu"})
+API_HISTORY = "api-history"
+MAX_RECORDED_LINES = 20000
 
 
 class ViewError(ValueError):
@@ -452,7 +458,8 @@ def _exit_reason(stage: dict[str, Any]) -> str:
     return str(reason).removeprefix("EXIT_REASON_").lower() if reason else "unspecified"
 
 
-def incident_events(incident: Incident) -> list[Event]:
+def incident_events(incident: Incident, recorded: bool = False) -> list[Event]:
+    """The incident's timeline; ``recorded`` when its recording draws the agent's writes (see ``recorded_events``)."""
     events: list[Event] = []
     link = incident.ledger_file or None
 
@@ -515,6 +522,8 @@ def incident_events(incident: Incident) -> list[Event]:
         )
     for action in _list(incident.outcome.get("repair_actions")):
         action = _dict(action)
+        if recorded and str(action.get("kind") or "") not in GO_ISSUED_KINDS:
+            continue  # the recording draws the agent's own writes
         resources = _list(action.get("resources"))
         target = str(action.get("target") or "")
         component = _component(resources[0]) if resources else _component(target)
@@ -537,6 +546,140 @@ def incident_events(incident: Incident) -> list[Event]:
     )
     decision = _dict(incident.ledger.get("reflection_decision")).get("learning_decision")
     add(phases.get("reflection_committed"), "learn", f"reflection committed ({decision or 'no decision'})", file=link)
+    return events
+
+
+# ---- the agent's recorded Kubernetes calls ---------------------------------------------------------------------
+
+_KINDS = {
+    "configmaps": "ConfigMap",
+    "cronjobs": "CronJob",
+    "daemonsets": "DaemonSet",
+    "deployments": "Deployment",
+    "horizontalpodautoscalers": "HorizontalPodAutoscaler",
+    "ingresses": "Ingress",
+    "networkpolicies": "NetworkPolicy",
+    "persistentvolumeclaims": "PersistentVolumeClaim",
+    "poddisruptionbudgets": "PodDisruptionBudget",
+    "replicasets": "ReplicaSet",
+    "serviceaccounts": "ServiceAccount",
+    "statefulsets": "StatefulSet",
+}
+_WRITE_VERBS = frozenset({"post", "put", "patch", "delete"})
+_REFUSALS = frozenset({"scope_read_only", "credential_path_refused", "recording_unavailable", "incident_verified"})
+_PORT = re.compile(r"^[0-9]{1,5}(:[0-9]{1,5})?$")
+
+
+def _kind(resource: str) -> str:
+    """The kind of a resource's plural name: the common compound kinds by table, else the capitalized singular."""
+    known = _KINDS.get(resource)
+    if known:
+        return known
+    singular = resource
+    if resource.endswith("ies"):
+        singular = resource[:-3] + "y"
+    elif resource.endswith(("sses", "xes")):
+        singular = resource[:-2]
+    elif resource.endswith("s") and not resource.endswith("ss"):
+        singular = resource[:-1]
+    return singular[:1].upper() + singular[1:]
+
+
+def _recorded(dest: Path, incident: Incident) -> list[dict[str, Any]]:
+    """The incident's ``api-history/events.jsonl`` as sink-mirrored (already redacted); malformed lines are skipped."""
+    path = dest / incident.dir / API_HISTORY / "events.jsonl" if incident.dir else None
+    if path is None or not path.is_file():
+        return []
+    events: list[dict[str, Any]] = []
+    with path.open(encoding="utf-8", errors="replace") as lines:
+        for _, line in zip(range(MAX_RECORDED_LINES), lines, strict=False):
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(event, dict) and event.get("phase") in ("start", "end"):
+                events.append(event)
+    return events
+
+
+def _paired(events: list[dict[str, Any]]) -> list[tuple[dict[str, Any], dict[str, Any] | None]]:
+    """Each request's start with its end (None while it is open), in start order; transport carries no id."""
+    starts: dict[str, dict[str, Any]] = {}
+    ends: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for event in events:
+        request = str(event.get("request_id") or "")
+        if not request:
+            continue
+        if event["phase"] == "start":
+            if request not in starts:
+                order.append(request)
+            starts[request] = event
+        else:
+            ends[request] = event
+    return [(starts[r], ends.get(r)) for r in order]
+
+
+def _object(event: dict[str, Any]) -> str:
+    resource, name = str(event.get("resource") or ""), str(event.get("name") or "")
+    return f"{_kind(resource)}/{name}" if name else f"{_kind(resource)}s"
+
+
+def _write_text(start: dict[str, Any], end: dict[str, Any] | None) -> str | None:
+    """The ``act``-lane text of one recorded write, exec or port-forward; None for a read."""
+    sub, verb = str(start.get("subresource") or ""), str(start.get("verb") or "")
+    target = _object(start)
+    status = int(_int((end or {}).get("status")))
+    if sub in ("exec", "attach"):
+        container = f" [{start['container']}]" if start.get("container") else ""
+        command = " ".join(str(w) for w in _list(start.get("command")))
+        text = f"{sub} {target}{container}: {command}".rstrip(": ")
+    elif sub == "portforward":
+        ports = ", ".join(p for p in map(str, _list(start.get("ports"))) if _PORT.match(p))
+        text = f"port-forward {target}: {ports}".rstrip(": ")
+    elif verb in _WRITE_VERBS and not start.get("dry_run"):
+        action = {"post": "create", "put": "put", "patch": "patch", "delete": "delete"}[verb]
+        paths = ", ".join(str(p) for p in _list((end or start).get("changed_paths")))
+        sub_text = f"/{sub}" if sub else ""
+        text = f"api-{action} {target}{sub_text}: {paths}".rstrip(": ")
+    else:
+        return None
+    if end is None:
+        return f"{text} (open)"
+    reason = str(end.get("omission") or "")
+    if status >= 400 and reason in _REFUSALS:
+        return f"{text} (refused: {reason})"
+    if status >= 400:
+        return f"{text} (failed {status})"
+    return text
+
+
+def recorded_events(dest: Path, incident: Incident) -> list[Event]:
+    """The agent's writes (lane ``act``) and its reads aggregated per minute (lane ``read``) from the recording."""
+    file = f"{incident.dir}/{API_HISTORY}/events.jsonl"
+    events: list[Event] = []
+    reads: dict[str, dict[str, int]] = {}
+    for start, end in _paired(_recorded(dest, incident)):
+        started = stamp(start.get("started"))
+        if started is None:
+            continue
+        text = _write_text(start, end)
+        if text is None:
+            if str(start.get("verb")) in ("get", "list", "watch"):
+                minute = started[:16] + ":00Z"
+                label = f"{start['verb']} {start.get('resource') or '?'}"
+                reads.setdefault(minute, {})[label] = reads.get(minute, {}).get(label, 0) + 1
+            continue
+        finish = stamp((end or {}).get("session_end")) or stamp((end or {}).get("finished"))
+        if finish is not None and finish <= started:
+            finish = None
+        component = _object(start) if start.get("name") else None
+        events.append(Event(started, "act", _clip(text, MAX_EVENT_TEXT), finish, component, file))
+    for minute, counts in reads.items():
+        total = sum(counts.values())
+        top = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:6]
+        listing = ", ".join(f"{label} \u00d7{n}" for label, n in top)
+        events.append(Event(minute, "read", _clip(f"{total} reads: {listing}", MAX_EVENT_TEXT), file=file))
     return events
 
 
@@ -954,7 +1097,11 @@ def build(dest: Path) -> View:
     incidents, inject = _select(dest, _incidents(dest))
     identities = _identities(dest, incidents)
     learned = learned_items(dest, incidents)
-    events = sorted((e for i in incidents for e in incident_events(i)), key=lambda e: e.at)[:MAX_EVENTS]
+    events: list[Event] = []
+    for i in incidents:
+        drawn = recorded_events(dest, i)
+        events += incident_events(i, recorded=bool(drawn)) + drawn
+    events = sorted(events, key=lambda e: e.at)[:MAX_EVENTS]
     panels: list[Panel] = [incidents_table(incidents, inject), actions_table(incidents, inject)]
     panels += _write_transcripts(dest, incidents, identities)[: MAX_PANELS - 3]
     panels.append(learned_table(dest, incidents))

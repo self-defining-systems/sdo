@@ -5,9 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"google.golang.org/protobuf/proto"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sdo.dev/operator/apihistory"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
@@ -121,15 +123,26 @@ func ObservedRepairOwners(outcome *contracts.OutcomeRecord, capture string) {
 			if slices.ContainsFunc(action.GetOwners(), func(owners *contracts.ResourceOwners) bool { return equalCauseResource(owners.GetResource(), written) }) {
 				continue
 			}
+			topLevel := false
 			for _, open := range opens {
-				if chain := observedOwnerChain(open, snapshotObject(open, written.GetKind(), written.GetNamespace(), written.GetName())); len(chain) > 0 {
+				object := snapshotObject(open, written.GetKind(), written.GetNamespace(), written.GetName())
+				if chain := observedOwnerChain(open, object); len(chain) > 0 {
 					action.Owners = append(action.Owners, &contracts.ResourceOwners{Resource: proto.Clone(written).(*contracts.ObjectRef), OwnerChain: chain})
+					topLevel = false
 					break
 				}
+				topLevel = topLevel || (object != nil && len(object.GetOwnerReferences()) == 0)
+			}
+			// An object that stood in the open capture with no owner is a helper of the agent's own: its writes
+			// belong to no cause. One no open phase observed stays unattributed.
+			if topLevel && len(action.GetResources()) == 1 && controlledKind(written.GetKind()) && apihistory.DerivedWriteKind(action.GetKind()) && !apihistory.HelperKind(action.GetKind()) && strings.HasPrefix(action.GetActionId(), apihistory.WriteIDPrefix) {
+				action.Kind = apihistory.HelperKindPrefix + strings.TrimPrefix(action.GetKind(), apihistory.WriteKindPrefix)
 			}
 		}
 	}
 }
+
+func controlledKind(kind string) bool { return kind == "Pod" || kind == "ReplicaSet" || kind == "Job" }
 
 func snapshotObject(snapshot sdktest.Snapshot, kind, namespace, name string) *unstructured.Unstructured {
 	for _, object := range append(append([]unstructured.Unstructured{}, snapshot.Objects...), sdk.TypedObjects(snapshot)...) {
