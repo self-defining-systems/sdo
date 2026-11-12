@@ -48,7 +48,8 @@ class InstallConfig:
     kubeconfig: Path
     auth_file: Path
     provider: str = "codex"
-    model: str = "gpt-6-luna"
+    #: The agent model; the experiment names it (the spec's operator settings), there is no default.
+    model: str = ""
     effort: str = ""
     operation_id: str = "fuzzops-onboard"
     source: Path | None = None
@@ -252,7 +253,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--kubeconfig", type=Path, required=True)
     p.add_argument("--auth-file", type=Path, default=Path.home() / ".codex" / "auth.json")
     p.add_argument("--provider", default="codex")
-    p.add_argument("--model", default="gpt-6-luna")
+    p.add_argument("--model", required=True, help="agent model (the experiment's setting)")
     p.add_argument("--effort", default="")
     p.add_argument("--source", type=Path, help="the app's source code, copied under src/ (no vendor or deploy files)")
     p.add_argument("--max-attempts", type=int, help="deployment and designer attempts (default: the configured value)")
