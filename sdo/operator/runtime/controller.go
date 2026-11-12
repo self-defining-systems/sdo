@@ -57,10 +57,8 @@ type ControllerConfig struct {
 	ClosureStabilityWindow time.Duration
 	// StageBudget bounds one automatic-stage pass; a pass re-run on the
 	// responder's loop gets twice this.
-	StageBudget     time.Duration
-	FiringThreshold int
-	ClearThreshold  int
-	BatchDebounce   time.Duration
+	StageBudget   time.Duration
+	BatchDebounce time.Duration
 	// ConfirmationInterval bounds how long a detector with a finding below its
 	// firing threshold waits for its next evaluation. Zero leaves confirmation
 	// to watch events and the detector's own interval.
@@ -275,6 +273,7 @@ func (c ControllerConfig) WithSettings(policy settings.Config) ControllerConfig 
 	c.ResponseTimeout = time.Duration(policy.Response.Timeout)
 	c.VerificationTimeout = time.Duration(policy.Response.VerificationTimeout)
 	c.StageBudget = time.Duration(policy.Response.StageBudget)
+	c.ClosureStabilityWindow = time.Duration(policy.Detection.StabilityWindow)
 	c.RepairPolicy = policy.Response.RepairPolicy
 	return c
 }
@@ -325,19 +324,13 @@ func NewController(
 	if dispatcher == nil {
 		return nil, fmt.Errorf("dispatcher is required")
 	}
-	if config.FiringThreshold < 1 || config.ClearThreshold < 1 {
-		return nil, fmt.Errorf("firing and clear thresholds must be positive")
-	}
 	// Timing and policy come from the operator configuration (WithSettings);
 	// the controller has no defaults of its own for them.
 	if config.ResponseTimeout <= 0 || config.VerificationTimeout <= 0 || config.StageBudget <= 0 {
 		return nil, fmt.Errorf("response timeout, verification timeout and stage budget must be positive (ControllerConfig.WithSettings)")
 	}
-	if config.ClosureStabilityWindow < 0 {
-		return nil, fmt.Errorf("closure stability window must not be negative")
-	}
-	if config.ClosureStabilityWindow == 0 {
-		config.ClosureStabilityWindow = 15 * time.Second
+	if config.ClosureStabilityWindow <= 0 {
+		return nil, fmt.Errorf("closure stability window must be positive (ControllerConfig.WithSettings)")
 	}
 	if config.ConfirmationInterval < 0 {
 		return nil, fmt.Errorf("confirmation interval must not be negative")
@@ -364,7 +357,7 @@ func NewController(
 	healthDetectorIDs := make([]string, 0)
 	detectorSpecs := make(map[string]sdk.DetectorSpec, len(detectors))
 	byID := make(map[string]sdk.Detector, len(detectors))
-	tracker := NewFindingStateTracker(config.FiringThreshold, config.ClearThreshold)
+	tracker := NewFindingStateTracker()
 	for _, detector := range detectors {
 		spec := detector.Spec()
 		detectorSpecs[spec.ID] = spec

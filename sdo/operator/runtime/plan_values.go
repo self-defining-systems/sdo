@@ -41,9 +41,9 @@ type PlanActionReport struct {
 	StoreCredential *program.StoreCredentialEffect `json:"store_credential,omitempty"`
 	// SourceChange is a ProposeSourceChange's resolved proposal; nothing was
 	// written.
-	SourceChange *program.SourceChangeProposal `json:"source_change,omitempty"`
-	JobStatus      json.RawMessage           `json:"job_status,omitempty"`
-	RecordingError string                    `json:"recording_error,omitempty"`
+	SourceChange   *program.SourceChangeProposal `json:"source_change,omitempty"`
+	JobStatus      json.RawMessage               `json:"job_status,omitempty"`
+	RecordingError string                        `json:"recording_error,omitempty"`
 }
 
 // PlanActionsComplete reports execution completion, independently of how many

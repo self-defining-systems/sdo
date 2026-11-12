@@ -49,18 +49,16 @@ type FindingChanges struct {
 }
 
 type FindingStateTracker struct {
-	firingThreshold int
-	clearThreshold  int
-	policies        map[string]sdk.PersistencePolicy
-	states          map[string]*FindingState
+	policies map[string]sdk.PersistencePolicy
+	states   map[string]*FindingState
 }
 
-func NewFindingStateTracker(firingThreshold int, clearThreshold int) *FindingStateTracker {
+// NewFindingStateTracker returns a tracker with no policies: every detector's persistence comes from its accepted
+// spec (SetPolicy). A detector with no policy acts on a single evaluation.
+func NewFindingStateTracker() *FindingStateTracker {
 	return &FindingStateTracker{
-		firingThreshold: firingThreshold,
-		clearThreshold:  clearThreshold,
-		policies:        make(map[string]sdk.PersistencePolicy),
-		states:          make(map[string]*FindingState),
+		policies: make(map[string]sdk.PersistencePolicy),
+		states:   make(map[string]*FindingState),
 	}
 }
 
@@ -75,7 +73,7 @@ func (t *FindingStateTracker) policy(detectorID string) sdk.PersistencePolicy {
 	if policy, ok := t.policies[detectorID]; ok {
 		return policy
 	}
-	return sdk.PersistencePolicy{Firing: t.firingThreshold, Clearing: t.clearThreshold}
+	return sdk.PersistencePolicy{Firing: 1, Clearing: 1}
 }
 
 func (t *FindingStateTracker) Observe(now time.Time, detectorID string, findings []sdk.Finding) FindingChanges {

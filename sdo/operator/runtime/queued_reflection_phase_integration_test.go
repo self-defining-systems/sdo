@@ -43,7 +43,7 @@ func queuedReflectionLedger(t *testing.T, root string, worker ReflectionWorkerFu
 	}
 	queuedReflectionGit(t, accepted, "add", ".")
 	queuedReflectionGit(t, accepted, "commit", "-qm", "synthetic base")
-	repository, err := broker.New(accepted, filepath.Join(root, "proposals"), nil, broker.ObservationPolicy{Telemetry: broker.Telemetry{Registry: telemetry.NewRegistry()}})
+	repository, err := broker.New(accepted, filepath.Join(root, "proposals"), nil, broker.ObservationPolicy{SettingsDigest: "settings-digest", Telemetry: broker.Telemetry{Registry: telemetry.NewRegistry()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +156,7 @@ func TestQueuedReflectionServesTheAcceptedHeadAfterALaterPublication(t *testing.
 	reflection := ledger.GetReflectionCommit()
 	queuedReflectionGit(t, accepted, "commit", "-q", "--allow-empty", "-m", "sdo(incident-2): validated outcome")
 	head := strings.TrimSpace(queuedReflectionGit(t, accepted, "rev-parse", "HEAD"))
-	repository, err := broker.New(accepted, filepath.Join(root, "proposals"), nil, broker.ObservationPolicy{Telemetry: broker.Telemetry{Registry: telemetry.NewRegistry()}})
+	repository, err := broker.New(accepted, filepath.Join(root, "proposals"), nil, broker.ObservationPolicy{SettingsDigest: "settings-digest", Telemetry: broker.Telemetry{Registry: telemetry.NewRegistry()}})
 	if err != nil {
 		t.Fatal(err)
 	}

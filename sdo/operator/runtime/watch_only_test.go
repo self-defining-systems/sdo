@@ -22,7 +22,6 @@ func TestWatchOnlyIncidentClosesOnHealthWithoutResponding(t *testing.T) {
 	world := &sameWriteWorld{}
 	cfg := testControllerConfig()
 	cfg.Namespace, cfg.SourceCommit, cfg.RepositoryWorktree = "app", "synthetic-accepted", "synthetic-worktree"
-	cfg.FiringThreshold, cfg.ClearThreshold = 1, 1
 	cfg.ClosureStabilityWindow = 5 * time.Second
 	cfg.VerificationTimeout = 5 * time.Minute
 	cfg = cfg.WithMode(settings.ModeWatchOnly)

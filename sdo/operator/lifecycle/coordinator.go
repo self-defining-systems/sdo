@@ -202,6 +202,9 @@ type Config struct {
 	DeploymentSource  *contracts.DeploymentSource
 	RenderEnvironment *contracts.RenderEnvironment
 	MaxAttempts       int
+	// SettingsDigest is settings.Config.DetectionDigest of the configuration the operator runs under; it joins
+	// every operability report subject this run builds.
+	SettingsDigest string
 	// DesignerAttempts is how many operability corrections the health judge
 	// gets for its own detectors before a detector set that still fires
 	// unchanged is attributed to the application; zero selects 2.

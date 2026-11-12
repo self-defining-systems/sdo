@@ -299,7 +299,7 @@ func TestRefreshPublicationIsScopedToWhoRunsIt(t *testing.T) {
 	run := func(scope string) string {
 		h, fake := gateHarness(t, clear)
 		fake.source = deployedSource()
-		cfg := lifecycle.Config{Application: "app", Namespace: "ns", RefreshScope: scope, DesignerAttempts: 2, PendingEvaluations: 4, PendingInterval: time.Second, InfrastructureTries: 3, InfrastructureBackoff: time.Second}
+		cfg := lifecycle.Config{SettingsDigest: "settings-digest", Application: "app", Namespace: "ns", RefreshScope: scope, DesignerAttempts: 2, PendingEvaluations: 4, PendingInterval: time.Second, InfrastructureTries: 3, InfrastructureBackoff: time.Second}
 		if _, err := h.coordinator.RefreshHealth(context.Background(), cfg, revision); err != nil {
 			t.Fatalf("refresh %q: %v", scope, err)
 		}

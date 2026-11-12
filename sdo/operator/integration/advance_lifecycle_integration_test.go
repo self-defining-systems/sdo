@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/contracts/settings"
 	"slices"
 	"strings"
 	"testing"
@@ -256,9 +257,9 @@ func (advReadiness) CheckLive(context.Context, string, *contracts.DeploymentPlan
 type advMaintenance struct{}
 
 func (advMaintenance) Pause(context.Context, string, time.Time) error { return nil }
-func (advMaintenance) Acknowledged(context.Context) (bool, error) { return true, nil }
-func (advMaintenance) Resume(context.Context) error               { return nil }
-func (advMaintenance) Busy(context.Context) (string, bool, error) { return "", false, nil }
+func (advMaintenance) Acknowledged(context.Context) (bool, error)     { return true, nil }
+func (advMaintenance) Resume(context.Context) error                   { return nil }
+func (advMaintenance) Busy(context.Context) (string, bool, error)     { return "", false, nil }
 
 // advRegistry is the prebuilt source's registry: it pins any tag to a digest.
 type advRegistry struct{ fake *imagesrctest.Fake }
@@ -400,7 +401,7 @@ func advanceImageOnly(t *testing.T, first, second map[string]string, check func(
 		Maintenance: advMaintenance{}, Activity: advMaintenance{},
 		Wait: advClock.wait, Now: advClock.now,
 	}
-	result, err := advancer.Advance(ctx, lifecycle.AdvanceConfig{
+	result, err := advancer.Advance(ctx, lifecycle.AdvanceConfig{SettingsDigest: settings.Default().DetectionDigest(),
 		Namespace: advChartNamespace, HealthObjective: "every synthetic workload stays available", GitDir: filepath.Join(o.accepted, ".git"),
 		PendingEvaluations: 1, InfrastructureTries: 1,
 	}, upstream.Request{Source: sources[0], Revision: latest, Prev: prev})

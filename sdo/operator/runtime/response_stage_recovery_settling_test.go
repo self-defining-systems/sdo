@@ -414,4 +414,3 @@ func TestRecoveryWaitWindowSurvivesControllerRestart(t *testing.T) {
 		t.Fatalf("the resumed stage repeated the restart (writes=%d)", world.restarts.Load())
 	}
 }
-

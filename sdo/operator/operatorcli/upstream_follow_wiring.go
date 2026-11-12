@@ -198,7 +198,11 @@ func controllerAdvancer(launch *contracts.ControllerConfig, operatorRoot string,
 		Now:         processio.Now,
 		Activity:    controllerActivity{Client: client, Namespace: controlNamespace(launch), Application: namespace},
 	}
-	return advancer, lifecycle.AdvanceConfig{Namespace: namespace, GitDir: filepath.Join(launch.GetAppRoot(), ".git")}, maintenance, nil
+	policy, err := deploywire.Settings(launch)
+	if err != nil {
+		return lifecycle.Advancer{}, lifecycle.AdvanceConfig{}, advanceMaintenance{}, err
+	}
+	return advancer, lifecycle.AdvanceConfig{SettingsDigest: policy.DetectionDigest(), Namespace: namespace, GitDir: filepath.Join(launch.GetAppRoot(), ".git")}, maintenance, nil
 }
 
 // operabilityExposer publishes an accepted advance's report to the
@@ -265,7 +269,12 @@ func (d deployerCorrection) CorrectDeployment(ctx context.Context, correction li
 	if err != nil {
 		return nil, err
 	}
+	policy, err := deploywire.Settings(d.launch)
+	if err != nil {
+		return nil, err
+	}
 	return coordinator.CorrectDeployment(ctx, lifecycle.Config{
-		Application: d.launch.GetApplication(), Namespace: d.launch.GetNamespace(), HealthObjective: objective, RegistryHost: identity.RegistryHost,
+		SettingsDigest: policy.DetectionDigest(),
+		Application:    d.launch.GetApplication(), Namespace: d.launch.GetNamespace(), HealthObjective: objective, RegistryHost: identity.RegistryHost,
 	}, correction)
 }

@@ -83,7 +83,6 @@ func testControllerConfig() ControllerConfig {
 	cfg := ControllerConfig{
 		Application: "demo", Namespace: "demo", SourceCommit: "source", DeployedCommit: "deployed",
 		RepositoryWorktree: "/tmp/demo",
-		FiringThreshold:    2, ClearThreshold: 2,
 	}.WithSettings(settings.Default())
 	cfg.ResponseTimeout = time.Minute
 	return cfg

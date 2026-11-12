@@ -45,4 +45,3 @@ func (l *ResponderLoop) updateMenuRollback(applicationID string, result PlanAppl
 		}
 	}
 }
-

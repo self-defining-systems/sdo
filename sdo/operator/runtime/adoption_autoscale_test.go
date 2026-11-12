@@ -86,7 +86,9 @@ func TestSourceComparisonIgnoresAutoscalerOwnedReplicas(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "app"},
 		Spec:       autoscalingv2.HorizontalPodAutoscalerSpec{ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{APIVersion: "apps/v1", Kind: "Deployment", Name: "web"}},
 	}
-	object := func() map[string]any { return map[string]any{"spec": map[string]any{"replicas": int64(5), "paused": false}} }
+	object := func() map[string]any {
+		return map[string]any{"spec": map[string]any{"replicas": int64(5), "paused": false}}
+	}
 	scaled := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: "app", HPAList: []autoscalingv2.HorizontalPodAutoscaler{hpa}})}
 	if _, found, _ := unstructured.NestedFieldNoCopy(scaled.sourceComparableFields(object(), ref), "spec", "replicas"); found {
 		t.Error("an autoscaled Deployment's replicas are compared")

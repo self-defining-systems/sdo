@@ -72,10 +72,11 @@ func checkOperability(report operability.Report, stage operability.Stage, want o
 // evidence: the verified deployment's trees and digests. The report's
 // AcceptedCommit, the proposal's base commit, is compared at publication
 // (requireDeploymentSubject) when the proposal is known.
-func deploymentReportDigest(report operability.Report, evidence SourceEvidence) (string, error) {
+func deploymentReportDigest(report operability.Report, evidence SourceEvidence, settingsDigest string) (string, error) {
 	want := operability.Subject{
 		AcceptedCommit: report.Subject.AcceptedCommit, BaseTree: evidence.BaseTree, EffectiveTree: evidence.EffectiveTree,
 		PatchesDigest: evidence.PatchesDigest, RenderDigest: evidence.RenderDigest, EnvDigest: evidence.EnvDigest,
+		SettingsDigest: settingsDigest,
 	}
 	return checkOperability(report, operability.StageDeployment, want)
 }
@@ -84,10 +85,11 @@ func deploymentReportDigest(report operability.Report, evidence SourceEvidence) 
 // deployment evidence: the deployed merged tree, its effective tree and the
 // render and environment digests. The report's AcceptedCommit, the accepted
 // head the advance was merged onto, is compared at publication.
-func advanceReportDigest(report operability.Report, evidence SourceEvidence) (string, error) {
+func advanceReportDigest(report operability.Report, evidence SourceEvidence, settingsDigest string) (string, error) {
 	want := operability.Subject{
 		AcceptedCommit: report.Subject.AcceptedCommit, BaseTree: evidence.BaseTree, EffectiveTree: evidence.EffectiveTree,
 		PatchesDigest: evidence.PatchesDigest, RenderDigest: evidence.RenderDigest, EnvDigest: evidence.EnvDigest,
+		SettingsDigest: settingsDigest,
 	}
 	return checkOperability(report, operability.StageAdvance, want)
 }
@@ -157,7 +159,7 @@ func (b *Broker) OperabilityReport(ctx context.Context, key string, stage operab
 			if evidence.OperabilityDigest == "" {
 				return fmt.Errorf("source evidence of %s names no operability report: %w", key, ErrSourceEvidencePredatesOperability)
 			}
-			digest, err := deploymentReportDigest(report, evidence)
+			digest, err := deploymentReportDigest(report, evidence, b.settingsDigest)
 			if err != nil {
 				return err
 			}
@@ -175,7 +177,7 @@ func (b *Broker) OperabilityReport(ctx context.Context, key string, stage operab
 			if evidence.OperabilityDigest == "" {
 				return fmt.Errorf("advance evidence of %s names no operability report: %w", key, ErrSourceEvidencePredatesOperability)
 			}
-			digest, err := advanceReportDigest(report, evidence)
+			digest, err := advanceReportDigest(report, evidence, b.settingsDigest)
 			if err != nil {
 				return err
 			}

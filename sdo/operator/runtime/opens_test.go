@@ -31,7 +31,6 @@ func openersController(t *testing.T, dispatcher Dispatcher, detectors ...sdk.Det
 	t.Helper()
 	cfg := testControllerConfig()
 	cfg.Namespace, cfg.SourceCommit, cfg.RepositoryWorktree = "app", "synthetic-accepted", "synthetic-worktree"
-	cfg.FiringThreshold, cfg.ClearThreshold = 1, 1
 	c, err := NewController(cfg, detectors, staticProvider{}, dispatcher, time.Unix(0, 0))
 	if err != nil {
 		t.Fatal(err)

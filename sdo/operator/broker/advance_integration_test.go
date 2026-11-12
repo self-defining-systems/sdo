@@ -671,7 +671,7 @@ func publishAdvance(ctx context.Context, b *Broker, id, upstream, base string, e
 	}
 	subject := operability.Subject{
 		AcceptedCommit: head, BaseTree: evidence.BaseTree, EffectiveTree: evidence.EffectiveTree,
-		PatchesDigest: evidence.PatchesDigest, RenderDigest: evidence.RenderDigest, EnvDigest: evidence.EnvDigest,
+		PatchesDigest: evidence.PatchesDigest, RenderDigest: evidence.RenderDigest, EnvDigest: evidence.EnvDigest, SettingsDigest: testSettingsDigest,
 	}
 	report, err := operability.New(operability.StageAdvance, subject).With(passingChecks("O1.deploy", "O2.stamps", "O4.detectors", "O6.budget")...)
 	if err != nil {

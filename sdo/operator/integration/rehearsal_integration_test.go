@@ -3,12 +3,13 @@
 package integration
 
 import (
-	kclock "k8s.io/utils/clock"
 	"context"
 	"encoding/json"
 	"fmt"
+	kclock "k8s.io/utils/clock"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/contracts/settings"
 	"sort"
 	"strings"
 	"sync"
@@ -612,7 +613,7 @@ func rehearse(t *testing.T, in rehearsalInput) rehearsal.Report {
 			Maintenance: AdvanceMaintenance{Client: client, Namespace: onbControl, Now: clock.Now}, Activity: advMaintenance{},
 			Wait: world.Wait, Now: clock.Now,
 		}
-		result, err := advancer.Advance(ctx, lifecycle.AdvanceConfig{
+		result, err := advancer.Advance(ctx, lifecycle.AdvanceConfig{SettingsDigest: settings.Default().DetectionDigest(),
 			Namespace: in.Namespace, HealthObjective: "every workload stays available", GitDir: filepath.Join(o.accepted, ".git"),
 		}, upstream.Request{Source: sources[0], Revision: latest, Prev: prev})
 		r.Outcome = string(result.Outcome)

@@ -51,7 +51,6 @@ func TestClearedFindingsDoNotCloseWhileTheOpeningUserTestFails(t *testing.T) {
 	recoverAt := opened.Add(3 * time.Minute)
 	cfg := testControllerConfig()
 	cfg.Namespace, cfg.SourceCommit, cfg.RepositoryWorktree = "app", "synthetic-accepted", "synthetic-worktree"
-	cfg.FiringThreshold, cfg.ClearThreshold = 1, 1
 	cfg.ClosureStabilityWindow = 5 * time.Second
 	cfg.VerificationTimeout = 10 * time.Minute
 	dispatcher := &blockingDispatcher{}

@@ -13,7 +13,7 @@ import (
 
 func operabilityReport(t *testing.T, commit string) operability.Report {
 	t.Helper()
-	subject := operability.Subject{AcceptedCommit: commit, BaseTree: "b", EffectiveTree: "e", PatchesDigest: "p", RenderDigest: "r", EnvDigest: "v", DiagnosticsTree: "d"}
+	subject := operability.Subject{AcceptedCommit: commit, BaseTree: "b", EffectiveTree: "e", PatchesDigest: "p", RenderDigest: "r", EnvDigest: "v", SettingsDigest: "s", DiagnosticsTree: "d"}
 	var checks []operability.Check
 	for _, id := range operability.AllItems() {
 		checks = append(checks, operability.Check{ID: string(id) + ".ok", Phase: operability.PhaseLive, Status: operability.StatusPass})

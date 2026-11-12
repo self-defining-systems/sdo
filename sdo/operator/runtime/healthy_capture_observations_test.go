@@ -9,8 +9,8 @@ import (
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/metrics"
-	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/sdktest"
+	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 )
 
@@ -26,7 +26,9 @@ func (captureTestProber) Reset(context.Context) error { return nil }
 
 type captureTestBase struct{ snapshot sdktest.Snapshot }
 
-func (b captureTestBase) Snapshot(context.Context) (sdk.DetectionContext, error) { return b.snapshot, nil }
+func (b captureTestBase) Snapshot(context.Context) (sdk.DetectionContext, error) {
+	return b.snapshot, nil
+}
 
 // A capture of the controller's composed snapshot is what the memory check
 // replays detectors on (healthy baseline, incident cases). It must carry the

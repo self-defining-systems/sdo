@@ -102,7 +102,7 @@ func newRepairClosureWorld(t *testing.T, policy string, repairs SourceRepairer) 
 	repairGit(t, w.accepted, "add", ".")
 	repairGit(t, w.accepted, "commit", "-qm", "synthetic base")
 	var err error
-	if w.repo, err = broker.New(w.accepted, filepath.Join(root, "proposals"), func(context.Context, string, []string) error { return nil }, broker.ObservationPolicy{Telemetry: broker.Telemetry{Registry: telemetry.NewRegistry()}}); err != nil {
+	if w.repo, err = broker.New(w.accepted, filepath.Join(root, "proposals"), func(context.Context, string, []string) error { return nil }, broker.ObservationPolicy{SettingsDigest: "settings-digest", Telemetry: broker.Telemetry{Registry: telemetry.NewRegistry()}}); err != nil {
 		t.Fatal(err)
 	}
 	w.native = NativeIncidentBroker{

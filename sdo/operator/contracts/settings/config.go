@@ -2,6 +2,8 @@ package settings
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -72,6 +74,7 @@ type Config struct {
 	Mode       Mode       `yaml:"mode" doc:"how incidents are handled: operate (respond and learn), frozen (respond, learn nothing), watch-only (detect and verify, never respond) or external (external alerts only, close on responder completion)"`
 	Agent      Agent      `yaml:"agent"`
 	Response   Response   `yaml:"response"`
+	Detection  Detection  `yaml:"detection"`
 	Learning   Learning   `yaml:"learning"`
 	Deployment Deployment `yaml:"deployment"`
 	Evidence   Evidence   `yaml:"evidence"`
@@ -89,6 +92,29 @@ type Agent struct {
 	CodePath           string   `yaml:"code_path" doc:"programming-model plugin set: go or shell"`
 	CodePathOverrides  string   `yaml:"code_path_overrides" doc:"CodePathOverrides as a JSON object (for example {\"response_stages\":[\"agent\"]}); empty selects the code path's own seams"`
 	ExtraEnv           []string `yaml:"extra_env" doc:"extra NAME=VALUE environment of responder workers"`
+}
+
+// Detection is the operator timing detectors and closure apply. It never says what is broken (accepted memory does);
+// it is stamped into every detector observation and bound into the operability report's subject (DetectionDigest).
+type Detection struct {
+	SelfHealHold     Duration `yaml:"self_heal_hold" doc:"how long a Kubernetes condition without a give-up signal must hold before it opens an incident; carried in every detector observation and bound into the operability report"`
+	StabilityWindow  Duration `yaml:"stability_window" doc:"how long the opening alerts must stay clear after SDO's last write settled before the incident counts as recovered"`
+	DriftBatchWindow Duration `yaml:"drift_batch_window" doc:"batch window for unexplained drift"`
+}
+
+// DefaultSelfHealHold is written here, not referenced from the SDK, because the contracts module cannot depend on
+// the SDK; a test in the operator module keeps it equal to sdk.DefaultSelfHealHold.
+const DefaultSelfHealHold = 5 * time.Minute
+
+// DetectionDigest is the sha256 of the canonical detection section: the settings that change what an accepted
+// detector decides. Operability report subjects carry it, so a report made under one hold never binds to another.
+func (c Config) DetectionDigest() string {
+	data, err := yaml.Marshal(c.Detection)
+	if err != nil {
+		panic(fmt.Sprintf("settings: marshal detection: %v", err))
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 // Response bounds and shapes the incident response.
@@ -157,6 +183,9 @@ func Default() Config {
 			Timeout: Duration(30 * time.Minute), VerificationTimeout: Duration(5 * time.Minute), MaxLoops: 10,
 			DiagnosisDeadline: Duration(10 * time.Second), StageBudget: Duration(45 * time.Second), RepairPolicy: "commit",
 			Standby: true, Menu: true,
+		},
+		Detection: Detection{
+			SelfHealHold: Duration(DefaultSelfHealHold), StabilityWindow: Duration(15 * time.Second), DriftBatchWindow: Duration(20 * time.Second),
 		},
 		Learning: Learning{Replay: "on", ReflectionSession: "resume", ReflectionGuidance: "baseline", LateFindings: "off"},
 		Deployment: Deployment{
@@ -227,6 +256,9 @@ func (c Config) Validate() error {
 	positive("response.diagnosis_deadline", c.Response.DiagnosisDeadline)
 	positive("response.stage_budget", c.Response.StageBudget)
 	oneOf("response.repair_policy", c.Response.RepairPolicy, "commit", "recorded-actions")
+	positive("detection.self_heal_hold", c.Detection.SelfHealHold)
+	positive("detection.stability_window", c.Detection.StabilityWindow)
+	positive("detection.drift_batch_window", c.Detection.DriftBatchWindow)
 	oneOf("learning.replay", c.Learning.Replay, "on", "off")
 	oneOf("learning.reflection_session", c.Learning.ReflectionSession, "fresh", "resume")
 	oneOf("learning.reflection_guidance", c.Learning.ReflectionGuidance, "baseline", "generalize", "generalize-spec")

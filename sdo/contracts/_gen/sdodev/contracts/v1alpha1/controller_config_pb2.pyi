@@ -12,7 +12,7 @@ from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 DESCRIPTOR: _descriptor.FileDescriptor
 
 class ControllerConfig(_message.Message):
-    __slots__ = ("memory_host_binary", "memory_host_digest", "namespace", "control_namespace", "app_root", "application", "source_commit", "deployed_commit", "responder_image", "repository_pvc", "repository_mount_path", "repository_pvc_subpath", "responder_credentials_secret", "broker_worktree_root", "firing_telemetry_path", "duration", "identity", "exit_after_closure", "maintenance_configmap", "agent_registration_directory", "responder_agent_id", "diagnostics_fingerprint", "controller_artifact_digest", "controller_revision", "broker_mode", "worker_mount_mode", "drift_batch_window", "toolchain_image", "closure_stability_window", "self_heal_hold", "script_image", "memory_upstream", "code_path", "render_environment", "deployment_policy", "deploy_identity", "telemetry_environment_file", "settings_path")
+    __slots__ = ("memory_host_binary", "memory_host_digest", "namespace", "control_namespace", "app_root", "application", "source_commit", "deployed_commit", "responder_image", "repository_pvc", "repository_mount_path", "repository_pvc_subpath", "responder_credentials_secret", "broker_worktree_root", "firing_telemetry_path", "duration", "identity", "exit_after_closure", "maintenance_configmap", "agent_registration_directory", "responder_agent_id", "diagnostics_fingerprint", "controller_artifact_digest", "controller_revision", "broker_mode", "worker_mount_mode", "toolchain_image", "script_image", "memory_upstream", "code_path", "render_environment", "deployment_policy", "deploy_identity", "telemetry_environment_file", "settings_path")
     MEMORY_HOST_BINARY_FIELD_NUMBER: _ClassVar[int]
     MEMORY_HOST_DIGEST_FIELD_NUMBER: _ClassVar[int]
     NAMESPACE_FIELD_NUMBER: _ClassVar[int]
@@ -39,10 +39,7 @@ class ControllerConfig(_message.Message):
     CONTROLLER_REVISION_FIELD_NUMBER: _ClassVar[int]
     BROKER_MODE_FIELD_NUMBER: _ClassVar[int]
     WORKER_MOUNT_MODE_FIELD_NUMBER: _ClassVar[int]
-    DRIFT_BATCH_WINDOW_FIELD_NUMBER: _ClassVar[int]
     TOOLCHAIN_IMAGE_FIELD_NUMBER: _ClassVar[int]
-    CLOSURE_STABILITY_WINDOW_FIELD_NUMBER: _ClassVar[int]
-    SELF_HEAL_HOLD_FIELD_NUMBER: _ClassVar[int]
     SCRIPT_IMAGE_FIELD_NUMBER: _ClassVar[int]
     MEMORY_UPSTREAM_FIELD_NUMBER: _ClassVar[int]
     CODE_PATH_FIELD_NUMBER: _ClassVar[int]
@@ -77,10 +74,7 @@ class ControllerConfig(_message.Message):
     controller_revision: str
     broker_mode: str
     worker_mount_mode: str
-    drift_batch_window: _duration_pb2.Duration
     toolchain_image: str
-    closure_stability_window: _duration_pb2.Duration
-    self_heal_hold: _duration_pb2.Duration
     script_image: str
     memory_upstream: MemoryUpstream
     code_path: CodePathConfig
@@ -89,7 +83,7 @@ class ControllerConfig(_message.Message):
     deploy_identity: DeployIdentity
     telemetry_environment_file: str
     settings_path: str
-    def __init__(self, memory_host_binary: _Optional[str] = ..., memory_host_digest: _Optional[str] = ..., namespace: _Optional[str] = ..., control_namespace: _Optional[str] = ..., app_root: _Optional[str] = ..., application: _Optional[str] = ..., source_commit: _Optional[str] = ..., deployed_commit: _Optional[str] = ..., responder_image: _Optional[str] = ..., repository_pvc: _Optional[str] = ..., repository_mount_path: _Optional[str] = ..., repository_pvc_subpath: _Optional[str] = ..., responder_credentials_secret: _Optional[str] = ..., broker_worktree_root: _Optional[str] = ..., firing_telemetry_path: _Optional[str] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., identity: _Optional[str] = ..., exit_after_closure: _Optional[bool] = ..., maintenance_configmap: _Optional[str] = ..., agent_registration_directory: _Optional[str] = ..., responder_agent_id: _Optional[str] = ..., diagnostics_fingerprint: _Optional[str] = ..., controller_artifact_digest: _Optional[str] = ..., controller_revision: _Optional[str] = ..., broker_mode: _Optional[str] = ..., worker_mount_mode: _Optional[str] = ..., drift_batch_window: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., toolchain_image: _Optional[str] = ..., closure_stability_window: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., self_heal_hold: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., script_image: _Optional[str] = ..., memory_upstream: _Optional[_Union[MemoryUpstream, _Mapping]] = ..., code_path: _Optional[_Union[CodePathConfig, _Mapping]] = ..., render_environment: _Optional[_Union[_deployment_source_pb2.RenderEnvironment, _Mapping]] = ..., deployment_policy: _Optional[_Union[_deployment_source_pb2.DeploymentPolicy, _Mapping]] = ..., deploy_identity: _Optional[_Union[DeployIdentity, _Mapping]] = ..., telemetry_environment_file: _Optional[str] = ..., settings_path: _Optional[str] = ...) -> None: ...
+    def __init__(self, memory_host_binary: _Optional[str] = ..., memory_host_digest: _Optional[str] = ..., namespace: _Optional[str] = ..., control_namespace: _Optional[str] = ..., app_root: _Optional[str] = ..., application: _Optional[str] = ..., source_commit: _Optional[str] = ..., deployed_commit: _Optional[str] = ..., responder_image: _Optional[str] = ..., repository_pvc: _Optional[str] = ..., repository_mount_path: _Optional[str] = ..., repository_pvc_subpath: _Optional[str] = ..., responder_credentials_secret: _Optional[str] = ..., broker_worktree_root: _Optional[str] = ..., firing_telemetry_path: _Optional[str] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., identity: _Optional[str] = ..., exit_after_closure: _Optional[bool] = ..., maintenance_configmap: _Optional[str] = ..., agent_registration_directory: _Optional[str] = ..., responder_agent_id: _Optional[str] = ..., diagnostics_fingerprint: _Optional[str] = ..., controller_artifact_digest: _Optional[str] = ..., controller_revision: _Optional[str] = ..., broker_mode: _Optional[str] = ..., worker_mount_mode: _Optional[str] = ..., toolchain_image: _Optional[str] = ..., script_image: _Optional[str] = ..., memory_upstream: _Optional[_Union[MemoryUpstream, _Mapping]] = ..., code_path: _Optional[_Union[CodePathConfig, _Mapping]] = ..., render_environment: _Optional[_Union[_deployment_source_pb2.RenderEnvironment, _Mapping]] = ..., deployment_policy: _Optional[_Union[_deployment_source_pb2.DeploymentPolicy, _Mapping]] = ..., deploy_identity: _Optional[_Union[DeployIdentity, _Mapping]] = ..., telemetry_environment_file: _Optional[str] = ..., settings_path: _Optional[str] = ...) -> None: ...
 
 class DeployIdentity(_message.Message):
     __slots__ = ("buildkit_image", "registry_push_secret", "registry_host", "registry_insecure", "build_timeout", "build_budget", "rollout_timeout")

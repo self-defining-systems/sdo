@@ -3,6 +3,5 @@
 # per-run values (agent provider, model and effort, evidence host path and run ID, mode) come from SDO_* env.
 response:
   repair_policy: recorded-actions   # benchmarks repair live state without a source commit (D6)
-# C2 adds, once D2 is agreed:
-# detection:
-#   self_heal_hold: 60s             # faults are graded in minutes; a restart that heals in 30 s still opens nothing
+detection:
+  self_heal_hold: 60s               # faults are graded in minutes (D2); production holds 5m. A restart that heals in 30 s still opens nothing
