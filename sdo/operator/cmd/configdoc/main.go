@@ -58,6 +58,14 @@ install fingerprint, so running ` + "`install-existing`" + ` again with a change
 For one release, ` + "`host`" + ` and ` + "`install-existing`" + ` refuse to start while ` + "`SDO_CODE_PATH`" + ` or ` + "`SDO_RESPONDER_MENU`" + ` is set in their
 environment; use ` + "`SDO_AGENT_CODE_PATH`" + ` and ` + "`SDO_RESPONSE_MENU`" + `.
 
+## Benchmark profile
+
+` + "`benchmarks/fuzzops/sdo-bench.yaml`" + ` is the profile every benchmark harness passes first. It sets only what differs from the
+defaults above: ` + "`response.repair_policy: recorded-actions`" + `, ` + "`detection.self_heal_hold: 60s`" + `, and, to measure the upper bound of what
+learned playbooks achieve alone, ` + "`response.after_playbook: wait`" + ` with ` + "`response.after_playbook_wait: 5m`" + `: after a playbook applied,
+the agent is never dispatched; recovery gets the whole bound (slow readiness and windowed detectors need more than the
+stage's default 90 seconds), then the incident escalates. Production keeps ` + "`agent`" + `.
+
 ## Keys
 `)
 	out.WriteString(settings.Markdown())

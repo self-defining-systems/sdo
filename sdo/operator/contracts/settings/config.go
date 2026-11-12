@@ -117,6 +117,13 @@ func (c Config) DetectionDigest() string {
 	return hex.EncodeToString(sum[:])
 }
 
+// The values of response.after_playbook.
+const (
+	AfterPlaybookAgent    = "agent"
+	AfterPlaybookEscalate = "escalate"
+	AfterPlaybookWait     = "wait"
+)
+
 // Response bounds and shapes the incident response.
 type Response struct {
 	Timeout              Duration `yaml:"timeout" doc:"how long the responder may work on one incident; the reflection deadline derives from it"`
@@ -125,6 +132,8 @@ type Response struct {
 	DiagnosisDeadline    Duration `yaml:"diagnosis_deadline" doc:"shared deadline of candidate diagnosis in the automatic stage"`
 	StageBudget          Duration `yaml:"stage_budget" doc:"scheduling bound of one automatic-stage pass; a pass re-run on the responder's loop may take twice this"`
 	RepairPolicy         string   `yaml:"repair_policy" doc:"the evidence the controller requires for a responder repair: commit (a source repair is committed through the broker; production) or recorded-actions (live cluster repairs are recorded as actions without a source commit; benchmark runs)"`
+	AfterPlaybook        string   `yaml:"after_playbook" doc:"what happens when a learned playbook applied and the opening alerts did not recover within the stage's bound: agent (dispatch the agent, told what the playbook did), escalate (no agent; the incident stays open under ordinary closure and closes failed at the verification timeout if the alerts never clear) or wait (keep waiting for recovery up to after_playbook_wait, then escalate). When recovery holds, no agent runs in any setting; an alert that did not open the incident never dispatches the agent after an applied playbook"`
+	AfterPlaybookWait    Duration `yaml:"after_playbook_wait" doc:"how long after_playbook: wait keeps waiting for the opening alerts to recover after the playbook applied, capped by the response timeout"`
 	Standby              bool     `yaml:"standby" doc:"pre-start a responder worker; false forces cold Jobs"`
 	Menu                 bool     `yaml:"menu" doc:"offer the responder its tool menu"`
 	Permissive           bool     `yaml:"permissive" doc:"broad lane repair permissions excluding Secret and credential APIs"`
@@ -181,6 +190,7 @@ func Default() Config {
 		Response: Response{
 			Timeout: Duration(30 * time.Minute), VerificationTimeout: Duration(5 * time.Minute), MaxLoops: 10,
 			DiagnosisDeadline: Duration(10 * time.Second), StageBudget: Duration(45 * time.Second), RepairPolicy: "commit",
+			AfterPlaybook: AfterPlaybookAgent, AfterPlaybookWait: Duration(5 * time.Minute),
 			Standby: true, Menu: true,
 		},
 		Detection: Detection{
@@ -255,6 +265,8 @@ func (c Config) Validate() error {
 	positive("response.diagnosis_deadline", c.Response.DiagnosisDeadline)
 	positive("response.stage_budget", c.Response.StageBudget)
 	oneOf("response.repair_policy", c.Response.RepairPolicy, "commit", "recorded-actions")
+	oneOf("response.after_playbook", c.Response.AfterPlaybook, AfterPlaybookAgent, AfterPlaybookEscalate, AfterPlaybookWait)
+	positive("response.after_playbook_wait", c.Response.AfterPlaybookWait)
 	positive("detection.self_heal_hold", c.Detection.SelfHealHold)
 	positive("detection.stability_window", c.Detection.StabilityWindow)
 	positive("detection.drift_batch_window", c.Detection.DriftBatchWindow)

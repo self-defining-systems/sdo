@@ -31,6 +31,14 @@ install fingerprint, so running `install-existing` again with a changed configur
 For one release, `host` and `install-existing` refuse to start while `SDO_CODE_PATH` or `SDO_RESPONDER_MENU` is set in their
 environment; use `SDO_AGENT_CODE_PATH` and `SDO_RESPONSE_MENU`.
 
+## Benchmark profile
+
+`benchmarks/fuzzops/sdo-bench.yaml` is the profile every benchmark harness passes first. It sets only what differs from the
+defaults above: `response.repair_policy: recorded-actions`, `detection.self_heal_hold: 60s`, and, to measure the upper bound of what
+learned playbooks achieve alone, `response.after_playbook: wait` with `response.after_playbook_wait: 5m`: after a playbook applied,
+the agent is never dispatched; recovery gets the whole bound (slow readiness and windowed detectors need more than the
+stage's default 90 seconds), then the incident escalates. Production keeps `agent`.
+
 ## Keys
 
 ### Top level
@@ -63,6 +71,8 @@ environment; use `SDO_AGENT_CODE_PATH` and `SDO_RESPONSE_MENU`.
 | `response.diagnosis_deadline` | `SDO_RESPONSE_DIAGNOSIS_DEADLINE` | duration | `10s` | shared deadline of candidate diagnosis in the automatic stage |
 | `response.stage_budget` | `SDO_RESPONSE_STAGE_BUDGET` | duration | `45s` | scheduling bound of one automatic-stage pass; a pass re-run on the responder's loop may take twice this |
 | `response.repair_policy` | `SDO_RESPONSE_REPAIR_POLICY` | string | `commit` | the evidence the controller requires for a responder repair: commit (a source repair is committed through the broker; production) or recorded-actions (live cluster repairs are recorded as actions without a source commit; benchmark runs) |
+| `response.after_playbook` | `SDO_RESPONSE_AFTER_PLAYBOOK` | string | `agent` | what happens when a learned playbook applied and the opening alerts did not recover within the stage's bound: agent (dispatch the agent, told what the playbook did), escalate (no agent; the incident stays open under ordinary closure and closes failed at the verification timeout if the alerts never clear) or wait (keep waiting for recovery up to after_playbook_wait, then escalate). When recovery holds, no agent runs in any setting; an alert that did not open the incident never dispatches the agent after an applied playbook |
+| `response.after_playbook_wait` | `SDO_RESPONSE_AFTER_PLAYBOOK_WAIT` | duration | `5m0s` | how long after_playbook: wait keeps waiting for the opening alerts to recover after the playbook applied, capped by the response timeout |
 | `response.standby` | `SDO_RESPONSE_STANDBY` | bool | `true` | pre-start a responder worker; false forces cold Jobs |
 | `response.menu` | `SDO_RESPONSE_MENU` | bool | `true` | offer the responder its tool menu |
 | `response.permissive` | `SDO_RESPONSE_PERMISSIVE` | bool | `false` | broad lane repair permissions excluding Secret and credential APIs |
