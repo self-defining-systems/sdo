@@ -43,7 +43,7 @@ func RunStandbyHistory(ctx context.Context, args []string) error {
 	if err := task.GetRequest().UnmarshalTo(request); err != nil {
 		return err
 	}
-	return RunAPIProxy(ctx, []string{"--incident", request.GetIncidentId(), "--directory", *directory})
+	return RunAPIProxy(ctx, []string{"--scope", "incident:" + request.GetIncidentId(), "--directory", *directory})
 }
 
 func RunStandbyReady(args []string) error {

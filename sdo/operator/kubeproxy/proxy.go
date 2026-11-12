@@ -24,25 +24,84 @@ type Recorder interface {
 	Gap()
 }
 
+// Admitter is implemented by a Recorder that can guarantee a write's record before the write is forwarded.
+type Admitter interface {
+	// Admit reserves the record of one write-class request. When it fails the request must not be forwarded.
+	Admit() error
+}
+
+// Config is the policy of one recording proxy.
+type Config struct {
+	// Recorder stores history. A recorder that is also an Admitter makes every write, exec, attach and
+	// port-forward fail closed: it is refused with 503 unless its record is reserved first.
+	Recorder Recorder
+	// Gate is the incident mutation fence; nil for scopes without one.
+	Gate *apihistory.MutationGate
+	// FieldManager, when set, replaces the fieldManager of every write the proxy forwards.
+	FieldManager string
+	// ReadOnly refuses writes and exec, attach and port-forward sessions with 403, recording each refusal.
+	ReadOnly bool
+}
+
 // New forwards request and response bytes through the incident connection pool.
 // Mutation requests cannot opt into transport retries using idempotency headers.
 func New(upstream *url.URL, readTransport, writeTransport http.RoundTripper, recorder Recorder) http.Handler {
-	return NewWithMutationGate(upstream, readTransport, writeTransport, recorder, nil)
+	return NewRecording(upstream, readTransport, writeTransport, Config{Recorder: recorder})
 }
 
 // NewWithMutationGate keeps the incident fence below all worker API callers,
 // including raw kubectl and GET-based exec/attach upgrades.
 func NewWithMutationGate(upstream *url.URL, readTransport, writeTransport http.RoundTripper, recorder Recorder, gate *apihistory.MutationGate) http.Handler {
+	return NewRecording(upstream, readTransport, writeTransport, Config{Recorder: recorder, Gate: gate})
+}
+
+// NewRecording is the proxy every agent Job reaches Kubernetes through.
+func NewRecording(upstream *url.URL, readTransport, writeTransport http.RoundTripper, config Config) http.Handler {
+	recorder, gate := config.Recorder, config.Gate
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		e := requestEvent(r)
+		var uncertain atomic.Bool
+		session := e.Subresource == "exec" || e.Subresource == "attach" || e.Subresource == "portforward"
+		write := mutating(r.Method) || session
+		if write && config.ReadOnly && !nonPersistingReview(e) {
+			refuseReadOnly(w, recorder, e)
+			return
+		}
+		if write && recorder != nil {
+			if admitter, ok := recorder.(Admitter); ok {
+				if err := admitter.Admit(); err != nil {
+					writeStatus(w, http.StatusServiceUnavailable, "ServiceUnavailable", "recording_unavailable",
+						"SDO cannot record this request, so it was not forwarded")
+					return
+				}
+				e.Reserved = true
+			}
+		}
+		if write && !session && config.FieldManager != "" {
+			e.FieldManager = config.FieldManager
+		}
+		if session {
+			query := r.URL.Query()
+			e.Container = query.Get("container")
+			e.Ports = apihistory.SafePorts(query["ports"])
+			if e.Subresource != "portforward" {
+				e.Command = apihistory.RedactCommand(query["command"])
+			}
+		}
 		// The transport can still be probing the request body for EOF when an
 		// upstream response arrives. HTTP/1's default response flush drains and
 		// closes that same body, racing the probe and aborting response copying.
 		// HTTP/2 already permits concurrent reads and writes; custom writers may
 		// not expose this optional control.
+		// Enabled only after the early refusals above: a refused request leaves its body unread, which full
+		// duplex forbids the server to drain.
 		_ = http.NewResponseController(w).EnableFullDuplex()
-		e := requestEvent(r)
-		var uncertain atomic.Bool
-		if gate != nil && (mutating(r.Method) || e.Subresource == "exec" || e.Subresource == "attach" || e.Subresource == "portforward") {
+		var requestBody *bodyPrefix
+		if recorder != nil && mutating(r.Method) && !session && r.Body != nil && r.Body != http.NoBody {
+			requestBody = &bodyPrefix{ReadCloser: r.Body}
+			r.Body = requestBody
+		}
+		if gate != nil && write {
 			lease, err := gate.Begin()
 			if err != nil {
 				warning, _ := gate.Verified()
@@ -72,6 +131,10 @@ func NewWithMutationGate(upstream *url.URL, readTransport, writeTransport http.R
 		// workers; raw bytes never enter its recording queue.
 		defer func() {
 			if completed != nil {
+				if completed.Status == http.StatusSwitchingProtocols {
+					// ServeHTTP returns only after the upgraded stream closes.
+					completed.SessionEnd = proxyio.Now().UTC()
+				}
 				record(*completed, responseBody)
 			}
 		}()
@@ -95,11 +158,27 @@ func NewWithMutationGate(upstream *url.URL, readTransport, writeTransport http.R
 				req.Header.Del("X-Idempotency-Key")
 			}
 			req.Header.Del("Authorization") // upstream wrapper supplies the Pod service-account token
+			if e.FieldManager != "" {
+				query := req.URL.Query()
+				query.Set("fieldManager", e.FieldManager)
+				req.URL.RawQuery = query.Encode()
+			}
+		}
+		annotate := func(end *apihistory.Event) {
+			if requestBody == nil {
+				return
+			}
+			if paths, ok := requestBody.changedPaths(e.Resource, r.Header.Get("Content-Type")); ok {
+				end.ChangedPaths = paths
+			} else {
+				end.PathsOmitted = true
+			}
 		}
 		proxy.ModifyResponse = func(res *http.Response) error {
 			end := e
 			end.Phase = "end"
 			end.Status = res.StatusCode
+			annotate(&end)
 			// A 101 Body is bidirectional. Leave it intact for ReverseProxy's upgrade
 			// path, including SPDY and WebSocket frames.
 			if res.StatusCode == http.StatusSwitchingProtocols {
@@ -157,6 +236,7 @@ func NewWithMutationGate(upstream *url.URL, readTransport, writeTransport http.R
 			end := e
 			end.Phase = "end"
 			end.Status = http.StatusBadGateway
+			annotate(&end)
 			end.Finished = proxyio.Now().UTC()
 			end.Omission = "upstream_error"
 			recordEnd(end, nil)
@@ -169,6 +249,75 @@ func NewWithMutationGate(upstream *url.URL, readTransport, writeTransport http.R
 		proxy.ServeHTTP(w, r)
 	})
 }
+
+// bodyPrefix keeps the first bytes of a request body for field-path extraction while the request streams on.
+// The bytes are never stored; only the key paths derived from them are.
+type bodyPrefix struct {
+	io.ReadCloser
+	mu       sync.Mutex
+	prefix   []byte
+	overflow bool
+}
+
+func (b *bodyPrefix) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if n > 0 && !b.overflow {
+		if len(b.prefix)+n > apihistory.MaxRequestBodyBytes {
+			b.prefix, b.overflow = nil, true
+		} else {
+			b.prefix = append(b.prefix, p[:n]...)
+		}
+	}
+	return n, err
+}
+
+func (b *bodyPrefix) changedPaths(resource, contentType string) ([]string, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.overflow {
+		return nil, false
+	}
+	return apihistory.ChangedPaths(resource, contentType, b.prefix)
+}
+
+// nonPersistingReview reports creates that only ask the API server a question, so a read-only scope may use them.
+func nonPersistingReview(e apihistory.Event) bool {
+	if e.Verb != "post" || e.Subresource != "" || (e.Group != "authorization.k8s.io" && e.Group != "authentication.k8s.io") {
+		return false
+	}
+	switch e.Resource {
+	case "subjectaccessreviews", "selfsubjectaccessreviews", "localsubjectaccessreviews", "selfsubjectrulesreviews", "selfsubjectreviews", "tokenreviews":
+		return true
+	}
+	return false
+}
+
+func refuseReadOnly(w http.ResponseWriter, recorder Recorder, e apihistory.Event) {
+	if recorder != nil {
+		recorder.Record(e, nil)
+		end := e
+		end.Phase, end.Status, end.Omission = "end", http.StatusForbidden, "scope_read_only"
+		end.Finished = proxyio.Now().UTC()
+		recorder.Record(end, nil)
+	}
+	writeStatus(w, http.StatusForbidden, "Forbidden", "scope_read_only", "this agent scope is read-only at the SDO API proxy")
+}
+
+func writeStatus(w http.ResponseWriter, code int, reason, message, detail string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(struct {
+		Kind       string `json:"kind"`
+		APIVersion string `json:"apiVersion"`
+		Status     string `json:"status"`
+		Reason     string `json:"reason"`
+		Message    string `json:"message"`
+		Code       int    `json:"code"`
+	}{"Status", "v1", "Failure", reason, message + ": " + detail, code})
+}
+
 func mutating(method string) bool { return method != "GET" && method != "HEAD" && method != "OPTIONS" }
 func requestEvent(r *http.Request) apihistory.Event {
 	var id [16]byte

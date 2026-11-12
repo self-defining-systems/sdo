@@ -18,6 +18,7 @@ from sdo.agents.memory_diagnostics import render_validation_feedback
 from sdo.agents.provider import lifecycle_timeout_seconds, resolve_agent
 from sdo.agents.responder import (
     KubernetesResultPublisher,
+    export_proxy_kubeconfig,
     prepare_claude_home,
     prepare_codex_home,
     record_worker_failure,
@@ -160,6 +161,7 @@ def main() -> int:
         record_worker_failure(ValueError("SDO_NAMESPACE and SDO_RESULT_CONFIGMAP are required"))
         return 2
     try:
+        export_proxy_kubeconfig(namespace)
         if agent_guidance() == "shell":
             prepare_codex_home(skills=skills_for_role("health-judge"))
             prepare_claude_home(skills=skills_for_role("health-judge"))

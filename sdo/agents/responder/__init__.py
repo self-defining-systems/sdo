@@ -30,6 +30,7 @@ _EXPORTS = {
     "VerifyScenarioVerdict": "incident_status",
     "current_outcome_view": "reflection_outcomes",
     "execute_incident": "codex",
+    "export_proxy_kubeconfig": "job",
     "history_view": "reflection_outcomes",
     "live_incident_status": "incident_status",
     "prepare_claude_home": "credentials",
@@ -77,6 +78,9 @@ if TYPE_CHECKING:
     )
     from sdo.agents.responder.job import (
         KubernetesResultPublisher as KubernetesResultPublisher,
+    )
+    from sdo.agents.responder.job import (
+        export_proxy_kubeconfig as export_proxy_kubeconfig,
     )
     from sdo.agents.responder.job import (
         write_application_kubeconfig as write_application_kubeconfig,

@@ -148,6 +148,13 @@ func (s *Store) projectEvent(e Event) Event {
 			*field.target = value.(string)
 		}
 	}
+	if e.Container != "" && len(identifierGrammars["container.name"](e.Container)) != 0 {
+		e.Container = ""
+		e.Partial = true
+	}
+	// Idempotent: an already redacted command passes through unchanged.
+	e.Command = RedactCommand(e.Command)
+	e.Ports = SafePorts(e.Ports)
 	return e
 }
 

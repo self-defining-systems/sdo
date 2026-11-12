@@ -25,6 +25,18 @@ const MaxLogBytes = 64 << 10
 const MaxProjectionBytes = 256 << 10
 const MaxQueuedBytes = 8 << 20
 
+// MaxAdmittedWrites bounds the write-class requests (writes, exec, attach, port-forward) one history admits. Each
+// reserves its start and end envelopes from a budget separate from the blob budget, so blobs and reads can never
+// crowd a write's record out. Past the bound the proxy refuses writes: it fails closed.
+const MaxAdmittedWrites = 1024
+const reservedEvents = 2 * MaxAdmittedWrites
+const reservedEnvelopeBytes = int64(reservedEvents) * 4096
+
+// ErrRecordingUnavailable is returned by Admit when a write's record cannot be guaranteed.
+var ErrRecordingUnavailable = errors.New("recording unavailable")
+
+var errCap = errors.New("history cap")
+
 type Limits struct {
 	Bytes  int64
 	Events uint64
@@ -65,6 +77,20 @@ type Event struct {
 	Omission        string    `json:"omission,omitempty"`
 	DryRun          bool      `json:"dry_run,omitempty"`
 	Partial         bool      `json:"partial,omitempty"`
+	// FieldManager is the manager the proxy forced on a write.
+	FieldManager string `json:"field_manager,omitempty"`
+	// ChangedPaths are the field paths a write changed, keys only. PathsOmitted marks a write whose body could
+	// not be read, so the paths are unknown rather than empty.
+	ChangedPaths []string `json:"changed_paths,omitempty"`
+	PathsOmitted bool     `json:"changed_paths_omitted,omitempty"`
+	// Container, Command and Ports describe an exec, attach or port-forward session; Command is redacted.
+	Container string   `json:"container,omitempty"`
+	Command   []string `json:"command,omitempty"`
+	Ports     []string `json:"ports,omitempty"`
+	// SessionEnd is when an upgraded exec, attach or port-forward stream closed.
+	SessionEnd time.Time `json:"session_end,omitempty"`
+	// Reserved marks the envelope of an admitted write; it is stored from the reserved envelope budget.
+	Reserved bool `json:"-"`
 }
 
 type Manifest struct {
@@ -99,6 +125,8 @@ type Store struct {
 	closeOnce   sync.Once
 	gate        sync.RWMutex
 	closed      bool
+	failed      atomic.Bool
+	admitted    atomic.Int64
 	done        chan struct{}
 	file        *os.File
 }
@@ -160,7 +188,8 @@ func Open(directory, incident string, limits Limits) (*Store, error) {
 	}
 	s := &Store{identityKey: identityKey, directory: directory, limits: limits.defaults(), manifest: m, file: f, done: make(chan struct{})}
 	s.dropped.Store(m.Dropped)
-	s.queue = make(chan observation, s.limits.Queue)
+	// Reserved envelopes never wait on, or compete with, the ordinary queue limit.
+	s.queue = make(chan observation, s.limits.Queue+reservedEvents)
 	s.projecting = make(chan struct{}, 8)
 	if err := s.writeManifest(); err != nil {
 		f.Close()
@@ -203,7 +232,7 @@ func (s *Store) Record(event Event, raw []byte) {
 		s.enqueue(event, nil)
 		return
 	}
-	if len(s.queue) == cap(s.queue) {
+	if !event.Reserved && len(s.queue) >= s.limits.Queue {
 		s.Gap()
 		return
 	}
@@ -236,7 +265,20 @@ func (s *Store) Record(event Event, raw []byte) {
 func (s *Store) enqueue(event Event, body []byte) {
 	envelope, _ := json.Marshal(event)
 	weight := int64(len(body) + len(envelope) + 256)
-	if s.queuedBytes.Add(weight) > MaxQueuedBytes {
+	if event.Reserved {
+		// The channel holds reservedEvents beyond the ordinary limit, and Admit bounds reserved events to that
+		// count, so this send cannot block or drop; a failure here would lose a write's record.
+		s.queuedBytes.Add(weight)
+		select {
+		case s.queue <- observation{event: event, body: body, weight: weight}:
+		default:
+			s.queuedBytes.Add(-weight)
+			s.failed.Store(true)
+			s.Gap()
+		}
+		return
+	}
+	if s.queuedBytes.Add(weight) > MaxQueuedBytes || len(s.queue) >= s.limits.Queue {
 		s.queuedBytes.Add(-weight)
 		s.Gap()
 		return
@@ -247,6 +289,22 @@ func (s *Store) enqueue(event Event, body []byte) {
 		s.queuedBytes.Add(-weight)
 		s.Gap()
 	}
+}
+
+// Admit reserves the start and end envelopes of one write-class request before the proxy forwards it. It fails
+// when the store is closed or has failed, or the reserved envelope budget is spent. A request that is not
+// admitted must not be forwarded: a write is never allowed without a record.
+func (s *Store) Admit() error {
+	s.gate.RLock()
+	defer s.gate.RUnlock()
+	if s.closed || s.failed.Load() {
+		return ErrRecordingUnavailable
+	}
+	if s.admitted.Add(1) > MaxAdmittedWrites {
+		s.admitted.Add(-1)
+		return fmt.Errorf("%w: reserved write envelope budget spent", ErrRecordingUnavailable)
+	}
+	return nil
 }
 func (s *Store) Gap() { s.dropped.Add(1) }
 func (s *Store) Close() {
@@ -289,9 +347,11 @@ func (s *Store) run() {
 			s.queuedBytes.Add(-item.weight)
 			if err := s.append(item); err != nil {
 				s.dropped.Add(1)
+				s.noteAppendFailure(item, err)
 			}
 			if err := s.writeManifest(); err != nil {
 				s.dropped.Add(1)
+				s.failed.Store(true)
 			}
 		case <-tick.C:
 			s.checkpoint()
@@ -326,17 +386,31 @@ drain:
 	for _, item := range batch {
 		if err := s.append(item); err != nil {
 			s.Gap()
+			s.noteAppendFailure(item, err)
 		}
 	}
 	s.manifest.SnapshotThrough = through
 	if err := s.writeManifest(); err != nil {
 		s.Gap()
+		s.failed.Store(true)
+	}
+}
+
+// noteAppendFailure fails the store closed to new writes when a record is lost for a reason other than an
+// ordinary event's budget: a disk error, or any lost reserved envelope.
+func (s *Store) noteAppendFailure(item observation, err error) {
+	if item.event.Reserved || !errors.Is(err, errCap) {
+		s.failed.Store(true)
 	}
 }
 
 func (s *Store) append(item observation) error {
-	if s.manifest.Events >= s.limits.Events {
-		return errors.New("event cap")
+	eventCap, byteCap := s.limits.Events, s.limits.Bytes
+	if item.event.Reserved {
+		eventCap, byteCap = eventCap+reservedEvents, byteCap+reservedEnvelopeBytes
+	}
+	if s.manifest.Events >= eventCap {
+		return fmt.Errorf("%w: events", errCap)
 	}
 	e := item.event
 	e.Sequence = s.manifest.Events + 1
@@ -352,14 +426,19 @@ func (s *Store) append(item observation) error {
 		} else if err != nil {
 			return err
 		}
+		// A reserved envelope may use the envelope budget, never the blob budget: a body that does not fit
+		// the ordinary byte cap is dropped and the envelope kept.
+		if item.event.Reserved && extra > 0 && s.manifest.Bytes+extra+4096 > s.limits.Bytes {
+			e.BodyHash, e.Omission, blobPath, extra = "", "redacted_blob_budget", "", 0
+		}
 	}
 	b, err := json.Marshal(e)
 	if err != nil {
 		return err
 	}
 	b = append(b, '\n')
-	if s.manifest.Bytes+int64(len(b))+extra > s.limits.Bytes {
-		return errors.New("byte cap")
+	if s.manifest.Bytes+int64(len(b))+extra > byteCap {
+		return fmt.Errorf("%w: bytes", errCap)
 	}
 	if extra > 0 {
 		if err := os.WriteFile(blobPath, item.body, 0600); err != nil {
