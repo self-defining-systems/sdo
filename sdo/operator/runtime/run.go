@@ -723,12 +723,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				}
 				loop.CachedFindings = func() ToolResponse { return controller.cachedFindingView(request.IncidentID) }
 				loop.ExternalReceipts = func() ([]RepairActionReceipt, bool, string, error) {
-					rows, pending, revision, err := memory.IncidentActionReceipts(*repositoryMountPath, request.IncidentID)
-					if err != nil {
-						return nil, pending, revision, err
-					}
-					result := incidentResultState(&contractsv1alpha1.IncidentResult{RepairActions: rows})
-					return result.RepairActions, pending, revision, nil
+					return agentWriteReceipts(*repositoryMountPath, request.IncidentID, controller.clock())
 				}
 				loop.VerifyResult = func(ctx context.Context, result IncidentResult) ToolResponse {
 					if controller == nil {

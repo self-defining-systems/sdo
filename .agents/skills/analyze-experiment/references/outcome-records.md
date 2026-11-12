@@ -143,14 +143,22 @@ responder incident/playbooks, and controller outcomes. Check reflection paths an
 accepted commits to identify learned files. Do not infer Go-program credit from
 shell notes. Script timeouts/crashes are detector errors, never repaired faults.
 
-Controller-observed API repair receipts use `kind=kubernetes-api` and stable
-`sdo-api-<digest>` IDs. They recover writes made outside the recorded-action
-wrapper from paired incident-bound proxy observations. Object responses must
-match the exact resource identity; deletes require a later direct GET returning
-404. Dry runs, streams/exec, failed or partial requests, dropped/stale histories
-and writes outside the incident window do not supply receipts. A stopped writer
-may leave an open manifest: complete durable request pairs are positive facts,
-never evidence of a complete replay history. These receipts still need fresh
+The agent's writes are derived by Go from the recording of its Kubernetes calls (`memory.AgentWrites`, the one reader;
+settle detection, the closure guard, the outcome's repair records and reflection's change list all use it, never the
+agent-writable `sdo act` journal). Receipts have stable `sdo-api-<digest>` IDs and `kind=api-<verb>` (`api-create`,
+`api-patch`, `api-put`, `api-delete`, `api-exec`, `api-attach`). A write is a paired, non-dry-run 2xx
+POST/PUT/PATCH/DELETE on any resource or subresource (not the review creates that persist nothing), or an established
+exec/attach session spanning to `session_end`; Details hold the changed field paths, or the redacted command and
+"exit status and effect not observed". A write to an object the agent created in the incident, or to a Pod, ReplicaSet
+or Job that stood in the open capture with no owner, has kind `api-helper-<verb>` and binds to no cause unless it is a
+cause resource. Reads, failed and refused requests, port-forwards and interrupted watches are not receipts.
+`manifest.json` `write_gaps` counts only lost write records (a lost start/end envelope of a write or session, a
+recorder restart, a stale generation, a short event file); lost bodies, 300 KB lists and stopped watches are `dropped`
+but not gaps. A gap is a write at `write_gap_at`: `AgentWrites` returns a receipt of kind `api-gap` there (it moves
+settle, never reaches the outcome), so a gap can delay Recovered by one settle horizon and never advance it. A request
+with a start and no end is pending while the recorder is live (an open exec keeps settle pending) and a gap at its
+start once it is not. Plan settlement (`IncidentAPIRecoveryReceipts`) stays unknown on any write gap. `sdo-act-*`
+receipts from the journal still arrive in worker results until the `sdo act` removal. These receipts still need fresh
 independent finding clearance through the unchanged verified-cause gate.
 Opaque external commands continue to require recorded-action or RunScript
 receipts. The script replay basis remains `observed-transition`.
